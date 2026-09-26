@@ -14,6 +14,8 @@ import (
 
 // A settled security designation needs no provider at all.
 func TestASecurityShapedUnitIsDesignatedWithoutAsking(t *testing.T) {
+	t.Parallel()
+
 	s := ReadState{SecurityShapedPackage: true}
 	role, why, ok := MandatoryReader(s)
 	if !ok {
@@ -34,6 +36,8 @@ func TestASecurityShapedUnitIsDesignatedWithoutAsking(t *testing.T) {
 // security-shaped unit -- is overruled by the machinery at BOTH ends of the
 // confidence range. Confidence never authorizes (rule 6).
 func TestAnObedientlyWrongAnswerIsOverruledAtEveryConfidence(t *testing.T) {
+	t.Parallel()
+
 	s := ReadState{SecurityShapedPackage: true}
 	for _, conf := range []float64{1.0, 0.1} {
 		got, err := ConstrainRead(RoleChildReview, conf, s)
@@ -52,6 +56,8 @@ func TestAnObedientlyWrongAnswerIsOverruledAtEveryConfidence(t *testing.T) {
 // A required independent read survives an answer that names one first reader.
 // The answer says who reads FIRST; it does not say who may be skipped.
 func TestRequiredReadsSurviveTheAnswer(t *testing.T) {
+	t.Parallel()
+
 	s := ReadState{DesignDefaultsTaken: 4, HolderOfTheArea: RoleLaneOwner}
 	got, err := ConstrainRead(RoleChildReview, 0.99, s)
 	if err != nil {
@@ -71,6 +77,8 @@ func TestRequiredReadsSurviveTheAnswer(t *testing.T) {
 // A provider answer may not replace an unresolved holder, and may not be read
 // as lifting that holder's hold.
 func TestAnAnswerNeverReplacesAnUnresolvedHolder(t *testing.T) {
+	t.Parallel()
+
 	s := ReadState{HolderOfTheArea: RoleDesignAuthority, HoldIsOpen: true}
 	got, err := ConstrainRead(RoleChildReview, 1.0, s)
 	if err != nil {
@@ -87,6 +95,8 @@ func TestAnAnswerNeverReplacesAnUnresolvedHolder(t *testing.T) {
 // The human is asked only after the friends. An answer naming the human while
 // `help --state` says ask-all-friends is refused and the friends stand.
 func TestTheHumanIsNeverSelectedBeforeTheFriends(t *testing.T) {
+	t.Parallel()
+
 	s := ReadState{HelpAnswer: HelpAskAllFriends}
 	got, err := ConstrainRead(RoleHuman, 1.0, s)
 	if err != nil {
@@ -110,6 +120,8 @@ func TestTheHumanIsNeverSelectedBeforeTheFriends(t *testing.T) {
 
 // A role no registry configures is a refusal: an answer cannot invent an owner.
 func TestAnAnswerNamingNoConfiguredRoleIsRefused(t *testing.T) {
+	t.Parallel()
+
 	if _, err := ConstrainRead("a-role-nobody-configured", 0.99, ReadState{}); err == nil {
 		t.Fatal("an answer naming an unconfigured role must be refused, never adopted")
 	}

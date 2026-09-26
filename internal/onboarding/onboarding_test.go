@@ -48,6 +48,8 @@ ALPHA STALE
 `
 
 func TestSectionNamesKeepsOrderAndRepeats(t *testing.T) {
+	t.Parallel()
+
 	got := SectionNames(twoSections)
 	want := []string{"nova-alpha", "nova-beta", "nova-alpha"}
 	if len(got) != len(want) {
@@ -61,6 +63,8 @@ func TestSectionNamesKeepsOrderAndRepeats(t *testing.T) {
 }
 
 func TestRepeatedSectionsNamesTheOneWrittenTwice(t *testing.T) {
+	t.Parallel()
+
 	got := RepeatedSections(twoSections)
 	if len(got) != 1 || got[0] != "nova-alpha" {
 		t.Fatalf("RepeatedSections = %q, want [nova-alpha]", got)
@@ -74,6 +78,8 @@ func TestRepeatedSectionsNamesTheOneWrittenTwice(t *testing.T) {
 // happily and names the first half. This pins that reading so the next person to
 // wonder why a section drifted unwatched finds the answer in a test.
 func TestSectionReadsOnlyTheFirstOfTwo(t *testing.T) {
+	t.Parallel()
+
 	body, ok := Section(twoSections, "nova-alpha")
 	if !ok {
 		t.Fatal("Section did not find nova-alpha")
@@ -91,6 +97,8 @@ func TestSectionReadsOnlyTheFirstOfTwo(t *testing.T) {
 }
 
 func TestTranscriptReadsANamedSubsection(t *testing.T) {
+	t.Parallel()
+
 	lines, err := Transcript(twoSections, "nova-alpha", "Refusals")
 	if err != nil {
 		t.Fatal(err)

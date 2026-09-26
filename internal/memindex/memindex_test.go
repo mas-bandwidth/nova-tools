@@ -42,6 +42,8 @@ func build(t *testing.T) *Corpus {
 }
 
 func TestNormalizeRecoversHiddenPhrases(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct{ name, src, phrase string }{
 		{"wrap+blockquote", wrapSpecimen, "somebody is awake and watching"},
 		{"emphasis", emphSpecimen, "every instrument reading as a measurement"},
@@ -57,6 +59,8 @@ func TestNormalizeRecoversHiddenPhrases(t *testing.T) {
 }
 
 func TestTruncateCutsOnARuneBoundary(t *testing.T) {
+	t.Parallel()
+
 	// The port's source sliced bytes; a multi-byte rune straddling the cut
 	// produced invalid UTF-8 inside a quoted receipt field.
 	s := strings.Repeat("a", 9) + "é" + strings.Repeat("b", 40)
@@ -72,6 +76,8 @@ func TestTruncateCutsOnARuneBoundary(t *testing.T) {
 }
 
 func TestBuildClassesAndFrontmatter(t *testing.T) {
+	t.Parallel()
+
 	c := build(t)
 	var wind *Chunk
 	for i := range c.Chunks {
@@ -106,6 +112,8 @@ func TestBuildClassesAndFrontmatter(t *testing.T) {
 // MinTerms filtering effectively disappeared — silently, behind a green STATS
 // line. This repo ships to other lines on other platforms.
 func TestBuildChunkingIsLineEndingAgnostic(t *testing.T) {
+	t.Parallel()
+
 	body := "---\nname: crlf-twin\ntype: measured\n---\n\n" +
 		"the first paragraph names the compressor and the eleven minutes it needs from cold.\n\n" +
 		"the second paragraph names the jetty and the eighteen minutes it runs late.\n\n" +
@@ -153,18 +161,24 @@ func TestBuildChunkingIsLineEndingAgnostic(t *testing.T) {
 }
 
 func TestBuildRefusesEmptyCorpus(t *testing.T) {
+	t.Parallel()
+
 	if _, err := Build(fstest.MapFS{"a.txt": {Data: []byte("no markdown here")}}, nil); err == nil {
 		t.Fatal("Build accepted a corpus with no markdown — the confident-zero engine this tool exists to remove")
 	}
 }
 
 func TestBuildRefusesCorpusWithNoIndexableParagraph(t *testing.T) {
+	t.Parallel()
+
 	if _, err := Build(fstest.MapFS{"a.md": {Data: []byte("# h\n\nok\n")}}, nil); err == nil {
 		t.Fatal("Build accepted a corpus whose every paragraph is below MinTerms")
 	}
 }
 
 func TestBuildHonoursExclude(t *testing.T) {
+	t.Parallel()
+
 	c, err := Build(corpusFS(), func(p string) bool { return strings.HasPrefix(p, "notes") })
 	if err != nil {
 		t.Fatalf("Build: %v", err)
@@ -177,6 +191,8 @@ func TestBuildHonoursExclude(t *testing.T) {
 }
 
 func TestBM25FindsFunctionWordVariant(t *testing.T) {
+	t.Parallel()
+
 	// A phrase grep for "reliable on the gusts" finds nothing against a file
 	// saying "reliable about the gusts". Term retrieval must not care which
 	// preposition was used.
@@ -188,6 +204,8 @@ func TestBM25FindsFunctionWordVariant(t *testing.T) {
 }
 
 func TestBM25FindsWrappedPhrase(t *testing.T) {
+	t.Parallel()
+
 	c := build(t)
 	hits := Retrieve(c, []Channel{NewBM25(c)}, "somebody is awake and watching and the light is how that travels", 3)
 	if len(hits) == 0 || hits[0].File != "HANDBOOK.md" {
@@ -196,6 +214,8 @@ func TestBM25FindsWrappedPhrase(t *testing.T) {
 }
 
 func TestRetrieveDeterministic(t *testing.T) {
+	t.Parallel()
+
 	// Two independent builds, same queries, byte-identical formatted output.
 	// Go randomizes map iteration; this is the test that proves no map order
 	// leaks into a result.
@@ -219,6 +239,8 @@ func TestRetrieveDeterministic(t *testing.T) {
 }
 
 func TestRetrieveNeverEmptyForInVocabularyQuery(t *testing.T) {
+	t.Parallel()
+
 	// An unrelated but in-vocabulary query still returns the best k with
 	// visible low scores — never a bare zero. Only a fully out-of-vocabulary
 	// query may return nothing, and the CLI says so in words when it does.
@@ -230,6 +252,8 @@ func TestRetrieveNeverEmptyForInVocabularyQuery(t *testing.T) {
 }
 
 func TestRetrieveEmptyForOutOfVocabularyQuery(t *testing.T) {
+	t.Parallel()
+
 	c := build(t)
 	if hits := Retrieve(c, []Channel{NewBM25(c)}, "zzqq xxvv wwjj", 5); len(hits) != 0 {
 		t.Fatalf("out-of-vocabulary query returned hits: %+v", hits)
@@ -258,6 +282,8 @@ func crowdingFS() fstest.MapFS {
 // and every other matching file was truncated away BEFORE it could be
 // counted — --k 2 returning one file, silently, with a green receipt line.
 func TestRetrieveDoesNotLetOneLongFileCrowdOutOthers(t *testing.T) {
+	t.Parallel()
+
 	c, err := Build(crowdingFS(), nil)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
@@ -292,6 +318,8 @@ func TestRetrieveDoesNotLetOneLongFileCrowdOutOthers(t *testing.T) {
 }
 
 func TestRetrieveRefusesNonPositiveK(t *testing.T) {
+	t.Parallel()
+
 	c := build(t)
 	for _, k := range []int{0, -1} {
 		if hits := Retrieve(c, []Channel{NewBM25(c)}, "glazing", k); hits != nil {
@@ -301,6 +329,8 @@ func TestRetrieveRefusesNonPositiveK(t *testing.T) {
 }
 
 func TestSingleChannelOrderIsChannelOrder(t *testing.T) {
+	t.Parallel()
+
 	c := build(t)
 	raw := NewBM25(c).Query("brass paste scratches optical glass", 10)
 	fused := Retrieve(c, []Channel{NewBM25(c)}, "brass paste scratches optical glass", 10)
@@ -321,6 +351,8 @@ func TestSingleChannelOrderIsChannelOrder(t *testing.T) {
 // channel surfaced it. Every hit must now carry a score some channel actually
 // computed, and name that channel.
 func TestNativeScoreComesFromTheChannelThatSurfacedTheChunk(t *testing.T) {
+	t.Parallel()
+
 	c := build(t)
 	// "anemometers" is out of vocabulary (the corpus says "anemometer"), so
 	// bm25 cannot reach notes/wind.md at all; trigram can. "glazing" is in
@@ -367,6 +399,8 @@ func TestNativeScoreComesFromTheChannelThatSurfacedTheChunk(t *testing.T) {
 // With one channel there is only one possible attribution, and every hit must
 // carry it: single-channel output is exactly that channel's opinion.
 func TestSingleChannelNativeIsThatChannel(t *testing.T) {
+	t.Parallel()
+
 	c := build(t)
 	for _, ch := range []Channel{NewBM25(c), NewTrigram(c)} {
 		for _, h := range Retrieve(c, []Channel{ch}, "salt haze glazing daylight", 5) {
@@ -378,6 +412,8 @@ func TestSingleChannelNativeIsThatChannel(t *testing.T) {
 }
 
 func TestCoverage(t *testing.T) {
+	t.Parallel()
+
 	fsys := corpusFS()
 	// Clean case: both notes are named in index-a.md.
 	fnds, err := Coverage(fsys, "notes/*.md", "notes/index-*.md")
@@ -419,6 +455,8 @@ func TestCoverage(t *testing.T) {
 // nova-check's own links check had cut the anchor before resolving since it
 // was written; this is that behaviour, in the other binary.
 func TestCoverageChecksAnchoredAndQueriedLinks(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name    string
 		link    string
@@ -469,6 +507,8 @@ func TestCoverageChecksAnchoredAndQueriedLinks(t *testing.T) {
 // notes stay in the fixture as the control: tightening the match must not
 // start reporting files that are genuinely named.
 func TestCoverageCollidingStemIsNotCoverage(t *testing.T) {
+	t.Parallel()
+
 	fsys := corpusFS()
 	fsys["notes/foo.md"] = &fstest.MapFile{Data: []byte("---\nname: foo\n---\n\na lesson no index names at all")}
 	fsys["notes/foobar.md"] = &fstest.MapFile{Data: []byte("---\nname: foobar\n---\n\na lesson the index does name")}
@@ -493,6 +533,8 @@ func TestCoverageCollidingStemIsNotCoverage(t *testing.T) {
 }
 
 func TestCoverageRefusesEmptySide(t *testing.T) {
+	t.Parallel()
+
 	if _, err := Coverage(corpusFS(), "nothing/*.md", "notes/index-*.md"); err == nil {
 		t.Error("Coverage accepted an empty A side — a broken check reported as a pass")
 	}
@@ -502,6 +544,8 @@ func TestCoverageRefusesEmptySide(t *testing.T) {
 }
 
 func TestWikilinks(t *testing.T) {
+	t.Parallel()
+
 	fsys := corpusFS()
 	fsys["notes/linked.md"] = &fstest.MapFile{Data: []byte("---\nname: linked\n---\n\nsee [[wind-log]] and the unwritten [[storm-glass]] page for the rest")}
 	c, err := Build(fsys, nil)
@@ -533,6 +577,8 @@ func TestWikilinks(t *testing.T) {
 // the resolving one must not, or the fix trades a hole for a false-positive
 // gate.
 func TestWikilinksScansAliasedAndHeadingForms(t *testing.T) {
+	t.Parallel()
+
 	fsys := corpusFS()
 	fsys["notes/linked.md"] = &fstest.MapFile{Data: []byte(
 		"---\nname: linked\n---\n\n" +
@@ -579,6 +625,8 @@ func TestWikilinksScansAliasedAndHeadingForms(t *testing.T) {
 }
 
 func TestFrontmatterPresent(t *testing.T) {
+	t.Parallel()
+
 	fnds, err := FrontmatterPresent(corpusFS(), "notes/wind.md", nil)
 	if err != nil || len(fnds) != 0 {
 		t.Fatalf("a file with frontmatter was flagged: %v %v", fnds, err)
@@ -595,6 +643,8 @@ func TestFrontmatterPresent(t *testing.T) {
 // hardcoded the "index-" prefix as exempt, which is a guess about someone
 // else's filenames. Nothing is exempt unless the caller says so, this run.
 func TestFrontmatterExemptionIsTheCallersAndNeverADefault(t *testing.T) {
+	t.Parallel()
+
 	fsys := corpusFS()
 	fnds, err := FrontmatterPresent(fsys, "notes/index-a.md", nil)
 	if err != nil {
@@ -610,6 +660,8 @@ func TestFrontmatterExemptionIsTheCallersAndNeverADefault(t *testing.T) {
 }
 
 func TestFrontmatterRefusesEmptyGlob(t *testing.T) {
+	t.Parallel()
+
 	if _, err := FrontmatterPresent(corpusFS(), "nothing/*.md", nil); err == nil {
 		t.Error("FrontmatterPresent accepted a glob matching nothing — a broken check reported as a pass")
 	}
@@ -622,6 +674,8 @@ func TestFrontmatterRefusesEmptyGlob(t *testing.T) {
 // against their own corpora. The repo's own fixtures are held to LF by
 // .gitattributes, so only a test like this one can cover the user's file.
 func TestFrontmatterToleratesCRLF(t *testing.T) {
+	t.Parallel()
+
 	lf := "---\nname: lantern\ntype: reference\n---\n\nbody\n"
 	wantName, wantType := frontmatter(lf)
 	if wantName != "lantern" || wantType != "reference" {
@@ -652,6 +706,8 @@ func TestFrontmatterToleratesCRLF(t *testing.T) {
 // The genuinely dangling link in the same fixture is the NEGATIVE CONTROL:
 // without it, this test would pass against a Wikilinks that reported nothing.
 func TestWikilinksIgnoresQuotedSpecimens(t *testing.T) {
+	t.Parallel()
+
 	fsys := corpusFS()
 	fsys["notes/specimens.md"] = &fstest.MapFile{Data: []byte(
 		"---\nname: specimens\n---\n\n" +
@@ -690,6 +746,8 @@ func TestWikilinksIgnoresQuotedSpecimens(t *testing.T) {
 //
 // Every case plants [[really-missing]] AFTER the hazard and asserts it survives.
 func TestMaskingNeverHidesARealLink(t *testing.T) {
+	t.Parallel()
+
 	hazards := map[string]string{
 		"lone fence run in prose":    "A fence opens with ``` in markdown.\n\nSee [[really-missing]].\n\n```\ncode\n```\n",
 		"stray backticks in prose":   "it`s a shame [[really-missing]] but it`s fine\n",
@@ -733,6 +791,8 @@ func (f fixedChannel) Query(text string, k int) []Scored { return f.res }
 // Pin the channel geometry BM25 smoothing, trigram Jaccard and reciprocal-rank
 // fusion dictate. These contracts live in docs/SPEC.md but had no direct tests.
 func TestIssue2306(t *testing.T) {
+	t.Parallel()
+
 	t.Run("BM25IdfNeverNegative", func(t *testing.T) {
 		// A term that appears in every document has DF == len(Chunks). The
 		// classic idf log(N/n) would be zero here; Lucene smoothing must stay
@@ -823,6 +883,8 @@ func TestIssue2306(t *testing.T) {
 // other: these SHOULD be masked, and a checker that reports them is the diluted
 // one this change exists to repair.
 func TestMaskingDoesSilenceQuotedSpecimens(t *testing.T) {
+	t.Parallel()
+
 	quiet := map[string]string{
 		"inline specimen": "every dangling `[[quiet-one]]` in this repo\n",
 		"fenced specimen": "```\nsee [[quiet-one]] here\n```\n",
@@ -852,6 +914,8 @@ func TestMaskingDoesSilenceQuotedSpecimens(t *testing.T) {
 }
 
 func TestIssue2305(t *testing.T) {
+	t.Parallel()
+
 	fsys := fstest.MapFS{
 		".git/HEAD.md":       {Data: []byte("ref: refs/heads/main\n")},
 		".git/config.md":     {Data: []byte("this git config pretends to be a markdown file\n")},
@@ -885,6 +949,8 @@ func TestIssue2305(t *testing.T) {
 // .git skip is by basename at any depth, not only at the corpus root.
 // A root-only check (p == ".git") passes TestIssue2305 but fails here.
 func TestBuildSkipsNestedGitDirectory(t *testing.T) {
+	t.Parallel()
+
 	fsys := fstest.MapFS{
 		"sub/.git/file.md":       {Data: []byte("a markdown file inside a nested git directory\n")},
 		"sub/.git/objects/md.md": {Data: []byte("a nested markdown inside nested git objects\n")},

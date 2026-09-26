@@ -14,6 +14,8 @@ import (
 // whole usage, so every refusal line must end at the literal door; a bare verb
 // may report several missing flags, one line each, and that is correct.
 func TestIssue1451EveryRefusalNamesTheDoor(t *testing.T) {
+	t.Parallel()
+
 	const door = "; run: nova-memory help"
 
 	exit, banner, stderr := runCLI(t, "", "help")

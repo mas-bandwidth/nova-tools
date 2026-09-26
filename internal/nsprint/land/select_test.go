@@ -41,6 +41,8 @@ func runSelectionGate(sel land.SelectionResult, plantedFailures map[string]strin
 
 // TestL9: a reverse dependency's planted failure turns the gate red (fails on: skipped dependents).
 func TestL9(t *testing.T) {
+	t.Parallel()
+
 	pkgs := []land.PackageInfo{
 		{
 			Dir:         "internal/dep",
@@ -104,6 +106,8 @@ func TestL9(t *testing.T) {
 
 // TestL9b: a Go-only batch has no lisp step (fails on: lisp on every gate).
 func TestL9b(t *testing.T) {
+	t.Parallel()
+
 	pkgs := []land.PackageInfo{
 		{
 			Dir:         "internal/nsprint/land",
@@ -154,6 +158,8 @@ func TestL9b(t *testing.T) {
 
 // TestL9c: an import added by the train is selected (fails on: a base-only graph).
 func TestL9c(t *testing.T) {
+	t.Parallel()
+
 	// Base graph: pkg/trainconsumer does NOT import pkg/dep
 	basePkgs := []land.PackageInfo{
 		{
@@ -236,6 +242,8 @@ func TestL9c(t *testing.T) {
 // TestL9d: same tree and GOOS with tag sets {} and {integration}, then a policy tag change:
 // three cache keys, and the package that imports the change only under integration is selected.
 func TestL9d(t *testing.T) {
+	t.Parallel()
+
 	repo := "nova-tools"
 	tree := "b407068f"
 	goos := "linux"
@@ -305,6 +313,8 @@ func TestL9d(t *testing.T) {
 // TestL9e: 2,001 distinct selection graphs: the oldest key is gone, the index holds 2,000,
 // no key has a TTL (fails on: an unbounded or TTL'd cache).
 func TestL9e(t *testing.T) {
+	t.Parallel()
+
 	addr := testutil.Start(t)
 	rdb := redis.NewClient(&redis.Options{Addr: addr})
 	defer rdb.Close()

@@ -31,6 +31,8 @@ func runCLI(t *testing.T, stdin string, args ...string) (exit int, stdout, stder
 // The no-guessing law: every missing flag is a refusal that names the flag.
 
 func TestRefusesToGuess(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name       string
 		args       []string
@@ -96,6 +98,8 @@ func TestRefusesToGuess(t *testing.T) {
 // Two missing flags must be reported in the same order every run: the check
 // is sorted, never map order.
 func TestRequiredFlagErrorOrderDeterministic(t *testing.T) {
+	t.Parallel()
+
 	for i := 0; i < 20; i++ {
 		exit, _, stderr := runCLI(t, "", "eval")
 		if exit != 2 {
@@ -133,6 +137,8 @@ func TestRootIsNeverTakenFromTheEnvironment(t *testing.T) {
 }
 
 func TestRefusesAnUnusableRoot(t *testing.T) {
+	t.Parallel()
+
 	empty := t.TempDir()
 	file := filepath.Join(t.TempDir(), "not-a-dir.md")
 	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
@@ -160,6 +166,8 @@ func TestRefusesAnUnusableRoot(t *testing.T) {
 // The verbs, on the fixture corpus
 
 func TestStats(t *testing.T) {
+	t.Parallel()
+
 	exit, stdout, stderr := runCLI(t, "", "stats", "--root", corpus)
 	if exit != 0 {
 		t.Fatalf("exit = %d, want 0; stderr: %s", exit, stderr)
@@ -177,6 +185,8 @@ func TestStats(t *testing.T) {
 }
 
 func TestStatsHonoursExclude(t *testing.T) {
+	t.Parallel()
+
 	exit, stdout, stderr := runCLI(t, "", "stats", "--root", corpus, "--exclude", "log")
 	if exit != 0 {
 		t.Fatalf("exit = %d, want 0; stderr: %s", exit, stderr)
@@ -190,6 +200,8 @@ func TestStatsHonoursExclude(t *testing.T) {
 }
 
 func TestSearch(t *testing.T) {
+	t.Parallel()
+
 	exit, stdout, stderr := runCLI(t, "", "search", "--root", corpus, "--channels", "bm25", "--k", "3",
 		"when", "can", "the", "relief", "boat", "land", "at", "the", "jetty")
 	if exit != 0 {
@@ -211,6 +223,8 @@ func TestSearch(t *testing.T) {
 // "already distilled into a note" are different answers to "do I know this?",
 // and a receipt that hid the difference would hand the mind the wrong verdict.
 func TestSearchReceiptsCarryClassAndFrontmatter(t *testing.T) {
+	t.Parallel()
+
 	_, stdout, _ := runCLI(t, "", "search", "--root", corpus, "--channels", "bm25", "--k", "6",
 		"washing", "the", "glazing", "before", "an", "onshore", "gale")
 	if !strings.Contains(stdout, "class=log") {
@@ -230,6 +244,8 @@ func TestSearchReceiptsCarryClassAndFrontmatter(t *testing.T) {
 // root it came from. #488 lives in the cairn and can never surface from
 // memory/ alone, however lexical the index.
 func TestSearchSpansMultipleRoots(t *testing.T) {
+	t.Parallel()
+
 	memdir := t.TempDir()
 	cairn := t.TempDir()
 	writeUnder(t, memdir, "compressor.md",
@@ -261,6 +277,8 @@ func TestSearchSpansMultipleRoots(t *testing.T) {
 // tripwire instead of a remembered rule, the same pattern the floors registry
 // uses. Change one of these and this test goes red until you change both.
 func TestCalibrationProbeAndSchemaVersionMoveTogether(t *testing.T) {
+	t.Parallel()
+
 	const wantProbe = "the quarterly marketing budget for the regional office needs revised headcount projections before the fiscal deadline"
 	const wantSchema = "nova-memory/1"
 	if calibrationProbe != wantProbe {
@@ -282,6 +300,8 @@ func TestCalibrationProbeAndSchemaVersionMoveTogether(t *testing.T) {
 // band as "weaker than unrelated control text" — a fabricated number, not a
 // measurement.
 func TestReceiptsNameTheChannelTheScoreCameFrom(t *testing.T) {
+	t.Parallel()
+
 	// "diaphones" is out of vocabulary (the corpus says "diaphone"), so bm25
 	// reaches nothing and every hit arrives through trigram.
 	exit, stdout, stderr := runCLI(t, "", "search", "--root", corpus, "--channels", "bm25,trigram", "--k", "3", "diaphones")
@@ -318,6 +338,8 @@ func TestReceiptsNameTheChannelTheScoreCameFrom(t *testing.T) {
 // for class=poison matched a class the corpus never held. A field is one
 // token, whatever wrote it.
 func TestACallersQueryCannotPoseAsAField(t *testing.T) {
+	t.Parallel()
+
 	exit, stdout, stderr := runCLI(t, "", "search", "--root", corpus, "--channels", "bm25", "--k", "3",
 		"quokka class=poison name=fake")
 	if exit != 0 {
@@ -347,6 +369,8 @@ func TestACallersQueryCannotPoseAsAField(t *testing.T) {
 // ran its fields straight into "<file>:<para>" and the quoted snippet with no boundary,
 // so a filename or snippet saying class=poison was inside the scan region.
 func TestAReceiptsPathAndSnippetSitAfterTheFieldBoundary(t *testing.T) {
+	t.Parallel()
+
 	exit, stdout, stderr := runCLI(t, "", "search", "--root", corpus, "--channels", "bm25", "--k", "3",
 		"when", "can", "the", "relief", "boat", "land", "at", "the", "jetty")
 	if exit != 0 {
@@ -378,6 +402,8 @@ func TestAReceiptsPathAndSnippetSitAfterTheFieldBoundary(t *testing.T) {
 }
 
 func TestSearchOutOfVocabularyQuerySaysSoInWords(t *testing.T) {
+	t.Parallel()
+
 	exit, stdout, stderr := runCLI(t, "", "search", "--root", corpus, "--channels", "bm25", "--k", "3", "zzqq", "xxvv")
 	if exit != 0 {
 		t.Fatalf("exit = %d, want 0; stderr: %s", exit, stderr)
@@ -388,6 +414,8 @@ func TestSearchOutOfVocabularyQuerySaysSoInWords(t *testing.T) {
 }
 
 func TestCheckFromStdin(t *testing.T) {
+	t.Parallel()
+
 	in := "The compressor belt hardens with age and the blast runs a half second short.\n\n" +
 		"The relief boat should not try the jetty steps near low water on a spring tide.\n"
 	exit, stdout, stderr := runCLI(t, in, "check", "--root", corpus, "--channels", "bm25", "--k", "2", "-")
@@ -418,6 +446,8 @@ func TestCheckFromStdin(t *testing.T) {
 }
 
 func TestCheckFromANamedFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	cand := filepath.Join(dir, "candidate.md")
 	if err := os.WriteFile(cand, []byte("Salt haze on the glazing has to be washed off in daylight before it etches the glass.\n"), 0o644); err != nil {
@@ -441,6 +471,8 @@ func TestCheckFromANamedFile(t *testing.T) {
 // blob against a corpus indexed paragraph by paragraph, silently, with a
 // green MEMORY OK line.
 func TestCheckCandidateSplittingIsLineEndingAgnostic(t *testing.T) {
+	t.Parallel()
+
 	lfBody := "The compressor belt hardens with age and the blast runs a half second short.\n\n" +
 		"The relief boat should not try the jetty steps near low water on a spring tide.\n\n" +
 		"Salt haze on the glazing has to be washed off in daylight before it etches the glass.\n"
@@ -486,6 +518,8 @@ func TestCheckCandidateSplittingIsLineEndingAgnostic(t *testing.T) {
 }
 
 func TestCheckRefusesUnusableInput(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	thin := filepath.Join(dir, "thin.md")
 	if err := os.WriteFile(thin, []byte("# h\n\nok\n"), 0o644); err != nil {
@@ -517,6 +551,8 @@ func TestCheckRefusesUnusableInput(t *testing.T) {
 // field deliberately excluded from this promise (it is a measurement, and it
 // is labelled as one).
 func TestRetrievalOutputIsByteIdentical(t *testing.T) {
+	t.Parallel()
+
 	in := "The relief boat should not try the jetty steps near low water on a spring tide.\n"
 	for _, args := range [][]string{
 		{"check", "--root", corpus, "--channels", "bm25,trigram", "--k", "5", "-"},
@@ -535,6 +571,8 @@ func TestRetrievalOutputIsByteIdentical(t *testing.T) {
 // verify — and the ruling that unresolved wikilinks have no default
 
 func TestVerifyPassesOnTheFixtureCorpus(t *testing.T) {
+	t.Parallel()
+
 	exit, stdout, stderr := runCLI(t, "", "verify", "--root", corpus, "--links", "info",
 		"--coverage", "notes/*.md:notes/index-*.md", "--frontmatter", "notes/*.md", "--exempt", "index-")
 	if exit != 0 {
@@ -554,6 +592,8 @@ func TestVerifyPassesOnTheFixtureCorpus(t *testing.T) {
 // a nonzero exit on findings, and a script trusting the spec passed dangling
 // links silently.
 func TestVerifyLinksRulingIsTheCallersBothWays(t *testing.T) {
+	t.Parallel()
+
 	base := []string{"verify", "--root", corpus, "--coverage", "notes/*.md:notes/index-*.md"}
 	exit, stdout, _ := runCLI(t, "", append(append([]string{}, base...), "--links", "info")...)
 	if exit != 0 {
@@ -578,6 +618,8 @@ func TestVerifyLinksRulingIsTheCallersBothWays(t *testing.T) {
 // Planted faults, one per gating check, each observed failing. A check never
 // seen failing is not a check.
 func TestVerifySaysNoOnPlantedFaults(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name  string
 		plant map[string]string
@@ -668,6 +710,8 @@ func TestVerifySaysNoOnPlantedFaults(t *testing.T) {
 // rate trains a reader to wave findings through, which is the failure the
 // --links ruling exists to prevent.
 func TestVerifyDoesNotFlagLinksThatResolve(t *testing.T) {
+	t.Parallel()
+
 	dir := copyCorpus(t)
 	writeUnder(t, dir, "notes/aliased.md", "---\nname: aliased\n---\n"+
 		"\nsee [[tide-tables|the jetty timing]] and [[lantern-care#the-brass]] and\n"+
@@ -693,6 +737,8 @@ func TestVerifyDoesNotFlagLinksThatResolve(t *testing.T) {
 // A glob that matches nothing is a broken check, not a pass — refused (2),
 // never reported green.
 func TestVerifyRefusesAnEmptyCheck(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name, want string
 		args       []string
@@ -719,6 +765,8 @@ func TestVerifyRefusesAnEmptyCheck(t *testing.T) {
 // eval — the harness ships, and it is proven able to fail
 
 func TestEvalOnTheShippedExampleGold(t *testing.T) {
+	t.Parallel()
+
 	exit, stdout, stderr := runCLI(t, "", "eval", "--root", corpus, "--channels", "bm25", "--k", "3", "--floor", "0.8", exampleGold)
 	if exit != 0 {
 		t.Fatalf("exit = %d, want 0; stdout: %s stderr: %s", exit, stdout, stderr)
@@ -745,6 +793,8 @@ func TestEvalOnTheShippedExampleGold(t *testing.T) {
 // stating the evaluation row count matches the actual count of evaluation rows
 // in testdata/example-gold.tsv (7 rows), so any future discrepancy fails.
 func TestExampleGoldHeaderCommentMatchesRowCount(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(exampleGold)
 	if err != nil {
 		t.Fatal(err)
@@ -801,6 +851,8 @@ func TestExampleGoldHeaderCommentMatchesRowCount(t *testing.T) {
 // taste. Here the second channel measurably costs ranking quality on this
 // fixture — the same finding that keeps trigram off unless a caller names it.
 func TestEvalMeasuresChannelSetsAgainstEachOther(t *testing.T) {
+	t.Parallel()
+
 	mrr := func(channels string) string {
 		exit, stdout, stderr := runCLI(t, "", "eval", "--root", corpus, "--channels", channels, "--k", "3", "--floor", "0.8", exampleGold)
 		if exit != 0 {
@@ -823,6 +875,8 @@ func TestEvalMeasuresChannelSetsAgainstEachOther(t *testing.T) {
 // wrong must drive the exit code. Without this, "run the eval" is a ritual,
 // not a property.
 func TestEvalSaysNoBelowTheFloor(t *testing.T) {
+	t.Parallel()
+
 	gold := filepath.Join(t.TempDir(), "wrong-gold.tsv")
 	content := "# every expectation here names the wrong file on purpose\n" +
 		"how often should the lantern glazing be washed\tnotes/fog-signal.md\n" +
@@ -849,6 +903,8 @@ func TestEvalSaysNoBelowTheFloor(t *testing.T) {
 // A floor of exactly the measured recall passes: a floor is a floor, not a
 // fence to stay clear of — the same posture as the kernel budget.
 func TestEvalFloorIsInclusive(t *testing.T) {
+	t.Parallel()
+
 	exit, _, stderr := runCLI(t, "", "eval", "--root", corpus, "--channels", "bm25", "--k", "3", "--floor", "1", exampleGold)
 	if exit != 0 {
 		t.Fatalf("exit = %d, want 0 at a floor equal to the measured recall; stderr: %s", exit, stderr)
@@ -859,6 +915,8 @@ func TestEvalFloorIsInclusive(t *testing.T) {
 // would otherwise move the reported recall without moving anything a reader
 // can see.
 func TestEvalRefusesABrokenGoldFile(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct{ name, content, want string }{
 		{"a row with no TAB", "how often should the glazing be washed notes/lantern.md\n", "has no TAB"},
 		{"a row with an empty query", "\tnotes/lantern.md\n", "empty query"},
@@ -933,6 +991,8 @@ func writeUnder(t *testing.T, dir, rel, content string) {
 // caller's argument or the corpus's own text, and a newline is legal in a POSIX filename,
 // so a file named with a forged OK line used to print that forgery on its own line.
 func TestNoCorpusOrCallerTextCanForgeALine(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("windows: a newline is not legal in a filename, so the fixture cannot be built and the vector does not exist there")
 	}

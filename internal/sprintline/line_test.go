@@ -6,6 +6,8 @@ import (
 )
 
 func TestEvaluateOutputChangesXAndY(t *testing.T) {
+	t.Parallel()
+
 	cal := "KIND fix n=2 est=~4h actual=~3h error=-25%\nSUGGEST fix 90m (default 120m)\n"
 	tasks := []Task{
 		{ID: "gate-fix-holds", Kind: "fix", Owner: "johnny", State: "open", EstMinutes: 120},
@@ -39,6 +41,8 @@ func TestEvaluateOutputChangesXAndY(t *testing.T) {
 }
 
 func TestHandMarkedReceiptIsNotAnInput(t *testing.T) {
+	t.Parallel()
+
 	// The sexp is not a parameter of Compose. This test is the negative the
 	// command runs too: a caller that still has the file must not be able to
 	// feed it in here. Counting :status is what sprint-xy did, and the two
@@ -66,6 +70,8 @@ func TestHandMarkedReceiptIsNotAnInput(t *testing.T) {
 }
 
 func TestWallUsesKindActualNotTheSumOrTheStoredEstimate(t *testing.T) {
+	t.Parallel()
+
 	suggest := map[string]int{"fix": 90}
 	parallel := []Task{
 		{ID: "a", Kind: "fix", Owner: "johnny", State: "open", EstMinutes: 120},
@@ -116,6 +122,8 @@ func TestWallUsesKindActualNotTheSumOrTheStoredEstimate(t *testing.T) {
 }
 
 func TestOpenFileRejectsAStatusFraction(t *testing.T) {
+	t.Parallel()
+
 	_, err := ParseOpenFile("14/23 61% -> ~9h\n")
 	if err == nil {
 		t.Fatal("an open file accepted a status fraction; that is the hand line, not a task")
@@ -137,6 +145,8 @@ func TestOpenFileRejectsAStatusFraction(t *testing.T) {
 }
 
 func TestStatusRowWithoutKindOrDependsIsRefused(t *testing.T) {
+	t.Parallel()
+
 	_, err := ParseStatus("Open a mas-bandwidth/nova-tools#1 owner=johnny route=- est=~2h\n")
 	if err == nil || !strings.Contains(err.Error(), "kind=") {
 		t.Fatalf("err = %v, want a kind= refusal", err)
@@ -152,6 +162,8 @@ func TestStatusRowWithoutKindOrDependsIsRefused(t *testing.T) {
 }
 
 func TestMinutesMatchesTheSprintLine(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		m    int
 		want string

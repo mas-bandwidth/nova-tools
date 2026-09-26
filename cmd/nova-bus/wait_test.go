@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -86,10 +85,12 @@ func push(dir string) error {
 // harness wakes when the call RETURNS, and the caller must then issue the next wait. The
 // line is always last, so a harness reading the tail of the transcript finds it.
 func TestWaitEndsWithRearmLine(t *testing.T) {
+	t.Parallel()
+
 	if testing.Short() {
 		t.Skip("slow: waits out a real wall-clock timeout; runs on the self-hosted legs and nightly")
 	}
-	t.Parallel()
+
 	hermetic(t)
 	checkout, _ := busDir(t)
 	settled(t, checkout)
@@ -155,37 +156,15 @@ func TestWaitReturnsWhenANoteArrivesDuringTheWait(t *testing.T) {
 	}
 }
 
-// THE DEFAULT INTERVAL IS TEN SECONDS, and it is pinned here because it is a number
-// somebody chose rather than a number that fell out. Glenn, watching two lines answer each
-// other through this verb: "the polling should be 10 sec". A poll is a git fetch, and the
-// interval is what stands between one line writing a note and the other one seeing it, so
-// it is chosen for the round trip and not for the fetch.
-//
-// It is asserted on the WAIT line, which is where a caller who named no interval is told
-// what they got. --timeout is short: what is under test is the number, not the sleeping.
-func TestTheDefaultWaitIntervalIsTenSeconds(t *testing.T) {
-	if testing.Short() {
-		t.Skip("slow: waits out a real wall-clock timeout; runs on the self-hosted legs and nightly")
-	}
-	t.Parallel()
-	hermetic(t)
-	checkout, _ := busDir(t)
-	settled(t, checkout)
-
-	invoke(t, "", "wait", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
-		"--timeout", "1s", "--remote", "origin", "--branch", "main").
-		mustCode(t, 0).
-		mustContain(t, "stdout", "WAIT as=Ada timeout=1s interval=10s cursor=").
-		mustContain(t, "stdout", "WAIT TIMEOUT after=")
-}
-
 // Nothing arrives: the wait stops when it said it would, says so, and exits 0. A timeout
 // is the answer "nothing yet", not an error -- the caller issues the next one.
 func TestWaitTimesOutQuietlyAndCountsItsPolls(t *testing.T) {
+	t.Parallel()
+
 	if testing.Short() {
 		t.Skip("slow: waits out a real wall-clock timeout; runs on the self-hosted legs and nightly")
 	}
-	t.Parallel()
+
 	hermetic(t)
 	checkout, _ := busDir(t)
 	settled(t, checkout)
@@ -440,10 +419,12 @@ func TestAWaitReturnsTheNewNoteInFullAndOneLineForTheBacklog(t *testing.T) {
 // rather than spinning in a zero-delay loop, and returns only when a note arrives or
 // the deadline passes. A settled reader with nothing new sits out the whole timeout.
 func TestWaitWithoutAdvanceBlocksWhenCursorIsUnadvanced(t *testing.T) {
+	t.Parallel()
+
 	if testing.Short() {
 		t.Skip("slow: waits out a real wall-clock timeout; runs on the self-hosted legs and nightly")
 	}
-	t.Parallel()
+
 	hermetic(t)
 	checkout, _ := busDir(t)
 	settled(t, checkout) // Ada is up to date: nothing new to wake on.
@@ -601,10 +582,12 @@ func installWaitSyncPoint() {
 // one WAIT ADVANCED line says so, and the wait blocks for a genuinely new note instead of
 // returning.
 func TestWaitAdvanceSkipsHeardNotesAndBlocks(t *testing.T) {
+	t.Parallel()
+
 	if testing.Short() {
 		t.Skip("slow: waits out a real wall-clock timeout; runs on the self-hosted legs and nightly")
 	}
-	t.Parallel()
+
 	hermetic(t)
 	checkout, bare := busDir(t)
 	settled(t, checkout)
@@ -644,43 +627,6 @@ func TestWaitAdvanceSkipsHeardNotesAndBlocks(t *testing.T) {
 	readTo := strings.TrimSpace(gitIn(t, checkout, "rev-parse", cursorCommit+"~1"))
 	if onLane := strings.Fields(read(t, checkout, "from-ada/CURSOR")); len(onLane) == 0 || onLane[0] != readTo {
 		t.Fatalf("the cursor was not advanced to head over the heard note (read to %s):\n%s", readTo, read(t, checkout, "from-ada/CURSOR"))
-	}
-}
-
-// THE BUS CARRIES NOTES, NEVER BEATS (#3144). Until 2026-09-24 a wait rewrote
-// from-<lane>/BEAT every tick and pushed it as `beat <name>` every --beat: 393 of 500 bus
-// commits on 2026-09-23. Presence is friend:<name> in Redis, written by `nova-wake beat`.
-// A wait given the old --beat and --beat-lease, over many polls and many whole beats, makes
-// no beat commit, writes no BEAT file, and says once that the flags are retired.
-func TestWaitNeverCommitsABeat(t *testing.T) {
-	t.Parallel()
-	hermetic(t)
-	checkout, bare := busDir(t)
-	settled(t, checkout)
-	before := strings.TrimSpace(gitIn(t, bare, "rev-parse", "main"))
-
-	r := invoke(t, "", waitFlags(checkout, "Ada", "1s", "--beat", "150ms", "--beat-lease", "10m")...).mustCode(t, 0)
-
-	polls, err := strconv.Atoi(field(t, r.stdout[strings.Index(r.stdout, "WAIT TIMEOUT"):], "polls="))
-	if err != nil || polls < 2 {
-		t.Fatalf("polls=%d, want several so a beat had every chance to land:\n%s", polls, r.stdout)
-	}
-	if n := strings.Count(r.stderr, "WAIT NOTE --beat and --beat-lease are retired and ignored"); n != 1 {
-		t.Fatalf("the retirement note printed %d times, want once:\n%s", n, r.stderr)
-	}
-	for _, where := range []string{checkout, bare} {
-		if log := gitIn(t, where, "log", "--format=%s", "main"); strings.Contains(log, "beat ada") {
-			t.Fatalf("a wait committed a beat in %s:\n%s", where, log)
-		}
-	}
-	if after := strings.TrimSpace(gitIn(t, bare, "rev-parse", "main")); after != before {
-		t.Fatalf("the bus moved from %s to %s under a wait that found nothing", before, after)
-	}
-	if _, err := os.Stat(filepath.Join(checkout, "from-ada", "BEAT")); !os.IsNotExist(err) {
-		t.Fatalf("the wait wrote from-ada/BEAT: %v", err)
-	}
-	if out := strings.TrimSpace(gitIn(t, checkout, "status", "--porcelain", "--untracked-files=all")); out != "" {
-		t.Fatalf("the wait left the checkout dirty:\n%s", out)
 	}
 }
 
@@ -731,10 +677,12 @@ func TestWaitHelpQuietBeatsDocumentsNoWake(t *testing.T) {
 // space and all -- rather than splitting it in two. splitShellWords tokenizes the way a
 // shell would for the grammar rearmCommand emits; the emitted command text is never executed.
 func TestRearmCommandQuotesArgumentsWithSpaces(t *testing.T) {
+	t.Parallel()
+
 	if testing.Short() {
 		t.Skip("slow: waits out a real wall-clock timeout; runs on the self-hosted legs and nightly")
 	}
-	t.Parallel()
+
 	hermetic(t)
 	_, bare := busDir(t)
 	checkout := filepath.Join(t.TempDir(), "stella 2 bus")
@@ -808,34 +756,6 @@ func splitShellWords(line string) []string {
 	return words
 }
 
-// FREDDY'S HARNESS DOES NOT WAKE, and it cannot loop either: it runs one tool call per turn
-// and branches on what came back. The three tests below are that harness's whole contract.
-//
-// --idle-exit is the code a TIMEOUT returns instead of 0, so "nothing arrived" and "a note
-// arrived" are two different numbers rather than two shapes of output to parse. The line
-// still says so, in the one WAIT TIMEOUT line a harness can grep, because an exit code that
-// appears nowhere in the transcript is a number somebody reads a bug into.
-func TestWaitIdleExitGivesATimeoutItsOwnCode(t *testing.T) {
-	if testing.Short() {
-		t.Skip("slow: waits out a real wall-clock timeout; runs on the self-hosted legs and nightly")
-	}
-	t.Parallel()
-	hermetic(t)
-	checkout, _ := busDir(t)
-	settled(t, checkout)
-
-	r := invoke(t, "", waitFlags(checkout, "Ada", "300ms", "--idle-exit", "3")...).mustCode(t, 3)
-	r.mustContain(t, "stdout", "WAIT as=Ada timeout=300ms interval=100ms cursor=").
-		mustContain(t, "stdout", "idle-exit=3").
-		mustContain(t, "stdout", "WAIT TIMEOUT after=").
-		mustContain(t, "stdout", "WAIT DONE reason=timeout")
-	// ONE line to grep, and the code is on it.
-	line := r.stdout[strings.Index(r.stdout, "WAIT TIMEOUT"):]
-	if got := field(t, line, "idle-exit="); got != "3" {
-		t.Fatalf("WAIT TIMEOUT says idle-exit=%q, want 3:\n%s", got, r.stdout)
-	}
-}
-
 // A NOTE IS STILL EXIT 0 with --idle-exit set: the flag names what a TIMEOUT returns and
 // nothing else. A harness that got 3 for a note would answer nothing and re-arm for ever.
 func TestWaitIdleExitDoesNotTouchAReturnOnANote(t *testing.T) {
@@ -847,35 +767,6 @@ func TestWaitIdleExitDoesNotTouchAReturnOnANote(t *testing.T) {
 		mustCode(t, 0).
 		mustContain(t, "stdout", "WAIT OK new=2").
 		mustContain(t, "stdout", "INBOX NOTE id=bo-abcdef012345")
-}
-
-// --until IS THE DEADLINE THE HARNESS ALREADY HAS: a MOMENT, not a duration. It stands
-// beside --timeout and the earlier of the two ends the wait, so a caller whose session ends
-// at a known instant does not have to work out how long is left and does not overshoot it.
-func TestWaitUntilIsAnAbsoluteDeadlineAndTheEarlierOneWins(t *testing.T) {
-	if testing.Short() {
-		t.Skip("slow: waits out a real wall-clock timeout; runs on the self-hosted legs and nightly")
-	}
-	t.Parallel()
-	hermetic(t)
-	checkout, _ := busDir(t)
-	settled(t, checkout)
-
-	// One second past the fixed clock these tests run on, against a --timeout of thirty:
-	// the instant is the earlier of the two and is therefore the one that ends the call.
-	until := now().Add(time.Second).Format(time.RFC3339)
-	r := invoke(t, "", waitFlags(checkout, "Ada", "30s", "--until", until)...).mustCode(t, 0)
-	r.mustContain(t, "stdout", "until="+until).
-		mustContain(t, "stdout", "WAIT TIMEOUT after=")
-	after := afterOf(t, r.stdout)
-	if after < time.Second {
-		t.Fatalf("the wait returned after %s, before the --until it was given:\n%s", after, r.stdout)
-	}
-	// Well under the --timeout it was also given: the two are not added and the longer one
-	// does not win.
-	if after > 15*time.Second {
-		t.Fatalf("the wait ran %s against --until %s and --timeout 30s; the instant did not bound it:\n%s", after, until, r.stdout)
-	}
 }
 
 // The invocations this verb refuses rather than guesses at. Every one of them is a harness

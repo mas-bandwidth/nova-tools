@@ -37,6 +37,8 @@ func aReadRootWorker(roots ...string) *swarm.Worker {
 // WITHOUT THE FIX: the walled run's permission block held the job's own directories and
 // nothing else, so every read of the staged root was auto-rejected.
 func TestNativeConfigNamesTheWorkerReadRootsOnAWalledRun(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
@@ -71,6 +73,8 @@ func TestNativeConfigNamesTheWorkerReadRootsOnAWalledRun(t *testing.T) {
 // the harness's own directory, /opt/homebrew and the toolchain roots, and no root of the
 // description's.
 func TestNativeWallReadsTheWorkerReadRoots(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	_, slot := aSlot(t)
@@ -100,6 +104,8 @@ func TestNativeWallReadsTheWorkerReadRoots(t *testing.T) {
 // --no-wall affair, where there is no OS wall to open them and the fence is all there is
 // (issue #644, TestNativeConfigNamesTheCardsReadPaths).
 func TestNativeConfigStillWithholdsTheCardsReadPathsOnAWalledRun(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)

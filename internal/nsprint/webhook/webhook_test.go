@@ -150,6 +150,8 @@ func workflowRun(id int64, name, action, status, conclusion, at string) string {
 // names itself; a stale redelivery is kept out; a rerun with a newer id
 // replaces the red attempt; every entry is acked in the writing call.
 func TestCheckRunEventWritesCI(t *testing.T) {
+	t.Parallel()
+
 	f := newFixture(t)
 	f.deliver(t, "check_run", checkRun(501, "build", "completed", "success", "2026-09-25T12:05:00Z"))
 	if n := f.pass(t); n.Applied != 1 {
@@ -202,6 +204,8 @@ func TestCheckRunEventWritesCI(t *testing.T) {
 // another kind is acked as a no-op; an entry another seat read and dropped
 // is reclaimed and written once.
 func TestWorkflowRunEventWritesCI(t *testing.T) {
+	t.Parallel()
+
 	f := newFixture(t)
 	f.deliver(t, "workflow_run", workflowRun(9001, "ci", "requested", "queued", "", "2026-09-25T12:00:01Z"))
 	f.deliver(t, "pull_request", `{"action":"opened","number":3597,"pull_request":{"number":3597,"head":{"sha":"`+head+`"}},

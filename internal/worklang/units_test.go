@@ -14,6 +14,8 @@ import (
 // admits, serialises or leases -- that is the kernel's side and it is Stella's
 // and Emma's to write.
 func TestWorklangWorkSet(t *testing.T) {
+	t.Parallel()
+
 	// A1 worklang-reads-the-real-work-set: the (work-set ... :units (...)) form
 	// a coordinator writes today is a plan this reader reads, with every unit,
 	// its id and its fields. Before the amendment ParsePlan refused it outright

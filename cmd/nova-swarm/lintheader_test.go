@@ -36,6 +36,8 @@ func lintTrustFixture(t *testing.T, body string) string {
 // A card missing KIND: draws kind-declared, and the drift line carries the remedy the
 // way every other token's does (#1464).
 func TestLintCardMissingKindDrawsKindDeclared(t *testing.T) {
+	t.Parallel()
+
 	card := writeLintCard(t, "nokind.card", typedCardText(t,
 		"PATHS: internal/swarm/lintheader.go",
 		"TEST: internal/swarm TestCardHeaderMissingKindDrawsKindDeclared",
@@ -57,6 +59,8 @@ func TestLintCardMissingKindDrawsKindDeclared(t *testing.T) {
 // A card with no TEST: draws test-named; a card whose PATHS: climbs or names everywhere
 // draws paths-declared.
 func TestLintCardDrawsTestNamedAndPathsDeclared(t *testing.T) {
+	t.Parallel()
+
 	card := writeLintCard(t, "bad.card", typedCardText(t,
 		"KIND: fix-red",
 		"PATHS: ../elsewhere/**, **",
@@ -77,6 +81,8 @@ func TestLintCardDrawsTestNamedAndPathsDeclared(t *testing.T) {
 // KIND: report is a card kind. The wake-chain card carries it, and lint accepts
 // that fixture. A nonsense kind is still a drift. `text` stays declared.
 func TestLintCardAcceptsKindReportAndRefusesANonsenseKind(t *testing.T) {
+	t.Parallel()
+
 	report := writeLintCard(t, "report.card", typedCardText(t,
 		"KIND: report",
 		"PATHS: internal/swarm/lintheader.go",
@@ -119,6 +125,8 @@ func TestLintCardAcceptsKindReportAndRefusesANonsenseKind(t *testing.T) {
 // NEGATIVE CONTROL: the same card, header complete and every value one the gate reads,
 // is clean at exit 0.
 func TestLintCardCompleteHeaderPasses(t *testing.T) {
+	t.Parallel()
+
 	card := writeLintCard(t, "good.card", typedCardText(t,
 		"KIND: fix-red",
 		"PATHS: internal/swarm/lintheader.go, internal/swarm/lintheader_test.go",
@@ -135,6 +143,8 @@ func TestLintCardCompleteHeaderPasses(t *testing.T) {
 // The paused token names the kind AND carries the `trust --set trial` command, because a
 // rerun is not the remedy (SPEC-TOOLWORK §5 rule 1, §1's abstain list).
 func TestLintCardPausedKindNamesTheTrialRemedy(t *testing.T) {
+	t.Parallel()
+
 	trust := lintTrustFixture(t, strings.Join([]string{
 		"TRUST kind=fix-red area=- state=paused cards=3/10 pass=0.33 need=0.80 run_of_fails=3/3 since=2026-09-19T14:00:00Z by=rowan",
 		"TRUST OK kinds=1 trial=0 trusted=0 paused=1",
@@ -163,6 +173,8 @@ func TestLintCardPausedKindNamesTheTrialRemedy(t *testing.T) {
 // trial is clean, and so is the same card with no --trust at all -- no state is not a
 // paused state.
 func TestLintCardTrialKindAndNoFixtureAreClean(t *testing.T) {
+	t.Parallel()
+
 	trust := lintTrustFixture(t, "TRUST kind=fix-red area=- state=trial cards=0/10 pass=- need=0.80 run_of_fails=0/3 since=- by=-\n")
 	card := writeLintCard(t, "trial.card", typedCardText(t,
 		"KIND: fix-red",
@@ -186,6 +198,8 @@ func TestLintCardTrialKindAndNoFixtureAreClean(t *testing.T) {
 // under §5 must have. Without it, the cards written before §5 are left to the twelve
 // older rules -- the negative control is the good card of TestLintGoodCardPasses.
 func TestLintCardTypedRequiresTheHeader(t *testing.T) {
+	t.Parallel()
+
 	card := writeLintCard(t, "old.card", lintGoodCard())
 	exit, stdout, _ := runSwarm(t, "lint", "--card", card, "--typed", "--max", "0")
 	if exit != 2 {
@@ -204,6 +218,8 @@ func TestLintCardTypedRequiresTheHeader(t *testing.T) {
 // An unreadable fixture is a refusal that names the flag, not a silent pass: a lint that
 // quietly checked nothing would pass a paused kind.
 func TestLintTrustFixtureMustBeReadable(t *testing.T) {
+	t.Parallel()
+
 	card := writeLintCard(t, "c.card", typedCardText(t, "KIND: fix-red", "PATHS: none", "TEST: none"))
 	exit, stdout, stderr := runSwarm(t, "lint", "--card", card, "--trust", filepath.Join(t.TempDir(), "absent.txt"))
 	if exit != 2 {
@@ -217,6 +233,8 @@ func TestLintTrustFixtureMustBeReadable(t *testing.T) {
 // `lint --rules` is the listing a bench with a stale clone reads (#1464), so the four new
 // tokens are in it, each with its remedy.
 func TestLintRulesNamesTheFourNewTokens(t *testing.T) {
+	t.Parallel()
+
 	exit, stdout, _ := runSwarm(t, "lint", "--rules")
 	if exit != 0 {
 		t.Fatalf("`lint --rules` is a listing: exit %d", exit)
@@ -235,6 +253,8 @@ func TestLintRulesNamesTheFourNewTokens(t *testing.T) {
 // verbatim `git clone ... && cd repo` drew a drift for wording. The step is its line and
 // everything under it up to the next STEP line, which is where the command actually is.
 func TestLintCloneStepReadsTheWholeStepNotOnlyItsLine(t *testing.T) {
+	t.Parallel()
+
 	body := strings.Join([]string{
 		"RESULT: CARD-0000 do the thing",
 		"You are a Go engineer. Work in $(pwd).",
@@ -259,6 +279,8 @@ func TestLintCloneStepReadsTheWholeStepNotOnlyItsLine(t *testing.T) {
 // body still draws the drift, and the message says what it wants rather than only that
 // something is wrong.
 func TestLintCloneStepStillDraftsAStepThatEntersNothing(t *testing.T) {
+	t.Parallel()
+
 	body := strings.Join([]string{
 		"RESULT: CARD-0000 do the thing",
 		"STEP 1. Get the tree.",
@@ -288,6 +310,8 @@ func TestLintCloneStepStillDraftsAStepThatEntersNothing(t *testing.T) {
 // today only by hitting it. Every lint says how big the card is and what the cap is, so
 // a card at 11k is known to be at 11k.
 func TestLintAlwaysNamesTheSizeAndTheCap(t *testing.T) {
+	t.Parallel()
+
 	clean := writeLintCard(t, "good.card", lintGoodCard())
 	_, stdout, _ := runSwarm(t, "lint", "--card", clean)
 	if !strings.Contains(stdout, "bytes=") || !strings.Contains(stdout, "cap=12000") {

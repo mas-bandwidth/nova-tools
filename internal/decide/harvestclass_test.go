@@ -29,6 +29,8 @@ func evidence() HarvestEvidence {
 // RESULT.md prose -- which is also what keeps SPEC-DECIDE rule 4, public or
 // synthetic state only (:226-241), true by construction rather than by care.
 func TestDecideStateIsBuiltFromOutcomeOnly(t *testing.T) {
+	t.Parallel()
+
 	ev := evidence()
 	ev.Prose = proseSentinel // what a caller might hand us by mistake
 
@@ -85,6 +87,8 @@ func TestDecideStateIsBuiltFromOutcomeOnly(t *testing.T) {
 // The provider is not asked where the gate decided, and `rejected` is a member
 // of the class set that NO provider is ever offered.
 func TestAcceptRejectIsClassRejectedNeverFailedAndNoProviderIsAsked(t *testing.T) {
+	t.Parallel()
+
 	for accept, want := range map[string]string{
 		AcceptOK:     ClassClean,
 		AcceptReject: ClassRejected,
@@ -127,6 +131,8 @@ func TestAcceptRejectIsClassRejectedNeverFailedAndNoProviderIsAsked(t *testing.T
 // only ever tightens. No class, at any confidence, turns a reject or an abstain
 // into a push, lifts a HOLD, or skips a read.
 func TestAHarvestClassNeverPushesARejectedCard(t *testing.T) {
+	t.Parallel()
+
 	for _, accept := range []string{AcceptReject, AcceptAbstain, AcceptNone} {
 		for _, class := range append(AskedHarvestClasses(), ClassRejected, ClassUnknown) {
 			ev := evidence()
@@ -160,6 +166,8 @@ func TestAHarvestClassNeverPushesARejectedCard(t *testing.T) {
 // which is a member of no answer set -- it is the absence of an answer (:99) --
 // and rule 14's requeue-once path runs as today.
 func TestBelowFloorIsUnknownAndRequeuesOnce(t *testing.T) {
+	t.Parallel()
+
 	ev := evidence()
 
 	low := ClassifyHarvest(ev, Result{Answer: ClassDefect, Confidence: 0.61, Decider: DeciderJev, Why: WhyNone}, 0.65)
@@ -195,6 +203,8 @@ func TestBelowFloorIsUnknownAndRequeuesOnce(t *testing.T) {
 // route log, so agreement between class= and what a person later did is measured
 // from rows and not from a feeling.
 func TestEveryOutcomeIsOneAppendedJSONLRow(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "outcomes.jsonl")
 	ev := evidence()
 
@@ -282,6 +292,8 @@ func (f *capturingProvider) Ask(_ context.Context, _ questions.Question, state s
 // The class is the answer the chain returned. The constant cannot pass this:
 // one unit, two provider answers, two different classes.
 func TestTheHarvestClassIsTheAnswerTheChainReturned(t *testing.T) {
+	t.Parallel()
+
 	q := harvestQ(t)
 	ev := evidence()
 	const floor = 0.65
@@ -308,6 +320,8 @@ func TestTheHarvestClassIsTheAnswerTheChainReturned(t *testing.T) {
 // A question nobody answered is DeciderNone and says so -- the row D2's
 // `decider=none why=no-decider` had no code path for.
 func TestAQuestionWithNoDeciderIsDeciderNoneAndNotAsked(t *testing.T) {
+	t.Parallel()
+
 	q := harvestQ(t)
 	ev := evidence()
 	const floor = 0.65
@@ -336,6 +350,8 @@ func TestAQuestionWithNoDeciderIsDeciderNoneAndNotAsked(t *testing.T) {
 
 // Where the gate already decided, no provider is asked and `asked=false`.
 func TestTheProviderIsNeverCalledWhereTheGateAlreadyDecided(t *testing.T) {
+	t.Parallel()
+
 	q := harvestQ(t)
 	const floor = 0.65
 	for _, accept := range []string{AcceptOK, AcceptReject} {
@@ -364,6 +380,8 @@ func TestTheProviderIsNeverCalledWhereTheGateAlreadyDecided(t *testing.T) {
 // or the outcome row. Only the three closed-set OUTCOME fields and the bounded
 // reason token may appear.
 func TestTheCapturedRequestCarriesNoProseAndNoOutputTail(t *testing.T) {
+	t.Parallel()
+
 	const proseMarker = "PROSE_MARKER_RESULT.md_must_not_cross_7f3a"
 	const tailMarker = "OUTPUT_TAIL_MARKER_must_not_cross_9b21"
 
@@ -441,6 +459,8 @@ func nonceOf(t *testing.T, state string) string {
 // in the chain, behind the table, and its own counter is the witness that it
 // was never asked.
 func TestARulesAnswerRecordsNoProviderCall(t *testing.T) {
+	t.Parallel()
+
 	q := harvestQ(t)
 	ev := evidence()
 	// The chain frames what it is handed (questions.Frame), so what goes in is

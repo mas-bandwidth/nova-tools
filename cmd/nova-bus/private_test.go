@@ -253,6 +253,8 @@ func TestPublicBusDecideOutputIsUnchanged(t *testing.T) {
 // banner the verb advertises. A poller that decided would need one of these flags to be
 // asked for it, and `wait` refuses both by name.
 func TestWaitHasNoPrivateOverrideAndNoDecidingPoller(t *testing.T) {
+	t.Parallel()
+
 	checkout, _ := busDir(t)
 	for _, flag := range []string{"--allow-private", "--decide"} {
 		r := invoke(t, "", "wait", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",

@@ -15,6 +15,8 @@ import (
 // version line. Each subtest builds the tool, runs the transcript's command,
 // and compares what the transcript line promises against what the tool printed.
 func TestFirstRunTranscriptsMatchInstalledBuild(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	md := readFile(t, filepath.Join(root, "docs", "TESTS.md"))
 
@@ -168,6 +170,8 @@ func promise(line string) string {
 // TestFirstRunTranscriptsNegativeControls tests that the helpers reject
 // missing commands, empty transcript blocks, and malformed version outputs.
 func TestFirstRunTranscriptsNegativeControls(t *testing.T) {
+	t.Parallel()
+
 	fixture := `$ command-empty
 $ command-with-output
 OUTPUT OK val=1

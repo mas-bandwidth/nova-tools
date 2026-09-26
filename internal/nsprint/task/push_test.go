@@ -12,6 +12,8 @@ import (
 )
 
 func TestPushEstDomain(t *testing.T) {
+	t.Parallel()
+
 	st, client := controlRedis(t)
 	ctx := context.Background()
 	sprint := "domain-abcdef01"
@@ -145,6 +147,8 @@ func TestPushEstDomain(t *testing.T) {
 }
 
 func TestPushWritesEstAndPushedAt(t *testing.T) {
+	t.Parallel()
+
 	st, client := controlRedis(t)
 	ctx := context.Background()
 	sprint := "est-pushed-at-01"

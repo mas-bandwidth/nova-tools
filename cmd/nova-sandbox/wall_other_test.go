@@ -15,9 +15,27 @@ func skipNotLinux(t *testing.T) {
 	t.Skipf("skipped on %s: the landlock wall is the linux body, and landlock is a linux LSM", runtime.GOOS)
 }
 
-func TestLandlockWallRefusesWriteOutsideJob(t *testing.T)      { skipNotLinux(t) }
-func TestLandlockWallAllowsReadPaths(t *testing.T)             { skipNotLinux(t) }
-func TestLandlockWallClampsAnABIAboveTheTable(t *testing.T)    { skipNotLinux(t) }
-func TestLandlockWallHidesSecret(t *testing.T)                 { skipNotLinux(t) }
-func TestLandlockWallBlocksNetworkWhenNotAllowed(t *testing.T) { skipNotLinux(t) }
-func TestCheckReportsLandlock(t *testing.T)                    { skipNotLinux(t) }
+func TestLandlockWallRefusesWriteOutsideJob(t *testing.T) {
+	t.Parallel()
+	skipNotLinux(t)
+}
+func TestLandlockWallAllowsReadPaths(t *testing.T) {
+	t.Parallel()
+	skipNotLinux(t)
+}
+func TestLandlockWallClampsAnABIAboveTheTable(t *testing.T) {
+	t.Parallel()
+	skipNotLinux(t)
+}
+func TestLandlockWallHidesSecret(t *testing.T) {
+	t.Parallel()
+	skipNotLinux(t)
+}
+func TestLandlockWallBlocksNetworkWhenNotAllowed(t *testing.T) {
+	t.Parallel()
+	skipNotLinux(t)
+}
+func TestCheckReportsLandlock(t *testing.T) {
+	t.Parallel()
+	skipNotLinux(t)
+}

@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // THE WINDOWS BENCH IS A TARGET LIKE ANY OTHER, and the Threadripper arriving
@@ -42,6 +44,8 @@ func windowsMachines(t *testing.T, lines ...string) string {
 // to take it. Before this it did not: ValidRemotePath demanded a leading `/`
 // or `~/`, so the adopt refused every windows bench at the flag, before ssh.
 func TestAdoptTakesWindowsDrivePathsForBinAndDest(t *testing.T) {
+	t.Parallel()
+
 	from := built(t, "v0.16.0", "windows-amd64", "nova-bus", "nova-update")
 	s := &fakeSSH{answer: map[string]string{"threadripper": "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0 retired=0\n"}}
 	var o, e bytes.Buffer
@@ -65,6 +69,8 @@ func TestAdoptTakesWindowsDrivePathsForBinAndDest(t *testing.T) {
 // Windows itself accepts everywhere -- and the tool it runs is nova-update.exe
 // at an absolute path composed from --dest.
 func TestAdoptComposesSlashPathsForAWindowsBench(t *testing.T) {
+	t.Parallel()
+
 	from := built(t, "v0.16.0", "windows-amd64", "nova-bus", "nova-update")
 	s := &fakeSSH{answer: map[string]string{"threadripper": "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0 retired=0\n"}}
 	var o, e bytes.Buffer
@@ -102,6 +108,8 @@ func TestAdoptComposesSlashPathsForAWindowsBench(t *testing.T) {
 // A bare `nova-update` resolves against a $PATH nobody here chose, and a
 // suffix-less name resolves against nothing at all.
 func TestAdoptDryRunProbesTheExeOnAWindowsBench(t *testing.T) {
+	t.Parallel()
+
 	from := built(t, "v0.16.0", "windows-amd64", "nova-bus", "nova-update")
 	s := &fakeSSH{answer: map[string]string{"threadripper": "nova-update v0.15.0 windows/amd64 go1.26.5\n"}}
 	var o, e bytes.Buffer
@@ -134,6 +142,8 @@ func TestAdoptDryRunProbesTheExeOnAWindowsBench(t *testing.T) {
 // command whose first token cannot exist. The drive form is allowed for the
 // windows target and for nothing else.
 func TestAdoptRefusesAWindowsPathForALinuxTarget(t *testing.T) {
+	t.Parallel()
+
 	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
 	var o, e bytes.Buffer
 	code := Run("nova-update", []string{"adopt", "--no-certify",
@@ -156,6 +166,8 @@ func TestAdoptRefusesAWindowsPathForALinuxTarget(t *testing.T) {
 // paths must not widen it to shell syntax: the far side is a POSIX shell
 // whatever the operating system under it.
 func TestAWindowsPathMayStillCarryNoShellSyntax(t *testing.T) {
+	t.Parallel()
+
 	for _, bad := range []string{
 		`C:\Users\nova\bin;calc.exe`,
 		`C:\Users\nova\bin $(whoami)`,
@@ -190,6 +202,8 @@ func TestAWindowsPathMayStillCarryNoShellSyntax(t *testing.T) {
 // two answer different questions -- "may this be sent" and "what is sent" --
 // and because every composition site has to reach the same answer.
 func TestRemotePathFoldsBackslashesForTheFarSidesShell(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct{ in, want string }{
 		{`C:\Users\nova\.local\bin`, "C:/Users/nova/.local/bin"},
 		{"C:/Users/nova/.local/bin", "C:/Users/nova/.local/bin"},
@@ -206,6 +220,8 @@ func TestRemotePathFoldsBackslashesForTheFarSidesShell(t *testing.T) {
 // more than one home directory and the odd machine says so in the file -- so
 // they take the drive form too, and are normalised the same way.
 func TestTheMachineColumnsTakeAWindowsPath(t *testing.T) {
+	t.Parallel()
+
 	from := built(t, "v0.16.0", "windows-amd64", "nova-bus", "nova-update")
 	s := &fakeSSH{answer: map[string]string{"threadripper": "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0 retired=0\n"}}
 	var o, e bytes.Buffer
@@ -231,6 +247,8 @@ func TestTheMachineColumnsTakeAWindowsPath(t *testing.T) {
 // the fetch has to be composed for it. The host part is two characters or
 // more, so `C:\releases` is still read as a local path and not as a host.
 func TestAdoptFetchesFromAWindowsBuildHost(t *testing.T) {
+	t.Parallel()
+
 	served := ArtifactDir(built(t, "v0.16.0", "windows-amd64", "nova-bus", "nova-update"), "v0.16.0", "windows", "amd64")
 	digest, err := fileSum(filepath.Join(served, SumsFile))
 	if err != nil {
@@ -272,6 +290,8 @@ func TestAdoptFetchesFromAWindowsBuildHost(t *testing.T) {
 // cannot name the files on a windows bench is a withdrawal that leaves them
 // there.
 func TestPullTakesAWindowsDestAndNamesTheExeFiles(t *testing.T) {
+	t.Parallel()
+
 	out := built(t, "v0.16.0", "windows-amd64", "nova-bus", "nova-update")
 	local := ArtifactDir(out, "v0.16.0", "windows", "amd64")
 	body, err := os.ReadFile(filepath.Join(local, SumsFile))
@@ -314,6 +334,8 @@ func TestPullTakesAWindowsDestAndNamesTheExeFiles(t *testing.T) {
 // every line in it therefore has to name a .exe -- a SUMS line naming
 // `nova-bus` would install a file that is not there and skip the one that is.
 func TestTheWindowsSumsFileNamesOnlyExeFiles(t *testing.T) {
+	t.Parallel()
+
 	out := built(t, "v0.16.0", "windows-amd64", "nova-bus", "nova-swarm", "nova-update")
 	dir := ArtifactDir(out, "v0.16.0", "windows", "amd64")
 	body, err := os.ReadFile(filepath.Join(dir, SumsFile))
@@ -357,6 +379,8 @@ func TestTheWindowsSumsFileNamesOnlyExeFiles(t *testing.T) {
 // verified=<n> for the checksum verification and never claims to have run
 // anything.
 func TestAWindowsBuildDoesNotClaimToHaveRunItsOwnArtifacts(t *testing.T) {
+	t.Parallel()
+
 	out := t.TempDir()
 	source := t.TempDir()
 	for _, tool := range []string{"nova-bus", "nova-update"} {
@@ -397,13 +421,15 @@ func TestAWindowsBuildDoesNotClaimToHaveRunItsOwnArtifacts(t *testing.T) {
 // the fallback is exercised on every runner rather than only on the one
 // platform that can produce the error.
 func TestInstallMovesARunningFileAsideWhenTheRenameIsRefused(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	src := filepath.Join(dir, "nova-update.exe.built")
-	if err := os.WriteFile(src, []byte("new"), 0o755); err != nil {
+	if err := testbin.WriteExecutable(src, []byte("new"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	dst := filepath.Join(dir, "nova-update.exe")
-	if err := os.WriteFile(dst, []byte("old"), 0o755); err != nil {
+	if err := testbin.WriteExecutable(dst, []byte("old"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	var renames []string
@@ -444,13 +470,15 @@ func TestInstallMovesARunningFileAsideWhenTheRenameIsRefused(t *testing.T) {
 // directory into a silent success, and it must leave nothing behind when it
 // cannot finish.
 func TestInstallPutsTheOldFileBackWhenTheFallbackAlsoFails(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	src := filepath.Join(dir, "nova-bus.exe.built")
-	if err := os.WriteFile(src, []byte("new"), 0o755); err != nil {
+	if err := testbin.WriteExecutable(src, []byte("new"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	dst := filepath.Join(dir, "nova-bus.exe")
-	if err := os.WriteFile(dst, []byte("old"), 0o755); err != nil {
+	if err := testbin.WriteExecutable(dst, []byte("old"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	// The new binary can never be moved into place -- a full disk, and it is
@@ -485,6 +513,8 @@ func TestInstallPutsTheOldFileBackWhenTheFallbackAlsoFails(t *testing.T) {
 // build wrote: the names are the target's, the probe asks after the target's
 // names, and nothing rebuilds a name out of this host's runtime.GOOS.
 func TestInstallOnAWindowsArtifactDirectoryUsesExeNamesThroughout(t *testing.T) {
+	t.Parallel()
+
 	from := built(t, "v0.16.0", "windows-amd64", "nova-bus", "nova-update")
 	bin := t.TempDir()
 	var probed []string

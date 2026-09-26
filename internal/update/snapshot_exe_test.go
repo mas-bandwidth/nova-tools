@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // `nova-version snapshot` INVENTORIES A WINDOWS BENCH'S BIN DIRECTORY, and
@@ -23,6 +25,8 @@ import (
 // tools. (Unix-only because the stubs need a shebang; the windows leg of CI
 // runs the rest of this package.)
 func TestSnapshotReadsExeNamesAndKeepsTheSuffix(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "bin")
 	if err := os.MkdirAll(bin, 0o755); err != nil {
@@ -30,7 +34,7 @@ func TestSnapshotReadsExeNamesAndKeepsTheSuffix(t *testing.T) {
 	}
 	stub := func(name, line string) {
 		t.Helper()
-		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\nprintf '%s\\n' '"+line+"'\n"), 0o755); err != nil {
+		if err := testbin.WriteExecutable(filepath.Join(bin, name), []byte("#!/bin/sh\nprintf '%s\\n' '"+line+"'\n"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}

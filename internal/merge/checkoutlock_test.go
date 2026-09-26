@@ -46,6 +46,8 @@ var underTheCallersLock = map[string]string{
 }
 
 func TestEveryCheckoutOperationIsUnderTheCheckoutLock(t *testing.T) {
+	t.Parallel()
+
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "records.go", nil, parser.ParseComments)
 	if err != nil {
@@ -96,6 +98,8 @@ func TestEveryCheckoutOperationIsUnderTheCheckoutLock(t *testing.T) {
 // And the lock is a real one: a fold while another holder has the checkout refuses inside
 // the wait, and the refusal says who holds it.
 func TestAFoldWaitsForTheCheckoutLockAndNamesTheHolder(t *testing.T) {
+	t.Parallel()
+
 	lane := t.TempDir()
 	for _, d := range []string{ReadsDir, GatesDir} {
 		if err := os.MkdirAll(filepath.Join(lane, d), 0o755); err != nil {

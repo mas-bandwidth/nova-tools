@@ -19,6 +19,8 @@ import (
 )
 
 func TestJobsAdmission(t *testing.T) {
+	t.Parallel()
+
 	// A5, A8 jobs-admission-is-atomic-no-partial-grant: admission takes the
 	// whole vector or none of it. A request short on ONE dimension takes
 	// nothing -- not the dimensions that were free -- so no unit ever holds a

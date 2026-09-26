@@ -103,6 +103,8 @@ func TestSeatNeutralMismatchedActorRefused(t *testing.T) {
 }
 
 func TestSeatNeutralActorMustBeAFriend(t *testing.T) {
+	t.Parallel()
+
 	addr, client := assignSeatFixture(t)
 	_ = addr
 	ctx := context.Background()
@@ -134,6 +136,8 @@ func TestSeatNeutralRoleFlagsRefused(t *testing.T) {
 }
 
 func TestSeatNeutralNoFriendLiterals(t *testing.T) {
+	t.Parallel()
+
 	_, file, _, _ := runtime.Caller(0)
 	root := filepath.Dir(file)
 	for _, path := range []string{"assign.go", "friend_roles.go", filepath.Join("..", "..", "internal", "nsprint", "fn", "lua", "friend_roles.lua"), filepath.Join("..", "..", "internal", "nsprint", "fn", "lua", "redistribute_floor.lua")} {

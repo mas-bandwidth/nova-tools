@@ -1,11 +1,12 @@
 package main
 
 import (
-	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // The gate's blind spot at the command line. On 2026-09-18 the gate reported
@@ -19,6 +20,8 @@ import (
 // The number is on the line both reads print, so nobody has to read a note to
 // learn that evidence was discarded.
 func TestDogfoodLineCountsTheUnmatchedReceipts(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	cli := writeCLI(t, dir)
 	receipts := filepath.Join(dir, "receipts")
@@ -49,6 +52,8 @@ func TestDogfoodLineCountsTheUnmatchedReceipts(t *testing.T) {
 // A not-ok receipt that matched nothing is a FAILURE, and the failure names the
 // receipt's file and the verb it claimed.
 func TestDogfoodGateFailsOnAnUnmatchedNotOkReceipt(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	cli := writeCLI(t, dir)
 	receipts := filepath.Join(dir, "receipts")
@@ -78,12 +83,14 @@ func TestDogfoodGateFailsOnAnUnmatchedNotOkReceipt(t *testing.T) {
 // report found no --tools on record at 65e23fb0; this locks in that it is there
 // and that it is the list the spelling is checked against.
 func TestDogfoodRecordChecksTheSpellingAgainstTheBinaries(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("the fixture is a shell script")
 	}
 	tools := t.TempDir()
 	script := "#!/bin/sh\ncat <<'EOF'\nnova-example: a fixture\n\nusage:\n  nova-example links --dir <dir>\n  nova-example ask   delivers ONE unit to the FRIEND who owns it\nEOF\n"
-	if err := os.WriteFile(filepath.Join(tools, "nova-example"), []byte(script), 0o755); err != nil {
+	if err := testbin.WriteExecutable(filepath.Join(tools, "nova-example"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	receipts := filepath.Join(t.TempDir(), "receipts")

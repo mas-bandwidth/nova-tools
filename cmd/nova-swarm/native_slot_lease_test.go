@@ -53,6 +53,8 @@ func TestNativeRunsWithNoSlotsStore(t *testing.T) {
 // an unknown flag and is not refused on the full share: the card runs, and the store holds
 // exactly the leases it held before.
 func TestNativeIgnoresTheRetiredSlotsStore(t *testing.T) {
+	t.Parallel()
+
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	cardPath := filepath.Join(root, "card.md")

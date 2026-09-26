@@ -37,6 +37,8 @@ func runVerb(t *testing.T, args ...string) (int, string, string) {
 }
 
 func TestBenchRoleFriendsRefusedOnEverySwarmAndCIPath(t *testing.T) {
+	t.Parallel()
+
 	addr, c := benchRoleFixture(t)
 	ctx := context.Background()
 
@@ -132,6 +134,8 @@ func TestBenchRoleFriendsRefusedOnEverySwarmAndCIPath(t *testing.T) {
 }
 
 func TestBenchLsRefusesAStoredRoleThatDoesNotParse(t *testing.T) {
+	t.Parallel()
+
 	addr, c := benchRoleFixture(t)
 	ctx := context.Background()
 	c.SAdd(ctx, "benches", "odd")

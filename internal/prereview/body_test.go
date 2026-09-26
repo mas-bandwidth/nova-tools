@@ -10,6 +10,8 @@ import (
 // (product code outside the PATHS is red, a test-only file outside is not) and
 // a DONE-WHEN whose named test the diff adds answers yes.
 func TestBodyCardPathsAndDoneWhen(t *testing.T) {
+	t.Parallel()
+
 	body := "Fixes it.\n\n**PATHS:** `internal/x/`, cmd/y/main.go (+ main_test.go). Nothing else.\nDONE-WHEN: `go test ./internal/x/ -run 'TestXA|TestXB'` passes\n"
 	got := strings.Join(BodyPaths(body), " ")
 	if got != "internal/x/** cmd/y/main.go **/main_test.go" {
@@ -43,6 +45,8 @@ func TestBodyCardPathsAndDoneWhen(t *testing.T) {
 // TestResultBlankLineIsNotAMissingDone: a blank line under RESULT is
 // formatting; the DONE line is the first non-blank line after it.
 func TestResultBlankLineIsNotAMissingDone(t *testing.T) {
+	t.Parallel()
+
 	if c := doneCheck(PR{Body: "RESULT\n\nDONE\nfiles: a.go"}, Card{}); c.Result != Yes {
 		t.Fatalf("done = %+v, want yes", c)
 	}
@@ -54,6 +58,8 @@ func TestResultBlankLineIsNotAMissingDone(t *testing.T) {
 // TestBaseGateAndGateCap: the read rubric's base gate (a stacked base or a
 // conflict is no) and the cap (an enabled gate that failed caps the score at 7).
 func TestBaseGateAndGateCap(t *testing.T) {
+	t.Parallel()
+
 	for _, c := range []struct {
 		ref, mergeable string
 		want           Result

@@ -155,6 +155,8 @@ func byBench(results []harvest.BenchResult) map[string]harvest.BenchResult {
 // dead worker had recorded is finished from its idem key and PR record with
 // no GitHub read, and a re-run opens no second PR.
 func TestControl13OneBenchDownOthersFinish(t *testing.T) {
+	t.Parallel()
+
 	c := startRedis(t)
 	st := store.New(c)
 	ctx := context.Background()
@@ -306,6 +308,8 @@ func TestControl13OneBenchDownOthersFinish(t *testing.T) {
 
 // A second worker for a bench whose lease is held harvests nothing.
 func TestHarvestLeaseHeldElsewhere(t *testing.T) {
+	t.Parallel()
+
 	c := startRedis(t)
 	st := store.New(c)
 	ctx := context.Background()
@@ -327,6 +331,8 @@ func TestHarvestLeaseHeldElsewhere(t *testing.T) {
 // TestHarvestCIPool verifies that a harvested fixture card leaves ci:pool
 // holding its head and the record pending (nova-tools#3717).
 func TestHarvestCIPool(t *testing.T) {
+	t.Parallel()
+
 	c := startRedis(t)
 	st := store.New(c)
 	ctx := context.Background()

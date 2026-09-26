@@ -22,6 +22,8 @@ const reviewersTSV = "who\tlogins\tmay-hold\nemma\tgafferongames\tyes\nstella\tg
 // (how land-lane runs the gate) it is no verdict at all, and without that flag
 // it is the same `pending` every untyped rowan-claude comment already is.
 func TestJevCommentIsNotAVerdictInTheGoGate(t *testing.T) {
+	t.Parallel()
+
 	rs, err := merge.ParseReviewers(strings.NewReader(reviewersTSV))
 	if err != nil {
 		t.Fatal(err)

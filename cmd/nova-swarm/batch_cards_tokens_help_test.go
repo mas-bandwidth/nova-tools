@@ -17,6 +17,8 @@ import (
 // swarm.NoBatchTokensRefusal -- the one that says the word is per card and never divided --
 // never reached a caller of the binary.
 func TestBatchCardsHelpNamesTokens(t *testing.T) {
+	t.Parallel()
+
 	exit, stdout, stderr := runSwarm(t, "help")
 	if exit != 0 {
 		t.Fatalf("`nova-swarm help` must exit 0, got %d; stderr: %s", exit, stderr)
@@ -37,6 +39,8 @@ func TestBatchCardsHelpNamesTokens(t *testing.T) {
 }
 
 func TestBatchCardsWithoutTokensPrintsTheBatchRefusal(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	card := filepath.Join(dir, "card.md")
 	if err := os.WriteFile(card, []byte("RESULT: c1 nova-tools rebase onto dev\nKIND: rebase\n"), 0o644); err != nil {

@@ -276,6 +276,8 @@ func dumpAll(t *testing.T, c *redis.Client) map[string]string {
 // every verdict the keyspace is byte-identical and the server counted no
 // write command at all (INFO commandstats since a CONFIG RESETSTAT).
 func TestLanderShadowWritesNothing(t *testing.T) {
+	t.Parallel()
+
 	addr := startThrowawayRedis(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = c.Close() })
@@ -322,6 +324,8 @@ func TestLanderShadowWritesNothing(t *testing.T) {
 // still get their verdicts and the verb exits 0 (the plain lander refuses
 // the whole batch, TestLanderRefusesAMemberWithNoRecord).
 func TestLanderShadowNoRecordIsALine(t *testing.T) {
+	t.Parallel()
+
 	addr := startThrowawayRedis(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = c.Close() })

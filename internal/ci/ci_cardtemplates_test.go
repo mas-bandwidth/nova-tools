@@ -68,6 +68,8 @@ func spells(res CardTemplatesResult) []string {
 // 1. The four spellings the schema dogfood measured on 2026-09-18 are each one
 // refusal, and each refusal carries the portable spelling.
 func TestCardTemplateRefusesTheFourSpellingsTheDogfoodMeasured(t *testing.T) {
+	t.Parallel()
+
 	body := "RESULT <label> sha=<sha12>\n" +
 		"STEP 1. /usr/bin/time -f '%e' go build ./...\n" +
 		"STEP 2. cores=$(nproc)\n" +
@@ -101,6 +103,8 @@ func TestCardTemplateRefusesTheFourSpellingsTheDogfoodMeasured(t *testing.T) {
 // names both halves on one line and is the shape the templates ship; a
 // `readlink -f` with a fallback is the same idea with a different spelling.
 func TestCardTemplateAcceptsThePortableSpellings(t *testing.T) {
+	t.Parallel()
+
 	body := "STEP 1. cores=$(if [ \"$(uname -s)\" = Darwin ]; then sysctl -n hw.ncpu; else nproc; fi)\n" +
 		"STEP 2. command -v go && go version\n" +
 		"STEP 3. dotnet --version; java -version 2>&1 | head -1\n" +
@@ -124,6 +128,8 @@ func TestCardTemplateAcceptsThePortableSpellings(t *testing.T) {
 // inside a nested $(...) (it rescues the inner command). Each of these is
 // refused; the attached forms after them are not.
 func TestCardTemplateReadlinkFallbackMustBeAttached(t *testing.T) {
+	t.Parallel()
+
 	refused := []string{
 		"p=$(readlink -f \"$f\" 2>/dev/null)",
 		"p=$(readlink -f \"$f\" 2>/dev/null); [ -n \"$p\" ] || exit 1",
@@ -171,6 +177,8 @@ func TestCardTemplateReadlinkFallbackMustBeAttached(t *testing.T) {
 // rule is "one of the estate's platforms", not "not linux". A card dealt to
 // hulk has no diskutil.
 func TestCardTemplateRefusesADarwinOnlyCommand(t *testing.T) {
+	t.Parallel()
+
 	root := cardTree(t, "templates", "mac.md", "STEP 1. sw_vers -productVersion && diskutil list\n")
 	res := checkTree(t, root, "templates")
 	if len(res.Findings) != 1 || res.Findings[0].Spell != "mac_only" {
@@ -183,6 +191,8 @@ func TestCardTemplateRefusesADarwinOnlyCommand(t *testing.T) {
 
 // 4. A .card is read and so is a .md; a .tsv beside them is a table and is not.
 func TestCardTemplateReadsMdAndCardAndNothingElse(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	dir := filepath.Join(root, "templates")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -210,6 +220,8 @@ func TestCardTemplateReadsMdAndCardAndNothingElse(t *testing.T) {
 // number, which a merge moves -- and a row that names no offender is itself
 // refused: the list only shrinks.
 func TestCardTemplateAllowlistIsCheckedInBothDirections(t *testing.T) {
+	t.Parallel()
+
 	root := cardTree(t, "templates", "one.md", "STEP 1. cat /proc/loadavg\n")
 	allow := filepath.Join(t.TempDir(), "allow.txt")
 	if err := os.WriteFile(allow, []byte("# reason column is for a reader\ntemplates/one.md proc 2026-09-18 the linux bench's own load, read nowhere else\n"), 0o644); err != nil {
@@ -246,6 +258,8 @@ func TestCardTemplateAllowlistIsCheckedInBothDirections(t *testing.T) {
 // 6. A directory the repository does not have yet is skipped, not an error: the
 // list names where a template MAY live.
 func TestCardTemplateSkipsADirectoryThatIsNotThere(t *testing.T) {
+	t.Parallel()
+
 	res, err := CheckCardTemplates(t.TempDir(), CardTemplateDirs, "")
 	if err != nil {
 		t.Fatalf("a tree with none of the directories is not an error: %v", err)
@@ -258,6 +272,8 @@ func TestCardTemplateSkipsADirectoryThatIsNotThere(t *testing.T) {
 // 7. The refusal line names the file, the line, the spelling and the remedy, so
 // a reader fixes the card without opening the checker.
 func TestCardTemplateRefusalLineNamesEverythingAFixNeeds(t *testing.T) {
+	t.Parallel()
+
 	root := cardTree(t, "templates", "t.md", "STEP 1. df -BG $HOME\n")
 	res := checkTree(t, root, "templates")
 	if len(res.Findings) != 1 {
@@ -281,6 +297,8 @@ func TestCardTemplateRefusalLineNamesEverythingAFixNeeds(t *testing.T) {
 // `/usr/bin/time -f`, `nproc`, `go --version` and `java --version`, and the
 // first card cut for the Air died inside the worker on all four.
 func TestNoCardTemplateCarriesAnOSSpecificCommand(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	res, err := CheckCardTemplates(root, CardTemplateDirs, cardTemplateAllowlistPath)
 	if err != nil {

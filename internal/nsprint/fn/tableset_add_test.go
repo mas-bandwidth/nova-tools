@@ -50,6 +50,8 @@ func tableSetZadds(src string) []string {
 // 02_card_move.lua (and the named, owed exceptions) ZADDs into a ws, bench
 // or friend table set directly.
 func TestTableSetAddsGoThroughTheOneMove(t *testing.T) {
+	t.Parallel()
+
 	names, err := fs.Glob(sources, "lua/*.lua")
 	if err != nil {
 		t.Fatal(err)
@@ -78,6 +80,8 @@ func TestTableSetAddsGoThroughTheOneMove(t *testing.T) {
 
 // TestTableSetAddGuardSeesTheShapes is the guard's own control.
 func TestTableSetAddGuardSeesTheShapes(t *testing.T) {
+	t.Parallel()
+
 	for _, bad := range []string{
 		"redis.call('ZADD', 'ws:' .. stream .. ':ready', at, id)",
 		"redis.call('ZADD', DF.key(stream, 'working'), age, id)",

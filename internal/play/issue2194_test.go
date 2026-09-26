@@ -15,6 +15,8 @@ import (
 //  2. TestEmptyAndUnprintableAuthorFramed — an empty author and one
 //     containing an unprintable rune are written Go-quoted and read back equal.
 func TestIssue2194(t *testing.T) {
+	t.Parallel()
+
 	t.Run("TestBlankAndCommentLinesIgnored", testBlankAndCommentLinesIgnored)
 	t.Run("TestEmptyAndUnprintableAuthorFramed", testEmptyAndUnprintableAuthorFramed)
 }

@@ -16,6 +16,8 @@ import (
 // SCHEMA, BRANCH, PATHS, CHECK and the rest, and the model's BRANCH
 // contradicted the wrapper's.
 func TestCardPromptIsTheTwoLineContract(t *testing.T) {
+	t.Parallel()
+
 	for _, kind := range typedrec.Kinds {
 		t.Run(kind, func(t *testing.T) {
 			card := "RESULT: c1 sha=0123456789ab nova-tools " + kind + ": a card\nKIND: " + kind + "\nBASE: dev\n"
@@ -48,6 +50,8 @@ func TestCardPromptIsTheTwoLineContract(t *testing.T) {
 // TestCardPromptLeavesUntypedCardsAlone: a card with no KIND, a runner kind or
 // a classification kind is its own prompt, unchanged.
 func TestCardPromptLeavesUntypedCardsAlone(t *testing.T) {
+	t.Parallel()
+
 	for _, card := range []string{
 		"a card\n",
 		"RESULT: c1\nKIND: script\n",

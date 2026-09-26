@@ -38,6 +38,8 @@ func fakeDial(store Store, err error, seen *Dial) func(context.Context, Dial) (S
 // state most of the fleet is in, and a line per card about it would be noise on every
 // machine the store has not reached yet.
 func TestWriterSilentWithoutThePassword(t *testing.T) {
+	t.Parallel()
+
 	var log strings.Builder
 	dialed := false
 	w := OpenWriter(context.Background(), WriterOptions{
@@ -67,6 +69,8 @@ func TestWriterSilentWithoutThePassword(t *testing.T) {
 // missing --store rather than assume one, and this writer disables itself for the same
 // reason.
 func TestWriterSilentWithoutAnAddress(t *testing.T) {
+	t.Parallel()
+
 	var log strings.Builder
 	w := OpenWriter(context.Background(), WriterOptions{
 		Log:    &log,
@@ -86,6 +90,8 @@ func TestWriterSilentWithoutAnAddress(t *testing.T) {
 // NOVA_REDIS_HOST:NOVA_REDIS_PORT. A host with no port resolves to NOTHING rather than to a
 // guessed port, which is the same refusal-to-guess in a third place.
 func TestWriterResolvesTheAddressFromTheEnvironment(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name string
 		flag string
@@ -131,6 +137,8 @@ func TestWriterResolvesTheAddressFromTheEnvironment(t *testing.T) {
 // TestWriterSurvivesADialThatRefuses: a store that cannot be reached is ONE line and a
 // writer that emits nothing, never a refusal the caller has to handle.
 func TestWriterSurvivesADialThatRefuses(t *testing.T) {
+	t.Parallel()
+
 	var log strings.Builder
 	w := OpenWriter(context.Background(), WriterOptions{
 		Log:    &log,
@@ -157,6 +165,8 @@ func TestWriterSurvivesADialThatRefuses(t *testing.T) {
 // one line per entry and nothing else. Send returns no error BY CONSTRUCTION -- there is no
 // value a caller could accidentally ignore -- and the caller's own work is untouched.
 func TestSendSurvivesAStoreThatErrors(t *testing.T) {
+	t.Parallel()
+
 	fake := NewFakeStream()
 	fake.FailEmit = errors.New("LOADING Redis is loading the dataset in memory")
 	var log strings.Builder
@@ -193,6 +203,8 @@ func TestSendSurvivesAStoreThatErrors(t *testing.T) {
 // refuses is the writer's problem, not the caller's. A field of payload size never reaches
 // the store and never fails the card that produced it.
 func TestSendSurvivesAnEntryTheDoorRefuses(t *testing.T) {
+	t.Parallel()
+
 	fake := NewFakeStream()
 	var log strings.Builder
 	w := OpenWriter(context.Background(), WriterOptions{
@@ -220,6 +232,8 @@ func TestSendSurvivesAnEntryTheDoorRefuses(t *testing.T) {
 // property that makes "an emit never fails the card" mechanical rather than a convention
 // every new call site has to remember.
 func TestSendIsSafeOnANilWriter(t *testing.T) {
+	t.Parallel()
+
 	var w *Writer
 	w.Send(context.Background(), Event{Label: "c1", Kind: OK})
 	w.Close()
@@ -234,6 +248,8 @@ func TestSendIsSafeOnANilWriter(t *testing.T) {
 // TestSendWritesTheEntryWhenTheStoreIsUp is the positive control this file owes: without it
 // every assertion above would pass on a writer that silently does nothing at all.
 func TestSendWritesTheEntryWhenTheStoreIsUp(t *testing.T) {
+	t.Parallel()
+
 	fake := NewFakeStream()
 	fake.Now = func() time.Time { return time.Date(2026, 9, 22, 14, 0, 0, 0, time.UTC) }
 	w := OpenWriter(context.Background(), WriterOptions{
@@ -273,6 +289,8 @@ func TestSendWritesTheEntryWhenTheStoreIsUp(t *testing.T) {
 // carrying a newline would otherwise split ONE skipped entry into two log lines, and a
 // reader counting EVENT SKIPPED lines would count one failure twice.
 func TestTheSkipLineIsOneLineEvenWhenTheStoreIsNot(t *testing.T) {
+	t.Parallel()
+
 	fake := NewFakeStream()
 	fake.FailEmit = errors.New("ERR the store said\nsomething\twith\nnewlines in it")
 	var log strings.Builder
@@ -297,6 +315,8 @@ func TestTheSkipLineIsOneLineEvenWhenTheStoreIsNot(t *testing.T) {
 // default Open resolves. This drives the real RedisStore -- Open, then XADD -- against
 // miniredis, and asserts the entry is on `cards:done` and `ev:cards` was never created.
 func TestTheWritersWriteTheCardsDoneKey(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	var log strings.Builder
 	w := OpenWriter(context.Background(), WriterOptions{

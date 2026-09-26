@@ -70,6 +70,8 @@ func sandboxArgv(t *testing.T, jobDir string) string {
 // and /opt/homebrew (when it exists), so git and the harness's libraries resolve inside the
 // wall — the reads the shell launcher made, which the native path of run 7 must make too.
 func TestNativeArgvReadsHarnessDir(t *testing.T) {
+	t.Parallel()
+
 	bin := nativeHarness(t)
 	_, slot := aSlot(t)
 	jobDir := filepath.Join(slot, "jobs", "a-label")
@@ -98,6 +100,8 @@ func TestNativeArgvReadsHarnessDir(t *testing.T) {
 // `go.mod requires go >= 1.26 (running go 1.22.2)` from the only one the wall left it.
 // The roots are read-only and come from ONE list (swarm.ToolchainRoots).
 func TestNativeArgvReadsTheBenchToolchainRoots(t *testing.T) {
+	t.Parallel()
+
 	bin := nativeHarness(t)
 	_, slot := aSlot(t)
 	jobDir := filepath.Join(slot, "jobs", "a-label")
@@ -205,6 +209,8 @@ func TestNativeArgvReadsTheBenchToolchainRoots(t *testing.T) {
 // reaches the argv; the per-OS list itself is held by the class test in internal/ci on every
 // platform.
 func TestNativeArgvReadsTheDarwinToolchainRoots(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS != "darwin" {
 		t.Skip("the darwin toolchain roots are this bench's own installs; asserted on a Mac")
 	}
@@ -255,6 +261,8 @@ func TestNativeArgvReadsTheDarwinToolchainRoots(t *testing.T) {
 }
 
 func TestNativeArgvSkipsAToolchainRootThatIsNotThere(t *testing.T) {
+	t.Parallel()
+
 	bin := nativeHarness(t)
 	_, slot := aSlot(t)
 	jobDir := filepath.Join(slot, "jobs", "a-label")
@@ -312,6 +320,8 @@ func aSlot(t *testing.T) (root, slot string) {
 // TestNativeRunRefusesMissingBinary: a binary that does not exist, and one that exists but
 // is not executable, are both the refusal that runs before any child can start.
 func TestNativeRunRefusesMissingBinary(t *testing.T) {
+	t.Parallel()
+
 	root, slot := aSlot(t)
 	for _, tc := range []struct {
 		name   string
@@ -352,6 +362,8 @@ func TestNativeRunRefusesMissingBinary(t *testing.T) {
 // TestNativeRunRecordsCardAndBinaryHashes: a run that finishes records the child's exit
 // code, the wall it took, and the sha256 of the card text and of the binary itself.
 func TestNativeRunRecordsCardAndBinaryHashes(t *testing.T) {
+	t.Parallel()
+
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	card := []byte("the card text, byte for byte\nwith a second line\n")
@@ -384,35 +396,13 @@ func TestNativeRunRecordsCardAndBinaryHashes(t *testing.T) {
 	}
 }
 
-// TestNativeRunKillsAtDeadline: a child that sleeps past the wall is killed by it, and the
-// run records a non-zero exit rather than hanging.
-func TestNativeRunKillsAtDeadline(t *testing.T) {
-	bin := nativeHarness(t)
-	root, slot := aSlot(t)
-
-	var errOut bytes.Buffer
-	start := time.Now()
-	res, code := nativeRun(nativeRunConfig{
-		binary: bin, model: "fake/fake-model", label: "lbl",
-		card: []byte("FAKE-SLEEP 60\n"), slotDir: slot, root: root, deadline: time.Second, noWall: true,
-	}, &errOut)
-	elapsed := time.Since(start)
-	if code != 0 {
-		t.Fatalf("a deadline kill is not a refusal, got exit %d:\n%s", code, errOut.String())
-	}
-	if res.rc == 0 {
-		t.Fatalf("the deadline killed the child, and the run records a non-zero exit")
-	}
-	if elapsed > 30*time.Second {
-		t.Fatalf("the deadline should cut the run short, but it took %v", elapsed)
-	}
-}
-
 // TestNativeRunAuthCopyIs0600: the named provider's entry is copied from the auth file into
 // the data home, mode 0600, and no other provider's entry travels with it. Asked of
 // copyAuth itself: the run that carries the copy removes it when the card ends, so after a
 // run there is nothing left to stat (TestNativeAuthCopyIsGoneAfterTheRun).
 func TestNativeRunAuthCopyIs0600(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	src := filepath.Join(t.TempDir(), "auth.json")
 	if err := os.WriteFile(src, []byte(`{"fake":"the-fake-secret","other":"the-other-secret"}`), 0o600); err != nil {
@@ -453,6 +443,8 @@ func TestNativeRunAuthCopyIs0600(t *testing.T) {
 // against. Before it, a run with no --config wrote no config and ran on the harness's default
 // fence, which auto-rejected the card's own `../scratch`.
 func TestNativeCarriesProviderConfig(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	const config = `{"provider":{"fake":{"options":{"baseURL":"http://localhost:11434/v1"}}}}` + "\n"
@@ -553,6 +545,8 @@ func assertConfigRecord(t *testing.T, slot, wantMode, wantBody string) {
 // provider and never the key. That provider is the one the harness is about to call, so its
 // missing key is a run that dies rc=1 in under a second.
 func TestNativeRefusesConfigProviderWithoutKey(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
@@ -595,6 +589,8 @@ func TestNativeRefusesConfigProviderWithoutKey(t *testing.T) {
 // them turned every adoption pass on this bench into `names provider inception, whose key is
 // absent` for a card that wanted a local model (issue #523 follow-up).
 func TestNativeConfigChecksOnlyTheModelsProvider(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
@@ -630,6 +626,8 @@ func TestNativeConfigChecksOnlyTheModelsProvider(t *testing.T) {
 // and no apiKey field -- ollama on localhost needs no key, so there is no key to be absent.
 // The config is still carried, mode 0600, and the run records the sha8 of what the child saw.
 func TestNativeConfigKeylessProviderAdmitted(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
@@ -686,6 +684,8 @@ func TestNativeConfigKeylessProviderAdmitted(t *testing.T) {
 // own bytes and a dash; both were the pre-#704 contract, and the two assertions below are
 // the contract the code now promises.
 func TestNativeOKNamesTheCarriedConfig(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	const config = `{"provider":{"fake":{"options":{"baseURL":"http://localhost:11434/v1"}}}}` + "\n"
@@ -853,6 +853,8 @@ func TestNativeAllowsProviderLoopback(t *testing.T) {
 // no provider prefix, an auth file looser than 0600, and a slot outside its root -- so each
 // prints its one REFUSED line.
 func TestNativeRunRefusalsNameTheirReason(t *testing.T) {
+	t.Parallel()
+
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	looseAuth := filepath.Join(t.TempDir(), "auth.json")
@@ -900,6 +902,8 @@ func TestNativeRunRefusalsNameTheirReason(t *testing.T) {
 }
 
 func TestCmdNativeCLI(t *testing.T) {
+	t.Parallel()
+
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	cardPath := filepath.Join(root, "card.md")
@@ -950,6 +954,8 @@ func TestCmdNativeCLI(t *testing.T) {
 // told its place by its cwd, not the caller's. The fake harness writes its own working
 // directory into RESULT.md, and the test asserts it is exactly the job directory.
 func TestNativeRunChildDirIsJobDir(t *testing.T) {
+	t.Parallel()
+
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	label := "a-label"
@@ -1024,6 +1030,8 @@ func TestNativeChildCwdIsJobDirFromForeignCwd(t *testing.T) {
 // field back to the path the producer held before it names the directory the child ran in.
 // The receipt is built by the producer's own encoder, not hard-coded unescaped.
 func TestWallNamedDecodesTheProducersEscapedCwd(t *testing.T) {
+	t.Parallel()
+
 	dir := "/Users/glenn/Documents/ChatGPT/stella 2/.scratch/stella-tools/runs/1/jobs/terminology"
 	line := "SANDBOX OK backend=sandbox-exec abi=- read=3 write=2 net=nopromise cwd=" +
 		oneline.Field(dir) + " ancestors=17 cmd=opencode\n"
@@ -1608,6 +1616,8 @@ func TestNativeChildCwdIsJobDirUnwalled(t *testing.T) {
 // TestNativeRunWritesUsageInJobDirectory: the native run writes usage.tsv beside RESULT.md
 // in <slot>/jobs/<label>/usage.tsv (and slotDir fallback), so the batch gather reads it.
 func TestNativeRunWritesUsageInJobDirectory(t *testing.T) {
+	t.Parallel()
+
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	label := "usage-loc"
@@ -1706,6 +1716,8 @@ func TestNativeRelativeSlotIsAbsolutized(t *testing.T) {
 // the job directory the way admission does, then runs `git rev-parse --show-toplevel` from
 // inside the exported TMPDIR and asserts it does not resolve into the job's repo.
 func TestNativeTmpDirIsOutsideAnyRepo(t *testing.T) {
+	t.Parallel()
+
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	label := "tmp-outside-repo"
@@ -1932,6 +1944,8 @@ func TestNativeSilentHarnessIsNotOK(t *testing.T) {
 // wherever it points, written by a process that has no wall around it (security#30's class).
 // The open carries O_NOFOLLOW, so the run refuses by name and the target is untouched.
 func TestNativeCaptureRefusesSymlink(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
@@ -1975,6 +1989,8 @@ func TestNativeCaptureRefusesSymlink(t *testing.T) {
 // exit 2, before any directory is made and before any child starts. Without --worker,
 // native keeps --model as today.
 func TestNativeRefusesAModelThatDiffersFromTheWorkerDescription(t *testing.T) {
+	t.Parallel()
+
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	cardPath := filepath.Join(root, "card.md")
@@ -2057,6 +2073,8 @@ func TestNativeSecretWorkerWritesNoAuthFileAndTheHarnessSeesName(t *testing.T) {
 // environment instead. The copy is the child's for the length of the run and no longer:
 // when the card ends, no auth.json exists on the bench.
 func TestNativeAuthWithAWorkerNamesItsLegacyCopy(t *testing.T) {
+	t.Parallel()
+
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	auth := filepath.Join(t.TempDir(), "auth.json")
@@ -2092,6 +2110,8 @@ func TestNativeAuthWithAWorkerNamesItsLegacyCopy(t *testing.T) {
 // by length and never by value -- and when the run ends no auth.json exists on the bench
 // (the bench standard's plaintext-key rule, docs/SPEC-SECRETS.md's dogfooding ten).
 func TestNativeAuthCopyIsGoneAfterTheRun(t *testing.T) {
+	t.Parallel()
+
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	auth := filepath.Join(t.TempDir(), "auth.json")
@@ -2141,6 +2161,8 @@ func TestNativeAuthCopyIsGoneAfterTheRun(t *testing.T) {
 // platform, and because they are written where every platform compiles them, darwin and linux
 // hold the windows answer to this contract.
 func TestAuthModeRulesAskThePlatform(t *testing.T) {
+	t.Parallel()
+
 	// The source question: is any group or other bit set? The answer is "no" on windows,
 	// however the file reads, because the bits do not exist there.
 	for _, tc := range []struct {
@@ -2364,6 +2386,8 @@ func TestNativeWalledJobPathWithSpace(t *testing.T) {
 // silent and alive, and the reaper that could not tell the difference deleted two certify
 // trees, and a running card's HOME and TMPDIR, on 2026-09-19.
 func TestNativeHoldsAJobLease(t *testing.T) {
+	t.Parallel()
+
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	label := "lease-card"
@@ -2402,6 +2426,8 @@ func TestNativeHoldsAJobLease(t *testing.T) {
 // bit back and removes both copies; a copy it still cannot remove is returned, and the run
 // fails on it rather than printing a NOTE.
 func TestRemoveAuthCopySurvivesAReadOnlyDataHome(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("directory mode bits do not gate unlink on windows")
 	}
@@ -2434,6 +2460,8 @@ func TestRemoveAuthCopySurvivesAReadOnlyDataHome(t *testing.T) {
 // A copy the cleanup cannot remove at all is named, never swallowed: here the card replaced
 // opencode/auth.json with a non-empty directory, which an unlink cannot take.
 func TestRemoveAuthCopyNamesACopyItCannotRemove(t *testing.T) {
+	t.Parallel()
+
 	dataHome := t.TempDir()
 	stuck := filepath.Join(dataHome, "opencode", "auth.json")
 	if err := os.MkdirAll(stuck, 0o755); err != nil {

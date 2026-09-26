@@ -124,6 +124,8 @@ func fullEvidence(repo string) BaseCheck {
 }
 
 func TestLintPathsResolveAtBase(t *testing.T) {
+	t.Parallel()
+
 	repo, sha := baseRepo(t)
 	bc := fullEvidence(repo)
 
@@ -188,6 +190,8 @@ func TestLintPathsResolveAtBase(t *testing.T) {
 }
 
 func TestLintRefusesPushSteps(t *testing.T) {
+	t.Parallel()
+
 	bc := BaseCheck{Legs: FleetLegs{"go": true}, P95: KindP95{"fix": 1}}
 	// The holdfix-2479 shape: STEP 6 pushes with a lease, STEP 7 posts with gh, and
 	// STEP 2 asks gh for the PR state in prose backticks.
@@ -253,6 +257,8 @@ func TestLintRefusesPushSteps(t *testing.T) {
 }
 
 func TestLintLegInFleetTable(t *testing.T) {
+	t.Parallel()
+
 	bc := BaseCheck{Legs: FleetLegs{"go": true, "sbcl": true}, P95: KindP95{"fix": 1}}
 
 	// nx-r1633: `LEG: lisp`, which no bench carries (the fleet's leg is sbcl).
@@ -295,6 +301,8 @@ func TestLintLegInFleetTable(t *testing.T) {
 }
 
 func TestLintDeadlineAtKindP95(t *testing.T) {
+	t.Parallel()
+
 	bc := BaseCheck{Legs: FleetLegs{"go": true}, P95: KindP95{"fix-red": 1600, "read": 1526}}
 
 	// card-read3-nova-tools-2708: DEADLINE 1500 on a kind whose DONE cards ran to 1526 s.
@@ -384,6 +392,8 @@ func commitFileAt(t *testing.T, dir, rel, body string) string {
 // an English outcome ("applied cleanly", "make preflight") is not a control and the
 // card is refused before any model is spent on it.
 func TestLintDoneWhenTestNameAtBase(t *testing.T) {
+	t.Parallel()
+
 	repo, _ := baseRepo(t)
 	commitFileAt(t, repo, "internal/decide/decide_test.go",
 		"package decide\n\nimport \"testing\"\n\nfunc TestDecideExisting(t *testing.T) {}\n")

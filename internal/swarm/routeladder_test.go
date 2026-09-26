@@ -168,6 +168,8 @@ func canListen(t *testing.T) bool {
 // offered its supported rung alone, so RouteCard must not reach the provider;
 // a confirmed failure restores the two-rung offer and the call is made.
 func TestRouteCardOnAMechanicalKindMakesNoCallUntilAConfirmedFailure(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	usage := filepath.Join(dir, "usage.tsv")
 	calls := 0
@@ -310,6 +312,8 @@ func TestRouteCardBelowTheFloorKeepsTodaysModel(t *testing.T) {
 // TestRouteCardWithNoKeyKeepsTodaysModel: no key is no call, and today's
 // behaviour is the fallback -- the loop runs on a bench with no API at all.
 func TestRouteCardWithNoKeyKeepsTodaysModel(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	got := RouteCard(context.Background(), RouteInput{
 		Registry: routeTestReg(t),
@@ -372,6 +376,8 @@ func TestRouteCardKeepsTodaysModelWhenTheProviderRefuses(t *testing.T) {
 // rung that just failed -- the ladder IS the retry policy, and a retry on the
 // same rung is not one.
 func TestRouteCardAfterGateFailureNeverReturnsTheSameRung(t *testing.T) {
+	t.Parallel()
+
 	reg := routeTestReg(t)
 	unit := routeTestUnit("card-5")
 	first := RouteCard(context.Background(), RouteInput{Registry: reg, Floor: 0.9, Now: routeTestNow}, unit, "vendor/low-1")
@@ -438,6 +444,8 @@ func TestRouteCardAfterGateFailureNeverReturnsTheSameRung(t *testing.T) {
 // one. The card keeps today's model, and the receipt names the rung anyway, so
 // the log says out loud what should have gone to a person.
 func TestRouteCardWithNoModelOnTheRungKeepsTodaysModel(t *testing.T) {
+	t.Parallel()
+
 	reg := routeTestReg(t)
 	dir := t.TempDir()
 	// A judgment kind starts above the card rungs, on the child rung, which
@@ -493,6 +501,8 @@ func highestOption(options []string) string {
 // batch reading its TSV and the first runner process starting. Before this
 // existed, the model column of that TSV was the last word on every card.
 func TestRouteCardsOnTheFillPathOverridesTheTSVModel(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	body := "RESULT: CARD-1 nova-tools #1 rebased onto dev\nKIND: rebase\nFILES: 4\nPACKAGES: 1\nLANES: 1\nSTEP 1. do the thing\n"
 	cardPath := filepath.Join(dir, "card-1.card")
@@ -578,6 +588,8 @@ func TestRouteCardsOnTheFillPathOverridesTheTSVModel(t *testing.T) {
 // launched: it is parked in routed-out/ with its ROUTE line, and the
 // coordinator (or a friend, over the bus) takes it from there.
 func TestRunParksACardTheLadderAsksInsteadOfRunning(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	p, w := recoveryPool(t, dir)
 	// A judgment card: the kind starts on the child rung, which the registry

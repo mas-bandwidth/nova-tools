@@ -8,6 +8,8 @@ import (
 )
 
 func TestVersionStampAndUsage(t *testing.T) {
+	t.Parallel()
+
 	for _, verb := range []string{"version", "--version"} {
 		var out, err bytes.Buffer
 		if code := update.Main("nova-version", []string{verb}, "v91.2.3", &out, &err); code != 0 || !strings.HasPrefix(out.String(), "nova-version v91.2.3 ") {
@@ -29,6 +31,8 @@ func TestVersionStampAndUsage(t *testing.T) {
 }
 
 func TestRefusalNamesVersionNotUpdate(t *testing.T) {
+	t.Parallel()
+
 	for _, args := range [][]string{{}, {"--no-such-flag-zz"}} {
 		var out, errs bytes.Buffer
 		if code := update.Main("nova-version", args, "", &out, &errs); code != 2 {
@@ -44,6 +48,8 @@ func TestRefusalNamesVersionNotUpdate(t *testing.T) {
 }
 
 func TestVersionHelpDoesNotDemandAnApplyVerb(t *testing.T) {
+	t.Parallel()
+
 	var out, err bytes.Buffer
 	if code := update.Main("nova-version", []string{"help"}, "", &out, &err); code != 0 {
 		t.Fatalf("help exit=%d stderr=%s", code, err.String())
@@ -61,6 +67,8 @@ func TestVersionHelpDoesNotDemandAnApplyVerb(t *testing.T) {
 }
 
 func TestVersionReportFileUsageStatesShape(t *testing.T) {
+	t.Parallel()
+
 	var out, err bytes.Buffer
 	if code := update.Main("nova-version", []string{"help"}, "", &out, &err); code != 0 {
 		t.Fatalf("help exit=%d stderr=%s", code, err.String())

@@ -287,6 +287,8 @@ func snapshotKeys(t *testing.T, client *redis.Client, sprint string) map[string]
 // card review-ready with reason ci MISSING. OK at the exact head, plus reads at
 // the bar and no open hold, makes it land-ready.
 func TestControl06CancelledCINeverLandReady(t *testing.T) {
+	t.Parallel()
+
 	st, client := initTestRedis(t)
 	ctx := context.Background()
 	const S = "control-c06"
@@ -423,6 +425,8 @@ func TestControl06CancelledCINeverLandReady(t *testing.T) {
 // holder_skipped: a prior reader with an open hold gets no push from pr-to-read,
 // and the other prior readers still get theirs.
 func TestControl32HeadChange(t *testing.T) {
+	t.Parallel()
+
 	st, client := initTestRedis(t)
 	ctx := context.Background()
 	const S = "control-c32"
@@ -589,6 +593,8 @@ func TestControl32HeadChange(t *testing.T) {
 //   - release: feeding dispositions through ns_test_ingest_disposition leaves h1 open
 //     until authorized release, after which the card goes land-ready.
 func TestControlOpenHoldBlocksLandReady(t *testing.T) {
+	t.Parallel()
+
 	st, client := initTestRedis(t)
 	ctx := context.Background()
 	const S = "control-hold"
@@ -893,6 +899,8 @@ func TestPrToReadMakesNoRestCall(t *testing.T) {
 // - once_then_route: seat-b holds lease paused in Remote; router returns ErrLeaseHeld before rules.
 // - stale_instance: review.lua write functions called under old instance return LEASE <holder>.
 func TestConsumeTwoSeatsOneWriter(t *testing.T) {
+	t.Parallel()
+
 	st, client := initTestRedis(t)
 	ctx := context.Background()
 	const S = "control-twoseats"
@@ -1118,6 +1126,8 @@ func TestConsumeTwoSeatsOneWriter(t *testing.T) {
 //   - security: readers=1, readers_security=2. Security paths vs regular paths. RequiredReads == required().
 //   - short_eligible: full 9-step active state lifecycle on s:<S>:unresolved.
 func TestControlRequiredReads(t *testing.T) {
+	t.Parallel()
+
 	st, client := initTestRedis(t)
 	ctx := context.Background()
 	const S = "control-reqreads"

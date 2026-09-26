@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // #3291: superman and batman harvested nothing from 2026-09-23T00:36Z. The shipped
@@ -32,7 +34,7 @@ func fakeSSHWithLoginShell(t *testing.T) (ssh, login string) {
 			"[ \"$1\" = -c ] || exit 2\n" +
 			"words=$(printf '%s' \"$2\" | sed -E 's/\\$([A-Za-z0-9_]+):r/${\\1%.*}/g')\n" +
 			"exec bash -c \"$words\"\n"
-		if err := os.WriteFile(login, []byte(standIn), 0o755); err != nil {
+		if err := testbin.WriteExecutable(login, []byte(standIn), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -41,7 +43,7 @@ func fakeSSHWithLoginShell(t *testing.T) (ssh, login string) {
 		"while [ $# -gt 0 ]; do case \"$1\" in -n) exec </dev/null; shift;; -o) shift 2;; -*) shift;; *) break;; esac; done\n" +
 		"shift # the host\n" +
 		"exec \"$FAKE_LOGIN_SHELL\" -c \"$*\"\n"
-	if err := os.WriteFile(ssh, []byte(fake), 0o755); err != nil {
+	if err := testbin.WriteExecutable(ssh, []byte(fake), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("FAKE_LOGIN_SHELL", login)

@@ -184,6 +184,8 @@ func labelFor(t *testing.T, tab *route.Table, provider string) string {
 // pushed bytes, START and END are in harness.log, RESULT.md is copied up,
 // and the slot is moved aside.
 func TestCardRunEachProviderGetsItsOwnKey(t *testing.T) {
+	t.Parallel()
+
 	tab, err := route.Load()
 	if err != nil {
 		t.Fatal(err)
@@ -268,6 +270,8 @@ func launchProvider(t *testing.T, tab *route.Table, s route.SpreadRow) string {
 }
 
 func TestCardRunRefusesBeforeTheRunner(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name  string
 		setup func(f *runFixture)
@@ -332,6 +336,8 @@ func TestCardRunRefusesBeforeTheRunner(t *testing.T) {
 // that directory on the way past. The native half, that the verb itself runs
 // with no store, is cmd/nova-swarm's TestNativeRunsWithNoSlotsStore.
 func TestCardRunTakesNoFileLease(t *testing.T) {
+	t.Parallel()
+
 	f := newRunFixture(t, "no-lease")
 	rep := f.run()
 	if rep.Code != 0 || rep.RC != 0 {
@@ -352,6 +358,8 @@ func TestCardRunTakesNoFileLease(t *testing.T) {
 }
 
 func TestCardRunNoRouteRunsFlashAndProRunsPro(t *testing.T) {
+	t.Parallel()
+
 	f := newRunFixture(t, "tiers")
 	rep := f.run()
 	if rep.Code != 0 || rep.Tier != "flash" || !strings.Contains(f.harnessLog(), "ROUTE none on s:run-s:card:tiers, running the flash tier") {
@@ -371,6 +379,8 @@ func TestCardRunNoRouteRunsFlashAndProRunsPro(t *testing.T) {
 }
 
 func TestCardRunExitCodesAreTheHarnessCodes(t *testing.T) {
+	t.Parallel()
+
 	// native rc=0 with no RESULT.md is FAILED (exit 1), not DONE.
 	f := newRunFixture(t, "noresult")
 	f.cfg.Env = append(f.cfg.Env[:0:0], f.cfg.Env...)
@@ -393,6 +403,8 @@ func TestCardRunExitCodesAreTheHarnessCodes(t *testing.T) {
 }
 
 func TestCardRunRefusesAnIncompleteConfig(t *testing.T) {
+	t.Parallel()
+
 	rep := card.Run(context.Background(), nil, card.RunConfig{Sprint: "s", Label: "l", Attempt: 1})
 	if rep.Code != card.RunExitRefused || !strings.HasPrefix(rep.Why, "missing ") {
 		t.Fatalf("%s", rep.Line())
@@ -409,6 +421,8 @@ func TestCardRunRefusesAnIncompleteConfig(t *testing.T) {
 }
 
 func TestProviderKey(t *testing.T) {
+	t.Parallel()
+
 	for launch, want := range map[string]string{
 		"openrouter/deepseek/deepseek-v4-flash": "OPENROUTER_API_KEY",
 		"opencode/glm-5.3-flash":                "OPENCODE_API_KEY",
@@ -504,6 +518,8 @@ func TestWrapperRunsTheHarnessInProcess(t *testing.T) {
 // TestWrapperConfigWantsOneHarness: a program or in-process, never both,
 // and in-process needs the store.
 func TestWrapperConfigWantsOneHarness(t *testing.T) {
+	t.Parallel()
+
 	id := card.Identity{Sprint: "s", Label: "l", BaseSHA: "0123abcd", Bench: "b", Attempt: 1}
 	both := newHarnessRun(t, id, "/bin/true").cfg
 	both.InProcess = &card.RunConfig{}

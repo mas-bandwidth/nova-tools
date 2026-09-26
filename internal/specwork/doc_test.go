@@ -13,6 +13,8 @@ import (
 // TestSpecDecideNamesTwelveRules reads SPEC-DECIDE.md, so the section or a rule
 // renamed out of the doc is red.
 func TestSpecWorkDutyTierSectionNamesItsRules(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-WORK.md"))
 	if err != nil {
 		t.Fatalf("the duty-tier amendment's spec is missing: %s", err)

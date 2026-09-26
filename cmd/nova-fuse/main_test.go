@@ -78,6 +78,8 @@ func nowish() time.Time { return time.Now().UTC().Truncate(time.Second) }
 // refusal must also never document a mechanical way around itself: the remedy is a live
 // conversation with your person, not a file.
 func TestLiftLockdownIsRefusedForever(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	writeRaw(t, box, `{"lockdown":{"at":"x","reason":"y"},"quarantine":{}}`)
 	before := readRaw(t, box)
@@ -116,6 +118,8 @@ func TestLiftLockdownIsRefusedForever(t *testing.T) {
 // caller or the environment can break -- no flag, no box, no readable state. If it could
 // fail its way past the refusal, the lever exists.
 func TestLiftLockdownRefusesBeforeReadingAnything(t *testing.T) {
+	t.Parallel()
+
 	// No --box at all: the refusal must come BEFORE the missing-flag refusal.
 	code, _, errOut := capture(t, []string{"lift", "lockdown"}, nowish())
 	if code != 2 {
@@ -191,6 +195,8 @@ func TestEnvironmentCannotRedirectOrLiftAnything(t *testing.T) {
 // TestUsageErrorsExitTwo: asking for something the tool does not have is exit 2, and no
 // usage error may touch the box.
 func TestUsageErrorsExitTwo(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	writeRaw(t, box, `{"quarantine":{"discord":{"at":"t","reason":"r"}}}`)
 	before := readRaw(t, box)
@@ -243,6 +249,8 @@ func TestUsageErrorsExitTwo(t *testing.T) {
 // these inputs is a real way a JSON file goes wrong -- a torn write, a bad hand-edit, a
 // wrong-shaped value -- and every one must refuse, never read as clear.
 func TestUnreadableBoxIsTreatedAsBlownNeverClear(t *testing.T) {
+	t.Parallel()
+
 	cases := map[string]string{
 		"empty file":                  "",
 		"truncated write":             `{"lockdown": {"at": "2026`,
@@ -281,6 +289,8 @@ func TestUnreadableBoxIsTreatedAsBlownNeverClear(t *testing.T) {
 // portable way to produce a read error that is not ErrNotExist. It must land on CANNOT
 // TELL, the third answer, never the reassuring one.
 func TestAnUnreadableFileTypeIsNotClear(t *testing.T) {
+	t.Parallel()
+
 	box := filepath.Join(t.TempDir(), "fuses.json")
 	if err := os.MkdirAll(box, 0o755); err != nil {
 		t.Fatal(err)
@@ -296,6 +306,8 @@ func TestAnUnreadableFileTypeIsNotClear(t *testing.T) {
 
 // TestUnreadableBoxMakesStatusRefuse: status answers or it does not.
 func TestUnreadableBoxMakesStatusRefuse(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	writeRaw(t, box, "{oops")
 	code, out, errOut := capture(t, []string{"status", "--box", box}, nowish())
@@ -314,6 +326,8 @@ func TestUnreadableBoxMakesStatusRefuse(t *testing.T) {
 // unreadable box blocks EVERY surface; replacing it with one holding a single quarantine
 // would unblock the rest. The safety-shaped action would be the fail-open.
 func TestQuarantineRefusesToNarrowAnUnreadableBox(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	writeRaw(t, box, "{corrupt")
 	before := readRaw(t, box)
@@ -336,6 +350,8 @@ func TestQuarantineRefusesToNarrowAnUnreadableBox(t *testing.T) {
 // TestLiftQuarantineRefusesOnAnUnreadableBox: nothing provable can be lifted from a box
 // that cannot be read.
 func TestLiftQuarantineRefusesOnAnUnreadableBox(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	writeRaw(t, box, "{corrupt")
 	before := readRaw(t, box)
@@ -356,6 +372,8 @@ func TestLiftQuarantineRefusesOnAnUnreadableBox(t *testing.T) {
 // a fuse you cannot blow is not a fuse. Lockdown blocks everything, so an unreadable box
 // becoming a lockdown leaves nothing less blocked than it was.
 func TestLockdownWorksOnAnUnreadableBox(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	writeRaw(t, box, "{corrupt")
 
@@ -392,6 +410,8 @@ func TestLockdownWorksOnAnUnreadableBox(t *testing.T) {
 // announcing a lockdown it did not manage to record: the operator stops worrying, and
 // nothing is actually gated.
 func TestBlowingFailsLoudlyWhenItCannotWrite(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("windows: chmod 0555 does not make a directory refuse writes, so the failure this pins cannot be produced here")
 	}
@@ -436,6 +456,8 @@ func TestBlowingFailsLoudlyWhenItCannotWrite(t *testing.T) {
 // TestExitCodes walks the whole table through the CLI a caller actually uses:
 // 0 = clear, 1 = blown (the fuse working), 2 = could not run.
 func TestExitCodes(t *testing.T) {
+	t.Parallel()
+
 	now := nowish()
 
 	t.Run("clear is 0", func(t *testing.T) {
@@ -495,6 +517,8 @@ func TestExitCodes(t *testing.T) {
 // ------------------------------------------------------------- 4. THE HAPPY PATH
 
 func TestLockdownIsWrittenVerifiedAndAnnounced(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	now := nowish()
 
@@ -531,6 +555,8 @@ func TestLockdownIsWrittenVerifiedAndAnnounced(t *testing.T) {
 // after the first word -- that is the audit trail of the most serious action this tool
 // can take, lost quietly, at the worst moment.
 func TestLockdownReasonIsJoinedNotTruncated(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	mustRun(t, []string{"lockdown", "--box", box, "suspected", "prompt", "injection"}, nowish())
 
@@ -547,6 +573,8 @@ func TestLockdownReasonIsJoinedNotTruncated(t *testing.T) {
 // `quarantine Discord` then `check discord` answer CLEAR -- a fail-OPEN in a safety
 // control, reached by a capital letter.
 func TestQuarantineMatchingIsNotDefeatedByACapitalLetter(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	now := nowish()
 	mustRun(t, []string{"quarantine", "--box", box, "  Discord  ", "many the same way"}, now)
@@ -565,6 +593,8 @@ func TestQuarantineMatchingIsNotDefeatedByACapitalLetter(t *testing.T) {
 // TestCheckQuotesTheStoredSpelling: a hand-edited box can hold a spelling the tool would
 // not have written, and a refusal quotes the file rather than the caller.
 func TestCheckQuotesTheStoredSpelling(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	writeRaw(t, box, `{"quarantine":{"Discord":{"at":"t","reason":"r"}}}`)
 	code, _, errOut := capture(t, []string{"check", "--box", box, "discord"}, nowish())
@@ -580,6 +610,8 @@ func TestCheckQuotesTheStoredSpelling(t *testing.T) {
 // a crash and never an invented value -- hand-editing is the only lockdown-replacement
 // mechanism, so sparse boxes are normal inputs.
 func TestStatusSurvivesAHandEditedBox(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	writeRaw(t, box, `{"lockdown": {}, "quarantine": {"bsky": {}}}`)
 
@@ -610,6 +642,8 @@ func TestStatusSurvivesAHandEditedBox(t *testing.T) {
 // TestStatusReportsAndNeverGates: status exits 0 whenever the box is readable, blown or
 // not. Answering the question is its whole job; check is the gate.
 func TestStatusReportsAndNeverGates(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	now := nowish()
 	mustRun(t, []string{"lockdown", "--box", box, "suspected compromise"}, now)
@@ -625,6 +659,8 @@ func TestStatusReportsAndNeverGates(t *testing.T) {
 // TestStatusIsDeterministic. Map iteration is randomized, so a naive port prints a
 // different order every run and status stops being diffable.
 func TestStatusIsDeterministic(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	writeRaw(t, box, `{"quarantine": {"zulip": {"at":"t","reason":"r"},
 		"discord": {"at":"t","reason":"r"}, "bsky": {"at":"t","reason":"r"}}}`)
@@ -646,6 +682,8 @@ func TestStatusIsDeterministic(t *testing.T) {
 // never be left torn, and no .tmp litter may survive for a later reader to mistake for
 // state.
 func TestTheWriteLeavesNoLitter(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	box := filepath.Join(dir, "fuses.json")
 	now := nowish()
@@ -666,6 +704,8 @@ func TestTheWriteLeavesNoLitter(t *testing.T) {
 }
 
 func TestPathEchoesTheBoxFlag(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	code, out, _ := capture(t, []string{"path", "--box", box}, nowish())
 	if code != 0 {
@@ -677,6 +717,8 @@ func TestPathEchoesTheBoxFlag(t *testing.T) {
 }
 
 func TestHelpIsNotAnError(t *testing.T) {
+	t.Parallel()
+
 	code, out, _ := capture(t, []string{"--help"}, nowish())
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
@@ -696,6 +738,8 @@ func TestHelpIsNotAnError(t *testing.T) {
 // verified fact -- the read failed with the one error that means NONEXISTENT rather than
 // UNREADABLE -- and that is a different answer from "could not look".
 func TestAbsentBoxIsClear(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	now := nowish()
 
@@ -726,6 +770,8 @@ func TestAbsentBoxIsClear(t *testing.T) {
 // changed an accepted answer of a safety control, and must mean it: rewrite note 1 in
 // internal/fuse's package comment and SPEC's three-answers paragraph in the same commit.
 func TestCheckIntoANonexistentDirectoryIsAlsoClear(t *testing.T) {
+	t.Parallel()
+
 	box := filepath.Join(t.TempDir(), "no", "such", "dir", "fuses.json")
 	code, out, errOut := capture(t, []string{"check", "--box", box, "discord"}, nowish())
 	if code != 0 {
@@ -741,6 +787,8 @@ func TestCheckIntoANonexistentDirectoryIsAlsoClear(t *testing.T) {
 // drift that leaves read paths reaching the wire ungated, so the tool has to say what it
 // did NOT measure.
 func TestBareCheckAdmitsItCheckedNoQuarantine(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	now := nowish()
 	mustRun(t, []string{"quarantine", "--box", box, "discord", "many the same way"}, now)
@@ -767,6 +815,8 @@ func TestBareCheckAdmitsItCheckedNoQuarantine(t *testing.T) {
 // decision, in both directions -- but the rescind is announced, never silent, and the
 // state file must reflect it.
 func TestLiftQuarantineSucceedsAndIsAnnounced(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	now := nowish()
 	mustRun(t, []string{"quarantine", "--box", box, "discord", "many the same way"}, now)
@@ -801,6 +851,8 @@ func TestLiftQuarantineSucceedsAndIsAnnounced(t *testing.T) {
 // TestALiftedQuarantineChecksClearAgain closes the loop: the whole point of a lift is
 // that the gate opens again.
 func TestALiftedQuarantineChecksClearAgain(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	now := nowish()
 	mustRun(t, []string{"quarantine", "--box", box, "discord", "many the same way"}, now)
@@ -823,6 +875,8 @@ func TestALiftedQuarantineChecksClearAgain(t *testing.T) {
 // that stops `check discord` walking past `quarantine Discord` must let
 // `lift quarantine DISCORD` reach it.
 func TestLiftQuarantineMatchesNormalizedAndQuotesTheStoredSpelling(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	writeRaw(t, box, `{"quarantine":{"Discord":{"at":"t","reason":"r"}}}`)
 
@@ -843,6 +897,8 @@ func TestLiftQuarantineMatchesNormalizedAndQuotesTheStoredSpelling(t *testing.T)
 // TestLiftQuarantineWithNothingToLiftDoesNotClaimSuccess. A typo must never read as a
 // lift: the operator would walk away believing a surface is open that is still blocked.
 func TestLiftQuarantineWithNothingToLiftDoesNotClaimSuccess(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	writeRaw(t, box, `{"quarantine":{"bsky":{"at":"t","reason":"r"}}}`)
 	before := readRaw(t, box)
@@ -868,6 +924,8 @@ func TestLiftQuarantineWithNothingToLiftDoesNotClaimSuccess(t *testing.T) {
 // TestLiftQuarantineUnderLockdownLeavesLockdownBlown pins both halves of the design at
 // once: the soft dial still turns, and the hard fuse still covers every surface.
 func TestLiftQuarantineUnderLockdownLeavesLockdownBlown(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	now := nowish()
 	mustRun(t, []string{"lockdown", "--box", box, "suspected compromise"}, now)
@@ -899,6 +957,8 @@ func TestLiftQuarantineUnderLockdownLeavesLockdownBlown(t *testing.T) {
 // -- only `at` and `reason`. A fuse that lifts itself has a timer an attacker can wait
 // out, so there must be nothing in the box a clock could act on.
 func TestLockdownDoesNotExpire(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	mustRun(t, []string{"lockdown", "--box", box, "suspected compromise"}, nowish())
 
@@ -977,6 +1037,8 @@ const forgedOK = "real\nFUSE OK lockdown=clear quarantine=clear surface=discord"
 // TestALockdownReasonCannotForgeAnOKLine is the finding itself. A blown lockdown must
 // print exactly one FUSE line, and nothing the box contains may add another.
 func TestALockdownReasonCannotForgeAnOKLine(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	writeBox(t, box, fuse.Box{
 		Lockdown:   &fuse.Fuse{At: "2026-08-03T00:00:00Z", Reason: forgedOK},
@@ -1004,6 +1066,8 @@ func TestALockdownReasonCannotForgeAnOKLine(t *testing.T) {
 
 // TestAQuarantineReasonCannotForgeAnOKLine: the same hole through the soft fuse.
 func TestAQuarantineReasonCannotForgeAnOKLine(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	writeBox(t, box, fuse.Box{
 		Quarantine: map[string]fuse.Fuse{"discord": {At: "2026-08-03T00:00:00Z", Reason: forgedOK}},
@@ -1023,6 +1087,8 @@ func TestAQuarantineReasonCannotForgeAnOKLine(t *testing.T) {
 // script diffs, so its line COUNT is part of the contract -- one line, plus one per
 // quarantine, whatever the reasons contain.
 func TestStatusPrintsOneLinePerFuseAndNoMore(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	writeBox(t, box, fuse.Box{
 		Lockdown: &fuse.Fuse{At: "2026-08-03T00:00:00Z", Reason: forgedOK},
@@ -1055,6 +1121,8 @@ func TestStatusPrintsOneLinePerFuseAndNoMore(t *testing.T) {
 // TestAStoredQuarantineKeyWithANewlinePrintsEscaped: the KEY is attacker-authored too --
 // it is a JSON object name, so it carries anything a reason can.
 func TestAStoredQuarantineKeyWithANewlinePrintsEscaped(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	// Written by hand: `dis\ncord` is a JSON escape, so the stored key holds a real newline.
 	const raw = `{"lockdown":null,"quarantine":{"dis\ncord":{"at":"2026-08-03T00:00:00Z","reason":"r"}}}`
@@ -1101,6 +1169,8 @@ func TestAStoredQuarantineKeyWithANewlinePrintsEscaped(t *testing.T) {
 // TestAnEscapeSequenceNeverReachesTheTerminal: the same hole aimed at an operator. A
 // reason that clears the screen, or repaints what is above it, must arrive as text.
 func TestAnEscapeSequenceNeverReachesTheTerminal(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	writeBox(t, box, fuse.Box{
 		Lockdown:   &fuse.Fuse{At: "\x1b[2J", Reason: "clean\x1b[2J\x1b[Hnothing to see"},
@@ -1125,6 +1195,8 @@ func TestAnEscapeSequenceNeverReachesTheTerminal(t *testing.T) {
 // fuse, so the reason is never REFUSED -- it is folded, and the write stays tidy. The
 // print-time escape is what actually holds; this only keeps this tool's own writes clean.
 func TestLockdownTakesANewlineInItsReasonAndStoresItFolded(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	code, out, errOut := capture(t, []string{"lockdown", "--box", box, "line one\nline two"}, nowish())
 	if code != 0 {
@@ -1151,6 +1223,8 @@ func TestLockdownTakesANewlineInItsReasonAndStoresItFolded(t *testing.T) {
 // refuse afterwards. The other direction of that same widening is pinned by
 // TestLiftRemovesEveryFoldEquivalentSpelling.
 func TestQuarantineFoldsAControlCharacterOutOfTheSurfaceName(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	code, out, errOut := capture(t, []string{"quarantine", "--box", box, "\x1bdiscord\n", "attacked"}, nowish())
 	if code != 0 {
@@ -1181,6 +1255,8 @@ func TestQuarantineFoldsAControlCharacterOutOfTheSurfaceName(t *testing.T) {
 // box's, but the guarantee SPEC.md states is that nothing an argument contains can add a
 // second line either.
 func TestAFailFileErrorStaysOnOneLine(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("windows: chmod 0555 does not make a directory refuse writes, so the failure this pins cannot be produced here")
 	}
@@ -1224,6 +1300,8 @@ func TestAFailFileErrorStaysOnOneLine(t *testing.T) {
 // path itself. A --box argument is the caller's own rather than the box's contents, and
 // the guarantee stated in SPEC.md covers both.
 func TestNoRefusalOrNoteCanForgeAnOKLine(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("windows: a newline is not legal in a filename there, so the box path cannot carry this forgery and the fixture cannot be built; the escaping under test is platform-independent and runs on the other two")
 	}
@@ -1305,6 +1383,8 @@ func TestNoRefusalOrNoteCanForgeAnOKLine(t *testing.T) {
 // is this tool's own is the list below: its wrappers, its exemptions with their reasons,
 // and its imports. A new interpolation is a decision from now on, never a drive-by.
 func TestEveryPrintedArgumentIsLiteralQuotedOrEscaped(t *testing.T) {
+	t.Parallel()
+
 	audit.PrintedArguments(t, fuseAudit)
 }
 
@@ -1312,6 +1392,8 @@ func TestEveryPrintedArgumentIsLiteralQuotedOrEscaped(t *testing.T) {
 // which walks fmt calls and therefore sees only one way of putting bytes on a stream. See
 // audit.Bypasses for the list; each entry was proved able to fail by mutation.
 func TestNoOtherWriterOrShadowCanBypassTheEscape(t *testing.T) {
+	t.Parallel()
+
 	audit.Bypasses(t, fuseAudit)
 }
 
@@ -1362,6 +1444,8 @@ var fuseAudit = audit.Config{
 // readers and for no others, which is the worst kind of hole -- invisible to the test
 // suite of whoever is not looking for it.
 func TestAUnicodeLineSeparatorCannotForgeALineEither(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	for _, sep := range []string{" ", " "} {
 		writeBox(t, box, fuse.Box{
@@ -1383,6 +1467,8 @@ func TestAUnicodeLineSeparatorCannotForgeALineEither(t *testing.T) {
 // and refusing it would mean a fuse that could be blown yesterday cannot be blown today.
 // That is the one direction this design forbids. The reason is kept as its escapes instead.
 func TestAReasonOfNothingButControlCharactersStillBlowsTheFuse(t *testing.T) {
+	t.Parallel()
+
 	t.Run("lockdown", func(t *testing.T) {
 		box := boxIn(t)
 		code, out, errOut := capture(t, []string{"lockdown", "--box", box, "\x01"}, nowish())
@@ -1433,6 +1519,8 @@ func TestAReasonOfNothingButControlCharactersStillBlowsTheFuse(t *testing.T) {
 // of stderr. This one needs no newline in a path, so unlike the --box tests it runs
 // everywhere.
 func TestAFlagErrorCannotForgeALineEither(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	writeRaw(t, box, `{"lockdown":null,"quarantine":{}}`)
 
@@ -1476,6 +1564,8 @@ func TestAFlagErrorCannotForgeALineEither(t *testing.T) {
 // fuse.OneLine from that loop leaves the whole suite green without this test, while
 // LIFT FAIL forges a line out of a stored key.
 func TestTheQuarantinedNowListingCannotForgeALine(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	writeRaw(t, box, `{"lockdown":null,"quarantine":{
 		"dis\nLIFT OK verified: discord is no longer quarantined (soft)cord": {"at":"t","reason":"r"},
@@ -1504,6 +1594,8 @@ func TestTheQuarantinedNowListingCannotForgeALine(t *testing.T) {
 // failure. What makes it safe to look at is that nothing is silent: every removal is
 // announced on its own line, under the spelling as stored.
 func TestLiftRemovesEveryFoldEquivalentSpelling(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	writeBox(t, box, fuse.Box{Quarantine: map[string]fuse.Fuse{
 		"dis cord":    {At: "t", Reason: "one"},
@@ -1545,6 +1637,8 @@ func TestLiftRemovesEveryFoldEquivalentSpelling(t *testing.T) {
 // nothing: a box is hand-editable, and a reader who only ever tests `reason` leaves the
 // other stored string free to forge.
 func TestAnAtStampCannotForgeALine(t *testing.T) {
+	t.Parallel()
+
 	const forgedAt = "2026-08-03T00:00:00Z\nFUSE OK lockdown=clear quarantine=clear surface=discord"
 
 	t.Run("through status and check under lockdown", func(t *testing.T) {
@@ -1596,6 +1690,8 @@ func TestAnAtStampCannotForgeALine(t *testing.T) {
 // spellings of one surface made the quoted name, the timestamp and the reason a coin flip
 // between runs. Status was already pinned deterministic; the gate's own refusal was not.
 func TestCheckIsDeterministicWhenTwoStoredKeysFoldTogether(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	writeBox(t, box, fuse.Box{Quarantine: map[string]fuse.Fuse{
 		"dis cord":  {At: "t", Reason: "one"},
@@ -1625,6 +1721,8 @@ func TestCheckIsDeterministicWhenTwoStoredKeysFoldTogether(t *testing.T) {
 // field value is one token now, whitespace and "=" escaped, so a key=value search can
 // match only a field this tool wrote.
 func TestAStoredKeyCannotPoseAsAField(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	writeBox(t, box, fuse.Box{
 		Lockdown:   &fuse.Fuse{At: "2026-08-03T00:00:00Z", Reason: "real"},
@@ -1663,6 +1761,8 @@ func TestAStoredKeyCannotPoseAsAField(t *testing.T) {
 // one token wherever it is a field, so a whitespace-splitting scanner still counts fields
 // where this tool wrote them.
 func TestASurfaceWithASpaceIsOneTokenInEveryField(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	mustRun(t, []string{"quarantine", "--box", box, "my surface", "why"}, nowish())
 
@@ -1691,6 +1791,8 @@ func TestASurfaceWithASpaceIsOneTokenInEveryField(t *testing.T) {
 // claim about a sibling entry, under the wrong name and the wrong time. The verification
 // now reads back the exact key it wrote, and the line names that entry.
 func TestQuarantineOKNamesTheEntryItVerified(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	writeBox(t, box, fuse.Box{Quarantine: map[string]fuse.Fuse{
 		"Discord": {At: "2020-01-01T00:00:00Z", Reason: "old"},
@@ -1707,6 +1809,8 @@ func TestQuarantineOKNamesTheEntryItVerified(t *testing.T) {
 }
 
 func TestLeadingDashSurfaceWithDelimiter(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	now := nowish()
 
@@ -1739,6 +1843,8 @@ func TestLeadingDashSurfaceWithDelimiter(t *testing.T) {
 }
 
 func TestLateFlagRefusalNamesDoor(t *testing.T) {
+	t.Parallel()
+
 	box := boxIn(t)
 	code, _, errOut := capture(t, []string{"quarantine", "--box", box, "my-surface", "reason", "--extra-flag"}, nowish())
 	if code != 2 {

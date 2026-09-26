@@ -87,6 +87,8 @@ func commandCounts(t *testing.T, ctx context.Context, admin *redis.Client) map[s
 // SCRIPT or FUNCTION call from any client. At dev 8d12fb19 list mode sent a
 // script and the seat was refused NOPERM.
 func TestDealStatusListUsesFcallOnly(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	bench, admin := benchSeat(t)
 	const S = "control-3605"
@@ -143,6 +145,8 @@ func TestDealStatusListUsesFcallOnly(t *testing.T) {
 // not loaded the library, list mode refuses naming the function and the
 // converge verb, and never loads the library itself.
 func TestDealStatusListNamesTheConvergeWhenUnloaded(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	c := redis.NewClient(&redis.Options{Addr: testutil.Start(t)})
 	t.Cleanup(func() { _ = c.Close() })
@@ -159,6 +163,8 @@ func TestDealStatusListNamesTheConvergeWhenUnloaded(t *testing.T) {
 // variable that picks the Redis seat (#3605), so a bench operator is not left
 // to find NOPERM/NOAUTH by trial.
 func TestDealStatusHelpNamesRedisUser(t *testing.T) {
+	t.Parallel()
+
 	if !strings.Contains(StatusUsage, store.UserEnv+"=bench") {
 		t.Fatalf("deal status help %q does not name %s=bench", StatusUsage, store.UserEnv)
 	}

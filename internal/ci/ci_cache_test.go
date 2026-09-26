@@ -17,6 +17,8 @@ import (
 // Rule: every actions/cache step in ci.yml carries the github-hosted condition, and
 // every setup-go step there says cache: false (the workflow manages caching itself).
 func TestNoCacheStepRunsOnASelfHostedRunner(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
 	steps := strings.Split(src, "\n      - ")

@@ -14,6 +14,8 @@ import (
 // the verb's start to its line, and each is ABSENT, never zero, where there
 // was no call or no measurement.
 func TestLatencyAndWallClockInEveryRowAndOnEveryLine(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 
 	// No call, no measurement: the rules answer carries no ms, the row omits

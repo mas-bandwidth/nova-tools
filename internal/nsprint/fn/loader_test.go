@@ -67,6 +67,8 @@ func countLocals(t *testing.T, source string) (active, sum int, largest string) 
 // above MaxLocals (180), so a merge that nears the limit fails here, in the
 // package that owns the chunk, not at FUNCTION LOAD on the fleet.
 func TestLibraryLocalsUnderLimit(t *testing.T) {
+	t.Parallel()
+
 	source, err := Source()
 	if err != nil {
 		t.Fatal(err)
@@ -84,6 +86,8 @@ func TestLibraryLocalsUnderLimit(t *testing.T) {
 // TestCountLocalsSeesTheOldShape is the guard's own control: the same files
 // concatenated with no blocks (the shape that broke dev) count over the limit.
 func TestCountLocalsSeesTheOldShape(t *testing.T) {
+	t.Parallel()
+
 	source, err := Source()
 	if err != nil {
 		t.Fatal(err)

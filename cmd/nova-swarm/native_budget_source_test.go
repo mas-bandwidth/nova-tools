@@ -155,6 +155,8 @@ func TestNativeRefusesABudgetNothingCanObserve(t *testing.T) {
 // second, or one not shorter than `--deadline`, is refused at exit 2: the first could end
 // an honest card on three quick reads, and under the second no sample would ever run."
 func TestNativeUsageIntervalFloorAndCeiling(t *testing.T) {
+	t.Parallel()
+
 	bin := nativeHarness(t)
 	for _, tc := range []struct {
 		name     string

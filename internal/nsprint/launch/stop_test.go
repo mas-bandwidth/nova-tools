@@ -27,6 +27,8 @@ func (f *fakeGroups) Signal(_ context.Context, p int, s string) error {
 }
 func (f *fakeGroups) Alive(_ context.Context, p int) (bool, error) { return f.alive[p], nil }
 func TestCardStopSignalsOnlyExactAttemptGroups(t *testing.T) {
+	t.Parallel()
+
 	f := &fakeGroups{ids: map[string][]int{"nova-card s/a/1": {11}, "nova-card s/c/3": {33}}, alive: map[int]bool{11: true, 33: true}, stubborn: map[int]bool{33: true}}
 	var out bytes.Buffer
 	sum, err := Stop(context.Background(), bytes.NewBufferString("s a 1\ns b 2\ns c 3\n"), &out, time.Second, f, func(context.Context, time.Duration) error { return nil })
@@ -50,6 +52,8 @@ func TestCardStopSignalsOnlyExactAttemptGroups(t *testing.T) {
 // per-card lines, the summary goes to stderr, and a completed protocol with an
 // ALIVE card is a nil error (the command exits 0; ALIVE is data).
 func TestCardStopCommandProtocol(t *testing.T) {
+	t.Parallel()
+
 	f := &fakeGroups{ids: map[string][]int{"nova-card s/a/1": {11}, "nova-card s/c/3": {33}}, alive: map[int]bool{11: true, 33: true}, stubborn: map[int]bool{33: true}}
 	var out, errOut bytes.Buffer
 	err := StopCommand(context.Background(), bytes.NewBufferString("s a 1\ns b 2\ns c 3\n"), &out, &errOut, time.Second, f, func(context.Context, time.Duration) error { return nil })

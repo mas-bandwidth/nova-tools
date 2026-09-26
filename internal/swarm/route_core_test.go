@@ -11,6 +11,8 @@ import (
 // package green: the verb tests stayed in cmd/nova-swarm and still passed
 // against the inlined copy.
 func TestParseRoutesAndPickRoute(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	muse := filepath.Join(dir, "muse.json")
 	paid := filepath.Join(dir, "paid.json")
@@ -40,6 +42,8 @@ func TestParseRoutesAndPickRoute(t *testing.T) {
 }
 
 func TestParseRoutesRefusesAnEmptyTable(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "empty.tsv")
 	if err := os.WriteFile(path, []byte("\n"), 0o600); err != nil {
 		t.Fatal(err)

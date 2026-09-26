@@ -20,6 +20,8 @@ import (
 // Holds stay keyed by who=: the holder's own later APPROVE releases, and a who=unknown
 // hold is released only by a reader who is not the author.
 func TestReaderRuleIsPersonAndModelNotLogin(t *testing.T) {
+	t.Parallel()
+
 	rs, err := ParseReviewers(strings.NewReader("who\tlogins\tmay-hold\n" +
 		"emma\tgafferongames\tyes\nstella\tgafferongames\tyes\njohnny\tgafferongames\tyes\n" +
 		"glenn\tgafferongames\tyes\nrowan\trowan-claude\tyes\n"))

@@ -118,6 +118,8 @@ func exeName(tool string) string {
 // and the grammar the spec states are one sentence, and the spec is where a
 // friend adding a binary looks first.
 func TestTheVersionGrammarIsSpelledOutOnceInTheSpec(t *testing.T) {
+	t.Parallel()
+
 	spec := readFile(t, filepath.Join(repoRoot(t), "docs", "SPEC.md"))
 	for _, want := range []string{
 		"<tool> <build identity> <goos>/<goarch> <go version>",

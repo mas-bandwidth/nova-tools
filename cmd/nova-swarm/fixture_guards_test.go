@@ -164,6 +164,8 @@ func fixtureNumber(task, name string) (int, bool) {
 }
 
 func TestTheBenchRefusesAWaitThatReachesTheJobsOwnDeadline(t *testing.T) {
+	t.Parallel()
+
 	for _, c := range []struct {
 		name     string
 		task     string
@@ -216,6 +218,8 @@ func TestTheBenchRefusesAWaitThatReachesTheJobsOwnDeadline(t *testing.T) {
 // a per-job `--deadline` is what a task queued with one is checked against -- otherwise the
 // three-second jobs in this package would be capped against a thirty-second bench.
 func TestTheDeadlineACappedJobIsMeasuredAgainstIsTheOneItRunsUnder(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	worker := filepath.Join(dir, "worker.json")
 	if err := os.WriteFile(worker, []byte(`{"name":"fake-1","deadline":"30s"}`+"\n"), 0o644); err != nil {
@@ -268,6 +272,8 @@ func TestTheDeadlineACappedJobIsMeasuredAgainstIsTheOneItRunsUnder(t *testing.T)
 // the add-then-rewrite order, another `--worker`, and the jobs `batch` and `requeue` queue
 // without going through `add` at all.
 func TestThePendingPoolIsCappedAgainstTheWorkerTheRunWillUse(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	pool := filepath.Join(dir, "pool", swarm.Pending)
 	if err := os.MkdirAll(pool, 0o755); err != nil {

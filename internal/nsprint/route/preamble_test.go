@@ -86,6 +86,8 @@ func rankClasses(counts map[string]int, floor int) []string {
 // recomputed here from the fixture, so the table cannot drift from the
 // attribution it cites.
 func TestProRoutesCarryAPreamble(t *testing.T) {
+	t.Parallel()
+
 	tab, err := Load()
 	if err != nil {
 		t.Fatal(err)
@@ -156,6 +158,8 @@ func TestProRoutesCarryAPreamble(t *testing.T) {
 // A route no pro card can reach carries no preamble, and asking for one is
 // an error rather than an empty paragraph.
 func TestPreambleRefusesARouteWithoutOne(t *testing.T) {
+	t.Parallel()
+
 	tab, err := Load()
 	if err != nil {
 		t.Fatal(err)
@@ -170,6 +174,8 @@ func TestPreambleRefusesARouteWithoutOne(t *testing.T) {
 // The parser refuses a fault class it has no sentence for, and faults
 // without faults_from (or the reverse).
 func TestParseRefusesUnknownFaults(t *testing.T) {
+	t.Parallel()
+
 	base := "routes:\n  - route: r1\n    rung: pro\n    model: m\n    state: held\n    why: \"x\"\n"
 	for _, tc := range []struct{ extra, want string }{
 		{"    faults: [CARD-NOPE]\n    faults_from: model\n", "CARD-NOPE"},

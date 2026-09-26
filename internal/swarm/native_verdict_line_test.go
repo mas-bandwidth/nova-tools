@@ -24,6 +24,8 @@ func writeJobLog(t *testing.T, line string) string {
 }
 
 func TestGatherReadsHarnessSilentOnNativeIncomplete(t *testing.T) {
+	t.Parallel()
+
 	job := writeJobLog(t, "NATIVE INCOMPLETE label=a job=/j rc=-1 wall=1.00s sandbox=none-by-flag card_sha256=- binary_sha256=- config=- harness=silent usage=none reason=no-store path=/x")
 	if !cardHarnessSilent(job) {
 		t.Fatal("a NATIVE INCOMPLETE line carrying harness=silent is a silent harness; gather must still see it")
@@ -31,6 +33,8 @@ func TestGatherReadsHarnessSilentOnNativeIncomplete(t *testing.T) {
 }
 
 func TestGatherReadsFenceRejectedOnNativeIncomplete(t *testing.T) {
+	t.Parallel()
+
 	job := writeJobLog(t, "NATIVE INCOMPLETE label=a job=/j rc=-1 wall=1.00s sandbox=none-by-flag card_sha256=- binary_sha256=- config=- harness=ok fence=rejected path=/sys/kernel/security/*")
 	got, ok := cardFenceRejected(job)
 	if !ok {
@@ -42,6 +46,8 @@ func TestGatherReadsFenceRejectedOnNativeIncomplete(t *testing.T) {
 }
 
 func TestGatherDoesNotTreatANonVerdictLineAsNative(t *testing.T) {
+	t.Parallel()
+
 	job := writeJobLog(t, "NATIVE NOTE harness=silent fence=rejected path=/x")
 	if cardHarnessSilent(job) {
 		t.Fatal("a NATIVE NOTE is not native's verdict line")

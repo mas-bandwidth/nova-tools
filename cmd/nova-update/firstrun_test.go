@@ -54,6 +54,8 @@ func TestExecutableFirstRun(t *testing.T) {
 	}
 }
 func TestMissingIndependentFlagsAreNamedTogether(t *testing.T) {
+	t.Parallel()
+
 	var out, errs bytes.Buffer
 	c := update.Main("nova-update", []string{"report", "--send"}, "", &out, &errs)
 	if c != 2 {

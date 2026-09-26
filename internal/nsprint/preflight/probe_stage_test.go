@@ -70,6 +70,8 @@ func probeInput(t *testing.T, c *redis.Client) LineupInput {
 // ci:<repo>:<head> green and one typed non-author read at head. Here each
 // probe stops at a different stage.
 func TestProbeMissNamesTheStage(t *testing.T) {
+	t.Parallel()
+
 	_, c := fixture(t)
 	stops := map[string]string{"probe-1": "", "probe-2": "cut", "probe-3": "run", "probe-4": "pr", "probe-5": "ci"}
 	for p, st := range stops {
@@ -99,6 +101,8 @@ func TestProbeMissNamesTheStage(t *testing.T) {
 // A red CI verdict at head is RED at ci (the 2026-09-25 quack-0925e shape:
 // landed by hand, every card head red on the fleet's own CI).
 func TestProbeLandedWithRedCIIsRed(t *testing.T) {
+	t.Parallel()
+
 	_, c := fixture(t)
 	for _, p := range probes {
 		putProbe(t, c, p, "land")
@@ -118,6 +122,8 @@ func TestProbeLandedWithRedCIIsRed(t *testing.T) {
 // Jev lines, author lines, lines at another head and untyped lines are not a
 // read; the landed index alone is not a landing.
 func TestProbeReadMustBeTypedNonAuthorAtHead(t *testing.T) {
+	t.Parallel()
+
 	_, c := fixture(t)
 	ctx := context.Background()
 	for _, p := range probes {
@@ -150,6 +156,8 @@ func TestProbeReadMustBeTypedNonAuthorAtHead(t *testing.T) {
 
 // Positive control: five probes through every stage are GREEN.
 func TestProbeAllStagesGreen(t *testing.T) {
+	t.Parallel()
+
 	_, c := fixture(t)
 	for _, p := range probes {
 		putProbe(t, c, p, "land")

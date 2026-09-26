@@ -60,6 +60,8 @@ func apLifeLog(t *testing.T, client *redis.Client) int {
 // life on cap:log, one entry wake on the outbox); a replayed tick is DUP and
 // a later tick with a new beat sends no second wake.
 func TestApplyWritesThroughNsFriendState(t *testing.T) {
+	t.Parallel()
+
 	st, client := fsRedis(t)
 	fsFriends(t, client, "ada", "stella", "johnny", "rowan")
 	apBeats(t, client, "ada", 0, 3959*10)
@@ -102,6 +104,8 @@ func TestApplyWritesThroughNsFriendState(t *testing.T) {
 // TestApplyConditionalOnRead: a human away that lands between ApplyLife's
 // read and its FCALL survives: the writer answers STALE and writes nothing.
 func TestApplyConditionalOnRead(t *testing.T) {
+	t.Parallel()
+
 	away := func(t *testing.T, st *store.Store) func() {
 		return func() {
 			fsMust(t, friend.Report(context.Background(), st, friend.ReportRequest{Friend: "ada", State: friend.StateAway,
@@ -197,6 +201,8 @@ func apRecoverFixture(t *testing.T, st *store.Store, client *redis.Client) (stri
 // Functions: D1 missed (tasks move), D2 pending (no write, no second wake,
 // no move), D2 answered (UP clears the classifier's own wake-missed).
 func TestApplyRecoversFromWakeMissed(t *testing.T) {
+	t.Parallel()
+
 	st, client := fsRedis(t)
 	ctx := context.Background()
 	_, w := apRecoverFixture(t, st, client)
@@ -291,6 +297,8 @@ func TestApplyRecoversFromWakeMissed(t *testing.T) {
 // friend only once its wake mode is declared (its deliver and turn
 // producers are proven); before that its beats alone never block it.
 func TestSweepAppliesLifeOnlyWhenAdopted(t *testing.T) {
+	t.Parallel()
+
 	st, client := fsRedis(t)
 	ctx := context.Background()
 	fsFriends(t, client, "ada", "stella", "johnny", "rowan")

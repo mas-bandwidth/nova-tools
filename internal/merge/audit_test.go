@@ -38,6 +38,8 @@ func (f *fakeAuditHost) DisableAutoMerge(ctx context.Context, pr int) error {
 // Every pull request the forge reports with auto-merge on is disabled, and the result
 // names them in the order they were read.
 func TestAuditDisablesEveryAutoMerge(t *testing.T) {
+	t.Parallel()
+
 	h := &fakeAuditHost{open: []AutoMergePR{
 		{Number: 1301, HeadRef: "rowan/impl-a"},
 		{Number: 1307, HeadRef: "rowan/impl-b"},
@@ -56,6 +58,8 @@ func TestAuditDisablesEveryAutoMerge(t *testing.T) {
 
 // A dry run reports and touches nothing: the count is the same, the forge is not written.
 func TestAuditDryRunWritesNothing(t *testing.T) {
+	t.Parallel()
+
 	h := &fakeAuditHost{open: []AutoMergePR{{Number: 1301, HeadRef: "rowan/impl-a"}}}
 	res, err := Audit(context.Background(), h, true)
 	if err != nil {
@@ -72,6 +76,8 @@ func TestAuditDryRunWritesNothing(t *testing.T) {
 // One refusal does not end the pass: the other pull requests are still cleared, and the
 // one that failed is counted and named.
 func TestAuditCarriesOnPastOneRefusal(t *testing.T) {
+	t.Parallel()
+
 	h := &fakeAuditHost{
 		open:   []AutoMergePR{{Number: 1, HeadRef: "a"}, {Number: 2, HeadRef: "b"}, {Number: 3, HeadRef: "c"}},
 		failOn: map[int]error{2: context.DeadlineExceeded},
@@ -92,6 +98,8 @@ func TestAuditCarriesOnPastOneRefusal(t *testing.T) {
 // flag missing MERGES the pull request, which is the accident this whole card is about, so
 // the argument list is built in one place and asserted here.
 func TestDisableAutoMergeArgsCarryTheDisableFlagAndNothingElse(t *testing.T) {
+	t.Parallel()
+
 	args := disableAutoMergeArgs("mas-bandwidth/nova-tools", 1301)
 	want := []string{"pr", "merge", "1301", "-R", "mas-bandwidth/nova-tools", "--disable-auto"}
 	if strings.Join(args, " ") != strings.Join(want, " ") {
@@ -108,6 +116,8 @@ func TestDisableAutoMergeArgsCarryTheDisableFlagAndNothingElse(t *testing.T) {
 // The audit's reads and its one write go through the same guarded gh as everything else,
 // and the read asks the forge for exactly the pull requests that carry an auto-merge.
 func TestGHAuditReadsAutoMergeRequestsAndDisablesThroughGh(t *testing.T) {
+	t.Parallel()
+
 	r := &recordRunner{out: "[]"}
 	h := NewGHEnqueue("mas-bandwidth/nova-tools", 0, r)
 	if _, err := h.AutoMergePRs(context.Background()); err != nil {

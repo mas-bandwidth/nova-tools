@@ -12,6 +12,8 @@ import (
 )
 
 func TestSingleUnscopedNumberedSequenceBelowHeading(t *testing.T) {
+	t.Parallel()
+
 	s, err := parseScopedSpec("docs/SPEC.md", "# Example\n\nIntro.\n\n## Rules\n1. First rule\ncontinued\n2. Second rule\n\n## Notes\nnot a rule\n", "")
 	if err != nil {
 		t.Fatal(err)
@@ -36,6 +38,8 @@ with its complete extent
 `
 
 func TestScopedSpecRefusesAmbiguousAndKeepsWholeRuleExtent(t *testing.T) {
+	t.Parallel()
+
 	if _, err := parseScopedSpec("docs/SPEC.md", twoSequences, ""); err == nil || !strings.Contains(err.Error(), "#The rules, numbered") || !strings.Contains(err.Error(), "#Tests this spec demands") {
 		t.Fatalf("ambiguous spec error = %v", err)
 	}
@@ -50,6 +54,8 @@ func TestScopedSpecRefusesAmbiguousAndKeepsWholeRuleExtent(t *testing.T) {
 }
 
 func TestCitationGrammarIsScopedAndClosed(t *testing.T) {
+	t.Parallel()
+
 	one, err := parseScopedSpec("docs/SPEC.md", twoSequences, "The rules, numbered")
 	if err != nil {
 		t.Fatal(err)

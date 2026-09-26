@@ -18,6 +18,8 @@ import (
 // test calls. One clock drives the verbs and the store, so a TTL lapse is a
 // function call and not ninety seconds of test.
 func TestPresenceKeyExpiresAndLeavesNoTombstone(t *testing.T) {
+	t.Parallel()
+
 	t0 := beatAt
 	st := presence.NewFakeStore(t0)
 	clock := fakeStoreClock{st}
@@ -106,6 +108,8 @@ func TestPresenceKeyExpiresAndLeavesNoTombstone(t *testing.T) {
 // Without --store, awake is exactly the bus reading it was: the flag is the
 // only door to the store, and a bad address is refused before any dial.
 func TestAwakeStoreRefusesBadAddressWithoutDialing(t *testing.T) {
+	t.Parallel()
+
 	st := presence.NewFakeStore(beatAt)
 	dials := 0
 	bus := awakeBus(t)

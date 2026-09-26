@@ -266,6 +266,8 @@ func TestHarvestUnknownAcceptanceDoesNotRetry(t *testing.T) {
 }
 
 func TestSameIDFromTwoSourcesDoesNotCrossTheHold(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	ident := "issues\t1\t1\t1\nprs\t1\t1\t1\n"
 	if err := os.WriteFile(filepath.Join(root, "identity.tsv"), []byte(ident), 0o644); err != nil {
@@ -318,6 +320,8 @@ func TestSameIDFromTwoSourcesDoesNotCrossTheHold(t *testing.T) {
 }
 
 func TestRelaunchRefusesAnUnreadableHoldLedger(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, "seen.tsv"), 0o755); err != nil {
 		t.Fatal(err)

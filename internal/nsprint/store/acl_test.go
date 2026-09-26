@@ -12,6 +12,8 @@ import (
 )
 
 func TestACLEachActorCallsOnlyItsFunctions(t *testing.T) {
+	t.Parallel()
+
 	extra := []string{"--user", "default", "off"}
 	for _, rule := range store.ACLRules {
 		parts := strings.Split(rule, " ")

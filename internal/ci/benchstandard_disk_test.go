@@ -24,6 +24,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // benchStandard runs tools/bench-standard.sh with a fake `df` first on PATH and a HOME of
@@ -45,7 +47,7 @@ func benchStandard(t *testing.T, freeGB string, home string) string {
 		"esac\n" +
 		"echo 'Filesystem 1024-blocks Used Available Capacity Mounted on'\n" +
 		"echo \"/dev/fake 1048576000 1 $(( " + freeGB + " * 1048576 )) 99% /\"\n"
-	if err := os.WriteFile(filepath.Join(bin, "df"), []byte(fake), 0o755); err != nil {
+	if err := testbin.WriteExecutable(filepath.Join(bin, "df"), []byte(fake), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	cmd := exec.Command("bash", filepath.Join(repoRoot(t), "tools", "bench-standard.sh"))

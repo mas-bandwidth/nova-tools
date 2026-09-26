@@ -25,6 +25,8 @@ import (
 // 6. MaxRegularRecord boundary is enforced by readRegular.
 
 func TestReadRegularOrdinaryFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	p := filepath.Join(dir, "ordinary.txt")
 	content := []byte("hello world, ordinary record contents\n")
@@ -42,6 +44,8 @@ func TestReadRegularOrdinaryFile(t *testing.T) {
 }
 
 func TestReadRegularBoundedExactBoundaryAccepted(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	p := filepath.Join(dir, "exact.txt")
 	content := bytes.Repeat([]byte("a"), 64)
@@ -59,6 +63,8 @@ func TestReadRegularBoundedExactBoundaryAccepted(t *testing.T) {
 }
 
 func TestReadRegularBoundedBoundaryPlusOneRefused(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	p := filepath.Join(dir, "plusone.txt")
 	content := bytes.Repeat([]byte("a"), 65)
@@ -82,6 +88,8 @@ func TestReadRegularBoundedBoundaryPlusOneRefused(t *testing.T) {
 }
 
 func TestReadRegularHugeSparseFileRefusedWithoutHugeAllocation(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	p := filepath.Join(dir, "huge_sparse.log")
 	f, err := os.Create(p)
@@ -119,6 +127,8 @@ func TestReadRegularHugeSparseFileRefusedWithoutHugeAllocation(t *testing.T) {
 }
 
 func TestReadRegularMaxRecordBoundary(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	p := filepath.Join(dir, "max_plus_one.log")
 	f, err := os.Create(p)
@@ -168,6 +178,8 @@ func (r infiniteByteReader) Read(p []byte) (int, error) {
 // Deterministic streamed-bound control: proves that readBounded consumes at most
 // limit+1 bytes from a stream and returns nil bytes on error, without allocating a huge buffer.
 func TestReadBoundedDeterministicStreamLimit(t *testing.T) {
+	t.Parallel()
+
 	const limit = int64(64)
 	cr := &countingReader{r: infiniteByteReader{b: 'z'}}
 
@@ -192,6 +204,8 @@ func TestReadBoundedDeterministicStreamLimit(t *testing.T) {
 
 // Proves that readBounded accepts a stream that matches the limit exactly and consumes exact bytes.
 func TestReadBoundedDeterministicExactStreamAccepted(t *testing.T) {
+	t.Parallel()
+
 	const limit = int64(64)
 	data := bytes.Repeat([]byte("y"), int(limit))
 	cr := &countingReader{r: bytes.NewReader(data)}
@@ -210,6 +224,8 @@ func TestReadBoundedDeterministicExactStreamAccepted(t *testing.T) {
 
 // Proves that readBounded and readRegularBounded reject non-positive limits.
 func TestReadBoundedRejectsNonPositiveLimit(t *testing.T) {
+	t.Parallel()
+
 	cr := &countingReader{r: bytes.NewReader([]byte("test"))}
 	if _, err := readBounded(cr, 0); err == nil {
 		t.Fatal("readBounded accepted limit=0")

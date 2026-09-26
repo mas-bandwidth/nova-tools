@@ -258,6 +258,8 @@ func TestAnUnreadableMarkerIsAnOrphan(t *testing.T) {
 // Every other platform refuses the verb for the reason `run` refuses: there are no
 // disposable volumes there to reap.
 func TestReapRefusesWhereThereAreNoDisposableVolumes(t *testing.T) {
+	t.Parallel()
+
 	line, remedy, refused := noDisposableBody("linux")
 	if !refused || !strings.Contains(line, "reason=no_sandbox") || remedy == "" {
 		t.Fatalf("reap and run share one platform gate, and it did not refuse linux: %q %q %v", line, remedy, refused)
@@ -267,6 +269,8 @@ func TestReapRefusesWhereThereAreNoDisposableVolumes(t *testing.T) {
 // `reap --help` answers the question rather than complaining about the argv that asked
 // it, the way `run --help` does (ONBOARDING.md point 2).
 func TestReapHelpIsExitZeroOnStdout(t *testing.T) {
+	t.Parallel()
+
 	var out, errb bytes.Buffer
 	if code := reapVerb([]string{"--help"}, &out, &errb); code != 0 {
 		t.Fatalf("`reap --help` exited %d\n%s", code, errb.String())
@@ -278,6 +282,8 @@ func TestReapHelpIsExitZeroOnStdout(t *testing.T) {
 
 // A flag the verb does not have is a refusal that names it, not a silent ignore.
 func TestReapRefusesAFlagItDoesNotHave(t *testing.T) {
+	t.Parallel()
+
 	var out, errb bytes.Buffer
 	code := reapVerb([]string{"--force"}, &out, &errb)
 	if code != 125 || !strings.Contains(errb.String(), "--force") {

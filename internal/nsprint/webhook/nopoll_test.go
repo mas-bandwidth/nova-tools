@@ -25,6 +25,8 @@ var pollAllowed = map[string]string{
 // the check state is ci:<repo>:<sha>:gh, written from the webhook stream, and
 // a rerun is `ci request --again`. Tests and fixtures are not scanned.
 func TestNoPollingPathsRemain(t *testing.T) {
+	t.Parallel()
+
 	root := moduleRoot(t)
 	var hits []string
 	for _, dir := range []string{"cmd/nova-sprint", "internal/nsprint"} {

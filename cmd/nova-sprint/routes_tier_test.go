@@ -11,6 +11,8 @@ import (
 // tier's allowed routes, in table order, each with its <via>/<model> launch
 // string; no held or dropped route is ever printed.
 func TestRoutesTierPrintsAllowedOnly(t *testing.T) {
+	t.Parallel()
+
 	tab, err := route.Load()
 	if err != nil {
 		t.Fatal(err)
@@ -64,6 +66,8 @@ func TestRoutesTierPrintsAllowedOnly(t *testing.T) {
 // since #3949). --spread prints the
 // table; a bad tier, an empty label or --label without --tier prints nothing.
 func TestRoutesTierLabelPicksTheSpread(t *testing.T) {
+	t.Parallel()
+
 	want := map[string][]string{
 		"flash": {
 			"mercury inception/mercury-2.5",

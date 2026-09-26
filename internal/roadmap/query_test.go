@@ -6,6 +6,8 @@ import (
 )
 
 func TestQueryAPIOnSampleRoadmap(t *testing.T) {
+	t.Parallel()
+
 	input := `
 (
   :schema "test-schema"
@@ -247,6 +249,8 @@ func TestQueryAPIOnSampleRoadmap(t *testing.T) {
 }
 
 func TestQueryProgressOnFullRoadmap(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join("..", "..", "docs", "roadmaps", "nova-work.sexp")
 	rm, err := ParseFile(path)
 	if err != nil {
@@ -306,6 +310,8 @@ func TestQueryProgressOnFullRoadmap(t *testing.T) {
 }
 
 func TestCalculateProgressZeroTotal(t *testing.T) {
+	t.Parallel()
+
 	p := CalculateProgress(0, 0, 0)
 	if p.Total != 0 || p.Percentage != 0.0 {
 		t.Errorf("unexpected zero progress: %+v", p)

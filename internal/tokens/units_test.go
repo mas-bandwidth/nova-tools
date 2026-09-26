@@ -39,6 +39,8 @@ func loadTestUnits(t *testing.T) *Units {
 }
 
 func TestUnitsMatchTheThreeThingsATranscriptNames(t *testing.T) {
+	t.Parallel()
+
 	u := loadTestUnits(t)
 	cases := []struct {
 		name  string
@@ -64,6 +66,8 @@ func TestUnitsMatchTheThreeThingsATranscriptNames(t *testing.T) {
 
 // THE BOUNDARY, in both directions and on all three keys.
 func TestUnitsAreMatchedAtABoundaryAndNotBySubstring(t *testing.T) {
+	t.Parallel()
+
 	u := loadTestUnits(t)
 	cases := []struct {
 		name  string
@@ -95,6 +99,8 @@ func TestUnitsAreMatchedAtABoundaryAndNotBySubstring(t *testing.T) {
 // PR and then read a sibling's is still working on its own, because the first thing it
 // named is the piece of work it was given.
 func TestTheFirstTokenThatNamesAUnitWins(t *testing.T) {
+	t.Parallel()
+
 	u := loadTestUnits(t)
 	got := u.Match([]string{"/x/a.go", "#1412", "mas-bandwidth/nova-tools/pull/141"})
 	if got != "tokens" {
@@ -110,6 +116,8 @@ func TestTheFirstTokenThatNamesAUnitWins(t *testing.T) {
 // A nil set is a fold run without --units: every message is `-`, and nothing panics on the
 // way there.
 func TestNoUnitsFileIsEveryRowOnTheDash(t *testing.T) {
+	t.Parallel()
+
 	var u *Units
 	if u.Len() != 0 {
 		t.Fatal("a nil set has units")
@@ -120,6 +128,8 @@ func TestNoUnitsFileIsEveryRowOnTheDash(t *testing.T) {
 }
 
 func TestAWorkSetWithNoUnitIdIsARefusal(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "set.lisp")
 	if err := os.WriteFile(path, []byte(`(work-set "s" :units ())`+"\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -130,6 +140,8 @@ func TestAWorkSetWithNoUnitIdIsARefusal(t *testing.T) {
 }
 
 func TestAPRValueIsReadWhicheverWayItIsWritten(t *testing.T) {
+	t.Parallel()
+
 	for _, c := range []struct{ in, want string }{
 		{"1412", "1412"},
 		{"#1412", "1412"},
@@ -149,6 +161,8 @@ func TestAPRValueIsReadWhicheverWayItIsWritten(t *testing.T) {
 // order, and the day file's reader dropped the second as "out of order": a unit's spend
 // vanished from `sum --by unit` on about one fold in five. Many folds, one order.
 func TestTwoUnitsOnOnePairAreWrittenInUnitOrder(t *testing.T) {
+	t.Parallel()
+
 	for i := 0; i < 64; i++ {
 		f := NewFolder()
 		for _, unit := range []string{"lisp:collision", "certify:verb", "", "zeta"} {

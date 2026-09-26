@@ -61,6 +61,8 @@ func wrMembers(t *testing.T, c *redis.Client, state string) map[string]float64 {
 // waiting and is named in unknown=. The repo#n form is met by the landed
 // task whose pr names it, and not by one still merging.
 func TestWaitingResolvesWhenDepsLand(t *testing.T) {
+	t.Parallel()
+
 	_, c := wstest.Start(t)
 	ctx := context.Background()
 	wrTask(t, c, "A", "landed", 1000)
@@ -151,6 +153,8 @@ func TestWaitingResolvesWhenDepsLand(t *testing.T) {
 // the lease left, the duty moves nothing and says why; after a renewal the
 // same pass moves the card.
 func TestWaitingResolveStopsAtLeaseMargin(t *testing.T) {
+	t.Parallel()
+
 	_, c := wstest.Start(t)
 	ctx := context.Background()
 	wrTask(t, c, "A", "landed", 1000)

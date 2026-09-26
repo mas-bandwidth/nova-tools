@@ -306,6 +306,8 @@ func TestHarvestRefusesAnInvalidExplicitBASE(t *testing.T) {
 }
 
 func TestHarvestTargetBranchRejectsAPresentInvalidTarget(t *testing.T) {
+	t.Parallel()
+
 	dev, err := harvestTargetBranch(HarvestInput{}, nil)
 	if err != nil || dev != DefaultBase {
 		t.Fatalf("omitted BASE = %q, %v, want %s", dev, err, DefaultBase)
@@ -403,6 +405,8 @@ func commitFixture(t *testing.T, repo, msg string) {
 // diff is exactly the row's declared paths; every row must be accepted. The rows
 // are the PATHS spellings the fleet actually cut on 2026-09-22.
 func TestStaleBaseAcceptsBranchWhoseParentIsTargetTip(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name    string
 		base    []string // files already on the target
@@ -488,6 +492,8 @@ func TestStaleBaseAcceptsBranchWhoseParentIsTargetTip(t *testing.T) {
 // on the current target. Every row must still refuse, and the refusal must name
 // the LANDED file and only it -- issue #2032 is why this check exists.
 func TestStaleBaseStillRefusesAnOlderBase(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name  string
 		paths string
@@ -530,6 +536,8 @@ func TestStaleBaseStillRefusesAnOlderBase(t *testing.T) {
 // t.TempDir() names the directory after the test and the fetch error quotes that
 // path. A check that its own positive control cannot fail is not a check.
 func TestStaleBaseSaysMISSINGWhenTheTargetCannotBeRead(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	dest := filepath.Join(dir, "empty.git")
 	realGit(t, "init", "--bare", "-b", "main", dest)
@@ -554,6 +562,8 @@ func TestStaleBaseSaysMISSINGWhenTheTargetCannotBeRead(t *testing.T) {
 // that can move under the check. The live refusals printed
 // af6a9fccf33199b4edfc586ab3c7f0c5e1a2d71d, which is that pin.
 func TestStaleBaseComparesAPinnedOIDNotAMovingRef(t *testing.T) {
+	t.Parallel()
+
 	f := newStaleFixture(t,
 		[]string{"internal/pulse/harveststale.go"},
 		[]string{"internal/pulse/harveststale.go", "stray/extra.go"})

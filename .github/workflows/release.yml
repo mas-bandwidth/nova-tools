@@ -62,7 +62,7 @@ jobs:
     # gets no release, and the refusal names the remedy.
     # It is the tag-only-a-certified-commit practice made into something that can say no.
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 2
     permissions:
       # Listing workflow runs is an Actions read; the file-level grant is contents only, and a
       # job that asks the API with a token that cannot read Actions would refuse every
@@ -85,7 +85,7 @@ jobs:
   release:
     needs: certified
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 2
     permissions:
       # The only job in this repository that writes anything. It is scoped to this job
       # rather than the file, so the certified job above, which asks the API and runs none

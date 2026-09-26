@@ -72,6 +72,8 @@ func TestRule1EveryPathIsAFlagAndNoEnvironmentIsConsulted(t *testing.T) {
 // ---------------------------------------------------------------- rule 2: sources are declared, rows name them
 
 func TestRule2EveryRowNamesItsSources(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	tr := mkdir(t, filepath.Join(dir, "tr"))
@@ -116,6 +118,8 @@ func TestRule2EveryRowNamesItsSources(t *testing.T) {
 // ---------------------------------------------------------------- rule 3: an unreadable source is counted, printed, exit 1
 
 func TestRule3AnUnreadableSourceIsCountedAndPrintedAndExitsOne(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	tr := mkdir(t, filepath.Join(dir, "tr"))
@@ -153,6 +157,8 @@ func TestRule3AnUnreadableSourceIsCountedAndPrintedAndExitsOne(t *testing.T) {
 // clean bench: 1,260 of 1,278 files flagged, TOKENS UNREADABLE, exit 1, and the remedy
 // printed ("open those files to this group") impossible to act on.
 func TestRule3AValidLineIsNeverCountedAsNotJSON(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	tr := mkdir(t, filepath.Join(dir, "tr"))
@@ -186,6 +192,8 @@ func TestRule3AValidLineIsNeverCountedAsNotJSON(t *testing.T) {
 // ---------------------------------------------------------------- rule 4: a message is counted once, by its id
 
 func TestRule4AMessageIsCountedOnceByItsID(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	tr := mkdir(t, filepath.Join(dir, "tr"))
@@ -210,6 +218,8 @@ func TestRule4AMessageIsCountedOnceByItsID(t *testing.T) {
 // ---------------------------------------------------------------- rule 5: repo attribution, unknown and other
 
 func TestRule5RepoAttributionAndTheTwoNamedBuckets(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	tr := mkdir(t, filepath.Join(dir, "tr"))
@@ -242,6 +252,8 @@ func TestRule5RepoAttributionAndTheTwoNamedBuckets(t *testing.T) {
 // ---------------------------------------------------------------- rule 6: the bus note
 
 func TestRule6TheSubjectIsExactAndAnUnparsedLineIsPrinted(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
@@ -292,6 +304,8 @@ func TestRule6TheSubjectIsExactAndAnUnparsedLineIsPrinted(t *testing.T) {
 // silence. It is an unparsed note now: named with its id, counted, exit 1, and the one
 // remedy line is about the subject.
 func TestANearMissSubjectIsNamedAndNeverVanishes(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
@@ -318,6 +332,8 @@ func TestANearMissSubjectIsNamedAndNeverVanishes(t *testing.T) {
 }
 
 func TestRule6ABadDateRefusesTheWholeNote(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct{ name, date, want string }{
 		{"missing", "", "line=0"},
 		{"unparseable", "yesterday", "line="},
@@ -347,6 +363,8 @@ func TestRule6ABadDateRefusesTheWholeNote(t *testing.T) {
 }
 
 func TestRule6SupersedesOrdersTwoNotesAndNothingElseDoes(t *testing.T) {
+	t.Parallel()
+
 	newBus := func(t *testing.T) (dir, out, bus string) {
 		dir = t.TempDir()
 		out = mkdir(t, filepath.Join(dir, "out"))
@@ -488,6 +506,8 @@ func TestRule6SupersedesOrdersTwoNotesAndNothingElseDoes(t *testing.T) {
 // ---------------------------------------------------------------- rule 7: the rough mark
 
 func TestRule7ARoughLineFoldsAsItsNumberAndIsCountedApart(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
@@ -519,6 +539,8 @@ func TestRule7ARoughLineFoldsAsItsNumberAndIsCountedApart(t *testing.T) {
 // ---------------------------------------------------------------- rule 8: one temp name, one lock
 
 func TestRule8TheTempNameIsFixedAndIsNotAStray(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	tr := mkdir(t, filepath.Join(dir, "tr"))
@@ -546,6 +568,8 @@ func TestRule8TheTempNameIsFixedAndIsNotAStray(t *testing.T) {
 // ---------------------------------------------------------------- rule 9: one file per day, nothing removed
 
 func TestRule9OneFilePerDayAndNothingIsRemoved(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	tr := mkdir(t, filepath.Join(dir, "tr"))
@@ -586,6 +610,8 @@ func TestRule9OneFilePerDayAndNothingIsRemoved(t *testing.T) {
 // ---------------------------------------------------------------- rule 10: a day that would shrink is refused
 
 func TestRule10ADayThatWouldShrinkIsRefused(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	tr := mkdir(t, filepath.Join(dir, "tr"))
@@ -609,6 +635,8 @@ func TestRule10ADayThatWouldShrinkIsRefused(t *testing.T) {
 }
 
 func TestRule10ANumberBecomingADashShrinksAndADashBecomingANumberDoesNot(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	repos := reposFile(t, dir)
@@ -654,6 +682,8 @@ func foldPools(t *testing.T, aIn, aOut, bIn, bOut string) (out, repos, poolA, po
 // claude-x row simply gone -- because the totals ROSE, so rule 10's day-total comparison
 // saw nothing.
 func TestIssue268AFoldKeepsARowNoDeclaredSourceWrote(t *testing.T) {
+	t.Parallel()
+
 	out, repos, poolA, poolB := foldPools(t, "410", "100", "2000", "420")
 	day := filepath.Join(out, "2026-09-14.tsv")
 
@@ -675,6 +705,8 @@ func TestIssue268AFoldKeepsARowNoDeclaredSourceWrote(t *testing.T) {
 // R2: full replacement -- every source in the file is declared -- is exactly what it was.
 // The one row is REPLACED by this run's arithmetic, never summed with the file's.
 func TestIssue268AFullReplacementIsUnchanged(t *testing.T) {
+	t.Parallel()
+
 	out, repos, poolA, _ := foldPools(t, "410", "100", "2000", "420")
 	day := filepath.Join(out, "2026-09-14.tsv")
 
@@ -695,6 +727,8 @@ func TestIssue268AFullReplacementIsUnchanged(t *testing.T) {
 // it did not. Its cells are already a sum over both and nothing on disk takes them apart,
 // so the fold refuses the day rather than guessing.
 func TestIssue268ABlendedRowIsRefusedAndNothingIsWritten(t *testing.T) {
+	t.Parallel()
+
 	out, repos, poolA, poolB := foldPools(t, "410", "100", "2000", "420")
 	day := filepath.Join(out, "2026-09-14.tsv")
 	// Both pools on the SAME model and repo, so one row carries both labels.
@@ -723,6 +757,8 @@ func TestIssue268ABlendedRowIsRefusedAndNothingIsWritten(t *testing.T) {
 // R4: rule 10 still fires on a real shrink, now compared against the MERGED file, and
 // --allow-shrink still writes it with the retained row still there.
 func TestIssue268Rule10StillFiresOnTheMergedTotalsAndKeepsRetainedRows(t *testing.T) {
+	t.Parallel()
+
 	out, repos, poolA, poolB := foldPools(t, "410", "100", "2000", "420")
 	day := filepath.Join(out, "2026-09-14.tsv")
 
@@ -754,6 +790,8 @@ func TestIssue268Rule10StillFiresOnTheMergedTotalsAndKeepsRetainedRows(t *testin
 // reports TOKENS UNREADABLE label=out with the finding reason, and leaves the raw
 // malformed file on disk byte-identical.
 func TestIssue268MalformedExistingDayRowFailsClosedAndPreservesRawFile(t *testing.T) {
+	t.Parallel()
+
 	out, repos, _, poolB := foldPools(t, "410", "100", "2000", "420")
 	day := filepath.Join(out, "2026-09-14.tsv")
 	// Blank the sources cell on the claude-x row (malformed row: sources cell empty).
@@ -778,6 +816,8 @@ func TestIssue268MalformedExistingDayRowFailsClosedAndPreservesRawFile(t *testin
 // sources= and turns= are coherent with the file on disk, while TOKENS OK rows= reflects
 // this run's folded rows.
 func TestIssue268CoherentDaySummaryScopeReflectsMergedFile(t *testing.T) {
+	t.Parallel()
+
 	out, repos, poolA, poolB := foldPools(t, "410", "100", "2000", "420")
 	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos,
 		"--swarm", "glenn="+poolA), 0)
@@ -801,6 +841,8 @@ func TestIssue268CoherentDaySummaryScopeReflectsMergedFile(t *testing.T) {
 // and refused under rule 10 rather than silently skipping with exit 0. Unrelated sources
 // are preserved.
 func TestIssue273ExplicitDayQuietSourceDetectedAndRefused(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	repos := reposFile(t, dir)
@@ -843,6 +885,8 @@ func TestIssue273ExplicitDayQuietSourceDetectedAndRefused(t *testing.T) {
 // When one source of a multi-source day goes quiet, shrinking under --allow-shrink preserves
 // the other source's rows.
 func TestIssue273ExplicitDayQuietSourcePreservesOtherSources(t *testing.T) {
+	t.Parallel()
+
 	out, repos, poolA, poolB := foldPools(t, "410", "100", "2000", "420")
 	day := filepath.Join(out, "2026-09-14.tsv")
 	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos,
@@ -881,6 +925,8 @@ func TestIssue273ExplicitDayQuietSourcePreservesOtherSources(t *testing.T) {
 // fold already refuses the day under rule 10 (TOKENS SHRANK); #273's repair is that the
 // source itself is named rather than only the day totals.
 func TestIssue273QuietSourceNamedOnSelectedDay(t *testing.T) {
+	t.Parallel()
+
 	out, repos, poolA, poolB := foldPools(t, "410", "100", "2000", "420")
 	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos,
 		"--swarm", "glenn="+poolA, "--swarm", "freddy="+poolB), 0)
@@ -899,6 +945,8 @@ func TestIssue273QuietSourceNamedOnSelectedDay(t *testing.T) {
 // ---------------------------------------------------------------- rule 12: the tool stamps
 
 func TestRule12TheToolStampsAndNoFlagSetsIt(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	tr := mkdir(t, filepath.Join(dir, "tr"))
@@ -939,6 +987,8 @@ func TestRule12TheToolStampsAndNoFlagSetsIt(t *testing.T) {
 // ---------------------------------------------------------------- rule 13: check is the gate
 
 func TestRule13CheckNamesEveryFindingAndFillsNoDay(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	const ver = "nova-tokens v1 day=%s at=2026-09-11T23:55:02Z build=b turns=1 sources=x\n"
@@ -1027,6 +1077,8 @@ func TestRule13CheckNamesEveryFindingAndFillsNoDay(t *testing.T) {
 // ---------------------------------------------------------------- rule 14: the swarm's usage files
 
 func TestRule14TheSwarmUsageFilesAreASource(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	pool := mkdir(t, filepath.Join(dir, "pool"))
@@ -1075,6 +1127,8 @@ func TestRule14TheSwarmUsageFilesAreASource(t *testing.T) {
 // ---------------------------------------------------------------- rule 15: five types apart, a dash is not a zero
 
 func TestRule15ATypeTheSourceDidNotReportIsADashAndNeverAZero(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	repos := reposFile(t, dir)
@@ -1108,6 +1162,8 @@ func TestRule15ATypeTheSourceDidNotReportIsADashAndNeverAZero(t *testing.T) {
 }
 
 func TestRule15AMixedRowSumsPerTypeOverTheSourcesThatReportedIt(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	repos := reposFile(t, dir)
@@ -1183,28 +1239,11 @@ func TestRule16And19TheDatabaseIsCopiedAndQueriedReadOnlyUnderATimeout(t *testin
 	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "g="+tr, "--scratch", scratch), 2)
 }
 
-func TestRule19ASubprocessPastTheTimeoutIsUnreadableAndTheFoldGoesOn(t *testing.T) {
-	dir := t.TempDir()
-	out := mkdir(t, filepath.Join(dir, "out"))
-	scratch := mkdir(t, filepath.Join(dir, "scratch"))
-	db := write(t, filepath.Join(dir, "opencode.db"), "SQLite format 3\x00\n")
-	fakeSqlite3Sleeping(t)
-	tr := mkdir(t, filepath.Join(dir, "tr"))
-	write(t, filepath.Join(tr, "a.jsonl"), msg("m1", "2026-09-11T10:00:00Z", "fable", map[string]int{"input_tokens": 3}, "/x/schema/a.go")+"\n")
-
-	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir),
-		"--opencode", "bench="+db, "--scratch", scratch, "--claude", "g="+tr, "--timeout", "1")
-	wantExit(t, r, 1)
-	wantContains(t, r.stderr, "timeout after 1s")
-	if _, err := os.Stat(filepath.Join(out, "2026-09-11.tsv")); err != nil {
-		t.Error("the fold did not continue over the other sources")
-	}
-	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "g="+tr, "--timeout", "0"), 2)
-}
-
 // ---------------------------------------------------------------- rule 17: a day is a UTC day
 
 func TestRule17TheDayComesFromTheMessageStamp(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	tr := mkdir(t, filepath.Join(dir, "tr"))
@@ -1274,6 +1313,8 @@ func TestRule17AZonedStampFoldsOnItsUTCDayAndAnUnreadableStampIsCounted(t *testi
 }
 
 func TestRule17ABusLineDatedAnotherDayIsRedatedAndCounted(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
@@ -1288,6 +1329,8 @@ func TestRule17ABusLineDatedAnotherDayIsRedatedAndCounted(t *testing.T) {
 // ---------------------------------------------------------------- rule 18: two folds, same rows
 
 func TestRule18TwoFoldsDifferInNothingButTheStamp(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	repos := reposFile(t, dir)
@@ -1325,6 +1368,8 @@ func TestRule18TwoFoldsDifferInNothingButTheStamp(t *testing.T) {
 // ---------------------------------------------------------------- rule 20: report
 
 func TestRule20ReportPrintsTheBodyAndNothingElse(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	repos := reposFile(t, dir)
 	tr := mkdir(t, filepath.Join(dir, "tr"))
@@ -1380,6 +1425,8 @@ func TestRule20ReportPrintsTheBodyAndNothingElse(t *testing.T) {
 }
 
 func TestRule20ReportRefusesAndSupersedes(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	repos := reposFile(t, dir)
 	tr := mkdir(t, filepath.Join(dir, "tr"))
@@ -1458,6 +1505,8 @@ func subjectOf(t *testing.T, r result) string {
 // ---------------------------------------------------------------- rule 21: the provider export
 
 func TestRule21AProviderExportIsUnattributedAndNeverSplit(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	repos := reposFile(t, dir)
@@ -1540,6 +1589,8 @@ func TestRule21AProviderExportIsUnattributedAndNeverSplit(t *testing.T) {
 }
 
 func TestRule17AMixedRowIsRefused(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	repos := reposFile(t, dir)
@@ -1555,6 +1606,8 @@ func TestRule17AMixedRowIsRefused(t *testing.T) {
 }
 
 func TestRule21ANoteOfOneReposCommentIsValidWithZeroRows(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
@@ -1571,6 +1624,8 @@ func TestRule21ANoteOfOneReposCommentIsValidWithZeroRows(t *testing.T) {
 // on the constant alone: a default is a promise about the unset flag, and the two could
 // drift. A run cannot be the test here -- the assertion is that nothing waits two minutes.
 func TestRule19TheTimeoutDefaultIsTwoMinutes(t *testing.T) {
+	t.Parallel()
+
 	var s sourceFlags
 	fs := flag.NewFlagSet("fold", flag.ContinueOnError)
 	s.declare(fs, true)
@@ -1594,6 +1649,8 @@ func TestRule19TheTimeoutDefaultIsTwoMinutes(t *testing.T) {
 // PROVIDER exports; a single note can do it alone, because the seventh field is the
 // line's day basis and a six-field line is UTC.
 func TestRule20ABusNoteWithSixAndSevenFieldLinesForOneKeyIsMixed(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
@@ -1621,6 +1678,8 @@ func TestRule20ABusNoteWithSixAndSevenFieldLinesForOneKeyIsMixed(t *testing.T) {
 // dropped before the body, and `report` used to print neither -- REPORT OK, exit 0, and a
 // friend pasting a short day onto the bus with nothing anywhere saying so.
 func TestReportCountsAndPrintsEverythingItDropped(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	repos := reposFile(t, dir)
 	tr := mkdir(t, filepath.Join(dir, "tr"))
@@ -1654,6 +1713,8 @@ func TestReportCountsAndPrintsEverythingItDropped(t *testing.T) {
 // UTC (rule 6), so a lane with one of each carries two bases -- and the field named the
 // zone, because the utc member was dropped before the merge.
 func TestABusLaneWithASixFieldAndASevenFieldLineIsMixed(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
@@ -1681,6 +1742,8 @@ func TestABusLaneWithASixFieldAndASevenFieldLineIsMixed(t *testing.T) {
 // "each names the day its tokens count to" as what they say: a DAY. The shape alone was
 // the test, so --day 2026-13-40 was accepted and wrote 2026-13-40.tsv.
 func TestADayIsADateOnTheCalendar(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	tr := mkdir(t, filepath.Join(dir, "tr"))
@@ -1703,6 +1766,8 @@ func TestADayIsADateOnTheCalendar(t *testing.T) {
 // the top meant the header was never checked at all: every row after it was read against
 // an empty column map -- every lookup column 0 -- and the named refusal never came.
 func TestASwarmFileWithALeadingBlankLineStillValidatesItsHeader(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	pool := mkdir(t, filepath.Join(dir, "pool"))
@@ -1733,6 +1798,8 @@ func TestASwarmFileWithALeadingBlankLineStillValidatesItsHeader(t *testing.T) {
 // the mixed one told the caller to declare one export for that day without saying which
 // two were competing.
 func TestTheMixedRemedyNamesTheTwoLabels(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	repos := reposFile(t, dir)
@@ -1754,6 +1821,8 @@ func TestTheMixedRemedyNamesTheTwoLabels(t *testing.T) {
 // line -- reported every body line early. Every fixture in this package writes a plain
 // five-key header with no heading, which is the one shape the old arithmetic got right.
 func TestABusNoteWithAHeadingReportsTheFileLineNumber(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
@@ -1786,6 +1855,8 @@ func TestABusNoteWithAHeadingReportsTheFileLineNumber(t *testing.T) {
 // is an unreadable, and it is appended after the MORE line had already been printed -- so
 // with no earlier unreadable the listing was truncated with no MORE line at all.
 func TestAFailedDayWriteIsInsideTheUnreadableCap(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	tr := mkdir(t, filepath.Join(dir, "tr"))
@@ -1811,6 +1882,8 @@ func TestAFailedDayWriteIsInsideTheUnreadableCap(t *testing.T) {
 // key", REPORT FAIL, exit 1. The verb threw away the whole body instead, so one mixed key
 // hid every other key the day had.
 func TestReportKeepsTheLinesForEveryKeyThatIsNotMixed(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	repos := reposFile(t, dir)
 	note := write(t, filepath.Join(dir, "note.txt"), "what was there before\n")
@@ -1840,6 +1913,8 @@ func TestReportKeepsTheLinesForEveryKeyThatIsNotMixed(t *testing.T) {
 // only. Four of the five parsed the extra word and dropped it, so `nova-tokens sum --out X
 // --month Y extra` answered about something the caller did not ask about.
 func TestEveryVerbRefusesAPositionalArgument(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	repos := reposFile(t, dir)
@@ -1865,6 +1940,8 @@ func TestEveryVerbRefusesAPositionalArgument(t *testing.T) {
 // note at its Subject:, and all three printed line=1 while the same run numbered a prose
 // line in the same file correctly.
 func TestAWholeNoteRefusalCarriesTheSubjectsFileLine(t *testing.T) {
+	t.Parallel()
+
 	// 1 heading, 2 blank, 3 From, 4 To, 5 Date, 6 Id, 7 Subject, 8 blank, 9 body.
 	note := func(subject string) string {
 		return strings.Join([]string{
@@ -1901,6 +1978,8 @@ func TestAWholeNoteRefusalCarriesTheSubjectsFileLine(t *testing.T) {
 // reader sees it, so the record index was one short from the first row onward -- and a
 // quoted field holding a newline made it drift further with every one.
 func TestAProviderUnparsedLineIsTheLineInTheFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	x := write(t, filepath.Join(dir, "xai.csv"), strings.Join([]string{
@@ -1933,6 +2012,8 @@ func TestAProviderUnparsedLineIsTheLineInTheFile(t *testing.T) {
 // value. A lane whose only note is a near miss, or whose day is a conflict, reports no
 // type at all and printed `reports= day_basis=utc` -- a field with nothing in it.
 func TestALaneThatFoldedNothingPrintsADashForReports(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")

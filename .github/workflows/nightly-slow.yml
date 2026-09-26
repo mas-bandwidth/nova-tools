@@ -68,7 +68,7 @@ jobs:
             tag: novadisk
     name: ${{ matrix.tag }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 2
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
@@ -87,7 +87,7 @@ jobs:
     needs: [test]
     if: failure()
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 2
     permissions:
       issues: write
     steps:

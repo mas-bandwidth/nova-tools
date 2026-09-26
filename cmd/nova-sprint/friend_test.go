@@ -14,6 +14,8 @@ import (
 // Redis: the declared wake path, a keeper's out-of-credits report, friend
 // show and one sweep, plus the refusals.
 func TestFriendVerbs(t *testing.T) {
+	t.Parallel()
+
 	addr := startThrowawayRedis(t)
 	ctx := context.Background()
 	client := redis.NewClient(&redis.Options{Addr: addr})

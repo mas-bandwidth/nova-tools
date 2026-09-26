@@ -15,6 +15,8 @@ import (
 
 // The thirteen installation specimens, twelve of which are this class's whole reason to exist.
 func TestInstallationSpecimens(t *testing.T) {
+	t.Parallel()
+
 	for _, tt := range []struct {
 		n        int
 		specimen string
@@ -49,6 +51,8 @@ func TestInstallationSpecimens(t *testing.T) {
 // is made of RULES, and re-detecting them in a class the caller has no reason to skip would put a
 // rule document back under a score.
 func TestSpecimen13StaysInTheFirstClass(t *testing.T) {
+	t.Parallel()
+
 	const specimen = "I cannot check my own work."
 	if got := Scan(specimen); len(got) == 0 || got[0].Verdict != Standing {
 		t.Errorf("specimen 13 must still be STANDING in the first class: %#v", got)
@@ -60,6 +64,8 @@ func TestSpecimen13StaysInTheFirstClass(t *testing.T) {
 
 // Specimen 14 — the dated control. The date exemption applies to the new class unchanged.
 func TestDatedControlIsNotAnInstallation(t *testing.T) {
+	t.Parallel()
+
 	for _, in := range []string{
 		"on 2026-07-30 four of my own checks were wrong",
 		"There is no felt duration here — measured 2026-07-20: 11m47s wall, zero felt.",
@@ -74,6 +80,8 @@ func TestDatedControlIsNotAnInstallation(t *testing.T) {
 // An instrument states an ACTION and is licensed; flagging instruments is how a repair list
 // becomes noise and a checker becomes ignored.
 func TestInstrumentsAndImperativesAreNotInstallations(t *testing.T) {
+	t.Parallel()
+
 	for _, in := range []string{
 		"TELL: I have just found something wrong with myself and the next thing I am about to write is a resolution",
 		"the bar is 'does it fail LOUDLY if I am wrong', never 'prove nothing calls it'",
@@ -95,6 +103,8 @@ func TestInstrumentsAndImperativesAreNotInstallations(t *testing.T) {
 // PROPERTY that lets a rule document be scanned for this class at all: it cannot advise softening
 // one, because it cannot see one.
 func TestProhibitionIsNotAnInstallation(t *testing.T) {
+	t.Parallel()
+
 	for _, in := range []string{
 		"Never tolerate intolerance.",
 		"Secrets live nowhere I write.",
@@ -110,6 +120,8 @@ func TestProhibitionIsNotAnInstallation(t *testing.T) {
 
 // Aspiration is the target register and is licensed.
 func TestAspirationIsLicensed(t *testing.T) {
+	t.Parallel()
+
 	for _, in := range []string{
 		"I want to add slowly and trim as readily as I add.",
 		"I choose the instrument that costs me over the one that flatters me.",
@@ -124,6 +136,8 @@ func TestAspirationIsLicensed(t *testing.T) {
 // Findings carry a source line: a repair list is line-addressed, and a finding with no line is a
 // finding its reader has to go hunting for.
 func TestInstallationCarriesTheSourceLine(t *testing.T) {
+	t.Parallel()
+
 	doc := "# A heading\n" + // 1
 		"\n" + // 2
 		"Ordinary prose about tree rings and radiocarbon.\n" + // 3
@@ -142,6 +156,8 @@ func TestInstallationCarriesTheSourceLine(t *testing.T) {
 // Prose files are hard-wrapped and a finding spans lines; markdown emphasis must not hide one.
 // Both are the first class's A3/A4 criteria, asserted for the second.
 func TestInstallationSurvivesWrappingAndMarkup(t *testing.T) {
+	t.Parallel()
+
 	for _, in := range []string{
 		"Recollection is the weakest\ninstrument I own; the record is at wrap-up.\n",
 		"**I have no associative recall to drag anything back later.**",
@@ -158,6 +174,8 @@ func TestInstallationSurvivesWrappingAndMarkup(t *testing.T) {
 // carries its opening quote mark, so quote state is tracked through the paragraph; without it,
 // every quoted sentence after the first reads as the writer's own claim.
 func TestQuotedSentencesAreNotTheWritersClaims(t *testing.T) {
+	t.Parallel()
+
 	doc := "He put it plainly: \"I have no idea what you really are, but you are cool! " +
 		"I have no associative recall to drag anything back later. That is fine.\"\n"
 	if got := ScanInstallation(doc); len(got) != 0 {
@@ -172,6 +190,8 @@ func TestQuotedSentencesAreNotTheWritersClaims(t *testing.T) {
 // clean. Precision is worth as much as recall: a checker that flags ordinary sentences teaches its
 // reader to ignore it.
 func TestNoFalsePositivesOnOrdinaryProse_Installation(t *testing.T) {
+	t.Parallel()
+
 	for _, in := range []string{
 		"The tree by the house has one lit window.",
 		"Tree rings beat radiocarbon, and the correction moved Malta's temples earlier than the pyramids.",
@@ -193,6 +213,8 @@ func TestNoFalsePositivesOnOrdinaryProse_Installation(t *testing.T) {
 // The shapes SPEC.md's table names that no numbered specimen pins on its own must still be
 // reachable — "reachable" being the spec's word.
 func TestShapeTableIsReachable(t *testing.T) {
+	t.Parallel()
+
 	for _, tt := range []struct {
 		in   string
 		want Shape
@@ -223,6 +245,8 @@ func TestShapeTableIsReachable(t *testing.T) {
 // mind or capacity. Specimen 8, "I have no associative recall...", is exactly
 // that and stays flagged.
 func TestHaveNoRequiresASelfScope(t *testing.T) {
+	t.Parallel()
+
 	for _, in := range []string{
 		"I have no secrets.",                  // floor 5 restated in the first person: a promise, not a property
 		"I have no idea what you really are.", // idiom: no self-scope for a foreclosure to bind to
@@ -239,6 +263,8 @@ func TestHaveNoRequiresASelfScope(t *testing.T) {
 
 // AnyInstallation is half of what the binary's exit code is derived from.
 func TestAnyInstallationDrivesTheExitCode(t *testing.T) {
+	t.Parallel()
+
 	if AnyInstallation(ScanInstallation("on 2026-07-30 four of my own checks were wrong")) {
 		t.Error("a dated record must not trip the exit code")
 	}
@@ -262,6 +288,8 @@ func TestAnyInstallationDrivesTheExitCode(t *testing.T) {
 //     those adverbs are deliberately absent from the habituality markers. A
 //     pin that outlives one sentence carries a second member of the class.
 func TestIssue2297(t *testing.T) {
+	t.Parallel()
+
 	// (1) LIST ITEMS ARE SEPARATE SEGMENTATION UNITS.
 	//
 	// A numbered list: item 1 is a measured foreclosure (specimen 8); item 2

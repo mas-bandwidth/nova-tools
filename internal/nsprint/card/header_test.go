@@ -15,6 +15,8 @@ import (
 // stores no stream; a repeat push writes nothing; a label conflict writes
 // nothing.
 func TestCardPushStoresStreamAndDoneWhen(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := newRedis(t)
 	srv := repoServer(t)

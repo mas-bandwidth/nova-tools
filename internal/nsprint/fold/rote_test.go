@@ -18,6 +18,8 @@ import (
 // control-verb receipt on the sprint's own log counts for its actor, and the
 // NEXT line names the top class and its mechanism.
 func TestFoldRoteSection(t *testing.T) {
+	t.Parallel()
+
 	mr, client, fx := seed(t)
 	work := workRepo(t)
 	ctx := context.Background()
@@ -70,6 +72,8 @@ func TestFoldRoteSection(t *testing.T) {
 
 // More notes than one page (1,000) are all counted.
 func TestReadRotePages(t *testing.T) {
+	t.Parallel()
+
 	_, client, _ := seed(t)
 	ctx := context.Background()
 	pipe := client.Pipeline()
@@ -95,6 +99,8 @@ func TestReadRotePages(t *testing.T) {
 // b has none of it and more verb steps (ws:log moves, cap:log receipts), so
 // b's TREND lines show the share and the class falling and name #3089.
 func TestFoldRoteTrendTwoFolds(t *testing.T) {
+	t.Parallel()
+
 	_, client, _ := seed(t)
 	ctx := context.Background()
 	at := func(h, m int) int64 { return time.Date(2026, 9, 24, h, m, 0, 0, time.UTC).UnixMilli() }

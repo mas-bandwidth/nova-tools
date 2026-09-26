@@ -65,6 +65,8 @@ func runVerification(t *testing.T, deps Deps, args ...string) (int, string, stri
 // what it measured at HEAD, leaves every other byte alone, and lists the criterion
 // whose own tests all pass but whose :state is not verified.
 func TestVerificationWriteRewritesTheThreeFieldsAndListsTheFlip(t *testing.T) {
+	t.Parallel()
+
 	p, orig := copyFixture(t)
 	code, out, errs := runVerification(t, verificationDeps(greenTranscript, false),
 		"--sexp", p, "--repo", ".", "--write")
@@ -101,6 +103,8 @@ func TestVerificationWriteRewritesTheThreeFieldsAndListsTheFlip(t *testing.T) {
 // TestVerificationCheckWritesNothing: --check is the merge gate; it judges and
 // never writes.
 func TestVerificationCheckWritesNothing(t *testing.T) {
+	t.Parallel()
+
 	p, orig := copyFixture(t)
 	code, out, errs := runVerification(t, verificationDeps(greenTranscript, true),
 		"--sexp", p, "--repo", ".", "--check")
@@ -119,6 +123,8 @@ func TestVerificationCheckWritesNothing(t *testing.T) {
 // test is red or gone is listed STALE, and nothing is written -- a new :revision
 // would claim a test passed there that did not.
 func TestVerificationRefusesAStaleVerifiedCriterion(t *testing.T) {
+	t.Parallel()
+
 	cases := map[string]struct {
 		transcript string
 		line       string
@@ -159,6 +165,8 @@ func TestVerificationRefusesAStaleVerifiedCriterion(t *testing.T) {
 // TestVerificationWriteRefusesADirtyTreeAndAMissingSummary: --write records only a
 // measurement of HEAD, and only a suite that finished.
 func TestVerificationWriteRefusesADirtyTreeAndAMissingSummary(t *testing.T) {
+	t.Parallel()
+
 	for name, deps := range map[string]Deps{
 		"dirty":      verificationDeps(greenTranscript, true),
 		"no-summary": verificationDeps(strings.Replace(greenTranscript, "NOVA-WORK SLICE1", "(crashed)", 1), false),
@@ -178,6 +186,8 @@ func TestVerificationWriteRefusesADirtyTreeAndAMissingSummary(t *testing.T) {
 
 // TestVerificationUsage: the flags are required and --check/--write exclusive.
 func TestVerificationUsage(t *testing.T) {
+	t.Parallel()
+
 	deps := verificationDeps(greenTranscript, false)
 	for _, args := range [][]string{
 		{"--repo", ".", "--check"},
@@ -194,6 +204,8 @@ func TestVerificationUsage(t *testing.T) {
 // TestVerificationReadsTheRealRoadmap: the reader walks docs/roadmaps/nova-work.sexp
 // and every verified criterion there names at least one test.
 func TestVerificationReadsTheRealRoadmap(t *testing.T) {
+	t.Parallel()
+
 	doc, err := readVerificationDoc(filepath.Join("..", "..", defaultRoadmapSexp))
 	if err != nil {
 		t.Fatal(err)

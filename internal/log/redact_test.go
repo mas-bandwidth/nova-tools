@@ -56,6 +56,8 @@ func secretShapes() []struct{ name, line, secret string } {
 }
 
 func TestRedactRemovesEverySecretShape(t *testing.T) {
+	t.Parallel()
+
 	for _, c := range secretShapes() {
 		got := Redact(c.line)
 		if strings.Contains(got, c.secret) {
@@ -70,6 +72,8 @@ func TestRedactRemovesEverySecretShape(t *testing.T) {
 // A redaction that eats the fields we ask questions with is a worse tool than no
 // redaction: a git sha, a card id, a PR number and an ordinary sentence all survive.
 func TestRedactLeavesTheFieldsWeQueryWithAlone(t *testing.T) {
+	t.Parallel()
+
 	keep := []string{
 		"dev moved to 0d7393529d4a7f1c4e0b3a2d1f6e8c9b0a1d2e3f",
 		"card 8973x finished on bench hulk",
@@ -95,6 +99,8 @@ func TestRedactLeavesTheFieldsWeQueryWithAlone(t *testing.T) {
 // The hook is inside Write, so a caller cannot forget it: the leak is caught before the
 // line leaves the process, whatever field carried it.
 func TestWriteRedactsEveryVariableField(t *testing.T) {
+	t.Parallel()
+
 	const secret = "sk-live-9aXbQ2mR7tZk4LpW8vNc3JdH"
 	l := New(fixedClock(), func() string { return "guid-1" }, "nova-work")
 	l.Verb = "events"
@@ -125,6 +131,8 @@ func TestWriteRedactsEveryVariableField(t *testing.T) {
 // The fixed vocabulary the program itself writes -- ts, level, source, event -- is never
 // touched, so a redaction bug can never rename an event out from under a query.
 func TestWriteKeepsTheFixedVocabulary(t *testing.T) {
+	t.Parallel()
+
 	l := New(fixedClock(), func() string { return "guid-1" }, "nova-work")
 	l.Verb = "events"
 	l.Event = "pr-checks-done"

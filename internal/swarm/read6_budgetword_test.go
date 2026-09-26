@@ -16,6 +16,8 @@ import (
 // reasoning for the deadline reap is the same reasoning here: a process that outlived the
 // kill is a fact about the KILL, not a background subtask the prompt forbade.
 func TestABudgetKillWithASurvivorKeepsItsFindings(t *testing.T) {
+	t.Parallel()
+
 	for _, c := range []struct {
 		name, end string
 		survivors int
@@ -38,6 +40,8 @@ func TestABudgetKillWithASurvivorKeepsItsFindings(t *testing.T) {
 
 // AND THE CONSEQUENCE, at the place the word is read: `triage` counts a budget-ended job.
 func TestTriageCountsABudgetEndedJob(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	p, _ := recoveryPool(t, dir)
 	sc := Sidecar{ID: NewID(time.Now().UTC(), "budgeted"), Files: 1, Tokens: 10, RC: -1,

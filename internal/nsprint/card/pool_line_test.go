@@ -35,6 +35,8 @@ func poolLine(t *testing.T, ctx context.Context, client *redis.Client) string {
 // no bench-row queue field in play. An empty pool prints "pool: 0 undealt"
 // while the sprint has cards, never no line.
 func TestTablePoolLineIsTheUndealtView(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	_, client := newSprint(t)
 	srv := repoServer(t)

@@ -8,6 +8,8 @@ import (
 // The DONE-WHEN control for #2895: a card routed to a dropped route is
 // REFUSED, whatever its rung and work type, and the refusal names the rule.
 func TestAllowedRoutesRefusesADroppedRoute(t *testing.T) {
+	t.Parallel()
+
 	tab, err := Load()
 	if err != nil {
 		t.Fatal(err)
@@ -51,6 +53,8 @@ func assertRefused(t *testing.T, tab *Table, c Card, want string) {
 // The five flash leaders and the two opencode pro routes of the 12:16 AM
 // pattern read are the rung lists; nothing else is allowed by default.
 func TestAllowedRoutesPerRungFromTheRanking(t *testing.T) {
+	t.Parallel()
+
 	tab, err := Load()
 	if err != nil {
 		t.Fatal(err)
@@ -73,6 +77,8 @@ func TestAllowedRoutesPerRungFromTheRanking(t *testing.T) {
 }
 
 func TestAllowedRoutesRefusesWrongRungHeldAndUnknown(t *testing.T) {
+	t.Parallel()
+
 	tab, err := Load()
 	if err != nil {
 		t.Fatal(err)
@@ -95,6 +101,8 @@ func TestAllowedRoutesRefusesWrongRungHeldAndUnknown(t *testing.T) {
 // A work-type row widens its rung by held routes the report measured on that
 // type: kimi-k3 on cell3, glm-5.3-flash on nx. Nowhere else.
 func TestAllowedRoutesWorkTypeRowWidensOnlyThatType(t *testing.T) {
+	t.Parallel()
+
 	tab, err := Load()
 	if err != nil {
 		t.Fatal(err)
@@ -109,6 +117,8 @@ func TestAllowedRoutesWorkTypeRowWidensOnlyThatType(t *testing.T) {
 }
 
 func TestParseRefusesATypeRowThatAddsADroppedRoute(t *testing.T) {
+	t.Parallel()
+
 	src := `routes:
   - route: a
     rung: flash
@@ -141,6 +151,8 @@ types:
 }
 
 func TestRenderPrintsTheTableWithTheNumbers(t *testing.T) {
+	t.Parallel()
+
 	tab, err := Load()
 	if err != nil {
 		t.Fatal(err)
@@ -166,6 +178,8 @@ func TestRenderPrintsTheTableWithTheNumbers(t *testing.T) {
 // the top of routes.yaml, and a held or dropped row's why names the step of
 // the rule that put it there.
 func TestTheTableFollowsItsRule(t *testing.T) {
+	t.Parallel()
+
 	tab, err := Load()
 	if err != nil {
 		t.Fatal(err)
@@ -194,6 +208,8 @@ func TestTheTableFollowsItsRule(t *testing.T) {
 
 // The rule is not vacuous: the rows stella named move when their numbers do.
 func TestDeriveMovesARowWhenItsNumbersMove(t *testing.T) {
+	t.Parallel()
+
 	tab, err := Load()
 	if err != nil {
 		t.Fatal(err)
@@ -224,6 +240,8 @@ func TestDeriveMovesARowWhenItsNumbersMove(t *testing.T) {
 // ranking drops (ordspro and orhaiku are both "dropped" rows above) -- that
 // is the point of an override, unlike a types row.
 func TestAllowedRoutesCodeOverrideIsExactlyTheThreeThatLanded(t *testing.T) {
+	t.Parallel()
+
 	tab, err := Load()
 	if err != nil {
 		t.Fatal(err)
@@ -265,6 +283,8 @@ func TestAllowedRoutesCodeOverrideIsExactlyTheThreeThatLanded(t *testing.T) {
 // A benched or dead route is refused even when an override names it: the
 // override list is not the last word, Check is.
 func TestAllowedRoutesOverrideNeverAdmitsABenchedRoute(t *testing.T) {
+	t.Parallel()
+
 	src := `routes:
   - route: a
     rung: pro
@@ -309,6 +329,8 @@ overrides:
 }
 
 func TestParseOverridesValidation(t *testing.T) {
+	t.Parallel()
+
 	base := `routes:
   - route: a
     rung: pro

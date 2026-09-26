@@ -27,6 +27,8 @@ import (
 // fold, check, sum, sources, report and session read files and write one day file, so no line is
 // skipped by name. A skip would be a hole, and this block has none.
 func TestHelpExampleLinesRunAsPrinted(t *testing.T) {
+	t.Parallel()
+
 	lines := exampleBlockLines(usage)
 	if len(lines) == 0 {
 		t.Fatal("the usage banner's `example:` blocks hold no line; this test would pass by running nothing")

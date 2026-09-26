@@ -17,6 +17,8 @@ import (
 // (ns_fleet_step: "ERR Function not found"). LoadMissing loads an empty store
 // and leaves a held library, older or newer, exactly as it is.
 func TestLoadMissingNeverReplaces(t *testing.T) {
+	t.Parallel()
+
 	addr := testutil.Start(t)
 	ctx := context.Background()
 	c := redis.NewClient(&redis.Options{Addr: addr})

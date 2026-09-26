@@ -136,6 +136,8 @@ func writeFile(t *testing.T, name, body string) string {
 // could run, and every one of the eight names a fault that pass found on a machine the
 // survey called healthy.
 func TestTheStandardWorkloadsAreTheShippedClasses(t *testing.T) {
+	t.Parallel()
+
 	loads, err := StandardWorkloads()
 	if err != nil {
 		t.Fatal(err)
@@ -228,6 +230,8 @@ func TestTheStandardWorkloadsAreTheShippedClasses(t *testing.T) {
 
 // TestAWorkloadIsAFileWithFrontMatter reads one from disk and holds every field.
 func TestAWorkloadIsAFileWithFrontMatter(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	mustWrite(t, filepath.Join(dir, "tiny.card"), strings.Join([]string{
 		"roles: bench,services",
@@ -268,6 +272,8 @@ func TestAWorkloadIsAFileWithFrontMatter(t *testing.T) {
 // TestAWorkloadWithoutARoleOrAnExpectIsRefused: a workload that applies to nothing, or that
 // cannot say what a pass looks like, is a certificate that means nothing.
 func TestAWorkloadWithoutARoleOrAnExpectIsRefused(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct{ name, body, want string }{
 		{"no roles", "expect: ^OK\n\necho OK\n", "roles"},
 		{"no expect", "roles: bench\n\necho OK\n", "expect"},
@@ -297,6 +303,8 @@ func TestAWorkloadWithoutARoleOrAnExpectIsRefused(t *testing.T) {
 // certificate expire. If either half can change without the hash changing, a bench keeps a
 // certificate for a standard it no longer meets.
 func TestTheStandardHashMovesWithTheStandardAndWithTheWorkloads(t *testing.T) {
+	t.Parallel()
+
 	standard := writeFile(t, "bench-standard.sh", "echo standard v1\n")
 	loads, err := StandardWorkloads()
 	if err != nil {
@@ -331,6 +339,8 @@ func TestTheStandardHashMovesWithTheStandardAndWithTheWorkloads(t *testing.T) {
 
 // TestCertifiedIsTrueOnlyForTheCurrentBuildAndHash is the whole currency rule.
 func TestCertifiedIsTrueOnlyForTheCurrentBuildAndHash(t *testing.T) {
+	t.Parallel()
+
 	path := writeFile(t, "certs.tsv", "")
 	at := fixedNow()
 	for _, c := range []Certificate{
@@ -369,6 +379,8 @@ func TestCertifiedIsTrueOnlyForTheCurrentBuildAndHash(t *testing.T) {
 // TestTheLastRowWins: certify appends, so a machine that failed and was repaired is current
 // on its newest row and not on its oldest.
 func TestTheLastRowWins(t *testing.T) {
+	t.Parallel()
+
 	path := writeFile(t, "certs.tsv", "")
 	at := fixedNow()
 	must(t, AppendCertificate(path, Certificate{Machine: "hulk", Build: "v1", Hash: "h", Class: "go-test", Verdict: VerdictFail, Evidence: "go1.22 refused by go.mod", At: at}))
@@ -385,6 +397,8 @@ func TestTheLastRowWins(t *testing.T) {
 // TestEvidenceIsOneLineOnTheRowAndOnTheLine: a workload that fails with a screenful must not
 // be able to write a second line into the certificates file or into the output.
 func TestEvidenceIsOneLineOnTheRowAndOnTheLine(t *testing.T) {
+	t.Parallel()
+
 	path := writeFile(t, "certs.tsv", "")
 	must(t, AppendCertificate(path, Certificate{
 		Machine: "hulk", Build: "v1", Hash: "h", Class: "go-test", Verdict: VerdictFail,
@@ -429,6 +443,8 @@ func benchOK() map[string]remoteAnswer {
 
 // TestCertifyRunsEveryWorkloadOfTheMachinesRolesAndWritesARowEach is the happy path.
 func TestCertifyRunsEveryWorkloadOfTheMachinesRolesAndWritesARowEach(t *testing.T) {
+	t.Parallel()
+
 	certs := writeFile(t, "certs.tsv", "")
 	remote := &fakeRemote{answers: benchOK()}
 	out, errs, code := runCertify(t, CertifyInput{
@@ -473,6 +489,8 @@ func TestCertifyRunsEveryWorkloadOfTheMachinesRolesAndWritesARowEach(t *testing.
 // matched against expect, never from the exit code alone -- the hulk card exited non-zero
 // for a reason the exit code could not name.
 func TestAFailingWorkloadIsOneFAILRowAndExitOne(t *testing.T) {
+	t.Parallel()
+
 	answers := benchOK()
 	answers["space|go-test"] = remoteAnswer{
 		out: "go: go.mod requires go >= 1.26.5 (running go 1.22.2)\n",
@@ -508,6 +526,8 @@ func TestAFailingWorkloadIsOneFAILRowAndExitOne(t *testing.T) {
 // certify composes for a wall workload wraps the body in nova-sandbox with a writable job
 // directory, a HOME inside it, and the toolchain named as a read root.
 func TestGoTestRunsInsideTheWallWithTheToolchainAsAReadRoot(t *testing.T) {
+	t.Parallel()
+
 	remote := &fakeRemote{answers: benchOK()}
 	_, _, code := runCertify(t, CertifyInput{
 		Machines: testRegistry(t), Only: "space", Certs: writeFile(t, "certs.tsv", ""),
@@ -545,6 +565,8 @@ func TestGoTestRunsInsideTheWallWithTheToolchainAsAReadRoot(t *testing.T) {
 // TestGitPushMakesItsOwnScratchRemoteAndTakesItAway: the push workload must not leave a bare
 // repository behind, and must not push to anything but the throwaway it made.
 func TestGitPushMakesItsOwnScratchRemoteAndTakesItAway(t *testing.T) {
+	t.Parallel()
+
 	loads, err := StandardWorkloads()
 	if err != nil {
 		t.Fatal(err)
@@ -575,6 +597,8 @@ func TestGitPushMakesItsOwnScratchRemoteAndTakesItAway(t *testing.T) {
 // units, both halves taking merge-group shards, for ten minutes. A check that can be wrong
 // in that direction must hold the listener count against the unit count.
 func TestRunnerPathProbesBothSystemdScopesAndBothUnitNamings(t *testing.T) {
+	t.Parallel()
+
 	body := workloadBody(t, "runner-path")
 	for _, want := range []string{
 		"--system", "--user", "nova-runner-*", "actions.runner.*", "launchctl",
@@ -595,6 +619,8 @@ func TestRunnerPathProbesBothSystemdScopesAndBothUnitNamings(t *testing.T) {
 // days -- about 1.8 GB a day -- so a seven-day retention rule cannot bound it and a size read
 // alone cannot say so.
 func TestDiagSizeReportsTheRateAndNotOnlyTheSize(t *testing.T) {
+	t.Parallel()
+
 	body := workloadBody(t, "diag-size")
 	for _, want := range []string{"MB/day", "oldest", "RATE=$((TOTAL / DAYS))"} {
 		if !strings.Contains(body, want) {
@@ -608,6 +634,8 @@ func TestDiagSizeReportsTheRateAndNotOnlyTheSize(t *testing.T) {
 // redis on space is bound on the tailnet with protected mode and no password, so a PING from
 // a bench is DENIED -- the name and the path work and only the password gate remains.
 func TestServicesReachDistinguishesRefusedFromDeniedFromPONG(t *testing.T) {
+	t.Parallel()
+
 	body := workloadBody(t, "services-reach")
 	for _, want := range []string{"PONG", "protected mode", "refused", "requirepass", "nova-secrets"} {
 		if !strings.Contains(body, want) {
@@ -645,6 +673,8 @@ func workloadBody(t *testing.T, class string) string {
 
 // TestRunnerOnlineAsksTheForgeAndNamesTheRunnerThatIsNot.
 func TestRunnerOnlineAsksTheForgeAndNamesTheRunnerThatIsNot(t *testing.T) {
+	t.Parallel()
+
 	forge := fakeForge{runners: map[string][]RunnerStatus{
 		"mas-bandwidth/nova-tools": {
 			{Name: "batman-nova-1", Status: "online"},
@@ -680,6 +710,8 @@ func TestRunnerOnlineAsksTheForgeAndNamesTheRunnerThatIsNot(t *testing.T) {
 
 // TestAnUnknownMachineIsRefusedByNameBeforeAnySSH.
 func TestAnUnknownMachineIsRefusedByNameBeforeAnySSH(t *testing.T) {
+	t.Parallel()
+
 	remote := &fakeRemote{answers: benchOK()}
 	_, errs, code := runCertify(t, CertifyInput{
 		Machines: testRegistry(t), Only: "batmobile", Certs: writeFile(t, "certs.tsv", ""),
@@ -698,6 +730,8 @@ func TestAnUnknownMachineIsRefusedByNameBeforeAnySSH(t *testing.T) {
 
 // TestDryRunSaysWhatItWouldRunAndWritesNothing.
 func TestDryRunSaysWhatItWouldRunAndWritesNothing(t *testing.T) {
+	t.Parallel()
+
 	certs := writeFile(t, "certs.tsv", "")
 	remote := &fakeRemote{answers: benchOK()}
 	out, errs, code := runCertify(t, CertifyInput{
@@ -720,6 +754,8 @@ func TestDryRunSaysWhatItWouldRunAndWritesNothing(t *testing.T) {
 
 // TestAllRunsEveryMachineInTheRegistryUnderItsOwnRoles.
 func TestAllRunsEveryMachineInTheRegistryUnderItsOwnRoles(t *testing.T) {
+	t.Parallel()
+
 	answers := benchOK()
 	for _, m := range []string{"hulk", "batman", "loki", "studio"} {
 		answers[m] = remoteAnswer{out: "nova-merge v0.17.0\nEVERYTHING OK PONG ready online\n"}
@@ -741,6 +777,8 @@ func TestAllRunsEveryMachineInTheRegistryUnderItsOwnRoles(t *testing.T) {
 
 // TestNeitherMachineNorAllIsARefusal: certify never guesses the whole fleet.
 func TestNeitherMachineNorAllIsARefusal(t *testing.T) {
+	t.Parallel()
+
 	_, errs, code := runCertify(t, CertifyInput{
 		Machines: testRegistry(t), Certs: writeFile(t, "certs.tsv", ""),
 		Remote: &fakeRemote{}, Hash: "h", Now: fixedNow,
@@ -815,6 +853,8 @@ func readFile(t *testing.T, path string) string {
 // TestBuildVersionRejectsErrorAndBannerText verifies that BuildVersion extracts valid
 // build version tokens and rejects SSH banners, diagnostics, and error messages.
 func TestBuildVersionRejectsErrorAndBannerText(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		out  string
@@ -930,6 +970,8 @@ func TestBuildVersionRejectsErrorAndBannerText(t *testing.T) {
 // TestMachineBuildProbeFailsOnRunScriptError tests that a failure in the machine-build probe's
 // remote script execution fails the certification, prints FAIL to stderr, and writes no row.
 func TestMachineBuildProbeFailsOnRunScriptError(t *testing.T) {
+	t.Parallel()
+
 	certs := writeFile(t, "certs.tsv", "")
 	ans := benchOK()
 	ans["space|build"] = remoteAnswer{err: errors.New("ssh: connection timed out")}
@@ -957,6 +999,8 @@ func TestMachineBuildProbeFailsOnRunScriptError(t *testing.T) {
 // TestMachineBuildProbeFailsOnBannerOrErrorOutput tests that when the build probe script exits 0
 // but outputs banner or error text without a valid build version, certification fails cleanly with no row.
 func TestMachineBuildProbeFailsOnBannerOrErrorOutput(t *testing.T) {
+	t.Parallel()
+
 	certs := writeFile(t, "certs.tsv", "")
 	ans := benchOK()
 	ans["space|build"] = remoteAnswer{out: "Authorized uses only. All activity may be monitored.\n"}
@@ -984,6 +1028,8 @@ func TestMachineBuildProbeFailsOnBannerOrErrorOutput(t *testing.T) {
 // TestCertifyRefusesInvalidBuildOverride tests that passing an invalid build version string
 // to Certify causes failure and writes no certificate rows.
 func TestCertifyRefusesInvalidBuildOverride(t *testing.T) {
+	t.Parallel()
+
 	certs := writeFile(t, "certs.tsv", "")
 	remote := &fakeRemote{answers: benchOK()}
 

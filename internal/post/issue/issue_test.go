@@ -5,6 +5,8 @@ import (
 )
 
 func TestParseSection_WithResult(t *testing.T) {
+	t.Parallel()
+
 	raw := `RESULT test-card sha=abcd
 KIND: fix
 SCHEMA: v2`
@@ -26,6 +28,8 @@ SCHEMA: v2`
 }
 
 func TestParseSection_Validate(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name    string
 		raw     string
@@ -81,6 +85,8 @@ KIND: fix`,
 }
 
 func TestSection_Body(t *testing.T) {
+	t.Parallel()
+
 	raw := `RESULT test sha=1234
 KIND: fix
 SCHEMA: v2
@@ -97,6 +103,8 @@ with multiple lines`
 }
 
 func TestSection_Title(t *testing.T) {
+	t.Parallel()
+
 	raw := `RESULT my-test-card sha=abcd123
 KIND: fix
 SCHEMA: v2`

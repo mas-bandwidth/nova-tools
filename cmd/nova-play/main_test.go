@@ -20,6 +20,8 @@ func writeSource(t *testing.T, dir, name, body string) string {
 }
 
 func TestNoVerbRefused(t *testing.T) {
+	t.Parallel()
+
 	var stdout, stderr bytes.Buffer
 	if got := run(nil, &stdout, &stderr); got != 2 {
 		t.Errorf("want exit 2, got %d", got)
@@ -30,6 +32,8 @@ func TestNoVerbRefused(t *testing.T) {
 }
 
 func TestUnknownVerbRefused(t *testing.T) {
+	t.Parallel()
+
 	var stdout, stderr bytes.Buffer
 	if got := run([]string{"unknown"}, &stdout, &stderr); got != 2 {
 		t.Errorf("want exit 2, got %d", got)
@@ -37,6 +41,8 @@ func TestUnknownVerbRefused(t *testing.T) {
 }
 
 func TestHelp(t *testing.T) {
+	t.Parallel()
+
 	var stdout, stderr bytes.Buffer
 	if got := run([]string{"help"}, &stdout, &stderr); got != 0 {
 		t.Errorf("want exit 0, got %d", got)
@@ -47,6 +53,8 @@ func TestHelp(t *testing.T) {
 }
 
 func TestAnnotateRequiresAllFlags(t *testing.T) {
+	t.Parallel()
+
 	var stdout, stderr bytes.Buffer
 	if got := run([]string{"annotate", "--source", "x.txt"}, &stdout, &stderr); got != 2 {
 		t.Errorf("want exit 2, got %d", got)
@@ -54,6 +62,8 @@ func TestAnnotateRequiresAllFlags(t *testing.T) {
 }
 
 func TestAnnotateAndRead(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	src := writeSource(t, dir, "story.txt", "The lantern room held a brass fitting.\n")
 
@@ -81,6 +91,8 @@ func TestAnnotateAndRead(t *testing.T) {
 }
 
 func TestReadEmptySource(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	src := writeSource(t, dir, "story.txt", "No annotations here.\n")
 
@@ -98,6 +110,8 @@ func TestReadEmptySource(t *testing.T) {
 }
 
 func TestStaleAnchorInRead(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	src := writeSource(t, dir, "story.txt", "The lantern room held a brass fitting.\n")
 
@@ -124,6 +138,8 @@ func TestStaleAnchorInRead(t *testing.T) {
 }
 
 func TestCLIPathWithSpaces(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	src := writeSource(t, dir, "story with spaces.txt", "The lantern room held a brass fitting.\n")
 
@@ -182,6 +198,8 @@ func TestCLIPathWithSpaces(t *testing.T) {
 }
 
 func TestCLIMultilineNoteAndReply(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	src := writeSource(t, dir, "story.txt", "A shared passage.\n")
 
@@ -240,6 +258,8 @@ func TestCLIMultilineNoteAndReply(t *testing.T) {
 }
 
 func TestCLIStaleSourceReplyRefusal(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	src := writeSource(t, dir, "story.txt", "The lantern room held a brass fitting.\n")
 
@@ -317,6 +337,8 @@ func TestCLIStaleSourceReplyRefusal(t *testing.T) {
 }
 
 func TestCLIProseBeginningWithKeywords(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	passage := "Passage line 1\nPASSAGE line 2\nPassage line 3"
 	src := writeSource(t, dir, "story.txt", passage+"\n")
@@ -387,6 +409,8 @@ func TestCLIProseBeginningWithKeywords(t *testing.T) {
 }
 
 func TestCLIFullAuthorNames(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	src := writeSource(t, dir, "story.txt", "The lantern room held a brass fitting.\n")
 
@@ -429,6 +453,8 @@ func TestCLIFullAuthorNames(t *testing.T) {
 }
 
 func TestCLICRLFPreserved(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	src := writeSource(t, dir, "story.txt", "The lantern room held a brass fitting.\r\n")
 
@@ -468,6 +494,8 @@ func TestCLICRLFPreserved(t *testing.T) {
 // Through the actual CLI surface: an author and a body carrying double quotes,
 // backslashes and a trailing space must survive annotate, read and reply.
 func TestCLIQuotedAuthorAndTextRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	src := writeSource(t, dir, "story.txt", "The lantern room held a brass fitting.\n")
 	passage := "The lantern room held a brass fitting."

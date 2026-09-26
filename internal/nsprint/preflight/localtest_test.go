@@ -9,6 +9,8 @@ import (
 // #3899: 7.26 reads one ps snapshot; a go test under the session preflight
 // runs in is RED, one under another session or preflight's own caller is not.
 func TestCheckLocalBatchTests(t *testing.T) {
+	t.Parallel()
+
 	ps := ParseProcs(`    1     0 /sbin/launchd
   100     1 /Applications/Claude.app/Contents/MacOS/Claude
   110   100 /opt/claude-code/claude --resume

@@ -1244,85 +1244,6 @@ and these tests must answer identically on every platform in the matrix — so a
 command assembled in a variable or hidden in a composite action is not seen, and
 the allowlist is matched by prefix.
 
-### `darwin-sizes` — the darwin cap is measured on a quiet host, with a stated margin
-
-**The rule.** The numbers that decide the darwin merge leg's cost — the measured
-sizes in `testdata/ci/package-sizes-darwin.tsv`, the 40 s shard budget, and
-`DARWIN_TIMEOUT` in the Makefile — stay in one place and in step, and the ceiling
-is never less than the stated margin over the largest share the plan can hand one
-`go test`. The sizes are read on a QUIET host — no runner busy, no merge group in
-flight — and the margin over them is TWO, written down as a number rather than
-folded into the table. A measurement is a floor; a cap is a floor times a margin;
-neither is ever a guess.
-**The hurt.** 2026-09-18 16:41Z, merge-group run 35369433950 (batch 7, `#1360`):
-`test-hosted-merge (darwin, 0)` and `(darwin, 1)` were CANCELLED at the
-five-minute per-leg cap on superman, and a cancelled shard drops the whole group
-and restarts every PR behind it. The log does not say what the headline says:
-NO package came near the 100 s per-package ceiling. Shard 0 finished 27 packages
-summing 211.8 s of `go test` between 16:36:43 and 16:41:24 and was killed partway
-through the rest, its largest single invocation `cmd/nova-wake` at 50.7 s. What
-ran out was the SHARD'S SUM, and the sum is decided by how many ways each package
-is dealt. Dealing came off the LINUX table, and FOUR of the five largest darwin
-packages sit under its 40 s budget, so each was dealt three ways instead of six:
-`cmd/nova-wake` 24.6 s on hulk against 120.3 s measured on superman,
-`cmd/nova-merge` 7.7 against 68.8, `internal/swarm` 17.4 against 64.4 and
-`cmd/nova-bus` 10.0 against 54.2. The second half of the hurt
-is the machine's STATE: superman was in its post-power-on condition, Spotlight
-settling and XprotectService scanning fresh test binaries with sixteen runners
-live, so the numbers of that moment were the state's and not the host's. That is
-why the rule names the conditions and not only the number — and why the margin is
-measured rather than assumed, on the same host both ways: `cmd/nova-merge` is
-68.8 s whole on a quiet superman against about 147 s on the loaded superman of
-that run, which is 2.1x.
-**The test.** `TestDarwinMergeShardPlanIsDerivedFromMeasurements`
-(`internal/ci/darwin_shards_class_test.go`).
-**Its allowlist.** The sizes file itself, whose censored rows are LABELLED as
-floors rather than written as sizes; the forcing packages are named in the test,
-so they cannot quietly fall out of the table.
-**Its remedy lines.** `the Makefile declares no DARWIN_TIMEOUT; the darwin
-per-package ceiling has nowhere to live but a workflow line nobody can run`;
-`DARWIN_TIMEOUT = <d>, under 2x the largest per-invocation share the plan can
-hand one go test`; and `<file> does not say "quiet" anywhere in its header; a
-size is only a size if the header says what the machine was doing when it was
-read`.
-**Its narrowings.** Like its Windows sibling it checks that the numbers are
-measured and consistent, not that they are still TRUE: a package that doubles on
-an x64 Mac keeps its old row until somebody measures again, and only the run says
-so. It reads the table's header for the words `quiet` and `margin` rather than
-verifying the conditions, which no test can check after the fact.
-
-### `darwin-table` — the merge gate's darwin leg deals from the darwin table
-
-**The rule.** The merge group's darwin leg reads the FULL column of
-`testdata/ci/package-sizes-darwin.tsv`, takes its ceiling from
-`make -s darwin-timeout`, and deals an unmeasured or censored package across
-EVERY slot the group opened; only linux still keeps the Linux table, which is its
-own measurement.
-**The hurt.** The same run, 35369433950, and the same shape as `windows-table`
-one platform later: a leg dealing from a table measured on another machine. Linux
-could not have said otherwise — `cmd/nova-merge` is 7.7 s on hulk and 68.8 s on a
-quiet x64 Mac, `cmd/nova-bus` 10.0 s there and 54.2 s here — so four of the five
-packages that dominate this leg sat under the 40 s budget in the only table it
-read, and were dealt three ways instead of six. Three platforms are three
-measurements, and the last leg reading somebody else's numbers was the one that
-dropped the group.
-**The test.** `TestMergeGateDarwinLegDealsFromTheDarwinTable`
-(`internal/ci/darwin_shards_class_test.go`).
-**Its allowlist.** None.
-**Its remedy lines.** `the merge gate's shard plan never reads <sizes file>; its
-darwin leg would deal from the Linux column again, which is how run 35369433950's
-group was dropped`; `an unknown darwin size must be dealt across every slot and
-never guessed downward`; and `the merge gate's darwin leg does not take its
-ceiling from make -s darwin-timeout; the darwin number would be written twice and
-drift`.
-**Its narrowings.** It asserts the shell branch's text inside one named step, so
-a renamed step fails loudly rather than passing silently — the same trade its
-Windows sibling takes. The windows and darwin branches in that step are
-deliberately NOT factored into one parameterised helper: both tests read the step
-as TEXT and assert each leg's own table and column literally, and a shared `awk`
-taking the column as a variable would satisfy neither. Twenty lines of duplicated
-shell is the price of a rule a reviewer can see.
-
 ### `cache` — no cache step on a self-hosted runner
 
 **The rule.** Every `actions/cache` step in `ci.yml` carries
@@ -2156,6 +2077,69 @@ matches a redirect, append, `tee`, `cp`, `mv`, `install` or `truncate` shape ont
 that path — a write performed some other way, such as a wrapped `dd` or a
 Python one-liner, is invisible to it.
 
+### `parallel` — every test opens with `t.Parallel()`
+
+**The rule.** Every top-level `func TestX(t *testing.T)` in a `_test.go` under
+`cmd/` or `internal/`, whatever its build tags, has `t.Parallel()` as its FIRST
+statement, or sits on the serial allowlist with its reason.
+**The hurt.** Glenn, 2026-09-25: "Go tests always run in parallel." On that day
+843 of 6,417 test functions were parallel; `cmd/nova-sprint` ran 267 tests one
+after another and `go-test-cmd` took 129 s on the Linux bench against a
+two-minute ceiling and a one-minute target. The same change made 4,487 more
+tests parallel (5,330 of 6,417) with a Go program: a test that calls
+`t.Setenv`/`t.Chdir`, `os.Setenv` or `os.Chdir`, or assigns a package-level
+variable from test code, directly or through a helper, stayed serial, and so did
+the few that read a process-wide counter (`tokens.Opens`, `bus.NoteParses`,
+pulse's `statusIndexReads`) every parallel test adds to, or register into a
+package map (`go test -race` found nova-sprint's `verbs`).
+**The test.** `TestEveryTestOpensWithTParallel`
+(`internal/ci/parallel_class_test.go`).
+**Its allowlist.** `internal/ci/testdata/serial-tests_allowlist.txt`, one
+`path:TestName serial: <reason>` per line (`t.Setenv`, `t.Chdir`, `os.Chdir`,
+`swaps package var <pkg>.<name>`, or a sentence); shrink-only both ways, a row
+without a `serial:` reason is refused, and `serialTestsCeiling` caps the count
+so the list can only come down.
+**Its remedy lines.** `does not open with t.Parallel(); make it the first
+statement, or give the test a per-test seam (cmd.Env, an injected clock,
+t.TempDir) instead of t.Setenv, os.Chdir or a package-level swap`; for a stale
+row, `delete the stale entry and lower serialTestsCeiling (the list only
+shrinks)`.
+**Its narrowings.** It reads the syntax only: a `t.Parallel()` later in the body
+does not count, a test that opens with `t.Parallel()` and then races a shared
+resource is not seen (that is `go test -race`'s job), and subtests are not
+required to call it.
+
+### `slowwaits` — no per-commit test sleeps over a second or waits out a deadline
+
+**The rule.** No `_test.go` under `cmd/` or `internal/` outside a
+`//go:build slow` file writes `time.Sleep` of more than one second, or hands
+the code under test a deadline over five seconds and under thirty -- a field,
+assignment or `--flag` value named deadline, timeout, wall, grace or idle.
+**The hurt.** Glenn, 2026-09-25: "as we have worked, we have made tests
+slower." One verdict test sat 59 s in provider retry waits it asserted nothing
+about, one route test polled the wrong key until its 30 s ceiling, and a
+deadline test waited out a stalled reader for 25 s; eighteen tests were over
+five seconds. The five-to-thirty band is the shape of a deadline proved by
+reaching it; below five is the short injected deadline, and thirty or more is
+the generous ceiling `waits` and the ten-second law ask for, which costs
+nothing and is not read here.
+**The test.** `TestNoTestSleepsOverASecondOrWaitsOutADeadlineOverFive`
+(`internal/ci/slowwaits_class_test.go`), and `TestSlowWaitsRuleSeesEveryShape`
+beside it, which pins the reader against six shapes it must catch and eight it
+must pass.
+**Its allowlist.** `internal/ci/testdata/slowwaits_allowlist.txt`, one
+`path:Func <reason>` per line, keyed by function and not by line; each entry
+was measured on the day the rule landed and none pays its wait. Shrink-only.
+**Its remedy lines.** `inject a short one through the seam (200 ms proves a
+deadline as well as 10 s does), wait on the event instead of the clock, or move
+the test behind //go:build slow (nightly-slow.yml runs it)`; for a stale row,
+`delete the stale entry (the list only shrinks)`.
+**Its narrowings.** It reads literal durations only (`constDuration`, the
+`waits` rule's evaluator): a duration from a variable, a `FAKE-SLEEP` or shell
+`sleep` inside a fake's script, a provider retry wait inside the code under
+test and a poll that never sees its event are all invisible to it. The
+per-package budget (`slowtests`) and the measured table are the net under those.
+
 ### `seatwrap` — no script wraps `nova-secrets exec` around a seat tool for its Redis password
 
 **The rule.** No shell file in the tree (a `.sh`, `.bash` or `.zsh` file, or an
@@ -2213,8 +2197,6 @@ Every class test reads this repository's own text — `.go` files, `.github/work
 14. `TestNoTestAssertsAWallClockBoundUnderTenSeconds` — no `_test.go` carries a literal duration under ten seconds where the test leans on the wall clock; thirty seconds is the generous bound, or `// wall-ok:`.
 15. `TestCIBuildTestLintCommandsGoThroughMake` — every build/test/vet/format command in `ci.yml` is a `make` invocation.
 16. `TestMakefileIsTheOneEntry` — the Makefile declares `build`, `test`, `test-full`, `lint`, `check`, `clean`, `help` as phony targets, with `check` the union of CI's gates.
-17. `TestDarwinMergeShardPlanIsDerivedFromMeasurements` — the darwin sizes, 40 s shard budget and `DARWIN_TIMEOUT` stay in one place, measured on a quiet host with a stated margin of two.
-18. `TestMergeGateDarwinLegDealsFromTheDarwinTable` — the merge gate's darwin leg reads the full darwin sizes column, takes its ceiling from `make -s darwin-timeout`, and deals unmeasured packages across every slot.
 19. `TestNoCacheStepRunsOnASelfHostedRunner` — every `actions/cache` step in `ci.yml` is `github-hosted`-only and every `setup-go` says `cache: false`.
 20. `TestEveryActionIsPinnedBySHA` — every `uses:` in `ci.yml` and `certification.yml` is `owner/action@<40-hex-sha>`.
 21. `TestEveryTriggeringEventReachesACIOKVerdict` — `ci-ok` has a verdict step gated for every triggering event (`pull_request`, `merge_group`, `push`, `workflow_dispatch`).
@@ -2239,6 +2221,35 @@ Every class test reads this repository's own text — `.go` files, `.github/work
 40. `TestTaskCardsHaveOneWriter` — no non-test Go file under `cmd/` or `internal/` writes a task card's sets or record (`ws:<stream>:<where>`, `friend:<f>:cards:<where>`, the friend-queue idx sets, `task:<id>`) with a direct Redis call; every move is one FCALL of the one writer, `ns_tcard_move` in `internal/nsprint/fn/lua/02_card_move.lua` (#3778, Glenn 2026-09-25: "a card can only ever be in no set, or one of these sets"; the 07:46 table read 143/143 left after a night that landed 27 PRs because four writers kept the sets). Fixtures that seed a throwaway store (a `*fixture*.go` file, `internal/nsprint/ws/wstest`) are the only exceptions; the remedy is `internal/nsprint/taskcard`. Its Lua twin is `TestTaskCardOneWriter` in `internal/nsprint/fn`.
 41. `TestTableSetsHaveOneWriter` / `TestTableSetsRuleCatchesAnInjectedWriter` — nothing but the one move file, `internal/nsprint/fn/lua/02_card_move.lua`, writes a set behind the three tables: `ws:<stream>:<where>` (the stream table's primaries), `bench:<b>:cards:<col>` and `friend:<f>:cards:<col>` (the host and friend tables' copies), and the bench lease ledgers `bench:<b>:living|starting` being folded into `bench:<b>:cards:working` (#3929, the table moves; Glenn 2026-09-25: "it's YOUR JOB to make sure that these links are always valid"). **The hurt:** the table printed counts no card record could account for, because several files each kept their own copy of a set, so a move in one left a stale member in another. **The sweep:** every Lua file under `internal/nsprint/fn/lua` (a ZADD, ZREM, SADD, SREM, SMOVE, pop, range removal, store, DEL, UNLINK or RENAME of one of those keys, directly or through a local bound to one) and every non-test Go file under `cmd/` and `internal/` (the go-redis write methods and raw command lists on the same keys). **The allowlist:** fixtures (`*fixture*.go`) seed a throwaway store; the legacy ledger writers were a ratchet (`legacyLedgerWriters` in `internal/ci/tablemoves_class_test.go`), now empty since the fold landed (#3998): any write of an old ledger fails. **The remedy line:** `a second writer of a table set (the one writer is 02_card_move.lua; verbs call it: nova-sprint card deal|work|end|land|cancel): <file>:<line>`, or the ratchet's `lower legacyLedgerWriters[...]`. **The control:** `TestTableSetsRuleCatchesAnInjectedWriter` feeds the scanner Lua and Go writers of the table sets and the ledgers and wants each found, and wants the move file, a fixture and a ZCARD read left alone.
 42. `TestNoOldLeaseLedgerLeft` — nothing reads or writes the old lease ledgers `bench:<b>:living|starting` and `friend:<f>:living|starting` any more, in the Lua library or in any non-test Go file: they fold into `<consumer>:cards:working`, the one lease ledger, and the width in use is its ZCARD (#3998, #3877's other half). **The hurt:** a bench or friend kept two ledgers beside its working set, so the width a table printed, the width a take was refused at and the width the dealer reserved against could each read a different set. **The sweep:** every Lua file under `internal/nsprint/fn/lua` (code before a `--` comment) and every non-test Go file under `cmd/` and `internal/`, for a string spelling of a bench or friend key ending `:living` or `:starting`. **No allowlist:** fixtures seed the consumer sets. **The remedy line:** `an old lease ledger key (folded into <consumer>:cards:working, #3998): <file>:<line>: <line>`; hold and drop a friend-queue lease with `NS.moves.hold` / `NS.moves.drop` (02_card_move.lua) and read width as ZCARD `<consumer>:cards:working`. **The control:** the test feeds the pattern a Lua ZCARD of a friend's `:starting`, a Go ZCard of a bench's `:living` and a fixture ZADD of a friend's `:living` and wants each found, and wants `bench:<b>:cards:working` left alone.
+
+### `cap` — every job two minutes, permanently, on every platform
+
+**The rule.** Every job in every workflow under `.github/workflows/` declares
+`timeout-minutes: 2`, literally: no expression, no per-leg ceiling in a matrix,
+no tier that is exempt (nightly, certification and release included), on every
+platform. Work that needs longer is split into parallel functional test programs,
+each its own job under the cap. Raising the cap is never the fix.
+
+**The hurt.** The exceptions this rule replaces were "hang detectors with room":
+the merge gate at five and ten minutes, the lisp job at fifteen, the push studio
+shards at twenty, the hosted tree at fifteen. Under them a nine-minute darwin leg
+ran to completion on 2026-09-25 and was treated as normal, and fixes to it took
+ten minutes per iteration. Glenn: "cap all five at 2 minutes now. we fix or it
+doesn't land. that's the right posture. nothing else will stop the test creep";
+"previously, you keep adding tests while working, and before we know it, it's 30
+minute long pauses before every check in. this is the only way to enforce."
+
+**The test.** `TestEveryCIJobIsCappedAtTwoMinutes` (`internal/ci/ci_budget_test.go`)
+reads every workflow file and refuses a job over the cap, a job with no literal
+cap, or a `timeout-minutes` expression. `TestShardGoTestTimeoutIsUnderTheJobCap`
+keeps `go test -timeout` (the workflow's `GOTEST_TIMEOUT` and the Makefile's
+`GOTEST_TIMEOUT`, `MERGE_TIMEOUT`, `DARWIN_TIMEOUT`) under the cap, so a run ends
+with a Go stack before the job cap kills it without one.
+
+**The remedy line.** Split the job (shards by measured package size, or one job
+per functional program), move a process-in-the-loop test behind the `slow` tag
+into the nightly functional matrix, or put the leg on a machine that compiles the
+set in seconds. Never a larger number.
 
 ## Parked class tests
 
@@ -2268,6 +2279,90 @@ that fits the two-minute law. Read `windows-sizes` below before writing either:
 its rule — a number in a table or a cap must come from a MEASUREMENT, and a
 measurement made at a cap is a floor and not a size — is the one that cost the
 most to learn and it is live today, one platform over, as `darwin-sizes`.
+
+### Parked 2026-09-25: the merge gate's darwin leg (`darwin-sizes`, `darwin-table`)
+
+**Why parked.** The merge group's darwin leg re-ran the full suite of the group's packages on the same Studio runners as the `test (n/N darwin-arm64)` shards, which already run the whole suite on the group commit. On run 36207910988 both sets crossed the two-minute cap together. Glenn (2026-09-25, 10:58 PM ET): "The correct action to take is to optimize the tests. And to reduce the number of runners." The leg is deleted as a duplicate, the Studio's runners go from eight to four, and the darwin sizes table, its 40 s shard budget and `DARWIN_TIMEOUT` have no leg to govern. The two tests below are DELETED with it; their hurt is kept here.
+
+### `darwin-sizes` — the darwin cap is measured on a quiet host, with a stated margin
+
+**The rule.** The numbers that decide the darwin merge leg's cost — the measured
+sizes in `testdata/ci/package-sizes-darwin.tsv`, the 40 s shard budget, and
+`DARWIN_TIMEOUT` in the Makefile — stay in one place and in step, and the ceiling
+is never less than the stated margin over the largest share the plan can hand one
+`go test`. The sizes are read on a QUIET host — no runner busy, no merge group in
+flight — and the margin over them is TWO, written down as a number rather than
+folded into the table. A measurement is a floor; a cap is a floor times a margin;
+neither is ever a guess.
+**The hurt.** 2026-09-18 16:41Z, merge-group run 35369433950 (batch 7, `#1360`):
+`test-hosted-merge (darwin, 0)` and `(darwin, 1)` were CANCELLED at the
+five-minute per-leg cap on superman, and a cancelled shard drops the whole group
+and restarts every PR behind it. The log does not say what the headline says:
+NO package came near the 100 s per-package ceiling. Shard 0 finished 27 packages
+summing 211.8 s of `go test` between 16:36:43 and 16:41:24 and was killed partway
+through the rest, its largest single invocation `cmd/nova-wake` at 50.7 s. What
+ran out was the SHARD'S SUM, and the sum is decided by how many ways each package
+is dealt. Dealing came off the LINUX table, and FOUR of the five largest darwin
+packages sit under its 40 s budget, so each was dealt three ways instead of six:
+`cmd/nova-wake` 24.6 s on hulk against 120.3 s measured on superman,
+`cmd/nova-merge` 7.7 against 68.8, `internal/swarm` 17.4 against 64.4 and
+`cmd/nova-bus` 10.0 against 54.2. The second half of the hurt
+is the machine's STATE: superman was in its post-power-on condition, Spotlight
+settling and XprotectService scanning fresh test binaries with sixteen runners
+live, so the numbers of that moment were the state's and not the host's. That is
+why the rule names the conditions and not only the number — and why the margin is
+measured rather than assumed, on the same host both ways: `cmd/nova-merge` is
+68.8 s whole on a quiet superman against about 147 s on the loaded superman of
+that run, which is 2.1x.
+**The test.** `TestDarwinMergeShardPlanIsDerivedFromMeasurements`
+(the deleted darwin_shards_class_test.go).
+**Its allowlist.** The sizes file itself, whose censored rows are LABELLED as
+floors rather than written as sizes; the forcing packages are named in the test,
+so they cannot quietly fall out of the table.
+**Its remedy lines.** `the Makefile declares no DARWIN_TIMEOUT; the darwin
+per-package ceiling has nowhere to live but a workflow line nobody can run`;
+`DARWIN_TIMEOUT = <d>, under 2x the largest per-invocation share the plan can
+hand one go test`; and `<file> does not say "quiet" anywhere in its header; a
+size is only a size if the header says what the machine was doing when it was
+read`.
+**Its narrowings.** Like its Windows sibling it checks that the numbers are
+measured and consistent, not that they are still TRUE: a package that doubles on
+an x64 Mac keeps its old row until somebody measures again, and only the run says
+so. It reads the table's header for the words `quiet` and `margin` rather than
+verifying the conditions, which no test can check after the fact.
+
+
+### `darwin-table` — the merge gate's darwin leg deals from the darwin table
+
+**The rule.** The merge group's darwin leg reads the FULL column of
+`testdata/ci/package-sizes-darwin.tsv`, takes its ceiling from
+`make -s darwin-timeout`, and deals an unmeasured or censored package across
+EVERY slot the group opened; only linux still keeps the Linux table, which is its
+own measurement.
+**The hurt.** The same run, 35369433950, and the same shape as `windows-table`
+one platform later: a leg dealing from a table measured on another machine. Linux
+could not have said otherwise — `cmd/nova-merge` is 7.7 s on hulk and 68.8 s on a
+quiet x64 Mac, `cmd/nova-bus` 10.0 s there and 54.2 s here — so four of the five
+packages that dominate this leg sat under the 40 s budget in the only table it
+read, and were dealt three ways instead of six. Three platforms are three
+measurements, and the last leg reading somebody else's numbers was the one that
+dropped the group.
+**The test.** `TestMergeGateDarwinLegDealsFromTheDarwinTable`
+(the deleted darwin_shards_class_test.go).
+**Its allowlist.** None.
+**Its remedy lines.** `the merge gate's shard plan never reads <sizes file>; its
+darwin leg would deal from the Linux column again, which is how run 35369433950's
+group was dropped`; `an unknown darwin size must be dealt across every slot and
+never guessed downward`; and `the merge gate's darwin leg does not take its
+ceiling from make -s darwin-timeout; the darwin number would be written twice and
+drift`.
+**Its narrowings.** It asserts the shell branch's text inside one named step, so
+a renamed step fails loudly rather than passing silently — the same trade its
+Windows sibling takes. The windows and darwin branches in that step are
+deliberately NOT factored into one parameterised helper: both tests read the step
+as TEXT and assert each leg's own table and column literally, and a shared `awk`
+taking the column as a variable would satisfy neither. Twenty lines of duplicated
+shell is the price of a rule a reviewer can see.
 
 ### `windows-pr` — a pull request gets a Windows leg, and it stays cheap
 

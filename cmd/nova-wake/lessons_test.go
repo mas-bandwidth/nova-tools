@@ -329,6 +329,8 @@ func TestWakeOutputIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 // The known limit, pinned as behaviour rather than left to be discovered:
 // mtime:size cannot see a rewrite that preserves both.
 func TestATouchedReportWithTheSameSizeAndMtimeDoesNotWake(t *testing.T) {
+	t.Parallel()
+
 	reports := t.TempDir()
 	path := filepath.Join(reports, "job", "RESULT.md")
 	write(t, path, "# a finding\n")
@@ -385,6 +387,8 @@ func TestATouchedReportWithTheSameSizeAndMtimeDoesNotWake(t *testing.T) {
 // A file that DISAPPEARS is not a change and its key is kept: a job directory
 // being rebuilt is not news, and the window does not want to be woken by an rm.
 func TestAVanishedReportIsNotAChange(t *testing.T) {
+	t.Parallel()
+
 	reports := t.TempDir()
 	path := filepath.Join(reports, "job", "RESULT.md")
 	write(t, path, "# a finding\n")

@@ -12,6 +12,8 @@ import (
 )
 
 func TestCmdProvingRunCLI(t *testing.T) {
+	t.Parallel()
+
 	tempDir := t.TempDir()
 
 	// 1. Test missing flag

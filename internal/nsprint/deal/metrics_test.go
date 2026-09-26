@@ -23,6 +23,8 @@ func (unusedDialer) Dial(Bench) Session { return nil }
 // left (2), the leases now held (4) and one session latency for the bench,
 // and the registered /metrics handler serves them.
 func TestDealExportsMetrics(t *testing.T) {
+	t.Parallel()
+
 	b := upBench("bench-a", 4)
 	b.Leased = 1
 	in := Input{Benches: []Bench{b}, Sprints: []Sprint{{Name: "s1", Pool: fiftyCards("s1")[:5]}}}

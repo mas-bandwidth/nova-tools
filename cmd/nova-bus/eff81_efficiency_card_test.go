@@ -18,6 +18,8 @@ import (
 // way TestNovaCheckEfficiencyCardNamesItsRules reads #86's section: the spec is
 // the one place the contract is written.
 func TestNovaBusEfficiencyCardNamesItsRules(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC.md"))
 	if err != nil {
 		t.Fatalf("the nova-bus efficiency card's contract is the spec's: %s", err)

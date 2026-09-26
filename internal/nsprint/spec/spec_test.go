@@ -3,6 +3,8 @@ package spec
 import "testing"
 
 func TestParseLine(t *testing.T) {
+	t.Parallel()
+
 	sha := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	for _, c := range []struct {
 		line string
@@ -33,6 +35,8 @@ func TestParseLine(t *testing.T) {
 }
 
 func TestBlock(t *testing.T) {
+	t.Parallel()
+
 	got := Block([]Row{{Stream: "s1", Working: 2, Done: 1}})
 	if got != "specs | working | done\ns1 | 2 | 1\n" {
 		t.Fatalf("block = %q", got)

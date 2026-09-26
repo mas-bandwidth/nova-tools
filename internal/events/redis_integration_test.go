@@ -88,6 +88,8 @@ func (c *cancelAfter) Next(ctx context.Context, group, consumer string, count in
 // the fold is killed half way through and restarted, and the count is a hundred. Then the
 // same stream is rebuilt into a fresh file and the two row sets are compared byte for byte.
 func TestAHundredDonesAgainstTheFleetStore(t *testing.T) {
+	t.Parallel()
+
 	store, stream, dial := liveStore(t)
 	ctx := context.Background()
 	group := "fold-test"

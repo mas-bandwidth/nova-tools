@@ -29,6 +29,8 @@ func setupRankTestRedis(t *testing.T) (*store.Store, *redis.Client) {
 // Stella holds X2 (est 105, DEPENDS-ON X1) and X3 (est 120, DEPENDS-ON X2), so X1 ranks 345.
 // Expected take order: F, X1, L, T1, T2, U.
 func TestRankDealsHeadOfLongestChainFirst(t *testing.T) {
+	t.Parallel()
+
 	st, client := setupRankTestRedis(t)
 	ctx := context.Background()
 	sprint := "s-test-rank"
@@ -157,6 +159,8 @@ func TestRankDealsHeadOfLongestChainFirst(t *testing.T) {
 // TestRankCycleTerminates verifies that cyclic dependencies terminate,
 // write CYCLE <cycle> to stderr, and rank cycle members at their own est.
 func TestRankCycleTerminates(t *testing.T) {
+	t.Parallel()
+
 	st, client := setupRankTestRedis(t)
 	ctx := context.Background()
 	sprint := "s-test-cycle"

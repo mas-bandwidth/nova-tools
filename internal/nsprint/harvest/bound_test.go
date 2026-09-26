@@ -65,6 +65,8 @@ func benchUp(t *testing.T, c *redis.Client, bench string) {
 // LEASE-MARGIN or err=FENCED), never a silent n=0, and gives back
 // lease:harvest:<b> in the same call.
 func TestHarvestBoundedByReconcilerLease(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	labels := []string{"ctl-hb-card1", "ctl-hb-card2", "ctl-hb-card3"}
 
@@ -123,6 +125,8 @@ func TestHarvestBoundedByReconcilerLease(t *testing.T) {
 // the next worker takes it, is told the holder and logs `TAKEN from=<instance>
 // stale`. Release gives a lease back by its token only.
 func TestHarvestStaleLeaseTakenAndReleased(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	c := startRedis(t)
 	st := store.New(c)

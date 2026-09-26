@@ -148,6 +148,8 @@ func TestQueryRefusesInvalidBranch(t *testing.T) {
 }
 
 func TestQueryRefusesSessionAndSnapshotTogether(t *testing.T) {
+	t.Parallel()
+
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"query", "--session", "a.sock", "--snapshot", "b.sexp", "--max-bytes", "1000", "--max-depth", "10", "--max-nodes", "100", "--cache", "c.cache", "--ask", "friends", "--branch", "open"}, &stdout, &stderr, "")
 	if code != 2 {
@@ -162,6 +164,8 @@ func TestQueryRefusesSessionAndSnapshotTogether(t *testing.T) {
 }
 
 func TestQueryRefusesSnapshotWithoutBounds(t *testing.T) {
+	t.Parallel()
+
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"query", "--snapshot", "snap.sexp", "--ask", "friends", "--branch", "open", "--cache", "c.cache"}, &stdout, &stderr, "")
 	if code != 2 {
@@ -181,6 +185,8 @@ func TestQueryRefusesSnapshotWithoutBounds(t *testing.T) {
 // exactly what it did, reporting `dial unix <file>: ...`, for a snapshot that
 // plainly exists on disk (nova-tools#1787).
 func TestQuerySnapshotRefusesInsteadOfDiallingTheFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	snapshot := filepath.Join(dir, "snap.sexp")
 	if err := os.WriteFile(snapshot, []byte("(:seed () :history ())"), 0o644); err != nil {
@@ -347,6 +353,8 @@ func TestQueryHandoffsBranchOpenOnly(t *testing.T) {
 }
 
 func TestQueryWithoutSessionOrSnapshot(t *testing.T) {
+	t.Parallel()
+
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"query", "--ask", "friends", "--branch", "open"}, &stdout, &stderr, "")
 	if code != 2 {
@@ -361,6 +369,8 @@ func TestQueryWithoutSessionOrSnapshot(t *testing.T) {
 }
 
 func TestHelpListsQuery(t *testing.T) {
+	t.Parallel()
+
 	verbs := switchVerbs(t)
 	found := false
 	for _, v := range verbs {

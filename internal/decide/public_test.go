@@ -105,6 +105,8 @@ func (r *recorder) text(t *testing.T) string {
 // enumerated tokens only, and the questions carry OPAQUE option ids -- not a
 // mind's name, not its lineage, not the lane it owns.
 func TestNoRegistryStringReachesTheProvider(t *testing.T) {
+	t.Parallel()
+
 	reg := privateRegistry(t)
 	u := Unit{ID: "u-1", Kind: KindNewVerb, Files: 3, Packages: 1, Lanes: 1, LaneOwner: "kepler-prime"}
 	rec := &recorder{conf: 0.95}
@@ -139,6 +141,8 @@ func TestNoRegistryStringReachesTheProvider(t *testing.T) {
 // The provider's opaque choice picks the mind at that position, and nothing
 // else: option n is the nth eligible rung.
 func TestAnOpaqueChoiceMapsBackToItsMind(t *testing.T) {
+	t.Parallel()
+
 	reg := privateRegistry(t)
 	u := Unit{ID: "u-2", Kind: KindNewVerb, Files: 3, Packages: 1, Lanes: 1}
 	first := &recorder{conf: 0.95, pick: 0}
@@ -164,6 +168,8 @@ func TestAnOpaqueChoiceMapsBackToItsMind(t *testing.T) {
 // Public is the boundary itself: an allowlist of enumerated values, and a value
 // outside it never leaves.
 func TestPublicIsAnAllowlist(t *testing.T) {
+	t.Parallel()
+
 	reg := privateRegistry(t)
 	shape, err := Unit{ID: "u", Kind: KindRebase, Files: 2, LaneOwner: "project-manhattan"}.Public(reg)
 	if err != nil {
@@ -199,6 +205,8 @@ func TestPublicIsAnAllowlist(t *testing.T) {
 // (R3) A wait is typed, and it survives to the line: same rung means WAIT, and
 // a wait is never permission to retry.
 func TestTheWaitIsTypedOnTheLine(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	res := mustRoute(t, reg, Unit{ID: "w", Kind: KindFixWithRedTest, Files: 3, Packages: 1,
 		Attempts: []Attempt{{Rung: "sol", Outcome: OutcomeTimeout}}}, DefaultFloor)
@@ -228,6 +236,8 @@ func TestTheWaitIsTypedOnTheLine(t *testing.T) {
 // so what must survive the wait is the reader, and the rung is the one the
 // attempt left occupied.
 func TestSecurityAndWaitTogether(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	for name, u := range map[string]Unit{
 		"guard kind":  {ID: "s1", Kind: KindGuard, Files: 1, Attempts: []Attempt{{Rung: "johnny", Outcome: OutcomeTimeout}}},
@@ -252,6 +262,8 @@ func TestSecurityAndWaitTogether(t *testing.T) {
 // and -- for a call that failed -- the fact that its cost is UNKNOWN rather
 // than zero.
 func TestProviderUsageIsKept(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	u := Unit{ID: "u", Kind: KindNewVerb, Files: 3, Packages: 1, Lanes: 1}
 
@@ -289,6 +301,8 @@ func TestProviderUsageIsKept(t *testing.T) {
 // The log row carries the usage and the wait, so the JSONL is a record of what
 // was spent as well as what was decided.
 func TestTheLogRowCarriesUsageAndWait(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	rec := &recorder{conf: 0.95, usage: Usage{InputTokens: 100, HasInput: true, OutputTokens: 5, HasOutput: true}}
 	res, err := RouteJev(context.Background(), rec, reg, Unit{ID: "u", Kind: KindNewVerb, Files: 3, Packages: 1, Lanes: 1}, DefaultFloor)

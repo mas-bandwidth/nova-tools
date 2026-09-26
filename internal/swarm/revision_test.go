@@ -17,6 +17,8 @@ import (
 // decided by a modification time, because two revisions renamed into place inside one
 // second are two revisions.
 func TestAReportIsARevision(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	p, id := revisionPool(t, dir)
 	copyPath := filepath.Join(p.ReportsDir(id), CopiedResult)
@@ -102,6 +104,8 @@ func TestAReportIsARevision(t *testing.T) {
 // in this package -- not what is fresh, not what was consumed, not which revision a page
 // holds. A revision is its bytes.
 func TestNoModTimeDecidesAnythingInThisPackage(t *testing.T) {
+	t.Parallel()
+
 	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)
@@ -214,6 +218,8 @@ func readPage(t *testing.T, out string) string {
 // raw finding lines, undeduplicated and with no job ids at all. Two workers finding one
 // thing were two findings on the page and one in the count.
 func TestThePageCarriesTheMergedFindingAndItsJobs(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	p := emptyPool(t, dir)
 	first := donePublished(t, p, "a")

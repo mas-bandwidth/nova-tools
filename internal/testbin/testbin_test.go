@@ -24,6 +24,8 @@ func TestMain(m *testing.M) {
 // the link path and on the copy path alike. This test binary is both the source
 // and, re-entered through TestMain, the program.
 func TestPlaceRunsThePlacedProgram(t *testing.T) {
+	t.Parallel()
+
 	src, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -50,6 +52,8 @@ func TestPlaceRunsThePlacedProgram(t *testing.T) {
 // a destination in the same directory are the same file after Place -- the link
 // is what avoids the macOS scan, and a copy here would be a regression.
 func TestPlaceHardLinksInTheSameDirectory(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("windows always copies")
 	}
@@ -125,6 +129,8 @@ func TestPlaceFallsBackToCopyWhenLinkFails(t *testing.T) {
 // TestPlaceReplacesAnExistingFile: a caller may ask twice, so a dst already
 // there is removed rather than linked through.
 func TestPlaceReplacesAnExistingFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src")
 	dst := filepath.Join(dir, "dst")

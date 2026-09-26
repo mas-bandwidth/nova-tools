@@ -12,6 +12,8 @@ import (
 // Johnny's lock read 2026-09-15: "under-counts dollars across Studio/Space/mini.
 // Name it local-spend= or join the benches. Not two writers."
 func TestSpecWorkLocalSpendSingleMention(t *testing.T) {
+	t.Parallel()
+
 	// Locate docs/SPEC-WORK.md relative to the repo root.
 	wd, err := os.Getwd()
 	if err != nil {

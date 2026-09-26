@@ -50,6 +50,8 @@ import (
 var notYetOnTheStandard = map[string]string{}
 
 func TestEveryCommandMeetsTheOnboardingStandard(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	transcripts := readFile(t, filepath.Join(root, "docs", "TESTS.md"))
 
@@ -169,6 +171,8 @@ func toolSections(md string) map[string]string {
 // fleet build is the exception, and its transcript must sit behind the note
 // that says so (#1510).
 func TestTESTSmdFirstRunSectionsNameToolsTheFleetBuildInstalls(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	transcripts := readFile(t, filepath.Join(root, "docs", "TESTS.md"))
 
@@ -267,6 +271,8 @@ func readFile(t *testing.T, path string) string {
 // subsections of its one section, where FirstRun and Transcript can both find
 // them.
 func TestNoToolIsWrittenTwiceInTheTranscripts(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(repoRoot(t), "docs", "TESTS.md")
 	repeated := onboarding.RepeatedSections(readFile(t, path))
 	if len(repeated) == 0 {

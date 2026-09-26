@@ -11,6 +11,8 @@ import (
 // bench-hygiene incident retired: a fresh harness-output.log can belong to a dead card and
 // a long card's log is older than fifteen minutes while it is still alive.
 func TestFleetStatusScriptCountsRunningProcessesNotLogAge(t *testing.T) {
+	t.Parallel()
+
 	script := fleetStatusScript("/home/bench", "2026-09-18T11:00:00Z")
 	for _, want := range []string{"pgrep -f", "/proc/", "/cwd", "nproc", "/proc/loadavg", "MemAvailable"} {
 		if !strings.Contains(script, want) {

@@ -33,6 +33,8 @@ func parseFixture(t *testing.T, name string) *WorkSet {
 // the keys this reader knows read and the ones it does not KEPT rather than
 // refused. `plan check` could not read a byte of this file, which is the gap.
 func TestParseWorkSetReadsTheRealShape(t *testing.T) {
+	t.Parallel()
+
 	ws := parseFixture(t, "pitstop-cut.lisp")
 	if ws.ID != "pitstop-cut" {
 		t.Errorf("work set id = %q, want pitstop-cut", ws.ID)
@@ -82,6 +84,8 @@ func TestParseWorkSetReadsTheRealShape(t *testing.T) {
 // defines repair:spec-1208-1209 or merge:simulate. Both are findings, not refusals
 // -- the file was read whole and it is its content that is wrong.
 func TestCheckFindsTheRealSetsAbsentNeeds(t *testing.T) {
+	t.Parallel()
+
 	ws := parseFixture(t, "pitstop-cut.lisp")
 	findings, counts := ws.Check(Options{})
 	var absent []string
@@ -114,6 +118,8 @@ func TestCheckFindsTheRealSetsAbsentNeeds(t *testing.T) {
 // Every rule runs over every unit in ONE pass. A checker that stopped at the first
 // finding would cost the caller one round trip per defect.
 func TestCheckReportsEveryRuleInOnePass(t *testing.T) {
+	t.Parallel()
+
 	ws := parseFixture(t, "set-defects.lisp")
 	findings, _ := ws.Check(Options{
 		Minds:     map[string]bool{"emma": true},
@@ -156,6 +162,8 @@ func TestCheckReportsEveryRuleInOnePass(t *testing.T) {
 // person does and a registry writes a mind's the way a machine does. Nothing else
 // is guessed at: a name neither spelling holds is a finding.
 func TestOwnerMatchFoldsCase(t *testing.T) {
+	t.Parallel()
+
 	ws := parseFixture(t, "pitstop-cut.lisp")
 	findings, _ := ws.Check(Options{
 		Minds:     map[string]bool{"emma": true, "stella": true},
@@ -171,6 +179,8 @@ func TestOwnerMatchFoldsCase(t *testing.T) {
 // Without --minds and without --lanes those two rules are OFF rather than run
 // against a guessed file: there is no default registry and no discovery.
 func TestNoRegistryMeansNoOwnerOrLaneRule(t *testing.T) {
+	t.Parallel()
+
 	ws := parseFixture(t, "set-defects.lisp")
 	findings, _ := ws.Check(Options{})
 	for _, f := range findings {
@@ -184,6 +194,8 @@ func TestNoRegistryMeansNoOwnerOrLaneRule(t *testing.T) {
 // done. The cut's chain is land:1260 -> land:1261 -> promote:main -> batch:land,
 // so settling one need moves exactly one unit into the set.
 func TestReadySetIsMechanical(t *testing.T) {
+	t.Parallel()
+
 	ws := parseFixture(t, "pitstop-cut.lisp")
 	ids := func(us []Unit) string {
 		var out []string
@@ -225,6 +237,8 @@ func TestReadySetIsMechanical(t *testing.T) {
 // Both RFC3339 spellings parse: a coordinator writes the minute-precision one, and
 // a reader that took only the full one refused a real unit.
 func TestParseStampReadsBothSpellings(t *testing.T) {
+	t.Parallel()
+
 	for _, s := range []string{"2026-09-19T12:00:00Z", "2026-09-19T12:00Z", "2026-09-19T12:00:00+00:00"} {
 		at, err := ParseStamp(s)
 		if err != nil {
@@ -245,6 +259,8 @@ func TestParseStampReadsBothSpellings(t *testing.T) {
 // A refusal is a file this reader could not read AT ALL, and it is exit 2 -- never
 // blurred with a finding, which is a file it read whole whose content is wrong.
 func TestParseWorkSetRefusals(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		src  string
@@ -283,6 +299,8 @@ func TestParseWorkSetRefusals(t *testing.T) {
 // One loop has one spelling however the walk enters it, so a cycle is never
 // reported twice under two names.
 func TestFindCyclesNamesEachLoopOnce(t *testing.T) {
+	t.Parallel()
+
 	needs := map[string][]string{"a": {"b"}, "b": {"c"}, "c": {"a"}}
 	cycles := FindCycles([]string{"a", "b", "c"}, needs)
 	if len(cycles) != 1 {
@@ -300,6 +318,8 @@ func TestFindCyclesNamesEachLoopOnce(t *testing.T) {
 // are read HERE because this is the one reader of the work-set form: a key only one
 // caller reads is the second reader growing back.
 func TestReadUnitCarriesBranchAndAcceptance(t *testing.T) {
+	t.Parallel()
+
 	src := []byte(`(work-set "s" :units ((unit "u1" :branch "rowan/lane-friends"
 	                                            :acceptance ("a line in notes.md" "a test")
 	                                            :title "retire the child shell")))`)

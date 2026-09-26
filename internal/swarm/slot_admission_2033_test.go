@@ -16,6 +16,8 @@ import (
 // refused when the remaining share fits only a read.
 
 func TestSlotAdmissionRefusesASchemaCardWhenTheShareFitsOnlyARead(t *testing.T) {
+	t.Parallel()
+
 	if got, read := SlotAdmissionWeight("schema"), SlotAdmissionWeight("read"); got <= read {
 		t.Fatalf("a schema card must weigh more than a read card (it spawns compilers); schema=%d read=%d", got, read)
 	}
@@ -52,6 +54,8 @@ func TestSlotAdmissionRefusesASchemaCardWhenTheShareFitsOnlyARead(t *testing.T) 
 }
 
 func TestSlotAdmissionChargesSchemaWeightAgainstTheShare(t *testing.T) {
+	t.Parallel()
+
 	store := writeSlotStore(t, "capacity\t8\nreserve\t0\nalice\t8\n")
 	now := time.Now().UTC()
 	pid := os.Getpid()
@@ -83,6 +87,8 @@ func TestSlotAdmissionChargesSchemaWeightAgainstTheShare(t *testing.T) {
 }
 
 func TestSlotDeadHolderBeforeUntilIsStrandedWithItsLabel(t *testing.T) {
+	t.Parallel()
+
 	const deadPid = 2147483647
 	if Alive(deadPid, "") {
 		t.Skip("dead pid probe is alive here")
@@ -114,6 +120,8 @@ func TestSlotDeadHolderBeforeUntilIsStrandedWithItsLabel(t *testing.T) {
 }
 
 func TestSlotAdmissionWeightByKind(t *testing.T) {
+	t.Parallel()
+
 	if got := SlotAdmissionWeight("read"); got != 1 {
 		t.Errorf("read weight = %d, want 1", got)
 	}
@@ -128,6 +136,8 @@ func TestSlotAdmissionWeightByKind(t *testing.T) {
 }
 
 func TestCardKindFromTextReadsTypedHeaderAndPullKind(t *testing.T) {
+	t.Parallel()
+
 	if got := CardKindFromText("RESULT: c1 sha=aaaaaaaaaaaa\nKIND: schema\nbody\n"); got != "schema" {
 		t.Errorf("KIND: header: got %q", got)
 	}

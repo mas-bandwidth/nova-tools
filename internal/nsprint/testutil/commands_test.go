@@ -9,6 +9,8 @@ import (
 
 // The counter is not vacuous: a client that sends a PING is counted.
 func TestCommandCounterCountsAPing(t *testing.T) {
+	t.Parallel()
+
 	addr, count := CommandCounter(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	defer c.Close()

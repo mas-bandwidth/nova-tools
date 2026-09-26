@@ -18,6 +18,8 @@ import (
 // else is compared exactly. placeholder is false because the documented command passes
 // --store, so the `SECRETS RULE NOTE` line is absent and must not appear.
 func TestTheKeygenFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
+	t.Parallel()
+
 	data, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	if err != nil {
 		t.Fatal(err)

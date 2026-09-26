@@ -56,6 +56,8 @@ func examples(t *testing.T) []string {
 // are run here against the fixture: an example that has drifted out of the flag
 // set teaches the wrong invocation to exactly the reader who cannot tell.
 func TestUsageBannerExamplesRun(t *testing.T) {
+	t.Parallel()
+
 	for _, ex := range examples(t) {
 		r := wakeRun(t, localize(t, strings.Fields(ex)[1:])...)
 		if r.exit == 2 {
@@ -72,6 +74,8 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 }
 
 func TestQuickstartIsTheFirstThingTheBannerOffers(t *testing.T) {
+	t.Parallel()
+
 	exs := examples(t)
 	if !strings.HasPrefix(exs[0], "nova-wake quickstart ") {
 		t.Errorf("the first example is %q; a first run should be offered quickstart first", exs[0])
@@ -86,6 +90,8 @@ func TestQuickstartIsTheFirstThingTheBannerOffers(t *testing.T) {
 // 6,500 bytes of banner to say that a dash was in the wrong place, and a
 // harness reading a tool's stderr pays that on every typo.
 func TestABareInvocationIsOneLineAndNamesTheDoor(t *testing.T) {
+	t.Parallel()
+
 	r := wakeRun(t)
 	if r.exit != 2 {
 		t.Errorf("a bare nova-wake exits %d, want 2", r.exit)
@@ -110,6 +116,8 @@ func TestABareInvocationIsOneLineAndNamesTheDoor(t *testing.T) {
 
 // (b) A refusal says what the flag or input WANTS, not only what was wrong.
 func TestARefusalSaysWhatTheFlagWants(t *testing.T) {
+	t.Parallel()
+
 	state := filepath.Join(t.TempDir(), "wake.state")
 	cases := []struct {
 		name string
@@ -145,6 +153,8 @@ func TestARefusalSaysWhatTheFlagWants(t *testing.T) {
 // back a second time for something the first run could already see is the
 // stumble this pins shut.
 func TestIndependentProblemsAreReportedInOneRun(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		args []string

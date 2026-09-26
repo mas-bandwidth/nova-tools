@@ -130,6 +130,8 @@ func clsResult(rows []Classification, label string) string {
 }
 
 func TestClassificationTable33(t *testing.T) {
+	t.Parallel()
+
 	rows := []struct {
 		outcome, reason, action, counter, policy string
 		budget                                   int
@@ -202,6 +204,8 @@ func TestClassificationTable33(t *testing.T) {
 }
 
 func TestControl16Classification(t *testing.T) {
+	t.Parallel()
+
 	c := clsRedis(t)
 	ctx := context.Background()
 
@@ -262,6 +266,8 @@ func TestControl16Classification(t *testing.T) {
 }
 
 func TestClassifyConcurrentDelivery(t *testing.T) {
+	t.Parallel()
+
 	c := clsRedis(t)
 	const S = "control-concurrent"
 	clsSprint(t, c, S, []string{"X", "Y"})
@@ -313,6 +319,8 @@ func TestClassifyConcurrentDelivery(t *testing.T) {
 }
 
 func TestClassifyPolicyBudgets(t *testing.T) {
+	t.Parallel()
+
 	t.Run("policy and no bench left", func(t *testing.T) {
 		c := clsRedis(t)
 		const S = "control-policy"

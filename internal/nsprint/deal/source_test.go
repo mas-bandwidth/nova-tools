@@ -22,6 +22,8 @@ func throwawayRedis(t *testing.T) *redis.Client {
 // only open sprints in sprint:order deal, only queued pool cards are read, and
 // a missing backpressure hash applies the declared policy.
 func TestRedisSourceReadsTheSpecKeys(t *testing.T) {
+	t.Parallel()
+
 	c := throwawayRedis(t)
 	ctx := context.Background()
 	c.SAdd(ctx, "benches", "ctl-a", "ctl-down")

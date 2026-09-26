@@ -120,6 +120,8 @@ func whyReads(t *testing.T, ctx context.Context, c *redis.Client) string {
 // PR's diff against its base identical carries emma's read to the new head;
 // `why` counts it and prints carried_from=<h8>.
 func TestReadCarriesAcrossIdenticalDiffMerge(t *testing.T) {
+	t.Parallel()
+
 	f := newMergeFixture(t)
 	ctx, c := mergeStore(t, f, f.b)
 	if got := whyReads(t, ctx, c); !strings.HasPrefix(got, "reads 0/1") {
@@ -146,6 +148,8 @@ func TestReadCarriesAcrossIdenticalDiffMerge(t *testing.T) {
 // changes the diff; the carry refuses naming the file, the read stays at the
 // head it was typed at, and `why` counts nothing at the new head.
 func TestReadDoesNotCarryAcrossChangedDiff(t *testing.T) {
+	t.Parallel()
+
 	f := newMergeFixture(t)
 	ctx, c := mergeStore(t, f, f.c)
 	id := land.ID{Repo: mergeRepo, N: 3612}

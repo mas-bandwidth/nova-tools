@@ -8,6 +8,8 @@ import (
 const frictionID = "abcdef0123456789abcdef0123456789"
 
 func TestFrictionAddAndSummary(t *testing.T) {
+	t.Parallel()
+
 	t.Run("parses every field", func(t *testing.T) {
 		line := frictionID + "\t1000\t42\tburn\tclaude\tissue-240\t2026-09-11T15:29:00Z"
 		e, err := ParseFrictionEntry(line)

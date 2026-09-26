@@ -60,6 +60,8 @@ func fakeLease(t *testing.T, ctx context.Context, st *store.Store) (*reconcile.L
 // window on the lease clock. The control: the same duty unbounded runs past
 // the TTL.
 func TestSlowDutyPassEndsInsideLease(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	const bases, step = 8, 800 * time.Millisecond
 
@@ -158,6 +160,8 @@ func TestRouteDutyStopsAtLeaseMargin(t *testing.T) {
 // proc:reconciler err naming them (LEASE-MARGIN), and the pass took under the
 // TTL on the lease clock while the pass record lands.
 func TestPreDutyRenewalFailureSkipsLaterDuties(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	const bases, step = 8, 800 * time.Millisecond
 

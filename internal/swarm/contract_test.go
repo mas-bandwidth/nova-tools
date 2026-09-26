@@ -24,6 +24,8 @@ const contractLine = "RESULT: READ card-142 at abc123 verdict=APPROVE findings=3
 // refusal names the first sixty characters the report actually holds, so a person
 // reading the line can see which text the contract was compared against.
 func TestResultRefusesWrongLine1(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "RESULT.md")
 	writeResult(t, path, "a title the worker wrote from some older prompt", "disposition", "evidence one")
@@ -47,6 +49,8 @@ func TestResultRefusesWrongLine1(t *testing.T) {
 // the one line a coordinator reads back out of the receipt, so no escaping is
 // allowed to mangle it.
 func TestResultReturnsLine2Verbatim(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "RESULT.md")
 	disposition := "the disposition, with commas: approval — and a dash"
@@ -71,6 +75,8 @@ func TestResultReturnsLine2Verbatim(t *testing.T) {
 // evidence lines; the contract returns at most N (default 20), so a coordinator's
 // window never holds an unbounded transcript.
 func TestResultBoundsEvidenceLines(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 
 	many := func(n int) []string {
@@ -115,6 +121,8 @@ func TestResultBoundsEvidenceLines(t *testing.T) {
 // THE RECEIPT IS WRITTEN BESIDE THE REPORT AND CARRIES THE CARD'S SHA-256, so the
 // retained report is keyed by what the worker was actually asked to do.
 func TestReceiptCarriesCardHash(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	result := filepath.Join(dir, "RESULT.md")
 	writeResult(t, result, contractLine, "disposition", "evidence")

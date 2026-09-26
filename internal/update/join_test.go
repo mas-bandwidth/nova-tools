@@ -289,7 +289,7 @@ func (b busFixture) refusePushes(t *testing.T) (restore func(), how string) {
 			t.Fatal(err)
 		}
 		hook := filepath.Join(dir, "pre-receive")
-		if err := os.WriteFile(hook, []byte("#!/bin/sh\necho 'synthetic refusal' >&2\nexit 1\n"), 0o755); err != nil {
+		if err := testbin.WriteExecutable(hook, []byte("#!/bin/sh\necho 'synthetic refusal' >&2\nexit 1\n"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 		return func() {
@@ -635,6 +635,8 @@ func removeStaleGitTransactionLocks(t *testing.T, gitDir string) []string {
 }
 
 func TestRemoveStaleGitTransactionLocksNamesOnly(t *testing.T) {
+	t.Parallel()
+
 	gitDir := filepath.Join(t.TempDir(), ".git")
 	for _, dir := range []string{gitDir, filepath.Join(gitDir, "refs", "heads"), filepath.Join(gitDir, "logs", "refs", "heads")} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {

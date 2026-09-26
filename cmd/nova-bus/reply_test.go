@@ -771,10 +771,12 @@ func TestReplyNeverOverwritesAnExistingDraft(t *testing.T) {
 // expected= one exit 0, one exit 1 carrying `this tool never overwrites a draft`, one file
 // at the composed path, and no `.tmp` beside it.
 func TestTwoProcessesRacingOneDraftPathLeaveOneWinner(t *testing.T) {
+	t.Parallel()
+
 	if testing.Short() {
 		t.Skip("slow: spawns racing processes over one draft path; runs on the self-hosted legs and nightly")
 	}
-	t.Parallel()
+
 	hermetic(t)
 	first, bare := busDir(t)
 	second := filepath.Join(t.TempDir(), "second")

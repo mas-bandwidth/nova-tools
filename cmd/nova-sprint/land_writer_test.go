@@ -9,6 +9,8 @@ import (
 )
 
 func TestLandWriterUsage(t *testing.T) {
+	t.Parallel()
+
 	code, _, errOut := runSprint("land", "writer")
 	if code != 2 || !strings.Contains(errOut, "needs --repo") {
 		t.Fatalf("bare land writer: code=%d err=%q", code, errOut)
@@ -31,6 +33,8 @@ func TestLandWriterUsage(t *testing.T) {
 }
 
 func TestLandWriterCutoverAndRollback(t *testing.T) {
+	t.Parallel()
+
 	addr := startThrowawayRedis(t)
 	ctx := context.Background()
 	client := redis.NewClient(&redis.Options{Addr: addr})

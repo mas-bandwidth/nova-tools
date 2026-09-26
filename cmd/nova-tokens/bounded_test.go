@@ -136,6 +136,8 @@ func largestFoldState(t *testing.T) (tmp, out string, args []string) {
 }
 
 func TestFoldIsBoundedAtTheLargestPlausibleState(t *testing.T) {
+	t.Parallel()
+
 	tmp, _, args := largestFoldState(t)
 	r := invoke(t, append([]string{"fold"}, args...)...)
 	wantExit(t, r, 1) // unreadable files, unparsed lines, mixed rows and conflicts, all at once
@@ -187,6 +189,8 @@ func TestFoldIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 }
 
 func TestSourcesIsBoundedAtTheLargestPlausibleState(t *testing.T) {
+	t.Parallel()
+
 	tmp, _, args := largestFoldState(t)
 	var sourceArgs []string
 	for i := 0; i < len(args); i++ {
@@ -216,6 +220,8 @@ func TestSourcesIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 }
 
 func TestCheckIsBoundedAtTheLargestPlausibleState(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	const hdr = "date\tmodel\trepo\tinput\toutput\tcache_write\tcache_read\treasoning\trough\tday_basis\tsources\n"
@@ -259,6 +265,8 @@ func TestCheckIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 }
 
 func TestSumIsBoundedAtTheLargestPlausibleState(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	const hdr = "date\tmodel\trepo\tinput\toutput\tcache_write\tcache_read\treasoning\trough\tday_basis\tsources\n"
@@ -305,6 +313,8 @@ func TestSumIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 // report is UNCAPPED on purpose: the body is the artifact, and a capped report would be a
 // count sent as a total.
 func TestReportIsUncappedBecauseTheBodyIsTheArtifact(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	tr := mkdir(t, filepath.Join(dir, "tr"))
 	var body []string

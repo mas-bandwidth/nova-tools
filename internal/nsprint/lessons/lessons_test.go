@@ -42,6 +42,8 @@ func TestMain(m *testing.M) {
 }
 
 func TestAppendIsBoundedAndIdempotent(t *testing.T) {
+	t.Parallel()
+
 	repo := t.TempDir()
 	docs := filepath.Join(repo, "docs")
 	if err := os.Mkdir(docs, 0o755); err != nil {
@@ -68,6 +70,8 @@ func TestAppendIsBoundedAndIdempotent(t *testing.T) {
 }
 
 func TestAppendRefusesConflictingIDAndInstructionShapedText(t *testing.T) {
+	t.Parallel()
+
 	repo := t.TempDir()
 	if err := os.Mkdir(filepath.Join(repo, "docs"), 0o755); err != nil {
 		t.Fatal(err)
@@ -96,6 +100,8 @@ func TestAppendRefusesConflictingIDAndInstructionShapedText(t *testing.T) {
 }
 
 func TestConcurrentUniqueAppendsAllSurvive(t *testing.T) {
+	t.Parallel()
+
 	repo := t.TempDir()
 	if err := os.Mkdir(filepath.Join(repo, "docs"), 0o755); err != nil {
 		t.Fatal(err)
@@ -150,6 +156,8 @@ func TestConcurrentUniqueAppendsAllSurvive(t *testing.T) {
 }
 
 func TestSupersedeArchivesEvidenceAndFreesFullView(t *testing.T) {
+	t.Parallel()
+
 	repo := t.TempDir()
 	if err := os.Mkdir(filepath.Join(repo, "docs"), 0o755); err != nil {
 		t.Fatal(err)
@@ -196,6 +204,8 @@ func TestSupersedeArchivesEvidenceAndFreesFullView(t *testing.T) {
 }
 
 func TestSupersedeRetryAfterArchivePublishedRemovesActiveCopy(t *testing.T) {
+	t.Parallel()
+
 	repo := t.TempDir()
 	if err := os.Mkdir(filepath.Join(repo, "docs"), 0o755); err != nil {
 		t.Fatal(err)

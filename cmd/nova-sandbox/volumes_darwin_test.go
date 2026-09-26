@@ -474,6 +474,8 @@ func TestTheCreateLockIsAnExclusiveFlock(t *testing.T) {
 // a path a card could write is a lock a card can take, and `run`'s whole premise is that
 // the contained command is not trusted with the machine.
 func TestTheCreateLockLivesUnderTheCallersCacheDirectory(t *testing.T) {
+	t.Parallel()
+
 	path, err := defaultVolumeLockPath()
 	if err != nil {
 		t.Fatalf("the default lock path: %v", err)

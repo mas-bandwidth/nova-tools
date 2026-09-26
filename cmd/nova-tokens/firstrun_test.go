@@ -85,6 +85,8 @@ func TestTheExampleLinesRun(t *testing.T) {
 }
 
 func TestEveryRefusalSaysWhatTheInputWantsAndOneRunNamesEveryProblem(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	// Three independent problems, three lines, one run.
 	r := invoke(t, "fold", "--day", "2026-09-11")
@@ -125,6 +127,8 @@ func TestEveryRefusalSaysWhatTheInputWantsAndOneRunNamesEveryProblem(t *testing.
 // directory, a rules file, a source. A quickstart would have to write state nobody asked
 // for, in a directory nobody named.
 func TestThereIsNoQuickstartVerbAndTheCommandReferenceSaysWhy(t *testing.T) {
+	t.Parallel()
+
 	r := invoke(t, "quickstart")
 	wantExit(t, r, 2)
 	wantContains(t, r.stderr, "unknown subcommand")

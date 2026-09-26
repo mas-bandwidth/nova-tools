@@ -51,6 +51,8 @@ func unitsFile(t *testing.T) string {
 }
 
 func TestFoldUnitsAttributesEachTranscriptToOneUnit(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	tr := unitsFixture(t, dir)
@@ -80,6 +82,8 @@ func TestFoldUnitsAttributesEachTranscriptToOneUnit(t *testing.T) {
 // The compatibility claim: a fold with no --units writes the rows it always wrote, with
 // the twelfth column `-` on every one of them.
 func TestAFoldWithNoUnitsPutsEveryRowOnTheDash(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	tr := unitsFixture(t, dir)
@@ -105,6 +109,8 @@ func TestAFoldWithNoUnitsPutsEveryRowOnTheDash(t *testing.T) {
 // A day file written before the units column existed still reads, and its rows read as
 // `-`: the reader takes either width and nothing has to be refolded to be summed.
 func TestTheReaderTakesTheElevenColumnFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	write(t, filepath.Join(out, "2026-09-18.tsv"),
@@ -128,6 +134,8 @@ func TestTheReaderTakesTheElevenColumnFile(t *testing.T) {
 }
 
 func TestSumByUnitPrintsTheUnitsTable(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	tr := unitsFixture(t, dir)
@@ -157,6 +165,8 @@ func TestSumByUnitPrintsTheUnitsTable(t *testing.T) {
 }
 
 func TestSumRefusesAByItDoesNotKnow(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	r := invoke(t, "sum", "--out", out, "--month", "2026-09", "--by", "lane")
@@ -165,6 +175,8 @@ func TestSumRefusesAByItDoesNotKnow(t *testing.T) {
 }
 
 func TestFoldRefusesAUnitsFileItCannotRead(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	tr := unitsFixture(t, dir)

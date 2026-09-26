@@ -18,6 +18,8 @@ func waitClock(start time.Time) (func() time.Time, func(time.Duration), *time.Ti
 }
 
 func TestWaitMergedOnSecondPollPrintsMergedOnce(t *testing.T) {
+	t.Parallel()
+
 	host := NewFakeHost()
 	head := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	mergeSHA := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -45,6 +47,8 @@ func TestWaitMergedOnSecondPollPrintsMergedOnce(t *testing.T) {
 }
 
 func TestWaitFailingCheckPrintsRedWithCheckName(t *testing.T) {
+	t.Parallel()
+
 	host := NewFakeHost()
 	head := "cccccccccccccccccccccccccccccccccccccccc"
 	host.PRs[7] = PR{Number: 7, HeadOID: head}
@@ -66,6 +70,8 @@ func TestWaitFailingCheckPrintsRedWithCheckName(t *testing.T) {
 }
 
 func TestWaitTimeoutPrintsPendingName(t *testing.T) {
+	t.Parallel()
+
 	host := NewFakeHost()
 	head := "dddddddddddddddddddddddddddddddddddddddd"
 	host.PRs[7] = PR{Number: 7, HeadOID: head}
@@ -93,6 +99,8 @@ func TestWaitTimeoutPrintsPendingName(t *testing.T) {
 // judges the head sha's own runs, so an in-progress run on the head is pending,
 // the deadline is a TIMEOUT, and the stale failure is never printed.
 func TestWaitIgnoresFailedCheckOnAnotherSHA(t *testing.T) {
+	t.Parallel()
+
 	host := NewFakeHost()
 	stale := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	head := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -118,6 +126,8 @@ func TestWaitIgnoresFailedCheckOnAnotherSHA(t *testing.T) {
 // A failure on the head sha itself is still RED, with the check named: filtering
 // to the head must not filter away the news the verb exists to report.
 func TestWaitFailedCheckOnHeadSHAIsRed(t *testing.T) {
+	t.Parallel()
+
 	host := NewFakeHost()
 	head := "cccccccccccccccccccccccccccccccccccccccc"
 	host.PRs[7] = PR{Number: 7, HeadOID: head}
@@ -141,6 +151,8 @@ func TestWaitFailedCheckOnHeadSHAIsRed(t *testing.T) {
 // A merged pull request is MERGED even when the rollup still carries a stale
 // failure: the merge happened, and the stale conclusion is not news.
 func TestWaitMergedDespiteStaleFailedRollup(t *testing.T) {
+	t.Parallel()
+
 	host := NewFakeHost()
 	head := "dddddddddddddddddddddddddddddddddddddddd"
 	stale := "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"

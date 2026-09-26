@@ -15,6 +15,8 @@ const testToken = "1.0123456789abcdef0123456789abcdef"
 func noEnv(string) string { return "" }
 
 func TestConfigCarriesTheLauncherDeadline(t *testing.T) {
+	t.Parallel()
+
 	deadline := time.UnixMilli(1_900_000_000_123)
 	env := map[string]string{
 		"NOVA_CARD_REDIS": "127.0.0.1:6379", "NOVA_CARD_BENCH": "bench-one",
@@ -35,6 +37,8 @@ func TestConfigCarriesTheLauncherDeadline(t *testing.T) {
 // what ps shows; a wrapper whose two disagree runs nothing, and no refusal
 // prints the token.
 func TestLaunchLineMustNameTheCard(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name  string
 		args  []string

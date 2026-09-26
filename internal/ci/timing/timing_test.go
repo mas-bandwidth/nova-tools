@@ -18,6 +18,8 @@ import (
 // must reproduce the committed table; that is the whole point of the
 // measurement, so it is the check.
 func TestTimingTableReproduces(t *testing.T) {
+	t.Parallel()
+
 	pkg, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -48,6 +50,8 @@ func TestTimingTableReproduces(t *testing.T) {
 // TestTimingRefusesABadHarvest holds Load to the refusals a bad harvest
 // earns, each naming its line, so a one-line fix stays one line.
 func TestTimingRefusesABadHarvest(t *testing.T) {
+	t.Parallel()
+
 	good := `{"repo":"mas-bandwidth/nova-tools","pr":1404,"job":"test (1/3)","opened":"2026-09-01T08:00:00Z","queued":"2026-09-01T08:01:30Z","started":"2026-09-01T08:02:15Z","setup_done":"2026-09-01T08:04:15Z","done":"2026-09-01T08:24:15Z","green":true}`
 	for _, tc := range []struct {
 		name, line, want string
@@ -117,6 +121,8 @@ func TestTimingRefusesABadHarvest(t *testing.T) {
 // the render to the table's shape: sorted by repo, PR and job, spans in whole
 // seconds, and "-" where a PR never went all-green.
 func TestTimingSelectAndRender(t *testing.T) {
+	t.Parallel()
+
 	job := func(repo string, pr int, name, opened, queued, started, setup, done string, green bool) Event {
 		return Event{Repo: repo, PR: pr, Job: name, Opened: opened, Queued: queued,
 			Started: started, SetupDone: setup, Done: done, Green: greenPtr(green)}

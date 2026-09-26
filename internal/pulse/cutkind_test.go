@@ -32,6 +32,8 @@ func cutKind(t *testing.T, in CutKindInput) (int, string, string, string) {
 // generated card; a catalog that only tells a human to add the link is not the
 // card-linked contract.
 func TestEveryCutKindCarriesItsReviewedExemplar(t *testing.T) {
+	t.Parallel()
+
 	exemplarPRs := map[string]int{
 		"read":       3483,
 		"fix":        3061,
@@ -110,6 +112,8 @@ func TestEveryCutKindCarriesItsReviewedExemplar(t *testing.T) {
 // cut-kind-read-line-one: a read card's line 1 is the contract the harvest matches, and its
 // number comes from the queue's state file, never from a hand (issue #828, classes B and F).
 func TestCutKindReadWritesTheContractLine(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out, queue := filepath.Join(dir, "pending"), filepath.Join(dir, "queue")
 	if err := os.MkdirAll(queue, 0o755); err != nil {
@@ -143,6 +147,8 @@ func TestCutKindReadWritesTheContractLine(t *testing.T) {
 // cut-kind-fix: the fix card's line 1 names the issue and the red test first, and a prior
 // attempt rides on the card so the worker never repeats it — "fix the prompt, not retry".
 func TestCutKindFixCarriesTheRedTestAndPriorAttempts(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out, queue := filepath.Join(dir, "pending"), filepath.Join(dir, "queue")
 	body := filepath.Join(dir, "body.md")
@@ -182,6 +188,8 @@ func TestCutKindFixCarriesTheRedTestAndPriorAttempts(t *testing.T) {
 // same binding renderValidated gives a validated card, so the contract line cannot drift
 // from the steps it names (#1852 item 1).
 func TestCutKindFixContractLineIsHashedOverEverythingBelowIt(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out, queue := filepath.Join(dir, "pending"), filepath.Join(dir, "queue")
 	code, _, errs, card := cutKind(t, CutKindInput{
@@ -206,6 +214,8 @@ func TestCutKindFixContractLineIsHashedOverEverythingBelowIt(t *testing.T) {
 // cut-kind-rebase: the rebase card's line 1 is the contract the harvest matches, and its
 // steps carry the branch the worker checks out and the base it rebases onto.
 func TestCutKindRebaseNamesTheBranchAndTheBase(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out, queue := filepath.Join(dir, "pending"), filepath.Join(dir, "queue")
 	code, line, errs, card := cutKind(t, CutKindInput{
@@ -230,6 +240,8 @@ func TestCutKindRebaseNamesTheBranchAndTheBase(t *testing.T) {
 
 // replay and spec cards are cut from the same numberer and carry their own shapes.
 func TestCutKindReplayAndSpec(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	queue := filepath.Join(dir, "queue")
 	_, _, errs, replay := cutKind(t, CutKindInput{
@@ -250,6 +262,8 @@ func TestCutKindReplayAndSpec(t *testing.T) {
 
 // cut --kind report writes a card. A nonsense kind is still not one of the kinds.
 func TestCutKindAcceptsReportAndRefusesANonsenseKind(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out, queue := filepath.Join(dir, "pending"), filepath.Join(dir, "queue")
 	code, line, errs, card := cutKind(t, CutKindInput{
@@ -282,6 +296,8 @@ func TestCutKindAcceptsReportAndRefusesANonsenseKind(t *testing.T) {
 
 // every refusal names its remedy, and an unknown kind is never guessed at.
 func TestCutKindRefusalsNameTheirRemedy(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	for _, c := range []struct {
 		name string
@@ -312,6 +328,8 @@ func TestCutKindRefusalsNameTheirRemedy(t *testing.T) {
 }
 
 func TestCutKindGuardCardForbidsJudgingTheVerdict(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out, queue := filepath.Join(dir, "pending"), filepath.Join(dir, "queue")
 	if err := os.MkdirAll(queue, 0o755); err != nil {
@@ -348,6 +366,8 @@ func TestCutKindGuardCardForbidsJudgingTheVerdict(t *testing.T) {
 // all four directories are visible, a fix lands in red and a small,
 // already-approved read lands in green.
 func TestCutKindWritesPriorityLanes(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	queue := filepath.Join(dir, "queue")
 	code, _, errs, _ := cutKind(t, CutKindInput{
@@ -378,6 +398,8 @@ func TestCutKindWritesPriorityLanes(t *testing.T) {
 }
 
 func TestCutKindV2Templates(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	queue := filepath.Join(dir, "queue")
 
@@ -561,6 +583,8 @@ func TestCutKindV2Templates(t *testing.T) {
 // command is what the lint reads — broad staging there is refused with no card written —
 // and a body that declares a second operative region is refused naming the position.
 func TestCutKindV2OperativeRegionBoundary(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	queue := filepath.Join(dir, "queue")
 	bodyFile := func(name, text string) string {

@@ -46,6 +46,8 @@ func devredFixture(t *testing.T) (context.Context, *redis.Client, *countingPushe
 // sets land:<repo>:<base>:red, the lander's gate reads it, and a green tip
 // clears it.
 func TestDevRedPushesOneTaskOnceAndHolds(t *testing.T) {
+	t.Parallel()
+
 	ctx, c, p, d := devredFixture(t)
 	c.HSet(ctx, civerdict.TipKey("nova-tools", "dev"), "sha", redSHA)
 	c.HSet(ctx, reconcile.CIRecordKey("nova-tools", redSHA), "verdict", "FAIL", "check", "test-packages/internal/ci")
@@ -111,6 +113,8 @@ func TestDevRedPushesOneTaskOnceAndHolds(t *testing.T) {
 // holds the base naming the failing check, once across passes, and nothing is
 // read from GitHub.
 func TestDevRedReadsTheGitHubLeg(t *testing.T) {
+	t.Parallel()
+
 	ctx, c, p, d := devredFixture(t)
 	c.HSet(ctx, civerdict.TipKey("nova-tools", "dev"), "sha", redSHA)
 	c.HSet(ctx, webhook.Key("mas-bandwidth/nova-tools", redSHA), "gh", "red", "gh_fail", "check:lint",
@@ -134,6 +138,8 @@ func TestDevRedReadsTheGitHubLeg(t *testing.T) {
 // TestDevRedWatchesTheBasesSet: with no Bases, the set devred:bases names
 // the pairs; an empty set is a pass that does nothing.
 func TestDevRedWatchesTheBasesSet(t *testing.T) {
+	t.Parallel()
+
 	ctx, c, _, d := devredFixture(t)
 	d.Bases = nil
 	outs, err := d.Pass(ctx)

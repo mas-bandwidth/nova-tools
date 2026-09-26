@@ -409,6 +409,8 @@ func stellaPrepared(t *testing.T) (string, string, Prepared, PreparedArtifact) {
 }
 
 func TestStellaPreparedRequiresCompleteRemoteIndex(t *testing.T) {
+	t.Parallel()
+
 	_, clone, p, a := stellaPrepared(t)
 	if _, e := SendPreparedArtifact(clone, "origin", "main", p, a, 1); e != nil {
 		t.Fatal(e)
@@ -439,6 +441,8 @@ func TestStellaPreparedRequiresCompleteRemoteIndex(t *testing.T) {
 }
 
 func TestStellaPreparedCannotConfirmCommitWithoutIndex(t *testing.T) {
+	t.Parallel()
+
 	bare, clone, p, a := stellaPrepared(t)
 	if e := p.Save(clone); e != nil {
 		t.Fatal(e)
@@ -458,6 +462,8 @@ func TestStellaPreparedCannotConfirmCommitWithoutIndex(t *testing.T) {
 }
 
 func TestStellaPreparedPreservesUnrelatedAttributeEdit(t *testing.T) {
+	t.Parallel()
+
 	bare, clone, p, a := stellaPrepared(t)
 	path := filepath.Join(clone, AttributesName)
 	old, _ := os.ReadFile(path)
@@ -478,6 +484,8 @@ func TestStellaPreparedPreservesUnrelatedAttributeEdit(t *testing.T) {
 }
 
 func TestStellaPreparedRefusesUnknownArtifactField(t *testing.T) {
+	t.Parallel()
+
 	_, clone, p, a := stellaPrepared(t)
 	b, _ := json.Marshal(a)
 	b = append(b[:len(b)-1], []byte(`,"unsupported":"synthetic"}`)...)
@@ -487,6 +495,8 @@ func TestStellaPreparedRefusesUnknownArtifactField(t *testing.T) {
 }
 
 func TestPreparedRefusesDuplicateKeys(t *testing.T) {
+	t.Parallel()
+
 	_, clone, p, a := stellaPrepared(t)
 	dupJSON := fmt.Sprintf(`{"schema":%q,"id":%q,"id":"duplicate-id","path":%q,"note":%q,"sha256":%q}`,
 		a.Schema, a.ID, a.Path, a.Note, a.SHA256)
@@ -496,6 +506,8 @@ func TestPreparedRefusesDuplicateKeys(t *testing.T) {
 }
 
 func TestStellaPreparedPreservesUnrelatedAheadAttributeEdit(t *testing.T) {
+	t.Parallel()
+
 	bare, clone, p, a := stellaPrepared(t)
 	if e := p.Save(clone); e != nil {
 		t.Fatal(e)
@@ -556,6 +568,8 @@ func blockUntilKilled() {
 }
 
 func TestSendPreparedProcessDeathHelper(t *testing.T) {
+	t.Parallel()
+
 	if os.Getenv("GO_WANT_PREPARED_DEATH_HELPER") != "1" {
 		return
 	}
@@ -637,6 +651,8 @@ func TestSendPreparedProcessDeathHelper(t *testing.T) {
 }
 
 func TestPreparedIndexStagedPartialHelper(t *testing.T) {
+	t.Parallel()
+
 	if os.Getenv("GO_WANT_PREPARED_INDEX_DEATH_HELPER") != "1" {
 		return
 	}
@@ -686,6 +702,8 @@ func TestPreparedIndexStagedPartialHelper(t *testing.T) {
 }
 
 func TestSendPreparedRecoveryHelper(t *testing.T) {
+	t.Parallel()
+
 	if os.Getenv("GO_WANT_PREPARED_RECOVERY_HELPER") != "1" {
 		return
 	}
@@ -717,6 +735,8 @@ func TestSendPreparedRecoveryHelper(t *testing.T) {
 }
 
 func TestSendPreparedProcessDeathRecovery(t *testing.T) {
+	t.Parallel()
+
 	modes := []string{"before-note-write", "after-note-write", "after-index-write", "after-note-commit", "after-commit"}
 
 	for _, mode := range modes {
@@ -806,6 +826,8 @@ func TestSendPreparedProcessDeathRecovery(t *testing.T) {
 // actual production-interruption gate (a kill inside SendPreparedArtifact's own INDEX append)
 // remains owed and is named in the PR.
 func TestPreparedIndexRecoveryFromStagedPartialIndexRetainsEarlierEntries(t *testing.T) {
+	t.Parallel()
+
 	hermetic(t)
 	bare := bareBus(t)
 	clone := cloneBus(t, bare)
@@ -901,6 +923,8 @@ func TestPreparedIndexRecoveryFromStagedPartialIndexRetainsEarlierEntries(t *tes
 }
 
 func TestSendPreparedChildExecutionAndRecovery(t *testing.T) {
+	t.Parallel()
+
 	bare, clone, p, a := stellaPrepared(t)
 	scratch := t.TempDir()
 	artFile := filepath.Join(scratch, "prepared.json")
@@ -941,6 +965,8 @@ func TestSendPreparedChildExecutionAndRecovery(t *testing.T) {
 }
 
 func TestRowanProbeAheadMergeCommitPublishesUnrelatedTree(t *testing.T) {
+	t.Parallel()
+
 	bare, clone, p, a := stellaIndependentPrepared(t)
 	id := Identity{Name: p.Sender.GitName, Email: p.Sender.GitEmail}
 	msg := WithTrailer(p.Message, TrailerSend+" "+a.ID)
@@ -985,6 +1011,8 @@ func TestRowanProbeAheadMergeCommitPublishesUnrelatedTree(t *testing.T) {
 }
 
 func TestRowanProbeStaleIndexLock(t *testing.T) {
+	t.Parallel()
+
 	_, clone, p, a := stellaIndependentPrepared(t)
 	lockFile := filepath.Join(clone, ".git", "index.lock")
 	if err := os.WriteFile(lockFile, []byte("stale lock\n"), 0644); err != nil {
@@ -1001,6 +1029,8 @@ func TestRowanProbeStaleIndexLock(t *testing.T) {
 }
 
 func TestPreparedDeliveryRecoversEmptyOrPartialGitattributes(t *testing.T) {
+	t.Parallel()
+
 	bare, clone, p, a := stellaIndependentPrepared(t)
 	// Write empty .gitattributes (simulating crash right after open/create before EnsureMergeAttributes wrote content)
 	attrsPath := filepath.Join(clone, AttributesName)
@@ -1028,6 +1058,8 @@ func TestPreparedDeliveryRecoversEmptyOrPartialGitattributes(t *testing.T) {
 }
 
 func TestPreparedDeliveryRecoversPartialNoteOnDisk(t *testing.T) {
+	t.Parallel()
+
 	bare, clone, p, a := stellaIndependentPrepared(t)
 	fullNote := filepath.Join(clone, filepath.FromSlash(p.Path))
 	if err := os.MkdirAll(filepath.Dir(fullNote), 0755); err != nil {
@@ -1054,6 +1086,8 @@ func TestPreparedDeliveryRecoversPartialNoteOnDisk(t *testing.T) {
 }
 
 func TestPreparedDeliveryRecoversPartialIndexOnDisk(t *testing.T) {
+	t.Parallel()
+
 	bare, clone, p, a := stellaIndependentPrepared(t)
 	fullIndex := filepath.Join(clone, filepath.FromSlash(IndexPath(p.Sender.Lane)))
 	if err := os.MkdirAll(filepath.Dir(fullIndex), 0755); err != nil {
@@ -1081,6 +1115,8 @@ func TestPreparedDeliveryRecoversPartialIndexOnDisk(t *testing.T) {
 }
 
 func TestPreparedDeliveryRefusesUnrelatedForeignGitattributes(t *testing.T) {
+	t.Parallel()
+
 	_, clone, p, a := stellaIndependentPrepared(t)
 	attrsPath := filepath.Join(clone, AttributesName)
 	if err := os.WriteFile(attrsPath, []byte("*.iso filter=lfs\n"), 0644); err != nil {
@@ -1097,6 +1133,8 @@ func TestPreparedDeliveryRefusesUnrelatedForeignGitattributes(t *testing.T) {
 }
 
 func TestPreparedDeliveryRefusesConflictingNoteOnDisk(t *testing.T) {
+	t.Parallel()
+
 	_, clone, p, a := stellaIndependentPrepared(t)
 	fullNote := filepath.Join(clone, filepath.FromSlash(p.Path))
 	if err := os.MkdirAll(filepath.Dir(fullNote), 0755); err != nil {

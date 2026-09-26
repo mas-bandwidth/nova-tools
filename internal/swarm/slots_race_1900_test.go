@@ -21,6 +21,8 @@ import (
 // spawns because the window is the same one -- count, then mkdir -- and a test that
 // needs a scheduler to cooperate is a test that goes green on a slow day.
 func TestConcurrentTakesNeverExceedCapacity(t *testing.T) {
+	t.Parallel()
+
 	for trial := 0; trial < 8; trial++ {
 		store := t.TempDir()
 		writeShares(t, store, "capacity\t1\nreserve\t0\nalice\t1\n")
@@ -77,6 +79,8 @@ func TestConcurrentTakesNeverExceedCapacity(t *testing.T) {
 // every byte of its shape and the lock is a file beside it, so a store made by an
 // older `slots init` still takes and still lists.
 func TestTheStoreLockDoesNotChangeTheSharesFormat(t *testing.T) {
+	t.Parallel()
+
 	store := t.TempDir()
 	body := "capacity\t4\nreserve\t1\nalice\t2\nbob\t2\n"
 	writeShares(t, store, body)
@@ -99,6 +103,8 @@ func TestTheStoreLockDoesNotChangeTheSharesFormat(t *testing.T) {
 // A take against a store that was never `slots init`ed still says shares.tsv, and does
 // not make a directory on the way past.
 func TestTakeAgainstAStoreThatWasNeverInitedStillSaysSharesTSV(t *testing.T) {
+	t.Parallel()
+
 	store := filepath.Join(t.TempDir(), "never-made")
 	_, _, _, _, _, ok, err := TakeSlotLeases(store, "alice", 1, time.Hour, "card", time.Now().UTC(), os.Getpid())
 	if ok || err == nil {

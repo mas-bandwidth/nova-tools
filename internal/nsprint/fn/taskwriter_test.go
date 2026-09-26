@@ -20,6 +20,8 @@ import (
 // table moves, #3929, #4094); the stream registry (ws:names, ws:order) and ws:log
 // receipts are not task sets. A second writer fails here, so it cannot land.
 func TestTaskCardOneWriter(t *testing.T) {
+	t.Parallel()
+
 	source, err := Source()
 	if err != nil {
 		t.Fatal(err)

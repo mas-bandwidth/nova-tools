@@ -74,6 +74,8 @@ func noteText(from, to, subject string, body int) string {
 // read's bound, and a peak resident that is FLAT across polls rather than a
 // function of how deep the lane is.
 func TestTheBoundedReadSpendsWhatItSaysItSpends(t *testing.T) {
+	t.Parallel()
+
 	dir, anchor := laneRepo(t)
 	// 900 notes IN ONE COMMIT, which is the spec's own separately named
 	// fixture: nine hundred notes added in one commit are one commit and three
@@ -142,6 +144,8 @@ func TestTheBoundedReadSpendsWhatItSaysItSpends(t *testing.T) {
 
 // TestTheAnswerIsFoundOnThePollThatReachesIt walks the same lane to the answer.
 func TestTheAnswerIsFoundOnThePollThatReachesIt(t *testing.T) {
+	t.Parallel()
+
 	dir, anchor := laneRepo(t)
 	for i := 1; i <= 900; i++ {
 		to := "Somebody-Else"
@@ -186,6 +190,8 @@ func TestTheAnswerIsFoundOnThePollThatReachesIt(t *testing.T) {
 // process that decodes every item, without a fake: a whole-read bound of a few
 // milliseconds must end the poll and leave nothing running.
 func TestAWedgedProcessIsKilledByTheWholeReadBound(t *testing.T) {
+	t.Parallel()
+
 	dir, anchor := laneRepo(t)
 	for i := 1; i <= 20; i++ {
 		writeFile(t, filepath.Join(dir, "from-peer", fmt.Sprintf("n%02d.md", i)),

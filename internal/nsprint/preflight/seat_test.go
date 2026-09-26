@@ -109,6 +109,8 @@ func noperm(cmd redis.Cmder) error {
 // NOPERM. 7.1 says it needs the preflight ACL user, once, instead of three
 // raw refusals, and every other check still runs.
 func TestPreflightInfoNeedsPreflightUser(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	mr := miniredis.RunT(t)
 	mr.SetTime(t0)
@@ -145,6 +147,8 @@ func TestPreflightInfoNeedsPreflightUser(t *testing.T) {
 // DONE-WHEN test for #3190: a fake store answering NOPERM to INFO, FUNCTION LIST or TIME
 // makes 7.1 print RED 7.1 with MISSING and the refused command, never GREEN, and exit 1.
 func TestStoreCheckNoPermIsRedNamingTheCommand(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	mr := miniredis.RunT(t)
 	mr.SetTime(t0)

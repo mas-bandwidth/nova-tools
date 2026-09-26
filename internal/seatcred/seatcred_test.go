@@ -12,6 +12,8 @@ import (
 )
 
 func TestFromArgsTakesTheSeatFlagOrTheEnvironment(t *testing.T) {
+	t.Parallel()
+
 	t.Cleanup(func() { seatcred.Select("") })
 	env := func(v string) func(string) string {
 		return func(k string) string {
@@ -52,6 +54,8 @@ func TestFromArgsTakesTheSeatFlagOrTheEnvironment(t *testing.T) {
 }
 
 func TestPasswordKeyNamesTheUsersVariable(t *testing.T) {
+	t.Parallel()
+
 	if got := seatcred.PasswordKey("coordinator"); got != "NOVA_REDIS_COORDINATOR_PASSWORD" {
 		t.Fatalf("PasswordKey = %s", got)
 	}

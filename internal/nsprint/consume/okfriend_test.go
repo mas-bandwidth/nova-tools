@@ -165,6 +165,8 @@ func newConsumer(st *store.Store, sprint, name string) *OkFriend {
 // harvest each required reader has exactly one head-specific read within
 // 60 s. The antecedent is the DONE-to-PR gap (370 done, 38 PRs).
 func TestControl07NoReviewBeforePR(t *testing.T) {
+	t.Parallel()
+
 	st, client := controlRedis(t)
 	ctx := context.Background()
 	sprint := "control-0707a0b1"
@@ -308,6 +310,8 @@ var errKilled = errors.New("killed between delivery and ack")
 // after one delivery and before its ack; on restart no card is handled twice
 // and the undelivered event still arrives (Johnny 8).
 func TestControl14NoCardHandledTwice(t *testing.T) {
+	t.Parallel()
+
 	st, client := controlRedis(t)
 	ctx := context.Background()
 	sprint := "control-1414c0d2"
@@ -447,6 +451,8 @@ func contains(list []string, s string) bool {
 // the id, and once the id is cleared the next pass routes the read and moves
 // the card (stella's hold on #3052 at ba232061).
 func TestOkFriendReviewConflictStaysHarvested(t *testing.T) {
+	t.Parallel()
+
 	st, client := controlRedis(t)
 	ctx := context.Background()
 	sprint := "control-3052c0f1"
@@ -526,6 +532,8 @@ func TestOkFriendReviewConflictStaysHarvested(t *testing.T) {
 // retrying with a bounded backoff, not a hot loop. The event stays pending
 // and the card stays harvested for the whole run.
 func TestOkFriendRunBacksOffOnBlocked(t *testing.T) {
+	t.Parallel()
+
 	st, client := controlRedis(t)
 	ctx := context.Background()
 	sprint := "control-3052b0ff"
@@ -587,6 +595,8 @@ func TestOkFriendRunBacksOffOnBlocked(t *testing.T) {
 }
 
 func TestOkFriendNextBackoffBounded(t *testing.T) {
+	t.Parallel()
+
 	o := &OkFriend{RetryWait: time.Second, RetryMax: 4 * time.Second}
 	var got []time.Duration
 	var d time.Duration

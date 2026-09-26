@@ -17,6 +17,8 @@ bot	ci-bot	no
 }
 
 func TestStripQuotedAndCode(t *testing.T) {
+	t.Parallel()
+
 	input := `Hello
 > quoted line 1
 > quoted line 2
@@ -40,6 +42,8 @@ After code`
 }
 
 func TestParseDispositionLine(t *testing.T) {
+	t.Parallel()
+
 	line := `DISPOSITION who=stella head=cb08e876640d3ab5086585b26f87067fac1f6ee8 verdict=HOLD scope="parser"`
 	who, head, verdict, scope, ok := ParseDispositionLine(line)
 	if !ok {
@@ -51,6 +55,8 @@ func TestParseDispositionLine(t *testing.T) {
 }
 
 func TestAuthorNoteSkipped(t *testing.T) {
+	t.Parallel()
+
 	body := "DISPOSITION who=rowan verdict=NOTE\nstatus report mentioning HOLD"
 	if !IsAuthorNote(body, "rowan") {
 		t.Errorf("expected author note to be recognized")
@@ -61,6 +67,8 @@ func TestAuthorNoteSkipped(t *testing.T) {
 }
 
 func TestParseCommentHoldRule(t *testing.T) {
+	t.Parallel()
+
 	rs := sampleReviewers()
 	head := "1111111111111111111111111111111111111111"
 
@@ -105,6 +113,8 @@ func TestParseCommentHoldRule(t *testing.T) {
 }
 
 func TestUnreleasedHoldsFold(t *testing.T) {
+	t.Parallel()
+
 	rs := sampleReviewers()
 	headA := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	headB := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -181,6 +191,8 @@ func TestUnreleasedHoldsFold(t *testing.T) {
 }
 
 func TestUnreleasedHoldsPreservesHoldOnEqualTimestamp(t *testing.T) {
+	t.Parallel()
+
 	head := "1111111111111111111111111111111111111111"
 	rs := sampleReviewers()
 	at := "2026-09-19T10:00:00Z"

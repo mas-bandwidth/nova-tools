@@ -126,6 +126,8 @@ func openListSprint(client *redis.Client, S string, order float64) {
 // TestListThreeSprintsOneTrip is the #3263 DONE-WHEN: a test with 3 sprints
 // fails if List issues more than 1 round trip.
 func TestListThreeSprintsOneTrip(t *testing.T) {
+	t.Parallel()
+
 	st, client := setupListTestRedis(t)
 	ctx := context.Background()
 
@@ -195,6 +197,8 @@ func TestListThreeSprintsOneTrip(t *testing.T) {
 
 // TestListOneSprint verifies the single-sprint path also uses one round trip.
 func TestListOneSprint(t *testing.T) {
+	t.Parallel()
+
 	st, client := setupListTestRedis(t)
 	ctx := context.Background()
 
@@ -218,6 +222,8 @@ func TestListOneSprint(t *testing.T) {
 
 // TestListStateFilter verifies state filtering works through the FCALL.
 func TestListStateFilter(t *testing.T) {
+	t.Parallel()
+
 	st, client := setupListTestRedis(t)
 	ctx := context.Background()
 
@@ -242,6 +248,8 @@ func TestListStateFilter(t *testing.T) {
 
 // TestListNoSprints verifies the empty-sprint case returns nothing in one trip.
 func TestListNoSprints(t *testing.T) {
+	t.Parallel()
+
 	st, client := setupListTestRedis(t)
 	ctx := context.Background()
 

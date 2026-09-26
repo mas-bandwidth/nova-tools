@@ -17,6 +17,8 @@ import (
 // the Go side of land/ names: each must resolve to exactly one row. A new refusal with no row
 // fails here (fails on: an unnamed refusal, a refusal with no remedy).
 func TestRefusalTableWalk(t *testing.T) {
+	t.Parallel()
+
 	rows := land.Refusals()
 	if len(rows) < 20 {
 		t.Fatalf("refusal table has %d rows; want every land refusal", len(rows))

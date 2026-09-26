@@ -22,6 +22,8 @@ import (
 // line now carries read=johnny beside a rung that can do the work, and a floor
 // nothing can clear (--floor 1) moves that rung and leaves the read alone.
 func TestRouteSecurityNeverFallsThrough(t *testing.T) {
+	t.Parallel()
+
 	for name, args := range map[string][]string{
 		"guard flag":    {"--guard"},
 		"secrets flag":  {"--secrets"},
@@ -66,6 +68,8 @@ func contains(args []string, want string) bool {
 
 // An unknown touch is a refusal naming the six.
 func TestRouteRefusesAnUnknownTouch(t *testing.T) {
+	t.Parallel()
+
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"route", "--no-jev", "--unit-id", "u", "--kind", "rebase", "--files", "1", "--touches", "the vibes"}, &stdout, &stderr); code != 2 {
 		t.Fatalf("exit = %d, want 2 (stdout=%q)", code, stdout.String())
@@ -78,6 +82,8 @@ func TestRouteRefusesAnUnknownTouch(t *testing.T) {
 // (3) A timeout holds its own rung until there is proof the attempt is dead,
 // and the log row says the decision is an await.
 func TestRouteHoldsTheRungOnAnUnterminatedTimeout(t *testing.T) {
+	t.Parallel()
+
 	log := filepath.Join(t.TempDir(), "decide.jsonl")
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"route", "--no-jev", "--unit-id", "t-1", "--kind", "fix-with-red-test",

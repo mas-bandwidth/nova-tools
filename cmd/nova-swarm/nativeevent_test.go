@@ -67,6 +67,8 @@ func okRow() swarm.UsageRow {
 // whose verdict line opens BLOCKED/FAILED/FAIL/RED is `fail`, and a report the MACHINERY
 // signed is `fail` however it opens.
 func TestCardEndEventIsOKOnlyWhenTheCardEarnedIt(t *testing.T) {
+	t.Parallel()
+
 	green := "RESULT card-1 sha=abc123 — the cell\nGREEN the assertion holds\nBRANCH rowan/card-1\n"
 	for _, tc := range []struct {
 		name    string
@@ -103,6 +105,8 @@ func TestCardEndEventIsOKOnlyWhenTheCardEarnedIt(t *testing.T) {
 // TestCardEndEventCarriesTheUsageRow: the numbers in the stream are the numbers in
 // usage.tsv, so the fold and the file can never disagree about one card's spend.
 func TestCardEndEventCarriesTheUsageRow(t *testing.T) {
+	t.Parallel()
+
 	job := jobWithResult(t, "RESULT card-1 sha=abc — t\nGREEN it holds\n")
 	e, _ := cardEndEvent(nativeRunConfig{label: "card-1", model: "opencode/deepseek-v4-flash"},
 		nativeRunResult{job: job, usage: okRow()}, "OK", "hulk")
@@ -130,6 +134,8 @@ func TestCardEndEventCarriesTheUsageRow(t *testing.T) {
 // keeps dashes in the row, and the entry carries NO cost at all: an absent cost is not a
 // zero cost, so a dash is nil here and no tokens_in, tokens_out or usd field is written.
 func TestCardEndEventKeepsDashesOutOfTheStream(t *testing.T) {
+	t.Parallel()
+
 	row := swarm.UsageRow{"job": "card-1", "attempt": "2", "provider": swarm.Dash, "model": swarm.Dash,
 		"tokens_in": swarm.Dash, "tokens_out": swarm.Dash, "usd": swarm.Dash}
 	job := jobWithResult(t, "")
@@ -155,6 +161,8 @@ func TestCardEndEventKeepsDashesOutOfTheStream(t *testing.T) {
 // call returns, one line lands on the run's stderr, the card's RESULT.md is untouched, and
 // nothing about this function can change a caller's exit code -- it returns nothing.
 func TestCardEndEmitCannotFailTheCard(t *testing.T) {
+	t.Parallel()
+
 	body := "RESULT card-1 sha=abc — t\nGREEN it holds\n"
 	job := jobWithResult(t, body)
 	fake := events.NewFakeStream()
@@ -187,6 +195,8 @@ func TestCardEndEmitCannotFailTheCard(t *testing.T) {
 // state of most of the fleet until #2559's launcher hands the password over, and it must not
 // print a line per card.
 func TestCardEndEmitIsSkippedWithoutAPassword(t *testing.T) {
+	t.Parallel()
+
 	job := jobWithResult(t, "RESULT card-1 sha=abc — t\nGREEN it holds\n")
 	var stderr strings.Builder
 	emitCardEnd(context.Background(), events.WriterOptions{
@@ -205,6 +215,8 @@ func TestCardEndEmitIsSkippedWithoutAPassword(t *testing.T) {
 // TestCardEndEmitWritesTheEntry is the positive control: without it every assertion above
 // would pass on a writer that never emits anything at all.
 func TestCardEndEmitWritesTheEntry(t *testing.T) {
+	t.Parallel()
+
 	job := jobWithResult(t, "RESULT card-1 sha=abc — t\nGREEN it holds\n")
 	fake := events.NewFakeStream()
 	var stderr strings.Builder
@@ -236,6 +248,8 @@ func TestCardEndEmitWritesTheEntry(t *testing.T) {
 // this runs the real Redis store (Open, XADD) against miniredis and asserts the entry is on
 // `cards:done` and that `ev:cards` was never created (Johnny's HOLD on #2619).
 func TestCardEndEmitWritesTheCardsDoneKey(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	job := jobWithResult(t, "RESULT card-1 sha=abc — t\nGREEN it holds\n")
 	var stderr strings.Builder
@@ -269,6 +283,8 @@ func TestCardEndEmitWritesTheCardsDoneKey(t *testing.T) {
 // SLOT LEASE, on a card that has already finished and already printed its receipt. Two of
 // those and the bench is a seat short for the rest of the sprint.
 func TestCardEndEmitBoundsTheWriteAndNotOnlyTheDial(t *testing.T) {
+	t.Parallel()
+
 	store := &deadlineStore{FakeStream: events.NewFakeStream()}
 	job := jobWithResult(t, "RESULT card-1 sha=abc — t\nGREEN it holds\n")
 	emitCardEnd(context.Background(), events.WriterOptions{

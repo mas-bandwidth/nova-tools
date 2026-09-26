@@ -26,6 +26,8 @@ func lintEscapeCard(t *testing.T, name string, header ...string) (string, int) {
 // lint clean as repo-relative because the copy of the glob rule only looked for a
 // leading `/` or `\`.
 func TestLintCardRefusesAWindowsDriveLetterPath(t *testing.T) {
+	t.Parallel()
+
 	stdout, exit := lintEscapeCard(t, "drive.card",
 		"KIND: fix-red",
 		"PATHS: C:/foo/bar",
@@ -45,6 +47,8 @@ func TestLintCardRefusesAWindowsDriveLetterPath(t *testing.T) {
 // #1853.2 THE CAP ON PATHS: IS EIGHT (SPEC-TOOLWORK.md:579-580). Nine globs used to
 // lint clean; a bound that names nine files has stopped bounding anything.
 func TestLintCardRefusesMoreThanEightPathGlobs(t *testing.T) {
+	t.Parallel()
+
 	nine := "p1/**, p2/**, p3/**, p4/**, p5/**, p6/**, p7/**, p8/**, p9/**"
 	stdout, exit := lintEscapeCard(t, "nine.card",
 		"KIND: fix-red",
@@ -72,6 +76,8 @@ func TestLintCardRefusesMoreThanEightPathGlobs(t *testing.T) {
 // #1853.3 A COMMA-ONLY PATHS: LINE DECLARES NOTHING. `PATHS: , , ` is not
 // `PATHS: none` and it is not a list of globs.
 func TestLintCardRefusesACommaOnlyPathsLine(t *testing.T) {
+	t.Parallel()
+
 	stdout, exit := lintEscapeCard(t, "commas.card",
 		"KIND: fix-red",
 		"PATHS: , , ",
@@ -89,6 +95,8 @@ func TestLintCardRefusesACommaOnlyPathsLine(t *testing.T) {
 // lint clean (LINT OK checks=16) because the typed header asked only that the
 // line exist. The name set is internal/hygiene/kinds.txt.
 func TestLintCardRefusesAnUnknownKind(t *testing.T) {
+	t.Parallel()
+
 	stdout, exit := lintEscapeCard(t, "unknown.card",
 		"KIND: completely-unknown-kind",
 		"PATHS: internal/hygiene/glob.go",

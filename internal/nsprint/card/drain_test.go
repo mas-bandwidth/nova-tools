@@ -21,6 +21,8 @@ import (
 // drain finds nothing to do, writes no receipt, and exits 0. A queue-dir card
 // that fails lint is REFUSED and stays where it is.
 func TestDrainReleasesAndImportsOnce(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := newRedis(t)
 	srv := repoServer(t)
@@ -215,6 +217,8 @@ func adHocScriptCalls(t *testing.T, ctx context.Context, client *redis.Client) [
 // TestDrainRefusesBadInput is the negative control for the arguments: a bad
 // sprint, a member that is neither bench: nor friend:, and a missing queue dir.
 func TestDrainRefusesBadInput(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := newRedis(t)
 	if res := card.Drain(ctx, client, "Bad Sprint", card.DrainOptions{}); res.Code != 2 {
@@ -282,6 +286,8 @@ func drainReceipts(t *testing.T, ctx context.Context, client *redis.Client) map[
 // survives, and a second teardown removes nothing. The keyspace is read with
 // KEYS only here, on the test's own store; the verb never scans.
 func TestDrainControlRestoresKeyspace(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := newRedis(t)
 	st := store.New(client)
@@ -362,6 +368,8 @@ func TestDrainControlRestoresKeyspace(t *testing.T) {
 // TestDrainControlRefusesARealSprint: --control takes only a control-<id>,
 // and never together with --sprint.
 func TestDrainControlRefusesARealSprint(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := newRedis(t)
 	for _, tc := range []struct {

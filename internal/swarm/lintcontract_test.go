@@ -39,6 +39,8 @@ func readOr(t *testing.T, path string) string {
 
 // The example line 1 of the document `cut` is written from is a line the lint accepts.
 func TestTheDocumentsContractLineIsOneTheLintAccepts(t *testing.T) {
+	t.Parallel()
+
 	doc := readOr(t, cardCutDocPath)
 	want := ""
 	for _, line := range strings.Split(doc, "\n") {
@@ -58,6 +60,8 @@ func TestTheDocumentsContractLineIsOneTheLintAccepts(t *testing.T) {
 // `cut`'s own renderer is on dev, so the test reads it rather than the document alone:
 // internal/pulse/cut_template.go refuses a card whose line 1 is not the form it names.
 func TestCutsContractLineIsOneTheLintAccepts(t *testing.T) {
+	t.Parallel()
+
 	path := cutSourcePath
 	if _, err := os.Stat(path); err != nil {
 		path = cutLegacyPath
@@ -82,6 +86,8 @@ func TestCutsContractLineIsOneTheLintAccepts(t *testing.T) {
 // form `cut` and the lint settle on, gather follows -- and a `RESULT` literal appearing
 // in that file would be a third opinion, which is the defect this test exists to catch.
 func TestGatherImposesNoContractPrefixOfItsOwn(t *testing.T) {
+	t.Parallel()
+
 	src := readOr(t, harvestSourcePath)
 	for _, bad := range []string{`"RESULT "`, `"RESULT: "`} {
 		if strings.Contains(src, bad) {
@@ -95,6 +101,8 @@ func TestGatherImposesNoContractPrefixOfItsOwn(t *testing.T) {
 // lint accepts both, because refusing either one refuses real cards. When #1741 closes,
 // one of these two lines goes.
 func TestBothContractFormsAreAcceptedUntilTheIssueSettlesIt(t *testing.T) {
+	t.Parallel()
+
 	for _, line := range []string{
 		"RESULT card-1 sha=0123456789ab",
 		"RESULT: CARD-0000 do the thing",
@@ -124,6 +132,8 @@ func TestBothContractFormsAreAcceptedUntilTheIssueSettlesIt(t *testing.T) {
 // This test holds the message to that, so the accept-both stopgap can never quietly become
 // a second rule.
 func TestTheContractRemedyNamesOneFormAndCallsTheOtherAStopgap(t *testing.T) {
+	t.Parallel()
+
 	if CardContractPrefixes[0] != "RESULT: " {
 		t.Fatalf("the colon form is the rule, so it is first: %v", CardContractPrefixes)
 	}

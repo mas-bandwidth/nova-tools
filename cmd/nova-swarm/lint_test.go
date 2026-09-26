@@ -39,6 +39,8 @@ func writeLintCard(t *testing.T, name, body string) string {
 }
 
 func TestLintGoodCardPasses(t *testing.T) {
+	t.Parallel()
+
 	card := writeLintCard(t, "good.card", lintGoodCard())
 	exit, stdout, stderr := runSwarm(t, "lint", "--card", card)
 	if exit != 0 {
@@ -58,6 +60,8 @@ func TestLintGoodCardPasses(t *testing.T) {
 // A card that writes its scratch above the job is the defect that killed cards tonight: the
 // `../scratch` is refused by the wall, and the lint names the line before any spend.
 func TestLintNamesTheParentPathLine(t *testing.T) {
+	t.Parallel()
+
 	body := strings.Join([]string{
 		"RESULT: CARD-1111 do the thing",
 		"STEP 1. pwd && git clone -q https://github.com/mas-bandwidth/nova-tools.git repo && cd repo",
@@ -83,6 +87,8 @@ func TestLintNamesTheParentPathLine(t *testing.T) {
 // A card that names no red test is the defect the work order says to catch: the check name
 // itself is the answer, so the reader does not have to find the missing piece.
 func TestLintNamesTheMissingRedTest(t *testing.T) {
+	t.Parallel()
+
 	body := strings.Join([]string{
 		"RESULT: CARD-2222 change a constant",
 		"STEP 1. pwd && git clone -q https://github.com/mas-bandwidth/nova-tools.git repo && cd repo",
@@ -105,6 +111,8 @@ func TestLintNamesTheMissingRedTest(t *testing.T) {
 // A card that reaches for the sandbox is a probe this tool does not run, and its defect is
 // named as plainly as the others.
 func TestLintRefusesNovaSandbox(t *testing.T) {
+	t.Parallel()
+
 	body := strings.Replace(lintGoodCard(), "STEP 2. Read docs/SPEC-SWARM.md first.",
 		"STEP 2. nova-sandbox probe --secret /root/.ssh/id_rsa", 1)
 	card := writeLintCard(t, "sandbox.card", body)
@@ -122,6 +130,8 @@ func TestLintRefusesNovaSandbox(t *testing.T) {
 // template the tool ships must lint clean, and a template that is not a card (result, worker,
 // setup, capacity) must answer by name rather than as a result-first drift.
 func TestTemplateThenLintPasses(t *testing.T) {
+	t.Parallel()
+
 	cardTemplates := map[string]bool{
 		"read-pr":   true,
 		"probe-row": true,
@@ -161,6 +171,8 @@ func TestTemplateThenLintPasses(t *testing.T) {
 // through the harness untruncated -- so the finding says how big, says `advisory`, and
 // leaves the verdict alone.
 func TestLintAdvisesAnOversizeCardAndDoesNotRefuseIt(t *testing.T) {
+	t.Parallel()
+
 	body := lintGoodCard() + "RESULT: padding " + strings.Repeat("x", 12000) + "\n"
 	card := writeLintCard(t, "big.card", body)
 	exit, stdout, _ := runSwarm(t, "lint", "--card", card)
@@ -184,6 +196,8 @@ func TestLintAdvisesAnOversizeCardAndDoesNotRefuseIt(t *testing.T) {
 // A card that is BOTH over the ceiling and drifting is refused for the drift alone, and the
 // closing size line answers the advisory question in the bytes.
 func TestAnOversizeDriftingCardIsRefusedForTheDriftAndSaysTheCeilingIsAdvisory(t *testing.T) {
+	t.Parallel()
+
 	body := lintGoodCard() + "STEP 6. cd ../elsewhere\n" + "RESULT: padding " + strings.Repeat("x", 12000) + "\n"
 	card := writeLintCard(t, "bigdrift.card", body)
 	exit, stdout, _ := runSwarm(t, "lint", "--card", card)

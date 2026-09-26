@@ -6,6 +6,8 @@ import "testing"
 // false, never true twice: a node whose Needs names the same id more than once must
 // not grow a second forward edge, a second reverse edge, or a second count in Edges.
 func TestARepeatedNeedIsOneEdge(t *testing.T) {
+	t.Parallel()
+
 	t.Run("a need named twice is one forward edge and one reverse edge", func(t *testing.T) {
 		g, err := Seed([]Node{
 			{ID: "a", Needs: []string{"b", "b"}},

@@ -19,6 +19,8 @@ import (
 // --sweep-now leaves that directory intact and the job directory gone. nova-pulse
 // status reads the spend from the results root, not from the job that was deleted.
 func TestControlCardResultsSurviveSweep(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	t.Run("sweep-now", func(t *testing.T) {
 		controlCardSurvivesSweep(t, true)
@@ -107,6 +109,8 @@ func controlCardSurvivesSweep(t *testing.T, sweepNow bool) {
 // has to be the identity. Both sweeps run, and each run's report, RESULT.md
 // and usage.tsv stay intact and unmixed.
 func TestTwoInvocationsPreserveResults(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
@@ -197,6 +201,8 @@ func TestTwoInvocationsPreserveResults(t *testing.T) {
 // unlinks harness-output.log, so the required report cannot be published.
 // --sweep-now must leave the job directory in place.
 func TestPublicationFailureKeepsTheJob(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)

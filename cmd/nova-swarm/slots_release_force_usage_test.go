@@ -16,6 +16,8 @@ import (
 // This holds the banner to the three things a reader needs: the flag, the keep, and that
 // the keep is the default.
 func TestUsageNamesForceAndTheKeepOnSlotsRelease(t *testing.T) {
+	t.Parallel()
+
 	exit, stdout, stderr := runSwarm(t, "help")
 	if exit != 0 {
 		t.Fatalf("`nova-swarm help` must print the usage and exit 0, got %d; stderr: %s", exit, stderr)

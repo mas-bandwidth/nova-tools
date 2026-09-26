@@ -73,6 +73,8 @@ func TestReadBriefFromFirstReadTaskMirrorDiffZeroGitHubCalls(t *testing.T) {
 // moved on since the task was queued; the brief still reads the task's head
 // (its diff and its CI) and the receipt names the record's head.
 func TestReadBriefTaskReadsTheTaskHeadWhenTheRecordMoved(t *testing.T) {
+	t.Parallel()
+
 	mirror, base, head := mirrorFixture(t, false)
 	c := client(t)
 	seedRecord(t, c, base, head)
@@ -98,6 +100,8 @@ func TestReadBriefTaskReadsTheTaskHeadWhenTheRecordMoved(t *testing.T) {
 // resolve to the same target; a task that is not a read of one PR at one
 // head is refused.
 func TestReadTargetOfEveryTaskShape(t *testing.T) {
+	t.Parallel()
+
 	h := strings.Repeat("a", 40)
 	for _, f := range []map[string]string{
 		{"kind": "read", "repo": "mas-bandwidth/nova-tools", "pr": "7", "head": h},

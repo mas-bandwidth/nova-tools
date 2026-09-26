@@ -21,6 +21,8 @@ func writeSection(t *testing.T, body string) string {
 }
 
 func TestIssueVerbReady(t *testing.T) {
+	t.Parallel()
+
 	sec := writeSection(t, "RESULT test-card sha=abcd\nKIND: fix\nSCHEMA: v2\n")
 	var out, errb bytes.Buffer
 	code := run([]string{"issue", "--section", sec, "--owner", "mas-bandwidth", "--repo", "nova-tools"}, &out, &errb)
@@ -33,6 +35,8 @@ func TestIssueVerbReady(t *testing.T) {
 }
 
 func TestIssueVerbRefusals(t *testing.T) {
+	t.Parallel()
+
 	good := writeSection(t, "RESULT test-card sha=abcd\nKIND: fix\nSCHEMA: v2\n")
 	noKind := writeSection(t, "RESULT test-card sha=abcd\nSCHEMA: v2\n")
 	missing := filepath.Join(t.TempDir(), "absent.md")

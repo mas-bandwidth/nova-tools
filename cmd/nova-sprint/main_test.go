@@ -19,6 +19,8 @@ func runSprint(args ...string) (int, string, string) {
 }
 
 func TestBareCommandNamesTheDoor(t *testing.T) {
+	t.Parallel()
+
 	code, stdout, stderr := runSprint()
 	if code != 2 {
 		t.Fatalf("exit %d, want 2", code)
@@ -35,6 +37,8 @@ func TestBareCommandNamesTheDoor(t *testing.T) {
 }
 
 func TestTableRefusalNamesEveryMissingPiece(t *testing.T) {
+	t.Parallel()
+
 	code, _, stderr := runSprint("table")
 	if code != 2 {
 		t.Fatalf("exit %d, want 2", code)
@@ -47,6 +51,8 @@ func TestTableRefusalNamesEveryMissingPiece(t *testing.T) {
 }
 
 func TestRefreshOwnSession(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		code, _, stderr := runSprint("refresh", "--", "true")
 		if code != 2 || !strings.Contains(stderr, "setsid") {
@@ -64,6 +70,8 @@ func TestRefreshOwnSession(t *testing.T) {
 }
 
 func TestRefreshRefusesAMissingCommand(t *testing.T) {
+	t.Parallel()
+
 	code, _, stderr := runSprint("refresh")
 	if code != 2 || !strings.Contains(stderr, "--") {
 		t.Fatalf("exit %d stderr %q, want a refusal that names --", code, stderr)
@@ -74,6 +82,8 @@ func TestRefreshRefusesAMissingCommand(t *testing.T) {
 // results root is not typed on argv. `card harvest --results-root` is an
 // unknown flag whose refusal names the card hash field that replaced it.
 func TestHarvestHasNoResultsRoot(t *testing.T) {
+	t.Parallel()
+
 	for _, arg := range [][]string{{"--results-root", "/srv/results"}, {"--results-root=/srv/results"}} {
 		args := append([]string{"card", "harvest", "--redis", "127.0.0.1:1", "--sprint", "s", "--bench", "b"}, arg...)
 		code, stdout, stderr := runSprint(args...)

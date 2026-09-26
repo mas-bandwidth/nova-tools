@@ -179,6 +179,8 @@ func appendFlags(have []flagSpec, line string) []flagSpec {
 }
 
 func TestTheClientCarriesEveryVerbTheSpecAddressesToASession(t *testing.T) {
+	t.Parallel()
+
 	var want []string
 	for _, v := range parseSpecVerbs(t) {
 		if _, skipped := notInTheBlock[v.name]; skipped {
@@ -195,6 +197,8 @@ func TestTheClientCarriesEveryVerbTheSpecAddressesToASession(t *testing.T) {
 }
 
 func TestEveryVerbsFlagsAreTheSpecsOwnInTheSpecsOrder(t *testing.T) {
+	t.Parallel()
+
 	for _, v := range parseSpecVerbs(t) {
 		if _, skipped := notInTheBlock[v.name]; skipped {
 			continue
@@ -215,6 +219,8 @@ func TestEveryVerbsFlagsAreTheSpecsOwnInTheSpecsOrder(t *testing.T) {
 // Every line the client does not send is a line somebody decided not to send,
 // and the decision is written down beside the table rather than lost in a diff.
 func TestEveryLineTheClientDoesNotSendSaysWhyInBothPlaces(t *testing.T) {
+	t.Parallel()
+
 	inBlock := map[string]bool{}
 	for _, v := range parseSpecVerbs(t) {
 		inBlock[v.name] = true
@@ -239,6 +245,8 @@ func TestEveryLineTheClientDoesNotSendSaysWhyInBothPlaces(t *testing.T) {
 // there with the spec's own flags -- the block's line, byte for byte, but for
 // the backticks a Go raw string literal cannot hold.
 func TestHelpCarriesTheSpecsOwnLineForEveryVerbTheClientSends(t *testing.T) {
+	t.Parallel()
+
 	for _, v := range parseSpecVerbs(t) {
 		if _, skipped := notInTheBlock[v.name]; skipped {
 			continue

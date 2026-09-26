@@ -19,6 +19,8 @@ import (
 // bounded by the full TTL less the margin, every bench is dealt and its row
 // reads ok, and the lease never lapses.
 func TestDealSessionsGetTheFullLeaseWindow(t *testing.T) {
+	t.Parallel()
+
 	st, c := controlRedis(t)
 	ctx := context.Background()
 	const S = "control-00003706"

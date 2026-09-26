@@ -51,6 +51,8 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 }
 
 func TestARefusalSaysWhatTheInputWants(t *testing.T) {
+	t.Parallel()
+
 	code, _, stderr := runSprint("table", "--refresh", "pending")
 	if code != 2 {
 		t.Fatalf("exit %d, want 2", code)
@@ -63,6 +65,8 @@ func TestARefusalSaysWhatTheInputWants(t *testing.T) {
 }
 
 func TestThereIsNoQuickstartVerbAndTheCommandReferenceSaysWhy(t *testing.T) {
+	t.Parallel()
+
 	code, _, stderr := runSprint("quickstart")
 	if code != 2 {
 		t.Fatalf("quickstart exit %d, want 2", code)

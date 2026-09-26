@@ -39,6 +39,8 @@ import (
 // RED AT dev 31e35195: "the card's child outlived the BATCH line" -- the pid was still alive
 // after Batch returned, exactly as ps showed on the bench.
 func TestBatchDeadlineEndsTheCardsWholeTree(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := dir + "/root"
 	card := writeCard(t, dir, "a.card", "RESULT: a\nall green")
@@ -85,6 +87,8 @@ func TestBatchDeadlineEndsTheCardsWholeTree(t *testing.T) {
 // RED AT dev 31e35195: the row read `a slot=1: ABSTAIN reason=deadline log=0` and carried no
 // count at all.
 func TestBatchAbstainRowSaysHowManyItKilled(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := dir + "/root"
 	card := writeCard(t, dir, "a.card", "RESULT: a\nall green")
@@ -118,6 +122,8 @@ func TestBatchAbstainRowSaysHowManyItKilled(t *testing.T) {
 // fact about this card and not a field that appears on everything. A card that finished on
 // its own was never killed, and its row says nothing about a kill.
 func TestBatchRowSaysNothingAboutKillsItDidNotMake(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := dir + "/root"
 	tsv := writeCards(t, dir, [][2]string{{"a", "RESULT: a\nall green"}})

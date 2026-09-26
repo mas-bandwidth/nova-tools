@@ -21,6 +21,8 @@ import (
 // at head that #3139 B2's evaluator requires, so the test holds whichever of
 // this build and B2 lands first.
 func TestUnitReapLander(t *testing.T) {
+	t.Parallel()
+
 	f := newLandFixture(t, "nova-tools", "dev")
 
 	const (

@@ -10,6 +10,8 @@ import (
 // goes on without it; with the red member too, the bisect never re-merges
 // the parked one.
 func TestBuildParkConflictsLandsTheRest(t *testing.T) {
+	t.Parallel()
+
 	f := newFixture(t)
 	b := build(f, t.TempDir(), testCmd)
 	b.ParkConflicts = true
@@ -33,6 +35,8 @@ func TestBuildParkConflictsLandsTheRest(t *testing.T) {
 // pr:<name>:<n>:lines (where read post stores it) makes the member landable;
 // the same line in both places counts once.
 func TestMembersCountReadPostLines(t *testing.T) {
+	t.Parallel()
+
 	c := newRedis(t)
 	ctx := context.Background()
 	head1, head2 := "1111111111111111111111111111111111111111", "2222222222222222222222222222222222222222"

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // EVERY CALLER OF `native` PASSES THE WORD, AND NONE INVENTS IT (SPEC-SWARM rule 13d,
@@ -27,10 +29,12 @@ import (
 // record: the stand-in for nova-swarm records every invocation it is handed, and after
 // this refusal there is no record at all.
 func TestBatchCardsRefusesWithoutTheBudgetWord(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	harness := filepath.Join(dir, "harness")
-	if err := os.WriteFile(harness, []byte("#!/bin/sh\necho FAKE-HARNESS \"$@\"\n"), 0o755); err != nil {
+	if err := testbin.WriteExecutable(harness, []byte("#!/bin/sh\necho FAKE-HARNESS \"$@\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	tsv := card636(t, dir, "card-t")
@@ -62,12 +66,14 @@ func TestBatchCardsRefusesWithoutTheBudgetWord(t *testing.T) {
 // argv it builds for a local card's `nova-swarm native`. Verbatim is the assertion: the
 // batch neither parses the number nor divides it among the cards.
 func TestBatchCardsPutsTheWordInTheLocalNativeArgv(t *testing.T) {
+	t.Parallel()
+
 	for _, word := range []string{"250000", "unmetered"} {
 		t.Run(word, func(t *testing.T) {
 			dir := t.TempDir()
 			root := filepath.Join(dir, "root")
 			harness := filepath.Join(dir, "harness")
-			if err := os.WriteFile(harness, []byte("#!/bin/sh\necho FAKE-HARNESS \"$@\"\n"), 0o755); err != nil {
+			if err := testbin.WriteExecutable(harness, []byte("#!/bin/sh\necho FAKE-HARNESS \"$@\"\n"), 0o755); err != nil {
 				t.Fatal(err)
 			}
 			tsv := card636(t, dir, "card-t")
@@ -147,6 +153,8 @@ func TestBatchCardsPutsTheWordInTheRemoteNativeArgv(t *testing.T) {
 // so the word going SIXTH -- after the five that were already there, never among them --
 // is what keeps every runner written before this rule still correct about its first five.
 func TestBatchCardsHandsTheRunnerTheWordAsItsSixthArgument(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	tsv := card636(t, dir, "card-r")

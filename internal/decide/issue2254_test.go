@@ -48,6 +48,8 @@ func rulesToolchainClass(t *testing.T, ev HarvestEvidence) Classification {
 }
 
 func TestIssue2254(t *testing.T) {
+	t.Parallel()
+
 	// 53: `a-bench-red-needs-the-table-and-a-fact-the-card-did-not-write`.
 	t.Run("a bench red needs the table and a fact the card did not write", func(t *testing.T) {
 		// The loosening holds: the table's row AND the job's exit status 126.

@@ -9,6 +9,8 @@ import (
 )
 
 func TestIdleLogProgress(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name               string
 		size, last, from   int64
@@ -43,6 +45,8 @@ func TestIdleLogProgress(t *testing.T) {
 // signal. CPU of the tree is separate and is not this test.
 
 func TestIdleWatchEndsACardThatOnlyDribblesIntoItsLog(t *testing.T) {
+	t.Parallel()
+
 	t.Run("one byte at a time", func(t *testing.T) {
 		dir := t.TempDir()
 		root := filepath.Join(dir, "root")
@@ -140,6 +144,8 @@ func TestIdleWatchEndsACardThatOnlyDribblesIntoItsLog(t *testing.T) {
 // actually stepping writes by the page, and that still resets the still-clock. CPU is
 // pinned constant so only the log reading is on trial.
 func TestIdleWatchKeepsACardWhoseLogGrowsAPage(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	tsv := writeCards(t, dir, [][2]string{

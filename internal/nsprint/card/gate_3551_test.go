@@ -43,6 +43,8 @@ func checkGate(out string, names []string) error {
 // passes; a missing name, a duplicate PASS, a nested SKIP, a nested FAIL and
 // a run that selected nothing are each refused.
 func TestDoneWhenGateChecker(t *testing.T) {
+	t.Parallel()
+
 	pass := func(name string) string { return "=== RUN   " + name + "\n--- PASS: " + name + " (0.01s)\n" }
 	complete := pass(gate3551[0]) + pass(gate3551[1]) + "PASS\n"
 	cases := []struct {
@@ -75,6 +77,8 @@ func TestDoneWhenGateChecker(t *testing.T) {
 // TestDoneWhen3551 is the executable DONE-WHEN of #3551: it runs this test
 // binary again on exactly the two controls, verbose, and requires checkGate.
 func TestDoneWhen3551(t *testing.T) {
+	t.Parallel()
+
 	self, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)

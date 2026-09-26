@@ -48,6 +48,8 @@ func initCloneRepo(t *testing.T, dir string) {
 // `launch-refuses-a-pool-with-no-identity`: a pool with no identity row is
 // refused at launch instead of staging a job under nobody's name.
 func TestLaunchRefusesAPoolWithNoIdentity(t *testing.T) {
+	t.Parallel()
+
 	pool := t.TempDir()
 	job := filepath.Join(t.TempDir(), "job")
 	if err := os.MkdirAll(job, 0o755); err != nil {
@@ -78,6 +80,8 @@ func TestLaunchRefusesAPoolWithNoIdentity(t *testing.T) {
 // pool's identity in its LOCAL config and answers it even where the bench's
 // own config says otherwise.
 func TestStagedCloneIgnoresTheBenchGitconfig(t *testing.T) {
+	t.Parallel()
+
 	pool := t.TempDir()
 	writePoolIdentity(t, pool, "rowan", "Rowan Friend", "rowan@example.com")
 	id, err := LoadPoolIdentity(pool)
@@ -208,6 +212,8 @@ func TestWorkerClonesAfterLaunchCarriesPoolIdentity(t *testing.T) {
 // `stage-refuses-a-symlink-out-of-the-job`: no absolute symlink and no symlink
 // resolving outside the job root survives staging; the refusal names the path.
 func TestStageRefusesASymlinkOutOfTheJob(t *testing.T) {
+	t.Parallel()
+
 	pool := t.TempDir()
 	writePoolIdentity(t, pool, "rowan", "Rowan Friend", "rowan@example.com")
 

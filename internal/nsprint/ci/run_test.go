@@ -91,6 +91,8 @@ func (f *runFixture) run(t *testing.T, bench string) (ci.RunResult, string, erro
 }
 
 func TestCIRequestRunStatusIsRedWithTheFailingCheck(t *testing.T) {
+	t.Parallel()
+
 	f := newRunFixture(t)
 	f.client.HSet(f.ctx, ci.PRKey(runRepo, 7), "head", f.sha)
 
@@ -177,6 +179,8 @@ func TestCIRequestRunStatusIsRedWithTheFailingCheck(t *testing.T) {
 }
 
 func TestCIRequestRefusesAnUndeclaredCheckAndAReservedName(t *testing.T) {
+	t.Parallel()
+
 	f := newRunFixture(t)
 	r, err := ci.Request(f.ctx, f.st, ci.RequestRequest{Repo: runRepo, SHA: f.sha, Checks: []string{"nope"}})
 	if err != nil || r.Status != "REFUSED" || !strings.Contains(r.Detail, "declared: head,fail") {
@@ -205,6 +209,8 @@ func TestCIRequestRefusesAnUndeclaredCheckAndAReservedName(t *testing.T) {
 }
 
 func TestCIRunReleasesWhenTheCloneFailsAndFencesALapsedToken(t *testing.T) {
+	t.Parallel()
+
 	f := newRunFixture(t)
 	bad := "file://" + filepath.Join(t.TempDir(), "missing.git")
 	if r, err := ci.Request(f.ctx, f.st, ci.RequestRequest{Repo: runRepo, SHA: f.sha, URL: bad}); err != nil || r.Status != "CREATED" {
@@ -244,6 +250,8 @@ func TestCIRunReleasesWhenTheCloneFailsAndFencesALapsedToken(t *testing.T) {
 }
 
 func TestCICompareFetchesOnceAndNamesTheDiffer(t *testing.T) {
+	t.Parallel()
+
 	f := newRunFixture(t)
 	if r, err := ci.Request(f.ctx, f.st, ci.RequestRequest{Repo: runRepo, SHA: f.sha, URL: f.url}); err != nil || r.Status != "CREATED" {
 		t.Fatalf("request = %v, %v", r, err)

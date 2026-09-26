@@ -19,6 +19,8 @@ import (
 // under cmd/nova-sprint or internal/nsprint/land spells the key: a string
 // literal holding "s:%s:pr:", or ":pr:" (the "s:"+S+":pr:"+repo form).
 func TestNoRetiredPRRecordRead(t *testing.T) {
+	t.Parallel()
+
 	roots := []string{filepath.Join("..", "..", "..", "cmd", "nova-sprint"), "."}
 	scanned := 0
 	for _, root := range roots {

@@ -19,6 +19,8 @@ import (
 // because nova-merge prints a fifth `build=<hex>` token -- extra metadata, not
 // a broken binary. One tool adding a field must never refuse the whole bin.
 func TestSnapshotAcceptsAToolThatSaysOneMoreTrueThing(t *testing.T) {
+	t.Parallel()
+
 	const stamp = "v0.15.3-0.20260918044559-d576bf6bbabb"
 	bin := t.TempDir()
 	specStub(t, bin, "nova-bus", "nova-bus "+stamp+" darwin/arm64 go1.27.1")
@@ -52,6 +54,8 @@ func TestSnapshotAcceptsAToolThatSaysOneMoreTrueThing(t *testing.T) {
 // being "accept anything": a binary that prints a usage refusal is still a
 // binary this verb cannot read, and saying so is the whole job.
 func TestSnapshotStillRefusesALineThatIsNotAVersionLine(t *testing.T) {
+	t.Parallel()
+
 	bin := t.TempDir()
 	specStub(t, bin, "nova-bus", "nova-bus v1 darwin/arm64 go1.27.1")
 	specStub(t, bin, "nova-broken", "nova-broken: no verb given; run: nova-broken help")
@@ -75,6 +79,8 @@ func TestSnapshotStillRefusesALineThatIsNotAVersionLine(t *testing.T) {
 // `version`, then `--version`, then bare, and the first answer that carries a
 // version line is the reading.
 func TestReportAsksOurOwnToolsTheVerbTheyAnswer(t *testing.T) {
+	t.Parallel()
+
 	const stamp = "v0.15.3-0.20260918044559-d576bf6bbabb"
 	bin := t.TempDir()
 	// Answers `version` and refuses anything else, exactly like a nova tool.
@@ -125,6 +131,8 @@ esac`)
 // remedy naming what to do -- a ladder that invents a reading is worse than the
 // bare run it replaced.
 func TestReportStillRefusesAToolThatAnswersNothing(t *testing.T) {
+	t.Parallel()
+
 	bin := t.TempDir()
 	mute := specScript(t, bin, "nova-mute", `printf '%s\n' 'nova-mute: no verb given' >&2; exit 2`)
 	file := manifest(t, row("nova-mute", "tool", mute, "local:"+mute, "none"))
@@ -142,6 +150,8 @@ func TestReportStillRefusesAToolThatAnswersNothing(t *testing.T) {
 // argv -- `go version`, `sops --version` -- is the caller's sentence and the
 // ladder never appends to it.
 func TestReportRunsAnExplicitArgvExactlyAsWritten(t *testing.T) {
+	t.Parallel()
+
 	bin := t.TempDir()
 	// Refuses any argument at all: proof that nothing was appended.
 	strict := specScript(t, bin, "strict", `if [ $# -ne 1 ] || [ "$1" != "report" ]; then printf 'argv was %s\n' "$*" >&2; exit 3; fi

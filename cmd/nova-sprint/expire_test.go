@@ -506,6 +506,8 @@ func TestExpireDutyReplacesSprintRequeue(t *testing.T) {
 // took runs a sweep over due candidates of every kind and writes nothing: no
 // card, index, idem, receipt, counter or expire_at stamp.
 func TestExpireStaleFenceWritesNothing(t *testing.T) {
+	t.Parallel()
+
 	x := newExpireFixture(t)
 	const S = "expire-fence0001"
 	x.sprint(S)
@@ -571,6 +573,8 @@ func TestExpireStaleFenceWritesNothing(t *testing.T) {
 // 50 pending keys is at most 3 Redis pipelines after its gate read, and no
 // single command.
 func TestExpireSweepThreeRoundTrips(t *testing.T) {
+	t.Parallel()
+
 	x := newExpireFixture(t)
 	const S = "expire-trips0001"
 	x.sprint(S)
@@ -626,6 +630,8 @@ func TestExpireSweepThreeRoundTrips(t *testing.T) {
 // expire_every_ms. A pass inside the interval is one round trip for every
 // sprint (the gate), no FCALL and no evidence session.
 func TestExpireGatedToPolicy(t *testing.T) {
+	t.Parallel()
+
 	x := newExpireFixture(t)
 	sprints := []string{"expire-gate0001", "expire-gate0002"}
 	x.bench("exp-bench")
@@ -709,6 +715,8 @@ func TestExpireGatedToPolicy(t *testing.T) {
 // reconcile-required, with no receipt and no unresolved item, while a
 // reachable bench's card resolves in the same sweep.
 func TestUnreachableBenchIsNotAbsence(t *testing.T) {
+	t.Parallel()
+
 	x := newExpireFixture(t)
 	const S = "expire-down0001"
 	x.sprint(S)
@@ -824,6 +832,8 @@ func (p *slowProber) Probe(ctx context.Context, _ deal.Bench, cards []reconcile.
 // second one), and when it ends it resolves its cards and writes its row
 // proc:expire:<bench>.
 func TestExpirePassNeverBlocksOnSSH(t *testing.T) {
+	t.Parallel()
+
 	x := newExpireFixture(t)
 	const S, B = "expire-slow3802", "slow-bench"
 	x.sprint(S)

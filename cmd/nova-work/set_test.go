@@ -36,6 +36,8 @@ func write(t *testing.T, name, body string) string {
 // read whole whose content is wrong, with one SET line per finding and the summary
 // still printed.
 func TestSetCheckFindingsExitOneAndPrintEveryOne(t *testing.T) {
+	t.Parallel()
+
 	code, stdout, stderr := runCLI(t, "set", "check", "--file", setFixture(t, "pitstop-cut.lisp"))
 	if code != 1 {
 		t.Fatalf("exit = %d, want 1 (findings)\nstdout: %s\nstderr: %s", code, stdout, stderr)
@@ -72,6 +74,8 @@ func TestSetCheckFindingsExitOneAndPrintEveryOne(t *testing.T) {
 
 // A clean set is exit 0 and two lines: the summary and x/y z%.
 func TestSetCheckCleanSetIsOneLine(t *testing.T) {
+	t.Parallel()
+
 	path := write(t, "clean.lisp", `(work-set "clean" :units (
 	  (unit "a" :status "closed" :title "landed")
 	  (unit "b" :needs ("a") :owner "Emma" :lane "work" :deadline "2026-09-19T12:00Z" :title "ready")
@@ -88,6 +92,8 @@ func TestSetCheckCleanSetIsOneLine(t *testing.T) {
 // --ready prints the mechanical ready set, and --done settles a need from outside
 // the document.
 func TestSetCheckReadyListsTheReadySet(t *testing.T) {
+	t.Parallel()
+
 	path := write(t, "chain.lisp", `(work-set "chain" :units (
 	  (unit "a" :title "needs nothing")
 	  (unit "b" :needs ("a") :owner "Stella" :lane "work" :title "needs a")
@@ -117,6 +123,8 @@ func TestSetCheckReadyListsTheReadySet(t *testing.T) {
 // --minds reads either JSON registry or a plain list, and the shape is READ rather
 // than guessed at from the file's name.
 func TestSetCheckMindsReadsEitherRegistry(t *testing.T) {
+	t.Parallel()
+
 	set := write(t, "owners.lisp", `(work-set "o" :units (
 	  (unit "a" :owner "Emma" :title "a known mind")
 	  (unit "b" :owner "Nobody" :title "a mind nothing names")))`)
@@ -139,6 +147,8 @@ func TestSetCheckMindsReadsEitherRegistry(t *testing.T) {
 
 // --lanes is the lanes file SPEC-WORKLANG already fixes: <name>\t<path prefixes>.
 func TestSetCheckLanesUsesTheLanesTable(t *testing.T) {
+	t.Parallel()
+
 	set := write(t, "lanes.lisp", `(work-set "l" :units (
 	  (unit "a" :lane "merge" :title "a lane the table names")
 	  (unit "b" :lane "nowhere" :title "a lane it does not")))`)
@@ -159,6 +169,8 @@ func TestSetCheckLanesUsesTheLanesTable(t *testing.T) {
 // is not a work set, a registry that is not one. Each is one line on stderr naming
 // the door, and none of them writes to stdout.
 func TestSetCheckRefusalsExitTwo(t *testing.T) {
+	t.Parallel()
+
 	good := write(t, "good.lisp", `(work-set "g" :units ((unit "a" :title "t")))`)
 	cases := []struct {
 		name string
@@ -203,6 +215,8 @@ func TestSetCheckRefusalsExitTwo(t *testing.T) {
 // The bounds still hold on this form: a work set past --max-bytes is refused before
 // a byte of it is parsed, and a dispatch macro is refused at the byte that owes it.
 func TestSetCheckKeepsTheReadersBounds(t *testing.T) {
+	t.Parallel()
+
 	good := write(t, "good.lisp", `(work-set "g" :units ((unit "a" :title "t")))`)
 	code, _, stderr := runCLI(t, "set", "check", "--file", good, "--max-bytes", "8")
 	if code != 2 || !strings.Contains(stderr, "--max-bytes") {
@@ -227,6 +241,8 @@ func TestSetCheckKeepsTheReadersBounds(t *testing.T) {
 // the lane and the unit holding it. A reader who wants to know why a bench is
 // only running eight cards reads that here instead of guessing at ps output.
 func TestSetCheckReadyAdmitsTheRealSetOf20260918(t *testing.T) {
+	t.Parallel()
+
 	path := setFixture(t, "pitstop-2026-09-18-units.lisp")
 	code, stdout, stderr := runCLI(t, "set", "check", "--file", path, "--ready")
 	if code != 0 {

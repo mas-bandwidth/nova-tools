@@ -11,12 +11,15 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/benchsh"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // TestBenchshArgvIsBashS (#2932 control 3): the argv after the target is
 // exactly `bash -s --` plus the quoted args, the script is on stdin, and
 // there is no -n.
 func TestBenchshArgvIsBashS(t *testing.T) {
+	t.Parallel()
+
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash unavailable")
 	}
@@ -25,7 +28,7 @@ func TestBenchshArgvIsBashS(t *testing.T) {
 	stdinLog := filepath.Join(dir, "stdin")
 	ssh := filepath.Join(dir, "ssh")
 	fake := "#!/bin/bash\nprintf '%s\\n' \"$@\" > " + strconv.Quote(argvLog) + "\ncat > " + strconv.Quote(stdinLog) + "\nexit 7\n"
-	if err := os.WriteFile(ssh, []byte(fake), 0o755); err != nil {
+	if err := testbin.WriteExecutable(ssh, []byte(fake), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	script := "set -eu\necho \"$1 $2\"\n"

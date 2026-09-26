@@ -17,6 +17,8 @@ import (
 // directly (a dealer that skipped the plan) deals nothing from the sprint;
 // cleared, the same pass deals the pool.
 func TestPitstopDealPassPlansNothingUntilCleared(t *testing.T) {
+	t.Parallel()
+
 	const sprint = "control-00003371"
 	ctx := context.Background()
 	c := dealRedis(t)
@@ -84,6 +86,8 @@ func TestPitstopDealPassPlansNothingUntilCleared(t *testing.T) {
 // TestPlanSkipsOnlyThePitStoppedSprint: a stop on one sprint leaves the
 // other open sprints' cards flowing to the whole fleet.
 func TestPlanSkipsOnlyThePitStoppedSprint(t *testing.T) {
+	t.Parallel()
+
 	in := Input{Now: time.Now(), Benches: []Bench{{Name: "b", Up: true, Slots: 4}}, Sprints: []Sprint{
 		{Name: "stopped", Share: 1, Pitstop: true, Pool: poolCards("stopped", 4)},
 		{Name: "running", Share: 1, Pool: poolCards("running", 2)},
@@ -103,6 +107,8 @@ func TestPlanSkipsOnlyThePitStoppedSprint(t *testing.T) {
 // commands RedisSource pipelines (no function needed): present is stopped,
 // absent is not.
 func TestRedisSourceReadsPitstopOnMiniredis(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	m := miniredis.RunT(t)
 	c := redis.NewClient(&redis.Options{Addr: m.Addr()})

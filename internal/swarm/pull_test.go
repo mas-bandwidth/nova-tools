@@ -40,6 +40,8 @@ func sameIDs(a, b []string) bool {
 // (small, already-approved PRs), then small (the shortest step budget), then
 // next; ordering inside a lane is source order.
 func TestRedLaneDrainsBeforeGreen(t *testing.T) {
+	t.Parallel()
+
 	queue := t.TempDir()
 	// Source order inside red is rb then ra; both are the same size, but with no
 	// scorer the rule keeps source order rather than guessing.
@@ -65,6 +67,8 @@ func TestRedLaneDrainsBeforeGreen(t *testing.T) {
 // a tie the rule cannot break is asked of Jev as one typed decision behind the
 // 0.9 floor, and a refusal keeps source order.
 func TestAScorerRefusalKeepsSourceOrder(t *testing.T) {
+	t.Parallel()
+
 	queue := t.TempDir()
 	writeLanes(t, queue,
 		lanes.Card{ID: "first", Kind: "fix", Red: true, Steps: 12, Body: "RESULT first\n"},

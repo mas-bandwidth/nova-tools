@@ -10,6 +10,8 @@ import (
 )
 
 func TestFriendRungs(t *testing.T) {
+	t.Parallel()
+
 	reg, err := DefaultRegistry()
 	if err != nil {
 		t.Fatalf("DefaultRegistry(): %v", err)
@@ -26,6 +28,8 @@ func TestFriendRungs(t *testing.T) {
 }
 
 func TestReadDownFriends(t *testing.T) {
+	t.Parallel()
+
 	reg, err := DefaultRegistry()
 	if err != nil {
 		t.Fatalf("DefaultRegistry(): %v", err)
@@ -76,6 +80,8 @@ func TestReadDownFriends(t *testing.T) {
 }
 
 func TestReadDownFriendsMapsSeatsAndSuppressesBroadcast(t *testing.T) {
+	t.Parallel()
+
 	reg, err := DefaultRegistry()
 	if err != nil {
 		t.Fatal(err)

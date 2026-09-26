@@ -18,6 +18,8 @@ import (
 // void APPENDS a row of its own keyed to the outcome row's time, both rows
 // stand, and the summary excludes the voided row from every count.
 func TestIssue2034(t *testing.T) {
+	t.Parallel()
+
 	log := routeThen(t, "row-2034", "row-test")
 
 	outcomeRun(t, log, "row-2034", "green")
@@ -87,6 +89,8 @@ func TestIssue2034(t *testing.T) {
 // void is its own argument; --of-time without --result void is a refusal
 // because a void without a target is a row nobody can join to a mistake.
 func TestIssue2034VoidRefusesWithoutTarget(t *testing.T) {
+	t.Parallel()
+
 	log := routeThen(t, "no-target", "row-test")
 	outcomeRun(t, log, "no-target", "green")
 	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}

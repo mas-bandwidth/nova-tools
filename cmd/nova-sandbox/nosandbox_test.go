@@ -14,6 +14,8 @@ import (
 // does not have, and the command does not run. The unsandboxed run a caller may take is
 // nova-swarm's, announced by RUN UNSANDBOXED, and SPEC-SWARM's own tests pin that line.
 func TestThereIsNoWayToRunAnUnwalledCommand(t *testing.T) {
+	t.Parallel()
+
 	j := newJob(t)
 	marker := j.base + "/the-command-ran"
 	sh := j.shell(t)

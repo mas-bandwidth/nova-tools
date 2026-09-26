@@ -18,6 +18,8 @@ import (
 )
 
 func TestIssue1468(t *testing.T) {
+	t.Parallel()
+
 	const path = "testdata/corpus/1468-plain-absolutes.md"
 
 	body, err := os.ReadFile(path)

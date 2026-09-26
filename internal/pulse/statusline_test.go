@@ -90,6 +90,8 @@ func write(t *testing.T, path, body string) {
 // TestStatusLineIsOneLineUnderFourHundredBytes is the claim of G4: a fresh window
 // reconstructs the day from this line and the policy, and never from the transcript.
 func TestStatusLineIsOneLineUnderFourHundredBytes(t *testing.T) {
+	t.Parallel()
+
 	const day = "2026-09-16"
 	queue := dayQueue(t)
 	benches := t.TempDir()
@@ -137,6 +139,8 @@ func TestStatusLineIsOneLineUnderFourHundredBytes(t *testing.T) {
 // still one line under the ceiling, and the benches that did not fit are COUNTED. A
 // listing whose length is the state's length is the thing internal/bounded exists to end.
 func TestStatusLineHoldsTheCeilingAtEveryBench(t *testing.T) {
+	t.Parallel()
+
 	queue := t.TempDir() // this claim is about the bench count, not the card count
 	benches := t.TempDir()
 	var roots []string
@@ -163,6 +167,8 @@ func TestStatusLineHoldsTheCeilingAtEveryBench(t *testing.T) {
 // they are, never left off the line, because a bench missing from the line reads as a bench
 // that is not in scope.
 func TestStatusLineSaysStopAndAnUnmeasuredSpend(t *testing.T) {
+	t.Parallel()
+
 	queue := t.TempDir()
 	write(t, filepath.Join(queue, "STOP"), "MAIN-RED aaaa1111: revert first\n")
 	bench := filepath.Join(t.TempDir(), "empty-bench")
@@ -184,6 +190,8 @@ func TestStatusLineSaysStopAndAnUnmeasuredSpend(t *testing.T) {
 
 // TestStatusLineRefusesWithoutQueueOrRoots and refuses a day it cannot read.
 func TestStatusLineRefusesWithoutQueueOrRoots(t *testing.T) {
+	t.Parallel()
+
 	for _, c := range []struct{ queue, roots, day, want string }{
 		{"", "x", "", "--queue"},
 		{"x", "", "", "--roots"},

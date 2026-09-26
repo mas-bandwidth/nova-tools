@@ -308,6 +308,8 @@ func TestPortConcurrentRunsToOneOut(t *testing.T) {
 
 // 8. the source uses the injected host and holds no short wall-clock literal.
 func TestPortSourceInjectedHostNoShortClock(t *testing.T) {
+	t.Parallel()
+
 	b, err := os.ReadFile("port.go")
 	if err != nil {
 		t.Fatal(err)

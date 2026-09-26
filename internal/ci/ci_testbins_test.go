@@ -63,6 +63,8 @@ func testbinLineAt(t *testing.T, root, rel string, line int) string {
 // 0o755 into a fixture is refused with its file and line, and the remedy names
 // the helper.
 func TestTestbinsRefusesACopiedBinary(t *testing.T) {
+	t.Parallel()
+
 	root := testbinFixtureTree(t, "copy.go.txt")
 	res, err := CheckTestbins(root, "")
 	if err != nil {
@@ -87,6 +89,8 @@ func TestTestbinsRefusesACopiedBinary(t *testing.T) {
 // way nova-wake's fakeBins is: the ReadFile is in one function and the
 // executing WriteFile in another. The taint follows the bytes.
 func TestTestbinsRefusesAMapHeldCopy(t *testing.T) {
+	t.Parallel()
+
 	root := testbinFixtureTree(t, "indirect.go.txt")
 	res, err := CheckTestbins(root, "")
 	if err != nil {
@@ -108,6 +112,8 @@ func TestTestbinsRefusesAMapHeldCopy(t *testing.T) {
 // is the executable and the script's bytes are never assessed, so the shape is
 // allowed.
 func TestTestbinsAllowsAShellScript(t *testing.T) {
+	t.Parallel()
+
 	root := testbinFixtureTree(t, "script.go.txt")
 	res, err := CheckTestbins(root, "")
 	if err != nil {
@@ -126,6 +132,8 @@ func TestTestbinsAllowsAShellScript(t *testing.T) {
 // function to hold a shell script: the copy is the only finding, and the
 // script written 0o755 under the same name stays exempt (Stella, #1262).
 func TestTestbinsTaintIsPerVariableNotPerSpelling(t *testing.T) {
+	t.Parallel()
+
 	root := testbinFixtureTree(t, "shadow.go.txt")
 	res, err := CheckTestbins(root, "")
 	if err != nil {
@@ -143,6 +151,8 @@ func TestTestbinsTaintIsPerVariableNotPerSpelling(t *testing.T) {
 // 4. A test that places the built program through testbin.Place is the allowed
 // shape: a link, not a copy, and no WriteFile carrying an execute bit.
 func TestTestbinsAllowsThePlacedHelper(t *testing.T) {
+	t.Parallel()
+
 	root := testbinFixtureTree(t, "helper.go.txt")
 	res, err := CheckTestbins(root, "")
 	if err != nil {
@@ -157,6 +167,8 @@ func TestTestbinsAllowsThePlacedHelper(t *testing.T) {
 // entry that names no offender on the tree is a place to park a copy, and the
 // remedy says the file only shrinks.
 func TestTestbinsAllowlistGrowsRefused(t *testing.T) {
+	t.Parallel()
+
 	root := testbinEmptyTree(t)
 	allow := filepath.Join(t.TempDir(), "fixed-testbins-allowlist.txt")
 
@@ -201,6 +213,8 @@ func TestTestbinsAllowlistGrowsRefused(t *testing.T) {
 // the OK line, the refusal line and the closing FAIL line, and the exit 2 a
 // refusal costs.
 func TestTestbinsOutputMatchesTheSpec(t *testing.T) {
+	t.Parallel()
+
 	root := testbinFixtureTree(t, "copy.go.txt")
 	res, err := CheckTestbins(root, "")
 	if err != nil {
@@ -232,6 +246,8 @@ func TestTestbinsOutputMatchesTheSpec(t *testing.T) {
 // TestTestbinsVerbLineMatchesTheSpec pins the help line the class test is
 // entered under, word for word, to the section that prints it.
 func TestTestbinsVerbLineMatchesTheSpec(t *testing.T) {
+	t.Parallel()
+
 	spec := readFile(t, filepath.Join(repoRoot(t), "docs", "SPEC-CI.md"))
 	if !strings.Contains(spec, TestbinVerbLine) {
 		t.Errorf("the testbins verb line is not in docs/SPEC-CI.md:\n%s", TestbinVerbLine)
@@ -243,6 +259,8 @@ func TestTestbinsVerbLineMatchesTheSpec(t *testing.T) {
 // pass are the ones the allowlist already names. The count is the truth about
 // the CI path whether or not the lines printed.
 func TestNoCopiedTestBinariesOnTheCIPath(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	allow := filepath.Join(root, "internal", "ci", "testdata", "fixed-testbins-allowlist.txt")
 	res, err := CheckTestbins(root, allow)
@@ -265,6 +283,8 @@ func TestNoCopiedTestBinariesOnTheCIPath(t *testing.T) {
 // the kind. The budget still holds: a second copy in the file has no row and is
 // refused, and a row with no offender left is still stale.
 func TestTestbinsAllowlistSurvivesShiftedLines(t *testing.T) {
+	t.Parallel()
+
 	root := testbinFixtureTree(t, "copy.go.txt")
 	first, err := CheckTestbins(root, "")
 	if err != nil || len(first.Findings) != 1 {

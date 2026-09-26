@@ -47,6 +47,8 @@ func (f *dependsRefs) count(name string) int {
 }
 
 func TestCardPushAcceptsEveryDependsOnForm(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := newRedis(t)
 	srv := repoServer(t)
@@ -85,6 +87,8 @@ func TestCardPushAcceptsEveryDependsOnForm(t *testing.T) {
 }
 
 func TestCardReleaseFreesOnMergedPR(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := newRedis(t)
 	srv := repoServer(t)
@@ -120,6 +124,8 @@ func TestCardReleaseFreesOnMergedPR(t *testing.T) {
 }
 
 func TestCardReleaseFreesOnDoneTask(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := newRedis(t)
 	srv := repoServer(t)
@@ -142,6 +148,8 @@ func TestCardReleaseFreesOnDoneTask(t *testing.T) {
 }
 
 func TestCardReleaseFreesOnClosedIssueLandedStreamAndDoneCard(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := newRedis(t)
 	srv := repoServer(t)
@@ -180,6 +188,8 @@ func TestCardReleaseFreesOnClosedIssueLandedStreamAndDoneCard(t *testing.T) {
 }
 
 func TestCardPushRefusesUnknownCardId(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := newRedis(t)
 	srv := repoServer(t)
@@ -196,6 +206,8 @@ func TestCardPushRefusesUnknownCardId(t *testing.T) {
 // refused at push, naming the record: nothing may park in waiting on a record
 // that nothing will ever write (#3503 bullet 2).
 func TestCardPushRefusesUnknownTaskAndStream(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := newRedis(t)
 	srv := repoServer(t)

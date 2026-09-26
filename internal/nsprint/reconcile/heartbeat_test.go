@@ -51,6 +51,8 @@ func leaseHolder(t *testing.T, c *redis.Client) (instance, token string) {
 // the same duty under a lease with no heartbeat is FENCED, the Studio's
 // restart loop of 2026-09-24/25.
 func TestHeartbeatHoldsLeaseThroughLongDuty(t *testing.T) {
+	t.Parallel()
+
 	st, c := controlRedis(t)
 	ctx := context.Background()
 	longDuty := func(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, error) {
@@ -115,6 +117,8 @@ func TestHeartbeatHoldsLeaseThroughLongDuty(t *testing.T) {
 // lease refuses without a round trip, Deadline is the zero time, a deal
 // fence refuses its token, and the pass loop exits ErrFenced.
 func TestHeartbeatFencesWithinOneBeat(t *testing.T) {
+	t.Parallel()
+
 	st, c := controlRedis(t)
 	ctx := context.Background()
 	clk := newFakeClock(time.Unix(1_800_000_000, 0))
@@ -169,6 +173,8 @@ func TestHeartbeatFencesWithinOneBeat(t *testing.T) {
 // retried every beat; once a whole TTL passes with none succeeding the Redis
 // lease has lapsed, so the lease fences itself.
 func TestHeartbeatFencesWhenRedisIsGone(t *testing.T) {
+	t.Parallel()
+
 	addr := testutil.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = c.Close() })
@@ -198,6 +204,8 @@ func TestHeartbeatFencesWhenRedisIsGone(t *testing.T) {
 // RenewAfter of the last successful one send nothing, and concurrent ones
 // share the one on the wire.
 func TestRenewCoalesces(t *testing.T) {
+	t.Parallel()
+
 	st, c := controlRedis(t)
 	ctx := context.Background()
 	clk := newFakeClock(time.Unix(1_800_000_000, 0))

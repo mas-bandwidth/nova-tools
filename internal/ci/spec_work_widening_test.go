@@ -12,6 +12,8 @@ import (
 // former phrasing "rather than widening on its own" read two ways (a worker
 // might widen with help), contradicting "only the coordinator may widen".
 func TestSpecWorkWorkerWideningUnambiguous(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	spec := readFile(t, filepath.Join(root, "docs", "SPEC-WORK.md"))
 

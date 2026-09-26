@@ -13,6 +13,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // TestStorePullUsesBenchOwnedKey is docs/SPEC-SECRETS.md, "Additions from dogfooding", rule 7:
@@ -171,7 +173,7 @@ func writeFakeSSH(t *testing.T, root, logPath string) string {
 		"if [ -n \"$SSH_AUTH_SOCK\" ]; then echo agent=set >> \"$log\"; else echo agent=unset >> \"$log\"; fi\n" +
 		"for a; do last=$a; done\n" +
 		"exec sh -c \"$last\"\n"
-	if err := os.WriteFile(p, []byte(script), 0o755); err != nil {
+	if err := testbin.WriteExecutable(p, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return p
@@ -293,6 +295,8 @@ func containsLine(lines []string, want string) bool {
 // caller instead of being refused. Every case here is an openssh-key-v1 file whose private
 // section is malformed; each must come back as an error, never a panic.
 func TestStorePullKeyRefusesAMalformedKeyWithoutPanicking(t *testing.T) {
+	t.Parallel()
+
 	wide := func(n int) []byte {
 		b := make([]byte, n)
 		for i := range b {

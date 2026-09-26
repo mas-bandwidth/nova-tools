@@ -19,6 +19,8 @@ import (
 // wall refused. This is exactly the misattribution `internal/swarm/nativeidle.go:96-103`
 // was written to prevent: It is deliberately not a WALL line."
 func TestIssue2579(t *testing.T) {
+	t.Parallel()
+
 	job := t.TempDir()
 
 	// Case 1: Card that became idle with NO refusal

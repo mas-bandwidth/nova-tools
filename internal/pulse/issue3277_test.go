@@ -10,6 +10,8 @@ import (
 // #3277: DialStore sends nothing; the caller's first command dials and
 // authenticates.
 func TestDialStoreSendsNoCommand3277(t *testing.T) {
+	t.Parallel()
+
 	addr, count := testutil.CommandCounter(t)
 	rdb, err := DialStore(context.Background(), StoreOptions{Addr: addr, PasswordEnv: "NOVA_TEST_3277_UNSET"})
 	if err != nil {

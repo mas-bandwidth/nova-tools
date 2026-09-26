@@ -20,6 +20,8 @@ import (
 // running is still occupied, so it cannot be granted to anybody else. Releasing your
 // OWN seat stays allowed -- that is how run and native give a seat back.
 func TestReleaseKeepsASeatWhoseHolderIsStillRunning(t *testing.T) {
+	t.Parallel()
+
 	store := t.TempDir()
 	writeShares1902(t, store, "capacity\t1\nreserve\t0\nalice\t1\n")
 
@@ -57,6 +59,8 @@ func TestReleaseKeepsASeatWhoseHolderIsStillRunning(t *testing.T) {
 // run's dispatcher and native's cleanup both release a lease whose pid is this
 // process's and is alive.
 func TestAHolderMayStillReleaseItsOwnLiveSeat(t *testing.T) {
+	t.Parallel()
+
 	store := t.TempDir()
 	writeShares1902(t, store, "capacity\t2\nreserve\t0\nbench\t2\n")
 	if _, _, _, _, _, ok, err := TakeSlotLeases(store, "bench", 1, time.Hour, "card-7", time.Now().UTC(), os.Getpid()); err != nil || !ok {

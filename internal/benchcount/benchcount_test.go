@@ -18,6 +18,8 @@ import (
 const orderTheTestRequires = "cut, then ok, then landed"
 
 func TestTheOrderIsCutThenOKThenLanded(t *testing.T) {
+	t.Parallel()
+
 	if benchcount.FunnelOrder != orderTheTestRequires {
 		t.Fatalf("the order the test requires is %q, the fold says %q", orderTheTestRequires, benchcount.FunnelOrder)
 	}
@@ -96,6 +98,8 @@ func TestTheOrderIsCutThenOKThenLanded(t *testing.T) {
 }
 
 func TestUsefulIsLandedOrVerifiedDefectOrReceiptedIssue(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name   string
 		events []benchcount.Entry
@@ -215,6 +219,8 @@ func TestUsefulIsLandedOrVerifiedDefectOrReceiptedIssue(t *testing.T) {
 }
 
 func TestALandingDoesNotMoveTheCardOffItsBench(t *testing.T) {
+	t.Parallel()
+
 	f := benchcount.New()
 	f.Apply(ev("1-0", "card", "cut", nil))
 	f.Apply(benchcount.Entry{ID: "2-0", Fields: map[string]string{
@@ -230,6 +236,8 @@ func TestALandingDoesNotMoveTheCardOffItsBench(t *testing.T) {
 }
 
 func TestLandedWithNoEarlierBenchUsesTheLandedEntry(t *testing.T) {
+	t.Parallel()
+
 	f := benchcount.New()
 	f.Apply(benchcount.Entry{ID: "1-0", Fields: map[string]string{
 		"label": "card", "event": "landed", "bench": "Space",
@@ -243,6 +251,8 @@ func TestLandedWithNoEarlierBenchUsesTheLandedEntry(t *testing.T) {
 }
 
 func TestRedeliveryDoesNotCountTwice(t *testing.T) {
+	t.Parallel()
+
 	f := benchcount.New()
 	e := ev("9-1", "card", "landed", map[string]string{
 		"defect": "verified", "issue": "2687", "receipt": "receipted", "usd": "0.5",
@@ -257,6 +267,8 @@ func TestRedeliveryDoesNotCountTwice(t *testing.T) {
 }
 
 func TestQueuedCountsAsCut(t *testing.T) {
+	t.Parallel()
+
 	f := benchcount.New()
 	f.Apply(ev("1-0", "card", "queued", nil))
 	if got := f.Bench("hulk"); got.Cut != 1 || got.OK != 0 || got.Landed != 0 {
@@ -265,6 +277,8 @@ func TestQueuedCountsAsCut(t *testing.T) {
 }
 
 func TestFixtureStreamIsOneHGETPerBench(t *testing.T) {
+	t.Parallel()
+
 	rdb := start(t)
 	ctx := context.Background()
 	seed := []map[string]string{
@@ -326,6 +340,8 @@ func TestFixtureStreamIsOneHGETPerBench(t *testing.T) {
 }
 
 func TestTheFoldDoesNotPollGitHub(t *testing.T) {
+	t.Parallel()
+
 	src, err := os.ReadFile("benchcount.go")
 	if err != nil {
 		t.Fatal(err)
@@ -395,6 +411,8 @@ func (h *hgetCount) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.Pr
 // TestWriteElevenHostsIsOneRoundTrip is #3271's DONE-WHEN: eleven bench rows
 // are one pipeline, not eleven HSETs. A lone command or a second pipeline fails.
 func TestWriteElevenHostsIsOneRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	rdb := start(t)
 	ctx := context.Background()
 	counts := map[string]benchcount.Counts{}

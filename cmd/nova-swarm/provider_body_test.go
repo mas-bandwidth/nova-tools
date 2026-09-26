@@ -126,6 +126,8 @@ func assertDialedProxy(t *testing.T, job string, proxy *swarm.ProviderProxy) {
 // as it is armed, so this does not wait 45s. One upstream request, one card
 // launch, unknown, and the persisted mark.
 func TestProviderBodySilenceArmsFortyFiveSecondsAndDoesNotRelaunch(t *testing.T) {
+	t.Parallel()
+
 	var upstream atomic.Int32
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		upstream.Add(1)
@@ -178,6 +180,8 @@ func TestProviderBodySilenceArmsFortyFiveSecondsAndDoesNotRelaunch(t *testing.T)
 // The gap is shorter than production so the suite can finish; the production
 // gap is the test above. elapsed is the measured body gap, not the card's idle.
 func TestProviderBodySilenceAbortsTheCardOnce(t *testing.T) {
+	t.Parallel()
+
 	var upstream atomic.Int32
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		upstream.Add(1)
@@ -233,6 +237,8 @@ func TestProviderBodySilenceAbortsTheCardOnce(t *testing.T) {
 // TestProviderBodyThatResumesInsideTheDeadlineIsNotUnknown: headers, a pause
 // shorter than the gap, then the body. The card completes. No acceptance file.
 func TestProviderBodyThatResumesInsideTheDeadlineIsNotUnknown(t *testing.T) {
+	t.Parallel()
+
 	var upstream atomic.Int32
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		upstream.Add(1)
@@ -282,6 +288,8 @@ func TestProviderBodyThatResumesInsideTheDeadlineIsNotUnknown(t *testing.T) {
 // upstream request, one launch, the persisted mark, no result. The body gap is
 // set far above the header wait so only the header wait can end this card.
 func TestProviderNoHeadersEndsAtTheHeaderWaitAsUnknown(t *testing.T) {
+	t.Parallel()
+
 	var upstream atomic.Int32
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		upstream.Add(1)
@@ -337,6 +345,8 @@ func TestProviderNoHeadersEndsAtTheHeaderWaitAsUnknown(t *testing.T) {
 // case: headers come late but inside the wait, then the body streams. The
 // card completes. No acceptance file, nothing lost.
 func TestProviderDelayedHeadersInsideTheWaitAreNotUnknown(t *testing.T) {
+	t.Parallel()
+
 	var upstream atomic.Int32
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		upstream.Add(1)

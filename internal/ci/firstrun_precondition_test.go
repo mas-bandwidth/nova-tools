@@ -20,6 +20,8 @@ import (
 // this file -- learns that a step skipped for a reason the file does not state
 // is a defect in the file, not a pass.
 func TestTESTSmdStatesThePreconditionConvention(t *testing.T) {
+	t.Parallel()
+
 	md := readFile(t, filepath.Join(repoRoot(t), "docs", "TESTS.md"))
 	if !strings.Contains(md, "Requires:") {
 		t.Errorf("docs/TESTS.md never states `Requires:`; a section owes a reader one line per precondition the machine may not have, exactly as `Platform:` already does")

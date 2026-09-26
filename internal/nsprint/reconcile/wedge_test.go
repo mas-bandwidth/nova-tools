@@ -241,6 +241,8 @@ func leaseOnClock(t *testing.T, c *redis.Client, clk *fakeClock, l *reconcile.Le
 // fenced, and the next pass runs and deals. The healthy bench beside it is
 // dealt and its row written in the same pass.
 func TestDealPassWedgedSshdDoesNotFenceOrStrand(t *testing.T) {
+	t.Parallel()
+
 	st, c := controlRedis(t)
 	ctx := context.Background()
 	const ok, wedge, S = "ctl-a-ok", "ctl-wedge", "control-5ca8ae22"

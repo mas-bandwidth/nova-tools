@@ -12,6 +12,8 @@ import (
 // grows a child, a catalog row that moves, or a hand-edit of a generated
 // page all fail here until `make map` rewrites the pages.
 func TestCommittedMapMatchesTree(t *testing.T) {
+	t.Parallel()
+
 	root := testRoot(t)
 	issues := Check(root, DefaultCatalog)
 	for _, s := range issues {
@@ -20,6 +22,8 @@ func TestCommittedMapMatchesTree(t *testing.T) {
 }
 
 func TestRootMapStaysUnder3KB(t *testing.T) {
+	t.Parallel()
+
 	root := testRoot(t)
 	pages, _ := Render(root, DefaultCatalog)
 	n := len(pages[RootAgents])
@@ -29,6 +33,8 @@ func TestRootMapStaysUnder3KB(t *testing.T) {
 }
 
 func TestRootMapIsAFourColumnTable(t *testing.T) {
+	t.Parallel()
+
 	root := testRoot(t)
 	pages, _ := Render(root, DefaultCatalog)
 	body := pages[RootAgents]
@@ -41,6 +47,8 @@ func TestRootMapIsAFourColumnTable(t *testing.T) {
 }
 
 func TestCatalogRoutesAndGuardsAreValid(t *testing.T) {
+	t.Parallel()
+
 	root := testRoot(t)
 	specRe := regexp.MustCompile(`\b(SPEC(?:-[A-Z0-9]+)*\.md)\b`)
 
@@ -73,6 +81,8 @@ func TestCatalogRoutesAndGuardsAreValid(t *testing.T) {
 // TestStaleMapFailsUntilRegenerate is the red-first blade: edit a mapped
 // directory, the guard goes red, regenerate, the guard goes green.
 func TestStaleMapFailsUntilRegenerate(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "Makefile"), []byte("# test tree\n"), 0o644); err != nil {
 		t.Fatal(err)

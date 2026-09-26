@@ -269,6 +269,8 @@ func TestRunRefusesWhenTheContainerCannotBeRead(t *testing.T) {
 // verb — which named every one of its own six problems in one refusal, correctly — failed
 // it.
 func TestRunNamesEveryBadFlagAtOnce(t *testing.T) {
+	t.Parallel()
+
 	badArgv := []string{"--name", "a b", "--size", "lots", "--timeout", "soon", "--container", "sda1"}
 	for _, tc := range []struct {
 		goos string
@@ -314,6 +316,8 @@ func TestRunNamesEveryBadFlagAtOnce(t *testing.T) {
 // of the WALL, which is a different refusal in a different line — see
 // TestWindowsRefusesWhileTheWallIsNotBuilt.
 func TestTheVerbRefusesWherethereIsNoDisposableBody(t *testing.T) {
+	t.Parallel()
+
 	for _, built := range []string{"darwin", "windows"} {
 		if _, _, refused := noDisposableBody(built); refused {
 			t.Fatalf("%s has the body and must not refuse for want of a place", built)
@@ -335,6 +339,8 @@ func TestTheVerbRefusesWherethereIsNoDisposableBody(t *testing.T) {
 
 // The name and size shapes, both ways round: what is accepted and what is not.
 func TestTheNameAndSizeShapesAreNarrow(t *testing.T) {
+	t.Parallel()
+
 	for _, ok := range []string{"j1", "lane-sandbox", "a.b_c", "A1"} {
 		if !okName(ok) {
 			t.Errorf("--name %q is a name this verb should take", ok)
@@ -371,6 +377,8 @@ func TestTheNameAndSizeShapesAreNarrow(t *testing.T) {
 // the delete is attempted, or the unmount fails and a clean exit becomes a leak. These
 // four assert the ORDER of the signals, with no process, no clock and no timer.
 func TestSuperviseSweepsTheGroupAfterAnOrdinaryExit(t *testing.T) {
+	t.Parallel()
+
 	done := make(chan int, 1)
 	done <- 3
 	var killed []syscall.Signal
@@ -384,6 +392,8 @@ func TestSuperviseSweepsTheGroupAfterAnOrdinaryExit(t *testing.T) {
 }
 
 func TestSuperviseKillsTheWholeGroupOnATimeout(t *testing.T) {
+	t.Parallel()
+
 	done := make(chan int, 1)
 	deadline := make(chan time.Time, 1)
 	deadline <- time.Time{}
@@ -415,6 +425,8 @@ func TestSuperviseKillsTheWholeGroupOnATimeout(t *testing.T) {
 }
 
 func TestSuperviseStopsAtTheTermWhenTheGroupDies(t *testing.T) {
+	t.Parallel()
+
 	done := make(chan int, 1)
 	deadline := make(chan time.Time, 1)
 	deadline <- time.Time{}
@@ -437,6 +449,8 @@ func TestSuperviseStopsAtTheTermWhenTheGroupDies(t *testing.T) {
 }
 
 func TestSuperviseForwardsATerminatingSignalToTheGroup(t *testing.T) {
+	t.Parallel()
+
 	done := make(chan int, 1)
 	sigs := make(chan os.Signal, 1)
 	sigs <- syscall.SIGINT
@@ -459,6 +473,8 @@ func TestSuperviseForwardsATerminatingSignalToTheGroup(t *testing.T) {
 // withHome is rule 9 for a home the TOOL made: the child sees one HOME and it is the one
 // on the disposable volume, whatever the caller's own environment carried.
 func TestTheChildsHomeIsTheOneOnTheVolume(t *testing.T) {
+	t.Parallel()
+
 	got := withHome([]string{"HOME=/Users/someone", "PATH=/bin", "HOMEBREW_PREFIX=/opt/homebrew"}, "/Volumes/nova-j1/home")
 	homes := 0
 	for _, kv := range got {
@@ -506,6 +522,8 @@ func TestTheTempDirectoryIsOnTheVolume(t *testing.T) {
 // to use it is not a mistake, and a tool that answers a question with four complaints
 // teaches the reader to stop asking.
 func TestRunAnswersHelpWithItsUsage(t *testing.T) {
+	t.Parallel()
+
 	for _, flag := range []string{"--help", "-h", "help"} {
 		var out, errb bytes.Buffer
 		code := runVerb([]string{flag}, nil, &out, &errb, []string{"PATH=" + os.Getenv("PATH")})

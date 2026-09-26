@@ -22,6 +22,8 @@ func writeSource(t *testing.T, dir, name, body string) string {
 // Two participants annotate the same passage, reply, resume, and export.
 // This is the red test for issue #222: the Export function does not exist yet.
 func TestTwoParticipantsAnnotateReplyResumeExport(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	src := writeSource(t, dir, "story.txt", "The lantern room held a brass fitting.\nIt collected salt on every wind.\n")
 
@@ -83,6 +85,8 @@ func TestTwoParticipantsAnnotateReplyResumeExport(t *testing.T) {
 // A changed source between sessions produces an explicit ANCHOR STALE,
 // not a silent reassignment.
 func TestStaleAnchorAfterSourceEdit(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	src := writeSource(t, dir, "story.txt", "The lantern room held a brass fitting.\n")
 
@@ -117,6 +121,8 @@ func TestStaleAnchorAfterSourceEdit(t *testing.T) {
 
 // Source path containing spaces must not trigger false ANCHOR STALE.
 func TestPathWithSpaces(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	src := writeSource(t, dir, "story with spaces.txt", "A shared passage.\n")
 
@@ -159,6 +165,8 @@ func TestPathWithSpaces(t *testing.T) {
 // Multiline passage, note, and reply content must be preserved losslessly across
 // save, load, and subsequent writes.
 func TestMultilineNotePassageReplyRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	srcText := "Passage line 1\nPassage line 2\nPassage line 3\n"
 	src := writeSource(t, dir, "story.txt", srcText)
@@ -269,6 +277,8 @@ func TestMultilineNotePassageReplyRoundTrip(t *testing.T) {
 // file byte-identical to before the attempt. Missing source must also refuse and leave
 // sidecar untouched.
 func TestStaleSourceReplyRefusal(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	src := writeSource(t, dir, "story.txt", "The lantern room held a brass fitting.\n")
 
@@ -331,6 +341,8 @@ func TestStaleSourceReplyRefusal(t *testing.T) {
 
 // Verify existing sidecar fixture in internal/play/ can be loaded and read.
 func TestExistingSidecarFixturePreserved(t *testing.T) {
+	t.Parallel()
+
 	fixture := filepath.Join(".", "story.txt")
 	store, err := LoadStore(fixture)
 	if err != nil {
@@ -351,6 +363,8 @@ func TestExistingSidecarFixturePreserved(t *testing.T) {
 // Lines beginning with NOTE, REPLY, PASSAGE, and BODY in note, passage, and reply
 // must not be confused with record delimiters.
 func TestProseBeginningWithKeywordsRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	srcText := "A shared passage for keyword test.\nWith multiple lines.\n"
 	src := writeSource(t, dir, "story.txt", srcText)
@@ -405,6 +419,8 @@ func TestProseBeginningWithKeywordsRoundTrip(t *testing.T) {
 
 // CRLF (\r\n) bytes in note and reply content must be preserved without normalization to LF.
 func TestCRLFPreservation(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	src := writeSource(t, dir, "story.txt", "The lantern room held a brass fitting.\n")
 
@@ -442,6 +458,8 @@ func TestCRLFPreservation(t *testing.T) {
 
 // Multi-word author names must be preserved losslessly for both notes and replies.
 func TestFullAuthorNamesRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	src := writeSource(t, dir, "story.txt", "The lantern room held a brass fitting.\n")
 
@@ -492,6 +510,8 @@ func TestFullAuthorNamesRoundTrip(t *testing.T) {
 // a Go-quoted string whenever it contains a space, a quote or a backslash,
 // and the text records are a single escaped physical line.
 func TestQuotedAuthorAndTextRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	src := writeSource(t, dir, "story.txt", "The lantern room held a brass fitting.\n")
 	passage := "The lantern room held a brass fitting."
@@ -616,6 +636,8 @@ func copyFixture(t *testing.T, src, dir, name string) string {
 // stored value. This is the behaviour documented in docs/SPEC-PLAY.md under
 // "Reading a legacy sidecar".
 func TestLegacySidecarReadThenUpgradeOnNextWrite(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	fixtureDir := filepath.Join("testdata", "legacy-v1")
 	src := copyFixture(t, filepath.Join(fixtureDir, "story.txt"), dir, "story.txt")

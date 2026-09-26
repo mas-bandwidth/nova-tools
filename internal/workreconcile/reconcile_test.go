@@ -6,6 +6,8 @@ import (
 )
 
 func TestReconciliationClean(t *testing.T) {
+	t.Parallel()
+
 	manifest := &CaptureManifest{
 		Provider:    "github",
 		Repo:        "mas-bandwidth/nova-tools",
@@ -84,6 +86,8 @@ func TestReconciliationClean(t *testing.T) {
 }
 
 func TestReconciliationDiscrepanciesNeverSummarized(t *testing.T) {
+	t.Parallel()
+
 	manifest := &CaptureManifest{
 		Provider:    "github",
 		Repo:        "mas-bandwidth/nova-tools",

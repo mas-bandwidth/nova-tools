@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // card636 writes a practice-17 shaped card and a one-row cards.tsv naming it, with the
@@ -46,10 +48,12 @@ func self636(t *testing.T, dir string) string {
 // process per card runs"), although `native` lives in the same binary. With --harness the
 // card must run through this binary's own native verb, no runner script.
 func TestCard8909BatchRunsNativeWithNoRunner(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	harness := filepath.Join(dir, "harness")
-	if err := os.WriteFile(harness, []byte("#!/bin/sh\necho FAKE-HARNESS \"$@\"\n"), 0o755); err != nil {
+	if err := testbin.WriteExecutable(harness, []byte("#!/bin/sh\necho FAKE-HARNESS \"$@\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	tsv := card636(t, dir, "card-f")
@@ -81,6 +85,8 @@ func TestCard8909BatchRunsNativeWithNoRunner(t *testing.T) {
 }
 
 func TestBatchUnknownAcceptanceDoesNotExitZero(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	tsv := card636(t, dir, "card-u")
@@ -104,6 +110,8 @@ func TestBatchUnknownAcceptanceDoesNotExitZero(t *testing.T) {
 
 // TestCard8909BatchRefusesWithNeitherRunnerNorHarness: one refusal naming both doors.
 func TestCard8909BatchRefusesWithNeitherRunnerNorHarness(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	tsv := card636(t, dir, "card-g")
 	var out, errb bytes.Buffer

@@ -22,6 +22,8 @@ func cli(args ...string) (int, string, string) {
 }
 
 func TestUsageBannerExamplesRun(t *testing.T) {
+	t.Parallel()
+
 	code, banner, stderr := cli("help")
 	if code != 0 {
 		t.Fatalf("`nova-post help` exit=%d, want 0; stderr: %s", code, stderr)
@@ -46,6 +48,8 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 }
 
 func TestBareCommandRefusesInOneLine(t *testing.T) {
+	t.Parallel()
+
 	code, stdout, stderr := cli()
 	if code != 2 {
 		t.Fatalf("a bare `nova-post` exits %d, want 2", code)

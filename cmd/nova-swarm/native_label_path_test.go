@@ -20,6 +20,8 @@ import (
 // from it stays strictly below the slot, which stays below the root. The honest
 // label in the same table is here so a fix that refuses every label fails too.
 func TestNativeRefusesALabelThatWalksOutOfTheSwarmRoot(t *testing.T) {
+	t.Parallel()
+
 	bin := nativeHarness(t)
 	for _, label := range []string{
 		"../../../OUTSIDE",
@@ -81,6 +83,8 @@ func TestNativeRefusesALabelThatWalksOutOfTheSwarmRoot(t *testing.T) {
 // The same admission with an honest label still makes the job directory, so the
 // refusal above is about the label being a path and not about labels.
 func TestNativeStillAcceptsAnOrdinaryLabel(t *testing.T) {
+	t.Parallel()
+
 	bin := nativeHarness(t)
 	base := t.TempDir()
 	root := filepath.Join(base, "swarm-root")

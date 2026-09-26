@@ -17,6 +17,8 @@ import (
 // never make, read or print a key. The age1... values are public keys the document
 // already carries.
 func TestTheKeygenTranscriptIsEveryLineTheReceiptPrints(t *testing.T) {
+	t.Parallel()
+
 	data, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	if err != nil {
 		t.Fatal(err)

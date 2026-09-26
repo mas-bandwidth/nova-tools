@@ -21,6 +21,8 @@ func writePullCard(t *testing.T, queue, name, body string) {
 // clone is clipped before the next card runs, so card n+1 never sees card n's uncommitted
 // diff and every card keeps its own RESULT.md.
 func TestABatchClipsBetweenCards(t *testing.T) {
+	t.Parallel()
+
 	queue := t.TempDir()
 	clone := t.TempDir()
 	harvest := t.TempDir()
@@ -74,6 +76,8 @@ func TestABatchClipsBetweenCards(t *testing.T) {
 // :effort stops the batch, and every card not done -- that card and the ones behind it --
 // goes back to queue/.
 func TestACardOverEffortReturnsTheRemainder(t *testing.T) {
+	t.Parallel()
+
 	queue := t.TempDir()
 	clone := t.TempDir()
 	harvest := t.TempDir()

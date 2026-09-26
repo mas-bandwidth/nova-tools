@@ -17,6 +17,8 @@ import (
 // say, paused on bench:<b>:desired rides the key as the hold, and a bench with
 // no beat has no Key. The store's clock is the decision's clock.
 func TestReadRedisDecidesByTheKeyAndItsTTL(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	t0 := time.Date(2026, 9, 23, 18, 0, 0, 0, time.UTC)
 	mr.SetTime(t0)
@@ -66,6 +68,8 @@ func TestReadRedisDecidesByTheKeyAndItsTTL(t *testing.T) {
 
 // TestReadRedisEmptyFleet: no registered bench is no rows, not an error.
 func TestReadRedisEmptyFleet(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = c.Close() })
@@ -100,6 +104,8 @@ func (h vanishBetween) ProcessPipelineHook(next redis.ProcessPipelineHook) redis
 // never a one-millisecond live record. PTTL -1 (present, no expiry) still
 // counts at the read.
 func TestReadRedisPTTLMinusTwoIsAbsent(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	t0 := time.Date(2026, 9, 23, 18, 0, 0, 0, time.UTC)
 	mr.SetTime(t0)

@@ -15,6 +15,8 @@ import (
 // same instant. That is the 2026-09-10 `database is locked` failure arriving by a second
 // route: two workers on one slot means one data home and one SQLite database.
 func TestNoSlotIsEverHeldTwice(t *testing.T) {
+	t.Parallel()
+
 	const n = 6 // n workers, n-1 allocatable slots
 	dir := t.TempDir()
 	p, err := OpenPool(dir)

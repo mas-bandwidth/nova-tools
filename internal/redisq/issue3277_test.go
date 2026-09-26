@@ -9,6 +9,8 @@ import (
 
 // #3277: Open sends nothing; the first queue operation dials.
 func TestOpenSendsNoCommand3277(t *testing.T) {
+	t.Parallel()
+
 	addr, count := testutil.CommandCounter(t)
 	q, err := redisq.Open(addr)
 	if err != nil {

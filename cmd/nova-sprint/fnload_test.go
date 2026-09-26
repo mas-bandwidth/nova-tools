@@ -14,6 +14,8 @@ import (
 // throwaway Redis, FCALL ns_ping then answers PONG, a second load is a no-op
 // with the same sha, and fn check exits 1 on a missing or stale library.
 func TestFnLoadThenPing(t *testing.T) {
+	t.Parallel()
+
 	addr := startThrowawayRedis(t)
 	ctx := context.Background()
 	client := redis.NewClient(&redis.Options{Addr: addr})
@@ -96,6 +98,8 @@ func TestFnLoadThenPing(t *testing.T) {
 }
 
 func TestFnRefusesWithoutRedis(t *testing.T) {
+	t.Parallel()
+
 	for _, sub := range []string{"load", "check"} {
 		code, _, errOut := runSprint("fn", sub)
 		if code != 2 || !strings.Contains(errOut, "--redis") {

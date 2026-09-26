@@ -13,6 +13,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 type placeFixture struct {
@@ -31,7 +33,7 @@ type placeFixture struct {
 
 func writeFakeExe(t *testing.T, path, body string) {
 	t.Helper()
-	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+	if err := testbin.WriteExecutable(path, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
 }

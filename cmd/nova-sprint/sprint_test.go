@@ -88,6 +88,8 @@ func TestSprintOpenLetsTaskTakeClaim(t *testing.T) {
 }
 
 func TestSprintRefusesABadName(t *testing.T) {
+	t.Parallel()
+
 	for _, args := range [][]string{
 		{"sprint"},
 		{"sprint", "reopen", "--sprint", "x"},

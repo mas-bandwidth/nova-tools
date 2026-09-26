@@ -17,6 +17,8 @@ import (
 // and then publishes RESULT.md. The rejection is a tool error the model worked around, so the
 // job is DONE -- the rejection on its own is not an outcome.
 func TestAFencedRunThatPublishedIsDone(t *testing.T) {
+	t.Parallel()
+
 	job := t.TempDir()
 	reject := "\x1b[33;1m!\x1b[0m  permission requested: external_directory (/outside/scratch/*); auto-rejecting\n"
 	if err := os.WriteFile(filepath.Join(job, "harness.log"), []byte(reject), 0o644); err != nil {
@@ -35,6 +37,8 @@ func TestAFencedRunThatPublishedIsDone(t *testing.T) {
 // the commit it kept -- `WALL task=a path=<p> commits=1 branch=<name>` -- so the harvester
 // pushes the work instead of the commits being stranded with the card.
 func TestAWallDeathNamesItsPathAndKeepsItsCommits(t *testing.T) {
+	t.Parallel()
+
 	job := t.TempDir()
 	reject := "\x1b[33;1m!\x1b[0m  permission requested: external_directory (/outside/scratch/*); auto-rejecting\n"
 	if err := os.WriteFile(filepath.Join(job, "harness.log"), []byte(reject), 0o644); err != nil {
@@ -91,6 +95,8 @@ func commit(t *testing.T, dir, name string) string {
 // printed are what the report line carries. RED WITHOUT THE CLASSIFIER: the log was read as a
 // model that published nothing.
 func TestWallRefusedReadsTheFenceAndTheSandbox(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name string
 		in   string
@@ -131,6 +137,8 @@ func TestWallRefusedReadsTheFenceAndTheSandbox(t *testing.T) {
 // TestWallLineNamesThePathTheStepAndTheSurvivingWork: the one line a wall death is reported
 // on, and it names the commits a harvester can still push when the clone holds any.
 func TestWallLineNamesThePathTheStepAndTheSurvivingWork(t *testing.T) {
+	t.Parallel()
+
 	w := WallRefusal{Path: "/jobs/scratch/*", Step: "2"}
 	if got, want := WallLine("card-8311", w, "", 0), "WALL task=card-8311 path=/jobs/scratch/* step=2"; got != want {
 		t.Errorf("WallLine = %q, want %q", got, want)
@@ -146,6 +154,8 @@ func TestWallLineNamesThePathTheStepAndTheSurvivingWork(t *testing.T) {
 // TestWallCommitsCountsPastTheBase: the branch and the commits a walled card left behind, so
 // a harvester can still push them. A clone with no commits past its base says zero.
 func TestWallCommitsCountsPastTheBase(t *testing.T) {
+	t.Parallel()
+
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not on PATH")
 	}

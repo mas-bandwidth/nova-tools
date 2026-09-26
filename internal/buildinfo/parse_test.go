@@ -15,6 +15,8 @@ import (
 // at a time. The grammar is four mandatory tokens and then any number of
 // `key=value` extras, and this is the only place it is spelled out.
 func TestParseTakesEveryToolsLineApart(t *testing.T) {
+	t.Parallel()
+
 	const stamp = "v0.15.3-0.20260918044559-d576bf6bbabb"
 	for _, tc := range []struct {
 		name     string
@@ -85,6 +87,8 @@ func TestParseTakesEveryToolsLineApart(t *testing.T) {
 // for "any line at all": a refusal that accepts everything cannot tell a caller
 // that the binary it just ran is broken.
 func TestParseRefusesWhatIsNotAVersionLine(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct{ name, line string }{
 		{"nothing at all", ""},
 		{"a usage refusal, which is what a nova tool prints with no verb", "nova-swarm: no verb given; run: nova-swarm help"},
@@ -107,6 +111,8 @@ func TestParseRefusesWhatIsNotAVersionLine(t *testing.T) {
 // than free tokens: a reader asks for the fact it wants by name and is never
 // holding a position.
 func TestExtraFindsWhatTheToolSaidAboutItself(t *testing.T) {
+	t.Parallel()
+
 	f, ok := buildinfo.Parse("nova-merge v1 darwin/arm64 go1.27.1 build=9c1885748f57")
 	if !ok {
 		t.Fatal("Parse refused nova-merge's line")
@@ -124,6 +130,8 @@ func TestExtraFindsWhatTheToolSaidAboutItself(t *testing.T) {
 // already takes apart -- which is what nova-merge's hand-rolled Fprintf did not
 // guarantee.
 func TestLineCarriesItsExtrasThroughTheOneWriter(t *testing.T) {
+	t.Parallel()
+
 	line := buildinfo.Line("nova-merge", "v9.9.9", "build=9c1885748f57")
 	f, ok := buildinfo.Parse(line)
 	if !ok {
@@ -144,6 +152,8 @@ func TestLineCarriesItsExtrasThroughTheOneWriter(t *testing.T) {
 // reader: an extra that a reader would refuse must never be printable, or the
 // grammar is enforced only on the day somebody runs the snapshot.
 func TestLineRefusesAnExtraThatIsNotKeyValue(t *testing.T) {
+	t.Parallel()
+
 	defer func() {
 		if recover() == nil {
 			t.Error("Line accepted an extra that is not key=value; the reader refuses it, so the writer must too")

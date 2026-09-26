@@ -55,6 +55,8 @@ func truncatedForge() *fakeForge {
 // cut clean. A list that may be short is not classified at all, and the
 // refusal says THAT before it says anything about what it found in it.
 func TestCutNamesTheTruncationBeforeTheHitsItFoundInIt(t *testing.T) {
+	t.Parallel()
+
 	f := truncatedForge()
 	path := filepath.Join(t.TempDir(), "CHANGELOG.md")
 	var out, errs bytes.Buffer
@@ -85,6 +87,8 @@ func TestCutNamesTheTruncationBeforeTheHitsItFoundInIt(t *testing.T) {
 // vouches for a prefix of the truth. The only way past a truncated compare is
 // a complete list.
 func TestCutRefusesATruncatedRangeEvenWithASecurityRead(t *testing.T) {
+	t.Parallel()
+
 	f := truncatedForge()
 	path := filepath.Join(t.TempDir(), "CHANGELOG.md")
 	var out, errs bytes.Buffer
@@ -107,6 +111,8 @@ func TestCutRefusesATruncatedRangeEvenWithASecurityRead(t *testing.T) {
 // rather than something a person assembled -- and a hand-written list is
 // exactly what a classification gate must never read.
 func TestCutLocalDiffClassifiesTheCompleteListItProduced(t *testing.T) {
+	t.Parallel()
+
 	f := truncatedForge()
 	g := &fakeGit{names: map[string][]string{
 		// The complete range: the two the forge's prefix showed, plus one it
@@ -147,6 +153,8 @@ func TestCutLocalDiffClassifiesTheCompleteListItProduced(t *testing.T) {
 // classification did not come from the forge: which list a gate read is the
 // first thing anybody auditing it asks.
 func TestCutLocalDiffWithAReadSaysWhereTheListCameFrom(t *testing.T) {
+	t.Parallel()
+
 	f := truncatedForge()
 	g := &fakeGit{names: map[string][]string{
 		"v0.15.10...abc123abc123def": {"internal/secrets/seal.go", "README.md"},
@@ -174,6 +182,8 @@ func TestCutLocalDiffWithAReadSaysWhereTheListCameFrom(t *testing.T) {
 // can be carried to the host doing the cut and read back there. The file
 // carries the range it was produced for.
 func TestCutLocalDiffWritesThePathsFileItClassified(t *testing.T) {
+	t.Parallel()
+
 	f := truncatedForge()
 	g := &fakeGit{names: map[string][]string{
 		"v0.15.10...abc123abc123def": {"README.md", "docs/SPEC-UPDATE.md"},
@@ -216,6 +226,8 @@ func TestCutLocalDiffWritesThePathsFileItClassified(t *testing.T) {
 // over from a different pair of commits, classifies a range that is not the one
 // being cut.
 func TestCutRefusesAPathsFileNobodyProduced(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	for _, tc := range []struct {
 		name, body, wants string
@@ -252,6 +264,8 @@ func TestCutRefusesAPathsFileNobodyProduced(t *testing.T) {
 // with the compiler's own `unsupported GOOS/GOARCH pair` and left an empty
 // directory of that name in the release tree for somebody to find later.
 func TestBuildRefusesAnUnsupportedPairBeforeBuildingAnything(t *testing.T) {
+	t.Parallel()
+
 	tc := &fakeToolchain{}
 	out1 := t.TempDir()
 	var out, errs bytes.Buffer
@@ -285,6 +299,8 @@ func TestBuildRefusesAnUnsupportedPairBeforeBuildingAnything(t *testing.T) {
 // platform short, and nobody the wiser until a bench asked for a binary that
 // was never made.
 func TestBuildBuildsEveryPlatformAndNamesEachInTheReceipt(t *testing.T) {
+	t.Parallel()
+
 	tc := &fakeToolchain{}
 	root := t.TempDir()
 	var out, errs bytes.Buffer
@@ -315,6 +331,8 @@ func TestBuildBuildsEveryPlatformAndNamesEachInTheReceipt(t *testing.T) {
 // whose word about its own bits proves nothing. `build` writes the digest of
 // the SHA256SUMS it just verified, on the coordinator, beside the artifacts.
 func TestBuildWritesTheSumsDigestBesideTheArtifacts(t *testing.T) {
+	t.Parallel()
+
 	tc := &fakeToolchain{}
 	root := t.TempDir()
 	var out, errs bytes.Buffer
@@ -358,6 +376,8 @@ func TestBuildWritesTheSumsDigestBesideTheArtifacts(t *testing.T) {
 // names a local file; a digest read off the far side would be the far side
 // vouching for itself.
 func TestAdoptExpectSumsFromReadsTheCoordinatorsDigestFile(t *testing.T) {
+	t.Parallel()
+
 	built, version := stagedRelease(t)
 	digest, err := fileSum(filepath.Join(built, SumsFile))
 	if err != nil {
@@ -408,6 +428,8 @@ func TestAdoptExpectSumsFromReadsTheCoordinatorsDigestFile(t *testing.T) {
 // A --expect-sums-from that names another machine is refused BY NAME: the
 // whole point of the digest is that it did not travel with the bits.
 func TestAdoptRefusesADigestFileOnTheFarSide(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	machines := filepath.Join(dir, "machines.tsv")
 	if err := os.WriteFile(machines, []byte("hulk\n"), 0o644); err != nil {
@@ -433,6 +455,8 @@ func TestAdoptRefusesADigestFileOnTheFarSide(t *testing.T) {
 // understand, and the fourth dogfood found that out with --from in hand and no
 // way to use it.
 func TestAdoptRefusesWhenTheLocalToolPredatesTheRelease(t *testing.T) {
+	t.Parallel()
+
 	built, _ := stagedRelease(t)
 	dir := t.TempDir()
 	machines := filepath.Join(dir, "machines.tsv")
@@ -464,6 +488,8 @@ func TestAdoptRefusesWhenTheLocalToolPredatesTheRelease(t *testing.T) {
 // directory that is not empty, deliberately, which would have turned a file
 // this tool wrote into a refusal on every machine in the fleet.
 func TestPullDeletesTheDigestFileToo(t *testing.T) {
+	t.Parallel()
+
 	built, version := stagedRelease(t)
 	root := filepath.Dir(filepath.Dir(built))
 	changelog := filepath.Join(t.TempDir(), "CHANGELOG.md")

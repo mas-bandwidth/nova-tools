@@ -70,6 +70,8 @@ func mustLine(t *testing.T, out, want string) {
 }
 
 func TestWhyControl35(t *testing.T) {
+	t.Parallel()
+
 	mr := control35(t)
 	out := why(t, mr)
 	t.Logf("control 35 before release:\n%s", out)
@@ -94,6 +96,8 @@ func TestWhyControl35(t *testing.T) {
 }
 
 func TestWhyHoldAtHeadIsNeverReleasableByAReader(t *testing.T) {
+	t.Parallel()
+
 	mr := control35(t)
 	mr.HSet(c35Hold, "head", c35Head)
 	out := why(t, mr)
@@ -101,6 +105,8 @@ func TestWhyHoldAtHeadIsNeverReleasableByAReader(t *testing.T) {
 }
 
 func TestWhyCarriedHoldByAPresentHolderWaitsForTheHolder(t *testing.T) {
+	t.Parallel()
+
 	mr := control35(t)
 	mr.HSet("friend:emma:state", "state", "out-of-credits", "since", strconv.FormatInt(c35Now-20*60, 10))
 	out := why(t, mr)
@@ -108,6 +114,8 @@ func TestWhyCarriedHoldByAPresentHolderWaitsForTheHolder(t *testing.T) {
 }
 
 func TestWhyNamesAStaleEvaluation(t *testing.T) {
+	t.Parallel()
+
 	mr := control35(t)
 	// Every condition passes on the records, but the unit still says
 	// reading: the answer names ns_unit_eval, not a person.
@@ -121,6 +129,8 @@ func TestWhyNamesAStaleEvaluation(t *testing.T) {
 // A hold counted on the unit but keyed outside the friends set (an inbound
 // login hold, 3.4) is never a pass: holds_open is the count.
 func TestWhyCountsHoldsOpenBeyondTheListedHolds(t *testing.T) {
+	t.Parallel()
+
 	mr := control35(t)
 	mr.Del(c35Hold)
 	out := why(t, mr)
@@ -131,6 +141,8 @@ func TestWhyCountsHoldsOpenBeyondTheListedHolds(t *testing.T) {
 }
 
 func TestWhyMissingIsNeverSuccess(t *testing.T) {
+	t.Parallel()
+
 	mr := control35(t)
 	gid := civerdict.GID("single", "dev", c35Head, "req1", "pol1", "run1")
 	mr.Del(civerdict.Key("nova-tools", c35Head, gid))
@@ -147,6 +159,8 @@ func TestWhyMissingIsNeverSuccess(t *testing.T) {
 }
 
 func TestWhyDropKeyAndStackParent(t *testing.T) {
+	t.Parallel()
+
 	mr := control35(t)
 	mr.HSet(c35U, "state", "dropped", "drop_reason", "carried HOLD", "drop_key", "4139b79f:9", "stack_parent", c35Parent)
 	mr.HSet(c35PU, "state", "reading", "head", c35Old)
@@ -167,6 +181,8 @@ func TestWhyDropKeyAndStackParent(t *testing.T) {
 // state=landed but no merge_sha is incomplete; the stack-parent condition
 // fails and the state line never claims every gate passes.
 func TestWhyLandedParentWithoutMergeSHAIsNeverAPass(t *testing.T) {
+	t.Parallel()
+
 	mr := control35(t)
 	mr.Del(c35Hold)
 	mr.HSet(c35U, "holds_open", "0", "stack_parent", c35Parent)
@@ -186,6 +202,8 @@ func TestWhyLandedParentWithoutMergeSHAIsNeverAPass(t *testing.T) {
 }
 
 func TestWhyRefusesAnUnknownPR(t *testing.T) {
+	t.Parallel()
+
 	mr := control35(t)
 	code, stdout, _ := runSprint("why", "nova-tools#9999", "--redis", mr.Addr(), "--sprint", c35Sprint)
 	if code != 1 {
@@ -200,6 +218,8 @@ func TestWhyRefusesAnUnknownPR(t *testing.T) {
 }
 
 func TestLandStatus(t *testing.T) {
+	t.Parallel()
+
 	mr := control35(t)
 	s := "s:" + c35Sprint + ":"
 	u := func(n string) string { return "gh/mas-bandwidth/nova-tools/" + n }
@@ -239,6 +259,8 @@ func TestLandStatus(t *testing.T) {
 }
 
 func TestLandVerbDispatch(t *testing.T) {
+	t.Parallel()
+
 	if code, _, stderr := runSprint("land", "nope"); code != 2 || !strings.Contains(stderr, "want status or flaky") {
 		t.Fatalf("land nope: exit=%d stderr=%q", code, stderr)
 	}

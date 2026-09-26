@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // The tests for Stella's review of #1173 at 60a1a17e: six fold defects, one test each.
@@ -83,7 +84,7 @@ func TestFoldWriteUnderRefusesSymlinks(t *testing.T) {
 		t.Fatalf("the file outside the scratch clone was changed: %q", b)
 	}
 	plain := filepath.Join(root, "plain_test.go")
-	if err := os.WriteFile(plain, []byte("old\n"), 0o755); err != nil {
+	if err := testbin.WriteExecutable(plain, []byte("old\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := foldWriteUnder(root, "plain_test.go", []byte("new\n")); err != nil {

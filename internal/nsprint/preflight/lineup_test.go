@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -88,6 +89,8 @@ func mustRefuse(t *testing.T, lines []Line, red ...string) {
 
 // Positive control: a lined-up fleet with five landed probes opens.
 func TestLineupGreenOpens(t *testing.T) {
+	t.Parallel()
+
 	in := lineupFixture(t, map[string]map[string]string{"hulk": goodAnswers(), "vision": goodAnswers()}, 5)
 	lines := LineupChecks(in)
 	if err := OpenGate(lines); err != nil {
@@ -102,6 +105,8 @@ func TestLineupGreenOpens(t *testing.T) {
 // open refuses. The same with a finished job dir left behind (7.19) and with
 // 4 of 5 probes landed (7.20).
 func TestControl49(t *testing.T) {
+	t.Parallel()
+
 	stale := goodAnswers()
 	stale[KeyBuild] = "351bafe3"
 	in := lineupFixture(t, map[string]map[string]string{"hulk": stale, "vision": goodAnswers()}, 5)
@@ -134,6 +139,8 @@ func TestControl49(t *testing.T) {
 // Control 64: a bench whose secrets clone is on seal/x with no upstream
 // prints DRIFT secrets.store and sprint open refuses (7.24).
 func TestControl64(t *testing.T) {
+	t.Parallel()
+
 	seal := goodAnswers()
 	seal[KeySecretsStore] = "branch=seal/x,upstream=no,rev=0fa4aa554bef,clean=yes"
 	in := lineupFixture(t, map[string]map[string]string{"hulk": goodAnswers(), "batman": seal}, 5)
@@ -156,6 +163,8 @@ func TestControl64(t *testing.T) {
 // Control 65: a bench with no scratch-clone verb, or missing one of the four
 // mirrors, is DRIFT code.clone-verb and sprint open refuses (7.25).
 func TestControl65(t *testing.T) {
+	t.Parallel()
+
 	noVerb := goodAnswers()
 	noVerb[KeyCloneVerb] = "verb=absent,mirrors=nova-tools:nova-work:rowan-tools:schema"
 	noMirror := goodAnswers()
@@ -180,6 +189,8 @@ func TestControl65(t *testing.T) {
 
 // No record, a stale record or an unread registry is RED, never GREEN.
 func TestLineupMissingAndStaleConform(t *testing.T) {
+	t.Parallel()
+
 	mr, c := fixture(t)
 	ctx := context.Background()
 	c.SAdd(ctx, "benches", "hulk", "vision", "parked")
@@ -212,6 +223,8 @@ func TestLineupMissingAndStaleConform(t *testing.T) {
 }
 
 func TestPublishRoundTripAndDeclared(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	yml := filepath.Join(dir, "all.yml")
 	body := "ansible_python_interpreter: /usr/bin/python3\nnova_build: \"v0.16.0-dev.e4386caa\"\nsecrets_rev: \"0fa4aa554bef\"   # the declared HEAD\n"
@@ -255,6 +268,8 @@ func TestPublishRoundTripAndDeclared(t *testing.T) {
 }
 
 func TestGraphQLBudget(t *testing.T) {
+	t.Parallel()
+
 	in := LineupInput{BinaryScanned: true, GraphQL: GraphQLBudget{Known: true, Remaining: 100, CallsPerPass: 1, Cadence: 10 * time.Second}}
 	if l := CheckGraphQL(in); !l.Red || !strings.Contains(l.Why, "100 < 360") {
 		t.Fatalf("7.21 %v", l)
@@ -271,7 +286,7 @@ func TestGraphQLBudget(t *testing.T) {
 		t.Fatalf("unread budget %v", l)
 	}
 	bin := filepath.Join(t.TempDir(), "bin")
-	if err := os.WriteFile(bin, []byte("xx POST /graph"+"ql yy"), 0o755); err != nil {
+	if err := testbin.WriteExecutable(bin, []byte("xx POST /graph"+"ql yy"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if hits, err := ScanBinaryForGraphQL(bin); err != nil || len(hits) != 1 {
@@ -289,6 +304,8 @@ var graphQLUse = regexp.MustCompile(`/graph` + `ql\b|"graph` + `ql"|api graph` +
 // GraphQL budget emptied on 2026-09-22 and the lander made 149 blind passes;
 // nova-sprint reads GitHub by REST only.
 func TestNoGraphQLInNovaSprint(t *testing.T) {
+	t.Parallel()
+
 	if !graphQLUse.MatchString(`exec.Command("gh", "api", "graph`+`ql", "-f", q)`) ||
 		!graphQLUse.MatchString(`const endpoint = "/graph`+`ql"`) {
 		t.Fatal("the pattern misses a known GraphQL call; the test would pass on nothing")
@@ -371,6 +388,8 @@ func probeSet(t *testing.T, c *redis.Client) []string {
 // reuse an earlier PASS record still inside its 15 min TTL. A failed publish
 // is RED on 7.18, and a clean exit that did not republish a bench is RED too.
 func TestLineupConformFailureRefuses(t *testing.T) {
+	t.Parallel()
+
 	mr, c, run := runFixture(t, "hulk")
 	ctx := context.Background()
 	if err := PublishConform(ctx, c, Evaluate("hulk", goodAnswers(), declared)); err != nil {
@@ -410,6 +429,8 @@ func TestLineupConformFailureRefuses(t *testing.T) {
 // cut. A RED prerequisite leaves the probe set untouched; all GREEN cuts it,
 // and a rerun with the five landed opens.
 func TestLineupOrderProbeCutAfterPreflight(t *testing.T) {
+	t.Parallel()
+
 	_, c, run := runFixture(t, "hulk")
 	ctx := context.Background()
 	sealed := goodAnswers()
@@ -466,6 +487,8 @@ func TestLineupOrderProbeCutAfterPreflight(t *testing.T) {
 // probes stay uncut. The same record republished under an earlier run's
 // marker is no better; only this run's marker counts.
 func TestLineupSameSecondOldRecordRefuses(t *testing.T) {
+	t.Parallel()
+
 	mr, c, run := runFixture(t, "hulk")
 	ctx := context.Background()
 	mr.SetTime(t0.Add(500 * time.Millisecond))
@@ -508,6 +531,8 @@ func TestLineupSameSecondOldRecordRefuses(t *testing.T) {
 }
 
 func TestRunMarkerUnique(t *testing.T) {
+	t.Parallel()
+
 	seen := map[string]bool{}
 	for i := 0; i < 1000; i++ {
 		m, err := NewRunMarker(t0)

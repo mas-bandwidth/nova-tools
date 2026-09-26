@@ -33,6 +33,8 @@ func plantedWaitBound() time.Duration {
 // native must not open a FIFO planted at RESULT.md: a follow-up ReadFile would park the
 // run in open(2) until a writer appears, and nothing ever will.
 func TestNativeDoesNotBlockOnAPlantedFIFOAtResult(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
@@ -70,6 +72,8 @@ func TestNativeDoesNotBlockOnAPlantedFIFOAtResult(t *testing.T) {
 
 // The lookup harnessState uses must not park on a FIFO at RESULT.md.
 func TestNativeHarnessStateDoesNotBlockOnAPlantedFIFO(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	job := filepath.Join(dir, "job")
 	plantNativeResultFIFO(t, job)

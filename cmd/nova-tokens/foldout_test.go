@@ -9,6 +9,8 @@ import (
 )
 
 func TestFoldOutAbsent(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	tr := mkdir(t, filepath.Join(dir, "tr"))
 	repos := reposFile(t, dir)

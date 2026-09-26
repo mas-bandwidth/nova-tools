@@ -28,6 +28,8 @@ func mustRoute(t *testing.T, reg *Registry, u Unit, floor float64) RouteResult {
 // The lowest rung the evidence supports: a mechanical unit starts on Flash, and
 // friends first means a unit that is not mechanical never lands on DeepSeek.
 func TestMechanicalStartsLowAndFriendsFirstOtherwise(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	mech := mustRoute(t, reg, Unit{ID: "u1", Kind: KindRebase, Files: 2, Packages: 1, Lanes: 1}, DefaultFloor)
 	if mech.Rung.Name != "flash" {
@@ -48,6 +50,8 @@ func TestMechanicalStartsLowAndFriendsFirstOtherwise(t *testing.T) {
 // eligible for a kind that is not mechanical, even at a height the unit has
 // climbed to.
 func TestDeepSeekIsSkippedForKindsThatAreNotMechanical(t *testing.T) {
+	t.Parallel()
+
 	reg, err := ParseRegistry([]byte(`{"minds":[
 	  {"name":"cheap","lineage":"deepseek","height":0,"availability":"available","ask":"card"},
 	  {"name":"bulk","lineage":"deepseek","height":2,"availability":"available","ask":"card"},
@@ -76,6 +80,8 @@ func TestDeepSeekIsSkippedForKindsThatAreNotMechanical(t *testing.T) {
 // twenty units to a mind that does not take work. He reaches every one of them
 // still, as the READER, and the work goes to the rung the evidence supports.
 func TestSecurityAlwaysReachesJohnnyAsTheReader(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	for _, u := range []Unit{
 		{ID: "g1", Kind: KindGuard, Files: 1, Packages: 1},
@@ -99,6 +105,8 @@ func TestSecurityAlwaysReachesJohnnyAsTheReader(t *testing.T) {
 // one author -- and by the same rule it reaches him as a READ, because the mind
 // designated for it is the reserved one.
 func TestFreshTakeReachesJohnnyAsTheReader(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	res := mustRoute(t, reg, Unit{ID: "f1", Kind: KindDesign, Files: 3, Packages: 1, FreshTake: true}, DefaultFloor)
 	if res.ReadField() != "johnny" {
@@ -123,6 +131,8 @@ func TestFreshTakeReachesJohnnyAsTheReader(t *testing.T) {
 // A failed attempt re-enters the decision with its evidence and the answer is
 // the next rung: sideways first (same height, other lineage), then up.
 func TestSidewaysBeforeUp(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	after := Unit{ID: "s1", Kind: KindFixWithRedTest, Files: 3, Packages: 1, Attempts: []Attempt{
 		{Rung: "opus", Outcome: OutcomeFailed, Reason: "missed the cause"},
@@ -156,6 +166,8 @@ func TestSidewaysBeforeUp(t *testing.T) {
 
 // The ladder never answers a rung below the one the evidence already burned.
 func TestTheLadderNeverStepsDown(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	u := Unit{ID: "d1", Kind: KindRebase, Files: 1, Packages: 1, Attempts: []Attempt{
 		{Rung: "pro", Outcome: OutcomeFailed, Reason: "conflicted again"},
@@ -169,6 +181,8 @@ func TestTheLadderNeverStepsDown(t *testing.T) {
 
 // Below the floor the answer steps UP a rung, never down.
 func TestBelowTheFloorStepsUp(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	thin := Unit{ID: "t1", Kind: KindNewVerb}
 	below := mustRoute(t, reg, thin, DefaultFloor)
@@ -189,6 +203,8 @@ func TestBelowTheFloorStepsUp(t *testing.T) {
 
 // The top is Fable/Astra, then all friends at once, then Glenn.
 func TestTheTopIsAllFriendsThenGlenn(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	u := Unit{ID: "top", Kind: KindSpec, Files: 4, Packages: 2, Attempts: []Attempt{
 		{Rung: "fable", Outcome: OutcomeFailed, Reason: "the shape is still wrong"},
@@ -217,6 +233,8 @@ func TestTheTopIsAllFriendsThenGlenn(t *testing.T) {
 // goes to sleep. The two facts are separate and the test says which one it is
 // about (see nova-tools#1501, where they stop being hand-written at all).
 func TestLaneOwnerWinsAtEqualHeight(t *testing.T) {
+	t.Parallel()
+
 	reg, err := ParseRegistry([]byte(`{"minds":[
 	  {"name":"opus","lineage":"rowan","height":2,"kinds":[],"lanes":["rowan-children"],"availability":"available","ask":"child"},
 	  {"name":"emma","lineage":"emma","height":3,"kinds":[],"lanes":["code"],"availability":"available","ask":"bus"},
@@ -236,6 +254,8 @@ func TestLaneOwnerWinsAtEqualHeight(t *testing.T) {
 // An unknown kind, a unit with no id, and an attempt naming no rung are each a
 // refusal: the evidence pointer is the unit's id (rule 10).
 func TestRouteRefusesThinContract(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	for name, u := range map[string]Unit{
 		"unknown kind":  {ID: "x", Kind: "vibes"},
@@ -257,6 +277,8 @@ func TestRouteRefusesThinContract(t *testing.T) {
 // The one line carries the unit (the evidence pointer), the rung, the
 // confidence, the floor, the reason and how the rung is asked.
 func TestRouteLineShape(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	res := mustRoute(t, reg, Unit{ID: "card 41", Kind: KindRebase, Files: 2, Packages: 1}, DefaultFloor)
 	line := res.Line()
@@ -303,6 +325,8 @@ func (f *fakeDecider) Decide(_ context.Context, state string, qs map[string]Ques
 // Jev chooses among the eligible rungs, and its choice is clamped: never below
 // the rung the rules already support.
 func TestJevChoiceNeverStepsBelowTheRules(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	fake := &fakeDecider{choice: "flash", conf: 0.99}
 	u := Unit{ID: "j1", Kind: KindSpec, Files: 4, Packages: 2}
@@ -331,6 +355,8 @@ func TestJevChoiceNeverStepsBelowTheRules(t *testing.T) {
 // A Jev answer below the floor steps up, and the provider's confidence is the
 // number the floor is applied to (rule 5).
 func TestJevBelowFloorStepsUp(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	u := Unit{ID: "j2", Kind: KindNewVerb, Files: 3, Packages: 1, Lanes: 1}
 	sure := &fakeDecider{choice: "rung-1", conf: 0.97} // rung-1 is opus, the lowest offered
@@ -359,6 +385,8 @@ func TestJevBelowFloorStepsUp(t *testing.T) {
 
 // A designation is machinery, not a judgment: no provider call is made for it.
 func TestJevIsNotAskedForADesignation(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	fake := &fakeDecider{choice: "flash", conf: 0.99}
 	res, err := RouteJev(context.Background(), fake, reg, Unit{ID: "j3", Kind: KindRebase, Files: 1, Guard: true}, DefaultFloor)
@@ -376,6 +404,8 @@ func TestJevIsNotAskedForADesignation(t *testing.T) {
 // A provider error, or an answer naming a rung nobody offered, falls back to
 // the rules answer: a decision advises, the machinery decides.
 func TestJevFallsBackToTheRules(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	u := Unit{ID: "j4", Kind: KindNewVerb, Files: 3, Packages: 1, Lanes: 1}
 	rules := mustRoute(t, reg, u, DefaultFloor)

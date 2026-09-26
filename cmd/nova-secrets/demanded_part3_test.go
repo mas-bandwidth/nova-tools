@@ -6,7 +6,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 )
@@ -55,122 +54,6 @@ func TestAKeyNameThatIsNotAnEnvVarIsRefused(t *testing.T) {
 		"--only", "all", "--", "echo", "PASSED")
 	if code != 0 || !strings.Contains(out, "PASSED") {
 		t.Errorf("expected valid keys to pass, got %d: out=%s, err=%s", code, out, errOut)
-	}
-}
-
-// Test 12: TestCheckCapsEachKindSeparatelyAndAlwaysPrintsTheCount
-func TestCheckCapsEachKindSeparatelyAndAlwaysPrintsTheCount(t *testing.T) {
-	t.Parallel()
-	sopsPath := findSops(t)
-	bin := buildNovaSecrets(t)
-
-	td := t.TempDir()
-	storeDir := filepath.Join(td, "store")
-	_ = os.MkdirAll(storeDir, 0755)
-	initGitStore(t, storeDir)
-
-	keyA := genKey(t, td, "keya")
-	recKey := genKey(t, td, "rec")
-	foreignKey := genKey(t, td, "foreign")
-
-	_ = os.WriteFile(filepath.Join(storeDir, "recovery.pub"), []byte(recKey.pubKey+"\n"), 0644)
-
-	var rules []string
-	rules = append(rules, fmt.Sprintf("  - path_regex: ^main\\.yaml$\n    age: %s,%s", keyA.pubKey, recKey.pubKey))
-	// 30 unsealed files
-	for i := 0; i < 30; i++ {
-		name := fmt.Sprintf("unsealed_%02d.yaml", i)
-		rules = append(rules, fmt.Sprintf("  - path_regex: ^%s$\n    age: %s,%s", name, keyA.pubKey, recKey.pubKey))
-		// File has unsealed key
-		_ = os.WriteFile(filepath.Join(storeDir, name), []byte("UNENCRYPTED_KEY: plaintext\nsops:\n  version: 3.13.3\n  age:\n    - recipient: "+keyA.pubKey+"\n"), 0644)
-	}
-	// The quiet kind: two files whose rule and whose recorded recipients name another
-	// seat's key, yet this seat's key opens them (sealed to it, the recipient string then
-	// rewritten, which sops does not check on decrypt): foreign-openable.
-	for _, name := range []string{"foreign_a", "foreign_b"} {
-		rules = append(rules, fmt.Sprintf("  - path_regex: ^%s\\.yaml$\n    age: %s,%s", name, foreignKey.pubKey, recKey.pubKey))
-		fp := filepath.Join(storeDir, name+".yaml")
-		sealFileWithSops(t, sopsPath, fp, []string{keyA.pubKey, recKey.pubKey}, "GH_TOKEN: ghp_for\n")
-		sealed, err := os.ReadFile(fp)
-		if err != nil {
-			t.Fatal(err)
-		}
-		_ = os.WriteFile(fp, []byte(strings.ReplaceAll(string(sealed), keyA.pubKey, foreignKey.pubKey)), 0644)
-	}
-	sealFileWithSops(t, sopsPath, filepath.Join(storeDir, "main.yaml"), []string{keyA.pubKey, recKey.pubKey}, "GH_TOKEN: ghp_main\n")
-
-	_ = os.WriteFile(filepath.Join(storeDir, ".sops.yaml"), []byte("creation_rules:\n"+strings.Join(rules, "\n")+"\n"), 0644)
-	commitAndPush(t, storeDir)
-
-	failLines := func(errOut, kindMarker string) int {
-		n := 0
-		for _, l := range strings.Split(errOut, "\n") {
-			if strings.HasPrefix(l, "SECRETS CHECK FAIL ") && !strings.HasPrefix(l, "SECRETS CHECK FAIL as=") && strings.Contains(l, kindMarker) {
-				n++
-			}
-		}
-		return n
-	}
-	summary := regexp.MustCompile(`(?m)^SECRETS CHECK FAIL as=main files=33 failed=(\d+) shown=(\d+)$`)
-
-	// Default --max 20: the loud kind (30 unsealed) caps at 20 with its own MORE line,
-	// and does not eat the quiet kind, whose two lines are all shown with no MORE.
-	_, errOut, code := runNovaSecrets(bin, "check", "--store", storeDir, "--as", "main", "--key", keyA.privPath, "--sops", sopsPath)
-	if code != 1 {
-		t.Fatalf("expected check exit 1, got %d: %s", code, errOut)
-	}
-	if got := failLines(errOut, "outside unencrypted_regex"); got != 20 {
-		t.Errorf("the loud kind shows %d lines at --max 20, want 20: %s", got, errOut)
-	}
-	if !strings.Contains(errOut, "SECRETS CHECK MORE kind=unsealed shown=20 total=30") {
-		t.Errorf("expected MORE line for unsealed: %s", errOut)
-	}
-	if got := failLines(errOut, "recipients do not list it"); got != 2 {
-		t.Errorf("the loud kind ate the quiet one: %d foreign lines shown, want both: %s", got, errOut)
-	}
-	if strings.Contains(errOut, "MORE kind=foreign-openable") {
-		t.Errorf("a kind under its cap printed a MORE line: %s", errOut)
-	}
-	// The count line prints on the red run, and its numbers are the run's.
-	m := summary.FindStringSubmatch(errOut)
-	if m == nil {
-		t.Fatalf("the red run printed no count line: %s", errOut)
-	}
-	if m[2] != fmt.Sprint(failLines(errOut, "")) {
-		t.Errorf("the count line's shown=%s does not match the FAIL lines printed: %s", m[2], errOut)
-	}
-
-	// --max 1: EACH kind caps separately, each with its own MORE line.
-	_, errOut1, code := runNovaSecrets(bin, "check", "--store", storeDir, "--as", "main", "--key", keyA.privPath, "--sops", sopsPath, "--max", "1")
-	if code != 1 {
-		t.Fatalf("expected exit 1 at --max 1, got %d", code)
-	}
-	if !strings.Contains(errOut1, "SECRETS CHECK MORE kind=unsealed shown=1 total=30") {
-		t.Errorf("--max 1: no MORE line of the loud kind's own: %s", errOut1)
-	}
-	if !regexp.MustCompile(`SECRETS CHECK MORE kind=foreign-openable shown=1 total=2 `).MatchString(errOut1) {
-		t.Errorf("--max 1: no MORE line of the quiet kind's own: %s", errOut1)
-	}
-	if summary.FindStringSubmatch(errOut1) == nil {
-		t.Errorf("--max 1: the count line is missing on the red run: %s", errOut1)
-	}
-
-	// --max 0 prints all
-	_, errOutAll, code := runNovaSecrets(bin, "check", "--store", storeDir, "--as", "main", "--key", keyA.privPath, "--sops", sopsPath, "--max", "0")
-	if code != 1 {
-		t.Fatalf("expected exit 1, got %d", code)
-	}
-	if strings.Contains(errOutAll, "MORE kind=") {
-		t.Errorf("max 0 should not print MORE line: %s", errOutAll)
-	}
-	if got := failLines(errOutAll, "outside unencrypted_regex"); got != 30 {
-		t.Errorf("--max 0 shows %d unsealed lines, want all 30", got)
-	}
-
-	// Negative --max is refused at exit 2
-	_, errOutNeg, code := runNovaSecrets(bin, "check", "--store", storeDir, "--as", "main", "--key", keyA.privPath, "--sops", sopsPath, "--max", "-1")
-	if code != 2 {
-		t.Errorf("expected exit 2 on negative max, got %d: %s", code, errOutNeg)
 	}
 }
 

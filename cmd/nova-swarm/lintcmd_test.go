@@ -58,6 +58,8 @@ func lintCmdCard(t *testing.T, name, verb string) (string, int, string) {
 // `ci-fast.yml:598-612` for every schema-leg card; the linter refused the verbatim copy
 // and 155 cards drifted on it.
 func TestLintAcceptsAMakeTestCommand(t *testing.T) {
+	t.Parallel()
+
 	stdout, exit, _ := lintCmdCard(t, "make.card", "make tables-cs-leg-debug")
 	if exit != 0 {
 		t.Fatalf("a `make <target>` gate is the gate `ci-fast.yml` runs; lint must accept it, got %d\n%s", exit, stdout)
@@ -71,6 +73,8 @@ func TestLintAcceptsAMakeTestCommand(t *testing.T) {
 // macOS bench that copied `make` runs `gmake`. Accepting only one spelling would refuse the
 // gate on the very bench the card names.
 func TestLintAcceptsAGmakeTestCommand(t *testing.T) {
+	t.Parallel()
+
 	stdout, exit, _ := lintCmdCard(t, "gmake.card", "gmake tables-rust-fixedform")
 	if exit != 0 {
 		t.Fatalf("a `gmake` gate is the BSD-make gate on macOS benches; lint must accept it, got %d\n%s", exit, stdout)
@@ -84,6 +88,8 @@ func TestLintAcceptsAGmakeTestCommand(t *testing.T) {
 // `gradle test` were each probed on 2026-09-19 and came back DRIFT; a card that names
 // one as the gate the CI runs is the card the lint must accept.
 func TestLintAcceptsCommonPolyglotRunners(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name, verb string
 	}{
@@ -109,6 +115,8 @@ func TestLintAcceptsCommonPolyglotRunners(t *testing.T) {
 // `bash <script>` and a bare `./<script>` are how a script-driven gate looks in a card,
 // and they were on the DRIFT side of the same probe table.
 func TestLintAcceptsScriptStyleTestCommands(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name, verb string
 	}{
@@ -133,6 +141,8 @@ func TestLintAcceptsScriptStyleTestCommands(t *testing.T) {
 // side of the probe and stays there: the check is about a TEST command, and widening to
 // any `cargo` line would clear cards whose gate the repository never runs.
 func TestLintStillRefusesCargoRunNotCargoTest(t *testing.T) {
+	t.Parallel()
+
 	stdout, exit, _ := lintCmdCard(t, "cargorun.card", "cargo run --quiet")
 	if exit != 2 {
 		t.Fatalf("`cargo run` is not a gate, the card drifts at exit 2, got %d\n%s", exit, stdout)
@@ -150,6 +160,8 @@ func TestLintStillRefusesCargoRunNotCargoTest(t *testing.T) {
 // is part of the contract; a check whose drift offers an out-of-date list sends the
 // writer down the wrong path.
 func TestLintTestCommandRemedyNamesTheAcceptedSet(t *testing.T) {
+	t.Parallel()
+
 	stdout, exit, _ := lintCmdCard(t, "remedy.card", "node test/x.mjs")
 	if exit != 2 {
 		t.Fatalf("`node test/x.mjs` is not on the accepted list, drifts at exit 2, got %d\n%s", exit, stdout)
@@ -175,6 +187,8 @@ func TestLintTestCommandRemedyNamesTheAcceptedSet(t *testing.T) {
 // whose text happens to contain a substring of one of the new verbs stays a drift, and a
 // verb that is a build command rather than a test command stays a drift.
 func TestLintTestCommandRefusesSubstringsAndFalsePositives(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name, verb string
 	}{
@@ -207,6 +221,8 @@ func TestLintTestCommandRefusesSubstringsAndFalsePositives(t *testing.T) {
 // make targets are hyphenated (`tables-cs-leg-debug`), and the regex's target character
 // class must include `-` so a hyphenated target is not rejected on its own merits.
 func TestLintAcceptsHyphenatedMakeTargets(t *testing.T) {
+	t.Parallel()
+
 	cases := []string{
 		"make tables-cs-leg-debug",
 		"make tables-rust-fixedform",
@@ -227,6 +243,8 @@ func TestLintAcceptsHyphenatedMakeTargets(t *testing.T) {
 // `make` with a path-shaped target (`make ./scripts/test.sh`) must also match; the
 // hyphen and the slash are both in the target character class.
 func TestLintAcceptsMakeWithPathTarget(t *testing.T) {
+	t.Parallel()
+
 	stdout, exit, _ := lintCmdCard(t, "path.card", "make ./scripts/test.sh")
 	if exit != 0 {
 		t.Fatalf("`make ./scripts/test.sh` is a valid gate, got exit %d\n%s", exit, stdout)

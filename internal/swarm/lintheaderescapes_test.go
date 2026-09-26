@@ -54,6 +54,8 @@ func dumpFindings(fs []CardHeaderFinding) string {
 // host: a card is linted on the bench that cuts it and run on another, so the rule is
 // lexical and the same on darwin, linux and windows.
 func TestAWindowsDriveLetterIsNotARepoRelativeGlob(t *testing.T) {
+	t.Parallel()
+
 	for _, g := range []string{`C:/Windows/system32/evil.go`, `C:\Windows\system32\evil.go`, `d:/x/y.go`} {
 		fs := findingsOn(headerCard(t, "KIND: fix-red", "PATHS: "+g, "TEST: ./internal/x TestA"))
 		if !hasCheck(fs, "paths-declared") {
@@ -70,6 +72,8 @@ func TestAWindowsDriveLetterIsNotARepoRelativeGlob(t *testing.T) {
 // #1853.2 THE CAP ON PATHS: IS EIGHT (SPEC-TOOLWORK.md:579-580, internal/hygiene maxPaths).
 // A card whose bound names nine files has a bound that has stopped bounding anything.
 func TestNineGlobsIsOverThePathsCap(t *testing.T) {
+	t.Parallel()
+
 	nine := "a1.go, a2.go, a3.go, a4.go, a5.go, a6.go, a7.go, a8.go, a9.go"
 	fs := findingsOn(headerCard(t, "KIND: fix-red", "PATHS: "+nine, "TEST: ./internal/x TestA"))
 	if !hasCheck(fs, "paths-declared") {
@@ -86,6 +90,8 @@ func TestNineGlobsIsOverThePathsCap(t *testing.T) {
 // and it is not a list of globs; the loop skipped every empty entry and said the line was
 // fine, which is the worst of the three answers.
 func TestACommaOnlyPathsLineDeclaresNothing(t *testing.T) {
+	t.Parallel()
+
 	for _, v := range []string{", , ", ",", " , "} {
 		fs := findingsOn(headerCard(t, "KIND: fix-red", "PATHS: "+v, "TEST: ./internal/x TestA"))
 		if !hasCheck(fs, "paths-declared") {
@@ -102,6 +108,8 @@ func TestACommaOnlyPathsLineDeclaresNothing(t *testing.T) {
 // a value, so `KIND: completely-unknown-kind` linted clean. The name set is
 // internal/hygiene/kinds.txt (SPEC-TOOLWORK.md §5 rule 3: there is no default kind).
 func TestAnUnknownKindDrawsKindDeclared(t *testing.T) {
+	t.Parallel()
+
 	fs := findingsOn(headerCard(t, "KIND: completely-unknown-kind", "PATHS: internal/x/a.go", "TEST: ./internal/x TestA"))
 	if !hasCheck(fs, "kind-declared") {
 		t.Fatalf("an unknown kind is not a kind this toolchain declares\n%s", dumpFindings(fs))
@@ -122,6 +130,8 @@ func TestAnUnknownKindDrawsKindDeclared(t *testing.T) {
 // KIND: line got NO typed checks at all and passed, then died at the gate. The stranded
 // line is now named, on its own line number.
 func TestATypedHeaderBelowTheBlockIsNamedNotSkipped(t *testing.T) {
+	t.Parallel()
+
 	raw := headerCard(t,
 		"This card is about a thing.",
 		"KIND: fix-red",
@@ -144,6 +154,8 @@ func TestATypedHeaderBelowTheBlockIsNamedNotSkipped(t *testing.T) {
 // #1854.2 A DUPLICATE HEADER KEY IS AMBIGUOUS, AND SILENTLY TAKING THE FIRST IS THE ONE
 // ANSWER NOBODY CAN ACT ON. Two KIND: lines is a card whose kind is unknown.
 func TestADuplicateHeaderKeyIsRefusedNotSilentlyDropped(t *testing.T) {
+	t.Parallel()
+
 	fs := findingsOn(headerCard(t,
 		"KIND: fix-red",
 		"KIND: transcript-test",
@@ -175,6 +187,8 @@ func TestADuplicateHeaderKeyIsRefusedNotSilentlyDropped(t *testing.T) {
 // every escape above is a rule that validator already held. This test is the one that
 // keeps the two from drifting apart again: the lint's answer on a glob is the validator's.
 func TestThePathRuleIsTheValidatorsNotACopy(t *testing.T) {
+	t.Parallel()
+
 	for _, g := range []string{"../out/x.go", "/etc/passwd", "**/*", "*/**", "*"} {
 		fs := findingsOn(headerCard(t, "KIND: fix-red", "PATHS: "+g, "TEST: ./internal/x TestA"))
 		if !hasCheck(fs, "paths-declared") {

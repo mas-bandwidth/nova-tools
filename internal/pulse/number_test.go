@@ -27,6 +27,8 @@ func stateValue(t *testing.T, queue, key string) string {
 // numbers and none is handed out twice — pit stop 3 bug 1, five hand-numbered replay cards
 // colliding with five launched cards of the same numbers (issue #828, class B).
 func TestFiftyConcurrentCutsNeverShareANumber(t *testing.T) {
+	t.Parallel()
+
 	queue := t.TempDir()
 	const n = 50
 	got := make([]int, n)
@@ -63,6 +65,8 @@ func TestFiftyConcurrentCutsNeverShareANumber(t *testing.T) {
 // the legacy NEXT file is seeded from and mirrored, so the manager tier's own nextNumber —
 // which another card retires — never hands out a number a cut has already used.
 func TestNumberSeedsFromLegacyNextAndMirrorsIt(t *testing.T) {
+	t.Parallel()
+
 	queue := t.TempDir()
 	if err := os.WriteFile(filepath.Join(queue, "NEXT"), []byte("8130\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -88,6 +92,8 @@ func TestNumberSeedsFromLegacyNextAndMirrorsIt(t *testing.T) {
 
 // the state file is one file with many facts: a key this verb does not own survives the write.
 func TestNumberKeepsEveryOtherStateKey(t *testing.T) {
+	t.Parallel()
+
 	queue := t.TempDir()
 	if err := os.WriteFile(filepath.Join(queue, "state.tsv"), []byte("next_card\t7\ngt\t41\n"), 0o644); err != nil {
 		t.Fatal(err)

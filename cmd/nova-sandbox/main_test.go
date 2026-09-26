@@ -131,6 +131,8 @@ func (j job) wrapped(t *testing.T, script string, extraEnv ...string) (int, stri
 // Rule 1 and rule 12: a wrapped command runs, the OK line names the wall, and the exit
 // status is the command's.
 func TestWrappedCommandRunsAndTheLineNamesTheWall(t *testing.T) {
+	t.Parallel()
+
 	needDarwin(t)
 	j := newJob(t)
 	code, _, errOut := j.wrapped(t, "true")
@@ -150,6 +152,8 @@ func TestWrappedCommandRunsAndTheLineNamesTheWall(t *testing.T) {
 // and readable outside it in the same test — a denial that was never possible is not a
 // wall. The same for a planted ~/.ssh key.
 func TestTheNamedSecretIsUnreadableInsideTheWall(t *testing.T) {
+	t.Parallel()
+
 	needDarwin(t)
 	j := newJob(t)
 	if b, err := os.ReadFile(j.secret); err != nil || !strings.Contains(string(b), "not-a-real-key") {
@@ -177,6 +181,8 @@ func TestTheNamedSecretIsUnreadableInsideTheWall(t *testing.T) {
 // The three escapes read 4 of PR #70 tried, each attempted from INSIDE the wall, and
 // each must fail closed.
 func TestTheThreeEscapesFailClosed(t *testing.T) {
+	t.Parallel()
+
 	needDarwin(t)
 	j := newJob(t)
 	for _, tc := range []struct{ name, script string }{
@@ -199,6 +205,8 @@ func TestTheThreeEscapesFailClosed(t *testing.T) {
 // The wall stands and the job still runs: the first second of a real job, by absolute
 // path, inside the wall.
 func TestTheFirstSecondOfARealJob(t *testing.T) {
+	t.Parallel()
+
 	needDarwin(t)
 	j := newJob(t)
 	git := realGit(t)
@@ -234,6 +242,8 @@ func TestTheFirstSecondOfARealJob(t *testing.T) {
 // a worker read that as "no compiler installed". A C++ probe that compiles
 // outside the wall must compile inside it, with no extra --read.
 func TestCXXCompilesInsideTheWallOnDarwin(t *testing.T) {
+	t.Parallel()
+
 	needDarwin(t)
 	if _, err := os.Stat("/usr/bin/c++"); err != nil {
 		t.Skip("skipped: /usr/bin/c++ is not on this machine")
@@ -265,6 +275,8 @@ func TestCXXCompilesInsideTheWallOnDarwin(t *testing.T) {
 // that file from TMPPREFIX, not TMPDIR; an inherited outside prefix therefore made a
 // legitimate report write fail at the wall even though its final destination was allowed.
 func TestZshLargeHeredocKeepsItsTemporaryFileInsideTheWall(t *testing.T) {
+	t.Parallel()
+
 	needDarwin(t)
 	if _, err := os.Stat("/bin/zsh"); err != nil {
 		t.Skip("/bin/zsh is not available on this macOS machine")
@@ -295,6 +307,8 @@ func TestZshLargeHeredocKeepsItsTemporaryFileInsideTheWall(t *testing.T) {
 // walled attempt sits between two unwalled controls on the same listener, so "nothing
 // connected from inside the wall" is read from the accept order, not from a timeout.
 func TestTheAgentSocketIsUnreachable(t *testing.T) {
+	t.Parallel()
+
 	needDarwin(t)
 	j := newJob(t)
 	if _, err := exec.LookPath("nc"); err != nil {
@@ -433,6 +447,8 @@ func serveUnixForTest(name string) int {
 // With no key readable and no agent reachable, a push out of the job fails. The remote
 // is a local path outside every named list, because no test here touches the network.
 func TestGitPushOutOfTheJobFails(t *testing.T) {
+	t.Parallel()
+
 	needDarwin(t)
 	j := newJob(t)
 	git := realGit(t)
@@ -459,6 +475,8 @@ func TestGitPushOutOfTheJobFails(t *testing.T) {
 // Rule 12's exit grammar: the child's status is the tool's, and a death by signal N is
 // 128+N.
 func TestExitStatusPassesThrough(t *testing.T) {
+	t.Parallel()
+
 	needDarwin(t)
 	j := newJob(t)
 	if code, _, _ := j.wrapped(t, "exit 3"); code != 3 {
@@ -478,6 +496,8 @@ func TestExitStatusPassesThrough(t *testing.T) {
 // The end-to-end job: a real command under a read set that EXCLUDES the secret
 // directory, proving in one run that the work runs and the secret does not.
 func TestEndToEndTheWorkRunsAndTheSecretDoesNot(t *testing.T) {
+	t.Parallel()
+
 	needDarwin(t)
 	j := newJob(t)
 	command := "/bin/sh"
@@ -497,6 +517,8 @@ func TestEndToEndTheWorkRunsAndTheSecretDoesNot(t *testing.T) {
 // Rule 10: five checks under the real policy, and the probe proves the wall before the
 // work runs.
 func TestProbeProvesTheWall(t *testing.T) {
+	t.Parallel()
+
 	needDarwin(t)
 	j := newJob(t)
 	code, out, errOut := j.tool(t, j.env(), "probe", "--read", j.read, "--write", j.write, "--secret", j.secret)
@@ -534,6 +556,8 @@ func TestProbeProvesTheWall(t *testing.T) {
 // file, so a probe without one is sound -- the wall proves the other four checks and no
 // read_secret step is invented.
 func TestAProbeWithoutASecretProvesTheWall(t *testing.T) {
+	t.Parallel()
+
 	needDarwin(t)
 	j := newJob(t)
 	code, out, errOut := j.tool(t, j.env(), "probe", "--read", j.read, "--write", j.write)
@@ -559,6 +583,8 @@ func TestAProbeWithoutASecretProvesTheWall(t *testing.T) {
 
 // Rule 4 and the refusal grammar, through the binary's own argv.
 func TestRefusalsThroughTheArgv(t *testing.T) {
+	t.Parallel()
+
 	j := newJob(t)
 	// The command is this platform's shell, not /bin/sh: every case below is about a FLAG,
 	// and a command that resolves on no PATH entry would answer them with its own refusal.
@@ -586,6 +612,8 @@ func TestRefusalsThroughTheArgv(t *testing.T) {
 
 // check is a question, not an attempt, and version is the build.
 func TestCheckAndVersion(t *testing.T) {
+	t.Parallel()
+
 	j := newJob(t)
 	code, out, _ := j.tool(t, j.env(), "check")
 	if code != 0 || !strings.HasPrefix(out, "CHECK OK backend=") {
@@ -628,6 +656,8 @@ func TestCheckAndVersion(t *testing.T) {
 // The usage banner carries the --read remedy, which is where it has to live: on linux
 // the tool is gone by the time the command dies, so it cannot say so after the fact.
 func TestUsageCarriesTheReadRemedy(t *testing.T) {
+	t.Parallel()
+
 	j := newJob(t)
 	code, out, _ := j.tool(t, j.env(), "help")
 	if code != 0 || !strings.Contains(out, readRemedy) {
@@ -641,6 +671,8 @@ func TestUsageCarriesTheReadRemedy(t *testing.T) {
 // PR 948 re-cut (#893): the linux read roots are not switchable, so the banner must not
 // advertise a --no-system-reads the parser no longer has.
 func TestHelpDoesNotAdvertiseNoSystemReads(t *testing.T) {
+	t.Parallel()
+
 	j := newJob(t)
 	code, out, _ := j.tool(t, j.env(), "help")
 	if code != 0 {
@@ -654,6 +686,8 @@ func TestHelpDoesNotAdvertiseNoSystemReads(t *testing.T) {
 // Rule 1 on every platform whose body is not built: the refusal names the platform and
 // the command does NOT run.
 func TestUnbuiltPlatformsRefuse(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "darwin" || runtime.GOOS == "linux" {
 		t.Skipf("skipped on %s: this body IS built (darwin is sandbox-exec, linux is landlock), and its refusals are tested by its own file", runtime.GOOS)
 	}
@@ -704,6 +738,8 @@ func mustOutput(t *testing.T, name string, args ...string) string {
 // script ever disagree, this is where it shows, and it shows as a named check rather
 // than as a job that dies in its first second.
 func TestTheCheckScriptPassesAgainstTheToolsProfile(t *testing.T) {
+	t.Parallel()
+
 	needDarwin(t)
 	root := repoRoot(t)
 	script := filepath.Join(root, "profiles", "darwin-check.sh")
@@ -751,6 +787,8 @@ func TestTheCheckScriptPassesAgainstTheToolsProfile(t *testing.T) {
 // reader running the script without NOVA_SANDBOX_FILL got the link literal
 // without the selected Xcode root, while cxx_compile required that root.
 func TestDarwinCheckHandFillerGrantsTheSameXcodeRoot(t *testing.T) {
+	t.Parallel()
+
 	needDarwin(t)
 	var xcode []string
 	for _, r := range sandbox.OptionalRoots("/bin/echo") {
@@ -846,6 +884,8 @@ func TestMain(m *testing.M) {
 // exercise the run-time root "the directory of the resolved command" exercised a root
 // that is in the profile verbatim. This is the test the spec said would decide which.
 func TestProbeReExecsTheToolAndNeverAShell(t *testing.T) {
+	t.Parallel()
+
 	needDarwin(t)
 	j := newJob(t)
 	self, err := os.Executable()
@@ -964,6 +1004,8 @@ func copyOfThisBinary(t *testing.T) string {
 // no probe step is ever a shell string and no path the caller handed the tool is ever
 // re-parsed (rule 12: never through a shell).
 func TestProbeStepIsTheInternalVerb(t *testing.T) {
+	t.Parallel()
+
 	j := newJob(t)
 	target := filepath.Join(j.write, "step")
 	// The guard first, because it is the whole of this verb's safety: probe-step opens,
@@ -1083,13 +1125,15 @@ func TestProbeStepIsTheInternalVerb(t *testing.T) {
 // differently under load, which is the shape of the defect this replaces. device+inode is
 // one stat each, it is what "the same binary" means, and it does not move.
 func TestTheParentGuardComparesFilesAndNotNames(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("skipped on windows: the probe's parent guard is not built there, and os.SameFile there is a different identity")
 	}
 	dir := t.TempDir()
 	elsewhere := t.TempDir()
 	tool := filepath.Join(dir, "tool")
-	if err := os.WriteFile(tool, []byte("not really a tool\n"), 0o700); err != nil {
+	if err := testbin.WriteExecutable(tool, []byte("not really a tool\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	// A COPY: the same bytes, a different file. This is the foreign parent, and it is the
@@ -1188,6 +1232,8 @@ func (f *fakeParent) imageOf(int) (string, error) {
 // says it changes, and the call counts make the ORDER itself the assertion — a guard that
 // made up its mind after the first answer reads the image once and fails here.
 func TestTheParentGuardRereadsTheImageAndNotJustThePid(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("skipped on windows: the probe's parent guard is not built there, and os.SameFile there is a different identity")
 	}
@@ -1196,7 +1242,7 @@ func TestTheParentGuardRereadsTheImageAndNotJustThePid(t *testing.T) {
 	// can replace what lives at `image` without touching what `self` names. That is what makes
 	// "the second read is a fresh stat" an assertion rather than a hope.
 	image := filepath.Join(dir, "image")
-	if err := os.WriteFile(image, []byte("the tool\n"), 0o700); err != nil {
+	if err := testbin.WriteExecutable(image, []byte("the tool\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	self := filepath.Join(dir, "self")
@@ -1204,7 +1250,7 @@ func TestTheParentGuardRereadsTheImageAndNotJustThePid(t *testing.T) {
 		t.Fatal(err)
 	}
 	other := filepath.Join(dir, "other")
-	if err := os.WriteFile(other, []byte("the tool\n"), 0o700); err != nil {
+	if err := testbin.WriteExecutable(other, []byte("the tool\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	missing := filepath.Join(dir, "no-such-image")
@@ -1215,7 +1261,7 @@ func TestTheParentGuardRereadsTheImageAndNotJustThePid(t *testing.T) {
 			t.Error(err)
 			return
 		}
-		if err := os.WriteFile(image, []byte("something else\n"), 0o700); err != nil {
+		if err := testbin.WriteExecutable(image, []byte("something else\n"), 0o700); err != nil {
 			t.Error(err)
 		}
 	}
@@ -1309,6 +1355,8 @@ func TestTheParentGuardRereadsTheImageAndNotJustThePid(t *testing.T) {
 // the parallel subtests below have all finished — so the test costs a fraction of a second
 // on a fast machine and the same work on a slow one, and it asserts the same thing on both.
 func TestParentGuardRefusesACopiedParentUnderLoad(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("skipped on windows: exec.Cmd.ExtraFiles is unsupported there, so no probe child can be given fd 3 at all")
 	}
@@ -1378,6 +1426,8 @@ func selfExecutable(t *testing.T) string {
 // path the caller hands the tool, so a path that does not exist is a refusal rather than
 // a silent pass (the reader's m7).
 func TestSecretPathIsNeverInterpreted(t *testing.T) {
+	t.Parallel()
+
 	needDarwin(t)
 	j := newJob(t)
 	injected := filepath.Join(j.write, "INJECTED")
@@ -1405,6 +1455,8 @@ func TestSecretPathIsNeverInterpreted(t *testing.T) {
 // otherwise. A NOTE that names a variable the child still has is a false statement about
 // the wall, which is the silent-sandbox failure in reverse.
 func TestTheNoteNamesExactlyWhatWasDropped(t *testing.T) {
+	t.Parallel()
+
 	needDarwin(t)
 	j := newJob(t)
 	env := j.env("SSH_AUTH_SOCK=/private/tmp/a.sock", "GPG_AGENT_INFO=/private/tmp/g:1:1",
@@ -1433,6 +1485,8 @@ func TestTheNoteNamesExactlyWhatWasDropped(t *testing.T) {
 // measured hazard the same rule states — /dev/fd/N re-opens a descriptor the caller held,
 // so the tool must hand the child none of its own.
 func TestOnlyStdinStdoutStderrArePassedToTheChild(t *testing.T) {
+	t.Parallel()
+
 	needDarwin(t)
 	j := newJob(t)
 	code, out, errOut := j.tool(t, j.env(), "--read", j.read, "--write", j.write, "--",
@@ -1474,6 +1528,8 @@ func TestOnlyStdinStdoutStderrArePassedToTheChild(t *testing.T) {
 // It is also the verb the spec's reader command now uses, so a reader who pastes that
 // command gets what this test asserts.
 func TestPolicyVerbPrintsAndRunsNothing(t *testing.T) {
+	t.Parallel()
+
 	needDarwin(t)
 	j := newJob(t)
 	marker := filepath.Join(j.write, "ran")
@@ -1511,6 +1567,8 @@ func TestPolicyVerbPrintsAndRunsNothing(t *testing.T) {
 // and it must be writable by this user anyway, or the probe cannot answer its question
 // and says so at exit 2 rather than reporting a check that failed.
 func TestProbeRefusesWhenItCannotAnswerTheQuestion(t *testing.T) {
+	t.Parallel()
+
 	needDarwin(t)
 	j := newJob(t)
 	// The outside path is <parent of the first --write>/.nova-sandbox-probe-<pid>. A
@@ -1563,6 +1621,8 @@ func toolBinary(t *testing.T) string {
 // then ignored them: `nova-sandbox --write <dir> --secret /etc/hosts --max 3 -- true`
 // exited 0 with the flags silently dropped, which is the opposite of rule 16.
 func TestFlagsOfAnotherVerbAreRefusedByTheBareForm(t *testing.T) {
+	t.Parallel()
+
 	j := newJob(t)
 	code, _, errOut := j.tool(t, j.env(), "--write", j.write, "--secret", j.secret, "--max", "3", "--", "/bin/sh", "-c", "true")
 	if code != 125 {
@@ -1598,6 +1658,8 @@ func TestFlagsOfAnotherVerbAreRefusedByTheBareForm(t *testing.T) {
 // `nova-sandbox --write <fresh> -- no-such-cmd` left .nova-sandbox-tmp in a directory it
 // never ran in. A refusal makes nothing.
 func TestARefusedRunCreatesNothing(t *testing.T) {
+	t.Parallel()
+
 	j := newJob(t)
 	code, _, errOut := j.tool(t, j.env(), "--write", j.write, "--", "no-such-command-xyz")
 	if code != 127 {
@@ -1640,6 +1702,8 @@ func TestARefusedRunCreatesNothing(t *testing.T) {
 // after the probe stopped standing on a shell. This is the pin for the one line that goes
 // stale silently: the transcript names the tool's own binary, never a shell.
 func TestTheTranscriptNamesTheToolsOwnBinary(t *testing.T) {
+	t.Parallel()
+
 	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	if err != nil {
 		t.Fatal(err)
@@ -1688,6 +1752,8 @@ var probeRefusalReasons = map[string]bool{
 }
 
 func TestProbeNamesEveryMissingRequiredFlagAtOnce(t *testing.T) {
+	t.Parallel()
+
 	j := newJob(t)
 
 	t.Run("bare", func(t *testing.T) {
@@ -1782,6 +1848,8 @@ func TestProbeNamesEveryMissingRequiredFlagAtOnce(t *testing.T) {
 // every --write` -- because the example set no HOME while rule 9 requires one
 // inside a --write. An example that cannot be pasted is a documentation defect.
 func TestTheProbeExampleInTheBannerSetsHome(t *testing.T) {
+	t.Parallel()
+
 	j := newJob(t)
 	code, out, errOut := j.tool(t, j.env(), "help")
 	if code != 0 {
@@ -1891,6 +1959,8 @@ func exampleCommands(t *testing.T, block, base string) []string {
 // case-sensitive and a linux mount can fold, so the test writes a file and asks for it back in
 // another case, and skips by name where the answer is no.
 func TestASecretSpelledInAnotherCaseIsRefusedWhereTheFilesystemFolds(t *testing.T) {
+	t.Parallel()
+
 	j := newJob(t)
 	if err := os.WriteFile(filepath.Join(j.base, "CaseProbe"), []byte("x\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -1940,6 +2010,8 @@ func TestASecretSpelledInAnotherCaseIsRefusedWhereTheFilesystemFolds(t *testing.
 // refusal everywhere: the flag is repeatable, it is on the banner, it takes a value, and
 // rule 5 refuses a path that is not there exactly as `--read` does.
 func TestReadNoExecIsAFlagOfTheBareForm(t *testing.T) {
+	t.Parallel()
+
 	j := newJob(t)
 	// The banner names it, or a caller cannot find it (ONBOARDING.md point 2).
 	if _, out, _ := j.tool(t, j.env(), "help"); !strings.Contains(out, "--read-noexec") {
@@ -1965,6 +2037,8 @@ func TestReadNoExecIsAFlagOfTheBareForm(t *testing.T) {
 // READABLE and NOT EXECUTABLE, while the same script under --read runs. The OK line
 // carries the count as its own field, so a log says which kind of grant a run had.
 func TestReadNoExecReadsAndRefusesToExecuteOnDarwin(t *testing.T) {
+	t.Parallel()
+
 	needDarwin(t)
 	j := newJob(t)
 	cache := filepath.Join(j.base, "cache")
@@ -1972,7 +2046,7 @@ func TestReadNoExecReadsAndRefusesToExecuteOnDarwin(t *testing.T) {
 		t.Fatal(err)
 	}
 	script := filepath.Join(cache, "x.sh")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\necho ran\n"), 0o755); err != nil {
+	if err := testbin.WriteExecutable(script, []byte("#!/bin/sh\necho ran\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	args := []string{"--read", j.read, "--read-noexec", cache, "--write", j.write, "--", "/bin/sh", "-c"}

@@ -43,6 +43,8 @@ const goodQuestions = `{
 }`
 
 func TestLoadQuestionFileCarriesTheCriteriaAndTheTypedFields(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	p := writeQuestionFile(t, dir, "questions-x.json", goodQuestions)
 	writeQuestionFile(t, dir, "criteria-x.md", "version: test.1\nTHE LONG CRITERIA BODY\n")
@@ -67,6 +69,8 @@ func TestLoadQuestionFileCarriesTheCriteriaAndTheTypedFields(t *testing.T) {
 // A criteria file whose version line disagrees with the question's is refused
 // BEFORE any provider call: a pair that is not one pair is not a pair.
 func TestACriteriaFileOfAnotherVersionIsRefusedBeforeTheCall(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	p := writeQuestionFile(t, dir, "questions-x.json", goodQuestions)
 	writeQuestionFile(t, dir, "criteria-x.md", "version: test.2\nbody\n")
@@ -79,6 +83,8 @@ func TestACriteriaFileOfAnotherVersionIsRefusedBeforeTheCall(t *testing.T) {
 // absolute path, a parent escape or a symlink out is a refusal: a question file
 // must not be a way to read an unrelated local file and post it to a provider.
 func TestACriteriaPathThatLeavesTheQuestionDirectoryIsRefused(t *testing.T) {
+	t.Parallel()
+
 	for _, bad := range []string{"../secret.md", "/etc/hosts", "sub/../../secret.md"} {
 		dir := t.TempDir()
 		body := strings.Replace(goodQuestions, `"criteria-x.md"`, `"`+bad+`"`, 1)
@@ -105,6 +111,8 @@ func TestACriteriaPathThatLeavesTheQuestionDirectoryIsRefused(t *testing.T) {
 // Payload is the refusal gate: a required typed field the state does not carry,
 // or carries with the wrong type, refuses BEFORE the provider is dialled.
 func TestPayloadRefusesAStateMissingARequiredTypedField(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	p := writeQuestionFile(t, dir, "questions-x.json", goodQuestions)
 	writeQuestionFile(t, dir, "criteria-x.md", "version: test.1\nbody\n")
@@ -180,6 +188,8 @@ func TestTheBytesOnTheWireCarryTheNamedCriteriaAndNothingElse(t *testing.T) {
 
 // Every question file this repository ships loads, and its criteria pair holds.
 func TestTheShippedQuestionFilesLoadWithTheirCriteria(t *testing.T) {
+	t.Parallel()
+
 	matches, err := filepath.Glob("../../docs/decide/questions-*.json")
 	if err != nil || len(matches) < 3 {
 		t.Fatalf("want the three shipped question files, got %v (%v)", matches, err)

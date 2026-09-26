@@ -11,6 +11,8 @@ import (
 // its own REFUSED line by batch line; a card that launched gets none. A
 // batch that never ran (no per-line answer) gives every card the row's why.
 func TestRefusalWhysKeepTheLauncherLines(t *testing.T) {
+	t.Parallel()
+
 	banner := "SECRETS EXEC OK as=ctl keys=1 only=1 required=1 cmd=nova-sprint\n"
 	se := &SessionError{Bench: "ctl", State: SSHError, Exit: 1, Stderr: banner,
 		Stdout: "LAUNCHED s/a/1 pid=9\nREFUSED line=3 wrapper s/c/1: NOPERM ws:*\nREFUSED line=2 start s/b/1: no such file\nLAUNCH started=1 refused=2 ms=4 over=false\n"}

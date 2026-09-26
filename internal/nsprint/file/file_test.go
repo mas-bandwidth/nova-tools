@@ -144,6 +144,8 @@ func writeBody(t *testing.T, body string) string {
 // refused with nothing posted; a good body posts and reads back equal; a
 // GitHub that stores the literal @path makes `file` exit 1.
 func TestControl50File(t *testing.T) {
+	t.Parallel()
+
 	t.Run("literal @path body is refused, nothing posted", func(t *testing.T) {
 		fake := newFake()
 		p := writeBody(t, "@/private/tmp/claude-501/scratchpad/jev-issues/3.md\n"+strings.Repeat("x", 300))
@@ -202,6 +204,8 @@ func TestControl50File(t *testing.T) {
 }
 
 func TestLintIssueRefusals(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		body string
@@ -232,6 +236,8 @@ func TestLintIssueRefusals(t *testing.T) {
 }
 
 func TestCommentPostsAndReadsBack(t *testing.T) {
+	t.Parallel()
+
 	fake := newFake()
 	body := "Read at head abc123: the change does what the DONE-WHEN says. " + strings.Repeat("Evidence line. ", 20)
 	p := writeBody(t, body)
@@ -256,6 +262,8 @@ func TestCommentPostsAndReadsBack(t *testing.T) {
 }
 
 func TestPushToQueuesTheBuildTask(t *testing.T) {
+	t.Parallel()
+
 	fake := newFake()
 	var got task.PushRequest
 	d := Deps{Push: func(_ context.Context, _ string, req task.PushRequest) (task.PushResult, error) {
@@ -288,6 +296,8 @@ func TestPushToQueuesTheBuildTask(t *testing.T) {
 }
 
 func TestFlagRefusals(t *testing.T) {
+	t.Parallel()
+
 	p := writeBody(t, goodBody)
 	for _, args := range [][]string{
 		{"--title", "t", "--body-file", p},

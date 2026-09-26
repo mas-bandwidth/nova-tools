@@ -21,6 +21,8 @@ import (
 // against it: the field names, in order, and every literal value against the enumeration
 // the grammar gives that field.
 func TestEveryRunLineParsesAgainstTheGrammar(t *testing.T) {
+	t.Parallel()
+
 	grammar := readGrammar(t)
 	for _, format := range runFormats(t) {
 		key, fields, values := grammarFields(format)
@@ -48,6 +50,8 @@ func TestEveryRunLineParsesAgainstTheGrammar(t *testing.T) {
 // every end the supervisor writes to exit.json, the one rule 11 writes over a done job, the
 // absence of any record at all, and the reservation that never launched.
 func TestTheReclaimLineNamesEveryEndAJobCanHave(t *testing.T) {
+	t.Parallel()
+
 	want := readGrammar(t)["RUN RECLAIM"].enums["end"]
 	for _, end := range []string{
 		EndDone, EndKilled, EndFailed, EndBudget, EndUnverifiable, EndViolation, EndUnknown, EndInputLimit, EndWall, "unlaunched",

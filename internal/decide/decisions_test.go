@@ -80,6 +80,8 @@ func TestDecideRecordsOneRowPerAnswer(t *testing.T) {
 
 // The TSV fallback is the same contract: append and read back by kind.
 func TestDecisionsTSVRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "decisions.tsv")
 	driver, err := OpenDecisions(path)
 	if err != nil {
@@ -118,6 +120,8 @@ func TestDecisionsTSVRoundTrip(t *testing.T) {
 // An empty value is a refusal, never a guess; a URL names a database, not the
 // TSV file the table is, and is refused without printing its password.
 func TestOpenDecisionsRefusesNoTable(t *testing.T) {
+	t.Parallel()
+
 	if _, err := OpenDecisions(""); err == nil {
 		t.Fatal("empty DSN must refuse")
 	}

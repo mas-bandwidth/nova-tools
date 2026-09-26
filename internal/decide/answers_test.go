@@ -80,6 +80,8 @@ func TestEmptyChoiceAboveTheFloorIsAProviderError(t *testing.T) {
 // The same two edges, socket-free, plus the answers that must still pass: a
 // choice the criteria hold, a score, and a noul.
 func TestValidateAnswers(t *testing.T) {
+	t.Parallel()
+
 	qs := helpQuestion()
 	qs["risk"] = Question{Instructions: "how risky?", Score: []string{"low", "mid", "high"}}
 	qs["nullq"] = Question{Instructions: "nothing to decide", Noul: true}

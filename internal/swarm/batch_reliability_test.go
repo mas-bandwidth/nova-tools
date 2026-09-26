@@ -59,6 +59,8 @@ func deepSeekCard(label, body string) string {
 // on the packet; the other cards run. The fault: one card whose quoted issue text held the
 // word "launcher" made ADMIT REFUSED for the whole batch, and 34 cards never ran.
 func TestBatchAdmissionIsPerCard(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	marks := filepath.Join(dir, "marks")
@@ -100,6 +102,8 @@ func TestBatchAdmissionIsPerCard(t *testing.T) {
 // quotes an issue mentioning a launcher is admitted; a card that tells the worker to use a
 // launcher in its contract lines is still refused.
 func TestCardShapeCheckCoversContractLinesOnly(t *testing.T) {
+	t.Parallel()
+
 	quoted := deepSeekCard("q",
 		"STEP 2 read the issue below and make it true.\n"+
 			"STEP 3 the issue says: \"the launcher shim is not the tool; fix the card\"\n"+
@@ -151,6 +155,8 @@ func deadPID(t *testing.T) int {
 // that named it is refused -- that card alone, per issue #529 -- and the slot is not shared.
 // The fault: two concurrent batches took the same slot and both cards were lost.
 func TestBatchRefusesLiveSlot(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	marks := filepath.Join(dir, "marks")
@@ -192,6 +198,8 @@ func TestBatchRefusesLiveSlot(t *testing.T) {
 // Without the lock check, both cards were launched into the same slot and the slot's
 // native.log carried both harnesses; with it, the lock is read before any child is forked.
 func TestBatchCard8072TwoHeldSlotsBothRefused(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	marks := filepath.Join(dir, "marks")
@@ -256,6 +264,8 @@ func TestBatchCard8072TwoHeldSlotsBothRefused(t *testing.T) {
 // ISSUE #457: a BATCH lock whose pid is dead is stale, and the batch takes the slot over,
 // saying so once. The lock it writes is its own, and it is gone when the slot ends.
 func TestBatchTakesOverStaleSlotLock(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	lock := writeBatchLock(t, root, 1, "GONE", deadPID(t))
@@ -314,6 +324,8 @@ func reasonRunner(t *testing.T, dir string) string {
 // The fault: `abstain log=<n>` named no reason, so the coordinator read a RESULT per card
 // to learn why.
 func TestBatchAbstainNamesReason(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name     string
 		model    string

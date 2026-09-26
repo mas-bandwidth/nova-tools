@@ -99,6 +99,8 @@ const testIdleBudget = 4 * time.Second // wall-ok: the injected clock advances t
 var idleReason = "ABSTAIN reason=idle=" + itoa(int(testIdleBudget.Seconds()))
 
 func TestBatchGathersLine2(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	tsv := writeCards(t, dir, [][2]string{
@@ -119,6 +121,8 @@ func TestBatchGathersLine2(t *testing.T) {
 }
 
 func TestBatchAbstainsMissingResult(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	tsv := writeCards(t, dir, [][2]string{
@@ -147,6 +151,8 @@ func TestBatchAbstainsMissingResult(t *testing.T) {
 // opened on nothing. The runner writes output to its log (so it is not a silent stall) and
 // exits clean without publishing.
 func TestBatchNamesMissingResultOnCleanExit(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	tsv := writeCards(t, dir, [][2]string{
@@ -173,6 +179,8 @@ func TestBatchNamesMissingResultOnCleanExit(t *testing.T) {
 }
 
 func TestBatchAbstainsWrongLine1(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	card := writeCard(t, dir, "a.card", "RESULT: a\nall green")
@@ -195,6 +203,8 @@ func TestBatchAbstainsWrongLine1(t *testing.T) {
 }
 
 func TestBatchPrefixLine1WithLongerTailAccepted(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	card := writeCard(t, dir, "a.card", "RESULT: a\nall green")
@@ -218,6 +228,8 @@ func TestBatchPrefixLine1WithLongerTailAccepted(t *testing.T) {
 }
 
 func TestBatchChangedWordBeforeEndStillMismatches(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	card := writeCard(t, dir, "a.card", "RESULT: alpha beta\nall green")
@@ -240,6 +252,8 @@ func TestBatchChangedWordBeforeEndStillMismatches(t *testing.T) {
 }
 
 func TestBatchIdenticalLine1PrintsNoTail(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	card := writeCard(t, dir, "a.card", "RESULT: a\nall green")
@@ -261,6 +275,8 @@ func TestBatchIdenticalLine1PrintsNoTail(t *testing.T) {
 }
 
 func TestBatchKillsAtDeadline(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	card := writeCard(t, dir, "a.card", "RESULT: a\nall green")
@@ -289,6 +305,8 @@ func TestBatchKillsAtDeadline(t *testing.T) {
 }
 
 func TestBatchKillsIdleCardEarly(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	card := writeCard(t, dir, "a.card", "RESULT: a\nall green")
@@ -321,6 +339,8 @@ func TestBatchKillsIdleCardEarly(t *testing.T) {
 }
 
 func TestBatchIdleDoesNotKillAWritingCard(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	card := writeCard(t, dir, "a.card", "RESULT: a\nall green")
@@ -378,6 +398,8 @@ func TestBatchIdleDoesNotKillAWritingCard(t *testing.T) {
 }
 
 func TestBatchLineCountsIdle(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	tsv := writeCards(t, dir, [][2]string{
@@ -419,6 +441,8 @@ func TestBatchLineCountsIdle(t *testing.T) {
 // after the first sample. The idle monitor must watch the child's own log (native.log once
 // it exists), not harness.log, and a page of growth in the window is work (issue #1893).
 func TestIdleWatchesNativeLog(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	card := writeCard(t, dir, "a.card", "RESULT: a\nall green")
@@ -476,6 +500,8 @@ func TestIdleWatchesNativeLog(t *testing.T) {
 // quiet. The monitor, watching native.log, kills the card after --idle=1s and names the file
 // it watched in the ABSTAIN reason.
 func TestIdleKillsWhenNativeLogStops(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	card := writeCard(t, dir, "a.card", "RESULT: a\nall green")
@@ -517,6 +543,8 @@ func TestIdleKillsWhenNativeLogStops(t *testing.T) {
 }
 
 func TestBatchOutputBounded(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	cards := make([][2]string, 20)
@@ -552,6 +580,8 @@ func TestBatchOutputBounded(t *testing.T) {
 }
 
 func TestStalledCardIsNamed(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	tsv := writeCards(t, dir, [][2]string{
@@ -571,6 +601,8 @@ func TestStalledCardIsNamed(t *testing.T) {
 }
 
 func TestWorkingCardCountsLogLines(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	tsv := writeCards(t, dir, [][2]string{
@@ -591,6 +623,8 @@ func TestWorkingCardCountsLogLines(t *testing.T) {
 }
 
 func TestBatchLineCountsStalled(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	tsv := writeCards(t, dir, [][2]string{
@@ -613,6 +647,8 @@ func TestBatchLineCountsStalled(t *testing.T) {
 // Slice 10: the batch packet sums tokens_in, tokens_out and usd across cards, from each
 // card's usage.tsv, and prints the totals on the BATCH line as in=<n> out=<n> usd=<n>.
 func TestBatchSumsUsage(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	tsv := writeCards(t, dir, [][2]string{
@@ -656,6 +692,8 @@ func TestBatchSumsUsage(t *testing.T) {
 // Lesson 24: when usage.tsv is in <root>/<slot>/usage.tsv rather than <root>/<slot>/jobs/<label>/usage.tsv,
 // the batch gather still reads the slot fallback and sums in/out/usd onto the BATCH line.
 func TestBatchSumsUsageFromSlotFallback(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	tsv := writeCards(t, dir, [][2]string{
@@ -694,6 +732,8 @@ func TestBatchSumsUsageFromSlotFallback(t *testing.T) {
 }
 
 func TestBatchAllocatesFreeSlots(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	a := writeCard(t, dir, "a.card", "RESULT: a\nall green")
@@ -716,6 +756,8 @@ func TestBatchAllocatesFreeSlots(t *testing.T) {
 }
 
 func TestBatchRefusesDuplicateSlots(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	card := writeCard(t, dir, "a.card", "RESULT: a\nall green")
@@ -741,6 +783,8 @@ func TestBatchRefusesDuplicateSlots(t *testing.T) {
 }
 
 func TestBatchSkipsBusySlot(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	busy := filepath.Join(root, "1", "jobs", "busy")
@@ -769,6 +813,8 @@ func TestBatchSkipsBusySlot(t *testing.T) {
 // whatever the log count. fakeRunner publishes RESULT.md and writes no run log, so the card
 // has no native.log and an empty harness.log -- the shape run 10's defect mistook for a stall.
 func TestGatherResultWinsOverEmptyLog(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	tsv := writeCards(t, dir, [][2]string{
@@ -791,6 +837,8 @@ func TestGatherResultWinsOverEmptyLog(t *testing.T) {
 // <slot>/native.log, not the job's harness.log (which holds only the runner's NATIVE OK line).
 // The card line's log=<n> reflects native.log's non-header lines.
 func TestGatherCountsNativeLog(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	tsv := writeCards(t, dir, [][2]string{
@@ -815,6 +863,8 @@ func TestGatherCountsNativeLog(t *testing.T) {
 // RESULT.md. A card whose RESULT.md is present and matches its contract is done whatever its
 // log count; a card with no result at all and no output is named stalled.
 func TestGatherStallOnlyWithoutResult(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	tsv := writeCards(t, dir, [][2]string{
@@ -926,6 +976,8 @@ func readTestFile(t *testing.T, path string) string {
 // card's native.log and no RESULT.md, and the gather names the class instead of a plain
 // missing-result abstain.
 func TestBatchScoresInputLimit(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	tsv := writeCards(t, dir, [][2]string{
@@ -954,6 +1006,8 @@ func TestBatchScoresInputLimit(t *testing.T) {
 // TestBatchThenRunsOnlyWhenAllDone: the --then follow-on runs only when every card is done.
 // All done runs the command and records its rc; one abstain prints SKIPPED and exits 3.
 func TestBatchThenRunsOnlyWhenAllDone(t *testing.T) {
+	t.Parallel()
+
 	// all done: the follow-on runs in the batch's root and its rc is recorded on the line.
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
@@ -1011,6 +1065,8 @@ func TestBatchThenRunsOnlyWhenAllDone(t *testing.T) {
 // for --idle. The fake harness here spins in a grandchild and writes nothing at all; the
 // other one sleeps and writes nothing, and only that one is killed.
 func TestIdleWatchCountsChildActivity(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
@@ -1096,6 +1152,8 @@ func TestIdleWatchCountsChildActivity(t *testing.T) {
 // a compiler or test subprocess finished and was reaped). That process departure is work
 // done, so the idle monitor treats it as activity and keeps the silent card alive.
 func TestIdleWatchTopologyChangeKeepsCardAlive(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
@@ -1149,6 +1207,8 @@ func TestIdleWatchTopologyChangeKeepsCardAlive(t *testing.T) {
 // is Darwin scheduler jitter on sleeping threads (issue #916), not real work. The card
 // must still be idle-killed once the idle window expires.
 func TestIdleWatchSub1PercentJitterKilled(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
@@ -1194,6 +1254,8 @@ func TestIdleWatchSub1PercentJitterKilled(t *testing.T) {
 // TestIdleWatchUnknownSampleReliesOnLog: when TreeCPU returns ok=false (unsupported OS
 // or unreadable process table), the monitor falls back to watching the log alone.
 func TestIdleWatchUnknownSampleReliesOnLog(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
@@ -1259,6 +1321,8 @@ func TestIdleWatchUnknownSampleReliesOnLog(t *testing.T) {
 // repo/RESULT.md or one directory down, copies it up to the job root and says so once on
 // stderr. The RESULT contract is unchanged: line 1 is still the card's contract line.
 func TestGatherCopiesResultUpFromRepo(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	tsv := writeCards(t, dir, [][2]string{
@@ -1298,6 +1362,8 @@ func TestGatherCopiesResultUpFromRepo(t *testing.T) {
 // nothing to go and read -- 0 in the fault that wrote the rule, and any number in the next
 // one. The exit code is still on the card's own NATIVE OK line for whoever wants it.
 func TestBatchScoresHarnessSilent(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	tsv := writeCards(t, dir, [][2]string{
@@ -1361,6 +1427,8 @@ func TestBatchScoresHarnessSilent(t *testing.T) {
 // put there: the start of a card's evidence was destroyed by the line announcing the run
 // (issue #608). The test writes a line, runs the batch, and demands BOTH, in that order.
 func TestBatchLogAppendsNeverTruncates(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	cards := writeCards(t, dir, [][2]string{{"c1", "the item\nDONE\n"}})

@@ -8,6 +8,8 @@ import (
 )
 
 func TestProvingRunOrchestratorEndToEnd(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	// 1. Create realistic capture manifests for nova-tools and schema

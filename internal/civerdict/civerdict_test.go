@@ -9,6 +9,8 @@ import (
 )
 
 func TestReadIsTheHashShape(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	mr := miniredis.RunT(t)
 	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -57,6 +59,8 @@ func TestReadIsTheHashShape(t *testing.T) {
 }
 
 func TestReadHeadRequiresMatchingBaseAndPolicy(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	mr := miniredis.RunT(t)
 	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})

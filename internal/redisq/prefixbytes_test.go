@@ -51,6 +51,8 @@ func (m *mockScanner) MemoryUsage(ctx context.Context, key string, samples ...in
 }
 
 func TestBytesPerDeclaredPrefix(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	t.Run("empty store returns zero per prefix", func(t *testing.T) {
@@ -166,6 +168,8 @@ func (p *pagedScanner) MemoryUsage(ctx context.Context, key string, samples ...i
 }
 
 func TestBytesPerPrefixPagination(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	t.Run("multiple SCAN pages accumulate", func(t *testing.T) {

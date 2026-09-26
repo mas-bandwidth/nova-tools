@@ -27,6 +27,8 @@ import (
 // refuses it the way `setup` is refused because wrapping a task inside a capacity
 // form would produce a prompt that is neither.
 func TestTheCapacityTemplateIsTheCensusAndRoutingLogNotAScheduler(t *testing.T) {
+	t.Parallel()
+
 	body, err := Template("capacity")
 	if err != nil {
 		t.Fatalf("template capacity: %v", err)
@@ -103,6 +105,8 @@ func TestTheCapacityTemplateIsTheCensusAndRoutingLogNotAScheduler(t *testing.T) 
 // workers nova-swarm pull may start on a bench. A full bench stops pulling and leaves every
 // card in queue/.
 func TestPullNeverExceedsTheCapacityLine(t *testing.T) {
+	t.Parallel()
+
 	// The line is the smallest arm, floored at zero: CPU headroom, disk above the 25G
 	// floor, and memory.
 	for _, c := range []struct {

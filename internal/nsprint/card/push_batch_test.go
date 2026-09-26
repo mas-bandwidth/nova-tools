@@ -74,6 +74,8 @@ func recorded(t *testing.T, client *redis.Client) *cmdRecorder {
 // is stored lower case as the card's leg field; a card with no LEG line has
 // none; an empty or multi-leg LEG line is refused before any write.
 func TestCardPushStoresLeg(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := newRedis(t)
 	srv := repoServer(t)
@@ -133,6 +135,8 @@ func TestCardPushStoresLeg(t *testing.T) {
 // leg, and a bench whose profile is go leaves it in the pool while it deals
 // the LEG: go card beside it.
 func TestDealLegFilterReadsPushedLeg(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := newRedis(t)
 	srv := repoServer(t)
@@ -185,6 +189,8 @@ func TestDealLegFilterReadsPushedLeg(t *testing.T) {
 // with a loaded library sends no FUNCTION command and exactly one round trip,
 // one pipeline holding the 12 cards' FCALLs (push and header for each).
 func TestCardPushBatchIsOnePipeline(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := newRedis(t)
 	srv := repoServer(t)
@@ -231,6 +237,8 @@ func TestCardPushBatchIsOnePipeline(t *testing.T) {
 // earlier in the same batch waits, as it would have pushed one at a time; the
 // dependency reads are one more pipeline, not one per card.
 func TestCardPushBatchDependsOnEarlierCard(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := newRedis(t)
 	srv := repoServer(t)
@@ -268,6 +276,8 @@ func TestCardPushBatchDependsOnEarlierCard(t *testing.T) {
 // card push sends no FUNCTION command, stores nothing, and refuses naming the
 // remedy nova-sprint fn load.
 func TestCardPushNeverLoadsTheLibrary(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := redis.NewClient(&redis.Options{Addr: startPushRedis(t)})
 	t.Cleanup(func() { _ = client.Close() })

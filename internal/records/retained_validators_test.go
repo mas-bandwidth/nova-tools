@@ -11,6 +11,8 @@ import (
 )
 
 func TestSealedCodexMappingValidates(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "tokens", "codex", "mapping.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -51,6 +53,8 @@ func TestSealedCodexMappingValidates(t *testing.T) {
 }
 
 func TestSealedGrokMappingValidates(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "tokens", "grok", "mapping.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -91,6 +95,8 @@ func TestSealedGrokMappingValidates(t *testing.T) {
 }
 
 func TestSealedAntigravityMappingValidates(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "tokens", "antigravity", "mapping.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -131,6 +137,8 @@ func TestSealedAntigravityMappingValidates(t *testing.T) {
 }
 
 func TestPositiveCoverageRecordValidates(t *testing.T) {
+	t.Parallel()
+
 	c := Coverage{
 		Schema:         SchemaCoverage,
 		ScopeID:        "nova.codex-desktop.responses",
@@ -208,6 +216,8 @@ func TestPositiveCoverageRecordValidates(t *testing.T) {
 }
 
 func TestCoverageAdversarialCases(t *testing.T) {
+	t.Parallel()
+
 	validCov := Coverage{
 		Schema:         SchemaCoverage,
 		ScopeID:        "nova.test.responses",
@@ -330,6 +340,8 @@ func TestCoverageAdversarialCases(t *testing.T) {
 }
 
 func TestReviewerMappingNonemptyContract(t *testing.T) {
+	t.Parallel()
+
 	for name, change := range map[string]func(*Mapping){
 		"producer-policy": func(m *Mapping) { m.IdentityRule.ProducerVersionFrom = "" },
 		"revision-policy": func(m *Mapping) { m.RevisionRule.IdenticalCopy = "" },
@@ -368,6 +380,8 @@ func TestReviewerMappingNonemptyContract(t *testing.T) {
 }
 
 func TestReviewerAllMappingStringSlotsAreNonempty(t *testing.T) {
+	t.Parallel()
+
 	for _, adapter := range []string{"codex", "grok"} {
 		raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "tokens", adapter, "mapping.json"))
 		if err != nil {

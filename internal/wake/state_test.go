@@ -13,6 +13,8 @@ import (
 // reload ate the trailing empty field, and every poll thereafter reported a
 // change over a bus that had not moved.
 func TestAValueRoundTripsByteForByte(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct{ name, value string }{
 		{"a trailing empty field", Compose("OPEN", "0", "0", "3", "")},
 		{"every field empty", Compose("", "", "")},
@@ -57,6 +59,8 @@ func TestAValueRoundTripsByteForByte(t *testing.T) {
 // Compose and Decompose are inverse, and the escape is applied % first so a
 // value holding a literal %7C is not a pipe when it comes back.
 func TestComposeDecomposeAreInverse(t *testing.T) {
+	t.Parallel()
+
 	parts := []string{"a|b", "%7C", "%25", "", "plain", "%"}
 	got := Decompose(Compose(parts...))
 	if len(got) != len(parts) {
@@ -72,6 +76,8 @@ func TestComposeDecomposeAreInverse(t *testing.T) {
 // Rule 11: an observation is APPENDED behind an unprinted one and never over
 // it. Red then green with the red unprinted is two records, red first.
 func TestAnObservationIsAppendedBehindAnUnprintedOne(t *testing.T) {
+	t.Parallel()
+
 	s := newState()
 	if !s.Observe("entry:r#1", "red", "id-red") {
 		t.Fatal("the first observation of a key is a change")
@@ -105,6 +111,8 @@ func TestAnObservationIsAppendedBehindAnUnprintedOne(t *testing.T) {
 // The queue numbering is never reused, so a record printed by one call cannot
 // be confused with a record appended by the next.
 func TestQueueNumbersAreNeverReused(t *testing.T) {
+	t.Parallel()
+
 	s := newState()
 	s.Observe("report:a", "1", "a1")
 	first := s.Queue()[0].N
@@ -118,6 +126,8 @@ func TestQueueNumbersAreNeverReused(t *testing.T) {
 // The LRU is bounded where it grows with events and exempt where a bound would
 // lose a delivery: a pending record survives 300 newer delivered ones.
 func TestEvictionKeepsPendingAndTakesTheOldestDelivered(t *testing.T) {
+	t.Parallel()
+
 	s := newState()
 	// One pending note, observed first and never printed.
 	s.Observe("bus:note:pending", "p", "pending")
@@ -159,6 +169,8 @@ func TestEvictionKeepsPendingAndTakesTheOldestDelivered(t *testing.T) {
 // that decides to start cold has swallowed everything that moved while no
 // watcher was running, and has a correct-looking first poll.
 func TestAnUnparsableStateFileIsAnErrorAndNotAColdStart(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "state")
 	if err := os.WriteFile(path, []byte("this is not a state file\n"), 0o644); err != nil {
@@ -171,6 +183,8 @@ func TestAnUnparsableStateFileIsAnErrorAndNotAColdStart(t *testing.T) {
 
 // A missing state file is a cold start, and says so.
 func TestAMissingStateFileIsCold(t *testing.T) {
+	t.Parallel()
+
 	s, err := Load(filepath.Join(t.TempDir(), "nothing-here"))
 	if err != nil {
 		t.Fatal(err)
@@ -184,6 +198,8 @@ func TestAMissingStateFileIsCold(t *testing.T) {
 // rename are there so a call killed mid-poll leaves one whole state or the
 // other and never half of either.
 func TestAKilledWriteLeavesTheOldFileIntact(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "state")
 	s := newState()
@@ -215,6 +231,8 @@ func TestAKilledWriteLeavesTheOldFileIntact(t *testing.T) {
 // The failure streak spans calls: it is written on every failed poll, read at
 // the next call's start, and cleared by the first success.
 func TestTheFailureStreakSpansCalls(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "state")
 	at := time.Date(2026, 9, 11, 10, 0, 0, 0, time.UTC)
@@ -254,6 +272,8 @@ func TestTheFailureStreakSpansCalls(t *testing.T) {
 // the empty tail. So it is asserted here, on the codec, where the mutation has
 // nowhere to hide.
 func TestAReaderMayNotEatATrailingEmptyField(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name  string
 		parts []string
@@ -290,6 +310,8 @@ func TestAReaderMayNotEatATrailingEmptyField(t *testing.T) {
 // line that never signed at all -- OFFLINE, or BACK, from missing history
 // rather than from the world.
 func TestALinesLastSignIsNotCappedByACommitCount(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile("line.go")
 	if err != nil {
 		t.Fatal(err)
@@ -306,6 +328,8 @@ func TestALinesLastSignIsNotCappedByACommitCount(t *testing.T) {
 // SIGKILLed at 60s on every poll and three of those BROKEN a healthy watch.
 // --gh-timeout is the budget for a forge call, and here it is the slack on top.
 func TestThePollProcessOutlivesTheWaitItAskedFor(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name    string
 		refresh bool
@@ -339,6 +363,8 @@ func TestThePollProcessOutlivesTheWaitItAskedFor(t *testing.T) {
 // can never go red -- which is what cmd/nova-wake/main_test.go's failed-write
 // guard had become.
 func TestTheStoredFormOfAWatchedKeyCarriesThePrintedLabel(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "state")
 	s, err := Load(path)
 	if err != nil {
@@ -394,6 +420,8 @@ func TestTheStoredFormOfAWatchedKeyCarriesThePrintedLabel(t *testing.T) {
 // forgetting what was already shown would print every standing thing once more,
 // and a migration that wakes a window is the cost this tool exists to avoid.
 func TestAStateWrittenWithoutTheLabelStillReads(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "state")
 	const standing = "bus:line:a line that stands"
 	old := Compose("entry:r#1", Compose("red", "id-red")) + "\n" +
@@ -469,6 +497,8 @@ func storedPrintedHalf(t *testing.T, path, key string) string {
 // makes two different lines refuse each other over a cursor neither of them is
 // moving, and the refusal names a holder the other line has never heard of.
 func TestTheAdvanceLockNameIsInjective(t *testing.T) {
+	t.Parallel()
+
 	bus := t.TempDir()
 	first, holder, err := LockAdvance(bus, "Rowan!")
 	if err != nil {

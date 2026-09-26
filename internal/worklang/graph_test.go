@@ -11,6 +11,8 @@ import (
 // red first: four tests, no network and no model call, every refusal named by
 // the field it refuses and the id it names.
 func TestWorklangNeedsGraph(t *testing.T) {
+	t.Parallel()
+
 	// worklang-needs-absent-node-is-a-refusal: a `:needs` naming an absent id is
 	// refused naming the field and the id; neither the graph nor the journal moves.
 	t.Run("worklang-needs-absent-node-is-a-refusal", func(t *testing.T) {

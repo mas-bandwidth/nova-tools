@@ -17,6 +17,8 @@ func mustParse(t *testing.T, s string) Value {
 // The digest is over canonical bytes, so key order and whitespace are irrelevant to
 // identity and a changed value is not.
 func TestCanonicalIdentityIgnoresOrderAndSpace(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name, a, b string
 		same       bool
@@ -46,6 +48,8 @@ func TestCanonicalIdentityIgnoresOrderAndSpace(t *testing.T) {
 }
 
 func TestCanonicalBytes(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct{ in, want string }{
 		{`{"b":"2","a":"1"}`, `{"a":"1","b":"2"}`},
 		// a non-ASCII character is written literally as UTF-8, never re-escaped
@@ -77,6 +81,8 @@ func TestCanonicalBytes(t *testing.T) {
 // RFC 8785 sorts member names by UTF-16 code units, which differs from Go's byte order
 // exactly where a supplementary character meets one in U+E000..U+FFFF.
 func TestUTF16KeyOrder(t *testing.T) {
+	t.Parallel()
+
 	// U+10000 encodes as the surrogates D800 DC00, so it sorts BELOW U+E000 in UTF-16 and
 	// above it in UTF-8. A canonicaliser that used Go's string order would swap these two.
 	const astral, private = "\U00010000", "\uE000"
@@ -96,6 +102,8 @@ func TestUTF16KeyOrder(t *testing.T) {
 }
 
 func TestParseRefusals(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct{ name, in, rule string }{
 		{"duplicate key", `{"a":"1","a":"2"}`, RuleDuplicateKey},
 		{"nested duplicate", `{"x":{"a":"1","a":"2"}}`, RuleDuplicateKey},
@@ -130,6 +138,8 @@ func TestParseRefusals(t *testing.T) {
 // Seal writes the envelope the format specifies and nothing else: two members, the ID
 // derived from the body alone, and no trailing newline.
 func TestSealShape(t *testing.T) {
+	t.Parallel()
+
 	body := mustParse(t, `{"b":"2","a":"1"}`)
 	out, id, err := Seal(body)
 	if err != nil {

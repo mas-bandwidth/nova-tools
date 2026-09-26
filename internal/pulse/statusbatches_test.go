@@ -181,6 +181,8 @@ func TestStatusRefusesUnreadableBatches(t *testing.T) {
 // The window is the newest outputs by modification time: an old batch outside it is not
 // folded, so yesterday's faults never look like this hour's.
 func TestStatusBatchWindowIsNewestFirst(t *testing.T) {
+	t.Parallel()
+
 	dir := filepath.Join(t.TempDir(), "batches")
 	base := time.Date(2026, 9, 15, 0, 0, 0, 0, time.UTC)
 	for i := 0; i < batchWindow+3; i++ {

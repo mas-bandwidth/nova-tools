@@ -17,6 +17,8 @@ const unattendedSentence = "You are unattended; never ask a question; decide and
 // a template set that matched nothing is no evidence, not a pass — the check runs its own
 // positive control, so the loop being empty is itself the red line.
 func TestEveryPulseTemplateSaysUnattended(t *testing.T) {
+	t.Parallel()
+
 	checked := 0
 	for _, name := range TemplateNames() {
 		if !IsPulseTemplate(name) {

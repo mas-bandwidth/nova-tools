@@ -66,6 +66,8 @@ func gateRemove(t *testing.T, dir string, names ...string) string {
 // exist?" -- has to be a machine's question. The machines registry is the answer: a new
 // recipient is permitted only for a seat the fleet already says it has.
 func TestGateRefusesANewRecipientForASeatTheRegistryDoesNotName(t *testing.T) {
+	t.Parallel()
+
 	dir := gateStart(t)
 	base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
 	head := gateCommit(t, dir, map[string]string{
@@ -87,6 +89,8 @@ func TestGateRefusesANewRecipientForASeatTheRegistryDoesNotName(t *testing.T) {
 }
 
 func TestGateApprovesANewRecipientForASeatTheRegistryNames(t *testing.T) {
+	t.Parallel()
+
 	dir := gateStart(t)
 	base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
 	head := gateCommit(t, dir, map[string]string{
@@ -107,6 +111,8 @@ func TestGateApprovesANewRecipientForASeatTheRegistryNames(t *testing.T) {
 // A key already in the store is not a grant: reselaing an existing seat, or editing its rule,
 // asks the registry nothing.
 func TestGateApprovesARuleEditThatAddsNoRecipient(t *testing.T) {
+	t.Parallel()
+
 	dir := gateStart(t)
 	gateCommit(t, dir, map[string]string{
 		".sops.yaml": gateSops(gateRule("rowan.yaml", gateSeatKey, gateRecoveryKey)),
@@ -129,6 +135,8 @@ func TestGateApprovesARuleEditThatAddsNoRecipient(t *testing.T) {
 // Without a registry the rule is dormant, not silently satisfied: the gate says so on the
 // line, so nobody reads an APPROVE as the registry having vouched.
 func TestGateWithoutAMachinesRegistrySaysTheRuleDidNotRun(t *testing.T) {
+	t.Parallel()
+
 	dir := gateStart(t)
 	base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
 	head := gateCommit(t, dir, map[string]string{
@@ -146,6 +154,8 @@ func TestGateWithoutAMachinesRegistrySaysTheRuleDidNotRun(t *testing.T) {
 }
 
 func TestGateRefusesAnUnreadableMachinesRegistry(t *testing.T) {
+	t.Parallel()
+
 	dir := gateStart(t)
 	base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
 	head := gateCommit(t, dir, map[string]string{
@@ -165,6 +175,8 @@ func TestGateRefusesAnUnreadableMachinesRegistry(t *testing.T) {
 // Keep what exists: a seat file that was in the store must still be there. Removing one is
 // how a seat would lose its credentials silently, and it is never part of adding a seat.
 func TestGateRefusesARemovedSeatFile(t *testing.T) {
+	t.Parallel()
+
 	dir := gateStart(t)
 	gateCommit(t, dir, map[string]string{
 		".sops.yaml": gateSops(gateRule("rowan.yaml", gateSeatKey, gateRecoveryKey)),
@@ -185,6 +197,8 @@ func TestGateRefusesARemovedSeatFile(t *testing.T) {
 // The registry is read WHOLE and validated whole, as internal/fleet demands: a malformed
 // line is a refusal, never a half-read registry whose read half lets a recipient through.
 func TestGateRefusesAMalformedMachinesRegistry(t *testing.T) {
+	t.Parallel()
+
 	dir := gateStart(t)
 	base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
 	head := gateCommit(t, dir, map[string]string{
@@ -205,6 +219,8 @@ func TestGateRefusesAMalformedMachinesRegistry(t *testing.T) {
 // A machine that carries no seat says `-`; that is an answer, not a seat name, and a rule
 // for a file called `-.yaml` must not be vouched for by it.
 func TestGateDoesNotTreatADashAsASeatName(t *testing.T) {
+	t.Parallel()
+
 	dir := gateStart(t)
 	base := strings.TrimSpace(gateGit(t, dir, "rev-parse", "HEAD"))
 	head := gateCommit(t, dir, map[string]string{

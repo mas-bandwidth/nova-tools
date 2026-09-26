@@ -37,6 +37,8 @@ func seedCommands(t *testing.T, client *redis.Client, cmds [][]string) {
 }
 
 func TestControl21TableCheckFixture(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := controlStore(t)
 	seedCommands(t, client, table.DefectFixture())
@@ -84,6 +86,8 @@ func TestControl21TableCheckFixture(t *testing.T) {
 }
 
 func TestControl24BenchCellsFromCardIndexes(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := controlStore(t)
 	seedCommands(t, client, [][]string{
@@ -118,6 +122,8 @@ func TestControl24BenchCellsFromCardIndexes(t *testing.T) {
 // merged on their base; a card still waiting on a dependency is counted in
 // waiting and never in ready.
 func TestPipelineCountsOnlyReadyCards(t *testing.T) {
+	t.Parallel()
+
 	raw := []any{"time", "1", "pipeline", "s1", "3", "0", "0", "0", "0", "0", "0", "0", "2", "1", "0", "0", "0"}
 	snap, err := table.Parse(raw)
 	if err != nil {

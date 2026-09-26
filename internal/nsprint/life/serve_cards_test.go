@@ -49,6 +49,8 @@ func receiptCount(t *testing.T, client *redis.Client, kind string) int {
 // the exit is the trigger, not a timer. Each card's brief is rendered from
 // its record by kind and each card ends with its child's typed line.
 func TestServeCardsWidthTwoFinishesFiveWithNoHandCall(t *testing.T) {
+	t.Parallel()
+
 	st, client := seedSeat(t, 2)
 	ctx := context.Background()
 	for i := 1; i <= 5; i++ {
@@ -155,6 +157,8 @@ func TestServeCardsWidthTwoFinishesFiveWithNoHandCall(t *testing.T) {
 // line, and a card whose kind has no model for a dispatch that says @model
 // fail before any exec. Nothing is left working.
 func TestServeCardWithoutTypedLineFails(t *testing.T) {
+	t.Parallel()
+
 	st, client := seedSeat(t, 3)
 	ctx := context.Background()
 	pushCard(t, client, "dies", "build")
@@ -195,6 +199,8 @@ func TestServeCardWithoutTypedLineFails(t *testing.T) {
 // the child and gives the card back to friend:emma:cards:ready (working ->
 // ready, the one move), so no card sits in working without a child.
 func TestServeStopGivesCardBack(t *testing.T) {
+	t.Parallel()
+
 	st, client := seedSeat(t, 1)
 	ctx := context.Background()
 	pushCard(t, client, "held", "build")

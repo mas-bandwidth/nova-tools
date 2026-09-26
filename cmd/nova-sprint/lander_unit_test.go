@@ -120,6 +120,8 @@ func TestLanderLoadsMembersFromUnitRecords(t *testing.T) {
 // beside it (another head, another word) changes nothing, and a PR known only
 // by a retired record is "no unit record", exit 1.
 func TestWhyReadsUnitRecordsOnly(t *testing.T) {
+	t.Parallel()
+
 	mr := control35(t)
 	const deadHead = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 	mr.HSet("s:"+c35Sprint+":pr:nova-tools:3200", "head", deadHead, "mergeable", "CONFLICTING", "state", "landed")

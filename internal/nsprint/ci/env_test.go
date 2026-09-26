@@ -17,6 +17,8 @@ import (
 )
 
 func TestCheckEnvDropsTheSeatVariables(t *testing.T) {
+	t.Parallel()
+
 	in := []string{
 		"PATH=/usr/bin", "HOME=/h", "GOCACHE=/c", "GOFLAGS=-mod=mod", "TMPDIR=/t", "LANG=C", "USER=u",
 		"NOVA_SPRINT_REDIS_USER=bench", "NOVA_SPRINT_REDIS_PASSWORD_ENV=SEAT_PW", "SEAT_PW=v1",

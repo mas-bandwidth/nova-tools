@@ -121,6 +121,8 @@ func seedCards(t *testing.T, client *redis.Client, sprint string, nowMS int64) m
 // FCALL, and without a server-side read a set's members and their hash fields
 // cannot come back in one round trip.
 func TestCensusSprintCardsOneRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	addr := startRedis(t)
 	client, flushes := countedClient(t, addr)
 	ctx := context.Background()
@@ -267,6 +269,8 @@ func indexOf(list []string, s string) int {
 }
 
 func TestCardCensusRefusals(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	st := store.New(redis.NewClient(&redis.Options{Addr: "127.0.0.1:1"}))
 	defer st.Close()

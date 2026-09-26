@@ -10,6 +10,8 @@ import (
 // the title's fields, the card block and the typed-line contract; a kind with
 // no template and a card with no model refuse naming the field.
 func TestRenderCardByKind(t *testing.T) {
+	t.Parallel()
+
 	rec := map[string]string{
 		"title":  "friend serve cards | PATHS: internal/nsprint/life/ | BASE: dev base-sha: abc123 | DONE-WHEN: `go test ./x` exits 0",
 		"origin": "issue:nova-tools#4095", "stream": "nova-sprint + merge + bus",

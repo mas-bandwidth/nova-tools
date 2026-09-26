@@ -177,6 +177,8 @@ func fixture(t *testing.T, ctx context.Context, c *redis.Client) {
 // PR with an APPROVE at head, the PR with a live fix, the unrecorded PR and
 // the plain open PR untouched; a second run makes no call.
 func TestReapClosesStaleSupersededPRs(t *testing.T) {
+	t.Parallel()
+
 	ctx, c := store(t)
 	fixture(t, ctx, c)
 	f := newForge(t)
@@ -219,6 +221,8 @@ func TestReapClosesStaleSupersededPRs(t *testing.T) {
 
 // TestReapDryRunWritesNothing: the same decisions, no write, no call.
 func TestReapDryRunWritesNothing(t *testing.T) {
+	t.Parallel()
+
 	ctx, c := store(t)
 	fixture(t, ctx, c)
 	f := newForge(t)
@@ -251,6 +255,8 @@ func TestReapDryRunWritesNothing(t *testing.T) {
 // failed:502 with one attempt and the next run closes it; ten failures are
 // STUCK and make no call.
 func TestReapBudgetDefersAndFailedCloseRetries(t *testing.T) {
+	t.Parallel()
+
 	ctx, c := store(t)
 	fixture(t, ctx, c)
 	f := newForge(t)
@@ -296,6 +302,8 @@ func TestReapBudgetDefersAndFailedCloseRetries(t *testing.T) {
 // in flight a live fix for B is pushed. B's gate runs after A's close
 // returns, revokes B (reap_close=revoked:...) and B gets no call.
 func TestReapGateNextToEachClose(t *testing.T) {
+	t.Parallel()
+
 	ctx, c := store(t)
 	card(t, ctx, c, 131, "card-b1", 70, map[string]string{"branch_gone": "1"})
 	card(t, ctx, c, 130, "card-a1", 71, map[string]string{"branch_gone": "1"})
@@ -330,6 +338,8 @@ func TestReapGateNextToEachClose(t *testing.T) {
 // read is not decided (STALE), and a pending decision the policy no longer
 // holds is revoked without a call.
 func TestReapFenceRefusesDrift(t *testing.T) {
+	t.Parallel()
+
 	ctx, c := store(t)
 	card(t, ctx, c, 140, "card-x", 80, map[string]string{"branch_gone": "1"})
 	key := "pr:nova-tools:140"
@@ -359,6 +369,8 @@ func TestReapFenceRefusesDrift(t *testing.T) {
 
 // TestDecideRules is the policy alone.
 func TestDecideRules(t *testing.T) {
+	t.Parallel()
+
 	h := head(7)
 	base := func(n int) reap.PR {
 		return reap.PR{Repo: repo, N: n, Key: fmt.Sprintf("pr:nova-tools:%d", n), Exists: true, State: "open", Head: h}

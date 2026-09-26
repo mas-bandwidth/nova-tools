@@ -41,6 +41,8 @@ func plantNativeResultSymlink(t *testing.T, job, body string) string {
 
 // native's result lookup must not follow a symlink planted at RESULT.md and call it published.
 func TestNativeDoesNotTreatAPlantedSymlinkAsAPublishedResult(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
@@ -71,6 +73,8 @@ func TestNativeDoesNotTreatAPlantedSymlinkAsAPublishedResult(t *testing.T) {
 
 // The lookup harnessState uses is the same question native asks of RESULT.md.
 func TestNativeHarnessStateDoesNotFollowAPlantedSymlinkAtResult(t *testing.T) {
+	t.Parallel()
+
 	skipWindowsPlant(t)
 	dir := t.TempDir()
 	job := filepath.Join(dir, "job")

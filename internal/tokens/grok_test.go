@@ -180,6 +180,8 @@ func grokDecodeFixtures(t *testing.T, opts GrokOptions) []GrokRecord {
 }
 
 func TestGrokDecoderTablesAreTheMappingsOwn(t *testing.T) {
+	t.Parallel()
+
 	m, _ := grokManifest(t)
 
 	allow := GrokAllowlists()
@@ -244,6 +246,8 @@ func sortedStrings(ss []string) []string {
 }
 
 func TestGrokDecoderSealsTheExpectedEnvelopesByteForByte(t *testing.T) {
+	t.Parallel()
+
 	m, mappingID := grokManifest(t)
 	want := grokSealedLines(t, "expected_records.jsonl")
 	recs := grokDecodeFixtures(t, grokFixtureOptions(mappingID))
@@ -328,6 +332,8 @@ func TestGrokDecoderSealsTheExpectedEnvelopesByteForByte(t *testing.T) {
 // The cost tick lexeme, the mixed-model turn, the unbound origin and the completeness gap,
 // read off the decoded records rather than off the fixture file.
 func TestGrokDecoderKeepsLexemesPresenceAndBasis(t *testing.T) {
+	t.Parallel()
+
 	_, mappingID := grokManifest(t)
 	recs := grokDecodeFixtures(t, grokFixtureOptions(mappingID))
 	byTurn := map[string]GrokRecord{}
@@ -425,6 +431,8 @@ func TestGrokDecoderKeepsLexemesPresenceAndBasis(t *testing.T) {
 // Day allocation: the UTC day of a known completion instant whatever its source offset, and
 // unallocated when the instant is unknown. Turn 2 completes at 23:30-04:00, the next UTC day.
 func TestGrokDayAllocationIsTheUTCDayOfAKnownInstant(t *testing.T) {
+	t.Parallel()
+
 	_, mappingID := grokManifest(t)
 	recs := grokDecodeFixtures(t, grokFixtureOptions(mappingID))
 	days := map[string]string{}
@@ -444,6 +452,8 @@ func TestGrokDayAllocationIsTheUTCDayOfAKnownInstant(t *testing.T) {
 // retained and excluded from spend. There is no newest-wins rule: the changed file is not a
 // winner for being decoded last.
 func TestGrokCopiedExportDeduplicatesAndAChangedOneConflicts(t *testing.T) {
+	t.Parallel()
+
 	_, mappingID := grokManifest(t)
 	recs := grokDecodeFixtures(t, grokFixtureOptions(mappingID))
 	if len(recs) != 7 {
@@ -484,6 +494,8 @@ func TestGrokCopiedExportDeduplicatesAndAChangedOneConflicts(t *testing.T) {
 
 // The owner's unsupported and owed cells are refusals in the adapter, not quiet numbers.
 func TestGrokUnsupportedAndOwedCellsRefuse(t *testing.T) {
+	t.Parallel()
+
 	m, mappingID := grokManifest(t)
 	if m.IdentityRule.NormalizedSupport {
 		t.Fatalf("the manifest must declare normalized spend unsupported for this key")
@@ -521,6 +533,8 @@ func grokContains(ss []string, want string) bool {
 // The origin is the owner's binding or nothing. The collector host, the file it read and the
 // bench this test runs on are not historical evidence.
 func TestGrokOriginNeverComesFromTheCollector(t *testing.T) {
+	t.Parallel()
+
 	_, mappingID := grokManifest(t)
 	recs, err := DecodeGrokTurns(grokSource(t, "source_export.json"), GrokOptions{MappingID: mappingID})
 	if err != nil {
@@ -551,6 +565,8 @@ func TestGrokOriginNeverComesFromTheCollector(t *testing.T) {
 // producer_version is the exact bounded string an owner supplies, or null. It is never the
 // `grok usage v1.0.30` an owner once reported, stamped on every export.
 func TestGrokProducerVersionIsExactOrNull(t *testing.T) {
+	t.Parallel()
+
 	_, mappingID := grokManifest(t)
 	exact := "grok usage v1.0.30"
 	opts := grokFixtureOptions(mappingID)
@@ -577,6 +593,8 @@ func TestGrokProducerVersionIsExactOrNull(t *testing.T) {
 // Every refused fixture refuses under the adapter's own allowlists, with the rule and field
 // the owner named. The adapter's closed set is the one the wire enforces.
 func TestGrokRefusedFixturesRefuseWithTheNamedRuleAndField(t *testing.T) {
+	t.Parallel()
+
 	v := records.NewValidator(GrokAllowlists())
 	lines := grokSealedLines(t, "refused_records.jsonl")
 	for _, line := range lines {
@@ -618,6 +636,8 @@ func TestGrokRefusedFixturesRefuseWithTheNamedRuleAndField(t *testing.T) {
 // Both sides of the privacy check: the sentinels are in the source fixtures' unsupported
 // fields, and they reach no record, no manifest and no diagnostic.
 func TestGrokPrivacySentinelsReachNoRecordOrDiagnostic(t *testing.T) {
+	t.Parallel()
+
 	for _, name := range []string{"source_export.json", "source_export_copy.json", "source_export_changed.json"} {
 		raw := grokSource(t, name)
 		if !bytes.Contains(raw, []byte(grokSentinelPrompt)) || !bytes.Contains(raw, []byte(grokSentinelPath)) {
@@ -673,6 +693,8 @@ func TestGrokPrivacySentinelsReachNoRecordOrDiagnostic(t *testing.T) {
 // The decoder is a pure function of the bytes it is handed and the owner's options: it opens
 // no file and runs no program, so no private path can reach a record through it.
 func TestGrokDecoderIsDeterministicAndSourceShapesAreNamed(t *testing.T) {
+	t.Parallel()
+
 	_, mappingID := grokManifest(t)
 	a := grokDecodeFixtures(t, grokFixtureOptions(mappingID))
 	b := grokDecodeFixtures(t, grokFixtureOptions(mappingID))
@@ -704,6 +726,8 @@ func TestGrokDecoderIsDeterministicAndSourceShapesAreNamed(t *testing.T) {
 // Stella's two source-shape witnesses, kept verbatim. A retained identity must not depend on
 // a model ID inferred from the split, JSON last-key-wins, or case aliasing.
 func TestStellaGrokMissingPrimaryDoesNotInventModel(t *testing.T) {
+	t.Parallel()
+
 	raw := []byte(`{"sessionId":"synthetic","turns":[{"turnNumber":1,"modelUsage":{"split-only":{}}}]}`)
 	recs, err := DecodeGrokTurns(raw, GrokOptions{MappingID: "sha256:" + strings.Repeat("0", 64)})
 	if err != nil {
@@ -716,6 +740,8 @@ func TestStellaGrokMissingPrimaryDoesNotInventModel(t *testing.T) {
 }
 
 func TestStellaGrokRejectsAmbiguousExport(t *testing.T) {
+	t.Parallel()
+
 	for name, raw := range map[string]string{
 		"trailing":   `{"sessionId":"a","turns":[]} {"sessionId":"b","turns":[]}`,
 		"duplicate":  `{"sessionId":"a","sessionId":"b","turns":[]}`,
@@ -731,6 +757,8 @@ func TestStellaGrokRejectsAmbiguousExport(t *testing.T) {
 }
 
 func TestGrokSourceBoundaryAllowsTrailingWhitespaceAndExcludesUnknownFields(t *testing.T) {
+	t.Parallel()
+
 	raw := []byte("{\"sessionId\":\"a\",\"turns\":[{\"turnNumber\":1,\"extraField\":123}],\"extraTop\":true} \n\t")
 	recs, err := DecodeGrokTurns(raw, GrokOptions{MappingID: "sha256:" + strings.Repeat("0", 64)})
 	if err != nil {
@@ -749,6 +777,8 @@ func TestGrokSourceBoundaryAllowsTrailingWhitespaceAndExcludesUnknownFields(t *t
 // A non-empty primary incompatible with the single split stays mixed: the split is retained,
 // and no winner is picked.
 func TestGrokPrimaryIncompatibleWithSingleSplitStaysMixed(t *testing.T) {
+	t.Parallel()
+
 	raw := []byte(`{"sessionId":"a","turns":[{"turnNumber":1,"primaryModelId":"primary-model","modelUsage":{"split-model":{}}}]}`)
 	recs, err := DecodeGrokTurns(raw, GrokOptions{MappingID: "sha256:" + strings.Repeat("0", 64)})
 	if err != nil {
@@ -767,6 +797,8 @@ func TestGrokPrimaryIncompatibleWithSingleSplitStaysMixed(t *testing.T) {
 // spellings that escape to the same name, are both refusals: no retained identity may depend
 // on JSON last-key-wins or escape aliasing.
 func TestGrokSourceBoundaryRefusesNestedAndEscapedDuplicateMembers(t *testing.T) {
+	t.Parallel()
+
 	for name, raw := range map[string]string{
 		"nested_usage_duplicate_key": `{"sessionId":"a","turns":[{"turnNumber":1,"modelUsage":{"m":{"inputTokens":1},"m":{"inputTokens":2}}}]}`,
 		"nested_field_duplicate_key": `{"sessionId":"a","turns":[{"turnNumber":1,"modelUsage":{"m":{"inputTokens":1,"inputTokens":2}}}]}`,
@@ -788,6 +820,8 @@ func TestGrokSourceBoundaryRefusesNestedAndEscapedDuplicateMembers(t *testing.T)
 // valid-JSON spelling decoded end to end -- if this file called a lexeme valid and the wire
 // refused it, SealObservation would refuse the record and the decode would fail here.
 func TestGrokLexemeGrammarsAcceptWhatTheWireAccepts(t *testing.T) {
+	t.Parallel()
+
 	for _, c := range []struct {
 		lexeme string
 		intOK  bool
@@ -888,6 +922,8 @@ func TestGrokLexemeGrammarsAcceptWhatTheWireAccepts(t *testing.T) {
 // the session block to a kind:aggregate observation in its own namespace, never filling a
 // missing turn; the checksum compares it against the turn rows only over complete coverage.
 func TestGrokSessionAggregateMappingAndChecksum(t *testing.T) {
+	t.Parallel()
+
 	_, mappingID := grokManifest(t)
 	raw := grokSource(t, "source_export.json")
 

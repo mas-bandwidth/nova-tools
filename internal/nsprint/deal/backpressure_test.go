@@ -30,6 +30,8 @@ func miniStore(t *testing.T) (*miniredis.Miniredis, *store.Store, *redis.Client)
 // Antecedent: the dealer read one BACKPRESSURE file while the loop wrote
 // another, and a stopped loop left ON on disk, failing closed with no signal.
 func TestControl11BackpressureMissingAppliesPolicy(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	const sprint = "control-0000c011"
 	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
@@ -222,6 +224,8 @@ func (h *roundTripHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redi
 // issues exactly one pipeline, no SCAN and no KEYS, and the receipt prints
 // round_trips=1. The SCAN walk it replaced took 7 round trips at 6,357 keys.
 func TestCheckOneBackpressureKeyOneRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	const sprint = "control-00003276"
 	m, st, c := miniStore(t)

@@ -65,6 +65,8 @@ func drew(t *testing.T, fs []CardHeaderFinding, want string) CardHeaderFinding {
 // ---- kind-declared ---------------------------------------------------------------
 
 func TestCardHeaderMissingKindDrawsKindDeclared(t *testing.T) {
+	t.Parallel()
+
 	h := fullHeader()[1:] // everything but KIND:
 	fs := LintCardHeader(typedCard(h...), nil, false)
 	f := drew(t, fs, "kind-declared")
@@ -76,6 +78,8 @@ func TestCardHeaderMissingKindDrawsKindDeclared(t *testing.T) {
 // An empty value is not a declaration: `KIND:` with nothing after it leaves the parser's
 // Kind empty, which is exactly what Missing() names (cardheader.go:138-150).
 func TestCardHeaderEmptyKindValueDrawsKindDeclared(t *testing.T) {
+	t.Parallel()
+
 	fs := LintCardHeader(typedCard(append([]string{"KIND:"}, fullHeader()[1:]...)...), nil, false)
 	f := drew(t, fs, "kind-declared")
 	if f.Line != 2 {
@@ -85,6 +89,8 @@ func TestCardHeaderEmptyKindValueDrawsKindDeclared(t *testing.T) {
 
 // NEGATIVE CONTROL for kind-declared: the same card with a kind draws nothing at all.
 func TestCardHeaderFullHeaderDrawsNothing(t *testing.T) {
+	t.Parallel()
+
 	if fs := LintCardHeader(typedCard(fullHeader()...), nil, true); len(fs) != 0 {
 		t.Fatalf("a complete header is clean, drew %v", fs)
 	}
@@ -93,6 +99,8 @@ func TestCardHeaderFullHeaderDrawsNothing(t *testing.T) {
 // ---- test-named ------------------------------------------------------------------
 
 func TestCardHeaderNoTestLineDrawsTestNamed(t *testing.T) {
+	t.Parallel()
+
 	h := []string{fullHeader()[0], fullHeader()[1], fullHeader()[3], fullHeader()[4]}
 	fs := LintCardHeader(typedCard(h...), nil, false)
 	drew(t, fs, "test-named")
@@ -104,6 +112,8 @@ func TestCardHeaderNoTestLineDrawsTestNamed(t *testing.T) {
 // The parser refuses a TEST: value that is not `<package> <TestName>` and not `none`
 // (cardheader.go:95-108). What it refuses, the lint refuses.
 func TestCardHeaderMalformedTestDrawsTestNamed(t *testing.T) {
+	t.Parallel()
+
 	for _, bad := range []string{
 		"TEST: TestOnlyAName",
 		"TEST: internal/swarm TestOne TestTwo",
@@ -123,6 +133,8 @@ func TestCardHeaderMalformedTestDrawsTestNamed(t *testing.T) {
 // declares no gate (cardheader.go:91-94), so it is a declaration, not a defect. The kind is
 // an ungated one (read): on a gated kind TEST: none is refused (TestIssue1853).
 func TestCardHeaderTestNoneDrawsNothing(t *testing.T) {
+	t.Parallel()
+
 	h := append([]string{}, fullHeader()...)
 	h[0] = "KIND: read"
 	h[2] = "TEST: none"
@@ -134,6 +146,8 @@ func TestCardHeaderTestNoneDrawsNothing(t *testing.T) {
 // ---- paths-declared --------------------------------------------------------------
 
 func TestCardHeaderBadPathsDrawPathsDeclared(t *testing.T) {
+	t.Parallel()
+
 	for _, bad := range []string{
 		"PATHS: ../other/**",           // above the job
 		"PATHS: internal/../../etc/**", // above the job, by climbing
@@ -162,6 +176,8 @@ func TestCardHeaderBadPathsDrawPathsDeclared(t *testing.T) {
 }
 
 func TestCardHeaderNoPathsLineDrawsPathsDeclared(t *testing.T) {
+	t.Parallel()
+
 	h := []string{fullHeader()[0], fullHeader()[2], fullHeader()[3], fullHeader()[4]}
 	fs := LintCardHeader(typedCard(h...), nil, false)
 	drew(t, fs, "paths-declared")
@@ -170,6 +186,8 @@ func TestCardHeaderNoPathsLineDrawsPathsDeclared(t *testing.T) {
 // NEGATIVE CONTROL for paths-declared: globs with a literal segment and no climb, and
 // `PATHS: none`, which is what a read kind carries (SPEC-TOOLWORK §5 rule 2).
 func TestCardHeaderGoodPathsDrawNothing(t *testing.T) {
+	t.Parallel()
+
 	for _, good := range []string{
 		"PATHS: internal/swarm/lintheader.go",
 		"PATHS: cmd/nova-swarm/**",
@@ -199,6 +217,8 @@ func writeTrust(t *testing.T, body string) string {
 // in GATE's lane. Until it does, the state is read from a fixture in the shape rule 1's
 // listing prints, so the day the verb lands its own output is the fixture.
 func TestCardHeaderPausedKindDrawsPausedAndTheTrialRemedy(t *testing.T) {
+	t.Parallel()
+
 	p := writeTrust(t, strings.Join([]string{
 		"TRUST kind=fix-red area=- state=paused cards=3/10 pass=0.33 need=0.80 run_of_fails=3/3 since=2026-09-19T14:00:00Z by=rowan",
 		"TRUST kind=sweep area=- state=trial cards=0/10 pass=- need=0.80 run_of_fails=0/3 since=- by=-",
@@ -221,6 +241,8 @@ func TestCardHeaderPausedKindDrawsPausedAndTheTrialRemedy(t *testing.T) {
 
 // NEGATIVE CONTROL for paused: the same fixture, a kind that is on trial in it.
 func TestCardHeaderTrialKindDrawsNoPaused(t *testing.T) {
+	t.Parallel()
+
 	p := writeTrust(t, "TRUST kind=fix-red area=- state=trial cards=0/10 pass=- need=0.80 run_of_fails=0/3 since=- by=-\n")
 	trust, err := ReadTrustFixture(p)
 	if err != nil {
@@ -234,6 +256,8 @@ func TestCardHeaderTrialKindDrawsNoPaused(t *testing.T) {
 // NEGATIVE CONTROL for paused: with no fixture there is no state, and the lint says
 // nothing rather than guessing.
 func TestCardHeaderNoTrustFixtureDrawsNoPaused(t *testing.T) {
+	t.Parallel()
+
 	if fs := LintCardHeader(typedCard(fullHeader()...), nil, true); len(fs) != 0 {
 		t.Fatalf("no trust state is not a paused state, drew %v", fs)
 	}
@@ -245,6 +269,8 @@ func TestCardHeaderNoTrustFixtureDrawsNoPaused(t *testing.T) {
 // (cardheader.go:70-76), so a KIND: below the prose is not a declaration. A lint that
 // read it would pass a card the gate refuses.
 func TestCardHeaderStopsWhereTheParserStops(t *testing.T) {
+	t.Parallel()
+
 	raw := []byte(strings.Join([]string{
 		"RESULT: CARD-0000 do the thing",
 		"PATHS: internal/swarm/*.go",
@@ -260,6 +286,8 @@ func TestCardHeaderStopsWhereTheParserStops(t *testing.T) {
 // An unknown KEY: line does not end the block: the parser's switch ignores it and reads
 // on (cardheader.go:78-122), so MODE: between two header lines keeps both.
 func TestCardHeaderUnknownKeyDoesNotEndTheBlock(t *testing.T) {
+	t.Parallel()
+
 	h := append([]string{}, fullHeader()...)
 	h = append(h[:2], append([]string{"MODE: explore"}, h[2:]...)...)
 	if fs := LintCardHeader(typedCard(h...), nil, true); len(fs) != 0 {
@@ -271,6 +299,8 @@ func TestCardHeaderUnknownKeyDoesNotEndTheBlock(t *testing.T) {
 // the shape that predates §5, and it is checked by the twelve older rules only -- unless
 // the header is required, and then it draws all three of the missing-line tokens.
 func TestCardHeaderUntypedCardIsCheckedOnlyWhenRequired(t *testing.T) {
+	t.Parallel()
+
 	raw := typedCard()
 	if fs := LintCardHeader(raw, nil, false); len(fs) != 0 {
 		t.Fatalf("an untyped card is not header-checked unless asked, drew %v", fs)
@@ -285,6 +315,8 @@ func TestCardHeaderUntypedCardIsCheckedOnlyWhenRequired(t *testing.T) {
 
 // Every token this file draws carries a remedy, the way every older token does (#1464).
 func TestCardHeaderEveryTokenHasARemedy(t *testing.T) {
+	t.Parallel()
+
 	for _, tok := range CardHeaderChecks() {
 		if strings.TrimSpace(CardHeaderRemedies[tok]) == "" {
 			t.Errorf("%s carries no remedy line", tok)

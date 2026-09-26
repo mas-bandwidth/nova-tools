@@ -34,6 +34,8 @@ func findRoot(t *testing.T) string {
 // 1. TestSpecSwarmContractMatches verifies that docs/SPEC-SWARM.md matches
 // typedrec.Contract.Markdown() byte for byte between the typedrec markers.
 func TestSpecSwarmContractMatches(t *testing.T) {
+	t.Parallel()
+
 	root := findRoot(t)
 	specPath := filepath.Join(root, "docs", "SPEC-SWARM.md")
 	data, err := os.ReadFile(specPath)
@@ -61,6 +63,8 @@ func TestSpecSwarmContractMatches(t *testing.T) {
 
 // 2. TestRoundTripEachKind verifies that each kind's exemplar parses as valid.
 func TestRoundTripEachKind(t *testing.T) {
+	t.Parallel()
+
 	kinds := []string{"fix", "recut", "port", "docs-guard", "report", "read"}
 	for _, kind := range kinds {
 		t.Run(kind, func(t *testing.T) {
@@ -97,6 +101,8 @@ func TestRoundTripEachKind(t *testing.T) {
 
 // 3. TestLegacyAdapterPreservesMeaning tests the legacy adapter against 10 distinct legacy formats.
 func TestLegacyAdapterPreservesMeaning(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name       string
 		content    string
@@ -226,6 +232,8 @@ func makeDoc(kind, status, check string, fields map[string]string, evidence stri
 
 // 4. TestRefusalDefects tests one row per defect and kind-specific field.
 func TestRefusalDefects(t *testing.T) {
+	t.Parallel()
+
 	t.Run("missing required field", func(t *testing.T) {
 		reqFields := []string{"SCHEMA", "ATTEMPT", "CHECK", "REPO", "BRANCH", "PATHS", "RED", "GREEN"}
 		for _, f := range reqFields {
@@ -384,6 +392,8 @@ func findDefault(k string) string {
 
 // 5. TestEvidenceRows tests the 12 evidence-row cases defined in rev 3.
 func TestEvidenceRows(t *testing.T) {
+	t.Parallel()
+
 	fixFields := map[string]string{
 		"BRANCH": "nova/s1/c1-a1",
 		"PATHS":  "internal/pkg",
@@ -595,6 +605,8 @@ func TestEvidenceRows(t *testing.T) {
 // 6. TestFailedCheckDoneStaysUnverified verifies that a DONE result with CHECK: fail
 // is valid but requires no GREEN line and stays unverified.
 func TestFailedCheckDoneStaysUnverified(t *testing.T) {
+	t.Parallel()
+
 	fixEx := typedrec.Exemplar("fix")
 	// Replace CHECK: pass with CHECK: fail, remove GREEN: pass
 	doc := strings.Replace(fixEx, "CHECK: pass\n", "CHECK: fail\n", 1)
@@ -613,6 +625,8 @@ func TestFailedCheckDoneStaysUnverified(t *testing.T) {
 
 // 7. TestForgedProvenanceNotEffective verifies that forged card/machinery facts are rejected.
 func TestForgedProvenanceNotEffective(t *testing.T) {
+	t.Parallel()
+
 	fixEx := typedrec.Exemplar("fix")
 
 	// ParseResult options contradiction check
@@ -644,6 +658,8 @@ func TestForgedProvenanceNotEffective(t *testing.T) {
 
 // 8. TestResultWriteOnce verifies write-once semantics of ns_card_result.
 func TestResultWriteOnce(t *testing.T) {
+	t.Parallel()
+
 	addr := testutil.Start(t)
 	client := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = client.Close() })

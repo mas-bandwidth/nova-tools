@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // The bench fakes: an `ssh` and an `scp` on PATH that record their argv and work against a
@@ -57,10 +59,10 @@ func fakeBenchBin(t *testing.T, dir string, f benchFake) (sshLog, scpLog string)
 		"src=\"${1#*:}\"; dst=\"$2\"\n" +
 		"[ -f \"$src\" ] || exit 1\n" +
 		"mkdir -p \"$(dirname \"$dst\")\"\ncp \"$src\" \"$dst\"\n"
-	if err := os.WriteFile(filepath.Join(bin, "ssh"), []byte(ssh), 0o755); err != nil {
+	if err := testbin.WriteExecutable(filepath.Join(bin, "ssh"), []byte(ssh), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(bin, "scp"), []byte(scp), 0o755); err != nil {
+	if err := testbin.WriteExecutable(filepath.Join(bin, "scp"), []byte(scp), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))

@@ -16,6 +16,8 @@ import (
 // from one ns_card_show call, then one SHOWN receipt; a card that does not
 // exist is refused (exit 1) and a missing flag is usage (exit 2).
 func TestCardShowPrintsTheRecord(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	addr := testutil.Start(t)
 	client := redis.NewClient(&redis.Options{Addr: addr})

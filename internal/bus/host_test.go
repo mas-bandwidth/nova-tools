@@ -14,6 +14,8 @@ import (
 // is there, refused when it is not a host, and ABSENT in every byte when nobody asked.
 
 func TestSendWritesTheHostLineWhenHostIsGiven(t *testing.T) {
+	t.Parallel()
+
 	tab := loadBus(t, writeBus(t, nil))
 	p, err := PrepareWith(tab, "From: Ada\nTo: Bo\nSubject: the gate\n\nbody\n",
 		at("2026-09-09T12:34:56Z"), SendOptions{Host: "air"})
@@ -36,6 +38,8 @@ func TestSendWritesTheHostLineWhenHostIsGiven(t *testing.T) {
 }
 
 func TestADraftsOwnHostLineIsKept(t *testing.T) {
+	t.Parallel()
+
 	tab := loadBus(t, writeBus(t, nil))
 	p, err := Prepare(tab, "From: Ada\nHost: studio\nTo: Bo\nSubject: the gate\n\nbody\n",
 		at("2026-09-09T12:34:56Z"), "")
@@ -51,6 +55,8 @@ func TestADraftsOwnHostLineIsKept(t *testing.T) {
 }
 
 func TestHostFlagAgainstADifferentHostLineIsARefusal(t *testing.T) {
+	t.Parallel()
+
 	tab := loadBus(t, writeBus(t, nil))
 	_, err := PrepareWith(tab, "From: Ada\nHost: studio\nTo: Bo\nSubject: the gate\n\nbody\n",
 		at("2026-09-09T12:34:56Z"), SendOptions{Host: "air"})
@@ -68,6 +74,8 @@ func TestHostFlagAgainstADifferentHostLineIsARefusal(t *testing.T) {
 // supplies --host on every send from a bench, and a draft written there that names its own
 // host would otherwise be refused for agreeing.
 func TestHostFlagAgreeingWithTheHostLineIsSilent(t *testing.T) {
+	t.Parallel()
+
 	tab := loadBus(t, writeBus(t, nil))
 	p, err := PrepareWith(tab, "From: Ada\nHost: air\nTo: Bo\nSubject: the gate\n\nbody\n",
 		at("2026-09-09T12:34:56Z"), SendOptions{Host: "air"})
@@ -80,6 +88,8 @@ func TestHostFlagAgreeingWithTheHostLineIsSilent(t *testing.T) {
 }
 
 func TestAHostThatIsNotOneWordIsRefused(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name, host, want string
 	}{
@@ -110,6 +120,8 @@ func TestAHostThatIsNotOneWordIsRefused(t *testing.T) {
 // A note whose header carries a Host line the parser cannot accept is a FINDING on the
 // note, not a crash and not a silently-dropped field.
 func TestAnUnusableHostLineIsAHeaderProblem(t *testing.T) {
+	t.Parallel()
+
 	c, err := LoadConfig(writeBus(t, nil))
 	if err != nil {
 		t.Fatal(err)
@@ -134,6 +146,8 @@ func TestAnUnusableHostLineIsAHeaderProblem(t *testing.T) {
 // this field existed -- the host is not in the `nova-bus id v1` preimage, so every id on
 // every bus is still the id it was.
 func TestANoteWithNoHostIsUnchanged(t *testing.T) {
+	t.Parallel()
+
 	draft := "From: Ada\nTo: Bo\nSubject: the gate\n\nbody\n"
 	tab := loadBus(t, writeBus(t, nil))
 	plain, err := Prepare(tab, draft, at("2026-09-09T12:34:56Z"), "")
@@ -157,6 +171,8 @@ func TestANoteWithNoHostIsUnchanged(t *testing.T) {
 // carries it as a NINTH field that is written only when there is one -- so a bus whose
 // notes have no host has the eight-field file it has always had, and needs no migration.
 func TestTheOpenLineCarriesTheHostOnlyWhenThereIsOne(t *testing.T) {
+	t.Parallel()
+
 	plain := OpenEntry{ID: "ada-3f9a1c2b8d40", Kind: OpenNote, From: "Ada", Addr: "to", Date: "2026-09-09T12:34:56Z", Path: "from-ada/x.md", Subject: "s"}
 	if got := strings.Count(OpenLine(plain), "\t"); got != openFieldsV2-1 {
 		t.Fatalf("an entry with no host writes %d tabs, want %d: %q", got, openFieldsV2-1, OpenLine(plain))
@@ -173,6 +189,8 @@ func TestTheOpenLineCarriesTheHostOnlyWhenThereIsOne(t *testing.T) {
 }
 
 func TestTheOpenListReadsBothWidths(t *testing.T) {
+	t.Parallel()
+
 	hosted := OpenEntry{ID: "ada-3f9a1c2b8d40", Kind: OpenNote, From: "Ada", Addr: "to", Date: "2026-09-09T12:34:56Z", Path: "from-ada/x.md", Subject: "s", Host: "air"}
 	plain := hosted
 	plain.Host = ""
@@ -198,6 +216,8 @@ func TestTheOpenListReadsBothWidths(t *testing.T) {
 // A row of any OTHER width is still the refusal it was, and it still names both widths so
 // a reader knows which one they have.
 func TestAnOpenRowOfTheWrongWidthIsStillRefused(t *testing.T) {
+	t.Parallel()
+
 	root := writeBus(t, nil)
 	write(t, root, OpenPath("from-ada"), OpenHeader+"\nada-3f9a1c2b8d40\tnote\t-\tAda\n")
 	_, err := ReadOpen(root, "from-ada")
@@ -214,6 +234,8 @@ func TestAnOpenRowOfTheWrongWidthIsStillRefused(t *testing.T) {
 // A reply posts from a machine too, and a reply with no host writes the reply this tool
 // has always written.
 func TestAReplyCarriesTheHostItIsGiven(t *testing.T) {
+	t.Parallel()
+
 	root := writeBus(t, map[string]string{
 		"from-bo/note.md": "From: Bo\nTo: Ada\nDate: Wed Sep  9 12:00:00 UTC 2026\nId: bo-abcdef012345\nSubject: the gate\n\nA question.\n",
 	})

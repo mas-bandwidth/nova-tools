@@ -16,6 +16,8 @@ const wallAutoRejectLine = "! permission requested: external_directory (/jobs/sc
 // wall, its path and the last STEP it reached. RED WITHOUT THE CLASS: the gather read the
 // absence of a result and scored `no-result`, blaming the model for a wall the machinery shut.
 func TestAWallDeathIsNamedEndWall(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	tsv := writeCards(t, dir, [][2]string{{"a", "RESULT: a\nMISSING"}})
@@ -48,6 +50,8 @@ func TestAWallDeathIsNamedEndWall(t *testing.T) {
 // wall that was worked around is not the card's end. RED WITHOUT THE ORDERING: the rejection
 // line alone scored the card an abstain over a report it had already published.
 func TestAWallSurvivedIsDone(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	tsv := writeCards(t, dir, [][2]string{{"a", "RESULT: a\nall green"}})

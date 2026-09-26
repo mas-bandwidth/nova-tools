@@ -67,6 +67,8 @@ func assertJohnnyRow(t *testing.T, rows []Row) {
 // with no beat is not given a presence from a width key, a last-seen stamp,
 // or the fact of being named.
 func TestABeatAndAWidthAreOneRowAndAMissingBeatIsNotAPresence(t *testing.T) {
+	t.Parallel()
+
 	beat, err := BeatKey("Johnny")
 	if err != nil || beat != "friend:johnny" {
 		t.Fatalf("BeatKey(Johnny) = %q, %v; want friend:johnny", beat, err)
@@ -87,6 +89,8 @@ func TestABeatAndAWidthAreOneRowAndAMissingBeatIsNotAPresence(t *testing.T) {
 // implementation: the same keys through MGET are the same one row, and
 // emma's counts without a beat are still not a presence.
 func TestTheRedisReadIsTheSameRow(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
@@ -109,6 +113,8 @@ func TestTheRedisReadIsTheSameRow(t *testing.T) {
 // up. A friend whose beat is missing stays down, even with the three
 // counts left behind.
 func TestReadOverMiniredisHoldingTheFourKeysReturnsQueueWorkingDoneAndUp(t *testing.T) {
+	t.Parallel()
+
 	queue, err := QueueKey("Johnny")
 	if err != nil || queue != "friend:johnny:queue" {
 		t.Fatalf("QueueKey(Johnny) = %q, %v; want friend:johnny:queue", queue, err)
@@ -150,6 +156,8 @@ func TestReadOverMiniredisHoldingTheFourKeysReturnsQueueWorkingDoneAndUp(t *test
 // row even though the text a caller shows is empty. A missing beat beside
 // leftover counts is still not a presence. The four keys are the same read.
 func TestAWhitespaceBeatIsStillAPresence(t *testing.T) {
+	t.Parallel()
+
 	rows, err := Read(context.Background(), mapStore{
 		"friend:stella":       " \t\n",
 		"friend:stella:width": "2",
@@ -171,6 +179,8 @@ func TestAWhitespaceBeatIsStillAPresence(t *testing.T) {
 // TestABeatWithNoWidthIsStillOneRow: presence is the beat. A missing width
 // is not zero children, and it does not drop the friend.
 func TestABeatWithNoWidthIsStillOneRow(t *testing.T) {
+	t.Parallel()
+
 	rows, err := Read(context.Background(), mapStore{
 		"friend:stella":       beatStamp,
 		"friend:stella:width": "many",
@@ -194,6 +204,8 @@ func TestABeatWithNoWidthIsStillOneRow(t *testing.T) {
 // TestWidthZeroIsACount: zero children is a width the beat wrote, not a
 // missing key.
 func TestWidthZeroIsACount(t *testing.T) {
+	t.Parallel()
+
 	rows, err := Read(context.Background(), mapStore{
 		"friend:stella":       beatStamp,
 		"friend:stella:width": "0",
@@ -212,6 +224,8 @@ func TestWidthZeroIsACount(t *testing.T) {
 // TestNothingDeclaredReadsNothing: an empty declaration does not scan the
 // store and does not turn whatever keys are there into friends.
 func TestNothingDeclaredReadsNothing(t *testing.T) {
+	t.Parallel()
+
 	rows, err := Read(context.Background(), errStore{err: errors.New("should not be called")}, nil)
 	if err != nil {
 		t.Fatalf("empty declaration: %v", err)
@@ -224,6 +238,8 @@ func TestNothingDeclaredReadsNothing(t *testing.T) {
 // TestAStoreErrorIsNotAnEmptyRoom: a failed read is the error. It is not a
 // table of friends who happen to be away.
 func TestAStoreErrorIsNotAnEmptyRoom(t *testing.T) {
+	t.Parallel()
+
 	rows, err := Read(context.Background(), errStore{err: errors.New("store down")}, []string{"johnny"})
 	if err == nil {
 		t.Fatal("a store error was dropped")
@@ -234,6 +250,8 @@ func TestAStoreErrorIsNotAnEmptyRoom(t *testing.T) {
 }
 
 func TestADeclaredNameThatIsNotANameIsRefused(t *testing.T) {
+	t.Parallel()
+
 	for _, name := range []string{"", " ", "emma stone", "friend:emma", "emma:width"} {
 		if _, err := Read(context.Background(), beatFixture(), []string{name}); err == nil {
 			t.Fatalf("name %q was accepted as a friend", name)
@@ -242,6 +260,8 @@ func TestADeclaredNameThatIsNotANameIsRefused(t *testing.T) {
 }
 
 func TestAMissingRedisClientIsNotAPresence(t *testing.T) {
+	t.Parallel()
+
 	rows, err := Read(context.Background(), NewRedis(nil), []string{"johnny"})
 	if err == nil {
 		t.Fatal("a missing client invented a read")

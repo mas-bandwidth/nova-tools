@@ -26,6 +26,8 @@ import (
 // ZCOUNT, HGET, EXISTS on small registries), microseconds each. The measured
 // time is logged.
 func TestWideTableRendersTheFleet(t *testing.T) {
+	t.Parallel()
+
 	addr := startThrowawayRedis(t)
 	loadTableFunction(t, addr)
 	client := redis.NewClient(&redis.Options{Addr: addr})
@@ -130,6 +132,8 @@ func checkFleetRows(t *testing.T, stdout string, cards int) {
 // any bound the one refusal line names bound=<name> value=<n> limit=<n>
 // remedy=<flag>, and the command exits 1.
 func TestWideTableRefusalNamesTheBound(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		bound string
 		limit int

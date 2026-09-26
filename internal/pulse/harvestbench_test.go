@@ -318,6 +318,8 @@ func TestHarvestBenchOpensThePRAgainstTheCardsBase(t *testing.T) {
 // ` (<label>, <bench>)`, so the title lost a word and ran past the cap. The title is cut at
 // a word boundary and the suffix is kept.
 func TestHarvestPRTitleCutsAtAWordBoundaryAndKeepsTheSuffix(t *testing.T) {
+	t.Parallel()
+
 	long := "RESULT: card-9601 the fixed table reader refuses a row whose declared width disagrees with the body it carries, red first"
 	head := strings.TrimPrefix(long, "RESULT: ")
 	got := prTitle(long, "card-9601", "hulk")

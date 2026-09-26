@@ -36,6 +36,8 @@ func scrape(t *testing.T, s *Set) string {
 // level: the registered promhttp handler serves queue depth, leases held and
 // provider latency, labelled by component, in the Prometheus text format.
 func TestScrapeExportsTheThreeFamilies(t *testing.T) {
+	t.Parallel()
+
 	s := New()
 	s.QueueDepth(Fill, 7)
 	s.LeasesHeld(Dealer, 3)
@@ -57,6 +59,8 @@ func TestScrapeExportsTheThreeFamilies(t *testing.T) {
 // TestNilSetIsANoOp: a verb run without metrics (every existing test) records
 // nothing and does not panic.
 func TestNilSetIsANoOp(t *testing.T) {
+	t.Parallel()
+
 	var s *Set
 	s.QueueDepth(Fill, 1)
 	s.LeasesHeld(Fill, 1)
@@ -66,6 +70,8 @@ func TestNilSetIsANoOp(t *testing.T) {
 // TestSetsAreIndependent: two sets never share a registry, so a test's scrape
 // sees only what its own run exported.
 func TestSetsAreIndependent(t *testing.T) {
+	t.Parallel()
+
 	a, b := New(), New()
 	a.QueueDepth(Fill, 9)
 	if body := scrape(t, b); strings.Contains(body, `nova_queue_depth{component="fill"} 9`) {

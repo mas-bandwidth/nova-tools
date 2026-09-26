@@ -23,6 +23,8 @@ func cardUsageFileRepo(t *testing.T, path, model, repo, rc, started, in, out, us
 // receipt whose rc is `-` counts in cards and dashes and never in completed. The header is
 // the ten columns in order.
 func TestSumSwarmRootCarriesCostPerCompletedTask(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := mkdir(t, filepath.Join(dir, "root"))
 	ledger := filepath.Join(dir, "ledger.tsv")
@@ -56,6 +58,8 @@ func TestSumSwarmRootCarriesCostPerCompletedTask(t *testing.T) {
 // TestSumSwarmRefusesALedgerNotInTheTenColumnOrder pins the one refusal the shape adds: a
 // ledger whose header is the old eight columns is refused (exit 2) naming the ten.
 func TestSumSwarmRefusesALedgerNotInTheTenColumnOrder(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := mkdir(t, filepath.Join(dir, "root"))
 	ledger := write(t, filepath.Join(dir, "ledger.tsv"),

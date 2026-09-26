@@ -13,6 +13,8 @@ import (
 // refused it before; a store that blinks after a good beat is still beaten
 // through (TestTheLoopKeepsBeatingThroughAStoreThatBlinked).
 func TestFirstBeatIsTheProbe3277(t *testing.T) {
+	t.Parallel()
+
 	st := presence.NewFakeStore(beatAt)
 	st.Hook = func(call int) error { return errStoreDown }
 	var errb bytes.Buffer

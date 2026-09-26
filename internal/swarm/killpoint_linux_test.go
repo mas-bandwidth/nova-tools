@@ -31,6 +31,8 @@ func findRepoRoot() (string, error) {
 }
 
 func TestPausePointThreadDirected(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	markPath := filepath.Join(dir, "mark.txt")
 	afterPath := filepath.Join(dir, "after.txt")

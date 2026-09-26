@@ -9,6 +9,8 @@ import (
 )
 
 func TestIssue2331(t *testing.T) {
+	t.Parallel()
+
 	t.Run("session-start-refuses-held-journal", func(t *testing.T) {
 		dir := t.TempDir()
 		journal := filepath.Join(dir, "test.journal")

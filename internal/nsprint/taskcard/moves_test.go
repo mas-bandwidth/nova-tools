@@ -121,6 +121,8 @@ func mustConsumer(t *testing.T, s string) taskcard.Consumer {
 // (one copy: a friend with the reader role) and to the swarm (four copies,
 // #4094).
 func TestTableMoves(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct{ consumer, reader string }{
 		{"bench:b", "friend:reader"},
 		{"friend:f", "bench:reader"},
@@ -356,6 +358,8 @@ func tableMoves(t *testing.T, consumer, reader string) {
 // primary, cuts no copy and touches no consumer set; card end of the copy
 // is what moves it.
 func TestCIVerdictNeverMovesAPrimary(t *testing.T) {
+	t.Parallel()
+
 	c := start(t)
 	ctx := context.Background()
 	k, rd := mustConsumer(t, "bench:b"), mustConsumer(t, "friend:reader")
@@ -419,6 +423,8 @@ func TestCIVerdictNeverMovesAPrimary(t *testing.T) {
 // names the author only once the end writes it); the ws:log move names the
 // PR and head.
 func TestEndOKCutsNoReadForItsAuthor(t *testing.T) {
+	t.Parallel()
+
 	c := start(t)
 	ctx := context.Background()
 	k := mustConsumer(t, "friend:f")
@@ -505,6 +511,8 @@ func countCalls(c *redis.Client) int {
 // TestCardEndDoneAlreadyLands: an ABSTAIN done-already <sha> moves the
 // primary working -> landed at that sha in the copy's end.
 func TestCardEndDoneAlreadyLands(t *testing.T) {
+	t.Parallel()
+
 	c := start(t)
 	ctx := context.Background()
 	k := mustConsumer(t, "friend:f")
@@ -529,6 +537,8 @@ func TestCardEndDoneAlreadyLands(t *testing.T) {
 
 // TestCardMovesRefuseOffGraph: the primary moves only through its copy.
 func TestCardMovesRefuseOffGraph(t *testing.T) {
+	t.Parallel()
+
 	c := start(t)
 	ctx := context.Background()
 	k := mustConsumer(t, "bench:b")
@@ -579,6 +589,8 @@ func TestCardMovesRefuseOffGraph(t *testing.T) {
 // returns the copy as a fail, counts an attempt and moves its primary to
 // review (#4072).
 func TestCardCancelAndExpire(t *testing.T) {
+	t.Parallel()
+
 	c := start(t)
 	ctx := context.Background()
 	k := mustConsumer(t, "friend:f")
@@ -622,6 +634,8 @@ func TestCardCancelAndExpire(t *testing.T) {
 // TestCardFsckFindsBrokenLinksBothWays injects drift by hand in both
 // directions and proves fsck names it and --repair clears it.
 func TestCardFsckFindsBrokenLinksBothWays(t *testing.T) {
+	t.Parallel()
+
 	c := start(t)
 	ctx := context.Background()
 	k := mustConsumer(t, "bench:b")
@@ -661,6 +675,8 @@ func TestCardFsckFindsBrokenLinksBothWays(t *testing.T) {
 // lease, is FENCED; an ok with a PR needs the PR record at --head on the
 // card's base.
 func TestCardEndIsIdempotentFencedAndChecksThePR(t *testing.T) {
+	t.Parallel()
+
 	c := start(t)
 	ctx := context.Background()
 	k := mustConsumer(t, "bench:b")
@@ -718,6 +734,8 @@ func TestCardEndIsIdempotentFencedAndChecksThePR(t *testing.T) {
 // ONE call gives the live copy back (fenced: its holder's end is refused,
 // its slot is free) and cuts the new copy on the other consumer.
 func TestControl17AssignLiveRefusesWithoutRevoke(t *testing.T) {
+	t.Parallel()
+
 	c := start(t)
 	ctx := context.Background()
 	a, b := mustConsumer(t, "friend:f"), mustConsumer(t, "bench:b")

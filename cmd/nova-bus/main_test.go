@@ -770,6 +770,8 @@ func TestReceiptMaxWordsDefaultsFromBusFileThenEnv(t *testing.T) {
 // that are not this note", so every fresh bus clone locked: inbox demands the file, send
 // then refuses the checkout that holds it.
 func TestSendIgnoresDotNovaBusPerCloneState(t *testing.T) {
+	t.Parallel()
+
 	hermetic(t)
 	checkout, _ := busDir(t)
 	writeFile(t, checkout, ".nova-bus/defaults", "receipt-max-words=40\n")

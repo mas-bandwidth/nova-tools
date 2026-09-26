@@ -75,6 +75,8 @@ func testWait(t *testing.T) time.Duration {
 // issue lists, each under the spec's own name, so the one command the card
 // gates on exercises every behaviour.
 func TestIssue2196(t *testing.T) {
+	t.Parallel()
+
 	t.Run("APausedOldWorkerCannotWriteAfterItsLeaseLapsed", testAPausedOldWorkerCannotWriteAfterItsLeaseLapsed)
 	t.Run("AModeRestartRefusesToStartUntilTheOldModesCardsAreDrained", testAModeRestartRefusesToStartUntilTheOldModesCardsAreDrained)
 	t.Run("ACapReservationOverProviderModelAndKeyIsOneAtomicScript", testACapReservationOverProviderModelAndKeyIsOneAtomicScript)

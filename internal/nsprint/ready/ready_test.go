@@ -24,6 +24,8 @@ func (m mapForge) Ref(_ context.Context, repo string, n int) (deal.Ref, error) {
 // ready one waits on it; an unset PATHS is the whole repo; other repos are
 // disjoint).
 func TestEvaluateFailsClosed(t *testing.T) {
+	t.Parallel()
+
 	const R = "o/r"
 	item := func(id string, deps, paths []string, kv ...string) Item {
 		it := Item{Sprint: "S", ID: id, Kind: KindCard, DependsOn: deps, Paths: paths, Repo: R, Base: "dev"}
@@ -80,6 +82,8 @@ func TestEvaluateFailsClosed(t *testing.T) {
 }
 
 func TestFindRefusesAnAmbiguousBareID(t *testing.T) {
+	t.Parallel()
+
 	vs := []Verdict{{Item: Item{Sprint: "a", ID: "x"}}, {Item: Item{Sprint: "b", ID: "x"}}}
 	if _, _, err := Find(vs, "x"); err == nil {
 		t.Fatal("bare id in two sprints: want an error naming both")
