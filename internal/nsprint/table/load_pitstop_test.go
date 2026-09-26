@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/table"
 )
@@ -95,5 +96,46 @@ func TestLoadPrefersTheBeatsCPUPercent(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("load cell: want %q in:\n%s", want, got)
 		}
+	}
+}
+
+// TestLoadCellHoldsTheTenSecondHigh (Glenn 2026-09-26 10:52 AM ET: "The CPU
+// load updating every 1 sec is giving me anxiety ... a 10 second sliding
+// window, and showing the highest value seen over the past 10 seconds"):
+// three ticks with cpu 50, 20, 10 inside ten seconds print 50.0%; once the
+// 50 is older than the window the cell falls to the highest that remains.
+func TestLoadCellHoldsTheTenSecondHigh(t *testing.T) {
+	t.Parallel()
+	now := table.SprintFixtureNow()
+	client, _ := consumerStore(t, [][]string{{"SADD", "benches", "eta"}})
+	ctx := context.Background()
+	r := table.NewSprintReader(client, table.SprintConfig{})
+	cell := func(at time.Time, cpu string) string {
+		if err := client.HSet(ctx, "bench:eta:beat", "cpu", cpu, "at", strconv.FormatInt(at.UnixMilli(), 10)).Err(); err != nil {
+			t.Fatal(err)
+		}
+		snap, err := r.Read(ctx, at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range snap.Consumers {
+			if c.Name == "eta" {
+				return c.Load
+			}
+		}
+		t.Fatal("no eta row")
+		return ""
+	}
+	if got := cell(now, "50.0"); got != "50.0%" {
+		t.Fatalf("first tick = %q", got)
+	}
+	if got := cell(now.Add(3*time.Second), "20.0"); got != "50.0%" {
+		t.Fatalf("second tick = %q, want the ten-second high 50.0%%", got)
+	}
+	if got := cell(now.Add(6*time.Second), "10.0"); got != "50.0%" {
+		t.Fatalf("third tick = %q, want 50.0%%", got)
+	}
+	if got := cell(now.Add(11*time.Second), "5.0"); got != "20.0%" {
+		t.Fatalf("after the window = %q, want 20.0%% (the 50 aged out)", got)
 	}
 }

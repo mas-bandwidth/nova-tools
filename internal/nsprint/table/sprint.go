@@ -158,16 +158,39 @@ func okPct(ok, done int64) string {
 // (the Studio; hardcoded, see readOnce).
 const FriendHostBeatKey = "bench:studio:beat"
 
-// loadCell is the load cell: the beat's cpu (CPU busy percent over the beat
-// interval, what Activity Monitor and top print; Glenn 2026-09-26 9:35 AM ET:
-// "You are not yet normalizing by cores", beside an Activity Monitor at 50%
-// while the table said 154%: a load average counts waiting threads) when the
-// beat has one, else loadPercent.
-func loadCell(cpu, load1, ncpu string) string {
+// loadValue is the row's load as a percent of every core: the beat's cpu
+// (CPU busy percent over the beat interval, what Activity Monitor and top
+// print; Glenn 2026-09-26 9:35 AM ET: "You are not yet normalizing by
+// cores", beside an Activity Monitor at 50% while the table said 154%: a
+// load average counts waiting threads) when the beat has one, else load1
+// over ncpu. ok is false when the beat carries neither; raw is the plain
+// load1 for a beat with no ncpu.
+func loadValue(cpu, load1, ncpu string) (v float64, raw string, ok bool) {
 	if v, err := strconv.ParseFloat(strings.TrimSpace(cpu), 64); err == nil && v >= 0 {
-		return fmt.Sprintf("%.1f%%", v)
+		return v, "", true
 	}
-	return loadPercent(load1, ncpu)
+	load := sanitize(load1)
+	if load == "" {
+		return 0, "", false
+	}
+	l, err := strconv.ParseFloat(load, 64)
+	n, err2 := strconv.ParseFloat(strings.TrimSpace(ncpu), 64)
+	if err != nil || err2 != nil || n <= 0 {
+		return 0, load, true
+	}
+	return l / n * 100, "", true
+}
+
+// loadCell is loadValue printed for one tick, one decimal.
+func loadCell(cpu, load1, ncpu string) string {
+	v, raw, ok := loadValue(cpu, load1, ncpu)
+	if !ok {
+		return ""
+	}
+	if raw != "" {
+		return raw
+	}
+	return fmt.Sprintf("%.1f%%", v)
 }
 
 // loadPercent is the load cell: the beat's load1 over its ncpu as a percent
@@ -203,6 +226,43 @@ type SprintReader struct {
 	sprints    []string
 	openSprint string
 	primed     bool
+	// loads is each row's load samples of the last LoadWindow, newest last:
+	// the cell prints the highest of them (Glenn 2026-09-26 10:52 AM ET: "The
+	// CPU load updating every 1 sec is giving me anxiety. The way I usually
+	// solve this is by having a 10 second sliding window, and showing the
+	// highest value seen over the past 10 seconds").
+	loads map[string][]loadSample
+}
+
+// LoadWindow is how long a load sample stays in a row's sliding window.
+const LoadWindow = 10 * time.Second
+
+type loadSample struct {
+	at time.Time
+	v  float64
+}
+
+// loadMax records v for row id at now and returns the highest sample of the
+// last LoadWindow.
+func (r *SprintReader) loadMax(id string, now time.Time, v float64) float64 {
+	if r.loads == nil {
+		r.loads = map[string][]loadSample{}
+	}
+	kept := r.loads[id][:0]
+	for _, s := range r.loads[id] {
+		if now.Sub(s.at) < LoadWindow {
+			kept = append(kept, s)
+		}
+	}
+	kept = append(kept, loadSample{at: now, v: v})
+	r.loads[id] = kept
+	max := v
+	for _, s := range kept {
+		if s.v > max {
+			max = s.v
+		}
+	}
+	return max
 }
 
 // NewSprintReader is a reader with no membership yet: its first Read takes
@@ -392,15 +452,18 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 			*cells[j], row.Unread[j] = n, err != nil
 		}
 		if got, err := cmds[i].beat.Result(); err == nil && len(got) == 4 {
-			if load := loadCell(pipeValue(got[3]), pipeValue(got[0]), pipeValue(got[2])); load != "" {
-				row.Load = load
-			}
-			if c.Kind == "friend" && row.Load == "-" {
+			v, raw, ok := loadValue(pipeValue(got[3]), pipeValue(got[0]), pipeValue(got[2]))
+			if !ok && c.Kind == "friend" {
 				if got, err := studio.Result(); err == nil && len(got) == 3 {
-					if load := loadCell(pipeValue(got[2]), pipeValue(got[0]), pipeValue(got[1])); load != "" {
-						row.Load = load
-					}
+					v, raw, ok = loadValue(pipeValue(got[2]), pipeValue(got[0]), pipeValue(got[1]))
 				}
+			}
+			switch {
+			case ok && raw != "":
+				row.Load = raw
+			case ok:
+				// the highest of the last LoadWindow, so the cell holds still
+				row.Load = fmt.Sprintf("%.1f%%", r.loadMax(c.ID(), now, v))
 			}
 			if atMS, err := strconv.ParseInt(pipeValue(got[1]), 10, 64); err == nil && now.UnixMilli()-atMS <= hostBeatStale.Milliseconds() {
 				row.Up = true
