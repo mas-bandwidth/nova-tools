@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
@@ -29,6 +30,8 @@ type CopyCard struct {
 	// Review is the REVIEW line of the verdict that moved the primary out
 	// of review (#4072), carried to its next copy; "" when it never failed.
 	Review string
+	// Body is the issue text the primary carries (TM.CARRY takes it to the copy).
+	Body string
 }
 
 // CopyCardFrom reads a copy's record (HGETALL task:<copy>) as a CopyCard.
@@ -36,7 +39,7 @@ func CopyCardFrom(id string, rec map[string]string) CopyCard {
 	return CopyCard{ID: id, Primary: rec["primary"], Leg: rec["leg"], Kind: rec["kind"], Repo: rec["repo"],
 		PR: rec["pr"], Head: rec["head"], Base: rec["base"], BaseSHA: rec["base_sha"], Paths: rec["paths"],
 		DoneWhen: rec["done_when"], Title: rec["title"], Origin: rec["origin"], Stream: rec["stream"],
-		Finding: rec["finding"], Route: rec["route"], Consumer: rec["consumer"], Review: rec["review"]}
+		Finding: rec["finding"], Route: rec["route"], Consumer: rec["consumer"], Review: rec["review"], Body: rec["body"]}
 }
 
 var labelBad = regexp.MustCompile(`[^A-Za-z0-9._-]`)
@@ -112,10 +115,24 @@ func RenderCopy(c CopyCard) ([]byte, error) {
 			"Push the fix to the PR's branch, then end with exactly one call:\n  %s --ok --pr %s --head <the new head sha>\n"+
 			"or:\n  %s --fail '<why>'\n", prRef, c.Head, oneLine(c.Finding), end, full+"#"+c.PR, end)
 	default:
-		body = fmt.Sprintf("%s\n"+
-			"End with exactly one call:\n  %s --ok --pr <owner/name>#<n> --head <sha>   (a PR is open)\n"+
-			"  %s --ok --done-already <sha>              (the work is already on the base)\n"+
-			"  %s --fail '<why>'\n", oneLine(c.Title), end, end, end)
+		// The work copy's card is the primary's harness card (#3911): the
+		// standard lines, the commit contract and the issue text quoted; the
+		// wrapper ends the copy from the commit (#4227), so the model is not
+		// told to run card end, which a sandboxed swarm model cannot.
+		n, _ := CopyNumber(c.ID)
+		branch := WrapperBranch(CopySprint, CopyCardLabel(c.ID), n)
+		var sb strings.Builder
+		sb.WriteString("NO-SUBAGENTS: " + taskcard.LineNoSubagents + "\n")
+		sb.WriteString("WALL: " + taskcard.LineWall + "\n")
+		sb.WriteString("TESTS: " + taskcard.LineTests + "\n")
+		sb.WriteString("UNATTENDED: " + taskcard.LineUnattended + "\n")
+		sb.WriteString("OUTPUT: " + taskcard.LineOutput + "\n")
+		fmt.Fprintf(&sb, "COMMIT: make your change in repo/ on a new branch %s (git checkout -b %s) and commit it there with the DONE-WHEN summary as the first line; never push and never open a PR; the wrapper pushes the branch and opens the PR from your commit; an uncommitted change counts as NO-COMMIT and the card fails.\n", branch, branch)
+		sb.WriteString("RESULT-FORMAT: RESULT.md in the job dir, outside repo/: line 1 is line 1 of this card verbatim; line 2 is DONE, ABSTAIN <why> or BLOCKED <why>.\n")
+		fmt.Fprintf(&sb, "DO: the work is the issue text quoted below (%s): change only PATHS, make DONE-WHEN hold, commit, write RESULT.md per RESULT-FORMAT, and exit; do not read other files, do not explore.\n", oneLine(c.Origin))
+		sb.WriteString("\n---\n")
+		sb.WriteString(taskcard.Quote(strings.TrimSpace(c.Body)))
+		body = sb.String()
 	}
 	route := c.Route
 	if route != RoutePro {
