@@ -414,16 +414,18 @@ const ownershipDiagCap = 200
 // the colon is short and has no newline: cwd unreadable, lsof failed, a permission
 // error collapsed onto one line.
 //
-// The scan is the calling account's git processes only: on darwin the ps rows whose
-// effective uid is ours, on linux the /proc/<pid> entries we own. Another account's git
-// is neither an owner nor an unknown. Its cwd cannot be read from this account (lsof
-// omits it, /proc/<pid>/cwd answers EACCES), so counting it made every wait on a shared
-// bench refuse whenever any other account ran git (CI run 36268521205: the runner
-// account `nova` refused on the coordinator's gits). A checkout owned by another
-// account's git is therefore out of this scan's sight. That is acceptable because the
-// lock this scan guards is removed only from a checkout this account can write, a git
-// of this account that is working in it is still seen, and a same-account git whose
-// cwd cannot be read still makes the scan unknown and keeps the lock.
+// Which account a git belongs to changes one answer only. Every git, of any account, is
+// placed by its readable cwd or by a command line that names an absolute work tree or
+// git dir (-C, --git-dir, --work-tree); one placed at this checkout is an owner and the
+// lock stays. A git of this account that nothing places makes the scan unknown, with
+// this sentence. A git of another account that nothing places is skipped: this account
+// cannot read its cwd (lsof omits it, /proc/<pid>/cwd answers EACCES), so it cannot be
+// told from any other process on the host, and counting it made every wait on a shared
+// bench refuse whenever another account ran git (CI run 36268521205: the runner account
+// `nova` refused on the coordinator's gits). A git of another account working in this
+// checkout with no absolute location on its command line is therefore out of this
+// scan's sight. The account is the effective uid (os.Geteuid, ps uid, the owner of
+// /proc/<pid>) because lsof and /proc permissions follow it.
 const ownershipUnknown = "cannot tell whether a git process owns this checkout"
 
 func ownershipUnknownErr(why string) error {
@@ -482,10 +484,86 @@ type procView struct {
 	cwdErr  error
 	cwd     string
 	dead    bool
-	// owner is the process's effective uid when ownerKnown. A process owned by another
-	// account is outside the scan (see ownershipUnknown).
+	// owner is the process's effective uid when ownerKnown. A process of another account
+	// that cannot be placed is skipped rather than unknown (see ownershipUnknown).
 	owner      uint32
 	ownerKnown bool
+}
+
+// procReader is how readProcView sees one /proc entry: owner is the entry's owner uid
+// (ok false when the stat has no uid), readFile and readlink are os.ReadFile and
+// os.Readlink on linux. A test drives it with a fake on every OS.
+type procReader struct {
+	owner    func(pid string) (uid uint32, ok bool, err error)
+	readFile func(name string) ([]byte, error)
+	readlink func(name string) (string, error)
+}
+
+// readProcView reads one pid. The owner of /proc/<pid> is the process's effective uid,
+// recorded for classifyViews; the process is read the same way whoever owns it, so a
+// command line of another account that names this checkout is still seen. An owner stat
+// that fails because the pid is gone is the vanished case; any other failure leaves the
+// owner unknown, and the process is then judged as this account's.
+func readProcView(pid string, r procReader) procView {
+	var v procView
+	uid, ok, err := r.owner(pid)
+	if err != nil {
+		if procGone(err) {
+			v.commErr = err
+			return v
+		}
+	} else if ok {
+		v.owner, v.ownerKnown = uid, true
+	}
+	comm, err := r.readFile("/proc/" + pid + "/comm")
+	if err != nil {
+		v.commErr = err
+		return v
+	}
+	v.comm = string(comm)
+	name := strings.TrimSpace(v.comm)
+	if name != "git" && name != "git.exe" {
+		return v
+	}
+	raw, err := r.readFile("/proc/" + pid + "/cmdline")
+	if err != nil {
+		v.cmdErr = err
+		return v
+	}
+	v.cmdline = raw
+	// An empty cmdline is how a zombie git looks. State Z or X is dead, and a
+	// pid that vanished while we were reading it is dead too. A live process
+	// with an empty cmdline is not: that stays unclassified unless its cwd places it.
+	if len(splitNUL(raw)) == 0 {
+		dead, derr := procDead(pid, r)
+		if procGone(derr) {
+			v.dead = true
+		} else if derr == nil {
+			v.dead = dead
+		}
+	}
+	cwd, err := r.readlink("/proc/" + pid + "/cwd")
+	if err != nil {
+		v.cwdErr = err
+		return v
+	}
+	v.cwd = cwd
+	return v
+}
+
+// procDead reports whether pid is a zombie or already dead. ENOENT or ESRCH (procGone)
+// means the pid vanished, which the caller treats as dead. Any other error means the
+// state could not be read; the caller must not invent "dead" from that.
+func procDead(pid string, r procReader) (bool, error) {
+	raw, err := r.readFile("/proc/" + pid + "/stat")
+	if err != nil {
+		return false, err
+	}
+	dead, ok := procStatDead(string(raw))
+	if !ok {
+		return false, fmt.Errorf("stat")
+	}
+	return dead, nil
 }
 
 // procStatDead reads the state character out of /proc/pid/stat. Z and X are not
@@ -570,17 +648,17 @@ func gitProcFromView(v procView) (gitProc, bool, error) {
 // classifyViews finishes the scan. A process that cannot be classified is remembered
 // and the rest are still classified, so a known owner later in the list is not dropped
 // on the floor because an earlier cmdline was empty.
-// A view whose known owner is not self is another account's process and is skipped
-// before anything else of it is judged.
+// A view is placed the same way whichever account owns it; a view of another account
+// (known owner not self) that cannot be placed is skipped, not unknown.
 func classifyViews(views []procView, self uint32) ([]gitProc, error) {
 	var procs []gitProc
 	var unknown error
 	for _, v := range views {
-		if v.ownerKnown && v.owner != self {
-			continue
-		}
 		p, skip, err := gitProcFromView(v)
 		if err != nil {
+			if v.ownerKnown && v.owner != self {
+				continue
+			}
 			if unknown == nil {
 				unknown = err
 			}

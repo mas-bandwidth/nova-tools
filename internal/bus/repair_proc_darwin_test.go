@@ -194,3 +194,24 @@ func TestStaleLockClearsBesideAnotherAccountsGit(t *testing.T) {
 	})
 	assertLockKept(t, oursLock, cleared, err)
 }
+
+// The ps path of TestForeignGitDirKeepsItsLock: a git of another account whose command
+// names this checkout's git dir absolutely, and whose cwd lsof did not give, is an owner.
+func TestDarwinForeignGitDirKeepsItsLock(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	dir, lock := oldIndexLock(t)
+	gd, err := GitDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleared, cerr := clearStaleIndexLock(dir, time.Now(), func() ([]gitProc, error) {
+		return gitProcsFromPS("502 77 git --git-dir="+gd+" fetch\n", "501", map[string]string{}, nil, func(string) (bool, error) { return true, nil })
+	})
+	if cleared || cerr != nil {
+		t.Fatalf("--git-dir of another account: cleared=%v err=%v, want the lock kept as owned", cleared, cerr)
+	}
+	if _, statErr := os.Lstat(lock); statErr != nil {
+		t.Fatalf("lock lost: %v", statErr)
+	}
+}
