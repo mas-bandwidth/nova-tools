@@ -57,7 +57,6 @@ var specAllowlist = []allowlistEntry{
 
 	// Other records
 	{file: "internal/nsprint/consume/okfriend.go", fn: "onHarvested", record: "Lua-reply"},
-	{file: "internal/nsprint/harvest/harvest.go", fn: "recordPR", record: "Lua-reply"},
 	{file: "internal/wake/bus.go", fn: "waitBookkeeping", record: "wake-bus"},
 	{file: "internal/nsprint/deal/ready.go", fn: "entryWhy", record: "Redis-outcome"},
 	{file: "internal/secrets/seal.go", fn: "RunSeal", record: "git-HEAD"},
@@ -77,16 +76,10 @@ var driftAllowlist = []allowlistEntry{
 		reason: "the card's PATHS header line in a swarm member's PR body, not a RESULT field"},
 	{file: "cmd/nova-swarm/nativeevent.go", fn: "failWord", record: "verdict", since: "7644669f",
 		reason: "first word of a nova-swarm native verdict line (BLOCKED, RED), an event record, not RESULT line 2"},
-	{file: "internal/nsprint/life/serve_cards.go", fn: "failLine", record: "typed-line", since: "84310288",
-		reason: "first word of the child's last typed line (BLOCKED, ABSTAIN): friend serve's fail signal for a card (#4095), an event line, not RESULT line 2"},
-	{file: "internal/nsprint/life/serve_copy.go", fn: "endCopy", record: "typed-line", since: "51b0ae73",
-		reason: "first word of the child's last typed line (DONE, SCORE, BLOCKED): friend serve's end of a consumer copy (#3998), an event line, not RESULT line 2"},
 	{file: "internal/nsprint/taskcard/complete.go", fn: "specFields", record: "SPEC-CARD", since: "98b5b444",
 		reason: "the issue's card header keys (ROUTE, KIND, REPO, PATHS, ...) that task push --issue fills the record from (#3916), read before any RESULT exists"},
 	{file: "internal/swarm/sparse.go", fn: "cardPATHS", record: "SPEC-CARD", since: "dd08d6e3",
 		reason: "the card's PATHS header for the sparse checkout, read before any RESULT exists"},
-	{file: "internal/nsprint/brief/lint.go", fn: "briefPaths", record: "brief", since: "1db79631",
-		reason: "the child brief's PATHS: line, compared with the task title's PATHS (#3154)"},
 	{file: "internal/nsprint/ready/ready.go", fn: "entryBlocker", record: "Redis-outcome", since: "26a5ddb0",
 		reason: "the Redis card hash outcome field, the same typed value as nsprint/deal/ready.go entryWhy"},
 	{file: "internal/post/issue/issue.go", fn: "RequiredFields", record: "card-schema-section", since: "1e58a3b0",
@@ -700,8 +693,8 @@ func TestOneTypedParser(t *testing.T) {
 				partB++
 			}
 		}
-		if len(specAllowlist) != 13 || partB != 0 {
-			t.Errorf("spec allowlist: %d entries, %d part=B; want 13 and 0", len(specAllowlist), partB)
+		if len(specAllowlist) != 12 || partB != 0 {
+			t.Errorf("spec allowlist: %d entries, %d part=B; want 12 and 0", len(specAllowlist), partB)
 		}
 		// Every drift entry names the commit that added it and why it stays.
 		for _, a := range driftAllowlist {

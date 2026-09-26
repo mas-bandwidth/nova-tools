@@ -50,9 +50,8 @@ whole table. Without --out it writes no file: there is no --fixture or
 Load the function library first with
 nova-sprint fn load --redis <addr> (fn check exits 1 while it is missing or stale).
 Control sprints are hidden unless named with --sprint.
---layout live is Glenn's sprint table, the Go port of rowan-tools
-bin/sprint-table-redis (#2674): the same keys (friend:<f>, friend:<f>:down,
-sprint:<name>:xy and :landed, q:blocked, bench:*) and the same bytes.
+--layout live is Glenn's sprint table (#2674): the streams, workers and
+benches of the copy model, rendered from Redis once a second.
 --compare waits for the file's next publish, renders from Redis, and prints
 MATCH (exit 0) or a unified diff (exit 1).
 --check reads an existing throwaway fixture store and compares exact output.

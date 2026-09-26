@@ -11,7 +11,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
-// pushBranch is the push script of internal/nsprint/harvest/remote.go in Go,
+// pushBranch is the retired card harvest's push script in Go,
 // in the local repo dir: the branch is under nova/, the commit exists, a
 // remote branch already at the sha is "already", a remote branch at another
 // sha is ErrBranchMoved (unless it is at req.Onto, the head a fix copy built

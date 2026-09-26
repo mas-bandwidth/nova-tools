@@ -5,7 +5,7 @@
 // and the table read it through Read. While it exists the sprint deals nothing (the deal pass's
 // plan skips the sprint and ns_card_deal refuses its cards), and Held
 // (held.go) gates every other automatic actor: the reconciler's duties, the
-// route loop, friend serve. It replaces the
+// route loop. It replaces the
 // pit stop as a bus note: a friend reads a key, never judges a note.
 //
 // Set and Clear are one FCALL each (ns_pitstop_set, ns_pitstop_clear in the

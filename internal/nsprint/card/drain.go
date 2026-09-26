@@ -2,13 +2,8 @@ package card
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
-	"os"
-	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -21,13 +16,7 @@ import (
 //  1. resume: every member named in Resume leaves s:<S>:paused, and every
 //     card in its parked set s:<S>:parked:<member> that is still queued goes
 //     back into s:<S>:pool at its own priority.
-//  2. import: every regular, non-hidden file in each retired fillloop queue
-//     dir is pushed create-only through Push (card lint, 4.3). A card that
-//     lints and is stored, or is already stored with the same payload, gets
-//     exactly one receipt (a drain-import entry on s:<S>:log, fenced by
-//     s:<S>:drain:imported) and its file is removed. A card that fails lint
-//     or conflicts is REFUSED and its file stays where it is.
-//  3. release: card release over the waiting set.
+//  2. release: card release over the waiting set.
 //
 // One OK or REFUSED line per item, then one DRAIN DONE line. Exit 0 when
 // nothing was refused, 2 when anything was. A second drain over the same
@@ -40,16 +29,14 @@ import (
 //	s:<S>:parked:<member>       set of card labels held out of the pool while
 //	                            that member is paused
 type DrainOptions struct {
-	Resume    []string // members to resume: bench:<b> or friend:<f>
-	QueueDirs []string // retired fillloop queue dirs to import once
-	Control   string   // control-<id> run to tear down (drainControl); alone
+	Resume  []string // members to resume: bench:<b> or friend:<f>
+	Control string   // control-<id> run to tear down (drainControl); alone
 }
 
 var memberRE = regexp.MustCompile(`^(bench|friend):[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 func keyPaused(sprint string) string         { return "s:" + sprint + ":paused" }
 func keyParked(sprint, member string) string { return "s:" + sprint + ":parked:" + member }
-func keyDrainImported(sprint string) string  { return "s:" + sprint + ":drain:imported" }
 
 // controlRE is a control id: the name a control run gives its sprint, and
 // the prefix (id or id-<suffix>) of every bench, friend and machine it makes.
@@ -82,12 +69,11 @@ func RegisterKeys(ctx context.Context, client *redis.Client, control string, key
 // package sends no ad-hoc script on any path.
 //
 //	ns_card_resume          keys: paused, parked, pool, log; args: member, sprint
-//	ns_card_import_receipt  keys: imported, log; args: label, payload_sha, file, place
 
 type drainTally struct {
-	out                                 strings.Builder
-	released, resumed, imported, refuse int
-	receipts                            int
+	out                       strings.Builder
+	released, resumed, refuse int
+	receipts                  int
 }
 
 func (d *drainTally) ok(sprint, item, rest string) {
@@ -103,12 +89,12 @@ func (d *drainTally) refused(sprint, item, rest, reason string) {
 		oneline.Field(sprint), item, rest, oneline.Field(strings.TrimSpace(reason)))
 }
 
-// Drain runs resume, import, and release for one sprint, or, with
+// Drain runs resume and release for one sprint, or, with
 // opts.Control, tears one control run down (drainControl). See DrainOptions.
 func Drain(ctx context.Context, client *redis.Client, sprint string, opts DrainOptions) VerbResult {
 	if opts.Control != "" {
-		if sprint != "" || len(opts.Resume) > 0 || len(opts.QueueDirs) > 0 {
-			return refused("--control tears a control run down and takes no --sprint, --resume or --queue-dir")
+		if sprint != "" || len(opts.Resume) > 0 {
+			return refused("--control tears a control run down and takes no --sprint or --resume")
 		}
 		return drainControl(ctx, client, opts.Control)
 	}
@@ -141,10 +127,6 @@ func Drain(ctx context.Context, client *redis.Client, sprint string, opts DrainO
 		d.ok(sprint, "resume", rest)
 	}
 
-	for _, dir := range opts.QueueDirs {
-		importDir(ctx, client, sprint, dir, &d)
-	}
-
 	rel := Release(ctx, client, sprint)
 	if rel.Code != 0 {
 		d.refused(sprint, "release", "", rel.Stderr)
@@ -158,8 +140,8 @@ func Drain(ctx context.Context, client *redis.Client, sprint string, opts DrainO
 		d.ok(sprint, "release", fmt.Sprintf("moved=%d waiting=%d", moved, waiting))
 	}
 
-	fmt.Fprintf(&d.out, "DRAIN DONE sprint=%s released=%d resumed=%d imported=%d refused=%d receipts=%d\n",
-		oneline.Field(sprint), d.released, d.resumed, d.imported, d.refuse, d.receipts)
+	fmt.Fprintf(&d.out, "DRAIN DONE sprint=%s released=%d resumed=%d refused=%d receipts=%d\n",
+		oneline.Field(sprint), d.released, d.resumed, d.refuse, d.receipts)
 	code := exitOK
 	if d.refuse > 0 {
 		code = exitRefused
@@ -186,68 +168,4 @@ func drainControl(ctx context.Context, client *redis.Client, control string) Ver
 	return VerbResult{Code: exitOK, Stdout: fmt.Sprintf(
 		"DRAIN DONE control=%s sprints=%s cards=%s benches=%s friends=%s machines=%s removed=%s\n",
 		oneline.Field(control), vals[1], vals[2], vals[3], vals[4], vals[5], vals[6])}
-}
-
-// importDir imports each card file in one retired queue dir, in name order.
-func importDir(ctx context.Context, client *redis.Client, sprint, dir string, d *drainTally) {
-	ents, err := os.ReadDir(dir)
-	if err != nil {
-		d.refused(sprint, "queue-dir", "dir="+oneline.Field(dir), err.Error())
-		return
-	}
-	var names []string
-	for _, e := range ents {
-		if e.Type().IsRegular() && !strings.HasPrefix(e.Name(), ".") {
-			names = append(names, e.Name())
-		}
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		path := filepath.Join(dir, name)
-		file := "file=" + oneline.Field(name)
-		body, err := os.ReadFile(path)
-		if err != nil {
-			d.refused(sprint, "import", file, err.Error())
-			continue
-		}
-		res := Push(ctx, client, sprint, body)
-		if res.Code != exitOK {
-			d.refused(sprint, "import", file, res.Stderr)
-			continue
-		}
-		label, place := pushedLabelPlace(res.Stdout)
-		if label == "" {
-			d.refused(sprint, "import", file, "card push reply "+res.Stdout)
-			continue
-		}
-		sum := sha256.Sum256(body)
-		wrote, err := client.FCall(ctx, "ns_card_import_receipt",
-			[]string{keyDrainImported(sprint), keyLog(sprint)},
-			label, hex.EncodeToString(sum[:]), name, place).Int64()
-		if err != nil {
-			d.refused(sprint, "import", file+" label="+oneline.Field(label), "receipt: "+err.Error())
-			continue
-		}
-		if err := os.Remove(path); err != nil {
-			d.refused(sprint, "import", file+" label="+oneline.Field(label), "stored, file not removed: "+err.Error())
-			continue
-		}
-		d.imported++
-		d.receipts += int(wrote)
-		d.ok(sprint, "import", fmt.Sprintf("%s label=%s place=%s receipt=%d",
-			file, oneline.Field(label), oneline.Field(place), wrote))
-	}
-}
-
-// pushedLabelPlace reads "CARD PUSH sprint=S label=L place=P".
-func pushedLabelPlace(line string) (label, place string) {
-	for _, f := range strings.Fields(line) {
-		if v, ok := strings.CutPrefix(f, "label="); ok {
-			label = v
-		}
-		if v, ok := strings.CutPrefix(f, "place="); ok {
-			place = v
-		}
-	}
-	return label, place
 }

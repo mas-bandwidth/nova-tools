@@ -78,29 +78,6 @@ func TestRefreshRefusesAMissingCommand(t *testing.T) {
 	}
 }
 
-// TestHarvestHasNoResultsRoot is the #3329 DONE-WHEN (verb half): the
-// results root is not typed on argv. `card harvest --results-root` is an
-// unknown flag whose refusal names the card hash field that replaced it.
-func TestHarvestHasNoResultsRoot(t *testing.T) {
-	t.Parallel()
-
-	for _, arg := range [][]string{{"--results-root", "/srv/results"}, {"--results-root=/srv/results"}} {
-		args := append([]string{"card", "harvest", "--redis", "127.0.0.1:1", "--sprint", "s", "--bench", "b"}, arg...)
-		code, stdout, stderr := runSprint(args...)
-		if code != 2 {
-			t.Fatalf("%v: exit %d, want 2 (usage)", arg, code)
-		}
-		if stdout != "" {
-			t.Fatalf("%v: stdout %q; a refusal belongs on stderr", arg, stdout)
-		}
-		for _, want := range []string{"unknown flag --results-root", "s:<S>:card:<label>", "results"} {
-			if !strings.Contains(stderr, want) {
-				t.Fatalf("%v: stderr %q lacks %q", arg, stderr, want)
-			}
-		}
-	}
-}
-
 // TestEndRefusesRelativeResults is the #3329 DONE-WHEN (writer half): the
 // card hash field `results` is always absolute, so `card end --results
 // rel/dir` exits 1 before it touches Redis, and ns_card_end, the field's

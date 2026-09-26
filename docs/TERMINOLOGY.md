@@ -4,7 +4,6 @@ Welcome — this guide is a plain-language map of the words you will meet in the
 specs, each linked to the exact rule that defines it so you can jump straight to
 the source. It covers planned features too; check the command reference for what
 is available today.
-
 - **abstain** — a card that produced no accepted answer, scored on the packet as
   `<label>: ABSTAIN reason=<token>`. The token names why: `line1-mismatch`,
   `no-result`, `rc=<n>`, `idle=<s>`, `deadline`, `result-after-deadline`, `card-abstain`,
@@ -80,10 +79,6 @@ is available today.
 - **handoff** — the verb that ends a manager shift, releases ownership and leaves
   a record and bus note for the successor. It refuses mid-harvest or when the
   successor is asleep. (SPEC-PULSE.md, Handoff)
-- **HARVEST** — the printed token of the pulse's gather verb: `HARVEST PR`,
-  `HARVEST RETRY`, `HARVEST OK`, `HARVEST REFUSED`. (SPEC-PULSE.md, output grammar)
-- **harvest** — the gather half of a pulse. It reads the swarm's packet, never a
-  report body, and disposes each card by its own two lines. (SPEC-PULSE.md, The loop, in words)
 - **headroom** — the per-tick launch cap `cores x 1.5 - load` per bench, never
   more than `cores` in one tick. Its field in each bench's status reading is
   **definition pending**. (SPEC-PULSE.md, Rate and convergence rule 3)
@@ -96,13 +91,8 @@ is available today.
 - **lane** — nova-merge's ordered queue, a directory holding one state file, one
   clone, and the records of reads and gates. One lane, one merge per pass.
   ([SPEC-MERGE.md, Retired: the per-PR lander role](SPEC-MERGE.md#retired-the-per-pr-lander-role-2026-09-24) · [SPEC-MERGE.md rule 20](SPEC-MERGE.md#the-rules-numbered))
-- **LAUNCH** — the pulse verb that scatters: every card that can run now runs
-  now, one slot each, one batch id, one deadline. (SPEC-PULSE.md rule 10)
 - **lease** — the ownership-of-execution record. One live lease per node; a
   second `take` is refused and names the holder. ([SPEC-WORK.md, The data](SPEC-WORK.md#the-data-rowan))
-- **manager tier** — the middle tier between planning and work: a bounded
-  controller on the cheapest qualified model that runs the policy. **Duty** is
-  retired; the command is `nova-pulse manager`. (SPEC-PULSE.md, The manager tier)
 - **NATIVE** — the printed token of a native card run: `NATIVE OK` when the card
   ran with its harness, `NATIVE INCOMPLETE` when a launch started and did not
   earn OK, `NATIVE REFUSED` when a native invocation is refused. The process
@@ -138,9 +128,6 @@ is available today.
 - **presence and its four facts** — whether a friend is awake is four separate
   facts, each proven or unproven on its own: process alive, beat written,
   delivery handled, wake fired. ([SPEC-WAKE.md, output grammar](SPEC-WAKE.md#output-grammar))
-- **pulse** — the scatter-gather loop itself: pool, cut, launch, harvest, and
-  repeat until the pool and queue are both empty, then say so.
-  (SPEC-PULSE.md, The loop, in words)
 - **quiet time** — manager time that makes no model call and sends no status
   note. (SPEC-PULSE.md, The manager tier)
 - **read (APPROVE and HOLD)** — a reader's recorded verdict for an exact
@@ -191,9 +178,5 @@ is available today.
 - **wall** — the kernel-enforced filesystem boundary a job runs inside, with
   separate read and write permissions. A pulse card names its job directory and
   scratch space within that boundary. ([SPEC-SANDBOX.md, The rules, numbered](SPEC-SANDBOX.md#the-rules-numbered) · SPEC-PULSE.md rule 5)
-- **width** — the concurrency reading checked by `nova-pulse width`: work in
-  flight, free slots and queued work. The command reports waiting work with idle
-  slots as an alarm; it launches nothing. (SPEC-PULSE.md, exit codes)
-- **WIDTH** — the printed alarm line `PULSE WIDTH in-flight=<n> free=<n>
-  pool=<n> queued=<n> headroom=<n> hours=<n>`, with `PULSE UNDER-WIDTH` as its
-  waiting-with-idle-slots verdict, exit 2. (SPEC-PULSE.md, output grammar)
+- **width** — a worker's slots, working and deficit, as `nova-sprint width` reads
+  them; it launches nothing.

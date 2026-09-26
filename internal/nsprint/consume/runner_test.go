@@ -478,22 +478,12 @@ func TestControl33PrToRead(t *testing.T) {
 
 	t.Run("card_and_hold_skipped", func(t *testing.T) {
 		f := newC33(t)
-		// PR 8 was produced by a card: ns_card_harvested records s:<S>:prcard.
-		const label, bench, pr = "c33-card", ctlBench, "8"
+		// PR 8 was produced by a card: s:<S>:prcard names it.
+		const label, bench = "c33-card", ctlBench
 		cardHead := f.seedPR(8, "ctl-a", "false", "opened")
-		must(t, f.client.HSet(f.ctx, "lease:harvest:"+bench, "instance", "hv", "token", "tk").Err())
 		must(t, f.client.HSet(f.ctx, "s:"+c33Sprint+":card:"+label, "state", "ended", "outcome", "DONE",
 			"attempt", "1", "bench", bench, "repo", c33Short, "pushed_sha", cardHead, "identity", "c33/id").Err())
-		must(t, f.client.HSet(f.ctx, "s:"+c33Sprint+":idem",
-			"pr:"+c33Short+":nova/"+c33Sprint+"/"+label+"-a1", pr).Err())
-		reply, err := f.client.FCall(f.ctx, "ns_card_harvested", nil, c33Sprint, label, bench, "hv", "tk", pr, cardHead, "ctl").Text()
-		must(t, err)
-		if !strings.HasPrefix(reply, "OK|") {
-			t.Fatalf("ns_card_harvested = %q", reply)
-		}
-		if got, _ := f.client.HGet(f.ctx, "s:"+c33Sprint+":prcard", c33Short+"#8").Result(); got != label {
-			t.Fatalf("s:%s:prcard %s#8 = %q, want %s", c33Sprint, c33Short, got, label)
-		}
+		must(t, f.client.HSet(f.ctx, "s:"+c33Sprint+":prcard", c33Short+"#8", label).Err())
 		// PR 9 has an open hold; PR 10's hold is released; PR 11 is a draft.
 		f.seedPR(9, "ctl-a", "false", "opened")
 		must(t, f.client.HSet(f.ctx, "s:"+c33Sprint+":hold:"+c33Short+":9", "ctl-b",

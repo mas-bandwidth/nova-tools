@@ -1,28 +1,20 @@
 package typedrec_test
 
 import (
-	"bytes"
 	"context"
-	"errors"
-	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/consume"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/harvest"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
-	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 	"github.com/redis/go-redis/v9"
 )
@@ -53,145 +45,6 @@ func TestEveryConsumerRefusesMissingFieldByName(t *testing.T) {
 			}
 
 			// The nova-pulse card-template check that followed left with internal/pulse (deleted 2026-09-25, #3969).
-		}
-	})
-
-	t.Run("harvest", func(t *testing.T) {
-		addr := testutil.Start(t)
-		client := redis.NewClient(&redis.Options{Addr: addr})
-		t.Cleanup(func() { _ = client.Close() })
-		ctx := context.Background()
-		if err := fn.Load(ctx, client); err != nil {
-			t.Fatalf("load fn: %v", err)
-		}
-		st := store.New(client)
-
-		sprint := "s1"
-		bench := "b1"
-		validLabel := "fix-valid"
-		invalidLabel := "fix-invalid"
-
-		// Set up beat for bench
-		if err := client.HSet(ctx, "bench:"+bench+":beat", "host", "localhost", "user", "glenn").Err(); err != nil {
-			t.Fatalf("set beat: %v", err)
-		}
-		// ns_harvest_due offers cards only on an UP bench (#3487, #2046: UP is
-		// the fleet record).
-		if err := client.HSet(ctx, "bench:"+bench+":state", "state", "UP", "at", "1").Err(); err != nil {
-			t.Fatalf("set bench state: %v", err)
-		}
-
-		tmpDir := t.TempDir()
-		validResDir := filepath.Join(tmpDir, "valid-res")
-		invalidResDir := filepath.Join(tmpDir, "invalid-res")
-		_ = os.MkdirAll(validResDir, 0o755)
-		_ = os.MkdirAll(invalidResDir, 0o755)
-
-		validContent := typedrec.Exemplar("fix")
-		var invalidLines []string
-		for _, l := range strings.Split(validContent, "\n") {
-			if strings.HasPrefix(l, "CHECK:") {
-				continue
-			}
-			invalidLines = append(invalidLines, l)
-		}
-		invalidContent := strings.Join(invalidLines, "\n")
-
-		validResFile := filepath.Join(validResDir, "RESULT.md")
-		invalidResFile := filepath.Join(invalidResDir, "RESULT.md")
-		if err := os.WriteFile(validResFile, []byte(validContent), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(invalidResFile, []byte(invalidContent), 0o644); err != nil {
-			t.Fatal(err)
-		}
-
-		// Setup both cards in Redis
-		for _, label := range []string{validLabel, invalidLabel} {
-			resDir := validResDir
-			if label == invalidLabel {
-				resDir = invalidResDir
-			}
-			cardKey := "s:" + sprint + ":card:" + label
-			_ = client.HSet(ctx, cardKey,
-				"state", "ended",
-				"outcome", "DONE",
-				"reason", "done",
-				"kind", "fix",
-				"bench", bench,
-				"repo", "mas-bandwidth/nova-tools",
-				"base", "dev",
-				"base_sha", "09fbedc9",
-				"attempt", "1",
-				"pushed_sha", "1111111111111111111111111111111111111111",
-				"identity", sprint+"/"+label+"/09fbedc9/"+bench+"/1",
-				"results", resDir,
-				"token", "tok-"+label,
-				"token_sha", "abcdefabcdef",
-			).Err()
-			_ = client.SAdd(ctx, "s:"+sprint+":idx:card:ended", label).Err()
-			_ = client.SAdd(ctx, "s:"+sprint+":bench:"+bench+":ended", label).Err()
-		}
-
-		// Record results in Redis
-		parsedValid := typedrec.ParseResult([]byte(validContent))
-		parsedInvalid := typedrec.ParseResult([]byte(invalidContent))
-
-		// Write result hashes via ns_card_result
-		argsValid := []any{sprint, validLabel, "1", "tok-" + validLabel, parsedValid.Schema, parsedValid.Kind, "1", "", "", "0", parsedValid.RawSHA256, string(parsedValid.RawBytes), validResDir, "c_check", "pass", "c_repo", "mas-bandwidth/nova-tools", "c_branch", "nova/" + sprint + "/" + validLabel + "-a1"}
-		argsInvalid := []any{sprint, invalidLabel, "1", "tok-" + invalidLabel, parsedInvalid.Schema, parsedInvalid.Kind, "0", parsedInvalid.Field, parsedInvalid.Defect, strconv.Itoa(parsedInvalid.Line), parsedInvalid.RawSHA256, string(parsedInvalid.RawBytes), invalidResDir, "c_repo", "mas-bandwidth/nova-tools", "c_branch", "nova/" + sprint + "/" + invalidLabel + "-a1"}
-
-		repValid, errValid := client.FCall(ctx, "ns_card_result", nil, argsValid...).Text()
-		repInvalid, errInvalid := client.FCall(ctx, "ns_card_result", nil, argsInvalid...).Text()
-		if errValid != nil || errInvalid != nil {
-			t.Fatalf("ns_card_result failed: valid=%v invalid=%v", errValid, errInvalid)
-		}
-		if !strings.HasPrefix(repValid, "0|OK|") || !strings.HasPrefix(repInvalid, "0|OK|") {
-			t.Fatalf("ns_card_result bad reply: valid=%s invalid=%s", repValid, repInvalid)
-		}
-
-		// Intercept stdout to check HARVEST-REFUSED print
-		oldStdout := os.Stdout
-		r, w, _ := os.Pipe()
-		os.Stdout = w
-
-		mockF := &mockForge{}
-		mockP := &mockPusher{}
-		_ = harvest.Run(ctx, st, harvest.Options{
-			Sprint:   sprint,
-			Benches:  []string{bench},
-			Forge:    mockF,
-			Pusher:   mockP,
-			Instance: "inst1",
-		})
-
-		w.Close()
-		os.Stdout = oldStdout
-		var buf bytes.Buffer
-		_, _ = io.Copy(&buf, r)
-		printed := buf.String()
-
-		wantRefuse := fmt.Sprintf("HARVEST-REFUSED %s %s field=CHECK defect=missing", sprint, invalidLabel)
-		if !strings.Contains(printed, wantRefuse) {
-			t.Fatalf("stdout = %q, want to contain %q", printed, wantRefuse)
-		}
-
-		// Verify fix-invalid state in Redis is refused
-		invalidState, _ := client.HGet(ctx, "s:"+sprint+":card:"+invalidLabel, "state").Result()
-		if invalidState != "refused" {
-			t.Fatalf("invalid card state = %q, want refused", invalidState)
-		}
-
-		// Verify fix-invalid/RESULT.md is byte-identical to original
-		gotRaw, err := os.ReadFile(invalidResFile)
-		if err != nil || string(gotRaw) != invalidContent {
-			t.Fatalf("invalid card raw file changed: %v", err)
-		}
-
-		// Verify valid sibling was harvested
-		validState, _ := client.HGet(ctx, "s:"+sprint+":card:"+validLabel, "state").Result()
-		if validState != "harvested" {
-			t.Fatalf("valid card state = %q, want harvested", validState)
 		}
 	})
 
@@ -497,24 +350,6 @@ func TestEveryConsumerRefusesMissingFieldByName(t *testing.T) {
 	})
 }
 
-type mockForge struct{}
-
-func (f *mockForge) FindOpenPR(ctx context.Context, repo, branch string) (harvest.PR, bool, error) {
-	return harvest.PR{Number: 42, Head: "1111111111111111111111111111111111111111"}, true, nil
-}
-func (f *mockForge) OpenPR(ctx context.Context, repo, branch, base, title, body string) (harvest.PR, error) {
-	return harvest.PR{Number: 42, Head: "1111111111111111111111111111111111111111"}, nil
-}
-func (f *mockForge) ReadPR(ctx context.Context, repo string, number int) (harvest.PR, error) {
-	return harvest.PR{Number: number, Head: "1111111111111111111111111111111111111111"}, nil
-}
-
-type mockPusher struct{}
-
-func (p *mockPusher) Push(ctx context.Context, bench harvest.BenchInfo, card harvest.Card) error {
-	return nil
-}
-
 // resultRedis is a Redis with the nsprint functions loaded.
 func resultRedis(t *testing.T) (*store.Store, *redis.Client) {
 	t.Helper()
@@ -668,105 +503,6 @@ func TestRecordResultEnforcesCardKindAndLine1(t *testing.T) {
 		}
 		if h := hashOf(tc.label); h["valid"] != "0" || h["field"] != tc.field || h["defect"] != "contradictory" {
 			t.Fatalf("%s: result hash %v, want valid=0 field=%s defect=contradictory", tc.label, h, tc.field)
-		}
-	}
-}
-
-// failingRecorder is a Redis ledger whose result record fails.
-type failingRecorder struct{ *card.RedisLedger }
-
-func (failingRecorder) Result(context.Context, typedrec.Result, string, ...card.Fact) (int, error) {
-	return card.WrapperExitRedis, errors.New("record failed")
-}
-
-// TestWrapperRecordFailureIsNotHarvestDue is #3497 Stella 4 item 2: a
-// harness that exits 0 with an unreadable RESULT.md, or whose result record
-// fails, ends FAILED other and is never offered by ns_harvest_due; the same
-// run with a readable, recorded RESULT.md ends DONE and is due.
-func TestWrapperRecordFailureIsNotHarvestDue(t *testing.T) {
-	st, client := resultRedis(t)
-	ctx := context.Background()
-	const sprint, bench = "s-wrap", "wrap-bench"
-	// ns_harvest_due offers cards only on an UP bench (#3487, #2046).
-	if err := client.HSet(ctx, "bench:"+bench+":state", "state", "UP", "at", "1").Err(); err != nil {
-		t.Fatalf("set bench state: %v", err)
-	}
-
-	root := t.TempDir()
-	harness := filepath.Join(root, "harness.sh")
-	script := "#!/bin/sh\nif [ \"$TYPEDREC_HARNESS\" = unreadable ]; then mkdir -p \"$NOVA_CARD_OUT/RESULT.md\"; else cp \"$TYPEDREC_RESULT\" \"$NOVA_CARD_OUT/RESULT.md\"; fi\n"
-	if err := testbin.WriteExecutable(harness, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	never := make(chan time.Time)
-	cases := []struct {
-		mode    string
-		outcome string
-		due     bool
-	}{
-		{"valid", "DONE", true},
-		{"unreadable", "FAILED", false},
-		{"recorder-fails", "FAILED", false},
-	}
-	for i, tc := range cases {
-		label := "card-" + tc.mode
-		id := card.Identity{Sprint: sprint, Label: label, BaseSHA: "0123abcd", Bench: bench, Attempt: 1}
-		token := fmt.Sprintf("1.%032x", i+1)
-		if err := client.HSet(ctx, card.CardKey(sprint, label), map[string]string{
-			"state": "dealt", "attempt": "1", "token": token, "token_sha": card.TokenSHA(token),
-			"identity": id.String(), "bench": bench, "base_sha": id.BaseSHA, "kind": typedrec.KindReport,
-		}).Err(); err != nil {
-			t.Fatal(err)
-		}
-		// The report record names the attempt's own branch, so the only
-		// thing that can keep the valid case from harvest is the record path.
-		report := strings.Replace(typedrec.Exemplar(typedrec.KindReport), "BRANCH: worker/report-throughput",
-			"BRANCH: "+card.WrapperBranch(sprint, label, 1), 1)
-		resultFile := filepath.Join(root, label+".RESULT.md")
-		if err := os.WriteFile(resultFile, []byte(report), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		t.Setenv("TYPEDREC_RESULT", resultFile)
-		t.Setenv("TYPEDREC_HARNESS", tc.mode)
-		cfg := card.WrapperConfig{
-			Sprint: sprint, Label: label, Attempt: 1, Bench: bench, Harness: harness,
-			JobsRoot: filepath.Join(root, "jobs"), ResultsRoot: filepath.Join(root, "results"),
-			Clock: 45 * time.Minute, BeatEvery: time.Minute,
-			After: func(time.Duration) <-chan time.Time { return never },
-			Tick:  func(time.Duration) (<-chan time.Time, func()) { return never, func() {} },
-		}
-		var ledger card.WrapperLedger = &card.RedisLedger{Store: st, Sprint: sprint, Label: label, Token: token}
-		if tc.mode == "recorder-fails" {
-			ledger = failingRecorder{ledger.(*card.RedisLedger)}
-		}
-		rep := card.RunWrapper(ctx, cfg, ledger)
-		if rep.Code != card.WrapperExitEnded || rep.Outcome != tc.outcome {
-			t.Fatalf("%s: %s why=%q; want outcome=%s code=0", tc.mode, rep.Line(), rep.Why, tc.outcome)
-		}
-		if tc.outcome == "FAILED" && (rep.Reason != "other" || !strings.Contains(rep.Why, "result not recorded")) {
-			t.Fatalf("%s: reason=%s why=%q; want other and the record failure named", tc.mode, rep.Reason, rep.Why)
-		}
-		if h := client.HGetAll(ctx, card.CardKey(sprint, label)+":result:a1").Val(); (h["valid"] == "1") != tc.due {
-			t.Fatalf("%s: result hash valid=%q field=%s defect=%s, want a validated hash only for the recorded case", tc.mode, h["valid"], h["field"], h["defect"])
-		}
-		// The branch was pushed: only the result gate stands between the card and harvest.
-		if err := client.HSet(ctx, card.CardKey(sprint, label), "pushed_sha", strings.Repeat("ab", 20)).Err(); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	out, err := client.FCallRO(ctx, "ns_harvest_due", nil, sprint, bench, "256").StringSlice()
-	if err != nil || len(out) < 3 || out[0] != "OK" {
-		t.Fatalf("ns_harvest_due: %v %v", out, err)
-	}
-	due := map[string]bool{}
-	for i := 3; i+8 < len(out); i += 9 {
-		due[out[i]] = true
-	}
-	for _, tc := range cases {
-		if due["card-"+tc.mode] != tc.due {
-			t.Fatalf("%s: harvest due=%v, want %v (due rows %v)", tc.mode, due["card-"+tc.mode], tc.due, due)
 		}
 	}
 }

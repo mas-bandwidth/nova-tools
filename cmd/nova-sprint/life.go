@@ -31,7 +31,7 @@ import (
 func init() {
 	register(Verb{
 		Name:    "friend",
-		Summary: "hello, bye, serve, wake, row and roles for a friend; report a friend state, show friends, or run one ladder sweep; declare the wake registry from the fleet file; wake-health [--repair]",
+		Summary: "hello, bye, wake, row and roles for a friend; report a friend state, show friends, or run one ladder sweep; declare the wake registry from the fleet file; wake-health [--repair]",
 		Run:     runFriend,
 	})
 	register(Verb{
@@ -41,28 +41,21 @@ func init() {
 	})
 	register(Verb{
 		Name:    "bench",
-		Summary: "beat, release, reset or retire one bench; reindex a sprint's card views once; ls the registry with each bench's role",
+		Summary: "beat or release one bench; reindex a sprint's card views once; ls the registry with each bench's role",
 		Run:     runBench,
 	})
 }
 
 func runFriend(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
-		return refuse(errOut, "friend", "want hello, bye, serve, wake, row, roles, report, show, sweep, down, up, declare or wake-health")
+		return refuse(errOut, "friend", "want hello, bye, wake, row, roles, report, show, sweep, down, up, declare or wake-health")
 	}
 	switch args[0] {
 	case "hello":
 		return runFriendHello(ctx, args[1:], out, errOut)
 	case "bye":
 		return runFriendBye(ctx, args[1:], out, errOut)
-	case "serve":
-		return runFriendServe(ctx, args[1:], out, errOut, false)
 	case "wake":
-		// `friend wake --as <f>` is one serve pass on the seat (#2938);
-		// `friend wake <f>` routes a wake through the reconciler's list.
-		if hasAsFlag(args[1:]) {
-			return runFriendServe(ctx, args[1:], out, errOut, true)
-		}
 		return runFriendWake(ctx, args[1:], out, errOut)
 	case "row":
 		return runFriendRow(ctx, args[1:], out, errOut)
@@ -83,29 +76,25 @@ func runFriend(ctx context.Context, args []string, out, errOut io.Writer) int {
 	case "wake-health":
 		return runFriendWakeHealth(ctx, args[1:], out, errOut)
 	default:
-		return refuse(errOut, "friend", fmt.Sprintf("unknown subverb %s; want hello, bye, serve, wake, row, roles, report, show, sweep, down, up, declare or wake-health", args[0]))
+		return refuse(errOut, "friend", fmt.Sprintf("unknown subverb %s; want hello, bye, wake, row, roles, report, show, sweep, down, up, declare or wake-health", args[0]))
 	}
 }
 
 func runBench(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
-		return refuse(errOut, "bench", "want beat, release, reset, retire, reindex or ls")
+		return refuse(errOut, "bench", "want beat, release, reindex or ls")
 	}
 	switch args[0] {
 	case "beat":
 		return runBenchBeat(ctx, args[1:], out, errOut)
 	case "release":
 		return runBenchRelease(ctx, args[1:], out, errOut)
-	case "reset":
-		return runBenchReset(ctx, args[1:], out, errOut)
-	case "retire":
-		return runBenchRetire(ctx, args[1:], out, errOut)
 	case "reindex":
 		return runBenchReindex(ctx, args[1:], out, errOut)
 	case "ls":
 		return runBenchLs(ctx, args[1:], out, errOut)
 	default:
-		return refuse(errOut, "bench", fmt.Sprintf("unknown subverb %s; want beat, release, reset, retire, reindex or ls", args[0]))
+		return refuse(errOut, "bench", fmt.Sprintf("unknown subverb %s; want beat, release, reindex or ls", args[0]))
 	}
 }
 

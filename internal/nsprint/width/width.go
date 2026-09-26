@@ -24,9 +24,6 @@ func DesiredKey(friend string) string {
 // LogKey is the per-tick sample stream the fold integrates.
 const LogKey = "width:log"
 
-// FunctionWrite is the Redis Function name that writes friend fillstate.
-const FunctionWrite = "ns_width_write"
-
 // Policy is what one width tick reads from config.
 type Policy struct {
 	RebalanceTicks int

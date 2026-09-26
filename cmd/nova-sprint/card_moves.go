@@ -254,7 +254,7 @@ func (m *moveCmd) usage(sub string, ids []string) string {
 		}
 	case "session":
 		if !strings.HasPrefix(*m.as, "bench:") {
-			return "session wants --as bench:<b> (a friend's seat is friend serve)"
+			return "session wants --as bench:<b> (a friend takes its copies through card work)"
 		}
 	}
 	return ""

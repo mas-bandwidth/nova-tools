@@ -9,8 +9,8 @@
 //  1. pushes the commit from the local repo dir to the primary's repository
 //     on GitHub as refs/heads/<branch>, idempotently and never with force: a
 //     remote branch already at the sha is success, a branch at any other sha
-//     is the typed refusal ErrBranchMoved (the rules of the card harvest's
-//     push script, internal/nsprint/harvest/remote.go), and the tip is read
+//     is the typed refusal ErrBranchMoved (the rules of the retired card
+//     harvest's push script), and the tip is read
 //     back after the push so "pushed" means ls-remote showed it. A fix copy
 //     (#4270) names the head it built on (Request.Onto): the PR's branch at
 //     that head moves forward to the commit, at any other sha it is

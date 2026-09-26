@@ -349,13 +349,6 @@ func TestEndAfterPushAndDealRecordsEnded(t *testing.T) {
 		t.Fatal("end left the bench slot leased")
 	}
 
-	due, err := client.FCall(ctx, "ns_harvest_due", nil, sprint, bench, "10").StringSlice()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(due) < 4 || due[0] != "OK" || due[3] != label {
-		t.Fatalf("harvest due = %v, want %s", due, label)
-	}
 	msgs, err := client.XRange(ctx, card.LogKey(sprint), "-", "+").Result()
 	if err != nil {
 		t.Fatal(err)

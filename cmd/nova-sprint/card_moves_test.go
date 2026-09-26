@@ -203,7 +203,7 @@ func TestCardMovesCLI(t *testing.T) {
 }
 
 // TestCardSessionCLI (#3998): `card session --as bench:<b>` is the bench
-// harness's session start. A friend is refused (its seat is friend serve), a
+// harness's session start. A friend is refused (it takes through card work), a
 // bench that is not enrolled takes nothing, and an enrolled bench takes its
 // ready copies with one card work --fill; a copy whose wrapper cannot start
 // is given back to its primary (card cancel), so nothing is left working

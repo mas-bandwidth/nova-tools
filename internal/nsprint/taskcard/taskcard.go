@@ -43,7 +43,6 @@ const (
 	FnDone       = "ns_tcard_done"
 	FnBeat       = "ns_tcard_beat"
 	FnExpire     = "ns_tcard_expire"
-	FnPlace      = "ns_tcard_place"
 	FnLandStream = "ns_tcard_land_stream"
 	FnFsck       = "ns_tcard_fsck"
 )

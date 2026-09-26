@@ -104,34 +104,6 @@ func TestRolesRefusalNamesBadValue(t *testing.T) {
 	}
 }
 
-func TestRolesSetByCoordinatorRoutesNextCall(t *testing.T) {
-	addr, client := rolesFixture(t)
-	bootstrapCoordinator(t, addr)
-	if code, _, errOut := runRoles(t, "a", addr, "--set", "b", "--roles", "may-hold"); code != 0 {
-		t.Fatal(errOut)
-	}
-	ctx := context.Background()
-	for _, f := range []string{"b", "c"} {
-		if err := client.HSet(ctx, "friend:"+f+":desired", "slots", "4", "paused", "0").Err(); err != nil {
-			t.Fatal(err)
-		}
-		if err := client.HSet(ctx, "friend:"+f+":beat", "at", "1").Err(); err != nil {
-			t.Fatal(err)
-		}
-	}
-	seed(t, addr, [][]string{
-		{"SADD", "sprints", "s"}, {"HSET", "s:s", "status", "open"},
-		{"HSET", "task:r", "state", "open", "kind", "read", "priority", "1", "repo", "r", "pr", "1", "head", strings.Repeat("1", 40), "author", "a"},
-		{"ZADD", "s:s:open:c", "1", "r"}, {"SADD", "s:s:idx:task:open", "r"},
-	})
-	t.Setenv("NOVA_FRIEND", "a")
-	var out, errOut bytes.Buffer
-	code := run([]string{"redistribute", "--redis", addr, "--from", "c", "--reason", "test"}, &out, &errOut)
-	if code != 0 || client.ZScore(ctx, "s:s:open:b", "r").Err() != nil {
-		t.Fatalf("exit %d out %q err %q", code, out.String(), errOut.String())
-	}
-}
-
 func TestHelloDoesNotWriteFriendRoles(t *testing.T) {
 	addr, client := rolesFixture(t)
 	ctx := context.Background()

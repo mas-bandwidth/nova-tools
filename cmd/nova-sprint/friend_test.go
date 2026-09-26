@@ -84,7 +84,7 @@ func TestFriendVerbs(t *testing.T) {
 			t.Fatalf("show %q lacks %q", show, want)
 		}
 	}
-	if got := runOK("friend", "sweep", "--redis", addr, "--as", "reconciler", "--builders", "johnny", "--coordinator", "rowan"); !strings.Contains(got, "SWEEP idem=sweep-") {
+	if got := runOK("friend", "sweep", "--redis", addr, "--as", "reconciler"); !strings.Contains(got, "SWEEP idem=sweep-") {
 		t.Fatalf("sweep: %q", got)
 	}
 	if got := runOK("friend", "report", "--redis", addr, "--as", "emma", "--clear"); got != "REPORT friend=emma state=up\n" {

@@ -2,7 +2,7 @@
 // are cards"): a sprint task is the record task:<id> with one where pointer,
 // moved between ws:<stream>:<where> and friend:<f>:cards:<where> only by the
 // one move (fn/lua/02_card_move.lua, internal/nsprint/taskcard). Each verb is
-// one FCALL (fsck FCALL_RO; ls one ZRANGE; migrate the one SCAN) and prints
+// one FCALL (fsck FCALL_RO; ls one ZRANGE) and prints
 // one receipt line:
 //
 //	TASK <verb> id=<id> from=<w> to=<w> ms=<n>
@@ -13,7 +13,7 @@
 // --actor and no --as;
 // done, cancel, block, unblock, front, move and beat with --actor and --id and
 // none of the one task store's --token, --as or --to (nor the batch forms'
-// --ids, --stream, --set); land, ls, fsck, expire and migrate always.
+// --ids, --stream, --set); land, ls, fsck and expire always.
 package main
 
 import (
@@ -50,7 +50,6 @@ usage:
   nova-sprint task expire  --actor <a> [--friend <f>]...
   nova-sprint task ls      (--stream <s> | --friend <f>) --where <w>
   nova-sprint task fsck    --sprint <S>
-  nova-sprint task migrate --actor <a> --sprint <S> --truth <stream|where|id|kind|repo#n|state file>
 under a harness (NOVA_FRIEND set) --actor must be the seat.
 every verb also takes --redis <addr> (else NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR) and --sprint <S>
 (the legacy idx sets' sprint; else FRIEND_QUEUE_SPRINT, else the first of sprint:order).
@@ -72,7 +71,7 @@ prints the harness card from the record (a copy id: its card), --brief --model <
 `
 
 // cardAlways are the card subverbs no other task form has.
-var cardAlways = map[string]bool{"land": true, "ls": true, "fsck": true, "expire": true, "migrate": true}
+var cardAlways = map[string]bool{"land": true, "ls": true, "fsck": true, "expire": true}
 
 // cardByID are the subverbs whose card form names one --id with --actor.
 var cardByID = map[string]bool{"done": true, "cancel": true, "block": true, "unblock": true, "front": true,
@@ -120,9 +119,9 @@ type cardCmd struct {
 	redis, actor, sprint, id, why, stream, friend   *string
 	kind, ref, origin, title, head, pr, repo, on    *string
 	evidence, sha, where, toFriend, toStream, toWhr *string
-	ok, truth                                       *string
+	ok                                              *string
 	issue, route, base, baseSHA, paths              *string
-	n, batch                                        *int
+	n                                               *int
 	waiting, front, help                            *bool
 	friends                                         multiFlag
 }
@@ -153,14 +152,12 @@ func runTaskCard(ctx context.Context, sub string, args []string, out, errOut io.
 	c.toStream = fs.String("to-stream", "", "")
 	c.toWhr = fs.String("to-where", "", "")
 	c.ok = fs.String("ok", "", "")
-	c.truth = fs.String("truth", "", "")
 	c.issue = fs.String("issue", "", "")
 	c.route = fs.String("route", "", "")
 	c.base = fs.String("base", "", "")
 	c.baseSHA = fs.String("base-sha", "", "")
 	c.paths = fs.String("paths", "", "")
 	c.n = fs.Int("n", 1, "")
-	c.batch = fs.Int("batch", 200, "")
 	c.waiting = fs.Bool("waiting", false, "")
 	c.front = fs.Bool("front", false, "")
 	c.help = fs.Bool("help", false, "")
@@ -222,8 +219,6 @@ func (c *cardCmd) missing(sub string) string {
 		}
 	case "take", "expire":
 		checks = append(checks, need(c.actor, "actor"))
-	case "migrate":
-		checks = append(checks, need(c.actor, "actor"), need(c.truth, "truth"))
 	case "fsck":
 		checks = append(checks, need(c.sprint, "sprint"))
 	case "ls":
@@ -451,30 +446,6 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 			return 1
 		}
 		return 0
-	case "migrate":
-		f, err := os.Open(*c.truth)
-		if err != nil {
-			return refuse(errOut, c.verb, err.Error())
-		}
-		truth, err := taskcard.ReadTruth(f)
-		_ = f.Close()
-		if err != nil {
-			return refuse(errOut, c.verb, err.Error())
-		}
-		r, err := taskcard.Migrate(ctx, cl, *c.sprint, *c.actor, truth, *c.batch)
-		if err != nil {
-			return refuse(errOut, c.verb, err.Error())
-		}
-		for _, k := range r.Held {
-			_, _ = fmt.Fprintf(out, "HELD %s (task:<id> holds another task; rename one)\n", k)
-		}
-		folded := 0
-		for _, n := range r.Folded {
-			folded += n
-		}
-		_, _ = fmt.Fprintf(out, "TASK migrate scanned=%d folded=%d held=%d %s skipped=%s ms=%d\n", r.Scanned, folded, len(r.Held),
-			counts(r.Placed, true), counts(r.Skipped, false), ms())
-		return 0
 	}
 	return refuse(errOut, c.verb, "unknown card subverb "+sub)
 }
@@ -518,7 +489,7 @@ func (c *cardCmd) replace(ctx context.Context, st *store.Store, sub string, o ta
 	if to == "" {
 		w, err := cl.HGet(ctx, taskcard.Key(*c.id), "where").Result()
 		if err != nil {
-			return moved(taskcard.Result{}, &taskcard.Refused{Why: "NOTASK task:" + *c.id + " (or no where: run nova-sprint task migrate)"})
+			return moved(taskcard.Result{}, &taskcard.Refused{Why: "NOTASK task:" + *c.id + ""})
 		}
 		to = w
 	}

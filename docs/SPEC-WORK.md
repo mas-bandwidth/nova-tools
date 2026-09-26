@@ -4963,7 +4963,7 @@ of them.
    verb is gated**: `heartbeat`, `attempt`, `evidence`, `observe`, `state --to review` and `state
    --to done` record what happened, and a record of what happened is never refused for a
    dependency. **How the gate reaches a launcher is said plainly, because today it does not.**
-   SPEC-SWARM names three launchers — `nova-swarm run`, `nova-pulse launch` and a hand launch —
+   SPEC-SWARM names three launchers — `nova-swarm run`, the bench's copy session and a hand launch —
    and none of them consults the tree: they admit by slot and by bench slot lease, and a card
    carries no node id. **The gate is the tree's answer at its own admission verbs, and a launcher
    must ask**: a launcher honours the gate when it starts a worker for a node only after an

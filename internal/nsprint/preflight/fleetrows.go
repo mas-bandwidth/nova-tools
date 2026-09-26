@@ -147,8 +147,8 @@ func (f Fleet) Input() FleetInput {
 
 // GatherFleet reads the fleet in two pipelined exchanges, never SCAN or KEYS:
 // the store clock, the bench registry, the sprints set and the sprint's pit
-// stop; then per bench its beat, desired hash, lease counts and harvest
-// worker lease, and per sprint its status.
+// stop; then per bench its beat, desired hash and lease counts, and per
+// sprint its status.
 func GatherFleet(ctx context.Context, c *redis.Client, sprint string) (Fleet, error) {
 	pipe := c.Pipeline()
 	clock := pipe.Time(ctx)
@@ -168,8 +168,8 @@ func GatherFleet(ctx context.Context, c *redis.Client, sprint string) (Fleet, er
 	benches := names.Val()
 	sort.Strings(benches)
 	type cmds struct {
-		beat, desired    *redis.MapStringStringCmd
-		working, harvest *redis.IntCmd
+		beat, desired *redis.MapStringStringCmd
+		working       *redis.IntCmd
 	}
 	cs := make([]cmds, len(benches))
 	status := make([]*redis.StringCmd, len(sprints.Val()))
@@ -179,7 +179,6 @@ func GatherFleet(ctx context.Context, c *redis.Client, sprint string) (Fleet, er
 			beat:    pipe.HGetAll(ctx, "bench:"+b+":beat"),
 			desired: pipe.HGetAll(ctx, "bench:"+b+":desired"),
 			working: pipe.ZCard(ctx, "bench:"+b+":cards:working"),
-			harvest: pipe.Exists(ctx, "lease:harvest:"+b),
 		}
 	}
 	for i, s := range sprints.Val() {
@@ -197,7 +196,7 @@ func GatherFleet(ctx context.Context, c *redis.Client, sprint string) (Fleet, er
 	}
 	for i, name := range benches {
 		beat, desired := cs[i].beat.Val(), cs[i].desired.Val()
-		b := BenchFacts{BenchState: BenchState{Name: name, Launcher: beat["launcher"], HarvestLease: cs[i].harvest.Val() == 1}}
+		b := BenchFacts{BenchState: BenchState{Name: name, Launcher: beat["launcher"]}}
 		b.Paused = desired["paused"] == "1" || desired["paused"] == "true"
 		b.Slots, _ = strconv.Atoi(desired["slots"])
 		b.Desired = b.Slots

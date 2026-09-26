@@ -30,7 +30,6 @@ const (
 	FnRename       = "ns_ws_rename"
 	FnOrder        = "ns_ws_order"
 	FnCounts       = "ns_ws_counts"
-	FnMigrate      = "ns_ws_migrate"
 )
 
 // The stream line (Glenn 2026-09-26): waiting -> ready -> working -> review
@@ -262,38 +261,4 @@ func Counts(ctx context.Context, c redis.Cmdable) ([]Count, error) {
 			Merging: atoi(out[i+4]), Landed: atoi(out[i+5]), Parked: atoi(out[i+6])})
 	}
 	return rows, nil
-}
-
-// MigrateResult is one ns_ws_migrate page.
-type MigrateResult struct {
-	Cursor                                   string // "0" when the scan is complete
-	Scanned, Placed, Same, NoStream, Skipped int
-}
-
-// Add sums another page into r (the cursor is the other's).
-func (r *MigrateResult) Add(o MigrateResult) {
-	r.Cursor = o.Cursor
-	r.Scanned += o.Scanned
-	r.Placed += o.Placed
-	r.Same += o.Same
-	r.NoStream += o.NoStream
-	r.Skipped += o.Skipped
-}
-
-// Migrate is one ns_ws_migrate page: SCAN task:* from cursor (count keys),
-// placing each task hash with a stream in its set. sprint names the
-// friend-queue idx sets (sprint:<sprint>:idx:<owner>:<state>) to read.
-func Migrate(ctx context.Context, c redis.Cmdable, cursor, sprint string, count int, by string) (MigrateResult, error) {
-	if cursor == "" {
-		cursor = "0"
-	}
-	out, err := call(ctx, c, FnMigrate, false, cursor, sprint, count, by)
-	if err != nil {
-		return MigrateResult{}, err
-	}
-	if len(out) != 6 {
-		return MigrateResult{}, fmt.Errorf("%s: unexpected reply %v", FnMigrate, out)
-	}
-	return MigrateResult{Cursor: out[0], Scanned: atoi(out[1]), Placed: atoi(out[2]),
-		Same: atoi(out[3]), NoStream: atoi(out[4]), Skipped: atoi(out[5])}, nil
 }

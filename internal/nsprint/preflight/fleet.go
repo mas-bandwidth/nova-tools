@@ -73,13 +73,12 @@ func FleetRed(lines []FleetLine) bool {
 // BenchState is a registered bench as the store holds it: its desired slots,
 // pause, and the fields of its beat.
 type BenchState struct {
-	Name         string
-	Desired      int           // bench:<b>:desired slots, written by capacity
-	Paused       bool          // an explicit pause; a paused bench may have no beat
-	BeatPresent  bool          // bench:<b>:beat exists
-	BeatAge      time.Duration // now - beat at
-	Launcher     string        // the beat's launcher field
-	HarvestLease bool          // the bench's harvest worker lease is held
+	Name        string
+	Desired     int           // bench:<b>:desired slots, written by capacity
+	Paused      bool          // an explicit pause; a paused bench may have no beat
+	BeatPresent bool          // bench:<b>:beat exists
+	BeatAge     time.Duration // now - beat at
+	Launcher    string        // the beat's launcher field
 }
 
 // Up is a bench the dealer would deal to: a fresh beat and no pause.
@@ -244,7 +243,7 @@ func FleetChecks(ctx context.Context, in FleetInput) []FleetLine {
 		CheckBatchLauncher(in),
 		CheckBeats(in),
 		CheckOneSessionPerBatch(ctx, in),
-		CheckHarvestAndConsumers(in),
+		CheckConsumers(in),
 		CheckTable(ctx, in),
 		CheckRESTBudget(in),
 		CheckTwoSchedulers(in),
@@ -464,15 +463,9 @@ func (s *countingSession) LaunchDry(ctx context.Context, card string) error {
 
 func (s *countingSession) Close() error { return s.s.Close() }
 
-// CheckHarvestAndConsumers is 7.8: every UP bench holds a harvest worker
-// lease and no consumer group has an entry pending past 60 s.
-func CheckHarvestAndConsumers(in FleetInput) FleetLine {
-	reds := unread(need{"benches", in.Loaded.Benches}, need{"consumer groups", in.Loaded.Consumers})
-	for _, b := range sortedBenches(in.Benches) {
-		if b.Up() && !b.HarvestLease {
-			reds = append(reds, oneline.Escape(b.Name)+" has no harvest worker lease")
-		}
-	}
+// CheckConsumers is 7.8: no consumer group has an entry pending past 60 s.
+func CheckConsumers(in FleetInput) FleetLine {
+	reds := unread(need{"consumer groups", in.Loaded.Consumers})
 	groups := append([]ConsumerGroup(nil), in.Consumers...)
 	sort.Slice(groups, func(i, j int) bool { return groups[i].Name < groups[j].Name })
 	for _, g := range groups {
@@ -480,7 +473,7 @@ func CheckHarvestAndConsumers(in FleetInput) FleetLine {
 			reds = append(reds, fmt.Sprintf("%s pending %ds", oneline.Escape(g.Name), int(g.OldestPending.Seconds())))
 		}
 	}
-	return line("7.8", "harvest and consumers", reds, fmt.Sprintf("%d consumer groups under %s", len(groups), PendingMax))
+	return line("7.8", "consumers", reds, fmt.Sprintf("%d consumer groups under %s", len(groups), PendingMax))
 }
 
 // CheckTable is 7.12: table --check passes and the renderer's file is fresh.

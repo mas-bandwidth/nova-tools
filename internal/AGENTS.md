@@ -4,7 +4,6 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 
 | dir | purpose | guard | command |
 | --- | --- | --- | --- |
-| `benchsh/` | the one bench script runner: ssh bash -s, script on stdin | `go test ./internal/benchsh` | `go test ./internal/benchsh` |
 | `board/` | board structures and view rendering | `go test ./internal/board` | `go test ./internal/board` |
 | `bounded/` | bounded readers and byte buffers | `go test ./internal/bounded` | `go test ./internal/bounded` |
 | `buildinfo/` | binary identity and version info | `go test ./internal/buildinfo` | `go test ./internal/buildinfo` |

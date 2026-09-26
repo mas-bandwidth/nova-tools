@@ -29,37 +29,6 @@ func (f *dealFixture) queued(t *testing.T, id, stream, friend string, age int64,
 	}
 }
 
-// TestRedistributeFromMovesDownFriendsQueue: the hand verb's function,
-// ns_redistribute_from, on a down friend moves every ready task on its
-// queue (the 2026-09-25 evidence: state=- moved=0 with 15 on the queue).
-func TestRedistributeFromMovesDownFriendsQueue(t *testing.T) {
-	f := newDealFixture(t)
-	const s = "nova-sprint"
-	f.friend(t, "emma", 2, false)
-	f.friend(t, "rowan", 3, true)
-	must(t, f.c.HSet(f.ctx, "friend:rowan:roles", "roles", "builder,coordinator,may-hold").Err())
-	must(t, f.c.HSet(f.ctx, "friend:rowan:beat", "at", "1").Err())
-	must(t, f.c.HSet(f.ctx, "friend:rowan:desired", "slots", "3").Err())
-	must(t, f.c.HSet(f.ctx, "friend:emma:down", "reason", "out of credits", "actor", "rowan").Err())
-	f.queued(t, "q1", s, "emma", 1)
-	f.queued(t, "q2", s, "emma", 2)
-
-	reply, err := f.c.FCall(f.ctx, "ns_redistribute_from", nil, "emma", "down", "", "", "rowan", "i1").Slice()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if fmt.Sprint(reply[0]) != "OK" {
-		t.Fatalf("reply %v, want OK", reply)
-	}
-	sum := reply[1].([]any)
-	if fmt.Sprint(sum[2]) != "2" {
-		t.Fatalf("summary %v, want moved=2", sum)
-	}
-	if got := f.members(t, "friend:rowan:cards:ready"); strings.Join(got, ",") != "q1,q2" {
-		t.Fatalf("rowan ready %v, want q1,q2", got)
-	}
-}
-
 // TestFriendRebalanceNeverSilentZero: the Lua move on a down friend whose
 // ready set is not empty never answers moved=0 without a reason. With no
 // other friend and a task with no stream there is nowhere to put it, so the

@@ -2551,8 +2551,7 @@ seat's key is the defect this closes, not a mode to fall back to.
 **A refusing `gh` sits beside them (nova-tools #3600).** GitHub is a git remote
 only (#3594): the same `<slot>/shim` holds a `gh` that prints one refusal naming
 #3594 and exits 2, so a card's shell that reaches for the GitHub CLI by name makes
-no GitHub call. It is the one `internal/nogh` shim that `nova-sprint friend serve`
-also puts first on every friend child's `PATH`.
+no GitHub call.
 
 **What it does not close.** A card that spells `/usr/bin/bash` absolutely skips
 the wrapper, and so would a harness that spawned a shell some third way. Closing

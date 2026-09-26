@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/life"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/redis/go-redis/v9"
 )
@@ -38,19 +37,15 @@ type Repairer interface {
 type Ladder struct {
 	Store  *store.Store
 	Policy Policy
-	// Roster is who may receive moved work (life.Roster).
-	Roster life.Roster
 	// Repair is optional; nil leaves a unit wake path to #3048's check.
 	Repair Repairer
 	Actor  string
 }
 
-// SweepResult is one sweep: the ladder steps that did something and the
-// redistribute tick's moves.
+// SweepResult is one sweep: the ladder steps that did something.
 type SweepResult struct {
 	Idem  string
 	Steps []Step
-	Moves []life.Move
 	// Life is each ApplyLife that wrote (#3153).
 	Life []ApplyResult
 }
@@ -140,11 +135,6 @@ func (l *Ladder) Sweep(ctx context.Context) (SweepResult, error) {
 			res.Steps = append(res.Steps, step)
 		}
 	}
-	moves, err := life.Redistribute(ctx, l.Store, l.Roster, l.Actor, idem)
-	if err != nil {
-		return res, err
-	}
-	res.Moves = moves
 	return res, nil
 }
 

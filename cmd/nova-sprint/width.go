@@ -5,26 +5,21 @@ import (
 	"fmt"
 	"io"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/width"
 )
 
 func init() {
 	register(Verb{
 		Name:    "width",
-		Summary: "read only width per friend and fleet: slots, working, deficit, eligible, idle; width fill claims up to the deficit",
+		Summary: "read only width per friend and fleet: slots, working, deficit, eligible, idle",
 		Run:     runWidth,
 	})
 }
 
 func runWidth(ctx context.Context, args []string, out, errOut io.Writer) int {
-	if len(args) > 0 && args[0] == "fill" {
-		return runWidthFill(ctx, args[1:], out, errOut)
-	}
 	fs := taskFlags("width")
 	addr := fs.String("redis", "", "")
 	as := fs.String("as", "", "")
@@ -151,66 +146,6 @@ func runWidth(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if readBound {
 		fmt.Fprintln(out, "READ-BOUND")
 	}
-	return 0
-}
-
-// runWidthFill is `width fill`: it claims min(deficit, eligible, --max) tasks
-// for --as through ns_width_fill (task.WidthFill). --max 0 is refused: an
-// unbounded claim is the fillstate deficit, so --max, when given, is positive.
-// The one task store's queue lease stays `task fill` (#3206 PR A).
-func runWidthFill(ctx context.Context, args []string, out, errOut io.Writer) int {
-	fs := taskFlags("width fill")
-	addr := fs.String("redis", "", "")
-	as := fs.String("as", "", "")
-	sprint := fs.String("sprint", "", "")
-	max := fs.Int("max", 0, "")
-	actor := fs.String("actor", "", "")
-	idem := fs.String("idem", "", "")
-	if err := fs.Parse(args); err != nil {
-		return refuse(errOut, "width fill", err.Error())
-	}
-	if *as == "" {
-		return refuse(errOut, "width fill", "--as is required")
-	}
-	for i, arg := range args {
-		if strings.HasPrefix(arg, "--max=") {
-			v, err := strconv.Atoi(strings.TrimPrefix(arg, "--max="))
-			if err != nil || v <= 0 {
-				return refuse(errOut, "width fill", "--max must be a positive integer")
-			}
-		} else if arg == "--max" {
-			if i+1 >= len(args) {
-				return refuse(errOut, "width fill", "--max requires an argument")
-			}
-			v, err := strconv.Atoi(args[i+1])
-			if err != nil || v <= 0 {
-				return refuse(errOut, "width fill", "--max must be a positive integer")
-			}
-		}
-	}
-	if *max < 0 {
-		return refuse(errOut, "width fill", "--max must be a positive integer")
-	}
-	if fs.NArg() != 0 {
-		return refuse(errOut, "width fill", "takes no arguments")
-	}
-	st, err := openTaskStore(ctx, *addr)
-	if err != nil {
-		return refuse(errOut, "width fill", err.Error())
-	}
-	defer st.Close()
-
-	if st.Client().Exists(ctx, "friend:"+*as+":desired").Val() == 0 {
-		return refuse(errOut, "width fill", fmt.Sprintf("friend %s has no desired slots", *as))
-	}
-	res, err := task.WidthFill(ctx, st, *as, *sprint, *max, *actor, *idem)
-	if err != nil {
-		return refuse(errOut, "width fill", err.Error())
-	}
-	for _, t := range res.Tasks {
-		fmt.Fprintf(out, "FILL %s kind=%s ref=%s token=%s\n", t.ID, t.Kind, t.Ref, t.Token)
-	}
-	fmt.Fprintf(out, "FILLED %s n=%d deficit=%d\n", *as, res.N, res.Deficit)
 	return 0
 }
 

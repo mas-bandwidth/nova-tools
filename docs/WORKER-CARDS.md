@@ -13,7 +13,7 @@ Emma reads it, and Freddy is asked by name where a practice touches his swarm (2
 16). Templates read: cards 05 (edit), 08 and 09 (reads) of 2026-09-14, sec38 card-04. A
 promoted practice lands in `nova-swarm template` ([SPEC-SWARM.md](SPEC-SWARM.md)).
 
-`nova-pulse cut --kind` links the matching reviewed pull request from [Card
+The card cutter links the matching reviewed pull request from [Card
 exemplars](EXEMPLARS.md) in every task body as `Example to follow:`. The example demonstrates
 method and evidence; it does not override the card's pinned source, PATHS, test, or DONE-WHEN.
 
@@ -52,7 +52,7 @@ refuses, so a card that lints clean on the bench is not rejected at the gate for
 | `kind-declared` | a `KIND: <kind>` line with a kind on it; `cut` writes it from the pool row and a model never does |
 | `paths-declared` | a `PATHS: <glob>[, <glob>...]` line, repository-relative, no `..`, every glob holding at least one literal segment — or `PATHS: none` for a card that changes nothing |
 | `test-named` | a `TEST: <package> <TestName>` line — two fields, the name a Go test name — or `TEST: none` where the kind declares no gate |
-| `paused` | the coordinator has not paused this kind. The remedy is never a rerun: it is `nova-pulse trust --set trial`. Checked only when `lint --card` is handed the state with `--trust <file>`, in the shape `nova-pulse trust` prints |
+| `paused` | the coordinator has not paused this kind. The remedy is never a rerun: it is the coordinator's trust setting. Checked only when `lint --card` is handed the state with `--trust <file>`, in the shape `nova-pulse trust` prints |
 
 
 The seven Mercury jobs cited below: 20260914T151824Z-card-03/04, 20260914T152306Z-card-02/05,

@@ -1588,14 +1588,14 @@ serialize runtimes.
 ## nova-pulse
 
 Deleted (nova-tools #3801). It was frozen on 2026-09-23 and superseded by
-`nova-sprint`; its last three verbs moved there:
+`nova-sprint`; its last three verbs moved there, and the harvest has since gone
+with the copy model (2026-09-26):
 
 | nova-pulse verb | now |
 | --- | --- |
 | `cut` | `nova-sprint card cut` (#3789): one issue becomes one card record in Redis |
-| `harvest` | `nova-sprint card harvest`: push, find-or-open the PR, verify the head |
+| `harvest` | `nova-sprint card harvest`, itself deleted 2026-09-26: a work copy's wrapper pushes its branch and opens its PR (#4227) |
 | `status` | `nova-sprint table`: the sprint table from Redis |
-
 
 ## nova-review
 
@@ -3670,7 +3670,7 @@ itself signals only the unit's pid.
 watches (#3530): the headline (`SPRINT TABLE *** PIT STOP ***` while
 `s:<name>:pitstop` or `sprint:<name>:pitstop` exists), the
 `<left>/<y> left, <z>% done -> ~<eta>m` line, the streams block and the
-consumer table, one blank line between them. The streams are the
+worker table, one blank line between them. The streams are the
 rows of `ws:order` (the ws index, #3662) with
 the ZCARDs of their `waiting`, `ready`, `working`, `review`, `reading`,
 `merging` and `landed` sets (`ws:<stream>:<where>`), one column each in that
@@ -3683,16 +3683,16 @@ in the last hour of `ws:log` (at least one an hour). Below the total, one
 `LAND` line per open landing and one `REVIEW stream=<s> over=<n>
 oldest=<id> age=<d> max=<d>` line per stream holding cards in review longer
 than `cfg:review max_age` (seconds; one hour when unset; a card with no
-`review_at` counts as over). The consumer table (#4071) is ONE table for
+`review_at` counts as over). The worker table (#4071) is ONE table for
 friends and benches: `consumer | ready | working | done | ok | fail | ok% |
-status | load`, one row per consumer named `<kind>:<name>` (`friend:emma`,
+status | load`, one row per worker named `<kind>:<name>` (`friend:emma`,
 `bench:hetzner`): the friends (the `--friends` roster, else the `friends`
 SET sorted), then the `benches` SET, then any other member of the
 `consumers` SET, each once, and a total row. Every cell is one ZCARD of
 `<kind>:<name>:cards:<set>` for set = `ready`, `working`, `ok`, `fail`; done
 is ok + fail and ok% is ok over done, derived, with no sprint window and no
 base from a `table clear`; a set that does not read prints `?`, never 0.
-status is `up` when the consumer's own beat (`<kind>:<name>:beat` at, ms)
+status is `up` when the worker's own beat (`<kind>:<name>:beat` at, ms)
 is under a minute old and `<kind>:<name>:down` does not exist, else `down`
 (the row still shows its cards); an up consumer whose desired hash has
 `paused` 1 (`worker pause`, #4308) prints `paused` instead; load is the
@@ -3715,7 +3715,7 @@ done count) and prints `CHECKPOINT`, then in one MULTI/EXEC moves every
 `ws:<s>:landed` member to closed (`task:<id>` state, one `ws:log` entry
 each), stores the done counts in `ws:done0` (which the table no longer
 reads) and the receipt in `ws:checkpoint`, and prints `CLEARED ... ms=<n>`.
-Waiting, ready, working, review, reading and merging and the consumer table
+Waiting, ready, working, review, reading and merging and the worker table
 are untouched.
 
 `review post --id <primary> --verdict recut|redeal|reassign:<consumer>|drop
@@ -3899,11 +3899,7 @@ its `repo` and `pr` fields or by `ref` (the PR URL the first read pushes, or
 (its diff and its CI) even when the record has moved on, and the receipt adds
 `record_head=` then and `task=<id>` always. A task that is not a read (kind
 `read` or `review`), names no PR or has no head is one `READ BRIEF REFUSED
-task=<id> why=` line (exit 1). `friend serve` briefs a taken read task the
-same way: when the task's title does not render through `brief render`, the
-child's `brief.md` is this read brief with `diff.patch` beside it (start
-receipt `brief=read`), and only a read the mirror cannot brief yet falls back
-to the task record (`brief=record`).
+task=<id> why=` line (exit 1).
 
 `read post --repo <r> --n <n> --line "<typed line>" [--no-github] [--owner
 <o>] [--redis <addr>]` stores the line: the first word is one of SCORE, HOLD,
@@ -3911,7 +3907,7 @@ REPAIR, SPEC, SPEC-WRITTEN, CLOSE or JEV-DIFF and the first line carries
 `who=<name>` and `head=<sha>` (a SPEC line: `who=`, `rev=<k>` and
 `score=<0..10>`, no head, see `spec` below), or the line is refused. It RPUSHes the line
 onto `pr:<repo>:<n>:lines` and stamps `last_line` and `last_line_at` on the
-record in one MULTI, then, until #3595 retires PR comments, mirrors it as one
+record in one MULTI, then mirrors it as one
 REST comment (`POST /repos/<owner>/<repo>/issues/<n>/comments`, the token from
 `GH_TOKEN` or `GITHUB_TOKEN`, the base URL from `GITHUB_API_URL`). `--no-github`
 is Redis only (the tests count HTTP calls: 0 with it, exactly 1 without). A
@@ -4003,7 +3999,6 @@ Exit 0 written or already so (RECORDED, NEW_REV, DONE, SAME), 1 refused
 
 The ws index (#3662) is the sprint's work-stream data structure: `ws:names`, `ws:order` (rank), and per stream one ZSET per state, `ws:<stream>:waiting|ready|working|merging|landed|parked`, with `task:<id>` fields `stream` and `state` naming the one set a task is in (`closed` is in none) and every move receipted in the `ws:log` stream. Each verb is one FCALL of an `ns_ws_*` function (library file `internal/nsprint/fn/lua/ws.lua`, Go wrappers in `internal/nsprint/ws`), prints one receipt line ending `ms=<n>` (the list verbs print their rows first), and exits 0 done, 1 refused (`REFUSED <why>`, nothing written), 2 could not run. Every verb takes `--redis <addr>` (default `$NOVA_SPRINT_REDIS`) and `--as <actor>` (default `$USER`); the writing verbs take `--why <text>` for the log.
 
-- `nova-sprint ws migrate [--sprint <S>] [--cursor <n>] [--count <n>] [--once]` builds the sets once from the `task:*` hashes: the stream from the `stream` field or a `STREAM: <s> |` title prefix, the state from `q:waiting` / `q:blocked` (waiting), the friend-queue index sets `sprint:<S>:idx:<owner>:working|open|closed` (working, ready, closed) and the hash's own state. The old state is kept in `fq_state`. It is idempotent: a second run places nothing, and a task ws has moved since is left where it is. Note the friend-queue's `open` becomes ws `ready`.
 - `nova-sprint ws counts` prints the totals over every stream; `nova-sprint ws checkpoint --out <path>` writes every stream's six sets with the task fields as TSV and records the receipt in `ws:checkpoint`.
 - `nova-sprint scope keep --streams "<a>|<b>"` parks every stream not named (waiting and ready move to parked; every set is scored by the task's `created_at` ms, so a list reads oldest first and a move never changes the score); `scope park --stream <s> [--ids @file]` parks one stream, or only the listed ids of it; `scope unpark --stream <s>` returns each parked task to the set it came from; `scope ls` prints each stream as kept, parked or partial. `scope keep` and `scope park` write a checkpoint first, to `--checkpoint <path>` or a new file in `$NOVA_SPRINT_CHECKPOINT_DIR` (default `nova-sprint/ws` under the user cache directory, newest 32 kept).
 - `nova-sprint stream ls` prints each stream's rank and six counts; `stream order <a> <b> ...` ranks the named streams first; `stream rename <old> <new>` renames the sets and every member's `stream` field.
@@ -4051,26 +4046,6 @@ Supersede first publishes the same row with status `superseded` to
 creates the archive when needed; cards never load it. If interrupted between
 those writes, retry recognizes the archived row and finishes the removal.
 Archived IDs remain reserved, and an identical supersede retry is unchanged.
-
-### xy
-
-The one line under the sprint table, `x/y z% -> ~eta`. It does not render the table.
-
-x, y and the percent are the stdout of `nova-work set check --evaluate`: `SET OK units=<y>` and `SET DONE done=<x> percent=<p>`. The percent is printed as that tool printed it. A `:status "done"` or `:status "landed"` in the work-set is not counted; those are the hand-marked receipts the old sprint-xy bash grepped.
-
-eta is the sprint's wall. `--calibration-out` is a file of `SUGGEST <kind> <n>m` lines, the mean lease-to-done actual for that kind, and each still-open task is charged that instead of its stored estimate when the task names a kind. The wall is one lane per owner, or per the route's consumer when the owner is clear, with real dependencies waited on. It is not the sum of the work, and it is not `open * 10/3 + 12`. `--open` is a file of `TASK` lines, or a verbose sprint status: C/O/W rows (`Open` or `Working`, `owner=`, `route=`, `est=` as `~Nh` or `~Nm`, `kind=`, `depends=`). `depends=-` is no edge. A row without `kind=` or `depends=` is a refusal: the printed estimate alone is not the calibrated wall.
-
-Run from the repo root. The three files are captured tool output and the open tasks. `--set` is a work-set whose receipts are already marked done; the line does not move.
-
-```text
-nova-sprint xy --evaluate-out cmd/nova-sprint/testdata/evaluate.txt --calibration-out cmd/nova-sprint/testdata/calibration.txt --open cmd/nova-sprint/testdata/open.tsv --set cmd/nova-sprint/testdata/set.sexp
-# prints
-26/42 61% -> ~3h
-```
-
-**Reading it.** `26/42` is `SET DONE done=26` over `SET OK units=42`. `61%` is the tool's `percent=`, not a recomputation. `~3h` is two open `fix` tasks on different owners, one depending on the other, each charged the calibrated 90 minutes rather than the stored 120. `evaluate.txt` also has a criterion `holds=yes`; that is not the count. `set.sexp` marks three receipts done or landed; that is not the count either.
-
-**What a first run gets wrong.** Leaving the flags off is one refusal that names each missing source. Pointing `--set` at a sexp full of `:status "done"` and reading those marks as x is the old count; this line will not do it. xy runs no sprint verb: `--calibration-out` and `--open` are files, and `--store`, `--name` and `--nova-pulse` are usage errors since nova-pulse was deleted (#3801). An `--open` status that prints a fraction and no open row is a refusal: that fraction is the sprint store's own x/y, and eta reads the verbose rows.
 
 ### pitstop
 
@@ -4199,10 +4174,7 @@ verb's 7. Exits 7 and 8 never print `nothing written`.
 bench: a leading `/`, not `//` (a network share), no backslash, no `..`
 segment; a drive root (`C:\x`, `C:/x`) or a scheme is refused. `card end`
 exits 1 (USAGE) on anything else before it opens Redis, `ns_card_end` applies
-the same rule (so nothing is written), and harvest refuses it before ssh. `nova-sprint card harvest` pushes from
-`<results>/repo` on the bench as read from that field; there is no
-`--results-root` (it is refused as an unknown flag that names the field),
-because no worker needs to know a bench's layout (#3329).
+the same rule (so nothing is written).
 
 ### `--seat` and `nova-sprint redis-cli`
 
@@ -4235,14 +4207,6 @@ nova-sprint table --seat studio --redis 100.115.99.19:6380 --once
 nova-sprint redis-cli --seat studio --redis 100.115.99.19:6380 -- ZCARD sprint:S:cards
 ```
 
-### `nova-sprint bench reset`
-
-`nova-sprint bench reset --bench <bench> [--keep-queue] [--grace 5s] [--redis <addr>] [--actor <seat>] [--idem <key>]` stops the bench's in-flight card process groups in one SSH session and returns stopped attempts to their sprint pools without charging a retry. A persistent reset record blocks the dealer until every process is gone. An SSH refusal or surviving process leaves the record held and the command exits 1.
-
-Recover by rerunning the command, or clear a held record with an operator receipt: `nova-sprint bench reset --bench <bench> --clear --why '<reason>' [--actor <seat>]`. A fresh running reset cannot be cleared. Reset does not restart services, modify fleet UP/DOWN state, or delete job storage.
-
-The bench-side command is `nova-sprint card stop --stdin --grace <duration>`. Its input is one `<sprint> <label> <attempt>` per line. It prints `STOPPED`, `GONE`, or `ALIVE` for the exact `nova-card <sprint>/<label>/<attempt>` process group, one line per card and nothing else on stdout; the `STOP stopped= gone= alive=` summary goes to stderr. It exits 0 whenever the protocol completed, ALIVE included (the reset holds on ALIVE); a non-zero exit means the session failed and the reset holds with `why=ssh:...`. A beat error that is not a takeover holds the record with `why=beat:...`.
-
 ### `nova-sprint fleet build`
 
 `nova-sprint fleet build [--redis <addr>] [--bench <b>[,<b>...]] [--build-cmd <path>] [--machines <file>] [--dry-run]` is the fleet deploy (nova-tools #3310), with its whole plan in Redis: the `fleet:release` hash holds `version` (`v<x>.<y>.<z>-dev.<sha8>`), `commit` (the full sha of that `<sha8>`), `builder` (the bench that builds), `self` (this machine's bench name), an optional `tools` list (default `nova-sprint,nova-swarm,nova-card,nova-wake`) and `platform:<bench>` (`<goos>-<goarch>`) for every bench and for `self`; the `benches` set names where to install. One pipeline reads both, and a gap is refused (`FLEET BUILD REFUSED: <why> (<remedy>)`, exit 1) before any child starts. The run: the builder builds the release once for the distinct platforms, in one ssh session running the nova-sprint the last fleet build installed there (`ssh -n <builder> .local/bin/nova-sprint fleet build compile --version <v> --commit <sha> --platform <list>`, which skips a platform already built; `--build-cmd <path>` runs that command locally with rowan-tools' space-build argv `--host <builder> --version <v> --commit <sha> --platform <list>` instead), and the `BUILD OK` line carries its last line; every bench, in one ssh session each and all at once, rsyncs its platform's tools from `<builder>:nova-bench/release/<v>/<platform>/` (the builder from its own disk) into `~/.local/bin.new`, renames each into `~/.local/bin` and prints its `nova-sprint version` line; this machine does the same locally. Each target prints `OK|MISMATCH|FAIL <bench> platform=<p>: <detail>`; a target whose version line names the release gets its receipt in one pipeline, `bench:<b>` fields `build`, `build_sha`, `build_at`, and a failed or mismatched one keeps its old receipt. Last, the new nova-sprint here runs `fn deploy --redis <addr>`, so the store's function library is this release's. The final line is `FLEET BUILD OK version=<v> commit=<sha12> benches=<n> fn=ok` (exit 0) or `FLEET BUILD FAIL ... at=build|install|fn ok=<n> failed=<list>` (exit 1). `--dry-run` prints `WOULD BUILD`/`WOULD INSTALL` lines and starts nothing. `nova-sprint fleet build set [--redis <addr>] <key>=<value>...` validates and writes `fleet:release` fields in one HSET. `nova-sprint fleet build compile --version <v> --commit <sha40> [--platform <p>[,<p>...]] [--repo-url <url>] [--dry-run]` is the builder half (nova-tools #4080; internal/nsprint/fleetbuild/compile.go), space-build's steps in Go: a platform already published under `~/nova-bench/release/<v>/<p>/` whose SHA256SUMS verifies prints `OK <p>` and is not rebuilt; the commit and the v* tags are fetched from GitHub into `~/nova-bench/space-build/src/nova-tools` (the mirror only an object alternate); a missing linux-amd64 reference at `~/nova-bench/build/<v>` is built first (`REFERENCE BUILT ...`); every cmd/nova-* is built per platform with `CGO_ENABLED=0 go build -trimpath -ldflags "-X main.version=<v>"` under the reference's toolchain, headers checked, the linux-amd64 build held file for file to the reference's sha256 (`IDENTICAL`), and each platform renamed into the release root (`PUBLISHED`). Every go child runs with the build's OWN Go state, `GOMODCACHE=~/nova-bench/space-build/go/mod`, `GOCACHE=~/nova-bench/space-build/go/build` and `GOTOOLCHAIN=<the reference's toolchain>` (a downloaded toolchain lands in that module cache), on top of the sanitized environment, so it never shares a cache or a toolchain extraction with a CI runner on the same machine; `BUILT <v> platforms=<list> tools=<n> toolchain=<go> gomodcache=<dir> gocache=<dir> log=<file>` is the receipt, and the last line is `FLEET COMPILE OK <v> commit=<sha> platforms=<list> built=<list>|none [go=<dir>]` (exit 0) or `FLEET COMPILE REFUSED: <why> (<remedy>)` (exit 1); 2 is usage. The loops that run the old binaries are not restarted by this verb.
@@ -4258,16 +4222,6 @@ Since nova-tools #4050 nothing in the plan is typed. `land merge` of nova-tools 
 ### `nova-sprint fleet churn`
 
 `nova-sprint fleet churn [--seconds 12] [--machines <file>] [--only <a,b,...>]` is the process-age sample as a verb (nova-tools #4310; internal/nsprint/fleet/churn.go): finding the relaunch churn (a bench-row every second, a ci-run dead and relaunched, a grok heartbeat) took a hand `ps` per machine. It runs one sample on every machine of the registry (`--machines <file>`, else `$NOVA_FLEET_MACHINES`; `--only` narrows to the names given and refuses one the registry lacks), all at once, over the registry's ssh column (`ssh -n -o BatchMode=yes -o ConnectTimeout=6 <host> <ps>`; a machine whose ssh column is `localhost` is sampled without ssh): `ps -eo pid,etimes,ppid,comm` on linux, `ps -Ao pid,etime,ppid,comm` on darwin with `[[dd-]hh:]mm:ss` parsed to seconds, a path reduced to its base name and a login shell's leading `-` dropped. Per machine, in registry order, it prints one `<machine> young <command> <n>` line per command with a process younger than `--seconds` (most first), one `<machine> old pid=<pid> age=<n>d comm=<command>` line per process older than a day whose parent is 1, and last `CHURN <machine> young=<n> old=<n>` (young counts processes, not commands). The sample's own pipeline is left out: `ps`, `awk`, `sshd`, and the shell `ps` runs under. A machine whose sample fails prints `CHURN <machine> FAIL <why>` (an ssh error, a bad ps line, or an os/arch that is neither linux nor darwin) and the verb goes on to the rest. Exit 0 every machine answered, 1 a machine failed, 2 usage or no registry.
-
-### `nova-sprint friend serve`
-
-`nova-sprint friend serve --as <f> [--width <n>] [--dispatch "<argv>" | -- <argv...>] [--dir <root>] [--sprint <s>] [--host <h>] [--harness <h>] [--session <s>] [--login <alias>]... [--once] [--redis <addr>]` is the loop unit on a friend's seat (nova-tools #2938): a friend who is not awake in a session still works her queue, at zero model tokens. Every second it beats (`ns_friend_serve_beat`, one call: the seat lock `friend:<f>:serve`, the presence hash `friend:<f>:beat` under a 5 s TTL, and the untimed `friend:<f>:last`), takes ready tasks from the friend's queue up to the free width (`task take`'s one pipeline plus one call), writes each task's brief (`brief render`, else the task record when render refuses the kind), starts the friend's own harness by exec and watches the child, beating its task lease every 60 s. When the child exits 0 having written a typed line (`SCORE`, `DISPOSITION`, `HOLD`, `DONE`, `BLOCKED`, `ABSTAIN`, `REPAIR`, `SPEC`, `SPEC-WRITTEN`, `CLOSE`; the last such line on stdout wins) the task is closed with that line as its evidence, a read with its verdict and score at the task's head; any other exit closes it with `blocked: exit=<rc> ...` naming the last line it wrote. A task is in working only while its child lives: a serve stopped by a signal kills its children and gives their tasks back (`task cancel`). Every event is one entry on `friend:<f>:log` and one `SERVE <f> <kind> ...` line on stdout. On start, after its first beat, each `--login` alias is bound to the seat in `friends:login` through `ns_friend_hello` (one call, the only writer of that hash; nova-tools #3797), so typed hold and read lines signed `who=<alias>` resolve to the friend instead of `REFUSED unknown-who`; a clashing alias (`LOGIN-TAKEN`, `LOGIN-IS-FRIEND`, `NAME-IS-LOGIN`) prints `FRIEND SERVE <f> REFUSED login <words>`, releases the seat and exits 1.
-
-The harness argv is the seat's declaration: `--dispatch` or the argv after `--`, else the `dispatch` field of the `cfg:friend:<f>` hash (space separated, no argument may contain a space, as the fleet loops table is spelled). In every argument `@brief`, `@out`, `@dir`, `@sprint` and `@id` are replaced per task; the child also gets `NOVA_FRIEND`, `NOVA_TASK_SPRINT`, `NOVA_TASK_ID`, `NOVA_TASK_ATTEMPT`, `NOVA_TASK_TOKEN`, `NOVA_TASK_KIND`, `NOVA_TASK_HEAD`, `NOVA_TASK_BRIEF`, `NOVA_TASK_OUT` and `NOVA_TASK_DIR` in its environment, with `<dir>/.shim` first on its `PATH`: that directory holds the refusing `gh` of `internal/nogh` (nova-tools #3600), which prints one line naming #3594 and exits 2, so a friend child reaches GitHub only through nova-sprint verbs and `git push`. A Claude seat declares `claude -p @brief`; Emma's seat declares her Antigravity dispatcher. `--width 0` (the default) reads `friend:<f>:desired`; `--dir` defaults to `~/nova-bench/serve/<f>`, holding `<sprint>/<id>-<attempt>/brief.md` and `out.log`.
-
-`nova-sprint friend wake --as <f> [the same flags]` (and `friend serve --once`) is one pass: beat, take, dispatch, watch the children it started until they close, release the seat. `friend wake <f>` without `--as` is unchanged: it routes one wake through the reconciler's list.
-
-Exit 0 served; 1 refused with the remedy named (`seat-held holder=<session>`: a second serve on the seat while the first holds the lock; `no-dispatch`; `no-width`; `unregistered`); 2 usage, including `--as` not equal to `NOVA_FRIEND`.
 
 ### Cutting a card from an issue: `nova-sprint card cut`
 

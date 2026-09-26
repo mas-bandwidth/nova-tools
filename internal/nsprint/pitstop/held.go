@@ -5,8 +5,8 @@ package pitstop
 // activity related to the sprint table"). On 09-25 s:<S>:pitstop was set at
 // 5:05 PM and only the dealer honoured it; the land duty kept rebuilding and
 // force-pushing every stream branch each tick. Now the reconciler reads Held
-// once per pass and skips its duties, and the route loop and friend serve read
-// it before they dispatch; beats, the table and `pitstop status` do not.
+// once per pass and skips its duties, and the route loop reads it before it
+// dispatches; beats, the table and `pitstop status` do not.
 //
 // A stop is held while its sprint is not closed. A scope=all stop holds every
 // stream (Whole); a scope=streams stop holds the streams it names, and only a
