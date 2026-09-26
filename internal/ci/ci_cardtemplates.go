@@ -314,7 +314,7 @@ func CheckCardTemplates(root string, dirs []string, allowlistPath string) (CardT
 		if statErr != nil || !info.IsDir() {
 			continue
 		}
-		walkErr := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
+		walkErr := walkSourceDir(base, func(path string, d os.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
@@ -324,7 +324,7 @@ func CheckCardTemplates(root string, dirs []string, allowlistPath string) (CardT
 			if !hasCardTemplateExt(path) {
 				return nil
 			}
-			raw, readErr := os.ReadFile(path)
+			raw, readErr := readSourceFile(path)
 			if readErr != nil {
 				return readErr
 			}

@@ -1,4 +1,11 @@
+//go:build functional
+
 package swarm
+
+// This file's tests exec whole programs -- the fake runner this package builds
+// (testdata/fakerunner), git, sqlite3 or sh -- so they are the functional tier's,
+// not unit tests (Glenn 2026-09-26, nova-tools#4328: unit tests under 2 s and
+// frugal with the machine's cores). They run under -tags functional.
 
 import (
 	"bytes"
@@ -10,8 +17,6 @@ import (
 	"testing"
 	"time"
 )
-
-func itoa(n int) string { return strconv.Itoa(n) }
 
 // The batch tests drive scatter/wait/gather with a fake runner: a real executable the test
 // places in a temp directory (see fakerunner_test.go), one process per card, exactly what a
@@ -48,29 +53,6 @@ func fakeRunnerLog(t *testing.T, dir, name, body string) string {
 		publishCard("{job}"),
 		runnerStep{Op: "copy", Path: "{root}/{slot}/native.log", Body: logSrc},
 	)
-}
-
-func writeCard(t *testing.T, dir, name, body string) string {
-	t.Helper()
-	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	return path
-}
-
-func writeCards(t *testing.T, dir string, cards [][2]string) string {
-	t.Helper()
-	var b strings.Builder
-	for i, c := range cards {
-		path := writeCard(t, dir, c[0]+".card", c[1])
-		b.WriteString(c[0] + "\t" + itoa(i+1) + "\tmodel\t" + path + "\n")
-	}
-	path := filepath.Join(dir, "cards.tsv")
-	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	return path
 }
 
 func runBatch(t *testing.T, cards, root, runner string, deadline time.Duration) (int, string, string) {

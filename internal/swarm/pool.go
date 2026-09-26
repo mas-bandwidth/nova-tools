@@ -301,6 +301,13 @@ func (p *Pool) ClaimNext() (Sidecar, []byte, bool, error) {
 	return Sidecar{}, nil, false, nil
 }
 
+// syncFile is how a durable record is flushed before it is renamed or linked into
+// place: (*os.File).Sync. This package's unit tests replace it with a no-op
+// (fsync_test.go): on macOS Sync is F_FULLFSYNC, tens of milliseconds a write, and
+// what a unit test asserts is the record, not the disk's durability
+// (nova-tools#4328).
+var syncFile = (*os.File).Sync
+
 // writeAtomic writes whole revisions: a temporary file beside the target, fsynced, then
 // renamed over it. A reader sees the previous revision or the new one, never a prefix.
 //
@@ -328,7 +335,7 @@ func writeAtomic(path string, data []byte, mode os.FileMode) error {
 		os.Remove(tmp)
 		return err
 	}
-	if err := f.Sync(); err != nil {
+	if err := syncFile(f); err != nil {
 		f.Close()
 		os.Remove(tmp)
 		return err

@@ -1853,7 +1853,7 @@ The standard had been silent about all of it.
 **The test.** `TestBenchStandardDriftsOnAToolTheWallCannotExecute` and
 `TestBenchStandardAcceptsAToolUnderAGrantedRoot`
 (`internal/ci/benchstandard_wall_toolchain_test.go`), in the shape
-`benchstandard_disk_test.go` already uses: run the REAL script with a FAKE PATH
+`benchstandard_disk_functional_test.go` already uses: run the REAL script with a FAKE PATH
 layout and a HOME of its own. The negative half puts the tool at
 `$HOME/.local/bin` — where the fleet's sbcl actually was — and demands exactly
 one DRIFT line carrying the remedy. The positive half puts it at
@@ -2153,8 +2153,10 @@ per-package budget (`slowtests`) and the measured table are the net under those.
 
 **The rule.** Every list file under `internal/ci/testdata/` (`*allowlist*.txt`,
 `*.allow`, `*_examples.txt`) is loaded by a call to `loadAllowlist` or
-`allowlist.Load` in `internal/ci`, and nothing there reads one with
-`os.ReadFile`, `os.Open` or `readFile`.
+`allowlist.Load`, and no Go file anywhere in the tree reads one with
+`os.ReadFile`, `os.Open` or `readFile`; the lander's guard
+(`internal/nsprint/land/guard`) reads `namedpaths_allowlist.txt` through the
+helper too.
 **The hurt.** 2026-09-26 (#4339): each class test had its own list format and
 no update path, so removals were followed by hand-written scripts
 (`fix-ci-serial2/3/4.py`, `drain_test_rewrite.py`, `prune.py`) rewriting
@@ -2171,9 +2173,8 @@ allowlist.Load`.
 **Its narrowings.** The walk is syntactic: a call's path is resolved through
 string literals (`filepath.Join` parts included), package constants, a variable
 assigned in the same function and one level of parameter; a path computed any
-other way is not seen. It reads `internal/ci` only, so a list read from another
-package (`internal/nsprint/land/guard` reads `namedpaths_allowlist.txt` for the
-lander) is not held here.
+other way is not seen. A package none of whose files spells a list file's name
+is not parsed, since the resolver could not reach a list from it.
 
 ### `seatwrap` — no script wraps `nova-secrets exec` around a seat tool for its Redis password
 

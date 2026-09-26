@@ -234,6 +234,13 @@ func TestTableSetsRuleCatchesAnInjectedWriter(t *testing.T) {
 // Go string ending ':living' or ':starting' after a bench or friend root.
 var oldLedgerKey = regexp.MustCompile(`(bench|friend)[^'"\n]*['"]\s*(\.\.|\+)\s*[^'"\n]*['"]:(living|starting)['"]|['"](bench|friend):[^'"\s]*:(living|starting)['"]`)
 
+// mayNameOldLedger is oldLedgerKey's cheap necessary condition: every match
+// carries ":living" or ":starting". Text without either is not handed to the
+// regexp (nova-tools#4328).
+func mayNameOldLedger(s string) bool {
+	return strings.Contains(s, ":living") || strings.Contains(s, ":starting")
+}
+
 // TestNoOldLeaseLedgerLeft (#3998): nothing reads or writes
 // bench|friend:<n>:living|starting any more, in the Lua library or in any
 // non-test Go file; the width in use is ZCARD <consumer>:cards:working.
@@ -246,7 +253,7 @@ func TestNoOldLeaseLedgerLeft(t *testing.T) {
 			if j := strings.Index(code, "--"); j >= 0 {
 				code = code[:j]
 			}
-			if oldLedgerKey.MatchString(code) {
+			if mayNameOldLedger(code) && oldLedgerKey.MatchString(code) {
 				bad = append(bad, n+":"+strconv.Itoa(i+1)+": "+strings.TrimSpace(line))
 			}
 		}
@@ -254,6 +261,9 @@ func TestNoOldLeaseLedgerLeft(t *testing.T) {
 	tree := repoTree(t)
 	for _, dir := range []string{"cmd", "internal"} {
 		for _, src := range tree.GoFilesUnder(false, dir) {
+			if !mayNameOldLedger(string(src.Src)) {
+				continue
+			}
 			for i, line := range strings.Split(string(src.Src), "\n") {
 				if oldLedgerKey.MatchString(line) {
 					bad = append(bad, src.Rel+":"+strconv.Itoa(i+1)+": "+strings.TrimSpace(line))

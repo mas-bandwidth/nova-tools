@@ -1,4 +1,12 @@
+//go:build functional
+
 package swarm
+
+// This file measures the launch handshake against the wall clock: awaitIdentity
+// and readFileSteadyBy read time.Now and wait on time.After with no clock seam,
+// so the bound is real time and the test is the functional tier's, not a unit
+// test (Glenn 2026-09-26, nova-tools#4328: unit tests never wait on the wall
+// clock).
 
 import (
 	"os"

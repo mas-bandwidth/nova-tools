@@ -15,14 +15,14 @@ cmd/nova-swarm/native_test.go:TestNativeRefusesAModelThatDiffersFromTheWorkerDes
 cmd/nova-swarm/native_test.go:TestNativeSecretWorkerWritesNoAuthFileAndTheHarnessSeesName hands the code under test --deadline 10s; a ceiling the run never reaches: 0.03 s on hetzner at dev 64b9bec48
 cmd/nova-swarm/native_test.go:TestNativeWorkerModelGateComparesQualifiedName hands the code under test --deadline 10s; a ceiling the run never reaches: 0.03 s on hetzner at dev 64b9bec48
 internal/nsprint/deal/pass_test.go:fixture.remote sets RunTimeout to 20s; a helper, not a test: its callers are timed, and none reached five seconds at dev 64b9bec48
-internal/swarm/batch_native_636_test.go:TestBatchUnknownAcceptanceDoesNotExitZero sets Deadline to 10s; a ceiling the run never reaches: 0.00 s on hetzner at dev 64b9bec48
+internal/swarm/batch_native_636_functional_test.go:TestBatchUnknownAcceptanceDoesNotExitZero sets Deadline to 10s; a ceiling the run never reaches: 0.00 s on hetzner at dev 64b9bec48
 internal/swarm/batch_native_636_test.go:TestCard8909BatchRefusesWithNeitherRunnerNorHarness sets Deadline to 10s; a ceiling the run never reaches: 0.00 s on hetzner at dev 64b9bec48
-internal/swarm/batch_native_636_test.go:TestCard8909BatchRunsNativeWithNoRunner sets Deadline to 10s; a ceiling the run never reaches: 0.01 s on hetzner at dev 64b9bec48
-internal/swarm/batch_reliability_test.go:TestBatchAbstainNamesReason sets deadline to 10s; a ceiling the run never reaches: 0.12 s on hetzner at dev 64b9bec48
-internal/swarm/batch_tokens_13d_test.go:TestBatchCardsHandsTheRunnerTheWordAsItsSixthArgument sets Deadline to 10s; a ceiling the run never reaches: 0.00 s on hetzner at dev 64b9bec48
-internal/swarm/batch_tokens_13d_test.go:TestBatchCardsPutsTheWordInTheLocalNativeArgv sets Deadline to 10s; a ceiling the run never reaches: 0.00 s on hetzner at dev 64b9bec48
-internal/swarm/batch_tokens_13d_test.go:TestBatchCardsRefusesWithoutTheBudgetWord sets Deadline to 10s; a ceiling the run never reaches: 0.00 s on hetzner at dev 64b9bec48
-internal/swarm/publicbatch_test.go:TestBatchPublicGateListedRunsUnlistedRefused sets Deadline to 20s; a ceiling the run never reaches: 0.00 s on hetzner at dev 64b9bec48
+internal/swarm/batch_native_636_functional_test.go:TestCard8909BatchRunsNativeWithNoRunner sets Deadline to 10s; a ceiling the run never reaches: 0.01 s on hetzner at dev 64b9bec48
+internal/swarm/batch_reliability_functional_test.go:TestBatchAbstainNamesReason sets deadline to 10s; a ceiling the run never reaches: 0.12 s on hetzner at dev 64b9bec48
+internal/swarm/batch_tokens_13d_functional_test.go:TestBatchCardsHandsTheRunnerTheWordAsItsSixthArgument sets Deadline to 10s; a ceiling the run never reaches: 0.00 s on hetzner at dev 64b9bec48
+internal/swarm/batch_tokens_13d_functional_test.go:TestBatchCardsPutsTheWordInTheLocalNativeArgv sets Deadline to 10s; a ceiling the run never reaches: 0.00 s on hetzner at dev 64b9bec48
+internal/swarm/batch_tokens_13d_functional_test.go:TestBatchCardsRefusesWithoutTheBudgetWord sets Deadline to 10s; a ceiling the run never reaches: 0.00 s on hetzner at dev 64b9bec48
+internal/swarm/publicbatch_functional_test.go:TestBatchPublicGateListedRunsUnlistedRefused sets Deadline to 20s; a ceiling the run never reaches: 0.00 s on hetzner at dev 64b9bec48
 internal/update/delivery_test.go:fakeBus sleeps 30s in a helper child that stands in for a hung bus; the test kills it at its own short bound, so the thirty seconds are never paid
 internal/update/inventory_spec_test.go:TestSnapshotTakesItsBoundsFromFlags hands the code under test --timeout 10s; a ceiling the run never reaches: 0.50 s on hetzner at dev 64b9bec48
 internal/update/update_test.go:TestHelperProcess sleeps 30s as a re-exec child standing in for a hung binary; the caller kills it at a short bound, so the thirty seconds are never paid

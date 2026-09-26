@@ -174,8 +174,7 @@ func matchNetAllow(entries []waitAllow, used []bool, f NetFinding) int {
 // cannot carry the shapes this check reads. A file whose header carries a
 // nightly or soak build constraint is skipped whole.
 func scanNetFile(rel string, src []byte) ([]NetFinding, bool) {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, rel, src, parser.ParseComments)
+	fset, file, err := parseSource(rel, src, parser.ParseComments)
 	if err != nil {
 		return nil, false
 	}

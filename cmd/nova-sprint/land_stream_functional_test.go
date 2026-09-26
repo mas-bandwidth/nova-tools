@@ -4,6 +4,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os/exec"
+	"sync"
+
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,6 +22,12 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
+)
+
+// The stream the land-stream tests land, and its slug.
+const (
+	lsStream = "landing: streams + lander"
+	lsSlug   = "landing-streams-lander"
 )
 
 // lsFixture is a bare repo with dev and refs/pull/<n>/head: 1 and 3 add a
@@ -302,10 +314,12 @@ func landedRelease(t *testing.T, ctx context.Context, c *redis.Client, addr, rec
 	c.Del(ctx, "benches", "bench:hulk:beat", "bench:space:beat", "bench:batman:beat")
 }
 
+// TestLandStreamConflictStops runs a whole land stream against a git remote it
+// builds with a dozen git processes; exec of whole programs is the functional
+// tier's (Glenn 2026-09-26, nova-tools#4328: unit tests under 2 s). The store
+// is a real one with the library: the lander reads each stream's merging set
+// through the epoch-keyed cell function ns_ws_zrange (nova-tools#4238).
 func TestLandStreamConflictStops(t *testing.T) {
-	// a real store with the library (this file is functional): the lander
-	// reads each stream's merging set through the epoch-keyed cell
-	// function ns_ws_zrange (nova-tools#4238)
 	addr := testutil.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = c.Close() })
@@ -313,7 +327,6 @@ func TestLandStreamConflictStops(t *testing.T) {
 	if err := fn.Load(ctx, c); err != nil {
 		t.Fatal(err)
 	}
-
 	root := t.TempDir()
 	src, bare := filepath.Join(root, "src"), filepath.Join(root, "remote.git")
 	_ = os.MkdirAll(src, 0o755)
@@ -360,4 +373,61 @@ func TestLandStreamConflictStops(t *testing.T) {
 	if n, _ := c.ZCard(ctx, "ws:"+lsStream+":merging").Result(); n != 2 {
 		t.Fatalf("a conflict moved members: merging=%d", n)
 	}
+}
+
+func lsGit(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	full := append([]string{"-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false"}, args...)
+	cmd := exec.Command("git", full...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "LC_ALL=C")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// fakeGitHub records every REST call and answers the five the lander makes
+// (a member's body closes issue 10<n>).
+type fakeGitHub struct {
+	mu    sync.Mutex
+	calls []string
+	srv   *httptest.Server
+}
+
+func newFakeGitHub(t *testing.T) *fakeGitHub {
+	g := &fakeGitHub{}
+	g.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		g.mu.Lock()
+		g.calls = append(g.calls, r.Method+" "+r.URL.Path+" "+body["head"]+body["sha"]+body["body"]+body["state"])
+		g.mu.Unlock()
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/"+lsRepo+"/pulls":
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"number":900}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/repos/"+lsRepo+"/pulls/900/merge":
+			_, _ = w.Write([]byte(`{"merged":true,"sha":"` + strings.Repeat("d", 40) + `"}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodPatch:
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/"+lsRepo+"/pulls/"):
+			n := strings.TrimPrefix(r.URL.Path, "/repos/"+lsRepo+"/pulls/")
+			_, _ = w.Write([]byte(`{"number":` + n + `,"body":"STREAM: x\n\nCloses #10` + n + `"}`))
+		default:
+			http.Error(w, `{"message":"unexpected"}`, http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(g.srv.Close)
+	return g
+}
+
+func (g *fakeGitHub) Calls() []string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return append([]string(nil), g.calls...)
 }

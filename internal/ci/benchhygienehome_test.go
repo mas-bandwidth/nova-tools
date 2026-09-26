@@ -8,7 +8,7 @@ package ci
 // cases passing and exactly the four HOME cases failing.
 //
 // This is the Go test for that guard, written the way
-// benchstandard_disk_test.go drives tools/bench-standard.sh: bash, a HOME of its
+// benchstandard_disk_functional_test.go drives tools/bench-standard.sh: bash, a HOME of its
 // own, and only the line it is about is read. The verb driven is `log`, which
 // tails <home>/hygiene.log and deletes nothing from the real bench.
 //

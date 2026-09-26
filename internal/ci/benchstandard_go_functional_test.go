@@ -1,5 +1,11 @@
+//go:build functional
+
 package ci
 
+// This file runs tools/bench-standard.sh, a whole bash program, under a fake
+// PATH: exec of a whole program is the functional tier's, not a unit test
+// (Glenn 2026-09-26, nova-tools#4328: unit tests under 2 s and frugal).
+//
 // Issue #1500. tools/bench-standard.sh held a bench against $NOVA_GO with a
 // hardcoded default of go1.26.5. go.mod moved to go 1.26.6 and the fleet-standard
 // check stayed green on a bench nova-merge batch refused: the wanted version was

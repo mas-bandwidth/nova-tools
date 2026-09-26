@@ -1,4 +1,11 @@
+//go:build functional
+
 package swarm
+
+// This file's tests exec whole programs -- the fake runner this package builds
+// (testdata/fakerunner), git, sqlite3 or sh -- so they are the functional tier's,
+// not unit tests (Glenn 2026-09-26, nova-tools#4328: unit tests under 2 s and
+// frugal with the machine's cores). They run under -tags functional.
 
 import (
 	"fmt"
@@ -65,8 +72,17 @@ func TestBatchReadsAReapedCardsSpendFromItsHarnessStore(t *testing.T) {
 		waitForFile(t, filepath.Join(root, "reaped-started"))
 		clk.waitTick()
 		clk.tick()
-		clk.advance(testIdleBudget)
-		clk.tick()
+		// The first tick can land before the batch has marked the card launched:
+		// the runner wrote reaped-started as soon as it was exec'd, and the
+		// launch bookkeeping takes the lock after Start returns. The card's store
+		// is then first SEEN on the next tick, which counts as movement, and one
+		// idle window later nothing ticked again: the runner slept its full 30 s
+		// and the test passed in 30.28 s (branch run, 2026-09-26). Two windows
+		// cover both orders; a tick after the batch has returned is a no-op.
+		for range 2 {
+			clk.advance(testIdleBudget)
+			clk.tick()
+		}
 	})
 	if code != 1 {
 		t.Fatalf("a batch with a reaped card exits 1, got %d:\n%s", code, out)
