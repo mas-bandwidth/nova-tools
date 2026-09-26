@@ -18,6 +18,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reap"
@@ -28,11 +29,11 @@ import (
 func runPRReap(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "pr reap"
 	fs := taskFlags(verb)
-	redisAddr := fs.String("redis", redisDefault(), "")
-	sprint := fs.String("sprint", "", "")
-	dry := fs.Bool("dry-run", false, "")
-	budget := fs.Int("budget", reap.DefaultBudget, "")
-	api := fs.String("api", "", "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
+	dry := fs.Bool("dry-run", false, verbflag.HelpDryRun)
+	budget := fs.Int("budget", reap.DefaultBudget, "the most PRs one run closes (default 10)")
+	api := fs.String("api", "", "the forge's REST base url")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}

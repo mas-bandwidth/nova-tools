@@ -28,6 +28,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
 	"strconv"
 	"strings"
@@ -77,21 +78,21 @@ func oneOf(v string, allowed ...string) bool {
 func runPRRecord(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "pr record"
 	fs := taskFlags(verb)
-	redisAddr := fs.String("redis", redisDefault(), "")
-	repo := fs.String("repo", "", "")
-	n := fs.Int("n", 0, "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	repo := fs.String("repo", "", verbflag.HelpRepo)
+	n := fs.Int("n", 0, verbflag.HelpN)
 	var f stream.RecordFields
-	fs.StringVar(&f.Head, "head", "", "")
-	fs.StringVar(&f.Base, "base", "", "")
-	fs.StringVar(&f.BaseSHA, "base-sha", "", "")
-	fs.StringVar(&f.Stream, "stream", "", "")
-	fs.StringVar(&f.CI, "ci", "", "")
-	fs.StringVar(&f.Mergeable, "mergeable", "", "")
-	fs.StringVar(&f.State, "state", "", "")
-	fs.StringVar(&f.Task, "task", "", "")
-	fs.StringVar(&f.Kind, "kind", "", "")
-	fs.StringVar(&f.BranchGone, "branch-gone", "", "")
-	closes := fs.String("closes", "", "")
+	fs.StringVar(&f.Head, "head", "", "the PR's head sha")
+	fs.StringVar(&f.Base, "base", "", "the PR's base branch")
+	fs.StringVar(&f.BaseSHA, "base-sha", "", "the base's sha the read was against, 40 hex")
+	fs.StringVar(&f.Stream, "stream", "", verbflag.HelpStream)
+	fs.StringVar(&f.CI, "ci", "", "the ci word: green, red or pending")
+	fs.StringVar(&f.Mergeable, "mergeable", "", "true or false")
+	fs.StringVar(&f.State, "state", "", "open or closed")
+	fs.StringVar(&f.Task, "task", "", "the task id the PR is for")
+	fs.StringVar(&f.Kind, "kind", "", "member or stream")
+	fs.StringVar(&f.BranchGone, "branch-gone", "", "why the branch is gone")
+	closes := fs.String("closes", "", "the PR numbers this one closes, comma-separated, or -")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
@@ -156,10 +157,10 @@ func runPRRecord(ctx context.Context, args []string, out, errOut io.Writer) int 
 func runPRLines(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "pr lines"
 	fs := taskFlags(verb)
-	redisAddr := fs.String("redis", redisDefault(), "")
-	repo := fs.String("repo", "", "")
-	n := fs.Int("n", 0, "")
-	add := fs.String("add", "", "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	repo := fs.String("repo", "", verbflag.HelpRepo)
+	n := fs.Int("n", 0, verbflag.HelpN)
+	add := fs.String("add", "", "the typed line to add to the record")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
