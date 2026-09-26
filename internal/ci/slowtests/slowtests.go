@@ -24,12 +24,16 @@ import (
 
 // Event is one decoded TestEvent line. The field names are `go test -json`'s
 // own; a package-level event has Test == "" and carries the package's total
-// Elapsed, while a test-level event carries that one test's Elapsed.
+// Elapsed, while a test-level event carries that one test's Elapsed. Output is
+// the text of an output (or build-output) event: the budget check never reads
+// it, and `nova-ci local` prints it under a red test so the failure is named
+// with its own words.
 type Event struct {
 	Action  string  `json:"Action"`
 	Package string  `json:"Package"`
 	Test    string  `json:"Test"`
 	Elapsed float64 `json:"Elapsed"`
+	Output  string  `json:"Output"`
 }
 
 // Test is one test-level row kept for a package's slowest list.

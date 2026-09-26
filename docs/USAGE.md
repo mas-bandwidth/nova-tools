@@ -727,13 +727,14 @@ suspected vulnerabilities.
 To build and validate locally:
 
 ```sh
-go build ./...
-go vet ./...
-go test -race ./...
+make build
+nova-ci local
 ```
 
-Timing-sensitive tests run separately with
-`go test -tags perf -p 1 -parallel 1 ./...`; see the
+`nova-ci local` runs exactly the unit tier CI runs for your change (the packages it
+touched and their importers, `make test` at `-p 2`, the unit budgets); see
+[TESTING.md](../TESTING.md). Timing-sensitive tests run separately with
+`go test -tags perf -p 1 -parallel 1 ./cmd/nova-bus`; see the
 [build reference](CLI.md#build) for context.
 
 **Development branch:** `nova-ci` is not part of `v0.15.2`.
