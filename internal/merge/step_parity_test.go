@@ -22,7 +22,7 @@ func TestFullClassParityEqualsCIWorkflowsBenchLegs(t *testing.T) {
 func ciStepRun(ciContent, stepName string) string {
 	lines := strings.Split(ciContent, "\n")
 	inStep := false
-	for _, line := range lines {
+	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "- name: "+stepName) {
 			inStep = true
@@ -33,7 +33,21 @@ func ciStepRun(ciContent, stepName string) string {
 				break
 			}
 			if strings.HasPrefix(trimmed, "run:") {
-				return strings.TrimSpace(strings.TrimPrefix(trimmed, "run:"))
+				run := strings.TrimSpace(strings.TrimPrefix(trimmed, "run:"))
+				if run != "|" {
+					return run
+				}
+				// A block scalar (`run: |`, the unit-tier test step since
+				// #4345): the step's command is its indented lines, joined.
+				indent := len(line) - len(strings.TrimLeft(line, " "))
+				var block []string
+				for _, next := range lines[i+1:] {
+					if strings.TrimSpace(next) != "" && len(next)-len(strings.TrimLeft(next, " ")) <= indent {
+						break
+					}
+					block = append(block, strings.TrimSpace(next))
+				}
+				return strings.TrimSpace(strings.Join(block, "\n"))
 			}
 		}
 	}
