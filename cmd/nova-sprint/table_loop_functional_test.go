@@ -140,7 +140,7 @@ func TestTableLiveOnceOut(t *testing.T) {
 func TestControl3637ClearVerb(t *testing.T) {
 	addr, client := wholeTableRedis(t)
 	cp := filepath.Join(t.TempDir(), "clear.tsv")
-	code, stdout, stderr := runSprint("table", "clear", "--redis", addr, "--checkpoint", cp, "--by", "rowan")
+	code, stdout, stderr := runSprint("table", "clear", "--redis", addr, "--checkpoint", cp)
 	if code != 0 {
 		t.Fatalf("exit %d stderr %s", code, stderr)
 	}

@@ -17,17 +17,18 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-const tableClearWants = "table clear --checkpoint <file> [--redis <addr>] [--friends <a,b,...>] [--by <name>]"
+const tableClearWants = "table clear --checkpoint <file> [--redis <addr>] [--friends <a,b,...>]"
 
 func cmdTableClear(args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New("table clear")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	friends := fs.String("friends", "", "")
-	checkpoint := fs.String("checkpoint", "", "")
-	by := fs.String("by", "", "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	friends := fs.String("friends", "", "the friends whose columns are cleared, comma-separated (default every friend)")
+	checkpoint := fs.String("checkpoint", "", "the file the cleared columns are checkpointed to first")
 	if err := fs.Parse(args); err != nil {
 		return tableRefuse(stderr, err.Error()+"; "+tableClearWants)
 	}
+	actor := seatActor()
+	by := &actor
 	if fs.NArg() > 0 {
 		return tableRefuse(stderr, "table clear takes flags, not positional arguments; "+tableClearWants)
 	}
