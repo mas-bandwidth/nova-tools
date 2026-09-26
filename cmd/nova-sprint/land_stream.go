@@ -1,15 +1,26 @@
 // The stream landing verbs (nova-tools#3598; #3611-#3613): the flow Rowan
 // lands by hand, as verbs with all state in Redis (internal/nsprint/land/stream).
 //
-//	nova-sprint land stream --repo <owner/repo> --stream <s> [--stream <s2>...] [--base dev] [--dry-run]
+//	nova-sprint land stream --repo <owner/repo> --stream <s> [--stream <s2>...] [--base dev] [--dry-run] [--partial] [--card <id>]
 //	    [--redis <addr>] [--remote <url>] [--mirror <dir>|none] [--workdir <dir>] [--branch <b>]
 //	    [--test <cmd>] [--test-timeout 20m] [--min-score N] [--by rowan] [--api <url>] [--budget N]
 //	nova-sprint land status --repo <owner/repo> [--redis <addr>]
-//	nova-sprint land merge --repo <owner/repo> --stream <s> [--by rowan] [--api <url>] [--budget N]
+//	nova-sprint land merge --repo <owner/repo> --stream <s> [--by rowan] [--api <url>] [--budget N] [--card <id>]
+//
+// One writer per stream (#4324): a run that builds, pushes or merges first
+// claims land:merge:<stream> owner (stream.Claim): --card <id> for a live
+// merge or escalation card's child (the claim stays the card's), else a
+// hand claim renewed while the run lasts. Another writer's live claim (the
+// land duty's pass, a card, another run, a cross-stream wait) refuses the
+// run: REFUSED LAND-OWNER stream=<s> owner=<o> (exit 2).
 //
 // land stream: members are ws:<s>:merging intersected with pr:<repo>:<n>
-// records read >= 8 at head (cfg:land min_score[:<repo>]), oldest
-// pr_ready_at first. --dry-run prints the order from Redis alone. A run
+// records read >= 8 at head (cfg:land min_score[:<repo>]), in the work
+// order the ws:<s>:merging score gives (#4342). --dry-run prints the plan
+// (PLAN, ORDER lines) from Redis alone: the coordinator's first move. A run
+// refuses LAND-SERIAL when a merging member would be left out (unread,
+// held, no PR): never one at a time (#4324); --partial lands without them
+// with the same line printed as allowed. A run
 // clones the base shallow (--reference-if-able the bench mirror), merges each
 // member --no-ff onto stream/<slug>, runs the batch test once
 // (cfg:land:test:<repo>, else make check, else go test ./...), bisects a red
@@ -122,6 +133,8 @@ func runLandStream(ctx context.Context, args []string, out, errOut io.Writer) in
 	by := fs.String("by", "rowan", "")
 	api := fs.String("api", gh.DefaultAPI, "")
 	budget := fs.Int("budget", 4, "")
+	partial := fs.Bool("partial", false, "")
+	card := fs.String("card", "", "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
@@ -136,7 +149,8 @@ func runLandStream(ctx context.Context, args []string, out, errOut io.Writer) in
 		return refuse(errOut, verb, "needs --redis <addr> or NOVA_REDIS_ADDR")
 	}
 	opts := stream.Options{Repo: *repo, Streams: streams, Base: *base, Branch: *branch, DryRun: *dry, Remote: *remote,
-		Test: *test, TestTimeout: *testTimeout, MinScore: *minScore, By: *by, Author: "Rowan <rowan@mas-bandwidth.com>", Log: out}
+		Test: *test, TestTimeout: *testTimeout, MinScore: *minScore, By: *by, Author: "Rowan <rowan@mas-bandwidth.com>", Log: out,
+		Partial: *partial}
 	slug, err := stream.Slug(streams...)
 	if err != nil {
 		return refuse(errOut, verb, err.Error())
@@ -173,11 +187,27 @@ func runLandStream(ctx context.Context, args []string, out, errOut io.Writer) in
 	if opts.GH != nil {
 		opts.GH.Redis = st.Client() // the calls are counted in the store (#4343)
 	}
+	if !*dry {
+		release, err := landHold(ctx, st.Client(), streams, *card, *by)
+		if err != nil {
+			return landExit(errOut, verb, err)
+		}
+		defer release()
+	}
 	rep, err := stream.LandStream(ctx, st.Client(), opts)
 	if rep.State == "dry-run" && err == nil {
+		// The plan (nova-tools #4324): the coordinator's first move whenever
+		// a stream has members in merging. The base, the ONE PR, the members
+		// in work order (order= is the ws:<stream>:merging score, #4342), and
+		// the LAND-SERIAL line a run would refuse with.
+		fmt.Fprintf(out, "PLAN repo=%s stream=%s base=%s branch=%s pr=one members=%d left_out=%d order=ws-score\n",
+			*repo, slug, *base, rep.Branch, len(rep.Members), len(rep.LeftOut))
 		for i, m := range rep.Members {
-			fmt.Fprintf(out, "ORDER %d %s#%d head=%s ready_at=%d read=%s:%d task=%s stream=%s\n",
+			fmt.Fprintf(out, "ORDER %d %s#%d head=%s order=%d read=%s:%d task=%s stream=%s\n",
 				i+1, *repo, m.N, stream.Short(m.Head), m.ReadyAt, m.Who, m.Score, m.Task, oneline.Field(m.Stream))
+		}
+		if rep.Serial != "" {
+			fmt.Fprintf(out, "%s (a run refuses with this line; --partial lands without them)\n", rep.Serial)
 		}
 	}
 	for _, s := range rep.Skips {
@@ -275,9 +305,15 @@ func runLandStreamStatus(ctx context.Context, args []string, out, errOut io.Writ
 		if r.PR > 0 && r.CI != "-" && !r.HeadMatch {
 			stale = " record_head=stale"
 		}
-		fmt.Fprintf(out, "STREAM %s streams=%s state=%s branch=%s head=%s members=%s parked=%s pr=%s ci=%s mergeable=%s%s\n",
+		serial := ""
+		if r.Serial != "" {
+			// The durable receipt of a landing that carries fewer members
+			// than the stream had in merging (#4324).
+			serial = fmt.Sprintf(" serial=%s partial_by=%s partial_at=%s", oneline.Field(r.Serial), orDash(r.PartialBy), orDash(r.PartialAt))
+		}
+		fmt.Fprintf(out, "STREAM %s streams=%s state=%s branch=%s head=%s members=%s parked=%s pr=%s ci=%s mergeable=%s%s%s\n",
 			r.Slug, oneline.Field(r.Streams), r.State, orDash(r.Branch), orDash(stream.Short(r.Head)), orDash(strings.Join(mem, ",")),
-			orDash(strings.Join(parked, ",")), pr, r.CI, r.Mergeable, stale)
+			orDash(strings.Join(parked, ",")), pr, r.CI, r.Mergeable, stale, serial)
 	}
 	fmt.Fprintf(out, "LAND STATUS repo=%s streams=%d open=%d green=%d\n", *repo, len(rows), open, green)
 	return 0
@@ -293,6 +329,7 @@ func runLandMerge(ctx context.Context, args []string, out, errOut io.Writer) int
 	by := fs.String("by", "rowan", "")
 	api := fs.String("api", gh.DefaultAPI, "")
 	budget := fs.Int("budget", 64, "")
+	card := fs.String("card", "", "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
@@ -309,6 +346,11 @@ func runLandMerge(ctx context.Context, args []string, out, errOut io.Writer) int
 		return 6
 	}
 	defer st.Close()
+	release, err := landHold(ctx, st.Client(), streams, *card, *by)
+	if err != nil {
+		return landExit(errOut, verb, err)
+	}
+	defer release()
 	// The token is needed only past the Redis gates; refuse on them first.
 	gh, tokErr := landGitHub(verb, *api, *budget, st.Client())
 	o := stream.MergeOptions{Repo: *repo, Streams: streams, By: *by}
@@ -347,8 +389,8 @@ func runLandMerge(ctx context.Context, args []string, out, errOut io.Writer) int
 		}
 		return orDash(strings.Join(out, ","))
 	}
-	fmt.Fprintf(out, "LAND MERGE repo=%s stream=%s pr=#%d head=%s merge=%s members=%d moved=%d missing=%d already=%t closed=%s unclosed=%s rest_calls=%d close_lines=%d skipped=%d closes_unread=%s issues_closed=%s issues_unclosed=%s release=%s\n",
-		*repo, l.Slug, l.PR, stream.Short(l.Head), stream.Short(rep.MergeSHA), len(l.Members), rep.Moved, rep.Missing, rep.Already,
+	fmt.Fprintf(out, "LAND MERGE repo=%s stream=%s pr=#%d head=%s merge=%s notes_dropped=%d members=%d moved=%d missing=%d already=%t closed=%s unclosed=%s rest_calls=%d close_lines=%d skipped=%d closes_unread=%s issues_closed=%s issues_unclosed=%s release=%s\n",
+		*repo, l.Slug, l.PR, stream.Short(l.Head), stream.Short(rep.MergeSHA), rep.NotesDropped, len(l.Members), rep.Moved, rep.Missing, rep.Already,
 		orDash(strings.Join(closed, ",")), orDash(strings.Join(unclosed, ",")), calls, rep.Lines, len(rep.Skipped), orDash(strings.Join(unread, ",")),
 		issues(rep.IssuesClosed), issues(rep.IssuesUnclosed), orDash(rep.Release))
 	for _, s := range rep.Skipped {
@@ -362,4 +404,68 @@ func runLandMerge(ctx context.Context, args []string, out, errOut io.Writer) int
 		return 1
 	}
 	return 0
+}
+
+// landHold claims the streams for this run (nova-tools #4324: one writer per
+// stream). With --card the card must be live and be each stream's merge or
+// escalation card (land:merge:<stream> task or escalation), and its claim
+// stays the card's (released when the card's episode ends); without it a hand claim is
+// renewed while the run lasts and released at its end. Another writer's
+// live claim is a refusal naming it.
+func landHold(ctx context.Context, c stream.Client, streams []string, card, by string) (release func(), err error) {
+	owned := func(err error) error {
+		var o *stream.OwnedError
+		if errors.As(err, &o) {
+			return &stream.Refusal{Why: o.Error(), Remedy: "the stream is " + o.Owner + "'s while it is live: its card's child runs with --card <id>; wait for the duty's pass or the other run"}
+		}
+		return err
+	}
+	if card != "" {
+		state, err := c.HGet(ctx, "task:"+card, "state").Result()
+		if err != nil && !errors.Is(err, redis.Nil) {
+			return nil, err
+		}
+		if state == "" || state == "closed" {
+			return nil, &stream.Refusal{Why: fmt.Sprintf("--card %s is not a live card (state=%s)", card, orDash(state)),
+				Remedy: "the stream's card is land:merge:<stream> task; without --card the run claims by hand"}
+		}
+		if err := landCardOf(ctx, c, streams, card); err != nil {
+			return nil, err
+		}
+		now := time.Now()
+		if err := stream.Claim(ctx, c, streams, stream.CardOwner(card), now, now.Add(stream.DefaultHandTTL)); err != nil {
+			return nil, owned(err)
+		}
+		return func() {}, nil
+	}
+	rel, err := stream.Hold(ctx, c, streams, stream.HandOwner(by), 0, nil)
+	if err != nil {
+		return nil, owned(err)
+	}
+	return rel, nil
+}
+
+// landCardOf refuses a --card that is not every stream's own card: the
+// land:merge:<stream> task (the merge card) or escalation (nova-tools
+// #4324). Any other open task would hold the stream until it closes.
+func landCardOf(ctx context.Context, c stream.Client, streams []string, card string) error {
+	pipe := c.Pipeline()
+	cmds := make([]*redis.SliceCmd, len(streams))
+	for i, s := range streams {
+		cmds[i] = pipe.HMGet(ctx, stream.OwnerKey(s), "task", "escalation")
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return err
+	}
+	for i, s := range streams {
+		v := cmds[i].Val()
+		task, _ := v[0].(string)
+		esc, _ := v[1].(string)
+		if card != task && card != esc {
+			return &stream.Refusal{Why: fmt.Sprintf("--card %s is not stream %s's merge or escalation card (task=%s escalation=%s)",
+				card, oneline.Field(s), orDash(task), orDash(esc)),
+				Remedy: "run as the stream's land:merge:<stream> task or escalation card; without --card the run claims by hand"}
+		}
+	}
+	return nil
 }

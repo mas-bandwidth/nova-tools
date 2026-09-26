@@ -13,6 +13,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	jevledger "github.com/mas-bandwidth/nova-tools/internal/nsprint/jev"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/note"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
@@ -51,6 +52,15 @@ type Options struct {
 	// ParkConflicts parks a conflicting member and lands the rest (the land
 	// duty, nova-tools #3898); the default stops the build at it.
 	ParkConflicts bool
+	// Partial lands the members that can land when the stream has members
+	// in merging that cannot (unread, held, under the score bar, no PR):
+	// the LAND-SERIAL line prints as allowed and the PR opens without them.
+	// The default refuses (nova-tools #4324: never one at a time). The land
+	// duty takes it from cfg:land partial.
+	Partial bool
+	// Now is the clock of the step lines (REBASED, PUSHED, PR opened: each
+	// with its wall); nil is time.Now.
+	Now func() time.Time
 }
 
 // Report is what one land stream run did.
@@ -65,6 +75,12 @@ type Report struct {
 	ParkedMoved         int
 	Workdir             string
 	TestCmd             string
+	// LeftOut is the merging members this landing does not carry (the
+	// skips, oldest PR first); Serial is the LAND-SERIAL line for them, ""
+	// when none. With Options.Partial the line is printed and the landing
+	// goes on; without it the run refuses with it.
+	LeftOut []Skip
+	Serial  string
 }
 
 // DefaultBranch is the stream branch for the slug.
@@ -108,19 +124,45 @@ func LandStream(ctx context.Context, c Client, o Options) (Report, error) {
 		test = CIBatch
 	}
 	rep.TestCmd = test
-	if o.DryRun {
-		rep.State = "dry-run"
-		return rep, nil
-	}
-	if len(rep.Members) == 0 {
-		rep.State = "empty"
-		return rep, nil
-	}
+	// One at a time is impossible in silence (nova-tools #4324): a PR that
+	// would carry fewer members than the stream has in merging is refused
+	// with the members left out, or, with Partial, opened with the same
+	// line in the log.
 	prev, hadPrev, err := LoadLanding(ctx, c, o.Repo, slug)
 	if err != nil {
 		return rep, err
 	}
-	if hadPrev && prev.State == "open" && prev.PR > 0 && prev.Branch != rep.Branch {
+	// A build refused LAND-SERIAL parked members out of merging: until each
+	// is back (or landed, or gone), the rest is still one at a time.
+	notBack, err := NotBack(ctx, c, prev, rep.Members, rep.Skips)
+	if err != nil {
+		return rep, err
+	}
+	rep.LeftOut = LeftOut(append(append([]Skip(nil), rep.Skips...), notBack...))
+	if len(rep.LeftOut) > 0 {
+		rep.Serial = SerialLine(o.Streams, len(rep.Members), rep.LeftOut)
+	}
+	if o.DryRun {
+		rep.State = "dry-run"
+		return rep, nil
+	}
+	if rep.Serial != "" {
+		if !o.Partial {
+			return rep, &Refusal{Why: rep.Serial, Remedy: "read, park or hold-release the members left out (the stream lands as one PR), or --partial to land without them"}
+		}
+		if o.Log != nil {
+			fmt.Fprintf(o.Log, "%s allowed=partial\n", rep.Serial)
+		}
+	}
+	steps := NewSteps(o.Log, o.Now)
+	if len(rep.Members) == 0 {
+		rep.State = "empty"
+		return rep, nil
+	}
+	// An open stream PR (a serial record keeps it) is reused, never opened
+	// twice on one branch.
+	openPR := hadPrev && (prev.State == "open" || prev.State == "serial") && prev.PR > 0
+	if openPR && prev.Branch != rep.Branch {
 		return rep, &Refusal{Why: fmt.Sprintf("land:%s:%s is open as #%d on %s", o.Repo, slug, prev.PR, prev.Branch),
 			Remedy: "land merge it, or pass --branch " + prev.Branch}
 	}
@@ -136,7 +178,8 @@ func LandStream(ctx context.Context, c Client, o Options) (Report, error) {
 	}
 	rep.Workdir = o.Workdir
 	b := Build{Repo: o.Repo, Remote: remote, Mirror: o.Mirror, Base: o.Base, Branch: rep.Branch, Workdir: o.Workdir,
-		Test: test, TestTimeout: o.TestTimeout, NoTest: o.NoTest, Author: o.Author, Log: o.Log, ParkConflicts: o.ParkConflicts}
+		Test: test, TestTimeout: o.TestTimeout, NoTest: o.NoTest, Author: o.Author, Log: o.Log, ParkConflicts: o.ParkConflicts,
+		Steps: steps}
 	res, err := b.Run(ctx, rep.Members)
 	rep.Build = res
 	rep.TestCmd = res.TestCmd
@@ -148,6 +191,46 @@ func LandStream(ctx context.Context, c Client, o Options) (Report, error) {
 	}
 	l := Landing{Repo: o.Repo, Slug: slug, Streams: strings.Join(o.Streams, ","), Base: o.Base, BaseSHA: res.BaseSHA,
 		Branch: rep.Branch, Head: res.Head, Members: res.Kept, Parked: res.Parked, Tests: res.Tests, Workdir: o.Workdir}
+	// The build can drop members too (a conflict parked, a red bisected
+	// out, a head that moved): the PR would carry fewer than the stream
+	// has in merging. The same line, after the build: with Partial it
+	// prints and goes on the landing record (serial, partial_by,
+	// partial_at); without it the parks still happen (the member leaves
+	// merging with its PARKED receipt, the duty's rebase task follows) and
+	// the run refuses: nothing is pushed, no PR opens, the stream lands
+	// whole on the next run.
+	var dropped []Skip
+	for _, p := range res.Parked {
+		dropped = append(dropped, Skip{Task: p.Task, N: p.N, Why: p.Why})
+	}
+	for _, m := range res.Moved {
+		dropped = append(dropped, Skip{Task: m.Task, N: m.N, Why: m.Why})
+	}
+	if len(dropped) > 0 && res.Conflict == nil && !res.BaseRed && len(res.Kept) > 0 {
+		rep.LeftOut = LeftOut(append(append([]Skip(nil), rep.LeftOut...), dropped...))
+		rep.Serial = SerialLine(o.Streams, len(res.Kept), rep.LeftOut)
+		if !o.Partial {
+			l.State = "serial"
+			l.Serial = rep.Serial
+			l.SerialLeft = rep.LeftOut
+			if openPR {
+				l.PR = prev.PR // the open stream PR stays this landing's
+			}
+			rep.State = l.State
+			rep.ParkedMoved, err = SaveBuilt(ctx, c, l, o.By)
+			if err != nil {
+				return rep, err
+			}
+			removeWorkdir(o.Workdir)
+			return rep, &Refusal{Why: rep.Serial + " (after the build)", Remedy: "the parked members left merging with their receipts; the next run refuses until each is back in merging, then the stream lands whole; or --partial"}
+		}
+		if o.Log != nil {
+			fmt.Fprintf(o.Log, "%s allowed=partial\n", rep.Serial)
+		}
+	}
+	if rep.Serial != "" && o.Partial {
+		l.Serial, l.PartialBy, l.PartialAt = rep.Serial, o.By, now()
+	}
 	if len(res.Kept) > 0 && res.Conflict == nil && !res.BaseRed {
 		// The issues each kept member's commits close, while the clone is
 		// here: land merge closes them with the ones its body closes.
@@ -176,8 +259,10 @@ func LandStream(ctx context.Context, c Client, o Options) (Report, error) {
 	if err := b.Push(ctx); err != nil {
 		return rep, err
 	}
-	if hadPrev && prev.State == "open" && prev.PR > 0 {
+	steps.Line("PUSHED %s head=%s members=%d", rep.Branch, short(res.Head), len(res.Kept))
+	if openPR {
 		rep.PR, rep.Reused = prev.PR, true
+		steps.Line("PR #%d reused base=%s", rep.PR, o.Base)
 	} else {
 		title := fmt.Sprintf("stream %s: %d members into %s", strings.Join(o.Streams, " + "), len(res.Kept), o.Base)
 		n, err := o.GH.OpenPR(ctx, o.Repo, rep.Branch, o.Base, title, PRBody(l, test))
@@ -188,6 +273,7 @@ func LandStream(ctx context.Context, c Client, o Options) (Report, error) {
 			return rep, err
 		}
 		rep.PR = n
+		steps.Line("PR #%d opened base=%s members=%d", rep.PR, o.Base, len(res.Kept))
 	}
 	l.PR = rep.PR
 	l.State = "open"
@@ -313,6 +399,9 @@ type MergeReport struct {
 	// failed ("" when it did not; the land stands either way).
 	GateJoined, GateMissing int
 	GateErr                 string
+	// NotesDropped is the stream MERGE-NOTEs this merge expired (the merge
+	// card that wrote them landed, nova-tools #4324).
+	NotesDropped int64
 }
 
 // Merge merges the stream PR when its record says ci=green and mergeable at
@@ -378,6 +467,14 @@ func Merge(ctx context.Context, c Client, o MergeOptions) (MergeReport, error) {
 		rep.Already, rep.Release, err = saveLanded(ctx, c, l, o.By, sha)
 		if err != nil {
 			return rep, err
+		}
+		// The stream's MERGE-NOTEs were the merge card's; it landed.
+		for _, s := range o.Streams {
+			n, err := note.Drop(ctx, c, note.StreamKey(s))
+			if err != nil {
+				return rep, fmt.Errorf("notes of %s: %w", s, err)
+			}
+			rep.NotesDropped += n
 		}
 	}
 	var ns []int

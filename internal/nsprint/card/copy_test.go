@@ -55,3 +55,26 @@ func TestRenderCopyKeepsTheFrontierRoute(t *testing.T) {
 		}
 	}
 }
+
+// TestRenderCopyCarriesMergeNotes (nova-tools #4324): the MERGE-NOTE lines
+// the caller loaded for the copy's stream and the sprint are a block at the
+// end of the card; a copy with none has no block.
+func TestRenderCopyCarriesMergeNotes(t *testing.T) {
+	t.Parallel()
+	c := card.CopyCard{ID: "p1~2", Primary: "p1", Leg: "work", Kind: "build", Repo: "mas-bandwidth/nova-tools",
+		Base: "dev", BaseSHA: strings.Repeat("ab", 20), Paths: "internal/x.go", DoneWhen: "TestX passes",
+		Title: "one verb", Origin: "issue:nova-tools#4300", Stream: "swarm: cards", Consumer: "bench:b", Body: "the issue"}
+	body, err := card.RenderCopy(c)
+	if err != nil || strings.Contains(string(body), card.NotesHeading) {
+		t.Fatalf("no notes: %v\n%s", err, body)
+	}
+	c.Notes = []string{"MERGE-NOTE by=merge-swarm-cards-1 at=1 taskcard.Opts.Fields is name then value", "  ", "MERGE-NOTE by=rowan at=2 no bash"}
+	body, err = card.RenderCopy(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "\n" + card.NotesHeading + "\n  MERGE-NOTE by=merge-swarm-cards-1 at=1 taskcard.Opts.Fields is name then value\n  MERGE-NOTE by=rowan at=2 no bash\n"
+	if !strings.HasSuffix(string(body), want) {
+		t.Fatalf("notes block:\n%s", body)
+	}
+}

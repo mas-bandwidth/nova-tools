@@ -94,6 +94,10 @@ const (
 	// (only read, fix, rebase and recut move between friends).
 	KindRebase Kind = "rebase"
 	KindRecut  Kind = "recut"
+	// KindMerge is a stream's merge card (nova-tools #4324): the reconciler's
+	// land watch cuts one per stream with members in merging, to a friend
+	// advertising the frontier type; its child lands the stream as one PR.
+	KindMerge Kind = "merge"
 )
 
 // Effects is a task's effect class (spec 4.2: none, idempotent, external).
@@ -269,7 +273,7 @@ func PushChecked(ctx context.Context, st *store.Store, req PushRequest) (PushRes
 		req.Kind = KindWork
 	}
 	switch req.Kind {
-	case KindRead, KindReview, KindHarvest, KindFix, KindWork, KindRebase, KindRecut:
+	case KindRead, KindReview, KindHarvest, KindFix, KindWork, KindRebase, KindRecut, KindMerge:
 	default:
 		return PushResult{}, fmt.Errorf("task push: invalid kind %q", req.Kind)
 	}

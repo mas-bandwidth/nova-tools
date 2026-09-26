@@ -362,10 +362,15 @@ func parseScore(s string) int {
 
 // Member is one PR of the stream that lands.
 type Member struct {
-	Task    string
-	Stream  string
-	N       int
-	Head    string
+	Task   string
+	Stream string
+	N      int
+	Head   string
+	// ReadyAt is the member's score in ws:<stream>:merging: the stream's
+	// work order. Today the move writes the task's created_at there; #4342
+	// writes the computed order (DEPENDS-ON, then PATHS overlap, then issue
+	// number) as that score, and the lander orders by it unchanged: the
+	// score is the one order, never read time.
 	ReadyAt int64
 	Who     string
 	Score   int
@@ -383,13 +388,19 @@ type Config struct {
 	MinScore int
 	Remote   string
 	Test     string
+	// Partial is cfg:land partial (1|true|yes): the land duty opens a
+	// stream PR without the members that cannot land, printing LAND-SERIAL
+	// as allowed. Off, the duty refuses the stream with that line until
+	// every merging member can land (nova-tools #4324).
+	Partial bool
 }
 
-// LoadConfig reads cfg:land (min_score:<repo>, min_score, remote:<repo>) and
-// cfg:land:test:<repo> in one round trip. The default score floor is 8.
+// LoadConfig reads cfg:land (min_score:<repo>, min_score, remote:<repo>,
+// partial) and cfg:land:test:<repo> in one round trip. The default score
+// floor is 8.
 func LoadConfig(ctx context.Context, c redis.Cmdable, repo string) (Config, error) {
 	pipe := c.Pipeline()
-	h := pipe.HMGet(ctx, "cfg:land", "min_score:"+repo, "min_score", "remote:"+repo)
+	h := pipe.HMGet(ctx, "cfg:land", "min_score:"+repo, "min_score", "remote:"+repo, "partial")
 	t := pipe.Get(ctx, "cfg:land:test:"+repo)
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return Config{}, err
@@ -406,6 +417,12 @@ func LoadConfig(ctx context.Context, c redis.Cmdable, repo string) (Config, erro
 	}
 	if s, ok := vals[2].(string); ok {
 		cfg.Remote = strings.TrimSpace(s)
+	}
+	if s, ok := vals[3].(string); ok {
+		switch strings.ToLower(strings.TrimSpace(s)) {
+		case "1", "true", "yes", "on":
+			cfg.Partial = true
+		}
 	}
 	return cfg, nil
 }
@@ -538,8 +555,8 @@ func Members(ctx context.Context, c redis.Cmdable, repo string, streams []string
 		}
 		out = append(out, Member{Task: cd.task, Stream: cd.stream, N: n, Head: r.Head, ReadyAt: cd.at, Who: read.Who, Score: read.Score})
 	}
-	// Streams in the order named, oldest pr_ready_at first within each,
-	// equal times by PR number.
+	// Streams in the order named, the ws ZSET score first within each (the
+	// work order, #4342), equal scores by PR number.
 	rank := map[string]int{}
 	for i, s := range streams {
 		if _, ok := rank[s]; !ok {
@@ -579,6 +596,15 @@ type Landing struct {
 	// CommitCloses is, per kept member, the issues its commit messages
 	// close; SaveBuilt stores it on the member's record (commit_closes).
 	CommitCloses map[int]string
+	// Serial is the LAND-SERIAL line of a landing that carries fewer
+	// members than the stream has in merging (nova-tools #4324); PartialBy
+	// and PartialAt say who allowed it (--partial) and when. State serial
+	// is a build the line refused after the parks.
+	Serial, PartialBy, PartialAt string
+	// SerialLeft is the members a serial record left out (stored as
+	// serial_left, <n>:<task> each): the next run refuses while any of them
+	// is live outside merging (NotBack).
+	SerialLeft []Skip
 }
 
 func (l Landing) fields() map[string]string {
@@ -600,13 +626,23 @@ func (l Landing) fields() map[string]string {
 	if l.PR > 0 {
 		f["pr"] = strconv.Itoa(l.PR)
 	}
+	if l.Serial != "" {
+		f["serial"], f["partial_by"], f["partial_at"] = l.Serial, l.PartialBy, l.PartialAt
+	}
+	if len(l.SerialLeft) > 0 {
+		left := make([]string, 0, len(l.SerialLeft))
+		for _, sk := range l.SerialLeft {
+			left = append(left, fmt.Sprintf("%d:%s", sk.N, sk.Task))
+		}
+		f["serial_left"] = strings.Join(left, " ")
+	}
 	return f
 }
 
 func landingFrom(repo string, m map[string]string) Landing {
 	l := Landing{Repo: repo, Slug: m["slug"], Streams: m["streams"], Base: m["base"], BaseSHA: m["base_sha"],
 		Branch: m["branch"], Head: m["head"], State: m["state"], Workdir: m["workdir"], At: m["at"],
-		MergeSHA: m["merge_sha"]}
+		MergeSHA: m["merge_sha"], Serial: m["serial"], PartialBy: m["partial_by"], PartialAt: m["partial_at"]}
 	l.PR, _ = strconv.Atoi(m["pr"])
 	l.Tests, _ = strconv.Atoi(m["tests"])
 	mem := strings.Fields(m["members"])
@@ -623,6 +659,11 @@ func landingFrom(repo string, m map[string]string) Landing {
 			mb.Stream = streams[i]
 		}
 		l.Members = append(l.Members, mb)
+	}
+	for _, w := range strings.Fields(m["serial_left"]) {
+		ns, task, _ := strings.Cut(w, ":")
+		n, _ := strconv.Atoi(ns)
+		l.SerialLeft = append(l.SerialLeft, Skip{Task: task, N: n})
 	}
 	for _, w := range strings.Fields(m["parked"]) {
 		ns, why, _ := strings.Cut(w, ":")
@@ -670,6 +711,48 @@ func LoadLandings(ctx context.Context, c redis.Cmdable, repo string) ([]Landing,
 	return out, nil
 }
 
+// NotBack is the members a serial landing record left out that are live
+// outside merging now (waiting, ready, working, review or parked): each is
+// a Skip with why not-back:<where>. A member in merging again (it is in
+// members or skips), landed, done or gone is back. One round trip, none
+// when prev is not a serial record.
+func NotBack(ctx context.Context, c redis.Cmdable, prev Landing, members []Member, skips []Skip) ([]Skip, error) {
+	if prev.State != "serial" || len(prev.SerialLeft) == 0 {
+		return nil, nil
+	}
+	here := map[string]bool{}
+	for _, m := range members {
+		here[m.Task] = true
+	}
+	for _, sk := range skips {
+		here[sk.Task] = true
+	}
+	var ask []Skip
+	pipe := c.Pipeline()
+	var cmds []*redis.StringCmd
+	for _, sk := range prev.SerialLeft {
+		if sk.Task == "" || here[sk.Task] {
+			continue
+		}
+		ask = append(ask, sk)
+		cmds = append(cmds, pipe.HGet(ctx, "task:"+sk.Task, "state"))
+	}
+	if len(ask) == 0 {
+		return nil, nil
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, err
+	}
+	var out []Skip
+	for i, sk := range ask {
+		switch st := cmds[i].Val(); st {
+		case "waiting", "ready", "working", "review", "parked":
+			out = append(out, Skip{Task: sk.Task, N: sk.N, Why: "not-back:" + st})
+		}
+	}
+	return out, nil
+}
+
 // SaveBuilt writes the landing hash, the stream PR's own record (when it has
 // a PR) and parks every bisected member (merging -> working, ws:log receipt,
 // its pr record state=parked) in one Lua call. It returns how many parked
@@ -694,7 +777,9 @@ func SaveBuilt(ctx context.Context, c redis.Scripter, l Landing, by string) (int
 		}
 	}
 	payload["commit_closes"] = commits
-	if l.PR > 0 {
+	// The stream PR's record follows an open landing's pushed head only: a
+	// serial record keeps the PR number but pushed nothing.
+	if l.PR > 0 && l.State == "open" {
 		payload["stream_pr"] = map[string]any{"n": strconv.Itoa(l.PR), "fields": map[string]string{
 			"repo": l.Repo, "n": strconv.Itoa(l.PR), "head": l.Head, "base": l.Base, "base_sha": l.BaseSHA,
 			"stream": l.Streams, "kind": "stream", "state": "open", "ci": "pending", "mergeable": "",

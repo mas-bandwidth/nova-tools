@@ -141,6 +141,10 @@ type Sample struct {
 	RetriesHour                                      int   // ws:log working -> ready|waiting in the last hour
 	OldestAt                                         int64 // created_at (ms) of the oldest card not landed; 0 none
 	Held                                             bool  // a pit stop holds the stream
+	// LandStalled is land:slow:<stream> stalled=1 (the land watch, #4324):
+	// the stream's landing is past cfg:land wall. It is a stall whatever
+	// the counts say.
+	LandStalled bool
 }
 
 // Left is the cards not landed.
@@ -212,6 +216,17 @@ func Step(prev State, s Sample, room bool, now time.Time, window time.Duration) 
 		st.BlockedSince = ms
 	}
 	switch {
+	case s.LandStalled:
+		// The landing is past its wall: stalled now, one ask per episode
+		// (blocked_since is the episode key, kept across runs).
+		switch {
+		case st.BlockedSince != 0:
+		case prev.BlockedSince != 0:
+			st.BlockedSince = prev.BlockedSince
+		default:
+			st.BlockedSince = ms
+		}
+		st.Status = StatusStalled
 	case !inPlay:
 		st.Status = StatusIdle
 	case st.BlockedSince != 0 && ms-st.BlockedSince >= window.Milliseconds():
@@ -466,9 +481,10 @@ func (p *Progress) measure(ctx context.Context, now time.Time, cfg ProgressConfi
 	}
 	notLanded := []string{ws.Waiting, ws.Ready, ws.Working, ws.Review, ws.Merging}
 	type streamCmds struct {
-		counts [6]*ws.CardCountCmd
-		oldest [5]*redis.ZSliceCmd
-		state  *redis.MapStringStringCmd
+		counts  [6]*ws.CardCountCmd
+		oldest  [5]*redis.ZSliceCmd
+		state   *redis.MapStringStringCmd
+		stalled *redis.StringCmd // land:slow:<stream> stalled (the land watch)
 	}
 	type consumerCmds struct {
 		desired *redis.SliceCmd
@@ -488,6 +504,7 @@ func (p *Progress) measure(ctx context.Context, now time.Time, cfg ProgressConfi
 			scs[i].oldest[j] = pipe.ZRangeWithScores(ctx, taskcard.StreamKey(s, state), 0, 1)
 		}
 		scs[i].state = pipe.HGetAll(ctx, ProgressStreamKey(s))
+		scs[i].stalled = pipe.HGet(ctx, LandSlowKey(s), "stalled")
 	}
 	ccs := make([]consumerCmds, len(roster))
 	for i, k := range roster {
@@ -572,6 +589,7 @@ func (p *Progress) measure(ctx context.Context, now time.Time, cfg ProgressConfi
 			}
 		}
 		_, smp.Held = holds.Stream(s)
+		smp.LandStalled = scs[i].stalled.Val() == "1"
 		run.Samples = append(run.Samples, smp)
 		run.States[s] = Step(stateFromHash(scs[i].state.Val()), smp, run.Room, now, cfg.Window)
 	}

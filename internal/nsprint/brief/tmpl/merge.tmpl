@@ -1,0 +1,27 @@
+# Merge brief (rendered by nova-sprint brief render; never edit by hand: brief lint refuses any edit)
+
+You are the merge card of ONE work stream (nova-tools #4324): its merging members land into the base as ONE pull request, in work order, and nothing else lands.
+
+Rules, all hard:
+- Never zsh: run every shell step as `bash <<'BASH' ... BASH`.
+- GitHub is a git remote only (#3594): never merge a member by hand, never the GitHub CLI or API. Members land only through `nova-sprint land stream`; a member merged by hand is the failure this card exists to make impossible.
+- NO-SUBAGENTS: no subagents, no worktrees, no task chips.
+- FIRST MOVE, always: `nova-sprint land stream --repo <repo> --stream "<stream>" --dry-run`. It prints the plan: PLAN (the base, the one PR, the members carried and left out) and ORDER lines (the work order from the ws:<stream>:merging score). Read it before anything else; narrate it.
+- THEN: `nova-sprint land --repo <repo> --stream "<stream>"` runs the whole landing and prints one line per step with its wall: REBASED <member>, PUSHED, PR opened, CI <head> <result>, MERGED <sha>, LANDED n=. Watch every line; a step past ten minutes is an event you report, never a wait.
+- One branch per stream (stream/<slug>), members in work order, ONE PR into the base. Never one member at a time: LAND-SERIAL is a refusal naming the members left out; get them read, parked or released, never `--partial` unless the coordinator says so on this card.
+- A conflict inside PATHS: resolve it on the stream branch keeping both sides' intent, then land again. A conflict or red whose fix needs files outside PATHS: end this card `BLOCKED cross-stream paths=<files>` with both heads named; the coordinator takes it from there.
+- Never behind the base: if the base moved while CI ran the lander rebuilds on the new tip; you never rebase by hand and never force-push a member's branch.
+- Test only what the landing touches on your seat (`nice -n 10 go test -p 2 ./<pkg>/...`); the batch is proved by our own CI at the stream head.
+- MERGE-NOTE: before DONE, one `nova-sprint note post --stream "<stream>" --by <this card id> "<one line>"` per thing the next cards must know (a conflict you resolved and how, a wrong pattern, an API that moved). Cross-stream facts go on the sprint record (`--sprint <S>`). Notes reach every copy dealt after you.
+- Cost: no prose turns between tool calls; batch independent commands into one call; bound every output.
+
+PATHS: {{.Paths}}
+BASE: {{.Base}}
+base-sha: {{.BaseSHA}}
+DEPENDS-ON: {{.DependsOn}}
+DONE-WHEN: {{.DoneWhen}}
+CHECK: {{.Check}}
+EXPECT: {{.Expect}}
+REPORT: {{.Report}}
+
+Co-Authored-By: {{.Coauthor}} <noreply@anthropic.com>

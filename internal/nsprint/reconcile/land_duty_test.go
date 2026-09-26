@@ -214,7 +214,10 @@ func newLDFixture(t *testing.T) *ldFixture {
 		fx.seedMember(t, ldBeta, n, float64(2000+n), "emma", true, ldScore("stella", fx.heads[n]))
 	}
 	fx.seedMember(t, ldBeta, 14, 2014, "emma", true, ldScore("stella", strings.Repeat("d", 40)))
-	c.HSet(ctx, "cfg:land", "remote:"+ldRepo, url, "min_score", "8")
+	// partial=1: the fixture has an unread member per stream and its flow
+	// tests expect the read members to land without it; off (the default,
+	// nova-tools #4324) the duty refuses the stream with LAND-SERIAL.
+	c.HSet(ctx, "cfg:land", "remote:"+ldRepo, url, "min_score", "8", "partial", "1")
 	c.Set(ctx, "cfg:land:test:"+ldRepo, "true", 0)
 	// The sprint the rebase task goes to, and its author a live friend.
 	c.HSet(ctx, "s:"+ldSprint, "status", "open")
