@@ -286,11 +286,16 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 		return nil, nil
 	}
 
-	// Round 2: every stream's waiting set, oldest first.
+	// Round 2: every stream's waiting set under the current epoch
+	// (nova-tools#4238), oldest first.
+	epoch, err := ws.Epoch(ctx, c)
+	if err != nil {
+		return nil, fmt.Errorf("waiting-resolve: %w", err)
+	}
 	pipe := c.Pipeline()
 	waitCmds := make([]*redis.StringSliceCmd, len(streams))
 	for i, s := range streams {
-		waitCmds[i] = pipe.ZRange(ctx, ws.Key(s, "waiting"), 0, -1)
+		waitCmds[i] = pipe.ZRange(ctx, ws.KeyAt(epoch, s, "waiting"), 0, -1)
 	}
 	if err := pipeerr.Exec(ctx, pipe); err != nil {
 		return nil, fmt.Errorf("waiting-resolve: waiting sets: %w", err)
@@ -307,7 +312,7 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 		}
 	}
 	// A waiting stop with no live card left is named with its remedy.
-	ready, err := wrStopsReady(ctx, c, streams, stops)
+	ready, err := wrStopsReady(ctx, c, epoch, streams, stops)
 	if err != nil {
 		return nil, err
 	}
@@ -367,9 +372,10 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 	if len(refDeps) > 0 {
 		for _, s := range streams {
 			for _, st := range ws.States {
-				setCmds = append(setCmds, pipe.ZRange(ctx, ws.Key(s, st), 0, -1))
+				setCmds = append(setCmds, pipe.ZRange(ctx, ws.KeyAt(epoch, s, st), 0, -1))
 			}
 		}
+
 	}
 	if err := pipeerr.Exec(ctx, pipe); err != nil {
 		return nil, fmt.Errorf("waiting-resolve: dependencies: %w", err)
@@ -561,7 +567,7 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 // wrStopsReady reads, for every stream with a waiting sentinel, whether any
 // other card of the stream is live (waiting, ready, working, review,
 // merging or parked), one pipelined round; ready[s] is true when none is.
-func wrStopsReady(ctx context.Context, c *redis.Client, streams []string, stops map[string]string) (map[string]bool, error) {
+func wrStopsReady(ctx context.Context, c *redis.Client, epoch uint64, streams []string, stops map[string]string) (map[string]bool, error) {
 	ready := map[string]bool{}
 	if len(stops) == 0 {
 		return ready, nil
@@ -574,7 +580,7 @@ func wrStopsReady(ctx context.Context, c *redis.Client, streams []string, stops 
 			continue
 		}
 		for _, w := range live {
-			cmds[s] = append(cmds[s], ws.QueueCardCount(ctx, pipe, s, w))
+			cmds[s] = append(cmds[s], ws.QueueCardCount(ctx, pipe, epoch, s, w))
 		}
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {

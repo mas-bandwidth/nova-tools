@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pipeerr"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -28,8 +29,12 @@ var Places = []string{"waiting", "ready", "working", "done", "parked"}
 // RosterKey is sprint:<S>:cards, every card of the sprint ever.
 func RosterKey(sprint string) string { return "sprint:" + sprint + ":cards" }
 
-// BenchCardsKey is the bench view of one place (or ok/fail), bench:<b>:cards:<where>.
-func BenchCardsKey(bench, where string) string { return "bench:" + bench + ":cards:" + where }
+// BenchCardsKeyAt is the bench view of one place (or ok/fail) under epoch e
+// (nova-tools#4238; a reader keys by ws.Epoch).
+
+func BenchCardsKeyAt(e uint64, bench, where string) string {
+	return ws.ConsumerKeyAt(e, "bench:"+bench, where)
+}
 
 // FsckReport is one ns_card_fsck or ns_card_repair reply.
 type FsckReport struct {

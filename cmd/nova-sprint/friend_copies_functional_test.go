@@ -146,8 +146,8 @@ func TestFriendPullDoneBeat(t *testing.T) {
 	if pr["head"] != head || pr["base"] != "dev" || pr["branch"] != "nova/copies/q1-c1-a1" || pr["task"] != "q1" || pr["state"] != "open" || pr["ci"] != "pending" {
 		t.Fatalf("pr:nova-tools:4400 = %v", pr)
 	}
-	if n := c.ZCard(ctx, rowan.Key("ok")).Val(); n != 1 {
-		t.Fatalf("%s ok = %d", rowan.Key("ok"), n)
+	if n := c.ZCard(ctx, rowan.KeyAt(0, "ok")).Val(); n != 1 {
+		t.Fatalf("%s ok = %d", rowan.KeyAt(0, "ok"), n)
 	}
 	if got := c.HGet(ctx, taskcard.Key("q1"), "where").Val(); got != "review" {
 		t.Fatalf("q1 is %s, want review", got)

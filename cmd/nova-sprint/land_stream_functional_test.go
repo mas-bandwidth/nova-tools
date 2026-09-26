@@ -11,7 +11,6 @@ import (
 	"sync"
 
 	"fmt"
-	"github.com/alicebob/miniredis/v2"
 	"os"
 	"path/filepath"
 	"strings"
@@ -323,13 +322,17 @@ func landedRelease(t *testing.T, ctx context.Context, c *redis.Client, addr, rec
 
 // TestLandStreamConflictStops runs a whole land stream against a git remote it
 // builds with a dozen git processes; exec of whole programs is the functional
-// tier's (Glenn 2026-09-26, nova-tools#4328: unit tests under 2 s).
+// tier's (Glenn 2026-09-26, nova-tools#4328: unit tests under 2 s). The store
+// is a real one with the library: the lander reads each stream's merging set
+// through the epoch-keyed cell function ns_ws_zrange (nova-tools#4238).
 func TestLandStreamConflictStops(t *testing.T) {
-	mr := miniredis.RunT(t)
-	addr := mr.Addr()
+	addr := testutil.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = c.Close() })
 	ctx := context.Background()
+	if err := fn.Load(ctx, c); err != nil {
+		t.Fatal(err)
+	}
 	root := t.TempDir()
 	src, bare := filepath.Join(root, "src"), filepath.Join(root, "remote.git")
 	_ = os.MkdirAll(src, 0o755)

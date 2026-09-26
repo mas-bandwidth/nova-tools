@@ -19,7 +19,7 @@ local function now_s()
   return t[1]
 end
 
--- keys: card, pool, waiting, log, idx queued (NS.card writes the index)
+-- keys: card, log, idx queued (NS.card writes the index; the dealer's lists are the epoch's, #4238)
 -- args: label, payload_sha, priority, base, base_sha, paths, repo, kind,
 --       depends_on, card_type (the optional TYPE: line, nova-tools#3091;
 --       empty: not stored), depends_on_typed, ready (0|1), route (the
@@ -44,7 +44,9 @@ end
 -- (the pre-#3503 ten-argument shape) gets pool only when depends_on is empty.
 -- The card also gets cut_at, Redis TIME seconds at this push (nova-tools#3091).
 redis.register_function('ns_card_push', function(keys, args)
-  local card, pool, waiting, log = keys[1], keys[2], keys[3], keys[4]
+  -- keys: card, log, idx queued (nova-tools#4238: the dealer's lists are
+  -- the epoch's, derived by NS.card, and are not declared)
+  local card, log = keys[1], keys[2]
   local label, payload, priority = args[1], args[2], args[3]
   local base, base_sha, paths = args[4], args[5], args[6]
   local repo, kind, depends_on = args[7], args[8], args[9]
@@ -153,11 +155,15 @@ end)
 -- args: sprint, then the labels whose typed dependencies the caller resolved
 --       in this pass (GitHub reads are cached by the caller).
 redis.register_function('ns_card_release', function(keys, args)
-  local waiting, pool, log = keys[1], keys[2], keys[3]
+  -- keys: log (the waiting list is the epoch's, derived below, #4238)
+  local log = keys[1]
   local sprint = args[1]
   if type(sprint) ~= 'string' or string.match(sprint, '^[-a-z0-9]+$') == nil or #sprint > 40 or #sprint < 1 then
     return redis.error_reply('bad sprint')
   end
+  -- the dealer's lists under the current epoch (#4238): the key names the
+  -- caller declared are for the ACL, the list is the epoch's
+  local waiting = CARD.skey(CARD.epoch(), sprint, 'waiting')
   local releasable = {}
   for i = 2, #args do
     if safe_id(args[i]) then
@@ -191,13 +197,15 @@ redis.register_function('ns_card_release', function(keys, args)
   return 'moved=' .. tostring(moved) .. ' waiting=' .. tostring(still)
 end)
 
--- keys: card, pool, waiting, log, idx queued, idx landed (NS.card moves
+-- keys: card, log, idx queued, idx landed (NS.card moves
 -- the label from its own state's index)
 -- args: label, merge_sha
 -- The merge commit is the landing. This does not move dependents; release does.
 redis.register_function('ns_card_land', function(keys, args)
-  local card, pool, waiting = keys[1], keys[2], keys[3]
-  local log = keys[4]
+  -- keys: card, log, idx queued, idx landed (the dealer's lists are the
+  -- epoch's, derived by NS.card, #4238)
+  local card, log = keys[1], keys[2]
+
   local label, merge = args[1], args[2]
   if redis.call('EXISTS', card) == 0 then
     return 'ABSENT'
@@ -240,8 +248,13 @@ end)
 -- keys: paused, parked, pool, log; args: member, sprint
 -- Returns {was_paused, moved, dropped}.
 redis.register_function('ns_card_resume', function(keys, args)
-  local paused, parked, pool, log = keys[1], keys[2], keys[3], keys[4]
+  -- keys: paused, parked, log (the pool is the epoch's, derived below, #4238)
+  local paused, parked, log = keys[1], keys[2], keys[3]
+
   local member, sprint = args[1], args[2]
+  -- the pool under the current epoch (#4238), not the declared key
+  local pool = CARD.skey(CARD.epoch(), sprint, 'pool')
+
   local was = redis.call('SREM', paused, member)
   local moved, dropped = 0, 0
   for _, label in ipairs(redis.call('SMEMBERS', parked)) do

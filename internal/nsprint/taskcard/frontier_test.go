@@ -126,7 +126,7 @@ func TestFrontierCardGoesOnlyToAWorkerAdvertisingIt(t *testing.T) {
 			t.Fatalf("read copy %s: leg tier route consumer = %v; want read pro read %s", cid, r, plain)
 		}
 	}
-	if n := c.ZCard(ctx, fonly.Key("ready")).Val(); n != 0 {
+	if n := c.ZCard(ctx, fonly.KeyAt(0, "ready")).Val(); n != 0 {
 		t.Fatalf("the frontier-only bench holds %d read copies; a read is pro", n)
 	}
 	cleanMoves(t, c, "frontier")

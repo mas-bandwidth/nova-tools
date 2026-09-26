@@ -275,14 +275,23 @@ func fill(ctx context.Context, c redis.Cmdable, parents []planRec) ([]Plan, erro
 }
 
 // Plans reads every plan of the named streams, in the streams' order and,
-// within a stream, oldest first: one pipeline over the streams' sets, one
-// HMGET pipeline for the members' kind, then fill. No SCAN.
+// within a stream, oldest first: the sprint epoch, one pipeline over the
+// streams' sets under it (nova-tools#4238: a plan of an older epoch is not
+// shown, like its cells), one HMGET pipeline for the members' kind, then
+// fill. No SCAN.
 func Plans(ctx context.Context, c redis.Cmdable, streams []string) ([]Plan, error) {
+	if len(streams) == 0 {
+		return nil, nil
+	}
+	epoch, err := ws.Epoch(ctx, c)
+	if err != nil {
+		return nil, fmt.Errorf("plans: %w", err)
+	}
 	pipe := c.Pipeline()
 	var sets []*redis.StringSliceCmd
 	for _, s := range streams {
 		for _, w := range ws.Wheres {
-			sets = append(sets, pipe.ZRange(ctx, StreamKey(s, w), 0, -1))
+			sets = append(sets, pipe.ZRange(ctx, StreamKeyAt(epoch, s, w), 0, -1))
 		}
 	}
 	if len(sets) == 0 {

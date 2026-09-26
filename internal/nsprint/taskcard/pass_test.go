@@ -69,7 +69,7 @@ func TestDealPassFillsEveryConsumerInOnePass(t *testing.T) {
 	cleanMoves(t, c, "pass")
 
 	// a full consumer is not dealt; an end frees a slot the next pass fills
-	w, _ := c.ZRange(ctx, b.Key("working"), 0, 0).Result()
+	w, _ := c.ZRange(ctx, b.KeyAt(0, "working"), 0, 0).Result()
 	if _, err := taskcard.End(ctx, c, taskcard.EndRequest{IDs: w, Why: "red", By: "b"}); err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestDealPassFillsEveryConsumerInOnePass(t *testing.T) {
 
 	// a stale beat is not dealt
 	c.HSet(ctx, f.BeatKey(), "at", strconv.FormatInt(now.Add(-time.Hour).UnixMilli(), 10))
-	fw, _ := c.ZRange(ctx, f.Key("working"), 0, -1).Result()
+	fw, _ := c.ZRange(ctx, f.KeyAt(0, "working"), 0, -1).Result()
 	if _, err := taskcard.End(ctx, c, taskcard.EndRequest{IDs: fw, OK: true, By: "f"}); err != nil {
 		t.Fatal(err)
 	}

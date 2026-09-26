@@ -385,12 +385,12 @@ func (p *Progress) Run(ctx context.Context, l *Lease) (Counts, error) {
 	if !p.last.IsZero() && now.Sub(p.last) < every {
 		return Counts{}, nil
 	}
-	cfg, streams, sprints, roster, top, err := p.readIndex(ctx)
+	cfg, streams, sprints, roster, top, epoch, err := p.readIndex(ctx)
 	if err != nil {
 		return Counts{}, err
 	}
 	p.last, p.every = now, cfg.Every
-	run, err := p.measure(ctx, now, cfg, streams, sprints, roster)
+	run, err := p.measure(ctx, now, cfg, streams, sprints, roster, epoch)
 	if err != nil {
 		return Counts{}, err
 	}
@@ -435,15 +435,21 @@ func (p *Progress) print(line string) {
 
 // readIndex is the first round trip: the config, the streams, the sprints,
 // the consumer roster and the duty's own record.
-func (p *Progress) readIndex(ctx context.Context) (cfg ProgressConfig, streams, sprints []string, roster []taskcard.Consumer, top map[string]string, err error) {
+func (p *Progress) readIndex(ctx context.Context) (cfg ProgressConfig, streams, sprints []string, roster []taskcard.Consumer, top map[string]string, epoch uint64, err error) {
 	pipe := p.Client.Pipeline()
 	cfgCmd := pipe.HGetAll(ctx, ProgressConfigKey)
+	// the sprint epoch (nova-tools#4238) rides this round: measure keys
+	// every set by it
+	epochCmd := pipe.HGet(ctx, ws.EpochKey, ws.EpochField)
 	order := pipe.ZRange(ctx, "ws:order", 0, -1)
 	sprintOrder := pipe.ZRange(ctx, "sprint:order", 0, -1)
 	consumers := pipe.SMembers(ctx, taskcard.ConsumersKey)
 	topCmd := pipe.HGetAll(ctx, ProgressKey)
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return cfg, nil, nil, nil, nil, fmt.Errorf("progress: index: %w", err)
+		return cfg, nil, nil, nil, nil, 0, fmt.Errorf("progress: index: %w", err)
+	}
+	if epoch, err = ws.ParseEpoch(epochCmd.Val()); err != nil {
+		return cfg, nil, nil, nil, nil, 0, fmt.Errorf("progress: %w", err)
 	}
 	cfg = ParseProgressConfig(cfgCmd.Val())
 	names := append([]string(nil), consumers.Val()...)
@@ -453,13 +459,13 @@ func (p *Progress) readIndex(ctx context.Context) (cfg ProgressConfig, streams, 
 			roster = append(roster, k)
 		}
 	}
-	return cfg, order.Val(), sprintOrder.Val(), roster, topCmd.Val(), nil
+	return cfg, order.Val(), sprintOrder.Val(), roster, topCmd.Val(), epoch, nil
 }
 
 // measure is the second round trip and the judgement: every stream's counts,
 // oldest card and stored state, every consumer's room, the open sprint, the
 // last hour of ws:log, then Step per stream.
-func (p *Progress) measure(ctx context.Context, now time.Time, cfg ProgressConfig, streams, sprints []string, roster []taskcard.Consumer) (ProgressRun, error) {
+func (p *Progress) measure(ctx context.Context, now time.Time, cfg ProgressConfig, streams, sprints []string, roster []taskcard.Consumer, epoch uint64) (ProgressRun, error) {
 	holds, err := pitstop.Current(ctx, p.Client)
 	if err != nil {
 		return ProgressRun{}, fmt.Errorf("progress: pitstop: %w", err)
@@ -476,16 +482,17 @@ func (p *Progress) measure(ctx context.Context, now time.Time, cfg ProgressConfi
 		down    *redis.IntCmd
 		at, ci  *redis.StringCmd
 	}
+	// every set under the epoch the index round read (nova-tools#4238)
 	pipe := p.Client.Pipeline()
 	scs := make([]streamCmds, len(streams))
 	for i, s := range streams {
 		// the counts and the oldest card leave the stream's stop out (#4318):
 		// a set's two oldest, so the sentinel beside a card never hides it
 		for j, state := range ws.Stream {
-			scs[i].counts[j] = ws.QueueCardCount(ctx, pipe, s, state)
+			scs[i].counts[j] = ws.QueueCardCount(ctx, pipe, epoch, s, state)
 		}
 		for j, state := range notLanded {
-			scs[i].oldest[j] = pipe.ZRangeWithScores(ctx, taskcard.StreamKey(s, state), 0, 1)
+			scs[i].oldest[j] = pipe.ZRangeWithScores(ctx, taskcard.StreamKeyAt(epoch, s, state), 0, 1)
 		}
 		scs[i].state = pipe.HGetAll(ctx, ProgressStreamKey(s))
 	}
@@ -493,7 +500,7 @@ func (p *Progress) measure(ctx context.Context, now time.Time, cfg ProgressConfi
 	for i, k := range roster {
 		ccs[i] = consumerCmds{
 			desired: pipe.HMGet(ctx, k.DesiredKey(), "slots", "paused"),
-			working: pipe.ZCard(ctx, k.Key(ws.Working)),
+			working: pipe.ZCard(ctx, k.KeyAt(epoch, ws.Working)),
 			down:    pipe.Exists(ctx, k.DownKey()),
 			at:      pipe.HGet(ctx, k.BeatKey(), "at"),
 			ci:      pipe.HGet(ctx, k.MachineBeatKey(), "ci"),

@@ -42,7 +42,9 @@ import (
 // not the launch verb's voice. Every other accepted session appends one line
 // to sessions.log and its stdin to launched, then holds the session for a
 // second (or for the seconds in the bench's `sleep` file, #3706), as a slow
-// remote verb would. It lives in t.TempDir(), so testguard sees a fake.
+// remote verb would; while the bench's `hold` file exists it holds first, so
+// a test that needs sessions open together removes the file instead of
+// waiting out a second (the unit tier's 1 s budget, #4328). It lives in t.TempDir(), so testguard sees a fake.
 const fixtureSSHD = `#!/bin/bash
 set -u
 FIX=%q
@@ -96,6 +98,7 @@ if [ -e "$dir/dropafter-timedout" ]; then
   echo "Connection timed out" >&2
   exit 255
 fi
+while [ -e "$dir/hold" ]; do sleep 0.01; done
 secs=1
 [ -e "$dir/sleep" ] && secs=$(cat "$dir/sleep")
 sleep "$secs"
@@ -459,6 +462,54 @@ func (perCardLauncher) Launch(ctx context.Context, open Opener, _ Bench, res []R
 
 var lineRE = regexp.MustCompile(`^control-0000c012 card-\d\d 1 1\.[0-9a-f]{32}$`)
 
+// TestControl12FixtureSSHDAllowsTwoSessions is control 12's positive control
+// on the fixture itself (#2756), its own test so each stays under the unit
+// tier's 1 s budget (#4328).
+func TestControl12FixtureSSHDAllowsTwoSessions(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	// The positive control on the fixture itself: sessions at once, the
+	// old launcher's shape, are closed before the command past the two
+	// it allows. The two it accepts hold until every other one is
+	// refused, so the control is exact (8 of 10) and waits on no clock
+	// (ten, not fifty: the unit tier's 1 s budget, #4328).
+	f := newFixture(t)
+	r := f.remote()
+	b := upBench("ctl-probe", 64)
+	f.set(t, b.Name, "sleep", "0")
+	f.set(t, b.Name, "hold", "")
+	hold := filepath.Join(f.dir, b.Name, "hold")
+	const sessions = 10
+	results := make(chan error, sessions)
+	for i := 0; i < sessions; i++ {
+		go func() { results <- r.Dial(b).Run(ctx, []byte("x\n")) }()
+	}
+	bound := time.NewTimer(guard)
+	defer bound.Stop()
+	refused := 0
+	for got := 0; got < sessions; got++ {
+		select {
+		case err := <-results:
+			var se *SessionError
+			if !errors.As(err, &se) || se.State != SSHRefused {
+				continue
+			}
+			if refused++; refused == sessions-2 {
+				if err := os.Remove(hold); err != nil {
+					t.Fatal(err)
+				}
+			}
+		case <-bound.C:
+			_ = os.Remove(hold)
+			t.Fatalf("fixture refused %d of %d concurrent sessions within %s; it must allow only two", refused, sessions, guard)
+		}
+	}
+	if refused != sessions-2 {
+		t.Fatalf("fixture refused %d of %d concurrent sessions; it must allow exactly two", refused, sessions)
+	}
+}
+
 // TestControl12FiftyCardsOneSession is #2756 control 12 (#2743): a 50-card
 // batch to a bench whose sshd allows two sessions launches over ONE session;
 // a launcher that opens a session per card is refused; a wedged sshd shows
@@ -469,36 +520,9 @@ func TestControl12FiftyCardsOneSession(t *testing.T) {
 	const sprint = "control-0000c012"
 	ctx := context.Background()
 
-	t.Run("fixture sshd allows two sessions", func(t *testing.T) {
-		// The positive control on the fixture itself: 50 sessions at once,
-		// the old launcher's shape, are mostly closed before the command.
-		f := newFixture(t)
-		r := f.remote()
-		b := upBench("ctl-probe", 64)
-		var wg sync.WaitGroup
-		var mu sync.Mutex
-		refused := 0
-		for i := 0; i < 50; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				err := r.Dial(b).Run(ctx, []byte("x\n"))
-				var se *SessionError
-				if errors.As(err, &se) && se.State == SSHRefused {
-					mu.Lock()
-					refused++
-					mu.Unlock()
-				}
-			}()
-		}
-		wg.Wait()
-		if refused < 25 {
-			t.Fatalf("fixture refused %d of 50 concurrent sessions; it must allow only two", refused)
-		}
-	})
-
 	t.Run("fifty cards launch over one session", func(t *testing.T) {
 		f := newFixture(t)
+		f.set(t, "ctl-a", "sleep", "0")
 		in := Input{Now: time.Now(), Benches: []Bench{upBench("ctl-a", 64)}, Sprints: []Sprint{{Name: sprint, Pool: fiftyCards(sprint)}}}
 		st := newFakeStore("lease-1", in)
 		p := &Pass{Source: staticSource{in}, Fence: fence("lease-1"), Reserver: st, Row: st, Dialer: f.remote()}
@@ -545,6 +569,7 @@ func TestControl12FiftyCardsOneSession(t *testing.T) {
 
 	t.Run("a launcher that opens a session per card is refused", func(t *testing.T) {
 		f := newFixture(t)
+		f.set(t, "ctl-a", "sleep", "0")
 		in := Input{Now: time.Now(), Benches: []Bench{upBench("ctl-a", 64)}, Sprints: []Sprint{{Name: sprint, Pool: fiftyCards(sprint)}}}
 		st := newFakeStore("lease-1", in)
 		p := &Pass{Source: staticSource{in}, Fence: fence("lease-1"), Reserver: st, Row: st, Dialer: f.remote(), Launcher: perCardLauncher{}}
@@ -570,6 +595,7 @@ func TestControl12FiftyCardsOneSession(t *testing.T) {
 	t.Run("a wedged sshd shows ssh refused within 10 s and its cards go elsewhere", func(t *testing.T) {
 		f := newFixture(t)
 		f.wedge(t, "ctl-a")
+		f.set(t, "ctl-b", "sleep", "0")
 		in := Input{Now: time.Now(), Benches: []Bench{upBench("ctl-a", 64), upBench("ctl-b", 50)}, Sprints: []Sprint{{Name: sprint, Pool: fiftyCards(sprint)}}}
 		st := newFakeStore("lease-1", in)
 		p := &Pass{Source: staticSource{in}, Fence: fence("lease-1"), Reserver: st, Row: st, Dialer: f.remote()}

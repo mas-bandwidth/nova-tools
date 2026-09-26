@@ -11,14 +11,18 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/table"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
+	"github.com/redis/go-redis/v9"
 )
 
 // TestSprintClearZerosBothTables (Glenn 2026-09-26 8:40 AM ET: "reset the
 // sprint table. zeros everywhere"; 8:41 AM: "make sprint clearing a verb. It
 // should be simple and fast"): over the fixture, `sprint clear` refuses while
-// cards are working or merging, clears everything with --force in one call,
-// writes the checkpoint first, and the next tick of the table reads zero in
-// every stream and consumer cell.
+// cards are working or merging, clears everything with --force in one call
+// (one increment of the sprint epoch, nova-tools#4238: nothing moved), writes
+// the checkpoint first, and the next tick of the table reads zero in every
+// stream and consumer cell; a member written into the old epoch's set after
+// the clear stays invisible.
 func TestSprintClearZerosBothTables(t *testing.T) {
 	addr, client := wholeTableRedis(t)
 	ctx := context.Background()
@@ -26,11 +30,24 @@ func TestSprintClearZerosBothTables(t *testing.T) {
 	if code != 1 || !strings.Contains(stderr, "INFLIGHT") {
 		t.Fatalf("cards in flight: exit %d stderr %q", code, stderr)
 	}
+	// the fixture's open sprint carries the pit stop; the clear names it
+	if err := client.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: "fix"}).Err(); err != nil {
+		t.Fatal(err)
+	}
 	cp := filepath.Join(t.TempDir(), "clear.tsv")
 	code, stdout, stderr := runSprint("sprint", "clear", "--redis", addr, "--why", "fresh run", "--force", "--by", "rowan", "--checkpoint", cp)
-	if code != 0 || !strings.HasPrefix(stdout, "CLEARED streams=") || !strings.Contains(stdout, " by=rowan ms=") {
+	if code != 0 || !strings.HasPrefix(stdout, "CLEARED streams=") || !strings.Contains(stdout, " epoch=1 by=rowan ms=") || !strings.Contains(stdout, "\nPITSTOP kept sprint=fix\n") {
 		t.Fatalf("clear: exit %d\n%s%s", code, stdout, stderr)
 	}
+	if v := client.HGet(ctx, ws.EpochKey, ws.EpochField).Val(); v != "1" {
+		t.Fatalf("sprint:epoch n = %q after the clear, want 1", v)
+	}
+	if n := client.ZCard(ctx, ws.KeyAt(0, "swarm: cards", "working")).Val(); n != 6 {
+		t.Fatalf("the clear moved cards: epoch 0's swarm: cards working holds %d, want the fixture's 6", n)
+	}
+	// a writer still holding the old epoch cannot make a cell non-zero
+	client.ZAdd(ctx, ws.ConsumerKeyAt(0, "bench:space", "ok"), redis.Z{Score: 1, Member: "late~1"})
+
 	b, err := os.ReadFile(cp)
 	if err != nil || !strings.HasPrefix(string(b), "# nova-sprint sprint clear checkpoint at=") || !strings.Contains(string(b), "\tworking\t") {
 		t.Fatalf("checkpoint: %v\n%s", err, b)

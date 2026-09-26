@@ -28,7 +28,7 @@ func table(t *testing.T, c *redis.Client, friend string) map[string]int64 {
 	m := map[string]int64{}
 	for _, w := range taskcard.Wheres {
 		m["ws:"+w] = wsCards(c, stream, w)
-		m["friend:"+w] = c.ZCard(ctx, taskcard.FriendKey(friend, w)).Val()
+		m["friend:"+w] = c.ZCard(ctx, taskcard.FriendKeyAt(0, friend, w)).Val()
 	}
 	return m
 }
@@ -251,9 +251,9 @@ func TestFsckFindsDriftInjectedByHand(t *testing.T) {
 		}
 	}
 	clean(t, c, "before")
-	c.ZAdd(ctx, taskcard.StreamKey(stream, "working"), redis.Z{Score: 1, Member: "d1"}) // d1 in two places
-	c.ZRem(ctx, taskcard.FriendKey("rowan", "ready"), "d2")                             // d2 unlinked
-	c.SRem(ctx, "sprint:"+sprint+":idx:rowan:open", "d3")                               // d3 unindexed
+	c.ZAdd(ctx, taskcard.StreamKeyAt(0, stream, "working"), redis.Z{Score: 1, Member: "d1"}) // d1 in two places
+	c.ZRem(ctx, taskcard.FriendKeyAt(0, "rowan", "ready"), "d2")                             // d2 unlinked
+	c.SRem(ctx, "sprint:"+sprint+":idx:rowan:open", "d3")                                    // d3 unindexed
 	r, err := taskcard.Fsck(ctx, c, sprint)
 	if err != nil {
 		t.Fatal(err)
@@ -303,7 +303,7 @@ func TestLeaseLapsedGoesBackToReady(t *testing.T) {
 	if err != nil || len(ids) != 1 || ids[0] != "l2" {
 		t.Fatalf("expire %v %v", ids, err)
 	}
-	if n := c.ZCard(ctx, taskcard.FriendKey("rowan", "working")).Val(); n != 1 {
+	if n := c.ZCard(ctx, taskcard.FriendKeyAt(0, "rowan", "working")).Val(); n != 1 {
 		t.Fatalf("rowan working %d, want 1", n)
 	}
 	h := c.HGetAll(ctx, "task:l2").Val()
@@ -340,7 +340,7 @@ func TestLandStreamLandsEveryMergingMember(t *testing.T) {
 		r.Landed[0] != (taskcard.Member{ID: "m1", Ref: "mas-bandwidth/nova-tools#3800", Origin: "issue:m1"}) {
 		t.Fatalf("land stream %+v %v", r, err)
 	}
-	if n := c.ZCard(ctx, taskcard.StreamKey(stream, "landed")).Val(); n != 2 || c.ZCard(ctx, taskcard.StreamKey(stream, "merging")).Val() != 0 {
+	if n := c.ZCard(ctx, taskcard.StreamKeyAt(0, stream, "landed")).Val(); n != 2 || c.ZCard(ctx, taskcard.StreamKeyAt(0, stream, "merging")).Val() != 0 {
 		t.Fatalf("landed %d", n)
 	}
 	if w := c.HGet(ctx, "task:m3", "where").Val(); w != "working" {
@@ -383,7 +383,7 @@ func TestReapUnlinksFinishedFromWorking(t *testing.T) {
 	clean(t, c, "before the drift")
 	// The drift the table showed: finished records still in the working set,
 	// and an id whose record is gone.
-	working := taskcard.FriendKey("rowan", "working")
+	working := taskcard.FriendKeyAt(0, "rowan", "working")
 	for _, id := range []string{"r-done", "r-landed"} {
 		created, _ := c.HGet(ctx, taskcard.Key(id), "created_at").Int64()
 		c.ZAdd(ctx, working, redis.Z{Score: float64(created), Member: id})
@@ -413,7 +413,7 @@ func TestReapUnlinksFinishedFromWorking(t *testing.T) {
 		t.Fatalf("lapsed record %v", h)
 	}
 	for id, where := range map[string]string{"r-done": "done", "r-landed": "landed"} {
-		if c.ZScore(ctx, taskcard.FriendKey("rowan", where), id).Err() != nil || c.HGet(ctx, taskcard.Key(id), "where").Val() != where {
+		if c.ZScore(ctx, taskcard.FriendKeyAt(0, "rowan", where), id).Err() != nil || c.HGet(ctx, taskcard.Key(id), "where").Val() != where {
 			t.Fatalf("%s left its own place %s", id, where)
 		}
 	}

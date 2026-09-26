@@ -36,7 +36,7 @@ func wrTask(t *testing.T, c *redis.Client, id, state string, created int64, kv .
 	pipe.ZAdd(ctx, "ws:order", redis.Z{Score: 1, Member: wrStream})
 	pipe.HSet(ctx, "task:"+id, fields...)
 	if state != "closed" {
-		pipe.ZAdd(ctx, ws.Key(wrStream, state), redis.Z{Score: float64(created), Member: id})
+		pipe.ZAdd(ctx, ws.KeyAt(0, wrStream, state), redis.Z{Score: float64(created), Member: id})
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		t.Fatal(err)
@@ -45,7 +45,7 @@ func wrTask(t *testing.T, c *redis.Client, id, state string, created int64, kv .
 
 func wrMembers(t *testing.T, c *redis.Client, state string) map[string]float64 {
 	t.Helper()
-	zs, err := c.ZRangeWithScores(context.Background(), ws.Key(wrStream, state), 0, -1).Result()
+	zs, err := c.ZRangeWithScores(context.Background(), ws.KeyAt(0, wrStream, state), 0, -1).Result()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +208,7 @@ func TestWaitingResolveCountsRefusedMoves(t *testing.T) {
 	if err := c.HSet(ctx, "task:R", "blocked_on", "task:A").Err(); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.ZAdd(ctx, ws.Key(wrStream, "waiting"), redis.Z{Score: float64(cardEpoch + 2001), Member: "R"}).Err(); err != nil {
+	if err := c.ZAdd(ctx, ws.KeyAt(0, wrStream, "waiting"), redis.Z{Score: float64(cardEpoch + 2001), Member: "R"}).Err(); err != nil {
 		t.Fatal(err)
 	}
 	lease, err := reconcile.Acquire(ctx, store.New(c), reconcile.AcquireOptions{Host: "test"})
@@ -247,7 +247,7 @@ func TestSentinelEdgeNeverReachesReadyUnmet(t *testing.T) {
 			fields = append(fields, f)
 		}
 		must(t, c.HSet(ctx, "task:"+id, fields...).Err())
-		must(t, c.ZAdd(ctx, ws.Key(stream, state), redis.Z{Score: float64(cardEpoch + created), Member: id}).Err())
+		must(t, c.ZAdd(ctx, ws.KeyAt(0, stream, state), redis.Z{Score: float64(cardEpoch + created), Member: id}).Err())
 	}
 	put("A1", a, "working", 1000)
 	put(sid, a, "waiting", 999, "kind", "sentinel")
@@ -276,7 +276,7 @@ func TestSentinelEdgeNeverReachesReadyUnmet(t *testing.T) {
 	if out.String() != want {
 		t.Fatalf("receipt\n%q\nwant\n%q (stream a has only its sentinel waiting: no line)", out.String(), want)
 	}
-	if n, _ := c.ZCard(ctx, ws.Key(b, "ready")).Result(); n != 0 {
+	if n, _ := c.ZCard(ctx, ws.KeyAt(0, b, "ready")).Result(); n != 0 {
 		t.Fatalf("ready %d, want 0: an unmet sentinel edge never reaches ready", n)
 	}
 
@@ -295,7 +295,7 @@ func TestSentinelEdgeNeverReachesReadyUnmet(t *testing.T) {
 	if counts, err := duty.Run(ctx, lease); err != nil || counts.Routed != 2 {
 		t.Fatalf("after the sentinel landed: routed %d err %v", counts.Routed, err)
 	}
-	ready, _ := c.ZRange(ctx, ws.Key(b, "ready"), 0, -1).Result()
+	ready, _ := c.ZRange(ctx, ws.KeyAt(0, b, "ready"), 0, -1).Result()
 	if strings.Join(ready, " ") != "B1 B2" {
 		t.Fatalf("ready %v", ready)
 	}

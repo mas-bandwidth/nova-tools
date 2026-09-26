@@ -1,5 +1,7 @@
 package table
 
+import "github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
+
 // DefectFixture seeds the defects of 2026-09-22 (6.8) so that `table --check`
 // renders them and asserts the exact output. Tests then add each forbidden
 // sidecar key in turn to prove the two-writers refusal.
@@ -18,14 +20,14 @@ func DefectFixture() [][]string {
 		{"SADD", "friends", "fran", "eight", "sleeping"},
 		{"HSET", "bench:b1:desired", "slots", "4"},
 		{"HSET", "bench:b1:beat", "at", "1"},
-		{"ZADD", "bench:b1:cards:ready", "0", "s:s1:card:r1"},
-		{"ZADD", "bench:b1:cards:working", "1", "s:s1:card:l1", "2", "t1~1"},
+		{"ZADD", ws.ConsumerKeyAt(0, "bench:b1", "ready"), "0", "s:s1:card:r1"},
+		{"ZADD", ws.ConsumerKeyAt(0, "bench:b1", "working"), "1", "s:s1:card:l1", "2", "t1~1"},
 		{"HSET", "task:t1~1", "lease_until", "1"},
 		{"ZADD", "s:s1:bench:b1:queue", "0", "c1"},
 		{"ZADD", "s:old:bench:b1:queue", "0", "old1", "0", "old2"},
 		{"ZADD", "s:control-hidden:bench:b1:queue", "0", "ctl1", "0", "ctl2"},
 		{"SADD", "s:s1:bench:b1:ended", "e1"},
-		{"ZADD", "s:s1:pool", "0", "pool-card"},
+		{"ZADD", ws.SprintListAt(0, "s1", "pool"), "0", "pool-card"},
 		{"HSET", "bench:b2", "host", ""},
 		{"HSET", "bench:b2:beat", "at", "1"},
 		{"ZADD", "s:s1:bench:b2:queue", "0", "d1", "0", "d2"},
@@ -33,7 +35,7 @@ func DefectFixture() [][]string {
 		{"HSET", "friend:fran:beat", "at", "1"},
 		{"HSET", "friend:eight:desired", "slots", "8"},
 		{"HSET", "friend:eight:beat", "at", "1"},
-		{"ZADD", "friend:eight:cards:working", "1", "s1/a/1", "1", "s1/b/1", "1", "s1/c/1", "1", "s1/d/1", "1", "s1/e/1",
+		{"ZADD", ws.ConsumerKeyAt(0, "friend:eight", "working"), "1", "s1/a/1", "1", "s1/b/1", "1", "s1/c/1", "1", "s1/d/1", "1", "s1/e/1",
 			"1", "s1/f/1", "1", "s1/g/1", "9999999999999", "t8"},
 		{"HSET", "friend:sleeping:desired", "slots", "2"},
 	}

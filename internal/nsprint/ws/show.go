@@ -132,13 +132,18 @@ func Show(ctx context.Context, c redis.Cmdable) ([]ShowStream, error) {
 		return nil, nil
 	}
 
-	// Round 2: every set of every stream, with scores.
+	// Round 2: every set of every stream under the current epoch
+	// (nova-tools#4238), with scores.
+	epoch, err := Epoch(ctx, c)
+	if err != nil {
+		return nil, fmt.Errorf("ws show: %w", err)
+	}
 	pipe = c.Pipeline()
 	setCmds := make([][]*redis.ZSliceCmd, len(streams))
 	for i, s := range streams {
 		setCmds[i] = make([]*redis.ZSliceCmd, len(Wheres))
 		for j, w := range Wheres {
-			setCmds[i][j] = pipe.ZRangeWithScores(ctx, Key(s, w), 0, -1)
+			setCmds[i][j] = pipe.ZRangeWithScores(ctx, KeyAt(epoch, s, w), 0, -1)
 		}
 	}
 	if err := showExec(ctx, pipe); err != nil {

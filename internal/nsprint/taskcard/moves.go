@@ -39,6 +39,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pipeerr"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -91,8 +92,9 @@ func ParseConsumer(s string) (Consumer, error) {
 
 func (c Consumer) String() string { return c.Kind + ":" + c.Name }
 
-// Key is the consumer's set at col (ready, working, ok, fail).
-func (c Consumer) Key(col string) string { return c.String() + ":cards:" + col }
+// KeyAt is the consumer's set at col (ready, working, ok, fail) under epoch
+// e (nova-tools#4238; a reader keys by ws.Epoch).
+func (c Consumer) KeyAt(e uint64, col string) string { return ws.ConsumerKeyAt(e, c.String(), col) }
 
 // DesiredKey holds the consumer's slots (and paused, tiers, kinds).
 func (c Consumer) DesiredKey() string { return c.String() + ":desired" }
@@ -531,13 +533,18 @@ func (c Cells) Line() string {
 // ReadCells reads every consumer's row in ONE pipeline of ZCARDs (and the
 // slots field): the table's consumer cells.
 func ReadCells(ctx context.Context, c redis.Cmdable, consumers []Consumer) ([]Cells, error) {
+	epoch, err := ws.Epoch(ctx, c)
+	if err != nil {
+		return nil, fmt.Errorf("cells: %w", err)
+	}
 	pipe := c.Pipeline()
 	cards := make([][]*redis.IntCmd, len(consumers))
 	slots := make([]*redis.StringCmd, len(consumers))
 	for i, k := range consumers {
 		for _, col := range Cols {
-			cards[i] = append(cards[i], pipe.ZCard(ctx, k.Key(col)))
+			cards[i] = append(cards[i], pipe.ZCard(ctx, k.KeyAt(epoch, col)))
 		}
+
 		slots[i] = pipe.HGet(ctx, k.DesiredKey(), "slots")
 	}
 	if err := pipeerr.Exec(ctx, pipe); err != nil {

@@ -138,7 +138,7 @@ func TestEveryOperationIsOneRoundTripUnderOneSecond(t *testing.T) {
 	if got := counts(t, c)[s(2)]; got.Waiting != 40 || got.Ready != 20 || got.Parked != 0 {
 		t.Fatalf("unpark did not restore waiting/ready: %+v", got)
 	}
-	if score, err := c.ZScore(ctx, ws.Key(s(2), "ready"), "t00082").Result(); err != nil || score != float64(wstest.Created(82)) {
+	if score, err := c.ZScore(ctx, ws.KeyAt(0, s(2), "ready"), "t00082").Result(); err != nil || score != float64(wstest.Created(82)) {
 		t.Fatalf("unpark lost the created_at score: %v %v, want %d", score, err, wstest.Created(82))
 	}
 	step("park", func() string {
@@ -269,11 +269,11 @@ func TestMoveRefusesABrokenLink(t *testing.T) {
 	// t00000 is in waiting; its record is made to say ready (set -> card broken)
 	c.HSet(ctx, "task:t00000", "where", "ready")
 	// t00001 is in waiting and also in ready, the target (two places)
-	c.ZAdd(ctx, ws.Key(s, "ready"), redis.Z{Score: float64(wstest.Created(1)), Member: "t00001"})
+	c.ZAdd(ctx, ws.KeyAt(0, s, "ready"), redis.Z{Score: float64(wstest.Created(1)), Member: "t00001"})
 	// t00003 is in waiting and also in landed, a set neither named nor the target
-	c.ZAdd(ctx, ws.Key(s, "landed"), redis.Z{Score: float64(wstest.Created(3)), Member: "t00003"})
+	c.ZAdd(ctx, ws.KeyAt(0, s, "landed"), redis.Z{Score: float64(wstest.Created(3)), Member: "t00003"})
 	// t00019 is done but also sits in parked
-	c.ZAdd(ctx, ws.Key(s, "parked"), redis.Z{Score: float64(wstest.Created(19)), Member: "t00019"})
+	c.ZAdd(ctx, ws.KeyAt(0, s, "parked"), redis.Z{Score: float64(wstest.Created(19)), Member: "t00019"})
 	for _, tc := range []struct{ id, to, want string }{
 		{"t00000", "working", "DRIFT unlinked ws:s0: work:ready task:t00000"},
 		{"t00001", "ready", "DRIFT twice ws:s0: work:ready task:t00001"},

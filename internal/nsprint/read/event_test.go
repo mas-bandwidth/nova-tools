@@ -22,7 +22,7 @@ func eventTask(t *testing.T, c *redis.Client, id, stream, state string, age int6
 	h := append([]string{"stream", stream, "state", state, "created_at", fmt.Sprint(age)}, fields...)
 	pipe := c.TxPipeline()
 	pipe.HSet(ctx, "task:"+id, h)
-	pipe.ZAdd(ctx, ws.Key(stream, state), redis.Z{Score: float64(age), Member: id})
+	pipe.ZAdd(ctx, ws.KeyAt(0, stream, state), redis.Z{Score: float64(age), Member: id})
 	pipe.SAdd(ctx, "ws:names", stream)
 	pipe.ZAddNX(ctx, "ws:order", redis.Z{Score: 1, Member: stream})
 	if _, err := pipe.Exec(ctx); err != nil {
@@ -106,7 +106,7 @@ func TestReadPostEventsMoveTasks(t *testing.T) {
 	if st := stateOf(t, c, "build-45-other"); st != "working" {
 		t.Fatalf("a task naming another issue moved: %s", st)
 	}
-	if n := c.ZCard(ctx, ws.Key(s, "landed")).Val(); n != 2 {
+	if n := c.ZCard(ctx, ws.KeyAt(0, s, "landed")).Val(); n != 2 {
 		t.Fatalf("ws:%s:landed = %d, want 2", s, n)
 	}
 	check("close")

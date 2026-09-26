@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 )
 
 // The #3530 fixture: a whole-table keyspace of 10 streams, 6 benches and 4
@@ -74,7 +76,7 @@ func SprintFixture() [][]string {
 		for j, state := range WSStates {
 			for k := int64(0); k < counts[j]; k++ {
 				id := fmt.Sprintf("t%d-%s-%d", i+1, state, k)
-				cmds = append(cmds, []string{"ZADD", "ws:" + s.Name + ":" + state, strconv.FormatInt(k+1, 10), id})
+				cmds = append(cmds, []string{"ZADD", ws.KeyAt(0, s.Name, state), strconv.FormatInt(k+1, 10), id})
 				task := []string{"HSET", "task:" + id, "stream", s.Name, "state", state, "title", "task " + id}
 				if age, ok := fixtureReviewAges[id]; ok {
 					task = append(task, "review_at", ms(-age))
@@ -125,7 +127,7 @@ func SprintFixture() [][]string {
 		cmds = append(cmds, []string{"HSET", "bench:" + b.name + ":beat", "host", b.name, "load1", b.load, "live", strconv.Itoa(b.working), "at", ms(-1 * time.Second)})
 		cmds = append(cmds, []string{"HSET", "bench:" + b.name, "host", b.name, "queue", "9", "working", "9", "load1", "9.99", "at", at(-1 * time.Second)})
 		cmds = append(cmds, ConsumerCards("bench:"+b.name, [4]int{b.ready, b.working, b.ok, b.fail})...)
-		cmds = append(cmds, []string{"ZADD", "bench:" + b.name + ":cards:ok", ms(-4 * time.Hour), b.name + "-before-open~1"})
+		cmds = append(cmds, []string{"ZADD", ws.ConsumerKeyAt(0, "bench:"+b.name, "ok"), ms(-4 * time.Hour), b.name + "-before-open~1"})
 	}
 	// Friends: rowan up, beating from its own laptop with a load (friend
 	// beat, #4233: a friend's load is its own beat's, never studio's 3.00),
@@ -145,7 +147,7 @@ func SprintFixture() [][]string {
 		[]string{"HSET", "friend:stella", "at", at(-1 * time.Second), "up", "1"},
 		[]string{"HSET", DoneBaseKey, "rowan", "10"},
 		// emma's one ok copy from before s:fix opened counts too
-		[]string{"ZADD", "friend:emma:cards:ok", ms(-4 * time.Hour), "e-before-open~1"},
+		[]string{"ZADD", ws.ConsumerKeyAt(0, "friend:emma", "ok"), ms(-4 * time.Hour), "e-before-open~1"},
 	)
 	for _, f := range []struct {
 		name   string
@@ -195,7 +197,7 @@ func ConsumerCards(consumer string, n [4]int) [][]string {
 	for i, set := range ConsumerSets {
 		for k := 0; k < n[i]; k++ {
 			score := strconv.FormatInt(start.Add(time.Duration(k+1)*time.Second).UnixMilli(), 10)
-			cmds = append(cmds, []string{"ZADD", consumer + ":cards:" + set, score, fmt.Sprintf("%s-%s~%d", name, set, k)})
+			cmds = append(cmds, []string{"ZADD", ws.ConsumerKeyAt(0, consumer, set), score, fmt.Sprintf("%s-%s~%d", name, set, k)})
 		}
 	}
 	return cmds
