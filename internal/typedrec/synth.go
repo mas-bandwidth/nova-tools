@@ -1,6 +1,7 @@
 package typedrec
 
 import (
+	"bytes"
 	"strconv"
 	"strings"
 )
@@ -148,6 +149,30 @@ func SplitModel(raw []byte, kind string) ModelLines {
 		}
 	}
 	return m
+}
+
+// MaxCardLine is the longest line 1 a reader keeps: bufio.MaxScanTokenSize,
+// what the line scanner every wrapper reader used before ReadCardLine took.
+const MaxCardLine = 64 * 1024
+
+// CardLine is line 1 of a model-written RESULT text as the wrapper records
+// it (the commit subject, the ledger's result field): the card line the
+// model wrote back, a typed value and never raw text.
+type CardLine string
+
+// ReadCardLine reads a RESULT text's line 1 as the line scanner did: the
+// bytes before the first newline with one trailing CR dropped; "" for an
+// empty text or a line of MaxCardLine bytes or more (the scanner returned
+// "" there, and CommitOutput falls back to its own subject).
+func ReadCardLine(raw []byte) CardLine {
+	line := raw
+	if i := bytes.IndexByte(raw, '\n'); i >= 0 {
+		line = raw[:i]
+	}
+	if len(line) >= MaxCardLine {
+		return ""
+	}
+	return CardLine(bytes.TrimSuffix(line, []byte("\r")))
 }
 
 // fieldLine reads `KEY: value` in the v2 typed-field syntax.

@@ -1,3 +1,12 @@
+// TestOneTypedParser is the one-typed-parser rule (#2506): internal/typedrec
+// is the home of every typed line a nova tool reads, the RESULT v2 record
+// and DISPOSITION line first, and the Lua replies (the PATHS gate's
+// refusal) and any other typed line with them. Outside typedrec no function
+// compares a line's token to a bare word, builds a table of the tokens, or
+// cuts a token's prefix; the tree walk below finds those shapes and skips
+// internal/typedrec because it is that home, not by accident. The allowlist
+// names the records that are not RESULT lines and only shrinks; a drift
+// entry names the commit that added it and why it stays.
 package typedrec_test
 
 import (
@@ -359,6 +368,13 @@ func (pc *parserChecker) scanFile(p, rel string) ([]hit, error) {
 						if id, ok := y.Fun.(*ast.Ident); ok && tokFuncs[id.Name] {
 							t = true
 						}
+						// A value the typed parser returned is typed text: a
+						// bare compare on it outside typedrec is a parse.
+						if sel, ok := y.Fun.(*ast.SelectorExpr); ok {
+							if id, ok := sel.X.(*ast.Ident); ok && id.Name == "typedrec" {
+								t = true
+							}
+						}
 					case *ast.IndexExpr:
 						if _, isStr := fold(y.Index); !isStr {
 							t = true
@@ -547,6 +563,12 @@ func TestOneTypedParser(t *testing.T) {
 		hits8, err := pc.scanFile(filepath.Join(fixDir, "var-shadow.go"), "var-shadow.go")
 		if err != nil || len(hits8) != 1 || hits8[0].tok != "HEAD" {
 			t.Errorf("fixture 8 var-shadow: got %v, err %v", hits8, err)
+		}
+
+		// 9. typed-shadow: a string the typed parser returned, compared raw.
+		hits9, err := pc.scanFile(filepath.Join(fixDir, "typed-shadow.go"), "typed-shadow.go")
+		if err != nil || len(hits9) != 1 || hits9[0].tok != "DONE" || hits9[0].form != "bare" {
+			t.Errorf("fixture 9 typed-shadow: got %v, err %v", hits9, err)
 		}
 
 		// 7. clean
