@@ -1758,3 +1758,170 @@ jobs:
             [ "$result" = "success" ] || bad=$((bad + 1))
           done
           [ "$bad" -eq 0 ] || { echo "$bad job(s) did not succeed"; exit 1; }
+
+      # The receipt below needs this tree (go build ./cmd/nova-sprint), so the
+      # job checks out the way every self-hosted job does: clean, borrow the
+      # bench mirror, checkout, the installed Go. always(): the receipt is
+      # written for a red run too.
+      - name: remove stale build dirs from the shared runner
+        if: always()
+        # The self-hosted runners reuse the _work directory across jobs; a tree left
+        # by an aborted or overlapping run makes checkout fail. Start from clean.
+        # The sweep below is `rm -rf` over whatever the workspace holds, so it only
+        # ever runs on a directory this repository has checked out: an empty
+        # variable is refused, a workspace that does not exist yet is the normal
+        # first-run state (#1751), and a workspace with no `.git` is not ours to
+        # empty — actions/checkout clears a non-repository workspace itself.
+        shell: bash
+        run: |
+          [ -n "${GITHUB_WORKSPACE}" ] || exit 1
+          [ -d "${GITHUB_WORKSPACE}" ] || exit 0
+          [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
+          # Clean in place, keep the tree (Glenn 2026-09-26 10:20 AM ET, fs_usage
+          # on the Studio: four `find ... rm -rf` sweeps and the re-seeds behind
+          # them were the file-event storm fseventsd digested at 100% CPU;
+          # "lots of tiny files is a really slow way to work"). A checkout of
+          # ours is reset to its HEAD and every untracked or ignored file is
+          # removed: the same hygiene as emptying it, a few hundred operations
+          # instead of a hundred thousand, and the next checkout fetches only
+          # the new commit. A tree git cannot reset is emptied as before.
+          if git -C "${GITHUB_WORKSPACE}" reset -q --hard && git -C "${GITHUB_WORKSPACE}" clean -ffdxq; then
+            echo "workspace cleaned in place: $(git -C "${GITHUB_WORKSPACE}" rev-parse --short HEAD 2>/dev/null || echo '-')"
+            exit 0
+          fi
+          find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+
+      - name: borrow objects from the bench mirror
+        if: always()
+        # THE CHECKOUT FETCH WAS THE HANG. Every self-hosted job empties its
+        # workspace above, so actions/checkout fetched the whole commit from
+        # GitHub (11 MB at --depth=1) on every job, and on the house benches
+        # that fetch stalled: 17 of the cancelled jobs in the last 25 PR runs
+        # (2026-09-23 02:00Z) died at `git fetch --depth=1 origin +<merge
+        # sha>` at the two-minute job cap (hulk 9, vision 5, studio 3, #2795),
+        # the same stall that failed 566 staged cards (#2882). Every bench
+        # already keeps $HOME/nova-bench/mirror/nova-tools.git fresh, so the
+        # workspace borrows its objects (objects/info/alternates) and starts
+        # detached at the mirror's HEAD: the fetch then carries only what the
+        # mirror lacks. Measured on hulk: 11 MB and 3.1 s -> 24 KB and 1.1 s.
+        # actions/checkout keeps a workspace whose origin URL matches and whose
+        # HEAD is a commit (it cleans and resets it, both no-ops here), so the
+        # checkout step itself is unchanged.
+        # A bench with no mirror, or a workspace that is not empty, is left to
+        # actions/checkout exactly as before, and this step never fails a job.
+        shell: bash
+        run: |
+          m="$HOME/nova-bench/mirror/nova-tools.git"
+          w="${GITHUB_WORKSPACE:?}"
+          [ -d "$m/objects" ] || { echo "no bench mirror at $m: checkout fetches from GitHub"; exit 0; }
+          mkdir -p "$w"
+          [ -z "$(ls -A "$w")" ] || { echo "workspace not empty: left to actions/checkout"; exit 0; }
+          seed() {
+            tip=$(git --git-dir="$m" rev-parse --verify -q 'HEAD^{commit}') || return 1
+            git init -q "$w" &&
+              git -C "$w" remote add origin "${{ github.server_url }}/${{ github.repository }}" &&
+              echo "$m/objects" > "$w/.git/objects/info/alternates" &&
+              git -C "$w" -c advice.detachedHead=false checkout -q --detach "$tip" &&
+              echo "workspace borrows $m, detached at its HEAD $tip"
+          }
+          seed || { echo "seeding from $m failed: left to actions/checkout"; rm -rf -- "$w/.git"; }
+
+      # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
+      # not redden a job. Attempt one tolerates its own failure ONLY so the
+      # retry below runs; the retry itself is not tolerated, so a checkout
+      # that fails twice still fails the job: fail-closed, not fail-open.
+      - name: checkout
+        id: checkout
+        if: always()
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: checkout retry
+        if: always() && steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: use the installed Go toolchain
+        if: always()
+        # The self-hosted runners carry Go (1.26 at /usr/bin/go on Linux, under
+        # /opt/homebrew or ~/go on macOS). Prefer it over a setup-go download.
+        shell: bash
+        run: |
+          set -euo pipefail
+          # the bench's own Go wins over a distro Go on the system path (hulk: /usr/bin/go 1.22
+          # shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain, 2026-09-17)
+          # newest Go under ~/sdk first (the Mac benches: batman and superman keep 1.27 there, and
+          # batman also carries a stale root-owned /usr/local/go 1.22 that won this loop, 2026-09-18)
+          # the toolchain go.mod names wins when ~/sdk holds it (#4080: space's runner took the newest sdk Go
+          # while the release build beside it switched toolchains in the same caches): the toolchain line,
+          # else the go line, which is the toolchain a go.mod without that line implies; else as before
+          want=$(sed -n 's/^toolchain \(go[0-9][0-9a-z.]*\)$/\1/p' go.mod 2>/dev/null | head -1 || true)
+          [ -n "$want" ] || want=$(sed -n 's/^go \([0-9][0-9a-z.]*\)$/go\1/p' go.mod 2>/dev/null | head -1 || true)
+          sdk=
+          if [ -n "$want" ] && [ -x "$HOME/sdk/$want/bin/go" ]; then sdk="$HOME/sdk/$want/bin"; fi
+          [ -n "$sdk" ] || sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true) # empty on the Linux benches; under pipefail the failed ls would abort the step
+          for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
+            [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
+          done
+          command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
+          go version
+          echo "GO SETUP want=${want:-none} go=$(command -v go) gomodcache=$(go env GOMODCACHE) gocache=$(go env GOCACHE)"
+
+
+      # THE RUNNER IS THE EVENT SOURCE (card gh-ci-receipts). Measured
+      # 2026-09-26 12:38 PM ET: ev:github empty (XLEN 0), zero ci:*:gh keys,
+      # so `nova-sprint land pr` could only print WAITING: the signed webhook
+      # receiver sits behind a tailscale funnel that is kept off by design.
+      # This job runs on our own runner as the bench seat, so it reports the
+      # run itself at the end of every run: the same ci:<repo>:<sha>:gh
+      # record, ev:github row and pr:<repo>:<n> refresh the receiver path
+      # would produce, from the verdict above and needs.*.result, no GitHub
+      # call. always(): a red run is reported as red. A write that fails is
+      # loud here and reddens ci-ok: a landing must never wait on a receipt
+      # that silently did not happen. The password never touches a flag or
+      # a file: nova-secrets exec under the bench seat (card.env names it).
+      # NEVER BUILD THE THING WITH ITSELF: the receipt is written by the
+      # bench's installed, released nova-sprint (fleet release), not by this
+      # tree, so a PR that changes the writer cannot write the check that
+      # lands itself. `go run` of this tree is the one-time bootstrap while
+      # the installed binary predates the verb, and it says so in the log.
+      - name: report this run to Redis from the runner
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          env_file="$HOME/nova-bench/launch/card.env"
+          [ -f "$env_file" ] || { echo "no $env_file on this runner: run the rowan-tools bench play on $(hostname) (it writes the bench seat and store address)"; exit 1; }
+          # shellcheck disable=SC1090
+          . "$env_file"
+          : "${NOVA_BENCH_SEAT:?card.env names no NOVA_BENCH_SEAT}" "${NOVA_BENCH_SOPS:?card.env names no NOVA_BENCH_SOPS}" "${NOVA_CARD_REDIS:?card.env names no NOVA_CARD_REDIS}"
+          ns="$HOME/.local/bin/nova-sprint"
+          # the installed binary's own refusal of the verb's flag is the probe (its exit is 2 either way)
+          probe=""
+          if [ -x "$ns" ]; then probe=$("$ns" ci github --from-runner 2>&1; echo "exit=$?"); fi
+          if [ -x "$ns" ] && ! grep -q "flag provided but not defined" <<<"$probe"; then
+            echo "RECEIPT WRITER installed $("$ns" version 2>/dev/null | head -1)"
+            writer=("$ns")
+          else
+            echo "BOOTSTRAP: $ns is absent or predates ci github --from-runner; go run of this tree writes this one receipt; roll the release (nova-sprint fleet release dev) so the next run uses the installed binary"
+            writer=("$(command -v go)" run ./cmd/nova-sprint)
+          fi
+          exec "$HOME/.local/bin/nova-secrets" exec --store "$HOME/nova-bench/secrets" --as "$NOVA_BENCH_SEAT" \
+            --key "$HOME/.config/nova-secrets/$NOVA_BENCH_SEAT.key" --sops "$NOVA_BENCH_SOPS" \
+            --only NOVA_REDIS_BENCH_PASSWORD --require NOVA_REDIS_BENCH_PASSWORD -- \
+            /usr/bin/env NOVA_SPRINT_REDIS_USER=bench NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_BENCH_PASSWORD \
+            "${writer[@]}" ci github --from-runner --redis "$NOVA_CARD_REDIS" \
+            --repo "${{ github.repository }}" \
+            --sha "${{ github.event.pull_request.head.sha || github.sha }}" \
+            --run-id "${{ github.run_id }}" \
+            --event "${{ github.event_name }}" \
+            --head-branch "${{ github.head_ref || github.ref_name }}" \
+            --base-branch "${{ github.base_ref || github.event.merge_group.base_ref || github.ref_name }}" \
+            --pr "${{ github.event.pull_request.number }}" \
+            --workflow "${{ github.workflow }}" \
+            --conclusion "${{ job.status }}" \
+            --job "lint=${{ needs.lint.result }}" \
+            --job "test=${{ needs.test.result }}" \
+            --job "test-race-queue=${{ needs.test-race-queue.result }}" \
+            --job "e2e=${{ needs.e2e.result }}" \
+            --job "lisp=${{ needs.lisp.result }}" \
+            --job "test-hosted=${{ needs.test-hosted.result }}" \
+            --job "test-hosted-pr=${{ needs.test-hosted-pr.result }}"

@@ -6,7 +6,8 @@
 // into ci:pool, a bench's runner-only pass over it, and the one budgeted
 // parity read against GitHub. github is the GitHub leg (#3597): the
 // ci-github consumer of ev:github writes ci:<repo>:<sha>:gh from the webhook
-// deliveries, so nothing polls GitHub for a check state. status --repo --sha
+// deliveries, so nothing polls GitHub for a check state; github --from-runner
+// (card gh-ci-receipts) is the ci-ok job writing the same record itself. status --repo --sha
 // prints that record's rows and the GitHub leg, from Redis only.
 // parity (#3041) is the sprint's measurement from Redis alone: no GitHub poll.
 package main
@@ -33,12 +34,14 @@ import (
 func init() {
 	register(Verb{
 		Name:    "ci",
-		Summary: "request, run, status and compare of our own ci; github writes Actions results from ev:github; cut, show, rerun, dispose and parity of ci cards",
+		Summary: "request, run, status and compare of our own ci; github writes Actions results from ev:github, github --from-runner is ci-ok reporting its own run; cut, show, rerun, dispose and parity of ci cards",
 		Run:     runCI,
 	})
 }
 
 const ciUsage = "want request, run, status, compare, github, cut, show, rerun, dispose or parity"
+
+const ciRunnerUsage = "ci github --from-runner --redis <addr> --repo owner/name --sha <40hex> --run-id <n> --event <ev> --workflow <name> --conclusion success|failure|cancelled [--head-branch <b>] [--base-branch <b>] [--pr <n>] [--at <rfc3339>] --job <name>=<result>..."
 
 func runCI(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
@@ -418,13 +421,73 @@ func runCICompare(ctx context.Context, args []string, out, errOut io.Writer) int
 // per pass that handled an entry (every pass with --once, which drains and
 // exits) and runs until SIGINT or SIGTERM otherwise. Exit 0 stopped or
 // drained, 1 a pass failed, 2 usage.
+//
+// --from-runner (card gh-ci-receipts) is the runner as the event source:
+//
+//	nova-sprint ci github --from-runner --redis <addr> --repo owner/name --sha <head>
+//	    --run-id <github.run_id> --event <github.event_name> --workflow <github.workflow>
+//	    --conclusion <job.status> [--head-branch <b>] [--base-branch <b>] [--pr <n>]
+//	    [--at <rfc3339>] --job <name>=<needs.name.result>...
+//
+// The ci-ok job calls it at the end of every run (.github/workflows/ci.yml),
+// and it writes what the receiver path would have: one ev:github row and
+// the ci:<repo>:<sha>:gh record through ns_ci_github, nothing else (never
+// pr:<repo>:<n>, which is the lander's; internal/nsprint/webhook/runner.go).
+// One CIGH RUNNER line; exit 0 written, 1 the store refused the write (which
+// reddens ci-ok: a landing never waits on a receipt that silently did not
+// happen), 2 usage.
 func runCIGitHub(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("ci github")
 	redisAddr := fs.String("redis", redisDefault(), "")
 	consumer := fs.String("consumer", "", "")
 	once := fs.Bool("once", false, "")
+	fromRunner := fs.Bool("from-runner", false, "")
+	var r webhook.Receipt
+	fs.StringVar(&r.Repo, "repo", "", "")
+	fs.StringVar(&r.SHA, "sha", "", "")
+	fs.StringVar(&r.RunID, "run-id", "", "")
+	fs.StringVar(&r.Event, "event", "", "")
+	fs.StringVar(&r.HeadBranch, "head-branch", "", "")
+	fs.StringVar(&r.BaseBranch, "base-branch", "", "")
+	fs.StringVar(&r.PR, "pr", "", "")
+	fs.StringVar(&r.Workflow, "workflow", "", "")
+	fs.StringVar(&r.Conclusion, "conclusion", "", "")
+	fs.StringVar(&r.At, "at", "", "")
+	var jobs multiFlag
+	fs.Var(&jobs, "job", "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "ci github", err.Error())
+	}
+	if *fromRunner {
+		if fs.NArg() > 0 {
+			return refuse(errOut, "ci github --from-runner", "takes flags only, nothing positional: "+ciRunnerUsage)
+		}
+		for _, v := range jobs {
+			j, err := webhook.ParseJob(v)
+			if err != nil {
+				return refuse(errOut, "ci github --from-runner", err.Error()+": "+ciRunnerUsage)
+			}
+			r.Jobs = append(r.Jobs, j)
+		}
+		if err := r.Validate(); err != nil {
+			return refuse(errOut, "ci github --from-runner", err.Error()+": "+ciRunnerUsage)
+		}
+		addr := landRedisAddr(*redisAddr)
+		if addr == "" {
+			return refuse(errOut, "ci github --from-runner", "needs --redis <addr> or NOVA_REDIS_ADDR: "+ciRunnerUsage)
+		}
+		st, err := store.Open(ctx, addr)
+		if err != nil {
+			return refuse(errOut, "ci github --from-runner", err.Error())
+		}
+		defer st.Close()
+		w, err := webhook.Write(ctx, st.Client(), r)
+		if err != nil {
+			fmt.Fprintf(errOut, "nova-sprint ci github --from-runner: %v; no receipt is in Redis, so land pr would wait forever: fix the store or the bench seat and rerun ci-ok\n", err)
+			return 1
+		}
+		fmt.Fprintln(out, w.Line())
+		return 0
 	}
 	if fs.NArg() > 0 {
 		return refuse(errOut, "ci github", "takes --redis <addr> [--consumer <seat>] [--once], nothing positional")

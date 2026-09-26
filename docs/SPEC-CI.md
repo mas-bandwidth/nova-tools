@@ -2358,6 +2358,43 @@ continuation is not seen. A package list spelled out by hand, however long, is
 not read, nor is one tool's own subtree (`./cmd/nova-ci/...`), and neither are
 the Makefile's `test-full` and `test-slow` targets, which CI's whole-tree runs
 call.
+### `ci-receipt` — ci-ok reports every run to Redis from the runner
+
+**The rule.** The `ci-ok` job of `.github/workflows/ci.yml` has exactly one
+step that runs `nova-sprint ci github --from-runner`, under `if: always()`,
+with `set -euo pipefail` and no `|| true` or `continue-on-error`, and that
+step passes every field of the record from the run's own context — `--repo`,
+`--sha` (the PR head, else `github.sha`), `--run-id`, `--event`,
+`--head-branch`, `--base-branch`, `--pr`, `--workflow`, `--conclusion`
+(`job.status`) — plus one `--job <name>=${{ needs.<name>.result }}` for every
+job in ci-ok's `needs` and none it does not need, as the bench seat
+(`nova-secrets exec … --require NOVA_REDIS_BENCH_PASSWORD`,
+`NOVA_SPRINT_REDIS_USER=bench`, `--redis "$NOVA_CARD_REDIS"`), never
+`curl`, `gh api` or `api.github.com`, and with the bench's installed
+nova-sprint as the writer (`$HOME/.local/bin/nova-sprint`); `go run` of the
+tree under test is the one bootstrap, taken only when the installed binary
+refuses the verb's flag, and announced as `BOOTSTRAP:`.
+**The hurt.** Measured 2026-09-26 12:38 PM ET: `ev:github` XLEN 0 and zero
+`ci:*:gh` keys, so `nova-sprint land pr` (#4326) could only print WAITING.
+The signed webhook receiver sits behind a tailscale funnel kept off by
+design, and no nova-sprint path may poll GitHub for a check state
+(`TestNoPollingPathsRemain`). The runners are ours and run as the bench
+seat, so the run reports itself; a receipt that silently did not happen
+would leave a landing waiting forever, which is why the step must fail the
+job. And never build the thing with itself: a PR that changes the writer
+must not write the check that lands it, which is why the installed binary
+writes and the tree only bootstraps.
+**The test.** `TestCIOKReportsEveryRunToRedisFromTheRunner`
+(`internal/ci/ciok_receipt_class_test.go`), reading the job as YAML.
+**Its allowlist.** None: one step, every field, no exceptions.
+**Its remedy line.** Each red names the flag, the expression or the guard
+the step is missing, e.g. `the receipt step does not pass --job
+"lisp=${{ needs.lisp.result }}"`; the fix is the step, never the test.
+**Its narrowings.** It reads the step's text: an expression that names the
+right context but is quoted differently passes as long as the flag and the
+expression are adjacent, and it does not run the step, so a bench with no
+`card.env` is found by the run itself (the step's own refusal names the
+rowan-tools bench play), not here.
 
 ### `silent` — no silent failure on the copy model's live path
 

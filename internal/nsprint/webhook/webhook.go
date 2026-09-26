@@ -79,12 +79,17 @@ type Record struct {
 	Fail  string // gh_fail: the first red run as kind:name
 	At    string // gh_at
 	PR    string
-	Runs  []Run // in field order (kind, then name)
+	EvID  string // ev_id: the ev:github entry last applied
+	// Source is who stamped the record: SourceRunner from the ci-ok job's own
+	// receipt (runner.go); "" when only the consumer wrote it. Source() folds
+	// it with EvID into runner, hook or none.
+	Source string
+	Runs   []Run // in field order (kind, then name)
 }
 
 // Parse reads a Record from the hash's fields (an HGETALL answer).
 func Parse(m map[string]string) Record {
-	r := Record{Found: len(m) > 0, Word: m["gh"], Fail: m["gh_fail"], At: m["gh_at"], PR: m["pr"]}
+	r := Record{Found: len(m) > 0, Word: m["gh"], Fail: m["gh_fail"], At: m["gh_at"], PR: m["pr"], EvID: m["ev_id"], Source: m["source"]}
 	for f, v := range m {
 		kind, name, ok := strings.Cut(f, ":")
 		if !ok || (kind != "check" && kind != "wf") {

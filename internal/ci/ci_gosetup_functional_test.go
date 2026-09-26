@@ -69,8 +69,8 @@ func TestCIGoSetupPrefersTheGoModToolchain(t *testing.T) {
 		t.Skip("no bash")
 	}
 	runs := goSetupRuns(t)
-	if len(runs) != 6 {
-		t.Fatalf("ci.yml has %d Go setup steps carrying %q, want 6 (update this test with the workflow)", len(runs), goSetupMarker)
+	if len(runs) != 7 {
+		t.Fatalf("ci.yml has %d Go setup steps carrying %q, want 7 (update this test with the workflow)", len(runs), goSetupMarker)
 	}
 	expr := regexp.MustCompile(`\$\{\{[^}]*\}\}`)
 	cases := []struct {
