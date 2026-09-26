@@ -101,6 +101,12 @@ type PRRead struct {
 
 	Out        io.Writer
 	LastReason map[string]string
+	// ackFailed is this pass's acks and idempotence marks that Redis refused
+	// (Glenn's failure-guidance requirement, 2026-09-26: no state write fails
+	// silently). An event whose ack failed is redelivered by the next pass,
+	// so the pass goes on; the count and the names go on the pass receipt
+	// (proc:pr-to-read err) and the pass's returned error.
+	ackFailed []string
 	// Hold, when set, is the sprint's hold-to-fix pass, run by OnceN after
 	// pr-to-read's under the same lease:route:<S> (#3799).
 	Hold *HoldRoute
@@ -153,6 +159,44 @@ func (p *PRRead) Reason(label string) string {
 		return ""
 	}
 	return p.LastReason[label]
+}
+
+// ackNoop marks an event this pass took no action on -- a head event that
+// is no change, or no card's PR -- idempotently done and acks it.
+func (p *PRRead) ackNoop(ctx context.Context, id string) {
+	client := p.Store.Client()
+	key := "s:" + p.Sprint + ":idem"
+	if err := client.HSet(ctx, key, "pr-to-read:"+id, "NOOP").Err(); err != nil {
+		p.noteAckFailure("idem", id, key, err)
+	}
+	p.ack(ctx, id)
+}
+
+// ack acks one s:<S>:log entry for the pr-to-read group; a refused ack is
+// written down, never dropped.
+func (p *PRRead) ack(ctx context.Context, id string) {
+	key := "s:" + p.Sprint + ":log"
+	if err := p.Store.Client().XAck(ctx, key, RulePRToRead, id).Err(); err != nil {
+		p.noteAckFailure("ack", id, key, err)
+	}
+}
+
+func (p *PRRead) noteAckFailure(what, id, key string, err error) {
+	p.mu.Lock()
+	p.ackFailed = append(p.ackFailed, fmt.Sprintf("%s %s on %s: %v", what, id, key, err))
+	p.mu.Unlock()
+	fmt.Fprintf(p.out(), "PR-TO-READ ACK-FAILED what=%s id=%s key=%s: %v\n", what, id, key, err)
+}
+
+// ackFailure is this pass's refused acks as one error, nil when every ack
+// landed.
+func (p *PRRead) ackFailure() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.ackFailed) == 0 {
+		return nil
+	}
+	return fmt.Errorf("pr-to-read: %d acks failed, each event comes back next pass: %s", len(p.ackFailed), strings.Join(p.ackFailed, "; "))
 }
 
 func (p *PRRead) out() io.Writer {
@@ -213,17 +257,21 @@ func head12(h string) string {
 	return h
 }
 
-// Pass executes one evaluation pass of pr-to-read.
-func (p *PRRead) Pass(ctx context.Context) (int, error) {
+// Pass executes one evaluation pass of pr-to-read. Its error carries every
+// ack or idempotence mark Redis refused this pass, counted and named, after
+// whatever ended the pass.
+func (p *PRRead) Pass(ctx context.Context) (nProcessed int, passErr error) {
 	if err := p.check(); err != nil {
 		return 0, err
 	}
 	startAt := time.Now()
 	client := p.Store.Client()
-	var passErr error
-	nProcessed := 0
+	p.ackFailed = nil
 
 	defer func() {
+		if failed := p.ackFailure(); failed != nil {
+			passErr = errors.Join(passErr, failed)
+		}
 		tookMs := time.Since(startAt).Milliseconds()
 		errStr := ""
 		if passErr != nil {
@@ -468,8 +516,7 @@ func (p *PRRead) Pass(ctx context.Context) (int, error) {
 		}
 		if e.prev == e.head {
 			// Not a head change, ack
-			_ = client.HSet(ctx, "s:"+p.Sprint+":idem", "pr-to-read:"+e.id, "NOOP").Err()
-			_ = client.XAck(ctx, "s:"+p.Sprint+":log", RulePRToRead, e.id).Err()
+			p.ackNoop(ctx, e.id)
 			continue
 		}
 
@@ -802,8 +849,8 @@ func (p *PRRead) firstRead(ctx context.Context, policy map[string]string, e head
 		if e.id == "" {
 			return false, client.ZRem(ctx, "s:"+S+":reads:pending", e.repo+"#"+e.pr+"@"+e.head).Err()
 		}
-		_ = client.HSet(ctx, "s:"+S+":idem", "pr-to-read:"+e.id, "NOOP").Err()
-		return false, client.XAck(ctx, "s:"+S+":log", RulePRToRead, e.id).Err()
+		p.ackNoop(ctx, e.id)
+		return false, nil
 	}
 	card, err := client.HGetAll(ctx, "s:"+S+":card:"+label).Result()
 	if err != nil {
@@ -903,7 +950,7 @@ func (p *PRRead) readHeadEvents(ctx context.Context) ([]headEvent, error) {
 				})
 			} else {
 				// Ack non-head events
-				_ = client.XAck(ctx, logKey, RulePRToRead, msg.ID).Err()
+				p.ack(ctx, msg.ID)
 			}
 		}
 	}

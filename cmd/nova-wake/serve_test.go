@@ -765,6 +765,7 @@ func TestServeDoesNotLoseANoteWhoseCommandFailed(t *testing.T) {
 		"INBOX NOTE id=aaa111 from=Stella addr=to at=2026-09-11T11:00:00Z path=from-stella/a.md: the first\n")
 	note, noteDir := fakeNote(t)
 	write(t, filepath.Join(noteDir, "rc"), "7")
+	write(t, filepath.Join(noteDir, "stderr"), "harness: out of credits\nsee the account page\n")
 	state := filepath.Join(t.TempDir(), "serve.state")
 	args := []string{"serve", "--bus", t.TempDir(), "--as", "Rowan", "--on-note", note,
 		"--interval", "30s", "--state", state, "--hours", "0.005",
@@ -775,6 +776,11 @@ func TestServeDoesNotLoseANoteWhoseCommandFailed(t *testing.T) {
 	}
 	if !strings.Contains(r.stdout, "WAKE UNCERTAIN id=aaa111 attempt=1 rc=7") {
 		t.Errorf("a first attempt that never returned 0 was written off as delivered:\n%s", r.stdout)
+	}
+	// The command's own last words are on the line (2026-09-26): before this
+	// its stderr went to io.Discard and rc=7 was all a person got.
+	if !strings.Contains(r.stdout, "WAKE UNCERTAIN id=aaa111 attempt=1 rc=7: dispatch did not accept; output=harness: out of credits see the account page; nova-wake serve") {
+		t.Errorf("the UNCERTAIN line does not carry the command's own words:\n%s", r.stdout)
 	}
 	if !strings.Contains(r.stdout, "failed=1") {
 		t.Errorf("the exit line does not count the dispatch that failed; the count line prints on failure too:\n%s", r.stdout)
@@ -826,7 +832,7 @@ func TestSpawnRefusesALeadingDashID(t *testing.T) {
 	note, noteDir := fakeNote(t)
 	var errb strings.Builder
 	s := &server{onNote: note, stdout: io.Discard, stderr: &errb}
-	rc := s.spawn(context.Background(), []string{"-evil"})
+	rc, _ := s.spawn(context.Background(), []string{"-evil"})
 	if rc == 0 {
 		t.Fatalf("spawn accepted a leading-dash id; it reached the command's argv")
 	}

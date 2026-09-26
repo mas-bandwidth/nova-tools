@@ -11,6 +11,7 @@
 //	calls    appended to, one line per invocation: the arguments, exactly
 //	stdin    appended to: whatever arrived on stdin, which must be nothing
 //	rc       the exit code to answer with; default 0
+//	stderr   if this file exists, its content is written to stderr before exiting
 //	block    if this file exists, wait until it is REMOVED before exiting
 package main
 
@@ -40,6 +41,9 @@ func main() {
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+	if said := read(filepath.Join(dir, "stderr")); said != "" {
+		fmt.Fprint(os.Stderr, said)
 	}
 	if rc, err := strconv.Atoi(strings.TrimSpace(read(filepath.Join(dir, "rc")))); err == nil && rc != 0 {
 		os.Exit(rc)

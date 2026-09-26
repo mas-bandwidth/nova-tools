@@ -531,7 +531,7 @@ func (s *server) runBatch(ctx context.Context, ids []string, attempt int, redeli
 	if serveKillPoint == "before-spawn" {
 		return
 	}
-	rc := s.spawn(ctx, ids)
+	rc, said := s.spawn(ctx, ids)
 	if serveKillPoint == "before-delivered" {
 		return
 	}
@@ -557,8 +557,12 @@ func (s *server) runBatch(ctx context.Context, ids []string, attempt int, redeli
 			if redelivered {
 				why = "retry not terminal"
 			}
-			fmt.Fprintf(s.stdout, "WAKE UNCERTAIN id=%s attempt=%d rc=%d: %s; %s\n",
-				oneline.Field(id), attempt, rc, oneline.Escape(why), oneline.Escape(s.remedy(id)))
+			// The command's own last words go on the line (Glenn's
+			// failure-guidance requirement, 2026-09-26): a harness out of
+			// credits says so on stderr, and a person reading UNCERTAIN with
+			// only rc=7 had to run it again to learn why.
+			fmt.Fprintf(s.stdout, "WAKE UNCERTAIN id=%s attempt=%d rc=%d: %s; output=%s; %s\n",
+				oneline.Field(id), attempt, rc, oneline.Escape(why), oneline.Escape(dash(said)), oneline.Escape(s.remedy(id)))
 			continue
 		}
 		s.ledger.MarkDelivered(id, done, rc, redelivered)
@@ -581,14 +585,17 @@ func (s *server) runBatch(ctx context.Context, ids []string, attempt int, redeli
 }
 
 // spawn runs the command with the ids and NOTHING else on its command line.
-func (s *server) spawn(ctx context.Context, ids []string) int {
+// It returns the exit code and the tail of what the command wrote on stdout
+// and stderr, one line, at most oneline.TailBytes: the reason a command that
+// did not accept the note gave, for the UNCERTAIN line.
+func (s *server) spawn(ctx context.Context, ids []string) (int, string) {
 	// The ids are appended to the command's own arguments, so an id beginning with "-"
 	// is parsed as a FLAG by whatever --on-note names. --on-note is arbitrary, so no
 	// end-of-options separator can be assumed to be accepted: refuse the id here,
 	// before it is ever an argument, and name it.
 	for _, id := range ids {
 		if strings.HasPrefix(id, "-") {
-			return refused(s.stderr, "on-note note id "+id+": an id beginning with '-' would be read as a flag by --on-note, so it is refused before it reaches argv")
+			return refused(s.stderr, "on-note note id "+id+": an id beginning with '-' would be read as a flag by --on-note, so it is refused before it reaches argv"), ""
 		}
 	}
 	fields := strings.Fields(s.onNote)
@@ -598,22 +605,44 @@ func (s *server) spawn(ctx context.Context, ids []string) int {
 	// otherwise index an empty slice and panic where nothing is watching -- the
 	// class Emma's #1390 named.
 	if len(fields) == 0 {
-		return refused(s.stderr, "on-note: --on-note carries no command, so there is nothing to start")
+		return refused(s.stderr, "on-note: --on-note carries no command, so there is nothing to start"), ""
 	}
 	cmd := exec.CommandContext(ctx, fields[0], append(append([]string{}, fields[1:]...), ids...)...)
-	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
+	// The tail is kept, never the whole: a harness may write megabytes, and
+	// the one line that matters is the last it said.
+	tail := &tailWriter{max: oneline.TailBytes}
+	cmd.Stdout, cmd.Stderr = tail, tail
 	cmd.Stdin = nil
 	if err := cmd.Run(); err != nil {
 		var ee *exec.ExitError
 		if asExitErr(err, &ee) {
-			return ee.ExitCode()
+			return ee.ExitCode(), tail.line()
 		}
 		// A command that could not be started at all is a non-zero exit like
 		// any other: the tool never reads its output and never retries it.
 		fmt.Fprintf(s.stderr, "WAKE POLL on-note: %s\n", oneline.Escape(oneline.Cap(oneLine(err.Error()), oneline.TailBytes)))
-		return 127
+		return 127, tail.line()
 	}
-	return 0
+	return 0, tail.line()
+}
+
+// tailWriter keeps the last max bytes written to it.
+type tailWriter struct {
+	max int
+	buf []byte
+}
+
+func (w *tailWriter) Write(p []byte) (int, error) {
+	w.buf = append(w.buf, p...)
+	if len(w.buf) > w.max {
+		w.buf = append([]byte(nil), w.buf[len(w.buf)-w.max:]...)
+	}
+	return len(p), nil
+}
+
+// line is the tail as one bounded line.
+func (w *tailWriter) line() string {
+	return oneline.Cap(oneLine(string(w.buf)), oneline.TailBytes)
 }
 
 func (s *server) sendReceipts(ctx context.Context, ids []string) {
