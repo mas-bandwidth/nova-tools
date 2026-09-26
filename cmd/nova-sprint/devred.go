@@ -182,6 +182,9 @@ func runDevRed(ctx context.Context, args []string, out, errOut io.Writer) int {
 		fmt.Fprintln(out, o.Line())
 		if o.Err != nil {
 			code = 1
+			// The DEVRED line carries the raw error; the store's own classes
+			// get their remedy on the verb's line.
+			storeDown(errOut, name, o.Err)
 		}
 	}
 	return code

@@ -16,7 +16,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -24,7 +23,6 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -150,18 +148,9 @@ func (quietRedis) Printf(context.Context, string, ...interface{}) {}
 
 var quietRedisOnce sync.Once
 
-// exitStoreDown is the one exit code for a store that did not answer or
-// whose ACL refused the seat's user: the code land, consume, reconcile and
-// sprint open already used ("6 no Redis"), now every refuse caller's.
-const exitStoreDown = 6
-
-// noPermUser reads the ACL user out of Redis's own NOPERM line ("NOPERM User
-// audit has no permissions to run the 'fcall' command").
-var noPermUser = regexp.MustCompile(`NOPERM User (\S+) `)
-
-// causeAddr is the first host:port a cause names ("dial tcp 10.0.0.5:6379:
-// connect: connection refused", "redis at 127.0.0.1:6379: ...").
-var causeAddr = regexp.MustCompile(`(?:\d{1,3}(?:\.\d{1,3}){3}|localhost|[A-Za-z][\w.-]*\.[A-Za-z]\w*):\d{2,5}\b`)
+// exitStoreDown is store.ExitDown, the one exit code for a store that did
+// not answer or whose ACL refused the seat's user.
+const exitStoreDown = store.ExitDown
 
 // refuse is the one refusal line every verb prints on stderr: the verb, the
 // cause, and the next verb. The cause is read for the store's own errors
@@ -178,44 +167,14 @@ func refuse(stderr io.Writer, verb, what string) int {
 	return code
 }
 
-// storeRefusal reads a refusal's cause for the store's own errors and gives
-// each class one remedy and one exit code, whichever verb hit it: the
-// nova_sprint function library not loaded on the store ("ERR Function not
-// found") is `nova-sprint fn load --redis <addr>`, exit 2; a store that did
-// not answer (store.UnreachableText) is `--redis` / `nova-sprint doctor`,
-// exit 6; the seat's ACL user denied (NOPERM) names that user and
-// `nova-sprint acl check`, exit 6. The address is the one this process last
-// opened (store.LastOpened), since Redis's error names none; with no open
-// yet the remedy spells the flag.
+// storeRefusal is store.Explain with the help door for everything that is
+// not the store's: the cause, then the class's remedy and exit code.
 func storeRefusal(what string) (string, int) {
-	// The cause's own address wins (a dial error carries it); a Redis reply
-	// does not, so the process's last open is the store it was talking to.
-	addr := store.LastOpened()
-	if m := causeAddr.FindString(what); m != "" {
-		addr = m
+	line, code, class := store.Explain(what)
+	if class == store.ClassNone {
+		return what + "; run: nova-sprint help", 2
 	}
-	flag := "--redis <addr>"
-	at := "the store"
-	if addr != "" {
-		flag, at = "--redis "+addr, addr
-	}
-	switch {
-	case strings.Contains(what, "Function not found"):
-		return what + "; the nova_sprint function library is not loaded on " + at +
-			"; run: nova-sprint fn load " + flag + " (nova-sprint doctor " + flag + " shows the store)", 2
-	case strings.Contains(what, "NOPERM"):
-		user := "the seat's ACL user"
-		if m := noPermUser.FindStringSubmatch(what); m != nil {
-			user = "ACL user " + m[1]
-		} else if u := os.Getenv(redisauth.UserEnv); u != "" {
-			user = "ACL user " + u + " (" + redisauth.UserEnv + ")"
-		}
-		return what + "; " + at + " denies " + user + " (the seat's row in seats.tsv, else " + redisauth.UserEnv +
-			"); run: nova-sprint acl check " + flag + " (the play writes the rows), or nova-sprint doctor " + flag, exitStoreDown
-	case store.NoAnswerText(what):
-		return what + "; " + at + " did not answer; check " + flag + " (or NOVA_SPRINT_REDIS), then run: nova-sprint doctor " + flag, exitStoreDown
-	}
-	return what + "; run: nova-sprint help", 2
+	return line, code
 }
 
 // refreshReexecEnv marks a re-execution of this binary as refresh's

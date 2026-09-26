@@ -331,7 +331,7 @@ func cmdCardShow(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	defer st.Close()
 	cardFields, resultFields, err := card.ShowRecord(ctx, st.Client(), *sprint, *label)
 	if err != nil {
-		fmt.Fprintf(stdout, "REFUSED card show %s/%s why=%s\n", *sprint, *label, oneline.Field(err.Error()))
+		fmt.Fprintf(stdout, "REFUSED card show %s/%s why=%s\n", *sprint, *label, oneline.Field(storeCause(err)))
 		return 6
 	}
 	if len(cardFields) == 0 {

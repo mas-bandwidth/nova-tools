@@ -301,10 +301,13 @@ func TestRowanAuditMissingFunctionNamesFnLoad(t *testing.T) {
 	addr := testutil.Start(t) // no library
 	for _, argv := range [][]string{
 		{"task", "done", "--redis", addr, "--sprint", "audit", "--id", "t1", "--token", "t", "--evidence", "x"},
-		{"sprint", "status", "--redis", addr, "--sprint", "audit"},
+		// sprint status refuses "not the open sprint" and stream ls reads
+		// without the library since #4428 (dev 0a985b2ce); task list and
+		// pitstop clear still call it first.
+		{"task", "list", "--redis", addr, "--sprint", "audit", "--as", "friend:audit"},
 		{"pitstop", "set", "--redis", addr, "--sprint", "audit", "--by", "rowan", "--why", "audit"},
 		{"worker", "show", "--redis", addr, "friend:audit"},
-		{"stream", "ls", "--redis", addr},
+		{"pitstop", "clear", "--redis", addr, "--sprint", "audit", "--by", "rowan"},
 	} {
 		code, out, errOut := runSprint(argv...)
 		if code == 0 || !strings.Contains(out+errOut, "fn load") {

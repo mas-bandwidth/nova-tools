@@ -53,6 +53,9 @@ func unreachable(stderr io.Writer, verb, what string) int {
 	if verb != "" {
 		where = " " + verb
 	}
+	if line, _, class := store.Explain(what); class != store.ClassNone {
+		what = line // the shared store classes' remedy; the exit stays the fleet verbs' documented 5
+	}
 	fmt.Fprintf(stderr, "nova-sprint%s: %s\n", where, oneline.Escape(what))
 	return 5
 }

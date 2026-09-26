@@ -299,8 +299,7 @@ func unitFormText(f worklang.Form) string {
 func runSprintOpen(ctx context.Context, st *store.Store, name, from string, plan *openPlan, now time.Time, out, errOut io.Writer) int {
 	existing, err := sprint.ReadExisting(ctx, st, name, plan.owners)
 	if err != nil {
-		fmt.Fprintf(errOut, "nova-sprint sprint open: %v\n", err)
-		return 6
+		return storeExit(errOut, "sprint open", err)
 	}
 	if existing.RegistryRefused != "" {
 		// #3570: the seat's ACL refuses the friends registry read. Refuse
@@ -338,8 +337,7 @@ func runSprintOpen(ctx context.Context, st *store.Store, name, from string, plan
 	}
 	line, err := sprint.Begin(ctx, st, name, plan.setID, plan.sha, now)
 	if err != nil {
-		fmt.Fprintf(errOut, "nova-sprint sprint open: %v\n", err)
-		return 6
+		return storeExit(errOut, "sprint open", err)
 	}
 	if line != "" {
 		fmt.Fprintln(out, line)
@@ -351,8 +349,7 @@ func runSprintOpen(ctx context.Context, st *store.Store, name, from string, plan
 		req.Sprint = name
 		res, err := task.PushChecked(ctx, st, req)
 		if err != nil {
-			fmt.Fprintf(errOut, "nova-sprint sprint open: %v\n", err)
-			return 6
+			return storeExit(errOut, "sprint open", err)
 		}
 		switch res.Status {
 		case task.PushCreated:
@@ -387,8 +384,7 @@ func runSprintOpen(ctx context.Context, st *store.Store, name, from string, plan
 	}
 	line, err = sprint.Finish(ctx, st, name, plan.setID, plan.sha, now, units)
 	if err != nil {
-		fmt.Fprintf(errOut, "nova-sprint sprint open: %v\n", err)
-		return 6
+		return storeExit(errOut, "sprint open", err)
 	}
 	if line != "" {
 		fmt.Fprintln(out, line)

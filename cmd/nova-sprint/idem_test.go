@@ -126,20 +126,28 @@ func TestIdemResolveLinesAndExits(t *testing.T) {
 	code, out, errOut = idemRun("open")
 	refused("unknown subverb", code, out, errOut)
 
-	// Exit 2: Redis unreachable (a port nothing listens on).
+	// Exit 6: Redis unreachable (a port nothing listens on), the shared
+	// refusal's store-down class with the doctor remedy.
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	idemMust(t, err)
 	dead := l.Addr().String()
 	idemMust(t, l.Close())
 	var o, e bytes.Buffer
 	code = run([]string{"idem", "resolve", "--redis", dead, "--sprint", s, "--key", keyA, "--was", wasA, "--url", url, "--who", "ctl-friend"}, &o, &e)
-	refused("redis unreachable", code, o.String(), e.String())
+	if code != 6 || o.Len() != 0 || !strings.HasPrefix(e.String(), "nova-sprint idem resolve: ") || !strings.Contains(e.String(), "run: nova-sprint doctor --redis "+dead) || strings.Count(e.String(), "\n") != 1 {
+		t.Fatalf("redis unreachable: exit %d stdout %q stderr %q, want exit 6 and one line with the doctor remedy", code, o.String(), e.String())
+	}
 
 	// Exit 2: the function library is not loaded (never loaded by a friend).
 	idemMust(t, client.Do(ctx, "FUNCTION", "FLUSH").Err())
 	idemMust(t, client.HSet(ctx, idem, keyB, wasB).Err())
 	code, out, errOut = resolve("--key", keyB, "--was", wasB, "--none")
-	refused("library not loaded", code, out, errOut)
+	// The shared refusal's library class: exit 2, one line ending with the
+	// fn load remedy instead of the help door.
+	if code != 2 || out != "" || strings.Count(errOut, "\n") != 1 || !strings.HasPrefix(errOut, "nova-sprint idem resolve: ") ||
+		!strings.Contains(errOut, "ERR Function not found") || !strings.Contains(errOut, "run: nova-sprint fn load --redis "+addr) {
+		t.Fatalf("library not loaded: exit %d stdout %q stderr %q, want exit 2 and one line with the fn load remedy", code, out, errOut)
+	}
 	if got, _ := client.HGet(ctx, idem, keyB).Result(); got != wasB {
 		t.Fatalf("library not loaded changed the key: %q", got)
 	}

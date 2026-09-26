@@ -412,14 +412,14 @@ type Applier struct {
 // be read. Results go to out and refusals to errOut.
 func (a Applier) Apply(ctx context.Context, name string, body []byte, out, errOut io.Writer) int {
 	if err := check(a.Store, name); err != nil {
-		fmt.Fprintf(errOut, "PLAN-ERROR %v\n", err)
+		fmt.Fprintf(errOut, "PLAN-ERROR %s\n", planCause(err))
 		return 2
 	}
 	p, findings := ParsePlan(body)
 	if len(findings) == 0 {
 		more, err := ValidatePlan(ctx, a.Store, p)
 		if err != nil {
-			fmt.Fprintf(errOut, "PLAN-ERROR %v\n", err)
+			fmt.Fprintf(errOut, "PLAN-ERROR %s\n", planCause(err))
 			return 2
 		}
 		findings = more
@@ -433,7 +433,7 @@ func (a Applier) Apply(ctx context.Context, name string, body []byte, out, errOu
 	}
 	routes, err := RoutesSHA()
 	if err != nil {
-		fmt.Fprintf(errOut, "PLAN-ERROR %v\n", err)
+		fmt.Fprintf(errOut, "PLAN-ERROR %s\n", planCause(err))
 		return 2
 	}
 	if a.afterValidate != nil {
@@ -465,7 +465,7 @@ func (a Applier) Apply(ctx context.Context, name string, body []byte, out, errOu
 			fmt.Fprintf(errOut, "PLAN-REFUSED authority: redis user %s may not apply a sprint plan (needs HSET on %s): %s\n", user, AuthzKey, text)
 			return 1
 		}
-		fmt.Fprintf(errOut, "PLAN-ERROR %s: %v\n", FunctionPlan, err)
+		fmt.Fprintf(errOut, "PLAN-ERROR %s: %s\n", FunctionPlan, planCause(err))
 		return 2
 	}
 	if len(reply) == 0 {
@@ -496,7 +496,7 @@ func (a Applier) Apply(ctx context.Context, name string, body []byte, out, errOu
 // can run it.
 func Show(ctx context.Context, st *store.Store, name string, out, errOut io.Writer) int {
 	if err := check(st, name); err != nil {
-		fmt.Fprintf(errOut, "PLAN-ERROR %v\n", err)
+		fmt.Fprintf(errOut, "PLAN-ERROR %s\n", planCause(err))
 		return 2
 	}
 	c := st.Client()
@@ -506,7 +506,7 @@ func Show(ctx context.Context, st *store.Store, name string, out, errOut io.Writ
 	lease := pipe.HGetAll(ctx, "lease:reconciler")
 	proc := pipe.HGetAll(ctx, "proc:reconciler")
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		fmt.Fprintf(errOut, "PLAN-ERROR show %s: %v\n", name, err)
+		fmt.Fprintf(errOut, "PLAN-ERROR show %s: %s\n", name, planCause(err))
 		return 2
 	}
 	record := planCmd.Val()
@@ -527,7 +527,7 @@ func Show(ctx context.Context, st *store.Store, name string, out, errOut io.Writ
 	}
 	if len(p.Rows) > 0 {
 		if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-			fmt.Fprintf(errOut, "PLAN-ERROR show %s: %v\n", name, err)
+			fmt.Fprintf(errOut, "PLAN-ERROR show %s: %s\n", name, planCause(err))
 			return 2
 		}
 	}
@@ -648,4 +648,13 @@ func parseStamp(s string) (time.Time, bool) {
 
 func wholeSecs(d time.Duration) string {
 	return fmt.Sprintf("%ds", int64(d.Round(time.Second)/time.Second))
+}
+
+// planCause is the error's text, explained when it is the store's own
+// (store.ExplainErr): the library not loaded, the store down, NOPERM.
+func planCause(err error) string {
+	if line, ok := store.ExplainErr(err); ok {
+		return line
+	}
+	return err.Error()
 }

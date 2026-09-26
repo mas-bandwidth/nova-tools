@@ -3655,10 +3655,15 @@ that did not answer (a dial, a timeout, a dropped connection, a refused
 login) ends `check --redis <addr> (or NOVA_SPRINT_REDIS), then run:
 nova-sprint doctor --redis <addr>`, exit 6; `NOPERM` names the ACL user the
 store denied and ends `run: nova-sprint acl check --redis <addr>`, exit 6.
-The address is the one the process opened (`store.LastOpened`), since the
-Redis error names none. A verb that documents its own store code keeps it
-(`fleet` 5, `task push` DOWN 7); everything else that reaches the store is
-6 when it cannot. go-redis's own pool lines (`pool.go:762: ... failed to
+The address is the cause's own host:port, else the one the process opened
+(`store.LastOpened`), since a Redis reply names none. The classifier is
+`store.Explain` (internal/nsprint/store/explain.go), so a verb whose receipt
+is its own line carries the same remedy in its field: `REFUSED card show ...
+why=`, `REFUSED card stitch ... why=`, `CONSUME-FAILED ... err=`, `PLAN-ERROR`,
+`WAKE REFUSED:`, the DEVRED check's verb line, sprint open's and gh budget's
+lines. A verb that documents its own store code keeps it with the same
+remedy on the line (`fleet` 5, `task push` DOWN 7); everything else that
+reaches the store is 6 when it cannot. go-redis's own pool lines (`pool.go:762: ... failed to
 dial after 5 attempts`) are dropped for the process: the verb's line names
 the store, the library's does not.
 

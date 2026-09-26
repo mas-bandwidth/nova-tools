@@ -54,13 +54,13 @@ func silentClosedAddr(t *testing.T) string {
 
 // TestCardRenderNamesTheStoreNotNOTASK: a store that does not answer used to
 // render as `CARD RENDER REFUSED ... why=NOTASK`, a missing card. It is the
-// Redis error on stderr, exit 2.
+// Redis error on stderr, the shared refusal's store-down class (exit 6).
 func TestCardRenderNamesTheStoreNotNOTASK(t *testing.T) {
 	t.Parallel()
 	code, out, errOut := runCLI("card", "render", "--id", "c0~1", "--redis", silentClosedAddr(t), "--actor", seat())
-	if code != 2 || out != "" || strings.Contains(errOut, "NOTASK") || strings.Contains(errOut, "NOCOPY") ||
+	if code != 6 || out != "" || strings.Contains(errOut, "NOTASK") || strings.Contains(errOut, "NOCOPY") ||
 		!strings.Contains(errOut, "nova-sprint card render:") || !strings.Contains(errOut, "connect") {
-		t.Fatalf("render on a dead store = %d %q %q; want exit 2 with the dial error, never NOTASK", code, out, errOut)
+		t.Fatalf("render on a dead store = %d %q %q; want exit 6 with the dial error, never NOTASK", code, out, errOut)
 	}
 }
 
@@ -153,11 +153,11 @@ func TestDealDutySaysWhichConsumerItSkipped(t *testing.T) {
 // TestCapacityRefusesWhenTheDesiredHashCannotBeRead: with no --machine the
 // verb reads the consumer's desired hash; a store that does not answer used
 // to read as "machine is required; pass --machine", a usage error. It is the
-// dial error.
+// dial error, the shared refusal's store-down class (exit 6).
 func TestCapacityRefusesWhenTheDesiredHashCannotBeRead(t *testing.T) {
 	t.Parallel()
 	code, out, errOut := runCLI("capacity", "bench", "--redis", silentClosedAddr(t), "--as", "rowan", "b1", "2")
-	if code != 2 || out != "" || strings.Contains(errOut, "machine is required") || !strings.Contains(errOut, "read bench:b1:desired machine:") {
+	if code != 6 || out != "" || strings.Contains(errOut, "machine is required") || !strings.Contains(errOut, "read bench:b1:desired machine:") {
 		t.Fatalf("capacity bench on a dead store = %d %q %q; want the read error, never 'machine is required'", code, out, errOut)
 	}
 }

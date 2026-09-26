@@ -47,14 +47,12 @@ func runGH(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 	st, err := store.Open(ctx, addr)
 	if err != nil {
-		fmt.Fprintf(errOut, "nova-sprint %s: %v\n", verb, err)
-		return 6
+		return storeExit(errOut, verb, err)
 	}
 	defer st.Close()
 	rep, err := gh.Budget(ctx, st.Client(), time.Now())
 	if err != nil {
-		fmt.Fprintf(errOut, "nova-sprint %s: %v\n", verb, err)
-		return 6
+		return storeExit(errOut, verb, err)
 	}
 	for _, l := range rep.Lines() {
 		fmt.Fprintln(out, l)

@@ -117,8 +117,7 @@ func runConsume(ctx context.Context, args []string, out, errOut io.Writer) int {
 	defer stop()
 	st, err := openReached(ctx, *redisAddr)
 	if err != nil {
-		fmt.Fprintf(errOut, "nova-sprint consume %s: %v\n", group, err)
-		return 6
+		return storeExit(errOut, "consume "+group, err)
 	}
 	defer st.Close()
 
@@ -137,7 +136,7 @@ func runConsume(ctx context.Context, args []string, out, errOut io.Writer) int {
 			fmt.Fprintf(errOut, "REFUSED pr-to-read sprint=%s %s held by %s at %s\n", *sprint, consume.LeaseKey(*sprint), held.Holder, held.At)
 			return 1
 		case err != nil:
-			fmt.Fprintf(errOut, "nova-sprint consume %s: %v\n", group, err)
+			fmt.Fprintf(errOut, "nova-sprint consume %s: %s\n", group, oneline.Escape(storeCause(err)))
 			return 1
 		}
 		fmt.Fprintf(out, "CONSUMED pr-to-read sprint=%s\n", *sprint)
@@ -152,7 +151,7 @@ func runConsume(ctx context.Context, args []string, out, errOut io.Writer) int {
 			fmt.Fprintf(errOut, "REFUSED hold-to-fix sprint=%s %s held by %s at %s\n", *sprint, consume.LeaseKey(*sprint), held.Holder, held.At)
 			return 1
 		case err != nil:
-			fmt.Fprintf(errOut, "nova-sprint consume %s: %v\n", group, err)
+			fmt.Fprintf(errOut, "nova-sprint consume %s: %s\n", group, oneline.Escape(storeCause(err)))
 			return 1
 		}
 		fmt.Fprintf(out, "CONSUMED hold-to-fix sprint=%s n=%d\n", *sprint, n)
@@ -223,7 +222,7 @@ func pendingOnReaders(err error) bool {
 func okFriendPass(ctx context.Context, st *store.Store, only, consumer, actor string, started map[string]bool, out io.Writer, quiet bool) int {
 	sprints, err := consumeSprints(ctx, st, only)
 	if err != nil {
-		fmt.Fprintf(out, "CONSUME-FAILED ok-to-friend err=%s\n", oneline.Escape(err.Error()))
+		fmt.Fprintf(out, "CONSUME-FAILED ok-to-friend err=%s\n", oneline.Escape(storeCause(err)))
 		return 1
 	}
 	if len(sprints) == 0 && !quiet {
@@ -234,7 +233,7 @@ func okFriendPass(ctx context.Context, st *store.Store, only, consumer, actor st
 		o := &consume.OkFriend{Store: st, Sprint: s, Consumer: consumer, Actor: actor, Block: -1}
 		if !started[s] {
 			if err := o.Start(ctx); err != nil {
-				fmt.Fprintf(out, "CONSUME-FAILED ok-to-friend sprint=%s err=%s\n", s, oneline.Escape(err.Error()))
+				fmt.Fprintf(out, "CONSUME-FAILED ok-to-friend sprint=%s err=%s\n", s, oneline.Escape(storeCause(err)))
 				code = 1
 				continue
 			}
@@ -249,7 +248,7 @@ func okFriendPass(ctx context.Context, st *store.Store, only, consumer, actor st
 		case pendingOnReaders(err):
 			fmt.Fprintf(out, "PENDING ok-to-friend sprint=%s n=%d err=%s\n", s, n, oneline.Escape(err.Error()))
 		default:
-			fmt.Fprintf(out, "CONSUME-FAILED ok-to-friend sprint=%s n=%d err=%s\n", s, n, oneline.Escape(err.Error()))
+			fmt.Fprintf(out, "CONSUME-FAILED ok-to-friend sprint=%s n=%d err=%s\n", s, n, oneline.Escape(storeCause(err)))
 			code = 1
 		}
 	}

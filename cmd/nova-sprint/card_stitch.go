@@ -96,7 +96,7 @@ func cmdCardStitch(ctx context.Context, args []string, stdout, stderr io.Writer)
 	}
 	p, err := taskcard.ReadPlan(ctx, c, parent)
 	if err != nil {
-		fmt.Fprintf(stdout, "REFUSED card stitch id=%s why=%s remedy=%s\n", *id, oneline.Field(err.Error()), oneline.Field("push the parent, then nova-sprint card cut --parent "+parent+" --from <children.tsv>"))
+		fmt.Fprintf(stdout, "REFUSED card stitch id=%s why=%s remedy=%s\n", *id, oneline.Field(storeCause(err)), oneline.Field("push the parent, then nova-sprint card cut --parent "+parent+" --from <children.tsv>"))
 		return 1
 	}
 	if p.Stitch.ID == "" && len(p.Children) == 0 {

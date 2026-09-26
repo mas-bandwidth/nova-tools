@@ -923,7 +923,7 @@ func runFriendWakeHealth(ctx context.Context, args []string, out, errOut io.Writ
 	}
 	st, err := openLifeStore(ctx, lifeAddr(*addr))
 	if err != nil {
-		fmt.Fprintf(errOut, "WAKE REFUSED: %v\n", err)
+		fmt.Fprintf(errOut, "WAKE REFUSED: %s\n", storeCause(err))
 		return 1
 	}
 	defer st.Close()
@@ -940,7 +940,7 @@ func runFriendWakeHealth(ctx context.Context, args []string, out, errOut io.Writ
 		}
 		res, err := life.RepairWake(ctx, st, newWakeHost(), life.RepairRequest{Host: *host, Only: *as, Session: *session, Actor: "wake-health"})
 		if err != nil {
-			fmt.Fprintf(errOut, "WAKE REFUSED: %v\n", err)
+			fmt.Fprintf(errOut, "WAKE REFUSED: %s\n", storeCause(err))
 			return 1
 		}
 		for f, holder := range res.Held {
@@ -950,7 +950,7 @@ func runFriendWakeHealth(ctx context.Context, args []string, out, errOut io.Writ
 	}
 	snap, err := life.ReadWake(ctx, st.Client())
 	if err != nil {
-		fmt.Fprintf(errOut, "WAKE REFUSED: %v\n", err)
+		fmt.Fprintf(errOut, "WAKE REFUSED: %s\n", storeCause(err))
 		return 1
 	}
 	rows := snap.Rows()

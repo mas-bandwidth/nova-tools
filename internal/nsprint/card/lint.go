@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
@@ -122,6 +123,11 @@ type cardDoc struct {
 }
 
 func refused(reason string) VerbResult {
+	// The store's own failures carry the shared remedy (store.Explain); the
+	// exit stays the card verb's refusal.
+	if line, _, class := store.Explain(reason); class != store.ClassNone {
+		reason = line
+	}
 	return VerbResult{Code: exitRefused, Stderr: oneline.Escape(reason) + "\n"}
 }
 
