@@ -261,7 +261,6 @@ func runBenchBeat(ctx context.Context, args []string, out, errOut io.Writer) int
 	user := fs.String("user", "", "bench user")
 	load1 := fs.String("load1", "", "one minute load")
 	ssh := fs.String("ssh", "", "ssh endpoint")
-	probe := fs.String("probe", "", "probe endpoint")
 	launcher := fs.String("launcher", life.BatchLauncher, "launcher identity the beat names (preflight 7.4)")
 	why := fs.String("why", "", "why the bench is live")
 	session := fs.String("session", "", "fenced owner session identity")
@@ -306,7 +305,7 @@ func runBenchBeat(ctx context.Context, args []string, out, errOut io.Writer) int
 
 	req := life.BenchRequest{
 		Bench: *bench, Host: *host, User: *user, Load1: *load1, SSH: *ssh,
-		Probe: *probe, Launcher: *launcher, Why: *why, Session: *session,
+		Launcher: *launcher, Why: *why, Session: *session,
 		Live: splitLive(*live), Actor: "bench", Facts: life.MeasureBench(*root),
 		RowAt: time.Now(), NCPU: runtime.NumCPU(),
 	}

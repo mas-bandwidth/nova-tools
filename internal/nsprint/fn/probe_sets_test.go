@@ -79,8 +79,10 @@ func zaddKeys(src string) []string {
 }
 
 // luaBody is the source of the function whose header line starts with
-// head, to its closing end at column 0; "" when there is none.
+// head, to its closing end at column 0, comments stripped (a commented-out
+// refusal is no refusal); "" when there is none.
 func luaBody(src, head string) string {
+	src = luaLineNotes.ReplaceAllString(src, "")
 	i := strings.Index(src, "\n"+head)
 	if i < 0 {
 		return ""
@@ -161,5 +163,10 @@ func TestConsumerSetsRefuseProbesGuardSeesTheShapes(t *testing.T) {
 	src := "x\nfunction TM.cut(c)\n  return cm_probe_refused(k, id)\nend\nfunction TM.deal(c)\nend\n"
 	if b := luaBody(src, "function TM.cut("); !strings.Contains(b, "cm_probe_refused(") || strings.Contains(b, "TM.deal") {
 		t.Errorf("luaBody = %q", b)
+	}
+	// a commented-out refusal is no refusal
+	src = "x\nlocal function cm_zadd(k, s, id)\n  -- error(why)\n  return redis.call('ZADD', k, s, id)\nend\n"
+	if b := luaBody(src, "local function cm_zadd("); strings.Contains(b, "error(why)") {
+		t.Errorf("luaBody kept a commented-out refusal: %q", b)
 	}
 }
