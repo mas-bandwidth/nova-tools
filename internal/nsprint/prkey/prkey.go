@@ -67,3 +67,10 @@ func Key(repo string, n int) string { return KeyText(repo, strconv.Itoa(n)) }
 
 // KeyText is Key for a PR number already held as decimal text.
 func KeyText(repo, n string) string { return "pr:" + Name(repo) + ":" + n }
+
+// HeadKey is the head index of repo at sha: pr:<name>:head:<sha>, a set of
+// the PR numbers whose record's head is sha (land.RecordPRHead keeps it; the
+// runner receipt folds its CI word through it). The member is the decimal
+// PR number; the key never collides with a record, whose last part is a
+// number.
+func HeadKey(repo, sha string) string { return "pr:" + Name(repo) + ":head:" + sha }

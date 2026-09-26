@@ -1216,7 +1216,8 @@ jobs:
 
   test-hosted:
     # THE FULL SUITE on the GitHub-hosted runners — ubuntu-latest and
-    # macos-latest — but ONLY on push to main and on the nightly schedule.
+    # macos-latest — on every push (dev and main), on the nightly schedule and on
+    # workflow_dispatch, as the `if:` below says; never on a pull request.
     # GitHub-hosted compute is the expensive tier, so a pull request never
     # touches it: a change's feedback path is the self-hosted matrix above.
     #
@@ -1237,11 +1238,31 @@ jobs:
     # here. ci-ok does not gate on it for a dispatch: the run is evidence to
     # read, not an automatic merge gate.
     if: vars.NOVA_CI_CARDS != 'on' && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    #
+    # SHARDS PER OS (2026-09-26, dev push run 36269122367 at f7aa36530): at four
+    # shards per OS, ubuntu-latest's shards 1, 2 and 4 went green at 88-95 s and
+    # shard 3 was cancelled by the cap at 123 s; all four macos-latest shards
+    # were cancelled at 125-173 s. The cap stays two minutes; the legs meet it by
+    # more shards: ubuntu-latest deals the tree six ways, macos-latest eight.
+    # `shards` rides in by include, the unused ubuntu indices are excluded, and
+    # the job name keeps its (os, shard) shape. internal/ci:
+    # TestHostedShardsUnderTheCap.
+    name: test-hosted (${{ matrix.os }}, ${{ matrix.shard }})
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        exclude:
+          - os: ubuntu-latest
+            shard: 7
+          - os: ubuntu-latest
+            shard: 8
+        include:
+          - os: ubuntu-latest
+            shards: 6
+          - os: macos-latest
+            shards: 8
     runs-on: ${{ matrix.os }}
     timeout-minutes: 2
     steps:
@@ -1284,8 +1305,33 @@ jobs:
       - name: build
         run: make build
 
-      - name: vet
-        run: make vet
+      - name: deal this shard's packages
+        # The heavy packages first, one per shard: cmd/nova-bus (46 s -short on
+        # the Studio) and cmd/nova-merge (28 s) shared shard 3 of 4, the ubuntu
+        # leg the cap cancelled at 123 s, and a count-only deal kept them together
+        # at eight. Then every other package round-robin in go list order (stable:
+        # go list sorts), continuing after the heavy ones. One line of
+        # space-separated packages, so vet and test below read the same deal.
+        # internal/ci: TestHostedDealSplitsTheHeavyPackages (hostedHeavy).
+        shell: bash
+        run: |
+          heavy="cmd/nova-bus cmd/nova-merge cmd/nova-sprint cmd/nova-swarm"
+          deal='
+            BEGIN { h = split(heavy, hv, " ") }
+            {
+              k = 0
+              for (j = 1; j <= h; j++) if ($0 ~ ("/" hv[j] "$")) k = j
+              if (k) s = (k - 1) % n; else { s = (h + r) % n; r++ }
+              if (s == i - 1) print
+            }'
+          pkgs=$(go list ./... | awk -v n=${{ matrix.shards }} -v i=${{ matrix.shard }} -v heavy="$heavy" "$deal" | tr '\n' ' ')
+          echo "$pkgs"
+          echo "HOSTED_PKGS=$pkgs" >> "$GITHUB_ENV"
+
+      - name: vet this shard's packages
+        # The shard's packages only: every shard vetting the whole tree would be a
+        # fixed cost more shards cannot shrink. The union of the shards is the tree.
+        run: make vet PKGS="$HOSTED_PKGS"
 
       - name: install redis-server
         # #3113, the hosted row. ubuntu-latest has no redis-server until apt
@@ -1293,16 +1339,13 @@ jobs:
         # not put the binary on PATH, and the controls spawn their own server.
         run: bash .github/scripts/install-redis-server.sh
 
-      - name: test (shard ${{ matrix.shard }} of 4)
-        # Four shards per OS, dealt by package order (stable: go list sorts), so a
-        # hosted leg is a quarter of the suite: the whole suite on one hosted
-        # runner took ten minutes (run 35045469738) for a tier whose budget is two.
-        # Same billed minutes, a quarter of the wall clock. The hosted legs still
-        # run only on main and nightly; the shard count is the whole tuning.
+      - name: test (shard ${{ matrix.shard }} of ${{ matrix.shards }})
+        # Six shards on ubuntu-latest and eight on macos-latest (above), dealt by
+        # the step before, so a hosted leg is a sixth or an eighth of the suite:
+        # the whole suite on one hosted runner took ten minutes (run 35045469738)
+        # for a tier whose budget is two. The shard count is the whole tuning.
         shell: bash
         run: |
-          pkgs=$(go list ./... | awk -v n=4 -v i=${{ matrix.shard }} 'NR % n == i - 1')
-          echo "$pkgs"
           # The hosted legs run -short: the multi-process and thousand-note fixture tests
           # in cmd/nova-bus, cmd/nova-wake, cmd/nova-merge and internal/bus are gated
           # behind testing.Short() and skip here, so a hosted leg answers inside the
@@ -1317,7 +1360,7 @@ jobs:
           # that lands, a slow package must not panic the leg. It is the ceiling, not
           # the target. The Makefile's test-short carries the same 12m ceiling, and
           # the shard travels in PKGS.
-          make test-short PKGS="$(echo $pkgs)"
+          make test-short PKGS="$HOSTED_PKGS"
 
   # THERE IS NO HOSTED MERGE LEG SINCE 2026-09-26. The merge group's gate is the
   # same sharded `test` legs the pull request ran, on our own benches, on the

@@ -26,6 +26,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -41,6 +42,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/redis/go-redis/v9"
 )
@@ -130,9 +132,15 @@ func runQuackCut(ctx context.Context, args []string, out, errOut io.Writer) int 
 		}
 		*baseSHA = sha
 	}
-	// Every card is rendered before Redis is touched: a bad input refuses
-	// with nothing written.
+	// Every card is rendered and linted before Redis is touched: a bad
+	// input refuses with nothing written; a card that is not one invariant
+	// (#4396) prints one card-lint line per rule, exit 2.
 	cuts, err := quackCuts(*n, *name, *stream, *repo, *base, *baseSHA, tierList)
+	var lint *quackLint
+	if errors.As(err, &lint) {
+		fmt.Fprint(errOut, card.LintLines(lint.id, lint.rs))
+		return 2
+	}
 	if err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
@@ -163,10 +171,23 @@ func quackCuts(n int, name, stream, repo, base, baseSHA string, tiers []string) 
 		if err != nil {
 			return nil, err
 		}
+		// A generated card is one invariant like a written one (#4396):
+		// refused before Redis is touched, one card-lint line per rule.
+		if rs := card.LintOneInvariant(repo, baseSHA, []byte(text)); rs != nil {
+			return nil, &quackLint{id: id, rs: rs}
+		}
 		cuts = append(cuts, quackCut{id: id, tier: tier, spec: taskcard.ParseIssue(text)})
 	}
 	return cuts, nil
 }
+
+// quackLint is a rendered card the one-invariant lint refused (#4396).
+type quackLint struct {
+	id string
+	rs cardhdr.Refusals
+}
+
+func (l *quackLint) Error() string { return "card-lint " + l.rs.Rules() + " id=" + l.id }
 
 // quackPlan is a quack cut's parsed flags and rendered cards, before Redis.
 type quackPlan struct {
@@ -222,6 +243,10 @@ func quackCutOn(ctx context.Context, cl redis.Cmdable, p quackPlan, out, errOut 
 			continue
 		}
 		refused++
+		if no, ok := ws.ParseRefusal(why); ok {
+			fmt.Fprintf(out, "%s id=%s\n", no.Receipt(), c.id) // the paths gate (SP.gate, #4322)
+			continue
+		}
 		fmt.Fprintf(out, "REFUSED id=%s why=%s\n", c.id, quoteField(why))
 	}
 	order := pushReorder(ctx, cl, p.stream, "", who, out)

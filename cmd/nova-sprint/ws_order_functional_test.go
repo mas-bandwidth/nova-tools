@@ -61,7 +61,7 @@ func TestWSOrderVerbs(t *testing.T) {
 	}
 
 	code, stdout, _ = runSprint("ws", "check", "--redis", addr)
-	if code != 0 || !strings.HasPrefix(stdout, "CHECK streams=1 drift=0 cycles=0 invariants=ok ") {
+	if code != 0 || !strings.HasPrefix(stdout, "CHECK streams=1 cards=6 overlaps=0 stale=0 repaired=0 records=0 unbuilt=0 refused=0 drift=0 cycles=0 invariants=ok ") {
 		t.Fatalf("ws check clean: exit %d %q", code, stdout)
 	}
 	t.Logf("ws check: %s", strings.TrimSpace(stdout))
@@ -73,7 +73,7 @@ func TestWSOrderVerbs(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(stdout), "\n")
 	wantDrift := `ORDER DRIFT stream="land: order" stored=e,a,b,c,d,land-order:sentinel computed=a,b,c,d,e,land-order:sentinel`
 	if code != 1 || len(lines) != 3 || !strings.HasPrefix(lines[0], "INVARIANTS ") || lines[1] != wantDrift ||
-		!strings.HasPrefix(lines[2], "CHECK streams=1 drift=1 cycles=0 invariants=bad ") {
+		!strings.HasPrefix(lines[2], "CHECK streams=1 cards=6 overlaps=0 stale=0 repaired=0 records=0 unbuilt=0 refused=0 drift=1 cycles=0 invariants=bad ") {
 		t.Fatalf("ws check after a hand zadd: exit %d\n%s", code, stdout)
 	}
 

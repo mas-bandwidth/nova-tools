@@ -37,15 +37,6 @@ var OrderLive = []string{Waiting, Ready, Working, Review, Merging}
 // orderFields are the record fields the order reads.
 var orderFields = []string{"blocked_on", "depends_on", "paths", "ref", "origin", "created_at", "order_score"}
 
-// RecordKey is the hash of a set member: a card id (s:<S>:card:<label>) is
-// its own key, a task id's is task:<id>.
-func RecordKey(id string) string {
-	if isCardID(id) {
-		return id
-	}
-	return "task:" + id
-}
-
 // orderRec is one member's order fields.
 type orderRec struct {
 	deps, paths, ref, origin string

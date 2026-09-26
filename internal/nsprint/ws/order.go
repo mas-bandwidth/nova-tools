@@ -372,13 +372,6 @@ func sharedPath(a, b []string) string {
 	return ""
 }
 
-// SplitPaths splits a stored PATHS value on commas and white space.
-func SplitPaths(v string) []string {
-	return strings.FieldsFunc(v, func(r rune) bool {
-		return r == ',' || r == ';' || r == ' ' || r == '\t' || r == '\n' || r == '\r'
-	})
-}
-
 var issueRE = regexp.MustCompile(`(?:#|/issues/|/pull/)([1-9][0-9]*)/?$`)
 
 // IssueOf is the first issue number the fields name (a ref or origin:

@@ -129,17 +129,28 @@ func TestCardHeaderMalformedTestDrawsTestNamed(t *testing.T) {
 	}
 }
 
-// NEGATIVE CONTROL for test-named: `TEST: none` is what the parser reads for a kind that
-// declares no gate (cardheader.go:91-94), so it is a declaration, not a defect. The kind is
-// an ungated one (read): on a gated kind TEST: none is refused (TestIssue1853).
+// NEGATIVE CONTROL for test-named: `TEST: none <why>` is what cardhdr.ParseTest reads for
+// a kind that declares no gate, so it is a declaration, not a defect. The kind is an
+// ungated one (read): on a gated kind TEST: none is refused (TestIssue1853). A bare
+// `none` is refused on any kind (the reader must see why), and a tagged TEST is read
+// as the gate runs it (nova-tools#4401 fix round, item 4).
 func TestCardHeaderTestNoneDrawsNothing(t *testing.T) {
 	t.Parallel()
 
 	h := append([]string{}, fullHeader()...)
 	h[0] = "KIND: read"
-	h[2] = "TEST: none"
+	h[2] = "TEST: none the read changes no code"
 	if fs := LintCardHeader(typedCard(h...), nil, true); len(fs) != 0 {
-		t.Fatalf("`TEST: none` is a declaration, drew %v", fs)
+		t.Fatalf("`TEST: none <why>` is a declaration, drew %v", fs)
+	}
+	h[2] = "TEST: none"
+	if fs := LintCardHeader(typedCard(h...), nil, true); !checks(fs)["test-named"] || !strings.Contains(fs[0].Excerpt, "says no why") {
+		t.Fatalf("a bare `TEST: none` drew %v, want test-named: says no why", fs)
+	}
+	h = append([]string{}, fullHeader()...)
+	h[2] = "TEST: -tags functional internal/swarm TestA"
+	if fs := LintCardHeader(typedCard(h...), nil, true); len(fs) != 0 {
+		t.Fatalf("a tagged TEST drew %v", fs)
 	}
 }
 
