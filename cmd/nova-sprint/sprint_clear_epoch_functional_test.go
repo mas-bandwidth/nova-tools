@@ -4,31 +4,52 @@ package main
 
 import (
 	"context"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/table"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws/wstest"
 	"github.com/redis/go-redis/v9"
 )
 
 // TestSprintClearIsOneEpochIncrement is the DONE-WHEN of nova-tools#4238
 // over the whole-table fixture (cards in every state, copies on every
-// consumer): `sprint clear` returns in under 10 ms with one HINCRBY of
-// sprint:epoch n and moves nothing; the next tick prints zeros everywhere
-// except status and load; a writer still holding the old epoch (a Go ZADD
-// into the old names, a bench's beat and end of its old copy) cannot make
-// a cell non-zero; a new card pushed after the clear is dealt and shown;
-// and the pit stop the clear found is kept and named.
+// consumer), driving the verb's one call, ns_sprint_clear, on a store of
+// its own: it returns in under 10 ms with one HINCRBY of sprint:epoch n
+// and moves nothing; the next tick prints zeros everywhere except status
+// and load; a writer still holding the old epoch (a Go ZADD into the old
+// names, a bench's beat of its old copy) cannot make a cell non-zero; a
+// new card pushed after the clear is dealt and shown; and the pit stop
+// the clear found is kept and named. The verb's own receipt lines are
+// TestSprintClearZerosBothTables's (serial: it clears the seat user).
 func TestSprintClearIsOneEpochIncrement(t *testing.T) {
-	addr, client := wholeTableRedis(t)
+	t.Parallel()
+
+	_, client := wstest.Start(t)
 	ctx := context.Background()
+	for _, cmd := range table.SprintFixture() {
+		args := make([]any, len(cmd))
+		for i, v := range cmd {
+			args[i] = v
+		}
+		if err := client.Do(ctx, args...).Err(); err != nil {
+			t.Fatalf("seed %v: %v", cmd, err)
+		}
+	}
 	// the fixture's open sprint carries the pit stop; the clear finds it
 	// through sprint:order like the table does
 	if err := client.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: "fix"}).Err(); err != nil {
 		t.Fatal(err)
+	}
+	clear := func(force string) ([]any, time.Duration) {
+		start := time.Now()
+		reply, err := client.FCall(ctx, "ns_sprint_clear", nil, "rowan", "fresh run", force).Slice()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return reply, time.Since(start)
 	}
 	stream, oldWorking := "swarm: cards", ws.KeyAt(0, "swarm: cards", "working")
 	wasWorking := client.ZCard(ctx, oldWorking).Val()
@@ -37,28 +58,23 @@ func TestSprintClearIsOneEpochIncrement(t *testing.T) {
 		t.Fatalf("the fixture has no working cards (%d) or space ok copies (%d)", wasWorking, wasSpaceOK)
 	}
 
-	code, _, stderr := runSprint("sprint", "clear", "--redis", addr, "--why", "fresh run")
-	if code != 1 || !strings.Contains(stderr, "REFUSED sprint clear: INFLIGHT") {
-		t.Fatalf("cards in flight: exit %d stderr %q", code, stderr)
+	if reply, _ := clear("0"); len(reply) < 2 || reply[0] != "REFUSED" || !strings.HasPrefix(reply[1].(string), "INFLIGHT ") {
+		t.Fatalf("cards in flight: %v", reply)
 	}
-	cp := filepath.Join(t.TempDir(), "clear.tsv")
-	code, stdout, stderr := runSprint("sprint", "clear", "--redis", addr, "--why", "fresh run", "--force", "--by", "rowan", "--checkpoint", cp)
-	if code != 0 {
-		t.Fatalf("clear: exit %d\n%s%s", code, stdout, stderr)
+	reply, took := clear("1")
+	if took >= 10*time.Millisecond {
+		t.Fatalf("the clear took %s, want under 10 ms", took)
 	}
-	lines := strings.Split(strings.TrimRight(stdout, "\n"), "\n")
-	if !strings.HasPrefix(lines[0], "CLEARED streams=10 cards=") || !strings.Contains(lines[0], " epoch=1 by=rowan ms=") {
-		t.Fatalf("receipt: %q", lines[0])
+	words := make([]string, len(reply))
+	for i, v := range reply {
+		words[i] = v.(string)
 	}
-	ms, err := strconv.Atoi(lines[0][strings.LastIndex(lines[0], "ms=")+3:])
-	if err != nil || ms >= 10 {
-		t.Fatalf("the clear took %d ms (%v), want under 10: %s", ms, err, lines[0])
+	// CLEARED streams cards copies consumers epoch pit sprint, then per stream
+	if len(words) < 8 || words[0] != "CLEARED" || words[1] != "10" || words[5] != "1" || words[6] != "kept" || words[7] != "fix" {
+		t.Fatalf("receipt: %v", words)
 	}
-	if lines[1] != "PITSTOP kept sprint=fix" {
-		t.Fatalf("the pit stop line: %q, want it kept and named", lines[1])
-	}
-	if !strings.Contains(stdout, "\nSTREAM swarm: cards cards=164\n") {
-		t.Fatalf("the per-stream count of what became invisible:\n%s", stdout)
+	if !strings.Contains(" "+strings.Join(words[8:], " ")+" ", " swarm: cards 164 ") {
+		t.Fatalf("the per-stream count of what became invisible: %v", words[8:])
 	}
 	// one increment, and nothing moved or deleted: the old epoch's sets and
 	// the pit stop are as they were
@@ -128,9 +144,9 @@ func TestSprintClearIsOneEpochIncrement(t *testing.T) {
 	if e := client.HGet(ctx, "task:after-1", "epoch").Val(); e != "1" {
 		t.Fatalf("the new card carries epoch %q, want 1", e)
 	}
-	reply, err := client.FCall(ctx, "ns_cm_deal", nil, "bench:hetzner", "rowan", "1", stream).Slice()
-	if err != nil || len(reply) < 2 || reply[0] != "DEALT" || reply[1] != "1" {
-		t.Fatalf("deal after the clear: %v %v", reply, err)
+	dealt, err := client.FCall(ctx, "ns_cm_deal", nil, "bench:hetzner", "rowan", "1", stream).Slice()
+	if err != nil || len(dealt) < 2 || dealt[0] != "DEALT" || dealt[1] != "1" {
+		t.Fatalf("deal after the clear: %v %v", dealt, err)
 	}
 	snap, err = table.NewSprintReader(client, table.SprintConfig{}).Read(ctx, now)
 	if err != nil {
@@ -153,8 +169,8 @@ func TestSprintClearIsOneEpochIncrement(t *testing.T) {
 	}
 
 	// a second clear counts only the current epoch's work and moves to 2
-	code, stdout, _ = runSprint("sprint", "clear", "--redis", addr, "--why", "again", "--force")
-	if code != 0 || !strings.HasPrefix(stdout, "CLEARED streams=10 cards=1 copies=1 ") || !strings.Contains(stdout, " epoch=2 ") {
-		t.Fatalf("second clear: exit %d %s", code, stdout)
+	reply, _ = clear("1")
+	if len(reply) < 6 || reply[0] != "CLEARED" || reply[2] != "1" || reply[3] != "1" || reply[5] != "2" {
+		t.Fatalf("second clear: %v", reply)
 	}
 }

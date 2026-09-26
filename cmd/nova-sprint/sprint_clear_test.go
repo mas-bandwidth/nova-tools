@@ -30,9 +30,13 @@ func TestSprintClearZerosBothTables(t *testing.T) {
 	if code != 1 || !strings.Contains(stderr, "INFLIGHT") {
 		t.Fatalf("cards in flight: exit %d stderr %q", code, stderr)
 	}
+	// the fixture's open sprint carries the pit stop; the clear names it
+	if err := client.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: "fix"}).Err(); err != nil {
+		t.Fatal(err)
+	}
 	cp := filepath.Join(t.TempDir(), "clear.tsv")
 	code, stdout, stderr := runSprint("sprint", "clear", "--redis", addr, "--why", "fresh run", "--force", "--by", "rowan", "--checkpoint", cp)
-	if code != 0 || !strings.HasPrefix(stdout, "CLEARED streams=") || !strings.Contains(stdout, " epoch=1 by=rowan ms=") || !strings.Contains(stdout, "\nPITSTOP ") {
+	if code != 0 || !strings.HasPrefix(stdout, "CLEARED streams=") || !strings.Contains(stdout, " epoch=1 by=rowan ms=") || !strings.Contains(stdout, "\nPITSTOP kept sprint=fix\n") {
 		t.Fatalf("clear: exit %d\n%s%s", code, stdout, stderr)
 	}
 	if v := client.HGet(ctx, ws.EpochKey, ws.EpochField).Val(); v != "1" {
