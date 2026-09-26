@@ -778,12 +778,21 @@ func saveLanded(ctx context.Context, c redis.Scripter, l Landing, by, mergeSHA s
 // member (internal/nsprint/fn/lua/03_task_event.lua).
 const FunctionLandMember = "ns_land_member"
 
+// PlanNote starts an ns_land_member note that names a plan the member's
+// stitch landed (TE.plan_note): "PLAN parent=<id> ref=<r> origin=<o>". A
+// skip note is "<id>: <why>" and an id holds no space, so the two never mix.
+const PlanNote = "PLAN "
+
 // Landed is what LandMembers moved.
 type Landed struct {
 	Moved   int      // tasks moved to landed
 	Missing int      // members no task names
 	Lines   int      // CLOSE lines added to member records
 	Skipped []string // "id: why" for tasks the move refused
+	// Plans are the plans a member's stitch landed with it (nova-tools
+	// #4317), each "parent=<id> ref=<repo#n|-> origin=<url|->": the plan's
+	// issue the lander closes with the stitch's.
+	Plans []string
 }
 
 // LandMembers runs ns_land_member for every member of a merged landing in
@@ -823,7 +832,13 @@ func LandMembers(ctx context.Context, c redis.Cmdable, l Landing, by, mergeSHA s
 		if matched == 0 {
 			out.Missing++
 		}
-		out.Skipped = append(out.Skipped, res[6:]...)
+		for _, note := range res[6:] {
+			if plan, ok := strings.CutPrefix(note, PlanNote); ok {
+				out.Plans = append(out.Plans, plan)
+				continue
+			}
+			out.Skipped = append(out.Skipped, note)
+		}
 	}
 	return out, nil
 }
