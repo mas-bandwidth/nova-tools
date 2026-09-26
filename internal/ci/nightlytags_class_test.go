@@ -26,13 +26,15 @@ import (
 // scheduled workflows name, and refuses the difference. A tag invented tomorrow
 // is covered the day its first test file lands.
 //
-// A scheduled workflow names a tag in one of two mechanical ways, both of which
-// are what actually reaches `go test`:
+// A scheduled workflow names a tag in one of three mechanical ways, all of
+// which are what actually reaches `go test`:
 //
 //  1. literally, on a `go test`/`go vet` line: `go test -tags perf ./...`
 //     (certification.yml's perf job), or
 //  2. as a `tag:` entry of a job's matrix, which the step then expands:
-//     `go test -tags ${{ matrix.tag }} ./...` (nightly-slow.yml).
+//     `go test -tags ${{ matrix.tag }} ./...` (nightly-slow.yml), or
+//  3. as a `make <target>` whose Makefile recipe passes `-tags`: ci.yml's
+//     functional job runs `make test-functional` on the nightly schedule.
 //
 // Platform and toolchain constraints are NOT opt-in tags and are not in scope:
 // `//go:build darwin` does not hide a test, it says where it runs, and the
@@ -141,6 +143,12 @@ func tagsNamedBySchedules(t *testing.T, root string) map[string][]string {
 	literal := regexp.MustCompile(`-tags[ =]+'?"?([A-Za-z0-9_,]+)`)
 	matrixTag := regexp.MustCompile(`^-?\s*tag:\s*'?"?([A-Za-z0-9_]+)`)
 
+	// 3. through a Makefile target: `make test-functional` on a scheduled
+	// workflow's line reaches the `-tags` its recipe passes (ci.yml's
+	// functional job; ci.yml reaches every tier through make).
+	mk := parseMakefile(t, filepath.Join(root, "Makefile"))
+	makeTarget := regexp.MustCompile(`\bmake\s+([a-z][a-z0-9-]*)`)
+
 	named := map[string][]string{}
 	for _, e := range entries {
 		if e.IsDir() || (!strings.HasSuffix(e.Name(), ".yml") && !strings.HasSuffix(e.Name(), ".yaml")) {
@@ -160,6 +168,18 @@ func tagsNamedBySchedules(t *testing.T, root string) map[string][]string {
 			}
 			if m := matrixTag.FindStringSubmatch(strings.TrimSpace(line)); m != nil {
 				named[m[1]] = appendOnce(named[m[1]], e.Name())
+			}
+			for _, target := range makeTarget.FindAllStringSubmatch(line, -1) {
+				for _, recipe := range mk.recipeFor(target[1]) {
+					if !strings.Contains(recipe, "go test") {
+						continue
+					}
+					for _, m := range literal.FindAllStringSubmatch(recipe, -1) {
+						for _, tag := range strings.Split(m[1], ",") {
+							named[tag] = appendOnce(named[tag], e.Name())
+						}
+					}
+				}
 			}
 		}
 	}

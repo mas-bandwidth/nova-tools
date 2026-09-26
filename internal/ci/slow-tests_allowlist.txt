@@ -1,0 +1,49 @@
+# The unit tier's slow-test allowlist: pkg<TAB>test<TAB>seconds, - in the test column
+# for a package's own row. make test runs `nova-ci slowtests --package-budget 2
+# --test-budget 1 --allowlist` with this file: a top-level test over 1 s, or a
+# package over 2 s, fails the leg unless its row here names a higher budget
+# (Glenn 2026-09-26 11:20 AM ET: "unit tests be < 2s (ideally <1)").
+#
+# Rows are the CI-SLOW lines of PR #4345's runs from 36255893861 on (after #4346, #4372),
+# at the unit shape (two cores a leg), the slowest leg per row, at 1.5x
+# (Intel/darwin variance), one decimal. THIS LIST ONLY SHRINKS: a test made fast deletes its
+# row, and internal/ci's TestSlowAllowlistOnlyShrinks holds the row count to a
+# ceiling that only goes down, every row to a test that exists and a budget
+# over the default it raises.
+cmd/nova-merge	-	33.6
+cmd/nova-work	-	6.9
+internal/ci	-	12.3
+cmd/nova-merge	TestIssue2683	4.5
+cmd/nova-merge	TestAHeldHeadIsDroppedFromABatchAndRefusedAtLand	3.3
+cmd/nova-merge	TestAHoldInAnySourceStops	2.7
+cmd/nova-merge	TestAnUntypedCommentFromAMayHoldLoginIsPending	2.6
+cmd/nova-merge	TestBatchPreservesRealLaneReadHolds	2.4
+cmd/nova-merge	TestUntypedCommentsIgnoreIsPerRunPrintedAndCarriesAReason	2.4
+cmd/nova-merge	TestNoRequireHoldsWaivesTheForgeSourcesOnlyAndIsPrinted	2.3
+cmd/nova-merge	TestRemovingMayHoldByCommitReleasesAndTheReceiptNamesTheCommit	2.1
+cmd/nova-merge	TestReviewersXorNoRequireHolds	1.7
+cmd/nova-merge	TestBatchOKCarriesHoldsDispositionsAndReviewers	1.5
+cmd/nova-merge	TestNoRequireHoldsWithoutLaneRefuses	1.5
+cmd/nova-work	TestSetCheckWriteStatusIsByteStable	2.4
+internal/ci	TestEveryAllowlistIsReadThroughTheOneHelper	4.5
+internal/ci	TestSharedRepoTreeSkipsTheGitDirectory	3.5
+internal/ci	TestEveryNamedRepoPathExists	3.5
+internal/docs	TestSpecCIIndexesEveryClassTest	2.3
+internal/ci	TestNoFixedWaitsOnTheCIPath	2.1
+cmd/nova-merge	TestSwarmMemberWithoutAcceptOKIsDropped	1.5
+internal/ci	TestNoTestGlobsTheSharedTempDir	1.7
+internal/nsprint/preflight	-	4.1
+internal/nsprint/preflight	TestStoreChecksPrintEveryCheckAndUnreachableIsRed	3.6
+cmd/nova-card	TestARefusalThatCannotBeKeptSaysSoOnStderr	2.7
+internal/ci	TestNoWholeTreeGoTestInDocs	1.5
+internal/ci	TestRemoveAllOnlyOnTempOrThroughSafepath	1.5
+internal/nsprint/fleetbuild	-	3.3
+internal/nsprint/fleetbuild	TestReleaseStepRefusalLetsTheRestRun	2.0
+cmd/nova-sprint	-	3.3
+internal/nsprint/land/stream	-	5.9
+internal/nsprint/land/stream	TestBuildParkConflictsLandsTheRest	2.4
+internal/nsprint/land/stream	TestBuildTestTimeoutIsRed	1.7
+internal/nsprint/land/stream	TestBuildParksTheRedMemberByBisect	1.7
+internal/ci	TestNoTestSleepsOverASecondOrWaitsOutADeadlineOverFive	1.6
+internal/ci	TestToolRunsInTestsWriteIntoATempDir	1.6
+internal/ci	TestNoMergeDeletesATestFileUndeclared	2.4
