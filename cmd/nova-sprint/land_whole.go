@@ -28,6 +28,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/gh"
 	"io"
 	"os"
 	"path/filepath"
@@ -62,7 +63,7 @@ func runLandWhole(ctx context.Context, args []string, out, errOut io.Writer) int
 	minScore := fs.Int("min-score", -1, "the read score a member needs to land (default cfg:land min_score)")
 	actor := seatActor()
 	by := &actor
-	api := fs.String("api", "https://api.github.com", "the forge's REST base url")
+	api := fs.String("api", gh.DefaultAPI, "the forge's REST base url")
 	budget := fs.Int("budget", 64, "the most forge writes one run makes")
 	ciWait := fs.Duration("ci-wait", 45*time.Minute, "how long to wait for the stream head's ci word")
 	tick := fs.Duration("tick", 10*time.Second, "how often the wait polls")
@@ -93,7 +94,7 @@ func runLandWhole(ctx context.Context, args []string, out, errOut io.Writer) int
 	if err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
-	gh, err := landGitHub(*api, *budget)
+	gh, err := landGitHub(verb, *api, *budget, nil)
 	if err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
@@ -128,6 +129,7 @@ func runLandWhole(ctx context.Context, args []string, out, errOut io.Writer) int
 		return 6
 	}
 	defer st.Close()
+	gh.Redis = st.Client() // the calls are counted in the store (#4343)
 	o.Request = func(ctx context.Context, repo, sha string, pr int, url string) (string, error) {
 		r, err := ci.Request(ctx, st, ci.RequestRequest{Repo: bareRepo(repo), SHA: sha, PR: pr, URL: url})
 		if err != nil {

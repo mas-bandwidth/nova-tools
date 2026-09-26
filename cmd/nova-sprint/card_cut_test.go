@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -60,7 +61,7 @@ func cutFixture(t *testing.T, issues map[int]card.Issue) (*redis.Client, string,
 	t.Setenv("NOVA_MIRROR_ROOT", mirror)
 	src := &fakeIssues{issues: issues, tip: strings.Repeat("ab", 20)}
 	old := cardCutSource
-	cardCutSource = src
+	cardCutSource = func(*store.Store) card.IssueSource { return src }
 	t.Cleanup(func() { cardCutSource = old })
 	return client, addr, src
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/gh"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
 	"strings"
@@ -64,7 +65,7 @@ func runLandFlakyObserve(ctx context.Context, args []string, out, errOut io.Writ
 	pkg := fs.String("pkg", "", "the Go package the flaky test is in")
 	test := fs.String("test", "", "the flaky test's name")
 	lane := fs.String("lane", "", "the lane that observed it")
-	api := fs.String("forge-api", "https://api.github.com", "the forge's REST base url")
+	api := fs.String("forge-api", gh.DefaultAPI, "the forge's REST base url")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "land flaky observe", err.Error())
 	}
@@ -92,7 +93,7 @@ func runLandFlakyObserve(ctx context.Context, args []string, out, errOut io.Writ
 	key := land.FlakyKey(*repo, *pkg, *test)
 	title := fmt.Sprintf("flaky: %s.%s fails a gate batch while every member passes alone", *pkg, *test)
 	body := fmt.Sprintf("dedup=%s\n\nObserved by nova-sprint land flaky on lane %s.\n", key, *lane)
-	rec, filed, err := land.NewRedisStore(st.Client(), *sprint).ObserveLive(ctx, land.Observation{Repo: *repo, Key: key, Lane: *lane, Title: title, Body: body}, land.RESTFiler{BaseURL: *api, Token: tok})
+	rec, filed, err := land.NewRedisStore(st.Client(), *sprint).ObserveLive(ctx, land.Observation{Repo: *repo, Key: key, Lane: *lane, Title: title, Body: body}, land.RESTFiler{BaseURL: *api, Token: tok, Redis: st.Client()})
 	if err != nil {
 		var pending *land.PendingError
 		if errors.As(err, &pending) {

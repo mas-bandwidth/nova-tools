@@ -4,13 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
+	"github.com/alicebob/miniredis/v2"
+	"github.com/mas-bandwidth/nova-tools/internal/gh"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
+	"github.com/redis/go-redis/v9"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // fakePRs is the forge in a map: <repo>#<n> -> Ref. A missing number is an
@@ -148,25 +151,31 @@ func TestReadyNamesEveryEntry(t *testing.T) {
 	}
 }
 
-// TestGHRefReadsPullsThenIssues runs GH against a fake gh in the test's temp
-// directory: a PR answers from pulls/<n>; a 404 there reads issues/<n>.
+// TestGHRefReadsPullsThenIssues runs GH against an httptest forge through
+// the one client: a PR answers from pulls/<n>; a 404 there reads
+// issues/<n>; a forge error stays an error. With a store, the lander's own
+// PR record answers first and every answer is copied, so the second read
+// of a reference makes no call (the reconciler never polls, #4343).
 func TestGHRefReadsPullsThenIssues(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
-	fake := filepath.Join(dir, "gh")
-	script := `#!/bin/sh
-case "$2" in
-  repos/o/r/pulls/1) echo '{"merged":true,"state":"closed","base":"dev"}' ;;
-  repos/o/r/pulls/2) echo 'gh: Not Found (HTTP 404)' >&2; exit 1 ;;
-  repos/o/r/issues/2) echo closed ;;
-  *) echo 'gh: HTTP 502' >&2; exit 1 ;;
-esac
-`
-	if err := testbin.WriteExecutable(fake, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	g := GH{Program: fake}
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		switch r.URL.Path {
+		case "/repos/o/r/pulls/1":
+			_, _ = w.Write([]byte(`{"merged":true,"state":"closed","base":{"ref":"dev"}}`))
+		case "/repos/o/r/pulls/2":
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"message":"Not Found"}`))
+		case "/repos/o/r/issues/2":
+			_, _ = w.Write([]byte(`{"state":"closed"}`))
+		default:
+			w.WriteHeader(http.StatusBadGateway)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	g := GH{Client: &gh.Client{API: srv.URL, Token: "t", HTTP: srv.Client()}}
 	ctx := context.Background()
 	if r, err := g.Ref(ctx, "o/r", 1); err != nil || !r.IsPR || !r.Merged || r.Base != "dev" {
 		t.Fatalf("pulls/1: %+v %v", r, err)
@@ -176,5 +185,26 @@ esac
 	}
 	if _, err := g.Ref(ctx, "o/r", 3); err == nil || !strings.Contains(err.Error(), "502") {
 		t.Fatalf("a forge error must stay an error, got %v", err)
+	}
+
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	g = GH{Client: &gh.Client{API: srv.URL, Token: "t", HTTP: srv.Client(), Redis: rdb}, Redis: rdb}
+	calls = 0
+	for range 2 {
+		if r, err := g.Ref(ctx, "o/r", 1); err != nil || !r.Merged {
+			t.Fatalf("copied: %+v %v", r, err)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("two reads of one reference made %d calls, want 1 (the copy answers the second)", calls)
+	}
+	// The lander's own record answers before any call.
+	if err := rdb.HSet(ctx, prkey.Key("o/r", 4), "state", "landed", "base", "dev").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if r, err := g.Ref(ctx, "o/r", 4); err != nil || !r.IsPR || !r.Merged || r.Base != "dev" || calls != 1 {
+		t.Fatalf("record: %+v %v calls=%d", r, err, calls)
 	}
 }

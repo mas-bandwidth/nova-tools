@@ -14,14 +14,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/gh"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/redis/go-redis/v9"
 )
 
 // Result is one reconciler call. Code is the process exit: 0 applied or
@@ -310,63 +311,36 @@ func ResolveIdem(ctx context.Context, st *store.Store, req IdemResolveRequest) (
 	}
 }
 
-// RESTPRHost talks to the GitHub REST API (BaseURL defaults to
-// https://api.github.com). It never uses GraphQL, and it only ever POSTs.
+// RESTPRHost opens the PR through the one GitHub client (internal/gh,
+// #4343; BaseURL defaults to its root). It never uses GraphQL, and it only
+// ever POSTs. Redis, when set, counts the call under reconcile-idem.
 type RESTPRHost struct {
 	BaseURL string
 	Token   string
 	HTTP    *http.Client
+	Redis   redis.Cmdable
 }
 
 // Open makes exactly one request, POST /repos/<repo>/pulls, and never a
-// second one. A 422 is classified by its body (classify422); any other
-// non-2xx is an error that leaves the key pending.
+// second one (the client retries only a secondary limit, which made no
+// PR). A 422 is classified by its body (classify422); any other non-2xx is
+// an error that leaves the key pending.
 func (h RESTPRHost) Open(ctx context.Context, repo, branch, base, title, body string) (string, error) {
-	base0 := h.BaseURL
-	if base0 == "" {
-		base0 = "https://api.github.com"
-	}
-	payload, err := json.Marshal(map[string]string{"head": branch, "base": base, "title": title, "body": body})
-	if err != nil {
-		return "", err
-	}
+	c := &gh.Client{API: h.BaseURL, Token: h.Token, HTTP: h.HTTP, Verb: "reconcile idem", Redis: h.Redis}
 	path := "/repos/" + repo + "/pulls"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(base0, "/")+path, bytes.NewReader(payload))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("Content-Type", "application/json")
-	if h.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+h.Token)
-	}
-	client := h.HTTP
-	if client == nil {
-		client = http.DefaultClient
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(resp.Body)
-	if resp.StatusCode == http.StatusUnprocessableEntity {
-		if err != nil {
-			raw = nil // a body cut short is unreadable: ambiguous
-		}
-		return "", fmt.Errorf("POST %s: 422: %w", path, classify422(raw))
-	}
-	if err != nil {
-		return "", err
-	}
-	if resp.StatusCode/100 != 2 {
-		return "", fmt.Errorf("POST %s: %d %s", path, resp.StatusCode, strings.TrimSpace(string(raw)))
-	}
 	var pr struct {
 		HTMLURL string `json:"html_url"`
 	}
-	if err := json.Unmarshal(raw, &pr); err != nil {
-		return "", fmt.Errorf("POST %s: reply: %w", path, err)
+	_, err := c.Do(ctx, http.MethodPost, path, map[string]string{"head": branch, "base": base, "title": title, "body": body}, &pr)
+	if err != nil {
+		var herr *gh.HTTPError
+		if errors.As(err, &herr) {
+			if herr.Status == http.StatusUnprocessableEntity {
+				return "", fmt.Errorf("POST %s: 422: %w", path, classify422([]byte(herr.Body)))
+			}
+			return "", fmt.Errorf("POST %s: %d %s", path, herr.Status, herr.Body)
+		}
+		return "", err
 	}
 	if pr.HTMLURL == "" {
 		return "", errors.New("pr open: no html_url in the reply")

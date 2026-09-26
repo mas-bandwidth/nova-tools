@@ -289,7 +289,7 @@ func onlyExpireDuty(t *testing.T, p reconcile.Prober) {
 	t.Helper()
 	seams, registered, prober := reconcileSeams, reconcileDuties, expireProber
 	t.Cleanup(func() { reconcileSeams, reconcileDuties, expireProber = seams, registered, prober })
-	reconcileSeams = func() (deal.Dialer, deal.PRs) { return &verbSSH{}, verbForge{} }
+	reconcileSeams = func(*store.Store) (deal.Dialer, deal.PRs) { return &verbSSH{}, verbForge{} }
 	expireProber = func() reconcile.Prober { return p }
 	var only []reconcileDutyBuilder
 	for _, b := range registered {

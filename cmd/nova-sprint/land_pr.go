@@ -20,10 +20,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/gh"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land/stream"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
@@ -34,9 +36,11 @@ func runLandPR(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags(verb)
 	repo := fs.String("repo", "mas-bandwidth/nova-tools", verbflag.HelpRepo)
 	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
-	api := fs.String("api", "https://api.github.com", "the forge's REST base url")
+	api := fs.String("api", gh.DefaultAPI, "the forge's REST base url")
 	prFlag := fs.String("pr", "", verbflag.HelpPR)
-	const usage = "land pr --pr <n> [--repo owner/name] [--redis <addr>] [--api <url>]"
+	wait := fs.Duration("wait", 0, "wait this long for the PR to merge, woken by the head's events (0: one pass)")
+	tick := fs.Duration("tick", 30*time.Second, "the longest a --wait sleeps between passes")
+	const usage = "land pr --pr <n> [--repo owner/name] [--redis <addr>] [--api <url>] [--wait <d> [--tick <d>]]"
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
@@ -49,6 +53,9 @@ func runLandPR(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 	if !landRepoOK(*repo) {
 		return refuse(errOut, verb, "--repo wants owner/name: "+usage)
+	}
+	if *wait < 0 || *tick <= 0 {
+		return refuse(errOut, verb, "--wait must not be negative and --tick must be positive: "+usage)
 	}
 	addr := landRedisAddr(*redisAddr)
 	if addr == "" {
@@ -67,14 +74,19 @@ func runLandPR(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return 6
 	}
 	defer st.Close()
-	gh := &stream.GitHub{API: *api, Token: tok, Budget: 3}
-	rep, err := stream.LandPR(ctx, gh, st.Client(), stream.LandPROptions{Repo: *repo, N: n, Log: out})
+	// Three calls per pass; a --wait pass again after the head's event.
+	budget := 3
+	if *wait > 0 {
+		budget = 0
+	}
+	c := &stream.GitHub{API: *api, Token: tok, Budget: budget, Verb: verb, Redis: st.Client(), Log: errOut}
+	rep, err := stream.LandPRWait(ctx, c, st.Client(), stream.LandPROptions{Repo: *repo, N: n, Log: out, Wait: *wait, Tick: *tick})
 	if err != nil {
 		return landExit(errOut, verb, err)
 	}
 	fmt.Fprintf(out, "LAND PR repo=%s pr=#%d state=%s head=%s ci=%s merge=%s failed=%s rest_calls=%d\n",
 		*repo, n, rep.State, orDash(stream.Short(rep.Head)), orDash(rep.CI), orDash(stream.Short(rep.MergeSHA)),
-		orDash(strings.Join(rep.Failed, ",")), gh.Calls)
+		orDash(strings.Join(rep.Failed, ",")), c.Calls)
 	switch rep.State {
 	case "merged":
 		return 0

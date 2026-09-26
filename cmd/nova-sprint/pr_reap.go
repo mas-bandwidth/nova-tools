@@ -21,6 +21,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land/stream"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reap"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -45,9 +46,10 @@ func runPRReap(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return refuse(errOut, verb, "needs --redis <addr> or NOVA_REDIS_ADDR")
 	}
 	o := reap.Options{Sprint: *sprint, DryRun: *dry, Budget: *budget}
+	var gh *stream.GitHub
 	if !*dry {
-		gh, err := landGitHub(*api, *budget)
-		if err != nil {
+		var err error
+		if gh, err = landGitHub(verb, *api, *budget, nil); err != nil {
 			return refuse(errOut, verb, err.Error())
 		}
 		o.Closer = gh
@@ -58,6 +60,9 @@ func runPRReap(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return 6
 	}
 	defer st.Close()
+	if gh != nil {
+		gh.Redis = st.Client() // the calls are counted in the store (#4343)
+	}
 	rep, err := reap.Run(ctx, st.Client(), o)
 	for _, l := range rep.Lines {
 		fmt.Fprintln(out, oneline.Escape(l))

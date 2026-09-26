@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/gh"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
 
@@ -24,7 +25,9 @@ func init() {
 }
 
 // readyForge is the forge seam; a test replaces it with a map (CI-NET).
-var readyForge = func() deal.PRs { return deal.GH{} }
+var readyForge = func(st *store.Store) deal.PRs {
+	return deal.GH{Client: gh.New("ready", st.Client()), Redis: st.Client()}
+}
 
 func runReady(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("ready")
@@ -46,7 +49,7 @@ func runReady(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if err != nil {
 		return refuse(errOut, "ready", err.Error())
 	}
-	verdicts := ready.Evaluate(ctx, snap, readyForge())
+	verdicts := ready.Evaluate(ctx, snap, readyForge(st))
 
 	if *why != "" {
 		v, ok, err := ready.Find(verdicts, *why)

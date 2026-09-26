@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/gh"
 	"io"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 	"time"
 
@@ -112,7 +112,7 @@ func cmdLineup(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	run.Enrich = func(in *preflight.LineupInput) {
 		in.GraphQL = preflight.GraphQLBudget{Remaining: *remaining, CallsPerPass: *perPass, Cadence: *cadence, Known: *remaining >= 0}
 		if !in.GraphQL.Known {
-			if n, err := ghGraphQLRemaining(ctx); err == nil {
+			if n, err := ghGraphQLRemaining(ctx, client); err == nil {
 				in.GraphQL.Remaining, in.GraphQL.Known = n, true
 			} else {
 				fmt.Fprintf(stderr, "nova-sprint lineup: GraphQL budget: %s\n", oneline.Err(err))
@@ -160,15 +160,12 @@ func runConformPublish(ctx context.Context, argv []string, marker string, stderr
 }
 
 // ghGraphQLRemaining reads the login's GraphQL budget by REST (GET
-// /rate_limit), never by a GraphQL call.
-func ghGraphQLRemaining(ctx context.Context) (int, error) {
-	args := []string{"api", "rate_limit", "--jq", ".resources.graphql.remaining"}
-	testguard.RefuseHosts("gh", args...)
-	out, err := exec.CommandContext(ctx, "gh", args...).Output()
-	if err != nil {
-		return 0, err
-	}
-	return strconv.Atoi(strings.TrimSpace(string(out)))
+// /rate_limit through the one GitHub client, #4343), never by a GraphQL
+// call.
+func ghGraphQLRemaining(ctx context.Context, rdb redis.Cmdable) (int, error) {
+	c := gh.New("lineup", rdb)
+	_, graphql, err := c.RateLimit(ctx)
+	return graphql, err
 }
 
 func cmdLineupPublish(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {

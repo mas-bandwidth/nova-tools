@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/gh"
 	"io"
 	"os"
 	"path/filepath"
@@ -39,13 +40,18 @@ func runCardPool(ctx context.Context, args []string, stdout, stderr io.Writer) i
 		return cmdCardFsck(ctx, args[1:], stdout, stderr)
 	case "ls":
 		return cmdCardLs(ctx, args[1:], stdout, stderr)
+	case "stitch":
+		return cmdCardStitch(ctx, args[1:], stdout, stderr)
 	default:
-		return refuse(stderr, "card", "unknown subcommand "+args[0]+"; it wants cut, push, release, show, stop, fsck or ls")
+		return refuse(stderr, "card", "unknown subcommand "+args[0]+"; it wants cut, push, release, show, stop, fsck, ls or stitch")
 	}
 }
 
-// cardCutSource is card cut's forge seam; tests replace it.
-var cardCutSource card.IssueSource = card.GHIssues{}
+// cardCutSource is card cut's forge seam, the one GitHub client over the
+// store (#4343); tests replace it.
+var cardCutSource = func(st *store.Store) card.IssueSource {
+	return card.GHIssues{Client: gh.New("card cut", st.Client())}
+}
 
 // cmdCardCut is nova-tools#3623, the retired pulse cutter's job: one GitHub issue
 // becomes one card record in Redis (card.Cut: render, store the body at its
@@ -68,6 +74,9 @@ func cmdCardCut(ctx context.Context, args []string, stdout, stderr io.Writer) in
 	dryRun := fs.Bool("dry-run", false, verbflag.HelpDryRun)
 	noGitHub := fs.Bool("no-github", false, "read nothing from GitHub: the issue text is --from's")
 	baseSHA := fs.String("base-sha", "", "the base's sha, 40 hex (default the tip of --base in the mirror)")
+	parent := fs.String("parent", "", "a plan card id: the --from rows are its children and a stitch is cut behind them")
+	stitchRoute := fs.String("stitch-route", "", "the stitch card's route (with --parent)")
+	stitchEst := fs.String("stitch-est", "", "the stitch card's estimate in minutes (with --parent)")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintln(stderr, "nova-sprint card: cut: "+oneline.Escape(err.Error())+"; run: nova-sprint help")
 		return 2
@@ -77,11 +86,20 @@ func cmdCardCut(ctx context.Context, args []string, stdout, stderr io.Writer) in
 			fmt.Fprintln(stderr, "nova-sprint card: cut --from takes no --issue, --spec, --index or argument; run: nova-sprint help")
 			return 2
 		}
+		if *parent != "" && *stream != "" {
+			fmt.Fprintln(stderr, "nova-sprint card: cut --parent takes no --stream: the children ride the parent's stream; run: nova-sprint help")
+			return 2
+		}
 		return cmdCardCutFrom(ctx, cutFromOpts{From: *from, Repo: *repo, Stream: *stream, Sprint: *sprint, Base: *base,
-			BaseSHA: *baseSHA, Actor: seatActor(), DryRun: *dryRun, NoGitHub: *noGitHub}, *addr, stdout, stderr)
+			BaseSHA: *baseSHA, Actor: seatActor(), DryRun: *dryRun, NoGitHub: *noGitHub,
+			Parent: *parent, StitchRoute: *stitchRoute, StitchEst: *stitchEst}, *addr, stdout, stderr)
+	}
+	if *parent != "" || *stitchRoute != "" || *stitchEst != "" {
+		fmt.Fprintln(stderr, "nova-sprint card: cut --parent <id> wants --from <children.tsv|->: the rows are the plan's children and the stitch is cut behind them (#4317); run: nova-sprint help")
+		return 2
 	}
 	if *sprint == "" || *addr == "" || *repo == "" || *issue <= 0 || *spec < 0 || fs.NArg() > 0 || *dryRun || *noGitHub || *baseSHA != "" {
-		fmt.Fprintln(stderr, "nova-sprint card: cut wants --sprint <S> --repo <owner/name> --issue <n> and --redis <addr> (or NOVA_SPRINT_REDIS), optional --spec <n> --index <ctxindex dir> --stream <name> --base <branch>; or many cards: --from <cards.tsv|-> --repo <owner/name> [--stream <s>] [--sprint <S>] [--base dev] [--base-sha <sha40>] [--actor <a>] [--dry-run] [--no-github]; run: nova-sprint help")
+		fmt.Fprintln(stderr, "nova-sprint card: cut wants --sprint <S> --repo <owner/name> --issue <n> and --redis <addr> (or NOVA_SPRINT_REDIS), optional --spec <n> --index <ctxindex dir> --stream <name> --base <branch>; or many cards: --from <cards.tsv|-> --repo <owner/name> [--stream <s>] [--sprint <S>] [--base dev] [--base-sha <sha40>] [--dry-run] [--no-github]; or a plan's children and stitch: --parent <id> --from <children.tsv|-> [--stitch-route frontier] [--stitch-est 60]; run: nova-sprint help")
 		return 2
 	}
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
@@ -93,7 +111,7 @@ func cmdCardCut(ctx context.Context, args []string, stdout, stderr io.Writer) in
 		return 1
 	}
 	defer st.Close()
-	c, res, err := card.Cut(ctx, st.Client(), cardCutSource, card.CutInput{
+	c, res, err := card.Cut(ctx, st.Client(), cardCutSource(st), card.CutInput{
 		Sprint: *sprint, Repo: *repo, Issue: *issue, Spec: *spec, Index: *index, Stream: *stream, Base: *base,
 	})
 	if err != nil {
