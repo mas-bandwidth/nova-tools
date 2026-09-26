@@ -1605,6 +1605,33 @@ prove GitHub prepends GITHUB_PATH in step order, which the leg's own `test` step
 checks (`command -v redis-server` must be the shim). A test that starts a
 server by an absolute path is not caught by the shim.
 
+### `hosted-shards` — the hosted legs meet the cap by shards, heavy packages apart
+
+**The rule.** ci.yml's `test-hosted` keeps `timeout-minutes: 2` and meets it by
+shard count: ubuntu-latest runs shards 1..6 and macos-latest 1..8, every leg
+carrying its OS's `shards`. The `deal this shard's packages` step places the
+heavy packages (`cmd/nova-bus`, `cmd/nova-merge`, `cmd/nova-sprint`,
+`cmd/nova-swarm`) first, one per shard, then every other package round-robin in
+`go list` order; vet and test both read the deal's `HOSTED_PKGS`.
+**The hurt.** Dev push run 36269122367 at f7aa36530: at four shards per OS,
+ubuntu-latest's shard 3 was cancelled at 123 s and all four macos-latest shards
+at 125-173 s, turning `ci-ok` red. Shard 3 of 4 held `cmd/nova-bus` (46 s
+`-short` on the Studio) and `cmd/nova-merge` (28 s) together, and a count-only
+deal kept them together at eight.
+**The test.** `TestHostedShardsUnderTheCap` (every ci.yml job at two minutes;
+both hosted OSes; shards 1..n with n at least 6 and 8), `TestHostedDealPartitionsTheTree`
+(the deal step over a stand-in list lands every package in exactly one shard)
+and `TestHostedDealSplitsTheHeavyPackages` (the deal step over the real
+`go list ./...`: no two heavy packages share a shard)
+(`internal/ci/hosted_shards_class_test.go`).
+**Its allowlist.** `hostedHeavy` in that file, which the step spells verbatim.
+**Its remedy line.** Add a shard to the OS's matrix and `include`, or name a
+package in `hostedHeavy` and in the step's `heavy=`; never raise the timeout.
+**Its narrowings.** The shard counts come from one run's cancelled legs, which
+are lower bounds; the class tests do not time a hosted leg, dev's push run does.
+The heavy list is named from one reader measurement, not from a hosted
+per-package timing.
+
 ### `onboarding` — every command meets the onboarding standard
 
 **The rule.** `docs/ONBOARDING.md`, asserted for EVERY directory under `cmd/` by

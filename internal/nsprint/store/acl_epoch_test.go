@@ -18,7 +18,7 @@ import (
 // every seat whose verbs key a table set by the epoch reads sprint:epoch n
 // under its own ACL user (ns-consumer, ns-table, ns-coordinator, ns-friend),
 // the friend seat counts its working set through ns_cell_zcard (task take and
-// width) and the coordinator's lander reads a stream's members through
+// width), its beat reads the copies it holds through ns_cell_zrange, and the coordinator's lander reads a stream's members through
 // ns_ws_zrange. The table seat without its sprint:epoch grant is refused, so
 // the control can fail.
 func TestACLSeatsReadTheSprintEpoch(t *testing.T) {
@@ -72,6 +72,9 @@ func TestACLSeatsReadTheSprintEpoch(t *testing.T) {
 	}
 	if n, err := ws.CellCard(ctx, as("ns-friend"), "friend:f", "working").Int64(); err != nil || n != 2 {
 		t.Errorf("ns-friend ns_cell_zcard friend:f working = %d %v, want 2 (epoch 1's set)", n, err)
+	}
+	if ids, err := ws.IDs(ws.CellRange(ctx, as("ns-friend"), "friend:f", "working")); err != nil || strings.Join(ids, ",") != "a,b" {
+		t.Errorf("ns-friend ns_cell_zrange friend:f working = %v %v, want [a b] (epoch 1's set)", ids, err)
 	}
 	if ids, err := ws.IDs(ws.StreamRange(ctx, as("ns-coordinator"), "s", "merging")); err != nil || len(ids) != 1 || ids[0] != "t1" {
 		t.Errorf("ns-coordinator ns_ws_zrange s merging = %v %v, want [t1]", ids, err)

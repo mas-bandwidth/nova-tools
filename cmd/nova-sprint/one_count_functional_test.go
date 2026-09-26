@@ -253,7 +253,7 @@ func probePrinters(t *testing.T, addr string, c *redis.Client, p *reconcile.Prog
 		t.Fatalf("ws show sums cards=%d live=%d landed=%d; want %d %d %d\n%s", sc, sl, sd, total, left, done, show)
 	}
 	ls := run(0, "stream", "ls")
-	lsRE := regexp.MustCompile(`(?m)^\d+ "([^"]+)" waiting=(\d+) ready=(\d+) working=(\d+) review=(\d+) merging=(\d+) landed=(\d+) parked=\d+$`)
+	lsRE := regexp.MustCompile(`(?m)^\d+ "([^"]+)" waiting=(\d+) ready=(\d+) working=(\d+) review=(\d+) merging=(\d+) landed=(\d+) parked=\d+ paths=\d+$`)
 	lc, ld := 0, 0
 	for _, m := range lsRE.FindAllStringSubmatch(ls, -1) {
 		for i := 2; i <= 7; i++ {
@@ -464,7 +464,7 @@ func TestOneCountClearKeepsParked(t *testing.T) {
 		t.Fatalf("ws counts after the clear %q; want parked=0 beside total=0 done=0/0 (the new epoch)", counts)
 	}
 	_, ls, _ := runSprint("stream", "ls", "--redis", ps.addr)
-	if !regexp.MustCompile(`(?m)^\d+ "alpha" waiting=0 ready=0 working=0 review=0 merging=0 landed=0 parked=0$`).MatchString(ls) {
+	if !regexp.MustCompile(`(?m)^\d+ "alpha" waiting=0 ready=0 working=0 review=0 merging=0 landed=0 parked=0 paths=0$`).MatchString(ls) {
 		t.Fatalf("stream ls after the clear:\n%s\nwant alpha all zeros (the new epoch)", ls)
 	}
 	if n, err := ps.c.ZScore(context.Background(), ws.KeyAt(0, "alpha", ws.Parked), "pa6").Result(); err != nil || n == 0 {

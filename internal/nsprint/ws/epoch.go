@@ -101,6 +101,7 @@ func SprintListAt(e uint64, sprint, list string) string {
 // reads the epoch (Epoch, or an HGet in an earlier round) and keys by it.
 const (
 	FnCellCard    = "ns_cell_zcard"
+	FnCellRange   = "ns_cell_zrange"
 	FnStreamRange = "ns_ws_zrange"
 )
 
@@ -109,6 +110,13 @@ const (
 // count that could not be read is an error to its reader, never 0.
 func CellCard(ctx context.Context, c redis.Cmdable, consumer, col string) *redis.Cmd {
 	return c.FCallRO(ctx, FnCellCard, nil, consumer, col)
+}
+
+// CellRange is ZRANGE of consumer's (bench:<b> or friend:<f>) set at col
+// under the current epoch, oldest first, as one FCALL_RO; IDs reads it. The
+// friend beat reads the copies it holds through it in its one pipeline.
+func CellRange(ctx context.Context, c redis.Cmdable, consumer, col string) *redis.Cmd {
+	return c.FCallRO(ctx, FnCellRange, nil, consumer, col)
 }
 
 // StreamRange is ZRANGE of stream's set at state under the current epoch,

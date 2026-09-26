@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ghevent"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -123,14 +124,24 @@ func Read(ctx context.Context, rdb *redis.Client, repo, sha string) (Record, err
 
 // Counts is one pass: entries written (APPLIED), older than what the hash
 // holds (KEPT), not a CI result (SKIPPED), and taken over from an idle
-// consumer (RECLAIMED, also counted in the other three).
+// consumer (RECLAIMED, also counted in the other three). Records is the
+// pull_request entries whose claim moved or created the PR record
+// (land.RecordPRHead); Failed the entries left pending because that write
+// failed.
 type Counts struct {
 	Applied, Kept, Skipped, Reclaimed int
+	Records, Failed                   int
+	LastFail                          string // the last failed entry: its id and why
 }
 
 // Line is the pass's receipt.
 func (c Counts) Line() string {
-	return fmt.Sprintf("CIGH applied=%d kept=%d skipped=%d reclaimed=%d", c.Applied, c.Kept, c.Skipped, c.Reclaimed)
+	line := fmt.Sprintf("CIGH applied=%d kept=%d skipped=%d reclaimed=%d records=%d failed=%d",
+		c.Applied, c.Kept, c.Skipped, c.Reclaimed, c.Records, c.Failed)
+	if c.LastFail != "" {
+		line += " last_fail=" + c.LastFail
+	}
+	return line
 }
 
 func (c *Counts) add(o Counts) {
@@ -138,6 +149,11 @@ func (c *Counts) add(o Counts) {
 	c.Kept += o.Kept
 	c.Skipped += o.Skipped
 	c.Reclaimed += o.Reclaimed
+	c.Records += o.Records
+	c.Failed += o.Failed
+	if o.LastFail != "" {
+		c.LastFail = o.LastFail
+	}
 }
 
 // Consumer is one member of the ci-github group.
@@ -149,6 +165,8 @@ type Consumer struct {
 	// MinIdle is how long another consumer's pending entry waits before this
 	// one reclaims it; 0 means DefaultMinIdle.
 	MinIdle time.Duration
+	// Now stamps the PR record writes; nil is time.Now.
+	Now func() time.Time
 }
 
 func (c *Consumer) check() error {
@@ -331,6 +349,19 @@ func (c *Consumer) apply(ctx context.Context, msgs []redis.XMessage) (Counts, er
 	for _, m := range msgs {
 		r, ok := resultOf(m)
 		if !ok {
+			// A pull_request entry moves the PR record first: a failed write
+			// leaves the entry pending (not acked) for the next pass.
+			if claim, isPR := land.ClaimOf(m); isPR {
+				res, err := land.RecordPRHead(ctx, c.Client, claim, c.Now)
+				if err != nil {
+					n.Failed++
+					n.LastFail = m.ID + " " + strings.Join(strings.Fields(err.Error()), "_")
+					continue
+				}
+				if res.Outcome == "created" || res.Outcome == "moved" {
+					n.Records++
+				}
+			}
 			foldRef(ctx, pipe, m)
 			skip = append(skip, m.ID)
 			continue
@@ -345,6 +376,7 @@ func (c *Consumer) apply(ctx context.Context, msgs []redis.XMessage) (Counts, er
 		return n, fmt.Errorf("ci github: apply: %w", err)
 	}
 	n.Skipped = len(skip)
+
 	for _, cmd := range cmds {
 		reply, _ := cmd.Slice()
 		if len(reply) > 0 && reply[0] == "APPLIED" {
