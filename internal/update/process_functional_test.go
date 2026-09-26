@@ -5,6 +5,7 @@ package update
 import (
 	"context"
 	"encoding/base64"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +22,9 @@ import (
 // load 17-30 (nice -n 15, -p 2) the three ran 2.0, 4.4 and 3.2 s.
 // TestJoinReporterDeathAfterRemoteConfirmationDoesNotPublishTwice stages the
 // same kind of kill and ran 1.3 s and 2.9 s in two Studio runs at load 10-30.
+// TestJoinInterruptionNegativeControlWithoutKillFails stages the same wrapped
+// child and ran 1.6 s on run 36264290984's space shard 3/4 at load 3 of 32
+// (#4413), red against the unit tier's 1 s budget.
 
 // Past the grace the refusal must name the pipe rather than blame the version
 // command, and it must say so without echoing a byte the child wrote.
@@ -84,4 +88,28 @@ func TestJoinReporterDeathAfterRemoteConfirmationDoesNotPublishTwice(t *testing.
 		}
 	}
 	t.Skipf("no reporter death landed between the note reaching the remote and the confirmation being recorded in %d staged attempts, so this case is UNPROVEN in this run rather than green", stagingAttempts)
+}
+
+// TestJoinInterruptionNegativeControlWithoutKillFails proves that the witness
+// strictly refuses an uninterrupted child completion: an observed boundary
+// without an actual live kill (killed-alive=false) fails the witness, proving
+// that an uninterrupted run cannot be reported as an interrupted recovery.
+func TestJoinInterruptionNegativeControlWithoutKillFails(t *testing.T) {
+	r := newReporter(t, "v1.2.3")
+	wrap, record := r.wrapperOnPath(t, killLostResult)
+	code, out, errs := r.send(t, wrap)
+	if code != 1 || !strings.Contains(errs+out, "sent=uncertain") {
+		t.Fatalf("negative control wrapper was not reported as failure: %d\n%s\n%s", code, out, errs)
+	}
+	b, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatalf("wrapper left no record: %v", err)
+	}
+	receipt := parseStageRecord(string(b))
+	if !receipt.observed {
+		t.Fatalf("expected boundary observed=true, got %s", string(b))
+	}
+	if receipt.killedAlive {
+		t.Fatalf("negative control must not report killed-alive=true: %s", string(b))
+	}
 }

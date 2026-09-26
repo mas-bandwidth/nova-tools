@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/functional"
@@ -29,8 +30,9 @@ usage:
   nova-ci slowtests --budget <seconds>
                       read newline-delimited ` + "`go test -json`" + ` TestEvents on stdin and
                       print one CI-SLOW line per package whose total elapsed
-                      time is over --budget (default 60); exit 2 when any
-                      package is over, 0 when none is.
+                      time is over --budget (default 60) and a CI-LOAD line;
+                      exit 0: the times are a measurement. --enforce makes a
+                      CI-SLOW line exit 2 (the nightly reference leg only).
   nova-ci local [--base origin/dev] [--functional]
                       the unit tier CI runs for this diff, on this machine:
                       the packages .github/scripts/select-packages.sh picks
@@ -42,22 +44,22 @@ usage:
                       --functional adds the functional build tag
                       (GOTEST_TAGS=functional); CI runs those tests in its
                       functional job as a stream merges.
-                      Exit 0 green, 1 a red test or build, 2 over the
-                      budgets or could not run.
+                      Exit 0 green, 1 a red test or build, 2 a CI-SLEEPS
+                      line or could not run.
   nova-ci slowtests --package-budget <s> --test-budget <s> [--allowlist <file>]
-                    [--sleeps <file>] [--max-load-per-cpu <n>] [--load <n> --cpus <n>]
+                    [--sleeps <file>] [--enforce] [--load <n> --cpus <n>]
                       the unit tier's budgets: a package over --package-budget
                       and a top-level test over --test-budget are each a CI-SLOW
                       line, unless the allowlist (pkg<TAB>test<TAB>seconds<TAB>
-                      <measured>s@<where>, - in the test column for a package's
-                      own row) names a higher one. With --max-load-per-cpu the
-                      host's load average (the larger of its 1- and 5-minute
-                      figures, over its CPUs; --load and --cpus give them by
-                      hand) is printed as a CI-LOAD line, and above the gate the
-                      CI-SLOW lines are printed and do not fail the run. A test
-                      skipped with the SLEEPS marker and not on --sleeps
-                      (pkg<TAB>test<TAB>where) is a CI-SLEEPS line and fails the
-                      run at any load.
+                      <measured>s@<where>, where is run<id> or a bench, - in
+                      the test column for a package's own row) names a higher
+                      one. The host's load average (the larger of its 1- and
+                      5-minute figures, over its CPUs; --load and --cpus give
+                      them by hand) is printed as a CI-LOAD line and never
+                      read by the verdict. A CI-SLOW line fails the run only
+                      with --enforce. A test skipped with the SLEEPS marker and
+                      not on --sleeps (pkg<TAB>test<TAB>where) is a CI-SLEEPS
+                      line and fails the run on every leg.
   nova-ci functional <package-dir>...
                       print the packages among these that hold functional tests
                       (a _test.go built only under the functional build tag) on
@@ -68,9 +70,10 @@ usage:
   nova-ci new-verb [--root <checkout>] <tool> <verb>
                       scaffold a new CLI verb skeleton: command, test, fixture, and makefile
 
-exit codes: 0 inside budget, 2 a package is over budget or the invocation
-            could not run (bad flag, unreadable stdin); local adds 1 for a red
-            test or a package that did not build.
+exit codes: 0 inside budget or measured, 2 a CI-SLEEPS line, a CI-SLOW
+            line under --enforce, or the invocation could not run (bad flag,
+            unreadable stdin); local adds 1 for a red test or a package that
+            did not build.
 
 example:
   nova-ci help
@@ -115,9 +118,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 }
 
-// cmdSlowtests reads the events, sums them against the budget, and prints the
-// verdict: one CI-SLOW line per over-budget package (exit 2), or the single
-// CI-SLOW OK line (exit 0). A malformed line or an unusable flag is a refusal.
+// cmdSlowtests reads the events, sums them against the budgets, and prints one
+// CI-SLOW line per package or test over its budget (or the single CI-SLOW OK
+// line), one CI-SLEEPS line per unledgered SLEEPS skip, and the CI-LOAD line.
+// Exit 2 on a CI-SLEEPS line on every leg, on a CI-SLOW line only with
+// --enforce; 0 otherwise. A malformed line or an unusable flag is a refusal.
 func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("slowtests", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -127,7 +132,7 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	testBudget := fs.Float64("test-budget", 0, "seconds one top-level test may take; 0 judges packages only")
 	allowlist := fs.String("allowlist", "", "pkg<TAB>test<TAB>seconds<TAB><measured>s@<where> rows that raise one package's or one test's budget")
 	sleeps := fs.String("sleeps", "", "pkg<TAB>test<TAB>where rows: the tests already skipped with the SLEEPS marker")
-	maxLoad := fs.Float64("max-load-per-cpu", 0, "above this load average a CPU the time budgets are measured, not enforced; 0 always enforces")
+	enforce := fs.Bool("enforce", false, "fail the run on a CI-SLOW line (the nightly reference leg only); without it the times are printed and only a CI-SLEEPS line fails")
 	loadFlag := fs.Float64("load", -1, "the host's load average, instead of reading it")
 	cpusFlag := fs.Int("cpus", 0, "the host's logical CPUs, instead of runtime.NumCPU")
 	if err := fs.Parse(args); err != nil {
@@ -143,8 +148,8 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	if *packageBudget < 0 || *testBudget < 0 {
 		return refuse(stderr, " slowtests", "--package-budget and --test-budget must be seconds greater than zero")
 	}
-	if *maxLoad < 0 || *cpusFlag < 0 {
-		return refuse(stderr, " slowtests", "--max-load-per-cpu and --cpus must not be negative")
+	if *cpusFlag < 0 {
+		return refuse(stderr, " slowtests", "--cpus must not be negative")
 	}
 	budgets := slowtests.Budgets{Package: float64(*budget), Test: *testBudget}
 	if *packageBudget > 0 {
@@ -180,21 +185,20 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 		return refuse(stderr, " slowtests", fmt.Sprintf("stdin is not newline-delimited go test -json: %s", oneline.Err(err)))
 	}
 	report := slowtests.Judge(events, budgets)
-	var load slowtests.Load
-	if *maxLoad > 0 {
+	// The load is printed, never judged: read from the host unless --load
+	// gives it, so a test hands in the figure instead of reading a machine.
+	load := slowtests.Load{Avg: *loadFlag, CPUs: runtime.NumCPU(), Known: true}
+	if *loadFlag < 0 {
 		load = hostLoad()
-		if *loadFlag >= 0 {
-			load.Avg, load.Known, load.Why = *loadFlag, true, ""
-		}
-		if *cpusFlag > 0 {
-			load.CPUs = *cpusFlag
-		}
+	}
+	if *cpusFlag > 0 {
+		load.CPUs = *cpusFlag
 	}
 	ledger := *sleeps
 	if ledger == "" {
 		ledger = "the SLEEPS ledger (no --sleeps given)"
 	}
-	lines, code := slowtests.Verdict(report, load, *maxLoad, ledger)
+	lines, code := slowtests.Verdict(report, load, *enforce, ledger)
 	for _, line := range lines {
 		fmt.Fprintln(stdout, line)
 	}

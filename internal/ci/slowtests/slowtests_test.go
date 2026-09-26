@@ -225,12 +225,34 @@ func TestSlowTestsAllowlistRefusesARowWithoutItsMeasurement(t *testing.T) {
 			t.Errorf("ParseAllowlist(%q) = %v, want a refusal naming line 1", text, err)
 		}
 	}
-	rows, err := ParseAllowlist(strings.NewReader("internal/ci\tTestA\t1.5\t0.99s@idle-2026-09-26\n"))
+	rows, err := ParseAllowlist(strings.NewReader("internal/ci\tTestA\t1.5\t0.99s@space\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 1 || rows[0].Seconds != 1.5 || rows[0].Measured != 0.99 || rows[0].Where != "idle-2026-09-26" {
-		t.Errorf("rows = %+v, want one row: budget 1.5, measured 0.99 at idle-2026-09-26", rows)
+	if len(rows) != 1 || rows[0].Seconds != 1.5 || rows[0].Measured != 0.99 || rows[0].Where != "space" {
+		t.Errorf("rows = %+v, want one row: budget 1.5, measured 0.99 at space", rows)
+	}
+}
+
+// PROBE 4 of the #4413 ruling: where a row was measured is a CI run
+// (`run<id>`) or a bench, never free text. `2s@guess` is refused, and so are a
+// run with no id or a non-numeric one and a bench name with a suffix;
+// `2s@run36264290984` and `2s@space` are read.
+func TestSlowTestsMeasuredWhereIsARunOrABench(t *testing.T) {
+	t.Parallel()
+
+	for _, where := range []string{"guess", "run", "runabc", "run36264290984x", "idle-2026-09-26", "studio-load12-2026-09-26", "Space"} {
+		text := "internal/ci\tTestA\t2\t2s@" + where + "\n"
+		if _, err := ParseAllowlist(strings.NewReader(text)); err == nil || !strings.Contains(err.Error(), "neither run<id>") {
+			t.Errorf("ParseAllowlist(%q) = %v, want a refusal: %q is neither a run nor a bench", text, err, where)
+		}
+	}
+	for _, where := range []string{"run36264290984", "space", "studio"} {
+		text := "internal/ci\tTestA\t2\t2s@" + where + "\n"
+		rows, err := ParseAllowlist(strings.NewReader(text))
+		if err != nil || len(rows) != 1 || rows[0].Where != where {
+			t.Errorf("ParseAllowlist(%q) = %+v, %v; want one row measured at %s", text, rows, err, where)
+		}
 	}
 }
 
@@ -255,45 +277,64 @@ func TestSlowTestsManySmallTestsNameThePackageAndItsTopThree(t *testing.T) {
 	}
 }
 
-// PROBE 1 and 2 at the verdict: a gated run prints every CI-SLOW line as
-// measured. A test at 1.4 s (0.99 s idle) on a 32-CPU box at load 20 is green
-// with CI-LOAD saying not enforced; at load 2 it is red; with the load unread
-// the budgets are measured, not enforced, and the line says why -- and an
-// unledgered SLEEPS skip is red in all three.
-func TestSlowTestsVerdictReadsTheLoadForTimeAndNeverForSleeps(t *testing.T) {
+// PROBE 1 and 6 at the verdict (the #4413 ruling: a budget verdict is the
+// same on any machine). The same go test -json fixture -- a 1.4 s test, and
+// cmd/nova-bus at 58.8 s as a package with no row (its darwin time in run
+// 36264290984) -- gives the same exit at load 2 and at load 20: on a pull
+// request or self-hosted leg (enforce false) every CI-SLOW line and the CI-LOAD
+// line are printed and the exit is 0; on the nightly leg (enforce true) the
+// 1.4 s test is red over its row (0.4 s measured, 1.2 s budget, three times
+// it) and cmd/nova-bus is red at the 2 s default. An unledgered SLEEPS skip is
+// red on both legs at both loads.
+func TestSlowTestsVerdictIsTheSameAtAnyLoad(t *testing.T) {
 	t.Parallel()
 
-	fixture := `{"Action":"pass","Package":"example.com/m/busy","Test":"TestSlow","Elapsed":1.4}
-{"Action":"output","Package":"example.com/m/busy","Test":"TestSleeps","Output":"    x_test.go:3: SLEEPS: needs a mocked clock\n"}
-{"Action":"skip","Package":"example.com/m/busy","Test":"TestSleeps","Elapsed":0}
-{"Action":"pass","Package":"example.com/m/busy","Elapsed":1.5}
-`
+	rows, err := ParseAllowlist(strings.NewReader("m/busy\tTestSlow\t1.2\t0.4s@run36264290984\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := Budgets{Package: 2, Test: 1, Rows: rows}
 	timeOnly := `{"Action":"pass","Package":"example.com/m/busy","Test":"TestSlow","Elapsed":1.4}
 {"Action":"pass","Package":"example.com/m/busy","Elapsed":1.5}
+{"Action":"pass","Package":"github.com/mas-bandwidth/nova-tools/cmd/nova-bus","Test":"TestWait","Elapsed":0.9}
+{"Action":"pass","Package":"github.com/mas-bandwidth/nova-tools/cmd/nova-bus","Elapsed":58.8}
 `
-	cases := []struct {
-		name      string
-		load      Load
-		code      int
-		loadLine  string
-		sleepCode int
-	}{
-		{"load 20", Load{Avg: 20, CPUs: 32, Known: true}, 0, "CI-LOAD load=20.00 cpus=32: budgets measured, not enforced (0.62 a cpu, the gate is 0.25)", 2},
-		{"load 2", Load{Avg: 2, CPUs: 32, Known: true}, 2, "CI-LOAD load=2.00 cpus=32: budgets enforced (0.06 a cpu, the gate is 0.25)", 2},
-		{"unread", Load{CPUs: 32, Why: "sysctl -n vm.loadavg: executable file not found in $PATH"}, 0,
-			"CI-LOAD load=unknown cpus=32: budgets measured, not enforced (the load could not be read: sysctl -n vm.loadavg: executable file not found in $PATH; the gate is 0.25 a cpu)", 2},
+	sleeps := `{"Action":"output","Package":"example.com/m/busy","Test":"TestSleeps","Output":"    x_test.go:3: SLEEPS: needs a mocked clock\n"}
+{"Action":"skip","Package":"example.com/m/busy","Test":"TestSleeps","Elapsed":0}
+{"Action":"pass","Package":"example.com/m/busy","Elapsed":0.1}
+`
+	slowLines := []string{
+		"CI-SLOW package=github.com/mas-bandwidth/nova-tools/cmd/nova-bus seconds=58.8s budget=2s slowest=TestWait:0.9s",
+		"CI-SLOW test=TestSlow package=example.com/m/busy seconds=1.4s budget=1.2s",
 	}
-	for _, c := range cases {
-		lines, code := Verdict(Judge(slowEvents(t, timeOnly), Budgets{Package: 2, Test: 1}), c.load, 0.25, "ledger.txt")
-		want := []string{"CI-SLOW test=TestSlow package=example.com/m/busy seconds=1.4s budget=1s", c.loadLine}
-		if code != c.code || strings.Join(lines, "\n") != strings.Join(want, "\n") {
-			t.Errorf("%s: exit %d lines\n%s\nwant exit %d lines\n%s", c.name, code, strings.Join(lines, "\n"), c.code, strings.Join(want, "\n"))
+	const sleepsLine = "CI-SLEEPS test=TestSleeps package=example.com/m/busy: skipped for a wall-clock wait and not on ledger.txt; inject a clock or tag it //go:build functional"
+	loads := map[string]Load{
+		"load 2":  {Avg: 2, CPUs: 32, Known: true},
+		"load 20": {Avg: 20, CPUs: 32, Known: true},
+		"unread":  {CPUs: 32, Why: "sysctl -n vm.loadavg: executable file not found in $PATH"},
+	}
+	for name, load := range loads {
+		for _, leg := range []struct {
+			name    string
+			enforce bool
+			code    int
+		}{{"pull request", false, 0}, {"nightly", true, 2}} {
+			lines, code := Verdict(Judge(slowEvents(t, timeOnly), b), load, leg.enforce, "ledger.txt")
+			want := append(append([]string{}, slowLines...), load.LoadLine())
+			if code != leg.code || strings.Join(lines, "\n") != strings.Join(want, "\n") {
+				t.Errorf("%s, %s leg: exit %d lines\n%s\nwant exit %d lines\n%s", name, leg.name, code, strings.Join(lines, "\n"), leg.code, strings.Join(want, "\n"))
+			}
+			lines, code = Verdict(Judge(slowEvents(t, sleeps), b), load, leg.enforce, "ledger.txt")
+			if code != 2 || !strings.Contains(strings.Join(lines, "\n"), sleepsLine) {
+				t.Errorf("%s, %s leg, a SLEEPS skip: exit %d lines\n%s\nwant exit 2 with %q", name, leg.name, code, strings.Join(lines, "\n"), sleepsLine)
+			}
 		}
-		lines, code = Verdict(Judge(slowEvents(t, fixture), Budgets{Package: 2, Test: 1}), c.load, 0.25, "ledger.txt")
-		sleeps := "CI-SLEEPS test=TestSleeps package=example.com/m/busy: skipped for a wall-clock wait and not on ledger.txt; inject a clock or tag it //go:build functional"
-		if code != c.sleepCode || !strings.Contains(strings.Join(lines, "\n"), sleeps) {
-			t.Errorf("%s with a SLEEPS skip: exit %d lines\n%s\nwant exit %d with %q", c.name, code, strings.Join(lines, "\n"), c.sleepCode, sleeps)
-		}
+	}
+	if got, want := loads["load 20"].LoadLine(), "CI-LOAD load=20.00 cpus=32 per-cpu=0.62: measured, not a verdict"; got != want {
+		t.Errorf("LoadLine = %q, want %q", got, want)
+	}
+	if got, want := loads["unread"].LoadLine(), "CI-LOAD load=unknown cpus=32: measured, not a verdict (the load could not be read: sysctl -n vm.loadavg: executable file not found in $PATH)"; got != want {
+		t.Errorf("LoadLine = %q, want %q", got, want)
 	}
 }
 

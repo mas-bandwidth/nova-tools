@@ -91,9 +91,10 @@ type Budgets struct {
 // in the test column for a package's own row. Package is module-relative
 // (internal/ci) and matches an event's import path by its trailing path
 // elements. Seconds is the budget the row enforces; Measured is the time the row
-// was cut from and Where the run or machine that measured it, so no number on
-// the list is a guess: the measured column is `<seconds>s@<where>`, and the
-// budget may not exceed MaxHeadroom times the measurement.
+// was cut from and Where the CI run (`run<id>`) or bench (Benches) that
+// measured it, so no number on the list is a guess: the measured column is
+// `<seconds>s@<where>`, and the budget may not exceed MaxHeadroom times the
+// measurement.
 type Row struct {
 	Package  string
 	Test     string
@@ -104,8 +105,7 @@ type Row struct {
 
 // MaxHeadroom is the most a row's budget may exceed its own measurement: three
 // times, the ratio run 36261817989 (2026-09-26) put on a busy Studio against the
-// same tests idle is 1.0-1.2 s over 0.9 s, well inside it, and the rows seeded
-// from #4345's runs sit at 1.5x.
+// same tests idle is 1.0-1.2 s over 0.9 s, well inside it.
 const MaxHeadroom = 3.0
 
 // SleepRow is one line of the SLEEPS ledger: `pkg<TAB>test<TAB>where`, a
@@ -220,8 +220,15 @@ func ParseAllowlist(r io.Reader) ([]Row, error) {
 	return rows, nil
 }
 
-// parseMeasured reads `<seconds>s@<where>`: a positive time and a non-empty
-// name of the run or machine that measured it.
+// Benches are the machines a row may name as where it was measured: the
+// self-hosted runner groups and hosts ci.yml's test legs run on (space, and the
+// studio group over air, batman, studio and superman). internal/ci's
+// TestMeasuredBenchesAreCIRunners holds each to ci.yml.
+var Benches = []string{"space", "studio", "superman", "batman", "air"}
+
+// parseMeasured reads `<seconds>s@<where>`: a positive time, and where is a
+// CI run (`run<id>`, the digits of a GitHub Actions run id) or a bench in
+// Benches. Free text is refused: `2s@guess` names nothing a reader can open.
 func parseMeasured(field string) (float64, string, error) {
 	at := strings.Index(field, "s@")
 	if at <= 0 || at+2 >= len(field) {
@@ -231,7 +238,29 @@ func parseMeasured(field string) (float64, string, error) {
 	if err != nil || secs <= 0 {
 		return 0, "", fmt.Errorf("measured %q is not a positive number of seconds", field)
 	}
-	return secs, field[at+2:], nil
+	where := field[at+2:]
+	if !measuredWhere(where) {
+		return 0, "", fmt.Errorf("measured %q: where %q is neither run<id> (a CI run) nor a bench (%s)", field, where, strings.Join(Benches, ", "))
+	}
+	return secs, where, nil
+}
+
+// measuredWhere reports whether where is `run<digits>` or a bench name.
+func measuredWhere(where string) bool {
+	if id, ok := strings.CutPrefix(where, "run"); ok && id != "" {
+		for _, c := range id {
+			if c < '0' || c > '9' {
+				return false
+			}
+		}
+		return true
+	}
+	for _, b := range Benches {
+		if where == b {
+			return true
+		}
+	}
+	return false
 }
 
 // ParseSleeps reads the SLEEPS ledger: `pkg<TAB>test<TAB>where` rows, blank
@@ -402,8 +431,9 @@ func budgetText(seconds float64) string {
 	return strconv.FormatFloat(seconds, 'f', -1, 64) + "s"
 }
 
-// ExitCode is 2 when any package or test is over budget or any test is an
-// unledgered SLEEPS skip, 0 when none is.
+// ExitCode is the enforced verdict (the nightly leg's): 2 when any package or
+// test is over budget or any test is an unledgered SLEEPS skip, 0 when none
+// is. Verdict is what a leg exits with.
 func (r Report) ExitCode() int {
 	if len(r.Over) > 0 || len(r.OverTests) > 0 || len(r.Sleepers) > 0 {
 		return 2
@@ -426,7 +456,7 @@ func (r Report) OverLines() []string {
 	return lines
 }
 
-// SleepsLines is one line per unledgered SLEEPS skip. It is red at any load: a
+// SleepsLines is one line per unledgered SLEEPS skip. It is red on every leg: a
 // test skipped for a wall-clock wait is what the test does, not how busy the
 // runner was.
 func (r Report) SleepsLines(ledger string) []string {
@@ -438,10 +468,12 @@ func (r Report) SleepsLines(ledger string) []string {
 	return lines
 }
 
-// Load is the host's run-queue load average and its logical CPU count at the
-// time a run is judged. Known is false when the host has no load average to
-// read (Windows) or the read failed; Why then says so, and a gated run
-// enforces no time budget on it (Enforced).
+// Load is the host's run-queue load average and its logical CPU count when a
+// run is judged. It is a MEASUREMENT printed beside the times, never an input
+// to the verdict: a budget verdict is the same on any machine (Rowan's ruling
+// on nova-tools#4413, 2026-09-26), so the load only tells a reader what the
+// box was doing while the times were taken. Known is false when the host has
+// no load average to read (Windows) or the read failed; Why then says so.
 type Load struct {
 	Avg   float64
 	CPUs  int
@@ -457,43 +489,31 @@ func (l Load) PerCPU() float64 {
 	return l.Avg / float64(l.CPUs)
 }
 
-// Enforced reports whether the time budgets are a verdict at this load: always
-// when maxPerCPU is zero (no gate); under a gate, only when the load was read
-// and is at or under maxPerCPU a CPU. A load that could not be read is not
-// evidence of an idle box, so under a gate it enforces nothing: the time is
-// printed as measured and the CI-LOAD line says why.
-func (l Load) Enforced(maxPerCPU float64) bool {
-	if maxPerCPU <= 0 {
-		return true
-	}
-	return l.Known && l.CPUs > 0 && l.PerCPU() <= maxPerCPU
-}
-
-// LoadLine is the CI-LOAD line a gated run prints: the load it was judged at
-// and whether the time budgets were a verdict, or why the load is unknown.
-func (l Load) LoadLine(maxPerCPU float64) string {
-	gate := strconv.FormatFloat(maxPerCPU, 'f', -1, 64)
+// LoadLine is the CI-LOAD line every run prints: the load the times were
+// taken at, or why it is unknown. It carries no verdict.
+func (l Load) LoadLine() string {
 	if !l.Known || l.CPUs <= 0 {
 		why := l.Why
 		if why == "" {
 			why = "no CPU count"
 		}
-		return fmt.Sprintf("CI-LOAD load=unknown cpus=%d: budgets measured, not enforced (the load could not be read: %s; the gate is %s a cpu)", l.CPUs, oneline.Escape(why), gate)
+		return fmt.Sprintf("CI-LOAD load=unknown cpus=%d: measured, not a verdict (the load could not be read: %s)", l.CPUs, oneline.Escape(why))
 	}
-	verdict := "budgets enforced"
-	if !l.Enforced(maxPerCPU) {
-		verdict = "budgets measured, not enforced"
-	}
-	return fmt.Sprintf("CI-LOAD load=%s cpus=%d: %s (%s a cpu, the gate is %s)",
-		strconv.FormatFloat(l.Avg, 'f', 2, 64), l.CPUs, verdict,
-		strconv.FormatFloat(l.PerCPU(), 'f', 2, 64), gate)
+	return fmt.Sprintf("CI-LOAD load=%s cpus=%d per-cpu=%s: measured, not a verdict",
+		strconv.FormatFloat(l.Avg, 'f', 2, 64), l.CPUs, strconv.FormatFloat(l.PerCPU(), 'f', 2, 64))
 }
 
-// Verdict is what the check prints and its exit code. Every CI-SLOW line is
-// printed whatever the load, so the time is always measured; with maxPerCPU
-// set the CI-LOAD line follows, and a CI-SLOW line fails the run only when the
-// load is enforced. An unledgered SLEEPS skip fails the run at any load.
-func Verdict(r Report, load Load, maxPerCPU float64, ledger string) ([]string, int) {
+// Verdict is what the check prints and its exit code. Every CI-SLOW line and
+// the CI-LOAD line are printed on every leg, so the time is always measured.
+// The exit code never reads the load:
+//
+//   - an unledgered SLEEPS skip (a CI-SLEEPS line) is 2 on every leg: it is
+//     what the test does, a static fact;
+//   - a CI-SLOW line is 2 only when enforce is set, which one caller does: the
+//     nightly whole-tree run on the idle reference leg (ci.yml's schedule
+//     branch of the test step, `make test SLOWTESTS_ENFORCE=1`). Everywhere
+//     else it is a printed measurement and exit 0.
+func Verdict(r Report, load Load, enforce bool, ledger string) ([]string, int) {
 	var lines []string
 	slow := r.OverLines()
 	lines = append(lines, slow...)
@@ -502,11 +522,9 @@ func Verdict(r Report, load Load, maxPerCPU float64, ledger string) ([]string, i
 	if len(slow) == 0 && len(sleeps) == 0 {
 		lines = append(lines, r.OKLine())
 	}
-	if maxPerCPU > 0 {
-		lines = append(lines, load.LoadLine(maxPerCPU))
-	}
+	lines = append(lines, load.LoadLine())
 	code := 0
-	if len(sleeps) > 0 || (len(slow) > 0 && load.Enforced(maxPerCPU)) {
+	if len(sleeps) > 0 || (enforce && len(slow) > 0) {
 		code = 2
 	}
 	return lines, code

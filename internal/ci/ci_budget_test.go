@@ -546,7 +546,9 @@ func TestMakefileHasNoTargetSpecificConditionalPKGS(t *testing.T) {
 // GOTEST_COUNT_FLAG= so Go's test cache serves unchanged packages; a
 // -count=1 in CI would make every one of a landing's three runs recompile
 // and re-execute every shard. By hand `make test` keeps -count=1 (the
-// Makefile default).
+// Makefile default). The one exception is the nightly space legs' line
+// (SLOWTESTS_ENFORCE=1, #4413): it runs once a night to MEASURE, and a cached
+// pass is an earlier run's time, not that night's, so it passes -count=1.
 func TestShardsUseTheGoTestCache(t *testing.T) {
 	t.Parallel()
 	ci := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
@@ -556,7 +558,8 @@ func TestShardsUseTheGoTestCache(t *testing.T) {
 			continue
 		}
 		steps++
-		if !strings.Contains(line, "GOTEST_COUNT_FLAG=") || strings.Contains(line, "GOTEST_COUNT_FLAG=-") {
+		nightly := strings.Contains(line, "SLOWTESTS_ENFORCE=1") && strings.Contains(line, "GOTEST_COUNT_FLAG=-count=1 ")
+		if !nightly && (!strings.Contains(line, "GOTEST_COUNT_FLAG=") || strings.Contains(line, "GOTEST_COUNT_FLAG=-")) {
 			t.Errorf("a shard step runs the suite with the cache off: %s", strings.TrimSpace(line))
 		}
 		if !strings.Contains(line, "GOTEST_LDFLAGS=-ldflags=-w") {

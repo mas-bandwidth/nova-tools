@@ -43,27 +43,9 @@ type mergeDeletions struct {
 // readMergeDeletions compares HEAD's tree with its first parent's, through
 // the package's gitOut (issue2218.go: a bounded git in root).
 func readMergeDeletions(root string) (*mergeDeletions, error) {
-	raw, err := gitOut(root, "cat-file", "-p", "HEAD")
+	parent, err := firstParent(root)
 	if err != nil {
 		return nil, err
-	}
-	// The raw object, not `log --format=%P`: a shallow checkout grafts the
-	// parents away in traversal and keeps them in the object.
-	var parents []string
-	for _, line := range strings.Split(raw, "\n") {
-		if p, ok := strings.CutPrefix(line, "parent "); ok {
-			parents = append(parents, p)
-		}
-		if line == "" {
-			break
-		}
-	}
-	if len(parents) == 0 {
-		return nil, fmt.Errorf("HEAD has no parent: there is no merge to compare")
-	}
-	parent := parents[0]
-	if _, err := gitOut(root, "cat-file", "-e", parent+"^{commit}"); err != nil {
-		return nil, fmt.Errorf("HEAD's first parent %s is not in this checkout (a depth-1 fetch), so what the merge deleted cannot be read; every workflow checks out with fetch-depth: 2 for this rule", parent[:9])
 	}
 	head, err := gitOut(root, "rev-parse", "--short", "HEAD")
 	if err != nil {
@@ -92,6 +74,35 @@ func readMergeDeletions(root string) (*mergeDeletions, error) {
 		m.Declared[p] = why
 	}
 	return m, nil
+}
+
+// firstParent is HEAD's first parent, the merge-parent comparison's base: for a
+// pull request's merge ref and a merge-queue commit, dev's tip. It is read from
+// the raw commit object, not `log --format=%P`: a shallow checkout grafts the
+// parents away in traversal and keeps them in the object. The SLEEPS ledger
+// rule (unitwaits_class_test.go) compares against the same commit.
+func firstParent(root string) (string, error) {
+	raw, err := gitOut(root, "cat-file", "-p", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	var parents []string
+	for _, line := range strings.Split(raw, "\n") {
+		if p, ok := strings.CutPrefix(line, "parent "); ok {
+			parents = append(parents, p)
+		}
+		if line == "" {
+			break
+		}
+	}
+	if len(parents) == 0 {
+		return "", fmt.Errorf("HEAD has no parent: there is no merge to compare")
+	}
+	parent := parents[0]
+	if _, err := gitOut(root, "cat-file", "-e", parent+"^{commit}"); err != nil {
+		return "", fmt.Errorf("HEAD's first parent %s is not in this checkout (a depth-1 fetch), so what the merge changed cannot be read; every workflow checks out with fetch-depth: 2 for this rule", parent[:9])
+	}
+	return parent, nil
 }
 
 // declaredRowsAdded reads the `<path> <why>` rows a unified diff of the log

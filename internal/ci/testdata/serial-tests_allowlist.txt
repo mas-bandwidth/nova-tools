@@ -836,7 +836,7 @@ internal/update/issue2288_test.go:TestMovedEmptyDiffIsNotARefusal serial: t.Sete
 internal/update/issue2288_test.go:TestMovedIsBoundedByTheClock serial: t.Setenv
 internal/update/issue2288_test.go:TestMovedNeverInfersARename serial: t.Setenv
 internal/update/issue2288_test.go:TestMovedReadsTheBuildNeverAList serial: t.Setenv
-internal/update/join_test.go:TestJoinInterruptionNegativeControlWithoutKillFails serial: t.Setenv
+internal/update/process_functional_test.go:TestJoinInterruptionNegativeControlWithoutKillFails serial: t.Setenv
 internal/update/process_functional_test.go:TestJoinReporterDeathAfterRemoteConfirmationDoesNotPublishTwice serial: swaps package var update.jobMap, t.Setenv
 internal/update/process_functional_test.go:TestJoinReporterDeathWithPendingSavedFinishesTheSameReport serial: swaps package var update.jobMap, t.Setenv
 internal/update/process_functional_test.go:TestJoinTwoPhaseInterruptionPreservesIndexPrefixAndRecovers serial: t.Setenv

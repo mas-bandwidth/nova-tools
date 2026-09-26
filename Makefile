@@ -194,32 +194,24 @@ preflight:
 # THE UNIT TIER'S BUDGETS (Glenn 2026-09-26 11:20 AM ET, nova-tools#4328: "unit
 # tests be < 2s (ideally <1) but also they must not be so aggressive that they
 # fill a whole machine cores"): a package over 2 s or a top-level test over 1 s
-# is a CI-SLOW line and a red leg, unless internal/ci/slow-tests_allowlist.txt
-# names a higher budget for exactly that row, and every row there names the
-# time it was measured at and where (internal/ci:
+# is a CI-SLOW line unless internal/ci/slow-tests_allowlist.txt names a higher
+# budget for exactly that row, and every row there names the time it was
+# measured at and where, `<seconds>s@run<id>` or `@<bench>` (internal/ci:
 # TestSlowAllowlistRowsNameTheirMeasurement).
 #
-# A BUDGET FAILS A TEST FOR WHAT IT DOES, NEVER FOR A BUSY RUNNER: run
-# 36261817989 (PR #4409, 2026-09-26 14:15 ET) was red on all eight self-hosted
-# shards with no test failing, twelve cmd/nova-review and cmd/nova-bus tests at
-# 1.0-1.2 s that run near 0.9 s idle, on a Studio at load 16-18 of its 32 CPUs
-# (0.50-0.56 a CPU; four darwin runners and the children building beside
-# them). So slowtests reads the host's load average (the larger of its 1- and
-# 5-minute figures) over its CPUs, prints it as a CI-LOAD line, and above
-# --max-load-per-cpu 0.25 (half the 0.50 that already moved 0.9 s to 1.2 s)
-# prints every CI-SLOW line as measured and does not fail the leg on them.
-# What a test does stays red at any load: a failing test (the unit tier's
-# redis-server shim fails an unmocked redis), and a test skipped with the
-# SLEEPS marker that internal/ci/sleeps-skips_allowlist.txt does not name
-# (internal/ci: TestSleepsLedgerIsTheTreesSleepsSkips).
-#
-# SLOWTESTS_FLAGS is the whole slowtests invocation, so the push run over the
-# whole tree, which is not cut to these budgets yet, passes the old package
-# budget instead (ci.yml), with SLOWTESTS_ENFORCE=0: its CI-SLOW lines print
-# and do not fail the leg, as before. Everywhere else a CI-SLOW line fails the
-# target unless the CI-LOAD line says the box was over the gate.
-SLOWTESTS_FLAGS ?= --package-budget 2 --test-budget 1 --allowlist internal/ci/slow-tests_allowlist.txt --sleeps internal/ci/sleeps-skips_allowlist.txt --max-load-per-cpu 0.25
-SLOWTESTS_ENFORCE ?= 1
+# A BUDGET VERDICT IS THE SAME ON ANY MACHINE (Rowan's ruling on nova-tools#4413,
+# 2026-09-26). What is ENFORCED on every leg is static: no unit test waits on
+# the wall clock (internal/ci: TestNoUnitTestWaitsOnTheWallClock), and a test
+# skipped with the SLEEPS marker that internal/ci/sleeps-skips_allowlist.txt does
+# not name is a CI-SLEEPS line and exit 2 here, whatever SLOWTESTS_ENFORCE says.
+# The wall times are MEASUREMENTS: slowtests prints every CI-SLOW line and a
+# CI-LOAD line (the host's load, never read by the verdict) and exits 0 on
+# them, unless SLOWTESTS_ENFORCE=1 passes --enforce, which one caller does: the
+# nightly whole-tree run on the space legs (ci.yml, the test step's schedule
+# branch). SLOWTESTS_FLAGS is the whole slowtests invocation, so the push run
+# over the whole tree passes the old 60 s package budget instead (ci.yml).
+SLOWTESTS_FLAGS ?= --package-budget 2 --test-budget 1 --allowlist internal/ci/slow-tests_allowlist.txt --sleeps internal/ci/sleeps-skips_allowlist.txt
+SLOWTESTS_ENFORCE ?= 0
 #
 # GOTEST_P IS THE LEG'S CORES: `go test -p` (packages at once) and `-parallel`
 # (tests at once in a package) are both held to it, and ci.yml caps the leg's
@@ -253,7 +245,7 @@ GOTEST_LDFLAGS ?=
 GOTEST_TAGS ?=
 test: PKGS := $(CL_PKGS)
 test:
-	@bash -o pipefail -c 'GOFLAGS=-json $(GO) test $(GOTEST_COUNT_FLAG) $(PKGS) -p $(GOTEST_P) -parallel $(GOTEST_P) -tags=$(GOTEST_TAGS) $(GOTEST_LDFLAGS) -timeout $(GOTEST_TIMEOUT) | tee "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; status=$${PIPESTATUS[0]}; $(GO) run ./cmd/nova-ci slowtests $(SLOWTESTS_FLAGS) < "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json" || { [ "$(SLOWTESTS_ENFORCE)" != 1 ] || [ "$$status" -ne 0 ] || status=2; }; exit $$status'
+	@bash -o pipefail -c 'GOFLAGS=-json $(GO) test $(GOTEST_COUNT_FLAG) $(PKGS) -p $(GOTEST_P) -parallel $(GOTEST_P) -tags=$(GOTEST_TAGS) $(GOTEST_LDFLAGS) -timeout $(GOTEST_TIMEOUT) | tee "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; status=$${PIPESTATUS[0]}; $(GO) run ./cmd/nova-ci slowtests $(SLOWTESTS_FLAGS) $(if $(filter 1,$(SLOWTESTS_ENFORCE)),--enforce,) < "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json" || { [ "$$status" -ne 0 ] || status=2; }; exit $$status'
 
 # THE FUNCTIONAL TIER (nova-tools#4328; Glenn 2026-09-26 11:20 AM ET: "we should
 # run functional tests, not on every small PR being merged or worked on, but
@@ -333,11 +325,10 @@ measure-roadmap:
 # job, the friend sequences and the nova-work acceptance suite (run once, by
 # verify-roadmap, with the roadmap's verified criteria judged against it).
 # The stream lander's batch test lands a whole stream, so it runs the
-# functional tier too (#4328). Over the whole tree the unit budgets are
-# printed, not enforced (the tree is not cut to 2 s / 1 s yet); the target
-# variables ride into `test` as its prerequisite.
-check: SLOWTESTS_FLAGS := --budget 60
-check: SLOWTESTS_ENFORCE := 0
+# functional tier too (#4328). Over the whole tree the times are printed
+# against the old 60 s package budget and a SLEEPS skip off the ledger is red;
+# the target variables ride into `test` as its prerequisite.
+check: SLOWTESTS_FLAGS := --budget 60 --sleeps internal/ci/sleeps-skips_allowlist.txt
 check: build lint test test-functional test-e2e verify-roadmap
 
 # An explicit list, never a computed path: clean removes the two directories a

@@ -1188,30 +1188,6 @@ func twoPhaseAttempt(t *testing.T, attempt int) bool {
 	return true
 }
 
-// TestJoinInterruptionNegativeControlWithoutKillFails proves that the witness
-// strictly refuses an uninterrupted child completion: an observed boundary
-// without an actual live kill (killed-alive=false) fails the witness, proving
-// that an uninterrupted run cannot be reported as an interrupted recovery.
-func TestJoinInterruptionNegativeControlWithoutKillFails(t *testing.T) {
-	r := newReporter(t, "v1.2.3")
-	wrap, record := r.wrapperOnPath(t, killLostResult)
-	code, out, errs := r.send(t, wrap)
-	if code != 1 || !strings.Contains(errs+out, "sent=uncertain") {
-		t.Fatalf("negative control wrapper was not reported as failure: %d\n%s\n%s", code, out, errs)
-	}
-	b, err := os.ReadFile(record)
-	if err != nil {
-		t.Fatalf("wrapper left no record: %v", err)
-	}
-	receipt := parseStageRecord(string(b))
-	if !receipt.observed {
-		t.Fatalf("expected boundary observed=true, got %s", string(b))
-	}
-	if receipt.killedAlive {
-		t.Fatalf("negative control must not report killed-alive=true: %s", string(b))
-	}
-}
-
 // checkoutState dumps everything a person repairing the bus would ask for about
 // the checkout a killed attempt left behind. A witness that cannot be acted on
 // is not a witness.

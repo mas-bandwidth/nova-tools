@@ -4,57 +4,26 @@
 # over 1 s, or a package over 2 s, is a CI-SLOW line unless its row here names a
 # higher budget (Glenn 2026-09-26 11:20 AM ET: "unit tests be < 2s (ideally <1)").
 #
-# EVERY ROW NAMES ITS MEASUREMENT: the fourth column is the time the row was cut
-# from and where it was measured, and the budget sits between that time and three
-# times it (slowtests.MaxHeadroom); the reader refuses a row without one. The row
-# count may rise only by a row that names its measurement, and a test made fast
-# deletes its row (internal/ci: TestSlowAllowlistRowsNameTheirMeasurement).
+# A CI-SLOW LINE IS A MEASUREMENT ON EVERY LEG BUT ONE (Rowan's ruling on
+# nova-tools#4413, 2026-09-26: a budget verdict is the same on any machine). A pull
+# request, merge-group or push leg prints it and exits 0; only the nightly
+# whole-tree run on the space legs (ci.yml, the test step's schedule branch,
+# `make test SLOWTESTS_ENFORCE=1`) fails on it.
 #
-# @run36255893861: the CI-SLOW lines of PR #4345's runs from 36255893861 on (after
-# #4346, #4372), at the unit shape (two cores a leg), the slowest leg per row; the
-# budget is 1.5x that time at one decimal (Intel/darwin variance), so the measured
-# column is the budget over 1.5 at one decimal.
-# @run36262781720: PR #4399's run, 2026-09-26: cmd/nova-swarm 17-19 s as a package
-# (18-20 s on the Studio on dev 467c66459; 20.4 s at load 12, nice -n 15, -p 2),
-# cmd/nova-decide 2.6 s (2.2 s on the Studio). A 19 s package is not a unit
-# package: the row is its debt until it is cut under 2 s or its slow tests are
-# tagged functional. Budget 1.5x.
-# @studio-load12-2026-09-26: internal/update at 9.4 s on the Studio (load 12 to
-# 15 of 32 CPUs, nice -n 15, go test -p 2 -parallel 2, GOMAXPROCS=2, -count=1)
-# after its four staged-kill tests moved to process_functional_test.go. Budget 1.5x.
-cmd/nova-merge	-	33.6	22.4s@run36255893861
-cmd/nova-work	-	6.9	4.6s@run36255893861
-internal/ci	-	12.3	8.2s@run36255893861
-cmd/nova-merge	TestIssue2683	4.5	3.0s@run36255893861
-cmd/nova-merge	TestAHeldHeadIsDroppedFromABatchAndRefusedAtLand	3.3	2.2s@run36255893861
-cmd/nova-merge	TestAHoldInAnySourceStops	2.7	1.8s@run36255893861
-cmd/nova-merge	TestAnUntypedCommentFromAMayHoldLoginIsPending	2.6	1.7s@run36255893861
-cmd/nova-merge	TestBatchPreservesRealLaneReadHolds	2.4	1.6s@run36255893861
-cmd/nova-merge	TestUntypedCommentsIgnoreIsPerRunPrintedAndCarriesAReason	2.4	1.6s@run36255893861
-cmd/nova-merge	TestNoRequireHoldsWaivesTheForgeSourcesOnlyAndIsPrinted	2.3	1.5s@run36255893861
-cmd/nova-merge	TestRemovingMayHoldByCommitReleasesAndTheReceiptNamesTheCommit	2.1	1.4s@run36255893861
-cmd/nova-merge	TestReviewersXorNoRequireHolds	1.7	1.1s@run36255893861
-cmd/nova-merge	TestBatchOKCarriesHoldsDispositionsAndReviewers	1.5	1.0s@run36255893861
-cmd/nova-merge	TestNoRequireHoldsWithoutLaneRefuses	1.5	1.0s@run36255893861
-cmd/nova-work	TestSetCheckWriteStatusIsByteStable	2.4	1.6s@run36255893861
-internal/ci	TestEveryAllowlistIsReadThroughTheOneHelper	4.5	3.0s@run36255893861
-internal/ci	TestSharedRepoTreeSkipsTheGitDirectory	3.5	2.3s@run36255893861
-internal/ci	TestEveryNamedRepoPathExists	3.5	2.3s@run36255893861
-internal/docs	TestSpecCIIndexesEveryClassTest	2.3	1.5s@run36255893861
-internal/ci	TestNoFixedWaitsOnTheCIPath	2.1	1.4s@run36255893861
-cmd/nova-merge	TestSwarmMemberWithoutAcceptOKIsDropped	1.5	1.0s@run36255893861
-internal/ci	TestNoTestGlobsTheSharedTempDir	1.7	1.1s@run36255893861
-internal/nsprint/preflight	-	4.1	2.7s@run36255893861
-internal/nsprint/preflight	TestStoreChecksPrintEveryCheckAndUnreachableIsRed	3.6	2.4s@run36255893861
-cmd/nova-card	TestARefusalThatCannotBeKeptSaysSoOnStderr	2.7	1.8s@run36255893861
-internal/ci	TestNoWholeTreeGoTestInDocs	1.5	1.0s@run36255893861
-internal/ci	TestRemoveAllOnlyOnTempOrThroughSafepath	1.5	1.0s@run36255893861
-internal/nsprint/fleetbuild	-	3.3	2.2s@run36255893861
-internal/nsprint/fleetbuild	TestReleaseStepRefusalLetsTheRestRun	2.0	1.3s@run36255893861
-cmd/nova-sprint	-	3.3	2.2s@run36255893861
-internal/ci	TestNoTestSleepsOverASecondOrWaitsOutADeadlineOverFive	1.6	1.1s@run36255893861
-internal/ci	TestToolRunsInTestsWriteIntoATempDir	1.6	1.1s@run36255893861
-internal/ci	TestNoMergeDeletesATestFileUndeclared	2.4	1.6s@run36255893861
+# EVERY ROW NAMES ITS MEASUREMENT: the fourth column is the time the row was cut
+# from and where: `run<id>` (a CI run) or a bench (slowtests.Benches), never free
+# text; the budget sits between that time and three times it (slowtests.MaxHeadroom).
+# The reader refuses any other row (internal/ci: TestSlowAllowlistRowsNameTheirMeasurement).
+#
+# The 33 rows #4413 first carried at @run36255893861 were the budget divided by 1.5,
+# not measured, and are dropped; the first enforcing nightly run's raw times re-add
+# the ones still over, measured (a follow-up PR).
+# @run36262781720: PR #4399's run, 2026-09-26: cmd/nova-swarm 17-19 s as a package,
+# cmd/nova-decide 2.6 s. A 19 s package is not a unit package: the row is its debt
+# until it is cut under 2 s or its slow tests are tagged functional. Budget 1.5x.
+# @studio: internal/update at 9.4 s on the Studio (load 12 to 15 of 32 CPUs, nice -n
+# 15, go test -p 2 -parallel 2, GOMAXPROCS=2, -count=1, 2026-09-26) after its
+# staged-kill tests moved to process_functional_test.go. Budget 1.5x.
 cmd/nova-swarm	-	28.5	19s@run36262781720
 cmd/nova-decide	-	3.9	2.6s@run36262781720
-internal/update	-	14.1	9.4s@studio-load12-2026-09-26
+internal/update	-	14.1	9.4s@studio

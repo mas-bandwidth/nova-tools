@@ -13,10 +13,11 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"
 )
 
-// hostLoad reads this host's load average for the slowtests load gate: the
-// larger of the 1- and 5-minute figures, so a leg of up to two minutes is
-// judged by the busiest reading that covers it, over runtime.NumCPU (the
-// machine's logical CPUs, not the leg's GOMAXPROCS).
+// hostLoad reads this host's load average for the CI-LOAD line slowtests
+// prints beside the times: the larger of the 1- and 5-minute figures, so a leg
+// of up to two minutes is described by the busiest reading that covers it,
+// over runtime.NumCPU (the machine's logical CPUs, not the leg's GOMAXPROCS).
+// It is a measurement; no verdict reads it.
 func hostLoad() slowtests.Load {
 	return loadFrom(runtime.GOOS, runtime.NumCPU(), readLoadAvg)
 }
@@ -45,8 +46,8 @@ func readLoadAvg(goos string) (string, error) {
 }
 
 // loadFrom is hostLoad with the read handed in: a read that fails, or a
-// figure that does not parse, is Known=false with the reason, and the gate
-// then enforces no time budget (slowtests.Load.Enforced).
+// figure that does not parse, is Known=false with the reason, and the CI-LOAD
+// line says so.
 func loadFrom(goos string, cpus int, read func(goos string) (string, error)) slowtests.Load {
 	load := slowtests.Load{CPUs: cpus}
 	raw, err := read(goos)

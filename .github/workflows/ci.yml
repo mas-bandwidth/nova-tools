@@ -332,8 +332,8 @@ jobs:
     # packages run on the darwin-x64 shards only. On pull_request and merge_group it
     # selects only the packages the change touches and their in-module
     # importers; the push to dev and the nightly run keep the whole tree.
-    # It runs on the nightly schedule too, for the `functional` job's list only
-    # (the unit `test` job keeps its own schedule guard).
+    # It runs on the nightly schedule too, for the `functional` job's list and
+    # for the unit `test` job's nightly space shards (#4413).
     if: vars.NOVA_CI_CARDS != 'on' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, space]
     timeout-minutes: 2
@@ -636,6 +636,14 @@ jobs:
           s=0
           st=0
           for pkg in "${all[@]}"; do
+            # THE NIGHTLY REFERENCE LEG IS SPACE ONLY (#4413): on schedule every
+            # package runs on the Linux space shards, where the unit budgets are
+            # enforced, and the darwin-only packages have no leg that night (the
+            # push to dev and certification carry them).
+            if [ "${{ github.event_name }}" = "schedule" ]; then
+              is_darwin_only "$pkg" && continue
+              space_grp[$((s % SPACE_SHARDS))]+=" $pkg"; s=$((s + 1)); continue
+            fi
             if { [ "${{ github.event_name }}" = "merge_group" ] || { [ "${{ github.event_name }}" = "pull_request" ] && ! needs_darwin "$pkg"; }; } && ! is_darwin_only "$pkg"; then
               space_grp[$((s % SPACE_SHARDS))]+=" $pkg"; s=$((s + 1)); continue
             fi
@@ -681,9 +689,15 @@ jobs:
     # carry the packages the change touched, not the whole tree; a change that
     # touched no Go package gets one leg with an empty package list that prints
     # and exits 0.
+    # ON SCHEDULE TOO, SINCE #4413: the nightly whole-tree run on the space
+    # legs is the one place a unit wall-time budget is ENFORCED (the test
+    # step's schedule branch passes SLOWTESTS_ENFORCE=1); test-packages deals
+    # the schedule's tree onto space only. A red schedule run blocks nothing
+    # (ci-ok does not run on schedule, revert-on-red reads pushes only): it is
+    # evidence, and its raw times are what an allowlist row is measured from.
     name: test (${{ matrix.entry.name }})
     needs: test-packages
-    if: vars.NOVA_CI_CARDS != 'on' && (github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository))
+    if: vars.NOVA_CI_CARDS != 'on' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     strategy:
       fail-fast: false
       matrix:
@@ -961,19 +975,23 @@ jobs:
         # They run in full on the same PR's Linux leg, on every push to dev (8 Studio shards) and in the merge group.
         # Not a global -short: that would also skip internal/bus's multi-process tests, the darwin evidence this leg is for.
         # SLOWTESTS_FLAGS: the Makefile's default is the unit tier's 2 s package
-        # and 1 s test budgets with internal/ci/slow-tests_allowlist.txt. A
-        # push or a manual run tests the WHOLE tree, which is not cut to those
-        # budgets yet, so it keeps the old 60 s package budget, printed and not
-        # enforced as before, with the SLEEPS ledger so its log names only a
-        # new SLEEPS skip; a push to dev is almost always proved by its
-        # merge-group run above and runs nothing. On a pull request and in the
-        # merge group the Makefile's flags also carry --max-load-per-cpu 0.25:
-        # over that load a CI-SLOW line is printed with a CI-LOAD line and does
-        # not fail the leg (run 36261817989: eight red shards, no red test, the
-        # Studio at load 16-18 of 32 CPUs).
+        # and 1 s test budgets with internal/ci/slow-tests_allowlist.txt and
+        # the SLEEPS ledger. A push or a manual run tests the WHOLE tree and
+        # keeps the old 60 s package budget with the ledger; a push to dev is
+        # almost always proved by its merge-group run above and runs nothing.
+        # THE VERDICT IS THE SAME ON ANY MACHINE (#4413): on every leg the
+        # CI-SLOW lines and a CI-LOAD line are printed and exit 0, and a
+        # CI-SLEEPS line (a SLEEPS skip off the ledger) is exit 2, the push leg
+        # included. The one leg that fails on a CI-SLOW line is the schedule
+        # branch below, the nightly whole tree on the space shards, with
+        # SLOWTESTS_ENFORCE=1. It is not test-hosted's ubuntu leg (a fresh VM,
+        # idle by construction): that job runs `make test-short`, whose -short
+        # skips are not the unit tier the budgets describe, on a two-core hosted
+        # runner no pull request leg runs on.
         env:
           NOVA_CI_PR_STUDIO: ${{ matrix.entry.group == 'macOS' && github.event_name == 'pull_request' && '1' || '' }}
           WHOLE_TREE_SLOWTESTS: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && '--budget 60 --sleeps internal/ci/sleeps-skips_allowlist.txt' || '' }}
+          NIGHTLY_ENFORCE: ${{ github.event_name == 'schedule' && matrix.entry.group == 'space' && '1' || '0' }}
         # GOTEST_COUNT_FLAG= turns Go's test cache on (Makefile): a shard whose
         # packages did not change since the last run on this machine is
         # served from the cache instead of recompiled and re-executed.
@@ -982,7 +1000,11 @@ jobs:
         run: |
           [ "$(command -v redis-server)" = "$RUNNER_TEMP/unit-tier-bin/redis-server" ] || { echo "unit tier: redis-server on PATH is $(command -v redis-server), not the refusing shim"; exit 1; }
           if [ -n "$WHOLE_TREE_SLOWTESTS" ]; then
-            make test PKGS="${{ matrix.entry.packages }}" GOTEST_TIMEOUT="110s" GOTEST_COUNT_FLAG= GOTEST_LDFLAGS=-ldflags=-w SLOWTESTS_FLAGS="$WHOLE_TREE_SLOWTESTS" SLOWTESTS_ENFORCE=0
+            make test PKGS="${{ matrix.entry.packages }}" GOTEST_TIMEOUT="110s" GOTEST_COUNT_FLAG= GOTEST_LDFLAGS=-ldflags=-w SLOWTESTS_FLAGS="$WHOLE_TREE_SLOWTESTS"
+          elif [ "$NIGHTLY_ENFORCE" = 1 ]; then
+            # The nightly reference leg: -count=1, so every time is a run and
+            # none a cached pass, and the budgets enforced.
+            make test PKGS="${{ matrix.entry.packages }}" GOTEST_TIMEOUT="110s" GOTEST_COUNT_FLAG=-count=1 GOTEST_LDFLAGS=-ldflags=-w SLOWTESTS_ENFORCE=1
           else
             make test PKGS="${{ matrix.entry.packages }}" GOTEST_TIMEOUT="110s" GOTEST_COUNT_FLAG= GOTEST_LDFLAGS=-ldflags=-w
           fi
