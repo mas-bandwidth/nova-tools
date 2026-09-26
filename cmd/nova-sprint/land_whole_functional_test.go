@@ -130,7 +130,7 @@ func lrFixture(t *testing.T, check string) (addr string, c *redis.Client, url, b
 	for n, at := range map[int]float64{1: 200, 2: 300, 3: 100} {
 		id := fmt.Sprintf("t%d", n)
 		c.ZAdd(ctx, "ws:"+lsStream+":merging", redis.Z{Score: at, Member: id})
-		c.HSet(ctx, "task:"+id, "stream", lsStream, "state", "merging", "pr", fmt.Sprint(n))
+		c.HSet(ctx, "task:"+id, "stream", lsStream, "state", "merging", "pr", fmt.Sprint(n), "ref", lsOrderRef[n]) // #2, red, last in the work order
 		if code, out, errOut := runSprint("pr", "record", "--redis", addr, "--repo", lsRepo, "--n", fmt.Sprint(n),
 			"--head", heads[n], "--base", "dev", "--stream", lsStream, "--task", id); code != 0 {
 			t.Fatalf("pr record: %d %s %s", code, out, errOut)

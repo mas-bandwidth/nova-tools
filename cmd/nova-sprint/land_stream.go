@@ -183,6 +183,9 @@ func runLandStream(ctx context.Context, args []string, out, errOut io.Writer) in
 	for _, s := range rep.Skips {
 		fmt.Fprintf(out, "SKIP task=%s pr=#%d why=%s\n", s.Task, s.N, oneline.Field(s.Why))
 	}
+	for _, h := range rep.Order {
+		fmt.Fprintln(out, h.Line()) // ORDER WAIT | ORDER CONFLICT (the work order gate)
+	}
 	if err != nil {
 		return landExit(errOut, verb, err)
 	}

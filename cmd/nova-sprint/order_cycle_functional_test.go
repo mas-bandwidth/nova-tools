@@ -439,3 +439,48 @@ func TestQuackCutProbesTheReorderGrant(t *testing.T) {
 	t.Logf("quack cut, granted: exit %d, %s; wall %s", code, strings.ReplaceAll(strings.TrimSpace(out.String()), "\n", " | "),
 		time.Since(start).Round(time.Millisecond))
 }
+
+// TestRenameRefusedOnTheThirdTaskMovesNothing is the #4410 fix round 4
+// dry pass: ns_ws_rename checks every task's move (TK.move with o.dry)
+// before the first write, so a refusal on the third of four tasks (a record
+// whose where field drifted from its set, seeded by hand) is REFUSED with
+// nothing moved: keys, ws:log and every ZSET unchanged, both names as
+// before. Without the dry pass the first two tasks move under the new name
+// before the refusal.
+func TestRenameRefusedOnTheThirdTaskMovesNothing(t *testing.T) {
+	t.Parallel()
+	start := time.Now()
+	addr, c := wstest.Start(t)
+	ctx := context.Background()
+	const a, b = "rd: a", "rd: b"
+	for _, id := range []string{"r1", "r2", "r3", "r4"} {
+		if code, out, errOut := runSprint("task", "push", "--redis", addr, "--actor", "rowan", "--id", id, "--stream", a,
+			"--kind", "build", "--title", id); code != 0 {
+			t.Fatalf("push %s: %d %q %q", id, code, out, errOut)
+		}
+	}
+	var tasks []string
+	for _, w := range []string{"waiting", "ready"} {
+		for _, id := range c.ZRange(ctx, ws.Key(a, w), 0, -1).Val() {
+			if !strings.HasSuffix(id, ":sentinel") {
+				tasks = append(tasks, w+":"+id)
+			}
+		}
+	}
+	if len(tasks) != 4 {
+		t.Fatalf("tasks %v", tasks)
+	}
+	third := strings.SplitN(tasks[2], ":", 2)
+	other := map[string]string{"ready": "waiting", "waiting": "ready"}[third[0]]
+	c.HSet(ctx, "task:"+third[1], "where", other, "state", other) // the drift: its record says another set
+	before := storeSnapshot(t, c)
+	code, out, errOut := runSprint("stream", "rename", "--redis", addr, a, b)
+	if code == 0 || !strings.Contains(out+errOut, "REFUSED DRIFT") || !strings.Contains(out+errOut, "task:"+third[1]) {
+		t.Fatalf("rename with a drifted third task: %d %q %q", code, out, errOut)
+	}
+	if after := storeSnapshot(t, c); after != before {
+		t.Fatalf("the refused rename wrote:\n%s---\n%s", before, after)
+	}
+	t.Logf("tasks in move order %v, third %s drifted; %s; store unchanged; wall %s", tasks, third[1],
+		strings.TrimSpace(out+errOut), time.Since(start).Round(time.Millisecond))
+}

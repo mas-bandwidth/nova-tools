@@ -259,27 +259,52 @@ local function ws_rename(keys, args)
   -- new name's stop then lands at the same sha); the new name's sentinel is
   -- created as the first move registers the stream. With the same slug the
   -- one stop moves with its stream.
+  -- (the same slug's stop is the new name's before the moves check it; a
+  -- refused dry pass puts the old value back, so nothing is written)
+  local slug_was = nil
   if same_slug then
+    slug_was = redis.call('GET', 'ws:slug:' .. NS.task.slug(new))
     redis.call('SET', 'ws:slug:' .. NS.task.slug(new), new)
   end
   local n, landed_sha = 0, nil
   local why_new = 'rename: stream ' .. old .. ' is ' .. new .. '; its sentinel is ' .. NS.task.sentinel_id(new)
+  -- step(id, state, dry): one task's move under the new name; with dry it
+  -- writes nothing (TK.move's o.dry) and returns the refusal it would.
+  local function step(id, state, dry)
+    if NS.task.is_sentinel(id) and not same_slug and (state == 'waiting' or state == 'parked') then
+      return NS.task.move(id, 'done', { by = by, ok = 'fail', stream = new, rename = true, why = why_new, dry = dry })
+    elseif NS.task.is_sentinel(id) and not same_slug and state == 'landed' then
+      if not dry then landed_sha = redis.call('HGET', 'task:' .. id, 'merge_sha') end
+      return NS.task.move(id, 'done', { by = by, ok = 'ok', stream = new, rename = true, why = why_new, dry = dry })
+    end
+    return NS.task.move(id, state, { by = by, why = 'rename', stream = new, rename = true, dry = dry })
+  end
+  -- Every move is checked (dry) before the first write: the moves go one
+  -- task at a time, so a refusal after a write would leave the stream
+  -- split across both names.
+  local plan = {}
   for _, state in ipairs(W.WHERE) do
     for _, id in ipairs(redis.call('ZRANGE', W.key(old, state), 0, -1)) do
-      local err
-      if NS.task.is_sentinel(id) and not same_slug and (state == 'waiting' or state == 'parked') then
-        err = NS.task.move(id, 'done', { by = by, ok = 'fail', stream = new, rename = true, why = why_new })
-      elseif NS.task.is_sentinel(id) and not same_slug and state == 'landed' then
-        landed_sha = redis.call('HGET', 'task:' .. id, 'merge_sha')
-        err = NS.task.move(id, 'done', { by = by, ok = 'ok', stream = new, rename = true, why = why_new })
-      else
-        err = NS.task.move(id, state, { by = by, why = 'rename', stream = new, rename = true })
-      end
+      local err = step(id, state, true)
       if err then
+        if same_slug then
+          if slug_was then
+            redis.call('SET', 'ws:slug:' .. NS.task.slug(new), slug_was)
+          else
+            redis.call('DEL', 'ws:slug:' .. NS.task.slug(new))
+          end
+        end
         return { 'REFUSED', err }
       end
-      if not NS.task.is_sentinel(id) then n = n + 1 end
+      plan[#plan + 1] = { id, state }
     end
+  end
+  for _, p in ipairs(plan) do
+    local err = step(p[1], p[2], false)
+    if err then
+      return { 'REFUSED', err }
+    end
+    if not NS.task.is_sentinel(p[1]) then n = n + 1 end
   end
   if landed_sha and landed_sha ~= '' then
     local nsid = NS.task.sentinel_id(new)

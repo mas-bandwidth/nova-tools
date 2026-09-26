@@ -74,6 +74,9 @@ type Report struct {
 	ParkedMoved         int
 	Workdir             string
 	TestCmd             string
+	// Order is the work order gate's lines (OrderGate): one per stream
+	// whose members it held back, ORDER WAIT or ORDER CONFLICT.
+	Order []OrderHold
 }
 
 // DefaultBranch is the stream branch for the slug.
@@ -109,6 +112,14 @@ func LandStream(ctx context.Context, c Client, o Options) (Report, error) {
 	if err != nil {
 		return rep, err
 	}
+	// The work order gate: the members are a prefix of each stream's whole
+	// live order, never the merging set's alone (OrderGate).
+	var held []Skip
+	rep.Members, held, rep.Order, err = OrderGate(ctx, c, o.Streams, rep.Members, rep.Skips)
+	if err != nil {
+		return rep, err
+	}
+	rep.Skips = append(rep.Skips, held...)
 	test := o.Test
 	if test == "" {
 		test = cfg.Test
@@ -377,6 +388,15 @@ func Merge(ctx context.Context, c Client, o MergeOptions) (MergeReport, error) {
 			return rep, &Refusal{Why: fmt.Sprintf("ci=%s on %s#%d at %s, not green", orDash(r.CI), o.Repo, l.PR, short(l.Head)), Remedy: prCmd + " --ci green once CI passes"}
 		case !r.MergeableOK():
 			return rep, &Refusal{Why: fmt.Sprintf("mergeable=%s on %s#%d", orDash(r.Mergeable), o.Repo, l.PR), Remedy: prCmd + " --mergeable true"}
+		}
+		// The work order again, immediately before the merge: a card that
+		// moved ahead of the landing's members since land stream selected
+		// them (a push, a DEPENDS-ON edit, a restart) refuses the merge,
+		// nothing merged and nothing reordered.
+		if _, _, holds, err := OrderGate(ctx, c, o.Streams, l.Members, nil); err != nil {
+			return rep, err
+		} else if len(holds) > 0 {
+			return rep, orderRefusal(holds[0])
 		}
 		if o.GH == nil {
 			return rep, &Refusal{Why: "no GitHub client", Remedy: "set GH_TOKEN"}
