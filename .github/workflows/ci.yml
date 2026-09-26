@@ -772,12 +772,36 @@ jobs:
       # No separate `build` step either: `go vet` and `go test` both compile
       # what they are given, so building first was a third compile of the same
       # packages. The whole-tree `go build ./...` still runs once, in lint.
+      # A push to dev is the merge queue's own merge commit almost every time,
+      # and the queue already ran this workflow on that exact sha as a
+      # merge_group (its head_sha is the commit that lands). Running the shards
+      # a third time on the same tree proves nothing and costs a full run on
+      # every machine (Glenn 2026-09-26 9:42 AM ET: "We aren't doing anything
+      # that should be this heavy in CPU use"). The step asks the API for a
+      # successful merge_group run of this sha; when one exists, vet and test
+      # are skipped and the job passes on that evidence. A direct push to dev
+      # has no such run and runs in full. Any API trouble reads as "not
+      # proved", never as a skip.
+      - name: proved by the merge-group run of this sha
+        id: proved
+        if: matrix.entry.packages != '' && github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          n=$(curl -sS --max-time 20 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/${{ github.repository }}/actions/runs?event=merge_group&head_sha=${{ github.sha }}&status=success&per_page=1" \
+              | grep -o '"total_count": *[0-9]*' | grep -o '[0-9]*$' || echo 0)
+          proved=false
+          [ "${n:-0}" -gt 0 ] 2>/dev/null && proved=true
+          echo "proved=$proved" >> "$GITHUB_OUTPUT"
+          echo "PROVED sha=${{ github.sha }} merge_group_runs=${n:-0} proved=$proved"
+
       - name: vet
-        if: matrix.entry.packages != ''
+        if: matrix.entry.packages != '' && steps.proved.outputs.proved != 'true'
         run: make vet PKGS="${{ matrix.entry.packages }}"
 
       - name: install redis-server
-        if: matrix.entry.packages != ''
+        if: matrix.entry.packages != '' && steps.proved.outputs.proved != 'true'
         # #3113. The controls spawn a throwaway redis-server. Self-hosted rows
         # (Studio, hulk) also get the binary from rowan-tools fleet/bench.yml;
         # this step is what a runner has before that playbook has converged,
@@ -785,7 +809,7 @@ jobs:
         run: bash .github/scripts/install-redis-server.sh
 
       - name: test
-        if: matrix.entry.packages != ''
+        if: matrix.entry.packages != '' && steps.proved.outputs.proved != 'true'
         # The default bash flags on a `run:` step are `-eo pipefail`, so a
         # failing `go test` already stops the step at the pipe, before
         # slowtests runs; the budget check only ever sees a green stream. The

@@ -558,3 +558,25 @@ func TestShardsUseTheGoTestCache(t *testing.T) {
 		t.Fatal("the Makefile's test target does not take GOTEST_COUNT_FLAG (-count=1 by hand, empty in CI)")
 	}
 }
+
+// TestPushOfAProvedShaSkipsTheShards (Glenn 2026-09-26 9:42 AM ET): a push
+// to dev that is the merge queue's own merge commit was already proved by
+// the merge_group run of that sha; the test job asks the API for that run
+// and skips vet and test when it exists. The step never skips on API
+// trouble (a missing count reads as 0).
+func TestPushOfAProvedShaSkipsTheShards(t *testing.T) {
+	t.Parallel()
+	job := jobBody(readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml")), "test")
+	for _, want := range []string{
+		"id: proved",
+		"github.event_name == 'push'",
+		"event=merge_group&head_sha=${{ github.sha }}&status=success",
+		"|| echo 0",
+		"- name: vet\n        if: matrix.entry.packages != '' && steps.proved.outputs.proved != 'true'",
+		"- name: test\n        if: matrix.entry.packages != '' && steps.proved.outputs.proved != 'true'",
+	} {
+		if !strings.Contains(job, want) {
+			t.Errorf("the test job lacks %q", want)
+		}
+	}
+}
