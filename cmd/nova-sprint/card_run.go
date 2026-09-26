@@ -145,9 +145,9 @@ func cardFlagAllowed(sub, name string) bool {
 	return false
 }
 
-// cardUsage is the attempt form's refusal (exit 1): detail, then the card
-// path's usage from the one table.
+// cardUsage is the attempt form's usage refusal: detail, then the card
+// path's usage from the one table, exit 2 as every other path's (#4399
+// round 5: card run and card launched exited 1 on an unknown flag).
 func cardUsage(stderr io.Writer, verb, detail string) int {
-	fmt.Fprintln(stderr, verbflag.Refusal(verb, detail))
-	return 1
+	return refuse(stderr, verb, detail)
 }

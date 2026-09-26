@@ -18,6 +18,7 @@ import (
 )
 
 func TestRead4399IDsFileCommentThroughTheOneParse(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "ids")
 	if err := os.WriteFile(path, []byte("a b\n# comment\nc,a  # trailing\n\n"), 0o644); err != nil {
 		t.Fatal(err)

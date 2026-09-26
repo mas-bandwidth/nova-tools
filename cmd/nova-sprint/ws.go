@@ -14,7 +14,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -32,9 +31,6 @@ func init() {
 	register(Verb{Name: "scope", Summary: "keep, park, unpark or list the streams in the sprint's scope", Run: runScope})
 	register(Verb{Name: "stream", Summary: "list, order or rename the work streams; open, rebase, pr, status or close a stream branch", Run: runStream})
 }
-
-// wsStdin is what `--ids @-` reads; a test replaces it.
-var wsStdin io.Reader = os.Stdin
 
 // wsCmd is one ws/scope/stream subverb's parsed common flags and its store.
 type wsCmd struct {
@@ -391,12 +387,11 @@ func runScopePark(ctx context.Context, args []string, out, errOut io.Writer) int
 	if *stream == "" {
 		return refuse(errOut, w.name, "--stream <s> is required")
 	}
+	// --ids is resolved by the one Parse (@file, @-, comments, duplicates:
+	// verbflag.ResolveIDs), never read again here (#4399 round 5).
 	var ids []string
 	if *idsArg != "" {
-		var err error
-		if ids, err = ws.ReadIDs(*idsArg, wsStdin); err != nil {
-			return refuse(errOut, w.name, err.Error())
-		}
+		ids = verbflag.List(*idsArg)
 	}
 	st, code, ok := w.open(ctx)
 	if !ok {

@@ -412,14 +412,20 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 			// A code copy's ok with a PR is held to its spec first
 			// (#4313): this door has no checkout, so it names the ones
 			// that run the gate (nova-tools#4401 read, DOORS).
-			if *c.pr != "" && cl.HGet(ctx, taskcard.Key(c.id), "leg").Val() != "read" {
+			leg, err := cardField(ctx, cl, c.id, "leg")
+			if err != nil {
+				return refuse(errOut, c.verb, err.Error())
+			}
+			if *c.pr != "" && leg != "read" {
 				return refused(&taskcard.Refused{Why: card.GateNoTest + " task done --pr of a code copy skips the spec gate: nova-sprint friend done --as friend:<f> --ids " + c.id +
 					" --ok --pr <repo>#<n> --head <sha> --checkout <your checkout at that head> [--test <finding test>] runs it before the end"})
 			}
 			r := taskcard.EndRequest{IDs: []string{c.id}, OK: true, PR: *c.pr, Head: *c.head, By: c.actor,
 				Fields: []string{"evidence", *c.evidence}}
 			if *c.pr != "" {
-				r.Repo = cl.HGet(ctx, taskcard.Key(c.id), "repo").Val()
+				if r.Repo, err = cardField(ctx, cl, c.id, "repo"); err != nil {
+					return refuse(errOut, c.verb, "--pr "+*c.pr+" of "+c.id+": "+err.Error())
+				}
 			}
 			e, err := taskcard.End(ctx, cl, r)
 			if err != nil {

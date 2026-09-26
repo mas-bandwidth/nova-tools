@@ -327,6 +327,7 @@ func runFriendDone(ctx context.Context, args []string, out, errOut io.Writer) in
 	doneAlready := fs.String("done-already", "", "the sha the work was already done at (with --ok)")
 	branch := fs.String("branch", "", "the PR's branch when it is not the brief's (with --pr)")
 	repoDir := fs.String("checkout", "", "the checkout at --head the spec gate runs in (with --ok --pr)")
+	fs.Spelled("repo", "checkout") // the checkout was --repo <dir> (#4399 round 5): the refusal names --checkout
 	findingTest := fs.String("test", "", "a fix copy's finding test, '<package> <TestName>' (with --ok --pr)")
 	score := fs.String("score", "", "a read's score, N/10")
 	gates := fs.String("gates", "", "a read's gates, ci:<green|red>,base:<ok|behind>,scope:<ok|over> (with --score)")

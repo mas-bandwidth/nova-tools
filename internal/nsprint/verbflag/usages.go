@@ -85,7 +85,7 @@ var Usages = map[string]Usage{
 	"ci dispose": {Forms: []string{"--repo <r> --sha <sha> --disposition <d> [--url <u>]"}, Examples: []string{"ci dispose --repo nova-tools --sha dcd918e6d --disposition flaky"}},
 	"ci parity":  {Forms: []string{"--sprint <S> [--min <n>]"}, Examples: []string{"ci parity --sprint quack-0926"}},
 
-	"consume list":              {Examples: []string{"consume list"}, NoFlags: true},
+	"consume list":              {Forms: []string{""}, Examples: []string{"consume list"}}, // no flags of its own, and no [flags]
 	"consume ok-to-friend once": {Forms: []string{"[--as <consumer>]"}, Examples: []string{"consume ok-to-friend once"}},
 	"consume ok-to-friend run":  {Forms: []string{"[--as <consumer>] [--every <d>]"}, Examples: []string{"consume ok-to-friend run --every 1s"}},
 	"consume pr-to-read once":   {Forms: []string{"--sprint <S> [--as <consumer>]"}, Examples: []string{"consume pr-to-read once --sprint quack-0926"}},

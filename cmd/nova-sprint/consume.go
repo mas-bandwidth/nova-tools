@@ -75,6 +75,16 @@ func runConsume(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 	group := args[0]
 	if group == "list" {
+		// its own flag set, with no flags: -h prints its usage and a flag
+		// nobody spells is refused like every other path (#4399 round 5:
+		// `consume list --zz-bogus` exited 0)
+		fs := verbflag.New("consume list")
+		if err := fs.Parse(args[1:]); err != nil {
+			return refuse(errOut, "consume list", err.Error())
+		}
+		if fs.NArg() > 0 {
+			return refuse(errOut, "consume list", "takes no arguments")
+		}
 		fmt.Fprintf(out, "%s duty=reconcile verb=consume proc=proc:%s\n", consume.GroupOkFriend, consume.GroupOkFriend)
 		fmt.Fprintf(out, "%s duty=reconcile,route verb=consume-once proc=proc:%s\n", groupPRToRead, groupPRToRead)
 		fmt.Fprintf(out, "%s duty=reconcile,route verb=consume-once proc=proc:%s needs=fix_to,release_reader\n", groupHoldToFix, groupHoldToFix)

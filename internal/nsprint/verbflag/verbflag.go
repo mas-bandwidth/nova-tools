@@ -217,15 +217,30 @@ func (s *Set) resolveIDs() error {
 
 // ResolveIDs is THE --ids input (HelpIDs): a comma list whose items are ids,
 // @<file> (the file's ids, one per line, or split by spaces or commas) or
-// @- (the same from stdin), in order, empty items dropped.
+// @- (the same from stdin), in order, empty items dropped. In the list and
+// in every file, '#' to the end of a line is a comment, and a duplicate is
+// dropped with the first occurrence kept, so the order is the input's: the
+// form ws.ReadIDs read before it delegated here (#4399 round 5: the one
+// Parse expanded @file before ws.ReadIDs saw it, and a comment line's words
+// became ids; ReadIDs then cut the joined list at the first '#', so
+// `scope park --ids @file` with "a b / # comment / c" parked a and b only).
 func ResolveIDs(v string, stdin io.Reader) ([]string, error) {
 	var out []string
-	split := func(text string) {
-		for _, id := range strings.FieldsFunc(text, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' || r == '\r' }) {
+	seen := map[string]bool{}
+	add := func(id string) {
+		if !seen[id] {
+			seen[id] = true
 			out = append(out, id)
 		}
 	}
-	for _, item := range List(v) {
+	split := func(text string) {
+		for _, line := range strings.Split(uncomment(text), "\n") {
+			for _, id := range strings.FieldsFunc(line, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\r' }) {
+				add(id)
+			}
+		}
+	}
+	for _, item := range List(uncomment(v)) {
 		switch {
 		case item == "@-":
 			if stdin == nil {
@@ -243,13 +258,27 @@ func ResolveIDs(v string, stdin io.Reader) ([]string, error) {
 			}
 			split(string(b))
 		default:
-			out = append(out, item)
+			add(item)
 		}
 	}
 	if len(out) == 0 {
 		return nil, fmt.Errorf("--ids %s names no id", v)
 	}
 	return out, nil
+}
+
+// uncomment is text with every line cut at its first '#'.
+func uncomment(text string) string {
+	if !strings.Contains(text, "#") {
+		return text
+	}
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if j := strings.IndexByte(line, '#'); j >= 0 {
+			lines[i] = line[:j]
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // RetiredError is Parse's refusal of a retired spelling: the new spelling

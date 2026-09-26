@@ -205,3 +205,31 @@ func TestResolveIDsIsTheOneIDInput(t *testing.T) {
 		t.Fatalf("an empty stdin: %v", err)
 	}
 }
+
+// TestResolveIDsReadsCommentsAndDuplicatesAsReadIDsDid (#4399 round 5):
+// through Parse, an ids file's '#' comments (a whole line, a trailing one)
+// are dropped and a duplicate is kept once at its first place, the form
+// ws.ReadIDs read on dev; the inline list is read the same way.
+func TestResolveIDsReadsCommentsAndDuplicatesAsReadIDsDid(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "ids")
+	if err := os.WriteFile(path, []byte("a b\n# comment\nc,a  # trailing\n\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fs := New("scope park")
+	ids := fs.String("ids", "", HelpIDs)
+	if err := fs.Parse([]string{"--ids", "@" + path}); err != nil || *ids != "a,b,c" {
+		t.Fatalf("--ids @file read %q (%v), want a,b,c", *ids, err)
+	}
+	got, err := ResolveIDs("@-", strings.NewReader("x\n# y\nx z\n"))
+	if err != nil || strings.Join(got, ",") != "x,z" {
+		t.Fatalf("stdin read %v (%v), want x,z", got, err)
+	}
+	got, err = ResolveIDs("p,q,p # r", nil)
+	if err != nil || strings.Join(got, ",") != "p,q" {
+		t.Fatalf("inline read %v (%v), want p,q", got, err)
+	}
+	if _, err := ResolveIDs("@-", strings.NewReader("# only a comment\n")); err == nil || !strings.Contains(err.Error(), "names no id") {
+		t.Fatalf("a file of comments: %v", err)
+	}
+}

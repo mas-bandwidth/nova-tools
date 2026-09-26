@@ -58,7 +58,7 @@ func doorPlan(t *testing.T, addr string, c *redis.Client, p, s string, n int, he
 	if err := os.WriteFile(tsv, []byte("id\ttitle\tpaths\tdone-when\tbody\ttest\n"+p+"-c\tone\ta.go\tholds\t"+cutInv+"\t./x TestOne\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if code, out, errOut := runSprint("card", "cut", "--parent", p, "--from", tsv, "--no-github", "--actor", "rowan", "--redis", addr); code != 0 {
+	if code, out, errOut := runSprint("card", "cut", "--parent", p, "--from", tsv, "--no-github", "--redis", addr); code != 0 {
 		t.Fatalf("cut %s exit %d:\n%s%s", p, code, out, errOut)
 	}
 	if _, err := taskcard.Move(ctx, c, p+"-c", "ready", taskcard.Opts{By: "rowan", Why: "test"}); err != nil {
@@ -87,7 +87,7 @@ func doorPlan(t *testing.T, addr string, c *redis.Client, p, s string, n int, he
 		if _, err := taskcard.Take(ctx, c, "emma", 1, "emma", st); err != nil {
 			t.Fatalf("take %s: %v", st, err)
 		}
-		if code, out, errOut := runSprint("task", "done", "--id", st, "--actor", "emma", "--evidence", "stitched",
+		if code, out, errOut := runSprint("task", "done", "--ids", st, "--as", "friend:emma", "--evidence", "stitched",
 			"--pr", strconv.Itoa(n), "--redis", addr); code != 0 || !strings.Contains(out, "TASK done id="+st+" from=working to=merging ms=") {
 			t.Fatalf("task done --pr (exit %d):\n%s%s", code, out, errOut)
 		}
@@ -102,11 +102,11 @@ func doorPlan(t *testing.T, addr string, c *redis.Client, p, s string, n int, he
 			}
 			return out
 		}
-		run("card", "deal", "--to", "bench:b", "--ids", st, "--actor", "rowan")
+		run("card", "deal", "--to", "bench:b", "--ids", st)
 		run("card", "work", "--as", "bench:b", "--fill")
 		// TEST none with a why: the checkout's diff is one text file
 		c.HSet(ctx, taskcard.Key(st+"~1"), "base_sha", baseSHA, "test", "none the fixture's diff is one text file")
-		if out := run("card", "end", "--id", st+"~1", "--ok", "--pr", "nova-tools#"+strconv.Itoa(n), "--head", head, "--repo", checkout,
+		if out := run("card", "end", "--ids", st+"~1", "--ok", "--pr", "nova-tools#"+strconv.Itoa(n), "--head", head, "--checkout", checkout,
 			"--line1", "RESULT: "+st, "--base", "dev", "--base-sha", baseSHA, "--paths", "a.go"); !strings.Contains(out, "ENDED "+st+"~1 primary="+st+" from=working to=review ") {
 			t.Fatalf("card end --ok --pr:\n%s", out)
 		}

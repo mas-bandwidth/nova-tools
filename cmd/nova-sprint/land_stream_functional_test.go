@@ -239,7 +239,7 @@ func TestLandStreamEndToEnd(t *testing.T) {
 	// Status reads the landing and the stream PR record: ci pending.
 	code, out, _ = runSprint("land", "status", "--redis", addr, "--repo", lsRepo)
 	if code != 0 || !strings.Contains(out, "STREAM "+lsSlug+" streams=") || !strings.Contains(out, "pr=#900 ci=pending mergeable=-") ||
-		!strings.Contains(out, " serial=LAND-SERIAL") || !strings.Contains(out, " partial_by=rowan partial_at=") {
+		!strings.Contains(out, " serial=LAND-SERIAL") || !strings.Contains(out, " partial_by="+seatActor()+" partial_at=") { // the actor is the seat (#4352 A)
 		t.Fatalf("status: %d\n%s", code, out)
 	}
 

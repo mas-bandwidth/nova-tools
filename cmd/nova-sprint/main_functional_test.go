@@ -31,8 +31,8 @@ func TestEndRefusesRelativeResults(t *testing.T) {
 		before := mr.Dump()
 		code, stdout, stderr := runSprint("card", "end", "--redis", mr.Addr(), "--sprint", sprint, "--ids", label,
 			"--token", token, "--outcome", "DONE", "--why", "done", "--results", identity)
-		if code != 1 {
-			t.Fatalf("exit %d, want 1 (USAGE); stdout %q stderr %q", code, stdout, stderr)
+		if code != 2 { // a usage refusal exits 2 on every path (#4399 round 5)
+			t.Fatalf("exit %d, want 2 (USAGE); stdout %q stderr %q", code, stdout, stderr)
 		}
 		if !strings.Contains(stderr, "--results "+identity+" is relative") || !strings.Contains(stderr, "absolute") {
 			t.Fatalf("stderr %q does not name the relative --results", stderr)
@@ -112,8 +112,8 @@ func TestResultsPathUnixAbsolute(t *testing.T) {
 			before := mr.Dump()
 			code, stdout, stderr := runSprint("card", "end", "--redis", mr.Addr(), "--sprint", sprint, "--ids", label,
 				"--token", token, "--outcome", "DONE", "--why", "done", "--results", results)
-			if code != 1 {
-				t.Fatalf("exit %d, want 1 (USAGE); stdout %q stderr %q", code, stdout, stderr)
+			if code != 2 { // a usage refusal exits 2 on every path (#4399 round 5)
+				t.Fatalf("exit %d, want 2 (USAGE); stdout %q stderr %q", code, stdout, stderr)
 			}
 			want := "absolute"
 			if results == "" {

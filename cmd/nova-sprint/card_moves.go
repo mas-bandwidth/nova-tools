@@ -130,6 +130,7 @@ func runCardMove(ctx context.Context, sub string, args []string, out, errOut io.
 	m.harness = fs.String("harness", "", "the harness that works the copies, written on each copy (work)")
 	m.child = fs.String("child", "", "the child session that works the copies, written on each copy (work)")
 	m.checkout = fs.String("checkout", "", "the checkout at --head the spec gate runs in (end --ok --pr)")
+	fs.Spelled("repo", "checkout") // the checkout was --repo <dir> (#4399 round 5): the refusal names --checkout
 	m.findingTest = fs.String("test", "", "a fix copy's finding test, '<package> <TestName>' (end --ok --pr)")
 	m.revoke = fs.Bool("revoke", false, "take the assignment back (assign)")
 	m.n = fs.Int("n", 0, verbflag.HelpN)
@@ -327,8 +328,16 @@ func (m *moveCmd) run(ctx context.Context, c *redis.Client, sub string, ids []st
 			repo, n, ok := strings.Cut(*m.pr, "#")
 			if !ok && len(ids) > 0 {
 				// --pr is the PR number (the vocabulary's): the repo is
-				// the card's own (#4399), as task done reads it.
-				repo, n = c.HGet(ctx, taskcard.Key(ids[0]), "repo").Val(), *m.pr
+				// the card's own (#4399), as task done reads it. A store
+				// failure is its own refusal, never "names no repo".
+				var err error
+				if repo, err = cardField(ctx, c, ids[0], "repo"); err != nil {
+					return refuse(errOut, "card end", "--pr "+*m.pr+" of "+ids[0]+": "+err.Error())
+				}
+				if repo == "" {
+					return refuse(errOut, "card end", "--pr "+*m.pr+": "+taskcard.Key(ids[0])+" names no repo; pass --pr <repo>#<n>")
+				}
+				n = *m.pr
 			}
 			if repo == "" || n == "" {
 				return refuse(errOut, "card end", "--pr wants the PR number of a card that names its repo, or <repo>#<n>")

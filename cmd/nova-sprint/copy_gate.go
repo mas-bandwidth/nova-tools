@@ -8,7 +8,6 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 )
 
 // gateCopyEnd is the spec gate (#4313) at a door that ends a code copy ok
@@ -29,7 +28,11 @@ func gateCopyEnd(ctx context.Context, c redis.Cmdable, id string, rec map[string
 	}
 	if cc.Test == "" && cc.Primary != "" {
 		// a copy cut before TM.CARRY carried test: the primary's
-		cc.Test = c.HGet(ctx, taskcard.Key(cc.Primary), "test").Val()
+		test, err := cardField(ctx, c, cc.Primary, "test")
+		if err != nil {
+			return "gate could not run: " + err.Error()
+		}
+		cc.Test = test
 	}
 	g, err := card.GateFriendCopy(ctx, card.FriendGate{Copy: cc, Finding: findingTest, Repo: repoDir, Head: head})
 	if err != nil {

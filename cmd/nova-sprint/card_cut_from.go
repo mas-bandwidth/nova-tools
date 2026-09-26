@@ -283,7 +283,11 @@ func parseCutRows(text []byte) ([]*cutRow, error) {
 		r.deps = strings.FieldsFunc(get["depends-on"], func(c rune) bool {
 			return c == ',' || c == ';' || c == ' ' || c == '\t' || c == '\n'
 		})
-		r.depsEmpty = len(r.deps) == 0
+		// an empty cell under a depends-on column is a cutter who forgot it
+		// (refused naming none); a file with no such column depends on
+		// nothing by construction (a plan's children.tsv, #4317)
+		_, hasDeps := get["depends-on"]
+		r.depsEmpty = hasDeps && len(r.deps) == 0
 		if len(r.deps) == 1 && (r.deps[0] == "none" || r.deps[0] == "-") {
 			r.deps = nil // - is the TSV's empty marker, normalized to the one spelling, none
 		}

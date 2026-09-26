@@ -42,14 +42,14 @@ func TestCardRunRefusesABadArgv(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var out, errOut bytes.Buffer
 			code := runCardRunEnv(context.Background(), tc.args, &out, &errOut, cardRunEnv(tc.env))
-			if code != 1 || out.Len() != 0 || !strings.Contains(errOut.String(), tc.want) {
-				t.Fatalf("code %d stdout %q stderr %q; want 1, nothing, %q", code, out.String(), errOut.String(), tc.want)
+			if code != 2 || out.Len() != 0 || !strings.Contains(errOut.String(), tc.want) {
+				t.Fatalf("code %d stdout %q stderr %q; want 2, nothing, %q", code, out.String(), errOut.String(), tc.want)
 			}
 		})
 	}
 	// The verb is reachable through card: `nova-sprint card run` with no flags is the same refusal.
 	var out, errOut bytes.Buffer
-	if code := runCard(context.Background(), []string{"run"}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "nova-sprint card run: ") {
+	if code := runCard(context.Background(), []string{"run"}, &out, &errOut); code != 2 || !strings.Contains(errOut.String(), "nova-sprint card run: ") {
 		t.Fatalf("card run: code %d stderr %q", code, errOut.String())
 	}
 }

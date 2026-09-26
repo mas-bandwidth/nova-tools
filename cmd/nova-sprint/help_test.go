@@ -157,13 +157,81 @@ func TestGrammarEveryPathHelpChild(t *testing.T) {
 				t.Errorf("%s: example %q with -h did not reach the path's flag set (a flag it does not define?)", p, e)
 			}
 		}
-		// a flag nobody spells: the grammar's refusal and the path's own usage
-		if fs != nil && !positionalPaths[p] {
-			_, out, errOut := runSprint(append(append([]string{}, words...), "--zz-not-a-flag")...)
+		// a flag nobody spells: the grammar's refusal, the path's own usage
+		// and exit 2 on every path (#4399 round 5: card run and card
+		// launched exited 1; consume list, with no flag set, exited 0)
+		if !positionalPaths[p] {
+			code, out, errOut := runSprint(append(append([]string{}, words...), "--zz-not-a-flag")...)
 			all := out + errOut
-			if !strings.Contains(all, "--zz-not-a-flag is not a flag of nova-sprint "+want) || !strings.Contains(all, "usage: nova-sprint "+want) ||
+			named := fs == nil || strings.Contains(all, "--zz-not-a-flag is not a flag of nova-sprint "+want)
+			if code != 2 || out != "" || !named || !strings.Contains(all, "usage: nova-sprint "+want) ||
 				strings.Contains(all, "nova-sprint help") || strings.Contains(all, "provided but not defined") {
-				t.Errorf("%s --zz-not-a-flag: %s", p, strings.TrimSpace(all))
+				t.Errorf("%s --zz-not-a-flag: exit %d (want 2), stdout %q, stderr %s", p, code, out, strings.TrimSpace(errOut))
+			}
+		}
+	}
+}
+
+// TestGrammarTopHelpNamesOnlyFlagsItsPathsTake (#4399 round 5): the top
+// help (`nova-sprint help`: main.go's usage and every registered verb's
+// summary line) advertised `card render --id` and `jev outcome --by`,
+// spellings the grammar retired. Every --flag a usage line spells is a
+// flag of the path the line names, and every --flag a verb's summary
+// spells is a flag of one of that noun's paths (or --seat, every verb's).
+func TestGrammarTopHelpNamesOnlyFlagsItsPathsTake(t *testing.T) {
+	t.Parallel()
+	flagsOf := func(path string) map[string]bool {
+		out := map[string]bool{"seat": true}
+		run, ok := helpRunner(strings.Fields(path)[0])
+		if !ok {
+			return out
+		}
+		if fs := helpFlags(run, path); fs != nil {
+			fs.VisitAll(func(f *flag.Flag) { out[f.Name] = true })
+		}
+		return out
+	}
+	nounFlags := func(noun string) map[string]bool {
+		out := flagsOf(noun)
+		for p := range verbflag.Usages {
+			if strings.HasPrefix(p, noun+" ") {
+				for f := range flagsOf(p) {
+					out[f] = true
+				}
+			}
+		}
+		return out
+	}
+	spelled := func(text string) []string {
+		var out []string
+		for _, w := range strings.Fields(text) {
+			w = strings.Trim(w, "[](),:;.|")
+			if m := flagTokenRE.FindStringSubmatch(w); m != nil && strings.HasPrefix(w, "--") {
+				out = append(out, m[1])
+			}
+		}
+		return out
+	}
+	for _, line := range strings.Split(usageWithRegisteredVerbs(), "\n") {
+		words := strings.Fields(line)
+		switch {
+		case strings.HasPrefix(line, "  nova-sprint ") && len(words) > 1:
+			path := verbflag.Resolve(words[1:])
+			if path == "" || verbflag.Usages[path].NoFlags || positionalPaths[path] {
+				continue
+			}
+			have := flagsOf(path)
+			for _, f := range spelled(line) {
+				if !have[f] {
+					t.Errorf("the top help's usage line %q spells --%s, which nova-sprint %s does not take", strings.TrimSpace(line), f, path)
+				}
+			}
+		case strings.HasPrefix(line, "  ") && len(words) > 1 && verbs[words[0]].Run != nil:
+			have := nounFlags(words[0])
+			for _, f := range spelled(line) {
+				if !have[f] {
+					t.Errorf("the top help's %s line spells --%s, which no nova-sprint %s path takes", words[0], f, words[0])
+				}
 			}
 		}
 	}
