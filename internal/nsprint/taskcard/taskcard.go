@@ -53,11 +53,21 @@ var Wheres = ws.Wheres
 // Key is a task's record.
 func Key(id string) string { return "task:" + id }
 
-// StreamKey is a stream's set of tasks at one where.
+// StreamKey is a stream's set of tasks at one where, at epoch 0 (the name
+// before the first sprint clear, nova-tools#4238); a reader keys by
+// ws.Epoch through StreamKeyAt.
 func StreamKey(stream, where string) string { return "ws:" + stream + ":" + where }
 
-// FriendKey is a friend's set of tasks (and cards) at one where.
+// StreamKeyAt is StreamKey under epoch e.
+func StreamKeyAt(e uint64, stream, where string) string { return ws.KeyAt(e, stream, where) }
+
+// FriendKey is a friend's set of tasks (and cards) at one where, at epoch 0.
 func FriendKey(friend, where string) string { return "friend:" + friend + ":cards:" + where }
+
+// FriendKeyAt is FriendKey under epoch e.
+func FriendKeyAt(e uint64, friend, where string) string {
+	return ws.ConsumerKeyAt(e, "friend:"+friend, where)
+}
 
 // Opts are a move's options. Friend and Stream change the task's dimension
 // only when their Set flag is true (an empty friend drops it).

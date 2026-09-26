@@ -30,8 +30,15 @@ import (
 // named a PR.
 var FriendDoneWheres = []string{ws.Done, ws.Merging, ws.Landed}
 
-// FriendCardsKey is one friend's set of task ids at where.
+// FriendCardsKey is one friend's set of task ids at where, at epoch 0 (the
+// name before the first sprint clear); a reader keys by ws.Epoch through
+// FriendCardsKeyAt (nova-tools#4238).
 func FriendCardsKey(friend, where string) string { return "friend:" + friend + ":cards:" + where }
+
+// FriendCardsKeyAt is FriendCardsKey under epoch e.
+func FriendCardsKeyAt(e uint64, friend, where string) string {
+	return ws.ConsumerKeyAt(e, "friend:"+friend, where)
+}
 
 // DoneBaseKey holds each friend's done count at the last `table clear`
 // (#3637). The sprint table no longer reads it (#4071: the consumer done
@@ -41,6 +48,7 @@ const DoneBaseKey = "ws:done0"
 // ClearPlan is what a clear will move, read before anything is written.
 type ClearPlan struct {
 	At      time.Time
+	Epoch   uint64 // the sprint epoch the plan was read under (#4238)
 	Streams []string
 	Landed  map[string][]redis.Z         // stream -> landed members (score landed_at ms)
 	Tasks   map[string]map[string]string // task id -> task:<id> fields; absent when no hash
@@ -57,6 +65,7 @@ func PlanClear(ctx context.Context, client redis.UniversalClient, friends []stri
 	p := &ClearPlan{At: now, Landed: map[string][]redis.Z{}, Tasks: map[string]map[string]string{}, Done: map[string]string{}}
 	pipe := client.Pipeline()
 	order := pipe.ZRange(ctx, "ws:order", 0, -1)
+	epoch := pipe.HGet(ctx, ws.EpochKey, ws.EpochField)
 	var fset *redis.StringSliceCmd
 	if len(friends) == 0 {
 		fset = pipe.SMembers(ctx, "friends")
@@ -68,6 +77,12 @@ func PlanClear(ctx context.Context, client redis.UniversalClient, friends []stri
 	if p.Streams, err = order.Result(); err != nil && !errors.Is(err, redis.Nil) {
 		return nil, fmt.Errorf("zrange ws:order: %w", err)
 	}
+	if v, err := epoch.Result(); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, fmt.Errorf("hget %s %s: %w", ws.EpochKey, ws.EpochField, err)
+
+	} else if p.Epoch, err = ws.ParseEpoch(v); err != nil {
+		return nil, err
+	}
 	p.Friends = friends
 	if fset != nil {
 		p.Friends, _ = fset.Result()
@@ -77,14 +92,15 @@ func PlanClear(ctx context.Context, client redis.UniversalClient, friends []stri
 	pipe = client.Pipeline()
 	landed := make([]*redis.ZSliceCmd, len(p.Streams))
 	for i, s := range p.Streams {
-		landed[i] = pipe.ZRangeWithScores(ctx, "ws:"+s+":landed", 0, -1)
+		landed[i] = pipe.ZRangeWithScores(ctx, ws.KeyAt(p.Epoch, s, ws.Landed), 0, -1)
 	}
 	done := make([][]*redis.IntCmd, len(p.Friends))
 	for i, f := range p.Friends {
 		for _, w := range FriendDoneWheres {
-			done[i] = append(done[i], pipe.ZCard(ctx, FriendCardsKey(f, w)))
+			done[i] = append(done[i], pipe.ZCard(ctx, FriendCardsKeyAt(p.Epoch, f, w)))
 		}
 	}
+
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !isReplyError(err) {
 		return nil, fmt.Errorf("read landed sets: %w", err)
 	}

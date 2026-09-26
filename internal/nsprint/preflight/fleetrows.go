@@ -23,6 +23,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/redis/go-redis/v9"
 )
@@ -158,7 +159,14 @@ func GatherFleet(ctx context.Context, c *redis.Client, sprint string) (Fleet, er
 	if sprint != "" {
 		pit = pipe.Get(ctx, "sprint:"+sprint+":pitstop")
 	}
+	// the sprint epoch (nova-tools#4238) rides this round: the benches'
+	// working sets below are keyed by it
+	epochCmd := pipe.HGet(ctx, ws.EpochKey, ws.EpochField)
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return Fleet{}, err
+	}
+	epoch, err := ws.ParseEpoch(epochCmd.Val())
+	if err != nil {
 		return Fleet{}, err
 	}
 	f := Fleet{Now: clock.Val(), Sprint: sprint}
@@ -174,13 +182,15 @@ func GatherFleet(ctx context.Context, c *redis.Client, sprint string) (Fleet, er
 	cs := make([]cmds, len(benches))
 	status := make([]*redis.StringCmd, len(sprints.Val()))
 	pipe = c.Pipeline()
+
 	for i, b := range benches {
 		cs[i] = cmds{
 			beat:    pipe.HGetAll(ctx, "bench:"+b+":beat"),
 			desired: pipe.HGetAll(ctx, "bench:"+b+":desired"),
-			working: pipe.ZCard(ctx, "bench:"+b+":cards:working"),
+			working: pipe.ZCard(ctx, ws.ConsumerKeyAt(epoch, "bench:"+b, "working")),
 		}
 	}
+
 	for i, s := range sprints.Val() {
 		status[i] = pipe.HGet(ctx, "s:"+s, "status")
 	}

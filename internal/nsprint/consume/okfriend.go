@@ -15,6 +15,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 	"github.com/redis/go-redis/v9"
 )
@@ -518,6 +519,10 @@ func (o *OkFriend) census(ctx context.Context) (*readerCensus, error) {
 		c.security = n
 	}
 	c.secPrefixes = strings.FieldsFunc(policy["security_paths"], func(r rune) bool { return r == ' ' || r == ',' })
+	epoch, err := ws.Epoch(ctx, client)
+	if err != nil {
+		return nil, fmt.Errorf("ok-to-friend: %w", err)
+	}
 	pipe := client.Pipeline()
 	type row struct {
 		beat    *redis.IntCmd
@@ -530,8 +535,9 @@ func (o *OkFriend) census(ctx context.Context) (*readerCensus, error) {
 		rows[i] = row{
 			beat:    pipe.Exists(ctx, "friend:"+f+":beat"),
 			desired: pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "paused"),
-			working: pipe.ZCard(ctx, "friend:"+f+":cards:working"),
-			open:    pipe.ZCard(ctx, "s:"+o.Sprint+":open:"+f),
+			working: pipe.ZCard(ctx, ws.ConsumerKeyAt(epoch, "friend:"+f, "working")),
+
+			open: pipe.ZCard(ctx, "s:"+o.Sprint+":open:"+f),
 		}
 	}
 	if len(names) > 0 {

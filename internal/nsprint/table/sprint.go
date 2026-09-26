@@ -118,7 +118,11 @@ func (r StreamRow) Total() int64 {
 
 // SprintSnapshot is one tick's read.
 type SprintSnapshot struct {
-	Config     SprintConfig
+	Config SprintConfig
+	// Epoch is the sprint epoch every cell of this snapshot was read under
+	// (nova-tools#4238): sprint:epoch, read in the same pipeline as the
+	// cells; a cell of another epoch is never shown.
+	Epoch      uint64
 	Pitstop    bool
 	Streams    []StreamRow
 	LandedHour int64 // ws:log moves to landed in the hour before the read
@@ -259,7 +263,11 @@ type SprintReader struct {
 	// the pit stop shown when Config.Sprint is empty.
 	sprints    []string
 	openSprint string
-	primed     bool
+	// epoch is sprint:epoch as the last tick read it: the cells are keyed
+	// by it, and a tick that reads another epoch is read once more, like a
+	// membership change (nova-tools#4238)
+	epoch  uint64
+	primed bool
 	// loads is each row's load samples of the last LoadWindow, newest last:
 	// the cell prints the highest of them (Glenn 2026-09-26 10:52 AM ET: "The
 	// CPU load updating every 1 sec is giving me anxiety. The way I usually
@@ -356,6 +364,10 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	cfg := r.Config
 	pipe := r.Client.Pipeline()
 	order := pipe.ZRange(ctx, "ws:order", 0, -1)
+	// THE EPOCH (nova-tools#4238): read once per tick, in the same
+	// pipeline; every cell below is keyed by the epoch of the last tick,
+	// and a tick whose epoch differs is read again with the new one.
+	epochCmd := pipe.HGet(ctx, ws.EpochKey, ws.EpochField)
 	benchSet := pipe.SMembers(ctx, "benches")
 	consumerSet := pipe.SMembers(ctx, "consumers")
 	var friendSet *redis.StringSliceCmd
@@ -392,7 +404,7 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	counts := make([][]*redis.IntCmd, len(r.streams))
 	for i, s := range r.streams {
 		for _, state := range WSStates {
-			counts[i] = append(counts[i], pipe.ZCard(ctx, "ws:"+s+":"+state))
+			counts[i] = append(counts[i], pipe.ZCard(ctx, ws.KeyAt(r.epoch, s, state)))
 		}
 	}
 	type consumerCmds struct {
@@ -405,7 +417,7 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	cmds := make([]consumerCmds, len(roster))
 	for i, c := range roster {
 		for j, set := range ConsumerSets {
-			cmds[i].cells[j] = pipe.ZCard(ctx, c.ID()+":cards:"+set)
+			cmds[i].cells[j] = pipe.ZCard(ctx, ws.ConsumerKeyAt(r.epoch, c.ID(), set))
 		}
 		cmds[i].beat = pipe.HMGet(ctx, c.ID()+":beat", "load1", "at", "ncpu", "cpu")
 		cmds[i].down = pipe.Exists(ctx, c.ID()+":down")
@@ -425,6 +437,17 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	gotOrder, err := order.Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
 		return nil, false, fmt.Errorf("zrange ws:order: %w", err)
+	}
+	// An epoch that could not be read is not epoch 0: the tick fails
+	// rather than show another epoch's cells.
+	epochVal, err := epochCmd.Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return nil, false, fmt.Errorf("hget %s %s: %w", ws.EpochKey, ws.EpochField, err)
+
+	}
+	gotEpoch, err := ws.ParseEpoch(epochVal)
+	if err != nil {
+		return nil, false, err
 	}
 	// A membership set that did not come back would empty its rows without
 	// a word: the tick fails instead, and the loop publishes the last good
@@ -463,15 +486,16 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	}
 	changed := !r.primed || !slices.Equal(gotOrder, r.streams) || !slices.Equal(gotBenches, r.benches) ||
 		!slices.Equal(gotConsumers, r.consumers) || (friendSet != nil && !slices.Equal(gotFriends, r.friends)) ||
-		!slices.Equal(gotSprints, r.sprints) || open != r.openSprint
+		!slices.Equal(gotSprints, r.sprints) || open != r.openSprint || gotEpoch != r.epoch
 	r.primed = true
 	if changed {
 		r.streams, r.benches, r.consumers, r.friends = gotOrder, gotBenches, gotConsumers, gotFriends
-		r.sprints, r.openSprint = gotSprints, open
+		r.sprints, r.openSprint, r.epoch = gotSprints, open, gotEpoch
 		return nil, true, nil
 	}
 
-	snap := &SprintSnapshot{Config: cfg}
+	snap := &SprintSnapshot{Config: cfg, Epoch: gotEpoch}
+
 	if pit != nil {
 		if n, err := pit.Result(); err != nil && !errors.Is(err, redis.Nil) {
 			// A stop that could not be read is not "no stop".

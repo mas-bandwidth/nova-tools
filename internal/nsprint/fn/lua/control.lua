@@ -46,8 +46,14 @@ do
     local base = prefix .. name
     local machine = redis.call('HGET', base .. ':desired', 'machine')
     for _, s in ipairs(suffixes) do ct_del(dead, base .. s) end
-    for _, w in ipairs(CT_WHERE) do ct_del(dead, base .. ':cards:' .. w) end
+    -- its sets under the current epoch and the legacy names (#4238)
+    local e = CARD.epoch()
+    for _, w in ipairs(CT_WHERE) do
+      ct_del(dead, CARD.ckey(e, base, w))
+      if e ~= 0 then ct_del(dead, CARD.ckey(0, base, w)) end
+    end
     return machine
+
   end
 
   -- ns_control_teardown: keys = control:<C>:keys; args = C.

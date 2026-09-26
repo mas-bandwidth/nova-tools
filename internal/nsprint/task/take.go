@@ -13,6 +13,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/deal"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -38,7 +39,10 @@ func TakeAvailable(ctx context.Context, st *store.Store, as, sprint, id string, 
 	pipe := client.Pipeline()
 	member := pipe.SIsMember(ctx, "friends", as)
 	desiredCmd := pipe.HGet(ctx, "friend:"+as+":desired", "slots")
-	workingCmd := pipe.ZCard(ctx, "friend:"+as+":cards:working")
+	// the working set under the current epoch, counted in this one
+	// pipeline (nova-tools#4238)
+	workingCmd := ws.CellCard(ctx, pipe, "friend:"+as, "working")
+
 	viewCmd := pipe.FCallRO(ctx, FunctionTakeView, nil, as, sprint, id)
 	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
 		return nil, fmt.Errorf("task take: read friend %s: %w", as, err)
@@ -50,7 +54,8 @@ func TakeAvailable(ctx context.Context, st *store.Store, as, sprint, id string, 
 	if err != nil {
 		return nil, fmt.Errorf("task take: friend %s has no desired slots: %w", as, err)
 	}
-	free := desired - int(workingCmd.Val())
+	free := desired - int(ws.CardVal(workingCmd))
+
 	if free <= 0 {
 		return []Claim{}, nil
 	}

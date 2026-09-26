@@ -336,11 +336,16 @@ func TestLandStreamEndToEnd(t *testing.T) {
 }
 
 func TestLandStreamConflictStops(t *testing.T) {
-	mr := miniredis.RunT(t)
-	addr := mr.Addr()
+	// the store with the library: the lander reads each stream's merging
+	// set through the epoch-keyed cell function (nova-tools#4238)
+	addr := testutil.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = c.Close() })
 	ctx := context.Background()
+	if err := fn.Load(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+
 	root := t.TempDir()
 	src, bare := filepath.Join(root, "src"), filepath.Join(root, "remote.git")
 	_ = os.MkdirAll(src, 0o755)

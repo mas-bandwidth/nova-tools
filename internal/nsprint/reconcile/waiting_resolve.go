@@ -256,11 +256,16 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 		return nil, nil
 	}
 
-	// Round 2: every stream's waiting set, oldest first.
+	// Round 2: every stream's waiting set under the current epoch
+	// (nova-tools#4238), oldest first.
+	epoch, err := ws.Epoch(ctx, c)
+	if err != nil {
+		return nil, fmt.Errorf("waiting-resolve: %w", err)
+	}
 	pipe := c.Pipeline()
 	waitCmds := make([]*redis.StringSliceCmd, len(streams))
 	for i, s := range streams {
-		waitCmds[i] = pipe.ZRange(ctx, ws.Key(s, "waiting"), 0, -1)
+		waitCmds[i] = pipe.ZRange(ctx, ws.KeyAt(epoch, s, "waiting"), 0, -1)
 	}
 	if err := pipeerr.Exec(ctx, pipe); err != nil {
 		return nil, fmt.Errorf("waiting-resolve: waiting sets: %w", err)
@@ -310,9 +315,10 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 	if len(refDeps) > 0 {
 		for _, s := range streams {
 			for _, st := range ws.States {
-				setCmds = append(setCmds, pipe.ZRange(ctx, ws.Key(s, st), 0, -1))
+				setCmds = append(setCmds, pipe.ZRange(ctx, ws.KeyAt(epoch, s, st), 0, -1))
 			}
 		}
+
 	}
 	if err := pipeerr.Exec(ctx, pipe); err != nil {
 		return nil, fmt.Errorf("waiting-resolve: dependencies: %w", err)

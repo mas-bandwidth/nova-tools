@@ -160,19 +160,22 @@ local function fsck_sprints(keys, args)
       if S then seen[S] = true end
     end
   end
+  -- the current epoch's sets: the ones the tables read (#4238)
+  local e = NS.card.epoch()
   local benches = redis.call('SMEMBERS', 'benches')
   benches[#benches + 1] = '_pool'
   for _, b in ipairs(benches) do
-    for _, w in ipairs(CG_PLACES) do ids('bench:' .. b .. ':cards:' .. w) end
-    ids('bench:' .. b .. ':cards:ok')
-    ids('bench:' .. b .. ':cards:fail')
+    for _, w in ipairs(CG_PLACES) do ids(NS.card.ckey(e, 'bench:' .. b, w)) end
+    ids(NS.card.ckey(e, 'bench:' .. b, 'ok'))
+    ids(NS.card.ckey(e, 'bench:' .. b, 'fail'))
   end
   for _, s in ipairs(redis.call('ZRANGE', 'ws:order', 0, -1)) do
-    for _, w in ipairs(CG_PLACES) do ids('ws:' .. s .. ':' .. w) end
+    for _, w in ipairs(CG_PLACES) do ids(NS.card.wskey(e, s, w)) end
   end
   for _, f in ipairs(redis.call('SMEMBERS', 'friends')) do
-    for _, w in ipairs(CG_PLACES) do ids('friend:' .. f .. ':cards:' .. w) end
+    for _, w in ipairs(CG_PLACES) do ids(NS.card.ckey(e, 'friend:' .. f, w)) end
   end
+
   local names = {}
   for s in pairs(seen) do names[#names + 1] = s end
   table.sort(names)

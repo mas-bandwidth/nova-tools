@@ -40,6 +40,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/jev"
@@ -70,8 +71,13 @@ func LandKey(repo, slug string) string { return "land:" + repo + ":" + slug }
 // IndexKey lists every slug with a land hash for the repo.
 func IndexKey(repo string) string { return "land:" + repo + ":streams" }
 
-// WSKey is one ws-index set of a stream.
+// WSKey is one ws-index set of a stream at epoch 0 (the name before the
+// first sprint clear, nova-tools#4238); a reader keys by ws.Epoch through
+// WSKeyAt.
 func WSKey(stream, state string) string { return "ws:" + stream + ":" + state }
+
+// WSKeyAt is WSKey under epoch e.
+func WSKeyAt(e uint64, stream, state string) string { return ws.KeyAt(e, stream, state) }
 
 // reserved slugs would collide with the lander's own land:<repo>:<word> keys.
 var reserved = map[string]bool{"streams": true, "gates": true, "events": true, "tok": true}
@@ -447,10 +453,13 @@ func prNumber(field, repo string) (int, bool) {
 // cfg:land jev_passes names the passes that gate (empty: every pass).
 func Members(ctx context.Context, c redis.Cmdable, repo string, streams []string, minScore int) ([]Member, []Skip, error) {
 	pipe := c.Pipeline()
-	zs := make([]*redis.ZSliceCmd, len(streams))
+	// each stream's merging set under the current epoch, read in this one
+	// pipeline (nova-tools#4238)
+	zs := make([]*redis.Cmd, len(streams))
 	for i, s := range streams {
-		zs[i] = pipe.ZRangeWithScores(ctx, WSKey(s, "merging"), 0, -1)
+		zs[i] = ws.StreamRangeWithScores(ctx, pipe, s, "merging")
 	}
+
 	jevCfg := pipe.HMGet(ctx, "cfg:land", "jev", "jev_passes")
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return nil, nil, err
@@ -467,10 +476,15 @@ func Members(ctx context.Context, c redis.Cmdable, repo string, streams []string
 	}
 	var cands []cand
 	for i, s := range streams {
-		for _, z := range zs[i].Val() {
+		members, err := ws.Zs(zs[i])
+		if err != nil {
+			return nil, nil, fmt.Errorf("merging of %s: %w", s, err)
+		}
+		for _, z := range members {
 			cands = append(cands, cand{task: fmt.Sprint(z.Member), stream: s, at: int64(z.Score)})
 		}
 	}
+
 	if len(cands) == 0 {
 		return nil, nil, nil
 	}

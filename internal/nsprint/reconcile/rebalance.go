@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pipeerr"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -94,8 +95,15 @@ func readStatus(ctx context.Context, c *redis.Client) (friendStatus, error) {
 	clock := p1.Time(ctx)
 	friends := p1.SMembers(ctx, "friends")
 	seen := p1.HGetAll(ctx, SeenKey)
+	// the sprint epoch (nova-tools#4238) rides this round: the friends'
+	// sets below are keyed by it
+	epochCmd := p1.HGet(ctx, ws.EpochKey, ws.EpochField)
 	if _, err := p1.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return st, fmt.Errorf("rebalance: read: %w", err)
+	}
+	epoch, err := ws.ParseEpoch(epochCmd.Val())
+	if err != nil {
+		return st, fmt.Errorf("rebalance: %w", err)
 	}
 	now := clock.Val()
 	st.names = friends.Val()
@@ -108,14 +116,16 @@ func readStatus(ctx context.Context, c *redis.Client) (friendStatus, error) {
 	}
 	cs := make([]cmds, len(st.names))
 	p2 := c.Pipeline()
+
 	for i, f := range st.names {
 		cs[i] = cmds{
 			at:      p2.HGet(ctx, "friend:"+f, "at"),
 			down:    p2.Exists(ctx, "friend:"+f+":down"),
-			ready:   p2.ZCard(ctx, "friend:"+f+":cards:ready"),
-			working: p2.ZCard(ctx, "friend:"+f+":cards:working"),
+			ready:   p2.ZCard(ctx, ws.ConsumerKeyAt(epoch, "friend:"+f, "ready")),
+			working: p2.ZCard(ctx, ws.ConsumerKeyAt(epoch, "friend:"+f, "working")),
 		}
 	}
+
 	if err := pipeerr.Exec(ctx, p2); err != nil {
 		return st, fmt.Errorf("rebalance: read friends: %w", err)
 	}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 )
 
 // Width is the slot accounting of one friend (spec 2.2, 4.2). Leased is
@@ -36,13 +37,21 @@ func GetWidth(ctx context.Context, st *store.Store, as string) (Width, error) {
 	client := st.Client()
 	pipe := client.Pipeline()
 	desiredCmd := pipe.HGet(ctx, "friend:"+as+":desired", "slots")
-	workingCmd := pipe.ZCard(ctx, "friend:"+as+":cards:working")
+	// the working set under the current epoch, counted in this one
+	// pipeline (nova-tools#4238)
+	workingCmd := ws.CellCard(ctx, pipe, "friend:"+as, "working")
 	if _, err := pipe.Exec(ctx); err != nil {
 		return Width{}, fmt.Errorf("width: friend %s has no desired slots: %w", as, err)
 	}
+
 	desired, err := desiredCmd.Int()
 	if err != nil {
 		return Width{}, fmt.Errorf("width: friend %s has no desired slots: %w", as, err)
 	}
-	return WidthFrom(desired, int(workingCmd.Val())), nil
+	working, err := workingCmd.Int64()
+	if err != nil {
+		return Width{}, fmt.Errorf("width: friend %s working: %w", as, err)
+	}
+	return WidthFrom(desired, int(working)), nil
+
 }

@@ -268,11 +268,14 @@ local function bench_beat(keys, args)
 
   local at = pl_now_ms()
   local first = redis.call('EXISTS', 'bench:' .. bench .. ':beat')
+  -- the beat carries the sprint epoch it was made under (#4238); status
+  -- and load read at, which is not epoch-keyed
   redis.call('HSET', 'bench:' .. bench .. ':beat',
     'host', host or '', 'user', user or '', 'load1', load1 or '',
     'ssh', ssh or '', 'probe', probe or '', 'launcher', launcher or '',
     'live', '0', 'why', why or '', 'build', build or '',
     'harness', harness or '', 'mirrors', mirrors or '', 'disk_gib', disk_gib or '',
+    'epoch', tostring(NS.card.epoch()),
     'at', tostring(at))
   redis.call('PEXPIRE', 'bench:' .. bench .. ':beat', ttl)
   redis.call('SET', owner_key, session, 'PX', ttl)
@@ -350,10 +353,14 @@ local function friend_row(keys, args)
   if kind ~= 'hash' and kind ~= 'none' then
     redis.call('DEL', row)
   end
+  -- the row's counts are stamped with the sprint epoch they were made
+  -- under (#4238): the table shows them only while it is the current one
   redis.call('HSET', row, 'at', at, 'up', tostring(up),
     'ready', tostring(ready), 'queue', tostring(ready),
     'working', tostring(working), 'waiting', tostring(waiting),
-    'width', tostring(working), 'done', tostring(done), 'slots', slots)
+    'width', tostring(working), 'done', tostring(done), 'slots', slots,
+    'epoch', tostring(NS.card.epoch()))
+
   redis.call('SET', row .. ':last', at)
   return { 'OK', tostring(up), tostring(ready), tostring(working),
     tostring(waiting), tostring(done), slots }

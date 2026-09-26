@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -190,13 +191,18 @@ func read(ctx context.Context, st *store.Store) ([]reading, error) {
 		idem     *redis.SliceCmd
 		open     []*redis.IntCmd
 	}
+	epoch, err := ws.Epoch(ctx, client)
+	if err != nil {
+		return nil, err
+	}
 	pipe := client.Pipeline()
 	all := make([]cmds, len(friends))
 	for i, f := range friends {
 		c := cmds{
-			beat:     pipe.Exists(ctx, "friend:"+f+":beat"),
-			desired:  pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "paused"),
-			working:  pipe.ZCard(ctx, "friend:"+f+":cards:working"),
+			beat:    pipe.Exists(ctx, "friend:"+f+":beat"),
+			desired: pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "paused"),
+			working: pipe.ZCard(ctx, ws.ConsumerKeyAt(epoch, "friend:"+f, "working")),
+
 			wakemode: pipe.Exists(ctx, WakeModeKey(f)),
 			idem:     pipe.HMGet(ctx, StateKey(f), "idem"),
 		}

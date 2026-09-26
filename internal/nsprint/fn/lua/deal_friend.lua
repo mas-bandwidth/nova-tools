@@ -38,9 +38,11 @@ function DF.fenced(token)
   return token == nil or token == '' or redis.call('HGET', 'lease:reconciler', 'token') ~= token
 end
 
+-- DF.key: the stream's set under the current epoch (nova-tools#4238).
 function DF.key(stream, state)
-  return 'ws:' .. stream .. ':' .. state
+  return NS.card.wskey(NS.card.epoch(), stream, state)
 end
+
 
 -- DF.slots is the friend's slots: friend:<f>:slots, else friend:<f>:desired
 -- slots; nil when neither is a number.
