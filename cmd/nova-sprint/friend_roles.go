@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
 	"os"
 )
@@ -15,7 +16,7 @@ func runFriendRoles(ctx context.Context, args []string, out, errOut io.Writer) i
 	fs, addr := lifeFlags("friend roles")
 	set := fs.String("set", "", "friend whose roles are changed")
 	roles := fs.String("roles", "", "comma separated may-hold,builder,coordinator,reader")
-	idem := fs.String("idem", "", "idempotency marker")
+	idem := fs.String("idem", "", verbflag.HelpIdem)
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "friend roles", err.Error())
 	}
