@@ -16,7 +16,6 @@ cmd/nova-swarm/native_test.go:TestNativeRefusesAModelThatDiffersFromTheWorkerDes
 cmd/nova-swarm/native_test.go:TestNativeSecretWorkerWritesNoAuthFileAndTheHarnessSeesName hands the code under test --deadline 10s; a ceiling the run never reaches: 0.03 s on hetzner at dev 64b9bec48
 cmd/nova-swarm/native_test.go:TestNativeWorkerModelGateComparesQualifiedName hands the code under test --deadline 10s; a ceiling the run never reaches: 0.03 s on hetzner at dev 64b9bec48
 internal/nsprint/deal/pass_test.go:fixture.remote sets RunTimeout to 20s; a helper, not a test: its callers are timed, and none reached five seconds at dev 64b9bec48
-internal/nsprint/reconcile/retrycap_test.go:TestDealRetryCapRefusedLaunch sets RunTimeout to 20s; a ceiling the run never reaches: 0.13 s on hetzner at dev 64b9bec48
 internal/swarm/batch_native_636_test.go:TestBatchUnknownAcceptanceDoesNotExitZero sets Deadline to 10s; a ceiling the run never reaches: 0.00 s on hetzner at dev 64b9bec48
 internal/swarm/batch_native_636_test.go:TestCard8909BatchRefusesWithNeitherRunnerNorHarness sets Deadline to 10s; a ceiling the run never reaches: 0.00 s on hetzner at dev 64b9bec48
 internal/swarm/batch_native_636_test.go:TestCard8909BatchRunsNativeWithNoRunner sets Deadline to 10s; a ceiling the run never reaches: 0.01 s on hetzner at dev 64b9bec48

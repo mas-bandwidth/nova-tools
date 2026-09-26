@@ -93,7 +93,6 @@ fleet/group_vars/all.yml rowan-tools' Ansible inventory, named by internal/nspri
 fleet/launchd/com.rowan.fleet-certify.plist the launchd plist lives in the self repository; there is no fleet/ here
 internal/decide/questions/security.txt a retired phrase-table file: replaced whole by `--security-phrases <file>`
 internal/decide/questions/tamper.txt a retired phrase-table file: replaced by `--tamper <file>`
-internal/swarm/routehealth PR #2718's package, named by internal/nsprint/route/health.go as where the rules were proved; not on dev
 scripts/coordination/ a prefix in SPEC-RELEASE.md's sensitive-path list, kept in the list though the directory is retired
 testdata/ci/package-sizes-windows.tsv retired with the native Windows legs on 2026-09-18; the measurements are in git at dev 65e86175
 tools/deploy/ a prefix in SPEC-SPRINT.md's live-or-security path list, kept in the list though no tools/deploy/ is in this tree

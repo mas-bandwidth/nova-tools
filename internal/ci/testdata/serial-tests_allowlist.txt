@@ -732,12 +732,6 @@ internal/nsprint/fleet/fleet_test.go:TestFleetUpAfterOneFromDown serial: t.Seten
 internal/nsprint/fleet/fleet_test.go:TestFleetUpAfterOneFromHeld serial: t.Setenv
 internal/nsprint/fold/fold_test.go:TestMainJevEvalExitCodes serial: t.Setenv
 internal/nsprint/harvest/fleet_test.go:TestFleetHarvestSkipsNonUp serial: t.Setenv
-internal/nsprint/land/controls_b6_defects_test.go:TestDefect6_WorkerWorktreeFailureIsError serial: t.Setenv
-internal/nsprint/land/controls_b8_test.go:TestL4 serial: swaps package var http.DefaultTransport, swaps package var land_test.trees
-internal/nsprint/land/controls_b8_test.go:TestL4b serial: swaps package var http.DefaultTransport, swaps package var land_test.trees
-internal/nsprint/land/controls_b8_test.go:TestL4c serial: swaps package var http.DefaultTransport, swaps package var land_test.trees
-internal/nsprint/land/controls_b8_test.go:TestL4d serial: swaps package var http.DefaultTransport, swaps package var land_test.trees
-internal/nsprint/land/controls_b8_test.go:TestL8 serial: swaps package var http.DefaultTransport, swaps package var land_test.trees
 internal/nsprint/land/eval_controls_test.go:TestNoStateAPI serial: swaps package var http.DefaultTransport
 internal/nsprint/land/eval_controls_test.go:TestRunnerIDTracksBuild serial: swaps package var land.ToolsVersion
 internal/nsprint/land/fleet_test.go:TestL15 serial: t.Setenv
@@ -748,7 +742,6 @@ internal/nsprint/launch/launch_test.go:TestLaunchReportsAWrapperRefusal serial: 
 internal/nsprint/launch/realwrapper_slow_test.go:TestLaunchRealWrapper serial: t.Setenv
 internal/nsprint/launch/realwrapper_slow_test.go:TestLaunchRealWrapperReportsNotDealtAsRefused serial: t.Setenv
 internal/nsprint/lessons/lessons_test.go:TestWaitersRaceAnOldLockAndEveryAcknowledgedRowSurvives serial: swaps package var lessons.lockBusy
-internal/nsprint/life/idle_test.go:TestIdleStatesMutationCannotWidenLedger serial: swaps package var life.IdleStates
 internal/nsprint/life/serve_read_test.go:TestServeReadTaskBriefCarriesTheMirrorDiff serial: t.Setenv
 internal/nsprint/mirror/mirror_test.go:TestFetchFailureLeavesMirror serial: t.Setenv
 internal/nsprint/mirror/mirror_test.go:TestFirstCloneAtomic serial: t.Setenv
@@ -762,8 +755,6 @@ internal/nsprint/read/read_test.go:TestReadPostNoGitHubMakesZeroCalls serial: t.
 internal/nsprint/read/read_test.go:TestReadPostRefusals serial: t.Setenv
 internal/nsprint/read/task_test.go:TestReadBriefFromFirstReadTaskMirrorDiffZeroGitHubCalls serial: t.Setenv
 internal/nsprint/reconcile/bound_duties_test.go:TestRouteDutyStopsAtLeaseMargin serial: t.Setenv
-internal/nsprint/reconcile/deal_friend_test.go:TestDealFillsEveryOpenSlotInOneTick serial: t.Setenv
-internal/nsprint/reconcile/deal_friend_test.go:TestDealHonoursWhoKindAndOwner serial: t.Setenv
 internal/nsprint/reconcile/fleet_test.go:TestFleetRefillReturnsOnUpOnly serial: t.Setenv
 internal/nsprint/reconcile/route_consumers_test.go:TestRouteConsumerStableOverHundredPasses serial: t.Setenv
 internal/nsprint/reconcile/route_consumers_test.go:TestRouteConsumerSweepBoundsRestarts serial: t.Setenv
@@ -926,15 +917,11 @@ internal/presence/issue3277_test.go:TestOpenSendsNoCommand3277 serial: t.Setenv
 internal/presence/seat_test.go:TestOpenLogsInAsTheSeat serial: t.Setenv
 internal/seatcred/seatcred_test.go:TestResolveReadsTheSeatThroughTheSecretsLibrary serial: t.Setenv
 cmd/nova-sprint/task_queue_test.go:TestFriendDownRebalancesAtOnce serial: t.Setenv (through a helper)
-internal/nsprint/reconcile/rebalance_test.go:TestFriendStaleBeatRebalances serial: t.Setenv (through a helper)
 cmd/nova-sprint/jev_test.go:TestJevMechRecordsOneLine serial: t.Setenv (through a helper)
 internal/nsprint/reconcile/rebalance_test.go:TestRedistributeFromMovesDownFriendsQueue serial: t.Setenv (through a helper)
-internal/nsprint/reconcile/deal_friend_test.go:TestDealReceiptSilentRefusalAndCap serial: t.Setenv (through a helper)
 cmd/nova-sprint/bench_retire_test.go:TestBenchRetire serial: t.Setenv (through a helper)
 cmd/nova-sprint/bench_retire_test.go:TestBenchRetireUnreachable serial: t.Setenv (through a helper)
 internal/nsprint/reconcile/rebalance_test.go:TestFriendRebalanceNeverSilentZero serial: t.Setenv (through a helper)
-internal/nsprint/reconcile/rebalance_test.go:TestFriendDownRebalancesInOneTick serial: t.Setenv (through a helper)
-internal/nsprint/reconcile/deal_friend_test.go:TestDealReceiptNamesEveryRefusal serial: t.Setenv (through a helper)
 internal/seatcred/seatcred_test.go:TestChildEnvHandsThePasswordToTheChildOnly serial: t.Setenv (through a helper)
 internal/seatcred/seatcred_test.go:TestActiveResolvesOnceAndOnlyWhenSelected serial: t.Setenv (through a helper)
 cmd/nova-sprint/sprint_clear_test.go:TestSprintClearZerosBothTables serial: t.Setenv
