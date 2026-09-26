@@ -35,7 +35,8 @@
 // consumer's own beat (<kind>:<name>:beat at, ms) is under a minute old and
 // <kind>:<name>:down does not exist, else down (the row still shows its
 // cards); an up consumer whose desired hash has paused 1 (worker pause,
-// #4308) prints paused instead; load is the beat's cpu or load1 (a bench
+// #4308) prints paused instead; an up bench whose last fleet play stopped
+// (bench:<b>:play result failed:<role>, #4356) prints behind: <role>; load is the beat's cpu or load1 (a bench
 // beat's, or a friend beat's, which `nova-sprint friend beat` measures on
 // the machine the friend's session runs on, #4233; - when the beat has
 // none). The old friend:<f> row hash and bench:<b> hash are never read, and
@@ -54,6 +55,7 @@
 //	<c>:beat                HMGET load1 at
 //	<c>:down                EXISTS (a string or a hash; either means down)
 //	<c>:desired             HGET paused (1: the status reads paused while up)
+//	bench:<b>:play          HGET result (failed:<role>: the status reads behind: <role>)
 //	s:<S>:pitstop           EXISTS, with the legacy sprint:<S>:pitstop
 //
 // The membership of ws:order, friends, benches and consumers is kept from
@@ -67,7 +69,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"slices"
 	"sort"
 	"strconv"
@@ -75,6 +76,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 )
 
 // WSStates are the six per-stream sets the table counts, in reply order:
@@ -168,25 +171,45 @@ func parseConsumer(s string) (Consumer, bool) {
 // <kind>:<name>:cards:ready|working|ok|fail, Unread per cell when its ZCARD
 // did not come back (it prints "?", never a false 0), Up from the beat and
 // the down key, Paused from the desired hash (worker pause, #4308), Load
-// from the beat ("-" when it has none).
+// from the beat ("-" when it has none), Behind the role a bench's last
+// fleet play stopped in (#4356; "" when it did not).
 type ConsumerRow struct {
 	Consumer
 	Ready, Working, OK, Fail int64
 	Unread                   [4]bool
 	Up                       bool
 	Paused                   bool
+	Behind                   string
 	Load                     string
 }
 
-// Status is the row's status cell: down, paused (up and paused) or up.
+// Status is the row's status cell: down, behind: <role> (up, its last
+// fleet play stopped in role), paused (up and paused) or up.
 func (r ConsumerRow) Status() string {
 	switch {
 	case !r.Up:
 		return "down"
+	case r.Behind != "":
+		return "behind: " + r.Behind
 	case r.Paused:
 		return "paused"
 	}
 	return "up"
+}
+
+// BenchPlayKey is the bench's fleet play receipt, and PlayBehind the role
+// its result says the play stopped in ("" for ok): the table's own spelling
+// of fleetbuild.PlayKey and fleetbuild.BehindRole (#4356), since fleetbuild's
+// tests import this package; TestPlayReceiptSpellingIsTheTables holds the
+// two to one another.
+func BenchPlayKey(bench string) string { return "bench:" + bench + ":play" }
+
+// PlayBehind is the role a play receipt's result names after failed:.
+func PlayBehind(result string) string {
+	if role, ok := strings.CutPrefix(result, "failed:"); ok {
+		return role
+	}
+	return ""
 }
 
 // Done is every copy that ended on the consumer: ok plus fail.
@@ -408,6 +431,7 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		beat   *redis.SliceCmd
 		down   *redis.IntCmd
 		paused *redis.StringCmd
+		play   *redis.StringCmd // a bench's last fleet play result (#4356)
 	}
 	roster := r.roster()
 	cmds := make([]consumerCmds, len(roster))
@@ -418,6 +442,9 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		cmds[i].beat = pipe.HMGet(ctx, c.ID()+":beat", "load1", "at", "ncpu", "cpu")
 		cmds[i].down = pipe.Exists(ctx, c.ID()+":down")
 		cmds[i].paused = pipe.HGet(ctx, c.ID()+":desired", "paused")
+		if c.Kind == "bench" {
+			cmds[i].play = pipe.HGet(ctx, BenchPlayKey(c.Name), "result")
+		}
 	}
 	progress := pipe.HGetAll(ctx, ProgressKey)
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !isReplyError(err) {
@@ -541,6 +568,11 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		}
 		if v, err := cmds[i].paused.Result(); err == nil && v == "1" {
 			row.Paused = true
+		}
+		if cmds[i].play != nil {
+			if v, err := cmds[i].play.Result(); err == nil {
+				row.Behind = PlayBehind(v)
+			}
 		}
 		snap.Consumers = append(snap.Consumers, row)
 	}
