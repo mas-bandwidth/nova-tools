@@ -3853,25 +3853,69 @@ function TM.bare(repo)
   return string.match(TK.str(repo), '([^/]+)$') or ''
 end
 
--- TM.ci_final: the CI word for a PR head: FAIL when the PR record names
--- another head (a head change), else the request record's final (ci
--- run, #3597) or the ci cards' verdicts at the head (ci.lua): OK, FAIL, or
--- '' while pending. Returns the word and why.
+-- TM.ci_final: the CI word for a PR head (ci-final-gh@dev): FAIL when the
+-- PR record names another head (a head change); else one fold over every
+-- source that speaks at the head, FAIL anywhere winning, then pending
+-- anywhere, then OK: (1) our own CI's request record ci:<repo>:<head> (ci
+-- run, #3597): final OK or FAIL, or pending while a record exists with no
+-- final (own CI unfinished; no record says nothing); (2) the ci cards'
+-- verdicts at the head (ci.lua): OK, FAIL, or pending for a gid with no
+-- verdict yet; (3) the GitHub leg ci:<repo>:<head>:gh that ns_ci_github
+-- folds from webhook deliveries or `ci github --from-runner`
+-- (ci_github.lua): gh green is OK, red is FAIL naming gh_fail, pending is
+-- pending (a run in flight at the head), no leg says nothing; (4) the PR
+-- record's own ci word (pr:<bare>:<n> ci green|red|pending with ci_why,
+-- from `pr record --ci` and the lander's fold of GitHub's check runs), read
+-- only while its ci_sha is empty or names this head, and its pending only
+-- at this head (an empty ci_sha with pending is the record's creation
+-- default, prrecord.go, not a word). (1) to (3) are read under both
+-- spellings of the repo (bare and owner/name); a red under either wins. A
+-- head no source names is '' (pending): a repo whose CI is GitHub Actions
+-- only (quack: hosted runners send no `ci github --from-runner`, and its PR
+-- records say ci green) passes a read on the leg or the PR record alone.
+-- Returns the word and why.
 function TM.ci_final(repo, pr, head)
   local bare = TM.bare(repo)
-  local now = TK.str(redis.call('HGET', 'pr:' .. bare .. ':' .. TK.str(pr), 'head'))
+  local prkey = 'pr:' .. bare .. ':' .. TK.str(pr)
+  local now = TK.str(redis.call('HGET', prkey, 'head'))
   if now ~= '' and now ~= head then return 'FAIL', 'head moved to ' .. string.sub(now, 1, 12) end
-  for _, r in ipairs({ bare, TK.str(repo) }) do
-    local f = redis.call('HMGET', 'ci:' .. r .. ':' .. head, 'final', 'why')
-    if TK.str(f[1]) == 'OK' or TK.str(f[1]) == 'FAIL' then return f[1], TK.str(f[2]) end
+  local names = { bare }
+  if TK.str(repo) ~= bare then names[2] = TK.str(repo) end
+  local ok, pending = false, false
+  for _, r in ipairs(names) do
+    local key = 'ci:' .. r .. ':' .. head
+    local f = redis.call('HMGET', key, 'final', 'why')
+    local final = TK.str(f[1])
+    if final == 'FAIL' then return 'FAIL', TK.str(f[2]) end
+    if final == 'OK' then
+      ok = true
+    elseif redis.call('EXISTS', key) == 1 then
+      pending = true
+    end
+    for _, gid in ipairs(redis.call('SMEMBERS', key .. ':gids')) do
+      local v = TK.str(redis.call('HGET', key .. ':' .. gid, 'verdict'))
+      if v == 'FAIL' then return 'FAIL', 'ci card verdict FAIL' end
+      if v == 'OK' then ok = true else pending = true end
+    end
+    local g = redis.call('HMGET', key .. ':gh', 'gh', 'gh_fail')
+    local gh = TK.str(g[1])
+    if gh == 'red' then
+      local fail = TK.str(g[2])
+      return 'FAIL', 'github red' .. (fail ~= '' and (' ' .. fail) or '')
+    end
+    if gh == 'green' then ok = true elseif gh ~= '' then pending = true end
   end
-  local word = ''
-  for _, gid in ipairs(redis.call('SMEMBERS', 'ci:' .. TK.str(repo) .. ':' .. head .. ':gids')) do
-    local v = TK.str(redis.call('HGET', 'ci:' .. TK.str(repo) .. ':' .. head .. ':' .. gid, 'verdict'))
-    if v == 'FAIL' then return 'FAIL', 'ci card verdict FAIL' end
-    if v == 'OK' then word = 'OK' end
+  local p = redis.call('HMGET', prkey, 'ci', 'ci_sha', 'ci_why')
+  local psha, pci = TK.str(p[2]), TK.str(p[1])
+  if psha == '' or psha == head then
+    if pci == 'red' then
+      local why = TK.str(p[3])
+      return 'FAIL', 'pr record ci red' .. (why ~= '' and (' ' .. why) or '')
+    end
+    if pci == 'green' then ok = true elseif pci ~= '' and psha == head then pending = true end
   end
-  return word, ''
+  if pending or not ok then return '', '' end
+  return 'OK', ''
 end
 
 -- TM.live: the consumer's own beat (<c>:beat at, a bench's or a friend's
