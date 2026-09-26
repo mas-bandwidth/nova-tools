@@ -25,11 +25,15 @@ import (
 func TestUnplacedGitIsForeignOnlyByItsStatusUID(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
-	const self, other = 501, 502
+	// self is the real effective uid: the fixture lock is read by the real owner reader,
+	// and a fixed 501 is another account on a CI runner (uid 1000 on the linux shard).
+	self := effectiveUID()
+	other := self + 1
 	eacces := func(op, path string) error { return &fs.PathError{Op: op, Path: path, Err: syscall.EACCES} }
 	esrch := func(op, path string) error { return &fs.PathError{Op: op, Path: path, Err: syscall.ESRCH} }
-	uidLine := func(uid int) []byte {
-		return []byte("Name:\tgit\nState:\tS (sleeping)\nUid:\t" + strconv.Itoa(uid) + "\t" + strconv.Itoa(uid) + "\t" + strconv.Itoa(uid) + "\t" + strconv.Itoa(uid) + "\nGid:\t20\t20\t20\t20\n")
+	uidLine := func(uid uint32) []byte {
+		u := strconv.FormatUint(uint64(uid), 10)
+		return []byte("Name:\tgit\nState:\tS (sleeping)\nUid:\t" + u + "\t" + u + "\t" + u + "\t" + u + "\nGid:\t20\t20\t20\t20\n")
 	}
 	// reader serves one pid: the entry owner, and per-file answers.
 	reader := func(owner uint32, status []byte, statusErr error, cmdline []byte, cwdErr error) procReader {
@@ -156,7 +160,8 @@ func TestStatusEffectiveUIDIsTheSecondField(t *testing.T) {
 func TestLockScanCountsEveryProcessItSaw(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
-	const self, other = 501, 502
+	self := effectiveUID() // the real lock owner, whatever uid the runner is
+	other := self + 1
 	denied := &fs.PathError{Op: "readlink", Path: "/proc/9/cwd", Err: syscall.EACCES}
 	dir, lock := oldIndexLock(t)
 	views := []procView{
