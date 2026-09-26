@@ -17,22 +17,32 @@ type Event struct {
 }
 
 // Snapshot is what sync read for one batch of events: the task records the
-// events and their read copies name (by id), the rows that exist (by key),
-// and the read decisions each landing primary still waits on.
+// events and their copies' primaries name (by id), the rows that exist (by
+// key), the read decisions each landing primary still waits on, each
+// primary's open review row (jev:review:open) and the tier its last work or
+// fix copy ran at (jev:built: "<tier> <copy> <model>").
 type Snapshot struct {
 	Records map[string]map[string]string
 	Rows    map[string]bool
 	Reads   map[string]map[string]string
+	Open    map[string]string
+	Built   map[string]string
 }
 
 // Plan is one batch's writes: the decisions, the outcomes, the read
 // decisions that wait for their head's fate, the primaries whose wait is
-// over, and the cursor after the batch.
+// over, the open reviews and built tiers set ("" clears), the review moves
+// whose record had moved on to a later review before sync read it (Moved,
+// counted and printed: no row is made from a record that is not the
+// move's), and the cursor after the batch.
 type Plan struct {
 	Decisions []Decision
 	Outcomes  []Outcome
 	Reads     []ReadWait
 	Settled   []string
+	Open      map[string]string
+	Built     map[string]string
+	Moved     []string
 	Cursor    string
 }
 
@@ -65,6 +75,21 @@ var (
 	findingRx = regexp.MustCompile(`\bfinding=(.*)$`)
 )
 
+// notFail are the whys of a primary's move into review that are not a
+// copy's fail (a build's PR, a fix, a head move): no REVIEW-JEV was written in
+// that call.
+var notFail = []string{"ok pr ", "fix pr ", "fix ok", "head moved to ", "read given back", "superseded"}
+
+// EventAt is the ms a move was logged at: its at field (the same cm_now the
+// call wrote on the record, review_at included), else the entry id's ms.
+func EventAt(e Event) string {
+	if at := e.Fields["at"]; at != "" {
+		return at
+	}
+	ms, _, _ := strings.Cut(e.ID, "-")
+	return ms
+}
+
 // IsCopy is id a consumer copy's (<primary>~<n>).
 func IsCopy(id string) bool { return copyRx.MatchString(id) }
 
@@ -94,6 +119,11 @@ func classify(e Event) (move, bool) {
 	case from == "review" && to != "review" && verdictRx.MatchString(why):
 		m.kind = kVerdict
 	case to == "review":
+		for _, p := range notFail {
+			if strings.HasPrefix(why, p) {
+				return m, false
+			}
+		}
 		m.kind = kReview
 	case to == "merging" && from != "merging":
 		m.kind = kMerging
@@ -135,11 +165,18 @@ func Needs(events []Event) []string {
 	return out
 }
 
-// Then is the second read, once the records are in: the rows the decisions
-// and outcomes would touch, and the read decisions of the primaries whose
-// head's fate is known.
-func Then(events []Event, recs map[string]map[string]string) (rows, reads []string) {
-	seenR, seenW := map[string]bool{}, map[string]bool{}
+// Then is the second read, beside the records: the rows the decisions
+// would make, the read decisions of the primaries whose head's fate is
+// known, and the primaries whose open review (a verdict) or built tier
+// (merging) an event settles.
+func Then(events []Event) (rows, reads, open, built []string) {
+	seenR, seenW, seenO, seenB := map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}
+	add := func(seen map[string]bool, list *[]string, id string) {
+		if !seen[id] {
+			seen[id] = true
+			*list = append(*list, id)
+		}
+	}
 	row := func(k string) {
 		if !seenR[k] {
 			seenR[k] = true
@@ -151,31 +188,27 @@ func Then(events []Event, recs map[string]map[string]string) (rows, reads []stri
 		if !ok {
 			continue
 		}
-		rec := recs[m.id]
 		switch m.kind {
 		case kRead:
 			row(RowKey(TypeReadSane, m.id))
 		case kCopyCut:
-			if at := recs[PrimaryOf(m.id)]["review_at"]; at != "" {
-				row(RowKey(TypeReview, PrimaryOf(m.id)+"@"+at))
-			}
+			add(seenO, &open, PrimaryOf(m.id))
 		case kCut:
 			row(RowKey(TypeTier, m.id))
 			row(RowKey(TypeWorkType, m.id))
-		case kReview, kVerdict:
-			if at := rec["review_at"]; at != "" {
-				row(RowKey(TypeReview, m.id+"@"+at))
-			}
+		case kReview:
+			row(RowKey(TypeReview, m.id+"@"+EventAt(e)))
+			add(seenO, &open, m.id)
+		case kVerdict:
+			add(seenO, &open, m.id)
 		case kMerging:
 			row(RowKey(TypeTier, m.id))
+			add(seenB, &built, m.id)
 		case kLanded, kClosed:
-			if !seenW[m.id] {
-				seenW[m.id] = true
-				reads = append(reads, m.id)
-			}
+			add(seenW, &reads, m.id)
 		}
 	}
-	return rows, reads
+	return rows, reads, open, built
 }
 
 // MakePlan judges one batch: each decision point's row (when the row is not
@@ -194,6 +227,16 @@ func MakePlan(events []Event, s Snapshot) Plan {
 			reads[p][c] = v
 		}
 	}
+	open, built := map[string]string{}, map[string]string{}
+	for k, v := range s.Open {
+		open[k] = v
+	}
+	for k, v := range s.Built {
+		built[k] = v
+	}
+	pl.Open, pl.Built = map[string]string{}, map[string]string{}
+	setOpen := func(id, v string) { open[id], pl.Open[id] = v, v }
+	setBuilt := func(id, v string) { built[id], pl.Built[id] = v, v }
 	decide := func(d Decision) {
 		if rows[RowKey(d.Type, d.Subject)] {
 			return
@@ -209,6 +252,14 @@ func MakePlan(events []Event, s Snapshot) Plan {
 			pl.Outcomes = append(pl.Outcomes, o)
 		}
 	}
+	// an open review names a row sync made; a verdict joins it
+	joinOpen := func(id string, o Outcome) {
+		if subj := open[id]; subj != "" && o.Outcome != "" {
+			o.Type, o.Subject = TypeReview, subj
+			pl.Outcomes = append(pl.Outcomes, o)
+			setOpen(id, "")
+		}
+	}
 	for _, e := range events {
 		pl.Cursor = e.ID
 		m, ok := classify(e)
@@ -219,46 +270,76 @@ func MakePlan(events []Event, s Snapshot) Plan {
 		if rec == nil {
 			continue
 		}
+		at, _ := strconv.ParseInt(EventAt(e), 10, 64)
 		switch m.kind {
 		case kCut:
 			if rec["friend"] != "" || rec["owner"] != "" {
 				continue // a friend-queue task, not a primary of the copy model
 			}
 			state := CutState(m.id, rec)
-			decide(Decision{Type: TypeTier, Subject: m.id, State: state, Rules: DeclaredTier(rec), Ask: true})
-			decide(Decision{Type: TypeWorkType, Subject: m.id, State: state, Ask: true})
+			decide(Decision{Type: TypeTier, Subject: m.id, State: state, Rules: DeclaredTier(rec), Ask: true, At: at})
+			decide(Decision{Type: TypeWorkType, Subject: m.id, State: state, Ask: true, At: at})
 			if t := DeclaredType(rec); t != "" {
 				join(Outcome{Type: TypeWorkType, Subject: m.id, Outcome: t, By: "card", Why: "the card's TYPE line"})
 			}
 		case kReview:
-			at, suggest := rec["review_at"], suggestOf(rec["review_jev"])
-			if at == "" || suggest == "" {
+			// the review is keyed by the move's own at, the cm_now TM.evidence
+			// wrote as review_at in the same call; a record whose review_at is
+			// later has moved on to another review, and its fields are not
+			// this move's: no row, one counted gap
+			ea := EventAt(e)
+			switch ra := rec["review_at"]; {
+			case ra == ea:
+			case atOrAfter(ra, ea):
+				pl.Moved = append(pl.Moved, m.id+"@"+ea)
+				continue
+			default:
+				continue // no REVIEW-JEV in this move's call
+			}
+			suggest := suggestOf(rec["review_jev"])
+			if suggest == "" {
 				continue
 			}
-			decide(Decision{Type: TypeReview, Subject: m.id + "@" + at, State: ReviewState(m.id, rec), Rules: suggest,
-				Ask: true})
+			subj := m.id + "@" + ea
+			decide(Decision{Type: TypeReview, Subject: subj, State: ReviewState(m.id, rec), Rules: suggest, Ask: true, At: at})
+			if rows[RowKey(TypeReview, subj)] {
+				setOpen(m.id, subj)
+			}
 		case kCopyCut:
 			// a reassign of a read cuts a read copy and moves no primary: the
 			// verdict is on the primary's record, not on a move
 			p := s.Records[PrimaryOf(m.id)]
-			at := p["review_at"]
-			if rec["leg"] != "read" || p["review_verdict"] != "reassign" || at == "" || !atOrAfter(p["reviewed_at"], at) ||
-				!sameCall(e.ID, p["reviewed_at"]) {
+			if rec["leg"] != "read" || p["review_verdict"] != "reassign" || !sameCall(e.ID, p["reviewed_at"]) {
 				continue
 			}
-			join(Outcome{Type: TypeReview, Subject: PrimaryOf(m.id) + "@" + at, Outcome: "reassign", By: p["reviewed_by"],
-				Why: reviewWhy(p["review"])})
+			joinOpen(PrimaryOf(m.id), Outcome{Outcome: "reassign", By: p["reviewed_by"], Why: reviewWhy(p["review"])})
 		case kVerdict:
-			if at := rec["review_at"]; at != "" {
-				v := verdictRx.FindStringSubmatch(m.why)
-				join(Outcome{Type: TypeReview, Subject: m.id + "@" + at, Outcome: v[1], By: m.by, Why: v[2]})
-			}
+			v := verdictRx.FindStringSubmatch(m.why)
+			joinOpen(m.id, Outcome{Outcome: v[1], By: m.by, Why: v[2]})
 		case kMerging:
-			if t := RanTier(rec); t != "" {
-				join(Outcome{Type: TypeTier, Subject: m.id, Outcome: t, By: "merging",
-					Why: "its work read " + strconv.Itoa(PassScore) + "+ at tier " + t})
+			// the tier outcome is what ran: the tier of the work or fix copy
+			// whose PR this read passed, from that copy's record at its ok
+			if b := strings.Fields(built[m.id]); len(b) > 0 && IsTier(b[0]) {
+				why := "its PR read " + strconv.Itoa(PassScore) + "+ built by " + b[1] + " at tier " + b[0]
+				if len(b) > 2 {
+					why += " (" + b[2] + ")"
+				}
+				join(Outcome{Type: TypeTier, Subject: m.id, Outcome: b[0], By: "merging", Why: why})
+			}
+			if built[m.id] != "" {
+				setBuilt(m.id, "")
 			}
 		case kRead:
+			if l := rec["leg"]; l == "work" || l == "fix" {
+				if t := RanTier(rec); t != "" && rec["primary"] != "" {
+					v := t + " " + m.id
+					if md := strings.Fields(rec["model"]); len(md) > 0 {
+						v += " " + md[0]
+					}
+					setBuilt(rec["primary"], v)
+				}
+				continue
+			}
 			p := rec["primary"]
 			score, err := strconv.Atoi(rec["score"])
 			if rec["leg"] != "read" || p == "" || err != nil || score < 1 || score > 10 {
@@ -267,7 +348,7 @@ func MakePlan(events []Event, s Snapshot) Plan {
 			finding := ReadFinding(rec)
 			rules, _ := ReadRules(score, rec["gates"], finding)
 			decide(Decision{Type: TypeReadSane, Subject: m.id, State: ReadState(m.id, rec, s.Records[p]), Rules: rules,
-				Ask: true, Fields: map[string]string{"primary": p, "score": rec["score"], "head": rec["head"]}})
+				Ask: true, At: at, Fields: map[string]string{"primary": p, "score": rec["score"], "head": rec["head"]}})
 			if reads[p] == nil {
 				reads[p] = map[string]string{}
 			}
@@ -368,7 +449,7 @@ func DeclaredTier(rec map[string]string) string {
 	return "flash"
 }
 
-// RanTier is the tier the primary's work ran at ("" when nothing says).
+// RanTier is the tier a copy's record says it ran at ("" when nothing says).
 func RanTier(rec map[string]string) string {
 	if IsTier(rec["tier"]) {
 		return rec["tier"]

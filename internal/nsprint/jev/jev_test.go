@@ -87,7 +87,8 @@ func ev(id string, kv ...string) Event {
 }
 
 func snap(recs map[string]map[string]string) Snapshot {
-	return Snapshot{Records: recs, Rows: map[string]bool{}, Reads: map[string]map[string]string{}}
+	return Snapshot{Records: recs, Rows: map[string]bool{}, Reads: map[string]map[string]string{}, Open: map[string]string{},
+		Built: map[string]string{}}
 }
 
 func findDecision(pl Plan, typ, subject string) (Decision, bool) {
@@ -116,7 +117,7 @@ func TestPlanCutIsTierAndWorkType(t *testing.T) {
 	t.Parallel()
 
 	events := []Event{
-		ev("1-0", "id", "p1", "from", "", "to", "waiting", "by", "rowan"),
+		ev("1-0", "id", "p1", "from", "", "to", "waiting", "by", "rowan", "at", "1"),
 		ev("2-0", "id", "p2", "from", "", "to", "ready"),
 		ev("3-0", "id", "f1", "from", "", "to", "ready"),
 		ev("4-0", "id", "p3", "from", "", "to", "waiting"),
@@ -130,7 +131,7 @@ func TestPlanCutIsTierAndWorkType(t *testing.T) {
 	if got := Needs(events); strings.Join(got, ",") != "p1,p2,f1,p3" {
 		t.Fatalf("Needs = %v", got)
 	}
-	rows, _ := Then(events, recs)
+	rows, _, _, _ := Then(events)
 	if len(rows) != 8 {
 		t.Fatalf("Then rows = %v", rows)
 	}
@@ -142,7 +143,7 @@ func TestPlanCutIsTierAndWorkType(t *testing.T) {
 		t.Errorf("cursor %q", pl.Cursor)
 	}
 	d, ok := findDecision(pl, TypeTier, "p1")
-	if !ok || d.Rules != "pro" || !d.Ask || !strings.Contains(d.State, "PATHS: cmd/x.go") {
+	if !ok || d.Rules != "pro" || !d.Ask || !strings.Contains(d.State, "PATHS: cmd/x.go") || d.At != 1 {
 		t.Errorf("p1 tier decision %+v %v", d, ok)
 	}
 	if d, ok := findDecision(pl, TypeTier, "p2"); !ok || d.Rules != "flash" {
@@ -168,30 +169,43 @@ func TestPlanCutIsTierAndWorkType(t *testing.T) {
 }
 
 // TestPlanReviewSuggestThenVerdict: a failed copy's primary in review is a
-// review decision (rules: the REVIEW-JEV suggest), keyed by its review_at;
-// the posted verdict is its outcome, by whoever posted it; a read reassign
-// (a copy cut in the verdict's call, no primary move) is too.
+// review decision (rules: the REVIEW-JEV suggest) keyed by the move's own at,
+// which is the review_at the same call wrote; the posted verdict joins the
+// primary's open review, by whoever posted it; a read reassign (a copy cut in
+// the verdict's call, no primary move) does too. A second review before sync
+// reads the first leaves the first move's record behind: a counted gap, no
+// row, and the verdict joins the second, never the first. A build's move into
+// review (a PR, no fail) is no decision.
 func TestPlanReviewSuggestThenVerdict(t *testing.T) {
 	t.Parallel()
 
 	recs := map[string]map[string]string{
 		"p1": {"review_at": "1000", "review_jev": "REVIEW-JEV id=p1 consumer=bench:b shape=exit-1 same_card=1 same_consumer=1 suggest=redeal",
 			"review_shape": "exit-1", "review_model": "kimi-k3", "review_line": "BLOCKED: red"},
-		"p2": {"review_at": "2000", "review_verdict": "reassign", "reviewed_at": "2500", "reviewed_by": "rowan",
-			"review": "REVIEW verdict=reassign:bench:c by=rowan: the reader keeps failing"},
+		"p2": {"review_at": "2000", "review_jev": "REVIEW-JEV id=p2 suggest=reassign", "review_verdict": "reassign",
+			"reviewed_at": "2500", "reviewed_by": "rowan", "review": "REVIEW verdict=reassign:bench:c by=rowan: the reader keeps failing"},
 		"p2~3": {"leg": "read", "primary": "p2"},
+		"p3":   {"review_at": "3500", "review_jev": "REVIEW-JEV id=p3 suggest=recut", "review_shape": "exit-2"},
 	}
 	events := []Event{
-		ev("1000-0", "id", "p1", "from", "working", "to", "review", "why", "child exit 1"),
-		ev("1500-0", "id", "p1", "from", "review", "to", "ready", "by", "rowan", "why", "review redeal: a crash"),
-		ev("2500-0", "id", "p2~3", "from", "", "to", "bench:c:ready"),
-		ev("9000-0", "id", "p2~3", "from", "", "to", "bench:c:ready"),
+		ev("1000-0", "id", "p1", "from", "working", "to", "review", "why", "child exit 1", "at", "1000"),
+		ev("1500-0", "id", "p1", "from", "review", "to", "ready", "by", "rowan", "why", "review redeal: a crash", "at", "1500"),
+		ev("2000-0", "id", "p2", "from", "working", "to", "review", "why", "read failed", "at", "2000"),
+		ev("2500-0", "id", "p2~3", "from", "", "to", "bench:c:ready", "at", "2500"),
+		ev("9000-0", "id", "p2~3", "from", "", "to", "bench:c:ready", "at", "9000"),
+		ev("3000-0", "id", "p3", "from", "working", "to", "review", "why", "child exit 1", "at", "3000"),
+		ev("3200-0", "id", "p3", "from", "review", "to", "ready", "by", "stella", "why", "review redeal: first", "at", "3200"),
+		ev("3500-0", "id", "p3", "from", "working", "to", "review", "why", "child exit 2", "at", "3500"),
+		ev("3600-0", "id", "p3", "from", "review", "to", "waiting", "by", "rowan", "why", "review recut: second", "at", "3600"),
+		ev("4000-0", "id", "p1", "from", "working", "to", "review", "why", "ok pr nova-tools#9 head abc", "at", "4000"),
 	}
-	s := snap(recs)
-	s.Rows[RowKey(TypeReview, "p2@2000")] = true
-	pl := MakePlan(events, s)
+	rows, _, open, _ := Then(events)
+	if !contains(rows, RowKey(TypeReview, "p3@3000")) || !contains(open, "p3") {
+		t.Fatalf("Then rows %v open %v", rows, open)
+	}
+	pl := MakePlan(events, snap(recs))
 	d, ok := findDecision(pl, TypeReview, "p1@1000")
-	if !ok || d.Rules != "redeal" || !strings.Contains(d.State, "SHAPE: exit-1") || !strings.Contains(d.State, "MODEL: kimi-k3") {
+	if !ok || d.Rules != "redeal" || d.At != 1000 || !strings.Contains(d.State, "SHAPE: exit-1") || !strings.Contains(d.State, "MODEL: kimi-k3") {
 		t.Fatalf("review decision %+v %v", d, ok)
 	}
 	if o, ok := findOutcome(pl, TypeReview, "p1@1000"); !ok || o.Outcome != "redeal" || o.By != "rowan" || o.Why != "a crash" {
@@ -209,6 +223,34 @@ func TestPlanReviewSuggestThenVerdict(t *testing.T) {
 	if n != 1 {
 		t.Errorf("read reassign joined %d times, want once (a later read cut is not the verdict)", n)
 	}
+	if _, ok := findDecision(pl, TypeReview, "p3@3000"); ok || strings.Join(pl.Moved, ",") != "p3@3000" {
+		t.Errorf("a review whose record moved on made a row, or no gap was counted: moved %v", pl.Moved)
+	}
+	if o, ok := findOutcome(pl, TypeReview, "p3@3500"); !ok || o.Outcome != "recut" || o.By != "rowan" {
+		t.Errorf("the second review's verdict %+v %v", o, ok)
+	}
+	for _, o := range pl.Outcomes {
+		if o.Subject == "p3@3000" || (o.Subject == "p3@3500" && o.Outcome == "redeal") {
+			t.Errorf("the first verdict joined a row it does not close: %+v", o)
+		}
+	}
+	if _, ok := findDecision(pl, TypeReview, "p1@4000"); ok {
+		t.Error("a build's move into review made a review row")
+	}
+	for _, id := range []string{"p1", "p2", "p3"} {
+		if v, set := pl.Open[id]; !set || v != "" {
+			t.Errorf("%s's open review after its verdict: %q %v, want cleared", id, v, set)
+		}
+	}
+}
+
+func contains(list []string, x string) bool {
+	for _, v := range list {
+		if v == x {
+			return true
+		}
+	}
+	return false
 }
 
 // TestPlanReadSanityAndTheHeadsFate: a read copy's score is a readsane
@@ -225,7 +267,7 @@ func TestPlanReadSanityAndTheHeadsFate(t *testing.T) {
 		"p1~2": {"leg": "read", "primary": "p1", "score": "4", "head": h1, "finding": "no test for the refusal"},
 		"p1~5": {"leg": "read", "primary": "p1", "score": "9", "head": h2, "gates": "ci:green,base:ok,scope:ok", "finding": "the doc comment drifts"},
 		"p1~6": {"leg": "read", "primary": "p1", "score": "6", "head": h2},
-		"p1~7": {"leg": "work", "primary": "p1"},
+		"p1~7": {"leg": "work", "primary": "p1", "tier": "frontier", "model": "opus-5.5"},
 	}
 	events := []Event{
 		ev("1-0", "id", "p1~2", "from", "bench:b:working", "to", "bench:b:ok"),
@@ -235,9 +277,9 @@ func TestPlanReadSanityAndTheHeadsFate(t *testing.T) {
 		ev("5-0", "id", "p1", "from", "review", "to", "merging"),
 		ev("6-0", "id", "p1", "from", "merging", "to", "landed"),
 	}
-	rows, waits := Then(events, recs)
-	if strings.Join(waits, ",") != "p1" {
-		t.Fatalf("Then waits %v", waits)
+	rows, waits, _, built := Then(events)
+	if strings.Join(waits, ",") != "p1" || strings.Join(built, ",") != "p1" {
+		t.Fatalf("Then waits %v built %v", waits, built)
 	}
 	s := snap(recs)
 	for _, k := range rows {
@@ -254,8 +296,14 @@ func TestPlanReadSanityAndTheHeadsFate(t *testing.T) {
 	if _, ok := findDecision(pl, TypeReadSane, "p1~7"); ok {
 		t.Error("a work copy's end made a readsane row")
 	}
-	if o, ok := findOutcome(pl, TypeTier, "p1"); !ok || o.Outcome != "pro" || o.By != "merging" {
+	// the card declares pro; its work copy ran at frontier: the outcome is
+	// what ran, not what was declared
+	if o, ok := findOutcome(pl, TypeTier, "p1"); !ok || o.Outcome != "frontier" || o.By != "merging" ||
+		!strings.Contains(o.Why, "p1~7") || !strings.Contains(o.Why, "opus-5.5") {
 		t.Errorf("tier outcome %+v %v", o, ok)
+	}
+	if v, set := pl.Built["p1"]; !set || v != "" {
+		t.Errorf("built tier after merging %q %v, want cleared", v, set)
 	}
 	for id, want := range map[string]string{"p1~2": "trust", "p1~5": "trust", "p1~6": "suspect"} {
 		if o, ok := findOutcome(pl, TypeReadSane, id); !ok || o.Outcome != want || o.By != "landed" {
