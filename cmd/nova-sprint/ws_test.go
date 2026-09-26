@@ -15,7 +15,7 @@ func TestWSVerbsRefuseHelpAndUsage(t *testing.T) {
 		{"ws", "checkpoint", "--redis", "127.0.0.1:1"},
 		{"scope", "keep", "--redis", "127.0.0.1:1"},
 		{"scope", "park", "--redis", "127.0.0.1:1"},
-		{"stream", "rename", "--redis", "127.0.0.1:1", "only-one"},
+		{"stream", "rename", "--redis", "127.0.0.1:1", "--stream", "only-one"},
 		{"stream", "order", "--redis", "127.0.0.1:1"},
 	} {
 		t.Setenv("NOVA_SPRINT_REDIS", "")
