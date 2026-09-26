@@ -42,7 +42,7 @@ func runFleetPlayWith(ctx context.Context, args []string, out, errOut io.Writer,
 	fs := verbflag.New("fleet play")
 	limit := fs.String("limit", "", "")
 	dryRun := fs.Bool("dry-run", false, "")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	machines := fs.String("machines", "", "")
 	playDir := fs.String("play-dir", "", "")
 	pos, err := parseInterspersed(fs, args)
