@@ -60,7 +60,7 @@ export NOVA_TEST_NO_HOST := 1
 # the same factor covers the unevenness of dealing tests by NAME instead of time. Neither number is a
 # guess and neither is hidden inside the other; internal/ci's darwin class tests
 # hold both.
-DARWIN_TIMEOUT ?= 300s
+DARWIN_TIMEOUT ?= 110s
 
 # MERGE_TIMEOUT is the per-package ceiling on the merge group's legs. 100 s is
 # the linux number and is what that leg has always used; the darwin leg exports
@@ -187,7 +187,7 @@ preflight:
 #
 # GOTEST_TIMEOUT is `go test -timeout` for this target; the default is Go's own
 # 10m. The workflow sets it per leg to fit the leg's job cap.
-GOTEST_TIMEOUT ?= 10m
+GOTEST_TIMEOUT ?= 110s
 test: PKGS := $(CL_PKGS)
 test:
 	@bash -o pipefail -c 'budget=60; case "$$(uname -m)" in x86_64) [ "$$(uname -s)" = Darwin ] && budget=300;; esac; GOFLAGS=-json $(GO) test -count=1 $(PKGS) -timeout $(GOTEST_TIMEOUT) | tee "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; status=$${PIPESTATUS[0]}; $(GO) run ./cmd/nova-ci slowtests --budget "$$budget" < "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; exit $$status'

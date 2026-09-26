@@ -97,7 +97,16 @@ diff arguing for itself.
 
 **Passing CI is not passing review, and CI covers less than it looks like.** CI
 is two tiers, and the law both obey is the maintainer's: **CI checks per every
-CL, one minute ideal, two minutes maximum.**
+CL, one minute ideal, two minutes maximum.** Since 2026-09-25 that law is a
+hard cap, permanent and platform-wide: **every job in every workflow declares
+`timeout-minutes: 2`**, linux, darwin, hosted or self-hosted, nightly and
+release included, and `internal/ci` refuses a workflow that declares anything
+else. Nothing is exempt. Work that needs longer is split into parallel
+functional test programs, each its own job under the cap (a nightly matrix of
+functionals is fine; a thirty-minute job is not). A run that crosses two minutes
+fails, and the test that crossed it moves (a mock, a func program, the slow
+tag) before anything lands: the cap exists because fixes iterate at the speed
+of one run, and because tests only ever accrete.
 
 The **CL tier** (`.github/workflows/ci.yml`) is what a change is required to
 pass in two minutes, ideally one. It runs `gofmt` on one runner — formatting is

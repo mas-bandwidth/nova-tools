@@ -127,29 +127,21 @@ func TestDarwinMergeShardPlanIsDerivedFromMeasurements(t *testing.T) {
 	// INDEX and not by time, so shares come out uneven; and these sizes were read
 	// on a QUIET host while the leg runs on a loaded one.
 	// darwinQuietHostMargin is those allowances in one stated factor.
-	largest := 0.0
-	largestName := ""
-	for pkg, v := range full {
-		if v.measured && v.secs > largest {
-			largest, largestName = v.secs, pkg
-		}
-	}
 	mk := parseMakefile(t, filepath.Join(root, "Makefile"))
 	raw, ok := mk.vars["DARWIN_TIMEOUT"]
 	if !ok {
-		t.Fatal("the Makefile declares no DARWIN_TIMEOUT; the darwin per-package ceiling has nowhere to live but a workflow line nobody can run, which is how the linux 100 s became darwin's number by default")
+		t.Fatal("the Makefile declares no DARWIN_TIMEOUT; the darwin per-package ceiling has nowhere to live but a workflow line nobody can run")
 	}
 	d, err := time.ParseDuration(strings.TrimSpace(raw))
 	if err != nil {
 		t.Fatalf("DARWIN_TIMEOUT = %q is not a Go duration: %v", raw, err)
 	}
-	if d.Seconds() < darwinQuietHostMargin*largest {
-		t.Errorf("DARWIN_TIMEOUT = %s, under %.0fx the whole of the largest measured package (%s at %.1fs in %s); plan-merge opens a SINGLE slot for a group whose Linux sizes sum under 20 s, and that slot runs the package whole in one `go test`, so the share is not the bound — the whole is. The sizes are from a quiet host, which is what the stated margin is for", d, darwinQuietHostMargin, strings.TrimPrefix(largestName, modulePath), largest, darwinSizesPath)
+	// Since 2026-09-25 the per-package ceiling is bounded by the job cap, not
+	// by a margin over the largest x64 measurement: a package that cannot run
+	// under two minutes is split or moves behind the slow tag, never waited for.
+	if d >= 2*time.Minute {
+		t.Errorf("DARWIN_TIMEOUT = %s is not under the two-minute job cap", d)
 	}
-
-	// And the number must say where it comes from. A ceiling is a claim about a
-	// machine, so the machine, the run that forced it and the margin belong in the
-	// repository beside it.
 	mkSrc := readFile(t, filepath.Join(root, "Makefile"))
 	if !strings.Contains(mkSrc, darwinMeasurementRun) {
 		t.Errorf("the Makefile does not say where DARWIN_TIMEOUT's number comes from (run %s); a ceiling is a claim about the machine and belongs in the repository with its measurement", darwinMeasurementRun)
