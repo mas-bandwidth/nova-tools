@@ -32,3 +32,4 @@ internal/ci/toolchainroots_class_test.go
 internal/ci/transcripts_class_test.go
 internal/ci/version_class_test.go
 internal/ci/wholetree_class_test.go
+internal/ci/cipriority_class_test.go
