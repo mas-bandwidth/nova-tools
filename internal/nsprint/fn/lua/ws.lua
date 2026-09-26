@@ -60,12 +60,9 @@ function W.log(id, stream, from, to, by, why, at)
 end
 
 -- W.place registers a stream: ws:names, and a rank after the last in
--- ws:order when it has none.
+-- ws:order when it has none (NS.card.register, the one registration).
 function W.place(stream)
-  redis.call('SADD', 'ws:names', stream)
-  if not redis.call('ZSCORE', 'ws:order', stream) then
-    redis.call('ZADD', 'ws:order', redis.call('ZCARD', 'ws:order') + 1, stream)
-  end
+  NS.card.register(stream)
 end
 
 -- W.move_one is a thin call of the one task move (NS.task.move,

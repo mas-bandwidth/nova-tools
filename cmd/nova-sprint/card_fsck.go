@@ -74,13 +74,31 @@ func runFsck(ctx context.Context, addr, sprint string, repair bool, verb, remedy
 	for _, l := range mem.Lines {
 		fmt.Fprintf(stderr, "DRIFT %s\n", oneline.Escape(l))
 	}
+	orphans := fsckOrphans(ctx, client, stdout, stderr)
 	nomirror := fsckNoMirror(ctx, client, stdout, stderr)
-	fmt.Fprintf(stdout, "%s notacard=%d removed=%d nomirror=%s\n", rep.Line(verb), mem.Bad, mem.Removed, nomirror)
+	fmt.Fprintf(stdout, "%s notacard=%d removed=%d orphansets=%s nomirror=%s\n", rep.Line(verb), mem.Bad, mem.Removed, orphans, nomirror)
 	if !rep.Clean() || !mem.Clean() {
 		fmt.Fprintf(stderr, "nova-sprint card: %d drift left; run: nova-sprint %s\n", rep.Drift-rep.Fixed+mem.Bad-mem.Removed, remedy)
 		return 1
 	}
 	return 0
+}
+
+// fsckOrphans prints one ORPHAN-SET key=<k> members=<n> line per ws set
+// whose members all belong to no card of any sprint in sprint:order and
+// returns the receipt's orphansets count, or "?" when the walk failed. It is
+// reported, never repaired (#4334 owns purging), and never changes the exit
+// code.
+func fsckOrphans(ctx context.Context, client redis.UniversalClient, stdout, stderr io.Writer) string {
+	rep, err := card.OrphanSets(ctx, client)
+	if err != nil {
+		fmt.Fprintf(stderr, "nova-sprint card: ws orphan sets not read: %s\n", oneline.Escape(err.Error()))
+		return "?"
+	}
+	for _, l := range rep.Lines {
+		fmt.Fprintln(stdout, oneline.Escape(l))
+	}
+	return strconv.FormatInt(rep.Orphans, 10)
 }
 
 // fsckNoMirror prints one NOMIRROR line per registered bench whose

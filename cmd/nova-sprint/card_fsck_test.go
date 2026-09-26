@@ -95,7 +95,7 @@ func TestCardFsckReportsNoMirror(t *testing.T) {
 	errOut.Reset()
 	code := cmdCardFsck(ctx, []string{"--sprint", sprint, "--redis", addr}, &out, &errOut)
 	want := "NOMIRROR bench=hulk repos=nova-tools\nNOMIRROR bench=space repos=nova-tools,rowan-tools\nCARD FSCK sprint=" + sprint
-	if code != 0 || !strings.HasPrefix(out.String(), want) || !strings.HasSuffix(out.String(), " drift=0 fixed=0 notacard=0 removed=0 nomirror=2\n") {
+	if code != 0 || !strings.HasPrefix(out.String(), want) || !strings.HasSuffix(out.String(), " drift=0 fixed=0 registered=0 notacard=0 removed=0 orphansets=0 nomirror=2\n") {
 		t.Fatalf("fsck with marks: %d %q %q", code, out.String(), errOut.String())
 	}
 }

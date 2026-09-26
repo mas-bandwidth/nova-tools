@@ -126,7 +126,7 @@ local function cm_views(S, label, id, p)
   local b = cm_bench(p.bench)
   v[#v + 1] = { t = 'z', k = 'bench:' .. b .. ':cards:' .. p.where, m = id }
   if p.where == 'done' then v[#v + 1] = { t = 'z', k = 'bench:' .. b .. ':cards:' .. p.ok, m = id } end
-  if p.stream ~= '' then v[#v + 1] = { t = 'z', k = 'ws:' .. p.stream .. ':' .. p.where, m = id } end
+  if p.stream ~= '' then v[#v + 1] = { t = 'z', k = 'ws:' .. p.stream .. ':' .. p.where, m = id, s = p.stream } end
   if p.owner ~= '' then v[#v + 1] = { t = 'z', k = 'friend:' .. p.owner .. ':cards:' .. p.where, m = id } end
   if p.where == 'ready' then v[#v + 1] = { t = 'l', k = 's:' .. S .. ':pool', m = label } end
   if p.where == 'waiting' then v[#v + 1] = { t = 's', k = 's:' .. S .. ':waiting', m = label } end
@@ -169,10 +169,33 @@ local function card_add(k, score, m)
   return nil
 end
 
+-- cm_register(stream): the one registration of a work stream, for the card
+-- path and the task path alike (TK.register and ws.lua's W.place call it):
+-- the stream is in ws:names and ranked last in ws:order when it has no rank.
+-- Found 2026-09-26 on the live store: card push --dir of 32 cards with
+-- STREAM: ci wrote ws:ci:ready and ws:ci:waiting but never ws:names or
+-- ws:order, so stream ls, stream order, scope keep and the stream table did
+-- not know the stream. Every ws:<stream>:<where> add of a card (cm_add of a
+-- view that names its stream) registers the stream first.
+local function cm_register(stream)
+  if type(stream) ~= 'string' or stream == '' then return end
+  redis.call('SADD', 'ws:names', stream)
+  if not redis.call('ZSCORE', 'ws:order', stream) then
+    redis.call('ZADD', 'ws:order', redis.call('ZCARD', 'ws:order') + 1, stream)
+  end
+end
+
+-- cm_registered(stream): the stream is in ws:names and ranked in ws:order.
+local function cm_registered(stream)
+  return redis.call('SISMEMBER', 'ws:names', stream) == 1 and redis.call('ZSCORE', 'ws:order', stream) ~= false
+end
+
 -- The pool's members are labels (not a table set of ids): added as they are.
 -- A card-id view goes through card_add; a refusal there leaves the view
--- unlinked, which card_move's after-check names (DRIFT-AFTER).
+-- unlinked, which card_move's after-check names (DRIFT-AFTER). A stream view
+-- (e.s) registers its stream first: one state machine with the task path.
 local function cm_add(e, score)
+  if e.s then cm_register(e.s) end
   if e.t == 's' then
     redis.call('SADD', e.k, e.m)
   elseif e.t == 'l' then
@@ -488,9 +511,11 @@ end
 -- every record the sprint's state indexes, waiting set and pool name that
 -- sprint:<S>:cards lacks, rewrites a pointer its fine state contradicts, adds
 -- a missing link and removes a stray one. A null card (where empty: created,
--- not yet placed) is in no table set and is counted as null. Returns FSCK S
--- cards null waiting ready working done parked ok fail drift fixed, then up
--- to 50 drift lines.
+-- not yet placed) is in no table set and is counted as null. A stream with
+-- members of the sprint that is missing from ws:names or ws:order is
+-- UNREGISTERED stream=<s> members=<n>; repair registers it. Returns FSCK S
+-- cards null waiting ready working done parked ok fail drift fixed
+-- registered, then up to 50 drift lines.
 local function card_fsck(S, write)
   local drift, fixed, lines = 0, 0, {}
   local function note(s)
@@ -515,6 +540,9 @@ local function card_fsck(S, write)
 
   local n = { null = 0, waiting = 0, ready = 0, working = 0, done = 0, parked = 0, ok = 0, fail = 0, abstain = 0 }
   local want, benches, streams, owners = {}, { _pool = true }, {}, {}
+  -- streams[s] counts the sprint's placed cards of stream s: its
+  -- ws:<s>:<where> members (a null card is in no set and counts 0)
+  local registered = 0
   for _, b in ipairs(redis.call('SMEMBERS', 'benches')) do benches[b] = true end
   for _, id in ipairs(redis.call('ZRANGE', all, 0, -1)) do
     do
@@ -535,7 +563,7 @@ local function card_fsck(S, write)
           -- null: created, not yet placed; in no table set (Glenn 12:32 AM)
           n.null = n.null + 1
           benches[cm_bench(c.bench)] = true
-          if c.stream ~= '' then streams[c.stream] = true end
+          if c.stream ~= '' then streams[c.stream] = streams[c.stream] or 0 end
           if c.owner ~= '' then owners[c.owner] = true end
         elseif not w then
           note('state ' .. id .. ' ' .. tostring(c.state))
@@ -551,7 +579,7 @@ local function card_fsck(S, write)
           n[w] = n[w] + 1
           if w == 'done' then n[ok] = n[ok] + 1 end
           benches[cm_bench(c.bench)] = true
-          if c.stream ~= '' then streams[c.stream] = true end
+          if c.stream ~= '' then streams[c.stream] = (streams[c.stream] or 0) + 1 end
           if c.owner ~= '' then owners[c.owner] = true end
           for _, e in ipairs(cm_views(S, label, id, c)) do
             want[e.k] = want[e.k] or {}
@@ -629,6 +657,24 @@ local function card_fsck(S, write)
   for s in pairs(streams) do
     for _, w in ipairs(CM_WHERE) do sweep('ws:' .. s .. ':' .. w, s, w) end
   end
+  -- A stream with members of this sprint that is not in ws:names or not
+  -- ranked in ws:order (2026-09-26: card push never registered it) is
+  -- UNREGISTERED; repair registers it (cm_register) and counts it registered.
+  local snames = {}
+  for s, m in pairs(streams) do
+    if m > 0 then snames[#snames + 1] = s end
+  end
+  table.sort(snames)
+  for _, s in ipairs(snames) do
+    if not cm_registered(s) then
+      note('UNREGISTERED stream=' .. s .. ' members=' .. streams[s])
+      if write then
+        cm_register(s)
+        registered = registered + 1
+        fixed = fixed + 1
+      end
+    end
+  end
   for f in pairs(owners) do
     for _, w in ipairs(CM_WHERE) do sweep('friend:' .. f .. ':cards:' .. w, '', w) end
   end
@@ -649,7 +695,8 @@ local function card_fsck(S, write)
   local sum = n.null + n.waiting + n.ready + n.working + n.done + n.parked
   if sum ~= total then note('sum ' .. sum .. ' (null + places) ~= ' .. total .. ' cards') end
   local out = { 'FSCK', S, tostring(total), tostring(n.null), tostring(n.waiting), tostring(n.ready), tostring(n.working),
-    tostring(n.done), tostring(n.parked), tostring(n.ok), tostring(n.fail), tostring(drift), tostring(fixed) }
+    tostring(n.done), tostring(n.parked), tostring(n.ok), tostring(n.fail), tostring(drift), tostring(fixed),
+    tostring(registered) }
   for _, l in ipairs(lines) do out[#out + 1] = l end
   return out
 end
@@ -729,6 +776,61 @@ local function card_members(write, by)
   return out
 end
 
+-- cm_sprint_member(m, live): m names a card of a sprint in sprint:order
+-- (live, a set of sprint names): a card id s:<S>:card:<label> listed in
+-- sprint:<S>:cards, or a task id whose task:<id> record exists and names a
+-- live sprint (or none: TK.sprint's first of sprint:order).
+local function cm_sprint_member(m, live)
+  local S = cm_split(m)
+  if S then return live[S] == true and redis.call('ZSCORE', 'sprint:' .. S .. ':cards', m) ~= false end
+  if type(m) ~= 'string' or m == '' then return false end
+  local sp = redis.call('HGET', 'task:' .. m, 'sprint')
+  if sp == false then return redis.call('EXISTS', 'task:' .. m) == 1 and next(live) ~= nil end
+  if sp == '' then return next(live) ~= nil end
+  return live[sp] == true
+end
+
+-- ws_orphans(): every ws:<stream>:<where> set (streams of ws:order and
+-- ws:names, cm_table_sets) that is non-empty and whose members all belong
+-- to no card of any sprint in sprint:order (cm_sprint_member; a lease
+-- member is the lease ledger's and is skipped) is ORPHAN-SET key=<k>
+-- members=<n>. Read-only: #4334 owns purging. Returns ORPHANS sets orphans,
+-- then up to 50 lines.
+local function ws_orphans()
+  local live = {}
+  for _, S in ipairs(redis.call('ZRANGE', 'sprint:order', 0, -1)) do live[S] = true end
+  local sets, orphans, lines = 0, 0, {}
+  for _, e in ipairs(cm_table_sets()) do
+    if string.sub(e.k, 1, 3) == 'ws:' then
+      local got = redis.pcall('ZRANGE', e.k, 0, -1)
+      if type(got) == 'table' and not got.err then
+        sets = sets + 1
+        local n, owned = 0, false
+        for _, m in ipairs(got) do
+          if not cm_lease_member(m, e.w) then
+            n = n + 1
+            if cm_sprint_member(m, live) then
+              owned = true
+              break
+            end
+          end
+        end
+        if n > 0 and not owned then
+          orphans = orphans + 1
+          if #lines < 50 then lines[#lines + 1] = 'ORPHAN-SET key=' .. e.k .. ' members=' .. #got end
+        end
+      end
+    end
+  end
+  local out = { 'ORPHANS', tostring(sets), tostring(orphans) }
+  for _, l in ipairs(lines) do out[#out + 1] = l end
+  return out
+end
+
+-- ns_ws_orphans(): ws_orphans, read-only (card fsck prints its lines).
+redis.register_function({ function_name = 'ns_ws_orphans', flags = { 'no-writes' },
+  callback = function(keys, args) return ws_orphans() end })
+
 -- ns_card_move(id, where[, ok[, by[, why]]]): a move that keeps the fine
 -- state (waiting <-> ready <-> parked, done/ok -> done/fail); the dealer's
 -- pool and waiting lists move with it, as with every move. OK or
@@ -788,7 +890,8 @@ local function card_purge(S)
   return n
 end
 
-NS.card = { move = card_move, create = card_create, purge = card_purge, add = card_add, record = cm_record }
+NS.card = { move = card_move, create = card_create, purge = card_purge, add = card_add, record = cm_record,
+  register = cm_register }
 
 -- ===========================================================================
 -- Tasks are cards (nova-tools #3778; rowan-new specs/ws-index.md, "Tasks are
@@ -1025,12 +1128,9 @@ end
 
 -- TK.register: a stream the task enters is in ws:names and ranked last in
 -- ws:order when it has no rank.
+-- The card path's own registration (cm_register): one state machine.
 function TK.register(stream)
-  if stream == '' then return end
-  redis.call('SADD', 'ws:names', stream)
-  if not redis.call('ZSCORE', 'ws:order', stream) then
-    redis.call('ZADD', 'ws:order', redis.call('ZCARD', 'ws:order') + 1, stream)
-  end
+  cm_register(stream)
 end
 
 -- TK.legacy keeps the friend-queue shapes of one move from cur to nxt and
