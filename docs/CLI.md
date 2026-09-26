@@ -4204,6 +4204,33 @@ nova-sprint pitstop clear --sprint nova-sprint-0924 --by rowan --scope nova-work
 PITSTOP NARROW sprint=nova-sprint-0924 by=rowan at=1790000060000 lifted="nova-work" was_by=rowan was_at=1790000000000 was_why="Glenn 8:00 PM: rest tonight"
 ```
 
+### reconcile: the progress duty
+
+`nova-sprint reconcile` runs the progress duty (nova-tools #4319; internal/nsprint/reconcile/progress.go) with its other duties: it measures whether each stream of `ws:order` is converging, and when one is not it stops that stream and asks for help. It reads `cfg:progress` (a hash; a missing or non-positive field keeps its default): `window_s` (1800, the stall window), `every_s` (10, the cadence), `refusals` (20, passes a duty error may repeat unchanged) and `ask` (`glenn,rowan`, who the wake note goes to). The `every_s` gate comes before any read: a gated pass costs no round trip and a run three (the index, the measurement, the record); a changed `every_s` applies from the next run.
+
+Per stream, `left` is waiting + ready + working + review + merging; the stream is **in play** when no pit stop holds it and a card is working or a ready card has a consumer with room (live beat, not down, not paused, a free slot). It is `converging` while in play inside the window since it last fell, `idle` when not in play, and `stalled` when in play for the whole window with no fall. A card that churns working -> ready -> working never falls, so it stalls the stream. Each run prints one line per stream whose numbers changed:
+
+```text
+PROGRESS autonomy left=1 delta=0 ready=1 landed_h=0 retries_h=0 oldest=1h0m0s blocked=30m0s window=30m0s status=stalled
+```
+
+`landed_h` and `retries_h` are the last hour of `ws:log` (moves to landed; working back to ready or waiting), `oldest` the age of the oldest card not landed, `blocked` how long the stream has been in play with no fall.
+
+The one ask path: a stalled stream, a duty error repeating unchanged past `refusals` passes, or a release probe failing twice. The duty sets the open sprint's pit stop `by=progress` with the diagnosis as its why (scoped to the stream for a stall, `scope=all` otherwise), prints one `EVENT` line, and writes one `friend:outbox` note (`kind=notice`, `actor=progress`) per `ask` name. An episode asks once: a stall again only after the stream fell or was lifted and stalled anew, a refusal once per text.
+
+```text
+EVENT PROGRESS STALLED autonomy stall blocked=30m0s window=30m0s left=1 ready=1 landed_h=0 retries_h=0 sprint=sprint-4319 at=1790000000000
+PROGRESS REFUSED pitstop set sprint=sprint-4319 why="already stopped by=rowan why=\"looking\""
+```
+
+Every refusal of its own (no open sprint, a stop already set, a wake that did not write) is one `PROGRESS REFUSED` line and counts as `refused=` on the pass's `DUTY` line, as every duty's refusals do (the waiting-resolve duty counts the moves `ns_ws_move_many` refused). State: `proc:progress:<stream>` {left, ref_left, ref_at, fell_at, blocked_since, asked_at, status, at}, so a restarted reconciler continues the window; `proc:progress` {events, event, event_at, refused, asked:<duty>, at}, where `refused` is the other duties' refusals of the last pass plus this run's own, each counted once. `nova-sprint table` prints one line from `proc:progress`, only when a count is non-zero:
+
+```text
+EVENTS n=1 refused=0 last=EVENT PROGRESS STALLED autonomy stall blocked=30m0s window=30m0s left=1 ready=1 landed_h=0 retries_h=0 sprint=sprint-4319 at=1790000000000
+```
+
+The stop is cleared like any other: `nova-sprint pitstop clear --sprint <S> --scope <stream> --by <who>` once the cause is fixed (docs/PIT-STOP.md, **The system's stop**).
+
 ### quack cut, quack run
 
 `nova-sprint quack cut --n <N> --repo <owner/name> --stream <s> --sprint <S> [--tiers flash,pro] [--base dev] [--base-sha <sha40>] [--ref <owner/name#n>] [--actor <a>] [--redis <addr>]`

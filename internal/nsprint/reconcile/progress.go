@@ -13,19 +13,22 @@ package reconcile
 //	left     = waiting + ready + working + review + merging (not landed)
 //	delta    = left now minus left at the start of the current window
 //	room     = some consumer is live, not down, not paused and has a free slot
-//	pushable = ready > 0 and room and no pit stop holds the stream
+//	in play  = no pit stop holds the stream, and working > 0 or (ready > 0 and room)
 //
-// A stream is converging while it is pushable and inside the window since it
-// last fell or since it became pushable; idle when nothing can be pushed
-// (nothing ready, no worker with room, or a pit stop holds it); stalled when
-// it has been pushable for the whole window (default 30 min) without left
-// falling once. Every run prints, per stream whose numbers changed:
+// A stream is converging while it is in play and inside the window since it
+// last fell or since it came into play; idle when nothing is in play
+// (nothing working and nothing ready a worker has room for, or a pit stop
+// holds it); stalled when it has been in play for the whole window (default
+// 30 min) without left falling once. A card that churns working -> ready ->
+// working never falls, so it keeps the stream in play and stalls it (the
+// cold read of #4361: counting only ready read that churn as idle). Every
+// run prints, per stream whose numbers changed:
 //
 //	PROGRESS <stream> left=<n> delta=<n> ready=<n> landed_h=<n> retries_h=<n> oldest=<d> blocked=<d> window=<d> status=converging|idle|stalled
 //
 // landed_h and retries_h are ws:log moves of the last hour (to=landed; from
 // working back to ready or waiting), oldest is the age of the oldest card not
-// landed, blocked is how long the stream has been pushable with no fall.
+// landed, blocked is how long the stream has been in play with no fall.
 //
 // The one ask path, rare: a stalled stream, a duty refusal repeating past
 // cfg:progress refusals passes (default 20), or a release probe failing
@@ -39,7 +42,14 @@ package reconcile
 // again only after the stream fell or was lifted and stalled anew; a refusal
 // shape asks once per text. Every refusal of the duty's own (no open sprint,
 // a stop already set, a wake that did not write) prints as a PROGRESS
-// REFUSED line and counts on the DUTY line (Counts.Refused).
+// REFUSED line and counts on the DUTY line (Counts.Refused). proc:progress
+// refused is the other duties' refusals of the last pass plus this run's
+// own, each counted once.
+//
+// Cost: the every_s gate comes before any read, so a gated pass is no round
+// trip and a run is three (the index, the measurement, the record), plus a
+// pit stop read when no pass put the holds on ctx and the stop and wake
+// calls of an ask.
 //
 // State lives in proc:progress:<stream> (left, ref_left, ref_at, fell_at,
 // blocked_since, asked_at, status, at) so a restarted reconciler continues
@@ -70,8 +80,9 @@ import (
 const ProgressConfigKey = "cfg:progress"
 
 // ProgressKey is the duty's record the table reads: events (asks so far),
-// event (the last EVENT line), event_at, refused (the last pass's duty
-// refusals), asked:<duty> (the refusal text already asked for).
+// event (the last EVENT line), event_at, refused (the other duties'
+// refusals of the last pass plus this run's own), asked:<duty> (the refusal
+// text already asked for).
 const ProgressKey = "proc:progress"
 
 // ProgressStreamKey is one stream's progress state.
@@ -149,7 +160,7 @@ type State struct {
 	RefLeft      int64 // left at the start of the current window
 	RefAt        int64
 	FellAt       int64 // the last run at which left fell (the first run when none)
-	BlockedSince int64 // since when the stream has been pushable with no fall; 0 not blocked
+	BlockedSince int64 // since when the stream has been in play with no fall; 0 not blocked
 	AskedAt      int64 // the BlockedSince already asked for
 	Status       string
 	At           int64
@@ -158,7 +169,7 @@ type State struct {
 // Delta is left now minus left at the window's start.
 func (st State) Delta() int64 { return st.Left - st.RefLeft }
 
-// Blocked is how long the stream has been pushable with no fall at now.
+// Blocked is how long the stream has been in play with no fall at now.
 func (st State) Blocked(now time.Time) time.Duration {
 	if st.BlockedSince == 0 {
 		return 0
@@ -187,9 +198,13 @@ func Step(prev State, s Sample, room bool, now time.Time, window time.Duration) 
 			st.RefLeft, st.RefAt = st.Left, ms
 		}
 	}
-	pushable := s.Ready > 0 && room && !s.Held
+	// In play: a worker holds a card, or a ready card has room. Working
+	// counts so a card cycling working -> ready -> working with no fall
+	// keeps the blocked clock running; only a fall or leaving play (a stop,
+	// nothing working and nothing ready with room) resets it.
+	inPlay := !s.Held && (s.Working > 0 || (s.Ready > 0 && room))
 	switch {
-	case !pushable || fell:
+	case !inPlay || fell:
 		st.BlockedSince = 0
 	case prev.BlockedSince != 0:
 		st.BlockedSince = prev.BlockedSince
@@ -197,7 +212,7 @@ func Step(prev State, s Sample, room bool, now time.Time, window time.Duration) 
 		st.BlockedSince = ms
 	}
 	switch {
-	case !pushable:
+	case !inPlay:
 		st.Status = StatusIdle
 	case st.BlockedSince != 0 && ms-st.BlockedSince >= window.Milliseconds():
 		st.Status = StatusStalled
@@ -312,8 +327,10 @@ type Progress struct {
 
 	mu      sync.Mutex
 	last    time.Time
+	every   time.Duration     // the cadence the last run read (cfg:progress every_s)
 	printed map[string]string // stream -> the key of the line last printed
-	refused int               // the last pass's duty refusals (NotePass)
+	own     int               // this duty's refusals in the current pass
+	refused int               // the other duties' refusals of the last pass (NotePass)
 	repeats []Repeat          // the duty errors repeating (NotePass)
 	// Last is the most recent run (tests and the receipt).
 	Last ProgressRun
@@ -330,12 +347,16 @@ type ProgressRun struct {
 	Refused int
 }
 
-// NotePass is the loop's word after each pass: the pass's duty refusals and
-// the duty errors repeating unchanged, for the next run's refusal trigger.
+// NotePass is the loop's word after each pass: the pass's refusal sum over
+// every duty and the duty errors repeating unchanged, for the next run's
+// refusal trigger. The sum includes this duty's own refusals of that pass,
+// which the next run's record already carries, so they are taken out here:
+// each refusal counts once on proc:progress.
 func (p *Progress) NotePass(refused int, repeats []Repeat) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.refused = refused
+	p.refused = max(refused-p.own, 0)
+	p.own = 0
 	p.repeats = append(p.repeats[:0], repeats...)
 }
 
@@ -354,18 +375,21 @@ func (p *Progress) Run(ctx context.Context, l *Lease) (Counts, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	now := p.now()
-	cfg, streams, sprints, roster, top, err := p.readIndex(ctx)
-	if err != nil {
-		return Counts{}, err
-	}
+	// The gate before any read: a gated pass is no round trip. The cadence
+	// is the one the last run read; a changed every_s applies from the next
+	// run.
 	every := p.Every
 	if every <= 0 {
-		every = cfg.Every
+		every = p.every
 	}
 	if !p.last.IsZero() && now.Sub(p.last) < every {
 		return Counts{}, nil
 	}
-	p.last = now
+	cfg, streams, sprints, roster, top, err := p.readIndex(ctx)
+	if err != nil {
+		return Counts{}, err
+	}
+	p.last, p.every = now, cfg.Every
 	run, err := p.measure(ctx, now, cfg, streams, sprints, roster)
 	if err != nil {
 		return Counts{}, err
@@ -395,6 +419,7 @@ func (p *Progress) Run(ctx context.Context, l *Lease) (Counts, error) {
 	}
 	refused, err := p.act(ctx, &run, cfg, now)
 	run.Refused = refused
+	p.own = refused
 	for _, line := range run.Lines {
 		p.print(line)
 	}
@@ -524,6 +549,7 @@ func (p *Progress) measure(ctx context.Context, now time.Time, cfg ProgressConfi
 	} else {
 		return ProgressRun{}, fmt.Errorf("progress: ws:log: %w", err)
 	}
+	// TODO(#4369): take the stream sentinel out of left and the oldest age through the shared "counts less the sentinel" helper once it lands on dev.
 	for i, s := range streams {
 		smp := Sample{Stream: s, LandedHour: landed[s], RetriesHour: retries[s]}
 		cells := []*int64{&smp.Waiting, &smp.Ready, &smp.Working, &smp.Review, &smp.Merging, &smp.Landed}

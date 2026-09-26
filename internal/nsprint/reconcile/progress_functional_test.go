@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -196,5 +197,117 @@ func TestProgressRepeatingRefusalAsksOnce(t *testing.T) {
 	}
 	if notes, _ := c.XRange(ctx, friend.OutboxKey, "-", "+").Result(); len(notes) != 1 {
 		t.Fatalf("asked twice for one text: %d notes", len(notes))
+	}
+}
+
+// roundTrips counts every command and pipeline sent to Redis.
+type roundTrips struct{ n atomic.Int64 }
+
+func (r *roundTrips) DialHook(next redis.DialHook) redis.DialHook { return next }
+func (r *roundTrips) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error { r.n.Add(1); return next(ctx, cmd) }
+}
+func (r *roundTrips) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error { r.n.Add(1); return next(ctx, cmds) }
+}
+
+// The cold read of #4361, item 2: the every_s gate comes before any read.
+// A pass loop at 1 s on the injected clock with every_s=10 costs three round
+// trips per 10 s (the index, the measurement, the record; the pass puts the
+// holds on ctx), and a gated pass none.
+func TestProgressGatesBeforeAnyRead(t *testing.T) {
+	t.Parallel()
+	addr := testutil.Start(t)
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = c.Close() })
+	ctx := context.Background()
+	if err := fn.Load(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	l, err := reconcile.Acquire(ctx, store.New(c), reconcile.AcquireOptions{Host: "ctl-4361"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = l.Release(ctx) })
+	now := time.Date(2026, 9, 26, 16, 0, 0, 0, time.UTC)
+	pipe := c.Pipeline()
+	pipe.ZAdd(ctx, "ws:order", redis.Z{Score: 1, Member: "autonomy"})
+	pipe.ZAdd(ctx, "ws:autonomy:ready", redis.Z{Score: float64(now.UnixMilli()), Member: "cards-1"})
+	pipe.HSet(ctx, "cfg:progress", "every_s", "10")
+	if _, err := pipe.Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// One connection, dialed before counting: the handshake is not a trip.
+	counted := redis.NewClient(&redis.Options{Addr: addr, PoolSize: 1})
+	t.Cleanup(func() { _ = counted.Close() })
+	if err := counted.Ping(ctx).Err(); err != nil {
+		t.Fatal(err)
+	}
+	var trips roundTrips
+	counted.AddHook(&trips)
+	clock := now
+	p := &reconcile.Progress{Client: counted, Now: func() time.Time { return clock }}
+	held := pitstop.WithHolds(ctx, nil) // what the pass puts on ctx
+	runs := 0
+	for pass := 0; pass < 30; pass++ {
+		before := trips.n.Load()
+		if _, err := p.Run(held, l); err != nil {
+			t.Fatal(err)
+		}
+		switch d := trips.n.Load() - before; {
+		case pass%10 == 0 && d != 3:
+			t.Fatalf("pass %d (a run): %d round trips, want 3", pass, d)
+		case pass%10 != 0 && d != 0:
+			t.Fatalf("pass %d (gated): %d round trips, want 0", pass, d)
+		case d > 0:
+			runs++
+		}
+		clock = clock.Add(time.Second)
+	}
+	if runs != 3 || trips.n.Load() != 9 {
+		t.Fatalf("30 s of passes: %d runs, %d round trips; want 3 and 9", runs, trips.n.Load())
+	}
+}
+
+// The cold read of #4361, item 3: proc:progress refused adds the other
+// duties' refusals of the last pass to this run's own, each once. The pass
+// sum NotePass gets includes the duty's own refusals of that pass, which
+// the run already recorded.
+func TestProgressRefusedCountsEachRefusalOnce(t *testing.T) {
+	t.Parallel()
+	c := redis.NewClient(&redis.Options{Addr: testutil.Start(t)})
+	t.Cleanup(func() { _ = c.Close() })
+	ctx := context.Background()
+	if err := fn.Load(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	l, err := reconcile.Acquire(ctx, store.New(c), reconcile.AcquireOptions{Host: "ctl-4361b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = l.Release(ctx) })
+	if err := c.HSet(ctx, "cfg:progress", "refusals", "1", "ask", "glenn").Err(); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 26, 16, 0, 0, 0, time.UTC)
+	p := &reconcile.Progress{Client: c, Now: func() time.Time { return now }, Every: time.Nanosecond}
+	refused := func() string {
+		t.Helper()
+		v, _ := c.HGet(ctx, reconcile.ProgressKey, "refused").Result()
+		return v
+	}
+	// Pass 1: two other refusals and a repeat past the limit; no open
+	// sprint, so the ask refuses once: 2 + 1.
+	p.NotePass(2, []reconcile.Repeat{{Duty: "land", Text: "cfg:land repos unset", Passes: 1}})
+	cnt, err := p.Run(ctx, l)
+	if err != nil || cnt.Refused != 1 || refused() != "3" {
+		t.Fatalf("pass 1: counts %d err %v refused=%s, want 1 and 3", cnt.Refused, err, refused())
+	}
+	// The pass's sum is 4 others plus that 1: the record is the 4 others
+	// and this run's own (none; the text is asked), never 5.
+	p.NotePass(4+cnt.Refused, []reconcile.Repeat{{Duty: "land", Text: "cfg:land repos unset", Passes: 2}})
+	now = now.Add(time.Second)
+	if cnt, err := p.Run(ctx, l); err != nil || cnt.Refused != 0 || refused() != "4" {
+		t.Fatalf("pass 2: counts %d err %v refused=%s, want 0 and 4", cnt.Refused, err, refused())
 	}
 }

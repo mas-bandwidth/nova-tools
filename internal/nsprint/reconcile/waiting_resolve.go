@@ -100,15 +100,18 @@ func wrList(xs []string) string {
 	return strings.Join(xs, ",")
 }
 
-// Run is one duty pass: Counts.Routed is the tasks moved to ready.
+// Run is one duty pass: Counts.Routed is the tasks moved to ready,
+// Counts.Refused the moves ns_ws_move_many refused (each also named in the
+// duty's error), so they reach the DUTY line and proc:progress once.
 func (d *WaitingResolve) Run(ctx context.Context, l *Lease) (Counts, error) {
 	lines, err := d.Pass(ctx, l)
-	n := 0
+	var c Counts
 	for _, r := range lines {
-		n += len(r.Ready)
+		c.Routed += len(r.Ready)
+		c.Refused += len(r.Refused)
 	}
 	d.print(lines)
-	return Counts{Routed: n}, err
+	return c, err
 }
 
 func (d *WaitingResolve) print(lines []ResolveLine) {
