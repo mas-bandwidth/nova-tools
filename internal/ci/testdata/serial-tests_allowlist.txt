@@ -756,8 +756,8 @@ internal/nsprint/launch/launch_test.go:TestLaunchOverrunsWithNothingRefused seri
 internal/nsprint/launch/launch_test.go:TestLaunchRefusesASecondLaunchOfOneAttempt serial: t.Setenv
 internal/nsprint/launch/launch_test.go:TestLaunchRefusesLinesPastTheBudget serial: t.Setenv
 internal/nsprint/launch/launch_test.go:TestLaunchReportsAWrapperRefusal serial: t.Setenv
-internal/nsprint/launch/realwrapper_test.go:TestLaunchRealWrapper serial: t.Setenv
-internal/nsprint/launch/realwrapper_test.go:TestLaunchRealWrapperReportsNotDealtAsRefused serial: t.Setenv
+internal/nsprint/launch/realwrapper_slow_test.go:TestLaunchRealWrapper serial: t.Setenv
+internal/nsprint/launch/realwrapper_slow_test.go:TestLaunchRealWrapperReportsNotDealtAsRefused serial: t.Setenv
 internal/nsprint/lessons/lessons_test.go:TestWaitersRaceAnOldLockAndEveryAcknowledgedRowSurvives serial: swaps package var lessons.lockBusy
 internal/nsprint/life/idle_test.go:TestIdleStatesMutationCannotWidenLedger serial: swaps package var life.IdleStates
 internal/nsprint/life/serve_read_test.go:TestServeReadTaskBriefCarriesTheMirrorDiff serial: t.Setenv

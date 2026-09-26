@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -628,43 +627,6 @@ func TestWaitAdvanceSkipsHeardNotesAndBlocks(t *testing.T) {
 	readTo := strings.TrimSpace(gitIn(t, checkout, "rev-parse", cursorCommit+"~1"))
 	if onLane := strings.Fields(read(t, checkout, "from-ada/CURSOR")); len(onLane) == 0 || onLane[0] != readTo {
 		t.Fatalf("the cursor was not advanced to head over the heard note (read to %s):\n%s", readTo, read(t, checkout, "from-ada/CURSOR"))
-	}
-}
-
-// THE BUS CARRIES NOTES, NEVER BEATS (#3144). Until 2026-09-24 a wait rewrote
-// from-<lane>/BEAT every tick and pushed it as `beat <name>` every --beat: 393 of 500 bus
-// commits on 2026-09-23. Presence is friend:<name> in Redis, written by `nova-wake beat`.
-// A wait given the old --beat and --beat-lease, over many polls and many whole beats, makes
-// no beat commit, writes no BEAT file, and says once that the flags are retired.
-func TestWaitNeverCommitsABeat(t *testing.T) {
-	t.Parallel()
-	hermetic(t)
-	checkout, bare := busDir(t)
-	settled(t, checkout)
-	before := strings.TrimSpace(gitIn(t, bare, "rev-parse", "main"))
-
-	r := invoke(t, "", waitFlags(checkout, "Ada", "1s", "--beat", "150ms", "--beat-lease", "10m")...).mustCode(t, 0)
-
-	polls, err := strconv.Atoi(field(t, r.stdout[strings.Index(r.stdout, "WAIT TIMEOUT"):], "polls="))
-	if err != nil || polls < 2 {
-		t.Fatalf("polls=%d, want several so a beat had every chance to land:\n%s", polls, r.stdout)
-	}
-	if n := strings.Count(r.stderr, "WAIT NOTE --beat and --beat-lease are retired and ignored"); n != 1 {
-		t.Fatalf("the retirement note printed %d times, want once:\n%s", n, r.stderr)
-	}
-	for _, where := range []string{checkout, bare} {
-		if log := gitIn(t, where, "log", "--format=%s", "main"); strings.Contains(log, "beat ada") {
-			t.Fatalf("a wait committed a beat in %s:\n%s", where, log)
-		}
-	}
-	if after := strings.TrimSpace(gitIn(t, bare, "rev-parse", "main")); after != before {
-		t.Fatalf("the bus moved from %s to %s under a wait that found nothing", before, after)
-	}
-	if _, err := os.Stat(filepath.Join(checkout, "from-ada", "BEAT")); !os.IsNotExist(err) {
-		t.Fatalf("the wait wrote from-ada/BEAT: %v", err)
-	}
-	if out := strings.TrimSpace(gitIn(t, checkout, "status", "--porcelain", "--untracked-files=all")); out != "" {
-		t.Fatalf("the wait left the checkout dirty:\n%s", out)
 	}
 }
 

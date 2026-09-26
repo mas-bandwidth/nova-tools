@@ -1266,7 +1266,42 @@ jobs:
             export MERGE_TIMEOUT
             echo "darwin leg: per-package ceiling $MERGE_TIMEOUT, shards dealt from testdata/ci/package-sizes-darwin.tsv"
           fi
+          # Whole packages first (2026-09-25, the two-minute rule): a package
+          # that needs no test-name split is dealt whole to one slot, and each
+          # slot runs its whole packages in ONE go test call, which builds and
+          # runs them in parallel. The per-package loop below (one `go test
+          # -list` and one `make test-merge` each, serial) took merge-group run
+          # 20106054139's darwin shard 4 nine minutes for fifty packages whose
+          # tests summed under two; only the packages big enough to split by
+          # test name still go through it.
+          whole=""
+          split=""
+          w=0
           for pkg in ${{ steps.pkgs.outputs.pkgs }}; do
+            if [ "$leg" = "darwin" ]; then
+              secs=$(printf '%s\n' "$darwin" | awk -F '\t' -v p="$pkg" '$1 == p { print $3; exit }')
+            else
+              secs=$(printf '%s\n' "$sizes" | awk -F '\t' -v p="$pkg" '$1 == p { print $2; exit }')
+            fi
+            case "$secs" in
+              ''|'-'|*+) split="$split $pkg" ;;
+              *)
+                if awk -v s="$secs" 'BEGIN { exit !(s > 40) }'; then
+                  split="$split $pkg"
+                elif [ $((w % slots)) -eq "$shard" ]; then
+                  whole="$whole $pkg"
+                  w=$((w + 1))
+                else
+                  w=$((w + 1))
+                fi
+                ;;
+            esac
+          done
+          if [ -n "$whole" ]; then
+            echo "shard $shard of $slots: whole packages in one call:$whole"
+            make test-merge PKGS="$whole"
+          fi
+          for pkg in $split; do
             if [ "$leg" = "darwin" ]; then
               # Column 3 is the FULL size, which is what this leg runs. Three
               # cases, and run 35369433950 is what dealing darwin by the Linux
