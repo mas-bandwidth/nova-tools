@@ -12,16 +12,20 @@
 //	    copy's brief (card.RenderCopy: the person's brief for a friend)
 //	    written to <d>/<copy label>.card; one PULLED line per copy naming
 //	    the path, the leg and the token, then the receipt.
-//	friend done --as friend:<f> --id <copy> (--ok [--pr <repo>#<n> --head <sha>] [--done-already <sha>]
+//	friend done --as friend:<f> --id <copy> (--ok [--pr <repo>#<n> --head <sha> [--branch <b>]] [--done-already <sha>]
 //	    | --score N/10 [--gates <g>] [--finding <text>] | --fail <why>) [--token <t>]
 //	    card end --id <copy> with the same evidence, refused (NOTMINE) for a
-//	    copy that is not this friend's.
+//	    copy that is not this friend's. --ok --pr first records the PR
+//	    (card.RecordPR, what the wrapper's harvest writes) so the end is
+//	    not refused NOPR; --branch is the PR's branch when it is not the
+//	    brief's (the copy's branch, else the wrapper's name for it).
 //	friend beat --as friend:<f> [--host <h>] [--once]
-//	    the zero-token tick: the friend's beat (host, at, load1, ncpu, cpu
-//	    of the machine this session runs on: its presence and load on the
-//	    consumer table) and row (the deal duty's liveness), then the leases
-//	    of every copy it holds (card beat). Without --once it ticks each
-//	    second until interrupted.
+//	    the zero-token tick, one round trip: the friend's beat (host, at,
+//	    load1, ncpu, cpu of the machine this session runs on: its status
+//	    and load on the consumer table, the deal duty's liveness) and the
+//	    lease of every copy it holds (ns_cm_beat over its working set in
+//	    the same pipeline). Without --once it ticks each second until
+//	    interrupted; a refused tick backs off and says why.
 //
 // The retired `friend serve` (#4327) dispatched a friend's copies through
 // the bench wrapper on the Studio; nothing here launches a model.
@@ -29,6 +33,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -41,7 +46,9 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card/harvestcopy"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/life"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
@@ -171,6 +178,7 @@ func runFriendDone(ctx context.Context, args []string, out, errOut io.Writer) in
 	pr := fs.String("pr", "", "")
 	head := fs.String("head", "", "")
 	doneAlready := fs.String("done-already", "", "")
+	branch := fs.String("branch", "", "")
 	score := fs.String("score", "", "")
 	gates := fs.String("gates", "", "")
 	finding := fs.String("finding", "", "")
@@ -205,6 +213,9 @@ func runFriendDone(ctx context.Context, args []string, out, errOut io.Writer) in
 	if *pr != "" && *head == "" {
 		return refuse(errOut, verb, "--pr wants --head <sha>")
 	}
+	if *pr != "" && !*ok {
+		return refuse(errOut, verb, "--pr goes with --ok")
+	}
 	r := taskcard.EndRequest{IDs: []string{*id}, OK: *fail == "", Why: *fail, Head: *head, DoneAlready: *doneAlready,
 		Gates: *gates, Finding: *finding, Reader: k.Name, Token: *token, By: by}
 	if *pr != "" {
@@ -234,16 +245,39 @@ func runFriendDone(ctx context.Context, args []string, out, errOut io.Writer) in
 	// The copy must be this friend's: card end fences on the token when
 	// one is given, and a friend ending another consumer's copy by id
 	// alone would be a silent theft.
-	holder, err := c.HGet(ctx, taskcard.Key(*id), "consumer").Result()
+	rec, err := c.HGetAll(ctx, taskcard.Key(*id)).Result()
+	holder := rec["consumer"]
 	switch {
-	case err == redis.Nil || (err == nil && holder == ""):
+	case err != nil && !errors.Is(err, redis.Nil):
+		return refuse(errOut, verb, err.Error())
+	case holder == "":
 		fmt.Fprintf(out, "FRIEND DONE REFUSED id=%s why=%s ms=%d\n", *id, quoteField("NOCOPY task:"+*id), ms())
 		return 1
-	case err != nil:
-		return refuse(errOut, verb, err.Error())
 	case holder != k.String():
 		fmt.Fprintf(out, "FRIEND DONE REFUSED id=%s why=%s ms=%d\n", *id, quoteField("NOTMINE task:"+*id+" is "+holder+"'s copy, not "+k.String()+"'s"), ms())
 		return 1
+	}
+	if r.PR != "" {
+		// The PR the friend opened is recorded before the end, as the
+		// wrapper's harvest records the bench's: card end refuses an ok
+		// whose PR record is missing (NOPR) or at another head.
+		n, err := strconv.Atoi(r.PR)
+		if err != nil || n <= 0 {
+			return refuse(errOut, verb, "--pr wants <repo>#<n>, n a PR number")
+		}
+		cc := card.CopyCardFrom(*id, rec)
+		b := *branch
+		if b == "" {
+			b = strings.TrimSpace(cc.Branch)
+		}
+		if b == "" {
+			cn, _ := card.CopyNumber(*id)
+			b = card.WrapperBranch(card.CopySprint, card.CopyCardLabel(*id), cn)
+		}
+		if err := card.RecordPR(ctx, c, nil, harvestcopy.Result{Repo: r.Repo, PR: n, Head: r.Head, Branch: b}, cc); err != nil {
+			return refuse(errOut, verb, err.Error())
+		}
+		fmt.Fprintf(out, "RECORDED pr=%s#%d head=%s branch=%s\n", prkey.Name(r.Repo), n, r.Head, b)
 	}
 	e, err := taskcard.End(ctx, c, r)
 	if err != nil {
@@ -258,19 +292,11 @@ func runFriendDone(ctx context.Context, args []string, out, errOut io.Writer) in
 	return 0
 }
 
-// friendBeatOnce is one tick of friend beat: the beat and row, then the
-// leases of the copies it found working. lease_until is 0 with none.
-func friendBeatOnce(ctx context.Context, st *store.Store, k taskcard.Consumer, host string, now time.Time) (life.FriendBeatResult, int64, error) {
-	res, err := life.FriendBeat(ctx, st, life.FriendBeatRequest{Friend: k.Name, Host: host,
+// friendBeatOnce is one tick of friend beat: the beat and every held
+// copy's lease, one round trip (life.FriendBeat).
+func friendBeatOnce(ctx context.Context, st *store.Store, k taskcard.Consumer, host string, now time.Time) (life.FriendBeatResult, error) {
+	return life.FriendBeat(ctx, st, life.FriendBeatRequest{Friend: k.Name, Host: host,
 		Load1: life.Load1Now(), NCPU: runtime.NumCPU(), CPU: life.CPUBusyNow(), At: now})
-	if err != nil {
-		return res, 0, err
-	}
-	if len(res.Working) == 0 {
-		return res, 0, nil
-	}
-	until, err := taskcard.BeatCopies(ctx, st.Client(), k, res.Working...)
-	return res, until, err
 }
 
 func runFriendBeat(ctx context.Context, args []string, out, errOut io.Writer) int {
@@ -303,11 +329,11 @@ func runFriendBeat(ctx context.Context, args []string, out, errOut io.Writer) in
 		return refuse(errOut, verb, err.Error())
 	}
 	defer func() { _ = st.Close() }()
-	res, until, err := friendBeatOnce(ctx, st, k, *host, time.Now())
+	res, err := friendBeatOnce(ctx, st, k, *host, time.Now())
 	if err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
-	fmt.Fprintf(out, "FRIEND BEAT as=%s host=%s working=%d lease_until=%d at=%d\n", k, *host, len(res.Working), until, res.AtMS)
+	fmt.Fprintf(out, "FRIEND BEAT as=%s host=%s working=%d lease_until=%d at=%d\n", k, *host, res.Working, res.LeaseUntil, res.AtMS)
 	if *once {
 		return 0
 	}
@@ -325,7 +351,7 @@ func runFriendBeat(ctx context.Context, args []string, out, errOut io.Writer) in
 			if now.Before(next) {
 				continue
 			}
-			if _, _, err := friendBeatOnce(signalCtx, st, k, *host, now); err != nil {
+			if _, err := friendBeatOnce(signalCtx, st, k, *host, now); err != nil {
 				if signalCtx.Err() != nil {
 					return 0
 				}

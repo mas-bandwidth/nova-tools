@@ -58,7 +58,7 @@ serve` is gone). Three verbs, each a copy-model move and nothing beside it:
 
 ```bash
 nova-sprint friend beat --as friend:<you> &          # zero tokens, once a second:
-                                                     # your beat (host, at, load) and row, and every held copy's lease
+                                                     # your beat (host, at, load) and every held copy's lease, one round trip
 nova-sprint friend pull --as friend:<you> [--n k]    # card work: ready -> working; one brief per copy under
                                                      # ~/.nova-sprint/friend/<you>/cards (--dir), one PULLED line each
 nova-sprint friend done --as friend:<you> --id <copy> --ok --pr <repo>#<n> --head <sha>   # card end

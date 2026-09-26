@@ -93,7 +93,7 @@ func TestFriendPullDoneBeat(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"\nCOPY: " + mine + "\n", "FRIEND: friend:" + me + " owns this copy end to end",
-		"nova-sprint card end --id " + mine + " --ok --pr nova-tools#<n> --head <sha>", "\n> the issue\n"} {
+		"nova-sprint friend done --as friend:" + me + " --id " + mine + " --ok --pr nova-tools#<n> --head <sha>", "\n> the issue\n"} {
 		if !strings.Contains(string(brief), want) {
 			t.Fatalf("brief lacks %q:\n%s", want, brief)
 		}
@@ -112,16 +112,15 @@ func TestFriendPullDoneBeat(t *testing.T) {
 	if code != 0 || !regexp.MustCompile(`^FRIEND BEAT as=friend:`+me+` host=laptop working=1 lease_until=\d+ at=\d+\n$`).MatchString(out) {
 		t.Fatalf("friend beat exit %d %q %s", code, out, errOut)
 	}
+	if n := c.Exists(ctx, "friend:"+me).Val(); n != 0 {
+		t.Fatalf("friend beat wrote the friend:%s row; ns_friend_row is its one writer", me)
+	}
 	beat := c.HGetAll(ctx, "friend:"+me+":beat").Val()
 	if beat["host"] != "laptop" || beat["at"] == "" || beat["ncpu"] == "" || beat["harness"] != "friend beat" {
 		t.Fatalf("%s:beat = %v", rowan, beat)
 	}
 	if ttl := c.TTL(ctx, "friend:"+me+":beat").Val(); ttl > 0 {
 		t.Fatalf("%s:beat expires in %s; keys do not expire", rowan, ttl)
-	}
-	row := c.HGetAll(ctx, "friend:"+me).Val()
-	if row["up"] != "1" || row["host"] != "laptop" || !regexp.MustCompile(`^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$`).MatchString(row["at"]) {
-		t.Fatalf("friend:"+me+" = %v", row)
 	}
 	after, _ := strconv.ParseInt(c.HGet(ctx, taskcard.Key(mine), "lease_until").Val(), 10, 64)
 	if after < before {
@@ -134,11 +133,18 @@ func TestFriendPullDoneBeat(t *testing.T) {
 	if code, out, _ := run("done", "--as", "friend:"+me, "--id", mine, "--ok", "--token", "stale@1"); code != 3 || !strings.Contains(out, "why=\"FENCED ") {
 		t.Fatalf("a stale token: exit %d %s", code, out)
 	}
+	// nothing pre-records the PR: friend done --ok --pr records it (as the
+	// wrapper's harvest does) before the end, which card end would refuse
+	// NOPR without the record
 	head := strings.Repeat("cd", 20)
-	c.HSet(ctx, "pr:nova-tools:4400", "head", head, "base", "dev")
 	code, out, errOut = run("done", "--as", "friend:"+me, "--id", mine, "--ok", "--pr", "nova-tools#4400", "--head", head, "--token", token)
-	if code != 0 || !strings.Contains(out, "ENDED "+mine+" primary=q1 from=working to=review next=-\n") || !strings.Contains(out, "FRIEND DONE as=friend:"+me+" n=1 ") {
+	if code != 0 || !strings.HasPrefix(out, "RECORDED pr=nova-tools#4400 head="+head+" branch=nova/copies/q1-c1-a1\nENDED "+mine+" primary=q1 from=working to=review next=-\n") ||
+		!strings.Contains(out, "FRIEND DONE as=friend:"+me+" n=1 ") {
 		t.Fatalf("friend done exit %d %q %s", code, out, errOut)
+	}
+	pr := c.HGetAll(ctx, "pr:nova-tools:4400").Val()
+	if pr["head"] != head || pr["base"] != "dev" || pr["branch"] != "nova/copies/q1-c1-a1" || pr["task"] != "q1" || pr["state"] != "open" || pr["ci"] != "pending" {
+		t.Fatalf("pr:nova-tools:4400 = %v", pr)
 	}
 	if n := c.ZCard(ctx, rowan.Key("ok")).Val(); n != 1 {
 		t.Fatalf("%s ok = %d", rowan.Key("ok"), n)

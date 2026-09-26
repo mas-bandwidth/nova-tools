@@ -15,20 +15,25 @@ import (
 // A friend's beat (nova-tools #4233; Glenn 2026-09-26 8:58 AM ET: friends
 // may run on any bench, 9:03 AM: "friends are running themselves"): the
 // friend's own harness ticks `nova-sprint friend beat --as friend:<f>` at
-// zero tokens, and that one tick is the friend's presence on every table:
+// zero tokens, and that one tick, ONE round trip, is the friend's presence
+// on every table and the lease of every copy it holds:
 //
 //	friend:<f>:beat   host, at (ms), load1, ncpu, cpu: the consumer table's
 //	                  status (up under a minute old) and load, measured on
-//	                  the machine the friend's session runs on, so no
-//	                  friend load is read from a hardcoded bench beat
-//	friend:<f>        at (RFC 3339), up, host: the row the deal duty reads
-//	                  (taskcard.Consumer.BeatKey; live under 90 s)
+//	                  the machine the friend's session runs on; the deal
+//	                  duty's liveness (taskcard.Consumer.BeatKey) and the
+//	                  reader pool's up (review.lua) read the same at
+//	ns_cm_beat        friend:<f> with no id: every copy in
+//	                  friend:<f>:cards:working gets a fresh lease, in the
+//	                  same pipeline, so no copy can end between a read of
+//	                  the set and its beat
 //
-// and the verb then renews the leases of the copies the friend holds
-// (taskcard.BeatCopies over Working). No TTL is set and any TTL a `friend
-// hello` loop left is removed: keys do not expire, at is reader-judged
-// (Glenn 2026-09-23). The session field of the beat is left alone, so a
-// hello loop of the same friend keeps beating beside this one.
+// No TTL is set and any TTL a `friend hello` loop left is removed: keys do
+// not expire, at is reader-judged (Glenn 2026-09-23). The friend:<f> row is
+// not written here: ns_friend_row (`friend row`) is its one writer, and a
+// beat that wrote up=1 there would never write the 0. The session field of
+// the beat is left alone, so a hello loop of the same friend keeps beating
+// beside this one.
 
 // FriendBeatRequest is one friend beat.
 type FriendBeatRequest struct {
@@ -43,21 +48,23 @@ type FriendBeatRequest struct {
 	At time.Time
 }
 
-// FriendBeatResult is what one beat wrote and found.
+// FriendBeatResult is what one beat wrote.
 type FriendBeatResult struct {
 	Friend string
 	AtMS   int64
-	// Working is the friend's working copies at the beat, whose leases the
-	// verb renews next.
-	Working []string
+	// Working is how many copies' leases the beat renewed, LeaseUntil the
+	// lease they now hold (ms; 0 with none).
+	Working    int
+	LeaseUntil int64
 }
 
 // FriendBeatHarness is the harness field a friend beat writes, naming its
 // producer beside a hello loop's harness.
 const FriendBeatHarness = "friend beat"
 
-// FriendBeat writes the friend's beat and row in one pipeline and reads
-// its working copies in the same round trip.
+// FriendBeat writes the friend's beat and renews its working copies' leases
+// in one pipeline. A refused lease renewal (ns_cm_beat REFUSED) is the
+// error, so the verb's loop backs off and says why.
 func FriendBeat(ctx context.Context, st *store.Store, req FriendBeatRequest) (FriendBeatResult, error) {
 	friend := strings.ToLower(strings.TrimSpace(req.Friend))
 	host := strings.TrimSpace(req.Host)
@@ -80,17 +87,31 @@ func FriendBeat(ctx context.Context, st *store.Store, req FriendBeatRequest) (Fr
 		fields = append(fields, "cpu", v)
 	}
 	beat := "friend:" + friend + ":beat"
-	row := "friend:" + friend
 	pipe := st.Client().Pipeline()
 	pipe.HSet(ctx, beat, fields...)
 	pipe.Persist(ctx, beat)
-	pipe.HSet(ctx, row, "at", RowStamp(at), "up", "1", "host", host)
-	working := pipe.ZRange(ctx, row+":cards:working", 0, -1)
+	leases := pipe.FCall(ctx, "ns_cm_beat", nil, "friend:"+friend)
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return FriendBeatResult{}, fmt.Errorf("friend beat %s: %w", friend, err)
 	}
-	if err := working.Err(); err != nil && !errors.Is(err, redis.Nil) {
-		return FriendBeatResult{}, fmt.Errorf("friend beat %s: working copies: %w", friend, err)
+	reply, err := leases.Slice()
+	if err != nil {
+		return FriendBeatResult{}, fmt.Errorf("friend beat %s: leases: %w", friend, err)
 	}
-	return FriendBeatResult{Friend: friend, AtMS: ms, Working: working.Val()}, nil
+	words := make([]string, len(reply))
+	for i, v := range reply {
+		words[i] = fmt.Sprint(v)
+	}
+	if len(words) == 2 && words[0] == "REFUSED" {
+		return FriendBeatResult{}, fmt.Errorf("friend beat %s: leases: %s", friend, words[1])
+	}
+	if len(words) != 3 || words[0] != "BEAT" {
+		return FriendBeatResult{}, fmt.Errorf("friend beat %s: leases: unexpected reply %v", friend, words)
+	}
+	n, _ := strconv.Atoi(words[1])
+	until, _ := strconv.ParseInt(words[2], 10, 64)
+	if n == 0 {
+		until = 0
+	}
+	return FriendBeatResult{Friend: friend, AtMS: ms, Working: n, LeaseUntil: until}, nil
 }

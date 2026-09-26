@@ -39,18 +39,19 @@ func TestFriendCopyRendersThePersonsBrief(t *testing.T) {
 			"CLONE: git clone --depth 50 --single-branch --branch dev https://", "/mas-bandwidth/nova-tools p1.c2 (from your mirror when you keep one)",
 			"checkout " + strings.Repeat("ab", 20) + " and git -C p1.c2 checkout -b nova/copies/p1-c2-a2.\n",
 			"commit on nova/copies/p1-c2-a2 with the DONE-WHEN summary as the first line, push nova/copies/p1-c2-a2 and open the PR against dev",
-			"END: nova-sprint card end --id p1~2 --ok --pr nova-tools#<n> --head <sha>",
-			"nova-sprint card end --id p1~2 --fail '<why>'",
-			"BEAT: nova-sprint friend beat --as friend:rowan --once",
+			"END: nova-sprint friend done --as friend:rowan --id p1~2 --ok --pr nova-tools#<n> --head <sha>",
+			"nova-sprint friend done --as friend:rowan --id p1~2 --fail '<why>'",
+			"BEAT: your session's nova-sprint friend beat --as friend:rowan renews this copy's lease every second",
+			"quoted below (issue:nova-tools#4233)",
 			"\n---\n> the issue text\n",
 		}},
 		{"read", []string{
 			"\nKIND: read\n", "\nROUTE: pro\n", "\nPR: mas-bandwidth/nova-tools#4300\n",
-			"\nDONE-WHEN: this copy is ended with the score of nova-tools#4300 at head " + strings.Repeat("cd", 20) + ": nova-sprint card end --id p1~2 --score N/10\n",
+			"\nDONE-WHEN: this copy is ended with the score of nova-tools#4300 at head " + strings.Repeat("cd", 20) + ": nova-sprint friend done --id p1~2 --score N/10\n",
 			"FRIEND: friend:rowan reads this PR itself (#4233)",
 			"DO: read nova-tools#4300 at head " + strings.Repeat("cd", 20) + " against dev@" + strings.Repeat("ab", 20),
-			"END: nova-sprint card end --id p1~2 --score N/10 --gates ci:<green|red>,base:<ok|behind>,scope:<ok|over> --finding '<one line>'",
-			"nova-sprint card end --id p1~2 --fail 'ABSTAIN <why>'",
+			"END: nova-sprint friend done --as friend:rowan --id p1~2 --score N/10 --gates ci:<green|red>,base:<ok|behind>,scope:<ok|over> --finding '<one line>'",
+			"nova-sprint friend done --as friend:rowan --id p1~2 --fail 'ABSTAIN <why>'",
 		}},
 		{"fix", []string{
 			"\nKIND: fix\n", "\nbase-sha: " + strings.Repeat("cd", 20) + "\n", "\nBRANCH: nova/copies/p1-c1-a1\n",
@@ -58,8 +59,8 @@ func TestFriendCopyRendersThePersonsBrief(t *testing.T) {
 			"CLONE: git clone --depth 50 --single-branch --branch nova/copies/p1-c1-a1 https://", "/mas-bandwidth/nova-tools p1.c2 (from your mirror when you keep one), then git -C p1.c2 checkout " + strings.Repeat("cd", 20) + ".\n",
 			"the read found: PATHS too narrow. Change only PATHS, close the finding, commit on top of " + strings.Repeat("cd", 20),
 			"push to nova/copies/p1-c1-a1 under your own GitHub identity",
-			"END: nova-sprint card end --id p1~2 --ok --pr nova-tools#<n> --head <sha>",
-			"BEAT: nova-sprint friend beat --as friend:rowan --once",
+			"END: nova-sprint friend done --as friend:rowan --id p1~2 --ok --pr nova-tools#<n> --head <sha>",
+			"BEAT: your session's nova-sprint friend beat --as friend:rowan renews this copy's lease every second",
 		}},
 	} {
 		body, err := card.RenderCopy(friendCopy(tc.leg))
@@ -71,16 +72,26 @@ func TestFriendCopyRendersThePersonsBrief(t *testing.T) {
 				t.Fatalf("%s brief lacks %q:\n%s", tc.leg, want, body)
 			}
 		}
-		for _, never := range []string{"the wrapper", "never push", "never open a PR", "RESULT.md", "NO-SUBAGENTS"} {
+		for _, never := range []string{"the wrapper", "never push", "never open a PR", "RESULT.md", "NO-SUBAGENTS", "card end", "--once"} {
 			if strings.Contains(string(body), never) {
 				t.Fatalf("%s brief still says %q (a friend has no wrapper):\n%s", tc.leg, never, body)
 			}
 		}
 	}
+	// no origin: the DO line names the primary, never "()"
+	noOrigin := friendCopy("work")
+	noOrigin.Origin = ""
+	body, err := card.RenderCopy(noOrigin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "quoted below (primary p1)") || strings.Contains(string(body), "quoted below ()") {
+		t.Fatalf("no-origin brief:\n%s", body)
+	}
 	// the same record dealt to a bench still renders the wrapper's card
 	bench := friendCopy("work")
 	bench.Consumer = "bench:b"
-	body, err := card.RenderCopy(bench)
+	body, err = card.RenderCopy(bench)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -34,14 +34,11 @@ import (
 // Live is how recent a consumer's beat must be for it to be dealt.
 const Live = 90 * time.Second
 
-// BeatKey is the hash whose at field is the consumer's beat: the bench's
-// own beat (bench:<b>:beat) or the friend's row (friend:<f>).
-func (c Consumer) BeatKey() string {
-	if c.Kind == "bench" {
-		return c.String() + ":beat"
-	}
-	return c.String()
-}
+// BeatKey is the hash whose at field is the consumer's beat, <kind>:<name>:beat
+// for a bench and a friend alike (#4233: bench beat and friend beat each
+// write their own; the friend:<f> row is ns_friend_row's and is never a
+// liveness source).
+func (c Consumer) BeatKey() string { return c.String() + ":beat" }
 
 // MachineBeatKey is the hash the consumer's own beat writes about the
 // machine it runs on: <consumer>:beat for a bench and a friend alike (host,

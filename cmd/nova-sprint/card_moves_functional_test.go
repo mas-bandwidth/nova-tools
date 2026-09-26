@@ -107,7 +107,7 @@ func TestCardMovesCLI(t *testing.T) {
 	// writes RESULT.md for its wrapper instead, #4270)
 	code, out, _ = runCLI("card", "render", "--id", "c0~2")
 	if code != 0 || !strings.Contains(out, "\nKIND: read\n") || !strings.Contains(out, "FRIEND: friend:emma reads this PR itself") ||
-		!strings.Contains(out, "nova-sprint card end --id c0~2 --score N/10") || strings.Contains(out, "RESULT.md") {
+		!strings.Contains(out, "nova-sprint friend done --as friend:emma --id c0~2 --score N/10") || strings.Contains(out, "RESULT.md") {
 		t.Fatalf("render = %d %q", code, out)
 	}
 	code, out, _ = runTaskCLI("take", "--actor", "emma")
