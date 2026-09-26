@@ -284,6 +284,7 @@ var Usages = map[string]Usage{
 	"worker show":   {Forms: []string{"[--as <worker>]"}, Examples: []string{"worker show --as bench:hulk"}},
 
 	"ws counts":     {Forms: []string{"[--sprint <S>]"}, Examples: []string{"ws counts"}},
+	"ws check":      {Forms: []string{"[--repair]"}, Examples: []string{"ws check", "ws check --repair"}},
 	"ws checkpoint": {Forms: []string{"--out <file.tsv>"}, Examples: []string{"ws checkpoint --out ws-0926.tsv"}},
 	"ws show":       {Forms: []string{"--order [--stream <s>]"}, Examples: []string{"ws show --order --stream probe-a"}},
 }

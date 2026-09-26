@@ -28,6 +28,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/mas-bandwidth/nova-tools/internal/gh"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -117,6 +118,17 @@ func Main(ctx context.Context, args []string, stdout, stderr io.Writer, d Deps) 
 	if len(findings) > 0 {
 		fmt.Fprintf(stderr, "nova-sprint file: REFUSED %s; nothing posted\n", oneline.Escape(strings.Join(findings, "; ")))
 		return 2
+	}
+	// --push-to queues the body as a build card: it is one invariant
+	// (#4396), refused before anything is posted or pushed, one REFUSED
+	// card-lint line per rule on stderr.
+	if *pushTo != "" {
+		if rs := cardhdr.LintOneInvariant(cardhdr.Card{Text: string(body)}); rs != nil {
+			for _, r := range rs {
+				fmt.Fprintf(stderr, "%s card=%s\n", r, strconv.Quote(*bodyFile))
+			}
+			return 2
+		}
 	}
 	if *pushTo != "" && d.Push == nil {
 		return refuse(stderr, "--push-to has no task store wired")

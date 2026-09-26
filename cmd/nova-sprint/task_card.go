@@ -8,7 +8,8 @@
 //	TASK <verb> id=<id> from=<w> to=<w> ms=<n>
 //	TASK <verb> REFUSED id=<id> why=<why> ms=<n>
 //
-// Exit 0 done, 1 refused (nothing written) or drift found, 2 could not run.
+// Exit 0 done, 1 refused (nothing written) or drift found, 2 could not run
+// or a push refused card-lint (nothing written, #4396).
 // They are the card form of the task subverbs (isTaskCard): push with --as,
 // take always; done, cancel and beat without the one task store's --token;
 // block, unblock, front, move, land, ls, fsck and expire always.
@@ -25,6 +26,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
@@ -41,7 +44,7 @@ import (
 //	task push    --ids <id> [--stream <s>] [--to friend:<f>] [--waiting | --depends-on <c>]
 //	             [--kind <k>] [--ref <repo#n>] [--origin <url>] [--title <t>] [--head <sha>] [--pr <n>] [--repo <r>] [--front]
 //	             [--issue <file|->] [--route pro|flash|friend] [--base <b>] [--base-sha <sha>] [--paths <p>]
-//	task take    [--as friend:<f>] [--ids <id>] [--n <k>]
+//	task take    [--as friend:<f> | --as bench:<b>] [--ids <id>] [--n <k>] [--model <m>] [--harness <h>] [--child <id>]
 //	task beat    --ids <id>
 //	task done    --ids <id> --evidence <text> [--pr <n>]
 //	task land    (--ids <id> | --stream <s>) --sha <merge sha8>
@@ -117,7 +120,8 @@ type cardCmd struct {
 	redis, as, sprint, ids, why, stream, to      *string
 	kind, ref, origin, title, head, pr, repo, on *string
 	dependsOn, evidence, sha, where, ok          *string
-	issue, route, base, baseSHA, paths           *string
+	issue, route, base, baseSHA, paths, join     *string
+	model, harness, child                        *string
 	n                                            *int
 	waiting, front, repair                       *bool
 	actor, id                                    string   // the seat, and the one id of --ids
@@ -153,6 +157,10 @@ func runTaskCard(ctx context.Context, sub string, args []string, out, errOut io.
 	c.base = fs.String("base", "", "the card's BASE branch (push)")
 	c.baseSHA = fs.String("base-sha", "", "the card's BASE-SHA, 40 hex (push)")
 	c.paths = fs.String("paths", "", "the card's PATHS, the files it may change (push)")
+	c.model = fs.String("model", "", "the model that works the copies, written on each copy (take)")
+	c.harness = fs.String("harness", "", "the harness that works the copies, written on each copy (take)")
+	c.child = fs.String("child", "", "the child session that works the copies, written on each copy (take)")
+	c.join = fs.String("join", "", "an open stream whose PATHS the card overlaps: the card joins it (push)")
 	c.n = fs.Int("n", 1, verbflag.HelpN)
 	c.waiting = fs.Bool("waiting", false, "push the card to waiting instead of ready (push)")
 	c.repair = fs.Bool("repair", false, "create every registered stream's missing sentinel card (fsck)")
@@ -194,6 +202,11 @@ func runTaskCard(ctx context.Context, sub string, args []string, out, errOut io.
 	return c.run(ctx, st, sub, out, errOut)
 }
 
+// who is take's --model, --harness and --child: who works the copies.
+func (c *cardCmd) who() taskcard.Who {
+	return taskcard.Who{Model: *c.model, Harness: *c.harness, Child: *c.child}
+}
+
 // missing names the first required flag a verb lacks, or "".
 func (c *cardCmd) missing(sub string) string {
 	need := func(v *string, name string) string {
@@ -209,6 +222,10 @@ func (c *cardCmd) missing(sub string) string {
 	case "land":
 		if (c.id == "") == (*c.stream == "") {
 			checks = append(checks, "want exactly one of --ids <id> and --stream <s>")
+		}
+	case "take", "expire":
+		if err := c.who().Check(); err != nil {
+			checks = append(checks, err.Error())
 		}
 	case "fsck":
 		checks = append(checks, need(c.sprint, "sprint"))
@@ -253,6 +270,14 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 	ms := func() int64 { return time.Since(start).Milliseconds() }
 	refused := func(err error) int {
 		if why, ok := taskcard.IsRefused(err); ok {
+			// the paths gate's refusal (SP.gate, #4322) is its one receipt line
+			if no, ok := ws.ParseRefusal(why); ok {
+				if sub != "push" {
+					no.Remedy = moveRemedy(no.Stream)
+				}
+				_, _ = fmt.Fprintf(out, "%s id=%s ms=%d\n", no.Receipt(), c.id, ms())
+				return 1
+			}
 			_, _ = fmt.Fprintf(out, "TASK %s REFUSED id=%s why=%s ms=%d\n", sub, c.id, quoteField(why), ms())
 			return 1
 		}
@@ -281,10 +306,27 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 		if err != nil {
 			return refuse(errOut, c.verb, err.Error())
 		}
+		// A push that carries a card is one invariant (#4396), and every
+		// push, a card or none, keeps the title-and-kind lint (no stitch, no
+		// plan with no card, no "build issue #N as written" title): refused
+		// before any write, the receipt on stdout, one REFUSED card-lint line
+		// per rule on stderr, exit 2 (as card push).
+		var rs cardhdr.Refusals
+		kind := *c.kind
+		if spec != nil {
+			kind = firstOf(kind, spec.Kind)
+			repo := firstOf(*c.repo, spec.Repo)
+			rs = cardhdr.LintOneInvariant(cardhdr.Card{Text: taskLintText(*c.kind, spec), Files: card.FilesAt(repo, spec.BaseSHA)})
+		}
+		if rs = rs.Merge(cardhdr.LintTitleKind(kind, *c.title, spec != nil)); rs != nil {
+			_, _ = fmt.Fprintf(out, "TASK push REFUSED id=%s why=%s ms=%d\n", c.id, quoteField("card-lint "+rs.Rules()), ms())
+			_, _ = fmt.Fprint(errOut, card.LintLines(c.id, rs))
+			return 2
+		}
 		r, err := taskcard.Push(ctx, cl, taskcard.PushRequest{ID: c.id, Stream: *c.stream, Friend: strings.TrimPrefix(*c.to, "friend:"),
 			Sprint: *c.sprint, Kind: *c.kind, Ref: *c.ref, Origin: *c.origin, Title: *c.title, Head: *c.head,
 			PR: *c.pr, Repo: *c.repo, DependsOn: *c.dependsOn, Front: *c.front, By: c.actor, Why: *c.why,
-			Where: map[bool]string{true: "waiting", false: ""}[*c.waiting], Spec: spec})
+			Where: map[bool]string{true: "waiting", false: ""}[*c.waiting], Spec: spec, Join: *c.join})
 		if err != nil {
 			return refused(err)
 		}
@@ -298,7 +340,7 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 		// --as bench:<b> is card work for the bench (#4399): its ready
 		// copies; a bench has no friend queue, so nothing else is taken.
 		if k, err := taskcard.ParseConsumer(*c.as); err == nil && k.Kind == "bench" {
-			w, err := taskcard.Work(ctx, cl, k, c.actor, *c.n, false, ids...)
+			w, err := taskcard.WorkAs(ctx, cl, k, c.actor, *c.n, false, c.who(), ids...)
 			if why, ok := taskcard.IsRefused(err); ok && strings.HasPrefix(why, "SLOTS ") {
 				_, _ = fmt.Fprintf(out, "TASK take REFUSED as=%s why=%s remedy=%s ms=%d\n", k, quoteField(why),
 					quoteField("nova-sprint capacity bench --as "+k.Name+" --machine <m> --slots <n>"), ms())
@@ -312,10 +354,14 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 		}
 		// task take is card work for a friend harness (#3929): the friend's
 		// ready copies first (card work --as friend:<f>), then friend-queue
-		// tasks for what is left of --n.
+		// tasks for what is left of --n. Who works the copies goes onto each
+		// one's record in the move (ns_cm_work), as card work --model
+		// --harness --child does.
+		who := c.who() // one word each: missing refused it before the store
+		k := taskcard.Consumer{Kind: "friend", Name: asFriend}
 		var got []string
 		if c.id == "" || taskcard.IsCopy(c.id) {
-			w, err := taskcard.Work(ctx, cl, taskcard.Consumer{Kind: "friend", Name: asFriend}, c.actor, *c.n, false, ids...)
+			w, err := taskcard.WorkAs(ctx, cl, k, c.actor, *c.n, false, who, ids...)
 			if err != nil {
 				// a friend with no declared slots holds no copies: the friend queue only
 				if why, ok := taskcard.IsRefused(err); !ok || c.id != "" || !strings.HasPrefix(why, "SLOTS") {
@@ -331,8 +377,13 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 			}
 			got = append(got, more...)
 		}
+		// the friend's one beat loop, as friend pull and card work keep it
+		code := 0
+		if !printFriendBeat(ctx, cl, k, redisArg(*c.redis), out) {
+			code = 1
+		}
 		_, _ = fmt.Fprintf(out, "TASK take n=%d ids=%s ms=%d\n", len(got), strings.Join(got, ","), ms())
-		return 0
+		return code
 	case "beat":
 		beat := taskcard.Beat
 		if taskcard.IsCopy(c.id) { // card beat --as friend:<f> (#3929)
@@ -351,6 +402,13 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 		if taskcard.IsCopy(c.id) {
 			// task done of a copy is card end (#3929): the copy returns to its
 			// primary (ok; with --pr <n> --head <sha> the primary moves to review).
+			// A code copy's ok with a PR is held to its spec first
+			// (#4313): this door has no checkout, so it names the ones
+			// that run the gate (nova-tools#4401 read, DOORS).
+			if *c.pr != "" && cl.HGet(ctx, taskcard.Key(c.id), "leg").Val() != "read" {
+				return refused(&taskcard.Refused{Why: card.GateNoTest + " task done --pr of a code copy skips the spec gate: nova-sprint friend done --as friend:<f> --ids " + c.id +
+					" --ok --pr <repo>#<n> --head <sha> --checkout <your checkout at that head> [--test <finding test>] runs it before the end"})
+			}
 			r := taskcard.EndRequest{IDs: []string{c.id}, OK: true, PR: *c.pr, Head: *c.head, By: c.actor,
 				Fields: []string{"evidence", *c.evidence}}
 			if *c.pr != "" {
@@ -511,6 +569,20 @@ func (c *cardCmd) spec() (*taskcard.Spec, error) {
 		}
 	}
 	return &s, nil
+}
+
+// taskLintText is the card a task push is linted as (#4396): the KIND,
+// PATHS and DONE-WHEN it is pushed with (a flag over the issue's line), then
+// the issue text.
+func taskLintText(kind string, s *taskcard.Spec) string {
+	var b strings.Builder
+	for _, kv := range [][2]string{{"KIND", firstOf(kind, s.Kind)}, {"PATHS", s.Paths}, {"DONE-WHEN", s.DoneWhen}} {
+		if kv[1] != "" {
+			fmt.Fprintf(&b, "%s: %s\n", kv[0], kv[1])
+		}
+	}
+	b.WriteString("\n" + s.Body + "\n")
+	return b.String()
 }
 
 // replace is front and move: the one move to the task's own where (front,

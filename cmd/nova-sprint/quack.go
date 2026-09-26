@@ -41,6 +41,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -118,8 +119,8 @@ func runQuackCut(ctx context.Context, args []string, out, errOut io.Writer) int 
 		}
 		*baseSHA = sha
 	}
-	// Every card is rendered before Redis is touched: a bad input refuses
-	// with nothing written.
+	// Every card is rendered and linted before Redis is touched: a bad
+	// input refuses with nothing written.
 	type cut struct {
 		id, tier string
 		spec     taskcard.Spec
@@ -131,6 +132,12 @@ func runQuackCut(ctx context.Context, args []string, out, errOut io.Writer) int 
 			Repo: *repo, Base: *base, BaseSHA: *baseSHA})
 		if err != nil {
 			return refuse(errOut, verb, err.Error())
+		}
+		// A generated card is one invariant like a written one (#4396):
+		// refused before Redis is touched, one card-lint line per rule.
+		if rs := card.LintOneInvariant(*repo, *baseSHA, []byte(text)); rs != nil {
+			fmt.Fprint(errOut, card.LintLines(id, rs))
+			return 2
 		}
 		cuts = append(cuts, cut{id: id, tier: tier, spec: taskcard.ParseIssue(text)})
 	}
@@ -176,6 +183,10 @@ func runQuackCut(ctx context.Context, args []string, out, errOut io.Writer) int 
 			continue
 		}
 		refused++
+		if no, ok := ws.ParseRefusal(why); ok {
+			fmt.Fprintf(out, "%s id=%s\n", no.Receipt(), c.id) // the paths gate (SP.gate, #4322)
+			continue
+		}
 		fmt.Fprintf(out, "REFUSED id=%s why=%s\n", c.id, quoteField(why))
 	}
 	fmt.Fprintf(out, "CUT n=%d stream=%s sprint=%s repo=%s tiers=%s pushed=%d skipped=%d refused=%d base-sha=%s pitstop=%s lift=%s ms=%d\n",

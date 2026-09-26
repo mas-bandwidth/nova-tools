@@ -19,9 +19,8 @@
 -- Invariant: a task id is in exactly one ws:<stream>:<where> set, the one its
 -- record's stream and where name, or in none when where is empty. This file
 -- writes no task set and no task pointer itself: every move is NS.task.move
--- and migrate's placing NS.task.place (02_card_move.lua, nova-tools #3778).
--- Every function here is O(1) or O(k) in the ids (or one stream's members)
--- it is handed; the one scan is ns_ws_migrate, a SCAN page per call, run once.
+-- (02_card_move.lua, nova-tools #3778). Every function here is O(1) or O(k)
+-- in the ids (or one stream's members) it is handed.
 --
 -- Callers: every function is the coordinator seat's (ns-coordinator), FCALLed
 -- by internal/nsprint/ws (ws.go); ns_ws_counts is no-writes (FCALL_RO), so the
@@ -171,13 +170,24 @@ local function ws_unpark_stream(keys, args)
   if not W.known(stream) then
     return { 'REFUSED', 'unknown stream ' .. tostring(stream) }
   end
+  -- No path belongs to two open streams (#4322): every parked task is
+  -- gated (NS.task.gate, the one check) before any moves, so an unpark that
+  -- would overlap another open stream is refused whole, the first overlap
+  -- named, and nothing leaves parked.
+  local parked = redis.call('ZRANGE', W.key(stream, 'parked'), 0, -1)
+  for _, id in ipairs(parked) do
+    local perr = NS.task.gate(id, stream)
+    if perr then
+      return { 'REFUSED', perr }
+    end
+  end
   local n = 0
-  for _, id in ipairs(redis.call('ZRANGE', W.key(stream, 'parked'), 0, -1)) do
+  for _, id in ipairs(parked) do
     local to = redis.call('HGET', 'task:' .. id, 'parked_from')
     if to ~= 'ready' then
       to = 'waiting'
     end
-    if not NS.task.move(id, to, { by = by, why = why }) then
+    if not NS.task.move(id, to, { by = by, why = why, gated = true }) then
       redis.call('HDEL', 'task:' .. id, 'parked_from')
       if not NS.task.is_sentinel(id) then n = n + 1 end
     end
@@ -377,44 +387,6 @@ local function ws_counts(keys, args)
     end
   end
   return out
-end
-
--- W.derive: the stream of a task hash, from its stream field or its title's
--- "STREAM: <s> |" prefix; nil when it names none.
-function W.derive(stream, title)
-  if stream and stream ~= '' then
-    return stream
-  end
-  if title then
-    local s = string.match(title, '^%s*STREAM:%s*(.-)%s*|')
-    if s and s ~= '' then
-      return s
-    end
-  end
-  return nil
-end
-
--- W.migrate_one places one task hash through NS.task.place (the one-time
--- placer beside the one task move); returns 'placed', 'same', 'nostream'
--- or 'skipped'.
-function W.migrate_one(id, sprint, by, now)
-  local f = redis.call('HMGET', 'task:' .. id, 'stream', 'title', 'where')
-  local stream = W.derive(f[1], f[2])
-  if stream and not W.valid_name(stream) then
-    return 'skipped'
-  end
-  local before = f[3]
-  local w = NS.task.place(id, nil, nil, { by = by, sprint = sprint, stream = stream })
-  if not w then
-    return 'skipped'
-  end
-  if not stream then
-    return 'nostream'
-  end
-  if before == w then
-    return 'same'
-  end
-  return 'placed'
 end
 
 redis.register_function('ns_ws_move', ws_move)

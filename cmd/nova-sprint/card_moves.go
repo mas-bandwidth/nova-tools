@@ -8,8 +8,10 @@
 // A consumer is bench:<b> or friend:<f>; no verb branches on which.
 //
 //	card deal  --to <consumer> [--n <k>] [--stream <s>] [--ids @file|a,b]
-//	card work  --as <consumer> (--fill | --n <k> | --ids @file|a,b)
-//	card end   --ids <copy>[,<copy>]|@file (--ok [--pr <repo>#<n> --head <sha>] [--done-already <sha>] |
+//	card work  --as <consumer> (--fill | --n <k> | --ids @file|a,b) [--model <m>] [--harness <h>] [--child <id>]
+//	           (who works them, onto each copy's record: taskcard.Who; for a
+//	           friend, its beat loop is kept running: ensureFriendBeat)
+//	card end   --ids <copy>[,<copy>]|@file (--ok [--pr <repo>#<n> --head <sha> --checkout <checkout at head> [--test <finding test>]] [--done-already <sha>] |
 //	           --score <N>/10 [--gates <g>] [--finding <text>] [--reader <who>] | --fail <why>) [--token <t>] [result flags]
 //	           (a --fail moves the primary to review, #4072; --exit <rc> is its evidence; see review.go)
 //	card assign --ids <primary> --to <consumer> [--revoke] [--why <why>]
@@ -84,11 +86,15 @@ type moveCmd struct {
 	redis, to, as, stream, ids, why, sha         *string
 	pr, head, doneAlready, score, gates, finding *string
 	reader, fail, add, rm, token, wrapper        *string
-	n                                            *int
-	fill, ok, repair, revoke, brief, each        *bool
-	result                                       map[string]*string
-	actor                                        string
-	consumers                                    []string
+	harness, child, checkout, findingTest        *string
+	// parent is the caller's context: the spec gate at card end --ok --pr
+	// runs under it, not under the store's 30 s
+	parent                                context.Context
+	n                                     *int
+	fill, ok, repair, revoke, brief, each *bool
+	result                                map[string]*string
+	actor                                 string
+	consumers                             []string
 }
 
 // resultFlags are card end's result fields (written onto the primary).
@@ -117,6 +123,10 @@ func runCardMove(ctx context.Context, sub string, args []string, out, errOut io.
 	m.rm = fs.String("rm", "", "a worker to remove from the consumers set (consumers)")
 	m.token = fs.String("token", "", "the copy's lease token, the fence a stale end is refused by")
 	m.wrapper = fs.String("wrapper", "", "the nova-card the copy session starts (session; default beside this executable)")
+	m.harness = fs.String("harness", "", "the harness that works the copies, written on each copy (work)")
+	m.child = fs.String("child", "", "the child session that works the copies, written on each copy (work)")
+	m.checkout = fs.String("checkout", "", "the checkout at --head the spec gate runs in (end --ok --pr)")
+	m.findingTest = fs.String("test", "", "a fix copy's finding test, '<package> <TestName>' (end --ok --pr)")
 	m.revoke = fs.Bool("revoke", false, "take the assignment back (assign)")
 	m.n = fs.Int("n", 0, verbflag.HelpN)
 	m.fill = fs.Bool("fill", false, "work as many ready copies as the worker has free slots (work)")
@@ -147,6 +157,7 @@ func runCardMove(ctx context.Context, sub string, args []string, out, errOut io.
 	if why := m.usage(sub, ids); why != "" {
 		return refuse(errOut, verb, why)
 	}
+	m.parent = ctx
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	st, err := store.Open(ctx, taskAddr(*m.redis))
@@ -195,6 +206,9 @@ func (m *moveCmd) usage(sub string, ids []string) string {
 		}
 		if *m.pr != "" && *m.head == "" {
 			return "end --pr wants --head <sha>"
+		}
+		if *m.pr != "" && len(ids) != 1 {
+			return "end --pr ends one copy: --ids <copy>"
 		}
 	case "beat":
 		if *m.as == "" || len(ids) == 0 {
@@ -285,12 +299,20 @@ func (m *moveCmd) run(ctx context.Context, c *redis.Client, sub string, ids []st
 		if err != nil {
 			return refuse(errOut, "card work", err.Error())
 		}
-		w, err := taskcard.Work(ctx, c, as, m.actor, *m.n, *m.fill, ids...)
+		who := taskcard.Who{Model: *m.result["model"], Harness: *m.harness, Child: *m.child}
+		if err := who.Check(); err != nil {
+			return refuse(errOut, "card work", err.Error())
+		}
+		w, err := taskcard.WorkAs(ctx, c, as, m.actor, *m.n, *m.fill, who, ids...)
 		if err != nil {
 			return refused(err, "as="+as.String())
 		}
+		code := 0
+		if !printFriendBeat(ctx, c, as, redisArg(*m.redis), out) {
+			code = 1
+		}
 		fmt.Fprintf(out, "CARD WORK as=%s n=%d free=%d ids=%s ms=%d\n", as, len(w.IDs), w.Free, dash(strings.Join(w.IDs, ",")), ms())
-		return 0
+		return code
 	case "end":
 		r := taskcard.EndRequest{IDs: ids, OK: *m.fail == "", Why: *m.fail, Head: *m.head, DoneAlready: *m.doneAlready,
 			Gates: *m.gates, Finding: *m.finding, Reader: *m.reader, Token: *m.token, By: m.actor}
@@ -315,6 +337,23 @@ func (m *moveCmd) run(ctx context.Context, c *redis.Client, sub string, ids []st
 				return refuse(errOut, "card end", "--score wants N/10, N 1-10")
 			}
 			r.Score = s
+		}
+		if r.OK && r.PR != "" {
+			// the spec gate (#4313) at this door as at friend done: a code
+			// copy's ok with a PR runs it in --repo, the checkout at --head,
+			// before the end (nova-tools#4401 read, DOORS)
+			rec, err := c.HGetAll(ctx, taskcard.Key(ids[0])).Result()
+			if err != nil {
+				return refuse(errOut, "card end", err.Error())
+			}
+			if why := gateCopyEnd(m.parent, c, ids[0], rec, *m.checkout, *m.findingTest, *m.head, out); why != "" {
+				fmt.Fprintf(out, "CARD END REFUSED ids=%s why=%s ms=%d\n", ids[0], quoteField(why), ms())
+				return 1
+			}
+			// the end's own round trips get their 30 s after the gate
+			after, cancelAfter := context.WithTimeout(m.parent, 30*time.Second)
+			defer cancelAfter()
+			ctx = after
 		}
 		for _, f := range resultFlags {
 			if v := *m.result[f]; v != "" {

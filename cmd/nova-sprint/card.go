@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/mas-bandwidth/nova-tools/internal/gh"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/launch"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
@@ -57,9 +59,10 @@ var cardCutSource = func(st *store.Store) card.IssueSource {
 // becomes one card record in Redis (card.Cut: render, store the body at its
 // content address, push with the one card writer), with the S2 context block
 // inlined when --index names a ctxindex directory. It refuses an issue with no
-// STREAM (and no --stream), an unparsable DEPENDS-ON, and a missing PATHS or
-// DONE-WHEN before any write. One receipt line; exit 0 cut, 1 refused with
-// the remedy named, 2 usage.
+// STREAM (and no --stream), an unparsable DEPENDS-ON, a missing PATHS or
+// DONE-WHEN, and a card that is not one invariant (cardhdr.LintOneInvariant,
+// one REFUSED card-lint line per rule on stderr, exit 2 as card push, #4396) before any write. One receipt line; exit 0
+// cut, 1 refused with the remedy named, 2 usage or card-lint.
 func cmdCardCut(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New("card cut")
 	sprint := fs.String("sprint", "", verbflag.HelpSprint)
@@ -70,6 +73,7 @@ func cmdCardCut(ctx context.Context, args []string, stdout, stderr io.Writer) in
 	index := fs.String("index", "", "a ctxindex directory whose S2 context block is inlined")
 	stream := fs.String("stream", "", verbflag.HelpStream)
 	base := fs.String("base", "", "the base branch when the issue names none")
+	join := fs.String("join", "", "an open stream whose PATHS the card overlaps: the card joins it")
 	from := fs.String("from", "", verbflag.HelpFrom)
 	dryRun := fs.Bool("dry-run", false, verbflag.HelpDryRun)
 	noGitHub := fs.Bool("no-github", false, "read nothing from GitHub: the issue text is --from's")
@@ -88,7 +92,7 @@ func cmdCardCut(ctx context.Context, args []string, stdout, stderr io.Writer) in
 			return refuse(stderr, "card cut", "--parent takes no --stream: the children ride the parent's stream")
 		}
 		return cmdCardCutFrom(ctx, cutFromOpts{From: *from, Repo: *repo, Stream: *stream, Sprint: *sprint, Base: *base,
-			BaseSHA: *baseSHA, Actor: seatActor(), DryRun: *dryRun, NoGitHub: *noGitHub,
+			BaseSHA: *baseSHA, Actor: seatActor(), DryRun: *dryRun, NoGitHub: *noGitHub, Join: *join,
 			Parent: *parent, StitchRoute: *stitchRoute, StitchEst: *stitchEst}, *addr, stdout, stderr)
 	}
 	if *parent != "" || *stitchRoute != "" || *stitchEst != "" {
@@ -107,10 +111,22 @@ func cmdCardCut(ctx context.Context, args []string, stdout, stderr io.Writer) in
 	}
 	defer st.Close()
 	c, res, err := card.Cut(ctx, st.Client(), cardCutSource(st), card.CutInput{
-		Sprint: *sprint, Repo: *repo, Issue: *issue, Spec: *spec, Index: *index, Stream: *stream, Base: *base,
+		Sprint: *sprint, Repo: *repo, Issue: *issue, Spec: *spec, Index: *index, Stream: *stream, Base: *base, Join: *join,
 	})
+	var lint cardhdr.Refusals
+	if errors.As(err, &lint) {
+		// one card, one invariant (#4396): each refusal is its own line,
+		// on stderr as card push prints them
+		fmt.Fprint(stderr, card.LintLines(c.Label, lint))
+		return 2
+	}
 	if err != nil {
 		fmt.Fprintf(stdout, "REFUSED card cut %s why=%s\n", who, oneline.Field(err.Error()))
+		return 1
+	}
+	if res.Code != 0 && strings.HasPrefix(res.Stdout, "REFUSED ") {
+		// the push's own receipt (PATHS overlap, #4322), its remedy on the line
+		fmt.Fprintf(stdout, "%s issue=%s\n", strings.TrimSpace(res.Stdout), who)
 		return 1
 	}
 	if res.Code != 0 {
@@ -137,6 +153,7 @@ func cmdCardPush(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	stdin := fs.Bool("stdin", false, "read the card file(s) from stdin")
 	dir := fs.String("dir", "", "a directory of card files, pushed in name order")
 	mapKind := fs.Bool("map-kind", false, "push a classification KIND as the card's RESULT kind")
+	join := fs.String("join", "", "an open stream whose PATHS the card overlaps: the card joins it")
 	if err := fs.Parse(args); err != nil {
 		return refuse(stderr, "card push", err.Error())
 	}
@@ -173,7 +190,7 @@ func cmdCardPush(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	}
 	defer client.Close()
 	first := 0
-	for _, res := range card.PushBatch(ctx, client, *sprint, files, card.PushOptions{MapKind: *mapKind}) {
+	for _, res := range card.PushBatch(ctx, client, *sprint, files, card.PushOptions{MapKind: *mapKind, Join: *join}) {
 		if wrote := writeCardResult(stdout, stderr, "card push", res); wrote != 0 && first == 0 {
 			first = wrote
 		}
@@ -246,6 +263,16 @@ func openCardRedis(ctx context.Context, addr string, stderr io.Writer) (*redis.C
 }
 
 func writeCardResult(stdout, stderr io.Writer, verb string, res card.VerbResult) int {
+	if res.Code != 0 && strings.HasPrefix(res.Stdout, "REFUSED ") {
+		// a refusal with its own receipt line (PATHS overlap, #4322)
+		_, _ = io.WriteString(stdout, res.Stdout)
+		return res.Code
+	}
+	if res.Code != 0 && res.Lines {
+		// one REFUSED card-lint line per rule (#4396), as written
+		_, _ = io.WriteString(stderr, res.Stderr)
+		return res.Code
+	}
 	if res.Code != 0 {
 		fmt.Fprintln(stderr, verbflag.Refusal(verb, strings.TrimSpace(res.Stderr)))
 		return res.Code

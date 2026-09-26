@@ -46,6 +46,9 @@ type VerbResult struct {
 	Code   int
 	Stdout string
 	Stderr string
+	// Lines is a Stderr of receipt lines, one per refusal (the REFUSED
+	// card-lint lines, #4396): the CLI prints them as written, one per line.
+	Lines bool
 }
 
 const (
@@ -120,6 +123,7 @@ type cardDoc struct {
 	DoneWhen       string // DONE-WHEN: the sentence a test can fail; required, carried into the PR body (#2932)
 	Task           string // TASK: <sentence>, the PR title's sentence when present (#3712); "" is absent
 	Leg            string // LEG: <leg>, the toolchain a bench profile must carry (deal Bench.runs); absent is any bench
+	StreamPaths    string // PATHS as the stream holds them (ws.SplitPaths, comma-joined), set by push's gate (#4322)
 	Payload        string
 }
 

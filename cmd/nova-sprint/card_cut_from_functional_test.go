@@ -6,12 +6,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
@@ -98,12 +98,14 @@ func TestCardCutFromLedgerFilesNothingTwice(t *testing.T) {
 	if err := fn.Load(ctx, client); err != nil {
 		t.Fatal(err)
 	}
-	rows := "id\ttitle\tstream\tpaths\tdone-when\tdepends-on\troute\n" +
-		"base\tBase\tledger\tp1.go\tgo test passes\tnone\tpro\n" +
-		"\tTwo\tledger\tp2.go\tgo test passes\tbase\tflash\n" +
-		"\tThree\tledger\tp3.go\tgo test passes\ttask:base\t\n" +
-		"\tFour\tledger\tp4.go\tgo test passes\t#12\t\n" +
-		"\tFive\tledger\tp5.go\tgo test passes\t-\t\n"
+	// a swarm card names its test or says why it has none (#4313)
+	// one-invariant bodies (#4396) and a TEST cell per swarm row (#4313)
+	rows := strings.ReplaceAll("id\ttitle\tstream\tpaths\tdone-when\tbody\tdepends-on\troute\ttest\n"+
+		"base\tBase\tledger\tp1.go\tgo test passes\tI\tnone\tpro\tnone the ledger fixture\n"+
+		"\tTwo\tledger\tp2.go\tgo test passes\tI\tbase\tflash\tnone the ledger fixture\n"+
+		"\tThree\tledger\tp3.go\tgo test passes\tI\ttask:base\t\tnone the ledger fixture\n"+
+		"\tFour\tledger\tp4.go\tgo test passes\tI\t#12\t\tnone the ledger fixture\n"+
+		"\tFive\tledger\tp5.go\tgo test passes\tI\t-\t\tnone the ledger fixture\n", "\tI\t", "\t"+cutInv+"\t")
 	forge := &fakeCutForge{failAt: 3}
 	d := cutDepsRedis(forge, client)
 	code, out := runCutFrom(cutFromOpts{Text: []byte(rows)}, d)
@@ -154,6 +156,34 @@ func TestCardCutFromLedgerFilesNothingTwice(t *testing.T) {
 	}
 }
 
+// TestCardCutFromLintRefusalWritesNothing (#4396) on a real store: a file
+// with one good row and one row that is a list (a lower-case a./b. BUILD:
+// list) exits 2, prints one REFUSED card-lint line on stderr, files no issue
+// and leaves the store's key count unchanged.
+func TestCardCutFromLintRefusalWritesNothing(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	addr := testutil.Start(t)
+	client := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = client.Close() })
+	if err := fn.Load(ctx, client); err != nil {
+		t.Fatal(err)
+	}
+	rows := "id\ttitle\tstream\tpaths\tdone-when\tdepends-on\tbody\n" +
+		"good\tGood\tlint\tp1.go\tgo test passes\tnone\t" + cutInv + "\n" +
+		"list\tList\tlint\tp2.go\tgo test passes\tnone\t" + cutInv + `\nBUILD:\na. the parser\nb. the linter` + "\n"
+	keys := client.DBSize(ctx).Val()
+	forge := &fakeCutForge{}
+	code, out, errOut := runCutFromErr(cutFromOpts{Text: []byte(rows)}, cutDepsRedis(forge, client))
+	want := `REFUSED card-lint rule=build-list line="BUILD:" remedy="cut as a parent with children: card cut --parent" row=2` + "\n"
+	if code != 2 || errOut != want || len(forge.titles) != 0 || !strings.Contains(out, `CARD CUT REFUSED row=2 line=3 id=list why="card-lint build-list: not one invariant"`) {
+		t.Fatalf("exit %d filed %d stdout\n%s\nstderr\n%s\nwant exit 2 and\n%s", code, len(forge.titles), out, errOut, want)
+	}
+	if n := client.DBSize(ctx).Val(); n != keys {
+		t.Fatalf("a card-lint refusal changed the key count %d -> %d", keys, n)
+	}
+}
+
 // TestCardCutFromNoneResolvesToReady is #4399 item 8 on a real store: the
 // cold walk's ten rows, depends-on `-` (the TSV's empty marker) or `none`,
 // land in waiting with blocked_on none, and one pass of the reconciler's
@@ -170,13 +200,13 @@ func TestCardCutFromNoneResolvesToReady(t *testing.T) {
 		t.Fatal(err)
 	}
 	var b strings.Builder
-	b.WriteString("id\ttitle\tstream\tpaths\tdone-when\tdepends-on\n")
+	b.WriteString("id\ttitle\tstream\tpaths\tdone-when\tdepends-on\tbody\n")
 	for i := 1; i <= 10; i++ {
 		dep := "-"
 		if i%2 == 0 {
 			dep = "none"
 		}
-		fmt.Fprintf(&b, "p%d\tprobe %d\tprobe-a\tp%d.go\tgo test passes\t%s\n", i, i, i, dep)
+		fmt.Fprintf(&b, "p%d\tprobe %d\tprobe-a\tp%d.go\tgo test passes\t%s\t%s\n", i, i, i, dep, cutInv)
 	}
 	d := cutDepsRedis(&fakeCutForge{}, client)
 	code, out := runCutFrom(cutFromOpts{Text: []byte(b.String()), Sprint: "probe", NoGitHub: true}, d)
@@ -202,7 +232,7 @@ func TestCardCutFromNoneResolvesToReady(t *testing.T) {
 	}
 
 	// An empty cell: refused with its row, nothing filed, pushed or ledgered.
-	empty := "id\ttitle\tstream\tpaths\tdone-when\tdepends-on\nq1\tq one\tprobe-b\tq1.go\tgo test passes\t\nq2\tq two\tprobe-b\tq2.go\tgo test passes\tnone\n"
+	empty := "id\ttitle\tstream\tpaths\tdone-when\tbody\tdepends-on\nq1\tq one\tprobe-b\tq1.go\tgo test passes\t" + cutInv + "\t\nq2\tq two\tprobe-b\tq2.go\tgo test passes\t" + cutInv + "\tnone\n"
 	forge := &fakeCutForge{}
 	code, out = runCutFrom(cutFromOpts{Text: []byte(empty), Sprint: "probe", NoGitHub: true}, cutDepsRedis(forge, client))
 	if code != 1 || !strings.Contains(out, `CARD CUT REFUSED row=1 line=2 id=q1 why="depends-on is empty: write none or the ids"`) ||

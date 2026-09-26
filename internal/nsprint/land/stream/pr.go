@@ -10,7 +10,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pitstop"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/webhook"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -163,6 +168,17 @@ type LandPRReport struct {
 	CI       string
 	MergeSHA string
 	Failed   []string
+	// After a merge (card pr-record-follows-github): Record is "created"
+	// when the PR record was written from the REST reply (it had none),
+	// "merged" when an existing record was marked merged, "none" when there
+	// is no record and the reply's head is not a full sha; Card the card the
+	// record names ("" none) and CardMove what happened to it (<from>-><to>,
+	// "already landed", "refused <why>", or "none"); Pitstop the sprint whose
+	// pit stop held the card's stream while it moved ("" none).
+	Record   string
+	Card     string
+	CardMove string
+	Pitstop  string
 }
 
 // LandPR runs the pass. The error is a *Refusal for a refused input, else
@@ -193,7 +209,7 @@ func LandPR(ctx context.Context, gh *GitHub, rdb redis.Cmdable, o LandPROptions)
 	case pr.Merged:
 		rep.State, rep.MergeSHA = "merged", pr.MergeCommitSHA
 		say("MERGED %s", pr.MergeCommitSHA)
-		return rep, nil
+		return afterMerge(ctx, rdb, o, rep, pr.Head.Ref, pr.Base.Ref, say)
 	case pr.State == "closed":
 		rep.State = "closed"
 		say("FAILED closed without a merge")
@@ -237,7 +253,15 @@ func LandPR(ctx context.Context, gh *GitHub, rdb redis.Cmdable, o LandPROptions)
 		return rep, nil
 	}
 
-	// Green at the head: the one merge, at exactly that sha.
+	// Green at the head. The PR record is what the reads scored: a record
+	// whose head is not GitHub's head (the REST head, or the head the newest
+	// delivery named) is refused, never merged over (card
+	// pr-record-follows-github: #4371 merged while its record lagged).
+	if err := staleRecord(ctx, rdb, o.Repo, o.N, pr.Head.SHA); err != nil {
+		return rep, err
+	}
+
+	// The one merge, at exactly that sha.
 	title := fmt.Sprintf("Merge pull request #%d", o.N)
 	if pr.Title != "" {
 		title = fmt.Sprintf("%s (#%d)", pr.Title, o.N)
@@ -248,5 +272,182 @@ func LandPR(ctx context.Context, gh *GitHub, rdb redis.Cmdable, o LandPROptions)
 	}
 	rep.State, rep.MergeSHA = "merged", sha
 	say("MERGED %s", sha)
+	return afterMerge(ctx, rdb, o, rep, pr.Head.Ref, pr.Base.Ref, say)
+}
+
+// staleRecord refuses a PR record whose head is not GitHub's: the REST
+// head the pass read, or the head the newest delivery named
+// (land.StaleHead). No record is not a refusal: a PR nobody recorded has no
+// read to be stale.
+func staleRecord(ctx context.Context, rdb redis.Cmdable, repo string, n int, restHead string) error {
+	key := PRKey(repo, n)
+	rec, err := rdb.HGetAll(ctx, key).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return fmt.Errorf("HGETALL %s: %w", key, err)
+	}
+	if rec["head"] == "" {
+		return nil
+	}
+	remedy := "the next delivery or runner receipt of the head moves the record; read it at that head, then land pr again (or record it: nova-sprint pr record --repo " +
+		repo + " --n " + strconv.Itoa(n) + " --head " + restHead + ")"
+	if err := land.StaleHead(key, rec); err != nil {
+		return &Refusal{Why: err.Error(), Remedy: remedy}
+	}
+	if rec["head"] != restHead {
+		st := &land.StaleError{Key: key, Head: rec["head"], GitHub: restHead, Src: "rest"}
+		return &Refusal{Why: st.Error(), Remedy: remedy}
+	}
+	return nil
+}
+
+// afterMerge is what a merge settles in Redis, in the same verb: the PR
+// record follows the REST reply (land.RecordPRHead, source rest: created
+// when absent, its head, branch and task from head.sha and head.ref, the
+// card found by land.BranchCardID), is marked merged at the merge commit,
+// and the card the record names lands (taskcard.Land, the one card move).
+// A pit stop does not hold the move, since it records what GitHub already
+// did; the receipt says so: PR <n> PITSTOP kept sprint=<S> scope=<scope>.
+func afterMerge(ctx context.Context, rdb redis.Cmdable, o LandPROptions, rep LandPRReport, headRef, baseRef string, say func(string, ...any)) (LandPRReport, error) {
+	if rdb == nil || rep.MergeSHA == "" {
+		return rep, nil
+	}
+	claim := land.PRClaim{Repo: o.Repo, N: o.N, Head: rep.Head, Action: "closed", Merged: true,
+		Branch: headRef, Base: baseRef, Source: land.ClaimREST}
+	created := false
+	if claim.Validate() == nil {
+		res, err := land.RecordPRHead(ctx, rdb, claim, o.Now)
+		if err != nil {
+			return rep, err
+		}
+		created = res.Outcome == "created"
+		say("RECORD %s", res.Words())
+	}
+	ok, err := land.RecordPRMerged(ctx, rdb, o.Repo, o.N, rep.Head, rep.MergeSHA, o.Now)
+	if err != nil {
+		return rep, err
+	}
+	switch {
+	case created:
+		rep.Record = "created"
+	case ok:
+		rep.Record = "merged"
+	default:
+		rep.Record = "none"
+	}
+	id, err := prCard(ctx, rdb, o.Repo, o.N)
+	if err != nil {
+		return rep, err
+	}
+	rep.Card, rep.CardMove = id, "none"
+	if id == "" {
+		say("CARD none (%s names no card)", PRKey(o.Repo, o.N))
+		return rep, nil
+	}
+	tv, err := rdb.HMGet(ctx, taskcard.Key(id), "where", "sprint", "stream").Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return rep, fmt.Errorf("HMGET %s where sprint stream: %w", taskcard.Key(id), err)
+	}
+	field := func(i int) string {
+		if i < len(tv) {
+			s, _ := tv[i].(string)
+			return s
+		}
+		return ""
+	}
+	where, sprint, strm := field(0), field(1), field(2)
+	if where == "landed" {
+		rep.CardMove = "already landed"
+		say("CARD %s already landed", id)
+		return rep, nil
+	}
+	if h, held, err := cardPitstop(ctx, rdb, sprint, strm); err != nil {
+		return rep, err
+	} else if held {
+		rep.Pitstop = h.Sprint
+		say("PITSTOP kept %s card=%s (the landed move is a fact; the stop holds the rest)", h.Words(), id)
+	}
+	res, err := taskcard.Land(ctx, rdb, id, "land-pr", rep.MergeSHA, fmt.Sprintf("merged %s#%d", o.Repo, o.N))
+	if err != nil {
+		if why, refused := taskcard.IsRefused(err); refused {
+			rep.CardMove = "refused " + why
+			say("CARD %s REFUSED %s", id, why)
+			return rep, nil
+		}
+		return rep, err
+	}
+	rep.CardMove = res.From + "->" + res.To
+	say("CARD %s %s->%s", id, res.From, res.To)
 	return rep, nil
+}
+
+// cardPitstop is the pit stop that holds the card's stream: its sprint's
+// stop (pitstop.Held) when the card names a sprint, else the first open
+// sprint's stop that holds the stream (pitstop.HeldOpen).
+func cardPitstop(ctx context.Context, rdb redis.Cmdable, sprint, strm string) (pitstop.Hold, bool, error) {
+	if sprint != "" {
+		h, held, err := pitstop.Held(ctx, rdb, sprint)
+		if err != nil {
+			return pitstop.Hold{}, false, fmt.Errorf("pitstop %s: %w", sprint, err)
+		}
+		return h, held && h.Stop.InScope(strm), nil
+	}
+	hs, err := pitstop.HeldOpen(ctx, rdb)
+	if err != nil {
+		return pitstop.Hold{}, false, fmt.Errorf("pitstop: %w", err)
+	}
+	h, held := hs.Stream(strm)
+	return h, held, nil
+}
+
+// prCard is the card of PR n: the record's task; else a card of the record's
+// stream in review, merging or working whose pr and repo are this PR's; else
+// the card the record's branch names when it names this PR. "" when none.
+func prCard(ctx context.Context, rdb redis.Cmdable, repo string, n int) (string, error) {
+	key := PRKey(repo, n)
+	v, err := rdb.HMGet(ctx, key, "task", "stream", "branch").Result()
+	if err != nil {
+		return "", fmt.Errorf("HMGET %s: %w", key, err)
+	}
+	str := func(i int) string { s, _ := v[i].(string); return s }
+	if t := str(0); t != "" {
+		return t, nil
+	}
+	var cands []string
+	if st := str(1); st != "" && st != "-" {
+		pipe := rdb.Pipeline()
+		var sets []*redis.StringSliceCmd
+		for _, w := range []string{"review", "merging", "working"} {
+			sets = append(sets, pipe.ZRange(ctx, ws.Key(st, w), 0, -1))
+		}
+		if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+			return "", fmt.Errorf("read stream %s: %w", st, err)
+		}
+		for _, s := range sets {
+			cands = append(cands, s.Val()...)
+		}
+	}
+	if b := land.BranchCardID(str(2)); b != "" {
+		cands = append(cands, b)
+	}
+	if len(cands) == 0 {
+		return "", nil
+	}
+	pipe := rdb.Pipeline()
+	got := make([]*redis.SliceCmd, len(cands))
+	for i, id := range cands {
+		got[i] = pipe.HMGet(ctx, taskcard.Key(id), "repo", "pr")
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return "", fmt.Errorf("read cards: %w", err)
+	}
+	want := strconv.Itoa(n)
+	for i, id := range cands {
+		f := got[i].Val()
+		r, _ := f[0].(string)
+		p, _ := f[1].(string)
+		if p == want && (r == "" || prkey.Name(r) == prkey.Name(repo)) {
+			return id, nil
+		}
+	}
+	return "", nil
 }

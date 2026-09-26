@@ -54,13 +54,13 @@ func TestGrammarColdWalk(t *testing.T) {
 	dir := t.TempDir()
 	base, head, mirror := walkMirror(t, dir)
 	var tsv strings.Builder
-	tsv.WriteString("id\ttitle\tstream\tpaths\tdone-when\tdepends-on\n")
+	tsv.WriteString("id\ttitle\tstream\tpaths\tdone-when\tdepends-on\tbody\n") // one invariant a card (#4396)
 	for i := 1; i <= 10; i++ {
 		dep := "-"
 		if i%2 == 0 {
 			dep = "none"
 		}
-		fmt.Fprintf(&tsv, "p%d\tprobe %d\tprobe-a\tp%d.go\tgo test passes\t%s\n", i, i, i, dep)
+		fmt.Fprintf(&tsv, "p%d\tprobe %d\tprobe-a\tp%d.go\tgo test passes\t%s\t%s\n", i, i, i, dep, cutInv)
 	}
 	writeFile(t, filepath.Join(dir, "cards.tsv"), tsv.String())
 	writeFile(t, filepath.Join(dir, "nolabel.md"), "BASE: dev\nBASE-SHA: "+base+"\nPATHS: a.go\nDEPENDS-ON: none\nDONE-WHEN: it holds\n\nbody\n")
@@ -194,7 +194,15 @@ func TestGrammarColdWalk(t *testing.T) {
 	check("ok", "card work --as friend:rowan --n 10", "n=10 ")
 	check("ok", "task take --as bench:studio", "TASK take n=0 ")
 	check("ok", "pr record --repo nova-tools --n 4399 --head "+head+" --base dev --base-sha "+base+" --stream probe-a --task p1")
-	check("ok", "card end --ids p1~1 --ok --pr 4399 --head "+head, "ENDED p1~1 primary=p1 from=working to=review")
+	// A code copy's ok with a PR runs the spec gate (#4313, dev #4401) in the
+	// child's checkout; with none named the end is refused with the line
+	// that runs it. The gate itself (go test at base and head, then nova-ci
+	// local) is TestEveryOkDoorRunsTheSpecGate's; the walk stands in for its
+	// pass with the one end the verb makes after it.
+	check("answer", "card end --ids p1~1 --ok --pr 4399 --head "+head, "wants --checkout <your checkout at --head>")
+	if _, err := taskcard.End(ctx, client, taskcard.EndRequest{IDs: []string{"p1~1"}, OK: true, PR: "4399", Repo: "nova-tools", Head: head, By: "rowan"}); err != nil {
+		t.Fatalf("the end after the gate's pass: %v", err)
+	}
 	check("next", "read brief --id p1 --mirror "+mirror, "--id is spelled --ids")
 	check("ok", "read brief --ids p1 --mirror "+mirror, "READ BRIEF repo=nova-tools n=4399 ", " out=- diff=- ", "+// walk")
 	check("ok", "read brief --ids @ids.txt --mirror "+mirror, "READ BRIEF repo=nova-tools n=4399 ")

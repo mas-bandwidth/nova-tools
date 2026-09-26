@@ -46,6 +46,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ci"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/redis/go-redis/v9"
@@ -271,6 +272,11 @@ func LoadPRBrief(ctx context.Context, c *redis.Client, o PRBriefOptions) (PRBrie
 	head := b.Record["head"]
 	if head == "" {
 		return b, fmt.Errorf("%w %s: no head; the record is written when the PR is opened (card harvest) or imported (nova-sprint pr record)", ErrMissing, key)
+	}
+	// A record whose head is not the head GitHub last named is refused, never
+	// read: a score at a stale head is a score of code nobody will merge.
+	if err := land.StaleHead(key, b.Record); err != nil {
+		return b, err
 	}
 	b.Sources = append(b.Sources, "record=redis:"+key)
 
@@ -565,6 +571,12 @@ func BriefPR(ctx context.Context, c *redis.Client, o PRBriefOptions, stdout, std
 	if err != nil {
 		if errors.Is(err, ErrMissing) {
 			fmt.Fprintf(stderr, "READ BRIEF REFUSED repo=%s n=%s why=%v\n", o.Repo, o.N, err)
+			return 1
+		}
+		var stale *land.StaleError
+		if errors.As(err, &stale) {
+			fmt.Fprintf(stderr, "READ BRIEF REFUSED repo=%s n=%s why=%v remedy=wait for the next delivery or runner receipt of the head GitHub has (it moves the record), or record it: nova-sprint pr record --repo %s --n %s --head <sha>\n",
+				o.Repo, o.N, err, o.Repo, o.N)
 			return 1
 		}
 		fmt.Fprintf(stderr, "nova-sprint read brief: %v\n", err)
