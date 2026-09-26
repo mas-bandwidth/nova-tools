@@ -63,6 +63,29 @@ func beatStore(t *testing.T, c *redis.Client, me string, slots, n int) []string 
 	return copies
 }
 
+// bindTestOwner uses this test process as the independently live harness
+// stand-in. It binds through the real atomic store boundary, never raw fields.
+func bindTestOwner(t *testing.T, c *redis.Client, k taskcard.Consumer, ids ...string) {
+	t.Helper()
+	host, err := os.Hostname()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sample := life.ProbeProcess(os.Getpid())
+	if sample.Err != nil || sample.Absent {
+		t.Fatalf("test owner: %+v", sample)
+	}
+	for _, id := range ids {
+		token, err := c.HGet(context.Background(), taskcard.Key(id), "token").Result()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := taskcard.BindOwner(context.Background(), c, k, id, token, taskcard.ProcessOwner{Host: host, PID: os.Getpid(), Start: sample.Start}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 // loadedStore starts a throwaway store (extra: redis-server arguments) and
 // loads the library as the default user.
 func loadedStore(t *testing.T, extra ...string) (string, *redis.Client) {
@@ -129,6 +152,7 @@ func TestFriendPullKeepsBeatAndNamesWorker(t *testing.T) {
 	if code != 0 || !strings.Contains(out, worker) {
 		t.Fatalf("card render exit %d lacks %q:\n%s%s", code, worker, out, errOut)
 	}
+	bindTestOwner(t, c, k, cp)
 	if code, out, errOut := runSprint("friend", "beat", "--as", k.String(), "--host", "laptop", "--once", "--redis", addr); code != 0 {
 		t.Fatalf("friend beat exit %d %s%s", code, out, errOut)
 	}
@@ -389,7 +413,7 @@ func TestFriendSeatKeepsBeatUnderACL(t *testing.T) {
 	}
 	var bare []string
 	for _, tok := range strings.Fields(rules["ns-friend"]) {
-		if !strings.HasPrefix(tok, "+fcall|ns_friend_") {
+		if !strings.HasPrefix(tok, "+fcall|ns_friend_") && tok != "+fcall|ns_cm_owner" {
 			bare = append(bare, tok)
 		}
 	}
@@ -428,7 +452,12 @@ func TestFriendSeatKeepsBeatUnderACL(t *testing.T) {
 	if got := admin.HGetAll(ctx, taskcard.Key(cp)).Val(); got["model"] != "opus-5.5" || got["harness"] != "claude-code" || got["child"] != "c7" {
 		t.Fatalf("task:%s = %v", cp, got)
 	}
-	// the loop's first step runs at its start: the beat, under ns-friend
+	// Bind the actual owner through the CLI under the same restricted seat.
+	claim := admin.HGet(ctx, taskcard.Key(cp), "token").Val()
+	if code, o := sprint("card", "owner", "--as", k.String(), "--id", cp, "--token", claim, "--pid", strconv.Itoa(os.Getpid())); code != 0 {
+		t.Fatalf("owner bind: %d %s", code, o)
+	}
+	// the loop's next step observes the bound test process under ns-friend
 	for i := 0; i < 300 && admin.HGet(ctx, "friend:"+me+":beat", "models").Val() != "opus-5.5"; i++ {
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -452,6 +481,7 @@ func TestFriendSeatKeepsBeatUnderACL(t *testing.T) {
 	if code != 0 || m2 == nil {
 		t.Fatalf("ns-friend friend pull after kill -9 of pid %d exit %d:\n%s", pid, code, out)
 	}
+	bindTestOwner(t, admin, k, admin.ZRange(ctx, k.Key("working"), 0, -1).Val()...)
 	pid, _ = strconv.Atoi(m2[1])
 	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
 	for i := 0; i < 300 && !strings.Contains(readFile(m[2]), "pid="+m2[1]); i++ {
@@ -565,6 +595,7 @@ func TestEndedCopyNotRenewedByLoop(t *testing.T) {
 	if code != 0 || !strings.Contains(out, " started pid=4242 working=4 ") {
 		t.Fatalf("pull exit %d:\n%s%s", code, out, errOut)
 	}
+	bindTestOwner(t, c, k, cps...)
 	token := c.HGet(ctx, life.BeatLoopKey(me), "token").Val()
 	st := store.New(c)
 	l := &life.BeatLoop{Lease: life.StoreLease{Client: c, Friend: me, Me: life.LoopHolder{Token: token, Host: "h", PID: 4242}}, Friend: me,

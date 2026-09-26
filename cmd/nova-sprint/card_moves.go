@@ -52,7 +52,7 @@ import (
 )
 
 // cardMoveVerbs are the table move subverbs no other card form has.
-var cardMoveVerbs = map[string]bool{"deal": true, "work": true, "land": true, "cancel": true, "expire": true,
+var cardMoveVerbs = map[string]bool{"owner": true, "deal": true, "work": true, "land": true, "cancel": true, "expire": true,
 	"table": true, "consumers": true, "render": true, "assign": true, "session": true}
 
 // isCardMove says whether a card call is a table move. end and beat are
@@ -105,6 +105,9 @@ var resultFlags = []string{"line1", "line2", "check", "paths", "branch", "commit
 	"wall", "evidence", "tier", "key", "exit"}
 
 func runCardMove(ctx context.Context, sub string, args []string, out, errOut io.Writer) int {
+	if sub == "owner" {
+		return runCardOwner(ctx, args, out, errOut)
+	}
 	verb := "card " + sub
 	fs := verbflag.New(verb) // -h prints the move's usage and flags, exit 2 (#3254)
 	m := &moveCmd{result: map[string]*string{}}

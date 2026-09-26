@@ -487,7 +487,7 @@ func runFriendBeat(ctx context.Context, args []string, out, errOut io.Writer) in
 		return refuse(errOut, verb, err.Error())
 	}
 	printBeatSkipped(out, k, res.Skipped)
-	fmt.Fprintf(out, "FRIEND BEAT as=%s host=%s working=%d lease_until=%d at=%d\n", k, *host, res.Working, res.LeaseUntil, res.AtMS)
+	fmt.Fprintf(out, "FRIEND BEAT as=%s host=%s working=%d dead=%d unknown=%d lease_until=%d at=%d\n", k, *host, res.Working, len(res.Dead), len(res.Unknown), res.LeaseUntil, res.AtMS)
 	if *once {
 		return 0
 	}
@@ -551,6 +551,9 @@ func runFriendBeatLoop(ctx context.Context, st *store.Store, k taskcard.Consumer
 	l := &life.BeatLoop{Lease: life.StoreLease{Client: c, Friend: k.Name, Me: me}, Friend: k.Name,
 		Tick: func(ctx context.Context, now time.Time) (int, error) {
 			res, err := friendBeatOnce(ctx, st, k, host, now)
+			for _, change := range res.Changed {
+				fmt.Fprintf(out, "OWNER as=%s copy_state=%s\n", k, change)
+			}
 			return res.Working, err
 		}}
 	fmt.Fprintf(out, "FRIEND BEAT LOOP as=%s host=%s key=%s pid=%d\n", k, host, life.BeatLoopKey(k.Name), os.Getpid())

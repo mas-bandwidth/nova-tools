@@ -106,10 +106,11 @@ func TestFriendPullDoneBeat(t *testing.T) {
 		t.Fatalf("a second pull with nothing ready: exit %d %s", code, out)
 	}
 
+	bindTestOwner(t, c, taskcard.Consumer{Kind: "friend", Name: me}, mine)
 	before, _ := strconv.ParseInt(rec["lease_until"], 10, 64)
 	c.HSet(ctx, taskcard.Key(mine), "lease_until", strconv.FormatInt(before-1000, 10))
 	code, out, errOut = run("beat", "--as", "friend:"+me, "--host", "laptop", "--once")
-	if code != 0 || !regexp.MustCompile(`^FRIEND BEAT as=friend:`+me+` host=laptop working=1 lease_until=\d+ at=\d+\n$`).MatchString(out) {
+	if code != 0 || !regexp.MustCompile(`^FRIEND BEAT as=friend:`+me+` host=laptop working=1 dead=0 unknown=0 lease_until=\d+ at=\d+\n$`).MatchString(out) {
 		t.Fatalf("friend beat exit %d %q %s", code, out, errOut)
 	}
 	if n := c.Exists(ctx, "friend:"+me).Val(); n != 0 {

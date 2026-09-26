@@ -3902,6 +3902,61 @@ function TM.beat(c, ids)
   return out
 end
 
+-- Owner observations for detached friend loops. The process identity is
+-- immutable within the lease token; a label alone is never evidence of life.
+-- KEYS working-set, copy; ARGV op, consumer, id, token, host, pid, start,
+-- state, observed-at (Redis time sampled before the external observation).
+redis.register_function('ns_cm_owner', function(keys, a)
+  local op, c, id, token = a[1], a[2], a[3], a[4]
+  if TM.parse(c) ~= 'friend' or not TK.copy_id(id) or token == '' or
+      keys[1] ~= TM.key(c, 'working') or keys[2] ~= 'task:' .. id then
+    return { 'REFUSED', 'OWNER bad consumer, copy, token or keys' }
+  end
+  local at = cm_now()
+  local r = redis.call('HMGET', keys[2], 'consumer', 'where', 'token', 'lease_until',
+    'owner_host', 'owner_pid', 'owner_start', 'owner_token', 'owner_state', 'owner_at')
+  if r[1] ~= c or r[2] ~= 'working' or not redis.call('ZSCORE', keys[1], id) then
+    return { 'REFUSED', 'NOTWORKING ' .. id }
+  end
+  if r[3] ~= token then return { 'REFUSED', 'FENCED ' .. id .. ' token changed' } end
+  local until_ms = tonumber(r[4]) or 0
+  local valid = a[5] ~= '' and tonumber(a[6]) and tonumber(a[6]) > 0 and a[7] ~= '' and a[7] ~= '-'
+  local same = r[8] == token and r[5] == a[5] and r[6] == a[6] and r[7] == a[7]
+  if op == 'bind' then
+    if not valid then return { 'REFUSED', 'OWNER process identity required' } end
+    if until_ms <= at then return { 'REFUSED', 'FENCED ' .. id .. ' lease lapsed' } end
+    if r[8] == token then
+      if same then return { 'BOUND' } end
+      return { 'REFUSED', 'CONFLICT ' .. id .. ' owner already bound' }
+    end
+    redis.call('HSET', keys[2], 'owner_host', a[5], 'owner_pid', a[6], 'owner_start', a[7],
+      'owner_token', token, 'owner_state', 'unknown', 'owner_at', '0')
+    return { 'BOUND' }
+  end
+  if op ~= 'observe' or (a[8] ~= 'live' and a[8] ~= 'dead' and a[8] ~= 'unknown') then
+    return { 'REFUSED', 'OWNER invalid operation or state' }
+  end
+  local unbound = r[8] ~= token and a[5] == '' and a[6] == '0' and a[7] == '' and a[8] == 'unknown'
+  if not same and not unbound then return { 'REFUSED', 'FENCED ' .. id .. ' owner changed' } end
+  local observed = tonumber(a[9]) or 0
+  -- BeatInterval is one second. Do not renew with a stale/future sample.
+  if observed <= 0 or observed > at or at - observed >= 2000 or
+      (r[8] == token and observed < (tonumber(r[10]) or 0)) then
+    return { 'REFUSED', 'STALE ' .. id .. ' owner observation' }
+  end
+  local state = a[8]
+  if state == 'live' and until_ms <= at then
+    return { 'REFUSED', 'FENCED ' .. id .. ' lease lapsed' }
+  end
+  local changed = r[9] ~= state
+  redis.call('HSET', keys[2], 'owner_state', state, 'owner_at', tostring(observed))
+  if state == 'live' then
+    until_ms = at + TM.LEASE
+    redis.call('HSET', keys[2], 'lease_until', tostring(until_ms), 'beat_at', tostring(at))
+  end
+  return { 'OWNER', state, changed and '1' or '0', tostring(until_ms) }
+end)
+
 -- TM.roster: every consumer: the consumers set, and bench:<b> for each of
 -- benches, friend:<f> for each of friends.
 function TM.roster()
