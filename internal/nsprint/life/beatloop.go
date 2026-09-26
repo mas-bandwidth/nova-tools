@@ -2,8 +2,8 @@ package life
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,16 +16,20 @@ import (
 // table called the one worker down): while a friend holds working copies,
 // ONE `nova-sprint friend beat --as friend:<f> --loop` runs for it, started
 // in its own session by the verb that gave the friend the copy (friend
-// pull, card work --as friend:<f>), and it stops when the friend holds none.
+// pull, card work --as friend:<f>, task take), and it stops when the friend
+// holds none.
 //
-//	friend:<f>:beatloop   the loop's lease: SET NX PX by the verb that starts
-//	                      the loop (the loop adopts that token), renewed by
-//	                      the loop every tick, deleted by the loop when it
-//	                      exits; a loop that dies lets it lapse in
-//	                      BeatLoopLease, and the next verb starts another.
+//	friend:<f>:beatloop   the loop's lease, a hash (token, host, pid) with a
+//	                      PEXPIRE: claimed by the verb that starts the loop
+//	                      (the loop adopts that token), renewed by the loop
+//	                      every tick, deleted by the loop when it exits; a
+//	                      loop that dies lets it lapse in BeatLoopLease, or a
+//	                      verb on its host finds its pid gone and takes it.
 //
 // The lease is a lock, the one key here with a PX: it says a loop is alive,
-// so a record never claims one that is not.
+// so a record never claims one that is not. Every move of it is a function
+// of the library (fn/lua/friend_beatloop.lua), which the friend seat's ACL
+// row grants (store/acl.go): the seat has no SET and no EVAL.
 
 // BeatLoopLease is how long a friend beat loop's lease outlives its last
 // renewal.
@@ -35,34 +39,49 @@ const BeatLoopLease = 10 * time.Second
 // loop.
 const BeatLoopIdleTicks = 2
 
+// The lease's functions (fn/lua/friend_beatloop.lua).
+const (
+	FnLoopClaim   = "ns_friend_loop_claim"
+	FnLoopRenew   = "ns_friend_loop_renew"
+	FnLoopRelease = "ns_friend_loop_release"
+)
+
 // BeatLoopKey is friend f's beat loop lease.
 func BeatLoopKey(friend string) string { return "friend:" + strings.ToLower(friend) + ":beatloop" }
 
-// renewScript extends the lease while it holds this loop's token, takes it
-// when it lapsed, and returns 0 when another loop holds it.
-const renewScript = `local v = redis.call('GET', KEYS[1])
-if v == ARGV[1] then return redis.call('PEXPIRE', KEYS[1], ARGV[2]) end
-if not v then redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2]); return 2 end
-return 0`
-
-// releaseScript deletes the lease only while it holds this loop's token.
-const releaseScript = `if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end
-return 0`
-
-// ClaimBeatLoop takes friend's beat loop lease for token (SET NX PX): true
-// when this call took it, false when a loop already holds it.
-func ClaimBeatLoop(ctx context.Context, c redis.Cmdable, friend, token string) (bool, error) {
-	ok, err := c.SetNX(ctx, BeatLoopKey(friend), token, BeatLoopLease).Result()
-	if err != nil {
-		return false, fmt.Errorf("claim %s: %w", BeatLoopKey(friend), err)
-	}
-	return ok, nil
+// LoopHolder is who holds a beat loop lease: its token, and the host and
+// pid of the loop (pid 0 until the loop, or the verb that started it,
+// renews it).
+type LoopHolder struct {
+	Token, Host string
+	PID         int
 }
 
-// RenewBeatLoop extends friend's lease for token (taking it when it
-// lapsed): false when another loop holds it.
-func RenewBeatLoop(ctx context.Context, c redis.Cmdable, friend, token string) (bool, error) {
-	n, err := c.Eval(ctx, renewScript, []string{BeatLoopKey(friend)}, token, BeatLoopLease.Milliseconds()).Int64()
+// ClaimBeatLoop takes friend's beat loop lease for me: took is true when
+// this call took it; else held is the holder. dead is the token of a holder
+// the caller found dead (its pid gone on the caller's host): a lease still
+// holding it is taken over. "" takes only a free lease.
+func ClaimBeatLoop(ctx context.Context, c redis.Cmdable, friend string, me LoopHolder, dead string) (took bool, held LoopHolder, err error) {
+	out, err := c.FCall(ctx, FnLoopClaim, []string{BeatLoopKey(friend)}, me.Token, BeatLoopLease.Milliseconds(),
+		me.Host, me.PID, dead).StringSlice()
+	if err != nil {
+		return false, LoopHolder{}, fmt.Errorf("claim %s: %w", BeatLoopKey(friend), err)
+	}
+	switch {
+	case len(out) == 1 && out[0] == "TOOK":
+		return true, LoopHolder{}, nil
+	case len(out) == 4 && out[0] == "HELD":
+		pid, _ := strconv.Atoi(out[3])
+		return false, LoopHolder{Token: out[1], Host: out[2], PID: pid}, nil
+	}
+	return false, LoopHolder{}, fmt.Errorf("claim %s: unexpected reply %v", BeatLoopKey(friend), out)
+}
+
+// RenewBeatLoop extends friend's lease for me and writes its host and pid
+// (taking it when it lapsed): false when another loop holds it.
+func RenewBeatLoop(ctx context.Context, c redis.Cmdable, friend string, me LoopHolder) (bool, error) {
+	n, err := c.FCall(ctx, FnLoopRenew, []string{BeatLoopKey(friend)}, me.Token, BeatLoopLease.Milliseconds(),
+		me.Host, me.PID).Int64()
 	if err != nil {
 		return false, fmt.Errorf("renew %s: %w", BeatLoopKey(friend), err)
 	}
@@ -71,19 +90,51 @@ func RenewBeatLoop(ctx context.Context, c redis.Cmdable, friend, token string) (
 
 // ReleaseBeatLoop deletes friend's lease while token holds it.
 func ReleaseBeatLoop(ctx context.Context, c redis.Cmdable, friend, token string) error {
-	if err := c.Eval(ctx, releaseScript, []string{BeatLoopKey(friend)}, token).Err(); err != nil && !errors.Is(err, redis.Nil) {
+	if err := c.FCall(ctx, FnLoopRelease, []string{BeatLoopKey(friend)}, token).Err(); err != nil {
 		return fmt.Errorf("release %s: %w", BeatLoopKey(friend), err)
 	}
 	return nil
+}
+
+// LoopLease is the lease one loop holds: the moves Step makes on it.
+type LoopLease interface {
+	// Renew extends it: false when another loop holds it.
+	Renew(ctx context.Context) (bool, error)
+	// Release lets go of it while this loop holds it.
+	Release(ctx context.Context) error
+	// Claim takes it when it is free: false when another loop holds it.
+	Claim(ctx context.Context) (bool, error)
+}
+
+// StoreLease is a LoopLease on the store: friend's lease held by Me.
+type StoreLease struct {
+	Client redis.Cmdable
+	Friend string
+	Me     LoopHolder
+}
+
+// Renew is RenewBeatLoop.
+func (s StoreLease) Renew(ctx context.Context) (bool, error) {
+	return RenewBeatLoop(ctx, s.Client, s.Friend, s.Me)
+}
+
+// Release is ReleaseBeatLoop.
+func (s StoreLease) Release(ctx context.Context) error {
+	return ReleaseBeatLoop(ctx, s.Client, s.Friend, s.Me.Token)
+}
+
+// Claim is ClaimBeatLoop of a free lease.
+func (s StoreLease) Claim(ctx context.Context) (bool, error) {
+	took, _, err := ClaimBeatLoop(ctx, s.Client, s.Friend, s.Me, "")
+	return took, err
 }
 
 // BeatLoop is one friend's beat loop: each Step renews the lease, then
 // ticks (FriendBeat: the beat and every held copy's lease) and counts the
 // ticks in a row that found no working copy.
 type BeatLoop struct {
-	Client redis.Cmdable
+	Lease  LoopLease
 	Friend string
-	Token  string
 	// Tick is one beat at now, returning how many copies the friend holds
 	// in working (FriendBeatResult.Working).
 	Tick func(ctx context.Context, now time.Time) (working int, err error)
@@ -101,7 +152,7 @@ type BeatLoop struct {
 // last tick is seen here (the loop takes the lease back and stays), and one
 // worked after it finds no lease and starts a loop of its own.
 func (l *BeatLoop) Step(ctx context.Context, now time.Time) (done bool, why string, err error) {
-	held, err := RenewBeatLoop(ctx, l.Client, l.Friend, l.Token)
+	held, err := l.Lease.Renew(ctx)
 	if err != nil {
 		return false, "", err
 	}
@@ -119,13 +170,13 @@ func (l *BeatLoop) Step(ctx context.Context, now time.Time) (done bool, why stri
 	if l.idle++; l.idle < BeatLoopIdleTicks {
 		return false, "", nil
 	}
-	if err := ReleaseBeatLoop(ctx, l.Client, l.Friend, l.Token); err != nil {
+	if err := l.Lease.Release(ctx); err != nil {
 		return false, "", err
 	}
 	if n, err := l.Tick(ctx, now); err == nil && n == 0 {
 		return true, fmt.Sprintf("IDLE no working copy for %d ticks", l.idle), nil
 	}
-	took, err := ClaimBeatLoop(ctx, l.Client, l.Friend, l.Token)
+	took, err := l.Lease.Claim(ctx)
 	if err != nil {
 		return false, "", err
 	}

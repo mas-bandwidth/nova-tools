@@ -179,11 +179,24 @@ type Worked struct {
 // Work is card work: ready -> working for as, n copies (fill: as many as
 // are free), or the named ones; one call.
 func Work(ctx context.Context, c redis.Cmdable, as Consumer, by string, n int, fill bool, ids ...string) (Worked, error) {
+	return WorkAs(ctx, c, as, by, n, fill, Who{}, ids...)
+}
+
+// WorkAs is Work that also names who works the copies: ns_cm_work writes
+// who's fields onto each worked copy's record in the same move
+// (seat-keeps-beat: the one writer of task:<id>, never a second HSET).
+func WorkAs(ctx context.Context, c redis.Cmdable, as Consumer, by string, n int, fill bool, who Who, ids ...string) (Worked, error) {
+	if err := who.Check(); err != nil {
+		return Worked{}, err
+	}
 	k := any(n)
 	if fill {
 		k = "fill"
 	}
 	args := []any{as.String(), by, k}
+	for _, a := range who.Args() {
+		args = append(args, a)
+	}
 	for _, id := range ids {
 		args = append(args, id)
 	}
@@ -207,19 +220,19 @@ func Work(ctx context.Context, c redis.Cmdable, as Consumer, by string, n int, f
 // named no model, harness or child, so neither the card nor the table could
 // say who held it): the model, the harness it runs in and the child's id,
 // each one word, written onto task:<copy> as model, harness and child by
-// the verb that moved it to working (card work, friend pull). An empty
-// field is not written.
+// ns_cm_work as it moves the copy to working (WorkAs: card work, friend
+// pull, task take). An empty field is not written.
 type Who struct{ Model, Harness, Child string }
 
-// Fields is who as HSET field, value pairs, empty ones left out.
-func (w Who) Fields() []any {
-	var f []any
+// Args is who as ns_cm_work's who words (field=value), empty ones left out.
+func (w Who) Args() []string {
+	var a []string
 	for _, kv := range [][2]string{{"model", w.Model}, {"harness", w.Harness}, {"child", w.Child}} {
 		if v := strings.TrimSpace(kv[1]); v != "" {
-			f = append(f, kv[0], v)
+			a = append(a, kv[0]+"="+v)
 		}
 	}
-	return f
+	return a
 }
 
 // Check refuses a field that is not one word.
@@ -228,30 +241,6 @@ func (w Who) Check() error {
 		if v := strings.TrimSpace(kv[1]); v != "" && strings.ContainsAny(v, " \t\r\n") {
 			return fmt.Errorf("--%s wants one word, got %q", kv[0], kv[1])
 		}
-	}
-	return nil
-}
-
-// QueueWho queues who's HSET onto each copy's record in pipe; nothing for
-// an empty who.
-func QueueWho(ctx context.Context, pipe redis.Pipeliner, ids []string, w Who) {
-	if f := w.Fields(); len(f) > 0 {
-		for _, id := range ids {
-			pipe.HSet(ctx, Key(id), f...)
-		}
-	}
-}
-
-// RecordWho writes who onto each copy's record in one round trip; nothing
-// for an empty who or no id.
-func RecordWho(ctx context.Context, c redis.Cmdable, ids []string, w Who) error {
-	if len(w.Fields()) == 0 || len(ids) == 0 {
-		return nil
-	}
-	pipe := c.Pipeline()
-	QueueWho(ctx, pipe, ids, w)
-	if _, err := pipe.Exec(ctx); err != nil {
-		return fmt.Errorf("record who: %w", err)
 	}
 	return nil
 }

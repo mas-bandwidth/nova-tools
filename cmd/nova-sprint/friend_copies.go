@@ -139,7 +139,9 @@ func runFriendPull(ctx context.Context, args []string, out, errOut io.Writer) in
 	}
 	defer func() { _ = st.Close() }()
 	c := st.Client()
-	w, err := taskcard.Work(ctx, c, k, by, *n, *n == 0)
+	// who works the copies goes on their records in the move itself
+	// (ns_cm_work), so each brief read below carries its WORKER line
+	w, err := taskcard.WorkAs(ctx, c, k, by, *n, *n == 0, who)
 	if err != nil {
 		if why, ok := taskcard.IsRefused(err); ok {
 			fmt.Fprintf(out, "FRIEND PULL REFUSED as=%s why=%s ms=%d\n", k, quoteField(why), ms())
@@ -148,9 +150,6 @@ func runFriendPull(ctx context.Context, args []string, out, errOut io.Writer) in
 		return refuse(errOut, verb, err.Error())
 	}
 	pipe := c.Pipeline()
-	// who works the copies goes on their records in the same round trip,
-	// before the read, so each brief carries its WORKER line
-	taskcard.QueueWho(ctx, pipe, w.IDs, who)
 	recs := make([]*redis.MapStringStringCmd, len(w.IDs))
 	for i, id := range w.IDs {
 		recs[i] = pipe.HGetAll(ctx, taskcard.Key(id))
@@ -181,19 +180,12 @@ func runFriendPull(ctx context.Context, args []string, out, errOut io.Writer) in
 		pulled++
 		fmt.Fprintf(out, "PULLED %s leg=%s token=%s card=%s\n", id, dash(rec["leg"]), w.Tokens[i], path)
 	}
-	if line, err := ensureFriendBeat(ctx, c, k, redisArg(*redisAddr), friendBeatStart, time.Now()); err != nil {
-		fmt.Fprintf(out, "BEATLOOP REFUSED as=%s why=%s\n", k, quoteField(err.Error()))
+	if !printFriendBeat(ctx, c, k, redisArg(*redisAddr), out) {
 		code = 1
-	} else if line != "" {
-		fmt.Fprintln(out, line)
 	}
 	fmt.Fprintf(out, "FRIEND PULL as=%s n=%d free=%d dir=%s ms=%d\n", k, pulled, w.Free, *dir, ms())
 	return code
 }
-
-// friendBeatStart starts a friend's beat loop in its own session; the
-// package's tests replace it (their binary is not nova-sprint).
-var friendBeatStart = startOwnSession
 
 // redisArg is the --redis a started loop is given: the verb's own when it
 // is not the default, so the loop reads the store the verb wrote; else
@@ -205,46 +197,124 @@ func redisArg(flag string) string {
 	return flag
 }
 
+// loopStarter is how a verb starts a friend's beat loop and judges the
+// holder of its lease; the package's tests replace friendLoop (their binary
+// is not nova-sprint).
+type loopStarter struct {
+	// start runs argv in its own session, its stdout and stderr appended
+	// to log, and returns its pid.
+	start func(argv []string, log string) (int, error)
+	// alive says whether pid is a live process on this host.
+	alive func(pid int) bool
+	// log is the file friend f's loop writes to.
+	log func(friend string) (string, error)
+}
+
+var friendLoop = loopStarter{start: startOwnSessionLog, alive: pidAlive, log: friendBeatLog}
+
+// pidAlive is kill(pid, 0): the process exists (EPERM: it does, another
+// user's).
+func pidAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	err := syscall.Kill(pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
+}
+
+// friendBeatLog is friend f's beat loop log, in the seat's state dir beside
+// friend pull's briefs (friendCardsDir): ~/.nova-sprint/friend/<f>/beatloop.log.
+func friendBeatLog(friend string) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("no home directory for the beat loop's log: %v", err)
+	}
+	return filepath.Join(home, ".nova-sprint", "friend", friend, "beatloop.log"), nil
+}
+
+// printFriendBeat is ensureFriendBeat's one BEATLOOP line on out, after the
+// verb's move; false when it was refused.
+func printFriendBeat(ctx context.Context, c redis.Cmdable, k taskcard.Consumer, redisFlag string, out io.Writer) bool {
+	line, err := ensureFriendBeat(ctx, c, k, redisFlag, friendLoop, time.Now())
+	if err != nil {
+		fmt.Fprintf(out, "BEATLOOP REFUSED as=%s why=%s\n", k, quoteField(err.Error()))
+		return false
+	}
+	if line != "" {
+		fmt.Fprintln(out, line)
+	}
+	return true
+}
+
 // ensureFriendBeat keeps a friend that holds working copies beating: when
-// k holds any copy in working and no loop holds friend:<f>:beatloop, it
-// claims the lease (SET NX PX) and starts `nova-sprint friend beat --as
-// friend:<f> --loop --lease <token>` through start, which adopts it; a
-// start that fails releases the claim and is the error. The line says
-// what it found: started (with the pid) or running; "" when k holds none.
-// The verb calls it after its move, so a loop that saw no copy and let go
-// of the lease is replaced (life.BeatLoop.Step).
-func ensureFriendBeat(ctx context.Context, c redis.Cmdable, k taskcard.Consumer, redisFlag string, start func([]string) (int, error), now time.Time) (string, error) {
+// k holds any copy (<primary>~<n>) in working and no live loop holds
+// friend:<f>:beatloop,
+// it claims the lease (ns_friend_loop_claim) and starts `nova-sprint friend
+// beat --as friend:<f> --loop --lease <token>` through s.start, its output
+// to s.log's file, and writes the started pid onto the lease; a start that
+// fails releases the claim and is the error. A lease held from this host by
+// a pid that is gone (kill -9 leaves it for life.BeatLoopLease) is taken
+// over. The line says what it found: started (pid, log), restarted (pid,
+// log, dead=<the gone pid>) or running (the holder's pid and host); "" when
+// k holds none. The verb calls it after its move, so a loop that saw no
+// copy and let go of the lease is replaced (life.BeatLoop.Step).
+func ensureFriendBeat(ctx context.Context, c redis.Cmdable, k taskcard.Consumer, redisFlag string, s loopStarter, now time.Time) (string, error) {
 	if k.Kind != "friend" {
 		return "", nil
 	}
-	n, err := c.ZCard(ctx, k.Key("working")).Result()
+	// the loop beats copies (ns_cm_beat); a friend-queue task in the same
+	// set is renewed by task beat, and alone it starts no loop
+	members, err := c.ZRange(ctx, k.Key("working"), 0, -1).Result()
 	if err != nil {
-		return "", fmt.Errorf("zcard %s: %w", k.Key("working"), err)
+		return "", fmt.Errorf("zrange %s: %w", k.Key("working"), err)
+	}
+	n := 0
+	for _, id := range members {
+		if taskcard.IsCopy(id) {
+			n++
+		}
 	}
 	if n == 0 {
 		return "", nil
 	}
 	host, _ := os.Hostname()
-	token := fmt.Sprintf("%s:%d:%d", host, os.Getpid(), now.UnixNano())
-	took, err := life.ClaimBeatLoop(ctx, c, k.Name, token)
+	me := life.LoopHolder{Token: fmt.Sprintf("%s:%d:%d", host, os.Getpid(), now.UnixNano()), Host: host}
+	took, held, err := life.ClaimBeatLoop(ctx, c, k.Name, me, "")
 	if err != nil {
 		return "", err
 	}
+	dead := 0
+	if !took && held.Host == host && held.PID > 0 && !s.alive(held.PID) {
+		dead = held.PID
+		if took, held, err = life.ClaimBeatLoop(ctx, c, k.Name, me, held.Token); err != nil {
+			return "", err
+		}
+	}
 	if !took {
-		return fmt.Sprintf("BEATLOOP as=%s running working=%d", k, n), nil
+		return fmt.Sprintf("BEATLOOP as=%s running pid=%d host=%s working=%d", k, held.PID, dash(held.Host), n), nil
 	}
-	exe, err := os.Executable()
+	log, err := s.log(k.Name)
 	if err == nil {
-		argv := []string{exe, "friend", "beat", "--as", k.String(), "--loop", "--lease", token}
-		if redisFlag != "" {
-			argv = append(argv, "--redis", redisFlag)
-		}
-		var pid int
-		if pid, err = start(argv); err == nil {
-			return fmt.Sprintf("BEATLOOP as=%s started pid=%d working=%d", k, pid, n), nil
+		var exe string
+		if exe, err = os.Executable(); err == nil {
+			argv := []string{exe, "friend", "beat", "--as", k.String(), "--loop", "--lease", me.Token}
+			if redisFlag != "" {
+				argv = append(argv, "--redis", redisFlag)
+			}
+			if me.PID, err = s.start(argv, log); err == nil {
+				// the lease names the loop's pid from its start, so the next
+				// verb can judge it before the loop's own first renew
+				if _, err := life.RenewBeatLoop(ctx, c, k.Name, me); err != nil {
+					return "", fmt.Errorf("loop started pid=%d: %w", me.PID, err)
+				}
+				if dead > 0 {
+					return fmt.Sprintf("BEATLOOP as=%s restarted pid=%d working=%d log=%s dead=%d", k, me.PID, n, log, dead), nil
+				}
+				return fmt.Sprintf("BEATLOOP as=%s started pid=%d working=%d log=%s", k, me.PID, n, log), nil
+			}
 		}
 	}
-	if relErr := life.ReleaseBeatLoop(ctx, c, k.Name, token); relErr != nil {
+	if relErr := life.ReleaseBeatLoop(ctx, c, k.Name, me.Token); relErr != nil {
 		return "", fmt.Errorf("start beat loop: %v; %v", err, relErr)
 	}
 	return "", fmt.Errorf("start beat loop: %w", err)
@@ -466,18 +536,20 @@ func runFriendBeat(ctx context.Context, args []string, out, errOut io.Writer) in
 // the lease, or a signal (which releases the lease).
 func runFriendBeatLoop(ctx context.Context, st *store.Store, k taskcard.Consumer, host, token string, out, errOut io.Writer) int {
 	c := st.Client()
-	if token == "" {
-		token = fmt.Sprintf("%s:%d:%d", host, os.Getpid(), time.Now().UnixNano())
-		took, err := life.ClaimBeatLoop(ctx, c, k.Name, token)
+	osHost, _ := os.Hostname()
+	me := life.LoopHolder{Token: token, Host: osHost, PID: os.Getpid()}
+	if me.Token == "" {
+		me.Token = fmt.Sprintf("%s:%d:%d", osHost, os.Getpid(), time.Now().UnixNano())
+		took, held, err := life.ClaimBeatLoop(ctx, c, k.Name, me, "")
 		if err != nil {
 			return refuse(errOut, "friend beat", err.Error())
 		}
 		if !took {
-			fmt.Fprintf(out, "FRIEND BEAT LOOP as=%s held key=%s\n", k, life.BeatLoopKey(k.Name))
+			fmt.Fprintf(out, "FRIEND BEAT LOOP as=%s held key=%s pid=%d host=%s\n", k, life.BeatLoopKey(k.Name), held.PID, dash(held.Host))
 			return 0
 		}
 	}
-	l := &life.BeatLoop{Client: c, Friend: k.Name, Token: token,
+	l := &life.BeatLoop{Lease: life.StoreLease{Client: c, Friend: k.Name, Me: me}, Friend: k.Name,
 		Tick: func(ctx context.Context, now time.Time) (int, error) {
 			res, err := friendBeatOnce(ctx, st, k, host, now)
 			return res.Working, err
@@ -509,7 +581,7 @@ func runFriendBeatLoop(ctx context.Context, st *store.Store, k taskcard.Consumer
 		case <-signalCtx.Done():
 			// a stopped loop lets go at once, so the next verb starts one
 			rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
-			_ = life.ReleaseBeatLoop(rctx, c, k.Name, token)
+			_ = life.ReleaseBeatLoop(rctx, c, k.Name, me.Token)
 			cancel()
 			fmt.Fprintf(out, "FRIEND BEAT LOOP END as=%s why=signal\n", k)
 			return 0

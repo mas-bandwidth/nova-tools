@@ -37,8 +37,9 @@ import (
 // clone the repo at BASE/base_sha, branch, commit, push, open the PR under
 // its own GitHub identity and end the copy itself with `nova-sprint friend
 // done --id <copy> --ok --pr <repo>#<n> --head <sha>` (card end after the PR
-// record; or --fail, or --score for a read), its session's `nova-sprint
-// friend beat` renewing the lease meanwhile.
+// record; or --fail, or --score for a read), the friend's one beat loop
+// (`nova-sprint friend beat --loop`, which friend pull started) renewing
+// the lease meanwhile.
 // `nova-sprint friend pull` writes these briefs into the friend's own dir.
 
 // CopyCard is the fields of a copy's record the card renders from.
@@ -162,7 +163,8 @@ func friendBody(c CopyCard, full, label, prRef, branch string) string {
 	// refuses an ok whose PR record is missing (NOPR).
 	endOK := fmt.Sprintf("nova-sprint friend done --as %s --id %s --ok --pr %s#<n> --head <sha>", who, c.ID, prkey.Name(c.Repo))
 	endFail := fmt.Sprintf("nova-sprint friend done --as %s --id %s --fail '<why>'", who, c.ID)
-	beat := fmt.Sprintf("BEAT: your session's nova-sprint friend beat --as %s renews this copy's lease every second; a lapsed lease returns this copy as a fail.\n", who)
+	beat := fmt.Sprintf("BEAT: %s's one beat loop (nova-sprint friend beat --as %s --loop, lease %s:beatloop) renews this copy's lease every second; "+
+		"friend pull, card work and task take start it when none runs, so run no beat yourself; a lapsed lease returns this copy as a fail.\n", who, who, who)
 	about := oneLine(c.Origin)
 	if about == "" {
 		about = "primary " + c.Primary

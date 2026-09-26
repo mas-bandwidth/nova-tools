@@ -2801,8 +2801,11 @@ end
 -- counts them (nova-tools#4293: a copy is never put beside a leg it would
 -- slow); named copies all or nothing. Each starts a lease its holder renews with
 -- card beat, and a token its end may present (a stale one is FENCED).
+-- who is the worker's field, value pairs (model, harness, child;
+-- seat-keeps-beat), written onto each copy's record in the same HSET as its
+-- move: the one writer records who works the copy.
 -- Returns the reply WORKED n free, then per copy its id and token.
-function TM.work(c, by, k, fill, ids)
+function TM.work(c, by, k, fill, ids, who)
   if not TM.parse(c) then return { 'REFUSED', 'CONSUMER ' .. TK.str(c) .. ' is not bench:<b> or friend:<f>' } end
   local d = TM.desired(c)
   if not d.slots then return { 'REFUSED', 'SLOTS ' .. c .. ':desired has no slots; run nova-sprint capacity' } end
@@ -2837,8 +2840,10 @@ function TM.work(c, by, k, fill, ids)
     redis.call('ZREM', TM.key(c, 'ready'), id)
     cm_zadd(TM.key(c, 'working'), TK.ms(r[3]) or at, id)
     local token = id .. '@' .. tostring(at)
-    redis.call('HSET', 'task:' .. id, 'where', 'working', 'where_at', tostring(at), 'leased_at', tostring(at),
-      'lease_until', tostring(at + TM.LEASE), 'token', token)
+    local h = { 'task:' .. id, 'where', 'working', 'where_at', tostring(at), 'leased_at', tostring(at),
+      'lease_until', tostring(at + TM.LEASE), 'token', token }
+    for _, v in ipairs(who or {}) do h[#h + 1] = v end
+    redis.call('HSET', unpack(h))
     TM.log(id, r[4], c .. ':ready', c .. ':working', by, 'work', c)
     out[#out + 1] = id
     out[#out + 1] = token
@@ -4112,10 +4117,21 @@ redis.register_function('ns_cm_deal', function(keys, args)
   return TM.deal(args[1], TK.str(args[2]), tonumber(args[3]) or 0, TK.str(args[4]), TM.ids(args, 5))
 end)
 
--- ns_cm_work(consumer, by, k|fill, id...) -> WORKED n free, then the ids |
--- REFUSED <why>.
+-- ns_cm_work(consumer, by, k|fill, [model=<m>] [harness=<h>] [child=<c>],
+-- id...) -> WORKED n free, then the ids | REFUSED <why>. The who words
+-- (seat-keeps-beat: who works the copies, taskcard.Who) come before the ids,
+-- each one word, and go onto each worked copy's record.
 redis.register_function('ns_cm_work', function(keys, args)
-  return TM.work(args[1], TK.str(args[2]), tonumber(args[3]) or 0, args[3] == 'fill', TM.ids(args, 4))
+  local who, i = {}, 4
+  while args[i] do
+    local f, v = string.match(args[i], '^(%a+)=(.*)$')
+    if f ~= 'model' and f ~= 'harness' and f ~= 'child' then break end
+    if v == '' or string.find(v, '%s') then return { 'REFUSED', 'WHO ' .. f .. ' wants one word' } end
+    who[#who + 1] = f
+    who[#who + 1] = v
+    i = i + 1
+  end
+  return TM.work(args[1], TK.str(args[2]), tonumber(args[3]) or 0, args[3] == 'fill', TM.ids(args, i), who)
 end)
 
 -- ns_cm_end(by, ok|fail, why, sha, score, reader, token, nfields, k, v...,

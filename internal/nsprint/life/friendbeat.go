@@ -70,7 +70,7 @@ type FriendBeatResult struct {
 const FriendBeatHarness = "friend beat"
 
 // FriendBeat writes the friend's beat and renews its working copies' leases
-// in one pipeline. A refused lease renewal (ns_cm_beat REFUSED) is the
+// in one pipeline, then (when it holds copies or had models) the models. A refused lease renewal (ns_cm_beat REFUSED) is the
 // error, so the verb's loop backs off and says why.
 func FriendBeat(ctx context.Context, st *store.Store, req FriendBeatRequest) (FriendBeatResult, error) {
 	friend := strings.ToLower(strings.TrimSpace(req.Friend))
@@ -98,7 +98,9 @@ func FriendBeat(ctx context.Context, st *store.Store, req FriendBeatRequest) (Fr
 	pipe.HSet(ctx, beat, fields...)
 	pipe.Persist(ctx, beat)
 	leases := pipe.FCall(ctx, "ns_cm_beat", nil, "friend:"+friend)
-	models := pipe.Eval(ctx, modelsScript, []string{"friend:" + friend + ":cards:working", beat})
+	working := "friend:" + friend + ":cards:working"
+	held := pipe.ZRange(ctx, working, 0, -1)
+	had := pipe.HGet(ctx, beat, "models")
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return FriendBeatResult{}, fmt.Errorf("friend beat %s: %w", friend, err)
 	}
@@ -121,22 +123,23 @@ func FriendBeat(ctx context.Context, st *store.Store, req FriendBeatRequest) (Fr
 	if n == 0 {
 		until = 0
 	}
-	m, err := models.Text()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		return FriendBeatResult{}, fmt.Errorf("friend beat %s: models: %w", friend, err)
+	// The models are a second round trip, only when there is something to
+	// write or remove: ns_friend_models declares every key it reads (the
+	// beat, the working set, task:<copy> for each copy the first trip saw).
+	ids, m := held.Val(), had.Val()
+	if len(ids) > 0 || m != "" {
+		keys := []string{beat, working}
+		for _, id := range ids {
+			keys = append(keys, "task:"+id)
+		}
+		if m, err = st.Client().FCall(ctx, FnFriendModels, keys).Text(); err != nil {
+			return FriendBeatResult{}, fmt.Errorf("friend beat %s: models: %w", friend, err)
+		}
 	}
 	return FriendBeatResult{Friend: friend, AtMS: ms, Working: n, LeaseUntil: until, Models: m}, nil
 }
 
-// modelsScript writes the beat's models field (KEYS[2]) from the models of the
-// copies in the working set (KEYS[1]): each distinct model once, in the
-// set's order, comma joined; the field is removed when none names one.
-const modelsScript = `local seen, out = {}, {}
-for _, id in ipairs(redis.call('ZRANGE', KEYS[1], 0, -1)) do
-  local m = redis.call('HGET', 'task:' .. id, 'model')
-  if m and m ~= '' and not seen[m] then seen[m] = true; out[#out + 1] = m end
-end
-if #out == 0 then redis.call('HDEL', KEYS[2], 'models'); return '' end
-local models = table.concat(out, ',')
-redis.call('HSET', KEYS[2], 'models', models)
-return models`
+// FnFriendModels writes the beat's models field from the named working
+// copies' models (fn/lua/friend_beatloop.lua): each distinct model once, in
+// the set's order, comma joined; the field is removed when none names one.
+const FnFriendModels = "ns_friend_models"

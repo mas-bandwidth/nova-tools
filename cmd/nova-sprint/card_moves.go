@@ -328,20 +328,13 @@ func (m *moveCmd) run(ctx context.Context, c *redis.Client, sub string, ids []st
 		if err := who.Check(); err != nil {
 			return refuse(errOut, "card work", err.Error())
 		}
-		w, err := taskcard.Work(ctx, c, as, *m.actor, *m.n, *m.fill, ids...)
+		w, err := taskcard.WorkAs(ctx, c, as, *m.actor, *m.n, *m.fill, who, ids...)
 		if err != nil {
 			return refused(err, "as="+as.String())
 		}
 		code := 0
-		if err := taskcard.RecordWho(ctx, c, w.IDs, who); err != nil {
-			fmt.Fprintf(out, "WORKER REFUSED as=%s why=%s\n", as, quoteField(err.Error()))
+		if !printFriendBeat(ctx, c, as, redisArg(*m.redis), out) {
 			code = 1
-		}
-		if line, err := ensureFriendBeat(ctx, c, as, redisArg(*m.redis), friendBeatStart, time.Now()); err != nil {
-			fmt.Fprintf(out, "BEATLOOP REFUSED as=%s why=%s\n", as, quoteField(err.Error()))
-			code = 1
-		} else if line != "" {
-			fmt.Fprintln(out, line)
 		}
 		fmt.Fprintf(out, "CARD WORK as=%s n=%d free=%d ids=%s ms=%d\n", as, len(w.IDs), w.Free, dash(strings.Join(w.IDs, ",")), ms())
 		return code
