@@ -3932,6 +3932,50 @@ github=<why>` (exit 1): the line is in Redis, which is the record.
 READ POST repo=nova-tools n=7 kind=SCORE lines=2 github_calls=1 comment=4242
 ```
 
+`read brief --pr <n> [--repo <r>] [--issue <ref>] [--mirror <dir>]
+[--no-github] [--redis <addr>]` (#4335, #4315) is the whole read in one
+command, printed to stdout in one screen, so a cold reader scores from its
+output alone. `--repo` defaults to `nova-tools`. Sections, each from the copy
+Redis holds: the ISSUE (title and body); the CARD, the imported card record
+`task:<task>` the PR record names (harvest writes `task=<primary>`), with its
+PATHS, DEPENDS-ON, base, DONE-WHEN and the spec lines of its body (DO,
+EVIDENCE, SEAMS, RULES, RECEIPTS, KEEP); DONE-WHEN from each source that has
+one (issue, card, record); the PR title and body (`pr_title` and `pr_body` on
+the record, which harvest writes with the text it opened the PR with); the
+FILES with `+added -deleted` (`git diff --numstat` in the bench mirror,
+`base_sha..head`, else the merge base of the base branch and head) and the
+files outside PATHS (the record's, else the card's, else the issue's); the CI
+at head, our checks (`ci:<name>:<head>` and one receipt per check, with the
+first FAIL line) and the GitHub leg the webhook ingest writes
+(`ci:<name>:<head>:gh`), with a `FAILING:` line naming every red check; the
+lines already posted; and the rubric with the post command. Nothing polls
+GitHub. Redis keeps an issue's text only on a card pushed from it (`source=issue`:
+the card body is the issue text); an issue the card only names (its SOURCE,
+ORIGIN or ref, or `--issue`) is one REST read, `GET /repos/<o>/<r>/issues/<n>`,
+and a PR with no `pr_body` (a hand PR) is one `GET /repos/<o>/<r>/pulls/<n>`.
+The `SOURCES` line names where every section came from (`redis:<key>`,
+`mirror:<dir>`, `rest:GET <path> (Redis has no copy)`). `--no-github` makes
+zero HTTP calls and prints each section it could not fill as a `READ BRIEF
+GAP` line. The last line is the receipt; exit 0 complete, 1 with gaps (or a
+record with no head: `READ BRIEF REFUSED`), 2 could not run:
+
+```
+READ BRIEF DONE mas-bandwidth/nova-tools#7 head=b7628a80 files=2 outside_paths=0 failing=1 lines=1 gaps=0 github_calls=1
+```
+
+`read post --file <scores.tsv> [--mirror <dir>] [--no-github] [--redis
+<addr>]` posts many typed lines in one call. A row is `<repo>\t<n>\t<typed
+line>` (a literal `\n` in the line is a newline, so a SCORE's numbered items
+fit on one row; blank rows and `#` rows are skipped). Each row is exactly one
+`read post --line` (gates measured, the comment mirror unless `--no-github`),
+its receipt or refusal printed under `ROW <i>`; a malformed row and a post
+that printed no receipt are refused, never skipped. The tally is last; exit 0
+every row posted, 1 a row refused, 2 a row could not run:
+
+```
+READ POST FILE file=scores.tsv rows=4 posted=3 refused=1 github_calls=0
+```
+
 Every brief this repository ships (the nova-sprint brief templates, the read
 template, the `nova-swarm template` cards and the swarm's card fixtures) is
 scanned by `internal/ci` (TestNoGhInAnyBrief, #3600): a `gh ` invocation, a

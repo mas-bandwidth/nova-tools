@@ -6,7 +6,9 @@
 //
 //	nova-sprint read brief  --repo <r> --n <n> --out <dir> [--mirror <dir>] [--redis <addr>]
 //	nova-sprint read brief  --id <task> [--sprint <S>] --out <dir> [--mirror <dir>] [--redis <addr>]
+//	nova-sprint read brief  --pr <n> [--repo <r>] [--issue <ref>] [--mirror <dir>] [--no-github] [--redis <addr>]
 //	nova-sprint read post   --repo <r> --n <n> --line <typed line> [--mirror <dir>] [--no-github] [--owner <o>] [--redis <addr>]
+//	nova-sprint read post   --file <scores.tsv> [--mirror <dir>] [--no-github] [--redis <addr>]
 //	nova-sprint read digest --repo <r> --n <n> [--sprint <S>] [--mirror <dir>] [--head <sha>] [--base-ref <ref>] [--redis <addr>]
 //	nova-sprint read carry  --repo <r> --n <n> [--sprint <S>] [--mirror <dir>] [--base-ref <ref>] [--redis <addr>]
 //
@@ -15,7 +17,14 @@
 //
 // brief writes the read brief; with --id it reads the read task
 // (task:<id>, or s:<S>:task:<id> with --sprint) for the PR and the exact
-// head, so a friend holding a read task needs nothing but its id; post
+// head, so a friend holding a read task needs nothing but its id. brief
+// --pr (#4335, #4315) prints the whole read to stdout in one screen: the
+// issue, the imported card, DONE-WHEN, the PR body, the files with +/-, the
+// check rollup at head and the rubric, from Redis and the mirror, with one
+// REST read only for a section Redis has no copy of (named on its SOURCES
+// line; --no-github makes it a GAP). post --file posts every row of a
+// <repo>\t<n>\t<line> file with a ROW receipt each and prints every
+// refusal (read.PostFile). post
 // stores the typed line through the line store (internal/nsprint/line,
 // #3595: one call, the ci and base gates measured from Redis and the scope
 // gate from the mirror diff against PATHS, a typed gate that disagrees
@@ -60,7 +69,7 @@ func init() {
 	})
 }
 
-const readUsage = "want brief --repo <r> --n <n> --out <dir> [--mirror <dir>] [--redis <addr>], brief --id <task> [--sprint <S>] --out <dir> [--mirror <dir>] [--redis <addr>], post --repo <r> --n <n> --line <typed line> [--mirror <dir>] [--no-github] [--owner <o>] [--redis <addr>], digest --repo <r> --n <n> [--sprint <S>] [--mirror <dir>] [--head <sha>] [--base-ref <ref>] [--redis <addr>] or carry --repo <r> --n <n> [--sprint <S>] [--mirror <dir>] [--base-ref <ref>] [--redis <addr>]"
+const readUsage = "want brief --repo <r> --n <n> --out <dir> [--mirror <dir>] [--redis <addr>], brief --id <task> [--sprint <S>] --out <dir> [--mirror <dir>] [--redis <addr>], brief --pr <n> [--repo <r>] [--issue <ref>] [--mirror <dir>] [--no-github] [--redis <addr>], post --repo <r> --n <n> --line <typed line> [--mirror <dir>] [--no-github] [--owner <o>] [--redis <addr>], post --file <scores.tsv> [--mirror <dir>] [--no-github] [--redis <addr>], digest --repo <r> --n <n> [--sprint <S>] [--mirror <dir>] [--head <sha>] [--base-ref <ref>] [--redis <addr>] or carry --repo <r> --n <n> [--sprint <S>] [--mirror <dir>] [--base-ref <ref>] [--redis <addr>]"
 
 func runRead(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
@@ -80,11 +89,26 @@ func runRead(ctx context.Context, args []string, out, errOut io.Writer) int {
 	head := fs.String("head", "", "")
 	baseRef := fs.String("base-ref", "", "")
 	taskID := fs.String("id", "", "")
+	prN := fs.String("pr", "", "")
+	issue := fs.String("issue", "", "")
+	file := fs.String("file", "", "")
 	if err := fs.Parse(args[1:]); err != nil || fs.NArg() != 0 {
 		return refuse(errOut, "read "+sub, readUsage)
 	}
 	if *redisAddr == "" {
 		*redisAddr = os.Getenv("NOVA_REDIS_ADDR")
+	}
+	if *prN != "" || *issue != "" {
+		if sub != "brief" || *prN == "" || *n != "" || *outDir != "" || *typed != "" || *taskID != "" || *file != "" || *head != "" || *baseRef != "" || *redisAddr == "" {
+			return refuse(errOut, "read "+sub, "--pr and --issue are brief only: want brief --pr <n> [--repo <r>] [--issue <ref>] [--mirror <dir>] [--no-github] [--redis <addr>] (or NOVA_SPRINT_REDIS)")
+		}
+		return runReadBriefPR(ctx, *redisAddr, *repo, *prN, *issue, *mirror, *noGitHub, out, errOut)
+	}
+	if *file != "" {
+		if sub != "post" || *repo != "" || *n != "" || *typed != "" || *outDir != "" || *taskID != "" || *head != "" || *baseRef != "" || *redisAddr == "" {
+			return refuse(errOut, "read "+sub, "--file is post only: want post --file <scores.tsv> [--mirror <dir>] [--no-github] [--redis <addr>] (or NOVA_SPRINT_REDIS); a row is <repo>\\t<n>\\t<typed line>")
+		}
+		return runReadPostFile(ctx, *redisAddr, *file, *mirror, *noGitHub, out, errOut)
 	}
 	if *taskID != "" {
 		if sub != "brief" || *repo != "" || *n != "" || *outDir == "" || *typed != "" || *noGitHub || *head != "" || *baseRef != "" || *redisAddr == "" {
@@ -172,6 +196,67 @@ func runReadBriefTask(ctx context.Context, addr, sprint, id, mirror, outDir stri
 		return 1
 	}
 	return read.BriefTask(ctx, st.Client(), id, fields, mirror, outDir, out, errOut)
+}
+
+// runReadBriefPR is `read brief --pr`: the one-screen brief on stdout
+// (read.BriefPR). --repo defaults to nova-tools.
+func runReadBriefPR(ctx context.Context, addr, repo, n, issue, mirror string, noGitHub bool, out, errOut io.Writer) int {
+	if repo == "" {
+		repo = "nova-tools"
+	}
+	_, name, err := prkey.Split(repo)
+	if v, aerr := strconv.Atoi(n); err != nil || aerr != nil || v <= 0 {
+		return refuse(errOut, "read brief", "--pr wants a positive PR number and --repo <owner/name|name>, got --pr "+strconv.Quote(n)+" --repo "+strconv.Quote(repo))
+	}
+	st, err := store.Open(ctx, addr)
+	if err != nil {
+		return refuse(errOut, "read brief", err.Error())
+	}
+	defer func() { _ = st.Close() }()
+	o := read.PRBriefOptions{Repo: repo, N: n, Issue: issue, Mirror: readMirror(mirror, name)}
+	if !noGitHub {
+		o.GitHub = &read.GitHub{BaseURL: os.Getenv("GITHUB_API_URL"), Token: ghToken()}
+	}
+	return read.BriefPR(ctx, st.Client(), o, out, errOut)
+}
+
+// runReadPostFile is `read post --file`: every row through the same post as
+// `read post --line`, one receipt per row (read.PostFile).
+func runReadPostFile(ctx context.Context, addr, file, mirror string, noGitHub bool, out, errOut io.Writer) int {
+	token := ""
+	if !noGitHub {
+		if token = ghToken(); token == "" {
+			fmt.Fprintf(errOut, "READ POST FILE REFUSED file=%s why=no GH_TOKEN or GITHUB_TOKEN in the environment for the comment mirror; run under nova-secrets exec --only GH_TOKEN, or pass --no-github (Redis only)\n", file)
+			return 1
+		}
+	}
+	f, err := os.Open(file)
+	if err != nil {
+		fmt.Fprintf(errOut, "READ POST FILE REFUSED file=%s why=%v\n", file, err)
+		return 1
+	}
+	defer f.Close()
+	st, err := store.Open(ctx, addr)
+	if err != nil {
+		return refuse(errOut, "read post", err.Error())
+	}
+	defer func() { _ = st.Close() }()
+	post := func(row read.Row, stdout, stderr io.Writer) int {
+		var poster *read.Poster
+		if !noGitHub {
+			poster = &read.Poster{BaseURL: os.Getenv("GITHUB_API_URL"), Owner: row.Owner, Token: token}
+		}
+		return read.PostMeasured(ctx, st.Client(), row.Repo, row.N, row.Line, readMirror(mirror, row.Repo), poster, stdout, stderr)
+	}
+	return read.PostFile(f, file, post, out, errOut)
+}
+
+// ghToken is GH_TOKEN, else GITHUB_TOKEN.
+func ghToken() string {
+	if t := os.Getenv("GH_TOKEN"); t != "" {
+		return t
+	}
+	return os.Getenv("GITHUB_TOKEN")
 }
 
 // runReadCarry is digest and carry over the unit record (#3630).

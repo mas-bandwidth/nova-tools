@@ -458,7 +458,9 @@ func (l *CopyLedger) recordPR(ctx context.Context, res harvestcopy.Result, c Cop
 		pipe.HSet(ctx, key, "ci", "pending", "mergeable", "")
 	}
 	set := []any{"head", res.Head, "base", c.Base, "branch", res.Branch, "kind", "member", "updated_at", at}
-	for k, v := range map[string]string{"base_sha": c.BaseSHA, "stream": c.Stream, "task": c.Primary} {
+	// pr_title and pr_body: the PR's opening text, so `read brief --pr`
+	// reads it from Redis (nova-tools #4335); only a PR this copy opened.
+	for k, v := range map[string]string{"base_sha": c.BaseSHA, "stream": c.Stream, "task": c.Primary, "pr_title": res.Title, "pr_body": res.Body} {
 		if v != "" {
 			set = append(set, k, v)
 		}

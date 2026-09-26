@@ -33,6 +33,13 @@ func readGit(t *testing.T, dir string, args ...string) string {
 func readFixture(t *testing.T) (mirror, addr, head string) {
 	t.Helper()
 	t.Setenv(store.UserEnv, "")
+	return readFixtureStore(t)
+}
+
+// readFixtureStore is readFixture without touching the environment, for a
+// test that runs in parallel and passes --redis itself.
+func readFixtureStore(t *testing.T) (mirror, addr, head string) {
+	t.Helper()
 	work := filepath.Join(t.TempDir(), "work")
 	if err := os.MkdirAll(work, 0o755); err != nil {
 		t.Fatal(err)
