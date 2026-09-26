@@ -1,3 +1,5 @@
+//go:build functional
+
 package fold_test
 
 import (

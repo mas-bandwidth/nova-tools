@@ -12,7 +12,6 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/civerdict"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pipeerr"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/webhook"
 )
 
@@ -187,7 +186,7 @@ func (d *DevRed) one(ctx context.Context, rb land.RepoBase) Outcome {
 	pipe := c.Pipeline()
 	tipCmd := pipe.HGet(ctx, civerdict.TipKey(rb.Repo, rb.Base), "sha")
 	redCmd := pipe.HGetAll(ctx, land.RedKey(rb.Repo, rb.Base))
-	if err := pipeerr.Exec(ctx, pipe); err != nil {
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		o.Err = err
 		return o
 	}
@@ -258,7 +257,7 @@ func (d *DevRed) evidence(ctx context.Context, rb land.RepoBase, sha string) (CI
 	pipe := c.Pipeline()
 	recCmd := pipe.HGetAll(ctx, CIRecordKey(rb.Repo, sha))
 	ghCmd := pipe.HGetAll(ctx, webhook.Key(rb.Repo, sha))
-	if err := pipeerr.Exec(ctx, pipe); err != nil {
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return CIState{}, fmt.Errorf("read %s and its gh leg: %w", CIRecordKey(rb.Repo, sha), err)
 	}
 	if st, ok := stateOf(recCmd.Val()); ok {

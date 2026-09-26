@@ -881,7 +881,7 @@ REPORT OK checked=1 known=1 unknown=0 changed=- sent=- took=8ms file=cmd/nova-ve
 
 The card wrapper (#3059) is started by `nova-sprint card launch --stdin`, never
 by hand, and its real run needs the sprint Redis and a dealt card; that run is
-`TestWrapperOwnsOneCardEndToEnd` in `internal/nsprint/card/wrapper_test.go`.
+`TestWrapperOwnsOneCardEndToEnd` in `internal/nsprint/card/wrapper_functional_test.go`.
 The first run a stranger can type reads nothing and writes nothing.
 
 ### First run

@@ -1,3 +1,5 @@
+//go:build functional
+
 package capacity_test
 
 import (
