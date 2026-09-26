@@ -214,9 +214,13 @@ jobs:
         id: checkout
         continue-on-error: true
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
       - name: checkout retry
         if: steps.checkout.outcome == 'failure'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
 
       - name: use the installed Go toolchain
         # The self-hosted runners carry Go (1.26 at /usr/bin/go on Linux, under
@@ -389,9 +393,13 @@ jobs:
         id: checkout
         continue-on-error: true
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
       - name: checkout retry
         if: steps.checkout.outcome == 'failure'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
 
       - name: use the installed Go toolchain
         # The self-hosted runners carry Go (1.26 at /usr/bin/go on Linux, under
@@ -758,9 +766,13 @@ jobs:
         if: matrix.entry.packages != ''
         continue-on-error: true
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
       - name: checkout retry
         if: matrix.entry.packages != '' && steps.checkout.outcome == 'failure'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
 
       - name: use the installed Go toolchain
         if: matrix.entry.packages != ''
@@ -955,6 +967,8 @@ jobs:
           find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
 
       - name: use the installed Go toolchain
         # The self-hosted runners carry Go (1.26 at /usr/bin/go on Linux, under
@@ -1026,9 +1040,13 @@ jobs:
         id: checkout
         continue-on-error: true
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
       - name: checkout retry
         if: steps.checkout.outcome == 'failure'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
@@ -1157,9 +1175,13 @@ jobs:
         id: checkout
         continue-on-error: true
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
       - name: checkout retry
         if: steps.checkout.outcome == 'failure'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
 
       - name: filter the PR diff for this platform's paths
         # No path filter exists elsewhere in this file to reuse, so
@@ -1284,9 +1306,13 @@ jobs:
         id: checkout
         continue-on-error: true
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
       - name: checkout retry
         if: steps.checkout.outcome == 'failure'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
 
       - name: use the installed Go toolchain
         # The self-hosted runners carry Go (1.26 at /usr/bin/go on Linux, under
@@ -1399,9 +1425,13 @@ jobs:
         id: checkout
         continue-on-error: true
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
       - name: checkout retry
         if: steps.checkout.outcome == 'failure'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
 
       - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
         id: filter
@@ -1517,9 +1547,13 @@ jobs:
         id: checkout
         continue-on-error: true
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
       - name: checkout retry
         if: steps.checkout.outcome == 'failure'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
 
       - name: install sbcl if missing
         # The self-hosted runners need no sudo; install directly when sbcl is absent.
@@ -1575,9 +1609,13 @@ jobs:
         if: steps.want.outputs.run == 'yes'
         continue-on-error: true
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
       - name: checkout retry
         if: steps.want.outputs.run == 'yes' && steps.checkout.outcome == 'failure'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
       - name: toolchains the way ci.yml finds them
         if: steps.want.outputs.run == 'yes'
         run: |

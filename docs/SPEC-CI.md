@@ -2406,38 +2406,64 @@ The go-redis pipeline shape has its own remedy rather than a rule:
 `internal/nsprint/pipeerr.Exec` walks every command of a pipeline whose fields
 may be absent and returns the first error that is not `redis.Nil`.
 
-### `classtests` — no merge deletes a class test file dev had
+### `classtests` — no merge deletes a test file or a list undeclared
 
-**The rule.** Every `internal/ci/*_class_test.go` is a row of
-`internal/ci/testdata/class-tests.txt`, and every row's file is in the tree.
-The list only grows: a new class test adds its row, and a row is never removed
-by an update. A class test is a rule this repository keeps by structure; a
-tree that lacks the file lacks the rule, and nothing else notices.
-**The hurt.** 2026-09-26: #4346 (`rowan/functional-tag`) was built on a base
-older than #4344 and its squash put a tree on dev that lacked the four files
-#4344 had added an hour before — the `silent` class test, its allowlist and
-two of its controls — and undid #4344's forty live-path fixes with them. Every
-check on the merge was green, because a rule that is not there cannot fail;
-the loss was found by a reader, not by CI.
-**The test.** `TestNoMergeDeletesAClassTest`
-(`internal/ci/classtests_class_test.go`): every row's file must be in the
-tree; a file the tree lacks is a red run naming the commit that deleted it
-(`git log --first-parent -m --diff-filter=D -- <file>` from the checkout), and
-the list is not handed to the helper while a row is missing, so no update can
-drop the row instead of the finding. `TestClassTestFileReadsThePath` pins the
-shape it reads (this package's `*_class_test.go` only).
-**Its allowlist.** `internal/ci/testdata/class-tests.txt`, the list itself:
-grow-only, no ceiling, `NOVA_CI_UPDATE=1` appends a new class test's row.
-**Its remedy lines.** `<list> lists <file> and the tree lacks it: deleted by
-<sha> <subject>. A merge never deletes a class test; restore the file from the
-commit before that one`; `<file> is a class test <list> does not list; add its
-row (NOVA_CI_UPDATE=1 does; the list only grows)`.
-**Its narrowings.** It reads `internal/ci` only, by file name; a class test kept
-elsewhere (`internal/nsprint/land/guard`) is not held here, and a class test
-emptied of its `Test…` functions but left on disk is `internal/docs`' index
-test's finding, not this one's. On a shallow checkout the deleting commit may
-be outside the fetched history; the finding says so and the file is still
-missing.
+**The rule.** What a change takes away from its first parent's tree is read
+out of git and compared with what the same change declares. Every `_test.go`
+and every list under `internal/ci/testdata` that HEAD's first parent had and
+HEAD lacks (renames excluded) is a red run unless a `<path> <why>` row for it
+was ADDED to `internal/ci/testdata/deleted-tests.txt` in the same change; a
+row that names no deletion of the change is red too. On a pull request the
+checkout is the merge ref and the first parent is dev's tip, so the set is
+exactly what merging the change deletes from dev; in the merge queue the
+same; on dev, a squash's own effect.
+**The hurt.** 2026-09-26: #4346 (`rowan/functional-tag`) was rebased onto
+#4344 with a tree that lacked the four files #4344 had added an hour before
+— the `silent` class test, its allowlist and two of its controls — and undid
+#4344's forty live-path fixes with them. Every check on the merge was green,
+because a rule that is not there cannot fail; the loss was found by a
+reader, not by CI. The first repair (#4381) kept a list of class tests in
+the tree, and a squash overwrites the tree, list and all: deleting the file
+and its row together stayed green. Hence git, not the tree, as the base of
+the comparison, and a declaration that only counts when the same change
+adds it — a stale tree's old rows declare nothing.
+**The test.** `TestNoMergeDeletesATestFileUndeclared`
+(`internal/ci/classtests_class_test.go`): HEAD's first parent from the raw
+commit object (a shallow checkout grafts parents away in traversal and keeps
+them in the object), `git diff -M --diff-filter=D --name-only <parent> HEAD`
+for the deletions, `git diff <parent> HEAD -- deleted-tests.txt` for the
+rows this change adds. `TestMergeRuleReadsTheDeletionOutOfGit` proves it over
+a repository it builds: the stale-base squash shape red for the test file and
+the list and silent for a source file, a rename not a deletion, a same-change
+row green, a row naming no deletion red, an old row declaring nothing.
+`TestGuardedByMergeRuleReadsThePath` and
+`TestDeclaredRowsAddedReadsOnlyTheAddedRows` pin the two readers. Every
+workflow checks out with `fetch-depth: 2` so the first parent is in every
+checkout;
+a checkout without it is a red run naming the fetch depth, never a pass.
+**Its allowlist.** `internal/ci/testdata/deleted-tests.txt`, a log: a row
+is a declaration, not an exception, and it counts only in the change that
+adds it, so old rows may be trimmed and trimming weakens nothing.
+**Its remedy lines.** `<sha> (<subject>) deletes <file>, which its first
+parent <sha> had, and no row of internal/ci/testdata/deleted-tests.txt added
+in the same change declares it: restore the file (git checkout <parent> --
+<file>), or, if the deletion is meant, add the row <file> <why> to
+internal/ci/testdata/deleted-tests.txt in this change`; `<sha> adds the row
+<path> ..., but the change deletes no such file`.
+**Its narrowings.** What it catches: a file the merge removes from dev's
+tree with nothing in the change saying so — the #4346 shape, whether the
+list of rules went with it or not. What it does not catch: a file emptied of
+its tests but left on disk (`internal/docs`' index test holds a `Test…` name
+SPEC-CI names; a control with no SPEC entry, nothing does); a deletion
+declared with a row, however wrong the why (a reader's eye); a squash that
+reverts live code, docs or a Lua function without deleting a guarded file
+(the `silent` rule holds its own live path, nothing holds the rest); a
+rename git's default similarity (50%) does not see, which reads as a
+deletion and wants a row; a list under a subdirectory of `testdata`, or a
+fixture that is not `_test.go`; and one merge only — HEAD against its first
+parent, never the merges before it, so a deletion that landed before this
+rule is not found by it. A local run reads the last commit on the branch,
+which is the developer's own; a root commit is a red run, not a pass.
 
 ## Parked class tests
 
