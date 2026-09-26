@@ -5,7 +5,7 @@
 // five hand checks)". It prints one line per check,
 //
 //	DOCTOR <check> OK key=value...
-//	DOCTOR <check> FIX key=value... remedy="<the command that fixes it>"
+//	DOCTOR <check> FIX key=value... why="<prose>" remedy="<one command>"
 //	DOCTOR <check> SKIP needs=<check>
 //
 // in the order seat, redis, fn, version, runners, ingest, pitstop, sprint
@@ -30,11 +30,12 @@
 //	         dev tip every landing into dev writes (#4050); the fix is self
 //	         update on the coordinator's machine, fleet build on a bench
 //	runners  this machine (--bench, else the short hostname) in the benches
-//	         registry, its desired role, CI legs and hold, and its beat's age
-//	         against preflight.BeatFresh
-//	ingest   ev:github, the stream the webhook receiver writes: its last
-//	         entry's age (older than ingestQuiet is a dead receiver) and the
-//	         ci-github group's lag
+//	         registry (fleet:release self, the coordinator's machine, is
+//	         outside it by design and counts), its desired role, CI legs and
+//	         hold, and its beat's age against preflight.BeatFresh
+//	ingest   ev:github: its last entry's age and sender, as information;
+//	         a fix only when the ci-github group lags or holds pending
+//	         entries
 //	pitstop  every sprint not closed: its s:<S>:pitstop (or the legacy key)
 //	sprint   the one open sprint (control-* sprints aside) and sprint:epoch
 //
@@ -83,12 +84,6 @@ func init() {
 // doctorChecks is the order the lines print in; the summary counts them.
 var doctorChecks = []string{"seat", "redis", "fn", "version", "runners", "ingest", "pitstop", "sprint"}
 
-// ingestQuiet is how old ev:github's last entry may be before the receiver
-// reads as dead. The org hook carries every push, PR, check run and workflow
-// run of three repos, so a working day's quiet hour is the receiver, not
-// GitHub.
-const ingestQuiet = 30 * time.Minute
-
 // doctorTimeout bounds the whole call: a store that does not answer is a FIX
 // line in under this, never a hang.
 const doctorTimeout = 3 * time.Second
@@ -104,6 +99,8 @@ type doctorSeat struct {
 	Key    string   // the seat file's password key
 	Err    error    // the seat (or the environment login) did not resolve
 	Remedy string   // the command that fixes Err
+	Why    string   // what Remedy does, when it is not plain
+	Seal   string   // the seal command for this seat's password key
 	Held   []string // seats whose age key this machine holds
 }
 
@@ -140,10 +137,11 @@ type doctorFacts struct {
 	BeatAt     string
 	BeatErr    error
 
-	Groups    []redis.XInfoGroup
-	GroupsErr error
-	LastID    string
-	LastErr   error
+	Groups     []redis.XInfoGroup
+	GroupsErr  error
+	LastID     string
+	LastSender string // the last entry's sender field ("" none)
+	LastErr    error
 
 	Sprints   []doctorSprint // not closed, in name order
 	SprintErr error
@@ -154,9 +152,12 @@ type doctorFacts struct {
 	MS    int64
 }
 
+// doctorLine is one check's line. Remedy is ONE command a person can paste;
+// Why is the prose that explains it, never folded into the command.
 type doctorLine struct {
 	Check, State string
 	Words        []string
+	Why          string
 	Remedy       string
 }
 
@@ -165,11 +166,18 @@ func (l doctorLine) String() string {
 	for _, w := range l.Words {
 		s += " " + w
 	}
+	if l.Why != "" {
+		s += " why=" + oneline.Quote(l.Why)
+	}
 	if l.Remedy != "" {
 		s += " remedy=" + oneline.Quote(l.Remedy)
 	}
 	return s
 }
+
+// fleetDir is the rowan-tools fleet directory every ansible fix runs in
+// ("fleet changes only through ansible").
+const fleetDir = "~/rowan-working/rowan-tools/fleet"
 
 // doctorDeps is everything doctor reads from its process: the environment,
 // this binary's stamp and the seat selection. A test hands in its own, so it
@@ -199,7 +207,7 @@ func doctorRun(ctx context.Context, args []string, out, errOut io.Writer, d doct
 		Addr: doctorAddr(*addrFlag, d.getenv, d.sel), Machine: doctorMachine(*bench), GOOS: runtime.GOOS, UID: os.Getuid(),
 		Have: buildinfo.Version(d.version), Seat: doctorSeatNow(d.getenv, d.sel),
 	}
-	f.Me = doctorMe(d.getenv, f.Seat.Name)
+	f.Me = doctorMe(d.getenv, f.Seat, f.Machine)
 	ctx, cancel := context.WithTimeout(ctx, doctorTimeout)
 	defer cancel()
 	doctorGather(ctx, &f, d.sel)
@@ -261,15 +269,16 @@ func doctorMachine(flag string) string {
 	return strings.ToLower(h)
 }
 
-// doctorMe is who a remedy names as --by: NOVA_FRIEND, else the seat.
-func doctorMe(getenv func(string) string, seat string) string {
-	if v := getenv(seatEnv); v != "" {
-		return v
+// doctorMe is who a remedy names as --by, never a placeholder: NOVA_FRIEND,
+// else the Redis user this call logs in as (coordinator under the wrapper's
+// environment), else the seat, else this machine.
+func doctorMe(getenv func(string) string, s doctorSeat, machine string) string {
+	for _, v := range []string{getenv(seatEnv), s.User, s.Name, machine} {
+		if v != "" {
+			return v
+		}
 	}
-	if seat != "" {
-		return seat
-	}
-	return "<you>"
+	return "doctor"
 }
 
 // doctorSeatNow resolves the seat the way every verb's store.Open will, and
@@ -281,10 +290,12 @@ func doctorSeatNow(getenv func(string) string, sel *seatcred.Selection) doctorSe
 	if ok {
 		s.Name = sel.Selected()
 		if err != nil {
-			s.Err, s.Remedy = err, seatRemedy(s.Name, err, getenv)
+			s.Err = err
+			s.Remedy, s.Why = seatRemedy(s.Name, err, getenv)
 			return s
 		}
 		s.User, s.Key = c.User, c.Key
+		s.Seal = sealCommand(s.Name, c.Key, getenv)
 		return s
 	}
 	// The environment's login, as redisauth.Auth reads it.
@@ -322,15 +333,50 @@ func heldSeats(getenv func(string) string) []string {
 	return seats
 }
 
-func seatRemedy(seat string, err error, getenv func(string) string) string {
-	if _, seal, ok := strings.Cut(err.Error(), "seal it with "); ok {
-		return seal
+// seatRemedy is the one command for a seat that did not resolve: the full
+// seal line when its file lacks the password, else the nova-secrets check
+// line that names what is wrong.
+func seatRemedy(seat string, err error, getenv func(string) string) (remedy, why string) {
+	msg := err.Error()
+	if i := strings.LastIndex(msg, "--name "); strings.Contains(msg, "seal it with") && i >= 0 {
+		return sealCommand(seat, strings.TrimSpace(msg[i+len("--name "):]), getenv), "the seat's file holds no password for its Redis user"
 	}
-	p, perr := seatcred.PathsFor(seat, getenv)
+	store, as, key, sops, perr := seatFiles(seat, getenv)
 	if perr != nil {
-		return perr.Error()
+		return "export NOVA_SECRETS_SOPS=$(command -v sops)", perr.Error()
 	}
-	return fmt.Sprintf("nova-secrets check --store %s --as %s --key %s --sops %s", p.Store, seat, p.Key, p.Sops)
+	return fmt.Sprintf("nova-secrets check --store %s --as %s --key %s --sops %s", store, as, key, sops),
+		"names what keeps the seat's file from opening"
+}
+
+// sealCommand is the whole nova-secrets seal line for seat's password key:
+// the store, file (--as) and key of its seats.tsv row when it has one, else
+// the default layout.
+func sealCommand(seat, name string, getenv func(string) string) string {
+	store, as, key, sops, err := seatFiles(seat, getenv)
+	if err != nil {
+		store, as, key, sops = "~/"+seatcred.DefaultStore, seat, "~/"+seatcred.DefaultKeyDir+"/"+seat+".key", "$(command -v sops)"
+	}
+	return fmt.Sprintf("nova-secrets seal --store %s --as %s --key %s --sops %s --name %s", store, as, key, sops, name)
+}
+
+// seatFiles is where seat's file lives: its seats.tsv row, else the layout
+// seatcred.PathsFor reads.
+func seatFiles(seat string, getenv func(string) string) (store, as, key, sops string, err error) {
+	if path, perr := seatcred.ProfilePath("nova-sprint", getenv); perr == nil {
+		if p, lerr := seatcred.LoadProfile(path, seat, getenv("HOME")); lerr == nil {
+			sops := getenv(seatcred.SopsEnv)
+			if sops == "" {
+				sops = "$(command -v sops)"
+			}
+			return p.Store, p.AsName(), p.Key, sops, nil
+		}
+	}
+	p, err := seatcred.PathsFor(seat, getenv)
+	if err != nil {
+		return "", "", "", "", err
+	}
+	return p.Store, seat, p.Key, p.Sops, nil
 }
 
 // exportSeatRemedy picks the seat to export: the one named for this machine
@@ -426,6 +472,7 @@ func doctorGather(ctx context.Context, f *doctorFacts, sel *seatcred.Selection) 
 		f.LastErr = err
 	} else if len(msgs) > 0 {
 		f.LastID = msgs[0].ID
+		f.LastSender, _ = msgs[0].Values["sender"].(string)
 	}
 	f.Epoch, f.EpochErr = epoch.Result()
 	if errors.Is(f.EpochErr, redis.Nil) {
@@ -526,14 +573,15 @@ func seatLine(f doctorFacts) doctorLine {
 	l := doctorLine{Check: "seat", Words: []string{"seat=" + oneline.Field(name)}}
 	switch {
 	case s.Err != nil:
-		l.State, l.Remedy = "FIX", s.Remedy
+		l.State, l.Remedy, l.Why = "FIX", s.Remedy, s.Why
 		if s.Name == "" {
-			l.Remedy = exportSeatRemedy(s.Held, f.Machine)
+			l.Remedy, l.Why = exportSeatRemedy(s.Held, f.Machine), "the environment names a Redis user with no password; a seat logs in without it"
 		}
 		l.Words = append(l.Words, "err="+oneline.Quote(s.Err.Error()))
 	case s.Name == "" && f.PingErr != nil && authRefused(f.PingErr):
 		// No seat and the store wants a login: the seat is the fix.
 		l.State, l.Remedy = "FIX", exportSeatRemedy(s.Held, f.Machine)
+		l.Why = "the store wants a login and no seat is named"
 		l.Words = append(l.Words, "err="+oneline.Quote(f.PingErr.Error()))
 	default:
 		l.State = "OK"
@@ -562,7 +610,8 @@ func redisLine(f doctorFacts, seat doctorLine) doctorLine {
 	switch {
 	case f.Addr == "":
 		l.State, l.Words = "FIX", []string{"addr=none"}
-		l.Remedy = "export NOVA_SPRINT_REDIS=<host:port> (or nova-sprint doctor --redis <host:port>)"
+		l.Remedy = "export NOVA_SPRINT_REDIS=<host:port>"
+		l.Why = "no --redis, no seat row address and no NOVA_SPRINT_REDIS or NOVA_REDIS_ADDR"
 		return l
 	case seat.State != "OK":
 		l.State, l.Words = "SKIP", []string{"needs=seat"}
@@ -584,11 +633,15 @@ func redisLine(f doctorFacts, seat doctorLine) doctorLine {
 	case authRefused(err) && f.Seat.Name != "":
 		l.State = "FIX"
 		l.Words = append(l.Words, "err="+oneline.Quote(err.Error()))
-		l.Remedy = fmt.Sprintf("nova-secrets seal --as %s --name %s (the seat's password is not the store's)", f.Seat.Name, f.Seat.Key)
+		l.Remedy, l.Why = f.Seat.Seal, "the store refuses the seat's password: reseal the store's current one"
+		if l.Remedy == "" {
+			l.Remedy = sealCommand(f.Seat.Name, f.Seat.Key, func(string) string { return "" })
+		}
 	default:
 		l.State = "FIX"
 		l.Words = append(l.Words, "err="+oneline.Quote(err.Error()))
-		l.Remedy = "nova-sprint doctor --redis <host:port> with the store's address; if it is right, make -C fleet store (rowan-tools) brings the store up"
+		l.Remedy = "make -C " + fleetDir + " store"
+		l.Why = "the store at " + f.Addr + " does not answer; if the address is wrong, pass --redis <host:port> instead"
 	}
 	return l
 }
@@ -615,12 +668,14 @@ func versionLine(f doctorFacts) doctorLine {
 	case f.ReleaseErr != nil:
 		l.State = "FIX"
 		l.Words = append(l.Words, "err="+oneline.Quote(f.ReleaseErr.Error()))
-		l.Remedy = "nova-sprint fleet build --dry-run --redis " + f.Addr + " (reads fleet:release and names what it cannot)"
+		l.Remedy = "nova-sprint fleet build --dry-run --redis " + f.Addr
+		l.Why = "the dry run reads fleet:release and names what it cannot"
 		return l
 	case commit == "":
 		l.State = "FIX"
 		l.Words = append(l.Words, "tip=none")
-		l.Remedy = "nova-sprint fleet build set version=v0.16.0-dev.<sha8> commit=<sha40> --redis " + f.Addr + " (a landing into dev writes both)"
+		l.Remedy = "nova-sprint fleet build set version=v0.16.0-dev.<sha8> commit=<sha40> --redis " + f.Addr
+		l.Why = "fleet:release names no dev tip; a landing into dev writes both"
 		return l
 	}
 	tip := commit
@@ -632,13 +687,13 @@ func versionLine(f doctorFacts) doctorLine {
 	switch {
 	case !ok:
 		l.State, l.Remedy = "FIX", versionRemedy(f)
-		l.Words = append(l.Words, "why=no-revision")
+		l.Why = "this build names no commit"
 	case dirty:
 		l.State, l.Remedy = "FIX", versionRemedy(f)
-		l.Words = append(l.Words, "why=dirty")
+		l.Why = "this build is from an edited tree"
 	case !strings.HasPrefix(commit, rev):
 		l.State, l.Remedy = "FIX", versionRemedy(f)
-		l.Words = append(l.Words, "why=behind-or-ahead")
+		l.Why = "this build is not the dev tip"
 	default:
 		l.State = "OK"
 	}
@@ -676,10 +731,12 @@ func isHex(s string, n int) bool {
 func fnLine(f doctorFacts, ver doctorLine) doctorLine {
 	l := doctorLine{Check: "fn"}
 	deploy := "NOVA_SPRINT_REDIS_USER=admin NOVA_SPRINT_REDIS_PASSWORD_ENV=NS_ADMIN nova-sprint fn deploy --redis " + f.Addr
+	why := "the store's library is not the one this binary embeds; deploy it as the admin user"
 	if ver.State != "OK" {
 		// A binary that is not the dev tip embeds another library: deploying
 		// it would roll the store back, so the fix is the binary first.
 		deploy = ver.Remedy
+		why = "this binary is not the dev tip; update it first, then run doctor again"
 	}
 	s := f.Lib
 	switch {
@@ -687,14 +744,15 @@ func fnLine(f doctorFacts, ver doctorLine) doctorLine {
 		l.State = "FIX"
 		l.Words = []string{"err=" + oneline.Quote(f.LibErr.Error())}
 		l.Remedy = "nova-sprint fn check --redis " + f.Addr
+		l.Why = "the seat could not list the function library"
 	case s.Missing:
-		l.State, l.Remedy = "FIX", deploy
+		l.State, l.Remedy, l.Why = "FIX", deploy, why
 		l.Words = []string{"MISSING", "want=" + s.Want}
 	case s.Loaded != s.Want:
-		l.State, l.Remedy = "FIX", deploy
+		l.State, l.Remedy, l.Why = "FIX", deploy, why
 		l.Words = []string{"STALE", "loaded=" + s.Loaded, "want=" + s.Want}
 	case !s.OK():
-		l.State, l.Remedy = "FIX", deploy
+		l.State, l.Remedy, l.Why = "FIX", deploy, why
 		l.Words = []string{"NOPING", "sha=" + s.Want, "ping=" + oneline.Quote(s.Ping)}
 	default:
 		l.State = "OK"
@@ -733,11 +791,18 @@ func runnersLine(f doctorFacts) doctorLine {
 		l.Words = append(l.Words, "err="+oneline.Quote(f.RegErr.Error()))
 		return l
 	}
-	if !f.Registered {
+	// The coordinator's machine (fleet:release self) beats as a bench and
+	// stays out of `benches` by design: its beat is the registration.
+	self := f.Machine != "" && f.Machine == f.Release["self"]
+	if !f.Registered && !self {
 		l.State = "FIX"
 		l.Words = append(l.Words, "registered=no")
-		l.Remedy = "make -C fleet bench-register (rowan-tools); if this machine has another registry name, nova-sprint doctor --bench <name>"
+		l.Remedy = "make -C " + fleetDir + " bench-register"
+		l.Why = "this machine is not in benches; if it has another registry name, run doctor --bench <name>"
 		return l
+	}
+	if self && !f.Registered {
+		l.Words = append(l.Words, "self=yes")
 	}
 	role := f.Desired["role"]
 	if role == "" {
@@ -751,16 +816,17 @@ func runnersLine(f doctorFacts) doctorLine {
 	at, _ := strconv.ParseInt(f.BeatAt, 10, 64)
 	switch {
 	case f.BeatErr != nil:
-		l.State, l.Remedy = "FIX", beatRemedy(f.GOOS, f.UID)
+		l.State, l.Remedy, l.Why = "FIX", beatRemedy(f.GOOS, f.UID), "this machine's bench beat is not live; restart its unit"
 		l.Words = append(l.Words, "err="+oneline.Quote(f.BeatErr.Error()))
 	case at <= 0:
-		l.State, l.Remedy = "FIX", beatRemedy(f.GOOS, f.UID)
+		l.State, l.Remedy, l.Why = "FIX", beatRemedy(f.GOOS, f.UID), "this machine's bench beat is not live; restart its unit"
 		l.Words = append(l.Words, "beat=none")
 	case f.Now.Sub(time.UnixMilli(at)) > preflight.BeatFresh:
-		l.State, l.Remedy = "FIX", beatRemedy(f.GOOS, f.UID)
+		l.State, l.Remedy, l.Why = "FIX", beatRemedy(f.GOOS, f.UID), "this machine's bench beat is not live; restart its unit"
 		l.Words = append(l.Words, "beat="+ageWords(f.Now.Sub(time.UnixMilli(at))))
 	case f.Desired["paused"] == "1":
 		l.State, l.Remedy = "FIX", "nova-sprint fleet release --bench "+f.Machine+" --redis "+f.Addr
+		l.Why = "this bench is held (paused); release it when the hold is done"
 		l.Words = append(l.Words, "beat="+ageWords(f.Now.Sub(time.UnixMilli(at))), "paused=1")
 	default:
 		l.State = "OK"
@@ -779,53 +845,56 @@ func streamIDTime(id string) (time.Time, bool) {
 	return time.UnixMilli(n), true
 }
 
+// ingestLine reports ev:github as information (its last entry's age and
+// sender) and judges only what doctor can know: the ci-github group has
+// entries it has not read (lag) or has not acked (pending). Nothing writes a
+// receiver beat today, and a quiet stream is not a dead receiver (the stream
+// carries runner receipts too, and an evening can be quiet), so age is never
+// a fix.
 func ingestLine(f doctorFacts) doctorLine {
 	l := doctorLine{Check: "ingest", Words: []string{"stream=" + ghevent.Stream}}
-	receiver := "make -C fleet hook (rowan-tools), then nova-post hook probe --pr <n>"
-	drain := "nova-sprint ci github --redis " + f.Addr + " --once"
-	if f.GroupsErr != nil {
+	if f.GroupsErr != nil && !strings.Contains(f.GroupsErr.Error(), "no such key") {
 		l.State = "FIX"
-		if strings.Contains(f.GroupsErr.Error(), "no such key") {
-			l.Words, l.Remedy = append(l.Words, "last=none"), receiver
-			return l
-		}
 		l.Words = append(l.Words, "err="+oneline.Quote(f.GroupsErr.Error()))
+		l.Why = "the seat cannot read the stream's groups"
 		l.Remedy = "nova-sprint redis-cli --redis " + f.Addr + " -- XINFO GROUPS " + ghevent.Stream
 		return l
 	}
 	if f.LastErr != nil {
-		l.State, l.Remedy = "FIX", receiver
+		l.State = "FIX"
 		l.Words = append(l.Words, "err="+oneline.Quote(f.LastErr.Error()))
+		l.Why = "the seat cannot read the stream"
+		l.Remedy = "nova-sprint redis-cli --redis " + f.Addr + " -- XREVRANGE " + ghevent.Stream + " + - COUNT 1"
 		return l
 	}
-	at, ok := streamIDTime(f.LastID)
-	if !ok {
-		l.State, l.Remedy = "FIX", receiver
-		l.Words = append(l.Words, "last=none")
-		return l
+	last, sender := "none", "-"
+	if at, ok := streamIDTime(f.LastID); ok {
+		last = ageWords(f.Now.Sub(at))
+		if f.LastSender != "" {
+			sender = f.LastSender
+		}
 	}
-	age := f.Now.Sub(at)
-	l.Words = append(l.Words, "last="+ageWords(age))
+	l.Words = append(l.Words, "last="+last, "sender="+oneline.Field(sender))
 	var group *redis.XInfoGroup
 	for i := range f.Groups {
 		if f.Groups[i].Name == webhook.Group {
 			group = &f.Groups[i]
 		}
 	}
-	switch {
-	case age > ingestQuiet:
-		l.State, l.Remedy = "FIX", receiver
-		l.Words = append(l.Words, "quiet="+ageWords(ingestQuiet))
-	case group == nil:
-		l.State, l.Remedy = "FIX", drain
-		l.Words = append(l.Words, "group=none")
-	case group.Lag > 0:
-		l.State, l.Remedy = "FIX", drain
-		l.Words = append(l.Words, "group="+webhook.Group, "lag="+strconv.FormatInt(group.Lag, 10), "pending="+strconv.FormatInt(group.Pending, 10))
-	default:
+	if group == nil {
 		l.State = "OK"
-		l.Words = append(l.Words, "group="+webhook.Group, "lag="+strconv.FormatInt(max(group.Lag, 0), 10), "pending="+strconv.FormatInt(group.Pending, 10))
+		l.Words = append(l.Words, "group=none")
+		return l
 	}
+	lag := max(group.Lag, 0)
+	l.Words = append(l.Words, "group="+webhook.Group, "lag="+strconv.FormatInt(lag, 10), "pending="+strconv.FormatInt(group.Pending, 10))
+	if lag > 0 || group.Pending > 0 {
+		l.State = "FIX"
+		l.Why = "ci-github has entries it has not read or acked"
+		l.Remedy = "nova-sprint ci github --redis " + f.Addr + " --once"
+		return l
+	}
+	l.State = "OK"
 	return l
 }
 
@@ -851,12 +920,13 @@ func pitstopLine(f doctorFacts) doctorLine {
 	S := oneline.Field(h.Name)
 	l.State = "FIX"
 	l.Remedy = "nova-sprint pitstop clear --sprint " + S + " --by " + oneline.Field(f.Me) + " --redis " + f.Addr
+	l.Why = "a pit stop idles every automatic duty; lift it when the stop is done"
 	switch {
 	case h.StopErr != nil:
 		l.Words = []string{"sprint=" + S, "by=wrongtype", "err=" + oneline.Quote(h.StopErr.Error())}
 	case h.Stop.Set:
 		l.Words = []string{"sprint=" + S, "by=" + oneline.Field(h.Stop.By),
-			"age=" + ageWords(f.Now.Sub(time.UnixMilli(h.Stop.At))), "why=" + oneline.Quote(h.Stop.Why)}
+			"age=" + ageWords(f.Now.Sub(time.UnixMilli(h.Stop.At))), "reason=" + oneline.Quote(h.Stop.Why)}
 		if h.Stop.Streams != nil {
 			l.Words = append(l.Words, "streams="+oneline.Field(strings.Join(h.Stop.Streams, ",")))
 		}
@@ -893,11 +963,13 @@ func sprintLine(f doctorFacts) doctorLine {
 		l.State = "FIX"
 		l.Words = []string{"open=0"}
 		l.Remedy = "nova-sprint sprint open --sprint <name> --from <work-set.lisp> --redis " + f.Addr
+		l.Why = "no sprint is open"
 	case len(open) > 1:
 		// One active sprint, many streams (Glenn 2026-09-26 8:50 AM ET).
 		l.State = "FIX"
 		l.Words = []string{"open=" + strconv.Itoa(len(open)), "sprints=" + oneline.Field(strings.Join(open, ","))}
 		l.Remedy = "nova-sprint sprint close --sprint " + oneline.Field(open[1]) + " --redis " + f.Addr
+		l.Why = "one active sprint, many streams: close the other"
 	default:
 		l.State = "OK"
 		l.Words = []string{"sprint=" + oneline.Field(open[0]), "epoch=" + oneline.Field(epoch)}

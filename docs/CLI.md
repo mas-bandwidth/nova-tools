@@ -4386,15 +4386,15 @@ NOVA_SPRINT_SEAT=coordinator nova-sprint sprint status
 
 ### `nova-sprint doctor`
 
-`nova-sprint doctor [--seat <name>] [--redis <addr>] [--bench <name>]` (nova-tools #4352 item L) is the five hand checks of 2026-09-26 (`fn check`, `version`, `fn deploy`, `pitstop status`, a `ps`) as one verb. It prints one line per check, in this order, each `OK` or `FIX` with `remedy="<the exact command>"`, or `SKIP needs=<check>` when the check it needs is not OK (a SKIP is not a fix):
+`nova-sprint doctor [--seat <name>] [--redis <addr>] [--bench <name>]` (nova-tools #4352 item L) is the five hand checks of 2026-09-26 (`fn check`, `version`, `fn deploy`, `pitstop status`, a `ps`) as one verb. It prints one line per check, in this order, each `OK` or `FIX` with `why="<prose>"` and `remedy="<one command to paste>"` (never prose, alternatives or a second step; an ansible fix is `make -C ~/rowan-working/rowan-tools/fleet <target>`), or `SKIP needs=<check>` when the check it needs is not OK (a SKIP is not a fix):
 
 - `seat`: `--seat`, else `NOVA_SPRINT_SEAT`, then `NOVA_SEAT`, resolved in this process (its `seats.tsv` row when it has one) (the key, the store file, the Redis password); with no seat, the environment's login, or the default user when the store lets it in. A seat that does not resolve names its `nova-secrets seal` or `nova-secrets check` line; no seat on a store that wants one names `export NOVA_SPRINT_SEAT=<seat>` for a seat whose key is in `~/.config/nova-secrets`.
 - `redis`: `PING` as that login (`--redis`, else the seat row's address, `NOVA_SPRINT_REDIS`, then `NOVA_REDIS_ADDR`); one dial bounded by a second and no retries.
 - `fn`: the loaded `nova_sprint` library against the one this binary embeds, fn check's own verdict (`fn.Judge`), then `ns_ping` only when the code is ours. The remedy is `fn deploy` as the admin user, or, when this binary is not the dev tip, the version remedy (deploying an older binary's library would roll the store back).
 - `version`: this binary's build identity against `fleet:release commit`, the dev tip every landing into dev writes; the remedy is `self update --sha <sha>` on the coordinator's machine (`fleet:release self`), `fleet build --bench <b>` on a bench.
-- `runners`: this machine (`--bench`, else the short hostname) in the `benches` registry, its role, CI legs and hold (`bench:<b>:desired`), and its beat's age against the preflight's 2 s; the remedy restarts the beat unit.
-- `ingest`: `ev:github`, the stream the webhook receiver writes: its last entry's age (older than 30 minutes is a dead receiver: `make -C fleet hook`) and the `ci-github` group's lag (`ci github --once` drains it).
-- `pitstop`: every sprint not closed, its `s:<S>:pitstop` (or the legacy key); a held stop names who set it, when, why, and the `pitstop clear` line.
+- `runners`: this machine (`--bench`, else the short hostname) in the `benches` registry (`fleet:release self`, the coordinator's machine, beats as a bench outside it by design and counts, printed `self=yes`), its role, CI legs and hold (`bench:<b>:desired`), and its beat's age against the preflight's 2 s; the remedy restarts the beat unit.
+- `ingest`: `ev:github`: its last entry's age and sender, printed as information (a quiet stream is not a dead receiver: the stream also carries runner receipts, and evenings are quiet); a fix only when the `ci-github` group lags or holds pending entries (`ci github --once` drains it).
+- `pitstop`: every sprint not closed, its `s:<S>:pitstop` (or the legacy key); a held stop names who set it, when and its `reason=`, and the `pitstop clear` line, whose `--by` is `NOVA_FRIEND`, else the Redis user, else the seat, else the machine.
 - `sprint`: the one open sprint (control sprints aside) and `sprint:epoch`; none or more than one is a fix.
 
 The last line is `DOCTOR OK checks=8 trips=<n> ms=<n>` (exit 0) or `DOCTOR FIX fixes=<n> skipped=<n> checks=8 trips=<n> ms=<n>` (exit 1); 2 is usage. No ssh, no GitHub, no model: everything past the seat is one pipeline, and a second only for the sprints and `ns_ping`, so `trips=` is at most 2.
@@ -4406,8 +4406,8 @@ DOCTOR redis OK addr=100.115.99.19:6380 user=coordinator
 DOCTOR fn OK sha=0123456789abcdef ping=PONG
 DOCTOR version OK have=v0.16.0-dev.c839379e tip=c839379e4eab
 DOCTOR runners OK bench=studio role=friends legs=- beat=1s
-DOCTOR ingest OK stream=ev:github last=40s group=ci-github lag=0 pending=0
-DOCTOR pitstop FIX sprint=s1 by=glenn age=10m why="rest" held=1 remedy="nova-sprint pitstop clear --sprint s1 --by rowan --redis 100.115.99.19:6380"
+DOCTOR ingest OK stream=ev:github last=40s sender=glenn group=ci-github lag=0 pending=0
+DOCTOR pitstop FIX sprint=s1 by=glenn age=10m reason="rest" held=1 why="a pit stop idles every automatic duty; lift it when the stop is done" remedy="nova-sprint pitstop clear --sprint s1 --by rowan --redis 100.115.99.19:6380"
 DOCTOR sprint OK sprint=s1 epoch=7
 DOCTOR FIX fixes=1 skipped=0 checks=8 trips=2 ms=61
 ```
