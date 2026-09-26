@@ -22,3 +22,6 @@ ACL user *and* its password in one pair: `NOVA_SPRINT_REDIS_USER=bench` and
 `NOVA_REDIS_BENCH_PASSWORD` (the password reaches the process through
 `nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD`, never a flag). A password
 with no user is refused naming the missing variable and the pair.
+
+A consumer copy's life on a bench, and the work copy's end that pushes its
+branch and opens its PR (#4227), is in [copies.md](copies.md).
