@@ -53,7 +53,7 @@ func TestLineVerbPostListImport(t *testing.T) {
 		t.Fatal(err)
 	}
 	mirror := t.TempDir() // not a git dir: scope stays unmeasured
-	code, stdout, stderr := runSprint("line", "post", "--repo", "mas-bandwidth/nova-tools", "--n", "3", "--kind", "SCORE", "--who", "emma",
+	code, stdout, stderr := runSprint("line", "post", "--repo", "mas-bandwidth/nova-tools", "--n", "3", "--kind", "SCORE", "--as", "emma",
 		"--head", head, "--score", "10", "--gates", "ci:ok,base:ok,scope:ok", "--body-file", body, "--mirror", mirror, "--redis", addr)
 	want := "LINE POST pr:nova-tools:3:line:" + head + ":emma:SCORE kind=SCORE who=emma head=3c3c3c3c gates=ci:ok,base:ok,scope:ok measured=ci,base lines=1 github_calls=0"
 	if code != 0 || strings.TrimSpace(stdout) != want {

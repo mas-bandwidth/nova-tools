@@ -2,7 +2,7 @@
 // CLOSE, ...) as Redis records (nova-tools #3595), the store `read post`
 // writes through. Registered through registry.go; main.go is untouched.
 //
-//	nova-sprint line post   --repo <r> --n <n> (--line <typed line> | --kind <K> --who <w> --head <sha>
+//	nova-sprint line post   --repo <r> --n <n> (--line <typed line> | --kind <K> --as <w> --head <sha>
 //	                        [--score N] [--gates ci:ok,base:ok,scope:ok] [--body-file <f>]) [--mirror <dir>] [--redis <addr>]
 //	nova-sprint line list   --repo <r> --n <n> [--head <sha>] [--redis <addr>]
 //	nova-sprint line import --repo <r> --n <n> --comments-file <f|-> [--redis <addr>]
@@ -27,6 +27,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
 	"os"
 	"strconv"
@@ -45,7 +46,7 @@ func init() {
 	})
 }
 
-const lineUsage = "want post --repo <r> --n <n> (--line <typed line> | --kind <K> --who <w> --head <sha> [--score N] [--gates <g>] [--body-file <f>]) [--mirror <dir>] [--redis <addr>], list --repo <r> --n <n> [--head <sha>] [--redis <addr>] or import --repo <r> --n <n> --comments-file <f|-> [--redis <addr>]"
+const lineUsage = "want post --repo <r> --n <n> (--line <typed line> | --kind <K> --as <w> --head <sha> [--score N] [--gates <g>] [--body-file <f>]) [--mirror <dir>] [--redis <addr>], list --repo <r> --n <n> [--head <sha>] [--redis <addr>] or import --repo <r> --n <n> --comments-file <f|-> [--redis <addr>]"
 
 func runLine(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
@@ -54,18 +55,18 @@ func runLine(ctx context.Context, args []string, out, errOut io.Writer) int {
 	sub := args[0]
 	verb := "line " + sub
 	fs := taskFlags(verb)
-	redisAddr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), "")
-	repo := fs.String("repo", "", "")
-	n := fs.String("n", "", "")
-	typed := fs.String("line", "", "")
-	kind := fs.String("kind", "", "")
-	who := fs.String("who", "", "")
-	head := fs.String("head", "", "")
-	score := fs.Int("score", -1, "")
-	gates := fs.String("gates", "", "")
-	bodyFile := fs.String("body-file", "", "")
-	mirror := fs.String("mirror", "", "")
-	commentsFile := fs.String("comments-file", "", "")
+	redisAddr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), verbflag.HelpRedis)
+	repo := fs.String("repo", "", verbflag.HelpRepo)
+	n := fs.String("n", "", verbflag.HelpN)
+	typed := fs.String("line", "", "the typed line, as posted")
+	kind := fs.String("kind", "", "the line's kind: SCORE, HOLD, REPAIR, SPEC, CLOSE, ...")
+	who := fs.String("as", "", verbflag.HelpAs)
+	head := fs.String("head", "", "the head the line is of")
+	score := fs.Int("score", -1, "a SCORE line's score")
+	gates := fs.String("gates", "", "a SCORE line's gates")
+	bodyFile := fs.String("body-file", "", "the comment body as posted, a file")
+	mirror := fs.String("mirror", "", "the bench mirror of the repo (default ~/nova-bench/mirror/<repo>.git)")
+	commentsFile := fs.String("comments-file", "", "the PR's comments as JSON, a file or - for stdin")
 	if err := fs.Parse(args[1:]); err != nil || fs.NArg() != 0 {
 		return refuse(errOut, verb, lineUsage)
 	}
@@ -80,7 +81,7 @@ func runLine(ctx context.Context, args []string, out, errOut io.Writer) int {
 	switch sub {
 	case "post":
 		if *commentsFile != "" || (*typed == "") == !built || (built && (*kind == "" || *who == "" || *head == "")) {
-			return refuse(errOut, verb, "want --line <typed line>, or --kind, --who and --head (with --score, --gates, --body-file), not both")
+			return refuse(errOut, verb, "want --line <typed line>, or --kind, --as and --head (with --score, --gates, --body-file), not both")
 		}
 		if built {
 			body := ""
