@@ -134,13 +134,13 @@ func OpenSingle(ctx context.Context, addr string) (*Store, error) {
 	return open(ctx, addr, 1, seatcred.Process())
 }
 
-// OpenProbe is Open for a one-shot health read (`nova-sprint doctor`): one
-// connection, one dial attempt bounded by a second, and no command retries, so
-// a store that is down or refuses the login answers on the first pipeline in
-// well under a second instead of after go-redis's five dials and three
-// retries.
-func OpenProbe(ctx context.Context, addr string) (*Store, error) {
-	return openWith(ctx, addr, seatcred.Process(), func(o *redis.Options) {
+// OpenProbe is OpenSeat for a one-shot health read (`nova-sprint doctor`):
+// one connection, one dial attempt bounded by a second, and no command
+// retries, so a store that is down or refuses the login answers on the first
+// pipeline in well under a second instead of after go-redis's five dials and
+// three retries.
+func OpenProbe(ctx context.Context, addr string, sel *seatcred.Selection) (*Store, error) {
+	return openWith(ctx, addr, sel, func(o *redis.Options) {
 		o.PoolSize, o.MaxRetries, o.DialerRetries, o.DialTimeout = 1, -1, 1, time.Second
 	})
 }

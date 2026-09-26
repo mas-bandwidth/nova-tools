@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"strconv"
 	"strings"
@@ -11,7 +12,6 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 	"github.com/mas-bandwidth/nova-tools/internal/seatcred/seattest"
@@ -51,16 +51,22 @@ func seedHealthy(t *testing.T, c *redis.Client) {
 	}
 }
 
-func doctorEnv(t *testing.T) {
+// runDoctorWith is `nova-sprint doctor args...` with its own environment
+// (only what env names; HOME a fresh directory unless env names one), this
+// binary stamped as the seeded dev tip, and its own seat selection: no
+// t.Setenv, so the tests run in parallel.
+func runDoctorWith(t *testing.T, env map[string]string, sel *seatcred.Selection, args ...string) (int, string, string) {
 	t.Helper()
-	for _, k := range []string{seatcred.SeatEnv, seatcred.UserEnv, store.PasswordEnvEnv, store.DefaultPasswordEnv,
-		"NOVA_SPRINT_REDIS", "NOVA_REDIS_ADDR", "NOVA_REDIS", SprintSeatEnv, "XDG_CONFIG_HOME", seatEnv} {
-		t.Setenv(k, "")
+	if _, ok := env["HOME"]; !ok {
+		env["HOME"] = t.TempDir()
 	}
-	t.Setenv("HOME", t.TempDir())
-	old := version
-	version = "v0.16.0-dev.c839379e"
-	t.Cleanup(func() { version = old; seatcred.Select("") })
+	if sel == nil {
+		sel = &seatcred.Selection{}
+	}
+	d := doctorDeps{getenv: func(k string) string { return env[k] }, version: "v0.16.0-dev.c839379e", sel: sel}
+	var out, errOut bytes.Buffer
+	code := doctorRun(context.Background(), args, &out, &errOut, d)
+	return code, out.String(), errOut.String()
 }
 
 // TestDoctorGreenStoreIsTwoTrips is the card's DONE-WHEN on a real store:
@@ -68,13 +74,13 @@ func doctorEnv(t *testing.T) {
 // sprints and ns_ping). Then each thing an operator breaks is one FIX line
 // naming its command, and the exit is 1 with the count.
 func TestDoctorGreenStoreIsTwoTrips(t *testing.T) {
-	doctorEnv(t)
+	t.Parallel()
 	addr := testutil.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = c.Close() })
 	seedHealthy(t, c)
 
-	code, out, errOut := runSprint("doctor", "--redis", addr, "--bench", "m1")
+	code, out, errOut := runDoctorWith(t, map[string]string{}, nil, "--redis", addr, "--bench", "m1")
 	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
 	if code != 0 || errOut != "" || len(lines) != 9 {
 		t.Fatalf("green store: exit %d stderr %q\n%s", code, errOut, out)
@@ -105,7 +111,7 @@ func TestDoctorGreenStoreIsTwoTrips(t *testing.T) {
 	c.SAdd(ctx, "sprints", "s2")
 	c.HSet(ctx, "s:s2", "status", "open")
 
-	code, out, _ = runSprint("doctor", "--redis", addr, "--bench", "m1")
+	code, out, _ = runDoctorWith(t, map[string]string{}, nil, "--redis", addr, "--bench", "m1")
 	if code != 1 || !strings.Contains(out, "DOCTOR FIX fixes=4 skipped=0 checks=8 trips=2 ms=") {
 		t.Fatalf("broken store: exit %d\n%s", code, out)
 	}
@@ -127,23 +133,28 @@ func TestDoctorGreenStoreIsTwoTrips(t *testing.T) {
 // in the studio seat's file. Under --seat every check reads as the seat; with
 // no seat the one fix is exporting the seat whose key this machine holds.
 func TestDoctorSeatOnTheFleetShape(t *testing.T) {
+	t.Parallel()
 	const pw = "doctor-test-pw-5b1e0c"
 	home := seattest.Home(t, "studio", map[string]string{"NOVA_REDIS_COORDINATOR_PASSWORD": pw})
-	doctorEnv(t)
-	seattest.Env(t, home)
 	addr := testutil.Start(t, "--user", "default", "off", "--user", "coordinator", "on", ">"+pw, "~*", "&*", "+@all")
 	c := redis.NewClient(&redis.Options{Addr: addr, Username: "coordinator", Password: pw})
 	t.Cleanup(func() { _ = c.Close() })
 	seedHealthy(t, c)
+	env := map[string]string{"HOME": home}
+	getenv := func(k string) string { return env[k] }
 
-	code, out, errOut := runSprint("doctor", "--seat", "studio", "--redis", addr, "--bench", "m1")
+	sel := &seatcred.Selection{}
+	sel.SelectWith("studio", "", func(s string) (seatcred.Cred, error) { return seatcred.Resolve(s, getenv) })
+	code, out, errOut := runDoctorWith(t, env, sel, "--redis", addr, "--bench", "m1")
 	if code != 0 || !strings.Contains(out, "DOCTOR seat OK seat=studio user=coordinator key=NOVA_REDIS_COORDINATOR_PASSWORD\n") ||
 		!strings.Contains(out, "DOCTOR redis OK addr="+addr+" user=coordinator\n") || !strings.Contains(out, "DOCTOR OK checks=8 trips=2") {
 		t.Fatalf("under the seat: exit %d stderr %q\n%s", code, errOut, out)
 	}
-	assertNoPassword(t, pw, out, errOut)
+	if strings.Contains(out+errOut, pw) {
+		t.Fatal("the password was printed")
+	}
 
-	code, out, errOut = runSprint("doctor", "--redis", addr, "--bench", "m1")
+	code, out, errOut = runDoctorWith(t, env, nil, "--redis", addr, "--bench", "m1")
 	if code != 1 || !strings.Contains(out, `DOCTOR seat FIX seat=none err="NOAUTH`) || !strings.Contains(out, `held=studio remedy="export NOVA_SPRINT_SEAT=studio"`) ||
 		!strings.Contains(out, "DOCTOR redis SKIP needs=seat\n") || !strings.Contains(out, "DOCTOR FIX fixes=1 skipped=7 checks=8") {
 		t.Fatalf("no seat: exit %d stderr %q\n%s", code, errOut, out)

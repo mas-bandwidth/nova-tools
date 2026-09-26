@@ -171,7 +171,20 @@ func (l doctorLine) String() string {
 	return s
 }
 
+// doctorDeps is everything doctor reads from its process: the environment,
+// this binary's stamp and the seat selection. A test hands in its own, so it
+// runs in parallel with no t.Setenv and no package-level swap.
+type doctorDeps struct {
+	getenv  func(string) string
+	version string
+	sel     *seatcred.Selection
+}
+
 func runDoctor(ctx context.Context, args []string, out, errOut io.Writer) int {
+	return doctorRun(ctx, args, out, errOut, doctorDeps{getenv: os.Getenv, version: version, sel: seatcred.Process()})
+}
+
+func doctorRun(ctx context.Context, args []string, out, errOut io.Writer, d doctorDeps) int {
 	fs := verbflag.New("doctor")
 	addrFlag := fs.String("redis", "", "the store to check (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR)")
 	bench := fs.String("bench", "", "this machine's registry name (default: the short hostname)")
@@ -183,13 +196,13 @@ func runDoctor(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 	start := time.Now()
 	f := doctorFacts{
-		Addr: doctorAddr(*addrFlag), Machine: doctorMachine(*bench), GOOS: runtime.GOOS, UID: os.Getuid(),
-		Have: buildinfo.Version(version), Seat: doctorSeatNow(os.Getenv),
+		Addr: doctorAddr(*addrFlag, d.getenv, d.sel), Machine: doctorMachine(*bench), GOOS: runtime.GOOS, UID: os.Getuid(),
+		Have: buildinfo.Version(d.version), Seat: doctorSeatNow(d.getenv, d.sel),
 	}
-	f.Me = doctorMe(f.Seat.Name)
+	f.Me = doctorMe(d.getenv, f.Seat.Name)
 	ctx, cancel := context.WithTimeout(ctx, doctorTimeout)
 	defer cancel()
-	doctorGather(ctx, &f)
+	doctorGather(ctx, &f, d.sel)
 	f.MS = time.Since(start).Milliseconds()
 	lines := doctorLines(f)
 	fixes := 0
@@ -223,13 +236,16 @@ func doctorSummary(lines []doctorLine, trips, ms int64) string {
 	return fmt.Sprintf("DOCTOR FIX fixes=%d skipped=%d checks=%d trips=%d ms=%d", fixes, skipped, len(lines), trips, ms)
 }
 
-// doctorAddr is --redis, else the variables a seat row sets (taskAddr), else
-// the selected seat's own address, the order every store dial uses.
-func doctorAddr(flag string) string {
-	if a := taskAddr(flag); a != "" {
-		return a
+// doctorAddr is --redis, else the variables a seat row sets (taskAddr's
+// order), else the selected seat's own address, the order every store dial
+// uses.
+func doctorAddr(flag string, getenv func(string) string, sel *seatcred.Selection) string {
+	for _, a := range []string{flag, getenv("NOVA_SPRINT_REDIS"), getenv("NOVA_REDIS_ADDR")} {
+		if a != "" {
+			return a
+		}
 	}
-	return seatcred.Addr()
+	return sel.Addr()
 }
 
 // doctorMachine is --bench, else the short hostname, lower case.
@@ -246,8 +262,8 @@ func doctorMachine(flag string) string {
 }
 
 // doctorMe is who a remedy names as --by: NOVA_FRIEND, else the seat.
-func doctorMe(seat string) string {
-	if v := os.Getenv(seatEnv); v != "" {
+func doctorMe(getenv func(string) string, seat string) string {
+	if v := getenv(seatEnv); v != "" {
 		return v
 	}
 	if seat != "" {
@@ -259,11 +275,11 @@ func doctorMe(seat string) string {
 // doctorSeatNow resolves the seat the way every verb's store.Open will, and
 // names the fix when it cannot: the seat's own seal line when its file lacks
 // the password, else the nova-secrets check line that names what is wrong.
-func doctorSeatNow(getenv func(string) string) doctorSeat {
+func doctorSeatNow(getenv func(string) string, sel *seatcred.Selection) doctorSeat {
 	s := doctorSeat{Held: heldSeats(getenv)}
-	c, ok, err := seatcred.Active()
+	c, ok, err := sel.Active()
 	if ok {
-		s.Name = seatcred.Selected()
+		s.Name = sel.Selected()
 		if err != nil {
 			s.Err, s.Remedy = err, seatRemedy(s.Name, err, getenv)
 			return s
@@ -271,12 +287,18 @@ func doctorSeatNow(getenv func(string) string) doctorSeat {
 		s.User, s.Key = c.User, c.Key
 		return s
 	}
-	user, _, err := redisauth.Auth("", "")
-	if err != nil {
-		s.Err, s.Remedy = err, exportSeatRemedy(s.Held, "")
-		return s
+	// The environment's login, as redisauth.Auth reads it.
+	if user := getenv(redisauth.UserEnv); user != "" {
+		env := getenv(redisauth.PasswordEnvEnv)
+		if env == "" {
+			env = redisauth.DefaultPasswordEnv
+		}
+		if getenv(env) == "" {
+			s.Err = fmt.Errorf("%s=%s but %s is empty", redisauth.UserEnv, user, env)
+			return s
+		}
+		s.User = user
 	}
-	s.User = user
 	return s
 }
 
@@ -341,12 +363,12 @@ var doctorQuietOnce sync.Once
 // doctorGather fills f from the store: round one is every read that needs no
 // answer first; round two, only when needed, reads each sprint that is not
 // closed and pings the library when its code is ours.
-func doctorGather(ctx context.Context, f *doctorFacts) {
+func doctorGather(ctx context.Context, f *doctorFacts, sel *seatcred.Selection) {
 	if f.Addr == "" || (f.Seat.Name != "" && f.Seat.Err != nil) {
 		return
 	}
 	doctorQuietOnce.Do(func() { redis.SetLogger(doctorQuiet{}) })
-	st, err := store.OpenProbe(ctx, f.Addr)
+	st, err := store.OpenProbe(ctx, f.Addr, sel)
 	if err != nil {
 		f.OpenErr = err
 		return

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"strconv"
 	"strings"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pitstop"
+	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 )
 
 // doctorNow is the store's TIME in every judged fact below: no test here
@@ -265,10 +268,11 @@ func TestExportSeatRemedyPrefersThisMachine(t *testing.T) {
 
 // TestDoctorRefusesPositionals: usage is exit 2 before anything is read.
 func TestDoctorRefusesPositionals(t *testing.T) {
-	t.Setenv("NOVA_SEAT", "")
-	t.Setenv(SprintSeatEnv, "")
-	code, stdout, stderr := runSprint("doctor", "now")
-	if code != 2 || stdout != "" || !strings.Contains(stderr, "takes flags, not positional arguments") {
-		t.Fatalf("exit %d stdout %q stderr %q", code, stdout, stderr)
+	t.Parallel()
+	var out, errOut bytes.Buffer
+	d := doctorDeps{getenv: func(string) string { return "" }, sel: &seatcred.Selection{}}
+	code := doctorRun(context.Background(), []string{"now"}, &out, &errOut, d)
+	if code != 2 || out.Len() != 0 || !strings.Contains(errOut.String(), "takes flags, not positional arguments") {
+		t.Fatalf("exit %d stdout %q stderr %q", code, out.String(), errOut.String())
 	}
 }
