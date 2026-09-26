@@ -49,7 +49,7 @@ usage:
   nova-sprint task move    --actor <a> --id <id> (--to-friend <f> | --to-stream <s> | --to-where <w> [--ok ok|fail] [--why <text>])
   nova-sprint task expire  --actor <a> [--friend <f>]...
   nova-sprint task ls      (--stream <s> | --friend <f>) --where <w>
-  nova-sprint task fsck    --sprint <S>
+  nova-sprint task fsck    --sprint <S> [--repair]
 under a harness (NOVA_FRIEND set) --actor must be the seat.
 every verb also takes --redis <addr> (else NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR) and --sprint <S>
 (the legacy idx sets' sprint; else FRIEND_QUEUE_SPRINT, else the first of sprint:order).
@@ -62,7 +62,8 @@ land moves merging (or working) -> landed at the merge sha; land --stream moves 
 member of ws:<s>:merging and prints LANDED <id> ref=<repo#n> origin=<url> per member (the
 lander closes those PRs and issues with the CLOSE line). take starts a lease the child
 renews with beat every 60 s; expire moves a working task whose lease lapsed back to ready and unlinks a finished task left in a friend's working set.
-fsck prints one line per drift and exits 1 when there is any.
+fsck prints one line per drift and exits 1 when there is any; a registered stream with no
+sentinel (#4318) is a NOSENTINEL line, and --repair creates every missing one.
 push --issue fills the card from the issue text (#3911): every KEY: line a card header
 carries (ROUTE WHO KIND TYPE REPO BASE base-sha PATHS TEST DEPENDS-ON DONE-WHEN EST PRIORITY
 SOURCE TASK STREAM ORIGIN) and the text as body; the flags override it. A pro or flash card
@@ -122,7 +123,7 @@ type cardCmd struct {
 	ok                                              *string
 	issue, route, base, baseSHA, paths              *string
 	n                                               *int
-	waiting, front, help                            *bool
+	waiting, front, help, repair                    *bool
 	friends                                         multiFlag
 }
 
@@ -159,6 +160,7 @@ func runTaskCard(ctx context.Context, sub string, args []string, out, errOut io.
 	c.paths = fs.String("paths", "", "")
 	c.n = fs.Int("n", 1, "")
 	c.waiting = fs.Bool("waiting", false, "")
+	c.repair = fs.Bool("repair", false, "")
 	c.front = fs.Bool("front", false, "")
 	c.help = fs.Bool("help", false, "")
 	fs.BoolVar(c.help, "h", false, "")
@@ -429,6 +431,17 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 		_, _ = fmt.Fprintf(out, "TASK ls n=%d where=%s ms=%d\n", len(ids), *c.where, ms())
 		return 0
 	case "fsck":
+		if *c.repair {
+			// the one repair: every registered stream has its sentinel (#4318)
+			sw, err := taskcard.SentinelsWalk(ctx, cl, true)
+			if err != nil {
+				return refuse(errOut, c.verb, err.Error())
+			}
+			for _, m := range sw.Missing {
+				_, _ = fmt.Fprintf(out, "SENTINEL created stream=%s id=%s\n", quoteField(m.Stream), m.ID)
+			}
+			_, _ = fmt.Fprintf(out, "TASK fsck repair sentinels=%d created=%d\n", len(sw.Missing), sw.Created)
+		}
 		r, err := taskcard.Fsck(ctx, cl, *c.sprint)
 		if err != nil {
 			return refuse(errOut, c.verb, err.Error())

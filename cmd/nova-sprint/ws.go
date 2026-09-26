@@ -1,5 +1,5 @@
 // The ws index verbs (nova-tools #3662, #3659, #3660; contract: rowan-new
-// specs/ws-index.md): `ws migrate|counts|checkpoint`, `scope
+// specs/ws-index.md): `ws counts|checkpoint|show`, `scope
 // keep|park|unpark|ls` and `stream ls|order|rename`. Each is one call into
 // internal/nsprint/ws, which is one FCALL of a fn/lua/ws.lua function (scope
 // park/keep first write a checkpoint, a pipelined read). Each prints one
@@ -26,7 +26,7 @@ import (
 )
 
 func init() {
-	register(Verb{Name: "ws", Summary: "the ws index: counts, checkpoint to TSV", Run: runWS})
+	register(Verb{Name: "ws", Summary: "the ws index: counts, checkpoint to TSV, show --order (every stream's cards with their DEPENDS-ON edges and sentinel)", Run: runWS})
 	register(Verb{Name: "scope", Summary: "keep, park, unpark or list the streams in the sprint's scope", Run: runScope})
 	register(Verb{Name: "stream", Summary: "list, order or rename the work streams; open, rebase, pr, status or close a stream branch", Run: runStream})
 }
@@ -114,7 +114,7 @@ func subverb(args []string, verb, want string, errOut io.Writer) (string, []stri
 }
 
 func runWS(ctx context.Context, args []string, out, errOut io.Writer) int {
-	sub, rest, code, ok := subverb(args, "ws", "counts or checkpoint", errOut)
+	sub, rest, code, ok := subverb(args, "ws", "counts, checkpoint or show", errOut)
 	if !ok {
 		return code
 	}
@@ -123,8 +123,71 @@ func runWS(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runWSCounts(ctx, rest, out, errOut)
 	case "checkpoint":
 		return runWSCheckpoint(ctx, rest, out, errOut)
+	case "show":
+		return runWSShow(ctx, rest, out, errOut)
 	}
-	return refuse(errOut, "ws", "unknown subverb "+sub+"; want counts or checkpoint")
+	return refuse(errOut, "ws", "unknown subverb "+sub+"; want counts, checkpoint or show")
+}
+
+// runWSShow is `ws show --order [--stream <s>]` (nova-tools #4318): every
+// stream's cards in order, one line each, `<where> <id> <- <edges>`, the
+// sentinel last; then one receipt. A dependency that is not landed carries
+// its set in parentheses, one with no record (no record). --stream shows
+// one stream and refuses a name the index does not have, naming the ones it
+// has. `stream order --show` is the same listing.
+func runWSShow(ctx context.Context, args []string, out, errOut io.Writer) int {
+	w := newWSCmd("ws show", out, errOut)
+	order := w.fs.Bool("order", false, "")
+	stream := w.fs.String("stream", "", "")
+	if _, code, ok := w.parse(args, 0, "ws show --redis <addr> --order [--stream <s>]"); !ok {
+		return code
+	}
+	if !*order {
+		return refuse(errOut, w.name, "want --order: ws show --redis <addr> --order [--stream <s>] prints every stream's cards in order with their DEPENDS-ON edges")
+	}
+	st, code, ok := w.open(ctx)
+	if !ok {
+		return code
+	}
+	defer st.Close()
+	return showOrder(ctx, w, st.Client(), *stream)
+}
+
+// showOrder prints the listing and the receipt for ws show --order and
+// stream order --show.
+func showOrder(ctx context.Context, w *wsCmd, c redis.Cmdable, only string) int {
+	rows, err := ws.Show(ctx, c)
+	if err != nil {
+		return w.done(err, "")
+	}
+	if only != "" {
+		var names []string
+		var keep []ws.ShowStream
+		for _, r := range rows {
+			names = append(names, strconv.Quote(r.Stream))
+			if r.Stream == only {
+				keep = append(keep, r)
+			}
+		}
+		if len(keep) == 0 {
+			return w.done(&ws.Refused{Why: fmt.Sprintf("no stream %s; the index has %s: nova-sprint stream ls --redis <addr>", strconv.Quote(only), strings.Join(names, " "))}, "")
+		}
+		rows = keep
+	}
+	cards, edges := 0, 0
+	for _, r := range rows {
+		fmt.Fprintf(w.out, "STREAM %d %s cards=%d live=%d landed=%d sentinel=%s\n", r.Rank, strconv.Quote(r.Stream), len(r.Cards), r.Live, r.Landed, r.Sentinel)
+		for _, card := range r.Cards {
+			fmt.Fprintf(w.out, "  %s\n", card.Line(r.Live))
+			cards++
+			if card.Sentinel {
+				edges += r.Live + r.Landed
+			} else {
+				edges += len(card.Deps)
+			}
+		}
+	}
+	return w.done(nil, fmt.Sprintf("SHOW streams=%d cards=%d edges=%d", len(rows), cards, edges))
 }
 
 func runWSCounts(ctx context.Context, args []string, out, errOut io.Writer) int {
@@ -393,12 +456,25 @@ func runStreamLs(ctx context.Context, args []string, out, errOut io.Writer) int 
 
 func runStreamOrder(ctx context.Context, args []string, out, errOut io.Writer) int {
 	w := newWSCmd("stream order", out, errOut)
-	names, code, ok := w.parse(args, -1, "stream order --redis <addr> <stream> [<stream>...]")
+	show := w.fs.Bool("show", false, "")
+	names, code, ok := w.parse(args, -1, "stream order --redis <addr> <stream> [<stream>...] | stream order --redis <addr> --show")
 	if !ok {
 		return code
 	}
+	if *show {
+		// the listing of ws show --order: every stream's cards with edges
+		if len(names) > 0 {
+			return refuse(errOut, w.name, "--show lists the streams; it ranks nothing: stream order --redis <addr> --show")
+		}
+		st, code, ok := w.open(ctx)
+		if !ok {
+			return code
+		}
+		defer st.Close()
+		return showOrder(ctx, w, st.Client(), "")
+	}
 	if len(names) == 0 {
-		return refuse(errOut, w.name, "name the streams in priority order, first is rank 1")
+		return refuse(errOut, w.name, "name the streams in priority order, first is rank 1; --show lists the cards of every stream with their edges")
 	}
 	st, code, ok := w.open(ctx)
 	if !ok {

@@ -107,7 +107,7 @@ func TestFleetDownKeepsLeases(t *testing.T) {
 
 	ssh := &verbSSH{}
 	seams := reconcileSeams
-	reconcileSeams = func() (deal.Dialer, deal.PRs) { return ssh, verbForge{} }
+	reconcileSeams = func(*store.Store) (deal.Dialer, deal.PRs) { return ssh, verbForge{} }
 	t.Cleanup(func() { reconcileSeams = seams })
 
 	const b = "bench-down-leases"

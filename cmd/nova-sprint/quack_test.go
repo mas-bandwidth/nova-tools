@@ -4,12 +4,14 @@ package main
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pitstop"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -63,6 +65,7 @@ func TestQuackCut(t *testing.T) {
 		t.Fatalf("pit stop %+v %v, want set by rowan for the cut", stop, err)
 	}
 	ids, err := client.ZRange(ctx, "ws:quack:waiting", 0, -1).Result()
+	ids = slices.DeleteFunc(ids, ws.IsSentinel) // the stream's stop (#4318) beside its cards
 	if err != nil || strings.Join(ids, ",") != "quack-001,quack-002,quack-003,quack-004,quack-005" {
 		t.Fatalf("ws:quack:waiting=%v %v", ids, err)
 	}
@@ -90,8 +93,8 @@ func TestQuackCut(t *testing.T) {
 	if !strings.Contains(out, "CUT n=6 stream=quack sprint=quack-t1 repo=mas-bandwidth/quack tiers=flash,pro pushed=1 skipped=5 refused=0 base-sha="+quackBase[:12]+" pitstop=held") {
 		t.Fatalf("second CUT line:\n%s", out)
 	}
-	if n := client.ZCard(ctx, "ws:quack:waiting").Val(); n != 6 {
-		t.Fatalf("waiting=%d, want 6", n)
+	if n := client.ZCard(ctx, "ws:quack:waiting").Val(); n != 7 { // six cards and the stream's sentinel (#4318)
+		t.Fatalf("waiting=%d, want 6 cards and the sentinel", n)
 	}
 
 	// Refusals write nothing.

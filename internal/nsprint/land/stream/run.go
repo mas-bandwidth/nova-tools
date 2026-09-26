@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/gh"
+	"github.com/redis/go-redis/v9"
 	"os"
 	"os/exec"
 	"strings"
@@ -41,8 +43,14 @@ type RunOptions struct {
 	// Request puts the stream head in the CI pool and returns the request's
 	// status word (CREATED, EXISTS, ...).
 	Request func(ctx context.Context, repo, sha string, pr int, url string) (string, error)
-	// Sleep waits one tick; nil sleeps on the wall clock under ctx.
+	// Sleep waits one tick; nil sleeps on the wall clock under ctx. It is
+	// the fallback of Await.
 	Sleep func(ctx context.Context, d time.Duration) error
+	// Await waits up to d for an ev:github entry for head (a check or
+	// workflow delivery the webhook ingest appended, #4343: events over
+	// polling), and returns early on one; nil blocks on ev:github (XREAD
+	// BLOCK), or, when Sleep is set (a test), waits one tick with it.
+	Await func(ctx context.Context, head string, d time.Duration) error
 	// BaseTip reads the base branch's tip from the remote; nil runs git
 	// ls-remote.
 	BaseTip func(ctx context.Context, remote, base string) (string, error)
@@ -90,6 +98,14 @@ func Run(ctx context.Context, c Client, o RunOptions) (RunReport, error) {
 	}
 	if o.MaxBuilds <= 0 {
 		o.MaxBuilds = 3
+	}
+	if o.Await == nil {
+		if o.Sleep != nil {
+			sleep := o.Sleep
+			o.Await = func(ctx context.Context, _ string, d time.Duration) error { return sleep(ctx, d) }
+		} else if o.Await, err = awaitHead(ctx, c); err != nil {
+			return rep, err
+		}
 	}
 	if o.Sleep == nil {
 		o.Sleep = sleepCtx
@@ -212,7 +228,9 @@ func Run(ctx context.Context, c Client, o RunOptions) (RunReport, error) {
 
 // waitCI reads the stream PR's record until its ci word is green or red, the
 // deadline passes (pending), or the record's head leaves the landing's head
-// (another run rebuilt it: an error, nothing merges).
+// (another run rebuilt it: an error, nothing merges). Between reads it
+// waits on ev:github for the head's next delivery, at most one tick: the
+// record is re-read on the event, never on a poll of GitHub.
 func waitCI(ctx context.Context, c Client, o RunOptions, l Landing, deadline time.Time) (string, error) {
 	for {
 		recs, err := LoadPRs(ctx, c, o.Repo, []int{l.PR})
@@ -229,10 +247,24 @@ func waitCI(ctx context.Context, c Client, o RunOptions, l Landing, deadline tim
 		if !time.Now().Before(deadline) {
 			return orDash(r.CI), nil
 		}
-		if err := o.Sleep(ctx, o.Tick); err != nil {
+		if err := o.Await(ctx, l.Head, o.Tick); err != nil {
 			return "", err
 		}
 	}
+}
+
+// awaitHead is the production Await: one XREAD BLOCK on ev:github from
+// the stream's tip, taken now (before the first pass, so a delivery
+// between the pass and the wait is not missed) and kept across calls.
+func awaitHead(ctx context.Context, c redis.Cmdable) (func(ctx context.Context, head string, d time.Duration) error, error) {
+	tip, err := gh.Tip(ctx, c)
+	if err != nil {
+		return nil, err
+	}
+	return func(ctx context.Context, head string, d time.Duration) error {
+		tip, _, err = gh.Await(ctx, c, tip, d, gh.HeadEvent(head))
+		return err
+	}, nil
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) error {

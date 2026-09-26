@@ -14,8 +14,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"time"
+	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/ci/functional"
 	"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
@@ -38,10 +39,21 @@ usage:
                       slowtests budgets) under nice -n 15 at -p 2, GOMAXPROCS=2
                       and -count=1; one PKG line per package with its seconds,
                       one RED line per failing test with its output.
-                      --functional adds the functional build tag, as CI's
-                      merge-group and push legs do (GOTEST_TAGS=functional).
+                      --functional adds the functional build tag
+                      (GOTEST_TAGS=functional); CI runs those tests in its
+                      functional job as a stream merges.
                       Exit 0 green, 1 a red test or build, 2 over the
                       budgets or could not run.
+  nova-ci slowtests --package-budget <s> --test-budget <s> [--allowlist <file>]
+                      the unit tier's budgets: a package over --package-budget
+                      and a top-level test over --test-budget are each a CI-SLOW
+                      line, unless the allowlist (pkg<TAB>test<TAB>seconds, - in
+                      the test column for a package's own row) names a higher one.
+  nova-ci functional <package-dir>...
+                      print the packages among these that hold functional tests
+                      (a _test.go built only under the functional build tag) on
+                      one line and a go test -run pattern naming exactly those
+                      tests on the next; print nothing when there are none.
   nova-ci new-rule [--root <checkout>] <rule-name>
                       scaffold a new class rule skeleton: class test, fixture, and makefile
   nova-ci new-verb [--root <checkout>] <tool> <verb>
@@ -80,6 +92,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return cmdSlowtests(args[1:], stdin, stdout, stderr)
 	case "local":
 		return cmdLocal(args[1:], stdout, stderr, execLocal)
+	case "functional":
+		return cmdFunctional(args[1:], stdout, stderr)
 	case "new-rule":
 		return cmdNewRule(args[1:], stdout, stderr)
 	case "new-verb":
@@ -100,6 +114,9 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	budget := fs.Int("budget", 60, "whole seconds a package's tests may take before it is over budget")
+	packageBudget := fs.Float64("package-budget", 0, "seconds a package's tests may take; replaces --budget when set")
+	testBudget := fs.Float64("test-budget", 0, "seconds one top-level test may take; 0 judges packages only")
+	allowlist := fs.String("allowlist", "", "pkg<TAB>test<TAB>seconds rows that raise one package's or one test's budget")
 	if err := fs.Parse(args); err != nil {
 		return refuse(stderr, " slowtests", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
@@ -110,11 +127,31 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 		return refuse(stderr, " slowtests", fmt.Sprintf("--budget must be a whole number of seconds greater than zero (got %d)", *budget))
 	}
 
+	if *packageBudget < 0 || *testBudget < 0 {
+		return refuse(stderr, " slowtests", "--package-budget and --test-budget must be seconds greater than zero")
+	}
+	budgets := slowtests.Budgets{Package: float64(*budget), Test: *testBudget}
+	if *packageBudget > 0 {
+		budgets.Package = *packageBudget
+	}
+	if *allowlist != "" {
+		f, err := os.Open(*allowlist)
+		if err != nil {
+			return refuse(stderr, " slowtests", fmt.Sprintf("--allowlist: %s", oneline.Err(err)))
+		}
+		rows, err := slowtests.ParseAllowlist(f)
+		_ = f.Close()
+		if err != nil {
+			return refuse(stderr, " slowtests", fmt.Sprintf("--allowlist %s: %s", *allowlist, oneline.Err(err)))
+		}
+		budgets.Rows = rows
+	}
+
 	events, err := slowtests.Parse(stdin)
 	if err != nil {
 		return refuse(stderr, " slowtests", fmt.Sprintf("stdin is not newline-delimited go test -json: %s", oneline.Err(err)))
 	}
-	report := slowtests.Sum(events, time.Duration(*budget)*time.Second)
+	report := slowtests.Judge(events, budgets)
 	if report.ExitCode() == 0 {
 		fmt.Fprintln(stdout, report.OKLine())
 		return 0
@@ -123,4 +160,33 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 		fmt.Fprintln(stdout, line)
 	}
 	return 2
+}
+
+// cmdFunctional prints the functional tier's selection for `make
+// test-functional`: the package directories among args that hold functional
+// tests, space-separated, then one -run pattern naming exactly those tests. A
+// change whose packages carry none prints nothing and exits 0, and the target
+// runs nothing.
+func cmdFunctional(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		return refuse(stderr, " functional", "no package directory given; pass the packages the change touched (./cmd/nova-sprint ...)")
+	}
+	dirs, err := functional.Expand(args)
+	if err != nil {
+		return refuse(stderr, " functional", oneline.Err(err))
+	}
+	pkgs, err := functional.Select(dirs)
+	if err != nil {
+		return refuse(stderr, " functional", oneline.Err(err))
+	}
+	if len(pkgs) == 0 {
+		return 0
+	}
+	dirs = make([]string, 0, len(pkgs))
+	for _, p := range pkgs {
+		dirs = append(dirs, p.Dir)
+	}
+	fmt.Fprintln(stdout, strings.Join(dirs, " "))
+	fmt.Fprintln(stdout, functional.RunPattern(pkgs))
+	return 0
 }

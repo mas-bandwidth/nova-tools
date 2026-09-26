@@ -33,9 +33,9 @@ package read
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/gh"
 	"io"
 	"net/http"
 	"net/url"
@@ -43,7 +43,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ci"
@@ -63,21 +62,31 @@ const (
 // keys of #4313, and the DO line a coordinator's card states its task with).
 var CardSpecKeys = []string{"DO", "EVIDENCE", "SEAMS", "RULES", "RECEIPTS", "KEEP"}
 
-// GitHub is the one REST read a brief makes where Redis has no copy. Nil is
-// --no-github: no HTTP at all.
+// GitHub is the one REST read a brief makes where Redis has no copy,
+// through the one GitHub client (internal/gh, #4343; BaseURL empty is its
+// root), counted under read-brief in Redis. Nil is --no-github: no HTTP at
+// all.
 type GitHub struct {
-	BaseURL string // GITHUB_API_URL, else https://api.github.com
+	BaseURL string // GITHUB_API_URL, else the client's root
 	Token   string
 	HTTP    *http.Client
-	calls   int
+	Redis   redis.Cmdable
+	client  *gh.Client
+}
+
+func (g *GitHub) c() *gh.Client {
+	if g.client == nil {
+		g.client = &gh.Client{API: g.BaseURL, Token: g.Token, HTTP: g.HTTP, Verb: "read brief", Redis: g.Redis}
+	}
+	return g.client
 }
 
 // Calls is how many HTTP requests the brief made.
 func (g *GitHub) Calls() int {
-	if g == nil {
+	if g == nil || g.client == nil {
 		return 0
 	}
-	return g.calls
+	return g.client.Calls
 }
 
 // Endpoint is the REST path a read asks for (kind issues or pulls), printed
@@ -88,39 +97,16 @@ func Endpoint(kind, owner, name, n string) string {
 
 // TitleBody is one GET of an issue or a pull: its title and body.
 func (g *GitHub) TitleBody(ctx context.Context, path string) (string, string, error) {
-	base := strings.TrimRight(g.BaseURL, "/")
-	if base == "" {
-		base = "https://api.github.com"
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+path, nil)
-	if err != nil {
-		return "", "", err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	if g.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+g.Token)
-	}
-	hc := g.HTTP
-	if hc == nil {
-		hc = &http.Client{Timeout: 30 * time.Second}
-	}
-	g.calls++
-	resp, err := hc.Do(req)
-	if err != nil {
-		return "", "", fmt.Errorf("GET %s: %v", path, err)
-	}
-	defer resp.Body.Close()
-	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode != http.StatusOK {
-		return "", "", fmt.Errorf("GET %s: github %d", path, resp.StatusCode)
-	}
 	var v struct {
 		Title string  `json:"title"`
 		Body  *string `json:"body"`
 	}
-	if err := json.Unmarshal(b, &v); err != nil {
-		return "", "", fmt.Errorf("GET %s: reply: %v", path, err)
+	if _, err := g.c().Do(ctx, http.MethodGet, path, nil, &v); err != nil {
+		var herr *gh.HTTPError
+		if errors.As(err, &herr) {
+			return "", "", fmt.Errorf("GET %s: github %d", path, herr.Status)
+		}
+		return "", "", fmt.Errorf("GET %s: %v", path, err)
 	}
 	body := ""
 	if v.Body != nil {

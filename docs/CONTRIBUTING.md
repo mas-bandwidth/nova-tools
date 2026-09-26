@@ -114,7 +114,12 @@ a property of the source, not of the platform — then `go build ./...`, `go vet
 ./...`, and the unit tests sharded by package group across parallel jobs, with
 `-count=1` and no race detector. `ci-ok` aggregates exactly the CL tier, so a
 matrix leg that is renamed, added or skipped cannot quietly leave branch
-protection.
+protection. Its tests come in two tiers ([TESTING.md](TESTING.md),
+nova-tools#4328): the **unit** tier runs on every pull request over the
+packages the change touched, at most two cores a leg, with no redis-server on
+PATH and a 2 s package / 1 s test budget; the **functional** tier (`//go:build
+functional`) runs only in the merge queue, as a whole work stream merges into
+dev, and nightly.
 
 The **certification tier** (`.github/workflows/certification.yml`) holds
 everything that cannot fit that budget, under the same job names it always had:
@@ -256,8 +261,8 @@ with its sweep of the tree or it does not land.
    `NOVA_TEST_WAIT`, or inject a fake clock (`waits`).
 4. **No test asserts a bound under ten seconds** — a short bound asserts the
    machine's load, not the code (`wall clock`).
-5. **No package over the per-package time budget** — per-change CI answers in
-   one minute ideally, two at most (`slowtests`).
+5. **No unit package over 2 s, no unit test over 1 s** — per-change CI answers in
+   one minute ideally, two at most; the allowlist only shrinks (`slowtests`).
 6. **The Makefile is the one entry for build, test and lint** — a workflow or a
    script calls a target, never its own `go test` line (`make`).
 7. **Every command meets the onboarding standard** — `<tool> help` with runnable
@@ -277,7 +282,7 @@ with its sweep of the tree or it does not land.
 `darwin-sizes`, `darwin-table`, `cache`, `pinned-actions`, `ci-ok`, `failed`,
 `benchname`, `nightly-tags`, `functional` (a test that starts a redis-server, execs a whole program or asserts a real-time bound is behind `//go:build functional`), `selection`, `toolchainroots`, `walltoolchain`, `hostseam`,
 `kernel-components`, `asd-closing-line`, `ciworkspace`, `lisptemppath`, `admitkind`, `namedpaths`, `lispduplicate`, `one section`, `testbins`, `fieldsindex`, `cardtemplates`, `transcripts`, `forestwriter`, `forestscript`, `parallel`, `slowwaits`, `allowlist`,
-`seatwrap`, `seatredis` (every nova-sprint `--redis` defaults to the seat's address), `wholetree` (no doc or card spells a whole-tree `go test`; run `nova-ci local`), `silent` (no `_ = err` and no `|| true` literal on the copy model's live path), `classtests` (no merge deletes a `_test.go` or an `internal/ci/testdata` list that its first parent had unless the same change declares it in `deleted-tests.txt`), `ci-receipt` (ci-ok reports every run to Redis from the runner, every field, failing loudly). Every entry — the ten above too — is written out in
+`seatwrap`, `tiers`, `seatredis` (every nova-sprint `--redis` defaults to the seat's address), `wholetree` (no doc or card spells a whole-tree `go test`; run `nova-ci local`), `silent` (no `_ = err` and no `|| true` literal on the copy model's live path), `classtests` (no merge deletes a `_test.go` or an `internal/ci/testdata` list that its first parent had unless the same change declares it in `deleted-tests.txt`), `ci-receipt` (ci-ok reports every run to Redis from the runner, every field, failing loudly). Every entry — the ten above too — is written out in
 [SPEC-CI.md](SPEC-CI.md) under **The class tests** with its rule, the hurt
 that bought it, its allowlist, its remedy line and its narrowings. Read the entry, not
 the test. An allowlist only ever shrinks: a new row is a refusal, not a parking place.

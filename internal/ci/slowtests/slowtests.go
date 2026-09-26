@@ -43,21 +43,53 @@ type Test struct {
 }
 
 // Package is one package's summed elapsed time and its slowest tests, sorted
-// worst first and capped at testsKept.
+// worst first and capped at testsKept. Budget is the seconds it was judged
+// against: the default, or its allowlist row.
 type Package struct {
 	Name    string
 	Seconds float64
 	Slowest []Test
+	Budget  float64
+}
+
+// OverTest is one top-level test over its budget: the default per-test budget,
+// or its allowlist row.
+type OverTest struct {
+	Package string
+	Name    string
+	Seconds float64
+	Budget  float64
 }
 
 // Report is one run of the budget check: how many packages were seen, the ones
-// over budget (worst first), the single slowest package overall, and the budget
-// they were judged against (kept only so a finding can print it).
+// over budget (worst first), the tests over budget (worst first), the single
+// slowest package overall, and the package budget they were judged against
+// (kept only so a finding can print it).
 type Report struct {
-	Packages int
-	Over     []Package
-	Slowest  Package
-	Budget   time.Duration
+	Packages  int
+	Over      []Package
+	OverTests []OverTest
+	Slowest   Package
+	Budget    time.Duration
+}
+
+// Budgets is what Judge holds a run to. Package is the default seconds for a
+// package's total; Test is the default seconds for one top-level test, zero
+// meaning tests are not judged one by one. Rows are the allowlist: a row whose
+// Test is empty is a package's own budget, any other row one test's.
+type Budgets struct {
+	Package float64
+	Test    float64
+	Rows    []Row
+}
+
+// Row is one allowlist line: `pkg<TAB>test<TAB>seconds`, with `-` in the test
+// column for a package's own row. Package is module-relative (internal/ci) and
+// matches an event's import path by its trailing path elements.
+type Row struct {
+	Package string
+	Test    string
+	Seconds float64
 }
 
 // testsKept is how many test-level rows a finding names. "A few" is three:
@@ -101,13 +133,78 @@ func Parse(r io.Reader) ([]Event, error) {
 	return events, nil
 }
 
-// Sum folds the events into a report. A package's total is the sum of its
-// package-level Elapsed (Test == ""); a test-level event only feeds the slowest
-// list. Over-budget packages are returned worst first, ties by name, so the
-// output never depends on map iteration.
+// ParseAllowlist reads `pkg<TAB>test<TAB>seconds` rows. Blank lines and lines
+// starting with # are skipped; `-` in the test column is the package's own row.
+// A malformed row, a budget that is not a positive number, or a row written
+// twice is an error naming its 1-based line.
+func ParseAllowlist(r io.Reader) ([]Row, error) {
+	sc := bufio.NewScanner(r)
+	var rows []Row
+	seen := map[string]int{}
+	line := 0
+	for sc.Scan() {
+		line++
+		text := strings.TrimSpace(sc.Text())
+		if text == "" || strings.HasPrefix(text, "#") {
+			continue
+		}
+		f := strings.Split(text, "\t")
+		if len(f) != 3 || f[0] == "" || f[1] == "" {
+			return nil, fmt.Errorf("line %d: want pkg<TAB>test<TAB>seconds, got %q", line, text)
+		}
+		secs, err := strconv.ParseFloat(f[2], 64)
+		if err != nil || secs <= 0 {
+			return nil, fmt.Errorf("line %d: budget %q is not a positive number of seconds", line, f[2])
+		}
+		row := Row{Package: f[0], Test: f[1], Seconds: secs}
+		if row.Test == "-" {
+			row.Test = ""
+		}
+		key := row.Package + "\t" + row.Test
+		if first, dup := seen[key]; dup {
+			return nil, fmt.Errorf("line %d: %s %s is already on line %d", line, f[0], f[1], first)
+		}
+		seen[key] = line
+		rows = append(rows, row)
+	}
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// matches reports whether a module-relative allowlist package names an event's
+// import path: equal, or its trailing path elements.
+func matches(rowPkg, importPath string) bool {
+	return importPath == rowPkg || strings.HasSuffix(importPath, "/"+rowPkg)
+}
+
+// budgetFor is the row's seconds for (pkg, test), or def when no row names it.
+func (b Budgets) budgetFor(pkg, test string, def float64) float64 {
+	for _, row := range b.Rows {
+		if row.Test == test && matches(row.Package, pkg) {
+			return row.Seconds
+		}
+	}
+	return def
+}
+
+// Sum folds the events into a report against one package budget and no
+// per-test budget: Judge with Budgets{Package: budget}.
 func Sum(events []Event, budget time.Duration) Report {
+	return Judge(events, Budgets{Package: budget.Seconds()})
+}
+
+// Judge folds the events into a report. A package's total is the sum of its
+// package-level Elapsed (Test == ""), judged against its allowlist row or
+// b.Package. With b.Test > 0 every top-level test (no "/" in its name: a
+// subtest's time is already its parent's) is judged against its row or b.Test.
+// Over-budget packages and tests are returned worst first, ties by name, so the
+// output never depends on map iteration.
+func Judge(events []Event, b Budgets) Report {
 	byPackage := map[string]*Package{}
 	var order []string
+	var overTests []OverTest
 	for _, ev := range events {
 		if ev.Package == "" || !terminalAction(ev.Action) {
 			continue
@@ -125,9 +222,23 @@ func Sum(events []Event, budget time.Duration) Report {
 		if ev.Elapsed > 0 {
 			pkg.Slowest = append(pkg.Slowest, Test{Name: ev.Test, Seconds: ev.Elapsed})
 		}
+		if b.Test > 0 && !strings.Contains(ev.Test, "/") {
+			if limit := b.budgetFor(ev.Package, ev.Test, b.Test); ev.Elapsed > limit {
+				overTests = append(overTests, OverTest{Package: ev.Package, Name: ev.Test, Seconds: ev.Elapsed, Budget: limit})
+			}
+		}
 	}
 
-	report := Report{Packages: len(order), Budget: budget}
+	report := Report{Packages: len(order), Budget: time.Duration(b.Package * float64(time.Second)), OverTests: overTests}
+	sort.SliceStable(report.OverTests, func(i, j int) bool {
+		if report.OverTests[i].Seconds != report.OverTests[j].Seconds {
+			return report.OverTests[i].Seconds > report.OverTests[j].Seconds
+		}
+		if report.OverTests[i].Package != report.OverTests[j].Package {
+			return report.OverTests[i].Package < report.OverTests[j].Package
+		}
+		return report.OverTests[i].Name < report.OverTests[j].Name
+	})
 	for _, name := range order {
 		pkg := byPackage[name]
 		sort.SliceStable(pkg.Slowest, func(i, j int) bool {
@@ -139,7 +250,8 @@ func Sum(events []Event, budget time.Duration) Report {
 		if report.Slowest.Name == "" || pkg.Seconds > report.Slowest.Seconds {
 			report.Slowest = *pkg
 		}
-		if pkg.Seconds > budget.Seconds() {
+		pkg.Budget = b.budgetFor(name, "", b.Package)
+		if pkg.Seconds > pkg.Budget {
 			report.Over = append(report.Over, *pkg)
 		}
 	}
@@ -159,20 +271,31 @@ func Seconds(seconds float64) string {
 	return strconv.FormatFloat(seconds, 'f', 1, 64) + "s"
 }
 
-// ExitCode is 2 when any package is over budget, 0 when none is.
+// budgetText renders a budget in seconds without a trailing .0: 60 stays
+// "60s", 1.5 is "1.5s".
+func budgetText(seconds float64) string {
+	return strconv.FormatFloat(seconds, 'f', -1, 64) + "s"
+}
+
+// ExitCode is 2 when any package or test is over budget, 0 when none is.
 func (r Report) ExitCode() int {
-	if len(r.Over) > 0 {
+	if len(r.Over) > 0 || len(r.OverTests) > 0 {
 		return 2
 	}
 	return 0
 }
 
-// OverLines is one line per over-budget package, worst first.
+// OverLines is one line per over-budget package, worst first, then one per
+// over-budget test, worst first.
 func (r Report) OverLines() []string {
-	lines := make([]string, 0, len(r.Over))
+	lines := make([]string, 0, len(r.Over)+len(r.OverTests))
 	for _, pkg := range r.Over {
-		lines = append(lines, fmt.Sprintf("CI-SLOW package=%s seconds=%s budget=%ds slowest=%s",
-			oneline.Field(pkg.Name), Seconds(pkg.Seconds), int64(r.Budget.Seconds()), slowestList(pkg)))
+		lines = append(lines, fmt.Sprintf("CI-SLOW package=%s seconds=%s budget=%s slowest=%s",
+			oneline.Field(pkg.Name), Seconds(pkg.Seconds), budgetText(pkg.Budget), slowestList(pkg)))
+	}
+	for _, test := range r.OverTests {
+		lines = append(lines, fmt.Sprintf("CI-SLOW test=%s package=%s seconds=%s budget=%s",
+			oneline.Field(test.Name), oneline.Field(test.Package), Seconds(test.Seconds), budgetText(test.Budget)))
 	}
 	return lines
 }

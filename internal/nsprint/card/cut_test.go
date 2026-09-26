@@ -17,7 +17,7 @@ func TestCutDependsVocabulary(t *testing.T) {
 		{"none (WHY: nothing)", "none", "nothing", ""},
 		{"mas-bandwidth/nova-tools#3502 (WHY: the card record shape)", "mas-bandwidth/nova-tools#3502", "the card record shape", ""},
 		{"#3502, rowan-tools#12 (landed), stream/swarm-cards, task:t1, card-7", "mas-bandwidth/nova-tools#3502,mas-bandwidth/rowan-tools#12,stream/swarm-cards,task:t1,card-7", "", ""},
-		{"after the harvest lands", "", "", `DEPENDS-ON: "after the harvest lands" is not a card id, owner/repo#n, stream/<slug> or task:<id>`},
+		{"after the harvest lands", "", "", `DEPENDS-ON: "after the harvest lands" is not a card id, owner/repo#n, <slug>:sentinel or task:<id>`},
 		{"(WHY: only a why)", "", "", "DEPENDS-ON names nothing; write none"},
 	} {
 		deps, why, err := CutDepends("mas-bandwidth/nova-tools", c.in)

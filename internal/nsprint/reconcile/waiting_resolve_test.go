@@ -223,3 +223,116 @@ func TestWaitingResolveCountsRefusedMoves(t *testing.T) {
 		t.Fatalf("err %v, want the refusal named", err)
 	}
 }
+
+// TestSentinelEdgeNeverReachesReadyUnmet is #4318's class test: a card whose
+// DEPENDS-ON names another stream's sentinel (bare or task:<id>) stays
+// waiting, the receipt naming the sentinel, until that sentinel is landed;
+// the sentinel itself is never the duty's to move (it is not counted), and
+// task land refuses it while a card of its stream is live.
+func TestSentinelEdgeNeverReachesReadyUnmet(t *testing.T) {
+	t.Parallel()
+	_, c := wstest.Start(t)
+	ctx := context.Background()
+	const a, b = "a: one", "b: two"
+	// Stream a: one working card and its sentinel waiting, written in the ws
+	// shape; stream b: two cards waiting on a's sentinel in both spellings.
+	sid := ws.SentinelID(a)
+	for _, s := range []string{a, b} {
+		must(t, c.SAdd(ctx, "ws:names", s).Err())
+	}
+	must(t, c.ZAdd(ctx, "ws:order", redis.Z{Score: 1, Member: a}, redis.Z{Score: 2, Member: b}).Err())
+	put := func(id, stream, state string, created int64, kv ...string) {
+		fields := []any{"stream", stream, "state", state, "created_at", cardEpoch + created}
+		for _, f := range kv {
+			fields = append(fields, f)
+		}
+		must(t, c.HSet(ctx, "task:"+id, fields...).Err())
+		must(t, c.ZAdd(ctx, ws.Key(stream, state), redis.Z{Score: float64(cardEpoch + created), Member: id}).Err())
+	}
+	put("A1", a, "working", 1000)
+	put(sid, a, "waiting", 999, "kind", "sentinel")
+	put("B1", b, "waiting", 2000, "blocked_on", sid)
+	put("B2", b, "waiting", 2001, "blocked_on", "task:"+sid)
+	// stream c: its stop ended (a rename's done/fail... or any done): never
+	// met, only a landing meets a sentinel edge
+	const cc = "c: three"
+	must(t, c.SAdd(ctx, "ws:names", cc).Err())
+	must(t, c.ZAdd(ctx, "ws:order", redis.Z{Score: 3, Member: cc}).Err())
+	csid := ws.SentinelID(cc)
+	put(csid, cc, "done", 998, "kind", "sentinel", "where", "done", "where_ok", "ok")
+	put("B3", b, "waiting", 2002, "blocked_on", csid)
+
+	st := store.New(c)
+	lease, err := reconcile.Acquire(ctx, st, reconcile.AcquireOptions{Host: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	duty := &reconcile.WaitingResolve{Client: c, Out: &out}
+	if counts, err := duty.Run(ctx, lease); err != nil || counts.Routed != 0 {
+		t.Fatalf("routed %d err %v; nothing is landed", counts.Routed, err)
+	}
+	want := `RESOLVE stream="b: two" ready=0 still=3 on=` + sid + `,` + csid + `,task:` + sid + ` unknown=-` + "\n"
+	if out.String() != want {
+		t.Fatalf("receipt\n%q\nwant\n%q (stream a has only its sentinel waiting: no line)", out.String(), want)
+	}
+	if n, _ := c.ZCard(ctx, ws.Key(b, "ready")).Result(); n != 0 {
+		t.Fatalf("ready %d, want 0: an unmet sentinel edge never reaches ready", n)
+	}
+
+	// The sentinel cannot land around A1; A1's landing, the stream's last,
+	// lands it by structure at the same sha.
+	if _, err := taskcard.Land(ctx, c, sid, "test", "0123abcd", ""); err == nil || !strings.Contains(err.Error(), "SENTINEL task:"+sid+" lands after the 1 live card(s) of stream a: one (first A1 working)") {
+		t.Fatalf("sentinel land with A1 live: %v", err)
+	}
+	if _, err := taskcard.Land(ctx, c, "A1", "test", "0123abcd", "merged"); err != nil {
+		t.Fatal(err)
+	}
+	if h := c.HGetAll(ctx, "task:"+sid).Val(); h["where"] != "landed" || h["merge_sha"] != "0123abcd" {
+		t.Fatalf("the stop after the last landing: %v", h)
+	}
+	out.Reset()
+	if counts, err := duty.Run(ctx, lease); err != nil || counts.Routed != 2 {
+		t.Fatalf("after the sentinel landed: routed %d err %v", counts.Routed, err)
+	}
+	ready, _ := c.ZRange(ctx, ws.Key(b, "ready"), 0, -1).Result()
+	if strings.Join(ready, " ") != "B1 B2" {
+		t.Fatalf("ready %v", ready)
+	}
+	if out.String() != `RESOLVE stream="b: two" ready=2 still=1 on=`+csid+` unknown=-`+"\n" {
+		t.Fatalf("receipt %q", out.String())
+	}
+	if err := ws.Check(ctx, c, []string{"A1", sid, "B1", "B2", "B3"}); err != nil {
+		t.Fatalf("invariant: %v", err)
+	}
+
+	// A stop whose last card was cancelled has no landing to ride: the duty
+	// names it with the remedy, once, until it lands.
+	const d = "d: four"
+	must(t, c.SAdd(ctx, "ws:names", d).Err())
+	must(t, c.ZAdd(ctx, "ws:order", redis.Z{Score: 4, Member: d}).Err())
+	dsid := ws.SentinelID(d)
+	put(dsid, d, "waiting", 3000, "kind", "sentinel", "where", "waiting")
+	put("D1", d, "waiting", 3001, "where", "waiting")
+	out.Reset()
+	if _, err := duty.Run(ctx, lease); err != nil || strings.Contains(out.String(), "SENTINEL") {
+		t.Fatalf("D1 live: %v %q", err, out.String())
+	}
+	if _, err := taskcard.Cancel(ctx, c, "D1", "test", "not needed"); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if _, err := duty.Run(ctx, lease); err != nil {
+		t.Fatal(err)
+	}
+	if want := `SENTINEL stream="d: four" id=` + dsid + ` live=0 ready-to-land: nova-sprint task land --id ` + dsid + ` --sha <merge sha>` + "\n"; out.String() != want {
+		t.Fatalf("remedy\n%q\nwant\n%q", out.String(), want)
+	}
+	out.Reset()
+	if _, err := duty.Run(ctx, lease); err != nil || out.Len() != 0 {
+		t.Fatalf("the remedy prints once: %q", out.String())
+	}
+	if _, err := taskcard.Land(ctx, c, dsid, "test", "abcd0123", ""); err != nil {
+		t.Fatalf("land the stop by hand: %v", err)
+	}
+}

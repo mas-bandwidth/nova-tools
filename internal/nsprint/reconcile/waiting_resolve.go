@@ -15,7 +15,11 @@ package reconcile
 // against the records:
 //
 //   - task:<id> (or a bare id) is met when task:<id> is landed (state landed,
-//     or where landed, or where done with where_ok not fail);
+//     or where landed, or where done with where_ok not fail); a stream's
+//     sentinel, <slug>:sentinel (nova-tools #4318, ws.SentinelID), is a
+//     task id like any other, so a stream that must wait for another whole
+//     stream puts DEPENDS-ON <slug>:sentinel on its first card and that is
+//     the one kind of edge there is;
 //   - owner/repo#n is met when a task in a ws set whose pr, ref or origin
 //     names it is landed;
 //   - an entry with no record (no task:<id>; no task in any ws set naming the
@@ -23,6 +27,17 @@ package reconcile
 //     guessed: no evidence is not negative evidence;
 //   - blocked_on "none" or "-" has nothing to wait on and is met; an empty
 //     blocked_on is no evidence either way and the task stays waiting.
+//
+// A stream's own sentinel is never a waiter here: it waits in its stream
+// for every other card to land and lands by structure with the last one
+// (TK.land_stop in 02_card_move.lua; task land by hand when the last card
+// was cancelled instead). The duty leaves it out of the counts, and when a
+// waiting sentinel has no live card left it prints the remedy:
+//
+//	SENTINEL stream=<s> id=<slug>:sentinel live=0 ready-to-land: nova-sprint task land --id <slug>:sentinel --sha <merge sha>
+//
+// A sentinel edge is met by landed alone (never by done: a sentinel's done
+// is a rename's), so a dependent stream is released only by the stop.
 //
 // A task whose every entry is met moves waiting -> ready through
 // ns_ws_move_many (ws.MoveMany, the ws index's one writer), one call per
@@ -78,6 +93,15 @@ type ResolveLine struct {
 	On      []string   // unmet dependencies that have a record
 	Unknown []string   // dependencies with no record
 	Refused []ws.IDWhy // ids ns_ws_move_many refused (left waiting, counted in Still)
+	// Stop is the stream's waiting sentinel with no live card left (its
+	// landing by structure had no last landing: the last card was cancelled).
+	Stop string
+}
+
+// StopLine is the remedy line for a sentinel ready to land.
+func (r ResolveLine) StopLine() string {
+	return fmt.Sprintf("SENTINEL stream=%s id=%s live=0 ready-to-land: nova-sprint task land --id %s --sha <merge sha>",
+		wrField(r.Stream), r.Stop, r.Stop)
 }
 
 // String is the receipt line.
@@ -124,12 +148,17 @@ func (d *WaitingResolve) print(lines []ResolveLine) {
 	for _, r := range lines {
 		// What is still waiting, and on what: an idle pass over the same
 		// waiting set prints nothing.
-		held := fmt.Sprintf("%d %s %s", r.Still, wrList(r.On), wrList(r.Unknown))
+		held := fmt.Sprintf("%d %s %s %s", r.Still, wrList(r.On), wrList(r.Unknown), r.Stop)
 		if len(r.Ready) == 0 && d.last[r.Stream] == held {
 			continue
 		}
 		d.last[r.Stream] = held
-		_, _ = fmt.Fprintln(d.Out, r.String())
+		if r.Still > 0 || len(r.Ready) > 0 {
+			_, _ = fmt.Fprintln(d.Out, r.String())
+		}
+		if r.Stop != "" {
+			_, _ = fmt.Fprintln(d.Out, r.StopLine())
+		}
 	}
 }
 
@@ -163,7 +192,8 @@ const (
 var (
 	wrRefRE = regexp.MustCompile(`^(?:([A-Za-z0-9_.-]+)/)?([A-Za-z0-9_.-]+)#([0-9]+)$`)
 	wrURLRE = regexp.MustCompile(`^https?://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/(?:issues|pull)/([0-9]+)(?:[/?#].*)?$`)
-	wrIDRE  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+	// a task id, or a stream sentinel's (<slug>:sentinel, ws.IsSentinel)
+	wrIDRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$|^[a-z0-9][a-z0-9-]*:sentinel$`)
 )
 
 // wrRefKey is owner/repo#n (the owner defaulting to prkey.DefaultOwner),
@@ -185,21 +215,16 @@ func wrRefKey(s string) string {
 	return strings.ToLower(owner + "/" + m[2] + "#" + m[3])
 }
 
-// wrParse splits a blocked_on value. none is true for "none" or "-" alone;
-// an empty value returns no deps and none false.
+// wrParse splits a blocked_on value (ws.SplitDeps, the one splitter). none
+// is true for "none" or "-" alone; an empty value returns no deps and none
+// false.
 func wrParse(text string) (deps []wrDep, none bool) {
-	parts := strings.FieldsFunc(text, func(r rune) bool {
-		return r == ',' || r == ';' || r == ' ' || r == '\t' || r == '\n' || r == '\r'
-	})
-	if len(parts) == 1 && (parts[0] == "none" || parts[0] == "-") {
-		return nil, true
+	parts := ws.SplitDeps(text)
+	if len(parts) == 0 {
+		t := strings.TrimSpace(text)
+		return nil, t == "none" || t == "-"
 	}
-	seen := map[string]bool{}
 	for _, p := range parts {
-		if seen[p] {
-			continue
-		}
-		seen[p] = true
 		dep := wrDep{raw: p}
 		if id, ok := strings.CutPrefix(p, "task:"); ok {
 			if wrIDRE.MatchString(id) {
@@ -269,12 +294,22 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 		return nil, fmt.Errorf("waiting-resolve: waiting sets: %w", err)
 	}
 	var waiters []*wrWaiter
+	stops := map[string]string{} // stream -> its waiting sentinel
 	for i, s := range streams {
 		for _, id := range waitCmds[i].Val() {
+			if ws.IsSentinel(id) {
+				stops[s] = id // the stream's stop: it lands by structure, not by this duty
+				continue
+			}
 			waiters = append(waiters, &wrWaiter{id: id, stream: s})
 		}
 	}
-	if len(waiters) == 0 {
+	// A waiting stop with no live card left is named with its remedy.
+	ready, err := wrStopsReady(ctx, c, streams, stops)
+	if err != nil {
+		return nil, err
+	}
+	if len(waiters) == 0 && len(ready) == 0 {
 		return nil, nil
 	}
 
@@ -326,6 +361,10 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 		switch {
 		case state == "" && where == "":
 			taskDeps[id] = wrUnknown
+		case ws.IsSentinel(id) && (state == "landed" || where == "landed"):
+			taskDeps[id] = wrMet // a stop is met by its landing alone
+		case ws.IsSentinel(id):
+			taskDeps[id] = wrUnmet
 		case wrLanded(state, where, ok):
 			taskDeps[id] = wrMet
 		default:
@@ -376,6 +415,12 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 	// lines never grows past len(streams), so the pointers into it hold.
 	lines := make([]ResolveLine, 0, len(streams))
 	byStream := map[string]*ResolveLine{}
+	for _, s := range streams {
+		if ready[s] {
+			lines = append(lines, ResolveLine{Stream: s, Stop: stops[s]})
+			byStream[s] = &lines[len(lines)-1]
+		}
+	}
 	type group struct {
 		stream, why string
 		ids         []string
@@ -478,6 +523,38 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 		return lines, fmt.Errorf("waiting-resolve: %s", strings.Join(errs, "; "))
 	}
 	return lines, nil
+}
+
+// wrStopsReady reads, for every stream with a waiting sentinel, whether any
+// other card of the stream is live (waiting, ready, working, review,
+// merging or parked), one pipelined round; ready[s] is true when none is.
+func wrStopsReady(ctx context.Context, c *redis.Client, streams []string, stops map[string]string) (map[string]bool, error) {
+	ready := map[string]bool{}
+	if len(stops) == 0 {
+		return ready, nil
+	}
+	live := []string{ws.Waiting, ws.Ready, ws.Working, ws.Review, ws.Merging, ws.Parked}
+	pipe := c.Pipeline()
+	cmds := map[string][]*ws.CardCountCmd{}
+	for _, s := range streams {
+		if stops[s] == "" {
+			continue
+		}
+		for _, w := range live {
+			cmds[s] = append(cmds[s], ws.QueueCardCount(ctx, pipe, s, w))
+		}
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, fmt.Errorf("waiting-resolve: stops: %w", err)
+	}
+	for s, cs := range cmds {
+		n := int64(0)
+		for _, cmd := range cs {
+			n += cmd.Val()
+		}
+		ready[s] = n == 0
+	}
+	return ready, nil
 }
 
 // wrNames is every owner/repo#n a task's pr, ref and origin name.

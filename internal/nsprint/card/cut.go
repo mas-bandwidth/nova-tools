@@ -4,20 +4,18 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"os/exec"
+	"github.com/mas-bandwidth/nova-tools/internal/gh"
+	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ctxindex"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 	"github.com/redis/go-redis/v9"
 )
@@ -271,7 +269,8 @@ func unquoteCode(v string) string {
 // "none" stays none; "#<n>" and "<name>#<n>" become owner/name#n in repo's
 // owner; a parenthetical "(WHY: ...)" is returned as the why and every other
 // parenthetical is dropped. An entry that is still not a card id,
-// owner/repo#n, stream/<slug> or task:<id> is refused.
+// owner/repo#n, <slug>:sentinel or task:<id> (stream/<slug>, the older
+// spelling of a stream edge, is its sentinel) is refused.
 func CutDepends(repo, value string) (string, string, error) {
 	why := ""
 	value = parenRE.ReplaceAllStringFunc(value, func(p string) string {
@@ -298,7 +297,7 @@ func CutDepends(repo, value string) (string, string, error) {
 			entry = owner + "/" + m[1] + "#" + m[2]
 		}
 		if _, err := parseDependency(entry); err != nil || strings.ContainsAny(entry, " \t") {
-			return "", "", fmt.Errorf("DEPENDS-ON: %q is not a card id, owner/repo#n, stream/<slug> or task:<id>", entry)
+			return "", "", fmt.Errorf("DEPENDS-ON: %q is not a card id, owner/repo#n, <slug>:sentinel or task:<id>", entry)
 		}
 		entries = append(entries, entry)
 	}
@@ -324,50 +323,42 @@ func Cut(ctx context.Context, client *redis.Client, src IssueSource, in CutInput
 	return c, res, nil
 }
 
-// GHIssues is the real IssueSource: `gh api` over REST (never GraphQL), with
-// the caller's GH_CONFIG_DIR, behind the test host guard.
+// GHIssues is the real IssueSource: the one GitHub client (#4343), REST
+// only, never GraphQL; the issue read is the import (issue -> card).
 type GHIssues struct {
-	Program string // the gh binary; "" is gh on PATH
+	Client *gh.Client
 }
 
 // Issue implements IssueSource.
 func (g GHIssues) Issue(ctx context.Context, repo string, n int) (Issue, error) {
-	out, err := g.api(ctx, "repos/"+repo+"/issues/"+strconv.Itoa(n), "{title: .title, body: (.body // \"\"), state: .state}")
-	if err != nil {
+	if g.Client == nil {
+		return Issue{}, errors.New("card: no GitHub client")
+	}
+	var out struct {
+		Title string  `json:"title"`
+		Body  *string `json:"body"`
+		State string  `json:"state"`
+	}
+	if _, err := g.Client.Do(ctx, http.MethodGet, "/repos/"+repo+"/issues/"+strconv.Itoa(n), nil, &out); err != nil {
 		return Issue{}, err
 	}
-	var is Issue
-	if err := json.Unmarshal(out, &is); err != nil {
-		return Issue{}, fmt.Errorf("gh: %s#%d: %v", repo, n, err)
+	is := Issue{Title: out.Title, State: out.State}
+	if out.Body != nil {
+		is.Body = *out.Body
 	}
 	return is, nil
 }
 
 // BranchSHA implements IssueSource.
 func (g GHIssues) BranchSHA(ctx context.Context, repo, ref string) (string, error) {
-	out, err := g.api(ctx, "repos/"+repo+"/commits/"+ref, ".sha")
-	return strings.TrimSpace(string(out)), err
-}
-
-func (g GHIssues) api(ctx context.Context, path, jq string) ([]byte, error) {
-	program := g.Program
-	if program == "" {
-		program = "gh"
+	if g.Client == nil {
+		return "", errors.New("card: no GitHub client")
 	}
-	args := []string{"api", path, "--jq", jq}
-	testguard.RefuseHosts(program, args...)
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, program, args...)
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			msg = err.Error()
-		}
-		return nil, fmt.Errorf("gh api %s: %s", path, oneline.Escape(msg))
+	var out struct {
+		SHA string `json:"sha"`
 	}
-	return out, nil
+	if _, err := g.Client.Do(ctx, http.MethodGet, "/repos/"+repo+"/commits/"+ref, nil, &out); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out.SHA), nil
 }

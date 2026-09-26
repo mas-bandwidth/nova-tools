@@ -231,7 +231,7 @@ func TestControl3530NoPitstopNoSprint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := snap.Render(now); !strings.HasPrefix(got, "SPRINT TABLE\n\n592/598 left, 1% done -> ~11840m\n\n") {
+	if got := snap.Render(now); !strings.HasPrefix(got, "SPRINT TABLE\n\n592/598 left, 1% done -> ~11840m gh 0/h\n\n") {
 		t.Fatalf("headline:\n%s", got)
 	}
 	mr := miniredis.RunT(t)

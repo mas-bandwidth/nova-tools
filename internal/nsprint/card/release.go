@@ -3,11 +3,13 @@ package card
 import (
 	"context"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/gh"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/deal"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/redis/go-redis/v9"
 )
@@ -17,7 +19,7 @@ import (
 // BASE, an issue closed, a stream landed, or a task done. Unresolved cards stay
 // in the waiting set; the set is not copied into the pool.
 func Release(ctx context.Context, client *redis.Client, sprint string) VerbResult {
-	return ReleaseWith(ctx, client, sprint, deal.GH{})
+	return ReleaseWith(ctx, client, sprint, deal.GH{Client: gh.New("card release", client), Redis: client})
 }
 
 // ReleaseWith is Release with an explicit forge seam. One invocation is one
@@ -91,8 +93,6 @@ func releasableCards(ctx context.Context, client *redis.Client, sprint string, r
 				localKeys[dep.Typed()] = keyCard(sprint, dep.Value)
 			case dependencyTask:
 				localKeys[dep.Typed()] = keyTask(sprint, dep.Value)
-			case dependencyStream:
-				localKeys[dep.Typed()] = keyStream(sprint, dep.Value)
 			}
 		}
 	}
@@ -128,7 +128,7 @@ func releasableCards(ctx context.Context, client *redis.Client, sprint string, r
 				}
 				continue
 			}
-			if !localDependencyReady(dep.Kind, localReads[dep.Typed()].Val()) {
+			if !localDependencyReady(dep, localReads[dep.Typed()].Val()) {
 				ok = false
 				break
 			}
@@ -154,11 +154,7 @@ func parseStoredDependencies(label, raw, typed string) ([]dependency, error) {
 		dep := dependency{Kind: dependencyKind(kind), Value: value}
 		switch dep.Kind {
 		case dependencyCard, dependencyTask:
-			if !idRE.MatchString(value) {
-				return nil, fmt.Errorf("DEPENDS-ON typed entry %q is invalid", entry)
-			}
-		case dependencyStream:
-			if !streamRE.MatchString(value) {
+			if !idRE.MatchString(value) && !(dep.Kind == dependencyTask && ws.IsSentinel(value)) {
 				return nil, fmt.Errorf("DEPENDS-ON typed entry %q is invalid", entry)
 			}
 		case dependencyGitHub:

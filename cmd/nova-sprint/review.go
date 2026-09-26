@@ -33,7 +33,7 @@ import (
 
 // reviewForge closes a dropped card's origin issue; tests swap it (CI-NET:
 // no host in a test).
-var reviewForge = func() reconcile.IssueCloser { return ghIssueCloser{} }
+var reviewForge = func(st *store.Store) reconcile.IssueCloser { return ghIssueCloser{verb: "review", rdb: st.Client()} }
 
 func init() {
 	register(Verb{Name: "review", Summary: "review post: the typed verdict that moves a failed card out of review (#4072)",
@@ -100,7 +100,7 @@ func runReview(ctx context.Context, args []string, out, errOut io.Writer) int {
 		get := func(i int) string { s, _ := rec[i].(string); return s }
 		repo, n, ok := reviewIssue(get(0), get(1), get(2))
 		var suffix string
-		suffix, code = reviewClose(ctx, reviewForge(), ok, repo, n, get(3))
+		suffix, code = reviewClose(ctx, reviewForge(st), ok, repo, n, get(3))
 		line += suffix
 	}
 	fmt.Fprintf(out, "%s ms=%d\n", line, time.Since(start).Milliseconds())

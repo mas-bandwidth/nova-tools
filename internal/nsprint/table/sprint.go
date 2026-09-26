@@ -69,6 +69,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/gh"
 	"slices"
 	"sort"
 	"strconv"
@@ -133,6 +134,7 @@ type SprintSnapshot struct {
 	Pitstop    bool
 	Streams    []StreamRow
 	LandedHour int64 // ws:log moves to landed in the hour before the read
+	GHHour     int64 // GitHub calls in the hour before the read (gh:calls:all, #4343)
 	// Events is proc:progress as the progress duty wrote it (#4319): the
 	// asks so far, the last EVENT line, and the last pass's duty refusals.
 	// The table prints one EVENTS line from it only when non-zero.
@@ -416,14 +418,18 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	}
 	hourAgo := now.Add(-time.Hour).UnixMilli()
 	log := pipe.XRangeN(ctx, "ws:log", strconv.FormatInt(hourAgo, 10), "+", logWindowMax)
+	ghAll := pipe.HGetAll(ctx, gh.TotalKey)
 	var lock *redis.Cmd
 	if cfg.LockKey != "" {
 		lock = pipe.Eval(ctx, lockRefreshScript, []string{cfg.LockKey}, cfg.LockToken, lockTTL(cfg).Milliseconds())
 	}
-	counts := make([][]*redis.IntCmd, len(r.streams))
+	// Each cell is the set's cards: the ZCARD less the stream's sentinel
+	// when it is in that set (ws.QueueCardCount, #4318: the stop is not a
+	// card, no new column).
+	counts := make([][]*ws.CardCountCmd, len(r.streams))
 	for i, s := range r.streams {
 		for _, state := range WSStates {
-			counts[i] = append(counts[i], pipe.ZCard(ctx, "ws:"+s+":"+state))
+			counts[i] = append(counts[i], ws.QueueCardCount(ctx, pipe, s, state))
 		}
 	}
 	type consumerCmds struct {
@@ -515,10 +521,14 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		snap.Errors = append(snap.Errors, "ws:log not read (eta rate unknown): "+err.Error())
 	} else {
 		for _, m := range msgs {
-			if to, _ := m.Values["to"].(string); to == "landed" {
-				snap.LandedHour++
+			id, _ := m.Values["id"].(string)
+			if to, _ := m.Values["to"].(string); to == "landed" && !ws.IsSentinel(id) {
+				snap.LandedHour++ // a stream's stop landing is not a card landed
 			}
 		}
+	}
+	if m, err := ghAll.Result(); err == nil {
+		snap.GHHour = gh.HourOf(m, now)
 	}
 	if lock != nil {
 		if n, err := lock.Int64(); err != nil || n == 0 {
@@ -636,7 +646,7 @@ func (s *SprintSnapshot) Render(now time.Time) string {
 	// newline left"): the title's blank line is then the gap before the
 	// worker table.
 	if left, y, pct, eta := s.XY(); y > 0 {
-		fmt.Fprintf(&b, "%d/%d left, %d%% done -> ~%dm\n\n", left, y, pct, eta)
+		fmt.Fprintf(&b, "%d/%d left, %d%% done -> ~%dm gh %d/h\n\n", left, y, pct, eta, s.GHHour)
 	}
 
 	s.renderStreams(&b)

@@ -8,15 +8,15 @@ package ci
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/gh"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/redis/go-redis/v9"
 )
 
 // CompareRequest is one parity read.
@@ -24,9 +24,10 @@ type CompareRequest struct {
 	Repo    string
 	SHA     string
 	Owner   string // GitHub owner; empty: mas-bandwidth
-	BaseURL string // empty: https://api.github.com
+	BaseURL string // empty: the client's root
 	Token   string
 	HTTP    *http.Client
+	Redis   redis.Cmdable // counts the call under ci-compare when set
 }
 
 // Comparison is one check beside its GitHub conclusion.
@@ -59,49 +60,25 @@ type checkRun struct {
 	Conclusion string `json:"conclusion"`
 }
 
-// FetchCheckRuns is the one REST call: GET
-// /repos/<owner>/<repo>/commits/<sha>/check-runs, first page of 100. It never
-// follows a link header and never calls the reruns or the workflow-runs
-// endpoints.
+// FetchCheckRuns is the one REST call, through the one GitHub client
+// (internal/gh, #4343): GET /repos/<owner>/<repo>/commits/<sha>/check-runs,
+// first page of 100. It never follows a link header and never calls the
+// reruns or the workflow-runs endpoints.
 func FetchCheckRuns(ctx context.Context, req CompareRequest) ([]checkRun, error) {
 	owner := req.Owner
 	if owner == "" {
 		owner = "mas-bandwidth"
 	}
-	base := strings.TrimRight(req.BaseURL, "/")
-	if base == "" {
-		base = "https://api.github.com"
-	}
-	url := base + "/repos/" + owner + "/" + req.Repo + "/commits/" + req.SHA + "/check-runs?per_page=100"
-	hreq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	hreq.Header.Set("Accept", "application/vnd.github+json")
-	hreq.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	if req.Token != "" {
-		hreq.Header.Set("Authorization", "Bearer "+req.Token)
-	}
-	client := req.HTTP
-	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
-	}
-	resp, err := client.Do(hreq)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("check-runs %s@%s: HTTP %d: %s", req.Repo, req.SHA[:8], resp.StatusCode, strings.TrimSpace(string(body)))
-	}
+	c := &gh.Client{API: req.BaseURL, Token: req.Token, HTTP: req.HTTP, Verb: "ci compare", Redis: req.Redis}
 	var v struct {
 		CheckRuns []checkRun `json:"check_runs"`
 	}
-	if err := json.Unmarshal(body, &v); err != nil {
+	_, err := c.Do(ctx, http.MethodGet, "/repos/"+owner+"/"+req.Repo+"/commits/"+req.SHA+"/check-runs?per_page=100", nil, &v)
+	if err != nil {
+		var herr *gh.HTTPError
+		if errors.As(err, &herr) {
+			return nil, fmt.Errorf("check-runs %s@%s: HTTP %d: %s", req.Repo, req.SHA[:8], herr.Status, herr.Body)
+		}
 		return nil, fmt.Errorf("check-runs %s@%s: %w", req.Repo, req.SHA[:8], err)
 	}
 	return v.CheckRuns, nil

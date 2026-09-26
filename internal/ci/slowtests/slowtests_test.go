@@ -154,3 +154,50 @@ func TestSlowTestsOverPackagesAreOrderedWorstFirst(t *testing.T) {
 		t.Errorf("second over line = %q, want the smaller offender second", lines[1])
 	}
 }
+
+// The unit tier's budgets (Glenn 2026-09-26 11:20 AM ET: "unit tests be < 2s
+// (ideally <1)"): a package over two seconds and a top-level test over one are
+// each a finding, and an allowlist row raises exactly the budget it names.
+func TestSlowTestsJudgesPackagesAndTestsAgainstTheirRows(t *testing.T) {
+	t.Parallel()
+
+	rows, err := ParseAllowlist(strings.NewReader("# pkg\ttest\tseconds\n\ninternal/ci\t-\t17.1\ninternal/ci\tTestBig\t11.1\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := `{"Action":"pass","Package":"example.com/m/internal/ci","Test":"TestBig","Elapsed":7.4}
+{"Action":"pass","Package":"example.com/m/internal/ci","Test":"TestSmall","Elapsed":1.2}
+{"Action":"pass","Package":"example.com/m/internal/ci","Test":"TestSmall/sub","Elapsed":1.1}
+{"Action":"pass","Package":"example.com/m/internal/ci","Elapsed":11.4}
+{"Action":"pass","Package":"example.com/m/cmd/fast","Test":"TestA","Elapsed":0.4}
+{"Action":"pass","Package":"example.com/m/cmd/fast","Elapsed":2.5}
+`
+	report := Judge(slowEvents(t, fixture), Budgets{Package: 2, Test: 1, Rows: rows})
+	if got, want := report.ExitCode(), 2; got != want {
+		t.Errorf("ExitCode = %d, want %d", got, want)
+	}
+	want := []string{
+		"CI-SLOW package=example.com/m/cmd/fast seconds=2.5s budget=2s slowest=TestA:0.4s",
+		"CI-SLOW test=TestSmall package=example.com/m/internal/ci seconds=1.2s budget=1s",
+	}
+	if got := report.OverLines(); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("OverLines =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// A malformed allowlist row, a budget that is not positive, and a row written
+// twice are refused with the line named, never read as "no budget".
+func TestSlowTestsAllowlistRefusesABadRow(t *testing.T) {
+	t.Parallel()
+
+	for _, text := range []string{
+		"internal/ci TestA 2\n",
+		"internal/ci\tTestA\t0\n",
+		"internal/ci\tTestA\tfast\n",
+		"internal/ci\tTestA\t2\ninternal/ci\tTestA\t3\n",
+	} {
+		if _, err := ParseAllowlist(strings.NewReader(text)); err == nil || !strings.Contains(err.Error(), "line ") {
+			t.Errorf("ParseAllowlist(%q) = %v, want an error naming the line", text, err)
+		}
+	}
+}

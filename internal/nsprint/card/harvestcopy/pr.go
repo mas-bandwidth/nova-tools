@@ -1,15 +1,14 @@
 package harvestcopy
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/gh"
 )
 
 // TitleMax is how much of a DONE-WHEN a title made from one carries
@@ -104,56 +103,23 @@ func PRBody(req Request) string {
 	return b.String()
 }
 
-// rest is one REST call: JSON in, JSON out, a bearer token, the GitHub
-// headers. A non-2xx reply is an error carrying the status and GitHub's
-// message; the status is returned beside it.
+// rest is one REST call through the one GitHub client (internal/gh,
+// #4343): JSON in, JSON out, a bearer token, the GitHub headers, counted
+// under card-harvest. A non-2xx reply is an error carrying the status and
+// GitHub's message; the status is returned beside it.
 func rest(ctx context.Context, req Request, method, path string, body any, out any) (int, error) {
-	api := strings.TrimRight(req.API, "/")
-	if api == "" {
-		api = DefaultAPI
-	}
-	var rd io.Reader
-	if body != nil {
-		b, err := json.Marshal(body)
-		if err != nil {
-			return 0, err
-		}
-		rd = bytes.NewReader(b)
-	}
-	r, err := http.NewRequestWithContext(ctx, method, api+path, rd)
+	c := &gh.Client{API: req.API, Token: req.Token, HTTP: req.HTTP, Verb: "card harvest", Redis: req.Redis}
+	resp, err := c.Do(ctx, method, path, body, out)
 	if err != nil {
-		return 0, err
-	}
-	r.Header.Set("Accept", "application/vnd.github+json")
-	r.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	r.Header.Set("Authorization", "Bearer "+req.Token)
-	if body != nil {
-		r.Header.Set("Content-Type", "application/json")
-	}
-	hc := req.HTTP
-	if hc == nil {
-		hc = &http.Client{Timeout: 30 * time.Second}
-	}
-	resp, err := hc.Do(r)
-	if err != nil {
-		return 0, fmt.Errorf("%s %s: %v", method, path, err)
-	}
-	defer resp.Body.Close()
-	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		msg := oneLine(string(b))
-		var e struct {
-			Message string `json:"message"`
+		var herr *gh.HTTPError
+		if errors.As(err, &herr) {
+			msg := herr.Message
+			if msg == "" {
+				msg = oneLine(herr.Body)
+			}
+			return herr.Status, fmt.Errorf("%s %s: HTTP %d: %s", method, path, herr.Status, msg)
 		}
-		if json.Unmarshal(b, &e) == nil && e.Message != "" {
-			msg = e.Message
-		}
-		return resp.StatusCode, fmt.Errorf("%s %s: HTTP %d: %s", method, path, resp.StatusCode, msg)
+		return resp.Status, fmt.Errorf("%s %s: %v", method, path, err)
 	}
-	if out != nil && len(bytes.TrimSpace(b)) > 0 {
-		if err := json.Unmarshal(b, out); err != nil {
-			return resp.StatusCode, fmt.Errorf("%s %s: reply: %v", method, path, err)
-		}
-	}
-	return resp.StatusCode, nil
+	return resp.Status, nil
 }
