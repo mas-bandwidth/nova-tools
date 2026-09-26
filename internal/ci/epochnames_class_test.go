@@ -28,9 +28,14 @@ import (
 // miss a new spelling.
 
 // epochRuleLines are the only code lines that may spell a table set's name,
-// each the rule itself; a row whose line is gone fails, so the list only
-// shrinks.
+// each the rule itself, and the one ws:<stream>:* key that is not a table
+// set (the stream's MERGE-NOTE list, note.StreamNotesKey, #4427: a list
+// per stream, never per epoch); a row whose line is gone fails, so the
+// list only shrinks.
 var epochRuleLines = map[string][]string{
+	"internal/nsprint/note/note.go": {
+		`func StreamNotesKey(stream string) string { return "ws:" + stream + ":notes" }`,
+	},
 	"internal/nsprint/ws/ws.go": {
 		`func key0(stream, state string) string { return "ws:" + stream + ":" + state }`,
 	},

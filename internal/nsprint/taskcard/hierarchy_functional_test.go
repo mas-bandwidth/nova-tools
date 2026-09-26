@@ -238,6 +238,11 @@ func TestPlanBindRefusesAParentThatMovedOn(t *testing.T) {
 	if _, err := taskcard.BindPlan(ctx, c, parent, nil, "other-stitch", "rowan"); err == nil || !strings.Contains(err.Error(), "is a plan whose stitch is "+stitch+", not other-stitch") {
 		t.Fatalf("another stitch: %v", err)
 	}
+	// A re-cut's stitch while the old one lives is refused by name.
+	if _, err := taskcard.BindPlan(ctx, c, parent, nil, taskcard.NextStitchID(parent, stitch), "rowan"); err == nil ||
+		!strings.Contains(err.Error(), stitch+" is waiting, and a stitch is re-cut (as plan-two-stitch-2) only once the old one ended done") {
+		t.Fatalf("re-cut over a live stitch: %v", err)
+	}
 	// A parent that was taken is refused: a plan is cut while it waits.
 	other := "plan-three"
 	pushPlanCards(t, c, other, "5201")
@@ -285,8 +290,10 @@ func TestStitchLandedByAnyDoorLandsThePlan(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := taskcard.Land(ctx, c, stitch, "rowan", head(32), ""); err != nil {
-		t.Fatal(err)
+	// The move's reply names the plan it landed with its ref (the fix of
+	// #4317: task land --id <stitch> prints it so the plan's issue closes).
+	if r, err := taskcard.Land(ctx, c, stitch, "rowan", head(32), ""); err != nil || r.To != "landed" || r.Parent != parent || r.ParentRef != "mas-bandwidth/nova-tools#4317" || r.ParentOrigin != "" {
+		t.Fatalf("land of the stitch: %+v %v", r, err)
 	}
 	rec := c.HGetAll(ctx, taskcard.Key(parent)).Val()
 	if rec["where"] != "landed" || rec["merge_sha"] != head(32) || !strings.Contains(rec["why"], "stitch "+stitch+" landed") {
@@ -373,7 +380,7 @@ func TestDropChildUnsticksAPlan(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, err := taskcard.ReadPlan(ctx, c, parent)
-	if err != nil || p.State() != taskcard.Stuck || !strings.Contains(p.Remedy(), "card stitch --id plan-drop --drop 5501") {
+	if err != nil || p.State() != taskcard.Stuck || !strings.Contains(p.Remedy(), "nova-sprint card stitch --drop 5501 drops it from the plan") {
 		t.Fatalf("stuck: %s %q %v", p.State(), p.Remedy(), err)
 	}
 	p, err = taskcard.DropChild(ctx, c, "5501", "rowan")
