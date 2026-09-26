@@ -27,7 +27,7 @@ func TestSprintClearZerosBothTables(t *testing.T) {
 		t.Fatalf("cards in flight: exit %d stderr %q", code, stderr)
 	}
 	cp := filepath.Join(t.TempDir(), "clear.tsv")
-	code, stdout, stderr := runSprint("sprint", "clear", "--redis", addr, "--why", "fresh run", "--force", "--by", "rowan", "--checkpoint", cp)
+	code, stdout, stderr := runSprint("sprint", "clear", "--redis", addr, "--why", "fresh run", "--force", "--checkpoint", cp)
 	if code != 0 || !strings.HasPrefix(stdout, "CLEARED streams=") || !strings.Contains(stdout, " by=rowan ms=") {
 		t.Fatalf("clear: exit %d\n%s%s", code, stdout, stderr)
 	}
