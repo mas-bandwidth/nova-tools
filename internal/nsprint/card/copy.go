@@ -64,6 +64,12 @@ type CopyCard struct {
 	// carries once its PR is open (TM.CARRY takes it to the copy): what a
 	// fix copy commits on and the wrapper pushes to.
 	Branch string
+	// Notes are the current MERGE-NOTE lines of the copy's stream and the
+	// sprint (internal/nsprint/note, nova-tools #4324): what the merge cards
+	// found that the tree now expects. The caller loads them at render
+	// (card run on the bench, card render), so a copy dealt after a note
+	// carries it.
+	Notes []string
 	// Model, Harness and Child are who works the copy (taskcard.Who: what
 	// card work and friend pull record); the card's WORKER line (not WHO,
 	// which is the primary's who-may-do-it header, cut.go cutKeys).
@@ -410,7 +416,27 @@ func RenderCopy(c CopyCard) ([]byte, error) {
 		// the last copy failed and a review sent the card on: this copy reads why
 		fmt.Fprintf(&b, "\nAn earlier copy of this card failed and went to review; the verdict:\n  %s\n", r)
 	}
+	if notes := notesBlock(c.Notes); notes != "" {
+		b.WriteString(notes)
+	}
 	return []byte(b.String()), nil
+}
+
+// NotesHeading opens the MERGE-NOTES block of a copy's card.
+const NotesHeading = "MERGE-NOTES (what the merge cards found that the tree now expects; follow them):"
+
+// notesBlock is the MERGE-NOTES block: "" when there are none.
+func notesBlock(notes []string) string {
+	var lines []string
+	for _, n := range notes {
+		if n = oneLine(n); n != "" {
+			lines = append(lines, "  "+n)
+		}
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return "\n" + NotesHeading + "\n" + strings.Join(lines, "\n") + "\n"
 }
 
 func oneLine(s string) string {

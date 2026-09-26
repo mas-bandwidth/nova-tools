@@ -86,7 +86,8 @@ func (f *firstReadFixture) fqShape(id, to string) map[string]string {
 // is a task card that bin/friend-queue still reads as its own push: the
 // fields it reads equal the reference push's, the index sets and the one
 // q:<f> entry are the same; and it is a card: where=ready, in exactly ws:swarm:ready and
-// friend:emma:cards:ready, with one ws:log receipt.
+// friend:emma:cards:ready, with its one push receipt in ws:log beside the
+// receipt of the stream's sentinel that the stream's registration created.
 func TestFirstReadIsFriendQueueShape(t *testing.T) {
 	t.Parallel()
 
@@ -123,8 +124,34 @@ func TestFirstReadIsFriendQueueShape(t *testing.T) {
 	if w, _ := f.client.HGet(f.ctx, "task:"+id, "where").Result(); w != "ready" {
 		t.Fatalf("%s where = %q, want ready", id, w)
 	}
-	if n, _ := f.client.XLen(f.ctx, "ws:log").Result(); n != 1 {
-		t.Fatalf("ws:log has %d entries, want the push", n)
+	// two receipts by identity: the stream's registration creates its
+	// sentinel (swarm:sentinel, null -> waiting, by ws, why sentinel; #4318)
+	// and the first read's own push (null -> ready); nothing else
+	log, err := f.client.XRange(f.ctx, "ws:log", "-", "+").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	type receipt struct{ id, stream, from, to, by, why string }
+	var rs []receipt
+	for _, e := range log {
+		v := func(k string) string { s, _ := e.Values[k].(string); return s }
+		rs = append(rs, receipt{v("id"), v("stream"), v("from"), v("to"), v("by"), v("why")})
+	}
+	sentinel := receipt{"swarm:sentinel", "swarm", "", "waiting", "ws", "sentinel"}
+	var push []receipt
+	seen := false
+	for _, r := range rs {
+		switch {
+		case r == sentinel && !seen:
+			seen = true
+		case r.id == id && r.stream == "swarm" && r.from == "" && r.to == "ready":
+			push = append(push, r)
+		default:
+			t.Fatalf("ws:log has %+v, neither the sentinel's creation nor %s's push: %+v", r, id, rs)
+		}
+	}
+	if !seen || len(push) != 1 {
+		t.Fatalf("ws:log = %+v, want exactly %+v and one push of %s into ready", rs, sentinel, id)
 	}
 }
 

@@ -34,8 +34,12 @@ local TE = {
   PATH = {
     merging = { waiting = { 'ready', 'working', 'merging' }, ready = { 'working', 'merging' },
       working = { 'merging' } },
+    -- review -> landed: a primary a copy's card end --ok --pr put in
+    -- review whose PR a person's CLOSE line (or the stream lander) says
+    -- landed; the move retires its open read copies (TM.after_move), and a
+    -- plan's stitch lands its plan (nova-tools#4317)
     landed = { waiting = { 'ready', 'working', 'landed' }, ready = { 'working', 'landed' },
-      working = { 'landed' }, merging = { 'landed' }, parked = { 'ready', 'working', 'landed' } },
+      working = { 'landed' }, merging = { 'landed' }, review = { 'landed' }, parked = { 'ready', 'working', 'landed' } },
   },
 }
 
@@ -45,7 +49,9 @@ function TE.now()
 end
 
 -- TE.move(id, to, by, why, sha) -> 'MOVED' | 'SAME' | 'SKIP', and for SKIP
--- why. sha is the merge a landing is at.
+-- why; for MOVED, the plan the move landed with its stitch (the one move's
+-- info.parent, TK.land_parent, nova-tools#4317) or nil. sha is the merge a
+-- landing is at.
 function TE.move(id, to, by, why, sha)
   local p = NS.task.read(id)
   if not p then return 'SKIP', 'no task' end
@@ -65,21 +71,37 @@ function TE.move(id, to, by, why, sha)
     err = NS.task.unread(step, p.friend, { sha = sha, landing = landing })
     if err then return 'SKIP', err end
   end
+  local parent
   for _, step in ipairs(path) do
-    err = NS.task.move(id, step, { by = by, why = why, sha = sha, landing = landing })
+    local info
+    err, info = NS.task.move(id, step, { by = by, why = why, sha = sha, landing = landing })
     if err then return 'SKIP', err end
+    if info and info.parent then parent = info.parent end
   end
-  return 'MOVED'
+  return 'MOVED', parent
+end
+
+-- TE.plan_note(parent) is the note naming a plan a landing landed with its
+-- stitch: 'PLAN parent=<id> ref=<repo#n|-> origin=<url|->', the fields
+-- TK.reply adds to task land's reply, so the door that landed the stitch
+-- closes the plan's issue too. A skip note is '<id>: <why>' and an id has
+-- no space, so 'PLAN ' never reads as one.
+function TE.plan_note(parent)
+  local f = redis.call('HMGET', 'task:' .. parent, 'ref', 'origin')
+  local ref, origin = f[1] or '', f[2] or ''
+  return 'PLAN parent=' .. parent .. ' ref=' .. (ref == '' and '-' or ref) .. ' origin=' .. (origin == '' and '-' or origin)
 end
 
 -- TE.apply(ids, to, by, why, sha) -> {moved, same, skipped, notes}: notes
--- are 'id: why' for each skipped id.
+-- are 'id: why' for each skipped id, and TE.plan_note for each plan a
+-- landed stitch landed (not counted in skipped).
 function TE.apply(ids, to, by, why, sha)
   local r = { moved = 0, same = 0, skipped = 0, notes = {} }
   for _, id in ipairs(ids) do
     local status, note = TE.move(id, to, by, why, sha)
     if status == 'MOVED' then
       r.moved = r.moved + 1
+      if note then r.notes[#r.notes + 1] = TE.plan_note(note) end
     elseif status == 'SAME' then
       r.same = r.same + 1
     else
@@ -153,7 +175,10 @@ end
 -- issues the member closes (closes: numbers space-joined, '-' none, ''
 -- unknown: the record's closes field stands), and moves every task naming the
 -- member PR or one of those issues, and the member's own task, to landed with
--- why. Idempotent: a re-run adds no line and moves nothing twice.
+-- why. Idempotent: a re-run adds no line and moves nothing twice. A
+-- member's task that is a plan's stitch lands the plan in the same call, and
+-- the notes carry 'PLAN parent=<id> ref=<repo#n|-> origin=<url|->' for it
+-- (TE.plan_note, nova-tools#4317), so the lander closes the plan's issue.
 --   {'OK', moved, same, skipped, matched, line_added, note...} | {'STALE', why}
 redis.register_function('ns_land_member', function(keys, args)
   local repo, slug, sha, n, task = args[1] or '', args[2] or '', args[3] or '', args[4] or '', args[5] or ''
@@ -185,7 +210,8 @@ end)
 -- (first: its first line) posted on pr:<repo>:<n> (key) is an event for. A
 -- CLOSE line by a person (who not jev*) lands every task naming the PR or an
 -- issue in the record's closes, why the line's "with <repo>#<n> (<sha>)"
--- when it has one; a SCORE line moves the read task read-<n>-<head8> working
+-- when it has one (a stitch among them lands its plan: a PLAN note,
+-- TE.plan_note); a SCORE line moves the read task read-<n>-<head8> working
 -- -> merging. Any other line moves nothing. The caller writes the line in the
 -- same call (ns_read_post; ns_line_post, line.lua, nova-tools #3595).
 function TE.event(repo, n, key, first)
@@ -224,6 +250,7 @@ end
 -- pr:<repo>:<n>:lines and the record's last_line/last_line_at are stamped
 -- (the record must have a head: NOHEAD otherwise, nothing written). read
 -- post writes through ns_line_post (line.lua), which makes the same move.
+-- The notes are TE.apply's: 'id: why' per skip, 'PLAN ...' per plan landed.
 --   {'OK', lines, kind, moved, same, skipped, cut, note...} | {'NOHEAD', key}
 redis.register_function('ns_read_post', function(keys, args)
   local repo, n, line, now = args[1] or '', args[2] or '', args[3] or '', args[4] or ''

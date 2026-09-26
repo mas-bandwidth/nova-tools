@@ -6,6 +6,7 @@ import (
 	"context"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/life"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 	"strconv"
 	"strings"
@@ -25,7 +26,7 @@ func TestCopyOwnerRenewalFencesAttemptProcessAndObservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	until := now.Add(time.Minute).UnixMilli()
-	if err := c.ZAdd(ctx, as.Key("working"), redis.Z{Score: 1, Member: id}).Err(); err != nil {
+	if err := c.ZAdd(ctx, ws.ConsumerKeyAt(0, as.String(), "working"), redis.Z{Score: 1, Member: id}).Err(); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.HSet(ctx, taskcard.Key(id), "where", "working", "consumer", as.String(), "token", token, "lease_until", until).Err(); err != nil {
@@ -123,7 +124,7 @@ func TestFriendBeatMixedOwnersAndDaemonRestart(t *testing.T) {
 	}
 	until := now.Add(time.Minute).UnixMilli()
 	for i, id := range []string{"live~1", "dead~1", "unknown~1", "damaged~1"} {
-		if err := c.ZAdd(ctx, as.Key("working"), redis.Z{Score: float64(i), Member: id}).Err(); err != nil {
+		if err := c.ZAdd(ctx, ws.ConsumerKeyAt(0, as.String(), "working"), redis.Z{Score: float64(i), Member: id}).Err(); err != nil {
 			t.Fatal(err)
 		}
 		if err := c.HSet(ctx, taskcard.Key(id), "consumer", as.String(), "where", "working", "token", id, "lease_until", until, "model", "test-model").Err(); err != nil {
@@ -140,7 +141,7 @@ func TestFriendBeatMixedOwnersAndDaemonRestart(t *testing.T) {
 			}
 		}
 	}
-	if err := c.ZAdd(ctx, as.Key("working"), redis.Z{Score: 4, Member: "legacy-task"}).Err(); err != nil {
+	if err := c.ZAdd(ctx, ws.ConsumerKeyAt(0, as.String(), "working"), redis.Z{Score: 4, Member: "legacy-task"}).Err(); err != nil {
 		t.Fatal(err)
 	}
 	req := life.FriendBeatRequest{Friend: as.Name, Host: "fixture", ObserverHost: "fixture", Process: func(pid int) life.ProcessSample {

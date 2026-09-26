@@ -25,6 +25,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/table"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -198,7 +199,7 @@ func TestEnsureFriendBeatStartsOneLoop(t *testing.T) {
 	if line, err := ensureFriendBeat(ctx, c, k, "", s, now); err != nil || line != "" || len(calls) != 0 {
 		t.Fatalf("no working copy: %q %v, %d starts", line, err, len(calls))
 	}
-	c.ZAdd(ctx, k.Key("working"), redis.Z{Score: 1, Member: "console-grammar~1"})
+	c.ZAdd(ctx, k.KeyAt(0, "working"), redis.Z{Score: 1, Member: "console-grammar~1"})
 	line, err := ensureFriendBeat(ctx, c, k, "127.0.0.1:1", s, now)
 	if err != nil || line != "BEATLOOP as=friend:rowan started pid=99 working=1 log=/state/rowan/beatloop.log" || len(calls) != 1 {
 		t.Fatalf("first verb: %q %v, %d starts", line, err, len(calls))
@@ -237,7 +238,7 @@ func TestEnsureFriendBeatStartsOneLoop(t *testing.T) {
 		t.Fatal("a failed start left its claim on the lease")
 	}
 	b, _ := taskcard.ParseConsumer("bench:studio")
-	c.ZAdd(ctx, b.Key("working"), redis.Z{Score: 1, Member: "x~1"})
+	c.ZAdd(ctx, b.KeyAt(0, "working"), redis.Z{Score: 1, Member: "x~1"})
 	if line, err := ensureFriendBeat(ctx, c, b, "", s, now); err != nil || line != "" || len(calls) != 2 {
 		t.Fatalf("a bench: %q %v, %d starts", line, err, len(calls))
 	}
@@ -253,7 +254,7 @@ func TestEnsureFriendBeatRaceStartsOne(t *testing.T) {
 	addr, c := loadedStore(t)
 	ctx := context.Background()
 	k, _ := taskcard.ParseConsumer("friend:rowan")
-	c.ZAdd(ctx, k.Key("working"), redis.Z{Score: 1, Member: "console-grammar~1"})
+	c.ZAdd(ctx, k.KeyAt(0, "working"), redis.Z{Score: 1, Member: "console-grammar~1"})
 	host, _ := os.Hostname()
 	s := loopStarter{
 		start: func([]string, string) (int, error) { return 4242, nil },
@@ -310,7 +311,7 @@ func TestFriendBeatLoopLogsAndDeadPid(t *testing.T) {
 	_, c := loadedStore(t)
 	ctx := context.Background()
 	k, _ := taskcard.ParseConsumer("friend:rowan")
-	c.ZAdd(ctx, k.Key("working"), redis.Z{Score: 1, Member: "console-grammar~1"})
+	c.ZAdd(ctx, k.KeyAt(0, "working"), redis.Z{Score: 1, Member: "console-grammar~1"})
 	log := filepath.Join(t.TempDir(), "friend", "rowan", "beatloop.log")
 	var pids []int
 	s := loopStarter{
@@ -481,7 +482,7 @@ func TestFriendSeatKeepsBeatUnderACL(t *testing.T) {
 	if code != 0 || m2 == nil {
 		t.Fatalf("ns-friend friend pull after kill -9 of pid %d exit %d:\n%s", pid, code, out)
 	}
-	bindTestOwner(t, admin, k, admin.ZRange(ctx, k.Key("working"), 0, -1).Val()...)
+	bindTestOwner(t, admin, k, admin.ZRange(ctx, ws.ConsumerKeyAt(0, k.String(), "working"), 0, -1).Val()...)
 	pid, _ = strconv.Atoi(m2[1])
 	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
 	for i := 0; i < 300 && !strings.Contains(readFile(m[2]), "pid="+m2[1]); i++ {
@@ -601,8 +602,8 @@ func TestEndedCopyNotRenewedByLoop(t *testing.T) {
 	l := &life.BeatLoop{Lease: life.StoreLease{Client: c, Friend: me, Me: life.LoopHolder{Token: token, Host: "h", PID: 4242}}, Friend: me,
 		Tick: func(ctx context.Context, now time.Time) (int, error) {
 			res, err := friendBeatOnce(ctx, st, k, "laptop", now)
-			if err == nil && int64(res.Working) != c.ZCard(ctx, k.Key("working")).Val() {
-				t.Errorf("tick counted %d, the set holds %d", res.Working, c.ZCard(ctx, k.Key("working")).Val())
+			if err == nil && int64(res.Working) != c.ZCard(ctx, k.KeyAt(0, "working")).Val() {
+				t.Errorf("tick counted %d, the set holds %d", res.Working, c.ZCard(ctx, k.KeyAt(0, "working")).Val())
 			}
 			return res.Working, err
 		}}
@@ -611,12 +612,12 @@ func TestEndedCopyNotRenewedByLoop(t *testing.T) {
 		t.Fatalf("step with four copies: %v %q %v", done, why, err)
 	}
 	// mid-tick: the models trip names a copy that ended after the first trip read it
-	c.ZRem(ctx, k.Key("working"), cps[0])
-	if m, err := c.FCall(ctx, life.FnFriendModels, []string{"friend:" + me + ":beat", k.Key("working"), taskcard.Key(cps[0])}).Text(); err != nil || m != "" ||
+	c.ZRem(ctx, k.KeyAt(0, "working"), cps[0])
+	if m, err := c.FCall(ctx, life.FnFriendModels, []string{"friend:" + me + ":beat", k.KeyAt(0, "working"), taskcard.Key(cps[0])}).Text(); err != nil || m != "" ||
 		c.HExists(ctx, "friend:"+me+":beat", "models").Val() {
 		t.Fatalf("models of an ended copy: %q %v", m, err)
 	}
-	c.ZAdd(ctx, k.Key("working"), redis.Z{Score: 1, Member: cps[0]})
+	c.ZAdd(ctx, k.KeyAt(0, "working"), redis.Z{Score: 1, Member: cps[0]})
 
 	tok := func(id string) string {
 		for _, line := range strings.Split(out, "\n") {
@@ -634,7 +635,7 @@ func TestEndedCopyNotRenewedByLoop(t *testing.T) {
 	}
 	for i, door := range doors {
 		code, o, e := runSprint(append(door, "--redis", addr)...)
-		if code != 0 || c.ZScore(ctx, k.Key("working"), cps[i]).Err() == nil {
+		if code != 0 || c.ZScore(ctx, k.KeyAt(0, "working"), cps[i]).Err() == nil {
 			t.Fatalf("%v: exit %d, still working:\n%s%s", door[:2], code, o, e)
 		}
 		ended := c.HGetAll(ctx, taskcard.Key(cps[i])).Val()

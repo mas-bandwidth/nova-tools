@@ -80,12 +80,18 @@ func Checkpoint(ctx context.Context, c redis.Cmdable, path string, now time.Time
 		cmd           *redis.ZSliceCmd
 	}
 	var sets []set
+	// the sets under the current epoch (nova-tools#4238)
+	epoch, err := Epoch(ctx, c)
+	if err != nil {
+		return CheckpointResult{}, err
+	}
 	pipe := c.Pipeline()
 	for _, s := range streams {
 		for _, st := range Wheres {
-			sets = append(sets, set{s, st, pipe.ZRangeWithScores(ctx, Key(s, st), 0, -1)})
+			sets = append(sets, set{s, st, pipe.ZRangeWithScores(ctx, KeyAt(epoch, s, st), 0, -1)})
 		}
 	}
+
 	if len(sets) > 0 {
 		if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
 			return CheckpointResult{}, fmt.Errorf("ws checkpoint sets: %w", err)

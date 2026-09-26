@@ -54,8 +54,8 @@ func TestFriendBeatRenewsObservedOwnersAndPreservesPresence(t *testing.T) {
 	if res.Friend != "rowan" || res.AtMS != at.UnixMilli() || res.Working != 2 || res.LeaseUntil <= time.Now().Add(time.Minute).UnixMilli() {
 		t.Fatalf("result %+v", res)
 	}
-	if log.singles != 1 || log.pipelines != 3 {
-		t.Fatalf("beat uses %d single calls + %d pipelines; want four round trips independent of owner count", log.singles, log.pipelines)
+	if log.singles != 2 || log.pipelines != 3 {
+		t.Fatalf("beat uses %d single calls + %d pipelines; want five round trips independent of owner count", log.singles, log.pipelines)
 	}
 	for _, id := range []string{"p1~1", "p2~1"} {
 		got, err := client.HGet(ctx, "task:"+id, "lease_until").Int64()

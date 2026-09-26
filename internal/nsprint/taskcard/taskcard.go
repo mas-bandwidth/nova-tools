@@ -53,11 +53,15 @@ var Wheres = ws.Wheres
 // Key is a task's record.
 func Key(id string) string { return "task:" + id }
 
-// StreamKey is a stream's set of tasks at one where.
-func StreamKey(stream, where string) string { return "ws:" + stream + ":" + where }
+// StreamKeyAt is a stream's set of tasks at one where under epoch e
+// (nova-tools#4238; a reader keys by ws.Epoch).
+func StreamKeyAt(e uint64, stream, where string) string { return ws.KeyAt(e, stream, where) }
 
-// FriendKey is a friend's set of tasks (and cards) at one where.
-func FriendKey(friend, where string) string { return "friend:" + friend + ":cards:" + where }
+// FriendKeyAt is a friend's set of tasks (and cards) at one where under
+// epoch e.
+func FriendKeyAt(e uint64, friend, where string) string {
+	return ws.ConsumerKeyAt(e, "friend:"+friend, where)
+}
 
 // Opts are a move's options. Friend and Stream change the task's dimension
 // only when their Set flag is true (an empty friend drops it).
@@ -121,9 +125,12 @@ func IsRefused(err error) (string, bool) {
 }
 
 // Result is one move: Status MOVED (From -> To) or SAME (already there,
-// nothing to change).
+// nothing to change). Parent, ParentRef and ParentOrigin are set when the
+// move landed a plan's stitch and so the plan (nova-tools#4317): the plan's
+// id and the issue ref and origin its lander closes.
 type Result struct {
-	Status, From, To string
+	Status, From, To                string
+	Parent, ParentRef, ParentOrigin string
 }
 
 func str(reply any) (string, error) {
@@ -151,12 +158,29 @@ func parseMove(fn, s string) (Result, error) {
 	switch {
 	case strings.HasPrefix(s, "REFUSED "):
 		return Result{}, &Refused{Why: strings.TrimPrefix(s, "REFUSED ")}
-	case len(f) == 3 && f[0] == "MOVED":
+	case len(f) >= 3 && f[0] == "MOVED":
 		from := f[1]
 		if from == "-" {
 			from = ""
 		}
-		return Result{Status: f[0], From: from, To: f[2]}, nil
+		r := Result{Status: f[0], From: from, To: f[2]}
+		for _, kv := range f[3:] {
+			k, v, ok := strings.Cut(kv, "=")
+			if v == "-" {
+				v = ""
+			}
+			switch {
+			case ok && k == "parent":
+				r.Parent = v
+			case ok && k == "ref":
+				r.ParentRef = v
+			case ok && k == "origin":
+				r.ParentOrigin = v
+			default:
+				return Result{}, fmt.Errorf("%s: unexpected reply %q", fn, s)
+			}
+		}
+		return r, nil
 	case len(f) == 2 && f[0] == "SAME":
 		return Result{Status: f[0], From: f[1], To: f[1]}, nil
 	}
@@ -530,14 +554,22 @@ func Reap(ctx context.Context, c redis.Cmdable, by string, friends ...string) (R
 	return Reaped{Expired: out[3 : 3+n], Unlinked: out[3+n:]}, nil
 }
 
-// Ls is one ZRANGE: a stream's tasks at a where, oldest first.
+// Ls is a stream's tasks at a where under the current epoch, oldest first.
 func Ls(ctx context.Context, c redis.Cmdable, stream, where string) ([]string, error) {
-	return c.ZRange(ctx, StreamKey(stream, where), 0, -1).Result()
+	epoch, err := ws.Epoch(ctx, c)
+	if err != nil {
+		return nil, err
+	}
+	return c.ZRange(ctx, StreamKeyAt(epoch, stream, where), 0, -1).Result()
 }
 
-// LsFriend is one ZRANGE: a friend's tasks (and cards) at a where.
+// LsFriend is a friend's tasks (and cards) at a where under the current epoch.
 func LsFriend(ctx context.Context, c redis.Cmdable, friend, where string) ([]string, error) {
-	return c.ZRange(ctx, FriendKey(friend, where), 0, -1).Result()
+	epoch, err := ws.Epoch(ctx, c)
+	if err != nil {
+		return nil, err
+	}
+	return c.ZRange(ctx, FriendKeyAt(epoch, friend, where), 0, -1).Result()
 }
 
 // FsckResult is ns_tcard_fsck's reply.

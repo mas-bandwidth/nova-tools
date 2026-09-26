@@ -10,6 +10,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/life"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -24,7 +25,7 @@ func TestFriendCopyPlainBeatNeverSubstitutesForObservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	until := now.Add(time.Minute).UnixMilli()
-	if err := c.ZAdd(ctx, as.Key("working"), redis.Z{Score: 1, Member: id}).Err(); err != nil {
+	if err := c.ZAdd(ctx, ws.ConsumerKeyAt(0, as.String(), "working"), redis.Z{Score: 1, Member: id}).Err(); err != nil {
 		t.Fatal(err)
 	}
 	for _, state := range []string{"", "live", "dead", "unknown"} {
@@ -56,7 +57,7 @@ func TestFriendBeatPreservesPerCopyRefusalAndRenewsHealthySibling(t *testing.T) 
 				t.Fatal(err)
 			}
 			for i, id := range []string{"bad~1", "healthy~1"} {
-				if err := c.ZAdd(ctx, as.Key("working"), redis.Z{Score: float64(i), Member: id}).Err(); err != nil {
+				if err := c.ZAdd(ctx, ws.ConsumerKeyAt(0, as.String(), "working"), redis.Z{Score: float64(i), Member: id}).Err(); err != nil {
 					t.Fatal(err)
 				}
 				if err := c.HSet(ctx, taskcard.Key(id), "where", "working", "consumer", as.String(), "token", "attempt", "lease_until", now.Add(time.Minute).UnixMilli()).Err(); err != nil {

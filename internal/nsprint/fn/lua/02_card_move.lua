@@ -83,11 +83,64 @@ local CM_FINE = {
   ['land-ready'] = 'done', landed = 'done', superseded = 'done',
 }
 -- the pointer is written only through card_move's own arguments
-local CM_POINTER = { state = true, where = true, where_ok = true, bench = true, created_at = true, where_at = true }
+local CM_POINTER = { state = true, where = true, where_ok = true, bench = true, created_at = true, where_at = true,
+  epoch = true }
 
 local function cm_now()
   local t = redis.call('TIME')
   return tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
+end
+
+-- THE SPRINT EPOCH (nova-tools#4238; Glenn 2026-09-26 9:25 AM ET: "have a
+-- uint64 sequence number that increments, thus, if the numbers from the
+-- async things are not the same sequence as current table view, the
+-- display is zero"). sprint:epoch is a uint64 (absent: 0). Every set that
+-- drives a table is named by an epoch, so a reader that keys by the
+-- current epoch cannot see an older epoch's members: invisible by
+-- construction, never "cleared later". A record carries the epoch it was
+-- created under (its epoch field, a pointer field) and lives in that
+-- epoch's sets for good: a writer that ends a card of an older epoch moves
+-- it within that epoch and can never make a current cell non-zero.
+-- `sprint clear` is one HINCRBY of sprint:epoch n (TM.sprint_clear, below):
+-- the number is a hash field because the table's tick reads the keyspace
+-- through HGET, never GET; the clear's receipt rides the same hash.
+--
+-- The rule, one function per set kind (internal/nsprint/ws/epoch.go is the
+-- same rule in Go):
+--   epoch 0  <consumer>:cards:<col>      ws:<s>:<w>      s:<S>:<pool|waiting>
+--   epoch e  <consumer>:<e>:cards:<col>  ws:<e>:<s>:<w>  s:<S>:<e>:<pool|waiting>
+-- Epoch 0 is the name every set had before the first clear: a store never
+-- cleared reads as it did, with no migration.
+local CM_EPOCH_KEY, CM_EPOCH_FIELD = 'sprint:epoch', 'n'
+
+local function cm_epoch()
+  return tonumber(redis.call('HGET', CM_EPOCH_KEY, CM_EPOCH_FIELD)) or 0
+end
+
+-- cm_estr(e): the epoch as the name segment; 0 for nil or junk.
+local function cm_estr(e)
+  return string.format('%d', tonumber(e) or 0)
+end
+
+-- cm_ckey(e, c, col): consumer c's (bench:<b>, friend:<f>) set at col.
+local function cm_ckey(e, c, col)
+  local s = cm_estr(e)
+  if s == '0' then return c .. ':cards:' .. col end
+  return c .. ':' .. s .. ':cards:' .. col
+end
+
+-- cm_wskey(e, s, w): stream s's set at where w.
+local function cm_wskey(e, s, w)
+  local es = cm_estr(e)
+  if es == '0' then return 'ws:' .. s .. ':' .. w end
+  return 'ws:' .. es .. ':' .. s .. ':' .. w
+end
+
+-- cm_skey(e, S, list): sprint S's dealer list (pool or waiting).
+local function cm_skey(e, S, list)
+  local es = cm_estr(e)
+  if es == '0' then return 's:' .. S .. ':' .. list end
+  return 's:' .. S .. ':' .. es .. ':' .. list
 end
 
 local function cm_split(id)
@@ -99,6 +152,21 @@ local function cm_idx(S, state)
   return 's:' .. S .. ':idx:card:' .. state
 end
 
+-- TK_str and TM_parse_consumer are TK.str and TM.parse for the read-only
+-- cell functions registered before those tables exist.
+local function TK_str(v)
+  if v == nil or v == false then return '' end
+  return tostring(v)
+end
+
+local function TM_parse_consumer(c)
+  if type(c) ~= 'string' then return nil end
+  local kind, name = string.match(c, '^(%l+):([A-Za-z0-9][A-Za-z0-9._-]*)$')
+  if kind ~= 'bench' and kind ~= 'friend' then return nil end
+  return kind, name
+end
+
+
 local function cm_bench(b)
   if b == nil or b == '' then return '_pool' end
   return b
@@ -106,12 +174,14 @@ end
 
 -- The record's pointer; nil when the record does not exist.
 local function cm_read(id)
-  local c = redis.call('HMGET', id, 'state', 'where', 'where_ok', 'bench', 'stream', 'owner', 'created_at', 'priority')
+  local c = redis.call('HMGET', id, 'state', 'where', 'where_ok', 'bench', 'stream', 'owner', 'created_at', 'priority',
+    'epoch')
   if not c[1] then return nil end
   local S = cm_split(id)
   return {
     state = c[1], where = c[2] or '', ok = c[3] or '-', bench = c[4] or '',
     stream = c[5] or '', owner = c[6] or '', created = tonumber(c[7]) or 0, priority = tonumber(c[8]) or 0,
+    epoch = tonumber(c[9]) or 0,
     linked = S ~= nil and redis.call('ZSCORE', 'sprint:' .. S .. ':cards', id) ~= false,
   }
 end
@@ -123,13 +193,13 @@ end
 local function cm_views(S, label, id, p)
   local v = {}
   if p.where == '' then return v end
-  local b = cm_bench(p.bench)
-  v[#v + 1] = { t = 'z', k = 'bench:' .. b .. ':cards:' .. p.where, m = id }
-  if p.where == 'done' then v[#v + 1] = { t = 'z', k = 'bench:' .. b .. ':cards:' .. p.ok, m = id } end
-  if p.stream ~= '' then v[#v + 1] = { t = 'z', k = 'ws:' .. p.stream .. ':' .. p.where, m = id, s = p.stream } end
-  if p.owner ~= '' then v[#v + 1] = { t = 'z', k = 'friend:' .. p.owner .. ':cards:' .. p.where, m = id } end
-  if p.where == 'ready' then v[#v + 1] = { t = 'l', k = 's:' .. S .. ':pool', m = label } end
-  if p.where == 'waiting' then v[#v + 1] = { t = 's', k = 's:' .. S .. ':waiting', m = label } end
+  local b, e = cm_bench(p.bench), p.epoch
+  v[#v + 1] = { t = 'z', k = cm_ckey(e, 'bench:' .. b, p.where), m = id }
+  if p.where == 'done' then v[#v + 1] = { t = 'z', k = cm_ckey(e, 'bench:' .. b, p.ok), m = id } end
+  if p.stream ~= '' then v[#v + 1] = { t = 'z', k = cm_wskey(e, p.stream, p.where), m = id, s = p.stream } end
+  if p.owner ~= '' then v[#v + 1] = { t = 'z', k = cm_ckey(e, 'friend:' .. p.owner, p.where), m = id } end
+  if p.where == 'ready' then v[#v + 1] = { t = 'l', k = cm_skey(e, S, 'pool'), m = label } end
+  if p.where == 'waiting' then v[#v + 1] = { t = 's', k = cm_skey(e, S, 'waiting'), m = label } end
   return v
 end
 
@@ -181,7 +251,9 @@ end
 -- probe would enter a consumer set: the last guard, never the path.
 local function cm_consumer_set(k)
   if type(k) ~= 'string' then return false end
-  local kind = string.match(k, '^(%l+):[^:]+:cards:%l+$')
+  -- <kind>:<name>:cards:<col> at epoch 0, <kind>:<name>:<e>:cards:<col> after
+  -- the first sprint clear (#4238): the guard holds at every epoch
+  local kind = string.match(k, '^(%l+):[^:]+:cards:%l+$') or string.match(k, '^(%l+):[^:]+:%d+:cards:%l+$')
   return kind == 'bench' or kind == 'friend'
 end
 
@@ -308,7 +380,7 @@ end
 -- stop and one more.
 function SP.live_other(stream, member)
   for _, w in ipairs(SP.WHERE) do
-    for _, m in ipairs(redis.call('ZRANGE', 'ws:' .. stream .. ':' .. w, 0, 2)) do
+    for _, m in ipairs(redis.call('ZRANGE', cm_wskey(cm_epoch(), stream, w), 0, 2)) do
       if m ~= member and not string.match(m, '^[a-z0-9][a-z0-9%-]*:sentinel$') then return true end
     end
   end
@@ -320,7 +392,7 @@ end
 function SP.union(stream, skip)
   local seen = {}
   for _, w in ipairs(SP.WHERE) do
-    for _, m in ipairs(redis.call('ZRANGE', 'ws:' .. stream .. ':' .. w, 0, -1)) do
+    for _, m in ipairs(redis.call('ZRANGE', cm_wskey(cm_epoch(), stream, w), 0, -1)) do
       if m ~= skip then SP.into(seen, redis.call('HGET', SP.key(m), SP.FIELD)) end
     end
   end
@@ -496,7 +568,7 @@ end
 -- caller links, then calls SP.linked.
 function SP.relink(member, stream, where)
   if type(stream) ~= 'string' or stream == '' or SP.LIVE[where] ~= true then return nil end
-  if redis.call('ZSCORE', 'ws:' .. stream .. ':' .. where, member) then return nil end
+  if redis.call('ZSCORE', cm_wskey(cm_epoch(), stream, where), member) then return nil end
   local _, perr = SP.gate(member, redis.call('HGET', SP.key(member), SP.FIELD), '', '', stream, '')
   return perr
 end
@@ -505,7 +577,7 @@ end
 -- before the write, so SP.linked adds the record's paths once).
 function SP.fresh(member, stream, where)
   if type(stream) ~= 'string' or stream == '' or SP.LIVE[where] ~= true then return false end
-  return redis.call('ZSCORE', 'ws:' .. stream .. ':' .. where, member) == false
+  return redis.call('ZSCORE', cm_wskey(cm_epoch(), stream, where), member) == false
 end
 
 -- SP.linked(member, stream, where): after a fresh link, the record's paths
@@ -542,7 +614,7 @@ function SP.repair(cands)
   for _, s in ipairs(names) do
     local st = { holds = false, seen = {}, pend = {}, unknown = false }
     for _, w in ipairs(SP.WHERE) do
-      for _, m in ipairs(redis.call('ZRANGE', 'ws:' .. s .. ':' .. w, 0, -1)) do
+      for _, m in ipairs(redis.call('ZRANGE', cm_wskey(cm_epoch(), s, w), 0, -1)) do
         if not string.match(m, '^[a-z0-9][a-z0-9%-]*:sentinel$') then
           st.holds = true
           local key = SP.key(m)
@@ -651,22 +723,23 @@ local function cm_others(S, label, id, p, extra)
       v[#v + 1] = { t = t, k = k, m = m }
     end
   end
+  local e = p.epoch
   local benches = redis.call('SMEMBERS', 'benches')
   benches[#benches + 1] = '_pool'
   benches[#benches + 1] = cm_bench(p.bench)
   for _, b in ipairs(extra or {}) do benches[#benches + 1] = cm_bench(b) end
   for _, b in ipairs(benches) do
-    for _, w in ipairs(CM_WHERE) do add('z', 'bench:' .. b .. ':cards:' .. w, id) end
-    add('z', 'bench:' .. b .. ':cards:ok', id)
-    add('z', 'bench:' .. b .. ':cards:fail', id)
-    add('z', 'bench:' .. b .. ':cards:abstain', id)
+    for _, w in ipairs(CM_WHERE) do add('z', cm_ckey(e, 'bench:' .. b, w), id) end
+    add('z', cm_ckey(e, 'bench:' .. b, 'ok'), id)
+    add('z', cm_ckey(e, 'bench:' .. b, 'fail'), id)
+    add('z', cm_ckey(e, 'bench:' .. b, 'abstain'), id)
   end
   for _, w in ipairs(CM_WHERE) do
-    if p.stream ~= '' then add('z', 'ws:' .. p.stream .. ':' .. w, id) end
-    if p.owner ~= '' then add('z', 'friend:' .. p.owner .. ':cards:' .. w, id) end
+    if p.stream ~= '' then add('z', cm_wskey(e, p.stream, w), id) end
+    if p.owner ~= '' then add('z', cm_ckey(e, 'friend:' .. p.owner, w), id) end
   end
-  add('l', 's:' .. S .. ':pool', label)
-  add('s', 's:' .. S .. ':waiting', label)
+  add('l', cm_skey(e, S, 'pool'), label)
+  add('s', cm_skey(e, S, 'waiting'), label)
   return v
 end
 
@@ -735,7 +808,7 @@ local function cm_derive(S, label, id)
   if state == 'queued' then
     if c[6] == 'waiting' or c[6] == 'ready' or c[6] == 'parked' then
       w = c[6]
-    elseif redis.call('SISMEMBER', 's:' .. S .. ':waiting', label) == 1 then
+    elseif redis.call('SISMEMBER', cm_skey(0, S, 'waiting'), label) == 1 then
       w = 'waiting'
     end
   end
@@ -774,7 +847,9 @@ local function cm_adopt(id, S, label)
     created = tonumber(c[2]) or cm_now()
     if created < 100000000000 then created = created * 1000 end
   end
-  local p = { where = w, ok = ok, bench = c[3] or '', stream = c[4] or '', owner = c[5] or '' }
+  -- an adopted record is placed under the current epoch (#4238); the
+  -- pre-model lists it may sit in are the epoch 0 names
+  local p = { where = w, ok = ok, bench = c[3] or '', stream = c[4] or '', owner = c[5] or '', epoch = cm_epoch() }
   -- the adoption links the record into its stream's set: gated (#4322)
   local perr = SP.relink(id, p.stream, w)
   if perr then return perr end
@@ -782,14 +857,15 @@ local function cm_adopt(id, S, label)
   -- A pre-model pool scored the card by its deal priority: that score moves
   -- to the record's priority field (when it has none) and the pool is
   -- re-scored by created_at like every view.
-  local legacy = redis.call('ZSCORE', 's:' .. S .. ':pool', label)
+  local legacy = redis.call('ZSCORE', cm_skey(0, S, 'pool'), label)
   if legacy and not c[7] then redis.call('HSET', id, 'priority', tostring(legacy)) end
   redis.call('ZADD', 'sprint:' .. S .. ':cards', created, id)
   for _, e in ipairs(cm_views(S, label, id, p)) do cm_add(e, created) end
-  if w ~= 'ready' then redis.call('ZREM', 's:' .. S .. ':pool', label) end
-  if w ~= 'waiting' then redis.call('SREM', 's:' .. S .. ':waiting', label) end
+  if w ~= 'ready' or p.epoch ~= 0 then redis.call('ZREM', cm_skey(0, S, 'pool'), label) end
+  if w ~= 'waiting' or p.epoch ~= 0 then redis.call('SREM', cm_skey(0, S, 'waiting'), label) end
   redis.call('SADD', cm_idx(S, c[6]), label)
-  redis.call('HSET', id, 'created_at', string.format('%.0f', created), 'where', w, 'where_ok', ok)
+  redis.call('HSET', id, 'created_at', string.format('%.0f', created), 'where', w, 'where_ok', ok,
+    'epoch', cm_estr(p.epoch))
   if fresh then SP.linked(id, p.stream, w) end
   return nil
 end
@@ -834,7 +910,8 @@ local function card_move(id, to, o)
   end
   local err = cm_edge(cur.where, cur.ok, to, ok, state)
   if err then return err end
-  local nxt = { where = to, ok = ok, bench = cur.bench, stream = cur.stream, owner = cur.owner }
+  -- a card lives in its own epoch's sets for good (nova-tools#4238)
+  local nxt = { where = to, ok = ok, bench = cur.bench, stream = cur.stream, owner = cur.owner, epoch = cur.epoch }
   if o.bench ~= nil then nxt.bench = o.bench end
   -- Before any write: the current link holds and the id is in no other set
   -- it could be in, the new bench's included, so every set the move adds it
@@ -958,8 +1035,12 @@ local function card_create(id, fields, o)
   h[#h + 1] = '-'
   h[#h + 1] = 'created_at'
   h[#h + 1] = tostring(created)
+  -- the epoch the card is created under names its sets for good (#4238)
+  h[#h + 1] = 'epoch'
+  h[#h + 1] = cm_estr(cm_epoch())
   redis.call('HSET', unpack(h))
   redis.call('ZADD', 'sprint:' .. S .. ':cards', created, id)
+
   redis.call('SADD', cm_idx(S, 'queued'), label)
   return card_move(id, 'waiting', { by = o.by, why = 'push', gated = true })
 end
@@ -1003,8 +1084,13 @@ local function card_fsck(S, write)
   for fine in pairs(CM_FINE) do
     for _, l in ipairs(redis.call('SMEMBERS', cm_idx(S, fine))) do seen[l] = true end
   end
-  for _, l in ipairs(redis.call('SMEMBERS', 's:' .. S .. ':waiting')) do seen[l] = true end
-  for _, l in ipairs(redis.call('ZRANGE', 's:' .. S .. ':pool', 0, -1)) do seen[l] = true end
+  -- the epochs this walk sweeps: 0 and the current one, then every epoch a
+  -- record of the sprint names (a card lives in its own epoch's sets)
+  local epochs = { [0] = true, [cm_epoch()] = true }
+  for e in pairs(epochs) do
+    for _, l in ipairs(redis.call('SMEMBERS', cm_skey(e, S, 'waiting'))) do seen[l] = true end
+    for _, l in ipairs(redis.call('ZRANGE', cm_skey(e, S, 'pool'), 0, -1)) do seen[l] = true end
+  end
   for l in pairs(seen) do
     local id = prefix .. l
     if cm_split(id) and redis.call('EXISTS', id) == 1 and not redis.call('ZSCORE', all, id) then
@@ -1026,6 +1112,7 @@ local function card_fsck(S, write)
       if not c or not label or string.sub(id, 1, #prefix) ~= prefix then
         note('gone ' .. id)
       else
+        epochs[c.epoch] = true
         if tonumber(redis.call('ZSCORE', all, id)) ~= c.created then
           note('score ' .. all .. ' ' .. id)
           if write then
@@ -1110,34 +1197,36 @@ local function card_fsck(S, write)
     end
   end
   -- The dealer's lists: the pool holds exactly the ready cards and the
-  -- waiting set exactly the waiting ones (members are labels).
-  local pool, waiting = 's:' .. S .. ':pool', 's:' .. S .. ':waiting'
-  for _, l in ipairs(redis.call('ZRANGE', pool, 0, -1)) do
-    if not (want[pool] and want[pool][l]) then
-      note('stray ' .. pool .. ' ' .. l)
-      if write then
-        redis.call('ZREM', pool, l)
-        fixed = fixed + 1
+  -- waiting set exactly the waiting ones (members are labels), per epoch.
+  for e in pairs(epochs) do
+    local pool, waiting = cm_skey(e, S, 'pool'), cm_skey(e, S, 'waiting')
+    for _, l in ipairs(redis.call('ZRANGE', pool, 0, -1)) do
+      if not (want[pool] and want[pool][l]) then
+        note('stray ' .. pool .. ' ' .. l)
+        if write then
+          redis.call('ZREM', pool, l)
+          fixed = fixed + 1
+        end
       end
     end
-  end
-  for _, l in ipairs(redis.call('SMEMBERS', waiting)) do
-    if not (want[waiting] and want[waiting][l]) then
-      note('stray ' .. waiting .. ' ' .. l)
-      if write then
-        redis.call('SREM', waiting, l)
-        fixed = fixed + 1
+    for _, l in ipairs(redis.call('SMEMBERS', waiting)) do
+      if not (want[waiting] and want[waiting][l]) then
+        note('stray ' .. waiting .. ' ' .. l)
+        if write then
+          redis.call('SREM', waiting, l)
+          fixed = fixed + 1
+        end
       end
     end
-  end
-  for b in pairs(benches) do
-    for _, w in ipairs(CM_WHERE) do sweep('bench:' .. b .. ':cards:' .. w, '', w) end
-    sweep('bench:' .. b .. ':cards:ok', '', 'done')
-    sweep('bench:' .. b .. ':cards:fail', '', 'done')
-    sweep('bench:' .. b .. ':cards:abstain', '', 'done')
-  end
-  for s in pairs(streams) do
-    for _, w in ipairs(CM_WHERE) do sweep('ws:' .. s .. ':' .. w, s, w) end
+    for b in pairs(benches) do
+      for _, w in ipairs(CM_WHERE) do sweep(cm_ckey(e, 'bench:' .. b, w), '', w) end
+      sweep(cm_ckey(e, 'bench:' .. b, 'ok'), '', 'done')
+      sweep(cm_ckey(e, 'bench:' .. b, 'fail'), '', 'done')
+      sweep(cm_ckey(e, 'bench:' .. b, 'abstain'), '', 'done')
+    end
+    for s in pairs(streams) do
+      for _, w in ipairs(CM_WHERE) do sweep(cm_wskey(e, s, w), s, w) end
+    end
   end
   -- A stream with members of this sprint that is not in ws:names or not
   -- ranked in ws:order (2026-09-26: card push never registered it) is
@@ -1157,8 +1246,10 @@ local function card_fsck(S, write)
       end
     end
   end
-  for f in pairs(owners) do
-    for _, w in ipairs(CM_WHERE) do sweep('friend:' .. f .. ':cards:' .. w, '', w) end
+  for e in pairs(epochs) do
+    for f in pairs(owners) do
+      for _, w in ipairs(CM_WHERE) do sweep(cm_ckey(e, 'friend:' .. f, w), '', w) end
+    end
   end
   for fine in pairs(CM_FINE) do
     for _, l in ipairs(redis.call('SMEMBERS', cm_idx(S, fine))) do
@@ -1187,12 +1278,14 @@ end
 -- ws:<stream>:<where> for every stream in ws:order or ws:names (the task
 -- places review, merging and landed included), bench:<b>:cards:<where> and
 -- :ok|fail|abstain for every registered bench and _pool, and
--- friend:<f>:cards:<where> for every member of friends. Read from the three
+-- friend:<f>:cards:<where> for every member of friends, all under the
+-- current epoch (the sets the tables read, #4238). Read from the three
 -- registries, never a SCAN; sorted, so a walk reads in one order.
 local CM_TABLE_WHERE = { 'waiting', 'ready', 'working', 'review', 'merging', 'landed', 'done', 'parked' }
 
 local function cm_table_sets()
   local out, seen = {}, {}
+  local e = cm_epoch()
   local function add(k, stream, w)
     if not seen[k] then
       seen[k] = true
@@ -1203,19 +1296,19 @@ local function cm_table_sets()
   for _, s in ipairs(redis.call('SMEMBERS', 'ws:names')) do streams[#streams + 1] = s end
   table.sort(streams)
   for _, s in ipairs(streams) do
-    for _, w in ipairs(CM_TABLE_WHERE) do add('ws:' .. s .. ':' .. w, s, w) end
+    for _, w in ipairs(CM_TABLE_WHERE) do add(cm_wskey(e, s, w), s, w) end
   end
   local benches = redis.call('SMEMBERS', 'benches')
   table.sort(benches)
   benches[#benches + 1] = '_pool'
   for _, b in ipairs(benches) do
-    for _, w in ipairs(CM_WHERE) do add('bench:' .. b .. ':cards:' .. w, '', w) end
-    for _, w in ipairs({ 'ok', 'fail', 'abstain' }) do add('bench:' .. b .. ':cards:' .. w, '', 'done') end
+    for _, w in ipairs(CM_WHERE) do add(cm_ckey(e, 'bench:' .. b, w), '', w) end
+    for _, w in ipairs({ 'ok', 'fail', 'abstain' }) do add(cm_ckey(e, 'bench:' .. b, w), '', 'done') end
   end
   local friends = redis.call('SMEMBERS', 'friends')
   table.sort(friends)
   for _, f in ipairs(friends) do
-    for _, w in ipairs(CM_TABLE_WHERE) do add('friend:' .. f .. ':cards:' .. w, '', w) end
+    for _, w in ipairs(CM_TABLE_WHERE) do add(cm_ckey(e, 'friend:' .. f, w), '', w) end
   end
   return out
 end
@@ -1313,7 +1406,37 @@ end
 redis.register_function({ function_name = 'ns_ws_orphans', flags = { 'no-writes' },
   callback = function(keys, args) return ws_orphans() end })
 
+-- ns_cell_zcard(consumer, col) -> ZCARD of the consumer's set at col under
+-- the current epoch (#4238): a Go reader that must stay at one pipeline
+-- (task width, task take) counts a cell through this in that pipeline,
+-- the epoch read atomically with the count.
+redis.register_function({ function_name = 'ns_cell_zcard', flags = { 'no-writes' },
+  callback = function(keys, args)
+    if not TM_parse_consumer(args[1]) then return redis.error_reply('ns_cell_zcard: ' .. tostring(args[1]) .. ' is not bench:<b> or friend:<f>') end
+    return redis.call('ZCARD', cm_ckey(cm_epoch(), args[1], TK_str(args[2])))
+  end })
+
+-- ns_cell_zrange(consumer, col) -> the consumer's set at col under the
+-- current epoch, oldest first: the friend beat's one-pipeline read of the
+-- copies it holds (life.FriendBeat), the epoch read atomically with them.
+redis.register_function({ function_name = 'ns_cell_zrange', flags = { 'no-writes' },
+  callback = function(keys, args)
+    if not TM_parse_consumer(args[1]) then return redis.error_reply('ns_cell_zrange: ' .. tostring(args[1]) .. ' is not bench:<b> or friend:<f>') end
+    return redis.call('ZRANGE', cm_ckey(cm_epoch(), args[1], TK_str(args[2])), 0, -1)
+  end })
+
+-- ns_ws_zrange(stream, state[, withscores]) -> the stream's set at state
+-- under the current epoch, oldest first (with scores as a flat list when
+-- asked): the lander's one-pipeline read of merging.
+redis.register_function({ function_name = 'ns_ws_zrange', flags = { 'no-writes' },
+  callback = function(keys, args)
+    local k = cm_wskey(cm_epoch(), TK_str(args[1]), TK_str(args[2]))
+    if args[3] == 'withscores' then return redis.call('ZRANGE', k, 0, -1, 'WITHSCORES') end
+    return redis.call('ZRANGE', k, 0, -1)
+  end })
+
 -- ns_card_move(id, where[, ok[, by[, why]]]): a move that keeps the fine
+
 -- state (waiting <-> ready <-> parked, done/ok -> done/fail); the dealer's
 -- pool and waiting lists move with it, as with every move. OK or
 -- REFUSED <why>.
@@ -1373,7 +1496,11 @@ local function card_purge(S)
 end
 
 NS.card = { move = card_move, create = card_create, purge = card_purge, add = card_add, record = cm_record,
-  register = cm_register }
+  register = cm_register,
+  -- the sprint epoch and the one key rule (#4238): a later file names a
+  -- table set only through these
+  epoch = cm_epoch, ckey = cm_ckey, wskey = cm_wskey, skey = cm_skey }
+
 
 -- ===========================================================================
 -- Tasks are cards (nova-tools #3778; rowan-new specs/ws-index.md, "Tasks are
@@ -1477,10 +1604,10 @@ local TK = {
   REPLACE = { waiting = true, ready = true, parked = true },
   POINTER = { where = true, where_ok = true, where_at = true, state = true, state_at = true, stream = true,
     friend = true, owner = true, created_at = true, sprint = true, queue = true, xid = true, cancelled = true,
-    lease_until = true, copy = true, primary = true, reads = true },
+    lease_until = true, copy = true, primary = true, reads = true, epoch = true },
   FIELDS = { 'where', 'where_ok', 'stream', 'friend', 'owner', 'created_at', 'sprint', 'state', 'title',
     'queue', 'xid', 'front', 'cancelled', 'pr', 'kind', 'ref', 'lease_until', 'beat_at', 'leased_at', 'where_at',
-    'priority', 'dest', 'claimed_at', 'token', 'copy', 'attempts', 'reads', 'head', 'author' },
+    'priority', 'dest', 'claimed_at', 'token', 'copy', 'attempts', 'reads', 'head', 'author', 'epoch' },
   LOG_MAX = '200000',
   -- a take's lease: three missed 60 s beats
   LEASE = 180000,
@@ -1529,6 +1656,19 @@ function TK.valid_stream(s)
   return s == '' or (#s <= 64 and not string.find(s, '[%c|]'))
 end
 
+-- TK.stream_refusal(s): nil when s may name a NEW stream, else the refusal.
+-- A name that starts with digits and a colon reads as the epoch segment of
+-- the set names (nova-tools#4238): ws:1:x:ready is stream `1:x` at epoch 0
+-- and stream `x` at epoch 1, so a stream is never registered under one. A
+-- task already in such a stream keeps it (the check is on a new stream).
+function TK.stream_refusal(s)
+  if not TK.valid_stream(s) then return 'STREAM bad name ' .. s end
+  if string.find(s, '^%d+:') then
+    return 'STREAM bad name ' .. s .. ': a leading <digits>: is the sprint epoch segment of the set names'
+  end
+  return nil
+end
+
 function TK.card_id(id)
   return string.match(id, '^s:[-a-z0-9]+:card:') ~= nil
 end
@@ -1545,8 +1685,11 @@ end
 -- land/stream.Slug say the same), created at registration (cm_register) in
 -- the stream's waiting set. It is the stream's stop: it lands (task land,
 -- with the merge sha) only when every other card of the stream is landed
--- or done, it is never dealt (TM.leg), and it moves nowhere else but parked
--- and done. A card in another stream that must wait for this whole stream
+-- or done AND by the coordinator's acceptance (TK.accepts: the actor holds
+-- the coordinator role; Glenn 2026-09-26 via Stella, "sentinels wait for
+-- the coordinator's review and merge", nova-tools#4412), never by structure
+-- with the last card; it is never dealt (TM.leg), and it moves nowhere else
+-- but parked and done. A card in another stream that must wait for this whole stream
 -- names it in DEPENDS-ON like any card edge (<slug>:sentinel or
 -- task:<slug>:sentinel); the waiting resolver treats it as any task id.
 function TK.slug(s)
@@ -1564,6 +1707,21 @@ end
 
 function TK.is_sentinel(id)
   return type(id) == 'string' and string.match(id, '^[a-z0-9][a-z0-9%-]*:sentinel$') ~= nil
+end
+
+-- TK.role: friend name holds role in its friend:<f>:roles csv (reader,
+-- builder, coordinator, may-hold); TM.role is this.
+function TK.role(name, role)
+  for x in string.gmatch(TK.str(redis.call('HGET', 'friend:' .. TK.str(name) .. ':roles', 'roles')), '[^,%s]+') do
+    if x == role then return true end
+  end
+  return false
+end
+
+-- TK.accepts(by): the actor is the coordinator seat, the one that accepts a
+-- stream by landing its sentinel (nova-tools#4412).
+function TK.accepts(by)
+  return TK.str(by) ~= '' and TK.role(by, 'coordinator')
 end
 
 -- TK.slug_clash: the refusal when stream's slug already belongs to another
@@ -1587,7 +1745,9 @@ end
 function TK.live_siblings(stream, id)
   local out = {}
   for _, w in ipairs({ 'waiting', 'ready', 'working', 'review', 'merging', 'parked' }) do
-    for _, m in ipairs(redis.call('ZRANGE', 'ws:' .. stream .. ':' .. w, 0, -1)) do
+    -- the stream's sets under the current epoch (#4238): an older epoch's
+    -- cards are invisible and do not hold the stop
+    for _, m in ipairs(redis.call('ZRANGE', cm_wskey(cm_epoch(), stream, w), 0, -1)) do
       if m ~= id then out[#out + 1] = { m, w } end
     end
   end
@@ -1607,15 +1767,21 @@ function TK.read(id)
   if p.friend == '' then p.friend = p.owner end
   p.stream = TK.stream_of(p.stream, p.title)
   p.created = TK.ms(p.created_at)
+  -- the epoch the record was placed under names its sets (#4238)
+  p.epoch = tonumber(p.epoch) or 0
   return p
 end
 
--- TK.views: the sets pointer p names.
+-- TK.epoch(): the sprint epoch (nova-tools#4238), the one read every verb
+-- shares; no verb passes it.
+TK.epoch = cm_epoch
+
+-- TK.views: the sets pointer p names, under p's epoch.
 function TK.views(p)
   local v = {}
   if p.where == '' then return v end
-  if p.stream ~= '' then v[#v + 1] = 'ws:' .. p.stream .. ':' .. p.where end
-  if p.friend ~= '' then v[#v + 1] = 'friend:' .. p.friend .. ':cards:' .. p.where end
+  if p.stream ~= '' then v[#v + 1] = cm_wskey(p.epoch, p.stream, p.where) end
+  if p.friend ~= '' then v[#v + 1] = cm_ckey(p.epoch, 'friend:' .. p.friend, p.where) end
   return v
 end
 
@@ -1633,8 +1799,8 @@ function TK.verify(id, p, streams, friends)
     if name == '' or seen[prefix .. name] then return nil end
     seen[prefix .. name] = true
     for _, w in ipairs(TK.WHERE) do
-      local k = prefix .. name .. ':' .. w
-      if prefix == 'friend:' then k = 'friend:' .. name .. ':cards:' .. w end
+      local k = cm_wskey(p.epoch, name, w)
+      if prefix == 'friend:' then k = cm_ckey(p.epoch, 'friend:' .. name, w) end
       if not mine[k] and redis.call('ZSCORE', k, id) then return 'twice ' .. k end
     end
     return nil
@@ -1758,7 +1924,9 @@ function TK.edge(id, cur, nxt, ok, o)
   -- The stream sentinel's graph is structure (#4318), checked before the
   -- from == to shortcut so no verb changes its outcome or owner in place:
   -- null -> waiting (registration, o.sentinel); waiting -> landed at the
-  -- merge sha once no other card of the stream is live; waiting <-> parked
+  -- merge sha once no other card of the stream is live, by the coordinator's
+  -- acceptance (TK.accepts) or a rename carrying a landing already accepted
+  -- (o.rename); waiting <-> parked
   -- with its stream; done or landed -> waiting when the stream starts again
   -- (registration, o.restart); waiting or parked -> done/fail by a rename
   -- alone (o.rename). Nothing else: not ready, working, review or merging,
@@ -1793,6 +1961,10 @@ function TK.edge(id, cur, nxt, ok, o)
           ' (first ' .. live[1][1] .. ' ' .. live[1][2] .. ')'
       end
       if TK.str(o.sha) == '' then return 'SHA landed needs the merge sha' end
+      if not o.rename and not TK.accepts(o.by) then
+        return 'SENTINEL task:' .. id .. ' lands by the coordinator\'s acceptance alone: ' .. TK.str(o.by) ..
+          ' does not hold the coordinator role (friend:<f>:roles)'
+      end
       return nil
     end
     if to == 'parked' and from == 'waiting' then return nil end
@@ -1806,7 +1978,7 @@ function TK.edge(id, cur, nxt, ok, o)
       if o.rename and ok == 'fail' and (from == 'waiting' or from == 'parked') then return nil end
       if o.rename and ok == 'ok' and from == 'landed' then return nil end
       return 'SENTINEL task:' .. id .. ' ends only when its stream is renamed (nova-sprint stream rename); it lands ' ..
-        '(task land --id ' .. id .. ' --sha <merge sha>) once every other card of stream ' .. cur.stream .. ' has'
+        '(the coordinator\'s task land --id ' .. id .. ' --sha <merge sha>) once every other card of stream ' .. cur.stream .. ' has'
     end
     return 'SENTINEL task:' .. id .. ' is the stream stop: it moves to landed (after every other card of stream ' ..
       cur.stream .. '), parked or waiting, never ' .. to
@@ -1942,6 +2114,20 @@ function TK.land_parent(id, o)
   return parent
 end
 
+-- TK.writes_pr(fields): the HSET pairs write the task's pr field. Every
+-- door that writes pr (task done --pr, task move --set pr, a push with pr,
+-- the route's merging move) goes through TK.move or TK.create, and both
+-- index the task's refs (NS.tref.index, 01_task_ref.lua) in the same call
+-- when it does, so a CLOSE line on the PR finds the task whichever door
+-- wrote it (nova-tools#4317: task done --pr on a stitch, then a CLOSE on
+-- the PR, moved nothing).
+function TK.writes_pr(fields)
+  for i = 1, #(fields or {}), 2 do
+    if fields[i] == 'pr' then return true end
+  end
+  return false
+end
+
 -- TK.move(id, to, o): the one move. Returns nil and {from, to, xid} when
 -- moved (to == from with nothing to change is a no-op: info.same, which
 -- writes only o.fields), else the refusal; a refusal writes nothing but the
@@ -1973,12 +2159,15 @@ function TK.move(id, to, o)
       cur = TK.read(id)
     end
   end
-  local nxt = { where = to, stream = cur.stream, friend = cur.friend, qscore = o.qscore }
+  -- a task lives in its own epoch's sets for good (nova-tools#4238)
+  local nxt = { where = to, stream = cur.stream, friend = cur.friend, qscore = o.qscore, epoch = cur.epoch }
   if o.stream ~= nil then nxt.stream = o.stream end
   if o.friend ~= nil then nxt.friend = o.friend end
   if to == 'working' and nxt.friend == '' and o.as and o.as ~= '' then nxt.friend = o.as end
   if not TK.valid_stream(nxt.stream) then return 'STREAM bad name ' .. nxt.stream end
   if nxt.stream ~= cur.stream or cur.where == '' then
+    local rerr = TK.stream_refusal(nxt.stream)
+    if rerr then return rerr end
     local serr = TK.slug_clash(nxt.stream)
     if serr then return serr end
   end
@@ -1992,7 +2181,7 @@ function TK.move(id, to, o)
   if err then return err end
   -- a probe never enters a consumer set (nova-tools#4237): refused before any write
   if nxt.friend ~= '' then
-    err = cm_probe_refused('friend:' .. nxt.friend .. ':cards:' .. to, id)
+    err = cm_probe_refused(cm_ckey(cur.epoch, 'friend:' .. nxt.friend, to), id)
     if err then return err end
   end
   local front = TK.str(o.front)
@@ -2014,6 +2203,7 @@ function TK.move(id, to, o)
   if cur.where == to and nxt.stream == cur.stream and nxt.friend == cur.friend and front ~= '1' and ok == cur.ok and
       state == cur.state and (o.copy == nil or o.copy == cur.copy) then
     if #fields > 0 then redis.call('HSET', 'task:' .. id, unpack(fields)) end
+    if TK.writes_pr(fields) and NS.tref then NS.tref.index(id) end
     return nil, { from = to, to = to, same = true }
   end
 
@@ -2080,6 +2270,7 @@ function TK.move(id, to, o)
   for _, v in ipairs(lh) do h[#h + 1] = v end
   for i = 1, #fields do h[#h + 1] = fields[i] end
   redis.call('HSET', unpack(h))
+  if TK.writes_pr(fields) and NS.tref then NS.tref.index(id) end
   if clear then redis.call('HDEL', 'task:' .. id, 'queue', 'xid') end
   if cur.where == 'working' and to ~= 'working' then redis.call('HDEL', 'task:' .. id, 'lease_until') end
   -- After: the new views hold the id and the dropped ones do not.
@@ -2116,34 +2307,19 @@ function TK.move(id, to, o)
     if herr then return 'DRIFT-AFTER ' .. herr .. ' task:' .. id end
   end
   -- a landed stitch lands its plan (nova-tools#4317), whichever door landed
-  -- it; the plan's own landing may in turn land the stream's stop below
+  -- it (never the stream's stop: that is the coordinator's acceptance)
   local parent
   if to == 'landed' and cur.where ~= 'landed' then
     local perr
     parent, perr = TK.land_parent(id, o)
     if perr then return 'DRIFT-AFTER plan of ' .. id .. ': ' .. perr end
   end
-  -- Landing by structure (#4318): the last live card's landing lands the
-  -- stream's sentinel at the same sha, in this call.
-  local stop
-  if to == 'landed' and cur.where ~= 'landed' and not TK.is_sentinel(id) and nxt.stream ~= '' then
-    stop = TK.land_stop(nxt.stream, o.sha, o.by, 'last card ' .. id .. ' landed')
-  end
-  return nil, { from = cur.where, to = to, xid = xid, cut = cut, stop = stop, parent = parent }
-end
-
--- TK.land_stop(stream, sha, by, why): the stream's sentinel lands when it is
--- waiting and no other card of the stream is live; returns its id when it
--- landed, else nil. A refusal here is drift in this file: the live check
--- just passed.
-function TK.land_stop(stream, sha, by, why)
-  local sid = TK.sentinel_id(stream)
-  if sid == '' or TK.str(sha) == '' then return nil end
-  if TK.str(redis.call('HGET', 'task:' .. sid, 'where')) ~= 'waiting' then return nil end
-  if #TK.live_siblings(stream, sid) > 0 then return nil end
-  local err = TK.move(sid, 'landed', { by = by, why = why, sha = sha })
-  if err then return nil end
-  return sid
+  -- No landing by structure (nova-tools#4412, Glenn 2026-09-26 via Stella:
+  -- "sentinels wait for the coordinator's review and merge"): the last live
+  -- card's landing leaves the stream's sentinel in waiting; the
+  -- waiting-resolve duty prints its SENTINEL ... ready-to-land receipt and
+  -- the coordinator's task land --id <slug>:sentinel lands it (TK.edge).
+  return nil, { from = cur.where, to = to, xid = xid, cut = cut, parent = parent }
 end
 
 -- TK.create(id, fields, o): a new record (where null) and its first move to
@@ -2162,7 +2338,8 @@ function TK.create(id, fields, o)
     if fields[i] == 'title' then title = fields[i + 1] end
   end
   local stream = TK.stream_of(o.stream, title)
-  if not TK.valid_stream(stream) then return 'STREAM bad name ' .. stream end
+  local rerr = TK.stream_refusal(stream)
+  if rerr then return rerr end
   -- no path belongs to two open streams (#4322): refused before any write;
   -- o.join (--join) names the one stream the task may join instead
   local mine = ''
@@ -2186,8 +2363,9 @@ function TK.create(id, fields, o)
   if TK.str(o.friend) ~= '' then
     for i = 1, #fields, 2 do
       if fields[i] == 'probe' and TK.str(fields[i + 1]) ~= '' then
-        return 'PROBE ' .. id .. ' is a probe (probe=' .. TK.str(fields[i + 1]) .. '); friend:' .. TK.str(o.friend) ..
-          ':cards:' .. where .. ' holds consumer work only: a probe result goes on bench:<b>:beat probe (nova-tools#4237)'
+        return 'PROBE ' .. id .. ' is a probe (probe=' .. TK.str(fields[i + 1]) .. '); ' ..
+          cm_ckey(cm_epoch(), 'friend:' .. TK.str(o.friend), where) ..
+          ' holds consumer work only: a probe result goes on bench:<b>:beat probe (nova-tools#4237)'
       end
     end
   end
@@ -2195,11 +2373,12 @@ function TK.create(id, fields, o)
   for i = 1, #fields do h[#h + 1] = fields[i] end
   for _, kv in ipairs({ { 'where', '' }, { 'where_ok', '-' }, { 'state', '' }, { 'stream', stream },
     { 'friend', TK.str(o.friend) }, { 'owner', TK.str(o.friend) }, { 'sprint', TK.str(o.sprint) },
-    { 'created_at', tostring(o.created or cm_now()) } }) do
+    { 'created_at', tostring(o.created or cm_now()) }, { 'epoch', cm_estr(cm_epoch()) } }) do
     h[#h + 1] = kv[1]
     h[#h + 1] = kv[2]
   end
   redis.call('HSET', unpack(h))
+  if TK.writes_pr(fields) and NS.tref then NS.tref.index(id) end
   TK.register(stream)
   return TK.move(id, where, { by = o.by, why = o.why or 'push', front = o.front, sprint = o.sprint, state = o.state,
     qscore = o.qscore, sentinel = o.sentinel, gated = true })
@@ -2218,8 +2397,8 @@ function TK.derive(id, p)
   if p.stream ~= '' then
     local found
     for _, w in ipairs(TK.WHERE) do
-      if redis.call('ZSCORE', 'ws:' .. p.stream .. ':' .. w, id) then
-        if found then return nil, 'twice ws:' .. p.stream .. ':' .. found .. ' and :' .. w end
+      if redis.call('ZSCORE', cm_wskey(p.epoch, p.stream, w), id) then
+        if found then return nil, 'twice ' .. cm_wskey(p.epoch, p.stream, found) .. ' and :' .. w end
         found = w
       end
     end
@@ -2379,11 +2558,27 @@ function TK.fsck(S)
       end
     end
   end
+  -- the current epoch's sets (the tables') and the legacy names (#4238)
+  local fsck_epochs = { [cm_epoch()] = true, [0] = true }
+  for e in pairs(fsck_epochs) do
+    for _, s in ipairs(streams) do
+      for _, w in ipairs(TK.WHERE) do sweep(cm_wskey(e, s, w), 'stream', s, w) end
+      for _, w in ipairs(TK.WHERE) do
+        for _, id in ipairs(redis.call('ZRANGE', cm_wskey(e, s, w), 0, -1)) do
+          if TK.is_sentinel(id) and id ~= TK.sentinel_id(s) then
+            note('SENTINEL ' .. id .. ' in ' .. cm_wskey(e, s, w) .. ' is another stream\'s stop (' ..
+              TK.str(redis.call('GET', 'ws:slug:' .. string.sub(id, 1, -10))) .. '); nova-sprint task fsck --repair moves it home')
+          end
+        end
+      end
+    end
+    for _, f in ipairs(friends) do
+      for _, w in ipairs(TK.WHERE) do sweep(cm_ckey(e, 'friend:' .. f, w), 'friend', f, w) end
+    end
+  end
   for _, s in ipairs(streams) do
-    for _, w in ipairs(TK.WHERE) do sweep('ws:' .. s .. ':' .. w, 'stream', s, w) end
     -- the stream's stop (#4318): waiting, parked or landed, in its own
-    -- stream, else missing; another stream's stop in one of s's sets is
-    -- named too
+    -- stream, else missing (its set is its own epoch's, #4238)
     local sid = TK.sentinel_id(s)
     if sid ~= '' then
       local f = redis.call('HMGET', 'task:' .. sid, 'where', 'stream')
@@ -2396,17 +2591,6 @@ function TK.fsck(S)
           '; nova-sprint task fsck --repair moves it home)')
       end
     end
-    for _, w in ipairs(TK.WHERE) do
-      for _, id in ipairs(redis.call('ZRANGE', 'ws:' .. s .. ':' .. w, 0, -1)) do
-        if TK.is_sentinel(id) and id ~= sid then
-          note('SENTINEL ' .. id .. ' in ws:' .. s .. ':' .. w .. ' is another stream\'s stop (' ..
-            TK.str(redis.call('GET', 'ws:slug:' .. string.sub(id, 1, -10))) .. '); nova-sprint task fsck --repair moves it home')
-        end
-      end
-    end
-  end
-  for _, f in ipairs(friends) do
-    for _, w in ipairs(TK.WHERE) do sweep('friend:' .. f .. ':cards:' .. w, 'friend', f, w) end
   end
   for _, id in ipairs(redis.call('SMEMBERS', 'sprint:' .. S .. ':tasks')) do want(id) end
   local n = { null = 0, unplaced = 0 }
@@ -2477,11 +2661,21 @@ end
 function TK.reply(err, info)
   if err then return 'REFUSED ' .. err end
   if info.same then return 'SAME ' .. info.to end
-  return 'MOVED ' .. (info.from == '' and '-' or info.from) .. ' ' .. info.to
+  local s = 'MOVED ' .. (info.from == '' and '-' or info.from) .. ' ' .. info.to
+  -- a stitch's landing landed its plan (TK.land_parent, nova-tools#4317):
+  -- the reply names the plan with its ref and origin, so the one who
+  -- landed the stitch by hand (task land --id) closes the plan's issue
+  if info.parent then
+    local f = redis.call('HMGET', 'task:' .. info.parent, 'ref', 'origin')
+    local ref, origin = TK.str(f[1]), TK.str(f[2])
+    s = s .. ' parent=' .. info.parent .. ' ref=' .. (ref == '' and '-' or ref) .. ' origin=' .. (origin == '' and '-' or origin)
+  end
+  return s
 end
 
--- ns_tcard_move(id, to, by, why[, k, v]...) -> MOVED <from> <to> |
--- SAME <where> | REFUSED <why>. The keys: ok friend stream sha sprint front
+-- ns_tcard_move(id, to, by, why[, k, v]...) -> MOVED <from> <to>
+-- [parent=<id> ref=<repo#n|-> origin=<url|->] | SAME <where> | REFUSED <why>
+-- (the parent part when the move landed a stitch and so its plan). The keys: ok friend stream sha sprint front
 -- as, else a record field.
 redis.register_function('ns_tcard_move', function(keys, args)
   local o = TK.opts(args, 5, { by = args[3], why = args[4] })
@@ -2509,7 +2703,7 @@ redis.register_function('ns_tcard_take', function(keys, args)
   local ids = {}
   for i = 4, #args do ids[#ids + 1] = args[i] end
   local named = #ids > 0
-  if not named then ids = redis.call('ZRANGE', 'friend:' .. as .. ':cards:ready', 0, -1) end
+  if not named then ids = redis.call('ZRANGE', cm_ckey(cm_epoch(), 'friend:' .. as, 'ready'), 0, -1) end
   local out = { 'TAKEN', '0' }
   for _, id in ipairs(ids) do
     if not named and #out - 2 >= n then break end
@@ -2527,7 +2721,10 @@ end)
 
 -- ns_tcard_done(id, by, evidence[, pr]) -> MOVED working merging|done |
 -- REFUSED <why>: working -> merging when the task names a PR (its pr field,
--- or pr given), else working -> done/ok.
+-- or pr given), else working -> done/ok. A task that goes to merging is
+-- indexed under its PR's ref in the same call (NS.tref.index; TK.move does
+-- it for a pr given, and this call for a pr the record already carried), so
+-- a CLOSE line on the PR lands it (nova-tools#4317).
 redis.register_function('ns_tcard_done', function(keys, args)
   local id, by, evidence, pr = args[1], args[2], args[3] or '', args[4] or ''
   local fields = { 'evidence', evidence }
@@ -2539,7 +2736,9 @@ redis.register_function('ns_tcard_done', function(keys, args)
   end
   local to, ok = 'done', 'ok'
   if pr ~= '' and pr ~= '0' then to, ok = 'merging', nil end
-  return TK.reply(TK.move(id, to, { by = by, why = 'done', ok = ok, fields = fields }))
+  local err, info = TK.move(id, to, { by = by, why = 'done', ok = ok, fields = fields })
+  if not err and to == 'merging' and NS.tref then NS.tref.index(id) end
+  return TK.reply(err, info)
 end)
 
 -- ns_tcard_beat(id, as) -> BEAT <lease_until> | REFUSED <why>: the holder
@@ -2583,7 +2782,7 @@ end
 -- (s:<S>:card:) is the card move's: card fsck and the expire duty own it.
 -- Returns the ids moved to ready and the ids unlinked.
 function TK.reap(f, by, now)
-  local fk = 'friend:' .. f .. ':cards:working'
+  local fk = cm_ckey(cm_epoch(), 'friend:' .. f, 'working')
   local expired, unlinked = {}, {}
   for _, id in ipairs(redis.call('ZRANGE', fk, 0, -1)) do
     if not TK.card_id(id) and not TK.copy_id(id) then
@@ -2662,7 +2861,7 @@ redis.register_function('ns_tcard_land_stream', function(keys, args)
   local stream, sha, by, why = args[1] or '', args[2] or '', args[3] or '', args[4] or ''
   if why == '' then why = 'stream merged ' .. sha end
   local landed, refused, parents = {}, {}, {}
-  for _, id in ipairs(redis.call('ZRANGE', 'ws:' .. stream .. ':merging', 0, -1)) do
+  for _, id in ipairs(redis.call('ZRANGE', cm_wskey(cm_epoch(), stream, 'merging'), 0, -1)) do
     if not TK.card_id(id) then
       local err, info = TK.move(id, 'landed', { by = by, why = why, sha = sha })
       if err then
@@ -2820,7 +3019,10 @@ function TM.parse(c)
   return kind, name
 end
 
-function TM.key(c, col) return c .. ':cards:' .. col end
+-- TM.key(c, col): consumer c's set at col under the current epoch (#4238):
+-- a copy of an older epoch is invisible to every consumer verb (its beat
+-- and end refuse NOTWORKING), and can never make a current cell non-zero.
+function TM.key(c, col) return cm_ckey(cm_epoch(), c, col) end
 
 -- TM.ci_legs: the CI legs running on the machine consumer c runs on, as
 -- its beat's ci field counts them (<consumer>:beat, a bench's or a
@@ -2915,7 +3117,7 @@ end
 function TM.leg(id, p)
   if not p then return nil, 'NOTASK task:' .. id end
   if TK.is_sentinel(id) then
-    return nil, 'SENTINEL task:' .. id .. ' is the stream stop, never dealt: it lands (task land) when every other card of its stream has'
+    return nil, 'SENTINEL task:' .. id .. ' is the stream stop, never dealt: it lands by the coordinator\'s acceptance (task land) when every other card of its stream has'
   end
   if p.copy ~= '' then return nil, 'LIVECOPY task:' .. id .. ' has live copy ' .. p.copy end
   if p.reads ~= '' then return nil, 'LIVECOPY task:' .. id .. ' has live read copies ' .. p.reads end
@@ -3079,7 +3281,7 @@ function TM.deal(c, by, k, stream, ids)
       for _, s in ipairs(streams) do
         local rows = {}
         for _, w in ipairs(wheres) do
-          local r = redis.call('ZRANGE', 'ws:' .. s .. ':' .. w, 0, -1, 'WITHSCORES')
+          local r = redis.call('ZRANGE', cm_wskey(cm_epoch(), s, w), 0, -1, 'WITHSCORES')
           for i = 1, #r, 2 do rows[#rows + 1] = { r[i], tonumber(r[i + 1]) or 0 } end
         end
         table.sort(rows, function(a, b) return a[2] < b[2] or (a[2] == b[2] and a[1] < b[1]) end)
@@ -3680,14 +3882,8 @@ function TM.live(c)
   return at ~= nil and math.abs(cm_now() - at) < TM.LIVE_MS
 end
 
--- TM.role: friend name holds role in its friend:<f>:roles csv (reader,
--- builder, coordinator, may-hold).
-function TM.role(name, role)
-  for x in string.gmatch(TK.str(redis.call('HGET', 'friend:' .. name .. ':roles', 'roles')), '[^,%s]+') do
-    if x == role then return true end
-  end
-  return false
-end
+-- TM.role: friend name holds role in its friend:<f>:roles csv (TK.role).
+TM.role = TK.role
 
 -- TM.room: consumer c's desired slots less the CI legs running on it
 -- (TM.ci_legs, nova-tools#4293) less its working and ready copies, and
@@ -3833,7 +4029,7 @@ TM.pending = TK.pending
 function TM.in_review()
   local out = {}
   for _, s in ipairs(TM.streams()) do
-    for _, id in ipairs(redis.call('ZRANGE', 'ws:' .. s .. ':review', 0, -1)) do
+    for _, id in ipairs(redis.call('ZRANGE', cm_wskey(cm_epoch(), s, 'review'), 0, -1)) do
       if not TK.card_id(id) and not TK.copy_id(id) then out[#out + 1] = id end
     end
   end
@@ -4121,79 +4317,62 @@ function TM.cancel_each(by, why, ids)
 end
 
 -- TM.sprint_clear(by, why, force): the sprint table to zeros (Glenn
--- 2026-09-26 8:40 AM ET: "reset the sprint table. zeros everywhere"). Every
--- primary in every ws:<s>:{waiting,ready,working,review,merging,landed} goes
--- to done: landed -> done/ok (what table clear did), the rest -> done/fail
--- with the why; a primary's live copies are retired to fail first; then
--- every consumer's ok and fail sets are deleted (the copies' records stay).
--- A ghost (a card or copy id in a ws set) is removed. Cards working or
--- merging are in flight: refused unless force. One call, one line back:
--- CLEARED streams cards copies consumers, then per stream its name and
--- count.
+-- 2026-09-26 8:40 AM ET: "reset the sprint table. zeros everywhere"), as
+-- ONE HINCRBY of sprint:epoch n (nova-tools#4238, Glenn 9:25 AM ET). Nothing is
+-- moved or deleted: every set the tables read is named by the epoch, so
+-- the next tick reads the new epoch's empty sets and every member of the
+-- old epoch is invisible for good; a writer still holding the old epoch
+-- writes into the old epoch's sets and can never make a cell non-zero.
+-- Cards working or merging are in flight: refused unless force (under the
+-- new epoch their copies' beats and ends refuse NOTWORKING; the cards stay
+-- in their epoch's sets). The pit stop is not a table set: the clear reads
+-- the open sprint's and reports it kept, or none; it never lifts one. One
+-- call, one line back: CLEARED streams cards copies consumers epoch
+-- pit sprint, then per stream its name and count (what the clear made
+-- invisible). The receipt rides the sprint:epoch hash, with one ws:log entry.
 function TM.sprint_clear(by, why, force)
   if TK.str(why) == '' then return { 'REFUSED', 'WHY sprint clear needs a why' } end
+  local e = cm_epoch()
   local streams = TM.streams()
-  local inflight = 0
-  for _, s in ipairs(streams) do
-    for _, w in ipairs({ 'working', 'merging' }) do
-      inflight = inflight + redis.call('ZCARD', 'ws:' .. s .. ':' .. w)
-    end
-  end
-  if inflight > 0 and not force then
-    return { 'REFUSED', 'INFLIGHT ' .. inflight .. ' cards working or merging; sprint clear --force cancels them' }
-  end
-  local cards, copies, per = 0, 0, {}
+  local inflight, cards, per = 0, 0, {}
   for _, s in ipairs(streams) do
     local n = 0
     for _, w in ipairs({ 'waiting', 'ready', 'working', 'review', 'merging', 'landed' }) do
-      local key = 'ws:' .. s .. ':' .. w
-      for _, id in ipairs(redis.call('ZRANGE', key, 0, -1)) do
-        local p = (not TK.card_id(id) and not TK.copy_id(id)) and TK.read(id) or nil
-        if TK.is_sentinel(id) then
-          -- the stream's stop stays with its stream (#4318): not a card
-          -- of the sprint, never counted
-        elseif not p then
-          redis.call('ZREM', key, id)
-        else
-          if p.copy ~= '' then
-            local r = redis.call('HMGET', 'task:' .. p.copy, 'consumer', 'where', 'stream')
-            if r[1] and TM.LIVE[TK.str(r[2])] and redis.call('ZSCORE', TM.key(r[1], r[2]), p.copy) then
-              TM.retire(p.copy, r[1], r[2], 'fail', 'sprint clear: ' .. why, {}, by, r[3])
-              copies = copies + 1
-            end
-          end
-          if p.reads ~= '' then
-            copies = copies + #TM.words(p.reads)
-            TM.retire_reads(id, 'sprint clear: ' .. why, by)
-          end
-          local ok = w == 'landed' and 'ok' or 'fail'
-          local err = TK.move(id, 'done', { by = by, why = why, ok = ok, copy = '', clear = true })
-          if err then return { 'REFUSED', 'DRIFT-AFTER ' .. err } end
-          n = n + 1
-        end
-      end
+      local k = redis.call('ZCARD', cm_wskey(e, s, w))
+      -- the stream's stop stays with its stream (#4318): not a card, never counted
+      local sid = TK.sentinel_id(s)
+      if sid ~= '' and redis.call('ZSCORE', cm_wskey(e, s, w), sid) then k = k - 1 end
+      n = n + k
+      if w == 'working' or w == 'merging' then inflight = inflight + k end
     end
     cards = cards + n
     per[#per + 1] = s
     per[#per + 1] = tostring(n)
   end
-  local consumers = TM.roster()
-  for _, c in ipairs(consumers) do
-    -- a copy still live on a consumer (its primary gone, or dealt outside
-    -- the streams) is retired; a live set member with no record is removed
-    for _, w in ipairs({ 'ready', 'working' }) do
-      for _, cid in ipairs(redis.call('ZRANGE', TM.key(c, w), 0, -1)) do
-        if TK.copy_id(cid) and redis.call('EXISTS', 'task:' .. cid) == 1 then
-          TM.retire(cid, c, w, 'fail', 'sprint clear: ' .. why, {}, by, TK.str(redis.call('HGET', 'task:' .. cid, 'stream')))
-          copies = copies + 1
-        else
-          redis.call('ZREM', TM.key(c, w), cid)
-        end
-      end
-    end
-    redis.call('DEL', TM.key(c, 'ok'), TM.key(c, 'fail'))
+  if inflight > 0 and not force then
+    return { 'REFUSED', 'INFLIGHT ' .. inflight .. ' cards working or merging; sprint clear --force leaves them to epoch ' .. e }
   end
-  local out = { 'CLEARED', tostring(#streams), tostring(cards), tostring(copies), tostring(#consumers) }
+  local consumers, copies = TM.roster(), 0
+  for _, c in ipairs(consumers) do
+    for _, w in ipairs({ 'ready', 'working' }) do copies = copies + redis.call('ZCARD', cm_ckey(e, c, w)) end
+  end
+  -- the pit stop of the open sprint (a member of sprint:order not closed)
+  -- is found and kept, never lifted
+  local pit, pit_sprint = 'none', ''
+  for _, S in ipairs(redis.call('ZRANGE', 'sprint:order', 0, -1)) do
+    if redis.call('HGET', 's:' .. S, 'status') ~= 'closed' and redis.call('EXISTS', 's:' .. S .. ':pitstop') == 1 then
+      pit, pit_sprint = 'kept', S
+    end
+  end
+  local nxt = redis.call('HINCRBY', CM_EPOCH_KEY, CM_EPOCH_FIELD, 1)
+  local at = cm_now()
+  redis.call('HSET', CM_EPOCH_KEY, 'at', tostring(at), 'by', TK.str(by), 'why', why, 'from', tostring(e),
+    'streams', tostring(#streams), 'cards', tostring(cards), 'copies', tostring(copies),
+    'consumers', tostring(#consumers), 'pitstop', pit, 'pitstop_sprint', pit_sprint)
+
+  TM.log('sprint:epoch', '', 'epoch/' .. e, 'epoch/' .. nxt, by, why, '')
+  local out = { 'CLEARED', tostring(#streams), tostring(cards), tostring(copies), tostring(#consumers),
+    tostring(nxt), pit, pit_sprint }
   for _, v in ipairs(per) do out[#out + 1] = v end
   return out
 end
@@ -4241,9 +4420,11 @@ end
 -- state, observed-at (Redis time sampled before the external observation).
 redis.register_function('ns_cm_owner', function(keys, a)
   local op, c, id, token = a[1], a[2], a[3], a[4]
-  if TM.parse(c) ~= 'friend' or not TK.copy_id(id) or token == '' or
-      keys[1] ~= TM.key(c, 'working') or keys[2] ~= 'task:' .. id then
+  if TM.parse(c) ~= 'friend' or not TK.copy_id(id) or token == '' or keys[2] ~= 'task:' .. id then
     return { 'REFUSED', 'OWNER bad consumer, copy, token or keys' }
+  end
+  if keys[1] ~= TM.key(c, 'working') then
+    return { 'REFUSED', 'EPOCH ' .. id .. ' sprint changed before owner update; no owner or lease changed; run: nova-sprint card render --id ' .. id }
   end
   local at = cm_now()
   local r = redis.call('HMGET', keys[2], 'consumer', 'where', 'token', 'lease_until',
@@ -4443,9 +4624,10 @@ function TM.fsck(write)
   local primaries = 0
   for _, s in ipairs(TM.streams()) do
     for _, w in ipairs(TK.WHERE) do
-      for _, id in ipairs(redis.call('ZRANGE', 'ws:' .. s .. ':' .. w, 0, -1)) do
+      for _, id in ipairs(redis.call('ZRANGE', cm_wskey(cm_epoch(), s, w), 0, -1)) do
         if not TK.card_id(id) and not TK.copy_id(id) then
           local f = redis.call('HMGET', 'task:' .. id, 'copy', 'friend', 'owner', 'reads')
+
           local cp, friend = TK.str(f[1]), TK.str(f[2])
           if friend == '' then friend = TK.str(f[3]) end
           local reads = TM.words(f[4])
@@ -4558,8 +4740,9 @@ redis.register_function('ns_cm_cancel_each', function(keys, args)
   return TM.cancel_each(TK.str(args[1]), args[2], TM.ids(args, 3))
 end)
 
--- ns_sprint_clear(by, why, force) -> CLEARED streams cards copies consumers,
--- then per stream: name, cards | REFUSED <why>.
+-- ns_sprint_clear(by, why, force) -> CLEARED streams cards copies consumers
+-- epoch pit(kept|none) sprint, then per stream: name, cards | REFUSED <why>.
+
 redis.register_function('ns_sprint_clear', function(keys, args)
   return TM.sprint_clear(TK.str(args[1]), args[2], args[3] == '1')
 end)

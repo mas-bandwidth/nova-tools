@@ -19,8 +19,9 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// The library functions (fn/lua/ws.lua). The coordinator seat FCALLs every one;
-// FnCounts is registered no-writes and is called with FCALL_RO.
+// The library functions (fn/lua/ws.lua). The coordinator seat FCALLs every one.
+// ns_ws_counts is not called from Go: every count is Counts (progress.go), one
+// definition of the sprint's numbers.
 const (
 	FnMove         = "ns_ws_move"
 	FnMoveMany     = "ns_ws_move_many"
@@ -29,7 +30,6 @@ const (
 	FnKeep         = "ns_ws_keep"
 	FnRename       = "ns_ws_rename"
 	FnOrder        = "ns_ws_order"
-	FnCounts       = "ns_ws_counts"
 )
 
 // The stream line (Glenn 2026-09-26): waiting -> ready -> working -> review
@@ -65,8 +65,10 @@ var States = append(append([]string{}, Stream...), Parked)
 // Closed is the state in no set.
 const Closed = "closed"
 
-// Key is the ZSET holding a stream's tasks in one state.
-func Key(stream, state string) string { return "ws:" + stream + ":" + state }
+// key0 is the ZSET holding a stream's tasks in one state at epoch 0, the
+// name before the first sprint clear; every reader keys by the epoch
+// through KeyAt (epoch.go, nova-tools#4238).
+func key0(stream, state string) string { return "ws:" + stream + ":" + state }
 
 // Refused is a function's REFUSED reply: the call wrote nothing (for a batch,
 // see ManyResult.Refused instead).
@@ -232,33 +234,4 @@ func Order(ctx context.Context, c redis.Cmdable, streams []string) (int, error) 
 		args[i] = s
 	}
 	return one(ctx, c, FnOrder, "ORDERED", args...)
-}
-
-// Count is one stream's row of ns_ws_counts.
-type Count struct {
-	Stream                                           string
-	Rank                                             int // 1-based position in the reply (ws:order, then unranked names)
-	Waiting, Ready, Working, Merging, Landed, Parked int
-}
-
-// Active is the stream's tasks that are not parked, landed or closed.
-func (c Count) Active() int { return c.Waiting + c.Ready + c.Working + c.Merging }
-
-// Counts is ns_ws_counts (FCALL_RO): every stream's six ZCARDs in rank order.
-func Counts(ctx context.Context, c redis.Cmdable) ([]Count, error) {
-	out, err := call(ctx, c, FnCounts, true)
-	if err != nil {
-		return nil, err
-	}
-	const stride = 7
-	if len(out)%stride != 0 {
-		return nil, fmt.Errorf("%s: reply of %d cells is not rows of %d", FnCounts, len(out), stride)
-	}
-	rows := make([]Count, 0, len(out)/stride)
-	for i := 0; i < len(out); i += stride {
-		rows = append(rows, Count{Stream: out[i], Rank: i/stride + 1,
-			Waiting: atoi(out[i+1]), Ready: atoi(out[i+2]), Working: atoi(out[i+3]),
-			Merging: atoi(out[i+4]), Landed: atoi(out[i+5]), Parked: atoi(out[i+6])})
-	}
-	return rows, nil
 }

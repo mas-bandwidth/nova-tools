@@ -78,7 +78,10 @@ func Fixture2674() [][]string {
 		}
 		cmds = append(cmds, cmd)
 	}
-	return cmds
+	// the config's sprint is the open one the one count reads: a --sprint
+	// that is not the open sprint is refused (#4411)
+	return append(cmds, []string{"ZADD", "sprint:order", "1", "fixes-2026-09-22"},
+		[]string{"HSET", "s:fixes-2026-09-22", "status", "open"})
 }
 
 // Fixture2674Degraded is applied on top of Fixture2674(): every branch of the

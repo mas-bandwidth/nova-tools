@@ -190,13 +190,16 @@ func TestPlanBindsLandsWithItsStitchAndIsNeverDealt(t *testing.T) {
 	if s := state(); s != "landed" {
 		t.Fatalf("state %s, want landed", s)
 	}
-	// Five landed: two children, the stitch, the parent, and the stream's
-	// sentinel (#4318), which the parent's landing landed as the last live
-	// card (the two hooks in the one move compose).
-	landedIDs := c.ZRange(ctx, taskcard.StreamKey(hierStream, "landed"), 0, -1).Val()
+	// Four landed by identity: two children, the stitch and the parent; the
+	// stream's sentinel (#4318) stays waiting for the coordinator's
+	// acceptance (#4412), though the parent's landing left no card live.
+	landedIDs := c.ZRange(ctx, taskcard.StreamKeyAt(0, hierStream, "landed"), 0, -1).Val()
 	sort.Strings(landedIDs)
-	if got := strings.Join(landedIDs, " "); got != "5001 5002 autonomy:sentinel "+parent+" "+stitch {
-		t.Fatalf("ws:%s:landed is %q, want the children, the sentinel, the parent and the stitch", hierStream, got)
+	if got := strings.Join(landedIDs, " "); got != "5001 5002 "+parent+" "+stitch {
+		t.Fatalf("ws:%s:landed is %q, want the children, the parent and the stitch", hierStream, got)
+	}
+	if w := c.HGet(ctx, taskcard.Key("autonomy:sentinel"), "where").Val(); w != "waiting" {
+		t.Fatalf("the sentinel is %q after the plan landed, want waiting for acceptance", w)
 	}
 	// Plans lists the plan for the stream, its children in order.
 	plans, err := taskcard.Plans(ctx, c, []string{hierStream, "no such stream"})
@@ -237,6 +240,11 @@ func TestPlanBindRefusesAParentThatMovedOn(t *testing.T) {
 	}
 	if _, err := taskcard.BindPlan(ctx, c, parent, nil, "other-stitch", "rowan"); err == nil || !strings.Contains(err.Error(), "is a plan whose stitch is "+stitch+", not other-stitch") {
 		t.Fatalf("another stitch: %v", err)
+	}
+	// A re-cut's stitch while the old one lives is refused by name.
+	if _, err := taskcard.BindPlan(ctx, c, parent, nil, taskcard.NextStitchID(parent, stitch), "rowan"); err == nil ||
+		!strings.Contains(err.Error(), stitch+" is waiting, and a stitch is re-cut (as plan-two-stitch-2) only once the old one ended done") {
+		t.Fatalf("re-cut over a live stitch: %v", err)
 	}
 	// A parent that was taken is refused: a plan is cut while it waits.
 	other := "plan-three"
@@ -285,14 +293,16 @@ func TestStitchLandedByAnyDoorLandsThePlan(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := taskcard.Land(ctx, c, stitch, "rowan", head(32), ""); err != nil {
-		t.Fatal(err)
+	// The move's reply names the plan it landed with its ref (the fix of
+	// #4317: task land --id <stitch> prints it so the plan's issue closes).
+	if r, err := taskcard.Land(ctx, c, stitch, "rowan", head(32), ""); err != nil || r.To != "landed" || r.Parent != parent || r.ParentRef != "mas-bandwidth/nova-tools#4317" || r.ParentOrigin != "" {
+		t.Fatalf("land of the stitch: %+v %v", r, err)
 	}
 	rec := c.HGetAll(ctx, taskcard.Key(parent)).Val()
 	if rec["where"] != "landed" || rec["merge_sha"] != head(32) || !strings.Contains(rec["why"], "stitch "+stitch+" landed") {
 		t.Fatalf("parent after task land on the stitch: where=%s merge_sha=%s why=%q", rec["where"], rec["merge_sha"], rec["why"])
 	}
-	if n := c.ZCard(ctx, taskcard.StreamKey(hierStream, "ready")).Val(); n != 0 {
+	if n := c.ZCard(ctx, taskcard.StreamKeyAt(0, hierStream, "ready")).Val(); n != 0 {
 		t.Fatalf("ws:ready holds %d, want 0 (a plan is never ready)", n)
 	}
 	clean(t, c, "after the hand landing")
@@ -345,7 +355,7 @@ func TestCancelOfAPlanCascadesOrRefuses(t *testing.T) {
 		}
 	}
 	// Nothing of the plan is left waiting: only the stream's sentinel (#4318).
-	if got := strings.Join(c.ZRange(ctx, taskcard.StreamKey(hierStream, "waiting"), 0, -1).Val(), " "); got != "autonomy:sentinel" {
+	if got := strings.Join(c.ZRange(ctx, taskcard.StreamKeyAt(0, hierStream, "waiting"), 0, -1).Val(), " "); got != "autonomy:sentinel" {
 		t.Fatalf("ws:waiting holds %q after the cascade, want only the sentinel", got)
 	}
 	if p, err := taskcard.ReadPlan(ctx, c, parent); err != nil || p.State() != "done" {
@@ -373,7 +383,7 @@ func TestDropChildUnsticksAPlan(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, err := taskcard.ReadPlan(ctx, c, parent)
-	if err != nil || p.State() != taskcard.Stuck || !strings.Contains(p.Remedy(), "card stitch --id plan-drop --drop 5501") {
+	if err != nil || p.State() != taskcard.Stuck || !strings.Contains(p.Remedy(), "nova-sprint card stitch --drop 5501 drops it from the plan") {
 		t.Fatalf("stuck: %s %q %v", p.State(), p.Remedy(), err)
 	}
 	p, err = taskcard.DropChild(ctx, c, "5501", "rowan")

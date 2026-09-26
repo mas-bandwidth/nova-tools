@@ -38,9 +38,11 @@ function W.created_ms(v)
   return NS.task.ms(v)
 end
 
+-- W.key: the stream's set under the current epoch (nova-tools#4238).
 function W.key(stream, state)
-  return 'ws:' .. stream .. ':' .. state
+  return NS.card.wskey(NS.card.epoch(), stream, state)
 end
+
 
 function W.now()
   local t = redis.call('TIME')
@@ -290,7 +292,10 @@ local function ws_rename(keys, args)
   if landed_sha and landed_sha ~= '' then
     local nsid = NS.task.sentinel_id(new)
     if redis.call('EXISTS', 'task:' .. nsid) == 1 then
-      local err = NS.task.move(nsid, 'landed', { by = by, sha = landed_sha, why = 'rename: landed as ' .. old })
+      -- the old name's landing was the coordinator's acceptance; the rename
+      -- carries it (o.rename), it is not a second acceptance
+      local err = NS.task.move(nsid, 'landed', { by = by, sha = landed_sha, why = 'rename: landed as ' .. old,
+        rename = true })
       if err then
         return { 'REFUSED', err }
       end

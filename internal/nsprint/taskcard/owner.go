@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -100,7 +101,11 @@ func ownerCall(ctx context.Context, c redis.Cmdable, as Consumer, id, token, op 
 	if as.Kind != "friend" || as.Name == "" || !IsCopy(id) || token == "" {
 		return nil, fmt.Errorf("owner requires friend consumer, copy id and current token")
 	}
-	r, err := c.FCall(ctx, FnOwner, []string{as.Key("working"), Key(id)}, op, as.String(), id, token, p.Host, p.PID, p.Start, state, at).StringSlice()
+	epoch, err := ws.Epoch(ctx, c)
+	if err != nil {
+		return nil, fmt.Errorf("owner %s: %w", id, err)
+	}
+	r, err := c.FCall(ctx, FnOwner, []string{ws.ConsumerKeyAt(epoch, as.String(), "working"), Key(id)}, op, as.String(), id, token, p.Host, p.PID, p.Start, state, at).StringSlice()
 	if err != nil {
 		return nil, fmt.Errorf("owner: %w", err)
 	}
@@ -122,10 +127,18 @@ type OwnerOutcome struct {
 	Err     error
 }
 
-// ObserveOwners sends a pass's observations in one round trip. Every copy is
+// ObserveOwners reads the current epoch, then batches the observations. Every copy is
 // independently fenced inside its FCALL; a refused copy cannot stop its peers.
 func ObserveOwners(ctx context.Context, c redis.Cmdable, as Consumer, checks []OwnerCheck) ([]OwnerOutcome, error) {
 	out := make([]OwnerOutcome, len(checks))
+	if len(checks) == 0 {
+		return out, nil
+	}
+	epoch, err := ws.Epoch(ctx, c)
+	if err != nil {
+		return nil, fmt.Errorf("observe owners %s: %w", as, err)
+	}
+	working := ws.ConsumerKeyAt(epoch, as.String(), "working")
 	cmds := make([]*redis.Cmd, len(checks))
 	p := c.Pipeline()
 	for i, check := range checks {
@@ -136,11 +149,8 @@ func ObserveOwners(ctx context.Context, c redis.Cmdable, as Consumer, checks []O
 		if as.Kind != "friend" || as.Name == "" || !IsCopy(check.ID) || check.Token == "" {
 			return nil, fmt.Errorf("owner requires friend consumer, copy id and current token")
 		}
-		cmds[i] = p.FCall(ctx, FnOwner, []string{as.Key("working"), Key(check.ID)},
+		cmds[i] = p.FCall(ctx, FnOwner, []string{working, Key(check.ID)},
 			"observe", as.String(), check.ID, check.Token, o.Owner.Host, o.Owner.PID, o.Owner.Start, o.State, o.At.UnixMilli())
-	}
-	if len(cmds) == 0 {
-		return out, nil
 	}
 	if _, err := p.Exec(ctx); err != nil {
 		return nil, fmt.Errorf("observe owners: %w", err)

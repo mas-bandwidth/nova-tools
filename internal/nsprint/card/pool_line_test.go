@@ -70,7 +70,7 @@ func TestTablePoolLineIsTheUndealtView(t *testing.T) {
 	cells := hostRow(t, ctx, client)
 	held := int64(0)
 	for i, w := range []string{"ready", "working"} {
-		n := client.ZCard(ctx, card.BenchCardsKey(ndBench, w)).Val()
+		n := client.ZCard(ctx, card.BenchCardsKeyAt(0, ndBench, w)).Val()
 		if cells[i+1] != fmt.Sprint(n) {
 			t.Fatalf("host row %s = %s, ZCARD = %d (row %v)", w, cells[i+1], n, cells)
 		}

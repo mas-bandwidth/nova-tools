@@ -165,8 +165,9 @@ The loop exits after two ticks without an observed live owner. The owner
 command starts it again if binding happens after that idle exit.
 
 Observations use Redis time sampled before the OS check and are refused when
-older than two seconds. Redis rechecks the working membership, claim token,
-process identity and unexpired lease atomically. An expired lease cannot be
+older than two seconds. Redis rechecks the current sprint epoch, working membership, claim token,
+process identity and unexpired lease atomically. A sprint clear cannot renew an
+old epoch copy, including when it races the OS observation. An expired lease cannot be
 revived even when the owner is alive. Copies with unknown owners lapse through
 the normal expiry path. The daemon refreshes friend presence only when at
 least one observed live copy was renewed; unrelated presence producers retain

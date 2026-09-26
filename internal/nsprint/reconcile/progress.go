@@ -141,9 +141,14 @@ type Sample struct {
 	RetriesHour                                      int   // ws:log working -> ready|waiting in the last hour
 	OldestAt                                         int64 // created_at (ms) of the oldest card not landed; 0 none
 	Held                                             bool  // a pit stop holds the stream
+	// LandStalled is land:slow:<stream> stalled=1 (the land watch, #4324):
+	// the stream's landing is past cfg:land wall. It is a stall whatever
+	// the counts say.
+	LandStalled bool
 }
 
-// Left is the cards not landed.
+// Left is the cards not landed: the one count's left for the stream
+// (ws.StreamCounts Sum less landed), sentinel aside.
 func (s Sample) Left() int64 { return s.Waiting + s.Ready + s.Working + s.Review + s.Merging }
 
 // The statuses.
@@ -212,6 +217,17 @@ func Step(prev State, s Sample, room bool, now time.Time, window time.Duration) 
 		st.BlockedSince = ms
 	}
 	switch {
+	case s.LandStalled:
+		// The landing is past its wall: stalled now, one ask per episode
+		// (blocked_since is the episode key, kept across runs).
+		switch {
+		case st.BlockedSince != 0:
+		case prev.BlockedSince != 0:
+			st.BlockedSince = prev.BlockedSince
+		default:
+			st.BlockedSince = ms
+		}
+		st.Status = StatusStalled
 	case !inPlay:
 		st.Status = StatusIdle
 	case st.BlockedSince != 0 && ms-st.BlockedSince >= window.Milliseconds():
@@ -385,12 +401,12 @@ func (p *Progress) Run(ctx context.Context, l *Lease) (Counts, error) {
 	if !p.last.IsZero() && now.Sub(p.last) < every {
 		return Counts{}, nil
 	}
-	cfg, streams, sprints, roster, top, err := p.readIndex(ctx)
+	cfg, streams, sprints, roster, top, epoch, err := p.readIndex(ctx)
 	if err != nil {
 		return Counts{}, err
 	}
 	p.last, p.every = now, cfg.Every
-	run, err := p.measure(ctx, now, cfg, streams, sprints, roster)
+	run, err := p.measure(ctx, now, cfg, streams, sprints, roster, epoch)
 	if err != nil {
 		return Counts{}, err
 	}
@@ -435,15 +451,21 @@ func (p *Progress) print(line string) {
 
 // readIndex is the first round trip: the config, the streams, the sprints,
 // the consumer roster and the duty's own record.
-func (p *Progress) readIndex(ctx context.Context) (cfg ProgressConfig, streams, sprints []string, roster []taskcard.Consumer, top map[string]string, err error) {
+func (p *Progress) readIndex(ctx context.Context) (cfg ProgressConfig, streams, sprints []string, roster []taskcard.Consumer, top map[string]string, epoch uint64, err error) {
 	pipe := p.Client.Pipeline()
 	cfgCmd := pipe.HGetAll(ctx, ProgressConfigKey)
+	// the sprint epoch (nova-tools#4238) rides this round: measure keys
+	// every set by it
+	epochCmd := pipe.HGet(ctx, ws.EpochKey, ws.EpochField)
 	order := pipe.ZRange(ctx, "ws:order", 0, -1)
 	sprintOrder := pipe.ZRange(ctx, "sprint:order", 0, -1)
 	consumers := pipe.SMembers(ctx, taskcard.ConsumersKey)
 	topCmd := pipe.HGetAll(ctx, ProgressKey)
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return cfg, nil, nil, nil, nil, fmt.Errorf("progress: index: %w", err)
+		return cfg, nil, nil, nil, nil, 0, fmt.Errorf("progress: index: %w", err)
+	}
+	if epoch, err = ws.ParseEpoch(epochCmd.Val()); err != nil {
+		return cfg, nil, nil, nil, nil, 0, fmt.Errorf("progress: %w", err)
 	}
 	cfg = ParseProgressConfig(cfgCmd.Val())
 	names := append([]string(nil), consumers.Val()...)
@@ -453,22 +475,23 @@ func (p *Progress) readIndex(ctx context.Context) (cfg ProgressConfig, streams, 
 			roster = append(roster, k)
 		}
 	}
-	return cfg, order.Val(), sprintOrder.Val(), roster, topCmd.Val(), nil
+	return cfg, order.Val(), sprintOrder.Val(), roster, topCmd.Val(), epoch, nil
 }
 
 // measure is the second round trip and the judgement: every stream's counts,
 // oldest card and stored state, every consumer's room, the open sprint, the
 // last hour of ws:log, then Step per stream.
-func (p *Progress) measure(ctx context.Context, now time.Time, cfg ProgressConfig, streams, sprints []string, roster []taskcard.Consumer) (ProgressRun, error) {
+func (p *Progress) measure(ctx context.Context, now time.Time, cfg ProgressConfig, streams, sprints []string, roster []taskcard.Consumer, epoch uint64) (ProgressRun, error) {
 	holds, err := pitstop.Current(ctx, p.Client)
 	if err != nil {
 		return ProgressRun{}, fmt.Errorf("progress: pitstop: %w", err)
 	}
 	notLanded := []string{ws.Waiting, ws.Ready, ws.Working, ws.Review, ws.Merging}
 	type streamCmds struct {
-		counts [6]*ws.CardCountCmd
-		oldest [5]*redis.ZSliceCmd
-		state  *redis.MapStringStringCmd
+		counts  []*ws.CardCountCmd // ws.QueueStreamCounts: the six, then parked
+		oldest  [5]*redis.ZSliceCmd
+		state   *redis.MapStringStringCmd
+		stalled *redis.StringCmd // land:slow:<stream> stalled (the land watch)
 	}
 	type consumerCmds struct {
 		desired *redis.SliceCmd
@@ -476,24 +499,26 @@ func (p *Progress) measure(ctx context.Context, now time.Time, cfg ProgressConfi
 		down    *redis.IntCmd
 		at, ci  *redis.StringCmd
 	}
+	// every set under the epoch the index round read (nova-tools#4238)
 	pipe := p.Client.Pipeline()
 	scs := make([]streamCmds, len(streams))
 	for i, s := range streams {
-		// the counts and the oldest card leave the stream's stop out (#4318):
-		// a set's two oldest, so the sentinel beside a card never hides it
-		for j, state := range ws.Stream {
-			scs[i].counts[j] = ws.QueueCardCount(ctx, pipe, s, state)
-		}
+		// the counts are the one count's cells (ws.QueueStreamCounts, the
+		// cells ws.Counts prints) under the epoch (#4238), the stream's stop
+		// out (#4318); the oldest card leaves it out too: a set's two
+		// oldest, so the sentinel beside a card never hides it
+		scs[i].counts = ws.QueueStreamCounts(ctx, pipe, epoch, s)
 		for j, state := range notLanded {
-			scs[i].oldest[j] = pipe.ZRangeWithScores(ctx, taskcard.StreamKey(s, state), 0, 1)
+			scs[i].oldest[j] = pipe.ZRangeWithScores(ctx, taskcard.StreamKeyAt(epoch, s, state), 0, 1)
 		}
 		scs[i].state = pipe.HGetAll(ctx, ProgressStreamKey(s))
+		scs[i].stalled = pipe.HGet(ctx, LandSlowKey(s), "stalled")
 	}
 	ccs := make([]consumerCmds, len(roster))
 	for i, k := range roster {
 		ccs[i] = consumerCmds{
 			desired: pipe.HMGet(ctx, k.DesiredKey(), "slots", "paused"),
-			working: pipe.ZCard(ctx, k.Key(ws.Working)),
+			working: pipe.ZCard(ctx, k.KeyAt(epoch, ws.Working)),
 			down:    pipe.Exists(ctx, k.DownKey()),
 			at:      pipe.HGet(ctx, k.BeatKey(), "at"),
 			ci:      pipe.HGet(ctx, k.MachineBeatKey(), "ci"),
@@ -553,11 +578,10 @@ func (p *Progress) measure(ctx context.Context, now time.Time, cfg ProgressConfi
 	} else {
 		return ProgressRun{}, fmt.Errorf("progress: ws:log: %w", err)
 	}
-	// TODO(#4369): take the stream sentinel out of left and the oldest age through the shared "counts less the sentinel" helper once it lands on dev.
 	for i, s := range streams {
 		smp := Sample{Stream: s, LandedHour: landed[s], RetriesHour: retries[s]}
 		cells := []*int64{&smp.Waiting, &smp.Ready, &smp.Working, &smp.Review, &smp.Merging, &smp.Landed}
-		for j, c := range scs[i].counts {
+		for j, c := range scs[i].counts[:ws.CountsCells] {
 			*cells[j] = c.Val()
 		}
 		for _, z := range scs[i].oldest {
@@ -572,6 +596,7 @@ func (p *Progress) measure(ctx context.Context, now time.Time, cfg ProgressConfi
 			}
 		}
 		_, smp.Held = holds.Stream(s)
+		smp.LandStalled = scs[i].stalled.Val() == "1"
 		run.Samples = append(run.Samples, smp)
 		run.States[s] = Step(stateFromHash(scs[i].state.Val()), smp, run.Room, now, cfg.Window)
 	}

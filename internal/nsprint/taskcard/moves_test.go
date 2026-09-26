@@ -95,7 +95,7 @@ func wsSnapshot(t *testing.T, c *redis.Client) string {
 	ctx := context.Background()
 	var b strings.Builder
 	for _, w := range []string{"waiting", "ready", "working", "review", "merging", "landed", "done", "parked"} {
-		for _, id := range c.ZRange(ctx, taskcard.StreamKey(mvStream, w), 0, -1).Val() {
+		for _, id := range c.ZRange(ctx, taskcard.StreamKeyAt(0, mvStream, w), 0, -1).Val() {
 			f := c.HMGet(ctx, taskcard.Key(id), "where", "copy").Val()
 			fmt.Fprintf(&b, "%s:%s=%v/%v ", w, id, f[0], f[1])
 		}
@@ -245,8 +245,8 @@ func tableMoves(t *testing.T, consumer, reader string) {
 	}
 	for _, id := range w.IDs[:6] {
 		for _, col := range []string{"ready", "working"} {
-			if c.ZScore(ctx, k.Key(col), id).Err() != redis.Nil {
-				t.Fatalf("copy %s still in %s", id, k.Key(col))
+			if c.ZScore(ctx, k.KeyAt(0, col), id).Err() != redis.Nil {
+				t.Fatalf("copy %s still in %s", id, k.KeyAt(0, col))
 			}
 		}
 	}
@@ -258,7 +258,7 @@ func tableMoves(t *testing.T, consumer, reader string) {
 		t.Fatalf("read copy %v", got)
 	}
 	// never the author: no read copy is on the author's queue
-	if n := c.ZCard(ctx, k.Key("ready")).Val(); n != 4 {
+	if n := c.ZCard(ctx, k.KeyAt(0, "ready")).Val(); n != 4 {
 		t.Fatalf("the author holds %d ready copies, want its 4 unworked work copies", n)
 	}
 	cleanMoves(t, c, "end")
@@ -335,8 +335,8 @@ func tableMoves(t *testing.T, consumer, reader string) {
 		fix["leg"] != "fix" || fix["kind"] != "fix" || fix["consumer"] != consumer || fix["finding"] == "" {
 		t.Fatalf("fix: primary %v copy %v", fixed, fix)
 	}
-	if c.ZScore(ctx, k.Key("ready"), e[0].Next).Err() != nil {
-		t.Fatalf("fix copy %s is not in %s", e[0].Next, k.Key("ready"))
+	if c.ZScore(ctx, k.KeyAt(0, "ready"), e[0].Next).Err() != nil {
+		t.Fatalf("fix copy %s is not in %s", e[0].Next, k.KeyAt(0, "ready"))
 	}
 	if _, err := taskcard.End(ctx, c, taskcard.EndRequest{IDs: []string{reads[2].Copy}, OK: true, Score: 10, By: "rowan"}); err != nil {
 		t.Fatal(err)
@@ -461,7 +461,7 @@ func TestEndOKCutsNoReadForItsAuthor(t *testing.T) {
 	if p["where"] != "review" || p["copy"] != "" || p["author"] != k.String() || !strings.HasPrefix(p["why"], "ok pr nova-tools#7000 head "+head(0)[:12]) {
 		t.Fatalf("primary %v", p)
 	}
-	if n := c.ZCard(ctx, k.Key("ready")).Val(); n != 0 {
+	if n := c.ZCard(ctx, k.KeyAt(0, "ready")).Val(); n != 0 {
 		t.Fatalf("the author holds %d ready copies, want none", n)
 	}
 	cleanMoves(t, c, "end ok")
@@ -657,9 +657,9 @@ func TestCardFsckFindsBrokenLinksBothWays(t *testing.T) {
 		t.Fatal(err)
 	}
 	// set -> record: a copy removed from its set (the primary names a lost copy)
-	c.ZRem(ctx, k.Key("ready"), d[0].Copy)
+	c.ZRem(ctx, k.KeyAt(0, "ready"), d[0].Copy)
 	// record -> set: a ghost in a consumer set whose record names another place
-	c.ZAdd(ctx, k.Key("working"), redis.Z{Score: 1, Member: d[1].Copy})
+	c.ZAdd(ctx, k.KeyAt(0, "working"), redis.Z{Score: 1, Member: d[1].Copy})
 	// a copy whose primary no longer names it (two findings: the orphan
 	// copy, and the primary working with no copy)
 	c.HSet(ctx, taskcard.Key(ids[2]), "copy", "")

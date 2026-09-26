@@ -11,6 +11,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -94,7 +95,7 @@ func FriendBeat(ctx context.Context, st *store.Store, req FriendBeatRequest) (Fr
 	beat := "friend:" + friend + ":beat"
 	c := st.Client()
 	as := taskcard.Consumer{Kind: "friend", Name: friend}
-	ids, err := c.ZRange(ctx, as.Key("working"), 0, -1).Result()
+	ids, err := ws.IDs(ws.CellRange(ctx, c, as.String(), "working"))
 	if err != nil {
 		return FriendBeatResult{}, err
 	}
