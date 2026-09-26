@@ -36,7 +36,7 @@ func init() {
 	})
 	register(Verb{
 		Name:    "land",
-		Summary: "land --repo <r> --stream <s> | status|flaky|stream|merge|pr|run|offer|list|migrate ...: the whole stream landing (build, ci, merge on green), lander status, flaky store, its steps (land stream/merge, land status --repo), one PR through the merge queue (land pr <n>, #4311), and the fenced stream-PR lander (land run/offer/list/migrate, #2942)",
+		Summary: "land --repo <r> --stream <s> | status|flaky|stream|merge|pr|run|offer|list|migrate ...: the whole stream landing (build, ci, merge on green), lander status, flaky store, its steps (land stream/merge, land status --repo), one PR merged by REST once its webhook check state in Redis is green (land pr <n>, #4311), and the fenced stream-PR lander (land run/offer/list/migrate, #2942)",
 		Run:     runLand,
 	})
 }
@@ -144,7 +144,7 @@ func unitHeader(u *land.Unit) string {
 
 func runLand(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
-		return refuse(errOut, "land", "want status or flaky or writer or eval or stream or merge or pr or run or offer or list or migrate (land run is the fenced stream-PR lander, #2942; land pr <n> is one PR through the merge queue, #4311)")
+		return refuse(errOut, "land", "want status or flaky or writer or eval or stream or merge or pr or run or offer or list or migrate (land run is the fenced stream-PR lander, #2942; land pr <n> merges one PR by REST once its check state in Redis is green, #4311)")
 	}
 	if strings.HasPrefix(args[0], "-") {
 		return runLandWhole(ctx, args, out, errOut) // the whole stream landing, #3598
@@ -178,13 +178,13 @@ func runLand(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runLandMerge(ctx, args[1:], out, errOut)
 	}
 	if args[0] == "pr" {
-		return runLandPR(ctx, args[1:], out, errOut) // one PR through the merge queue, #4311
+		return runLandPR(ctx, args[1:], out, errOut) // one PR merged on green, #4311
 	}
 	if args[0] == "status" && hasRepoFlag(args[1:]) {
 		return runLandStreamStatus(ctx, args[1:], out, errOut)
 	}
 	if args[0] != "status" {
-		return refuse(errOut, "land", "want status or flaky or writer or eval or stream or merge or pr or run or offer or list or migrate (land run is the fenced stream-PR lander, #2942; land pr <n> is one PR through the merge queue, #4311)")
+		return refuse(errOut, "land", "want status or flaky or writer or eval or stream or merge or pr or run or offer or list or migrate (land run is the fenced stream-PR lander, #2942; land pr <n> merges one PR by REST once its check state in Redis is green, #4311)")
 	}
 	const usage = "land status [<unit>] --redis <addr> --sprint <S>"
 	addr, sprint, now, pos, err := readFlags("land status", args[1:])

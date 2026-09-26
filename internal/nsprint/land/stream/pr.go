@@ -2,98 +2,71 @@ package stream
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
 	"strings"
-	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/webhook"
+	"github.com/redis/go-redis/v9"
 )
 
-// LAND PR (nova-tools#4311): one pull request through GitHub's merge queue,
-// watched to its merge commit. The scratch script of 2026-09-26 (wait for
-// the PR's checks, enqueue it, watch the merge_group run, print the MERGED
-// line) ran about twenty times that day; this is it as a verb, through the
-// REST and GraphQL API with the token from the environment, never a child
-// process. A verb until the queue leaves GitHub (#3597).
+// LAND PR (nova-tools#4311): one pull request to its merge commit in one
+// pass, no loop and no wait. The scratch script of 2026-09-26 (wait for the
+// PR's checks, enqueue it, watch the merge_group run) ran about twenty times
+// that day; this is it as a verb within nova-sprint's two GitHub rules: REST
+// only, never GraphQL (7.21, TestNoGraphQLInNovaSprint), and no check state
+// read from GitHub (TestNoPollingPathsRemain): the check state is
+// ci:<repo>:<head>:gh, which the webhook ingest (internal/nsprint/webhook)
+// writes from the check_run and workflow_run deliveries.
 //
-// The walk: read the PR (its node id, head, mergeable_state); poll its
-// head's check runs until every one has completed (a failed one ends the
-// walk naming it) and the forge calls the PR mergeable; enqueue it with the
-// enqueuePullRequest mutation (the one admission the tools make, the door
-// internal/merge names); then poll the PR and the repository's merge_group
-// workflow runs, printing each QUEUE RUN status as it changes, until the PR
-// is merged (MERGED <sha>) or a queue run fails (FAILED <job names>) or the
-// timeout passes. Every wait goes through Sleep and every clock read through
-// Now, so a test walks the whole thing with no real time.
+// The pass: one REST read of the PR (merged, state, mergeable_state, head);
+// one HGETALL of the GitHub leg at that head; then, when the leg is green
+// and the PR has no conflict, one REST merge at exactly that head (GitHub
+// refuses when the head moved), the admin merge at a proved sha that skips
+// the merge queue (Glenn 2026-09-26 11:35 AM ET: the queue's run re-proved
+// the same tree for minutes). A pending or unrecorded leg is WAITING: the
+// verb returns at once and a later run, after the webhook writes green,
+// merges. Three GitHub calls at most, and none of them a check-state read.
 
 // ErrNoToken is the typed refusal when no GitHub token is in the environment.
 var ErrNoToken = &Refusal{Why: "no GitHub token", Remedy: "export GH_TOKEN (or GITHUB_TOKEN) for the seat that lands"}
 
-// LandPROptions is one land pr run.
+// LandPROptions is one land pr pass.
 type LandPROptions struct {
-	Repo    string // owner/name
-	N       int    // the pull request
-	Timeout time.Duration
-	Tick    time.Duration
-	// Now and Sleep are the clock; nil is the wall clock.
-	Now   func() time.Time
-	Sleep func(ctx context.Context, d time.Duration) error
-	Log   io.Writer // the progress lines; nil discards them
+	Repo string    // owner/name
+	N    int       // the pull request
+	Log  io.Writer // the progress lines; nil discards them
 }
 
-// LandPRReport is how the walk ended: State merged, failed, timeout, closed
-// or conflict; MergeSHA when merged; Failed the check or job names when a
-// check or queue run failed.
+// LandPRReport is how the pass ended: State merged, waiting, failed, closed
+// or conflict; Head the PR head the pass judged; CI the GitHub leg's word at
+// that head ("" when nothing is recorded); MergeSHA when merged; Failed the
+// first red run (kind:name) when the leg is red.
 type LandPRReport struct {
 	State    string
+	Head     string
+	CI       string
 	MergeSHA string
 	Failed   []string
-	// Enqueued says the PR was in the queue when the walk ended (or already).
-	Enqueued bool
 }
 
 type prView struct {
-	NodeID         string `json:"node_id"`
 	State          string `json:"state"`
 	Merged         bool   `json:"merged"`
 	MergeCommitSHA string `json:"merge_commit_sha"`
 	MergeableState string `json:"mergeable_state"`
+	Title          string `json:"title"`
 	Head           struct {
 		SHA string `json:"sha"`
 	} `json:"head"`
 }
 
-type checkRuns struct {
-	Total int `json:"total_count"`
-	Runs  []struct {
-		Name       string `json:"name"`
-		Status     string `json:"status"`
-		Conclusion string `json:"conclusion"`
-	} `json:"check_runs"`
-}
-
-type queueRuns struct {
-	Runs []struct {
-		ID         int64  `json:"id"`
-		HeadBranch string `json:"head_branch"`
-		Status     string `json:"status"`
-		Conclusion string `json:"conclusion"`
-		CreatedAt  string `json:"created_at"`
-	} `json:"workflow_runs"`
-}
-
-type runJobs struct {
-	Jobs []struct {
-		Name       string `json:"name"`
-		Conclusion string `json:"conclusion"`
-	} `json:"jobs"`
-}
-
-// LandPR runs the walk. The error is a *Refusal for a refused input, else
-// the API error that stopped it; a walk that ended in FAILED or timeout
-// returns its report with a nil error.
-func LandPR(ctx context.Context, gh *GitHub, o LandPROptions) (LandPRReport, error) {
+// LandPR runs the pass. The error is a *Refusal for a refused input, else
+// the API or store error that stopped it; a pass that ended failed, closed,
+// in conflict or waiting returns its report with a nil error.
+func LandPR(ctx context.Context, gh *GitHub, rdb redis.Cmdable, o LandPROptions) (LandPRReport, error) {
 	var rep LandPRReport
 	if gh == nil || gh.Token == "" {
 		return rep, ErrNoToken
@@ -101,232 +74,77 @@ func LandPR(ctx context.Context, gh *GitHub, o LandPROptions) (LandPRReport, err
 	if o.N < 1 || !strings.Contains(o.Repo, "/") {
 		return rep, &Refusal{Why: "land pr wants <n> and --repo owner/name", Remedy: "nova-sprint land pr <n> --repo owner/name"}
 	}
-	if o.Tick <= 0 {
-		o.Tick = 10 * time.Second
-	}
-	if o.Timeout <= 0 {
-		o.Timeout = 20 * time.Minute
-	}
-	if o.Now == nil {
-		o.Now = time.Now
-	}
-	if o.Sleep == nil {
-		o.Sleep = func(ctx context.Context, d time.Duration) error {
-			t := time.NewTimer(d)
-			defer t.Stop()
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-t.C:
-				return nil
-			}
-		}
+	if rdb == nil {
+		return rep, &Refusal{Why: "land pr reads the check state from Redis and has no store", Remedy: "--redis <addr> or NOVA_REDIS_ADDR"}
 	}
 	if o.Log == nil {
 		o.Log = io.Discard
 	}
 	say := func(format string, a ...any) { fmt.Fprintf(o.Log, "PR %d "+format+"\n", append([]any{o.N}, a...)...) }
-	deadline := o.Now().Add(o.Timeout)
-	wait := func() (bool, error) {
-		if !o.Now().Before(deadline) {
-			return false, nil
-		}
-		return true, o.Sleep(ctx, o.Tick)
-	}
-	prPath := fmt.Sprintf("/repos/%s/pulls/%d", o.Repo, o.N)
 
-	// Checks at the head, until they are all green or one is red.
 	var pr prView
-	lastChecks := ""
-	for {
-		pr = prView{}
-		if _, err := gh.do(ctx, http.MethodGet, prPath, nil, &pr); err != nil {
-			return rep, err
-		}
-		if pr.Merged {
-			rep.State, rep.MergeSHA = "merged", pr.MergeCommitSHA
-			say("MERGED %s", pr.MergeCommitSHA)
-			return rep, nil
-		}
-		if pr.State == "closed" {
-			rep.State = "closed"
-			say("FAILED closed without a merge")
-			return rep, nil
-		}
-		if pr.MergeableState == "dirty" {
-			rep.State = "conflict"
-			say("FAILED conflict with the base (mergeable_state=dirty)")
-			return rep, nil
-		}
-		var cr checkRuns
-		if _, err := gh.do(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/commits/%s/check-runs?per_page=100", o.Repo, pr.Head.SHA), nil, &cr); err != nil {
-			return rep, err
-		}
-		pass, pending := 0, 0
-		var failed []string
-		for _, r := range cr.Runs {
-			switch {
-			case r.Status != "completed":
-				pending++
-			case r.Conclusion == "success" || r.Conclusion == "skipped" || r.Conclusion == "neutral":
-				pass++
-			default:
-				failed = append(failed, r.Name)
-			}
-		}
-		if line := fmt.Sprintf("CHECKS %d/%d", pass, len(cr.Runs)); line != lastChecks {
-			lastChecks = line
-			say("%s", line)
-		}
-		if len(failed) > 0 {
-			sort.Strings(failed)
-			rep.State, rep.Failed = "failed", failed
-			say("FAILED %s", strings.Join(failed, ","))
-			return rep, nil
-		}
-		if pending == 0 && mergeableNow(pr.MergeableState) {
-			break
-		}
-		more, err := wait()
-		if err != nil {
-			return rep, err
-		}
-		if !more {
-			rep.State = "timeout"
-			say("FAILED timeout after %s waiting for checks (mergeable_state=%s)", o.Timeout, pr.MergeableState)
-			return rep, nil
-		}
+	if _, err := gh.do(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/pulls/%d", o.Repo, o.N), nil, &pr); err != nil {
+		return rep, err
+	}
+	rep.Head = pr.Head.SHA
+	switch {
+	case pr.Merged:
+		rep.State, rep.MergeSHA = "merged", pr.MergeCommitSHA
+		say("MERGED %s", pr.MergeCommitSHA)
+		return rep, nil
+	case pr.State == "closed":
+		rep.State = "closed"
+		say("FAILED closed without a merge")
+		return rep, nil
+	case pr.MergeableState == "dirty":
+		rep.State = "conflict"
+		say("FAILED conflict with the base (mergeable_state=dirty)")
+		return rep, nil
+	case pr.Head.SHA == "":
+		return rep, fmt.Errorf("GET pull %s#%d: no head sha in the reply", o.Repo, o.N)
 	}
 
-	// The one admission: enqueuePullRequest by node id.
-	already, err := gh.enqueue(ctx, pr.NodeID)
+	// The check state at the head, from the webhook's record, never GitHub.
+	key := webhook.Key(o.Repo, pr.Head.SHA)
+	m, err := rdb.HGetAll(ctx, key).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return rep, fmt.Errorf("HGETALL %s: %w", key, err)
+	}
+	ci := webhook.Parse(m)
+	rep.CI = ci.Word
+	pass, total := 0, 0
+	for _, r := range ci.Runs {
+		total++
+		if r.Word == webhook.Green {
+			pass++
+		}
+	}
+	say("CHECKS %s %d/%d head=%s", orDash(ci.Word), pass, total, short(pr.Head.SHA))
+	switch {
+	case ci.Word == webhook.Red:
+		fail := ci.Fail
+		if fail == "" {
+			fail = "gh red at " + short(pr.Head.SHA)
+		}
+		rep.State, rep.Failed = "failed", []string{fail}
+		say("FAILED %s", fail)
+		return rep, nil
+	case ci.Word != webhook.Green:
+		rep.State = "waiting"
+		say("WAITING %s has gh=%s; run again once the webhook writes green", key, orDash(ci.Word))
+		return rep, nil
+	}
+
+	// Green at the head: the one merge, at exactly that sha.
+	title := fmt.Sprintf("Merge pull request #%d", o.N)
+	if pr.Title != "" {
+		title = fmt.Sprintf("%s (#%d)", pr.Title, o.N)
+	}
+	sha, err := gh.MergePR(ctx, o.Repo, o.N, pr.Head.SHA, title)
 	if err != nil {
 		return rep, err
 	}
-	rep.Enqueued = true
-	if already {
-		say("ENQUEUED already")
-	} else {
-		say("ENQUEUED")
-	}
-
-	// The queue: the PR merged, or its merge_group run failed.
-	marker := fmt.Sprintf("/pr-%d-", o.N)
-	seen := map[int64]string{}
-	for {
-		more, err := wait()
-		if err != nil {
-			return rep, err
-		}
-		if !more {
-			rep.State = "timeout"
-			say("FAILED timeout after %s in the queue", o.Timeout)
-			return rep, nil
-		}
-		pr = prView{}
-		if _, err := gh.do(ctx, http.MethodGet, prPath, nil, &pr); err != nil {
-			return rep, err
-		}
-		if pr.Merged {
-			rep.State, rep.MergeSHA = "merged", pr.MergeCommitSHA
-			say("MERGED %s", pr.MergeCommitSHA)
-			return rep, nil
-		}
-		if pr.State == "closed" {
-			rep.State = "closed"
-			say("FAILED closed without a merge")
-			return rep, nil
-		}
-		var qr queueRuns
-		if _, err := gh.do(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/actions/runs?event=merge_group&per_page=30", o.Repo), nil, &qr); err != nil {
-			return rep, err
-		}
-		// The PR's newest queue entry: the group branch with the latest run.
-		group, groupAt := "", ""
-		for _, r := range qr.Runs {
-			if strings.Contains(r.HeadBranch, marker) && r.CreatedAt > groupAt {
-				group, groupAt = r.HeadBranch, r.CreatedAt
-			}
-		}
-		for _, r := range qr.Runs {
-			if r.HeadBranch != group || group == "" {
-				continue
-			}
-			word := r.Status
-			if r.Status == "completed" {
-				word = "completed " + r.Conclusion
-			}
-			if seen[r.ID] != word {
-				seen[r.ID] = word
-				say("QUEUE RUN %d %s", r.ID, word)
-			}
-			if r.Status == "completed" && r.Conclusion != "success" {
-				var jobs runJobs
-				if _, err := gh.do(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/actions/runs/%d/jobs?per_page=100", o.Repo, r.ID), nil, &jobs); err != nil {
-					return rep, err
-				}
-				var failed []string
-				for _, j := range jobs.Jobs {
-					if j.Conclusion != "success" && j.Conclusion != "skipped" && j.Conclusion != "neutral" {
-						failed = append(failed, j.Name)
-					}
-				}
-				sort.Strings(failed)
-				if len(failed) == 0 {
-					failed = []string{"run " + fmt.Sprint(r.ID) + " " + r.Conclusion}
-				}
-				rep.State, rep.Failed = "failed", failed
-				say("FAILED %s", strings.Join(failed, ","))
-				return rep, nil
-			}
-		}
-	}
-}
-
-// mergeableNow is the forge's word for a PR the queue will take: clean, or
-// unstable (a non-required check is red, which the check walk above already
-// judged), or has_hooks.
-func mergeableNow(state string) bool {
-	switch state {
-	case "clean", "unstable", "has_hooks":
-		return true
-	}
-	return false
-}
-
-// enqueue runs the enqueuePullRequest mutation. already is true when the
-// forge says the PR is in the queue already, which is the same outcome.
-func (g *GitHub) enqueue(ctx context.Context, nodeID string) (already bool, err error) {
-	if nodeID == "" {
-		return false, fmt.Errorf("the forge named no node id for the pull request, and the queue mutation takes one")
-	}
-	var out struct {
-		Data struct {
-			Enqueue struct {
-				Entry struct {
-					ID string `json:"id"`
-				} `json:"mergeQueueEntry"`
-			} `json:"enqueuePullRequest"`
-		} `json:"data"`
-		Errors []struct {
-			Message string `json:"message"`
-		} `json:"errors"`
-	}
-	_, err = g.do(ctx, http.MethodPost, "/graphql", map[string]any{
-		"query":     "mutation($id:ID!){enqueuePullRequest(input:{pullRequestId:$id}){mergeQueueEntry{id}}}",
-		"variables": map[string]string{"id": nodeID},
-	}, &out)
-	if err != nil {
-		return false, err
-	}
-	for _, e := range out.Errors {
-		if strings.Contains(strings.ToLower(e.Message), "already") {
-			return true, nil
-		}
-		return false, fmt.Errorf("enqueuePullRequest: %s", e.Message)
-	}
-	if out.Data.Enqueue.Entry.ID == "" {
-		return false, fmt.Errorf("enqueuePullRequest: no merge queue entry in the reply")
-	}
-	return false, nil
+	rep.State, rep.MergeSHA = "merged", sha
+	say("MERGED %s", sha)
+	return rep, nil
 }

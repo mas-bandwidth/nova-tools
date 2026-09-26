@@ -6,97 +6,79 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
-	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 )
 
-// landPRFake is the smallest GitHub the verb walks: PR 12's checks are green
-// and it is clean at once, one queue run is in progress after the first
-// tick and green after the second, and the PR is merged after the third.
-// The fake clock (landPRNow, landPRSleep) advances the step; no real time.
-func landPRFake(t *testing.T, fail bool) (*httptest.Server, *int) {
+// landPRFake is the smallest GitHub the verb calls: PR 12 read, and its
+// merge at the head. Anything else (a check-runs or workflow-runs read,
+// GraphQL) fails the test.
+func landPRFake(t *testing.T) *httptest.Server {
 	t.Helper()
-	var mu sync.Mutex
-	step := 0
-	now := time.Date(2026, 9, 26, 15, 0, 0, 0, time.UTC)
-	prevNow, prevSleep := landPRNow, landPRSleep
-	landPRNow = func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
-	landPRSleep = func(_ context.Context, d time.Duration) error {
-		mu.Lock()
-		defer mu.Unlock()
-		now = now.Add(d)
-		step++
-		return nil
-	}
-	t.Cleanup(func() { landPRNow, landPRSleep = prevNow, prevSleep })
+	head := strings.Repeat("a", 40)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		s := step
-		mu.Unlock()
 		var reply any
 		switch {
-		case r.URL.Path == "/repos/o/r/pulls/12":
-			pr := map[string]any{"node_id": "PR_12", "state": "open", "merged": false, "mergeable_state": "clean", "head": map[string]any{"sha": strings.Repeat("a", 40)}}
-			if s >= 3 && !fail {
-				pr["merged"], pr["merge_commit_sha"] = true, strings.Repeat("b", 40)
-			}
-			reply = pr
-		case strings.HasSuffix(r.URL.Path, "/check-runs"):
-			reply = map[string]any{"total_count": 1, "check_runs": []map[string]any{{"name": "lint", "status": "completed", "conclusion": "success"}}}
-		case r.URL.Path == "/graphql":
-			reply = map[string]any{"data": map[string]any{"enqueuePullRequest": map[string]any{"mergeQueueEntry": map[string]any{"id": "MQE"}}}}
-		case r.URL.Path == "/repos/o/r/actions/runs":
-			run := map[string]any{"id": 500, "head_branch": "gh-readonly-queue/dev/pr-12-" + strings.Repeat("c", 40), "status": "in_progress", "conclusion": "", "created_at": "2026-09-26T15:00:10Z"}
-			if s >= 2 {
-				run["status"], run["conclusion"] = "completed", map[bool]string{true: "failure", false: "success"}[fail]
-			}
-			reply = map[string]any{"workflow_runs": []map[string]any{run}}
-		case r.URL.Path == "/repos/o/r/actions/runs/500/jobs":
-			reply = map[string]any{"jobs": []map[string]any{{"name": "go-test-cmd", "conclusion": "failure"}}}
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/pulls/12":
+			reply = map[string]any{"state": "open", "merged": false, "mergeable_state": "blocked", "title": "t", "head": map[string]any{"sha": head}}
+		case r.Method == http.MethodPut && r.URL.Path == "/repos/o/r/pulls/12/merge":
+			reply = map[string]any{"sha": strings.Repeat("b", 40), "merged": true}
 		default:
-			t.Errorf("unexpected call %s", r.URL)
+			t.Errorf("unexpected call %s %s", r.Method, r.URL)
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
 		_ = json.NewEncoder(w).Encode(reply)
 	}))
 	t.Cleanup(srv.Close)
-	return srv, &step
+	return srv
 }
 
-// TestLandPRVerb: the verb walks one PR to MERGED with the receipt line
-// (exit 0), a red queue run is exit 1 naming the job, a missing token is
-// the typed refusal with nothing called (exit 2), and usage is exit 2.
+// TestLandPRVerb: with no GitHub leg in Redis the verb is WAITING at once
+// (exit 3); once the webhook's record is green it merges by REST at the
+// head with the receipt line (exit 0); red is exit 1 naming the run; a
+// missing token is the typed refusal with nothing called (exit 2), and
+// usage is exit 2.
 func TestLandPRVerb(t *testing.T) {
 	t.Setenv("GH_TOKEN", "t0k")
 	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("NOVA_REDIS_ADDR", "")
+	mr := miniredis.RunT(t)
+	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = c.Close() })
+	key := "ci:r:" + strings.Repeat("a", 40) + ":gh"
 
-	srv, _ := landPRFake(t, false)
-	code, out, errOut := runSprint("land", "pr", "12", "--repo", "o/r", "--api", srv.URL, "--timeout", "5m", "--tick", "10s")
-	if code != 0 {
-		t.Fatalf("exit %d\n%s%s", code, out, errOut)
-	}
-	want := "PR 12 CHECKS 1/1\nPR 12 ENQUEUED\nPR 12 QUEUE RUN 500 in_progress\nPR 12 QUEUE RUN 500 completed success\nPR 12 MERGED " + strings.Repeat("b", 40) + "\n" +
-		"LAND PR repo=o/r pr=#12 state=merged merge=bbbbbbbb enqueued=true failed=- rest_calls="
-	if !strings.HasPrefix(out, want) {
-		t.Fatalf("stdout:\n%s\nwant prefix:\n%s", out, want)
+	srv := landPRFake(t)
+	code, out, errOut := runSprint("land", "pr", "12", "--repo", "o/r", "--redis", mr.Addr(), "--api", srv.URL)
+	if code != 3 || !strings.Contains(out, "PR 12 WAITING "+key+" has gh=-") ||
+		!strings.Contains(out, "LAND PR repo=o/r pr=#12 state=waiting head=aaaaaaaa ci=- merge=- failed=- rest_calls=1\n") {
+		t.Fatalf("waiting: exit %d\n%s%s", code, out, errOut)
 	}
 
-	srv, _ = landPRFake(t, true)
-	code, out, _ = runSprint("land", "pr", "--repo", "o/r", "--api", srv.URL, "#12")
-	if code != 1 || !strings.Contains(out, "PR 12 FAILED go-test-cmd\nLAND PR repo=o/r pr=#12 state=failed merge=- enqueued=true failed=go-test-cmd rest_calls=") {
-		t.Fatalf("red queue run: exit %d\n%s", code, out)
+	c.HSet(context.Background(), key, "gh", "green", "check:lint", "green 1 x")
+	code, out, errOut = runSprint("land", "pr", "--repo", "o/r", "--redis", mr.Addr(), "--api", srv.URL, "#12")
+	want := "PR 12 CHECKS green 1/1 head=aaaaaaaa\nPR 12 MERGED " + strings.Repeat("b", 40) + "\n" +
+		"LAND PR repo=o/r pr=#12 state=merged head=aaaaaaaa ci=green merge=bbbbbbbb failed=- rest_calls=2\n"
+	if code != 0 || out != want {
+		t.Fatalf("green: exit %d\n%s\nwant:\n%s%s", code, out, want, errOut)
+	}
+
+	c.HSet(context.Background(), key, "gh", "red", "gh_fail", "check:lint", "check:lint", "red 1 x")
+	code, out, _ = runSprint("land", "pr", "12", "--repo", "o/r", "--redis", mr.Addr(), "--api", srv.URL)
+	if code != 1 || !strings.Contains(out, "PR 12 FAILED check:lint\nLAND PR repo=o/r pr=#12 state=failed head=aaaaaaaa ci=red merge=- failed=check:lint rest_calls=1\n") {
+		t.Fatalf("red: exit %d\n%s", code, out)
 	}
 
 	prev := landStreamToken
 	landStreamToken = func() (string, error) { return "", nil }
 	t.Cleanup(func() { landStreamToken = prev })
-	code, out, errOut = runSprint("land", "pr", "12", "--repo", "o/r", "--api", srv.URL)
+	code, out, errOut = runSprint("land", "pr", "12", "--repo", "o/r", "--redis", mr.Addr(), "--api", srv.URL)
 	if code != 2 || out != "" || !strings.Contains(errOut, "REFUSED no GitHub token remedy=export GH_TOKEN (or GITHUB_TOKEN)") {
 		t.Fatalf("no token: exit %d %q %q", code, out, errOut)
 	}
-	for _, args := range [][]string{{}, {"x"}, {"0"}, {"12", "13"}, {"12", "--repo", "norepo"}, {"12", "--timeout", "0"}, {"12", "--tick", "-1s"}} {
+	for _, args := range [][]string{{}, {"x"}, {"0"}, {"12", "13"}, {"12", "--repo", "norepo"}, {"12", "--timeout", "5m"}, {"12"}} {
 		if code, _, errOut := runSprint(append([]string{"land", "pr"}, args...)...); code != 2 || !strings.HasPrefix(errOut, "nova-sprint land pr: ") {
 			t.Fatalf("%v: exit %d %q, want usage", args, code, errOut)
 		}

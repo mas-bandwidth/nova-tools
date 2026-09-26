@@ -4112,20 +4112,16 @@ QUACK RUN sprint=quack-0926 benches=2 refused=0 pitstop=lifted ms=9
 
 ### land pr
 
-`nova-sprint land pr <n> [--repo owner/name] [--timeout 20m] [--tick 10s] [--api <url>]`
+`nova-sprint land pr <n> [--repo owner/name] [--redis <addr>] [--api <url>]`
 
-One pull request through GitHub's merge queue to its merge commit (#4311; the scratch script that ran about twenty times on 2026-09-26, as a verb until the queue leaves GitHub, #3597). It reads the PR and polls its head's check runs every `--tick`, printing `PR <n> CHECKS <pass>/<total>` as the count changes; a red check ends the walk as `FAILED <names>`. Once every check has completed and the forge calls the PR mergeable (`clean`, `unstable` or `has_hooks`; `dirty` is `FAILED conflict`), it enqueues the PR with the `enqueuePullRequest` mutation (the tools' one admission to a merge queue) and prints `ENQUEUED` (`ENQUEUED already` when it was in the queue). Then it polls the PR and the repository's `merge_group` workflow runs, printing `QUEUE RUN <id> <status>` for the PR's newest queue entry as each run changes (an older attempt for the same PR is ignored), until the PR is merged (`MERGED <sha>`), a queue run fails (`FAILED <job names>`, read from the run's jobs) or `--timeout` passes (`FAILED timeout ...`). A final `LAND PR` line carries the state, the merge sha and the REST calls made. Everything goes through the REST and GraphQL API with the token from the environment (`GH_TOKEN`, then `GITHUB_TOKEN`, as the lander reads it); it never runs `gh`. No token is the typed refusal `REFUSED no GitHub token remedy=...`. `--repo` defaults to `mas-bandwidth/nova-tools`. Exit 0 merged, 1 failed, timed out or closed, 2 usage or refused.
+One pull request to its merge commit in one pass (#4311; the scratch script that ran about twenty times on 2026-09-26, as a verb). It reads the PR by REST (one call), then reads its head's check state from Redis, `ci:<repo>:<head>:gh`, which the webhook ingest writes from GitHub's `check_run` and `workflow_run` deliveries (internal/nsprint/webhook); it never reads the check-runs or workflow-runs endpoints and never calls GraphQL (nova-sprint is REST only, and GitHub is events only). It prints `PR <n> CHECKS <word> <pass>/<total> head=<sha8>`. Green: it merges the PR by REST at exactly that head (GitHub refuses when the head moved), skipping the merge queue whose run re-proves the same tree (Glenn 2026-09-26), and prints `MERGED <sha>`. Red: `FAILED <first red run>` (`kind:name`). Pending or nothing recorded yet: `WAITING` and it returns at once; there is no loop and no sleep, so run it again once the webhook has written green. A merged PR is `MERGED <sha>`, a closed one `FAILED closed without a merge`, and `mergeable_state=dirty` is `FAILED conflict`. A final `LAND PR` line carries the state, head, check word, merge sha and REST calls made (at most two; the budget is three). The token comes from the environment (`GH_TOKEN`, then `GITHUB_TOKEN`, as the lander reads it); it never runs `gh`. No token is the typed refusal `REFUSED no GitHub token remedy=...`. `--repo` defaults to `mas-bandwidth/nova-tools`; `--redis` defaults to `NOVA_REDIS_ADDR`. Exit 0 merged, 1 failed, closed or in conflict, 2 usage or refused, 3 waiting, 6 no Redis.
 
 ```text
 nova-sprint land pr 4304
 # prints
-PR 4304 CHECKS 4/6
-PR 4304 CHECKS 6/6
-PR 4304 ENQUEUED
-PR 4304 QUEUE RUN 19273645120 in_progress
-PR 4304 QUEUE RUN 19273645120 completed success
+PR 4304 CHECKS green 6/6 head=9c41d7e2
 PR 4304 MERGED 635eaca1c7b0e4f2a9d8c6b5a4e3f2d1c0b9a8f7
-LAND PR repo=mas-bandwidth/nova-tools pr=#4304 state=merged merge=635eaca1 enqueued=true failed=- rest_calls=14
+LAND PR repo=mas-bandwidth/nova-tools pr=#4304 state=merged head=9c41d7e2 ci=green merge=635eaca1 failed=- rest_calls=2
 ```
 
 ### adopt

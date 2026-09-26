@@ -1,19 +1,20 @@
-// land pr (nova-tools#4311): one pull request through GitHub's merge queue
-// to its merge commit, the scratch script of 2026-09-26 as a verb.
+// land pr (nova-tools#4311): one pull request to its merge commit in one
+// pass, the scratch script of 2026-09-26 as a verb.
 //
-//	nova-sprint land pr <n> [--repo owner/name] [--timeout 20m] [--tick 10s] [--api <url>]
+//	nova-sprint land pr <n> [--repo owner/name] [--redis <addr>] [--api <url>]
 //
-// It waits for the PR's checks at its head (PR <n> CHECKS <pass>/<total> as
-// the count changes), enqueues it (ENQUEUED; the enqueuePullRequest
-// mutation, the tools' one admission to a merge queue), prints each of its
-// merge_group run's QUEUE RUN <id> <status> lines as they change, and ends
-// with MERGED <sha> or FAILED <check or job names>. Everything goes through
-// the REST and GraphQL API with the token from the environment (GH_TOKEN,
-// then GITHUB_TOKEN, as the lander reads it; internal/nsprint/land/stream);
-// no child process. A missing token is the typed refusal REFUSED no GitHub
-// token remedy=... (exit 2).
+// It reads the PR by REST, reads its head's check state from Redis
+// (ci:<repo>:<head>:gh, written by the webhook ingest; never the check-runs
+// or workflow-runs endpoints), prints PR <n> CHECKS <word> <pass>/<total>,
+// and when that is green merges the PR by REST at exactly that head (PR <n>
+// MERGED <sha>). Red is FAILED <first red run>; pending or unrecorded is
+// WAITING and the verb returns at once: no loop, no sleep, no GraphQL. The
+// token comes from the environment (GH_TOKEN, then GITHUB_TOKEN, as the
+// lander reads it; internal/nsprint/land/stream); no child process. A
+// missing token is the typed refusal REFUSED no GitHub token remedy=...
 //
-// Exit 0 merged, 1 failed, timed out or closed, 2 usage or refused.
+// Exit 0 merged, 1 failed, closed or in conflict, 2 usage or refused,
+// 3 waiting (not yet green; run again), 6 no Redis.
 package main
 
 import (
@@ -22,23 +23,16 @@ import (
 	"io"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land/stream"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 )
-
-// landPRSleep is the wait's tick; a test swaps it for a fake clock.
-var landPRSleep func(ctx context.Context, d time.Duration) error
-
-// landPRNow is the wait's clock; a test swaps it with landPRSleep.
-var landPRNow = time.Now
 
 func runLandPR(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "land pr"
 	fs := taskFlags(verb)
 	repo := fs.String("repo", "mas-bandwidth/nova-tools", "")
-	timeout := fs.Duration("timeout", 20*time.Minute, "")
-	tick := fs.Duration("tick", 10*time.Second, "")
+	redisAddr := fs.String("redis", "", "")
 	api := fs.String("api", "https://api.github.com", "")
 	// The one positional <n> may come before or after the flags.
 	var pos []string
@@ -53,7 +47,7 @@ func runLandPR(ctx context.Context, args []string, out, errOut io.Writer) int {
 		}
 		args = fs.Args()
 	}
-	const usage = "land pr <n> [--repo owner/name] [--timeout 20m] [--tick 10s] [--api <url>]"
+	const usage = "land pr <n> [--repo owner/name] [--redis <addr>] [--api <url>]"
 	if len(pos) != 1 {
 		return refuse(errOut, verb, "wants one pull request number: "+usage)
 	}
@@ -64,23 +58,33 @@ func runLandPR(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if !landRepoOK(*repo) {
 		return refuse(errOut, verb, "--repo wants owner/name: "+usage)
 	}
-	if *timeout <= 0 || *tick <= 0 {
-		return refuse(errOut, verb, "--timeout and --tick must be positive: "+usage)
+	addr := landRedisAddr(*redisAddr)
+	if addr == "" {
+		return refuse(errOut, verb, "needs --redis <addr> or NOVA_REDIS_ADDR (the check state is read from Redis): "+usage)
 	}
 	tok, err := landStreamToken()
 	if err != nil || tok == "" {
 		return landExit(errOut, verb, stream.ErrNoToken)
 	}
-	gh := &stream.GitHub{API: *api, Token: tok}
-	rep, err := stream.LandPR(ctx, gh, stream.LandPROptions{Repo: *repo, N: n, Timeout: *timeout, Tick: *tick,
-		Now: landPRNow, Sleep: landPRSleep, Log: out})
+	st, err := store.Open(ctx, addr)
+	if err != nil {
+		fmt.Fprintf(errOut, "nova-sprint %s: %v\n", verb, err)
+		return 6
+	}
+	defer st.Close()
+	gh := &stream.GitHub{API: *api, Token: tok, Budget: 3}
+	rep, err := stream.LandPR(ctx, gh, st.Client(), stream.LandPROptions{Repo: *repo, N: n, Log: out})
 	if err != nil {
 		return landExit(errOut, verb, err)
 	}
-	fmt.Fprintf(out, "LAND PR repo=%s pr=#%d state=%s merge=%s enqueued=%t failed=%s rest_calls=%d\n",
-		*repo, n, rep.State, orDash(stream.Short(rep.MergeSHA)), rep.Enqueued, orDash(strings.Join(rep.Failed, ",")), gh.Calls)
-	if rep.State != "merged" {
-		return 1
+	fmt.Fprintf(out, "LAND PR repo=%s pr=#%d state=%s head=%s ci=%s merge=%s failed=%s rest_calls=%d\n",
+		*repo, n, rep.State, orDash(stream.Short(rep.Head)), orDash(rep.CI), orDash(stream.Short(rep.MergeSHA)),
+		orDash(strings.Join(rep.Failed, ",")), gh.Calls)
+	switch rep.State {
+	case "merged":
+		return 0
+	case "waiting":
+		return 3
 	}
-	return 0
+	return 1
 }
