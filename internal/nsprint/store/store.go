@@ -115,6 +115,10 @@ func OpenSingle(ctx context.Context, addr string) (*Store, error) {
 
 func open(ctx context.Context, addr string, poolSize int) (*Store, error) {
 	if addr == "" {
+		// A seat's profile row names its Redis (nova-tools#4330).
+		addr = seatcred.Addr()
+	}
+	if addr == "" {
 		return nil, fmt.Errorf("redis address is required")
 	}
 	user, password, err := authFromEnv()

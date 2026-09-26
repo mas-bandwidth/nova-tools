@@ -130,15 +130,36 @@ var (
 	resolved bool
 	cred     Cred
 	credErr  error
-	resolver = func(seat string) (Cred, error) { return Resolve(seat, os.Getenv) }
+	addr     string
+	resolver = defaultResolver
 )
+
+func defaultResolver(seat string) (Cred, error) { return Resolve(seat, os.Getenv) }
 
 // Select makes seat this process's seat ("" is none) and forgets any earlier
 // resolution. Nothing is decrypted until Active is first asked.
-func Select(seat string) {
+func Select(seat string) { SelectWith(seat, "", nil) }
+
+// SelectWith is Select with the seat's Redis address (Addr, "" when the seat
+// names none) and the resolution Active runs on first use: resolve (a seat
+// profile row, nova-tools#4330) instead of Resolve's default layout. A nil
+// resolve is Resolve.
+func SelectWith(seat, redisAddr string, resolve func(seat string) (Cred, error)) {
 	mu.Lock()
 	defer mu.Unlock()
-	selected, resolved, cred, credErr = strings.TrimSpace(seat), false, Cred{}, nil
+	if resolve == nil {
+		resolve = defaultResolver
+	}
+	selected, resolved, cred, credErr, addr, resolver = strings.TrimSpace(seat), false, Cred{}, nil, redisAddr, resolve
+}
+
+// Addr is the selected seat's Redis address from its profile row, "" when no
+// seat is selected or its row names none: the address a store dial falls back
+// to when its caller names none.
+func Addr() string {
+	mu.Lock()
+	defer mu.Unlock()
+	return addr
 }
 
 // Selected is the seat Select recorded, "" when none.

@@ -42,7 +42,7 @@ var helpCases = [][]string{
 	{"hold", "ingest"}, {"hold", "show"}, {"hold", "release"}, {"hold", "route"},
 	{"idem", "resolve"},
 	{"jev", "mech"},
-	{"redis-cli"},
+	{"redis-cli"}, {"redis"},
 	{"land"}, {"land", "status"}, {"land", "flaky", "list"}, {"land", "flaky", "observe"}, {"land", "writer"}, {"land", "eval"}, {"land", "stream"},
 	{"land", "merge"}, {"land", "pr"}, {"land", "run"}, {"land", "offer"}, {"land", "list"},
 	{"lander"},
