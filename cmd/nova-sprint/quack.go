@@ -237,7 +237,13 @@ func runQuackRun(ctx context.Context, args []string, out, errOut io.Writer) int 
 
 	refused := 0
 	for _, b := range benches {
-		machine := existingMachine(ctx, st, capacity.KindBench, b.name)
+		machine, err := existingMachine(ctx, st, capacity.KindBench, b.name)
+		if err != nil {
+			refused++
+			fmt.Fprintf(out, "SLOTS REFUSED bench=%s slots=%d why=%s\n", oneline.Field(b.name), b.slots,
+				oneline.Field("read "+capacity.DesiredKey(capacity.KindBench, b.name)+" machine: "+err.Error()))
+			continue
+		}
 		if machine == "" {
 			refused++
 			fmt.Fprintf(out, "SLOTS REFUSED bench=%s slots=%d why=no-machine remedy=%s\n", oneline.Field(b.name), b.slots,

@@ -116,6 +116,10 @@ func SetBudget(ctx context.Context, st *store.Store, machine string, cpuMilli, m
 		return fmt.Errorf("budget set %s: unexpected reply %T", machine, reply)
 	}
 	if status, _ := values[0].(string); status != "SET" {
+		if status == "REFUSED" && len(values) > 1 {
+			why, _ := values[1].(string)
+			return fmt.Errorf("budget set %s: REFUSED %s", machine, why)
+		}
 		return fmt.Errorf("budget set %s: unexpected status %q", machine, status)
 	}
 	return nil
@@ -195,6 +199,10 @@ func Take(ctx context.Context, st *store.Store, req TakeRequest) (BudgetResult, 
 			UsedMem:  res.UsedMem,
 			TotalMem: res.TotalMem,
 		}
+	}
+	if status == "REFUSED" && len(values) > 1 {
+		why, _ := values[1].(string)
+		return res, fmt.Errorf("budget take %s %s: REFUSED %s", req.Machine, req.Consumer, why)
 	}
 	if status != "OK" {
 		return res, fmt.Errorf("budget take %s %s: unexpected status %q", req.Machine, req.Consumer, status)

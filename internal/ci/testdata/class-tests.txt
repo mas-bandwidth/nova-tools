@@ -1,0 +1,34 @@
+# Every class test under internal/ci (internal/ci/classtests_class_test.go, the
+# classtests rule), one repo-relative path per row. 2026-09-26: #4346 was squashed
+# from a stale base and its merge deleted the four files #4344 had added, the
+# silent class test among them, with nothing red. This list only GROWS: a row
+# whose file the tree lacks is a red run naming the deleting commit, and no update
+# drops it; a new class test adds its row (NOVA_CI_UPDATE=1 does).
+internal/ci/briefs_nogh_class_test.go
+internal/ci/busprogress_class_test.go
+internal/ci/ciworkspace_class_test.go
+internal/ci/classtests_class_test.go
+internal/ci/fieldsindex_class_test.go
+internal/ci/forestwriter_class_test.go
+internal/ci/functionaltag_class_test.go
+internal/ci/hostseam_class_test.go
+internal/ci/lispduplicate_class_test.go
+internal/ci/lispkernel_class_test.go
+internal/ci/lisptemppath_class_test.go
+internal/ci/namedpaths_class_test.go
+internal/ci/nightlytags_class_test.go
+internal/ci/parallel_class_test.go
+internal/ci/pathassert_class_test.go
+internal/ci/prmerge_class_test.go
+internal/ci/removeall_class_test.go
+internal/ci/seatwrap_class_test.go
+internal/ci/sharedtemp_class_test.go
+internal/ci/silent_class_test.go
+internal/ci/slowwaits_class_test.go
+internal/ci/tablemoves_class_test.go
+internal/ci/taskwriter_class_test.go
+internal/ci/testoutpath_class_test.go
+internal/ci/toolchainroots_class_test.go
+internal/ci/transcripts_class_test.go
+internal/ci/version_class_test.go
+internal/ci/wholetree_class_test.go

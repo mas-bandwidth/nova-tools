@@ -259,8 +259,9 @@ local function cm_add(e, score)
   elseif e.t == 'l' then
     redis.call('ZADD', e.k, score, e.m)
   else
-    card_add(e.k, score, e.m)
+    return card_add(e.k, score, e.m)
   end
+  return nil
 end
 
 local function cm_rem(e)
@@ -656,15 +657,16 @@ local function card_fsck(S, write)
             if not cm_has(e) then
               note('unlinked ' .. e.k .. ' ' .. e.m)
               if write then
-                cm_add(e, c.created)
-                fixed = fixed + 1
+                -- a link the add refused is a line, never counted fixed
+                local err = cm_add(e, c.created)
+                if err then note('repair refused ' .. err) else fixed = fixed + 1 end
               end
             elseif e.t ~= 's' and tonumber(redis.call('ZSCORE', e.k, e.m)) ~= c.created then
               -- every ZSET is scored by the card's created_at, uniformly
               note('score ' .. e.k .. ' ' .. e.m)
               if write then
-                cm_add(e, c.created)
-                fixed = fixed + 1
+                local err = cm_add(e, c.created)
+                if err then note('repair refused ' .. err) else fixed = fixed + 1 end
               end
             end
           end
@@ -2486,19 +2488,25 @@ function TM.deal(c, by, k, stream, ids)
         end
         table.sort(rows, function(a, b) return a[2] < b[2] or (a[2] == b[2] and a[1] < b[1]) end)
         for _, row in ipairs(rows) do
-          if (#out - 2) / 2 >= k then return end
+          if (#out - 2) / 2 >= k then return nil end
           local id = row[1]
           if not TK.card_id(id) and not TK.copy_id(id) then
             local leg = TM.leg(id, TK.read(id))
             if leg == want and not TM.may(c, d, id, leg) and not TM.cut(c, id, leg, { by = by, dry = true }) then
-              cut(id, leg)
+              -- the dry run passed: a cut refused here is drift, named
+              -- like the named path's, never a copy quietly left out
+              local err = cut(id, leg)
+              if err then return err end
             end
           end
         end
       end
+      return nil
     end
-    pass({ 'review' }, 'read')
-    pass({ 'ready', 'waiting' }, 'work')
+    local err = pass({ 'review' }, 'read')
+    if err then return { 'REFUSED', 'DRIFT-AFTER ' .. err } end
+    err = pass({ 'ready', 'waiting' }, 'work')
+    if err then return { 'REFUSED', 'DRIFT-AFTER ' .. err } end
   end
   out[2] = tostring((#out - 2) / 2)
   return out
@@ -3615,6 +3623,19 @@ function TM.expire(by, consumers)
   consumers = named
   local now = cm_now()
   local out = { 'EXPIRED', '0' }
+  local n = 0
+  -- a finish the move refused is in the reply as the pair id, 'REFUSED
+  -- <why>' (never counted in n): a lapsed copy that stays in working with
+  -- no line was the silent shape, repeated every sweep
+  local function ended(id, err, info)
+    out[#out + 1] = id
+    if err then
+      out[#out + 1] = 'REFUSED ' .. tostring(err)
+    else
+      out[#out + 1] = info.to
+      n = n + 1
+    end
+  end
   for _, c in ipairs(consumers) do
     -- a consumer whose beat is older than a lease holds no ready copy: each
     -- goes back to its primary (no attempt counted)
@@ -3625,10 +3646,7 @@ function TM.expire(by, consumers)
       for _, id in ipairs(redis.call('ZRANGE', TM.key(c, 'ready'), 0, -1)) do
         if TK.copy_id(id) then
           local err, info = TM.finish(id, { outcome = 'fail', why = 'consumer down', keep = true, by = by })
-          if not err then
-            out[#out + 1] = id
-            out[#out + 1] = info.to
-          end
+          ended(id, err, info)
         end
       end
     end
@@ -3641,15 +3659,12 @@ function TM.expire(by, consumers)
           -- (#4094 c); a lapsed work or fix copy is a fail, to review (#4072)
           local keep = TK.str(redis.call('HGET', 'task:' .. id, 'leg')) == 'read'
           local err, info = TM.finish(id, { outcome = 'fail', why = 'lease lapsed', keep = keep, by = by })
-          if not err then
-            out[#out + 1] = id
-            out[#out + 1] = info.to
-          end
+          ended(id, err, info)
         end
       end
     end
   end
-  out[2] = tostring((#out - 2) / 2)
+  out[2] = tostring(n)
   return out
 end
 
@@ -3767,17 +3782,19 @@ function TM.fsck(write)
               if write then
                 local to = w
                 if w == 'working' then to = 'waiting' end
-                if not TK.move(id, to, { by = 'fsck', why = 'fsck: copy ' .. cp .. ' lost', copy = '' }) then
-                  fixed = fixed + 1
-                end
+                -- a repair the move refused is a line with its why, never
+                -- a drift that stays and prints nothing
+                local err = TK.move(id, to, { by = 'fsck', why = 'fsck: copy ' .. cp .. ' lost', copy = '' })
+                if err then note('repair refused task:' .. id .. ' ' .. err) else fixed = fixed + 1 end
               end
             end
           elseif w == 'working' and friend == '' then
             -- (review with no copy waits for its read deal; a working
             -- primary is always its copy's: nothing waits on CI there)
             note('bare task:' .. id .. ' is working with no copy and no friend')
-            if write and not TK.move(id, 'waiting', { by = 'fsck', why = 'fsck: working with no copy', copy = '' }) then
-              fixed = fixed + 1
+            if write then
+              local err = TK.move(id, 'waiting', { by = 'fsck', why = 'fsck: working with no copy', copy = '' })
+              if err then note('repair refused task:' .. id .. ' ' .. err) else fixed = fixed + 1 end
             end
           end
         end

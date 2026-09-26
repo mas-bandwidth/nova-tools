@@ -99,18 +99,25 @@ func runReview(ctx context.Context, args []string, out, errOut io.Writer) int {
 		}
 		get := func(i int) string { s, _ := rec[i].(string); return s }
 		repo, n, ok := reviewIssue(get(0), get(1), get(2))
-		switch {
-		case !ok:
-			line += " issue=- closed=no"
-		case reviewForge().CloseIssue(ctx, repo, n, get(3)) != nil:
-			line += fmt.Sprintf(" issue=%s#%d closed=no", repo, n)
-			code = 1
-		default:
-			line += fmt.Sprintf(" issue=%s#%d closed=yes", repo, n)
-		}
+		var suffix string
+		suffix, code = reviewClose(ctx, reviewForge(), ok, repo, n, get(3))
+		line += suffix
 	}
 	fmt.Fprintf(out, "%s ms=%d\n", line, time.Since(start).Milliseconds())
 	return code
+}
+
+// reviewClose closes a dropped card's origin issue (when it has one) and
+// answers the receipt's issue words and the exit code: a close the forge
+// refused is `closed=no err=<why>`, exit 1 (the why used to be dropped).
+func reviewClose(ctx context.Context, forge reconcile.IssueCloser, ok bool, repo string, n int, comment string) (string, int) {
+	if !ok {
+		return " issue=- closed=no", 0
+	}
+	if err := forge.CloseIssue(ctx, repo, n, comment); err != nil {
+		return fmt.Sprintf(" issue=%s#%d closed=no err=%s", repo, n, quoteField(err.Error())), 1
+	}
+	return fmt.Sprintf(" issue=%s#%d closed=yes", repo, n), 0
 }
 
 // reviewVerdict is the typed verdict: recut, redeal, drop, or
