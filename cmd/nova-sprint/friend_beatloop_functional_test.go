@@ -679,6 +679,8 @@ func takeCopiesAndTask(t *testing.T) (addr string, c *redis.Client, me string, c
 	if len(working) != 3 || !slices.Contains(working, "fq-probe-1") {
 		t.Fatalf("working %v", working)
 	}
+	k, _ := taskcard.ParseConsumer("friend:" + me)
+	bindTestOwner(t, c, k, cps...)
 	return addr, c, me, cps
 }
 
@@ -693,9 +695,11 @@ func TestFriendBeatOnceSkipsFriendQueueTask(t *testing.T) {
 	t.Parallel()
 	addr, c, me, cps := takeCopiesAndTask(t)
 	ctx := context.Background()
-	for _, id := range append([]string{"fq-probe-1"}, cps...) {
-		c.HSet(ctx, taskcard.Key(id), "lease_until", "1")
+	until := time.Now().Add(time.Minute).UnixMilli()
+	for _, id := range cps {
+		c.HSet(ctx, taskcard.Key(id), "lease_until", until)
 	}
+	c.HSet(ctx, taskcard.Key("fq-probe-1"), "lease_until", "1")
 	code, out, errOut := runSprint("friend", "beat", "--as", "friend:"+me, "--once", "--redis", addr)
 	want := "FRIEND BEAT SKIPPED as=friend:" + me + " id=fq-probe-1 why=\"not a copy: task beat renews a friend-queue task\"\n" +
 		"FRIEND BEAT as=friend:" + me + " "
@@ -703,7 +707,7 @@ func TestFriendBeatOnceSkipsFriendQueueTask(t *testing.T) {
 		t.Fatalf("friend beat --once exit %d:\n%s%s", code, out, errOut)
 	}
 	for _, id := range cps {
-		if v := c.HGet(ctx, taskcard.Key(id), "lease_until").Val(); v == "1" {
+		if v := c.HGet(ctx, taskcard.Key(id), "lease_until").Val(); v == strconv.FormatInt(until, 10) {
 			t.Fatalf("copy %s not renewed", id)
 		}
 	}
@@ -779,7 +783,8 @@ func TestBeatLoopInErrorsKeepsLeaseAndPullSaysRunning(t *testing.T) {
 			res, err := friendBeatOnce(ctx, st, k, host, now)
 			return res.Working, err
 		}}
-	c.HSet(ctx, taskcard.Key(cps[0]), "lease_until", "1")
+	until := time.Now().Add(time.Minute).UnixMilli()
+	c.HSet(ctx, taskcard.Key(cps[0]), "lease_until", until)
 	lctx, stop := context.WithCancel(ctx)
 	ticks := make(chan time.Time)
 	var out, errOut strings.Builder
@@ -809,7 +814,7 @@ func TestBeatLoopInErrorsKeepsLeaseAndPullSaysRunning(t *testing.T) {
 	if n := lease.held.Load(); n != 26 {
 		t.Fatalf("the lease was renewed on %d of 26 steps", n)
 	}
-	if v := c.HGet(ctx, taskcard.Key(cps[0]), "lease_until").Val(); v == "1" {
+	if v := c.HGet(ctx, taskcard.Key(cps[0]), "lease_until").Val(); v == strconv.FormatInt(until, 10) {
 		t.Fatalf("copy %s not renewed after the refusals stopped", cps[0])
 	}
 	if c.Exists(ctx, life.BeatLoopKey(me)).Val() != 0 {

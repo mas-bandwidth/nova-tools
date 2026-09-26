@@ -45,12 +45,17 @@ func TestFriendBeatRenewsObservedOwnersAndPreservesPresence(t *testing.T) {
 	}
 	at := time.Date(2026, 9, 26, 16, 0, 0, 0, time.UTC)
 
+	log := &cmdLog{}
+	client.AddHook(log)
 	res, err := life.FriendBeat(ctx, st, life.FriendBeatRequest{Friend: "Rowan", Host: "laptop", Load1: "0.50", NCPU: 8, CPU: "12.5", At: at})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res.Friend != "rowan" || res.AtMS != at.UnixMilli() || res.Working != 2 || res.LeaseUntil <= time.Now().Add(time.Minute).UnixMilli() {
 		t.Fatalf("result %+v", res)
+	}
+	if log.singles != 1 || log.pipelines != 3 {
+		t.Fatalf("beat uses %d single calls + %d pipelines; want four round trips independent of owner count", log.singles, log.pipelines)
 	}
 	for _, id := range []string{"p1~1", "p2~1"} {
 		got, err := client.HGet(ctx, "task:"+id, "lease_until").Int64()

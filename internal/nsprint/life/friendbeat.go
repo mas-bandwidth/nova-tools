@@ -47,7 +47,7 @@ type FriendBeatResult struct {
 	// lease they now hold (ms; 0 with none).
 	Working    int
 	LeaseUntil int64
-	// Models is the models field the beat wrote ("" when it removed it).
+	// Models names observed live owners; presence is untouched with none.
 	Models string
 	// Dead and Unknown name copies that were not renewed. Changed contains
 	// only new states, so a loop can report a lapse once instead of each tick.
@@ -103,51 +103,86 @@ func FriendBeat(ctx context.Context, st *store.Store, req FriendBeatRequest) (Fr
 		}
 	}
 	rep := FriendBeatResult{Friend: friend, AtMS: ms}
-	models := []string{}
-	seen := map[string]bool{}
+	// Read only renewal metadata, never the potentially large card prompt.
+	p := c.Pipeline()
+	records := make(map[string]*redis.SliceCmd, len(ids))
 	for _, id := range ids {
 		if !taskcard.IsCopy(id) {
 			rep.Skipped = append(rep.Skipped, id)
 			continue
-		} // friend-queue tasks use task beat
-		p := c.Pipeline()
-		rec := p.HGetAll(ctx, taskcard.Key(id))
-		stamp := p.Time(ctx)
-		if _, err := p.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-			return FriendBeatResult{}, err
 		}
-		r := rec.Val()
-		if r["consumer"] != as.String() || r["where"] != "working" {
+		records[id] = p.HMGet(ctx, taskcard.Key(id), "consumer", "where", "token", "owner_host", "owner_pid", "owner_start", "owner_token", "model")
+	}
+	// Sample server time before any OS observation, so delayed work fails closed.
+	stamp := p.Time(ctx)
+	if _, err := p.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return FriendBeatResult{}, err
+	}
+	checks := []taskcard.OwnerCheck{}
+	modelsByID := map[string]string{}
+	samples := map[int]ProcessSample{}
+	cachedProbe := func(pid int) ProcessSample {
+		if v, ok := samples[pid]; ok {
+			return v
+		}
+		v := probe(pid)
+		samples[pid] = v
+		return v
+	}
+	for _, id := range ids {
+		rec := records[id]
+		if rec == nil {
 			continue
 		}
-		pid, _ := strconv.Atoi(r["owner_pid"])
-		owner := taskcard.ProcessOwner{Host: r["owner_host"], PID: pid, Start: r["owner_start"]}
-		if r["owner_token"] != r["token"] {
-			owner = taskcard.ProcessOwner{}
+		values := rec.Val()
+		field := func(i int) string {
+			if v, ok := values[i].(string); ok {
+				return v
+			}
+			return ""
 		}
-		state := OwnerState(owner, observer, probe)
-		if r["token"] == "" {
+		if field(0) != as.String() || field(1) != "working" {
+			continue
+		}
+		token := field(2)
+		if token == "" {
 			rep.Unknown = append(rep.Unknown, id)
 			continue
 		}
-		got, err := taskcard.ObserveOwner(ctx, c, as, id, r["token"], taskcard.OwnerObservation{Owner: owner, State: state, At: stamp.Val()})
-		if err != nil {
-			if _, refused := taskcard.IsRefused(err); refused {
-				rep.Unknown = append(rep.Unknown, id)
-				continue
+		pid, _ := strconv.Atoi(field(4))
+		owner := taskcard.ProcessOwner{Host: field(3), PID: pid, Start: field(5)}
+		if field(6) != token {
+			owner = taskcard.ProcessOwner{}
+		}
+		state := OwnerState(owner, observer, cachedProbe)
+		checks = append(checks, taskcard.OwnerCheck{ID: id, Token: token,
+			Observation: taskcard.OwnerObservation{Owner: owner, State: state, At: stamp.Val()}})
+		modelsByID[id] = field(7)
+	}
+	outcomes, err := taskcard.ObserveOwners(ctx, c, as, checks)
+	if err != nil {
+		return FriendBeatResult{}, err
+	}
+	models := []string{}
+	seen := map[string]bool{}
+	for i, out := range outcomes {
+		id := checks[i].ID
+		if out.Err != nil {
+			if _, refused := taskcard.IsRefused(out.Err); !refused {
+				return FriendBeatResult{}, out.Err
 			}
-			return FriendBeatResult{}, err
+			rep.Unknown = append(rep.Unknown, id)
+			continue
 		}
+		got := out.Receipt
 		if got.Changed {
-			rep.Changed = append(rep.Changed, id+":"+state)
+			rep.Changed = append(rep.Changed, id+":"+got.State)
 		}
-		switch state {
+		switch got.State {
 		case "live":
 			rep.Working++
-			if got.LeaseUntil > rep.LeaseUntil {
-				rep.LeaseUntil = got.LeaseUntil
-			}
-			if m := r["model"]; m != "" && !seen[m] {
+			rep.LeaseUntil = max(rep.LeaseUntil, got.LeaseUntil)
+			if m := modelsByID[id]; m != "" && !seen[m] {
 				seen[m] = true
 				models = append(models, m)
 			}

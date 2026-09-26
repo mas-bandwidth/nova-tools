@@ -22,16 +22,12 @@
 //	    not refused NOPR; --branch is the PR's branch when it is not the
 //	    brief's (the copy's branch, else the wrapper's name for it).
 //	friend beat --as friend:<f> [--host <h>] [--once | --loop [--lease <token>]]
-//	    the zero-token tick, one round trip: the friend's beat (host, at,
-//	    load1, ncpu, cpu of the machine this session runs on: its status
-//	    and load on the consumer table, the deal duty's liveness) and the
-//	    lease of every copy it holds (ns_cm_beat over its working set in
-//	    the same pipeline). Without --once it ticks each second until
-//	    interrupted; a refused tick backs off and says why. --loop is the
-//	    friend's one beat loop (life.BeatLoop): it holds
-//	    friend:<f>:beatloop (--lease: the token the starting verb claimed
-//	    it with) and exits when the friend holds no working copy for two
-//	    ticks; friend pull and card work --as friend:<f> start it in its
+//	    observes bound local process owners and renews only their current
+//	    copies. Missing, remote, dead or unreadable owners never renew. The
+//	    friend presence is refreshed only with at least one observed live
+//	    owner. Reads and fenced renewals are batched, independent of copy count.
+//	    --loop holds friend:<f>:beatloop and exits after two ticks without
+//	    observed live owners; friend pull and card work start it in their
 //	    own session (the refresh start) when no loop holds the lease.
 //
 // The retired `friend serve` (#4327) dispatched a friend's copies through
@@ -179,6 +175,7 @@ func runFriendPull(ctx context.Context, args []string, out, errOut io.Writer) in
 		}
 		pulled++
 		fmt.Fprintf(out, "PULLED %s leg=%s token=%s card=%s\n", id, dash(rec["leg"]), w.Tokens[i], path)
+		fmt.Fprintf(out, "OWNER REQUIRED id=%s state=unknown run=\"nova-sprint card owner --as %s --id %s --token <claim-token> --pid <harness-pid>\"\n", id, k, id)
 	}
 	if !printFriendBeat(ctx, c, k, redisArg(*redisAddr), out) {
 		code = 1
@@ -487,6 +484,12 @@ func runFriendBeat(ctx context.Context, args []string, out, errOut io.Writer) in
 		return refuse(errOut, verb, err.Error())
 	}
 	printBeatSkipped(out, k, res.Skipped)
+	for _, id := range res.Dead {
+		fmt.Fprintf(out, "FRIEND OWNER id=%s state=dead renewed=false\n", id)
+	}
+	for _, id := range res.Unknown {
+		fmt.Fprintf(out, "FRIEND OWNER id=%s state=unknown renewed=false\n", id)
+	}
 	fmt.Fprintf(out, "FRIEND BEAT as=%s host=%s working=%d dead=%d unknown=%d lease_until=%d at=%d\n", k, *host, res.Working, len(res.Dead), len(res.Unknown), res.LeaseUntil, res.AtMS)
 	if *once {
 		return 0

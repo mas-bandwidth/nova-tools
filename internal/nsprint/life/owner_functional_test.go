@@ -76,6 +76,19 @@ func TestCopyOwnerRenewalFencesAttemptProcessAndObservation(t *testing.T) {
 	if err != nil || r.State != "live" || r.LeaseUntil == until {
 		t.Fatalf("live: %+v %v", r, err)
 	}
+	// Even the same live owner cannot revive an expired lease.
+	if err := c.HSet(ctx, taskcard.Key(id), "lease_until", "1").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = observe(p, "live", fresh()); err == nil || !strings.Contains(err.Error(), "lease lapsed") {
+		t.Fatalf("expired renewal: %v", err)
+	}
+	if c.HGet(ctx, taskcard.Key(id), "lease_until").Val() != "1" {
+		t.Fatal("expired lease resurrected")
+	}
+	if err := c.HSet(ctx, taskcard.Key(id), "lease_until", until).Err(); err != nil {
+		t.Fatal(err)
+	}
 	// A replacement attempt must not inherit the old process's observation.
 	if err := c.HSet(ctx, taskcard.Key(id), "token", "attempt-b").Err(); err != nil {
 		t.Fatal(err)

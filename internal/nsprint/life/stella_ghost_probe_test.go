@@ -13,11 +13,11 @@ import (
 // Review probe: a crashed harness leaves its copy record, but no owner
 // process or live session. An independently surviving beat must not turn
 // that stale record back into evidence of a live friend and worker.
-func TestStellaDetachedBeatWithoutLiveOwner(t *testing.T) {
+func TestDetachedBeatWithoutLiveOwner(t *testing.T) {
 	t.Parallel()
 	st, c := rdRedis(t)
 	ctx := context.Background()
-	const friend = "stella-probe"
+	const friend = "owner-probe"
 	const id = "ghost~1"
 	c.ZAdd(ctx, "friend:"+friend+":cards:working", redis.Z{Score: 1, Member: id})
 	c.HSet(ctx, "task:"+id, "consumer", "friend:"+friend, "where", "working", "lease_until", "1", "child", "dead-child", "harness", "dead-session")

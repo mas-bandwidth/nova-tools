@@ -58,15 +58,29 @@ type OwnerReceipt struct {
 // The store rechecks token, binding, membership, lease and observation age in
 // the same operation as renewal. It never moves or resurrects a copy.
 func ObserveOwner(ctx context.Context, c redis.Cmdable, as Consumer, id, token string, o OwnerObservation) (OwnerReceipt, error) {
+	if err := o.check(); err != nil {
+		return OwnerReceipt{}, err
+	}
+	r, err := ownerCall(ctx, c, as, id, token, "observe", o.Owner, o.State, o.At.UnixMilli())
+	return ownerReceipt(r, err)
+}
+
+func (o OwnerObservation) check() error {
 	if o.State != "live" && o.State != "dead" && o.State != "unknown" {
-		return OwnerReceipt{}, fmt.Errorf("owner state wants live, dead or unknown")
+		return fmt.Errorf("owner state wants live, dead or unknown")
 	}
 	if o.State != "unknown" || o.Owner != (ProcessOwner{}) {
 		if err := o.Owner.check(); err != nil {
-			return OwnerReceipt{}, err
+			return err
 		}
 	}
-	r, err := ownerCall(ctx, c, as, id, token, "observe", o.Owner, o.State, o.At.UnixMilli())
+	return nil
+}
+
+func ownerReceipt(r []string, err error) (OwnerReceipt, error) {
+	if err == nil {
+		err = refusal(r)
+	}
 	if err != nil {
 		return OwnerReceipt{}, err
 	}
@@ -92,4 +106,45 @@ func ownerCall(ctx context.Context, c redis.Cmdable, as Consumer, id, token, op 
 		return nil, err
 	}
 	return r, nil
+}
+
+// OwnerCheck is a fenced observation for one copy.
+type OwnerCheck struct {
+	ID, Token   string
+	Observation OwnerObservation
+}
+
+// OwnerOutcome keeps one copy's refusal separate from unrelated live owners.
+type OwnerOutcome struct {
+	Receipt OwnerReceipt
+	Err     error
+}
+
+// ObserveOwners sends a pass's observations in one round trip. Every copy is
+// independently fenced inside its FCALL; a refused copy cannot stop its peers.
+func ObserveOwners(ctx context.Context, c redis.Cmdable, as Consumer, checks []OwnerCheck) ([]OwnerOutcome, error) {
+	out := make([]OwnerOutcome, len(checks))
+	cmds := make([]*redis.Cmd, len(checks))
+	p := c.Pipeline()
+	for i, check := range checks {
+		o := check.Observation
+		if err := o.check(); err != nil {
+			return nil, err
+		}
+		if as.Kind != "friend" || as.Name == "" || !IsCopy(check.ID) || check.Token == "" {
+			return nil, fmt.Errorf("owner requires friend consumer, copy id and current token")
+		}
+		cmds[i] = p.FCall(ctx, FnOwner, []string{as.Key("working"), Key(check.ID)},
+			"observe", as.String(), check.ID, check.Token, o.Owner.Host, o.Owner.PID, o.Owner.Start, o.State, o.At.UnixMilli())
+	}
+	if len(cmds) == 0 {
+		return out, nil
+	}
+	if _, err := p.Exec(ctx); err != nil {
+		return nil, fmt.Errorf("observe owners: %w", err)
+	}
+	for i, cmd := range cmds {
+		out[i].Receipt, out[i].Err = ownerReceipt(cmd.StringSlice())
+	}
+	return out, nil
 }

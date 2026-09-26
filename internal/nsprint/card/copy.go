@@ -39,7 +39,7 @@ import (
 // done --id <copy> --ok --pr <repo>#<n> --head <sha>` (card end after the PR
 // record; or --fail, or --score for a read), the friend's one beat loop
 // (`nova-sprint friend beat --loop`, which friend pull started) renewing
-// the lease meanwhile.
+// the lease meanwhile only after binding an observed local process owner.
 // `nova-sprint friend pull` writes these briefs into the friend's own dir.
 
 // CopyCard is the fields of a copy's record the card renders from.
@@ -163,8 +163,12 @@ func friendBody(c CopyCard, full, label, prRef, branch string) string {
 	// refuses an ok whose PR record is missing (NOPR).
 	endOK := fmt.Sprintf("nova-sprint friend done --as %s --id %s --ok --pr %s#<n> --head <sha>", who, c.ID, prkey.Name(c.Repo))
 	endFail := fmt.Sprintf("nova-sprint friend done --as %s --id %s --fail '<why>'", who, c.ID)
-	beat := fmt.Sprintf("BEAT: %s's one beat loop (nova-sprint friend beat --as %s --loop, lease %s:beatloop) renews this copy's lease every second; "+
-		"friend pull, card work and task take start it when none runs, so run no beat yourself; a lapsed lease returns this copy as a fail.\n", who, who, who)
+	beat := fmt.Sprintf("BEAT: bind the actual local harness process before the startup lease lapses: "+
+		"nova-sprint card owner --as %s --id %s --token <claim-token> --pid <harness-pid>. "+
+		"Use the token from PULLED and the process that does this work, never a child UUID or the beat daemon. "+
+		"The detached loop renews only while that same process is observed alive. Missing, remote or unreadable identity is UNKNOWN and does not renew; "+
+		"inspect with nova-sprint friend beat --as %s --once. If your harness exposes no process identity, report that limitation to the coordinator. "+
+		"A lapsed lease must be reclaimed, not revived.\n", who, c.ID, who)
 	about := oneLine(c.Origin)
 	if about == "" {
 		about = "primary " + c.Primary
