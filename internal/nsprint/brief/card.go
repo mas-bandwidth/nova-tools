@@ -12,7 +12,7 @@ import (
 // Card brief (nova-tools #4095): `card render` renders each card's brief from
 // its record, task:<id>, by the card's kind, in process and with no second
 // read: the caller already holds the record it took. The kind's template is
-// the same file brief render uses (build, fix, read, rebase), so a card child
+// the same file brief render uses (build, fix, read, rebase, merge), so a card child
 // and a sprint-task child are told the same rules.
 
 // Header lines of a card brief.
