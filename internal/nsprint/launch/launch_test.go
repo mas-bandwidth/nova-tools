@@ -184,12 +184,12 @@ func TestLaunchRefusesASecondLaunchOfOneAttempt(t *testing.T) {
 	l := fixtureLines(1)[0]
 	in := l.String() + "\n" + "not a card line\n" + l.String() + "\n"
 	var out strings.Builder
-	res, err := Launch(strings.NewReader(in), &out, Config{Wrapper: exe})
+	res, err := Launch(strings.NewReader(in), &out, Config{Wrapper: exe, LogDir: t.TempDir()})
 	pids := map[string]int{}
 	t.Cleanup(func() { killAll(pids) })
 	for _, s := range strings.Split(out.String(), "\n") {
 		f := strings.Fields(s)
-		if len(f) == 3 && f[0] == "LAUNCHED" {
+		if len(f) >= 3 && f[0] == "LAUNCHED" {
 			pid, _ := strconv.Atoi(strings.TrimPrefix(f[2], "pid="))
 			pids[f[1]+"#"+strconv.Itoa(len(pids))] = pid
 		}
@@ -238,7 +238,7 @@ func TestLaunchSharesOneBudgetAcrossAcknowledgements(t *testing.T) {
 	clock := time.Unix(1_800_000_000, 0)
 	batchDeadline := clock.Add(5 * time.Second)
 	var deadlines []time.Time
-	start := func(_ string, _ Line, deadline time.Time) (int, string, error) {
+	start := func(_ string, _ Line, deadline time.Time, _ string) (int, string, error) {
 		deadlines = append(deadlines, deadline)
 		const ack = 3 * time.Second
 		if left := deadline.Sub(clock); left < ack {
@@ -283,11 +283,11 @@ func TestLaunchRefusesLinesPastTheBudget(t *testing.T) {
 	clock := time.Now()
 	tick := func() time.Time { clock = clock.Add(time.Second); return clock }
 	var out strings.Builder
-	res, err := Launch(strings.NewReader(in.String()), &out, Config{Wrapper: exe, Budget: DefaultBudget, Now: tick})
+	res, err := Launch(strings.NewReader(in.String()), &out, Config{Wrapper: exe, Budget: DefaultBudget, Now: tick, LogDir: t.TempDir()})
 	pids := map[string]int{}
 	t.Cleanup(func() { killAll(pids) })
 	for _, s := range strings.Split(out.String(), "\n") {
-		if f := strings.Fields(s); len(f) == 3 && f[0] == "LAUNCHED" {
+		if f := strings.Fields(s); len(f) >= 3 && f[0] == "LAUNCHED" {
 			pids[f[1]], _ = strconv.Atoi(strings.TrimPrefix(f[2], "pid="))
 		}
 	}
@@ -338,11 +338,11 @@ func TestLaunchOverrunsWithNothingRefused(t *testing.T) {
 		return clock
 	}
 	var out strings.Builder
-	res, err := Launch(strings.NewReader(in.String()), &out, Config{Wrapper: exe, Budget: DefaultBudget, Now: tick})
+	res, err := Launch(strings.NewReader(in.String()), &out, Config{Wrapper: exe, Budget: DefaultBudget, Now: tick, LogDir: t.TempDir()})
 	pids := map[string]int{}
 	t.Cleanup(func() { killAll(pids) })
 	for _, s := range strings.Split(out.String(), "\n") {
-		if f := strings.Fields(s); len(f) == 3 && f[0] == "LAUNCHED" {
+		if f := strings.Fields(s); len(f) >= 3 && f[0] == "LAUNCHED" {
 			pids[f[1]], _ = strconv.Atoi(strings.TrimPrefix(f[2], "pid="))
 		}
 	}
@@ -367,7 +367,7 @@ func TestLaunchEchoesRefusalsToStderr(t *testing.T) {
 	}
 	lines := fixtureLines(2)
 	in := lines[0].String() + "\n" + lines[1].String() + "\n"
-	start := func(_ string, l Line, _ time.Time) (int, string, error) {
+	start := func(_ string, l Line, _ time.Time, _ string) (int, string, error) {
 		if l == lines[1] {
 			return 0, "REFUSED card launched NOPERM on ws:*", nil
 		}

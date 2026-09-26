@@ -9,7 +9,8 @@ import (
 // A consumer copy's launch (#3998): the bench's session start takes its
 // copies with one `card work --as bench:<b> --fill` and starts one wrapper
 // per copy, detached exactly as a sprint card's (own session, stdout and
-// stderr /dev/null, the acknowledgement on fd 3), with the command identity
+// stderr the wrapper log <NOVA_CARD_RESULTS>/launch/copy/<copy>.log, the
+// acknowledgement on fd 3), with the command identity
 // `nova-card copy <copy>` and the one stdin line `<copy> <token>`. The token
 // is never an argument.
 
@@ -39,7 +40,8 @@ func ParseCopyLine(s string) (CopyLine, error) {
 }
 
 // LaunchCopy starts one copy's wrapper and waits for its acknowledgement
-// (LAUNCHED, or its REFUSED line) until budget runs out.
+// (LAUNCHED, or its REFUSED line) until budget runs out. Its error names
+// the wrapper log (CopyLogPath) beside a REFUSED acknowledgement.
 func LaunchCopy(wrapper string, l CopyLine, budget time.Duration) (string, error) {
 	return LaunchCopyEnv(wrapper, l, budget, nil)
 }
@@ -57,12 +59,19 @@ func LaunchCopyEnv(wrapper string, l CopyLine, budget time.Duration, env []strin
 	if budget <= 0 {
 		budget = DefaultBudget
 	}
-	_, ack, err := startDetachedArgsEnv(wrapper, []string{WrapperName, CopyArg, l.Copy}, l.String(), time.Now().Add(budget), env)
+	args := []string{WrapperName, CopyArg, l.Copy}
+	_, ack, err := startDetachedArgsEnv(wrapper, args, l.String(), time.Now().Add(budget), env)
 	if err != nil {
 		return "", err
 	}
 	if ack != "LAUNCHED" {
-		return ack, fmt.Errorf("%s", ack)
+		return ack, fmt.Errorf("%s (wrapper log %s)", ack, WrapperLogPath(wrapper, env, args))
 	}
 	return ack, nil
+}
+
+// CopyLogPath is the wrapper log LaunchCopyEnv keeps for copy: the results
+// root in env (else this process's environment), launch/copy/<copy>.log.
+func CopyLogPath(wrapper string, env []string, copy string) string {
+	return WrapperLogPath(wrapper, env, []string{WrapperName, CopyArg, copy})
 }

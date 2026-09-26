@@ -196,10 +196,16 @@ func TestLaunchRealWrapperReportsNotDealtAsRefused(t *testing.T) {
 	if state := client.HGet(ctx, card.CardKey(id.Sprint, id.Label), "state").Val(); state != "queued" {
 		t.Fatalf("refused wrapper changed card state to %q", state)
 	}
-	for name, dir := range map[string]string{"jobs": jobs, "results": results} {
-		if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
-			t.Fatalf("refused wrapper left %s entries %v (%v)", name, entries, err)
-		}
+	if entries, err := os.ReadDir(jobs); err != nil || len(entries) != 0 {
+		t.Fatalf("refused wrapper left jobs entries %v (%v)", entries, err)
+	}
+	// The results root holds the launcher's own record and nothing of the
+	// wrapper's: the per-attempt wrapper log, at the path the launch names.
+	if entries, err := os.ReadDir(results); err != nil || len(entries) != 1 || entries[0].Name() != WrapperLogDir {
+		t.Fatalf("refused wrapper left results entries %v (%v), want only %s/", entries, err, WrapperLogDir)
+	}
+	if _, err := os.Stat(WrapperLogPath(wrapper, nil, []string{WrapperName, line.Card()})); err != nil {
+		t.Fatalf("the wrapper log the launch names is not there: %v", err)
 	}
 }
 

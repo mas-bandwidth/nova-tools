@@ -6,9 +6,10 @@
 // For each line the launcher starts the card wrapper detached, in its own
 // session (POSIX setsid), with the command identity
 // `nova-card <sprint>/<label>/<attempt>`, and then exits. It never holds the
-// ssh session for a card's run: the wrapper's stdout and stderr are
-// /dev/null, so the session closes as soon as the launcher returns, and a
-// hang-up or kill of the session's process group does not reach a wrapper.
+// ssh session for a card's run: the wrapper's stdout and stderr are one
+// per-attempt log file (WrapperLogPath, named on the LAUNCHED line), never a
+// pipe, so the session closes as soon as the launcher returns, and a hang-up
+// or kill of the session's process group does not reach a wrapper.
 //
 // The token is the wrapper's first line on stdin, never an argument: argv is
 // what `ps` shows to every user on the bench, and receipts carry only the
@@ -22,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -118,8 +120,22 @@ type Config struct {
 	// Err, when set, gets every REFUSED line as well as out (#3700): the
 	// dealer keeps stdout, and a session log on the bench keeps stderr.
 	Err io.Writer
+	// LogDir, when set, is where the per-attempt wrapper logs go
+	// (<LogDir>/<sprint>/<label>/<attempt>.log); empty is WrapperLogPath's
+	// answer, <NOVA_CARD_RESULTS>/launch from this process's environment or
+	// launch/ beside the wrapper.
+	LogDir string
 	// start is the process seam for deterministic deadline tests.
-	start func(string, Line, time.Time) (int, string, error)
+	start func(wrapper string, l Line, deadline time.Time, logPath string) (int, string, error)
+}
+
+// logPath is the wrapper log for one line.
+func (cfg Config) logPath(l Line) string {
+	args := []string{WrapperName, l.Card()}
+	if cfg.LogDir != "" {
+		return filepath.Join(cfg.LogDir, WrapperLogName(args))
+	}
+	return WrapperLogPath(cfg.Wrapper, nil, args)
 }
 
 // Result counts the batch: wrappers started and lines refused.
@@ -138,14 +154,15 @@ type Result struct {
 // Launch reads the batch from in and starts one detached wrapper per line
 // as the line arrives. It writes one line per card to out:
 //
-//	LAUNCHED <sprint>/<label>/<attempt> pid=<pid>
+//	LAUNCHED <sprint>/<label>/<attempt> pid=<pid> log=<wrapper log>
 //	REFUSED line=<n> <why>
 //
 // (each REFUSED line to cfg.Err as well, when set) and then LAUNCH
 // started=<n> refused=<m> ms=<batch time> over=<bool>. A
 // malformed line, a second line for an attempt already in this batch, a
-// wrapper that would not start, or a line reached after the budget is
-// refused; the rest of the batch still launches. over=true means the
+// wrapper that would not start, a wrapper log that could not be opened, or a
+// line reached after the budget is refused; the rest of the batch still
+// launches. over=true means the
 // measured wall time, taken after the last line's own start returned, is
 // past the budget even though every line that reached it was individually
 // on time (Result.Overran); a caller must not read Refused==0 as success
@@ -205,7 +222,8 @@ func Launch(in io.Reader, out io.Writer, cfg Config) (Result, error) {
 				n, l.Card(), spent.Milliseconds(), budget.Milliseconds())
 			continue
 		}
-		pid, ack, err := start(cfg.Wrapper, l, deadline)
+		logPath := cfg.logPath(l)
+		pid, ack, err := start(cfg.Wrapper, l, deadline, logPath)
 		if err != nil {
 			refused("REFUSED line=%d start %s: %s\n", n, l.Card(), oneline.Err(err))
 			continue
@@ -215,7 +233,7 @@ func Launch(in io.Reader, out io.Writer, cfg Config) (Result, error) {
 			continue
 		}
 		res.Started++
-		fmt.Fprintf(out, "LAUNCHED %s pid=%d\n", l.Card(), pid)
+		fmt.Fprintf(out, "LAUNCHED %s pid=%d log=%s\n", l.Card(), pid, oneline.Field(logPath))
 	}
 	// Measured after the loop, so it includes the last line's own
 	// startDetached: a per-line check alone cannot catch a slow final
