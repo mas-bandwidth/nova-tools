@@ -409,3 +409,73 @@ func TestHeadMoveRetiresAndRecutsReads(t *testing.T) {
 	}
 	cleanMoves(t, c, "lapsed")
 }
+
+// TestReadCopiesHonourRoom (#4270; seen 2026-09-26 9:20 AM ET: a bench with
+// 5 slots and 5 working got 8 ready): the move into review cuts read copies
+// only onto consumers with room (slots less working less ready), at most
+// that many per consumer, so a full bench gets none and a bench with one
+// free slot gets one; with no room anywhere none are cut, and the deal
+// pass cuts them when room appears. A bench whose kinds filter excludes
+// read gets none either.
+func TestReadCopiesHonourRoom(t *testing.T) {
+	t.Parallel()
+	c := start(t)
+	ctx := context.Background()
+	author := enroll(t, c, "bench:b", 4, "")
+	full := enroll(t, c, "bench:s1", 2, "")
+	one := enroll(t, c, "bench:s2", 3, "")
+	workOnly := enroll(t, c, "bench:s3", 4, "")
+	c.HSet(ctx, workOnly.DesiredKey(), "kinds", "work")
+	ids := pushPrimaries(t, c, 6)
+	// s1 is full: two work copies working; s2 has one slot open: two working
+	fill := func(k taskcard.Consumer, n int, from []string) {
+		t.Helper()
+		if d, err := taskcard.Deal(ctx, c, taskcard.DealRequest{To: k, IDs: from[:n], By: "rowan"}); err != nil || len(d) != n {
+			t.Fatalf("deal %d to %s: %v %v", n, k, d, err)
+		}
+		if w, err := taskcard.Work(ctx, c, k, k.Name, 0, true); err != nil || len(w.IDs) != n {
+			t.Fatalf("work %s: %+v %v", k, w, err)
+		}
+	}
+	fill(full, 2, ids[1:3])
+	fill(one, 2, ids[3:5])
+	e := toReading(t, c, author, ids[0], 8500, head(0))
+	cp := split(e.Next)
+	if e.To != "review" || len(cp) != 1 {
+		t.Fatalf("end ok: to=%s next=%q, want review and ONE read copy (s1 is full, s2 has one slot, s3 takes no read)", e.To, e.Next)
+	}
+	if r := rec(c, cp[0]); r["consumer"] != one.String() || r["leg"] != "read" {
+		t.Fatalf("read copy %v, want on %s", r, one)
+	}
+	wantCells(t, cellsOf(t, c, full), "full bench", 0, 2, 0, 0)
+	wantCells(t, cellsOf(t, c, one), "one slot", 1, 2, 0, 0)
+	wantCells(t, cellsOf(t, c, workOnly), "kinds=work", 0, 0, 0, 0)
+	cleanMoves(t, c, "room")
+
+	// no room anywhere: the move into review cuts nothing; the deal pass
+	// cuts the read when a slot frees
+	workCopy(t, c, cp[0])
+	e = toReading(t, c, author, ids[5], 8501, head(5))
+	if e.To != "review" || split(e.Next) != nil {
+		t.Fatalf("end ok with no room: to=%s next=%q, want review and no read copy", e.To, e.Next)
+	}
+	if p := rec(c, ids[5]); p["reads"] != "" {
+		t.Fatalf("primary reads=%q, want none", p["reads"])
+	}
+	if r, err := taskcard.DealPass(ctx, c, "reconciler", time.Now()); err != nil || len(r.Lines) != 0 {
+		t.Fatalf("pass with no room: %+v %v", r, err)
+	}
+	w, _ := c.ZRange(ctx, full.Key("working"), 0, 0).Result()
+	if _, err := taskcard.End(ctx, c, taskcard.EndRequest{IDs: w, Why: "red", By: "s1"}); err != nil {
+		t.Fatal(err)
+	}
+	r, err := taskcard.DealPass(ctx, c, "reconciler", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	reads := liveReads(c, ids[5])
+	if len(reads) != 1 || rec(c, reads[0])["consumer"] != full.String() {
+		t.Fatalf("after a slot freed on s1: reads=%v lines=%v, want one read copy on s1", reads, r.Lines)
+	}
+	cleanMoves(t, c, "room appears")
+}

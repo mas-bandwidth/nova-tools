@@ -2099,7 +2099,7 @@ local TM = {
   LIVE_MS = 90000,
   -- the primary's fields a copy carries for its consumer's brief
   CARRY = { 'kind', 'ref', 'origin', 'title', 'repo', 'pr', 'head', 'base', 'base_sha', 'paths', 'done_when', 'tier',
-    'route', 'stream', 'review', 'body' },
+    'route', 'stream', 'review', 'body', 'branch' },
   -- a card end's result fields (written onto the primary and the copy)
   RESULT = { line1 = true, line2 = true, check = true, paths = true, branch = true, commit = true, pr = true,
     repo = true, head = true, base = true, base_sha = true, model = true, route = true, wall = true, evidence = true,
@@ -2933,10 +2933,12 @@ end
 
 -- TM.read_route(id): the consumers primary id's read copies go to (#4094):
 -- the friend with the reader role that may read it (never the author:
--- TM.may) with the most open slots, as one copy; else TM.SWARM_READS
--- copies over the swarm's live benches that may read it, most room first
--- (by id on a tie), round-robin; {} when there is no reader at all (the
--- deal pass cuts them when one comes).
+-- TM.may) with the most open slots, as one copy; else up to TM.SWARM_READS
+-- copies over the swarm's live benches that may read it and have room
+-- (slots less working less ready, #4270), most room first (by id on a
+-- tie), round-robin, never more per bench than its room; fewer than
+-- TM.SWARM_READS when the room runs out, {} when there is no reader with
+-- room at all (the deal pass cuts them when room comes: TM.ensure).
 function TM.read_route(id)
   local friend, froom, benches = nil, 0, {}
   for _, c in ipairs(TM.roster()) do
@@ -2944,7 +2946,7 @@ function TM.read_route(id)
     if kind == 'bench' or TM.role(name, 'reader') then
       local d = TM.desired(c)
       local room = TM.room(c, d)
-      if room and not TM.may(c, d, id, 'read') then
+      if room and room > 0 and not TM.may(c, d, id, 'read') then
         if kind == 'friend' then
           if room > froom then friend, froom = c, room end
         else
@@ -2956,8 +2958,17 @@ function TM.read_route(id)
   if friend then return { friend } end
   table.sort(benches, function(a, b) return a.room > b.room or (a.room == b.room and a.c < b.c) end)
   local out = {}
-  if #benches == 0 then return out end
-  for i = 1, TM.SWARM_READS do out[i] = benches[(i - 1) % #benches + 1].c end
+  while #out < TM.SWARM_READS do
+    local any = false
+    for _, b in ipairs(benches) do
+      if #out < TM.SWARM_READS and b.room > 0 then
+        out[#out + 1] = b.c
+        b.room = b.room - 1
+        any = true
+      end
+    end
+    if not any then break end
+  end
   return out
 end
 
@@ -2988,8 +2999,9 @@ function TM.fix_route(id, author)
   return nil
 end
 
--- TM.cut_reads(id, by, why): primary id's read copies on its read route,
--- through the one cut. Returns nil and the copy ids, or the refusal.
+-- TM.cut_reads(id, by, why): primary id's read copies on its read route
+-- (only consumers with room, at most their room each: #4270), through the
+-- one cut. Returns nil and the copy ids, or the refusal.
 function TM.cut_reads(id, by, why)
   local out = {}
   for _, c in ipairs(TM.read_route(id)) do
