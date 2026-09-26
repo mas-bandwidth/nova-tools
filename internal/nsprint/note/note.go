@@ -30,7 +30,7 @@ import (
 const Kind = "MERGE-NOTE"
 
 // StreamKey is a stream's notes list.
-func StreamKey(stream string) string { return "ws:" + stream + ":notes" }
+func StreamNotesKey(stream string) string { return "ws:" + stream + ":notes" }
 
 // SprintKey is a sprint's notes list.
 func SprintKey(sprint string) string { return "sprint:" + sprint + ":notes" }
@@ -109,7 +109,7 @@ func ForCopy(ctx context.Context, c redis.Cmdable, stream, sprint string) ([]str
 	}
 	var keys []string
 	if stream != "" {
-		keys = append(keys, StreamKey(stream))
+		keys = append(keys, StreamNotesKey(stream))
 	}
 	if sprint != "" {
 		keys = append(keys, SprintKey(sprint))

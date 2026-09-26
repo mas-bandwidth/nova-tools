@@ -1,3 +1,5 @@
+//go:build functional
+
 package reconcile_test
 
 import (
@@ -9,11 +11,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land/stream"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 )
 
 // TestLandDutyRefusesSerialByDefaultPassesPartialAndYieldsToTheMergeCard
@@ -25,10 +28,12 @@ import (
 // the card closes the duty lands again.
 func TestLandDutyRefusesSerialByDefaultPassesPartialAndYieldsToTheMergeCard(t *testing.T) {
 	t.Parallel()
-	mr := miniredis.RunT(t)
-	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = c.Close() })
 	ctx := context.Background()
+	c := redis.NewClient(&redis.Options{Addr: testutil.Start(t)})
+	t.Cleanup(func() { _ = c.Close() })
+	if err := fn.Load(ctx, c); err != nil {
+		t.Fatal(err)
+	}
 	const s, repo = "landing: alpha", "mas-bandwidth/nova-tools"
 	c.ZAdd(ctx, "ws:order", redis.Z{Score: 1, Member: s})
 	head := func(n int) string { return strings.Repeat(fmt.Sprint(n), 40) }
@@ -93,10 +98,12 @@ func TestLandDutyRefusesSerialByDefaultPassesPartialAndYieldsToTheMergeCard(t *t
 // over.
 func TestLandDutyAndWatchInterleaveOnOneClaim(t *testing.T) {
 	t.Parallel()
-	mr := miniredis.RunT(t)
-	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = c.Close() })
 	ctx := context.Background()
+	c := redis.NewClient(&redis.Options{Addr: testutil.Start(t)})
+	t.Cleanup(func() { _ = c.Close() })
+	if err := fn.Load(ctx, c); err != nil {
+		t.Fatal(err)
+	}
 	const s, repo, tok = "landing: alpha", "mas-bandwidth/nova-tools", "feedface"
 	c.ZAdd(ctx, "ws:order", redis.Z{Score: 1, Member: s})
 	c.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: "sp"})

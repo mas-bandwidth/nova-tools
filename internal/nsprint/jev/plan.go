@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 )
 
 // PassScore is the read score that moves a primary to merging (TM.PASS).
@@ -100,6 +102,14 @@ func classify(e Event) (move, bool) {
 	id, from, to, why := f["id"], f["from"], f["to"], f["why"]
 	m := move{id: id, by: f["by"], why: why}
 	if id == "" {
+		return m, false
+	}
+	// A stream's sentinel is a mechanical card, the stream's stop (#4318):
+	// created by registration, never dealt, read or reviewed, landed by the
+	// coordinator's acceptance (#4412). Jev asks no tier and no worktype of
+	// it (Rowan's ruling on #4412; its judgment, if any, is the separate
+	// sentinel judgment): none of its moves is a decision point here.
+	if ws.IsSentinel(id) {
 		return m, false
 	}
 	if IsCopy(id) {

@@ -76,8 +76,11 @@ func cmdTable(args []string, stdout, stderr io.Writer) int {
 	if opts.layout != "wide" {
 		return tableRefuse(stderr, "--layout wants live or wide")
 	}
-	if opts.friends != "" || opts.xyFile != "" || opts.lockKey != "" {
-		return tableRefuse(stderr, "--friends, --xy-file and --lock belong to --layout live; the wide table takes --out <file>")
+	if opts.xyFile != "" {
+		return tableRefuse(stderr, xyFileRetired)
+	}
+	if opts.friends != "" || opts.lockKey != "" {
+		return tableRefuse(stderr, "--friends and --lock belong to --layout live; the wide table takes --out <file>")
 	}
 	if opts.check {
 		if opts.live {

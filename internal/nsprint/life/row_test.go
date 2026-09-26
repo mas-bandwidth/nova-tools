@@ -96,11 +96,19 @@ func TestControl3440RowVerbsRenderTheBashTable(t *testing.T) {
 			t.Fatalf("seed %v: %v", cmd, err)
 		}
 	}
-	ix := "sprint:" + cfg.Sprint + ":idx:"
+	// the config's sprint is the open one the one count reads (#4411)
+	client.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: cfg.Sprint})
+	client.HSet(ctx, "s:"+cfg.Sprint, "status", "open")
+	// the row counts the friend's table sets under the epoch (#4238; epoch 0
+	// here): friend:<f>:cards:ready|working|done
 	for name, f := range friends {
-		for set, field := range map[string]string{"open": "ready", "working": "working", "closed": "done"} {
-			if n := atoi(t, f[field]); n > 0 {
-				client.SAdd(ctx, ix+name+":"+set, members(name+"-"+set, n)...)
+		for _, set := range []string{"ready", "working", "done"} {
+			var z []redis.Z
+			for i, m := range members(name+"-"+set, atoi(t, f[set])) {
+				z = append(z, redis.Z{Score: float64(i), Member: m})
+			}
+			if len(z) > 0 {
+				client.ZAdd(ctx, "friend:"+name+":cards:"+set, z...)
 			}
 		}
 		client.HSet(ctx, "friend:"+name+":desired", "slots", f["slots"], "machine", "studio")
@@ -158,7 +166,10 @@ func TestControl3440RowVerbsRenderTheBashTable(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got, want := snap.RenderLive(now), table.Golden2674(); got != want {
+		// the progress line is the one count (#4411): no stream here, so
+		// 0/0 with no eta; every other byte is the bash's (table.MaskXY)
+		got, want := snap.RenderLive(now), table.Golden2674()
+		if table.MaskXY(got) != table.MaskXY(want) || !strings.HasPrefix(got, "SPRINT TABLE\n\n0/0 done 0%, left 0, eta -\n\n") {
 			t.Fatalf("pass %d: the table from the row verbs differs from sprint-table-redis\ngot:\n%s\nwant:\n%s", pass, got, want)
 		}
 	}
@@ -188,15 +199,18 @@ func TestControl3440RowVerbsRenderTheBashTable(t *testing.T) {
 }
 
 // TestFriendRowReplacesAWrongTypeAndCountsDown: a friend:<f> left as a
-// string is replaced by the hash, a friend with no beat is up=0, and a
-// missing index set counts 0.
+// string is replaced by the hash, a friend with no beat is up=0, a missing
+// set counts 0, and the counts are the friend's table sets under the
+// current epoch (#4238): a set of another epoch counts 0.
 func TestFriendRowReplacesAWrongTypeAndCountsDown(t *testing.T) {
 	t.Parallel()
 
 	st, client, _ := controlRedis(t)
 	ctx := context.Background()
 	client.Set(ctx, "friend:walter", "legacy", 0)
-	client.SAdd(ctx, "sprint:s1:idx:walter:open", "a", "b")
+	client.ZAdd(ctx, "friend:walter:cards:ready", redis.Z{Score: 1, Member: "a"}, redis.Z{Score: 2, Member: "b"})
+	client.ZAdd(ctx, "friend:walter:3:cards:working", redis.Z{Score: 1, Member: "c"})
+	client.SAdd(ctx, "sprint:s1:idx:walter:open", "d", "e", "f")
 	at := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
 	res, err := life.FriendRow(ctx, st, life.FriendRowRequest{Friend: "Walter", Sprint: "s1", At: at})
 	if err != nil {
@@ -206,10 +220,20 @@ func TestFriendRowReplacesAWrongTypeAndCountsDown(t *testing.T) {
 		t.Fatalf("result %+v", res)
 	}
 	got := client.HGetAll(ctx, "friend:walter").Val()
-	want := map[string]string{"at": "2026-09-25T12:00:00Z", "up": "0", "ready": "2", "queue": "2", "working": "0", "waiting": "0", "width": "0", "done": "0", "slots": ""}
+	want := map[string]string{"at": "2026-09-25T12:00:00Z", "up": "0", "ready": "2", "queue": "2", "working": "0", "waiting": "0", "width": "0", "done": "0", "slots": "", "epoch": "0"}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("friend:walter = %v, want %v", got, want)
 	}
+	// after a clear the row is the new epoch's sets, stamped with it
+	client.HSet(ctx, "sprint:epoch", "n", "3")
+	res, err = life.FriendRow(ctx, st, life.FriendRowRequest{Friend: "walter", Sprint: "s1", At: at})
+	if err != nil || res.Ready != 0 || res.Working != 1 || res.Done != 0 {
+		t.Fatalf("at epoch 3: %+v %v, want ready 0 working 1", res, err)
+	}
+	if got := client.HMGet(ctx, "friend:walter", "ready", "working", "epoch").Val(); fmt.Sprint(got) != "[0 1 3]" {
+		t.Fatalf("row at epoch 3 = %v, want ready 0 working 1 epoch 3", got)
+	}
+
 	if _, err := life.FriendRow(ctx, st, life.FriendRowRequest{Friend: "bad name", Sprint: "s1"}); err == nil {
 		t.Fatal("a name that is not a friend slug was written")
 	}

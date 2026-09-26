@@ -48,7 +48,7 @@ func TestFriendServeTakesAPushedCard(t *testing.T) {
 		t.Fatalf("friend serve's take %+v %v", claims, err)
 	}
 	h := c.HGetAll(ctx, "task:rowan-1").Val()
-	if h["where"] != "working" || h["state"] != "claimed" || c.ZCard(ctx, taskcard.FriendKey("rowan", "working")).Val() != 1 {
+	if h["where"] != "working" || h["state"] != "claimed" || c.ZCard(ctx, taskcard.FriendKeyAt(0, "rowan", "working")).Val() != 1 {
 		t.Fatalf("taken card %v", h)
 	}
 	if r, err := task.Done(ctx, st, task.DoneRequest{Sprint: sprint, ID: "rowan-1", Token: claims[0].Token, Evidence: "done"}); err != nil || r != task.DoneClosed {

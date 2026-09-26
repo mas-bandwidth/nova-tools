@@ -28,9 +28,8 @@ func Land(ctx context.Context, client *redis.Client, sprint, label, mergeSHA str
 	}
 	reply, err := client.FCall(ctx, "ns_card_land", []string{
 		keyCard(sprint, label),
-		keyPool(sprint),
-		keyWaiting(sprint),
 		keyLog(sprint),
+
 		keyIdx(sprint, "queued"),
 		keyIdx(sprint, "landed"),
 	}, label, mergeSHA).Text()
