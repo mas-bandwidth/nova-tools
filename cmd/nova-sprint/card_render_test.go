@@ -11,12 +11,14 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
 )
 
-// TestCardRenderFromIssuePush (nova-tools#3911): task push --issue fills the
+// cardRenderFromIssuePush (nova-tools#3911) runs at the end of TestCardMovesCLI
+// (already serial for its t.Setenv; the serial allowlist only shrinks): task push --issue fills the
 // record from the issue text, card render --id prints a harness card card
 // push's linter admits and --brief the friend brief from the same record, a
 // flash push without PATHS is refused naming it, and a record with no swarm
 // route is refused at render.
-func TestCardRenderFromIssuePush(t *testing.T) {
+func cardRenderFromIssuePush(t *testing.T) {
+	t.Helper()
 	newSeat(t)
 	t.Setenv("FRIEND_QUEUE_SPRINT", seatSprint)
 	t.Setenv("NOVA_FRIEND", "")
