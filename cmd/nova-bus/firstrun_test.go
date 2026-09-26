@@ -230,7 +230,7 @@ func TestTheFirstRunTranscriptIsWhatTheToolPrints(t *testing.T) {
 }
 
 // The exemption is gone, and it stays gone: a `### First run` for nova-bus exists in
-// the document the walk reads, and no entry in internal/ci's skip list names this
+// the document the walk reads, and no entry in internal/ci's skip list (onboarding_functional_test.go) names this
 // tool. Asserted here as well as there because the skip list is one map entry away
 // from being back, and the tool the README sends people to first is the worst one to
 // excuse.
@@ -243,7 +243,7 @@ func TestNovaBusIsNotExemptFromTheOnboardingStandard(t *testing.T) {
 	if _, err := onboarding.FirstRun(string(raw), "nova-bus"); err != nil {
 		t.Fatalf("%v\n(docs/ONBOARDING.md point 5(c))", err)
 	}
-	// The walk moved behind the functional tag with #4328 (it execs every tool).
+	// The walk is a functional test since #4372 (it builds and runs every command).
 	walk, err := os.ReadFile(filepath.Join("..", "..", "internal", "ci", "onboarding_functional_test.go"))
 	if err != nil {
 		t.Fatal(err)
