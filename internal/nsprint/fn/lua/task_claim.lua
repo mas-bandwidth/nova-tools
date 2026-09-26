@@ -150,7 +150,15 @@ local function task_push(keys, args)
   if #unmet > 0 then
     DEP.wait(S, id, key, to, unmet, at)
     receipt(S, 'task push', id, '', 'waiting', 0, '', actor, to, 'depends-on ' .. table.concat(unmet, ';'), '', idem, at)
-    return { 'CREATED', 'waiting', tostring(#unmet) }
+    -- each unmet condition with its class (NS.dep.class for a task edge; any
+    -- other condition waits on its fact)
+    local classes = {}
+    for _, c in ipairs(unmet) do
+      local class, detail = 'waiting', ''
+      if string.sub(c, 1, 5) == 'task:' then class, detail = NS.dep.class(string.sub(c, 6)) end
+      classes[#classes + 1] = c .. ' ' .. NS.dep.text(class, detail)
+    end
+    return { 'CREATED', 'waiting', tostring(#unmet), table.concat(classes, '; ') }
   end
   receipt(S, 'task push', id, '', 'open', 0, '', actor, to, '', '', idem, at)
   if #conds > 0 then
@@ -187,19 +195,36 @@ local function task_take(keys, args)
     return { 'NONE' }
   end
 
-  -- A task whose needs are not all closed is passed over (#2939): the reply
-  -- names the unmet ids and nothing is written.
+  -- A task whose needs are not all met is passed over (#2939): the reply
+  -- names the unmet ids and, per id, its class (NS.dep.class: waiting,
+  -- parked, dead or unknown, and the where), and nothing is written. A need
+  -- is met by the one dependency rule alone (NS.dep: landed, or done/ok; a
+  -- sentinel only landed). The sprint's closed index is not the rule: a task
+  -- cancelled is closed there too, and a cancelled need is dead, not met.
   local needs = redis.call('HGET', key, 'needs')
   if needs and needs ~= '' then
-    local unmet = {}
+    local unmet, classes = {}, {}
     for need in string.gmatch(needs, '%S+') do
-      if redis.call('SISMEMBER', 's:' .. S .. ':idx:task:closed', need) == 0 then
+      local nid = NS.dep.ids(need)[1] or need
+      local class, detail = NS.dep.class(nid)
+      if class ~= 'met' then
         unmet[#unmet + 1] = need
+        classes[#classes + 1] = need .. ' ' .. NS.dep.text(class, detail)
       end
     end
     if #unmet > 0 then
-      return { 'BLOCKED', table.concat(unmet, ' ') }
+      return { 'BLOCKED', table.concat(unmet, ' '), table.concat(classes, '; ') }
     end
+  end
+
+  -- The row's full DEPENDS-ON contract at the instant of the claim, by the
+  -- rule ready --why reads (NS.dep.first_blocker, nova-tools #4414): a task
+  -- released when its edge was met, whose edge has since returned to unmet
+  -- (a stream sentinel reopened by new work), is refused with the reader's
+  -- line, WAIT <edge> <class>, and nothing is written.
+  local dep_edge, dep_line = NS.dep.first_blocker(redis.call('HGET', key, 'depends_on') or '')
+  if dep_edge then
+    return { 'BLOCKED', dep_edge, dep_line, dep_line }
   end
 
   -- Presence and capacity are global, shared by every open sprint. A down
@@ -327,7 +352,7 @@ local function task_done(keys, args)
 
   local attempt = tonumber(redis.call('HGET', key, 'attempt') or '0')
   local at = now_ms()
-  local err = NS.task.set(id, 'closed', { sprint = S, by = actor, why = 'done',
+  local err, moved = NS.task.set(id, 'closed', { sprint = S, by = actor, why = 'done',
     fields = { 'evidence', evidence, 'verdict', verdict, 'score', score, 'closed_at', tostring(at) } })
   if err then
     return { 'REFUSED', err }
@@ -340,7 +365,9 @@ local function task_done(keys, args)
       friend .. '@' .. head, verdict .. ' ' .. score .. ' ' .. evidence)
   end
   receipt(S, 'task done', id, state, 'closed', attempt, redis.call('HGET', key, 'token_sha'), actor, '', '', evidence, idem, at)
-  local ready = DEP.resolve(S, 'task:' .. id, false, actor, idem, at)
+  -- the move released every sprint's waiters on task:<id> (TK.release_waiters);
+  -- this resolve settles any the move did not (a dependency already met)
+  local ready = ((moved and moved.released) or 0) + DEP.resolve(S, 'task:' .. id, false, actor, idem, at)
   if record then
     return { 'DONE', unpack(record) }
   end

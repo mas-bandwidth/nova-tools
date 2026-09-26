@@ -26,13 +26,22 @@
 // The first blocker is one line, its first word the class:
 //
 //	WAIT <dep> pr#<n> open
+//	WAIT <dep> waiting|parked [<where>]
 //	WAIT PATHS <other>
 //	DEAD <dep> pr#<n> closed-unmerged
 //	UNKNOWN <dep> pr#<n> base-unresolved
 //
 // plus the rarer WAIT <dep> issue#<n> open, WAIT <dep> card-<state> no-pr,
-// WAIT <dep> pr#<n> merged-into <b> not <base>, DEAD <dep> no-such-card,
+// WAIT <dep> pr#<n> merged-into <b> not <base>, DEAD <dep> dead <where>,
 // DEAD <dep> card-<state>, and UNKNOWN <dep> ... forge/state/repo lines.
+//
+// A dependency on a task record (task:<id>, or an id with no sprint card,
+// a stream's <slug>:sentinel among them) is read through the class table,
+// ws.DepClass, the one every reader of an edge prints: met (not a blocker),
+// or WAIT <dep> waiting|parked [<where>], DEAD <dep> dead <where>, UNKNOWN
+// <dep> unknown (no record has the id). A waiting task is a candidate too,
+// so --why names what it waits on; one whose dependencies are all met waits
+// only for its release: WAIT <wait_on> for a durable wait, else WAIT release.
 //
 // Evaluate never writes; the forge is the dealer's one seam (deal.PRs), so
 // a test hands in a map and no host is reached.
@@ -45,6 +54,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/deal"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 )
 
 // Item kinds.
@@ -64,7 +74,12 @@ type Item struct {
 	Paths     []string // repo-relative; empty is the whole repo
 	Repo      string
 	Base      string
+	WaitOn    string // a waiting task's durable wait (#3090), "" for none
 }
+
+// TaskDep is what a task record named in DEPENDS-ON holds: the one
+// dependency rule's fields (the dealer's type).
+type TaskDep = deal.TaskDep
 
 // Snapshot is one read of what ready needs.
 type Snapshot struct {
@@ -75,9 +90,12 @@ type Snapshot struct {
 	// InFlight are the dealt and running cards and the claimed and working
 	// tasks: their PATHS are taken.
 	InFlight []Item
-	// Deps is every card or task a candidate names in DEPENDS-ON, keyed
+	// Deps is every sprint card a candidate names in DEPENDS-ON, keyed
 	// <sprint>/<id>; an id the sprint does not have is absent.
 	Deps map[string]deal.DepCard
+	// Tasks is every task record (task:<id>) a candidate names, keyed by id:
+	// a task:<id> entry, or an id with no card in Deps.
+	Tasks map[string]TaskDep
 }
 
 // Verdict is one candidate's answer.
@@ -97,6 +115,11 @@ func Evaluate(ctx context.Context, snap Snapshot, prs deal.PRs) []Verdict {
 		v := Verdict{Item: c}
 		if b := f.depBlocker(ctx, snap, c); b != "" {
 			v.Blocker = b
+		} else if c.Kind == KindTask && c.State == "waiting" {
+			v.Blocker = "WAIT release"
+			if c.WaitOn != "" {
+				v.Blocker = "WAIT " + c.WaitOn
+			}
 		} else if b := pathsBlocker(c, snap.InFlight, claimed); b != "" {
 			v.Blocker = b
 		} else {
@@ -191,9 +214,12 @@ func (f *forge) entryBlocker(ctx context.Context, snap Snapshot, c Item, e strin
 		ref, err := f.ref(ctx, repo, n)
 		return refBlocker(e, n, ref, err, c.Base)
 	}
+	id, isTask := strings.CutPrefix(e, "task:")
 	d, ok := snap.Deps[c.Sprint+"/"+e]
-	if !ok || !d.Found {
-		return "DEAD " + e + " no-such-card"
+	if isTask || ws.IsSentinel(id) || !ok || !d.Found {
+		// a task record, or an id no sprint card has: the class table
+		// (ws.DepClass); no record at all is unknown
+		return taskBlocker(e, id, snap.Tasks[id])
 	}
 	switch {
 	case d.State == "landed":
@@ -226,6 +252,26 @@ func (f *forge) entryBlocker(ctx context.Context, snap Snapshot, c Item, e strin
 		state = "unknown"
 	}
 	return "WAIT " + e + " card-" + state + " no-pr"
+}
+
+// taskBlocker is the class table (ws.DepClass) on a task record as a
+// blocker line, empty when the edge is met: its first word ready's (WAIT for
+// waiting and parked, DEAD, UNKNOWN), then the entry, the class and the
+// record's where when the class does not say it.
+func taskBlocker(e, id string, t TaskDep) string {
+	class, detail := ws.DepClass(id, t.State, t.Where, t.WhereOK)
+	lead := "WAIT"
+	switch class {
+	case ws.DepClassMet:
+		return ""
+	case ws.DepClassDead:
+		lead = "DEAD"
+	case ws.DepClassUnknown:
+		lead = "UNKNOWN"
+	case ws.DepClassCycle:
+		lead = "CYCLE"
+	}
+	return lead + " " + e + " " + ws.DepText(class, detail)
 }
 
 // refBlocker reads one forge answer against the dependent's base. An unknown

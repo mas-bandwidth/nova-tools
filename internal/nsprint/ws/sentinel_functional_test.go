@@ -174,7 +174,7 @@ func TestShowOrderListsCardsWithEdges(t *testing.T) {
 	}
 	want := []string{
 		"waiting A",
-		"waiting B <- A(waiting), task:ghost(no record)",
+		"waiting B <- A(waiting), task:ghost(unknown)",
 		"waiting " + snSentinel + " <- every other card of the stream (live 2)",
 		"waiting C <- task:" + snSentinel + "(waiting), mas-bandwidth/nova-tools#77",
 		"waiting ci:sentinel <- every other card of the stream (live 1)",

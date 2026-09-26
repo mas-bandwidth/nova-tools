@@ -22,7 +22,13 @@
 -- in friend:<dest>:waiting, so the width line counts it as waiting.
 --
 -- Conditions (the one DEPENDS-ON form, nova-tools#3409):
---   task:<id>            met when task:<id> is closed (done or closed)
+--   task:<id>            met by the one dependency rule (NS.dep, 01_dep.lua):
+--                        task:<id> landed, or done/ok (closed); a stream
+--                        sentinel only when landed. A task named bare (P3,
+--                        or a sentinel <slug>:sentinel) is stored as
+--                        task:<id> (NS.dep.ids, the card door's reading).
+--                        The move that meets it releases its waiters
+--                        (TK.release_waiters, 02_card_move.lua).
 --   key:<k>=<v>          met when GET k equals v
 --   anything else        <owner>/<repo>#<n>, stream/<slug>, card:<id>, pr:,
 --                        spec:, node: -- met only by ns_task_resolve with
@@ -75,7 +81,22 @@ function DEP.parse(text)
   for raw in string.gmatch(text, '[^;,]+') do
     local c = string.match(raw, '^%s*(.-)%s*$')
     if c ~= '' then
-      if string.find(c, '%s') or not (string.find(c, ':') or string.find(c, '/') or string.find(c, '#')) then
+      if string.find(c, '%s') then
+        return out, c
+      end
+      -- a task named bare (P3, or a stream's sentinel <slug>:sentinel) is
+      -- the task edge task:<id>, the card door's reading: NS.dep.ids is the
+      -- one parser of which entries name a task
+      local bare = not string.find(c, '/') and not string.find(c, '#') and
+        (not string.find(c, ':') or NS.dep.is_sentinel(c))
+      if bare then
+        local ids = NS.dep.ids(c)
+        if #ids ~= 1 then
+          return out, c
+        end
+        c = 'task:' .. ids[1]
+      end
+      if not (string.find(c, ':') or string.find(c, '/') or string.find(c, '#')) then
         return out, c
       end
       if string.sub(c, 1, 4) == 'key:' and not string.match(c, '^key:[^=]+=.*$') then
@@ -93,7 +114,7 @@ end
 -- DEP.holds reports whether a condition can be proven met from Redis alone.
 function DEP.holds(S, c)
   if string.sub(c, 1, 5) == 'task:' then
-    return redis.call('HGET', 'task:' .. string.sub(c, 6), 'state') == 'closed'
+    return NS.dep.met(string.sub(c, 6))
   end
   if string.sub(c, 1, 4) == 'key:' then
     local k, v = string.match(c, '^key:([^=]+)=(.*)$')
@@ -182,10 +203,50 @@ function DEP.release(S, id, key, actor, idem, at)
     actor, dest, 'depends-on met', redis.call('HGET', key, 'depends_on') or '', idem, at)
 end
 
+-- DEP.left(S, key, cond): every condition of the row's full contract that
+-- is unmet now, cond (the one resolving, already found met) excepted. The
+-- contract is its DEPENDS-ON (depends_on) and whatever waits_on still names
+-- (a row pushed before depends_on was stored). A task: edge is judged by the
+-- rule ready --why reads (NS.dep.blocker), so an edge met once and since
+-- returned to unmet (a stream sentinel reopened by new work) counts again
+-- (nova-tools #4414, Stella's second variant); key: by DEP.holds; any other
+-- kind is met only by an asserted resolve, so it is unmet while waits_on
+-- still names it.
+function DEP.left(S, key, cond)
+  local waits, conds, seen = {}, {}, {}
+  for c in string.gmatch(redis.call('HGET', key, 'waits_on') or '', '[^;]+') do
+    waits[c] = true
+  end
+  local listed = DEP.parse(redis.call('HGET', key, 'depends_on') or '')
+  for c in string.gmatch(redis.call('HGET', key, 'waits_on') or '', '[^;]+') do
+    listed[#listed + 1] = c
+  end
+  for _, c in ipairs(listed) do
+    if c ~= cond and not seen[c] then
+      seen[c] = true
+      local unmet
+      if string.sub(c, 1, 5) == 'task:' then
+        unmet = NS.dep.blocker(c) ~= nil
+      elseif string.sub(c, 1, 4) == 'key:' then
+        unmet = not DEP.holds(S, c)
+      else
+        unmet = waits[c] == true
+      end
+      if unmet then
+        conds[#conds + 1] = c
+      end
+    end
+  end
+  return conds
+end
+
 -- DEP.resolve settles one condition for every task waiting on it. A task:
 -- or key: condition is re-checked here; any other kind is met only when the
--- caller asserts it. A task whose last unmet condition goes is released.
--- Returns the number of tasks made ready.
+-- caller asserts it. Before a release every other condition of the row is
+-- re-evaluated (DEP.left), never only the one resolving: a row with an edge
+-- unmet again stays waiting, its waits_on names every unmet edge and the
+-- release index holds it under each, so the move that meets that edge
+-- releases it. Returns the number of tasks made ready.
 function DEP.resolve(S, cond, asserted, actor, idem, at)
   local met = DEP.holds(S, cond) or (asserted and string.sub(cond, 1, 5) ~= 'task:' and string.sub(cond, 1, 4) ~= 'key:')
   if not met then
@@ -198,17 +259,15 @@ function DEP.resolve(S, cond, asserted, actor, idem, at)
     local key = 'task:' .. id
     redis.call('SREM', 's:' .. S .. ':waits:' .. cond, id)
     if redis.call('HGET', key, 'state') == 'waiting' then
-      local left = {}
-      for c in string.gmatch(redis.call('HGET', key, 'waits_on') or '', '[^;]+') do
-        if c ~= cond then
-          left[#left + 1] = c
-        end
-      end
+      local left = DEP.left(S, key, cond)
       if #left == 0 then
         DEP.release(S, id, key, actor, idem, at)
         ready = ready + 1
       else
         redis.call('HSET', key, 'waits_on', table.concat(left, ';'))
+        for _, c in ipairs(left) do
+          redis.call('SADD', 's:' .. S .. ':waits:' .. c, id)
+        end
       end
     end
   end
@@ -265,3 +324,7 @@ local function friend_down(keys, args)
 end
 
 redis.register_function('ns_friend_down', friend_down)
+
+-- The move that meets a dependency (landed, or done/ok) releases its waiters
+-- through DEP.resolve (TK.release_waiters, 02_card_move.lua).
+NS.task.on_met(DEP.resolve)

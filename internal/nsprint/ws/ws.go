@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -172,6 +173,56 @@ func MoveMany(ctx context.Context, c redis.Cmdable, to, by, why string, ids []st
 		r.Refused = append(r.Refused, IDWhy{ID: out[i], Why: out[i+1]})
 	}
 	return r, nil
+}
+
+// ReleaseResult is a Release's reply: Moved ids went waiting -> ready,
+// Skipped ids were no longer waiting (another release, or any move, got
+// there first) and stayed where they were, Refused ids the move refused.
+type ReleaseResult struct {
+	Moved   []string
+	Skipped []IDWhy
+	Refused []IDWhy
+}
+
+// ErrUnguarded is Release's refusal on a store whose nova_sprint library
+// predates the guarded release (ns_ws_move_many refuses waiting>ready as an
+// unknown where): nothing moved. Release never falls back to the unguarded
+// move, which pulls a card another pass released and a dealer dealt from
+// working back to ready (a double release); the remedy is `nova-sprint fn
+// load`.
+var ErrUnguarded = errors.New("the store's nova_sprint library has no guarded release (ns_ws_move_many waiting>ready)")
+
+// Release is the waiting resolver's guarded move (ns_ws_move_many with to
+// waiting>ready): each id moves waiting -> ready only while it is waiting,
+// so two releases racing move a card once and never pull a dealt card back.
+// On a library without the guard it moves nothing and returns ErrUnguarded.
+func Release(ctx context.Context, c redis.Cmdable, by, why string, ids []string) (ReleaseResult, error) {
+	guarded := Waiting + ">" + Ready
+	r, err := MoveMany(ctx, c, guarded, by, why, ids)
+	if err != nil {
+		return ReleaseResult{}, err
+	}
+	// A library without the guard refuses every id WHERE waiting>ready
+	// before any write (TK.edge): nothing moved, and nothing will.
+	if len(ids) > 0 && len(r.Refused) == len(ids) && strings.HasPrefix(r.Refused[0].Why, "WHERE "+guarded) {
+		return ReleaseResult{}, ErrUnguarded
+	}
+	var out ReleaseResult
+	left := map[string]bool{}
+	for _, x := range r.Refused {
+		left[x.ID] = true
+		if strings.HasPrefix(x.Why, "NOTFROM ") {
+			out.Skipped = append(out.Skipped, x)
+		} else {
+			out.Refused = append(out.Refused, x)
+		}
+	}
+	for _, id := range ids {
+		if !left[id] {
+			out.Moved = append(out.Moved, id)
+		}
+	}
+	return out, nil
 }
 
 func one(ctx context.Context, c redis.Cmdable, fn, want string, args ...any) (int, error) {

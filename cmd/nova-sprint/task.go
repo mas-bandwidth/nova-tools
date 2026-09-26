@@ -167,7 +167,11 @@ func runTaskPush(ctx context.Context, args []string, out, errOut io.Writer) int 
 	}
 	switch {
 	case res.Status == task.PushCreated && res.Waiting > 0:
-		_, _ = fmt.Fprintf(out, "PUSH %s id=%s waiting=%d\n", res.Status, *id, res.Waiting)
+		if res.Classes != "" {
+			_, _ = fmt.Fprintf(out, "PUSH %s id=%s waiting=%d on=%q\n", res.Status, *id, res.Waiting, res.Classes)
+		} else {
+			_, _ = fmt.Fprintf(out, "PUSH %s id=%s waiting=%d\n", res.Status, *id, res.Waiting)
+		}
 	case res.Status == task.PushCreated && res.OnMet:
 		_, _ = fmt.Fprintf(out, "PUSH %s id=%s on-met\n", res.Status, *id)
 	default:
@@ -214,8 +218,13 @@ func runTaskTake(ctx context.Context, args []string, out, errOut io.Writer) int 
 	claims, err := task.TakeAvailable(ctx, st, *as, *sprint, *id, *n, initiator, *idem)
 	var blocked *task.BlockedError
 	if errors.As(err, &blocked) {
-		// #2939: exit 7, new because 3-6 are taken.
-		_, _ = fmt.Fprintf(out, "BLOCKED needs %s\n", strings.Join(blocked.Needs, " "))
+		// #2939: exit 7, new because 3-6 are taken. A DEPENDS-ON refusal
+		// prints ready --why's own line (#4414).
+		if blocked.Wait != "" {
+			_, _ = fmt.Fprintln(out, blocked.Wait)
+			return 7
+		}
+		_, _ = fmt.Fprintf(out, "BLOCKED needs %s\n", blocked.Unmet())
 		return 7
 	}
 	if err != nil {

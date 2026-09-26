@@ -106,7 +106,7 @@ func TestWaitingResolvesWhenDepsLand(t *testing.T) {
 	if s, _ := c.HGet(ctx, "task:B", "where").Result(); s != "ready" {
 		t.Fatalf("task:B where %q, want ready (the pointer, #3778)", s)
 	}
-	want := `RESOLVE stream="nova-sprint + merge + bus" ready=2 still=5 on=mas-bandwidth/nova-tools#78,task:D unknown=o/r#99,task:ghost` + "\n"
+	want := `RESOLVE stream="nova-sprint + merge + bus" ready=2 still=5 waiting=mas-bandwidth/nova-tools#78,task:D parked=- dead=- unknown=o/r#99,task:ghost` + "\n"
 	if out.String() != want {
 		t.Fatalf("receipt\n%q\nwant\n%q", out.String(), want)
 	}
@@ -272,7 +272,7 @@ func TestSentinelEdgeNeverReachesReadyUnmet(t *testing.T) {
 	if counts, err := duty.Run(ctx, lease); err != nil || counts.Routed != 0 {
 		t.Fatalf("routed %d err %v; nothing is landed", counts.Routed, err)
 	}
-	want := `RESOLVE stream="b: two" ready=0 still=3 on=` + sid + `,` + csid + `,task:` + sid + ` unknown=-` + "\n"
+	want := `RESOLVE stream="b: two" ready=0 still=3 waiting=` + sid + `,task:` + sid + ` parked=- dead=` + csid + ` unknown=-` + "\n"
 	if out.String() != want {
 		t.Fatalf("receipt\n%q\nwant\n%q (stream a has only its sentinel waiting: no line)", out.String(), want)
 	}
@@ -299,7 +299,7 @@ func TestSentinelEdgeNeverReachesReadyUnmet(t *testing.T) {
 	if strings.Join(ready, " ") != "B1 B2" {
 		t.Fatalf("ready %v", ready)
 	}
-	if out.String() != `RESOLVE stream="b: two" ready=2 still=1 on=`+csid+` unknown=-`+"\n" {
+	if out.String() != `RESOLVE stream="b: two" ready=2 still=1 waiting=- parked=- dead=`+csid+` unknown=-`+"\n" {
 		t.Fatalf("receipt %q", out.String())
 	}
 	if err := ws.Check(ctx, c, []string{"A1", sid, "B1", "B2", "B3"}); err != nil {

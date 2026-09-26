@@ -1162,7 +1162,8 @@ end
 -- or done, it is never dealt (TM.leg), and it moves nowhere else but parked
 -- and done. A card in another stream that must wait for this whole stream
 -- names it in DEPENDS-ON like any card edge (<slug>:sentinel or
--- task:<slug>:sentinel); the waiting resolver treats it as any task id.
+-- task:<slug>:sentinel); whether that edge is met is the one dependency
+-- rule (NS.dep, 01_dep.lua): a sentinel only when landed.
 function TK.slug(s)
   local w = string.gsub(string.lower(TK.str(s)), '[^a-z0-9]+', '-')
   w = string.gsub(w, '^%-+', '')
@@ -1176,9 +1177,7 @@ function TK.sentinel_id(stream)
   return w .. ':sentinel'
 end
 
-function TK.is_sentinel(id)
-  return type(id) == 'string' and string.match(id, '^[a-z0-9][a-z0-9%-]*:sentinel$') ~= nil
-end
+TK.is_sentinel = NS.dep.is_sentinel
 
 -- TK.slug_clash: the refusal when stream's slug already belongs to another
 -- stream (ws:slug:<slug>), else nil. Checked before any write at every door
@@ -1601,6 +1600,13 @@ function TK.move(id, to, o)
   end
   local err = TK.edge(id, cur, nxt, ok, o)
   if err then return err end
+  -- a DEPENDS-ON written by a move (task block) is refused the way a push's is
+  for i = 1, #fields, 2 do
+    if fields[i] == 'blocked_on' then
+      err = TK.dep_refusal(id, nxt.stream, fields[i + 1])
+      if err then return err end
+    end
+  end
   -- a probe never enters a consumer set (nova-tools#4237): refused before any write
   if nxt.friend ~= '' then
     err = cm_probe_refused('friend:' .. nxt.friend .. ':cards:' .. to, id)
@@ -1732,7 +1738,90 @@ function TK.move(id, to, o)
   if to == 'landed' and cur.where ~= 'landed' and not TK.is_sentinel(id) and nxt.stream ~= '' then
     stop = TK.land_stop(nxt.stream, o.sha, o.by, 'last card ' .. id .. ' landed')
   end
-  return nil, { from = cur.where, to = to, xid = xid, cut = cut, stop = stop, parent = parent }
+  -- The move that meets the dependency on this id (the one rule, NS.dep:
+  -- landed, or done/ok; a sentinel only landed) releases every task-queue
+  -- task waiting on task:<id> in this call (TK.release_waiters).
+  local released = 0
+  if not NS.dep.met_of(id, cur.state, cur.where, cur.ok) and NS.dep.met_of(id, state, to, ok) then
+    released = TK.release_waiters(id, o.by, at)
+  end
+  return nil, { from = cur.where, to = to, xid = xid, cut = cut, stop = stop, parent = parent, released = released }
+end
+
+-- TK.dep_refusal(id, stream, text): the refusal of a DEPENDS-ON value text
+-- on task id of stream, before any write, else nil. An edge that could never
+-- be met is refused by name instead of waiting for ever:
+--   CYCLE    the edges lead back to id, or to its own stream's sentinel (the
+--            stop waits on every live card of its stream, id included); the
+--            walk follows unmet task edges (NS.dep.ids of blocked_on and
+--            depends_on) and, through an unmet sentinel, every live card of
+--            its stream (TK.live_siblings)
+--   UNKNOWN  a stream sentinel with no record: no stream has that slug, so
+--            nothing will ever land it
+--   DEAD     an edge the class table (NS.dep.class) calls dead: a record in
+--            done that is not met (done/fail, a sentinel done by hand)
+-- A task id with no record that is not a sentinel is not refused: the task
+-- may be pushed after the edge that names it (its class is unknown).
+function TK.dep_refusal(id, stream, text)
+  local named = NS.dep.ids(text)
+  if #named == 0 then return nil end
+  local stop = TK.sentinel_id(stream)
+  local queue, seen, i = {}, {}, 1
+  for _, d in ipairs(named) do queue[#queue + 1] = { d, 'task:' .. id .. ' -> ' .. d } end
+  while i <= #queue do
+    local x, path = queue[i][1], queue[i][2]
+    i = i + 1
+    if x == id then return 'CYCLE ' .. path end
+    if stop ~= '' and x == stop then
+      return 'CYCLE ' .. path .. ' (the stop of stream ' .. stream .. ', which waits on task:' .. id .. ')'
+    end
+    if not seen[x] and not NS.dep.met(x) then
+      seen[x] = true
+      local f = redis.call('HMGET', 'task:' .. x, 'blocked_on', 'depends_on', 'stream')
+      for _, d in ipairs(NS.dep.ids(TK.str(f[1]) .. ',' .. TK.str(f[2]))) do
+        queue[#queue + 1] = { d, path .. ' -> ' .. d }
+      end
+      if TK.is_sentinel(x) and TK.str(f[3]) ~= '' then
+        for _, r in ipairs(TK.live_siblings(TK.str(f[3]), x)) do
+          queue[#queue + 1] = { r[1], path .. ' -> ' .. r[1] }
+        end
+      end
+    end
+  end
+  for _, d in ipairs(named) do
+    if TK.is_sentinel(d) and redis.call('EXISTS', 'task:' .. d) == 0 then
+      return 'UNKNOWN task:' .. d .. ' has no record: no stream with the slug ' .. string.sub(d, 1, -10) ..
+        ' is registered (nova-sprint stream ls), so nothing would ever land it'
+    end
+    local class, detail = NS.dep.class(d)
+    if class == 'dead' then
+      return 'DEAD task:' .. d .. ' ' .. NS.dep.text(class, detail) .. ': it is done and not met, so the edge would wait for ever'
+    end
+  end
+  return nil
+end
+
+-- TK.release_waiters(id, by, at): the dependency on task:<id> is met now, so
+-- every task of every sprint (sprints and sprint:order, the bounded sets
+-- card_ghost reads too) waiting on it in the task queue's release index
+-- (s:<S>:waits:task:<id>, task_queue.lua) is settled by DEP.resolve, which
+-- re-checks the rule and releases a task whose last condition went. DEP is a
+-- later file's, so it hands its resolve in at load (NS.task.on_met sets
+-- TK.resolve). Returns the number released.
+function TK.release_waiters(id, by, at)
+  if not TK.resolve then return 0 end
+  local cond = 'task:' .. id
+  local seen, n = {}, 0
+  local function each(S)
+    if seen[S] or S == '' then return end
+    seen[S] = true
+    if redis.call('SCARD', 's:' .. S .. ':waits:' .. cond) > 0 then
+      n = n + TK.resolve(S, cond, false, TK.str(by), '', at)
+    end
+  end
+  for _, S in ipairs(redis.call('SMEMBERS', 'sprints')) do each(S) end
+  for _, S in ipairs(redis.call('ZRANGE', 'sprint:order', 0, -1)) do each(S) end
+  return n
 end
 
 -- TK.land_stop(stream, sha, by, why): the stream's sentinel lands when it is
@@ -1771,6 +1860,12 @@ function TK.create(id, fields, o)
   end
   local serr = TK.slug_clash(stream)
   if serr then return serr end
+  for i = 1, #fields, 2 do
+    if fields[i] == 'blocked_on' or fields[i] == 'depends_on' then
+      local derr = TK.dep_refusal(id, stream, fields[i + 1])
+      if derr then return derr end
+    end
+  end
   local where = o.where or 'waiting'
   if where ~= 'waiting' and where ~= 'ready' then return 'OFFGRAPH a new task starts in waiting or ready' end
   -- a probe never enters a consumer set (nova-tools#4237): refused before any write
@@ -2219,7 +2314,16 @@ redis.register_function('ns_tcard_take', function(keys, args)
     -- a consumer copy is card work's (the friend harness's task take works
     -- copies first, then takes friend-queue tasks)
     if named or not TK.copy_id(id) then
-      local err = TK.move(id, 'working', { by = by, why = 'take', as = as })
+      -- its DEPENDS-ON at the instant of the take (nova-tools #4414): an
+      -- edge returned to unmet refuses with ready --why's line
+      local dep = redis.call('HMGET', 'task:' .. id, 'blocked_on', 'depends_on')
+      local _, line = NS.dep.first_blocker(TK.str(dep[1]) .. ';' .. TK.str(dep[2]))
+      local err
+      if line then
+        err = 'DEPENDS task:' .. id .. ' ' .. line
+      else
+        err = TK.move(id, 'working', { by = by, why = 'take', as = as })
+      end
       if err and named then return { 'REFUSED', err } end
       if not err then out[#out + 1] = id end
     end
@@ -2619,10 +2723,30 @@ function TM.leg(id, p)
     end
     return 'read'
   end
-  if p.where == 'ready' then return 'work' end
+  if p.where == 'ready' then
+    -- released once, its DEPENDS-ON is judged again at the deal (nova-tools
+    -- #4414): an edge returned to unmet (a stream sentinel reopened by new
+    -- work) refuses with the line ready --why prints (NS.dep.first_blocker)
+    local e, line = NS.dep.first_blocker(TK.str(redis.call('HGET', 'task:' .. id, 'blocked_on')))
+    if e then return nil, 'DEPENDS task:' .. id .. ' ' .. line end
+    return 'work'
+  end
   if p.where == 'waiting' or not p.placed then
     local dep = TK.str(redis.call('HGET', 'task:' .. id, 'blocked_on'))
-    if dep ~= '' and dep ~= '-' and dep ~= 'none' then return nil, 'DEPENDS task:' .. id .. ' waits on ' .. dep end
+    if dep ~= '' and dep ~= '-' and dep ~= 'none' then
+      -- a card with DEPENDS-ON is released by the waiting resolver alone (a
+      -- stitch's brief is written there); the refusal names the first edge
+      -- the one rule (NS.dep) says is unmet
+      local ids = NS.dep.ids(dep)
+      for _, d in ipairs(ids) do
+        local class, detail = NS.dep.class(d)
+        if class ~= 'met' then
+          return nil, 'DEPENDS task:' .. id .. ' waits on task:' .. d .. ' ' .. NS.dep.text(class, detail) .. ' (of ' .. dep .. ')'
+        end
+      end
+      if #ids == 0 then return nil, 'DEPENDS task:' .. id .. ' waits on ' .. dep end
+      return nil, 'DEPENDS task:' .. id .. ' waits on ' .. dep .. ' (its task edges are met: the waiting resolver releases it)'
+    end
     if p.where == 'waiting' then return 'work' end
   end
   return nil, 'WHERE task:' .. id .. ' is ' .. (p.where == '' and 'null' or p.where) .. ', not waiting or review'
@@ -2795,6 +2919,18 @@ function TM.deal(c, by, k, stream, ids)
   return out
 end
 
+-- TM.dep_line(cid): nil when copy cid may start now, else the line ready
+-- --why prints for its primary's first unmet DEPENDS-ON edge (NS.dep.
+-- first_blocker, nova-tools #4414): a work or fix copy dealt before its
+-- primary's edge returned to unmet (a stream sentinel reopened by new work)
+-- does not start. A read copy reviews work already done and is not held.
+function TM.dep_line(cid)
+  local f = redis.call('HMGET', 'task:' .. cid, 'leg', 'primary')
+  if TK.str(f[1]) == 'read' or TK.str(f[2]) == '' then return nil end
+  local _, line = NS.dep.first_blocker(TK.str(redis.call('HGET', 'task:' .. f[2], 'blocked_on')))
+  return line
+end
+
 -- TM.work(c, by, k, fill, ids): consumer ready -> working, k = min(free,
 -- |ready copies|) (fill; else also at most k), free = slots - ci -
 -- |working|, ci the CI legs running on the consumer's machine as its beat
@@ -2816,6 +2952,8 @@ function TM.work(c, by, k, fill, ids)
       if not TK.copy_id(id) or not redis.call('ZSCORE', TM.key(c, 'ready'), id) then
         return { 'REFUSED', 'NOTREADY ' .. id .. ' is not a copy in ' .. TM.key(c, 'ready') }
       end
+      local line = TM.dep_line(id)
+      if line then return { 'REFUSED', 'DEPENDS task:' .. id .. ' ' .. line } end
       take[#take + 1] = id
     end
     if #take > free then return { 'REFUSED', 'FULL ' .. c .. ' has ' .. free .. ' free of ' .. d.slots .. ' slots' } end
@@ -2825,7 +2963,7 @@ function TM.work(c, by, k, fill, ids)
     if n > 0 then
       for _, id in ipairs(redis.call('ZRANGE', TM.key(c, 'ready'), 0, -1)) do
         if #take >= n then break end
-        if TK.copy_id(id) then take[#take + 1] = id end
+        if TK.copy_id(id) and not TM.dep_line(id) then take[#take + 1] = id end
       end
     end
   end
@@ -4253,6 +4391,9 @@ NS.task = { move = TK.move, create = TK.create, place = TK.place, read = TK.read
   -- the stream sentinel (#4318): its id for a stream, and whether an id is one
   sentinel_id = TK.sentinel_id, is_sentinel = TK.is_sentinel, slug = TK.slug, slug_clash = TK.slug_clash,
   live_siblings = TK.live_siblings,
+  -- on_met(resolve): the task queue's DEP.resolve (task_queue.lua) that a
+  -- move meeting a dependency calls (TK.release_waiters)
+  on_met = function(f) TK.resolve = f end,
   -- set(id, state, o): the move to the where a fine state names (cancelled is
   -- done/fail), writing that state: the sprint store's transitions.
   -- renew(id, at): a live holder's beat renews the task's lease.

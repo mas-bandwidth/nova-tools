@@ -28,15 +28,19 @@ func showExec(ctx context.Context, pipe redis.Pipeliner) error {
 // it is the stream's stop, after every other card. Show never writes.
 
 // ShowDep is one DEPENDS-ON entry of a card: the entry as written, and, for
-// a task id, what its record says: Where (its set) and Landed; Known is
-// false when no record has that id (an owner/repo#n reference is never
-// looked up here: Known false, Ref true).
+// a task id, what its record says: Where (its set), Class and Detail (the
+// class table, ws.DepClass: met, waiting, parked, dead or unknown, and the
+// where when the class does not say it) and Landed (Class met); Known is
+// false when no record has that id, Class unknown (an owner/repo#n
+// reference is never looked up here: Known false, Ref true, no Class).
 type ShowDep struct {
 	Raw    string
 	ID     string // the task id an entry names ("" for a repository reference)
 	Ref    bool   // an owner/repo#n reference
 	Known  bool
 	Where  string
+	Class  string
+	Detail string
 	Landed bool
 }
 
@@ -92,16 +96,6 @@ func DepID(entry string) string {
 		return id
 	}
 	return entry
-}
-
-// showLanded is whether a record's fields say landed (the waiting resolver's
-// rule): where landed, or done with where_ok not fail; a stream's sentinel
-// only when landed (its done is a rename's, never a landing).
-func showLanded(where, whereOK, id string) bool {
-	if IsSentinel(id) {
-		return where == Landed
-	}
-	return where == Landed || (where == Done && whereOK != "fail")
 }
 
 // Show reads every stream's cards and edges. It returns the streams in rank
@@ -182,20 +176,23 @@ func Show(ctx context.Context, c redis.Cmdable) ([]ShowStream, error) {
 		})
 	}
 
-	// Round 3: every member's blocked_on and where_ok.
+	// Round 3: every member's blocked_on and the fields the class table
+	// reads (state, where, where_ok: the record, as every reader of an edge
+	// reads it).
 	pipe = c.Pipeline()
 	recCmds := make([]*redis.SliceCmd, len(members))
 	for i, id := range members {
-		recCmds[i] = pipe.HMGet(ctx, "task:"+id, "blocked_on", "where_ok")
+		recCmds[i] = pipe.HMGet(ctx, "task:"+id, "blocked_on", "where_ok", "state", "where")
 	}
 	if err := showExec(ctx, pipe); err != nil {
 		return nil, fmt.Errorf("ws show: records: %w", err)
 	}
-	blockedOn, okOf := map[string]string{}, map[string]string{}
+	blockedOn := map[string]string{}
+	recOf := map[string][3]string{} // state, where, where_ok
 	for i, id := range members {
 		v := recCmds[i].Val()
 		blockedOn[id] = showStr(v, 0)
-		okOf[id] = showStr(v, 1)
+		recOf[id] = [3]string{showStr(v, 2), showStr(v, 3), showStr(v, 1)}
 	}
 
 	// The edges, in two passes: the entries first, then (round 4) the
@@ -209,6 +206,9 @@ func Show(ctx context.Context, c redis.Cmdable) ([]ShowStream, error) {
 			for _, raw := range SplitDeps(blockedOn[card.ID]) {
 				dep := ShowDep{Raw: raw, ID: DepID(raw)}
 				dep.Ref = dep.ID == ""
+				if !dep.Ref {
+					dep.Class = DepClassUnknown
+				}
 				if _, known := whereOf[dep.ID]; !dep.Ref && !known && !strayRead[dep.ID] {
 					strayRead[dep.ID] = true
 					strays = append(strays, dep.ID)
@@ -221,15 +221,15 @@ func Show(ctx context.Context, c redis.Cmdable) ([]ShowStream, error) {
 		pipe = c.Pipeline()
 		strayCmds := make([]*redis.SliceCmd, len(strays))
 		for i, id := range strays {
-			strayCmds[i] = pipe.HMGet(ctx, "task:"+id, "where", "where_ok")
+			strayCmds[i] = pipe.HMGet(ctx, "task:"+id, "state", "where", "where_ok")
 		}
 		if err := showExec(ctx, pipe); err != nil {
 			return nil, fmt.Errorf("ws show: dependencies: %w", err)
 		}
 		for i, id := range strays {
 			v := strayCmds[i].Val()
-			if w := showStr(v, 0); w != "" {
-				whereOf[id], okOf[id] = w, showStr(v, 1)
+			if st, w := showStr(v, 0), showStr(v, 1); st != "" || w != "" {
+				whereOf[id], recOf[id] = DepWhere(st, w), [3]string{st, w, showStr(v, 2)}
 			}
 		}
 	}
@@ -238,7 +238,13 @@ func Show(ctx context.Context, c redis.Cmdable) ([]ShowStream, error) {
 			deps := out[i].Cards[j].Deps
 			for k := range deps {
 				if w, ok := whereOf[deps[k].ID]; ok && !deps[k].Ref {
-					deps[k].Known, deps[k].Where, deps[k].Landed = true, w, showLanded(w, okOf[deps[k].ID], deps[k].ID)
+					r := recOf[deps[k].ID]
+					if r[0] == "" && r[1] == "" {
+						r[1] = w // a member with no record fields: its set says where
+					}
+					deps[k].Known, deps[k].Where = true, w
+					deps[k].Class, deps[k].Detail = DepClass(deps[k].ID, r[0], r[1], r[2])
+					deps[k].Landed = deps[k].Class == DepClassMet
 				}
 			}
 		}
@@ -255,9 +261,10 @@ func showStr(v []any, i int) string {
 }
 
 // Line is the card's line as ws show prints it: its where and id, then
-// `<- ` and its edges: each entry as written, with the dependency's set in
-// parentheses when it is not landed, or (no record) when nothing has that
-// id; a sentinel's edge is every other card of its stream.
+// `<- ` and its edges: each entry as written, with its class in parentheses
+// when it is not met (ws.DepText: waiting, parked or dead and the where the
+// class does not say, unknown when nothing has that id); a sentinel's edge
+// is every other card of its stream.
 func (c ShowCard) Line(live int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%-7s %s", c.Where, c.ID)
@@ -274,12 +281,8 @@ func (c ShowCard) Line(live int) string {
 			b.WriteString(", ")
 		}
 		b.WriteString(d.Raw)
-		switch {
-		case d.Ref:
-		case !d.Known:
-			b.WriteString("(no record)")
-		case !d.Landed:
-			b.WriteString("(" + d.Where + ")")
+		if !d.Ref && d.Class != DepClassMet {
+			b.WriteString("(" + DepText(d.Class, d.Detail) + ")")
 		}
 	}
 	return b.String()

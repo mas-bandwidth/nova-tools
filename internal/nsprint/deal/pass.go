@@ -71,6 +71,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/metrics"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/benchrole"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pitstop"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 )
 
 // SSH states on the bench row (#2756 2.2 `bench:<b>:beat` ssh: ok, refused,
@@ -212,6 +213,9 @@ type Input struct {
 	// Deps is every card a pooled or waiting card names in DEPENDS-ON, keyed
 	// <S>/<label>; a card id the sprint does not have is absent (#3066).
 	Deps map[string]DepCard
+	// Tasks is every task record (task:<id>) a card names, keyed by id: a
+	// task:<id> entry, a stream's <slug>:sentinel, or an id with no card.
+	Tasks map[string]TaskDep
 	// MaxSessions is cfg:deal max_sessions; zero when unset or unreadable,
 	// and the pass uses its own MaxSessions or DefaultMaxSessions (#3706).
 	MaxSessions int
@@ -998,8 +1002,8 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 	}
 	// The cards named in DEPENDS-ON, one pipelined round (#3066).
 	type depCmd struct {
-		key string
-		cmd *redis.SliceCmd
+		key       string
+		cmd, task *redis.SliceCmd
 	}
 	var depCmds []depCmd
 	seenDep := map[string]bool{}
@@ -1018,7 +1022,7 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 						continue
 					}
 					seenDep[k] = true
-					depCmds = append(depCmds, depCmd{k, nil})
+					depCmds = append(depCmds, depCmd{k, nil, nil})
 				}
 			}
 		}
@@ -1029,13 +1033,24 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 		for i := range depCmds {
 			slash := strings.IndexByte(depCmds[i].key, '/')
 			S, label := depCmds[i].key[:slash], depCmds[i].key[slash+1:]
-			depCmds[i].cmd = pipe.HMGet(ctx, "s:"+S+":card:"+label, "state", "outcome", "repo", "base", "pr", "pushed_sha")
+			id, isTask := strings.CutPrefix(label, "task:")
+			if !isTask && !ws.IsSentinel(id) {
+				depCmds[i].cmd = pipe.HMGet(ctx, "s:"+S+":card:"+label, "state", "outcome", "repo", "base", "pr", "pushed_sha")
+			}
+			depCmds[i].task = pipe.HMGet(ctx, "task:"+id, "state", "where", "where_ok")
 		}
 		if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 			return Input{}, err
 		}
-		in.Deps = map[string]DepCard{}
+		in.Deps, in.Tasks = map[string]DepCard{}, map[string]TaskDep{}
 		for _, d := range depCmds {
+			if v := d.task.Val(); str(v, 0) != "" || str(v, 1) != "" {
+				id := strings.TrimPrefix(d.key[strings.IndexByte(d.key, '/')+1:], "task:")
+				in.Tasks[id] = TaskDep{State: str(v, 0), Where: str(v, 1), WhereOK: str(v, 2)}
+			}
+			if d.cmd == nil {
+				continue
+			}
 			v := d.cmd.Val()
 			if len(v) == 0 || v[0] == nil {
 				continue
