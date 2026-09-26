@@ -373,8 +373,9 @@ func TestTaskTakeRecordsWhoAndKeepsBeat(t *testing.T) {
 // `friend pull` works a copy with its model and claims the loop's lease
 // (ns_friend_loop_claim) and starts the REAL loop, which steps under the
 // same login (ns_friend_loop_renew, the friend beat's HSET and PERSIST,
-// ns_cm_beat, ns_friend_models) and writes its log; SIGTERM ends it with
-// ns_friend_loop_release. `friend beat --once` then writes the beat and its
+// ns_cm_beat, ns_friend_models) and writes its log; after kill -9 of it the
+// next pull says restarted (dead=<its pid>), and SIGTERM ends the new one
+// with ns_friend_loop_release. `friend beat --once` then writes the beat and its
 // models. The lease functions also run on an ns-friend client directly. The
 // control: the same seat without the ns_friend_* grants is refused (NOPERM)
 // the claim and the models, and ns-friend is refused a SET on the lease key.
@@ -397,7 +398,7 @@ func TestFriendSeatKeepsBeatUnderACL(t *testing.T) {
 	ctx := context.Background()
 	const me = "aclfriend"
 	k, _ := taskcard.ParseConsumer("friend:" + me)
-	cp := beatStore(t, admin, me, 2, 1)[0]
+	cp := beatStore(t, admin, me, 2, 2)[0]
 	bin := buildRoutesBinary(t)
 	home := t.TempDir()
 	env := []string{"HOME=" + home, "PATH=" + os.Getenv("PATH"), seatEnv + "=" + me, store.UserEnv + "=ns-friend",
@@ -416,7 +417,7 @@ func TestFriendSeatKeepsBeatUnderACL(t *testing.T) {
 		return 0, string(b)
 	}
 
-	code, out := sprint("friend", "pull", "--as", k.String(), "--model", "opus-5.5", "--harness", "claude-code", "--child", "c7")
+	code, out := sprint("friend", "pull", "--as", k.String(), "--n", "1", "--model", "opus-5.5", "--harness", "claude-code", "--child", "c7")
 	m := regexp.MustCompile(`(?m)^BEATLOOP as=` + k.String() + ` started pid=(\d+) working=1 log=(\S+)$`).FindStringSubmatch(out)
 	if code != 0 || m == nil || m[2] != filepath.Join(home, ".nova-sprint", "friend", me, "beatloop.log") {
 		t.Fatalf("ns-friend friend pull exit %d:\n%s", code, out)
@@ -437,6 +438,24 @@ func TestFriendSeatKeepsBeatUnderACL(t *testing.T) {
 	if got := admin.HGet(ctx, life.BeatLoopKey(me), "pid").Val(); got != m[1] {
 		t.Fatalf("lease pid %q, want the loop's %s", got, m[1])
 	}
+	// kill -9: the lease outlives the loop, and the next pull restarts it at
+	// once (the holder's pid is gone on this host), not "running"
+	if err := syscall.Kill(pid, syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 300 && pidAlive(pid); i++ {
+		time.Sleep(10 * time.Millisecond)
+	}
+	code, out = sprint("friend", "pull", "--as", k.String(), "--n", "1", "--model", "opus-5.5")
+	m2 := regexp.MustCompile(`(?m)^BEATLOOP as=` + k.String() + ` restarted pid=(\d+) working=2 log=(\S+) dead=` + m[1] + `$`).FindStringSubmatch(out)
+	if code != 0 || m2 == nil {
+		t.Fatalf("ns-friend friend pull after kill -9 of pid %d exit %d:\n%s", pid, code, out)
+	}
+	pid, _ = strconv.Atoi(m2[1])
+	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
+	for i := 0; i < 300 && !strings.Contains(readFile(m[2]), "pid="+m2[1]); i++ {
+		time.Sleep(10 * time.Millisecond)
+	}
 	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
 		t.Fatal(err)
 	}
@@ -451,7 +470,7 @@ func TestFriendSeatKeepsBeatUnderACL(t *testing.T) {
 
 	admin.PExpire(ctx, "friend:"+me+":beat", time.Hour) // a hello loop's TTL: the beat's PERSIST removes it
 	code, out = sprint("friend", "beat", "--as", k.String(), "--host", "laptop", "--once")
-	if code != 0 || !strings.HasPrefix(out, "FRIEND BEAT as="+k.String()+" host=laptop working=1 ") {
+	if code != 0 || !strings.HasPrefix(out, "FRIEND BEAT as="+k.String()+" host=laptop working=2 ") {
 		t.Fatalf("ns-friend friend beat --once exit %d:\n%s", code, out)
 	}
 	if got := admin.HGet(ctx, "friend:"+me+":beat", "models").Val(); got != "opus-5.5" || admin.TTL(ctx, "friend:"+me+":beat").Val() > 0 {
@@ -483,4 +502,127 @@ func TestFriendSeatKeepsBeatUnderACL(t *testing.T) {
 	if _, err := life.FriendBeat(ctx, store.New(as("ns-friend-bare")), life.FriendBeatRequest{Friend: me, Host: "laptop"}); err == nil || !strings.Contains(err.Error(), "NOPERM") {
 		t.Fatalf("ns-friend without the models grant, friend beat: %v, want NOPERM", err)
 	}
+}
+
+// TestFriendPullRaceStartsOneLoop (seat-keeps-beat PROBE: two pulls at the
+// same instant): 20 trials, each two `friend pull --n 1` at once for a
+// friend with ready copies and no loop: in every trial exactly one pull
+// prints started and the other running, and one loop is started.
+func TestFriendPullRaceStartsOneLoop(t *testing.T) {
+	t.Parallel()
+	addr, c := loadedStore(t)
+	ctx := context.Background()
+	me := beatSeat()
+	k, _ := taskcard.ParseConsumer("friend:" + me)
+	beatStore(t, c, me, 40, 40)
+	for trial := 0; trial < 20; trial++ {
+		c.Del(ctx, life.BeatLoopKey(me))
+		before := len(startsFor(addr))
+		outs := make([]string, 2)
+		var wg sync.WaitGroup
+		for i := range outs {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				code, out, errOut := runSprint("friend", "pull", "--as", k.String(), "--n", "1", "--dir", t.TempDir(), "--redis", addr)
+				outs[i] = fmt.Sprintf("exit %d\n%s%s", code, out, errOut)
+			}()
+		}
+		wg.Wait()
+		started, running := 0, 0
+		for _, o := range outs {
+			if strings.Contains(o, "\nBEATLOOP as="+k.String()+" started pid=4242 ") {
+				started++
+			}
+			if strings.Contains(o, "\nBEATLOOP as="+k.String()+" running pid=") {
+				running++
+			}
+		}
+		if started != 1 || running != 1 || len(startsFor(addr))-before != 1 {
+			t.Fatalf("trial %d: %d started, %d running, %d loops:\n%s", trial, started, running, len(startsFor(addr))-before, strings.Join(outs, "\n"))
+		}
+	}
+}
+
+// TestEndedCopyNotRenewedByLoop (seat-keeps-beat PROBE: a copy ended while
+// the loop runs): a friend pulls four copies and its loop steps with the
+// real friend beat; each copy is then ended through one door (friend done
+// --fail, card end --fail, task done, card cancel), and the loop's next
+// step counts one fewer and leaves the ended copy's record as its end left
+// it (no lease_until, no beat_at after the end): ns_cm_beat renews only
+// the working set. With none left, the next step is idle and the one after
+// releases the lease. Mid-tick: ns_friend_models given a copy the first
+// trip read but that has ended since writes no model for it.
+func TestEndedCopyNotRenewedByLoop(t *testing.T) {
+	t.Parallel()
+	addr, c := loadedStore(t)
+	ctx := context.Background()
+	me := beatSeat()
+	k, _ := taskcard.ParseConsumer("friend:" + me)
+	cps := beatStore(t, c, me, 4, 4)
+	code, out, errOut := runSprint("friend", "pull", "--as", k.String(), "--dir", t.TempDir(), "--model", "opus-5.5", "--redis", addr)
+	if code != 0 || !strings.Contains(out, " started pid=4242 working=4 ") {
+		t.Fatalf("pull exit %d:\n%s%s", code, out, errOut)
+	}
+	token := c.HGet(ctx, life.BeatLoopKey(me), "token").Val()
+	st := store.New(c)
+	l := &life.BeatLoop{Lease: life.StoreLease{Client: c, Friend: me, Me: life.LoopHolder{Token: token, Host: "h", PID: 4242}}, Friend: me,
+		Tick: func(ctx context.Context, now time.Time) (int, error) {
+			res, err := friendBeatOnce(ctx, st, k, "laptop", now)
+			if err == nil && int64(res.Working) != c.ZCard(ctx, k.Key("working")).Val() {
+				t.Errorf("tick counted %d, the set holds %d", res.Working, c.ZCard(ctx, k.Key("working")).Val())
+			}
+			return res.Working, err
+		}}
+	now := time.Date(2026, 9, 26, 18, 0, 0, 0, time.UTC)
+	if done, why, err := l.Step(ctx, now); done || err != nil {
+		t.Fatalf("step with four copies: %v %q %v", done, why, err)
+	}
+	// mid-tick: the models trip names a copy that ended after the first trip read it
+	c.ZRem(ctx, k.Key("working"), cps[0])
+	if m, err := c.FCall(ctx, life.FnFriendModels, []string{"friend:" + me + ":beat", k.Key("working"), taskcard.Key(cps[0])}).Text(); err != nil || m != "" ||
+		c.HExists(ctx, "friend:"+me+":beat", "models").Val() {
+		t.Fatalf("models of an ended copy: %q %v", m, err)
+	}
+	c.ZAdd(ctx, k.Key("working"), redis.Z{Score: 1, Member: cps[0]})
+
+	tok := func(id string) string {
+		for _, line := range strings.Split(out, "\n") {
+			if strings.HasPrefix(line, "PULLED "+id+" ") {
+				return regexp.MustCompile(`token=(\S+)`).FindStringSubmatch(line)[1]
+			}
+		}
+		return ""
+	}
+	doors := [][]string{
+		{"friend", "done", "--as", k.String(), "--id", cps[0], "--fail", "gave up", "--token", tok(cps[0])},
+		{"card", "end", "--id", cps[1], "--fail", "gave up"},
+		{"task", "done", "--actor", me, "--id", cps[2], "--evidence", "done already"},
+		{"card", "cancel", "--id", cps[3], "--why", "given back"},
+	}
+	for i, door := range doors {
+		code, o, e := runSprint(append(door, "--redis", addr)...)
+		if code != 0 || c.ZScore(ctx, k.Key("working"), cps[i]).Err() == nil {
+			t.Fatalf("%v: exit %d, still working:\n%s%s", door[:2], code, o, e)
+		}
+		ended := c.HGetAll(ctx, taskcard.Key(cps[i])).Val()
+		now = now.Add(time.Second)
+		if done, why, err := l.Step(ctx, now); err != nil || done != false {
+			t.Fatalf("step after %v: %v %q %v", door[:2], done, why, err)
+		}
+		after := c.HGetAll(ctx, taskcard.Key(cps[i])).Val()
+		if after["lease_until"] != ended["lease_until"] || after["beat_at"] != ended["beat_at"] || after["lease_until"] != "" && after["where"] == "working" {
+			t.Fatalf("%v: the loop touched the ended copy: %v -> %v", door[:2], ended, after)
+		}
+	}
+	done, why, err := l.Step(ctx, now.Add(time.Second))
+	if err != nil || !done || !strings.HasPrefix(why, "IDLE ") || c.Exists(ctx, life.BeatLoopKey(me)).Val() != 0 {
+		t.Fatalf("second idle step: %v %q %v, lease %v", done, why, err, c.HGetAll(ctx, life.BeatLoopKey(me)).Val())
+	}
+}
+
+// readFile is a file's text, "" when it cannot be read.
+func readFile(path string) string {
+	b, _ := os.ReadFile(path)
+	return string(b)
 }
