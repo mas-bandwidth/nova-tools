@@ -641,14 +641,17 @@ func TestForeignGitDirKeepsItsLock(t *testing.T) {
 	}
 }
 
-// The lock file's own owner decides before age or any process does. The owner is
-// supplied (lockOwner seam) and the process view is supplied; the lock is a real stale
-// index.lock in a fixture checkout. (a) Another account's lock beside another account's
-// unplaced git: refused, naming the uid, and the scan is never asked. (b) Our own lock
+// Age first, then the lock file's own owner, then the scan. The owner is supplied
+// (lockOwner seam) and the process view is supplied; the lock is a real index.lock in a
+// fixture checkout, and the clock is its own mtime plus an offset. (a0) A fresh lock of
+// another account, or of unreadable owner: left alone with no error, so the wait goes
+// on, and neither the owner nor the scan is asked. (a) A stale lock of another account
+// beside another account's unplaced git: refused, naming the uid, and the scan is never
+// asked. (b) Our own lock
 // beside the same git: cleared, the skip. (c) Our own lock beside another account's git
 // that names this checkout with -C: kept as owned. (d) An owner that cannot be read:
 // refused.
-func TestIndexLockOwnerDecidesBeforeTheScan(t *testing.T) {
+func TestIndexLockAgeThenOwnerThenScan(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
 	denied := &fs.PathError{Op: "readlink", Path: "/proc/18772/cwd", Err: syscall.EACCES}
@@ -658,6 +661,30 @@ func TestIndexLockOwnerDecidesBeforeTheScan(t *testing.T) {
 	}
 
 	dir, lock := oldIndexLock(t)
+	fi, err := os.Lstat(lock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh := fi.ModTime().Add(staleIndexLockAge - time.Second)
+	for _, o := range []struct {
+		uid uint32
+		ok  bool
+	}{{502, true}, {0, false}} {
+		cleared, err := clearStaleIndexLockAs(dir, fresh, func() ([]gitProc, error) {
+			t.Fatal("(a0) the scan ran for a fresh lock")
+			return nil, nil
+		}, func(os.FileInfo) (uint32, bool) {
+			t.Fatal("(a0) the owner was read for a fresh lock")
+			return o.uid, o.ok
+		}, 501)
+		if cleared || err != nil {
+			t.Fatalf("(a0) fresh lock, owner %d ok=%v: cleared=%v err=%v, want left alone and no error", o.uid, o.ok, cleared, err)
+		}
+		if _, statErr := os.Lstat(lock); statErr != nil {
+			t.Fatalf("(a0) lock lost: %v", statErr)
+		}
+	}
+
 	asked := false
 	cleared, err := clearStaleIndexLockAs(dir, time.Now(), func() ([]gitProc, error) {
 		asked = true
@@ -665,7 +692,7 @@ func TestIndexLockOwnerDecidesBeforeTheScan(t *testing.T) {
 	}, owner(502, true), 501)
 	const foreign = "index.lock is owned by uid 502, not this account; ask its owner or the bench admin"
 	if cleared || err == nil || err.Error() != foreign || asked {
-		t.Fatalf("(a) another account's lock: cleared=%v err=%v scanned=%v, want refused with %q and no scan", cleared, err, asked, foreign)
+		t.Fatalf("(a) another account's stale lock: cleared=%v err=%v scanned=%v, want refused with %q and no scan", cleared, err, asked, foreign)
 	}
 	if _, statErr := os.Lstat(lock); statErr != nil {
 		t.Fatalf("(a) lock lost: %v", statErr)
@@ -699,7 +726,7 @@ func TestIndexLockOwnerDecidesBeforeTheScan(t *testing.T) {
 		return nil, nil
 	}, owner(0, false), 501)
 	if cleared || err == nil || !strings.HasPrefix(err.Error(), "index.lock owner cannot be read") || !strings.HasSuffix(err.Error(), "ask its owner or the bench admin") {
-		t.Fatalf("(d) owner unreadable: cleared=%v err=%v, want refused", cleared, err)
+		t.Fatalf("(d) stale lock, owner unreadable: cleared=%v err=%v, want refused", cleared, err)
 	}
 	if _, statErr := os.Lstat(namedLock); statErr != nil {
 		t.Fatalf("(d) lock lost: %v", statErr)

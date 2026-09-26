@@ -30,10 +30,11 @@ type WaitRecovery struct {
 	Discarded   []string
 }
 
-// ClearStaleIndexLock removes the checkout's git index.lock when this account owns the
-// lock file, it is older than staleIndexLockAge, and no live git process owns the
-// checkout. A lock file owned by another account, or whose owner cannot be read, is
-// refused before its age or any process is looked at (see ownershipUnknown).
+// ClearStaleIndexLock removes the checkout's git index.lock when it is older than
+// staleIndexLockAge, this account owns the lock file, and no live git process owns the
+// checkout. A fresh lock is left alone whoever owns it. A stale lock owned by another
+// account, or whose owner cannot be read, is refused before any process is looked at
+// (see ownershipUnknown).
 //
 // THE FAILURE THIS CLOSES. A killed git leaves index.lock behind. Every later merge and
 // commit then fails with "File exists" and the next tick fails the same way, forever,
@@ -71,8 +72,9 @@ func lockOwnerForeignErr(uid uint32) error {
 var errLockOwnerUnknown = errors.New("index.lock owner cannot be read, so it is not known to be this account's; ask its owner or the bench admin")
 
 // clearStaleIndexLockAs is clearStaleIndexLock with the lock file's owner reader and this
-// account's uid supplied. The owner is read from the Lstat of the lock itself; only a lock
-// owned by self goes on to the age rule and the process scan.
+// account's uid supplied. The age rule comes first; the owner of a stale lock is read
+// from the Lstat of the lock itself, and only a stale lock owned by self goes on to the
+// process scan.
 func clearStaleIndexLockAs(dir string, now time.Time, scan func() ([]gitProc, error), lockOwner func(os.FileInfo) (uint32, bool), self uint32) (bool, error) {
 	lock, err := indexLockPath(dir)
 	if err != nil {
@@ -90,16 +92,17 @@ func clearStaleIndexLockAs(dir string, now time.Time, scan func() ([]gitProc, er
 	}
 	// Lstat, not Stat: a symlink planted at the lock path is removed as a symlink.
 	// Following it would delete whatever it pointed at.
+	// A fresh lock is some git at work, whoever owns it: left alone, and the wait goes on.
+	age := now.Sub(fi.ModTime())
+	if age <= staleIndexLockAge {
+		return false, nil
+	}
 	owner, ok := lockOwner(fi)
 	if !ok {
 		return false, errLockOwnerUnknown
 	}
 	if owner != self {
 		return false, lockOwnerForeignErr(owner)
-	}
-	age := now.Sub(fi.ModTime())
-	if age <= staleIndexLockAge {
-		return false, nil
 	}
 	owns, err := gitOwnsCheckoutScan(dir, scan)
 	if err != nil {
@@ -444,11 +447,12 @@ const ownershipDiagCap = 200
 // the colon is short and has no newline: cwd unreadable, lsof failed, a permission
 // error collapsed onto one line.
 //
-// Which account a lock or a git belongs to is judged from evidence, in this order. The
-// lock file comes first: its owner uid is read from its own Lstat, and a lock owned by
-// another account is never stale to this caller, nor is a lock whose owner cannot be
-// read; both are refused before age or any process is looked at. Only a lock owned by
-// this account goes on. Then every git, of any account, is placed by its readable cwd or
+// Which account a lock or a git belongs to is judged from evidence, in this order. A
+// fresh lock is some git at work, whoever owns it, and is left alone while the wait goes
+// on. A stale lock's owner uid is read from its own Lstat: a stale lock owned by another
+// account is never this caller's to clear, nor is one whose owner cannot be read, and
+// both are refused before any process is looked at. Only a stale lock owned by this
+// account goes on. Then every git, of any account, is placed by its readable cwd or
 // by a command line that names an absolute work tree or git dir (-C, --git-dir,
 // --work-tree); one placed at this checkout is an owner and the lock stays. A git of this
 // account that nothing places makes the scan unknown, with this sentence. A git of
