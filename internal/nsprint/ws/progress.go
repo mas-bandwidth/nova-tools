@@ -22,21 +22,27 @@ import (
 // The definition, fixed here:
 //
 //	the sprint's streams  ws:order, the ws index (it holds one sprint at a time)
-//	cells                 per stream, the ZCARD of ws:<s>:<state> for the six
-//	                      states of Stream; the stream's sentinel counts like
-//	                      any card of its stream (it lands last)
+//	cells                 per stream, the card count of ws:<s>:<state> for the
+//	                      six states of Stream: the set's ZCARD less the
+//	                      stream's sentinel when it is in that set
+//	                      (QueueCardCount, count.go). The sentinel is the
+//	                      stream's stop, not work: it is in no cell, no
+//	                      total, no x/y and no left (the coordinator's ruling
+//	                      on Glenn's "zeros everywhere after sprint clear")
 //	Total                 every card in the six sets: waiting + ready +
 //	                      working + review + merging + landed. A card in done
 //	                      (closed: cancelled, or cleared by sprint clear) or
 //	                      parked is in none of them and is not counted
 //	Done                  landed
 //	x/y                   Done/Total; left = Total - Done
-//	eta                   now + left / (moves to landed in ws:log over the
-//	                      hour before now), in Eastern
+//	eta                   now + left / (cards, sentinels aside, moved to
+//	                      landed in ws:log over the hour before now), in
+//	                      Eastern; "-" with no card, "done" when all landed
 //
-// Parked is read beside the six (scope ls prints it) and is never in Total.
-// Every value comes from ONE pipeline of plain reads (ZRANGE, ZCARD, HGET,
-// XRANGE: inside the table tick's command allowlist): the memberships
+// Parked is read beside the six (scope ls prints it), its sentinel aside
+// too, and is never in Total. After sprint clear every count is 0.
+// Every value comes from ONE pipeline of plain reads (ZRANGE, ZCARD, ZSCORE,
+// HGET, XRANGE: inside the table tick's command allowlist): the memberships
 // (ws:order, and sprint:order when no sprint is named) are kept from the
 // previous read and re-read in the same pipeline, and a read that finds one
 // changed reads again, the way the table's tick works.
@@ -83,15 +89,15 @@ type SprintCounts struct {
 	// Sprint is the sprint named, or the open one (the last member of
 	// sprint:order whose status is not closed); "" when there is none.
 	Sprint string
-	// Status is s:<Sprint> status when the read asked for it (WithStatus)
-	// or found the open sprint; "" when absent or not read.
+	// Status is the open sprint's s:<S> status when the read found it (no
+	// sprint named); "" otherwise.
 	Status string
 	// Streams are ws:order's streams in rank order; Total is their column
 	// sums (Stream "total").
 	Streams []StreamCounts
 	Total   StreamCounts
-	// LandedHour is the moves to landed in ws:log over the hour before At,
-	// the ETA's rate; LogErr is set when ws:log did not come back.
+	// LandedHour is the cards (sentinels aside) moved to landed in ws:log
+	// over the hour before At, the ETA's rate; LogErr is set when ws:log did not come back.
 	LandedHour int64
 	LogErr     error
 	// At is the instant the read was made for: the ETA is measured from it.
@@ -133,7 +139,8 @@ func (c SprintCounts) Pct() int64 {
 // the store's and print "?".
 func (c SprintCounts) Unread() bool { return c.Total.AnyUnread() }
 
-// ETA is the eta word: "done" when every card landed, "?" when nothing
+// ETA is the eta word: "-" when there is no card (a total of 0 has no eta,
+// never the current time), "done" when every card landed, "?" when nothing
 // landed in the hour (or ws:log or a cell was not read), else HH:MM ET (the
 // clock Glenn reads), +<n>d when it is days out.
 func (c SprintCounts) ETA() string {
@@ -141,7 +148,9 @@ func (c SprintCounts) ETA() string {
 	switch {
 	case c.Unread():
 		return "?"
-	case c.All() > 0 && left == 0:
+	case c.All() == 0:
+		return "-"
+	case left == 0:
 		return "done"
 	case c.LogErr != nil || c.LandedHour <= 0 || c.At.IsZero():
 		return "?"
@@ -201,9 +210,6 @@ func (c SprintCounts) Receipt() string {
 type CountsReader struct {
 	// Sprint names the sprint; "" reads the open one.
 	Sprint string
-	// WithStatus also reads s:<Sprint> status for a named sprint (sprint
-	// status prints it; the table never reads s:<S>).
-	WithStatus bool
 
 	streams []string
 	sprints []string
@@ -218,35 +224,57 @@ type CountsCmd struct {
 	order   *redis.StringSliceCmd
 	sprintQ *redis.StringSliceCmd
 	states  []*redis.StringCmd // HGET s:<S> status per cached sprint
-	named   *redis.StringCmd   // HGET s:<Sprint> status (WithStatus)
 	log     *redis.XMessageSliceCmd
-	cells   [][]*redis.IntCmd // per cached stream: the six, then parked
+	cells   [][]*CardCountCmd // per cached stream: the six, then parked
 }
 
 // Queue queues the read made for now on pipe.
 func (r *CountsReader) Queue(ctx context.Context, pipe redis.Pipeliner, now time.Time) *CountsCmd {
 	q := &CountsCmd{r: r, at: now, order: pipe.ZRange(ctx, "ws:order", 0, -1)}
-	switch {
-	case r.Sprint == "":
+	if r.Sprint == "" {
 		q.sprintQ = pipe.ZRange(ctx, "sprint:order", 0, -1)
 		for _, name := range r.sprints {
 			// the status field on s:<S> (what sprint open, close and the
 			// pit stop use): closed is out, any other status is open
 			q.states = append(q.states, pipe.HGet(ctx, "s:"+name, "status"))
 		}
-	case r.WithStatus:
-		q.named = pipe.HGet(ctx, "s:"+r.Sprint, "status")
 	}
 	hourAgo := now.Add(-time.Hour).UnixMilli()
 	q.log = pipe.XRangeN(ctx, "ws:log", strconv.FormatInt(hourAgo, 10), "+", LogWindowMax)
 	for _, s := range r.streams {
-		row := make([]*redis.IntCmd, 0, CountsCells+1)
-		for _, state := range Stream {
-			row = append(row, pipe.ZCard(ctx, Key(s, state)))
-		}
-		q.cells = append(q.cells, append(row, pipe.ZCard(ctx, Key(s, Parked))))
+		q.cells = append(q.cells, QueueStreamCounts(ctx, pipe, s))
 	}
 	return q
+}
+
+// QueueMembers queues the membership reads a caller makes in its own earlier
+// round trip (ws:order, and sprint:order when no sprint is named); Prime
+// takes their answers, so the caller's next pipeline carries every count and
+// a cold read needs no round trip of its own (the live layout's SCAN trip
+// carries them).
+func (r *CountsReader) QueueMembers(ctx context.Context, pipe redis.Pipeliner) (order, sprints *redis.StringSliceCmd) {
+	order = pipe.ZRange(ctx, "ws:order", 0, -1)
+	if r.Sprint == "" {
+		sprints = pipe.ZRange(ctx, "sprint:order", 0, -1)
+	}
+	return order, sprints
+}
+
+// Prime sets the memberships QueueMembers read. A read that finds them moved
+// since reads again (Read), as after any membership change.
+func (r *CountsReader) Prime(order, sprints *redis.StringSliceCmd) error {
+	o, err := order.Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return fmt.Errorf("zrange ws:order: %w", err)
+	}
+	var sp []string
+	if sprints != nil {
+		if sp, err = sprints.Result(); err != nil && !errors.Is(err, redis.Nil) {
+			return fmt.Errorf("zrange sprint:order: %w", err)
+		}
+	}
+	r.streams, r.sprints, r.primed = o, sp, true
+	return nil
 }
 
 // SprintName is the sprint the reader counts for: the named one, or the open
@@ -280,8 +308,6 @@ func (q *CountsCmd) Result() (SprintCounts, bool, error) {
 				open, status = name, st
 			}
 		}
-	} else if q.named != nil {
-		status = q.named.Val()
 	}
 	// The open sprint only names the counts; it is taken from this read's
 	// statuses whenever sprint:order held still (a caller keying other
@@ -309,8 +335,9 @@ func (q *CountsCmd) Result() (SprintCounts, bool, error) {
 		c.LogErr = err
 	} else {
 		for _, m := range msgs {
-			if to, _ := m.Values["to"].(string); to == Landed {
-				c.LandedHour++
+			id, _ := m.Values["id"].(string)
+			if to, _ := m.Values["to"].(string); to == Landed && !IsSentinel(id) {
+				c.LandedHour++ // a stream's stop landing is not a card landed
 			}
 		}
 	}

@@ -4,6 +4,7 @@ package sprint
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -34,9 +35,11 @@ func (h *tripHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.Pro
 // sprint's four cards in the ws index (one waiting, one working, two
 // landed, one of them in the hour before --now) and its sentinel waiting,
 // opened 1 h before --now, print exactly one status line: the ws index's
-// numbers, sentinel counted, the eta from the last hour's landings, read in
+// numbers, the sentinel not counted (the stream's stop, not work), the eta
+// from the last hour's landings (a sentinel's landing is not one), read in
 // two round trips (the memberships, then every count in one pipeline). The
-// legacy s:<S>:idx:task sets the old line counted are not read.
+// legacy s:<S>:idx:task sets the old line counted are not read. A name that
+// is not the open sprint is refused naming the open one.
 func TestControl21(t *testing.T) {
 	addr, c := planRedis(t)
 	ctx := context.Background()
@@ -53,6 +56,7 @@ func TestControl21(t *testing.T) {
 		c.ZAdd(ctx, "ws:st:landed", redis.Z{Score: 4, Member: "t3"}, redis.Z{Score: 5, Member: "t4"}).Err(),
 		c.XAdd(ctx, &redis.XAddArgs{Stream: "ws:log", ID: ms(-2 * time.Hour), Values: []any{"id", "t3", "to", "landed"}}).Err(),
 		c.XAdd(ctx, &redis.XAddArgs{Stream: "ws:log", ID: ms(-30 * time.Minute), Values: []any{"id", "t4", "to", "landed"}}).Err(),
+		c.XAdd(ctx, &redis.XAddArgs{Stream: "ws:log", ID: ms(-20 * time.Minute), Values: []any{"id", "other:sentinel", "to", "landed"}}).Err(),
 		// the legacy index the old line counted: never read now
 		c.SAdd(ctx, "s:"+s+":idx:task:closed", "x1", "x2", "x3").Err(),
 	} {
@@ -74,12 +78,18 @@ func TestControl21(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		// 5 cards (the sentinel one of them), 2 landed, 3 left at 1 an hour.
-		if want := s + " open 2/5 done 40%, left 3, eta 15:00 ET"; len(lines) != 1 || lines[0] != want {
+		// 4 cards (the sentinel aside), 2 landed, 2 left at 1 an hour.
+		if want := s + " open 2/4 done 50%, left 2, eta 14:00 ET"; len(lines) != 1 || lines[0] != want {
 			t.Fatalf("status %q = %q; want exactly %q", name, lines, want)
 		}
 		if got := hook.n.Load(); got != 2 {
 			t.Fatalf("status %q took %d round trips; want 2", name, got)
 		}
+	}
+	var refused *StatusRefusal
+	lines, err := StatusLines(ctx, store.New(client), "other-sprint", now)
+	if !errors.As(err, &refused) || lines != nil ||
+		err.Error() != `REFUSED sprint status --sprint other-sprint: not the open sprint; open=control-21 remedy="nova-sprint sprint status"` {
+		t.Fatalf("status other-sprint = %q, %v; want the refusal naming control-21", lines, err)
 	}
 }

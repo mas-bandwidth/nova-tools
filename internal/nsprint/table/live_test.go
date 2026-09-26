@@ -11,6 +11,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/table"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -168,8 +169,9 @@ func (l *argLog) commandsNamed(name string) [][]string {
 
 // TestLiveNoBlockedLandedLines (DONE-WHEN of #3424): the live layout dropped
 // the blocked: and landed: lines at 7:05 PM. The live golden has no such line,
-// and ReadLive no longer sends ZCARD q:blocked nor reads the landed key in the
-// xy MGET (the tick is still the SCAN walk plus one pipeline).
+// and ReadLive no longer sends ZCARD q:blocked nor reads the landed key; the
+// xy MGET is gone too (#4411: the progress line is the one count, and the
+// tick is still the SCAN walk plus one pipeline).
 func TestLiveNoBlockedLandedLines(t *testing.T) {
 	t.Parallel()
 	golden := table.Golden2674()
@@ -194,14 +196,13 @@ func TestLiveNoBlockedLandedLines(t *testing.T) {
 			t.Fatalf("ReadLive still sends ZCARD q:blocked: %v", cmd)
 		}
 	}
-	mgets := log.commandsNamed("MGET")
-	if len(mgets) != 1 {
-		t.Fatalf("MGET count = %d, want the one xy MGET", len(mgets))
+	if mgets := log.commandsNamed("MGET"); len(mgets) != 0 {
+		t.Fatalf("MGET %v: ReadLive still reads sprint-xy's key (the progress line is the one count)", mgets)
 	}
-	for _, cmd := range mgets {
+	for _, cmd := range log.commands() {
 		for _, a := range cmd[1:] {
-			if strings.Contains(a, ":landed") {
-				t.Fatalf("ReadLive still reads the landed key in the MGET: %v", cmd)
+			if strings.HasSuffix(a, ":xy") || strings.HasSuffix(a, ":landed") {
+				t.Fatalf("ReadLive still reads a retired key: %v", cmd)
 			}
 		}
 	}
@@ -251,14 +252,14 @@ func TestTableShowsStaleBenchRowNotAbsent(t *testing.T) {
 // TABLE *** PIT STOP *** <why> since <at> while it is set, SPRINT TABLE when
 // it is unset; a key of another type there still reads as a stop. The HGETALL
 // rides the one pipeline, so the tick is still the SCAN walk plus one
-// pipeline with its one xy MGET; only line 1 changes, and a failed
+// pipeline (the xy MGET is gone, #4411); only line 1 changes, and a failed
 // tick keeps the last good title.
 func TestLiveTitlePitstop(t *testing.T) {
 	t.Parallel()
 
 	cfg, now := table.Fixture2674Config(), table.Fixture2674Now()
 	golden := table.Golden2674()
-	rest := golden[strings.Index(golden, "\n"):]
+	rest := table.MaskXY(golden[strings.Index(golden, "\n"):])
 	pitKey := "s:" + cfg.Sprint + ":pitstop"
 	for _, c := range []struct {
 		name  string
@@ -283,25 +284,65 @@ func TestLiveTitlePitstop(t *testing.T) {
 				t.Fatal(err)
 			}
 			names, trips := log.reset()
-			if got, want := snap.RenderLive(now), c.title+rest; got != want {
+			if got, want := snap.RenderLive(now), c.title+rest; table.MaskXY(got) != want {
 				t.Fatalf("title with %s:\ngot:\n%s\nwant:\n%s", c.name, got, want)
 			}
 			if trips != 2 {
-				t.Fatalf("round trips = %d, want 2 (SCAN, then one pipeline): %v", trips, names)
+				t.Fatalf("round trips = %d, want 2 (SCAN with the one count's memberships, then one pipeline): %v", trips, names)
 			}
-			mgets := 0
 			for _, n := range names {
 				if n == "MGET" {
-					mgets++
+					t.Fatalf("an MGET in %v: the xy key is retired (#4411)", names)
 				}
-			}
-			if mgets != 1 {
-				t.Fatalf("MGET count = %d, want the one xy MGET: %v", mgets, names)
 			}
 			failed := table.FailedLive(cfg, snap).RenderLive(now)
 			if first := failed[:strings.Index(failed, "\n")]; first != c.title {
 				t.Fatalf("failed tick title = %q, want the last good %q", first, c.title)
 			}
 		})
+	}
+}
+
+// TestLiveProgressLineIsTheOneCount (#4411): the live layout's progress line
+// is the one count (ws.Counts' Header), the streams' sentinels never
+// counted, read in the tick's two round trips (the SCAN carries ws:order,
+// the pipeline every cell with the sentinel's ZSCORE); a failed tick keeps
+// the last good line.
+func TestLiveProgressLineIsTheOneCount(t *testing.T) {
+	t.Parallel()
+	cfg, now := table.Fixture2674Config(), table.Fixture2674Now()
+	cmds := append(withCardViews(table.Fixture2674(), now), [][]string{
+		{"ZADD", "ws:order", "1", "alpha", "2", "beta"},
+		{"ZADD", "ws:alpha:waiting", "1", "alpha:sentinel", "2", "a1"},
+		{"ZADD", "ws:alpha:landed", "3", "a2"},
+		{"ZADD", "ws:beta:waiting", "1", "beta:sentinel"},
+		{"ZADD", "ws:beta:review", "2", "b1"},
+		{"ZADD", "ws:beta:parked", "3", "b2"},
+	}...)
+	client := liveStore(t, cmds)
+	log := &cmdLog{}
+	client.AddHook(log)
+	snap, err := table.ReadLive(context.Background(), client, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names, trips := log.reset()
+	if trips != 2 {
+		t.Fatalf("round trips = %d, want 2: %v", trips, names)
+	}
+	want, err := ws.Counts(context.Background(), client, cfg.Sprint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 3 cards (a1, a2, b1; the sentinels and the parked b2 aside), 1 landed
+	if !strings.HasPrefix(want.Header(), "1/3 done 33%, left 2, eta ") {
+		t.Fatalf("the one count %q; want 1/3 done 33%%, left 2", want.Header())
+	}
+	got := snap.RenderLive(now)
+	if line := strings.Split(got, "\n")[2]; line != want.Header() {
+		t.Fatalf("progress line %q; want the one count %q", line, want.Header())
+	}
+	if failed := table.FailedLive(cfg, snap).RenderLive(now); strings.Split(failed, "\n")[2] != want.Header() {
+		t.Fatalf("a failed tick lost the last good line:\n%s", failed)
 	}
 }

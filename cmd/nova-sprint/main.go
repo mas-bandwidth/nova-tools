@@ -33,7 +33,7 @@ usage:
   nova-sprint table --check --redis <addr>
   nova-sprint table --layout live [--redis <addr>] [--sprint <name>] [--friends <a,b,...>] [--once | --loop [<seconds>]] [--out <file>] [--lock <key>]
   nova-sprint table clear --checkpoint <file> [--redis <addr>] [--friends <a,b,...>] [--by <name>]
-  nova-sprint table --compare <file> --redis <addr> --sprint <name> --friends <a,b,...> [--xy-file <file>]
+  nova-sprint table --compare <file> --redis <addr> --sprint <name> --friends <a,b,...>
   nova-sprint refresh -- <command> [arg...]
   nova-sprint <verb> [<subverb>] -h
   nova-sprint redis-cli [--redis <addr>] -- <redis command...>

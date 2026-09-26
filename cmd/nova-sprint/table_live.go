@@ -38,7 +38,7 @@ func cmdTableLive(opts tableOpts, stdout, stderr io.Writer) int {
 		problems = append(problems, "--layout live takes no --check")
 	}
 	if opts.xyFile != "" {
-		problems = append(problems, "--xy-file belongs to --compare")
+		problems = append(problems, xyFileRetired)
 	}
 	if opts.loop && opts.once {
 		problems = append(problems, "--loop takes no --once")
@@ -253,6 +253,10 @@ func splitRoster(list string) []string {
 	return strings.FieldsFunc(list, func(r rune) bool { return r == ',' || r == ' ' })
 }
 
+// xyFileRetired refuses --xy-file: the live layout's progress line is the one
+// count (ws.Counts, #4411), never sprint-xy's key or its SPRINT-XY.txt.
+const xyFileRetired = `--xy-file is retired: the progress line is the one count; remedy="nova-sprint ws counts"`
+
 // cmdTableCompare is `--compare <file>` (#2674): the bash-parity render of
 // the live Redis diffed against the file the bash of record publishes.
 func cmdTableCompare(opts tableOpts, stdout, stderr io.Writer) int {
@@ -269,10 +273,13 @@ func cmdTableCompare(opts tableOpts, stdout, stderr io.Writer) int {
 	if opts.check || opts.loop || opts.once || opts.out != "" {
 		problems = append(problems, "--compare takes none of --check, --loop, --once, --out")
 	}
+	if opts.xyFile != "" {
+		problems = append(problems, xyFileRetired)
+	}
 	if len(problems) > 0 {
 		return tableRefuse(stderr, strings.Join(problems, "; "))
 	}
-	cfg := table.LiveConfig{Sprint: opts.sprint, XYFile: opts.xyFile, Friends: splitRoster(opts.friends), RowStale: 10 * time.Second}
+	cfg := table.LiveConfig{Sprint: opts.sprint, Friends: splitRoster(opts.friends), RowStale: 10 * time.Second}
 	ctx := context.Background()
 	st, err := store.Open(ctx, opts.redis)
 	if err != nil {
@@ -298,8 +305,10 @@ func compareLive(ctx context.Context, st *store.Store, cfg table.LiveConfig, pat
 	if err != nil {
 		return tableRefuse(stderr, "--compare: "+err.Error())
 	}
-	want := maskVolatile(string(wantBytes))
-	got := maskVolatile(snap.RenderLive(time.Now()))
+	// the progress line is the one count against the bash's sprint-xy line
+	// (#4411): table.MaskXY masks it and the xy stale lines on both sides
+	want := maskVolatile(table.MaskXY(string(wantBytes)))
+	got := maskVolatile(table.MaskXY(snap.RenderLive(time.Now())))
 	if got == want {
 		fmt.Fprintln(stdout, "MATCH (load and age masked)")
 		return 0

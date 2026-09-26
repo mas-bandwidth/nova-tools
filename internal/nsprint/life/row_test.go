@@ -158,7 +158,10 @@ func TestControl3440RowVerbsRenderTheBashTable(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got, want := snap.RenderLive(now), table.Golden2674(); got != want {
+		// the progress line is the one count (#4411): no stream here, so
+		// 0/0 with no eta; every other byte is the bash's (table.MaskXY)
+		got, want := snap.RenderLive(now), table.Golden2674()
+		if table.MaskXY(got) != table.MaskXY(want) || !strings.HasPrefix(got, "SPRINT TABLE\n\n0/0 done 0%, left 0, eta -\n\n") {
 			t.Fatalf("pass %d: the table from the row verbs differs from sprint-table-redis\ngot:\n%s\nwant:\n%s", pass, got, want)
 		}
 	}

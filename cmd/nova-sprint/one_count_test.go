@@ -19,8 +19,9 @@ import (
 
 // The one-count fixture: one open sprint, three streams, a card in every
 // state (a parked and a cancelled card among them, neither counted) and the
-// three stream sentinels waiting, which are counted like any card. Totals:
-// 14 cards in the six sets, 3 landed.
+// three stream sentinels waiting, which are the streams' stops, not work,
+// and counted nowhere (the coordinator's ruling on Glenn's "zeros everywhere
+// after sprint clear"). Totals: 11 cards in the six sets, 3 landed.
 const oneCountSprint = "one-count"
 
 type oneCountCard struct{ id, stream, where string }
@@ -42,7 +43,7 @@ type oneCountNumbers struct {
 }
 
 var (
-	headerRE  = regexp.MustCompile(`(\d+)/(\d+) done (\d+)%, left (\d+), eta ([0-9:]+ ET(?: \+\d+d)?|\?|done)`)
+	headerRE  = regexp.MustCompile(`(\d+)/(\d+) done (\d+)%, left (\d+), eta ([0-9:]+ ET(?: \+\d+d)?|\?|-|done)`)
 	receiptRE = regexp.MustCompile(`done=(\d+)/(\d+) pct=(\d+) left=(\d+) eta="([^"]*)"`)
 	totalRE   = regexp.MustCompile(`(?m)^total +\| +(\d+) \| +(\d+) \| +(\d+) \| +(\d+) \| +(\d+) \| +(\d+)$`)
 )
@@ -133,8 +134,9 @@ func assertOneCount(t *testing.T, got map[string]oneCountNumbers, want oneCountN
 // TestOneCountEveryPrintoutSameNumbers (#one-count): sprint status, the table
 // headline, the live loop's headline, the table's total row and ws counts
 // print the same done/total, pct, left and eta from one store at one instant,
-// the sentinels counted and the parked and cancelled cards not; changing one
-// card's state moves all of them together.
+// the sentinels, the parked and the cancelled cards not counted (a sentinel's
+// landing in ws:log is not in the eta's rate either); changing one card's
+// state moves all of them together.
 func TestOneCountEveryPrintoutSameNumbers(t *testing.T) {
 	t.Parallel()
 	mr := miniredis.RunT(t)
@@ -151,7 +153,8 @@ func TestOneCountEveryPrintoutSameNumbers(t *testing.T) {
 		pipe.ZAdd(ctx, "ws:order", redis.Z{Score: float64(i + 1), Member: s})
 		pipe.ZAdd(ctx, ws.Key(s, ws.Waiting), redis.Z{Score: 1, Member: ws.SentinelID(s)})
 	}
-	// a landing two hours ago is outside the ETA's hour
+	// a landing two hours ago is outside the ETA's hour; a sentinel's
+	// landing inside it is a stop, not a card landed, and not in the rate
 	pipe.XAdd(ctx, &redis.XAddArgs{Stream: "ws:log", ID: fmt.Sprintf("%d-0", now.Add(-2*time.Hour).UnixMilli()), Values: []any{"id", "old", "to", "landed"}})
 	landedAt := 0
 	for i, c := range oneCountCards {
@@ -162,16 +165,19 @@ func TestOneCountEveryPrintoutSameNumbers(t *testing.T) {
 			pipe.XAdd(ctx, &redis.XAddArgs{Stream: "ws:log", ID: fmt.Sprintf("%d-0", at), Values: []any{"id", c.id, "from", "merging", "to", "landed"}})
 		}
 	}
+	pipe.XAdd(ctx, &redis.XAddArgs{Stream: "ws:log", ID: fmt.Sprintf("%d-0", now.Add(-5*time.Minute).UnixMilli()),
+		Values: []any{"id", ws.SentinelID("delta"), "stream", "delta", "from", "waiting", "to", "landed"}})
 	if _, err := pipe.Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
 
-	// 14 cards: alpha 6 + sentinel, beta 3 + sentinel, gamma 2 + sentinel;
-	// 3 landed in the hour, so 11 left at 3 an hour is 3h40m after 13:32 EDT.
+	// 11 cards: alpha 6, beta 3, gamma 2, the three sentinels aside; 3
+	// landed in the hour (the sentinel's landing aside), so 8 left at 3 an
+	// hour is 2h40m after 13:32 EDT.
 	got, cells := oneCountPrintouts(t, client, now)
-	assertOneCount(t, got, oneCountNumbers{done: 3, total: 14, pct: 21, left: 11, eta: "17:12 ET"})
-	if cells != [6]int{5, 2, 2, 1, 1, 3} {
-		t.Fatalf("total row %v; want waiting 5 (2 cards, 3 sentinels) ready 2 working 2 review 1 merging 1 landed 3", cells)
+	assertOneCount(t, got, oneCountNumbers{done: 3, total: 11, pct: 27, left: 8, eta: "16:12 ET"})
+	if cells != [6]int{2, 2, 2, 1, 1, 3} {
+		t.Fatalf("total row %v; want waiting 2 (the 3 sentinels aside) ready 2 working 2 review 1 merging 1 landed 3", cells)
 	}
 
 	// Mutation: g2 lands. Every printout moves together.
@@ -183,9 +189,25 @@ func TestOneCountEveryPrintoutSameNumbers(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, cells = oneCountPrintouts(t, client, now)
-	// 10 left at 4 an hour: 2h30m after 13:32 EDT.
-	assertOneCount(t, got, oneCountNumbers{done: 4, total: 14, pct: 28, left: 10, eta: "16:02 ET"})
-	if cells != [6]int{5, 2, 1, 1, 1, 4} {
+	// 7 left at 4 an hour: 1h45m after 13:32 EDT.
+	assertOneCount(t, got, oneCountNumbers{done: 4, total: 11, pct: 36, left: 7, eta: "15:17 ET"})
+	if cells != [6]int{2, 2, 1, 1, 1, 4} {
 		t.Fatalf("total row after the move %v", cells)
+	}
+}
+
+// TestXYFileRetired (#4411): the live layout's progress line is the one
+// count, so --xy-file (sprint-xy's SPRINT-XY.txt) is refused with the remedy,
+// on --layout live and on --compare alike, before Redis is dialed.
+func TestXYFileRetired(t *testing.T) {
+	t.Parallel()
+	for _, args := range [][]string{
+		{"table", "--layout", "live", "--once", "--redis", "127.0.0.1:1", "--xy-file", "SPRINT-XY.txt"},
+		{"table", "--compare", "t.txt", "--redis", "127.0.0.1:1", "--sprint", "s", "--friends", "a", "--xy-file", "SPRINT-XY.txt"},
+	} {
+		code, _, stderr := runSprint(args...)
+		if code != 2 || !strings.Contains(stderr, xyFileRetired) {
+			t.Fatalf("%v: exit %d stderr %q; want 2 and %q", args, code, stderr, xyFileRetired)
+		}
 	}
 }

@@ -296,7 +296,28 @@ func rowLine(kind string, r Row) string {
 	return strings.Join(cells, " | ")
 }
 
+// RetiredPipeline is the wide table's pipeline row for a sprint the retired
+// card family (s:<S>:idx:card:<state>, s:<S>:pool, s:<S>:waiting) holds
+// nothing of: its cards, if any, are task records in the ws index, counted
+// by the one count (ws.Counts). The row refuses the way census does, never a
+// row of zeros beside the one count's numbers.
+const RetiredPipeline = `REFUSED pipeline reads a retired key family; remedy="nova-sprint ws counts"`
+
+// Retired is a pipeline whose every cell is 0: the retired family holds
+// nothing of the sprint.
+func (p Pipeline) Retired() bool {
+	for _, n := range p.Cards {
+		if n != 0 {
+			return false
+		}
+	}
+	return p.Pool == 0 && p.Waiting == 0 && p.Backpressure == 0 && p.Orphan == 0 && p.Reconcile == 0
+}
+
 func pipelineLine(p Pipeline) string {
+	if p.Retired() {
+		return "pipeline " + p.Sprint + " " + RetiredPipeline
+	}
 	parts := []string{"pipeline", p.Sprint}
 	for _, state := range pipelineState {
 		parts = append(parts, state+"="+strconv.FormatInt(p.Cards[state], 10))

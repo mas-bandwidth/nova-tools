@@ -133,6 +133,11 @@ func TestTableTickMakesNoRestCall(t *testing.T) {
 			if k := "ZCARD ws:" + s.Name + ":" + where; !keys[k] {
 				t.Fatalf("the tick never sent %s", k)
 			}
+			// the one count leaves the stream's sentinel out: the ZSCORE of
+			// its id rides the same pipeline (#4411)
+			if k := "ZSCORE ws:" + s.Name + ":" + where; !keys[k] {
+				t.Fatalf("the tick never sent %s", k)
+			}
 		}
 	}
 	if !keys["ZCARD ws:fleet, ci, secrets, jev:review"] {

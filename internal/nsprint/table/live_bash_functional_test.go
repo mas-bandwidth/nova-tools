@@ -150,7 +150,6 @@ func bashParity2674(t *testing.T) {
 			}
 			home := t.TempDir()
 			cfg := table.Fixture2674Config()
-			cfg.XYFile = filepath.Join(home, "rowan-working", "tmp", "session-0919b", "SPRINT-XY.txt")
 			bashPort, client := port, bench
 			if c.noRedis {
 				bashPort = freePort(t)
@@ -191,7 +190,10 @@ func bashParity2674(t *testing.T) {
 			} else if want := c.golden(); got != want {
 				t.Fatalf("the bash of record no longer prints %s on this keyspace\nbash:\n%s\ngolden:\n%s", c.file, got, want)
 			}
-			if goOut != got {
+			// The one documented difference (#4411): Go's progress line is
+			// the one count, the bash's sprint-xy's; table.MaskXY masks it and
+			// the bash's xy stale lines on both sides.
+			if table.MaskXY(goOut) != table.MaskXY(got) {
 				t.Fatalf("Go and the bash of record differ on the same keyspace\ngo:\n%s\nbash:\n%s", goOut, got)
 			}
 		})

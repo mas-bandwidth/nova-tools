@@ -175,12 +175,18 @@ func showOrder(ctx context.Context, w *wsCmd, c redis.Cmdable, only string) int 
 		}
 		rows = keep
 	}
-	cards, edges := 0, 0
+	// cards, live and landed are the one count (ws.ShowStream.Counts: the
+	// sets less the stream's sentinel, parked and done aside), the numbers
+	// ws counts and the table print; the listing still shows every card,
+	// the sentinel last.
+	var cards int64
+	edges := 0
 	for _, r := range rows {
-		fmt.Fprintf(w.out, "STREAM %d %s cards=%d live=%d landed=%d sentinel=%s\n", r.Rank, strconv.Quote(r.Stream), len(r.Cards), r.Live, r.Landed, r.Sentinel)
+		n := r.Counts
+		fmt.Fprintf(w.out, "STREAM %d %s cards=%d live=%d landed=%d sentinel=%s\n", r.Rank, strconv.Quote(r.Stream), n.Sum(), n.Sum()-n.Cell(ws.Landed), n.Cell(ws.Landed), r.Sentinel)
+		cards += n.Sum()
 		for _, card := range r.Cards {
 			fmt.Fprintf(w.out, "  %s\n", card.Line(r.Live))
-			cards++
 			if card.Sentinel {
 				edges += r.Live + r.Landed
 			} else {

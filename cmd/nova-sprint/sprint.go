@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -132,6 +133,12 @@ func runSprintVerb(ctx context.Context, args []string, out, errOut io.Writer) in
 		return 0
 	default:
 		lines, err := sprint.StatusLines(ctx, st, *name, now)
+		var notOpen *sprint.StatusRefusal
+		if errors.As(err, &notOpen) {
+			// the ws index counts the open sprint only: one line, exit 1
+			fmt.Fprintln(out, notOpen.Error())
+			return 1
+		}
 		if err != nil {
 			return refuse(errOut, verb, err.Error())
 		}

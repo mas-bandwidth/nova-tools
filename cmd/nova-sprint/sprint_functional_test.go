@@ -57,9 +57,16 @@ func TestSprintOpenLetsTaskTakeClaim(t *testing.T) {
 	}
 	step("PUSH CREATED id=t1", "task", "push", "--redis", addr, "--sprint", s, "--id", "t1",
 		"--title", "first", "--payload-sha", "p1", "--to", "ctl-open")
-	// status is the one count of the ws index (#one-count): a task pushed
-	// with no stream is in no stream set and counts in no sprint's y
-	step(s+" absent 0/0 done 0%, left 0, eta ?", "sprint", "status", "--redis", addr, "--sprint", s)
+	// status is the one count of the ws index (#one-count), which holds the
+	// open sprint only: a sprint not open is refused naming the open one
+	notOpen := func() {
+		t.Helper()
+		want := "REFUSED sprint status --sprint " + s + `: not the open sprint; open=- remedy="nova-sprint sprint status"` + "\n"
+		if code, out, errOut := runSprint("sprint", "status", "--redis", addr, "--sprint", s); code != 1 || out != want {
+			t.Fatalf("status of a sprint not open: code=%d out=%q stderr=%q; want 1 %q", code, out, errOut, want)
+		}
+	}
+	notOpen()
 	step("NONE trips=1", "task", "take", "--redis", addr, "--sprint", s, "--as", "ctl-open")
 
 	step("OPEN "+s+" units=0 pushed=0 existed=0 closed=0 skipped_done=0", "sprint", "open", "--redis", addr, "--sprint", s)
@@ -73,7 +80,8 @@ func TestSprintOpenLetsTaskTakeClaim(t *testing.T) {
 	if n, _ := client.ZCard(ctx, "sprint:order").Result(); n != 1 {
 		t.Fatalf("sprint:order has %d members after two opens, want 1", n)
 	}
-	step(s+" open 0/0 done 0%, left 0, eta ?", "sprint", "status", "--redis", addr, "--sprint", s)
+	// a task pushed with no stream is in no stream set: no card, no eta
+	step(s+" open 0/0 done 0%, left 0, eta -", "sprint", "status", "--redis", addr, "--sprint", s)
 
 	code, out, errOut := runSprint("task", "take", "--redis", addr, "--as", "ctl-open")
 	// #3261: the take names its round trips, one pipeline and one FCALL.
@@ -90,7 +98,7 @@ func TestSprintOpenLetsTaskTakeClaim(t *testing.T) {
 	if ok, _ := client.SIsMember(ctx, "sprints", s).Result(); ok {
 		t.Fatalf("sprints still holds %s after close", s)
 	}
-	step(s+" closed 0/0 done 0%, left 0, eta ?", "sprint", "status", "--redis", addr, "--sprint", s)
+	notOpen()
 }
 
 const (
@@ -471,7 +479,7 @@ func TestSprintStatusOpenOnly(t *testing.T) {
 	expect(t, 0, "status-closed status=closed\n", "sprint", "close", "--redis", addr, "--sprint", "status-closed", "--now", fxNow)
 	// the one count (#one-count): the units carry no stream, so the ws index
 	// holds none of them; the line names the open sprint only
-	expect(t, 0, "status-open open 0/0 done 0%, left 0, eta ?\n", "sprint", "status", "--redis", addr, "--now", fxLater)
+	expect(t, 0, "status-open open 0/0 done 0%, left 0, eta -\n", "sprint", "status", "--redis", addr, "--now", fxLater)
 }
 
 // TestSprintOpenReplay pins the existing-sprint rule.

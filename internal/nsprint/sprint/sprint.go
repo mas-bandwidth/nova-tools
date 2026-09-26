@@ -288,12 +288,14 @@ func Line(name string, s Status) string { return name + " status=" + string(s) }
 
 // StatusLines is `sprint status`: the one count (ws.Counts, the numbers the
 // table and ws counts print), one line, `<S> <status> <landed>/<total> done
-// <z>%, left <l>, eta <HH:MM> ET`. An empty name is the open sprint (the last
-// of sprint:order not closed, the table's rule); with none open it prints
-// nothing. The ws index holds one sprint's streams at a time, so the counts
-// are the index's whichever sprint is named; the name picks the status word,
-// and the eta is measured from now (--now). ns_sprint_status (the legacy
-// s:<S>:idx:task and idx:card count) is no longer called.
+// <z>%, left <l>, eta <HH:MM> ET`. The ws index holds the open sprint's
+// streams only (one sprint at a time), so the line is always the open
+// sprint's (the last of sprint:order not closed, the table's rule): an empty
+// name prints it, or nothing with none open; a name that is not the open
+// sprint is refused with *StatusRefusal naming the open one, never the
+// index's counts under another name. The eta is measured from now (--now).
+// ns_sprint_status (the legacy s:<S>:idx:task and idx:card count) is no
+// longer called.
 func StatusLines(ctx context.Context, st *store.Store, name string, now time.Time) ([]string, error) {
 	if st == nil || st.Client() == nil {
 		return nil, errors.New("sprint: store is required")
@@ -301,11 +303,31 @@ func StatusLines(ctx context.Context, st *store.Store, name string, now time.Tim
 	if name != "" && !ValidName(name) {
 		return nil, fmt.Errorf("sprint name %q is not [a-z0-9-]{1,40}", name)
 	}
-	c, err := (&ws.CountsReader{Sprint: name, WithStatus: true}).Read(ctx, st.Client(), now)
+	c, err := (&ws.CountsReader{}).Read(ctx, st.Client(), now)
 	if err != nil {
 		return nil, fmt.Errorf("sprint status: %w", err)
 	}
+	if name != "" && name != c.Sprint {
+		return nil, &StatusRefusal{Name: name, Open: c.Sprint}
+	}
 	return StatusLine(c), nil
+}
+
+// StatusRefusal is sprint status --sprint <name> for a name that is not the
+// open sprint: the ws index's counts are the open sprint's, so they are
+// never printed under another name.
+type StatusRefusal struct {
+	Name string // the name asked for
+	Open string // the open sprint, "" when none is open
+}
+
+// Error is the refusal's one line (the verb prints it on stdout, exit 1).
+func (r *StatusRefusal) Error() string {
+	open := r.Open
+	if open == "" {
+		open = "-"
+	}
+	return fmt.Sprintf(`REFUSED sprint status --sprint %s: not the open sprint; open=%s remedy="nova-sprint sprint status"`, r.Name, open)
 }
 
 // StatusLine is the status line of one read: none when no sprint is named or
