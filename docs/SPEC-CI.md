@@ -633,7 +633,14 @@ directions: an offender that is not listed is red, and a listed entry that names
 no offender is also red, so fixing a site means deleting its row in the same
 change and a new row parks nothing. The newer lists are matched by **file and
 kind, never by line**, so a merge that shifts lines in a listed file does not
-turn dev red. And every entry below names its **narrowings** — the false
+turn dev red. Every list is read and written by the one helper,
+`internal/ci/allowlist` (`allowlist.Load`, `allowlist.Check`; #4339): under
+`NOVA_CI_UPDATE=1` a class test rewrites its list to the set it measured --
+stale rows dropped, comments and kept rows byte for byte -- and fails once with
+`updated, rerun`, so a removal regenerates every list with one variable and no
+script edits a list file. Every list here is ceiling-only: under the update it
+refuses to grow and says so, one line per key ([TESTING.md](TESTING.md)). And
+every entry below names its **narrowings** — the false
 negatives the heuristic accepts on purpose — because a class test with false
 positives is one people learn to edit around, and a narrowing nobody wrote down
 is read as coverage.
@@ -2098,13 +2105,14 @@ package map (`go test -race` found nova-sprint's `verbs`).
 **Its allowlist.** `internal/ci/testdata/serial-tests_allowlist.txt`, one
 `path:TestName serial: <reason>` per line (`t.Setenv`, `t.Chdir`, `os.Chdir`,
 `swaps package var <pkg>.<name>`, or a sentence); shrink-only both ways, a row
-without a `serial:` reason is refused, and `serialTestsCeiling` caps the count
-so the list can only come down.
+without a `serial:` reason is refused, and the list's own `# ceiling: N` line
+caps the count so the list can only come down (`NOVA_CI_UPDATE=1` lowers it
+with the rows it drops, and never raises it).
 **Its remedy lines.** `does not open with t.Parallel(); make it the first
 statement, or give the test a per-test seam (cmd.Env, an injected clock,
 t.TempDir) instead of t.Setenv, os.Chdir or a package-level swap`; for a stale
-row, `delete the stale entry and lower serialTestsCeiling (the list only
-shrinks)`.
+row, `delete the stale entry and lower its ceiling line (the list only
+shrinks; NOVA_CI_UPDATE=1 does both)`.
 **Its narrowings.** It reads the syntax only: a `t.Parallel()` later in the body
 does not count, a test that opens with `t.Parallel()` and then races a shared
 resource is not seen (that is `go test -race`'s job), and subtests are not
@@ -2140,6 +2148,32 @@ the test behind //go:build slow (nightly-slow.yml runs it)`; for a stale row,
 `sleep` inside a fake's script, a provider retry wait inside the code under
 test and a poll that never sees its event are all invisible to it. The
 per-package budget (`slowtests`) and the measured table are the net under those.
+
+### `allowlist` — every list is read through the one helper
+
+**The rule.** Every list file under `internal/ci/testdata/` (`*allowlist*.txt`,
+`*.allow`, `*_examples.txt`) is loaded by a call to `loadAllowlist` or
+`allowlist.Load` in `internal/ci`, and nothing there reads one with
+`os.ReadFile`, `os.Open` or `readFile`.
+**The hurt.** 2026-09-26 (#4339): each class test had its own list format and
+no update path, so removals were followed by hand-written scripts
+(`fix-ci-serial2/3/4.py`, `drain_test_rewrite.py`, `prune.py`) rewriting
+`serial-tests_allowlist.txt` and the sleeps list, a round trip per list per
+change. The helper gives every list one reader and one `NOVA_CI_UPDATE=1`
+writer; a list read any other way has no update path.
+**The test.** `TestEveryAllowlistIsReadThroughTheOneHelper`
+(`internal/ci/allowlist_update_test.go`); the helper's own contract is
+`internal/ci/allowlist/allowlist_test.go`.
+**Its allowlist.** None.
+**Its remedy lines.** `is not read through allowlist.Load (loadAllowlist in a
+test)`; `reads a list file directly; read it with loadAllowlist or
+allowlist.Load`.
+**Its narrowings.** The walk is syntactic: a call's path is resolved through
+string literals (`filepath.Join` parts included), package constants, a variable
+assigned in the same function and one level of parameter; a path computed any
+other way is not seen. It reads `internal/ci` only, so a list read from another
+package (`internal/nsprint/land/guard` reads `namedpaths_allowlist.txt` for the
+lander) is not held here.
 
 ### `seatwrap` — no script wraps `nova-secrets exec` around a seat tool for its Redis password
 
@@ -2519,7 +2553,8 @@ walk with extra bookkeeping.
 the walk can see, so nothing invalidates the cache and the second walk was never
 buying anything. That is also why the rules are safe to run concurrently: each
 class test carries `t.Parallel()` and reads the shared tree and its own
-`testdata/` allowlist, and writes only to its own `t.TempDir()`. A test that
+`testdata/` allowlist, and writes only to its own `t.TempDir()` -- or, under
+`NOVA_CI_UPDATE=1`, to its own list, which no walk reads. A test that
 chdirs, sets an environment variable, or writes shared state does NOT get
 `t.Parallel()`, and the shared tree is not a licence to add one.
 

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 )
 
@@ -62,7 +63,7 @@ func TestEveryTranscriptIsExecutedLineForLine(t *testing.T) {
 
 	root := repoRoot(t)
 	md := readFile(t, filepath.Join(root, "docs", "TESTS.md"))
-	allow := readAllowlist(t, transcriptAllowlistPath)
+	allow := loadAllowlist(t, transcriptAllowlistPath, shrinkOnly)
 	tree := repoTree(t)
 
 	entries, err := os.ReadDir(filepath.Join(root, "cmd"))
@@ -73,6 +74,9 @@ func TestEveryTranscriptIsExecutedLineForLine(t *testing.T) {
 	var violations []string
 	sections := 0
 	executed, isSection := map[string]bool{}, map[string]bool{}
+	// measured is the set the list must hold: every section still owed a
+	// line-for-line test, listed or not.
+	measured := map[string]bool{}
 
 	for _, e := range entries {
 		if !e.IsDir() {
@@ -89,10 +93,14 @@ func TestEveryTranscriptIsExecutedLineForLine(t *testing.T) {
 		if calls && len(others) == 0 {
 			executed[tool] = true
 		}
-		if allow[tool] {
+		if allow.Has(tool) {
+			if !executed[tool] {
+				measured[tool] = true
+			}
 			continue
 		}
 		if !calls {
+			measured[tool] = true
 			violations = append(violations, fmt.Sprintf(
 				"docs/TESTS.md has a `## %s` section and no test in cmd/%s compares it with %s; the section is a promise no build checks. Convert it -- run every `$` line of the `### First run` block in order and hand the steps and the results to the one comparator -- or list %s in %s with the issue that owes it",
 				tool, tool, theComparator, tool, transcriptAllowlistPath))
@@ -112,7 +120,8 @@ func TestEveryTranscriptIsExecutedLineForLine(t *testing.T) {
 	// listed as owed -- and an entry naming NO section is an orphan that nothing
 	// above can ever make stale, so it would sit in the list for good, reading
 	// like an exception somebody still owes.
-	for tool := range allow {
+	for _, row := range allowlist.Check(t, allow, measured).Stale {
+		tool := row.Key
 		switch {
 		case !isSection[tool]:
 			violations = append(violations, fmt.Sprintf(

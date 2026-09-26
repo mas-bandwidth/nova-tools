@@ -217,18 +217,11 @@ func (s *server) spawn() string {
 func TestFieldsIndexAllowlistIsShrinkOnly(t *testing.T) {
 	t.Parallel()
 
-	allow := readFieldsIndexAllowlist(t)
-	for key := range allow {
-		if !strings.Contains(key, ":") || strings.HasSuffix(key, ":") {
+	for _, row := range loadAllowlist(t, fieldsIndexAllowlistPath, shrinkOnly).Rows() {
+		if key := row.Key; !strings.Contains(key, ":") || strings.HasSuffix(key, ":") {
 			t.Errorf("%s row %q is not a `file:function` key", fieldsIndexAllowlistPath, key)
 		}
-	}
-	raw := readFile(t, fieldsIndexAllowlistPath)
-	for _, line := range strings.Split(raw, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
+		line := row.Text
 		if !strings.Contains(line, " #") {
 			t.Errorf("%s row %q carries no reason; every exception says why the data cannot be short", fieldsIndexAllowlistPath, line)
 		}

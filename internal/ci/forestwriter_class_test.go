@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 )
 
 // forestWriterAllowlistPath is the shrink-only list of file writes the rule
@@ -91,7 +93,7 @@ func TestForestWrittenOnlyByTheKernel(t *testing.T) {
 				continue
 			}
 			seen[key] = true
-			if !allow[key] {
+			if !allow.Has(key) {
 				violations = append(violations, fmt.Sprintf(
 					"%s:%d: %s writes a file in a package that reads work sets and is not on %s; write a work set through %s (it refuses the forest), or list this call with the target it writes",
 					src.Rel, line, key, forestWriterAllowlistPath, forestWriter))
@@ -102,12 +104,11 @@ func TestForestWrittenOnlyByTheKernel(t *testing.T) {
 		violations = append(violations, fmt.Sprintf(
 			"%s is gone or writes nothing; it is the one writer of a work set and the rule is anchored on it", forestWriter))
 	}
-	for key := range allow {
-		if !seen[key] {
-			violations = append(violations, fmt.Sprintf(
-				"%s lists %s, but no file write is there any more; delete the stale entry (the list only shrinks)",
-				forestWriterAllowlistPath, key))
-		}
+	for _, row := range allowlist.Check(t, allow, seen).Stale {
+		key := row.Key
+		violations = append(violations, fmt.Sprintf(
+			"%s lists %s, but no file write is there any more; delete the stale entry (the list only shrinks)",
+			forestWriterAllowlistPath, key))
 	}
 
 	for _, f := range tree.Files {
@@ -261,24 +262,14 @@ func scriptForestWrites(rel, text string) []string {
 // readForestWriterAllowlist reads `file:function # target` lines. An entry
 // without the target it writes is itself a red run: the list says what each
 // write is, so a reader can see that none of them is the forest.
-func readForestWriterAllowlist(t *testing.T) map[string]bool {
+func readForestWriterAllowlist(t *testing.T) *allowlist.List {
 	t.Helper()
-	raw, err := os.ReadFile(forestWriterAllowlistPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	allow := map[string]bool{}
-	for n, line := range strings.Split(string(raw), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
+	allow := loadAllowlist(t, forestWriterAllowlistPath, shrinkOnly)
+	for _, row := range allow.Rows() {
+		i := strings.Index(row.Text, " #")
+		if i < 0 || strings.TrimSpace(row.Text[i+2:]) == "" {
+			t.Errorf("%s:%d: %q names no target; write `file:function # what it writes`", forestWriterAllowlistPath, row.Line, row.Text)
 		}
-		i := strings.Index(line, " #")
-		if i < 0 || strings.TrimSpace(line[i+2:]) == "" {
-			t.Errorf("%s:%d: %q names no target; write `file:function # what it writes`", forestWriterAllowlistPath, n+1, line)
-			continue
-		}
-		allow[strings.TrimSpace(line[:i])] = true
 	}
 	return allow
 }

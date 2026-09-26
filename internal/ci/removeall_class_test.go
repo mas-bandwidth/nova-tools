@@ -3,10 +3,11 @@ package ci
 import (
 	"fmt"
 	"go/ast"
-	"os"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 )
 
 // removeAllAllowlistPath is the shrink-only list of the os.RemoveAll calls this
@@ -36,7 +37,7 @@ func TestRemoveAllOnlyOnTempOrThroughSafepath(t *testing.T) {
 	t.Parallel()
 
 	tree := repoTree(t)
-	allow := readRemoveAllAllowlist(t)
+	allow := loadAllowlist(t, removeAllAllowlistPath, shrinkOnly)
 	seen := map[string]bool{}
 	var violations []string
 
@@ -70,7 +71,7 @@ func TestRemoveAllOnlyOnTempOrThroughSafepath(t *testing.T) {
 					id, ok := call.Args[0].(*ast.Ident)
 					if ok && tempVars[id.Name] {
 						seen[key] = true
-						if !allow[key] {
+						if !allow.Has(key) {
 							violations = append(violations, fmt.Sprintf(
 								"%s:%d: os.RemoveAll on the temp dir %s is not in %s; a new raw removal needs the safepath.RemoveUnder route or an allowlist entry with a reason",
 								rel, fset.Position(call.Pos()).Line, id.Name, removeAllAllowlistPath))
@@ -87,12 +88,11 @@ func TestRemoveAllOnlyOnTempOrThroughSafepath(t *testing.T) {
 	}
 	// The list only shrinks: an entry whose call has left is a red run, so nobody
 	// can quietly widen the exception set and leave it there.
-	for key := range allow {
-		if !seen[key] {
-			violations = append(violations, fmt.Sprintf(
-				"%s lists %s, but no os.RemoveAll of a MkdirTemp dir is there any more; delete the stale entry (the list only shrinks)",
-				removeAllAllowlistPath, key))
-		}
+	for _, row := range allowlist.Check(t, allow, seen).Stale {
+		key := row.Key
+		violations = append(violations, fmt.Sprintf(
+			"%s lists %s, but no os.RemoveAll of a MkdirTemp dir is there any more; delete the stale entry (the list only shrinks)",
+			removeAllAllowlistPath, key))
 	}
 	sort.Strings(violations)
 	for _, v := range violations {
@@ -156,24 +156,4 @@ func isOSMkdirTemp(call *ast.CallExpr) bool {
 	}
 	id, ok := sel.X.(*ast.Ident)
 	return ok && id.Name == "os" && sel.Sel.Name == "MkdirTemp"
-}
-
-func readRemoveAllAllowlist(t *testing.T) map[string]bool {
-	t.Helper()
-	raw, err := os.ReadFile(removeAllAllowlistPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	allow := map[string]bool{}
-	for _, line := range strings.Split(string(raw), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		if i := strings.Index(line, " #"); i >= 0 {
-			line = strings.TrimSpace(line[:i])
-		}
-		allow[line] = true
-	}
-	return allow
 }

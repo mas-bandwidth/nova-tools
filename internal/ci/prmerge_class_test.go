@@ -4,11 +4,12 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 )
 
 // THE CLASS RULE BEHIND THE ONE DOOR (Glenn, 2026-09-18).
@@ -46,7 +47,7 @@ func TestNoGhPrMergeSpellingInTheToolsGo(t *testing.T) {
 	t.Parallel()
 
 	tree := repoTree(t)
-	allow := readAllowlist(t, prMergeAllowlistPath)
+	allow := loadAllowlist(t, prMergeAllowlistPath, shrinkOnly)
 	seen := map[string]bool{}
 	var violations []string
 	files := 0
@@ -64,14 +65,14 @@ func TestNoGhPrMergeSpellingInTheToolsGo(t *testing.T) {
 				switch {
 				case w.value == "pr" && i+1 < len(words) && words[i+1].value == "merge" && words[i+1].fn == w.fn:
 					seen[key] = true
-					if !allow[key] {
+					if !allow.Has(key) {
 						violations = append(violations, fmt.Sprintf(
 							"%s:%d builds a `gh pr merge` call in %s; admission to a merge queue is internal/merge.Enqueuer.Enqueue (the enqueuePullRequest mutation), and a merge of a pull request is a batch that landed -- if this is the audit's --disable-auto, list it in %s with its reason",
 							rel, w.line, w.fn, prMergeAllowlistPath))
 					}
 				case w.value == "--auto" || strings.HasPrefix(w.value, "--auto="):
 					seen[key] = true
-					if !allow[key] {
+					if !allow.Has(key) {
 						violations = append(violations, fmt.Sprintf(
 							"%s:%d carries --auto in %s; auto-merge is not an enqueue, it is a standing instruction the forge executes later with nobody in the room -- four pull requests reached dev that way on 2026-09-18",
 							rel, w.line, w.fn))
@@ -85,12 +86,11 @@ func TestNoGhPrMergeSpellingInTheToolsGo(t *testing.T) {
 	}
 	// The list only shrinks: an entry whose call has left is red, so nobody can widen the
 	// exception set and leave it there.
-	for key := range allow {
-		if !seen[key] {
-			violations = append(violations, fmt.Sprintf(
-				"%s lists %s, and no `pr merge` or --auto is there any more; delete the stale entry (the list only shrinks)",
-				prMergeAllowlistPath, key))
-		}
+	for _, row := range allowlist.Check(t, allow, seen).Stale {
+		key := row.Key
+		violations = append(violations, fmt.Sprintf(
+			"%s lists %s, and no `pr merge` or --auto is there any more; delete the stale entry (the list only shrinks)",
+			prMergeAllowlistPath, key))
 	}
 	sort.Strings(violations)
 	for _, v := range violations {
@@ -189,26 +189,4 @@ func funcKey(fn *ast.FuncDecl) string {
 		return receiverName(fn.Recv.List[0].Type) + "." + fn.Name.Name
 	}
 	return fn.Name.Name
-}
-
-// readAllowlist reads a shrink-only exception list: one `<path>:<func>` per line, blank
-// lines and # comments ignored, and a trailing ` # reason` stripped.
-func readAllowlist(t *testing.T, path string) map[string]bool {
-	t.Helper()
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	allow := map[string]bool{}
-	for _, line := range strings.Split(string(raw), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		if i := strings.Index(line, " #"); i >= 0 {
-			line = strings.TrimSpace(line[:i])
-		}
-		allow[line] = true
-	}
-	return allow
 }

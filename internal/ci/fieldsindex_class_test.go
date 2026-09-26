@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 )
 
 // fieldsIndexAllowlistPath is the shrink-only list of the split-result index and
@@ -40,7 +42,7 @@ func TestNoUncheckedFieldsIndex(t *testing.T) {
 	t.Parallel()
 
 	root := repoRoot(t)
-	allow := readFieldsIndexAllowlist(t)
+	allow := loadAllowlist(t, fieldsIndexAllowlistPath, shrinkOnly)
 	seen := map[string]bool{}
 	var violations []string
 
@@ -68,7 +70,7 @@ func TestNoUncheckedFieldsIndex(t *testing.T) {
 			}
 			for _, f := range findings {
 				seen[f.key] = true
-				if !allow[f.key] {
+				if !allow.Has(f.key) {
 					violations = append(violations, f.line)
 				}
 			}
@@ -80,12 +82,11 @@ func TestNoUncheckedFieldsIndex(t *testing.T) {
 	}
 	// The list only shrinks: a row whose unchecked index has left is a red run,
 	// so nobody can quietly widen the exception set and leave it there.
-	for key := range allow {
-		if !seen[key] {
-			violations = append(violations, fmt.Sprintf(
-				"%s lists %s, but no unchecked split index is there any more; delete the stale row (the list only shrinks)",
-				fieldsIndexAllowlistPath, key))
-		}
+	for _, row := range allowlist.Check(t, allow, seen).Stale {
+		key := row.Key
+		violations = append(violations, fmt.Sprintf(
+			"%s lists %s, but no unchecked split index is there any more; delete the stale row (the list only shrinks)",
+			fieldsIndexAllowlistPath, key))
 	}
 	sort.Strings(violations)
 	for _, v := range violations {
@@ -350,24 +351,4 @@ func fieldsIndexFuncName(fn *ast.FuncDecl) string {
 		return receiverName(fn.Recv.List[0].Type) + "." + fn.Name.Name
 	}
 	return fn.Name.Name
-}
-
-func readFieldsIndexAllowlist(t *testing.T) map[string]bool {
-	t.Helper()
-	raw, err := os.ReadFile(fieldsIndexAllowlistPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	allow := map[string]bool{}
-	for _, line := range strings.Split(string(raw), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		if i := strings.Index(line, " #"); i >= 0 {
-			line = strings.TrimSpace(line[:i])
-		}
-		allow[line] = true
-	}
-	return allow
 }

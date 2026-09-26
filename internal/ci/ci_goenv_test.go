@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 )
 
 // ci_goenv_test.go is the red-test contract of the goenv checker, and then the
@@ -198,9 +200,10 @@ func TestGoEnvClassRuleHoldsOverTheRepository(t *testing.T) {
 	for _, f := range res.Findings {
 		t.Errorf("%s", f.Render())
 	}
-	for _, s := range res.Stale {
-		t.Errorf("%s lists %s:%d, but nothing there inherits the environment any more; %s",
-			goEnvAllowlistPath, s.File, s.Line, GoEnvRemedyAllow)
+	list := loadAllowlist(t, goEnvAllowlistPath, FileLineListOptions)
+	for _, row := range allowlist.Check(t, list, res.Measured).Stale {
+		t.Errorf("%s:%d lists %s, but nothing there inherits the environment any more; %s",
+			goEnvAllowlistPath, row.Line, row.Key, GoEnvRemedyAllow)
 	}
 	if res.Files == 0 {
 		t.Fatal("the walk read no files; the repository root is wrong")

@@ -5,11 +5,12 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 )
 
 // pathAssertAllowlistPath is the shrink-only list of the path-against-literal
@@ -62,7 +63,7 @@ func TestNoTestComparesAPathAgainstASlashLiteral(t *testing.T) {
 	t.Parallel()
 
 	tree := repoTree(t)
-	allow := readPathAssertAllowlist(t)
+	allow := loadAllowlist(t, pathAssertAllowlistPath, shrinkOnly)
 	seen := map[string]bool{}
 	var violations []string
 
@@ -80,7 +81,7 @@ func TestNoTestComparesAPathAgainstASlashLiteral(t *testing.T) {
 				key := rel + ":" + removeAllFuncName(fn)
 				for _, f := range flaggedPathAssertions(fn) {
 					seen[key] = true
-					if allow[key] {
+					if allow.Has(key) {
 						continue
 					}
 					violations = append(violations, fmt.Sprintf(
@@ -93,12 +94,11 @@ func TestNoTestComparesAPathAgainstASlashLiteral(t *testing.T) {
 
 	// The list only shrinks: an entry whose assertion has left is a red run, so
 	// nobody can quietly widen the exception set and leave it there.
-	for key := range allow {
-		if !seen[key] {
-			violations = append(violations, fmt.Sprintf(
-				"%s lists %s, but no path-against-literal comparison is there any more; delete the stale entry (the list only shrinks)",
-				pathAssertAllowlistPath, key))
-		}
+	for _, row := range allowlist.Check(t, allow, seen).Stale {
+		key := row.Key
+		violations = append(violations, fmt.Sprintf(
+			"%s lists %s, but no path-against-literal comparison is there any more; delete the stale entry (the list only shrinks)",
+			pathAssertAllowlistPath, key))
 	}
 	sort.Strings(violations)
 	for _, v := range violations {
@@ -366,24 +366,4 @@ func TestPathAssertHeuristicReadsWhatItClaims(t *testing.T) {
 			}
 		})
 	}
-}
-
-func readPathAssertAllowlist(t *testing.T) map[string]bool {
-	t.Helper()
-	raw, err := os.ReadFile(pathAssertAllowlistPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	allow := map[string]bool{}
-	for _, line := range strings.Split(string(raw), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		if i := strings.Index(line, " #"); i >= 0 {
-			line = strings.TrimSpace(line[:i])
-		}
-		allow[line] = true
-	}
-	return allow
 }

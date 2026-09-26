@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 )
 
 // ci_templates_test.go is the red-test contract of the templates checker in
@@ -273,7 +275,10 @@ func TestNoUnquotedPathsInTemplateLiterals(t *testing.T) {
 	for _, f := range res.Findings {
 		t.Error(f.Render())
 	}
-	for _, f := range res.Stale {
-		t.Error(f.Render())
+	// The stale rows come from the one helper, which under NOVA_CI_UPDATE=1
+	// drops them from the file instead (nova-tools#4339).
+	list := loadAllowlist(t, allow, FileLineListOptions)
+	for _, row := range allowlist.Check(t, list, res.Measured).Stale {
+		t.Errorf("%s:%d: %q names no offender on the tree; %s", allow, row.Line, row.Text, TemplateRemedyAllow)
 	}
 }

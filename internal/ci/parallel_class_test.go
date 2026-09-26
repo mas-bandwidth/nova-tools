@@ -1,15 +1,13 @@
 package ci
 
 import (
-	"bufio"
-	"bytes"
 	"fmt"
 	"go/ast"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 )
 
 // parallel_class_test.go is Glenn's rule of 2026-09-25: Go tests always run in
@@ -24,8 +22,8 @@ import (
 // `os.Chdir` change the whole process, and a test that swaps a package-level
 // seam (`now = fake`) races every other test reading it. The list only
 // shrinks: an entry whose test now opens with t.Parallel(), or whose test is
-// gone, is a stale entry and a red run, and the list may never grow past
-// serialTestsCeiling. The way off the list is a per-test seam: cmd.Env for a
+// gone, is a stale entry and a red run, and the list may never grow past the
+// `# ceiling: N` line it carries. The way off the list is a per-test seam: cmd.Env for a
 // child process, a field on the struct under test for a clock or a dialer, a
 // t.TempDir for a path.
 //
@@ -33,25 +31,14 @@ import (
 // a darwin-only or slow-tagged test is held to the same rule.
 const serialTestsAllowlistPath = "testdata/serial-tests_allowlist.txt"
 
-// serialTestsCeiling is the size of the serial allowlist on the day the rule
-// landed. It only comes down: lower it when an entry leaves, never raise it.
-// 2026-09-25 evening: the ceiling rose by nine for tests the fleet, redis,
-// nova-sprint and swarm streams landed after the measurement with t.Setenv or
-// a package-var seam (card_moves TestCardSessionCLI and TestCardMovesCLI,
-// fleet_build TestFleetBuildCompileVerb and ...ExecGivesGoItsOwnCaches, jev
-// TestJevMechRefusals, lander_unit TestLanderLoadsMembersFromUnitRecords,
-// line TestLineVerbPostListImport, task_card TestTaskMoveRefusesAPrimaryUnread,
-// card TestReadCopyDealtToBenchRendersALintedCard), then by nine more from the
-// redis stream (seat and #3277 tests on t.Setenv); each owes a per-test seam,
-// and the list only shrinks from here.
-const serialTestsCeiling = 877
-
 func TestEveryTestOpensWithTParallel(t *testing.T) {
 	t.Parallel()
 
 	tree := repoTree(t)
 	allow := readSerialTestsAllowlist(t)
-	seen := map[string]bool{}
+	// serial is the measured set: every test that does not open with
+	// t.Parallel(). nowParallel names the listed ones that do, for the remedy.
+	serial, nowParallel := map[string]bool{}, map[string]bool{}
 	var violations []string
 	total, parallel := 0, 0
 
@@ -76,16 +63,11 @@ func TestEveryTestOpensWithTParallel(t *testing.T) {
 			opens := len(fn.Body.List) > 0 && isParallelStmt(fn.Body.List[0], tname)
 			if opens {
 				parallel++
-				if _, listed := allow[key]; listed {
-					violations = append(violations, fmt.Sprintf(
-						"%s lists %s, but it opens with t.Parallel() now; delete the stale entry and lower serialTestsCeiling (the list only shrinks)",
-						serialTestsAllowlistPath, key))
-				}
-				seen[key] = true
+				nowParallel[key] = true
 				continue
 			}
-			if _, listed := allow[key]; listed {
-				seen[key] = true
+			serial[key] = true
+			if allow.Has(key) {
 				continue
 			}
 			violations = append(violations, fmt.Sprintf(
@@ -93,17 +75,19 @@ func TestEveryTestOpensWithTParallel(t *testing.T) {
 				f.Rel, tree.FSet.Position(fn.Pos()).Line, fn.Name.Name, tname))
 		}
 	}
-	for key := range allow {
-		if !seen[key] {
-			violations = append(violations, fmt.Sprintf(
-				"%s lists %s, but no such test exists any more; delete the stale entry and lower serialTestsCeiling (the list only shrinks)",
-				serialTestsAllowlistPath, key))
-		}
-	}
-	if len(allow) > serialTestsCeiling {
+	if _, ok := allow.Ceiling(); !ok {
 		violations = append(violations, fmt.Sprintf(
-			"%s has %d entries, over the ceiling of %d; the serial list only shrinks",
-			serialTestsAllowlistPath, len(allow), serialTestsCeiling))
+			"%s carries no `# ceiling: N` line; the serial list's count only falls, and the ceiling is what holds it there",
+			serialTestsAllowlistPath))
+	}
+	for _, row := range allowlist.Check(t, allow, serial).Stale {
+		gone := "no such test exists any more"
+		if nowParallel[row.Key] {
+			gone = "it opens with t.Parallel() now"
+		}
+		violations = append(violations, fmt.Sprintf(
+			"%s lists %s, but %s; delete the stale entry and lower its ceiling line (the list only shrinks; NOVA_CI_UPDATE=1 does both)",
+			serialTestsAllowlistPath, row.Key, gone))
 	}
 	if total == 0 {
 		t.Fatal("no test function found under cmd/ or internal/; the walk is broken, not the tree")
@@ -112,7 +96,7 @@ func TestEveryTestOpensWithTParallel(t *testing.T) {
 	for _, v := range violations {
 		t.Error(v)
 	}
-	t.Logf("%d of %d test functions open with t.Parallel(); %d on the serial allowlist", parallel, total, len(allow))
+	t.Logf("%d of %d test functions open with t.Parallel(); %d on the serial allowlist", parallel, total, allow.Len())
 }
 
 // isGoTestName is go test's own rule: Test, then nothing or a character that
@@ -172,31 +156,21 @@ func isParallelStmt(s ast.Stmt, tname string) bool {
 
 // readSerialTestsAllowlist reads `path:TestName  serial: <reason>` lines; a
 // line without a reason is refused, so every serial test says why.
-func readSerialTestsAllowlist(t *testing.T) map[string]string {
+func readSerialTestsAllowlist(t *testing.T) *allowlist.List {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.FromSlash(serialTestsAllowlistPath))
-	if err != nil {
-		t.Fatal(err)
-	}
-	out := map[string]string{}
-	sc := bufio.NewScanner(bytes.NewReader(raw))
-	line := 0
-	for sc.Scan() {
-		line++
-		text := strings.TrimSpace(sc.Text())
-		if text == "" || strings.HasPrefix(text, "#") {
-			continue
-		}
-		key, reason, _ := strings.Cut(text, " ")
+	allow := loadAllowlist(t, serialTestsAllowlistPath, shrinkOnly)
+	first := map[string]int{}
+	for _, row := range allow.Rows() {
+		_, reason, _ := strings.Cut(row.Text, " ")
 		reason = strings.TrimSpace(reason)
 		if !strings.HasPrefix(reason, "serial: ") || len(reason) == len("serial: ") {
-			t.Errorf("%s:%d: %q carries no `serial: <reason>`", serialTestsAllowlistPath, line, text)
+			t.Errorf("%s:%d: %q carries no `serial: <reason>`", serialTestsAllowlistPath, row.Line, row.Text)
+		}
+		if at, dup := first[row.Key]; dup {
+			t.Errorf("%s:%d: %s is listed twice (first at line %d)", serialTestsAllowlistPath, row.Line, row.Key, at)
 			continue
 		}
-		if _, dup := out[key]; dup {
-			t.Errorf("%s:%d: %s is listed twice", serialTestsAllowlistPath, line, key)
-		}
-		out[key] = reason
+		first[row.Key] = row.Line
 	}
-	return out
+	return allow
 }
