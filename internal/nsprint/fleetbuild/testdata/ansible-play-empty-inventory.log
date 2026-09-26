@@ -1,0 +1,16 @@
+[WARNING]: provided hosts list is empty, only localhost is available. Note that the implicit localhost does not match 'all'
+[WARNING]: Could not match supplied host pattern, ignoring: space
+[WARNING]: Could not match supplied host pattern, ignoring: hetzner
+[WARNING]: Could not match supplied host pattern, ignoring: hulk
+[WARNING]: Could not match supplied host pattern, ignoring: vision
+[WARNING]: Could not match supplied host pattern, ignoring: batman
+[WARNING]: Could not match supplied host pattern, ignoring: superman
+
+PLAY [the declared nova build in ~/.local/bin] *********************************
+skipping: no hosts matched
+
+PLAY [the nova_sprint function library on the fleet store (fn load, then fn check, as the coordinator seat)] ***
+skipping: no hosts matched
+
+PLAY RECAP *********************************************************************
+

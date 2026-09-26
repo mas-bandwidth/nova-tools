@@ -45,8 +45,10 @@ func TestFriendBeatWritesBeatAndRenewsLeasesInOneRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := client.PoolStats().Hits + client.PoolStats().Misses - trips; got != 1 {
-		t.Fatalf("friend beat took %d connections from the pool, want 1 (one round trip)", got)
+	// the beat and the leases in one round trip; holding copies, the models
+	// (ns_friend_models, every key declared) in a second
+	if got := client.PoolStats().Hits + client.PoolStats().Misses - trips; got != 2 {
+		t.Fatalf("friend beat took %d connections from the pool, want 2 (the beat and leases, then the models)", got)
 	}
 	if res.Friend != "rowan" || res.AtMS != at.UnixMilli() || res.Working != 2 || res.LeaseUntil <= time.Now().Add(time.Minute).UnixMilli() {
 		t.Fatalf("result %+v", res)
@@ -75,9 +77,13 @@ func TestFriendBeatWritesBeatAndRenewsLeasesInOneRoundTrip(t *testing.T) {
 	}
 
 	// no measurement and nothing working: the fields are left alone, lease 0
+	trips = client.PoolStats().Hits + client.PoolStats().Misses
 	res, err = life.FriendBeat(ctx, st, life.FriendBeatRequest{Friend: "emma", Host: "studio", At: at})
 	if err != nil || res.Working != 0 || res.LeaseUntil != 0 {
 		t.Fatalf("emma: %+v %v", res, err)
+	}
+	if got := client.PoolStats().Hits + client.PoolStats().Misses - trips; got != 1 {
+		t.Fatalf("friend beat holding nothing took %d connections from the pool, want 1 (one round trip)", got)
 	}
 	if beat := client.HGetAll(ctx, "friend:emma:beat").Val(); len(beat) != 3 || beat["host"] != "studio" || beat["harness"] != life.FriendBeatHarness {
 		t.Fatalf("friend:emma:beat = %v", beat)
