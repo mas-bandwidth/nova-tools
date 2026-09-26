@@ -1596,7 +1596,7 @@ with the copy model (2026-09-26):
 
 | nova-pulse verb | now |
 | --- | --- |
-| `cut` | `nova-sprint card cut` (#3789): one issue becomes one card record in Redis |
+| `cut` | `nova-sprint card cut` (#3789): one issue becomes one card record in Redis; `card cut --from <file>` (#4340) files one issue and cuts one task card per row |
 | `harvest` | `nova-sprint card harvest`, itself deleted 2026-09-26: a work copy's wrapper pushes its branch and opens its PR (#4227) |
 | `status` | `nova-sprint table`: the sprint table from Redis |
 
@@ -4459,6 +4459,40 @@ ACL CHECK DRIFT store=127.0.0.1:6380 redis=8.0.5 drifted=4 users=12 rows=/var/li
 `nova-sprint card cut --sprint <S> --repo <owner/name> --issue <n> [--spec <n>] [--index <dir>] [--stream <name>] [--base <branch>] [--redis <addr>]` (nova-tools#3623) is the cut `nova-pulse cut` did, as one Redis write: it reads the issue over REST (`gh api`, the caller's `GH_CONFIG_DIR`), renders the card in the card-push shape (`KIND`, `TASK`, `REPO`, `BASE`, `base-sha`, `PATHS`, `DEPENDS-ON`, `WHY`, `DONE-WHEN`, `WHO`, `STREAM`, `EST`, `ORIGIN`, then the issue quoted line by line), stores the exact bytes at `s:<S>:body:sha256:<sha>` and pushes the card as `card push` does, so the record `s:<S>:card:<name>-<n>` lands in waiting (an unmet dependency) or ready. The first line of each key anywhere in the issue body is read; `--stream` and `--base` override, `WHO` defaults to `any`, and an issue with no `base-sha` gets the branch tip. `DEPENDS-ON` is rewritten into the card vocabulary (`#n` and `name#n` become `owner/name#n`; a `(WHY: ...)` becomes the `WHY:` line). `--index` names a context index directory (`internal/ctxindex`) and inlines the CONTEXT block for the spec IDs the issue (and the `--spec` issue) names. No file and no queue directory is written. A recut of the same issue is `place=exists`.
 
 One receipt: `CARD CUT <S>/<repo>#<n> label=... place=pool|waiting|exists stream=... contexts=<k> origin=<url>`. Exit 0 cut; 1 refused with `REFUSED card cut ... why=...` (no `STREAM` and no `--stream`, a `DEPENDS-ON` that is not a card id, owner/repo#n, stream/<slug> or task:<id>, no `PATHS` or `DONE-WHEN`, or a missing index, each before any write; or the push's own refusal); 2 usage.
+
+### Many cards from one file: `nova-sprint card cut --from`
+
+`nova-sprint card cut --from <cards.tsv|-> --repo <owner/name> [--stream <s>] [--sprint <S>] [--base dev] [--base-sha <sha40>] [--actor <a>] [--redis <addr>] [--dry-run] [--no-github]` (nova-tools#4340; cmd/nova-sprint/card_cut_from.go) files one issue per row through the one GitHub writer (`nova-sprint file`'s REST create and read-back) and pushes each row as a task card (`task:<id>`, the record `task push` and `quack cut` write) onto its stream's waiting set, every push in one pipeline. `-` reads the file from standard input.
+
+The file is tab separated, one card per line; blank lines and lines starting with `#` are skipped. The columns, in this order unless the first line is a header row naming them (`done_when` and `DONE-WHEN` spell `done-when`):
+
+| column | what | default |
+|---|---|---|
+| `title` | the issue title and the card's task, one line | required |
+| `stream` | the card's stream | `--stream` |
+| `who` | `any`, `only <names>` or `except <names>` | `any` |
+| `paths` | the card's PATHS | required |
+| `done-when` | the card's DONE-WHEN | required |
+| `body` | the issue text below the card lines | empty |
+| `depends-on` | `#<n>` (an issue of `--repo`), `owner/name#<n>`, or a task id (`task:<id>` or `<id>`), comma separated; `none` or `-` is none | none |
+| `route` | `frontier`, `pro`, `flash` (a swarm card, complete at push, with `base-sha`) or `friend` | `friend` |
+| `est` | minutes: `30`, `45 min`, `2 h` | `30` |
+| `id` | the task id; only a header row can name this column | `<repo name>-<issue n>`, or with `--no-github` the title's slug |
+
+A cell writes a newline as `\n`, a tab as `\t` and a backslash as `\\`. A `depends-on` entry that is another row's `id` cell is that row: its issue is filed first, the issue's `DEPENDS-ON` carries that row's issue ref and the card's `blocked_on` its task id. A row that is depended on needs an `id` cell: there is one DEPENDS-ON form (#3409), so `row:<n>` is refused naming the id column, and with `--no-github` naming a row by its title slug is refused the same way.
+
+Every row is checked before anything is written: a bad row is named with its row, line and why, and then nothing is filed or pushed. Then each issue is filed in dependency order and written to the cut ledger, `cut:<sha256 of the file>` (`repo` and `<row n> -> <issue n>`, never expired), before the next is filed; the ledger is read before the first filing. A rerun of the same file after a partial or a full filing therefore files nothing twice: a row the ledger holds takes its issue from there, and its card, when an earlier run pushed it, is `to=already`. The first forge failure stops the filing and names every row behind it; the rows filed before it are still pushed. `--dry-run` prints the rows in push order and touches neither GitHub nor Redis (nor the ledger); `--no-github` files no issue and writes no ledger.
+
+The four receipt lines, all on standard output:
+
+```
+CARD CUT row=<n> id=<id> ref=<owner/name#n|-> stream=<s> to=waiting|already depends=<ids|none>
+CARD CUT REFUSED row=<n> line=<l> id=<id|-> why=<why>
+CARD CUT DRY row=<n> id=<id|-> stream=<s> who=<w> route=<r> est=<e> depends=<d> title=<t>
+CARD CUT FROM file=<f> rows=<n> cut=<k> already=<a> refused=<r> filed=<f> reused=<u> github=on|off ms=<ms>
+```
+
+`CARD CUT` is one row cut (or already cut by an earlier run of this file); `CARD CUT REFUSED` names a row and why (a refusal of the whole file, such as an unreadable ledger or a ledger filed on another `--repo`, prints `file=<f>` in place of the row and carries `remedy=`); `CARD CUT DRY` is one row of a `--dry-run`; `CARD CUT FROM` is the summary, last: `filed` counts issues filed by this run, `reused` the rows whose issue came from the ledger. Exit 0 every row cut or already; 1 a row refused (named); 2 usage.
 
 ### The card model: `nova-sprint card fsck`, `card ls --unplaced`, `bench reindex`
 
