@@ -104,8 +104,10 @@ type Request struct {
 	// prkey.DefaultOwner.
 	Repo string
 	// Base is the PR's base (the primary's BASE); Title its title. Stream,
-	// Origin and DoneWhen are the primary's, carried in the PR body.
-	Base, Title, Stream, Origin, DoneWhen string
+	// Origin, DoneWhen and Test are the primary's, carried in the PR body
+	// (TEST so a reader sees the class test, or why the card has none;
+	// #4313).
+	Base, Title, Stream, Origin, DoneWhen, Test string
 	// Token is the push credential and the REST bearer token.
 	Token string
 

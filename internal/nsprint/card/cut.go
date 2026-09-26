@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ctxindex"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
@@ -98,6 +100,19 @@ func RenderCut(ctx context.Context, src IssueSource, in CutInput) (CutCard, erro
 			return CutCard{}, fmt.Errorf("%s#%d has no %s: line", in.Repo, in.Issue, key)
 		}
 	}
+	// The card is a spec (#4313): its DONE-WHEN names the test that proves
+	// it, or its TEST line does, or the card says why it has none. A card
+	// whose DONE-WHEN cannot be turned into a test is refused here, before
+	// any write, with the remedy.
+	test := fields["TEST"]
+	if test == "" {
+		if test = taskcard.TestFromDoneWhen(fields["DONE-WHEN"]); test == "none" {
+			test = "" // no TEST line and no test in DONE-WHEN: the refusal says so
+		}
+	}
+	if _, why := cardhdr.ParseTest(test); why != "" {
+		return CutCard{}, fmt.Errorf("%s#%d: %s", in.Repo, in.Issue, why)
+	}
 	name := in.Repo[strings.IndexByte(in.Repo, '/')+1:]
 	label := fmt.Sprintf("%s-%d", name, in.Issue)
 	depends, why, err := CutDepends(in.Repo, fields["DEPENDS-ON"])
@@ -150,6 +165,7 @@ func RenderCut(ctx context.Context, src IssueSource, in CutInput) (CutCard, erro
 		{"BASE", base},
 		{"base-sha", baseSHA},
 		{"PATHS", fields["PATHS"]},
+		{"TEST", test},
 		{"DEPENDS-ON", depends},
 		{"WHY", why},
 		{"DONE-WHEN", fields["DONE-WHEN"]},
@@ -214,7 +230,7 @@ func sealContract(card string) string {
 }
 
 // cutKeys are the issue lines a cut reads, first occurrence wins.
-var cutKeys = []string{"STREAM", "PATHS", "DEPENDS-ON", "WHY", "DONE-WHEN", "BASE", "base-sha", "EST", "WHO"}
+var cutKeys = []string{"STREAM", "PATHS", "TEST", "DEPENDS-ON", "WHY", "DONE-WHEN", "BASE", "base-sha", "EST", "WHO"}
 
 // IssueFields reads the card's lines from an issue body: the first line of
 // each key in cutKeys, anywhere in the body, after list markers and Markdown

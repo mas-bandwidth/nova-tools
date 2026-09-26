@@ -30,16 +30,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 	"github.com/redis/go-redis/v9"
@@ -95,40 +96,107 @@ type CheckRun struct {
 	Wall  time.Duration
 }
 
-var (
-	testPkgRE  = regexp.MustCompile(`^\.(/[A-Za-z0-9_.-]+)*/?(\.\.\.)?$`)
-	testNameRE = regexp.MustCompile(`^(Test|Example|Fuzz)[A-Za-z0-9_]*$`)
-)
-
 // TestCommand is the card's TEST line as argv: `<package> <TestName>` is
 // `go test <package> -run ^<TestName>$ -count=1`. Anything else (absent,
-// `none`, a free command) has no argv and why says so: the wrapper runs only
-// the declared grammar and never assumes a package from PATHS.
+// `none <why>`, a free command) has no argv and why says so: the wrapper runs
+// only the declared grammar (cardhdr.ParseTest) and never assumes a package
+// from PATHS.
 func TestCommand(test string) (argv []string, why string) {
-	f := strings.Fields(test)
+	tl, refused := cardhdr.ParseTest(test)
 	switch {
-	case len(f) == 0:
+	case strings.TrimSpace(test) == "":
 		return nil, "no TEST line on the card"
-	case len(f) == 1 && f[0] == "none":
-		return nil, "TEST: none"
-	case len(f) != 2 || !testPkgRE.MatchString(f[0]) || hasDotDot(f[0]) || !testNameRE.MatchString(f[1]):
+	case tl.None:
+		return nil, "TEST: none (" + tl.Why + ")"
+	case refused != "":
 		return nil, "TEST is not `<package> <TestName>`"
 	}
-	return []string{"go", "test", f[0], "-run", "^" + f[1] + "$", "-count=1"}, ""
+	return []string{"go", "test", tl.Package, "-run", "^" + tl.Name + "$", "-count=1"}, ""
 }
 
-func hasDotDot(p string) bool {
-	for _, seg := range strings.Split(p, "/") {
-		if seg == ".." {
-			return true
+// NoTestsMark is what go test prints for a -run that selected nothing: a
+// TEST line naming no test in its package passes vacuously, which the
+// wrapper reads as a fail, never as a green.
+const NoTestsMark = "[no tests to run]"
+
+// Cmd is one child process the wrapper runs at end: in Dir, the argv, its
+// output (stdout and stderr together) to Out, under Timeout, beating on
+// every tick while it runs.
+type Cmd struct {
+	Dir     string
+	Argv    []string
+	Out     io.Writer
+	Timeout time.Duration
+	Ticks   <-chan time.Time
+	Beat    func()
+}
+
+// Runner runs one Cmd and returns its exit status; -1 with an error is a
+// command that could not start, and -1 with context.DeadlineExceeded one
+// killed at Timeout. It is the end step's one seam: the tests pass a fake
+// that answers from a table, so no unit test starts go or git.
+type Runner func(ctx context.Context, c Cmd) (int, error)
+
+// execRun is the production Runner: the child in its own group (killed
+// whole at the deadline), the wrapper's environment minus any token.
+func execRun(ctx context.Context, c Cmd) (int, error) {
+	if len(c.Argv) == 0 {
+		return -1, errors.New("empty command")
+	}
+	timeout := c.Timeout
+	if timeout <= 0 {
+		timeout = DefaultCheckTimeout
+	}
+	cctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, c.Argv[0], c.Argv[1:]...)
+	cmd.Dir = c.Dir
+	cmd.Env = checkEnv(os.Environ())
+	cmd.Stdout, cmd.Stderr = c.Out, c.Out
+	harnessGroup(cmd)
+	cmd.Cancel = func() error { killGroup(cmd); return nil }
+	cmd.WaitDelay = 10 * time.Second
+	done := make(chan error, 1)
+	if err := cmd.Start(); err != nil {
+		return -1, err
+	}
+	go func() { done <- cmd.Wait() }()
+	var err error
+wait:
+	for {
+		select {
+		case err = <-done:
+			break wait
+		case <-c.Ticks:
+			if c.Beat != nil {
+				c.Beat()
+			}
 		}
 	}
-	return false
+	if cctx.Err() != nil {
+		return -1, context.DeadlineExceeded
+	}
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		return exit.ExitCode(), nil
+	}
+	if err != nil {
+		return -1, err
+	}
+	return 0, nil
 }
 
 // RunCheck runs the card's TEST line in repo under timeout, calling beat every
 // tick while it runs (the card's lease stays live past the harness).
 func RunCheck(ctx context.Context, repo, test string, timeout time.Duration, ticks <-chan time.Time, beat func()) CheckRun {
+	return runCheck(ctx, nil, repo, test, timeout, ticks, beat)
+}
+
+// runCheck is RunCheck through run (nil is execRun).
+func runCheck(ctx context.Context, run Runner, repo, test string, timeout time.Duration, ticks <-chan time.Time, beat func()) CheckRun {
+	if run == nil {
+		run = execRun
+	}
 	argv, why := TestCommand(test)
 	if argv == nil {
 		return CheckRun{Check: "not-run", Cmd: test, Gate: "TEST: not-run (" + why + ")"}
@@ -140,45 +208,26 @@ func RunCheck(ctx context.Context, repo, test string, timeout time.Duration, tic
 	if timeout <= 0 {
 		timeout = DefaultCheckTimeout
 	}
-	cctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	cmd := exec.CommandContext(cctx, argv[0], argv[1:]...)
-	cmd.Dir = repo
-	cmd.Env = checkEnv(os.Environ())
 	var out tailBuffer
-	cmd.Stdout, cmd.Stderr = &out, &out
-	harnessGroup(cmd)
-	cmd.Cancel = func() error { killGroup(cmd); return nil }
-	cmd.WaitDelay = 10 * time.Second
 	began := time.Now()
-	done := make(chan error, 1)
-	if err := cmd.Start(); err != nil {
-		return CheckRun{Check: "not-run", Cmd: cmdline, Gate: cmdline + ": not-run (" + oneField(err.Error()) + ")"}
-	}
-	go func() { done <- cmd.Wait() }()
-	var err error
-wait:
-	for {
-		select {
-		case err = <-done:
-			break wait
-		case <-ticks:
-			if beat != nil {
-				beat()
-			}
-		}
-	}
+	exit, err := run(ctx, Cmd{Dir: repo, Argv: argv, Out: &out, Timeout: timeout, Ticks: ticks, Beat: beat})
 	r := CheckRun{Cmd: cmdline, Wall: time.Since(began), Tail: out.tail(3)}
 	secs := fmt.Sprintf("%.2fs", r.Wall.Seconds())
 	switch {
-	case err == nil:
+	case err != nil && !errors.Is(err, context.DeadlineExceeded):
+		return CheckRun{Check: "not-run", Cmd: cmdline, Gate: cmdline + ": not-run (" + oneField(err.Error()) + ")"}
+	case err == nil && exit == 0 && bytes.Contains(out.b, []byte(NoTestsMark)):
+		// go test's vacuous ok: the TEST line names no test in its package.
+		r.Check = "fail"
+		r.Gate = cmdline + ": fail (no tests to run: TEST names no test in " + argv[2] + ")"
+	case err == nil && exit == 0:
 		r.Check = "pass"
 		r.Gate = cmdline + ": pass " + secs
 		r.Green = cmdline + ": pass " + secs
 		if r.Tail != "" {
 			r.Green += "; " + r.Tail
 		}
-	case cctx.Err() != nil:
+	case err != nil:
 		r.Check = "fail"
 		r.Gate = cmdline + ": fail timeout after " + timeout.String()
 	default:

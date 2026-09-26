@@ -102,3 +102,74 @@ func KeyValue(line string) (key, value string, ok bool) {
 	}
 	return m[1], strings.TrimSpace(m[2]), true
 }
+
+// A card is a spec (nova-tools#4313, Glenn 2026-09-26: "how can I make the
+// quality of the friends+swarm work as good as, or better than software
+// built yourself?"): its TEST line names the one test the change is proved
+// by, the class test, and the copy wrapper runs it at BASE (red) and at HEAD
+// (green) before it pushes. A card with no test says why, on the same line,
+// so the reader sees it: `TEST: none <why>`.
+
+// TestLine is a card's TEST value, read by ParseTest.
+type TestLine struct {
+	// Package and Name are `TEST: <package> <TestName>`: the Go package
+	// path the wrapper runs and the test it selects.
+	Package, Name string
+	// None is `TEST: none <why>`; Why is the reason the card has no test.
+	None bool
+	Why  string
+}
+
+// String is the line's value as a card carries it.
+func (t TestLine) String() string {
+	if t.None {
+		return "none " + t.Why
+	}
+	return t.Package + " " + t.Name
+}
+
+// TestRemedy is what a card whose DONE-WHEN cannot be turned into a test is
+// told, on every refusal.
+const TestRemedy = "name `go test <package> -run <TestName>` in DONE-WHEN, or add TEST: <package> <TestName>, or TEST: none <why the change has no test>"
+
+var (
+	testPkgRE  = regexp.MustCompile(`^\.(/[A-Za-z0-9_.-]+)*/?(\.\.\.)?$`)
+	testNameRE = regexp.MustCompile(`^(Test|Example|Fuzz)[A-Za-z0-9_]*$`)
+)
+
+// ParseTest reads a TEST value: `<package> <TestName>` (the package a
+// ./-relative Go path with no .., the name a Go test name) or `none <why>`.
+// Anything else is refused: why is one line with the remedy, and the line
+// is zero. A bare `none` is refused too: the reader must see why.
+func ParseTest(v string) (TestLine, string) {
+	f := strings.Fields(v)
+	switch {
+	case len(f) == 0:
+		return TestLine{}, "DONE-WHEN cannot be turned into a test (no TEST line): " + TestRemedy
+	case isNone(f[0]):
+		why := strings.TrimLeft(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(v), "none")), ":-()— ")
+		if why == "" {
+			return TestLine{}, "TEST: none says no why: write TEST: none <why the change has no test>, or TEST: <package> <TestName>"
+		}
+		return TestLine{None: true, Why: why}, ""
+	case len(f) == 2 && testPkgRE.MatchString(f[0]) && !hasDotDot(f[0]) && testNameRE.MatchString(f[1]):
+		return TestLine{Package: f[0], Name: f[1]}, ""
+	}
+	return TestLine{}, "TEST " + strings.TrimSpace(v) + " is not `<package> <TestName>` or `none <why>`: " + TestRemedy
+}
+
+func hasDotDot(p string) bool {
+	for _, seg := range strings.Split(p, "/") {
+		if seg == ".." {
+			return true
+		}
+	}
+	return false
+}
+
+// isNone is the first word of `none <why>`: none, or none with a separator
+// glued to it (`none:`, `none-`).
+func isNone(w string) bool {
+	rest, ok := strings.CutPrefix(w, "none")
+	return ok && strings.Trim(rest, ":-()—") == ""
+}

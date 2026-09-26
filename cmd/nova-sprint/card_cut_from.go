@@ -95,7 +95,7 @@ type cutFromDeps struct {
 type cutRow struct {
 	n, line                                   int
 	title, stream, who, paths, doneWhen, body string
-	route, est, id                            string
+	route, est, id, test                      string
 	deps                                      []string // entries as written, none dropped
 	depRow                                    []int    // per entry: the row its id names, 0 outside the file
 	rowDeps                                   []int    // the rows this row depends on
@@ -115,9 +115,10 @@ var (
 )
 
 // cutHeader reads a header row: every cell a column name (done_when and
-// DONE-WHEN spell done-when), title among them. ok is false for a card row.
+// DONE-WHEN spell done-when), title among them; id and test are header-only
+// columns. ok is false for a card row.
 func cutHeader(cells []string) (cols []string, ok bool, err error) {
-	known := map[string]bool{"id": true}
+	known := map[string]bool{"id": true, "test": true}
 	for _, c := range cutColumns {
 		known[c] = true
 	}
@@ -203,7 +204,7 @@ func parseCutRows(text []byte) ([]*cutRow, error) {
 			}
 		}
 		r.title, r.stream, r.who, r.paths = get["title"], get["stream"], get["who"], get["paths"]
-		r.doneWhen, r.body, r.route, r.est, r.id = get["done-when"], get["body"], strings.ToLower(get["route"]), get["est"], get["id"]
+		r.doneWhen, r.body, r.route, r.est, r.id, r.test = get["done-when"], get["body"], strings.ToLower(get["route"]), get["est"], get["id"], get["test"]
 		r.deps = strings.FieldsFunc(get["depends-on"], func(c rune) bool {
 			return c == ',' || c == ';' || c == ' ' || c == '\t' || c == '\n'
 		})
@@ -415,6 +416,9 @@ func cutIssueText(r *cutRow, rows []*cutRow, o cutFromOpts) string {
 	if r.route != taskcard.RouteFriend {
 		fmt.Fprintf(&b, "base-sha: %s\n", o.BaseSHA)
 	}
+	if r.test != "" {
+		fmt.Fprintf(&b, "TEST: %s\n", strings.ReplaceAll(r.test, "\n", " "))
+	}
 	fmt.Fprintf(&b, "DONE-WHEN: %s\n", strings.ReplaceAll(r.doneWhen, "\n", " "))
 	if r.body != "" {
 		b.WriteString("\n" + r.body + "\n")
@@ -429,7 +433,7 @@ func cutSpec(r *cutRow, o cutFromOpts, text string) taskcard.Spec {
 	if text != "" {
 		s = taskcard.ParseIssue(text)
 	} else {
-		s = taskcard.Spec{Route: r.route, Who: r.who, Paths: r.paths, DoneWhen: r.doneWhen, Est: r.est, Task: r.title}
+		s = taskcard.Spec{Route: r.route, Who: r.who, Paths: r.paths, DoneWhen: r.doneWhen, Est: r.est, Task: r.title, Test: r.test}
 	}
 	s.Repo, s.Base = o.Repo, o.Base
 	if r.route != taskcard.RouteFriend {

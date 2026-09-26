@@ -41,7 +41,7 @@ func (l *RedisLedger) Card(ctx context.Context) (WrapperCard, error) {
 		return WrapperCard{}, errors.New("no store")
 	}
 	pipe := l.Store.Client().Pipeline()
-	cardCmd := pipe.HMGet(ctx, CardKey(l.Sprint, l.Label), "state", "bench", "attempt", "identity", "est", "kind")
+	cardCmd := pipe.HMGet(ctx, CardKey(l.Sprint, l.Label), "state", "bench", "attempt", "identity", "est", "kind", "base_sha", "test")
 	cfgCmd := pipe.HGet(ctx, CardConfigKey, "wall_max_min")
 	_, _ = pipe.Exec(ctx)
 	vals, err := cardCmd.Result()
@@ -56,7 +56,7 @@ func (l *RedisLedger) Card(ctx context.Context) (WrapperCard, error) {
 	return WrapperCard{
 		State: str(vals[0]), Bench: str(vals[1]), Attempt: attempt, Identity: str(vals[3]),
 		EstMin: positiveFloat(str(vals[4])), WallMaxMin: positiveFloat(cfgCmd.Val()),
-		Kind: str(vals[5]),
+		Kind: str(vals[5]), BaseSHA: str(vals[6]), Test: str(vals[7]),
 	}, nil
 }
 

@@ -47,6 +47,11 @@ type CopyCard struct {
 	Repo, PR, Head, Base, BaseSHA    string
 	Paths, DoneWhen, Title, Origin   string
 	Stream, Finding, Route, Consumer string
+	// Test is the primary's TEST line (#4313): `<package> <TestName>`, the
+	// class test the wrapper runs at base-sha and at the copy's head, or
+	// `none <why>`, which the copy's card and its PR body carry so the
+	// reader sees why. TM.CARRY takes it to the copy.
+	Test string
 	// Review is the REVIEW line of the verdict that moved the primary out
 	// of review (#4072), carried to its next copy; "" when it never failed.
 	Review string
@@ -64,7 +69,7 @@ func CopyCardFrom(id string, rec map[string]string) CopyCard {
 		PR: rec["pr"], Head: rec["head"], Base: rec["base"], BaseSHA: rec["base_sha"], Paths: rec["paths"],
 		DoneWhen: rec["done_when"], Title: rec["title"], Origin: rec["origin"], Stream: rec["stream"],
 		Finding: rec["finding"], Route: rec["route"], Consumer: rec["consumer"], Review: rec["review"], Body: rec["body"],
-		Branch: rec["branch"]}
+		Branch: rec["branch"], Test: rec["test"]}
 }
 
 // ScoreLine is the read copy's one typed line, RESULT.md line 2 (#4270):
@@ -269,6 +274,7 @@ func RenderCopy(c CopyCard) ([]byte, error) {
 		sb.WriteString("NO-SUBAGENTS: " + taskcard.LineNoSubagents + "\n")
 		sb.WriteString("WALL: " + taskcard.LineWall + "\n")
 		sb.WriteString("TESTS: " + taskcard.LineTests + "\n")
+		sb.WriteString("GATE: " + taskcard.LineGate + "\n")
 		sb.WriteString("UNATTENDED: " + taskcard.LineUnattended + "\n")
 		fmt.Fprintf(&sb, "COMMIT: repo/ is checked out at the PR's head %s, which is %s; change only PATHS, close the finding and commit on top of that head with the finding's summary as the first line; never push and never open a PR; the wrapper pushes your commit to %s and ends this copy with the new head; an uncommitted change counts as NO-COMMIT and the card fails.\n",
 			c.Head, branch, branch)
@@ -285,6 +291,7 @@ func RenderCopy(c CopyCard) ([]byte, error) {
 		sb.WriteString("NO-SUBAGENTS: " + taskcard.LineNoSubagents + "\n")
 		sb.WriteString("WALL: " + taskcard.LineWall + "\n")
 		sb.WriteString("TESTS: " + taskcard.LineTests + "\n")
+		sb.WriteString("GATE: " + taskcard.LineGate + "\n")
 		sb.WriteString("UNATTENDED: " + taskcard.LineUnattended + "\n")
 		sb.WriteString("OUTPUT: " + taskcard.LineOutput + "\n")
 		fmt.Fprintf(&sb, "COMMIT: make your change in repo/ on a new branch %s (git checkout -b %s) and commit it there with the DONE-WHEN summary as the first line; never push and never open a PR; the wrapper pushes the branch and opens the PR from your commit; an uncommitted change counts as NO-COMMIT and the card fails.\n", branch, branch)
@@ -322,6 +329,9 @@ func RenderCopy(c CopyCard) ([]byte, error) {
 	line("base-repo", "https://github.com/"+full)
 	line("base-sha", baseSHA)
 	line("PATHS", c.Paths)
+	if c.Leg != "read" {
+		line("TEST", c.Test)
+	}
 	line("DEPENDS-ON", "none")
 	line("DONE-WHEN", done)
 	line("ROUTE", route)

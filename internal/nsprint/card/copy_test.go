@@ -55,3 +55,34 @@ func TestRenderCopyKeepsTheFrontierRoute(t *testing.T) {
 		}
 	}
 }
+
+// TestCopyCardCarriesTheTestLine (#4313): a work or fix copy's card carries
+// the primary's TEST line, the class test the wrapper runs or the why the
+// card has none, read from the record's test field; a read's does not.
+func TestCopyCardCarriesTheTestLine(t *testing.T) {
+	t.Parallel()
+	rec := map[string]string{"primary": "p1", "leg": "work", "kind": "build", "repo": "mas-bandwidth/nova-tools",
+		"base": "dev", "base_sha": strings.Repeat("ab", 20), "paths": "internal/x.go", "done_when": "TestX passes",
+		"title": "one verb", "test": "./internal/x TestX"}
+	c := card.CopyCardFrom("p1~1", rec)
+	if c.Test != "./internal/x TestX" {
+		t.Fatalf("Test = %q", c.Test)
+	}
+	body, err := card.RenderCopy(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "\nTEST: ./internal/x TestX\n") {
+		t.Fatalf("no TEST line:\n%s", body)
+	}
+	rec["test"] = "none one docs page; the reader checks it"
+	body, _ = card.RenderCopy(card.CopyCardFrom("p1~1", rec))
+	if !strings.Contains(string(body), "\nTEST: none one docs page; the reader checks it\n") {
+		t.Fatalf("no TEST: none line:\n%s", body)
+	}
+	rec["leg"], rec["pr"], rec["head"] = "read", "4313", strings.Repeat("cd", 20)
+	body, _ = card.RenderCopy(card.CopyCardFrom("p1~2", rec))
+	if strings.Contains(string(body), "\nTEST:") {
+		t.Fatalf("a read carries a TEST line:\n%s", body)
+	}
+}

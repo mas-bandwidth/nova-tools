@@ -137,7 +137,20 @@ func (l *CopyLedger) Card(ctx context.Context) (WrapperCard, error) {
 	if len(rec) == 0 {
 		return WrapperCard{}, nil
 	}
-	c := WrapperCard{State: rec["where"], Kind: copyKind(CopyCardFrom(l.Copy, rec)), EstMin: positiveFloat(rec["est"])}
+	cc := CopyCardFrom(l.Copy, rec)
+	c := WrapperCard{State: rec["where"], Kind: copyKind(cc), EstMin: positiveFloat(rec["est"]), BaseSHA: cc.BaseSHA, Test: cc.Test}
+	if cc.Leg == "fix" && cc.Head != "" {
+		// a fix copy's repo/ is staged at the PR's head (RenderCopy): the
+		// gate's base is that head
+		c.BaseSHA = cc.Head
+	}
+	if c.Test == "" && cc.Primary != "" {
+		// A copy cut by a move library from before TM.CARRY carried test
+		// (#4313): the primary's TEST line is the copy's.
+		if v, err := l.Client.HGet(ctx, "task:"+cc.Primary, "test").Result(); err == nil {
+			c.Test = v
+		}
+	}
 	if kind, name, ok := strings.Cut(rec["consumer"], ":"); ok && kind == "bench" {
 		c.Bench = name
 	}
@@ -269,6 +282,11 @@ func (l *CopyLedger) End(ctx context.Context, end WrapperEnd) (int, error) {
 	}
 	if l2 != "" {
 		fields = append(fields, "line2", l2)
+	}
+	if end.Gate != nil {
+		// the spec gate's receipt (#4313), on the copy's record as its
+		// evidence: pass or the reason, and the red names
+		fields = append(fields, "evidence", end.Gate.Line())
 	}
 	switch {
 	case c.Leg == "read" && (end.Outcome == "DONE" || end.Outcome == "ABSTAIN"):
@@ -414,7 +432,7 @@ func (l *CopyLedger) harvest(ctx context.Context, end WrapperEnd, c CopyCard, br
 	}
 	res, err := h(ctx, harvestcopy.Request{
 		RepoDir: end.RepoDir, SHA: end.PushedSHA, Branch: branch, Onto: onto, Repo: c.Repo, Base: c.Base,
-		Title: c.Title, Stream: c.Stream, Origin: c.Origin, DoneWhen: c.DoneWhen,
+		Title: c.Title, Stream: c.Stream, Origin: c.Origin, DoneWhen: c.DoneWhen, Test: c.Test,
 		Token: l.PushToken, Askpass: l.Askpass,
 	})
 	if err != nil {

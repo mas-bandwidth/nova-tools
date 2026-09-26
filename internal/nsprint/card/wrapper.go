@@ -115,6 +115,11 @@ type WrapperCard struct {
 	// model card). The end step reads it to tell a code card, which must
 	// commit, from one that legitimately commits nothing (NoCommitKinds).
 	Kind string
+	// BaseSHA is the sha the job's repo/ is staged at (the card's base-sha;
+	// a fix copy's PR head) and Test the card's TEST line: the spec gate
+	// (#4313, RunSpecGate) holds a DONE code card's commit to them before
+	// the push.
+	BaseSHA, Test string
 }
 
 // WrapperEnd is the exit class the wrapper hands to the ledger.
@@ -137,6 +142,10 @@ type WrapperEnd struct {
 	// (<job>/out/repo), set on a DONE end; a copy's ledger pushes from it
 	// (#4227) before the job dir is deleted.
 	RepoDir string
+	// Gate is the spec gate's result (#4313) for a DONE code card with a
+	// commit; nil when it did not run. A refused gate is a FAILED end with
+	// the gate's reason and why, and no PR is opened from it.
+	Gate *GateResult
 }
 
 // WrapperLedger is the Redis side of one attempt. Every method returns the
@@ -325,6 +334,14 @@ type WrapperConfig struct {
 	// Copy is a consumer copy's id (#3998): the ledger is a CopyLedger and
 	// the in-process harness renders the card from task:<copy>.
 	Copy string
+	// Run runs the end step's child processes (the spec gate's TEST runs,
+	// git and nova-ci local, #4313); nil is the real one. A test passes a
+	// fake that answers from a table.
+	Run Runner
+	// HarnessEnv is the base environment of a harness program (Harness);
+	// nil is os.Environ(). A test hands its fake harness its switches here
+	// rather than through the process environment.
+	HarnessEnv []string
 }
 
 // WrapperReport is what one run did; the command prints Line.
@@ -516,7 +533,7 @@ func RunWrapper(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger) Wr
 	}
 	if err := makeJobDir(cfg.JobsRoot, job); err != nil {
 		// The card is launched and the harness never ran: a crash, recorded.
-		return finish(ctx, cfg, ledger, &rep, c.Kind, job, results, began, now, WrapperEnd{Outcome: "FAILED", Reason: "crash", Exit: -1, WallMax: wallMax}, "job dir: "+err.Error(), cleanup)
+		return finish(ctx, cfg, ledger, &rep, c, job, results, began, now, WrapperEnd{Outcome: "FAILED", Reason: "crash", Exit: -1, WallMax: wallMax}, "job dir: "+err.Error(), cleanup)
 	}
 
 	// 3. The harness, in its own group, token-free: the program cfg.Harness
@@ -542,14 +559,18 @@ func RunWrapper(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger) Wr
 		cmd := exec.Command(cfg.Harness)
 		cmd.Dir = job
 		cmd.Stdout, cmd.Stderr = log, log
-		cmd.Env = harnessEnv(os.Environ(), cfg, job, results)
+		base := cfg.HarnessEnv
+		if base == nil {
+			base = os.Environ()
+		}
+		cmd.Env = harnessEnv(base, cfg, job, results)
 		harnessGroup(cmd)
 		proc = &execHarness{cmd: cmd}
 	}
 	if err := proc.start(); err != nil {
 		log.Close()
 		// The card is launched and the harness never ran: a crash, recorded.
-		return finish(ctx, cfg, ledger, &rep, c.Kind, job, results, began, now, WrapperEnd{Outcome: "FAILED", Reason: "crash", Exit: -1, WallMax: wallMax}, "harness start: "+err.Error(), cleanup)
+		return finish(ctx, cfg, ledger, &rep, c, job, results, began, now, WrapperEnd{Outcome: "FAILED", Reason: "crash", Exit: -1, WallMax: wallMax}, "harness start: "+err.Error(), cleanup)
 	}
 	exited := proc.exited()
 	// The wall cap runs from the harness start, whatever the beats say.
@@ -615,7 +636,7 @@ func RunWrapper(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger) Wr
 	}
 	// A fenced beat ends here too: the ledger writes end.record before its
 	// end call, which is then fenced, and the record stays for the reconciler.
-	return finish(ctx, cfg, ledger, &rep, c.Kind, job, results, began, now, end, why, cleanup)
+	return finish(ctx, cfg, ledger, &rep, c, job, results, began, now, end, why, cleanup)
 }
 
 // makeJobDir makes <job>/out for a launched attempt. A directory already at
@@ -664,10 +685,40 @@ func (l *RedisLedger) Claim(ctx context.Context, nonce string) (int, error) {
 	return reply.Code, nil
 }
 
-// finish is step 6 and 7: copy out, record, end, delete.
-func finish(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger, rep *WrapperReport, kind, job, results string, began time.Time, now func() time.Time, end WrapperEnd, why string, cleanup func()) WrapperReport {
+// finish is step 6 and 7: commit, the spec gate, copy out, record, end, delete.
+func finish(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger, rep *WrapperReport, c WrapperCard, job, results string, began time.Time, now func() time.Time, end WrapperEnd, why string, cleanup func()) WrapperReport {
+	kind := c.Kind
 	wall := now().Sub(began)
 	end.ResultsDir = results
+	// The beat under every end-step child process (the gate's runs, the
+	// TEST line): the lease stays live past the harness.
+	every := cfg.BeatEvery
+	if every <= 0 {
+		every = DefaultBeatEvery
+	}
+	var ticks <-chan time.Time
+	var stopTicks func()
+	if cfg.Tick != nil {
+		ticks, stopTicks = cfg.Tick(every)
+	} else {
+		t := time.NewTicker(every)
+		ticks, stopTicks = t.C, t.Stop
+	}
+	defer stopTicks()
+	beatNoted := false
+	beat := func() {
+		code, err := ledger.Beat(ctx)
+		if err == nil && code == 0 {
+			rep.Beats++
+			return
+		}
+		if !beatNoted {
+			// A beat refused while a child runs (fenced, Redis down) is on
+			// the report once, not lost between beats.
+			beatNoted = true
+			appendWhy(rep, fmt.Sprintf("beat under TEST refused code=%d%s", code, errSuffix(err)))
+		}
+	}
 	rep.Outcome, rep.Reason, rep.Exit, rep.Wall, rep.Why = end.Outcome, end.Reason, end.Exit, wall, why
 	end.PushedSHA, end.Commit = NoCommit, "NO-COMMIT"
 	// The model's line 2 (#3919): ABSTAIN or BLOCKED is the end, not DONE,
@@ -709,6 +760,34 @@ func finish(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger, rep *W
 			}
 		}
 	}
+	if cfg.Copy != "" && end.Outcome == "DONE" && end.Commit == "COMMITTED" && CodeKind(kind) {
+		// The spec gate (#4313) on a copy: the class test at head and at
+		// base, then CI's answer for the diff, before the copy's end pushes
+		// anything (CopyLedger.End harvests a DONE end only). A red is a
+		// FAILED end with the gate's reason; the rows go into RESULT.md
+		// beside the model's word, red names included. A sprint card's
+		// harvest is the older flow (#2932) and is not held here.
+		repo := filepath.Join(job, "out", "repo")
+		paths, perr := ChangedPaths(repo, c.BaseSHA)
+		if perr != nil {
+			appendWhy(rep, "paths: "+perr.Error())
+		}
+		g := RunSpecGate(ctx, GateInput{Repo: repo, Base: c.BaseSHA, Head: end.PushedSHA, Test: c.Test, Paths: paths,
+			Timeout: cfg.CheckTimeout, Ticks: ticks, Beat: beat, Run: cfg.Run})
+		end.Gate = &g
+		if err := AppendGates(filepath.Join(job, "out"), g.Rows); err != nil {
+			appendWhy(rep, "gates: "+err.Error())
+		}
+		if !g.Passed() {
+			end.Outcome, end.Reason, end.Why = "FAILED", g.Reason, g.Why
+			rep.Outcome, rep.Reason = end.Outcome, end.Reason
+			if rep.Why == "" {
+				rep.Why = end.Why
+			} else if !strings.Contains(rep.Why, end.Why) {
+				rep.Why = end.Why + "; " + rep.Why
+			}
+		}
+	}
 	if err := copyOut(job, results); err != nil {
 		// The job dir is kept: its results are the only copy. The card
 		// still ends, FAILED other with this as its why, so the record says
@@ -729,34 +808,8 @@ func finish(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger, rep *W
 		// #3689: the wrapper writes the record (typed fields synthesized, its
 		// facts beside them) and Redis holds it; the beat keeps the lease live
 		// while the card's TEST line runs.
-		er := endRecord{cfg: cfg, job: job, results: results, end: end, wall: wall, why: rep.Why}
-		every := cfg.BeatEvery
-		if every <= 0 {
-			every = DefaultBeatEvery
-		}
-		var stop func()
-		if cfg.Tick != nil {
-			er.ticks, stop = cfg.Tick(every)
-		} else {
-			t := time.NewTicker(every)
-			er.ticks, stop = t.C, t.Stop
-		}
-		beatNoted := false
-		er.beat = func() {
-			code, err := ledger.Beat(ctx)
-			if err == nil && code == 0 {
-				rep.Beats++
-				return
-			}
-			if !beatNoted {
-				// A beat refused while the TEST line runs (fenced, Redis
-				// down) is on the report once, not lost between beats.
-				beatNoted = true
-				appendWhy(rep, fmt.Sprintf("beat under TEST refused code=%d%s", code, errSuffix(err)))
-			}
-		}
+		er := endRecord{cfg: cfg, job: job, results: results, end: end, wall: wall, why: rep.Why, ticks: ticks, beat: beat}
 		res, synth, rcode, rerr := recordEnd(ctx, rec, er)
-		stop()
 		if synth && rerr == nil && rcode == 0 && res.Defect == typedrec.DefectContradictory && wrapperField(res.Field) {
 			// The wrapper wrote this field from the card: a disagreement is a
 			// wrapper bug, logged; the card stays DONE.
@@ -1059,8 +1112,12 @@ func copyFile(src, dst string) error {
 // writeWrapperLine records what end.record has no field for: the wall and the
 // harness's RESULT line (line 1 of out/RESULT.md, if it wrote one).
 func writeWrapperLine(results string, cfg WrapperConfig, end WrapperEnd, beats int, wall time.Duration) error {
-	line := fmt.Sprintf("WRAPPER card=%s outcome=%s reason=%s exit=%d beats=%d wall_ms=%d wall_max_s=%d commit=%s result=%s why=%s\n",
-		cfg.card(), end.Outcome, end.Reason, end.Exit, beats, wall.Milliseconds(), int64(end.WallMax/time.Second), strconv.Quote(end.Commit), strconv.Quote(resultLine(results)), strconv.Quote(end.Why))
+	gate := "-"
+	if end.Gate != nil {
+		gate = end.Gate.Reason
+	}
+	line := fmt.Sprintf("WRAPPER card=%s outcome=%s reason=%s exit=%d beats=%d wall_ms=%d wall_max_s=%d commit=%s gate=%s result=%s why=%s\n",
+		cfg.card(), end.Outcome, end.Reason, end.Exit, beats, wall.Milliseconds(), int64(end.WallMax/time.Second), strconv.Quote(end.Commit), gate, strconv.Quote(resultLine(results)), strconv.Quote(end.Why))
 	return os.WriteFile(filepath.Join(results, "wrapper.line"), []byte(line), 0o644)
 }
 

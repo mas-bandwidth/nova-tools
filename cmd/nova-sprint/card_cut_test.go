@@ -84,7 +84,7 @@ func TestCardCutWritesRecord(t *testing.T) {
 	ctx := context.Background()
 	client, addr, src := cutFixture(t, map[int]card.Issue{
 		9001: {Title: "card cut writes the record", Body: cutIssueBody},
-		9002: {Title: "second card", Body: "DONE-WHEN: the second test fails red\nPATHS: docs/CLI.md\n" +
+		9002: {Title: "second card", Body: "DONE-WHEN: the second test fails red\nPATHS: docs/CLI.md\nTEST: none one docs page; the reader checks it\n" +
 			"DEPENDS-ON: #9001 (WHY: the cut verb), nova-tools#3502\nSTREAM: swarm: cards\nBASE: dev\n"},
 	})
 	dir := t.TempDir()
