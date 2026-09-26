@@ -3,12 +3,14 @@ package ci
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"gopkg.in/yaml.v3"
 )
 
@@ -26,6 +28,13 @@ var hostedMinShards = map[string]int{
 }
 
 const hostedDealStep = "deal this shard's packages"
+
+// hostedHeavy are the packages the deal places first, one per shard, before the
+// round-robin: cmd/nova-bus (46.4 s -short on the Studio) and cmd/nova-merge
+// (28.6 s) held shard 3 of 4 together, the ubuntu leg cancelled at 123 s
+// (reader measurement, #4421 round 2); cmd/nova-sprint and cmd/nova-swarm are
+// the reader's named heavy commands. ci.yml's deal step spells the same list.
+var hostedHeavy = []string{"cmd/nova-bus", "cmd/nova-merge", "cmd/nova-sprint", "cmd/nova-swarm"}
 
 type hostedMatrix struct {
 	OS      []string         `yaml:"os"`
@@ -195,6 +204,67 @@ func TestHostedDealPartitionsTheTree(t *testing.T) {
 		sort.Strings(bad)
 		if len(bad) > 0 || len(seen) != packages {
 			t.Errorf("%s at %d shards: the deal is not a partition: %v (%d distinct)", runner, n, bad, len(seen))
+		}
+	}
+}
+
+// TestHostedDealSplitsTheHeavyPackages runs the deal step over the real
+// `go list ./...` at each OS's shard count (reader repro, #4421 round 2): no two
+// hostedHeavy packages share a shard, every heavy package is in the tree, and
+// the step's heavy list is hostedHeavy.
+func TestHostedDealSplitsTheHeavyPackages(t *testing.T) {
+	t.Parallel()
+	job := ciJobs(t)["test-hosted"]
+	deal := stepIndex(job, hostedDealStep)
+	if deal < 0 {
+		t.Fatalf("test-hosted has no %q step", hostedDealStep)
+	}
+	if want := `heavy="` + strings.Join(hostedHeavy, " ") + `"`; !strings.Contains(job.Steps[deal].Run, want) {
+		t.Errorf("the deal step does not spell %s", want)
+	}
+	cmd := exec.Command("go", "list", "./...")
+	cmd.Dir = repoRoot(t)
+	cmd.Env = goenv.Clean(os.Environ())
+	list, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	listFile := filepath.Join(t.TempDir(), "pkgs")
+	if err := os.WriteFile(listFile, list, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for runner, n := range hostedMinShards {
+		home := map[string]int{}
+		for i := 1; i <= n; i++ {
+			script := job.Steps[deal].Run
+			script = strings.ReplaceAll(script, "${{ matrix.shards }}", strconv.Itoa(n))
+			script = strings.ReplaceAll(script, "${{ matrix.shard }}", strconv.Itoa(i))
+			script = strings.ReplaceAll(script, "go list ./...", "cat "+listFile)
+			env := filepath.Join(t.TempDir(), "env")
+			runStep(t, script, "GITHUB_ENV="+env)
+			b, err := os.ReadFile(env)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, p := range strings.Fields(strings.TrimPrefix(strings.TrimSpace(string(b)), "HOSTED_PKGS=")) {
+				for _, h := range hostedHeavy {
+					if strings.HasSuffix(p, "/"+h) {
+						home[h] = i
+					}
+				}
+			}
+		}
+		shardOf := map[int]string{}
+		for _, h := range hostedHeavy {
+			i, ok := home[h]
+			if !ok {
+				t.Errorf("%s at %d shards: heavy package %s is dealt to no shard (not in go list?)", runner, n, h)
+				continue
+			}
+			if other, dup := shardOf[i]; dup {
+				t.Errorf("%s at %d shards: %s and %s share shard %d", runner, n, other, h, i)
+			}
+			shardOf[i] = h
 		}
 	}
 }

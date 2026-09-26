@@ -1216,7 +1216,8 @@ jobs:
 
   test-hosted:
     # THE FULL SUITE on the GitHub-hosted runners — ubuntu-latest and
-    # macos-latest — but ONLY on push to main and on the nightly schedule.
+    # macos-latest — on every push (dev and main), on the nightly schedule and on
+    # workflow_dispatch, as the `if:` below says; never on a pull request.
     # GitHub-hosted compute is the expensive tier, so a pull request never
     # touches it: a change's feedback path is the self-hosted matrix above.
     #
@@ -1305,11 +1306,25 @@ jobs:
         run: make build
 
       - name: deal this shard's packages
-        # Dealt by package order (stable: go list sorts), one line of
+        # The heavy packages first, one per shard: cmd/nova-bus (46 s -short on
+        # the Studio) and cmd/nova-merge (28 s) shared shard 3 of 4, the ubuntu
+        # leg the cap cancelled at 123 s, and a count-only deal kept them together
+        # at eight. Then every other package round-robin in go list order (stable:
+        # go list sorts), continuing after the heavy ones. One line of
         # space-separated packages, so vet and test below read the same deal.
+        # internal/ci: TestHostedDealSplitsTheHeavyPackages (hostedHeavy).
         shell: bash
         run: |
-          pkgs=$(go list ./... | awk -v n=${{ matrix.shards }} -v i=${{ matrix.shard }} 'NR % n == i - 1' | tr '\n' ' ')
+          heavy="cmd/nova-bus cmd/nova-merge cmd/nova-sprint cmd/nova-swarm"
+          deal='
+            BEGIN { h = split(heavy, hv, " ") }
+            {
+              k = 0
+              for (j = 1; j <= h; j++) if ($0 ~ ("/" hv[j] "$")) k = j
+              if (k) s = (k - 1) % n; else { s = (h + r) % n; r++ }
+              if (s == i - 1) print
+            }'
+          pkgs=$(go list ./... | awk -v n=${{ matrix.shards }} -v i=${{ matrix.shard }} -v heavy="$heavy" "$deal" | tr '\n' ' ')
           echo "$pkgs"
           echo "HOSTED_PKGS=$pkgs" >> "$GITHUB_ENV"
 
