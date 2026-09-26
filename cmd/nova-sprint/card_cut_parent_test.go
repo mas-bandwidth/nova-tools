@@ -35,9 +35,9 @@ func planParent(where string) planFacts {
 }
 
 const childRows = "id\ttitle\tpaths\tdone-when\tbody\tdepends-on\troute\n" +
-	"h-model\tthe model\tinternal/nsprint/taskcard/hierarchy.go\tPlan.State is derived\tbuild it\tnone\tpro\n" +
-	"h-verb\tthe verb\tcmd/nova-sprint/card_cut_from.go internal/nsprint/taskcard/hierarchy.go\tcard cut --parent cuts children and stitch\tbuild it\th-model\tpro\n" +
-	"h-table\tthe table\tcmd/nova-sprint/ws.go\tstream ls --tree\tbuild it\tnone\tfriend\n"
+	"h-model\tthe model\tinternal/nsprint/taskcard/hierarchy.go\tPlan.State is derived\t" + cutInv + "\tnone\tpro\n" +
+	"h-verb\tthe verb\tcmd/nova-sprint/card_cut_from.go internal/nsprint/taskcard/hierarchy.go\tcard cut --parent cuts children and stitch\t" + cutInv + "\th-model\tpro\n" +
+	"h-table\tthe table\tcmd/nova-sprint/ws.go\tstream ls --tree\t" + cutInv + "\tnone\tfriend\n"
 
 // TestCardCutParentCutsChildrenAndStitchInOneCall is nova-tools#4317's
 // DONE-WHEN: one call cuts the rows as the parent's children (its stream,
@@ -105,6 +105,38 @@ func TestCardCutParentCutsChildrenAndStitchInOneCall(t *testing.T) {
 	code, out = runCutFrom(cutFromOpts{Text: []byte(childRows), Parent: "nova-tools-4317", Repo: ""}, d)
 	if code != 0 || len(forge2.titles) != 0 || strings.Count(out, "to=already") != 4 || !strings.Contains(out, "CARD CUT PLAN parent=nova-tools-4317 children=3") {
 		t.Errorf("rerun: exit %d filed %d:\n%s", code, len(forge2.titles), out)
+	}
+}
+
+// TestCardCutParentStitchIsNotLinted (#4396): the stitch row card cut
+// --parent writes carries the plan's DONE-WHEN (two sentences here), the
+// union of the children's PATHS (four packages) and a generated body with no
+// INVARIANT or CLASS-TEST, and is cut, not refused card-lint: the row check
+// returns for the stitch before the lint, and as a card it is KIND stitch,
+// which cardhdr.LintOneInvariant exempts on every other push path. Each
+// child is still linted.
+func TestCardCutParentStitchIsNotLinted(t *testing.T) {
+	t.Parallel()
+	forge, st := &fakeCutForge{}, &fakeCutStore{}
+	parent := planParent("waiting")
+	parent.Rec["done_when"] = "the children land. The stitch lands."
+	plans := &fakePlanStore{facts: map[string]planFacts{"p": parent}}
+	d := cutDeps(forge, st)
+	d.Plan, d.Bind = plans.plan, plans.bind
+	rows := "id\ttitle\tpaths\tdone-when\tbody\n" +
+		"c1\tone\tpkg/a/a.go\tA holds\t" + cutInv + "\n" + "c2\ttwo\tpkg/b/b.go\tB holds\t" + cutInv + "\n" +
+		"c3\tthree\tpkg/c/c.go\tC holds\t" + cutInv + "\n" + "c4\tfour\tpkg/d/d.go\tD holds\t" + cutInv + "\n"
+	code, out := runCutFrom(cutFromOpts{Text: []byte(rows), Parent: "p"}, d)
+	if code != 0 || strings.Contains(out, "card-lint") || !strings.Contains(out, "CARD CUT row=stitch id=p-stitch ") {
+		t.Fatalf("exit %d, want the stitch cut with no card-lint line:\n%s", code, out)
+	}
+	stitch := st.batches[0][len(st.batches[0])-1]
+	if stitch.Spec.Kind != taskcard.KindStitch || stitch.Spec.DoneWhen != parent.Rec["done_when"] || stitch.Spec.Paths != "pkg/a/a.go pkg/b/b.go pkg/c/c.go pkg/d/d.go" {
+		t.Fatalf("stitch spec %+v", *stitch.Spec)
+	}
+	code, out = runCutFrom(cutFromOpts{Text: []byte(strings.Replace(rows, cutInv, "build it", 1)), Parent: "p"}, d)
+	if code != 1 || !strings.Contains(out, "REFUSED card-lint rule=invariant-missing line=\"\" remedy=\"add INVARIANT: <the one sentence the class test proves>\" row=1\n") {
+		t.Fatalf("a child with no INVARIANT: exit %d:\n%s", code, out)
 	}
 }
 
@@ -177,7 +209,7 @@ func TestCardCutParentDryRunAndMoreChildren(t *testing.T) {
 	plans := &fakePlanStore{facts: map[string]planFacts{"nova-tools-4317": facts}}
 	d := cutDeps(forge, st)
 	d.Plan, d.Bind = plans.plan, plans.bind
-	rows := "title\tpaths\tdone-when\nthe docs\tdocs/CLI.md\tdocumented\n"
+	rows := "title\tpaths\tdone-when\tbody\nthe docs\tdocs/CLI.md\tdocumented\t" + cutInv + "\n"
 	code, out := runCutFrom(cutFromOpts{Text: []byte(rows), Parent: "nova-tools-4317", DryRun: true, NoGitHub: true, StitchRoute: "friend", StitchEst: "2 h"}, d)
 	if code != 0 {
 		t.Fatalf("dry run exit %d:\n%s", code, out)

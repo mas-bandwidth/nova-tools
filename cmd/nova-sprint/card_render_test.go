@@ -89,6 +89,28 @@ func cardRenderFromIssuePush(t *testing.T) {
 	if code, out, _ := render("--id", "l1"); code != 1 || !strings.Contains(out, "NOTASK") {
 		t.Errorf("a refused push left a record: render = %d %q", code, out)
 	}
+	// a plan (KIND: plan, #4388) is exempt from the DONE-WHEN, CLASS-TEST
+	// and PATHS rules (its children carry them); as KIND: fix it is refused.
+	// A plan is no swarm card (its children are), so it rides route friend.
+	plan := filepath.Join(dir, "plan.md")
+	planText := "KIND: plan\nSTREAM: swarm: cards\nPATHS: internal/a/a.go internal/b/ internal/c/ internal/d/\n" +
+		"INVARIANT: x holds everywhere.\nDONE-WHEN: the children land. The stitch lands."
+	if err := os.WriteFile(plan, []byte(planText), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pushPlan := func(id string) (int, string, string) {
+		return runTaskCLI("push", "--actor", "rowan", "--id", id, "--waiting", "--ref", "mas-bandwidth/nova-tools#1",
+			"--issue", plan, "--route", "friend", "--base", "dev")
+	}
+	if code, out, errOut := pushPlan("pl1"); code != 0 || !strings.Contains(out, "to=waiting") {
+		t.Errorf("push of a KIND: plan card = %d %q %q", code, out, errOut)
+	}
+	if err := os.WriteFile(plan, []byte(strings.Replace(planText, "KIND: plan", "KIND: fix", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, out, _ := pushPlan("pl2"); code != 1 || !strings.HasPrefix(out, `TASK push REFUSED id=pl2 why="card-lint done-when-sentences,class-test-missing,paths-packages" ms=`) {
+		t.Errorf("push of the plan card as KIND: fix = %d %q", code, out)
+	}
 	if code, out, _ := push("fr1", "friend"); code != 0 {
 		t.Fatalf("push friend = %d %q", code, out)
 	}

@@ -253,3 +253,40 @@ func TestCardCutInlinesIndex(t *testing.T) {
 		t.Fatalf("a missing index: exit %d out %q, want a refusal naming --index", code, out)
 	}
 }
+
+// TestCardPushPrintsOneLintLinePerRule (#4396): card push of a card that is
+// not one invariant (no INVARIANT, a BUILD: list lettered A. to F., the
+// #4352 shape) exits 2 with one REFUSED card-lint line per rule on stderr,
+// each as written (no nova-sprint card: prefix, no escaped newline), and
+// writes nothing.
+func TestCardPushPrintsOneLintLinePerRule(t *testing.T) {
+	ctx := context.Background()
+	client, addr, _ := cutFixture(t, nil)
+	path := filepath.Join(t.TempDir(), "list.md")
+	body := "RESULT: card-4352 sha=0123456789ab\nKIND: fix\nBASE: dev\nbase-repo: https://github.com/mas-bandwidth/nova-tools.git\n" +
+		"base-sha: " + cutBaseSHA + "\nPATHS: internal/nsprint/card/push.go\nDEPENDS-ON: none\n" +
+		"DONE-WHEN: `go test ./internal/nsprint/card -run TestX` passes.\nCLASS-TEST: TestX\n\n" +
+		"BUILD:\nA. the parser.\nB. the linter.\nC. the push path.\nD. the cut path.\nE. the task path.\nF. the docs.\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before := client.DBSize(ctx).Val()
+	code, out, errOut := runSprint("card", "push", "--redis", addr, "--sprint", "push-lint", path)
+	want := `REFUSED card-lint rule=invariant-missing line="" remedy="add INVARIANT: <the one sentence the class test proves>" card=` + fmt.Sprintf("%q", path) + "\n" +
+		`REFUSED card-lint rule=build-list line="BUILD:" remedy="cut as a parent with children: card cut --parent" card=` + fmt.Sprintf("%q", path) + "\n"
+	if code != 2 || out != "" || errOut != want {
+		t.Fatalf("exit %d stdout %q stderr\n%s\nwant exit 2 and\n%s", code, out, errOut, want)
+	}
+	if after := client.DBSize(ctx).Val(); after != before {
+		t.Fatalf("a refused push wrote %d keys", after-before)
+	}
+	fixed := strings.Replace(body, "CLASS-TEST: TestX\n", "CLASS-TEST: TestX\nINVARIANT: card push admits one invariant.\n", 1)
+	fixed = strings.Replace(fixed, "BUILD:\nA. the parser.\nB.", "BUILD:\nthe parser.\nB.", 1)
+	fixed = fixed[:strings.Index(fixed, "B. the linter")]
+	if err := os.WriteFile(path, []byte(fixed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code, out, errOut := runSprint("card", "push", "--redis", addr, "--sprint", "push-lint", path); code != 0 || !strings.Contains(out, "place=") {
+		t.Fatalf("the one-invariant card: exit %d stdout %q stderr %q", code, out, errOut)
+	}
+}

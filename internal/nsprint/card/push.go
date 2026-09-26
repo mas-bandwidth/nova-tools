@@ -86,7 +86,7 @@ func PushBatch(ctx context.Context, client *redis.Client, sprint string, files [
 		// One card, one invariant (#4396): a card that is a list, or a
 		// pointer to an issue, is refused before any write.
 		if rs := LintOneInvariant(doc.Repo, doc.BaseSHA, body); rs != nil {
-			return []VerbResult{{Code: exitRefused, Stderr: LintLines(f.Name, rs)}}
+			return []VerbResult{{Code: exitRefused, Stderr: LintLines(f.Name, rs), Lines: true}}
 		}
 		docs[i] = doc
 		bodies[i] = body

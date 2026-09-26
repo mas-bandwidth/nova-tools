@@ -294,7 +294,7 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 		// before any write, one REFUSED card-lint line per rule.
 		if spec != nil {
 			repo := firstOf(*c.repo, spec.Repo)
-			if rs := cardhdr.LintOneInvariant(cardhdr.Card{Text: taskLintText(*c.kind, spec), GoFiles: card.GoFilesAt(repo, spec.BaseSHA)}); rs != nil {
+			if rs := cardhdr.LintOneInvariant(cardhdr.Card{Text: taskLintText(*c.kind, spec), Files: card.FilesAt(repo, spec.BaseSHA)}); rs != nil {
 				_, _ = fmt.Fprintf(out, "TASK push REFUSED id=%s why=%s ms=%d\n", *c.id, quoteField("card-lint "+rs.Rules()), ms())
 				_, _ = fmt.Fprint(out, card.LintLines(*c.id, rs))
 				return 1

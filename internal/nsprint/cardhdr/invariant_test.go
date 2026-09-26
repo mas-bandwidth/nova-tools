@@ -44,7 +44,7 @@ func cardWith(key, line string) string {
 
 // TestLintOneInvariantRefusesEachRule is the class test of #4396: one row per
 // rule, each card refused by that rule alone with the exact offending line,
-// the good card and a parent accepted; and the mutation check: with the
+// the good card accepted; and the mutation check: with the
 // row's rule removed from the linter, the row's card is accepted, so removing
 // any one rule turns its row red.
 func TestLintOneInvariantRefusesEachRule(t *testing.T) {
@@ -92,15 +92,6 @@ func TestLintOneInvariantRefusesEachRule(t *testing.T) {
 	if got := LintOneInvariant(Card{Text: cardWith("", "")}); got != nil {
 		t.Errorf("the good card is refused:\n%v", got)
 	}
-	parent := cardWith("KIND:", "KIND: parent")
-	parent = strings.Replace(parent, goodCardLines[4]+"\n", "", 1) // no CLASS-TEST
-	parent = strings.Replace(parent, goodCardLines[6]+"\n", "", 1) // no DONE-WHEN
-	if got := LintOneInvariant(Card{Text: parent}); got != nil {
-		t.Errorf("a parent (no DONE-WHEN, no CLASS-TEST) is refused:\n%v", got)
-	}
-	if got := LintOneInvariant(Card{Text: strings.Replace(parent, "KIND: parent", "KIND: fix", 1)}); got.Rules() != RuleDoneWhenMissing+","+RuleClassTestMissing {
-		t.Errorf("the same card as KIND: fix: rules %q, want the DONE-WHEN and CLASS-TEST refusals", got.Rules())
-	}
 	line := Refusal{Rule: RuleBuildList, Line: "BUILD:", Remedy: RemedyParent}.String()
 	if want := `REFUSED card-lint rule=build-list line="BUILD:" remedy="cut as a parent with children: card cut --parent"`; line != want {
 		t.Errorf("refusal line %q, want %q", line, want)
@@ -121,6 +112,86 @@ func TestLintOneInvariantReadsIssueText(t *testing.T) {
 	}
 }
 
+// TestLintOneInvariantExemptsPlanAndStitch: a KIND plan (taskcard.KindPlan,
+// #4388) carries no DONE-WHEN rule, no CLASS-TEST and PATHS over any number of
+// packages, since its children carry them; a KIND stitch (the row card cut
+// --parent writes: the plan's DONE-WHEN, the children's PATHS, a generated
+// body) is read by no rule. The same cards under any other KIND are refused.
+func TestLintOneInvariantExemptsPlanAndStitch(t *testing.T) {
+	t.Parallel()
+	plan := cardWith("KIND:", "KIND: plan")
+	plan = strings.Replace(plan, goodCardLines[4]+"\n", "", 1) // no CLASS-TEST
+	plan = strings.Replace(plan, goodCardLines[6]+"\n", "", 1) // no DONE-WHEN
+	plan = strings.Replace(plan, goodCardLines[3], "PATHS: a/b/x.go, a/c/, a/d/, a/e/", 1)
+	if got := LintOneInvariant(Card{Text: plan}); got != nil {
+		t.Errorf("KIND: plan (no DONE-WHEN, no CLASS-TEST, four packages) is refused:\n%v", got)
+	}
+	if got := LintOneInvariant(Card{Text: strings.Replace(plan, "KIND: plan", "KIND: plan\nDONE-WHEN: the children land. The stitch lands.", 1)}); got != nil {
+		t.Errorf("KIND: plan with a two-sentence DONE-WHEN is refused:\n%v", got)
+	}
+	for _, kind := range []string{"KIND: fix", "KIND: parent"} {
+		want := RuleDoneWhenMissing + "," + RuleClassTestMissing + "," + RulePathsPackages
+		if got := LintOneInvariant(Card{Text: strings.Replace(plan, "KIND: plan", kind, 1)}); got.Rules() != want {
+			t.Errorf("the plan card as %s: rules %q, want %s", kind, got.Rules(), want)
+		}
+	}
+	stitch := "KIND: stitch\nPATHS: a/b/x.go a/c/ a/d/ a/e/\nDONE-WHEN: the children land. The stitch lands.\n\n" +
+		"Stitch of plan p: read every child's PR.\n\nBUILD:\n- child one\n- child two\nBuild issue #1 as written.\n"
+	if got := LintOneInvariant(Card{Text: stitch}); got != nil {
+		t.Errorf("KIND: stitch is refused:\n%v", got)
+	}
+	want := "invariant-missing,done-when-sentences,class-test-missing,paths-packages,build-issue,build-list"
+	if got := LintOneInvariant(Card{Text: strings.Replace(stitch, "KIND: stitch", "KIND: fix", 1)}); got.Rules() != want {
+		t.Errorf("the stitch card as KIND: fix: rules %q, want %s", got.Rules(), want)
+	}
+}
+
+// TestLintOneInvariantReadsLetteredBuildList: a BUILD: list lettered A. B.
+// (the #4352 A-F shape) or A) B) is a list, refused build-list like - and 1.
+func TestLintOneInvariantReadsLetteredBuildList(t *testing.T) {
+	t.Parallel()
+	for name, list := range map[string]string{
+		"A-F":  "BUILD:\nA. the parser.\nB. the linter.\nC. the push path.\nD. the cut path.\nE. the task path.\nF. the docs.",
+		"A)":   "BUILD:\nA) the parser\nB) the linter",
+		"dash": "BUILD:\n- the parser\n- the linter",
+		"1.":   "BUILD:\n1. the parser\n2. the linter",
+	} {
+		if got := LintOneInvariant(Card{Text: cardWith("BUILD:", list)}); got.Rules() != RuleBuildList {
+			t.Errorf("%s: rules %q, want build-list", name, got.Rules())
+		}
+	}
+	for _, one := range []string{"BUILD:\nA. the parser.", "BUILD: the parser.\nA good test names the rule."} {
+		if got := LintOneInvariant(Card{Text: cardWith("BUILD:", one)}); got != nil {
+			t.Errorf("%q: refused %q, want accepted (one item)", one, got.Rules())
+		}
+	}
+}
+
+// TestLintOneInvariantReadsBuildIssueForms: a body that points at an issue
+// is refused build-issue whatever sits between the words: a comma, a repo
+// before the #, lower case.
+func TestLintOneInvariantReadsBuildIssueForms(t *testing.T) {
+	t.Parallel()
+	for line, refused := range map[string]bool{
+		"Build issue #4352, as written.":                  true,
+		"Build issue #4352 as written.":                   true,
+		"Build nova-tools#4352 as written.":               true,
+		"build mas-bandwidth/nova-tools#4352, as written": true,
+		"Build #4352 (the A-F list) as written.":          true,
+		"Build the parser as #4352 names it.":             false,
+		"The build is as written in the spec.":            false,
+		"Rebuild issue #4352 as written.":                 false,
+	} {
+		got := LintOneInvariant(Card{Text: cardWith("BUILD:", line)})
+		if want := map[bool]string{true: RuleBuildIssue, false: ""}[refused]; got.Rules() != want {
+			t.Errorf("%q: rules %q, want %q", line, got.Rules(), want)
+		}
+	}
+}
+
+// TestSentences pins the count. A boundary inside a `code span` is opaque
+// (the span is one sentence's words); a code span that is itself a sentence
+// after a prose sentence is a second sentence.
 func TestSentences(t *testing.T) {
 	t.Parallel()
 	for s, want := range map[string]int{
@@ -133,6 +204,12 @@ func TestSentences(t *testing.T) {
 		"`go test ./x -run 'A.B'. then` runs": 1,
 		"`a. b` then. and":                    2,
 		"ends in #4401.":                      1,
+		// prose, then a code span that is itself a sentence: two
+		"exits 1. `go test ./x -run TestA passes.`": 2,
+		"exits 1. `go test ./x -run TestA` passes.": 2,
+		// the boundary is inside the span: one
+		"exits 1 when `go test ./x. passes` fails.": 1,
+		"`go test ./x -run TestA passes.`":          1,
 	} {
 		if got := Sentences(s); got != want {
 			t.Errorf("Sentences(%q) = %d, want %d", s, got, want)
@@ -158,6 +235,33 @@ func TestPackagesCountsDistinctPackages(t *testing.T) {
 	}
 	if got := Packages("a/b/x.go (new), a/b/y.go and docs/x.md, ./c/", nil); !reflect.DeepEqual(got, []string{"a/b", "c"}) {
 		t.Errorf("Packages by shape = %v, want [a/b c]", got)
+	}
+}
+
+// TestPackagesTreeDirWithNoGoFileIsNoPackage: with the tree, a directory in
+// it that holds no .go file (docs/) is no package, and a directory absent
+// from it (a new pkg/c/) is read by its shape: a package.
+func TestPackagesTreeDirWithNoGoFileIsNoPackage(t *testing.T) {
+	t.Parallel()
+	tree := []string{"pkg/a/a.go", "pkg/b/b.go", "docs/CLI.md", "docs/img/x.png", "pkg/a/testdata/card.md"}
+	for paths, want := range map[string][]string{
+		"docs/":                             {},
+		"docs/ pkg/a/testdata/":             {},
+		"pkg/c/":                            {"pkg/c"},
+		"pkg/c":                             {"pkg/c"},
+		"pkg/a/ pkg/b/ pkg/c/ docs/":        {"pkg/a", "pkg/b", "pkg/c"},
+		"pkg/a/ pkg/b/ pkg/c/ pkg/d/new.go": {"pkg/a", "pkg/b", "pkg/c", "pkg/d"},
+	} {
+		if got := Packages(paths, tree); !reflect.DeepEqual(got, want) {
+			t.Errorf("Packages(%q) = %v, want %v", paths, got, want)
+		}
+	}
+	card := cardWith("PATHS:", "PATHS: pkg/a/a.go, pkg/b/, pkg/c/, pkg/d/")
+	if got := LintOneInvariant(Card{Text: card, Files: tree}); got.Rules() != RulePathsPackages {
+		t.Errorf("four packages, two new: rules %q, want paths-packages", got.Rules())
+	}
+	if got := LintOneInvariant(Card{Text: cardWith("PATHS:", "PATHS: pkg/a/a.go, pkg/b/, pkg/c/, docs/"), Files: tree}); got != nil {
+		t.Errorf("three packages and docs/: refused %q", got.Rules())
 	}
 }
 

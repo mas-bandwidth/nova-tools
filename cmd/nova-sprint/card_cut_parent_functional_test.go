@@ -37,9 +37,9 @@ func TestCardCutParentEndToEnd(t *testing.T) {
 	}
 	dir := t.TempDir()
 	tsv := filepath.Join(dir, "children.tsv")
-	rows := "id\ttitle\tpaths\tdone-when\tdepends-on\troute\n" +
-		"the-model\tthe model\tinternal/nsprint/taskcard/hierarchy.go\tPlan.State is derived\tnone\tpro\n" +
-		"the-verb\tthe verb\tcmd/nova-sprint/card_cut_from.go\tcard cut --parent\tthe-model\tfriend\n"
+	rows := "id\ttitle\tpaths\tdone-when\tbody\tdepends-on\troute\n" +
+		"the-model\tthe model\tinternal/nsprint/taskcard/hierarchy.go\tPlan.State is derived\t" + cutInv + "\tnone\tpro\n" +
+		"the-verb\tthe verb\tcmd/nova-sprint/card_cut_from.go\tcard cut --parent\t" + cutInv + "\tthe-model\tfriend\n"
 	if err := os.WriteFile(tsv, []byte(rows), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestCardCutParentEndToEnd(t *testing.T) {
 	// parent lists it, and the waiting stitch's edge grows to it (it is
 	// never pushed again, so the store's EXISTS never orphans a child).
 	more := filepath.Join(dir, "more.tsv")
-	if err := os.WriteFile(more, []byte("id\ttitle\tpaths\tdone-when\nthe-docs\tthe docs\tdocs/CLI.md\tdocumented\n"), 0o644); err != nil {
+	if err := os.WriteFile(more, []byte("id\ttitle\tpaths\tdone-when\tbody\nthe-docs\tthe docs\tdocs/CLI.md\tdocumented\t"+cutInv+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	code, out, _ = run("card", "cut", "--parent", "hier", "--from", more, "--no-github", "--actor", "rowan")
@@ -239,7 +239,7 @@ func TestCardCutParentGrowFilesNoSecondStitchIssue(t *testing.T) {
 	d.Bind = func(ctx context.Context, parent string, children []string, stitch, by string) (taskcard.Result, error) {
 		return taskcard.BindPlan(ctx, c, parent, children, stitch, by)
 	}
-	first := "id\ttitle\tpaths\tdone-when\nc1\tone\ta.go\tholds\nc2\ttwo\tb.go\tholds\n"
+	first := "id\ttitle\tpaths\tdone-when\tbody\nc1\tone\ta.go\tholds\t" + cutInv + "\nc2\ttwo\tb.go\tholds\t" + cutInv + "\n"
 	code, out := runCutFrom(cutFromOpts{Text: []byte(first), Parent: "grow"}, d)
 	if code != 0 || len(forge.titles) != 3 || forge.titles[2] != "stitch: grow" {
 		t.Fatalf("first cut exit %d filed %v:\n%s", code, forge.titles, out)
@@ -251,7 +251,7 @@ func TestCardCutParentGrowFilesNoSecondStitchIssue(t *testing.T) {
 		t.Fatalf("rerun exit %d filed %v:\n%s", code, forge.titles, out)
 	}
 	// Growing: one issue for the new child, none for the stitch.
-	code, out = runCutFrom(cutFromOpts{Text: []byte("id\ttitle\tpaths\tdone-when\nc3\tthree\tc.go\tholds\n"), Parent: "grow"}, d)
+	code, out = runCutFrom(cutFromOpts{Text: []byte("id\ttitle\tpaths\tdone-when\tbody\nc3\tthree\tc.go\tholds\t" + cutInv + "\n"), Parent: "grow"}, d)
 	if code != 0 || len(forge.titles) != 4 || forge.titles[3] != "three" ||
 		!strings.Contains(out, "CARD CUT row=stitch id=grow-stitch ref=mas-bandwidth/nova-tools#5002 stream=autonomy to=already depends=c3,c1,c2\n") {
 		t.Fatalf("grow exit %d filed %v:\n%s", code, forge.titles, out)

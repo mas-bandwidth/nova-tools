@@ -10,7 +10,9 @@ package cardhdr
 // CLASS-TEST naming one Go test, PATHS over at most three Go packages and, if
 // any, PLATFORMS of darwin and linux only; a body that says "build issue #N
 // as written", or a BUILD: section that lists two or more items, is refused.
-// Each refusal is one line naming the rule, the line and the remedy.
+// Each refusal is one line naming the rule, the line and the remedy. A KIND
+// plan skips the DONE-WHEN, CLASS-TEST and PATHS rules and a KIND stitch
+// every rule (KindPlan, KindStitch).
 
 import (
 	"fmt"
@@ -32,11 +34,16 @@ const (
 	keyKind      = "KIND"
 )
 
-// parentKind is the KIND of a card cut as a parent with children (#4388's
-// hierarchy): its children carry the DONE-WHEN, the CLASS-TEST and the
-// packages, so the parent is exempt from those rules. It is the KIND value
-// alone, so this compiles and holds before the hierarchy lands.
-const parentKind = "parent"
+// The hierarchy's KINDs (#4388; taskcard.KindPlan and taskcard.KindStitch
+// are these constants). A plan is a card cut as a parent with children: its
+// children carry the DONE-WHEN, the CLASS-TEST and the packages, so a plan is
+// exempt from those rules. A stitch is the card card cut --parent writes for
+// the plan's second phase: its DONE-WHEN is the plan's, its PATHS the union
+// of the children's and its body generated, so no rule reads it.
+const (
+	KindPlan   = "plan"
+	KindStitch = "stitch"
+)
 
 // MaxPackages is the most Go packages a card's PATHS may span.
 const MaxPackages = 3
@@ -100,10 +107,10 @@ func (rs Refusals) Rules() string {
 // a card is cut from) and the repo at the card's BASE.
 type Card struct {
 	Text string
-	// GoFiles is the path of every .go file in the repo at the card's BASE,
-	// the tree PATHS is counted against. nil is a tree not read: a path is
-	// then counted by its shape (Packages).
-	GoFiles []string
+	// Files is the path of every file in the repo at the card's BASE, the
+	// tree PATHS is counted against. nil is a tree not read: a path is then
+	// counted by its shape (Packages).
+	Files []string
 }
 
 // Sentences counts the sentences in s: a sentence ends in . ! or ? followed
@@ -192,14 +199,16 @@ func ParsePlatforms(value string) ([]string, error) {
 var pathTokenRE = regexp.MustCompile(`^[A-Za-z0-9_.*?\[\]/-]+$`)
 
 // Packages is the distinct Go packages (directories) a PATHS value spans.
-// Entries are separated by commas or spaces. With goFiles (the repo at the
-// card's BASE) an entry spans the directory of every .go file it names,
-// matches as a glob, or holds below it; an entry ending in .go that names no
-// file yet is a new file in its directory. With no tree (goFiles nil) an entry
-// is read by its shape: a .go file or glob is its directory, a directory
-// (a trailing / or /..., or a path whose last element has no extension) is
-// itself, and anything else is not a package.
-func Packages(paths string, goFiles []string) []string {
+// Entries are separated by commas or spaces. With files (every file in the
+// repo at the card's BASE) an entry that is in the tree (it names a file,
+// matches one as a glob, or holds one below it) spans the directory of every
+// .go file it covers, so a directory in the tree with no .go file (docs/) is
+// no package. An entry absent from the tree (a new file or a new directory)
+// is read by its shape, as every entry is with no tree (files nil): a .go
+// file or glob is its directory, a directory (a trailing / or /..., or a path
+// whose last element has no extension) is itself, and anything else is not a
+// package.
+func Packages(paths string, files []string) []string {
 	pkgs := map[string]bool{}
 	for _, tok := range strings.FieldsFunc(paths, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' || r == ';' }) {
 		tok = strings.Trim(tok, "`'\"")
@@ -209,26 +218,23 @@ func Packages(paths string, goFiles []string) []string {
 		if tok == "" || tok == "." || !pathTokenRE.MatchString(tok) {
 			continue
 		}
-		isGo := strings.HasSuffix(tok, ".go")
-		if goFiles == nil {
-			switch {
-			case isGo:
-				pkgs[path.Dir(tok)] = true
-			case dir || strings.Contains(tok, "/") && !strings.Contains(path.Base(tok), "."):
-				pkgs[tok] = true
+		inTree := false
+		for _, f := range files {
+			if ok, _ := path.Match(tok, f); ok || f == tok || strings.HasPrefix(f, tok+"/") {
+				inTree = true
+				if strings.HasSuffix(f, ".go") {
+					pkgs[path.Dir(f)] = true
+				}
 			}
+		}
+		if inTree {
 			continue
 		}
-		found := false
-		for _, f := range goFiles {
-			ok, _ := path.Match(tok, f)
-			if ok || f == tok || strings.HasPrefix(f, tok+"/") {
-				pkgs[path.Dir(f)] = true
-				found = true
-			}
-		}
-		if !found && isGo {
+		switch {
+		case strings.HasSuffix(tok, ".go"):
 			pkgs[path.Dir(tok)] = true
+		case dir || strings.Contains(tok, "/") && !strings.Contains(path.Base(tok), "."):
+			pkgs[tok] = true
 		}
 	}
 	out := make([]string, 0, len(pkgs))
@@ -246,10 +252,10 @@ type cardLine struct {
 
 // lintCard is the card as the rules read it.
 type lintCard struct {
-	keys    map[string]cardLine // the first line of each key
-	lines   []string            // every line, a quote prefix ("> ") dropped, fences dropped
-	kind    string
-	goFiles []string
+	keys  map[string]cardLine // the first line of each key
+	lines []string            // every line, a quote prefix ("> ") dropped, fences dropped
+	kind  string
+	files []string
 }
 
 // unquote drops a Markdown quote prefix, so a card cut from an issue (which
@@ -262,7 +268,7 @@ func unquote(line string) string {
 }
 
 func readCard(c Card) *lintCard {
-	lc := &lintCard{keys: map[string]cardLine{}, goFiles: c.GoFiles}
+	lc := &lintCard{keys: map[string]cardLine{}, files: c.Files}
 	fenced := false
 	for _, raw := range strings.Split(strings.ReplaceAll(c.Text, "\r\n", "\n"), "\n") {
 		line := unquote(strings.TrimRight(raw, " \t\r"))
@@ -284,7 +290,7 @@ func readCard(c Card) *lintCard {
 	return lc
 }
 
-func (lc *lintCard) parent() bool { return lc.kind == parentKind }
+func (lc *lintCard) plan() bool { return lc.kind == KindPlan }
 
 // rule is one check: nil when the card keeps it.
 type rule struct {
@@ -293,8 +299,13 @@ type rule struct {
 }
 
 var (
-	buildIssueRE = regexp.MustCompile(`(?i)build .*#\d+ .*as written`)
-	listItemRE   = regexp.MustCompile(`^\s*(?:[-*+]|\d+[.)])\s+\S`)
+	// buildIssueRE is a body that points at an issue: "Build issue #4352 as
+	// written.", "Build nova-tools#4352, as written." (any words, any
+	// punctuation, between).
+	buildIssueRE = regexp.MustCompile(`(?i)\bbuild\b.*#\d+\b.*\bas written\b`)
+	// listItemRE is one list item: - * + markers, 1. 1) numbers and A. A)
+	// letters (the #4352 A-F shape).
+	listItemRE = regexp.MustCompile(`^\s*(?:[-*+]|\d+[.)]|[A-Z][.)])\s+\S`)
 )
 
 const (
@@ -321,27 +332,27 @@ var rules = []rule{
 	}},
 	{RuleDoneWhenMissing, func(lc *lintCard) *Refusal {
 		l, ok := lc.keys[keyDoneWhen]
-		if !lc.parent() && (!ok || strings.TrimSpace(l.value) == "") {
+		if !lc.plan() && (!ok || strings.TrimSpace(l.value) == "") {
 			return &Refusal{Line: l.text, Remedy: remedyDoneWhen}
 		}
 		return nil
 	}},
 	{RuleDoneWhenSentences, func(lc *lintCard) *Refusal {
-		if l, ok := lc.keys[keyDoneWhen]; ok && !lc.parent() && Sentences(l.value) > 1 {
+		if l, ok := lc.keys[keyDoneWhen]; ok && !lc.plan() && Sentences(l.value) > 1 {
 			return &Refusal{Line: l.text, Remedy: RemedyParent}
 		}
 		return nil
 	}},
 	{RuleClassTestMissing, func(lc *lintCard) *Refusal {
 		l, ok := lc.keys[KeyClassTest]
-		if !lc.parent() && (!ok || strings.TrimSpace(l.value) == "") {
+		if !lc.plan() && (!ok || strings.TrimSpace(l.value) == "") {
 			return &Refusal{Line: l.text, Remedy: remedyClassTest}
 		}
 		return nil
 	}},
 	{RuleClassTestForm, func(lc *lintCard) *Refusal {
 		l, ok := lc.keys[KeyClassTest]
-		if !ok || lc.parent() || strings.TrimSpace(l.value) == "" {
+		if !ok || lc.plan() || strings.TrimSpace(l.value) == "" {
 			return nil
 		}
 		if _, err := ParseClassTest(l.value); err != nil {
@@ -351,7 +362,7 @@ var rules = []rule{
 	}},
 	{RulePathsPackages, func(lc *lintCard) *Refusal {
 		l, ok := lc.keys[keyPaths]
-		if ok && !lc.parent() && len(Packages(l.value, lc.goFiles)) > MaxPackages {
+		if ok && !lc.plan() && len(Packages(l.value, lc.files)) > MaxPackages {
 			return &Refusal{Line: l.text, Remedy: RemedyParent}
 		}
 		return nil
@@ -396,13 +407,18 @@ var rules = []rule{
 }
 
 // LintOneInvariant is every rule's refusal for card, in rule order; nil when
-// the card is one invariant. Every push path runs it before any write.
+// the card is one invariant, and nil for a KIND stitch (generated by card cut
+// --parent, not written by an author). Every push path runs it before any
+// write.
 func LintOneInvariant(c Card) Refusals {
 	return lintWith(c, rules)
 }
 
 func lintWith(c Card, rs []rule) Refusals {
 	lc := readCard(c)
+	if lc.kind == KindStitch {
+		return nil
+	}
 	var out Refusals
 	for _, r := range rs {
 		if ref := r.check(lc); ref != nil {

@@ -103,7 +103,7 @@ type cutFromOpts struct {
 	Text                                       []byte
 	Repo, Stream, Sprint, Base, BaseSHA, Actor string
 	DryRun, NoGitHub                           bool
-	goFiles                                    []string // the repo at --base-sha, for the one-invariant lint
+	files                                      []string // the repo at --base-sha, for the one-invariant lint
 	// Parent makes the rows a plan's children (#4317); StitchRoute and
 	// StitchEst are the stitch card's ROUTE (frontier) and EST (60).
 	Parent, StitchRoute, StitchEst string
@@ -128,7 +128,7 @@ type cutFromDeps struct {
 	LedgerRead  func(ctx context.Context, key string) (taskcard.CutLedger, error)
 	LedgerWrite func(ctx context.Context, key, repo string, row, issue int) error
 	BaseSHA     func(repo, base string) (string, error)
-	GoFiles     func(repo, sha string) []string // the .go files at sha (card.GoFilesAt); nil reads PATHS by shape
+	Files       func(repo, sha string) []string // the files at sha (card.FilesAt); nil reads PATHS by shape
 	Now         func() time.Time
 	// Plan reads the parent (--parent); Bind makes it a plan after the push.
 	Plan func(ctx context.Context, id string) (planFacts, error)
@@ -380,7 +380,7 @@ func checkCutRow(r *cutRow, byID, slugs map[string]int, o cutFromOpts) {
 		}
 	}
 	if r.why == "" {
-		if rs := cardhdr.LintOneInvariant(cardhdr.Card{Text: cutLintText(r), GoFiles: o.goFiles}); rs != nil {
+		if rs := cardhdr.LintOneInvariant(cardhdr.Card{Text: cutLintText(r), Files: o.files}); rs != nil {
 			r.lint = rs
 			fail("card-lint " + rs.Rules() + ": not one invariant")
 		}
@@ -715,8 +715,8 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 			break
 		}
 	}
-	if d.GoFiles != nil {
-		o.goFiles = d.GoFiles(o.Repo, o.BaseSHA)
+	if d.Files != nil {
+		o.files = d.Files(o.Repo, o.BaseSHA)
 	}
 	// The id cells name rows for DEPENDS-ON (the first of a repeated id;
 	// the repeat is refused below). With --no-github a row without one is
@@ -975,7 +975,7 @@ func cmdCardCutFrom(ctx context.Context, o cutFromOpts, addr string, stdout, std
 	if err != nil {
 		return refuse(stderr, verb, "cannot read --from: "+err.Error())
 	}
-	d := cutFromDeps{Now: time.Now, BaseSHA: card.MirrorBranchSHA, GoFiles: card.GoFilesAt}
+	d := cutFromDeps{Now: time.Now, BaseSHA: card.MirrorBranchSHA, Files: card.FilesAt}
 	if !o.DryRun || o.Parent != "" {
 		if !o.DryRun {
 			if o.Actor = quackActor(o.Actor); o.Actor == "" {

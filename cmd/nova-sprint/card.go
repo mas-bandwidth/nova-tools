@@ -249,6 +249,11 @@ func openCardRedis(ctx context.Context, addr string, stderr io.Writer) (*redis.C
 }
 
 func writeCardResult(stdout, stderr io.Writer, res card.VerbResult) int {
+	if res.Code != 0 && res.Lines {
+		// one REFUSED card-lint line per rule (#4396), as written
+		_, _ = io.WriteString(stderr, res.Stderr)
+		return res.Code
+	}
 	if res.Code != 0 {
 		fmt.Fprintf(stderr, "nova-sprint card: %s; run: nova-sprint help\n", oneline.Escape(strings.TrimSpace(res.Stderr)))
 		return res.Code
