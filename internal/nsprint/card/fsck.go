@@ -36,13 +36,22 @@ type FsckReport struct {
 	Cards, Null                                     int64
 	Waiting, Ready, Working, Done, Parked, OK, Fail int64
 	Drift, Fixed                                    int64
-	Lines                                           []string // the first 50 drift lines
+	// Registered counts the streams repair added to ws:names/ws:order: a
+	// stream with members of the sprint but no name (UNREGISTERED, found
+	// 2026-09-26: card push never registered its stream).
+	Registered int64
+	Lines      []string // the first 50 drift lines
 }
 
-// Line is the receipt: FSCK <S> cards=... drift=... fixed=....
+// FsckFields is the number of leading fields of an FSCK reply before its
+// drift lines: FSCK S cards null waiting ready working done parked ok fail
+// drift fixed registered.
+const FsckFields = 14
+
+// Line is the receipt: FSCK <S> cards=... drift=... fixed=... registered=....
 func (r FsckReport) Line(verb string) string {
-	return fmt.Sprintf("%s sprint=%s cards=%d null=%d waiting=%d ready=%d working=%d done=%d parked=%d ok=%d fail=%d drift=%d fixed=%d",
-		verb, r.Sprint, r.Cards, r.Null, r.Waiting, r.Ready, r.Working, r.Done, r.Parked, r.OK, r.Fail, r.Drift, r.Fixed)
+	return fmt.Sprintf("%s sprint=%s cards=%d null=%d waiting=%d ready=%d working=%d done=%d parked=%d ok=%d fail=%d drift=%d fixed=%d registered=%d",
+		verb, r.Sprint, r.Cards, r.Null, r.Waiting, r.Ready, r.Working, r.Done, r.Parked, r.OK, r.Fail, r.Drift, r.Fixed, r.Registered)
 }
 
 // Clean is true when the walk found no drift, or repair fixed all it found.
@@ -66,10 +75,10 @@ func Fsck(ctx context.Context, client redis.UniversalClient, sprint string, repa
 	if err != nil {
 		return FsckReport{}, fmt.Errorf("%s: %w", fname, err)
 	}
-	if len(reply) < 13 || reply[0] != "FSCK" {
+	if len(reply) < FsckFields || reply[0] != "FSCK" {
 		return FsckReport{}, fmt.Errorf("%s reply %q", fname, reply)
 	}
-	n := make([]int64, 11)
+	n := make([]int64, FsckFields-2)
 	for i := range n {
 		v, err := strconv.ParseInt(reply[2+i], 10, 64)
 		if err != nil {
@@ -78,7 +87,8 @@ func Fsck(ctx context.Context, client redis.UniversalClient, sprint string, repa
 		n[i] = v
 	}
 	return FsckReport{Sprint: reply[1], Cards: n[0], Null: n[1], Waiting: n[2], Ready: n[3], Working: n[4],
-		Done: n[5], Parked: n[6], OK: n[7], Fail: n[8], Drift: n[9], Fixed: n[10], Lines: reply[13:]}, nil
+		Done: n[5], Parked: n[6], OK: n[7], Fail: n[8], Drift: n[9], Fixed: n[10], Registered: n[11],
+		Lines: reply[FsckFields:]}, nil
 }
 
 // Unplaced lists the sprint's null cards (where empty: created, in no table
@@ -155,4 +165,32 @@ func ParseMembers(fname string, reply []string) (MembersReport, error) {
 		n[i] = v
 	}
 	return MembersReport{Sets: n[0], Members: n[1], Bad: n[2], Removed: n[3], Lines: reply[5:]}, nil
+}
+
+// OrphanReport is one ns_ws_orphans reply: the ws:<stream>:<where> sets
+// (streams of ws:order and ws:names) whose members all belong to no card of
+// any sprint in sprint:order. Reported, never repaired (#4334 owns purging).
+type OrphanReport struct {
+	Sets, Orphans int64
+	Lines         []string // ORPHAN-SET key=<k> members=<n>, the first 50
+}
+
+// OrphanSets walks the ws sets in one read-only function call.
+func OrphanSets(ctx context.Context, client redis.UniversalClient) (OrphanReport, error) {
+	reply, err := client.FCallRO(ctx, "ns_ws_orphans", nil).StringSlice()
+	if err != nil {
+		return OrphanReport{}, fmt.Errorf("ns_ws_orphans: %w", err)
+	}
+	if len(reply) < 3 || reply[0] != "ORPHANS" {
+		return OrphanReport{}, fmt.Errorf("ns_ws_orphans reply %q", reply)
+	}
+	n := make([]int64, 2)
+	for i := range n {
+		v, err := strconv.ParseInt(reply[1+i], 10, 64)
+		if err != nil {
+			return OrphanReport{}, fmt.Errorf("ns_ws_orphans reply field %d %q", 1+i, reply[1+i])
+		}
+		n[i] = v
+	}
+	return OrphanReport{Sets: n[0], Orphans: n[1], Lines: reply[3:]}, nil
 }

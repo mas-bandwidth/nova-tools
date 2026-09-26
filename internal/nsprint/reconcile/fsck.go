@@ -142,13 +142,13 @@ func FsckAll(ctx context.Context, c *redis.Client, token string) (FsckWalk, erro
 		switch {
 		case err != nil:
 			errs = append(errs, fmt.Sprintf("repair %s: %v", r.name, err))
-		case len(rep) < 13 || rep[0] != "FSCK":
+		case len(rep) < card.FsckFields || rep[0] != "FSCK":
 			errs = append(errs, fmt.Sprintf("repair %s: reply %q", r.name, rep))
 		default:
 			fixed, _ := strconv.Atoi(rep[12])
 			w.Fixed += fixed
 			if fixed > 0 {
-				w.Lines = append(w.Lines, rep[13:]...)
+				w.Lines = append(w.Lines, rep[card.FsckFields:]...)
 			}
 		}
 		if r.retire == nil {
