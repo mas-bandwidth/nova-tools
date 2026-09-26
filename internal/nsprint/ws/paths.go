@@ -388,8 +388,10 @@ func RecordKey(member string) string {
 
 // LivePaths recomputes every stream's paths from its records, the truth the
 // stream record caches: every member of every Live set of every stream in
-// ws:names, its record's paths field read by SplitPaths. It also returns the
-// stored record (PathsKey) and the live cards. Three pipelined round trips.
+// ws:names, its record's stored PathsField (written only gated: the push,
+// and the repair), else its PATHS read by SplitPaths (a record cut before
+// #4322, which the repair backfills). It also returns the stored record
+// (PathsKey) and the live cards. Three pipelined round trips.
 func LivePaths(ctx context.Context, c redis.Cmdable) (live, stored StreamPaths, cards []LiveCard, err error) {
 	pipe := c.Pipeline()
 	names := pipe.SMembers(ctx, "ws:names")
@@ -448,7 +450,11 @@ func LivePaths(ctx context.Context, c redis.Cmdable) (live, stored StreamPaths, 
 		if _, ok := live[cards[i].Stream]; !ok {
 			live[cards[i].Stream] = nil // a stream with a live card is in live, paths or not
 		}
-		live.Add(cards[i].Stream, SplitPaths(cards[i].Raw))
+		if cards[i].Stored != "" {
+			live.Add(cards[i].Stream, ParsePaths(cards[i].Stored))
+		} else {
+			live.Add(cards[i].Stream, SplitPaths(cards[i].Raw))
+		}
 	}
 	return live, stored, cards, nil
 }
@@ -481,38 +487,46 @@ func Stale(live, stored StreamPaths) []string {
 	return out
 }
 
-// RepairPaths writes what LivePaths found: each live card's PathsField from
-// its record's PATHS, and each stale stream's field of PathsKey (removed
-// when it holds none), in one pipeline. It returns the streams and records
-// written. It is ws check --repair: the backfill of the records cut before
-// #4322 and the fix of any drift since.
-func RepairPaths(ctx context.Context, c redis.Cmdable, live, stored StreamPaths, cards []LiveCard) (streams, records int, err error) {
-	pipe := c.Pipeline()
+// RepairFunction is ws check --repair's one call (02_card_move.lua
+// SP.repair): the backfill and every stream's field, over the live sets as
+// they are when it runs, so a push beside it loses nothing (#4322).
+const RepairFunction = "ns_ws_paths_repair"
+
+// Repair is what RepairPaths wrote: the streams whose field changed, the
+// records backfilled, the streams left unbuilt, and one line per record the
+// gate refused (PATHS overlap paths=<a,b> stream=<other> id=<member>
+// in=<stream>) or found changed since the read (PATHS unread id=<member>
+// in=<stream>).
+type Repair struct {
+	Streams, Records, Unbuilt int
+	Refused                   []string
+}
+
+// RepairPaths is ws check --repair: one FCALL of ns_ws_paths_repair with
+// the live cards LivePaths found holding PATHS and no PathsField, each as
+// its record key, the PATHS read and their stored form. The Lua gates each
+// backfill against every other stream's paths as it builds them and writes
+// every stream's field from the live sets in the same call. It is the
+// backfill of the records cut before #4322 and the fix of any drift since.
+func RepairPaths(ctx context.Context, c redis.Cmdable, cards []LiveCard) (Repair, error) {
+	args := []any{"ws check --repair"}
 	for _, lc := range cards {
-		want := JoinPaths(SplitPaths(lc.Raw))
-		if want == lc.Stored {
+		if lc.Stored != "" || lc.Raw == "" {
 			continue
 		}
-		if want == "" {
-			pipe.HDel(ctx, lc.Key, PathsField)
-		} else {
-			pipe.HSet(ctx, lc.Key, PathsField, want)
-		}
-		records++
+		args = append(args, lc.Key, lc.Raw, JoinPaths(SplitPaths(lc.Raw)))
 	}
-	for _, s := range Stale(live, stored) {
-		if _, holds := live[s]; holds {
-			pipe.HSet(ctx, PathsKey, s, JoinPaths(live[s])) // "" builds a stream whose cards name no path
-		} else {
-			pipe.HDel(ctx, PathsKey, s)
-		}
-		streams++
+	v, err := c.FCall(ctx, RepairFunction, nil, args...).StringSlice()
+	if err != nil {
+		return Repair{}, fmt.Errorf("repair %s: %w", PathsKey, err)
 	}
-	if streams+records == 0 {
-		return 0, 0, nil
+	if len(v) < 4 || v[0] != "REPAIRED" {
+		return Repair{}, fmt.Errorf("repair %s: reply %q", PathsKey, v)
 	}
-	if _, err := pipe.Exec(ctx); err != nil {
-		return 0, 0, fmt.Errorf("repair %s: %w", PathsKey, err)
-	}
-	return streams, records, nil
+	var r Repair
+	r.Streams, _ = strconv.Atoi(v[1])
+	r.Records, _ = strconv.Atoi(v[2])
+	r.Unbuilt, _ = strconv.Atoi(v[3])
+	r.Refused = v[4:]
+	return r, nil
 }

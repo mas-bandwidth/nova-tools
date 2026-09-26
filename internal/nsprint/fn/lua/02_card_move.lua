@@ -446,6 +446,166 @@ function SP.moved(member, s0, w0, s1, w1)
   end
 end
 
+-- SP.field(k, result): a move's record field k, refused when it would
+-- change the record's paths past the gate (#4322; the cold read's FCALL
+-- ns_tcard_move ... stream zeta stream_paths pkg/evil was MOVED): the gate
+-- reads the stored stream_paths before the move's HSET writes a new one.
+-- stream_paths is written only by the push (SP.gate in the create) and by
+-- ws check --repair (SP.repair, gated); paths only by the push and by a
+-- card end's result (result: the paths the work touched, TM.finish), which
+-- reach stream_paths only through the gated repair. nil when k may ride.
+function SP.field(k, result)
+  if k == SP.FIELD then
+    return 'FIELD stream_paths is the stream\'s paths: only the push and ws check --repair write it (#4322)'
+  end
+  if k == 'paths' and not result then
+    return 'FIELD paths is the card\'s PATHS, fixed at its push (#4322): cut another card for other paths'
+  end
+  return nil
+end
+
+-- SP.relink(member, stream, where): the gate of a write that links record
+-- member into ws:<stream>:<where> outside the one move (an adoption of a
+-- record that predates the where field, card fsck --repair's relink, the
+-- reap's relink of a stray's own views; #4322): nil when the link adds no
+-- record to a live set (no stream, not live, already a member) or SP.gate
+-- passes the record's stored stream_paths, else the typed refusal. The
+-- caller links, then calls SP.linked.
+function SP.relink(member, stream, where)
+  if type(stream) ~= 'string' or stream == '' or SP.LIVE[where] ~= true then return nil end
+  if redis.call('ZSCORE', 'ws:' .. stream .. ':' .. where, member) then return nil end
+  local _, perr = SP.gate(member, redis.call('HGET', SP.key(member), SP.FIELD), '', '', stream, '')
+  return perr
+end
+
+-- SP.fresh(member, stream, where): the link SP.relink gated is new (read
+-- before the write, so SP.linked adds the record's paths once).
+function SP.fresh(member, stream, where)
+  if type(stream) ~= 'string' or stream == '' or SP.LIVE[where] ~= true then return false end
+  return redis.call('ZSCORE', 'ws:' .. stream .. ':' .. where, member) == false
+end
+
+-- SP.linked(member, stream, where): after a fresh link, the record's paths
+-- join its stream's (SP.moved from no stream).
+function SP.linked(member, stream, where)
+  SP.moved(member, '', '', stream, where)
+end
+
+-- SP.repair(by, cands): ws check --repair in one call (#4322; the cold
+-- read ran the Go read-then-pipeline repair beside pushes and lost the
+-- pushed path in 17 of 40 trials, once admitting an overlap). cands is
+-- record key -> { raw, want }: a live record's PATHS as ws check read them
+-- (raw) and their stored form (want, ws.SplitPaths comma-joined), for the
+-- records it found with no stream_paths. In this one call, over the live
+-- sets as they are now: a record with stream_paths holds them (they are
+-- only ever written gated); a record with none and no PATHS holds none; a
+-- record with none whose PATHS are still raw is backfilled with want once
+-- SP.gate's rule (SP.overlap) passes it against every other stream's
+-- paths as the repair builds them (stream name order, then set, then
+-- member), and a refused one keeps none and leaves its stream unbuilt (its
+-- paths are unknown to the gate), as does a record whose PATHS changed
+-- since the read. Then each stream's field is written: the union, '' for
+-- one with no live card, none for an unbuilt one; a field of a stream not
+-- in ws:names goes. Returns REPAIRED streams records unbuilt, then one
+-- line per refusal: PATHS overlap paths=<a,b> stream=<other> id=<member>
+-- in=<stream>, or PATHS unread id=<member> in=<stream>.
+function SP.repair(cands)
+  local names = redis.call('SMEMBERS', 'ws:names')
+  table.sort(names)
+  local have = {}
+  local all = redis.call('HGETALL', SP.KEY)
+  for i = 1, #all, 2 do have[all[i]] = all[i + 1] end
+  local per, lines, records, streams, unbuilt = {}, {}, 0, 0, 0
+  for _, s in ipairs(names) do
+    local st = { holds = false, seen = {}, pend = {}, unknown = false }
+    for _, w in ipairs(SP.WHERE) do
+      for _, m in ipairs(redis.call('ZRANGE', 'ws:' .. s .. ':' .. w, 0, -1)) do
+        if not string.match(m, '^[a-z0-9][a-z0-9%-]*:sentinel$') then
+          st.holds = true
+          local key = SP.key(m)
+          local f = redis.call('HMGET', key, 'paths', SP.FIELD)
+          if type(f[2]) == 'string' then
+            SP.into(st.seen, f[2])
+          elseif type(f[1]) == 'string' and f[1] ~= '' then
+            local c = cands[key]
+            if c and c.raw == f[1] then
+              st.pend[#st.pend + 1] = { key = key, m = m, want = c.want }
+            else
+              st.unknown = true
+              lines[#lines + 1] = 'PATHS unread id=' .. m .. ' in=' .. s
+            end
+          end
+        end
+      end
+    end
+    per[s] = st
+  end
+  for _, s in ipairs(names) do
+    for _, p in ipairs(per[s].pend) do
+      local mine = SP.list(p.want)
+      local ov, other
+      for _, s2 in ipairs(names) do
+        if s2 ~= s then
+          local theirs = {}
+          for q in pairs(per[s2].seen) do theirs[#theirs + 1] = q end
+          ov = SP.overlap(mine, theirs)
+          if ov then
+            other = s2
+            break
+          end
+        end
+      end
+      if ov then
+        per[s].unknown = true
+        lines[#lines + 1] = 'PATHS overlap paths=' .. table.concat(ov, ',') .. ' stream=' .. other .. ' id=' .. p.m .. ' in=' .. s
+      elseif #mine > 0 then
+        redis.call('HSET', p.key, SP.FIELD, table.concat(mine, ','))
+        records = records + 1
+        for _, q in ipairs(mine) do per[s].seen[q] = true end
+      end
+    end
+  end
+  local named = {}
+  for _, s in ipairs(names) do
+    named[s] = true
+    local st = per[s]
+    if st.unknown then
+      unbuilt = unbuilt + 1
+      if have[s] ~= nil then
+        redis.call('HDEL', SP.KEY, s)
+        streams = streams + 1
+      end
+    else
+      local out = {}
+      for q in pairs(st.seen) do out[#out + 1] = q end
+      table.sort(out)
+      local v = table.concat(out, ',')
+      if not st.holds and (have[s] == nil or have[s] == '') then v = have[s] end
+      if v ~= nil and have[s] ~= v then
+        redis.call('HSET', SP.KEY, s, v)
+        streams = streams + 1
+      end
+    end
+  end
+  for s in pairs(have) do
+    if not named[s] then
+      redis.call('HDEL', SP.KEY, s)
+      streams = streams + 1
+    end
+  end
+  local out = { 'REPAIRED', tostring(streams), tostring(records), tostring(unbuilt) }
+  for _, l in ipairs(lines) do out[#out + 1] = l end
+  return out
+end
+
+-- ns_ws_paths_repair(by, [key, raw, want]...) -> REPAIRED streams records
+-- unbuilt, then the refusal lines: SP.repair (ws check --repair).
+redis.register_function('ns_ws_paths_repair', function(keys, args)
+  local cands = {}
+  for i = 2, #args - 2, 3 do cands[args[i]] = { raw = args[i + 1], want = args[i + 2] } end
+  return SP.repair(cands)
+end)
+
 -- The pool's members are labels (not a table set of ids): added as they are.
 -- A card-id view goes through card_add; a refusal there leaves the view
 -- unlinked, which card_move's after-check names (DRIFT-AFTER). A stream view
@@ -607,6 +767,10 @@ local function cm_adopt(id, S, label)
     if created < 100000000000 then created = created * 1000 end
   end
   local p = { where = w, ok = ok, bench = c[3] or '', stream = c[4] or '', owner = c[5] or '' }
+  -- the adoption links the record into its stream's set: gated (#4322)
+  local perr = SP.relink(id, p.stream, w)
+  if perr then return perr end
+  local fresh = SP.fresh(id, p.stream, w)
   -- A pre-model pool scored the card by its deal priority: that score moves
   -- to the record's priority field (when it has none) and the pool is
   -- re-scored by created_at like every view.
@@ -618,6 +782,7 @@ local function cm_adopt(id, S, label)
   if w ~= 'waiting' then redis.call('SREM', 's:' .. S .. ':waiting', label) end
   redis.call('SADD', cm_idx(S, c[6]), label)
   redis.call('HSET', id, 'created_at', string.format('%.0f', created), 'where', w, 'where_ok', ok)
+  if fresh then SP.linked(id, p.stream, w) end
   return nil
 end
 
@@ -637,6 +802,9 @@ local function card_move(id, to, o)
   local fields = o.fields or {}
   for i = 1, #fields, 2 do
     if CM_POINTER[fields[i]] then return 'FIELD ' .. fields[i] .. ' is the pointer' end
+    -- no move changes a record's paths past the gate (#4322)
+    local ferr = SP.field(fields[i], o.result)
+    if ferr then return ferr end
   end
   local cur = cm_read(id)
   if not cur then return 'NOCARD ' .. id end
@@ -886,8 +1054,14 @@ local function card_fsck(S, write)
             if not cm_has(e) then
               note('unlinked ' .. e.k .. ' ' .. e.m)
               if write then
-                -- a link the add refused is a line, never counted fixed
-                local err = cm_add(e, c.created)
+                -- a link the add refused is a line, never counted fixed;
+                -- a stream view is gated first (#4322)
+                local err
+                if e.s then err = SP.relink(id, c.stream, w) end
+                if not err then
+                  err = cm_add(e, c.created)
+                  if not err and e.s then SP.linked(id, c.stream, w) end
+                end
                 if err then note('repair refused ' .. err) else fixed = fixed + 1 end
               end
             elseif e.t ~= 's' and tonumber(redis.call('ZSCORE', e.k, e.m)) ~= c.created then
@@ -1258,7 +1432,6 @@ NS.card = { move = card_move, create = card_create, purge = card_purge, add = ca
 -- A Redis Function cannot call another, so later files reach it as NS.task:
 --   NS.task.move(id, to, o)          -> nil, info | refusal
 --   NS.task.create(id, fields, o)    -> nil, info | refusal
---   NS.task.place(id, where, ok, o)  -> placed where | nil, why (migrate only)
 -- o: by, why, ok (ok|fail entering done), friend, stream, sha (landed),
 -- sprint (the legacy idx sets' sprint when the record names none), front
 -- ('1' requeues on q:<f>:front), as (a take: the friend taking), state (the
@@ -1303,8 +1476,6 @@ local TK = {
   LOG_MAX = '200000',
   -- a take's lease: three missed 60 s beats
   LEASE = 180000,
-  -- task migrate: a working task with no beat in this long goes back to ready
-  STALE = 600000,
 }
 
 function TK.str(v)
@@ -1778,6 +1949,9 @@ function TK.move(id, to, o)
   local fields = o.fields or {}
   for i = 1, #fields, 2 do
     if TK.POINTER[fields[i]] then return 'FIELD ' .. fields[i] .. ' is the pointer' end
+    -- no move changes a record's paths past the gate (#4322)
+    local ferr = SP.field(fields[i], o.result)
+    if ferr then return ferr end
   end
   local cur = TK.read(id)
   if not cur then return 'NOTASK task:' .. id end
@@ -2103,9 +2277,15 @@ function TK.adopt(id, p, o, dry)
       end
     end
   end
+  -- the adoption links the record into its stream's set: gated (#4322),
+  -- in a dry check too
+  local perr = SP.relink(id, p.stream, w)
+  if perr then return perr end
   if dry then return nil, w, ok end
+  local fresh = SP.fresh(id, p.stream, w)
   local created = p.created or cm_now()
   for _, k in ipairs(TK.views(q)) do cm_zadd(k, 'NX', created, id) end
+  if fresh then SP.linked(id, p.stream, w) end
   TK.register(p.stream)
   redis.call('HSET', 'task:' .. id, 'where', w, 'where_ok', ok, 'stream', p.stream, 'friend', p.friend,
     'owner', p.friend, 'created_at', string.format('%.0f', created))
@@ -2130,124 +2310,6 @@ function TK.last_beat(p)
   return last
 end
 
--- TK.place(id, where, ok, o): task migrate's writer, once: the record at
--- where/ok (nil where: TK.derive), o.stream when the record names none; the
--- id leaves every other set of every stream in ws:names and every friend in
--- friends, joins its views, and the legacy shapes follow. Returns the where
--- placed, or nil and why it was skipped.
-function TK.place(id, where, ok, o)
-  o = o or {}
-  if TK.card_id(id) then return nil, 'card' end
-  local p = TK.read(id)
-  if not p then return nil, 'norecord' end
-  if p.kind == '' and p.title == '' and p.state == '' and p.ref == '' and not p.placed then return nil, 'notatask' end
-  if p.stream == '' and TK.str(o.stream) ~= '' then p.stream = o.stream end
-  if not TK.valid_stream(p.stream) then return nil, 'badstream' end
-  if not p.placed then TK.holder(id, p, o) end
-  if not where or where == '' then
-    local w, k = TK.derive(id, { placed = false, stream = p.stream, state = p.state, cancelled = p.cancelled,
-      friend = p.friend, sprint = TK.sprint(p, o), where = '' })
-    if not w then
-      -- in two sets: the furthest along the graph wins
-      local rank = { parked = 1, waiting = 1, ready = 2, working = 3, merging = 4, done = 5, landed = 6 }
-      w, k = nil, '-'
-      for _, x in ipairs(TK.WHERE) do
-        if p.stream ~= '' and redis.call('ZSCORE', 'ws:' .. p.stream .. ':' .. x, id) and
-            (not w or rank[x] > rank[w]) then
-          w = x
-        end
-      end
-      if w == 'done' then k = 'ok' end
-      if w == 'landed' then k = 'ok' end
-    end
-    if p.placed and p.where ~= '' then w, k = p.where, p.ok end
-    where, ok = w or '', k
-  end
-  if where ~= '' and not TK.IS[where] then return nil, 'where-' .. where end
-  local now = cm_now()
-  if where == 'working' and now - TK.last_beat(p) > TK.STALE then
-    where = 'ready'
-    o.why = 'lease lapsed (migrate: no beat in 10 min)'
-    -- a sprint store claim's old token is fenced: its done refuses FENCED
-    if p.token ~= '' and p.token ~= '0' and p.token ~= 'fenced' then
-      redis.call('HSET', 'task:' .. id, 'token', 'fenced')
-    end
-  end
-  if where == 'landed' then ok = 'ok' end
-  if where == 'done' and ok ~= 'fail' then ok = 'ok' end
-  if where ~= 'done' and where ~= 'landed' then ok = '-' end
-  local created = p.created or cm_now()
-  local target = {}
-  for _, k in ipairs(TK.views({ where = where, stream = p.stream, friend = p.friend })) do target[k] = true end
-  local streams = redis.call('SMEMBERS', 'ws:names')
-  streams[#streams + 1] = p.stream
-  local friends = redis.call('SMEMBERS', 'friends')
-  friends[#friends + 1] = p.friend
-  if p.owner ~= '' then friends[#friends + 1] = p.owner end
-  for _, w in ipairs(TK.WHERE) do
-    for _, s in ipairs(streams) do
-      local k = 'ws:' .. s .. ':' .. w
-      if s ~= '' and not target[k] then redis.call('ZREM', k, id) end
-    end
-    for _, f in ipairs(friends) do
-      local k = 'friend:' .. f .. ':cards:' .. w
-      if f ~= '' and not target[k] then redis.call('ZREM', k, id) end
-    end
-  end
-  for k in pairs(target) do cm_zadd(k, created, id) end
-  TK.register(p.stream)
-  local at = cm_now()
-  local S = TK.sprint(p, o)
-  if S ~= '' then
-    -- out of every ready queue of its sprint; TK.legacy puts it back in one
-    redis.call('ZREM', 's:' .. S .. ':ready', id)
-    for _, f in ipairs(friends) do
-      if f ~= '' then redis.call('ZREM', 's:' .. S .. ':open:' .. f, id) end
-    end
-  end
-  local cur = { where = '', friend = p.friend, queue = p.queue, xid = p.xid }
-  if p.placed then cur.where = p.where end
-  local lh, clear = TK.legacy(id, S, cur, { where = where, friend = p.friend }, p.front, at, p.priority)
-  -- a fine state that names this where stays (claimed, cancelled, ...)
-  local state = TK.STATE[where] or ''
-  if TK.WHERE_OF[p.state] == where and not (where == 'done' and (p.state == 'cancelled') ~= (ok == 'fail')) then
-    state = p.state
-  elseif where == 'done' and ok == 'fail' and p.state == 'cancelled' then
-    state = 'cancelled'
-  end
-  if S ~= '' and state ~= p.state then
-    if p.state ~= '' then redis.call('SREM', 's:' .. S .. ':idx:task:' .. p.state, id) end
-  end
-  if S ~= '' and state ~= '' then redis.call('SADD', 's:' .. S .. ':idx:task:' .. state, id) end
-  local h = { 'task:' .. id, 'where', where, 'where_ok', ok, 'where_at', tostring(at), 'state', state,
-    'stream', p.stream, 'friend', p.friend, 'owner', p.friend, 'created_at', string.format('%.0f', created),
-    'migrated_at', tostring(at) }
-  if p.sprint == '' and S ~= '' then
-    h[#h + 1] = 'sprint'
-    h[#h + 1] = S
-  end
-  if where == 'done' and ok == 'fail' then
-    h[#h + 1] = 'cancelled'
-    h[#h + 1] = '1'
-  end
-  if TK.str(o.why) ~= '' then
-    h[#h + 1] = 'why'
-    h[#h + 1] = o.why
-  end
-  if where == 'working' and not tonumber(p.lease_until) then
-    h[#h + 1] = 'lease_until'
-    h[#h + 1] = tostring(TK.last_beat(p) + TK.LEASE)
-  end
-  for _, v in ipairs(lh) do h[#h + 1] = v end
-  redis.call('HSET', unpack(h))
-  if clear then redis.call('HDEL', 'task:' .. id, 'queue', 'xid') end
-  if where ~= 'working' then redis.call('HDEL', 'task:' .. id, 'lease_until') end
-  if cur.where ~= where then
-    redis.call('XADD', 'ws:log', 'MAXLEN', '~', TK.LOG_MAX, '*', 'id', id, 'stream', p.stream, 'from', cur.where,
-      'to', where, 'by', TK.str(o.by), 'why', TK.str(o.why) ~= '' and o.why or 'migrate', 'at', tostring(at))
-  end
-  return where
-end
 
 -- TK.fsck(S): both directions, read-only. Every id in a ws:<stream>:<where>
 -- set (streams in ws:names and ws:order) or a friend:<f>:cards:<where> set
@@ -2517,7 +2579,16 @@ function TK.reap(f, by, now)
       local why, p = TK.stray(id, f)
       if why then
         if p and p.placed and TK.IS[p.where] then
-          for _, k in ipairs(TK.views(p)) do cm_zadd(k, 'NX', p.created or cm_now(), id) end
+          -- relinking its stream's set is gated (#4322): a refused relink
+          -- leaves the record's views as they are, named in the receipt
+          local perr = SP.relink(id, p.stream, p.where)
+          if perr then
+            why = why .. '; views not relinked: ' .. perr
+          else
+            local fresh = SP.fresh(id, p.stream, p.where)
+            for _, k in ipairs(TK.views(p)) do cm_zadd(k, 'NX', p.created or cm_now(), id) end
+            if fresh then SP.linked(id, p.stream, p.where) end
+          end
         end
         redis.call('ZREM', fk, id)
         redis.call('XADD', 'ws:log', 'MAXLEN', '~', TK.LOG_MAX, '*', 'id', id, 'stream', p and p.stream or '',
@@ -3381,7 +3452,9 @@ function TM.finish(id, o)
   end
   -- the primary's copy pointer clears when it names this copy; a live fix
   -- copy stays named while a read of the same head ends
-  local mo = { by = o.by, why = why, ok = pok, fields = pf, dry = o.dry, review = review ~= nil }
+  -- result: a card end's result fields ride the move, paths among them
+  -- (the paths the work touched; SP.field, #4322)
+  local mo = { by = o.by, why = why, ok = pok, fields = pf, dry = o.dry, review = review ~= nil, result = true }
   if p.copy == id or not stay then mo.copy = '' end
   if sha ~= '' then mo.sha = sha end
   if score then mo.reads_why = 'superseded: ' .. id .. ' read ' .. score .. '/10' end
@@ -4475,7 +4548,7 @@ redis.register_function('ns_cm_reads', function(keys, args) return TM.ensure(TK.
 -- finish: NS.tm.score(repo, n, line, by) -> {moved, cut, notes}.
 NS.tm = { score = TM.score }
 
-NS.task = { move = TK.move, create = TK.create, place = TK.place, read = TK.read, stream_of = TK.stream_of,
+NS.task = { move = TK.move, create = TK.create, read = TK.read, stream_of = TK.stream_of,
   ms = TK.ms, where = TK.IS, where_of = TK.WHERE_OF, unread = TK.unread,
   -- the stream sentinel (#4318): its id for a stream, and whether an id is one
   sentinel_id = TK.sentinel_id, is_sentinel = TK.is_sentinel, slug = TK.slug, slug_clash = TK.slug_clash,

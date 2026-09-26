@@ -295,6 +295,7 @@ func TestCardCutFromDryRun(t *testing.T) {
 	}
 	want := "CARD CUT DRY row=2 id=first-id stream=s who=any route=friend est=30 depends=mas-bandwidth/nova-tools#12 title=first\n" +
 		"CARD CUT DRY row=1 id=second stream=s who=\"only rowan,stella\" route=flash est=\"45 min\" depends=first-id title=second\n" +
+		"CARD CUT DRY PATHS unchecked rows=2 why=\"no --redis: the paths gate reads the store\" remedy=\"pass --redis <addr>\"\n" +
 		"CARD CUT FROM file=cards.tsv rows=2 cut=0 already=0 refused=0 filed=0 reused=0 github=off ms=0\n"
 	if out != want {
 		t.Fatalf("dry run:\n%s\nwant:\n%s", out, want)

@@ -68,3 +68,21 @@ func TestCardCutFromStreamsPathsDisjoint(t *testing.T) {
 		t.Fatalf("in-file overlap: exit %d out %q; want first line %q", code, out, want)
 	}
 }
+
+// TestCardCutFromDryRunSaysPathsUnchecked is the #4405 fix round's item 5
+// (#4322): a --dry-run with no store checks no paths, and its receipt says
+// so with the remedy, beside the rows and the summary.
+func TestCardCutFromDryRunSaysPathsUnchecked(t *testing.T) {
+	t.Parallel()
+	d := cutDeps(&fakeCutForge{}, &fakeCutStore{})
+	d.StreamPaths = nil
+	code, out := runCutFrom(cutFromOpts{DryRun: true, Text: []byte(pathsRows([3]string{"u1", "fleet", "internal/nsprint/ws/paths.go"}))}, d)
+	want := `CARD CUT DRY PATHS unchecked rows=1 why="no --redis: the paths gate reads the store" remedy="pass --redis <addr>"` + "\n"
+	if code != 0 || !strings.Contains(out, want) || !strings.Contains(out, "CARD CUT DRY row=1 id=u1 ") {
+		t.Fatalf("dry run with no store: exit %d out %q; want the line %q", code, out, want)
+	}
+	d = cutDeps(&fakeCutForge{}, &fakeCutStore{paths: ws.StreamPaths{}})
+	if code, out := runCutFrom(cutFromOpts{DryRun: true, Text: []byte(pathsRows([3]string{"u1", "fleet", "internal/nsprint/ws/paths.go"}))}, d); code != 0 || strings.Contains(out, "unchecked") {
+		t.Fatalf("dry run with a store: exit %d out %q; want no unchecked line", code, out)
+	}
+}

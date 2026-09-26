@@ -139,15 +139,35 @@ func TestCardPushStreamsPathsDisjoint(t *testing.T) {
 	if strings.Join(lines, "\n") != "PATHS OVERLAP stream=ci other=old paths=cmd/nova-sprint/ci.go" {
 		t.Fatalf("overlaps = %q", lines)
 	}
-	streams, records, err := ws.RepairPaths(ctx, client, live, stored, cards)
-	if err != nil || streams != 4 || records != 2 {
-		t.Fatalf("repair: streams %d records %d err %v; want 4 and 2 (sp-c's and sp-u's stream_paths)", streams, records, err)
+	// The repair backfills in one call, gated (#4322): sp-c's PATHS join ci;
+	// sp-u's overlap ci's, so it keeps none and its stream old is left
+	// unbuilt (its paths unknown to the gate), named with its remedy.
+	r, err := ws.RepairPaths(ctx, client, cards)
+	if err != nil || r.Streams != 3 || r.Records != 1 || r.Unbuilt != 1 ||
+		strings.Join(r.Refused, "|") != "PATHS overlap paths=cmd/nova-sprint/ci.go stream=ci id=sp-u in=old" {
+		t.Fatalf("repair: %+v %v; want 3 streams (ci docs work), 1 record (sp-c), old unbuilt by sp-u's overlap", r, err)
 	}
 	if got := streamPaths(t, ctx, client, "work"); got != "internal/nsprint/ws/check.go" {
 		t.Fatalf("repaired ws:paths work = %q", got)
 	}
 	if client.HGet(ctx, keyCard("sp-c"), ws.PathsField).Val() != "cmd/nova-sprint/ci.go" {
 		t.Fatal("repair did not restore sp-c's stream_paths")
+	}
+	if client.HExists(ctx, "task:sp-u", ws.PathsField).Val() || client.HExists(ctx, ws.PathsKey, "old").Val() {
+		t.Fatal("the refused backfill wrote sp-u's stream_paths or built old")
+	}
+	_, err = taskcard.Push(ctx, client, taskcard.PushRequest{ID: "sp-v", Stream: "new", Title: "v", By: "test",
+		Fields: []string{"paths", "elsewhere/v.go"}})
+	if why, _ := taskcard.IsRefused(err); why != "PATHS unbuilt stream=old" {
+		t.Fatalf("push while old is unbuilt: %v", err)
+	}
+	// the remedy: old parked releases its paths; the repair is clean
+	if _, err := ws.ParkStream(ctx, client, "old", "test", "park"); err != nil {
+		t.Fatal(err)
+	}
+	live, stored, cards, _ = ws.LivePaths(ctx, client)
+	if r, err := ws.RepairPaths(ctx, client, cards); err != nil || len(r.Refused) != 0 || r.Unbuilt != 0 {
+		t.Fatalf("repair after old parked: %+v %v", r, err)
 	}
 	live, stored, _, _ = ws.LivePaths(ctx, client)
 	if s := ws.Stale(live, stored); len(s) != 0 {

@@ -159,7 +159,7 @@ func TestPathsGateRefusesUnbuilt(t *testing.T) {
 	if got := strings.Join(ws.Stale(live, stored), ","); got != "bare,work" {
 		t.Fatalf("stale = %q; want bare,work (bare holds a path-less live task and no field)", got)
 	}
-	if _, _, err := ws.RepairPaths(ctx, client, live, stored, cards); err != nil {
+	if _, err := ws.RepairPaths(ctx, client, cards); err != nil {
 		t.Fatal(err)
 	}
 	if v, err := client.HGet(ctx, ws.PathsKey, "bare").Result(); err != nil || v != "" {

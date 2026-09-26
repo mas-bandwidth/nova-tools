@@ -130,6 +130,11 @@ type cutFromDeps struct {
 	// dry run with no --redis) gates nothing. The push's own FCALL gates
 	// each row again, atomically (SP.gate, #4322).
 	StreamPaths func(ctx context.Context) (ws.GateView, error)
+	// StoredPaths reads the PATHS of the records a rerun found pushed
+	// (EXISTS), id -> paths; a row whose PATHS differ is a CONFLICT, never
+	// to=already (#4322: a card's PATHS are fixed at its push). nil checks
+	// nothing.
+	StoredPaths func(ctx context.Context, ids []string) (map[string]string, error)
 	// Plan reads the parent (--parent); Bind makes it a plan after the push.
 	Plan func(ctx context.Context, id string) (planFacts, error)
 	Bind func(ctx context.Context, parent string, children []string, stitch, by string) (taskcard.Result, error)
@@ -781,6 +786,11 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 		if o.Parent != "" {
 			fmt.Fprintf(out, "CARD CUT DRY PLAN parent=%s children=%d stitch=%s parent_to=waiting depends=%s\n", o.Parent, children, taskcard.StitchID(o.Parent), taskcard.StitchID(o.Parent))
 		}
+		if d.StreamPaths == nil {
+			// no store: the paths gate (#4322) read nothing, and says so
+			fmt.Fprintf(out, "CARD CUT DRY PATHS unchecked rows=%d why=%s remedy=%s\n", len(rows),
+				cutField("no --redis: the paths gate reads the store"), strconv.Quote("pass --redis <addr>"))
+		}
 		summary(len(rows), 0)
 		return 0
 	}
@@ -887,12 +897,14 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 			outcomes = nil
 		}
 	}
+	var rerun []*cutRow
 	for i, oc := range outcomes {
 		r := push[i]
 		if oc.Err != nil {
 			if why, ok := taskcard.IsRefused(oc.Err); ok {
 				if (r.fromLedger || facts.Children[r.id]) && strings.HasPrefix(why, "EXISTS ") {
 					r.already = true // an earlier run of this file cut it (or the plan lists it)
+					rerun = append(rerun, r)
 					continue
 				}
 				r.why = "push refused: " + why
@@ -906,6 +918,7 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 			r.why = "push placed it in " + oc.Result.Where + ", not waiting"
 		}
 	}
+	cutRerunPaths(ctx, d, rerun)
 	var childIDs []string
 	stitchOK := false
 	for _, r := range order {
@@ -950,6 +963,41 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 		return 1
 	}
 	return 0
+}
+
+// cutRerunPaths checks the rows a rerun found pushed (to=already): a row
+// whose PATHS are not its record's is a CONFLICT naming both, never a
+// quiet already (#4322, the cold read of #4405: a rerun of card cut
+// --parent with changed PATHS printed to=already and kept the old ones).
+func cutRerunPaths(ctx context.Context, d cutFromDeps, rerun []*cutRow) {
+	if len(rerun) == 0 || d.StoredPaths == nil {
+		return
+	}
+	ids := make([]string, len(rerun))
+	for i, r := range rerun {
+		ids[i] = r.id
+	}
+	got, err := d.StoredPaths(ctx, ids)
+	for _, r := range rerun {
+		if err != nil {
+			r.already, r.why = false, "read back the pushed card's PATHS: "+err.Error()
+			continue
+		}
+		old, now := ws.SplitPaths(got[r.id]), ws.SplitPaths(r.paths)
+		if ws.SamePaths(old, now) {
+			continue
+		}
+		r.already = false
+		r.why = fmt.Sprintf("CONFLICT task:%s paths=%s new=%s: a card's PATHS are fixed at its push; cut the change as another card (its own id), or cancel task:%s and rerun",
+			r.id, cutPathsField(old), cutPathsField(now), r.id)
+	}
+}
+
+func cutPathsField(p []string) string {
+	if len(p) == 0 {
+		return "-"
+	}
+	return ws.JoinPaths(p)
 }
 
 // cmdCardCutFrom wires card cut --from: the file, the task store (opened
@@ -1035,6 +1083,9 @@ func cmdCardCutFrom(ctx context.Context, o cutFromOpts, addr string, stdout, std
 		d.Plan = func(ctx context.Context, id string) (planFacts, error) {
 			return readPlanFacts(ctx, st.Client(), id)
 		}
+		d.StoredPaths = func(ctx context.Context, ids []string) (map[string]string, error) {
+			return readStoredPaths(ctx, st.Client(), ids)
+		}
 		d.Bind = func(ctx context.Context, parent string, children []string, stitch, by string) (taskcard.Result, error) {
 			return taskcard.BindPlan(ctx, st.Client(), parent, children, stitch, by)
 		}
@@ -1050,6 +1101,23 @@ func cmdCardCutFrom(ctx context.Context, o cutFromOpts, addr string, stdout, std
 		}
 	}
 	return cardCutFrom(ctx, o, d, stdout)
+}
+
+// readStoredPaths reads each task:<id>'s PATHS in one pipeline.
+func readStoredPaths(ctx context.Context, c redis.Cmdable, ids []string) (map[string]string, error) {
+	pipe := c.Pipeline()
+	cmds := make([]*redis.StringCmd, len(ids))
+	for i, id := range ids {
+		cmds[i] = pipe.HGet(ctx, taskcard.Key(id), "paths")
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, err
+	}
+	out := make(map[string]string, len(ids))
+	for i, id := range ids {
+		out[id] = cmds[i].Val()
+	}
+	return out, nil
 }
 
 // readPlanFacts reads --parent's record and, when it has a stitch, where the

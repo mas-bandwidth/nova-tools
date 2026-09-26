@@ -166,11 +166,11 @@ func TestCardCutFromPathsGateOnAStore(t *testing.T) {
 	if code != 1 || !strings.HasPrefix(out, want) {
 		t.Fatalf("dry run unbuilt: exit %d out %q; want first line %q", code, out, want)
 	}
-	live, stored, cards, err := ws.LivePaths(ctx, client)
+	_, _, cards, err := ws.LivePaths(ctx, client)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := ws.RepairPaths(ctx, client, live, stored, cards); err != nil {
+	if _, err := ws.RepairPaths(ctx, client, cards); err != nil {
 		t.Fatal(err)
 	}
 

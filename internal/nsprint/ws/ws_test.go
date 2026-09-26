@@ -14,7 +14,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// legacy writes the friend-queue shape ns_ws_migrate reads: task:<id> hashes
+// legacy writes the friend-queue shape TK.adopt reads: task:<id> hashes
 // with owner and a friend-queue state, the stream in a `stream` field (even
 // ids) or a "STREAM: <s> |" title (odd ids), every fifth id with neither, the
 // owner's idx sets for sprint S, and q:waiting / q:blocked.
