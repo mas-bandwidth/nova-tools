@@ -53,7 +53,7 @@ func TestDigestFlagsRefuseBeforeReading(t *testing.T) {
 		{[]string{"--redis", addr, "--since", "2026-09-23T00:00:00-04:00"}, "wants --since <RFC3339 UTC>"},
 		{[]string{"--redis", addr, "--since", digestSince, "--until", "soon"}, "wants --until <RFC3339 UTC>"},
 		{[]string{"--redis", addr, "--since", digestSince, "--until", digestSince}, "since must be before until"},
-		{[]string{"--redis", addr, "--since", digestSince, "--repo", "nova-tools"}, `invalid value "nova-tools" for flag -repo: --repo "nova-tools" is not <owner>/<name>`},
+		{[]string{"--redis", addr, "--since", digestSince, "--repo", "nova-tools"}, `--repo "nova-tools" is not <owner>/<name>`},
 	} {
 		code, stdout, stderr := runSprint(append([]string{"digest"}, tc.args...)...)
 		if code != 2 || stdout != "" || stderr != pre+tc.want+post {
