@@ -36,7 +36,7 @@ func TestSprintClearZerosBothTables(t *testing.T) {
 	}
 	cp := filepath.Join(t.TempDir(), "clear.tsv")
 	code, stdout, stderr := runSprint("sprint", "clear", "--redis", addr, "--why", "fresh run", "--force", "--by", "rowan", "--checkpoint", cp)
-	if code != 0 || !strings.HasPrefix(stdout, "CLEARED streams=") || !strings.Contains(stdout, " epoch=1 by=rowan ms=") || !strings.Contains(stdout, "\nPITSTOP kept sprint=fix\n") {
+	if code != 0 || !strings.HasPrefix(stdout, "CLEARED streams=") || !strings.Contains(stdout, " epoch=1 parked_kept=0 by=rowan ms=") || !strings.Contains(stdout, "\nPITSTOP kept sprint=fix\n") {
 		t.Fatalf("clear: exit %d\n%s%s", code, stdout, stderr)
 	}
 	if v := client.HGet(ctx, ws.EpochKey, ws.EpochField).Val(); v != "1" {

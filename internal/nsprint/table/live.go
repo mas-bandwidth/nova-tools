@@ -1,15 +1,23 @@
 // live.go: the live layout of nova-sprint table (#2674), a Go port of the
-// bash of record rowan-tools bin/sprint-table-redis. It reads ONLY the keys
-// that script reads today and prints its layout byte for byte:
+// bash of record rowan-tools bin/sprint-table-redis. It reads the keys that
+// script reads and prints its layout byte for byte, but for one line:
 //
-//	SPRINT TABLE / sprint: x/y z% -> eta / blank / the bench block / two
-//	blanks / the friend block.
+//	SPRINT TABLE / the one count / blank / the bench block / two blanks /
+//	the friend block.
+//
+// The progress line is the one count (ws.SprintCounts.Header, nova-tools
+// #4411): the numbers sprint status, ws counts and the sprint table print,
+// the streams' sentinels never counted. The bash printed sprint-xy's
+// sprint:<S>:xy (or SPRINT-XY.txt, and a stale line when both were
+// missing); that key is no longer read, and MaskXY is the one documented
+// difference the parity control and --compare mask on both sides.
 //
 // Keys (all read-only; each has one writer elsewhere):
 //
 //	friend:<f>            HMGET at up ready working done   (friend-row)
 //	friend:<f>:down       GET, a set value prints "down"   (out-of-credits)
-//	sprint:<S>:xy         the sprint line                  (sprint-xy)
+//	ws:order, ws:<s>:*,   the one count (ws.CountsReader): the memberships ride
+//	ws:log, sprint:order  the SCAN walk's first round trip, every count the pipeline
 //	s:<S>:pitstop         HGETALL, the pitstop verb's hash: the title reads
 //	                      *** PIT STOP *** <why> since <at> (#3423, #3887)
 //	bench:*               SCAN COUNT 1000, then HGETALL    (bench-row, card-dealer)
@@ -35,11 +43,9 @@
 package table
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -54,8 +60,7 @@ import (
 // LiveConfig names what the bash hard-codes; nothing here is compiled in.
 type LiveConfig struct {
 	Friends  []string      // the roster, in display order
-	Sprint   string        // sprint:<Sprint>:xy and the pit stop (pitstop.Key)
-	XYFile   string        // SPRINT-XY.txt fallback while the xy key is missing (until #2679)
+	Sprint   string        // the pit stop (pitstop.Key) and the one count's sprint; "" the open one
 	RowStale time.Duration // a friend row older than this prints "stale" (bash ROW_STALE_S=10)
 	// BenchStale: a host row whose own at is older than this prints "stale";
 	// zero is 2 x BenchBeatInterval (#3372). The bash of record used 60 s.
@@ -97,7 +102,9 @@ type LiveSnapshot struct {
 	// (nova-tools#4238); a friend row stamped with another epoch shows zero.
 	Epoch   uint64
 	Friends []FriendRow
-	XY      string // "" when the key is missing
+	// Counts is the one count (ws.Counts) the progress line prints; At zero
+	// is never read.
+	Counts ws.SprintCounts
 	// Pitstop is s:<S>:pitstop, the one key `nova-sprint pitstop set|clear`
 	// writes (#3887): while it exists the title says PIT STOP with its why
 	// and at. A key of another type there (the 09-23 string) still stops the
@@ -111,35 +118,39 @@ type LiveSnapshot struct {
 	// says whether the line prints.
 	Pool        string
 	PoolPresent bool
-	// XYFileLine / XYFileMod are the fallback file, read only when XY == "".
-	XYFileLine string
-	XYFileMod  time.Time
-	XYFileOK   bool
-	// Stale is set by the loop when this tick's read failed and the friend,
-	// xy and landed values are the last good read (LastGood is when).
+	// Stale is set by the loop when this tick's read failed and the friend
+	// rows and the counts are the last good read (LastGood is when).
 	Stale    bool
 	LastGood time.Time
 }
 
-// ReadLive reads the live keyspace: the SCAN cursor walk for bench:*, then
-// one pipeline for every value.
+// ReadLive reads the live keyspace: the SCAN cursor walk for bench:* (its
+// first page pipelined with the one count's memberships), then one pipeline
+// for every value, the one count's cells among them: two round trips while
+// ws:order holds still between them.
 func ReadLive(ctx context.Context, client redis.UniversalClient, cfg LiveConfig) (*LiveSnapshot, error) {
+	counts := &ws.CountsReader{Sprint: cfg.Sprint}
 	var keys []string
 	var cursor uint64
 	// THE EPOCH (nova-tools#4238): every card cell below is keyed by it, and
 	// a friend row's counts show only when stamped with it. It rides the
-	// first SCAN page's round trip, so the read stays the SCAN walk plus
-	// one pipeline.
+	// first SCAN page's round trip with the one count's memberships (#4411),
+	// so the read stays the SCAN walk plus one pipeline.
 	var epoch uint64
 	for first := true; ; first = false {
-		var scan *redis.ScanCmd
-		var epochCmd *redis.StringCmd
+		var page []string
+		var next uint64
+		var err error
 		if first {
-			p := client.Pipeline()
-			scan = p.Scan(ctx, cursor, "bench:*", 1000)
-			epochCmd = p.HGet(ctx, ws.EpochKey, ws.EpochField)
-			if _, err := p.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-				return nil, fmt.Errorf("scan bench:*: %w", err)
+			pipe := client.Pipeline()
+			scan := pipe.Scan(ctx, cursor, "bench:*", 1000)
+			order, sprints := counts.QueueMembers(ctx, pipe)
+			epochCmd := pipe.HGet(ctx, ws.EpochKey, ws.EpochField)
+			if _, xerr := pipe.Exec(ctx); xerr != nil && !errors.Is(xerr, redis.Nil) && !isReplyError(xerr) {
+				return nil, fmt.Errorf("scan bench:*: %w", xerr)
+			}
+			if err := counts.Prime(order, sprints); err != nil {
+				return nil, err
 			}
 			v, err := epochCmd.Result()
 			if err != nil && !errors.Is(err, redis.Nil) {
@@ -148,10 +159,10 @@ func ReadLive(ctx context.Context, client redis.UniversalClient, cfg LiveConfig)
 			if epoch, err = ws.ParseEpoch(v); err != nil {
 				return nil, err
 			}
+			page, next, err = scan.Result()
 		} else {
-			scan = client.Scan(ctx, cursor, "bench:*", 1000)
+			page, next, err = client.Scan(ctx, cursor, "bench:*", 1000).Result()
 		}
-		page, next, err := scan.Result()
 		if err != nil {
 			return nil, fmt.Errorf("scan bench:*: %w", err)
 		}
@@ -163,6 +174,7 @@ func ReadLive(ctx context.Context, client redis.UniversalClient, cfg LiveConfig)
 	}
 	benchKeys := dedupSorted(keys)
 
+	now := time.Now()
 	type friendCmds struct {
 		row  *redis.SliceCmd
 		down *redis.StringCmd
@@ -173,17 +185,20 @@ func ReadLive(ctx context.Context, client redis.UniversalClient, cfg LiveConfig)
 		downExists *redis.IntCmd
 	}
 	var (
-		fc       []friendCmds
-		mget     *redis.SliceCmd
-		pit      *redis.MapStringStringCmd
-		poolView *redis.IntCmd
-		roster   *redis.IntCmd
-		hashes   []*redis.MapStringStringCmd
-		cards    [][]*redis.IntCmd
-		nomirror []*redis.StringSliceCmd
+		countsCmd *ws.CountsCmd
+		fc        []friendCmds
+		pit       *redis.MapStringStringCmd
+		poolView  *redis.IntCmd
+		roster    *redis.IntCmd
+		hashes    []*redis.MapStringStringCmd
+		cards     [][]*redis.IntCmd
+		nomirror  []*redis.StringSliceCmd
 	)
 	for try := 1; ; try++ {
 		pipe := client.Pipeline()
+		// the one count's cells, keyed by the same epoch as every cell here
+		counts.PrimeEpoch(epoch)
+		countsCmd = counts.Queue(ctx, pipe, now)
 		fc = make([]friendCmds, len(cfg.Friends))
 		for i, name := range cfg.Friends {
 			fc[i].row = pipe.HMGet(ctx, "friend:"+name, "at", "up", "ready", "working", "done", "epoch")
@@ -191,7 +206,6 @@ func ReadLive(ctx context.Context, client redis.UniversalClient, cfg LiveConfig)
 			fc[i].downReason = pipe.HGet(ctx, "friend:"+name+":down", "reason")
 			fc[i].downExists = pipe.Exists(ctx, "friend:"+name+":down")
 		}
-		mget = pipe.MGet(ctx, "sprint:"+cfg.Sprint+":xy")
 		// The pit stop is the verb's hash, read in the same pipeline (#3887).
 		pit = nil
 		if cfg.Sprint != "" {
@@ -226,25 +240,32 @@ func ReadLive(ctx context.Context, client redis.UniversalClient, cfg LiveConfig)
 		if err != nil && !errors.Is(err, redis.Nil) {
 			return nil, fmt.Errorf("hget %s %s: %w", ws.EpochKey, ws.EpochField, err)
 		}
-		now, err := ws.ParseEpoch(v)
+		gotEpoch, err := ws.ParseEpoch(v)
 		if err != nil {
 			return nil, err
 		}
-		if now == epoch {
+		if gotEpoch == epoch {
 			break
 		}
 		if try == liveEpochReads {
 			return nil, fmt.Errorf("%s moved on %d reads in a row", ws.EpochKey, liveEpochReads)
 		}
-		epoch = now
+		epoch = gotEpoch
 	}
-	// The friend block is all-or-nothing, as in the bash: a failed MGET
-	// means the connection is not answering.
-	vals, err := mget.Result()
-	if err != nil || len(vals) != 1 {
-		return nil, fmt.Errorf("mget xy: %v", err)
+	// The friend block is all-or-nothing, as in the bash: a failed ws:order
+	// read (the one count's) means the connection is not answering.
+	got, changed, err := countsCmd.Result()
+	if err != nil {
+		return nil, err
 	}
-	snap := &LiveSnapshot{Config: cfg, Epoch: epoch, XY: pipeValue(vals[0]), Pitstop: readPitstop(cfg.Sprint, pit)}
+	if changed {
+		// ws:order or sprint:order moved since the SCAN trip: read the
+		// counts again (a third round trip only on that race)
+		if got, err = counts.Read(ctx, client, now); err != nil {
+			return nil, err
+		}
+	}
+	snap := &LiveSnapshot{Config: cfg, Epoch: epoch, Counts: got, Pitstop: readPitstop(cfg.Sprint, pit)}
 	for i, name := range cfg.Friends {
 		row := FriendRow{Name: name}
 		if got, err := fc[i].row.Result(); err == nil && len(got) == 6 {
@@ -286,9 +307,6 @@ func ReadLive(ctx context.Context, client redis.UniversalClient, cfg LiveConfig)
 		snap.Benches = append(snap.Benches, BenchRow{Key: strings.TrimPrefix(key, "bench:"), Fields: fields, NoMirror: noMirrorCell(nomirror[i])})
 	}
 	poolFromView(snap, poolView, roster)
-	if snap.XY == "" && cfg.XYFile != "" {
-		snap.XYFileLine, snap.XYFileMod, snap.XYFileOK = readXYFile(cfg.XYFile)
-	}
 	return snap, nil
 }
 
@@ -417,16 +435,13 @@ func (row BenchRow) noMirrorSuffix() string {
 	return " | nomirror=" + row.NoMirror
 }
 
-// FailedLive is the tick whose read failed: the friend, xy and pit stop values
+// FailedLive is the tick whose read failed: the friend, counts and pit stop values
 // of last (nil when there never was a good read), no bench rows, and a stale
 // line (the bash's LAST_FROWS path).
 func FailedLive(cfg LiveConfig, last *LiveSnapshot) *LiveSnapshot {
 	snap := &LiveSnapshot{Config: cfg, Stale: true}
 	if last != nil {
-		snap.Friends, snap.XY, snap.Pitstop, snap.LastGood = last.Friends, last.XY, last.Pitstop, last.LastGood
-	}
-	if snap.XY == "" && cfg.XYFile != "" {
-		snap.XYFileLine, snap.XYFileMod, snap.XYFileOK = readXYFile(cfg.XYFile)
+		snap.Friends, snap.Counts, snap.Pitstop, snap.LastGood = last.Friends, last.Counts, last.Pitstop, last.LastGood
 	}
 	return snap
 }
@@ -443,12 +458,11 @@ func (s *LiveSnapshot) RenderLive(now time.Time) string {
 		b.WriteString("SPRINT TABLE\n")
 	}
 	b.WriteString("\n")
-	if s.XY != "" {
-		b.WriteString(strings.TrimPrefix(s.XY, "sprint: ") + "\n")
-	} else if s.XYFileOK {
-		b.WriteString(strings.TrimPrefix(s.XYFileLine, "sprint: ") + "\n")
+	// the one count (#4411); never read prints every number "?"
+	if s.Counts.At.IsZero() {
+		b.WriteString(NeverCounted + "\n")
 	} else {
-		b.WriteString("SPRINT ? (sprint-xy has not written yet)\n")
+		b.WriteString(s.Counts.Header() + "\n")
 	}
 	b.WriteString("\n")
 
@@ -514,13 +528,6 @@ func (s *LiveSnapshot) RenderLive(now time.Time) string {
 			fmt.Fprintf(&b, "stale: %ds (Redis did not answer; rows are the last good read)\n", now.Unix()-s.LastGood.Unix())
 		} else {
 			b.WriteString("stale: never read (Redis did not answer since start)\n")
-		}
-	}
-	if s.XY == "" {
-		if s.XYFileOK {
-			fmt.Fprintf(&b, "stale: %ds (xy key missing: sprint-xy has not written for >180s; the x/y above is SPRINT-XY.txt)\n", now.Unix()-s.XYFileMod.Unix())
-		} else {
-			b.WriteString("stale: xy key missing and no SPRINT-XY.txt (sprint-xy is not running)\n")
 		}
 	}
 	return b.String()
@@ -632,20 +639,6 @@ func friendState(row FriendRow, now time.Time, stale time.Duration) string {
 	return "up"
 }
 
-func readXYFile(path string) (string, time.Time, bool) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return "", time.Time{}, false
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return "", info.ModTime(), false
-	}
-	defer file.Close()
-	line, _ := bufio.NewReader(file).ReadString('\n')
-	return strings.TrimSuffix(line, "\n"), info.ModTime(), true
-}
-
 func parseUTC(s string) (time.Time, bool) {
 	t, err := time.Parse("2006-01-02T15:04:05Z", s)
 	return t, err == nil
@@ -736,4 +729,28 @@ func awkInt(v string) int64 {
 		return 0
 	}
 	return int64(f)
+}
+
+// NeverCounted is the progress line before any good read.
+const NeverCounted = "?/? done ?%, left ?, eta ?"
+
+// MaskXY is the one documented difference between the live layout and the
+// bash of record (nova-tools #4411): the bash's progress line (sprint-xy's
+// sprint:<S>:xy, or its SPRINT ? line) and its xy stale lines against the
+// one count's line. It replaces the line after the title's blank with
+// "X/Y MASKED" and drops every "stale: ... xy key missing" line, so the
+// parity control and --compare compare every other byte.
+func MaskXY(table string) string {
+	lines := strings.Split(table, "\n")
+	out := make([]string, 0, len(lines))
+	for i, l := range lines {
+		switch {
+		case i == 2 && len(lines) > 1 && lines[1] == "":
+			out = append(out, "X/Y MASKED")
+		case strings.HasPrefix(l, "stale: ") && strings.Contains(l, "xy key missing"):
+		default:
+			out = append(out, l)
+		}
+	}
+	return strings.Join(out, "\n")
 }

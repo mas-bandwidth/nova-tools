@@ -1,6 +1,7 @@
 // The sprint verb (#2939) opens a sprint from a work set, closes it, folds
 // it once closed (#2618, internal/nsprint/sprint/fold.go) and prints its
-// status as x/y z% -> eta. It registers itself through the registry
+// status from the one count (ws.Counts): <landed>/<total> done <z>%, left <l>,
+// eta <HH:MM> ET. It registers itself through the registry
 // (registry.go), so main.go is unchanged.
 package main
 
@@ -8,9 +9,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,7 +30,7 @@ import (
 func init() {
 	register(Verb{
 		Name:    "sprint",
-		Summary: "open --from a work set, close, fold (the end-of-sprint refinement, #2618), and status as x/y z% -> eta",
+		Summary: "open --from a work set, close, fold (the end-of-sprint refinement, #2618), and status as landed/total done z%, left l, eta HH:MM ET (the one count)",
 		Run:     runSprintVerb,
 	})
 }
@@ -132,6 +135,12 @@ func runSprintVerb(ctx context.Context, args []string, out, errOut io.Writer) in
 		return 0
 	default:
 		lines, err := sprint.StatusLines(ctx, st, *name, now)
+		var notOpen *sprint.StatusRefusal
+		if errors.As(err, &notOpen) {
+			// the ws index counts the open sprint only: one line, exit 1
+			fmt.Fprintln(out, notOpen.Error())
+			return 1
+		}
 		if err != nil {
 			return refuse(errOut, verb, err.Error())
 		}
@@ -398,11 +407,15 @@ func runSprintOpen(ctx context.Context, st *store.Store, name, from string, plan
 // is invisible for good; nothing is moved or deleted, and a writer still
 // holding the old epoch cannot make a cell non-zero. Cards working or
 // merging are in flight and refuse the clear without --force. The pit stop
-// is kept, never lifted: the receipt says which one it found.
+// is kept, never lifted: the receipt says which one it found. A parked card
+// is not work in flight and not landed, and a clear is not a cancel: parked
+// cards stay parked in the epoch the clear left, and the receipt names them
+// (parked_kept, sentinels aside, #4411); the new epoch counts them nowhere.
 // --checkpoint <file> writes every ws set's members (the epoch's) before
 // the INCR. Prints CLEARED streams=<n> cards=<n> copies=<n> consumers=<n>
-// epoch=<n> by=<who> ms=<n>, PITSTOP kept sprint=<S> | PITSTOP none, then
-// STREAM <name> cards=<n> per stream (what the clear made invisible).
+// epoch=<n> parked_kept=<n|?> by=<who> ms=<n>, PITSTOP kept sprint=<S> |
+// PITSTOP none, then STREAM <name> cards=<n> per stream (what the clear
+// made invisible).
 func runSprintClear(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "sprint clear"
 	fs := taskFlags(verb)
@@ -466,7 +479,16 @@ func runSprintClear(ctx context.Context, args []string, out, errOut io.Writer) i
 	if len(words) < 8 {
 		return refuse(errOut, verb, "short reply "+oneline.Escape(strings.Join(words, " ")))
 	}
-	fmt.Fprintf(out, "CLEARED streams=%s cards=%s copies=%s consumers=%s epoch=%s by=%s ms=%d\n", words[1], words[2], words[3], words[4], words[5], who, time.Since(start).Milliseconds())
+	ms := time.Since(start).Milliseconds()
+	// the parked cards the clear left parked in the epoch it left, sentinels
+	// aside; "?" when the count did not read (never a false 0)
+	kept := "?"
+	if e, err := ws.ParseEpoch(words[5]); err == nil && e > 0 {
+		if n, err := ws.ParkedAt(ctx, st.Client(), e-1); err == nil {
+			kept = strconv.FormatInt(n, 10)
+		}
+	}
+	fmt.Fprintf(out, "CLEARED streams=%s cards=%s copies=%s consumers=%s epoch=%s parked_kept=%s by=%s ms=%d\n", words[1], words[2], words[3], words[4], words[5], kept, who, ms)
 	if words[6] == "kept" {
 		fmt.Fprintf(out, "PITSTOP kept sprint=%s\n", oneline.Escape(words[7]))
 	} else {

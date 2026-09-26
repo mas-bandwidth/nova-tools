@@ -175,12 +175,18 @@ func showOrder(ctx context.Context, w *wsCmd, c redis.Cmdable, only string) int 
 		}
 		rows = keep
 	}
-	cards, edges := 0, 0
+	// cards, live and landed are the one count (ws.ShowStream.Counts: the
+	// sets less the stream's sentinel, parked and done aside), the numbers
+	// ws counts and the table print; the listing still shows every card,
+	// the sentinel last.
+	var cards int64
+	edges := 0
 	for _, r := range rows {
-		fmt.Fprintf(w.out, "STREAM %d %s cards=%d live=%d landed=%d sentinel=%s\n", r.Rank, strconv.Quote(r.Stream), len(r.Cards), r.Live, r.Landed, r.Sentinel)
+		n := r.Counts
+		fmt.Fprintf(w.out, "STREAM %d %s cards=%d live=%d landed=%d sentinel=%s\n", r.Rank, strconv.Quote(r.Stream), n.Sum(), n.Sum()-n.Cell(ws.Landed), n.Cell(ws.Landed), r.Sentinel)
+		cards += n.Sum()
 		for _, card := range r.Cards {
 			fmt.Fprintf(w.out, "  %s\n", card.Line(r.Live))
-			cards++
 			if card.Sentinel {
 				edges += r.Live + r.Landed
 			} else {
@@ -201,18 +207,18 @@ func runWSCounts(ctx context.Context, args []string, out, errOut io.Writer) int 
 		return code
 	}
 	defer st.Close()
-	rows, err := ws.Counts(ctx, st.Client())
-	var t ws.Count
-	for _, r := range rows {
-		t.Waiting += r.Waiting
-		t.Ready += r.Ready
-		t.Working += r.Working
-		t.Merging += r.Merging
-		t.Landed += r.Landed
-		t.Parked += r.Parked
-	}
-	return w.done(err, fmt.Sprintf("COUNTS streams=%d waiting=%d ready=%d working=%d merging=%d landed=%d parked=%d",
-		len(rows), t.Waiting, t.Ready, t.Working, t.Merging, t.Landed, t.Parked))
+	// The one count (ws.Counts), the numbers sprint status and the table
+	// print: the six stream sets per state, parked beside them, the total,
+	// done=landed/total, left and the eta.
+	line, err := wsCountsLine(ctx, st.Client(), time.Now())
+	return w.done(err, line)
+}
+
+// wsCountsLine is ws counts' receipt: the one count read for now, printed as
+// key=value (ws.SprintCounts.Receipt).
+func wsCountsLine(ctx context.Context, c redis.Cmdable, now time.Time) (string, error) {
+	counts, err := (&ws.CountsReader{}).Read(ctx, c, now)
+	return counts.Receipt(), err
 }
 
 func runWSCheckpoint(ctx context.Context, args []string, out, errOut io.Writer) int {
@@ -388,15 +394,18 @@ func runScopeUnpark(ctx context.Context, args []string, out, errOut io.Writer) i
 
 // scopeOf is a stream's place in the scope: parked (everything not yet
 // started is parked), kept (nothing parked) or partial.
-func scopeOf(r ws.Count) string {
+func scopeOf(r ws.StreamCounts) string {
 	switch {
 	case r.Parked == 0:
 		return "kept"
-	case r.Waiting+r.Ready == 0:
+	case r.Cell(ws.Waiting)+r.Cell(ws.Ready) == 0:
 		return "parked"
 	}
 	return "partial"
 }
+
+// active is a stream's cards not parked, landed or closed.
+func active(r ws.StreamCounts) int64 { return r.Sum() - r.Cell(ws.Landed) }
 
 func runScopeLs(ctx context.Context, args []string, out, errOut io.Writer) int {
 	w := newWSCmd("scope ls", out, errOut)
@@ -408,14 +417,14 @@ func runScopeLs(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return code
 	}
 	defer st.Close()
-	rows, err := ws.Counts(ctx, st.Client())
+	c, err := ws.Counts(ctx, st.Client(), "")
 	n := map[string]int{}
-	for _, r := range rows {
+	for _, r := range c.Streams {
 		s := scopeOf(r)
 		n[s]++
-		fmt.Fprintf(out, "%s %s active=%d parked=%d\n", s, strconv.Quote(r.Stream), r.Active(), r.Parked)
+		fmt.Fprintf(out, "%s %s active=%d parked=%d\n", s, strconv.Quote(r.Stream), active(r), r.Parked)
 	}
-	return w.done(err, fmt.Sprintf("SCOPE streams=%d kept=%d parked=%d partial=%d", len(rows), n["kept"], n["parked"], n["partial"]))
+	return w.done(err, fmt.Sprintf("SCOPE streams=%d kept=%d parked=%d partial=%d", len(c.Streams), n["kept"], n["parked"], n["partial"]))
 }
 
 func runStream(ctx context.Context, args []string, out, errOut io.Writer) int {
@@ -456,12 +465,12 @@ func runStreamLs(ctx context.Context, args []string, out, errOut io.Writer) int 
 		return code
 	}
 	defer st.Close()
-	rows, err := ws.Counts(ctx, st.Client())
+	c, err := ws.Counts(ctx, st.Client(), "")
 	plans := map[string][]taskcard.Plan{}
 	n := 0
 	if err == nil && *tree {
-		names := make([]string, len(rows))
-		for i, r := range rows {
+		names := make([]string, len(c.Streams))
+		for i, r := range c.Streams {
 			names[i] = r.Stream
 		}
 		var ps []taskcard.Plan
@@ -472,16 +481,16 @@ func runStreamLs(ctx context.Context, args []string, out, errOut io.Writer) int 
 			}
 		}
 	}
-	for _, r := range rows {
-		fmt.Fprintf(out, "%d %s waiting=%d ready=%d working=%d merging=%d landed=%d parked=%d\n",
-			r.Rank, strconv.Quote(r.Stream), r.Waiting, r.Ready, r.Working, r.Merging, r.Landed, r.Parked)
+	for i, r := range c.Streams {
+		fmt.Fprintf(out, "%d %s waiting=%d ready=%d working=%d review=%d merging=%d landed=%d parked=%d\n",
+			i+1, strconv.Quote(r.Stream), r.Cells[0], r.Cells[1], r.Cells[2], r.Cells[3], r.Cells[4], r.Cells[5], r.Parked)
 		for _, p := range plans[r.Stream] {
 			fmt.Fprintf(out, "  %s\n", p.Line())
 			if !*expand {
 				continue
 			}
-			for _, c := range p.Children {
-				fmt.Fprintf(out, "    child %s %s pr=%s score=%s\n", c.ID, orDash(c.Where), orDash(c.PRRef()), orDash(c.Score))
+			for _, ch := range p.Children {
+				fmt.Fprintf(out, "    child %s %s pr=%s score=%s\n", ch.ID, orDash(ch.Where), orDash(ch.PRRef()), orDash(ch.Score))
 			}
 			if p.Stitch.ID != "" {
 				fmt.Fprintf(out, "    stitch %s %s pr=%s\n", p.Stitch.ID, orDash(p.Stitch.Where), orDash(p.Stitch.PRRef()))
@@ -489,9 +498,9 @@ func runStreamLs(ctx context.Context, args []string, out, errOut io.Writer) int 
 		}
 	}
 	if *tree {
-		return w.done(err, fmt.Sprintf("STREAMS n=%d plans=%d", len(rows), n))
+		return w.done(err, fmt.Sprintf("STREAMS n=%d plans=%d", len(c.Streams), n))
 	}
-	return w.done(err, fmt.Sprintf("STREAMS n=%d", len(rows)))
+	return w.done(err, fmt.Sprintf("STREAMS n=%d", len(c.Streams)))
 }
 
 func runStreamOrder(ctx context.Context, args []string, out, errOut io.Writer) int {

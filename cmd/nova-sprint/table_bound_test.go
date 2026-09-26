@@ -119,14 +119,16 @@ func checkFleetRows(t *testing.T, stdout string, cards int) {
 	if got := count("pipeline "); got != table.FleetOpenSprints {
 		t.Errorf("pipeline rows=%d, want %d (closed and control sprints hidden)", got, table.FleetOpenSprints)
 	}
-	sum := 0
-	cell := regexp.MustCompile(`\b(queued|running|landed)=(\d+)`)
-	for _, m := range cell.FindAllStringSubmatch(stdout, -1) {
-		n, _ := strconv.Atoi(m[2])
-		sum += n
+	// every open sprint's row is the retired family's refusal, whatever
+	// the fixture's cards there (#4411): never a number beside the one count
+	refused := 0
+	for _, line := range strings.Split(stdout, "\n") {
+		if strings.HasPrefix(line, "pipeline ") && strings.HasSuffix(line, " "+table.RetiredPipeline) {
+			refused++
+		}
 	}
-	if sum != cards {
-		t.Errorf("pipeline cells count %d cards, want %d:\n%s", sum, cards, stdout)
+	if refused != table.FleetOpenSprints || regexp.MustCompile(`\b(queued|running|landed)=\d`).MatchString(stdout) {
+		t.Errorf("%d cards: %d pipeline rows refused, want %d and no cell:\n%s", cards, refused, table.FleetOpenSprints, stdout)
 	}
 }
 

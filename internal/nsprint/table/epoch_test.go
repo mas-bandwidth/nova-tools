@@ -130,6 +130,9 @@ func TestLiveTableReadsOnlyTheCurrentEpoch(t *testing.T) {
 		{"HSET", "friend:emma", "at", at, "up", "1", "ready", "1", "working", "1", "done", "1", "epoch", "2"},
 		{"HSET", "friend:stella", "at", at, "up", "1", "ready", "6", "working", "6", "done", "6"},
 		{"HSET", ws.EpochKey, ws.EpochField, "2"},
+		// the config's sprint is the open one the one count reads (#4411)
+		{"ZADD", "sprint:order", "1", "x"},
+		{"HSET", "s:x", "status", "open"},
 	})
 	log := &cmdLog{}
 	client.AddHook(log)
@@ -256,6 +259,9 @@ func TestLiveTableClearMidPipelineShowsNoOldFrame(t *testing.T) {
 		{"ZADD", ws.ConsumerKeyAt(3, "bench:alpha", "ok"), "1", "new~1"},
 		{"HSET", "friend:emma", "at", at, "up", "1", "ready", "1", "working", "1", "done", "1", "epoch", "2"},
 		{"HSET", ws.EpochKey, ws.EpochField, "2"},
+		// the config's sprint is the open one the one count reads (#4411)
+		{"ZADD", "sprint:order", "1", "x"},
+		{"HSET", "s:x", "status", "open"},
 	})
 	client.AddHook(&clearMidPipeline{other: otherClient(t, client)})
 	snap, err := table.ReadLive(context.Background(), client, table.LiveConfig{Friends: []string{"emma"}, Sprint: "x"})
