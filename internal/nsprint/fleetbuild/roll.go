@@ -8,9 +8,12 @@ package fleetbuild
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -224,19 +227,121 @@ func RestartBeatsArgv(benches []string) []string {
 // adhocStatus are the status words of an ad hoc header line.
 var adhocStatus = map[string]bool{"CHANGED": true, "SUCCESS": true, "FAILED": true, "FAILED!": true, "UNREACHABLE!": true}
 
-// ParseAdhoc reads ansible's ad hoc output: host -> its status word
-// (CHANGED, SUCCESS, FAILED, FAILED!, UNREACHABLE!) from each `<host> |
-// <STATUS> ...` header line at the start of a line. Everything else (the
-// [ERROR]/[WARNING]/[DEPRECATION WARNING] blocks ansible 2.19 prints before a
-// header, a command's own output) is not a header.
-func ParseAdhoc(out string) map[string]string {
-	st := map[string]string{}
-	for _, l := range strings.Split(out, "\n") {
-		l = plainLine(l)
+// AdhocAnswer is what ansible's ad hoc output says of one host: its status
+// word, the rc it names (in the header, `rc=5 >>`, or the JSON body's
+// "rc"), and the first line of its message (the command's first output line
+// under a `>>` header, the JSON body's "msg" under a `=> {` one).
+type AdhocAnswer struct{ Status, RC, Msg string }
+
+// Reason is the answer's rc and message for a BEAT line: " rc=5: <msg>",
+// either part left out when ansible gave none.
+func (a AdhocAnswer) Reason() string {
+	s := ""
+	if a.RC != "" {
+		s = " rc=" + a.RC
+	}
+	if a.Msg != "" {
+		s += ": " + a.Msg
+	}
+	return s
+}
+
+var (
+	adhocMsgRe = regexp.MustCompile(`^\s*"msg":\s*("(?:[^"\\]|\\.)*")`)
+	adhocRCRe  = regexp.MustCompile(`^\s*"rc":\s*(-?[0-9]+)`)
+)
+
+// adhocHeader reports whether l (plain) is a `<host> | <STATUS> ...` header
+// line at the start of a line.
+func adhocHeader(l string, f []string) bool {
+	return len(f) >= 3 && f[1] == "|" && adhocStatus[f[2]] && !strings.HasPrefix(l, " ") && !strings.HasPrefix(l, "[")
+}
+
+// AdhocAnswers reads ansible's ad hoc output: host -> its answer, from each
+// `<host> | <STATUS> ...` header line at the start of a line and the lines
+// under it. Everything else (the [ERROR]/[WARNING]/[DEPRECATION WARNING]
+// blocks ansible 2.19 prints before a header, which also end the output of
+// the header before them) is not a header.
+func AdhocAnswers(out string) map[string]AdhocAnswer {
+	ans := map[string]AdhocAnswer{}
+	cur, inJSON := "", false
+	for _, raw := range strings.Split(out, "\n") {
+		l := plainLine(raw)
 		f := strings.Fields(l)
-		if len(f) >= 3 && f[1] == "|" && adhocStatus[f[2]] && !strings.HasPrefix(l, " ") && !strings.HasPrefix(l, "[") {
-			st[f[0]] = f[2]
+		if len(f) >= 3 && adhocHeader(l, f) {
+			a := AdhocAnswer{Status: f[2]}
+			for _, w := range f[3:] {
+				if strings.HasPrefix(w, "rc=") {
+					a.RC = strings.TrimPrefix(w, "rc=")
+				}
+			}
+			ans[f[0]] = a
+			cur, inJSON = f[0], strings.HasSuffix(strings.TrimSpace(l), "=> {")
+			continue
+		}
+		if cur == "" {
+			continue
+		}
+		a := ans[cur]
+		switch {
+		case inJSON && strings.TrimSpace(l) == "}" && !strings.HasPrefix(l, " "):
+			cur = ""
+		case inJSON:
+			if m := adhocMsgRe.FindStringSubmatch(l); m != nil && a.Msg == "" {
+				if u, err := strconv.Unquote(m[1]); err == nil {
+					a.Msg = FirstLine(u)
+				}
+			}
+			if m := adhocRCRe.FindStringSubmatch(l); m != nil && a.RC == "" {
+				a.RC = m[1]
+			}
+			ans[cur] = a
+		case strings.HasPrefix(l, "["):
+			cur = ""
+		case strings.TrimSpace(l) != "":
+			a.Msg = strings.TrimSpace(l)
+			ans[cur] = a
+			cur = ""
 		}
 	}
+	return ans
+}
+
+// ParseAdhoc is each host's status word (CHANGED, SUCCESS, FAILED, FAILED!,
+// UNREACHABLE!) of AdhocAnswers.
+func ParseAdhoc(out string) map[string]string {
+	st := map[string]string{}
+	for h, a := range AdhocAnswers(out) {
+		st[h] = a.Status
+	}
 	return st
+}
+
+// DefaultInventoryRegistry is the registry inventory.py reads when
+// FLEET_REGISTRY is unset; InventoryShape is the row it reads (a row with
+// fewer columns is dropped), InventoryTimeout bounds one --list.
+const (
+	DefaultInventoryRegistry = "~/rowan-working/queue/control/machines.tsv"
+	InventoryShape           = "6 tab-separated columns (name ssh os/arch roles seat cores; a bench's roles hold bench)"
+	InventoryTimeout         = 30 * time.Second
+)
+
+// InventoryArgv is `inventory.py --list` of the play directory dir, run by
+// its path as ansible runs it.
+func InventoryArgv(dir string) []string {
+	return []string{filepath.Join(dir, PlayInventory), "--list"}
+}
+
+// InventoryBenches reads inventory.py --list: the hosts of its benches group
+// (the group the play's hosts: names).
+func InventoryBenches(out string) ([]string, error) {
+	var inv struct {
+		Benches struct {
+			Hosts []string `json:"hosts"`
+		} `json:"benches"`
+	}
+	if err := json.Unmarshal([]byte(out), &inv); err != nil {
+		return nil, fmt.Errorf("not an inventory: %v: %q", err, FirstLine(out))
+	}
+	return inv.Benches.Hosts, nil
 }

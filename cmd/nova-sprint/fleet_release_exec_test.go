@@ -15,11 +15,12 @@ import (
 )
 
 // The play answers (#4383 fix) through the REAL releaseExec.Run: a fake
-// ansible-playbook and ansible in a temp directory on PATH (testguard reads
-// a program under the temp directory as a fake, never a host) print a
+// ansible-playbook and ansible in a temp directory on the PATH the runner's
+// Environ gives (testguard reads a program under the temp directory as a
+// fake, never a host; no t.Setenv, so the tests run in parallel) print a
 // fixture and record what they were started with: the directory, the argv,
-// stdin, and the environment the release builds (goenv.Clean of this
-// process's plus PlayEnv).
+// stdin, and the environment the release builds (goenv.Clean of Environ plus
+// PlayEnv).
 
 const fakeAnsible = `#!/bin/sh
 d=$(dirname "$0")
@@ -33,9 +34,19 @@ n=$(basename "$0")
 cat "$d/$n.out"
 `
 
-// fakeAnsibleBin writes the two fakes into a temp directory, puts it first
-// on PATH and returns it; <dir>/<prog>.out is what each prints.
-func fakeAnsibleBin(t *testing.T) string {
+// fakeInventory is the play directory's inventory.py: it records the
+// registry and argv it was started with and prints inventory.json.
+const fakeInventory = `#!/bin/sh
+d=$(dirname "$0")
+echo "FLEET_REGISTRY=$FLEET_REGISTRY ARGV=$*" > "$d/inventory.seen"
+cat "$d/inventory.json"
+`
+
+// fakeAnsibleBin writes the two fakes into a temp directory and returns it
+// with the environment a runner starts them in: that directory first on
+// PATH, a temp HOME, and a secret that must not reach ansible;
+// <dir>/<prog>.out is what each prints.
+func fakeAnsibleBin(t *testing.T) (string, []string) {
 	t.Helper()
 	bin := t.TempDir()
 	for _, p := range []string{"ansible-playbook", "ansible"} {
@@ -46,8 +57,25 @@ func fakeAnsibleBin(t *testing.T) string {
 			t.Fatal(err)
 		}
 	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	return bin
+	return bin, []string{"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"), "HOME=" + t.TempDir(), "GH_TOKEN=not-for-ansible"}
+}
+
+// execPlayDir is a play directory whose inventory.py is fakeInventory
+// printing body.
+func execPlayDir(t *testing.T, body string) string {
+	t.Helper()
+	d := releasePlayDir(t)
+	inv := filepath.Join(d, fleetbuild.PlayInventory)
+	if err := os.WriteFile(inv, []byte(fakeInventory), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(inv, 0o755); err != nil { // releasePlayDir wrote it 0644
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(d, "inventory.json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return d
 }
 
 func ansibleFixture(t *testing.T, name string) []byte {
@@ -84,9 +112,8 @@ func seen(t *testing.T, bin, prog string) map[string]string {
 // HOME, the play's ansible settings and FLEET_REGISTRY, and no secret; the
 // output comes back byte for byte and Recap reads the real RECAP from it.
 func TestReleaseExecRunsThePlayAsByHand(t *testing.T) {
-	bin := fakeAnsibleBin(t)
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("GH_TOKEN", "not-for-ansible")
+	t.Parallel()
+	bin, environ := fakeAnsibleBin(t)
 	real := ansibleFixture(t, "ansible-play-2026-09-26.log")
 	if err := os.WriteFile(filepath.Join(bin, "ansible-playbook.out"), real, 0o644); err != nil {
 		t.Fatal(err)
@@ -94,7 +121,7 @@ func TestReleaseExecRunsThePlayAsByHand(t *testing.T) {
 	dir, reg := releasePlayDir(t), releaseRegistry(t)
 	benches := []string{"space", "hetzner", "hulk", "vision", "batman", "superman"}
 	argv := fleetbuild.PlayArgv(fleetbuild.DefaultPlay, "v0.16.0-dev.dec7b954", benches)
-	out, err := releaseExec{}.Run(context.Background(), dir, fleetbuild.PlayEnv(reg), argv)
+	out, err := releaseExec{Environ: environ}.Run(context.Background(), dir, fleetbuild.PlayEnv(reg), argv)
 	if err != nil || out != string(real) {
 		t.Fatalf("run: %v; %d bytes back of %d", err, len(out), len(real))
 	}
@@ -112,7 +139,7 @@ func TestReleaseExecRunsThePlayAsByHand(t *testing.T) {
 	if s["STDIN"] != "EOF" {
 		t.Errorf("stdin %q: ansible must not wait on one", s["STDIN"])
 	}
-	if !strings.HasPrefix(s["PATH"], bin+string(os.PathListSeparator)) || s["HOME"] != os.Getenv("HOME") ||
+	if !strings.HasPrefix(s["PATH"], bin+string(os.PathListSeparator)) || "HOME="+s["HOME"] != environ[1] ||
 		s["ANSIBLE_NOCOWS"] != "1" || s["ANSIBLE_HOST_KEY_CHECKING"] != "True" || s[fleetbuild.PlayRegistry] != reg {
 		t.Errorf("env PATH=%q HOME=%q NOCOWS=%q HOSTKEY=%q REGISTRY=%q", s["PATH"], s["HOME"], s["ANSIBLE_NOCOWS"], s["ANSIBLE_HOST_KEY_CHECKING"], s[fleetbuild.PlayRegistry])
 	}
@@ -121,16 +148,19 @@ func TestReleaseExecRunsThePlayAsByHand(t *testing.T) {
 	}
 }
 
-// execRelRunner is the verb's runner with ansible and ansible-playbook
-// started for real (the fakes on PATH) and every other child faked; a beat
-// ansible answered CHANGED for catches up in the store.
-type execRelRunner struct{ fake *verbRelFake }
+// execRelRunner is the verb's runner with inventory.py, ansible and
+// ansible-playbook started for real (the fakes) and every other child
+// faked; a beat ansible answered CHANGED for catches up in the store.
+type execRelRunner struct {
+	fake *verbRelFake
+	exec releaseExec
+}
 
 func (e execRelRunner) Run(ctx context.Context, dir string, env []string, argv []string) (string, error) {
-	if argv[0] != "ansible" && argv[0] != "ansible-playbook" {
+	if argv[0] != "ansible" && argv[0] != "ansible-playbook" && !strings.HasSuffix(argv[0], "/"+fleetbuild.PlayInventory) {
 		return e.fake.Run(ctx, dir, env, argv)
 	}
-	out, err := releaseExec{}.Run(ctx, dir, env, argv)
+	out, err := e.exec.Run(ctx, dir, env, argv)
 	if argv[0] == "ansible" {
 		for h, st := range fleetbuild.ParseAdhoc(out) {
 			if st == "CHANGED" {
@@ -142,50 +172,79 @@ func (e execRelRunner) Run(ctx context.Context, dir string, env []string, argv [
 }
 
 // TestFleetReleaseReportsWhatAnsibleSaid is the verb over the real exec:
-// the real play's six RECAP rows and OK; the empty inventory's play (exit 0,
-// warnings, a PLAY RECAP with no row: the 2026-09-26 13:52 run) is one
-// REFUSED naming ansible's first line; a play printing nothing is a REFUSED
-// saying so; never "no answer" for a bench; the receipt names the play log.
+// inventory.py --list runs first over the play's registry and its INVENTORY
+// line counts the benches; the real play's six RECAP rows and OK; an
+// inventory naming no bench (what inventory.py printed for the 4-column
+// registry of the 2026-09-26 13:52 run) is REFUSED before any ansible runs,
+// naming the 6-column row and the registry inventory.py reads unset; a play
+// printing nothing is a REFUSED saying so, with the restart skipped; never
+// "no answer" for a bench; the receipt names the play log.
 func TestFleetReleaseReportsWhatAnsibleSaid(t *testing.T) {
-	bin := fakeAnsibleBin(t)
+	t.Parallel()
+	both := `{"benches": {"hosts": ["space", "hulk"]}, "store": {"hosts": ["space"]}, "coordinator": {"hosts": ["studio"]}, "_meta": {"hostvars": {}}}` + "\n"
+	none := `{"benches": {"hosts": []}, "store": {"hosts": []}, "coordinator": {"hosts": []}, "_meta": {"hostvars": {}}}` + "\n"
 	for _, tc := range []struct {
-		name, play, adhoc string
-		code              int
-		want              string
+		name, inv, play string
+		code            int
+		want            []string
+		ran             []string // the fakes that ran
 	}{
-		{"the real play", "ansible-play-2026-09-26.log", "", 0, "RELEASE play OK tools.yml version=" + verbVersion + " hosts=6 beats-restarted=1 log="},
-		{"empty inventory", "ansible-play-empty-inventory.log", "ansible-adhoc-empty-inventory.log", 1,
-			`RELEASE play REFUSED: ansible printed nothing parseable: "[WARNING]: provided hosts list is empty, only localhost is available. Note that the implicit localhost does not match 'all'" (the play reached none of space,hulk; the inventory read FLEET_REGISTRY=`},
-		{"nothing printed", "", "", 1, "RELEASE play REFUSED: ansible printed nothing (exit status 0) (the play reached none of space,hulk;"},
+		{"the real play", both, "ansible-play-2026-09-26.log", 0, []string{"INVENTORY hosts=2 registry=",
+			"RELEASE play OK tools.yml version=" + verbVersion + " hosts=6 beats-restarted=1 log="}, []string{"ansible-playbook", "ansible"}},
+		{"empty inventory", none, "ansible-play-empty-inventory.log", 1, []string{"INVENTORY hosts=0 registry=",
+			"RELEASE play REFUSED: inventory.py --list names no bench from FLEET_REGISTRY=",
+			" (inventory.py reads rows of 6 tab-separated columns (name ssh os/arch roles seat cores; a bench's roles hold bench) and drops the rest; unset, FLEET_REGISTRY is ~/rowan-working/queue/control/machines.tsv (--machines <that registry>))\n"}, nil},
+		{"nothing printed", both, "", 1, []string{"BEAT skipped hulk: the play reached no bench\n",
+			"RELEASE play REFUSED: ansible printed nothing (exit status 0) (the play reached none of space,hulk;"}, []string{"ansible-playbook"}},
 	} {
+		bin, environ := fakeAnsibleBin(t)
 		var play []byte
-		adhoc := []byte("hulk | CHANGED | rc=0 >>\n\n")
 		if tc.play != "" {
 			play = ansibleFixture(t, tc.play)
 		}
-		if tc.adhoc != "" {
-			adhoc = ansibleFixture(t, tc.adhoc)
-		}
-		if tc.name == "nothing printed" {
-			adhoc = nil
-		}
 		os.WriteFile(filepath.Join(bin, "ansible-playbook.out"), play, 0o644)
-		os.WriteFile(filepath.Join(bin, "ansible.out"), adhoc, 0o644)
+		os.WriteFile(filepath.Join(bin, "ansible.out"), []byte("hulk | CHANGED | rc=0 >>\n\n"), 0o644)
+		dir, reg := execPlayDir(t, tc.inv), releaseRegistry(t)
 
 		mr := miniredis.RunT(t)
 		mr.SAdd("benches", "space", "hulk")
 		mr.HSet("bench:space:beat", "build", "nova-sprint "+verbVersion+" linux/amd64 go1.26.6")
 		f := &verbRelFake{home: t.TempDir(), mr: mr}
 		sleeps := 0
-		deps := verbDeps(f, map[string]string{fleetbuild.PlayDirEnv: releasePlayDir(t)}, "studio", &sleeps)
-		deps.Runner = execRelRunner{f}
+		deps := verbDeps(f, map[string]string{fleetbuild.PlayDirEnv: dir}, "studio", &sleeps)
+		deps.Runner = execRelRunner{f, releaseExec{Environ: environ}}
 		var out, errOut bytes.Buffer
-		code := runFleetReleaseWith(context.Background(), []string{verbSha, "--redis", mr.Addr(), "--machines", releaseRegistry(t), "--wait", "0s"}, &out, &errOut, deps)
+		code := runFleetReleaseWith(context.Background(), []string{verbSha, "--redis", mr.Addr(), "--machines", reg, "--wait", "0s"}, &out, &errOut, deps)
 		s := out.String()
-		logPath := filepath.Join(f.home, "nova-bench", "release-src", "logs", "play-"+verbVersion+".log")
-		if code != tc.code || !strings.Contains(s, tc.want) || strings.Contains(s, "no answer") ||
-			!strings.Contains(s, "ANSIBLE LOG "+logPath+" bytes="+strconv.Itoa(len(play))+"\n") {
+		if code != tc.code || strings.Contains(s, "no answer") {
 			t.Errorf("%s: code=%d\n%s\nerr=%s", tc.name, code, s, errOut.String())
+		}
+		for _, w := range tc.want {
+			if !strings.Contains(s, w) {
+				t.Errorf("%s: missing %q in\n%s", tc.name, w, s)
+			}
+		}
+		if b, err := os.ReadFile(filepath.Join(dir, "inventory.seen")); err != nil || string(b) != "FLEET_REGISTRY="+reg+" ARGV=--list\n" {
+			t.Errorf("%s: inventory.py saw %q (%v)", tc.name, b, err)
+		}
+		var ran []string
+		for _, p := range []string{"ansible-playbook", "ansible"} {
+			if _, err := os.Stat(filepath.Join(bin, p+".seen")); err == nil {
+				ran = append(ran, p)
+			}
+		}
+		if strings.Join(ran, ",") != strings.Join(tc.ran, ",") {
+			t.Errorf("%s: ran %v, want %v", tc.name, ran, tc.ran)
+		}
+		logPath := filepath.Join(f.home, "nova-bench", "release-src", "logs", "play-"+verbVersion+".log")
+		if tc.ran == nil {
+			if strings.Contains(s, "ANSIBLE LOG") {
+				t.Errorf("%s: a log of a play that never ran:\n%s", tc.name, s)
+			}
+			continue
+		}
+		if !strings.Contains(s, "ANSIBLE LOG "+logPath+" bytes="+strconv.Itoa(len(play))+"\n") {
+			t.Errorf("%s: no play log line:\n%s", tc.name, s)
 		}
 		if b, err := os.ReadFile(logPath); err != nil || !bytes.Equal(b, play) {
 			t.Errorf("%s: play log %v, %d bytes of %d", tc.name, err, len(b), len(play))

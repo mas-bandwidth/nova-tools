@@ -184,3 +184,149 @@ func TestReleasePlayAnswersAsAnsibleSaid(t *testing.T) {
 		}
 	}
 }
+
+// TestParseAdhocIgnoresTheCommandsOwnLines: a line the restarted command
+// prints at the start of a line is no header, though it reads `<word> |
+// <word>`: one naming a host with a word that is not a status (dev's rule
+// read it as space's status "restarted"), one opening with `[` (dev's rule
+// read it as a host "[hulk]").
+func TestParseAdhocIgnoresTheCommandsOwnLines(t *testing.T) {
+	t.Parallel()
+	out := "space | FAILED | rc=5 >>\n" +
+		"Failed to restart nova-loop-nova-sprint-bench-beat.service: Unit nova-loop-nova-sprint-bench-beat.service not found.\n" +
+		"hulk | CHANGED | rc=0 >>\n" +
+		"space | restarted by hand before this run\n" +
+		"[hulk] | FAILED | a tag the command printed\n"
+	st := ParseAdhoc(out)
+	if len(st) != 2 || st["space"] != "FAILED" || st["hulk"] != "CHANGED" {
+		t.Errorf("adhoc %v", st)
+	}
+}
+
+// TestReleaseSkipsTheRestartWhenThePlayReachedNone: a play whose RECAP has
+// no row starts no beat restart; a BEAT line says it was skipped and the
+// play's refusal is the step's answer.
+func TestReleaseSkipsTheRestartWhenThePlayReachedNone(t *testing.T) {
+	t.Parallel()
+	emptyPlay := fixture(t, "ansible-play-empty-inventory.log")
+	adhoc := "hulk | CHANGED | rc=0 >>\n\nbatman | CHANGED | rc=0 >>\n\n"
+	mr := relStore(t)
+	f := &relFake{home: t.TempDir(), playOut: &emptyPlay, adhocOut: &adhoc}
+	r, out, _ := newRelease(t, f, mr)
+	res, err := r.Run(context.Background(), relSha)
+	s := out.String()
+	if err != nil || !strings.Contains(states(res), "play=REFUSED ") {
+		t.Fatalf("err=%v states=%s\n%s", err, states(res), s)
+	}
+	if _, ran := f.find("ansible "); ran {
+		t.Errorf("the beat restart ran:\n%s", strings.Join(f.heads(), "\n"))
+	}
+	for _, w := range []string{
+		"BEAT skipped hulk,batman: the play reached no bench\n",
+		"(the play reached none of space,hulk,batman; the inventory read FLEET_REGISTRY=/reg/machines.tsv;",
+	} {
+		if !strings.Contains(s, w) {
+			t.Errorf("missing %q in\n%s", w, s)
+		}
+	}
+	if strings.Contains(s, "BEAT hulk") || strings.Contains(s, "beat-restart-") {
+		t.Errorf("a restart answer printed:\n%s", s)
+	}
+}
+
+// TestReleaseChecksTheInventoryBeforeThePlay: inventory.py --list runs in
+// the play directory over the play's registry before any ansible; an
+// inventory with no bench, one without a bench of the roll, a failing
+// inventory.py and one printing no inventory are each refused naming the
+// row shape inventory.py reads and the registry it reads unset, and neither
+// the play nor the restart runs; the verify still runs.
+func TestReleaseChecksTheInventoryBeforeThePlay(t *testing.T) {
+	t.Parallel()
+	fix := " (inventory.py reads rows of 6 tab-separated columns (name ssh os/arch roles seat cores; a bench's roles hold bench) and drops the rest; unset, FLEET_REGISTRY is ~/rowan-working/queue/control/machines.tsv (--machines <that registry>)"
+	empty := `{"benches": {"hosts": []}, "store": {"hosts": []}, "coordinator": {"hosts": []}, "_meta": {"hostvars": {}}}` + "\n"
+	two := `{"benches": {"hosts": ["space", "hulk"]}}` + "\n"
+	trace := "Traceback (most recent call last):\n  File \"inventory.py\", line 21\n"
+	for _, tc := range []struct {
+		name string
+		inv  *string
+		fail string
+		want []string
+	}{
+		{"no bench", &empty, "", []string{"INVENTORY hosts=0 registry=/reg/machines.tsv\n",
+			"RELEASE play REFUSED: inventory.py --list names no bench from FLEET_REGISTRY=/reg/machines.tsv" + fix + ")\n"}},
+		{"a bench absent", &two, "", []string{"INVENTORY hosts=2 registry=/reg/machines.tsv\n",
+			"RELEASE play REFUSED: inventory.py --list has no batman among its 2 benches from FLEET_REGISTRY=/reg/machines.tsv" + fix + "; a bench FLEET_STATE marks DOWN is dropped too)\n"}},
+		{"inventory.py fails", nil, "inventory.py", []string{
+			"RELEASE play REFUSED: inventory.py --list with FLEET_REGISTRY=/reg/machines.tsv: exit status 1: boom" + fix + ")\n"}},
+		{"no inventory printed", &trace, "", []string{
+			`RELEASE play REFUSED: inventory.py --list with FLEET_REGISTRY=/reg/machines.tsv: not an inventory: invalid character 'T' looking for beginning of value: "Traceback (most recent call last):"` + fix + ")\n"}},
+	} {
+		mr := relStore(t)
+		f := &relFake{home: t.TempDir(), invOut: tc.inv, fail: tc.fail}
+		f.restarted = catchUp(mr)
+		r, out, _ := newRelease(t, f, mr)
+		res, err := r.Run(context.Background(), relSha)
+		s := out.String()
+		if err != nil || states(res) != "build=OK fn=OK fn-check=OK play=REFUSED self=OK" || len(res.Checks) != 3 {
+			t.Errorf("%s: err=%v states=%s checks=%d\n%s", tc.name, err, states(res), len(res.Checks), s)
+			continue
+		}
+		for _, w := range tc.want {
+			if !strings.Contains(s, w) {
+				t.Errorf("%s: missing %q in\n%s", tc.name, w, s)
+			}
+		}
+		if heads := strings.Join(f.heads(), "\n"); strings.Contains(heads, "ansible") {
+			t.Errorf("%s: ansible ran:\n%s", tc.name, heads)
+		}
+		c, ok := f.find(filepath.Join(r.PlayDir, PlayInventory) + " --list")
+		if !ok || c.dir != r.PlayDir || strings.Join(c.env, " ") != "ANSIBLE_NOCOWS=1 ANSIBLE_HOST_KEY_CHECKING=True FLEET_REGISTRY=/reg/machines.tsv" {
+			t.Errorf("%s: inventory call %v %+v", tc.name, ok, c)
+		}
+	}
+}
+
+// TestBeatLineNamesAnsiblesReason: AdhocAnswers reads each host's rc and
+// first message line (under a `>>` header, the command's first line; under
+// a `=> {` one, the JSON's "rc" and "msg"), and a failed BEAT line prints
+// them: `BEAT hulk failed failed rc=5: Failed to restart ...`, not `failed
+// failed` alone.
+func TestBeatLineNamesAnsiblesReason(t *testing.T) {
+	t.Parallel()
+	a := AdhocAnswers(fixture(t, "ansible-adhoc-2.19.log"))
+	for h, want := range map[string]AdhocAnswer{
+		"space":    {"FAILED", "5", "Failed to restart nova-loop-nova-sprint-bench-beat.service: Unit nova-loop-nova-sprint-bench-beat.service not found."},
+		"superman": {"FAILED", "113", `Could not find service "com.nova.loop.nova-sprint-bench-beat" in domain for system`},
+		"hulk":     {"CHANGED", "0", ""},
+	} {
+		if a[h] != want {
+			t.Errorf("%s: %+v, want %+v", h, a[h], want)
+		}
+	}
+	json := AdhocAnswers("batman | UNREACHABLE! => {\n    \"changed\": false,\n    \"msg\": \"Failed to connect to the host via ssh: ssh: connect to host batman port 22: Operation timed out\",\n    \"unreachable\": true\n}\n" +
+		"vision | FAILED! => {\n    \"changed\": true,\n    \"msg\": \"non-zero return code\\nsecond line\",\n    \"rc\": 5\n}\n")
+	if got := json["batman"]; got != (AdhocAnswer{"UNREACHABLE!", "", "Failed to connect to the host via ssh: ssh: connect to host batman port 22: Operation timed out"}) {
+		t.Errorf("batman %+v", got)
+	}
+	if got := json["vision"]; got != (AdhocAnswer{"FAILED!", "5", "non-zero return code"}) || got.Reason() != " rc=5: non-zero return code" {
+		t.Errorf("vision %+v %q", got, got.Reason())
+	}
+
+	adhoc := "hulk | FAILED | rc=5 >>\nFailed to restart nova-loop-nova-sprint-bench-beat.service: Unit nova-loop-nova-sprint-bench-beat.service not found.\n" +
+		"batman | CHANGED | rc=0 >>\n\n"
+	mr := relStore(t)
+	f := &relFake{home: t.TempDir(), adhocOut: &adhoc}
+	r, out, _ := newRelease(t, f, mr)
+	if _, err := r.Run(context.Background(), relSha); err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range []string{
+		"BEAT hulk failed failed rc=5: Failed to restart nova-loop-nova-sprint-bench-beat.service: Unit nova-loop-nova-sprint-bench-beat.service not found.\n",
+		"BEAT batman restarted\n",
+		"RELEASE play REFUSED: the beat restart failed on hulk (read the BEAT lines and ",
+	} {
+		if !strings.Contains(out.String(), w) {
+			t.Errorf("missing %q in\n%s", w, out.String())
+		}
+	}
+}

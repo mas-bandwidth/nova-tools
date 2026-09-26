@@ -580,6 +580,43 @@ func (r *Release) playStep(ctx context.Context, published bool, benches []string
 			return nil
 		}
 	}
+	// The inventory before the play: inventory.py --list over the registry
+	// the play will read, every bench of the roll in its benches group, or
+	// no ansible runs (an inventory.py that drops every row makes a play
+	// that exits 0 having reached nothing).
+	ictx, icancel := context.WithTimeout(ctx, InventoryTimeout)
+	iout, iErr := r.run(ictx, r.PlayDir, PlayEnv(r.Registry), InventoryArgv(r.PlayDir)...)
+	icancel()
+	fix := fmt.Sprintf("inventory.py reads rows of %s and drops the rest; unset, %s is %s (--machines <that registry>)", InventoryShape, PlayRegistry, DefaultInventoryRegistry)
+	listed, perr := InventoryBenches(iout)
+	if iErr != nil || perr != nil {
+		why := perr
+		if iErr != nil {
+			why = fmt.Errorf("%v: %s", iErr, FirstLine(iout))
+		}
+		r.step(res, StepPlay, StateRefused, "%s --list with %s=%s: %v (%s)", PlayInventory, PlayRegistry, r.Registry, why, fix)
+		return nil
+	}
+	r.printf("INVENTORY hosts=%d registry=%s\n", len(listed), r.Registry)
+	inInv := map[string]bool{}
+	for _, h := range listed {
+		inInv[h] = true
+	}
+	var absent []string
+	for _, b := range benches {
+		if !inInv[b] {
+			absent = append(absent, b)
+		}
+	}
+	switch {
+	case len(listed) == 0:
+		r.step(res, StepPlay, StateRefused, "%s --list names no bench from %s=%s (%s)", PlayInventory, PlayRegistry, r.Registry, fix)
+		return nil
+	case len(absent) > 0:
+		r.step(res, StepPlay, StateRefused, "%s --list has no %s among its %d benches from %s=%s (%s; a bench FLEET_STATE marks DOWN is dropped too)",
+			PlayInventory, strings.Join(absent, ","), len(listed), PlayRegistry, r.Registry, fix)
+		return nil
+	}
 	// --limit always: the play's last play is the coordinator's fn-load,
 	// which would reload the library of the coordinator's own (not yet
 	// updated) nova-sprint over the one the fn step deployed.
@@ -609,6 +646,12 @@ func (r *Release) playStep(ctx context.Context, published bool, benches []string
 	restart := behind(checks)
 	var failed []string
 	restartWhy := ""
+	if len(recap) == 0 && len(restart) > 0 {
+		// The play reached no bench: a restart would reach none either, and
+		// the play's refusal is the answer.
+		r.printf("BEAT skipped %s: the play reached no bench\n", strings.Join(restart, ","))
+		restart = nil
+	}
 	if len(restart) > 0 {
 		rctx, cancel := context.WithTimeout(ctx, RestartTimeout)
 		out, rErr := r.run(rctx, r.PlayDir, PlayEnv(r.Registry), RestartBeatsArgv(restart)...)
@@ -617,20 +660,21 @@ func (r *Release) playStep(ctx context.Context, published bool, benches []string
 		}
 		cancel()
 		beatLog := r.keepLog("beat-restart-"+res.Version+".log", out)
-		st := ParseAdhoc(out)
+		st := AdhocAnswers(out)
 		if len(st) == 0 {
 			restartWhy = fmt.Sprintf("the beat restart of %s: %s (ansible's output: %s)", strings.Join(restart, ","), Unparseable(out, rErr), beatLog)
 			restart = nil
 		}
 		for _, b := range restart {
-			switch s := st[b]; s {
+			switch a := st[b]; a.Status {
 			case "CHANGED", "SUCCESS":
 				r.printf("BEAT %s restarted\n", b)
 			default:
+				s := a.Status
 				if s == "" {
 					s = "absent from ansible's answer"
 				}
-				r.printf("BEAT %s failed %s\n", b, strings.ToLower(strings.TrimSuffix(s, "!")))
+				r.printf("BEAT %s failed %s%s\n", b, strings.ToLower(strings.TrimSuffix(s, "!")), a.Reason())
 				failed = append(failed, b)
 			}
 		}

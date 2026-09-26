@@ -60,9 +60,15 @@ type relFake struct {
 	// playOut and adhocOut, when set, are what ansible-playbook and ansible
 	// print (exit 0) in place of the made-up recap and headers.
 	playOut, adhocOut *string
-	mu                sync.Mutex
-	call              []call
+	// invOut, when set, is what inventory.py --list prints in place of the
+	// three benches.
+	invOut *string
+	mu     sync.Mutex
+	call   []call
 }
+
+// relInventory is inventory.py --list naming the release store's benches.
+const relInventory = `{"benches": {"hosts": ["space", "hulk", "batman"]}, "store": {"hosts": ["space"]}, "coordinator": {"hosts": ["studio"]}, "_meta": {"hostvars": {}}}` + "\n"
 
 func (f *relFake) Run(ctx context.Context, dir string, env []string, argv []string) (string, error) {
 	f.mu.Lock()
@@ -73,6 +79,10 @@ func (f *relFake) Run(ctx context.Context, dir string, env []string, argv []stri
 		return "boom\n", errors.New("exit status 1")
 	}
 	switch {
+	case strings.HasSuffix(argv[0], "/"+PlayInventory) && f.invOut != nil:
+		return *f.invOut, nil
+	case strings.HasSuffix(argv[0], "/"+PlayInventory):
+		return relInventory, nil
 	case argv[0] == "git" && argv[1] == "clone":
 		d := argv[len(argv)-1]
 		os.MkdirAll(filepath.Join(d, ".git"), 0o755)
@@ -263,7 +273,7 @@ func TestReleaseRollsTheWholeFleetInOrder(t *testing.T) {
 		"nova-sprint-" + relVersion + " version", "go build", "nova-sprint-" + relVersion + " version",
 		"ssh space .local/bin/nova-sprint", "ssh space cat",
 		"nova-sprint-" + relVersion + " fn", "nova-sprint-" + relVersion + " fn",
-		"ansible-playbook -i", "ansible hulk,batman",
+		"inventory.py --list", "ansible-playbook -i", "ansible hulk,batman",
 		"git fetch", "git rev-parse", "git checkout", "git merge-base", "nova-sprint version", "go build", ".nova-sprint.self-update.7 version", "nova-sprint version",
 		"launchctl kickstart", "launchctl kickstart", "launchctl kickstart",
 	}
