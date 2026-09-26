@@ -59,6 +59,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/gh"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"slices"
 	"sort"
@@ -122,6 +123,7 @@ type SprintSnapshot struct {
 	Pitstop    bool
 	Streams    []StreamRow
 	LandedHour int64 // ws:log moves to landed in the hour before the read
+	GHHour     int64 // GitHub calls in the hour before the read (gh:calls:all, #4343)
 	// Consumers are the consumer table's rows, in display order (#4071).
 	Consumers []ConsumerRow
 	// RoundTrips is how many pipelines the read took: 1 in steady state.
@@ -385,6 +387,7 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	}
 	hourAgo := now.Add(-time.Hour).UnixMilli()
 	log := pipe.XRangeN(ctx, "ws:log", strconv.FormatInt(hourAgo, 10), "+", logWindowMax)
+	ghAll := pipe.HGetAll(ctx, gh.TotalKey)
 	var lock *redis.Cmd
 	if cfg.LockKey != "" {
 		lock = pipe.Eval(ctx, lockRefreshScript, []string{cfg.LockKey}, cfg.LockToken, lockTTL(cfg).Milliseconds())
@@ -489,6 +492,11 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 				snap.LandedHour++
 			}
 		}
+	}
+	if m, err := ghAll.Result(); err != nil && !errors.Is(err, redis.Nil) {
+		snap.Errors = append(snap.Errors, "gh:calls:all not read (gh n/h unknown): "+err.Error())
+	} else {
+		snap.GHHour = gh.HourOf(m, now)
 	}
 	if lock != nil {
 		if n, err := lock.Int64(); err != nil || n == 0 {
@@ -601,7 +609,7 @@ func (s *SprintSnapshot) Render(now time.Time) string {
 	// newline left"): the title's blank line is then the gap before the
 	// worker table.
 	if left, y, pct, eta := s.XY(); y > 0 {
-		fmt.Fprintf(&b, "%d/%d left, %d%% done -> ~%dm\n\n", left, y, pct, eta)
+		fmt.Fprintf(&b, "%d/%d left, %d%% done -> ~%dm gh %d/h\n\n", left, y, pct, eta, s.GHHour)
 	}
 
 	s.renderStreams(&b)

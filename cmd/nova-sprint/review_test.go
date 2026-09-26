@@ -11,6 +11,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/redis/go-redis/v9"
@@ -116,7 +117,7 @@ func TestReviewPostCLI(t *testing.T) {
 
 	failOnce(t, c, "rv1")
 	forge := &closedIssues{}
-	reviewForge = func() reconcile.IssueCloser { return forge }
+	reviewForge = func(*store.Store) reconcile.IssueCloser { return forge }
 	code, out, errOut = post("--id", "rv1", "--verdict", "drop", "--why", "superseded by #4100")
 	if code != 0 || !regexp.MustCompile(`^REVIEW POST id=rv1 verdict=drop to=landed copy=- issue=mas-bandwidth/nova-tools#4000 closed=yes ms=\d+\n$`).MatchString(out) {
 		t.Fatalf("drop = %d %q %q", code, out, errOut)

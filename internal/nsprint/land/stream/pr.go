@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/webhook"
 	"github.com/redis/go-redis/v9"
@@ -38,6 +38,55 @@ type LandPROptions struct {
 	Repo string    // owner/name
 	N    int       // the pull request
 	Log  io.Writer // the progress lines; nil discards them
+	// Wait, when positive, makes a WAITING pass block on ev:github for the
+	// head's next check delivery (#4343: events over polling, the verb form
+	// of `gh pr checks --watch`) and pass again, up to Wait in all; Tick
+	// bounds one block (default 30 s). Now and Await are the clock and the
+	// wait; nil are the wall and ev:github.
+	Wait  time.Duration
+	Tick  time.Duration
+	Now   func() time.Time
+	Await func(ctx context.Context, head string, d time.Duration) error
+}
+
+// LandPRWait runs LandPR, and while the pass is waiting and Wait allows,
+// waits on ev:github for the head and passes again. Each pass is the same
+// three calls at most; the wait itself makes none.
+func LandPRWait(ctx context.Context, gh *GitHub, rdb redis.Cmdable, o LandPROptions) (LandPRReport, error) {
+	rep, err := LandPR(ctx, gh, rdb, o)
+	if err != nil || rep.State != "waiting" || o.Wait <= 0 {
+		return rep, err
+	}
+	now := o.Now
+	if now == nil {
+		now = time.Now
+	}
+	await := o.Await
+	if await == nil {
+		await = awaitHead(rdb)
+	}
+	tick := o.Tick
+	if tick <= 0 {
+		tick = 30 * time.Second
+	}
+	deadline := now().Add(o.Wait)
+	for rep.State == "waiting" {
+		left := deadline.Sub(now())
+		if left <= 0 {
+			return rep, nil
+		}
+		d := tick
+		if left < d {
+			d = left
+		}
+		if err := await(ctx, rep.Head, d); err != nil {
+			return rep, err
+		}
+		if rep, err = LandPR(ctx, gh, rdb, o); err != nil {
+			return rep, err
+		}
+	}
+	return rep, nil
 }
 
 // LandPRReport is how the pass ended: State merged, waiting, failed, closed
@@ -50,17 +99,6 @@ type LandPRReport struct {
 	CI       string
 	MergeSHA string
 	Failed   []string
-}
-
-type prView struct {
-	State          string `json:"state"`
-	Merged         bool   `json:"merged"`
-	MergeCommitSHA string `json:"merge_commit_sha"`
-	MergeableState string `json:"mergeable_state"`
-	Title          string `json:"title"`
-	Head           struct {
-		SHA string `json:"sha"`
-	} `json:"head"`
 }
 
 // LandPR runs the pass. The error is a *Refusal for a refused input, else
@@ -82,8 +120,8 @@ func LandPR(ctx context.Context, gh *GitHub, rdb redis.Cmdable, o LandPROptions)
 	}
 	say := func(format string, a ...any) { fmt.Fprintf(o.Log, "PR %d "+format+"\n", append([]any{o.N}, a...)...) }
 
-	var pr prView
-	if _, err := gh.do(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/pulls/%d", o.Repo, o.N), nil, &pr); err != nil {
+	pr, err := gh.ViewPR(ctx, o.Repo, o.N)
+	if err != nil {
 		return rep, err
 	}
 	rep.Head = pr.Head.SHA

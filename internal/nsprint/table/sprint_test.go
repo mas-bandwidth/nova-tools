@@ -232,7 +232,7 @@ func TestControl3530NoPitstopNoSprint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := snap.Render(now); !strings.HasPrefix(got, "SPRINT TABLE\n\n592/598 left, 1% done -> ~11840m\n\n") {
+	if got := snap.Render(now); !strings.HasPrefix(got, "SPRINT TABLE\n\n592/598 left, 1% done -> ~11840m gh 0/h\n\n") {
 		t.Fatalf("headline:\n%s", got)
 	}
 	mr := miniredis.RunT(t)
@@ -375,7 +375,7 @@ func TestControl3637ClearUnderOneSecond(t *testing.T) {
 		}
 	}
 	got := after.Render(now)
-	if !strings.Contains(got, "\n592/592 left, 0% done -> ~11840m\n") {
+	if !strings.Contains(got, "\n592/592 left, 0% done -> ~11840m gh 0/h\n") {
 		t.Fatalf("after clear:\n%s", got)
 	}
 	if b, a := before.Render(now), got; b[strings.Index(b, "\nworker "):] != a[strings.Index(a, "\nworker "):] {

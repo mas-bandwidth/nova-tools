@@ -20,9 +20,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/gh"
 	"io"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land/stream"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
@@ -33,7 +35,9 @@ func runLandPR(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags(verb)
 	repo := fs.String("repo", "mas-bandwidth/nova-tools", "")
 	redisAddr := fs.String("redis", "", "")
-	api := fs.String("api", "https://api.github.com", "")
+	api := fs.String("api", gh.DefaultAPI, "")
+	wait := fs.Duration("wait", 0, "")
+	tick := fs.Duration("tick", 30*time.Second, "")
 	// The one positional <n> may come before or after the flags.
 	var pos []string
 	for len(args) > 0 {
@@ -47,7 +51,7 @@ func runLandPR(ctx context.Context, args []string, out, errOut io.Writer) int {
 		}
 		args = fs.Args()
 	}
-	const usage = "land pr <n> [--repo owner/name] [--redis <addr>] [--api <url>]"
+	const usage = "land pr <n> [--repo owner/name] [--redis <addr>] [--api <url>] [--wait <d> [--tick <d>]]"
 	if len(pos) != 1 {
 		return refuse(errOut, verb, "wants one pull request number: "+usage)
 	}
@@ -57,6 +61,9 @@ func runLandPR(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 	if !landRepoOK(*repo) {
 		return refuse(errOut, verb, "--repo wants owner/name: "+usage)
+	}
+	if *wait < 0 || *tick <= 0 {
+		return refuse(errOut, verb, "--wait must not be negative and --tick must be positive: "+usage)
 	}
 	addr := landRedisAddr(*redisAddr)
 	if addr == "" {
@@ -72,14 +79,19 @@ func runLandPR(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return 6
 	}
 	defer st.Close()
-	gh := &stream.GitHub{API: *api, Token: tok, Budget: 3}
-	rep, err := stream.LandPR(ctx, gh, st.Client(), stream.LandPROptions{Repo: *repo, N: n, Log: out})
+	// Three calls per pass; a --wait pass again after the head's event.
+	budget := 3
+	if *wait > 0 {
+		budget = 0
+	}
+	c := &stream.GitHub{API: *api, Token: tok, Budget: budget, Verb: verb, Redis: st.Client(), Log: errOut}
+	rep, err := stream.LandPRWait(ctx, c, st.Client(), stream.LandPROptions{Repo: *repo, N: n, Log: out, Wait: *wait, Tick: *tick})
 	if err != nil {
 		return landExit(errOut, verb, err)
 	}
 	fmt.Fprintf(out, "LAND PR repo=%s pr=#%d state=%s head=%s ci=%s merge=%s failed=%s rest_calls=%d\n",
 		*repo, n, rep.State, orDash(stream.Short(rep.Head)), orDash(rep.CI), orDash(stream.Short(rep.MergeSHA)),
-		orDash(strings.Join(rep.Failed, ",")), gh.Calls)
+		orDash(strings.Join(rep.Failed, ",")), c.Calls)
 	switch rep.State {
 	case "merged":
 		return 0

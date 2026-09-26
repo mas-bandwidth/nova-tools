@@ -2,12 +2,9 @@ package main
 
 import (
 	"context"
-	"errors"
 	"io"
-	"os"
-	"os/exec"
-	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/gh"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/file"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
@@ -40,19 +37,9 @@ func cmdFile(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 }
 
 // githubToken is GH_TOKEN, then GITHUB_TOKEN, then `gh auth token` (which
-// honours GH_CONFIG_DIR, the fleet's per-seat gh config).
-func githubToken() (string, error) {
-	for _, k := range []string{"GH_TOKEN", "GITHUB_TOKEN"} {
-		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
-			return v, nil
-		}
-	}
-	out, err := exec.Command("gh", "auth", "token").Output()
-	if err != nil {
-		return "", errors.New("no GH_TOKEN or GITHUB_TOKEN, and gh auth token failed: " + err.Error())
-	}
-	return strings.TrimSpace(string(out)), nil
-}
+// honours GH_CONFIG_DIR, the fleet's per-seat gh config): internal/gh's
+// one token read (#4343).
+var githubToken = gh.Token
 
 func pushFiledTask(ctx context.Context, addr string, req task.PushRequest) (task.PushResult, error) {
 	st, err := store.Open(ctx, addr)

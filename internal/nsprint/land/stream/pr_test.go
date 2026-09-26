@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/webhook"
@@ -203,5 +204,52 @@ func TestLandPRWaitsRedAndDone(t *testing.T) {
 	}
 	if gh.Calls != 0 {
 		t.Fatalf("a refusal made %d calls", gh.Calls)
+	}
+}
+
+// TestLandPRWaitBlocksOnTheHeadsEvent (#4343: events over polling): with
+// Wait set, a WAITING pass waits on ev:github for the head and passes
+// again; the wait is the injected seam (no clock, no GitHub call), and the
+// pass after the webhook's green is the merge. The deadline ends a wait
+// that never wakes.
+func TestLandPRWaitBlocksOnTheHeadsEvent(t *testing.T) {
+	t.Parallel()
+
+	f, c := newFakeForge(), prRedis(t)
+	srv := httptest.NewServer(f.handler(t))
+	t.Cleanup(srv.Close)
+	now := time.Date(2026, 9, 26, 16, 0, 0, 0, time.UTC)
+	var waits []string
+	await := func(_ context.Context, head string, d time.Duration) error {
+		waits = append(waits, head[:4]+" "+d.String())
+		now = now.Add(d)
+		if len(waits) == 2 {
+			ghLeg(t, c, "gh", "green", "check:lint", "green 1 x") // the webhook wrote green
+		}
+		return nil
+	}
+	var log bytes.Buffer
+	gh := &GitHub{API: srv.URL, Token: "t0k", HTTP: srv.Client()}
+	o := LandPROptions{Repo: "o/r", N: f.n, Log: &log, Wait: 10 * time.Minute, Tick: 30 * time.Second,
+		Now: func() time.Time { return now }, Await: await}
+	rep, err := LandPRWait(context.Background(), gh, c, o)
+	if err != nil || rep.State != "merged" || rep.MergeSHA != f.mergeSHA || len(f.merges) != 1 {
+		t.Fatalf("%v %+v merges=%d\n%s", err, rep, len(f.merges), log.String())
+	}
+	if strings.Join(waits, ",") != "hhhh 30s,hhhh 30s" || gh.Calls != 4 {
+		t.Fatalf("waits %v calls %d: two waits on the head, then the read and the merge", waits, gh.Calls)
+	}
+
+	// Never green: the wait ends at the deadline, still waiting, no merge.
+	f2, c2 := newFakeForge(), prRedis(t)
+	srv2 := httptest.NewServer(f2.handler(t))
+	t.Cleanup(srv2.Close)
+	n := 0
+	o2 := LandPROptions{Repo: "o/r", N: f2.n, Wait: 70 * time.Second, Tick: 30 * time.Second,
+		Now:   func() time.Time { return now },
+		Await: func(_ context.Context, _ string, d time.Duration) error { n++; now = now.Add(d); return nil }}
+	rep, err = LandPRWait(context.Background(), &GitHub{API: srv2.URL, Token: "t0k", HTTP: srv2.Client()}, c2, o2)
+	if err != nil || rep.State != "waiting" || n != 3 || len(f2.merges) != 0 {
+		t.Fatalf("deadline: %v %+v waits=%d (30s, 30s, then the 10s left)", err, rep, n)
 	}
 }

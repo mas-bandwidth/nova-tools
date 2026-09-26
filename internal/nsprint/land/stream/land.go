@@ -433,7 +433,7 @@ func Merge(ctx context.Context, c Client, o MergeOptions) (MergeReport, error) {
 				continue
 			}
 			line := IssueCloseLine(l.Members[i].Head, l.Branch, l.Head, o.Repo, l.PR, rep.MergeSHA, r.N)
-			if err := o.GH.Comment(ctx, o.Repo, issue, line); err != nil {
+			if _, err := o.GH.Comment(ctx, o.Repo, issue, line); err != nil {
 				closeErr = err
 				rep.IssuesUnclosed = append(rep.IssuesUnclosed, issue)
 				continue
@@ -461,7 +461,7 @@ func Merge(ctx context.Context, c Client, o MergeOptions) (MergeReport, error) {
 			continue
 		}
 		line := CloseLine(l.Members[i].Head, l.Branch, l.Head, o.Repo, l.PR, rep.MergeSHA)
-		if err := o.GH.Comment(ctx, o.Repo, r.N, line); err != nil {
+		if _, err := o.GH.Comment(ctx, o.Repo, r.N, line); err != nil {
 			closeErr = err
 			rep.Unclosed = append(rep.Unclosed, r.N)
 			continue

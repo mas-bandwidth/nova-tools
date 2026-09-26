@@ -15,9 +15,7 @@
 package file
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -29,13 +27,15 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/mas-bandwidth/nova-tools/internal/gh"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/redis/go-redis/v9"
 )
 
 // DefaultAPI is the GitHub REST root the verb posts to.
-const DefaultAPI = "https://api.github.com"
+const DefaultAPI = gh.DefaultAPI
 
 // DefaultOrg is the owner a bare repo name (`nova-tools`) is filed under.
 const DefaultOrg = "mas-bandwidth"
@@ -51,6 +51,8 @@ type Deps struct {
 	HTTP  *http.Client
 	Token func() (string, error)
 	Push  func(ctx context.Context, redisAddr string, req task.PushRequest) (task.PushResult, error)
+	// Redis counts the calls under file when set.
+	Redis redis.Cmdable
 }
 
 // Usage is the verb's help text.
@@ -319,22 +321,13 @@ func TaskTitle(repo string, n int, title string, body []byte) string {
 	return strings.Join(parts, " | ")
 }
 
-// client is the REST seam: two POSTs and two GETs of the issues API.
+// client is the REST seam, the one GitHub client (internal/gh, #4343):
+// two POSTs and two GETs of the issues API, counted under file.
 type client struct {
-	api   string
-	http  *http.Client
-	token string
+	gh *gh.Client
 }
 
 func newClient(d Deps) (*client, error) {
-	api := strings.TrimRight(d.API, "/")
-	if api == "" {
-		api = DefaultAPI
-	}
-	h := d.HTTP
-	if h == nil {
-		h = &http.Client{Timeout: 60 * time.Second}
-	}
 	if d.Token == nil {
 		return nil, errors.New("no GitHub token source")
 	}
@@ -345,94 +338,47 @@ func newClient(d Deps) (*client, error) {
 	if strings.TrimSpace(tok) == "" {
 		return nil, errors.New("GitHub token is empty; set GH_TOKEN or log gh in")
 	}
-	return &client{api: api, http: h, token: strings.TrimSpace(tok)}, nil
-}
-
-func (c *client) do(ctx context.Context, method, path string, in any, want int, out any) error {
-	var rd io.Reader
-	if in != nil {
-		b, err := json.Marshal(in)
-		if err != nil {
-			return err
-		}
-		rd = bytes.NewReader(b)
+	h := d.HTTP
+	if h == nil {
+		h = &http.Client{Timeout: 60 * time.Second}
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.api+path, rd)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	if in != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	if err != nil {
-		return err
-	}
-	if resp.StatusCode != want {
-		msg := string(raw)
-		if len(msg) > 200 {
-			msg = msg[:200]
-		}
-		return fmt.Errorf("%s %s: HTTP %d: %s", method, path, resp.StatusCode, msg)
-	}
-	return json.Unmarshal(raw, out)
+	return &client{gh: &gh.Client{API: d.API, HTTP: h, Token: strings.TrimSpace(tok), Verb: "file", Redis: d.Redis}}, nil
 }
 
 func (c *client) createIssue(ctx context.Context, repo, title, body string) (int, string, error) {
-	var out struct {
-		Number  int    `json:"number"`
-		HTMLURL string `json:"html_url"`
+	n, url, err := c.gh.CreateIssue(ctx, repo, title, body)
+	if err != nil {
+		return 0, "", short(err)
 	}
-	err := c.do(ctx, http.MethodPost, "/repos/"+repo+"/issues",
-		map[string]string{"title": title, "body": body}, http.StatusCreated, &out)
-	if err == nil && out.Number <= 0 {
-		err = errors.New("GitHub answered without an issue number")
-	}
-	return out.Number, out.HTMLURL, err
+	return n, url, nil
 }
 
 func (c *client) issueBody(ctx context.Context, repo string, n int) (string, error) {
-	var out struct {
-		Body *string `json:"body"`
-	}
-	if err := c.do(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/issues/%d", repo, n), nil, http.StatusOK, &out); err != nil {
-		return "", err
-	}
-	if out.Body == nil {
-		return "", nil
-	}
-	return *out.Body, nil
+	b, err := c.gh.IssueBody(ctx, repo, n)
+	return b, short(err)
 }
 
 func (c *client) createComment(ctx context.Context, repo string, issue int, body string) (int64, error) {
-	var out struct {
-		ID int64 `json:"id"`
+	id, err := c.gh.Comment(ctx, repo, issue, body)
+	if err != nil {
+		return 0, short(err)
 	}
-	err := c.do(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/issues/%d/comments", repo, issue),
-		map[string]string{"body": body}, http.StatusCreated, &out)
-	if err == nil && out.ID <= 0 {
-		err = errors.New("GitHub answered without a comment id")
+	if id <= 0 {
+		return 0, errors.New("GitHub answered without a comment id")
 	}
-	return out.ID, err
+	return id, nil
 }
 
 func (c *client) commentBody(ctx context.Context, repo string, id int64) (string, error) {
-	var out struct {
-		Body *string `json:"body"`
+	b, err := c.gh.CommentBody(ctx, repo, id)
+	return b, short(err)
+}
+
+// short keeps a non-2xx reply's error to 200 characters of body.
+func short(err error) error {
+	var herr *gh.HTTPError
+	if errors.As(err, &herr) && len(herr.Body) > 200 {
+		return fmt.Errorf("%s %s: HTTP %d: %s", herr.Method, herr.Path, herr.Status, herr.Body[:200])
 	}
-	if err := c.do(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/issues/comments/%d", repo, id), nil, http.StatusOK, &out); err != nil {
-		return "", err
-	}
-	if out.Body == nil {
-		return "", nil
-	}
-	return *out.Body, nil
+	return err
 }

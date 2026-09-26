@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/gh"
 	"io"
 	"os"
 	"strings"
@@ -64,7 +65,7 @@ func runLandFlakyObserve(ctx context.Context, args []string, out, errOut io.Writ
 	pkg := fs.String("pkg", "", "")
 	test := fs.String("test", "", "")
 	lane := fs.String("lane", "", "")
-	api := fs.String("forge-api", "https://api.github.com", "")
+	api := fs.String("forge-api", gh.DefaultAPI, "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "land flaky observe", err.Error())
 	}

@@ -15,6 +15,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/gh"
 	"io"
 	"os"
 	"os/signal"
@@ -385,7 +386,7 @@ func runCICompare(ctx context.Context, args []string, out, errOut io.Writer) int
 	repo := fs.String("repo", "", "")
 	sha := fs.String("sha", "", "")
 	owner := fs.String("owner", "mas-bandwidth", "")
-	api := fs.String("forge-api", "https://api.github.com", "")
+	api := fs.String("forge-api", gh.DefaultAPI, "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "ci compare", err.Error())
 	}
