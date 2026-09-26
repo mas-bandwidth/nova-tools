@@ -347,17 +347,20 @@ func TestLandStreamEndToEnd(t *testing.T) {
 	// the rows by identity and order: the refused run's park, the --partial
 	// run's park, the landing, five lands walked step by step through the one
 	// move (#3778: a ready member goes ready -> working -> landed, one
-	// receipt each), the two streams' sentinels created at registration
-	// (#4318), and no sentinel landed: the swarm's waits for the
-	// coordinator's acceptance (#4412)
+	// receipt each; #103 and #7 reach working in #3's call, are held ORDER
+	// WAIT behind #101 until #1's call lands it, and land in the landing's
+	// second pass, #4322 round 6), the two streams' sentinels created at
+	// registration (#4318), and no sentinel landed: the swarm's waits for
+	// the coordinator's acceptance (#4412)
 	var rows []string
 	for _, e := range c.XRange(ctx, "ws:log", "-", "+").Val() {
 		rows = append(rows, fmt.Sprintf("%v %v->%v", e.Values["id"], e.Values["from"], e.Values["to"]))
 	}
 	wantRows := []string{"t2 merging->working", "t2 merging->working", "land:mas-bandwidth/nova-tools:landing-streams-lander merging->landed",
 		ws.SentinelID(swarm) + " ->waiting", "build-103-three waiting->ready", "build-103-three ready->working",
-		"build-103-three working->landed", "build-7-seven ready->working", "build-7-seven working->landed",
-		ws.SentinelID(lsStream) + " ->waiting", "t3 merging->landed", "build-101-one working->landed", "t1 merging->landed"}
+		"build-7-seven ready->working",
+		ws.SentinelID(lsStream) + " ->waiting", "t3 merging->landed", "build-101-one working->landed", "t1 merging->landed",
+		"build-103-three working->landed", "build-7-seven working->landed"}
 	if got := strings.Join(rows, "; "); got != strings.Join(wantRows, "; ") {
 		t.Fatalf("ws:log rows\n%s\nwant\n%s", got, strings.Join(wantRows, "; "))
 	}

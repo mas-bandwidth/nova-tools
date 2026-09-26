@@ -177,8 +177,21 @@ func TestACLSeatsRunTheCardVerbs(t *testing.T) {
 		_, err := fc.HGetAll(ctx, taskcard.Key(id)).Result()
 		noperm("ns-friend", "HGETALL "+taskcard.Key(id), err)
 	}
-	if _, err := taskcard.BeatCopies(ctx, fc, friend, w.IDs...); err != nil {
-		t.Fatalf("ns-friend card beat: %v", err)
+	if _, err := taskcard.BeatCopies(ctx, fc, friend, w.IDs...); err == nil || !strings.Contains(err.Error(), "observed owner") {
+		t.Fatalf("ns-friend card beat must direct to observed-owner beat: %v", err)
+	}
+	for i, id := range w.IDs {
+		owner := taskcard.ProcessOwner{Host: "fixture", PID: 42, Start: "creation-1"}
+		if err := taskcard.BindOwner(ctx, fc, friend, id, w.Tokens[i], owner); err != nil {
+			t.Fatalf("ns-friend owner bind: %v", err)
+		}
+		now, err := fc.Time(ctx).Result()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, err := taskcard.ObserveOwner(ctx, fc, friend, id, w.Tokens[i], taskcard.OwnerObservation{Owner: owner, State: "live", At: now}); err != nil || got.State != "live" {
+			t.Fatalf("ns-friend observed owner beat: %+v %v", got, err)
+		}
 	}
 	for i, id := range w.IDs {
 		_, err := fc.HGet(ctx, taskcard.Key(id), "where").Result()

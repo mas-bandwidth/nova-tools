@@ -57,7 +57,7 @@ import (
 )
 
 // cardMoveVerbs are the table move subverbs no other card form has.
-var cardMoveVerbs = map[string]bool{"deal": true, "work": true, "land": true, "cancel": true, "expire": true,
+var cardMoveVerbs = map[string]bool{"owner": true, "deal": true, "work": true, "land": true, "cancel": true, "expire": true,
 	"table": true, "consumers": true, "render": true, "assign": true, "session": true}
 
 // isCardMove says whether a card call is a table move. end and beat are
@@ -113,6 +113,9 @@ var resultFlags = []string{"line1", "line2", "check", "paths", "branch", "commit
 	"wall", "evidence", "tier", "key", "exit"}
 
 func runCardMove(ctx context.Context, sub string, args []string, out, errOut io.Writer) int {
+	if sub == "owner" {
+		return runCardOwner(ctx, args, out, errOut)
+	}
 	verb := "card " + sub
 	fs := verbflag.New(verb) // -h prints the move's usage and flags, exit 2 (#3254)
 	m := &moveCmd{result: map[string]*string{}}
@@ -349,6 +352,11 @@ func (m *moveCmd) run(ctx context.Context, c *redis.Client, sub string, ids []st
 		code := 0
 		if !printFriendBeat(ctx, c, as, redisArg(*m.redis), out) {
 			code = 1
+		}
+		if as.Kind == "friend" {
+			for i, id := range w.IDs {
+				fmt.Fprintf(out, "OWNER REQUIRED id=%s token=%s state=unknown run=\"nova-sprint card owner --as %s --id %s --token %s --pid <harness-pid>\"\n", id, w.Tokens[i], as, id, w.Tokens[i])
+			}
 		}
 		fmt.Fprintf(out, "CARD WORK as=%s n=%d free=%d ids=%s ms=%d\n", as, len(w.IDs), w.Free, dash(strings.Join(w.IDs, ",")), ms())
 		return code

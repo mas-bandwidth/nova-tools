@@ -627,8 +627,8 @@ func TestCardCancelAndExpire(t *testing.T) {
 		t.Fatalf("cancelled primary's copy %v", h)
 	}
 	cleanMoves(t, c, "cancel")
-	if _, err := taskcard.BeatCopies(ctx, c, k, d[2].Copy); err != nil {
-		t.Fatal(err)
+	if _, err := taskcard.BeatCopies(ctx, c, k, d[2].Copy); err == nil || !strings.Contains(err.Error(), "observed owner") {
+		t.Fatalf("friend copy beat without owner observation: %v", err)
 	}
 	c.HSet(ctx, taskcard.Key(d[2].Copy), "lease_until", "1")
 	x, err := taskcard.ExpireCopies(ctx, c, "reconciler")

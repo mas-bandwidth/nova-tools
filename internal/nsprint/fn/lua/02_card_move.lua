@@ -2875,6 +2875,9 @@ end)
 -- of a working task renews its lease (the child's beat, every 60 s).
 redis.register_function('ns_tcard_beat', function(keys, args)
   local id, as = args[1], args[2] or ''
+  if TK.copy_id(id) then
+    return 'REFUSED OWNER id=' .. id .. ' is a consumer copy; no lease renewed; run: nova-sprint card render --id ' .. id
+  end
   local p = TK.read(id)
   if not p then return 'REFUSED NOTASK task:' .. id end
   if p.where ~= 'working' then return 'REFUSED NOTWORKING task:' .. id .. ' is ' .. p.where end
@@ -4565,6 +4568,12 @@ function TM.beat(c, ids)
       return { 'REFUSED', 'NOTWORKING ' .. TK.str(id) .. ' is not in ' .. TM.key(c, 'working') }
     end
   end
+  -- Only ns_cm_owner carries a fresh, fenced process observation. A cached
+  -- live state is insufficient here: repeated plain beats could keep a dead
+  -- owner alive forever. This also covers task beat's copy path.
+  if #ids > 0 and TM.parse(c) == 'friend' then
+    return { 'REFUSED', 'OWNER ids=' .. table.concat(ids, ',') .. ' ' .. c .. ' copies require an observed owner; no leases renewed; run: nova-sprint friend beat --as ' .. c .. ' --once' }
+  end
   for _, id in ipairs(ids) do
     redis.call('HSET', 'task:' .. id, 'lease_until', tostring(at + TM.LEASE), 'beat_at', tostring(at))
   end
@@ -4572,6 +4581,63 @@ function TM.beat(c, ids)
   for _, id in ipairs(skipped) do out[#out + 1] = id end
   return out
 end
+
+-- Owner observations for detached friend loops. The process identity is
+-- immutable within the lease token; a label alone is never evidence of life.
+-- KEYS working-set, copy; ARGV op, consumer, id, token, host, pid, start,
+-- state, observed-at (Redis time sampled before the external observation).
+redis.register_function('ns_cm_owner', function(keys, a)
+  local op, c, id, token = a[1], a[2], a[3], a[4]
+  if TM.parse(c) ~= 'friend' or not TK.copy_id(id) or token == '' or keys[2] ~= 'task:' .. id then
+    return { 'REFUSED', 'OWNER bad consumer, copy, token or keys' }
+  end
+  if keys[1] ~= TM.key(c, 'working') then
+    return { 'REFUSED', 'EPOCH ' .. id .. ' sprint changed before owner update; no owner or lease changed; run: nova-sprint card render --id ' .. id }
+  end
+  local at = cm_now()
+  local r = redis.call('HMGET', keys[2], 'consumer', 'where', 'token', 'lease_until',
+    'owner_host', 'owner_pid', 'owner_start', 'owner_token', 'owner_state', 'owner_at')
+  if r[1] ~= c or r[2] ~= 'working' or not redis.call('ZSCORE', keys[1], id) then
+    return { 'REFUSED', 'NOTWORKING ' .. id }
+  end
+  if r[3] ~= token then return { 'REFUSED', 'FENCED ' .. id .. ' token changed' } end
+  local until_ms = tonumber(r[4]) or 0
+  local valid = a[5] ~= '' and tonumber(a[6]) and tonumber(a[6]) > 0 and a[7] ~= '' and a[7] ~= '-'
+  local same = r[8] == token and r[5] == a[5] and r[6] == a[6] and r[7] == a[7]
+  if op == 'bind' then
+    if not valid then return { 'REFUSED', 'OWNER process identity required' } end
+    if until_ms <= at then return { 'REFUSED', 'FENCED ' .. id .. ' lease lapsed' } end
+    if r[8] == token then
+      if same then return { 'BOUND' } end
+      return { 'REFUSED', 'CONFLICT ' .. id .. ' owner already bound' }
+    end
+    redis.call('HSET', keys[2], 'owner_host', a[5], 'owner_pid', a[6], 'owner_start', a[7],
+      'owner_token', token, 'owner_state', 'unknown', 'owner_at', '0')
+    return { 'BOUND' }
+  end
+  if op ~= 'observe' or (a[8] ~= 'live' and a[8] ~= 'dead' and a[8] ~= 'unknown') then
+    return { 'REFUSED', 'OWNER invalid operation or state' }
+  end
+  local unbound = r[8] ~= token and a[5] == '' and a[6] == '0' and a[7] == '' and a[8] == 'unknown'
+  if not same and not unbound then return { 'REFUSED', 'FENCED ' .. id .. ' owner changed' } end
+  local observed = tonumber(a[9]) or 0
+  -- BeatInterval is one second. Do not renew with a stale/future sample.
+  if observed <= 0 or observed > at or at - observed >= 2000 or
+      (r[8] == token and observed < (tonumber(r[10]) or 0)) then
+    return { 'REFUSED', 'STALE ' .. id .. ' owner observation' }
+  end
+  local state = a[8]
+  if state == 'live' and until_ms <= at then
+    return { 'REFUSED', 'FENCED ' .. id .. ' lease lapsed' }
+  end
+  local changed = r[9] ~= state
+  redis.call('HSET', keys[2], 'owner_state', state, 'owner_at', tostring(observed))
+  if state == 'live' then
+    until_ms = at + TM.LEASE
+    redis.call('HSET', keys[2], 'lease_until', tostring(until_ms), 'beat_at', tostring(at))
+  end
+  return { 'OWNER', state, changed and '1' or '0', tostring(until_ms) }
+end)
 
 -- TM.roster: every consumer: the consumers set, and bench:<b> for each of
 -- benches, friend:<f> for each of friends.
@@ -5017,7 +5083,7 @@ function TK.reorder(stream, args, from)
   return nil, { ranked, rescored, skipped }
 end
 
-NS.task = { move = TK.move, create = TK.create, read = TK.read, stream_of = TK.stream_of,
+NS.task = { move = TK.move, create = TK.create, read = TK.read, stream_of = TK.stream_of, is_copy = TK.copy_id,
   ms = TK.ms, where = TK.IS, where_of = TK.WHERE_OF, unread = TK.unread,
   -- the stream sentinel (#4318): its id for a stream, and whether an id is one
   sentinel_id = TK.sentinel_id, is_sentinel = TK.is_sentinel, slug = TK.slug, slug_clash = TK.slug_clash,

@@ -3213,10 +3213,16 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// not yet born. The repair is recorded only after it has happened, and printed once,
 	// from the poll, together with whatever the fast-forward itself had to discard.
 	repairs := &repairLog{}
-	if cleared, err := bus.ClearStaleIndexLock(*busDir, time.Now()); err != nil {
+	rep, err := bus.ClearStaleIndexLock(*busDir, time.Now())
+	if rep.Scanned {
+		printLockScan(stdout, rep.Scan)
+	}
+	if errors.Is(err, bus.ErrIndexLockChanged) {
+		fmt.Fprintf(stderr, "WAIT: %s\n", oneline.Err(err))
+	} else if err != nil {
 		fmt.Fprintf(stderr, "WAIT REFUSED: %s\n", oneline.Err(err))
 		return 1
-	} else if cleared {
+	} else if rep.Cleared {
 		repairs.add("index.lock")
 	}
 	// A dirty BEAT is what a wait from before #3144, killed mid-tick, left behind. No wait
@@ -3259,6 +3265,17 @@ func discardDirtyOwnedBeat(o inboxOpts) (bool, error) {
 		return false, nil
 	}
 	return bus.DiscardPath(o.busDir, beat)
+}
+
+// printLockScan is the receipt of one process scan over a stale index.lock of this
+// account: how many live gits were placed at this checkout (owner), how many of another
+// account were passed over unplaced (foreign), and how many could not be read (unknown).
+// It is printed whenever such a scan classified every process, before the WAIT REPAIR
+// that clears the lock or the WAIT REFUSED that keeps it, so the evidence for the unlink
+// (owner=0 unknown=0) or for the refusal is on the record. A scan that failed as a whole
+// has no counts and prints only its refusal.
+func printLockScan(w io.Writer, s bus.LockScan) {
+	fmt.Fprintf(w, "WAIT SCAN index.lock owner=%d foreign=%d unknown=%d\n", s.Owner, s.Foreign, s.Unknown)
 }
 
 // repairLog is the repairs this wait has done and not yet said. add is idempotent: a beat
@@ -3510,6 +3527,12 @@ func waitPoll(o inboxOpts, first bool, now time.Time, keep func(inboxReading) bo
 	// dirty file it does not own refuses the poll and is not touched. See
 	// bus.RecoverWaitFastForward.
 	rec, err := bus.RecoverWaitFastForward(o.busDir, o.remote, o.branch, waitOwnedPaths(o), time.Now())
+	if rec.Scanned {
+		printLockScan(stdout, rec.Scan)
+	}
+	if rec.LockChanged {
+		fmt.Fprintf(stderr, "WAIT: %s\n", oneline.Err(bus.ErrIndexLockChanged))
+	}
 	if rec.LockCleared {
 		repairs.add("index.lock")
 	}
