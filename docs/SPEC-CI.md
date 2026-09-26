@@ -2220,6 +2220,51 @@ per functional program), move a process-in-the-loop test behind the `slow` tag
 into the nightly functional matrix, or put the leg on a machine that compiles the
 set in seconds. Never a larger number.
 
+### `silent` — no silent failure on the copy model's live path
+
+**The rule.** Glenn, 2026-09-25: "every verb must return an error that you see,
+for breadcrumbs as you work, failing silent is not allowed. Without this every
+thing we have done shows it is not possible to make a reliable system"; and
+2026-09-26 11:30 AM ET: "every verb in nova tools related to current work should
+not fail silently. Scan for silent failures and fix." In the live packages
+(`cmd/nova-sprint`, `cmd/nova-card`, `internal/nsprint/{reconcile, taskcard,
+table, card, launch, fn, capacity, pipeerr}`), no non-test `.go` file holds
+`_ = err` (any error-named identifier assigned to the blank identifier) or a
+`|| true` inside a Go string literal (an embedded script step whose exit is
+thrown away). A failure is returned, printed as one typed line (`REFUSED <verb>:
+<why>` on stderr with exit 1, or the verb's own receipt vocabulary) or, in a
+loop, counted and printed once per pass (the reconciler's `DUTY <name> ...
+err=<text>` line is the model).
+**The hurt.** The 2026-09-26 sweep (`rowan/no-silent-failures`): a `card render`
+that reported a Redis outage as `NOTASK`; a copy whose refused `card end` left
+only `code=2` on a line written to `/dev/null`; a reconciler deal duty that threw
+its pass's `REFUSED` lines away and returned clean counts; a consumer whose
+`slots` field would not parse and was skipped every pass with no line; a lapsed
+copy the expire sweep could not end, left in `working` with nothing said, every
+sweep; a go-redis pipeline whose first absent field (`redis.Nil`) hid a later
+`NOPERM` and read the rest as zero. Each was a card that sat still while the
+table said nothing.
+**The test.** `TestNoSilentFailureOnTheLivePath`
+(`internal/ci/silent_class_test.go`), with the rule proved over source in
+`TestSilentRuleReadsTheTwoShapes` (the two shapes refused; a discarded value
+that is not an error and a `|| true` in a comment are not).
+**Its allowlist.** `internal/ci/testdata/silent_allowlist.txt`, one
+`file:function` per row (a package-level literal is `file:<package>`); EMPTY
+today, shrink-only in both directions.
+**Its remedy lines.** `` `_ = err` drops the failure where it happened; return
+it, print one typed line (REFUSED <verb>: <why>) or count it into the pass's
+DUTY line``; `` `|| true` inside a Go string literal hides an embedded script
+step's failure; drop it and read the step's exit``; for a stale row, `delete the
+stale entry (the list only shrinks)`.
+**Its narrowings.** Non-test `.go` files of the live packages only. It reads the
+two shapes by their syntax: `_, _ = f()` (a discarded multi-value), `_ =
+f.Close()`, an `err` assigned and never read, and an `if err != nil { return
+nil }` are not read (`go vet`, errcheck and the reviewer's eye are theirs), and
+neither is a Lua function that returns `nil` where a `REFUSED <why>` belongs.
+The go-redis pipeline shape has its own remedy rather than a rule:
+`internal/nsprint/pipeerr.Exec` walks every command of a pipeline whose fields
+may be absent and returns the first error that is not `redis.Nil`.
+
 ## Parked class tests
 
 A parked rule is one this repository decided to stop enforcing, kept here with
@@ -2462,6 +2507,7 @@ fix and integration-4 is what it costs`.
 **Its narrowings.** It counts jobs that name `windows-latest` AND the
 `pull_request` event in their text; a Windows runner reached through a reusable
 workflow or a matrix value built elsewhere would not be counted.
+
 
 ## How the class tests read the tree: one walk, one parse, in parallel
 
