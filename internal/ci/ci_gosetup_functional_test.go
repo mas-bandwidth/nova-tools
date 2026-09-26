@@ -69,9 +69,21 @@ func TestCIGoSetupPrefersTheGoModToolchain(t *testing.T) {
 		t.Skip("no bash")
 	}
 	runs := goSetupRuns(t)
-	if len(runs) != 7 {
-		t.Fatalf("ci.yml has %d Go setup steps carrying %q, want 7 (update this test with the workflow)", len(runs), goSetupMarker)
+	if len(runs) != 8 {
+		t.Fatalf("ci.yml has %d Go setup steps carrying %q, want 8 (update this test with the workflow)", len(runs), goSetupMarker)
 	}
+	// A step copied verbatim into another job (the functional job's is the
+	// test job's) is the same script: it runs once, so a copy costs the unit
+	// tier's one-second test budget nothing.
+	seen := map[string]bool{}
+	unique := runs[:0:0]
+	for _, run := range runs {
+		if !seen[run] {
+			seen[run] = true
+			unique = append(unique, run)
+		}
+	}
+	runs = unique
 	expr := regexp.MustCompile(`\$\{\{[^}]*\}\}`)
 	cases := []struct {
 		name, gomod string

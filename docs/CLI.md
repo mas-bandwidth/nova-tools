@@ -3172,8 +3172,15 @@ budgets) under `nice -n 15` with `GOMAXPROCS=2`, `GOTEST_P=2` and `-count=1`. It
 prints one `PKG` line per package with its seconds and one `RED` line per failing
 test with its output; exit 0 is green, 1 a red test or build, 2 over the budgets
 or a step that could not run. `--functional` adds the functional build tag
-(`GOTEST_TAGS=functional`), as CI's merge-group and push legs do
-([TESTING.md](../TESTING.md)).
+(`GOTEST_TAGS=functional`); CI runs those tests in its `functional` job as a
+stream merges ([TESTING.md](../TESTING.md)).
+
+The unit tier (`make test`) passes `--package-budget 2 --test-budget 1 --allowlist
+internal/ci/slow-tests_allowlist.txt` instead: a package over 2 s or a top-level
+test over 1 s is a `CI-SLOW` line unless its allowlist row names more. `nova-ci
+functional <package-dir>...` prints, for `make test-functional`, the packages
+that hold `//go:build functional` tests and a `-run` pattern naming exactly
+those tests; it prints nothing when there are none ([TESTING.md](TESTING.md), "The two tiers").
 
 See [SPEC-CI.md](SPEC-CI.md).
 

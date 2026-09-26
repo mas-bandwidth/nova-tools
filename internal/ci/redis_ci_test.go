@@ -18,10 +18,12 @@ import (
 )
 
 // TestRedisBackedTestsDoNotSkipUnderCI is #3113. With NOVA_CI=1 and
-// redis-server on PATH, a redis-backed control runs. A missing redis-server
+// redis-server on PATH, a redis-backed control runs (in the functional tier,
+// nova-tools#4328). A missing redis-server
 // fails instead of skipping, and no other file keeps a private LookPath that
 // can still skip. The workflows install the binary; the helper is the one gate.
 func TestRedisBackedTestsDoNotSkipUnderCI(t *testing.T) {
+	t.Parallel()
 	switch os.Getenv("NOVA_REDIS_CI_CHILD") {
 	case "fail":
 		testutil.Absent(t, errors.New("redis-server: executable file not found"))
@@ -43,7 +45,8 @@ func TestRedisBackedTestsDoNotSkipUnderCI(t *testing.T) {
 		t.Fatalf("missing redis-server outside CI: exit %d, want a skip\n%s", skipCode, skipOut)
 	}
 
-	t.Setenv(testutil.CIEnv, "1")
+	// NOVA_CI=1 comes from the functional job's environment (ci.yml), which
+	// is where this file runs: it is behind the functional tag.
 	addr := testutil.Start(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -72,7 +75,9 @@ func TestRedisBackedTestsDoNotSkipUnderCI(t *testing.T) {
 	if !strings.Contains(ci, `NOVA_CI: "1"`) {
 		t.Fatal("ci.yml does not set NOVA_CI=1; a missing redis-server would skip and the run would stay green")
 	}
-	for _, job := range []string{"test", "test-hosted"} {
+	// The functional tier installs the server; the unit tier refuses one
+	// (TestUnitTierRefusesRedisServer), so its `test` job must not install it.
+	for _, job := range []string{"functional", "test-hosted"} {
 		body := jobBody(ci, job)
 		if body == "" {
 			t.Fatalf("ci.yml has no job %s", job)
@@ -80,6 +85,9 @@ func TestRedisBackedTestsDoNotSkipUnderCI(t *testing.T) {
 		if !strings.Contains(body, "install-redis-server.sh") {
 			t.Errorf("ci.yml job %s does not install redis-server", job)
 		}
+	}
+	if strings.Contains(jobBody(ci, "test"), "install-redis-server.sh") {
+		t.Error("ci.yml job test (the unit tier) installs redis-server; the unit tier refuses one")
 	}
 	cert := readFile(t, filepath.Join(root, ".github", "workflows", "certification.yml"))
 	if !strings.Contains(cert, `NOVA_CI: "1"`) {
@@ -189,4 +197,26 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(b[i:])
+}
+
+// TestStartFailsClosedOnTheUnitTierShim is the other half of
+// TestUnitTierRefusesRedisServer (unit_tier_class_test.go): with the unit
+// tier's redis-server shim first on PATH and NOVA_CI=1, testutil.Start fails
+// the test naming the shim's line, never skips and never starts a server. It
+// calls testutil.Start, so it lives in this functional-tagged file; the shim
+// is ci.yml's own step, run here.
+func TestStartFailsClosedOnTheUnitTierShim(t *testing.T) {
+	t.Parallel()
+	if os.Getenv("NOVA_UNIT_TIER_SHIM_CHILD") == "1" {
+		testutil.Start(t)
+		t.Fatal("testutil.Start returned with the unit tier's shim first on PATH; it must fail closed")
+	}
+	dir := unitTierShim(t)
+	tmp := t.TempDir()
+	child := exec.Command(os.Args[0], "-test.run", "^TestStartFailsClosedOnTheUnitTierShim$", "-test.count=1", "-test.v")
+	child.Env = []string{"NOVA_UNIT_TIER_SHIM_CHILD=1", "NOVA_CI=1", "PATH=" + dir + string(os.PathListSeparator) + os.Getenv("PATH"), "HOME=" + tmp, "TMPDIR=" + tmp}
+	got, err := child.CombinedOutput()
+	if err == nil || !strings.Contains(string(got), unitShimMessage) || strings.Contains(string(got), "--- SKIP") {
+		t.Fatalf("testutil.Start under NOVA_CI=1 with the shim first on PATH: err %v; want a failure naming %q\n%s", err, unitShimMessage, got)
+	}
 }

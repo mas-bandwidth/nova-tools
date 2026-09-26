@@ -31,6 +31,20 @@
 # pull_request from a fork skips CI rather than running untrusted code on our
 # machines.
 #
+# TWO TIERS, since 2026-09-26 (nova-tools#4328). Glenn: "Only run tests that
+# you actually need to, according to the changes being made." "unit tests be <
+# 2s (ideally <1) but also they must not be so aggressive that they fill a
+# whole machine cores." "we should run functional tests, not on every small PR
+# being merged or worked on, but only as we merge whole work streams." The UNIT
+# tier is the `test` matrix on every pull_request, merge_group and push: only
+# the packages the change touched, at most two cores a leg (GOMAXPROCS and the
+# Makefile's GOTEST_P), no redis-server on PATH, and slowtests failing a
+# package over 2 s or a test over 1 s unless internal/ci/slow-tests_allowlist.txt
+# names it. The FUNCTIONAL tier is the `functional` job: the tests behind
+# `//go:build functional`, over the same packages, on merge_group (a stream's
+# merge into dev), the nightly schedule and a manual run, never on a pull
+# request. See docs/TESTING.md.
+#
 # NO NATIVE WINDOWS LEG, since 2026-09-18. Glenn's ruling: "drop the native
 # windows CI runners. WSL only from now on." Every windows-latest leg this file
 # carried — test-windows-pr's four shards, test-hosted-merge's windows leg and
@@ -318,11 +332,14 @@ jobs:
     # packages run on the darwin-x64 shards only. On pull_request and merge_group it
     # selects only the packages the change touches and their in-module
     # importers; the push to dev and the nightly run keep the whole tree.
-    if: vars.NOVA_CI_CARDS != 'on' && (github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository))
+    # It runs on the nightly schedule too, for the `functional` job's list only
+    # (the unit `test` job keeps its own schedule guard).
+    if: vars.NOVA_CI_CARDS != 'on' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, space]
     timeout-minutes: 2
     outputs:
       packages: ${{ steps.list.outputs.packages }}
+      functional: ${{ steps.list.outputs.functional }}
     steps:
       - name: remove stale build dirs from the shared runner
         # The self-hosted runners reuse the _work directory across jobs; a tree left
@@ -538,6 +555,29 @@ jobs:
             case "$heavy" in *" $pkg "*) front+=("$pkg") ;; *) rest+=("$pkg") ;; esac
           done
           all=(${front[@]+"${front[@]}"} ${rest[@]+"${rest[@]}"})
+
+          # THE FUNCTIONAL TIER'S LIST: the same selected packages, dealt into
+          # FOUR space shards like a pull request's unit legs (the darwin-only
+          # packages have no Linux leg). The `functional` job reads it on
+          # merge_group, schedule and workflow_dispatch only; each leg's `make
+          # test-functional` runs just the tests behind the functional tag.
+          FUNCTIONAL_SHARDS=4
+          declare -a functional_grp
+          f=0
+          for pkg in ${all[@]+"${all[@]}"}; do
+            is_darwin_only "$pkg" && continue
+            functional_grp[$((f % FUNCTIONAL_SHARDS))]+=" $pkg"
+            f=$((f + 1))
+          done
+          fentries=()
+          for ((g=0; g<FUNCTIONAL_SHARDS; g++)); do
+            [ -n "${functional_grp[$g]:-}" ] || continue
+            fentries+=("{\"name\":\"$((g + 1))/$FUNCTIONAL_SHARDS space\",\"packages\":\"${functional_grp[$g]# }\"}")
+          done
+          [ "${#fentries[@]}" -gt 0 ] || fentries=('{"name":"nothing","packages":""}')
+          functional="[$(IFS=,; echo "${fentries[*]}")]"
+          echo "functional: $functional"
+          echo "functional=$functional" >> "$GITHUB_OUTPUT"
 
           if [ "${#all[@]}" -eq 0 ]; then
             echo "nothing to test for this change"
@@ -831,8 +871,31 @@ jobs:
           case "$runners" in ''|*[!0-9]*|0) runners=8 ;; esac
           share=$(( cores / runners ))
           [ "$share" -ge 1 ] || share=1
-          echo "$cores cores on this machine, $runners runners per machine (NOVA_RUNNERS_PER_MACHINE), this leg takes $share"
+          # AT MOST TWO (Glenn 2026-09-26 11:20 AM ET, nova-tools#4328: unit
+          # tests "must not be so aggressive that they fill a whole machine
+          # cores"): min(share, 2), the Makefile's GOTEST_P, whatever the box.
+          [ "$share" -le 2 ] || share=2
+          echo "$cores cores on this machine, $runners runners per machine (NOVA_RUNNERS_PER_MACHINE), this leg takes $share (at most 2)"
           echo "GOMAXPROCS=$share" >> "$GITHUB_ENV"
+
+      - name: the unit tier refuses redis-server
+        if: matrix.entry.packages != ''
+        # THE UNIT TIER STARTS NO SERVER (nova-tools#4328; docs/TESTING.md: unit
+        # tests mock, functional tests carry the build tag). A directory FIRST
+        # on PATH holds a redis-server that prints why and exits 86, so a
+        # redis-backed test left untagged fails closed here under NOVA_CI=1
+        # (internal/nsprint/testutil.Start names this line) instead of
+        # starting a real server on a shared runner. The `functional` job
+        # installs the real one. internal/ci: TestUnitTierRefusesRedisServer.
+        shell: bash
+        run: |
+          set -euo pipefail
+          shim="${RUNNER_TEMP:?}/unit-tier-bin"
+          mkdir -p "$shim"
+          printf '%s\n' '#!/bin/sh' 'echo "unit tier: redis-server is functional-only (build tag functional)" >&2' 'exit 86' > "$shim/redis-server"
+          chmod +x "$shim/redis-server"
+          echo "$shim" >> "$GITHUB_PATH"
+          echo "redis-server on this leg is $shim/redis-server (exit 86)"
 
       # No actions/cache here. These runners are PERSISTENT: ~/.cache/go-build
       # survives between jobs on the machine itself, so the action spends 6 s
@@ -871,14 +934,6 @@ jobs:
         if: matrix.entry.packages != '' && steps.proved.outputs.proved != 'true'
         run: make vet PKGS="${{ matrix.entry.packages }}"
 
-      - name: install redis-server
-        if: matrix.entry.packages != '' && steps.proved.outputs.proved != 'true'
-        # #3113. The controls spawn a throwaway redis-server. Self-hosted rows
-        # (Studio, hulk) also get the binary from rowan-tools fleet/bench.yml;
-        # this step is what a runner has before that playbook has converged,
-        # and what the hosted rows run below. It does not dial the fleet store.
-        run: bash .github/scripts/install-redis-server.sh
-
       - name: test
         if: matrix.entry.packages != '' && steps.proved.outputs.proved != 'true'
         # The default bash flags on a `run:` step are `-eo pipefail`, so a
@@ -905,20 +960,151 @@ jobs:
         # parallel lab tests ran 660 s at GOMAXPROCS=4 (Go's 11m timeout) and 12 min (the cap) on a loaded Studio.
         # They run in full on the same PR's Linux leg, on every push to dev (8 Studio shards) and in the merge group.
         # Not a global -short: that would also skip internal/bus's multi-process tests, the darwin evidence this leg is for.
-        # GOTEST_TAGS (nova-tools #4328, Glenn 2026-09-26 11:20 AM ET: functional
-        # tests run "not on every small PR being merged or worked on, but only as we
-        # merge whole work streams"): a pull request's legs build without the
-        # `functional` tag, so no redis-server starts; the merge group and an
-        # unproved push to dev are the landing, and they run the functional tier.
+        # SLOWTESTS_FLAGS: the Makefile's default is the unit tier's 2 s package
+        # and 1 s test budgets with internal/ci/slow-tests_allowlist.txt. A
+        # push or a manual run tests the WHOLE tree, which is not cut to those
+        # budgets yet, so it keeps the old 60 s package budget, printed and not
+        # enforced as before; a push to dev is almost always proved by its
+        # merge-group run above and runs nothing.
         env:
           NOVA_CI_PR_STUDIO: ${{ matrix.entry.group == 'macOS' && github.event_name == 'pull_request' && '1' || '' }}
-          GOTEST_TAGS: ${{ github.event_name != 'pull_request' && 'functional' || '' }}
+          WHOLE_TREE_SLOWTESTS: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && '--budget 60' || '' }}
         # GOTEST_COUNT_FLAG= turns Go's test cache on (Makefile): a shard whose
         # packages did not change since the last run on this machine is
         # served from the cache instead of recompiled and re-executed.
         # GOTEST_LDFLAGS=-ldflags=-w links test binaries without DWARF: no
         # dsymutil per binary on darwin, less to scan.
-        run: make test PKGS="${{ matrix.entry.packages }}" GOTEST_TIMEOUT="110s" GOTEST_COUNT_FLAG= GOTEST_LDFLAGS=-ldflags=-w
+        run: |
+          [ "$(command -v redis-server)" = "$RUNNER_TEMP/unit-tier-bin/redis-server" ] || { echo "unit tier: redis-server on PATH is $(command -v redis-server), not the refusing shim"; exit 1; }
+          if [ -n "$WHOLE_TREE_SLOWTESTS" ]; then
+            make test PKGS="${{ matrix.entry.packages }}" GOTEST_TIMEOUT="110s" GOTEST_COUNT_FLAG= GOTEST_LDFLAGS=-ldflags=-w SLOWTESTS_FLAGS="$WHOLE_TREE_SLOWTESTS" SLOWTESTS_ENFORCE=0
+          else
+            make test PKGS="${{ matrix.entry.packages }}" GOTEST_TIMEOUT="110s" GOTEST_COUNT_FLAG= GOTEST_LDFLAGS=-ldflags=-w
+          fi
+
+  functional:
+    # THE FUNCTIONAL TIER (nova-tools#4328; Glenn 2026-09-26 11:20 AM ET: "we
+    # should run functional tests, not on every small PR being merged or worked
+    # on, but only as we merge whole work streams, and functional tests
+    # themselves should be frugal and built wisely to not waste resources").
+    # A functional test is one behind `//go:build functional`: a real
+    # redis-server, a real binary, a real process. It runs on merge_group (the
+    # queue's run of a stream PR into dev), on the nightly schedule and by hand,
+    # and NEVER on pull_request: a card PR into a stream branch and a stream PR
+    # into dev both skip it. Same selected packages as the unit legs, four space
+    # shards, two cores a leg, the two-minute cap. ci-ok requires it when it ran.
+    # internal/ci: TestFunctionalTierRunsOnlyAsStreamsMerge.
+    name: functional (${{ matrix.entry.name }})
+    needs: test-packages
+    if: vars.NOVA_CI_CARDS != 'on' && (github.event_name == 'merge_group' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    strategy:
+      fail-fast: false
+      matrix:
+        entry: ${{ fromJSON(needs.test-packages.outputs.functional) }}
+    runs-on: [self-hosted, linux, x64, space]
+    timeout-minutes: 2
+    steps:
+      - name: nothing to test for this change
+        if: matrix.entry.packages == ''
+        shell: bash
+        run: echo "nothing to test for this change"
+
+      - name: remove stale build dirs from the shared runner
+        if: matrix.entry.packages != ''
+        # The same clean-in-place as the unit legs (see the test job).
+        shell: bash
+        run: |
+          [ -n "${GITHUB_WORKSPACE}" ] || exit 1
+          [ -d "${GITHUB_WORKSPACE}" ] || exit 0
+          [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
+          if git -C "${GITHUB_WORKSPACE}" reset -q --hard && git -C "${GITHUB_WORKSPACE}" clean -ffdxq; then
+            echo "workspace cleaned in place: $(git -C "${GITHUB_WORKSPACE}" rev-parse --short HEAD 2>/dev/null || echo '-')"
+            exit 0
+          fi
+          find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+
+      - name: borrow objects from the bench mirror
+        if: matrix.entry.packages != ''
+        # The same mirror borrow as the unit legs (see the test job).
+        shell: bash
+        run: |
+          m="$HOME/nova-bench/mirror/nova-tools.git"
+          w="${GITHUB_WORKSPACE:?}"
+          [ -d "$m/objects" ] || { echo "no bench mirror at $m: checkout fetches from GitHub"; exit 0; }
+          mkdir -p "$w"
+          [ -z "$(ls -A "$w")" ] || { echo "workspace not empty: left to actions/checkout"; exit 0; }
+          seed() {
+            tip=$(git --git-dir="$m" rev-parse --verify -q 'HEAD^{commit}') || return 1
+            git init -q "$w" &&
+              git -C "$w" remote add origin "${{ github.server_url }}/${{ github.repository }}" &&
+              echo "$m/objects" > "$w/.git/objects/info/alternates" &&
+              git -C "$w" -c advice.detachedHead=false checkout -q --detach "$tip" &&
+              echo "workspace borrows $m, detached at its HEAD $tip"
+          }
+          seed || { echo "seeding from $m failed: left to actions/checkout"; rm -rf -- "$w/.git"; }
+
+      - name: checkout
+        id: checkout
+        if: matrix.entry.packages != ''
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: checkout retry
+        if: matrix.entry.packages != '' && steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: use the installed Go toolchain
+        if: matrix.entry.packages != ''
+        # The same toolchain pick as the unit legs, verbatim (see the test job).
+        shell: bash
+        run: |
+          set -euo pipefail
+          # the bench's own Go wins over a distro Go on the system path (hulk: /usr/bin/go 1.22
+          # shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain, 2026-09-17)
+          # newest Go under ~/sdk first (the Mac benches: batman and superman keep 1.27 there, and
+          # batman also carries a stale root-owned /usr/local/go 1.22 that won this loop, 2026-09-18)
+          # the toolchain go.mod names wins when ~/sdk holds it (#4080: space's runner took the newest sdk Go
+          # while the release build beside it switched toolchains in the same caches): the toolchain line,
+          # else the go line, which is the toolchain a go.mod without that line implies; else as before
+          want=$(sed -n 's/^toolchain \(go[0-9][0-9a-z.]*\)$/\1/p' go.mod 2>/dev/null | head -1 || true)
+          [ -n "$want" ] || want=$(sed -n 's/^go \([0-9][0-9a-z.]*\)$/go\1/p' go.mod 2>/dev/null | head -1 || true)
+          sdk=
+          if [ -n "$want" ] && [ -x "$HOME/sdk/$want/bin/go" ]; then sdk="$HOME/sdk/$want/bin"; fi
+          [ -n "$sdk" ] || sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true) # empty on the Linux benches; under pipefail the failed ls would abort the step
+          for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
+            [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
+          done
+          command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
+          go version
+          echo "GO SETUP want=${want:-none} go=$(command -v go) gomodcache=$(go env GOMODCACHE) gocache=$(go env GOCACHE)"
+
+      - name: take this runner's share of the machine, not all of it
+        if: matrix.entry.packages != ''
+        # The unit legs' rule: cores over NOVA_RUNNERS_PER_MACHINE, at most 2.
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$(uname -s)" = "Darwin" ]; then
+            cores=$(sysctl -n hw.ncpu)
+          else
+            cores=$(nproc)
+          fi
+          runners="${NOVA_RUNNERS_PER_MACHINE:-8}"
+          case "$runners" in ''|*[!0-9]*|0) runners=8 ;; esac
+          share=$(( cores / runners ))
+          [ "$share" -ge 1 ] || share=1
+          [ "$share" -le 2 ] || share=2
+          echo "$cores cores on this machine, $runners runners per machine (NOVA_RUNNERS_PER_MACHINE), this leg takes $share (at most 2)"
+          echo "GOMAXPROCS=$share" >> "$GITHUB_ENV"
+
+      - name: install redis-server
+        if: matrix.entry.packages != ''
+        # #3113. The functional tests spawn a throwaway redis-server on
+        # loopback; the unit tier refuses one. It does not dial the fleet store.
+        run: bash .github/scripts/install-redis-server.sh
+
+      - name: functional tests
+        if: matrix.entry.packages != ''
+        run: make test-functional PKGS="${{ matrix.entry.packages }}"
 
   test-race-queue:
     # THE QUEUE AND LEASE PACKAGE UNDER -race, and the one place the race
@@ -1685,7 +1871,7 @@ jobs:
     # reference and the run was never created. test-hosted is skipped on a pull
     # request and ci-ok's `always()` still runs; the per-event steps below check
     # exactly the jobs that event actually ran.
-    needs: [lint, test, test-race-queue, e2e, lisp, test-hosted, test-hosted-pr]
+    needs: [lint, test, functional, test-race-queue, e2e, lisp, test-hosted, test-hosted-pr]
     # PRs are self-hosted only; hosted runners are reserved for push to main and
     # the nightly schedule. ci-ok aggregates on the Linux space runner either way.
     runs-on: [self-hosted, linux, x64, space]
@@ -1704,6 +1890,7 @@ jobs:
           for pair in \
             "lint:${{ needs.lint.result }}" \
             "test:${{ needs.test.result }}" \
+            "functional:${{ needs.functional.result }}" \
             "test-race-queue:${{ needs.test-race-queue.result }}" \
             "lisp:${{ needs.lisp.result }}" \
             "e2e:${{ needs.e2e.result }}" \
@@ -1723,9 +1910,12 @@ jobs:
             # is the full hosted evidence the queue's gate must see (Rule T).
             [ "$result" = "success" ] && continue
             # NOVA_CI_CARDS=on (#2925): these rows run as ci cards and the lander reads the ci verdict (#2842, #2924), so Actions skipping them is the design.
-            if [ "$cards" = on ] && [ "$result" = skipped ]; then case "$job" in test|test-race-queue|e2e) continue ;; esac; fi
+            if [ "$cards" = on ] && [ "$result" = skipped ]; then case "$job" in test|functional|test-race-queue|e2e) continue ;; esac; fi
             [ "$job" = "lisp" ] && [ "$result" = "skipped" ] && continue
             [ "$job" = "test-hosted-pr" ] && [ "$result" = "skipped" ] && continue
+            # functional runs on merge_group and workflow_dispatch only; on a
+            # pull request it is skipped by design. When it ran, it must pass.
+            [ "$job" = "functional" ] && [ "$result" = "skipped" ] && [ "${{ github.event_name }}" = "pull_request" ] && continue
             # test-windows-pr was aggregated here until 2026-09-18, when the
             # native windows runners were dropped. The Windows guard is now the
             # lint job's `make vet-windows` step, so a GOOS=windows compile break
@@ -1920,6 +2110,7 @@ jobs:
             --conclusion "${{ job.status }}" \
             --job "lint=${{ needs.lint.result }}" \
             --job "test=${{ needs.test.result }}" \
+            --job "functional=${{ needs.functional.result }}" \
             --job "test-race-queue=${{ needs.test-race-queue.result }}" \
             --job "e2e=${{ needs.e2e.result }}" \
             --job "lisp=${{ needs.lisp.result }}" \
