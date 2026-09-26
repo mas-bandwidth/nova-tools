@@ -36,7 +36,8 @@ import (
 
 const (
 	// DefaultPlay is the play that installs the declared nova build on
-	// every bench (rowan-tools fleet/tools.yml, the tools role).
+	// every bench (the tools play of the rowan-tools fleet directory, its
+	// tools role).
 	DefaultPlay = "tools.yml"
 	// PlayDirEnv names the fleet play directory; unset, it is
 	// <home>/DefaultPlayDirRel.
