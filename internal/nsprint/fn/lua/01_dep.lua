@@ -137,8 +137,9 @@ DP.LEAD = { waiting = 'WAIT', parked = 'WAIT', dead = 'DEAD', unknown = 'UNKNOWN
 
 -- DP.blocker(entry): nil when the DEPENDS-ON entry names no task (key:,
 -- owner/repo#n, ...) or its task edge is met now; else the line ready --why
--- prints for it, '<LEAD> <entry> <class text>' (WAIT task:alpha:sentinel
--- waiting). Every claim door calls this at the instant of the claim, in its
+-- prints for it, '<LEAD> task:<id> <class text>' (WAIT task:alpha:sentinel
+-- waiting): the edge has one spelling, task:<id>, whether the record names
+-- it bare (a stream card's blocked_on) or with task: (#4414). Every claim door calls this at the instant of the claim, in its
 -- own FCALL (nova-tools #4414, Stella's reopened sentinel): an edge met once
 -- and returned to unmet blocks again.
 function DP.blocker(e)
@@ -146,7 +147,7 @@ function DP.blocker(e)
   if not id then return nil end
   local class, detail = DP.class(id)
   if class == 'met' then return nil end
-  return (DP.LEAD[class] or 'WAIT') .. ' ' .. e .. ' ' .. DP.text(class, detail)
+  return (DP.LEAD[class] or 'WAIT') .. ' task:' .. id .. ' ' .. DP.text(class, detail)
 end
 
 -- DP.first_blocker(text, edges): the first entry of a DEPENDS-ON value

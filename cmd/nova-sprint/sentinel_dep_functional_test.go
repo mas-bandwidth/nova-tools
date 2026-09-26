@@ -142,7 +142,7 @@ func TestSentinelDepReleasedWhenStopLands(t *testing.T) {
 	if got, code := sdWhy(t, c, "B"); got != "WAIT task:"+stop+" waiting" || code != 1 {
 		t.Fatalf("ready --why B = %q exit %d", got, code)
 	}
-	if got, code := sdWhy(t, c, "C"); got != "WAIT "+stop+" waiting" || code != 1 {
+	if got, code := sdWhy(t, c, "C"); got != "WAIT task:"+stop+" waiting" || code != 1 {
 		t.Fatalf("ready --why C = %q exit %d", got, code)
 	}
 	k, _ := taskcard.ParseConsumer("friend:f1")
@@ -268,7 +268,7 @@ func TestSentinelDepReleasedWhenStopLands(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, code := sdWhy(t, c, "K")
-	if got != "DEAD "+gstop+" dead done/ok" || code != 1 {
+	if got != "DEAD task:"+gstop+" dead done/ok" || code != 1 {
 		t.Fatalf("ready --why K = %q exit %d", got, code)
 	}
 	t.Logf("probe 1: ready --why K = %s", got)
@@ -329,7 +329,7 @@ func TestSentinelDepUnknownStreamIsNamed(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, code := sdWhy(t, c, "J")
-	if got != "UNKNOWN "+ghost+" unknown" || code != 1 {
+	if got != "UNKNOWN task:"+ghost+" unknown" || code != 1 {
 		t.Fatalf("ready --why J = %q exit %d", got, code)
 	}
 	lease, err := reconcile.Acquire(ctx, st, reconcile.AcquireOptions{Host: "test"})
@@ -610,7 +610,7 @@ func TestDepClassEveryReader(t *testing.T) {
 
 		// ready --why on the stream card (met: only its release is left)
 		got, _ := sdWhy(t, c, "C"+r.name)
-		want := lead + " " + r.target + " " + r.text
+		want := lead + " task:" + r.target + " " + r.text
 		if met {
 			want = "WAIT release"
 		}
@@ -639,8 +639,8 @@ func TestDepClassEveryReader(t *testing.T) {
 		if derr == nil || !strings.Contains(derr.Error(), wantDeal) {
 			t.Errorf("%s: deal C%s: %v, want %q", r.name, r.name, derr, wantDeal)
 		}
-		if w, held := gate["D"+r.name]; met && held || !met && w != r.target+" "+r.text {
-			t.Errorf("%s: gate D%s held %v why %q, want %q", r.name, r.name, held, w, r.target+" "+r.text)
+		if w, held := gate["D"+r.name]; met && held || !met && w != "task:"+r.target+" "+r.text {
+			t.Errorf("%s: gate D%s held %v why %q, want %q", r.name, r.name, held, w, "task:"+r.target+" "+r.text)
 		}
 
 		// ws show

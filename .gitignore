@@ -36,3 +36,4 @@ tending/
 
 # a card's TMPDIR lives beside the clone, never in it (79 junk files reached dev on 2026-09-18)
 scratch/
+/nova-sprint

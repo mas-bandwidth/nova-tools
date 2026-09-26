@@ -219,7 +219,7 @@ func (f *forge) entryBlocker(ctx context.Context, snap Snapshot, c Item, e strin
 	if isTask || ws.IsSentinel(id) || !ok || !d.Found {
 		// a task record, or an id no sprint card has: the class table
 		// (ws.DepClass); no record at all is unknown
-		return taskBlocker(e, id, snap.Tasks[id])
+		return taskBlocker(id, snap.Tasks[id])
 	}
 	switch {
 	case d.State == "landed":
@@ -256,9 +256,10 @@ func (f *forge) entryBlocker(ctx context.Context, snap Snapshot, c Item, e strin
 
 // taskBlocker is the class table (ws.DepClass) on a task record as a
 // blocker line, empty when the edge is met: its first word ready's (WAIT for
-// waiting and parked, DEAD, UNKNOWN), then the entry, the class and the
-// record's where when the class does not say it.
-func taskBlocker(e, id string, t TaskDep) string {
+// waiting and parked, DEAD, UNKNOWN), then the edge spelled task:<id> (one
+// spelling on every line and every claim door, NS.dep.blocker; #4414),
+// the class and the record's where when the class does not say it.
+func taskBlocker(id string, t TaskDep) string {
 	class, detail := ws.DepClass(id, t.State, t.Where, t.WhereOK)
 	lead := "WAIT"
 	switch class {
@@ -271,7 +272,7 @@ func taskBlocker(e, id string, t TaskDep) string {
 	case ws.DepClassCycle:
 		lead = "CYCLE"
 	}
-	return lead + " " + e + " " + ws.DepText(class, detail)
+	return lead + " task:" + id + " " + ws.DepText(class, detail)
 }
 
 // refBlocker reads one forge answer against the dependent's base. An unknown

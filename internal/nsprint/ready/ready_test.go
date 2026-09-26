@@ -68,7 +68,7 @@ func TestEvaluateFailsClosed(t *testing.T) {
 		"other-repo":    "",
 		"nobase":        "UNKNOWN o/r#1 pr#1 base-unresolved",
 		"forge-down":    "UNKNOWN o/r#9 pr#9 forge: no answer",
-		"ghost":         "UNKNOWN missing unknown",
+		"ghost":         "UNKNOWN task:missing unknown",
 		"landed-nobase": "UNKNOWN lnb base-unresolved",
 		"issue-open":    "WAIT o/r#2 issue#2 open",
 		"other-base":    "WAIT o/r#3 pr#3 merged-into main not dev",

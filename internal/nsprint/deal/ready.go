@@ -68,16 +68,16 @@ type TaskDep struct {
 	State, Where, WhereOK string
 }
 
-// Why is empty when the edge on task record id is met, else the entry and
-// its class from the class table (ws.DepClass, the word every reader of an
+// Why is empty when the edge on task record id is met, else the edge
+// spelled task:<id> (one spelling on every line, #4414) and its class from the class table (ws.DepClass, the word every reader of an
 // edge prints): waiting or parked with the where, dead with the where, or
 // unknown when no record has the id (the zero TaskDep).
-func (t TaskDep) Why(entry, id string) string {
+func (t TaskDep) Why(id string) string {
 	class, detail := ws.DepClass(id, t.State, t.Where, t.WhereOK)
 	if class == ws.DepClassMet {
 		return ""
 	}
-	return entry + " " + ws.DepText(class, detail)
+	return "task:" + id + " " + ws.DepText(class, detail)
 }
 
 // Ref is the forge's answer for one number: a PR (IsPR) with its merge state
@@ -247,7 +247,7 @@ func (r *resolver) entryWhy(ctx context.Context, in Input, c Card, entry string)
 	if isTask || ws.IsSentinel(id) || !d.Found {
 		// a task record, a stream's sentinel among them, or an id no sprint
 		// card has: the class table; no record at all is unknown
-		return in.Tasks[id].Why(entry, id)
+		return in.Tasks[id].Why(id)
 	}
 	switch {
 	case d.State == "landed":

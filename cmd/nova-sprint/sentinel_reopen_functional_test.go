@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 )
 
@@ -327,4 +329,69 @@ func TestSprintCardDealRefusesReopenedSentinel(t *testing.T) {
 		t.Fatalf("ns_card_deal with alpha landed again: %+v %v", res, err)
 	}
 	t.Logf("sprint-card deal: reopened alpha dealt %v, relanded alpha dealt Q", dealt)
+}
+
+// TestReopenedSentinelEveryDoorPrintsReaderLine: one spelling of the edge
+// on every line (#4414 round 3). With alpha reopened, ready --why prints
+// WAIT task:alpha:sentinel waiting for a queue row (DEPENDS-ON
+// task:alpha:sentinel) and for stream cards (blocked_on alpha:sentinel)
+// alike, and every claim door's refusal carries that line byte for byte:
+// task take (the whole line), card take, card deal and named card work
+// (DEPENDS task:<id> then the line).
+func TestReopenedSentinelEveryDoorPrintsReaderLine(t *testing.T) {
+	t.Parallel()
+	c, st := sdStore(t)
+	ctx := context.Background()
+	const want = "WAIT task:alpha:sentinel waiting"
+	if err := sdCard(t, c, "A1", "alpha", ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"D", "E", "F"} {
+		if err := sdCard(t, c, id, "beta-"+strings.ToLower(id), "alpha:sentinel"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sdQueue(t, st, "B", "alpha:sentinel")
+	sdLand(t, c, "A1")
+	if _, _, err := sdResolve(c, sdLease(t, st)); err != nil {
+		t.Fatal(err)
+	}
+	as, err := taskcard.ParseConsumer("friend:f1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dd, err := taskcard.Deal(ctx, c, taskcard.DealRequest{To: as, N: 1, IDs: []string{"D"}, By: "test"})
+	if err != nil || len(dd) != 1 {
+		t.Fatalf("deal D while landed: %+v %v", dd, err)
+	}
+	if err := sdCard(t, c, "A2", "alpha", ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"B", "E", "F"} {
+		if why, code := sdWhy(t, c, id); code != 1 || why != want {
+			t.Fatalf("ready --why %s: exit %d %q, want %q", id, code, why, want)
+		}
+	}
+	door := func(name, id string, err error) {
+		t.Helper()
+		if err == nil {
+			t.Fatalf("%s %s: let through with alpha reopened", name, id)
+		}
+		_, line, ok := strings.Cut(err.Error(), "DEPENDS task:"+id+" ")
+		if !ok || line != want {
+			t.Fatalf("%s %s: %q; want DEPENDS task:%s then %q byte for byte", name, id, err.Error(), id, want)
+		}
+		t.Logf("%s %s: DEPENDS task:%s %s", name, id, id, line)
+	}
+	_, ok, err := task.Take(ctx, st, task.TakeRequest{Sprint: sdSprint, ID: "B", As: "f1"})
+	var blocked *task.BlockedError
+	if ok || !errors.As(err, &blocked) || blocked.Wait != want {
+		t.Fatalf("task take B: ok %v err %v; want %q", ok, err, want)
+	}
+	_, err = taskcard.Take(ctx, c, "f1", 1, "test", "E")
+	door("card take", "E", err)
+	_, err = taskcard.Deal(ctx, c, taskcard.DealRequest{To: as, N: 1, IDs: []string{"F"}, By: "test"})
+	door("card deal", "F", err)
+	_, err = taskcard.Work(ctx, c, as, "test", 1, false, dd[0].Copy)
+	door("card work", dd[0].Copy, err)
 }
