@@ -68,3 +68,4 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `workclient/` | client bindings for nova-work daemon | `go test ./internal/workclient` | `go test ./internal/workclient` |
 | `worklang/` | worklang s-expression evaluator | `go test ./internal/worklang` | `go test ./internal/worklang` |
 | `workreconcile/` | GitHub issue import and work reconcile | `go test ./internal/workreconcile` | `go test ./internal/workreconcile` |
+| `yield/` | CI over work: a copy or local test run steps itself to nice 15 before it execs (nova-tools#4293) | `go test ./internal/yield` | `go test ./internal/yield` |

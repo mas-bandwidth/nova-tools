@@ -116,6 +116,7 @@ var DefaultCatalog = []Entry{
 	E("internal/workclient", "client bindings for nova-work daemon", "go test ./internal/workclient", "go test ./internal/workclient"),
 	E("internal/worklang", "worklang s-expression evaluator", "go test ./internal/worklang", "go test ./internal/worklang"),
 	E("internal/workreconcile", "GitHub issue import and work reconcile", "go test ./internal/workreconcile", "go test ./internal/workreconcile"),
+	E("internal/yield", "CI over work: a copy or local test run steps itself to nice 15 before it execs (nova-tools#4293)", "go test ./internal/yield", "go test ./internal/yield"),
 
 	// docs/
 	E("docs/spec-pulse", "the card contract the pulse cut engine writes (10-the-card-as-cut-writes-it.md); the rest of the spec folder deleted 2026-09-24", "go test ./internal/docs", "go test ./internal/docs"),
