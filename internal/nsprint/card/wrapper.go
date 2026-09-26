@@ -736,12 +736,14 @@ func finish(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger, rep *W
 	if end.Outcome == "DONE" {
 		// The commit step (#2932): <job>/out/repo onto the card branch, before copy out.
 		msg := resultLine(filepath.Join(job, "out"))
-		c, commitErr := CommitOutput(filepath.Join(job, "out", "repo"), WrapperBranch(cfg.Sprint, cfg.Label, cfg.Attempt), msg, cfg.Bench)
+		// cr, not c: the card c is read below (BaseSHA, Test), and a
+		// commit result under its name read as the card to the class test.
+		cr, commitErr := CommitOutput(filepath.Join(job, "out", "repo"), WrapperBranch(cfg.Sprint, cfg.Label, cfg.Attempt), string(msg), cfg.Bench)
 		if commitErr != nil {
-			c = CommitResult{SHA: NoCommit, Note: "NO-COMMIT"}
+			cr = CommitResult{SHA: NoCommit, Note: "NO-COMMIT"}
 			appendWhy(rep, "commit step: "+commitErr.Error())
 		}
-		end.PushedSHA, end.Commit = c.SHA, c.Note
+		end.PushedSHA, end.Commit = cr.SHA, cr.Note
 		// The checkout the commit lives in: a copy's end pushes from it
 		// (#4227). The end runs before cleanup, so it is still there.
 		end.RepoDir = filepath.Join(job, "out", "repo")
@@ -1132,7 +1134,7 @@ func writeWrapperLine(results string, cfg WrapperConfig, end WrapperEnd, beats i
 		gate = end.Gate.Reason
 	}
 	line := fmt.Sprintf("WRAPPER card=%s outcome=%s reason=%s exit=%d beats=%d wall_ms=%d wall_max_s=%d commit=%s gate=%s result=%s why=%s\n",
-		cfg.card(), end.Outcome, end.Reason, end.Exit, beats, wall.Milliseconds(), int64(end.WallMax/time.Second), strconv.Quote(end.Commit), gate, strconv.Quote(resultLine(results)), strconv.Quote(end.Why))
+		cfg.card(), end.Outcome, end.Reason, end.Exit, beats, wall.Milliseconds(), int64(end.WallMax/time.Second), strconv.Quote(end.Commit), gate, strconv.Quote(string(resultLine(results))), strconv.Quote(end.Why))
 	return os.WriteFile(filepath.Join(results, "wrapper.line"), []byte(line), 0o644)
 }
 
@@ -1151,14 +1153,15 @@ func noteWrapperLine(results, line string) error {
 }
 
 // resultLine is line 1 of the job's RESULT.md, the card line the model
-// wrote back ("" without one), read by the one typed parser: a scanner here
-// made every value under it look parsed, and finish's DONE compares with it.
-func resultLine(results string) string {
+// wrote back ("" without one), the typed value the one parser reads
+// (typedrec.ReadCardLine: one trailing CR dropped, a line of 64 KiB or more
+// is ""), never a scanner's raw text.
+func resultLine(results string) typedrec.CardLine {
 	raw, err := os.ReadFile(filepath.Join(results, "RESULT.md"))
 	if err != nil {
 		return ""
 	}
-	return typedrec.SplitModel(raw, "").Line1
+	return typedrec.ReadCardLine(raw)
 }
 
 func ledgerCode(code int, err error) int {
