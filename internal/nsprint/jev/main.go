@@ -124,8 +124,11 @@ func runSync(ctx context.Context, args []string, out, errOut io.Writer, e env) i
 	if res.Gap != "" {
 		fmt.Fprintf(out, "JEV SYNC GAP between=%s why=ws:log was trimmed past jev:cursor remedy=run jev sync more often than ws:log turns over\n", res.Gap)
 	}
-	fmt.Fprintf(out, "JEV SYNC moves=%d decisions=%d outcomes=%d from=%s cursor=%s\n", res.Events, res.Decisions,
-		res.Outcomes, dash(res.From), dash(res.Cursor))
+	for _, m := range res.Moved {
+		fmt.Fprintf(out, "JEV SYNC MOVED review %s why=the record moved on to a later review before sync read it remedy=run jev sync more often; no row is made from another move's record\n", oneline.Field(m))
+	}
+	fmt.Fprintf(out, "JEV SYNC moves=%d decisions=%d outcomes=%d moved=%d from=%s cursor=%s\n", res.Events, res.Decisions,
+		res.Outcomes, len(res.Moved), dash(res.From), dash(res.Cursor))
 	return 0
 }
 
@@ -174,10 +177,17 @@ func ask(ctx context.Context, c redis.Cmdable, a Asker, n int64, out io.Writer) 
 			a.Version, a.MS, a.Cost())
 	}
 	if err != nil {
-		return refused(out, "ask", err.Error(), "check Redis and rerun")
+		return refused(out, "ask", err.Error(), "check Redis and rerun; rows left in "+KeyAsking+" go back with SMOVE to "+KeyPending)
 	}
-	left, _ := c.SCard(ctx, KeyPending).Result()
-	fmt.Fprintf(out, "JEV ASK asked=%d answered=%d failed=%d pending=%d\n", len(res), answered, failed, left)
+	var pending, asking *redis.IntCmd
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), writeTimeout)
+	defer cancel()
+	_, _ = c.Pipelined(rctx, func(p redis.Pipeliner) error {
+		pending, asking = p.SCard(rctx, KeyPending), p.SCard(rctx, KeyAsking)
+		return nil
+	})
+	fmt.Fprintf(out, "JEV ASK asked=%d answered=%d failed=%d pending=%d asking=%d\n", len(res), answered, failed,
+		pending.Val(), asking.Val())
 	if failed > 0 {
 		return 1
 	}

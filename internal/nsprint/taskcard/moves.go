@@ -38,6 +38,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pipeerr"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
@@ -242,6 +243,10 @@ type EndRequest struct {
 // author's queue, fresh reads at a fix's new head), if any.
 type Ended struct {
 	Copy, Primary, From, To, Next string
+	// Why is set on a copy the expire sweep could NOT end (the move
+	// refused it: DRIFT, a lost primary); To is then "". The copy stays
+	// where it is, and the why is the line the sweep prints for it.
+	Why string
 }
 
 // End is card end: one call.
@@ -416,7 +421,15 @@ func ExpireCopies(ctx context.Context, c redis.Cmdable, by string, consumers ...
 	if err != nil {
 		return nil, err
 	}
-	return parseEnded(FnExpireCp, "EXPIRED", out, 2)
+	e, err := parseEnded(FnExpireCp, "EXPIRED", out, 2)
+	for i := range e {
+		// The function answers a refused finish as the pair id, "REFUSED
+		// <why>" (no line about a lapsed copy that stays was the silent shape).
+		if why, ok := strings.CutPrefix(e[i].To, "REFUSED "); ok {
+			e[i].To, e[i].Why = "", why
+		}
+	}
+	return e, err
 }
 
 // Recut is one primary whose read copies were cut: by a head move
@@ -538,7 +551,7 @@ func ReadCells(ctx context.Context, c redis.Cmdable, consumers []Consumer) ([]Ce
 
 		slots[i] = pipe.HGet(ctx, k.DesiredKey(), "slots")
 	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+	if err := pipeerr.Exec(ctx, pipe); err != nil {
 		return nil, fmt.Errorf("cells: %w", err)
 	}
 	out := make([]Cells, len(consumers))

@@ -88,7 +88,12 @@ do
     local m = {}
     local word = redis.call('HGET', 'ci:' .. repo .. ':' .. head, 'ci')
     if not word and rec[4] == head then word = rec[3] end
-    if word == 'green' then m.ci = 'ok' elseif word == 'red' then m.ci = 'red' elseif word == 'pending' then m.ci = 'pending' end
+    if word == 'green' then m.ci = 'ok' elseif word == 'red' then m.ci = 'red' elseif word == 'pending' then m.ci = 'pending'
+    elseif word and word ~= '' then
+      -- any other CI word (error, cancelled, a typo) left ci unmeasured,
+      -- and the typed gate and the score cap then went unchecked
+      return { 'REFUSED', 'ci:' .. repo .. ':' .. string.sub(head, 1, 8) .. ' ci=' .. tostring(word) .. ' is not green, red or pending' }
+    end
     local base = rec[2] or ''
     if base ~= '' then
       if LN_BASES[base] then m.base = 'ok' else m.base = 'no' end

@@ -15,26 +15,37 @@
 // read and checked before anything is written: a bad row is named with its
 // line and why, and then nothing is filed or pushed (a rerun after the fix
 // files no duplicate). Then, in dependency order (a row whose DEPENDS-ON
-// names row:<n> comes after row n), each row's issue is filed through the
-// one GitHub writer (nova-sprint file's REST create and read-back) and the
-// cards are pushed as task cards (taskcard.PushMany: one ns_tcard_push per
-// card, all in one pipeline) onto their stream's waiting set. One receipt
-// line per row, every refusal printed, and one summary line:
+// names another row's id comes after that row), each row's issue is filed
+// through the one GitHub writer (nova-sprint file's REST create and
+// read-back) and the cards are pushed as task cards (taskcard.PushMany: one
+// ns_tcard_push per card, all in one pipeline) onto their stream's waiting
+// set. One receipt line per row, every refusal printed, and one summary
+// line:
 //
-//	CARD CUT row=<n> id=<id> ref=<owner/name#n|-> stream=<s> to=waiting depends=<ids|none>
+//	CARD CUT row=<n> id=<id> ref=<owner/name#n|-> stream=<s> to=waiting|already depends=<ids|none>
 //	CARD CUT REFUSED row=<n> line=<l> id=<id|-> why=<why>
 //	CARD CUT DRY row=<n> id=<id|-> stream=<s> who=<w> route=<r> est=<e> depends=<d> title=<t>
-//	CARD CUT FROM file=<f> rows=<n> cut=<k> refused=<r> filed=<f> github=on|off ms=<ms>
+//	CARD CUT FROM file=<f> rows=<n> cut=<k> already=<a> refused=<r> filed=<f> reused=<u> github=on|off ms=<ms>
+//
+// THE LEDGER (the cold read of #4358). Each issue filed is written to
+// cut:<sha256 of the file> (row -> issue, taskcard.WriteCutLedger) before
+// the next is filed, and the ledger is read before the first filing, so a
+// rerun of the same file after a partial or a full filing files nothing
+// twice: a row the ledger holds takes its issue from there (reused=), and
+// its card, when an earlier run pushed it, is to=already (#4352 N: running
+// a verb twice is not a refusal).
 //
 // A cell writes a newline as \n, a tab as \t and a backslash as \\. A row's
 // id is <repo name>-<issue n> (the card cut label), or with --no-github a
-// slug of its title; an id cell names it. DEPENDS-ON entries are row:<n>
-// (the n-th card row of this file, header and # comment lines not counted),
-// #<n> (an issue of --repo), owner/name#n, or a task id; none or - is none.
-// The issue carries row:<n> as that row's issue ref; the card's blocked_on
-// carries it as that row's task id, which the waiting-resolve duty reads.
+// slug of its title; an id cell names it. DEPENDS-ON entries are #<n> (an
+// issue of --repo), owner/name#n, or a task id (task:<id> or <id>); none or
+// - is none. A task id that is another row's id cell is that row: the issue
+// carries that row's issue ref, the card's blocked_on its task id (which the
+// waiting-resolve duty reads). A row that is depended on must have an id
+// cell (#3409: one DEPENDS-ON form, so row:<n> is refused, naming the id
+// column).
 //
-// Exit 0 every row cut, 1 a row refused (named), 2 usage.
+// Exit 0 every row cut or already, 1 a row refused (named), 2 usage.
 package main
 
 import (
@@ -69,13 +80,15 @@ type cutFromOpts struct {
 }
 
 // cutFromDeps are the verb's seams: the one GitHub writer, the one-pipeline
-// push, the mirror's tip and the clock. Tests pass fakes; nothing here
-// reaches GitHub or Redis on its own.
+// push, the cut ledger, the mirror's tip and the clock. Tests pass fakes;
+// nothing here reaches GitHub or Redis on its own.
 type cutFromDeps struct {
-	File    func(ctx context.Context, repo, title, body string) (int, string, error)
-	Push    func(ctx context.Context, reqs []taskcard.PushRequest) ([]taskcard.PushOutcome, error)
-	BaseSHA func(repo, base string) (string, error)
-	Now     func() time.Time
+	File        func(ctx context.Context, repo, title, body string) (int, string, error)
+	Push        func(ctx context.Context, reqs []taskcard.PushRequest) ([]taskcard.PushOutcome, error)
+	LedgerRead  func(ctx context.Context, key string) (taskcard.CutLedger, error)
+	LedgerWrite func(ctx context.Context, key, repo string, row, issue int) error
+	BaseSHA     func(repo, base string) (string, error)
+	Now         func() time.Time
 }
 
 // cutRow is one card row.
@@ -84,9 +97,11 @@ type cutRow struct {
 	title, stream, who, paths, doneWhen, body string
 	route, est, id                            string
 	deps                                      []string // entries as written, none dropped
-	rowDeps                                   []int    // the row:<n> entries
+	depRow                                    []int    // per entry: the row its id names, 0 outside the file
+	rowDeps                                   []int    // the rows this row depends on
 	why                                       string   // a refusal
 	ref, origin                               string   // the filed issue
+	fromLedger, already                       bool     // the issue came from the ledger; the card was pushed before
 }
 
 var (
@@ -231,8 +246,10 @@ func cutSlug(title string) string {
 	return s
 }
 
-// checkCutRow fills a row's defaults and names what is wrong with it.
-func checkCutRow(r *cutRow, rows int, o cutFromOpts) {
+// checkCutRow fills a row's defaults and names what is wrong with it. byID
+// is the file's id cells (id -> row); slugs, with --no-github, the title
+// slugs of the rows without one.
+func checkCutRow(r *cutRow, byID, slugs map[string]int, o cutFromOpts) {
 	fail := func(why string) {
 		if r.why == "" {
 			r.why = why
@@ -274,21 +291,31 @@ func checkCutRow(r *cutRow, rows int, o cutFromOpts) {
 	case r.id != "" && (!cutIDRE.MatchString(r.id) || taskcard.IsCopy(r.id)):
 		fail(fmt.Sprintf("id %q is not a task id ([A-Za-z0-9._-], no ~<n>)", r.id))
 	}
-	for _, d := range r.deps {
+	r.depRow = make([]int, len(r.deps))
+	for i, d := range r.deps {
 		if m := cutRowRE.FindStringSubmatch(d); m != nil {
-			k, _ := strconv.Atoi(m[1])
-			switch {
-			case k < 1 || k > rows:
-				fail(fmt.Sprintf("depends-on %s names no row (the file has %d)", d, rows))
-			case k == r.n:
+			fail(fmt.Sprintf("depends-on %s is refused (#3409: one DEPENDS-ON form); add an id column (a header row naming id), give row %s an id and name that id", d, m[1]))
+			continue
+		}
+		if cutIssueRE.MatchString(d) || cutRefRE.MatchString(d) {
+			continue
+		}
+		id := strings.TrimPrefix(d, "task:")
+		if !cutIDRE.MatchString(id) {
+			fail(fmt.Sprintf("depends-on %q is not #<n>, owner/name#<n> or a task id (another row's id cell names that row)", d))
+			continue
+		}
+		if k, ok := byID[id]; ok {
+			if k == r.n {
 				fail(fmt.Sprintf("depends-on %s names the row itself", d))
-			default:
+			} else {
+				r.depRow[i] = k
 				r.rowDeps = append(r.rowDeps, k)
 			}
 			continue
 		}
-		if !cutIssueRE.MatchString(d) && !cutRefRE.MatchString(d) && !cutIDRE.MatchString(strings.TrimPrefix(d, "task:")) {
-			fail(fmt.Sprintf("depends-on %q is not row:<n>, #<n>, owner/name#<n> or a task id", d))
+		if k, ok := slugs[id]; ok && k != r.n {
+			fail(fmt.Sprintf("depends-on %s is row %d's title, and a row that is depended on needs an id; add an id column (a header row naming id) and give row %d an id", d, k, k))
 		}
 	}
 	if r.id == "" && o.NoGitHub {
@@ -333,14 +360,14 @@ func orderCutRows(rows []*cutRow) []*cutRow {
 			var stuck []string
 			for _, r := range rows {
 				if !placed[r.n] {
-					stuck = append(stuck, "row:"+strconv.Itoa(r.n))
+					stuck = append(stuck, strconv.Itoa(r.n))
 				}
 			}
 			for _, r := range rows {
 				if !placed[r.n] {
 					placed[r.n] = true
 					if r.why == "" {
-						r.why = "depends-on is a cycle among " + strings.Join(stuck, ",")
+						r.why = "depends-on is a cycle among rows " + strings.Join(stuck, ",")
 					}
 					order = append(order, r)
 				}
@@ -351,20 +378,21 @@ func orderCutRows(rows []*cutRow) []*cutRow {
 }
 
 // cutDepends renders a row's DEPENDS-ON: issue is true for the issue text
-// (row:<n> as that row's ref), false for the card's blocked_on (row:<n> as
-// that row's task id). "none" when it has none.
+// (another row's id as that row's ref), false for the card's blocked_on
+// (that row's task id). "none" when it has none.
 func cutDepends(r *cutRow, rows []*cutRow, repo string, issue bool) string {
 	var out []string
-	for _, d := range r.deps {
-		switch {
-		case cutRowRE.MatchString(d):
-			k, _ := strconv.Atoi(d[len("row:"):])
+	for i, d := range r.deps {
+		if k := r.depRow[i]; k > 0 {
 			dep := rows[k-1]
 			if issue && dep.ref != "" {
 				out = append(out, dep.ref)
 			} else {
 				out = append(out, dep.id)
 			}
+			continue
+		}
+		switch {
 		case cutIssueRE.MatchString(d):
 			out = append(out, repo+d)
 		default:
@@ -432,14 +460,15 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 	if o.NoGitHub {
 		github = "off"
 	}
-	summary := func(rows, cut, refused, filed int) {
-		fmt.Fprintf(out, "CARD CUT FROM file=%s rows=%d cut=%d refused=%d filed=%d github=%s ms=%d\n",
-			cutField(o.From), rows, cut, refused, filed, github, d.Now().Sub(start).Milliseconds())
+	var cut, already, filed, reused int
+	summary := func(rows, refused int) {
+		fmt.Fprintf(out, "CARD CUT FROM file=%s rows=%d cut=%d already=%d refused=%d filed=%d reused=%d github=%s ms=%d\n",
+			cutField(o.From), rows, cut, already, refused, filed, reused, github, d.Now().Sub(start).Milliseconds())
 	}
 	rows, err := parseCutRows(o.Text)
 	if err != nil {
 		fmt.Fprintf(out, "CARD CUT REFUSED file=%s why=%s\n", cutField(o.From), cutField(err.Error()))
-		summary(0, 0, 1, 0)
+		summary(0, 1)
 		return 1
 	}
 	// The base sha is read once, and only when a row runs on the swarm.
@@ -449,19 +478,36 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 			if err != nil {
 				fmt.Fprintf(out, "CARD CUT REFUSED file=%s why=%s remedy=%s\n", cutField(o.From), cutField(err.Error()),
 					cutField("pass --base-sha <sha40>, or nova-sprint mirror refresh so the mirror holds "+o.Base))
-				summary(len(rows), 0, len(rows), 0)
+				summary(len(rows), len(rows))
 				return 1
 			}
 			o.BaseSHA = sha
 			break
 		}
 	}
+	// The id cells name rows for DEPENDS-ON (the first of a repeated id;
+	// the repeat is refused below). With --no-github a row without one is
+	// its title's slug, which a dependent may not name: it needs an id.
+	byID, slugs := map[string]int{}, map[string]int{}
+	for _, r := range rows {
+		if r.id == "" {
+			if o.NoGitHub {
+				if s := cutSlug(r.title); s != "" {
+					if _, ok := slugs[s]; !ok {
+						slugs[s] = r.n
+					}
+				}
+			}
+		} else if _, ok := byID[r.id]; !ok {
+			byID[r.id] = r.n
+		}
+	}
 	ids := map[string]int{}
 	for _, r := range rows {
-		checkCutRow(r, len(rows), o)
+		checkCutRow(r, byID, slugs, o)
 		if r.id != "" && r.why == "" {
 			if k, ok := ids[r.id]; ok {
-				r.why = fmt.Sprintf("id %s is row:%d's too", r.id, k)
+				r.why = fmt.Sprintf("id %s is row %d's too", r.id, k)
 			}
 			ids[r.id] = r.n
 		}
@@ -477,7 +523,7 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 	if refused > 0 {
 		// Nothing is filed or pushed while a row is bad: the fixed file
 		// reruns whole, with no duplicate issue.
-		summary(len(rows), 0, refused, 0)
+		summary(len(rows), refused)
 		return 1
 	}
 	if o.DryRun {
@@ -485,34 +531,74 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 			fmt.Fprintf(out, "CARD CUT DRY row=%d id=%s stream=%s who=%s route=%s est=%s depends=%s title=%s\n", r.n, cutField(r.id),
 				cutField(r.stream), cutField(r.who), r.route, cutField(r.est), cutField(cutDepends(r, rows, o.Repo, false)), cutField(r.title))
 		}
-		summary(len(rows), 0, 0, 0)
+		summary(len(rows), 0)
 		return 0
 	}
 
-	// File each issue in dependency order through the one writer; the first
-	// failure stops the filing (a forge that refused one refuses the next),
-	// and the rows behind it are named, never filed.
-	filed := 0
-	stopped := ""
+	// The ledger: the rows an earlier run of this file filed take their
+	// issue from it and are never filed again.
 	name := o.Repo[strings.IndexByte(o.Repo, '/')+1:]
+	ledger := taskcard.CutLedgerKey(o.Text)
+	if !o.NoGitHub {
+		l, err := d.LedgerRead(ctx, ledger)
+		if err != nil {
+			fmt.Fprintf(out, "CARD CUT REFUSED file=%s why=%s remedy=%s\n", cutField(o.From), cutField("ledger: "+err.Error()),
+				cutField("check --redis or NOVA_SPRINT_REDIS and rerun; nothing was filed"))
+			summary(len(rows), len(rows))
+			return 1
+		}
+		if len(l.Issues) > 0 && l.Repo != o.Repo {
+			fmt.Fprintf(out, "CARD CUT REFUSED file=%s why=%s remedy=%s\n", cutField(o.From),
+				cutField(fmt.Sprintf("%s filed this file's rows on %s, not %s", ledger, l.Repo, o.Repo)), cutField("rerun with --repo "+l.Repo))
+			summary(len(rows), len(rows))
+			return 1
+		}
+		for _, r := range rows {
+			if n, ok := l.Issues[r.n]; ok {
+				r.fromLedger = true
+				r.ref, r.origin = fmt.Sprintf("%s#%d", o.Repo, n), fmt.Sprintf("https://github.com/%s/issues/%d", o.Repo, n)
+				if r.id == "" {
+					r.id = fmt.Sprintf("%s-%d", name, n)
+				}
+				reused++
+			}
+		}
+	}
+
+	// File each issue in dependency order through the one writer, and write
+	// it to the ledger before the next; the first failure stops the filing
+	// (a forge that refused one refuses the next), and the rows behind it
+	// are named, never filed.
+	stopped := ""
 	for _, r := range order {
 		if o.NoGitHub {
 			break
 		}
+		if r.fromLedger {
+			continue
+		}
 		if stopped != "" {
-			r.why = "not filed: the filing stopped at " + stopped
+			r.why = "not filed: the filing stopped at row " + stopped
 			continue
 		}
 		n, url, err := d.File(ctx, o.Repo, r.title, cutIssueText(r, rows, o))
+		if n > 0 {
+			filed++
+			if lerr := d.LedgerWrite(ctx, ledger, o.Repo, r.n, n); lerr != nil {
+				r.why = fmt.Sprintf("ledger: %v; %s#%d is filed but not in the ledger, so a rerun files it again: record it first with redis-cli HSET %s repo %s %d %d",
+					lerr, o.Repo, n, ledger, o.Repo, r.n, n)
+				stopped = strconv.Itoa(r.n)
+				continue
+			}
+		}
 		if err != nil {
 			r.why = "file: " + err.Error()
 			if n > 0 {
-				r.why += fmt.Sprintf("; %s#%d exists without a card", o.Repo, n)
+				r.why += fmt.Sprintf("; %s#%d is in the ledger, so a rerun pushes its card without filing it again", o.Repo, n)
 			}
-			stopped = "row:" + strconv.Itoa(r.n)
+			stopped = strconv.Itoa(r.n)
 			continue
 		}
-		filed++
 		r.ref, r.origin = fmt.Sprintf("%s#%d", o.Repo, n), url
 		if r.id == "" {
 			r.id = fmt.Sprintf("%s-%d", name, n)
@@ -551,6 +637,10 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 		r := push[i]
 		if oc.Err != nil {
 			if why, ok := taskcard.IsRefused(oc.Err); ok {
+				if r.fromLedger && strings.HasPrefix(why, "EXISTS ") {
+					r.already = true // an earlier run of this file cut it
+					continue
+				}
 				r.why = "push refused: " + why
 			} else {
 				r.why = "push: " + oc.Err.Error()
@@ -559,18 +649,23 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 			r.why = "push placed it in " + oc.Result.Where + ", not waiting"
 		}
 	}
-	cut := 0
 	for _, r := range order {
 		if r.why != "" {
 			cutRefused(out, r)
 			continue
 		}
-		cut++
-		fmt.Fprintf(out, "CARD CUT row=%d id=%s ref=%s stream=%s to=waiting depends=%s\n", r.n, r.id, cutField(r.ref),
-			cutField(r.stream), cutField(cutDepends(r, rows, o.Repo, false)))
+		to := "waiting"
+		if r.already {
+			to = "already"
+			already++
+		} else {
+			cut++
+		}
+		fmt.Fprintf(out, "CARD CUT row=%d id=%s ref=%s stream=%s to=%s depends=%s\n", r.n, r.id, cutField(r.ref),
+			cutField(r.stream), to, cutField(cutDepends(r, rows, o.Repo, false)))
 	}
-	summary(len(rows), cut, len(rows)-cut, filed)
-	if cut < len(rows) {
+	summary(len(rows), len(rows)-cut-already)
+	if cut+already < len(rows) {
 		return 1
 	}
 	return 0
@@ -618,6 +713,12 @@ func cmdCardCutFrom(ctx context.Context, o cutFromOpts, addr string, stdout, std
 		defer func() { _ = st.Close() }()
 		d.Push = func(ctx context.Context, reqs []taskcard.PushRequest) ([]taskcard.PushOutcome, error) {
 			return taskcard.PushMany(ctx, st.Client(), reqs)
+		}
+		d.LedgerRead = func(ctx context.Context, key string) (taskcard.CutLedger, error) {
+			return taskcard.ReadCutLedger(ctx, st.Client(), key)
+		}
+		d.LedgerWrite = func(ctx context.Context, key, repo string, row, issue int) error {
+			return taskcard.WriteCutLedger(ctx, st.Client(), key, repo, row, issue)
 		}
 		if !o.NoGitHub {
 			is, err := file.NewIssuer(file.Deps{Token: githubToken})

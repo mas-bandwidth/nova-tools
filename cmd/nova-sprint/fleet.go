@@ -17,7 +17,7 @@ import (
 func init() {
 	register(Verb{
 		Name:    "fleet",
-		Summary: "fleet state, is-up, hold, release (a held bench, or <sha>: the whole deploy), config, build, and churn (the process-age sample)",
+		Summary: "fleet state, is-up, hold, release (a held bench, or <sha>|dev: the whole roll, build, fn, fn check, the bench play, self update and the beat verify), config, build, and churn (the process-age sample); roll is retired into release",
 		Run:     runFleet,
 	})
 }
@@ -76,6 +76,8 @@ func runFleet(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runFleetBuild(ctx, args[1:], out, errOut)
 	case "churn":
 		return runFleetChurn(ctx, args[1:], out, errOut)
+	case "roll":
+		return runFleetRoll(ctx, args[1:], out, errOut)
 	default:
 		return refuse(errOut, "fleet", fmt.Sprintf("unknown subverb %s; want state, is-up, hold, release, config, build, or churn", args[0]))
 	}

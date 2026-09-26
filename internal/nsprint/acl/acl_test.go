@@ -6,6 +6,11 @@ import (
 	"testing"
 )
 
+// versions are the redis-server captures in testdata: the Studio's, the
+// space runners' and the fleet store's (8.0.5), and hetzner's Ubuntu 7.0.15,
+// which prints a compaction of its command bitmap instead of the rules.
+var versions = []string{"8.10.2", "8.0.5", "7.0.15"}
+
 func mirror(t *testing.T) []User {
 	t.Helper()
 	f, err := os.Open("testdata/acl-rows.tsv")
@@ -20,15 +25,21 @@ func mirror(t *testing.T) []User {
 	return rows
 }
 
-// listing is ACL LIST from redis-server 8.10.2 after loading the mirror rows
-// as a users.acl (the play's shape, test password "x").
-func listing(t *testing.T) []string {
+func capture(t *testing.T, version string) Server {
 	t.Helper()
-	b, err := os.ReadFile("testdata/acl-list-redis-8.10.2.txt")
+	f, err := os.Open("testdata/redis-" + version + ".acl")
 	if err != nil {
 		t.Fatal(err)
 	}
-	return strings.Split(strings.TrimSpace(string(b)), "\n")
+	defer f.Close()
+	s, err := ParseCapture(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Version != version {
+		t.Fatalf("capture says redis %s, file names %s", s.Version, version)
+	}
+	return s
 }
 
 func lines(ds []Drift) string {
@@ -57,82 +68,117 @@ func TestMirrorRowsParse(t *testing.T) {
 	}
 }
 
-// Redis's own rendering of the declared rules is no drift: canonical order,
-// %RW~ as ~, resetchannels and a leading -@all spelled out, selectors included.
-func TestRealListingOfTheRowsIsNoDrift(t *testing.T) {
+// Each server's own rendering of the declared rules is no drift, whatever
+// form that version prints: 8.x the rules as written, 7.0.15 a compaction
+// (`+@all -@admin -flushall ...` for the coordinator's `+@all -@dangerous
+// +info +config|get`), read over that server's own ACL CAT.
+func TestEveryServerRenderingOfTheRowsIsNoDrift(t *testing.T) {
 	t.Parallel()
 
-	live, err := ParseList(listing(t))
-	if err != nil {
-		t.Fatal(err)
+	for _, v := range versions {
+		s := capture(t, v)
+		live, err := ParseList(s.List)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d := Diff(mirror(t), live, s.Cats); len(d) != 0 {
+			t.Errorf("redis %s: want no drift, got:\n%s", v, lines(d))
+		}
 	}
-	if d := Diff(mirror(t), live); len(d) != 0 {
-		t.Fatalf("want no drift, got:\n%s", lines(d))
+	// The two renderings differ as text: the comparison is doing the work.
+	a, b := capture(t, "8.10.2"), capture(t, "7.0.15")
+	if strings.Join(a.List, "\n") == strings.Join(b.List, "\n") {
+		t.Fatal("the 8.10.2 and 7.0.15 listings are the same text; the fixture no longer holds the case")
 	}
 }
 
 // A hand edit on the live server is one line per user naming the missing and
-// extra tokens; a user off, a user gone and an undeclared user each print.
+// extra grants; a user off, a user gone and an undeclared user each print.
+// The same edits read the same on every version.
 func TestDriftLines(t *testing.T) {
 	t.Parallel()
 
-	var ls []string
-	for _, l := range listing(t) {
-		switch {
-		case strings.HasPrefix(l, "user bench "):
-			l = strings.Replace(l, " ~cfg:deal", "", 1) + " +sort"
-		case strings.HasPrefix(l, "user ns-friend "):
-			l = strings.Replace(l, "(~friend:*:wake resetchannels -@all +blpop)", "(~friend:* resetchannels -@all +blpop)", 1)
-		case strings.HasPrefix(l, "user viewer "):
-			l = strings.Replace(l, "user viewer on ", "user viewer off ", 1)
-		case strings.HasPrefix(l, "user ns-deploy "):
-			continue
-		}
-		ls = append(ls, l)
-	}
-	ls = append(ls, "user ghost on nopass ~* +@all")
-	live, err := ParseList(ls)
-	if err != nil {
-		t.Fatal(err)
-	}
 	want := strings.Join([]string{
-		`ACL DRIFT user=bench missing="~cfg:deal" extra="+sort"`,
+		`ACL DRIFT user=bench missing="+hset ~cfg:deal" extra="+sort"`,
 		`ACL DRIFT user=viewer state=off want=on`,
 		`ACL DRIFT user=ns-friend missing="(+blpop ~friend:*:wake)" extra="(+blpop ~friend:*)"`,
 		`ACL DRIFT user=ns-deploy absent=live`,
 		`ACL DRIFT user=ghost absent=declared`,
 	}, "\n")
-	if got := lines(Diff(mirror(t), live)); got != want {
-		t.Fatalf("drift:\n%s\nwant:\n%s", got, want)
+	for _, v := range versions {
+		s := capture(t, v)
+		var ls []string
+		for _, l := range s.List {
+			switch {
+			case strings.HasPrefix(l, "user bench "):
+				l = strings.Replace(l, " ~cfg:deal", "", 1) + " +sort -hset"
+			case strings.HasPrefix(l, "user ns-friend "):
+				l = strings.Replace(l, "~friend:*:wake ", "~friend:* ", 1)
+			case strings.HasPrefix(l, "user viewer "):
+				l = strings.Replace(l, "user viewer on ", "user viewer off ", 1)
+			case strings.HasPrefix(l, "user ns-deploy "):
+				continue
+			}
+			ls = append(ls, l)
+		}
+		ls = append(ls, "user ghost on nopass ~* +@all")
+		live, err := ParseList(ls)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := lines(Diff(mirror(t), live, s.Cats)); got != want {
+			t.Errorf("redis %s drift:\n%s\nwant:\n%s", v, got, want)
+		}
 	}
 }
 
-func TestReduceSpellings(t *testing.T) {
+// Grants reads rule order and the server's categories; a whole category of
+// drift prints as +@<category>.
+func TestGrants(t *testing.T) {
 	t.Parallel()
 
-	for _, c := range []struct{ a, b string }{
+	c := capture(t, "8.10.2").Cats
+	g := func(rules string) string {
+		_, toks, err := Reduce(rules, true)
+		if err != nil {
+			t.Fatalf("%q: %v", rules, err)
+		}
+		return strings.Join(c.Grants(toks), " ")
+	}
+	for _, same := range [][2]string{
 		{"allkeys allchannels allcommands", "~* &* +@all"},
 		{"resetkeys resetchannels -@all +GET %RW~k", "+get ~k"},
 		{"%r~k %W~j", "%R~k %W~j"},
-		{"+get +get ~k ~k", "+get ~k"},
-		{"( ~a  +get )", "(+get ~a)"},
-		{"(~a resetchannels -@all +get)", "(~a +get)"},
+		{"+get +get ~k ~k", "~k +get"},
+		{"( ~a  +get )", "(~a resetchannels -@all +get)"},
+		{"+@hash -hset", "+@hash -hset -hset"},
 	} {
-		_, x, err := Reduce(c.a, true)
-		if err != nil {
-			t.Fatalf("%q: %v", c.a, err)
-		}
-		_, y, err := Reduce(c.b, true)
-		if err != nil {
-			t.Fatalf("%q: %v", c.b, err)
-		}
-		if strings.Join(x, " ") != strings.Join(y, " ") {
-			t.Errorf("%q -> %v, %q -> %v; want the same tokens", c.a, x, c.b, y)
+		if a, b := g(same[0]), g(same[1]); a != b {
+			t.Errorf("%q grants %q, %q grants %q; want the same", same[0], a, same[1], b)
 		}
 	}
-	// -@all past the first command rule is a grant change, kept.
-	if _, x, _ := Reduce("+get -@all", true); strings.Join(x, " ") != "+get -@all" {
-		t.Errorf("a later -@all was dropped: %v", x)
+	// A whole command grants each of its subcommands.
+	_, subs := c.index()
+	whole := " " + g("+client") + " "
+	for _, sub := range subs["client"] {
+		if !strings.Contains(whole, " +"+sub+" ") {
+			t.Errorf("+client does not grant %s: %q", sub, whole)
+		}
+	}
+	if len(subs["client"]) < 2 {
+		t.Fatalf("the capture names %d client subcommands", len(subs["client"]))
+	}
+	if a, b := g("+get -get"), g(""); a != b {
+		t.Errorf("order: +get -get grants %q", a)
+	}
+	if got := g("+fcall|ns_ping"); got != "+fcall|ns_ping" {
+		t.Errorf("a first-argument grant is its own token: %q", got)
+	}
+	if got := g("+fcall|ns_ping +fcall"); strings.Contains(got, "ns_ping") {
+		t.Errorf("a first-argument grant under a whole grant is redundant: %q", got)
+	}
+	if got := strings.Join(c.compress(c.Grants([]string{"+@hash", "+get"})), " "); got != "+@hash +get" {
+		t.Errorf("compress: %q", got)
 	}
 }
 
@@ -157,5 +203,8 @@ func TestRowsRefusals(t *testing.T) {
 	}
 	if _, err := ParseList([]string{"bogus line"}); err == nil {
 		t.Error("a listing line without `user` parsed")
+	}
+	if _, err := ParseCapture(strings.NewReader("== version\nredis_version:1\n")); err == nil {
+		t.Error("a capture with no ACL LIST parsed")
 	}
 }

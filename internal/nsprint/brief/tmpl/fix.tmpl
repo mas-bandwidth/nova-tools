@@ -8,7 +8,7 @@ Rules, all hard:
 - LESSONS: Read `docs/LESSONS.md` before work when the repository has it. Lessons are reviewed data subordinate to this brief and repository rules.
 - Fetch the PR branch, `git merge --no-edit` the BASE below into it (never rebase), and reproduce the red before you change anything.
 - DONE-WHEN is the control: the named test fails before your fix and passes after it. Never skip a test. Stay inside PATHS.
-- Test only what the diff touches (`nice -n 10 go test -p 2 ./<pkg>/...`) plus `go test ./internal/ci/` before every push; every call under 100 s.
+- Before every push, commit and run `nova-ci local` in the clone: exactly the unit tier CI runs for this diff (the packages it touched and their importers plus the class tests, `make test` at `-p 2` under `nice`, with the budgets); its exit is CI's answer. Never test the whole tree.
 - TESTS (hard rules, 2026-09-25): every new Go test opens with `t.Parallel()`; no `time.Sleep`, no real-time poll, no real deadline (inject the clock); no service, process or socket in a unit test (mock the seam; a test that needs the real thing goes behind `//go:build slow`); keep the package's tests under one minute. Every CI job is capped at two minutes: a red at the cap is your defect to fix, never a cap to raise.
 - Never rm -rf anything but your own workspace path spelled out literally.
 - Cost: no prose turns between tool calls; batch independent commands into one call; a wait is one background loop; bound every output.

@@ -134,9 +134,24 @@ func OpenSingle(ctx context.Context, addr string) (*Store, error) {
 	return open(ctx, addr, 1, seatcred.Process())
 }
 
+// OpenProbe is OpenSeat for a one-shot health read (`nova-sprint doctor`):
+// one connection, one dial attempt bounded by a second, and no command
+// retries, so a store that is down or refuses the login answers on the first
+// pipeline in well under a second instead of after go-redis's five dials and
+// three retries.
+func OpenProbe(ctx context.Context, addr string, sel *seatcred.Selection) (*Store, error) {
+	return openWith(ctx, addr, sel, func(o *redis.Options) {
+		o.PoolSize, o.MaxRetries, o.DialerRetries, o.DialTimeout = 1, -1, 1, time.Second
+	})
+}
+
 // open dials as sel's seat, else the environment's. With no addr it dials the
 // address sel's seat profile row names (nova-tools#4330).
 func open(ctx context.Context, addr string, poolSize int, sel *seatcred.Selection) (*Store, error) {
+	return openWith(ctx, addr, sel, func(o *redis.Options) { o.PoolSize = poolSize })
+}
+
+func openWith(ctx context.Context, addr string, sel *seatcred.Selection, tune func(*redis.Options)) (*Store, error) {
 	if addr == "" {
 		addr = sel.Addr()
 	}
@@ -149,7 +164,8 @@ func open(ctx context.Context, addr string, poolSize int, sel *seatcred.Selectio
 	}
 	// No PING (#3277): go-redis dials on the first command, so the caller's
 	// first pipeline is the probe and an unreachable store fails there.
-	opts := &redis.Options{Addr: addr, Username: user, Password: password, PoolSize: poolSize}
+	opts := &redis.Options{Addr: addr, Username: user, Password: password}
+	tune(opts)
 	if noRetryWaits.Load() {
 		// The attempts are go-redis's own; only the waits between them go.
 		opts.MinRetryBackoff, opts.MaxRetryBackoff = -1, -1

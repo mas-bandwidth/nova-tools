@@ -51,6 +51,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pipeerr"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 )
@@ -266,7 +267,7 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 	for i, s := range streams {
 		waitCmds[i] = pipe.ZRange(ctx, ws.KeyAt(epoch, s, "waiting"), 0, -1)
 	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+	if err := pipeerr.Exec(ctx, pipe); err != nil {
 		return nil, fmt.Errorf("waiting-resolve: waiting sets: %w", err)
 	}
 	var waiters []*wrWaiter
@@ -285,7 +286,7 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 	for i, w := range waiters {
 		boCmds[i] = pipe.HGet(ctx, "task:"+w.id, "blocked_on")
 	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+	if err := pipeerr.Exec(ctx, pipe); err != nil {
 		return nil, fmt.Errorf("waiting-resolve: blocked_on: %w", err)
 	}
 	taskDeps, refDeps := map[string]wrStatus{}, map[string]wrStatus{}
@@ -319,7 +320,7 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 		}
 
 	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+	if err := pipeerr.Exec(ctx, pipe); err != nil {
 		return nil, fmt.Errorf("waiting-resolve: dependencies: %w", err)
 	}
 	for i, id := range taskIDs {
@@ -353,7 +354,7 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 			memCmds[i] = pipe.HMGet(ctx, "task:"+m, "state", "where", "where_ok", "pr", "ref", "origin", "repo")
 		}
 		if len(members) > 0 {
-			if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+			if err := pipeerr.Exec(ctx, pipe); err != nil {
 				return nil, fmt.Errorf("waiting-resolve: members: %w", err)
 			}
 		}

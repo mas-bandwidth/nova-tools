@@ -1628,13 +1628,13 @@ words is not seen.
 
 **The rule.** Every opt-in build tag a `_test.go` carries is named by a
 SCHEDULED workflow, either literally on a `go test`/`go vet` line
-(`go test -tags perf ./...`) or as a `tag:` entry of a job's matrix the step
-then expands (`go test -tags ${{ matrix.tag }} ./...`). Platform and toolchain
+(`go test -tags perf` over the tree) or as a `tag:` entry of a job's matrix the
+step then expands (`go test -tags ${{ matrix.tag }}` over the tree). Platform and toolchain
 constraints are not opt-ins and are out of scope: `//go:build darwin` says where
 a test runs, not whether it runs, and a negation (`!windows`) is on by default
 everywhere else.
 **The hurt.** A build tag is how this tree takes a test off the per-change path,
-and `go test ./...` without the tag compiles the file away silently. So a tag no
+and a plain `go test` over the tree compiles the file away silently. So a tag no
 scheduled job passes to `go test -tags` is not a slower tier, it is a deleted
 test that still looks like a test in the tree. One tag was in exactly that
 state: `//go:build darwin && novadisk`
@@ -2286,6 +2286,124 @@ per functional program), move a process-in-the-loop test behind the `slow` tag
 into the nightly functional matrix, or put the leg on a machine that compiles the
 set in seconds. Never a larger number.
 
+### `wholetree` — no doc and no card tells anyone to test the whole tree
+
+**The rule.** No Markdown file in the tree outside `testdata/` (the docs,
+`AGENTS.md`, `TESTING.md`, the READMEs), no card template (`CardTemplateDirs`),
+no brief source (the `briefSources` the no-gh rule reads) and neither Go file
+that writes a harness card's standard lines (`internal/nsprint/taskcard/complete.go`,
+`internal/nsprint/card/copy.go`) spells `go test`, with any flags, over `./...`
+or over one of the three trees that are most of it (`./cmd/...`,
+`./internal/...`, `./tools/...`).
+The door is `nova-ci local` (nova-tools#4336): the packages
+`.github/scripts/select-packages.sh` picks against the merge base of the base
+and `HEAD`, run through the Makefile's `test` target under `nice -n 15` at
+`-p 2`, with the unit budgets, exiting as CI would ([TESTING.md](../TESTING.md)).
+**The hurt.** Glenn 2026-09-26 10:08 AM ET, "CPU is for real work": children
+test the packages they touched and nothing else. The day's children each
+invented a way to test what they changed (a sharding script under `timeout 95`,
+a six-pass loop hunting t.Parallel violations, hand timing scripts) and several
+ran the whole tree on the benches the real work shares. A doc that spells the
+whole-tree run teaches the next child to do it again.
+**The test.** `TestNoWholeTreeGoTestInDocs`, with its control
+`TestWholeTreeRuleSeesEachSpelling` (`internal/ci/wholetree_class_test.go`),
+which pins the bare, flagged, piped and table-cell spellings and the
+`./cmd/...`, `./internal/...` and `./tools/...` trees as red, and `nova-ci
+local`, a named package, one tool's own subtree, `go vet ./...` and prose as
+green.
+**Its allowlist.** None. The offenders in the tree when the rule landed (the
+build sections of `docs/CLI.md` and `docs/USAGE.md`, two sentences of this
+spec, one release note, and the `cmd/`, `internal/` and `tools/` guard cells
+of `AGENTS.md`, now `nova-ci local` in `internal/docs/catalog.go`) were
+rewritten.
+**Its remedy line.** `run nova-ci local (the unit tier CI runs for this diff)
+or name the packages you touched: nice -n 15 go test -p 2 -count=1 ./cmd/<tool>`.
+**Its narrowings.** One line at a time: a command split across a backslash
+continuation is not seen. A package list spelled out by hand, however long, is
+not read, nor is one tool's own subtree (`./cmd/nova-ci/...`), and neither are
+the Makefile's `test-full` and `test-slow` targets, which CI's whole-tree runs
+call.
+
+### `silent` — no silent failure on the copy model's live path
+
+**The rule.** Glenn, 2026-09-25: "every verb must return an error that you see,
+for breadcrumbs as you work, failing silent is not allowed. Without this every
+thing we have done shows it is not possible to make a reliable system"; and
+2026-09-26 11:30 AM ET: "every verb in nova tools related to current work should
+not fail silently. Scan for silent failures and fix." In the live packages
+(`cmd/nova-sprint`, `cmd/nova-card`, `internal/nsprint/{reconcile, taskcard,
+table, card, launch, fn, capacity, pipeerr}`), no non-test `.go` file holds
+`_ = err` (any error-named identifier assigned to the blank identifier) or a
+`|| true` inside a Go string literal (an embedded script step whose exit is
+thrown away). A failure is returned, printed as one typed line (`REFUSED <verb>:
+<why>` on stderr with exit 1, or the verb's own receipt vocabulary) or, in a
+loop, counted and printed once per pass (the reconciler's `DUTY <name> ...
+err=<text>` line is the model).
+**The hurt.** The 2026-09-26 sweep (`rowan/no-silent-failures`): a `card render`
+that reported a Redis outage as `NOTASK`; a copy whose refused `card end` left
+only `code=2` on a line written to `/dev/null`; a reconciler deal duty that threw
+its pass's `REFUSED` lines away and returned clean counts; a consumer whose
+`slots` field would not parse and was skipped every pass with no line; a lapsed
+copy the expire sweep could not end, left in `working` with nothing said, every
+sweep; a go-redis pipeline whose first absent field (`redis.Nil`) hid a later
+`NOPERM` and read the rest as zero. Each was a card that sat still while the
+table said nothing.
+**The test.** `TestNoSilentFailureOnTheLivePath`
+(`internal/ci/silent_class_test.go`), with the rule proved over source in
+`TestSilentRuleReadsTheTwoShapes` (the two shapes refused; a discarded value
+that is not an error and a `|| true` in a comment are not).
+**Its allowlist.** `internal/ci/testdata/silent_allowlist.txt`, read through
+the one helper (`allowlist`), one `file:function <why it is judged not silent>`
+per row (a package-level literal is `file:<package>`); EMPTY today under
+`# ceiling: 0`, shrink-only in both directions, and a row with no reason is
+red.
+**Its remedy lines.** `` `_ = err` drops the failure where it happened; return
+it, print one typed line (REFUSED <verb>: <why>) or count it into the pass's
+DUTY line``; `` `|| true` inside a Go string literal hides an embedded script
+step's failure; drop it and read the step's exit``; for a stale row, `delete the
+stale entry (the list only shrinks; NOVA_CI_UPDATE=1 drops it)`.
+**Its narrowings.** Non-test `.go` files of the live packages only. It reads the
+two shapes by their syntax: `_, _ = f()` (a discarded multi-value), `_ =
+f.Close()`, an `err` assigned and never read, and an `if err != nil { return
+nil }` are not read (`go vet`, errcheck and the reviewer's eye are theirs), and
+neither is a Lua function that returns `nil` where a `REFUSED <why>` belongs.
+The go-redis pipeline shape has its own remedy rather than a rule:
+`internal/nsprint/pipeerr.Exec` walks every command of a pipeline whose fields
+may be absent and returns the first error that is not `redis.Nil`.
+
+### `classtests` — no merge deletes a class test file dev had
+
+**The rule.** Every `internal/ci/*_class_test.go` is a row of
+`internal/ci/testdata/class-tests.txt`, and every row's file is in the tree.
+The list only grows: a new class test adds its row, and a row is never removed
+by an update. A class test is a rule this repository keeps by structure; a
+tree that lacks the file lacks the rule, and nothing else notices.
+**The hurt.** 2026-09-26: #4346 (`rowan/functional-tag`) was built on a base
+older than #4344 and its squash put a tree on dev that lacked the four files
+#4344 had added an hour before — the `silent` class test, its allowlist and
+two of its controls — and undid #4344's forty live-path fixes with them. Every
+check on the merge was green, because a rule that is not there cannot fail;
+the loss was found by a reader, not by CI.
+**The test.** `TestNoMergeDeletesAClassTest`
+(`internal/ci/classtests_class_test.go`): every row's file must be in the
+tree; a file the tree lacks is a red run naming the commit that deleted it
+(`git log --first-parent -m --diff-filter=D -- <file>` from the checkout), and
+the list is not handed to the helper while a row is missing, so no update can
+drop the row instead of the finding. `TestClassTestFileReadsThePath` pins the
+shape it reads (this package's `*_class_test.go` only).
+**Its allowlist.** `internal/ci/testdata/class-tests.txt`, the list itself:
+grow-only, no ceiling, `NOVA_CI_UPDATE=1` appends a new class test's row.
+**Its remedy lines.** `<list> lists <file> and the tree lacks it: deleted by
+<sha> <subject>. A merge never deletes a class test; restore the file from the
+commit before that one`; `<file> is a class test <list> does not list; add its
+row (NOVA_CI_UPDATE=1 does; the list only grows)`.
+**Its narrowings.** It reads `internal/ci` only, by file name; a class test kept
+elsewhere (`internal/nsprint/land/guard`) is not held here, and a class test
+emptied of its `Test…` functions but left on disk is `internal/docs`' index
+test's finding, not this one's. On a shallow checkout the deleting commit may
+be outside the fetched history; the finding says so and the file is still
+missing.
+
 ## Parked class tests
 
 A parked rule is one this repository decided to stop enforcing, kept here with
@@ -2528,6 +2646,7 @@ fix and integration-4 is what it costs`.
 **Its narrowings.** It counts jobs that name `windows-latest` AND the
 `pull_request` event in their text; a Windows runner reached through a reusable
 workflow or a matrix value built elsewhere would not be counted.
+
 
 ## How the class tests read the tree: one walk, one parse, in parallel
 

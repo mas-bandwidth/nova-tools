@@ -349,6 +349,10 @@ func runLandMerge(ctx context.Context, args []string, out, errOut io.Writer) int
 	for _, s := range rep.Skipped {
 		fmt.Fprintf(errOut, "LAND MERGE SKIPPED %s\n", oneline.Field(s))
 	}
+	if rep.GateErr != "" {
+		fmt.Fprintf(errOut, "JEV REFUSED land-gate pr=#%d why=%s remedy=%s\n", l.PR, oneline.Field(rep.GateErr),
+			oneline.Field("the land stands; nova-sprint jev outcome --type gate joins a head by hand"))
+	}
 	if len(rep.Unclosed) > 0 || len(rep.IssuesUnclosed) > 0 {
 		return 1
 	}

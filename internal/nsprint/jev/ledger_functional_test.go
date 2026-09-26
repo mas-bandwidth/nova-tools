@@ -33,6 +33,15 @@ func (s scripted) Decide(_ context.Context, _ string, qs map[string]decide.Quest
 	return out, decide.Usage{InputTokens: 500, HasInput: true, HasOutput: true}, nil
 }
 
+// cancelling is Jev whose caller gives up mid-call: it cancels the ask's
+// context and fails with its error, as a real call would.
+type cancelling struct{ cancel context.CancelFunc }
+
+func (f cancelling) Decide(ctx context.Context, _ string, _ map[string]decide.Question) (map[string]decide.Answer, decide.Usage, error) {
+	f.cancel()
+	return nil, decide.Usage{}, ctx.Err()
+}
+
 // TestLedgerFromTheMoveLogToTheReport is #4316's DONE-WHEN on a real Redis
 // with the library loaded: a primary pushed with ROUTE pro and TYPE verb, its
 // bench copy failing to review, and the coordinator's redeal become, through
@@ -122,6 +131,33 @@ func TestLedgerFromTheMoveLogToTheReport(t *testing.T) {
 		t.Errorf("tier row after ask %v", h)
 	}
 
+	// an ask whose context is cancelled mid-call loses no row: the claimed
+	// rows go back to jev:pending on the context without its cancel
+	cctx, cancel := context.WithCancel(ctx)
+	if res, err := jev.AskPending(cctx, c, cancelling{cancel}, 16); err != nil || len(res) != 1 || !res[0].Again {
+		t.Fatalf("a cancelled ask %+v %v", res, err)
+	}
+	if n := c.SMembers(ctx, jev.KeyPending).Val(); len(n) != 1 || c.SCard(ctx, jev.KeyAsking).Val() != 0 {
+		t.Errorf("after a cancelled ask pending %v asking %d, want the row back and nothing claimed", n, c.SCard(ctx, jev.KeyAsking).Val())
+	}
+
+	// the gate: jev mech's gate word is a row at the head, the landing its
+	// outcome; a head mech never ran on is counted, not an error
+	head := strings.Repeat("b", 40)
+	if err := jev.RecordGate(ctx, c, "nova-tools", 4367, head, "ok", "JEV who=jev pass=mech head="+head+" gate=ok"); err != nil {
+		t.Fatal(err)
+	}
+	if j, m, err := jev.JoinGates(ctx, c, "nova-tools", []jev.GateHead{{N: 4367, Head: head}, {N: 1, Head: "c0ffee"}}, "ok",
+		"landed", "landed with nova-tools#4400"); err != nil || j != 1 || m != 1 {
+		t.Errorf("JoinGates joined %d missing %d %v", j, m, err)
+	}
+	if h := row(jev.TypeGate, "nova-tools#4367@bbbbbbbbbbbb"); h["rules"] != "ok" || h["outcome"] != "ok" {
+		t.Errorf("gate row %v", h)
+	}
+	if j, _, _ := jev.JoinGates(ctx, c, "nova-tools", []jev.GateHead{{N: 4367, Head: head}}, "ok", "landed", "again"); j != 0 {
+		t.Errorf("a second land joined the same outcome again: %d", j)
+	}
+
 	// the hook: one call records a decision point another stream builds, one
 	// call joins its outcome; an outcome with no decision is refused
 	if err := jev.Record(ctx, c, jev.Decision{Type: jev.TypeOrder, Subject: "nova-tools-1|nova-tools-2", State: "PAIR",
@@ -148,7 +184,8 @@ func TestLedgerFromTheMoveLogToTheReport(t *testing.T) {
 		t.Errorf("the worktype has no rules answer and no Jev answer yet, and printed a line:\n%s", out)
 	}
 	for _, want := range []string{
-		"JEV REPORT rows=4 pending=2 lines=5\n",
+		"JEV REPORT rows=5 pending=2 lines=6\n",
+		"JEV type=gate source=rules version=rules answers=1 outcomes=1 agree=1 agreement=100% open=0 overrides=0",
 		"JEV type=tier source=rules version=rules answers=1 outcomes=0 agree=0 agreement=- open=1",
 		"JEV type=tier source=jev version=tier-v1 answers=1 outcomes=0 agree=0 agreement=- open=1 overrides=0 override_agreement=- cost=$0.000021 ms=",
 		"JEV type=review source=jev version=review-v1 answers=1 outcomes=1 agree=1 agreement=100% open=0 overrides=1 override_agreement=100%",

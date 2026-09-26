@@ -216,7 +216,13 @@ func (d *DoneAlready) one(ctx context.Context, token, s string, c doneAlreadyCar
 	}
 	// A deposed instance must not reach the forge: the fence is read first,
 	// and ns_card_done_already checks it again before it writes.
-	if held, err := d.Client.HGet(ctx, "lease:reconciler", "token").Result(); err != nil || held != token {
+	held, err := d.Client.HGet(ctx, "lease:reconciler", "token").Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		// A store that did not answer is not a lost lease: the read error
+		// is the duty's error, never a FENCED that stops the loop.
+		return o, fmt.Errorf("done-already %s/%s: read lease:reconciler: %w", s, c.label, err)
+	}
+	if held != token {
 		return o, fmt.Errorf("done-already %s/%s: %w", s, c.label, ErrFenced)
 	}
 	if err := d.Forge.CloseIssue(ctx, repo, n, evidence); err != nil {
