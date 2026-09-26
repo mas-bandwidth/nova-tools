@@ -114,3 +114,27 @@ func TestAbortKeepsTheCauseAndNamesTheEvidence(t *testing.T) {
 		t.Fatalf("aborted.json %+v %v", ab, err)
 	}
 }
+
+// TestAbortNamesTheUnwrittenEvidence: when aborted.json cannot be written
+// (a file sits where the job directory would be) the one line keeps the
+// cause, names the evidence path, says NOT WRITTEN with the write's cause,
+// and tells recovery not to infer the acknowledgement; forcing the write
+// error to nil turns this red.
+func TestAbortNamesTheUnwrittenEvidence(t *testing.T) {
+	t.Parallel()
+	job := filepath.Join(t.TempDir(), "job")
+	if err := os.WriteFile(job, []byte("a file where the job directory would be"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var errOut bytes.Buffer
+	code := abort(SuperviseInput{Task: "audit-card", Slot: 1, Nonce: "fixture", Stderr: &errOut, Now: time.Now}, job, errors.New("reservation changed: slot 1 reads state=free nonce=other"))
+	line := errOut.String()
+	for _, want := range []string{"SUPERVISE ABORTED slot=1 id=audit-card: reservation changed: slot 1 reads state=free nonce=other", "no harness was started", "evidence=" + AbortedPath(job) + " NOT WRITTEN: the job directory could not be made: not a directory", "the durable acknowledgement does not exist, so recovery must not infer it", "rule 17 decides slot 1 from the slot file alone", "inspect: " + job} {
+		if code != 2 || !strings.Contains(line, want) {
+			t.Fatalf("exit=%d stderr %q lacks %q", code, line, want)
+		}
+	}
+	if _, err := os.Stat(AbortedPath(job)); err == nil {
+		t.Fatal("aborted.json exists")
+	}
+}
