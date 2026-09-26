@@ -86,6 +86,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 )
 
 // cutColumns are a row's cells in the default order; id is optional.
@@ -125,6 +126,9 @@ type cutFromDeps struct {
 	// Plan reads the parent (--parent); Bind makes it a plan after the push.
 	Plan func(ctx context.Context, id string) (planFacts, error)
 	Bind func(ctx context.Context, parent string, children []string, stitch, by string) (taskcard.Result, error)
+	// Order writes each named stream's work order after the push and the
+	// bind (#4322 fix round), one ORDER line per stream; nil writes none.
+	Order func(ctx context.Context, streams []string, out io.Writer)
 }
 
 // cutRow is one card row.
@@ -379,46 +383,37 @@ func checkCutRow(r *cutRow, byID, slugs map[string]int, o cutFromOpts) {
 }
 
 // orderCutRows is the push order: file order, except that a row comes
-// after every row its DEPENDS-ON names. Rows on a cycle are refused.
+// after every row its DEPENDS-ON names (ws.Topo, the stream order's core,
+// the earliest ready row first). Rows on a cycle are refused.
 func orderCutRows(rows []*cutRow) []*cutRow {
-	placed := make([]bool, len(rows)+1)
-	var order []*cutRow
-	for len(order) < len(rows) {
-		moved := false
-		for _, r := range rows {
-			if placed[r.n] {
-				continue
-			}
-			ready := true
-			for _, k := range r.rowDeps {
-				if !placed[k] {
-					ready = false
-					break
-				}
-			}
-			if ready {
-				placed[r.n] = true
-				order = append(order, r)
-				moved = true
-				break // the earliest ready row first, then look again from the top
+	at := make(map[int]int, len(rows)) // row number -> index
+	for i, r := range rows {
+		at[r.n] = i
+	}
+	idx, stuck := ws.Topo(len(rows), func(i int) []int {
+		var before []int
+		for _, k := range rows[i].rowDeps {
+			if j, ok := at[k]; ok {
+				before = append(before, j)
 			}
 		}
-		if !moved {
-			var stuck []string
-			for _, r := range rows {
-				if !placed[r.n] {
-					stuck = append(stuck, strconv.Itoa(r.n))
-				}
+		return before
+	}, func(a, b int) bool { return a < b })
+	order := make([]*cutRow, 0, len(rows))
+	for _, i := range idx {
+		order = append(order, rows[i])
+	}
+	if len(stuck) > 0 {
+		names := make([]string, len(stuck))
+		for k, i := range stuck {
+			names[k] = strconv.Itoa(rows[i].n)
+		}
+		for _, i := range stuck {
+			r := rows[i]
+			if r.why == "" {
+				r.why = "depends-on is a cycle among rows " + strings.Join(names, ",")
 			}
-			for _, r := range rows {
-				if !placed[r.n] {
-					placed[r.n] = true
-					if r.why == "" {
-						r.why = "depends-on is a cycle among rows " + strings.Join(stuck, ",")
-					}
-					order = append(order, r)
-				}
-			}
+			order = append(order, r)
 		}
 	}
 	return order
@@ -882,6 +877,21 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 		fmt.Fprintf(out, "CARD CUT row=%s id=%s ref=%s stream=%s to=%s depends=%s\n", cutRowN(r), r.id, cutField(r.ref),
 			cutField(r.stream), to, cutField(cutDepends(r, rows, o.Repo, false)))
 	}
+	// Every stream a row was pushed onto (and the parent's) has its work
+	// order written once the push and the bind are done (#4322 fix round):
+	// card cut --from and --parent, children and stitch, are doors.
+	orderAll := func() {
+		if d.Order == nil || cut == 0 {
+			return
+		}
+		var streams []string
+		for _, r := range order {
+			if r.why == "" && !r.already {
+				streams = append(streams, r.stream)
+			}
+		}
+		d.Order(ctx, append(streams, o.Stream), out)
+	}
 	// The parent is bound last, once its children and stitch exist: a cut
 	// whose stitch was refused leaves the parent as it was (the children
 	// stand as cards of the stream; a rerun with the fix cuts the stitch).
@@ -894,16 +904,36 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 				why = w
 			}
 			fmt.Fprintf(out, "CARD CUT REFUSED parent=%s why=%s\n", o.Parent, cutField("bind: "+why))
+			orderAll()
 			summary(len(rows), len(rows)-cut-already)
 			return 1
 		}
 		fmt.Fprintf(out, "CARD CUT PLAN parent=%s children=%d stitch=%s parent_to=%s depends=%s\n", o.Parent, len(childIDs), stitch, res.To, stitch)
 	}
+	orderAll()
 	summary(len(rows), len(rows)-cut-already)
 	if cut+already < len(rows) {
 		return 1
 	}
 	return 0
+}
+
+// cutPush is card cut's push on a store (--from and --parent, children and
+// stitch): one pipeline of ns_tcard_push. A seat that cannot write the
+// streams' work order pushes nothing (#4322 fix round, orderGrant); a row
+// that closes a DEPENDS-ON cycle through its card is refused by its own
+// ns_tcard_push (TK.create, cm_order_cycle), nothing of it written.
+func cutPush(c redis.Cmdable) func(ctx context.Context, reqs []taskcard.PushRequest) ([]taskcard.PushOutcome, error) {
+	return func(ctx context.Context, reqs []taskcard.PushRequest) ([]taskcard.PushOutcome, error) {
+		streams := make([]string, 0, len(reqs))
+		for _, r := range reqs {
+			streams = append(streams, ws.StreamOfTitle(r.Stream, r.Title))
+		}
+		if why := orderGrant(ctx, c, streams...); why != "" {
+			return nil, errors.New(why)
+		}
+		return taskcard.PushMany(ctx, c, reqs)
+	}
 }
 
 // cmdCardCutFrom wires card cut --from: the file, the task store (opened
@@ -962,9 +992,7 @@ func cmdCardCutFrom(ctx context.Context, o cutFromOpts, addr string, stdout, std
 			return refuse(stderr, verb, "redis: "+err.Error()+"; nothing filed")
 		}
 		defer func() { _ = st.Close() }()
-		d.Push = func(ctx context.Context, reqs []taskcard.PushRequest) ([]taskcard.PushOutcome, error) {
-			return taskcard.PushMany(ctx, st.Client(), reqs)
-		}
+		d.Push = cutPush(st.Client())
 		d.LedgerRead = func(ctx context.Context, key string) (taskcard.CutLedger, error) {
 			return taskcard.ReadCutLedger(ctx, st.Client(), key)
 		}
@@ -976,6 +1004,9 @@ func cmdCardCutFrom(ctx context.Context, o cutFromOpts, addr string, stdout, std
 		}
 		d.Bind = func(ctx context.Context, parent string, children []string, stitch, by string) (taskcard.Result, error) {
 			return taskcard.BindPlan(ctx, st.Client(), parent, children, stitch, by)
+		}
+		d.Order = func(ctx context.Context, streams []string, out io.Writer) {
+			reorderLines(ctx, st.Client(), streams, o.Actor, out)
 		}
 		if o.DryRun {
 			return cardCutFrom(ctx, o, d, stdout)

@@ -14,6 +14,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -30,6 +31,12 @@ const (
 	lsStream = "landing: streams + lander"
 	lsSlug   = "landing-streams-lander"
 )
+
+// lsOrderRef is each member task's ref: its issue number puts the stream's
+// computed work order at #3, #1, #2 (ws.Order: issue number), so the red
+// member #2 is last and the members ahead of it land without passing an
+// unfinished predecessor (the work order gate, nova-tools #4322).
+var lsOrderRef = map[int]string{1: "mas-bandwidth/nova-tools#9001", 2: "mas-bandwidth/nova-tools#9002", 3: "mas-bandwidth/nova-tools#9000"}
 
 // lsFixture is a bare repo with dev and refs/pull/<n>/head: 1 and 3 add a
 // file each (green; 3's commit message closes #7), 2 adds red.txt (red
@@ -89,7 +96,8 @@ func TestLandStreamEndToEnd(t *testing.T) {
 	landStreamToken = func() (string, error) { return "test-token", nil }
 	t.Cleanup(func() { landStreamToken = prev })
 
-	// Three members in merging, aged 3 < 1 < 2: order is #3, #1, #2. The
+	// Three members in merging, aged 3 < 1 < 2 and issues (lsOrderRef) in
+	// the same order: order is #3, #1, #2, the red #2 last. The
 	// issues #101 and #103 (closed by #1's body and #3's record) have their
 	// own tasks in another stream.
 	const swarm = "swarm: cards"
@@ -107,7 +115,7 @@ func TestLandStreamEndToEnd(t *testing.T) {
 	for n, at := range map[int]float64{1: 200, 2: 300, 3: 100} {
 		id := fmt.Sprintf("t%d", n)
 		c.ZAdd(ctx, "ws:"+lsStream+":merging", redis.Z{Score: at, Member: id})
-		c.HSet(ctx, "task:"+id, "stream", lsStream, "state", "merging", "pr", fmt.Sprint(n), "created_at", fmt.Sprint(at))
+		c.HSet(ctx, "task:"+id, "stream", lsStream, "state", "merging", "pr", fmt.Sprint(n), "created_at", fmt.Sprint(at), "ref", lsOrderRef[n])
 		if code, out, errOut := runSprint("pr", "record", "--redis", addr, "--repo", lsRepo, "--n", fmt.Sprint(n),
 			"--head", heads[n], "--base", "dev", "--stream", lsStream, "--task", id); code != 0 || !strings.Contains(out, "created=true") {
 			t.Fatalf("pr record: %d %s %s", code, out, errOut)
@@ -202,6 +210,14 @@ func TestLandStreamEndToEnd(t *testing.T) {
 	}
 	if n, _ := c.ZCard(ctx, "ws:"+lsStream+":landed").Result(); n != 2 {
 		t.Fatalf("landed %d", n)
+	}
+	// the move to landed is a door (#4322 fix round): the stream's order is
+	// written over what is left live, one ORDER line
+	if !regexp.MustCompile(`(?m)^ORDER stream=` + regexp.QuoteMeta(quoteField(lsStream)) + ` order=\d+$`).MatchString(out) {
+		t.Fatalf("no ORDER line for %s after the merge:\n%s", lsStream, out)
+	}
+	if so, err := ws.ReadOrder(ctx, c, lsStream); err != nil || so.Stale() {
+		t.Fatalf("%s after the merge: stale %v %v", lsStream, so.Stale(), err)
 	}
 	landedRelease(t, ctx, c, addr, out)
 	if n, _ := c.ZCard(ctx, "ws:"+lsStream+":merging").Result(); n != 0 {

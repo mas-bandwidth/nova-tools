@@ -332,6 +332,7 @@ cmd/nova-sprint/life_test.go:TestLifeVerbRefusals serial: t.Setenv
 cmd/nova-sprint/lineup_test.go:TestLineupPublishStampsRunMarker serial: t.Setenv
 cmd/nova-sprint/main_functional_test.go:TestEndRefusesRelativeResults serial: t.Setenv
 cmd/nova-sprint/main_functional_test.go:TestResultsPathUnixAbsolute serial: t.Setenv
+cmd/nova-sprint/order_doors_functional_test.go:TestOrderDoorsCLI serial: os.Unsetenv, t.Setenv
 cmd/nova-sprint/pitstop_functional_test.go:TestPitstopClearNarrowsScope serial: t.Setenv
 cmd/nova-sprint/pitstop_test.go:TestPitstopStatusOnMiniredis serial: t.Setenv
 cmd/nova-sprint/pitstop_functional_test.go:TestPitstopVerbEveryBranch serial: t.Setenv

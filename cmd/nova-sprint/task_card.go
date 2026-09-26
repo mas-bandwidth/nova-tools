@@ -29,6 +29,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -128,6 +129,23 @@ type cardCmd struct {
 }
 
 func runTaskCard(ctx context.Context, sub string, args []string, out, errOut io.Writer) int {
+	c, code, done := parseTaskCard(sub, args, out, errOut, os.Getenv)
+	if done {
+		return code
+	}
+	st, err := store.Open(ctx, taskAddr(*c.redis))
+	if err != nil {
+		return refuse(errOut, c.verb, err.Error())
+	}
+	defer func() { _ = st.Close() }()
+	return c.run(ctx, st, sub, out, errOut)
+}
+
+// parseTaskCard is runTaskCard before the store: the flags, the usage and
+// the seat check, with the environment read through getenv (a test passes
+// its own, so it runs in parallel). done is true when the verb has already
+// answered with code.
+func parseTaskCard(sub string, args []string, out, errOut io.Writer, getenv func(string) string) (*cardCmd, int, bool) {
 	verb := "task " + sub
 	fs := taskFlags(verb)
 	c := &cardCmd{verb: verb}
@@ -174,32 +192,27 @@ func runTaskCard(ctx context.Context, sub string, args []string, out, errOut io.
 		}
 	}
 	if err := fs.Parse(args); err != nil {
-		return refuse(errOut, verb, err.Error()+"; see nova-sprint task "+sub+" --help")
+		return nil, refuse(errOut, verb, err.Error()+"; see nova-sprint task "+sub+" --help"), true
 	}
 	if *c.help {
 		_, _ = io.WriteString(out, taskCardUsage)
-		return 0
+		return nil, 0, true
 	}
 	if fs.NArg() > 0 {
-		return refuse(errOut, verb, "takes flags, not positional arguments")
+		return nil, refuse(errOut, verb, "takes flags, not positional arguments"), true
 	}
 	if *c.sprint == "" {
-		*c.sprint = os.Getenv("FRIEND_QUEUE_SPRINT")
+		*c.sprint = getenv("FRIEND_QUEUE_SPRINT")
 	}
 	// #2929: a seat's verbs act as the seat. Under a harness (NOVA_FRIEND
 	// set) --actor must name it; a coordinator shell (none set) names itself.
-	if seat := os.Getenv(seatEnv); seat != "" && *c.actor != "" && *c.actor != seat {
-		return refuse(errOut, verb, fmt.Sprintf("--actor %s is not the seat (%s=%s)", *c.actor, seatEnv, seat))
+	if seat := getenv(seatEnv); seat != "" && *c.actor != "" && *c.actor != seat {
+		return nil, refuse(errOut, verb, fmt.Sprintf("--actor %s is not the seat (%s=%s)", *c.actor, seatEnv, seat)), true
 	}
 	if want := c.missing(sub); want != "" {
-		return refuse(errOut, verb, want)
+		return nil, refuse(errOut, verb, want), true
 	}
-	st, err := store.Open(ctx, taskAddr(*c.redis))
-	if err != nil {
-		return refuse(errOut, verb, err.Error())
-	}
-	defer func() { _ = st.Close() }()
-	return c.run(ctx, st, sub, out, errOut)
+	return c, 0, false
 }
 
 // missing names the first required flag a verb lacks, or "".
@@ -259,6 +272,13 @@ func (c *cardCmd) missing(sub string) string {
 	return ""
 }
 
+// movesOrder are the subverbs whose move can change a stream's order
+// (#4322 fix round): out of the live sets (done, land, cancel), into
+// another stream (move --to-stream) or within one (block, unblock, front,
+// move).
+var movesOrder = map[string]bool{"done": true, "land": true, "cancel": true, "block": true, "unblock": true,
+	"front": true, "move": true}
+
 func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, errOut io.Writer) int {
 	cl := st.Client()
 	start := time.Now()
@@ -270,6 +290,14 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 		}
 		return refuse(errOut, c.verb, err.Error())
 	}
+	// The stream the task is in before a move (#4322 fix round): a move
+	// out of a stream's live sets, into another stream or within one
+	// recomputes that stream's order, and the new stream's; one ORDER line
+	// each after the TASK line. One read, before the move.
+	var before string
+	if movesOrder[sub] && *c.id != "" && !taskcard.IsCopy(*c.id) {
+		before = cl.HGet(ctx, taskcard.Key(*c.id), "stream").Val()
+	}
 	moved := func(r taskcard.Result, err error) int {
 		if err != nil {
 			return refused(err)
@@ -279,6 +307,7 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 			from = "-"
 		}
 		_, _ = fmt.Fprintf(out, "TASK %s id=%s from=%s to=%s ms=%d\n", sub, *c.id, from, r.To, ms())
+		reorderLines(ctx, cl, []string{before, *c.toStream}, *c.actor, out)
 		return 0
 	}
 	o := taskcard.Opts{By: *c.actor, Why: *c.why, Sprint: *c.sprint}
@@ -288,6 +317,14 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 		if err != nil {
 			return refuse(errOut, c.verb, err.Error())
 		}
+		// A seat that cannot write the stream's work order is refused
+		// before any write (the #4322 fix round). A push that closes a
+		// DEPENDS-ON cycle through its card is refused by ns_tcard_push
+		// itself (TK.create), and prints as every refusal: TASK push REFUSED.
+		if why := orderGrant(ctx, cl, ws.StreamOfTitle(*c.stream, *c.title)); why != "" {
+			_, _ = fmt.Fprintf(out, "TASK push REFUSED id=%s why=%s ms=%d\n", *c.id, quoteField(why), ms())
+			return 1
+		}
 		r, err := taskcard.Push(ctx, cl, taskcard.PushRequest{ID: *c.id, Stream: *c.stream, Friend: *c.friend,
 			Sprint: *c.sprint, Kind: *c.kind, Ref: *c.ref, Origin: *c.origin, Title: *c.title, Head: *c.head,
 			PR: *c.pr, Repo: *c.repo, DependsOn: *c.on, Front: *c.front, By: *c.actor, Why: *c.why,
@@ -295,7 +332,10 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 		if err != nil {
 			return refused(err)
 		}
-		_, _ = fmt.Fprintf(out, "TASK push id=%s from=- to=%s ms=%d\n", *c.id, r.Where, ms())
+		// The stream's work order is current after every push (#4322):
+		// the same ws.Reorder as ws reorder, measured in the receipt.
+		order := pushReorder(ctx, cl, *c.stream, *c.id, *c.actor, out)
+		_, _ = fmt.Fprintf(out, "TASK push id=%s from=- to=%s %s ms=%d\n", *c.id, r.Where, order, ms())
 		return 0
 	case "take":
 		var ids []string
@@ -377,6 +417,7 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 			_, _ = fmt.Fprintf(out, "REFUSED %s why=%s\n", id, quoteField(r.Refused[id]))
 		}
 		_, _ = fmt.Fprintf(out, "TASK land stream=%s sha=%s n=%d refused=%d ms=%d\n", quoteField(*c.stream), *c.sha, len(r.Landed), len(r.Refused), ms())
+		reorderLines(ctx, cl, []string{*c.stream}, *c.actor, out)
 		if len(r.Refused) > 0 {
 			return 1
 		}

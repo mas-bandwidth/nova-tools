@@ -27,7 +27,7 @@ import (
 )
 
 func init() {
-	register(Verb{Name: "ws", Summary: "the ws index: counts, checkpoint to TSV, show --order (every stream's cards with their DEPENDS-ON edges and sentinel)", Run: runWS})
+	register(Verb{Name: "ws", Summary: "the ws index: counts, checkpoint to TSV, show --order (every stream's cards in work order, one reason per edge), reorder a stream's scores, check (invariants and ORDER DRIFT)", Run: runWS})
 	register(Verb{Name: "scope", Summary: "keep, park, unpark or list the streams in the sprint's scope", Run: runScope})
 	register(Verb{Name: "stream", Summary: "list, order or rename the work streams; open, rebase, pr, status or close a stream branch", Run: runStream})
 }
@@ -115,7 +115,7 @@ func subverb(args []string, verb, want string, errOut io.Writer) (string, []stri
 }
 
 func runWS(ctx context.Context, args []string, out, errOut io.Writer) int {
-	sub, rest, code, ok := subverb(args, "ws", "counts, checkpoint or show", errOut)
+	sub, rest, code, ok := subverb(args, "ws", "counts, checkpoint, show, reorder or check", errOut)
 	if !ok {
 		return code
 	}
@@ -126,16 +126,117 @@ func runWS(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runWSCheckpoint(ctx, rest, out, errOut)
 	case "show":
 		return runWSShow(ctx, rest, out, errOut)
+	case "reorder":
+		return runWSReorder(ctx, rest, out, errOut)
+	case "check":
+		return runWSCheck(ctx, rest, out, errOut)
 	}
-	return refuse(errOut, "ws", "unknown subverb "+sub+"; want counts, checkpoint or show")
+	return refuse(errOut, "ws", "unknown subverb "+sub+"; want counts, checkpoint, show, reorder or check")
 }
 
-// runWSShow is `ws show --order [--stream <s>]` (nova-tools #4318): every
-// stream's cards in order, one line each, `<where> <id> <- <edges>`, the
-// sentinel last; then one receipt. A dependency that is not landed carries
-// its set in parentheses, one with no record (no record). --stream shows
-// one stream and refuses a name the index does not have, naming the ones it
-// has. `stream order --show` is the same listing.
+// runWSReorder is `ws reorder --stream <s>` (nova-tools #4322): the
+// stream's work order (ws.Order over its live cards' DEPENDS-ON, PATHS and
+// issue numbers) recomputed and written as the scores of its waiting, ready
+// and merging sets in one FCALL. One receipt: REORDERED stream=<s>
+// cards=<ranked> rescored=<n> skipped=<n> rt=<round trips> ms=<n>. A
+// DEPENDS-ON cycle is refused by name and nothing is written.
+func runWSReorder(ctx context.Context, args []string, out, errOut io.Writer) int {
+	w := newWSCmd("ws reorder", out, errOut)
+	stream := w.fs.String("stream", "", "")
+	if _, code, ok := w.parse(args, 0, "ws reorder --redis <addr> --stream <s>"); !ok {
+		return code
+	}
+	if *stream == "" {
+		return refuse(errOut, w.name, "--stream <s> is required: the stream whose work order is written")
+	}
+	st, code, ok := w.open(ctx)
+	if !ok {
+		return code
+	}
+	defer st.Close()
+	r, err := ws.Reorder(ctx, st.Client(), *stream, *w.by)
+	var ce *ws.CycleError
+	if errors.As(err, &ce) {
+		err = &ws.Refused{Why: ce.Error() + " in stream " + strconv.Quote(*stream)}
+	}
+	return w.done(err, fmt.Sprintf("REORDERED stream=%s cards=%d rescored=%d skipped=%d rt=%d",
+		strconv.Quote(*stream), r.Ranked, r.Rescored, r.Skipped, r.RoundTrips))
+}
+
+// runWSCheck is `ws check [--stream <s>]` (nova-tools #4322): the ws index
+// invariants (ws.Check: one set per task, record and set agree, the one
+// score) and each stream's order: a stream whose stored scores read another
+// sequence than its computed order is `ORDER DRIFT stream=<s> stored=<ids>
+// computed=<ids>` (the members of waiting, ready and merging, comma
+// separated; `ws reorder --stream <s>` writes it), one whose DEPENDS-ON closes
+// a cycle `ORDER CYCLE stream=<s> <the cycle>`, a broken invariant
+// `INVARIANTS <what>`; then CHECK streams=<n> drift=<n> cycles=<n>
+// invariants=ok|bad. Exit 0 clean, 1 with any finding.
+func runWSCheck(ctx context.Context, args []string, out, errOut io.Writer) int {
+	w := newWSCmd("ws check", out, errOut)
+	stream := w.fs.String("stream", "", "")
+	if _, code, ok := w.parse(args, 0, "ws check --redis <addr> [--stream <s>]"); !ok {
+		return code
+	}
+	st, code, ok := w.open(ctx)
+	if !ok {
+		return code
+	}
+	defer st.Close()
+	c := st.Client()
+	streams, err := ws.Streams(ctx, c)
+	if err != nil {
+		return w.done(err, "")
+	}
+	if *stream != "" {
+		found := false
+		for _, s := range streams {
+			found = found || s == *stream
+		}
+		if !found {
+			return w.done(&ws.Refused{Why: "unknown stream " + *stream}, "")
+		}
+		streams = []string{*stream}
+	}
+	invariants := "ok"
+	if err := ws.Check(ctx, c, nil); err != nil {
+		invariants = "bad"
+		fmt.Fprintf(out, "INVARIANTS %s\n", err)
+	}
+	orders, err := ws.ReadOrders(ctx, c, streams)
+	if err != nil {
+		return w.done(err, "")
+	}
+	drift, cycles := 0, 0
+	for _, o := range orders {
+		switch {
+		case o.Err != nil:
+			cycles++
+			fmt.Fprintf(out, "ORDER CYCLE stream=%s %s\n", strconv.Quote(o.Stream), o.Err)
+		case o.Drift():
+			drift++
+			fmt.Fprintf(out, "ORDER DRIFT stream=%s stored=%s computed=%s\n", strconv.Quote(o.Stream),
+				strings.Join(o.Stored, ","), strings.Join(o.Computed, ","))
+		}
+	}
+	fmt.Fprintf(out, "CHECK streams=%d drift=%d cycles=%d invariants=%s ms=%s\n", len(streams), drift, cycles, invariants, w.ms())
+	if drift+cycles > 0 || invariants != "ok" {
+		return 1
+	}
+	return 0
+}
+
+// runWSShow is `ws show --order [--stream <s>]` (nova-tools #4318, #4322):
+// every stream's cards in its computed work order, one line each, `<rank>
+// <where> <id> <- <edges>` (rank - for a card the order does not rank:
+// landed, done, parked), one reason per edge: `<dep> (reason: depends-on)`
+// for each DEPENDS-ON entry (one not landed carries its set in parentheses,
+// one with no record (no record)), `<id> (reason: paths <path>)` and `<id>
+// (reason: issue)` for the order's tie-breaks, the sentinel last; then one
+// receipt. A stream whose DEPENDS-ON closes a cycle prints `ORDER CYCLE`
+// after its STREAM line and its cards unranked. --stream shows one stream
+// and refuses a name the index does not have, naming the ones it has.
+// `stream order --show` is the same listing.
 func runWSShow(ctx context.Context, args []string, out, errOut io.Writer) int {
 	w := newWSCmd("ws show", out, errOut)
 	order := w.fs.Bool("order", false, "")
@@ -178,13 +279,16 @@ func showOrder(ctx context.Context, w *wsCmd, c redis.Cmdable, only string) int 
 	cards, edges := 0, 0
 	for _, r := range rows {
 		fmt.Fprintf(w.out, "STREAM %d %s cards=%d live=%d landed=%d sentinel=%s\n", r.Rank, strconv.Quote(r.Stream), len(r.Cards), r.Live, r.Landed, r.Sentinel)
+		if r.Cycle != "" {
+			fmt.Fprintf(w.out, "  ORDER CYCLE %s\n", r.Cycle)
+		}
 		for _, card := range r.Cards {
 			fmt.Fprintf(w.out, "  %s\n", card.Line(r.Live))
 			cards++
 			if card.Sentinel {
 				edges += r.Live + r.Landed
 			} else {
-				edges += len(card.Deps)
+				edges += len(card.Deps) + len(card.Reasons)
 			}
 		}
 	}
@@ -338,7 +442,13 @@ func runScopePark(ctx context.Context, args []string, out, errOut io.Writer) int
 	why := whyOr(*w.why, "scope park")
 	if ids == nil {
 		n, err := ws.ParkStream(ctx, st.Client(), *stream, *w.by, why)
-		return w.done(err, fmt.Sprintf("PARKED stream=%s parked=%d checkpoint=%s rows=%d", strconv.Quote(*stream), n, c.Path, c.Rows))
+		if err != nil {
+			return w.done(err, "")
+		}
+		// park is a door (#4322 fix round): the stream's order is written
+		// over what is still live.
+		order := pushReorder(ctx, st.Client(), *stream, "", *w.by, out)
+		return w.done(nil, fmt.Sprintf("PARKED stream=%s parked=%d checkpoint=%s rows=%d %s", strconv.Quote(*stream), n, c.Path, c.Rows, order))
 	}
 	// --ids parks those tasks only; each must be in --stream (one pipelined
 	// read of their stream fields), else nothing moves.
@@ -360,12 +470,16 @@ func runScopePark(ctx context.Context, args []string, out, errOut io.Writer) int
 		return w.done(&ws.Refused{Why: fmt.Sprintf("%d of %d ids are not in stream %s (first %s)", len(other), len(ids), strconv.Quote(*stream), other[0])}, "")
 	}
 	r, err := ws.MoveMany(ctx, st.Client(), "parked", *w.by, why, ids)
+	order := ""
+	if err == nil {
+		order = " " + pushReorder(ctx, st.Client(), *stream, "", *w.by, out)
+	}
 	if err == nil && len(r.Refused) > 0 {
 		fmt.Fprintf(out, "PARKED stream=%s parked=%d same=%d refused=%d first=%s:%s checkpoint=%s ms=%s\n",
 			strconv.Quote(*stream), r.Moved, r.Same, len(r.Refused), r.Refused[0].ID, strconv.Quote(r.Refused[0].Why), c.Path, w.ms())
 		return 1
 	}
-	return w.done(err, fmt.Sprintf("PARKED stream=%s parked=%d same=%d checkpoint=%s rows=%d", strconv.Quote(*stream), r.Moved, r.Same, c.Path, c.Rows))
+	return w.done(err, fmt.Sprintf("PARKED stream=%s parked=%d same=%d checkpoint=%s rows=%d%s", strconv.Quote(*stream), r.Moved, r.Same, c.Path, c.Rows, order))
 }
 
 func runScopeUnpark(ctx context.Context, args []string, out, errOut io.Writer) int {
@@ -383,7 +497,12 @@ func runScopeUnpark(ctx context.Context, args []string, out, errOut io.Writer) i
 	}
 	defer st.Close()
 	n, err := ws.UnparkStream(ctx, st.Client(), *stream, *w.by, whyOr(*w.why, "scope unpark"))
-	return w.done(err, fmt.Sprintf("UNPARKED stream=%s unparked=%d", strconv.Quote(*stream), n))
+	if err != nil {
+		return w.done(err, "")
+	}
+	// unpark is a door (#4322 fix round): the returned cards are ordered.
+	order := pushReorder(ctx, st.Client(), *stream, "", *w.by, out)
+	return w.done(nil, fmt.Sprintf("UNPARKED stream=%s unparked=%d %s", strconv.Quote(*stream), n, order))
 }
 
 // scopeOf is a stream's place in the scope: parked (everything not yet
@@ -521,7 +640,7 @@ func runStreamOrder(ctx context.Context, args []string, out, errOut io.Writer) i
 		return code
 	}
 	defer st.Close()
-	n, err := ws.Order(ctx, st.Client(), names)
+	n, err := ws.OrderStreams(ctx, st.Client(), names)
 	return w.done(err, fmt.Sprintf("ORDERED streams=%d first=%s", n, strconv.Quote(names[0])))
 }
 

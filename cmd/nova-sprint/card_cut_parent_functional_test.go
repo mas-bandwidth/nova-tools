@@ -6,10 +6,12 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws/wstest"
 )
 
@@ -56,6 +58,16 @@ func TestCardCutParentEndToEnd(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
 		}
+	}
+	// card cut --parent is a door (#4322 fix round): the children, the
+	// stitch and the bound parent are ordered once the bind is done.
+	if !regexp.MustCompile(`(?m)^ORDER stream=autonomy order=5 order_rt=3 order_ms=[0-9.]+\nCARD CUT FROM `).MatchString(out) {
+		t.Errorf("no ORDER line before the summary:\n%s", out)
+	}
+	if so, err := ws.ReadOrder(ctx, c, stream); err != nil || so.Stale() {
+		t.Errorf("autonomy's order after the cut: stale %v %v stored %v computed %v", so.Stale(), err, so.Stored, so.Computed)
+	} else {
+		t.Logf("autonomy ordered: %s", strings.Join(so.Computed, ","))
 	}
 	rec := c.HGetAll(ctx, taskcard.Key("hier")).Val()
 	for k, want := range map[string]string{"where": "waiting", "kind": "plan", "children": "the-model the-verb", "stitch": "hier-stitch", "blocked_on": "hier-stitch"} {

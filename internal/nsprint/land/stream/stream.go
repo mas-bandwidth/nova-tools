@@ -362,13 +362,16 @@ func parseScore(s string) int {
 
 // Member is one PR of the stream that lands.
 type Member struct {
-	Task    string
-	Stream  string
-	N       int
-	Head    string
-	ReadyAt int64
-	Who     string
-	Score   int
+	Task   string
+	Stream string
+	N      int
+	Head   string
+	// OrderScore is the member's score in ws:<stream>:merging: the stream's
+	// work order (ws.Order, written by ns_ws_reorder, nova-tools #4322), so
+	// the lowest lands first.
+	OrderScore int64
+	Who        string
+	Score      int
 }
 
 // Skip is a task in merging that does not land in this batch, and why.
@@ -437,7 +440,9 @@ func prNumber(field, repo string) (int, bool) {
 
 // Members is ws:<stream>:merging intersected with the repo's pr records that
 // carry a read at head >= minScore, no hold at head and no failing JEV line
-// at head, oldest pr_ready_at first, for each stream in the order given.
+// at head, in the stream's work order (the merging set's scores, which
+// ns_ws_reorder writes from ws.Order, nova-tools #4322; lowest first), for
+// each stream in the order given.
 // Three pipelined round trips.
 //
 // The JEV line (internal/jev, nova-tools#3631) is Jev's mechanical passes
@@ -463,12 +468,12 @@ func Members(ctx context.Context, c redis.Cmdable, repo string, streams []string
 	}
 	type cand struct {
 		task, stream string
-		at           int64
+		order        int64
 	}
 	var cands []cand
 	for i, s := range streams {
 		for _, z := range zs[i].Val() {
-			cands = append(cands, cand{task: fmt.Sprint(z.Member), stream: s, at: int64(z.Score)})
+			cands = append(cands, cand{task: fmt.Sprint(z.Member), stream: s, order: int64(z.Score)})
 		}
 	}
 	if len(cands) == 0 {
@@ -536,10 +541,10 @@ func Members(ctx context.Context, c redis.Cmdable, repo string, streams []string
 			skips = append(skips, Skip{Task: cd.task, N: n, Why: why})
 			continue
 		}
-		out = append(out, Member{Task: cd.task, Stream: cd.stream, N: n, Head: r.Head, ReadyAt: cd.at, Who: read.Who, Score: read.Score})
+		out = append(out, Member{Task: cd.task, Stream: cd.stream, N: n, Head: r.Head, OrderScore: cd.order, Who: read.Who, Score: read.Score})
 	}
-	// Streams in the order named, oldest pr_ready_at first within each,
-	// equal times by PR number.
+	// Streams in the order named, the work order (lowest order score)
+	// first within each, equal scores by PR number.
 	rank := map[string]int{}
 	for i, s := range streams {
 		if _, ok := rank[s]; !ok {
@@ -551,8 +556,8 @@ func Members(ctx context.Context, c redis.Cmdable, repo string, streams []string
 		if rank[a.Stream] != rank[b.Stream] {
 			return rank[a.Stream] < rank[b.Stream]
 		}
-		if a.ReadyAt != b.ReadyAt {
-			return a.ReadyAt < b.ReadyAt
+		if a.OrderScore != b.OrderScore {
+			return a.OrderScore < b.OrderScore
 		}
 		return a.N < b.N
 	})

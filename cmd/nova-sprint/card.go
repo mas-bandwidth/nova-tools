@@ -169,12 +169,36 @@ func cmdCardPush(ctx context.Context, args []string, stdout, stderr io.Writer) i
 		return code
 	}
 	defer client.Close()
+	return cardPushOn(ctx, client, *sprint, files, card.PushOptions{MapKind: *mapKind}, stdout, stderr)
+}
+
+// cardPushOn is card push on an open store: the checks before any write,
+// the batch, and one ORDER line per stream.
+func cardPushOn(ctx context.Context, client *redis.Client, sprint string, files []card.CardFile, opts card.PushOptions,
+	stdout, stderr io.Writer) int {
 	first := 0
-	for _, res := range card.PushBatch(ctx, client, *sprint, files, card.PushOptions{MapKind: *mapKind}) {
+	// Before any write (#4322 fix round): a batch whose own cards close a
+	// DEPENDS-ON cycle is refused whole (pure: no store read), and so is a
+	// seat that cannot write a stream's work order; one line, exit 2. A card
+	// that closes a cycle through the stream's live cards is refused by its
+	// own ns_card_push (card_create), nothing of it written.
+	streams, adds := card.StreamCards(ctx, sprint, files, opts)
+	for _, s := range streams {
+		if why := batchCycle(s, adds[s]); why != "" {
+			return refuse(stderr, "card", "push refused, nothing written: "+why)
+		}
+	}
+	if why := orderGrant(ctx, client, streams...); why != "" {
+		return refuse(stderr, "card", "push refused, nothing written: "+why)
+	}
+	for _, res := range card.PushBatch(ctx, client, sprint, files, opts) {
 		if wrote := writeCardResult(stdout, stderr, res); wrote != 0 && first == 0 {
 			first = wrote
 		}
 	}
+	// Each stream the batch pushed onto gets its work order written (#4322),
+	// one ORDER line per stream.
+	reorderLines(ctx, client, streams, "card push", stdout)
 	return first
 }
 

@@ -95,8 +95,14 @@ func TestWaitingResolvesWhenDepsLand(t *testing.T) {
 	}
 
 	ready, waiting := wrMembers(t, c, "ready"), wrMembers(t, c, "waiting")
-	if len(ready) != 2 || ready["B"] != float64(cardEpoch+2000) || ready["F"] != float64(cardEpoch+2003) {
-		t.Fatalf("ready %v, want B and F at their created_at scores", ready)
+	// B and F are scored by the stream's work order, which the same pass
+	// wrote (#4322 fix round: the resolver's moves are a door).
+	so, err := ws.ReadOrder(ctx, c, wrStream)
+	if err != nil || so.Stale() {
+		t.Fatalf("the pass left the order stale: %v", err)
+	}
+	if len(ready) != 2 || ready["B"] != so.StoredScore["B"] || ready["F"] != so.StoredScore["F"] || ready["B"] >= ready["F"] {
+		t.Fatalf("ready %v, want B then F at their order scores", ready)
 	}
 	for _, id := range []string{"C", "E", "H", "J", "K"} {
 		if _, ok := waiting[id]; !ok {
@@ -106,7 +112,8 @@ func TestWaitingResolvesWhenDepsLand(t *testing.T) {
 	if s, _ := c.HGet(ctx, "task:B", "where").Result(); s != "ready" {
 		t.Fatalf("task:B where %q, want ready (the pointer, #3778)", s)
 	}
-	want := `RESOLVE stream="nova-sprint + merge + bus" ready=2 still=5 on=mas-bandwidth/nova-tools#78,task:D unknown=o/r#99,task:ghost` + "\n"
+	want := `RESOLVE stream="nova-sprint + merge + bus" ready=2 still=5 on=mas-bandwidth/nova-tools#78,task:D unknown=o/r#99,task:ghost` + "\n" +
+		`ORDER stream="nova-sprint + merge + bus" order=10 why=stale` + "\n"
 	if out.String() != want {
 		t.Fatalf("receipt\n%q\nwant\n%q", out.String(), want)
 	}
@@ -272,7 +279,9 @@ func TestSentinelEdgeNeverReachesReadyUnmet(t *testing.T) {
 	if counts, err := duty.Run(ctx, lease); err != nil || counts.Routed != 0 {
 		t.Fatalf("routed %d err %v; nothing is landed", counts.Routed, err)
 	}
-	want := `RESOLVE stream="b: two" ready=0 still=3 on=` + sid + `,` + csid + `,task:` + sid + ` unknown=-` + "\n"
+	want := `RESOLVE stream="b: two" ready=0 still=3 on=` + sid + `,` + csid + `,task:` + sid + ` unknown=-` + "\n" +
+		// the pass writes each unranked stream's order once (#4322 fix round)
+		`ORDER stream="a: one" order=2 why=stale` + "\n" + `ORDER stream="b: two" order=3 why=stale` + "\n"
 	if out.String() != want {
 		t.Fatalf("receipt\n%q\nwant\n%q (stream a has only its sentinel waiting: no line)", out.String(), want)
 	}
@@ -299,7 +308,9 @@ func TestSentinelEdgeNeverReachesReadyUnmet(t *testing.T) {
 	if strings.Join(ready, " ") != "B1 B2" {
 		t.Fatalf("ready %v", ready)
 	}
-	if out.String() != `RESOLVE stream="b: two" ready=2 still=1 on=`+csid+` unknown=-`+"\n" {
+	// the move registered b's sentinel: a live card the order had not
+	// ranked, so the same pass writes b's order again
+	if out.String() != `RESOLVE stream="b: two" ready=2 still=1 on=`+csid+` unknown=-`+"\n"+`ORDER stream="b: two" order=4 why=stale`+"\n" {
 		t.Fatalf("receipt %q", out.String())
 	}
 	if err := ws.Check(ctx, c, []string{"A1", sid, "B1", "B2", "B3"}); err != nil {
@@ -325,7 +336,9 @@ func TestSentinelEdgeNeverReachesReadyUnmet(t *testing.T) {
 	if _, err := duty.Run(ctx, lease); err != nil {
 		t.Fatal(err)
 	}
-	if want := `SENTINEL stream="d: four" id=` + dsid + ` live=0 ready-to-land: nova-sprint task land --id ` + dsid + ` --sha <merge sha>` + "\n"; out.String() != want {
+	// D1 left the live sets: the same pass orders what is left, [sentinel]
+	if want := `SENTINEL stream="d: four" id=` + dsid + ` live=0 ready-to-land: nova-sprint task land --id ` + dsid + ` --sha <merge sha>` + "\n" +
+		`ORDER stream="d: four" order=1 why=stale` + "\n"; out.String() != want {
 		t.Fatalf("remedy\n%q\nwant\n%q", out.String(), want)
 	}
 	out.Reset()

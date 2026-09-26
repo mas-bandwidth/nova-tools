@@ -42,6 +42,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/redis/go-redis/v9"
 )
 
 func init() {
@@ -131,48 +132,82 @@ func runQuackCut(ctx context.Context, args []string, out, errOut io.Writer) int 
 	}
 	// Every card is rendered before Redis is touched: a bad input refuses
 	// with nothing written.
-	type cut struct {
-		id, tier string
-		spec     taskcard.Spec
-	}
-	cuts := make([]cut, 0, *n)
-	for i := 1; i <= *n; i++ {
-		id, tier := card.QuackID(i), tierList[(i-1)%len(tierList)]
-		text, err := card.QuackIssue(card.QuackInput{Sprint: *name, Stream: *stream, ID: id, Tier: tier,
-			Repo: *repo, Base: *base, BaseSHA: *baseSHA})
-		if err != nil {
-			return refuse(errOut, verb, err.Error())
-		}
-		cuts = append(cuts, cut{id: id, tier: tier, spec: taskcard.ParseIssue(text)})
+	cuts, err := quackCuts(*n, *name, *stream, *repo, *base, *baseSHA, tierList)
+	if err != nil {
+		return refuse(errOut, verb, err.Error())
 	}
 
-	start := quackNow()
 	st, err := store.Open(ctx, raddr)
 	if err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
 	defer func() { _ = st.Close() }()
-	cl := st.Client()
+	return quackCutOn(ctx, st.Client(), quackPlan{name: *name, stream: *stream, repo: *repo, ref: *ref, who: who,
+		baseSHA: *baseSHA, tiers: tierList, cuts: cuts}, out, errOut)
+}
+
+// quackCut is one rendered card of a quack cut.
+type quackCut struct {
+	id, tier string
+	spec     taskcard.Spec
+}
+
+// quackCuts renders the n cards quack-001.. from the template, tiers
+// round-robin, before Redis is touched.
+func quackCuts(n int, name, stream, repo, base, baseSHA string, tiers []string) ([]quackCut, error) {
+	cuts := make([]quackCut, 0, n)
+	for i := 1; i <= n; i++ {
+		id, tier := card.QuackID(i), tiers[(i-1)%len(tiers)]
+		text, err := card.QuackIssue(card.QuackInput{Sprint: name, Stream: stream, ID: id, Tier: tier,
+			Repo: repo, Base: base, BaseSHA: baseSHA})
+		if err != nil {
+			return nil, err
+		}
+		cuts = append(cuts, quackCut{id: id, tier: tier, spec: taskcard.ParseIssue(text)})
+	}
+	return cuts, nil
+}
+
+// quackPlan is a quack cut's parsed flags and rendered cards, before Redis.
+type quackPlan struct {
+	name, stream, repo, ref, who, baseSHA string
+	tiers                                 []string
+	cuts                                  []quackCut
+}
+
+// quackCutOn is quack cut's store half on c. The stream's work order
+// (nova-tools #4322): a seat that cannot write it is refused before the
+// stop or any card is written (orderGrant, as task push, task card push,
+// card push and card cut --from), and after the pushes the stream's order
+// is written once (pushReorder: its order= fields on the CUT line).
+func quackCutOn(ctx context.Context, cl redis.Cmdable, p quackPlan, out, errOut io.Writer) int {
+	const verb = "quack cut"
+	n, who, S := len(p.cuts), p.who, oneline.Field(p.name)
+	start := quackNow()
+	if why := orderGrant(ctx, cl, p.stream); why != "" {
+		fmt.Fprintf(out, "CUT REFUSED sprint=%s stream=%s why=%s\n", S, oneline.Field(p.stream), quoteField(why))
+		return 1
+	}
 
 	// The stop first, so nothing deals a card before the whole run is in.
-	stop, err := pitstop.Set(ctx, cl, *name, who, fmt.Sprintf("quack cut: cutting %d quack cards into %s", *n, *stream), false, "quack-cut-"+*name)
+	stop, err := pitstop.Set(ctx, cl, p.name, who, fmt.Sprintf("quack cut: cutting %d quack cards into %s", n, p.stream), false, "quack-cut-"+p.name)
 	if err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
 	pit := "set"
 	switch stop.Outcome {
 	case pitstop.Unknown:
-		fmt.Fprintf(out, "CUT REFUSED sprint=%s why=sprint-unknown remedy=%s\n", S, oneline.Quote("nova-sprint sprint open --sprint "+*name+" first"))
+		fmt.Fprintf(out, "CUT REFUSED sprint=%s why=sprint-unknown remedy=%s\n", S, oneline.Quote("nova-sprint sprint open --sprint "+p.name+" first"))
 		return 1
 	case pitstop.Exists:
 		pit = "held" // a stop already there is the same stop: nothing deals until quack run
 	}
 
 	pushed, skipped, refused := 0, 0, 0
-	for i := range cuts {
-		c := &cuts[i]
-		_, err := taskcard.Push(ctx, cl, taskcard.PushRequest{ID: c.id, Where: "waiting", Stream: *stream, Sprint: *name,
-			Ref: *ref, Title: card.QuackTitle(c.id, c.tier), Repo: *repo, By: who, Why: "quack cut", Spec: &c.spec})
+	for i := range p.cuts {
+		c := &p.cuts[i]
+		_, err := taskcard.Push(ctx, cl, taskcard.PushRequest{ID: c.id, Where: "waiting", Stream: p.stream, Sprint: p.name,
+			Ref: p.ref, Title: card.QuackTitle(c.id, c.tier), Repo: p.repo, By: who, Why: "quack cut", Spec: &c.spec})
 		if err == nil {
 			pushed++
 			continue
@@ -189,9 +224,10 @@ func runQuackCut(ctx context.Context, args []string, out, errOut io.Writer) int 
 		refused++
 		fmt.Fprintf(out, "REFUSED id=%s why=%s\n", c.id, quoteField(why))
 	}
-	fmt.Fprintf(out, "CUT n=%d stream=%s sprint=%s repo=%s tiers=%s pushed=%d skipped=%d refused=%d base-sha=%s pitstop=%s lift=%s ms=%d\n",
-		*n, oneline.Field(*stream), S, *repo, strings.Join(tierList, ","), pushed, skipped, refused, (*baseSHA)[:12], pit,
-		oneline.Quote("nova-sprint quack run --sprint "+*name), quackNow().Sub(start).Milliseconds())
+	order := pushReorder(ctx, cl, p.stream, "", who, out)
+	fmt.Fprintf(out, "CUT n=%d stream=%s sprint=%s repo=%s tiers=%s pushed=%d skipped=%d refused=%d base-sha=%s pitstop=%s %s lift=%s ms=%d\n",
+		n, oneline.Field(p.stream), S, p.repo, strings.Join(p.tiers, ","), pushed, skipped, refused, p.baseSHA[:12], pit, order,
+		oneline.Quote("nova-sprint quack run --sprint "+p.name), quackNow().Sub(start).Milliseconds())
 	if refused > 0 {
 		return 1
 	}

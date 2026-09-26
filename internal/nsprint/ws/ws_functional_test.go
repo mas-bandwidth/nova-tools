@@ -159,7 +159,7 @@ func TestEveryOperationIsOneRoundTripUnderOneSecond(t *testing.T) {
 		t.Fatalf("rename left stream %q on a member", st)
 	}
 	step("order", func() string {
-		n, err := ws.Order(ctx, c, []string{s(9), "swarm: renamed"})
+		n, err := ws.OrderStreams(ctx, c, []string{s(9), "swarm: renamed"})
 		if err != nil || n != 10 {
 			t.Fatalf("order %d %v, want 10", n, err)
 		}
@@ -318,9 +318,9 @@ func TestRefusalsWriteNothing(t *testing.T) {
 		"rename onto":        func() error { _, err := ws.Rename(ctx, c, s(0), s(1), "t"); return err },
 		"rename unknown":     func() error { _, err := ws.Rename(ctx, c, "nope", "x", "t"); return err },
 		"rename bad name":    func() error { _, err := ws.Rename(ctx, c, s(0), "a|b", "t"); return err },
-		"order twice":        func() error { _, err := ws.Order(ctx, c, []string{s(0), s(0)}); return err },
-		"order unknown":      func() error { _, err := ws.Order(ctx, c, []string{"nope"}); return err },
-		"order none":         func() error { _, err := ws.Order(ctx, c, nil); return err },
+		"order twice":        func() error { _, err := ws.OrderStreams(ctx, c, []string{s(0), s(0)}); return err },
+		"order unknown":      func() error { _, err := ws.OrderStreams(ctx, c, []string{"nope"}); return err },
+		"order none":         func() error { _, err := ws.OrderStreams(ctx, c, nil); return err },
 		"move unknown state": func() error { _, err := ws.Move(ctx, c, "t00000", "gone", "t", ""); return err },
 	} {
 		before, _ := c.DBSize(ctx).Result()

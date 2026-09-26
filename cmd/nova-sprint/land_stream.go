@@ -8,8 +8,8 @@
 //	nova-sprint land merge --repo <owner/repo> --stream <s> [--by rowan] [--api <url>] [--budget N]
 //
 // land stream: members are ws:<s>:merging intersected with pr:<repo>:<n>
-// records read >= 8 at head (cfg:land min_score[:<repo>]), oldest
-// pr_ready_at first. --dry-run prints the order from Redis alone. A run
+// records read >= 8 at head (cfg:land min_score[:<repo>]), in the
+// stream's work order (the merging set's order scores, #4322). --dry-run prints the order from Redis alone. A run
 // clones the base shallow (--reference-if-able the bench mirror), merges each
 // member --no-ff onto stream/<slug>, runs the batch test once
 // (cfg:land:test:<repo>, else make check, else go test ./...), bisects a red
@@ -176,12 +176,15 @@ func runLandStream(ctx context.Context, args []string, out, errOut io.Writer) in
 	rep, err := stream.LandStream(ctx, st.Client(), opts)
 	if rep.State == "dry-run" && err == nil {
 		for i, m := range rep.Members {
-			fmt.Fprintf(out, "ORDER %d %s#%d head=%s ready_at=%d read=%s:%d task=%s stream=%s\n",
-				i+1, *repo, m.N, stream.Short(m.Head), m.ReadyAt, m.Who, m.Score, m.Task, oneline.Field(m.Stream))
+			fmt.Fprintf(out, "ORDER %d %s#%d head=%s order_score=%d read=%s:%d task=%s stream=%s\n",
+				i+1, *repo, m.N, stream.Short(m.Head), m.OrderScore, m.Who, m.Score, m.Task, oneline.Field(m.Stream))
 		}
 	}
 	for _, s := range rep.Skips {
 		fmt.Fprintf(out, "SKIP task=%s pr=#%d why=%s\n", s.Task, s.N, oneline.Field(s.Why))
+	}
+	for _, h := range rep.Order {
+		fmt.Fprintln(out, h.Line()) // ORDER WAIT | ORDER CONFLICT (the work order gate)
 	}
 	if err != nil {
 		return landExit(errOut, verb, err)
@@ -351,6 +354,14 @@ func runLandMerge(ctx context.Context, args []string, out, errOut io.Writer) int
 		*repo, l.Slug, l.PR, stream.Short(l.Head), stream.Short(rep.MergeSHA), len(l.Members), rep.Moved, rep.Missing, rep.Already,
 		orDash(strings.Join(closed, ",")), orDash(strings.Join(unclosed, ",")), calls, rep.Lines, len(rep.Skipped), orDash(strings.Join(unread, ",")),
 		issues(rep.IssuesClosed), issues(rep.IssuesUnclosed), orDash(rep.Release))
+	for _, o := range rep.Orders {
+		switch {
+		case o.Err != nil:
+			fmt.Fprintf(out, "ORDER stream=%s order=error:%s\n", quoteField(o.Stream), quoteField(o.Err.Error()))
+		default:
+			fmt.Fprintf(out, "ORDER stream=%s order=%d\n", quoteField(o.Stream), o.Ranked)
+		}
+	}
 	for _, s := range rep.Skipped {
 		fmt.Fprintf(errOut, "LAND MERGE SKIPPED %s\n", oneline.Field(s))
 	}

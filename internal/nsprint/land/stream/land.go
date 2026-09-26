@@ -14,6 +14,7 @@ import (
 
 	jevledger "github.com/mas-bandwidth/nova-tools/internal/nsprint/jev"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
 
@@ -26,6 +27,14 @@ func (r *Refusal) Error() string { return "REFUSED " + r.Why + " remedy=" + r.Re
 type Client interface {
 	redis.Cmdable
 	redis.Scripter
+}
+
+// StreamOrderLine is one stream's work order written by the lander:
+// Ranked cards, or Err (a DEPENDS-ON cycle is a *ws.CycleError).
+type StreamOrderLine struct {
+	Stream string
+	Ranked int
+	Err    error
 }
 
 // Options is one land stream run.
@@ -65,6 +74,9 @@ type Report struct {
 	ParkedMoved         int
 	Workdir             string
 	TestCmd             string
+	// Order is the work order gate's lines (OrderGate): one per stream
+	// whose members it held back, ORDER WAIT or ORDER CONFLICT.
+	Order []OrderHold
 }
 
 // DefaultBranch is the stream branch for the slug.
@@ -100,6 +112,14 @@ func LandStream(ctx context.Context, c Client, o Options) (Report, error) {
 	if err != nil {
 		return rep, err
 	}
+	// The work order gate: the members are a prefix of each stream's whole
+	// live order, never the merging set's alone (OrderGate).
+	var held []Skip
+	rep.Members, held, rep.Order, err = OrderGate(ctx, c, o.Streams, rep.Members, rep.Skips)
+	if err != nil {
+		return rep, err
+	}
+	rep.Skips = append(rep.Skips, held...)
 	test := o.Test
 	if test == "" {
 		test = cfg.Test
@@ -291,7 +311,10 @@ type MergeOptions struct {
 
 // MergeReport is what one land merge did.
 type MergeReport struct {
-	Landing  Landing
+	Landing Landing
+	// Orders is each landed stream's order written after the move to
+	// landed (ws.Reorder), in the streams' order.
+	Orders   []StreamOrderLine
 	MergeSHA string
 	Moved    int
 	Missing  int
@@ -366,6 +389,15 @@ func Merge(ctx context.Context, c Client, o MergeOptions) (MergeReport, error) {
 		case !r.MergeableOK():
 			return rep, &Refusal{Why: fmt.Sprintf("mergeable=%s on %s#%d", orDash(r.Mergeable), o.Repo, l.PR), Remedy: prCmd + " --mergeable true"}
 		}
+		// The work order again, immediately before the merge: a card that
+		// moved ahead of the landing's members since land stream selected
+		// them (a push, a DEPENDS-ON edit, a restart) refuses the merge,
+		// nothing merged and nothing reordered.
+		if _, _, holds, err := OrderGate(ctx, c, o.Streams, l.Members, nil); err != nil {
+			return rep, err
+		} else if len(holds) > 0 {
+			return rep, orderRefusal(holds[0])
+		}
 		if o.GH == nil {
 			return rep, &Refusal{Why: "no GitHub client", Remedy: "set GH_TOKEN"}
 		}
@@ -416,6 +448,13 @@ func Merge(ctx context.Context, c Client, o MergeOptions) (MergeReport, error) {
 		return rep, err
 	}
 	rep.Moved, rep.Missing, rep.Lines, rep.Skipped = landed.Moved, landed.Missing, landed.Lines, landed.Skipped
+	// The members left their streams' live sets: each stream's work order
+	// is recomputed over what is still live (nova-tools #4322 fix round:
+	// the move to landed is a door), never a reason to refuse the land.
+	for _, s := range o.Streams {
+		r, err := ws.Reorder(ctx, c, s, o.By)
+		rep.Orders = append(rep.Orders, StreamOrderLine{Stream: s, Ranked: r.Ranked, Err: err})
+	}
 	// The Jev gate at each member's head is a decision; its landing is the
 	// outcome (#4316): one call, never a reason to refuse the land.
 	heads := make([]jevledger.GateHead, len(l.Members))

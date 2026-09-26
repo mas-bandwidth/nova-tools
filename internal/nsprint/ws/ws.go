@@ -224,9 +224,10 @@ func Rename(ctx context.Context, c redis.Cmdable, old, new, by string) (int, err
 	return one(ctx, c, FnRename, "RENAMED", old, new, by)
 }
 
-// Order is ns_ws_order: the named streams take ranks 1..k; the rest follow in
-// their old order. It returns how many streams are ranked.
-func Order(ctx context.Context, c redis.Cmdable, streams []string) (int, error) {
+// OrderStreams is ns_ws_order: the named streams take ranks 1..k; the rest
+// follow in their old order. It returns how many streams are ranked. (Order,
+// order.go, is the order of the cards within one stream.)
+func OrderStreams(ctx context.Context, c redis.Cmdable, streams []string) (int, error) {
 	args := make([]any, len(streams))
 	for i, s := range streams {
 		args[i] = s

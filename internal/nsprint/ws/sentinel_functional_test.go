@@ -149,9 +149,9 @@ func TestRenameEndsTheOldSentinel(t *testing.T) {
 }
 
 // TestShowOrderListsCardsWithEdges: ws.Show lists every stream's cards in
-// the sets' order with the sentinel last, each DEPENDS-ON entry an edge
-// annotated with what its record says, and a stream's edge on another
-// stream's sentinel like any other.
+// its computed order with the sentinel last, each DEPENDS-ON entry an edge
+// annotated with what its record says and its reason, and a stream's edge
+// on another stream's sentinel like any other.
 func TestShowOrderListsCardsWithEdges(t *testing.T) {
 	t.Parallel()
 	_, c := wstest.Start(t)
@@ -173,11 +173,11 @@ func TestShowOrderListsCardsWithEdges(t *testing.T) {
 		}
 	}
 	want := []string{
-		"waiting A",
-		"waiting B <- A(waiting), task:ghost(no record)",
-		"waiting " + snSentinel + " <- every other card of the stream (live 2)",
-		"waiting C <- task:" + snSentinel + "(waiting), mas-bandwidth/nova-tools#77",
-		"waiting ci:sentinel <- every other card of the stream (live 1)",
+		"1 waiting A",
+		"2 waiting B <- A(waiting) (reason: depends-on), task:ghost(no record) (reason: depends-on)",
+		"3 waiting " + snSentinel + " <- every other card of the stream (reason: sentinel; live 2)",
+		"1 waiting C <- task:" + snSentinel + "(waiting) (reason: depends-on), mas-bandwidth/nova-tools#77 (reason: depends-on)",
+		"2 waiting ci:sentinel <- every other card of the stream (reason: sentinel; live 1)",
 	}
 	if strings.Join(lines, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("lines\n%s\nwant\n%s", strings.Join(lines, "\n"), strings.Join(want, "\n"))
@@ -279,7 +279,7 @@ func TestSentinelIsStructure(t *testing.T) {
 	if n, _ := c.Exists(ctx, "task:fleet:sentinel").Result(); n != 0 {
 		t.Fatal("a fixture stream has a stop before registration")
 	}
-	if _, err := ws.Order(ctx, c, []string{"fleet"}); err != nil {
+	if _, err := ws.OrderStreams(ctx, c, []string{"fleet"}); err != nil {
 		t.Fatal(err)
 	}
 	if w, _ := c.HGet(ctx, "task:fleet:sentinel", "where").Result(); w != "waiting" {
