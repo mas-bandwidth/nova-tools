@@ -1071,18 +1071,23 @@ produced by running the built binary, not written by hand.
 ### First run
 
 ```text
-$ nova-ci slowtests --budget 60 < cmd/nova-ci/testdata/example-events.jsonl
+$ nova-ci slowtests --budget 60 --load 4 --cpus 16 < cmd/nova-ci/testdata/example-events.jsonl
 CI-SLOW package=github.com/mas-bandwidth/nova-tools/internal/example seconds=65.1s budget=60s slowest=TestSlowThing:63.4s,TestAlsoSlow:1.5s
+CI-LOAD load=4.00 cpus=16 per-cpu=0.25: measured, not a verdict
 
-$ nova-ci slowtests --budget 120 < cmd/nova-ci/testdata/example-events.jsonl
+$ nova-ci slowtests --budget 120 --load 4 --cpus 16 < cmd/nova-ci/testdata/example-events.jsonl
 CI-SLOW OK packages=2 slowest=github.com/mas-bandwidth/nova-tools/internal/example:65.1s
+CI-LOAD load=4.00 cpus=16 per-cpu=0.25: measured, not a verdict
 ```
 
 The input is the newline-delimited `go test -json` stream the test step already
 produces. Each package's total is its package-level `Elapsed`, and the
 `slowest=` list names the few test-level rows that spent it, so the first run
 tells the reader whether one test or the whole package is the cost. `--budget`
-is whole seconds and defaults to 60. The common mistake is forgetting the
+is whole seconds and defaults to 60. Both runs exit 0: a CI-SLOW line is a
+measurement, and only `--enforce` (the nightly space legs) makes it exit 2. The
+CI-LOAD line is the host's load average, printed and never judged; `--load` and
+`--cpus` hand it in here so the transcript is the same on every machine. The common mistake is forgetting the
 redirect: with an empty stdin the verb reads zero packages and prints
 `CI-SLOW OK packages=0 slowest=none`, which is why the test step always tees
 the stream first (`.github/workflows/ci.yml`).

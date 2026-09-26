@@ -32,6 +32,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land/stream"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
@@ -129,9 +130,21 @@ func runPRRecord(ctx context.Context, args []string, out, errOut io.Writer) int 
 		return 6
 	}
 	defer st.Close()
+	prev := ""
+	if f.Head != "" {
+		prev, _ = st.Client().HGet(ctx, stream.PRKey(*repo, *n), "head").Result()
+	}
 	r, err := stream.Record(ctx, st.Client(), *repo, *n, f)
 	if err != nil {
 		return landExit(errOut, verb, err)
+	}
+	// A recorded head is one the recorder read from or pushed to GitHub:
+	// the claim follows it and the head index moves (land.NoteHead).
+	if f.Head != "" && f.Head == r.Head {
+		if err := land.NoteHead(ctx, st.Client(), *repo, *n, prev, r.Head, "record", nil); err != nil {
+			fmt.Fprintf(errOut, "nova-sprint %s: %v\n", verb, err)
+			return 6
+		}
 	}
 	fmt.Fprintf(out, "PR RECORD %s head=%s base=%s stream=%s ci=%s mergeable=%s state=%s created=%t\n",
 		stream.PRKey(*repo, *n), orDash(stream.Short(r.Head)), orDash(r.Base), oneline.Field(orDash(r.Stream)),

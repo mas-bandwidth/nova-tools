@@ -28,6 +28,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/mas-bandwidth/nova-tools/internal/gh"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -70,7 +71,9 @@ lacks What:, DONE-WHEN:, PATHS:, BASE:, DEPENDS-ON: or an owner:/reader:/est:
 line (reader must not be the owner). Posts by REST, reads the stored body back
 and compares it byte for byte. Prints FILED <repo>#<n> len=<k> or
 COMMENTED <repo>#<n> comment=<id> len=<k>. --push-to queues the build task
-(kind work) for that friend in the same call, after the read-back.
+(kind work) for that friend in the same call, after the read-back; its body
+is a card, refused before posting when it is not one invariant (one REFUSED
+card-lint line per rule).
 exit codes: 0 filed and read back equal, 1 stored body differs, 2 refused or could not run.
 `
 
@@ -132,6 +135,17 @@ func Main(ctx context.Context, args []string, stdout, stderr io.Writer, d Deps) 
 	if len(findings) > 0 {
 		fmt.Fprintf(stderr, "nova-sprint file: REFUSED %s; nothing posted\n", oneline.Escape(strings.Join(findings, "; ")))
 		return 2
+	}
+	// --push-to queues the body as a build card: it is one invariant
+	// (#4396), refused before anything is posted or pushed, one REFUSED
+	// card-lint line per rule on stderr.
+	if *pushTo != "" {
+		if rs := cardhdr.LintOneInvariant(cardhdr.Card{Text: string(body)}); rs != nil {
+			for _, r := range rs {
+				fmt.Fprintf(stderr, "%s card=%s\n", r, strconv.Quote(*bodyFile))
+			}
+			return 2
+		}
 	}
 	if *pushTo != "" && d.Push == nil {
 		return refuse(stderr, "--push-to has no task store wired")

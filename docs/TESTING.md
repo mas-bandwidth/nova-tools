@@ -19,7 +19,11 @@ clock: it fakes the store, the network and the process it talks to. It runs on
 every pull request in `.github/workflows/ci.yml`'s `test` matrix, over the
 packages the change touched, at most two cores a leg (`make test`, `GOTEST_P`),
 and it is done in under 1 s per test and 2 s per package (`nova-ci slowtests`,
-with `internal/ci/slow-tests_allowlist.txt` for the rows still being cut). The
+with `internal/ci/slow-tests_allowlist.txt` for the rows still being cut, each
+naming its measurement; the times are printed on every leg and enforced only on
+the nightly space legs, while a wall-clock wait in a unit test or a
+`t.Skip("SLEEPS: ...")` missing from `internal/ci/sleeps-skips_allowlist.txt` is
+red on every leg). The
 unit tier's PATH holds a `redis-server` that refuses, so a test that needs a
 real one fails there, naming this rule.
 

@@ -101,7 +101,9 @@ func TestCopyEndHarvestsAndEndsOkWithThePR(t *testing.T) {
 	branch := card.WrapperBranch(card.CopySprint, card.CopyCardLabel(l.Copy), 1)
 	want := harvestcopy.Request{RepoDir: end.RepoDir, SHA: sha, Branch: branch, Repo: "nova-tools", Base: "dev",
 		Title: "copy model: push and open the PR at the boundary", Stream: "swarm: cards", Origin: "issue:nova-tools#4227",
-		DoneWhen: "a work copy reaches ok with a PR open", Token: "ghp-bench"}
+		DoneWhen: "a work copy reaches ok with a PR open", Token: "ghp-bench", Redis: c}
+	// #4371: every production client names its store; the harvest counts its
+	// REST calls in the Redis the copy end runs on.
 	if calls != 1 || got != want {
 		t.Fatalf("harvest called %d times with\n%+v\nwant\n%+v", calls, got, want)
 	}

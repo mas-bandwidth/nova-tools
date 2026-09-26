@@ -266,7 +266,7 @@ func TestPlayOKAndDryRun(t *testing.T) {
 }
 
 // TestPlayWithNoRecapFailsAndWritesNothing: a play that dies before any
-// bench (a missing collection, a syntax error) is PLAY ERROR and FAIL, and no
+// bench (a missing collection, a syntax error) is PLAY ABORTED and FAIL, and no
 // receipt is written.
 func TestPlayWithNoRecapFailsAndWritesNothing(t *testing.T) {
 	t.Parallel()
@@ -278,7 +278,7 @@ func TestPlayWithNoRecapFailsAndWritesNothing(t *testing.T) {
 	if err != nil || res.OK() || res.Err != "exit_status_4" {
 		t.Fatalf("%v %+v", err, res)
 	}
-	if out.String() != "PLAY ERROR bench.yml err=exit_status_4 last=ERROR! couldn't resolve module/action 'x'\n" ||
+	if out.String() != "PLAY ABORTED bench.yml err=exit_status_4 last=ERROR! couldn't resolve module/action 'x'\n" ||
 		res.Line() != "FLEET PLAY FAIL tag=bench sha=0123456789ab benches=0 failed=-" {
 		t.Errorf("out %q line %q", out.String(), res.Line())
 	}

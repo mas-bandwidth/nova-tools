@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -56,18 +57,44 @@ func TestCardMovesCLI(t *testing.T) {
 	if code != 0 || !strings.HasPrefix(out, "CARD BEAT as=bench:b n=2 lease_until=") {
 		t.Fatalf("beat = %d %q", code, out)
 	}
-	h := strings.Repeat("e", 40)
+	// the copy's ok with a PR runs the spec gate (#4313) in --repo, the
+	// checkout at --head (nova-tools#4401 read, DOORS): a base commit and
+	// the copy's one text file, TEST none with a why, so the gate is CI's
+	// answer for a diff with no Go package
+	checkout := filepath.Join(t.TempDir(), "c0")
+	git := func(args ...string) string {
+		cmd := exec.Command("git", append([]string{"-C", checkout, "-c", "user.email=f@example.com", "-c", "user.name=f", "-c", "core.hooksPath=/dev/null"}, args...)...)
+		b, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v %s", args, err, b)
+		}
+		return strings.TrimSpace(string(b))
+	}
+	if err := os.MkdirAll(checkout, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	git("init", "-q")
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	baseSHA := git("rev-parse", "HEAD")
+	if err := os.WriteFile(filepath.Join(checkout, "a.txt"), []byte("the work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "a.txt")
+	git("commit", "-q", "-m", "the work")
+	h := git("rev-parse", "HEAD")
+	c.HSet(ctx, "task:c0~1", "base_sha", baseSHA, "test", "none the fixture's diff is one text file")
 	c.HSet(ctx, "pr:nova-tools:77", "head", h, "base", "dev")
-	endOK := []string{"card", "end", "--id", "c0~1", "--ok", "--pr", "nova-tools#77", "--head", h, "--line1", "RESULT: c0",
-		"--base", "dev", "--base-sha", strings.Repeat("1", 40), "--paths", "a.go"}
+	endOK := []string{"card", "end", "--id", "c0~1", "--ok", "--pr", "nova-tools#77", "--head", h, "--repo", checkout, "--line1", "RESULT: c0",
+		"--base", "dev", "--base-sha", baseSHA, "--paths", "a.go"}
 	code, out, _ = runCLI(endOK...)
 	// the work copy's ok with a PR moves the primary to review (no reader
 	// enrolled: the read deal cuts its copy)
-	if code != 0 || !strings.HasPrefix(out, "ENDED c0~1 primary=c0 from=working to=review next=-\nCARD END n=1 ms=") {
+	if code != 0 || !strings.Contains(out, "\nENDED c0~1 primary=c0 from=working to=review next=-\nCARD END n=1 ms=") ||
+		!strings.HasPrefix(out, "GATE TEST: none (the fixture's diff is one text file); no class test required\n") {
 		t.Fatalf("end ok with a PR = %d %q", code, out)
 	}
 	code, out, _ = runCLI(endOK...)
-	if code != 0 || !strings.HasPrefix(out, "ALREADY c0~1 primary=c0 ended=ok\n") {
+	if code != 0 || !strings.Contains(out, "\nALREADY c0~1 primary=c0 ended=ok\n") {
 		t.Fatalf("repeat end = %d %q", code, out)
 	}
 	if code, out, _ = runCLI("card", "end", "--id", "c0~1", "--fail", "other"); code != 4 || !strings.Contains(out, "why=\"CONFLICT") {
