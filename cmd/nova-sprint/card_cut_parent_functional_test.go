@@ -4,8 +4,11 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -115,7 +118,7 @@ func TestCardCutParentEndToEnd(t *testing.T) {
 	if code, out, _ := run("stream", "ls", "--tree"); !strings.Contains(out, "  plan hier stuck children=3 ") {
 		t.Fatalf("a failed child derives stuck (exit %d):\n%s", code, out)
 	}
-	if code, out, _ := run("card", "stitch", "--id", "hier"); code != 0 || !strings.Contains(out, "stuck: the-docs ended done/fail and the stitch waits on it; nova-sprint card stitch --id hier --drop the-docs drops it from the plan") {
+	if code, out, _ := run("card", "stitch", "--id", "hier"); code != 0 || !strings.Contains(out, "stuck: the-docs ended done/fail and the stitch waits on it; nova-sprint card stitch --drop the-docs drops it from the plan") {
 		t.Fatalf("the stuck remedy (exit %d):\n%s", code, out)
 	}
 	if code, out, _ := run("card", "stitch", "--drop", "the-model"); code != 1 || !strings.Contains(out, `REFUSED card stitch drop=the-model why=task:the-model\x20is\x20waiting,\x20not\x20done:`) {
@@ -261,5 +264,340 @@ func TestCardCutParentGrowFilesNoSecondStitchIssue(t *testing.T) {
 	}
 	if got := c.HGet(ctx, taskcard.Key("grow"), "children").Val(); got != "c1 c2 c3" {
 		t.Fatalf("children %q", got)
+	}
+}
+
+// TestCancelledStitchIsStuckThenRecutLandsThePlan is the #4317 fix, the cold
+// reader's exact sequence on a real store through the verbs: after the
+// child e1 landed, task cancel --id pc-stitch (from ready) leaves the plan
+// stuck, never waiting, and the cancel's receipt, card stitch and the tree
+// name the remedy; running it (card cut --parent pc, no --from) re-cuts the
+// stitch as pc-stitch-2 over every child and the parent waits on it; task
+// land --id pc-stitch-2 lands the plan and its receipt names the plan with
+// the ref and origin the lander closes; the stream's stop lands with it.
+func TestCancelledStitchIsStuckThenRecutLandsThePlan(t *testing.T) {
+	t.Parallel()
+	addr, c := wstest.Start(t)
+	ctx := context.Background()
+	run := func(args ...string) (int, string, string) {
+		return runSprint(append(args, "--redis", addr)...)
+	}
+	const stream = "autonomy"
+	const ref, origin = "mas-bandwidth/nova-tools#4317", "https://forge.test/mas-bandwidth/nova-tools/issues/4317"
+	if _, err := taskcard.Push(ctx, c, taskcard.PushRequest{ID: "pc", Where: "waiting", Stream: stream, Kind: "build",
+		Ref: ref, Origin: origin, Title: "plan cancel", Repo: "mas-bandwidth/nova-tools", By: "rowan",
+		Fields: []string{"base", "dev", "base_sha", cutFromSHA, "paths", "a.go", "done_when", "the plan holds"}}); err != nil {
+		t.Fatal(err)
+	}
+	tsv := filepath.Join(t.TempDir(), "children.tsv")
+	if err := os.WriteFile(tsv, []byte("id\ttitle\tpaths\tdone-when\ne1\tone\ta.go\tholds\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, out, errOut := run("card", "cut", "--parent", "pc", "--from", tsv, "--no-github", "--actor", "rowan"); code != 0 {
+		t.Fatalf("cut exit %d:\n%s%s", code, out, errOut)
+	}
+	sha := func(i int) string { return strings.Repeat("0", 39) + string(rune('0'+i)) }
+	walk := func(id, pr string) {
+		t.Helper()
+		if _, err := taskcard.Move(ctx, c, id, "ready", taskcard.Opts{By: "rowan", Why: "test"}); err != nil {
+			t.Fatalf("%s ready: %v", id, err)
+		}
+		if _, err := taskcard.Take(ctx, c, "emma", 1, "emma", id); err != nil {
+			t.Fatalf("take %s: %v", id, err)
+		}
+		if _, err := taskcard.Done(ctx, c, id, "emma", "DONE", pr); err != nil {
+			t.Fatalf("done %s: %v", id, err)
+		}
+	}
+	walk("e1", "81")
+	if _, err := taskcard.LandStream(ctx, c, stream, sha(1), "rowan", ""); err != nil {
+		t.Fatal(err)
+	}
+	// The resolver's release of the stitch, by hand; then the cancel.
+	if _, err := taskcard.Move(ctx, c, "pc-stitch", "ready", taskcard.Opts{By: "rowan", Why: "depends-on met"}); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ := run("task", "cancel", "--id", "pc-stitch", "--why", "wrong approach", "--actor", "rowan")
+	if code != 0 || !strings.Contains(out, "TASK cancel id=pc-stitch from=ready to=done ms=") ||
+		!strings.Contains(out, `PLAN id=pc state=stuck remedy="stuck: stitch pc-stitch ended done/fail and the plan lands only with its stitch; nova-sprint card cut --parent pc re-cuts the stitch (pc-stitch-2, DEPENDS-ON every child)"`) {
+		t.Fatalf("cancel of the stitch (exit %d):\n%s", code, out)
+	}
+	if code, out, _ := run("card", "stitch", "--id", "pc"); code != 0 || !strings.Contains(out, "\nPLAN id=pc state=stuck children=1 stitch=pc-stitch:done written=0 ms=") ||
+		!strings.Contains(out, "stuck: stitch pc-stitch ended done/fail and the plan lands only with its stitch; nova-sprint card cut --parent pc re-cuts the stitch (pc-stitch-2, DEPENDS-ON every child)") {
+		t.Fatalf("card stitch on the stuck plan (exit %d):\n%s", code, out)
+	}
+	if _, out, _ := run("stream", "ls", "--tree"); !strings.Contains(out, "  plan pc stuck children=1 ") {
+		t.Fatalf("tree:\n%s", out)
+	}
+	// The remedy: card cut --parent pc alone re-cuts the stitch.
+	code, out, errOut := run("card", "cut", "--parent", "pc", "--no-github", "--actor", "rowan")
+	if code != 0 || !strings.Contains(out, "CARD CUT row=stitch id=pc-stitch-2 ref=- stream=autonomy to=waiting depends=e1\n") ||
+		!strings.Contains(out, "CARD CUT PLAN parent=pc children=0 stitch=pc-stitch-2 parent_to=waiting depends=pc-stitch-2\n") {
+		t.Fatalf("re-cut (exit %d):\n%s%s", code, out, errOut)
+	}
+	rec := c.HGetAll(ctx, taskcard.Key("pc")).Val()
+	for k, want := range map[string]string{"where": "waiting", "kind": "plan", "children": "e1", "stitch": "pc-stitch-2", "blocked_on": "pc-stitch-2"} {
+		if rec[k] != want {
+			t.Errorf("parent %s = %q, want %q", k, rec[k], want)
+		}
+	}
+	if s := c.HGetAll(ctx, taskcard.Key("pc-stitch-2")).Val(); s["parent"] != "pc" || s["phase"] != "stitch" || s["blocked_on"] != "e1" || !strings.Contains(s["body"], "- e1 landed pr=") {
+		t.Fatalf("the re-cut stitch %v", s)
+	}
+	if w := c.HGet(ctx, taskcard.Key("pc-stitch"), "where").Val(); w != "done" {
+		t.Fatalf("the old stitch is %s, want it left done", w)
+	}
+	if _, out, _ := run("card", "stitch", "--id", "pc"); !strings.Contains(out, "\nPLAN id=pc state=waiting children=1 stitch=pc-stitch-2:waiting ") {
+		t.Fatalf("the plan after the re-cut:\n%s", out)
+	}
+	// A second bare cut while the new stitch waits is refused by name.
+	if code, out, _ := run("card", "cut", "--parent", "pc", "--no-github", "--actor", "rowan"); code != 1 || !strings.Contains(out, `why="no children rows: --from <children.tsv> cuts children; card cut --parent pc alone re-cuts a stitch that ended done, and its stitch pc-stitch-2 is waiting"`) || !strings.Contains(out, " rows=0 cut=0 already=0 refused=1 ") {
+		t.Fatalf("bare cut on a waiting stitch (exit %d):\n%s", code, out)
+	}
+	// The re-cut stitch lands by task land --id: the plan lands with it and
+	// the receipt names it, its ref and origin; the stream's stop lands too.
+	walk("pc-stitch-2", "82")
+	code, out, _ = run("task", "land", "--id", "pc-stitch-2", "--sha", sha(2), "--actor", "rowan")
+	if code != 0 || !strings.Contains(out, "TASK land id=pc-stitch-2 from=merging to=landed parent=pc ref="+ref+" origin="+origin+" ms=") {
+		t.Fatalf("task land on the stitch (exit %d):\n%s", code, out)
+	}
+	rec = c.HGetAll(ctx, taskcard.Key("pc")).Val()
+	if rec["where"] != "landed" || rec["merge_sha"] != sha(2) || rec["ref"] != ref || rec["origin"] != origin {
+		t.Fatalf("parent after the stitch landed: where=%s merge_sha=%s ref=%s origin=%s", rec["where"], rec["merge_sha"], rec["ref"], rec["origin"])
+	}
+	if w := c.HGet(ctx, taskcard.Key(stream+":sentinel"), "where").Val(); w != "landed" {
+		t.Fatalf("the stream's stop is %s, want landed with the plan", w)
+	}
+	// A plain card's land receipt names no plan.
+	if _, out, _ := run("task", "land", "--id", "e1", "--sha", sha(1), "--actor", "rowan"); strings.Contains(out, "parent=") {
+		t.Fatalf("a child's land names a plan:\n%s", out)
+	}
+}
+
+// TestRecutStitchFilesItsOwnIssueWithGitHubOn is the fix round's owed (1)
+// on a real store with GitHub on (the fake forge): a bare card cut --parent
+// files each re-cut stitch's issue through the ledger keyed by plan and
+// stitch id (taskcard.RecutLedgerKey), so two plans' re-cuts file two
+// issues (never the first re-cut's reused), a plan on another repo re-cuts
+// (never refused by an empty file's ledger), and a --from re-cut with the
+// plan's own file files a new issue for the new stitch, not the old one's.
+func TestRecutStitchFilesItsOwnIssueWithGitHubOn(t *testing.T) {
+	t.Parallel()
+	_, c := wstest.Start(t)
+	ctx := context.Background()
+	forge := &fakeCutForge{}
+	d := cutDepsRedis(forge, c)
+	d.Plan = func(ctx context.Context, id string) (planFacts, error) { return readPlanFacts(ctx, c, id) }
+	d.Bind = func(ctx context.Context, parent string, children []string, stitch, by string) (taskcard.Result, error) {
+		return taskcard.BindPlan(ctx, c, parent, children, stitch, by)
+	}
+	repoOf := map[string]string{"pa": "mas-bandwidth/nova-tools", "pb": "mas-bandwidth/nova-tools", "pz": "mas-bandwidth/other"}
+	files := map[string]string{}
+	for _, p := range []string{"pa", "pb", "pz"} {
+		if _, err := taskcard.Push(ctx, c, taskcard.PushRequest{ID: p, Where: "waiting", Stream: "autonomy", Kind: "build",
+			Ref: repoOf[p] + "#1", Title: "plan " + p, Repo: repoOf[p], By: "rowan",
+			Fields: []string{"base", "dev", "base_sha", cutFromSHA, "paths", "a.go", "done_when", "holds"}}); err != nil {
+			t.Fatal(err)
+		}
+		files[p] = "id\ttitle\tpaths\tdone-when\n" + p + "-c1\tone\ta.go\tholds\n"
+		if code, out := runCutFrom(cutFromOpts{Text: []byte(files[p]), Parent: p, Repo: repoOf[p]}, d); code != 0 {
+			t.Fatalf("cut %s exit %d:\n%s", p, code, out)
+		}
+		if _, err := taskcard.Cancel(ctx, c, p+"-stitch", "rowan", "wrong approach"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(forge.titles) != 6 {
+		t.Fatalf("filed %v, want a child and a stitch per plan", forge.titles)
+	}
+	bare := func(p string) (int, string) {
+		var b strings.Builder
+		return cardCutFrom(ctx, cutFromOpts{Parent: p, Base: "dev", Actor: "rowan"}, d, &b), b.String()
+	}
+	for i, p := range []string{"pa", "pb", "pz"} {
+		n := 5006 + i
+		code, out := bare(p)
+		want := fmt.Sprintf("CARD CUT row=stitch id=%s-stitch-2 ref=%s#%d stream=autonomy to=waiting depends=%s-c1\n", p, repoOf[p], n, p)
+		if code != 0 || !strings.Contains(out, want) || !strings.Contains(out, " rows=1 cut=1 already=0 refused=0 filed=1 reused=0 github=on ") {
+			t.Fatalf("bare re-cut of %s: exit %d, want %q:\n%s", p, code, want, out)
+		}
+		if got := c.HGetAll(ctx, taskcard.RecutLedgerKey(p, p+"-stitch-2")).Val(); got["repo"] != repoOf[p] || got["1"] != strconv.Itoa(n) || len(got) != 2 {
+			t.Fatalf("%s's re-cut ledger %v", p, got)
+		}
+	}
+	if n := c.Exists(ctx, taskcard.CutLedgerKey(nil)).Val(); n != 0 {
+		t.Fatal("a bare re-cut wrote the empty file's ledger")
+	}
+	// A --from re-cut with pa's own file: the child is the ledger's (reused,
+	// already), the new stitch files its own issue, not pa-stitch's #5001.
+	if _, err := taskcard.Cancel(ctx, c, "pa-stitch-2", "rowan", "wrong again"); err != nil {
+		t.Fatal(err)
+	}
+	code, out := runCutFrom(cutFromOpts{Text: []byte(files["pa"]), Parent: "pa"}, d)
+	if code != 0 || !strings.Contains(out, "CARD CUT row=stitch id=pa-stitch-3 ref=mas-bandwidth/nova-tools#5009 stream=autonomy to=waiting depends=pa-c1\n") ||
+		!strings.Contains(out, " filed=1 reused=1 ") || len(forge.titles) != 10 {
+		t.Fatalf("--from re-cut exit %d filed %d:\n%s", code, len(forge.titles), out)
+	}
+	if got := c.HGet(ctx, taskcard.Key("pa"), "stitch").Val(); got != "pa-stitch-3" {
+		t.Fatalf("pa's stitch %q", got)
+	}
+}
+
+// TestRecutStitchFilingRefusalNamesItsRemedy is the third fix round's owed
+// (3): a bare re-cut whose stitch issue the forge refuses prints the row's
+// refusal with a remedy= field (rerun the cut; the re-cut's own ledger
+// holds every issue filed), exits 1 and binds nothing; the rerun it names
+// files the stitch's issue once and cuts it.
+func TestRecutStitchFilingRefusalNamesItsRemedy(t *testing.T) {
+	t.Parallel()
+	_, c := wstest.Start(t)
+	ctx := context.Background()
+	forge := &fakeCutForge{}
+	d := cutDepsRedis(forge, c)
+	d.Plan = func(ctx context.Context, id string) (planFacts, error) { return readPlanFacts(ctx, c, id) }
+	d.Bind = func(ctx context.Context, parent string, children []string, stitch, by string) (taskcard.Result, error) {
+		return taskcard.BindPlan(ctx, c, parent, children, stitch, by)
+	}
+	if _, err := taskcard.Push(ctx, c, taskcard.PushRequest{ID: "rf", Where: "waiting", Stream: "autonomy", Kind: "build",
+		Ref: "mas-bandwidth/nova-tools#1", Title: "plan rf", Repo: "mas-bandwidth/nova-tools", By: "rowan",
+		Fields: []string{"base", "dev", "base_sha", cutFromSHA, "paths", "a.go", "done_when", "holds"}}); err != nil {
+		t.Fatal(err)
+	}
+	if code, out := runCutFrom(cutFromOpts{Text: []byte("id\ttitle\tpaths\tdone-when\nrf-c1\tone\ta.go\tholds\n"), Parent: "rf"}, d); code != 0 {
+		t.Fatalf("cut rf exit %d:\n%s", code, out)
+	}
+	if _, err := taskcard.Cancel(ctx, c, "rf-stitch", "rowan", "wrong approach"); err != nil {
+		t.Fatal(err)
+	}
+	bare := func() (int, string) {
+		var b strings.Builder
+		return cardCutFrom(ctx, cutFromOpts{Parent: "rf", Base: "dev", Actor: "rowan"}, d, &b), b.String()
+	}
+	forge.failAt = len(forge.titles) + 1
+	code, out := bare()
+	want := `why="file: HTTP 403: rate limited" remedy="rerun nova-sprint card cut --parent rf with the same flags; ` +
+		taskcard.RecutLedgerKey("rf", "rf-stitch-2") + ` holds every issue filed, so none is filed twice"` + "\n"
+	if code != 1 || !strings.Contains(out, "CARD CUT REFUSED row=stitch ") || !strings.Contains(out, want) || strings.Contains(out, "CARD CUT PLAN") {
+		t.Fatalf("refused re-cut filing: exit %d, want %q:\n%s", code, want, out)
+	}
+	if got := c.HGet(ctx, taskcard.Key("rf"), "stitch").Val(); got != "rf-stitch" {
+		t.Fatalf("a refused re-cut bound stitch %q", got)
+	}
+	forge.failAt = 0
+	code, out = bare()
+	if code != 0 || !strings.Contains(out, "CARD CUT row=stitch id=rf-stitch-2 ref=mas-bandwidth/nova-tools#5002 stream=autonomy to=waiting depends=rf-c1\n") ||
+		!strings.Contains(out, " filed=1 ") || len(forge.titles) != 3 {
+		t.Fatalf("the rerun the remedy names: exit %d filed %v:\n%s", code, forge.titles, out)
+	}
+}
+
+// TestStuckPlanRemedyRunsAsPrinted is the fix round's owed (2): the drop a
+// stuck plan's remedy prints is card stitch --drop <child> (the old --id
+// <plan> --drop <child> form exits 2), and the test runs the printed
+// command verbatim through the CLI, the store on --redis: first a failed
+// child alone, then a failed child and an ended stitch, where the drop runs
+// as printed and then the printed re-cut (with --no-github --actor) lands
+// the plan a new stitch.
+func TestStuckPlanRemedyRunsAsPrinted(t *testing.T) {
+	t.Parallel()
+	addr, c := wstest.Start(t)
+	ctx := context.Background()
+	run := func(args ...string) (int, string, string) {
+		return runSprint(append(args, "--redis", addr)...)
+	}
+	if _, err := taskcard.Push(ctx, c, taskcard.PushRequest{ID: "rp", Where: "waiting", Stream: "autonomy", Kind: "build",
+		Ref: "mas-bandwidth/nova-tools#4317", Title: "remedy", Repo: "mas-bandwidth/nova-tools", By: "rowan",
+		Fields: []string{"base", "dev", "base_sha", cutFromSHA, "paths", "a.go", "done_when", "holds"}}); err != nil {
+		t.Fatal(err)
+	}
+	tsv := filepath.Join(t.TempDir(), "children.tsv")
+	if err := os.WriteFile(tsv, []byte("id\ttitle\tpaths\tdone-when\nd1\tone\ta.go\tholds\nd2\ttwo\tb.go\tholds\nd3\tthree\tc.go\tholds\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, out, errOut := run("card", "cut", "--parent", "rp", "--from", tsv, "--no-github", "--actor", "rowan"); code != 0 {
+		t.Fatalf("cut exit %d:\n%s%s", code, out, errOut)
+	}
+	if code, _, errOut := run("card", "stitch", "--id", "rp", "--drop", "d3"); code != 2 || !strings.Contains(errOut, "wants --id <parent|stitch> [--write], or --drop <child>") {
+		t.Fatalf("the old remedy form: exit %d %q, want 2", code, errOut)
+	}
+	printed := regexp.MustCompile(`nova-sprint (card stitch --drop \S+)`)
+	remedy := func(want string) []string {
+		t.Helper()
+		code, out, _ := run("card", "stitch", "--id", "rp")
+		m := printed.FindStringSubmatch(out)
+		if code != 0 || m == nil || !strings.Contains(out, want) || strings.Contains(out, "--id rp --drop") {
+			t.Fatalf("remedy (exit %d), want %q:\n%s", code, want, out)
+		}
+		return strings.Fields(m[1])
+	}
+	// A failed child alone: the drop as printed.
+	if _, err := taskcard.Cancel(ctx, c, "d3", "rowan", "not needed"); err != nil {
+		t.Fatal(err)
+	}
+	drop := remedy("stuck: d3 ended done/fail and the stitch waits on it; nova-sprint card stitch --drop d3 drops it from the plan")
+	if code, out, errOut := run(drop...); code != 0 || !strings.Contains(out, "STITCH DROP parent=rp child=d3 children=2 state=waiting ms=") {
+		t.Fatalf("%v as printed: exit %d\n%s%s", drop, code, out, errOut)
+	}
+	// A failed child and an ended stitch: the drop as printed, then the re-cut.
+	if _, err := taskcard.Cancel(ctx, c, "d2", "rowan", "not needed"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskcard.Cancel(ctx, c, "rp-stitch", "rowan", "wrong approach"); err != nil {
+		t.Fatal(err)
+	}
+	drop = remedy("stuck: stitch rp-stitch ended done/fail and the plan lands only with its stitch, and d2 ended done/fail; nova-sprint card stitch --drop d2 drops it, then nova-sprint card cut --parent rp re-cuts the stitch (rp-stitch-2, DEPENDS-ON every child)")
+	if code, out, errOut := run(drop...); code != 0 || !strings.Contains(out, "STITCH DROP parent=rp child=d2 children=1 state=stuck ms=") {
+		t.Fatalf("%v as printed: exit %d\n%s%s", drop, code, out, errOut)
+	}
+	if code, out, errOut := run("card", "cut", "--parent", "rp", "--no-github", "--actor", "rowan"); code != 0 ||
+		!strings.Contains(out, "CARD CUT PLAN parent=rp children=0 stitch=rp-stitch-2 parent_to=waiting depends=rp-stitch-2\n") ||
+		!strings.Contains(out, "CARD CUT row=stitch id=rp-stitch-2 ref=- stream=autonomy to=waiting depends=d1\n") {
+		t.Fatalf("the printed re-cut: exit %d\n%s%s", code, out, errOut)
+	}
+	if _, out, _ := run("card", "stitch", "--id", "rp"); !strings.Contains(out, "\nPLAN id=rp state=waiting children=1 stitch=rp-stitch-2:waiting ") {
+		t.Fatalf("the plan after the remedy:\n%s", out)
+	}
+}
+
+// TestStitchDoneWithNoPRPrintsThePlanStuck is the fix round's owed (4):
+// task done of a stitch with no PR ends it done, and the receipt is
+// followed by the plan's PLAN stuck line with its remedy, as task cancel's
+// is; a done with a PR (to merging) prints no PLAN line.
+func TestStitchDoneWithNoPRPrintsThePlanStuck(t *testing.T) {
+	t.Parallel()
+	addr, c := wstest.Start(t)
+	ctx := context.Background()
+	run := func(args ...string) (int, string, string) {
+		return runSprint(append(args, "--redis", addr)...)
+	}
+	for _, p := range []string{"sd", "sm"} {
+		if _, err := taskcard.Push(ctx, c, taskcard.PushRequest{ID: p, Where: "waiting", Stream: "autonomy-" + p, Kind: "build",
+			Ref: "mas-bandwidth/nova-tools#4317", Title: "done " + p, Repo: "mas-bandwidth/nova-tools", By: "rowan",
+			Fields: []string{"base", "dev", "base_sha", cutFromSHA, "paths", "a.go", "done_when", "holds"}}); err != nil {
+			t.Fatal(err)
+		}
+		tsv := filepath.Join(t.TempDir(), "children.tsv")
+		if err := os.WriteFile(tsv, []byte("id\ttitle\tpaths\tdone-when\n"+p+"-c\tone\ta.go\tholds\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if code, out, errOut := run("card", "cut", "--parent", p, "--from", tsv, "--no-github", "--actor", "rowan"); code != 0 {
+			t.Fatalf("cut exit %d:\n%s%s", code, out, errOut)
+		}
+		if _, err := taskcard.Move(ctx, c, p+"-stitch", "ready", taskcard.Opts{By: "rowan", Why: "test"}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := taskcard.Take(ctx, c, "emma", 1, "emma", p+"-stitch"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	code, out, errOut := run("task", "done", "--id", "sd-stitch", "--actor", "emma", "--evidence", "nothing to stitch")
+	if code != 0 || !strings.Contains(out, "TASK done id=sd-stitch from=working to=done ms=") ||
+		!strings.Contains(out, `PLAN id=sd state=stuck remedy="stuck: stitch sd-stitch ended done/`) ||
+		!strings.Contains(out, `nova-sprint card cut --parent sd re-cuts the stitch (sd-stitch-2, DEPENDS-ON every child)"`) {
+		t.Fatalf("task done of a stitch with no PR (exit %d):\n%s%s", code, out, errOut)
+	}
+	code, out, errOut = run("task", "done", "--id", "sm-stitch", "--actor", "emma", "--evidence", "stitched", "--pr", "91")
+	if code != 0 || !strings.Contains(out, "TASK done id=sm-stitch from=working to=merging ms=") || strings.Contains(out, "PLAN ") {
+		t.Fatalf("task done of a stitch with a PR (exit %d):\n%s%s", code, out, errOut)
 	}
 }

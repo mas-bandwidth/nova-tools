@@ -216,7 +216,8 @@ func TestCardCutParentFlags(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"card", "cut", "--parent", "p", "--issue", "4"}, "cut --parent <id> wants --from <children.tsv|->"},
+		{[]string{"card", "cut", "--parent", "p", "--issue", "4"}, "cut --from (or --parent) takes no --issue"},
+		{[]string{"card", "cut", "--stitch-est", "60", "--issue", "4"}, "--stitch-route and --stitch-est go with --parent"},
 		{[]string{"card", "cut", "--parent", "p", "--from", "x.tsv", "--stream", "s"}, "cut --parent takes no --stream"},
 		{[]string{"card", "cut", "--parent", "p~1", "--from", "x.tsv"}, "--parent wants a task id"},
 		{[]string{"card", "cut", "--parent", "p", "--from", "x.tsv", "--stitch-route", "gpu"}, "--stitch-route wants"},
