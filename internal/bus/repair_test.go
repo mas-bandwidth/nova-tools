@@ -640,3 +640,84 @@ func TestForeignGitDirKeepsItsLock(t *testing.T) {
 		t.Fatalf("stale index.lock still present: %v", statErr)
 	}
 }
+
+// The lock file's own owner decides before age or any process does. The owner is
+// supplied (lockOwner seam) and the process view is supplied; the lock is a real stale
+// index.lock in a fixture checkout. (a) Another account's lock beside another account's
+// unplaced git: refused, naming the uid, and the scan is never asked. (b) Our own lock
+// beside the same git: cleared, the skip. (c) Our own lock beside another account's git
+// that names this checkout with -C: kept as owned. (d) An owner that cannot be read:
+// refused.
+func TestIndexLockOwnerDecidesBeforeTheScan(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	denied := &fs.PathError{Op: "readlink", Path: "/proc/18772/cwd", Err: syscall.EACCES}
+	unplaced := procView{owner: 502, ownerKnown: true, comm: "git\n", cmdline: []byte("git\x00commit"), cwdErr: denied}
+	owner := func(uid uint32, ok bool) func(os.FileInfo) (uint32, bool) {
+		return func(os.FileInfo) (uint32, bool) { return uid, ok }
+	}
+
+	dir, lock := oldIndexLock(t)
+	asked := false
+	cleared, err := clearStaleIndexLockAs(dir, time.Now(), func() ([]gitProc, error) {
+		asked = true
+		return classifyViews([]procView{unplaced}, 501)
+	}, owner(502, true), 501)
+	const foreign = "index.lock is owned by uid 502, not this account; ask its owner or the bench admin"
+	if cleared || err == nil || err.Error() != foreign || asked {
+		t.Fatalf("(a) another account's lock: cleared=%v err=%v scanned=%v, want refused with %q and no scan", cleared, err, asked, foreign)
+	}
+	if _, statErr := os.Lstat(lock); statErr != nil {
+		t.Fatalf("(a) lock lost: %v", statErr)
+	}
+
+	cleared, err = clearStaleIndexLockAs(dir, time.Now(), func() ([]gitProc, error) {
+		return classifyViews([]procView{unplaced}, 501)
+	}, owner(501, true), 501)
+	if err != nil || !cleared {
+		t.Fatalf("(b) our own lock beside another account's unplaced git: cleared=%v err=%v, want removed", cleared, err)
+	}
+	if _, statErr := os.Lstat(lock); !os.IsNotExist(statErr) {
+		t.Fatalf("(b) stale index.lock still present: %v", statErr)
+	}
+
+	named, namedLock := oldIndexLock(t)
+	withC := unplaced
+	withC.cmdline = []byte("git\x00-C\x00" + named + "\x00commit")
+	cleared, err = clearStaleIndexLockAs(named, time.Now(), func() ([]gitProc, error) {
+		return classifyViews([]procView{withC}, 501)
+	}, owner(501, true), 501)
+	if cleared || err != nil {
+		t.Fatalf("(c) our own lock, another account's git naming it with -C: cleared=%v err=%v, want kept as owned", cleared, err)
+	}
+	if _, statErr := os.Lstat(namedLock); statErr != nil {
+		t.Fatalf("(c) lock lost: %v", statErr)
+	}
+
+	cleared, err = clearStaleIndexLockAs(named, time.Now(), func() ([]gitProc, error) {
+		t.Fatal("(d) the scan ran for a lock whose owner could not be read")
+		return nil, nil
+	}, owner(0, false), 501)
+	if cleared || err == nil || !strings.HasPrefix(err.Error(), "index.lock owner cannot be read") || !strings.HasSuffix(err.Error(), "ask its owner or the bench admin") {
+		t.Fatalf("(d) owner unreadable: cleared=%v err=%v, want refused", cleared, err)
+	}
+	if _, statErr := os.Lstat(namedLock); statErr != nil {
+		t.Fatalf("(d) lock lost: %v", statErr)
+	}
+}
+
+// The real owner reader on the fixture lock: a lock this process wrote is owned by its
+// effective uid, so the wait path goes on to the age rule.
+func TestIndexLockOwnerIsTheWriter(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	_, lock := oldIndexLock(t)
+	fi, err := os.Lstat(lock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uid, ok := lockFileOwner(fi)
+	if !ok || uid != effectiveUID() {
+		t.Fatalf("lock owner: uid=%d ok=%v, want %d", uid, ok, effectiveUID())
+	}
+}

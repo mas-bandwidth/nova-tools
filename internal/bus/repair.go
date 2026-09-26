@@ -30,8 +30,10 @@ type WaitRecovery struct {
 	Discarded   []string
 }
 
-// ClearStaleIndexLock removes the checkout's git index.lock when it is older than
-// staleIndexLockAge and no live git process owns the checkout.
+// ClearStaleIndexLock removes the checkout's git index.lock when this account owns the
+// lock file, it is older than staleIndexLockAge, and no live git process owns the
+// checkout. A lock file owned by another account, or whose owner cannot be read, is
+// refused before its age or any process is looked at (see ownershipUnknown).
 //
 // THE FAILURE THIS CLOSES. A killed git leaves index.lock behind. Every later merge and
 // commit then fails with "File exists" and the next tick fails the same way, forever,
@@ -51,6 +53,27 @@ func ClearStaleIndexLock(dir string, now time.Time) (bool, error) {
 // A test hands back an incomplete scan — a cwd git with no -C whose cwd could
 // not be read, or a permission error — and the lock must still be here afterwards.
 func clearStaleIndexLock(dir string, now time.Time, scan func() ([]gitProc, error)) (bool, error) {
+	return clearStaleIndexLockAs(dir, now, scan, lockFileOwner, effectiveUID())
+}
+
+// effectiveUID is this process's account as the lock owner and the process scan compare
+// it. On an OS with no uid it is a value no lock owner reads as.
+func effectiveUID() uint32 {
+	return uint32(os.Geteuid())
+}
+
+// lockOwnerForeignErr and lockOwnerUnknownErr are the two refusals about the lock file
+// itself. The wait prints them after "WAIT REFUSED: ".
+func lockOwnerForeignErr(uid uint32) error {
+	return fmt.Errorf("index.lock is owned by uid %d, not this account; ask its owner or the bench admin", uid)
+}
+
+var errLockOwnerUnknown = errors.New("index.lock owner cannot be read, so it is not known to be this account's; ask its owner or the bench admin")
+
+// clearStaleIndexLockAs is clearStaleIndexLock with the lock file's owner reader and this
+// account's uid supplied. The owner is read from the Lstat of the lock itself; only a lock
+// owned by self goes on to the age rule and the process scan.
+func clearStaleIndexLockAs(dir string, now time.Time, scan func() ([]gitProc, error), lockOwner func(os.FileInfo) (uint32, bool), self uint32) (bool, error) {
 	lock, err := indexLockPath(dir)
 	if err != nil {
 		return false, err
@@ -67,6 +90,13 @@ func clearStaleIndexLock(dir string, now time.Time, scan func() ([]gitProc, erro
 	}
 	// Lstat, not Stat: a symlink planted at the lock path is removed as a symlink.
 	// Following it would delete whatever it pointed at.
+	owner, ok := lockOwner(fi)
+	if !ok {
+		return false, errLockOwnerUnknown
+	}
+	if owner != self {
+		return false, lockOwnerForeignErr(owner)
+	}
 	age := now.Sub(fi.ModTime())
 	if age <= staleIndexLockAge {
 		return false, nil
@@ -414,18 +444,24 @@ const ownershipDiagCap = 200
 // the colon is short and has no newline: cwd unreadable, lsof failed, a permission
 // error collapsed onto one line.
 //
-// Which account a git belongs to changes one answer only. Every git, of any account, is
-// placed by its readable cwd or by a command line that names an absolute work tree or
-// git dir (-C, --git-dir, --work-tree); one placed at this checkout is an owner and the
-// lock stays. A git of this account that nothing places makes the scan unknown, with
-// this sentence. A git of another account that nothing places is skipped: this account
-// cannot read its cwd (lsof omits it, /proc/<pid>/cwd answers EACCES), so it cannot be
-// told from any other process on the host, and counting it made every wait on a shared
-// bench refuse whenever another account ran git (CI run 36268521205: the runner account
-// `nova` refused on the coordinator's gits). A git of another account working in this
-// checkout with no absolute location on its command line is therefore out of this
-// scan's sight. The account is the effective uid (os.Geteuid, ps uid, the owner of
-// /proc/<pid>) because lsof and /proc permissions follow it.
+// Which account a lock or a git belongs to is judged from evidence, in this order. The
+// lock file comes first: its owner uid is read from its own Lstat, and a lock owned by
+// another account is never stale to this caller, nor is a lock whose owner cannot be
+// read; both are refused before age or any process is looked at. Only a lock owned by
+// this account goes on. Then every git, of any account, is placed by its readable cwd or
+// by a command line that names an absolute work tree or git dir (-C, --git-dir,
+// --work-tree); one placed at this checkout is an owner and the lock stays. A git of this
+// account that nothing places makes the scan unknown, with this sentence. A git of
+// another account that nothing places is skipped: this account cannot read its cwd (lsof
+// omits it, /proc/<pid>/cwd answers EACCES), so it cannot be told from any other process
+// on the host, and counting it made every wait on a shared bench refuse whenever another
+// account ran git (CI run 36268521205: the runner account `nova` refused on the
+// coordinator's gits). The skip removes no other account's lock: that account's git
+// holds its own lock file, which the first rule refuses. What stays out of sight is a
+// git of another account working in this checkout, with no absolute location on its
+// command line, under a lock this account made. The account is the effective uid
+// (os.Geteuid, ps uid, the owner of /proc/<pid> and of the lock file) because lsof, /proc
+// and file ownership follow it.
 const ownershipUnknown = "cannot tell whether a git process owns this checkout"
 
 func ownershipUnknownErr(why string) error {
