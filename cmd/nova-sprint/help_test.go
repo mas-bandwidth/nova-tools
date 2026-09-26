@@ -14,6 +14,7 @@ import (
 // A verb added to the registry fails TestEveryVerbHasHelpCase until it is
 // listed here (#3254).
 var helpCases = [][]string{
+	{"acl", "check"},
 	{"adopt", "receipt"}, {"adopt", "matrix"}, {"adopt", "status"},
 	{"backpressure", "check"},
 	{"bench", "beat"}, {"bench", "release"}, {"bench", "reindex"}, {"bench", "ls"},
