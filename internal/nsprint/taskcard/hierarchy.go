@@ -35,6 +35,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/redis/go-redis/v9"
@@ -62,6 +63,35 @@ const (
 // StitchID is the stitch card's id for a parent: <parent>-stitch (a task id
 // in the one id form, so every parser and the resolver take it as is).
 func StitchID(parent string) string { return parent + "-stitch" }
+
+// NextStitchID is the id of the stitch re-cut after old ended done
+// (nova-tools#4317 fix): <parent>-stitch-2 after <parent>-stitch, then -3,
+// and so on. The old record stays done; the parent's stitch field moves on.
+func NextStitchID(parent, old string) string {
+	base := StitchID(parent)
+	n := 1
+	if rest, ok := strings.CutPrefix(old, base+"-"); ok {
+		if k, err := strconv.Atoi(rest); err == nil && k > 1 {
+			n = k
+		}
+	}
+	return base + "-" + strconv.Itoa(n+1)
+}
+
+// IsStitchOf reports whether id is one of parent's stitch ids: StitchID or
+// a re-cut's NextStitchID.
+func IsStitchOf(parent, id string) bool {
+	base := StitchID(parent)
+	if id == base {
+		return true
+	}
+	rest, ok := strings.CutPrefix(id, base+"-")
+	if !ok {
+		return false
+	}
+	k, err := strconv.Atoi(rest)
+	return err == nil && k > 1 && strconv.Itoa(k) == rest
+}
 
 // Child is one card of a plan as the stitch's brief reads it: its pointer
 // and the result fields a card end wrote on it.
@@ -95,19 +125,34 @@ type Plan struct {
 	Stitch                            Child // ID "" when the parent has no stitch yet
 }
 
-// Stuck is the derived state of a plan whose stitch can never be released:
-// a child ended done/fail (its edge is never met), so the plan needs a hand:
-// `card stitch --id <parent> --drop <child>` drops the child from the plan
-// (DropChild: the stitch's edge with it), or `card cut --parent` cuts a
-// replacement. Plan.Remedy names it.
+// Stuck is the derived state of a plan that cannot move on its own, with
+// Plan.Remedy naming the way on (nova-tools#4317, and its fix: a plan never
+// sits in a state with no way on). Two causes:
+//
+//   - the stitch ended done (cancelled, done/fail, or done without a PR) or
+//     has no record: the plan lands only with its stitch, so it never
+//     lands; `card cut --parent <parent>` re-cuts the stitch (NextStitchID,
+//     DEPENDS-ON every child) and the plan moves on with it;
+//   - a child ended done/fail: its edge is never met, so the stitch is never
+//     released; `card stitch --id <parent> --drop <child>` drops the child
+//     from the plan (DropChild: the stitch's edge with it), or `card cut
+//     --parent` cuts a replacement.
 const Stuck = "stuck"
+
+// StitchEnded reports whether the plan's stitch can never land: it ended
+// done (any outcome) or its record is missing. A plan with no stitch yet
+// (ID "") has not ended one.
+func (p Plan) StitchEnded() bool {
+	return p.Stitch.ID != "" && (p.Stitch.Where == ws.Done || p.Stitch.Where == "")
+}
 
 // State is the parent's derived state: its own terminal set when it is in
 // one; else the stitch's once the stitch has moved (landed, review, merging,
-// working, ready); else stuck when a child ended done/fail, parked when a
-// child or the stitch is parked, working while any child is in flight
-// (working, review, merging), ready when one is ready, and waiting
-// otherwise. It is never waiting for a plan that cannot move.
+// working, ready); else stuck when the stitch ended done (StitchEnded) or a
+// child ended done/fail, parked when a child or the stitch is parked,
+// working while any child is in flight (working, review, merging), ready
+// when one is ready, and waiting otherwise. It is never waiting for a plan
+// that cannot move: every stuck plan has a Remedy.
 func (p Plan) State() string {
 	switch p.Where {
 	case ws.Landed, ws.Done, ws.Parked:
@@ -116,6 +161,9 @@ func (p Plan) State() string {
 	switch p.Stitch.Where {
 	case ws.Landed, ws.Review, ws.Merging, ws.Working, ws.Ready:
 		return p.Stitch.Where
+	}
+	if p.StitchEnded() {
+		return Stuck
 	}
 	for _, c := range p.Children {
 		if c.Where == ws.Done && c.WhereOK == "fail" {
@@ -153,14 +201,29 @@ func (p Plan) Failed() []string {
 	return out
 }
 
-// Remedy is the one line a stuck plan needs, "" for any other state.
+// Remedy is the one line a stuck plan needs, "" for any other state. A
+// stitch that ended is re-cut (card cut --parent); a failed child is
+// dropped first when there is one, so the re-cut stitch is not stuck on it.
 func (p Plan) Remedy() string {
 	if p.State() != Stuck {
 		return ""
 	}
 	f := p.Failed()
-	return fmt.Sprintf("stuck: %s ended done/fail and the stitch waits on it; nova-sprint card stitch --id %s --drop %s drops it from the plan, or nova-sprint card cut --parent %s --from <children.tsv> cuts a replacement (then drop the failed one)",
-		strings.Join(f, ","), p.ID, f[0], p.ID)
+	if !p.StitchEnded() {
+		return fmt.Sprintf("stuck: %s ended done/fail and the stitch waits on it; nova-sprint card stitch --id %s --drop %s drops it from the plan, or nova-sprint card cut --parent %s --from <children.tsv> cuts a replacement (then drop the failed one)",
+			strings.Join(f, ","), p.ID, f[0], p.ID)
+	}
+	ended := "has no record"
+	if p.Stitch.Where == ws.Done {
+		ended = "ended done/" + dashOf(p.Stitch.WhereOK)
+	}
+	why := fmt.Sprintf("stuck: stitch %s %s and the plan lands only with its stitch", p.Stitch.ID, ended)
+	if len(f) > 0 {
+		return fmt.Sprintf("%s, and %s ended done/fail; nova-sprint card stitch --id %s --drop %s drops it, then nova-sprint card cut --parent %s re-cuts the stitch (%s, DEPENDS-ON every child)",
+			why, strings.Join(f, ","), p.ID, f[0], p.ID, NextStitchID(p.ID, p.Stitch.ID))
+	}
+	return fmt.Sprintf("%s; nova-sprint card cut --parent %s re-cuts the stitch (%s, DEPENDS-ON every child)",
+		why, p.ID, NextStitchID(p.ID, p.Stitch.ID))
 }
 
 // Counts folds the children by where (the table's six live states, then
@@ -494,6 +557,8 @@ func setFields(ctx context.Context, c redis.Cmdable, id, by, why string, fields 
 }
 
 // BindPlan makes parent a plan over children with stitch (nova-tools#4317):
+// a parent whose old stitch ended done (Plan.StitchEnded) takes the new
+// stitch in its place (the re-cut; the old record stays done);
 // the parent's record gains kind plan, children (appended to any it has),
 // stitch and DEPENDS-ON the stitch (blocked_on, the one edge form), through
 // the one move (waiting stays, ready goes back to waiting; anything else is
@@ -521,7 +586,15 @@ func BindPlan(ctx context.Context, c redis.Cmdable, parent string, children []st
 		return Result{}, &Refused{Why: fmt.Sprintf("task:%s is %s; a plan is cut while its parent waits (waiting or ready)", parent, where)}
 	}
 	if old := str(2); old != "" && old != stitch {
-		return Result{}, &Refused{Why: fmt.Sprintf("task:%s is a plan whose stitch is %s, not %s", parent, old, stitch)}
+		// A re-cut (the fix of #4317): the old stitch ended done (or has no
+		// record), so the plan takes a new one; a live old stitch is kept.
+		ow, err := c.HGet(ctx, Key(old), "where").Result()
+		if err != nil && !errors.Is(err, redis.Nil) {
+			return Result{}, fmt.Errorf("task:%s: %w", old, err)
+		}
+		if (ow != ws.Done && ow != "") || !IsStitchOf(parent, stitch) {
+			return Result{}, &Refused{Why: fmt.Sprintf("task:%s is a plan whose stitch is %s, not %s: %s is %s, and a stitch is re-cut (as %s) only once the old one ended done", parent, old, stitch, old, dashOf(ow), NextStitchID(parent, old))}
+		}
 	}
 	all := strings.Fields(str(1))
 	seen := map[string]bool{}

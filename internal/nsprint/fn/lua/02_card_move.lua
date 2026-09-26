@@ -2180,11 +2180,21 @@ end
 function TK.reply(err, info)
   if err then return 'REFUSED ' .. err end
   if info.same then return 'SAME ' .. info.to end
-  return 'MOVED ' .. (info.from == '' and '-' or info.from) .. ' ' .. info.to
+  local s = 'MOVED ' .. (info.from == '' and '-' or info.from) .. ' ' .. info.to
+  -- a stitch's landing landed its plan (TK.land_parent, nova-tools#4317):
+  -- the reply names the plan with its ref and origin, so the one who
+  -- landed the stitch by hand (task land --id) closes the plan's issue
+  if info.parent then
+    local f = redis.call('HMGET', 'task:' .. info.parent, 'ref', 'origin')
+    local ref, origin = TK.str(f[1]), TK.str(f[2])
+    s = s .. ' parent=' .. info.parent .. ' ref=' .. (ref == '' and '-' or ref) .. ' origin=' .. (origin == '' and '-' or origin)
+  end
+  return s
 end
 
--- ns_tcard_move(id, to, by, why[, k, v]...) -> MOVED <from> <to> |
--- SAME <where> | REFUSED <why>. The keys: ok friend stream sha sprint front
+-- ns_tcard_move(id, to, by, why[, k, v]...) -> MOVED <from> <to>
+-- [parent=<id> ref=<repo#n|-> origin=<url|->] | SAME <where> | REFUSED <why>
+-- (the parent part when the move landed a stitch and so its plan). The keys: ok friend stream sha sprint front
 -- as, else a record field.
 redis.register_function('ns_tcard_move', function(keys, args)
   local o = TK.opts(args, 5, { by = args[3], why = args[4] })

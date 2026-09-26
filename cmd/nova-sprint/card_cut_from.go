@@ -60,7 +60,9 @@
 // is bound (taskcard.BindPlan): kind plan, children, stitch, and DEPENDS-ON
 // the stitch, so the parent's state is derived and it lands when the stitch
 // lands. A parent that already has a stitch still in waiting takes more
-// children (the stitch's edges grow); one whose stitch moved on is refused.
+// children (the stitch's edges grow); one whose stitch ended done is
+// re-cut as NextStitchID (card cut --parent <id> alone, no --from, re-cuts
+// just the stitch); one whose stitch is in flight is refused.
 //
 //	CARD CUT PLAN parent=<id> children=<n> stitch=<id> parent_to=waiting depends=<stitch>
 package main
@@ -107,6 +109,9 @@ type cutFromOpts struct {
 type planFacts struct {
 	Rec                    map[string]string
 	StitchWhere, StitchRef string // the stitch's where and issue ref, when the parent has one
+	// Stitch is the stitch this cut binds: StitchID, the waiting one, or a
+	// re-cut's NextStitchID (set by planRows).
+	Stitch string
 	// Children is the parent's children field as a set: a row whose id is
 	// one of them is a rerun's, to=already, never a refusal.
 	Children map[string]bool
@@ -548,15 +553,32 @@ func planRows(ctx context.Context, o *cutFromOpts, d cutFromDeps, rows []*cutRow
 	default:
 		return nil, facts, fmt.Errorf("task:%s is %s; a plan is cut while its parent waits (waiting or ready)", o.Parent, cutField(rec["where"]))
 	}
+	// The stitch: a new plan's is StitchID; a waiting one takes more
+	// children; one that ended done (or has no record) is re-cut as
+	// NextStitchID, so a plan whose stitch was cancelled moves on (the
+	// remedy Plan.Remedy names); one in flight is left to land the plan.
 	stitch := taskcard.StitchID(o.Parent)
+	restitch := false
 	if old := rec[taskcard.FieldStitch]; old != "" {
-		if old != stitch {
+		if !taskcard.IsStitchOf(o.Parent, old) {
 			return nil, facts, fmt.Errorf("task:%s is a plan whose stitch is %s, not %s", o.Parent, old, stitch)
 		}
-		if facts.StitchWhere != "waiting" {
-			return nil, facts, fmt.Errorf("task:%s is a plan whose stitch %s is %s: more children are cut while the stitch waits; cut a new plan otherwise", o.Parent, old, cutField(facts.StitchWhere))
+		switch facts.StitchWhere {
+		case "waiting":
+			stitch = old
+		case "done", "":
+			stitch, restitch = taskcard.NextStitchID(o.Parent, old), true
+		default:
+			return nil, facts, fmt.Errorf("task:%s is a plan whose stitch %s is %s: more children are cut while the stitch waits, and a stitch is re-cut once it ended done; the plan lands when %s lands", o.Parent, old, cutField(facts.StitchWhere), old)
 		}
 	}
+	if len(rows) == 0 && !restitch {
+		return nil, facts, fmt.Errorf("no children rows: --from <children.tsv> cuts children; card cut --parent %s alone re-cuts a stitch that ended done, and its stitch %s is %s", o.Parent, cutField(rec[taskcard.FieldStitch]), cutField(facts.StitchWhere))
+	}
+	if len(rows) == 0 && rec[taskcard.FieldChildren] == "" {
+		return nil, facts, fmt.Errorf("task:%s has no children to re-cut a stitch over: --from <children.tsv>", o.Parent)
+	}
+	facts.Stitch = stitch
 	if rec["stream"] == "" {
 		return nil, facts, fmt.Errorf("task:%s has no stream: nova-sprint task move --id %s --to-stream <s> first", o.Parent, o.Parent)
 	}
@@ -613,8 +635,9 @@ func planRows(ctx context.Context, o *cutFromOpts, d cutFromDeps, rows []*cutRow
 		st.paths = strings.TrimSpace(rec["paths"])
 	}
 	// A stitch already waiting is never pushed again: its edges grow at the
-	// bind (taskcard.BindPlan), and its row is to=already.
-	if rec[taskcard.FieldStitch] != "" {
+	// bind (taskcard.BindPlan), and its row is to=already. A re-cut stitch
+	// is a new card, pushed and filed.
+	if rec[taskcard.FieldStitch] != "" && !restitch {
 		st.already = true
 		st.ref = facts.StitchRef
 	}
@@ -660,7 +683,13 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 		fmt.Fprintf(out, "CARD CUT FROM file=%s rows=%d cut=%d already=%d refused=%d filed=%d reused=%d github=%s ms=%d\n",
 			cutField(o.From), rows, cut, already, refused, filed, reused, github, d.Now().Sub(start).Milliseconds())
 	}
-	rows, err := parseCutRows(o.Text)
+	var rows []*cutRow
+	var err error
+	// card cut --parent <id> with no --from: no children rows, the stitch
+	// alone (a re-cut; planRows refuses it for a plan whose stitch lives).
+	if o.Parent == "" || o.From != "" || len(o.Text) > 0 {
+		rows, err = parseCutRows(o.Text)
+	}
 	if err != nil {
 		fmt.Fprintf(out, "CARD CUT REFUSED file=%s why=%s\n", cutField(o.From), cutField(err.Error()))
 		summary(0, 1)
@@ -671,7 +700,7 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 	if o.Parent != "" {
 		if rows, facts, err = planRows(ctx, &o, d, rows); err != nil {
 			fmt.Fprintf(out, "CARD CUT REFUSED parent=%s why=%s\n", o.Parent, cutField(err.Error()))
-			summary(children, children)
+			summary(children, max(children, 1))
 			return 1
 		}
 	}
@@ -736,7 +765,7 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 				cutField(r.stream), cutField(r.who), r.route, cutField(r.est), cutField(cutDepends(r, rows, o.Repo, false)), cutField(r.title))
 		}
 		if o.Parent != "" {
-			fmt.Fprintf(out, "CARD CUT DRY PLAN parent=%s children=%d stitch=%s parent_to=waiting depends=%s\n", o.Parent, children, taskcard.StitchID(o.Parent), taskcard.StitchID(o.Parent))
+			fmt.Fprintf(out, "CARD CUT DRY PLAN parent=%s children=%d stitch=%s parent_to=waiting depends=%s\n", o.Parent, children, facts.Stitch, facts.Stitch)
 		}
 		summary(len(rows), 0)
 		return 0
@@ -886,7 +915,7 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 	// whose stitch was refused leaves the parent as it was (the children
 	// stand as cards of the stream; a rerun with the fix cuts the stitch).
 	if o.Parent != "" && stitchOK {
-		stitch := taskcard.StitchID(o.Parent)
+		stitch := facts.Stitch
 		res, err := d.Bind(ctx, o.Parent, childIDs, stitch, o.Actor)
 		if err != nil {
 			why := err.Error()
@@ -938,9 +967,12 @@ func cmdCardCutFrom(ctx context.Context, o cutFromOpts, addr string, stdout, std
 		return refuse(stderr, verb, "--sprint must match [a-z0-9-]{1,40}")
 	}
 	var err error
-	if o.From == "-" {
+	switch o.From {
+	case "":
+		// --parent alone: a stitch re-cut, no rows (cardCutFrom)
+	case "-":
 		o.Text, err = io.ReadAll(os.Stdin)
-	} else {
+	default:
 		o.Text, err = os.ReadFile(o.From)
 	}
 	if err != nil {

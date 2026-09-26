@@ -141,3 +141,71 @@ func TestStitchIDAndPRRef(t *testing.T) {
 		t.Errorf("ResultKind(stitch) = %q, %v; want fix (a stitch is a build task)", k, err)
 	}
 }
+
+// TestPlanStateOverEveryStitchPhase is the #4317 fix's invariant: a plan
+// never sits in a state with no way on. Over every phase of the stitch
+// (every child landed), a stitch that can still land the plan gives its own
+// phase (or waiting while it waits on its edges); one that ended done/ok,
+// done/fail or has no record gives stuck with a Remedy that re-cuts it; no
+// phase gives waiting when the stitch is terminal.
+func TestPlanStateOverEveryStitchPhase(t *testing.T) {
+	t.Parallel()
+	landed := []taskcard.Child{{ID: "c1", Where: "landed"}, {ID: "c2", Where: "landed"}}
+	for _, tc := range []struct {
+		where, ok, want string
+	}{
+		{"waiting", "", "waiting"},
+		{"ready", "", "ready"},
+		{"working", "", "working"},
+		{"review", "", "review"},
+		{"merging", "", "merging"},
+		{"landed", "ok", "landed"},
+		{"parked", "", "parked"},
+		{"done", "ok", taskcard.Stuck},
+		{"done", "fail", taskcard.Stuck},
+		{"", "", taskcard.Stuck}, // the stitch's record is gone
+	} {
+		p := taskcard.Plan{ID: "pc", Where: "waiting", Children: landed, Stitch: taskcard.Child{ID: "pc-stitch", Where: tc.where, WhereOK: tc.ok}}
+		got := p.State()
+		if got != tc.want {
+			t.Errorf("stitch %s/%s: state %q, want %q", tc.where, tc.ok, got, tc.want)
+		}
+		terminal := tc.where == "done" || tc.where == "landed" || tc.where == ""
+		if terminal && got == "waiting" {
+			t.Errorf("stitch %s/%s: waiting on a stitch that can never land", tc.where, tc.ok)
+		}
+		r := p.Remedy()
+		if got == taskcard.Stuck {
+			if !strings.Contains(r, "nova-sprint card cut --parent pc re-cuts the stitch (pc-stitch-2, DEPENDS-ON every child)") || !strings.Contains(r, "stitch pc-stitch ") {
+				t.Errorf("stitch %s/%s: remedy %q does not name the re-cut", tc.where, tc.ok, r)
+			}
+		} else if r != "" {
+			t.Errorf("stitch %s/%s: remedy %q for state %s", tc.where, tc.ok, r, got)
+		}
+	}
+	// A cancelled stitch and a failed child: drop the child, then re-cut.
+	p := taskcard.Plan{ID: "pc", Where: "waiting", Children: []taskcard.Child{{ID: "c1", Where: "landed"}, {ID: "c2", Where: "done", WhereOK: "fail"}},
+		Stitch: taskcard.Child{ID: "pc-stitch-2", Where: "done", WhereOK: "fail"}}
+	if p.State() != taskcard.Stuck || !strings.Contains(p.Remedy(), "stitch pc-stitch-2 ended done/fail and the plan lands only with its stitch, and c2 ended done/fail; nova-sprint card stitch --id pc --drop c2 drops it, then nova-sprint card cut --parent pc re-cuts the stitch (pc-stitch-3,") {
+		t.Fatalf("stitch and child ended: %s %q", p.State(), p.Remedy())
+	}
+	if line := p.Line(); !strings.HasPrefix(line, "plan pc stuck children=2 ") || !strings.HasSuffix(line, " stitch=pc-stitch-2:done") {
+		t.Fatalf("line %q", line)
+	}
+}
+
+// TestNextStitchID: the re-cut ids count up from the first stitch, and only
+// a parent's own stitch ids are its stitches.
+func TestNextStitchID(t *testing.T) {
+	t.Parallel()
+	for old, want := range map[string]string{"p-stitch": "p-stitch-2", "p-stitch-2": "p-stitch-3", "p-stitch-9": "p-stitch-10", "": "p-stitch-2"} {
+		if got := taskcard.NextStitchID("p", old); got != want {
+			t.Errorf("NextStitchID(p, %q) = %q, want %q", old, got, want)
+		}
+	}
+	for id, want := range map[string]bool{"p-stitch": true, "p-stitch-2": true, "p-stitch-10": true, "p-stitch-1": false, "p-stitch-02": false, "p-stitch-x": false, "q-stitch": false, "p": false} {
+		if got := taskcard.IsStitchOf("p", id); got != want {
+			t.Errorf("IsStitchOf(p, %q) = %v, want %v", id, got, want)
+		}
+	}
+}
