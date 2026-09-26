@@ -155,10 +155,16 @@ func runHoldRelease(ctx context.Context, args []string, out, errOut io.Writer) i
 	if err != nil {
 		return refuse(errOut, "hold release", err.Error())
 	}
-	fmt.Fprintln(out, strings.Join(reply, " "))
 	if len(reply) > 0 && reply[0] == "RELEASED" {
+		fmt.Fprintln(out, strings.Join(reply, " "))
 		return 0
 	}
+	// A refusal names the record it is about (the reason, and on no-unit
+	// the prunit key the store had no value at), the unit and sprint, that
+	// nothing was written, and the two verbs that show the unit.
+	short := disposition.ShortRepo(repo)
+	fmt.Fprintf(out, "%s unit=%s#%d sprint=%s holder=%s: nothing written; run: nova-sprint why %s#%d --sprint %s --redis %s, or nova-sprint hold show --sprint %s --redis %s %s#%d\n",
+		strings.Join(reply, " "), short, n, *sprint, holder, short, n, *sprint, lifeAddr(*addr), *sprint, lifeAddr(*addr), short, n)
 	return 2
 }
 
@@ -325,7 +331,17 @@ func runHoldShow(ctx context.Context, args []string, out, errOut io.Writer) int 
 		return refuse(errOut, "hold show", err.Error())
 	}
 	uv := u.Val()
-	fmt.Fprintf(out, "HOLDS %s#%d unit=%s head=%v author=%v holds_open=%v\n", short, n, unit, uv[0], uv[1], uv[2])
+	// findings counts what the store holds in a shape the verb cannot read
+	// as a real row: a prunit naming a unit with no record, a parked value
+	// that is not JSON. Each is named on its own line and the exit is 1.
+	findings := 0
+	if uv[0] == nil && uv[1] == nil && uv[2] == nil {
+		findings++
+		fmt.Fprintf(out, "HOLDS %s#%d unit=%s MISSING key=s:%s:u:%s: unit record missing (the prunit names it, the store has no hash); run: nova-sprint why %s#%d --sprint %s --redis %s\n",
+			short, n, unit, *sprint, unit, short, n, *sprint, lifeAddr(*addr))
+	} else {
+		fmt.Fprintf(out, "HOLDS %s#%d unit=%s head=%v author=%v holds_open=%v\n", short, n, unit, orNil(uv[0]), orNil(uv[1]), orNil(uv[2]))
+	}
 	now := time.Now().UnixMilli()
 	for _, f := range friends {
 		h := holds[f].Val()
@@ -348,10 +364,26 @@ func runHoldShow(ctx context.Context, args []string, out, errOut io.Writer) int 
 			continue
 		}
 		var p disposition.Park
-		_ = json.Unmarshal([]byte(parks.Val()[k]), &p)
+		if err := json.Unmarshal([]byte(parks.Val()[k]), &p); err != nil {
+			findings++
+			fmt.Fprintf(out, "parked %s MALFORMED key=%s field=%s err=%q: not a parked record, printed as none\n",
+				strings.TrimPrefix(k, prefix), disposition.ParkKey(*sprint), k, err.Error())
+			continue
+		}
 		fmt.Fprintf(out, "parked %s id=%s role=%s reason=%s age=%ds\n", strings.TrimPrefix(k, prefix), p.ID, p.Role, p.Reason, (now-p.ParkedAt)/1000)
 	}
+	if findings > 0 {
+		return 1
+	}
 	return 0
+}
+
+// orNil prints a missing hash field as -, never Go's <nil>.
+func orNil(v any) any {
+	if v == nil {
+		return "-"
+	}
+	return v
 }
 
 func sortedKeys(m map[string]string) []string {

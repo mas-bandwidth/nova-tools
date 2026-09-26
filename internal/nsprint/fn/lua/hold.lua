@@ -106,9 +106,10 @@ do
     if not f then
       return { 'REFUSED', 'unknown-who' }
     end
-    local unit = redis.call('GET', 's:' .. S .. ':prunit:' .. repo .. ':' .. pr)
+    local prkey = 's:' .. S .. ':prunit:' .. repo .. ':' .. pr
+    local unit = redis.call('GET', prkey)
     if not unit then
-      return { 'REFUSED', 'no-unit' }
+      return { 'REFUSED', 'no-unit', prkey }
     end
     local ukey = 's:' .. S .. ':u:' .. unit
     local u = redis.call('HMGET', ukey, 'head', 'author', 'state')
@@ -452,9 +453,10 @@ do
   -- the reader path, is refused.
   local function release(keys, args)
     local S, repo, pr, holder, as, head, evidence = args[1], args[2], args[3], args[4], args[5], args[6], args[7]
-    local unit = redis.call('GET', 's:' .. S .. ':prunit:' .. repo .. ':' .. pr)
+    local prkey = 's:' .. S .. ':prunit:' .. repo .. ':' .. pr
+    local unit = redis.call('GET', prkey)
     if not unit then
-      return { 'REFUSED', 'no-unit' }
+      return { 'REFUSED', 'no-unit', prkey }
     end
     local ukey = 's:' .. S .. ':u:' .. unit
     local u = redis.call('HMGET', ukey, 'head', 'security')

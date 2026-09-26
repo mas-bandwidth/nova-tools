@@ -272,6 +272,7 @@ cmd/nova-sprint/card_harness_functional_test.go:TestCardRunEndToEnd serial: t.Se
 cmd/nova-sprint/census_test.go:TestCensusSprintVerb serial: t.Setenv
 cmd/nova-sprint/control42_redis_test.go:TestControl42Redis serial: t.Setenv
 cmd/nova-sprint/cost_test.go:TestCostImportExitCodes serial: t.Setenv
+cmd/nova-sprint/error_audit_rowan_functional_test.go:TestRowanAuditTaskDoneNotFoundIsNamed serial: t.Setenv (NOVA_FRIEND is the seat task push reads; the audit probe is copied as written)
 cmd/nova-sprint/expire_test.go:TestExpireDutyReplacesSprintRequeue serial: swaps package var main.expireProber, swaps package var main.reconcileDuties, swaps package var main.reconcileSeams
 cmd/nova-sprint/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
 cmd/nova-sprint/firstrun_functional_test.go:TestUsageBannerExamplesRun serial: t.Chdir

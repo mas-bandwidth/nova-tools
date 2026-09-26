@@ -28,6 +28,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/disposition"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/redis/go-redis/v9"
@@ -36,6 +37,7 @@ import (
 // TestRowanAuditChild is the re-exec target: it runs nova-sprint's run with
 // the argv in ROWAN_AUDIT_ARGV and exits with its code.
 func TestRowanAuditChild(t *testing.T) {
+	t.Parallel()
 	raw := os.Getenv("ROWAN_AUDIT_ARGV")
 	if raw == "" {
 		t.Skip("child only")
@@ -142,6 +144,7 @@ func rowanReset(t *testing.T, mode, addr string) {
 }
 
 func TestRowanAuditSweep(t *testing.T) {
+	t.Parallel()
 	stubs, log := rowanStubDir(t)
 	home := t.TempDir()
 	base := []string{"PATH=" + stubs + ":/usr/bin:/bin", "HOME=" + home, "XDG_CONFIG_HOME=" + filepath.Join(home, ".config"), "TMPDIR=" + t.TempDir()}
@@ -269,6 +272,39 @@ func TestRowanAuditMissingFunctionNamesFnLoad(t *testing.T) {
 			t.Errorf("%s with no library: exit=%d stdout=%q stderr=%q; want the missing function named and `nova-sprint fn load --redis %s`",
 				strings.Join(argv[:2], " "), code, out, errOut, addr)
 		}
+	}
+}
+
+// TestRowanAuditHoldReleaseNoUnitNamesTheUnit: hold release on a unit with no
+// record prints `REFUSED no-unit`, exit 2, with no unit, sprint, or next verb.
+func TestRowanAuditHoldReleaseNoUnitNamesTheUnit(t *testing.T) {
+	t.Parallel()
+	addr := rowanStore(t)
+	code, out, errOut := runSprint("hold", "release", "--as", "rowan", "--sprint", "audit", "--redis", addr,
+		"nova-tools#9", "stella", "--head", "0123456789abcdef0123456789abcdef01234567", "--evidence", "evidence-1")
+	if !strings.Contains(out+errOut, "nova-tools#9") || !strings.Contains(out+errOut, "why ") && !strings.Contains(out+errOut, "hold show") {
+		t.Errorf("hold release on a missing unit: exit=%d stdout=%q stderr=%q; want the unit and sprint named and an inspect verb (why / hold show)", code, out, errOut)
+	}
+}
+
+// TestRowanAuditHoldShowMalformedParkIsNamed: hold show drops json.Unmarshal's
+// error on a parked record (hold.go:350-352) and prints the zero Park:
+// `parked x id= role= reason= age=<epoch>s`, a row that looks real.
+func TestRowanAuditHoldShowMalformedParkIsNamed(t *testing.T) {
+	t.Parallel()
+	addr := rowanStore(t)
+	ctx := context.Background()
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	defer c.Close()
+	if err := c.Set(ctx, "s:audit:prunit:nova-tools:7", "nova-tools#7", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.HSet(ctx, disposition.ParkKey("audit"), "nova-tools:7:reader", "{not json").Err(); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut := runSprint("hold", "show", "--redis", addr, "--sprint", "audit", "nova-tools#7")
+	if strings.Contains(out, "parked reader id= ") || !strings.Contains(out+errOut, "malformed") && !strings.Contains(out+errOut, "invalid") {
+		t.Errorf("a malformed parked record prints as a real one: exit=%d stdout=%q stderr=%q; want it named malformed with its key and field", code, out, errOut)
 	}
 }
 
