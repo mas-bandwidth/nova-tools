@@ -28,7 +28,7 @@ func consumerStore(t *testing.T, cmds [][]string) (*redis.Client, *cmdLog) {
 // consumerBlock is the rendered table from its consumer header to the end.
 func consumerBlock(t *testing.T, got string) string {
 	t.Helper()
-	i := strings.Index(got, "\nconsumer ")
+	i := strings.Index(got, "\nworker ")
 	if i < 0 {
 		t.Fatalf("no consumer table:\n%s", got)
 	}
