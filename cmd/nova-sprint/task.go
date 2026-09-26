@@ -181,6 +181,12 @@ func runTaskPush(ctx context.Context, args []string, out, errOut io.Writer) int 
 }
 
 func runTaskTake(ctx context.Context, args []string, out, errOut io.Writer) int {
+	return runTaskTakeAs(ctx, args, os.Getenv(seatEnv), out, errOut)
+}
+
+// runTaskTakeAs is task take with the seat (the initiator) passed in as a
+// value, so a parallel test hands in its own without t.Setenv.
+func runTaskTakeAs(ctx context.Context, args []string, initiator string, out, errOut io.Writer) int {
 	fs := taskFlags("task take")
 	redisAddr := fs.String("redis", redisDefault(), "")
 	sprint := fs.String("sprint", "", "")
@@ -195,7 +201,6 @@ func runTaskTake(ctx context.Context, args []string, out, errOut io.Writer) int 
 		return refuse(errOut, "task take", "takes flags, not positional arguments")
 	}
 	// #2929: only --as equal to the initiator takes; --actor is gone.
-	initiator := os.Getenv(seatEnv)
 	if initiator == "" {
 		return refuse(errOut, "task take", wantFriend+" ("+seatEnv+" is empty)")
 	}

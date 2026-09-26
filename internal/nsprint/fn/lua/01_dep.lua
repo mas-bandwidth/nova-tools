@@ -149,12 +149,18 @@ function DP.blocker(e)
   return (DP.LEAD[class] or 'WAIT') .. ' ' .. e .. ' ' .. DP.text(class, detail)
 end
 
--- DP.first_blocker(text): the first entry of a DEPENDS-ON value (split as
--- DP.ids splits) with a blocker, as (entry, line); nil when none has one.
-function DP.first_blocker(text)
+-- DP.first_blocker(text, edges): the first entry of a DEPENDS-ON value
+-- (split as DP.ids splits) with a blocker, as (entry, line); nil when none
+-- has one. edges limits it to the entries that name a task record on every
+-- reading, task:<id> and <slug>:sentinel: a sprint card's (s:<S>:card:)
+-- bare label names a sprint card, not a task (ready.entryBlocker), and
+-- stays the Go gate's.
+function DP.first_blocker(text, edges)
   for e in string.gmatch(text or '', '[^,;%s]+') do
-    local line = DP.blocker(e)
-    if line then return e, line end
+    if not edges or string.sub(e, 1, 5) == 'task:' or DP.is_sentinel(e) then
+      local line = DP.blocker(e)
+      if line then return e, line end
+    end
   end
   return nil
 end

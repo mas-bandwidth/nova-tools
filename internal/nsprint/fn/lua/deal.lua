@@ -224,6 +224,10 @@ local function card_deal(keys, args)
         string.match(csha, '^[0-9a-f]+$') and #csha == 12 and
 		(pin == '' or pin == bench) and not deal_names(c[7], bench) and deal_runs(desired[3], c[4]) and
         (not bp[S] or c[5] == 'priority') and
+        -- its task and sentinel edges at the instant of the deal (#4414):
+        -- the Go gate read them before this call, a stream may have
+        -- reopened since
+        not NS.dep.first_blocker(redis.call('HGET', ck, 'depends_on') or '', true) and
         not CARD.move(ck, 'working', { state = 'dealt', bench = bench, by = actor, why = 'deal',
           fields = { 'attempt', tostring(attempt), 'token', ctoken, 'token_sha', csha, 'pin', pin,
             'identity', S .. '/' .. label .. '/' .. string.sub(c[6] or '', 1, 8) .. '/' .. bench .. '/' .. attempt,

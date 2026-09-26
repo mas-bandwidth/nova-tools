@@ -9,6 +9,11 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/redis/go-redis/v9"
+
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/deal"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 )
@@ -109,76 +114,217 @@ func TestReopenedSentinelTakePrintsReaderLine(t *testing.T) {
 	}
 }
 
-// TestReopenRaceClaimNeverSeesUnmetEdge is probe (d): 20 trials, each a
-// take of a released B and the push that reopens its stream's sentinel,
-// started together. Each is one FCALL; Redis runs a function to its end
-// before the next command, so the take reads the sentinel either wholly
-// before the reopen or wholly after. ws:log is one stream both calls append
-// to, so its order is the execution order: a CLAIMED B must come before the
-// reopen, a refused one after it with ready --why's line.
+// TestReopenRaceClaimNeverSeesUnmetEdge is probe (d), both orders of a take
+// of a released row and the push that reopens its stream's sentinel. Each
+// is one FCALL, and Redis runs a function to its end before the next
+// command, so a take reads the sentinel wholly before or wholly after the
+// reopen:
+//   - claim-first: the take claims (the edge is met at the claim); after the
+//     reopen that row stays claimed (the NOT DONE boundary: running work is
+//     the dialogue/checkpoint's), and a later take of another row on the
+//     same edge is refused with ready --why's line.
+//   - reopen-first: the take is refused with ready --why's line.
+//   - interleave: 20 trials started together; ws:log, one stream both calls
+//     append to, gives the execution order: a CLAIMED row comes before the
+//     reopen, a refused one after it.
 func TestReopenRaceClaimNeverSeesUnmetEdge(t *testing.T) {
 	t.Parallel()
-	c, st := sdStore(t)
-	ctx := context.Background()
-	if err := c.HSet(ctx, "friend:f1:desired", "slots", 100).Err(); err != nil {
-		t.Fatal(err)
-	}
-	const trials = 20
-	claimedFirst, reopenedFirst := 0, 0
-	for i := 0; i < trials; i++ {
-		stream := fmt.Sprintf("race r%d", i)
-		stop := ws.SentinelID(stream)
-		a1, a2, b := fmt.Sprintf("R%dA1", i), fmt.Sprintf("R%dA2", i), fmt.Sprintf("R%dB", i)
-		if err := sdCard(t, c, a1, stream, ""); err != nil {
+	// setup: stream alpha with card A1 landed, rows (each DEPENDS-ON the
+	// stream's sentinel) released to open
+	setup := func(t *testing.T, stream string, rows ...string) (*redis.Client, *store.Store, string) {
+		c, st := sdStore(t)
+		if err := c.HSet(context.Background(), "friend:f1:desired", "slots", 100).Err(); err != nil {
 			t.Fatal(err)
 		}
-		if r := sdQueue(t, st, b, stop); r.Status != task.PushCreated {
-			t.Fatalf("trial %d push B: %+v", i, r)
+		stop := ws.SentinelID(stream)
+		if err := sdCard(t, c, stream+"-A1", stream, ""); err != nil {
+			t.Fatal(err)
 		}
-		sdLand(t, c, a1)
-		if s := sdField(t, c, b, "state"); s != "open" {
-			t.Fatalf("trial %d: B not released: %s", i, s)
-		}
-		var wg sync.WaitGroup
-		var ok bool
-		var takeErr, pushErr error
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-			_, ok, takeErr = task.Take(ctx, st, task.TakeRequest{Sprint: sdSprint, ID: b, As: "f1"})
-		}()
-		go func() {
-			defer wg.Done()
-			pushErr = sdCard(t, c, a2, stream, "")
-		}()
-		wg.Wait()
-		if pushErr != nil {
-			t.Fatalf("trial %d push A2: %v", i, pushErr)
-		}
-		claimAt, reopenAt := -1, -1
-		for n, e := range c.XRange(ctx, "ws:log", "-", "+").Val() {
-			if e.Values["id"] == b && e.Values["to"] == "working" && claimAt < 0 {
-				claimAt = n
-			}
-			if e.Values["id"] == stop && e.Values["from"] == "landed" && e.Values["to"] == "waiting" && reopenAt < 0 {
-				reopenAt = n
+		for _, r := range rows {
+			if res := sdQueue(t, st, r, stop); res.Status != task.PushCreated {
+				t.Fatalf("push %s: %+v", r, res)
 			}
 		}
-		if reopenAt < 0 {
-			t.Fatalf("trial %d: no reopen of %s on ws:log", i, stop)
-		}
-		if ok {
-			if claimAt < 0 || claimAt > reopenAt {
-				t.Fatalf("trial %d: B CLAIMED at ws:log #%d after the reopen at #%d: the edge was unmet at the claim", i, claimAt, reopenAt)
+		sdLand(t, c, stream+"-A1")
+		for _, r := range rows {
+			if s := sdField(t, c, r, "state"); s != "open" {
+				t.Fatalf("%s not released: %s", r, s)
 			}
-			claimedFirst++
-			continue
 		}
-		var blocked *task.BlockedError
-		if !errors.As(takeErr, &blocked) || blocked.Wait != "WAIT task:"+stop+" waiting" || claimAt >= 0 {
-			t.Fatalf("trial %d: take refused with %v (claim entry #%d); want WAIT task:%s waiting and no claim", i, takeErr, claimAt, stop)
-		}
-		reopenedFirst++
+		return c, st, stop
 	}
-	t.Logf("probe (d): %d trials, %d claimed before the reopen, %d refused after it, none claimed on an unmet edge", trials, claimedFirst, reopenedFirst)
+	take := func(st *store.Store, id string) (bool, error) {
+		_, ok, err := task.Take(context.Background(), st, task.TakeRequest{Sprint: sdSprint, ID: id, As: "f1"})
+		return ok, err
+	}
+	refusedWith := func(t *testing.T, err error, want string) {
+		t.Helper()
+		var blocked *task.BlockedError
+		if !errors.As(err, &blocked) || blocked.Wait != want {
+			t.Fatalf("take refused with %v; want BlockedError.Wait %q", err, want)
+		}
+	}
+
+	t.Run("claim-first", func(t *testing.T) {
+		t.Parallel()
+		c, st, stop := setup(t, "alpha", "B", "C")
+		if ok, err := take(st, "B"); err != nil || !ok {
+			t.Fatalf("take B with alpha landed: %v %v", ok, err)
+		}
+		if err := sdCard(t, c, "alpha-A2", "alpha", ""); err != nil {
+			t.Fatal(err)
+		}
+		if w := sdField(t, c, stop, "where"); w != "waiting" {
+			t.Fatalf("stop after the reopen: %s", w)
+		}
+		// the NOT DONE boundary, asserted: the row claimed before the reopen
+		// stays claimed
+		if s := sdField(t, c, "B", "state"); s != "claimed" {
+			t.Fatalf("B after the reopen: %s, want claimed (running work is not recalled)", s)
+		}
+		why, code := sdWhy(t, c, "C")
+		if code != 1 || why != "WAIT task:"+stop+" waiting" {
+			t.Fatalf("ready --why C: exit %d %q", code, why)
+		}
+		ok, err := take(st, "C")
+		if ok {
+			t.Fatalf("take C after the reopen claimed")
+		}
+		refusedWith(t, err, why)
+		t.Logf("claim-first: B claimed before the reopen stays %s; C after it: %s", sdField(t, c, "B", "state"), why)
+	})
+
+	t.Run("reopen-first", func(t *testing.T) {
+		t.Parallel()
+		c, st, stop := setup(t, "alpha", "B")
+		if err := sdCard(t, c, "alpha-A2", "alpha", ""); err != nil {
+			t.Fatal(err)
+		}
+		ok, err := take(st, "B")
+		if ok {
+			t.Fatalf("take B after the reopen claimed")
+		}
+		refusedWith(t, err, "WAIT task:"+stop+" waiting")
+		if s := sdField(t, c, "B", "state"); s != "open" {
+			t.Fatalf("B after the refused take: %s, want open (nothing written)", s)
+		}
+		t.Logf("reopen-first: B refused, WAIT task:%s waiting", stop)
+	})
+
+	t.Run("interleave", func(t *testing.T) {
+		t.Parallel()
+		const trials = 20
+		c, st := sdStore(t)
+		ctx := context.Background()
+		if err := c.HSet(ctx, "friend:f1:desired", "slots", 100).Err(); err != nil {
+			t.Fatal(err)
+		}
+		claimedFirst, reopenedFirst := 0, 0
+		for i := 0; i < trials; i++ {
+			stream := fmt.Sprintf("race r%d", i)
+			stop := ws.SentinelID(stream)
+			a1, a2, b := fmt.Sprintf("R%dA1", i), fmt.Sprintf("R%dA2", i), fmt.Sprintf("R%dB", i)
+			if err := sdCard(t, c, a1, stream, ""); err != nil {
+				t.Fatal(err)
+			}
+			if r := sdQueue(t, st, b, stop); r.Status != task.PushCreated {
+				t.Fatalf("trial %d push B: %+v", i, r)
+			}
+			sdLand(t, c, a1)
+			var wg sync.WaitGroup
+			var ok bool
+			var takeErr, pushErr error
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				ok, takeErr = take(st, b)
+			}()
+			go func() {
+				defer wg.Done()
+				pushErr = sdCard(t, c, a2, stream, "")
+			}()
+			wg.Wait()
+			if pushErr != nil {
+				t.Fatalf("trial %d push A2: %v", i, pushErr)
+			}
+			claimAt, reopenAt := -1, -1
+			for n, e := range c.XRange(ctx, "ws:log", "-", "+").Val() {
+				if e.Values["id"] == b && e.Values["to"] == "working" && claimAt < 0 {
+					claimAt = n
+				}
+				if e.Values["id"] == stop && e.Values["from"] == "landed" && e.Values["to"] == "waiting" && reopenAt < 0 {
+					reopenAt = n
+				}
+			}
+			if reopenAt < 0 {
+				t.Fatalf("trial %d: no reopen of %s on ws:log", i, stop)
+			}
+			if ok {
+				if claimAt < 0 || claimAt > reopenAt {
+					t.Fatalf("trial %d: B CLAIMED at ws:log #%d after the reopen at #%d: the edge was unmet at the claim", i, claimAt, reopenAt)
+				}
+				claimedFirst++
+				continue
+			}
+			refusedWith(t, takeErr, "WAIT task:"+stop+" waiting")
+			if claimAt >= 0 {
+				t.Fatalf("trial %d: refused take left a claim entry #%d", i, claimAt)
+			}
+			reopenedFirst++
+		}
+		t.Logf("interleave: %d trials, %d claimed before the reopen, %d refused after it, none claimed on an unmet edge", trials, claimedFirst, reopenedFirst)
+	})
+}
+
+// TestSprintCardDealRefusesReopenedSentinel: the sprint-card deal FCALL
+// (ns_card_deal, deal.lua) judges a card's task and sentinel edges itself
+// (NS.dep.first_blocker, edges only), whatever the Go gate read before it:
+// a pooled card on alpha:sentinel is not dealt while alpha is reopened and
+// is dealt once alpha lands again; a card whose bare label names a sprint
+// card is left to the Go gate and dealt.
+func TestSprintCardDealRefusesReopenedSentinel(t *testing.T) {
+	t.Parallel()
+	c, _ := sdStore(t)
+	ctx := context.Background()
+	const bench, fence = "b1", "fence-4414"
+	for _, cmd := range [][]any{
+		{"SADD", "benches", bench},
+		{"HSET", "bench:" + bench + ":desired", "slots", "4"},
+		{"HSET", "bench:" + bench + ":state", "state", "UP"},
+		{"HSET", "lease:reconciler", "token", fence},
+	} {
+		if err := c.Do(ctx, cmd...).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := sdCard(t, c, "A1", "alpha", ""); err != nil {
+		t.Fatal(err)
+	}
+	sdSprintCard(t, c, "Q", "task:alpha:sentinel")
+	sdSprintCard(t, c, "L", "Q9")
+	sdLand(t, c, "A1")
+	if err := sdCard(t, c, "A2", "alpha", ""); err != nil {
+		t.Fatal(err)
+	}
+	fns := &reconcile.DealFunctions{Client: c, Actor: "reconciler"}
+	res, err := fns.Reserve(ctx, fence, bench, []deal.Card{{Sprint: sdSprint, Label: "Q"}, {Sprint: sdSprint, Label: "L"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dealt []string
+	for _, r := range res {
+		dealt = append(dealt, r.Card.Label)
+	}
+	if len(dealt) != 1 || dealt[0] != "L" {
+		t.Fatalf("ns_card_deal with alpha reopened dealt %v; want [L] (Q waits on task:alpha:sentinel)", dealt)
+	}
+	if s := c.HGet(ctx, "s:"+sdSprint+":card:Q", "state").Val(); s != "queued" {
+		t.Fatalf("Q after the refused deal: %s, want queued", s)
+	}
+	sdLand(t, c, "A2")
+	res, err = fns.Reserve(ctx, fence, bench, []deal.Card{{Sprint: sdSprint, Label: "Q"}})
+	if err != nil || len(res) != 1 {
+		t.Fatalf("ns_card_deal with alpha landed again: %+v %v", res, err)
+	}
+	t.Logf("sprint-card deal: reopened alpha dealt %v, relanded alpha dealt Q", dealt)
 }
