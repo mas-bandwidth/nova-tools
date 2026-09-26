@@ -83,7 +83,7 @@ func runStreamLife(ctx context.Context, sub string, args []string, out, errOut i
 	case "status":
 		return runLandStreamStatusAs(ctx, "stream status", args, out, errOut), true
 	case "close":
-		return runLandMergeAs(ctx, "stream close", args, out, errOut), true
+		return runLandMergeAs(ctx, "stream close", args, out, errOut, landStreamToken), true
 	case "pr":
 		return runLandStreamAs(ctx, "stream pr", args, out, errOut), true
 	case "open", "rebase":

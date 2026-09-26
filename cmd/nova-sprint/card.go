@@ -84,9 +84,10 @@ func cmdCardCut(ctx context.Context, args []string, stdout, stderr io.Writer) in
 	if err := fs.Parse(args); err != nil {
 		return refuse(stderr, "card cut", err.Error())
 	}
-	if *from != "" {
+	// --parent without --from re-cuts a stitch that ended done (#4317 fix).
+	if *from != "" || *parent != "" {
 		if *issue != 0 || *spec != 0 || *index != "" || fs.NArg() > 0 {
-			return refuse(stderr, "card cut", "--from takes no --issue, --spec, --index or argument")
+			return refuse(stderr, "card cut", "--from (or --parent) takes no --issue, --spec, --index or argument")
 		}
 		if *parent != "" && *stream != "" {
 			return refuse(stderr, "card cut", "--parent takes no --stream: the children ride the parent's stream")
@@ -95,11 +96,11 @@ func cmdCardCut(ctx context.Context, args []string, stdout, stderr io.Writer) in
 			BaseSHA: *baseSHA, Actor: seatActor(), DryRun: *dryRun, NoGitHub: *noGitHub, Join: *join,
 			Parent: *parent, StitchRoute: *stitchRoute, StitchEst: *stitchEst}, *addr, stdout, stderr)
 	}
-	if *parent != "" || *stitchRoute != "" || *stitchEst != "" {
-		return refuse(stderr, "card cut", "--parent <id> wants --from <children.tsv|->: the rows are the plan's children and the stitch is cut behind them (#4317)")
+	if *stitchRoute != "" || *stitchEst != "" {
+		return refuse(stderr, "card cut", "--stitch-route and --stitch-est go with --parent <id> (#4317)")
 	}
 	if *sprint == "" || *addr == "" || *repo == "" || *issue <= 0 || *spec < 0 || fs.NArg() > 0 || *dryRun || *noGitHub || *baseSHA != "" {
-		return refuse(stderr, "card cut", "wants one issue (--issue <n>) or many cards (--from <cards.tsv|->)")
+		return refuse(stderr, "card cut", "wants one issue (--issue <n>), many cards (--from <cards.tsv|->), a plan's children (--parent <id> --from <children.tsv|->), or --parent <id> alone to re-cut a stitch that ended done")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
