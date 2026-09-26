@@ -1,0 +1,6 @@
+# The number of `t.Skip("SLEEPS: ...")` calls under cmd/ and internal/, and the
+# date it was measured (internal/ci/sleeps_class_test.go, nova-tools #4312).
+# The 94 skips of #4221 (2026-09-25) plus five that landed after it. The count
+# only falls: a test that waits on the wall clock gets an injected clock or
+# becomes a functional test. When you lower it, write `<count> <YYYY-MM-DD>`.
+99 2026-09-26
