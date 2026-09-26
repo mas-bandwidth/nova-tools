@@ -53,6 +53,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/deal"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pipeerr"
 )
 
 // Suspect is one reconcile-required card whose evidence a Prober gathers.
@@ -290,7 +291,7 @@ func (e *Expire) gate(ctx context.Context, also func(redis.Pipeliner)) ([]string
 	benches := pipe.SMembers(ctx, "benches")
 	clock := pipe.Time(ctx)
 	rows := e.gateRows(ctx, pipe, e.sprints)
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+	if err := pipeerr.Exec(ctx, pipe); err != nil {
 		return nil, nil, 0, fmt.Errorf("expire gate: %w", err)
 	}
 	t, err := clock.Result()
@@ -309,7 +310,7 @@ func (e *Expire) gate(ctx context.Context, also func(redis.Pipeliner)) ([]string
 	if len(fresh) > 0 {
 		pipe := e.Client.Pipeline()
 		more := e.gateRows(ctx, pipe, fresh)
-		if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		if err := pipeerr.Exec(ctx, pipe); err != nil {
 			return nil, nil, 0, fmt.Errorf("expire gate: %w", err)
 		}
 		for s, r := range more {
@@ -417,7 +418,7 @@ func (e *Expire) sweep(ctx context.Context, l *Lease, due, benches []string, now
 	for _, b := range benches {
 		beats[b] = pipe.HMGet(ctx, "bench:"+b+":beat", "host", "user")
 	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+	if err := pipeerr.Exec(ctx, pipe); err != nil {
 		return Counts{}, fmt.Errorf("expire read: %w", err)
 	}
 
@@ -704,6 +705,11 @@ func (e *Expire) resolve(ctx context.Context, l *Lease, bench string, cards []Su
 		"cards", len(cards), "resolved", resolved, "timeouts", timeouts, "err", status)
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !anyReply(rs) && row.Err() != nil {
 		return append(errs, fmt.Sprintf("resolutions %s: %v", bench, err)), false, 0
+	}
+	if err := row.Err(); err != nil && !errors.Is(err, redis.Nil) {
+		// The worker's own record (proc:expire:<bench>) did not land: the
+		// resolutions below are still read, and this is in the DUTY line.
+		errs = append(errs, fmt.Sprintf("record %s: %v", ProbeProcKey(bench), err))
 	}
 	fenced, expired := false, 0
 	for _, t := range rs {

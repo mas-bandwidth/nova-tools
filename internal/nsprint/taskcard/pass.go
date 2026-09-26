@@ -2,13 +2,13 @@ package taskcard
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pipeerr"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -93,8 +93,12 @@ func DealPass(ctx context.Context, c redis.Cmdable, by string, now time.Time) (P
 	if err != nil {
 		return res, err
 	}
-	res.Expired = len(x)
 	for _, e := range x {
+		if e.Why != "" {
+			res.Lines = append(res.Lines, fmt.Sprintf("EXPIRE %s REFUSED why=%s", e.Copy, e.Why))
+			continue
+		}
+		res.Expired++
 		res.Lines = append(res.Lines, fmt.Sprintf("EXPIRED %s to=%s why=lease-lapsed", e.Copy, e.To))
 	}
 	reads, err := EnsureReads(ctx, c, by)
@@ -125,7 +129,7 @@ func DealPass(ctx context.Context, c redis.Cmdable, by string, now time.Time) (P
 			at:      pipe.HGet(ctx, k.BeatKey(), "at"),
 		}
 	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+	if err := pipeerr.Exec(ctx, pipe); err != nil {
 		return res, fmt.Errorf("deal pass: read: %w", err)
 	}
 	var rows []passRow
@@ -133,6 +137,9 @@ func DealPass(ctx context.Context, c redis.Cmdable, by string, now time.Time) (P
 		d := cs[i].desired.Val()
 		slots, err := strconv.ParseInt(fmt.Sprint(valueAt(d, 0)), 10, 64)
 		if err != nil {
+			// A consumer on the roster whose slots cannot be read is never
+			// dealt to: that is a line, not a quiet skip every pass.
+			res.Lines = append(res.Lines, fmt.Sprintf("DEAL %s SKIP why=slots %q on %s is not a number", k, fmt.Sprint(valueAt(d, 0)), k.DesiredKey()))
 			continue
 		}
 		t, ok := beatAt(cs[i].at.Val())

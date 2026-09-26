@@ -145,7 +145,10 @@ func FsckAll(ctx context.Context, c *redis.Client, token string) (FsckWalk, erro
 		case len(rep) < 13 || rep[0] != "FSCK":
 			errs = append(errs, fmt.Sprintf("repair %s: reply %q", r.name, rep))
 		default:
-			fixed, _ := strconv.Atoi(rep[12])
+			fixed, err := strconv.Atoi(rep[12])
+			if err != nil {
+				errs = append(errs, fmt.Sprintf("repair %s: fixed %q is not a number", r.name, rep[12]))
+			}
 			w.Fixed += fixed
 			if fixed > 0 {
 				w.Lines = append(w.Lines, rep[13:]...)
@@ -161,7 +164,10 @@ func FsckAll(ctx context.Context, c *redis.Client, token string) (FsckWalk, erro
 		case len(ret) > 0 && ret[0] == "FENCED":
 			return w, fmt.Errorf("fsck retire %s: %w", r.name, ErrFenced)
 		case len(ret) >= 2 && ret[0] == "RETIRED":
-			n, _ := strconv.Atoi(ret[1])
+			n, err := strconv.Atoi(ret[1])
+			if err != nil {
+				errs = append(errs, fmt.Sprintf("retire %s: count %q is not a number", r.name, ret[1]))
+			}
 			w.Retired += n
 			if n > 0 {
 				w.Lines = append(w.Lines, fmt.Sprintf("retired %d of closed %s", n, r.name))
@@ -169,6 +175,10 @@ func FsckAll(ctx context.Context, c *redis.Client, token string) (FsckWalk, erro
 			for _, x := range ret[2:] {
 				errs = append(errs, "retire "+r.name+": "+x)
 			}
+		default:
+			// Any other reply is a refusal this duty did not expect: it is
+			// in the DUTY line, never dropped on the floor.
+			errs = append(errs, fmt.Sprintf("retire %s: reply %q", r.name, ret))
 		}
 	}
 	reply, err := c.FCall(ctx, "ns_fsck_finding", nil, token, w.Fixed, w.Retired, w.Line()).StringSlice()
