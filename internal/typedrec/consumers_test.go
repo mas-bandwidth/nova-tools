@@ -1,3 +1,5 @@
+//go:build functional
+
 package typedrec_test
 
 import (

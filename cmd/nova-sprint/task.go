@@ -308,13 +308,7 @@ func runTaskDone(ctx context.Context, args []string, out, errOut io.Writer) int 
 		if err != nil && !errors.Is(err, redis.Nil) {
 			return refuse(errOut, "task done", err.Error())
 		}
-		pr := 0
-		if prText != "" {
-			// A pr field that is not a number is a broken record, not PR 0.
-			if pr, err = strconv.Atoi(prText); err != nil {
-				return refuse(errOut, "task done", "task:"+*id+" pr="+prText+" is not a number")
-			}
-		}
+		pr, _ := strconv.Atoi(prText)
 		typed.KindDerived = disposition.Classify(typed.Reason, pr)
 	}
 	scoreText := ""

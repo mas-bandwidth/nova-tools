@@ -319,6 +319,40 @@ func TaskTitle(repo string, n int, title string, body []byte) string {
 	return strings.Join(parts, " | ")
 }
 
+// Issuer is the verb's issue writer for a caller that files many issues
+// (card cut --from, nova-tools#4340): each Post is one REST create and one
+// read-back, the same two calls the verb makes, so every issue the fleet
+// files goes through this one writer. The caller lints its own bodies.
+type Issuer struct{ c *client }
+
+// NewIssuer reads the token once; it refuses an empty one.
+func NewIssuer(d Deps) (*Issuer, error) {
+	c, err := newClient(d)
+	if err != nil {
+		return nil, err
+	}
+	return &Issuer{c: c}, nil
+}
+
+// Post files one issue on repo (owner/name) and reads its body back. It
+// returns the issue number and its html URL; a stored body that differs
+// from body is an error naming the issue (which exists and must be fixed by
+// hand), as is a failed read-back.
+func (i *Issuer) Post(ctx context.Context, repo, title, body string) (int, string, error) {
+	n, url, err := i.c.createIssue(ctx, repo, title, body)
+	if err != nil {
+		return 0, "", fmt.Errorf("post issue: %w", err)
+	}
+	stored, err := i.c.issueBody(ctx, repo, n)
+	if err != nil {
+		return n, url, fmt.Errorf("READBACK FAILED %s#%d: %w; the issue exists, check its body by hand", repo, n, err)
+	}
+	if stored != body {
+		return n, url, fmt.Errorf("READBACK DIFFERS %s#%d posted=%d stored=%d; the issue exists, fix its body by hand", repo, n, len(body), len(stored))
+	}
+	return n, url, nil
+}
+
 // client is the REST seam: two POSTs and two GETs of the issues API.
 type client struct {
 	api   string

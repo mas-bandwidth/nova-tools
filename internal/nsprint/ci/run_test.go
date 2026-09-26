@@ -1,3 +1,5 @@
+//go:build functional
+
 package ci_test
 
 // The DONE-WHEN of nova-tools #3597 / #3349 for our own CI: request -> run

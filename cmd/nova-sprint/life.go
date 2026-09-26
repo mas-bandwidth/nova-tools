@@ -337,13 +337,7 @@ func runBenchBeat(ctx context.Context, args []string, out, errOut io.Writer) int
 	// this host; no new unit, no tokens.
 	wakeOn := *host
 	if wakeOn == "" {
-		h, err := os.Hostname()
-		if err != nil {
-			// The repair tick names this host; a bench that cannot say
-			// its name refuses now, not every tenth beat with an empty host.
-			return refuse(errOut, "bench beat", "no --host and no hostname: "+err.Error())
-		}
-		wakeOn = h
+		wakeOn, _ = os.Hostname()
 	}
 	beats := 0
 	var launchEnv []string

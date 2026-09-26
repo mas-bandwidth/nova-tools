@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 )
 
 // The four items of the #2910 HOLD at 76811872, one test each.
@@ -213,8 +215,8 @@ func TestIssue2218AddedUnexecutedRowFails(t *testing.T) {
 		if err != nil || !present {
 			t.Fatalf("%s: ListAtCommit = present %v, %v; want the base's list", name, present, err)
 		}
-		head, _ := os.ReadFile(filepath.Join(root, UnexecutedListPath))
-		if added := AddedListRows(baseList, string(head)); !slices.Equal(added, []string{"$ nova-foo newverb --x 1"}) {
+		head := loadAllowlist(t, filepath.Join(root, UnexecutedListPath), unexecutedListOptions)
+		if added := AddedListRows(baseList, head.Text()); !slices.Equal(added, []string{"$ nova-foo newverb --x 1"}) {
 			t.Errorf("%s: added rows = %q; want the appended row, which fails the class test", name, added)
 		}
 	}
@@ -233,7 +235,11 @@ func TestIssue2218AddedUnexecutedRowFails(t *testing.T) {
 func TestIssue2218HelpBannersAreCounted(t *testing.T) {
 	t.Parallel()
 
-	got := parseCompared(t, "compared_examples.txt", "cmd/nova-work/main_test.go:TestReady example: nova-work ready --node a\n")
+	list, err := allowlist.Parse("compared_examples.txt", "cmd/nova-work/main_test.go:TestReady example: nova-work ready --node a\n", comparedListOptions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := parseCompared(t, "compared_examples.txt", list)
 	if got["example: nova-work ready --node a"].test != "TestReady" {
 		t.Errorf("parseCompared = %v; want the example: entry accepted", got)
 	}

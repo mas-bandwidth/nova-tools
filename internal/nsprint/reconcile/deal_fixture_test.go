@@ -1,3 +1,5 @@
+//go:build functional
+
 package reconcile_test
 
 import (

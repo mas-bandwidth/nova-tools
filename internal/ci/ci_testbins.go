@@ -1,7 +1,6 @@
 package ci
 
 import (
-	"bufio"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -67,6 +66,9 @@ type TestbinsResult struct {
 	Allowlisted int
 	Findings    []TestbinFinding
 	Stale       []TestbinFinding
+	// Measured is the set the allowlist must hold (allowlist.Check): the key of
+	// every row a finding used and of every finding no row allows.
+	Measured map[string]bool
 }
 
 // Refused is the number of lines the run would print: offenders plus stale
@@ -104,7 +106,7 @@ var checkTestbinDirs = []string{"internal", "cmd"}
 // fixtures are never read as offenders.
 func CheckTestbins(root, allowlistPath string) (TestbinsResult, error) {
 	var res TestbinsResult
-	entries, err := readTestbinAllowlist(allowlistPath)
+	entries, err := readWaitAllowlist(allowlistPath)
 	if err != nil {
 		return res, err
 	}
@@ -164,60 +166,17 @@ func CheckTestbins(root, allowlistPath string) (TestbinsResult, error) {
 		remaining = append(remaining, f)
 	}
 	res.Findings = remaining
+	res.Measured = usedRowKeys(entries, matched)
 	for i, e := range entries {
 		if matched[i] {
 			continue
 		}
 		res.Stale = append(res.Stale, TestbinFinding{File: e.file, Line: e.line, Kind: "allowlist", Remedy: TestbinRemedyAllow})
 	}
+	for _, f := range res.Findings {
+		res.Measured[FileLineKey(f.File, f.Line, f.Kind)] = true
+	}
 	return res, nil
-}
-
-// testbinAllow is one allowlist row: the offender it names. The date and the
-// reason that follow are for a reader and are not matched on.
-type testbinAllow struct {
-	file string
-	line int
-	kind string
-}
-
-// readTestbinAllowlist parses `file:line kind date reason` rows, ignoring blank
-// lines and # comments. A missing file is an empty allowlist, never an error:
-// a tree with nothing parked in it is the goal.
-func readTestbinAllowlist(path string) ([]testbinAllow, error) {
-	if path == "" {
-		return nil, nil
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	defer f.Close()
-	var out []testbinAllow
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-		colon := strings.LastIndex(fields[0], ":")
-		if colon < 0 {
-			continue
-		}
-		n, convErr := strconv.Atoi(fields[0][colon+1:])
-		if convErr != nil {
-			continue
-		}
-		out = append(out, testbinAllow{file: fields[0][:colon], line: n, kind: fields[1]})
-	}
-	return out, sc.Err()
 }
 
 // matchTestbinAllow returns the index of an unused entry that allows this
@@ -229,7 +188,7 @@ func readTestbinAllowlist(path string) ([]testbinAllow, error) {
 // lines of a listed file must not turn dev red (2026-09-17, #1073). An exact
 // line match is preferred so the stale row reported is the one a reader
 // expects.
-func matchTestbinAllow(entries []testbinAllow, used []bool, f TestbinFinding) int {
+func matchTestbinAllow(entries []waitAllow, used []bool, f TestbinFinding) int {
 	loose := -1
 	for i, e := range entries {
 		if used[i] || e.file != f.File || e.kind != f.Kind {

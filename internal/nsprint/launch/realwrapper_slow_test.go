@@ -1,4 +1,4 @@
-//go:build unix && slow
+//go:build unix && slow && functional
 
 package launch
 

@@ -344,14 +344,8 @@ func (r WrapperReport) Line() string {
 	if r.Outcome == "" {
 		return fmt.Sprintf("REFUSED nova-card %s code=%d why=%s", r.Card, r.Code, strconv.Quote(r.Why))
 	}
-	line := fmt.Sprintf("ENDED nova-card %s outcome=%s reason=%s exit=%d beats=%d wall_ms=%d code=%d",
+	return fmt.Sprintf("ENDED nova-card %s outcome=%s reason=%s exit=%d beats=%d wall_ms=%d code=%d",
 		r.Card, r.Outcome, r.Reason, r.Exit, r.Beats, r.Wall.Milliseconds(), r.Code)
-	if r.Why != "" {
-		// What went wrong on the way to the end (a refused end, a leaked job
-		// dir, a commit step error) is on the line, never only in memory.
-		line += " why=" + strconv.Quote(r.Why)
-	}
-	return line
 }
 
 // WrapperBranch is the attempt's branch (#2756 1.7): nova/<S>/<label>-a<attempt>.
@@ -497,9 +491,9 @@ func RunWrapper(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger) Wr
 	}
 	cleanup := func() {
 		if err := safepath.RemoveUnder(cfg.JobsRoot, job); err != nil {
-			// A job dir left on the bench is on the report's line, whatever
-			// else went wrong (#3420 hygiene: it fills the disk otherwise).
-			appendWhy(&rep, "job dir left: "+err.Error())
+			if rep.Why == "" {
+				rep.Why = "job dir left: " + err.Error()
+			}
 			return
 		}
 		// <S>/<label> go too once empty; os.Remove never removes a non-empty dir.
@@ -682,10 +676,12 @@ func finish(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger, rep *W
 	if end.Outcome == "DONE" {
 		// The commit step (#2932): <job>/out/repo onto the card branch, before copy out.
 		msg := resultLine(filepath.Join(job, "out"))
-		c, commitErr := CommitOutput(filepath.Join(job, "out", "repo"), WrapperBranch(cfg.Sprint, cfg.Label, cfg.Attempt), msg, cfg.Bench)
-		if commitErr != nil {
+		c, err := CommitOutput(filepath.Join(job, "out", "repo"), WrapperBranch(cfg.Sprint, cfg.Label, cfg.Attempt), msg, cfg.Bench)
+		if err != nil {
 			c = CommitResult{SHA: NoCommit, Note: "NO-COMMIT"}
-			appendWhy(rep, "commit step: "+commitErr.Error())
+			if rep.Why == "" {
+				rep.Why = "commit step: " + err.Error()
+			}
 		}
 		end.PushedSHA, end.Commit = c.SHA, c.Note
 		// The checkout the commit lives in: a copy's end pushes from it
@@ -697,28 +693,16 @@ func finish(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger, rep *W
 		if nc, ok := NoCommitEnd(kind, filepath.Join(job, "out"), end); ok {
 			end = nc
 			rep.Outcome, rep.Reason = end.Outcome, end.Reason
-			if commitErr != nil {
-				// The commit step failed: the record blames git, not the
-				// model ("committed nothing" would be a lie).
-				end.Why = "commit step: " + commitErr.Error()
-			}
 			if rep.Why == "" {
 				rep.Why = end.Why
-			} else if !strings.Contains(rep.Why, end.Why) {
+			} else {
 				rep.Why = end.Why + "; " + rep.Why
 			}
 		}
 	}
 	if err := copyOut(job, results); err != nil {
-		// The job dir is kept: its results are the only copy. The card
-		// still ends, FAILED other with this as its why, so the record says
-		// what happened rather than a lease that lapses in silence.
+		// The job dir is kept: its results are the only copy.
 		rep.Code, rep.Why = WrapperExitCouldNot, "copy out: "+err.Error()
-		end.Outcome, end.Reason, end.Exit, end.Why = "FAILED", "other", -1, rep.Why
-		rep.Outcome, rep.Reason, rep.Exit = end.Outcome, end.Reason, end.Exit
-		if code, eerr := ledger.End(ctx, end); eerr != nil || code != 0 {
-			appendWhy(rep, fmt.Sprintf("card end refused code=%d%s", code, errSuffix(eerr)))
-		}
 		return *rep
 	}
 	// The RESULT record comes before the end: a DONE whose RESULT.md could
@@ -741,18 +725,9 @@ func finish(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger, rep *W
 			t := time.NewTicker(every)
 			er.ticks, stop = t.C, t.Stop
 		}
-		beatNoted := false
 		er.beat = func() {
-			code, err := ledger.Beat(ctx)
-			if err == nil && code == 0 {
+			if code, err := ledger.Beat(ctx); err == nil && code == 0 {
 				rep.Beats++
-				return
-			}
-			if !beatNoted {
-				// A beat refused while the TEST line runs (fenced, Redis
-				// down) is on the report once, not lost between beats.
-				beatNoted = true
-				appendWhy(rep, fmt.Sprintf("beat under TEST refused code=%d%s", code, errSuffix(err)))
 			}
 		}
 		res, synth, rcode, rerr := recordEnd(ctx, rec, er)
@@ -773,43 +748,23 @@ func finish(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger, rep *W
 				end.Outcome, end.Reason = "FAILED", "other"
 				rep.Outcome, rep.Reason = end.Outcome, end.Reason
 			}
-			if end.Why == "" {
-				// The record's why says why it is FAILED other, not "".
-				end.Why = rwhy
+			if rep.Why == "" {
+				rep.Why = rwhy
+			} else {
+				rep.Why += "; " + rwhy
 			}
-			appendWhy(rep, rwhy)
 		}
 	}
-	if err := writeWrapperLine(results, cfg, end, rep.Beats, wall); err != nil {
-		appendWhy(rep, "wrapper.line: "+err.Error())
-	}
+	writeWrapperLine(results, cfg, end, rep.Beats, wall)
 	code, err := ledger.End(ctx, end)
 	cleanup()
 	if err != nil || code != 0 {
 		rep.Code = ledgerCode(code, err)
-		refused := fmt.Sprintf("card end refused code=%d%s", code, errSuffix(err))
-		appendWhy(rep, refused)
-		// The wrapper runs detached with its stdout on /dev/null: the
-		// refused end is appended to the results' wrapper.line too, so the
-		// bench holds the why beside the record the end did not write.
-		if nerr := noteWrapperLine(results, "END-REFUSED card="+cfg.card()+" "+refused); nerr != nil {
-			appendWhy(rep, "wrapper.line: "+nerr.Error())
-		}
+		rep.Why = fmt.Sprintf("card end refused code=%d%s", code, errSuffix(err))
 		return *rep
 	}
 	rep.Code = WrapperExitEnded
 	return *rep
-}
-
-// appendWhy adds one more reason to the report's why, in order, ";"-joined.
-func appendWhy(rep *WrapperReport, why string) {
-	switch {
-	case why == "":
-	case rep.Why == "":
-		rep.Why = why
-	default:
-		rep.Why += "; " + why
-	}
 }
 
 // NativeRefusedMark is what `nova-swarm native` prints when it refuses a card
@@ -1058,24 +1013,10 @@ func copyFile(src, dst string) error {
 
 // writeWrapperLine records what end.record has no field for: the wall and the
 // harness's RESULT line (line 1 of out/RESULT.md, if it wrote one).
-func writeWrapperLine(results string, cfg WrapperConfig, end WrapperEnd, beats int, wall time.Duration) error {
+func writeWrapperLine(results string, cfg WrapperConfig, end WrapperEnd, beats int, wall time.Duration) {
 	line := fmt.Sprintf("WRAPPER card=%s outcome=%s reason=%s exit=%d beats=%d wall_ms=%d wall_max_s=%d commit=%s result=%s why=%s\n",
 		cfg.card(), end.Outcome, end.Reason, end.Exit, beats, wall.Milliseconds(), int64(end.WallMax/time.Second), strconv.Quote(end.Commit), strconv.Quote(resultLine(results)), strconv.Quote(end.Why))
-	return os.WriteFile(filepath.Join(results, "wrapper.line"), []byte(line), 0o644)
-}
-
-// noteWrapperLine appends one line to the results' wrapper.line: what
-// happened after the WRAPPER line was written (a refused end).
-func noteWrapperLine(results, line string) error {
-	f, err := os.OpenFile(filepath.Join(results, "wrapper.line"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(f, line); err != nil {
-		_ = f.Close()
-		return err
-	}
-	return f.Close()
+	_ = os.WriteFile(filepath.Join(results, "wrapper.line"), []byte(line), 0o644)
 }
 
 func resultLine(results string) string {

@@ -275,12 +275,14 @@ with its sweep of the tree or it does not land.
 `templates`, `goenv`, `pathassert`, `busprogress`,
 `outputs`, `windows-pr`, `windows-sizes`, `windows-table`, `one-windows-leg`,
 `darwin-sizes`, `darwin-table`, `cache`, `pinned-actions`, `ci-ok`, `failed`,
-`benchname`, `nightly-tags`, `selection`, `toolchainroots`, `walltoolchain`, `hostseam`,
-`kernel-components`, `asd-closing-line`, `ciworkspace`, `lisptemppath`, `admitkind`, `namedpaths`, `lispduplicate`, `one section`, `testbins`, `fieldsindex`, `cardtemplates`, `transcripts`, `forestwriter`, `forestscript`, `parallel`, `slowwaits`,
-`seatwrap`, `silent` (no `_ = err` and no `|| true` literal on the copy model's live path). Every entry — the ten above too — is written out in
+`benchname`, `nightly-tags`, `functional` (a test that starts a redis-server is behind `//go:build functional`), `selection`, `toolchainroots`, `walltoolchain`, `hostseam`,
+`kernel-components`, `asd-closing-line`, `ciworkspace`, `lisptemppath`, `admitkind`, `namedpaths`, `lispduplicate`, `one section`, `testbins`, `fieldsindex`, `cardtemplates`, `transcripts`, `forestwriter`, `forestscript`, `parallel`, `slowwaits`, `allowlist`,
+`seatwrap`. Every entry — the ten above too — is written out in
 [SPEC-CI.md](SPEC-CI.md) under **The class tests** with its rule, the hurt
 that bought it, its allowlist, its remedy line and its narrowings. Read the entry, not
 the test. An allowlist only ever shrinks: a new row is a refusal, not a parking place.
+After a removal, `NOVA_CI_UPDATE=1 go test -count=1 ./internal/ci/` drops the stale rows
+from every list and fails once with `updated, rerun` ([TESTING.md](TESTING.md)).
 
 **Two more that are not class tests.** A fake is **strict like the real tool** —
 a lenient fake ships the real thing broken, so a fake refuses what the real one

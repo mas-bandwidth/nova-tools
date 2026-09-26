@@ -1,3 +1,5 @@
+//go:build functional
+
 package ci_test
 
 import (
