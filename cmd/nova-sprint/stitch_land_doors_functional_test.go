@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -38,16 +39,23 @@ const (
 // --pr the stitch is merging; by a copy's card end --ok --pr it is in
 // review. Nothing indexes the stitch by hand (no ns_task_refs): the door
 // that wrote its pr indexed it, or a CLOSE line on n does not find it.
-func doorPlan(t *testing.T, addr string, c *redis.Client, p, s string, n int, head, door string) {
+func doorPlan(t *testing.T, addr string, c *redis.Client, p, s string, n int, head, door string) string {
 	t.Helper()
 	ctx := context.Background()
+	// card end --ok --pr runs the spec gate (#4313, nova-tools#4401) in
+	// --repo, the checkout at --head, and the PR record's head is that
+	// head: the door's head is the checkout's, returned to the caller.
+	var checkout, baseSHA string
+	if door == doorEnd {
+		checkout, baseSHA, head = doorCheckout(t)
+	}
 	if _, err := taskcard.Push(ctx, c, taskcard.PushRequest{ID: p, Where: "waiting", Stream: s, Kind: "build",
 		Ref: doorPlanRef, Origin: doorPlanOrigin, Title: "door " + p, Repo: lsRepo, By: "rowan",
-		Fields: []string{"base", "dev", "base_sha", cutFromSHA, "paths", "a.go", "done_when", "holds"}}); err != nil {
+		Fields: []string{"base", "dev", "base_sha", cutFromSHA, "paths", "a.go", "done_when", "holds", "test", "./x TestHolds"}}); err != nil {
 		t.Fatal(err)
 	}
 	tsv := filepath.Join(t.TempDir(), "children.tsv")
-	if err := os.WriteFile(tsv, []byte("id\ttitle\tpaths\tdone-when\n"+p+"-c\tone\ta.go\tholds\n"), 0o644); err != nil {
+	if err := os.WriteFile(tsv, []byte("id\ttitle\tpaths\tdone-when\tbody\ttest\n"+p+"-c\tone\ta.go\tholds\t"+cutInv+"\t./x TestOne\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if code, out, errOut := runSprint("card", "cut", "--parent", p, "--from", tsv, "--no-github", "--actor", "rowan", "--redis", addr); code != 0 {
@@ -96,8 +104,10 @@ func doorPlan(t *testing.T, addr string, c *redis.Client, p, s string, n int, he
 		}
 		run("card", "deal", "--to", "bench:b", "--ids", st, "--actor", "rowan")
 		run("card", "work", "--as", "bench:b", "--fill")
-		if out := run("card", "end", "--id", st+"~1", "--ok", "--pr", "nova-tools#"+strconv.Itoa(n), "--head", head,
-			"--line1", "RESULT: "+st, "--base", "dev", "--base-sha", cutFromSHA, "--paths", "a.go"); !strings.Contains(out, "ENDED "+st+"~1 primary="+st+" from=working to=review ") {
+		// TEST none with a why: the checkout's diff is one text file
+		c.HSet(ctx, taskcard.Key(st+"~1"), "base_sha", baseSHA, "test", "none the fixture's diff is one text file")
+		if out := run("card", "end", "--id", st+"~1", "--ok", "--pr", "nova-tools#"+strconv.Itoa(n), "--head", head, "--repo", checkout,
+			"--line1", "RESULT: "+st, "--base", "dev", "--base-sha", baseSHA, "--paths", "a.go"); !strings.Contains(out, "ENDED "+st+"~1 primary="+st+" from=working to=review ") {
 			t.Fatalf("card end --ok --pr:\n%s", out)
 		}
 	default:
@@ -106,6 +116,35 @@ func doorPlan(t *testing.T, addr string, c *redis.Client, p, s string, n int, he
 	if w := c.HGet(ctx, taskcard.Key(st), "where").Val(); w != want {
 		t.Fatalf("%s is %s, want %s", st, w, want)
 	}
+	return head
+}
+
+// doorCheckout is a git checkout for the spec gate at card end --ok --pr: a
+// base commit and the copy's one text file on top (TestCardMovesCLI's).
+func doorCheckout(t *testing.T) (dir, base, head string) {
+	t.Helper()
+	dir = filepath.Join(t.TempDir(), "checkout")
+	git := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir, "-c", "user.email=f@example.com", "-c", "user.name=f", "-c", "core.hooksPath=/dev/null"}, args...)...)
+		b, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v %s", args, err, b)
+		}
+		return strings.TrimSpace(string(b))
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	git("init", "-q")
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	base = git("rev-parse", "HEAD")
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("the work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "a.txt")
+	git("commit", "-q", "-m", "the work")
+	return dir, base, git("rev-parse", "HEAD")
 }
 
 // TestLandMergeNamesThePlanItsStitchLanded is the fix round's owed (3), the
@@ -236,8 +275,7 @@ func TestCloseAfterCardEndPRLandsThePlan(t *testing.T) {
 	t.Parallel()
 	addr, c := wstest.Start(t)
 	ctx := context.Background()
-	head := strings.Repeat("b", 40)
-	doorPlan(t, addr, c, "de", "autonomy-de", 90, head, doorEnd)
+	head := doorPlan(t, addr, c, "de", "autonomy-de", 90, "", doorEnd)
 	if !c.SIsMember(ctx, "ref:nova-tools#90:tasks", "de-stitch").Val() {
 		t.Fatalf("card end --ok --pr 90 left de-stitch out of ref:nova-tools#90:tasks: %v", c.SMembers(ctx, "ref:nova-tools#90:tasks").Val())
 	}

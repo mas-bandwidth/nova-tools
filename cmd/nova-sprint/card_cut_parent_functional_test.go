@@ -289,11 +289,11 @@ func TestCancelledStitchIsStuckThenRecutLandsThePlan(t *testing.T) {
 	const ref, origin = "mas-bandwidth/nova-tools#4317", "https://forge.test/mas-bandwidth/nova-tools/issues/4317"
 	if _, err := taskcard.Push(ctx, c, taskcard.PushRequest{ID: "pc", Where: "waiting", Stream: stream, Kind: "build",
 		Ref: ref, Origin: origin, Title: "plan cancel", Repo: "mas-bandwidth/nova-tools", By: "rowan",
-		Fields: []string{"base", "dev", "base_sha", cutFromSHA, "paths", "a.go", "done_when", "the plan holds"}}); err != nil {
+		Fields: []string{"base", "dev", "base_sha", cutFromSHA, "paths", "a.go", "done_when", "the plan holds", "test", "./x TestHolds"}}); err != nil {
 		t.Fatal(err)
 	}
 	tsv := filepath.Join(t.TempDir(), "children.tsv")
-	if err := os.WriteFile(tsv, []byte("id\ttitle\tpaths\tdone-when\ne1\tone\ta.go\tholds\n"), 0o644); err != nil {
+	if err := os.WriteFile(tsv, []byte("id\ttitle\tpaths\tdone-when\tbody\ttest\ne1\tone\ta.go\tholds\t"+cutInv+"\t./x TestOne\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if code, out, errOut := run("card", "cut", "--parent", "pc", "--from", tsv, "--no-github", "--actor", "rowan"); code != 0 {
@@ -399,10 +399,10 @@ func TestRecutStitchFilesItsOwnIssueWithGitHubOn(t *testing.T) {
 	for _, p := range []string{"pa", "pb", "pz"} {
 		if _, err := taskcard.Push(ctx, c, taskcard.PushRequest{ID: p, Where: "waiting", Stream: "autonomy", Kind: "build",
 			Ref: repoOf[p] + "#1", Title: "plan " + p, Repo: repoOf[p], By: "rowan",
-			Fields: []string{"base", "dev", "base_sha", cutFromSHA, "paths", "a.go", "done_when", "holds"}}); err != nil {
+			Fields: []string{"base", "dev", "base_sha", cutFromSHA, "paths", "a.go", "done_when", "holds", "test", "./x TestHolds"}}); err != nil {
 			t.Fatal(err)
 		}
-		files[p] = "id\ttitle\tpaths\tdone-when\n" + p + "-c1\tone\ta.go\tholds\n"
+		files[p] = "id\ttitle\tpaths\tdone-when\tbody\ttest\n" + p + "-c1\tone\ta.go\tholds\t" + cutInv + "\t./x TestOne\n"
 		if code, out := runCutFrom(cutFromOpts{Text: []byte(files[p]), Parent: p, Repo: repoOf[p]}, d); code != 0 {
 			t.Fatalf("cut %s exit %d:\n%s", p, code, out)
 		}
@@ -415,7 +415,7 @@ func TestRecutStitchFilesItsOwnIssueWithGitHubOn(t *testing.T) {
 	}
 	bare := func(p string) (int, string) {
 		var b strings.Builder
-		return cardCutFrom(ctx, cutFromOpts{Parent: p, Base: "dev", Actor: "rowan"}, d, &b), b.String()
+		return cardCutFrom(ctx, cutFromOpts{Parent: p, Base: "dev", Actor: "rowan"}, d, &b, &b), b.String()
 	}
 	for i, p := range []string{"pa", "pb", "pz"} {
 		n := 5006 + i
@@ -463,10 +463,10 @@ func TestRecutStitchFilingRefusalNamesItsRemedy(t *testing.T) {
 	}
 	if _, err := taskcard.Push(ctx, c, taskcard.PushRequest{ID: "rf", Where: "waiting", Stream: "autonomy", Kind: "build",
 		Ref: "mas-bandwidth/nova-tools#1", Title: "plan rf", Repo: "mas-bandwidth/nova-tools", By: "rowan",
-		Fields: []string{"base", "dev", "base_sha", cutFromSHA, "paths", "a.go", "done_when", "holds"}}); err != nil {
+		Fields: []string{"base", "dev", "base_sha", cutFromSHA, "paths", "a.go", "done_when", "holds", "test", "./x TestHolds"}}); err != nil {
 		t.Fatal(err)
 	}
-	if code, out := runCutFrom(cutFromOpts{Text: []byte("id\ttitle\tpaths\tdone-when\nrf-c1\tone\ta.go\tholds\n"), Parent: "rf"}, d); code != 0 {
+	if code, out := runCutFrom(cutFromOpts{Text: []byte("id\ttitle\tpaths\tdone-when\tbody\ttest\nrf-c1\tone\ta.go\tholds\t" + cutInv + "\t./x TestOne\n"), Parent: "rf"}, d); code != 0 {
 		t.Fatalf("cut rf exit %d:\n%s", code, out)
 	}
 	if _, err := taskcard.Cancel(ctx, c, "rf-stitch", "rowan", "wrong approach"); err != nil {
@@ -474,7 +474,7 @@ func TestRecutStitchFilingRefusalNamesItsRemedy(t *testing.T) {
 	}
 	bare := func() (int, string) {
 		var b strings.Builder
-		return cardCutFrom(ctx, cutFromOpts{Parent: "rf", Base: "dev", Actor: "rowan"}, d, &b), b.String()
+		return cardCutFrom(ctx, cutFromOpts{Parent: "rf", Base: "dev", Actor: "rowan"}, d, &b, &b), b.String()
 	}
 	forge.failAt = len(forge.titles) + 1
 	code, out := bare()
@@ -510,11 +510,11 @@ func TestStuckPlanRemedyRunsAsPrinted(t *testing.T) {
 	}
 	if _, err := taskcard.Push(ctx, c, taskcard.PushRequest{ID: "rp", Where: "waiting", Stream: "autonomy", Kind: "build",
 		Ref: "mas-bandwidth/nova-tools#4317", Title: "remedy", Repo: "mas-bandwidth/nova-tools", By: "rowan",
-		Fields: []string{"base", "dev", "base_sha", cutFromSHA, "paths", "a.go", "done_when", "holds"}}); err != nil {
+		Fields: []string{"base", "dev", "base_sha", cutFromSHA, "paths", "a.go", "done_when", "holds", "test", "./x TestHolds"}}); err != nil {
 		t.Fatal(err)
 	}
 	tsv := filepath.Join(t.TempDir(), "children.tsv")
-	if err := os.WriteFile(tsv, []byte("id\ttitle\tpaths\tdone-when\nd1\tone\ta.go\tholds\nd2\ttwo\tb.go\tholds\nd3\tthree\tc.go\tholds\n"), 0o644); err != nil {
+	if err := os.WriteFile(tsv, []byte("id\ttitle\tpaths\tdone-when\tbody\ttest\nd1\tone\ta.go\tholds\t"+cutInv+"\t./x TestOne\nd2\ttwo\tb.go\tholds\t"+cutInv+"\t./x TestOne\nd3\tthree\tc.go\tholds\t"+cutInv+"\t./x TestOne\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if code, out, errOut := run("card", "cut", "--parent", "rp", "--from", tsv, "--no-github", "--actor", "rowan"); code != 0 {
@@ -576,11 +576,11 @@ func TestStitchDoneWithNoPRPrintsThePlanStuck(t *testing.T) {
 	for _, p := range []string{"sd", "sm"} {
 		if _, err := taskcard.Push(ctx, c, taskcard.PushRequest{ID: p, Where: "waiting", Stream: "autonomy-" + p, Kind: "build",
 			Ref: "mas-bandwidth/nova-tools#4317", Title: "done " + p, Repo: "mas-bandwidth/nova-tools", By: "rowan",
-			Fields: []string{"base", "dev", "base_sha", cutFromSHA, "paths", "a.go", "done_when", "holds"}}); err != nil {
+			Fields: []string{"base", "dev", "base_sha", cutFromSHA, "paths", p + ".go", "done_when", "holds", "test", "./x TestHolds"}}); err != nil {
 			t.Fatal(err)
 		}
 		tsv := filepath.Join(t.TempDir(), "children.tsv")
-		if err := os.WriteFile(tsv, []byte("id\ttitle\tpaths\tdone-when\n"+p+"-c\tone\ta.go\tholds\n"), 0o644); err != nil {
+		if err := os.WriteFile(tsv, []byte("id\ttitle\tpaths\tdone-when\tbody\ttest\n"+p+"-c\tone\t"+p+".go\tholds\t"+cutInv+"\t./x TestOne\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		if code, out, errOut := run("card", "cut", "--parent", p, "--from", tsv, "--no-github", "--actor", "rowan"); code != 0 {
