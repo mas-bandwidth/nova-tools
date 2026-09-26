@@ -361,7 +361,13 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 			_, _ = fmt.Fprintf(out, "TASK done id=%s from=working to=ok primary=%s primary_to=%s ms=%d\n", *c.id, e[0].Primary, e[0].To, ms())
 			return 0
 		}
-		return moved(taskcard.Done(ctx, cl, *c.id, *c.actor, *c.evidence, *c.pr))
+		// done with no PR ends a card done (#4317): a stitch or child so
+		// ended leaves its plan stuck, and the receipt names the way on
+		code := moved(taskcard.Done(ctx, cl, *c.id, *c.actor, *c.evidence, *c.pr))
+		if code == 0 {
+			c.planAfter(ctx, cl, out)
+		}
+		return code
 	case "land":
 		if *c.stream == "" {
 			return moved(taskcard.Land(ctx, cl, *c.id, *c.actor, *c.sha, *c.why))

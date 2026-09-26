@@ -186,7 +186,7 @@ func TestPlanStateOverEveryStitchPhase(t *testing.T) {
 	// A cancelled stitch and a failed child: drop the child, then re-cut.
 	p := taskcard.Plan{ID: "pc", Where: "waiting", Children: []taskcard.Child{{ID: "c1", Where: "landed"}, {ID: "c2", Where: "done", WhereOK: "fail"}},
 		Stitch: taskcard.Child{ID: "pc-stitch-2", Where: "done", WhereOK: "fail"}}
-	if p.State() != taskcard.Stuck || !strings.Contains(p.Remedy(), "stitch pc-stitch-2 ended done/fail and the plan lands only with its stitch, and c2 ended done/fail; nova-sprint card stitch --id pc --drop c2 drops it, then nova-sprint card cut --parent pc re-cuts the stitch (pc-stitch-3,") {
+	if p.State() != taskcard.Stuck || !strings.Contains(p.Remedy(), "stitch pc-stitch-2 ended done/fail and the plan lands only with its stitch, and c2 ended done/fail; nova-sprint card stitch --drop c2 drops it, then nova-sprint card cut --parent pc re-cuts the stitch (pc-stitch-3,") {
 		t.Fatalf("stitch and child ended: %s %q", p.State(), p.Remedy())
 	}
 	if line := p.Line(); !strings.HasPrefix(line, "plan pc stuck children=2 ") || !strings.HasSuffix(line, " stitch=pc-stitch-2:done") {

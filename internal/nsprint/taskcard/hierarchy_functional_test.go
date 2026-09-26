@@ -380,7 +380,7 @@ func TestDropChildUnsticksAPlan(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, err := taskcard.ReadPlan(ctx, c, parent)
-	if err != nil || p.State() != taskcard.Stuck || !strings.Contains(p.Remedy(), "card stitch --id plan-drop --drop 5501") {
+	if err != nil || p.State() != taskcard.Stuck || !strings.Contains(p.Remedy(), "nova-sprint card stitch --drop 5501 drops it from the plan") {
 		t.Fatalf("stuck: %s %q %v", p.State(), p.Remedy(), err)
 	}
 	p, err = taskcard.DropChild(ctx, c, "5501", "rowan")

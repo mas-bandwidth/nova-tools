@@ -134,7 +134,7 @@ type Plan struct {
 //     lands; `card cut --parent <parent>` re-cuts the stitch (NextStitchID,
 //     DEPENDS-ON every child) and the plan moves on with it;
 //   - a child ended done/fail: its edge is never met, so the stitch is never
-//     released; `card stitch --id <parent> --drop <child>` drops the child
+//     released; `card stitch --drop <child>` drops the child
 //     from the plan (DropChild: the stitch's edge with it), or `card cut
 //     --parent` cuts a replacement.
 const Stuck = "stuck"
@@ -210,8 +210,8 @@ func (p Plan) Remedy() string {
 	}
 	f := p.Failed()
 	if !p.StitchEnded() {
-		return fmt.Sprintf("stuck: %s ended done/fail and the stitch waits on it; nova-sprint card stitch --id %s --drop %s drops it from the plan, or nova-sprint card cut --parent %s --from <children.tsv> cuts a replacement (then drop the failed one)",
-			strings.Join(f, ","), p.ID, f[0], p.ID)
+		return fmt.Sprintf("stuck: %s ended done/fail and the stitch waits on it; nova-sprint card stitch --drop %s drops it from the plan, or nova-sprint card cut --parent %s --from <children.tsv> cuts a replacement (then drop the failed one)",
+			strings.Join(f, ","), f[0], p.ID)
 	}
 	ended := "has no record"
 	if p.Stitch.Where == ws.Done {
@@ -219,8 +219,8 @@ func (p Plan) Remedy() string {
 	}
 	why := fmt.Sprintf("stuck: stitch %s %s and the plan lands only with its stitch", p.Stitch.ID, ended)
 	if len(f) > 0 {
-		return fmt.Sprintf("%s, and %s ended done/fail; nova-sprint card stitch --id %s --drop %s drops it, then nova-sprint card cut --parent %s re-cuts the stitch (%s, DEPENDS-ON every child)",
-			why, strings.Join(f, ","), p.ID, f[0], p.ID, NextStitchID(p.ID, p.Stitch.ID))
+		return fmt.Sprintf("%s, and %s ended done/fail; nova-sprint card stitch --drop %s drops it, then nova-sprint card cut --parent %s re-cuts the stitch (%s, DEPENDS-ON every child)",
+			why, strings.Join(f, ","), f[0], p.ID, NextStitchID(p.ID, p.Stitch.ID))
 	}
 	return fmt.Sprintf("%s; nova-sprint card cut --parent %s re-cuts the stitch (%s, DEPENDS-ON every child)",
 		why, p.ID, NextStitchID(p.ID, p.Stitch.ID))

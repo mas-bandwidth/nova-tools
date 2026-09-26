@@ -68,8 +68,9 @@ do
   -- text (the whole typed line), source ('' or comment:<id>).
   -- Reply: MISSING <record> | REFUSED <why> | EXISTS <line key> |
   -- POSTED <line key> <full head> <gates> <measured> <lines in the log>
-  -- <tasks moved> <same> <skipped> <cut> <note>... (the notes 'id: why' per skip;
-  -- cut is the copies the SCORE cut, #4094).
+  -- <tasks moved> <same> <skipped> <cut> <note>... (the notes 'id: why' per skip,
+  -- and 'PLAN parent=<id> ref=<r> origin=<o>' per plan a CLOSE line's landing
+  -- landed with its stitch, #4317; cut is the copies the SCORE cut, #4094).
   local function line_post(keys, args)
     local mode, repo, n, head, who, kind = args[1] or '', args[2] or '', args[3] or '',
       string.lower(args[4] or ''), string.lower(args[5] or ''), args[6] or ''

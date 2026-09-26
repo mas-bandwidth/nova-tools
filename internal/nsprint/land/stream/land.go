@@ -297,7 +297,8 @@ type MergeReport struct {
 	Missing  int
 	Lines    int
 	Skipped  []string
-	Unread   []int // members whose closes stayed unknown (no record, no read)
+	Plans    []string // the plans a member's stitch landed (Landed.Plans)
+	Unread   []int    // members whose closes stayed unknown (no record, no read)
 	Already  bool
 	Closed   []int
 	Unclosed []int
@@ -415,7 +416,7 @@ func Merge(ctx context.Context, c Client, o MergeOptions) (MergeReport, error) {
 	if err != nil {
 		return rep, err
 	}
-	rep.Moved, rep.Missing, rep.Lines, rep.Skipped = landed.Moved, landed.Missing, landed.Lines, landed.Skipped
+	rep.Moved, rep.Missing, rep.Lines, rep.Skipped, rep.Plans = landed.Moved, landed.Missing, landed.Lines, landed.Skipped, landed.Plans
 	// The Jev gate at each member's head is a decision; its landing is the
 	// outcome (#4316): one call, never a reason to refuse the land.
 	heads := make([]jevledger.GateHead, len(l.Members))

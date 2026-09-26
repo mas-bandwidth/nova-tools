@@ -33,7 +33,8 @@
 // rerun of the same file after a partial or a full filing files nothing
 // twice: a row the ledger holds takes its issue from there (reused=), and
 // its card, when an earlier run pushed it, is to=already (#4352 N: running
-// a verb twice is not a refusal).
+// a verb twice is not a refusal). A re-cut stitch (#4317) files through
+// taskcard.RecutLedgerKey(plan, stitch), row 1, never the file's ledger.
 //
 // A cell writes a newline as \n, a tab as \t and a backslash as \\. A row's
 // id is <repo name>-<issue n> (the card cut label), or with --no-github a
@@ -76,6 +77,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -112,6 +114,9 @@ type planFacts struct {
 	// Stitch is the stitch this cut binds: StitchID, the waiting one, or a
 	// re-cut's NextStitchID (set by planRows).
 	Stitch string
+	// Restitch is true when Stitch is a re-cut (the old one ended done):
+	// its row files through RecutLedgerKey, never the file's ledger.
+	Restitch bool
 	// Children is the parent's children field as a set: a row whose id is
 	// one of them is a rerun's, to=already, never a refusal.
 	Children map[string]bool
@@ -578,7 +583,7 @@ func planRows(ctx context.Context, o *cutFromOpts, d cutFromDeps, rows []*cutRow
 	if len(rows) == 0 && rec[taskcard.FieldChildren] == "" {
 		return nil, facts, fmt.Errorf("task:%s has no children to re-cut a stitch over: --from <children.tsv>", o.Parent)
 	}
-	facts.Stitch = stitch
+	facts.Stitch, facts.Restitch = stitch, restitch
 	if rec["stream"] == "" {
 		return nil, facts, fmt.Errorf("task:%s has no stream: nova-sprint task move --id %s --to-stream <s> first", o.Parent, o.Parent)
 	}
@@ -772,31 +777,59 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 	}
 
 	// The ledger: the rows an earlier run of this file filed take their
-	// issue from it and are never filed again.
+	// issue from it and are never filed again. A re-cut stitch's row files
+	// through its own ledger, keyed by plan and stitch id (RecutLedgerKey):
+	// a bare re-cut has no file, and a file's ledger holds the old stitch's
+	// issue, so neither may name the new stitch's (#4317). A bare re-cut
+	// reads no file ledger at all.
 	name := o.Repo[strings.IndexByte(o.Repo, '/')+1:]
 	ledger := taskcard.CutLedgerKey(o.Text)
+	recut := ""
+	if facts.Restitch {
+		recut = taskcard.RecutLedgerKey(o.Parent, facts.Stitch)
+	}
+	// ledgerOf is a row's ledger key and its row there: a re-cut stitch is
+	// row 1 of its own ledger (a bare and a --from re-cut agree on it).
+	ledgerOf := func(r *cutRow) (string, int) {
+		if r.stitch && recut != "" {
+			return recut, 1
+		}
+		return ledger, r.n
+	}
 	if !o.NoGitHub {
-		l, err := d.LedgerRead(ctx, ledger)
-		if err != nil {
-			fmt.Fprintf(out, "CARD CUT REFUSED file=%s why=%s remedy=%s\n", cutField(o.From), cutField("ledger: "+err.Error()),
-				cutField("check --redis or NOVA_SPRINT_REDIS and rerun; nothing was filed"))
-			summary(len(rows), len(rows))
-			return 1
-		}
-		if len(l.Issues) > 0 && l.Repo != o.Repo {
-			fmt.Fprintf(out, "CARD CUT REFUSED file=%s why=%s remedy=%s\n", cutField(o.From),
-				cutField(fmt.Sprintf("%s filed this file's rows on %s, not %s", ledger, l.Repo, o.Repo)), cutField("rerun with --repo "+l.Repo))
-			summary(len(rows), len(rows))
-			return 1
-		}
+		var keys []string
 		for _, r := range rows {
-			if n, ok := l.Issues[r.n]; ok {
-				r.fromLedger = true
-				r.ref, r.origin = fmt.Sprintf("%s#%d", o.Repo, n), fmt.Sprintf("https://github.com/%s/issues/%d", o.Repo, n)
-				if r.id == "" {
-					r.id = fmt.Sprintf("%s-%d", name, n)
+			if k, _ := ledgerOf(r); !slices.Contains(keys, k) {
+				keys = append(keys, k)
+			}
+		}
+		for _, key := range keys {
+			l, err := d.LedgerRead(ctx, key)
+			if err != nil {
+				fmt.Fprintf(out, "CARD CUT REFUSED file=%s why=%s remedy=%s\n", cutField(o.From), cutField("ledger: "+err.Error()),
+					cutField("check --redis or NOVA_SPRINT_REDIS and rerun; nothing was filed"))
+				summary(len(rows), len(rows))
+				return 1
+			}
+			if len(l.Issues) > 0 && l.Repo != o.Repo {
+				fmt.Fprintf(out, "CARD CUT REFUSED file=%s why=%s remedy=%s\n", cutField(o.From),
+					cutField(fmt.Sprintf("%s filed this file's rows on %s, not %s", key, l.Repo, o.Repo)), cutField("rerun with --repo "+l.Repo))
+				summary(len(rows), len(rows))
+				return 1
+			}
+			for _, r := range rows {
+				k, row := ledgerOf(r)
+				if k != key {
+					continue
 				}
-				reused++
+				if n, ok := l.Issues[row]; ok {
+					r.fromLedger = true
+					r.ref, r.origin = fmt.Sprintf("%s#%d", o.Repo, n), fmt.Sprintf("https://github.com/%s/issues/%d", o.Repo, n)
+					if r.id == "" {
+						r.id = fmt.Sprintf("%s-%d", name, n)
+					}
+					reused++
+				}
 			}
 		}
 	}
@@ -820,9 +853,10 @@ func cardCutFrom(ctx context.Context, o cutFromOpts, d cutFromDeps, out io.Write
 		n, url, err := d.File(ctx, o.Repo, r.title, cutIssueText(r, rows, o))
 		if n > 0 {
 			filed++
-			if lerr := d.LedgerWrite(ctx, ledger, o.Repo, r.n, n); lerr != nil {
+			key, row := ledgerOf(r)
+			if lerr := d.LedgerWrite(ctx, key, o.Repo, row, n); lerr != nil {
 				r.why = fmt.Sprintf("ledger: %v; %s#%d is filed but not in the ledger, so a rerun files it again: record it first with redis-cli HSET %s repo %s %d %d",
-					lerr, o.Repo, n, ledger, o.Repo, r.n, n)
+					lerr, o.Repo, n, key, o.Repo, row, n)
 				stopped = strconv.Itoa(r.n)
 				continue
 			}

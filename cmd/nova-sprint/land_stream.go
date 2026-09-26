@@ -351,6 +351,11 @@ func runLandMerge(ctx context.Context, args []string, out, errOut io.Writer) int
 		*repo, l.Slug, l.PR, stream.Short(l.Head), stream.Short(rep.MergeSHA), len(l.Members), rep.Moved, rep.Missing, rep.Already,
 		orDash(strings.Join(closed, ",")), orDash(strings.Join(unclosed, ",")), calls, rep.Lines, len(rep.Skipped), orDash(strings.Join(unread, ",")),
 		issues(rep.IssuesClosed), issues(rep.IssuesUnclosed), orDash(rep.Release))
+	// a member's stitch landed its plan (#4317): the plan, its issue and
+	// origin, so the one who landed the stream closes the plan's issue too
+	for _, p := range rep.Plans {
+		fmt.Fprintf(out, "LAND MERGE PLAN %s\n", p)
+	}
 	for _, s := range rep.Skipped {
 		fmt.Fprintf(errOut, "LAND MERGE SKIPPED %s\n", oneline.Field(s))
 	}

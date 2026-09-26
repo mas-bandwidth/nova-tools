@@ -28,6 +28,15 @@ func CutLedgerKey(text []byte) string {
 	return "cut:" + hex.EncodeToString(sum[:])
 }
 
+// RecutLedgerKey is the ledger of a re-cut stitch (nova-tools#4317): keyed
+// by the plan and the new stitch id, so a bare card cut --parent <plan>
+// (no file) never shares the empty file's ledger with another plan's re-cut,
+// and a file re-run for the re-cut never hands the new stitch the old one's
+// issue. The stitch is its row 1.
+func RecutLedgerKey(parent, stitch string) string {
+	return CutLedgerKey([]byte("recut plan=" + parent + " stitch=" + stitch + "\n"))
+}
+
 // CutLedger is one file's filings: the repo they were filed on and each
 // row's issue number.
 type CutLedger struct {
