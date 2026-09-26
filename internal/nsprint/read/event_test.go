@@ -22,7 +22,7 @@ func eventTask(t *testing.T, c *redis.Client, id, stream, state string, age int6
 	h := append([]string{"stream", stream, "state", state, "created_at", fmt.Sprint(age)}, fields...)
 	pipe := c.TxPipeline()
 	pipe.HSet(ctx, "task:"+id, h)
-	pipe.ZAdd(ctx, ws.Key(stream, state), redis.Z{Score: float64(age), Member: id})
+	pipe.ZAdd(ctx, ws.KeyAt(0, stream, state), redis.Z{Score: float64(age), Member: id})
 	pipe.SAdd(ctx, "ws:names", stream)
 	pipe.ZAddNX(ctx, "ws:order", redis.Z{Score: 1, Member: stream})
 	if _, err := pipe.Exec(ctx); err != nil {
@@ -109,10 +109,10 @@ func TestReadPostEventsMoveTasks(t *testing.T) {
 	// the landed set by identity: the stream's two cards and nothing else;
 	// its sentinel waits for the coordinator's acceptance (#4412) though no
 	// card of the stream is live, and swarm: cards's waits with its card
-	if got := c.ZRange(ctx, ws.Key(s, "landed"), 0, -1).Val(); strings.Join(got, ",") != "build-7-thing,"+read8 {
+	if got := c.ZRange(ctx, ws.KeyAt(0, s, "landed"), 0, -1).Val(); strings.Join(got, ",") != "build-7-thing,"+read8 {
 		t.Fatalf("ws:%s:landed = %v, want build-7-thing and %s", s, got, read8)
 	}
-	if got := c.ZRange(ctx, ws.Key("swarm: cards", "landed"), 0, -1).Val(); strings.Join(got, ",") != "build-44-issue" {
+	if got := c.ZRange(ctx, ws.KeyAt(0, "swarm: cards", "landed"), 0, -1).Val(); strings.Join(got, ",") != "build-44-issue" {
 		t.Fatalf("ws:swarm: cards:landed = %v, want build-44-issue", got)
 	}
 	for _, st := range []string{s, "swarm: cards"} {

@@ -4,6 +4,7 @@ package table_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,7 +39,8 @@ func cases2674() []case2674 {
 
 // TestControl2674SprintLayout (DONE-WHEN of #2674): on the keyspace captured
 // from the live fleet Redis, and on the degraded and no-Redis variants, Go's
-// RenderLive prints the bytes the bash of record printed on the same keyspace.
+// RenderLive prints the bytes the bash of record printed on the same keyspace,
+// but for the progress line, the one count (#4411, table.MaskXY).
 // The "bash" subtest re-runs the pinned bash itself against a real
 // redis-server loaded with the same keys and requires bash == golden == Go.
 func TestControl2674SprintLayout(t *testing.T) {
@@ -58,8 +60,16 @@ func TestControl2674SprintLayout(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if got, want := snap.RenderLive(now), c.golden(); got != want {
-				t.Fatalf("Go differs from the bash's %s\ngot:\n%s\nwant:\n%s", c.file, got, want)
+			// every byte is the bash's but the progress line, the one count
+			// (#4411): the fixture has no stream, so 0/0 with no eta, and
+			// "?" when Redis never answered
+			line := "0/0 done 0%, left 0, eta -"
+			if c.noRedis {
+				line = table.NeverCounted
+			}
+			got, want := snap.RenderLive(now), c.golden()
+			if table.MaskXY(got) != table.MaskXY(want) || strings.Split(got, "\n")[2] != line {
+				t.Fatalf("Go differs from the bash's %s (x/y masked; line 3 %q)\ngot:\n%s\nwant:\n%s", c.file, line, got, want)
 			}
 		})
 	}

@@ -28,7 +28,7 @@ func TestHostRowPrintsNoMirror(t *testing.T) {
 		{"HSET", "bench:delta", "host", "delta", "at", at},
 		{"SET", table.NoMirrorKey("delta"), "not-a-set"},
 	})
-	snap, err := table.ReadLive(context.Background(), client, table.LiveConfig{Friends: []string{"rowan"}, Sprint: "x"})
+	snap, err := table.ReadLive(context.Background(), client, table.LiveConfig{Friends: []string{"rowan"}})
 	if err != nil {
 		t.Fatal(err)
 	}

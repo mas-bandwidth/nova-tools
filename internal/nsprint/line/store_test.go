@@ -230,7 +230,7 @@ func TestLanderReadsPostedLine(t *testing.T) {
 	if err := c.HSet(ctx, "task:t7", "pr", "7").Err(); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.ZAdd(ctx, stream.WSKey("s1", "merging"), redis.Z{Score: 1, Member: "t7"}).Err(); err != nil {
+	if err := c.ZAdd(ctx, stream.WSKeyAt(0, "s1", "merging"), redis.Z{Score: 1, Member: "t7"}).Err(); err != nil {
 		t.Fatal(err)
 	}
 	members, skips, err := stream.Members(ctx, c, "nova-tools", []string{"s1"}, 8)

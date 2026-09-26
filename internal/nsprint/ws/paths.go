@@ -325,11 +325,16 @@ func ReadGateView(ctx context.Context, c redis.Cmdable) (GateView, error) {
 	if len(streams) == 0 {
 		return v, nil
 	}
+	// the live sets are the current epoch's (nova-tools#4238)
+	epoch, err := Epoch(ctx, c)
+	if err != nil {
+		return GateView{}, err
+	}
 	pipe = c.Pipeline()
 	sets := make([][]*redis.StringSliceCmd, len(streams))
 	for i, s := range streams {
 		for _, w := range Live {
-			sets[i] = append(sets[i], pipe.ZRange(ctx, Key(s, w), 0, 2))
+			sets[i] = append(sets[i], pipe.ZRange(ctx, KeyAt(epoch, s, w), 0, 2))
 		}
 	}
 	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
@@ -434,10 +439,15 @@ func LivePaths(ctx context.Context, c redis.Cmdable) (live, stored StreamPaths, 
 		cmd    *redis.StringSliceCmd
 	}
 	var sets []set
+	// the live sets are the current epoch's (nova-tools#4238)
+	epoch, err := Epoch(ctx, c)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	pipe = c.Pipeline()
 	for _, s := range streams {
 		for _, w := range Live {
-			sets = append(sets, set{s, pipe.ZRange(ctx, Key(s, w), 0, -1)})
+			sets = append(sets, set{s, pipe.ZRange(ctx, KeyAt(epoch, s, w), 0, -1)})
 		}
 	}
 	if len(sets) > 0 {

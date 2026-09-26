@@ -112,8 +112,11 @@ func Drain(ctx context.Context, client *redis.Client, sprint string, opts DrainO
 	var d drainTally
 
 	for _, member := range opts.Resume {
+		// paused, parked, log: the pool is the epoch's, derived by the
+		// function (nova-tools#4238)
 		vals, err := client.FCall(ctx, "ns_card_resume",
-			[]string{keyPaused(sprint), keyParked(sprint, member), keyPool(sprint), keyLog(sprint)},
+			[]string{keyPaused(sprint), keyParked(sprint, member), keyLog(sprint)},
+
 			member, sprint).Int64Slice()
 		if err != nil || len(vals) != 3 {
 			d.refused(sprint, "resume", "member="+oneline.Field(member), fmt.Sprintf("resume: %v", err))

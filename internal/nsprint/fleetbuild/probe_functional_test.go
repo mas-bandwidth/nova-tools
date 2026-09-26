@@ -51,8 +51,8 @@ func TestSprintClearThenFleetRollLeavesTheConsumerTableAtZero(t *testing.T) {
 	if _, err := taskcard.CancelCards(ctx, c, "rowan", "given back", dealt[0].Copy); err != nil {
 		t.Fatal(err)
 	}
-	if n := c.ZCard(ctx, hulk.Key("fail")).Val(); n != 1 {
-		t.Fatalf("%s holds %d before the clear, want 1", hulk.Key("fail"), n)
+	if n := c.ZCard(ctx, hulk.KeyAt(0, "fail")).Val(); n != 1 {
+		t.Fatalf("%s holds %d before the clear, want 1", hulk.KeyAt(0, "fail"), n)
 	}
 
 	// sprint clear

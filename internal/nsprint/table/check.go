@@ -165,6 +165,10 @@ func tableCells(body string) cellSet {
 				c.add("line "+line, line)
 				continue
 			}
+			if rest, ok := strings.CutPrefix(line, "pipeline "+f[1]+" REFUSED "); ok {
+				c.add("pipeline "+f[1]+" REFUSED", rest)
+				continue
+			}
 			for _, kv := range f[2:] {
 				k, v, _ := strings.Cut(kv, "=")
 				c.add("pipeline "+f[1]+" "+k, v)
