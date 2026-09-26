@@ -98,6 +98,7 @@ type Table struct {
 	types        []TypeRow
 	overrides    []OverrideRow
 	spread       []SpreadRow
+	probe        []ProbeRow
 	rungs        []string
 }
 
@@ -196,6 +197,9 @@ func (t *Table) Check(c Card) error {
 	row := t.rows[i]
 	if row.Rung != c.Rung {
 		return refuse(fmt.Sprintf("%s is a rung %s route", row.Route, row.Rung))
+	}
+	if t.probed(c.Rung, c.Route) {
+		return nil
 	}
 	if o := t.overrideFor(c.Rung, c.Type); o != nil {
 		if row.Flag == FlagBenched || row.Flag == FlagDead {
@@ -298,7 +302,7 @@ func Parse(src []byte) (*Table, error) {
 					t.Rule = s
 				}
 				section = ""
-			case "routes", "types", "overrides", "spread":
+			case "routes", "types", "overrides", "spread", "probe":
 				if val != "" {
 					return nil, fmt.Errorf("routes.yaml:%d: %s wants a block list below it", lineNo, key)
 				}
@@ -314,7 +318,7 @@ func Parse(src []byte) (*Table, error) {
 			}
 		case indent == 2 && strings.HasPrefix(trimmed, "- "):
 			if section == "" {
-				return nil, fmt.Errorf("routes.yaml:%d: list item outside routes, types, overrides or spread", lineNo)
+				return nil, fmt.Errorf("routes.yaml:%d: list item outside routes, types, overrides, spread or probe", lineNo)
 			}
 			key, val, err := keyValue(strings.TrimPrefix(trimmed, "- "))
 			if err != nil {
@@ -345,6 +349,8 @@ func Parse(src []byte) (*Table, error) {
 			err = t.addType(it)
 		case "spread":
 			err = t.addSpread(it)
+		case "probe":
+			err = t.addProbe(it)
 		default:
 			err = t.addOverride(it)
 		}
@@ -392,6 +398,9 @@ func Parse(src []byte) (*Table, error) {
 		}
 	}
 	if err := t.checkSpread(); err != nil {
+		return nil, fmt.Errorf("routes.yaml: %v", err)
+	}
+	if err := t.checkProbe(); err != nil {
 		return nil, fmt.Errorf("routes.yaml: %v", err)
 	}
 	return t, nil

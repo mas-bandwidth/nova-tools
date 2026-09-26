@@ -72,10 +72,7 @@ func TestParseFoldRefusesADamagedRecord(t *testing.T) {
 func TestCheckFoldKeepsRungAndDeadAndFallsBack(t *testing.T) {
 	t.Parallel()
 
-	tab, err := Load()
-	if err != nil {
-		t.Fatal(err)
-	}
+	tab := loadNoProbe(t)
 	f := foldFixture()
 	if err := tab.CheckFold(Card{Rung: "pro", Type: "fix", Route: "ormuse"}, f); err == nil || !strings.Contains(err.Error(), "is dead") {
 		t.Errorf("a dead route the fold ranks in: %v, want REFUSED dead", err)
