@@ -242,11 +242,9 @@ func TestControl3530NoPitstopNoSprint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "SPRINT TABLE\n\n0/0 left, 0% done -> ~0m\n\n" +
-		"stream                    | waiting | ready | working | review | merging | landed\n" +
-		"--------------------------+---------+-------+---------+--------+---------+-------\n" +
-		"--------------------------+---------+-------+---------+--------+---------+-------\n" +
-		"total                     |       0 |     0 |       0 |      0 |       0 |      0\n\n" +
+	// An empty sprint shows the title and the worker table alone: no
+	// headline, no stream table, no extra blank line (Glenn 2026-09-26).
+	want := "SPRINT TABLE\n\n" +
 		"worker                    | ready | working |  done |  ok% | status | load\n" +
 		"--------------------------+-------+---------+-------+------+--------+------\n" +
 		"--------------------------+-------+---------+-------+------+--------+------\n" +
@@ -380,7 +378,7 @@ func TestControl3637ClearUnderOneSecond(t *testing.T) {
 	if !strings.Contains(got, "\n592/592 left, 0% done -> ~11840m\n") {
 		t.Fatalf("after clear:\n%s", got)
 	}
-	if b, a := before.Render(now), got; b[strings.Index(b, "\nconsumer "):] != a[strings.Index(a, "\nconsumer "):] {
+	if b, a := before.Render(now), got; b[strings.Index(b, "\nworker "):] != a[strings.Index(a, "\nworker "):] {
 		t.Fatalf("a clear changed the consumer table:\nbefore\n%s\nafter\n%s", b, a)
 	}
 	if state, _ := client.HGet(ctx, "task:t9-landed-0", "state").Result(); state != "closed" {
