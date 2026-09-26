@@ -98,7 +98,15 @@ func TestSentinelIsCreatedAtFirstPushAndLandsLast(t *testing.T) {
 	if _, err := taskcard.Cancel(ctx, c, "B", "test", "not needed"); err != nil {
 		t.Fatal(err)
 	}
-	r, err := taskcard.Land(ctx, c, snSentinel, "test", snSHA, "")
+	// nothing live: the sentinel lands by the coordinator's acceptance
+	// alone (#4412); a seat without the role is refused
+	if _, err := taskcard.Land(ctx, c, snSentinel, "test", snSHA, ""); err == nil || !strings.Contains(err.Error(), "SENTINEL task:"+snSentinel+" lands by the coordinator's acceptance alone") {
+		t.Fatalf("land by a non-coordinator: %v", err)
+	}
+	if err := c.HSet(ctx, "friend:rowan:roles", "roles", "coordinator").Err(); err != nil {
+		t.Fatal(err)
+	}
+	r, err := taskcard.Land(ctx, c, snSentinel, "rowan", snSHA, "")
 	if err != nil || r.From != "waiting" || r.To != "landed" {
 		t.Fatalf("land: %+v %v", r, err)
 	}
@@ -191,9 +199,10 @@ func TestShowOrderListsCardsWithEdges(t *testing.T) {
 // is in the one move, not in the verbs. task done, cancel, a move to ready,
 // working, review or merging, a done/ok, a friend, a create of a sentinel
 // id, and a second stream name with the same slug are refused by name and
-// write nothing; sprint clear leaves it; it lands by structure with the
-// last card at that sha; stream order registers a stream that was written
-// straight into the keys.
+// write nothing; sprint clear leaves it; the last card's landing leaves it
+// waiting, a task land by a seat without the coordinator role is refused and
+// writes nothing, and the coordinator's lands it at that sha (#4412); stream
+// order registers a stream that was written straight into the keys.
 func TestSentinelIsStructure(t *testing.T) {
 	t.Parallel()
 	_, c := wstest.Start(t)
@@ -240,7 +249,8 @@ func TestSentinelIsStructure(t *testing.T) {
 	if n, _ := c.Exists(ctx, "task:Z", "task:x:sentinel").Result(); n != 0 {
 		t.Fatal("a refused push wrote a record")
 	}
-	// landing by structure: A lands, the stop lands with it at the sha
+	// no landing by structure (#4412): A lands, the stop waits for the
+	// coordinator's acceptance
 	if _, err := taskcard.Move(ctx, c, "A", "ready", taskcard.Opts{By: "test", Why: "deps met"}); err != nil {
 		t.Fatal(err)
 	}
@@ -250,8 +260,24 @@ func TestSentinelIsStructure(t *testing.T) {
 	if _, err := taskcard.Land(ctx, c, "A", "test", snSHA, "merged"); err != nil {
 		t.Fatal(err)
 	}
-	if h := c.HGetAll(ctx, "task:"+snSentinel).Val(); h["where"] != "landed" || h["merge_sha"] != snSHA || h["why"] != "last card A landed" {
-		t.Fatalf("the stop after the last landing: %v", h)
+	if h := c.HGetAll(ctx, "task:"+snSentinel).Val(); h["where"] != "waiting" || h["merge_sha"] != "" {
+		t.Fatalf("the stop after the last landing: %v, want waiting for acceptance", h)
+	}
+	before = dump()
+	if _, err := taskcard.Land(ctx, c, snSentinel, "test", snSHA, ""); err == nil || !strings.Contains(err.Error(), "SENTINEL task:"+snSentinel+" lands by the coordinator's acceptance alone") {
+		t.Fatalf("land by a non-coordinator: %v", err)
+	}
+	if dump() != before {
+		t.Fatal("a refused acceptance wrote the stop's record")
+	}
+	if err := c.HSet(ctx, "friend:rowan:roles", "roles", "reader,coordinator").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskcard.Land(ctx, c, snSentinel, "rowan", snSHA, "accepted"); err != nil {
+		t.Fatalf("the coordinator's acceptance: %v", err)
+	}
+	if h := c.HGetAll(ctx, "task:"+snSentinel).Val(); h["where"] != "landed" || h["merge_sha"] != snSHA || h["why"] != "accepted" {
+		t.Fatalf("the stop after acceptance: %v", h)
 	}
 	if err := ws.Check(ctx, c, []string{"A", snSentinel}); err != nil {
 		t.Fatalf("invariant: %v", err)
@@ -406,8 +432,16 @@ func TestSentinelKeepsItsStream(t *testing.T) {
 	if _, err := taskcard.Land(ctx, c, "G", "test", snSHA, "merged"); err != nil {
 		t.Fatal(err)
 	}
-	if w, _ := c.HGet(ctx, "task:"+gsid, "where").Result(); w != "landed" {
-		t.Fatalf("gamma's stop after its last landing: %q", w)
+	if w, _ := c.HGet(ctx, "task:"+gsid, "where").Result(); w != "waiting" {
+		t.Fatalf("gamma's stop after its last landing: %q, want waiting for acceptance", w)
+	}
+	// the coordinator accepts gamma; the rename below (by a seat without the
+	// role) carries that acceptance to the new name, it is not a second one
+	if err := c.HSet(ctx, "friend:rowan:roles", "roles", "coordinator").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskcard.Land(ctx, c, gsid, "rowan", snSHA, "accepted"); err != nil {
+		t.Fatalf("the coordinator's acceptance of gamma: %v", err)
 	}
 	if _, err := ws.Rename(ctx, c, "gamma", "delta", "test"); err != nil {
 		t.Fatalf("rename a landed stream: %v", err)

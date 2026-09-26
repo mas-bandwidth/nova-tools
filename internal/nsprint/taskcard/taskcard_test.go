@@ -4,6 +4,7 @@ package taskcard_test
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -146,18 +147,26 @@ func TestPushTakeDoneLandWalksTheSets(t *testing.T) {
 	if !c.SIsMember(ctx, "sprint:"+sprint+":idx:rowan:closed", "build-3778-a").Val() {
 		t.Fatal("landed task not in idx closed")
 	}
-	// two records: the card and the stream's sentinel, created waiting at
-	// the push that registered the stream and landed by structure with the
-	// last card (#4318): two ws:log entries of its own
+	// two records: the card, landed, and the stream's sentinel, created
+	// waiting at the push that registered the stream (#4318) and still
+	// waiting for the coordinator's acceptance (#4412)
 	res := clean(t, c, "land")
-	if res.Counts["landed"] != 2 || res.Counts["waiting"] != 0 || res.Tasks != 2 {
+	if res.Counts["landed"] != 1 || res.Counts["waiting"] != 1 || res.Tasks != 2 {
 		t.Fatalf("fsck counts %+v", res)
 	}
-	if h := c.HGetAll(ctx, "task:"+ws.SentinelID(stream)).Val(); h["where"] != "landed" || h["merge_sha"] != "0123abcd" {
-		t.Fatalf("the stop after the last card landed: %v", h)
+	sid := ws.SentinelID(stream)
+	if h := c.HGetAll(ctx, "task:"+sid).Val(); h["where"] != "waiting" || h["merge_sha"] != "" {
+		t.Fatalf("the sentinel after the last card landed: %v, want waiting for acceptance", h)
 	}
-	if n := c.XLen(ctx, "ws:log").Val(); n != 6 {
-		t.Fatalf("ws:log has %d entries, want 4 (push, take, done, land)", n)
+	// the ws:log rows by identity and order
+	var rows []string
+	for _, e := range c.XRange(ctx, "ws:log", "-", "+").Val() {
+		rows = append(rows, fmt.Sprintf("%v %v->%v", e.Values["id"], e.Values["from"], e.Values["to"]))
+	}
+	want := []string{sid + " ->waiting", "build-3778-a ->ready", "build-3778-a ready->working",
+		"build-3778-a working->merging", "build-3778-a merging->landed"}
+	if got := strings.Join(rows, "; "); got != strings.Join(want, "; ") {
+		t.Fatalf("ws:log rows\n%s\nwant (the sentinel's creation, push, take, done, land)\n%s", got, strings.Join(want, "; "))
 	}
 
 	// A task that names no PR: done is done/ok.

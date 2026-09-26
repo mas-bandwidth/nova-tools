@@ -161,10 +161,11 @@ func TestLandWatchCrossStreamWaitsOnTheRealSentinel(t *testing.T) {
 	if err := stream.Claim(ctx, c, []string{a}, stream.DutyOwner(repo, "feed"), now, now); !errors.As(err, &held) || held.Owner != "after:beta:sentinel" {
 		t.Fatalf("the duty's claim before the stop: %v", err)
 	}
-	// Beta's last card goes; its stop lands through the one move.
+	// Beta's last card goes; its stop lands through the one move, by the
+	// coordinator's acceptance alone (#4412; rowan holds the role above).
 	c.ZRem(ctx, "ws:"+b+":working", "b1")
 	c.Del(ctx, "task:b1")
-	if _, err := taskcard.Land(ctx, c, ws.SentinelID(b), "lander", strings.Repeat("d", 40), ""); err != nil {
+	if _, err := taskcard.Land(ctx, c, ws.SentinelID(b), "rowan", strings.Repeat("d", 40), ""); err != nil {
 		t.Fatalf("land beta's stop: %v", err)
 	}
 	pass()

@@ -190,13 +190,16 @@ func TestPlanBindsLandsWithItsStitchAndIsNeverDealt(t *testing.T) {
 	if s := state(); s != "landed" {
 		t.Fatalf("state %s, want landed", s)
 	}
-	// Five landed: two children, the stitch, the parent, and the stream's
-	// sentinel (#4318), which the parent's landing landed as the last live
-	// card (the two hooks in the one move compose).
+	// Four landed by identity: two children, the stitch and the parent; the
+	// stream's sentinel (#4318) stays waiting for the coordinator's
+	// acceptance (#4412), though the parent's landing left no card live.
 	landedIDs := c.ZRange(ctx, taskcard.StreamKeyAt(0, hierStream, "landed"), 0, -1).Val()
 	sort.Strings(landedIDs)
-	if got := strings.Join(landedIDs, " "); got != "5001 5002 autonomy:sentinel "+parent+" "+stitch {
-		t.Fatalf("ws:%s:landed is %q, want the children, the sentinel, the parent and the stitch", hierStream, got)
+	if got := strings.Join(landedIDs, " "); got != "5001 5002 "+parent+" "+stitch {
+		t.Fatalf("ws:%s:landed is %q, want the children, the parent and the stitch", hierStream, got)
+	}
+	if w := c.HGet(ctx, taskcard.Key("autonomy:sentinel"), "where").Val(); w != "waiting" {
+		t.Fatalf("the sentinel is %q after the plan landed, want waiting for acceptance", w)
 	}
 	// Plans lists the plan for the stream, its children in order.
 	plans, err := taskcard.Plans(ctx, c, []string{hierStream, "no such stream"})

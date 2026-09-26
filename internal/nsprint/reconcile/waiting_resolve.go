@@ -29,12 +29,15 @@ package reconcile
 //     blocked_on is no evidence either way and the task stays waiting.
 //
 // A stream's own sentinel is never a waiter here: it waits in its stream
-// for every other card to land and lands by structure with the last one
-// (TK.land_stop in 02_card_move.lua; task land by hand when the last card
-// was cancelled instead). The duty leaves it out of the counts, and when a
-// waiting sentinel has no live card left it prints the remedy:
+// for every other card to land, and then for the coordinator's acceptance
+// (nova-tools#4412, Glenn 2026-09-26 via Stella: "sentinels wait for the
+// coordinator's review and merge"): the coordinator's task land lands it,
+// never the last card's landing and never this duty (TK.edge refuses an
+// actor without the coordinator role). The duty leaves it out of the
+// counts, and when a waiting sentinel has no live card left it prints the
+// receipt with the acceptance command, once per change:
 //
-//	SENTINEL stream=<s> id=<slug>:sentinel live=0 ready-to-land: nova-sprint task land --id <slug>:sentinel --sha <merge sha>
+//	SENTINEL ready-for-acceptance stream=<s> id=<slug>:sentinel live=0: nova-sprint task land --actor <coordinator> --id <slug>:sentinel --sha <merge sha>
 //
 // A sentinel edge is met by landed alone (never by done: a sentinel's done
 // is a rename's), so a dependent stream is released only by the stop.
@@ -94,14 +97,15 @@ type ResolveLine struct {
 	On      []string   // unmet dependencies that have a record
 	Unknown []string   // dependencies with no record
 	Refused []ws.IDWhy // ids ns_ws_move_many refused (left waiting, counted in Still)
-	// Stop is the stream's waiting sentinel with no live card left (its
-	// landing by structure had no last landing: the last card was cancelled).
+	// Stop is the stream's waiting sentinel with no live card left: ready
+	// for the coordinator's acceptance (#4412).
 	Stop string
 }
 
-// StopLine is the remedy line for a sentinel ready to land.
+// StopLine is the receipt for a sentinel ready for the coordinator's
+// acceptance, with the one command that accepts it.
 func (r ResolveLine) StopLine() string {
-	return fmt.Sprintf("SENTINEL stream=%s id=%s live=0 ready-to-land: nova-sprint task land --id %s --sha <merge sha>",
+	return fmt.Sprintf("SENTINEL ready-for-acceptance stream=%s id=%s live=0: nova-sprint task land --actor <coordinator> --id %s --sha <merge sha>",
 		wrField(r.Stream), r.Stop, r.Stop)
 }
 
@@ -305,7 +309,7 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 	for i, s := range streams {
 		for _, id := range waitCmds[i].Val() {
 			if ws.IsSentinel(id) {
-				stops[s] = id // the stream's stop: it lands by structure, not by this duty
+				stops[s] = id // the stream's stop: the coordinator's acceptance lands it, never this duty (#4412)
 				continue
 			}
 			waiters = append(waiters, &wrWaiter{id: id, stream: s})

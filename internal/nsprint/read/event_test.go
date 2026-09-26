@@ -106,8 +106,19 @@ func TestReadPostEventsMoveTasks(t *testing.T) {
 	if st := stateOf(t, c, "build-45-other"); st != "working" {
 		t.Fatalf("a task naming another issue moved: %s", st)
 	}
-	if n := c.ZCard(ctx, ws.KeyAt(0, s, "landed")).Val(); n != 2 {
-		t.Fatalf("ws:%s:landed = %d, want 2", s, n)
+	// the landed set by identity: the stream's two cards and nothing else;
+	// its sentinel waits for the coordinator's acceptance (#4412) though no
+	// card of the stream is live, and swarm: cards's waits with its card
+	if got := c.ZRange(ctx, ws.KeyAt(0, s, "landed"), 0, -1).Val(); strings.Join(got, ",") != "build-7-thing,"+read8 {
+		t.Fatalf("ws:%s:landed = %v, want build-7-thing and %s", s, got, read8)
+	}
+	if got := c.ZRange(ctx, ws.KeyAt(0, "swarm: cards", "landed"), 0, -1).Val(); strings.Join(got, ",") != "build-44-issue" {
+		t.Fatalf("ws:swarm: cards:landed = %v, want build-44-issue", got)
+	}
+	for _, st := range []string{s, "swarm: cards"} {
+		if h := c.HGetAll(ctx, "task:"+ws.SentinelID(st)).Val(); h["where"] != "waiting" || h["merge_sha"] != "" {
+			t.Fatalf("%s's sentinel after the CLOSE: %v, want waiting for acceptance", st, h)
+		}
 	}
 	check("close")
 
