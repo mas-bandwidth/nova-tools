@@ -69,13 +69,16 @@ func Home(t *testing.T, seat string, values map[string]string) string {
 
 // Env points every variable seatcred reads at home and clears the ones that
 // would otherwise steer a resolution (store, key, sops, user, seat) for the
-// rest of the test.
+// rest of the test. The discovered sops path is then pinned for decryption.
 func Env(t *testing.T, home string) {
 	t.Helper()
 	t.Setenv("HOME", home)
 	for _, k := range []string{seatcred.SeatEnv, seatcred.StoreEnv, seatcred.KeyEnv, seatcred.SopsEnv, seatcred.UserEnv} {
 		t.Setenv(k, "")
 	}
+	// Home may find sops outside PATH (for example the macOS runner).
+	// Read the fixture with the same discovery rule used to encrypt it.
+	t.Setenv(seatcred.SopsEnv, lookTool(t, "sops"))
 	t.Cleanup(func() { seatcred.Select("") })
 }
 
