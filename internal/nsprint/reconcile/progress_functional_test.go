@@ -5,6 +5,7 @@ package reconcile_test
 import (
 	"bytes"
 	"context"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -18,6 +19,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 )
 
 // The DONE-WHEN's ask half of nova-tools #4319, on a throwaway redis-server
@@ -309,5 +311,59 @@ func TestProgressRefusedCountsEachRefusalOnce(t *testing.T) {
 	now = now.Add(time.Second)
 	if cnt, err := p.Run(ctx, l); err != nil || cnt.Refused != 0 || refused() != "4" {
 		t.Fatalf("pass 2: counts %d err %v refused=%s, want 0 and 4", cnt.Refused, err, refused())
+	}
+}
+
+// TestProgressLeftIsTheOneCount (#4411): PROGRESS left= is the one count's
+// left for the stream (ws.Counts, the sentinel never counted) and oldest=
+// skips the sentinel even when it is the oldest member of its set; a
+// sentinel's landing is not in landed_h.
+func TestProgressLeftIsTheOneCount(t *testing.T) {
+	t.Parallel()
+	c := redis.NewClient(&redis.Options{Addr: testutil.Start(t)})
+	t.Cleanup(func() { _ = c.Close() })
+	ctx := context.Background()
+	if err := fn.Load(ctx, c); err != nil {
+		t.Fatalf("load fn: %v", err)
+	}
+	l, err := reconcile.Acquire(ctx, store.New(c), reconcile.AcquireOptions{Host: "ctl-4411"})
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	t.Cleanup(func() { _ = l.Release(ctx) })
+
+	now := time.Date(2026, 9, 26, 18, 0, 0, 0, time.UTC)
+	const S, stream = "sprint-4411", "one-count"
+	sid := ws.SentinelID(stream)
+	ms := func(d time.Duration) float64 { return float64(now.Add(d).UnixMilli()) }
+	pipe := c.Pipeline()
+	pipe.HSet(ctx, "s:"+S, "status", "open")
+	pipe.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: S})
+	pipe.ZAdd(ctx, "ws:order", redis.Z{Score: 1, Member: stream})
+	// the sentinel is the oldest member of waiting: 3 h; the card is 1 h
+	pipe.ZAdd(ctx, ws.Key(stream, ws.Waiting), redis.Z{Score: ms(-3 * time.Hour), Member: sid}, redis.Z{Score: ms(-time.Hour), Member: "w1"})
+	pipe.ZAdd(ctx, ws.Key(stream, ws.Ready), redis.Z{Score: ms(-time.Hour), Member: "r1"})
+	pipe.ZAdd(ctx, ws.Key(stream, ws.Landed), redis.Z{Score: ms(-2 * time.Hour), Member: "l1"})
+	pipe.XAdd(ctx, &redis.XAddArgs{Stream: "ws:log", ID: strconv.FormatInt(now.Add(-10*time.Minute).UnixMilli(), 10) + "-0",
+		Values: []any{"id", "other:sentinel", "stream", stream, "from", "waiting", "to", "landed"}})
+	if _, err := pipe.Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	p := &reconcile.Progress{Client: c, Out: &out, Now: func() time.Time { return now }}
+	if _, err := p.Run(ctx, l); err != nil {
+		t.Fatal(err)
+	}
+	counts, err := ws.Counts(ctx, c, "")
+	if err != nil || len(counts.Streams) != 1 {
+		t.Fatalf("counts %+v %v", counts, err)
+	}
+	left := counts.Streams[0].Sum() - counts.Streams[0].Cell(ws.Landed)
+	if left != 2 {
+		t.Fatalf("the one count's left %d; want 2 (w1, r1; the sentinel aside)", left)
+	}
+	want := `PROGRESS one-count left=2 delta=0 ready=1 landed_h=0 retries_h=0 oldest=1h0m0s `
+	if !strings.Contains(out.String(), want) {
+		t.Fatalf("progress:\n%s\nwant %q", out.String(), want)
 	}
 }

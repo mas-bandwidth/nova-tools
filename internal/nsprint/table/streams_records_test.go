@@ -74,7 +74,7 @@ func TestStreamsTableFromRecords(t *testing.T) {
 	}
 	out := snap.Render(now)
 	rule := "--------------------------+---------+-------+---------+--------+---------+-------\n"
-	want := "SPRINT TABLE\n\n100/106 left, 5% done -> ~6000m gh 0/h\n\n" +
+	want := "SPRINT TABLE\n\n6/106 done 5%, left 100, eta ? gh 0/h\n\n" +
 		"stream                    | waiting | ready | working | review | merging | landed\n" + rule +
 		"nova-sprint + merge + bus |      56 |    12 |       3 |      4 |       2 |      1\n" +
 		"swarm: cards              |       4 |     0 |       7 |      2 |       0 |      5\n" +
@@ -131,6 +131,11 @@ func TestTableTickMakesNoRestCall(t *testing.T) {
 	for _, s := range table.SprintFixtureStreams {
 		for _, where := range table.WSStates {
 			if k := "ZCARD ws:" + s.Name + ":" + where; !keys[k] {
+				t.Fatalf("the tick never sent %s", k)
+			}
+			// the one count leaves the stream's sentinel out: the ZSCORE of
+			// its id rides the same pipeline (#4411)
+			if k := "ZSCORE ws:" + s.Name + ":" + where; !keys[k] {
 				t.Fatalf("the tick never sent %s", k)
 			}
 		}

@@ -96,6 +96,9 @@ func TestControl3440RowVerbsRenderTheBashTable(t *testing.T) {
 			t.Fatalf("seed %v: %v", cmd, err)
 		}
 	}
+	// the config's sprint is the open one the one count reads (#4411)
+	client.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: cfg.Sprint})
+	client.HSet(ctx, "s:"+cfg.Sprint, "status", "open")
 	ix := "sprint:" + cfg.Sprint + ":idx:"
 	for name, f := range friends {
 		for set, field := range map[string]string{"open": "ready", "working": "working", "closed": "done"} {
@@ -158,7 +161,10 @@ func TestControl3440RowVerbsRenderTheBashTable(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got, want := snap.RenderLive(now), table.Golden2674(); got != want {
+		// the progress line is the one count (#4411): no stream here, so
+		// 0/0 with no eta; every other byte is the bash's (table.MaskXY)
+		got, want := snap.RenderLive(now), table.Golden2674()
+		if table.MaskXY(got) != table.MaskXY(want) || !strings.HasPrefix(got, "SPRINT TABLE\n\n0/0 done 0%, left 0, eta -\n\n") {
 			t.Fatalf("pass %d: the table from the row verbs differs from sprint-table-redis\ngot:\n%s\nwant:\n%s", pass, got, want)
 		}
 	}

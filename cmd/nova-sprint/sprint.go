@@ -1,6 +1,7 @@
 // The sprint verb (#2939) opens a sprint from a work set, closes it, folds
 // it once closed (#2618, internal/nsprint/sprint/fold.go) and prints its
-// status as x/y z% -> eta. It registers itself through the registry
+// status from the one count (ws.Counts): <landed>/<total> done <z>%, left <l>,
+// eta <HH:MM> ET. It registers itself through the registry
 // (registry.go), so main.go is unchanged.
 package main
 
@@ -8,9 +9,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,6 +21,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/table"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/worklang"
 	"github.com/redis/go-redis/v9"
@@ -26,7 +30,7 @@ import (
 func init() {
 	register(Verb{
 		Name:    "sprint",
-		Summary: "open --from a work set, close, fold (the end-of-sprint refinement, #2618), and status as x/y z% -> eta",
+		Summary: "open --from a work set, close, fold (the end-of-sprint refinement, #2618), and status as landed/total done z%, left l, eta HH:MM ET (the one count)",
 		Run:     runSprintVerb,
 	})
 }
@@ -131,6 +135,12 @@ func runSprintVerb(ctx context.Context, args []string, out, errOut io.Writer) in
 		return 0
 	default:
 		lines, err := sprint.StatusLines(ctx, st, *name, now)
+		var notOpen *sprint.StatusRefusal
+		if errors.As(err, &notOpen) {
+			// the ws index counts the open sprint only: one line, exit 1
+			fmt.Fprintln(out, notOpen.Error())
+			return 1
+		}
 		if err != nil {
 			return refuse(errOut, verb, err.Error())
 		}
@@ -396,8 +406,12 @@ func runSprintOpen(ctx context.Context, st *store.Store, name, from string, plan
 // deletes every consumer's ok and fail sets, so both tables read zero on the
 // next tick. Cards working or merging are in flight and refuse the clear
 // without --force. --checkpoint <file> writes every ws set's members before
-// anything moves. Prints CLEARED streams=<n> cards=<n> copies=<n>
-// consumers=<n> ms=<n>, then STREAM <name> cards=<n> per stream cleared.
+// anything moves. A parked card is not work in flight and not landed, and a
+// clear is not a cancel: parked cards stay parked (the one count counts
+// them nowhere, before or after), and the receipt names them, read from the
+// one count after the clear (#4411). Prints CLEARED streams=<n> cards=<n>
+// copies=<n> consumers=<n> parked_kept=<n|?> by=<who> ms=<n>, then STREAM
+// <name> cards=<n> per stream cleared.
 func runSprintClear(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "sprint clear"
 	fs := taskFlags(verb)
@@ -457,7 +471,13 @@ func runSprintClear(ctx context.Context, args []string, out, errOut io.Writer) i
 	if len(words) < 5 {
 		return refuse(errOut, verb, "short reply "+oneline.Escape(strings.Join(words, " ")))
 	}
-	fmt.Fprintf(out, "CLEARED streams=%s cards=%s copies=%s consumers=%s by=%s ms=%d\n", words[1], words[2], words[3], words[4], who, time.Since(start).Milliseconds())
+	// the parked cards the clear left parked, sentinels aside; "?" when the
+	// count did not read (never a false 0)
+	kept := "?"
+	if c, err := ws.Counts(ctx, st.Client(), ""); err == nil {
+		kept = strconv.FormatInt(c.Total.Parked, 10)
+	}
+	fmt.Fprintf(out, "CLEARED streams=%s cards=%s copies=%s consumers=%s parked_kept=%s by=%s ms=%d\n", words[1], words[2], words[3], words[4], kept, who, time.Since(start).Milliseconds())
 	for i := 5; i+1 < len(words); i += 2 {
 		fmt.Fprintf(out, "STREAM %s cards=%s\n", oneline.Escape(words[i]), words[i+1])
 	}

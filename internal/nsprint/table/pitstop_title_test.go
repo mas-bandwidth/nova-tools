@@ -38,6 +38,10 @@ func TestPitstopTitleReadsTheVerbKey(t *testing.T) {
 	if err := c.HSet(ctx, "s:"+S, "status", "open").Err(); err != nil {
 		t.Fatal(err)
 	}
+	// S is the open sprint: a --sprint that is not is refused (#4411)
+	if err := c.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: S}).Err(); err != nil {
+		t.Fatal(err)
+	}
 	cfg := table.LiveConfig{Sprint: S}
 	now := time.Now()
 	title := func() string {

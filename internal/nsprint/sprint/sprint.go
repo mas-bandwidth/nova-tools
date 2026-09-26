@@ -17,13 +17,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -286,9 +286,16 @@ func SetClosed(ctx context.Context, st *store.Store, name string, now time.Time)
 // Line is the one line close prints.
 func Line(name string, s Status) string { return name + " status=" + string(s) }
 
-// StatusLines is `sprint status`: one FCALL_RO ns_sprint_status, one line per
-// sprint, `<S> <status> x/y z% -> eta <hh:mm> <zone>`. An empty name reads
-// every open sprint in sprint:order.
+// StatusLines is `sprint status`: the one count (ws.Counts, the numbers the
+// table and ws counts print), one line, `<S> <status> <landed>/<total> done
+// <z>%, left <l>, eta <HH:MM> ET`. The ws index holds the open sprint's
+// streams only (one sprint at a time), so the line is always the open
+// sprint's (the last of sprint:order not closed, the table's rule): an empty
+// name prints it, or nothing with none open; a name that is not the open
+// sprint is refused with *StatusRefusal naming the open one, never the
+// index's counts under another name. The eta is measured from now (--now).
+// ns_sprint_status (the legacy s:<S>:idx:task and idx:card count) is no
+// longer called.
 func StatusLines(ctx context.Context, st *store.Store, name string, now time.Time) ([]string, error) {
 	if st == nil || st.Client() == nil {
 		return nil, errors.New("sprint: store is required")
@@ -296,53 +303,42 @@ func StatusLines(ctx context.Context, st *store.Store, name string, now time.Tim
 	if name != "" && !ValidName(name) {
 		return nil, fmt.Errorf("sprint name %q is not [a-z0-9-]{1,40}", name)
 	}
-	reply, err := st.Client().FCallRO(ctx, FunctionStatus, nil, name).Result()
+	c, err := (&ws.CountsReader{}).Read(ctx, st.Client(), now)
 	if err != nil {
 		return nil, fmt.Errorf("sprint status: %w", err)
 	}
-	rows, ok := reply.([]any)
-	if !ok || len(rows)%5 != 0 {
-		return nil, fmt.Errorf("sprint status: unexpected reply %T", reply)
+	if name != "" && name != c.Sprint {
+		return nil, &StatusRefusal{Name: name, Open: c.Sprint}
 	}
-	loc := zone()
-	lines := make([]string, 0, len(rows)/5)
-	for i := 0; i < len(rows); i += 5 {
-		cell := func(j int) string { return fmt.Sprint(rows[i+j]) }
-		x, _ := strconv.Atoi(cell(2))
-		y, _ := strconv.Atoi(cell(3))
-		opened, _ := strconv.ParseInt(cell(4), 10, 64)
-		lines = append(lines, XYLine(cell(0), cell(1), x, y, opened, now, loc))
-	}
-	return lines, nil
+	return StatusLine(c), nil
 }
 
-// XYLine renders one status line. eta = now + (y-x)*(now-opened)/x; it is
-// `?` when x=0 or the open time is unknown, and `done` when x=y>0.
-func XYLine(name, status string, x, y int, openedMs int64, now time.Time, loc *time.Location) string {
-	pct := 0
-	if y > 0 {
-		pct = x * 100 / y
-	}
-	eta := "eta ?"
-	switch {
-	case x > 0 && x >= y:
-		eta = "done"
-	case x > 0 && openedMs > 0:
-		elapsed := now.Sub(time.UnixMilli(openedMs))
-		if elapsed >= 0 {
-			left := time.Duration(int64(elapsed) / int64(x) * int64(y-x))
-			eta = "eta " + now.Add(left).In(loc).Format("15:04 MST")
-		}
-	}
-	return fmt.Sprintf("%s %s %d/%d %d%% -> %s", name, status, x, y, pct, eta)
+// StatusRefusal is sprint status --sprint <name> for a name that is not the
+// open sprint: the ws index's counts are the open sprint's, so they are
+// never printed under another name.
+type StatusRefusal struct {
+	Name string // the name asked for
+	Open string // the open sprint, "" when none is open
 }
 
-// zone is read at call time: TZ when it is set and loads, else time.Local.
-func zone() *time.Location {
-	if tz, ok := os.LookupEnv("TZ"); ok && tz != "" {
-		if loc, err := time.LoadLocation(tz); err == nil {
-			return loc
-		}
+// Error is the refusal's one line (the verb prints it on stdout, exit 1).
+func (r *StatusRefusal) Error() string {
+	open := r.Open
+	if open == "" {
+		open = "-"
 	}
-	return time.Local
+	return fmt.Sprintf(`REFUSED sprint status --sprint %s: not the open sprint; open=%s remedy="nova-sprint sprint status"`, r.Name, open)
+}
+
+// StatusLine is the status line of one read: none when no sprint is named or
+// open.
+func StatusLine(c ws.SprintCounts) []string {
+	if c.Sprint == "" {
+		return nil
+	}
+	status := c.Status
+	if status == "" {
+		status = string(Absent)
+	}
+	return []string{c.Sprint + " " + status + " " + c.Header()}
 }

@@ -8,9 +8,10 @@ import (
 
 // The one count of a stream set's cards (#4318): the set's ZCARD less the
 // stream's sentinel when it is in that set. The sentinel is the stream's
-// stop, not one of its cards, so every reader that counts cards (the sprint
-// table, the progress duty, ns_ws_counts in Lua, the tests) counts through
-// here and no column ever shows it.
+// stop, not one of its cards, so every reader that counts cards counts
+// through here: Counts (progress.go: sprint status, the table, ws counts,
+// scope ls, stream ls), the progress duty's PROGRESS left=, and ws show's
+// STREAM line (show.go counts the members it lists by the same rule).
 
 // CardCountCmd is one queued card count: the ZCARD and the sentinel's ZSCORE
 // on the same set, read in the caller's pipeline.
@@ -45,6 +46,17 @@ func (c *CardCountCmd) Result() (int64, error) {
 func (c *CardCountCmd) Val() int64 {
 	n, _ := c.Result()
 	return n
+}
+
+// QueueStreamCounts queues one stream's card counts on pipe: the six sets of
+// Stream in order, then parked. Counts and the progress duty read a stream's
+// cells through it.
+func QueueStreamCounts(ctx context.Context, pipe redis.Pipeliner, stream string) []*CardCountCmd {
+	out := make([]*CardCountCmd, 0, CountsCells+1)
+	for _, state := range Stream {
+		out = append(out, QueueCardCount(ctx, pipe, stream, state))
+	}
+	return append(out, QueueCardCount(ctx, pipe, stream, Parked))
 }
 
 // CardCount reads one set's card count in one round trip.

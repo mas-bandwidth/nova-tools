@@ -75,6 +75,7 @@ func TestHostRowsFromBenchSets(t *testing.T) {
 	seedCommands(t, client, [][]string{
 		{"SADD", "benches", "alpha"},
 		{"HSET", "s:S1", "status", "open", "opened_at", ms(-2 * time.Hour)},
+		{"ZADD", "sprint:order", "1", "S1"},
 		{"HSET", "bench:alpha:beat", "host", "alpha", "load1", "0.50", "live", "1", "at", ms(-time.Second)},
 		{"ZADD", "bench:alpha:cards:working", ms(-50 * time.Minute), "p1~1"},
 		{"ZADD", "bench:alpha:cards:ok", ms(-90 * time.Minute), "p2~1", ms(-80 * time.Minute), "p3~1", ms(-70 * time.Minute), "p4~1"},

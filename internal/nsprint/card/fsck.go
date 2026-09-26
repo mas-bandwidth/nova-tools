@@ -49,9 +49,18 @@ type FsckReport struct {
 // drift fixed registered.
 const FsckFields = 14
 
-// Line is the receipt: FSCK <S> cards=... drift=... fixed=... registered=....
+// FsckFamily labels every count of the FSCK line (#4411): they count the
+// s:<S>:card records of the roster sprint:<S>:cards, the card family the one
+// task store replaced for sprint work (card push and 02_card_move.lua still
+// write it), never the sprint's progress, which is the one count (`nova-sprint
+// ws counts`). The label rides in the line so its cards= never reads as a
+// number beside the one count.
+const FsckFamily = "family=retired"
+
+// Line is the receipt: <verb> sprint=<S> family=retired cards=... drift=...
+// fixed=... registered=....
 func (r FsckReport) Line(verb string) string {
-	return fmt.Sprintf("%s sprint=%s cards=%d null=%d waiting=%d ready=%d working=%d done=%d parked=%d ok=%d fail=%d drift=%d fixed=%d registered=%d",
+	return fmt.Sprintf("%s sprint=%s "+FsckFamily+" cards=%d null=%d waiting=%d ready=%d working=%d done=%d parked=%d ok=%d fail=%d drift=%d fixed=%d registered=%d",
 		verb, r.Sprint, r.Cards, r.Null, r.Waiting, r.Ready, r.Working, r.Done, r.Parked, r.OK, r.Fail, r.Drift, r.Fixed, r.Registered)
 }
 

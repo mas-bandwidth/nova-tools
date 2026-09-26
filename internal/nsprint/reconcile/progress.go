@@ -143,7 +143,8 @@ type Sample struct {
 	Held                                             bool  // a pit stop holds the stream
 }
 
-// Left is the cards not landed.
+// Left is the cards not landed: the one count's left for the stream
+// (ws.StreamCounts Sum less landed), sentinel aside.
 func (s Sample) Left() int64 { return s.Waiting + s.Ready + s.Working + s.Review + s.Merging }
 
 // The statuses.
@@ -466,7 +467,7 @@ func (p *Progress) measure(ctx context.Context, now time.Time, cfg ProgressConfi
 	}
 	notLanded := []string{ws.Waiting, ws.Ready, ws.Working, ws.Review, ws.Merging}
 	type streamCmds struct {
-		counts [6]*ws.CardCountCmd
+		counts []*ws.CardCountCmd // ws.QueueStreamCounts: the six, then parked
 		oldest [5]*redis.ZSliceCmd
 		state  *redis.MapStringStringCmd
 	}
@@ -479,11 +480,11 @@ func (p *Progress) measure(ctx context.Context, now time.Time, cfg ProgressConfi
 	pipe := p.Client.Pipeline()
 	scs := make([]streamCmds, len(streams))
 	for i, s := range streams {
-		// the counts and the oldest card leave the stream's stop out (#4318):
-		// a set's two oldest, so the sentinel beside a card never hides it
-		for j, state := range ws.Stream {
-			scs[i].counts[j] = ws.QueueCardCount(ctx, pipe, s, state)
-		}
+		// the counts are the one count's cells (ws.QueueStreamCounts, the
+		// cells ws.Counts prints), the stream's stop out (#4318); the oldest
+		// card leaves it out too: a set's two oldest, so the sentinel beside
+		// a card never hides it
+		scs[i].counts = ws.QueueStreamCounts(ctx, pipe, s)
 		for j, state := range notLanded {
 			scs[i].oldest[j] = pipe.ZRangeWithScores(ctx, taskcard.StreamKey(s, state), 0, 1)
 		}
@@ -553,11 +554,10 @@ func (p *Progress) measure(ctx context.Context, now time.Time, cfg ProgressConfi
 	} else {
 		return ProgressRun{}, fmt.Errorf("progress: ws:log: %w", err)
 	}
-	// TODO(#4369): take the stream sentinel out of left and the oldest age through the shared "counts less the sentinel" helper once it lands on dev.
 	for i, s := range streams {
 		smp := Sample{Stream: s, LandedHour: landed[s], RetriesHour: retries[s]}
 		cells := []*int64{&smp.Waiting, &smp.Ready, &smp.Working, &smp.Review, &smp.Merging, &smp.Landed}
-		for j, c := range scs[i].counts {
+		for j, c := range scs[i].counts[:ws.CountsCells] {
 			*cells[j] = c.Val()
 		}
 		for _, z := range scs[i].oldest {
