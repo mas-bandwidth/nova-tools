@@ -10,6 +10,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
 	"os"
 
@@ -42,7 +43,7 @@ func runAdopt(ctx context.Context, args []string, out, errOut io.Writer) int {
 	var verb string
 	if sub == "receipt" {
 		fs.StringVar(&verb, "verb", "", "the verb adopted, e.g. \"nova-sprint land stream\"")
-		fs.StringVar(&r.Who, "as", "", "the seat writing the receipt; default NOVA_FRIEND")
+		fs.StringVar(&r.Who, "as", "", verbflag.HelpAs)
 		fs.StringVar(&r.POV, "pov", "", "coordinator, bench, reader or friend")
 		fs.StringVar(&r.State, "state", "", "adopted, adopted-gaps, in-flight, unexercised, blocked or hack")
 		fs.StringVar(&r.Gap, "gap", "", "the issue holding the gap: <repo>#<n>")

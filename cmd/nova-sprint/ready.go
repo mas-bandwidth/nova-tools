@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/deal"
@@ -27,9 +28,9 @@ var readyForge = func() deal.PRs { return deal.GH{} }
 
 func runReady(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("ready")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	sprint := fs.String("sprint", "", "")
-	why := fs.String("why", "", "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
+	why := fs.String("why", "", verbflag.HelpWhy)
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "ready", err.Error())
 	}

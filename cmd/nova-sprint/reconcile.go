@@ -22,6 +22,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
 	"os"
 	"os/signal"
@@ -128,11 +129,11 @@ func productionDuties(st *store.Store, set *metrics.Set) (duties []reconcile.Dut
 // 1 when any duty errored. Every duty error is printed with the duty's name.
 func runReconcile(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("reconcile")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	host := fs.String("host", "", "")
-	once := fs.Bool("once", false, "")
-	metricsAddr := fs.String("metrics-addr", "", "")
-	readers := fs.String("readers", "", "")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	host := fs.String("host", "", "this host (default the hostname)")
+	once := fs.Bool("once", false, "one pass, then return")
+	metricsAddr := fs.String("metrics-addr", "", "serve /metrics at this host:port")
+	readers := fs.String("readers", "", "the reader friends the route duty deals reads to, comma-separated")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "reconcile", err.Error())
 	}

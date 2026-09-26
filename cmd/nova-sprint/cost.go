@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
 	"strings"
 	"time"
@@ -32,9 +33,9 @@ func runCost(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return refuse(errOut, "cost", "the one subverb is import: cost import --provider <anthropic|openrouter|oc> --file <export.csv> --redis <addr>")
 	}
 	fs := taskFlags("cost import")
-	provider := fs.String("provider", "", "")
-	file := fs.String("file", "", "")
-	redisAddr := fs.String("redis", redisDefault(), "")
+	provider := fs.String("provider", "", "the provider: anthropic, openrouter or oc")
+	file := fs.String("file", "", "the provider's usage export, a csv")
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
 	if err := fs.Parse(args[1:]); err != nil {
 		return refuse(errOut, "cost import", err.Error())
 	}
