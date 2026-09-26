@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -344,6 +345,9 @@ func TestWaitRefusesAnotherAccountsStaleLock(t *testing.T) {
 	if lines := waitRepairLines(r); len(lines) != 0 {
 		t.Fatalf("claimed a repair of another account's lock: %q", lines)
 	}
+	if lines := waitScanLines(r); len(lines) != 0 {
+		t.Fatalf("another account's lock was scanned: %q", lines)
+	}
 	if _, err := os.Lstat(lock); err != nil {
 		t.Fatalf("another account's stale index.lock was removed: %v", err)
 	}
@@ -362,5 +366,129 @@ func TestWaitRefusesAnotherAccountsStaleLock(t *testing.T) {
 	}
 	if _, err := os.Lstat(freshLock); err != nil {
 		t.Fatalf("fresh index.lock was removed: %v", err)
+	}
+}
+
+func waitScanLines(r result) []string {
+	var lines []string
+	for _, line := range strings.Split(r.stdout, "\n") {
+		if strings.HasPrefix(line, "WAIT SCAN ") {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+// scanReceipt is the WAIT SCAN line as printed on this host: no owner and nothing
+// unknown, or the lock could not have been cleared; the foreign count is whatever other
+// accounts are running on the bench and is not this test's to pin.
+var scanReceipt = regexp.MustCompile(`^WAIT SCAN index\.lock owner=0 foreign=[0-9]+ unknown=0$`)
+
+// #4420 round 5: the receipt of the scan that cleared the lock is on stdout, once, before
+// the WAIT REPAIR line, in the shape scanReceipt names. A wait that never scanned (no
+// lock, a fresh lock, another account's lock) prints no WAIT SCAN line.
+func TestWaitScanReceiptNamesTheCounts(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	checkout, bare := busDir(t)
+	pushAhead(t, bare, "from-bo/arrived.md", "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:03:00 UTC 2026\nId: bo-222222222222\nSubject: Arrived\n\nA note on the bus.\n")
+	plantLock(t, checkout, 2*time.Minute)
+	r := invoke(t, "", waitFlags(checkout, "Ada", "2s")...).mustCode(t, 0)
+	scans := waitScanLines(r)
+	if len(scans) != 1 || !scanReceipt.MatchString(scans[0]) {
+		t.Fatalf("WAIT SCAN lines = %q, want one matching %s\nstdout:\n%s", scans, scanReceipt, r.stdout)
+	}
+	if repairs := waitRepairLines(r); len(repairs) != 1 || strings.Index(r.stdout, scans[0]) > strings.Index(r.stdout, repairs[0]) {
+		t.Fatalf("the scan receipt does not come before the one repair line:\n%s", r.stdout)
+	}
+
+	fresh, _ := busDir(t)
+	plantLock(t, fresh, 0)
+	if r := invoke(t, "", waitFlags(fresh, "Ada", "2s")...); len(waitScanLines(r)) != 0 {
+		t.Fatalf("a fresh lock was scanned:\n%s", r.stdout)
+	}
+	clean, _ := busDir(t)
+	if r := invoke(t, "", waitFlags(clean, "Ada", "2s")...).mustCode(t, 0); len(waitScanLines(r)) != 0 {
+		t.Fatalf("a checkout with no lock was scanned:\n%s", r.stdout)
+	}
+}
+
+// #4420 round 5, the "changed" path end to end: the stale lock is replaced during the
+// scan by a file of the same owner and the same old mtime, twice, once under the wait's
+// first check (main.go, bus.ClearStaleIndexLock) and once under the first poll's
+// (bus.RecoverWaitFastForward, WaitRecovery.LockChanged). Each time the wait says
+// `WAIT: index.lock changed during the scan; waiting` on stderr and goes on: the first
+// poll returns on the fixture's two unread notes, WAIT OK, exit 0, with the second
+// replacement still at the path and no repair claimed. Nothing here waits on a clock:
+// the wait ends on the news of its one poll. Printing WAIT REFUSED and exiting 1 on
+// either path, or returning the error from RecoverWaitFastForward instead of setting
+// LockChanged, is exit 1 and a red run here.
+func TestWaitGoesOnWhenTheLockChangesDuringTheScan(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	checkout, _ := busDir(t)
+	lock := plantLock(t, checkout, 2*time.Minute)
+	fi, err := os.Lstat(lock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := fi.ModTime()
+	n := 0
+	replace := func() {
+		n++
+		if err := os.Rename(lock, fmt.Sprintf("%s.old%d", lock, n)); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(lock, []byte(fmt.Sprintf("replacement %d", n)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(lock, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var restoreSecond func()
+	restoreFirst, err := bus.HookIndexLockScanForTest(lock, func() {
+		replace()
+		r, err := bus.HookIndexLockScanForTest(lock, replace)
+		if err != nil {
+			t.Fatal(err)
+		}
+		restoreSecond = r
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restoreFirst()
+	defer func() {
+		if restoreSecond != nil {
+			restoreSecond()
+		}
+	}()
+
+	r := invoke(t, "", waitFlags(checkout, "Ada", "2s")...).mustCode(t, 0)
+	const changed = "WAIT: index.lock changed during the scan; waiting\n"
+	if r.stderr != changed+changed {
+		t.Fatalf("stderr = %q, want the changed line twice and nothing else", r.stderr)
+	}
+	if n != 2 {
+		t.Fatalf("the lock was replaced %d times, want 2 (under the first check and under the first poll)", n)
+	}
+	if repairs := waitRepairLines(r); len(repairs) != 0 {
+		t.Fatalf("claimed a repair of a lock that changed under it: %q\nstdout:\n%s", repairs, r.stdout)
+	}
+	scans := waitScanLines(r)
+	if len(scans) != 2 {
+		t.Fatalf("want two WAIT SCAN receipts (one per changed scan), got %q", scans)
+	}
+	for _, s := range scans {
+		if !scanReceipt.MatchString(s) {
+			t.Fatalf("scan receipt %q does not match %s", s, scanReceipt)
+		}
+	}
+	if got, err := os.ReadFile(lock); err != nil || string(got) != "replacement 2" {
+		t.Fatalf("the lock at the path after the wait: %q %v, want the second replacement untouched", got, err)
+	}
+	if !strings.Contains(r.stdout, "WAIT OK") {
+		t.Fatalf("the wait did not go on to its poll:\n%s", r.stdout)
 	}
 }

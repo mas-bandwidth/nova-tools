@@ -92,9 +92,10 @@ func TestRowanOpusLockSequenceFreshStaleOwnedAndBack(t *testing.T) {
 		t.Fatalf("6 refreshed foreign: c=%v err=%v", c, err)
 	}
 	present("6")
-	// 7. own, stale, only an unplaced foreign git: cleared.
+	// 7. own, stale, only an unplaced foreign git (foreign by its status uid; round 5 added
+	// account/accountKnown to this view, the entry owner alone no longer proves it): cleared.
 	ownerUID = self
-	scanWith = []procView{{owner: other, ownerKnown: true, comm: "git\n", cmdline: []byte("git\x00commit"), cwdErr: denied}}
+	scanWith = []procView{{owner: other, ownerKnown: true, account: other, accountKnown: true, comm: "git\n", cmdline: []byte("git\x00commit"), cwdErr: denied}}
 	c, err = clearStaleIndexLockAs(dir, now.Add(staleIndexLockAge+time.Second), scan, seam, self)
 	if !c || err != nil {
 		t.Fatalf("7 own stale, unplaced foreign: c=%v err=%v", c, err)

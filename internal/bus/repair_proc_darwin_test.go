@@ -143,11 +143,11 @@ func TestGitScanSkipsAnotherAccountsGit(t *testing.T) {
 	}
 	ps := "502 18772 git status\n501 77 git fetch -q origin\n"
 	procs, err := gitProcsFromPS(ps, "501", map[string]string{"77": "/Users/nova/bus"}, nil, alive)
-	if err != nil || len(procs) != 1 {
-		t.Fatalf("another account's git with no cwd beside our own: procs=%+v err=%v, want one and no error", procs, err)
+	if err != nil || len(procs) != 2 || !procs[0].foreign || procs[0].command != "git status" {
+		t.Fatalf("another account's git with no cwd beside our own: procs=%+v err=%v, want theirs flagged foreign, ours placed, and no error", procs, err)
 	}
-	if !procs[0].cwdKnown || procs[0].cwd != "/Users/nova/bus" || procs[0].command != "git fetch -q origin" {
-		t.Fatalf("our own git was not placed by its cwd: %+v", procs[0])
+	if own := placed(procs); len(own) != 1 || !own[0].cwdKnown || own[0].cwd != "/Users/nova/bus" || own[0].command != "git fetch -q origin" {
+		t.Fatalf("our own git was not placed by its cwd: %+v", procs)
 	}
 	if len(asked) != 0 {
 		t.Fatalf("another account's pid reached the liveness check: %v", asked)
@@ -178,18 +178,18 @@ func TestStaleLockClearsBesideAnotherAccountsGit(t *testing.T) {
 	alive := func(string) (bool, error) { return true, nil }
 
 	dir, lock := oldIndexLock(t)
-	cleared, err := clearStaleIndexLock(dir, time.Now(), func() ([]gitProc, error) {
+	rep, err := clearStaleIndexLockReport(dir, time.Now(), func() ([]gitProc, error) {
 		return gitProcsFromPS(other+" 18772 git status\n", self, map[string]string{}, nil, alive)
-	})
-	if err != nil || !cleared {
-		t.Fatalf("stale lock beside another account's git: cleared=%v err=%v, want removed", cleared, err)
+	}, indexLockOwner, effectiveUID())
+	if err != nil || !rep.Cleared || !rep.Scanned || rep.Scan != (LockScan{Foreign: 1}) {
+		t.Fatalf("stale lock beside another account's git: report=%+v err=%v, want removed with foreign=1", rep, err)
 	}
 	if _, statErr := os.Lstat(lock); !os.IsNotExist(statErr) {
 		t.Fatalf("stale index.lock still present: %v", statErr)
 	}
 
 	ours, oursLock := oldIndexLock(t)
-	cleared, err = clearStaleIndexLock(ours, time.Now(), func() ([]gitProc, error) {
+	cleared, err := clearStaleIndexLock(ours, time.Now(), func() ([]gitProc, error) {
 		return gitProcsFromPS(self+" 18772 git status\n", self, map[string]string{}, nil, alive)
 	})
 	assertLockKept(t, oursLock, cleared, err)

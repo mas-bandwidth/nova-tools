@@ -2,6 +2,7 @@ package bus
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -114,11 +115,11 @@ func TestStaleIndexLockWithALiveGitIsLeftAlone(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	cleared, err := ClearStaleIndexLock(dir, time.Now())
+	rep, err := ClearStaleIndexLock(dir, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cleared {
+	if rep.Cleared {
 		t.Fatal("removed a stale index.lock while a git process still owned the checkout")
 	}
 	if _, err := os.Lstat(lock); err != nil {
@@ -154,7 +155,7 @@ func TestStaleIndexLockWithALiveGitIsLeftAlone(t *testing.T) {
 	}
 	deadline = time.Now().Add(testWaitBound())
 	for {
-		cleared, err = clearStaleIndexLock(dir, time.Now(), scan)
+		cleared, err := clearStaleIndexLock(dir, time.Now(), scan)
 		if err != nil && !scanUnknownElsewhere(t, err, lock) {
 			t.Fatalf("stale lock with no git: cleared=%v err=%v", cleared, err)
 		}
@@ -278,9 +279,9 @@ func TestStaleLockStaysForCwdGitWithoutDashC(t *testing.T) {
 	if !saw {
 		t.Fatal("cwd git with no -C was not recorded as an owner")
 	}
-	cleared, err := ClearStaleIndexLock(dir, time.Now())
-	if err != nil || cleared {
-		t.Fatalf("cleared=%v err=%v, want the lock left because the cwd git owns the checkout", cleared, err)
+	rep, err := ClearStaleIndexLock(dir, time.Now())
+	if err != nil || rep.Cleared {
+		t.Fatalf("cleared=%v err=%v, want the lock left because the cwd git owns the checkout", rep.Cleared, err)
 	}
 	if _, statErr := os.Lstat(lock); statErr != nil {
 		t.Fatalf("the old lock is gone: %v", statErr)
@@ -346,14 +347,14 @@ func TestEmptyCmdlineDeadProcessDoesNotBlockLockCleanup(t *testing.T) {
 		{comm: "git\n"},
 		{comm: "git\n", cmdline: ownerCmd, cwd: dir},
 	}, 501)
-	if len(procs) != 1 {
+	if len(placed(procs)) != 1 {
 		t.Fatalf("empty cmdline hid the later owner: procs=%+v err=%v", procs, err)
 	}
-	owns, oerr := gitOwnsCheckoutScan(dir, func() ([]gitProc, error) {
+	found, oerr := gitOwnsCheckoutScan(dir, func() ([]gitProc, error) {
 		return procs, err
 	})
-	if oerr != nil || !owns {
-		t.Fatalf("known owner was not recognized behind an empty cmdline: owns=%v err=%v", owns, oerr)
+	if oerr != nil || found.Owner != 1 || found.Unknown != 1 {
+		t.Fatalf("known owner was not recognized behind an empty cmdline: found=%+v err=%v", found, oerr)
 	}
 	kept, kerr := clearStaleIndexLock(dir, time.Now(), func() ([]gitProc, error) {
 		return procs, err
@@ -521,33 +522,46 @@ func TestVanishingProcessESRCHDoesNotBlockLockCleanup(t *testing.T) {
 
 // The linux twin of TestGitScanSkipsAnotherAccountsGit: /proc/<pid>/cwd of another
 // account answers EACCES, which read as a live git of unknown place and refused the
-// wait. A view whose owner is another uid is skipped; our own git beside it is placed;
-// the same unreadable view owned by us is still unknown, and a view whose owner could
-// not be read is judged as before.
+// wait. A view whose status proves another uid is skipped, flagged foreign; our own git
+// beside it is placed; the same unreadable view of our own account is still unknown, and
+// a view whose account could not be read is unknown too, not skipped.
 func TestGitScanSkipsAnotherAccountsGitLinux(t *testing.T) {
 	t.Parallel()
 	denied := &fs.PathError{Op: "readlink", Path: "/proc/18772/cwd", Err: syscall.EACCES}
-	foreign := procView{comm: "git\n", cmdline: []byte("git\x00status"), cwdErr: denied, owner: 502, ownerKnown: true}
-	own := procView{comm: "git\n", cmdline: []byte("git\x00fetch"), cwd: "/home/nova/bus", owner: 501, ownerKnown: true}
+	foreign := procView{comm: "git\n", cmdline: []byte("git\x00status"), cwdErr: denied, owner: 502, ownerKnown: true, account: 502, accountKnown: true}
+	own := procView{comm: "git\n", cmdline: []byte("git\x00fetch"), cwd: "/home/nova/bus", owner: 501, ownerKnown: true, account: 501, accountKnown: true}
 	procs, err := classifyViews([]procView{foreign, own}, 501)
-	if err != nil || len(procs) != 1 || procs[0].cwd != "/home/nova/bus" {
-		t.Fatalf("another account's git beside our own: procs=%+v err=%v, want our one and no error", procs, err)
+	if err != nil || len(placed(procs)) != 1 || placed(procs)[0].cwd != "/home/nova/bus" || len(procs) != 2 || !procs[0].foreign {
+		t.Fatalf("another account's git beside our own: procs=%+v err=%v, want our one placed, theirs flagged foreign, and no error", procs, err)
 	}
 	if _, err := classifyViews([]procView{foreign}, 502); err == nil || !strings.HasPrefix(err.Error(), ownershipUnknown) {
 		t.Fatalf("our own git with an unreadable cwd: err=%v, want %q", err, ownershipUnknown)
 	}
 	unowned := foreign
-	unowned.ownerKnown = false
-	if _, err := classifyViews([]procView{unowned}, 501); err == nil || !strings.HasPrefix(err.Error(), ownershipUnknown) {
-		t.Fatalf("a git whose owner could not be read: err=%v, want %q", err, ownershipUnknown)
+	unowned.ownerKnown, unowned.accountKnown = false, false
+	if procs, err := classifyViews([]procView{unowned}, 501); err == nil || !strings.HasPrefix(err.Error(), ownershipUnknown) || len(procs) != 1 || !procs[0].unknown {
+		t.Fatalf("a git whose account could not be read: procs=%+v err=%v, want one unknown and %q", procs, err, ownershipUnknown)
 	}
 }
 
-// readProcView through a fake /proc records the owner of every entry and reads the rest
-// the same way whoever owns it. Another account's git with an unreadable cwd and no
-// absolute location is skipped; the same git naming a checkout with -C is placed; our own
-// is read in full; an owner stat that says the pid is gone is the vanished case; an owner
-// stat with no uid leaves the owner unknown and the unplaced git is then unknown.
+// placed is the gits a scan could place or must still place: the ones that are neither
+// flagged foreign nor flagged unknown.
+func placed(procs []gitProc) []gitProc {
+	var out []gitProc
+	for _, p := range procs {
+		if !p.foreign && !p.unknown {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// readProcView through a fake /proc records the owner of every entry, the account its
+// status states, and reads the rest the same way whoever owns it. Another account's git
+// with an unreadable cwd and no absolute location is skipped, flagged foreign; the same
+// git naming a checkout with -C is placed; our own is read in full; an owner stat that
+// says the pid is gone is the vanished case; an owner stat with no uid and a status that
+// cannot be read leave the account unknown, and the unplaced git is then unknown.
 func TestReadProcViewRecordsTheOwner(t *testing.T) {
 	t.Parallel()
 	denied := &fs.PathError{Op: "readlink", Path: "/proc/18772/cwd", Err: syscall.EACCES}
@@ -557,6 +571,12 @@ func TestReadProcViewRecordsTheOwner(t *testing.T) {
 			readFile: func(name string) ([]byte, error) {
 				if strings.HasSuffix(name, "/comm") {
 					return []byte("git\n"), nil
+				}
+				if strings.HasSuffix(name, "/status") {
+					if !ok {
+						return nil, &fs.PathError{Op: "open", Path: name, Err: syscall.EACCES}
+					}
+					return []byte(fmt.Sprintf("Name:\tgit\nUid:\t%d\t%d\t%d\t%d\n", owner, owner, owner, owner)), nil
 				}
 				return []byte(cmdline), nil
 			},
@@ -570,21 +590,21 @@ func TestReadProcViewRecordsTheOwner(t *testing.T) {
 	}
 
 	v := readProcView("18772", fake(502, true, nil, "git\x00status", denied))
-	if !v.ownerKnown || v.owner != 502 || strings.TrimSpace(v.comm) != "git" || v.cwdErr == nil {
-		t.Fatalf("another account's entry: %+v, want owner 502 and comm, cmdline and cwd read", v)
+	if !v.ownerKnown || v.owner != 502 || !v.accountKnown || v.account != 502 || strings.TrimSpace(v.comm) != "git" || v.cwdErr == nil {
+		t.Fatalf("another account's entry: %+v, want owner and account 502 and comm, cmdline and cwd read", v)
 	}
-	if procs, err := classifyViews([]procView{v}, 501); err != nil || len(procs) != 0 {
-		t.Fatalf("another account's unplaced git: procs=%+v err=%v, want none and no error", procs, err)
+	if procs, err := classifyViews([]procView{v}, 501); err != nil || len(procs) != 1 || !procs[0].foreign {
+		t.Fatalf("another account's unplaced git: procs=%+v err=%v, want one flagged foreign and no error", procs, err)
 	}
 
 	v = readProcView("18773", fake(502, true, nil, "git\x00-C\x00/home/glenn/bus\x00commit", denied))
-	if procs, err := classifyViews([]procView{v}, 501); err != nil || len(procs) != 1 || procs[0].command != "git -C /home/glenn/bus commit" {
+	if procs, err := classifyViews([]procView{v}, 501); err != nil || len(procs) != 1 || procs[0].command != "git -C /home/glenn/bus commit" || procs[0].foreign {
 		t.Fatalf("another account's git naming a checkout with -C: procs=%+v err=%v, want it placed", procs, err)
 	}
 
 	v = readProcView("77", fake(501, true, nil, "git\x00status", nil))
-	if !v.ownerKnown || v.owner != 501 || v.cwd != "/home/nova/bus" {
-		t.Fatalf("our own entry: %+v, want owner 501 and cwd read", v)
+	if !v.ownerKnown || v.owner != 501 || !v.accountKnown || v.account != 501 || v.cwd != "/home/nova/bus" {
+		t.Fatalf("our own entry: %+v, want owner and account 501 and cwd read", v)
 	}
 
 	gone := &fs.PathError{Op: "stat", Path: "/proc/19050", Err: syscall.ENOENT}
@@ -594,8 +614,8 @@ func TestReadProcViewRecordsTheOwner(t *testing.T) {
 	}
 
 	v = readProcView("19051", fake(0, false, nil, "git\x00status", denied))
-	if _, err := classifyViews([]procView{v}, 501); v.ownerKnown || err == nil || !strings.HasPrefix(err.Error(), ownershipUnknown) {
-		t.Fatalf("an owner stat with no uid: view=%+v err=%v, want owner unknown and the scan unknown", v, err)
+	if procs, err := classifyViews([]procView{v}, 501); v.ownerKnown || v.accountKnown || v.accountErr == nil || err == nil || !strings.HasPrefix(err.Error(), ownershipUnknown) || len(procs) != 1 || !procs[0].unknown {
+		t.Fatalf("an owner stat with no uid and an unreadable status: view=%+v procs=%+v err=%v, want account unknown and the scan unknown", v, procs, err)
 	}
 }
 
@@ -630,8 +650,8 @@ func TestForeignGitDirKeepsItsLock(t *testing.T) {
 	private, privateLock := oldIndexLock(t)
 	cleared, cerr := clearStaleIndexLock(private, time.Now(), func() ([]gitProc, error) {
 		return classifyViews([]procView{
-			{owner: 502, ownerKnown: true, comm: "git\n", cmdline: []byte("git\x00status"), cwdErr: denied},
-			{owner: 502, ownerKnown: true, comm: "bash\n"},
+			{owner: 502, ownerKnown: true, account: 502, accountKnown: true, comm: "git\n", cmdline: []byte("git\x00status"), cwdErr: denied},
+			{owner: 502, ownerKnown: true, account: 502, accountKnown: true, comm: "bash\n"},
 		}, 501)
 	})
 	if cerr != nil || !cleared {
@@ -656,7 +676,7 @@ func TestIndexLockAgeThenOwnerThenScan(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
 	denied := &fs.PathError{Op: "readlink", Path: "/proc/18772/cwd", Err: syscall.EACCES}
-	unplaced := procView{owner: 502, ownerKnown: true, comm: "git\n", cmdline: []byte("git\x00commit"), cwdErr: denied}
+	unplaced := procView{owner: 502, ownerKnown: true, account: 502, accountKnown: true, comm: "git\n", cmdline: []byte("git\x00commit"), cwdErr: denied}
 	owner := func(uid uint32, ok bool) func(os.FileInfo) (uint32, bool) {
 		return func(os.FileInfo) (uint32, bool) { return uid, ok }
 	}

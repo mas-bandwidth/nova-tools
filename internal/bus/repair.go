@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -32,6 +33,36 @@ type WaitRecovery struct {
 	// LockChanged is true when the stale index.lock was replaced or touched during the
 	// process scan and so was left in place (ErrIndexLockChanged).
 	LockChanged bool
+	// Scanned is true when a stale index.lock of this account went to the process scan
+	// and the scan classified every process; Scan is then what it found, whether the lock
+	// was cleared, kept as owned, or kept as unknown.
+	Scanned bool
+	Scan    LockScan
+}
+
+// LockScan is the process scan's answer about one stale index.lock of this account.
+// Every live git the scan saw is one of three: an Owner is placed at this checkout, by
+// its cwd or by an absolute -C, --git-dir or --work-tree on its command line, whichever
+// account runs it; Foreign is another account's git placed nowhere, and only when the
+// kernel's own uid for it (/proc/<pid>/status on linux, ps uid on darwin) says so;
+// Unknown is a process still present whose account or place could not be read (EPERM
+// or EACCES on its status, cmdline or cwd, or a root-owned /proc entry, the non-dumpable
+// shape, whose status cannot prove another account). A process that vanished or is dead
+// mid-read is gone: it holds no lock and is counted nowhere (#3029). The lock is unlinked
+// only from a scan with Owner and Unknown both zero.
+type LockScan struct {
+	Owner, Foreign, Unknown int
+}
+
+// IndexLockReport is what ClearStaleIndexLock did and saw. Cleared is true only after
+// the lock file is gone. Scanned and Scan are as on WaitRecovery: the counts exist only
+// when a stale lock of this account reached a scan that classified every process, so a
+// scan that failed as a whole (ps failed, /proc unreadable) reports no counts and its
+// error names the failure.
+type IndexLockReport struct {
+	Cleared bool
+	Scanned bool
+	Scan    LockScan
 }
 
 // ClearStaleIndexLock removes the checkout's git index.lock when it is older than
@@ -50,8 +81,8 @@ type WaitRecovery struct {
 // now is the machine clock, compared with the lock file's own mtime. It is not the note
 // clock a verb freezes in tests: a frozen September would call a lock written today
 // either ancient or not yet born, and both answers are lies.
-func ClearStaleIndexLock(dir string, now time.Time) (bool, error) {
-	return clearStaleIndexLock(dir, now, gitProcesses)
+func ClearStaleIndexLock(dir string, now time.Time) (IndexLockReport, error) {
+	return clearStaleIndexLockReport(dir, now, gitProcesses, indexLockOwner, effectiveUID())
 }
 
 // clearStaleIndexLock is ClearStaleIndexLock with the process scan supplied.
@@ -59,6 +90,46 @@ func ClearStaleIndexLock(dir string, now time.Time) (bool, error) {
 // not be read, or a permission error — and the lock must still be here afterwards.
 func clearStaleIndexLock(dir string, now time.Time, scan func() ([]gitProc, error)) (bool, error) {
 	return clearStaleIndexLockAs(dir, now, scan, indexLockOwner, effectiveUID())
+}
+
+// indexLockScanHooks holds what the CLI tests run on their own fixture lock between the
+// process scan and the re-Lstat, so the lock can be replaced during the scan from
+// outside this package. An entry matches one lock file by os.SameFile and fires once.
+// Nothing but HookIndexLockScanForTest writes it.
+var indexLockScanHooks sync.Map // *indexLockScanHook -> struct{}
+
+type indexLockScanHook struct {
+	fi        os.FileInfo
+	afterScan func()
+}
+
+// HookIndexLockScanForTest runs afterScan once, the next time ClearStaleIndexLock has
+// scanned for the lock file at path and is about to re-check it, until the returned
+// restore runs. It is for tests outside this package that drive the wait end to end
+// through a lock that changes during the scan; the file itself is not changed here.
+func HookIndexLockScanForTest(path string, afterScan func()) (restore func(), err error) {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	h := &indexLockScanHook{fi: fi, afterScan: afterScan}
+	indexLockScanHooks.Store(h, struct{}{})
+	return func() { indexLockScanHooks.Delete(h) }, nil
+}
+
+// runIndexLockScanHooks fires every hook set on the inspected lock, each once.
+func runIndexLockScanHooks(fi os.FileInfo) {
+	var fire []func()
+	indexLockScanHooks.Range(func(k, _ any) bool {
+		if h := k.(*indexLockScanHook); os.SameFile(h.fi, fi) {
+			indexLockScanHooks.Delete(h)
+			fire = append(fire, h.afterScan)
+		}
+		return true
+	})
+	for _, f := range fire {
+		f()
+	}
 }
 
 // indexLockOwnerOverrides holds the owners the CLI tests set on their own fixture locks,
@@ -120,64 +191,77 @@ var errLockOwnerUnknown = errors.New("index.lock owner cannot be read, so it is 
 // from the Lstat of the lock itself, and only a stale lock owned by self goes on to the
 // process scan.
 func clearStaleIndexLockAs(dir string, now time.Time, scan func() ([]gitProc, error), lockOwner func(os.FileInfo) (uint32, bool), self uint32) (bool, error) {
+	rep, err := clearStaleIndexLockReport(dir, now, scan, lockOwner, self)
+	return rep.Cleared, err
+}
+
+// clearStaleIndexLockReport is the whole of ClearStaleIndexLock, with the scan's counts.
+func clearStaleIndexLockReport(dir string, now time.Time, scan func() ([]gitProc, error), lockOwner func(os.FileInfo) (uint32, bool), self uint32) (IndexLockReport, error) {
+	var rep IndexLockReport
 	lock, err := indexLockPath(dir)
 	if err != nil {
-		return false, err
+		return rep, err
 	}
 	fi, err := os.Lstat(lock)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return false, nil
+			return rep, nil
 		}
-		return false, err
+		return rep, err
 	}
 	if fi.IsDir() {
-		return false, fmt.Errorf("%s is a directory; refusing to remove it", lock)
+		return rep, fmt.Errorf("%s is a directory; refusing to remove it", lock)
 	}
 	// Lstat, not Stat: a symlink planted at the lock path is removed as a symlink.
 	// Following it would delete whatever it pointed at.
 	// A fresh lock is some git at work, whoever owns it: left alone, and the wait goes on.
 	age := now.Sub(fi.ModTime())
 	if age <= staleIndexLockAge {
-		return false, nil
+		return rep, nil
 	}
 	owner, ok := lockOwner(fi)
 	if !ok {
-		return false, errLockOwnerUnknown
+		return rep, errLockOwnerUnknown
 	}
 	if owner != self {
-		return false, lockOwnerForeignErr(owner)
+		return rep, lockOwnerForeignErr(owner)
 	}
-	owns, err := gitOwnsCheckoutScan(dir, scan)
+	found, err := gitOwnsCheckoutScan(dir, scan)
+	// A scan that failed as a whole classified nobody and has no counts to report; one
+	// that met a process it could not read has, and Unknown says so.
+	rep.Scanned = err == nil || found.Unknown > 0
+	rep.Scan = found
+	runIndexLockScanHooks(fi)
 	if err != nil {
 		// Not knowing is not the same as knowing the lock is leftover. Leave it.
-		return false, err
+		return rep, err
 	}
-	if owns {
-		return false, nil
+	if found.Owner > 0 {
+		return rep, nil
 	}
 	// The scan took time, and the path may now hold a different lock: the old one finished
 	// and a new git took the path, or someone touched it. Only the lock that was inspected
 	// is removed: the same device and inode, the same owner, and no newer mtime.
 	if changed, err := indexLockChanged(lock, fi, owner, lockOwner); err != nil || changed {
 		if os.IsNotExist(err) {
-			return false, nil
+			return rep, nil
 		}
 		if err == nil {
 			err = ErrIndexLockChanged
 		}
-		return false, err
+		return rep, err
 	}
 	if err := os.Remove(lock); err != nil {
 		if os.IsNotExist(err) {
-			return false, nil
+			return rep, nil
 		}
-		return false, err
+		return rep, err
 	}
 	if _, statErr := os.Lstat(lock); !os.IsNotExist(statErr) {
-		return false, fmt.Errorf("index.lock is still there after removing it")
+		return rep, fmt.Errorf("index.lock is still there after removing it")
 	}
-	return true, nil
+	rep.Cleared = true
+	return rep, nil
 }
 
 // ErrIndexLockChanged is the answer when the index.lock at the path is no longer the one
@@ -355,7 +439,8 @@ func RecoverWaitFastForward(dir, remote, branch string, owned []string, now time
 	if err := ValidGitArg("branch", branch); err != nil {
 		return rec, err
 	}
-	cleared, err := ClearStaleIndexLock(dir, now)
+	rep, err := ClearStaleIndexLock(dir, now)
+	rec.Scanned, rec.Scan = rep.Scanned, rep.Scan
 	if errors.Is(err, ErrIndexLockChanged) {
 		rec.LockChanged = true
 		err = nil
@@ -363,7 +448,7 @@ func RecoverWaitFastForward(dir, remote, branch string, owned []string, now time
 	if err != nil {
 		return rec, err
 	}
-	rec.LockCleared = cleared
+	rec.LockCleared = rep.Cleared
 	if _, err := git(dir, "fetch", remote, branch); err != nil {
 		return rec, fmt.Errorf("the fetch that would say whether anything has arrived on %s/%s failed: %w", remote, branch, err)
 	}
@@ -546,12 +631,15 @@ const ownershipDiagCap = 200
 // coordinator's gits). The skip removes no other account's lock: that account's git
 // holds its own lock file, which the first rule refuses. What stays out of sight is a
 // git of another account working in this checkout, with no absolute location on its
-// command line, under a lock this account made. On linux the account is the owner of
-// /proc/<pid>, and a non-dumpable process (one that changed credentials, or set
-// PR_SET_DUMPABLE to 0) has its /proc/<pid> owned by root: a git of this account in that
-// state reads as another account's and, when nothing places it, is skipped too. The
-// account is the effective uid (os.Geteuid, ps uid, the owner of /proc/<pid> and of the
-// lock file) because lsof, /proc and file ownership follow it.
+// command line, under a lock this account made. Another account's git is only what the
+// kernel's own uid for the process says it is: ps uid on darwin, the Uid line of
+// /proc/<pid>/status on linux, which is readable whoever owns the entry. The owner of
+// /proc/<pid> itself does not prove it: a non-dumpable process (one that changed
+// credentials, or set PR_SET_DUMPABLE to 0) has its /proc/<pid> owned by root whichever
+// account runs it, so a root-owned entry whose status cannot be read, or any unplaced git
+// whose status cannot be read, is unknown and keeps the lock, never skipped. The account
+// is the effective uid (os.Geteuid, ps uid, the second Uid field, the owner of the lock
+// file) because lsof, /proc and file ownership follow it.
 const ownershipUnknown = "cannot tell whether a git process owns this checkout"
 
 func ownershipUnknownErr(why string) error {
@@ -610,10 +698,18 @@ type procView struct {
 	cwdErr  error
 	cwd     string
 	dead    bool
-	// owner is the process's effective uid when ownerKnown. A process of another account
-	// that cannot be placed is skipped rather than unknown (see ownershipUnknown).
+	// owner is the owner of the /proc/<pid> entry when ownerKnown: the process's
+	// effective uid when it is dumpable, root when it is not. It does not decide whose
+	// process this is (see ownershipUnknown).
 	owner      uint32
 	ownerKnown bool
+	// account is the process's effective uid as /proc/<pid>/status states it, when
+	// accountKnown; accountErr is a status that could not be read. Only accountKnown with
+	// another uid makes an unplaced git another account's (skipped); anything else keeps
+	// it unknown.
+	account      uint32
+	accountKnown bool
+	accountErr   error
 }
 
 // procReader is how readProcView sees one /proc entry: owner is the entry's owner uid
@@ -625,11 +721,12 @@ type procReader struct {
 	readlink func(name string) (string, error)
 }
 
-// readProcView reads one pid. The owner of /proc/<pid> is the process's effective uid,
-// recorded for classifyViews; the process is read the same way whoever owns it, so a
-// command line of another account that names this checkout is still seen. An owner stat
-// that fails because the pid is gone is the vanished case; any other failure leaves the
-// owner unknown, and the process is then judged as this account's.
+// readProcView reads one pid. The owner of /proc/<pid> is recorded; the process's account
+// is the Uid line of its status, read once the comm says it is a git; the process is read
+// the same way whoever owns it, so a command line of another account that names this
+// checkout is still seen. A read that fails because the pid is gone, at the owner stat,
+// the status or any later file, is the vanished case; a status that fails any other way
+// leaves the account unknown, and an unplaced git is then unknown, not skipped.
 func readProcView(pid string, r procReader) procView {
 	var v procView
 	uid, ok, err := r.owner(pid)
@@ -650,6 +747,18 @@ func readProcView(pid string, r procReader) procView {
 	name := strings.TrimSpace(v.comm)
 	if name != "git" && name != "git.exe" {
 		return v
+	}
+	status, err := r.readFile("/proc/" + pid + "/status")
+	if err != nil {
+		if procGone(err) {
+			v.commErr = err
+			return v
+		}
+		v.accountErr = err
+	} else if uid, ok := statusEffectiveUID(status); ok {
+		v.account, v.accountKnown = uid, true
+	} else {
+		v.accountErr = errors.New("status has no Uid line")
 	}
 	raw, err := r.readFile("/proc/" + pid + "/cmdline")
 	if err != nil {
@@ -675,6 +784,27 @@ func readProcView(pid string, r procReader) procView {
 	}
 	v.cwd = cwd
 	return v
+}
+
+// statusEffectiveUID reads the effective uid out of /proc/<pid>/status: the line
+// "Uid:\t<real>\t<effective>\t<saved>\t<fs>". ok is false when there is no such line or
+// it has fewer than two fields.
+func statusEffectiveUID(status []byte) (uint32, bool) {
+	for _, line := range strings.Split(string(status), "\n") {
+		if !strings.HasPrefix(line, "Uid:") {
+			continue
+		}
+		fields := strings.Fields(line[len("Uid:"):])
+		if len(fields) < 2 {
+			return 0, false
+		}
+		uid, err := strconv.ParseUint(fields[1], 10, 32)
+		if err != nil {
+			return 0, false
+		}
+		return uint32(uid), true
+	}
+	return 0, false
 }
 
 // procDead reports whether pid is a zombie or already dead. ENOENT or ESRCH (procGone)
@@ -774,20 +904,26 @@ func gitProcFromView(v procView) (gitProc, bool, error) {
 // classifyViews finishes the scan. A process that cannot be classified is remembered
 // and the rest are still classified, so a known owner later in the list is not dropped
 // on the floor because an earlier cmdline was empty.
-// A view is placed the same way whichever account owns it; a view of another account
-// (known owner not self) that cannot be placed is skipped, not unknown.
+// A view is placed the same way whichever account owns it. A view that cannot be placed
+// is another account's (foreign, not unknown) only when its status proved an account
+// other than self; an unplaced git whose status could not be read, or whose entry is
+// root-owned with no status to say otherwise, stays unknown. The first unknown is the
+// error; every one of them is in the list, flagged, so the caller can count.
 func classifyViews(views []procView, self uint32) ([]gitProc, error) {
 	var procs []gitProc
 	var unknown error
 	for _, v := range views {
 		p, skip, err := gitProcFromView(v)
 		if err != nil {
-			if v.ownerKnown && v.owner != self {
+			command := strings.Join(splitNUL(v.cmdline), " ")
+			if v.accountKnown && v.account != self {
+				procs = append(procs, gitProc{command: command, foreign: true})
 				continue
 			}
 			if unknown == nil {
 				unknown = err
 			}
+			procs = append(procs, gitProc{command: command, unknown: true, why: strings.TrimPrefix(err.Error(), ownershipUnknown+": ")})
 			continue
 		}
 		if skip {
@@ -814,41 +950,67 @@ func splitNUL(b []byte) []string {
 // the cwd could not be read. An empty cwd with cwdKnown false is not "this git is
 // nowhere"; it is "we do not know", and the lock stays unless the command line itself
 // names an absolute work tree.
+//
+// foreign marks another account's git that nothing placed: it is counted and never an
+// owner. unknown marks a process still present whose account or place could not be
+// read, with why as the reason; it keeps the lock. A scanner lists both so the caller
+// can count them beside the owners (LockScan).
 type gitProc struct {
 	command  string
 	args     []string
 	cwd      string
 	cwdKnown bool
+	foreign  bool
+	unknown  bool
+	why      string
 }
 
 // gitOwnsCheckout reports whether a live git process is operating on dir. An error means
 // the question could not be answered, which the caller treats as "do not remove the lock".
 func gitOwnsCheckout(dir string) (bool, error) {
-	return gitOwnsCheckoutScan(dir, gitProcesses)
+	found, err := gitOwnsCheckoutScan(dir, gitProcesses)
+	return found.Owner > 0, err
 }
 
-func gitOwnsCheckoutScan(dir string, scan func() ([]gitProc, error)) (bool, error) {
+// gitOwnsCheckoutScan classifies every process the scan listed (LockScan). An owner
+// anywhere in the list answers the question, whatever else the scan could not read; with
+// no owner, a scan that failed as a whole or met one unknown process is an error, and the
+// lock stays.
+func gitOwnsCheckoutScan(dir string, scan func() ([]gitProc, error)) (LockScan, error) {
+	var found LockScan
 	names, err := ownerNames(dir)
 	if err != nil {
-		return false, err
+		return found, err
 	}
 	procs, scanErr := scan()
+	var unknown error
 	for _, p := range procs {
-		if procOwns(names, p) {
-			// A known owner answers the question. An unclassified process elsewhere
-			// in the same scan does not un-answer it, and does not hide it.
-			return true, nil
+		switch {
+		case p.foreign:
+			found.Foreign++
+		case p.unknown:
+			found.Unknown++
+			if unknown == nil {
+				unknown = ownershipUnknownErr(p.why)
+			}
+		case procOwns(names, p):
+			found.Owner++
+		case !p.cwdKnown && !commandLocatesAbsolutely(p):
+			found.Unknown++
+			if unknown == nil {
+				unknown = ownershipUnknownErr("cwd unreadable")
+			}
 		}
+	}
+	if found.Owner > 0 {
+		// A known owner answers the question. An unclassified process elsewhere
+		// in the same scan does not un-answer it, and does not hide it.
+		return found, nil
 	}
 	if scanErr != nil {
-		return false, scanErr
+		return found, scanErr
 	}
-	for _, p := range procs {
-		if !p.cwdKnown && !commandLocatesAbsolutely(p) {
-			return false, ownershipUnknownErr("cwd unreadable")
-		}
-	}
-	return false, nil
+	return found, unknown
 }
 
 // commandLocatesAbsolutely reports whether the command line names an absolute work

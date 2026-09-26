@@ -35,8 +35,19 @@ func gitProcesses() ([]gitProc, error) {
 // skipped. A still-present git with no cwd and no absolute location is an incomplete
 // scan when it is this account's, and is skipped when it is another account's: lsof as
 // this account cannot read it, so it is out of this scan's sight (see ownershipUnknown).
+// Every skipped git of another account and every unreadable one of this account is in
+// the list, flagged (gitProc.foreign, gitProc.unknown), so the caller can count them; the
+// first unknown is the error, and the rest of the snapshot is still read, so an owner
+// later in it is not hidden.
 func gitProcsFromPS(psOut, self string, cwds map[string]string, cwdErr error, alive func(pid string) (bool, error)) ([]gitProc, error) {
 	var procs []gitProc
+	var first error
+	unknown := func(command, why string) {
+		procs = append(procs, gitProc{command: command, unknown: true, why: why})
+		if first == nil {
+			first = ownershipUnknownErr(why)
+		}
+	}
 	for _, line := range strings.Split(psOut, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -59,9 +70,11 @@ func gitProcsFromPS(psOut, self string, cwds map[string]string, cwdErr error, al
 		if cwdErr != nil {
 			if !commandLocatesAbsolutely(p) {
 				if foreign {
+					procs = append(procs, gitProc{command: cmd, foreign: true})
 					continue
 				}
-				return nil, ownershipUnknownErr("cwd unreadable, " + strings.TrimPrefix(cwdErr.Error(), ownershipUnknown+": "))
+				unknown(cmd, "cwd unreadable, "+strings.TrimPrefix(cwdErr.Error(), ownershipUnknown+": "))
+				continue
 			}
 			procs = append(procs, p)
 			continue
@@ -69,17 +82,20 @@ func gitProcsFromPS(psOut, self string, cwds map[string]string, cwdErr error, al
 		cwd, found := cwds[pid]
 		if !found || cwd == "" {
 			if foreign && !commandLocatesAbsolutely(p) {
+				procs = append(procs, gitProc{command: cmd, foreign: true})
 				continue
 			}
 			still, aerr := alive(pid)
 			if aerr != nil {
-				return nil, ownershipUnknownErr(aerr.Error())
+				unknown(cmd, aerr.Error())
+				continue
 			}
 			if !still {
 				continue
 			}
 			if !commandLocatesAbsolutely(p) {
-				return nil, ownershipUnknownErr("cwd unreadable pid=" + pid)
+				unknown(cmd, "cwd unreadable pid="+pid)
+				continue
 			}
 			procs = append(procs, p)
 			continue
@@ -88,7 +104,7 @@ func gitProcsFromPS(psOut, self string, cwds map[string]string, cwdErr error, al
 		p.cwdKnown = true
 		procs = append(procs, p)
 	}
-	return procs, nil
+	return procs, first
 }
 
 func looksLikeGit(cmd string) bool {
