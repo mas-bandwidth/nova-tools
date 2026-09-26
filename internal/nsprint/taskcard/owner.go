@@ -69,7 +69,9 @@ func (o OwnerObservation) check() error {
 	if o.State != "live" && o.State != "dead" && o.State != "unknown" {
 		return fmt.Errorf("owner state wants live, dead or unknown")
 	}
-	if o.State != "unknown" || o.Owner != (ProcessOwner{}) {
+	// Unknown records exact binding bytes without asserting a valid process.
+	// A damaged binding must not prevent live siblings from being renewed.
+	if o.State != "unknown" {
 		if err := o.Owner.check(); err != nil {
 			return err
 		}

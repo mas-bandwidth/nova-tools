@@ -122,12 +122,17 @@ func TestFriendBeatMixedOwnersAndDaemonRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	until := now.Add(time.Minute).UnixMilli()
-	for i, id := range []string{"live~1", "dead~1", "unknown~1"} {
+	for i, id := range []string{"live~1", "dead~1", "unknown~1", "damaged~1"} {
 		if err := c.ZAdd(ctx, as.Key("working"), redis.Z{Score: float64(i), Member: id}).Err(); err != nil {
 			t.Fatal(err)
 		}
 		if err := c.HSet(ctx, taskcard.Key(id), "consumer", as.String(), "where", "working", "token", id, "lease_until", until, "model", "test-model").Err(); err != nil {
 			t.Fatal(err)
+		}
+		if i == 3 {
+			if err := c.HSet(ctx, taskcard.Key(id), "owner_host", "fixture", "owner_pid", "1", "owner_start", "-", "owner_token", id).Err(); err != nil {
+				t.Fatal(err)
+			}
 		}
 		if i < 2 {
 			if err := taskcard.BindOwner(ctx, c, as, id, id, taskcard.ProcessOwner{Host: "fixture", PID: i + 1, Start: "creation"}); err != nil {
@@ -146,13 +151,13 @@ func TestFriendBeatMixedOwnersAndDaemonRestart(t *testing.T) {
 	}}
 	for pass := 0; pass < 2; pass++ {
 		r, err := life.FriendBeat(ctx, st, req)
-		if err != nil || r.Working != 1 || len(r.Dead) != 1 || len(r.Unknown) != 1 {
+		if err != nil || r.Working != 1 || len(r.Dead) != 1 || len(r.Unknown) != 2 {
 			t.Fatalf("pass %d: %+v %v", pass, r, err)
 		}
 		if pass == 1 && len(r.Changed) != 0 {
 			t.Fatalf("restart repeated notices: %v", r.Changed)
 		}
-		for _, id := range []string{"dead~1", "unknown~1"} {
+		for _, id := range []string{"dead~1", "unknown~1", "damaged~1"} {
 			if v := c.HGet(ctx, taskcard.Key(id), "lease_until").Val(); v != strconv.FormatInt(until, 10) {
 				t.Fatalf("renewed %s: %s", id, v)
 			}
