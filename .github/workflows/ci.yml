@@ -158,6 +158,18 @@ jobs:
           [ -n "${GITHUB_WORKSPACE}" ] || exit 1
           [ -d "${GITHUB_WORKSPACE}" ] || exit 0
           [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
+          # Clean in place, keep the tree (Glenn 2026-09-26 10:20 AM ET, fs_usage
+          # on the Studio: four `find ... rm -rf` sweeps and the re-seeds behind
+          # them were the file-event storm fseventsd digested at 100% CPU;
+          # "lots of tiny files is a really slow way to work"). A checkout of
+          # ours is reset to its HEAD and every untracked or ignored file is
+          # removed: the same hygiene as emptying it, a few hundred operations
+          # instead of a hundred thousand, and the next checkout fetches only
+          # the new commit. A tree git cannot reset is emptied as before.
+          if git -C "${GITHUB_WORKSPACE}" reset -q --hard && git -C "${GITHUB_WORKSPACE}" clean -ffdxq; then
+            echo "workspace cleaned in place: $(git -C "${GITHUB_WORKSPACE}" rev-parse --short HEAD 2>/dev/null || echo '-')"
+            exit 0
+          fi
           find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
 
       - name: borrow objects from the bench mirror
@@ -314,6 +326,18 @@ jobs:
           [ -n "${GITHUB_WORKSPACE}" ] || exit 1
           [ -d "${GITHUB_WORKSPACE}" ] || exit 0
           [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
+          # Clean in place, keep the tree (Glenn 2026-09-26 10:20 AM ET, fs_usage
+          # on the Studio: four `find ... rm -rf` sweeps and the re-seeds behind
+          # them were the file-event storm fseventsd digested at 100% CPU;
+          # "lots of tiny files is a really slow way to work"). A checkout of
+          # ours is reset to its HEAD and every untracked or ignored file is
+          # removed: the same hygiene as emptying it, a few hundred operations
+          # instead of a hundred thousand, and the next checkout fetches only
+          # the new commit. A tree git cannot reset is emptied as before.
+          if git -C "${GITHUB_WORKSPACE}" reset -q --hard && git -C "${GITHUB_WORKSPACE}" clean -ffdxq; then
+            echo "workspace cleaned in place: $(git -C "${GITHUB_WORKSPACE}" rev-parse --short HEAD 2>/dev/null || echo '-')"
+            exit 0
+          fi
           find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
 
       - name: borrow objects from the bench mirror
@@ -653,6 +677,18 @@ jobs:
           [ -n "${GITHUB_WORKSPACE}" ] || exit 1
           [ -d "${GITHUB_WORKSPACE}" ] || exit 0
           [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
+          # Clean in place, keep the tree (Glenn 2026-09-26 10:20 AM ET, fs_usage
+          # on the Studio: four `find ... rm -rf` sweeps and the re-seeds behind
+          # them were the file-event storm fseventsd digested at 100% CPU;
+          # "lots of tiny files is a really slow way to work"). A checkout of
+          # ours is reset to its HEAD and every untracked or ignored file is
+          # removed: the same hygiene as emptying it, a few hundred operations
+          # instead of a hundred thousand, and the next checkout fetches only
+          # the new commit. A tree git cannot reset is emptied as before.
+          if git -C "${GITHUB_WORKSPACE}" reset -q --hard && git -C "${GITHUB_WORKSPACE}" clean -ffdxq; then
+            echo "workspace cleaned in place: $(git -C "${GITHUB_WORKSPACE}" rev-parse --short HEAD 2>/dev/null || echo '-')"
+            exit 0
+          fi
           find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
 
       - name: borrow objects from the bench mirror
@@ -875,6 +911,18 @@ jobs:
           [ -n "${GITHUB_WORKSPACE}" ] || exit 1
           [ -d "${GITHUB_WORKSPACE}" ] || exit 0
           [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
+          # Clean in place, keep the tree (Glenn 2026-09-26 10:20 AM ET, fs_usage
+          # on the Studio: four `find ... rm -rf` sweeps and the re-seeds behind
+          # them were the file-event storm fseventsd digested at 100% CPU;
+          # "lots of tiny files is a really slow way to work"). A checkout of
+          # ours is reset to its HEAD and every untracked or ignored file is
+          # removed: the same hygiene as emptying it, a few hundred operations
+          # instead of a hundred thousand, and the next checkout fetches only
+          # the new commit. A tree git cannot reset is emptied as before.
+          if git -C "${GITHUB_WORKSPACE}" reset -q --hard && git -C "${GITHUB_WORKSPACE}" clean -ffdxq; then
+            echo "workspace cleaned in place: $(git -C "${GITHUB_WORKSPACE}" rev-parse --short HEAD 2>/dev/null || echo '-')"
+            exit 0
+          fi
           find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -1151,6 +1199,18 @@ jobs:
           [ -n "${GITHUB_WORKSPACE}" ] || exit 1
           [ -d "${GITHUB_WORKSPACE}" ] || exit 0
           [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
+          # Clean in place, keep the tree (Glenn 2026-09-26 10:20 AM ET, fs_usage
+          # on the Studio: four `find ... rm -rf` sweeps and the re-seeds behind
+          # them were the file-event storm fseventsd digested at 100% CPU;
+          # "lots of tiny files is a really slow way to work"). A checkout of
+          # ours is reset to its HEAD and every untracked or ignored file is
+          # removed: the same hygiene as emptying it, a few hundred operations
+          # instead of a hundred thousand, and the next checkout fetches only
+          # the new commit. A tree git cannot reset is emptied as before.
+          if git -C "${GITHUB_WORKSPACE}" reset -q --hard && git -C "${GITHUB_WORKSPACE}" clean -ffdxq; then
+            echo "workspace cleaned in place: $(git -C "${GITHUB_WORKSPACE}" rev-parse --short HEAD 2>/dev/null || echo '-')"
+            exit 0
+          fi
           find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
 
       - name: borrow objects from the bench mirror
@@ -1254,6 +1314,18 @@ jobs:
           [ -n "${GITHUB_WORKSPACE}" ] || exit 1
           [ -d "${GITHUB_WORKSPACE}" ] || exit 0
           [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
+          # Clean in place, keep the tree (Glenn 2026-09-26 10:20 AM ET, fs_usage
+          # on the Studio: four `find ... rm -rf` sweeps and the re-seeds behind
+          # them were the file-event storm fseventsd digested at 100% CPU;
+          # "lots of tiny files is a really slow way to work"). A checkout of
+          # ours is reset to its HEAD and every untracked or ignored file is
+          # removed: the same hygiene as emptying it, a few hundred operations
+          # instead of a hundred thousand, and the next checkout fetches only
+          # the new commit. A tree git cannot reset is emptied as before.
+          if git -C "${GITHUB_WORKSPACE}" reset -q --hard && git -C "${GITHUB_WORKSPACE}" clean -ffdxq; then
+            echo "workspace cleaned in place: $(git -C "${GITHUB_WORKSPACE}" rev-parse --short HEAD 2>/dev/null || echo '-')"
+            exit 0
+          fi
           find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
 
       - name: borrow objects from the bench mirror
@@ -1360,6 +1432,18 @@ jobs:
           [ -n "${GITHUB_WORKSPACE}" ] || exit 1
           [ -d "${GITHUB_WORKSPACE}" ] || exit 0
           [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
+          # Clean in place, keep the tree (Glenn 2026-09-26 10:20 AM ET, fs_usage
+          # on the Studio: four `find ... rm -rf` sweeps and the re-seeds behind
+          # them were the file-event storm fseventsd digested at 100% CPU;
+          # "lots of tiny files is a really slow way to work"). A checkout of
+          # ours is reset to its HEAD and every untracked or ignored file is
+          # removed: the same hygiene as emptying it, a few hundred operations
+          # instead of a hundred thousand, and the next checkout fetches only
+          # the new commit. A tree git cannot reset is emptied as before.
+          if git -C "${GITHUB_WORKSPACE}" reset -q --hard && git -C "${GITHUB_WORKSPACE}" clean -ffdxq; then
+            echo "workspace cleaned in place: $(git -C "${GITHUB_WORKSPACE}" rev-parse --short HEAD 2>/dev/null || echo '-')"
+            exit 0
+          fi
           find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
 
       - name: borrow objects from the bench mirror
