@@ -97,11 +97,17 @@ type CheckRun struct {
 	Tail  string
 	Wall  time.Duration
 	// Red is a fail that proves the test red: go test's fail event for the
-	// named test, its package failing to build or run with the test in it,
-	// or the run killed at the cap. A test that did not run (no pass and no
-	// fail event: [no test files], [no tests to run], a package go test
-	// cannot find) is a fail at head and never a red at base.
+	// named test, or the run killed at the cap. A pass event of the named
+	// test is never red, whatever else failed. A test that did not run (no
+	// pass and no fail event: [no test files], [no tests to run], a package
+	// go test cannot find, a package that does not build) is a fail at head
+	// and never a red on its own (nova-tools#4401 read, item 1).
 	Red bool
+	// Passed is the named test's own pass event, whatever the exit.
+	// BuildFailed is its package failing to build, the named test never
+	// run: the spec gate reads it as the red only when the diff's test
+	// files add or change the named test (RunSpecGate).
+	Passed, BuildFailed bool
 }
 
 // TestCommand is the card's TEST line as argv: `[-tags <tags>] <package>
@@ -236,7 +242,7 @@ func runCheck(ctx context.Context, run Runner, repo, test string, timeout time.D
 	began := time.Now()
 	exit, err := run(ctx, Cmd{Dir: repo, Argv: append(argv, "-json"), Out: &out, Timeout: timeout, Ticks: ticks, Beat: beat})
 	ev := readTestEvents(out.all(), tl.Name)
-	r := CheckRun{Cmd: cmdline, Wall: time.Since(began), Tail: ev.tail(3)}
+	r := CheckRun{Cmd: cmdline, Wall: time.Since(began), Tail: ev.tail(3), Passed: ev.passed}
 	secs := fmt.Sprintf("%.2fs", r.Wall.Seconds())
 	switch {
 	case err != nil && !errors.Is(err, context.DeadlineExceeded):
@@ -251,8 +257,13 @@ func runCheck(ctx context.Context, run Runner, repo, test string, timeout time.D
 		if r.Tail != "" {
 			r.Green += "; " + r.Tail
 		}
-	case ev.failed || ev.pkgFailed:
-		r.Check, r.Red = "fail", true
+	case ev.failed || ev.pkgFailed || ev.passed:
+		// a fail of the named test is its red; a package that did not
+		// build ran no test (BuildFailed); a pass of the named test beside
+		// another failure (TestMain, a panic after it) is never red
+		r.Check = "fail"
+		r.Red = ev.failed && !ev.passed
+		r.BuildFailed = ev.buildFailed && !ev.failed && !ev.passed
 		r.Gate = cmdline + ": fail " + secs
 		if r.Tail != "" {
 			r.Gate += ": " + r.Tail
@@ -286,8 +297,11 @@ type testEvents struct {
 	// test (a build error, a panic, TestMain, the -timeout) while the
 	// package has test files and is there to set up.
 	passed, failed, pkgFailed bool
-	noFiles, noTests, setup   bool
-	output                    []string
+	// buildFailed is the package (or its test binary) failing to build:
+	// a build-fail event, or a package fail event naming FailedBuild.
+	buildFailed             bool
+	noFiles, noTests, setup bool
+	output                  []string
 }
 
 func (e testEvents) tail(n int) string {
@@ -304,7 +318,10 @@ func readTestEvents(lines []string, name string) testEvents {
 	var e testEvents
 	for _, l := range lines {
 		t := strings.TrimSpace(l)
-		var ev slowtests.Event
+		var ev struct {
+			slowtests.Event
+			FailedBuild string `json:"FailedBuild"`
+		}
 		if t == "" || t[0] != '{' || json.Unmarshal([]byte(t), &ev) != nil {
 			if t != "" {
 				e.output = append(e.output, t)
@@ -339,13 +356,16 @@ func readTestEvents(lines []string, name string) testEvents {
 				e.failed = true
 			case ev.Test == "":
 				e.pkgFailed = true
+				if ev.Action == "build-fail" || ev.FailedBuild != "" {
+					e.buildFailed = true
+				}
 			}
 		}
 	}
 	if e.noFiles || e.setup {
 		// no test to run (no test files), or no package to run it in
 		// (go test cannot find the directory): nothing is proved red
-		e.pkgFailed = false
+		e.pkgFailed, e.buildFailed = false, false
 	}
 	return e
 }

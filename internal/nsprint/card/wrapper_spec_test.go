@@ -133,6 +133,7 @@ func TestSpecGateHoldsTheCardToItsSpec(t *testing.T) {
 		why    string // in the refusal
 		reds   []string
 		calls  int
+		files  map[string]string // a path's content; "x" when absent
 	}{
 		{name: "no TEST line", test: "", paths: []string{"x/x.go", "x/x_test.go"}, reason: card.GateNoTest, why: "no TEST line"},
 		{name: "bare none", test: "none", paths: []string{"x/x.go", "x/x_test.go"}, reason: card.GateNoTest, why: "TEST: none says no why"},
@@ -142,7 +143,8 @@ func TestSpecGateHoldsTheCardToItsSpec(t *testing.T) {
 		{name: "no test files at head", test: "./q TestAnything", paths: []string{"q/q.go", "x/x_test.go"}, fake: gateFake{head: noFiles}, reason: card.GateNotGreen, why: "ran no TestAnything in ./q: [no test files]", calls: 1},
 		{name: "a subtest's pass at head", test: "./x TestY", paths: []string{"x/x.go", "x/x_test.go"}, fake: gateFake{head: subOnly}, reason: card.GateNotGreen, why: "ran no TestY in ./x", calls: 1},
 		{name: "not set up at base", test: "./x TestY", paths: []string{"x/x.go", "x/x_test.go"}, fake: gateFake{head: pass, base: setup}, reason: card.GateNotRed, why: "did not run at base-sha " + base[:12]},
-		{name: "build red at base", test: "./x TestY", paths: []string{"x/x.go", "x/x_test.go"}, fake: gateFake{head: pass, base: buildRed, ci: ciGreen}, reason: card.GatePass},
+		{name: "build red at base", test: "./x TestY", paths: []string{"x/x.go", "x/x_test.go"}, fake: gateFake{head: pass, base: buildRed, ci: ciGreen}, reason: card.GatePass,
+			files: map[string]string{"x/x_test.go": "package x\n\nimport \"testing\"\n\nfunc TestY(t *testing.T) { Z() }\n"}},
 		{name: "tagged", test: "-tags functional ./x TestY", paths: []string{"x/x.go", "x/x_test.go"}, fake: gateFake{head: pass, base: fail, ci: ciGreen}, reason: card.GatePass},
 		{name: "not red at base", test: "./x TestY", paths: []string{"x/x.go", "x/x_test.go"}, fake: gateFake{head: pass, base: pass}, reason: card.GateNotRed, why: "passes at base-sha " + base[:12] + " with your test files (x/x_test.go)"},
 		{name: "nova-ci local red", test: "./x TestY", paths: []string{"x/x.go", "x/x_test.go"}, fake: gateFake{head: pass, base: fail, ci: ciRed}, reason: card.GateCIRed,
@@ -164,7 +166,11 @@ func TestSpecGateHoldsTheCardToItsSpec(t *testing.T) {
 				if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.WriteFile(full, []byte("x"), 0o644); err != nil {
+				body, ok := tc.files[p]
+				if !ok {
+					body = "x"
+				}
+				if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -306,5 +312,128 @@ func TestFixCopyIsGatedOnItsFindingTest(t *testing.T) {
 	}
 	if strings.Contains(string(body), "\nTEST: ./x TestPrimary\n") || !strings.Contains(string(body), "\nFINDING-TEST: "+card.FindingTestLine+"\n") {
 		t.Errorf("the fix card:\n%s", body)
+	}
+}
+
+// TestRedAtBaseIsTheNamedTestsOwn is the nova-tools#4401 read's item 1: a
+// red at base is the named test's own fail event, or its package failing to
+// build only when the diff's test files add or change that test; a pass of
+// the named test at base is never red, whatever else failed. Before it, an
+// old always-green test beside a new test file calling new code (d1), or a
+// base that does not compile (d2), read as red and passed the gate.
+func TestRedAtBaseIsTheNamedTestsOwn(t *testing.T) {
+	t.Parallel()
+	const (
+		base = "0123456789abcdef0123456789abcdef01234567"
+		head = "89abcdef0123456789abcdef0123456789abcdef"
+	)
+	buildFail := gateAnswer{exit: 1, out: `{"ImportPath":"example.com/x [example.com/x.test]","Action":"build-output","Output":"x/new_test.go:5:2: undefined: NewThing\n"}` + "\n" +
+		`{"ImportPath":"example.com/x [example.com/x.test]","Action":"build-fail"}` + "\n" +
+		`{"Action":"fail","Package":"example.com/x","Elapsed":0,"FailedBuild":"example.com/x [example.com/x.test]"}` + "\n"}
+	// the named test passed; the package failed after it (TestMain, a leak check)
+	passThenFail := gateAnswer{exit: 1, out: `{"Action":"pass","Package":"example.com/x","Test":"TestOld","Elapsed":0}` + "\n" +
+		`{"Action":"output","Package":"example.com/x","Output":"FAIL\texample.com/x\t0.01s\n"}` + "\n" +
+		`{"Action":"fail","Package":"example.com/x","Elapsed":0.01}` + "\n"}
+	// the package panicked outside the named test: no event of its own
+	panicked := gateAnswer{exit: 1, out: `{"Action":"output","Package":"example.com/x","Output":"panic: init\n"}` + "\n" +
+		`{"Action":"fail","Package":"example.com/x","Elapsed":0.01}` + "\n"}
+	const (
+		oldTest  = "package x\n\nimport \"testing\"\n\nfunc TestOld(t *testing.T) { t.Parallel() }\n"
+		newTest  = "package x\n\nimport \"testing\"\n\nfunc TestNew(t *testing.T) {\n\tNewThing()\n}\n"
+		oldTest2 = "package x\n\nimport \"testing\"\n\nfunc TestOld(t *testing.T) {\n\tNewThing()\n}\n"
+	)
+	ciGreen := gateAnswer{exit: 0, out: "nova-ci local: packages=1 seconds=0.4 red=0 make-exit=0\n"}
+	for _, tc := range []struct {
+		name     string
+		test     string
+		baseTest string            // x/old_test.go at base; "" for none
+		files    map[string]string // the diff's files at head
+		baseRun  gateAnswer
+		reason   string
+		why      string
+	}{
+		{name: "d1: an old test beside a new file that calls new code", test: "./x TestOld", baseTest: oldTest,
+			files: map[string]string{"x/x.go": "package x\n", "x/new_test.go": newTest}, baseRun: buildFail, reason: card.GateNotRed, why: "do not add or change TestOld"},
+		{name: "d1 control: the new test the file adds", test: "./x TestNew", baseTest: oldTest,
+			files: map[string]string{"x/x.go": "package x\n", "x/new_test.go": newTest}, baseRun: buildFail, reason: card.GatePass},
+		{name: "d1: an old test changed to call new code", test: "./x TestOld", baseTest: oldTest,
+			files: map[string]string{"x/x.go": "package x\n", "x/old_test.go": oldTest2}, baseRun: buildFail, reason: card.GatePass},
+		{name: "d1: an old test the diff's file carries unchanged", test: "./x TestOld", baseTest: oldTest,
+			files: map[string]string{"x/x.go": "package x\n", "x/old_test.go": oldTest + "\nfunc TestNew(t *testing.T) { NewThing() }\n"}, baseRun: buildFail, reason: card.GateNotRed, why: "do not add or change TestOld"},
+		{name: "d2: a base that does not compile", test: "./x TestOld", baseTest: oldTest,
+			files: map[string]string{"x/x.go": "package x\n", "x/other_test.go": "package x\n"}, baseRun: buildFail, reason: card.GateNotRed, why: "does not build at base-sha " + base[:12]},
+		{name: "a test in another package", test: "./x TestNew", baseTest: oldTest,
+			files: map[string]string{"x/x.go": "package x\n", "y/new_test.go": "package y\n\nimport \"testing\"\n\nfunc TestNew(t *testing.T) {}\n"}, baseRun: buildFail, reason: card.GateNotRed, why: "do not add or change TestNew"},
+		{name: "a pass of the named test beside a package fail", test: "./x TestOld", baseTest: oldTest,
+			files: map[string]string{"x/x.go": "package x\n", "x/new_test.go": newTest}, baseRun: passThenFail, reason: card.GateNotRed, why: "passes at base-sha " + base[:12]},
+		{name: "a package fail outside the named test", test: "./x TestOld", baseTest: oldTest,
+			files: map[string]string{"x/x.go": "package x\n", "x/old_test.go": oldTest2}, baseRun: panicked, reason: card.GateNotRed, why: "did not run at base-sha " + base[:12]},
+		{name: "the named test's own fail", test: "./x TestOld", baseTest: oldTest,
+			files: map[string]string{"x/x.go": "package x\n", "x/old_test.go": oldTest2}, baseRun: testFail("TestOld"), reason: card.GatePass},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			out := filepath.Join(t.TempDir(), "out")
+			repo := filepath.Join(out, "repo")
+			var paths []string
+			for p, body := range tc.files {
+				full := filepath.Join(repo, filepath.FromSlash(p))
+				if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				paths = append(paths, p)
+			}
+			fake := &gateFake{head: testPass(strings.Fields(tc.test)[1]), base: tc.baseRun, ci: ciGreen}
+			// the base worktree holds base's own test file before the
+			// diff's are checked out over it
+			run := func(ctx context.Context, c card.Cmd) (int, error) {
+				exit, err := fake.run(ctx, c)
+				if c.Argv[0] == "git" && strings.Contains(strings.Join(c.Argv, " "), "worktree add") && tc.baseTest != "" {
+					dir := filepath.Join(c.Argv[len(c.Argv)-2], "x")
+					if err := os.MkdirAll(dir, 0o755); err != nil {
+						return -1, err
+					}
+					if err := os.WriteFile(filepath.Join(dir, "old_test.go"), []byte(tc.baseTest), 0o644); err != nil {
+						return -1, err
+					}
+				}
+				return exit, err
+			}
+			g := card.RunSpecGate(context.Background(), card.GateInput{Repo: repo, Base: base, Head: head, Test: tc.test, Paths: paths, Run: run})
+			if g.Reason != tc.reason || !strings.Contains(g.Why, tc.why) {
+				t.Fatalf("gate %s why=%q, want %s with %q\n%s", g.Reason, g.Why, tc.reason, tc.why, strings.Join(g.Rows, "\n"))
+			}
+		})
+	}
+}
+
+// TestFixFindingTestIsNeverNone is the nova-tools#4401 read's item 4: a fix
+// copy's finding test names a test. `none <why>` excused a fix from the class
+// test; the finding is a defect at the PR head, so its test fails there. The
+// fix is refused no-test with the fix's remedy and nothing runs; a work
+// copy's `none <why>` is still a declaration.
+func TestFixFindingTestIsNeverNone(t *testing.T) {
+	t.Parallel()
+	const prHead, commit = "0123456789abcdef0123456789abcdef01234567", "89abcdef0123456789abcdef0123456789abcdef"
+	repo := filepath.Join(t.TempDir(), "out", "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range []string{"none cosmetic", "none: the finding is a typo", "none"} {
+		f := &gateFake{ci: gateAnswer{exit: 0, out: "nova-ci local: packages=1 seconds=0.4 red=0 make-exit=0\n"}}
+		g := card.RunSpecGate(context.Background(), card.GateInput{Repo: repo, Base: prHead, Head: commit, Test: v, Fix: true, Paths: []string{"docs/a.md"}, Run: f.run})
+		if g.Reason != card.GateNoTest || !strings.Contains(g.Why, "a fix") || !strings.Contains(g.Why, card.FindingTestLine) || len(f.calls) != 0 {
+			t.Errorf("fix with TEST %q: %s %q (%d calls), want no-test with the fix's remedy and nothing run", v, g.Reason, g.Why, len(f.calls))
+		}
+	}
+	f := &gateFake{ci: gateAnswer{exit: 0, out: "nova-ci local: packages=1 seconds=0.4 red=0 make-exit=0\n"}}
+	if g := card.RunSpecGate(context.Background(), card.GateInput{Repo: repo, Base: prHead, Head: commit, Test: "none cosmetic", Paths: []string{"docs/a.md"}, Run: f.run}); !g.Passed() {
+		t.Errorf("a work copy's none <why>: %s %q, want pass", g.Reason, g.Why)
+	}
+	if strings.Contains(card.FindingTestLine, "TEST: none") {
+		t.Errorf("FindingTestLine still offers none: %q", card.FindingTestLine)
 	}
 }

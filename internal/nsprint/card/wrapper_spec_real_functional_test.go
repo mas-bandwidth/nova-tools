@@ -59,7 +59,12 @@ func realRepo(t *testing.T, baseFiles, headFiles map[string]string) (repo, base,
 // is not green; a test green at base is not red; a red at base with the
 // change's test and a pass at head passes, with a tagged TEST run under its
 // tags; a fix copy is held to the finding test it names at the PR head, and
-// the base worktree is removed every time.
+// the base worktree is removed every time. The nova-tools#4401 read's probes
+// run here too: an old green test beside a new file calling new code (d1)
+// and a base that does not compile (d2) are not red, a `./...` TEST whose
+// other package fails to build at base is refused (d3), and a fix's finding
+// test of `none <why>` is refused.
+
 func TestRealGateHoldsARealRepoToItsSpec(t *testing.T) {
 	t.Parallel()
 	if _, err := exec.LookPath("go"); err != nil {
@@ -70,6 +75,9 @@ func TestRealGateHoldsARealRepoToItsSpec(t *testing.T) {
 		addRight = "package x\n\nfunc Add(a, b int) int { return a + b }\n"
 		addTest  = "package x\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) {\n\tt.Parallel()\n\tif Add(2, 2) != 4 {\n\t\tt.Fatal(\"2+2\")\n\t}\n}\n"
 		oldTest  = "package x\n\nimport \"testing\"\n\nfunc TestOld(t *testing.T) { t.Parallel() }\n"
+		newThing = "package x\n\nfunc Add(a, b int) int { return a + b }\n\nfunc NewThing() int { return 1 }\n"
+		newTest  = "package x\n\nimport \"testing\"\n\nfunc TestNew(t *testing.T) {\n\tt.Parallel()\n\tif NewThing() != 1 {\n\t\tt.Fatal(\"new\")\n\t}\n}\n"
+		broken   = "package x\n\nfunc Add(a, b int) int { return a + }\n"
 	)
 	fixed := map[string]string{"x/x.go": addRight, "x/x_test.go": addTest}
 	for _, tc := range []struct {
@@ -78,6 +86,7 @@ func TestRealGateHoldsARealRepoToItsSpec(t *testing.T) {
 		test       string
 		reason     string
 		row        string // in the rows
+		why        string // in the refusal
 	}{
 		{name: "red at base, green at head", base: map[string]string{"x/x.go": addWrong}, head: fixed, test: "./x TestAdd",
 			reason: card.GatePass, row: "at base "},
@@ -89,6 +98,16 @@ func TestRealGateHoldsARealRepoToItsSpec(t *testing.T) {
 			test: "./x TestOld", reason: card.GateNotRed, row: "pass"},
 		{name: "tagged", base: map[string]string{"x/x.go": addWrong}, head: map[string]string{"x/x.go": addRight, "x/x_test.go": "//go:build functional\n\n" + addTest},
 			test: "-tags functional ./x TestAdd", reason: card.GatePass, row: "TEST -tags functional ./x TestAdd at head "},
+		{name: "d1: an old green test beside a new file calling new code", base: map[string]string{"x/x.go": addRight, "x/old_test.go": oldTest},
+			head: map[string]string{"x/x.go": newThing, "x/new_test.go": newTest}, test: "./x TestOld", reason: card.GateNotRed, row: "at base ", why: "do not add or change TestOld"},
+		{name: "d1 control: the new test the file adds", base: map[string]string{"x/x.go": addRight, "x/old_test.go": oldTest},
+			head: map[string]string{"x/x.go": newThing, "x/new_test.go": newTest}, test: "./x TestNew", reason: card.GatePass, row: "your test files add or change TestNew"},
+		{name: "d2: a base that does not compile", base: map[string]string{"x/x.go": broken, "x/old_test.go": oldTest},
+			head: map[string]string{"x/x.go": addRight, "x/x_test.go": addTest}, test: "./x TestOld", reason: card.GateNotRed, row: "at base ", why: "does not build at base-sha"},
+		{name: "d3: a package pattern over another package that fails to build at base", base: map[string]string{"x/x.go": addRight, "x/x_test.go": addTest, "y/y.go": "package y\n\nfunc Y() int { return }\n"},
+			head: map[string]string{"y/y.go": "package y\n\nfunc Y() int { return 1 }\n", "x/x_test.go": addTest + "\n// touched\n"}, test: "./... TestAdd", reason: card.GateNoTest, row: "not one package", why: "not one package"},
+		{name: "d3: the named package, green at base", base: map[string]string{"x/x.go": addRight, "x/x_test.go": addTest, "y/y.go": "package y\n\nfunc Y() int { return }\n"},
+			head: map[string]string{"y/y.go": "package y\n\nfunc Y() int { return 1 }\n", "x/x_test.go": addTest + "\n// touched\n"}, test: "./x TestAdd", reason: card.GateNotRed, row: "with the diff's tests: pass", why: "passes at base-sha"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -99,7 +118,7 @@ func TestRealGateHoldsARealRepoToItsSpec(t *testing.T) {
 			}
 			g := card.RunSpecGate(context.Background(), card.GateInput{Repo: repo, Base: base, Head: head, Test: tc.test, Paths: paths})
 			rows := strings.Join(g.Rows, "\n")
-			if g.Reason != tc.reason || !strings.Contains(rows, tc.row) {
+			if g.Reason != tc.reason || !strings.Contains(rows, tc.row) || !strings.Contains(g.Why, tc.why) {
 				t.Fatalf("gate %s why=%q, want %s with %q in the rows:\n%s", g.Reason, g.Why, tc.reason, tc.row, rows)
 			}
 			if _, err := os.Stat(filepath.Join(filepath.Dir(repo), "base")); !os.IsNotExist(err) {
@@ -119,7 +138,7 @@ func TestRealGateHoldsARealRepoToItsSpec(t *testing.T) {
 		cc := card.CopyCard{ID: "p1~2", Primary: "p1", Leg: "fix", Head: prSHA, BaseSHA: "0000000000000000000000000000000000000000", Test: "./x TestAdd"}
 		for _, fc := range []struct {
 			finding, reason string
-		}{{"./x TestAddNegative", card.GatePass}, {"", card.GateNoTest}} {
+		}{{"./x TestAddNegative", card.GatePass}, {"", card.GateNoTest}, {"none cosmetic", card.GateNoTest}} {
 			g, err := card.GateFriendCopy(context.Background(), card.FriendGate{Copy: cc, Finding: fc.finding, Repo: repo, Head: commit})
 			if err != nil || g.Reason != fc.reason {
 				t.Fatalf("finding %q: gate %s why=%q err=%v, want %s\n%s", fc.finding, g.Reason, g.Why, err, fc.reason, strings.Join(g.Rows, "\n"))

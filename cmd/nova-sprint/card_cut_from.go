@@ -334,7 +334,7 @@ func checkCutRow(r *cutRow, byID, slugs map[string]int, o cutFromOpts) {
 		if r.why == "" && r.route != taskcard.RouteFriend {
 			s := cutSpec(r, o, "")
 			if missing := s.Complete("", ""); len(missing) > 0 {
-				fail("the stitch (route " + r.route + ") lacks " + strings.Join(missing, ", ") + "; pass --base-sha, or --stitch-route friend")
+				fail("the stitch (route " + r.route + ") lacks " + strings.Join(missing, ", ") + "; the stitch carries the plan's TEST: give the plan one, pass --base-sha, or --stitch-route friend")
 			}
 		}
 		return
@@ -612,6 +612,9 @@ func planRows(ctx context.Context, o *cutFromOpts, d cutFromDeps, rows []*cutRow
 	st := &cutRow{n: len(rows) + 1, stitch: true, id: stitch, title: "stitch: " + cutOneLine(rec["title"]),
 		stream: o.Stream, who: "any", route: strings.ToLower(o.StitchRoute), est: o.StitchEst,
 		paths: strings.Join(paths, " "), doneWhen: doneWhen, body: b.String(),
+		// the stitch is held to the plan's own TEST (#4313): the class test
+		// the plan's DONE-WHEN is proved by, once the children have landed
+		test:   strings.TrimSpace(rec["test"]),
 		fields: []string{taskcard.FieldParent, o.Parent, taskcard.FieldPhase, taskcard.PhaseStitch}}
 	if st.paths == "" {
 		st.paths = strings.TrimSpace(rec["paths"])

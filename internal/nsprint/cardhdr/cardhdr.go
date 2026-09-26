@@ -148,14 +148,17 @@ const TestRemedy = "name `go test <package> -run <TestName>` in DONE-WHEN, or ad
 
 var (
 	// testPkgRE is a ./-relative or repository-relative Go package path.
-	testPkgRE  = regexp.MustCompile(`^(\.|\./[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*|[A-Za-z0-9_][A-Za-z0-9_.-]*(/[A-Za-z0-9_.-]+)*)/?(\.\.\.)?$`)
+	// A `...` pattern is not one package: a red at base from any package
+	// it matches would read as the named test's (nova-tools#4401 read).
+	testPkgRE  = regexp.MustCompile(`^(\.|\./[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*|[A-Za-z0-9_][A-Za-z0-9_.-]*(/[A-Za-z0-9_.-]+)*)/?$`)
 	testNameRE = regexp.MustCompile(`^(Test|Example|Fuzz)[A-Za-z0-9_]*$`)
 	testTagsRE = regexp.MustCompile(`^[A-Za-z0-9_.]+(,[A-Za-z0-9_.]+)*$`)
 )
 
 // ParseTest reads a TEST value: `[-tags <tags>] <package> <TestName>` (the
-// package a ./-relative or repository-relative Go path with no .., the name
-// a Go test name, the tags go test's -tags list) or `none <why>`. Anything
+// package one ./-relative or repository-relative Go package with no .. and
+// no `...` pattern, the name a Go test name, the tags go test's -tags list)
+// or `none <why>`. Anything
 // else is refused: why is one line with the remedy, and the line is zero. A
 // bare `none` is refused too: the reader must see why.
 func ParseTest(v string) (TestLine, string) {
@@ -181,6 +184,9 @@ func ParseTest(v string) (TestLine, string) {
 	}
 	if flagged && !testTagsRE.MatchString(tags) {
 		return TestLine{}, refused
+	}
+	if len(f) == 2 && strings.Contains(f[0], "...") {
+		return TestLine{}, "TEST " + strings.TrimSpace(v) + " names a package pattern (" + f[0] + "), not one package: a red at base must be the named test's own, so name the package the test is in: " + TestRemedy
 	}
 	if len(f) == 2 && testPkgRE.MatchString(f[0]) && !hasDotDot(f[0]) && testNameRE.MatchString(f[1]) {
 		return TestLine{Package: f[0], Name: f[1], Tags: tags}, ""

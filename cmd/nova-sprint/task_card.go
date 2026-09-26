@@ -26,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
@@ -342,6 +343,13 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 		if taskcard.IsCopy(*c.id) {
 			// task done of a copy is card end (#3929): the copy returns to its
 			// primary (ok; with --pr <n> --head <sha> the primary moves to review).
+			// A code copy's ok with a PR is held to its spec first
+			// (#4313): this door has no checkout, so it names the ones
+			// that run the gate (nova-tools#4401 read, DOORS).
+			if *c.pr != "" && cl.HGet(ctx, taskcard.Key(*c.id), "leg").Val() != "read" {
+				return refused(&taskcard.Refused{Why: card.GateNoTest + " task done --pr of a code copy skips the spec gate: nova-sprint friend done --as friend:<f> --id " + *c.id +
+					" --ok --pr <repo>#<n> --head <sha> --repo <your checkout at that head> [--test <finding test>] runs it before the end"})
+			}
 			r := taskcard.EndRequest{IDs: []string{*c.id}, OK: true, PR: *c.pr, Head: *c.head, By: *c.actor,
 				Fields: []string{"evidence", *c.evidence}}
 			if *c.pr != "" {

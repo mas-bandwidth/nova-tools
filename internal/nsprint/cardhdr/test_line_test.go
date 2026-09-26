@@ -65,3 +65,21 @@ func TestParseTestIsTheOneGrammar(t *testing.T) {
 		t.Errorf("String() = %q", s)
 	}
 }
+
+// TestParseTestRefusesAPackagePattern is the nova-tools#4401 read's item 2:
+// a TEST over `./...` ran every package it matches, so a package that failed
+// to build at base read as the named test's red while the base row showed
+// `--- PASS: TestAdd`. A TEST names one package; a pattern is refused on one
+// line that says so, with the remedy.
+func TestParseTestRefusesAPackagePattern(t *testing.T) {
+	t.Parallel()
+	for _, v := range []string{"./... TestAdd", "./internal/... TestAdd", "internal/x/... TestAdd", "-tags functional ./... TestAdd", "... TestAdd", "./x... TestAdd"} {
+		got, why := cardhdr.ParseTest(v)
+		if got != (cardhdr.TestLine{}) || !strings.Contains(why, "not one package") || !strings.Contains(why, "TEST: none <why") || strings.Contains(why, "\n") {
+			t.Errorf("ParseTest(%q) = %+v %q, want a one-line refusal naming the pattern", v, got, why)
+		}
+	}
+	if got, why := cardhdr.ParseTest("./x TestAdd"); why != "" || got.Package != "./x" {
+		t.Errorf("one package: %+v %q", got, why)
+	}
+}

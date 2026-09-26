@@ -10,7 +10,10 @@ package card
 //   - the class test: the card's TEST line names one test (`<package>
 //     <TestName>`, cardhdr.ParseTest); the diff adds or changes at least one
 //     _test.go file; the wrapper runs TEST at HEAD (it passes: GREEN) and at
-//     BASE with the diff's test files checked out over it (it fails: RED). A
+//     BASE with the diff's test files checked out over it (it fails: RED, the
+//     named test's own fail event, or its package failing to build only when
+//     the diff's test files add or change the named test; a pass of the named
+//     test at base is never red). A
 //     card whose TEST is `none <why>` is excused from the class test, not from
 //     CI, and the why is on the card, in RESULT.md and in the PR body, so the
 //     reader sees it. A bare `none` or no TEST line is refused: the reader
@@ -34,7 +37,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -130,8 +137,13 @@ func RunSpecGate(ctx context.Context, in GateInput) GateResult {
 		return res
 	}
 	tl, why := cardhdr.ParseTest(in.Test)
-	if why != "" && in.Fix {
+	switch {
+	case why != "" && in.Fix:
 		why = "a fix names its finding test: " + why + "; " + FindingTestLine
+	case in.Fix && tl.None:
+		// a finding is a defect at the PR head: its test fails there and
+		// passes at the fix (nova-tools#4401 read, item 4)
+		why = "a fix's finding test is never none (" + tl.Why + "): the finding is a defect at the PR head " + short(in.Base) + ", so its test fails there; " + FindingTestLine
 	}
 	if why != "" {
 		res.Rows = append(res.Rows, "TEST: refused ("+why+")")
@@ -151,17 +163,28 @@ func RunSpecGate(ctx context.Context, in GateInput) GateResult {
 		if head.Check != "pass" {
 			return refuse(GateNotGreen, "TEST "+in.Test+" is not green at head "+short(in.Head)+": "+head.Gate+"; make it pass before you commit")
 		}
-		red, stage := runAtBase(ctx, run, in, tests)
+		red, baseFunc, stage := runAtBase(ctx, run, in, tests)
 		if stage != "" {
 			res.Rows = append(res.Rows, "TEST "+in.Test+" at base "+short(in.Base)+": not-run ("+stage+")")
 			return refuse(GateNotRed, "TEST "+in.Test+" could not run at base-sha "+short(in.Base)+": "+stage)
 		}
-		res.Rows = append(res.Rows, "TEST "+in.Test+" at base "+short(in.Base)+" with the diff's tests: "+strings.TrimPrefix(red.Gate, red.Cmd+": "))
+		row := "TEST " + in.Test + " at base " + short(in.Base) + " with the diff's tests: " + strings.TrimPrefix(red.Gate, red.Cmd+": ")
+		// A package that does not build at base is the named test's red
+		// only when the diff's test files add or change that test: an old
+		// test beside a new file that calls new code, or a base that does
+		// not compile, proves nothing about it (nova-tools#4401 read, item 1).
+		buildRed := red.BuildFailed && diffDefinesTest(in.Repo, tests, tl, baseFunc)
+		if buildRed {
+			row += " (the package does not build: your test files add or change " + tl.Name + ")"
+		}
+		res.Rows = append(res.Rows, row)
 		switch {
-		case red.Check == "pass":
+		case red.Check == "pass" || red.Passed:
 			return refuse(GateNotRed, "TEST "+in.Test+" passes at base-sha "+short(in.Base)+" with your test files ("+strings.Join(tests, " ")+"): the test does not fail without the change; write one that does")
-		case !red.Red:
-			return refuse(GateNotRed, "TEST "+in.Test+" did not run at base-sha "+short(in.Base)+" with your test files ("+strings.Join(tests, " ")+"): "+red.Gate+"; a red is the named test failing (or its package failing to build), never a test that is not there")
+		case red.BuildFailed && !buildRed:
+			return refuse(GateNotRed, "TEST "+in.Test+"'s package does not build at base-sha "+short(in.Base)+" with your test files ("+strings.Join(tests, " ")+"), and they do not add or change "+tl.Name+": a build failure is its red only when your test files define it; name the test the change adds, or make "+tl.Name+" itself fail at base")
+		case !red.Red && !buildRed:
+			return refuse(GateNotRed, "TEST "+in.Test+" did not run at base-sha "+short(in.Base)+" with your test files ("+strings.Join(tests, " ")+"): "+red.Gate+"; a red is the named test's own fail (or its package failing to build when your test files add or change it), never a test that is not there")
 		}
 		res.Red = red.Gate
 	}
@@ -264,9 +287,11 @@ func testFiles(repo string, paths []string) []string {
 }
 
 // runAtBase stages Base in a worktree beside repo (<out>/base), checks the
-// diff's test files out of Head over it and runs TEST there. stage names the
-// step that could not run; the worktree is removed either way.
-func runAtBase(ctx context.Context, run Runner, in GateInput, tests []string) (CheckRun, string) {
+// diff's test files out of Head over it and runs TEST there. baseFunc is the
+// named test's source at base, read before the checkout ("" when base has
+// none). stage names the step that could not run; the worktree is removed
+// either way.
+func runAtBase(ctx context.Context, run Runner, in GateInput, tests []string) (_ CheckRun, baseFunc, stage string) {
 	base := in.BaseDir
 	if base == "" {
 		base = filepath.Join(filepath.Dir(in.Repo), "base")
@@ -286,17 +311,85 @@ func runAtBase(ctx context.Context, run Runner, in GateInput, tests []string) (C
 	out := filepath.Dir(base)
 	_ = safepath.RemoveUnder(out, base)
 	if why := git(in.Repo, "worktree", "add", "--detach", "--force", base, in.Base); why != "" {
-		return CheckRun{}, why
+		return CheckRun{}, "", why
 	}
 	defer func() {
 		_ = git(in.Repo, "worktree", "remove", "--force", base)
 		_ = safepath.RemoveUnder(out, base)
 		_ = git(in.Repo, "worktree", "prune")
 	}()
+	tl, _ := cardhdr.ParseTest(in.Test)
+	baseFunc = testFuncIn(filepath.Join(base, filepath.FromSlash(testPkgDir(tl))), tl.Name)
 	if why := git(base, append([]string{"checkout", in.Head, "--"}, tests...)...); why != "" {
-		return CheckRun{}, why
+		return CheckRun{}, "", why
 	}
-	return runCheck(ctx, run, base, in.Test, in.Timeout, in.Ticks, in.Beat), ""
+	return runCheck(ctx, run, base, in.Test, in.Timeout, in.Ticks, in.Beat), baseFunc, ""
+}
+
+// testPkgDir is TEST's package as a repository-relative directory: `./x/`
+// and `x` are `x`, `.` is `.`.
+func testPkgDir(tl cardhdr.TestLine) string {
+	return path.Clean(tl.Package)
+}
+
+// diffDefinesTest reports whether the diff's test files in TEST's package
+// define the named test at head with source that base does not have
+// (baseFunc, the test's source at base, "" when absent): the test is new or
+// changed, so its package failing to build at base is the test's own red.
+func diffDefinesTest(repo string, tests []string, tl cardhdr.TestLine, baseFunc string) bool {
+	dir := testPkgDir(tl)
+	for _, p := range tests {
+		if path.Dir(p) != dir {
+			continue
+		}
+		src, err := os.ReadFile(filepath.Join(repo, filepath.FromSlash(p)))
+		if err != nil {
+			continue
+		}
+		if head := funcSource(src, tl.Name); head != "" && head != baseFunc {
+			return true
+		}
+	}
+	return false
+}
+
+// testFuncIn is the source of the top-level func name in the _test.go files
+// of dir, "" when none defines it.
+func testFuncIn(dir, name string) string {
+	files, _ := filepath.Glob(filepath.Join(dir, "*_test.go"))
+	sort.Strings(files)
+	for _, f := range files {
+		src, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		if s := funcSource(src, name); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// funcSource is the source text of the top-level func name (no receiver) in
+// one Go file, "" when the file does not declare it or does not parse that
+// far.
+func funcSource(src []byte, name string) string {
+	fset := token.NewFileSet()
+	f, _ := parser.ParseFile(fset, "", src, parser.SkipObjectResolution)
+	if f == nil {
+		return ""
+	}
+	for _, d := range f.Decls {
+		fd, ok := d.(*ast.FuncDecl)
+		if !ok || fd.Recv != nil || fd.Name == nil || fd.Name.Name != name || fd.Body == nil {
+			continue
+		}
+		from, to := fset.Position(fd.Pos()).Offset, fset.Position(fd.End()).Offset
+		if from >= 0 && to <= len(src) && from < to {
+			return string(src[from:to])
+		}
+	}
+	return ""
 }
 
 // redLineMark is how nova-ci local prints a red test.

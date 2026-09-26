@@ -241,7 +241,11 @@ func runFriendDone(ctx context.Context, args []string, out, errOut io.Writer) in
 	}
 	start := time.Now()
 	ms := func() int64 { return time.Since(start).Milliseconds() }
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	// the store's calls are bounded by 30 s each side of the gate; the gate
+	// runs under the caller's context, each command under its own cap
+	// (DefaultCheckTimeout): a gate is go test, not a round trip
+	parent := ctx
+	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
 	st, err := store.Open(ctx, taskAddr(*redisAddr))
 	if err != nil {
@@ -264,30 +268,18 @@ func runFriendDone(ctx context.Context, args []string, out, errOut io.Writer) in
 		fmt.Fprintf(out, "FRIEND DONE REFUSED id=%s why=%s ms=%d\n", *id, quoteField("NOTMINE task:"+*id+" is "+holder+"'s copy, not "+k.String()+"'s"), ms())
 		return 1
 	}
-	if cc := card.CopyCardFrom(*id, rec); r.PR != "" && cc.Leg != "read" {
+	if r.PR != "" {
 		// The spec gate (#4313) a bench's copy passes in its wrapper: a
 		// friend has none, so the verb runs it in the friend's checkout
 		// before anything is recorded.
-		if *repoDir == "" {
-			fmt.Fprintf(out, "FRIEND DONE REFUSED id=%s why=%s ms=%d\n", *id, quoteField(card.GateNoTest+" --ok --pr wants --repo <your checkout at --head>: the spec gate runs there before the end"), ms())
+		if why := gateCopyEnd(parent, c, *id, rec, *repoDir, *findingTest, *head, out); why != "" {
+			fmt.Fprintf(out, "FRIEND DONE REFUSED id=%s why=%s ms=%d\n", *id, quoteField(why), ms())
 			return 1
 		}
-		if cc.Test == "" && cc.Primary != "" {
-			// a copy cut before TM.CARRY carried test: the primary's
-			cc.Test = c.HGet(ctx, taskcard.Key(cc.Primary), "test").Val()
-		}
-		g, err := card.GateFriendCopy(ctx, card.FriendGate{Copy: cc, Finding: *findingTest, Repo: *repoDir, Head: *head})
-		if err != nil {
-			fmt.Fprintf(out, "FRIEND DONE REFUSED id=%s why=%s ms=%d\n", *id, quoteField("gate could not run: "+err.Error()), ms())
-			return 1
-		}
-		for _, row := range g.Rows {
-			fmt.Fprintf(out, "GATE %s\n", row)
-		}
-		if !g.Passed() {
-			fmt.Fprintf(out, "FRIEND DONE REFUSED id=%s why=%s ms=%d\n", *id, quoteField(g.Reason+" "+g.Why), ms())
-			return 1
-		}
+		// the end's own round trips get their 30 s after the gate
+		after, cancelAfter := context.WithTimeout(parent, 30*time.Second)
+		defer cancelAfter()
+		ctx = after
 	}
 	if r.PR != "" {
 		// The PR the friend opened is recorded before the end, as the

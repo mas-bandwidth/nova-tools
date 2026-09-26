@@ -77,7 +77,7 @@ func CopyCardFrom(id string, rec map[string]string) CopyCard {
 // FindingTestLine is what a fix copy is told of its gate: the primary's
 // TEST is green at the PR head already, so the fix carries its own red test
 // and names it (nova-tools#4313 fix round).
-const FindingTestLine = "the fix carries its own test for the finding: it fails at the PR head and passes at your commit; name it on RESULT.md line 3 as TEST: [-tags <tags>] <package> <TestName> (or TEST: none <why the finding has no test>); the gate runs that test, not the primary's, before the push."
+const FindingTestLine = "the fix carries its own test for the finding: it fails at the PR head and passes at your commit; name it on RESULT.md line 3 as TEST: [-tags <tags>] <package> <TestName> (a finding test is never none: the finding is a defect, and its test proves the fix); the gate runs that test, not the primary's, before the push."
 
 // GateTest is the TEST a copy's commit is held to: a fix copy's is the
 // finding test the fix names (finding), since the primary's TEST is green
@@ -271,7 +271,7 @@ func RenderCopy(c CopyCard) ([]byte, error) {
 			done = fmt.Sprintf("this copy is ended with the score of %s at head %s: nova-sprint friend done --as %s --id %s --score N/10", prRef, c.Head, strings.TrimSpace(c.Consumer), c.ID)
 		case "fix":
 			baseSHA = c.Head
-			done = fmt.Sprintf("the fix is committed on top of %s's head %s, pushed to its branch, and this copy is ended with the new head: nova-sprint friend done --as %s --id %s --ok --pr %s --head <sha>",
+			done = fmt.Sprintf("the fix is committed on top of %s's head %s, pushed to its branch, and this copy is ended with the new head, the gate run in your checkout on the finding test (never none): nova-sprint friend done --as %s --id %s --ok --pr %s --head <sha> --repo <your checkout at that head> --test '<package> <TestName>'",
 				prRef, c.Head, strings.TrimSpace(c.Consumer), c.ID, prRef)
 		}
 		body = friendBody(c, full, label, prRef, branch)
