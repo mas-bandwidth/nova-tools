@@ -32,6 +32,12 @@ func startDetached(wrapper string, l Line, deadline time.Time) (int, string, err
 // startDetachedArgs is startDetached for any argv and one stdin line (a
 // sprint card's launch line, or a copy's <copy> <token>, #3998).
 func startDetachedArgs(wrapper string, args []string, stdinLine string, deadline time.Time) (int, string, error) {
+	return startDetachedArgsEnv(wrapper, args, stdinLine, deadline, nil)
+}
+
+// startDetachedArgsEnv is startDetachedArgs with extra environment for the
+// child (the bench's card.env, read by the beat and never applied to itself).
+func startDetachedArgsEnv(wrapper string, args []string, stdinLine string, deadline time.Time, env []string) (int, string, error) {
 	if !deadline.After(time.Now()) {
 		return 0, "", fmt.Errorf("wrapper acknowledgement timed out")
 	}
@@ -49,7 +55,7 @@ func startDetachedArgs(wrapper string, args []string, stdinLine string, deadline
 		Path:  wrapper,
 		Args:  args,
 		Stdin: r,
-		Env: append(os.Environ(),
+		Env: append(append(os.Environ(), env...),
 			LaunchAckFDEnv+"=3",
 			LaunchDeadlineEnv+"="+strconv.FormatInt(deadline.UnixMilli(), 10),
 		),

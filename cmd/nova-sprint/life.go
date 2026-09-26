@@ -281,6 +281,7 @@ func runBenchBeat(ctx context.Context, args []string, out, errOut io.Writer) int
 	root := fs.String("root", "", "the bench root whose harness, mirrors and free disk the beat carries (default ~/"+life.DefaultRoot+")")
 	copies := fs.Bool("copies", true, "each beat, when bench:<b> is enrolled in consumers, open the copy session: card work --fill and one nova-card copy per copy (#3998)")
 	wrapper := fs.String("wrapper", "", "the nova-card the copy session starts (default: beside this executable)")
+	cardEnv := fs.String("card-env", "", "the bench's card environment file the copy session hands nova-card (default ~/nova-bench/launch/card.env, the fleet play's; absent is refused when --copies is on)")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "bench beat", err.Error())
 	}
@@ -348,7 +349,23 @@ func runBenchBeat(ctx context.Context, args []string, out, errOut io.Writer) int
 		wakeOn, _ = os.Hostname()
 	}
 	beats := 0
-	copySession := benchCopySession(st, *bench, *copies, *wrapper, out, errOut)
+	var launchEnv []string
+	if *copies {
+		path := *cardEnv
+		if path == "" {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return refuse(errOut, "bench beat", err.Error())
+			}
+			path = filepath.Join(home, "nova-bench", "launch", "card.env")
+		}
+		env, err := launch.ReadEnvFile(path)
+		if err != nil {
+			return refuse(errOut, "bench beat", "card env: "+err.Error()+" (the fleet play in rowan-tools writes it)")
+		}
+		launchEnv = env
+	}
+	copySession := benchCopySession(st, *bench, *copies, *wrapper, launchEnv, out, errOut)
 	return benchBeatLoop(signalCtx, ticker.C, life.BeatInterval, *bench, errOut,
 		func(ctx context.Context) (life.BenchResult, error) {
 			req.Facts, req.RowAt = life.MeasureBench(*root), time.Now()
@@ -372,7 +389,7 @@ func runBenchBeat(ctx context.Context, args []string, out, errOut io.Writer) int
 // copy (card.OpenCopySession); a copy that cannot start is given back. A
 // session that took nothing prints nothing; an error prints once until it
 // changes, and never stops the beat.
-func benchCopySession(st *store.Store, bench string, on bool, wrapperFlag string, out, errOut io.Writer) func(context.Context) {
+func benchCopySession(st *store.Store, bench string, on bool, wrapperFlag string, launchEnv []string, out, errOut io.Writer) func(context.Context) {
 	if !on {
 		return func(context.Context) {}
 	}
@@ -383,7 +400,7 @@ func benchCopySession(st *store.Store, bench string, on bool, wrapperFlag string
 			if err != nil {
 				return err
 			}
-			_, err = launch.LaunchCopy(wrapper, launch.CopyLine{Copy: l.Copy, Token: l.Token}, launch.DefaultBudget)
+			_, err = launch.LaunchCopyEnv(wrapper, launch.CopyLine{Copy: l.Copy, Token: l.Token}, launch.DefaultBudget, launchEnv)
 			return err
 		})
 		if err != nil {

@@ -41,13 +41,23 @@ func ParseCopyLine(s string) (CopyLine, error) {
 // LaunchCopy starts one copy's wrapper and waits for its acknowledgement
 // (LAUNCHED, or its REFUSED line) until budget runs out.
 func LaunchCopy(wrapper string, l CopyLine, budget time.Duration) (string, error) {
+	return LaunchCopyEnv(wrapper, l, budget, nil)
+}
+
+// LaunchCopyEnv is LaunchCopy with the bench's card environment for the
+// wrapper (NOVA_CARD_* and the seat's Redis identity: the play writes it to
+// ~/nova-bench/launch/card.env; the beat reads it with ReadEnvFile and hands
+// it to the child, never to itself). Without it nova-card copy refuses at
+// once, "missing or bad NOVA_CARD_BENCH, ...", the first copy-model quack's
+// launch failure (2026-09-25 11:21 PM ET).
+func LaunchCopyEnv(wrapper string, l CopyLine, budget time.Duration, env []string) (string, error) {
 	if err := checkWrapper(wrapper); err != nil {
 		return "", err
 	}
 	if budget <= 0 {
 		budget = DefaultBudget
 	}
-	_, ack, err := startDetachedArgs(wrapper, []string{WrapperName, CopyArg, l.Copy}, l.String(), time.Now().Add(budget))
+	_, ack, err := startDetachedArgsEnv(wrapper, []string{WrapperName, CopyArg, l.Copy}, l.String(), time.Now().Add(budget), env)
 	if err != nil {
 		return "", err
 	}
