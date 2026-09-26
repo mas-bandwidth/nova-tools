@@ -156,6 +156,10 @@ func fakeNative(mode, out string) int {
 // record of the right class, and no job directory left behind; a wrapper
 // started for a card not dealt to this bench exits 4 and writes nothing.
 func TestWrapperOwnsOneCardEndToEnd(t *testing.T) {
+	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 	self, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)

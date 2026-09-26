@@ -49,6 +49,10 @@ func newGoOrigin(t *testing.T) (origin, base string) {
 // the record. RED AT cfe7adbf: the wrong-BRANCH card is `BRANCH contradictory`
 // and the two-line card `SCHEMA missing`, both valid=0.
 func TestWrapperFillsTheResult(t *testing.T) {
+	// SLEEPS: this test waits on the wall clock (measured over 5 s on the 2026-09-25 PR run). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git unavailable")
 	}

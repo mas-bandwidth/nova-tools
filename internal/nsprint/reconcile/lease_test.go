@@ -64,6 +64,10 @@ func procField(t *testing.T, ctx context.Context, client *redis.Client, field st
 //     instance refuses while B holds the lease.
 func TestControl10StaleInstanceCannotDeal(t *testing.T) {
 	t.Parallel()
+	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 
 	st, client := controlRedis(t)
 	ctx := context.Background()

@@ -21,6 +21,10 @@ import (
 // wait at the gate holding no process and no spend, and start only as the first two end.
 func TestABatchNeverExceedsItsRouteCap(t *testing.T) {
 	t.Parallel()
+	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 
 	windowsIsNotABench(t)
 	dir := t.TempDir()

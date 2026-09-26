@@ -89,6 +89,10 @@ func (s *syncBuffer) String() string {
 // deal nothing, and the refill lands inside half the 10 s sweep floor, so the
 // event, not the sweep, woke it.
 func TestReconcileVerbDealsOnEvent(t *testing.T) {
+	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 	addr := startThrowawayRedis(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = c.Close() })

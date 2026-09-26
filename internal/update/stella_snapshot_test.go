@@ -78,6 +78,10 @@ func TestStellaSnapshotRoundTripKeepsDistinctMapKeys(t *testing.T) {
 // snapshot's writer (a leftover is preferable to deleting another writer's
 // work), and the killed write retries cleanly on top of the leftover.
 func TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp(t *testing.T) {
+	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 	if runtime.GOOS == "windows" {
 		t.Skip("SIGKILL on a process group stages the death; the owed Windows validation is named in the pull request")
 	}

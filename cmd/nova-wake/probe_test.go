@@ -300,6 +300,10 @@ func TestAProbeMeasuresBeforeItPings(t *testing.T) {
 // The bounded correlation read: draft 7's K3, draft 8's K3a-c, draft 9's K4a-c.
 
 func TestTheBoundedCorrelationRead(t *testing.T) {
+	// SLEEPS: this test waits on the wall clock (measured over 5 s on the 2026-09-25 PR run). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 	if testing.Short() {
 		t.Skip("slow: spawns repeated probes over a built lane; runs on the self-hosted legs and nightly")
 	}

@@ -39,6 +39,10 @@ var fast = reconcile.Windows{Start: 150 * time.Millisecond, Beat: 250 * time.Mil
 // requeues under a new attempt; one whose identity is live is launched.
 func TestControl23NoSecondLaunch(t *testing.T) {
 	t.Parallel()
+	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 
 	ctx := context.Background()
 	st, client := newSprint(t)
@@ -173,6 +177,10 @@ func TestControl23NoSecondLaunch(t *testing.T) {
 // tests-red before dying ends FAILED tests-red.
 func TestControl25OrphanNeverDone(t *testing.T) {
 	t.Parallel()
+	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 
 	ctx := context.Background()
 	st, client := newSprint(t)
@@ -908,6 +916,10 @@ func sameHash(t *testing.T, what string, want, got map[string]string) {
 // and one durable receipt, and the retry after a crash writes nothing new.
 func TestControl09OneAssignmentOneReceipt(t *testing.T) {
 	t.Parallel()
+	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 
 	ctx := context.Background()
 	st, client := newSprint(t)

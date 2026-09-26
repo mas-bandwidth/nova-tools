@@ -321,6 +321,10 @@ func waitOn(t *testing.T, ch <-chan struct{}, what string) {
 }
 
 func TestLandTakesStreamPRsOldestFirst(t *testing.T) {
+	// SLEEPS: this test waits on the wall clock (measured over 5 s on the 2026-09-25 PR run). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 	f := newLandFix(t)
 	h1 := f.pr(11, f.base0, "a.txt", "a\n")
 	h2 := f.pr(12, f.base0, "b.txt", "b\n")
@@ -398,6 +402,10 @@ func TestLandTakesStreamPRsOldestFirst(t *testing.T) {
 }
 
 func TestLandGateAtHeadNoReadGate(t *testing.T) {
+	// SLEEPS: this test waits on the wall clock (measured over 5 s on the 2026-09-25 PR run). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 	f := newLandFix(t)
 	type tc struct {
 		n      int

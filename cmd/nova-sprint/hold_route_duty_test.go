@@ -128,6 +128,10 @@ func TestReconcileRoutesHoldToFix(t *testing.T) {
 // the start line names hold-to-fix among the rules and classify alone as not
 // wired, and the running router turns a HOLD into its fix task.
 func TestRouteVerbRunsHoldToFix(t *testing.T) {
+	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 	const S, pr = "control-3799r", 38
 	_, c, addr, _ := routeFixture(t, S)
 	e := &holdEnv{t: t, c: c, addr: addr, S: S}

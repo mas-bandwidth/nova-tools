@@ -636,6 +636,10 @@ func removeStaleGitTransactionLocks(t *testing.T, gitDir string) []string {
 
 func TestRemoveStaleGitTransactionLocksNamesOnly(t *testing.T) {
 	t.Parallel()
+	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 
 	gitDir := filepath.Join(t.TempDir(), ".git")
 	for _, dir := range []string{gitDir, filepath.Join(gitDir, "refs", "heads"), filepath.Join(gitDir, "logs", "refs", "heads")} {

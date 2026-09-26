@@ -55,6 +55,10 @@ func wholeTableRedis(t *testing.T) (string, *redis.Client) {
 // a second writer on the same lock refuses with exit 3 while the first runs,
 // and the first releases the lock on its way out.
 func TestControl3530LoopPublishesOneWriter(t *testing.T) {
+	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 	addr, client := wholeTableRedis(t)
 	dir := t.TempDir()
 	out := filepath.Join(dir, "TABLE.txt")

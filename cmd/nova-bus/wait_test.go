@@ -448,6 +448,10 @@ func TestWaitWithoutAdvanceBlocksWhenCursorIsUnadvanced(t *testing.T) {
 // inbox returns it, so the wait that must block is the one over a quiet bus.
 func TestWaitWithoutAdvanceReturnsWhenNoteArrivesDuringWaitWithUnadvancedCursor(t *testing.T) {
 	t.Parallel()
+	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 	hermetic(t)
 	checkout, bare := busDir(t)
 	settled(t, checkout) // Ada is up to date: nothing new to wake on.

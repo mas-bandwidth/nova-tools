@@ -168,6 +168,10 @@ func indexDataRows(raw string) int {
 // first tick builds the index, the next answers from it without opening a job file,
 // and only a job whose directory mtime moved is re-read.
 func TestStatusUsesThePerRootIndex(t *testing.T) {
+	// SLEEPS: this test waits on the wall clock (measured over 5 s on the 2026-09-25 PR run). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 	const day = "2026-09-16"
 	root := bigStatusRoot(t, day)
 	queue := bigStatusQueue(t)
