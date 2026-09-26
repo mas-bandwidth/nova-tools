@@ -3695,7 +3695,8 @@ watches (#3530): the headline (`SPRINT TABLE *** PIT STOP ***` while
 worker table, one blank line between them. The streams are the
 rows of `ws:order` (the ws index, #3662) with
 the ZCARDs of their `waiting`, `ready`, `working`, `review`, `reading`,
-`merging` and `landed` sets (`ws:<stream>:<where>`), one column each in that
+`merging` and `landed` sets (`ws:<stream>:<where>`, `ws:<e>:<stream>:<where>`
+after a `sprint clear`), one column each in that
 order (nothing folded: `review` is its own column between `working` and
 `reading`, and `reading` between `review` and `merging`); rows
 with all zeros are hidden. The total row sums each column. y is every task in
@@ -3711,7 +3712,8 @@ status | load`, one row per worker named `<kind>:<name>` (`friend:emma`,
 `bench:hetzner`): the friends (the `--friends` roster, else the `friends`
 SET sorted), then the `benches` SET, then any other member of the
 `consumers` SET, each once, and a total row. Every cell is one ZCARD of
-`<kind>:<name>:cards:<set>` for set = `ready`, `working`, `ok`, `fail`; done
+`<kind>:<name>:cards:<set>` (`<kind>:<name>:<e>:cards:<set>` at epoch e,
+`sprint clear`) for set = `ready`, `working`, `ok`, `fail`; done
 is ok + fail and ok% is ok over done, derived, with no sprint window and no
 base from a `table clear`; a set that does not read prints `?`, never 0.
 status is `up` when the worker's own beat (`<kind>:<name>:beat` at, ms)
@@ -3739,6 +3741,51 @@ each), stores the done counts in `ws:done0` (which the table no longer
 reads) and the receipt in `ws:checkpoint`, and prints `CLEARED ... ms=<n>`.
 Waiting, ready, working, review, reading and merging and the worker table
 are untouched.
+
+`sprint clear --why <text> [--force] [--checkpoint <file>] [--by <name>]
+[--redis <addr>]` (#4238) is the sprint table to zeros as ONE call,
+`ns_sprint_clear`: one `HINCRBY sprint:epoch n 1`. Nothing is moved or
+deleted. Every set behind a table is named by the sprint epoch it was
+written under, so the next tick reads the new epoch's empty sets and the old
+epoch's members are invisible for good:
+
+| set | epoch 0 (the name before the first clear) | epoch e |
+| --- | --- | --- |
+| a stream's tasks | `ws:<stream>:<where>` | `ws:<e>:<stream>:<where>` |
+| a consumer's copies | `<kind>:<name>:cards:<col>` | `<kind>:<name>:<e>:cards:<col>` |
+| a sprint's dealer lists | `s:<S>:pool`, `s:<S>:waiting` | `s:<S>:<e>:pool`, `s:<S>:<e>:waiting` |
+
+A store never cleared reads as it did (epoch 0 is the old names, no
+migration). A record carries the epoch it was created under (its `epoch`
+field; absent is 0) and lives in that epoch's sets for good: a move, a beat
+or an end of an older epoch's card stays in its own epoch (an old copy's
+beat or end refuses `NOTWORKING`), so a writer holding the old epoch never
+makes a current cell non-zero. Every reader keys by the current epoch: the
+tick reads `sprint:epoch n` after its cells in the same pipeline and reads
+again when it moved, and `ReadLive` does the same. The names are spelled by
+one rule (`ws.KeyAt`, `ws.ConsumerKeyAt`, `ws.SprintListAt`; `NS.card.ckey`,
+`wskey`, `skey` in the library); `TestEveryTableSetIsNamedByTheEpochRule`
+refuses any other spelling. A stream name may not start with `<digits>:`
+(`STREAM bad name <s>: a leading <digits>: is the sprint epoch segment of
+the set names`). Cards working or merging are in flight and refuse the
+clear (`REFUSED sprint clear: INFLIGHT <n> cards working or merging; sprint
+clear --force leaves them to epoch <e>`) unless `--force`. The pit stop is
+kept, never lifted. `--checkpoint` writes every ws set's members (the
+current epoch's) before the increment. The receipt:
+
+```
+CLEARED streams=10 cards=598 copies=38 consumers=11 epoch=1 by=rowan ms=0
+PITSTOP kept sprint=fix
+STREAM swarm: cards cards=164
+```
+
+`PITSTOP none` when no open sprint has a stop; one `STREAM` line per stream
+with what the clear made invisible; `ms` is the one call's own time. The
+same receipt rides the `sprint:epoch` hash (`n`, `at`, `by`, `why`, `from`,
+`streams`, `cards`, `copies`, `consumers`, `pitstop`, `pitstop_sprint`) with
+one `ws:log` entry (`epoch/<e>` to `epoch/<e+1>`). The old epochs' sets
+stay until a reaper takes them (not built). Exit 0 cleared, 1 refused, 2
+could not run.
 
 `review post --id <primary> --verdict recut|redeal|reassign:<consumer>|drop
 --why <text> [--to <consumer>] [--redis <addr>] [--actor <a>]` (#4072) is
@@ -4576,7 +4623,7 @@ A plan lands with its stitch by every door (`TK.land_parent` in the one move: th
 
 ### The card model: `nova-sprint card fsck`, `card ls --unplaced`, `bench reindex`
 
-ONE PLACE (nova-tools#3692). Glenn: "cards are not allowed to disappear." A card is its record `s:<S>:card:<label>` (the card id), never deleted, listed forever in `sprint:<S>:cards`. Its `where` names its one place (`waiting`, `ready`, `working`, `done`, `parked`, or empty: null, in no table set), `where_ok` is `ok` or `fail` once done. The places are ZSETs of card ids, every score the card's `created_at`: `bench:<b>:cards:<where>` (plus `:ok` and `:fail`; `_pool` while the card has no bench), `ws:<stream>:<where>` for a card with a `STREAM:` line, `friend:<owner>:cards:<where>` for a card a friend holds, and the dealer's lists: `s:<S>:pool` (ready) and `s:<S>:waiting`. Every ZSET, the pool included, is scored by `created_at`, uniformly, so every list reads oldest first; the deal priority is the record's `priority` field (lower deals first), and the dealer reads the pool by age and deals by that field, age breaking ties. A count the host table could not read prints `?`, never 0. One Lua primitive (`internal/nsprint/fn/lua/02_card_move.lua`) is the only writer of the pointer and the sets, in one call; the host table's ready, working, done, ok and fail are those ZCARDs.
+ONE PLACE (nova-tools#3692). Glenn: "cards are not allowed to disappear." A card is its record `s:<S>:card:<label>` (the card id), never deleted, listed forever in `sprint:<S>:cards`. Its `where` names its one place (`waiting`, `ready`, `working`, `done`, `parked`, or empty: null, in no table set), `where_ok` is `ok` or `fail` once done. The places are ZSETs of card ids, every score the card's `created_at`: `bench:<b>:cards:<where>` (plus `:ok` and `:fail`; `_pool` while the card has no bench), `ws:<stream>:<where>` for a card with a `STREAM:` line, `friend:<owner>:cards:<where>` for a card a friend holds, and the dealer's lists: `s:<S>:pool` (ready) and `s:<S>:waiting`, each named at epoch 0 as here and with the sprint epoch after a clear (`ws:<e>:...`, `<kind>:<name>:<e>:cards:...`, `s:<S>:<e>:...`; see `sprint clear`). Every ZSET, the pool included, is scored by `created_at`, uniformly, so every list reads oldest first; the deal priority is the record's `priority` field (lower deals first), and the dealer reads the pool by age and deals by that field, age breaking ties. A count the host table could not read prints `?`, never 0. One Lua primitive (`internal/nsprint/fn/lua/02_card_move.lua`) is the only writer of the pointer and the sets, in one call; the host table's ready, working, done, ok and fail are those ZCARDs.
 
 - `nova-sprint card fsck --sprint <S> --redis <addr> [--repair]` walks both directions (every card in exactly one place per dimension at its created_at score, every set member pointing back, the places summing to the roster) and prints one `CARD FSCK` line; exit 1 names `--repair`.
 - `nova-sprint bench reindex --sprint <S> --redis <addr>` is the one-time rebuild for a sprint whose cards predate the model: it adopts them from the sprint's state indexes and fills every view.

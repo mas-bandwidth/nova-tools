@@ -34,7 +34,7 @@ func seed(t *testing.T, c *redis.Client, n int, head string, readAt int64, lines
 	t.Helper()
 	ctx := context.Background()
 	id := fmt.Sprintf("t%d", n)
-	if err := c.ZAdd(ctx, WSKey(strm, "merging"), redis.Z{Score: float64(readAt), Member: id}).Err(); err != nil {
+	if err := c.ZAdd(ctx, WSKeyAt(0, strm, "merging"), redis.Z{Score: float64(readAt), Member: id}).Err(); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.HSet(ctx, "task:"+id, "stream", strm, "state", "merging", "pr", fmt.Sprintf("%s#%d", repo, n), "created_at", fmt.Sprint(readAt)).Err(); err != nil {
@@ -107,10 +107,10 @@ func TestMembersOrderAndFilters(t *testing.T) {
 	seed(t, c, 5, h(5), 60, score("rowan", h(5), 10), "HOLD who=emma head="+h(5)[:8]) // held
 	seed(t, c, 6, h(6), 70, score("jev", h(6), 10))                                   // jev only
 	// A task of another repo in the same stream is not a member or a skip here.
-	c.ZAdd(ctx, WSKey(strm, "merging"), redis.Z{Score: 10, Member: "other"})
+	c.ZAdd(ctx, WSKeyAt(0, strm, "merging"), redis.Z{Score: 10, Member: "other"})
 	c.HSet(ctx, "task:other", "pr", "mas-bandwidth/rowan-tools#9")
 	// A task with a pr but no record.
-	c.ZAdd(ctx, WSKey(strm, "merging"), redis.Z{Score: 20, Member: "t8"})
+	c.ZAdd(ctx, WSKeyAt(0, strm, "merging"), redis.Z{Score: 20, Member: "t8"})
 	c.HSet(ctx, "task:t8", "pr", "8")
 
 	ms, skips, err := Members(ctx, c, repo, []string{strm}, 8)
@@ -208,7 +208,7 @@ func TestSaveBuiltParksAndLandMembersLands(t *testing.T) {
 	if err != nil || moved != 1 {
 		t.Fatalf("built: %d %v", moved, err)
 	}
-	if s, _ := c.ZScore(ctx, WSKey(strm, "working"), "t2").Result(); s != 2 {
+	if s, _ := c.ZScore(ctx, WSKeyAt(0, strm, "working"), "t2").Result(); s != 2 {
 		t.Fatalf("parked t2 scores %v in working, want its age 2", s)
 	}
 	if st, _ := c.HGet(ctx, "task:t2", "state").Result(); st != "working" {
@@ -237,17 +237,17 @@ func TestSaveBuiltParksAndLandMembersLands(t *testing.T) {
 	if err != nil || already {
 		t.Fatalf("landed: %t %v", already, err)
 	}
-	if n, _ := c.ZCard(ctx, WSKey(strm, "merging")).Result(); n != 2 {
+	if n, _ := c.ZCard(ctx, WSKeyAt(0, strm, "merging")).Result(); n != 2 {
 		t.Fatalf("SaveLanded moved tasks: merging has %d", n)
 	}
 	res, err := LandMembers(ctx, c, got, "rowan", sha, map[int]string{1: "-"})
 	if err != nil || res.Moved != 2 || res.Missing != 0 || res.Lines != 2 || len(res.Skipped) != 0 {
 		t.Fatalf("land members: %+v %v", res, err)
 	}
-	if n, _ := c.ZCard(ctx, WSKey(strm, "merging")).Result(); n != 0 {
+	if n, _ := c.ZCard(ctx, WSKeyAt(0, strm, "merging")).Result(); n != 0 {
 		t.Fatalf("merging still has %d", n)
 	}
-	if n, _ := c.ZCard(ctx, WSKey(strm, "landed")).Result(); n != 2 {
+	if n, _ := c.ZCard(ctx, WSKeyAt(0, strm, "landed")).Result(); n != 2 {
 		t.Fatalf("landed has %d", n)
 	}
 	if why, _ := c.HGet(ctx, "task:t3", "why").Result(); why != "landed with nova-tools#900 (dddddddd)" {
@@ -317,7 +317,7 @@ func TestRedisPartsForAThousandAreFixedRoundTrips(t *testing.T) {
 	head := strings.Repeat("a", 40)
 	for n := 1; n <= 1000; n++ {
 		id := fmt.Sprintf("t%d", n)
-		pipe.ZAdd(ctx, WSKey(strm, "merging"), redis.Z{Score: float64(n), Member: id})
+		pipe.ZAdd(ctx, WSKeyAt(0, strm, "merging"), redis.Z{Score: float64(n), Member: id})
 		pipe.HSet(ctx, "task:"+id, "stream", strm, "state", "merging", "pr", fmt.Sprint(n))
 		pipe.HSet(ctx, PRKey(repo, n), "head", head, "base", "dev", "stream", strm, "state", "open", "reads", score("rowan", head, 10))
 	}
@@ -351,7 +351,7 @@ func TestRedisPartsForAThousandAreFixedRoundTrips(t *testing.T) {
 	if rt.n != 7 { // members 3 (merging, task pr, records), built 1, load 1, landed 1, land members 1
 		t.Fatalf("%d round trips for 1,000 members, want 7", rt.n)
 	}
-	if n, _ := c.ZCard(ctx, WSKey(strm, "landed")).Result(); n != 1000 {
+	if n, _ := c.ZCard(ctx, WSKeyAt(0, strm, "landed")).Result(); n != 1000 {
 		t.Fatalf("landed %d", n)
 	}
 }

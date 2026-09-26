@@ -212,7 +212,7 @@ local function card_deal(keys, args)
       'why', 'reason')
     -- In the pool (scored by created_at, like every view) is dealable; the
     -- bench queue keeps the card's deal priority, the record's field.
-    local score = redis.call('ZSCORE', 's:' .. S .. ':pool', label) and (tonumber(c[8]) or 0)
+    local score = redis.call('ZSCORE', NS.card.skey(NS.card.epoch(), S, 'pool'), label) and (tonumber(c[8]) or 0)
     local pin = c[3] or ''
     if open[S] and c[1] == 'queued' and score and attempt and attempt > max_attempts and
         attempt == (tonumber(c[2]) or 0) + 1 then
@@ -407,7 +407,10 @@ local function card_gate(keys, args)
     return { 'NONE', 'sprint not open' }
   end
   local at = deal_now_ms()
-  local pool, waiting = 's:' .. S .. ':pool', 's:' .. S .. ':waiting'
+  -- the dealer's lists under the current epoch (#4238)
+  local e = NS.card.epoch()
+  local pool, waiting = NS.card.skey(e, S, 'pool'), NS.card.skey(e, S, 'waiting')
+
   local waited, released = 0, 0
   for i = 5, #args, 3 do
     local label, verb, why = args[i], args[i + 1], args[i + 2]

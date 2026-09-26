@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 )
 
 const (
@@ -113,9 +115,13 @@ func IdemKey(sprint string) string { return "s:" + sprint + ":idem" }
 
 func IdxKey(sprint, state string) string { return "s:" + sprint + ":idx:card:" + state }
 
-// BenchWorkingKey is the bench's one lease ledger (#3998): its dealt,
-// launched and running sprint cards and its working copies.
-func BenchWorkingKey(bench string) string { return "bench:" + bench + ":cards:working" }
+// BenchWorkingKeyAt is the bench's one lease ledger (#3998): its dealt,
+// launched and running sprint cards and its working copies, under epoch e
+// (nova-tools#4238; a reader keys by ws.Epoch).
+
+func BenchWorkingKeyAt(e uint64, bench string) string {
+	return ws.ConsumerKeyAt(e, "bench:"+bench, "working")
+}
 
 func BenchEndedKey(sprint, bench string) string {
 	return "s:" + sprint + ":bench:" + bench + ":ended"

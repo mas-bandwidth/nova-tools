@@ -26,7 +26,7 @@ func TestFsckDutyRemovesMembersNotACard(t *testing.T) {
 	real := card.CardKey(s, "real")
 	pipeShape := "/private/tmp/nova/import-ab.pipe:task:build-3155-ghost"
 	noRecord := card.CardKey(s, "never-pushed")
-	benchReady := card.BenchCardsKey(ghBench, "ready")
+	benchReady := card.BenchCardsKeyAt(0, ghBench, "ready")
 	wsReady := "ws:" + ghStream + ":ready"
 	friendReady := "friend:emma:cards:ready"
 	w.do(t,
@@ -36,7 +36,7 @@ func TestFsckDutyRemovesMembersNotACard(t *testing.T) {
 		[]any{"ZADD", benchReady, 1, pipeShape},
 		[]any{"ZADD", wsReady, 1, noRecord},
 	)
-	if !zHas(t, w.ctx, w.c, card.BenchCardsKey("_pool", "ready"), real) || !zHas(t, w.ctx, w.c, wsReady, real) {
+	if !zHas(t, w.ctx, w.c, card.BenchCardsKeyAt(0, "_pool", "ready"), real) || !zHas(t, w.ctx, w.c, wsReady, real) {
 		t.Fatalf("fixture: %s is not in its ready views", real)
 	}
 
@@ -72,7 +72,7 @@ func TestFsckDutyRemovesMembersNotACard(t *testing.T) {
 			}
 		}
 	}
-	if !zHas(t, w.ctx, w.c, card.BenchCardsKey("_pool", "ready"), real) || !zHas(t, w.ctx, w.c, wsReady, real) {
+	if !zHas(t, w.ctx, w.c, card.BenchCardsKeyAt(0, "_pool", "ready"), real) || !zHas(t, w.ctx, w.c, wsReady, real) {
 		t.Fatalf("the duty removed the real card %s from a view", real)
 	}
 	receipts := 0

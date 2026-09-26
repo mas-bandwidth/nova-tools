@@ -30,7 +30,8 @@ func TestFriendRowAndBenchBeatWriteTheTableRows(t *testing.T) {
 	if err := fn.Load(ctx, client); err != nil {
 		t.Fatal(err)
 	}
-	client.SAdd(ctx, "sprint:s1:idx:walter:working", "a")
+	// the row counts the friend's table sets under the epoch (#4238)
+	client.ZAdd(ctx, "friend:walter:cards:working", redis.Z{Score: 1, Member: "a"})
 	client.HSet(ctx, "friend:walter:desired", "slots", "8")
 	// up is the beat's at under a minute old (#4233), not the key's existence
 	client.HSet(ctx, "friend:walter:beat", "at", strconv.FormatInt(time.Now().UnixMilli(), 10))

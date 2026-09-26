@@ -65,8 +65,10 @@ var States = append(append([]string{}, Stream...), Parked)
 // Closed is the state in no set.
 const Closed = "closed"
 
-// Key is the ZSET holding a stream's tasks in one state.
-func Key(stream, state string) string { return "ws:" + stream + ":" + state }
+// key0 is the ZSET holding a stream's tasks in one state at epoch 0, the
+// name before the first sprint clear; every reader keys by the epoch
+// through KeyAt (epoch.go, nova-tools#4238).
+func key0(stream, state string) string { return "ws:" + stream + ":" + state }
 
 // Refused is a function's REFUSED reply: the call wrote nothing (for a batch,
 // see ManyResult.Refused instead).

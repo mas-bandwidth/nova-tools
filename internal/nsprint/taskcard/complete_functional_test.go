@@ -194,14 +194,14 @@ func TestWaitingCardIsCompleteForFriendOrSwarm(t *testing.T) {
 		t.Errorf("two deals and the render of 100 took %d round trips, want 3", n)
 	}
 	for _, x := range []taskcard.Consumer{batman, stella} {
-		if n := c.ZCard(ctx, x.Key("ready")).Val(); n != 50 {
+		if n := c.ZCard(ctx, x.KeyAt(0, "ready")).Val(); n != 50 {
 			t.Errorf("%s ready copies = %d, want 50", x, n)
 		}
 	}
 	if n := wsCards(c, cardStream, "waiting"); n != 2 {
 		t.Errorf("waiting after the deal = %d, want 2", n)
 	}
-	if n := c.ZCard(ctx, taskcard.StreamKey(cardStream, "working")).Val(); n != 100 {
+	if n := c.ZCard(ctx, taskcard.StreamKeyAt(0, cardStream, "working")).Val(); n != 100 {
 		t.Errorf("working primaries after the deal = %d, want 100", n)
 	}
 	clean(t, c, "after the deal")

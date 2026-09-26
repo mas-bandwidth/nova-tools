@@ -54,7 +54,7 @@ func oneTable(t *testing.T, ctx context.Context, client *redis.Client, step stri
 		var benchIn, streamIn []string
 		for _, b := range []string{ndBench, "_pool"} {
 			for _, w := range append(append([]string{}, card.Places...), "ok", "fail") {
-				if zHas(t, ctx, client, card.BenchCardsKey(b, w), id) {
+				if zHas(t, ctx, client, card.BenchCardsKeyAt(0, b, w), id) {
 					benchIn = append(benchIn, b+"/"+w)
 				}
 			}
@@ -86,7 +86,7 @@ func oneTable(t *testing.T, ctx context.Context, client *redis.Client, step stri
 		scored := map[string]string{card.RosterKey(ndSprint): id}
 		for _, v := range benchIn {
 			b, w, _ := strings.Cut(v, "/")
-			scored[card.BenchCardsKey(b, w)] = id
+			scored[card.BenchCardsKeyAt(0, b, w)] = id
 		}
 		label := strings.TrimPrefix(id, "s:"+ndSprint+":card:")
 		if where == "ready" {
@@ -197,9 +197,9 @@ func assertHostRow(t *testing.T, ctx context.Context, client *redis.Client, step
 	t.Helper()
 	cells := hostRow(t, ctx, client)
 	for i, w := range []string{"ready", "working", "done", "ok", "fail"} {
-		n := client.ZCard(ctx, card.BenchCardsKey(ndBench, w)).Val()
+		n := client.ZCard(ctx, card.BenchCardsKeyAt(0, ndBench, w)).Val()
 		if cells[i+1] != fmt.Sprint(n) {
-			t.Fatalf("%s: host row %s = %s, ZCARD %s = %d (row %v)", step, w, cells[i+1], card.BenchCardsKey(ndBench, w), n, cells)
+			t.Fatalf("%s: host row %s = %s, ZCARD %s = %d (row %v)", step, w, cells[i+1], card.BenchCardsKeyAt(0, ndBench, w), n, cells)
 		}
 	}
 }
@@ -347,7 +347,7 @@ func TestCardMoveRefusesOffGraphAndDrift(t *testing.T) {
 	oneTable(t, ctx, client, "move to waiting", 1)
 
 	// A second place: the move refuses and writes nothing.
-	client.ZAdd(ctx, card.BenchCardsKey("_pool", "working"), redis.Z{Score: 1, Member: id})
+	client.ZAdd(ctx, card.BenchCardsKeyAt(0, "_pool", "working"), redis.Z{Score: 1, Member: id})
 	if got := client.FCall(ctx, "ns_card_move", nil, id, "ready").Val(); !strings.HasPrefix(fmt.Sprint(got), "REFUSED DRIFT twice") {
 		t.Fatalf("move with the id in two places = %v", got)
 	}
@@ -442,7 +442,7 @@ func TestMoveRefusesDriftOnTheNewBenchBeforeAnyWrite(t *testing.T) {
 	srv := repoServer(t)
 	ndPush(t, ctx, client, srv.URL+"/acme/public.git", "pr-a", "none", "pool")
 	id := card.CardKey(ndSprint, "pr-a")
-	client.ZAdd(ctx, card.BenchCardsKey(ndBench, "done"), redis.Z{Score: 1, Member: id})
+	client.ZAdd(ctx, card.BenchCardsKeyAt(0, ndBench, "done"), redis.Z{Score: 1, Member: id})
 	before := hashOf(t, ctx, client, ndSprint, "pr-a")
 	logLen := client.XLen(ctx, card.LogKey(ndSprint)).Val()
 	token := attemptToken(1, strings.Repeat("a", 32))
@@ -455,8 +455,8 @@ func TestMoveRefusesDriftOnTheNewBenchBeforeAnyWrite(t *testing.T) {
 	if fmt.Sprint(after) != fmt.Sprint(before) {
 		t.Fatalf("a refused deal wrote the record:\nbefore %v\nafter  %v", before, after)
 	}
-	if !zHas(t, ctx, client, "s:"+ndSprint+":pool", "pr-a") || client.ZCard(ctx, card.BenchWorkingKey(ndBench)).Val() != 0 ||
-		client.XLen(ctx, card.LogKey(ndSprint)).Val() != logLen || client.ZCard(ctx, card.BenchCardsKey(ndBench, "working")).Val() != 0 {
+	if !zHas(t, ctx, client, "s:"+ndSprint+":pool", "pr-a") || client.ZCard(ctx, card.BenchWorkingKeyAt(0, ndBench)).Val() != 0 ||
+		client.XLen(ctx, card.LogKey(ndSprint)).Val() != logLen || client.ZCard(ctx, card.BenchCardsKeyAt(0, ndBench, "working")).Val() != 0 {
 		t.Fatal("a refused deal wrote the pool, the starting set, the log or the bench view")
 	}
 	rep, err := card.Fsck(ctx, client, ndSprint, true)
@@ -528,7 +528,7 @@ func TestInvalidResultRefusedMoveSurfaces(t *testing.T) {
 	ndEnd(t, ctx, client, "ir-a", token, "DONE", "done")
 	oneTable(t, ctx, client, "ended ok", 1)
 	id := card.CardKey(ndSprint, "ir-a")
-	client.ZAdd(ctx, card.BenchCardsKey("_pool", "fail"), redis.Z{Score: 1, Member: id}) // drift
+	client.ZAdd(ctx, card.BenchCardsKeyAt(0, "_pool", "fail"), redis.Z{Score: 1, Member: id}) // drift
 	res, err := client.FCall(ctx, "ns_card_result", nil, ndSprint, "ir-a", "1", token,
 		"typed-record/v1", "fix", "0", "KIND", "malformed", "2", strings.Repeat("a", 64), "10", "/r").Text()
 	if err != nil || !strings.HasPrefix(res, "2|MOVE|1|") {
@@ -537,14 +537,14 @@ func TestInvalidResultRefusedMoveSurfaces(t *testing.T) {
 	if client.Exists(ctx, id+":result:a1").Val() != 0 {
 		t.Fatal("a refused move stored the result")
 	}
-	if w := client.HGet(ctx, id, "where_ok").Val(); w != "ok" || !zHas(t, ctx, client, card.BenchCardsKey(ndBench, "ok"), id) {
+	if w := client.HGet(ctx, id, "where_ok").Val(); w != "ok" || !zHas(t, ctx, client, card.BenchCardsKeyAt(0, ndBench, "ok"), id) {
 		t.Fatalf("where_ok %q after a refused move; the card must stay where its sets say", w)
 	}
 	msgs, _ := client.XRange(ctx, "sprint:"+ndSprint+":moves", "-", "+").Result()
 	if len(msgs) == 0 || fmt.Sprint(msgs[len(msgs)-1].Values["to"]) != "REFUSED" {
 		t.Fatalf("the refusal is not logged: %v", msgs)
 	}
-	client.ZRem(ctx, card.BenchCardsKey("_pool", "fail"), id)
+	client.ZRem(ctx, card.BenchCardsKeyAt(0, "_pool", "fail"), id)
 	res, err = client.FCall(ctx, "ns_card_result", nil, ndSprint, "ir-a", "1", token,
 		"typed-record/v1", "fix", "0", "KIND", "malformed", "2", strings.Repeat("a", 64), "10", "/r").Text()
 	if err != nil || !strings.HasPrefix(res, "0|OK") {
@@ -566,7 +566,7 @@ func TestFsckChecksEveryScore(t *testing.T) {
 	srv := repoServer(t)
 	ndPush(t, ctx, client, srv.URL+"/acme/public.git", "sc-a", "none", "pool")
 	id := card.CardKey(ndSprint, "sc-a")
-	for _, z := range [][2]string{{card.BenchCardsKey("_pool", "ready"), id}, {"ws:" + ndStream + ":ready", id},
+	for _, z := range [][2]string{{card.BenchCardsKeyAt(0, "_pool", "ready"), id}, {"ws:" + ndStream + ":ready", id},
 		{"s:" + ndSprint + ":pool", "sc-a"}, {card.RosterKey(ndSprint), id}} {
 		client.ZAdd(ctx, z[0], redis.Z{Score: 1, Member: z[1]})
 	}

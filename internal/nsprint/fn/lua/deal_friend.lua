@@ -38,9 +38,18 @@ function DF.fenced(token)
   return token == nil or token == '' or redis.call('HGET', 'lease:reconciler', 'token') ~= token
 end
 
+-- DF.key: the stream's set under the current epoch (nova-tools#4238).
 function DF.key(stream, state)
-  return 'ws:' .. stream .. ':' .. state
+  return NS.card.wskey(NS.card.epoch(), stream, state)
 end
+
+-- DF.ckey: friend f's set at col under the current epoch (nova-tools#4238):
+-- the slots a deal or a rebalance counts and the cards it moves are the
+-- current epoch's, the ones the table shows.
+function DF.ckey(f, col)
+  return NS.card.ckey(NS.card.epoch(), 'friend:' .. f, col)
+end
+
 
 -- DF.slots is the friend's slots: friend:<f>:slots, else friend:<f>:desired
 -- slots; nil when neither is a number.
@@ -110,7 +119,7 @@ local function deal_friend(keys, args)
   if not slots then
     return { 'REFUSED', 'friend ' .. f .. ' has no slots' }
   end
-  local fk = 'friend:' .. f .. ':cards:working'
+  local fk = DF.ckey(f, 'working')
   local open = slots - DF.ci(f) - redis.call('ZCARD', fk)
   if open < 0 then
     open = 0
@@ -190,8 +199,8 @@ function DF.open(g)
   if redis.call('EXISTS', 'friend:' .. g .. ':down') == 1 then return nil end
   local slots = DF.slots(g)
   if not slots then return nil end
-  return slots - DF.ci(g) - redis.call('ZCARD', 'friend:' .. g .. ':cards:working') -
-    redis.call('ZCARD', 'friend:' .. g .. ':cards:ready')
+  return slots - DF.ci(g) - redis.call('ZCARD', DF.ckey(g, 'working')) -
+    redis.call('ZCARD', DF.ckey(g, 'ready'))
 end
 
 -- DF.rebalance moves a down friend f's cards (nova-tools #4145): every id in
@@ -253,11 +262,11 @@ function DF.rebalance(f, targets, by)
     moves[#moves + 1] = id
     moves[#moves + 1] = best or 'ready'
   end
-  local ready = redis.call('ZRANGE', 'friend:' .. f .. ':cards:ready', 0, -1)
+  local ready = redis.call('ZRANGE', DF.ckey(f, 'ready'), 0, -1)
   for _, id in ipairs(ready) do
     one(id, 'rebalance: ' .. f .. ' down')
   end
-  for _, id in ipairs(redis.call('ZRANGE', 'friend:' .. f .. ':cards:working', 0, -1)) do
+  for _, id in ipairs(redis.call('ZRANGE', DF.ckey(f, 'working'), 0, -1)) do
     local lease = tonumber(redis.call('HGET', 'task:' .. id, 'lease_until') or '')
     if lease and lease < now then
       one(id, 'lease lapsed: ' .. f .. ' down')

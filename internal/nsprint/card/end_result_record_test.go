@@ -91,7 +91,7 @@ func TestCardEndStoresResultOnRecord(t *testing.T) {
 				if !queued {
 					t.Errorf("s:%s:done-already does not hold %s", id.Sprint, id.Label)
 				}
-				if !zHas(t, ctx, client, card.BenchCardsKey(id.Bench, "abstain"), key) {
+				if !zHas(t, ctx, client, card.BenchCardsKeyAt(0, id.Bench, "abstain"), key) {
 					t.Errorf("%s is not in the bench's abstain view", key)
 				}
 			} else {

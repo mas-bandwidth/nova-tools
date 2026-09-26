@@ -9,7 +9,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws/wstest"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -32,10 +32,11 @@ func (h *widthTripHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redi
 func TestGetWidthOnePipeline(t *testing.T) {
 	t.Parallel()
 
-	addr := testutil.Start(t)
-	c := redis.NewClient(&redis.Options{Addr: addr})
-	t.Cleanup(func() { _ = c.Close() })
+	// the store with the library: the working count is the epoch-keyed
+	// cell function ns_cell_zcard, in the one pipeline (nova-tools#4238)
+	_, c := wstest.Start(t)
 	ctx := context.Background()
+
 	c.HSet(ctx, "friend:f:desired", "slots", 4)
 	c.ZAdd(ctx, "friend:f:cards:working", redis.Z{Member: "a"})
 	c.ZAdd(ctx, "friend:f:cards:working", redis.Z{Member: "b"})

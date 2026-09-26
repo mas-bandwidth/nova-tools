@@ -40,6 +40,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pipeerr"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
@@ -592,9 +593,13 @@ type prCand struct {
 // prCandidates is every PR of the stream's working and merging tasks, in
 // two pipelined round trips, each once, sorted.
 func (d *RouteDuty) prCandidates(ctx context.Context, stream string) ([]prCand, error) {
+	epoch, err := ws.Epoch(ctx, d.Client)
+	if err != nil {
+		return nil, err
+	}
 	pipe := d.Client.Pipeline()
-	working := pipe.ZRange(ctx, "ws:"+stream+":working", 0, -1)
-	merging := pipe.ZRange(ctx, "ws:"+stream+":merging", 0, -1)
+	working := pipe.ZRange(ctx, ws.KeyAt(epoch, stream, "working"), 0, -1)
+	merging := pipe.ZRange(ctx, ws.KeyAt(epoch, stream, "merging"), 0, -1)
 	if err := pipeerr.Exec(ctx, pipe); err != nil {
 		return nil, err
 	}

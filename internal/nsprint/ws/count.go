@@ -20,10 +20,10 @@ type CardCountCmd struct {
 }
 
 // QueueCardCount queues the two reads of one set's card count on pipe.
-func QueueCardCount(ctx context.Context, pipe redis.Pipeliner, stream, where string) *CardCountCmd {
-	c := &CardCountCmd{n: pipe.ZCard(ctx, Key(stream, where))}
+func QueueCardCount(ctx context.Context, pipe redis.Pipeliner, epoch uint64, stream, where string) *CardCountCmd {
+	c := &CardCountCmd{n: pipe.ZCard(ctx, KeyAt(epoch, stream, where))}
 	if sid := SentinelID(stream); sid != "" {
-		c.stop = pipe.ZScore(ctx, Key(stream, where), sid)
+		c.stop = pipe.ZScore(ctx, KeyAt(epoch, stream, where), sid)
 	}
 	return c
 }
@@ -49,8 +49,12 @@ func (c *CardCountCmd) Val() int64 {
 
 // CardCount reads one set's card count in one round trip.
 func CardCount(ctx context.Context, c redis.Cmdable, stream, where string) (int64, error) {
+	epoch, err := Epoch(ctx, c)
+	if err != nil {
+		return 0, err
+	}
 	pipe := c.Pipeline()
-	cmd := QueueCardCount(ctx, pipe, stream, where)
+	cmd := QueueCardCount(ctx, pipe, epoch, stream, where)
 	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
 		return 0, err
 	}

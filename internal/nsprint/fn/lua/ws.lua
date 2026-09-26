@@ -39,9 +39,11 @@ function W.created_ms(v)
   return NS.task.ms(v)
 end
 
+-- W.key: the stream's set under the current epoch (nova-tools#4238).
 function W.key(stream, state)
-  return 'ws:' .. stream .. ':' .. state
+  return NS.card.wskey(NS.card.epoch(), stream, state)
 end
+
 
 function W.now()
   local t = redis.call('TIME')

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -89,13 +90,17 @@ func Show(ctx context.Context, st *store.Store, f string) ([]Row, error) {
 		working *redis.IntCmd
 		done    []*redis.IntCmd
 	}
+	epoch, err := ws.Epoch(ctx, client)
+	if err != nil {
+		return nil, err
+	}
 	pipe := client.Pipeline()
 	all := make([]cmds, len(friends))
 	for i, name := range friends {
 		c := cmds{
 			state:   pipe.HMGet(ctx, StateKey(name), "state", "rung", "since", "until", "reason"),
 			wake:    pipe.HMGet(ctx, WakePathKey(name), "kind", "unit", "host", "notify"),
-			working: pipe.ZCard(ctx, "friend:"+name+":cards:working"),
+			working: pipe.ZCard(ctx, ws.ConsumerKeyAt(epoch, "friend:"+name, "working")),
 		}
 		for _, s := range sprints {
 			c.done = append(c.done, pipe.SCard(ctx, "s:"+s+":done:"+name))

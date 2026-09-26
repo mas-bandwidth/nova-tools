@@ -70,7 +70,7 @@ func (h *harness) cardKey(label string) string { return "s:" + h.S + ":card:" + 
 // pushCard writes a card through ns_card_push, the one writer of card_type and cut_at.
 func (h *harness) pushCard(label, paths, cardType string) {
 	h.t.Helper()
-	keys := []string{h.cardKey(label), "s:" + h.S + ":pool", "s:" + h.S + ":waiting", "s:" + h.S + ":log", "s:" + h.S + ":idx:card:queued"}
+	keys := []string{h.cardKey(label), "s:" + h.S + ":log", "s:" + h.S + ":idx:card:queued"}
 	reply, err := h.c.FCall(h.ctx, "ns_card_push", keys,
 		label, "payload-"+label, "0", testBase, testBaseSHA, paths, "mas-bandwidth/nova-tools", "model", "", cardType).Text()
 	if err != nil || !strings.HasPrefix(reply, "OK place=") {

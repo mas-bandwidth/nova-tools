@@ -44,7 +44,7 @@ func TestSentinelIsCreatedAtFirstPushAndLandsLast(t *testing.T) {
 
 	snPush(t, c, "A", snStream, "")
 	snPush(t, c, "B", snStream, "A")
-	waiting, err := c.ZRange(ctx, ws.Key(snStream, "waiting"), 0, -1).Result()
+	waiting, err := c.ZRange(ctx, ws.KeyAt(0, snStream, "waiting"), 0, -1).Result()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,12 +111,12 @@ func TestSentinelIsCreatedAtFirstPushAndLandsLast(t *testing.T) {
 	// A push after the stop landed starts the stream again: no second
 	// sentinel, the one record returns to waiting behind the new card.
 	snPush(t, c, "C", snStream, "")
-	waiting, _ = c.ZRange(ctx, ws.Key(snStream, "waiting"), 0, -1).Result()
+	waiting, _ = c.ZRange(ctx, ws.KeyAt(0, snStream, "waiting"), 0, -1).Result()
 	sort.Strings(waiting)
 	if strings.Join(waiting, " ") != "C "+snSentinel {
 		t.Fatalf("waiting after C: %v, want C and the sentinel back in waiting", waiting)
 	}
-	if n, _ := c.ZCard(ctx, ws.Key(snStream, "landed")).Result(); n != 1 {
+	if n, _ := c.ZCard(ctx, ws.KeyAt(0, snStream, "landed")).Result(); n != 1 {
 		t.Fatalf("landed after C: %d, want A alone", n)
 	}
 	if err := ws.Check(ctx, c, []string{"A", "B", "C", snSentinel}); err != nil {
@@ -134,12 +134,12 @@ func TestRenameEndsTheOldSentinel(t *testing.T) {
 	if _, err := ws.Rename(ctx, c, "old: name", "new: name", "test"); err != nil {
 		t.Fatal(err)
 	}
-	waiting, _ := c.ZRange(ctx, ws.Key("new: name", "waiting"), 0, -1).Result()
+	waiting, _ := c.ZRange(ctx, ws.KeyAt(0, "new: name", "waiting"), 0, -1).Result()
 	sort.Strings(waiting)
 	if strings.Join(waiting, " ") != "A new-name:sentinel" {
 		t.Fatalf("waiting %v", waiting)
 	}
-	done, _ := c.ZRange(ctx, ws.Key("new: name", "done"), 0, -1).Result()
+	done, _ := c.ZRange(ctx, ws.KeyAt(0, "new: name", "done"), 0, -1).Result()
 	if strings.Join(done, " ") != "old-name:sentinel" {
 		t.Fatalf("done %v", done)
 	}
@@ -256,12 +256,21 @@ func TestSentinelIsStructure(t *testing.T) {
 	if err := ws.Check(ctx, c, []string{"A", snSentinel}); err != nil {
 		t.Fatalf("invariant: %v", err)
 	}
-	// sprint clear zeros the cards and leaves the stop with its stream
+	// sprint clear zeros the cards and leaves the stop with its stream: one
+	// increment of the sprint epoch (nova-tools#4238), nothing moved: A's
+	// record still says landed, its set is epoch 0's and the stream's landed
+	// count under the new epoch reads zero
 	if _, err := c.FCall(ctx, "ns_sprint_clear", nil, "test", "fresh run", "1").Result(); err != nil {
 		t.Fatalf("sprint clear: %v", err)
 	}
-	if w, _ := c.HGet(ctx, "task:A", "where").Result(); w != "done" {
-		t.Fatalf("A after the clear: %q", w)
+	if w, _ := c.HGet(ctx, "task:A", "where").Result(); w != "landed" {
+		t.Fatalf("A after the clear: %q, want landed (the clear moves nothing, #4238)", w)
+	}
+	if e, _ := ws.Epoch(ctx, c); e != 1 {
+		t.Fatalf("epoch after the clear = %d, want 1", e)
+	}
+	if n, err := ws.CardCount(ctx, c, snStream, "landed"); err != nil || n != 0 {
+		t.Fatalf("landed cards of %s after the clear = %d %v, want 0 (epoch 1 reads its own sets)", snStream, n, err)
 	}
 	if w, _ := c.HGet(ctx, "task:"+snSentinel, "where").Result(); w != "landed" {
 		t.Fatalf("the stop after the clear: %q, want landed (left with its stream)", w)
@@ -331,9 +340,9 @@ func TestSentinelKeepsItsStream(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	score := c.ZScore(ctx, ws.Key(alpha, "waiting"), sid).Val()
-	must(c.ZRem(ctx, ws.Key(alpha, "waiting"), sid).Err())
-	must(c.ZAdd(ctx, ws.Key(beta, "waiting"), redis.Z{Score: score, Member: sid}).Err())
+	score := c.ZScore(ctx, ws.KeyAt(0, alpha, "waiting"), sid).Val()
+	must(c.ZRem(ctx, ws.KeyAt(0, alpha, "waiting"), sid).Err())
+	must(c.ZAdd(ctx, ws.KeyAt(0, beta, "waiting"), redis.Z{Score: score, Member: sid}).Err())
 	must(c.HSet(ctx, "task:"+sid, "stream", beta).Err())
 	r, err := taskcard.Fsck(ctx, c, "s1")
 	if err != nil {
@@ -377,7 +386,7 @@ func TestSentinelKeepsItsStream(t *testing.T) {
 	if h := c.HGetAll(ctx, "task:"+sid).Val(); h["stream"] != "Alpha" || h["where"] != "waiting" {
 		t.Fatalf("stop after the same-slug rename: %v", h)
 	}
-	if n, _ := c.ZCard(ctx, ws.Key("Alpha", "done")).Result(); n != 0 {
+	if n, _ := c.ZCard(ctx, ws.KeyAt(0, "Alpha", "done")).Result(); n != 0 {
 		t.Fatal("the same-slug rename ended the stop")
 	}
 	if owner, _ := c.Get(ctx, "ws:slug:alpha").Result(); owner != "Alpha" {
@@ -410,7 +419,7 @@ func TestSentinelKeepsItsStream(t *testing.T) {
 	if h := c.HGetAll(ctx, "task:"+dsid).Val(); h["where"] != "landed" || h["merge_sha"] != snSHA {
 		t.Fatalf("the new stop after the rename: %v", h)
 	}
-	if n, _ := c.ZCard(ctx, ws.Key("delta", "waiting")).Result(); n != 0 {
+	if n, _ := c.ZCard(ctx, ws.KeyAt(0, "delta", "waiting")).Result(); n != 0 {
 		t.Fatal("the rename left a waiting stop")
 	}
 	if n, err := ws.CardCount(ctx, c, "delta", "landed"); err != nil || n != 1 {

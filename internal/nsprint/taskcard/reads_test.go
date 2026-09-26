@@ -141,8 +141,8 @@ func TestReadingCutsAFriendReaderCopy(t *testing.T) {
 	if got := liveReads(c, ids[0]); len(got) != 1 || got[0] != cp[0] {
 		t.Fatalf("primary reads=%v, want [%s]", got, cp[0])
 	}
-	if c.ZScore(ctx, emma.Key("ready"), cp[0]).Err() != nil {
-		t.Fatalf("%s is not in %s", cp[0], emma.Key("ready"))
+	if c.ZScore(ctx, emma.KeyAt(0, "ready"), cp[0]).Err() != nil {
+		t.Fatalf("%s is not in %s", cp[0], emma.KeyAt(0, "ready"))
 	}
 	cleanMoves(t, c, "friend read")
 }
@@ -273,8 +273,8 @@ func TestUnderEightCutsAFixCopy(t *testing.T) {
 		fix["done_when"] != "go test ./internal/x -run TestX passes" || fix["where"] != "ready" {
 		t.Fatalf("fix copy %v", fix)
 	}
-	if c.ZScore(ctx, author.Key("ready"), p["copy"]).Err() != nil {
-		t.Fatalf("fix copy %s is not on the author's queue %s", p["copy"], author.Key("ready"))
+	if c.ZScore(ctx, author.KeyAt(0, "ready"), p["copy"]).Err() != nil {
+		t.Fatalf("fix copy %s is not on the author's queue %s", p["copy"], author.KeyAt(0, "ready"))
 	}
 	if r := rec(c, cp[0]); r["where"] != "ok" || r["score"] != "6" {
 		t.Fatalf("read copy after SCORE 6 (ok with its finding): %v", r)
@@ -467,7 +467,7 @@ func TestReadCopiesHonourRoom(t *testing.T) {
 	if r, err := taskcard.DealPass(ctx, c, "reconciler", time.Now()); err != nil || len(r.Lines) != 0 {
 		t.Fatalf("pass with no room: %+v %v", r, err)
 	}
-	w, _ := c.ZRange(ctx, full.Key("working"), 0, 0).Result()
+	w, _ := c.ZRange(ctx, full.KeyAt(0, "working"), 0, 0).Result()
 	if _, err := taskcard.End(ctx, c, taskcard.EndRequest{IDs: w, Why: "red", By: "s1"}); err != nil {
 		t.Fatal(err)
 	}
