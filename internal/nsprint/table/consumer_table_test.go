@@ -124,7 +124,8 @@ func TestConsumerTableStatusAndOrder(t *testing.T) {
 
 // TestConsumerTableKeyAllowlist: a steady tick reads, per consumer, only
 // the ZCARDs of its four sets, its beat (HMGET), its down key (EXISTS) and
-// its desired hash's paused flag (HGET, #4308); never the old friend:<f>
+// its desired hash's paused flag (HGET, #4308), and a bench's last fleet
+// play result (HGET bench:<b>:play, #4356; a friend has none); never the old friend:<f>
 // or bench:<b> row hash, ws:done0, a sprint's opened_at or its cards, never
 // a ZCOUNT window, and never another consumer's beat for a friend's load
 // (the bench:studio:beat hardcode, retired by #4233).
@@ -159,7 +160,7 @@ func TestConsumerTableKeyAllowlist(t *testing.T) {
 	sort.Strings(consumerKeys)
 	want := []string{
 		"EXISTS bench:hetzner:down", "EXISTS friend:emma:down",
-		"HGET bench:hetzner:desired", "HGET friend:emma:desired",
+		"HGET bench:hetzner:desired", "HGET bench:hetzner:play", "HGET friend:emma:desired",
 		"HMGET bench:hetzner:beat",
 		"HMGET friend:emma:beat",
 		"ZCARD bench:hetzner:cards:fail", "ZCARD bench:hetzner:cards:ok", "ZCARD bench:hetzner:cards:ready", "ZCARD bench:hetzner:cards:working",
