@@ -32,3 +32,24 @@ func TestCutLedgerKeyAndParse(t *testing.T) {
 		t.Fatalf("no repo: %v", err)
 	}
 }
+
+// TestRecutLedgerKeyIsPerPlanAndStitch (nova-tools#4317, the fix round's
+// owed 1): a re-cut stitch's ledger is keyed by plan and stitch id, so no
+// two plans' re-cuts, and no two re-cuts of one plan, share it, and none is
+// the empty file's ledger a bare card cut --parent used to share.
+func TestRecutLedgerKeyIsPerPlanAndStitch(t *testing.T) {
+	t.Parallel()
+	keys := map[string]bool{taskcard.CutLedgerKey(nil): true}
+	for _, k := range []string{
+		taskcard.RecutLedgerKey("pa", "pa-stitch-2"), taskcard.RecutLedgerKey("pb", "pb-stitch-2"),
+		taskcard.RecutLedgerKey("pa", "pa-stitch-3"),
+	} {
+		if !strings.HasPrefix(k, "cut:") || len(k) != len("cut:")+64 || keys[k] {
+			t.Fatalf("re-cut key %q is shaped wrong or shared", k)
+		}
+		keys[k] = true
+	}
+	if taskcard.RecutLedgerKey("pa", "pa-stitch-2") != taskcard.RecutLedgerKey("pa", "pa-stitch-2") {
+		t.Fatal("a re-cut's key is not stable across reruns")
+	}
+}
