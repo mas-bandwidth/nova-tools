@@ -1,4 +1,4 @@
-// fleet play <tag> [--limit a,b] [--dry-run] (#4356 item C) runs one
+// fleet play --play <tag> [--bench a,b] [--dry-run] (#4356 item C) runs one
 // rowan-tools fleet play through the verb, never by hand
 // (fleet-changes-only-through-ansible): <tag>.yml in the play directory with
 // the machines registry as its inventory, refused on a dirty or behind
@@ -8,8 +8,11 @@
 // bench:<b>:play for fleet doctor and the table, and FLEET PLAY OK|FAIL last
 // (internal/nsprint/fleetbuild/play.go).
 //
-//	fleet play <tag> [--limit <a,b,...>] [--dry-run] [--redis <addr>]
+//	fleet play --play <tag> [--bench <a,b,...>] [--dry-run] [--redis <addr>]
 //	           [--machines <file>] [--play-dir <dir>]
+//
+// One grammar (#4352 A): the play is --play (with or without .yml), the
+// benches it is limited to are --bench, a comma list, as on fleet release.
 //
 // Exit 0 every bench ran every role; 1 a refusal (FLEET PLAY REFUSED: <why>)
 // or a bench that stopped (the failed list on the last line); 2 usage; 5
@@ -40,19 +43,22 @@ func playRefused(errOut io.Writer, err error) int {
 
 func runFleetPlayWith(ctx context.Context, args []string, out, errOut io.Writer, deps releaseDeps) int {
 	fs := verbflag.New("fleet play")
-	limit := fs.String("limit", "", "")
-	dryRun := fs.Bool("dry-run", false, "")
-	redisAddr := fs.String("redis", redisDefault(), "")
-	machines := fs.String("machines", "", "")
-	playDir := fs.String("play-dir", "", "")
-	pos, err := parseInterspersed(fs, args)
-	if err != nil {
+	play := fs.String("play", "", "the play to run: its tag (tools runs tools.yml in the play directory)")
+	limit := fs.String("bench", "", "the benches the play is limited to, comma-separated (default every machine of the registry)")
+	dryRun := fs.Bool("dry-run", false, verbflag.HelpDryRun)
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	machines := fs.String("machines", "", "the machines registry file (default NOVA_FLEET_MACHINES)")
+	playDir := fs.String("play-dir", "", "the play directory, a rowan-tools clone (default NOVA_FLEET_PLAY_DIR, else ~/"+fleetbuild.DefaultPlayDirRel+")")
+	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "fleet play", err.Error())
 	}
-	if len(pos) != 1 {
-		return refuse(errOut, "fleet play", "wants one <tag>, the play's name (tools runs tools.yml in the play directory)")
+	if fs.NArg() > 0 {
+		return refuse(errOut, "fleet play", "takes flags, not positional arguments: the play is --play <tag>")
 	}
-	tag := strings.TrimSuffix(pos[0], ".yml")
+	if *play == "" {
+		return refuse(errOut, "fleet play", "wants --play <tag>, the play's name (tools runs tools.yml in the play directory)")
+	}
+	tag := strings.TrimSuffix(*play, ".yml")
 	home, err := deps.Home()
 	if err != nil {
 		return playRefused(errOut, fmt.Errorf("no home directory: %v", err))
@@ -75,12 +81,7 @@ func runFleetPlayWith(ctx context.Context, args []string, out, errOut io.Writer,
 	if dir == "" {
 		dir = filepath.Join(home, filepath.FromSlash(fleetbuild.DefaultPlayDirRel))
 	}
-	var only []string
-	for _, b := range strings.Split(*limit, ",") {
-		if b = strings.TrimSpace(b); b != "" {
-			only = append(only, b)
-		}
-	}
+	only := verbflag.List(*limit)
 	p := &fleetbuild.Play{Runner: deps.Runner, PlayDir: dir, Tag: tag, Registry: registry,
 		Machines: ms, Limit: only, DryRun: *dryRun, Out: out}
 	if !*dryRun {
