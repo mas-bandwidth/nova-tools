@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/redis/go-redis/v9"
@@ -19,13 +20,15 @@ func showExec(ctx context.Context, pipe redis.Pipeliner) error {
 	return nil
 }
 
-// Show is `ws show --order` (nova-tools #4318): every stream's cards in
-// order with their DEPENDS-ON edges, read in four pipelined rounds (the
-// streams; every set of every stream; every member's blocked_on and where;
-// the records of dependencies that are in no stream). The order within a
-// stream is the sets' one order, created_at then id (the seam with #4342,
-// whose computed order is the waiting set's score), with the sentinel last:
-// it is the stream's stop, after every other card. Show never writes.
+// Show is `ws show --order` (nova-tools #4318, #4322): every stream's cards
+// in its computed work order (Order, order.go) with one reason per edge,
+// read in four pipelined rounds (the streams; every set of every stream;
+// every member's record; the records of dependencies that are in no
+// stream). A stream's landed and done cards come first (the order is past
+// them), then its live cards by rank, then its parked cards, and the
+// sentinel last: it is the stream's stop, after every other card. A stream
+// whose DEPENDS-ON closes a cycle carries the cycle in Cycle and lists its
+// cards by score. Show never writes.
 
 // ShowDep is one DEPENDS-ON entry of a card: the entry as written, and, for
 // a task id, what its record says: Where (its set) and Landed; Known is
@@ -44,9 +47,11 @@ type ShowDep struct {
 type ShowCard struct {
 	ID       string
 	Where    string
-	Score    float64 // its created_at ms, the sets' order
+	Score    float64 // its score in its set
 	Sentinel bool
+	Rank     int // its rank in the stream's order; 0 when it is not ordered (landed, done, parked, or a cycle)
 	Deps     []ShowDep
+	Reasons  []Reason // its order edges that are not DEPENDS-ON entries (paths, issue)
 }
 
 // ShowStream is one stream: its cards in order, the sentinel last.
@@ -57,6 +62,7 @@ type ShowStream struct {
 	Sentinel string // the sentinel's where, or "none" when the stream has no sentinel record
 	Live     int    // cards in waiting, ready, working, review, merging or parked, the sentinel aside
 	Landed   int    // cards in landed
+	Cycle    string // the stream's DEPENDS-ON cycle (Order refused it); "" when it is ordered
 }
 
 // SplitDeps splits a stored blocked_on (DEPENDS-ON) value into its entries:
@@ -182,20 +188,22 @@ func Show(ctx context.Context, c redis.Cmdable) ([]ShowStream, error) {
 		})
 	}
 
-	// Round 3: every member's blocked_on and where_ok.
+	// Round 3: every member's record: the order's fields and where_ok.
 	pipe = c.Pipeline()
 	recCmds := make([]*redis.SliceCmd, len(members))
 	for i, id := range members {
-		recCmds[i] = pipe.HMGet(ctx, "task:"+id, "blocked_on", "where_ok")
+		recCmds[i] = pipe.HMGet(ctx, RecordKey(id), append(append([]string{}, orderFields...), "where_ok")...)
 	}
 	if err := showExec(ctx, pipe); err != nil {
 		return nil, fmt.Errorf("ws show: records: %w", err)
 	}
 	blockedOn, okOf := map[string]string{}, map[string]string{}
+	recs := map[string]orderRec{}
 	for i, id := range members {
 		v := recCmds[i].Val()
-		blockedOn[id] = showStr(v, 0)
-		okOf[id] = showStr(v, 1)
+		recs[id] = readOrderRec(v)
+		blockedOn[id] = recs[id].deps
+		okOf[id] = showStr(v, len(orderFields))
 	}
 
 	// The edges, in two passes: the entries first, then (round 4) the
@@ -242,8 +250,79 @@ func Show(ctx context.Context, c redis.Cmdable) ([]ShowStream, error) {
 				}
 			}
 		}
+		showOrder(&out[i], recs)
 	}
 	return out, nil
+}
+
+// showOrder ranks a stream's live cards (Order) and sorts its cards: landed
+// and done by score, the live by rank, parked by score, the sentinel last.
+func showOrder(st *ShowStream, recs map[string]orderRec) {
+	var live []string
+	seen := map[string]bool{}
+	for _, c := range st.Cards {
+		if isLive(c.Where) && !seen[c.ID] {
+			seen[c.ID] = true
+			live = append(live, c.ID)
+		}
+	}
+	ord, reasons, err := Order(orderCards(st.Stream, live, recs))
+	rank := map[string]int{}
+	extra := map[string][]Reason{}
+	if err != nil {
+		st.Cycle = err.Error()
+	} else {
+		for _, o := range ord {
+			rank[o.ID] = o.Rank
+		}
+		for _, r := range reasons {
+			if r.Why == WhyPaths || r.Why == WhyIssue {
+				extra[r.Card] = append(extra[r.Card], r)
+			}
+		}
+	}
+	group := func(c ShowCard) int {
+		switch {
+		case c.Sentinel:
+			return 3
+		case c.Where == Landed || c.Where == Done:
+			return 0
+		case c.Where == Parked:
+			return 2
+		}
+		return 1
+	}
+	for j := range st.Cards {
+		c := &st.Cards[j]
+		c.Rank = rank[c.ID]
+		if !c.Sentinel {
+			c.Reasons = extra[c.ID]
+		}
+	}
+	cards := st.Cards
+	sort.SliceStable(cards, func(a, b int) bool {
+		ga, gb := group(cards[a]), group(cards[b])
+		if ga != gb {
+			return ga < gb
+		}
+		if cards[a].Rank != cards[b].Rank {
+			return cards[a].Rank < cards[b].Rank
+		}
+		if cards[a].Score != cards[b].Score {
+			return cards[a].Score < cards[b].Score
+		}
+		return cards[a].ID < cards[b].ID
+	})
+}
+
+// isLive is whether a set's cards are ordered (OrderLive).
+func isLive(where string) bool {
+	for _, w := range OrderLive {
+		if w == where {
+			return true
+		}
+	}
+	return false
 }
 
 func showStr(v []any, i int) string {
@@ -254,18 +333,25 @@ func showStr(v []any, i int) string {
 	return s
 }
 
-// Line is the card's line as ws show prints it: its where and id, then
-// `<- ` and its edges: each entry as written, with the dependency's set in
-// parentheses when it is not landed, or (no record) when nothing has that
-// id; a sentinel's edge is every other card of its stream.
+// Line is the card's line as ws show prints it: its rank in the stream's
+// order (- when it is not ordered), its where and id, then `<- ` and its
+// edges, one reason each: every DEPENDS-ON entry as written, with the
+// dependency's set in parentheses when it is not landed or (no record) when
+// nothing has that id, `(reason: depends-on)`; then the order's other edges
+// into it, `<id> (reason: paths <path>)` and `<id> (reason: issue)`; a
+// sentinel's edge is every other card of its stream.
 func (c ShowCard) Line(live int) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%-7s %s", c.Where, c.ID)
+	rank := "-"
+	if c.Rank > 0 {
+		rank = strconv.Itoa(c.Rank)
+	}
+	fmt.Fprintf(&b, "%s %-7s %s", rank, c.Where, c.ID)
 	if c.Sentinel {
-		fmt.Fprintf(&b, " <- every other card of the stream (live %d)", live)
+		fmt.Fprintf(&b, " <- every other card of the stream (reason: sentinel; live %d)", live)
 		return b.String()
 	}
-	if len(c.Deps) == 0 {
+	if len(c.Deps)+len(c.Reasons) == 0 {
 		return b.String()
 	}
 	b.WriteString(" <- ")
@@ -281,6 +367,13 @@ func (c ShowCard) Line(live int) string {
 		case !d.Landed:
 			b.WriteString("(" + d.Where + ")")
 		}
+		b.WriteString(" (reason: " + WhyDependsOn + ")")
+	}
+	for i, r := range c.Reasons {
+		if i > 0 || len(c.Deps) > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(r.String())
 	}
 	return b.String()
 }

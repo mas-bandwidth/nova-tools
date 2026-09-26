@@ -140,12 +140,12 @@ func TestWSShowOrder(t *testing.T) {
 	push("B", "swarm: cards", "A")
 	push("C", "ci", "swarm-cards:sentinel")
 	want := `STREAM 1 "swarm: cards" cards=3 live=2 landed=0 sentinel=waiting
-  waiting A
-  waiting B <- A(waiting)
-  waiting swarm-cards:sentinel <- every other card of the stream (live 2)
+  1 waiting A
+  2 waiting B <- A(waiting) (reason: depends-on)
+  3 waiting swarm-cards:sentinel <- every other card of the stream (reason: sentinel; live 2)
 STREAM 2 "ci" cards=2 live=1 landed=0 sentinel=waiting
-  waiting C <- swarm-cards:sentinel(waiting)
-  waiting ci:sentinel <- every other card of the stream (live 1)
+  1 waiting C <- swarm-cards:sentinel(waiting) (reason: depends-on)
+  2 waiting ci:sentinel <- every other card of the stream (reason: sentinel; live 1)
 SHOW streams=2 cards=5 edges=5 ms=`
 	for _, args := range [][]string{{"ws", "show", "--redis", addr, "--order"}, {"stream", "order", "--redis", addr, "--show"}} {
 		code, stdout, stderr := runSprint(args...)

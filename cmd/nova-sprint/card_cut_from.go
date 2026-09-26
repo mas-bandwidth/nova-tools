@@ -66,6 +66,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 )
 
 // cutColumns are a row's cells in the default order; id is optional.
@@ -332,46 +333,37 @@ func checkCutRow(r *cutRow, byID, slugs map[string]int, o cutFromOpts) {
 }
 
 // orderCutRows is the push order: file order, except that a row comes
-// after every row its DEPENDS-ON names. Rows on a cycle are refused.
+// after every row its DEPENDS-ON names (ws.Topo, the stream order's core,
+// the earliest ready row first). Rows on a cycle are refused.
 func orderCutRows(rows []*cutRow) []*cutRow {
-	placed := make([]bool, len(rows)+1)
-	var order []*cutRow
-	for len(order) < len(rows) {
-		moved := false
-		for _, r := range rows {
-			if placed[r.n] {
-				continue
-			}
-			ready := true
-			for _, k := range r.rowDeps {
-				if !placed[k] {
-					ready = false
-					break
-				}
-			}
-			if ready {
-				placed[r.n] = true
-				order = append(order, r)
-				moved = true
-				break // the earliest ready row first, then look again from the top
+	at := make(map[int]int, len(rows)) // row number -> index
+	for i, r := range rows {
+		at[r.n] = i
+	}
+	idx, stuck := ws.Topo(len(rows), func(i int) []int {
+		var before []int
+		for _, k := range rows[i].rowDeps {
+			if j, ok := at[k]; ok {
+				before = append(before, j)
 			}
 		}
-		if !moved {
-			var stuck []string
-			for _, r := range rows {
-				if !placed[r.n] {
-					stuck = append(stuck, strconv.Itoa(r.n))
-				}
+		return before
+	}, func(a, b int) bool { return a < b })
+	order := make([]*cutRow, 0, len(rows))
+	for _, i := range idx {
+		order = append(order, rows[i])
+	}
+	if len(stuck) > 0 {
+		names := make([]string, len(stuck))
+		for k, i := range stuck {
+			names[k] = strconv.Itoa(rows[i].n)
+		}
+		for _, i := range stuck {
+			r := rows[i]
+			if r.why == "" {
+				r.why = "depends-on is a cycle among rows " + strings.Join(names, ",")
 			}
-			for _, r := range rows {
-				if !placed[r.n] {
-					placed[r.n] = true
-					if r.why == "" {
-						r.why = "depends-on is a cycle among rows " + strings.Join(stuck, ",")
-					}
-					order = append(order, r)
-				}
-			}
+			order = append(order, r)
 		}
 	}
 	return order

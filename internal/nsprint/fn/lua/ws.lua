@@ -14,6 +14,10 @@
 -- 12:22 AM: "the sorted order should be in order of age of the card,
 -- uniformly"): a ZRANGE reads oldest first in any set, and a move never
 -- changes the score.
+-- The exception (nova-tools #4322, #4324): a stream's waiting, ready and
+-- merging sets are scored by the stream's computed work order once
+-- ns_ws_reorder has written it (the record's order_score, which every move
+-- into those sets carries), so the lander and the dealer read work order.
 --   ws:log                   STREAM one entry per move: id stream from to by why at
 --
 -- Invariant: a task id is in exactly one ws:<stream>:<where> set, the one its
@@ -417,7 +421,23 @@ function W.migrate_one(id, sprint, by, now)
   return 'placed'
 end
 
+-- ns_ws_reorder(stream, by, id, score, ...) -> REORDERED ranked rescored
+-- skipped | REFUSED why: the stream's computed work order (nova-tools #4322;
+-- internal/nsprint/ws.Reorder computes it with ws.Order and sends it) as
+-- the scores of its waiting, ready and merging sets, through the one writer
+-- (NS.task.reorder, 02_card_move.lua). by is the receipt's.
+local function ws_reorder(keys, args)
+  local stream = args[1]
+  if not W.known(stream) then
+    return { 'REFUSED', 'unknown stream ' .. tostring(stream) }
+  end
+  local err, r = NS.task.reorder(stream, args, 3)
+  if err then return { 'REFUSED', err } end
+  return { 'REORDERED', r[1], r[2], r[3] }
+end
+
 redis.register_function('ns_ws_move', ws_move)
+redis.register_function('ns_ws_reorder', ws_reorder)
 redis.register_function('ns_ws_move_many', ws_move_many)
 redis.register_function('ns_ws_park_stream', ws_park_stream)
 redis.register_function('ns_ws_unpark_stream', ws_unpark_stream)

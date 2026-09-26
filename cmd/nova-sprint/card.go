@@ -156,10 +156,16 @@ func cmdCardPush(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	}
 	defer client.Close()
 	first := 0
-	for _, res := range card.PushBatch(ctx, client, *sprint, files, card.PushOptions{MapKind: *mapKind}) {
+	opts := card.PushOptions{MapKind: *mapKind}
+	for _, res := range card.PushBatch(ctx, client, *sprint, files, opts) {
 		if wrote := writeCardResult(stdout, stderr, res); wrote != 0 && first == 0 {
 			first = wrote
 		}
+	}
+	// Each stream the batch pushed onto gets its work order written (#4322),
+	// one ORDER line per stream.
+	for _, s := range card.Streams(ctx, files, opts) {
+		fmt.Fprintf(stdout, "ORDER stream=%s %s\n", quoteField(s), pushReorder(ctx, client, s, "", "card push", stdout))
 	}
 	return first
 }

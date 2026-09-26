@@ -313,3 +313,24 @@ func ensure(ctx context.Context, client *redis.Client) error {
 	}
 	return fn.LoadMissing(ctx, client)
 }
+
+// Streams is the distinct STREAM: lines of a batch's cards, in file order;
+// a file that does not lint names none (nova-tools #4322: card push writes
+// each stream's work order after the insert).
+func Streams(ctx context.Context, files []CardFile, opts PushOptions) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, f := range files {
+		body := f.Body
+		if opts.MapKind {
+			body, _, _ = MapKind(body)
+		}
+		doc, err := lint(ctx, body)
+		if err != nil || doc.Stream == "" || seen[doc.Stream] {
+			continue
+		}
+		seen[doc.Stream] = true
+		out = append(out, doc.Stream)
+	}
+	return out
+}

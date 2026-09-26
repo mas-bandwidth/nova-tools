@@ -33,7 +33,9 @@ func runTaskCLI(args ...string) (int, string, string) {
 	return code, out.String(), errOut.String()
 }
 
-var cardLine = regexp.MustCompile(`^TASK (\w+) id=(\S+) from=(\S+) to=(\S+) ms=\d+\n$`)
+// cardLine is a task card verb's receipt; a push onto a stream also names
+// the order it wrote (#4322: order=<n> order_rt=<n> order_ms=<ms>).
+var cardLine = regexp.MustCompile(`^TASK (\w+) id=(\S+) from=(\S+) to=(\S+) (?:order=\S+(?: order_rt=\d+ order_ms=[0-9.]+)? )?ms=\d+\n$`)
 
 // TestTaskCardCLI walks one task through the verbs and proves the table
 // (ZCARDs) and fsck after each, then a refusal, drift and the usage.

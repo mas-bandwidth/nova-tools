@@ -295,7 +295,10 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 		if err != nil {
 			return refused(err)
 		}
-		_, _ = fmt.Fprintf(out, "TASK push id=%s from=- to=%s ms=%d\n", *c.id, r.Where, ms())
+		// The stream's work order is current after every push (#4322):
+		// the same ws.Reorder as ws reorder, measured in the receipt.
+		order := pushReorder(ctx, cl, *c.stream, *c.id, *c.actor, out)
+		_, _ = fmt.Fprintf(out, "TASK push id=%s from=- to=%s %s ms=%d\n", *c.id, r.Where, order, ms())
 		return 0
 	case "take":
 		var ids []string
