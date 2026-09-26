@@ -63,7 +63,7 @@ const grammarChildEnv = "NOVA_SPRINT_GRAMMAR_CHILD"
 // against the path's set rather than run with -h after it (a positional
 // ends flag parsing, and the verb would run).
 var positionalPaths = map[string]bool{"redis": true, "redis-cli": true, "refresh": true, "fleet build set": true,
-	"result check": true, "result disposition": true, "card push": true}
+	"result check": true, "result disposition": true, "card push": true, "note post": true}
 
 var flagTokenRE = regexp.MustCompile(`^--?([A-Za-z0-9][A-Za-z0-9-]*)(=.*)?$`)
 

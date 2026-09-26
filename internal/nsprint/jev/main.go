@@ -19,7 +19,7 @@ import (
 
 // Usage is the ledger's subverbs on nova-sprint help.
 const Usage = "sync [--n <moves>] | ask [--n <rows>] [--key-env <VAR>] [--base-url <url>] | " +
-	"report [--type <t>] [--version <v>] | outcome --type <t> --subject <s> --outcome <o> --why <text> [--by <who>]"
+	"report [--type <t>] [--version <v>] | outcome --type <t> --subject <s> --outcome <o> --why <text> [--as <who>]"
 
 // env is what the verb reads from outside: TypeSafe Jev and the process
 // environment. Main uses the real ones; a test passes its own (a unit test

@@ -116,6 +116,9 @@ type LandDuty struct {
 	TTL time.Duration
 	// Out receives the LAND-DUTY receipt lines; Log the build's own lines.
 	Out, Log io.Writer
+	// Land runs one stream's whole landing; nil is stream.Run. A test swaps
+	// it to see the options the duty passes (cfg:land partial).
+	Land func(ctx context.Context, c stream.Client, o stream.RunOptions) (stream.RunReport, error)
 
 	mu     sync.Mutex
 	busy   map[string]bool
@@ -138,6 +141,12 @@ type LandLine struct {
 	Rebase             []string // rebase task ids pushed (or found)
 	CI                 string   // the CI request's status word
 	Err                string
+	// Card is the stream's live merge card (nova-tools #4324): the duty
+	// leaves the stream to it (State merge-card); one writer per stream.
+	Card string
+	// Owner is the claim another writer holds on the stream (State owned):
+	// a hand run, another worker, or a cross-stream wait (after:<sentinel>).
+	Owner string
 }
 
 // String is the receipt line.
@@ -154,9 +163,9 @@ func (r LandLine) String() string {
 	if r.PR > 0 {
 		pr = "#" + strconv.Itoa(r.PR)
 	}
-	return fmt.Sprintf("LAND-DUTY repo=%s stream=%s state=%s pr=%s members=%s unread=%s skip=%s parked=%s rebase=%s ci=%s err=%s",
+	return fmt.Sprintf("LAND-DUTY repo=%s stream=%s state=%s pr=%s members=%s unread=%s skip=%s parked=%s rebase=%s ci=%s card=%s owner=%s err=%s",
 		r.Repo, wrField(r.Stream), r.State, pr, numList(r.Members), numList(r.Unread), wrList(skips),
-		oneline.Field(wrList(parked)), wrList(r.Rebase), orDashStr(r.CI), oneline.Field(orDashStr(r.Err)))
+		oneline.Field(wrList(parked)), wrList(r.Rebase), orDashStr(r.CI), orDashStr(r.Card), oneline.Field(orDashStr(r.Owner)), oneline.Field(orDashStr(r.Err)))
 }
 
 func numList(ns []int) string {
@@ -391,7 +400,7 @@ func (d *LandDuty) Pass(ctx context.Context, instance, repo string) (LandPass, e
 			}
 		}
 	}()
-	lines, err := d.land(pctx, repo)
+	lines, err := d.land(pctx, repo, token)
 	cancel()
 	<-beat
 	p.Lines, p.Took = lines, time.Since(start)
@@ -435,8 +444,10 @@ func (d *LandDuty) Pass(ctx context.Context, instance, repo string) (LandPass, e
 
 // land runs the land sequence for every stream in ws:order with a landable
 // member or an open landing, oldest stream rank first. One stream's error is
-// on its line; the pass goes on to the next.
-func (d *LandDuty) land(ctx context.Context, repo string) ([]LandLine, error) {
+// on its line; the pass goes on to the next. token is the pass's
+// lease:land:<repo> token: the duty's claim on each stream it builds is
+// live while the lease holds it.
+func (d *LandDuty) land(ctx context.Context, repo, token string) ([]LandLine, error) {
 	c := d.Client
 	streams, err := c.ZRange(ctx, "ws:order", 0, -1).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
@@ -506,7 +517,30 @@ func (d *LandDuty) land(ctx context.Context, repo string) ([]LandLine, error) {
 				continue
 			}
 		}
-		out = append(out, d.landStream(ctx, repo, s, slug, gh, line))
+		// One writer per stream (nova-tools #4324): the duty claims the
+		// stream (land:merge:<stream> owner, atomic) before it builds and
+		// holds it for the whole landing; a live merge card, a hand run or
+		// a cross-stream wait holds it instead and the duty builds, pushes
+		// and merges nothing for it.
+		owner := stream.DutyOwner(repo, token)
+		now := time.Now()
+		if err := stream.Claim(ctx, c, []string{s}, owner, now, now); err != nil {
+			var held *stream.OwnedError
+			if !errors.As(err, &held) {
+				line.State, line.Err = "error", "claim: "+err.Error()
+			} else if card, ok := strings.CutPrefix(held.Owner, "card:"); ok {
+				line.State, line.Card = "merge-card", card
+			} else {
+				line.State, line.Owner = "owned", held.Owner
+			}
+			out = append(out, line)
+			continue
+		}
+		line = d.landStream(ctx, repo, s, slug, gh, line, cfg.Partial)
+		if _, err := stream.Release(context.WithoutCancel(ctx), c, []string{s}, owner); err != nil {
+			line.Err = strings.TrimPrefix(line.Err+"; ", "; ") + "release: " + err.Error()
+		}
+		out = append(out, line)
 	}
 	return out, nil
 }
@@ -539,8 +573,12 @@ func (d *LandDuty) workroot() string {
 }
 
 // landStream is one stream's land run with every landable member in one
-// batch, conflicts parked, and a rebase task per parked conflict.
-func (d *LandDuty) landStream(ctx context.Context, repo, s, slug string, gh *stream.GitHub, line LandLine) LandLine {
+// batch, conflicts parked, and a rebase task per parked conflict. partial is
+// cfg:land partial: off, a stream with a member that cannot land is refused
+// with LAND-SERIAL on its line (nova-tools #4324: never one at a time), and
+// the alarms carry it; on, the PR opens without them and the line prints
+// as allowed.
+func (d *LandDuty) landStream(ctx context.Context, repo, s, slug string, gh *stream.GitHub, line LandLine, partial bool) LandLine {
 	if d.Request == nil {
 		line.State, line.Err = "error", "no CI request seam"
 		return line
@@ -553,12 +591,16 @@ func (d *LandDuty) landStream(ctx context.Context, repo, s, slug string, gh *str
 		Options: stream.Options{Repo: repo, Streams: []string{s}, Base: d.base(), Mirror: mirror,
 			Workdir:     filepath.Join(d.workroot(), fmt.Sprintf("land-%s-%d", strings.ReplaceAll(slug, "+", "_"), time.Now().UnixNano())),
 			TestTimeout: d.TestTimeout, MinScore: -1, By: LandActor, Author: "Rowan <rowan@mas-bandwidth.com>",
-			Log: d.Log, GH: gh, ParkConflicts: true, NoTest: true},
+			Log: d.Log, GH: gh, ParkConflicts: true, NoTest: true, Partial: partial},
 		// No sleeping on CI: one read of the CI word, and the next tick
 		// resumes the open landing at its wait.
 		CIWait: 0, Tick: time.Second, Request: d.Request, CIURL: d.CIURL, BaseTip: d.BaseTip,
 	}
-	rep, err := stream.Run(ctx, d.Client, o)
+	land := d.Land
+	if land == nil {
+		land = stream.Run
+	}
+	rep, err := land(ctx, d.Client, o)
 	line.State, line.CI = rep.State, rep.CIRequest
 	if line.State == "" {
 		line.State = "error"

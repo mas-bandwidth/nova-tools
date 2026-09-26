@@ -161,7 +161,7 @@ func TestLandMergeNamesThePlanItsStitchLanded(t *testing.T) {
 	token := func() (string, error) { return "test-token", nil }
 	landMergeCLI := func(args ...string) (int, string, string) {
 		var out, errOut strings.Builder
-		code := landMerge(ctx, args, &out, &errOut, token)
+		code := runLandMergeAs(ctx, "land merge", args, &out, &errOut, token)
 		return code, out.String(), errOut.String()
 	}
 	const s = "autonomy-lm"

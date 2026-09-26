@@ -189,8 +189,11 @@ var Usages = map[string]Usage{
 	"mirror check":   {Forms: []string{"--bench <b> [--repos <r,...>] [--dir <dir>]"}, Examples: []string{"mirror check --bench hulk"}},
 	"mirror status":  {Forms: []string{"[--repos <r,...>] [--expect <b,...>] [--stale <d>]"}, Examples: []string{"mirror status"}},
 
-	"note": {Forms: []string{"--rote <class> --as <mind> [--what <text>] [--mech <m>]"}, Examples: []string{"note --rote hand-merge --as rowan --what 'merged 4399 by hand'"}},
-	"rote": {Forms: []string{"[--sprint <S>] [--since <t>] [--until <t>]"}, Examples: []string{"rote --since 24h"}},
+	"note":      {Forms: []string{"--rote <class> --as <mind> [--what <text>] [--mech <m>]"}, Examples: []string{"note --rote hand-merge --as rowan --what 'merged 4399 by hand'"}},
+	"note post": {Forms: []string{"(--stream <s> | --sprint <S>) [--as <who>] <text...>"}, Examples: []string{"note post --stream console --as merge-console-1 'the moves API changed'"}},
+	"note ls":   {Forms: []string{"--stream <s> | --sprint <S>"}, Examples: []string{"note ls --stream console"}},
+	"note drop": {Forms: []string{"--stream <s> | --sprint <S>"}, Examples: []string{"note drop --stream console"}},
+	"rote":      {Forms: []string{"[--sprint <S>] [--since <t>] [--until <t>]"}, Examples: []string{"rote --since 24h"}},
 
 	"pitstop set":    {Forms: []string{"--sprint <S> --stream <s,...> --why <text>"}, Examples: []string{"pitstop set --sprint quack-0926 --stream console --why 'dev red'"}},
 	"pitstop clear":  {Forms: []string{"--sprint <S> --stream <s,...> --why <text> [--force]"}, Examples: []string{"pitstop clear --sprint quack-0926 --stream console --why 'dev green'"}},
