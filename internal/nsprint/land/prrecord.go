@@ -11,8 +11,10 @@ package land
 //
 // RecordPRHead is the one writer of what GitHub said about a PR's head. A
 // claim is a pull_request delivery (opened, synchronize, reopened, closed:
-// source delivery) or a runner receipt of a pull_request run (source runner,
-// the event source the fleet has while the funnel is off). It creates the
+// source delivery), a runner receipt of a pull_request run (source runner,
+// the event source the fleet has while the funnel is off), or land pr's REST
+// read of a PR it merged or found merged (source rest: head.sha and
+// head.ref, so a PR nobody recorded still names its card). It creates the
 // record when absent, moves head and state, keeps the head index
 // pr:<name>:head:<sha> -> n, and stamps the claim (gh_head, gh_ev, gh_src,
 // gh_at) so a reader can see whether the head it is about to read is the
@@ -44,6 +46,7 @@ import (
 const (
 	ClaimDelivery = "delivery" // a pull_request delivery on ev:github
 	ClaimRunner   = "runner"   // the ci-ok job's receipt of a pull_request run
+	ClaimREST     = "rest"     // land pr's REST read of a merged PR (head.sha, head.ref)
 )
 
 var fullSHARx = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -57,7 +60,7 @@ type PRClaim struct {
 	Merged bool   // closed only: the PR merged
 	Branch string // the head branch, "" when not carried
 	Base   string // the base branch, "" when not carried
-	Source string // ClaimDelivery or ClaimRunner
+	Source string // ClaimDelivery, ClaimRunner or ClaimREST
 	EvID   string // the ev:github entry id of the claim
 	RunID  string // runner only: github.run_id (decimal)
 	At     int64  // the claim's time, unix ms; 0 means now
@@ -75,20 +78,24 @@ type PRHeadResult struct {
 	Task    string
 }
 
-// Line is the one receipt line.
-func (r PRHeadResult) Line() string {
+// Line is the one receipt line: PR HEAD then Words.
+func (r PRHeadResult) Line() string { return "PR HEAD " + r.Words() }
+
+// Words are the receipt's words after its label (land pr prints them as
+// PR <n> RECORD <words>).
+func (r PRHeadResult) Words() string {
 	d := func(s string) string {
 		if s == "" {
 			return "-"
 		}
 		return s
 	}
-	line := fmt.Sprintf("PR HEAD %s outcome=%s head=%s prev=%s state=%s stream=%s task=%s",
+	w := fmt.Sprintf("%s outcome=%s head=%s prev=%s state=%s stream=%s task=%s",
 		r.Key, r.Outcome, d(short8(r.Head)), d(short8(r.Prev)), d(r.State), d(r.Stream), d(r.Task))
 	if r.Why != "" {
-		line += " why=" + strings.Join(strings.Fields(r.Why), "_")
+		w += " why=" + strings.Join(strings.Fields(r.Why), "_")
 	}
-	return line
+	return w
 }
 
 func short8(s string) string {
@@ -157,14 +164,16 @@ func planPRHead(key string, rec map[string]string, c PRClaim, card cardOf, nowMS
 	}
 
 	state := rec["state"]
+	// A delivery and a REST read name the PR's state; a run does not.
+	names := c.Source != ClaimRunner
 	switch {
-	case c.Source == ClaimDelivery && c.Action == "closed" && c.Merged:
+	case names && c.Action == "closed" && c.Merged:
 		state = "merged"
-	case c.Source == ClaimDelivery && c.Action == "closed":
+	case names && c.Action == "closed":
 		if state != "merged" {
 			state = "closed"
 		}
-	case c.Source == ClaimDelivery:
+	case names:
 		if state != "merged" {
 			state = "open"
 		}
@@ -245,8 +254,12 @@ func (c PRClaim) Validate() error {
 		if !decimalAfter(c.RunID, "0") {
 			return fmt.Errorf("pr head: a runner claim needs its run id, got %q", c.RunID)
 		}
+	case ClaimREST:
+		if c.Action != "closed" || !c.Merged {
+			return fmt.Errorf("pr head: a REST claim is a merged PR (closed, merged), not %q merged=%t", c.Action, c.Merged)
+		}
 	default:
-		return fmt.Errorf("pr head: source %q is not delivery or runner", c.Source)
+		return fmt.Errorf("pr head: source %q is not delivery, runner or rest", c.Source)
 	}
 	return nil
 }

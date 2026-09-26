@@ -218,3 +218,50 @@ func TestBranchCardIDAndOrder(t *testing.T) {
 		t.Error("decimalAfter")
 	}
 }
+
+// TestRESTClaimWritesAMergedRecord (the read of 36a03b11d, probe: land pr
+// with no record printed record=none card=- and left the card merging): a
+// REST claim of a merged PR creates the record merged, with the branch and
+// the card head.ref spells; on a record with no task it backfills task and
+// branch; on a record merged at another head it is KEPT; an open or
+// unmerged REST claim is refused.
+func TestRESTClaimWritesAMergedRecord(t *testing.T) {
+	t.Parallel()
+
+	c := PRClaim{Repo: "mas-bandwidth/nova-tools", N: 45, Head: shaNew, Action: "closed", Merged: true,
+		Branch: "rowan/prfollow3", Base: "dev", Source: ClaimREST}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	card := cardOf{ID: BranchCardID(c.Branch), Stream: "github"}
+	if card.ID != "prfollow3" {
+		t.Fatalf("BranchCardID(%s) = %q", c.Branch, card.ID)
+	}
+	p := planPRHead("pr:nova-tools:45", map[string]string{}, c, card, nowMS)
+	set := setOf(p)
+	if p.res.Outcome != "created" || set["state"] != "merged" || set["task"] != "prfollow3" || set["branch"] != "rowan/prfollow3" ||
+		set["stream"] != "github" || set["gh_src"] != "rest" || set["head"] != shaNew || p.addIdx != shaNew {
+		t.Fatalf("created: %s %v", p.res.Line(), set)
+	}
+
+	// An open record at the head with no task: merged, task and branch backfilled.
+	p = planPRHead("pr:nova-tools:45", map[string]string{"head": shaNew, "state": "open"}, c, card, nowMS)
+	set = setOf(p)
+	if p.res.Outcome != "same" || set["state"] != "merged" || set["task"] != "prfollow3" || set["branch"] != "rowan/prfollow3" {
+		t.Fatalf("backfill: %s %v", p.res.Line(), set)
+	}
+
+	// Merged at another head: the record's head is final.
+	p = planPRHead("pr:nova-tools:45", map[string]string{"head": shaOld, "state": "merged"}, c, card, nowMS)
+	if p.writes || p.res.Outcome != "kept" {
+		t.Fatalf("merged elsewhere: %s", p.res.Line())
+	}
+
+	for _, bad := range []PRClaim{{Action: "closed"}, {Action: "opened", Merged: true}} {
+		b := c
+		b.Action, b.Merged = bad.Action, bad.Merged
+		if err := b.Validate(); err == nil || !strings.Contains(err.Error(), "a REST claim is a merged PR") {
+			t.Fatalf("%s merged=%t: %v", b.Action, b.Merged, err)
+		}
+	}
+}

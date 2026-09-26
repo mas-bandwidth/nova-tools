@@ -154,7 +154,7 @@ func TestPRRecordFollowsGitHubAndLandPRLandsTheCard(t *testing.T) {
 	t.Cleanup(srv.Close)
 	gh := &stream.GitHub{API: srv.URL, Token: "t0k", Budget: 3}
 	rep, err := stream.LandPR(ctx, gh, c, stream.LandPROptions{Repo: "mas-bandwidth/nova-tools", N: 42})
-	if err != nil || rep.State != "merged" || rep.Record != "merged" || rep.Card != "prfollow" || rep.CardMove != "merging->landed" {
+	if err != nil || rep.State != "merged" || rep.Record != "merged" || rep.Card != "prfollow" || rep.CardMove != "merging->landed" || rep.Pitstop != "S1" {
 		t.Fatalf("land pr: %+v %v", rep, err)
 	}
 	task := c.HGetAll(ctx, "task:prfollow").Val()
@@ -164,5 +164,66 @@ func TestPRRecordFollowsGitHubAndLandPRLandsTheCard(t *testing.T) {
 	// Again: the card is already landed and nothing moves.
 	if rep, err = stream.LandPR(ctx, gh, c, stream.LandPROptions{Repo: "mas-bandwidth/nova-tools", N: 42}); err != nil || rep.CardMove != "already landed" {
 		t.Fatalf("land pr again: %+v %v", rep, err)
+	}
+}
+
+// TestLandPRWithNoRecordLandsTheBranchCard (the read of 36a03b11d, probe:
+// with no record, land pr merged and printed record=none card=- card_move=none;
+// a card with pr=45 on branch rowan/prfollow3 stayed merging, although the
+// REST reply carries head.ref): land pr writes the record from the reply,
+// finds the card head.ref spells, and lands it through a pit stop, saying
+// PITSTOP kept sprint=S1 on the receipt.
+func TestLandPRWithNoRecordLandsTheBranchCard(t *testing.T) {
+	t.Parallel()
+
+	ctx, c := runnerStore(t)
+	const key = "pr:nova-tools:45"
+	head, merge := strings.Repeat("c", 40), strings.Repeat("d", 40)
+	c.SAdd(ctx, "friends", "rowan")
+	if _, err := taskcard.Push(ctx, c, taskcard.PushRequest{ID: "prfollow3", Stream: "github", Friend: "rowan", Sprint: "S1",
+		Kind: "build", Title: "the gh-client failure again", PR: "45", Repo: "mas-bandwidth/nova-tools", By: "rowan"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskcard.Take(ctx, c, "rowan", 1, "rowan"); err != nil {
+		t.Fatal(err)
+	}
+	if m, err := taskcard.Done(ctx, c, "prfollow3", "rowan", "PR #45 opened", "45"); err != nil || m.To != "merging" {
+		t.Fatalf("done: %+v %v", m, err)
+	}
+	c.HSet(ctx, "s:S1:pitstop", "by", "rowan", "why", "a pit stop", "scope", "all")
+	if n := c.Exists(ctx, key).Val(); n != 0 {
+		t.Fatalf("%s exists before land pr", key)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		if req.Method != http.MethodGet || req.URL.Path != "/repos/mas-bandwidth/nova-tools/pulls/45" {
+			t.Errorf("land pr called %s %s", req.Method, req.URL)
+			rw.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_ = json.NewEncoder(rw).Encode(map[string]any{"state": "closed", "merged": true, "merge_commit_sha": merge,
+			"head": map[string]any{"sha": head, "ref": "rowan/prfollow3"}, "base": map[string]any{"ref": "dev"}})
+	}))
+	t.Cleanup(srv.Close)
+	var log strings.Builder
+	gh := &stream.GitHub{API: srv.URL, Token: "t0k", Budget: 3}
+	rep, err := stream.LandPR(ctx, gh, c, stream.LandPROptions{Repo: "mas-bandwidth/nova-tools", N: 45, Log: &log})
+	if err != nil || rep.Record != "created" || rep.Card != "prfollow3" || rep.CardMove != "merging->landed" || rep.Pitstop != "S1" {
+		t.Fatalf("land pr: %+v %v\n%s", rep, err, log.String())
+	}
+	want := "PR 45 MERGED " + merge + "\n" +
+		"PR 45 RECORD " + key + " outcome=created head=cccccccc prev=- state=merged stream=github task=prfollow3\n" +
+		"PR 45 PITSTOP kept sprint=S1 scope=all card=prfollow3 (the landed move is a fact; the stop holds the rest)\n" +
+		"PR 45 CARD prfollow3 merging->landed\n"
+	if log.String() != want {
+		t.Fatalf("log:\n%s\nwant:\n%s", log.String(), want)
+	}
+	rec := c.HGetAll(ctx, key).Val()
+	if rec["head"] != head || rec["branch"] != "rowan/prfollow3" || rec["task"] != "prfollow3" || rec["state"] != "merged" ||
+		rec["merge_sha"] != merge || rec["gh_src"] != "rest" {
+		t.Fatalf("record: %v", rec)
+	}
+	if task := c.HGetAll(ctx, "task:prfollow3").Val(); task["where"] != "landed" || task["merge_sha"] != merge {
+		t.Fatalf("the card: where=%s merge_sha=%s", task["where"], task["merge_sha"])
 	}
 }

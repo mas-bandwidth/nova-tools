@@ -70,8 +70,9 @@ func TestLandPRVerb(t *testing.T) {
 
 	code, out, errOut = runSprint("land", "pr", "--repo", "o/r", "--redis", mr.Addr(), "--api", srv.URL, "#12")
 	want := "PR 12 CHECKS green 1/1 head=aaaaaaaa\nPR 12 MERGED " + strings.Repeat("b", 40) + "\n" +
+		"PR 12 RECORD pr:r:12 outcome=created head=aaaaaaaa prev=- state=merged stream=- task=-\n" +
 		"PR 12 CARD none (pr:r:12 names no card)\n" +
-		"LAND PR repo=o/r pr=#12 state=merged head=aaaaaaaa ci=green merge=bbbbbbbb failed=- record=none card=- card_move=none rest_calls=2\n"
+		"LAND PR repo=o/r pr=#12 state=merged head=aaaaaaaa ci=green merge=bbbbbbbb failed=- record=created card=- card_move=none rest_calls=2\n"
 	if code != 0 || out != want {
 		t.Fatalf("green: exit %d\n%s\nwant:\n%s%s", code, out, want, errOut)
 	}

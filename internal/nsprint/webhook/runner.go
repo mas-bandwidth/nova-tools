@@ -218,8 +218,10 @@ func (w Written) Line() string {
 // cancelled, the PR record's claim (a pull_request run) and the fold of a
 // final word onto the records at the sha. It needs the nova_sprint function
 // library on the store and a seat with XADD on ev:github, FCALL and HSET on
-// ci:*, and HMGET, HSET, SADD, SREM and SMEMBERS on pr:*. It touches no
-// other key.
+// ci:*, HMGET, HSET, SADD, SREM and SMEMBERS on pr:*, and HMGET on task:*
+// (the card the head branch names, read when the record is new or names no
+// task: land.RecordPRHead). It writes no key outside ev:github, ci:* and
+// pr:*, and reads none outside those and task:*.
 func Write(ctx context.Context, rdb *redis.Client, r Receipt) (Written, error) {
 	var w Written
 	if rdb == nil {

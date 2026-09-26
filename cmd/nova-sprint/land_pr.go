@@ -13,9 +13,12 @@
 // lander reads it; internal/nsprint/land/stream); no child process. A
 // missing token is the typed refusal REFUSED no GitHub token remedy=...
 //
-// After MERGED (card pr-record-follows-github) the PR record is marked
-// merged and the card it names lands at the merge commit (PR <n> CARD <id>
-// <from>->landed, and record=, card=, card_move= on the LAND PR line); a
+// After MERGED (card pr-record-follows-github) the PR record follows the
+// REST reply (written from head.sha and head.ref when absent: PR <n> RECORD
+// ...), is marked merged, and the card it names (or head.ref spells) lands
+// at the merge commit (PR <n> CARD <id> <from>->landed, and record=, card=,
+// card_move= on the LAND PR line). A pit stop does not hold that move, a
+// fact of GitHub's: PR <n> PITSTOP kept sprint=<S> says it proceeded. A
 // record whose head is not GitHub's is REFUSED STALE before the merge.
 //
 // Exit 0 merged, 1 failed, closed or in conflict, 2 usage or refused,

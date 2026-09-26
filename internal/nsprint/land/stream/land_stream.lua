@@ -140,9 +140,12 @@ if op == 'record' then
   end
   local old = redis.call('HGET', k, 'head')
   if (f.head or '') ~= '' and old and old ~= '' and old ~= f.head then
-    -- a new head: CI and mergeable were for the old one
+    -- a new head: CI and mergeable were for the old one, and so was
+    -- ci_sha (the head the ci word was folded at: land.FoldCI; planPRHead
+    -- clears it on a moved head the same way)
     if (f.ci or '') == '' then f.ci = 'pending' end
     if (f.mergeable or '') == '' then redis.call('HSET', k, 'mergeable', '') end
+    redis.call('HSET', k, 'ci_sha', '')
     ci_request(p.repo, f.head, p.n, p.now)
   end
   local set = {}

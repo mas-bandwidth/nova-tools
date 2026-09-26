@@ -344,3 +344,48 @@ func TestLandPRRefusesAStaleRecordAndFindsTheCard(t *testing.T) {
 		t.Fatalf("record after the merge: %v", rec)
 	}
 }
+
+// TestLandPRWithNoRecordWritesItFromTheReply (the read of 36a03b11d, probe:
+// with no record land pr merged and printed record=none card=- card_move=none
+// although the REST reply carries head.ref): the record is written from the
+// reply (head.sha, head.ref, base.ref, state merged at the merge commit) and
+// the card is the one head.ref spells (land.BranchCardID), here already
+// landed so nothing moves. A card of another PR on that branch is not it.
+func TestLandPRWithNoRecordWritesItFromTheReply(t *testing.T) {
+	t.Parallel()
+
+	f, c := newFakeForge(), prRedis(t)
+	ctx := context.Background()
+	head := strings.Repeat("4", 40)
+	f.pr["head"] = map[string]any{"sha": head, "ref": "rowan/prfollow3"}
+	f.pr["base"] = map[string]any{"ref": "dev"}
+	if err := c.HSet(ctx, webhook.Key("o/r", head), "gh", "green", "wf:ci", "green 3 x").Err(); err != nil {
+		t.Fatal(err)
+	}
+	c.HSet(ctx, "task:prfollow3", "repo", "o/r", "pr", "8", "stream", "github", "where", "landed")
+	rep, log, _, err := runLandPR(t, f, c)
+	if err != nil || rep.Record != "created" || rep.Card != "" || rep.CardMove != "none" ||
+		!strings.Contains(log, "PR 7 RECORD pr:r:7 outcome=created head=44444444 prev=- state=merged stream=- task=-\n") {
+		t.Fatalf("another PR's card: %v %+v\n%s", err, rep, log)
+	}
+
+	c.Del(ctx, "pr:r:7")
+	c.HSet(ctx, "task:prfollow3", "pr", "7")
+	f.pr["merged"], f.pr["state"], f.pr["merge_commit_sha"] = true, "closed", f.mergeSHA
+	rep, log, gh, err := runLandPR(t, f, c)
+	if err != nil || rep.State != "merged" || rep.Record != "created" || rep.Card != "prfollow3" || rep.CardMove != "already landed" || gh.Calls != 1 {
+		t.Fatalf("merged at GitHub: %v %+v calls=%d\n%s", err, rep, gh.Calls, log)
+	}
+	want := "PR 7 MERGED " + f.mergeSHA + "\nPR 7 RECORD pr:r:7 outcome=created head=44444444 prev=- state=merged stream=github task=prfollow3\nPR 7 CARD prfollow3 already landed\n"
+	if log != want {
+		t.Fatalf("log:\n%s\nwant:\n%s", log, want)
+	}
+	rec := c.HGetAll(ctx, "pr:r:7").Val()
+	if rec["head"] != head || rec["branch"] != "rowan/prfollow3" || rec["base"] != "dev" || rec["task"] != "prfollow3" ||
+		rec["state"] != "merged" || rec["merge_sha"] != f.mergeSHA || rec["gh_src"] != "rest" || rec["repo"] != "o/r" {
+		t.Fatalf("record: %v", rec)
+	}
+	if !c.SIsMember(ctx, "pr:r:head:"+head, "7").Val() {
+		t.Fatalf("the head index does not name 7: %v", c.Keys(ctx, "pr:*").Val())
+	}
+}

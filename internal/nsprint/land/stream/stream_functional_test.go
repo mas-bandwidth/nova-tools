@@ -94,6 +94,36 @@ func TestRecordAndLines(t *testing.T) {
 	}
 }
 
+// TestRecordNewHeadClearsCISHA (the read of 36a03b11d: the Lua record op
+// moved head without clearing ci_sha): a record whose ci was folded green at
+// its head (ci_sha) keeps ci_sha while the head stays, and a new head clears
+// it with ci back to pending, as land.RecordPRHead does on a moved head.
+func TestRecordNewHeadClearsCISHA(t *testing.T) {
+	t.Parallel()
+
+	c := newRedis(t)
+	ctx := context.Background()
+	a, b := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	if _, err := Record(ctx, c, repo, 9, RecordFields{Head: a, Base: "dev", Stream: strm}); err != nil {
+		t.Fatal(err)
+	}
+	key := PRKey(repo, 9)
+	c.HSet(ctx, key, "ci", "green", "ci_sha", a)
+	if _, err := Record(ctx, c, repo, 9, RecordFields{Head: a, Mergeable: "true"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.HMGet(ctx, key, "ci", "ci_sha").Val(); got[0] != "green" || got[1] != a {
+		t.Fatalf("same head: ci, ci_sha = %v", got)
+	}
+	r, err := Record(ctx, c, repo, 9, RecordFields{Head: b})
+	if err != nil || r.CI != "pending" || r.Head != b {
+		t.Fatalf("new head: %+v %v", r, err)
+	}
+	if got := c.HGet(ctx, key, "ci_sha").Val(); got != "" {
+		t.Fatalf("new head kept ci_sha %q", got)
+	}
+}
+
 func TestMembersOrderAndFilters(t *testing.T) {
 	t.Parallel()
 
