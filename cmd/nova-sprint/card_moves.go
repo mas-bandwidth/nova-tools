@@ -35,7 +35,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -158,25 +157,10 @@ func runCardMove(ctx context.Context, sub string, args []string, out, errOut io.
 	return m.run(ctx, st.Client(), sub, ids, out, errOut)
 }
 
-// idList is --ids (a,b,c or @file of ids, one per line or space separated),
-// in order.
+// idList is --ids in order: verbflag's Parse has resolved @file and @- (the
+// one id input, verbflag.ResolveIDs) into the comma list.
 func (m *moveCmd) idList() ([]string, error) {
-	var ids []string
-	v := *m.ids
-	if strings.HasPrefix(v, "@") {
-		b, err := os.ReadFile(v[1:])
-		if err != nil {
-			return nil, err
-		}
-		ids = append(ids, strings.Fields(string(b))...)
-	} else if v != "" {
-		for _, id := range strings.Split(v, ",") {
-			if id = strings.TrimSpace(id); id != "" {
-				ids = append(ids, id)
-			}
-		}
-	}
-	return ids, nil
+	return verbflag.List(*m.ids), nil
 }
 
 // usage names the first thing a verb's flags lack, or "".

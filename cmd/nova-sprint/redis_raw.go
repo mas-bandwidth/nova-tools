@@ -32,8 +32,6 @@ func init() {
 	})
 }
 
-const redisRawWants = "wants [--seat <name>] [--redis <host:port>] [--] <redis command...>, for example: nova-sprint --seat coordinator redis ZCARD sprint:S:cards"
-
 func cmdRedisRaw(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	return redisRaw(ctx, seatcred.Process(), os.Getenv, args, stdout, stderr)
 }
@@ -43,14 +41,14 @@ func redisRaw(ctx context.Context, sel *seatcred.Selection, getenv func(string) 
 	fs := verbflag.New("redis")
 	addr := fs.String("redis", rawAddrDefault(sel, getenv), verbflag.HelpRedis)
 	if err := fs.Parse(args); err != nil {
-		return refuse(stderr, "redis", redisRawWants)
+		return refuse(stderr, "redis", err.Error())
 	}
 	cmdArgs := fs.Args()
 	if len(cmdArgs) == 0 {
-		return refuse(stderr, "redis", "no command; "+redisRawWants)
+		return refuse(stderr, "redis", "no command")
 	}
 	if *addr == "" {
-		return refuse(stderr, "redis", "no address: pass --seat <name> with a seats.tsv row, --redis <host:port>, or set NOVA_SPRINT_REDIS; "+redisRawWants)
+		return refuse(stderr, "redis", "no address: pass --seat <name> with a seats.tsv row, --redis <host:port>, or set NOVA_SPRINT_REDIS")
 	}
 	who := "seat=none"
 	if c, ok, err := sel.Active(); ok {

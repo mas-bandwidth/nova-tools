@@ -127,12 +127,10 @@ func runFriendShow(ctx context.Context, args []string, out, errOut io.Writer) in
 	if err != nil {
 		// The store answered: a friend it does not hold is data, one line
 		// on stdout and exit 1, never a usage refusal (#4399).
-		why := strings.TrimPrefix(err.Error(), "friend show: ")
-		remedy := ""
 		if errors.Is(err, friend.ErrNotRegistered) {
-			remedy = " remedy=" + quoteField("nova-sprint friend show")
+			return friendNotRegistered(out, verb, name)
 		}
-		fmt.Fprintf(out, "FRIEND SHOW REFUSED as=%s why=%s%s\n", quoteField(name), quoteField(why), remedy)
+		fmt.Fprintf(out, "FRIEND SHOW REFUSED as=%s why=%s\n", quoteField(name), quoteField(strings.TrimPrefix(err.Error(), "friend show: ")))
 		return 1
 	}
 	for _, r := range rows {
@@ -224,4 +222,15 @@ func runCapacityWake(ctx context.Context, args []string, out, errOut io.Writer) 
 	}
 	fmt.Fprintf(out, "SET friend %s wake=%s\n", name, wp)
 	return 0
+}
+
+// friendNotRegistered is the one data line of every friend verb given a name
+// the registry (the friends set) does not hold, exit 1 (#4399: friend show
+// refused it while friend down wrote friend:<f>:down for it):
+//
+//	FRIEND SHOW|DOWN|UP REFUSED as=<f> why="<f> is not a registered friend" remedy="nova-sprint friend show"
+func friendNotRegistered(out io.Writer, verb, name string) int {
+	fmt.Fprintf(out, "%s REFUSED as=%s why=%s remedy=%s\n", strings.ToUpper(verb), quoteField(name),
+		quoteField(name+" is not a registered friend"), quoteField("nova-sprint friend show"))
+	return 1
 }

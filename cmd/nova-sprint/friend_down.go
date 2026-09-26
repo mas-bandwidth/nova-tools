@@ -44,6 +44,9 @@ func runFriendDown(ctx context.Context, on bool, args []string, out, errOut io.W
 	if err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
+	if r.Status == "UNKNOWN" { // the registry does not hold it: data, as friend show says it
+		return friendNotRegistered(out, verb, name)
+	}
 	_, _ = fmt.Fprintf(out, "FRIEND %s %s\n", r.Status, name)
 	if r.Status != "DOWN" && r.Status != "UP" && r.Status != "SAME" {
 		return 2

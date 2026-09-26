@@ -2,6 +2,8 @@ package verbflag
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -179,5 +181,27 @@ func TestRefusalEndsInThePathsOwnUsage(t *testing.T) {
 		if got := Refusal(c.verb, c.what); got != c.want || strings.Contains(got, "nova-sprint help") {
 			t.Errorf("Refusal(%q, %q)\n got %s\nwant %s", c.verb, c.what, got, c.want)
 		}
+	}
+}
+
+// TestResolveIDsIsTheOneIDInput (#4399 round 4, Stella's walk): a comma list
+// whose items are ids, @<file> or @- (stdin), one per line or split by
+// spaces or commas, in order; a missing file and an empty list are refused.
+func TestResolveIDsIsTheOneIDInput(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ids.txt")
+	if err := os.WriteFile(path, []byte("p2\np3 p4,p5\n\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ResolveIDs("p1,@"+path+",@-,p9", strings.NewReader("p6\np7\n"))
+	if err != nil || strings.Join(got, ",") != "p1,p2,p3,p4,p5,p6,p7,p9" {
+		t.Fatalf("got %v %v", got, err)
+	}
+	if _, err := ResolveIDs("@"+filepath.Join(dir, "none"), nil); err == nil || !strings.Contains(err.Error(), "--ids @") {
+		t.Fatalf("a missing file: %v", err)
+	}
+	if _, err := ResolveIDs("@-", strings.NewReader("\n")); err == nil || !strings.Contains(err.Error(), "names no id") {
+		t.Fatalf("an empty stdin: %v", err)
 	}
 }

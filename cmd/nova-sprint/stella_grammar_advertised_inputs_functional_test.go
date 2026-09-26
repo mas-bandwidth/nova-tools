@@ -21,24 +21,12 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 )
 
-// TestGrammarColdWalk is the cold read of #4399 as a functional test: a
-// session with NOVA_SPRINT_REDIS set and no --redis cuts a stream of ten
-// cards from a file, resolves them to ready, runs them on children, ends one
-// with its PR and reads its brief, using only what nova-sprint prints. The
-// reader's walk ended 21 of 64 lines in the help tail; this one holds:
-//
-//   - ZERO lines anywhere print "run: nova-sprint help" or Go's flag error;
-//   - every natural line succeeds, answers from the store, or prints the
-//     exact next line, and that line, run verbatim, is not refused again;
-//   - each retired spelling (typed on purpose) prints the whole corrected
-//     line and exits 2, and the corrected line runs;
-//   - the ten cards cut with depends-on `-` are ready after one pass of the
-//     reconciler's waiting-resolve duty (item 8).
-//
-// Each line runs in a child (this test binary as nova-sprint, TestMain) in a
-// scratch directory, against a throwaway redis-server with the function
-// library loaded.
-func TestGrammarColdWalk(t *testing.T) {
+// TestStellaGrammarAdvertisedIDInputs is Stella's independent walk of #4399
+// (bus stella-ab9422c9b483), preserved under her name: the cold walk with
+// the three --ids forms HelpIDs advertises and that failed at 98eec3cdc,
+// `card render --ids @-` (stdin p1), `read brief --ids @ids.txt` and
+// `read brief --ids @-`. Every line's stdin is "p1\n".
+func TestStellaGrammarAdvertisedIDInputs(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	addr := testutil.Start(t)
@@ -79,7 +67,7 @@ func TestGrammarColdWalk(t *testing.T) {
 	runLine := func(argv []string) result {
 		cmd := exec.Command(self, argv...)
 		cmd.Dir, cmd.Env = dir, env
-		cmd.Stdin = strings.NewReader("p1\n") // what --ids @- reads
+		cmd.Stdin = strings.NewReader("p1\n")
 		var out, errOut strings.Builder
 		cmd.Stdout, cmd.Stderr = &out, &errOut
 		_ = cmd.Run()
@@ -161,9 +149,9 @@ func TestGrammarColdWalk(t *testing.T) {
 	check("shape", "card push --sprint probe nolabel.md", "missing label: a card names its id on a first line RESULT: <id> or a LABEL: <id>")
 	check("ok", "card cut --from cards.tsv --repo mas-bandwidth/nova-tools --stream probe-a --no-github", "rows=10 cut=10 ")
 	writeFile(t, filepath.Join(dir, "ids.txt"), "p1\n")
-	// every --ids form HelpIDs promises (Stella's walk, #4399 round 4)
-	check("answer", "card render --ids @-", "CARD RENDER REFUSED id=p1")
+	check("answer", "card render --ids p1", "CARD RENDER REFUSED id=p1")
 	check("answer", "card render --ids @ids.txt", "CARD RENDER REFUSED id=p1")
+	check("answer", "card render --ids @-", "CARD RENDER REFUSED id=p1")
 	check("ok", "stream ls", `"probe-a" waiting=`)
 	check("ok", "task ls", "p10 stream=probe-a where=waiting")
 	check("ok", "task ls --stream probe-a", "TASK ls n=11 ")
@@ -197,6 +185,7 @@ func TestGrammarColdWalk(t *testing.T) {
 	check("ok", "card end --ids p1~1 --ok --pr 4399 --head "+head, "ENDED p1~1 primary=p1 from=working to=review")
 	check("next", "read brief --id p1 --mirror "+mirror, "--id is spelled --ids")
 	check("ok", "read brief --ids p1 --mirror "+mirror, "READ BRIEF repo=nova-tools n=4399 ", " out=- diff=- ", "+// walk")
+
 	check("ok", "read brief --ids @ids.txt --mirror "+mirror, "READ BRIEF repo=nova-tools n=4399 ")
 	check("ok", "read brief --ids @- --mirror "+mirror, "READ BRIEF repo=nova-tools n=4399 ")
 
@@ -213,41 +202,4 @@ func TestGrammarColdWalk(t *testing.T) {
 		t.Errorf("%d of %d lines printed the help tail; want 0", helpTail, lines)
 	}
 	t.Logf("walk: %d lines (%d natural), help tail %d", lines, natural, helpTail)
-}
-
-// walkMirror is a bare mirror with a base commit and a head commit that adds
-// walk.go: the read brief's diff.
-func walkMirror(t *testing.T, dir string) (base, head, mirror string) {
-	t.Helper()
-	work := filepath.Join(dir, "work")
-	if err := os.MkdirAll(work, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	git := func(d string, args ...string) string {
-		cmd := exec.Command("git", append([]string{"-C", d}, args...)...)
-		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@x", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@x", "GIT_CONFIG_GLOBAL=/dev/null")
-		b, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %v: %v: %s", args, err, b)
-		}
-		return strings.TrimSpace(string(b))
-	}
-	git(work, "init", "-q", "-b", "dev")
-	writeFile(t, filepath.Join(work, "p1.go"), "package p\n")
-	git(work, "add", ".")
-	git(work, "commit", "-qm", "base")
-	base = git(work, "rev-parse", "HEAD")
-	writeFile(t, filepath.Join(work, "p1.go"), "package p\n\n// walk\n")
-	git(work, "commit", "-qam", "walk")
-	head = git(work, "rev-parse", "HEAD")
-	mirror = filepath.Join(dir, "nova-tools.git")
-	git(work, "clone", "-q", "--bare", work, mirror)
-	return base, head, mirror
-}
-
-func writeFile(t *testing.T, path, body string) {
-	t.Helper()
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
 }

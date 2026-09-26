@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -254,7 +255,10 @@ func TestGrammarNoHelpTailInTheSource(t *testing.T) {
 //   - seatAddrEnvs is used only by redisDefaultFrom (the read) and
 //     selectSeat (the write of --seat's address): a second loop over it, as
 //     redis_raw.go's rawAddrDefault had (the ninth door), is red;
-//   - no Getenv of an address variable anywhere (the eighth door's shape).
+//   - no Getenv of an address variable anywhere (the eighth door's shape);
+//   - a name split into literals ("NOVA_" + "REDIS") is folded and held the
+//     same. A name built at run time (fmt.Sprintf, a lookup table) is not
+//     read by any syntax test; the resolver's own test pins the one list.
 func TestGrammarOneRedisResolver(t *testing.T) {
 	t.Parallel()
 	names := map[string]bool{`"NOVA_SPRINT_REDIS"`: true, `"NOVA_REDIS_ADDR"`: true, `"NOVA_REDIS"`: true}
@@ -293,6 +297,13 @@ func TestGrammarOneRedisResolver(t *testing.T) {
 					if x.Kind == token.STRING && names[x.Value] {
 						t.Errorf("%s: spells %s outside seat.go's seatAddrEnvs: a second resolver", fset.Position(x.Pos()), x.Value)
 					}
+				case *ast.BinaryExpr:
+					// a name split into literals ("NOVA_" + "REDIS") is the
+					// same name: fold every all-literal concatenation
+					if v, ok := foldLiterals(x); ok && names[strconv.Quote(v)] {
+						t.Errorf("%s: spells %q in pieces outside seat.go's seatAddrEnvs: a second resolver", fset.Position(x.Pos()), v)
+						return false
+					}
 				}
 				return true
 			})
@@ -318,7 +329,8 @@ func TestGrammarOneRedisResolver(t *testing.T) {
 // file outside internal/nsprint/verbflag spells a usage of its own. Every Go
 // string literal of nova-sprint's source is read off the syntax tree, and
 // one holding "usage:" is red, but for the top-level help text (main.go's
-// usage, what `nova-sprint help` prints) and a parser's "CPU usage:".
+// usage, what `nova-sprint help` prints) and a parser's "CPU usage:"; any
+// case ("Usage:", "USAGE:") counts.
 func TestGrammarNoHandPrintedUsage(t *testing.T) {
 	t.Parallel()
 	fset := token.NewFileSet()
@@ -346,7 +358,7 @@ func TestGrammarNoHandPrintedUsage(t *testing.T) {
 				if !ok || lit.Kind != token.STRING {
 					return true
 				}
-				if strings.Contains(lit.Value, "usage:") && !strings.Contains(lit.Value, "CPU usage:") {
+				if v := strings.ToLower(lit.Value); strings.Contains(v, "usage:") && !strings.Contains(v, "cpu usage:") { // Usage:, USAGE: too
 					t.Errorf("%s: a hand-printed usage %s: end the refusal with verbflag.Refusal (the one table)", fset.Position(lit.Pos()), lit.Value)
 				}
 				return true
@@ -357,4 +369,30 @@ func TestGrammarNoHandPrintedUsage(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+}
+
+// foldLiterals is the value of a + b + ... when every operand is a string
+// literal.
+func foldLiterals(e ast.Expr) (string, bool) {
+	switch x := e.(type) {
+	case *ast.BasicLit:
+		if x.Kind != token.STRING {
+			return "", false
+		}
+		v, err := strconv.Unquote(x.Value)
+		return v, err == nil
+	case *ast.ParenExpr:
+		return foldLiterals(x.X)
+	case *ast.BinaryExpr:
+		if x.Op != token.ADD {
+			return "", false
+		}
+		l, ok := foldLiterals(x.X)
+		if !ok {
+			return "", false
+		}
+		r, ok := foldLiterals(x.Y)
+		return l + r, ok
+	}
+	return "", false
 }

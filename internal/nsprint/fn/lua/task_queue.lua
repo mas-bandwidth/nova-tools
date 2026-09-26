@@ -238,6 +238,11 @@ local function friend_down(keys, args)
   if f == nil or f == '' then
     return { 'INVALID' }
   end
+  -- one rule with friend show (#4399): a name the registry does not hold is
+  -- refused, and no friend:<f>:down is written for it
+  if redis.call('SISMEMBER', 'friends', f) == 0 then
+    return { 'UNKNOWN' }
+  end
   local key = 'friend:' .. f .. ':down'
   local current = DEP.down(f)
   if on and current and current == (reason ~= '' and reason or 'down') then

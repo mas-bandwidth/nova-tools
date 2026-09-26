@@ -29,8 +29,6 @@ func init() {
 	})
 }
 
-const redisCLIWants = "wants [--seat <name>] [--redis <host:port>] -- <redis command...>, for example: nova-sprint redis-cli --seat studio --redis 127.0.0.1:6380 -- ZCARD sprint:S:cards"
-
 func cmdRedisCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New("redis-cli")
 	addr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
@@ -38,19 +36,23 @@ func cmdRedisCLI(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	if i < 0 || i == len(args)-1 {
 		// -h before the "--" still answers (verbflag); anything else is refused.
 		if err := fs.Parse(args); err != nil {
-			return refuse(stderr, "redis-cli", redisCLIWants)
+			return refuse(stderr, "redis-cli", err.Error())
 		}
-		return refuse(stderr, "redis-cli", "no command after --; "+redisCLIWants)
+		return refuse(stderr, "redis-cli", "no command after --")
 	}
 	if err := fs.Parse(args[:i]); err != nil {
+		var re *verbflag.RetiredError
+		if errors.As(err, &re) { // the corrected whole line keeps the command after --
+			re.Line += " " + verbflag.Join(args[i:])
+		}
 		return refuse(stderr, "redis-cli", err.Error())
 	}
 	if fs.NArg() > 0 {
-		return refuse(stderr, "redis-cli", redisCLIWants)
+		return refuse(stderr, "redis-cli", "takes flags before --, then the command")
 	}
 	host, port, err := net.SplitHostPort(strings.TrimSpace(*addr))
 	if err != nil || host == "" || port == "" {
-		return refuse(stderr, "redis-cli", "--redis <host:port> (or NOVA_SPRINT_REDIS) is required; "+redisCLIWants)
+		return refuse(stderr, "redis-cli", "--redis <host:port> (or NOVA_SPRINT_REDIS) is required")
 	}
 	c, ok, err := seatcred.Active()
 	if !ok {

@@ -17,6 +17,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"strings"
 )
@@ -151,7 +152,7 @@ func (s *Set) Parse(args []string) error {
 	}
 	err := s.FlagSet.Parse(args)
 	if err == nil {
-		return nil
+		return s.resolveIDs()
 	}
 	old, ok := strings.CutPrefix(err.Error(), notDefined)
 	if !ok {
@@ -194,6 +195,61 @@ func without(args []string, name string) ([]string, bool) {
 		return append(append([]string{}, args[:i]...), args[end:]...), true
 	}
 	return nil, false
+}
+
+// Stdin is what --ids @- reads; the process's standard input.
+var Stdin io.Reader = os.Stdin
+
+// resolveIDs expands the set's --ids through ResolveIDs, so every verb
+// that takes ids reads the one form (#4399: `card render --ids @-` and
+// `read brief --ids @file` were refused while the help promised both).
+func (s *Set) resolveIDs() error {
+	f := s.Lookup("ids")
+	if f == nil || !strings.Contains(f.Value.String(), "@") {
+		return nil
+	}
+	ids, err := ResolveIDs(f.Value.String(), Stdin)
+	if err != nil {
+		return err
+	}
+	return f.Value.Set(strings.Join(ids, ","))
+}
+
+// ResolveIDs is THE --ids input (HelpIDs): a comma list whose items are ids,
+// @<file> (the file's ids, one per line, or split by spaces or commas) or
+// @- (the same from stdin), in order, empty items dropped.
+func ResolveIDs(v string, stdin io.Reader) ([]string, error) {
+	var out []string
+	split := func(text string) {
+		for _, id := range strings.FieldsFunc(text, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' || r == '\r' }) {
+			out = append(out, id)
+		}
+	}
+	for _, item := range List(v) {
+		switch {
+		case item == "@-":
+			if stdin == nil {
+				return nil, errors.New("--ids @- reads stdin, and there is none")
+			}
+			b, err := io.ReadAll(stdin)
+			if err != nil {
+				return nil, fmt.Errorf("--ids @-: %v", err)
+			}
+			split(string(b))
+		case strings.HasPrefix(item, "@"):
+			b, err := os.ReadFile(item[1:])
+			if err != nil {
+				return nil, fmt.Errorf("--ids %s: %v", item, err)
+			}
+			split(string(b))
+		default:
+			out = append(out, item)
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("--ids %s names no id", v)
+	}
+	return out, nil
 }
 
 // RetiredError is Parse's refusal of a retired spelling: the new spelling

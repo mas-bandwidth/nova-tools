@@ -27,11 +27,23 @@ const Usage = "sync [--n <moves>] | ask [--n <rows>] [--key-env <VAR>] [--base-u
 type env struct {
 	newAsker func(baseURL, keyEnv string) (Asker, error)
 	getenv   func(string) string
+	// resolve is the one Redis resolver over getenv; the real env's is
+	// DefaultAddrFrom (hookResolve), a test passes its own.
+	resolve func(getenv func(string) string) string
 }
 
 var realEnv = env{
 	newAsker: func(baseURL, keyEnv string) (Asker, error) { return decide.New(baseURL, keyEnv) },
 	getenv:   os.Getenv,
+	resolve:  hookResolve,
+}
+
+// hookResolve is DefaultAddrFrom over getenv, "" while it is unset.
+func hookResolve(getenv func(string) string) string {
+	if DefaultAddrFrom != nil {
+		return DefaultAddrFrom(getenv)
+	}
+	return ""
 }
 
 // Main is `nova-sprint jev sync|ask|report|outcome` (nova-tools #4316):
@@ -91,10 +103,21 @@ var DefaultAddrFrom func(getenv func(string) string) string
 // addr is --redis (its default the selected seat's address), else the one
 // resolver over e's environment.
 func (e env) addr(flagVal string) string {
-	if flagVal == "" && DefaultAddrFrom != nil {
-		return DefaultAddrFrom(e.getenv)
+	if flagVal == "" && e.resolve != nil {
+		return e.resolve(e.getenv)
 	}
 	return flagVal
+}
+
+// AddrFor is the store the ledger verbs dial for a --redis value (the
+// selected seat's address by default, "" when there is none) in the
+// environment getenv reads: the real env's resolver over getenv, so a caller
+// holds the ledger's use of the one resolver without touching the process
+// environment (#4399).
+func AddrFor(flagVal string, getenv func(string) string) string {
+	e := realEnv
+	e.getenv = getenv
+	return e.addr(flagVal)
 }
 
 func (e env) open(ctx context.Context, sub, flagVal string, out io.Writer) (*store.Store, int) {
