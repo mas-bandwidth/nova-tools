@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/deal"
+	landstream "github.com/mas-bandwidth/nova-tools/internal/nsprint/land/stream"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/table"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws/wstest"
@@ -212,5 +213,51 @@ func TestSprintClearIsOneEpochIncrement(t *testing.T) {
 	reply, _ = clear("1")
 	if len(reply) < 6 || reply[0] != "CLEARED" || reply[2] != "1" || reply[3] != "1" || reply[5] != "2" {
 		t.Fatalf("second clear: %v", reply)
+	}
+
+	// the lander parks after a clear (#4377 read, item 9): SaveBuilt moves a
+	// member of the current epoch merging -> working in that epoch's sets,
+	// where the tick shows it, and a member of an older epoch (the
+	// fixture's, no epoch field) within its own epoch's sets, where no cell
+	// counts it
+	lstream := "nova-sprint + merge + bus"
+	// after-2 is a task of epoch 2 the stream's PR walk left in merging
+	// (seeded as the library places it: its epoch's set and its record)
+	if err := client.ZAdd(ctx, ws.KeyAt(2, lstream, "merging"), redis.Z{Score: 7, Member: "after-2"}).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.HSet(ctx, "task:after-2", "stream", lstream, "state", "merging", "where", "merging", "created_at", "7", "epoch", "2").Err(); err != nil {
+		t.Fatal(err)
+	}
+	moved, err := landstream.SaveBuilt(ctx, client, landstream.Landing{Repo: "nova-tools", Slug: "epoch-park", Base: "dev",
+		Branch: "land/epoch-park", Head: strings.Repeat("b", 40), Parked: []landstream.Parked{
+			{Member: landstream.Member{Task: "after-2", Stream: lstream, N: 91}, Why: "red"},
+			{Member: landstream.Member{Task: "t2-merging-0", Stream: lstream, N: 92}, Why: "red"},
+		}}, "rowan")
+	if err != nil || moved != 2 {
+		t.Fatalf("the lander's park after the clear moved %d: %v, want 2", moved, err)
+	}
+	for _, c := range []struct {
+		key, id string
+		in      bool
+	}{
+		{ws.KeyAt(2, lstream, "working"), "after-2", true},
+		{ws.KeyAt(2, lstream, "merging"), "after-2", false},
+		{ws.KeyAt(0, lstream, "working"), "t2-merging-0", true},
+		{ws.KeyAt(0, lstream, "merging"), "t2-merging-0", false},
+		{ws.KeyAt(2, lstream, "working"), "t2-merging-0", false},
+	} {
+		if _, err := client.ZScore(ctx, c.key, c.id).Result(); (err == nil) != c.in {
+			t.Fatalf("after the park %s in %s = %t, want %t", c.id, c.key, err == nil, c.in)
+		}
+	}
+	snap, err = table.NewSprintReader(client, table.SprintConfig{}).Read(ctx, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range snap.Streams {
+		if r.Name == lstream && (r.Working != 1 || r.Merging != 0 || r.Total() != 1) {
+			t.Fatalf("the park is not shown at epoch 2: %+v", r)
+		}
 	}
 }

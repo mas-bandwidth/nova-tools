@@ -54,7 +54,13 @@ func TakeAvailable(ctx context.Context, st *store.Store, as, sprint, id string, 
 	if err != nil {
 		return nil, fmt.Errorf("task take: friend %s has no desired slots: %w", as, err)
 	}
-	free := desired - int(ws.CardVal(workingCmd))
+	// a working count that could not be read fails the take, like GetWidth:
+	// read as 0 it would take every slot again (the #4377 read, item 6)
+	working, err := workingCmd.Int64()
+	if err != nil {
+		return nil, fmt.Errorf("task take: friend %s working: %w", as, err)
+	}
+	free := desired - int(working)
 
 	if free <= 0 {
 		return []Claim{}, nil

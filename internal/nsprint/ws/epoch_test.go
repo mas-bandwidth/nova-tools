@@ -80,9 +80,4 @@ func TestZsReadsMemberScorePairs(t *testing.T) {
 	if _, err := ws.Zs(cmd); err == nil {
 		t.Fatal("a junk score is not an error")
 	}
-	cmd = redis.NewCmd(nil)
-	cmd.SetVal(int64(3))
-	if ws.CardVal(cmd) != 3 {
-		t.Fatalf("CardVal = %d, want 3", ws.CardVal(cmd))
-	}
 }

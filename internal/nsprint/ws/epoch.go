@@ -105,19 +105,10 @@ const (
 )
 
 // CellCard is ZCARD of consumer's (bench:<b> or friend:<f>) set at col
-// under the current epoch, as one FCALL_RO; CardVal reads it.
+// under the current epoch, as one FCALL_RO; its Int64 is the count, and a
+// count that could not be read is an error to its reader, never 0.
 func CellCard(ctx context.Context, c redis.Cmdable, consumer, col string) *redis.Cmd {
 	return c.FCallRO(ctx, FnCellCard, nil, consumer, col)
-}
-
-// CardVal is a CellCard count; a count that could not be read is 0, as
-// IntCmd.Val would be.
-func CardVal(cmd *redis.Cmd) int64 {
-	n, err := cmd.Int64()
-	if err != nil {
-		return 0
-	}
-	return n
 }
 
 // StreamRange is ZRANGE of stream's set at state under the current epoch,

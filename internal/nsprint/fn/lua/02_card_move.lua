@@ -1261,6 +1261,19 @@ function TK.valid_stream(s)
   return s == '' or (#s <= 64 and not string.find(s, '[%c|]'))
 end
 
+-- TK.stream_refusal(s): nil when s may name a NEW stream, else the refusal.
+-- A name that starts with digits and a colon reads as the epoch segment of
+-- the set names (nova-tools#4238): ws:1:x:ready is stream `1:x` at epoch 0
+-- and stream `x` at epoch 1, so a stream is never registered under one. A
+-- task already in such a stream keeps it (the check is on a new stream).
+function TK.stream_refusal(s)
+  if not TK.valid_stream(s) then return 'STREAM bad name ' .. s end
+  if string.find(s, '^%d+:') then
+    return 'STREAM bad name ' .. s .. ': a leading <digits>: is the sprint epoch segment of the set names (ws:<e>:<stream>:<where>)'
+  end
+  return nil
+end
+
 function TK.card_id(id)
   return string.match(id, '^s:[-a-z0-9]+:card:') ~= nil
 end
@@ -1655,6 +1668,8 @@ function TK.move(id, to, o)
   if to == 'working' and nxt.friend == '' and o.as and o.as ~= '' then nxt.friend = o.as end
   if not TK.valid_stream(nxt.stream) then return 'STREAM bad name ' .. nxt.stream end
   if nxt.stream ~= cur.stream or cur.where == '' then
+    local rerr = TK.stream_refusal(nxt.stream)
+    if rerr then return rerr end
     local serr = TK.slug_clash(nxt.stream)
     if serr then return serr end
   end
@@ -1822,7 +1837,8 @@ function TK.create(id, fields, o)
     if fields[i] == 'title' then title = fields[i + 1] end
   end
   local stream = TK.stream_of(o.stream, title)
-  if not TK.valid_stream(stream) then return 'STREAM bad name ' .. stream end
+  local rerr = TK.stream_refusal(stream)
+  if rerr then return rerr end
   if TK.is_sentinel(id) and not (o.sentinel and TK.sentinel_id(stream) == id) then
     return 'SENTINEL ' .. id .. ' is a stream sentinel id: registration creates a stream\'s own (the first push into it); pick another id'
   end
