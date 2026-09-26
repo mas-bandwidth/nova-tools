@@ -420,10 +420,13 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	if cfg.LockKey != "" {
 		lock = pipe.Eval(ctx, lockRefreshScript, []string{cfg.LockKey}, cfg.LockToken, lockTTL(cfg).Milliseconds())
 	}
-	counts := make([][]*redis.IntCmd, len(r.streams))
+	// Each cell is the set's cards: the ZCARD less the stream's sentinel
+	// when it is in that set (ws.QueueCardCount, #4318: the stop is not a
+	// card, no new column).
+	counts := make([][]*ws.CardCountCmd, len(r.streams))
 	for i, s := range r.streams {
 		for _, state := range WSStates {
-			counts[i] = append(counts[i], pipe.ZCard(ctx, "ws:"+s+":"+state))
+			counts[i] = append(counts[i], ws.QueueCardCount(ctx, pipe, s, state))
 		}
 	}
 	type consumerCmds struct {
@@ -515,8 +518,9 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		snap.Errors = append(snap.Errors, "ws:log not read (eta rate unknown): "+err.Error())
 	} else {
 		for _, m := range msgs {
-			if to, _ := m.Values["to"].(string); to == "landed" {
-				snap.LandedHour++
+			id, _ := m.Values["id"].(string)
+			if to, _ := m.Values["to"].(string); to == "landed" && !ws.IsSentinel(id) {
+				snap.LandedHour++ // a stream's stop landing is not a card landed
 			}
 		}
 	}

@@ -10,6 +10,9 @@ import (
 	"testing"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws/wstest"
 )
 
 // TestTaskCardDispatch: the card form is chosen by its flags, and the one
@@ -60,16 +63,18 @@ func TestTaskCardCLI(t *testing.T) {
 	if m := cardLine.FindStringSubmatch(out); code != 0 || m == nil || m[3] != "working" || m[4] != "merging" || zc("merging") != 1 {
 		t.Fatalf("done = %d %q", code, out)
 	}
+	// the last card's landing lands the stream's stop with it (#4318): two in landed
 	code, out, _ = runTaskCLI("land", "--actor", "lander", "--id", "build-1", "--sha", "0123abcd")
-	if m := cardLine.FindStringSubmatch(out); code != 0 || m == nil || m[4] != "landed" || zc("landed") != 1 || zc("merging") != 0 {
+	if m := cardLine.FindStringSubmatch(out); code != 0 || m == nil || m[4] != "landed" || zc("landed") != 2 || zc("merging") != 0 {
 		t.Fatalf("land = %d %q", code, out)
 	}
+	// ls lists the set as it is: the card and the stream's stop
 	code, out, _ = runTaskCLI("ls", "--stream", s, "--where", "landed")
-	if code != 0 || !strings.HasPrefix(out, "build-1\nTASK ls n=1 where=landed ms=") {
+	if code != 0 || !strings.HasPrefix(out, "build-1\n"+ws.SentinelID(s)+"\nTASK ls n=2 where=landed ms=") {
 		t.Fatalf("ls = %d %q", code, out)
 	}
 	code, out, _ = runTaskCLI("fsck", "--sprint", seatSprint)
-	if code != 0 || !strings.Contains(out, " landed=1 ") || !strings.Contains(out, " drift=0 ") {
+	if code != 0 || !strings.Contains(out, " landed=2 ") || !strings.Contains(out, " drift=0 ") {
 		t.Fatalf("fsck = %d %q", code, out)
 	}
 
@@ -149,5 +154,39 @@ func TestTaskMoveRefusesAPrimaryUnread(t *testing.T) {
 	code, out, _ = runTaskCLI("take", "--actor", "a", "--id", "held-1")
 	if code != 0 || !strings.Contains(out, "held-1") || c.HGet(ctx, "task:held-1", "where").Val() != "working" {
 		t.Fatalf("friend take = %d %q", code, out)
+	}
+}
+
+// TestTaskFsckNamesAndRepairsAMissingSentinel (#4318): a registered stream
+// with no sentinel (written straight into the keys, as every stream before
+// this change was) is a NOSENTINEL drift line naming the remedy, and task
+// fsck --repair creates it; a second fsck is clean.
+func TestTaskFsckNamesAndRepairsAMissingSentinel(t *testing.T) {
+	t.Parallel()
+	addr, c := wstest.Start(t)
+	ctx := context.Background()
+	fsck := func(args ...string) (int, string, string) {
+		return runTaskCLI(append([]string{"fsck", "--redis", addr, "--sprint", "s1"}, args...)...)
+	}
+	if err := c.SAdd(ctx, "ws:names", "fleet").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.ZAdd(ctx, "ws:order", redis.Z{Score: 1, Member: "fleet"}).Err(); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ := fsck()
+	if code != 1 || !strings.Contains(out, "DRIFT NOSENTINEL stream=fleet id=fleet:sentinel (no record; nova-sprint task fsck --repair creates it)\n") || !strings.Contains(out, " drift=1 ") {
+		t.Fatalf("fsck without the stop = %d %q", code, out)
+	}
+	code, out, _ = fsck("--repair")
+	if code != 0 || !strings.HasPrefix(out, "SENTINEL created stream=fleet id=fleet:sentinel\nTASK fsck repair sentinels=1 created=1\n") || !strings.Contains(out, " drift=0 ") {
+		t.Fatalf("fsck --repair = %d %q", code, out)
+	}
+	if w, _ := c.HGet(ctx, "task:fleet:sentinel", "where").Result(); w != "waiting" {
+		t.Fatalf("stop where %q, want waiting", w)
+	}
+	code, out, _ = fsck("--repair")
+	if code != 0 || !strings.HasPrefix(out, "TASK fsck repair sentinels=0 created=0\n") {
+		t.Fatalf("second repair = %d %q", code, out)
 	}
 }

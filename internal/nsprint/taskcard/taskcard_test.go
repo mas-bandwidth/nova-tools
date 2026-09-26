@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws/wstest"
 	"github.com/redis/go-redis/v9"
 )
@@ -26,7 +27,7 @@ func table(t *testing.T, c *redis.Client, friend string) map[string]int64 {
 	ctx := context.Background()
 	m := map[string]int64{}
 	for _, w := range taskcard.Wheres {
-		m["ws:"+w] = c.ZCard(ctx, taskcard.StreamKey(stream, w)).Val()
+		m["ws:"+w] = wsCards(c, stream, w)
 		m["friend:"+w] = c.ZCard(ctx, taskcard.FriendKey(friend, w)).Val()
 	}
 	return m
@@ -145,11 +146,17 @@ func TestPushTakeDoneLandWalksTheSets(t *testing.T) {
 	if !c.SIsMember(ctx, "sprint:"+sprint+":idx:rowan:closed", "build-3778-a").Val() {
 		t.Fatal("landed task not in idx closed")
 	}
+	// two records: the card and the stream's sentinel, created waiting at
+	// the push that registered the stream and landed by structure with the
+	// last card (#4318): two ws:log entries of its own
 	res := clean(t, c, "land")
-	if res.Counts["landed"] != 1 || res.Tasks != 1 {
+	if res.Counts["landed"] != 2 || res.Counts["waiting"] != 0 || res.Tasks != 2 {
 		t.Fatalf("fsck counts %+v", res)
 	}
-	if n := c.XLen(ctx, "ws:log").Val(); n != 4 {
+	if h := c.HGetAll(ctx, "task:"+ws.SentinelID(stream)).Val(); h["where"] != "landed" || h["merge_sha"] != "0123abcd" {
+		t.Fatalf("the stop after the last card landed: %v", h)
+	}
+	if n := c.XLen(ctx, "ws:log").Val(); n != 6 {
 		t.Fatalf("ws:log has %d entries, want 4 (push, take, done, land)", n)
 	}
 
