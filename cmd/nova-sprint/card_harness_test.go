@@ -29,6 +29,8 @@ func cardRunEnv(extra map[string]string) func(string) string {
 }
 
 func TestCardRunRefusesABadArgv(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		args []string
@@ -60,6 +62,8 @@ func TestCardRunRefusesABadArgv(t *testing.T) {
 }
 
 func TestCardRunRefusesARedisItCannotReach(t *testing.T) {
+	t.Parallel()
+
 	// Open sends nothing (#3277): the card read is the first command, after
 	// the out dir, so the dirs are the test's own.
 	dir := t.TempDir()

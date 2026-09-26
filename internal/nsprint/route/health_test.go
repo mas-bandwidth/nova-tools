@@ -18,6 +18,8 @@ var t0 = time.Date(2026, 9, 22, 23, 42, 22, 0, time.UTC)
 // no token and no error is its own class; a model that answered and failed
 // is a card failure and never counts against the route.
 func TestUnknownErrorAtAnyWallIsProvider(t *testing.T) {
+	t.Parallel()
+
 	rows := readTails(t)
 	walls := map[Class]int{}
 	for _, r := range rows {
@@ -44,6 +46,8 @@ func TestUnknownErrorAtAnyWallIsProvider(t *testing.T) {
 // not; deaths that have left the 50-attempt window do not count; card
 // failures never count.
 func TestRouteBenchedAbove10PercentOverLast50(t *testing.T) {
+	t.Parallel()
+
 	h := NewHealth()
 	unknown := Attempt{Route: "ords41", Wall: 75 * time.Second, Tail: `"name": "UnknownError"`}
 	silent := Attempt{Route: "ords41", Wall: 41 * time.Second}
@@ -105,6 +109,8 @@ func TestRouteBenchedAbove10PercentOverLast50(t *testing.T) {
 // and the window ageing never unbench it; only a passing known-answer probe
 // does, and it starts the route on a clean window.
 func TestRouteBenchedAfterFailedKnownAnswerProbe(t *testing.T) {
+	t.Parallel()
+
 	h := NewHealth()
 	probe := Attempt{Route: "orgeminilite", KnownAnswer: true, Wall: 5 * time.Second, Tokens: 380,
 		Tail: "I cannot fulfill this request. The run tool is not available."}
@@ -147,6 +153,8 @@ func TestRouteBenchedAfterFailedKnownAnswerProbe(t *testing.T) {
 // incomplete, never on a benched route, and always on a route the #2895 table
 // allows for the card's rung; the ROUTE line carries avoid=.
 func TestRedealAvoidsTheFailedRoute(t *testing.T) {
+	t.Parallel()
+
 	tab, err := Load()
 	if err != nil {
 		t.Fatal(err)

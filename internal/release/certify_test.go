@@ -83,6 +83,8 @@ func certifyPaths(t *testing.T) (registry, certs, standard string) {
 
 // TestAdoptWithCertifyRunsTheWorkloadsOnEachAdoptedMachineUnderTheVersionJustInstalled.
 func TestAdoptWithCertifyRunsTheWorkloadsOnEachAdoptedMachineUnderTheVersionJustInstalled(t *testing.T) {
+	t.Parallel()
+
 	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
 	registry, certs, standard := certifyPaths(t)
 	s := &certifySSH{
@@ -153,6 +155,8 @@ func TestAdoptWithCertifyRunsTheWorkloadsOnEachAdoptedMachineUnderTheVersionJust
 // TestAdoptWithCertifyFailsTheMachineWhoseWorkloadFailed: a machine that installed and then
 // could not do the work is not an adopted machine anybody should launch a card onto.
 func TestAdoptWithCertifyFailsTheMachineWhoseWorkloadFailed(t *testing.T) {
+	t.Parallel()
+
 	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
 	registry, certs, standard := certifyPaths(t)
 	s := &certifySSH{
@@ -183,6 +187,8 @@ func TestAdoptWithCertifyFailsTheMachineWhoseWorkloadFailed(t *testing.T) {
 // TestAdoptRefusesHalfOfTheCertifyFlags names every missing one at once, the same law the
 // rest of this package's refusals keep.
 func TestAdoptRefusesHalfOfTheCertifyFlags(t *testing.T) {
+	t.Parallel()
+
 	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
 	registry, _, _ := certifyPaths(t)
 	var o, e bytes.Buffer
@@ -207,6 +213,8 @@ func TestAdoptRefusesHalfOfTheCertifyFlags(t *testing.T) {
 // and must say `certified=waived` on its verdict, because a waived check that is silent is a
 // check that was never there.
 func TestAdoptWaivedByNoCertifyCertifiesNothingAndSaysSo(t *testing.T) {
+	t.Parallel()
+
 	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
 	s := &certifySSH{fakeSSH: fakeSSH{answer: map[string]string{"hulk": "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0\n"}}}
 	var o, e bytes.Buffer
@@ -232,6 +240,8 @@ func TestAdoptWaivedByNoCertifyCertifiesNothingAndSaysSo(t *testing.T) {
 // never be guessed: an adopt that says nothing about certification is refused, with both
 // roads on the line.
 func TestAdoptRefusesWhenNeitherCertifiedNorWaived(t *testing.T) {
+	t.Parallel()
+
 	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
 	var o, e bytes.Buffer
 	code := Run("nova-update", []string{
@@ -251,6 +261,8 @@ func TestAdoptRefusesWhenNeitherCertifiedNorWaived(t *testing.T) {
 
 // TestNoCertifyAndCertifyTogetherIsARefusal: one asks for it and the other waives it.
 func TestNoCertifyAndCertifyTogetherIsARefusal(t *testing.T) {
+	t.Parallel()
+
 	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
 	registry, certs, standard := certifyPaths(t)
 	var o, e bytes.Buffer

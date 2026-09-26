@@ -14,6 +14,8 @@ import (
 
 // The line names where the work goes next when the answer is below the floor.
 func TestRouteLineNamesTheNextRungBelowTheFloor(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	u := Unit{ID: "thin", Kind: KindNewVerb} // thin evidence: confidence 0.60
 	low, err := RouteRules(reg, u, DefaultFloor)
@@ -46,6 +48,8 @@ func TestRouteLineNamesTheNextRungBelowTheFloor(t *testing.T) {
 // --step-up re-asks the SAME question with the below-floor rung excluded from
 // the criteria, up to maxSteps, and every step is a decision in its own right.
 func TestRouteStepUpReAsksWithTheBelowFloorRungExcluded(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	u := Unit{ID: "s-1", Kind: KindNewVerb, Files: 3, Packages: 1, Lanes: 1}
 	unsure := &fakeDecider{choice: "rung-1", conf: 0.40}
@@ -91,6 +95,8 @@ func TestRouteStepUpReAsksWithTheBelowFloorRungExcluded(t *testing.T) {
 
 // An answer at or above the floor is the answer: nothing steps.
 func TestRouteStepUpStopsAtTheFloor(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	u := Unit{ID: "s-2", Kind: KindNewVerb, Files: 3, Packages: 1, Lanes: 1}
 	sure := &fakeDecider{choice: "rung-1", conf: 0.97}
@@ -108,6 +114,8 @@ func TestRouteStepUpStopsAtTheFloor(t *testing.T) {
 
 // A max-steps that is not a count is a refusal, never a guess at one.
 func TestRouteStepUpRefusesAMaxStepsThatIsNotACount(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	u := Unit{ID: "s-3", Kind: KindRebase, Files: 2, Packages: 1}
 	if _, err := RouteStepUp(context.Background(), &fakeDecider{choice: "rung-1", conf: 0.99}, reg, u, DefaultFloor, 0); err == nil {

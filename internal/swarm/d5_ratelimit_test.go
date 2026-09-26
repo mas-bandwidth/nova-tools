@@ -14,6 +14,8 @@ import "testing"
 // The 429 outcome is for a job whose harness did NOT finish: a non-zero status, or no
 // completion evidence at all.
 func TestADoneJobIsNotFiledAsRateLimited(t *testing.T) {
+	t.Parallel()
+
 	for _, c := range []struct {
 		name      string
 		inLog     bool

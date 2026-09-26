@@ -87,6 +87,8 @@ func walterDecl() life.WakeDecl {
 // finds wake:unit-missing, bootstraps the unit exactly once, and the row says
 // `wake: repaired <unit>` with the finding beside it.
 func TestWakeHealthRepairsUnloadedUnit(t *testing.T) {
+	t.Parallel()
+
 	host := newFakeWakeHost()
 	d := walterDecl()
 	host.files[d.UnitFile] = true
@@ -121,6 +123,8 @@ func TestWakeHealthRepairsUnloadedUnit(t *testing.T) {
 // TestWakeHealthLoadedUnitIsOK is the positive half: a loaded unit, a current
 // clone and a live beat print `wake: ok` and make no repair call at all.
 func TestWakeHealthLoadedUnitIsOK(t *testing.T) {
+	t.Parallel()
+
 	host := newFakeWakeHost()
 	d := walterDecl()
 	host.files[d.UnitFile] = true
@@ -139,6 +143,8 @@ func TestWakeHealthLoadedUnitIsOK(t *testing.T) {
 // current clone with a beat older than its TTL is not a live wake path. The
 // state is down and the row is red; before the fix it was `wake: ok`.
 func TestWakeHealthStaleBeatIsDown(t *testing.T) {
+	t.Parallel()
+
 	host := newFakeWakeHost()
 	d := walterDecl()
 	host.files[d.UnitFile] = true
@@ -160,6 +166,8 @@ func TestWakeHealthStaleBeatIsDown(t *testing.T) {
 // TestWakeHealthJustBootstrappedUnitIsNotDownOnBeat: the unit this tick
 // bootstrapped cannot have beaten yet, so its stale beat leaves it repaired.
 func TestWakeHealthJustBootstrappedUnitIsNotDownOnBeat(t *testing.T) {
+	t.Parallel()
+
 	host := newFakeWakeHost()
 	d := walterDecl()
 	host.files[d.UnitFile] = true
@@ -175,6 +183,8 @@ func TestWakeHealthJustBootstrappedUnitIsNotDownOnBeat(t *testing.T) {
 // TestWakeHealthPullsBehindBus: the wake server's bus clone is 3 commits
 // behind; one tick pulls it and the row prints behind=0 with the finding.
 func TestWakeHealthPullsBehindBus(t *testing.T) {
+	t.Parallel()
+
 	host := newFakeWakeHost()
 	d := walterDecl()
 	host.files[d.UnitFile] = true
@@ -198,6 +208,8 @@ func TestWakeHealthPullsBehindBus(t *testing.T) {
 // TestWakeHealthDownAfterTwoFailedLoads: a unit that fails to load twice is
 // tried exactly twice in the tick and the row prints `wake: down` in red.
 func TestWakeHealthDownAfterTwoFailedLoads(t *testing.T) {
+	t.Parallel()
+
 	host := newFakeWakeHost()
 	d := walterDecl()
 	host.files[d.UnitFile] = true
@@ -230,6 +242,8 @@ func TestWakeHealthDownAfterTwoFailedLoads(t *testing.T) {
 // TestWakeHealthNoUnitFileIsDown: with no unit file there is nothing to
 // bootstrap; the tick says so and does not pretend to repair.
 func TestWakeHealthNoUnitFileIsDown(t *testing.T) {
+	t.Parallel()
+
 	host := newFakeWakeHost()
 	h := life.CheckWake(context.Background(), host, beatsLive(true), walterDecl())
 	if h.State != life.WakeDown || len(host.calls) != 0 || !strings.Contains(h.Row(), "wake:no-unit-file") {
@@ -241,6 +255,8 @@ func TestWakeHealthNoUnitFileIsDown(t *testing.T) {
 // the owner's notify channel is a declared path; without a channel, or with
 // neither mode, the friend is down in red.
 func TestWakeHealthHumanAndUndeclared(t *testing.T) {
+	t.Parallel()
+
 	host := newFakeWakeHost()
 	ctx := context.Background()
 	h := life.CheckWake(ctx, host, beatsLive(false), life.WakeDecl{Friend: "stella", Mode: life.WakeHuman, Notify: "bus To: Glenn"})
@@ -265,6 +281,8 @@ func TestWakeHealthHumanAndUndeclared(t *testing.T) {
 // wakehealth hash and the bootstrap is one cap:log wake-repair receipt, so the
 // table prints it from Redis and the repair is on the record.
 func TestWakeHealthRecordsRepairInRedis(t *testing.T) {
+	t.Parallel()
+
 	st, client, _ := controlRedis(t)
 	ctx := context.Background()
 	host := newFakeWakeHost()
@@ -322,6 +340,8 @@ func realGit(t *testing.T, home string) func(args ...string) string {
 // TestExecWakeHostBehindAndPullOnRealGit runs the production FetchFF on a
 // real local clone three commits behind its file:// remote.
 func TestExecWakeHostBehindAndPullOnRealGit(t *testing.T) {
+	t.Parallel()
+
 	defer testguard.AllowHosts()()
 	dir := t.TempDir()
 	git := realGit(t, dir)
@@ -351,6 +371,8 @@ func TestExecWakeHostBehindAndPullOnRealGit(t *testing.T) {
 // leaves HEAD at exactly the remote tip. A fetch of an unreachable remote
 // wraps ErrFetchFailed.
 func TestWakeFetchRealGitStaleUpstream(t *testing.T) {
+	t.Parallel()
+
 	defer testguard.AllowHosts()()
 	dir := t.TempDir()
 	git := realGit(t, dir)

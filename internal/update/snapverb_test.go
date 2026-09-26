@@ -11,6 +11,8 @@ import (
 // switch dispatches is listed beside the others, including snapshot's new
 // --bin/--out shape and diff.
 func TestHelpListsEveryVerbTheSwitchDispatches(t *testing.T) {
+	t.Parallel()
+
 	var o bytes.Buffer
 	help("nova-version", &o)
 	for _, verb := range []string{"snapshot", "diff", "report", "send"} {
@@ -25,6 +27,8 @@ func TestHelpListsEveryVerbTheSwitchDispatches(t *testing.T) {
 // each adopted entry the way report does and prints how many answer -- the
 // adopted sixteen -- so the count is the manifest's, never a directory scan's.
 func TestSnapshotFileCountsTheAdoptedManifest(t *testing.T) {
+	t.Parallel()
+
 	var rows []string
 	for i := 1; i <= 16; i++ {
 		rows = append(rows, row(fmt.Sprintf("nova-tool-%02d", i), "tool", fmt.Sprintf("0.%d.0", i), "-", "-"))

@@ -9,6 +9,8 @@ import (
 // TestMirrorVerbReceipts: the mirror verb is registered, refuses usage with 2,
 // and check reads a missing mirror as one REFUSED line and exit 1 (no fetch, no Redis).
 func TestMirrorVerbReceipts(t *testing.T) {
+	t.Parallel()
+
 	for _, args := range [][]string{
 		{"mirror"},
 		{"mirror", "nope"},

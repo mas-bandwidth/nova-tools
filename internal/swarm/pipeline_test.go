@@ -10,6 +10,8 @@ import (
 // remedy line, at admission, before any worker starts. The remedy names the
 // keyword because a refusal a caller cannot act on is a refusal wasted.
 func TestAdmissionRefusesAFourthCallWithoutExplore(t *testing.T) {
+	t.Parallel()
+
 	four := "RESULT: fix the rule\nSTEP 1 read the test\nSTEP 2 write the red test\nSTEP 3 fix the source\nSTEP 4 write the result\n"
 	why := admitWhyOf(t, t.TempDir(), "p4", "opencode/deepseek-v4-flash", four)
 	if why == "" {
@@ -32,6 +34,8 @@ func TestAdmissionRefusesAFourthCallWithoutExplore(t *testing.T) {
 // A card that stops at the pipeline bound needs no mode word: three calls are
 // the shape, not the exception.
 func TestTheFixCardRunsInThreeModelCalls(t *testing.T) {
+	t.Parallel()
+
 	three := "RESULT: fix the rule\nSTEP 1 write the red test\nSTEP 2 write the fix\nSTEP 3 write the result\n"
 	if why := admitWhyOf(t, t.TempDir(), "p3", "opencode/deepseek-v4-flash", three); why != "" {
 		t.Fatalf("a three-step card is admitted, got %q", why)
@@ -44,6 +48,8 @@ func TestTheFixCardRunsInThreeModelCalls(t *testing.T) {
 // The explore card carries a turn budget the harness enforces, and the budget is
 // read from the card so the stop and the report can both name it.
 func TestExploreOverTurnBudgetIsStoppedWithTheBudgetNamed(t *testing.T) {
+	t.Parallel()
+
 	card := "MODE: explore\nTURNS: 4\nRESULT: find where the rule lives\nSTEP 1 grep\n"
 	n, ok := exploreTurnBudget(card)
 	if !ok || n != 4 {

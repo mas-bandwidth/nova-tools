@@ -252,6 +252,8 @@ func TestClosedEntryInStreamHistoryDoesNotCountAsLiveQueued(t *testing.T) {
 // here are client-side: a pipeline flush is one trip however many commands
 // it carries.
 func TestReadOf2000QueuedItemsIsAtMostTwoRoundTrips(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
@@ -318,6 +320,8 @@ func TestReadOf2000QueuedItemsIsAtMostTwoRoundTrips(t *testing.T) {
 }
 
 func TestAnAbsentStreamIsAnEmptyQueue(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
@@ -334,6 +338,8 @@ func TestAnAbsentStreamIsAnEmptyQueue(t *testing.T) {
 }
 
 func TestReadRefusesAFriendNameThatIsNotAQueueKey(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })

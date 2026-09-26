@@ -31,6 +31,8 @@ import (
 // which is exactly where `native` reads them from (#1712, `ReadCardUsage`). When the card
 // wrote no `usage.tsv`, the batch reads the same store the same way.
 func TestBatchReadsAReapedCardsSpendFromItsHarnessStore(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
@@ -85,6 +87,8 @@ func TestBatchReadsAReapedCardsSpendFromItsHarnessStore(t *testing.T) {
 // double-count a card that already reported, which is the same false ledger in the other
 // direction.
 func TestAFinishedCardsUsageRowIsNotRecountedFromTheStore(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
@@ -143,6 +147,8 @@ func reapedStoreSQL(at time.Time) string {
 // The card here has a file where its database should be that is NOT a database, so the
 // reader reaches it, fails on it, and has something to say.
 func TestAReapedCardsUnreadableStoreIsNoted(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	if _, err := exec.LookPath(SQLiteBinary); err != nil {
 		t.Skipf("%s is not on PATH", SQLiteBinary)
@@ -191,6 +197,8 @@ func TestAReapedCardsUnreadableStoreIsNoted(t *testing.T) {
 // the harness writes those when the turn completes -- so the provider charged for work that
 // is in nobody's database. `partial=<n>` counts the cards whose numbers are a floor.
 func TestReapedSpendIsALowerBound(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
@@ -241,6 +249,8 @@ func TestReapedSpendIsALowerBound(t *testing.T) {
 // it blocked the store fallback AND it put another card's numbers on this card's row. Every
 // row carries a `job` column naming the label that wrote it, so the question is mechanical.
 func TestAStaleSlotUsageRowIsNotThisCardsRow(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
@@ -305,6 +315,8 @@ func TestAStaleSlotUsageRowIsNotThisCardsRow(t *testing.T) {
 // So a failed query has its own reason, and an empty store is an absence like a missing one:
 // zero, counted, and silent.
 func TestAnEmptyStoreIsNotUnread(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	if _, err := exec.LookPath(SQLiteBinary); err != nil {
 		t.Skipf("%s is not on PATH", SQLiteBinary)
@@ -353,6 +365,8 @@ func TestAnEmptyStoreIsNotUnread(t *testing.T) {
 // AND THE READER THAT REALLY STOPPED KEEPS ITS OWN REASON, distinct from the empty store
 // above. This is the pair: one token each, so the note fires for exactly one of them.
 func TestAFailedQueryAndAnEmptyTableAreDifferentReasons(t *testing.T) {
+	t.Parallel()
+
 	if _, err := exec.LookPath(SQLiteBinary); err != nil {
 		t.Skipf("%s is not on PATH", SQLiteBinary)
 	}

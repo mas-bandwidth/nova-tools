@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -100,7 +101,7 @@ func (f *fixture) bins(help map[string][]string) {
 		if lines != nil {
 			script = "#!/bin/sh\nprintf '%s\\n' '" + strings.Join(lines, "' '") + "'\n"
 		}
-		if err := os.WriteFile(filepath.Join(f.tools, tool), []byte(script), 0o755); err != nil {
+		if err := testbin.WriteExecutable(filepath.Join(f.tools, tool), []byte(script), 0o755); err != nil {
 			f.t.Fatal(err)
 		}
 	}
@@ -240,6 +241,8 @@ func (f *fixture) hand(sha string, verbs []string, resolved map[string]string, p
 }
 
 func TestVerbsUnused(t *testing.T) {
+	t.Parallel()
+
 	day := 24 * time.Hour
 	all := []string{"nova-check help", "nova-fix", "nova-fix links", "nova-sprint help", "nova-sprint land eval"}
 

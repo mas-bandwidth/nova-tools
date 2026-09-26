@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -64,7 +65,7 @@ func (f *fakeBench) Run(ctx context.Context, argv []string) (string, error) {
 		stage := strings.TrimSuffix(argv[len(argv)-1], "/")
 		for _, a := range argv {
 			if t, ok := strings.CutPrefix(a, "--include="); ok {
-				if err := os.WriteFile(filepath.Join(stage, t), []byte(testV), 0o755); err != nil {
+				if err := testbin.WriteExecutable(filepath.Join(stage, t), []byte(testV), 0o755); err != nil {
 					return "", err
 				}
 			}
@@ -160,6 +161,8 @@ func deploy(t *testing.T, c *redis.Client, f *fakeBench, only ...string) (Result
 // release gets its bench:<b> build receipt; fn deploy runs last with the new
 // nova-sprint.
 func TestFleetBuildDeploysEveryBenchFromRedisConfig(t *testing.T) {
+	t.Parallel()
+
 	mr, c := seed(t)
 	f := &fakeBench{t: t, home: t.TempDir()}
 	r, out := deploy(t, c, f)
@@ -251,6 +254,8 @@ func TestFleetBuildDeploysEveryBenchFromRedisConfig(t *testing.T) {
 // version, and a bench whose ssh fails, get no receipt (hulk keeps its old
 // one); the rest are written and fn deploy still runs; the run is not OK.
 func TestFleetBuildMismatchAndFailureKeepOldReceipt(t *testing.T) {
+	t.Parallel()
+
 	mr, c := seed(t)
 	mr.HSet("bench:hulk", "build", "v0.15.2", "build_sha", "old")
 	f := &fakeBench{t: t, home: t.TempDir(), answer: map[string]string{"hulk": "v0.15.2"}, sshFail: map[string]bool{"batman": true}}
@@ -281,6 +286,8 @@ func TestFleetBuildMismatchAndFailureKeepOldReceipt(t *testing.T) {
 
 // TestFleetBuildFailureInstallsNothing: a failed build is the only child.
 func TestFleetBuildFailureInstallsNothing(t *testing.T) {
+	t.Parallel()
+
 	mr, c := seed(t)
 	f := &fakeBench{t: t, home: t.TempDir(), failBuild: true}
 	r, out := deploy(t, c, f)
@@ -299,6 +306,8 @@ func TestFleetBuildFailureInstallsNothing(t *testing.T) {
 
 // TestFleetBuildNamedBenchesOnly: --bench narrows the targets and the platforms built.
 func TestFleetBuildNamedBenchesOnly(t *testing.T) {
+	t.Parallel()
+
 	mr, c := seed(t)
 	f := &fakeBench{t: t, home: t.TempDir()}
 	r, _ := deploy(t, c, f, "hulk", "studio")
@@ -316,6 +325,8 @@ func TestFleetBuildNamedBenchesOnly(t *testing.T) {
 // TestFleetBuildRefusesIncompleteConfig: every gap in the plan is refused
 // before any child, naming the remedy; set writes only valid fields.
 func TestFleetBuildRefusesIncompleteConfig(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	for _, tc := range []struct {
 		name  string
@@ -367,6 +378,8 @@ func TestFleetBuildRefusesIncompleteConfig(t *testing.T) {
 // TestFleetBuildReceiptNamesTheBuildCache (#4080): the BUILD OK line carries
 // the compile verb's last line, which names the build's own Go directory.
 func TestFleetBuildReceiptNamesTheBuildCache(t *testing.T) {
+	t.Parallel()
+
 	_, c := seed(t)
 	f := &fakeBench{t: t, home: t.TempDir()}
 	r, out := deploy(t, c, f)
@@ -378,6 +391,8 @@ func TestFleetBuildReceiptNamesTheBuildCache(t *testing.T) {
 // TestFleetBuildLegacyBuildCmd keeps --build-cmd: a named command gets
 // space-build's argv on this machine, not the ssh compile.
 func TestFleetBuildLegacyBuildCmd(t *testing.T) {
+	t.Parallel()
+
 	_, c := seed(t)
 	cfg, err := ReadConfig(context.Background(), c)
 	if err != nil {

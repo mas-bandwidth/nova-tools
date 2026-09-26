@@ -23,6 +23,8 @@ import (
 // FindSource on every line they read; that pair is what TestIssue2291
 // exercises, so the rest of the issue has a writer and a parser to lean on.
 func TestIssue2291(t *testing.T) {
+	t.Parallel()
+
 	// The four fields the spec demands (#2291, SPEC-VERSION item 6): every
 	// one of them round-trips through the version line, and a Source with
 	// any of them missing is a Source the reader cannot verify.

@@ -16,6 +16,8 @@ import (
 // host row bench:<b> (host, load1, ncpu, at) beside its beat; a missing flag
 // is refused.
 func TestFriendRowAndBenchBeatWriteTheTableRows(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	addr := testutil.Start(t)
 	client := redis.NewClient(&redis.Options{Addr: addr})

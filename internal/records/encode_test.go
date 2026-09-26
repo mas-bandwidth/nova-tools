@@ -31,6 +31,8 @@ import (
 // present zero, an interval aggregate, reordered keys, a model split), and a round trip
 // that holds over all seven is a statement about the schema rather than about one example.
 func TestEveryValidFixtureRoundTripsThroughTheTypedEncoder(t *testing.T) {
+	t.Parallel()
+
 	checked := 0
 	for _, path := range fixtures(t, "valid") {
 		t.Run(filepath.Base(path), func(t *testing.T) {
@@ -72,6 +74,8 @@ func TestEveryValidFixtureRoundTripsThroughTheTypedEncoder(t *testing.T) {
 // duplicate member on the way IN, so a builder that quietly kept the last of two would let
 // a writer produce a body its own reader refuses.
 func TestTheBuilderRefusesADuplicateMember(t *testing.T) {
+	t.Parallel()
+
 	o := NewObject()
 	if err := o.Set("schema", SchemaObservation); err != nil {
 		t.Fatalf("the first Set: %v", err)
@@ -94,6 +98,8 @@ func TestTheBuilderRefusesADuplicateMember(t *testing.T) {
 // rather than at the digest. A map reaches the canonicaliser as "no canonical form", which
 // is a true refusal in the wrong place: by then the caller has lost which member it was.
 func TestTheBuilderNamesTheMemberWithNoWireForm(t *testing.T) {
+	t.Parallel()
+
 	o := NewObject()
 	err := o.Set("raw_usage", map[string]string{"input": "1000"})
 	if err == nil {
@@ -114,6 +120,8 @@ func TestTheBuilderNamesTheMemberWithNoWireForm(t *testing.T) {
 // same field named, as if it had arrived over the wire -- because it IS validated over the
 // wire: SealObservation seals and then reads its own bytes back through ValidateEnvelope.
 func TestAnEncodedRecordCannotCarryAFieldItsMappingDoesNotAllow(t *testing.T) {
+	t.Parallel()
+
 	v := NewValidator(Allowlists{RawUsageFields: []string{"input"}, ReceiptFields: []string{"turn_id"}})
 	obs := minimalObservation()
 	obs.RawUsage["cost_usd_ticks"] = RawField{
@@ -136,6 +144,8 @@ func TestAnEncodedRecordCannotCarryAFieldItsMappingDoesNotAllow(t *testing.T) {
 // and nothing is written. An encoder that produced a body only its own writer could read
 // would be a second grammar.
 func TestAnEncodedRecordWithAnUnknownEnumIsRefusedByName(t *testing.T) {
+	t.Parallel()
+
 	v := testValidator(t)
 	obs := minimalObservation()
 	obs.Kind = "guess"
@@ -153,6 +163,8 @@ func TestAnEncodedRecordWithAnUnknownEnumIsRefusedByName(t *testing.T) {
 // carried, never a number. An integer above 2^53 and a decimal both survive the encoder
 // byte for byte, because nothing in it parses a value.
 func TestALexemeSurvivesTheEncoderByteForByte(t *testing.T) {
+	t.Parallel()
+
 	v := NewValidator(Allowlists{
 		RawUsageFields: []string{"input", "cost_usd_ticks"},
 		ReceiptFields:  []string{"turn_id"},
@@ -189,6 +201,8 @@ func TestALexemeSurvivesTheEncoderByteForByte(t *testing.T) {
 // dropped an absent field -- the obvious thing a writer does with a nil value -- would turn
 // "the source did not carry it" into "the mapping has no such field" one seal later.
 func TestAnAbsentFieldStaysAbsentThroughTheEncoder(t *testing.T) {
+	t.Parallel()
+
 	v := NewValidator(Allowlists{RawUsageFields: []string{"input", "reasoning"}, ReceiptFields: []string{"turn_id"}})
 	obs := minimalObservation()
 	obs.RawUsage["reasoning"] = RawField{
@@ -219,6 +233,8 @@ func TestAnAbsentFieldStaysAbsentThroughTheEncoder(t *testing.T) {
 // required key is never missing. Both directions are checked against the schema's own list,
 // which is read out of the validator rather than retyped here.
 func TestTheEncodedBodyCarriesExactlyTheSchemasMembers(t *testing.T) {
+	t.Parallel()
+
 	body, err := minimalObservation().Body()
 	if err != nil {
 		t.Fatalf("Body: %v", err)

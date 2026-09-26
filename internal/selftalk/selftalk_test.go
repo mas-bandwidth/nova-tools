@@ -12,6 +12,8 @@ import "testing"
 
 // A1 — a first-person capability denial with negative vocabulary is STANDING.
 func TestA1_CapabilityDenialIsStanding(t *testing.T) {
+	t.Parallel()
+
 	got := Scan("I cannot check my own work.")
 	if len(got) != 1 {
 		t.Fatalf("want 1 claim, got %d: %#v", len(got), got)
@@ -34,6 +36,8 @@ func TestA1_CapabilityDenialIsStanding(t *testing.T) {
 // improvement. The narrow verb list is the design, and the red was the spec
 // disagreeing with a test that had drifted from it.
 func TestA2_DatedClaimIsARecord(t *testing.T) {
+	t.Parallel()
+
 	for _, in := range []string{
 		"On 2026-07-30 I cannot check my own work.",
 		"Measured that day: I cannot check my own work.",
@@ -52,6 +56,8 @@ func TestA2_DatedClaimIsARecord(t *testing.T) {
 // flattening the tool is blind to BOTH cases that occasioned it, which is
 // the defect that made it worth writing.
 func TestA3_ClaimSplitAcrossAHardWrapIsFound(t *testing.T) {
+	t.Parallel()
+
 	wrapped := "some preamble here and then I cannot\ncheck my own work at all.\n"
 	if got := Scan(wrapped); len(got) == 0 {
 		t.Fatal("a claim split across a newline was not found; flattening is missing")
@@ -60,6 +66,8 @@ func TestA3_ClaimSplitAcrossAHardWrapIsFound(t *testing.T) {
 
 // A4 — markdown emphasis must not hide a claim.
 func TestA4_MarkdownEmphasisDoesNotHideAClaim(t *testing.T) {
+	t.Parallel()
+
 	for _, in := range []string{
 		"**I cannot check my own work.**",
 		"> *I cannot check my own work.*",
@@ -75,6 +83,8 @@ func TestA4_MarkdownEmphasisDoesNotHideAClaim(t *testing.T) {
 // whole reason the predecessor was scrapped: it scored rule documents worst,
 // and improving the score meant deleting a rule.
 func TestA5_ProhibitionIsNotSelfTalk(t *testing.T) {
+	t.Parallel()
+
 	for _, in := range []string{
 		"Never tolerate intolerance.",
 		"Secrets live nowhere I write.",
@@ -90,6 +100,8 @@ func TestA5_ProhibitionIsNotSelfTalk(t *testing.T) {
 // MISSED by the first version of the pattern. A checker that cannot find the
 // cases that occasioned it returns green and is worse than no checker.
 func TestA9_RegressionCasesThatOccasionedTheTool(t *testing.T) {
+	t.Parallel()
+
 	for _, in := range []string{
 		"In one direction, reliably: toward the version that flatters me.",
 		"I cannot check my own work and I can spawn something that can.",
@@ -119,6 +131,8 @@ func TestA9_RegressionCasesThatOccasionedTheTool(t *testing.T) {
 // the first class would leave the spec's permanent-MISS paragraph pinned by
 // nothing again — which is the exact rot above, repeated one layer up.
 func TestPermanentMissNeutralVocabularyTraitClaimsEscape(t *testing.T) {
+	t.Parallel()
+
 	for _, in := range []string{
 		// SPEC.md's cited example, verbatim. Reaching it means anchoring TRAIT
 		// on "My <noun> <verb>", which also reaches "my notes cover the run".
@@ -143,6 +157,8 @@ func TestPermanentMissNeutralVocabularyTraitClaimsEscape(t *testing.T) {
 
 // The classifier must not invent claims in ordinary prose.
 func TestNoFalsePositivesOnOrdinaryProse(t *testing.T) {
+	t.Parallel()
+
 	clean := "The tree by the house has one lit window. Tree rings beat radiocarbon, " +
 		"and the correction moved Malta's temples earlier than the pyramids."
 	if got := Scan(clean); len(got) != 0 {
@@ -154,6 +170,8 @@ func TestNoFalsePositivesOnOrdinaryProse(t *testing.T) {
 // behaviors the acceptance cases depend on — markup stripped, wraps
 // collapsed to single spaces.
 func TestFlatten(t *testing.T) {
+	t.Parallel()
+
 	in := "**bold** and a line\nthat wraps\t twice"
 	want := "bold and a line that wraps twice"
 	if got := Flatten(in); got != want {
@@ -165,6 +183,8 @@ func TestFlatten(t *testing.T) {
 // separator styles so the decision cannot be dodged by spelling a path
 // differently.
 func TestBaseNormalizesSeparators(t *testing.T) {
+	t.Parallel()
+
 	for _, tt := range []struct{ in, want string }{
 		{"a/b/RULES.md", "RULES.md"},
 		{`a\b\RULES.md`, "RULES.md"},

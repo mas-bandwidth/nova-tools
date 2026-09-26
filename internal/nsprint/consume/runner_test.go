@@ -549,6 +549,8 @@ func (h *fakeHalf) Pass(context.Context) (int, error) { return h.n, h.err }
 // The one pr-to-read slot runs both halves: every half starts, the counts
 // add, and a hard error wins over a retryable one.
 func TestJoinPRToRead(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	a, b := &fakeHalf{n: 2}, &fakeHalf{n: 3}
 	j := JoinPRToRead(a, nil, b)
@@ -576,6 +578,8 @@ func TestJoinPRToRead(t *testing.T) {
 // adopts with cut=1 once the tip is recorded; the cut writes only the card, so
 // the runner rows at ci:<repo>:<head>:<gid>:runners are untouched.
 func TestStoreCICut(t *testing.T) {
+	t.Parallel()
+
 	f := newC33(t)
 	f.rule.CICut = StoreCICut(f.rule.Store, "route")
 	must(t, f.client.HSet(f.ctx, "bench:"+ctlBench+":desired", "slots", "4", "paused", "0", "legs", "go").Err())
@@ -630,6 +634,8 @@ func TestStoreCICut(t *testing.T) {
 // a card, hold, draft or close that landed in between writes no review task
 // and no adopt record.
 func TestPRToReadAdoptRechecksLive(t *testing.T) {
+	t.Parallel()
+
 	f := newC33(t)
 	head := f.seedPR(8, "ctl-a", "false", "opened")
 	pkey := "s:" + c33Sprint + ":pr:" + c33Short + ":8"
@@ -684,6 +690,8 @@ func TestPRToReadAdoptRechecksLive(t *testing.T) {
 // not occupy the write-once receipt ci:<repo>:<head>:<gid>, or ns_ci_end
 // answers ALREADY and the head never gets a verdict.
 func TestRunnerRowThenCIEndWritesVerdict(t *testing.T) {
+	t.Parallel()
+
 	f := newC33(t)
 	must(t, f.client.HSet(f.ctx, "bench:"+ctlBench+":desired", "slots", "4", "paused", "0", "legs", "go").Err())
 	must(t, f.client.HSet(f.ctx, "bench:"+ctlBench+":beat", "host", ctlBench, "at", "1").Err())
@@ -729,6 +737,8 @@ func TestRunnerRowThenCIEndWritesVerdict(t *testing.T) {
 // record, policy or tip refuses (NOBASE, NOPOLICY) and writes nothing, never
 // a row under a made-up identity (base dev, pol1/req1/run1, base_sha=head).
 func TestRunnerRowsResolveTheirBase(t *testing.T) {
+	t.Parallel()
+
 	const stream, head8x = "stream-x", "8888aaaa8888aaaa8888aaaa8888aaaa8888aaaa"
 	publish := func(f *c33Fix, number string) string {
 		t.Helper()

@@ -18,6 +18,8 @@ import (
 // fails the test if it is reached: both lines are refusals made before the
 // instance is dialled, which is the promise the transcript documents.
 func TestFirstRunTranscriptIsWhatTheToolPrints(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	if err != nil {
 		t.Fatal(err)

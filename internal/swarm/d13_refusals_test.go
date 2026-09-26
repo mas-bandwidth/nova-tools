@@ -22,6 +22,8 @@ import (
 // What counts is a DENIED OPERATION in the harness's or the OS's own words. A worker
 // writing about refusals is doing the job it was given.
 func TestOnlyADeniedOperationIsARefusal(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	log := filepath.Join(dir, "harness.log")
 

@@ -10,6 +10,8 @@ import (
 )
 
 func TestSlotLeaseConstants(t *testing.T) {
+	t.Parallel()
+
 	if DefaultSlotLeaseTTL != 15*time.Second {
 		t.Fatalf("DefaultSlotLeaseTTL = %v; want 15s", DefaultSlotLeaseTTL)
 	}
@@ -19,6 +21,8 @@ func TestSlotLeaseConstants(t *testing.T) {
 }
 
 func TestSlotLeaseAcquireAndRelease(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	leasePath := filepath.Join(dir, SlotLeaseFileName)
 
@@ -71,6 +75,8 @@ func TestSlotLeaseAcquireAndRelease(t *testing.T) {
 }
 
 func TestSlotLeaseHeartbeatLoop(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	leasePath := filepath.Join(dir, SlotLeaseFileName)
 
@@ -93,16 +99,24 @@ func TestSlotLeaseHeartbeatLoop(t *testing.T) {
 		t.Fatalf("Read initial lease failed: %v", err)
 	}
 
-	// Wait for at least 2 heartbeats
-	time.Sleep(75 * time.Millisecond)
-
-	updatedLease, err := ReadSlotLease(leasePath)
-	if err != nil {
-		t.Fatalf("Read updated lease failed: %v", err)
-	}
-
-	if !updatedLease.Until.After(initialLease.Until) {
-		t.Fatalf("Heartbeat did not advance Until: initial=%v, updated=%v", initialLease.Until, updatedLease.Until)
+	// Poll for the heartbeat rather than sleeping a fixed 75 ms: under a
+	// loaded parallel suite on an x64 Mac (PR run 36204356479) the loop's
+	// goroutine had not run once in that window. The bound is a hang
+	// detector, not a budget.
+	var updatedLease *SlotLease
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		updatedLease, err = ReadSlotLease(leasePath)
+		if err != nil {
+			t.Fatalf("Read updated lease failed: %v", err)
+		}
+		if updatedLease.Until.After(initialLease.Until) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("Heartbeat did not advance Until within 3 s: initial=%v, updated=%v", initialLease.Until, updatedLease.Until)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 	if !updatedLease.Heartbeat.After(initialLease.Heartbeat) {
 		t.Fatalf("Heartbeat timestamp did not advance: initial=%v, updated=%v", initialLease.Heartbeat, updatedLease.Heartbeat)
@@ -110,6 +124,8 @@ func TestSlotLeaseHeartbeatLoop(t *testing.T) {
 }
 
 func TestSlotLeaseDRIFTPreservation(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	leasePath := filepath.Join(dir, SlotLeaseFileName)
 
@@ -185,6 +201,8 @@ func TestSlotLeaseDRIFTPreservation(t *testing.T) {
 }
 
 func TestSlotLeaseDeadPIDReclaim(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	leasePath := filepath.Join(dir, SlotLeaseFileName)
 
@@ -256,6 +274,8 @@ func TestSlotLeaseDeadPIDReclaim(t *testing.T) {
 }
 
 func TestSlotLeaseAtomicWrites(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	leasePath := filepath.Join(dir, SlotLeaseFileName)
 
@@ -303,6 +323,8 @@ func TestSlotLeaseAtomicWrites(t *testing.T) {
 }
 
 func TestSlotLeaseFencedReleaseProtection(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	leasePath := filepath.Join(dir, SlotLeaseFileName)
 

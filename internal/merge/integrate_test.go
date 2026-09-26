@@ -40,6 +40,8 @@ func (r *recordingGH) argv(i int) string { return strings.Join(r.calls[i], " ") 
 // file for a pull request body would be a fifth (TestNothingWritesIntoTheClonesWorkTree
 // is the rule; this is the behaviour that keeps it true).
 func TestTheWriteSidePassesEveryBodyAsAnArgumentAndNeverAsAFile(t *testing.T) {
+	t.Parallel()
+
 	r := &recordingGH{reply: map[string]string{
 		"pr view": `{"number": 9001, "url": "https://example.invalid/pull/9001"}`,
 	}}
@@ -89,6 +91,8 @@ func TestTheWriteSidePassesEveryBodyAsAnArgumentAndNeverAsAFile(t *testing.T) {
 // A HEAD OR BASE THAT GIT COULD READ AS AN OPTION NEVER REACHES THE FORGE (lesson 48):
 // the check is at the arrival point, before a single call is made.
 func TestTheWriteSideRefusesABranchNameAForgeCouldReadAsAnOption(t *testing.T) {
+	t.Parallel()
+
 	r := &recordingGH{}
 	g := NewGHIntegrate("o/n", time.Minute, r)
 
@@ -106,6 +110,8 @@ func TestTheWriteSideRefusesABranchNameAForgeCouldReadAsAnOption(t *testing.T) {
 // The fake is the one cmd/nova-merge's tests drive, so its own accounting is held here:
 // what it records, in what order, and that an error is returned rather than recorded.
 func TestTheFakeWriteSideRecordsEveryWriteInOrder(t *testing.T) {
+	t.Parallel()
+
 	f := NewFakeIntegrateForge()
 
 	first, err := f.CreatePR(NewPR{Base: "dev", Head: "rowan/integration-1"})

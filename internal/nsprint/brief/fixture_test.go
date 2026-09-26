@@ -23,6 +23,8 @@ type fixtureTask struct {
 // refuse it on field=coauthor. This test lands in the first commit, before any
 // lint check exists, so it is red there and green at head.
 func TestBriefLintRefusesWrongCoauthorFixture20260923(t *testing.T) {
+	t.Parallel()
+
 	st, client := briefRedis(t)
 	raw, err := os.ReadFile(filepath.Join("testdata", "wrong-coauthor-2026-09-23.task.json"))
 	if err != nil {

@@ -104,6 +104,8 @@ func readSource(t *testing.T, dir string) life.DeclSource {
 
 // TestDeclareOneRoundTrip: a declare is one pipelined read and one FCALL.
 func TestDeclareOneRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	_, _, addr := controlRedis(t)
 	dir, _, commit := declRepo(t)
 	commit(humans)
@@ -131,6 +133,8 @@ func onlyReads(t *testing.T, log *cmdLog) {
 
 // TestDeclareUnchangedNoWrites: the same rev and digest write nothing.
 func TestDeclareUnchangedNoWrites(t *testing.T) {
+	t.Parallel()
+
 	st, _, addr := controlRedis(t)
 	dir, _, commit := declRepo(t)
 	commit(humans)
@@ -148,6 +152,8 @@ func TestDeclareUnchangedNoWrites(t *testing.T) {
 
 // TestDeclareCheckReadsOnly: --check diffs and writes nothing.
 func TestDeclareCheckReadsOnly(t *testing.T) {
+	t.Parallel()
+
 	st, _, addr := controlRedis(t)
 	dir, _, commit := declRepo(t)
 	commit(humans)
@@ -170,6 +176,8 @@ func TestDeclareCheckReadsOnly(t *testing.T) {
 // children of r1) both read prev_rev=r1; exactly one FCALL writes, the other
 // gets CONFLICT with nothing written, and its retry is refused stale.
 func TestDeclareCASOneWinner(t *testing.T) {
+	t.Parallel()
+
 	st, client, addr := controlRedis(t)
 	ctx := context.Background()
 	dir, git, commit := declRepo(t)

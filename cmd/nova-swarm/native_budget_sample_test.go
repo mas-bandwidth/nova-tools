@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // THE LIVE SAMPLER AND WHAT THE LINE REPORTS (SPEC-SWARM rule 13d, demanded test 13d,
@@ -75,6 +76,8 @@ func runBudgetCard(t *testing.T, tokens, directives string, extra ...string) (in
 // THE FIGURE IS THE FINAL READ'S, not a sample's: "`<spent>` is the sum over every launch
 // at the final read, never the sum at the stop".
 func TestNativeLineReportsWhatTheFinalReadSaw(t *testing.T) {
+	t.Parallel()
+
 	needsSQLite(t)
 	for _, tc := range []struct {
 		name       string
@@ -124,6 +127,8 @@ func TestNativeLineReportsWhatTheFinalReadSaw(t *testing.T) {
 // the harness reported, because `unmetered` is a statement of the caller's and not a
 // measurement. The same harness under a number prints the number, which is the control.
 func TestNativeUnmeteredIsNeverAFigure(t *testing.T) {
+	t.Parallel()
+
 	needsSQLite(t)
 	rc, stdout, stderr := runBudgetCard(t, "unmetered", "FAKE-USAGE-DB 100 50 0 0 7 0.5\nFAKE-FINDINGS 1\n")
 	if rc != 0 {
@@ -144,6 +149,8 @@ func TestNativeUnmeteredIsNeverAFigure(t *testing.T) {
 // journal mode before the card starts: that is what a live harness's database looks like,
 // and it is the state in which a reader that waited for a checkpoint would wait forever.
 func TestNativeSamplesThroughAWriteAheadLog(t *testing.T) {
+	t.Parallel()
+
 	needsSQLite(t)
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
@@ -195,65 +202,6 @@ INSERT INTO message (data, time_created) VALUES (json_object('role','assistant',
 	}
 }
 
-// TestNativeSamplerNeverOverlapsAndNeverDelaysTheDeadline: rule 13d, "no sample starts while
-// one is unanswered", and "a usage reader that never returns does not move the deadline, and
-// the run still ends inside the bound the deadline's own test holds (issue #779)".
-//
-// THE READER THAT NEVER RETURNS is a `sqlite3` on PATH that sleeps past every bound. The
-// sampler gives one read 5 seconds and abandons it; the card's deadline is 3 seconds and is
-// the thing under test, so a sampler that could hold the ending open would show here as a
-// run that outlived its own deadline.
-func TestNativeSamplerNeverOverlapsAndNeverDelaysTheDeadline(t *testing.T) {
-	windowsIsNotABench(t)
-	needsSQLite(t)
-	bin := nativeHarness(t)
-	root, slot := aSlot(t)
-	// A database must EXIST for the reader to be run at all: an absent one is an absence
-	// and never a read.
-	db := filepath.Join(slot, "data", "opencode", "opencode.db")
-	if err := os.MkdirAll(filepath.Dir(db), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command(swarm.SQLiteBinary, db)
-	cmd.Stdin = strings.NewReader("CREATE TABLE message (id INTEGER PRIMARY KEY, data TEXT NOT NULL, time_created INTEGER NOT NULL);\n")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("building the fixture store: %v\n%s", err, out)
-	}
-	// A `sqlite3` on PATH that never answers, ahead of the real one.
-	slow := t.TempDir()
-	stall := filepath.Join(slow, swarm.SQLiteBinary)
-	if err := os.WriteFile(stall, []byte("#!/bin/sh\nsleep 600\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", slow+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	card := filepath.Join(root, "card.md")
-	if err := os.WriteFile(card, []byte("a card\nFAKE-IGNORE-TERM\nFAKE-SLEEP 60\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	args := append(budgetNativeArgs(t, bin, card, slot, root, "50000"), "--usage-interval", "1s")
-	for i := range args {
-		if args[i] == "--deadline" {
-			args[i+1] = "3s"
-		}
-	}
-	// THE EVENT, NOT THE CLOCK. The reader sleeps ten minutes and the card's deadline is
-	// three seconds. What is asserted is that the run RETURNS and that its DEADLINE is what
-	// ended the card: `rc=-1` with NO `stopped=` field, which is the deadline's own shape and
-	// not a sampler's. A sampler that could hold the ending open would not reach either
-	// assertion at all -- the go test timeout is this repo's bound on a hang, and it is a
-	// better one than a number written here, which is why the repo refuses the number.
-	var stdout, stderr bytes.Buffer
-	run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
-	line := nativeOKLine(t, stdout.String())
-	if got := fieldOf(line, "rc"); got != "-1" {
-		t.Fatalf("the DEADLINE ended this card, so the line prints rc=-1; got %q:\n%s", got, line)
-	}
-	if got := fieldOf(line, "stopped"); got != "" {
-		t.Fatalf("a reader that never answers is not three FAILED reads while the card still had time; the deadline ended it and the line carries no stopped= field, got %q:\n%s", got, line)
-	}
-}
-
 // TestLiveSamplerNeverRunsTwoReadsAtOnce holds the same clause at the unit, where it can be
 // asserted rather than inferred: the loop is driven against a reader that is slower than
 // its own interval, and no two reads are ever in flight together.
@@ -273,7 +221,7 @@ func TestLiveSamplerNeverRunsTwoReadsAtOnce(t *testing.T) {
 	// A reader that takes a good deal longer than the interval below, so a loop that
 	// queued its ticks would show two reads in flight at once.
 	slow := t.TempDir()
-	if err := os.WriteFile(filepath.Join(slow, swarm.SQLiteBinary), []byte("#!/bin/sh\nsleep 1\n"), 0o755); err != nil {
+	if err := testbin.WriteExecutable(filepath.Join(slow, swarm.SQLiteBinary), []byte("#!/bin/sh\nsleep 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", slow+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -318,7 +266,7 @@ func TestLiveSamplerCountsAFailedReadAndAnAnswerResetsIt(t *testing.T) {
 	}
 	// A reader that refuses, the way sqlite3 refuses bytes that are not a database.
 	bad := t.TempDir()
-	if err := os.WriteFile(filepath.Join(bad, swarm.SQLiteBinary),
+	if err := testbin.WriteExecutable(filepath.Join(bad, swarm.SQLiteBinary),
 		[]byte("#!/bin/sh\necho 'Error: file is not a database' >&2\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}

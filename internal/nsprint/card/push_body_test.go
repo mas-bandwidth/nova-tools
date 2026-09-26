@@ -18,6 +18,8 @@ import (
 // so card run never refuses "no body" for a card the store lists. The probe
 // sprint quack-0925-1350 failed 12 of 12 that way.
 func TestPushStoresTheBodyTheWrapperRuns(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := newRedis(t)
 	srv := repoServer(t)
@@ -40,6 +42,8 @@ func TestPushStoresTheBodyTheWrapperRuns(t *testing.T) {
 // runs through card run on a throwaway store, so rowan-tools'
 // bin/nova-card-push (the bash EVAL SET with a 7-day PX) can be retired.
 func TestPushedCardRunsThroughCardRun(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	self, err := os.Executable()
 	if err != nil {

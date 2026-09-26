@@ -50,6 +50,8 @@ func writeBenchesFile(t *testing.T, names ...string) string {
 // status-html-a-silent-bench-says-down: the row says DOWN rather than a row of zeros, and
 // the STATUS HTML line counts it, so a reader is told the fleet is partly unseen.
 func TestStatusHTMLSilentBenchSaysDown(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	stdout, stderr, code := runStatusHTML(t, dir, writeBenchesFile(t, "alpha", "beta"), t.TempDir(),
 		[]BenchReading{
@@ -73,6 +75,8 @@ func TestStatusHTMLSilentBenchSaysDown(t *testing.T) {
 
 // A bench that answers is untouched by the DOWN path, and down=0 is the healthy fleet.
 func TestStatusHTMLEveryBenchAnsweringSaysDownZero(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	stdout, stderr, code := runStatusHTML(t, dir, writeBenchesFile(t, "alpha"), t.TempDir(),
 		[]BenchReading{{Name: "alpha", Live: 2, Cores: 4, Load: 1, FreeGB: 50, MemGB: 20, Allowed: 3}})
@@ -95,6 +99,8 @@ func TestStatusHTMLEveryBenchAnsweringSaysDownZero(t *testing.T) {
 // A silent bench's free disk is not zero, it is unknown: the metrics row must not claim a
 // number the fleet never gave, and a dash is how the time series says "no answer".
 func TestStatusHTMLMetricsRowSaysDashForASilentBench(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	if _, stderr, code := runStatusHTML(t, dir, writeBenchesFile(t, "alpha", "beta"), t.TempDir(),
 		[]BenchReading{
@@ -117,6 +123,8 @@ func TestStatusHTMLMetricsRowSaysDashForASilentBench(t *testing.T) {
 // beside itself. status-page.sh's two charts are what a reader watches to see the fleet
 // widen or stall, and a page that writes the series and draws nothing loses them.
 func TestStatusHTMLPageDrawsTheTimeSeries(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	if _, stderr, code := runStatusHTML(t, dir, writeBenchesFile(t, "alpha"), t.TempDir(),
 		[]BenchReading{{Name: "alpha", Live: 1, Cores: 4, Load: 0, FreeGB: 90, MemGB: 30, Allowed: 2}}); code != 0 {
@@ -133,6 +141,8 @@ func TestStatusHTMLPageDrawsTheTimeSeries(t *testing.T) {
 // The page is still counts only: no card id, branch name or label reaches it, DOWN row or
 // not. A public page carrying a card label is the one failure this page cannot have.
 func TestStatusHTMLPageStaysCountsOnly(t *testing.T) {
+	t.Parallel()
+
 	queue := t.TempDir()
 	writeStatusFile(t, queue, filepath.Join("pending", "card-4242.md"), "RESULT: card-4242 stays off the page\n")
 	dir := t.TempDir()

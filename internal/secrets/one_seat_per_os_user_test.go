@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // "one seat per OS user, keys for swarms not people" -- docs/SPEC-SECRETS.md,
@@ -36,7 +37,7 @@ func writeSeatBenchExe(t *testing.T, path, body string) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+	if err := testbin.WriteExecutable(path, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
 }

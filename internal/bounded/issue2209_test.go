@@ -32,6 +32,8 @@ import (
 
 // TestIssue2209 — see the package doc above.
 func TestIssue2209(t *testing.T) {
+	t.Parallel()
+
 	const (
 		log         = "logs/run-42.log"
 		identity    = "run-42"

@@ -183,6 +183,8 @@ func TestWrapperFillsTheResult(t *testing.T) {
 // TestTestCommandIsTheDeclaredGrammar: only `<package> <TestName>` runs; the
 // wrapper never assumes a package or runs a free command.
 func TestTestCommandIsTheDeclaredGrammar(t *testing.T) {
+	t.Parallel()
+
 	for test, want := range map[string]string{
 		"./internal/docs TestEveryTopLevelDocLinkResolves": "go test ./internal/docs -run ^TestEveryTopLevelDocLinkResolves$ -count=1",
 		"./internal/pulse/ TestStale":                      "go test ./internal/pulse/ -run ^TestStale$ -count=1",
@@ -209,6 +211,8 @@ func TestTestCommandIsTheDeclaredGrammar(t *testing.T) {
 // a card-result log entry) and keeps the record valid; the same disagreement
 // in a record the wrapper did not write is still contradictory.
 func TestWrapperFieldContradictionIsALoggedBug(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	st, client := newSprint(t)
 	const line1 = "RESULT: bug-card sha=0123456789ab nova-tools fix: a card"
@@ -266,6 +270,8 @@ func TestWrapperFieldContradictionIsALoggedBug(t *testing.T) {
 // TestCardPushStoresTest (#3689): lint reads TEST: into the card hash's test
 // field, which the wrapper runs at card end; an absent line stores nothing.
 func TestCardPushStoresTest(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := newRedis(t)
 	srv := repoServer(t)

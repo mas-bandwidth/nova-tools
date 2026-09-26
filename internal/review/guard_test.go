@@ -19,6 +19,8 @@ func guardFixture(t *testing.T, dir string) (*GuardResult, error) {
 }
 
 func TestGuardIsGuardedWhenTheNewTestGoesRedWithoutTheChange(t *testing.T) {
+	t.Parallel()
+
 	dir := newRepo(t)
 	run(t, dir, "git", "checkout", "-q", "-b", "fix")
 	write(t, dir, "sign/sign.go", `package sign
@@ -63,6 +65,8 @@ func TestSignZero(t *testing.T) {
 }
 
 func TestGuardIsUnguardedWhenTestsStayGreen(t *testing.T) {
+	t.Parallel()
+
 	dir := newRepo(t)
 	run(t, dir, "git", "checkout", "-q", "-b", "fix")
 	write(t, dir, "sign/sign.go", `package sign
@@ -88,6 +92,8 @@ func Sign(n int) int {
 }
 
 func TestGuardIsCompilerHeldWhenRevertDoesNotCompile(t *testing.T) {
+	t.Parallel()
+
 	dir := newRepo(t)
 	run(t, dir, "git", "checkout", "-q", "-b", "callonly")
 	write(t, dir, "sign/sign.go", `package sign
@@ -130,6 +136,8 @@ func TestMul(t *testing.T) {
 // Reverting value.txt still makes the retained test red. N/A only when every
 // production path is excluded Go.
 func TestGuardIsGuardedWhenANonGoFileIsRevertedBesideAnExcludedGoFile(t *testing.T) {
+	t.Parallel()
+
 	dir := newRepo(t)
 	write(t, dir, "sign/value.txt", "base\n")
 	write(t, dir, "sign/sign_test.go", `package sign
@@ -200,6 +208,8 @@ func TestValue(t *testing.T) {
 // productionAppliesHere, so Guard returned NOT-APPLICABLE before the control ran.
 // Restoring obsolete.go makes the retained regression red.
 func TestGuardIsGuardedWhenProductionGoFileIsDeleted(t *testing.T) {
+	t.Parallel()
+
 	dir := newRepo(t)
 	run(t, dir, "git", "checkout", "-q", "-b", "delete")
 	write(t, dir, "sign/obsolete.go", "package sign\n\nfunc Obsolete() int { return 1 }\n")
@@ -237,6 +247,8 @@ func TestObsoleteGone(t *testing.T) {
 }
 
 func TestGuardIsNotApplicableForAForeignGOOSFile(t *testing.T) {
+	t.Parallel()
+
 	dir := newRepo(t)
 	other := "windows"
 	if runtime.GOOS == "windows" {
@@ -258,6 +270,8 @@ func TestGuardIsNotApplicableForAForeignGOOSFile(t *testing.T) {
 }
 
 func TestGuardAbstainsWhenEveryChangedFileIsATest(t *testing.T) {
+	t.Parallel()
+
 	dir := newRepo(t)
 	run(t, dir, "git", "checkout", "-q", "-b", "tests")
 	write(t, dir, "sign/sign_test.go", `package sign
@@ -284,6 +298,8 @@ func TestSignNegative(t *testing.T) {
 }
 
 func TestGuardDoesNotOpenAResultFile(t *testing.T) {
+	t.Parallel()
+
 	dir := newRepo(t)
 	run(t, dir, "git", "checkout", "-q", "-b", "fix")
 	write(t, dir, "sign/sign.go", `package sign
@@ -326,6 +342,8 @@ func TestSignZero(t *testing.T) {
 }
 
 func TestGuardRecordsBothTails(t *testing.T) {
+	t.Parallel()
+
 	dir := newRepo(t)
 	run(t, dir, "git", "checkout", "-q", "-b", "fix")
 	write(t, dir, "sign/sign.go", `package sign

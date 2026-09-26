@@ -35,6 +35,8 @@ func closedAddr(t *testing.T) string {
 // sprint log (s:<S>:log, kind "wrapper refused") when Redis is reachable,
 // else an append-only <results>/refused/<S>/<label>/<attempt>.line.
 func TestRefusalLeavesARecord(t *testing.T) {
+	t.Parallel()
+
 	addr := testutil.Start(t)
 	client := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = client.Close() })
@@ -131,6 +133,8 @@ func TestRefusalLeavesARecord(t *testing.T) {
 // TestHelpLeavesNoRefusal: a run that refuses nothing writes no refusal
 // record (the version verb names no card).
 func TestHelpLeavesNoRefusal(t *testing.T) {
+	t.Parallel()
+
 	results := t.TempDir()
 	env := map[string]string{"NOVA_CARD_RESULTS": results}
 	var out, errb strings.Builder

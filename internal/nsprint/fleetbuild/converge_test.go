@@ -31,6 +31,8 @@ func beat(mr *miniredis.Miniredis, bench, line string) {
 // services machine, self the one coordination machine, and every bench's
 // platform comes from bench:<b>:desired, else the registry, else its beat.
 func TestConvergeFillsBuilderSelfAndPlatforms(t *testing.T) {
+	t.Parallel()
+
 	ms, err := ParseMachines(strings.NewReader(testMachines))
 	if err != nil {
 		t.Fatal(err)
@@ -75,6 +77,8 @@ func TestConvergeFillsBuilderSelfAndPlatforms(t *testing.T) {
 }
 
 func TestParseManifestIsEveryNovaTool(t *testing.T) {
+	t.Parallel()
+
 	got, err := ParseManifest(testManifest)
 	if err != nil || !reflect.DeepEqual(got, manifestTools) {
 		t.Fatalf("manifest = %v, %v", got, err)
@@ -90,6 +94,8 @@ func TestParseManifestIsEveryNovaTool(t *testing.T) {
 // live pass claims the version once and starts one deploy for exactly the
 // drifting benches, and the next pass is HELD.
 func TestDutyWouldInstallEveryDriftingBench(t *testing.T) {
+	t.Parallel()
+
 	mr, c := seed(t)
 	mr.SAdd(BenchesKey, "vision")
 	beat(mr, "hulk", "nova-sprint v0.16.0-dev.7658e89c linux/amd64 go1.26.1")
@@ -152,6 +158,8 @@ func TestDutyWouldInstallEveryDriftingBench(t *testing.T) {
 // TestDutyNoPlanWithoutARelease: before any landing there is nothing to
 // converge the fleet to.
 func TestDutyNoPlanWithoutARelease(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { c.Close() })

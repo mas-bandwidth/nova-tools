@@ -54,6 +54,8 @@ func issue223WriteSource(t *testing.T, dir, name, body string) string {
 // but this test is kept, the run falls back to "unknown subcommand" and
 // the test goes red again.
 func TestIssue223ViewRendersTwoLayoutsWithoutRewritingSources(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	frontmatter := issue223WriteSource(t, dir, "moment-one.md", `---
 author: Emma

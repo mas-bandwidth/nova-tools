@@ -344,6 +344,8 @@ func TestLandRebuildsOnAMovedBase(t *testing.T) {
 }
 
 func TestLandRunRefusesUsage(t *testing.T) {
+	t.Parallel()
+
 	for _, args := range [][]string{
 		{"land", "--repo", lsRepo},
 		{"land", "--stream", "s", "--repo", "nova-tools"},

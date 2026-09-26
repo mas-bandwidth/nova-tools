@@ -17,6 +17,8 @@ import (
 // stay fast, and takes overlap constantly: the losing interleaving arrives
 // within a few hundred takes.
 func TestConcurrentTakesKeepEveryTake(t *testing.T) {
+	t.Parallel()
+
 	store := writeSlotStore(t, "capacity\t64\nreserve\t0\nalice\t64\nbob\t64\n")
 	now := time.Now().UTC()
 	pid := os.Getpid()

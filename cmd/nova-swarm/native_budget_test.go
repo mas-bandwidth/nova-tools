@@ -61,6 +61,8 @@ func budgetCard(t *testing.T, root string) string {
 // takes there, the data home, the temp directory. A refusal that had already made a
 // directory would leave the bench's hygiene pass a job that never ran.
 func TestNativeRefusesWithoutTheBudgetWord(t *testing.T) {
+	t.Parallel()
+
 	bin := nativeHarness(t)
 	for _, tc := range []struct {
 		name   string
@@ -110,6 +112,8 @@ func TestNativeRefusesWithoutTheBudgetWord(t *testing.T) {
 // `budget=`, which is `budget=unmetered`, or rule 13's three spellings against the
 // number." A card launched `--tokens unmetered` runs to its deadline and says so.
 func TestNativeUnmeteredPrintsTheWordOnTheLine(t *testing.T) {
+	t.Parallel()
+
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	card := budgetCard(t, root)
@@ -128,6 +132,8 @@ func TestNativeUnmeteredPrintsTheWordOnTheLine(t *testing.T) {
 // sample has observed anything the spelling is rule 13's own dash -- "`budget=-/<n>` for a
 // job whose usage was never observed" -- and it is never silence and never `unmetered`.
 func TestNativeNumericBudgetPrintsAgainstTheNumber(t *testing.T) {
+	t.Parallel()
+
 	// A NUMERIC BUDGET WANTS A READER (rule 13d, and this repo's slice 2): on a bench with
 	// no `sqlite3` the same launch is a NATIVE REFUSED, which is the rule working and not
 	// this assertion failing. The skip names the missing program rather than pretending.
@@ -155,6 +161,8 @@ func TestNativeNumericBudgetPrintsAgainstTheNumber(t *testing.T) {
 // `budget=` immediately after `harness=<ok|silent>` and ahead of every optional tail, so a
 // reader parses one fixed line. The position is the contract, not merely the presence.
 func TestNativeBudgetSitsWhereTheGrammarPutsIt(t *testing.T) {
+	t.Parallel()
+
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	card := budgetCard(t, root)

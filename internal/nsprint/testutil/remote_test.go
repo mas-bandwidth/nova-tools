@@ -10,6 +10,8 @@ import (
 )
 
 func TestLocalRemoteEnforcesDevIntegrity(t *testing.T) {
+	t.Parallel()
+
 	remote := testutil.NewLocalRemote(t, "dev")
 
 	// Set up local working clone

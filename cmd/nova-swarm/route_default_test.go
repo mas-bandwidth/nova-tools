@@ -13,6 +13,8 @@ import (
 // refused by name, because a skipped route is a fact in the log and not an
 // absence.
 func TestLaunchCannotSkipTheRouteWithoutALoggedReason(t *testing.T) {
+	t.Parallel()
+
 	// Routing on with no accounting home is a rule answer, not a refusal: a
 	// call nobody can account for is not made, but the card is still routed.
 	f := newFlags("batch")

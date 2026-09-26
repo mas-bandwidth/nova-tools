@@ -20,6 +20,8 @@ import (
 // TestL13: an order-only HOLD record is a note with stack_parent;
 // a CI-only HOLD is a note; a substantive one stays a hold (§3.4, L13).
 func TestL13(t *testing.T) {
+	t.Parallel()
+
 	f := newLandFixture(t, "nova-tools", "dev")
 
 	// 1. Setup a unit
@@ -90,6 +92,8 @@ func TestL13(t *testing.T) {
 // TestL25: replaying the 12-lane mix (15 holds, 13 missing reads, 12 pending reads)
 // under a fixture policy readers: 1: zero gates run on those units, and why names each condition (§3.3, L25).
 func TestL25(t *testing.T) {
+	t.Parallel()
+
 	f := newLandFixture(t, "nova-tools", "dev")
 
 	pol := &land.BasePolicy{
@@ -205,6 +209,8 @@ func TestL25(t *testing.T) {
 // TestL29: the #1589 case: Emma's newer APPROVE releases her older HOLD,
 // an older APPROVE never releases a newer HOLD (§3.4, L29).
 func TestL29(t *testing.T) {
+	t.Parallel()
+
 	f := newLandFixture(t, "nova-tools", "dev")
 
 	h1 := "1111111111111111111111111111111111111111"
@@ -302,6 +308,8 @@ func TestL29(t *testing.T) {
 // TestL29b: an untyped inbound hold keyed login:x is released only by x
 // or a --releases record (§3.4, L29b).
 func TestL29b(t *testing.T) {
+	t.Parallel()
+
 	f := newLandFixture(t, "nova-tools", "dev")
 
 	head := "1111111111111111111111111111111111111111"
@@ -375,6 +383,8 @@ func TestL29b(t *testing.T) {
 // TestL29c: a HOLD by a friend with friend:<x>:down is released by a may-hold reader's --releases;
 // without down the same release is refused (§3.4, L29c).
 func TestL29c(t *testing.T) {
+	t.Parallel()
+
 	f := newLandFixture(t, "nova-tools", "dev")
 
 	head := "1111111111111111111111111111111111111111"
@@ -469,6 +479,8 @@ func TestL29c(t *testing.T) {
 // TestL31b: against the gid lookup: a receipt for another base, base_sha,
 // policy_id or runner_id is ci stale, never OK (§3.3, L31b).
 func TestL31b(t *testing.T) {
+	t.Parallel()
+
 	f := newLandFixture(t, "nova-tools", "dev")
 
 	pol := &land.BasePolicy{
@@ -544,6 +556,8 @@ func TestL31b(t *testing.T) {
 // TestL32: a stale inbound consumer refuses the intent (inbound-stale);
 // a ref moved without a delivery writes INBOUND MISSED and the head from git (§3.2, L32).
 func TestL32(t *testing.T) {
+	t.Parallel()
+
 	f := newLandFixture(t, "nova-tools", "dev")
 
 	// Subcase 1: inbound consumer stale refuses intent
@@ -731,6 +745,8 @@ func (f *failingTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 // RELEASE from the same login releases it, and an entry with no body is only
 // counted (§3.1, 3.4, L29b).
 func TestEvalPassInboundHolds(t *testing.T) {
+	t.Parallel()
+
 	f := newLandFixture(t, "nova-tools", "dev")
 	head := "abababababababababababababababababababab"
 	if _, err := land.CallUnitHead(f.ctx, f.client, land.UnitHeadParams{
@@ -795,6 +811,8 @@ func TestEvalPassInboundHolds(t *testing.T) {
 // head when that reader's APPROVE is at the current head, and never a HOLD at
 // the current head for an APPROVE at an older one (§3.4, L29 on the verb path).
 func TestEvalPassSupersedes(t *testing.T) {
+	t.Parallel()
+
 	f := newLandFixture(t, "nova-tools", "dev")
 	h1 := "1010101010101010101010101010101010101010"
 	h2 := "2020202020202020202020202020202020202020"
@@ -838,6 +856,8 @@ func TestEvalPassSupersedes(t *testing.T) {
 // receipt queues exactly one ci single across passes, with batch, attempt
 // and token (§3.3, L31b).
 func TestEvalPassQueuesOneCISingle(t *testing.T) {
+	t.Parallel()
+
 	f := newLandFixture(t, "nova-tools", "dev")
 	head := "3030303030303030303030303030303030303030"
 	if _, err := land.CallUnitHead(f.ctx, f.client, land.UnitHeadParams{Sprint: f.sprint, Unit: "unit-ci", Repo: f.repo, Base: f.base, Head: head, BaseSHA: "1111111111111111111111111111111111111111"}); err != nil {
@@ -864,6 +884,8 @@ func TestEvalPassQueuesOneCISingle(t *testing.T) {
 // a pull_request synchronize delivery fetches the branch and writes the head
 // with no INBOUND MISSED (§3.1, 3.2, L32 on the verb path).
 func TestEvalPassMirrorReconcile(t *testing.T) {
+	t.Parallel()
+
 	f := newLandFixture(t, "nova-tools", "dev")
 	dir := t.TempDir()
 	up := filepath.Join(dir, "up")

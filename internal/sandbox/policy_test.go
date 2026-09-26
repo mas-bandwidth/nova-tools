@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // scratch is one job's shape: a write set with a data home inside it (rule 9), a read
@@ -90,6 +92,8 @@ func in(t *testing.T, write, read, home string, argv ...string) Input {
 
 // Rule 4: --write has no default, and zero of it is a refusal that names the flag.
 func TestRefusesToGuessAWriteSet(t *testing.T) {
+	t.Parallel()
+
 	_, bad := Build(Input{Argv: []string{anExecutable(t)}, Home: "/"})
 	if len(bad) == 0 {
 		t.Fatal("a run with no --write was built; rule 4 refuses to guess")
@@ -107,6 +111,8 @@ func TestRefusesToGuessAWriteSet(t *testing.T) {
 
 // Rule 5: relative is refused WITH the absolute form; absent is refused and NOT created.
 func TestPathsAreResolvedAbsoluteAndExisting(t *testing.T) {
+	t.Parallel()
+
 	write, read, home, _ := scratch(t)
 
 	_, bad := Build(in(t, "relative/dir", read, home, anExecutable(t)))
@@ -130,6 +136,8 @@ func TestPathsAreResolvedAbsoluteAndExisting(t *testing.T) {
 
 // Rule 4: a path in both lists is a refusal naming both flags, never a silent merge.
 func TestSamePathInBothListsIsARefusal(t *testing.T) {
+	t.Parallel()
+
 	write, _, home, _ := scratch(t)
 	_, bad := Build(Input{Reads: []string{write}, Writes: []string{write}, Home: home, Argv: []string{anExecutable(t)}})
 	if len(bad) == 0 {
@@ -148,6 +156,8 @@ func TestSamePathInBothListsIsARefusal(t *testing.T) {
 
 // Rule 9: a HOME outside every --write is refused BEFORE the command runs.
 func TestHomeOutsideTheWriteSetIsRefused(t *testing.T) {
+	t.Parallel()
+
 	write, read, _, _ := scratch(t)
 	_, bad := Build(in(t, write, read, os.TempDir(), anExecutable(t)))
 	var found bool
@@ -169,6 +179,8 @@ func TestHomeOutsideTheWriteSetIsRefused(t *testing.T) {
 // path is checked and the HOME inside it is not, so an ordinary --write and a HOME
 // holding a paren reach the profile and the sandbox fails to start.
 func TestHomeWithSbplMetacharacterIsRefused(t *testing.T) {
+	t.Parallel()
+
 	needSbpl(t)
 	write, read, _, _ := scratch(t)
 	oddHome := filepath.Join(write, "a (paren) home")
@@ -190,6 +202,8 @@ func TestHomeWithSbplMetacharacterIsRefused(t *testing.T) {
 // Rules 13 and 8: the cwd and the temp directory default to the first --write, and an
 // explicit one outside the write set is refused.
 func TestCwdAndTmpAreInsideTheWall(t *testing.T) {
+	t.Parallel()
+
 	write, read, home, _ := scratch(t)
 	p, bad := Build(in(t, write, read, home, anExecutable(t)))
 	if len(bad) > 0 {
@@ -213,6 +227,8 @@ func TestCwdAndTmpAreInsideTheWall(t *testing.T) {
 
 // The exit-codes section: the pre-flight stats the resolved command OUTSIDE the wall.
 func TestCommandPreflight(t *testing.T) {
+	t.Parallel()
+
 	write, read, home, _ := scratch(t)
 	notExec := filepath.Join(write, "data.txt")
 	if err := os.WriteFile(notExec, []byte("x"), 0o600); err != nil {
@@ -237,6 +253,8 @@ func TestCommandPreflight(t *testing.T) {
 // The build's own decision, from "to verify at build" item 2: a path carrying an SBPL
 // metacharacter is refused, because the ancestor literals put a path INTO the profile.
 func TestPathWithSbplMetacharacterIsRefused(t *testing.T) {
+	t.Parallel()
+
 	needSbpl(t)
 	write, read, _, _ := scratch(t)
 	odd := filepath.Join(write, `a (paren)`)
@@ -277,6 +295,8 @@ func TestPathWithSbplMetacharacterIsRefused(t *testing.T) {
 // Rule 9 and this build's agent fix: the environment passes through, the four temp
 // variables are the tool's, and the agent variables are dropped.
 func TestChildEnv(t *testing.T) {
+	t.Parallel()
+
 	env := []string{"HOME=/w/home", "ANTHROPIC_API_KEY=sk-not-real", "TMPDIR=/outside", "TMPPREFIX=/outside/zsh", "SSH_AUTH_SOCK=/private/tmp/agent.sock", "SSH_AGENT_PID=9", "PATH=/bin"}
 	got := strings.Join(ChildEnv(env, "/w/.nova-sandbox-tmp"), "\n")
 	for _, want := range []string{"ANTHROPIC_API_KEY=sk-not-real", "PATH=/bin", "TMPDIR=/w/.nova-sandbox-tmp", "TMP=/w/.nova-sandbox-tmp", "TEMP=/w/.nova-sandbox-tmp", "TMPPREFIX=/w/.nova-sandbox-tmp/zsh"} {
@@ -308,6 +328,8 @@ func TestChildEnv(t *testing.T) {
 
 // The ancestor literals of the darwin profile: every proper ancestor, "/" excluded.
 func TestAncestors(t *testing.T) {
+	t.Parallel()
+
 	// Only the directories ABOVE each path are ancestors: c and d are the paths
 	// themselves, and they are granted by their own subpath rule.
 	got := Ancestors(filepath.FromSlash("/a/b/c"), filepath.FromSlash("/a/b/d"))
@@ -361,7 +383,7 @@ func TestACommandInTheCallersHomeIsRefused(t *testing.T) {
 			name, body = "x.cmd", "@exit /b 0\r\n"
 		}
 		script := filepath.Join(dir, name)
-		if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
+		if err := testbin.WriteExecutable(script, []byte(body), 0o700); err != nil {
 			t.Fatal(err)
 		}
 		return script
@@ -421,6 +443,8 @@ func TestACommandInTheCallersHomeIsRefused(t *testing.T) {
 // this function's word "every proper ancestor", and nothing covered a relative or an empty
 // path at all.
 func TestAncestorsEdges(t *testing.T) {
+	t.Parallel()
+
 	needUnixPaths(t)
 	for _, tc := range []struct {
 		name, path string
@@ -451,6 +475,8 @@ func TestAncestorsEdges(t *testing.T) {
 // the caller's paths only as parameters, and grants IP plus unix sockets under the write
 // set — never (allow network*), which reaches the SSH agent socket.
 func TestDarwinProfileIsGenerated(t *testing.T) {
+	t.Parallel()
+
 	needUnixPaths(t)
 	write, read, home, _ := scratch(t)
 	p, bad := Build(in(t, write, read, home, anExecutable(t)))
@@ -521,6 +547,8 @@ func TestDarwinProfileIsGenerated(t *testing.T) {
 // "unable to read data link". The grant is the link, not a subpath on
 // /private/var/db, which holds host state the wall is not for.
 func TestDarwinProfileGrantsTheXcodeSelectLink(t *testing.T) {
+	t.Parallel()
+
 	needUnixPaths(t)
 	write, read, home, _ := scratch(t)
 	p, bad := Build(in(t, write, read, home, anExecutable(t)))
@@ -552,6 +580,8 @@ func TestDarwinProfileGrantsTheXcodeSelectLink(t *testing.T) {
 // ancestor carries file-read-data or file-read*, so opening or listing an ancestor's
 // contents stays denied.
 func TestAncestorsGetMetadataOnly(t *testing.T) {
+	t.Parallel()
+
 	needUnixPaths(t)
 	write, read, home, _ := scratch(t)
 	p, bad := Build(in(t, write, read, home, anExecutable(t)))
@@ -595,6 +625,8 @@ func grantLines(profile string) string {
 // Rule 7 of revision 6: inbound is granted only under --net-listen, and --net-deny with
 // --net-listen is a refusal rather than a tool picking which the caller meant.
 func TestInboundIsOnlyGrantedWhenAsked(t *testing.T) {
+	t.Parallel()
+
 	needUnixPaths(t)
 	write, read, home, _ := scratch(t)
 	p, bad := Build(in(t, write, read, home, anExecutable(t)))
@@ -624,6 +656,8 @@ func TestInboundIsOnlyGrantedWhenAsked(t *testing.T) {
 // bad_net assertion with it. This refusal is a Build-level flag refusal with no profile
 // text in it at all, and the spec's exit table lists it at 125 for every platform.
 func TestNetDenyWithNetListenIsRefusedOnEveryPlatform(t *testing.T) {
+	t.Parallel()
+
 	write, read, home, _ := scratch(t)
 	iv := in(t, write, read, home, anExecutable(t))
 	iv.NetDeny, iv.NetListen = true, true
@@ -643,6 +677,8 @@ func TestNetDenyWithNetListenIsRefusedOnEveryPlatform(t *testing.T) {
 // CLAUDE_AGENT_SDK_VERSION are names that say what is RUNNING the job; they address
 // nothing and must arrive, or the SANDBOX NOTE line is a false statement.
 func TestScrubSetIsExactlyTheSpecs(t *testing.T) {
+	t.Parallel()
+
 	caller := []string{
 		"SSH_AUTH_SOCK=/private/tmp/agent.sock",
 		"SSH_AGENT_PID=4242",
@@ -675,6 +711,8 @@ func TestScrubSetIsExactlyTheSpecs(t *testing.T) {
 
 // Rule 7, revision 7: mach-lookup is narrowed and the unqualified form is gone.
 func TestMachLookupIsNarrowed(t *testing.T) {
+	t.Parallel()
+
 	needUnixPaths(t)
 	write, read, home, _ := scratch(t)
 	pol, bad := Build(in(t, write, read, home, anExecutable(t)))

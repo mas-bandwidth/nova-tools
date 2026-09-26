@@ -311,6 +311,8 @@ func TestStatusHTMLWithNoRepoAnywhereStillSaysNobodyAsked(t *testing.T) {
 // status-registry-needs-no-home-column: the registry carries no home, and it needs none -- with
 // no home the liveness script uses the login home, which is the home ssh lands in anyway.
 func TestFleetStatusScriptWithNoHomeUsesTheLoginHome(t *testing.T) {
+	t.Parallel()
+
 	script := fleetStatusScript("", "2026-09-18T11:00:00Z")
 	if strings.Contains(script, "HOME=") || strings.Contains(script, "export HOME") {
 		t.Errorf("the script sets HOME although the registry gave none:\n%s", script)

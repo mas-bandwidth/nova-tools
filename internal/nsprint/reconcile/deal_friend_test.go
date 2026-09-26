@@ -229,6 +229,8 @@ func TestDealHonoursWhoKindAndOwner(t *testing.T) {
 }
 
 func TestWhoAdmits(t *testing.T) {
+	t.Parallel()
+
 	for _, c := range []struct {
 		who, f string
 		want   bool

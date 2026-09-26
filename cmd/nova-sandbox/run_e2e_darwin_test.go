@@ -24,6 +24,8 @@ import (
 )
 
 func TestARealRunLeavesNothingBehind(t *testing.T) {
+	t.Parallel()
+
 	needDarwin(t)
 	name := "e2e" + strconv.Itoa(os.Getpid())
 	volume := "/Volumes/" + volumePrefix + name

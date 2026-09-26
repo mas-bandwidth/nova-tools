@@ -103,6 +103,8 @@ func localize(t *testing.T, dir, line string) []string {
 // TestBareNovaWorkRefusesInOneLine: no verb is not an invocation, and the refusal says
 // where the usage is.
 func TestBareNovaWorkRefusesInOneLine(t *testing.T) {
+	t.Parallel()
+
 	var out, errb bytes.Buffer
 	if code := run(nil, &out, &errb, production()); code != 2 {
 		t.Fatalf("a bare nova-work exits %d, want 2", code)
@@ -120,6 +122,8 @@ func TestBareNovaWorkRefusesInOneLine(t *testing.T) {
 
 // TestUsageBannerExamplesRun executes each line under `example:` with the test's deps.
 func TestUsageBannerExamplesRun(t *testing.T) {
+	t.Parallel()
+
 	var help, errb bytes.Buffer
 	if code := run([]string{"help"}, &help, &errb, production()); code != 0 {
 		t.Fatalf("nova-work help exit = %d, stderr=%s", code, errb.String())
@@ -162,6 +166,8 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 }
 
 func TestTESTSFirstRunMatchesWhatTheToolPrints(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	if err != nil {
 		t.Fatal(err)
@@ -255,6 +261,8 @@ func runDocumented(t *testing.T) onboarding.Runner {
 // shape, and it said so from a second `## nova-work` section that
 // onboarding.Section could not reach.
 func TestTESTSRefusalsAreWhatTheToolPrints(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	if err != nil {
 		t.Fatal(err)

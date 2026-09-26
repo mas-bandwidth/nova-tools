@@ -59,6 +59,8 @@ import (
 // It reads the workflows as text, like the rest of this package: go.mod carries
 // no YAML library.
 func TestNoMultiLineValueIsWrittenToAStepOutput(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	for _, file := range []string{".github/workflows/ci.yml", ".github/workflows/certification.yml"} {
 		src := readFile(t, filepath.Join(root, file))
@@ -77,6 +79,8 @@ func TestNoMultiLineValueIsWrittenToAStepOutput(t *testing.T) {
 // group died, and the same step with #1318's guard. A class rule whose tree is
 // already clean proves nothing by passing, so it is made to fail here on purpose.
 func TestOutputHeuristicFlagsTheMergeGateRegression(t *testing.T) {
+	t.Parallel()
+
 	const before = `
 jobs:
   test-hosted-merge:

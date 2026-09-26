@@ -37,6 +37,8 @@ func securityUnit(t *testing.T, name string) Unit {
 }
 
 func TestTheSevenSecurityUnitsGoToTheirRungAndAreReadByJohnny(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	for _, tc := range []struct {
 		file string
@@ -94,6 +96,8 @@ func TestTheSevenSecurityUnitsGoToTheirRungAndAreReadByJohnny(t *testing.T) {
 // a kind, not a height, and it is answered here. A decider that is asked at all
 // fails this test.
 func TestTheSevenSecurityUnitsNeverReachTheProvider(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	for _, name := range []string{
 		"certify_fix-loop", "fleet_services", "release_next", "threadripper_standard",
@@ -120,6 +124,8 @@ func TestTheSevenSecurityUnitsNeverReachTheProvider(t *testing.T) {
 // The touch tokens are deduplicated, in the order the enumeration names them.
 // --secrets beside touches: ["secrets"] is one fact said twice.
 func TestSecurityReasonNamesEachTouchOnce(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	for name, tc := range map[string]struct {
 		unit Unit
@@ -152,6 +158,8 @@ func TestSecurityReasonNamesEachTouchOnce(t *testing.T) {
 // property is the one the old rule had and the new rule keeps: the read is not
 // optional because the rung is no longer johnny's.
 func TestSecurityWithNoReaderIsRefused(t *testing.T) {
+	t.Parallel()
+
 	for name, data := range map[string]string{
 		"nobody designated": `{"minds":[
 		  {"name":"flash","lineage":"deepseek","height":0,"kinds":[],"availability":"available","ask":"card"},
@@ -180,6 +188,8 @@ func TestSecurityWithNoReaderIsRefused(t *testing.T) {
 // A fresh take designated to a RESERVED mind is the same shape and gets the
 // same answer: the read is attached and the work goes up the ladder.
 func TestAFreshTakeOnAReservedMindIsAReadToo(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	u := Unit{ID: "f1", Kind: KindDesign, Files: 3, Packages: 1, FreshTake: true}
 	res := mustRoute(t, reg, u, DefaultFloor)
@@ -196,6 +206,8 @@ func TestAFreshTakeOnAReservedMindIsAReadToo(t *testing.T) {
 
 // One read, once, however many designations name the same mind.
 func TestOneMindNamedTwiceIsOneRead(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	u := Unit{ID: "f2", Kind: KindGuard, Files: 3, Packages: 1, FreshTake: true, Touches: []string{TouchSecrets}}
 	res := mustRoute(t, reg, u, DefaultFloor)
@@ -207,6 +219,8 @@ func TestOneMindNamedTwiceIsOneRead(t *testing.T) {
 // The line carries the read on every decision, as a dash where there is none:
 // every field on every line, so no reader has to infer an absence.
 func TestTheLineAlwaysCarriesTheRead(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	plain := mustRoute(t, reg, Unit{ID: "p", Kind: KindRebase, Files: 2, Packages: 1}, DefaultFloor)
 	if !strings.Contains(plain.Line(), " read=- ") {

@@ -134,6 +134,8 @@ func only(t *testing.T, what string, code int, lines []string, want string) {
 }
 
 func TestBriefLintRefusesCoauthorModelMismatch(t *testing.T) {
+	t.Parallel()
+
 	st, client := briefRedis(t)
 	dir := t.TempDir()
 	putTask(t, client, "co-1", "build", defaultTitle("1"))
@@ -166,6 +168,8 @@ func TestBriefLintRefusesCoauthorModelMismatch(t *testing.T) {
 }
 
 func TestBriefLintRefusesRulesShaNotOnTask(t *testing.T) {
+	t.Parallel()
+
 	st, client := briefRedis(t)
 	dir := t.TempDir()
 	putTask(t, client, "rules-1", "build", defaultTitle("1"))
@@ -199,6 +203,8 @@ func TestBriefLintRefusesRulesShaNotOnTask(t *testing.T) {
 }
 
 func TestBriefLintRefusesPathsMismatch(t *testing.T) {
+	t.Parallel()
+
 	st, client := briefRedis(t)
 	dir := t.TempDir()
 	putTask(t, client, "paths-1", "build", defaultTitle("1"))
@@ -228,6 +234,8 @@ func TestBriefLintRefusesPathsMismatch(t *testing.T) {
 }
 
 func TestBriefLintRefusesMissingTaskRef(t *testing.T) {
+	t.Parallel()
+
 	st, client := briefRedis(t)
 	dir := t.TempDir()
 	putTask(t, client, "ref-1", "build", defaultTitle("1"))
@@ -272,6 +280,8 @@ func isTaskFieldLine(l string) bool {
 }
 
 func TestBriefRenderDiffersOnlyInTaskFields(t *testing.T) {
+	t.Parallel()
+
 	st, client := briefRedis(t)
 	dir := t.TempDir()
 	models := []string{"opus-5.5", "sonnet-5", "fable-5.1", "opus-5.5", "haiku-5"}
@@ -317,6 +327,8 @@ func TestBriefRenderDiffersOnlyInTaskFields(t *testing.T) {
 }
 
 func TestBriefLintRefusesEditedBrief(t *testing.T) {
+	t.Parallel()
+
 	st, client := briefRedis(t)
 	dir := t.TempDir()
 	putTask(t, client, "edit-1", "build", defaultTitle("1"))
@@ -341,6 +353,8 @@ func TestBriefLintRefusesEditedBrief(t *testing.T) {
 }
 
 func TestBriefLintRefusesMissingBriefSha(t *testing.T) {
+	t.Parallel()
+
 	st, client := briefRedis(t)
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -430,6 +444,8 @@ func TestBriefRenderRefusesTaskChangedBetweenRoundTrips(t *testing.T) {
 }
 
 func TestBriefLintRefusesTaskEditedAfterRender(t *testing.T) {
+	t.Parallel()
+
 	st, client := briefRedis(t)
 	ctx := context.Background()
 	title := defaultTitle("1")

@@ -10,6 +10,8 @@ import (
 // nova-tools #3634: the pass plans no swarm card onto a bench whose registry
 // role is friends, however free it is; the fleet bench beside it takes them.
 func TestPlanDealsNothingToAFriendsBench(t *testing.T) {
+	t.Parallel()
+
 	now := time.Unix(1000, 0)
 	in := Input{
 		Now: now,

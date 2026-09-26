@@ -6,6 +6,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // TestToolchainVersionDirReadsTheVersionOffTheLauncher is the darwin half of the hurt of
@@ -31,7 +33,7 @@ func TestToolchainVersionDirReadsTheVersionOffTheLauncher(t *testing.T) {
 	if err := os.MkdirAll(real, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(real, "go"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+	if err := testbin.WriteExecutable(filepath.Join(real, "go"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	// The launcher on PATH is a symlink into the tree, the way brew links one.
@@ -58,7 +60,7 @@ func TestToolchainVersionDirReadsTheVersionOffTheLauncher(t *testing.T) {
 	// Go unpacked into ~/sdk or the distribution's /usr/bin/go is under another prefix and
 	// must not drag a Cellar path that is not there onto the argv, which rule 5 refuses.
 	other := t.TempDir()
-	if err := os.WriteFile(filepath.Join(other, "go"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+	if err := testbin.WriteExecutable(filepath.Join(other, "go"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", other)
@@ -76,6 +78,8 @@ func TestToolchainVersionDirReadsTheVersionOffTheLauncher(t *testing.T) {
 // each OS's list resolves under a home of the test's own, a system root needs no home, and
 // an OS the list does not speak for names nothing rather than another OS's layout.
 func TestToolchainRootsAreOneListPerOS(t *testing.T) {
+	t.Parallel()
+
 	for _, goos := range ToolchainRootOSes() {
 		names := ToolchainRootNames(goos)
 		if len(names) == 0 {
@@ -119,6 +123,8 @@ func TestToolchainRootsAreOneListPerOS(t *testing.T) {
 // (`/opt/homebrew/opt/openjdk` points into the Cellar) has to reach the argv resolved, or
 // the wall names a tree the card's runtime is not under.
 func TestToolchainRootsResolveSymlinks(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("symlinked toolchain roots are a unix shape")
 	}

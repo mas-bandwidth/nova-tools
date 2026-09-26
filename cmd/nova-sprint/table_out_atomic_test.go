@@ -19,6 +19,8 @@ import (
 // file; and the temp file is gone after each tick (the directory holds the
 // out file alone). The tick source is a stub, so the test needs no server.
 func TestTableOutAtomic(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := filepath.Join(dir, "SPRINT-TABLE.txt")
 	want := table.DefectGolden()

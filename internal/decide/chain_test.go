@@ -46,6 +46,8 @@ func publicEvidence(text string) Evidence {
 // (docs/SPEC-DECIDE.md:1412-1418, D2 at :734-756). A verb never fails and never
 // guesses.
 func TestWithNoProviderEveryQuestionAnswersByRuleOrUnknownAndSaysSo(t *testing.T) {
+	t.Parallel()
+
 	q := harvestQ(t)
 
 	// A rule row matches: the rules decider answers at 1.00, no call is made.
@@ -85,6 +87,8 @@ func TestWithNoProviderEveryQuestionAnswersByRuleOrUnknownAndSaysSo(t *testing.T
 // F4 `private-evidence-never-reaches-a-public-decider` (S7, :696-716). The
 // refusal is BEFORE any call, and the question falls to the next decider.
 func TestPrivateEvidenceNeverReachesAPublicDecider(t *testing.T) {
+	t.Parallel()
+
 	q := harvestQ(t)
 	remote := &fake{name: DeciderJev, sees: SeesPublic, answer: "clean", conf: 0.99}
 	loopback := &fake{name: DeciderLocal, sees: SeesPrivate, answer: "defect", conf: 0.80}
@@ -114,6 +118,8 @@ func TestPrivateEvidenceNeverReachesAPublicDecider(t *testing.T) {
 // F5 `an-answer-outside-the-set-is-a-provider-error` (S3, :620-630): exit 2, and
 // no decision.
 func TestAnAnswerOutsideTheSetIsAProviderError(t *testing.T) {
+	t.Parallel()
+
 	q := harvestQ(t)
 	liar := &fake{name: DeciderJev, sees: SeesPublic, answer: "push-it", conf: 0.99}
 	got := Chain{Deciders: []ChainDecider{NewRulesDecider(nil), liar}}.Classify(context.Background(), q, publicEvidence("x"), 0.65)
@@ -138,6 +144,8 @@ func TestAnAnswerOutsideTheSetIsAProviderError(t *testing.T) {
 // F6 `one-item-one-call` (D4, :799-825): one item is asked about per call, so
 // one item's text can never colour another item's answer.
 func TestOneItemOneCall(t *testing.T) {
+	t.Parallel()
+
 	q := harvestQ(t)
 	f := &fake{name: DeciderJev, sees: SeesPublic, answer: "clean", conf: 0.90}
 	ch := Chain{Deciders: []ChainDecider{NewRulesDecider(nil), f}}
@@ -166,6 +174,8 @@ func TestOneItemOneCall(t *testing.T) {
 // before the floor is looked at, at ANY confidence, and no later decider is
 // asked. A first provider's stop is not undone by a second's permission.
 func TestAStoppingMemberEndsTheWalkBeforeTheFloor(t *testing.T) {
+	t.Parallel()
+
 	q := harvestQ(t)
 	q.Stopping = []string{"defect"} // this question has none; the rule is general
 
@@ -206,6 +216,8 @@ func TestAStoppingMemberEndsTheWalkBeforeTheFloor(t *testing.T) {
 // S5 (:650-666): the tamper screen makes NO provider call, answers with the
 // question's tamper answer, and the item escalates.
 func TestTamperedEvidenceMakesNoCall(t *testing.T) {
+	t.Parallel()
+
 	q := harvestQ(t)
 	f := &fake{name: DeciderJev, sees: SeesPublic, answer: "clean", conf: 0.99}
 	got := Chain{Deciders: []ChainDecider{NewRulesDecider(nil), f}, Escalate: "a-stronger-reader"}.Classify(
@@ -232,6 +244,8 @@ func TestTamperedEvidenceMakesNoCall(t *testing.T) {
 // F7 `the-evidence-text-is-never-logged` (#1616's acceptance list). The row
 // carries a hash of the evidence and its size; the text itself is never in it.
 func TestTheEvidenceTextIsNeverLogged(t *testing.T) {
+	t.Parallel()
+
 	q := harvestQ(t)
 	secretish := "the card said something nobody else should have to read twice"
 	f := &fake{name: DeciderJev, sees: SeesPublic, answer: "clean", conf: 0.90}
@@ -273,6 +287,8 @@ func TestTheEvidenceTextIsNeverLogged(t *testing.T) {
 // Neither receipt carries the provider's own error text. The token is the
 // evidence; the sentence is the provider's, and it is not ours to keep.
 func TestAFailedProviderAttemptSurvivesInTheLineAndTheRow(t *testing.T) {
+	t.Parallel()
+
 	q := harvestQ(t)
 	want := DeciderJev + "=" + WhyProviderError
 

@@ -22,6 +22,8 @@ import (
 //	per-job data home as the WHOLE write set, the worker home as a read, the job directory as
 //	the cwd, and never --net-deny -- the provider's API is the work.
 func TestWorkersAreContainedBelowTheModel(t *testing.T) {
+	t.Parallel()
+
 	slotDir := absFixture("pool", "worker-home-1")
 	jobDir := filepath.Join(slotDir, "jobs", "abc")
 	dataHome := filepath.Join(jobDir, "data")

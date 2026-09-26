@@ -12,6 +12,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // fakeBin writes one executable fake and returns its path. Fakes are shell
@@ -23,7 +25,7 @@ func fakeBin(t *testing.T, dir, name, body string) string {
 		t.Skip("the forge and git fakes are shell scripts; internal/converge covers the same paths with Go fakes")
 	}
 	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body), 0o755); err != nil {
+	if err := testbin.WriteExecutable(path, []byte("#!/bin/sh\n"+body), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -101,6 +103,8 @@ func (f *convFixture) run(t *testing.T, extra ...string) (int, string, string) {
 
 // 17
 func TestConvergenceRefusesAMissingFlag(t *testing.T) {
+	t.Parallel()
+
 	required := []string{"repo", "ledger", "receipts", "retired", "since"}
 	for _, missing := range required {
 		f := newConvFixture(t)
@@ -142,6 +146,8 @@ func TestConvergenceRefusesAMissingFlag(t *testing.T) {
 
 // 18
 func TestConvergenceRefusesASinceItCannotRead(t *testing.T) {
+	t.Parallel()
+
 	for _, bad := range []string{"yesterday", "2026-13-40T00:00:00Z", "2026-09-19T00:00:00Z"} {
 		f := newConvFixture(t)
 		args := append([]string(nil), f.args...)
@@ -165,6 +171,8 @@ func TestConvergenceRefusesASinceItCannotRead(t *testing.T) {
 
 // One tick, end to end, through the fakes.
 func TestConvergencePrintsATickAtTheCommandLine(t *testing.T) {
+	t.Parallel()
+
 	f := newConvFixture(t)
 	exit, stdout, stderr := f.run(t)
 	if exit != 0 {
@@ -195,6 +203,8 @@ func TestConvergencePrintsATickAtTheCommandLine(t *testing.T) {
 
 // --json is the same reading, and only the object.
 func TestConvergenceJSONIsTheWholeReading(t *testing.T) {
+	t.Parallel()
+
 	f := newConvFixture(t)
 	exit, stdout, stderr := f.run(t, "--json")
 	if exit != 0 {
@@ -225,6 +235,8 @@ func TestConvergenceJSONIsTheWholeReading(t *testing.T) {
 
 // 15, at the command line: the streak is the only exit 1, and it lives in --state.
 func TestConvergenceExitsOneOnTheSecondConsecutiveWidening(t *testing.T) {
+	t.Parallel()
+
 	f := newConvFixture(t)
 	state := filepath.Join(f.dir, "state.json")
 
@@ -287,6 +299,8 @@ func TestConvergenceExitsOneOnTheSecondConsecutiveWidening(t *testing.T) {
 
 // The CLASSES stream through a fake git.
 func TestConvergenceReadsClassesThroughAFakeGit(t *testing.T) {
+	t.Parallel()
+
 	f := newConvFixture(t)
 	repoDir := filepath.Join(f.dir, "repo")
 	spec := func(n int) string {
@@ -327,6 +341,8 @@ esac
 
 // A forge that will not answer is exit 2 and prints no reading.
 func TestConvergenceRefusesAForgeThatWillNotAnswer(t *testing.T) {
+	t.Parallel()
+
 	f := newConvFixture(t)
 	bad := fakeBin(t, f.dir, "gh-broken", "echo 'gh: could not resolve to a Repository' 1>&2\nexit 1\n")
 	exit, stdout, stderr := f.run(t, "--gh", bad)
@@ -343,6 +359,8 @@ func TestConvergenceRefusesAForgeThatWillNotAnswer(t *testing.T) {
 
 // A --timeout of zero or less is a wait with no end.
 func TestConvergenceRefusesATimeoutThatIsNotOne(t *testing.T) {
+	t.Parallel()
+
 	f := newConvFixture(t)
 	for _, bad := range []string{"0", "-5"} {
 		exit, _, stderr := f.run(t, "--timeout", bad)

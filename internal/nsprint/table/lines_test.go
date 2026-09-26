@@ -112,6 +112,8 @@ func linesStore(t *testing.T, cmds [][]string) (*redis.Client, *cmdLog) {
 // reconciler prints ? with its age, and a steady tick is one pipeline with no
 // KEYS and no SCAN.
 func TestTableMachineCiClockLines(t *testing.T) {
+	t.Parallel()
+
 	client, log := linesStore(t, linesFixture())
 	ctx := context.Background()
 	r := table.NewLinesReader(client, table.LinesConfig{})
@@ -154,6 +156,8 @@ func TestTableMachineCiClockLines(t *testing.T) {
 // TestTableLinesEmptyKeyspace: nothing registered and no sprint renders the
 // header, every clock at zero, a zero ci line and every fixed process missing.
 func TestTableLinesEmptyKeyspace(t *testing.T) {
+	t.Parallel()
+
 	client, _ := linesStore(t, nil)
 	lines, err := table.NewLinesReader(client, table.LinesConfig{}).Read(context.Background(), linesNow)
 	if err != nil {
@@ -180,6 +184,8 @@ func TestTableLinesEmptyKeyspace(t *testing.T) {
 // lease frees on release; and a reader racing the writer never observes the
 // output partially written, nor is a temp file left behind.
 func TestTableRendererLease(t *testing.T) {
+	t.Parallel()
+
 	client, _ := linesStore(t, nil)
 	ctx := context.Background()
 	dir := t.TempDir()

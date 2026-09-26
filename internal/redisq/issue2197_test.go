@@ -9,6 +9,8 @@ import (
 )
 
 func TestIssue2197(t *testing.T) {
+	t.Parallel()
+
 	t.Run("LanesAreReadInPriorityOrder", func(t *testing.T) {
 		ctx := context.Background()
 		kind := "cut"

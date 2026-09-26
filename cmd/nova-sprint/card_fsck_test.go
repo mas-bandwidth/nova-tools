@@ -19,6 +19,8 @@ import (
 // bench link is drift (exit 1, remedy --repair), --repair restores it, card
 // show prints the pointer, and card ls --unplaced prints the null cards.
 func TestCardFsckAndBenchReindexVerbs(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	addr := testutil.Start(t)
 	client := redis.NewClient(&redis.Options{Addr: addr})
@@ -71,6 +73,8 @@ func TestCardFsckAndBenchReindexVerbs(t *testing.T) {
 // registered bench whose ci:nomirror:<bench> set is non-empty and counts the
 // benches in its receipt; a bench defect is not card drift, so the exit is 0.
 func TestCardFsckReportsNoMirror(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	addr := testutil.Start(t)
 	client := redis.NewClient(&redis.Options{Addr: addr})
@@ -104,6 +108,8 @@ func TestCardFsckReportsNoMirror(t *testing.T) {
 // back: the card move (BADID) and the friend deal, whose adds are the one
 // checked add.
 func TestCardFsckMemberNotACard(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	addr := testutil.Start(t)
 	client := redis.NewClient(&redis.Options{Addr: addr})

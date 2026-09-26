@@ -57,6 +57,8 @@ git push -q origin $NEW:refs/heads/rowan/integration
 `
 
 func TestIssue2012(t *testing.T) {
+	t.Parallel()
+
 	t.Run("mapfile-is-not-a-bash-32-builtin", func(t *testing.T) {
 		path := fleetScript(t, "mapfile-launcher.sh", issue2012Mapfile)
 		exit, stdout, stderr := runSwarm(t, "lint", "--fleet", path)

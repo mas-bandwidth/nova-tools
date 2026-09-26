@@ -13,6 +13,8 @@ import (
 // by addRules and never switched off, because a harness that cannot resolve a name
 // inside the sandbox is a sandbox bug, not a network one.
 func TestLinuxReadRootsIncludeTheResolverDirectory(t *testing.T) {
+	t.Parallel()
+
 	for _, want := range []string{"/etc", "/usr", "/lib", "/lib64", "/run/systemd/resolve"} {
 		found := false
 		for _, r := range linuxReadRoots {

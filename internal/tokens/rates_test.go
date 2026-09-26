@@ -10,6 +10,8 @@ import (
 // price list, pricing a known model by its input and output counts, refusing to price an
 // unknown model, and reporting the earliest verified date in the table.
 func TestRatesPricingAndUnpriced(t *testing.T) {
+	t.Parallel()
+
 	table := strings.Join([]string{
 		"model\tinput_rate\toutput_rate\tverified_date",
 		"claude-x\t0.0000030\t0.000015\t2026-09-01",

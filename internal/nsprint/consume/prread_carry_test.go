@@ -126,6 +126,8 @@ func seedCarry(t *testing.T, ctx context.Context, client *redis.Client, r carryR
 // card goes land-ready on the carried read. The digest at the old head is the
 // recorded one (digest=true) or computed from the mirror (digest=false).
 func TestHeadChangeCarriesRead(t *testing.T) {
+	t.Parallel()
+
 	r := newCarryRepo(t)
 	for _, tc := range []struct {
 		name   string
@@ -169,6 +171,8 @@ func TestHeadChangeCarriesRead(t *testing.T) {
 // diff: CARRY REFUSED names the file, the read stays at the old head, emma
 // gets her re-read at the new head, and the card stays review-ready.
 func TestHeadChangeRefusesChangedDiff(t *testing.T) {
+	t.Parallel()
+
 	r := newCarryRepo(t)
 	st, client := initTestRedis(t)
 	ctx := context.Background()
@@ -197,6 +201,8 @@ func TestHeadChangeRefusesChangedDiff(t *testing.T) {
 // TestHeadChangeNoMirrorQueuesReRead: without a mirror the carry is skipped
 // with its reason on one line and the re-read is queued as before.
 func TestHeadChangeNoMirrorQueuesReRead(t *testing.T) {
+	t.Parallel()
+
 	r := newCarryRepo(t)
 	st, client := initTestRedis(t)
 	ctx := context.Background()

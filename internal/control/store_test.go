@@ -15,6 +15,8 @@ import (
 )
 
 func TestOpen(t *testing.T) {
+	t.Parallel()
+
 	if _, err := control.Open("", 30*time.Second); err == nil {
 		t.Fatal("expected error for empty controlDir, got nil")
 	}
@@ -62,6 +64,8 @@ func TestOpen(t *testing.T) {
 }
 
 func TestOpen_MaxRUNIsDurationNotIntegerHeuristic(t *testing.T) {
+	t.Parallel()
+
 	// 999999 as an integer used to mean seconds (~11 days) while 1000000 was
 	// treated as nanoseconds. Open takes time.Duration, so 999999ns is 999999ns.
 	h, err := control.Open(t.TempDir(), 999999*time.Nanosecond)
@@ -93,6 +97,8 @@ func TestOpen_MaxRUNIsDurationNotIntegerHeuristic(t *testing.T) {
 }
 
 func TestLoad_AbsentStateFailsClosed(t *testing.T) {
+	t.Parallel()
+
 	h, err := control.Open(t.TempDir(), 30*time.Second)
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
@@ -108,6 +114,8 @@ func TestLoad_AbsentStateFailsClosed(t *testing.T) {
 }
 
 func TestUpdate_InitAndCAS(t *testing.T) {
+	t.Parallel()
+
 	h, err := control.Open(t.TempDir(), 60*time.Second)
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
@@ -182,6 +190,8 @@ func TestUpdate_InitAndCAS(t *testing.T) {
 }
 
 func TestUpdate_RUNExpiryBounds(t *testing.T) {
+	t.Parallel()
+
 	h, err := control.Open(t.TempDir(), 30*time.Second)
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
@@ -242,6 +252,8 @@ func TestUpdate_RUNExpiryBounds(t *testing.T) {
 }
 
 func TestUpdate_PauseDrainStop_AfterExpiredRun(t *testing.T) {
+	t.Parallel()
+
 	h, err := control.Open(t.TempDir(), 10*time.Second)
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
@@ -310,6 +322,8 @@ func TestUpdate_PauseDrainStop_AfterExpiredRun(t *testing.T) {
 }
 
 func TestUpdate_NonRUNExpiresRefused(t *testing.T) {
+	t.Parallel()
+
 	h, err := control.Open(t.TempDir(), 30*time.Second)
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
@@ -326,6 +340,8 @@ func TestUpdate_NonRUNExpiresRefused(t *testing.T) {
 }
 
 func TestWithCoordinator_AuthorityEnforcement(t *testing.T) {
+	t.Parallel()
+
 	h, err := control.Open(t.TempDir(), 30*time.Second)
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
@@ -424,6 +440,8 @@ func TestWithCoordinator_AuthorityEnforcement(t *testing.T) {
 }
 
 func TestWithCoordinator_CallbackErrorReconciliation(t *testing.T) {
+	t.Parallel()
+
 	tmpDir := t.TempDir()
 	h, err := control.Open(tmpDir, 30*time.Second)
 	if err != nil {
@@ -487,6 +505,8 @@ func TestWithCoordinator_CallbackErrorReconciliation(t *testing.T) {
 }
 
 func TestWithCoordinator_LockMutualExclusion(t *testing.T) {
+	t.Parallel()
+
 	h, err := control.Open(t.TempDir(), 30*time.Second)
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
@@ -539,6 +559,8 @@ func TestWithCoordinator_LockMutualExclusion(t *testing.T) {
 }
 
 func TestWriteAck_And_LoadAck(t *testing.T) {
+	t.Parallel()
+
 	tmpDir := t.TempDir()
 	h, err := control.Open(tmpDir, 30*time.Second)
 	if err != nil {
@@ -596,6 +618,8 @@ func TestWriteAck_And_LoadAck(t *testing.T) {
 }
 
 func TestLoadAck_OwnerMustMatchFilename(t *testing.T) {
+	t.Parallel()
+
 	tmpDir := t.TempDir()
 	h, err := control.Open(tmpDir, 30*time.Second)
 	if err != nil {
@@ -624,6 +648,8 @@ func TestLoadAck_OwnerMustMatchFilename(t *testing.T) {
 }
 
 func TestWriteAck_RefusesBenchRebind(t *testing.T) {
+	t.Parallel()
+
 	h, err := control.Open(t.TempDir(), 30*time.Second)
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
@@ -664,6 +690,8 @@ func TestWriteAck_RefusesBenchRebind(t *testing.T) {
 }
 
 func TestWriteAck_ConcurrentCompetingBenchesRefused(t *testing.T) {
+	t.Parallel()
+
 	h, err := control.Open(t.TempDir(), 30*time.Second)
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
@@ -727,6 +755,8 @@ func TestWriteAck_ConcurrentCompetingBenchesRefused(t *testing.T) {
 }
 
 func TestLoad_UnknownFieldsRefused(t *testing.T) {
+	t.Parallel()
+
 	tmpDir := t.TempDir()
 	h, err := control.Open(tmpDir, 30*time.Second)
 	if err != nil {
@@ -753,6 +783,8 @@ func TestLoad_UnknownFieldsRefused(t *testing.T) {
 }
 
 func TestLoad_TrailingJSONRefused(t *testing.T) {
+	t.Parallel()
+
 	tmpDir := t.TempDir()
 	h, err := control.Open(tmpDir, 30*time.Second)
 	if err != nil {
@@ -779,6 +811,8 @@ func TestLoad_TrailingJSONRefused(t *testing.T) {
 }
 
 func TestLoadAck_UnknownAndTrailingJSONRefused(t *testing.T) {
+	t.Parallel()
+
 	tmpDir := t.TempDir()
 	h, err := control.Open(tmpDir, 30*time.Second)
 	if err != nil {
@@ -820,6 +854,8 @@ func TestLoadAck_UnknownAndTrailingJSONRefused(t *testing.T) {
 }
 
 func TestOpen_SymlinkedControlDirRefused(t *testing.T) {
+	t.Parallel()
+
 	outside := t.TempDir()
 	root := t.TempDir()
 	link := filepath.Join(root, "ctrl")
@@ -841,6 +877,8 @@ func TestOpen_SymlinkedControlDirRefused(t *testing.T) {
 }
 
 func TestWriteAck_SymlinkedAcksDirRefused(t *testing.T) {
+	t.Parallel()
+
 	tmpDir := t.TempDir()
 	h, err := control.Open(tmpDir, 30*time.Second)
 	if err != nil {

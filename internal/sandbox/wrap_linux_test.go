@@ -73,6 +73,8 @@ func TestNewerLandlockABIIsClampedToTheTableOnLinux(t *testing.T) {
 // Every row of the table is itself, and only above the top is a clamp. A mutation that
 // clamps everything to the table's maximum -- or that clamps nothing -- turns this red.
 func TestWallABIClampsOnlyAboveTheTable(t *testing.T) {
+	t.Parallel()
+
 	for abi := minKnownABI; abi <= maxKnownABI; abi++ {
 		if used, clamped := wallABI(abi); used != abi || clamped {
 			t.Errorf("wallABI(%d) = %d, %v; want %d, false", abi, used, clamped, abi)

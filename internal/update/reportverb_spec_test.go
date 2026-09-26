@@ -13,6 +13,8 @@ import (
 // block is: the sentences a reader needs are still there, but the document they
 // live in is broken, so a reader cannot trust the section the issue points at.
 func TestSpecUpdateReportVerbSectionIsIntact(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-UPDATE.md"))
 	if err != nil {
 		t.Fatal(err)

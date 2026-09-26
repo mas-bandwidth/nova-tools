@@ -18,6 +18,8 @@ import "testing"
 // string, which is a procedure and not a judgement. The difference from
 // `dogfood` is only which document is read, so it takes the same rung.
 func TestATranscriptTestIsAKindAtTheBottomRung(t *testing.T) {
+	t.Parallel()
+
 	if !KnownKind(KindTranscriptTest) {
 		t.Fatalf("transcript-test is not a kind, so every route call naming it is refused; 12 were refused on 2026-09-19")
 	}
@@ -36,6 +38,8 @@ func TestATranscriptTestIsAKindAtTheBottomRung(t *testing.T) {
 // The twelve units the log holds, by name, routed rather than refused. The
 // rung they actually ran on and came back green from is flash.
 func TestTheTwelveRefusedTranscriptUnitsRouteToFlash(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	for _, id := range []string{
 		"tools13-t1-1654-memory", "tools13-t2-1654-tokens", "tools13-t3-1654-swarm",

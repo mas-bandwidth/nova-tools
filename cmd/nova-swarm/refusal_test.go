@@ -14,6 +14,8 @@ import (
 
 // `supervise` is run's child and nobody's verb.
 func TestSuperviseTypedByHandIsRefused(t *testing.T) {
+	t.Parallel()
+
 	pool := filepath.Join(t.TempDir(), "pool")
 	runSwarm(t, "quickstart", "--pool", pool)
 	exit, _, stderr := runSwarm(t, "supervise", "--pool", pool, "--task", "whatever", "--slot", "1", "--nonce", "abc123abc123", "--worker", "w.json")
@@ -27,6 +29,8 @@ func TestSuperviseTypedByHandIsRefused(t *testing.T) {
 
 // An unknown verb and a flag typo cost ONE line each, never the banner.
 func TestAnUnusableInvocationCostsOneLine(t *testing.T) {
+	t.Parallel()
+
 	for _, args := range [][]string{{"tirage"}, {"status", "--pooll", "x"}} {
 		exit, stdout, stderr := runSwarm(t, args...)
 		if exit != 2 {
@@ -44,6 +48,8 @@ func TestAnUnusableInvocationCostsOneLine(t *testing.T) {
 // An empty task directory is a BATCH REFUSED at exit 1, and one unreadable file queues
 // nothing at all: a batch is all of its tasks or none.
 func TestABatchIsAllOfItsTasksOrNone(t *testing.T) {
+	t.Parallel()
+
 	b := newBench(t)
 	empty := filepath.Join(b.dir, "empty")
 	write(b.t, filepath.Join(empty, "keep"), "")

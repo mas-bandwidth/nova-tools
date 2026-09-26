@@ -40,6 +40,8 @@ func key(args []string) string { return strings.Join(args, " ") }
 // of BatchSize and under for o/r, one for p/q -- and every verdict after that
 // comes from the run's cache: no REST read of any PR.
 func TestPrefetchReadsEachRepoInBatches(t *testing.T) {
+	t.Parallel()
+
 	first, second := map[int]string{}, map[int]string{}
 	var subjects []string
 	var loN, hiN []int
@@ -96,6 +98,8 @@ func TestPrefetchReadsEachRepoInBatches(t *testing.T) {
 // The batch answers the fields pull's REST read does: a closed PR carries its
 // head and close stamp for the merge rule, a merged one its merge commit.
 func TestPrefetchSpellsThePullAsRESTDoes(t *testing.T) {
+	t.Parallel()
+
 	f := &forge{answers: map[string]string{
 		key(BatchArgs("o/r", []int{1, 2, 3})): batchAnswer(map[int]string{
 			1: mergedGQL(1),
@@ -121,6 +125,8 @@ func TestPrefetchSpellsThePullAsRESTDoes(t *testing.T) {
 // A PR the batch did not answer is read by REST, once, as before: a batch that
 // failed says nothing, and no evidence is not negative evidence.
 func TestPrefetchLeavesTheUnansweredToREST(t *testing.T) {
+	t.Parallel()
+
 	f := &forge{answers: map[string]string{
 		// #2 is null in the answer; x/y's batch fails outright
 		key(BatchArgs("o/r", []int{1, 2})): `{"data":{"repository":{"p1":` + mergedGQL(1) + `,"p2":null}}}`,
@@ -150,6 +156,8 @@ func TestPrefetchLeavesTheUnansweredToREST(t *testing.T) {
 // The repo reaches the query only as GraphQL variables: the query text names no
 // owner or repo, whatever a subject spells.
 func TestBatchArgsKeepTheRepoOutOfTheQuery(t *testing.T) {
+	t.Parallel()
+
 	args := BatchArgs("zed/qux", []int{7, 12})
 	if args[0] != "api" || args[1] != "graphql" {
 		t.Fatalf("args = %q", args)

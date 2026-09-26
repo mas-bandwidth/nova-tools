@@ -71,6 +71,8 @@ func withCardViews(cmds [][]string, now time.Time) [][]string {
 // and fail are the ZCARDs of bench:<b>:cards:*, never the bash bench-row's
 // fields; a bench with no card views prints zeros, not the hash's counts.
 func TestHostRowReadsCardViews(t *testing.T) {
+	t.Parallel()
+
 	now := table.Fixture2674Now()
 	at := now.Add(-1 * time.Second).UTC().Format("2006-01-02T15:04:05Z")
 	client := liveStore(t, [][]string{
@@ -102,6 +104,8 @@ func TestHostRowReadsCardViews(t *testing.T) {
 // view whose ZCARD errors (here WRONGTYPE) prints "?" in its cell, its ok%
 // and its column total, never a false 0.
 func TestHostRowPrintsUnreadCountsAsQuestionMarks(t *testing.T) {
+	t.Parallel()
+
 	now := table.Fixture2674Now()
 	at := now.Add(-1 * time.Second).UTC().Format("2006-01-02T15:04:05Z")
 	client := liveStore(t, [][]string{

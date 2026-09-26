@@ -12,6 +12,8 @@ import (
 // two-line file is `SCHEMA missing`, and the wrong-BRANCH file contradicts the
 // wrapper's branch.
 func TestSynthesizeFromTwoModelLines(t *testing.T) {
+	t.Parallel()
+
 	const line1 = "RESULT: quack-fix sha=0123456789ab nova-tools fix: a card"
 	const branch = "nova/flash-0924/quack-fix-a1"
 	facts := WrapperFacts{
@@ -69,6 +71,8 @@ func TestSynthesizeFromTwoModelLines(t *testing.T) {
 // and its ## Findings are the model's (the wrapper cannot know them); BRANCH
 // and PATHS, which a read does not know, are not written.
 func TestSynthesizeKeepsJudgementFields(t *testing.T) {
+	t.Parallel()
+
 	const line1 = "RESULT: r1 sha=0123456789ab nova-tools read: read PR 812"
 	head := strings.Repeat("a", 40)
 	model := line1 + "\nDONE\nPR: 812\nHEAD: " + head + "\nFINDINGS: 1\nFLOOR: LOW\nSUGGEST: APPROVE\nBRANCH: x\n## Findings\n- LOW a.go:1 `x` y\n"
@@ -86,6 +90,8 @@ func TestSynthesizeKeepsJudgementFields(t *testing.T) {
 // for a kind that needs one, the fields only the model can know); it never asks
 // for a field the wrapper writes.
 func TestResultFormatIsTheTwoLineContract(t *testing.T) {
+	t.Parallel()
+
 	for _, kind := range Kinds {
 		f := ResultFormat(kind)
 		if !strings.Contains(f, "line 1: this card's line 1, verbatim") || !strings.Contains(f, "`DONE`, `ABSTAIN <why>` or `BLOCKED <why>`") {

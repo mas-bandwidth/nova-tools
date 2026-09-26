@@ -184,6 +184,8 @@ func TestNextNoneNamesTheGateThatEmptiedTheSet(t *testing.T) {
 // Accounting is not optional: a jev call that nobody can account for is refused
 // before it is made, exactly as nova-decide route refuses it.
 func TestNextRefusesAJevCallItCannotAccountFor(t *testing.T) {
+	t.Parallel()
+
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"next", "--file", workSet(t), "--for", "rowan-child", "--lanes", lanesFixture}, &stdout, &stderr)
 	if code != 2 {
@@ -200,6 +202,8 @@ func TestNextRefusesAJevCallItCannotAccountFor(t *testing.T) {
 // naming the path rather than a wait -- a waiter here would be the barrier A9
 // removes.
 func TestAWriteVerbRefusesWhenTheSetIsLocked(t *testing.T) {
+	t.Parallel()
+
 	path := workSet(t)
 	if err := os.Mkdir(path+".lock", 0o755); err != nil {
 		t.Fatalf("take the lock: %v", err)
@@ -217,6 +221,8 @@ func TestAWriteVerbRefusesWhenTheSetIsLocked(t *testing.T) {
 // A3's refusal, at the CLI: the word the author must write instead is IN the
 // message, so nobody has to go and read the spec to get past it.
 func TestAttemptRecordRefusesAnOutcomeWithNoProof(t *testing.T) {
+	t.Parallel()
+
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"attempt", "record", "--file", workSet(t), "--unit", "certify:verb",
 		"--by", "rowan-child", "--outcome", "failed"}, &stdout, &stderr); code != 2 {
@@ -230,6 +236,8 @@ func TestAttemptRecordRefusesAnOutcomeWithNoProof(t *testing.T) {
 // attempt list is the reader beside the writer, and it reads what the writer
 // wrote: two records, in order, with their proofs.
 func TestAttemptListReadsBackWhatRecordWrote(t *testing.T) {
+	t.Parallel()
+
 	path := workSet(t)
 	record := func(args ...string) {
 		t.Helper()
@@ -268,6 +276,8 @@ func TestAttemptListReadsBackWhatRecordWrote(t *testing.T) {
 // byte of it alone. Pinned at the CLI as well as in the reader, because this is
 // the property a coordinator trusts when they let a tool near their work set.
 func TestRecordLeavesTheRestOfTheDocumentByteIdentical(t *testing.T) {
+	t.Parallel()
+
 	path := workSet(t)
 	before, err := os.ReadFile(path)
 	if err != nil {

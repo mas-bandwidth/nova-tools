@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // ci_budget_test.go is the two-minute law, read off the workflow files as text
@@ -38,55 +39,6 @@ var jobKeyRe = regexp.MustCompile(`^  ([a-zA-Z0-9_-]+):$`)
 // timeoutRe matches a timeout-minutes line at four spaces.
 var timeoutRe = regexp.MustCompile(`^    timeout-minutes:\s*(\d+)$`)
 
-// offCLPathRe matches the `if:` guard that runs a job ONLY on push to main and
-// on the nightly schedule. Such a job cannot run on a pull_request, so nothing
-// waits on it to merge and the two-minute CL budget does not apply: it is the
-// expensive tier — the GitHub-hosted full suite — deliberately off the fast
-// path. Every other job in ci.yml is on the CL path by default; the exemption
-// has to be written into the workflow as that guard, not assumed here.
-var offCLPathRe = regexp.MustCompile(`github\.event_name == 'push' \|\| github\.event_name == 'schedule'`)
-
-// perLegTimeoutRe matches a job ceiling carried per matrix leg rather than as one
-// number: `timeout-minutes: ${{ matrix.leg.timeout }}`.
-var perLegTimeoutRe = regexp.MustCompile(`^    timeout-minutes:\s*\$\{\{\s*matrix\.leg\.timeout\s*\}\}\s*$`)
-
-// pushStudioTimeoutRe matches the sharded test job's ceiling: a larger cap for
-// the studio shards of a PUSH run only (the whole tree, dev and main), the CL
-// cap for every leg a pull request or merge group can start. Group 1 is the
-// push-studio cap, group 2 the CL cap. No pull request can reach group 1, so
-// the CL-path check reads group 2; TestPushStudioShardsCarryTheirOwnCeiling
-// pins group 1.
-var pushStudioTimeoutRe = regexp.MustCompile(`^    timeout-minutes:\s*\$\{\{\s*matrix\.entry\.group == 'macOS' && github\.event_name == 'push' && (\d+) \|\| (\d+)\s*\}\}\s*$`)
-
-// pushStudioCeiling is the push run's studio-shard cap, and its reason: on
-// 2026-09-24 dev push run 35950929169 (attempt 2, Studio load 3.5) ran sixteen
-// whole-tree studio shards at once and all sixteen were cancelled at twelve
-// minutes, 1/16 still testing after 6,252 passes in 75 packages. The push leg
-// now deals eight shards (one wave on eight runners) under this cap.
-const pushStudioCeiling = 20
-
-func TestPushStudioShardsCarryTheirOwnCeiling(t *testing.T) {
-	root := repoRoot(t)
-	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
-	for _, line := range strings.Split(jobBody(src, "test"), "\n") {
-		m := pushStudioTimeoutRe.FindStringSubmatch(line)
-		if m == nil {
-			continue
-		}
-		if push, _ := strconv.Atoi(m[1]); push != pushStudioCeiling {
-			t.Errorf("the test job's push studio cap = %d, want %d", push, pushStudioCeiling)
-		}
-		return
-	}
-	t.Error("the test job declares no push-only studio cap; the whole-tree studio shards of run 35950929169 were all cancelled at the CL cap")
-}
-
-// legNameRe and legTimeoutRe read a matrix leg's name and its own ceiling.
-var (
-	legNameRe    = regexp.MustCompile(`^-\s*name:\s*(\S+)$`)
-	legTimeoutRe = regexp.MustCompile(`^timeout:\s*(\d+)$`)
-)
-
 // usesRe matches an action reference pinned by its 40-hex commit SHA.
 var usesRe = regexp.MustCompile(`uses:\s*([^/\s]+/[^@\s]+)@([0-9a-fA-F]{40})`)
 
@@ -97,94 +49,106 @@ var usesRe = regexp.MustCompile(`uses:\s*([^/\s]+/[^@\s]+)@([0-9a-fA-F]{40})`)
 // "refuses:" is not an action reference).
 var usesDirectiveRe = regexp.MustCompile(`^\s*(-\s*)?uses:\s*\S`)
 
-func TestCLTierJobsStayWithinTheBudget(t *testing.T) {
+func TestEveryCIJobIsCappedAtTwoMinutes(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
-	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
-	names := jobNames(src)
-	if len(names) == 0 {
-		t.Fatal("no jobs parsed from ci.yml; the parser is looking in the wrong place")
+	files, err := filepath.Glob(filepath.Join(root, ".github", "workflows", "*.yml"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no workflow files under .github/workflows: %v", err)
 	}
-	timeouts := jobTimeouts(src)
-	offPath := jobsOffTheCLPath(src)
-	for _, name := range names {
-		mins, ok := timeouts[name]
-		if !ok {
-			t.Errorf("job %q has no timeout-minutes; the per-job cap cannot be guarded on a job that does not declare one", name)
+	for _, file := range files {
+		src := readFile(t, file)
+		names := jobNames(src)
+		if len(names) == 0 {
+			t.Errorf("%s: no jobs parsed; the parser is looking in the wrong place", filepath.Base(file))
 			continue
 		}
-		if offPath[name] {
-			// Guarded to push-to-main and the nightly schedule, so no pull
-			// request waits on it and it is not in the CL budget. It did
-			// declare a ceiling, which is the part checked just above.
-			continue
+		timeouts := jobTimeouts(src)
+		for _, name := range names {
+			mins, ok := timeouts[name]
+			if !ok {
+				t.Errorf("%s: job %q declares no literal timeout-minutes; every job is `timeout-minutes: %d`, no expression, no per-leg ceiling", filepath.Base(file), name, twoMinuteCap)
+				continue
+			}
+			if mins > twoMinuteCap {
+				t.Errorf("%s: job %q has timeout-minutes %d, want %d: the cap is permanent and platform-wide; split the work into parallel functional programs instead of raising it", filepath.Base(file), name, mins, twoMinuteCap)
+			}
 		}
-		// This pins the per-job CAP only. timeout-minutes is a ceiling on one
-		// job, not a proof that the whole required path fits two minutes: the
-		// path is the CI run, and no per-job ceiling can see that sum.
-		want, ok := clTierCeilings[name]
-		if !ok {
-			want = defaultCLCeiling
-		}
-		if mins > want {
-			t.Errorf("CL-tier job %q has timeout-minutes %d, want a cap <= %d", name, mins, want)
+		if strings.Contains(src, "timeout-minutes: ${{") {
+			t.Errorf("%s: a timeout-minutes is an expression; the cap is the literal %d on every job", filepath.Base(file), twoMinuteCap)
 		}
 	}
 }
 
-// TestMergeGateAllowanceCarriesItsReason pins the one exception: test-hosted-merge
-// declares exactly mergeGateCeiling minutes (five), and the reason it may is
-// recorded in the test as mergeGateReason. Every other job on the critical path
-// stays at defaultCLCeiling, which TestCLTierJobsStayWithinTheBudget enforces by
-// the map lookup above. If the job drifts back to two the fleet drops groups
-// again; if it drifts past five the exception has grown without a record.
-func TestMergeGateAllowanceCarriesItsReason(t *testing.T) {
-	root := repoRoot(t)
-	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
-	mins, ok := jobTimeouts(src)["test-hosted-merge"]
-	if !ok {
-		t.Fatal("test-hosted-merge declares no timeout-minutes; the allowance has nothing to hold")
+// goTestTimeoutRe reads the sharded test job's `go test -timeout`, which must
+// end the run with a Go stack before the job cap kills it without one.
+var goTestTimeoutRe = regexp.MustCompile(`GOTEST_TIMEOUT="([0-9]+)s"`)
+
+func TestShardGoTestTimeoutIsUnderTheJobCap(t *testing.T) {
+	t.Parallel()
+
+	job := jobBody(readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml")), "test")
+	m := goTestTimeoutRe.FindStringSubmatch(job)
+	if m == nil {
+		t.Fatal("the test job passes no literal GOTEST_TIMEOUT=\"<n>s\" to make test")
 	}
-	if mins != mergeGateDarwinCeiling {
-		t.Errorf("test-hosted-merge's largest per-leg timeout-minutes = %d, want %d", mins, mergeGateDarwinCeiling)
+	secs, _ := strconv.Atoi(m[1])
+	if secs >= twoMinuteCap*60 {
+		t.Errorf("go test -timeout %ds is not under the %d-minute job cap", secs, twoMinuteCap)
 	}
-	// PER LEG, because one number for two platforms censors the slower of them.
-	// linux was measured at 41-94 s in run 35354900090, so ITS five minutes is
-	// still a hang detector and stays. darwin's five did not survive batch 7 —
-	// shards 0 and 1 of run 35369433950 were cancelled at exactly five minutes —
-	// and is now mergeGateDarwinCeiling behind a plan that deals from darwin's own
-	// measured table. A THIRD leg lived here until 2026-09-18: windows, at twelve
-	// minutes, cancelled at 5:12 on a five-minute cap with fifteen of twenty-three
-	// packages still to run. It went with the native windows runners (Glenn: "drop
-	// the native windows CI runners. WSL only from now on."), and the assertion
-	// below is that it does not come back by accident.
-	legs := legTimeouts(jobBody(src, "test-hosted-merge"))
-	if len(legs) == 0 {
-		t.Fatal("test-hosted-merge declares no per-leg timeouts; one ceiling for every platform is what cancelled darwin shards 0 and 1 of run 35369433950 at exactly five minutes")
-	}
-	if _, ok := legs["windows"]; ok {
-		t.Error("test-hosted-merge declares a windows leg again; the native windows CI runners were dropped on 2026-09-18 and the CL tier's Windows guard is the lint job's `make vet-windows` cross-vet, which needs no Windows machine")
-	}
-	for leg, want := range map[string]int{"linux": mergeGateCeiling, "darwin": mergeGateDarwinCeiling} {
-		got, ok := legs[leg]
+	mk := parseMakefile(t, filepath.Join(repoRoot(t), "Makefile"))
+	for _, v := range []string{"GOTEST_TIMEOUT", "MERGE_TIMEOUT", "DARWIN_TIMEOUT"} {
+		raw, ok := mk.vars[v]
 		if !ok {
-			t.Errorf("the %s leg of test-hosted-merge declares no timeout of its own", leg)
+			t.Errorf("the Makefile declares no %s", v)
 			continue
 		}
-		if got != want {
-			t.Errorf("the %s leg of test-hosted-merge has timeout %d, want %d", leg, got, want)
+		d, err := time.ParseDuration(strings.TrimSpace(raw))
+		if err != nil {
+			t.Errorf("%s = %q is not a Go duration: %v", v, raw, err)
+			continue
+		}
+		if d >= time.Duration(twoMinuteCap)*time.Minute {
+			t.Errorf("Makefile %s = %s is not under the %d-minute job cap", v, d, twoMinuteCap)
 		}
 	}
-	for name, reason := range map[string]string{"merge gate": mergeGateReason, "merge gate darwin leg": mergeGateDarwinReason} {
-		if strings.TrimSpace(reason) == "" {
-			t.Errorf("the %s allowance carries no reason; an exception must say why it exists", name)
+}
+
+// macOSEntryRe reads a macOS shard entry's arch and group from test-packages.
+var macOSEntryRe = regexp.MustCompile(`entries\+=\(.*\\"os\\":\\"macOS\\",\\"arch\\":\\"([^"\\]+)\\",\\"group\\":\\"([^"\\]+)\\"`)
+
+// TestMacOSShardsRunOnTheStudioForNow pins the 2026-09-25 decision (Glenn: "let's
+// have the darwin tests run on studio, so we can move forward"; "running tests
+// in under 2 minutes will require modern machines"): the darwin legs select the
+// Studio's ARM64 runners until the Mac minis (~2026-10-10) take them. #3634's
+// rule (no CI on the Studio) is suspended for the darwin legs only.
+func TestMacOSShardsRunOnTheStudioForNow(t *testing.T) {
+	t.Parallel()
+
+	src := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
+	found := 0
+	for _, line := range strings.Split(jobBody(src, "test-packages"), "\n") {
+		m := macOSEntryRe.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		found++
+		if m[1] != "ARM64" || m[2] != "studio" {
+			t.Errorf("a macOS test shard selects arch %q group %q, want ARM64 on studio (2026-09-25, until the Mac minis): %s", m[1], m[2], strings.TrimSpace(line))
 		}
 	}
-	if !strings.Contains(src, "the one allowed exception") && !strings.Contains(src, "the one exception") {
-		t.Error("the test-hosted-merge comment does not name the gate as the exception to the two-minute law")
+	if found == 0 {
+		t.Error("test-packages emits no macOS shard entry this test can read")
+	}
+	if strings.Contains(jobBody(src, "test-hosted-merge"), "name: darwin") {
+		t.Error("the merge group carries a darwin leg again; since 2026-09-25 its darwin coverage is the test (darwin-arm64) shards on the group commit, and a second leg on the same runners crossed the cap (run 36207910988)")
 	}
 }
 
 func TestJobsThatLeftCIAreStillInCertification(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	cert := readFile(t, filepath.Join(root, ".github", "workflows", "certification.yml"))
 
@@ -222,6 +186,8 @@ func TestJobsThatLeftCIAreStillInCertification(t *testing.T) {
 }
 
 func TestEveryActionIsPinnedBySHA(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	for _, file := range []string{".github/workflows/ci.yml", ".github/workflows/certification.yml"} {
 		src := readFile(t, filepath.Join(root, file))
@@ -246,6 +212,8 @@ func TestEveryActionIsPinnedBySHA(t *testing.T) {
 // this file: the step's shape is the contract, so the assertion is on the words
 // a reviewer would look for.
 func TestFleetProbeRunsTheNetworkProbeInsideNovaSandbox(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
 	job := jobBody(src, "fleet-probe")
@@ -261,8 +229,8 @@ func TestFleetProbeRunsTheNetworkProbeInsideNovaSandbox(t *testing.T) {
 	if !strings.Contains(job, "runner.os == 'Linux'") {
 		t.Errorf("the sandboxed network probe is not guarded to Linux runners only")
 	}
-	if mins, ok := jobTimeouts(src)["fleet-probe"]; !ok || mins > defaultCLCeiling {
-		t.Errorf("fleet-probe timeout-minutes = %d (declared=%v), want a cap <= %d; the probe must fit the two-minute CL budget", mins, ok, defaultCLCeiling)
+	if mins, ok := jobTimeouts(src)["fleet-probe"]; !ok || mins > twoMinuteCap {
+		t.Errorf("fleet-probe timeout-minutes = %d (declared=%v), want a cap <= %d; the probe must fit the two-minute CL budget", mins, ok, twoMinuteCap)
 	}
 }
 
@@ -376,125 +344,19 @@ func wallSecondsUnderTen(re *regexp.Regexp, code string) bool {
 	return false
 }
 
-// defaultCLCeiling is the two-minute law: a CL-tier job caps at 2 minutes.
-const defaultCLCeiling = 2
-
-// mergeGateCeiling is the one allowed exception to the two-minute law.
-// test-hosted-merge is on the CL path — the merge queue's group commit waits on
-// it — but it is not a small check: it runs the FULL hosted suite (no -short) of
-// the packages a group changes, on both platforms, sharded by size. Under load
-// (the Studio running sixteen self-hosted legs plus three friends) its darwin
-// shards were cancelled at 2:44 on 2026-09-17; a cancelled shard drops the whole
-// group and restarts every group behind it, so the two-minute cap on this one job
-// was the throughput limit of the whole fleet. Five minutes is the allowance;
-// every other CL-path job stays at the default two.
-const mergeGateCeiling = 5
-
-// mergeGateReason is the record beside that allowance: why the merge gate is
-// allowed five minutes. It is asserted in TestMergeGateAllowanceCarriesItsReason,
-// so the number and the why cannot drift apart silently.
-const mergeGateReason = "the merge gate runs the full suite of the packages a group changes on both hosted platforms; sharded by size; cancelled under load at 2:44 on 2026-09-17"
-
-// A WINDOWS CEILING LIVED HERE, twelve minutes, the second number of the one
-// exception and the windows leg's alone: five of six windows legs took 3:47 to
-// 4:53 in run 35354900090 and the sixth was cancelled at 5:12 with fifteen of
-// twenty-three packages still to run. It went with the leg on 2026-09-18 (Glenn:
-// "drop the native windows CI runners. WSL only from now on."). The rule it
-// carried is not lost — it is mergeGateDarwinCeiling below, the same asymmetry
-// one platform over: a cancelled shard does not fail one leg, it drops the group
-// and restarts every PR behind it, while a cap that is too generous costs runner
-// minutes only when something is genuinely wedged.
-
-// mergeGateDarwinCeiling is the SECOND number of the one exception, and 2026-09-18
-// is what bought it. Five minutes fit darwin while the leg ran small groups off
-// the Linux table (38-256 s in run 35354900090). It did not fit batch 7: in
-// merge-group run 35369433950 darwin shards 0 and 1 were CANCELLED at exactly
-// five minutes on superman, carrying a thirteen-member batch's packages dealt by
-// COUNT rather than by size, with cmd/nova-bus — 10.0 s in the Linux table and
-// minutes on an x64 Mac — inside shard 0.
-//
-// The shard plan is the real fix and it landed in the same change:
-// testdata/ci/package-sizes-darwin.tsv and DARWIN_TIMEOUT mean a darwin shard is
-// now dealt from darwin's own measurement. This number is what remains a HANG
-// DETECTOR behind that plan, and it carries the same room the retired Windows
-// ceiling did, for the same asymmetry: a cap that is too generous costs runner minutes
-// when something is genuinely wedged, while a cap that is too thin drops the
-// group and restarts every PR behind it.
-const mergeGateDarwinCeiling = 10
-
-// mergeGateDarwinReason is the record beside THAT number, asserted the same way.
-const mergeGateDarwinReason = "darwin runs the full suite on the x64 Macs: shards 0 and 1 of run 35369433950 were cancelled at the five-minute cap carrying a thirteen-member batch dealt by count off the Linux table, so the leg now deals from package-sizes-darwin.tsv and this cap is the hang detector behind it"
-
-// clTierCeilings is where a job that does NOT cap at two minutes says so, and
-// says why. A number here is a claim about the machine the job runs on, so it
-// belongs in the repository beside the law rather than in a commit message.
-var clTierCeilings = map[string]int{
-	// The aggregate reads results and checks nothing out.
-	"ci-ok": 1,
-
-	// The one allowed exception, and the ceiling here is the LARGEST of its
-	// per-leg numbers, because this map answers "how long can this job run".
-	// linux carries mergeGateCeiling (5) and darwin mergeGateDarwinCeiling (10),
-	// each for the reason recorded beside it. The budget test reads the two apart
-	// out of the workflow's matrix. A windows leg at twelve was the largest until
-	// 2026-09-18, when the native windows runners were dropped.
-	"test-hosted-merge": mergeGateDarwinCeiling,
-
-	// The sandbox leg a PR runs only when it touches internal/sandbox or a
-	// *_linux.go. A hosted runner starts cold (checkout, setup-go, cache
-	// restore) before it compiles anything, and 6 is the same cap the sharded
-	// matrix carries. A PR that does not touch those paths pays a checkout and
-	// skips. This job carried a windows entry too until 2026-09-18, when that
-	// entry was retired into test-windows-pr: on integration-4 it was CANCELLED
-	// by this very cap at 6 min 20 s, running unsharded the same packages the
-	// sharded leg had just passed. The number was never the problem; running
-	// them unsharded was. (2026-09-16, amended 2026-09-18)
-	"test-hosted-pr": 6,
-
-	// `test-windows-pr` WAS HERE at ten minutes, the Windows leg a pull request
-	// got for the packages it changed. Glenn dropped the native windows CI
-	// runners on 2026-09-18 ("WSL only from now on."), so the job and its ceiling
-	// are both gone. The Windows guard a PR runs now is the lint job's `make
-	// vet-windows` cross-vet, which lives inside lint's ordinary two minutes and
-	// needs no entry here.
-
-	// The sharded test matrix, and the one number the move to self-hosted
-	// runners actually changed. The two minutes are the CL FEEDBACK PATH: how
-	// long a change waits. On GitHub-hosted runners every leg starts at once,
-	// so a leg's ceiling and the run's wall clock are one number. On 4+4 fixed
-	// machines they are not: the legs queue, the run is the sum over the waves,
-	// and a per-job ceiling cannot see it. Measured in run 35019905236: every
-	// studio leg and three of eight space legs were CANCELLED at 2:00 having
-	// done nothing wrong, while five space legs passed at 80-118 s. Six is a
-	// hang detector for a leg measured, once the legs stopped oversubscribing
-	// their machines, at 12 to 126 s over a 233 s run (35025207396). The budget
-	// is the run's wall clock; hold the law there.
-	//
-	// RAISED FROM SIX to twelve on 2026-09-19, because six had stopped being a
-	// hang detector and started cancelling honest work again. Two receipts the
-	// same hour: #1700's `test (2/4 studio)` on superman-nova-1 and #1714's
-	// `test (3/4 studio)` on superman-nova-2, both CANCELLED at 6:23 and 6:07
-	// with every test PASS on the console and `ok cmd/nova-merge 342.360s` in
-	// the log — the package that ran in 150 s the same morning. The number is
-	// twice the slowest GREEN shard in the last twenty green runs of this
-	// workflow: 348 s, `test (2/4 studio)` on superman-nova-7 in run
-	// 35457289611. 348 s is THREE SECONDS under the old cap, which is not a
-	// budget, it is a coin flip on the load of the minute.
-	//
-	// The cause is the group label, not the Studio. `studio` is a GROUP that
-	// spans four machines — air, batman, studio and superman — and their
-	// slowest green shards in the same twenty runs are 149 s, 308 s, 162 s and
-	// 348 s. superman is an Intel Xeon W-2191B at 2.30 GHz carrying ten
-	// runners; the Studio is an M3 Ultra. One ceiling over machines that differ
-	// by more than 2x censors the slower of them, which is the same mistake
-	// `test-hosted-merge` made with one number for linux and darwin. Splitting
-	// the label by machine class is the real repair and wants its own change;
-	// twelve is the honest ceiling until then.
-	"test": 12,
-
-	// The lisp tier on both SBCL platforms; lispCeiling carries its receipts.
-	"lisp": lispCeiling,
-}
+// twoMinuteCap is THE CI law, permanent and platform-wide (Glenn 2026-09-25
+// 9:40 PM ET: "i want this 2 minute cap to be permanent, and for all new CI
+// stuff created, all platforms to have this same 2m cap"): every job in every
+// workflow declares timeout-minutes: 2, literally. No expression, no matrix
+// leg with its own ceiling, no tier that is exempt, nightly and release
+// included. The exceptions this file used to carry (the merge gate at five and
+// ten, the lisp job at fifteen, the push studio shards at twenty, the hosted
+// tree at fifteen) were "hang detectors with room"; a nine-minute darwin leg
+// ran to completion under them on 2026-09-25 and was treated as normal.
+// Glenn: "we fix or it doesn't land. that's the right posture. nothing else
+// will stop the test creep." Work that needs longer is split into parallel
+// functional test programs, each its own job under the cap.
+const twoMinuteCap = 2
 
 func jobNames(src string) []string {
 	var names []string
@@ -543,67 +405,6 @@ func jobTimeouts(src string) map[string]int {
 				out[cur] = n
 			}
 			continue
-		}
-		if m := pushStudioTimeoutRe.FindStringSubmatch(line); m != nil {
-			// The CL cap: the only branch a pull request or merge group reaches.
-			if n, err := strconv.Atoi(m[2]); err == nil {
-				out[cur] = n
-			}
-			continue
-		}
-		if perLegTimeoutRe.MatchString(line) {
-			for _, mins := range legTimeouts(jobBody(src, cur)) {
-				if mins > out[cur] {
-					out[cur] = mins
-				}
-			}
-		}
-	}
-	return out
-}
-
-// legTimeouts reads a job's per-leg ceilings out of its matrix: each `- name: X`
-// entry's `timeout: N`, keyed by the leg name. It is how the budget test can say
-// what windows is allowed without saying the same thing about linux and darwin.
-func legTimeouts(job string) map[string]int {
-	out := make(map[string]int)
-	name := ""
-	for _, line := range strings.Split(job, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if m := legNameRe.FindStringSubmatch(trimmed); m != nil {
-			name = m[1]
-			continue
-		}
-		if name == "" {
-			continue
-		}
-		if m := legTimeoutRe.FindStringSubmatch(trimmed); m != nil {
-			if n, err := strconv.Atoi(m[1]); err == nil {
-				out[name] = n
-			}
-		}
-	}
-	return out
-}
-
-// jobsOffTheCLPath returns the jobs whose `if:` guard runs them only on push to
-// main and on the nightly schedule. It reads the workflow as text, like the rest
-// of this file: the guard is matched by its exact shape, so a job that wants out
-// of the two-minute budget has to carry that guard verbatim and mention no
-// pull_request of its own.
-func jobsOffTheCLPath(src string) map[string]bool {
-	out := make(map[string]bool)
-	cur := ""
-	for _, line := range strings.Split(src, "\n") {
-		if m := jobKeyRe.FindStringSubmatch(line); m != nil {
-			cur = m[1]
-			continue
-		}
-		if cur == "" || !strings.HasPrefix(line, "    if:") {
-			continue
-		}
-		if offCLPathRe.MatchString(line) && !strings.Contains(line, "pull_request") {
-			out[cur] = true
 		}
 	}
 	return out
@@ -691,6 +492,8 @@ func certificationOKNeeds(src string) map[string]bool {
 // verdict) that no ci-ok step names would let ci-ok run zero steps and report
 // success over red needs (found on #766 before the queue was turned on).
 func TestEveryTriggeringEventReachesACIOKVerdict(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
 	i := strings.Index(src, "\n  ci-ok:")
@@ -706,111 +509,16 @@ func TestEveryTriggeringEventReachesACIOKVerdict(t *testing.T) {
 	}
 }
 
-// studioEntryRe matches the test-packages line that emits a Go shard for macOS
-// (once the studio legs, now darwin-x64); group 1 is its arch label.
-var studioEntryRe = regexp.MustCompile(`entries\+=\(.*\\"os\\":\\"macOS\\",\\"arch\\":\\"([^"\\]+)\\"`)
-
-// TestMacOSShardsLeaveTheStudio: Glenn 2026-09-24 7:25 PM ET (nova-tools#3634),
-// "No CI, and no swarm on the studio. It's for friends." The Studio's runners
-// are the only ARM64 macOS runners, so a macOS Go shard carries X64 and lands
-// on batman or superman. (Run 35999520176's Intel cancellations predate #3492,
-// when every shard ran the whole tree.)
-func TestMacOSShardsLeaveTheStudio(t *testing.T) {
-	src := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
-	found := 0
-	for _, line := range strings.Split(jobBody(src, "test-packages"), "\n") {
-		m := studioEntryRe.FindStringSubmatch(line)
-		if m == nil {
-			continue
-		}
-		found++
-		if m[1] != "X64" {
-			t.Errorf("a macOS test shard selects arch %q, want X64 (nova-tools#3634: no CI on the Studio): %s", m[1], strings.TrimSpace(line))
-		}
-		if strings.Contains(line, "studio\\\"") {
-			t.Errorf("a macOS test shard is still named for the Studio: %s", strings.TrimSpace(line))
-		}
-	}
-	if found == 0 {
-		t.Error("test-packages emits no macOS shard entry this test can read")
-	}
-	if !strings.Contains(jobBody(src, "test"), `"${{ matrix.entry.arch }}"`) {
-		t.Error("the test job's runs-on does not carry matrix.entry.arch, so the X64 label selects nothing and a shard could land on the Studio")
-	}
-}
-
-// goTestTimeoutRe reads the test job's per-leg `go test -timeout`: group 1 the
-// push studio value, group 2 the PR/merge-group studio value, group 3 the space
-// legs' value (minutes).
-var goTestTimeoutRe = regexp.MustCompile(`GOTEST_TIMEOUT="\$\{\{ matrix\.entry\.group == 'macOS' && github\.event_name == 'push' && '(\d+)m' \|\| matrix\.entry\.group == 'macOS' && '(\d+)m' \|\| '(\d+)m' \}\}"`)
-
-// TestShardGoTestTimeoutFitsTheJobCap: run 35999520176's Studio shard failed
-// only on Go's default 10m package timeout (cmd/nova-bus, cmd/nova-merge). Each
-// shard's go test timeout must be under its job cap, so Go names a hang before
-// the runner cancels the job; space legs keep Go's 10m under the CL cap.
-func TestShardGoTestTimeoutFitsTheJobCap(t *testing.T) {
-	job := jobBody(readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml")), "test")
-	var caps, tos []string
-	for _, line := range strings.Split(job, "\n") {
-		if m := pushStudioTimeoutRe.FindStringSubmatch(line); m != nil {
-			caps = m[1:]
-		}
-		if m := goTestTimeoutRe.FindStringSubmatch(line); m != nil {
-			tos = m[1:]
-		}
-	}
-	if caps == nil || tos == nil {
-		t.Fatalf("the test job lacks a readable cap (%v) or GOTEST_TIMEOUT (%v)", caps, tos)
-	}
-	caps = append(caps, caps[1]) // space legs run under the CL cap
-	for i, shape := range []string{"push studio", "PR/merge-group studio", "space"} {
-		c, _ := strconv.Atoi(caps[i])
-		to, _ := strconv.Atoi(tos[i])
-		if to >= c {
-			t.Errorf("%s: go test -timeout %dm is not under the job cap %dm", shape, to, c)
-		}
-	}
-}
-
 // TestMakefileHasNoTargetSpecificConditionalPKGS: under GNU make 3.81 (the
 // macOS runners' /usr/bin/make) one `<target>: PKGS ?= ...` line made
 // `test: PKGS := $(CL_PKGS)` override `make test PKGS=<shard>`, so every studio
 // shard of dev push run 35999520176 ran the whole tree.
 func TestMakefileHasNoTargetSpecificConditionalPKGS(t *testing.T) {
+	t.Parallel()
+
 	src := readFile(t, filepath.Join(repoRoot(t), "Makefile"))
 	re := regexp.MustCompile(`(?m)^[A-Za-z0-9_.-]+:\s*PKGS\s*\?=`)
 	if m := re.FindString(src); m != "" {
 		t.Errorf("Makefile carries %q; under make 3.81 it lets `test: PKGS :=` beat the shard's PKGS", m)
-	}
-}
-
-// lispMeasuredMaxSecs is the slowest lisp job wall clock measured on
-// 2026-09-24, set-up to Complete job. The first measurement, 158 s (studio, run
-// 36007928793), set the cap at 6; both studio legs on the next two runs
-// (36011449625 on studio-nova-15, 36011918432 on studio-nova-16) were then
-// cancelled at 6:40 with the suite unfinished, because at Studio load 50-70 the
-// sweep took 42-90 s and checkout 107-157 s (14 s at 13:38Z): 265-293 s before
-// the suite starts. 430 s = 293 s to reach the suite + 110 s, the slowest suite
-// seen (space, run 36006767411) + 27 s teardown. Space legs ran 82-107 s.
-const lispMeasuredMaxSecs = 430
-
-// lispCeiling is the lisp job's cap in minutes: twice the measured max, rounded
-// up to a whole minute.
-const lispCeiling = 15
-
-// TestLispCapIsAboveTheMeasuredFloor: the lisp job's timeout-minutes must be at
-// least twice the slowest measured lisp job, so the cap is a hang detector and
-// not a coin flip on the load of the minute.
-func TestLispCapIsAboveTheMeasuredFloor(t *testing.T) {
-	src := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
-	mins, ok := jobTimeouts(src)["lisp"]
-	if !ok {
-		t.Fatal("the lisp job declares no timeout-minutes")
-	}
-	if mins*60 < 2*lispMeasuredMaxSecs {
-		t.Errorf("lisp timeout-minutes = %d (%d s), want >= 2 x the measured %d s job wall clock", mins, mins*60, lispMeasuredMaxSecs)
-	}
-	if mins != lispCeiling {
-		t.Errorf("lisp timeout-minutes = %d, want lispCeiling %d (change both with a new measurement)", mins, lispCeiling)
 	}
 }

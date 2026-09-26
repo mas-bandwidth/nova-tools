@@ -12,6 +12,8 @@ import (
 // The log is append-only JSON lines: every decision, its evidence, the rung it
 // tried, what followed, and what Rowan would have picked.
 func TestAppendEntryIsAppendOnlyJSONLines(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "decide.jsonl")
 	first := Entry{
 		Unit:       "u1",
@@ -79,6 +81,8 @@ func TestAppendEntryIsAppendOnlyJSONLines(t *testing.T) {
 
 // A log with no rows is no summary, not a guessed one.
 func TestReadEntriesRefusesRubbish(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	bad := filepath.Join(dir, "bad.jsonl")
 	if err := os.WriteFile(bad, []byte("not json\n"), 0o600); err != nil {
@@ -95,6 +99,8 @@ func TestReadEntriesRefusesRubbish(t *testing.T) {
 // The summary counts the escalations per kind and regenerates the starting rung
 // from the rows: the lowest rung that is carrying its own weight.
 func TestSummaryRegeneratesTheStartingRung(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	path := filepath.Join(t.TempDir(), "decide.jsonl")
 	entries := []Entry{
@@ -160,6 +166,8 @@ func TestSummaryRegeneratesTheStartingRung(t *testing.T) {
 // A kind with no success keeps the rung it started from: a starting rung with
 // no rows behind it is not regenerated.
 func TestSummaryKeepsTheDefaultWithNoSuccess(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	sum, err := Summarize(reg, []Entry{
 		{Unit: "a", Kind: KindNewVerb, RungTried: "opus", Height: 2, Outcome: OutcomeFailed, RowanPick: "opus", Evidence: Unit{ID: "a", Kind: KindNewVerb}},

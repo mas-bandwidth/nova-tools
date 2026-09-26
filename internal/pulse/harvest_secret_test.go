@@ -141,6 +141,8 @@ func TestTheSeatsOwnKeyIsCaughtWithoutAShape(t *testing.T) {
 // openPR's body is the scanned RESULT.md text, truncated. A change to openPR that makes
 // the body something else breaks this test rather than opening a hole.
 func TestThePRBodyIsAPrefixOfWhatTheScanRead(t *testing.T) {
+	t.Parallel()
+
 	lines := []string{"RESULT x", "DONE", "BRANCH b", strings.Repeat("y", 100)}
 	scanned := strings.Join(lines, "\n")
 	for _, cap := range []int{4096, 20, 1} {

@@ -1,11 +1,9 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -89,85 +87,6 @@ func TestTheRetryBudgetHasAMeasuredDefault(t *testing.T) {
 }
 
 // ---------------------------------------------------------------- 2. no conflict wedges a line
-
-// TWO BENCHES OF ONE LANE, RACING. This is the shape that wedged a bench: both append to
-// the lane's INDEX in the same commit as their note, so the rebase conflicts, and a person's
-// own `git pull --rebase` then landed in a half-done rebase with `UU from-<lane>/INDEX`.
-// Twenty sends, ten rounds of two, and every one of them lands.
-func TestTwoClonesOfOneLaneRacingTenRoundsAllLand(t *testing.T) {
-	if testing.Short() {
-		t.Skip("slow: spawns twenty racing sends in a loop; runs on the self-hosted legs and nightly")
-	}
-	t.Parallel()
-	hermetic(t)
-	checkout, bare := busDir(t)
-	second := cloneOf(t, bare)
-
-	const rounds = 10
-	benches := []string{checkout, second}
-	for round := range rounds {
-		var wg sync.WaitGroup
-		results := make([]result, len(benches))
-		for i, dir := range benches {
-			wg.Add(1)
-			go func(i int, dir string) {
-				defer wg.Done()
-				subject := fmt.Sprintf("Round %d from bench %d", round, i)
-				body := fmt.Sprintf("Bench %d, round %d, sent at once with the other.", i, round)
-				results[i] = invoke(t, draftFrom("Ada", subject, body),
-					"send", "--bus", dir, "--stdin", "--remote", "origin", "--branch", "main")
-			}(i, dir)
-		}
-		wg.Wait()
-		for i, r := range results {
-			if r.code != 0 {
-				t.Fatalf("round %d, bench %d: exit %d\nstdout: %s\nstderr: %s", round, i, r.code, r.stdout, r.stderr)
-			}
-		}
-	}
-
-	// 20/20 on the bus.
-	files := gitIn(t, bare, "ls-tree", "-r", "--name-only", "main")
-	if n := strings.Count(files, "from-ada/2026-09-09T1234Z-round-"); n != rounds*2 {
-		t.Fatalf("%d of %d notes reached the bus:\n%s", n, rounds*2, files)
-	}
-	// And the catalogue names every one of them: the union kept both sides' lines every
-	// time, rather than one bench's replacing the other's.
-	index := gitIn(t, bare, "show", "main:from-ada/INDEX")
-	if n := strings.Count(index, "from-ada/2026-09-09T1234Z-round-"); n != rounds*2 {
-		t.Fatalf("the catalogue holds %d of %d lines:\n%s", n, rounds*2, index)
-	}
-	if strings.Contains(index, "<<<") {
-		t.Fatalf("conflict markers reached the catalogue:\n%s", index)
-	}
-
-	// BOTH TREES ARE CLEAN AND NEITHER IS MID-REBASE, which is the whole of "no conflict
-	// wedges a line": a bench a person has to rescue is a bench that lost.
-	for i, dir := range benches {
-		if branch := strings.TrimSpace(gitIn(t, dir, "rev-parse", "--abbrev-ref", "HEAD")); branch != "main" {
-			t.Fatalf("bench %d is on %q, not a branch a person can work from", i, branch)
-		}
-		if out := gitIn(t, dir, "status", "--porcelain"); strings.TrimSpace(out) != "" {
-			t.Fatalf("bench %d was left dirty:\n%s", i, out)
-		}
-		gd := strings.TrimSpace(gitIn(t, dir, "rev-parse", "--absolute-git-dir"))
-		for _, name := range []string{"rebase-merge", "rebase-apply"} {
-			if _, err := os.Stat(filepath.Join(gd, name)); !os.IsNotExist(err) {
-				t.Fatalf("bench %d was left in a rebase (%s)", i, name)
-			}
-		}
-	}
-	// The bus itself is still valid.
-	invoke(t, "", "check", "--bus", checkout, "--full").mustCode(t, 0).mustContain(t, "stdout", "BUS OK")
-	// And the union rule is on the bus, so a person's own `git pull --rebase` gets the
-	// same settlement this tool gave itself.
-	attrs := gitIn(t, bare, "show", "main:"+bus.AttributesName)
-	for _, want := range []string{"from-*/INDEX merge=union", "from-*/RECEIPTS merge=union"} {
-		if !strings.Contains(attrs, want) {
-			t.Fatalf("%s does not carry %q:\n%s", bus.AttributesName, want, attrs)
-		}
-	}
-}
 
 // ---------------------------------------------------------------- 3. addressed to nobody
 

@@ -79,6 +79,8 @@ func TestJevWithAccountingRuns(t *testing.T) {
 // flag: the obligation is to account for what was spent, not to write a file
 // for a decision that cost nothing.
 func TestNoJevKeepsAccountingOptional(t *testing.T) {
+	t.Parallel()
+
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"route", "--no-jev", "--unit-id", "u", "--kind", "rebase", "--files", "2", "--packages", "1"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit = %d, want 0 (stderr=%q)", code, stderr.String())

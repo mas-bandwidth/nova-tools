@@ -168,6 +168,8 @@ func (f *fixture) unresolved() map[string]string {
 // wall, bench, attempt, log, head, base, tree; `ci show <sha>` prints it; a
 // head with no record is MISSING, exit 5, and never land-ready.
 func TestControl29VerdictRecordAndShow(t *testing.T) {
+	t.Parallel()
+
 	f := newFixture(t, "ctl-a", "ctl-b")
 	label := f.cut()
 
@@ -249,6 +251,8 @@ func TestControl29VerdictRecordAndShow(t *testing.T) {
 
 // TestControl31RerunAndFlaky is #2756 control 31.
 func TestControl31RerunAndFlaky(t *testing.T) {
+	t.Parallel()
+
 	t.Run("FAIL on A, OK on B is FLAKY until a typed disposition", func(t *testing.T) {
 		f := newFixture(t, "ctl-a", "ctl-b")
 		label := f.cut()
@@ -385,6 +389,8 @@ func TestControl31RerunAndFlaky(t *testing.T) {
 // (MISSING), the reconciler cuts the one rerun on another bench, both
 // attempts are receipted for cost, and the ci x/y counts one head.
 func TestControl34ExecutionStateAndVerdict(t *testing.T) {
+	t.Parallel()
+
 	t.Run("red tests end DONE with FAIL", func(t *testing.T) {
 		f := newFixture(t, "ctl-a", "ctl-b")
 		label := f.cut()
@@ -485,6 +491,8 @@ func TestControl34ExecutionStateAndVerdict(t *testing.T) {
 // names this one. A bench that declares no legs runs every leg, the rule
 // deal.lua keeps (#3349), so it is not RUNNER-ONLY.
 func TestCutRefusesARunnerOnlyLeg(t *testing.T) {
+	t.Parallel()
+
 	f := newFixture(t, "ctl-a")
 	f.client.HSet(f.ctx, "bench:ctl-a:desired", "legs", "schema")
 	r, err := ci.Cut(f.ctx, f.st, ci.CutRequest{Sprint: f.sprint, Repo: repo, PR: pr, Head: head, Base: base, BaseRef: "dev"})
@@ -513,6 +521,8 @@ func TestCutRefusesARunnerOnlyLeg(t *testing.T) {
 // 7 3.7) and the rows live at ci:<repo>:<head>:<gid>:runners, apart from the
 // write-once receipt, so neither the cut nor the end erases them.
 func TestCiCutKeepsRunnerRow(t *testing.T) {
+	t.Parallel()
+
 	f := newFixture(t, "ctl-a")
 	gid, err := civerdict.Expected(f.ctx, f.client, repo, "dev", base)
 	if err != nil {

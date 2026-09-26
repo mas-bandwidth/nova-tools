@@ -36,6 +36,8 @@ import (
 // TestLoadedBenchWithHeartbeatIsUp is the #2161 case replayed: a bench at load
 // 21 on 16 cores that still writes its heartbeat key is UP.
 func TestLoadedBenchWithHeartbeatIsUp(t *testing.T) {
+	t.Parallel()
+
 	const ttl = 30 * time.Second
 	start := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	b := state.Bench{
@@ -89,6 +91,8 @@ func TestLoadedBenchWithHeartbeatIsUp(t *testing.T) {
 // allowance for anyone observing the expiry late, so the decision is DOWN at
 // the TTL and certainly by the TTL plus five seconds.
 func TestAnExpiredHeartbeatKeyIsDownWithinTTLPlusFiveSeconds(t *testing.T) {
+	t.Parallel()
+
 	const ttl = 30 * time.Second
 	written := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	b := state.Bench{Name: "hulk", Key: &state.Key{Written: written, TTL: ttl}}
@@ -117,6 +121,8 @@ func TestAnExpiredHeartbeatKeyIsDownWithinTTLPlusFiveSeconds(t *testing.T) {
 // held bench whose key still counts is HELD (there, and taking no work), and a
 // held bench whose key expires is DOWN like any other.
 func TestHeldRidesTheKeyAndExpiresWithIt(t *testing.T) {
+	t.Parallel()
+
 	const ttl = 30 * time.Second
 	written := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	b := state.Bench{Name: "hulk", Key: &state.Key{Written: written, TTL: ttl, Held: true}}
@@ -134,6 +140,8 @@ func TestHeldRidesTheKeyAndExpiresWithIt(t *testing.T) {
 // HELD bench is here, a DOWN bench is not) and bin/fleet-state writes one
 // tab-separated row per bench. Both reach Bench.State; neither reads a file.
 func TestLiveAndRowAreTheBinsEngines(t *testing.T) {
+	t.Parallel()
+
 	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	const ttl = 30 * time.Second
 	benches := []state.Bench{
@@ -168,6 +176,8 @@ func TestLiveAndRowAreTheBinsEngines(t *testing.T) {
 // This checker is the one file allowed to hold the name in code, so it skips
 // itself; the needle is split so this source line is not itself a mention.
 func TestNoReaderOfFleetStateTSV(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	_, self, _, ok := runtime.Caller(0)
 	if !ok {

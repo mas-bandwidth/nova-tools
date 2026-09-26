@@ -30,6 +30,8 @@ func (f *fakeReader) Consumers(_ context.Context) ([]capacity.Consumer, error) {
 // machine with ceiling 64: capacity friend a 32 and b 32 succeed; b 33 refuses
 // with CEILING; friend hello --slots 64 by a refuses and a keeps 32.
 func TestControl27MachineCeiling(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	r := &fakeReader{
 		ceilings: map[string]int{"studio": 64},
@@ -119,6 +121,8 @@ func (f *fakeTasks) Details(_ context.Context, sprint string, ids []string) (map
 // isolation: a closed or missing task cannot be counted as live, nor can a
 // task from another friend's global active index.
 func TestControl22ClosedNeverLive(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	r := &fakeTasks{
 		sprints: []string{"s1"},
@@ -150,6 +154,8 @@ func TestControl22ClosedNeverLive(t *testing.T) {
 
 // TestWidthAccounting checks the pure width arithmetic underlying task width.
 func TestWidthAccounting(t *testing.T) {
+	t.Parallel()
+
 	got := task.WidthFrom(32, 8)
 	want := task.Width{Desired: 32, Leased: 8, Free: 24}
 	if got != want {

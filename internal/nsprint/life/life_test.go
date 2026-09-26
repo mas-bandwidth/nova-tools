@@ -39,6 +39,8 @@ func controlRedis(t *testing.T) (*store.Store, *redis.Client, string) {
 // work, one hello takes that work with no manual take, the fence token is
 // preserved for the child, and bye leaves the remaining queue in place.
 func TestControl15FriendReturnTakesWork(t *testing.T) {
+	t.Parallel()
+
 	st, client, _ := controlRedis(t)
 	ctx := context.Background()
 	const sprint, friend = "s1", "walter"
@@ -144,6 +146,8 @@ func TestControl15FriendReturnTakesWork(t *testing.T) {
 // independent clients/instances beat the same bench, the first wins and the
 // second refuses, and once the owner and beat expire a new instance recovers.
 func TestBenchBeatSingleInstance(t *testing.T) {
+	t.Parallel()
+
 	stA, clientA, addr := controlRedis(t)
 	ctx := context.Background()
 
@@ -207,6 +211,8 @@ func TestBenchBeatSingleInstance(t *testing.T) {
 // :owner and :live with a TTL of 3 x the beat interval (BenchBeatTTL), so a
 // dead loop's row leaves the store on its own; an explicit TTL is honoured.
 func TestBenchBeatKeyHasTTL(t *testing.T) {
+	t.Parallel()
+
 	st, client, _ := controlRedis(t)
 	ctx := context.Background()
 	if life.BenchBeatTTL != 3*life.BeatInterval {
@@ -240,6 +246,8 @@ func TestBenchBeatKeyHasTTL(t *testing.T) {
 }
 
 func TestFriendHelloPreservesConfiguredCapacity(t *testing.T) {
+	t.Parallel()
+
 	st, client, _ := controlRedis(t)
 	ctx := context.Background()
 	client.HSet(ctx, "machine:studio:ceiling", "slots", 64)
@@ -271,6 +279,8 @@ func TestFriendHelloPreservesConfiguredCapacity(t *testing.T) {
 }
 
 func TestHelloNeverWritesDesired(t *testing.T) {
+	t.Parallel()
+
 	st, client, _ := controlRedis(t)
 	ctx := context.Background()
 	client.SAdd(ctx, "friends", "f")
@@ -288,6 +298,8 @@ func TestHelloNeverWritesDesired(t *testing.T) {
 }
 
 func TestHelloUnregisteredRefuses(t *testing.T) {
+	t.Parallel()
+
 	st, client, _ := controlRedis(t)
 	ctx := context.Background()
 	client.HSet(ctx, "machine:m:ceiling", "slots", 40)

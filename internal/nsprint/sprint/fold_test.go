@@ -90,6 +90,8 @@ const jev9 = "jev=APPROVE 9 u 1"
 // per-type score summary, the Jev calibration set and the cost per type with
 // the next ceiling, and writes each on s:<S>:fold:<section>.
 func TestSprintFoldFromRedis(t *testing.T) {
+	t.Parallel()
+
 	t.Run("insufficient", func(t *testing.T) {
 		f := newFoldSeat(t, "closed")
 		for i := 0; i < 3; i++ {

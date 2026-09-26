@@ -13,6 +13,8 @@ import (
 // flags. Emma found this by looking for it. A verb in the binary and in nobody's
 // reference is a verb that gets re-derived from its own `--help` on every bench.
 func TestCLIDocsNameTheSwarmLintVerbAndItsFlags(t *testing.T) {
+	t.Parallel()
+
 	b, err := os.ReadFile("../../docs/CLI.md")
 	if err != nil {
 		t.Fatalf("this class test reads docs/CLI.md: %v", err)

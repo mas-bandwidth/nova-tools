@@ -97,7 +97,10 @@ func TestIssue2296(t *testing.T) {
 	t.Run("TestNoCodeStagedRootAndBase", noCodeStagedRootAndBase)
 }
 
-func TestNoCodeStagedClassifiesTheIndex(t *testing.T) { noCodeStagedClassifiesTheIndex(t) }
+func TestNoCodeStagedClassifiesTheIndex(t *testing.T) {
+	t.Parallel()
+	noCodeStagedClassifiesTheIndex(t)
+}
 
 // A commit commits an index, not a tree (SPEC.md:805). Staging a shebang and
 // then replacing the file with prose on disk leaves the shebang in what will
@@ -133,7 +136,10 @@ func noCodeStagedClassifiesTheIndex(t *testing.T) {
 	}
 }
 
-func TestNoCodeStagedRequiresDir(t *testing.T) { noCodeStagedRequiresDir(t) }
+func TestNoCodeStagedRequiresDir(t *testing.T) {
+	t.Parallel()
+	noCodeStagedRequiresDir(t)
+}
 
 // --dir is required on the no-guessing law, never inferred from the working
 // directory (SPEC.md:831). The test binary runs inside this repository, so
@@ -152,7 +158,10 @@ func noCodeStagedRequiresDir(t *testing.T) {
 	}
 }
 
-func TestNoCodeStagedNothingToSay(t *testing.T) { noCodeStagedNothingToSay(t) }
+func TestNoCodeStagedNothingToSay(t *testing.T) {
+	t.Parallel()
+	noCodeStagedNothingToSay(t)
+}
 
 // Nothing staged, or deletions only, is exit 0 with a count of zero -- an
 // empty change set is a fact about the commit, not a broken check
@@ -186,7 +195,10 @@ func noCodeStagedNothingToSay(t *testing.T) {
 	ok0(t, fresh, "an unborn HEAD with an empty index")
 }
 
-func TestNoCodeStagedSaysNo(t *testing.T) { noCodeStagedSaysNo(t) }
+func TestNoCodeStagedSaysNo(t *testing.T) {
+	t.Parallel()
+	noCodeStagedSaysNo(t)
+}
 
 // Any staged path classified as machinery is one `NOCODE FAIL <path>:
 // <reason>` line per path on stderr, exit 1, and no OK line anywhere; a clean
@@ -371,7 +383,10 @@ esac
 	}
 }
 
-func TestNoCodeStagedRootAndBase(t *testing.T) { noCodeStagedRootAndBase(t) }
+func TestNoCodeStagedRootAndBase(t *testing.T) {
+	t.Parallel()
+	noCodeStagedRootAndBase(t)
+}
 
 // The root test and the base detector. A linked worktree and a submodule pass
 // the root test -- their .git is a file, so any test for .git being a
@@ -462,6 +477,8 @@ func noCodeStagedRootAndBase(t *testing.T) {
 // name (`-run TestFriendSequence`), so the round trip runs on every pull
 // request once it lands here.
 func TestFriendSequenceStagedAdvisoryCommit(t *testing.T) {
+	t.Parallel()
+
 	dir := stLab(t)
 
 	// The friend stages a script beside the prose -- the pre-commit moment

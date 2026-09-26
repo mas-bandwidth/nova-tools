@@ -30,6 +30,8 @@ func runBatchSlots(t *testing.T, cards, root, runner, slots string, deadline tim
 // TestBatchAllocatesSlots: the cards.tsv slot column is optional, and the batch allocates
 // each card its own free slot from --slots <lo>-<hi>, skipping a slot whose lock is live.
 func TestBatchAllocatesSlots(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	busy := filepath.Join(root, "5", "jobs", "held")
@@ -65,6 +67,8 @@ func TestBatchAllocatesSlots(t *testing.T) {
 // TestBatchRefusesHandSlotOutOfRange: a card whose hand slot is outside --slots is
 // ADMIT REFUSED at admission with the card named, and never reaches the runner.
 func TestBatchRefusesHandSlotOutOfRange(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	a := writeCard(t, dir, "a.card", "RESULT: a\nall green")
@@ -101,6 +105,8 @@ func TestBatchRefusesHandSlotOutOfRange(t *testing.T) {
 // NATIVE line and no harness-output.log -- scores runner-refused with its last line, and
 // rc=<n> is never used for it: rc is reserved for the harness.
 func TestBatchScoresRunnerRefused(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	tsv := writeCards(t, dir, [][2]string{
@@ -126,6 +132,8 @@ func TestBatchScoresRunnerRefused(t *testing.T) {
 // none ran, the BATCH line carries uniform-abstain=<reason>. A batch with one done card
 // carries no such token.
 func TestBatchLineNamesUniformAbstain(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	tsv := writeCards(t, dir, [][2]string{

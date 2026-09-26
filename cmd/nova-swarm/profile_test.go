@@ -16,6 +16,8 @@ import (
 // call, in the order the harness reported them, with the six columns the profile verb
 // reads. A tool row carries no tokens (the harness gave none there), a turn row does.
 func TestNativeRunWritesTimeline(t *testing.T) {
+	t.Parallel()
+
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	label := "timeline"
@@ -85,6 +87,8 @@ func timelineFile(t *testing.T, dir string, body string) {
 // job and one summary line, with every phase inferred from the tool call's command and its
 // seconds, including a test run after a failing test run counted as retry.
 func TestProfilePrintsPhases(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	// job-a: clone, read, edit, a failing test, a passing test (retry), result and deps.
 	timelineFile(t, filepath.Join(root, "job-a"),

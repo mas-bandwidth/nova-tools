@@ -64,6 +64,8 @@ func doneAlreadyMirror(t *testing.T) (mirror, landed, stray string) {
 // mirror and not on the base is refused on the record with no close; a sha
 // the mirror does not know yet stays queued; a stale fence reaches no forge.
 func TestAbstainDoneAlreadyClosesIssue(t *testing.T) {
+	t.Parallel()
+
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git unavailable")
 	}
@@ -158,6 +160,8 @@ func TestAbstainDoneAlreadyClosesIssue(t *testing.T) {
 }
 
 func TestDoneAlreadyParsers(t *testing.T) {
+	t.Parallel()
+
 	for line, want := range map[string]string{
 		"ABSTAIN done-already d20d73c4":           "d20d73c4",
 		"ABSTAIN done-already D20D73C4 via #3901": "d20d73c4",

@@ -28,6 +28,8 @@ func (h *widthTripHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redi
 }
 
 func TestGetWidthOnePipeline(t *testing.T) {
+	t.Parallel()
+
 	addr := testutil.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = c.Close() })

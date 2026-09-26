@@ -342,6 +342,8 @@ func TestHarvestLeavesACardTheProbeCouldNotAnswerFor(t *testing.T) {
 // against a real two-root fixture: a job that is there, one that is not, and one whose
 // `jobs` directory cannot be read.
 func TestBenchProbeScriptAsksAboutEachLabelByName(t *testing.T) {
+	t.Parallel()
+
 	if os.Geteuid() == 0 {
 		t.Skip("running as root: mode 000 does not refuse root")
 	}
@@ -512,6 +514,8 @@ func TestHarvestInfersNoAbsenceFromARootItCouldNotReadWhole(t *testing.T) {
 // TestBenchListScriptReportsAnUnreadableRootAsIncomplete holds the script boundary on its
 // own: the same fixture, parsed, without the drain.
 func TestBenchListScriptReportsAnUnreadableRootAsIncomplete(t *testing.T) {
+	t.Parallel()
+
 	if os.Geteuid() == 0 {
 		t.Skip("running as root: mode 000 does not refuse root")
 	}

@@ -51,6 +51,8 @@ func TestWatchAdoptRunsPassEscalatesAndPostsReceipt(t *testing.T) {
 // The contract lives in SPEC-UPDATE.md rule 27; a paragraph renamed out of the
 // doc is red the same way the verbs block is.
 func TestSpecUpdateNamesAdoptPass(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-UPDATE.md"))
 	if err != nil {
 		t.Fatal(err)

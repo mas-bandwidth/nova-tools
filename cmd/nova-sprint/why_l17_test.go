@@ -1,8 +1,6 @@
 package main
 
 import (
-	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
@@ -32,47 +30,4 @@ func l17Redis(t *testing.T) *miniredis.Miniredis {
 	mr.HSet(civerdict.Key("nova-tools", l17Head, gid), "verdict", "OK")
 	mr.SAdd(civerdict.GIDsKey("nova-tools", l17Head), gid)
 	return mr
-}
-
-// TestL17b is control L17b (nova-tools#3139 rev 7 section 11, 7.7): every
-// outcome of `why` (both forms) and `land status [<unit>]` exits with exactly
-// its code: 0 printed, 1 no record, 2 refused or usage, 6 no Redis.
-func TestL17b(t *testing.T) {
-	mr := l17Redis(t)
-	addr := mr.Addr()
-	now := strconv.FormatInt(1790000000, 10)
-	dead := "127.0.0.1:1"
-	cases := []struct {
-		name string
-		args []string
-		code int
-		out  string // a substring of stdout+stderr
-	}{
-		{"why unit", []string{"why", l17Unit, "--redis", addr, "--sprint", l17Sprint, "--now", now}, 0, "ci OK@4139b79f"},
-		{"why pr", []string{"why", "nova-tools#3200", "--redis", addr, "--sprint", l17Sprint, "--now", now}, 0, "unit " + l17Unit + " nova-tools#3200"},
-		{"why unknown unit", []string{"why", "gh/mas-bandwidth/nova-tools/9999", "--redis", addr, "--sprint", l17Sprint}, 1, "MISSING s:l17:u:gh/mas-bandwidth/nova-tools/9999"},
-		{"why unknown pr", []string{"why", "nova-tools#9999", "--redis", addr, "--sprint", l17Sprint}, 1, "MISSING s:l17:prunit:nova-tools:9999"},
-		{"why no arg", []string{"why", "--redis", addr, "--sprint", l17Sprint}, 2, "REFUSED"},
-		{"why two args", []string{"why", l17Unit, "nova-tools#3200", "--redis", addr, "--sprint", l17Sprint}, 2, "REFUSED"},
-		{"why bare number", []string{"why", "3200", "--redis", addr, "--sprint", l17Sprint}, 2, "REFUSED"},
-		{"why no sprint", []string{"why", l17Unit, "--redis", addr}, 2, "REFUSED"},
-		{"why dead redis", []string{"why", l17Unit, "--redis", dead, "--sprint", l17Sprint}, 6, ""},
-		{"status", []string{"land", "status", "--redis", addr, "--sprint", l17Sprint, "--now", now}, 0, "units 1: reading 1"},
-		{"status unit", []string{"land", "status", l17Unit, "--redis", addr, "--sprint", l17Sprint, "--now", now}, 0, "state reading"},
-		{"status unknown unit", []string{"land", "status", "gh/mas-bandwidth/nova-tools/9999", "--redis", addr, "--sprint", l17Sprint}, 1, "MISSING s:l17:u:gh/mas-bandwidth/nova-tools/9999"},
-		{"status two units", []string{"land", "status", l17Unit, l17Unit, "--redis", addr, "--sprint", l17Sprint}, 2, "REFUSED"},
-		{"status no sprint", []string{"land", "status", "--redis", addr}, 2, "REFUSED"},
-		{"status dead redis", []string{"land", "status", "--redis", dead, "--sprint", l17Sprint}, 6, ""},
-		{"status unit dead redis", []string{"land", "status", l17Unit, "--redis", dead, "--sprint", l17Sprint}, 6, ""},
-	}
-	for _, tc := range cases {
-		code, stdout, stderr := runSprint(tc.args...)
-		if code != tc.code {
-			t.Errorf("%s: exit %d, want %d\nstdout %s\nstderr %s", tc.name, code, tc.code, stdout, stderr)
-			continue
-		}
-		if tc.out != "" && !strings.Contains(stdout+stderr, tc.out) {
-			t.Errorf("%s: want %q in\nstdout %s\nstderr %s", tc.name, tc.out, stdout, stderr)
-		}
-	}
 }

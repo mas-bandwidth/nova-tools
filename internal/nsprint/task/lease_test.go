@@ -51,6 +51,8 @@ func zcard(t *testing.T, ctx context.Context, client *redis.Client, key string) 
 // claimed_at backdated 70 s against Redis TIME they reopen, release their
 // leases and emit one receipt each, leaving working 1.
 func TestControl01EightClaimsOneChild(t *testing.T) {
+	t.Parallel()
+
 	st, client := controlRedis(t)
 	ctx := context.Background()
 	sprint := "control-01c0ffee"
@@ -123,6 +125,8 @@ func TestControl01EightClaimsOneChild(t *testing.T) {
 // 180 s beat window), the old token's existing Done returns exit 3 FENCED, and
 // the next claim gets attempt 2.
 func TestControl02TakeNeverBeat(t *testing.T) {
+	t.Parallel()
+
 	st, client := controlRedis(t)
 	ctx := context.Background()
 	sprint := "control-02deadbe"
@@ -190,6 +194,8 @@ func TestControl02TakeNeverBeat(t *testing.T) {
 // idempotent; an external-effect task becomes reconcile-required with an
 // unresolved item and nothing is replayed.
 func TestTaskWorkingStaleExpiry(t *testing.T) {
+	t.Parallel()
+
 	st, client := controlRedis(t)
 	ctx := context.Background()
 	sprint := "control-05abc123"
@@ -250,6 +256,8 @@ func TestTaskWorkingStaleExpiry(t *testing.T) {
 // external-effect task goes reconcile-required with unresolved evidence, not
 // open, and the old token's Done refuses exit 3.
 func TestTaskCancelExternal(t *testing.T) {
+	t.Parallel()
+
 	st, client := controlRedis(t)
 	ctx := context.Background()
 	sprint := "control-06beef01"

@@ -39,6 +39,8 @@ func (*fixtureFiler) Find(context.Context, string, string, time.Time) (int, bool
 }
 
 func TestFlakyObserveRedis(t *testing.T) {
+	t.Parallel()
+
 	addr := testutil.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = c.Close() })
@@ -97,6 +99,8 @@ func TestFlakyObserveRedis(t *testing.T) {
 }
 
 func TestRESTFilerFind(t *testing.T) {
+	t.Parallel()
+
 	var gotPath, gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
@@ -125,6 +129,8 @@ func gitRun(t *testing.T, dir string, args ...string) string {
 }
 
 func TestMirrorForgeMergeable(t *testing.T) {
+	t.Parallel()
+
 	d := t.TempDir()
 	gitRun(t, d, "init", "-q")
 	gitRun(t, d, "switch", "-c", "dev")

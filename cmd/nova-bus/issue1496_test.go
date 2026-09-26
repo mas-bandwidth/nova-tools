@@ -10,6 +10,8 @@ import "testing"
 // vary between runs; the exact ordered string pins the fixed order the repair promises.
 
 func TestIssue1496ABareVerbNamesEveryMissingRequiredFlagInAFixedOrder(t *testing.T) {
+	t.Parallel()
+
 	const want = "nova-bus send: --branch is required; refusing to guess; run: nova-bus help\n" +
 		"nova-bus send: --bus is required; refusing to guess; run: nova-bus help\n" +
 		"nova-bus send: --remote is required; refusing to guess; run: nova-bus help\n"

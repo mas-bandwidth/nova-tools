@@ -25,6 +25,8 @@ import (
 // --config wrote no config at all and a run with one wrote the provider's bytes with no
 // permission block, so what the fence called external was left entirely to the harness.
 func TestNativeConfigNamesTheJobDirectory(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
@@ -70,6 +72,8 @@ func TestNativeConfigNamesTheJobDirectory(t *testing.T) {
 // non-interactive `run` is auto-rejected and the model stops -- the run ends and the card's
 // commits are stranded. RED WITHOUT THE CHANGE: the block said `ask` (issue #918).
 func TestNativeConfigDeniesExternalPaths(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
@@ -110,6 +114,8 @@ func TestNativeConfigDeniesExternalPaths(t *testing.T) {
 // is no wall to open it, and the second case of #644 was `cat /sys/kernel/security/lsm`
 // rejected twice on Space.
 func TestNativeConfigNamesTheCardsReadPaths(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
@@ -139,6 +145,8 @@ func TestNativeConfigNamesTheCardsReadPaths(t *testing.T) {
 // before it the line said `harness=ok rc=0` and nothing else, and the card was scored
 // `no-result` -- a coordinator went and read the model for a fence the machinery built.
 func TestNativeReportsAFenceRejection(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)

@@ -18,6 +18,8 @@ import (
 )
 
 func TestCIFailingHeadIsClaimedTwiceNeverAThirdTime(t *testing.T) {
+	t.Parallel()
+
 	f := newRunFixture(t)
 	f.client.HSet(f.ctx, ci.ConfigKey(runRepo), "checks", "head,boom", "check:boom", "git rev-parse --verify FAIL-no-such-ref")
 	f.client.HSet(f.ctx, ci.PRKey(runRepo, 9), "head", f.sha)
@@ -69,6 +71,8 @@ func TestCIFailingHeadIsClaimedTwiceNeverAThirdTime(t *testing.T) {
 }
 
 func TestCIReleaseStormEndsAtTheCapWithTheBlockedWhy(t *testing.T) {
+	t.Parallel()
+
 	f := newRunFixture(t)
 	bad := "file://" + filepath.Join(t.TempDir(), "missing.git")
 	if r, err := ci.Request(f.ctx, f.st, ci.RequestRequest{Repo: runRepo, SHA: f.sha, URL: bad}); err != nil || r.Status != "CREATED" {
@@ -106,6 +110,8 @@ func TestCIReleaseStormEndsAtTheCapWithTheBlockedWhy(t *testing.T) {
 }
 
 func TestFirstFail(t *testing.T) {
+	t.Parallel()
+
 	cases := map[string]string{
 		"ok a\n--- FAIL: TestX (0.1s)\n    x_test.go:3: boom\nFAIL\n": "--- FAIL: TestX (0.1s)",
 		"building\nFAIL\tgithub.com/x/y [build failed]\n":             "FAIL github.com/x/y [build failed]",

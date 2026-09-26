@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // THE EXECUTE QUESTION IS ASKED OF THE PLATFORM, NOT OF THE UNIX BIT (windows leg, 2026-09-15).
@@ -17,6 +19,8 @@ import (
 // two bodies are held to one contract: a thing the loader will run is admitted, a thing it
 // will not run is refused, and a directory or a missing path is never executable.
 func TestIsExecutableAsksThePlatformsOwnRule(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 
 	// (1) A FILE THE PLATFORM WILL RUN. On unix that is mode 0755; on windows it is the
@@ -25,7 +29,7 @@ func TestIsExecutableAsksThePlatformsOwnRule(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		runnable += ".exe"
 	}
-	if err := os.WriteFile(runnable, []byte("binary\n"), 0o755); err != nil {
+	if err := testbin.WriteExecutable(runnable, []byte("binary\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if !isExecutable(runnable) {
@@ -70,6 +74,8 @@ func TestIsExecutableAsksThePlatformsOwnRule(t *testing.T) {
 // loader itself answers -- the extension decides, case does not matter, a missing PATHEXT
 // falls back to the shipped list, and the absence of an extension is a refusal.
 func TestExecutableByExtensionIsTheWindowsRule(t *testing.T) {
+	t.Parallel()
+
 	const pathext = `.COM;.EXE;.BAT;.CMD;.VBS;.JS`
 	for _, tc := range []struct {
 		path    string
@@ -106,6 +112,8 @@ func TestExecutableByExtensionIsTheWindowsRule(t *testing.T) {
 // each on its own, admit; none of them refuses. It is skipped on windows, where the bits are
 // not the rule and os.Chmod cannot set them.
 func TestIsExecutableUnixBits(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("windows carries no execute bit: os.Stat reports 0666 for every readable file, so there is no bit to set or clear (see executable.go)")
 	}

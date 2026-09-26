@@ -13,6 +13,8 @@ func decodeIdentityJSON(sqlite, transcript string) ([]AntigravityRecord, error) 
 }
 
 func TestAntigravityJSONRequiresExplicitNativeIdentity(t *testing.T) {
+	t.Parallel()
+
 	for name, src := range map[string]string{
 		"null_export":           `null`,
 		"non_array":             `{}`,
@@ -47,6 +49,8 @@ func TestAntigravityJSONRequiresExplicitNativeIdentity(t *testing.T) {
 }
 
 func TestAntigravityJSONCannotInventTranscriptJoin(t *testing.T) {
+	t.Parallel()
+
 	const sqlite = `[{"idx":0,"size":6,"data_hex":"0a0422020801"}]`
 	for name, line := range map[string]string{
 		"missing_step":           `{"created_at":"2026-09-12T12:00:00Z"}`,
@@ -73,6 +77,8 @@ func TestAntigravityJSONCannotInventTranscriptJoin(t *testing.T) {
 }
 
 func TestAntigravityJSONNativeZeroAndUnknownMaterial(t *testing.T) {
+	t.Parallel()
+
 	const sqlite = `[{"idx":0,"IDX":9,"size":6,"SIZE":1,"data_hex":"0a0422020801","DATA_HEX":"invalid","private":{"idx":3,"idx":4,"text":"PRIVATE-SENTINEL"}}]`
 	for name, transcript := range map[string]string{
 		"unpaired": "",
@@ -106,6 +112,8 @@ func TestAntigravityJSONNativeZeroAndUnknownMaterial(t *testing.T) {
 // The API already receives the source bytes. Ignored transcript content must not
 // impose bufio.Scanner's unrelated 64KiB default on valid native metadata.
 func TestAntigravityJSONLargeIgnoredTranscriptField(t *testing.T) {
+	t.Parallel()
+
 	const sqlite = `[{"idx":0,"size":6,"data_hex":"0a0422020801"}]`
 	line := `{"step_index":0,"created_at":"2026-09-12T12:00:00Z","text":"` + strings.Repeat("private-text-", 8192) + `"}`
 	out, err := decodeIdentityJSON(sqlite, line)

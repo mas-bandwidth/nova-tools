@@ -83,6 +83,8 @@ func awaitRequest(t *testing.T, requests <-chan string) string {
 }
 
 func TestVersionPrintsTheBuildIdentity(t *testing.T) {
+	t.Parallel()
+
 	for _, verb := range []string{"version", "--version"} {
 		t.Run(verb, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
@@ -155,6 +157,8 @@ func TestRefusalLinesExitOne(t *testing.T) {
 }
 
 func TestMissingSocketExitsTwoWithTheSpecsRemedy(t *testing.T) {
+	t.Parallel()
+
 	// The spec's exit 2 is "could not run (... no such session ...), which
 	// costs one line ending `run: nova-work help`" -- that line is the remedy.
 	// The relative name never exists, so the dial is an honest missing socket.
@@ -177,6 +181,8 @@ func TestMissingSocketExitsTwoWithTheSpecsRemedy(t *testing.T) {
 }
 
 func TestHelpListsEveryVerbTheClientAccepts(t *testing.T) {
+	t.Parallel()
+
 	// The switch is now two verbs and a table: help and version answer
 	// without a session, query has constraints of its own, and every other
 	// socket verb is a row of socketVerbs (see socketverbs.go). So the thing
@@ -327,6 +333,8 @@ func TestSessionStartAndStopSpellTheirRequestLines(t *testing.T) {
 }
 
 func TestCLIDocCarriesTheHelpBlockByteForByte(t *testing.T) {
+	t.Parallel()
+
 	if strings.TrimSpace(usage) == "" {
 		t.Fatal("the usage block is empty")
 	}
@@ -348,6 +356,8 @@ func TestCLIDocCarriesTheHelpBlockByteForByte(t *testing.T) {
 }
 
 func TestUnusableInvocationsAreRefusedAtTwo(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		args []string
@@ -418,6 +428,8 @@ func invoke(args ...string) (int, string, string) {
 // The help text carries the dependencies and ready verb lines exactly as section 1
 // prints them.
 func TestHelpNamesTheDependenciesAndReadyVerbs(t *testing.T) {
+	t.Parallel()
+
 	code, stdout, _ := invoke("help")
 	if code != 0 {
 		t.Fatalf("help exit = %d, want 0", code)
@@ -466,6 +478,8 @@ func recvBy(t *testing.T, ch <-chan *redis.Message, channel string) string {
 // dependencies refuses a :deps cycle before it publishes anything: exit 2, one
 // remedy line naming validator rule 3.
 func TestDependenciesRefusesANeedsCycle(t *testing.T) {
+	t.Parallel()
+
 	seed := writeSeed(t, cycleSeed)
 	code, stdout, stderr := invoke("dependencies", "--graph", seed)
 	if code != 2 {
@@ -483,6 +497,8 @@ func TestDependenciesRefusesANeedsCycle(t *testing.T) {
 
 // A seeded acyclic graph publishes once, as one line.
 func TestDependenciesPublishesAnAcyclicGraph(t *testing.T) {
+	t.Parallel()
+
 	seed := writeSeed(t, openNeedSeed)
 	code, stdout, stderr := invoke("dependencies", "--graph", seed)
 	if code != 0 {
@@ -500,6 +516,8 @@ func TestDependenciesPublishesAnAcyclicGraph(t *testing.T) {
 // ready --node X is the ready set: the row for an open-need node names its exact
 // blocker and its resolver, and a ready node's row says so.
 func TestReadyPrintsEachRowsBlockerAndResolver(t *testing.T) {
+	t.Parallel()
+
 	seed := writeSeed(t, openNeedSeed)
 
 	code, stdout, stderr := invoke("ready", "--graph", seed, "--node", "a")
@@ -524,6 +542,8 @@ func TestReadyPrintsEachRowsBlockerAndResolver(t *testing.T) {
 
 // An unknown node is a refusal, never a guess.
 func TestReadyRefusesAnUnknownNode(t *testing.T) {
+	t.Parallel()
+
 	seed := writeSeed(t, openNeedSeed)
 	code, stdout, stderr := invoke("ready", "--graph", seed, "--node", "zzz")
 	if code != 2 {
@@ -535,6 +555,8 @@ func TestReadyRefusesAnUnknownNode(t *testing.T) {
 }
 
 func TestPlanCheckReadsAValidPlan(t *testing.T) {
+	t.Parallel()
+
 	path := writePlan(t, "(:plan :version 1 (:node :id \"n1\" :kind docs :bespoke \"kept\"))\n")
 	var out, errb bytes.Buffer
 	code := run([]string{"plan", "check", "--file", path}, &out, &errb)
@@ -547,6 +569,8 @@ func TestPlanCheckReadsAValidPlan(t *testing.T) {
 }
 
 func TestPlanCheckRefusals(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		body string
@@ -615,6 +639,8 @@ func TestPlanCheckRefusals(t *testing.T) {
 }
 
 func TestPlanCheckRefusesAMissingFile(t *testing.T) {
+	t.Parallel()
+
 	var out, errb bytes.Buffer
 	code := run([]string{"plan", "check"}, &out, &errb)
 	if code != 2 {
@@ -639,6 +665,8 @@ const expandPlan = `(:plan :version 1
 
 // plan expand writes one card directory per node and prints exactly one line.
 func TestPlanExpandWritesACardPerNode(t *testing.T) {
+	t.Parallel()
+
 	path := writePlan(t, expandPlan)
 	out := t.TempDir()
 	code, stdout, stderr := invoke("plan", "expand", "--file", path, "--out", out)
@@ -664,6 +692,8 @@ func TestPlanExpandWritesACardPerNode(t *testing.T) {
 
 // plan expand refuses a missing --out, never guessing a directory.
 func TestPlanExpandRefusesAMissingOut(t *testing.T) {
+	t.Parallel()
+
 	path := writePlan(t, expandPlan)
 	code, _, stderr := invoke("plan", "expand", "--file", path)
 	if code != 2 || !strings.Contains(stderr, "--out is required") {
@@ -673,6 +703,8 @@ func TestPlanExpandRefusesAMissingOut(t *testing.T) {
 
 // plan expand refuses a needs cycle before any card is written.
 func TestPlanExpandRefusesANeedsCycle(t *testing.T) {
+	t.Parallel()
+
 	body := `(:plan :version 1
  (:node :id "a" :kind docs :repo "o/r" :base "dev" :needs ("b")
   :output (:branch "rowan/a-a" :green ("t"))
@@ -707,6 +739,8 @@ func TestPlanExpandRefusesANeedsCycle(t *testing.T) {
 // defective plan costs one round trip, never one per field, and the CLI's help
 // names the fields a card node owes.
 func TestIssue1808Repro(t *testing.T) {
+	t.Parallel()
+
 	body := `(:plan :version 1
  (:node :id "n1" :kind docs :repo "o/r" :base "dev"
   :output (:green ("test:a"))
@@ -754,6 +788,8 @@ func TestIssue1808Repro(t *testing.T) {
 
 // TestEventsRefusesMissingRedis: --redis is required and its absence is exit 2.
 func TestEventsRefusesMissingRedis(t *testing.T) {
+	t.Parallel()
+
 	var out, errb bytes.Buffer
 	code := run([]string{"events"}, &out, &errb, production())
 	if code != 2 {
@@ -767,6 +803,8 @@ func TestEventsRefusesMissingRedis(t *testing.T) {
 // TestEventsOncePublishesChecksDone: one pass polls the fake forge and publishes the
 // completed check suite on pr-checks-done.
 func TestEventsOncePublishesChecksDone(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	ctx := context.Background()
 	sub := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -810,6 +848,8 @@ func mustRun(t *testing.T, d Deps, args ...string) (int, string, string) {
 }
 
 func TestUnknownVerbIsRefused(t *testing.T) {
+	t.Parallel()
+
 	// record and results wrote and read the card_results table; they are retired with it
 	// (#2623), and the fold of cards:done is the record. They are unknown verbs now, not
 	// verbs that quietly do nothing.

@@ -10,6 +10,8 @@ import (
 // members are bound to the unit's revision only when harvested;
 // behaviour 40 -- a unit with no :acceptance is refused at load (exit 2).
 func TestIssue2243(t *testing.T) {
+	t.Parallel()
+
 	// jobs-a-collection-binds-its-members-at-harvest: a :collects entry is
 	// named before the run and its members are bound to the unit's revision
 	// only when harvested, not before.

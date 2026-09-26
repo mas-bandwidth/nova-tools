@@ -25,6 +25,8 @@ func (f *fixedRemote) Run(_ context.Context, _ string, name string, args ...stri
 }
 
 func TestTheConflictRemedyReadsTheConfiguredRemote(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name       string
 		url        string
@@ -71,6 +73,8 @@ func TestTheConflictRemedyReadsTheConfiguredRemote(t *testing.T) {
 }
 
 func TestTheConflictRemedyFallsBackWhenTheRemoteCannotBeRead(t *testing.T) {
+	t.Parallel()
+
 	r := &fixedRemote{err: context.DeadlineExceeded}
 	p := &Pass{
 		Clone:  NewGit("lane/repo", 0, r),
@@ -92,6 +96,8 @@ func TestTheConflictRemedyFallsBackWhenTheRemoteCannotBeRead(t *testing.T) {
 // and the derived dir were interpolated raw, so a value carrying a shell metacharacter
 // ran on paste. Every value the line prints goes through the file's own shellQuote.
 func TestTheHandCommandQuotesEveryValueItPrints(t *testing.T) {
+	t.Parallel()
+
 	head, base := "feat;rm -rf x", "main&&id"
 	token := shellQuote("https://host/o/n.git")
 	cmd := HandCommand(token, base, head, []string{"a.txt"})

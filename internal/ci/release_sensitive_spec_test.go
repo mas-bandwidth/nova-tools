@@ -26,6 +26,8 @@ const sensitiveMarker = "<!-- release-sensitive-paths -->"
 // spec's block and release.SensitivePaths must be the same list, in the same
 // order, byte for byte.
 func TestTheSensitivePathListIsTheSameInTheCodeAndInTheSpec(t *testing.T) {
+	t.Parallel()
+
 	spec := readFile(t, filepath.Join(repoRoot(t), "docs", "SPEC-RELEASE.md"))
 	inSpec := fencedBlockAfter(t, spec, sensitiveMarker)
 	inCode := release.SensitivePaths

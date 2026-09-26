@@ -223,6 +223,8 @@ func seedFleet(t *testing.T, c *redis.Client, sprint string, n int, benches map[
 // contract: the Go planner offers the card to the next eligible bench, and
 // ns_card_deal independently refuses the avoided one.
 func TestDealSkipsAvoidedBench(t *testing.T) {
+	t.Parallel()
+
 	c := dealRedis(t)
 	const sprint = "control-avoid"
 	seedFleet(t, c, sprint, 1, map[string]int{"X": 1, "Y": 1})
@@ -313,6 +315,8 @@ func scard(t *testing.T, c *redis.Client, k string) int64 {
 // ssh-refused and exactly one log entry; the bench ssh cell has one fenced
 // writer.
 func TestDealFunctionsFencedAndAtomic(t *testing.T) {
+	t.Parallel()
+
 	const sprint = "control-00003063"
 	ctx := context.Background()
 	c := dealRedis(t)
@@ -655,6 +659,8 @@ func TestDealFunctionsFencedAndAtomic(t *testing.T) {
 // writes the row and ns_card_undeal returns a refused bench's cards.
 // `go test -run TestControl12FiftyCardsOneSession` runs it beside the fixture version.
 func TestControl12FiftyCardsOneSessionOnRealFunctions(t *testing.T) {
+	t.Parallel()
+
 	const sprint = "control-0000c012"
 	ctx := context.Background()
 	c := dealRedis(t)
@@ -777,6 +783,8 @@ var regexpToken = regexp.MustCompile(`^\d+\.[0-9a-f]{32}$`)
 // with no legs runs every leg, and a card with no LEG deals to any bench. A
 // bench that declares legs still refuses a card of another leg.
 func TestCardDealBenchWithoutLegsCardWithoutLeg(t *testing.T) {
+	t.Parallel()
+
 	const sprint = "control-00003321"
 	ctx := context.Background()
 	c := dealRedis(t)
@@ -842,6 +850,8 @@ func ptr(s string) *string { return &s }
 // ssh_fail_after is honoured through ns_fleet_config, an ok row clears the
 // count, and a stale token is FENCED before any write.
 func TestDealFailOneCallHoldsBenchAfterThreeTimeouts(t *testing.T) {
+	t.Parallel()
+
 	const sprint = "control-00003322"
 	const deadline = 1200 * time.Millisecond
 	ctx := context.Background()

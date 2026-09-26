@@ -15,6 +15,8 @@ import (
 // alone does not identify the cause, so `RUN NOTE` (the one remedy line) names the
 // stop and the act that lifts it, and never a second run.
 func TestRunNoteNamesAStoppedPool(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	p, err := OpenPool(dir)
 	if err != nil {

@@ -11,6 +11,8 @@ import (
 // cores at W=16 records width=8; one whose throughput at 8 is under 1.5 x its
 // throughput at 4 records width=4; one abstain at any round ends the doubling.
 func TestSizeDoublesUntilARuleBreaks(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	cores := 16
 	loadFor := func(w int) float64 {
@@ -54,6 +56,8 @@ func TestSizeDoublesUntilARuleBreaks(t *testing.T) {
 // size-records-width-with-version: the row gains width, measured and version,
 // and a version unequal to the running tool's is re-measured by the adopt step.
 func TestSizeRecordsWidthWithVersion(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	dir := t.TempDir()
 	p := filepath.Join(dir, "benches.tsv")
@@ -92,6 +96,8 @@ func TestSizeRecordsWidthWithVersion(t *testing.T) {
 // eight cards from a batch of twelve, and the four wait in the queue rather
 // than a ninth slot.
 func TestLaunchFillsToWidth(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	if got := PlanBenchLaunch(16, 0, 8, 12); got != 8 {
 		t.Fatalf("width=8 with 12 queued launches 8, got %d", got)
@@ -102,6 +108,8 @@ func TestLaunchFillsToWidth(t *testing.T) {
 // 16x1.5-6=18, capped at cores 16 and then at its width 8; at load 20 it is
 // given four; at load 24 it is given none, its width unchanged on the row.
 func TestLaunchDropsDownUnderLoad(t *testing.T) {
+	t.Parallel()
+
 	windowsIsNotABench(t)
 	if got := PlanBenchLaunch(16, 6, 8, 100); got != 8 {
 		t.Fatalf("headroom 18 capped at cores 16 then width 8, got %d", got)

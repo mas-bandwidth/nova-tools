@@ -11,6 +11,8 @@ import (
 // card's owner is the comment author. This closes the security finding where
 // anybody who may comment on the issue may take or close any card under any name.
 func TestTheIssueBackendFoldsOnTheCommentAuthorNotTheAsLabel(t *testing.T) {
+	t.Parallel()
+
 	i, err := NewIssue("mas-bandwidth/schema#876", time.Minute)
 	if err != nil {
 		t.Fatal(err)

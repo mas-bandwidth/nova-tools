@@ -23,6 +23,8 @@ var adHocScript = regexp.MustCompile(`redis\.NewScript\(|\.Eval(Sha)?(RO|Ro)?\(|
 // TestCardPathMakesNoEvalCall and TestDrainReleasesAndImportsOnce are the
 // runtime controls on a real server's command counters.
 func TestCardPackageSendsNoAdHocScript(t *testing.T) {
+	t.Parallel()
+
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)

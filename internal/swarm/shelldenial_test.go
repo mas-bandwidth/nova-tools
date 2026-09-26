@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // A DENIAL IN THE CAPTURE IS NEVER AN OK, AND NEVER A DIAGNOSIS EITHER (issue #1465, and
@@ -20,6 +22,8 @@ import (
 // -- and it takes the PATH WHOLE, because a shell delimits its fields with `: ` and spaces
 // and parentheses are ordinary pathname characters (Stella's P1).
 func TestShellDeniedReadsTheShellsOwnWords(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name, line, want string
 	}{
@@ -127,6 +131,8 @@ func TestShellDeniedReadsTheShellsOwnWords(t *testing.T) {
 // TestShellDenialCarriesTheStep: the step the card had reached rides with the path, the way a
 // wall death's does, so the refusal says WHERE the card was and not only what was named.
 func TestShellDenialCarriesTheStep(t *testing.T) {
+	t.Parallel()
+
 	log := []byte("STEP 1 clone\nSTEP 4 run the gate\n/usr/bin/bash: line 1: /opt/sdk tool/bin/go: Permission denied\n")
 	got, ok := ShellDenied(log)
 	if !ok {
@@ -141,6 +147,8 @@ func TestShellDenialCarriesTheStep(t *testing.T) {
 // The same line comes out of an exec denial, a redirection the card recovered from, and a cd
 // into an unreadable directory. The reason may name none of them, and it must say so.
 func TestShellDenialReasonAssertsNoCauseItCannotProve(t *testing.T) {
+	t.Parallel()
+
 	d := ShellDenial{Path: "/opt/out/report.txt", Step: "3", Line: "/bin/bash: /opt/out/report.txt: Permission denied"}
 	for _, tc := range []struct{ name, wall string }{
 		{name: "unwalled", wall: SandboxNoneByFlag},
@@ -173,6 +181,8 @@ func TestShellDenialReasonAssertsNoCauseItCannotProve(t *testing.T) {
 // `--no-wall` runs too, where there is no sandbox at all, so the text cannot attribute the
 // denial to one -- and must not offer a read set that does not exist as a remedy.
 func TestShellDenialReasonAttributesNothingToAWallThatWasNotThere(t *testing.T) {
+	t.Parallel()
+
 	d := ShellDenial{Path: "/opt/sdk tool/bin/go", Step: "3", Line: "/bin/bash: /opt/sdk tool/bin/go: Permission denied"}
 	got := ShellDenialReason("a-card", "/jobs/a-card", SandboxNoneByFlag, 0, d)
 	for _, forbidden := range []string{"read_roots", "the wall refused"} {
@@ -199,6 +209,8 @@ func TestShellDenialReasonAttributesNothingToAWallThatWasNotThere(t *testing.T) 
 // resolves into -- because the kernel checks the grant against the resolved target. Named
 // with a space in it, because a path with a space is an ordinary path.
 func TestDeniedPathRootsNameBothEntries(t *testing.T) {
+	t.Parallel()
+
 	// The temp dir is resolved once: on macOS t.TempDir() lands under /var, a symlink to
 	// /private/var, and the roots this reports are resolved paths.
 	dir, err := filepath.EvalSymlinks(t.TempDir())
@@ -209,7 +221,7 @@ func TestDeniedPathRootsNameBothEntries(t *testing.T) {
 	if err := os.MkdirAll(sdkBin, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(sdkBin, "go"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+	if err := testbin.WriteExecutable(filepath.Join(sdkBin, "go"), []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	linkDir := filepath.Join(dir, "go", "bin")
@@ -239,6 +251,8 @@ func TestDeniedPathRootsNameBothEntries(t *testing.T) {
 // hold on #1478) gives exactly ShellDenied's answer on the same bytes, however the child's
 // writes happen to be split, including a last line with no newline.
 func TestShellDenialReaderAnswersAsShellDenied(t *testing.T) {
+	t.Parallel()
+
 	captures := []string{
 		"STEP 1 plan\nSTEP 3 run the gate\n/usr/bin/bash: line 1: /opt/sdk/go1.26.5/bin/go: Permission denied\nSTEP 4 report\n",
 		"STEP 2 x\nzsh: permission denied: /opt/sdk tool/bin/go",

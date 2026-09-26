@@ -353,6 +353,8 @@ func TestShallowMirrorRefusedAndRepaired(t *testing.T) {
 // TestNoShallowFlagsOnMirrorPaths: no argv this package ran carries a shallow
 // or partial-clone flag. It runs after the other tests in this file.
 func TestNoShallowFlagsOnMirrorPaths(t *testing.T) {
+	t.Parallel()
+
 	allMu.Lock()
 	defer allMu.Unlock()
 	if len(allArgv) == 0 {
@@ -372,6 +374,8 @@ func TestNoShallowFlagsOnMirrorPaths(t *testing.T) {
 // TestStatusReceiptShapes: OK, MISMATCH, MISSING and UNREACHABLE, the total
 // line, and ? for a stale field.
 func TestStatusReceiptShapes(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	mr, rdb := newRedis(t)
 	now := time.Now()
@@ -438,6 +442,8 @@ func TestOneLoopPerBench(t *testing.T) {
 }
 
 func TestParseReposAndRemote(t *testing.T) {
+	t.Parallel()
+
 	r, err := ParseRepos("nova-tools:dev,schema:main")
 	if err != nil || len(r) != 2 || r[1] != (Repo{"schema", "main"}) {
 		t.Fatalf("%v %v", r, err)

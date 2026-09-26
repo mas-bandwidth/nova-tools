@@ -184,6 +184,16 @@ var (
 // and removes the one directory they live in after the last. The compile is charged here
 // and never to whichever test asks first.
 func TestMain(m *testing.M) {
+	// THE PROVIDER RETRY WAIT IS NOT UNDER TEST HERE. A launch that dies on a provider 5xx
+	// is retried after 5-20s and then 30-60s (swarm.ProviderRetryDelay); a verdict test
+	// that drives FAKE-5XX through all three launches sat up to 80s in those waits and
+	// asserted nothing about them. The bands are internal/swarm's TestProviderRetryDelayBands;
+	// here every run pins the wait to zero through the seam the delay already reads, once,
+	// for the whole process, so no test needs t.Setenv (which t.Parallel refuses) for it. A
+	// test that wants a wait of its own still sets it.
+	if os.Getenv("NOVA_SWARM_PROVIDER_BACKOFF") == "" {
+		_ = os.Setenv("NOVA_SWARM_PROVIDER_BACKOFF", "0s")
+	}
 	if err := buildShared(); err != nil {
 		fmt.Fprintf(os.Stderr, "building the binaries these tests run: %v\n", err)
 		os.Exit(1)
@@ -621,6 +631,8 @@ func (b *bench) usageRow(id string) map[string]string {
 
 // triage accepts --usage and exits 0.
 func TestTriageAcceptsUsageFlag(t *testing.T) {
+	t.Parallel()
+
 	b := newBench(t)
 	usageFile := filepath.Join(t.TempDir(), "usage.tsv")
 	exit, stdout, stderr := b.swarm("triage", "--pool", b.pool, "--usage", usageFile)

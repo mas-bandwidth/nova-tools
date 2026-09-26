@@ -86,12 +86,16 @@ func mustRefuse(t *testing.T, body, fieldSubstr string) {
 // TestProfileRefusesUnknownField: a profile whose worker carries a field the spec forbids
 // there -- `key_file` is on the forbidden list -- is an exit-2 refusal naming that field.
 func TestProfileRefusesUnknownField(t *testing.T) {
+	t.Parallel()
+
 	mustRefuse(t, profileJSON("5m", `, "key_file": "/secure/example/key"`), "worker.key_file")
 }
 
 // TestProfileRefusesMissingLimit: a worker with no `deadline` is the missing-limits refusal,
 // and it names the exact field a person must go and fill in.
 func TestProfileRefusesMissingLimit(t *testing.T) {
+	t.Parallel()
+
 	mustRefuse(t, profileJSON("", ""), "worker.deadline")
 }
 
@@ -99,6 +103,8 @@ func TestProfileRefusesMissingLimit(t *testing.T) {
 // profile record in canonical field order, so the same record (even reordered and
 // re-spaced) hashes the same, and changing one field changes the hash.
 func TestProfilePreimageIsStable(t *testing.T) {
+	t.Parallel()
+
 	valid := profileJSON("5m", "")
 
 	first, err := LoadProfile(writeProfile(t, valid))
@@ -170,6 +176,8 @@ func TestProfilePreimageIsStable(t *testing.T) {
 // TestProfileRefusesEmptyID: a profile file whose only entry has an empty id is refused,
 // naming the id.
 func TestProfileRefusesEmptyID(t *testing.T) {
+	t.Parallel()
+
 	body := `{
   "version": 1,
   "profiles": {
@@ -197,6 +205,8 @@ func TestProfileRefusesEmptyID(t *testing.T) {
 // TestProfileRefusesDuplicateID: a catalog member repeated under the same id is a
 // duplicate key, refused with that member named.
 func TestProfileRefusesDuplicateID(t *testing.T) {
+	t.Parallel()
+
 	body := `{
   "version": 1,
   "profiles": {
@@ -211,6 +221,8 @@ func TestProfileRefusesDuplicateID(t *testing.T) {
 // this build does not support, and the profile refuses on that field before any provider
 // or gate use. `adapter` is a closed implementation identifier, not a provider/model name.
 func TestProfileRefusesUnknownAdapter(t *testing.T) {
+	t.Parallel()
+
 	body := strings.Replace(profileJSON("5m", ""),
 		`"execution": {"adapter": "opencode-native/1", "adapter_revision": "1"}`,
 		`"execution": {"adapter": "opencode-native/2", "adapter_revision": "1"}`, 1)
@@ -220,6 +232,8 @@ func TestProfileRefusesUnknownAdapter(t *testing.T) {
 // TestProfileRefusesUnknownAdapterRevision: a compatibility revision this build does not
 // support is refused too, on its own field.
 func TestProfileRefusesUnknownAdapterRevision(t *testing.T) {
+	t.Parallel()
+
 	body := strings.Replace(profileJSON("5m", ""),
 		`"execution": {"adapter": "opencode-native/1", "adapter_revision": "1"}`,
 		`"execution": {"adapter": "opencode-native/1", "adapter_revision": "9"}`, 1)

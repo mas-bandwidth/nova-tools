@@ -92,6 +92,8 @@ func TestNativeHandsCardRepoToCardOut(t *testing.T) {
 // TestHandOffCardOutRefusals: no NOVA_CARD_OUT is no hand-off and leaves the job as it
 // was; an out inside the job is refused; an out that already holds a repo keeps it.
 func TestHandOffCardOutRefusals(t *testing.T) {
+	t.Parallel()
+
 	job := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(job, "repo", ".git"), 0o755); err != nil {
 		t.Fatal(err)

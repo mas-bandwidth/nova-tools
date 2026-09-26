@@ -12,6 +12,8 @@ import (
 // spec nobody reads in a build rots; this test reads it the way the swarm
 // grammar test reads SPEC-SWARM.md, so a rule renamed out of the doc is red.
 func TestSpecDecideNamesTwelveRules(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-DECIDE.md"))
 	if err != nil {
 		t.Fatalf("the typed-decision route's spec is missing: %s", err)
@@ -44,6 +46,8 @@ func TestSpecDecideNamesTwelveRules(t *testing.T) {
 // regenerated from. A rule that is only in the code is a rule nobody can argue
 // with, so this test reads the doc for each of them.
 func TestSpecDecideNamesTheLadder(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-DECIDE.md"))
 	if err != nil {
 		t.Fatalf("the typed-decision route's spec is missing: %s", err)

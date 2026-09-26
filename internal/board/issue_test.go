@@ -14,6 +14,8 @@ import (
 // concatenated JSON arrays, which is what `gh api --paginate` hands back, so the
 // pagination is exercised rather than assumed.
 func TestTheIssueBackendReadsTheWholeThreadAcrossPages(t *testing.T) {
+	t.Parallel()
+
 	i, err := NewIssue("mas-bandwidth/schema#876", time.Minute)
 	if err != nil {
 		t.Fatal(err)
@@ -92,6 +94,8 @@ func TestTheIssueBackendReadsTheWholeThreadAcrossPages(t *testing.T) {
 // The three parts of --issue become gh's own argv, so a value beginning with a dash is an
 // OPTION to gh and not a repository. The cost of being narrow is a refusal a person reads.
 func TestAnIssueSpecIsCheckedRatherThanPasted(t *testing.T) {
+	t.Parallel()
+
 	for _, bad := range []string{
 		"mas-bandwidth/schema", "mas-bandwidth#876", "--repo=evil/x#1", "mas-bandwidth/-x#1",
 		"mas-bandwidth/schema#0", "mas-bandwidth/schema#eight", "mas-bandwidth/sch ema#8",
@@ -128,6 +132,8 @@ func mustTime(t *testing.T, s string) time.Time {
 // thread, paused, and appended what it drew would post a second card under an id another
 // line had already used, and two filings would fold into one card with nothing said.
 func TestACardAppendRereadsTheThreadAndRefusesAnExistingId(t *testing.T) {
+	t.Parallel()
+
 	i, err := NewIssue("mas-bandwidth/schema#876", time.Minute)
 	if err != nil {
 		t.Fatal(err)
@@ -180,6 +186,8 @@ func TestACardAppendRereadsTheThreadAndRefusesAnExistingId(t *testing.T) {
 // become no budget at all, and a subprocess that never returns is a tool that has stopped
 // saying anything while looking exactly like one that is working.
 func TestGhTimeoutIsAFlagAndIsChecked(t *testing.T) {
+	t.Parallel()
+
 	// The budget a caller names reaches the subprocess, on the read side and the write
 	// side, as a context deadline and not as a hope.
 	i, err := NewIssue("mas-bandwidth/schema#876", 30*time.Second)

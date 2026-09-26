@@ -48,6 +48,8 @@ func mustPost(t *testing.T, c *redis.Client, text string, scope line.Scope) line
 // typed gate disagrees with the measured one, or whose score is over the gate
 // cap with a measured gate red, writes nothing.
 func TestLinePostRefusesMalformed(t *testing.T) {
+	t.Parallel()
+
 	c := storeRedis(t)
 	ctx := context.Background()
 	for _, text := range []string{
@@ -111,6 +113,8 @@ func TestLinePostRefusesMalformed(t *testing.T) {
 // TestLineListByHead: List returns the lines at one head only, oldest
 // first; "" is the record's head and a typed prefix expands to it.
 func TestLineListByHead(t *testing.T) {
+	t.Parallel()
+
 	c := storeRedis(t)
 	ctx := context.Background()
 	if err := c.HSet(ctx, "ci:nova-tools:"+headA, "ci", "green").Err(); err != nil {
@@ -147,6 +151,8 @@ func TestLineListByHead(t *testing.T) {
 // a second line of a kind by the same reader at the same head replaces the
 // first, another reader's is its own record, and the log keeps both.
 func TestLineKeyedByWho(t *testing.T) {
+	t.Parallel()
+
 	c := storeRedis(t)
 	ctx := context.Background()
 	p := mustPost(t, c, "SCORE who=Emma head="+headA+" score=8/10", line.Scope{})
@@ -171,6 +177,8 @@ func TestLineKeyedByWho(t *testing.T) {
 // comment:<id>, prose is skipped, a second import writes nothing new, and an
 // imported line keeps its typed gate even when the measure now disagrees.
 func TestImportFromComments(t *testing.T) {
+	t.Parallel()
+
 	c := storeRedis(t)
 	ctx := context.Background()
 	if err := c.HSet(ctx, "ci:nova-tools:"+headA, "ci", "red").Err(); err != nil {
@@ -210,6 +218,8 @@ func TestImportFromComments(t *testing.T) {
 // in Redis: before the post the member is skipped no-read-at-head, after a
 // SCORE posted through the store it is a member at that score.
 func TestLanderReadsPostedLine(t *testing.T) {
+	t.Parallel()
+
 	c := storeRedis(t)
 	ctx := context.Background()
 	if err := c.HSet(ctx, "pr:nova-tools:7", "state", "open", "stream", "s1").Err(); err != nil {

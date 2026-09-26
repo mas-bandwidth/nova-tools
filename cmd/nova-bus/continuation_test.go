@@ -259,10 +259,12 @@ func TestContinuationSurvivesOrdinaryCursorAdvance(t *testing.T) {
 // appears once in it, a tip that grows waits for a fresh chain, and a token that names no
 // item in the range refuses and writes nothing.
 func TestRetryAfterAPartialResumesAtNext(t *testing.T) {
+	t.Parallel()
+
 	if testing.Short() {
 		t.Skip("slow: retries a send over repeated attempts; runs on the self-hosted legs and nightly")
 	}
-	t.Parallel()
+
 	for _, advance := range []bool{false, true} {
 		name := "ReadOnly"
 		if advance {

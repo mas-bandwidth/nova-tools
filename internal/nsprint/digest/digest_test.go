@@ -84,6 +84,8 @@ func window() digest.Options { return digest.Options{Since: since, Until: until}
 // events and moves); the output is want.txt byte for byte, whether the
 // events repo is named by --repo or only by the window's landing.
 func TestDigestGolden(t *testing.T) {
+	t.Parallel()
+
 	c := load(t)
 	w := want(t)
 	if got := render(t, c, window()); got != w {
@@ -131,6 +133,8 @@ func firstDiff(a, b string) int {
 // TestDigestEachSectionFails: a digest missing any one section's in-window
 // record differs from the golden, first inside that section.
 func TestDigestEachSectionFails(t *testing.T) {
+	t.Parallel()
+
 	w := want(t)
 	for _, tc := range []struct{ section, skip string }{
 		{"landed:", "LANDED mas-bandwidth/nova-tools#3901"},
@@ -157,6 +161,8 @@ func TestDigestEachSectionFails(t *testing.T) {
 // says so in every section it feeds and never prints "none"; a deletion
 // before since is not a trim of the window.
 func TestDigestSourceTrimmed(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	t.Run("ws_log_trimmed", func(t *testing.T) {
 		c := load(t)
@@ -283,6 +289,8 @@ func grammarErr(text string) error {
 // TestDigestLineGrammar: want.txt keeps the grammar, and the grammar pins
 // field order and the none form; DIGEST_PROBE=<file> checks a saved output.
 func TestDigestLineGrammar(t *testing.T) {
+	t.Parallel()
+
 	w := want(t)
 	checkGrammar(t, w)
 	if p := os.Getenv("DIGEST_PROBE"); p != "" {
@@ -341,6 +349,8 @@ var eventsRx = regexp.MustCompile(`^land:\S+:events$`)
 // pr:<name>:<n> are read, every XRANGE carries COUNT 1000, nothing is
 // SCANned, and the package has no GitHub client.
 func TestDigestBoundedReads(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	check := func(t *testing.T, c *redis.Client, rts int) {
 		t.Helper()

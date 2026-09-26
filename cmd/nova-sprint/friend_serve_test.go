@@ -19,6 +19,8 @@ import (
 // seat's dispatch: this test binary, which writes one DONE line when
 // NOVA_SERVE_FAKE is set and is otherwise an empty test.
 func TestHelperServeDispatch(t *testing.T) {
+	t.Parallel()
+
 	if os.Getenv("NOVA_SERVE_FAKE") == "" {
 		return
 	}

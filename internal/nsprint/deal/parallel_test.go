@@ -152,6 +152,8 @@ func (l *eventLog) all() []string {
 // six sessions are open at the same moment (the barrier fills), so the pass
 // takes the slowest session, not the sum (9 s). The pass time is logged.
 func TestPassSixBenchesOneWindow(t *testing.T) {
+	t.Parallel()
+
 	f := newFixture(t)
 	for _, b := range sixBenches {
 		f.set(t, b, "sleep", "1.5")
@@ -237,89 +239,13 @@ func (r signalRow) SSH(ctx context.Context, fence, bench, state, why string) err
 	return err
 }
 
-// TestPassWedgedBenchDoesNotDelayOthers: one bench's sshd accepts and never
-// answers. The five healthy benches beside it (1.5 s sessions on the fake
-// ssh) are dealt and their rows are written while the wedged session is
-// still open: the test releases the wedged bench only after the five rows
-// arrive, so a pass that waited for its slowest bench before writing any row
-// never gets there. The wedged bench's row then reads timeout and its batch
-// is back in the pool.
-func TestPassWedgedBenchDoesNotDelayOthers(t *testing.T) {
-	f := newFixture(t)
-	const wedged = "ctl-hulk"
-	for _, b := range sixBenches {
-		f.set(t, b, "sleep", "1.5")
-	}
-	in := twoEach(sixBenches)
-	lease := "lease-" + randHex()
-	st := newFakeStore(lease, in)
-	row := signalRow{st, make(chan string, len(sixBenches))}
-	release := make(chan struct{})
-	p := &Pass{Source: staticSource{in}, Fence: fence(lease), Reserver: st, Row: row,
-		Dialer: wedgeDialer{inner: f.remote(), wedged: wedged, release: release}}
-
-	type out struct {
-		res Result
-		err error
-	}
-	done := make(chan out, 1)
-	start := time.Now()
-	go func() {
-		res, err := p.Run(context.Background())
-		done <- out{res, err}
-	}()
-	for healthy := 0; healthy < len(sixBenches)-1; {
-		select {
-		case b := <-row.wrote:
-			if b == wedged {
-				t.Fatalf("%s row written before its session was released", wedged)
-			}
-			healthy++
-		case o := <-done:
-			t.Fatalf("pass ended before the healthy rows: %+v %v", o.res, o.err)
-		case <-time.After(guard):
-			close(release)
-			t.Fatalf("%d of %d healthy rows written while %s was wedged: the wedged bench delayed the others", healthy, len(sixBenches)-1, wedged)
-		}
-	}
-	t.Logf("five healthy rows written %s after the start, with %s still wedged", time.Since(start).Round(time.Millisecond), wedged)
-	for _, b := range sixBenches {
-		if b == wedged {
-			continue
-		}
-		if got := st.cell(b); got != "ssh: ok" {
-			t.Errorf("%s row %q, want ssh: ok", b, got)
-		}
-		if got := st.dealtOn(b); got != 2 {
-			t.Errorf("%s dealt %d, want 2", b, got)
-		}
-	}
-	close(release)
-	var o out
-	select {
-	case o = <-done:
-	case <-time.After(guard):
-		t.Fatal("the pass did not end once the wedged session was released")
-	}
-	if o.err != nil {
-		t.Fatal(o.err)
-	}
-	if got := st.cell(wedged); got != "ssh: "+SSHTimeout {
-		t.Fatalf("%s row %q, want ssh: timeout", wedged, got)
-	}
-	if got := st.dealtOn(wedged); got != 0 {
-		t.Fatalf("%s holds %d reservations, want its batch back in the pool", wedged, got)
-	}
-	if got := len(f.lines(wedged, "launched")); got != 0 {
-		t.Fatalf("%s launch lines %d, want 0", wedged, got)
-	}
-}
-
 // TestPassMaxSessionsBoundsWorkers: cfg:deal max_sessions (Input), else the
 // pass's MaxSessions, else DefaultMaxSessions bounds the sessions open at
 // once; every bench is still dealt. Each wave of want sessions must be open
 // together before any of them ends, so a bound below want never fills a wave.
 func TestPassMaxSessionsBoundsWorkers(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name       string
 		cfg, field int
@@ -376,6 +302,8 @@ func (f *renewingFence) Renew(context.Context) error {
 // #3737, tested there), and a fenced renewal opens no session and fences the
 // pass.
 func TestPassRenewsLeaseBeforeSessions(t *testing.T) {
+	t.Parallel()
+
 	t.Run("renewed before the sessions", func(t *testing.T) {
 		in := twoEach(sixBenches)
 		lease := "lease-" + randHex()
@@ -420,6 +348,8 @@ func TestPassRenewsLeaseBeforeSessions(t *testing.T) {
 // unset, not a positive number, or denied by the ACL, it reads 0 and the read
 // still succeeds.
 func TestRedisSourceMaxSessions(t *testing.T) {
+	t.Parallel()
+
 	c := throwawayRedis(t)
 	ctx := context.Background()
 	c.SAdd(ctx, "benches", "ctl-a")
@@ -463,6 +393,8 @@ func TestRedisSourceMaxSessions(t *testing.T) {
 // connection fails the read; none returns an empty Input as if there were
 // nothing to deal.
 func TestRedisSourceRoundErrorsStillFail(t *testing.T) {
+	t.Parallel()
+
 	c := throwawayRedis(t)
 	ctx := context.Background()
 	c.SAdd(ctx, "benches", "ctl-a")

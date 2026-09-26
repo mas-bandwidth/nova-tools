@@ -59,6 +59,8 @@ func card(lines ...string) []byte {
 }
 
 func TestCardHeaderBlockRunsToTheFirstLineThatIsNotAKeyLine(t *testing.T) {
+	t.Parallel()
+
 	// The nineteen keys of the real card, with the line each sits on.
 	realKeys := map[string]int{
 		"KIND": 2, "SCHEMA": 3, "ATTEMPT": 4, "DEADLINE": 5, "LEG": 6, "REPO": 7,
@@ -184,6 +186,8 @@ func TestCardHeaderBlockRunsToTheFirstLineThatIsNotAKeyLine(t *testing.T) {
 // read past as an unknown key -- the card has no PATHS: line and the lint says so, which
 // is the answer the gate will give it.
 func TestCardHeaderLowerCaseTypedKeyIsNotTheTypedKey(t *testing.T) {
+	t.Parallel()
+
 	raw := card(
 		"RESULT: CARD-2605 do the thing",
 		"KIND: fix-red",

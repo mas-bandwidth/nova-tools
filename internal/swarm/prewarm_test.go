@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 func prewarmFixture(t *testing.T) (string, string) {
@@ -28,6 +30,8 @@ func prewarmFixture(t *testing.T) (string, string) {
 // until every warm phase succeeds, and every phase receives the exact caches native jobs
 // later receive.
 func TestPrewarmPublishesExactTipAfterEveryCachePhase(t *testing.T) {
+	t.Parallel()
+
 	source, tip := prewarmFixture(t)
 	root := filepath.Join(t.TempDir(), "pool")
 	var calls []PrewarmCommand
@@ -102,6 +106,8 @@ func TestPrewarmPublishesExactTipAfterEveryCachePhase(t *testing.T) {
 
 // A failed compiler must not leave a checkout that staging mistakes for a warm exact tip.
 func TestPrewarmFailurePublishesNeitherCheckoutNorReceipt(t *testing.T) {
+	t.Parallel()
+
 	source, tip := prewarmFixture(t)
 	root := filepath.Join(t.TempDir(), "pool")
 	_, err := Prewarm(PrewarmInput{
@@ -127,6 +133,8 @@ func TestPrewarmFailurePublishesNeitherCheckoutNorReceipt(t *testing.T) {
 }
 
 func TestPrewarmFailedRerunInvalidatesPriorReceipt(t *testing.T) {
+	t.Parallel()
+
 	source, tip := prewarmFixture(t)
 	root := filepath.Join(t.TempDir(), "pool")
 	input := PrewarmInput{Root: root, Source: source, Repo: "acme/tool", Tip: tip,
@@ -161,7 +169,7 @@ func TestPrewarmGitChildrenDropSecrets(t *testing.T) {
 	bin := t.TempDir()
 	log := filepath.Join(t.TempDir(), "secret-child.log")
 	wrapper := "#!/bin/sh\nif [ -n \"$STELLA_REVIEW_TOKEN\" ]; then printf '%s\\n' \"$*\" >> \"$STELLA_REVIEW_LOG\"; fi\nexec \"$STELLA_REAL_GIT\" \"$@\"\n"
-	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(wrapper), 0o755); err != nil {
+	if err := testbin.WriteExecutable(filepath.Join(bin, "git"), []byte(wrapper), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("STELLA_REVIEW_TOKEN", "must-not-reach-child")
@@ -202,6 +210,8 @@ func envValue(env []string, name string) string {
 // Each child writes a private overlay beside its checkout. PrepareLispJobCache seeds it
 // from the shared exact-tip output before launch.
 func TestCacheEnvCarriesAPrivateLispOverlay(t *testing.T) {
+	t.Parallel()
+
 	source, _ := prewarmFixture(t)
 	root := t.TempDir()
 	if err := EnsureCacheDirs(root); err != nil {
@@ -220,6 +230,8 @@ func TestCacheEnvCarriesAPrivateLispOverlay(t *testing.T) {
 // output. Staging pins tracked-file mtimes to the tip's commit time so two paths mapping to
 // the same shared output can actually reuse it.
 func TestStageJobTreePinsTrackedMtimeForCompiledCacheReuse(t *testing.T) {
+	t.Parallel()
+
 	source, _ := prewarmFixture(t)
 	dest := filepath.Join(t.TempDir(), "job", JobRepo)
 	if err := StageJobTree(source, dest, nil); err != nil {
@@ -236,6 +248,8 @@ func TestStageJobTreePinsTrackedMtimeForCompiledCacheReuse(t *testing.T) {
 }
 
 func TestPrewarmTrackedSymlinkTargetMtimeIsUntouched(t *testing.T) {
+	t.Parallel()
+
 	source, _ := prewarmFixture(t)
 	target := filepath.Join(t.TempDir(), "outside")
 	if err := os.WriteFile(target, []byte("outside"), 0o644); err != nil {
@@ -267,6 +281,8 @@ func TestPrewarmTrackedSymlinkTargetMtimeIsUntouched(t *testing.T) {
 }
 
 func TestPrepareLispJobCacheRefusesSymlinkOverlay(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	job := filepath.Join(root, "job")
 	source := filepath.Join(job, JobRepo)
@@ -283,6 +299,8 @@ func TestPrepareLispJobCacheRefusesSymlinkOverlay(t *testing.T) {
 }
 
 func TestASDFMappingReusesCompiledOutputAcrossFreshJobClone(t *testing.T) {
+	t.Parallel()
+
 	sbcl, err := exec.LookPath("sbcl")
 	if err != nil {
 		t.Skip("sbcl is not installed on this test host")
@@ -345,6 +363,8 @@ func TestASDFMappingReusesCompiledOutputAcrossFreshJobClone(t *testing.T) {
 }
 
 func TestSpecNamesExactTipPrewarmAndItsFleetMeasurement(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-SWARM.md"))
 	if err != nil {
 		t.Fatal(err)

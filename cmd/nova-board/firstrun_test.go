@@ -64,6 +64,8 @@ func examples(t *testing.T) []string {
 // a broken example — which is the whole distinction this tool's `check` rests on, so the
 // assertion here is the same one the shell guard makes.
 func TestUsageBannerExamplesRun(t *testing.T) {
+	t.Parallel()
+
 	for _, ex := range examples(t) {
 		exit, stdout, stderr := runFixture(t, strings.Fields(ex)[1:]...)
 		if exit == 2 {
@@ -81,6 +83,8 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 
 // quickstart is what a first run is offered first.
 func TestQuickstartIsTheFirstThingTheBannerOffers(t *testing.T) {
+	t.Parallel()
+
 	exs := examples(t)
 	if !strings.HasPrefix(exs[0], "nova-board quickstart ") {
 		t.Errorf("the first example is %q; a first run should be offered quickstart first", exs[0])
@@ -101,6 +105,8 @@ func TestQuickstartIsTheFirstThingTheBannerOffers(t *testing.T) {
 // and nothing saying HOW, then hit the refusal when it ran. The line the banner prints for
 // close must name all three.
 func TestCloseUsageNamesTheThreeWays(t *testing.T) {
+	t.Parallel()
+
 	var closeLine string
 	for _, line := range strings.Split(usage, "\n") {
 		if strings.HasPrefix(line, "  nova-board close ") {
@@ -119,6 +125,8 @@ func TestCloseUsageNamesTheThreeWays(t *testing.T) {
 
 // (b) A refusal says what the flag or input WANTS, not only what was wrong.
 func TestARefusalSaysWhatTheFlagWants(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		args []string
@@ -159,6 +167,8 @@ func TestARefusalSaysWhatTheFlagWants(t *testing.T) {
 // (b), the other half: ONE RUN REPORTS EVERY PROBLEM IT CAN FIND. Being sent back a second
 // time for something the first run could already see is the stumble this pins shut.
 func TestIndependentProblemsAreReportedInOneRun(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name string
 		args []string
@@ -313,6 +323,8 @@ func shapesOf(stream string) []string {
 // The fixture is small enough to read in a sitting and is referenced by nothing outside
 // testdata, which is what ONBOARDING asks of it.
 func TestTheFixtureIsSmallEnoughToReadInASitting(t *testing.T) {
+	t.Parallel()
+
 	entries, err := os.ReadDir(exampleBoard)
 	if err != nil {
 		t.Fatal(err)
@@ -340,6 +352,8 @@ func TestTheFixtureIsSmallEnoughToReadInASitting(t *testing.T) {
 // claim about a message that has since moved, and the command reference is where a first
 // run reads it. That reference is docs/CLI.md since the README became an adoption guide.
 func TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "CLI.md"))
 	if err != nil {
 		t.Fatal(err)
@@ -412,6 +426,8 @@ func TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints(t *testing.T) {
 // directory is a valid empty ledger, and the first `add` makes it
 // (TestAddMakesTheDirectoryOnFirstUse).
 func TestADirThatDoesNotExistIsRefusedWithTheMkdirThatFixesIt(t *testing.T) {
+	t.Parallel()
+
 	missing := filepath.Join(t.TempDir(), "board")
 	for _, verb := range []string{"list", "check"} {
 		args := []string{verb, "--dir", missing, "--stale", "10m"}
@@ -465,6 +481,8 @@ func TestADirThatDoesNotExistIsRefusedWithTheMkdirThatFixesIt(t *testing.T) {
 // in the test above: SPEC-BOARD's item 6 is a BUILD list entry (SPEC-BOARD.md:808-814),
 // not a numbered rule.
 func TestTheMkdirRemedyIsOnePastableCommandWhenTheDirHasASpace(t *testing.T) {
+	t.Parallel()
+
 	missing := filepath.Join(t.TempDir(), "my board", "cards")
 	var out, errb bytes.Buffer
 	if exit := run([]string{"list", "--dir", missing, "--stale", "10m"}, &out, &errb, time.Now().UTC(), &seq{}); exit != 2 {
@@ -494,6 +512,8 @@ func TestTheMkdirRemedyIsOnePastableCommandWhenTheDirHasASpace(t *testing.T) {
 // tool spells every other boolean field -- `close` prints override=true|false through the
 // same yesNo -- rather than the yes|no a sibling tool uses.
 func TestQuickstartMakesTheDirectory(t *testing.T) {
+	t.Parallel()
+
 	missing := filepath.Join(t.TempDir(), "board")
 	var out, errb bytes.Buffer
 	if exit := run([]string{"quickstart", "--dir", missing, "--stale", "10m"}, &out, &errb, time.Now().UTC(), &seq{}); exit != 0 {
@@ -561,6 +581,8 @@ func TestQuickstartMakesTheDirectory(t *testing.T) {
 // refusing them. A REFUSED RUN LEAVES NOTHING BEHIND: every flag and every problem is
 // found first, and only a line that will be obeyed is allowed to touch the filesystem.
 func TestQuickstartRefusedMakesNothing(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name string
 		args []string

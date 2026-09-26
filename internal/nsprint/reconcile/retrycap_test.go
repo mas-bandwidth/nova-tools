@@ -12,6 +12,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/deal"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // refusingBench is a fake `ssh` to a bench whose card wrapper refuses every
@@ -53,6 +54,8 @@ func (f capFence) Token(context.Context) (string, error) { return string(f), nil
 // moves it to done/fail (state refused, reason retries, why the last REFUSED
 // line) with one receipt; the pool no longer holds it and card fsck is clean.
 func TestDealRetryCapRefusedLaunch(t *testing.T) {
+	t.Parallel()
+
 	const (
 		sprint = "control-3700"
 		bench  = "ctl-cap"
@@ -86,7 +89,7 @@ func TestDealRetryCapRefusedLaunch(t *testing.T) {
 	dir := t.TempDir()
 	sessions := filepath.Join(dir, "sessions.log")
 	prog := filepath.Join(dir, "ssh")
-	if err := os.WriteFile(prog, []byte(fmt.Sprintf(refusingBench, sessions)), 0o755); err != nil {
+	if err := testbin.WriteExecutable(prog, []byte(fmt.Sprintf(refusingBench, sessions)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	fns := &reconcile.DealFunctions{Client: c, Actor: "reconciler"}
@@ -179,6 +182,8 @@ func TestDealRetryCapRefusedLaunch(t *testing.T) {
 // max_attempts is the default 3, never unbounded; a card at attempt 3 is
 // capped, a card at attempt 2 is dealt.
 func TestDealRetryCapDefault(t *testing.T) {
+	t.Parallel()
+
 	const sprint, bench, token = "control-3700d", "ctl-capd", "fence-3700d"
 	ctx := context.Background()
 	_, c := controlRedis(t)

@@ -117,6 +117,8 @@ func mustBuild(t *testing.T, in EgressInput) EgressPlan {
 }
 
 func TestParseEgressPolicyTakesNamesAndComments(t *testing.T) {
+	t.Parallel()
+
 	names, bad := ParseEgressPolicy([]byte("# the header\n\none.example.test\n  two.example.test  # the api\n\n# a comment\nmodel.example.test\n"))
 	if len(bad) > 0 {
 		t.Fatalf("a well-formed policy was refused: %v", bad)
@@ -128,6 +130,8 @@ func TestParseEgressPolicyTakesNamesAndComments(t *testing.T) {
 }
 
 func TestParseEgressPolicyRefusesWhatIsNotAHostname(t *testing.T) {
+	t.Parallel()
+
 	for _, line := range []string{
 		"https://example.com",             // a URL is not a hostname
 		"example.com:443",                 // a port is not the file's business
@@ -145,6 +149,8 @@ func TestParseEgressPolicyRefusesWhatIsNotAHostname(t *testing.T) {
 }
 
 func TestParseEgressPolicyRefusesAnEmptyFile(t *testing.T) {
+	t.Parallel()
+
 	if _, bad := ParseEgressPolicy([]byte("# only comments\n\n")); len(bad) == 0 {
 		t.Error("a policy with no names was accepted; a plan built from it would allow nothing and the caller would learn that from a silent wall instead of a refusal")
 	}
@@ -154,6 +160,8 @@ func TestParseEgressPolicyRefusesAnEmptyFile(t *testing.T) {
 // have to be in it, and so has at least one model host for a run to name. The names
 // themselves are data in that file and are not spelled again here.
 func TestTheShippedPolicyCarriesTheReviewedNames(t *testing.T) {
+	t.Parallel()
+
 	names, bad := ParseEgressPolicy(readShippedPolicy(t))
 	if len(bad) > 0 {
 		t.Fatalf("infra/image/egress.txt does not parse: %v", bad)
@@ -179,6 +187,8 @@ func TestTheShippedPolicyCarriesTheReviewedNames(t *testing.T) {
 }
 
 func TestBuildEgressPinsEveryAllowedNameOnceAndAsksNothingElse(t *testing.T) {
+	t.Parallel()
+
 	in := goodInput(t)
 	p := mustBuild(t, in)
 	res := in.Lookup.(*fakeResolver)
@@ -197,6 +207,8 @@ func TestBuildEgressPinsEveryAllowedNameOnceAndAsksNothingElse(t *testing.T) {
 // carries: Johnny's page says an update is a PR to egress.txt, "Not a runtime flag", so a
 // flag that could name any host would be exactly the widening the page refuses.
 func TestBuildEgressRefusesAModelHostThatIsNotInThePolicy(t *testing.T) {
+	t.Parallel()
+
 	in := goodInput(t)
 	in.ModelHost = "other-model.example.test"
 	_, bad := BuildEgress(in)
@@ -207,6 +219,8 @@ func TestBuildEgressRefusesAModelHostThatIsNotInThePolicy(t *testing.T) {
 
 // A second model host in the file is not a second model host in the run.
 func TestBuildEgressAllowsExactlyOneModelHost(t *testing.T) {
+	t.Parallel()
+
 	in := goodInput(t)
 	const second, secondAddr = "second-model.example.test", "198.51.100.77"
 	in.Names = append(in.Names, second)
@@ -226,6 +240,8 @@ func TestBuildEgressAllowsExactlyOneModelHost(t *testing.T) {
 }
 
 func TestBuildEgressRefusesAPolicyMissingABaseName(t *testing.T) {
+	t.Parallel()
+
 	in := goodInput(t)
 	in.Names = []string{EgressBaseNames[1], testModelHost}
 	_, bad := BuildEgress(in)
@@ -237,6 +253,8 @@ func TestBuildEgressRefusesAPolicyMissingABaseName(t *testing.T) {
 // Fail closed on a resolver that answers with an address inside a denied range: that is
 // either a poisoned answer or a rebinding, and either way the safe move is no plan at all.
 func TestBuildEgressRefusesAPinnedAddressInsideADeniedRange(t *testing.T) {
+	t.Parallel()
+
 	for _, bad := range []string{"127.0.0.1", "169.254.169.254", "::1", "10.1.0.7"} {
 		in := goodInput(t)
 		in.Lookup.(*fakeResolver).table[EgressBaseNames[1]] = addrs(t, bad)
@@ -248,6 +266,8 @@ func TestBuildEgressRefusesAPinnedAddressInsideADeniedRange(t *testing.T) {
 }
 
 func TestBuildEgressRefusesAResolverThatIsItselfDenied(t *testing.T) {
+	t.Parallel()
+
 	for _, r := range []string{"127.0.0.53", "169.254.169.254", "10.1.0.9"} {
 		in := goodInput(t)
 		in.Resolver = netip.MustParseAddr(r)
@@ -259,6 +279,8 @@ func TestBuildEgressRefusesAResolverThatIsItselfDenied(t *testing.T) {
 }
 
 func TestBuildEgressRefusesWithNoSelector(t *testing.T) {
+	t.Parallel()
+
 	in := goodInput(t)
 	in.UID, in.Veth = "", ""
 	_, bad := BuildEgress(in)
@@ -268,6 +290,8 @@ func TestBuildEgressRefusesWithNoSelector(t *testing.T) {
 }
 
 func TestBuildEgressRefusesABadRunName(t *testing.T) {
+	t.Parallel()
+
 	for _, run := range []string{"", "a b", "j1; drop", "../x", strings.Repeat("j", 40)} {
 		in := goodInput(t)
 		in.Run = run
@@ -278,6 +302,8 @@ func TestBuildEgressRefusesABadRunName(t *testing.T) {
 }
 
 func TestBuildEgressRefusesAResolverFailure(t *testing.T) {
+	t.Parallel()
+
 	in := goodInput(t)
 	in.Lookup.(*fakeResolver).err = errors.New("i/o timeout")
 	_, bad := BuildEgress(in)
@@ -289,6 +315,8 @@ func TestBuildEgressRefusesAResolverFailure(t *testing.T) {
 // The rendered ruleset: the shape a reader checks, asserted line by line rather than as a
 // blob, because each of these lines is a separate promise.
 func TestRenderedPlanHasTheShapeThePageAsksFor(t *testing.T) {
+	t.Parallel()
+
 	p := mustBuild(t, goodInput(t))
 	for _, want := range []string{
 		"table inet nova_egress_j1 {",
@@ -320,6 +348,8 @@ func TestRenderedPlanHasTheShapeThePageAsksFor(t *testing.T) {
 }
 
 func TestRenderedPlanCarriesAVethChainWhenAVethIsNamed(t *testing.T) {
+	t.Parallel()
+
 	in := goodInput(t)
 	in.UID, in.Veth = "", "veth-j1"
 	p := mustBuild(t, in)
@@ -335,6 +365,8 @@ func TestRenderedPlanCarriesAVethChainWhenAVethIsNamed(t *testing.T) {
 }
 
 func TestBuildEgressRefusesAVethNameThatIsNotOne(t *testing.T) {
+	t.Parallel()
+
 	in := goodInput(t)
 	in.UID, in.Veth = "", `veth"; drop`
 	if _, bad := BuildEgress(in); !hasReason(bad, "bad_veth") {
@@ -343,6 +375,8 @@ func TestBuildEgressRefusesAVethNameThatIsNotOne(t *testing.T) {
 }
 
 func TestBuildEgressRefusesAUIDThatIsNotANumber(t *testing.T) {
+	t.Parallel()
+
 	in := goodInput(t)
 	in.UID = "root"
 	if _, bad := BuildEgress(in); !hasReason(bad, "bad_uid") {
@@ -351,6 +385,8 @@ func TestBuildEgressRefusesAUIDThatIsNotANumber(t *testing.T) {
 }
 
 func TestPlanCountsAreTheRulesItRendered(t *testing.T) {
+	t.Parallel()
+
 	p := mustBuild(t, goodInput(t))
 	allow, deny := 0, 0
 	for _, l := range ruleLines(p.Text) {
@@ -371,6 +407,8 @@ func TestPlanCountsAreTheRulesItRendered(t *testing.T) {
 // The test of the tests: the audit has to go RED on a plan that lost each invariant. A
 // checker that only ever passes is a checker that checks nothing.
 func TestCheckEgressPlanPassesTheRealPlan(t *testing.T) {
+	t.Parallel()
+
 	p := mustBuild(t, goodInput(t))
 	audit, bad := CheckEgressPlan(p.Text)
 	if len(bad) > 0 {
@@ -385,6 +423,8 @@ func TestCheckEgressPlanPassesTheRealPlan(t *testing.T) {
 }
 
 func TestCheckEgressPlanGoesRedOnEachLostInvariant(t *testing.T) {
+	t.Parallel()
+
 	good := mustBuild(t, goodInput(t)).Text
 	cases := []struct {
 		name, from, to, reason string
@@ -413,6 +453,8 @@ func TestCheckEgressPlanGoesRedOnEachLostInvariant(t *testing.T) {
 }
 
 func TestCheckEgressPlanRefusesSomethingThatIsNotAPlan(t *testing.T) {
+	t.Parallel()
+
 	for _, text := range []string{"", "# only a comment\n", "table ip nova_egress_j1 {\n}\n", "table inet other {\n}\n"} {
 		if _, bad := CheckEgressPlan(text); len(bad) == 0 {
 			t.Errorf("the audit passed %q, which is not a plan this tool wrote", text)

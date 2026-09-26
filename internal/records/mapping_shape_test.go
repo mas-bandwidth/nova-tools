@@ -46,6 +46,8 @@ import (
 //     what was on the wire; the mapping states what it means.
 //   - "Repository defaults to unattributed for this multi-repo sitting".
 func TestTheWireCarriesTheCodexSourceContract(t *testing.T) {
+	t.Parallel()
+
 	v := NewValidator(Allowlists{
 		// A CLOSED allowlist, written here from the contract's field names rather than
 		// derived from the record under test: "Unknown source fields are excluded, not
@@ -235,6 +237,8 @@ func TestTheWireCarriesTheCodexSourceContract(t *testing.T) {
 //   - "No repo field exists: unattributed, with an optional separately evidenced touched list
 //     carrying no allocated spend."
 func TestTheWireCarriesTheGrokSourceContract(t *testing.T) {
+	t.Parallel()
+
 	fields := []string{
 		"inputTokens", "outputTokens", "cachedReadTokens", "cacheCreationTokens",
 		"reasoningTokens", "totalTokens", "modelCalls", "costUsdTicks", "turnCount",
@@ -462,6 +466,8 @@ func TestTheWireCarriesTheGrokSourceContract(t *testing.T) {
 // Now that the package validates nova.tokens.mapping/2, an incomplete mapping body is refused
 // by exact-keys validation, and a complete mapping envelope validates.
 func TestAMappingBodyCanBeSealedAndValidated(t *testing.T) {
+	t.Parallel()
+
 	body := NewObject()
 	for name, v := range map[string]Value{
 		"schema":   "nova.tokens.mapping/2",

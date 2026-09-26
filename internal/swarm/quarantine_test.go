@@ -12,6 +12,8 @@ import (
 // TestFailureTaxonomy validates the 4-way classification of Sprint Row 10 (#2061):
 // transient provider errors, infrastructure crashes, test failures, and unrecoverable card defects.
 func TestFailureTaxonomy(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name           string
 		err            error
@@ -199,6 +201,8 @@ func TestFailureTaxonomy(t *testing.T) {
 // queue/quarantine/<reason>/<card-id>/
 // holding <card-id>.card and quarantine.json.
 func TestQuarantineDirectoryStructure(t *testing.T) {
+	t.Parallel()
+
 	bench := t.TempDir()
 	queue := filepath.Join(bench, "queue")
 	if err := os.MkdirAll(queue, 0o755); err != nil {
@@ -296,6 +300,8 @@ func TestQuarantineDirectoryStructure(t *testing.T) {
 // TestFixLimboLeakProviderFailed reproduces and verifies the fix for the leak
 // where .provider-failed left cards in limbo.
 func TestFixLimboLeakProviderFailed(t *testing.T) {
+	t.Parallel()
+
 	bench := t.TempDir()
 	queue := filepath.Join(bench, "queue")
 	if err := os.MkdirAll(queue, 0o755); err != nil {
@@ -378,6 +384,8 @@ func TestFixLimboLeakProviderFailed(t *testing.T) {
 // TestTriageRouting verifies routing according to the failure taxonomy and
 // formatting of quarantine summaries in triage.
 func TestTriageRouting(t *testing.T) {
+	t.Parallel()
+
 	queue := t.TempDir()
 
 	cardContent := []byte(":kind test\ncard content\n")

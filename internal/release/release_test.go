@@ -119,7 +119,7 @@ func (b *fakeToolchain) Build(_ context.Context, source, pkg, out, goos, goarch 
 	}
 	// A stub that is a real file with real bytes, so the checksum file the
 	// caller writes is over something.
-	return "", os.WriteFile(out, []byte("binary "+filepath.Base(out)+" "+strings.Join(args, " ")), 0o755)
+	return "", testbin.WriteExecutable(out, []byte("binary "+filepath.Base(out)+" "+strings.Join(args, " ")), 0o755)
 }
 
 type fakeSSH struct {
@@ -313,6 +313,8 @@ func cutDeps(t *testing.T, f Forge) Deps {
 // since v0.15.0; this is the same refusal one step earlier, where the person
 // cutting the release is still at the keyboard.
 func TestCutRefusesAShaWhoseChecksAreNotGreen(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name  string
 		runs  []CheckRun
@@ -360,6 +362,8 @@ func cutForge() *fakeForge {
 }
 
 func TestCutWritesTheChangelogTagsAndSaysWhatItDid(t *testing.T) {
+	t.Parallel()
+
 	f := cutForge()
 	path := filepath.Join(t.TempDir(), "CHANGELOG.md")
 	if err := os.WriteFile(path, []byte("# nova-tools changelog\n\n## v0.15.10 — 2026-09-17\n\n- #1 older\n"), 0o644); err != nil {
@@ -416,6 +420,8 @@ func TestCutWritesTheChangelogTagsAndSaysWhatItDid(t *testing.T) {
 // A commit whose subject carries no (#n) is not a pull request and is not a
 // changelog line; the count says 2 because two of the three commits were.
 func TestCutCountsOnlyCommitsThatNameAPullRequest(t *testing.T) {
+	t.Parallel()
+
 	prs := PullRequests(cutForge().commits["v0.15.10...abc123abc123def"])
 	if len(prs) != 2 {
 		t.Fatalf("prs=%d %v", len(prs), prs)
@@ -432,6 +438,8 @@ func TestCutCountsOnlyCommitsThatNameAPullRequest(t *testing.T) {
 }
 
 func TestCutDryRunWritesNothingAndTagsNothing(t *testing.T) {
+	t.Parallel()
+
 	f := cutForge()
 	path := filepath.Join(t.TempDir(), "CHANGELOG.md")
 	var out, errs bytes.Buffer
@@ -452,6 +460,8 @@ func TestCutDryRunWritesNothingAndTagsNothing(t *testing.T) {
 }
 
 func TestCutRefusesAVersionNoLaterStepCouldCheck(t *testing.T) {
+	t.Parallel()
+
 	for _, v := range []string{"", "0.16.0", "v0.16", "v0.16.0 rc1", "v0.16.0%s", "v0.16=0"} {
 		if err := ValidVersion(v); err == nil {
 			t.Errorf("accepted %q", v)
@@ -465,6 +475,8 @@ func TestCutRefusesAVersionNoLaterStepCouldCheck(t *testing.T) {
 }
 
 func TestEveryReleaseVerbNamesItsMissingFlagsAtOnce(t *testing.T) {
+	t.Parallel()
+
 	var out, errs bytes.Buffer
 	code := Run("nova-update", []string{"cut"}, &out, &errs, Deps{})
 	if code != 2 {
@@ -503,6 +515,8 @@ func sourceTree(t *testing.T) string {
 }
 
 func TestBuildStampsEveryToolAndWritesOneChecksumFile(t *testing.T) {
+	t.Parallel()
+
 	source, out := sourceTree(t), t.TempDir()
 	tc := &fakeToolchain{}
 	var o, e bytes.Buffer
@@ -561,6 +575,8 @@ func TestBuildStampsEveryToolAndWritesOneChecksumFile(t *testing.T) {
 }
 
 func TestBuildRefusesWhenOneToolDoesNotCompile(t *testing.T) {
+	t.Parallel()
+
 	source, out := sourceTree(t), t.TempDir()
 	var o, e bytes.Buffer
 	code := Run("nova-update", []string{"build", "--version", "v0.16.0", "--out", out, "--source", source},
@@ -579,6 +595,8 @@ func TestBuildRefusesWhenOneToolDoesNotCompile(t *testing.T) {
 }
 
 func TestBuildRefusesASourceTreeWithNoNovaTools(t *testing.T) {
+	t.Parallel()
+
 	var o, e bytes.Buffer
 	code := Run("nova-update", []string{"build", "--version", "v0.16.0", "--out", t.TempDir(), "--source", t.TempDir()},
 		&o, &e, Deps{Toolchain: &fakeToolchain{}})
@@ -683,6 +701,8 @@ func built(t *testing.T, version, platform string, tools ...string) string {
 // directory of .exe files whatever host built it -- which is what lets the
 // install below find them and the adopt below run one of them.
 func TestBuildNamesArtifactsForTheTargetNotTheHost(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct{ platform, want string }{
 		{"windows-amd64", "nova-bus.exe"},
 		{"linux-amd64", "nova-bus"},
@@ -712,6 +732,8 @@ func TestBuildNamesArtifactsForTheTargetNotTheHost(t *testing.T) {
 // suite, and windows is one of the names, so this holds on every runner and
 // also says what a windows release is supposed to look like.
 func TestInstallVerifiesRenamesAndSkipsWhatIsAlreadyCurrent(t *testing.T) {
+	t.Parallel()
+
 	for _, platform := range []string{"", "linux-amd64", "windows-amd64"} {
 		name := platform
 		if name == "" {
@@ -724,7 +746,7 @@ func TestInstallVerifiesRenamesAndSkipsWhatIsAlreadyCurrent(t *testing.T) {
 			// nova-wake is already at the release; the other two are not. It
 			// is written under the name the TARGET installs it as.
 			current := ToolFile("nova-wake", goos)
-			if err := os.WriteFile(filepath.Join(bin, current), []byte("old"), 0o755); err != nil {
+			if err := testbin.WriteExecutable(filepath.Join(bin, current), []byte("old"), 0o755); err != nil {
 				t.Fatal(err)
 			}
 			args := []string{"install", "--from", from, "--version", "v0.16.0", "--bin", bin}
@@ -779,10 +801,12 @@ func TestInstallVerifiesRenamesAndSkipsWhatIsAlreadyCurrent(t *testing.T) {
 }
 
 func TestInstallRefusesABinaryThatDoesNotMatchItsChecksum(t *testing.T) {
+	t.Parallel()
+
 	goos, goarch := platformOf(t, "")
 	from := built(t, "v0.16.0", "", "nova-bus", "nova-swarm")
 	dir := ArtifactDir(from, "v0.16.0", goos, goarch)
-	if err := os.WriteFile(filepath.Join(dir, ToolFile("nova-bus", goos)), []byte("tampered"), 0o755); err != nil {
+	if err := testbin.WriteExecutable(filepath.Join(dir, ToolFile("nova-bus", goos)), []byte("tampered"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	bin := t.TempDir()
@@ -803,6 +827,8 @@ func TestInstallRefusesABinaryThatDoesNotMatchItsChecksum(t *testing.T) {
 }
 
 func TestInstallRefusesAVersionThatWasNeverBuilt(t *testing.T) {
+	t.Parallel()
+
 	var o, e bytes.Buffer
 	code := Run("nova-update", []string{"install", "--from", built(t, "v0.16.0", "", "nova-bus"),
 		"--version", "v0.17.0", "--bin", t.TempDir()}, &o, &e, Deps{})
@@ -830,6 +856,8 @@ func machinesFile(t *testing.T, lines string) string {
 // the path would exist nowhere in the release, and the bench would answer
 // `command not found` for a mistake made on this side.
 func TestAdoptSendsInstallsAndWritesOneReceiptPerMachine(t *testing.T) {
+	t.Parallel()
+
 	for _, platform := range []string{"", "linux-amd64", "windows-amd64"} {
 		name := platform
 		if name == "" {
@@ -897,6 +925,8 @@ func TestAdoptSendsInstallsAndWritesOneReceiptPerMachine(t *testing.T) {
 // A windows release that somehow carries no nova-update.exe is refused by name,
 // rather than sent and then found missing on the far side.
 func TestAdoptRefusesAReleaseWithNoUpdateForTheTarget(t *testing.T) {
+	t.Parallel()
+
 	var o, e bytes.Buffer
 	code := Run("nova-update", []string{"adopt", "--no-certify", "--version", "v0.16.0",
 		"--machines", machinesFile(t, "hulk\n"), "--ssh", "/usr/bin/ssh",
@@ -908,6 +938,8 @@ func TestAdoptRefusesAReleaseWithNoUpdateForTheTarget(t *testing.T) {
 }
 
 func TestAdoptRefusesOneMachineAndStillReportsTheRest(t *testing.T) {
+	t.Parallel()
+
 	from := built(t, "v0.16.0", "", "nova-bus", "nova-update")
 	list := machinesFile(t, "hulk\nvision\n")
 	s := &fakeSSH{
@@ -946,6 +978,8 @@ func TestAdoptRefusesOneMachineAndStillReportsTheRest(t *testing.T) {
 // adoption, however cheerfully it exited: the receipt is read from the output,
 // never from the exit code.
 func TestAdoptRefusesAMachineWhoseInstallSaidNothing(t *testing.T) {
+	t.Parallel()
+
 	from := built(t, "v0.16.0", "", "nova-update")
 	s := &fakeSSH{answer: map[string]string{"hulk": "bash: nova-update: command not found\n"}}
 	var o, e bytes.Buffer
@@ -957,6 +991,8 @@ func TestAdoptRefusesAMachineWhoseInstallSaidNothing(t *testing.T) {
 }
 
 func TestAdoptRefusesAMachineNameThatIsNotOne(t *testing.T) {
+	t.Parallel()
+
 	from := built(t, "v0.16.0", "", "nova-update")
 	s := &fakeSSH{}
 	var o, e bytes.Buffer
@@ -972,6 +1008,8 @@ func TestAdoptRefusesAMachineNameThatIsNotOne(t *testing.T) {
 }
 
 func TestAdoptRefusesAnEmptyMachineList(t *testing.T) {
+	t.Parallel()
+
 	var o, e bytes.Buffer
 	code := Run("nova-update", []string{"adopt", "--no-certify", "--version", "v0.16.0",
 		"--machines", machinesFile(t, "# nobody\n\n"), "--ssh", "/usr/bin/ssh",
@@ -993,6 +1031,8 @@ func TestAdoptRefusesAnEmptyMachineList(t *testing.T) {
 // ceiling stays -- a runaway gh must not be able to fill memory -- but reaching
 // it says so by name.
 func TestAForgeReadThatFillsTheCeilingSaysSoRatherThanKilled(t *testing.T) {
+	t.Parallel()
+
 	args := []string{"api", "repos/o/n/compare/v0.15.2...head"}
 	err := apiError(args, true, fmt.Errorf("signal: killed"))
 	if err == nil {
@@ -1021,6 +1061,8 @@ func TestAForgeReadThatFillsTheCeilingSaysSoRatherThanKilled(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestReleaseRefusesAnUnknownSubverbAndNamesTheFive(t *testing.T) {
+	t.Parallel()
+
 	var o, e bytes.Buffer
 	if code := Run("nova-update", []string{"ship"}, &o, &e, Deps{}); code != 2 {
 		t.Fatal(code)
@@ -1041,6 +1083,8 @@ func TestReleaseRefusesAnUnknownSubverbAndNamesTheFive(t *testing.T) {
 // the receipt off stdout reads receipts and nothing else (Glenn 2026-09-17:
 // programs say what they are doing).
 func TestProgressGoesToStderrAndReceiptsToStdout(t *testing.T) {
+	t.Parallel()
+
 	from := built(t, "v0.16.0", "", "nova-bus", "nova-update")
 	s := &fakeSSH{answer: map[string]string{"hulk": "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0\n"}}
 	var o, e bytes.Buffer
@@ -1068,6 +1112,8 @@ func TestProgressGoesToStderrAndReceiptsToStdout(t *testing.T) {
 // that needs no new trust is to run adopt where the trust already is and let it
 // READ the release from where it was built.
 func TestAdoptFetchesTheReleaseFromAnotherMachine(t *testing.T) {
+	t.Parallel()
+
 	goos, goarch := platformOf(t, "linux-amd64")
 	// hulk built it; this host has never seen the artifacts.
 	onHulk := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
@@ -1120,6 +1166,8 @@ func TestAdoptFetchesTheReleaseFromAnotherMachine(t *testing.T) {
 }
 
 func TestAdoptRefusesARemoteFromWithNoStage(t *testing.T) {
+	t.Parallel()
+
 	var o, e bytes.Buffer
 	code := Run("nova-update", []string{"adopt", "--no-certify", "--version", "v0.16.0",
 		"--machines", machinesFile(t, "vision\n"), "--ssh", "/usr/bin/ssh",
@@ -1132,10 +1180,12 @@ func TestAdoptRefusesARemoteFromWithNoStage(t *testing.T) {
 // A fetch that arrived truncated is caught ONCE, here, rather than four times
 // on four machines that are then in four different states.
 func TestAdoptRefusesAFetchThatDoesNotMatchItsChecksums(t *testing.T) {
+	t.Parallel()
+
 	goos, goarch := platformOf(t, "linux-amd64")
 	onHulk := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
 	dir := ArtifactDir(onHulk, "v0.16.0", goos, goarch)
-	if err := os.WriteFile(filepath.Join(dir, "nova-bus"), []byte("truncated"), 0o755); err != nil {
+	if err := testbin.WriteExecutable(filepath.Join(dir, "nova-bus"), []byte("truncated"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	s := &fakeSSH{serves: map[string]string{"hulk": dir}}
@@ -1161,6 +1211,8 @@ func TestAdoptRefusesAFetchThatDoesNotMatchItsChecksums(t *testing.T) {
 // A colon is ambiguous exactly once, and it is resolved in favour of the local
 // path: a windows artifact root is a path, not a host called C.
 func TestRemoteFromTellsAHostFromAWindowsPath(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		in, host, dir string
 		remote        bool
@@ -1182,6 +1234,8 @@ func TestRemoteFromTellsAHostFromAWindowsPath(t *testing.T) {
 // so in the file, rather than in a second run with different flags -- which is
 // a second chance to get the version wrong.
 func TestMachinesFileCarriesPerMachineOverrides(t *testing.T) {
+	t.Parallel()
+
 	machines, err := Machines(strings.NewReader(
 		"# the fleet\nhulk\n\nvision\t~/bin\t~/stage\nnova@mini\t/opt/nova/bin\n"))
 	if err != nil {
@@ -1198,6 +1252,8 @@ func TestMachinesFileCarriesPerMachineOverrides(t *testing.T) {
 }
 
 func TestMachinesFileRefusesAShapeItCannotMean(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct{ name, in, wants string }{
 		{"an empty override", "vision\t\n", "empty"},
 		{"a fourth column", "vision\t/b\t/d\t/x\n", "tab-separated fields"},
@@ -1214,6 +1270,8 @@ func TestMachinesFileRefusesAShapeItCannotMean(t *testing.T) {
 }
 
 func TestAdoptUsesEachMachinesOwnBinAndDest(t *testing.T) {
+	t.Parallel()
+
 	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
 	list := machinesFile(t, "hulk\nvision\t/opt/nova/bin\t/opt/nova/stage\n")
 	s := &fakeSSH{answer: map[string]string{
@@ -1245,12 +1303,14 @@ func TestAdoptUsesEachMachinesOwnBinAndDest(t *testing.T) {
 // fact about PATH order nobody has read. The old shell script kept them in
 // step; the verb did not.
 func TestInstallRetiresStaleCopiesOfWhatItInstalled(t *testing.T) {
+	t.Parallel()
+
 	from := built(t, "v0.16.0", "", "nova-bus", "nova-swarm")
 	goos, _ := platformOf(t, "")
 	bin, goBin := t.TempDir(), t.TempDir()
 	// Two stale tools of ours, one tool of somebody else's, one directory.
 	for _, name := range []string{ToolFile("nova-bus", goos), ToolFile("nova-swarm", goos), "gopls"} {
-		if err := os.WriteFile(filepath.Join(goBin, name), []byte("stale"), 0o755); err != nil {
+		if err := testbin.WriteExecutable(filepath.Join(goBin, name), []byte("stale"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1286,6 +1346,8 @@ func TestInstallRetiresStaleCopiesOfWhatItInstalled(t *testing.T) {
 
 // The one argument that would delete the release just installed.
 func TestInstallRefusesToRetireTheDirectoryItInstalledInto(t *testing.T) {
+	t.Parallel()
+
 	from := built(t, "v0.16.0", "", "nova-bus")
 	bin := t.TempDir()
 	var o, e bytes.Buffer
@@ -1300,6 +1362,8 @@ func TestInstallRefusesToRetireTheDirectoryItInstalledInto(t *testing.T) {
 }
 
 func TestInstallWithNoRetireDirectoryIsNotAFailure(t *testing.T) {
+	t.Parallel()
+
 	from := built(t, "v0.16.0", "", "nova-bus")
 	var o, e bytes.Buffer
 	code := Run("nova-update", []string{"install", "--from", from, "--version", "v0.16.0",
@@ -1311,6 +1375,8 @@ func TestInstallWithNoRetireDirectoryIsNotAFailure(t *testing.T) {
 }
 
 func TestAdoptPassesRetireToEachMachineAndCountsIt(t *testing.T) {
+	t.Parallel()
+
 	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
 	s := &fakeSSH{answer: map[string]string{
 		"hulk": "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0 retired=18\n",
@@ -1334,6 +1400,8 @@ func TestAdoptPassesRetireToEachMachineAndCountsIt(t *testing.T) {
 // The help is the banner, and these are the two things a person cannot work out
 // from the flag names alone.
 func TestReleaseHelpCarriesTheMachinesFormatAndTheAdoptRule(t *testing.T) {
+	t.Parallel()
+
 	var o, e bytes.Buffer
 	if code := Run("nova-update", []string{"help"}, &o, &e, Deps{}); code != 0 {
 		t.Fatal(code)
@@ -1370,6 +1438,8 @@ func TestReleaseHelpCarriesTheMachinesFormatAndTheAdoptRule(t *testing.T) {
 // Every one of these is refused BEFORE any remote command is composed, which is
 // why the assertion is that ssh was never reached at all.
 func TestAdoptRefusesAPathTheRemoteShellWouldReadAsSyntax(t *testing.T) {
+	t.Parallel()
+
 	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
 	hostile := []string{
 		"/tmp/x; rm -rf /",
@@ -1417,6 +1487,8 @@ func TestAdoptRefusesAPathTheRemoteShellWouldReadAsSyntax(t *testing.T) {
 // The same rule for a path that arrives in the machines file rather than on the
 // command line: the columns are interpolated into the same remote command.
 func TestAdoptRefusesAHostilePathInTheMachinesFile(t *testing.T) {
+	t.Parallel()
+
 	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
 	s := &fakeSSH{}
 	var o, e bytes.Buffer
@@ -1436,6 +1508,8 @@ func TestAdoptRefusesAHostilePathInTheMachinesFile(t *testing.T) {
 }
 
 func TestValidRemotePathTakesWhatItShould(t *testing.T) {
+	t.Parallel()
+
 	for _, good := range []string{"/home/nova/.local/bin", "~/.local/bin", "/opt/nova-tools/bin", "~/go/bin", "/a+b/c-d_e.f@g"} {
 		if err := ValidRemotePath("--bin", good); err != nil {
 			t.Errorf("refused %q: %v", good, err)
@@ -1448,6 +1522,8 @@ func TestValidRemotePathTakesWhatItShould(t *testing.T) {
 // would put the fleet's trust inside a machine the release is being pushed TO,
 // and a key named on argv is a key in every `ps` on the box.
 func TestSSHOptionsForbidAgentForwardingAndKeysOnArgv(t *testing.T) {
+	t.Parallel()
+
 	joined := strings.Join(SSHOptions, " ")
 	if !strings.Contains(joined, "ForwardAgent=no") {
 		t.Fatalf("ForwardAgent=no is not said out loud: %s", joined)
@@ -1477,6 +1553,8 @@ func TestSSHOptionsForbidAgentForwardingAndKeysOnArgv(t *testing.T) {
 // digest comes from the cut, through git, and a mismatch names BOTH -- which
 // one is wrong is the whole question.
 func TestAdoptRefusesAFetchedReleaseWhoseSumsAreNotTheOnesCut(t *testing.T) {
+	t.Parallel()
+
 	goos, goarch := platformOf(t, "linux-amd64")
 	onHulk := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
 	dir := ArtifactDir(onHulk, "v0.16.0", goos, goarch)
@@ -1503,6 +1581,8 @@ func TestAdoptRefusesAFetchedReleaseWhoseSumsAreNotTheOnesCut(t *testing.T) {
 }
 
 func TestAdoptRefusesARemoteFromWithNoDigestToCheckAgainst(t *testing.T) {
+	t.Parallel()
+
 	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
 	s := &fakeSSH{serves: map[string]string{"hulk": ArtifactDir(from, "v0.16.0", "linux", "amd64")}}
 	var o, e bytes.Buffer
@@ -1521,6 +1601,8 @@ func TestAdoptRefusesARemoteFromWithNoDigestToCheckAgainst(t *testing.T) {
 // The digest the cut records and the digest adopt checks are the same string,
 // written in the form the flag wants so nobody has to transcribe it.
 func TestCutRecordsTheSumsDigestTheAdoptWillCheck(t *testing.T) {
+	t.Parallel()
+
 	goos, goarch := platformOf(t, "linux-amd64")
 	out := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
 	sums := filepath.Join(ArtifactDir(out, "v0.16.0", goos, goarch), SumsFile)
@@ -1568,6 +1650,8 @@ func TestCutRecordsTheSumsDigestTheAdoptWillCheck(t *testing.T) {
 // verb touched: a release whose bytes changed reaches neither the version probe
 // nor a rename.
 func TestInstallChecksBeforeItTouchesAnything(t *testing.T) {
+	t.Parallel()
+
 	from := built(t, "v0.16.0", "", "nova-bus", "nova-swarm")
 	goos, _ := platformOf(t, "")
 	dir := ArtifactDir(from, "v0.16.0", goos, "")
@@ -1577,7 +1661,7 @@ func TestInstallChecksBeforeItTouchesAnything(t *testing.T) {
 		t.Fatal(err)
 	}
 	platDir := filepath.Join(dir, entries[0].Name())
-	if err := os.WriteFile(filepath.Join(platDir, ToolFile("nova-bus", goos)), []byte("swapped"), 0o755); err != nil {
+	if err := testbin.WriteExecutable(filepath.Join(platDir, ToolFile("nova-bus", goos)), []byte("swapped"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	bin := t.TempDir()
@@ -1602,6 +1686,8 @@ func TestInstallChecksBeforeItTouchesAnything(t *testing.T) {
 // NEVER remove the last-good stamp. --from's artifact directory is what a
 // re-install and a rollback read, and what adopt just verified.
 func TestRetireRefusesTheLiveStamp(t *testing.T) {
+	t.Parallel()
+
 	from := built(t, "v0.16.0", "", "nova-bus")
 	goos, goarch := platformOf(t, "")
 	for _, target := range []string{from, ArtifactDir(from, "v0.16.0", goos, goarch)} {
@@ -1624,6 +1710,8 @@ func TestRetireRefusesTheLiveStamp(t *testing.T) {
 // couriered to every machine in the fleet by a verb nobody thinks of as a file
 // transfer.
 func TestSendCarriesOnlyWhatTheChecksumFileNames(t *testing.T) {
+	t.Parallel()
+
 	goos, goarch := platformOf(t, "")
 	from := built(t, "v0.16.0", "", "nova-bus", "nova-update")
 	dir := ArtifactDir(from, "v0.16.0", goos, goarch)
@@ -1672,6 +1760,8 @@ func TestSendCarriesOnlyWhatTheChecksumFileNames(t *testing.T) {
 // nothing else, so a remote answering with shell syntax is a machine that gets
 // refused, not a command that runs here.
 func TestAdoptTreatsRemoteOutputAsDataNotAsACommand(t *testing.T) {
+	t.Parallel()
+
 	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
 	marker := filepath.Join(t.TempDir(), "should-not-exist")
 	s := &fakeSSH{answer: map[string]string{
@@ -1692,6 +1782,8 @@ func TestAdoptTreatsRemoteOutputAsDataNotAsACommand(t *testing.T) {
 // The far-side binary is named by ABSOLUTE path, never by $PATH: it must be the
 // one just sent and verified, not whichever nova-update the bench's PATH finds.
 func TestAdoptRunsTheBinaryItSentByAbsolutePath(t *testing.T) {
+	t.Parallel()
+
 	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
 	s := &fakeSSH{answer: map[string]string{"hulk": "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0 retired=0\n"}}
 	var o, e bytes.Buffer
@@ -1720,6 +1812,8 @@ func TestAdoptRunsTheBinaryItSentByAbsolutePath(t *testing.T) {
 // version again is making them repeat what the directory already says -- and
 // mistyping it is how a fleet ends up half-adopted.
 func TestAdoptInfersTheVersionWhenThereIsOnlyOne(t *testing.T) {
+	t.Parallel()
+
 	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
 	s := &fakeSSH{answer: map[string]string{"hulk": "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0 retired=0\n"}}
 	var o, e bytes.Buffer
@@ -1740,6 +1834,8 @@ func TestAdoptInfersTheVersionWhenThereIsOnlyOne(t *testing.T) {
 // Two releases under one root is the case where guessing would be wrong, so it
 // refuses -- and names both, because the remedy is to pick one.
 func TestAdoptRefusesToGuessBetweenTwoVersionsAndNamesThem(t *testing.T) {
+	t.Parallel()
+
 	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
 	second := built(t, "v0.17.0", "linux-amd64", "nova-bus", "nova-update")
 	if err := os.Rename(filepath.Join(second, "v0.17.0"), filepath.Join(from, "v0.17.0")); err != nil {
@@ -1764,6 +1860,8 @@ func TestAdoptRefusesToGuessBetweenTwoVersionsAndNamesThem(t *testing.T) {
 }
 
 func TestAdoptRefusesAnEmptyArtifactRoot(t *testing.T) {
+	t.Parallel()
+
 	var o, e bytes.Buffer
 	code := Run("nova-update", []string{"adopt", "--no-certify", "--machines", machinesFile(t, "hulk\n"),
 		"--ssh", "/usr/bin/ssh", "--from", t.TempDir(), "--bin", "~/.local/bin", "--dest", "~/build",
@@ -1776,6 +1874,8 @@ func TestAdoptRefusesAnEmptyArtifactRoot(t *testing.T) {
 // One build, every platform the fleet runs. Four invocations differing only in
 // --platform is four chances for one of them to carry a different --version.
 func TestBuildTakesSeveralPlatformsAtOnce(t *testing.T) {
+	t.Parallel()
+
 	source, out := sourceTree(t), t.TempDir()
 	tc := &fakeToolchain{}
 	var o, e bytes.Buffer
@@ -1814,6 +1914,8 @@ func TestBuildTakesSeveralPlatformsAtOnce(t *testing.T) {
 }
 
 func TestBuildRefusesAPlatformListItCannotRead(t *testing.T) {
+	t.Parallel()
+
 	var o, e bytes.Buffer
 	code := Run("nova-update", []string{"build", "--version", "v0.16.0", "--out", t.TempDir(),
 		"--source", sourceTree(t), "--platform", "linux-amd64,nonsense"}, &o, &e, Deps{Toolchain: &fakeToolchain{}})
@@ -1826,6 +1928,8 @@ func TestBuildRefusesAPlatformListItCannotRead(t *testing.T) {
 // person it was supposed to reassure. The build reads its own, in the step that
 // wrote it, and says how many it checked.
 func TestBuildVerifiesTheChecksumsItJustWrote(t *testing.T) {
+	t.Parallel()
+
 	source, out := sourceTree(t), t.TempDir()
 	var o, e bytes.Buffer
 	code := Run("nova-update", []string{"build", "--version", "v0.16.0", "--out", out, "--source", source},
@@ -1842,6 +1946,8 @@ func TestBuildVerifiesTheChecksumsItJustWrote(t *testing.T) {
 // what this host assumes: is it reachable, is the destination there, what is
 // installed now. Nothing is streamed and nothing is installed.
 func TestAdoptDryRunProbesEveryMachineAndStreamsNothing(t *testing.T) {
+	t.Parallel()
+
 	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
 	s := &fakeSSH{
 		answer: map[string]string{
@@ -1879,6 +1985,8 @@ func TestAdoptDryRunProbesEveryMachineAndStreamsNothing(t *testing.T) {
 // A machine already holding this release does not need it streamed again. The
 // question is asked of the machine's own checksum file, before anything moves.
 func TestAdoptStreamsNothingToAMachineThatAlreadyHasTheRelease(t *testing.T) {
+	t.Parallel()
+
 	goos, goarch := platformOf(t, "linux-amd64")
 	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
 	localSums, err := os.ReadFile(filepath.Join(ArtifactDir(from, "v0.16.0", goos, goarch), SumsFile))
@@ -1926,6 +2034,8 @@ func TestAdoptStreamsNothingToAMachineThatAlreadyHasTheRelease(t *testing.T) {
 // that directory as complete: it re-streams into <version>.partial/ and
 // renames into place only after the bench verifies every named file.
 func TestAdoptDoesNotTrustAPartialReleaseDir(t *testing.T) {
+	t.Parallel()
+
 	goos, goarch := platformOf(t, "linux-amd64")
 	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
 	local := ArtifactDir(from, "v0.16.0", goos, goarch)
@@ -1986,6 +2096,8 @@ func TestAdoptDoesNotTrustAPartialReleaseDir(t *testing.T) {
 // question. It prints the verb's own usage, and exits 0 because asking for
 // help is not an error.
 func TestVerbHelpPrintsThatVerbsUsage(t *testing.T) {
+	t.Parallel()
+
 	for _, verb := range []string{"cut", "build", "install", "adopt", "pull"} {
 		for _, flagSpelling := range []string{"--help", "-h"} {
 			t.Run(verb+" "+flagSpelling, func(t *testing.T) {
@@ -2012,6 +2124,8 @@ func TestVerbHelpPrintsThatVerbsUsage(t *testing.T) {
 // verified=<n> is the number the CHECK returned, not the length of a list, so
 // the number cannot be printed without the check having run.
 func TestVerifyArtifactsReportsWhatItActuallyChecked(t *testing.T) {
+	t.Parallel()
+
 	goos, goarch := platformOf(t, "")
 	from := built(t, "v0.16.0", "", "nova-bus", "nova-swarm", "nova-wake")
 	dir := ArtifactDir(from, "v0.16.0", goos, goarch)
@@ -2024,7 +2138,7 @@ func TestVerifyArtifactsReportsWhatItActuallyChecked(t *testing.T) {
 		t.Fatalf("checked %d of 3: %v", n, err)
 	}
 	// One bad artifact stops the count where it stopped the check.
-	if err := os.WriteFile(filepath.Join(dir, ToolFile("nova-bus", goos)), []byte("changed"), 0o755); err != nil {
+	if err := testbin.WriteExecutable(filepath.Join(dir, ToolFile("nova-bus", goos)), []byte("changed"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if n, err := VerifyArtifacts(dir, arts); err == nil || n == 3 {

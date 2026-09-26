@@ -11,6 +11,8 @@ import (
 // when it is accepted, because nothing can accept it. The fix is a verb that accepts
 // a node, which this test calls.
 func TestIssue1796(t *testing.T) {
+	t.Parallel()
+
 	g, err := Seed([]Node{
 		{ID: "issues-sweep", Needs: []string{"cutter-C2"}},
 		{ID: "cutter-C2"},
@@ -44,6 +46,8 @@ func TestIssue1796(t *testing.T) {
 // the dependent become ready. A missing node or an invalid graph leaves the file
 // byte-identical.
 func TestIssue1796AcceptPersists(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "deps.json")
 	seed, err := MarshalNodes([]Node{
@@ -101,6 +105,8 @@ func TestIssue1796AcceptPersists(t *testing.T) {
 // the dependent reads ready from disk; every refusal, of the line or of the node,
 // leaves the file byte-identical.
 func TestIssue1796AcceptCommandBoundary(t *testing.T) {
+	t.Parallel()
+
 	for _, line := range [][]string{
 		{"--graph", "g.json", "--node", "a"},
 		{"--node", "a", "-graph=g.json"},

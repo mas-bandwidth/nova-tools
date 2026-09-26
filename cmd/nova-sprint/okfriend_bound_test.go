@@ -40,6 +40,8 @@ func (c *marginClock) advance(d time.Duration) {
 // starts no sprint (no group created, nothing read) and names the sprints it
 // left; with the lease renewed the same duty passes the sprint.
 func TestOkFriendDutyStopsAtLeaseMargin(t *testing.T) {
+	t.Parallel()
+
 	addr := startThrowawayRedis(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = c.Close() })

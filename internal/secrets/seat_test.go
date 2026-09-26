@@ -39,8 +39,14 @@ var (
 // no ciphertext -- and, on the way back, on sops metadata in the file and on the
 // identity being one of the recipients that file records.
 const fakeSopsScript = `#!/bin/sh
-ARGS="__ARGS__"
-STDIN="__STDIN__"
+# Written ONCE per test binary (TestMain) and reached through a per-fixture
+# symlink, so no test writes an executable while another test forks: a child
+# between fork and exec still holds the writer's descriptor, and the exec then
+# fails with ETXTBSY ("text file busy", space shard 1/4 of run 36206780711).
+# $0 is the symlink's own path, so the fixture's files sit beside it.
+here=$(dirname "$0")
+ARGS="$here/sops.args"
+STDIN="$here/sops.stdin"
 if [ "$1" = "--version" ]; then echo "sops 3.13.3"; exit 0; fi
 printf '%s\n' "$@" >> "$ARGS"
 
@@ -133,9 +139,10 @@ func newSeatFixture(t *testing.T) *seatFixture {
 	f.airKey = filepath.Join(keyDir, "air.key")
 	mustWrite(t, f.airKey, "AGE-SECRET-KEY-1AIR\n# public key: "+pubAir+"\n", 0600)
 
-	script := strings.NewReplacer("__ARGS__", f.sopsArgs, "__STDIN__", f.sopsStdin).Replace(fakeSopsScript)
 	f.sopsPath = filepath.Join(dir, "sops")
-	mustWrite(t, f.sopsPath, script, 0755)
+	if err := os.Symlink(sharedFakeSops, f.sopsPath); err != nil {
+		t.Fatal(err)
+	}
 	return f
 }
 
@@ -150,6 +157,24 @@ func (f *seatFixture) options(t *testing.T, only string) SeatAddOptions {
 		KeyPath:  f.rowanKey,
 		SopsPath: f.sopsPath,
 	}
+}
+
+// sharedFakeSops is the one fake sops executable of this test binary, written
+// before any test runs (see fakeSopsScript for why).
+var sharedFakeSops string
+
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "secrets-fake-sops")
+	if err != nil {
+		panic(err)
+	}
+	sharedFakeSops = filepath.Join(dir, "sops")
+	if err := os.WriteFile(sharedFakeSops, []byte(fakeSopsScript), 0o755); err != nil {
+		panic(err)
+	}
+	code := m.Run()
+	_ = os.RemoveAll(dir)
+	os.Exit(code)
 }
 
 func mustMkdir(t *testing.T, path string, perm os.FileMode) {
@@ -185,6 +210,8 @@ func (f *seatFixture) read(t *testing.T, rel string) string {
 // come out of a seat this machine can open and go into a file only the new seat's key
 // and the recovery key can open.
 func TestSeatAddReSealsNamedValuesIntoTheNewSeatsFile(t *testing.T) {
+	t.Parallel()
+
 	f := newSeatFixture(t)
 	lines, err := RunSeatAdd(f.options(t, "GH_TOKEN,DEEPSEEK_API_KEY"))
 	if err != nil {
@@ -254,6 +281,8 @@ func TestSeatAddReSealsNamedValuesIntoTheNewSeatsFile(t *testing.T) {
 // TestSeatAddLeavesAFileOnlyTheNewSeatCanOpen is the assertion the whole verb exists
 // for, proven through the fake's own recipient check rather than by reading the rule.
 func TestSeatAddLeavesAFileOnlyTheNewSeatCanOpen(t *testing.T) {
+	t.Parallel()
+
 	f := newSeatFixture(t)
 	if _, err := RunSeatAdd(f.options(t, "GH_TOKEN")); err != nil {
 		t.Fatalf("RunSeatAdd: %v", err)
@@ -271,6 +300,8 @@ func TestSeatAddLeavesAFileOnlyTheNewSeatCanOpen(t *testing.T) {
 // hit had he pointed the verb at a seat this bench has no key for. It must cost
 // nothing -- no rule, no file, no half-written store.
 func TestSeatAddRefusesWhenTheSourceSeatCannotBeOpenedHere(t *testing.T) {
+	t.Parallel()
+
 	f := newSeatFixture(t)
 	before := f.read(t, ".sops.yaml")
 
@@ -294,6 +325,8 @@ func TestSeatAddRefusesWhenTheSourceSeatCannotBeOpenedHere(t *testing.T) {
 // TestSeatAddRefusesAnExistingTargetFile: a verb that can overwrite a seat file is a
 // verb that can drop every value a seat holds.
 func TestSeatAddRefusesAnExistingTargetFile(t *testing.T) {
+	t.Parallel()
+
 	f := newSeatFixture(t)
 	mustWrite(t, filepath.Join(f.storeDir, "air.yaml"), "sops:\n", 0644)
 	_, err := RunSeatAdd(f.options(t, "GH_TOKEN"))
@@ -311,6 +344,8 @@ func TestSeatAddRefusesAnExistingTargetFile(t *testing.T) {
 // TestSeatAddRefusesAnExistingRule: the rule is the grant. A verb that rewrites one
 // silently is the recipient edit that never went through a review.
 func TestSeatAddRefusesAnExistingRule(t *testing.T) {
+	t.Parallel()
+
 	f := newSeatFixture(t)
 	mustWrite(t, filepath.Join(f.storeDir, ".sops.yaml"),
 		"creation_rules:\n  - path_regex: ^rowan\\.yaml$\n    age: "+pubRowan+","+pubRecovery+
@@ -327,6 +362,8 @@ func TestSeatAddRefusesAnExistingRule(t *testing.T) {
 
 // TestSeatAddRefusesAKeyTheSourceDoesNotCarry, naming the key and never a value.
 func TestSeatAddRefusesAKeyTheSourceDoesNotCarry(t *testing.T) {
+	t.Parallel()
+
 	f := newSeatFixture(t)
 	before := f.read(t, ".sops.yaml")
 	_, err := RunSeatAdd(f.options(t, "GH_TOKEN,ABSENT_KEY"))
@@ -351,6 +388,8 @@ func TestSeatAddRefusesAKeyTheSourceDoesNotCarry(t *testing.T) {
 
 // TestSeatAddRefusesAnUnusableInvocation costs one refusal per shape and touches nothing.
 func TestSeatAddRefusesAnUnusableInvocation(t *testing.T) {
+	t.Parallel()
+
 	f := newSeatFixture(t)
 	for _, tc := range []struct {
 		name string
@@ -384,6 +423,8 @@ func TestSeatAddRefusesAnUnusableInvocation(t *testing.T) {
 // says no is a green test over a broken verb -- it has happened here once already, so
 // the fake is held to the three refusals this verb depends on.
 func TestTheFakeSopsRefusesWhatRealSopsRefuses(t *testing.T) {
+	t.Parallel()
+
 	f := newSeatFixture(t)
 
 	// A clear file has no sops metadata, and sops will not decrypt one.

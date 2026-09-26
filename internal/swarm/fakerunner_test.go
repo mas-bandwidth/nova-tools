@@ -165,6 +165,8 @@ func publishCard(into string) runnerStep {
 // per line, which is how a fixture proves WHICH command the batch ran and with what arguments
 // -- a `--runner`'s five, or the self's `native` verb (issue #636).
 func TestFakeRunnerRecordsItsArgv(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := filepath.Join(dir, "argv")
 	runner := runnerDoing(t, dir, "recorder", runnerStep{Op: "record", Path: out})
@@ -187,6 +189,8 @@ func TestFakeRunnerRecordsItsArgv(t *testing.T) {
 // helper as a subprocess and used to assert only the lines it produced, so reverting the
 // temp+rename left them green (#2026).
 func TestFakeRunnerPublishesAWholeFileWriteAtomically(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("testdata", "fakerunner", "main.go"))
 	if err != nil {
 		t.Fatal(err)

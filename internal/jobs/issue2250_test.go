@@ -6,6 +6,8 @@ import (
 )
 
 func TestIssue2250(t *testing.T) {
+	t.Parallel()
+
 	// jobs-done-when-is-a-report-not-a-gate: a work set's :done-when
 	// describes the set's finish line as a report; a member whose own
 	// needs are closed goes even while other members are open — the

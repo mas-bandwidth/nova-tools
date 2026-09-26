@@ -16,6 +16,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fold"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 type fixture struct {
@@ -118,6 +119,8 @@ func opts(fx fixture, work string) fold.Options {
 // every step boundary: after the fold file is written, after it is staged,
 // after the commit and before the store records it.
 func TestControl20FoldOnce(t *testing.T) {
+	t.Parallel()
+
 	for _, killAt := range []string{fold.StepWritten, fold.StepStaged, fold.StepCommitted} {
 		t.Run("kill-after-"+killAt, func(t *testing.T) {
 			_, client, fx := seed(t)
@@ -193,6 +196,8 @@ func TestControl20FoldOnce(t *testing.T) {
 // from the store alone. An unpriced card is counted, never priced at zero; a
 // read at a stale head or a HOLD is not useful; ci cards are on their own line.
 func TestFoldCostPerLandedPerRoute(t *testing.T) {
+	t.Parallel()
+
 	_, client, fx := seed(t)
 	work := workRepo(t)
 	var out bytes.Buffer
@@ -240,6 +245,8 @@ func TestFoldCostPerLandedPerRoute(t *testing.T) {
 }
 
 func TestFoldRefusesASprintThatIsNotClosed(t *testing.T) {
+	t.Parallel()
+
 	_, client, fx := seed(t)
 	work := workRepo(t)
 	ctx := context.Background()
@@ -259,6 +266,8 @@ func TestFoldRefusesASprintThatIsNotClosed(t *testing.T) {
 }
 
 func TestMainFlagsAndExitCodes(t *testing.T) {
+	t.Parallel()
+
 	mr, _, fx := seed(t)
 	work := workRepo(t)
 	var stdout, stderr bytes.Buffer
@@ -280,6 +289,8 @@ func TestMainFlagsAndExitCodes(t *testing.T) {
 // suppressed (-) on its route and on the sprint line, never printed as if
 // exact; usd itself stays the priced sum with unpriced counting the gap.
 func TestFoldSuppressesPerCardWhenUnpricedCardCounts(t *testing.T) {
+	t.Parallel()
+
 	_, client, fx := seed(t)
 	ctx := context.Background()
 	s := "s:" + fx.Sprint
@@ -331,6 +342,8 @@ func TestFoldSuppressesPerCardWhenUnpricedCardCounts(t *testing.T) {
 // useful, landed card and an unpriced failed card prints - for both, on the
 // route line, the sprint line, the fold sexp and the commit subject.
 func TestFoldSuppressesPerCardWhenUnpricedCardIsOutsideTheDenominator(t *testing.T) {
+	t.Parallel()
+
 	_, client, fx := seed(t)
 	ctx := context.Background()
 	s := "s:" + fx.Sprint
@@ -458,6 +471,8 @@ func calib(t *testing.T, candidate string, scorer fold.Scorer) *fold.JevCalib {
 // candidate prompt worse on the held-out third in false passes or false
 // bounces is refused and the current prompt stays; one that holds is adopted.
 func TestFoldRunsJevEvalPerType(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	t.Run("current", func(t *testing.T) {
 		_, client, fx := seed(t)
@@ -611,6 +626,8 @@ func TestFoldRunsJevEvalPerType(t *testing.T) {
 // TestJevEvalHelper is the jev-eval stand-in Main runs through --jev-eval: it
 // reads calibration rows on stdin and writes ledger-shaped lines on stdout.
 func TestJevEvalHelper(t *testing.T) {
+	t.Parallel()
+
 	if os.Getenv("FOLD_JEV_HELPER") != "1" {
 		t.Skip("helper process for TestMainJevEvalExitCodes")
 	}
@@ -673,7 +690,7 @@ func verbsFixture(t *testing.T, broken bool) (tools, repo, receipts, first strin
 	if broken {
 		script = "#!/bin/sh\nexit 1\n"
 	}
-	if err := os.WriteFile(filepath.Join(tools, "nova-fix"), []byte(script), 0o755); err != nil {
+	if err := testbin.WriteExecutable(filepath.Join(tools, "nova-fix"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	git(t, repo, "init", "-q", "-b", "main")
@@ -695,6 +712,8 @@ func verbsFixture(t *testing.T, broken bool) (tools, repo, receipts, first strin
 }
 
 func TestFoldVerbs(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	main := func(mr *miniredis.Miniredis, fx fixture, work string, extra ...string) (int, string, string) {
 		var stdout, stderr bytes.Buffer

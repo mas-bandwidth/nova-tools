@@ -71,6 +71,8 @@ func TestAFarFutureDeadlineStillGivesUpOnASilentSession(t *testing.T) {
 }
 
 func TestADeclaredWaitKeepsItsTransportAllowance(t *testing.T) {
+	t.Parallel()
+
 	// operation wait --timeout T is a Go duration the session is allowed to sit
 	// on for T; the client's bound is T plus the transport allowance, so an
 	// answer after 30 seconds but before T+30s is no longer a false silence.
@@ -86,6 +88,8 @@ func TestADeclaredWaitKeepsItsTransportAllowance(t *testing.T) {
 }
 
 func TestTheDerivedBoundIsTheMinimumAndNeverZero(t *testing.T) {
+	t.Parallel()
+
 	soon := time.Now().Add(20 * time.Second).UTC().Format(time.RFC3339)
 	at, err := time.Parse(time.RFC3339, soon)
 	if err != nil {

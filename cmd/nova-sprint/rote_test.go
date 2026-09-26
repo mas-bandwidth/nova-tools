@@ -14,6 +14,8 @@ import (
 // top class, with counts 3 and 2. A control-verb receipt on cap:log is counted
 // by verb for its mind and is not hand work.
 func TestRote(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	addr := mr.Addr()
 	for _, n := range []struct{ class, mech string }{
@@ -62,6 +64,8 @@ func TestRote(t *testing.T) {
 // A note without a class or a mind, or with a class that is not a class
 // name, refuses and writes nothing; `note` without --rote refuses.
 func TestRoteNoteRefuses(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	for _, args := range [][]string{
 		{"note", "--rote", "width-check", "--store", mr.Addr()},
@@ -83,6 +87,8 @@ func TestRoteNoteRefuses(t *testing.T) {
 // --since keeps only the notes at or after the time; an empty window prints
 // the NEXT line with no class rather than nothing.
 func TestRoteSince(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	if code, _, stderr := runSprint("note", "--rote", "width-check", "--as", "stella", "--store", mr.Addr()); code != 0 {
 		t.Fatalf("note: %s", stderr)

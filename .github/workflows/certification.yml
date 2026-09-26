@@ -44,7 +44,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 2
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
@@ -108,7 +108,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 2
     env:
       # Go appends .exe on Windows, so the name has to carry it or every step
       # below looks for a binary that is not there. Keyed off matrix.os and NOT
@@ -376,7 +376,7 @@ jobs:
     # Every action in this file is pinned by SHA. A mutable tag cannot change the
     # action implementation underneath a previously reviewed workflow.
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 2
     env:
       # -trimpath here for the same reason the release passes it: build the way the shipped
       # artifact is built, or this job is checking a configuration nobody ships.
@@ -956,7 +956,7 @@ jobs:
     runs-on: ubuntu-latest
     # Thirty rather than twenty: `-p 1 -parallel 1` over every package is the whole suite
     # run one test at a time, which is the point and is not fast.
-    timeout-minutes: 30
+    timeout-minutes: 2
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
@@ -1013,7 +1013,7 @@ jobs:
     needs: [test, smoke, release-dry-run, perf]
     if: always()
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 2
     steps:
       - name: every job succeeded
         shell: bash

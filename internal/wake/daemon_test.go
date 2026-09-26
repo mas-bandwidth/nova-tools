@@ -9,6 +9,8 @@ import (
 )
 
 func TestDaemonBoundaryRejectShells(t *testing.T) {
+	t.Parallel()
+
 	shells := []string{
 		"sh", "bash", "zsh", "csh", "tcsh", "ksh", "fish", "dash",
 		"/bin/sh", "/bin/bash", "/usr/bin/zsh", "/usr/local/bin/fish",
@@ -40,6 +42,8 @@ func TestDaemonBoundaryRejectShells(t *testing.T) {
 }
 
 func TestDaemonBoundaryRejectDashC(t *testing.T) {
+	t.Parallel()
+
 	for _, argv := range [][]string{
 		{"python", "-c", "import os"},
 		{"tool", "-c=command"},
@@ -56,6 +60,8 @@ func TestDaemonBoundaryRejectDashC(t *testing.T) {
 }
 
 func TestDaemonBoundaryRejectBodies(t *testing.T) {
+	t.Parallel()
+
 	for _, argv := range [][]string{
 		{"nova-bus", "inbox", "--bodies"},
 		{"nova-bus", "--bodies=true"},
@@ -71,6 +77,8 @@ func TestDaemonBoundaryRejectBodies(t *testing.T) {
 }
 
 func TestDaemonBoundaryRejectAllowPrivate(t *testing.T) {
+	t.Parallel()
+
 	for _, argv := range [][]string{
 		{"nova-bus", "inbox", "--allow-private"},
 		{"tool", "--allow-private=yes"},
@@ -86,6 +94,8 @@ func TestDaemonBoundaryRejectAllowPrivate(t *testing.T) {
 }
 
 func TestDaemonBoundaryRejectDecide(t *testing.T) {
+	t.Parallel()
+
 	for _, argv := range [][]string{
 		{"nova-decide", "question"},
 		{"nova-bus", "wait", "--decide"},
@@ -102,6 +112,8 @@ func TestDaemonBoundaryRejectDecide(t *testing.T) {
 }
 
 func TestDaemonBoundaryRejectSecondaryAs(t *testing.T) {
+	t.Parallel()
+
 	// Multiple --as flags
 	argv := []string{"nova-bus", "wait", "--as", "johnny", "--as", "emma"}
 	err := ValidateDaemonArgv(argv, "johnny")
@@ -134,6 +146,8 @@ func TestDaemonBoundaryRejectSecondaryAs(t *testing.T) {
 }
 
 func TestDaemonBoundaryRejectSwarmVerbs(t *testing.T) {
+	t.Parallel()
+
 	swarmVerbs := []string{"harvest", "fill", "native", "merge"}
 	for _, verb := range swarmVerbs {
 		argv := []string{"runner", verb, "card-123"}
@@ -159,6 +173,8 @@ func TestDaemonBoundaryRejectSwarmVerbs(t *testing.T) {
 }
 
 func TestDaemonValidateNotePath(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 
 	// 1. Existing regular file: passes
@@ -204,6 +220,8 @@ func TestDaemonValidateNotePath(t *testing.T) {
 }
 
 func TestDaemonDirectArgvExecution(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	notePath := filepath.Join(dir, "note.md")
 	if err := os.WriteFile(notePath, []byte("Packet content"), 0o644); err != nil {

@@ -14,6 +14,8 @@ import (
 // A held lease names the launcher's own pid, so the reaper can ask the operating system
 // whether the launcher is alive rather than asking a log how long it has been quiet.
 func TestJobLeaseNamesTheLauncherPid(t *testing.T) {
+	t.Parallel()
+
 	job := t.TempDir()
 	release, err := StartJobLease(job, "card-1")
 	if err != nil {
@@ -37,6 +39,8 @@ func TestJobLeaseNamesTheLauncherPid(t *testing.T) {
 // The mtime is the heartbeat: a card that says nothing for an hour still has a lease that
 // was touched moments ago, which is the whole point of the file.
 func TestJobLeaseHeartbeatsItsMtime(t *testing.T) {
+	t.Parallel()
+
 	job := t.TempDir()
 	path := filepath.Join(job, JobLeaseName)
 	release, err := startJobLeaseEvery(job, "card-1", 10*time.Millisecond)
@@ -74,6 +78,8 @@ func TestJobLeaseHeartbeatsItsMtime(t *testing.T) {
 // A released lease is gone: a finished job leaves nothing behind that claims to be alive,
 // and releasing twice is not an error.
 func TestJobLeaseReleaseRemovesTheFile(t *testing.T) {
+	t.Parallel()
+
 	job := t.TempDir()
 	release, err := StartJobLease(job, "card-1")
 	if err != nil {
@@ -105,6 +111,8 @@ func TestJobLeaseReleaseRemovesTheFile(t *testing.T) {
 // (1) A LIVE LEASE IS NOT TAKEN TWICE. The second take is refused, by name, and the file
 // on disk is still the FIRST holder's, byte for byte.
 func TestASecondTakeOnALiveJobLeaseIsRefused(t *testing.T) {
+	t.Parallel()
+
 	job := t.TempDir()
 	release, err := StartJobLease(job, "card-1")
 	if err != nil {
@@ -145,6 +153,8 @@ func TestASecondTakeOnALiveJobLeaseIsRefused(t *testing.T) {
 // holds the path. The barrier is the file: the second take happens on the same
 // goroutine, after the path is free, so nothing here waits on a clock.
 func TestAReleaseNeverRemovesAnotherRunsLease(t *testing.T) {
+	t.Parallel()
+
 	job := t.TempDir()
 	path := filepath.Join(job, JobLeaseName)
 
@@ -188,6 +198,8 @@ func TestAReleaseNeverRemovesAnotherRunsLease(t *testing.T) {
 // without ever being told. A held lease that disappears is written again, with this
 // holder's own body.
 func TestTheHeartbeatRewritesALeaseThatWentMissing(t *testing.T) {
+	t.Parallel()
+
 	job := t.TempDir()
 	path := filepath.Join(job, JobLeaseName)
 	release, err := startJobLeaseEvery(job, "card-1", time.Millisecond)
@@ -224,6 +236,8 @@ func TestTheHeartbeatRewritesALeaseThatWentMissing(t *testing.T) {
 // over rather than refusing forever. A crashed launcher must not cost a card ten minutes.
 // This is the stale-owner recovery the exclusion must never grow over.
 func TestADeadHoldersLeaseIsTakenOver(t *testing.T) {
+	t.Parallel()
+
 	job := t.TempDir()
 	path := filepath.Join(job, JobLeaseName)
 	host, _ := os.Hostname()
@@ -258,6 +272,8 @@ func TestADeadHoldersLeaseIsTakenOver(t *testing.T) {
 // itself, not a duration: the file is created and left empty for exactly as long as the
 // assertions take.
 func TestAnUnfinishedClaimIsNotReclaimedAsADeadOwner(t *testing.T) {
+	t.Parallel()
+
 	job := t.TempDir()
 	path := filepath.Join(job, JobLeaseName)
 
@@ -297,6 +313,8 @@ func TestAnUnfinishedClaimIsNotReclaimedAsADeadOwner(t *testing.T) {
 // takes the directory. Without this the refusal would be a job directory nobody can ever
 // use again.
 func TestAnUnfinishedClaimIsTakenOverOnceItIsStale(t *testing.T) {
+	t.Parallel()
+
 	job := t.TempDir()
 	path := filepath.Join(job, JobLeaseName)
 	if err := os.WriteFile(path, nil, 0o644); err != nil {
@@ -324,6 +342,8 @@ func TestAnUnfinishedClaimIsTakenOverOnceItIsStale(t *testing.T) {
 // nil: the caller was told it had protection it did not have, and two launches proceeded.
 // Failing to establish ownership is a refusal with a name, never a silent success.
 func TestALeaseThatCannotBeEstablishedIsARefusalAndNotASilentSuccess(t *testing.T) {
+	t.Parallel()
+
 	job := t.TempDir()
 	// A path that is there and is not a record: this run cannot tell who holds the
 	// directory, and under rule 3 it may not guess.
@@ -346,6 +366,8 @@ func TestALeaseThatCannotBeEstablishedIsARefusalAndNotASilentSuccess(t *testing.
 // can prove it owns the place, so no run starts. Skipped for a user the mode bits do not
 // bind, which is the one way this could pass for the wrong reason.
 func TestAJobDirectoryThatCannotHoldALeaseRefusesTheRun(t *testing.T) {
+	t.Parallel()
+
 	if os.Geteuid() == 0 {
 		t.Skip("root is not bound by the directory's mode, so this proves nothing here")
 	}
@@ -378,6 +400,8 @@ func TestAJobDirectoryThatCannotHoldALeaseRefusesTheRun(t *testing.T) {
 // remove happens first against a path that is already empty, the republish lands after it,
 // and the lease is still there when the run has ended.
 func TestAReleaseWaitsForTheHeartbeatBeforeItRemovesTheLease(t *testing.T) {
+	t.Parallel()
+
 	job := t.TempDir()
 	path := filepath.Join(job, JobLeaseName)
 	ticks := make(chan time.Time)
@@ -411,6 +435,8 @@ func TestAReleaseWaitsForTheHeartbeatBeforeItRemovesTheLease(t *testing.T) {
 // Nothing is left beside the lease either: the temp file the publication links from is this
 // run's own and is removed, so a job directory never accumulates them.
 func TestTakingTheLeaseLeavesNoTemporaryFileBehind(t *testing.T) {
+	t.Parallel()
+
 	job := t.TempDir()
 	release, err := StartJobLease(job, "card-1")
 	if err != nil {
@@ -473,6 +499,8 @@ func staleRecord(t *testing.T, job, how string) {
 // deliberately apart: a pid this kernel asked about and was answered for, and a record it
 // cannot read at all which only age can retire.
 func TestACompetingStaleTakerNeverRemovesTheWinnersLiveLease(t *testing.T) {
+	t.Parallel()
+
 	for _, how := range []string{"dead-pid", "unknown-and-stale"} {
 		t.Run(how, func(t *testing.T) {
 			job := t.TempDir()
@@ -542,6 +570,8 @@ func TestACompetingStaleTakerNeverRemovesTheWinnersLiveLease(t *testing.T) {
 // A reclamation that puts a record back leaves no tombstone behind either: the job
 // directory holds the lease and nothing else when the dust settles.
 func TestACompetingReclamationLeavesNoTombstoneBehind(t *testing.T) {
+	t.Parallel()
+
 	job := t.TempDir()
 	staleRecord(t, job, "dead-pid")
 
@@ -582,6 +612,8 @@ func TestACompetingReclamationLeavesNoTombstoneBehind(t *testing.T) {
 // record whose pid THIS kernel can see alive is held however old its heartbeat is, and only
 // a record this kernel cannot be asked about is ever retired by elapsed time.
 func TestAnOldHeartbeatNeverRetiresALivePid(t *testing.T) {
+	t.Parallel()
+
 	job := t.TempDir()
 	path := filepath.Join(job, JobLeaseName)
 	release, err := StartJobLease(job, "card-1")
@@ -607,6 +639,8 @@ func TestAnOldHeartbeatNeverRetiresALivePid(t *testing.T) {
 // Feature 87 hold (#2857): the renew decision must stop renewing once the beat file
 // exists and has not moved; before it exists the tick renews (connecting grace).
 func TestLeaseProviderBeatRenewsOnlyOnAdvance(t *testing.T) {
+	t.Parallel()
+
 	job := t.TempDir()
 	beat := filepath.Join(job, ProviderBeatName)
 	var last time.Time
@@ -644,6 +678,8 @@ func TestLeaseProviderBeatRenewsOnlyOnAdvance(t *testing.T) {
 // touchProviderBeat must create the file when absent (the first sample may already
 // show turns > 0, where a bare Chtimes silently did nothing).
 func TestLeaseTouchProviderBeatCreatesAbsentFile(t *testing.T) {
+	t.Parallel()
+
 	job := t.TempDir()
 	now := time.Now().Add(-time.Hour).Truncate(time.Second)
 	if err := touchProviderBeat(job, now); err != nil {

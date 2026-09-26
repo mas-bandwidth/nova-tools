@@ -48,6 +48,8 @@ func countingOpener(st presence.Store, dials *int) storeOpener {
 }
 
 func TestBeatOnceWritesTheFriendsKey(t *testing.T) {
+	t.Parallel()
+
 	st := presence.NewFakeStore(beatAt)
 	var out, errb bytes.Buffer
 	code := cmdBeat([]string{"--as", "Johnny", "--store", "store.invalid:6380", "--once"},
@@ -72,6 +74,8 @@ func TestBeatOnceWritesTheFriendsKey(t *testing.T) {
 // with the beat's TTL, `presence` over the friends SET prints the friend up
 // with that width, and once the beat has lapsed the same line prints down.
 func TestBeatWidthWritesTheHashAndPresencePrintsUpOrDown(t *testing.T) {
+	t.Parallel()
+
 	st := presence.NewFakeStore(beatAt)
 	st.AddMembers(presence.FriendsSet, "emma", "stella", "rowan")
 	clock := fakeStoreClock{st}
@@ -120,6 +124,8 @@ func TestBeatWidthWritesTheHashAndPresencePrintsUpOrDown(t *testing.T) {
 // passes. The reset time is not this beat's clock. A missing flag writes no
 // field and the beat still succeeds. presence prints the ones that are there.
 func TestBeatWindowAndWidthAreSetOnlyWhenTheFlagsArePassed(t *testing.T) {
+	t.Parallel()
+
 	const (
 		reset = "2026-09-23T04:00:00Z" // not the beat's own stamp
 		stamp = "2026-09-22T09:41:00Z"
@@ -248,6 +254,8 @@ func beatFields(st *presence.FakeStore) [4]string {
 }
 
 func TestBeatRefusesWhatItCannotGuess(t *testing.T) {
+	t.Parallel()
+
 	st := presence.NewFakeStore(beatAt)
 	for _, c := range []struct {
 		name string
@@ -286,6 +294,8 @@ func TestBeatRefusesWhatItCannotGuess(t *testing.T) {
 // on stdout or stderr -- never contains the password, while the third,
 // ordinary shape still works.
 func TestBeatStoreURLParsingRejectsTLSAndUserinfoWithoutLeakingTheSecret(t *testing.T) {
+	t.Parallel()
+
 	const secret = "hunter2"
 	for _, c := range []struct {
 		name       string
@@ -332,6 +342,8 @@ func TestBeatStoreURLParsingRejectsTLSAndUserinfoWithoutLeakingTheSecret(t *test
 // for byte, and that the two accepted forms in the same list -- a bare
 // host:port and an [ipv6]:port -- still parse and reach the opener.
 func TestBeatStoreURLQueryParametersAreRefusedWithoutDialing(t *testing.T) {
+	t.Parallel()
+
 	const secret = "SYNTHETIC_SECRET"
 	// Mirrors presence.refusedAddr, unexported on purpose: the CLI proves
 	// the refusal it prints against the same literal the package's own test
@@ -388,6 +400,8 @@ func TestBeatStoreURLQueryParametersAreRefusedWithoutDialing(t *testing.T) {
 }
 
 func TestTheLoopKeepsBeatingThroughAStoreThatBlinked(t *testing.T) {
+	t.Parallel()
+
 	st := presence.NewFakeStore(beatAt)
 	// One good beat (call 1), then a store that refuses four calls -- four
 	// beats -- and then a store that answers again. A beat that exited on the first error would have
@@ -424,6 +438,8 @@ func TestTheLoopKeepsBeatingThroughAStoreThatBlinked(t *testing.T) {
 }
 
 func TestPresencePrintsTheOneLine(t *testing.T) {
+	t.Parallel()
+
 	st := presence.NewFakeStore(beatAt)
 	ctx := context.Background()
 	if err := presence.Beat(ctx, st, "emma", st.Now(), presence.DefaultTTL); err != nil {
@@ -447,6 +463,8 @@ func TestPresencePrintsTheOneLine(t *testing.T) {
 }
 
 func TestPresenceReadsTheRosterFromTheBusCheckout(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "participants.json"), []byte(
 		`{"participants":[{"name":"Rowan"},{"name":"Stella"},{"name":"Glenn"}]}`), 0o600); err != nil {
@@ -465,6 +483,8 @@ func TestPresenceReadsTheRosterFromTheBusCheckout(t *testing.T) {
 }
 
 func TestPresenceRefusesARosterItWouldHaveToInvent(t *testing.T) {
+	t.Parallel()
+
 	st := presence.NewFakeStore(beatAt)
 	for _, c := range []struct {
 		name string
@@ -492,6 +512,8 @@ func TestPresenceRefusesARosterItWouldHaveToInvent(t *testing.T) {
 }
 
 func TestPresenceSaysNothingRatherThanAnEmptyRoomWhenTheStoreIsDown(t *testing.T) {
+	t.Parallel()
+
 	st := presence.NewFakeStore(beatAt)
 	st.Err = errStoreDown
 	var out, errb bytes.Buffer
@@ -506,6 +528,8 @@ func TestPresenceSaysNothingRatherThanAnEmptyRoomWhenTheStoreIsDown(t *testing.T
 }
 
 func TestTheUsageNamesBothVerbs(t *testing.T) {
+	t.Parallel()
+
 	var out, errb bytes.Buffer
 	if code := run([]string{"help"}, &out, &errb); code != 0 {
 		t.Fatalf("help exited %d", code)
@@ -529,6 +553,8 @@ func TestTheUsageNamesBothVerbs(t *testing.T) {
 // built to the documented scenario (johnny up 12s width 8, stella up 4s, emma
 // down 1h12m last 09:41Z, freddy never beaten, all four in the friends SET).
 func TestTheCommandReferencePresenceExampleMatchesWhatTheToolPrints(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "CLI.md"))
 	if err != nil {
 		t.Fatal(err)
@@ -607,6 +633,8 @@ var errStoreDown = errors.New("dial tcp: connection refused")
 // down with no age (the row does not say since when); a row whose at has gone
 // stale is a silent row loop, down and dated by that at.
 func TestPresenceReadsFriendRowHash(t *testing.T) {
+	t.Parallel()
+
 	st := presence.NewFakeStore(beatAt)
 	st.AddMembers(presence.FriendsSet, "stella", "johnny", "emma", "rowan")
 	stamp := func(ago time.Duration) string { return beatAt.Add(-ago).Format(presence.Stamp) }
@@ -635,6 +663,8 @@ func TestPresenceReadsFriendRowHash(t *testing.T) {
 // key: beat exits 2 naming the type and leaves the key exactly as it was. A
 // plain string (a beat older than #2673) is the beat's own and is replaced.
 func TestBeatRefusesNonStringFriendKey(t *testing.T) {
+	t.Parallel()
+
 	rowAt := beatAt.Add(-time.Second).Format(presence.Stamp)
 	t.Run("the friend row", func(t *testing.T) {
 		st := presence.NewFakeStore(beatAt)

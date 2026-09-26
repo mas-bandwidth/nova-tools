@@ -11,6 +11,8 @@ import (
 // example, rather than returning on the first empty string. Reverting exec.go
 // left ./internal/secrets green because nothing in the package called RunExec.
 func TestRunExecRefusalNamesEveryMissingRequiredFlagTogether(t *testing.T) {
+	t.Parallel()
+
 	code, err := RunExec("", "", "", "", "", nil, []string{os.Args[0]})
 	if code != 125 {
 		t.Fatalf("expected exit 125, got %d err=%v", code, err)

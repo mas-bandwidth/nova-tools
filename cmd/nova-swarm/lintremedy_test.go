@@ -27,6 +27,8 @@ import (
 // produces names what the rule wants. This is a class test: it does not name the five checks
 // that card happened to trip, it asserts the property over every drift.
 func TestEveryDriftCarriesItsRemedy(t *testing.T) {
+	t.Parallel()
+
 	// The card as it was written by hand, line 1 the contract line of a schema fix.
 	body := strings.Join([]string{
 		"# fixed: row 5 writer_bound_count on go",
@@ -67,6 +69,8 @@ func TestEveryDriftCarriesItsRemedy(t *testing.T) {
 // the count agrees with the count the LINT OK line publishes, so a check cannot be added
 // without its remedy.
 func TestLintRulesPrintsEveryRuleAndItsRemedy(t *testing.T) {
+	t.Parallel()
+
 	exit, stdout, stderr := runSwarm(t, "lint", "--rules")
 	if exit != 0 {
 		t.Fatalf("`lint --rules` is a listing, not a refusal: exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
@@ -102,6 +106,8 @@ func TestLintRulesPrintsEveryRuleAndItsRemedy(t *testing.T) {
 // TestLintRulesNeedsNoCard: a card writer asking what the rules want has no card yet, which
 // is exactly when the question is asked.
 func TestLintRulesNeedsNoCard(t *testing.T) {
+	t.Parallel()
+
 	exit, stdout, stderr := runSwarm(t, "lint", "--rules")
 	if exit != 0 || !strings.Contains(stdout, "LINT RULE ") {
 		t.Fatalf("`lint --rules` answers without --card: exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)

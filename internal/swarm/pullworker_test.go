@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // plantWorkerTestCard puts one <name>.card in store/queue/.
@@ -37,6 +39,8 @@ func writeWorkerTestStore(t *testing.T, shares string) string {
 // TestWorkerRunsCardAndHarvestsOutcome: A worker takes a card under a lease, runs it,
 // heartbeats it, writes outcome to harvest/ before releasing the lease, and cleans up.
 func TestWorkerRunsCardAndHarvestsOutcome(t *testing.T) {
+	t.Parallel()
+
 	store := writeWorkerTestStore(t, "capacity\t2\nreserve\t0\nhulk\t2\n")
 	plantWorkerTestCard(t, store, "CARD-001", "RESULT: CARD-001 pass\nDo something")
 
@@ -101,6 +105,8 @@ func TestWorkerRunsCardAndHarvestsOutcome(t *testing.T) {
 
 // TestWorkerIdleWhenQueueIsEmpty: With an empty queue and Once=true, it prints PULL IDLE and exits 0.
 func TestWorkerIdleWhenQueueIsEmpty(t *testing.T) {
+	t.Parallel()
+
 	store := writeWorkerTestStore(t, "capacity\t2\nreserve\t0\nhulk\t2\n")
 	var stdout, stderr bytes.Buffer
 
@@ -124,6 +130,8 @@ func TestWorkerIdleWhenQueueIsEmpty(t *testing.T) {
 
 // TestWorkerContainerContractArgs: verify that BuildContainerArgs matches the run contract.
 func TestWorkerContainerContractArgs(t *testing.T) {
+	t.Parallel()
+
 	args := BuildContainerArgs("podman", "nova-card:dev", "/home/bench/work", "opencode/deepseek-v4-flash", "CARD-42", "card text", "DEEPSEEK_API_KEY")
 	joined := strings.Join(args, " ")
 
@@ -152,6 +160,8 @@ func TestWorkerContainerContractArgs(t *testing.T) {
 
 // TestWrapSecretsExec: verify that WrapSecretsExec prefixes nova-secrets exec --as <seat> --.
 func TestWrapSecretsExec(t *testing.T) {
+	t.Parallel()
+
 	base := []string{"podman", "run", "--rm", "nova-card:dev"}
 	wrapped := WrapSecretsExec("hulk", base)
 	want := "nova-secrets exec --as hulk -- podman run --rm nova-card:dev"
@@ -174,7 +184,7 @@ func writeFakeExec(t *testing.T, name, script string) string {
 	if err := os.MkdirAll(bin, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0o755); err != nil {
+	if err := testbin.WriteExecutable(filepath.Join(bin, name), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return bin
@@ -183,6 +193,8 @@ func writeFakeExec(t *testing.T, name, script string) string {
 // A container that plants a symlink where RESULT.md is expected must not carry the
 // host-side harvest out of the job: the read is refused, and nothing is harvested.
 func TestHarvestRefusesASymlinkedResult(t *testing.T) {
+	t.Parallel()
+
 	workDir := t.TempDir()
 	outside := t.TempDir()
 	secret := filepath.Join(outside, "secret.txt")
@@ -205,6 +217,8 @@ func TestHarvestRefusesASymlinkedResult(t *testing.T) {
 // safe path element must be refused before any join, not run into a workspace the
 // raw name would build.
 func TestWorkerRefusesACardWithAnUnsafeLabel(t *testing.T) {
+	t.Parallel()
+
 	store := writeWorkerTestStore(t, "capacity\t2\nreserve\t0\nhulk\t2\n")
 	plantWorkerTestCard(t, store, "CARD 001", "RESULT: pass\n")
 	var stdout, stderr bytes.Buffer

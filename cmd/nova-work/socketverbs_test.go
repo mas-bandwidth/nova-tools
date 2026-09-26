@@ -74,6 +74,8 @@ func TestEverySocketVerbShapeSpellsItsRequestLine(t *testing.T) {
 
 // Every socket verb refuses to guess the socket, the same way the four did.
 func TestEverySocketVerbRefusesToGuessTheSession(t *testing.T) {
+	t.Parallel()
+
 	for _, verb := range allSocketVerbs() {
 		if verb == "query" {
 			continue // query's own refusal names --snapshot beside --session
@@ -138,6 +140,8 @@ func TestEverySocketVerbClassifiesTheReplyByTheSecondToken(t *testing.T) {
 // The block's lines this client does not send are refused BY NAME, with the
 // reason, rather than as an unknown verb or as a stray positional argument.
 func TestTheLinesTheClientDoesNotSendAreRefusedByName(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		args []string
 		want string
@@ -168,6 +172,8 @@ func TestTheLinesTheClientDoesNotSendAreRefusedByName(t *testing.T) {
 // A family named with no sub-verb, or with one the spec does not spell, is
 // refused naming the sub-verbs there are.
 func TestAVerbFamilyRefusalNamesItsSubVerbs(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		args []string
 		want []string

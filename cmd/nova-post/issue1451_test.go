@@ -14,6 +14,8 @@ import (
 )
 
 func TestIssue1451EveryRefusalNamesTheDoor(t *testing.T) {
+	t.Parallel()
+
 	// door is the ONBOARDING point 1 shape: the line ENDS with it. doorWord is
 	// the same phrase without the separator, counted so a second copy -- the
 	// `, run:` hand-written ones left in place beside the appended `; run:` --

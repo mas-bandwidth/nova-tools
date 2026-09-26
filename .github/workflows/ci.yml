@@ -443,10 +443,18 @@ jobs:
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             base="${{ github.event.pull_request.base.sha }}"
             SPACE_SHARDS=4
-            STUDIO_SHARDS=2 # 14:55Z 2026-09-24: 16/16 Studio ARM64 runners busy, 12 runs queued, six PR runs at 4 studio shards each (24 jobs for 16 runners) held dev's push runs 10+ min; a shard's tests run 0.7-4.0 min since #3492 (run 36003142070); was 4
+            # FOUR since 2026-09-25 (the two-minute cap, every job): at two darwin
+            # shards, shard 2/2 of PR run 36206229467 held cmd/nova-sprint,
+            # cmd/nova-wake and cmd/nova-review together and crossed the cap on
+            # the Studio; at eight, sixteen darwin jobs of one queue run shared
+            # eight runners and the merge legs crossed it. Glenn: "we cannot run
+            # CI as parallel as we are used to, and still get reliable < 2m";
+            # "reduce the number of runners". The Studio carries four runners
+            # (fleet/runners.tsv), one wave per PR. The 2026-09-24 note below is history.
+            STUDIO_SHARDS=4 # 14:55Z 2026-09-24: 16/16 Studio ARM64 runners busy, 12 runs queued, six PR runs at 4 studio shards each (24 jobs for 16 runners) held dev's push runs 10+ min; a shard's tests run 0.7-4.0 min since #3492 (run 36003142070); was 4
           elif [ "${{ github.event_name }}" = "merge_group" ]; then
             base="${{ github.event.merge_group.base_sha }}"
-            STUDIO_SHARDS=2
+            STUDIO_SHARDS=4
           fi
           if [ -n "$base" ]; then
             while IFS= read -r pkg; do
@@ -558,7 +566,8 @@ jobs:
             packages="${studio_grp[$g]# }"
             n=$((g + 1))
             # X64, OFF THE STUDIO (Glenn 2026-09-24 7:25 PM ET, nova-tools#3634: "No CI, and no swarm on the studio. It's for friends."): the macOS shards run on the Intel Macs, batman and superman (self-hosted,macOS,X64). Dev push run 35999520176's 7/8 Intel cancellations predate #3492, when GNU make 3.81 made every shard run the whole tree; since #3492 a shard's tests take 0.7-4.0 min on the Studio (run 36003142070), about 3x that per core on Intel, inside the 20-minute push cap. internal/ci: TestMacOSShardsLeaveTheStudio.
-            entries+=("{\"name\":\"$n/$STUDIO_SHARDS darwin-x64\",\"packages\":\"$packages\",\"os\":\"macOS\",\"arch\":\"X64\",\"group\":\"macOS\"}")
+            # ARM64, ON THE STUDIO FOR NOW (Glenn 2026-09-25 8:40 PM ET: "let's have the darwin tests run on studio, so we can move forward"; the x64 iMac Pros took nine minutes for the merge group's darwin leg, and "running tests in under 2 minutes will require modern machines"). Temporary until an M-series machine joins the fleet for darwin CI; #3634's rule stands otherwise.
+            entries+=("{\"name\":\"$n/$STUDIO_SHARDS darwin-arm64\",\"packages\":\"$packages\",\"os\":\"macOS\",\"arch\":\"ARM64\",\"group\":\"studio\"}")
           done
 
           [ "${#entries[@]}" -gt 0 ] || { echo "no packages with tests: the fan-out would be empty and green"; exit 1; }
@@ -618,7 +627,7 @@ jobs:
     # 2x spread censors the slower machine. The reason lives beside the number
     # in internal/ci/ci_budget_test.go.
     # PUSH STUDIO SHARDS get 20 (2026-09-24, run 35950929169: all sixteen whole-tree studio shards cancelled at 12); PR, merge-group and space legs keep 12.
-    timeout-minutes: ${{ matrix.entry.group == 'macOS' && github.event_name == 'push' && 20 || 12 }}
+    timeout-minutes: 2
     steps:
       - name: nothing to test for this change
         # test-packages emits one leg with an empty package list when the change
@@ -803,7 +812,7 @@ jobs:
         # Not a global -short: that would also skip internal/bus's multi-process tests, the darwin evidence this leg is for.
         env:
           NOVA_CI_PR_STUDIO: ${{ matrix.entry.group == 'macOS' && github.event_name == 'pull_request' && '1' || '' }}
-        run: make test PKGS="${{ matrix.entry.packages }}" GOTEST_TIMEOUT="${{ matrix.entry.group == 'macOS' && github.event_name == 'push' && '18m' || matrix.entry.group == 'macOS' && '11m' || '10m' }}"
+        run: make test PKGS="${{ matrix.entry.packages }}" GOTEST_TIMEOUT="110s"
 
   test-race-queue:
     # THE QUEUE AND LEASE PACKAGE UNDER -race, and the one place the race
@@ -901,7 +910,7 @@ jobs:
         os: [ubuntu-latest, macos-latest]
         shard: [1, 2, 3, 4]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 2
     steps:
       # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
       # not redden a job. Attempt one tolerates its own failure ONLY so the
@@ -1011,7 +1020,8 @@ jobs:
           base="${{ github.event.merge_group.base_sha }}"
           git fetch -q --depth=1 origin "$base" 2>/dev/null || true
           slots=$(bash .github/scripts/plan-merge-slots.sh "$base" HEAD)
-          case "$slots" in 1) shards='[0]';; 3) shards='[0,1,2]';; *) slots=6; shards='[0,1,2,3,4,5]';; esac
+          shards=$(seq -s, 0 $((slots - 1)))
+          shards="[$shards]"
           echo "plan-merge: slots=$slots"
           echo "slots=$slots" >> "$GITHUB_OUTPUT"
           echo "shards=$shards" >> "$GITHUB_OUTPUT"
@@ -1046,31 +1056,12 @@ jobs:
         leg:
           - name: linux
             runner: ubuntu-latest
-            # FIVE, the allowance the budget test records: measured 41 to 94 s
-            # in run 35354900090, so the cap is a hang detector with room.
-            timeout: 5
-          - name: darwin
-            # A label array, carried as a JSON string: a runs-on expression must
-            # resolve to a single string, so the job parses this one with fromJSON.
-            # The Intel Macs, batman and superman (X64; the Studio left CI 2026-09-24,
-            # nova-tools#3634), and whatever x64 Mac joins next. The Go tests do not care
-            # which, and one machine as the only darwin runner made it the clock of the
-            # whole merge queue.
-            labels: '["self-hosted","macOS","X64"]'
-            # TEN since 2026-09-18, and batch 7 is what bought it. Five fitted
-            # this leg while it ran small groups (38 to 256 s in run
-            # 35354900090), and then merge-group run 35369433950 had darwin
-            # shards 0 AND 1 CANCELLED at exactly five minutes on superman: a
-            # thirteen-member batch's packages dealt into six shards BY COUNT off
-            # the Linux table, with cmd/nova-bus (10.0 s there, minutes on an x64
-            # Mac) inside shard 0. The real fix is below — this leg now deals
-            # from testdata/ci/package-sizes-darwin.tsv and takes its per-package
-            # ceiling from the Makefile's DARWIN_TIMEOUT — and TEN is what stays
-            # behind that plan as a hang detector rather than a budget. The
-            # asymmetry is the argument for the room: a cancelled shard drops the
-            # whole group and restarts every PR behind it, while a generous cap
-            # costs runner minutes only when something is genuinely wedged.
-            timeout: 10
+        # THERE IS NO DARWIN LEG HERE SINCE 2026-09-25: the merge group's darwin
+        # coverage is the `test (n/N darwin-arm64)` shards, which run the full
+        # suite on the group commit on the same Studio runners; a second darwin
+        # leg re-ran the same suite beside them and both crossed the two-minute
+        # cap (run 36207910988). Glenn: "the correct action to take is to
+        # optimize the tests. And to reduce the number of runners."
         # THERE IS NO WINDOWS LEG (2026-09-18, Glenn: "drop the native windows
         # CI runners. WSL only from now on."). It was a third entry here,
         # windows-latest at a twelve-minute hang-detector cap, dealing its
@@ -1103,7 +1094,7 @@ jobs:
     # the matrix above. internal/ci's budget test reads both numbers out of the
     # matrix and records why each is what it is. A third number lived here until
     # 2026-09-18: twelve minutes for the windows leg, which is gone with the leg.
-    timeout-minutes: ${{ matrix.leg.timeout }}
+    timeout-minutes: 2
     steps:
       # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
       # not redden a job. Attempt one tolerates its own failure ONLY so the
@@ -1257,45 +1248,45 @@ jobs:
           shard=${{ matrix.shard }}
           slots=${{ needs.plan-merge.outputs.slots }}
           sizes=$(cat testdata/ci/package-sizes.tsv)
-          darwin=$(cat testdata/ci/package-sizes-darwin.tsv)
           leg=${{ matrix.leg.name }}
-          if [ "$leg" = "darwin" ]; then
-            # One place holds the darwin ceiling: the Makefile. `?=` there lets
-            # this exported value win over the linux default of 100 s.
-            MERGE_TIMEOUT=$(make -s darwin-timeout)
-            export MERGE_TIMEOUT
-            echo "darwin leg: per-package ceiling $MERGE_TIMEOUT, shards dealt from testdata/ci/package-sizes-darwin.tsv"
-          fi
+          # Whole packages first (2026-09-25, the two-minute rule): a package
+          # that needs no test-name split is dealt whole to one slot, and each
+          # slot runs its whole packages in ONE go test call, which builds and
+          # runs them in parallel. The per-package loop below (one `go test
+          # -list` and one `make test-merge` each, serial) took merge-group run
+          # 20106054139's darwin shard 4 nine minutes for fifty packages whose
+          # tests summed under two; only the packages big enough to split by
+          # test name still go through it.
+          whole=""
+          split=""
+          w=0
           for pkg in ${{ steps.pkgs.outputs.pkgs }}; do
-            if [ "$leg" = "darwin" ]; then
-              # Column 3 is the FULL size, which is what this leg runs. Three
-              # cases, and run 35369433950 is what dealing darwin by the Linux
-              # number costs.
-              secs=$(printf '%s\n' "$darwin" | awk -F '\t' -v p="$pkg" '$1 == p { print $3; exit }')
-              case "$secs" in
-                ''|'-')
-                  echo "$pkg: no full darwin measurement, dealt across all $slots slot(s)"
-                  n=$slots
-                  ;;
-                *+)
-                  echo "$pkg: darwin full ${secs} (censored: at least that), dealt across all $slots slot(s)"
-                  n=$slots
-                  ;;
-                *)
-                  if awk -v s="$secs" 'BEGIN { exit !(s > 40) }'; then n=6; else n=3; fi
-                  echo "$pkg: darwin full ${secs}s, $n shard(s)"
-                  ;;
-              esac
+            secs=$(printf '%s\n' "$sizes" | awk -F '\t' -v p="$pkg" '$1 == p { print $2; exit }')
+            # Only a package MEASURED over 40 s splits by test name; an
+            # unmeasured package is dealt whole (queue run 36208535525: the
+            # table measured 8 of 160 packages and the other 152 went one at
+            # a time through the split loop, 81 of them on shard 0 before the
+            # cap).
+            if [ -n "$secs" ] && [ "$secs" != "-" ] && awk -v s="$secs" 'BEGIN { exit !(s + 0 > 40) }'; then
+              split="$split $pkg"
+            elif [ $((w % slots)) -eq "$shard" ]; then
+              whole="$whole $pkg"
+              w=$((w + 1))
             else
-              secs=$(printf '%s\n' "$sizes" | awk -F '\t' -v p="$pkg" '$1 == p { print $2; exit }')
-              if [ -n "$secs" ] && awk -v s="$secs" 'BEGIN { exit !(s > 40) }'; then
-                n=6
-              else
-                n=3
-              fi
+              w=$((w + 1))
             fi
-            # Never deal over more slots than the plan opened, or tests would
-            # land in a slot that does not exist and never run.
+          done
+          if [ -n "$whole" ]; then
+            echo "shard $shard of $slots: whole packages in one call:$whole"
+            make test-merge PKGS="$whole"
+          fi
+          for pkg in $split; do
+            secs=$(printf '%s\n' "$sizes" | awk -F '\t' -v p="$pkg" '$1 == p { print $2; exit }')
+            if [ -n "$secs" ] && awk -v s="$secs" 'BEGIN { exit !(s > 40) }'; then
+              n=6
+            else
+              n=3
+            fi
             if [ "$n" -gt "$slots" ]; then n=$slots; fi
             list=$(go test -list '.*' "$pkg") || exit 1
             tests=$(printf '%s\n' "$list" | grep '^Test' | sort || true)
@@ -1369,7 +1360,7 @@ jobs:
     runs-on: ${{ matrix.leg.os }}
     # 6 is the CL cap the two-minute law allows; 2 killed the windows leg by the clock
     # (cmd/nova-bus measured 439 s there). The legs run -short (#682).
-    timeout-minutes: 6
+    timeout-minutes: 2
     steps:
       # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
       # not redden a job. Attempt one tolerates its own failure ONLY so the
@@ -1644,7 +1635,7 @@ jobs:
     # must resolve to a string, not to an array.
     runs-on: [self-hosted, "${{ matrix.entry.os }}", "${{ matrix.entry.arch }}", "${{ matrix.entry.group }}"]
     # 15 = 2x the measured max lisp job, 430 s (studio at load 50-70, runs 36011449625/36011918432: checkout 107-157 s, suite up to 110 s)
-    timeout-minutes: 15
+    timeout-minutes: 2
     steps:
       - name: remove stale build dirs from the shared runner
         # The self-hosted runners reuse the _work directory across jobs; a tree left
@@ -1837,7 +1828,7 @@ jobs:
     # PRs are self-hosted only; hosted runners are reserved for push to main and
     # the nightly schedule. ci-ok aggregates on the Linux space runner either way.
     runs-on: [self-hosted, linux, x64, space]
-    timeout-minutes: 1
+    timeout-minutes: 2
     steps:
       - name: every CL-tier job succeeded (pull request, merge group or manual)
         # merge_group is the queue's group commit: ci-ok on it is THE merge gate,

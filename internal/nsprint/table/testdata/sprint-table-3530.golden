@@ -18,15 +18,15 @@ REVIEW stream="swarm: cards" over=2 oldest=t1-review-0 age=3h00m max=2h00m
 
 consumer             | ready | working |  done |    ok |  fail |  ok% | status | load
 ---------------------+-------+---------+-------+-------+-------+------+--------+------
-friend:rowan         |     0 |      12 |    14 |    10 |     4 |  71% | up     | -
-friend:johnny        |     2 |       0 |     3 |     3 |     0 | 100% | down   | -
-friend:emma          |     1 |       4 |     5 |     4 |     1 |  80% | up     | -
-friend:stella        |     0 |       1 |     5 |     5 |     0 | 100% | down   | -
-bench:batman         |     0 |       0 |     1 |     1 |     0 | 100% | up     | 0.89
-bench:hetzner        |     2 |       3 |     5 |     4 |     1 |  80% | up     | 0.19
-bench:hulk           |     7 |       0 |     3 |     3 |     0 | 100% | up     | 0.40
-bench:space          |     1 |       4 |     4 |     2 |     2 |  50% | up     | 1.04
-bench:superman       |     0 |       1 |     2 |     1 |     1 |  50% | up     | 1.02
-bench:vision         |     0 |       0 |     1 |     1 |     0 | 100% | up     | 0.72
+rowan                |     0 |      12 |    14 |    10 |     4 |  71% | up     | 3.00
+johnny               |     2 |       0 |     3 |     3 |     0 | 100% | down   | 3.00
+emma                 |     1 |       4 |     5 |     4 |     1 |  80% | up     | 3.00
+stella               |     0 |       1 |     5 |     5 |     0 | 100% | down   | 3.00
+batman               |     0 |       0 |     1 |     1 |     0 | 100% | up     | 0.89
+hetzner              |     2 |       3 |     5 |     4 |     1 |  80% | up     | 0.19
+hulk                 |     7 |       0 |     3 |     3 |     0 | 100% | up     | 0.40
+space                |     1 |       4 |     4 |     2 |     2 |  50% | up     | 1.04
+superman             |     0 |       1 |     2 |     1 |     1 |  50% | up     | 1.02
+vision               |     0 |       0 |     1 |     1 |     0 | 100% | up     | 0.72
 ---------------------+-------+---------+-------+-------+-------+------+--------+------
 total                |    13 |      25 |    43 |    34 |     9 |  79% |

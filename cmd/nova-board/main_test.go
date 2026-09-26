@@ -1558,6 +1558,8 @@ func TestTheCapWidensAndEachKindIsCappedSeparately(t *testing.T) {
 // comes back whole. Every `want` below is what `sh -c 'printf "%s|\n" <the word>'` prints.
 // The single-quote half -- the rule board.Quote now prints -- is pinned next.
 func TestShellWordsReadsADoubleQuotedWordTheWayAShellDoes(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name string
 		line string
@@ -1590,6 +1592,8 @@ func TestShellWordsReadsADoubleQuotedWordTheWayAShellDoes(t *testing.T) {
 // quotes are literal, so a word holding $(...) or a backtick comes back whole and, pasted,
 // runs nothing. Every `want` is what `sh -c 'printf "%s|\n" <the word>'` prints.
 func TestShellWordsReadsASingleQuotedWordTheWayAShellDoes(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name string
 		line string

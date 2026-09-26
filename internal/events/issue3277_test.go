@@ -9,6 +9,8 @@ import (
 
 // #3277: Open sends nothing; the first Emit or read dials.
 func TestOpenSendsNoCommand3277(t *testing.T) {
+	t.Parallel()
+
 	addr, count := testutil.CommandCounter(t)
 	s, err := Open(context.Background(), Dial{Addr: addr})
 	if err != nil {

@@ -50,6 +50,8 @@ func mustClass(t *testing.T, evs []life.Event, atMS int64, want string) {
 // for 11 h and no turn-start (Stella's 11 h idle) is OFFLINE-MODEL at every
 // minute from minute 20 to hour 11, never UP: a beat is process life only.
 func TestProcessBeatsWithoutTurnStartIsOfflineModel(t *testing.T) {
+	t.Parallel()
+
 	f, err := os.Open("testdata/beats-11h-no-turns.jsonl")
 	if err != nil {
 		t.Fatal(err)
@@ -86,6 +88,8 @@ func TestProcessBeatsWithoutTurnStartIsOfflineModel(t *testing.T) {
 // turn-start is WAKE-PENDING through exactly 120,000 ms and WAKE-MISSED from
 // 120,001 ms; an uncaused turn-start never answers it.
 func TestScheduledWakeWithoutTurnEscalates(t *testing.T) {
+	t.Parallel()
+
 	d := life.Event{ID: "d1", Kind: life.EventDeliver, At: 30000}
 	const dAt = 30000
 	evs := timeline(300, d)
@@ -105,6 +109,8 @@ func TestScheduledWakeWithoutTurnEscalates(t *testing.T) {
 // TestWakeMissedRecoversOnLaterCausedTurn: D1 at 0 s is never answered; D2
 // at 300 s supersedes it. Only the newest delivery is consulted.
 func TestWakeMissedRecoversOnLaterCausedTurn(t *testing.T) {
+	t.Parallel()
+
 	d1 := life.Event{ID: "d1", Kind: life.EventDeliver, At: 0}
 	d2 := life.Event{ID: "d2", Kind: life.EventDeliver, At: 300000}
 	turn := func(atMS int64) life.Event {
@@ -140,6 +146,8 @@ func TestWakeMissedRecoversOnLaterCausedTurn(t *testing.T) {
 // TestWakeModeRequiresFiringReceipt: a receipt is a deliver D and a
 // turn-start with cause D at most 120,000 ms later; the newest one wins.
 func TestWakeModeRequiresFiringReceipt(t *testing.T) {
+	t.Parallel()
+
 	d := life.Event{ID: "d1", Kind: life.EventDeliver, At: 0}
 	if _, ok := life.FindReceipt(timeline(200, d, life.Event{Kind: life.EventTurnStart, At: 5000})); ok {
 		t.Fatal("a bare turn-start is a receipt")
@@ -170,6 +178,8 @@ func TestWakeModeRequiresFiringReceipt(t *testing.T) {
 // turn-start clears it. This is the event contract; automatic capture is
 // #3185's.
 func TestUsageLimitEventClassifiesOutOfCredits(t *testing.T) {
+	t.Parallel()
+
 	t.Run("active", func(t *testing.T) {
 		evs := timeline(120,
 			life.Event{Kind: life.EventTurnStart, At: 10000},

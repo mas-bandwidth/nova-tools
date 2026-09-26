@@ -18,6 +18,8 @@ import (
 )
 
 func TestStellaSnapshotWriterPreservesOtherSnapshotsTemp(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	a, b := filepath.Join(dir, "a.json"), filepath.Join(dir, "b.json")
 	unlockA, err := lockSnapshot(context.Background(), a)
@@ -49,6 +51,8 @@ func TestStellaSnapshotWriterPreservesOtherSnapshotsTemp(t *testing.T) {
 }
 
 func TestStellaSnapshotRoundTripKeepsDistinctMapKeys(t *testing.T) {
+	t.Parallel()
+
 	for _, names := range [][]string{{"Tool", "tool"}, {"outil-é"}} {
 		s := emptySnapshot()
 		for _, name := range names {

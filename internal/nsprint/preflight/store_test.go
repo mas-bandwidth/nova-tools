@@ -42,6 +42,8 @@ func find(t *testing.T, lines []Line, n string) Line {
 }
 
 func TestLineAndExitCode(t *testing.T) {
+	t.Parallel()
+
 	green := Line{N: "7.3", Name: "leases-vs-beats", Why: "8 leased, 8 living"}
 	red := Line{N: "7.2", Name: "state-files", Red: true, Why: "policy names BEAT"}
 	if got := green.String(); got != "GREEN 7.3 leases-vs-beats: 8 leased, 8 living" {
@@ -61,6 +63,8 @@ func TestLineAndExitCode(t *testing.T) {
 // Control 18 (#2756 section 8): a sprint whose policy names a state file is
 // preflight red, and so is a retired file touched inside the window.
 func TestControl18StateFileIsRed(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	dir := t.TempDir()
 	cleanPolicy := filepath.Join(dir, "policy.conf")
@@ -160,6 +164,8 @@ func TestControl18StateFileIsRed(t *testing.T) {
 // checked. Every shape a state file can be named in, and the words that must
 // stay green.
 func TestIsStateFileShapes(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		tok  string
 		want bool
@@ -195,6 +201,8 @@ func TestIsStateFileShapes(t *testing.T) {
 // A policy file naming a relative BEAT is RED end to end, not only the
 // absolute path.
 func TestStateFileRelativeBEATIsRed(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	policy := filepath.Join(t.TempDir(), "policy.conf")
 	if err := os.WriteFile(policy, []byte("backpressure_missing = open\nbeat = BEAT\n"), 0o644); err != nil {
@@ -212,6 +220,8 @@ func TestStateFileRelativeBEATIsRed(t *testing.T) {
 // eight claims, one child beats. The leases are members of the friend's one
 // working set (#3998), each judged by its own record.
 func TestPreflightLeasesNotEqualBeats(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	stamp := func(d time.Duration) string { return fmt.Sprint(int64(ago(d))) }
 	seed := func(c *redis.Client, consumer string, startAge, beatAge time.Duration) {
@@ -285,6 +295,8 @@ func TestPreflightLeasesNotEqualBeats(t *testing.T) {
 }
 
 func TestPreflightReconcilerLease(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	at := func(d time.Duration) string { return fmt.Sprint(int64(ago(d))) }
 	_, c := fixture(t)
@@ -307,6 +319,8 @@ func TestPreflightReconcilerLease(t *testing.T) {
 }
 
 func TestPreflightStateWithoutReceipt(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	_, c := fixture(t)
 	s := "control-00000010"
@@ -332,6 +346,8 @@ func TestPreflightStateWithoutReceipt(t *testing.T) {
 
 // Control 27's preflight half (#2756 2.4, 7.15).
 func TestPreflightMachineCeiling(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	_, c := fixture(t)
 	c.SAdd(ctx, "friends", "ctl-a", "ctl-b")
@@ -368,6 +384,8 @@ func TestPreflightMachineCeiling(t *testing.T) {
 // Stella's hold 6 on #3005: a desired machine with no slots field was summed
 // as zero width, so the machine read green under its ceiling.
 func TestPreflightMachineCeilingMissingSlotsIsRed(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	_, c := fixture(t)
 	c.SAdd(ctx, "friends", "ctl-a", "ctl-b")
@@ -389,6 +407,8 @@ func TestPreflightMachineCeilingMissingSlotsIsRed(t *testing.T) {
 }
 
 func TestStoreChecksPrintEveryCheckAndUnreachableIsRed(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	c := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1", MaxRetries: -1, DialTimeout: 200 * time.Millisecond})
 	defer c.Close()
@@ -411,6 +431,8 @@ func TestStoreChecksPrintEveryCheckAndUnreachableIsRed(t *testing.T) {
 // Check 7.1 needs INFO and FUNCTION, which miniredis does not serve; it runs
 // against a throwaway redis-server as the store package's controls do.
 func TestPreflightRedisAndLibrary(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	for _, aof := range []string{"no", "yes"} {
 		// The helper starts with --appendonly no; a later argument wins.

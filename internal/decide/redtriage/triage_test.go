@@ -12,6 +12,8 @@ import (
 // known flaky test beside one real red must give one `flaky` row and one
 // `real` row, not two `real` rows because the pair was not every-flaking.
 func TestMixedReportKeepsFlakyBesideReal(t *testing.T) {
+	t.Parallel()
+
 	r := ci.FailedReport{Failures: []ci.TestFailure{
 		{Package: "internal/a", Test: "TestKnownFlake", At: "a_test.go:10"},
 		{Package: "internal/b", Test: "TestRealBreak", At: "b_test.go:20"},

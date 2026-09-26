@@ -23,6 +23,8 @@ func runTaskCLI(args ...string) (int, string, string) {
 // TestTaskBatchHelpPerVerb: every batch verb answers --help (and -h) with the
 // usage on stdout and exit 0.
 func TestTaskBatchHelpPerVerb(t *testing.T) {
+	t.Parallel()
+
 	for _, sub := range []string{"cancel", "block", "unblock", "move", "front", "sweep"} {
 		for _, h := range []string{"--help", "-h"} {
 			code, out, errOut := runTaskCLI(sub, h)

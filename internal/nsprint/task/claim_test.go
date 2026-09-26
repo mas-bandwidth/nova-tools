@@ -37,6 +37,8 @@ func controlRedis(t *testing.T) (*store.Store, *redis.Client) {
 // stays closed at exit 0 CLOSED, and a push at a new head creates a distinct
 // review identity.
 func TestControl03PushIsCreateOnly(t *testing.T) {
+	t.Parallel()
+
 	st, client := controlRedis(t)
 	ctx := context.Background()
 	sprint := "control-abcdef01"
@@ -135,6 +137,8 @@ func TestControl03PushIsCreateOnly(t *testing.T) {
 // TestControl04ConcurrentTakesOneOwner is #2756 control 4: two concurrent
 // takes of one task give exactly one owner and one receipt.
 func TestControl04ConcurrentTakesOneOwner(t *testing.T) {
+	t.Parallel()
+
 	st, client := controlRedis(t)
 	ctx := context.Background()
 	sprint := "control-12345678"

@@ -55,6 +55,8 @@ func hygLab(t *testing.T) string {
 }
 
 func TestHygieneVerbPassesACleanBranch(t *testing.T) {
+	t.Parallel()
+
 	dir := hygLab(t)
 	hygWrite(t, dir, "sign/sign.go", "package sign\n\nfunc F() {}\n")
 	hygGit(t, dir, "add", "-A")
@@ -70,6 +72,8 @@ func TestHygieneVerbPassesACleanBranch(t *testing.T) {
 }
 
 func TestHygieneVerbExitsOneAndNamesTheFinding(t *testing.T) {
+	t.Parallel()
+
 	dir := hygLab(t)
 	hygWrite(t, dir, "sign/RESULT.md", "the worker's own report\n")
 	hygGit(t, dir, "add", "-A")
@@ -90,6 +94,8 @@ func TestHygieneVerbExitsOneAndNamesTheFinding(t *testing.T) {
 // A branch with no declared paths says paths=- and skips out-of-path. The field is
 // PRINTED rather than omitted: a line that left it out would read as a bound that held.
 func TestHygieneVerbSaysPathsDashWhenUnbounded(t *testing.T) {
+	t.Parallel()
+
 	dir := hygLab(t)
 	hygWrite(t, dir, "elsewhere/x.go", "package elsewhere\n")
 	hygGit(t, dir, "add", "-A")
@@ -107,6 +113,8 @@ func TestHygieneVerbSaysPathsDashWhenUnbounded(t *testing.T) {
 // There is no default identity. A range checked against nobody would admit anybody, so
 // the missing flag is a refusal and never a fallback to the repository's own config.
 func TestHygieneVerbRefusesWithoutAnIdentity(t *testing.T) {
+	t.Parallel()
+
 	dir := hygLab(t)
 	for _, args := range [][]string{
 		{"hygiene", "--repo", dir, "--base", "main", "--head", "HEAD"},
@@ -123,6 +131,8 @@ func TestHygieneVerbRefusesWithoutAnIdentity(t *testing.T) {
 }
 
 func TestHygieneUsageNamesTheVerb(t *testing.T) {
+	t.Parallel()
+
 	var out, errb bytes.Buffer
 	if code := run([]string{"help"}, &out, &errb); code != 0 {
 		t.Fatalf("exit %d", code)
@@ -146,6 +156,8 @@ func hygFixtureKey() string { return "gh" + "p_" + strings.Repeat("A", 36) }
 // clean. This one runs the verb and searches BOTH streams -- the finding line, the
 // verdict line, the refusal path -- for the fixture string.
 func TestHygieneVerbNeverPrintsTheKey(t *testing.T) {
+	t.Parallel()
+
 	dir := hygLab(t)
 	key := hygFixtureKey()
 	hygWrite(t, dir, "sign/sign.go", "package sign\n\nconst token = \""+key+"\"\n")
@@ -222,6 +234,8 @@ func hygMore(t *testing.T, stdout string) (total int, remedy string) {
 // the one thing a capped listing exists to offer -- the rest of the list -- exited 2
 // on `--identity is required` for everyone who pasted it.
 func TestHygieneMoreCommandRunsAsPrinted(t *testing.T) {
+	t.Parallel()
+
 	dir := hygManyFindings(t)
 	var out, errb bytes.Buffer
 	code := run([]string{"hygiene", "--repo", dir, "--base", "main", "--head", "HEAD",
@@ -267,6 +281,8 @@ func TestHygieneMoreCommandRunsAsPrinted(t *testing.T) {
 // author alive. A clean branch came back as an identity finding, and nothing in the
 // output said why.
 func TestHygieneRefusesAnEmailInAngleBrackets(t *testing.T) {
+	t.Parallel()
+
 	dir := hygLab(t)
 	hygWrite(t, dir, "sign/sign.go", "package sign\n\nfunc F() {}\n")
 	hygGit(t, dir, "add", "-A")
@@ -288,6 +304,8 @@ func TestHygieneRefusesAnEmailInAngleBrackets(t *testing.T) {
 // #1805, the other half: neither the help nor the command reference may teach the
 // form that breaks. SPEC.md:1396 spells it `Name <email>` and these two must agree.
 func TestHygieneIdentityFormIsSpelledTheSameEverywhere(t *testing.T) {
+	t.Parallel()
+
 	var out, errb bytes.Buffer
 	if code := run([]string{"help"}, &out, &errb); code != 0 {
 		t.Fatalf("exit %d", code)
@@ -314,6 +332,8 @@ func TestHygieneIdentityFormIsSpelledTheSameEverywhere(t *testing.T) {
 // (kinds.txt grew `guard` after they were written, so #1848's pasted list is
 // stale there).
 func TestHygieneIdentityIsDocumentedAsOneNameAndEmail(t *testing.T) {
+	t.Parallel()
+
 	var helpOut, helpErr bytes.Buffer
 	if code := run([]string{"help"}, &helpOut, &helpErr); code != 0 {
 		t.Fatalf("`nova-check help` exits %d, want 0; stderr: %s", code, helpErr.String())
@@ -480,6 +500,8 @@ func hygFields(cmd string) ([]string, error) {
 // `cut` and abstained by `accept`; there is no default kind." A clean answer about a
 // shape of work that does not exist is the #1805 failure again, one flag along.
 func TestHygieneRefusesAKindTheToolDoesNotDeclare(t *testing.T) {
+	t.Parallel()
+
 	dir := hygLab(t)
 	hygWrite(t, dir, "sign/sign.go", "package sign\n\nfunc F() {}\n")
 	hygGit(t, dir, "add", "-A")
@@ -511,6 +533,8 @@ func TestHygieneRefusesAKindTheToolDoesNotDeclare(t *testing.T) {
 // list's second column names still unlocks its exception. A guard that refused
 // everything would pass the test above and break the verb.
 func TestHygieneAcceptsEveryDeclaredKind(t *testing.T) {
+	t.Parallel()
+
 	dir := hygLab(t)
 	hygWrite(t, dir, "sign/sign.go", "package sign\n\nfunc F() {}\n")
 	hygGit(t, dir, "add", "-A")
@@ -538,6 +562,8 @@ func TestHygieneAcceptsEveryDeclaredKind(t *testing.T) {
 // The stray list's second column names kinds, and until now nothing checked that they
 // were kinds at all. A typo there silently grants an exception to nobody.
 func TestEveryKindTheStrayListNamesIsDeclared(t *testing.T) {
+	t.Parallel()
+
 	for _, kind := range hygiene.StrayKinds() {
 		if !hygiene.KindDeclared(kind) {
 			t.Errorf("the stray list excuses a file for kind %q, which the tool does not declare: the exception is granted to nobody", kind)

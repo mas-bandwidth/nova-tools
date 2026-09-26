@@ -97,7 +97,16 @@ diff arguing for itself.
 
 **Passing CI is not passing review, and CI covers less than it looks like.** CI
 is two tiers, and the law both obey is the maintainer's: **CI checks per every
-CL, one minute ideal, two minutes maximum.**
+CL, one minute ideal, two minutes maximum.** Since 2026-09-25 that law is a
+hard cap, permanent and platform-wide: **every job in every workflow declares
+`timeout-minutes: 2`**, linux, darwin, hosted or self-hosted, nightly and
+release included, and `internal/ci` refuses a workflow that declares anything
+else. Nothing is exempt. Work that needs longer is split into parallel
+functional test programs, each its own job under the cap (a nightly matrix of
+functionals is fine; a thirty-minute job is not). A run that crosses two minutes
+fails, and the test that crossed it moves (a mock, a func program, the slow
+tag) before anything lands: the cap exists because fixes iterate at the speed
+of one run, and because tests only ever accrete.
 
 The **CL tier** (`.github/workflows/ci.yml`) is what a change is required to
 pass in two minutes, ideally one. It runs `gofmt` on one runner — formatting is
@@ -262,11 +271,13 @@ with its sweep of the tree or it does not land.
     `os.TempDir()`, and every path a tool writes is named there
     (`testoutpath`, `sharedtemp`).
 
-**The rest of the index, by name.** `templates`, `goenv`, `pathassert`, `busprogress`,
+**The rest of the index, by name.** `cap` (every job two minutes, permanently, every platform),
+`templates`, `goenv`, `pathassert`, `busprogress`,
 `outputs`, `windows-pr`, `windows-sizes`, `windows-table`, `one-windows-leg`,
 `darwin-sizes`, `darwin-table`, `cache`, `pinned-actions`, `ci-ok`, `failed`,
 `benchname`, `nightly-tags`, `selection`, `toolchainroots`, `walltoolchain`, `hostseam`,
-`kernel-components`, `asd-closing-line`, `ciworkspace`, `lisptemppath`, `admitkind`, `namedpaths`, `lispduplicate`, `one section`, `testbins`, `fieldsindex`, `cardtemplates`, `transcripts`, `forestwriter`, `forestscript`, `seatwrap`. Every entry — the ten above too — is written out in
+`kernel-components`, `asd-closing-line`, `ciworkspace`, `lisptemppath`, `admitkind`, `namedpaths`, `lispduplicate`, `one section`, `testbins`, `fieldsindex`, `cardtemplates`, `transcripts`, `forestwriter`, `forestscript`, `parallel`, `slowwaits`,
+`seatwrap`. Every entry — the ten above too — is written out in
 [SPEC-CI.md](SPEC-CI.md) under **The class tests** with its rule, the hurt
 that bought it, its allowlist, its remedy line and its narrowings. Read the entry, not
 the test. An allowlist only ever shrinks: a new row is a refusal, not a parking place.

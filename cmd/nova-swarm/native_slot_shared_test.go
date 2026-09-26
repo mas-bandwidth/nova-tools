@@ -23,6 +23,8 @@ import (
 // has "its own data home" and "a slot is held by exactly one worker". Johnny's receipt
 // had both runs print NATIVE OK naming the same opencode.db.
 func TestASecondNativeInOneSlotUnderAnotherLabelIsRefused(t *testing.T) {
+	t.Parallel()
+
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 
@@ -114,6 +116,8 @@ func TestASecondNativeInOneSlotUnderAnotherLabelIsRefused(t *testing.T) {
 // failing. Nothing here waits on a clock; each step waits on the file that says it
 // happened.
 func TestASecondNativeInOneSlotControlWithoutTheSlotLeaseIsAdmitted(t *testing.T) {
+	t.Parallel()
+
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 

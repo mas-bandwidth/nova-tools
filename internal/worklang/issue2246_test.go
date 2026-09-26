@@ -17,6 +17,8 @@ import (
 // network and never calls a model; the same facts and the same plan expand
 // to byte-identical cards on every run.
 func TestIssue2246(t *testing.T) {
+	t.Parallel()
+
 	// worklang-derive-expands-to-one-node-per-issue: a (:derive :as
 	// "schema/issue-{n}" :kind go-fix :from (:issues ...)) over a pinned fact
 	// set of 25 open no-PR issues plus one issue with a PR yields exactly 25

@@ -38,6 +38,8 @@ func countLines(s string) int {
 // hundred lines and no total; at the audit's 5,000-entry state it was 10,000 lines and
 // ~197K tokens, which is a context window spent to learn one number.
 func TestVerifyCapsFindingsAndAlwaysPrintsTheCount(t *testing.T) {
+	t.Parallel()
+
 	dir := largeCorpus(t, 500)
 	exit, stdout, stderr := runCLI(t, "", "verify", "--root", dir, "--links", "gate")
 	if exit != 1 {
@@ -65,6 +67,8 @@ func TestVerifyCapsFindingsAndAlwaysPrintsTheCount(t *testing.T) {
 
 // The remedy in the MORE line has to be true, which means running it.
 func TestVerifyFailMaxWidensAndZeroPrintsAll(t *testing.T) {
+	t.Parallel()
+
 	dir := largeCorpus(t, 500)
 	_, _, stderr := runCLI(t, "", "verify", "--root", dir, "--links", "gate", "--fail-max", "5")
 	if got := countLines(stderr); got != 7 {
@@ -82,6 +86,8 @@ func TestVerifyFailMaxWidensAndZeroPrintsAll(t *testing.T) {
 // Zero already means all, so a negative ceiling is a typo with two readings and gets
 // neither.
 func TestVerifyRefusesANegativeCeiling(t *testing.T) {
+	t.Parallel()
+
 	dir := largeCorpus(t, 3)
 	exit, _, stderr := runCLI(t, "", "verify", "--root", dir, "--links", "gate", "--fail-max", "-1")
 	if exit != 2 || !strings.Contains(stderr, "--fail-max must be a line ceiling") {
@@ -92,6 +98,8 @@ func TestVerifyRefusesANegativeCeiling(t *testing.T) {
 // The reason the cap is per KIND: twenty wikilink findings must not be able to eat the
 // one frontmatter finding, which is the line the reader did not already know.
 func TestVerifyCapsEachKindSeparately(t *testing.T) {
+	t.Parallel()
+
 	dir := largeCorpus(t, 500)
 	// One file that is missing its frontmatter name AND is the only one under this glob.
 	if err := os.WriteFile(filepath.Join(dir, "index-of-things.md"), []byte("# index\n\nno name here\n"), 0o644); err != nil {
@@ -111,6 +119,8 @@ func TestVerifyCapsEachKindSeparately(t *testing.T) {
 
 // A flag typo used to cost the whole 62-line banner. It costs one line and names the door.
 func TestAFlagTypoIsOneLine(t *testing.T) {
+	t.Parallel()
+
 	for _, args := range [][]string{
 		{"verify", "--rooot", "x", "--links", "gate"},
 		{"frobnicate"},
@@ -151,6 +161,8 @@ func firstLines(s string, n int) string {
 // eval at the audit's state: five hundred gold rows, all missing. It printed one line
 // per row — 36 KB — of which the passing half said only what the summary line says.
 func TestEvalListsMissesOnlyAndCapsThem(t *testing.T) {
+	t.Parallel()
+
 	dir := largeCorpus(t, 20)
 	var gold strings.Builder
 	for i := 0; i < 500; i++ {

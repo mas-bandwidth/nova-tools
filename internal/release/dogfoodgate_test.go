@@ -113,6 +113,8 @@ func cutArgs(changelog string, extra ...string) []string {
 // ---------------------------------------------------------------------------
 
 func TestReadDogfoodFindsTheOpenEdge(t *testing.T) {
+	t.Parallel()
+
 	cli, receipts := oneOpenEdge(t)
 	v, err := ReadDogfood(cli, receipts)
 	if err != nil {
@@ -135,6 +137,8 @@ func TestReadDogfoodFindsTheOpenEdge(t *testing.T) {
 }
 
 func TestReadDogfoodIsQuietWhenTheEdgeWasAnswered(t *testing.T) {
+	t.Parallel()
+
 	cli, receipts := noOpenEdge(t)
 	v, err := ReadDogfood(cli, receipts)
 	if err != nil {
@@ -149,6 +153,8 @@ func TestReadDogfoodIsQuietWhenTheEdgeWasAnswered(t *testing.T) {
 // something. Reading past it would report a shorter, greener truth than the one
 // on disk -- which is the direction a gate must never fail in.
 func TestReadDogfoodRefusesABrokenReceipt(t *testing.T) {
+	t.Parallel()
+
 	cli, receipts := noOpenEdge(t)
 	if err := os.WriteFile(filepath.Join(receipts, "broken.json"), []byte("{not json\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -159,6 +165,8 @@ func TestReadDogfoodRefusesABrokenReceipt(t *testing.T) {
 }
 
 func TestReadDogfoodRefusesAReceiptsDirectoryThatIsNotThere(t *testing.T) {
+	t.Parallel()
+
 	cli, _ := noOpenEdge(t)
 	if _, err := ReadDogfood(cli, filepath.Join(t.TempDir(), "nowhere")); err == nil {
 		t.Fatal("an absent receipts directory read as an empty one")
@@ -170,6 +178,8 @@ func TestReadDogfoodRefusesAReceiptsDirectoryThatIsNotThere(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestCutRefusesOnAnOpenEdgeBeforeItAsksTheForgeAnything(t *testing.T) {
+	t.Parallel()
+
 	cli, receipts := oneOpenEdge(t)
 	f := cutForge()
 	changelog := changelogIn(t, t.TempDir())
@@ -206,6 +216,8 @@ func TestCutRefusesOnAnOpenEdgeBeforeItAsksTheForgeAnything(t *testing.T) {
 }
 
 func TestCutPassesTheGateAndSaysSoOnTheLine(t *testing.T) {
+	t.Parallel()
+
 	cli, receipts := noOpenEdge(t)
 	f := cutForge()
 	changelog := changelogIn(t, t.TempDir())
@@ -222,6 +234,8 @@ func TestCutPassesTheGateAndSaysSoOnTheLine(t *testing.T) {
 // The waiver is the way past the gate, and it is work: the reason is required,
 // it is printed, and it is written into the section that travels by git.
 func TestCutWaivesTheGateOnlyWithAReasonAndRecordsItEverywhere(t *testing.T) {
+	t.Parallel()
+
 	cli, receipts := oneOpenEdge(t)
 	f := cutForge()
 	changelog := changelogIn(t, t.TempDir())
@@ -260,6 +274,8 @@ func TestCutWaivesTheGateOnlyWithAReasonAndRecordsItEverywhere(t *testing.T) {
 // A run with no reference and no receipts is NOT a run that passed, and the
 // line says which input was missing.
 func TestCutNamesASkippedGate(t *testing.T) {
+	t.Parallel()
+
 	f := cutForge()
 	changelog := changelogIn(t, t.TempDir())
 	var out, errs bytes.Buffer
@@ -278,6 +294,8 @@ func TestCutNamesASkippedGate(t *testing.T) {
 // The reference is derived from the checkout the verb was already given, so
 // nobody retypes a path the cut already knows.
 func TestCutFindsTheReferenceBesideTheChangelog(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	changelog := changelogIn(t, root)
 	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
@@ -306,6 +324,8 @@ func TestCutFindsTheReferenceBesideTheChangelog(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBuildRefusesOnAnOpenEdgeBeforeItCompilesAnything(t *testing.T) {
+	t.Parallel()
+
 	cli, receipts := oneOpenEdge(t)
 	source, outDir := sourceTree(t), t.TempDir()
 	tc := &fakeToolchain{}
@@ -328,6 +348,8 @@ func TestBuildRefusesOnAnOpenEdgeBeforeItCompilesAnything(t *testing.T) {
 }
 
 func TestBuildPassesTheGateAndSaysSoOnTheLine(t *testing.T) {
+	t.Parallel()
+
 	cli, receipts := noOpenEdge(t)
 	source, outDir := sourceTree(t), t.TempDir()
 	var o, e bytes.Buffer
@@ -348,6 +370,8 @@ func TestBuildPassesTheGateAndSaysSoOnTheLine(t *testing.T) {
 // A Deps.Dogfood is the seam the release lane's own tests use when the question
 // is what the verb DOES about a verdict rather than how the verdict was read.
 func TestTheGateIsASeam(t *testing.T) {
+	t.Parallel()
+
 	called := 0
 	deps := cutDeps(t, cutForge())
 	deps.Dogfood = func(cli, receipts string) (DogfoodVerdict, error) {
@@ -368,6 +392,8 @@ func TestTheGateIsASeam(t *testing.T) {
 // Tool output costs tokens: the count is the answer and the first few edges are
 // the orientation. A hundred open edges must not print a hundred lines.
 func TestTheRefusalIsBounded(t *testing.T) {
+	t.Parallel()
+
 	var many []string
 	for i := 0; i < 40; i++ {
 		many = append(many, "DOGFOOD GATE FAIL tool=nova-example verb=v: an edge")
@@ -392,6 +418,8 @@ func TestTheRefusalIsBounded(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestTheSectionCarriesNoWaiverWhenThereWasNone(t *testing.T) {
+	t.Parallel()
+
 	s := Section("v0.16.0", "abc", "v0.15.10", "", "", time.Date(2026, 9, 18, 0, 0, 0, 0, time.UTC), nil)
 	if strings.Contains(s, DogfoodWaiverPrefix) {
 		t.Fatalf("a gated release wrote a waiver line:\n%s", s)
@@ -400,6 +428,8 @@ func TestTheSectionCarriesNoWaiverWhenThereWasNone(t *testing.T) {
 
 // The help says the gate exists where a person will meet it.
 func TestTheHelpSaysWhatTheGateIs(t *testing.T) {
+	t.Parallel()
+
 	var out, errs bytes.Buffer
 	if code := Run("nova-update", []string{"help"}, &out, &errs, Deps{}); code != 0 {
 		t.Fatalf("code=%d", code)

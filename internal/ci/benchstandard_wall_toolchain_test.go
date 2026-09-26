@@ -24,6 +24,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // benchStandardWithTool runs the standard with `tool` installed at `at` (relative to the
@@ -42,7 +44,7 @@ func benchStandardWithTool(t *testing.T, tool, at string, setup ...func(home str
 		t.Fatal(err)
 	}
 	// A stub that answers --version, because check (3) reads `go version` before (3c) runs.
-	if err := os.WriteFile(full, []byte("#!/bin/sh\necho 'stub "+tool+" 0.0'\n"), 0o755); err != nil {
+	if err := testbin.WriteExecutable(full, []byte("#!/bin/sh\necho 'stub "+tool+" 0.0'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	bin := filepath.Dir(full)
@@ -136,6 +138,8 @@ const (
 // also keeps this test running on the darwin benches) and the marker block in the script --
 // and must match in both directions and in order.
 func TestBenchStandardAndTheWallNameTheSameReadRoots(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	wallSrc, err := os.ReadFile(filepath.Join(root, "internal", "sandbox", "wrap_linux.go"))
 	if err != nil {

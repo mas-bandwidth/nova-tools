@@ -16,6 +16,8 @@ import (
 // The line names done and does not name ok, fail or calibration. The verdict
 // is still on the read.
 func TestFriendDoneCountsKindReadEventsOnTheFixtureStream(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile("testdata/cards-done.stream")
 	if err != nil {
 		t.Fatal(err)
@@ -75,6 +77,8 @@ func TestFriendDoneCountsKindReadEventsOnTheFixtureStream(t *testing.T) {
 }
 
 func TestADispositionCommentIsNotAStreamEntry(t *testing.T) {
+	t.Parallel()
+
 	_, err := Parse("DISPOSITION who=emma head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa verdict=APPROVE score=9\n")
 	if err == nil {
 		t.Fatal("a bare DISPOSITION comment was parsed as a stream entry")
@@ -86,6 +90,8 @@ func TestADispositionCommentIsNotAStreamEntry(t *testing.T) {
 }
 
 func TestCountRefusesADayThatIsNotADate(t *testing.T) {
+	t.Parallel()
+
 	_, err := Count(nil, "today", nil)
 	if err == nil {
 		t.Fatal("a day named today was accepted; the fold wants YYYY-MM-DD and does not read the clock")

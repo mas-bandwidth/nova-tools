@@ -15,6 +15,8 @@ import (
 // gets nothing; WHO decides who may take a card; the next pass after an
 // end refills the freed slot.
 func TestDealPassFillsEveryConsumerInOnePass(t *testing.T) {
+	t.Parallel()
+
 	c := start(t)
 	ctx := context.Background()
 	now := time.Now()

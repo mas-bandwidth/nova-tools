@@ -8,6 +8,8 @@ import "testing"
 // box priced at ~600 MB/card reports a share near its real card count instead of
 // whatever number the operator wrote down.
 func TestIssue2019Repro(t *testing.T) {
+	t.Parallel()
+
 	const (
 		mib = int64(1024 * 1024)
 		gib = 1024 * mib

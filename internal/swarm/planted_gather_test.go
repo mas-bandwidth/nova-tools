@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // A probe that plants both at once, on the certification schedule, and asserts the refusal
@@ -32,7 +34,7 @@ func plantSymlinkRunner(t *testing.T, dir string) string {
 		"job=\"$root/$slot/jobs/$label\"\n" +
 		"mkdir -p \"$job\"\n" +
 		"ln -s " + strconv.Quote(secret) + " \"$job/RESULT.md\"\n"
-	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+	if err := testbin.WriteExecutable(path, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -49,7 +51,7 @@ func plantFIFORunner(t *testing.T, dir string) string {
 		"job=\"$root/$slot/jobs/$label\"\n" +
 		"mkdir -p \"$job\"\n" +
 		"mkfifo \"$job/RESULT.md\"\n"
-	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+	if err := testbin.WriteExecutable(path, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -57,6 +59,8 @@ func plantFIFORunner(t *testing.T, dir string) string {
 
 // The gather refuses a symlink planted at a job's RESULT.md, names it, and never follows it.
 func TestGatherRefusesAPlantedSymlinkAtResult(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	tsv := writeCards(t, dir, [][2]string{{"a", "RESULT: a\nall green"}})
@@ -78,6 +82,8 @@ func TestGatherRefusesAPlantedSymlinkAtResult(t *testing.T) {
 
 // The gather refuses a FIFO planted at a job's RESULT.md and never blocks on it.
 func TestGatherDoesNotBlockOnAPlantedFIFO(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
 	tsv := writeCards(t, dir, [][2]string{{"a", "RESULT: a\nall green"}})
@@ -96,6 +102,8 @@ func TestGatherDoesNotBlockOnAPlantedFIFO(t *testing.T) {
 
 // The single-card contract read refuses a symlink at RESULT.md and never follows it.
 func TestCheckResultRefusesAPlantedSymlink(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	secret := filepath.Join(dir, "secret-outside-the-wall")
 	if err := os.WriteFile(secret, []byte("a secret the wall was keeping\n"), 0o644); err != nil {
@@ -118,6 +126,8 @@ func TestCheckResultRefusesAPlantedSymlink(t *testing.T) {
 // The sequence both probes walk together: a symlink at RESULT.md first, then a FIFO, each
 // refused with its kind named and never followed or blocked on.
 func TestFriendSequencePlantedResultIsRefused(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	secret := filepath.Join(dir, "secret-outside-the-wall")
 	if err := os.WriteFile(secret, []byte("a secret the wall was keeping\n"), 0o644); err != nil {

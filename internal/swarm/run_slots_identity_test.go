@@ -54,6 +54,8 @@ func assertDispatcherBystandersSurvive(t *testing.T, store, what string) {
 // launch-refused are the two that need no supervisor: each takes a lease, then
 // the cleanup fires. The finish path uses the same helper.
 func TestDispatcherReleasesSlotLeasesByIdentityNotOwnerAndLabel(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name    string
 		sc      func(id string) Sidecar

@@ -44,6 +44,8 @@ func planClaimed(t *testing.T, f *landTestFixture, n int, batch, bench, slot str
 // receipt is STALE; the new attempt's receipt is the one final receipt; the sweeper's Run loop
 // reclaims without a tick call (fails on: the 90 s reclaim; a live gate requeued).
 func TestL5ServeSweep(t *testing.T) {
+	t.Parallel()
+
 	f := newLandFixture(t, "nova-tools", "dev")
 	tok1 := planClaimed(t, f, 501, "batch-l5s", "studio", "slot-1")
 	if err := f.client.Set(f.ctx, "worker:studio:slot-1", "batch-l5s:1:"+tok1, 15*time.Second).Err(); err != nil {
@@ -127,6 +129,8 @@ func rep0Token(t *testing.T, f *landTestFixture, batch string) string {
 // benched bench is refused a gate; only --reinstate after a bench-conform PASS younger than
 // 15 min brings it back (fails on: a sick bench gating on; a reinstate on a stale or failed conform).
 func TestL20(t *testing.T) {
+	t.Parallel()
+
 	f := newLandFixture(t, "nova-tools", "dev")
 	ctx := f.ctx
 	gate := func(bench, verdict, input, batch string) land.GateOutcome {
@@ -243,6 +247,8 @@ func TestL20(t *testing.T) {
 // gate with a live worker claimed longer than 2x its class p99 on that bench prints STUCK once per
 // tick and is not requeued; a step killed by its deadline is ERROR, never RED.
 func TestB9StuckAndDeadlines(t *testing.T) {
+	t.Parallel()
+
 	f := newLandFixture(t, "nova-tools", "dev")
 	tok := planClaimed(t, f, 503, "batch-st", "studio", "slot-3")
 	_ = f.client.Set(f.ctx, "worker:studio:slot-3", "batch-st:1:"+tok, time.Minute).Err()

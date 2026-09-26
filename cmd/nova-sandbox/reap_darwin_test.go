@@ -28,6 +28,8 @@ import (
 // wrapped command forks a background sleep and exits, and the test kills the group it
 // made. Red with Setpgid on the tool's child; green without it.
 func TestAForkedChildIsReapedWithTheCallersGroup(t *testing.T) {
+	t.Parallel()
+
 	needDarwin(t)
 	j := newJob(t)
 	bin := toolBinary(t)

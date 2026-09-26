@@ -33,6 +33,8 @@ func seedBenches(t *testing.T, ctx context.Context, client *redis.Client, names 
 }
 
 func TestCardPushBenchStoresThePin(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := newRedis(t)
 	srv := repoServer(t)
@@ -59,6 +61,8 @@ func TestCardPushBenchStoresThePin(t *testing.T) {
 }
 
 func TestCardPushRefusesUnregisteredBench(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := newRedis(t)
 	srv := repoServer(t)
@@ -82,6 +86,8 @@ func TestCardPushRefusesUnregisteredBench(t *testing.T) {
 // reads the pool the way the deal pass does, and deals: a pass for vision
 // skips it (planner and ns_card_deal both), a pass for hulk deals it.
 func TestDealHonoursPushedBench(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := newRedis(t)
 	srv := repoServer(t)

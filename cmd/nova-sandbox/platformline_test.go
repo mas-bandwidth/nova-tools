@@ -16,6 +16,8 @@ import (
 // by platform"); every remaining claim must be true of what this bench actually
 // prints.
 func TestThePlatformLineNamesNoFieldThisBenchAlreadyPrints(t *testing.T) {
+	t.Parallel()
+
 	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	if err != nil {
 		t.Fatal(err)

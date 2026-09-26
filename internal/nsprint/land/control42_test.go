@@ -16,6 +16,8 @@ import (
 // one issue under flaky:<repo>:<pkg>.<test>; a second hit of that key files
 // nothing. A member read UNKNOWN twice and then MERGEABLE is not dropped.
 func TestControl42(t *testing.T) {
+	t.Parallel()
+
 	if !merge.GateRedException(true, []bool{true, true}) {
 		t.Fatal("base green and every member green alone must be class gate-red")
 	}

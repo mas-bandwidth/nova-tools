@@ -57,6 +57,8 @@ func submitInput(bench, worker string, cores int, load1 float64, sub *fakeSubmit
 // rename(<name>.card, taken/<worker>-<name>.card), so two pullers cannot take one card
 // because the rename decides.
 func TestPullerTakesOneCardByAtomicRename(t *testing.T) {
+	t.Parallel()
+
 	bench := fakeQueue(t, map[string][]string{lanes.Next: {"only"}})
 	sub := &fakeSubmitter{}
 
@@ -114,6 +116,8 @@ func TestPullerTakesOneCardByAtomicRename(t *testing.T) {
 // 2Gi, and the node reserves the fixed 25 GiB floor, so the scheduler's admission of a 2 GiB
 // request against allocatable is the two memory terms of the capacity line.
 func TestJobRequestsAndLimitsAreTheCapacityLine(t *testing.T) {
+	t.Parallel()
+
 	bench := fakeQueue(t, map[string][]string{lanes.Small: {"Card_One.v2"}})
 	sub := &fakeSubmitter{}
 	if _, err := PullSubmit(submitInput(bench, "w1", 8, 0, sub)); err != nil {
@@ -159,6 +163,8 @@ func TestJobRequestsAndLimitsAreTheCapacityLine(t *testing.T) {
 
 // 17. The puller reads load1 and declines to submit while cores*1.5 - load1 <= 0.
 func TestPullerDeclinesBelowTheLoadLine(t *testing.T) {
+	t.Parallel()
+
 	bench := fakeQueue(t, map[string][]string{lanes.Next: {"a"}})
 	sub := &fakeSubmitter{}
 
@@ -208,6 +214,8 @@ func validJobName(s string) bool {
 // moved: the queued card stays in its lane, no Job is created, and nothing appears outside
 // <bench>/taken.
 func TestPullSubmitRefusesAWorkerThatIsNotOneSafeComponent(t *testing.T) {
+	t.Parallel()
+
 	for _, worker := range []string{
 		"../../outside", "../outside", "a/b", "x/../../y", "/abs", "..", ".", "a\\b",
 		"w1\x00", "-w1", ".hidden", "w 1", "",
@@ -260,6 +268,8 @@ func TestPullSubmitRefusesAWorkerThatIsNotOneSafeComponent(t *testing.T) {
 // land on a file already in taken/. The existing taken card keeps its bytes, the queued card
 // stays in its lane, and no Job is created.
 func TestPullSubmitNeverOverwritesAnExistingTakenCard(t *testing.T) {
+	t.Parallel()
+
 	bench := fakeQueue(t, map[string][]string{lanes.Next: {"c1"}})
 	taken := filepath.Join(bench, "taken")
 	if err := os.MkdirAll(taken, 0o755); err != nil {
@@ -288,6 +298,8 @@ func TestPullSubmitNeverOverwritesAnExistingTakenCard(t *testing.T) {
 // A worker name in the expected format still takes a card, and the taken path is directly
 // inside <bench>/taken.
 func TestPullSubmitAcceptsAWorkerNameInTheExpectedFormat(t *testing.T) {
+	t.Parallel()
+
 	for _, worker := range []string{"w1", "studio-3", "hulk_2.a", "  w1  "} {
 		bench := fakeQueue(t, map[string][]string{lanes.Next: {"c1"}})
 		sub := &fakeSubmitter{}

@@ -8,12 +8,15 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // Issue #3501 / SWARM GATE #3501: inside the card sandbox, verbs installed in ~/.local/bin
 // (and entries on PATH) must resolve and execute by name, but their files cannot be
 // inspected (file-read-metadata granted on PATH entries, file-read* denied).
 func TestDarwinProfileGrantsMetadataOnInheritedPathEntries(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS != "darwin" {
 		t.Skipf("skipped on %s: the darwin SBPL profile is macOS-specific", runtime.GOOS)
 	}
@@ -25,7 +28,7 @@ func TestDarwinProfileGrantsMetadataOnInheritedPathEntries(t *testing.T) {
 		t.Fatal(err)
 	}
 	fakeTool := filepath.Join(binDir, "my-tool")
-	if err := os.WriteFile(fakeTool, []byte("#!/bin/sh\necho ok\n"), 0o755); err != nil {
+	if err := testbin.WriteExecutable(fakeTool, []byte("#!/bin/sh\necho ok\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 

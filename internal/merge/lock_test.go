@@ -14,6 +14,8 @@ import (
 // Work list 2 and demanded test 2.
 
 func TestASecondHolderWaitsTheBoundedTimeAndNamesTheFirst(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), StateLock)
 	release, err := Lock(path, LockWait)
 	if err != nil {
@@ -41,6 +43,8 @@ func TestASecondHolderWaitsTheBoundedTimeAndNamesTheFirst(t *testing.T) {
 }
 
 func TestTheLockIsFreeTheInstantItsHolderIsKilled(t *testing.T) {
+	t.Parallel()
+
 	// SIGKILL is the case rule 2 is written for: the kernel releases the lock, so there
 	// is no age to compute and nothing to break. The holder is a child process, because
 	// a lock released by a goroutine would prove something else entirely.
@@ -85,6 +89,8 @@ func TestTheLockIsFreeTheInstantItsHolderIsKilled(t *testing.T) {
 // waits to be killed. It is a test function because that is how a Go test spawns a child
 // of itself without a second binary, and it does nothing at all unless the parent asked.
 func TestHelperHoldsTheLock(t *testing.T) {
+	t.Parallel()
+
 	path := os.Getenv("NOVA_MERGE_LOCK_HELPER")
 	if path == "" {
 		t.Skip("not the helper: this runs only as the child of TestTheLockIsFreeTheInstantItsHolderIsKilled")
@@ -99,6 +105,8 @@ func TestHelperHoldsTheLock(t *testing.T) {
 }
 
 func TestAKillMidWriteLeavesTheOldStateEntireAndTheTempNameIsSteppedOver(t *testing.T) {
+	t.Parallel()
+
 	lane := t.TempDir()
 	if err := Init(lane, LaneConfig{Repo: "o/n", Base: "main", LaneBranch: "nova-merge/l"}); err != nil {
 		t.Fatal(err)

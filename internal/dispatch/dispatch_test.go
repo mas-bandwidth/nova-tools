@@ -13,6 +13,8 @@ import (
 // uncertain. This package is that discipline lifted out of nova-wake serve so
 // nova-chat takes it rather than re-spelling it (SPEC-CHAT work-list item 13).
 func TestDispatchLedgerStatesAndTransitions(t *testing.T) {
+	t.Parallel()
+
 	st, err := wake.Load(filepath.Join(t.TempDir(), "state"))
 	if err != nil {
 		t.Fatal(err)

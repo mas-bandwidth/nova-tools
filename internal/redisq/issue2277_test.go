@@ -43,6 +43,8 @@ func killInstance(mr *miniredis.Miniredis, q *redisq.Queue) {
 // issue lists, each under the issue's own name, so the one command the card
 // gates on exercises every use.
 func TestIssue2277(t *testing.T) {
+	t.Parallel()
+
 	t.Run("TestWakeDoorbellFallsBackToReportAndEntryFiles", testWakeDoorbellFallsBackToReportAndEntryFiles)
 	t.Run("TestSwarmSlotsAndLocksFallBackToLockFiles", testSwarmSlotsAndLocksFallBackToLockFiles)
 	t.Run("TestBudgetsFallBackToUsageRows", testBudgetsFallBackToUsageRows)
@@ -51,22 +53,32 @@ func TestIssue2277(t *testing.T) {
 }
 
 func TestWakeDoorbellFallsBackToReportAndEntryFiles(t *testing.T) {
+	t.Parallel()
+
 	testWakeDoorbellFallsBackToReportAndEntryFiles(t)
 }
 
 func TestSwarmSlotsAndLocksFallBackToLockFiles(t *testing.T) {
+	t.Parallel()
+
 	testSwarmSlotsAndLocksFallBackToLockFiles(t)
 }
 
 func TestBudgetsFallBackToUsageRows(t *testing.T) {
+	t.Parallel()
+
 	testBudgetsFallBackToUsageRows(t)
 }
 
 func TestPlanStateFallsBackToPlanFile(t *testing.T) {
+	t.Parallel()
+
 	testPlanStateFallsBackToPlanFile(t)
 }
 
 func TestFallbackRoundTripKillsInstanceAndReadsSameValue(t *testing.T) {
+	t.Parallel()
+
 	testFallbackRoundTripKillsInstanceAndReadsSameValue(t)
 }
 

@@ -70,6 +70,8 @@ func deadPID(t *testing.T) int {
 }
 
 func TestLockRecoversWhenTheSentinelHolderDied(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	lockPath := filepath.Join(dir, LockName)
 	writeHolder(t, lockPath, fmt.Sprintf("pid=%d at=2000-01-01T00:00:00Z", deadPID(t)))
@@ -92,6 +94,8 @@ func TestLockRecoversWhenTheSentinelHolderDied(t *testing.T) {
 // removeLockFile is the release path on the sentinel platforms. A missing file
 // is success rather than an error, because the lock it named is already gone.
 func TestRemoveLockFileTreatsAMissingFileAsGone(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), LockName+".held")
 	if err := removeLockFile(path); err != nil {
 		t.Fatalf("removing a file that is not there returned %v, want nil", err)
@@ -108,6 +112,8 @@ func TestRemoveLockFileTreatsAMissingFileAsGone(t *testing.T) {
 }
 
 func TestLockLeavesALiveHoldersSentinelAlone(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	lockPath := filepath.Join(dir, LockName)
 	writeHolder(t, lockPath, fmt.Sprintf("pid=%d", os.Getpid()))
@@ -126,6 +132,8 @@ func TestLockLeavesALiveHoldersSentinelAlone(t *testing.T) {
 // A holder that cannot be shown to be gone is not a dead one: an empty or
 // unwritable pid is left for a person rather than cleared on a guess.
 func TestLockLeavesAnUnknownHolderAlone(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	lockPath := filepath.Join(dir, LockName)
 	writeHolder(t, lockPath, "")

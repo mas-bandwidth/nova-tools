@@ -20,6 +20,8 @@ import (
 // filled with ids that are not units; a Measure that still reads them counts
 // them and fails here.
 func TestDebtFromUnitRecords(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := redis.NewClient(&redis.Options{Addr: testutil.Start(t)})
 	t.Cleanup(func() { _ = client.Close() })

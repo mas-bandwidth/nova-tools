@@ -10,6 +10,8 @@ import (
 )
 
 func TestProviderReadDeadlinesStayUnderNinetySeconds(t *testing.T) {
+	t.Parallel()
+
 	if ProviderHeaderTimeout <= 0 || ProviderHeaderTimeout >= 90*time.Second {
 		t.Fatalf("header deadline is %s, want a black-holed attempt under 90s", ProviderHeaderTimeout)
 	}
@@ -22,6 +24,8 @@ func TestProviderReadDeadlinesStayUnderNinetySeconds(t *testing.T) {
 }
 
 func TestApplyProviderReadDeadlineWritesBothAndKeepsTheKey(t *testing.T) {
+	t.Parallel()
+
 	in := []byte(`{"provider":{"deepseek":{"options":{"apiKey":"k","baseURL":"https://example.invalid"}}}}`)
 	out := ApplyProviderReadDeadline(in, "deepseek")
 	var cfg map[string]any
@@ -41,6 +45,8 @@ func TestApplyProviderReadDeadlineWritesBothAndKeepsTheKey(t *testing.T) {
 }
 
 func TestScoreCardHoldsAnUnknownAcceptanceEvenWhenAResultExists(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	job := filepath.Join(root, "1", "jobs", "a")
 	if err := os.MkdirAll(job, 0o755); err != nil {
@@ -59,6 +65,8 @@ func TestScoreCardHoldsAnUnknownAcceptanceEvenWhenAResultExists(t *testing.T) {
 }
 
 func TestAcceptanceUnknownHoldsAnEmptyMarker(t *testing.T) {
+	t.Parallel()
+
 	job := t.TempDir()
 	if err := os.WriteFile(filepath.Join(job, "provider-acceptance"), []byte("\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -69,6 +77,8 @@ func TestAcceptanceUnknownHoldsAnEmptyMarker(t *testing.T) {
 }
 
 func TestAcceptanceUnknownFailsClosedWhenTheMarkerCannotBeRead(t *testing.T) {
+	t.Parallel()
+
 	job := t.TempDir()
 	if err := os.Mkdir(filepath.Join(job, "provider-acceptance"), 0o755); err != nil {
 		t.Fatal(err)
@@ -79,6 +89,8 @@ func TestAcceptanceUnknownFailsClosedWhenTheMarkerCannotBeRead(t *testing.T) {
 }
 
 func TestApplyProviderReadDeadlineLeavesAnUnreadableConfig(t *testing.T) {
+	t.Parallel()
+
 	in := []byte(`not json`)
 	out := ApplyProviderReadDeadline(in, "deepseek")
 	if string(out) != string(in) {
@@ -87,6 +99,8 @@ func TestApplyProviderReadDeadlineLeavesAnUnreadableConfig(t *testing.T) {
 }
 
 func TestApplyProviderReadDeadlineCreatesAMissingProvider(t *testing.T) {
+	t.Parallel()
+
 	out := ApplyProviderReadDeadline([]byte(`{}`), "deepseek")
 	if !strings.Contains(string(out), `"headerTimeout"`) || !strings.Contains(string(out), `"chunkTimeout"`) {
 		t.Fatalf("a built-in provider with no entry got no deadline:\n%s", out)
@@ -94,6 +108,8 @@ func TestApplyProviderReadDeadlineCreatesAMissingProvider(t *testing.T) {
 }
 
 func TestALostResponseIsNotALaunchFailure(t *testing.T) {
+	t.Parallel()
+
 	// The server accepted the request, then the response never came. That is
 	// UNKNOWN. A second launch would be a second request.
 	for _, tail := range []string{

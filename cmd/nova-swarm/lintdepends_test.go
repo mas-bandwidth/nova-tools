@@ -35,6 +35,8 @@ func dependsLineup(t *testing.T, body string) string {
 const dependsRemedy = "DEPENDS-ON: <card-id>[, ...] or DEPENDS-ON: -"
 
 func TestLintTypedRefusesACardWithNoDependsOn(t *testing.T) {
+	t.Parallel()
+
 	card := dependsOnCard(t, "nokey.card", "")
 	exit, stdout, stderr := runSwarm(t, "lint", "--card", card, "--typed", "--max", "0")
 	if exit != 2 {
@@ -53,6 +55,8 @@ func TestLintTypedRefusesACardWithNoDependsOn(t *testing.T) {
 }
 
 func TestLintTypedRefusesASelfDependency(t *testing.T) {
+	t.Parallel()
+
 	card := dependsOnCard(t, "self.card", "DEPENDS-ON: other-card, CARD-0000")
 	lineup := dependsLineup(t, "id\tdepends-on\nother-card\t-\n")
 	exit, stdout, stderr := runSwarm(t, "lint", "--card", card, "--typed", "--lineup", lineup, "--max", "0")
@@ -71,6 +75,8 @@ func TestLintTypedRefusesASelfDependency(t *testing.T) {
 }
 
 func TestLintTypedRefusesAnUnknownDependsOnID(t *testing.T) {
+	t.Parallel()
+
 	card := dependsOnCard(t, "unknown.card", "DEPENDS-ON: missing-card")
 	lineup := dependsLineup(t, "id\tdepends-on\nother-card\t-\n")
 	exit, stdout, stderr := runSwarm(t, "lint", "--card", card, "--typed", "--lineup", lineup, "--max", "0")
@@ -86,6 +92,8 @@ func TestLintTypedRefusesAnUnknownDependsOnID(t *testing.T) {
 }
 
 func TestLintTypedDependsOnDashPasses(t *testing.T) {
+	t.Parallel()
+
 	card := dependsOnCard(t, "dash.card", "DEPENDS-ON: -")
 	lineup := dependsLineup(t, "id\tdepends-on\nother-card\t-\n")
 	exit, stdout, stderr := runSwarm(t, "lint", "--card", card, "--typed", "--lineup", lineup, "--max", "0")
@@ -98,6 +106,8 @@ func TestLintTypedDependsOnDashPasses(t *testing.T) {
 }
 
 func TestLintTypedDependsOnReferencePasses(t *testing.T) {
+	t.Parallel()
+
 	card := dependsOnCard(t, "ref.card", "DEPENDS-ON: mas-bandwidth/nova-tools#2550")
 	lineup := dependsLineup(t, "id\tdepends-on\nother-card\t-\n")
 	exit, stdout, stderr := runSwarm(t, "lint", "--card", card, "--typed", "--lineup", lineup, "--max", "0")
@@ -110,6 +120,8 @@ func TestLintTypedDependsOnReferencePasses(t *testing.T) {
 }
 
 func TestLintTypedRefusesASpaceAndDogfood(t *testing.T) {
+	t.Parallel()
+
 	lineup := dependsLineup(t, "id\tdepends-on\nother-card\t-\n")
 	card := dependsOnCard(t, "space.card", "DEPENDS-ON: nova-tools #2550")
 	exit, stdout, stderr := runSwarm(t, "lint", "--card", card, "--typed", "--lineup", lineup, "--max", "0")
@@ -124,6 +136,8 @@ func TestLintTypedRefusesASpaceAndDogfood(t *testing.T) {
 }
 
 func TestLintTypedDependsOnKnownIDPasses(t *testing.T) {
+	t.Parallel()
+
 	card := dependsOnCard(t, "known.card", "DEPENDS-ON: other-card, third-card")
 	lineup := dependsLineup(t, "id\tdepends-on\nother-card\t-\nthird-card\tother-card\n")
 	exit, stdout, stderr := runSwarm(t, "lint", "--card", card, "--typed", "--lineup", lineup, "--max", "0")

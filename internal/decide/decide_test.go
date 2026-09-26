@@ -114,6 +114,8 @@ func TestRequestSendsDocumentedBody(t *testing.T) {
 
 // The documented response shape parses into choice/score/noul answers.
 func TestDecodeParsesAllAnswerKinds(t *testing.T) {
+	t.Parallel()
+
 	answers, usage, err := decodeResponse([]byte(`{"answers": {
 		"gate": {"type":"choice","choice":"go","probabilities":{"go":0.93,"wait":0.07},"confidence":0.93},
 		"risk": {"type":"score","score":2.5,"legend":{"0":"low","3":"high"},"confidence":0.81},
@@ -148,6 +150,8 @@ func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { retu
 // Decide end to end over a fake transport: documented body out, typed
 // answers back, usage counted.
 func TestDecideRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	var gotBody map[string]any
 	var gotAuth string
 	c := &Client{
@@ -202,6 +206,8 @@ func TestDecideRoundTrip(t *testing.T) {
 
 // A provider 500 is a provider error.
 func TestDecideRefusesOn500(t *testing.T) {
+	t.Parallel()
+
 	c := &Client{
 		baseURL: "http://example.invalid",
 		key:     "sekret",
@@ -280,6 +286,8 @@ func TestDecideSendsBodyAndParses(t *testing.T) {
 
 // Line renders confidence and the below list.
 func TestLineRendersConfidenceAndBelow(t *testing.T) {
+	t.Parallel()
+
 	answers := map[string]Answer{
 		"gate": {Type: "choice", Choice: "go", Confidence: 0.93},
 		"risk": {Type: "score", Score: 2.5, Confidence: 0.41},
@@ -304,6 +312,8 @@ func TestLineRendersConfidenceAndBelow(t *testing.T) {
 
 // A clean decision names nobody below the floor.
 func TestLineCleanDecision(t *testing.T) {
+	t.Parallel()
+
 	line := Line("DECIDE", map[string]Answer{
 		"gate": {Type: "choice", Choice: "go", Confidence: 0.95},
 	}, 0.9)
@@ -314,6 +324,8 @@ func TestLineCleanDecision(t *testing.T) {
 
 // Bad questions are refused, never guessed.
 func TestParseQuestionsRefuses(t *testing.T) {
+	t.Parallel()
+
 	for name, doc := range map[string]string{
 		"not json":   `[`,
 		"empty":      `{}`,

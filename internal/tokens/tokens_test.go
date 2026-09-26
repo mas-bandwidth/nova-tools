@@ -13,6 +13,8 @@ import (
 // comparison with a dash on either side, the attribution ladder, and the lock.
 
 func TestTheDayFileRoundTripsByteIdentically(t *testing.T) {
+	t.Parallel()
+
 	var c Counts
 	c.Set(Input, 100)
 	c.Set(CacheRead, 0)
@@ -38,6 +40,8 @@ func TestTheDayFileRoundTripsByteIdentically(t *testing.T) {
 }
 
 func TestAnUnversionedFileRefuses(t *testing.T) {
+	t.Parallel()
+
 	_, findings := ParseDayFile("2026-09-11", "date\tmodel\trepo\n")
 	if len(findings) != 1 || !strings.Contains(findings[0].Reason, Version) {
 		t.Errorf("an unversioned file gives %v; it wants one finding naming the version line", findings)
@@ -45,6 +49,8 @@ func TestAnUnversionedFileRefuses(t *testing.T) {
 }
 
 func TestTheShrinkComparisonWithADashOnEitherSide(t *testing.T) {
+	t.Parallel()
+
 	var was, now Counts
 	was.Set(Input, 100)
 	was.Set(Reasoning, 40)
@@ -71,6 +77,8 @@ func TestTheShrinkComparisonWithADashOnEitherSide(t *testing.T) {
 // row comes back byte for byte, because the fold that wrote it is the only run that could
 // compute it and this one must not touch it.
 func TestMergeDayRetainsReplacesAndRefuses(t *testing.T) {
+	t.Parallel()
+
 	row := func(model, repo string, in int64, sources ...string) DayRow {
 		var c Counts
 		c.Set(Input, in)
@@ -143,6 +151,8 @@ func TestMergeDayRetainsReplacesAndRefuses(t *testing.T) {
 }
 
 func TestTheAttributionLadder(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "repos.tsv")
 	os.WriteFile(path, []byte("# a comment\n\nschema\t(^|/)schema($|/)\n"), 0o644)
@@ -169,6 +179,8 @@ func TestTheAttributionLadder(t *testing.T) {
 // The tally behind `sources --unattributed`: only the `other` arm feeds it, only when a
 // caller asked for it, and the key is the tree rather than the file.
 func TestTheUnattributedTallyCountsOnlyWhatFellToOther(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "repos.tsv")
 	if err := os.WriteFile(path, []byte("schema\t(^|/)schema($|/)\n"), 0o644); err != nil {
@@ -203,6 +215,8 @@ func TestTheUnattributedTallyCountsOnlyWhatFellToOther(t *testing.T) {
 // memory grows with the tree is the unbounded read this repo's caps exist to end, and a
 // total that stopped at the ceiling would be a number nobody could use.
 func TestTheUnattributedTallyIsBoundedAndKeepsItsTotal(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "repos.tsv")
 	if err := os.WriteFile(path, []byte("schema\t(^|/)schema($|/)\n"), 0o644); err != nil {
@@ -235,6 +249,8 @@ func TestTheUnattributedTallyIsBoundedAndKeepsItsTotal(t *testing.T) {
 // PathStem is the key, and it is one function so that the listing and the rule a person
 // writes from it are cut from the same string.
 func TestPathStemKeepsTheTree(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct{ in, want string }{
 		{"/Users/glenn/deepseek-working-3/cmd/a.go", "/Users/glenn/deepseek-working-3"},
 		{"/Users/glenn/deepseek-working-3", "/Users/glenn/deepseek-working-3"},
@@ -252,6 +268,8 @@ func TestPathStemKeepsTheTree(t *testing.T) {
 }
 
 func TestAMalformedRulesLineIsNamed(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "repos.tsv")
 	os.WriteFile(path, []byte("schema\t(^|/)schema($|/)\nthis line has no tab\n"), 0o644)
@@ -262,6 +280,8 @@ func TestAMalformedRulesLineIsNamed(t *testing.T) {
 }
 
 func TestMissingDaysAreNamedAndNeverFilled(t *testing.T) {
+	t.Parallel()
+
 	got := MissingDays([]string{"2026-09-07", "2026-09-08", "2026-09-10"})
 	if len(got) != 1 || got[0] != "2026-09-09" {
 		t.Errorf("missing days are %v, want [2026-09-09]", got)
@@ -275,6 +295,8 @@ func TestMissingDaysAreNamedAndNeverFilled(t *testing.T) {
 }
 
 func TestTheFoldLockIsExclusiveAndNamesItsHolder(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	release, err := TakeFoldLock(dir, LockWait)
 	if err != nil {
@@ -300,6 +322,8 @@ func TestTheFoldLockIsExclusiveAndNamesItsHolder(t *testing.T) {
 }
 
 func TestTheBusGrammarIsOneGrammar(t *testing.T) {
+	t.Parallel()
+
 	// The parser is the serializer's inverse, which is the only way the two stay one
 	// grammar: report writes this and fold --bus reads it.
 	line := BodyLine("2026-09-11", "emma", "gemini", "schema", Input, 1234, UTC)
@@ -341,6 +365,8 @@ func TestTheBusGrammarIsOneGrammar(t *testing.T) {
 // 2026-13-40` was accepted, wrote a day file, passed check, and left MissingDays walking
 // from a day that does not exist.
 func TestValidDayIsACalendarCheck(t *testing.T) {
+	t.Parallel()
+
 	for _, good := range []string{"2026-09-11", "2024-02-29", "2026-01-01", "2026-12-31"} {
 		if !ValidDay(good) {
 			t.Errorf("%s is a day", good)
@@ -354,6 +380,8 @@ func TestValidDayIsACalendarCheck(t *testing.T) {
 }
 
 func TestASourceLineFieldIsADashWhereItIsNotAMeasurement(t *testing.T) {
+	t.Parallel()
+
 	s := &Source{Kind: KindClaude}
 	if s.StatField("nousage") != Dash {
 		t.Error("a transcript has no job directories, so nousage is a dash and not a zero")
@@ -380,6 +408,8 @@ func TestASourceLineFieldIsADashWhereItIsNotAMeasurement(t *testing.T) {
 // ledger or bus file took the process's memory. A file over the cap must be refused by
 // name rather than read.
 func TestReadSourceRefusesAnOversizedFile(t *testing.T) {
+	t.Parallel()
+
 	const capInTest = 64 << 20
 	path := filepath.Join(t.TempDir(), "huge.csv")
 	f, err := os.Create(path)
@@ -409,6 +439,8 @@ func TestReadSourceRefusesAnOversizedFile(t *testing.T) {
 // out, so a diamond was re-walked once per path. A node already proven acyclic must stay
 // memoized, which the walk's own seen map must show; the answer is unchanged.
 func TestOnCycleDoesNotRewalkAProvenAcyclicDiamond(t *testing.T) {
+	t.Parallel()
+
 	bottom := &note{id: "d"}
 	left := &note{id: "b", subject: parsedSubject{supersedes: []string{"d"}}}
 	right := &note{id: "c", subject: parsedSubject{supersedes: []string{"d"}}}
@@ -425,6 +457,8 @@ func TestOnCycleDoesNotRewalkAProvenAcyclicDiamond(t *testing.T) {
 
 // L10b: the memo must not hide a cycle. A diamond with a back edge still reports true.
 func TestOnCycleStillSeesARealCycle(t *testing.T) {
+	t.Parallel()
+
 	bottom := &note{id: "d"}
 	left := &note{id: "b", subject: parsedSubject{supersedes: []string{"d"}}}
 	right := &note{id: "c", subject: parsedSubject{supersedes: []string{"d", "a"}}}

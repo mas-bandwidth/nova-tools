@@ -16,6 +16,8 @@ import (
 // Found and built by the fix-runner lane, 2026-09-19; folded in here with its
 // test.
 func TestChoreIsAnAliasForFleetChoreAndNotANewKind(t *testing.T) {
+	t.Parallel()
+
 	if got := CanonicalKind("chore"); got != KindFleetChore {
 		t.Errorf("CanonicalKind(chore) = %q, want %q", got, KindFleetChore)
 	}
@@ -36,6 +38,8 @@ func TestChoreIsAnAliasForFleetChoreAndNotANewKind(t *testing.T) {
 // ladder decides on and the kind the route log records are the same name. An
 // alias reaching the log would split every per-kind floor in two.
 func TestTheAliasIsResolvedAtTheReadSoTheLogKeepsTheCanonicalName(t *testing.T) {
+	t.Parallel()
+
 	u, err := ParseUnit([]byte(`{"id":"u-chore","kind":"chore","files":1,"packages":1,"lanes":1}`))
 	if err != nil {
 		t.Fatal(err)
@@ -59,6 +63,8 @@ func TestTheAliasIsResolvedAtTheReadSoTheLogKeepsTheCanonicalName(t *testing.T) 
 // A near miss is still a refusal. An alias table is a short list of names the
 // table already holds, never a spell-corrector.
 func TestANameThatIsNotAnAliasStillRefuses(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	for _, bad := range []string{"choree", "chores", "fleetchore", ""} {
 		u, err := ParseUnit([]byte(`{"id":"u","kind":"` + bad + `","files":1,"packages":1,"lanes":1}`))

@@ -7,6 +7,8 @@ import (
 )
 
 func TestParseNovaWorkSexp(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join("..", "..", "docs", "roadmaps", "nova-work.sexp")
 	rm, err := ParseFile(path)
 	if err != nil {
@@ -103,6 +105,8 @@ func TestParseNovaWorkSexp(t *testing.T) {
 }
 
 func TestStrictSyntaxValidationAndErrorLocations(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name       string
 		input      string
@@ -231,6 +235,8 @@ func TestStrictSyntaxValidationAndErrorLocations(t *testing.T) {
 }
 
 func TestDirectCriteriaParsing(t *testing.T) {
+	t.Parallel()
+
 	input := `
 ; Direct criteria specification in features
 (
@@ -326,6 +332,8 @@ func TestDirectCriteriaParsing(t *testing.T) {
 }
 
 func TestSubfeaturesFallbackToCriteria(t *testing.T) {
+	t.Parallel()
+
 	input := `
 (
   :epics (
@@ -372,6 +380,8 @@ func TestSubfeaturesFallbackToCriteria(t *testing.T) {
 }
 
 func TestUnicodeAndCRLFPositionTracking(t *testing.T) {
+	t.Parallel()
+
 	// Unicode characters take multiple bytes but count as 1 column each
 	// "日本語" is 3 runes (9 bytes)
 	input := "; 観測コメント\r\n(:schema \"v1\"\r\n :title \"日本語テスト\"\r\n :tag #.macro)"
@@ -392,6 +402,8 @@ func TestUnicodeAndCRLFPositionTracking(t *testing.T) {
 }
 
 func TestParseBytesDirectly(t *testing.T) {
+	t.Parallel()
+
 	data := []byte(`
 (:schema "direct-bytes"
  :epics (
@@ -422,6 +434,8 @@ func TestParseBytesDirectly(t *testing.T) {
 }
 
 func TestNonListEpicsSyntaxError(t *testing.T) {
+	t.Parallel()
+
 	input := `(:schema "v1" :epics "not-a-list")`
 	_, err := ParseNamed("test.sexp", input)
 	if err == nil {
@@ -433,6 +447,8 @@ func TestNonListEpicsSyntaxError(t *testing.T) {
 }
 
 func TestUnterminatedEscapeInString(t *testing.T) {
+	t.Parallel()
+
 	input := `(:schema "unterminated-esc\`
 	_, err := ParseNamed("test.sexp", input)
 	if err == nil {
@@ -444,6 +460,8 @@ func TestUnterminatedEscapeInString(t *testing.T) {
 }
 
 func TestSymbolWithColonError(t *testing.T) {
+	t.Parallel()
+
 	input := `(:schema "v1" :key sym:bad)`
 	_, err := ParseNamed("test.sexp", input)
 	if err == nil {
@@ -455,6 +473,8 @@ func TestSymbolWithColonError(t *testing.T) {
 }
 
 func TestNonKeywordInPlistError(t *testing.T) {
+	t.Parallel()
+
 	input := `(:schema "v1" "not-a-keyword" "value")`
 	_, err := ParseNamed("test.sexp", input)
 	if err == nil {
@@ -466,6 +486,8 @@ func TestNonKeywordInPlistError(t *testing.T) {
 }
 
 func TestStringEscapeSequences(t *testing.T) {
+	t.Parallel()
+
 	input := `(:schema "v1\tline1\nline2\r\"quoted\"\\backslash")`
 	rm, err := ParseNamed("escapes.sexp", input)
 	if err != nil {
@@ -478,6 +500,8 @@ func TestStringEscapeSequences(t *testing.T) {
 }
 
 func TestParseStatusNormalizations(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		raw  string
 		want Status
@@ -518,6 +542,8 @@ func TestParseStatusNormalizations(t *testing.T) {
 }
 
 func TestParseFileErrors(t *testing.T) {
+	t.Parallel()
+
 	_, err := ParseFile("non_existent_file_12345.sexp")
 	if err == nil {
 		t.Fatalf("expected error reading non-existent file, got nil")
@@ -525,6 +551,8 @@ func TestParseFileErrors(t *testing.T) {
 }
 
 func TestSNodeHelpers(t *testing.T) {
+	t.Parallel()
+
 	nodes, err := ParseSExpressions("test.sexp", "(:kw bare-symbol \"str\" 42)")
 	if err != nil {
 		t.Fatalf("ParseSExpressions failed: %v", err)

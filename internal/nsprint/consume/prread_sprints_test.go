@@ -14,6 +14,8 @@ import (
 // event queues the first read; a third pass joins and queues nothing more.
 // A sprint whose lease:route:<S> another router holds is skipped, no error.
 func TestPRReadJoinsSprintOpenedLater(t *testing.T) {
+	t.Parallel()
+
 	a := newFirstReadFixture(t, "join-a")
 	a.up("rowan", "1", 0, 0)
 	a.up("stella", "1", 0, 0)

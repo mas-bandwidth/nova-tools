@@ -10,6 +10,8 @@ import (
 // and verdict required, head required for APPROVE, an APPROVE strict (whole
 // line), a HOLD lenient.
 func TestParseDisposition(t *testing.T) {
+	t.Parallel()
+
 	const h40 = "0123456789abcdef0123456789abcdef01234567"
 	cases := []struct {
 		name          string

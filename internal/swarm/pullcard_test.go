@@ -11,6 +11,8 @@ import (
 // a worker that dies holding a card leaves its lease past until= with a dead pid;
 // the next take reaps that lease and its card goes back to queue/.
 func TestAnExpiredLeaseWithADeadPidReturnsTheCard(t *testing.T) {
+	t.Parallel()
+
 	const deadPid = 2147483647
 	if Alive(deadPid, "") {
 		t.Skip("dead pid probe is alive here")
@@ -55,6 +57,8 @@ func TestAnExpiredLeaseWithADeadPidReturnsTheCard(t *testing.T) {
 // A pull takes the first queued card under a fresh lease and moves it to taken/;
 // a heartbeat then renews that lease. This pins the happy path.
 func TestPullTakesACardUnderALeaseAndHeartbeatRenewsIt(t *testing.T) {
+	t.Parallel()
+
 	store := writeSlotStore(t, "capacity\t2\nreserve\t0\nalice\t2\n")
 	if err := os.MkdirAll(filepath.Join(store, "queue"), 0o755); err != nil {
 		t.Fatal(err)
@@ -89,6 +93,8 @@ func TestPullTakesACardUnderALeaseAndHeartbeatRenewsIt(t *testing.T) {
 // path escapes the store root. safepath.RemoveUnder refuses it, so the directory the link
 // points at -- and the lease inside it -- survives.
 func TestReapRefusesALeaseThatEscapesTheStoreThroughASymlink(t *testing.T) {
+	t.Parallel()
+
 	const deadPid = 2147483647
 	if Alive(deadPid, "") {
 		t.Skip("dead pid probe is alive here")

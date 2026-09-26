@@ -33,6 +33,8 @@ func runCode(stdin string, args ...string) (int, string, string) {
 }
 
 func TestOpenAppendIndexReceiptRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	store := t.TempDir()
 	out, _ := runOK(t, "", "open", "--store", store, "--session", "s1", "--source", "bench/session-3", "--publish", "manual")
 	if !strings.Contains(out, "OPEN OK") || !strings.Contains(out, "session=s1") {
@@ -82,6 +84,8 @@ func TestOpenAppendIndexReceiptRoundTrip(t *testing.T) {
 }
 
 func TestOfflineAppendSucceedsWithPublicationPending(t *testing.T) {
+	t.Parallel()
+
 	store := t.TempDir()
 	runOK(t, "", "open", "--store", store, "--session", "s", "--publish", "deferred")
 	out, _ := runOK(t, "", "append", "--store", store, "--session", "s", "--entry", "e",
@@ -92,6 +96,8 @@ func TestOfflineAppendSucceedsWithPublicationPending(t *testing.T) {
 }
 
 func TestAppendViaFileAndStdinKeepsExactBytes(t *testing.T) {
+	t.Parallel()
+
 	store := t.TempDir()
 	runOK(t, "", "open", "--store", store, "--session", "s", "--publish", "never")
 	prose := "line one\nline two  with trailing spaces   \n\ttabbed\n"
@@ -123,6 +129,8 @@ func TestAppendViaFileAndStdinKeepsExactBytes(t *testing.T) {
 }
 
 func TestInterruptedAppendRecoversAtCLI(t *testing.T) {
+	t.Parallel()
+
 	store := t.TempDir()
 	runOK(t, "", "open", "--store", store, "--session", "s", "--publish", "manual")
 	runOK(t, "", "append", "--store", store, "--session", "s", "--entry", "other",
@@ -149,6 +157,8 @@ func TestInterruptedAppendRecoversAtCLI(t *testing.T) {
 }
 
 func TestExistingDirtyWorkIsUntouched(t *testing.T) {
+	t.Parallel()
+
 	store := t.TempDir()
 	dirty := filepath.Join(store, "my-unfinished-work.md")
 	before := []byte("half-written thought, do not touch\n")
@@ -172,6 +182,8 @@ func TestExistingDirtyWorkIsUntouched(t *testing.T) {
 }
 
 func TestConcurrentRecordsAndAlternateHeaders(t *testing.T) {
+	t.Parallel()
+
 	store := t.TempDir()
 	for _, s := range []string{"alpha", "beta"} {
 		runOK(t, "", "open", "--store", store, "--session", s, "--publish", "never")
@@ -199,6 +211,8 @@ func TestConcurrentRecordsAndAlternateHeaders(t *testing.T) {
 }
 
 func TestLifecycleVerbsStayRefused(t *testing.T) {
+	t.Parallel()
+
 	store := t.TempDir()
 	for _, verb := range []string{"seal", "consume", "delete", "grade", "consolidate", "wake", "rollup", "retention"} {
 		if code, _, _ := runCode("", verb, "--store", store); code != 2 {
@@ -208,6 +222,8 @@ func TestLifecycleVerbsStayRefused(t *testing.T) {
 }
 
 func TestMissingFlagsAreRefusedNeverGuessed(t *testing.T) {
+	t.Parallel()
+
 	if code, _, _ := runCode("", "open", "--session", "s"); code != 2 {
 		t.Fatalf("open without --store exited %d, want 2", code)
 	}
@@ -221,6 +237,8 @@ func TestMissingFlagsAreRefusedNeverGuessed(t *testing.T) {
 }
 
 func TestBadClockIsRefused(t *testing.T) {
+	t.Parallel()
+
 	store := t.TempDir()
 	if code, _, _ := runCode("", "open", "--store", store, "--session", "s",
 		"--publish", "never", "--now", "tomorrow-ish"); code != 2 {

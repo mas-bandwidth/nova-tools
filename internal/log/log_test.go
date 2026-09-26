@@ -23,6 +23,8 @@ func newLine() Line { return New(fixedClock(), fixedGUID(), "nova-pulse") }
 // a-slog-line-carries-the-spec-fields: the JSON object's keys are the spec's table
 // exactly -- no key missing, no key invented -- and the object is exactly one line.
 func TestLineCarriesTheSpecFieldsAndNoMore(t *testing.T) {
+	t.Parallel()
+
 	l := newLine()
 	l.Verb = "launch"
 	l.Event = "done"
@@ -75,6 +77,8 @@ func TestLineCarriesTheSpecFieldsAndNoMore(t *testing.T) {
 // an-absent-id-is-never-omitted: job, card, pr, run and slot are 0 or "" when they are
 // not this scope's, and the key is still written, so `| json` never guesses.
 func TestLineWritesAbsentIdsAsEmptyNotOmitted(t *testing.T) {
+	t.Parallel()
+
 	var buf bytes.Buffer
 	if err := newLine().Write(&buf); err != nil {
 		t.Fatalf("Write: %v", err)
@@ -90,6 +94,8 @@ func TestLineWritesAbsentIdsAsEmptyNotOmitted(t *testing.T) {
 // a-msg-with-a-newline-is-escaped-through-oneline-field: the sentence cannot add a second
 // line, and the value a reader parses back is the oneline.Field rendering.
 func TestLineEscapesMsgThroughOnelineField(t *testing.T) {
+	t.Parallel()
+
 	l := newLine()
 	l.Event = "start"
 	l.Msg = "line one\nline two\twith = and space"
@@ -118,6 +124,8 @@ func TestLineEscapesMsgThroughOnelineField(t *testing.T) {
 
 // an-err-with-a-newline-is-escaped-too: the same one-line promise covers the error slot.
 func TestLineEscapesErr(t *testing.T) {
+	t.Parallel()
+
 	l := newLine()
 	l.Err = "boom\nsecond line"
 
@@ -142,6 +150,8 @@ func TestLineEscapesErr(t *testing.T) {
 
 // The level the caller sets is the level the object carries, in the spec's uppercase.
 func TestLineCarriesTheCallersLevel(t *testing.T) {
+	t.Parallel()
+
 	l := newLine()
 	l.Level = "WARN"
 	l.Event = "retry"

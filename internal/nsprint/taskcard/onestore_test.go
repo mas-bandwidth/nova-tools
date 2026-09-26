@@ -18,6 +18,8 @@ import (
 // (sprint a field), places it through the one move, fences a stale claim and
 // leaves a key whose id the one store already holds, named, untouched.
 func TestMigrateFoldsTheSprintStore(t *testing.T) {
+	t.Parallel()
+
 	c := start(t)
 	ctx := context.Background()
 	old := func(id string) string { return "s:" + sprint + ":task:" + id }
@@ -63,6 +65,8 @@ func TestMigrateFoldsTheSprintStore(t *testing.T) {
 // friend serve's take (task.TakeAvailable, the sprint store's guarded take)
 // claims it through the one move: one store, zero hand steps.
 func TestFriendServeTakesAPushedCard(t *testing.T) {
+	t.Parallel()
+
 	addr, c := wstest.Start(t)
 	ctx := context.Background()
 	p := c.Pipeline()

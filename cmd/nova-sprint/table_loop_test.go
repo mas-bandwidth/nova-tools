@@ -154,7 +154,7 @@ func TestTableLiveOnceOut(t *testing.T) {
 		t.Fatalf("exit %d stdout %q stderr %q", code, stdout, stderr)
 	}
 	b, err := os.ReadFile(out)
-	if err != nil || !strings.Contains(string(b), "\nfriend:rowan         |     0 |      12 |    14 |    10 |     4 |  71% | ") ||
+	if err != nil || !strings.Contains(string(b), "\nrowan                |     0 |      12 |    14 |    10 |     4 |  71% | ") ||
 		!strings.Contains(string(b), "\nstream                         | waiting | ready | working | review | reading | merging | landed\n") {
 		t.Fatalf("published table:\n%s (%v)", b, err)
 	}

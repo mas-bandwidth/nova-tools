@@ -100,6 +100,8 @@ func has(fs []Finding, token string) *Finding {
 // The positive control. Without it every red below could be a check that says no to
 // everything, which is the cheapest way to pass a suite and proves nothing at all.
 func TestHygienePassesACleanRange(t *testing.T) {
+	t.Parallel()
+
 	dir := lab(t)
 	git(t, dir, "checkout", "-q", "-b", "card")
 	write(t, dir, "sign/sign.go", "package sign\n\nfunc Sign(n int) int {\n\tif n == 0 {\n\t\treturn 0\n\t}\n\treturn 1\n}\n")
@@ -114,6 +116,8 @@ func TestHygienePassesACleanRange(t *testing.T) {
 // hygiene-rejects-a-foreign-committer: nothing anywhere says whose name a card's commit
 // carries, so it carries whatever the bench's git config held.
 func TestHygieneRejectsAForeignCommitter(t *testing.T) {
+	t.Parallel()
+
 	dir := lab(t)
 	git(t, dir, "checkout", "-q", "-b", "card")
 	write(t, dir, "sign/sign.go", "package sign\n\nfunc Sign(n int) int { return 0 }\n")
@@ -138,6 +142,8 @@ func TestHygieneRejectsAForeignCommitter(t *testing.T) {
 }
 
 func TestHygieneRejectsAForeignAuthor(t *testing.T) {
+	t.Parallel()
+
 	dir := lab(t)
 	git(t, dir, "checkout", "-q", "-b", "card")
 	write(t, dir, "sign/sign.go", "package sign\n\nfunc Sign(n int) int { return 0 }\n")
@@ -159,6 +165,8 @@ func TestHygieneRejectsAForeignAuthor(t *testing.T) {
 
 // hygiene-rejects-a-merge-commit.
 func TestHygieneRejectsAMergeCommit(t *testing.T) {
+	t.Parallel()
+
 	dir := lab(t)
 	git(t, dir, "checkout", "-q", "-b", "side")
 	write(t, dir, "sign/sign.go", "package sign\n\nfunc Sign(n int) int { return 2 }\n")
@@ -183,6 +191,8 @@ func TestHygieneRejectsAMergeCommit(t *testing.T) {
 // hygiene-counts-a-rename-on-both-sides: a rename that moves a file OUT of the declared
 // paths is out-of-path on the side that left, not only on the side that arrived.
 func TestHygieneCountsARenameOnBothSides(t *testing.T) {
+	t.Parallel()
+
 	dir := lab(t)
 	git(t, dir, "checkout", "-q", "-b", "card")
 	git(t, dir, "mv", "sign/sign.go", "other/sign.go")
@@ -210,6 +220,8 @@ func TestHygieneCountsARenameOnBothSides(t *testing.T) {
 }
 
 func TestHygieneAcceptsAChangeInsideTheDeclaredPaths(t *testing.T) {
+	t.Parallel()
+
 	dir := lab(t)
 	git(t, dir, "checkout", "-q", "-b", "card")
 	write(t, dir, "sign/sign.go", "package sign\n\nfunc Sign(n int) int { return 0 }\n")
@@ -224,6 +236,8 @@ func TestHygieneAcceptsAChangeInsideTheDeclaredPaths(t *testing.T) {
 // does not apply to it. It is SKIPPED and said to be skipped -- never silently passed,
 // and never failed for not having a card.
 func TestHygieneSkipsOutOfPathWhenNoPathsAreDeclared(t *testing.T) {
+	t.Parallel()
+
 	dir := lab(t)
 	git(t, dir, "checkout", "-q", "-b", "card")
 	write(t, dir, "other/other.go", "package other\n\nfunc F() {}\n")
@@ -237,6 +251,8 @@ func TestHygieneSkipsOutOfPathWhenNoPathsAreDeclared(t *testing.T) {
 // hygiene-rejects-result-md-in-the-diff: the worker's own report is not part of its
 // change.
 func TestHygieneRejectsResultMDInTheDiff(t *testing.T) {
+	t.Parallel()
+
 	dir := lab(t)
 	git(t, dir, "checkout", "-q", "-b", "card")
 	write(t, dir, "sign/RESULT.md", "line 1\n")
@@ -252,6 +268,8 @@ func TestHygieneRejectsResultMDInTheDiff(t *testing.T) {
 }
 
 func TestHygieneRejectsTheRestOfTheStrayList(t *testing.T) {
+	t.Parallel()
+
 	for _, rel := range []string{"sign/run.log", "sign/sign.go.orig", "sign/sign.go.rej", "sign/sign.test", "sign/out.out", "sign/.DS_Store", "sign/PROMPT.md", "sign/.sign.go.swp", "scratch/note.txt"} {
 		t.Run(rel, func(t *testing.T) {
 			dir := lab(t)
@@ -269,6 +287,8 @@ func TestHygieneRejectsTheRestOfTheStrayList(t *testing.T) {
 
 // hygiene-rejects-a-file-over-one-mebibyte.
 func TestHygieneRejectsAFileOverOneMebibyte(t *testing.T) {
+	t.Parallel()
+
 	dir := lab(t)
 	git(t, dir, "checkout", "-q", "-b", "card")
 	write(t, dir, "sign/big.bin", strings.Repeat("a", 1024*1024+1))
@@ -285,6 +305,8 @@ func TestHygieneRejectsAFileOverOneMebibyte(t *testing.T) {
 
 // hygiene-rejects-a-symlink-and-a-submodule.
 func TestHygieneRejectsASymlink(t *testing.T) {
+	t.Parallel()
+
 	dir := lab(t)
 	git(t, dir, "checkout", "-q", "-b", "card")
 	if err := os.Symlink("/etc/passwd", filepath.Join(dir, "sign", "link")); err != nil {
@@ -302,6 +324,8 @@ func TestHygieneRejectsASymlink(t *testing.T) {
 }
 
 func TestHygieneRejectsASubmodule(t *testing.T) {
+	t.Parallel()
+
 	dir := lab(t)
 	git(t, dir, "checkout", "-q", "-b", "card")
 	// A gitlink is mode 160000 pointing at a commit; it is written into the index
@@ -320,6 +344,8 @@ func TestHygieneRejectsASubmodule(t *testing.T) {
 
 // hygiene-rejects-a-conflict-marker: card-16 left `<<<<<<< HEAD` in a fenced block.
 func TestHygieneRejectsAConflictMarker(t *testing.T) {
+	t.Parallel()
+
 	dir := lab(t)
 	git(t, dir, "checkout", "-q", "-b", "card")
 	write(t, dir, "sign/sign.go", "package sign\n\n<<<<<<< HEAD\nfunc Sign(n int) int { return 1 }\n=======\nfunc Sign(n int) int { return 0 }\n>>>>>>> side\n")
@@ -336,6 +362,8 @@ func TestHygieneRejectsAConflictMarker(t *testing.T) {
 
 // An allowlisted exception names the card kind it is for, and holds for that kind only.
 func TestHygieneStrayExceptionHoldsForItsKindOnly(t *testing.T) {
+	t.Parallel()
+
 	dir := lab(t)
 	git(t, dir, "checkout", "-q", "-b", "card")
 	write(t, dir, "sign/golden.out", "expected\n")
@@ -361,6 +389,8 @@ func fixtureKey() string {
 
 // hygiene-never-prints-the-secret: the output is searched for the fixture string.
 func TestHygieneRejectsAKeyShapeAndNeverPrintsIt(t *testing.T) {
+	t.Parallel()
+
 	dir := lab(t)
 	git(t, dir, "checkout", "-q", "-b", "card")
 	key := fixtureKey()
@@ -387,6 +417,8 @@ func TestHygieneRejectsAKeyShapeAndNeverPrintsIt(t *testing.T) {
 }
 
 func TestHygieneRejectsAPEMPrivateKeyHeader(t *testing.T) {
+	t.Parallel()
+
 	dir := lab(t)
 	git(t, dir, "checkout", "-q", "-b", "card")
 	write(t, dir, "sign/key.pem", "-----BEGIN"+" OPENSSH PRIVATE KEY-----\nnot-a-key\n")
@@ -402,6 +434,8 @@ func TestHygieneRejectsAPEMPrivateKeyHeader(t *testing.T) {
 // holds (#1814); the hygiene gate must agree, or a card dumping an xai- key into a
 // committed file reads HYGIENE OK.
 func TestHygieneRejectsAnXAIProviderKey(t *testing.T) {
+	t.Parallel()
+
 	dir := lab(t)
 	git(t, dir, "checkout", "-q", "-b", "card")
 	// Built by parts so no key-shaped string lands in the tree.
@@ -438,6 +472,8 @@ func TestHygieneRejectsAnXAIProviderKey(t *testing.T) {
 // The two embedded lists are one list: a class test fails when they differ, so the
 // gate and the harvest cannot drift the way #1899 found (no xai- row, sk- {32,}).
 func TestHygieneKeyShapesMatchTheHarvestBackstop(t *testing.T) {
+	t.Parallel()
+
 	hygiene := shapeDataRows(t, keyShapeData)
 	raw, err := os.ReadFile(filepath.Join("..", "keyshape", "keyshapes.txt"))
 	if err != nil {
@@ -473,6 +509,8 @@ func shapeDataRows(t *testing.T, data string) []string {
 // A key shape that was ALREADY in the base is not this card's finding: the check reads
 // added lines, because a range is judged by what it added.
 func TestHygieneReadsAddedLinesOnly(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	git(t, dir, "init", "-q", "-b", "main")
 	write(t, dir, "go.mod", "module fixture\n\ngo 1.26\n")
@@ -490,6 +528,8 @@ func TestHygieneReadsAddedLinesOnly(t *testing.T) {
 
 // paths-line-refuses-dotdot-and-bare-doublestar.
 func TestValidatePathsRefusesDotDotAndBareDoubleStar(t *testing.T) {
+	t.Parallel()
+
 	for _, bad := range [][]string{
 		{"../elsewhere/**"},
 		{"sign/../../etc/**"},
@@ -518,6 +558,8 @@ func TestValidatePathsRefusesDotDotAndBareDoubleStar(t *testing.T) {
 // lexical (`^[A-Za-z]:`), not filepath.VolumeName, because a card is linted on one
 // bench and run on another.
 func TestValidatePathsRefusesAWindowsDriveLetter(t *testing.T) {
+	t.Parallel()
+
 	for _, bad := range []string{`C:/foo/bar`, `C:\Windows\system32\evil.go`, `d:/x/y.go`} {
 		if err := ValidatePaths([]string{bad}); err == nil {
 			t.Errorf("ValidatePaths([%q]) = nil, want a refusal: a drive letter is absolute", bad)
@@ -531,6 +573,8 @@ func TestValidatePathsRefusesAWindowsDriveLetter(t *testing.T) {
 // #1853.4 THE NAME SET IS kinds.txt. A kind the file does not hold is not declared;
 // there is no default kind (SPEC-TOOLWORK.md §5 rule 3).
 func TestKindDeclaredRefusesAnUnknownKind(t *testing.T) {
+	t.Parallel()
+
 	if KindDeclared("completely-unknown-kind") {
 		t.Fatal("completely-unknown-kind is not in kinds.txt")
 	}
@@ -541,6 +585,8 @@ func TestKindDeclaredRefusesAnUnknownKind(t *testing.T) {
 
 // A check that could not run has found nothing, and must never report clean.
 func TestCheckRefusesRatherThanReportingClean(t *testing.T) {
+	t.Parallel()
+
 	dir := lab(t)
 	if _, err := Check(context.Background(), Options{Repo: dir, Base: "no-such-ref", Head: "HEAD", Identities: rowan()}); err == nil {
 		t.Fatal("a bad base returned no error")
@@ -567,6 +613,8 @@ func TestCheckRefusesRatherThanReportingClean(t *testing.T) {
 // written by something that is not git. The whole-repository half of the same rule is
 // carried by the symlink and submodule tests above, which git DOES write.
 func TestModeFindingRejectsAModeGitWillNotWrite(t *testing.T) {
+	t.Parallel()
+
 	f, bad := modeFinding(entry{newMode: "100600", path: "sign/private.go", status: "A"})
 	if !bad {
 		t.Fatal("mode 100600 was accepted")
@@ -600,6 +648,8 @@ func TestModeFindingRejectsAModeGitWillNotWrite(t *testing.T) {
 // drops the `a/` and `b/` from every header, so the parser never learns a file name and
 // skips every added line in the range.
 func TestHygieneIgnoresTheSubjectReposDiffConfig(t *testing.T) {
+	t.Parallel()
+
 	dir := lab(t)
 	git(t, dir, "config", "diff.noprefix", "true")
 	git(t, dir, "checkout", "-q", "-b", "card")
@@ -624,6 +674,8 @@ func TestHygieneIgnoresTheSubjectReposDiffConfig(t *testing.T) {
 // this package then runs follows the replacement and the four checks report clean over
 // a range that still carries a key.
 func TestHygieneIgnoresTheSubjectReposReplaceRefs(t *testing.T) {
+	t.Parallel()
+
 	dir := lab(t)
 	base := git(t, dir, "rev-parse", "main")
 	git(t, dir, "checkout", "-q", "-b", "card")
@@ -644,6 +696,8 @@ func TestHygieneIgnoresTheSubjectReposReplaceRefs(t *testing.T) {
 // the lines, so nothing reaches the shapes and `--check` has nothing to look at either.
 // It is committable inside the range, and at batch there is no PATHS: line to stop it.
 func TestHygieneReadsADiffTheSubjectRepoMarkedBinary(t *testing.T) {
+	t.Parallel()
+
 	dir := lab(t)
 	git(t, dir, "checkout", "-q", "-b", "card")
 	write(t, dir, "sign/.gitattributes", "*.go -diff\n")
@@ -660,6 +714,8 @@ func TestHygieneReadsADiffTheSubjectRepoMarkedBinary(t *testing.T) {
 // whole header -- `+++ "b/sign/k\303\251y.go"` -- which the parser read as a file it
 // could not name, so every added line in that file was skipped.
 func TestHygieneReadsAPathGitWouldQuote(t *testing.T) {
+	t.Parallel()
+
 	dir := lab(t)
 	git(t, dir, "checkout", "-q", "-b", "card")
 	write(t, dir, "sign/kéy.go", "package sign\n\nconst token = \""+fixtureKey()+"\"\n")
@@ -681,6 +737,8 @@ func TestHygieneReadsAPathGitWouldQuote(t *testing.T) {
 // the one read that now answers both the key shapes and the conflict markers must
 // refuse rather than come back empty, because an empty answer reads as a clean range.
 func TestHygieneRefusesWhenTheAddedLinesCannotBeRead(t *testing.T) {
+	t.Parallel()
+
 	dir := lab(t)
 	head := git(t, dir, "rev-parse", "HEAD")
 
@@ -701,6 +759,8 @@ func TestHygieneRefusesWhenTheAddedLinesCannotBeRead(t *testing.T) {
 // is not the spelling; it is that SOMEWHERE in the glob there is a literal character
 // the path has to carry.
 func TestValidatePathsRefusesAGlobThatBoundsNothing(t *testing.T) {
+	t.Parallel()
+
 	for _, bad := range []string{"**", "**/", "**/*", "*/**", "*", "*/*", "**/**", "?", "*/*/**"} {
 		if err := ValidatePaths([]string{bad}); err == nil {
 			t.Errorf("ValidatePaths([%q]) = nil, want a refusal: it matches every file there is", bad)
@@ -720,6 +780,8 @@ func TestValidatePathsRefusesAGlobThatBoundsNothing(t *testing.T) {
 // 6ad85012's glob.go left this package green: the existing ValidatePaths tests name
 // `/etc/passwd` and `**`, not a drive letter.
 func TestValidatePathsRefusesAWindowsDriveLetterAndALeadingBackslash(t *testing.T) {
+	t.Parallel()
+
 	for _, bad := range []string{
 		`C:/Windows/system32/evil.go`,
 		`C:\Windows\system32\evil.go`,
@@ -742,6 +804,8 @@ func TestValidatePathsRefusesAWindowsDriveLetterAndALeadingBackslash(t *testing.
 // kinds.txt left ./internal/hygiene green. The name set is data here; a stray
 // exception granted to a kind that does not exist is an exception granted to nobody.
 func TestKindDeclaredHoldsTheEmbeddedNameSet(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile("kinds.txt")
 	if err != nil {
 		t.Fatal(err)
@@ -783,6 +847,8 @@ func TestKindDeclaredHoldsTheEmbeddedNameSet(t *testing.T) {
 // ambiguous sooner or later -- at which point `git cat-file -s` refuses and the WHOLE
 // Check returns an error over a range that was fine. The id is read in full.
 func TestHygieneReadsFullBlobIds(t *testing.T) {
+	t.Parallel()
+
 	dir := lab(t)
 	git(t, dir, "checkout", "-q", "-b", "card")
 	write(t, dir, "sign/sign.go", "package sign\n\nfunc Sign(n int) int { return 0 }\n")
@@ -809,6 +875,8 @@ func TestHygieneReadsFullBlobIds(t *testing.T) {
 // card's finding, and charging it makes every later card in that repository unfixable
 // by anybody.
 func TestHygieneSizesAddedFilesOnly(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	git(t, dir, "init", "-q", "-b", "main")
 	write(t, dir, "go.mod", "module fixture\n\ngo 1.26\n")
@@ -828,6 +896,8 @@ func TestHygieneSizesAddedFilesOnly(t *testing.T) {
 // was skipped, and a skipped row is a commit that went through the identity check
 // without being checked. There is no safe way to read half a row.
 func TestHygieneRefusesALogRowItCannotRead(t *testing.T) {
+	t.Parallel()
+
 	const sep = "\x1f"
 	good := strings.Join([]string{"abc123", "Rowan", "rowan@example.com", "Rowan", "rowan@example.com", ""}, sep)
 	if _, err := identityFindings(good, rowan()); err != nil {
@@ -844,6 +914,8 @@ func TestHygieneRefusesALogRowItCannotRead(t *testing.T) {
 // so a key added below that byte reached nothing. This is the half `--attr-source`
 // does not cover, and the reason `--text` is passed as well as it.
 func TestHygieneReadsAFileGitCallsBinary(t *testing.T) {
+	t.Parallel()
+
 	dir := lab(t)
 	git(t, dir, "checkout", "-q", "-b", "card")
 	write(t, dir, "sign/blob.go", "package sign\n\x00\nconst token = \""+fixtureKey()+"\"\n")
@@ -863,6 +935,8 @@ func TestHygieneReadsAFileGitCallsBinary(t *testing.T) {
 // A name holding a double quote is quoted whatever that setting says, so the header
 // has to be unquoted rather than merely kept unquoted.
 func TestHygieneReadsAPathGitMustQuote(t *testing.T) {
+	t.Parallel()
+
 	name := "sign/k\"y.go"
 	dir := lab(t)
 	git(t, dir, "checkout", "-q", "-b", "card")
@@ -897,6 +971,8 @@ func TestHygieneReadsAPathGitMustQuote(t *testing.T) {
 // honours the attribute whatever `--text` says. So the marker check stops asking git
 // and reads the lines this package already has.
 func TestHygieneChecksMarkersWhateverTheAttributesSay(t *testing.T) {
+	t.Parallel()
+
 	const marked = "package sign\n\n<<<<<<< HEAD\nfunc Sign(n int) int { return 1 }\n=======\nfunc Sign(n int) int { return 0 }\n>>>>>>> side\n"
 	for _, how := range []struct {
 		name string
@@ -945,6 +1021,8 @@ func TestHygieneChecksMarkersWhateverTheAttributesSay(t *testing.T) {
 // this range's finding, and a line that merely looks like one is not a marker. git's
 // own rule is exactly seven characters followed by a space or the end of the line.
 func TestHygieneReadsAMarkerAsGitSpellsIt(t *testing.T) {
+	t.Parallel()
+
 	dir := lab(t)
 	git(t, dir, "checkout", "-q", "-b", "card")
 	write(t, dir, "sign/sign.go", "package sign\n\n// <<<<<<<< eight is a rule in a comment, not a marker\nconst bar = \"<<<<<<<\"\nfunc Sign(n int) int { return 1 }\n")

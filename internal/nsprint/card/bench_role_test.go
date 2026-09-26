@@ -12,6 +12,8 @@ import (
 // is refused with one REFUSED line naming the role, exit 1, and nothing is
 // written; the same pin to a fleet bench (role fleet, or no role) is stored.
 func TestCardPushRefusesAFriendsBenchPin(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	client := newRedis(t)
 	srv := repoServer(t)

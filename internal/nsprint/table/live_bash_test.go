@@ -261,6 +261,8 @@ func runBash2674(t *testing.T, bash, script, pipe, cliDir, home, port, password 
 // only (-capture-live-2674 host:port); then run TestControl2674SprintLayout
 // with -update-golden-2674 on the Studio to take the goldens from the bash.
 func TestCapture2674LiveSnapshot(t *testing.T) {
+	t.Parallel()
+
 	if *captureLive2674 == "" {
 		t.Skip("on demand: -capture-live-2674 host:port")
 	}

@@ -13,6 +13,8 @@ import (
 // still moving waits, and the missing stage is named only once the probe
 // has timed out.
 func TestQuackRowVerdicts(t *testing.T) {
+	t.Parallel()
+
 	bars := card.DefaultQuackBars
 	full := card.QuackProgress{At: map[string]int64{"push": 1000, "deal": 3000, "launch": 4000, "end": 60000, "harvest": 70000, "read": 80000}}
 	if _, ok, v := card.QuackRow(full, 1000, bars, false); !ok || v != "PASS" {

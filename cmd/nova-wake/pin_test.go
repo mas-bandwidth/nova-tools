@@ -79,6 +79,8 @@ func TestAWakeBuiltAtAVersionRunsAgainstTheBusOfTheSameRelease(t *testing.T) {
 // A build with no stamp at all still refuses rather than accepting anything: an
 // empty tool version is not a wildcard.
 func TestAnUnstampedVersionIsNotAWildcard(t *testing.T) {
+	t.Parallel()
+
 	if wake.AcceptBus("", "v0.12.0") {
 		t.Error("a nova-wake that cannot say what it is accepted a nova-bus anyway")
 	}

@@ -25,6 +25,8 @@ import (
 // as done/fail, state ended, reason reconcile-timeout with a why, through the
 // one move; a younger card stays; a replay writes nothing; fsck is clean.
 func TestRequiredTimeoutEndsStuckCard(t *testing.T) {
+	t.Parallel()
+
 	addr := testutil.Start(t)
 	ctx := context.Background()
 	c := redis.NewClient(&redis.Options{Addr: addr})
@@ -157,6 +159,8 @@ func TestRequiredTimeoutEndsStuckCard(t *testing.T) {
 // required_at (none of its times) is never ended on its first sighting: the
 // sweep stamps required_at from Redis TIME and the window runs from there.
 func TestRequiredWithoutTimeStampsFirst(t *testing.T) {
+	t.Parallel()
+
 	addr := testutil.Start(t)
 	ctx := context.Background()
 	c := redis.NewClient(&redis.Options{Addr: addr})
@@ -207,6 +211,8 @@ func (deadProber) Probe(context.Context, deal.Bench, []reconcile.Suspect) (map[s
 // timeouts=1 and the probe's err on proc:expire:<bench>, and the next Run
 // counts it in Expired.
 func TestRequiredTimeoutInEvidenceWorker(t *testing.T) {
+	t.Parallel()
+
 	addr := testutil.Start(t)
 	ctx := context.Background()
 	c := redis.NewClient(&redis.Options{Addr: addr})

@@ -24,6 +24,8 @@ func hashFile(t *testing.T, path string) string {
 // unknown dates/authors staying unknown, and with excluded records never
 // entering the output.
 func TestViewRendersTwoLayoutsWithoutRewritingSources(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	frontmatter := writeSource(t, dir, "moment-one.md", `---
 author: Emma

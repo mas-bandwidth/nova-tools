@@ -13,6 +13,8 @@ import (
 // the 429 itself is read from the harness's text, because POSIX truncates the status to a
 // number below 256 and a token count is not a rate limit.
 func TestBackoffDoublesToACap(t *testing.T) {
+	t.Parallel()
+
 	if got := Backoff(1, 30*time.Second); got != 30*time.Second {
 		t.Errorf("the first retry waits the base, got %s", got)
 	}
@@ -28,6 +30,8 @@ func TestBackoffDoublesToACap(t *testing.T) {
 }
 
 func TestProviderRetryAfterNamesTheInterval(t *testing.T) {
+	t.Parallel()
+
 	for _, c := range []struct {
 		log  string
 		want time.Duration
@@ -45,6 +49,8 @@ func TestProviderRetryAfterNamesTheInterval(t *testing.T) {
 }
 
 func TestRateLimitedReadsTheStatusFromTheText(t *testing.T) {
+	t.Parallel()
+
 	if !RateLimited([]byte("error: the provider answered HTTP 429 Too Many Requests")) {
 		t.Error("a 429 beside a status word is a rate limit")
 	}
@@ -60,6 +66,8 @@ func TestRateLimitedReadsTheStatusFromTheText(t *testing.T) {
 // measured zero. Mixed rows retain the known subtotal but identify missing
 // pricing instead of presenting it as a complete total.
 func TestCostPreservesUnknownUSD(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name        string
 		usd         []string

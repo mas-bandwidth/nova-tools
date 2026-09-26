@@ -53,6 +53,8 @@ func asRef(err error, out *Refusal) bool {
 // Revision 7, test 20 rewritten: the wrap writes NO profile file. The first --write holds
 // no .nova-sandbox-*.sb at any point, because the text goes to sandbox-exec with -p.
 func TestNoProfileFileIsWritten(t *testing.T) {
+	t.Parallel()
+
 	write := t.TempDir()
 	home := filepath.Join(write, "home")
 	if err := os.MkdirAll(home, 0o755); err != nil {

@@ -16,6 +16,8 @@ import (
 // and a reader who pasted it got the refusal. This test counts the lines, the way
 // `report` already prints three, so a continuation cannot come back.
 func TestHelpListsSwarmRootForm(t *testing.T) {
+	t.Parallel()
+
 	r := invoke(t, "help")
 	wantExit(t, r, 0)
 	wantContains(t, r.stdout, "--out <dir> --month <YYYY-MM>")
@@ -47,6 +49,8 @@ func TestHelpListsSwarmRootForm(t *testing.T) {
 // (#2024). This assertion goes through run("help") so a revert of that usage line
 // goes red.
 func TestHelpListsFoldPoolForm(t *testing.T) {
+	t.Parallel()
+
 	r := invoke(t, "help")
 	wantExit(t, r, 0)
 	wantContains(t, r.stdout, "nova-tokens fold-pool --pool <dir> --ledger <file> [--since <stamp>]")

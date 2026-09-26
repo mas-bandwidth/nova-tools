@@ -150,6 +150,8 @@ func TestNewObservationCannotReplaceUnresolvedPending(t *testing.T) {
 	}
 }
 func TestDeliveryScopeAndPreparedArtifactChecks(t *testing.T) {
+	t.Parallel()
+
 	o := options{as: "a", to: "c,b", bus: ".", remote: "origin", branch: "main", host: "studio"}
 	same := o
 	same.to = "b,c"
@@ -179,6 +181,8 @@ func TestDeliveryScopeAndPreparedArtifactChecks(t *testing.T) {
 // ambiguous identity. Both readers must refuse it, and must do so without
 // quoting the offending key or any of the note back into the diagnostic.
 func TestStrictDecodingRefusesAmbiguousAndWrongInput(t *testing.T) {
+	t.Parallel()
+
 	note := "a note\n"
 	sum := shaText(note)
 	good := fmt.Sprintf(`{"schema":"nova.bus.prepared/1","id":"fixture-1","path":"from-fixture/f.md","note":%q,"sha256":%q}`, note, sum)
@@ -276,6 +280,8 @@ func TestTheBusOwnWordsReachTheCallerBoundedToOneLine(t *testing.T) {
 // keys that fold to one field still carried two values, and the LAST won. The
 // witness the cold read measured is the first case below.
 func TestStrictDecodingRefusesKeysThatFoldTogether(t *testing.T) {
+	t.Parallel()
+
 	note := "a note\n"
 	sum := shaText(note)
 	artifact := func(pairs string) string {

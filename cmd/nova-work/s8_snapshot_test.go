@@ -47,6 +47,8 @@ func writeSnapshotPair(t *testing.T) (snapshot, cache string) {
 // it could have dialled and not one it needed -- because a published snapshot
 // is a file, and the file is the whole session (nova-tools#1787).
 func TestQuerySnapshotReadsTheFile(t *testing.T) {
+	t.Parallel()
+
 	snapshot, cache := writeSnapshotPair(t)
 
 	var stdout, stderr bytes.Buffer
@@ -105,6 +107,8 @@ func (z *countingZeros) Read(p []byte) (int, error) {
 // consumed at most max-bytes+1 bytes, so an endless stream cannot exhaust
 // memory before the refusal (the hold on nova-tools#2742 at 2d120b4c).
 func TestReadBoundedConsumesAtMostTheBound(t *testing.T) {
+	t.Parallel()
+
 	z := &countingZeros{}
 	data, over, err := readBoundedFrom(z, 100)
 	if err != nil {
@@ -127,6 +131,8 @@ func TestReadBoundedConsumesAtMostTheBound(t *testing.T) {
 // --max-bytes as the snapshot and refused whole, naming the cache and the
 // bound, while the snapshot itself is under it.
 func TestQuerySnapshotRefusesAnOversizedCache(t *testing.T) {
+	t.Parallel()
+
 	snapshot, cache := writeSnapshotPair(t)
 	body, err := os.ReadFile(cache)
 	if err != nil {

@@ -15,6 +15,8 @@ import (
 )
 
 func TestMutateSkipsACallOnlyTestCoupledByCompilation(t *testing.T) {
+	t.Parallel()
+
 	dir := newRepo(t)
 	run(t, dir, "git", "checkout", "-q", "-b", "callonly")
 	write(t, dir, "sign/sign.go", `package sign

@@ -13,6 +13,8 @@ import (
 // TestSeedPromptIsScoreQuestion: the seed file is today's score question
 // verbatim, at sha8 fd94795e, with no levels of its own.
 func TestSeedPromptIsScoreQuestion(t *testing.T) {
+	t.Parallel()
+
 	p, err := Resolve(SeedSha8)
 	if err != nil {
 		t.Fatal(err)
@@ -32,6 +34,8 @@ func TestSeedPromptIsScoreQuestion(t *testing.T) {
 // TestPromptFileExemplarsAndSha8: EXEMPLAR and LEVEL lines are parsed out and
 // never sent as instructions; the sha8 is over the file bytes as stored.
 func TestPromptFileExemplarsAndSha8(t *testing.T) {
+	t.Parallel()
+
 	var b strings.Builder
 	b.WriteString("Score it.\nEXEMPLAR mas-bandwidth/nova-tools#2436\nSecond line.\n")
 	for i := 1; i <= 10; i++ {
@@ -62,6 +66,8 @@ func TestPromptFileExemplarsAndSha8(t *testing.T) {
 // TestEmbeddedPromptsAreNamedBySha8: every shipped prompt is stored under its
 // own sha8 and resolves, and the default is the tuning run's winner.
 func TestEmbeddedPromptsAreNamedBySha8(t *testing.T) {
+	t.Parallel()
+
 	n := 0
 	err := fs.WalkDir(promptFS, "prompts", func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
@@ -95,6 +101,8 @@ func TestEmbeddedPromptsAreNamedBySha8(t *testing.T) {
 // past, a relative path resolved beside the conf, a sha8 kept as is, an absent
 // file or key is "".
 func TestConfPrompt(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	conf := filepath.Join(dir, "jev.conf")
 	for _, c := range []struct{ body, want string }{

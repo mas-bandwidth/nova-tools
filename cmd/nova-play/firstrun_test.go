@@ -291,6 +291,8 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 // document; this one fails in the package whose transcript would be the half that
 // nothing runs.
 func TestTESTSNamesNovaPlayOnce(t *testing.T) {
+	t.Parallel()
+
 	sections := 0
 	for _, name := range onboarding.SectionNames(readTranscriptDoc(t)) {
 		if name == "nova-play" {

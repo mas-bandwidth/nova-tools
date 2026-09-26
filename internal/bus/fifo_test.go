@@ -14,6 +14,8 @@ import (
 // A FIFO planted at a lane's INDEX must never park the lane reader: the read refuses it by
 // name, never opening the pipe (issue #233).
 func TestReadLaneIndexDoesNotBlockOnAPlantedFIFO(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "bus")
 	index := filepath.Join(root, "from-x", IndexName)

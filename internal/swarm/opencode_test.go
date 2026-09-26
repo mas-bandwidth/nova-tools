@@ -239,6 +239,8 @@ func TestOpenCodeSourceWithoutSQLiteIsANamedRefusal(t *testing.T) {
 // `usage: none` reports nothing and is never an error: only `--tokens unmetered` tasks run
 // under it, and that refusal is made before the first worker.
 func TestTheNoneSourceReportsNothing(t *testing.T) {
+	t.Parallel()
+
 	usage, err := ReadProviderUsage(UsageNone, t.TempDir())
 	if err != nil {
 		t.Fatalf("`usage: none` is not an error: %v", err)
@@ -251,6 +253,8 @@ func TestTheNoneSourceReportsNothing(t *testing.T) {
 // TestFakeSQLite3FlushMarkerMatchesTheFake keeps the copied constant honest: the fake's own
 // source is read and the literal it declares must be the one the tests append.
 func TestFakeSQLite3FlushMarkerMatchesTheFake(t *testing.T) {
+	t.Parallel()
+
 	src, err := os.ReadFile(filepath.Join("testdata", "fakesqlite", "main.go"))
 	if err != nil {
 		t.Fatal(err)
@@ -278,6 +282,8 @@ func TestFakeSQLite3FlushMarkerMatchesTheFake(t *testing.T) {
 // The clock here is the test's own, so nothing sleeps and nothing is timed: the failure is
 // deterministic, not a race this test hopes to catch.
 func TestASlowFirstReadDoesNotSpendTheSettleWindow(t *testing.T) {
+	t.Parallel()
+
 	db := filepath.Join(t.TempDir(), "opencode.db")
 	if err := os.WriteFile(db, []byte("deepseek\tdeepseek-chat\t100\t50\t\t\t\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -325,6 +331,8 @@ func TestASlowFirstReadDoesNotSpendTheSettleWindow(t *testing.T) {
 // checkpoints is the named refusal the caller can act on -- never a hang, and never an
 // unbounded number of attempts.
 func TestAWriteAheadLogThatOutlastsTheWindowIsStillARefusal(t *testing.T) {
+	t.Parallel()
+
 	db := filepath.Join(t.TempDir(), "opencode.db")
 	if err := os.WriteFile(db, []byte("deepseek\tdeepseek-chat\t100\t50\t\t\t\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -380,6 +388,8 @@ func TestAWriteAheadLogThatOutlastsTheWindowIsStillARefusal(t *testing.T) {
 // The clock is the test's own: every query advances it by exactly what it was allowed, so
 // a retry handed too much time shows up as an overrun and not as a flake.
 func TestEveryRetryIsBoundedByWhatIsLeftOfTheWindow(t *testing.T) {
+	t.Parallel()
+
 	db := filepath.Join(t.TempDir(), "opencode.db")
 	if err := os.WriteFile(db, []byte("deepseek\tdeepseek-chat\t100\t50\t\t\t\n"), 0o644); err != nil {
 		t.Fatal(err)

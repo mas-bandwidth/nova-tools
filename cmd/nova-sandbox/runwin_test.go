@@ -431,6 +431,8 @@ func TestWindowsMemoryAndCPUReachTheJob(t *testing.T) {
 // W4's second half: accepted and IGNORED off windows, the way --name already is, so one
 // caller builds one argv for three platforms.
 func TestWindowsMemoryAndCPUAreAcceptedAndIgnoredOffWindows(t *testing.T) {
+	t.Parallel()
+
 	for _, goos := range []string{"darwin", "linux"} {
 		f := parseRun([]string{"--name", "j1", "--size", "8g", "--memory", "4g", "--cpu", "50", "--", "/bin/sh"})
 		_, bad := validateRun(&f, goos)
@@ -491,6 +493,8 @@ func TestWindowsSizeIsRefusedNotApproximated(t *testing.T) {
 // W5's flag half, both directions: --scratch is required on windows, absolute, and is not a
 // darwin flag.
 func TestWindowsScratchIsRequiredAndAbsolute(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		goos, scratch string
 		refused       bool
@@ -525,6 +529,8 @@ func TestWindowsScratchIsRequiredAndAbsolute(t *testing.T) {
 // tests exist for: filepath.IsAbs answers for the HOST, and the host here is a Mac, which
 // gets `C:\nova` and `/nova` exactly backwards.
 func TestAbsolutePathForNamesThePlatform(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		goos, path string
 		abs        bool
@@ -749,6 +755,8 @@ func TestASecondWSBRunRefusesRatherThanQueues(t *testing.T) {
 // W9's other half: the DEFAULT on windows is --place job, because a single-instance resource
 // is not a pool's.
 func TestTheWindowsDefaultPlaceIsTheJob(t *testing.T) {
+	t.Parallel()
+
 	f := parseRun([]string{"--name", "j1", "--scratch", `C:\nova`, "--", "cmd.exe"})
 	if _, bad := validateRun(&f, "windows"); hasReason(bad, "bad_place") {
 		t.Fatalf("a run with no --place is refused: %v", reasonsOf(bad))
@@ -817,6 +825,8 @@ func TestAWSBRunReadsTheGuestsStatusOutOfTheScratch(t *testing.T) {
 // W8's document. It is a pure function of its input, so it is asserted line by line here and
 // nothing about it waits for a bench.
 func TestTheWSBDocumentIsW8sFile(t *testing.T) {
+	t.Parallel()
+
 	xml := wsbDocument(wsbInput{
 		Reads:   []string{`C:\go`, `C:\src & co`},
 		Scratch: `C:\nova\nova-j1`,
@@ -865,6 +875,8 @@ func TestTheWSBDocumentIsW8sFile(t *testing.T) {
 // command's own %ERRORLEVEL% to the status file, with `&` and not `&&`, because an absent
 // file is 124 and a failing command is not a timeout.
 func TestTheWSBLogonCommandWritesTheStatusWhateverHappened(t *testing.T) {
+	t.Parallel()
+
 	cmd := wsbLogonCommand(wsbInput{Scratch: `C:\nova\nova-j1`, Argv: []string{"cmd.exe", "/c", "exit 3"}})
 	if !strings.Contains(cmd, "%ERRORLEVEL%") {
 		t.Fatalf("the logon command does not write the command's own status: %s", cmd)
@@ -884,6 +896,8 @@ func TestTheWSBLogonCommandWritesTheStatusWhateverHappened(t *testing.T) {
 // `no-windows-path-reaches-wsl`, the runtime half: no argv this tool composes names wsl,
 // wsl.exe or a \\wsl$\ path.
 func TestNoWindowsPathReachesWSL(t *testing.T) {
+	t.Parallel()
+
 	for _, argv := range [][]string{
 		{"wsl", "-e", "bash"},
 		{`C:\Windows\System32\wsl.exe`, "--", "make"},
@@ -910,6 +924,8 @@ func TestNoWindowsPathReachesWSL(t *testing.T) {
 // this package rather than trusting the runtime check, because a future exec site that
 // forgot to call wslInArgv would leave that check green and the rule broken.
 func TestNoExecSiteInThisToolSpellsWSL(t *testing.T) {
+	t.Parallel()
+
 	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatalf("this package has to be readable for the tripwire to read it: %s", err)
@@ -985,6 +1001,8 @@ func TestWindowsRefusesWhileTheWallIsNotBuilt(t *testing.T) {
 // -- because the assertion is about a line that is NOT there, and no fake can stand in for
 // an absence. Breakaway is exactly how a tree escapes the kill.
 func TestTheWin32BodyNeverPermitsBreakaway(t *testing.T) {
+	t.Parallel()
+
 	src := goCodeOnly(t, "runwin_windows.go")
 	for _, flag := range []string{"jobObjectLimitBreakawayOK", "jobObjectLimitSilentBreakawayOK"} {
 		// Named once in the const block, and never used. A second mention is an assignment.
@@ -1017,6 +1035,8 @@ func TestTheWin32BodyNeverPermitsBreakaway(t *testing.T) {
 // The \\?\ prefix, which every grant and every removal goes through: a scratch under a deep
 // profile plus a Go module cache reaches MAX_PATH in ORDINARY use.
 func TestWinLongPathPrefixesOnlyWhatItShould(t *testing.T) {
+	t.Parallel()
+
 	for in, want := range map[string]string{
 		`C:\nova\nova-j1`:     `\\?\C:\nova\nova-j1`,
 		`c:/nova/nova-j1`:     `\\?\c:\nova\nova-j1`,
@@ -1037,6 +1057,8 @@ func TestWinLongPathPrefixesOnlyWhatItShould(t *testing.T) {
 // space would hand `C:\Program Files\Go\bin\go.exe` to the child as two arguments, and that
 // is the ordinary path on windows, not an unusual one.
 func TestWinCommandLineQuotesTheWayCommandLineToArgvWUnquotes(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		in   []string
 		want string
@@ -1058,6 +1080,8 @@ func TestWinCommandLineQuotesTheWayCommandLineToArgvWUnquotes(t *testing.T) {
 // --memory's number, in the same spellings --size already takes: a caller who learned
 // `--size 8g` should not have to learn a second one.
 func TestParseBytesTakesTheSizeSpellings(t *testing.T) {
+	t.Parallel()
+
 	for in, want := range map[string]int64{
 		"1024": 1024,
 		"64m":  64 << 20,
@@ -1081,6 +1105,8 @@ func TestParseBytesTakesTheSizeSpellings(t *testing.T) {
 
 // The status file's three answers: not yet, a number, and something that is not one.
 func TestReadWSBExit(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, wsbExitFile)
 	if _, ok := readWSBExit(path); ok {
@@ -1128,6 +1154,8 @@ func TestTheWindowsReceiptIsTheSameGrammarAsDarwins(t *testing.T) {
 // not ask it -- and it says what --size does here, because that is the first thing a windows
 // reader coming from the darwin docs will try.
 func TestTheWindowsHelpNamesTheWindowsFlags(t *testing.T) {
+	t.Parallel()
+
 	var out, errb bytes.Buffer
 	if code := runVerb([]string{"help"}, nil, &out, &errb, nil); code != 0 {
 		t.Fatalf("`run help` exited %d", code)

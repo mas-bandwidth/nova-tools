@@ -24,6 +24,8 @@ const sentinel = "SYNTHETIC_SENTINEL_7f3a"
 // The repair keeps the both-sides-one-list property that the list exists for, and takes the
 // mutability away: an unexported slice, and an accessor that hands out a copy.
 func TestTheSchemasMemberListCannotBeWidenedByACaller(t *testing.T) {
+	t.Parallel()
+
 	raw, _ := readFixture(t, filepath.Join("testdata", "valid", "antigravity_request.json"))
 	v := validatorFor(t, raw)
 	env, err := v.ValidateEnvelope(raw)
@@ -97,6 +99,8 @@ func TestTheSchemasMemberListCannotBeWidenedByACaller(t *testing.T) {
 // validator carrying the same allowlists and NO skips, so there is no handle that can seal
 // what the boundary refuses.
 func TestAWithoutValidatorCannotSealWhatTheStrictBoundaryRefuses(t *testing.T) {
+	t.Parallel()
+
 	// The allowlist matches minimalObservation's one raw field ON PURPOSE. testValidator's
 	// wider allowlist masks this finding behind `missing_field at body.raw_usage.cache_read`
 	// -- every allowlisted field owes the record an entry -- so a test written with it would
@@ -157,6 +161,8 @@ func TestAWithoutValidatorCannotSealWhatTheStrictBoundaryRefuses(t *testing.T) {
 // U+2029 and bound the width, so a Refusal built anywhere -- including by a caller through
 // the exported struct -- cannot carry a control character or an unbounded string.
 func TestABuilderRefusalNeverEchoesTheCallersMemberName(t *testing.T) {
+	t.Parallel()
+
 	name := sentinel + "\r/private/path/prompt.txt\nrefused: envelope_shape at envelope"
 	o := NewObject()
 	if err := o.Set(name, "x"); err != nil {
@@ -224,6 +230,8 @@ func TestABuilderRefusalNeverEchoesTheCallersMemberName(t *testing.T) {
 // it is an API misuse rather than a defect in a record's bytes, and every Rule* constant owes
 // testdata a fixture that fails only that rule.
 func TestAValidatedBodyCannotBeMutated(t *testing.T) {
+	t.Parallel()
+
 	raw, _ := readFixture(t, filepath.Join("testdata", "valid", "claude_code_request.json"))
 	v := validatorFor(t, raw)
 	env, err := v.ValidateEnvelope(raw)
@@ -299,6 +307,8 @@ func TestAValidatedBodyCannotBeMutated(t *testing.T) {
 // what the boundary enforced -- including between a SealObservation's seal and its strict
 // read-back. The allowlist is a declaration made once, not a live handle.
 func TestAValidatorsAllowlistIsNotALiveHandle(t *testing.T) {
+	t.Parallel()
+
 	fields := []string{"input"}
 	receipts := []string{"turn_id"}
 	v := NewValidator(Allowlists{RawUsageFields: fields, ReceiptFields: receipts})
@@ -342,6 +352,8 @@ func TestAValidatorsAllowlistIsNotALiveHandle(t *testing.T) {
 // between them is a change in what the encoder can and cannot carry, and it should be read
 // rather than discovered.
 func TestEveryRuleThatSurvivesATypedRoundTripIsRefusedOnReseal(t *testing.T) {
+	t.Parallel()
+
 	// Defects the typed round trip legitimately loses, because Observation cannot represent
 	// them and Body() writes the schema's twelve members whatever it was handed:
 	//   - duplicate_key, invalid_utf8, lone_surrogate: properties of the BYTES or of a member
@@ -435,6 +447,8 @@ func TestEveryRuleThatSurvivesATypedRoundTripIsRefusedOnReseal(t *testing.T) {
 // here rather than a fixture, because an observation body has no nested array and the
 // property belongs to the sealed object rather than to the schema.
 func TestASealedObjectsNestedArraysAreCopiedToo(t *testing.T) {
+	t.Parallel()
+
 	const doc = `{"outer":[["a","b"],["c"]],"flat":["d"]}`
 	parsed, err := parseStrict([]byte(doc), nil, "body")
 	if err != nil {

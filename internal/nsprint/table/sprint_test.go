@@ -98,6 +98,8 @@ func sprintStore(t *testing.T) (*redis.Client, *miniredis.Miniredis, *cmdLog) {
 // first tick takes two round trips (the sets, then the values) and every
 // later tick exactly one pipeline, with no KEYS and no SCAN.
 func TestControl3530WholeTableGolden(t *testing.T) {
+	t.Parallel()
+
 	client, _, log := sprintStore(t)
 	ctx, now := context.Background(), table.SprintFixtureNow()
 	r := table.NewSprintReader(client, table.SprintFixtureConfig())
@@ -137,6 +139,8 @@ func TestControl3530WholeTableGolden(t *testing.T) {
 // render against an in-process server, over the fixture; the median render
 // must be under 10 ms.
 func TestControl3530RenderUnder10ms(t *testing.T) {
+	t.Parallel()
+
 	client, _, _ := sprintStore(t)
 	ctx, now := context.Background(), table.SprintFixtureNow()
 	r := table.NewSprintReader(client, table.SprintFixtureConfig())
@@ -172,6 +176,8 @@ func TestControl3530RenderUnder10ms(t *testing.T) {
 // ticks is on the very next table (one extra round trip that tick), and a
 // removed one is gone from it.
 func TestControl3530MembershipChange(t *testing.T) {
+	t.Parallel()
+
 	client, _, log := sprintStore(t)
 	ctx, now := context.Background(), table.SprintFixtureNow()
 	cfg := table.SprintFixtureConfig()
@@ -216,6 +222,8 @@ func TestControl3530MembershipChange(t *testing.T) {
 // prints the plain headline, and an empty keyspace renders every block with
 // zero totals rather than failing.
 func TestControl3530NoPitstopNoSprint(t *testing.T) {
+	t.Parallel()
+
 	client, _, _ := sprintStore(t)
 	ctx, now := context.Background(), table.SprintFixtureNow()
 	cfg := table.SprintFixtureConfig()
@@ -252,6 +260,8 @@ func TestControl3530NoPitstopNoSprint(t *testing.T) {
 // says so under the headline; after a good read it keeps that read's rows and
 // says how stale they are.
 func TestControl3530FailedTickNeverBlank(t *testing.T) {
+	t.Parallel()
+
 	now := table.SprintFixtureNow()
 	cfg := table.SprintFixtureConfig()
 	if got := table.FailedSprint(cfg, nil).Render(now); got != "SPRINT TABLE\n\nstale: never read (Redis did not answer since start)\n" {
@@ -273,6 +283,8 @@ func TestControl3530FailedTickNeverBlank(t *testing.T) {
 // refused with the holder's token; a tick whose lock was taken over reports
 // LockLost; the holder's release frees the key and a stranger's does not.
 func TestControl3530WriterLock(t *testing.T) {
+	t.Parallel()
+
 	client, _, _ := sprintStore(t)
 	ctx, now := context.Background(), table.SprintFixtureNow()
 	const key = "lock:nova-sprint-table"
@@ -324,6 +336,8 @@ func sprintStoreLua(t *testing.T) (*redis.Client, *cmdLog) {
 }
 
 func TestControl3637ClearUnderOneSecond(t *testing.T) {
+	t.Parallel()
+
 	client, log := sprintStoreLua(t)
 	ctx, now := context.Background(), table.SprintFixtureNow()
 	r := table.NewSprintReader(client, table.SprintFixtureConfig())

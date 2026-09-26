@@ -32,6 +32,8 @@ func writeDocs(t *testing.T, root string, body map[string]string, skip ...string
 // Item 1: a named doc that is missing is an error naming it, never a silent
 // skip that shrinks the scan to fewer docs.
 func TestIssue2218MissingDocIsAnError(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	writeDocs(t, root, nil, "docs/nova-swarm-quickstart.md")
 	_, err := PastedDocExamples(root)
@@ -43,6 +45,8 @@ func TestIssue2218MissingDocIsAnError(t *testing.T) {
 // Item 2: a GOOS is a whole word on the Platform line, never a substring of
 // another word ("js" in "json", "ios" in "ratios", "aix" in "plaix").
 func TestIssue2218PlatformGOOSIsAWholeWord(t *testing.T) {
+	t.Parallel()
+
 	cases := map[string][]string{
 		"Platform: darwin": {"darwin"},
 		"Platform: recorded on macOS (darwin) — a Linux bench prints": {"linux", "darwin"},
@@ -60,6 +64,8 @@ func TestIssue2218PlatformGOOSIsAWholeWord(t *testing.T) {
 // lives in the example's tool's package, and the named test itself reads a
 // doc the example is pasted in.
 func TestIssue2218ComparedEntryIsTiedToItsExample(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	src := "package main\n\nfunc TestFoo(t *testing.T) {\n\traw, _ := os.ReadFile(filepath.Join(\"docs\", \"README.md\"))\n\tonboarding.Compare(onboarding.Step{Line: \"$ nova-foo go\"}, raw, nil)\n}\n\nfunc TestBar(t *testing.T) {\n\tos.ReadFile(\"CLI.md\")\n}\n"
 	writeGo(t, root, "cmd/nova-foo/foo_test.go", src)
@@ -94,6 +100,8 @@ func writeGo(t *testing.T, root, rel, src string) {
 // hold's own: `$ nova-wake awake --bus ./bus` named under the presence test,
 // which never mentions awake, fails.
 func TestIssue2218ComparedEntryNamesItsCommand(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	writeDocs(t, root, map[string]string{
 		"docs/CLI.md": "## nova-wake\n\n```\n$ nova-wake presence --bus ./bus\n$ nova-wake awake --bus ./bus\n```\n\n## nova-sprint\n\n### First run\n\n```text\n$ nova-sprint table --once\n! refused\n```\n",
@@ -159,6 +167,8 @@ func runTranscript(t *testing.T, doc string) {
 // change's base, and a row the change adds fails. The control is the hold's
 // own: a new doc example appended with the same row appended to the list.
 func TestIssue2218AddedUnexecutedRowFails(t *testing.T) {
+	t.Parallel()
+
 	if got := AddedListRows("# c\n$ a\n$ b\n", "# c\n$ a\n\n$ nova-foo newverb --x 1\n"); !slices.Equal(got, []string{"$ nova-foo newverb --x 1"}) {
 		t.Errorf("AddedListRows = %q; want the one appended row", got)
 	}
@@ -221,6 +231,8 @@ func TestIssue2218AddedUnexecutedRowFails(t *testing.T) {
 // not only banners pasted in the four docs; an unlisted new help example
 // fails the class test.
 func TestIssue2218HelpBannersAreCounted(t *testing.T) {
+	t.Parallel()
+
 	got := parseCompared(t, "compared_examples.txt", "cmd/nova-work/main_test.go:TestReady example: nova-work ready --node a\n")
 	if got["example: nova-work ready --node a"].test != "TestReady" {
 		t.Errorf("parseCompared = %v; want the example: entry accepted", got)
@@ -257,6 +269,8 @@ func TestIssue2218HelpBannersAreCounted(t *testing.T) {
 // named doc are pasted examples too (the spec's "every $/example: line"),
 // enumerated through HelpExampleLines.
 func TestIssue2218HelpExampleBlocksInDocsAreCounted(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	writeDocs(t, root, map[string]string{
 		"docs/CLI.md": "```\nusage: nova-foo run\n\nexample:\n  nova-foo run --x 1\n  nova-foo run --y   2\n```\n\nnova-foo run --prose-not-an-example\n",
@@ -280,6 +294,8 @@ func TestIssue2218HelpExampleBlocksInDocsAreCounted(t *testing.T) {
 // a `## nova-*` section that names no recognised GOOS is an error naming its
 // line, never a line silently left out of the check.
 func TestIssue2218PlatformGOOSIsCaseNormalized(t *testing.T) {
+	t.Parallel()
+
 	cases := map[string][]string{
 		"Platform: Linux":                       {"linux"},
 		"Platform: DARWIN, then a Linux bench":  {"linux", "darwin"},
@@ -294,6 +310,8 @@ func TestIssue2218PlatformGOOSIsCaseNormalized(t *testing.T) {
 }
 
 func TestIssue2218PlatformLineWithNoGOOSFails(t *testing.T) {
+	t.Parallel()
+
 	md := "# Tests\n\nPlatform: prose outside a tool section is not checked\n\n## nova-foo\n\nPlatform: darwin\n\nPlatform: recorded on a machine whose wall probe fails\n\n## nova-bar\n\nPlatform: macOS\n"
 	got, err := PlatformLinesFromTESTSmd(md)
 	if err == nil {
@@ -319,6 +337,8 @@ func TestIssue2218PlatformLineWithNoGOOSFails(t *testing.T) {
 // NEXT heading off as the separator), so the second of two adjacent tool
 // sections was never read; each section is read.
 func TestIssue2218EveryToolSectionIsRead(t *testing.T) {
+	t.Parallel()
+
 	md := "## nova-a\n\nPlatform: linux\n\n## nova-b\n\nPlatform: bogus\n\n## nova-c\n\nPlatform: darwin\n"
 	got, err := PlatformLinesFromTESTSmd(md)
 	if err == nil || !strings.Contains(err.Error(), "line 7") {
@@ -335,6 +355,8 @@ func TestIssue2218EveryToolSectionIsRead(t *testing.T) {
 // expression, which the runs-on-only reader never saw: legs are read from the
 // matrix values too, and a comment never declares a leg.
 func TestIssue2218CILegsIncludeMatrixLegs(t *testing.T) {
+	t.Parallel()
+
 	yaml := "jobs:\n  a:\n    # a macOS leg is described here, in a comment only\n    strategy:\n      matrix:\n        os: [ubuntu-latest, macos-latest]\n    runs-on: ${{ matrix.os }}\n"
 	if got := CILegsFromYAML(yaml); !got["linux"] || !got["darwin"] || len(got) != 2 {
 		t.Errorf("CILegsFromYAML(matrix os list) = %v; want linux and darwin", got)
@@ -360,6 +382,8 @@ func TestIssue2218CILegsIncludeMatrixLegs(t *testing.T) {
 // lines under it went uncounted and their list rows read as stale. A line
 // continued with ` \` is one command, counted by its first line.
 func TestIssue2218HelpBannerLineLedByAnotherToolIsCounted(t *testing.T) {
+	t.Parallel()
+
 	banner := "usage: nova-foo serve\n\nexample:\n  nova-foo version\n  nova-secrets exec --only K -- nova-foo serve --port 1\n  nova-foo spill --ttl   10m \\\n           --value hi\n  nova-foo recall --name note\n\nnova-foo prose after the block is not an example\n"
 	got, err := BannerExampleLines(banner)
 	if err != nil {

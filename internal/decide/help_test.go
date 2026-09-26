@@ -8,6 +8,8 @@ import (
 // The second decision: continue, ask all friends, or ask Glenn -- and Glenn is
 // only ever asked after all friends have been.
 func TestHelpAnswers(t *testing.T) {
+	t.Parallel()
+
 	for name, tc := range map[string]struct {
 		state HelpState
 		want  string
@@ -68,6 +70,8 @@ func TestHelpAnswers(t *testing.T) {
 
 // Glenn is never the first ask, whatever the hours say.
 func TestGlennIsOnlyAskedAfterAllFriends(t *testing.T) {
+	t.Parallel()
+
 	res, err := Help(HelpState{Hours: 12, FailuresLastHour: 9, SelfInflicted: 9, ClassRecurring: true, Uncertainty: 1})
 	if err != nil {
 		t.Fatal(err)
@@ -79,6 +83,8 @@ func TestGlennIsOnlyAskedAfterAllFriends(t *testing.T) {
 
 // Numbers that cannot be are a refusal, never a guess.
 func TestHelpRefusesImpossibleState(t *testing.T) {
+	t.Parallel()
+
 	for name, s := range map[string]HelpState{
 		"negative hours":      {Hours: -1},
 		"negative retries":    {RetriesOnRung: -2},
@@ -94,6 +100,8 @@ func TestHelpRefusesImpossibleState(t *testing.T) {
 
 // One line, the answer and the reason.
 func TestHelpLineShape(t *testing.T) {
+	t.Parallel()
+
 	res, err := Help(HelpState{Hours: 3, LandingMoved: true})
 	if err != nil {
 		t.Fatal(err)

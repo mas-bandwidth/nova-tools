@@ -59,6 +59,8 @@ func nativeVerdictRun(t *testing.T, label, card string) (stdout, stderr string, 
 // THE C18 SHAPE: the provider answers 5xx at request start, the harness exits 1, and the
 // job directory holds no RESULT.md. RED WITHOUT THE FIX: `NATIVE OK ... rc=1`.
 func TestNativeRefusesToSayOKForAProviderFailureThatProducedNothing(t *testing.T) {
+	t.Parallel()
+
 	out := nativeVerdict(t, "c18", "FAKE-5XX\n")
 
 	if strings.Contains(out, "NATIVE OK") {
@@ -83,6 +85,8 @@ func TestNativeRefusesToSayOKForAProviderFailureThatProducedNothing(t *testing.T
 // delivered card. Here the first condition to fail is the harness's own silence, which
 // #591 already made a token on this line and which the verdict now acts on.
 func TestNativeRefusesToSayOKWhenTheHarnessSaidNothing(t *testing.T) {
+	t.Parallel()
+
 	out := nativeVerdict(t, "noresult", "FAKE-NORESULT\n")
 
 	if strings.Contains(out, "NATIVE OK") {
@@ -99,6 +103,8 @@ func TestNativeRefusesToSayOKWhenTheHarnessSaidNothing(t *testing.T) {
 // AND THE OTHER DIRECTION, so the fix is not "never say OK": a card that ran, answered and
 // wrote its RESULT.md still gets the word, with no why= tail at all.
 func TestNativeStillSaysOKForARunThatProducedItsResult(t *testing.T) {
+	t.Parallel()
+
 	out := nativeVerdict(t, "green", "FAKE-RESULT ok\n")
 
 	if !strings.Contains(out, "NATIVE OK ") {
@@ -123,6 +129,8 @@ func TestNativeStillSaysOKForARunThatProducedItsResult(t *testing.T) {
 // RED WITHOUT THE FIX: process exit 255 (the child's code passed through), or
 // any verdict other than exactly one NATIVE INCOMPLETE with rc=255 why=rc.
 func TestNativeHarnessExit255PrintsAVerdictAndDoesNotExit255(t *testing.T) {
+	t.Parallel()
+
 	stdout, stderr, code := nativeVerdictRun(t, "fsevents", "FAKE-FSEVENTS\n")
 	combined := stdout + stderr
 	if strings.Contains(combined, "NATIVE OK") {
@@ -165,6 +173,8 @@ func TestNativeHarnessExit255PrintsAVerdictAndDoesNotExit255(t *testing.T) {
 // produced its RESULT.md is still NATIVE OK at exit 0, and a silent harness is
 // still NATIVE INCOMPLETE, and neither process exits 255.
 func TestNativeOrdinaryCardsStillPrintOKAndIncomplete(t *testing.T) {
+	t.Parallel()
+
 	stdout, stderr, code := nativeVerdictRun(t, "green255", "FAKE-RESULT ok\n")
 	if !strings.Contains(stdout, "NATIVE OK ") {
 		t.Fatalf("a run that produced its RESULT.md must still be OK:\n%s\nstderr:\n%s", stdout, stderr)

@@ -20,6 +20,8 @@ func cardUsageFile(t *testing.T, path, provider, model, started, in, out, usd st
 }
 
 func TestSumSwarmRootIsIdempotent(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := mkdir(t, filepath.Join(dir, "root"))
 	ledger := filepath.Join(dir, "ledger.tsv")
@@ -62,6 +64,8 @@ func TestSumSwarmRootIsIdempotent(t *testing.T) {
 // FILE, so an existing directory at --out is refused by name (file vs directory),
 // not by the raw OS rename error. Before #496 the tmp-rename leaked "file exists".
 func TestSumRefusesOutDirectory(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := mkdir(t, filepath.Join(dir, "root"))
 	out := mkdir(t, filepath.Join(dir, "swarm-sum-out"))
@@ -81,6 +85,8 @@ func TestSumRefusesOutDirectory(t *testing.T) {
 // its card (rc=0) and carries a dashes count of 0,0,0,0. The header is pinned byte for byte
 // to the ten columns the binary writes and refuses a ledger for, `dashes` last.
 func TestSumSwarmAllUnknownModelIsDashNeverZero(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := mkdir(t, filepath.Join(dir, "root"))
 	ledger := filepath.Join(dir, "ledger.tsv")
@@ -114,6 +120,8 @@ func TestSumSwarmAllUnknownModelIsDashNeverZero(t *testing.T) {
 // the day and a used one is counted. The fixture writes the 14-column receipt the swarm
 // would write once it carries the tool, and the reader folds counts, never a sum of tokens.
 func TestSumSwarmRootCarriesToolInvocations(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := mkdir(t, filepath.Join(dir, "root"))
 	ledger := filepath.Join(dir, "ledger.tsv")
@@ -133,6 +141,8 @@ func TestSumSwarmRootCarriesToolInvocations(t *testing.T) {
 }
 
 func TestSumSwarmMixedKnownUnknownDailyAggregate(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := mkdir(t, filepath.Join(dir, "root"))
 	ledger := filepath.Join(dir, "ledger.tsv")

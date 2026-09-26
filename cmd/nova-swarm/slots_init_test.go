@@ -24,6 +24,8 @@ func slotsInit(t *testing.T, args ...string) (int, string, string) {
 }
 
 func TestSlotsInitMakesAStoreTheLeaseCodeCanRead(t *testing.T) {
+	t.Parallel()
+
 	store := filepath.Join(t.TempDir(), "slots-store")
 
 	rc, stdout, stderr := slotsInit(t, "--store", store, "--owner", "swarm-space", "--capacity", "1", "--share", "1")
@@ -57,6 +59,8 @@ func TestSlotsInitMakesAStoreTheLeaseCodeCanRead(t *testing.T) {
 // second ask is refused. This is the test that would have caught a shares.tsv written in
 // a format loadSlotShares does not read -- a bench that then grants every take.
 func TestTheStoreSlotsInitWritesGrantsOneLeaseAndRefusesTheSecond(t *testing.T) {
+	t.Parallel()
+
 	store := filepath.Join(t.TempDir(), "slots-store")
 	if rc, stdout, stderr := slotsInit(t, "--store", store, "--owner", "swarm-space", "--capacity", "1", "--share", "1"); rc != 0 {
 		t.Fatalf("init exits %d:\n%s%s", rc, stdout, stderr)
@@ -88,6 +92,8 @@ func TestTheStoreSlotsInitWritesGrantsOneLeaseAndRefusesTheSecond(t *testing.T) 
 // are running right now, and a capacity edited underneath them is a bench that overcommits
 // without saying so.
 func TestSlotsInitRefusesToOverwriteAStore(t *testing.T) {
+	t.Parallel()
+
 	store := filepath.Join(t.TempDir(), "slots-store")
 	if rc, stdout, stderr := slotsInit(t, "--store", store, "--owner", "swarm-space", "--capacity", "1", "--share", "1"); rc != 0 {
 		t.Fatalf("init exits %d:\n%s%s", rc, stdout, stderr)
@@ -119,6 +125,8 @@ func TestSlotsInitRefusesToOverwriteAStore(t *testing.T) {
 // Every flag is required, and one run names every one that is missing: the onboarding
 // standard's rule, and the difference between one trip to the shell and four.
 func TestSlotsInitWantsAllFourFlags(t *testing.T) {
+	t.Parallel()
+
 	rc, stdout, stderr := slotsInit(t)
 	if rc != 2 {
 		t.Fatalf("init with no flags is refused with exit 2, got %d:\n%s%s", rc, stdout, stderr)
@@ -133,6 +141,8 @@ func TestSlotsInitWantsAllFourFlags(t *testing.T) {
 // An owner spelled as one of shares.tsv's two reserved keys would be read back as the
 // bench's own capacity or reserve, and the owner would simply not be there.
 func TestSlotsInitRefusesAReservedOwnerName(t *testing.T) {
+	t.Parallel()
+
 	for _, name := range []string{"capacity", "reserve"} {
 		store := filepath.Join(t.TempDir(), "slots-store")
 		rc, _, stderr := slotsInit(t, "--store", store, "--owner", name, "--capacity", "1", "--share", "1")
@@ -150,6 +160,8 @@ func TestSlotsInitRefusesAReservedOwnerName(t *testing.T) {
 
 // A share wider than the bench can never be met.
 func TestSlotsInitRefusesAShareWiderThanTheCapacity(t *testing.T) {
+	t.Parallel()
+
 	store := filepath.Join(t.TempDir(), "slots-store")
 	rc, _, stderr := slotsInit(t, "--store", store, "--owner", "swarm-space", "--capacity", "2", "--share", "3")
 	if rc != 2 {

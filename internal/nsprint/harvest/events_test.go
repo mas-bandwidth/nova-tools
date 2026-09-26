@@ -21,6 +21,8 @@ import (
 // carries the issue the body closes; a repeat moves nothing; the ws sets
 // agree with every record throughout.
 func TestHarvestPROpenedMovesTasksToMerging(t *testing.T) {
+	t.Parallel()
+
 	c := startRedis(t)
 	ctx := context.Background()
 	const (

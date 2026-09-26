@@ -179,6 +179,8 @@ func sha(s string) string {
 // every read of the same capture wherever it sits, and an original that
 // contradicts its manifest on any of them is refused.
 func TestStableIdentityRevisionAndURL(t *testing.T) {
+	t.Parallel()
+
 	c := openBundle(t, bundleDir, DefaultLimits())
 	man := readManifest(t, bundleDir)
 
@@ -265,6 +267,8 @@ func TestStableIdentityRevisionAndURL(t *testing.T) {
 // every comment, every label, every cross-reference and every attachment of
 // every issue is preserved from the original, and the page chain is whole.
 func TestBodyCommentsLabelsRelationshipsAndPagination(t *testing.T) {
+	t.Parallel()
+
 	c := openBundle(t, bundleDir, DefaultLimits())
 	man := readManifest(t, bundleDir)
 
@@ -417,6 +421,8 @@ func commentsContain(nodes []any, s string) bool {
 // with the bundle's contents, or an original whose bytes do not match its
 // digest, refuses the whole capture.
 func TestTamperedManifestIsRefused(t *testing.T) {
+	t.Parallel()
+
 	dir := copyBundle(t)
 	writeManifest(t, dir, func(m *Manifest) { m.TotalIssues = 69 })
 	_, err := Open(dir, DefaultLimits())
@@ -447,6 +453,8 @@ func TestTamperedManifestIsRefused(t *testing.T) {
 // previous page did not end at, or a last page that says more follow, refuses
 // the capture.
 func TestPageGapIsRefused(t *testing.T) {
+	t.Parallel()
+
 	dir := copyBundle(t)
 	writeManifest(t, dir, func(m *Manifest) {
 		gone := map[int]bool{}
@@ -486,6 +494,8 @@ func TestPageGapIsRefused(t *testing.T) {
 // explicit truncated record carrying the full length and digest, never cut
 // silently; the bundle and per-issue byte bounds refuse.
 func TestOversizeBodyIsTruncatedWithHash(t *testing.T) {
+	t.Parallel()
+
 	lim := DefaultLimits()
 	lim.MaxBodyBytes = 1000
 	c := openBundle(t, bundleDir, lim)
@@ -534,6 +544,8 @@ func hasGap(gs []Gap, field string) bool {
 // capture exposes readers only, and the adapter's own source imports nothing
 // that reaches a host or runs a program.
 func TestAdapterHasNoWriteMethod(t *testing.T) {
+	t.Parallel()
+
 	allowed := map[string]bool{"Provider": true, "Repository": true, "FetchedAt": true, "Pages": true, "Issues": true, "Issue": true, "Lookup": true}
 	typ := reflect.TypeOf(&Capture{})
 	var names []string
@@ -566,6 +578,8 @@ func TestAdapterHasNoWriteMethod(t *testing.T) {
 // pages back through a fake query, writes the same originals and page chain;
 // the production query refuses any document that is not a query.
 func TestRecordReplaysTheCaptureAndRefusesMutation(t *testing.T) {
+	t.Parallel()
+
 	man := readManifest(t, bundleDir)
 	byAfter := map[string]Page{}
 	for _, p := range man.Pages {
@@ -635,6 +649,8 @@ func TestRecordReplaysTheCaptureAndRefusesMutation(t *testing.T) {
 // into a file outside the bundle; it refuses, and the outside target keeps its
 // bytes (stella, nova-tools#3242).
 func TestRecordDoesNotFollowSymlinksOutOfTheBundle(t *testing.T) {
+	t.Parallel()
+
 	man := readManifest(t, bundleDir)
 	first := man.Pages[0]
 	var nodes []string
@@ -700,6 +716,8 @@ func TestRecordDoesNotFollowSymlinksOutOfTheBundle(t *testing.T) {
 // query callback, which runs between the check and the first write, cannot
 // redirect a single byte outside the bundle (stella, nova-tools#3242 hold 7).
 func TestRecordPinsTheBundleAgainstAParentSwap(t *testing.T) {
+	t.Parallel()
+
 	man := readManifest(t, bundleDir)
 	first := man.Pages[0]
 	var nodes []string

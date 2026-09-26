@@ -144,6 +144,8 @@ func TestRouteRefusalStillPersistsTheCall(t *testing.T) {
 // A refusal with no call behind it writes no usage row: there is nothing to
 // account for, and an empty row would be a claim that a call was made.
 func TestARefusalWithNoCallWritesNoUsage(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	usage := filepath.Join(dir, "usage.tsv")
 	log := filepath.Join(dir, "decide.jsonl")

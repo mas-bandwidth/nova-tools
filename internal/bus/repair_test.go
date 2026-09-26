@@ -383,6 +383,8 @@ func TestEmptyCmdlineDeadProcessDoesNotBlockLockCleanup(t *testing.T) {
 }
 
 func TestProcOwnsRequiresAPathBoundary(t *testing.T) {
+	t.Parallel()
+
 	names := []string{"/bus"}
 	if !procOwns(names, gitProc{command: "git -C /bus status"}) {
 		t.Fatal("git -C /bus should own /bus")

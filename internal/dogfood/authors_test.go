@@ -11,6 +11,8 @@ import (
 )
 
 func TestParseAuthorsReadsAMapping(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "authors.txt")
 	body := "# who wrote what\n\nnova-check links = Rowan\nnova-fuse lift quarantine =  Stella \n"
@@ -33,6 +35,8 @@ func TestParseAuthorsReadsAMapping(t *testing.T) {
 }
 
 func TestParseAuthorsRefusesALineItCannotRead(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct{ name, body, want string }{
 		{"no equals", "nova-check links Rowan\n", "`=`"},
 		{"empty name", "nova-check links =\n", "empty"},
@@ -59,6 +63,8 @@ func TestParseAuthorsRefusesALineItCannotRead(t *testing.T) {
 }
 
 func TestAuthorsFromGitTakesTheCommitThatIntroducedTheVerb(t *testing.T) {
+	t.Parallel()
+
 	var asked [][]string
 	run := func(ctx context.Context, dir string, args ...string) (string, error) {
 		asked = append(asked, args)
@@ -84,6 +90,8 @@ func TestAuthorsFromGitTakesTheCommitThatIntroducedTheVerb(t *testing.T) {
 }
 
 func TestAuthorsFromGitLeavesAVerbItCannotPlaceUnowned(t *testing.T) {
+	t.Parallel()
+
 	run := func(ctx context.Context, dir string, args ...string) (string, error) {
 		return "", exec.ErrNotFound
 	}
@@ -97,12 +105,16 @@ func TestAuthorsFromGitLeavesAVerbItCannotPlaceUnowned(t *testing.T) {
 }
 
 func TestAuthorsFromGitRefusesWithNoRepo(t *testing.T) {
+	t.Parallel()
+
 	if _, err := AuthorsFromGit(context.Background(), " ", verbs("nova-check links"), nil, nil); err == nil {
 		t.Fatal("an empty --repo was accepted; every path comes from a flag")
 	}
 }
 
 func TestAuthorsFromGitStopsOnADeadline(t *testing.T) {
+	t.Parallel()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	run := func(ctx context.Context, dir string, args ...string) (string, error) { return "Rowan\n", nil }
@@ -112,6 +124,8 @@ func TestAuthorsFromGitStopsOnADeadline(t *testing.T) {
 }
 
 func TestAuthorsFromGitReportsProgress(t *testing.T) {
+	t.Parallel()
+
 	var last int
 	run := func(ctx context.Context, dir string, args ...string) (string, error) { return "Rowan\n", nil }
 	_, err := AuthorsFromGit(context.Background(), "/repo",
@@ -130,6 +144,8 @@ func TestAuthorsFromGitReportsProgress(t *testing.T) {
 // this passes to git are the flags git actually accepts. Local only: nothing
 // in this package reaches the network.
 func TestAuthorsFromGitAgainstARealRepository(t *testing.T) {
+	t.Parallel()
+
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("no git on this machine")
 	}
@@ -188,6 +204,8 @@ func (c *fakeClock) now() time.Time       { return c.at }
 func (c *fakeClock) tick(d time.Duration) { c.at = c.at.Add(d) }
 
 func TestProgressSaysNothingOnARunThatAnswersAtOnce(t *testing.T) {
+	t.Parallel()
+
 	clock := &fakeClock{at: time.Date(2026, 9, 18, 9, 0, 0, 0, time.UTC)}
 	said := 0
 	progress := NewProgress(clock.now, 100*time.Millisecond, 2*time.Second, func(done, total int) { said++ })
@@ -201,6 +219,8 @@ func TestProgressSaysNothingOnARunThatAnswersAtOnce(t *testing.T) {
 }
 
 func TestProgressSpeaksUpOnARunThatLooksLikeAHangAndThenHoldsItsPace(t *testing.T) {
+	t.Parallel()
+
 	clock := &fakeClock{at: time.Date(2026, 9, 18, 9, 0, 0, 0, time.UTC)}
 	var said [][2]int
 	progress := NewProgress(clock.now, 100*time.Millisecond, 2*time.Second, func(done, total int) {
@@ -229,6 +249,8 @@ func TestProgressSpeaksUpOnARunThatLooksLikeAHangAndThenHoldsItsPace(t *testing.
 // field list and panic (nova-tools #3160). It is placed by the commit that
 // first added a file under cmd/<tool>, and a verb with words keeps its -S read.
 func TestAuthorsFromGitBareKey(t *testing.T) {
+	t.Parallel()
+
 	var calls [][]string
 	run := func(_ context.Context, _ string, args ...string) (string, error) {
 		calls = append(calls, append([]string(nil), args...))

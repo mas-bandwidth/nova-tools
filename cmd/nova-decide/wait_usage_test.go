@@ -55,6 +55,8 @@ func useFake(t *testing.T, f *fake) {
 // (R3) An unresolved timeout is a WAIT at the command line: the typed field on
 // the line, an exit that is not permission, and the owner still named.
 func TestRouteWaitIsTypedAndNotPermission(t *testing.T) {
+	t.Parallel()
+
 	log := filepath.Join(t.TempDir(), "decide.jsonl")
 	for name, args := range map[string][]string{
 		"ordinary": {"--kind", "fix-with-red-test", "--files", "3", "--packages", "1", "--attempt", "sol:timeout"},
@@ -102,6 +104,8 @@ func TestRouteWaitIsTypedAndNotPermission(t *testing.T) {
 
 // A decision that is not a wait still carries the field, and still exits 0.
 func TestRouteWithoutAWaitExitsZero(t *testing.T) {
+	t.Parallel()
+
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"route", "--no-jev", "--unit-id", "u", "--kind", "rebase", "--files", "2", "--packages", "1"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit = %d, want 0 (stderr=%q)", code, stderr.String())
@@ -205,6 +209,8 @@ func TestRouteWritesUsageForAFailedCall(t *testing.T) {
 // No call, no row: the rules alone spend nothing, and an empty usage file would
 // be a claim that a call was made.
 func TestRouteWritesNoUsageWithoutACall(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	usage := filepath.Join(dir, "usage.tsv")
 	var stdout, stderr bytes.Buffer

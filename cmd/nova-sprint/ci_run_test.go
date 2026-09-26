@@ -31,6 +31,8 @@ func ciGit(t *testing.T, dir string, args ...string) string {
 }
 
 func TestCIVerbRequestRunStatus(t *testing.T) {
+	t.Parallel()
+
 	addr := testutil.Start(t)
 	client := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = client.Close() })

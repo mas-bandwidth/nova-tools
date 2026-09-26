@@ -162,6 +162,8 @@ func TestRouteRefusesBeforeTheCallWhenTheStoreWillNotAnswer(t *testing.T) {
 // tokens: the counters are ABSENT on the entry and NULL in the fold, never 0.
 // The JSON lines log gets the same decision beside it.
 func TestRouteStoreWritesADecideEventTheFoldReads(t *testing.T) {
+	t.Parallel()
+
 	mr := miniredis.RunT(t)
 	log := filepath.Join(t.TempDir(), "decide.jsonl")
 

@@ -35,6 +35,8 @@ func generateTestManifest(repo string, count int) *CaptureManifest {
 }
 
 func TestInterruptionAndResumptionZeroDuplicates(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	repo := "mas-bandwidth/nova-tools"
 	totalCount := 80
@@ -134,6 +136,8 @@ func TestInterruptionAndResumptionZeroDuplicates(t *testing.T) {
 }
 
 func TestSourceMovementUpdate(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 	repo := "mas-bandwidth/nova-tools"
 	manifest := generateTestManifest(repo, 10)

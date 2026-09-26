@@ -16,6 +16,8 @@ import (
 
 // TestClampTimeout verifies that execution timeouts are strictly clamped to [5s, 2h].
 func TestClampTimeout(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name string
 		in   time.Duration
@@ -47,6 +49,8 @@ func TestClampTimeout(t *testing.T) {
 
 // TestClampTimeoutWithDefault verifies fallback to default timeout when raw duration is <= 0.
 func TestClampTimeoutWithDefault(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name       string
 		in         time.Duration
@@ -74,6 +78,8 @@ func TestClampTimeoutWithDefault(t *testing.T) {
 // TestTimeoutHierarchyConstruction verifies multi-tier hierarchy invariants:
 // CardTimeout >= StepTimeout >= GitTimeout.
 func TestTimeoutHierarchyConstruction(t *testing.T) {
+	t.Parallel()
+
 	t.Run("default hierarchy satisfies invariants", func(t *testing.T) {
 		h := DefaultTimeoutHierarchy()
 		if err := h.Validate(); err != nil {
@@ -147,6 +153,8 @@ func TestTimeoutHierarchyConstruction(t *testing.T) {
 
 // TestTimeoutHierarchyBudgets verifies dynamic step and git budget allocations.
 func TestTimeoutHierarchyBudgets(t *testing.T) {
+	t.Parallel()
+
 	h := NewTimeoutHierarchy(30*time.Minute, 5*time.Minute, 1*time.Minute)
 
 	t.Run("StepBudget", func(t *testing.T) {
@@ -189,6 +197,8 @@ func TestTimeoutHierarchyBudgets(t *testing.T) {
 
 // TestTimeoutHierarchyContexts verifies context creation and deadline propagation.
 func TestTimeoutHierarchyContexts(t *testing.T) {
+	t.Parallel()
+
 	h := NewTimeoutHierarchy(10*time.Second, 5*time.Second, 1*time.Second)
 
 	ctx, cancel := h.CardContext(context.Background())
@@ -216,6 +226,8 @@ func TestTimeoutHierarchyContexts(t *testing.T) {
 
 // TestTaskkillArgs verifies Windows taskkill argument construction.
 func TestTaskkillArgs(t *testing.T) {
+	t.Parallel()
+
 	pid := 4242
 
 	// Graceful tree termination (Phase 1 / SIGTERM equivalent)
@@ -235,6 +247,8 @@ func TestTaskkillArgs(t *testing.T) {
 
 // TestWindowsKillStrategyComparison tests the comparison between taskkill /T /F vs syscall.
 func TestWindowsKillStrategyComparison(t *testing.T) {
+	t.Parallel()
+
 	if StrategyTaskkill.String() != "taskkill" {
 		t.Errorf("StrategyTaskkill.String() = %q, want %q", StrategyTaskkill.String(), "taskkill")
 	}
@@ -264,6 +278,8 @@ func TestWindowsKillStrategyComparison(t *testing.T) {
 
 // TestTwoPhaseReapLifecycle tests the two-phase reap contract on the host system.
 func TestTwoPhaseReapLifecycle(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("Unix process group tests run under POSIX; Windows compatibility verified via TaskkillArgs & cross-compile")
 	}
@@ -319,6 +335,8 @@ func waitSignal(cmd *exec.Cmd) <-chan syscall.Signal {
 // TestTwoPhaseReapUnresponsiveChildKilledBySIGKILL tests that a process ignoring SIGTERM
 // is forcefully terminated by Phase 2 (SIGKILL) once the grace period expires.
 func TestTwoPhaseReapUnresponsiveChildKilledBySIGKILL(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("Unix process group tests run under POSIX")
 	}
@@ -373,6 +391,8 @@ func TestTwoPhaseReapUnresponsiveChildKilledBySIGKILL(t *testing.T) {
 
 // TestWindowsTreeReapFallback verifies that Windows taskkill vs syscall fallback functions correctly.
 func TestWindowsTreeReapFallback(t *testing.T) {
+	t.Parallel()
+
 	// Verify that unknown or dash stamps are rejected safely without signalling
 	if KnownStamp("") {
 		t.Errorf("KnownStamp(\"\") want false")

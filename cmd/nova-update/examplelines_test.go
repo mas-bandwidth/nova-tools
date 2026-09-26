@@ -26,6 +26,8 @@ import (
 // them. An in-process update.Main call would prove the arguments parse; it would not prove the command
 // a reader types exists, or that the fixture path in the banner resolves from a checkout root.
 func TestHelpExampleLinesRunAsPrinted(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("the block is pasted through `sh -c` and the fleet runs no windows leg for this binary")
 	}

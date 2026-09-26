@@ -43,6 +43,8 @@ func countingListener(t *testing.T) (string, *int64) {
 // stdout and exactly the standard one-line refusal, with no dial of the
 // named Redis; an unreachable Redis is the same shape after the flags.
 func TestDigestFlagsRefuseBeforeReading(t *testing.T) {
+	t.Parallel()
+
 	addr, accepts := countingListener(t)
 	pre := "nova-sprint digest: "
 	post := "; run: nova-sprint help\n"
@@ -110,6 +112,8 @@ func digestFixture(t *testing.T) string {
 // run's command against the fixture prints the documented output byte for
 // byte, and the documented first stumble prints its documented refusal.
 func TestDigestCLIReference(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "CLI.md"))
 	if err != nil {
 		t.Fatal(err)

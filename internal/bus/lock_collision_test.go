@@ -32,6 +32,8 @@ func (c *lockStepClock) waited() time.Duration { return c.now.Sub(c.start) }
 // encounters a transient collision during lock release/handover, lockFile waits out the window
 // and successfully acquires the lock.
 func TestLockFileTransientCollisionRecoversWhenWaitBudgetAllows(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	lockPath := filepath.Join(dir, "test.lock")
 
@@ -71,6 +73,8 @@ func TestLockFileTransientCollisionRecoversWhenWaitBudgetAllows(t *testing.T) {
 // lockFile retries until the wait budget expires, never enters the critical section, and returns
 // the real underlying error without falsely asserting ErrLockHeld or claiming another process is running.
 func TestLockFilePersistentCollisionPreservesActualErrorAndDoesNotFalselyAssertLockHeld(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	lockPath := filepath.Join(dir, "test.lock")
 
@@ -114,6 +118,8 @@ func TestLockFilePersistentCollisionPreservesActualErrorAndDoesNotFalselyAssertL
 // TestLockFileImmediateNonblockingRejectsCollisionImmediately verifies that with wait=0,
 // a collision error returns immediately with the real error rather than waiting or claiming ErrLockHeld.
 func TestLockFileImmediateNonblockingRejectsCollisionImmediately(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	lockPath := filepath.Join(dir, "test.lock")
 
@@ -150,6 +156,8 @@ func TestLockFileImmediateNonblockingRejectsCollisionImmediately(t *testing.T) {
 // when another run actually holds the lock (clean contention, no underlying error), lockFile
 // returns ErrLockHeld immediately.
 func TestLockFileImmediateNonblockingCleanContentionReturnsLockHeld(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	lockPath := filepath.Join(dir, "test.lock")
 
@@ -181,6 +189,8 @@ func TestLockFileImmediateNonblockingCleanContentionReturnsLockHeld(t *testing.T
 // cannot be opened because its parent directory does not exist, lockFile fails immediately
 // at the primary OpenFile, never invoking the try operation.
 func TestLockFileNegativeControlMissingParentFailsAtOpen(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	lockPath := filepath.Join(dir, "missing-dir", "test.lock")
 

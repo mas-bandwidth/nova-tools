@@ -472,6 +472,8 @@ func TestFleetConfigRefusesZero(t *testing.T) {
 // TestFleetOneWriter is a grep class test: bench:*:state and bench:*:hold are written only in fleet.lua,
 // and cfg:fleet only by ns_fleet_config.
 func TestFleetOneWriter(t *testing.T) {
+	t.Parallel()
+
 	source, err := fn.Source()
 	if err != nil {
 		t.Fatalf("fn.Source(): %v", err)

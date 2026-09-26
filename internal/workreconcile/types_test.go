@@ -6,6 +6,8 @@ import (
 )
 
 func TestMintUID(t *testing.T) {
+	t.Parallel()
+
 	seen := make(map[string]bool)
 	for i := 0; i < 5000; i++ {
 		uid, err := MintUID()
@@ -27,6 +29,8 @@ func TestMintUID(t *testing.T) {
 }
 
 func TestStoreOperations(t *testing.T) {
+	t.Parallel()
+
 	store := NewStore()
 
 	node1 := &WorkNode{

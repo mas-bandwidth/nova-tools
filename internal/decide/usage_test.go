@@ -14,6 +14,8 @@ import (
 // spent, and nothing is not zero -- while an explicitly reported zero IS a
 // measurement and must survive as one.
 func TestUsagePresenceIsPerField(t *testing.T) {
+	t.Parallel()
+
 	for name, tc := range map[string]struct {
 		body      string
 		wantIn    bool
@@ -68,6 +70,8 @@ func TestUsagePresenceIsPerField(t *testing.T) {
 // The presence travels through the route and into the log row: an absent
 // counter is an ABSENCE there too, and an explicit zero is a zero.
 func TestRouteCarriesUsagePresence(t *testing.T) {
+	t.Parallel()
+
 	reg := testRegistry(t)
 	u := Unit{ID: "u", Kind: KindNewVerb, Files: 3, Packages: 1, Lanes: 1}
 
@@ -139,6 +143,8 @@ func threeRungRegistry(t *testing.T) *Registry {
 // result carries the usage and the refusal, so the caller can persist both
 // before it exits.
 func TestUsageSurvivesARoutingRefusal(t *testing.T) {
+	t.Parallel()
+
 	reg := threeRungRegistry(t)
 	u := Unit{ID: "u-ref", Kind: KindRebase, Files: 2, Packages: 1, Attempts: []Attempt{
 		{Rung: "low", Outcome: OutcomeFailed, Reason: "the card rung missed it"},
@@ -167,6 +173,8 @@ func TestUsageSurvivesARoutingRefusal(t *testing.T) {
 
 // A refusal the rules reach on their own carries no call, and says so.
 func TestARulesRefusalCarriesNoCall(t *testing.T) {
+	t.Parallel()
+
 	reg := twoRungRegistry(t)
 	u := Unit{ID: "u-top", Kind: KindRebase, Files: 2, Packages: 1, Attempts: []Attempt{
 		{Rung: "low", Outcome: OutcomeFailed, Reason: "r"},

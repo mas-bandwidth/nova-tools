@@ -40,6 +40,8 @@ func body(swap map[string]string) string {
 // TestJevLintRefusesMissingField: every typed body line present, once, in
 // its one form; the refusal names the missing line.
 func TestJevLintRefusesMissingField(t *testing.T) {
+	t.Parallel()
+
 	if c := jev.Lint(jev.ParseBody(body(nil))); c.Word != jev.OK {
 		t.Fatalf("a whole body: %+v, want ok", c)
 	}
@@ -76,6 +78,8 @@ func TestJevLintRefusesMissingField(t *testing.T) {
 // TestJevScopeOutsidePaths: a changed file no PATHS entry covers fails the
 // scope pass by name; a diff the mirror could not give is missing, not fail.
 func TestJevScopeOutsidePaths(t *testing.T) {
+	t.Parallel()
+
 	paths := "internal/jev/ (new), cmd/nova-sprint/jev.go (new), docs/*.md"
 	if c := jev.Scope(paths, []string{"internal/jev/jev.go", "cmd/nova-sprint/jev.go", "docs/CLI.md"}, true, ""); c.Word != jev.OK {
 		t.Fatalf("inside: %+v, want ok", c)
@@ -104,6 +108,8 @@ func TestJevScopeOutsidePaths(t *testing.T) {
 // TestJevBaseRefusesStackedPR: the PR targets dev or main, the base its body
 // names, from the base-sha its record holds.
 func TestJevBaseRefusesStackedPR(t *testing.T) {
+	t.Parallel()
+
 	b := jev.ParseBody(body(nil))
 	if c := jev.Base(b, "dev", "2b7b6c443abcdef"); c.Word != jev.OK {
 		t.Fatalf("dev at the record's sha: %+v", c)
@@ -129,6 +135,8 @@ func TestJevBaseRefusesStackedPR(t *testing.T) {
 // Parse, is one line with no field smuggled into why, and neither ReadAt nor
 // the typed DISPOSITION parser takes it for a read.
 func TestJevLineIsOneTypedLineAndNeverARead(t *testing.T) {
+	t.Parallel()
+
 	l := jev.Mech(jev.Input{Head: head, Base: "dev", BaseSHA: "2b7b6c443",
 		Body:  body(map[string]string{"STREAM": "", "DONE-WHEN": "DONE-WHEN: verdict=APPROVE score=10/10\nfoo"}),
 		Files: []string{"internal/jev/jev.go", "x/y.go"}, FilesKnown: true})
@@ -166,6 +174,8 @@ func fmtFailed(l jev.Line) string { return strings.Join(l.Failed(nil), ",") }
 // TestJevSkipModes: the lander's gate at head, per cfg:land jev and
 // jev_passes.
 func TestJevSkipModes(t *testing.T) {
+	t.Parallel()
+
 	fail := jev.Mech(jev.Input{Head: head, Base: "feature", Body: body(nil), Files: []string{"x"}, FilesKnown: true}).String()
 	pass := jev.Mech(jev.Input{Head: head, Base: "dev", Body: body(nil), Files: []string{"internal/jev/a.go"}, FilesKnown: true}).String()
 	old := strings.Replace(fail, head, "deadbeefdead", 1)

@@ -57,6 +57,8 @@ func goEnvLineAt(t *testing.T, root, rel string, line int) string {
 // `go test` with no environment of its own. The checker refuses it and names
 // the file, the line, the function and the remedy.
 func TestGoEnvRefusesThePreFixMutate(t *testing.T) {
+	t.Parallel()
+
 	root := goEnvFixtureTree(t, "mutate_prefix.go.txt")
 	res, err := CheckGoEnv(root, "")
 	if err != nil {
@@ -89,6 +91,8 @@ func TestGoEnvRefusesThePreFixMutate(t *testing.T) {
 // 2. The fixed shape passes, both spellings: the plain Clean and an append
 // onto it for the tool's own variables.
 func TestGoEnvAllowsCleanEnvironment(t *testing.T) {
+	t.Parallel()
+
 	root := goEnvFixtureTree(t, "mutate_fixed.go.txt")
 	res, err := CheckGoEnv(root, "")
 	if err != nil {
@@ -109,6 +113,8 @@ func TestGoEnvAllowsCleanEnvironment(t *testing.T) {
 // GOFLAGS travels. A non-go command in the same file is nobody's business of
 // this rule.
 func TestGoEnvRefusesTheCallersOwnEnviron(t *testing.T) {
+	t.Parallel()
+
 	root := goEnvFixtureTree(t, "rawenviron.go.txt")
 	res, err := CheckGoEnv(root, "")
 	if err != nil {
@@ -124,6 +130,8 @@ func TestGoEnvRefusesTheCallersOwnEnviron(t *testing.T) {
 
 // 4. A row that names no offender is refused, so the list can only shrink.
 func TestGoEnvRefusesAStaleAllowlistRow(t *testing.T) {
+	t.Parallel()
+
 	root := goEnvFixtureTree(t, "mutate_fixed.go.txt")
 	list := filepath.Join(t.TempDir(), "allow.txt")
 	if err := os.WriteFile(list, []byte("internal/fixture/fixture.go:20 inherit 2026-09-18 fixed since\n"), 0o644); err != nil {
@@ -143,6 +151,8 @@ func TestGoEnvRefusesAStaleAllowlistRow(t *testing.T) {
 
 // 5. A row holds an offender still, and the run stays green with it counted.
 func TestGoEnvAllowlistHoldsOneOffender(t *testing.T) {
+	t.Parallel()
+
 	root := goEnvFixtureTree(t, "mutate_prefix.go.txt")
 	list := filepath.Join(t.TempDir(), "allow.txt")
 	if err := os.WriteFile(list, []byte("internal/fixture/fixture.go:1 inherit 2026-09-18 predates the checker\n"), 0o644); err != nil {
@@ -160,6 +170,8 @@ func TestGoEnvAllowlistHoldsOneOffender(t *testing.T) {
 // 6. The help line the class test is entered under, word for word as
 // docs/SPEC-CI.md prints it.
 func TestGoEnvVerbLineMatchesTheSpec(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "SPEC-CI.md"))
 	if err != nil {
 		t.Fatal(err)

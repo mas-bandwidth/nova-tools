@@ -16,6 +16,8 @@ import (
 // request` calls), idempotent on the sha and with no GitHub call; a head
 // already requested is EXISTS and its record is left as it was.
 func TestHarvestRequestsCIForTheHead(t *testing.T) {
+	t.Parallel()
+
 	c := startRedis(t)
 	st := store.New(c)
 	ctx := context.Background()
@@ -78,6 +80,8 @@ func TestHarvestRequestsCIForTheHead(t *testing.T) {
 // pass finishes it from the PR record (no second PR, no GitHub) and requests
 // the head then.
 func TestHarvestCIRefusalLeavesCardForNextPass(t *testing.T) {
+	t.Parallel()
+
 	c := startRedis(t)
 	st := store.New(c)
 	ctx := context.Background()

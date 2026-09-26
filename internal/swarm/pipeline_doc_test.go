@@ -12,6 +12,8 @@ import (
 // red here before any implementation is trusted. This reads the doc the way
 // internal/decide's doc test reads SPEC-DECIDE.md.
 func TestSpecSwarmNamesTheCardPipeline(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-SWARM.md"))
 	if err != nil {
 		t.Fatalf("SPEC-SWARM.md is missing: %s", err)

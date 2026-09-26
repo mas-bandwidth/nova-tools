@@ -12,6 +12,8 @@ import (
 )
 
 func TestParseRole(t *testing.T) {
+	t.Parallel()
+
 	for raw, want := range map[string]string{"": "fleet", "fleet": "fleet", "friends": "friends", " friends ": "friends"} {
 		got, err := benchrole.Parse(raw)
 		if err != nil || got != want {
@@ -32,6 +34,8 @@ func TestParseRole(t *testing.T) {
 }
 
 func TestRefusedIsOneLineExitOne(t *testing.T) {
+	t.Parallel()
+
 	var err error = benchrole.Refused("studio", "friends", "no CI claim on a friends bench")
 	var re *benchrole.Error
 	if !errors.As(err, &re) || re.ExitCode() != 1 {
@@ -45,6 +49,8 @@ func TestRefusedIsOneLineExitOne(t *testing.T) {
 }
 
 func TestListReadsTheRoleColumn(t *testing.T) {
+	t.Parallel()
+
 	addr := testutil.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = c.Close() })

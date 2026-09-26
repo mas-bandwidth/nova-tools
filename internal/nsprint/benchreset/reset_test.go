@@ -84,6 +84,8 @@ func seedResetCards(t *testing.T, c *redis.Client, states ...string) []Card {
 }
 
 func TestBenchResetRequeuesInFlight(t *testing.T) {
+	t.Parallel()
+
 	t.Run("requeue", func(t *testing.T) {
 		c := resetRedis(t)
 		cards := seedResetCards(t, c, "dealt", "launched", "running")
@@ -300,6 +302,8 @@ func fakeBench(t *testing.T, novaSprint string) string {
 // the real bench-side stdout must parse. No `nova-card` group with these
 // identities exists, so every card answers GONE and nothing is signalled.
 func TestRemoteStopperDrivesRealCardStop(t *testing.T) {
+	t.Parallel()
+
 	bin := filepath.Join(t.TempDir(), "nova-sprint")
 	build := exec.Command("go", "build", "-o", bin, "github.com/mas-bandwidth/nova-tools/cmd/nova-sprint")
 	build.Env = goenv.Clean(os.Environ())
@@ -344,6 +348,8 @@ exec %q "$@" 2>%q
 // the ALIVE card stays running, and the record is held with why=alive:1, not
 // an ssh failure.
 func TestBenchResetAliveRequeuesSiblings(t *testing.T) {
+	t.Parallel()
+
 	c := resetRedis(t)
 	cards := seedResetCards(t, c, "running", "running")
 	ctx := context.Background()
@@ -379,6 +385,8 @@ exit 0
 // instead of reporting fenced and leaving it running (#3589 rowan hold 2,
 // item 5).
 func TestBenchResetBeatErrorHolds(t *testing.T) {
+	t.Parallel()
+
 	c := resetRedis(t)
 	seedResetCards(t, c, "running")
 	ctx, cancel := context.WithCancel(context.Background())

@@ -15,6 +15,8 @@ import (
 // is removed with one ws:log receipt each, while every real card keeps its
 // views; the next walk finds nothing.
 func TestFsckDutyRemovesMembersNotACard(t *testing.T) {
+	t.Parallel()
+
 	w := newGhWorld(t)
 	const s = "live-4054"
 	w.open(t, s, 1)

@@ -16,6 +16,8 @@ import (
 // text, so a missing phrase is a red test and a phrase removed by a later edit is
 // red again.
 func TestSchedulingCostSpec175(t *testing.T) {
+	t.Parallel()
+
 	// Whitespace is normalised so a phrase may wrap a source line the way the
 	// rest of this spec wraps at the margin, without the wrap making the test red.
 	spec := strings.Join(strings.Fields(readFile(t, filepath.Join(repoRoot(t), "docs", "SPEC-WORK.md"))), " ")

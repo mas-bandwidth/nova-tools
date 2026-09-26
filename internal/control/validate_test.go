@@ -8,6 +8,8 @@ import (
 )
 
 func TestValidateState(t *testing.T) {
+	t.Parallel()
+
 	now := time.Now().UTC()
 	exp := now.Add(10 * time.Second)
 
@@ -87,6 +89,8 @@ func TestValidateState(t *testing.T) {
 }
 
 func TestValidateUpdate_NonRUNMustNotExpire(t *testing.T) {
+	t.Parallel()
+
 	now := time.Now().UTC()
 	exp := now.Add(10 * time.Second)
 	next := control.State{
@@ -103,6 +107,8 @@ func TestValidateUpdate_NonRUNMustNotExpire(t *testing.T) {
 }
 
 func TestValidateAck(t *testing.T) {
+	t.Parallel()
+
 	now := time.Now().UTC()
 
 	// Valid ack

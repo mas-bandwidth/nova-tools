@@ -32,6 +32,8 @@ import (
 // `FAKE-AWAIT-NOTE` until this test writes `<job>/note`, so the overlap window is exactly
 // as long as the assertions take and no run here waits on a chosen number of seconds.
 func TestASecondNativeRunInOneJobDirectoryIsRefusedAndTheFirstIsUntouched(t *testing.T) {
+	t.Parallel()
+
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	const label = "shared-label"
@@ -133,6 +135,8 @@ func awaitLease(t *testing.T, path string) string {
 // one line with a remedy, BEFORE it has written anything into the shared place: no data
 // home, no temp directory, no harness output, no argv for the wall.
 func TestANativeRunThatCannotEstablishOwnershipRefusesBeforeItWritesAnything(t *testing.T) {
+	t.Parallel()
+
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	const label = "unownable"
