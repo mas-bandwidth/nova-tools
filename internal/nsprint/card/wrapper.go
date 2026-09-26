@@ -756,10 +756,21 @@ func finish(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger, rep *W
 // before the card runs: `NATIVE REFUSED: <reason>` on its stderr, exit 2.
 const NativeRefusedMark = "NATIVE REFUSED"
 
+// HarnessRefusedMark is what the harness itself writes when it refuses the
+// card before native runs: `REFUSED <why> for <card>` in its own log (run.go
+// step 1 and 2 refusals, and the wrapper's receipt line `REFUSED card run
+// ... code=2`), exit 2. It is read only from the harness's own logs, never
+// from native's output, where the word may be the model's (#4234).
+const HarnessRefusedMark = "REFUSED "
+
 // refusalSources are the files, relative to the job dir, that NativeRefusal
 // reads, in order: the harness's own output, then what the bench harness
 // keeps of native's stderr and stdout and its own log under the out dir.
-var refusalSources = []string{"harness.log", "out/native.err", "out/native.out", "out/harness.log"}
+// own marks the harness's own logs, where HarnessRefusedMark counts too.
+var refusalSources = []struct {
+	rel string
+	own bool
+}{{"harness.log", true}, {"out/native.err", false}, {"out/native.out", false}, {"out/harness.log", true}}
 
 // refusalTail is how much of each source's end NativeRefusal reads.
 const refusalTail = 64 << 10
@@ -768,15 +779,35 @@ const refusalTail = 64 << 10
 // line in refusalSources carrying NativeRefusedMark, from the mark on (a
 // leading log stamp is dropped). ok is false when no source holds one.
 func NativeRefusal(job string) (line string, ok bool) {
-	for _, rel := range refusalSources {
-		if line, ok := refusalIn(filepath.Join(job, filepath.FromSlash(rel))); ok {
+	for _, src := range refusalSources {
+		if line, ok := refusalIn(filepath.Join(job, filepath.FromSlash(src.rel)), src.own); ok {
 			return line, true
 		}
 	}
 	return "", false
 }
 
-func refusalIn(path string) (string, bool) {
+// refusalLine is the refusal a log line carries, from its mark on: the native
+// mark anywhere, or, in the harness's own log, HarnessRefusedMark at the
+// start of the line or right after one log stamp.
+func refusalLine(text string, own bool) (string, bool) {
+	if i := strings.Index(text, NativeRefusedMark); i >= 0 {
+		return strings.TrimSpace(text[i:]), true
+	}
+	if !own {
+		return "", false
+	}
+	i := strings.Index(text, HarnessRefusedMark)
+	if i < 0 {
+		return "", false
+	}
+	if lead := strings.TrimSpace(text[:i]); lead != "" && strings.ContainsAny(lead, " \t") {
+		return "", false
+	}
+	return strings.TrimSpace(text[i:]), true
+}
+
+func refusalIn(path string, own bool) (string, bool) {
 	f, err := os.Open(path)
 	if err != nil {
 		return "", false
@@ -794,8 +825,8 @@ func refusalIn(path string) (string, bool) {
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 4096), refusalTail+1)
 	for sc.Scan() {
-		if i := strings.Index(sc.Text(), NativeRefusedMark); i >= 0 {
-			return strings.TrimSpace(sc.Text()[i:]), true
+		if line, ok := refusalLine(sc.Text(), own); ok {
+			return line, true
 		}
 	}
 	return "", false

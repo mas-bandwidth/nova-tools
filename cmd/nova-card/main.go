@@ -75,7 +75,9 @@ The bench configures it through the environment the launcher runs in:
   NOVA_CARD_HARNESS  absolute path of a harness program; unset, the Go
                      harness runs in-process (nova-sprint card run, #3681)
                      from NOVA_CARD_HARNESS_BIN, NOVA_CARD_DEADLINE,
-                     NOVA_CARD_TOKENS and HOME
+                     NOVA_CARD_TOKENS and HOME. A copy (nova-card copy)
+                     always runs in-process; a program named here is not
+                     read for it (#4234)
   NOVA_CARD_JOBS     absolute root of job dirs (<root>/<S>/<label>/<attempt>)
   NOVA_CARD_RESULTS  absolute root of results (<root>/<identity>)
   NOVA_CARD_CLOCK    the card clock, a Go duration (45m)
@@ -290,6 +292,24 @@ func config(l launch.Line, getenv func(string) string) (card.WrapperConfig, erro
 	return cfg, nil
 }
 
+// copyConfig is a consumer copy's wrapper configuration (#4234). The copy
+// protocol (the card rendered from task:<copy>, run.go) lives in the Go
+// harness alone, so a copy always runs in-process, whatever program
+// NOVA_CARD_HARNESS names: that program is a launched card's, and reads
+// s:<S>:card:<label>, which no copy has. batman and superman kept a stale
+// card.env naming the retired bash harness (fleet converge never reached the
+// darwin pair after 2026-09-24), and it ended every copy of the 100-card
+// quack run in under a second: REFUSED no payload_sha on
+// s:copies:card:<label>, exit 2, recorded as a bare "crash".
+func copyConfig(l launch.Line, getenv func(string) string) (card.WrapperConfig, error) {
+	return config(l, func(k string) string {
+		if k == "NOVA_CARD_HARNESS" {
+			return ""
+		}
+		return getenv(k)
+	})
+}
+
 // RefusedLogKind is the sprint-log kind of a wrapper refusal record (#3420).
 // It wakes no reconciler pass (reconcile.Classify reads "card " and "task "
 // kinds only): the card is still dealt, and the refusal is evidence only.
@@ -392,12 +412,15 @@ func runCopy(id string, stdin io.Reader, stdout, stderr io.Writer, getenv func(s
 		return refuse(stderr, err.Error())
 	}
 	l := launch.Line{Sprint: card.CopySprint, Label: card.CopyCardLabel(id), Attempt: n}
-	cfg, err := config(l, getenv)
+	cfg, err := copyConfig(l, getenv)
 	if err != nil {
 		ack("REFUSED " + err.Error())
 		rep := card.WrapperReport{Code: card.WrapperExitUsage, Card: id, Why: err.Error()}
 		fmt.Fprintln(stdout, rep.Line())
 		return card.WrapperExitUsage
+	}
+	if p := getenv("NOVA_CARD_HARNESS"); p != "" {
+		fmt.Fprintf(stderr, "nova-card: copy %s runs the Go harness in-process; NOVA_CARD_HARNESS=%s is a launched card's program, not a copy's (#4234)\n", id, oneline.Escape(p))
 	}
 	cfg.Copy = id
 	ctx := context.Background()
