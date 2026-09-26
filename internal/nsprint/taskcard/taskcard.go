@@ -564,6 +564,47 @@ func Fsck(ctx context.Context, c redis.Cmdable, sprint string) (FsckResult, erro
 	return r, nil
 }
 
+// FnSentinels is ns_tcard_sentinels: every registered stream without a
+// waiting, parked or landed sentinel (#4318), created with write.
+const FnSentinels = "ns_tcard_sentinels"
+
+// Sentinels is one stream and its missing sentinel id.
+type Sentinels struct {
+	Missing []Stop // streams without a live or landed sentinel, in rank order
+	Created int64  // sentinels created or restarted (write only)
+}
+
+// Stop is one stream's sentinel.
+type Stop struct{ Stream, ID string }
+
+// SentinelsWalk lists every registered stream without a live or landed
+// sentinel; with write it creates (or restarts) each through registration,
+// the task fsck --repair step.
+func SentinelsWalk(ctx context.Context, c redis.Cmdable, write bool) (Sentinels, error) {
+	w := "0"
+	if write {
+		w = "1"
+	}
+	reply, err := c.FCall(ctx, FnSentinels, nil, w).Result()
+	if err != nil {
+		return Sentinels{}, fmt.Errorf("%s: %w", FnSentinels, err)
+	}
+	out, err := list(reply)
+	if err != nil || len(out) < 3 || out[0] != "SENTINELS" {
+		return Sentinels{}, fmt.Errorf("%s: unexpected reply %v %v", FnSentinels, out, err)
+	}
+	n, _ := strconv.ParseInt(out[1], 10, 64)
+	r := Sentinels{}
+	r.Created, _ = strconv.ParseInt(out[2], 10, 64)
+	if int64(len(out)-3) != 2*n {
+		return Sentinels{}, fmt.Errorf("%s: unexpected reply %v", FnSentinels, out)
+	}
+	for i := 3; i+1 < len(out); i += 2 {
+		r.Missing = append(r.Missing, Stop{Stream: out[i], ID: out[i+1]})
+	}
+	return r, nil
+}
+
 // Member is one task a stream merge landed: its id, its PR or issue
 // (repo#n) and origin (the URL it came from), what the lander closes with
 // the CLOSE line.

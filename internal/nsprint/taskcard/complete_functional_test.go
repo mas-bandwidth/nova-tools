@@ -157,7 +157,7 @@ func TestWaitingCardIsCompleteForFriendOrSwarm(t *testing.T) {
 			toBatman = append(toBatman, id)
 		}
 	}
-	if n := c.ZCard(ctx, taskcard.StreamKeyAt(0, cardStream, "waiting")).Val(); n != 102 {
+	if n := wsCards(c, cardStream, "waiting"); n != 102 {
 		t.Fatalf("waiting = %d, want 102", n)
 	}
 	trips := &roundTrips{}
@@ -198,7 +198,7 @@ func TestWaitingCardIsCompleteForFriendOrSwarm(t *testing.T) {
 			t.Errorf("%s ready copies = %d, want 50", x, n)
 		}
 	}
-	if n := c.ZCard(ctx, taskcard.StreamKeyAt(0, cardStream, "waiting")).Val(); n != 2 {
+	if n := wsCards(c, cardStream, "waiting"); n != 2 {
 		t.Errorf("waiting after the deal = %d, want 2", n)
 	}
 	if n := c.ZCard(ctx, taskcard.StreamKeyAt(0, cardStream, "working")).Val(); n != 100 {

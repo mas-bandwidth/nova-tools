@@ -138,7 +138,7 @@ func TestTableTickMakesNoRestCall(t *testing.T) {
 	if !keys["ZCARD ws:fleet, ci, secrets, jev:review"] {
 		t.Fatal("the tick never read the review cell of fleet, ci, secrets, jev")
 	}
-	allowed := map[string]bool{"ZRANGE": true, "ZCARD": true, "SMEMBERS": true, "EXISTS": true, "XRANGE": true, "HGETALL": true, "HGET": true, "HMGET": true, "ZCOUNT": true, "EVAL": true, "EVALSHA": true, "EVAL_RO": true}
+	allowed := map[string]bool{"ZRANGE": true, "ZCARD": true, "ZSCORE": true, "SMEMBERS": true, "EXISTS": true, "XRANGE": true, "HGETALL": true, "HGET": true, "HMGET": true, "ZCOUNT": true, "EVAL": true, "EVALSHA": true, "EVAL_RO": true}
 	names, _ := log.reset()
 	if len(names) == 0 {
 		t.Fatal("no commands logged")

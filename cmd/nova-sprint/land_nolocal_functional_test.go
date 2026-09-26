@@ -77,7 +77,8 @@ func TestLandRefusesLocalTestOnCoordinator(t *testing.T) {
 	if n := goTests(); n != 0 {
 		t.Fatalf("%d local go test invocations, want 0", n)
 	}
-	if n, _ := c.ZCard(ctx, "ws:"+lsStream+":landed").Result(); n != 3 {
-		t.Fatalf("landed %d, want 3", n)
+	// the three members and the stream's stop, landed by structure with the last (#4318)
+	if n, _ := c.ZCard(ctx, "ws:"+lsStream+":landed").Result(); n != 4 {
+		t.Fatalf("landed %d, want 3 and the stop", n)
 	}
 }

@@ -8,15 +8,15 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/benchrole"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/redis/go-redis/v9"
 )
 
-func keyCard(sprint, label string) string  { return "s:" + sprint + ":card:" + label }
-func keyLog(sprint string) string          { return "s:" + sprint + ":log" }
-func keyIdx(sprint, state string) string   { return "s:" + sprint + ":idx:card:" + state }
-func keyTask(sprint, id string) string     { return "task:" + id }
-func keyStream(sprint, slug string) string { return "s:" + sprint + ":stream:" + slug }
+func keyCard(sprint, label string) string { return "s:" + sprint + ":card:" + label }
+func keyLog(sprint string) string         { return "s:" + sprint + ":log" }
+func keyIdx(sprint, state string) string  { return "s:" + sprint + ":idx:card:" + state }
+func keyTask(sprint, id string) string    { return "task:" + id }
 
 // Push is PushWith under no options.
 func Push(ctx context.Context, client *redis.Client, sprint string, body []byte) VerbResult {
@@ -221,8 +221,6 @@ func queueDependencyReads(ctx context.Context, pipe redis.Pipeliner, sprint stri
 			reads[i] = pipe.HGetAll(ctx, keyCard(sprint, dep.Value))
 		case dependencyTask:
 			reads[i] = pipe.HGetAll(ctx, keyTask(sprint, dep.Value))
-		case dependencyStream:
-			reads[i] = pipe.HGetAll(ctx, keyStream(sprint, dep.Value))
 		}
 	}
 	return reads
@@ -246,7 +244,7 @@ func dependenciesReady(sprint string, deps []dependency, reads []*redis.MapStrin
 		if dep.Kind == dependencyTask && deadTaskState(fields["state"]) {
 			return false, fmt.Errorf("DEPENDS-ON: task:%s is %s in sprint %s and will never finish", dep.Value, fields["state"], sprint)
 		}
-		if !localDependencyReady(dep.Kind, fields) {
+		if !localDependencyReady(dep, fields) {
 			ready = false
 		}
 	}
@@ -260,9 +258,10 @@ func dependenciesReady(sprint string, deps []dependency, reads []*redis.MapStrin
 func missingDependency(sprint string, dep dependency) error {
 	switch dep.Kind {
 	case dependencyTask:
+		if ws.IsSentinel(dep.Value) {
+			return fmt.Errorf("DEPENDS-ON: %s has no record %s: no stream with that slug is registered (nova-sprint stream ls)", dep.Value, keyTask(sprint, dep.Value))
+		}
 		return fmt.Errorf("DEPENDS-ON: task:%s has no record %s in sprint %s", dep.Value, keyTask(sprint, dep.Value), sprint)
-	case dependencyStream:
-		return fmt.Errorf("DEPENDS-ON: stream/%s has no record %s in sprint %s", dep.Value, keyStream(sprint, dep.Value), sprint)
 	}
 	return fmt.Errorf("DEPENDS-ON: %s is not a card in sprint %s", dep.Value, sprint)
 }
@@ -274,17 +273,23 @@ func deadTaskState(state string) bool {
 	return state == "cancelled" || state == "reconcile-required"
 }
 
-func localDependencyReady(kind dependencyKind, fields map[string]string) bool {
-	switch kind {
+func localDependencyReady(dep dependency, fields map[string]string) bool {
+	switch dep.Kind {
 	case dependencyCard:
 		if fields["state"] == "landed" && shaRE.MatchString(fields["merge_sha"]) {
 			return true
 		}
 		return fields["state"] == "ended" && fields["outcome"] == "DONE" && fields["pushed_sha"] == ""
 	case dependencyTask:
-		return fields["state"] == "closed" || fields["state"] == "done"
-	case dependencyStream:
-		return fields["state"] == "landed"
+		// a stream's sentinel (#4318) is met by its landing alone: its done
+		// is a rename's, never a landing
+		if ws.IsSentinel(dep.Value) {
+			return fields["state"] == "landed" || fields["where"] == "landed"
+		}
+		// a task record (task:<id>, the one task store): closed or done, or
+		// landed by its where
+		return fields["state"] == "closed" || fields["state"] == "done" || fields["state"] == "landed" ||
+			fields["where"] == "landed" || (fields["where"] == "done" && fields["where_ok"] != "fail")
 	}
 	return false
 }

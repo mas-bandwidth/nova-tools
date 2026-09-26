@@ -120,9 +120,13 @@ func ParseDevTip(out string) (string, bool) {
 	return f[0], true
 }
 
-// PlayArgv is the fleet play for version, narrowed to limit when given.
+// PlayArgv is the fleet play for version (none when "": the play's own
+// declared build), narrowed to limit when given.
 func PlayArgv(play, version string, limit []string) []string {
-	argv := []string{"ansible-playbook", "-i", PlayInventory, play, "--forks", fmt.Sprint(PlayForks), "--diff", "-e", "nova_build=" + version}
+	argv := []string{"ansible-playbook", "-i", PlayInventory, play, "--forks", fmt.Sprint(PlayForks), "--diff"}
+	if version != "" {
+		argv = append(argv, "-e", "nova_build="+version)
+	}
 	if len(limit) > 0 {
 		argv = append(argv, "--limit", strings.Join(limit, ","))
 	}

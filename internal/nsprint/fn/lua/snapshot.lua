@@ -82,6 +82,14 @@ local function append_row(out, bucket, name, sprints, now_ms)
   if missing == 1 then why[#why + 1] = 'missing: desired' end
   if up == 0 then why[#why + 1] = 'down: beat' end
   if stale > 0 then why[#why + 1] = 'stale: lease lapsed' end
+  if bucket == 'bench' then
+    -- bench:<b>:play (fleet play, #4356): a play that stopped in a role left
+    -- the bench half converged; result failed:<role> is printed as behind.
+    local play = redis.call('HGET', 'bench:' .. name .. ':play', 'result')
+    if play and string.sub(play, 1, 7) == 'failed:' then
+      why[#why + 1] = 'behind: ' .. string.sub(play, 8)
+    end
+  end
   if bucket == 'friend' then
     -- friend:<f>:state (out-of-credits from the keeper, down from the
     -- redistribute tick, #3047) is printed on the row it describes.

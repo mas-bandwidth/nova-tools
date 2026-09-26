@@ -59,8 +59,9 @@ func TestCardPushAcceptsEveryDependsOnForm(t *testing.T) {
 	parent := validCard(repo)
 	parent.label = "dep-parent"
 	mustPush(t, ctx, client, parent.render(), "pool")
-	// Task and stream records must exist at push; open ones park the card.
-	client.HSet(ctx, "s:"+sprint+":stream:nova-pulse", "state", "open")
+	// Task and sentinel records must exist at push; open ones park the card
+	// (stream/<slug> is the stream's sentinel, task:<slug>:sentinel, #4318).
+	client.HSet(ctx, "task:nova-pulse:sentinel", "state", "waiting", "where", "waiting", "stream", "nova pulse")
 	client.HSet(ctx, "task:build-index", "state", "open")
 
 	cases := []struct {
@@ -71,7 +72,7 @@ func TestCardPushAcceptsEveryDependsOnForm(t *testing.T) {
 	}{
 		{label: "dep-none", dep: "none", place: "pool", typed: ""},
 		{label: "dep-github", dep: "mas-bandwidth/nova-tools#3476", place: "waiting", typed: "github:mas-bandwidth/nova-tools#3476"},
-		{label: "dep-stream", dep: "stream/nova-pulse", place: "waiting", typed: "stream:nova-pulse"},
+		{label: "dep-stream", dep: "stream/nova-pulse", place: "waiting", typed: "task:nova-pulse:sentinel"},
 		{label: "dep-task", dep: "task:build-index", place: "waiting", typed: "task:build-index"},
 		{label: "dep-card", dep: "dep-parent", place: "waiting", typed: "card:dep-parent"},
 	}
@@ -156,7 +157,9 @@ func TestCardReleaseFreesOnClosedIssueLandedStreamAndDoneCard(t *testing.T) {
 	client := newRedis(t)
 	srv := repoServer(t)
 	repo := srv.URL + "/acme/public.git"
-	client.HSet(ctx, "s:"+sprint+":stream:nova-pulse", "state", "open")
+	// stream/nova-pulse is the stream's sentinel (#4318): waiting parks the
+	// card, landed frees it
+	client.HSet(ctx, "task:nova-pulse:sentinel", "state", "waiting", "where", "waiting", "stream", "nova pulse")
 
 	for _, tc := range []struct {
 		label string
@@ -175,7 +178,7 @@ func TestCardReleaseFreesOnClosedIssueLandedStreamAndDoneCard(t *testing.T) {
 		f.label, f.depends = tc.label, tc.dep
 		mustPush(t, ctx, client, f.render(), "waiting")
 	}
-	client.HSet(ctx, "s:"+sprint+":stream:nova-pulse", "state", "landed")
+	client.HSet(ctx, "task:nova-pulse:sentinel", "state", "landed", "where", "landed")
 	client.HSet(ctx, keyCard("done-without-pr"), "state", "ended", "outcome", "DONE", "pushed_sha", "")
 	refs := newDependsRefs()
 	refs.set("mas-bandwidth/nova-tools#3503", deal.Ref{State: "closed"})
@@ -223,7 +226,7 @@ func TestCardPushRefusesUnknownTaskAndStream(t *testing.T) {
 		{label: "unknown-task-child", dep: "task:missing-task",
 			want: "DEPENDS-ON: task:missing-task has no record task:missing-task in sprint " + sprint},
 		{label: "unknown-stream-child", dep: "stream/missing-stream",
-			want: "DEPENDS-ON: stream/missing-stream has no record s:" + sprint + ":stream:missing-stream in sprint " + sprint},
+			want: "DEPENDS-ON: missing-stream:sentinel has no record task:missing-stream:sentinel: no stream with that slug is registered (nova-sprint stream ls)"},
 	} {
 		t.Run(tc.label, func(t *testing.T) {
 			if tc.seed != "" {

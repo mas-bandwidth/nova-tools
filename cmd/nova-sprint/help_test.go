@@ -73,7 +73,7 @@ var helpCases = [][]string{
 	{"verbs", "unused"},
 	{"why"}, {"width"},
 	{"worker", "pause"}, {"worker", "resume"}, {"worker", "show"},
-	{"ws", "counts"}, {"ws", "checkpoint"},
+	{"ws", "counts"}, {"ws", "checkpoint"}, {"ws", "show"},
 }
 
 // ownHelp is the verbs whose hand-written usage answers -h, with the exit
