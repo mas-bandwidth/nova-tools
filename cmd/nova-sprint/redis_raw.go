@@ -35,8 +35,13 @@ func init() {
 const redisRawWants = "wants [--seat <name>] [--redis <host:port>] [--] <redis command...>, for example: nova-sprint --seat coordinator redis ZCARD sprint:S:cards"
 
 func cmdRedisRaw(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	return redisRaw(ctx, seatcred.Process(), os.Getenv, args, stdout, stderr)
+}
+
+// redisRaw is the verb as sel's seat, its address default read from getenv.
+func redisRaw(ctx context.Context, sel *seatcred.Selection, getenv func(string) string, args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New("redis")
-	addr := fs.String("redis", rawAddrDefault(), "redis address (the seat's row, else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR)")
+	addr := fs.String("redis", rawAddrDefault(sel, getenv), "redis address (the seat's row, else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then NOVA_REDIS)")
 	if err := fs.Parse(args); err != nil {
 		return refuse(stderr, "redis", redisRawWants)
 	}
@@ -48,13 +53,13 @@ func cmdRedisRaw(ctx context.Context, args []string, stdout, stderr io.Writer) i
 		return refuse(stderr, "redis", "no address: pass --seat <name> with a seats.tsv row, --redis <host:port>, or set NOVA_SPRINT_REDIS; "+redisRawWants)
 	}
 	who := "seat=none"
-	if c, ok, err := seatcred.Active(); ok {
+	if c, ok, err := sel.Active(); ok {
 		if err != nil {
 			return refuse(stderr, "redis", err.Error())
 		}
 		who = c.String()
 	}
-	st, err := store.Open(ctx, *addr)
+	st, err := store.OpenSeat(ctx, *addr, sel)
 	if err != nil {
 		return refuse(stderr, "redis", err.Error())
 	}
@@ -75,12 +80,12 @@ func cmdRedisRaw(ctx context.Context, args []string, stdout, stderr io.Writer) i
 
 // rawAddrDefault is the seat's row address, else the environment's, without
 // the loopback fallback: a raw command never goes to a Redis nobody named.
-func rawAddrDefault() string {
-	if a := seatcred.Addr(); a != "" {
+func rawAddrDefault(sel *seatcred.Selection, getenv func(string) string) string {
+	if a := sel.Addr(); a != "" {
 		return a
 	}
 	for _, k := range seatAddrEnvs {
-		if v := os.Getenv(k); v != "" {
+		if v := getenv(k); v != "" {
 			return v
 		}
 	}

@@ -36,13 +36,13 @@ func TestLoadProfileNamesTheFile(t *testing.T) {
 	if _, err := seatcred.LoadProfile(path, "coordinator", "/h"); !errors.Is(err, seatcred.ErrNoProfileRow) || !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), seatcred.ProfileColumns) {
 		t.Fatalf("missing file: %v; want ErrNoProfileRow naming %s and the columns", err, path)
 	}
-	good := "# fleet play\n\ncoordinator\t10.0.0.1:6380\tcoordinator\tNOVA_REDIS_COORDINATOR_PASSWORD\t~/nova-bench/secrets\t~/.config/nova-secrets/studio.key\n" +
-		"bench\t10.0.0.1:6380\tbench\tNOVA_REDIS_BENCH_PASSWORD\t/s\t/k/air.key\r\n"
+	good := "# fleet play\n\ncoordinator\tredis.invalid:6380\tcoordinator\tNOVA_REDIS_COORDINATOR_PASSWORD\t~/nova-bench/secrets\t~/.config/nova-secrets/studio.key\n" +
+		"bench\tredis.invalid:6380\tbench\tNOVA_REDIS_BENCH_PASSWORD\t/s\t/k/air.key\r\n"
 	if err := os.WriteFile(path, []byte(good), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	p, err := seatcred.LoadProfile(path, "coordinator", "/h")
-	want := seatcred.Profile{Name: "coordinator", Addr: "10.0.0.1:6380", User: "coordinator", SecretEnv: "NOVA_REDIS_COORDINATOR_PASSWORD", Store: "/h/nova-bench/secrets", Key: "/h/.config/nova-secrets/studio.key"}
+	want := seatcred.Profile{Name: "coordinator", Addr: "redis.invalid:6380", User: "coordinator", SecretEnv: "NOVA_REDIS_COORDINATOR_PASSWORD", Store: "/h/nova-bench/secrets", Key: "/h/.config/nova-secrets/studio.key"}
 	if err != nil || p != want || p.AsName() != "studio" {
 		t.Fatalf("LoadProfile = %+v %v; want %+v as studio", p, err, want)
 	}
@@ -54,7 +54,7 @@ func TestLoadProfileNamesTheFile(t *testing.T) {
 	}
 
 	for _, c := range []struct{ row, why string }{
-		{"coordinator\t10.0.0.1:6380\tcoordinator", "3 columns"},
+		{"coordinator\tredis.invalid:6380\tcoordinator", "3 columns"},
 		{"bad/name\th:1\tu\tK\t/s\t/k/a.key", "name"},
 		{"c\tnoport\tu\tK\t/s\t/k/a.key", "redis addr"},
 		{"c\th:1\t\tK\t/s\t/k/a.key", "redis user"},
@@ -83,44 +83,50 @@ func TestLoadProfileNamesTheFile(t *testing.T) {
 // the row's user, with the password held under the row's secret env, from the
 // seat file its key names -- nothing from the default layout.
 func TestResolveProfileReadsTheRowsSecret(t *testing.T) {
+	t.Parallel()
+
 	const pw = "profile-test-pw-4330"
 	home := seattest.Home(t, "studio", map[string]string{"NOVA_REDIS_COORDINATOR_PASSWORD": pw, "NOVA_REDIS_BENCH_PASSWORD": "not-this-one"})
-	seattest.Env(t, home)
+	// Nothing from the environment: the row names the store and key, and
+	// sops is the one on PATH.
+	noenv := func(string) string { return "" }
 	p := seatcred.Profile{
 		Name: "coordinator", Addr: "h:1", User: "coordinator", SecretEnv: "NOVA_REDIS_COORDINATOR_PASSWORD",
 		Store: filepath.Join(home, seatcred.DefaultStore), Key: filepath.Join(home, seatcred.DefaultKeyDir, "studio.key"),
 	}
-	c, err := seatcred.ResolveProfile(p, os.Getenv)
+	c, err := seatcred.ResolveProfile(p, noenv)
 	if err != nil || c.Seat != "coordinator" || c.User != "coordinator" || c.Key != p.SecretEnv || !same(c, pw) {
 		t.Fatalf("ResolveProfile = %v %v; want coordinator with the coordinator password", c, err)
 	}
 	p.SecretEnv = "NOVA_REDIS_GHOST_PASSWORD"
-	if _, err := seatcred.ResolveProfile(p, os.Getenv); err == nil || !strings.Contains(err.Error(), "NOVA_REDIS_GHOST_PASSWORD") || !strings.Contains(err.Error(), "--as studio") || strings.Contains(err.Error(), pw) {
+	if _, err := seatcred.ResolveProfile(p, noenv); err == nil || !strings.Contains(err.Error(), "NOVA_REDIS_GHOST_PASSWORD") || !strings.Contains(err.Error(), "--as studio") || strings.Contains(err.Error(), pw) {
 		t.Fatalf("absent secret env: %v; want a refusal naming the key and the seal remedy", err)
 	}
 	p.Key = filepath.Join(home, "nowhere.key")
-	if _, err := seatcred.ResolveProfile(p, os.Getenv); err == nil || !strings.Contains(err.Error(), "seat coordinator") {
+	if _, err := seatcred.ResolveProfile(p, noenv); err == nil || !strings.Contains(err.Error(), "seat coordinator") {
 		t.Fatalf("key for a seat the store lacks: %v", err)
 	}
 }
 
 func TestSelectWithResolvesThroughTheGivenFunc(t *testing.T) {
-	t.Cleanup(func() { seatcred.Select("") })
+	t.Parallel()
+
+	var sel seatcred.Selection
 	calls := 0
-	seatcred.SelectWith("coordinator", "h:1", func(s string) (seatcred.Cred, error) {
+	sel.SelectWith("coordinator", "h:1", func(s string) (seatcred.Cred, error) {
 		calls++
 		return seatcred.Cred{Seat: s, User: "u"}, nil
 	})
 	for i := 0; i < 2; i++ {
-		if c, ok, err := seatcred.Active(); !ok || err != nil || c.User != "u" {
+		if c, ok, err := sel.Active(); !ok || err != nil || c.User != "u" {
 			t.Fatalf("Active = %v %v %v", c, ok, err)
 		}
 	}
-	if calls != 1 || seatcred.Addr() != "h:1" {
-		t.Fatalf("resolved %d times with addr %q, want once with h:1", calls, seatcred.Addr())
+	if calls != 1 || sel.Addr() != "h:1" || sel.Selected() != "coordinator" {
+		t.Fatalf("resolved %d times with addr %q seat %q, want once with h:1 as coordinator", calls, sel.Addr(), sel.Selected())
 	}
-	seatcred.Select("")
-	if _, ok, _ := seatcred.Active(); ok || seatcred.Addr() != "" {
+	sel.Select("")
+	if _, ok, _ := sel.Active(); ok || sel.Addr() != "" {
 		t.Fatal("Select(\"\") left a seat or its address selected")
 	}
 }

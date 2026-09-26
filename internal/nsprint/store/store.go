@@ -36,11 +36,11 @@ const (
 	DefaultPasswordEnv = redisauth.DefaultPasswordEnv
 )
 
-func authFromEnv() (user, password string, err error) {
+func authFromEnv(sel *seatcred.Selection) (user, password string, err error) {
 	// A seat given by --seat or NOVA_SEAT (nova-tools#4052) is read through
 	// nova-secrets' library in this process: its login wins, and the password
 	// goes to the client in memory, never into this process's environment.
-	if c, ok, err := seatcred.Active(); ok {
+	if c, ok, err := sel.Active(); ok {
 		if err != nil {
 			return "", "", err
 		}
@@ -102,7 +102,13 @@ func isNoAuth(err error) bool {
 }
 
 func Open(ctx context.Context, addr string) (*Store, error) {
-	return open(ctx, addr, 0)
+	return open(ctx, addr, 0, seatcred.Process())
+}
+
+// OpenSeat is Open as sel's seat instead of this process's (nova-tools#4330):
+// a caller holding its own seatcred.Selection, such as a parallel test.
+func OpenSeat(ctx context.Context, addr string, sel *seatcred.Selection) (*Store, error) {
+	return open(ctx, addr, 0, sel)
 }
 
 // OpenSingle is Open with a pool of exactly one connection, for a long-lived
@@ -110,18 +116,19 @@ func Open(ctx context.Context, addr string) (*Store, error) {
 // authenticated connection, and a broken one is redialed by the same client
 // on the next command.
 func OpenSingle(ctx context.Context, addr string) (*Store, error) {
-	return open(ctx, addr, 1)
+	return open(ctx, addr, 1, seatcred.Process())
 }
 
-func open(ctx context.Context, addr string, poolSize int) (*Store, error) {
+// open dials as sel's seat, else the environment's. With no addr it dials the
+// address sel's seat profile row names (nova-tools#4330).
+func open(ctx context.Context, addr string, poolSize int, sel *seatcred.Selection) (*Store, error) {
 	if addr == "" {
-		// A seat's profile row names its Redis (nova-tools#4330).
-		addr = seatcred.Addr()
+		addr = sel.Addr()
 	}
 	if addr == "" {
 		return nil, fmt.Errorf("redis address is required")
 	}
-	user, password, err := authFromEnv()
+	user, password, err := authFromEnv(sel)
 	if err != nil {
 		return nil, err
 	}

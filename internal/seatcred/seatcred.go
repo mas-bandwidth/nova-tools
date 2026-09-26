@@ -123,72 +123,103 @@ func Resolve(seat string, getenv func(string) string) (Cred, error) {
 	return Cred{}, fmt.Errorf("seat %s: %s holds no %s; seal it with nova-secrets seal --as %s --name %s", seat, sf.Path, strings.Join(want, " or "), seat, want[0])
 }
 
-// The process's seat. Select records it; Active resolves it once.
-var (
+// Selection is a seat choice: Select records it, Active resolves it once.
+// The process has one (Process), which the package functions act on; a test
+// holds its own so it runs in parallel with every other (nova-tools#4330).
+type Selection struct {
 	mu       sync.Mutex
 	selected string
 	resolved bool
 	cred     Cred
 	credErr  error
 	addr     string
-	resolver = defaultResolver
-)
+	resolver func(seat string) (Cred, error)
+}
+
+var process Selection
+
+// Process is this process's seat selection.
+func Process() *Selection { return &process }
 
 func defaultResolver(seat string) (Cred, error) { return Resolve(seat, os.Getenv) }
 
 // Select makes seat this process's seat ("" is none) and forgets any earlier
 // resolution. Nothing is decrypted until Active is first asked.
-func Select(seat string) { SelectWith(seat, "", nil) }
+func Select(seat string) { process.Select(seat) }
+
+// SelectWith is Select with the seat's Redis address; see Selection.SelectWith.
+func SelectWith(seat, redisAddr string, resolve func(seat string) (Cred, error)) {
+	process.SelectWith(seat, redisAddr, resolve)
+}
+
+// Addr is this process's seat's Redis address; see Selection.Addr.
+func Addr() string { return process.Addr() }
+
+// Selected is the seat Select recorded, "" when none.
+func Selected() string { return process.Selected() }
+
+// Active is this process's seat's login; see Selection.Active.
+func Active() (Cred, bool, error) { return process.Active() }
+
+// FromArgs selects this process's seat from args; see Selection.FromArgs.
+func FromArgs(args []string, getenv func(string) string) ([]string, error) {
+	return process.FromArgs(args, getenv)
+}
+
+// Select makes seat the selection ("" is none) and forgets any earlier
+// resolution.
+func (s *Selection) Select(seat string) { s.SelectWith(seat, "", nil) }
 
 // SelectWith is Select with the seat's Redis address (Addr, "" when the seat
 // names none) and the resolution Active runs on first use: resolve (a seat
 // profile row, nova-tools#4330) instead of Resolve's default layout. A nil
 // resolve is Resolve.
-func SelectWith(seat, redisAddr string, resolve func(seat string) (Cred, error)) {
-	mu.Lock()
-	defer mu.Unlock()
-	if resolve == nil {
-		resolve = defaultResolver
-	}
-	selected, resolved, cred, credErr, addr, resolver = strings.TrimSpace(seat), false, Cred{}, nil, redisAddr, resolve
+func (s *Selection) SelectWith(seat, redisAddr string, resolve func(seat string) (Cred, error)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.selected, s.resolved, s.cred, s.credErr, s.addr, s.resolver = strings.TrimSpace(seat), false, Cred{}, nil, redisAddr, resolve
 }
 
 // Addr is the selected seat's Redis address from its profile row, "" when no
 // seat is selected or its row names none: the address a store dial falls back
 // to when its caller names none.
-func Addr() string {
-	mu.Lock()
-	defer mu.Unlock()
-	return addr
+func (s *Selection) Addr() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.addr
 }
 
 // Selected is the seat Select recorded, "" when none.
-func Selected() string {
-	mu.Lock()
-	defer mu.Unlock()
-	return selected
+func (s *Selection) Selected() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.selected
 }
 
 // Active is the selected seat's login, resolved on first use and kept for the
-// life of the process. ok is false when no seat is selected: the caller then
+// life of the selection. ok is false when no seat is selected: the caller then
 // authenticates as it did before (its own environment variables).
-func Active() (c Cred, ok bool, err error) {
-	mu.Lock()
-	defer mu.Unlock()
-	if selected == "" {
+func (s *Selection) Active() (c Cred, ok bool, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.selected == "" {
 		return Cred{}, false, nil
 	}
-	if !resolved {
-		cred, credErr = resolver(selected)
-		resolved = true
+	if !s.resolved {
+		resolve := s.resolver
+		if resolve == nil {
+			resolve = defaultResolver
+		}
+		s.cred, s.credErr = resolve(s.selected)
+		s.resolved = true
 	}
-	return cred, true, credErr
+	return s.cred, true, s.credErr
 }
 
 // FromArgs takes --seat <name> or --seat=<name> out of args (only before a
 // "--", which ends a tool's own flags), selects that seat or else getenv's
 // NOVA_SEAT, and returns the rest. A --seat with no name is an error.
-func FromArgs(args []string, getenv func(string) string) ([]string, error) {
+func (s *Selection) FromArgs(args []string, getenv func(string) string) ([]string, error) {
 	seat, flagged := "", false
 	rest := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
@@ -216,7 +247,7 @@ func FromArgs(args []string, getenv func(string) string) ([]string, error) {
 	if !flagged && getenv != nil {
 		seat = getenv(SeatEnv)
 	}
-	Select(seat)
+	s.Select(seat)
 	return rest, nil
 }
 

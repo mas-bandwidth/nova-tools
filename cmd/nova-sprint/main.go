@@ -18,6 +18,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 	"github.com/mas-bandwidth/nova-tools/internal/sprinttable"
 )
 
@@ -85,7 +86,7 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 	// "--": every verb reads its Redis login from that seat through
 	// nova-secrets' library (#4052), and its address and user from the seat's
 	// row in seats.tsv (#4330, seat.go).
-	args, err := selectSeat(args, os.Getenv, os.Setenv)
+	args, err := selectSeat(seatcred.Process(), args, os.Getenv, os.Setenv)
 	if err != nil {
 		return refuse(stderr, "", err.Error())
 	}

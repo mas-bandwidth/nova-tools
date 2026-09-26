@@ -5,26 +5,32 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
-	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 	"github.com/mas-bandwidth/nova-tools/internal/seatcred/seattest"
 	"github.com/redis/go-redis/v9"
 )
 
 // TestSeatRowDrivesVerbsWithNoWrapper is #4330's DONE-WHEN on a throwaway
-// fleet-shaped Redis (default user off): `nova-sprint --seat coordinator
-// table` and `nova-sprint --seat coordinator redis <cmd>` run with no user or
-// password in the environment and no wrapper -- the row in seats.tsv names
-// the login (and, for redis, the address), the seat's file the password. A
-// row for a user the ACL restricts prints Redis's refusal.
+// fleet-shaped Redis (default user off). The built nova-sprint runs with an
+// environment of PATH, HOME and XDG_CONFIG_HOME only -- no address, user or
+// password, no wrapper: `--seat coordinator table`, and `redis <cmd>` under
+// NOVA_SPRINT_SEAT with no address on the line, take the login (and the
+// address) from the seat's row in seats.tsv and the password from the seat's
+// file. A row for a user the ACL restricts prints Redis's refusal, and a seat
+// with no row is refused naming seats.tsv.
 func TestSeatRowDrivesVerbsWithNoWrapper(t *testing.T) {
+	t.Parallel()
+
 	const pw, rpw = "row-coord-test-pw-4330", "row-reader-test-pw-4330"
 	home := seattest.Home(t, "studio", map[string]string{"NOVA_REDIS_COORDINATOR_PASSWORD": pw, "NOVA_REDIS_READER_PASSWORD": rpw})
 	addr := testutil.Start(t, "--user", "default", "off",
@@ -35,60 +41,68 @@ func TestSeatRowDrivesVerbsWithNoWrapper(t *testing.T) {
 	if err := fn.Load(context.Background(), c); err != nil {
 		t.Fatal(err)
 	}
-	seattest.Env(t, home)
-	for _, k := range append([]string{SprintSeatEnv, store.PasswordEnvEnv, store.DefaultPasswordEnv, "NOVA_REDIS_COORDINATOR_PASSWORD", "REDISCLI_AUTH"}, seatAddrEnvs...) {
-		t.Setenv(k, "")
-	}
 	xdg := filepath.Join(home, "xdg")
-	t.Setenv("XDG_CONFIG_HOME", xdg)
 	row := func(name, user string) string {
 		return name + "\t" + addr + "\t" + user + "\tNOVA_REDIS_" + strings.ToUpper(user) + "_PASSWORD\t~/nova-bench/secrets\t~/.config/nova-secrets/studio.key\n"
 	}
 	if err := os.MkdirAll(filepath.Join(xdg, "nova-sprint"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(xdg, "nova-sprint", "seats.tsv"), []byte(row("coordinator", "coordinator")+row("reader", "reader")), 0o600); err != nil {
+	seats := filepath.Join(xdg, "nova-sprint", "seats.tsv")
+	if err := os.WriteFile(seats, []byte(row("coordinator", "coordinator")+row("reader", "reader")), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	var out, errOut bytes.Buffer
-	if code := run([]string{"--seat", "coordinator", "table", "--redis", addr, "--once"}, &out, &errOut); code != 0 || strings.TrimSpace(out.String()) == "" {
-		t.Fatalf("--seat coordinator table: exit %d stderr %s", code, errOut.String())
+	bin := filepath.Join(t.TempDir(), "nova-sprint")
+	if runtime.GOOS == "windows" {
+		bin += ".exe"
 	}
-	assertNoPassword(t, pw, out.String(), errOut.String())
+	build := exec.Command("go", "build", "-o", bin, ".")
+	build.Env = goenv.Clean(os.Environ())
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build ./cmd/nova-sprint: %v\n%s", err, out)
+	}
+	ns := func(extra []string, args ...string) (int, string, string) {
+		cmd := exec.Command(bin, args...)
+		cmd.Env = append([]string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "XDG_CONFIG_HOME=" + xdg}, extra...)
+		var out, errOut bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &out, &errOut
+		err := cmd.Run()
+		code := 0
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			code = ee.ExitCode()
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		for _, s := range []string{out.String(), errOut.String()} {
+			if strings.Contains(s, pw) || strings.Contains(s, rpw) {
+				t.Fatal("a password was printed")
+			}
+		}
+		return code, out.String(), errOut.String()
+	}
 
-	t.Setenv(SprintSeatEnv, "coordinator")
-	for _, k := range seatAddrEnvs {
-		os.Unsetenv(k)
+	if code, out, errOut := ns(nil, "--seat", "coordinator", "table", "--redis", addr, "--once"); code != 0 || strings.TrimSpace(out) == "" {
+		t.Fatalf("--seat coordinator table: exit %d stderr %s", code, errOut)
 	}
-	out.Reset()
-	errOut.Reset()
-	if code := run([]string{"redis", "SET", "seat:probe", "v1"}, &out, &errOut); code != 0 || out.String() != "OK\n" || !strings.Contains(errOut.String(), "REDIS seat=coordinator user=coordinator") {
-		t.Fatalf("NOVA_SPRINT_SEAT redis SET: exit %d stdout %q stderr %q", code, out.String(), errOut.String())
+	if code, _, errOut := ns(nil, "table", "--redis", addr, "--once"); code == 0 || !strings.Contains(errOut, "NOAUTH") {
+		t.Fatalf("table with no seat: exit %d stderr %q; want NOAUTH, so the seat is what logged in", code, errOut)
 	}
-	out.Reset()
-	errOut.Reset()
-	if code := run([]string{"redis", "--", "HMGET", "nokey", "a"}, &out, &errOut); code != 0 || out.String() != "\n" {
-		t.Fatalf("redis HMGET: exit %d stdout %q stderr %q", code, out.String(), errOut.String())
+	seatEnv := []string{SprintSeatEnv + "=coordinator"}
+	if code, out, errOut := ns(seatEnv, "redis", "SET", "seat:probe", "v1"); code != 0 || out != "OK\n" || !strings.Contains(errOut, "REDIS seat=coordinator user=coordinator") {
+		t.Fatalf("NOVA_SPRINT_SEAT redis SET: exit %d stdout %q stderr %q", code, out, errOut)
 	}
-	t.Setenv(SprintSeatEnv, "")
-
-	out.Reset()
-	errOut.Reset()
-	if code := run([]string{"--seat", "reader", "redis", "GET", "seat:probe"}, &out, &errOut); code != 0 || out.String() != "v1\n" {
-		t.Fatalf("reader GET: exit %d stdout %q stderr %q", code, out.String(), errOut.String())
+	if code, out, errOut := ns(seatEnv, "redis", "--", "HMGET", "nokey", "a"); code != 0 || out != "\n" {
+		t.Fatalf("redis HMGET: exit %d stdout %q stderr %q", code, out, errOut)
 	}
-	out.Reset()
-	errOut.Reset()
-	if code := run([]string{"--seat", "reader", "redis", "SET", "seat:probe", "v2"}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "REDIS REFUSED seat=reader") || !strings.Contains(errOut.String(), "NOPERM") {
-		t.Fatalf("reader SET: exit %d stderr %q; want 1 and the NOPERM refusal printed", code, errOut.String())
+	if code, out, errOut := ns(nil, "--seat", "reader", "redis", "GET", "seat:probe"); code != 0 || out != "v1\n" {
+		t.Fatalf("reader GET: exit %d stdout %q stderr %q", code, out, errOut)
 	}
-	assertNoPassword(t, rpw, out.String(), errOut.String())
-
-	out.Reset()
-	errOut.Reset()
-	if code := run([]string{"--seat", "ghost", "redis", "--redis", addr, "PING"}, &out, &errOut); code != 2 || !strings.Contains(errOut.String(), filepath.Join(xdg, "nova-sprint", "seats.tsv")) {
-		t.Fatalf("ghost seat: exit %d stderr %q; want 2 naming seats.tsv", code, errOut.String())
+	if code, _, errOut := ns(nil, "--seat", "reader", "redis", "SET", "seat:probe", "v2"); code != 1 || !strings.Contains(errOut, "REDIS REFUSED seat=reader") || !strings.Contains(errOut, "NOPERM") {
+		t.Fatalf("reader SET: exit %d stderr %q; want 1 and the NOPERM refusal printed", code, errOut)
 	}
-	seatcred.Select("")
+	if code, _, errOut := ns(nil, "--seat", "ghost", "redis", "--redis", addr, "PING"); code != 2 || !strings.Contains(errOut, seats) {
+		t.Fatalf("ghost seat: exit %d stderr %q; want 2 naming %s", code, errOut, seats)
+	}
 }

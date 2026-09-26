@@ -31,11 +31,12 @@ const SprintSeatEnv = "NOVA_SPRINT_SEAT"
 // from; a seat row sets all three.
 var seatAddrEnvs = []string{"NOVA_SPRINT_REDIS", "NOVA_REDIS_ADDR", "NOVA_REDIS"}
 
-// selectSeat takes --seat out of args, selects the seat, and when the seat
+// selectSeat takes --seat out of args, selects the seat in sel (the process's
+// seatcred.Process() from main), and when the seat
 // has a profile row points the verbs' address defaults at its Redis. A
 // malformed profile is refused here, before any verb runs.
-func selectSeat(args []string, getenv func(string) string, setenv func(k, v string) error) ([]string, error) {
-	rest, err := seatcred.FromArgs(args, func(k string) string {
+func selectSeat(sel *seatcred.Selection, args []string, getenv func(string) string, setenv func(k, v string) error) ([]string, error) {
+	rest, err := sel.FromArgs(args, func(k string) string {
 		if k == seatcred.SeatEnv {
 			if v := getenv(SprintSeatEnv); v != "" {
 				return v
@@ -46,7 +47,7 @@ func selectSeat(args []string, getenv func(string) string, setenv func(k, v stri
 	if err != nil {
 		return nil, err
 	}
-	seat := seatcred.Selected()
+	seat := sel.Selected()
 	if seat == "" {
 		return rest, nil
 	}
@@ -60,7 +61,7 @@ func selectSeat(args []string, getenv func(string) string, setenv func(k, v stri
 	if errors.Is(err, seatcred.ErrNoProfileRow) {
 		// The #4052 seat, named by the refusal when it does not open either.
 		rowErr := err
-		seatcred.SelectWith(seat, "", func(s string) (seatcred.Cred, error) {
+		sel.SelectWith(seat, "", func(s string) (seatcred.Cred, error) {
 			c, err := seatcred.Resolve(s, getenv)
 			if err != nil {
 				return c, fmt.Errorf("%v; and as a nova-secrets seat: %w", rowErr, err)
@@ -77,6 +78,6 @@ func selectSeat(args []string, getenv func(string) string, setenv func(k, v stri
 			return nil, fmt.Errorf("seat %s: cannot set %s: %v", seat, k, err)
 		}
 	}
-	seatcred.SelectWith(seat, p.Addr, func(string) (seatcred.Cred, error) { return seatcred.ResolveProfile(p, getenv) })
+	sel.SelectWith(seat, p.Addr, func(string) (seatcred.Cred, error) { return seatcred.ResolveProfile(p, getenv) })
 	return rest, nil
 }
