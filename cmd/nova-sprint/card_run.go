@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
@@ -35,39 +34,57 @@ func runCard(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return cardUsage(stderr, "", "wants cut, push, release, stop, show, run, launched, beat, or end")
 	}
 	sub := args[0]
+	return runCardAttempt(ctx, sub, args[1:], stdout, stderr)
+}
+
+// runCardAttempt is the bench attempt form of card launched, beat and end
+// (the s:<S>:card model): `card <verb> --sprint <S> --ids <label> --token <t>
+// ...`, one flag set under the one grammar (#4352 A; the label was a
+// positional). end and beat with --sprint are this form; without it they are
+// the table moves (card_moves.go).
+func runCardAttempt(ctx context.Context, sub string, args []string, stdout, stderr io.Writer) int {
 	want, ok := cardWant(sub)
 	if !ok {
 		return cardUsage(stderr, "unknown verb "+sub, "wants cut, push, release, stop, show, run, launched, beat, or end")
 	}
-	verbflag.HelpIfAsked(args[1:], "card "+sub, cardFlagNames(sub)...)
-	flags, pos, err := parseCardArgs(args[1:])
-	if err != nil {
+	fs := verbflag.New("card " + sub)
+	redisAddr := fs.String("redis", redisDefault(), verbflag.HelpRedis)
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
+	ids := fs.String("ids", "", verbflag.HelpIDs)
+	token := fs.String("token", "", "the attempt's token, from the launch")
+	branch, jobdir, outcome, why, results := new(string), new(string), new(string), new(string), new(string)
+	switch sub {
+	case "launched":
+		branch = fs.String("branch", "", "the branch the attempt works on")
+		jobdir = fs.String("jobdir", "", "the attempt's job directory on the bench")
+	case "end":
+		outcome = fs.String("outcome", "", "DONE, ABSTAIN, BLOCKED or FAILED")
+		why = fs.String("why", "", verbflag.HelpWhy)
+		results = fs.String("results", "", "the results directory, a Unix absolute path on the bench")
+	}
+	if err := fs.Parse(args); err != nil {
 		return cardUsage(stderr, err.Error(), want)
 	}
-	if a := redisOr(flags["redis"]); a != "" {
-		flags["redis"] = a // the seat's address when --redis is absent (#4330)
+	if fs.NArg() > 0 {
+		return cardUsage(stderr, "takes flags, not positional arguments", want)
 	}
-	if len(pos) != 1 {
-		return cardUsage(stderr, "wants one label", want)
+	label := oneID(*ids)
+	if label == "" {
+		return cardUsage(stderr, "wants --ids <label>, one label", want)
 	}
-	label := pos[0]
-	for _, name := range cardFlagNames(sub) {
-		if flags[name] == "" {
-			return cardUsage(stderr, "missing --"+name, want)
+	for _, f := range []struct{ name, v string }{{"redis", *redisAddr}, {"sprint", *sprint}, {"token", *token},
+		{"branch", *branch}, {"jobdir", *jobdir}, {"outcome", *outcome}, {"why", *why}, {"results", *results}} {
+		if f.v == "" && cardFlagAllowed(sub, f.name) {
+			return cardUsage(stderr, "missing --"+f.name, want)
 		}
 	}
-	for name := range flags {
-		if !cardFlagAllowed(sub, name) {
-			return cardUsage(stderr, "unknown flag --"+name, want)
-		}
-	}
-	if sub == "end" && !card.AbsResults(flags["results"]) {
+	if sub == "end" && !card.AbsResults(*results) {
 		// #3329: results is the card hash field harvest pushes from; it is
 		// absolute so no reader needs a root typed on its argv.
-		return cardUsage(stderr, "--results "+flags["results"]+" is relative or not a Unix path",
+		return cardUsage(stderr, "--results "+*results+" is relative or not a Unix path",
 			"results must be a Unix absolute path on the bench (leading /, no //, no backslash, no ..; the card hash field s:<S>:card:<label> results); "+want)
 	}
-	st, err := store.Open(ctx, flags["redis"])
+	st, err := store.Open(ctx, *redisAddr)
 	if err != nil {
 		fmt.Fprintln(stdout, (card.Result{Code: 6, Verb: "card " + sub, ID: label, Reason: "REDIS"}).Line())
 		return 6
@@ -77,20 +94,18 @@ func runCard(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	switch sub {
 	case "launched":
 		res, err = card.Launched(ctx, st, card.LaunchRequest{
-			Sprint: flags["sprint"], Label: label, Token: flags["token"],
-			Branch: flags["branch"], JobDir: flags["jobdir"],
+			Sprint: *sprint, Label: label, Token: *token,
+			Branch: *branch, JobDir: *jobdir,
 		})
 	case "beat":
 		res, err = card.Beat(ctx, st, card.BeatRequest{
-			Sprint: flags["sprint"], Label: label, Token: flags["token"],
+			Sprint: *sprint, Label: label, Token: *token,
 		})
 	case "end":
 		res, err = card.End(ctx, st, card.EndRequest{
-			Sprint: flags["sprint"], Label: label, Token: flags["token"],
-			Outcome: flags["outcome"], Reason: flags["reason"], ResultsDir: flags["results"],
+			Sprint: *sprint, Label: label, Token: *token,
+			Outcome: *outcome, Reason: *why, ResultsDir: *results,
 		})
-	default:
-		return cardUsage(stderr, "unknown verb "+sub, "wants cut, push, release, stop, show, run, launched, beat, or end")
 	}
 	if store.Unreachable(err) {
 		// Open sends nothing (#3277): this is the first batch, and an
@@ -109,11 +124,11 @@ func runCard(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 func cardWant(sub string) (string, bool) {
 	switch sub {
 	case "launched":
-		return "launched wants --redis <addr> --sprint <S> <label> --token <t> --branch <b> --jobdir <d>", true
+		return "launched wants --redis <addr> --sprint <S> --ids <label> --token <t> --branch <b> --jobdir <d>", true
 	case "beat":
-		return "beat wants --redis <addr> --sprint <S> <label> --token <t>", true
+		return "beat wants --redis <addr> --sprint <S> --ids <label> --token <t>", true
 	case "end":
-		return "end wants --redis <addr> --sprint <S> <label> --token <t> --outcome DONE,ABSTAIN,BLOCKED,FAILED --reason <code> --results <dir>", true
+		return "end wants --redis <addr> --sprint <S> --ids <label> --token <t> --outcome DONE,ABSTAIN,BLOCKED,FAILED --why <code> --results <dir>", true
 	default:
 		return "", false
 	}
@@ -126,7 +141,7 @@ func cardFlagNames(sub string) []string {
 	case "beat":
 		return []string{"redis", "sprint", "token"}
 	case "end":
-		return []string{"redis", "sprint", "token", "outcome", "reason", "results"}
+		return []string{"redis", "sprint", "token", "outcome", "why", "results"}
 	default:
 		return nil
 	}
@@ -148,47 +163,4 @@ func cardUsage(stderr io.Writer, detail, want string) int {
 	}
 	fmt.Fprintf(stderr, "nova-sprint card: %s; run: nova-sprint help\n", msg)
 	return 1
-}
-
-func parseCardArgs(args []string) (map[string]string, []string, error) {
-	flags := map[string]string{}
-	var pos []string
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		if a == "--" {
-			return nil, nil, fmt.Errorf("unexpected --")
-		}
-		if strings.HasPrefix(a, "--") {
-			name := strings.TrimPrefix(a, "--")
-			val := ""
-			if eq := strings.IndexByte(name, '='); eq >= 0 {
-				val = name[eq+1:]
-				name = name[:eq]
-			} else {
-				if i+1 >= len(args) {
-					return nil, nil, fmt.Errorf("missing value for --%s", name)
-				}
-				i++
-				val = args[i]
-			}
-			if name == "" || val == "" || strings.HasPrefix(val, "--") {
-				return nil, nil, fmt.Errorf("missing value for --%s", name)
-			}
-			switch name {
-			case "redis", "sprint", "token", "branch", "jobdir", "outcome", "reason", "results":
-			default:
-				return nil, nil, fmt.Errorf("unknown flag --%s", name)
-			}
-			if _, dup := flags[name]; dup {
-				return nil, nil, fmt.Errorf("duplicate --%s", name)
-			}
-			flags[name] = val
-			continue
-		}
-		if strings.HasPrefix(a, "-") {
-			return nil, nil, fmt.Errorf("unknown flag %s", a)
-		}
-		pos = append(pos, a)
-	}
-	return flags, pos, nil
 }

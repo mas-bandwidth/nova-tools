@@ -29,8 +29,8 @@ func TestEndRefusesRelativeResults(t *testing.T) {
 		mr.HSet("s:"+sprint+":card:"+label, "state", "running", "attempt", "1",
 			"token", token, "identity", identity, "bench", "b")
 		before := mr.Dump()
-		code, stdout, stderr := runSprint("card", "end", "--redis", mr.Addr(), "--sprint", sprint, label,
-			"--token", token, "--outcome", "DONE", "--reason", "done", "--results", identity)
+		code, stdout, stderr := runSprint("card", "end", "--redis", mr.Addr(), "--sprint", sprint, "--ids", label,
+			"--token", token, "--outcome", "DONE", "--why", "done", "--results", identity)
 		if code != 1 {
 			t.Fatalf("exit %d, want 1 (USAGE); stdout %q stderr %q", code, stdout, stderr)
 		}
@@ -110,8 +110,8 @@ func TestResultsPathUnixAbsolute(t *testing.T) {
 			mr.HSet("s:"+sprint+":card:"+label, "state", "running", "attempt", "1",
 				"token", token, "identity", identity, "bench", "b")
 			before := mr.Dump()
-			code, stdout, stderr := runSprint("card", "end", "--redis", mr.Addr(), "--sprint", sprint, label,
-				"--token", token, "--outcome", "DONE", "--reason", "done", "--results", results)
+			code, stdout, stderr := runSprint("card", "end", "--redis", mr.Addr(), "--sprint", sprint, "--ids", label,
+				"--token", token, "--outcome", "DONE", "--why", "done", "--results", results)
 			if code != 1 {
 				t.Fatalf("exit %d, want 1 (USAGE); stdout %q stderr %q", code, stdout, stderr)
 			}

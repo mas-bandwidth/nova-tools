@@ -34,7 +34,7 @@ func TestCardShowPrintsTheRecord(t *testing.T) {
 		"w_note", "two\nlines", "w_model", "opencode/kimi-k3").Err(); err != nil {
 		t.Fatal(err)
 	}
-	code, out, errOut := runSprint("card", "show", "--redis", addr, "--sprint", "show-s", "--label", "c1")
+	code, out, errOut := runSprint("card", "show", "--redis", addr, "--sprint", "show-s", "--ids", "c1")
 	if code != 0 {
 		t.Fatalf("exit %d stderr %q", code, errOut)
 	}
@@ -56,11 +56,11 @@ func TestCardShowPrintsTheRecord(t *testing.T) {
 		"why", "REFUSED line=1 wrapper show-s/c2/3: NOPERM ws:*").Err(); err != nil {
 		t.Fatal(err)
 	}
-	if code, out, errOut := runSprint("card", "show", "--redis", addr, "--sprint", "show-s", "--label", "c2"); code != 0 ||
+	if code, out, errOut := runSprint("card", "show", "--redis", addr, "--sprint", "show-s", "--ids", "c2"); code != 0 ||
 		!strings.Contains(out, "SHOWN card show-s/c2 state=refused attempt=3 outcome=- valid=- retries=3 reason=retries fields=5 why=REFUSED line=1 wrapper show-s/c2/3: NOPERM ws:*\n") {
 		t.Fatalf("card show c2: exit %d stderr %q out:\n%s", code, errOut, out)
 	}
-	if code, out, _ := runSprint("card", "show", "--redis", addr, "--sprint", "show-s", "--label", "nope"); code != 1 || !strings.HasPrefix(out, "REFUSED card show show-s/nope") {
+	if code, out, _ := runSprint("card", "show", "--redis", addr, "--sprint", "show-s", "--ids", "nope"); code != 1 || !strings.HasPrefix(out, "REFUSED card show show-s/nope") {
 		t.Fatalf("a missing card: exit %d out %q, want 1 and REFUSED", code, out)
 	}
 	if code, _, _ := runSprint("card", "show", "--redis", addr, "--sprint", "show-s"); code != 2 {

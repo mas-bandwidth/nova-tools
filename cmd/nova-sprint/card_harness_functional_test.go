@@ -50,7 +50,7 @@ func TestCardRunEndToEnd(t *testing.T) {
 	t.Setenv("DEEPSEEK_API_KEY", "ds-val")
 	t.Setenv("INCEPTION_API_KEY", "in-val")
 	var out, errOut bytes.Buffer
-	code := runCardRunEnv(ctx, []string{"--sprint", "e2e", "--label", "e2e", "--attempt", "1"}, &out, &errOut, env)
+	code := runCardRunEnv(ctx, []string{"--sprint", "e2e", "--ids", "e2e", "--attempt", "1"}, &out, &errOut, env)
 	if code != card.RunExitNoResult || !strings.HasPrefix(out.String(), "CARD RUN e2e/e2e/1 code=1 tier=pro route=") || !strings.Contains(out.String(), " rc=0 wall_s=") {
 		t.Fatalf("code %d stdout %q stderr %q", code, out.String(), errOut.String())
 	}

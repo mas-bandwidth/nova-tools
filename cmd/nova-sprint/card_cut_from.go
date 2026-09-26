@@ -699,8 +699,8 @@ func cmdCardCutFrom(ctx context.Context, o cutFromOpts, addr string, stdout, std
 	}
 	d := cutFromDeps{Now: time.Now, BaseSHA: card.MirrorBranchSHA}
 	if !o.DryRun {
-		if o.Actor = quackActor(o.Actor); o.Actor == "" {
-			return refuse(stderr, verb, "--actor is required when "+seatEnv+" is empty")
+		if o.Actor == "" {
+			o.Actor = seatActor()
 		}
 		raddr := taskAddr(addr)
 		if raddr == "" {

@@ -55,8 +55,8 @@ func init() {
 // not run.
 func runCardLaunch(_ context.Context, args []string, in io.Reader, out, errOut io.Writer) int {
 	fs := verbflag.New("card launch")
-	stdin := fs.Bool("stdin", false, "")
-	wrapper := fs.String("wrapper", "", "")
+	stdin := fs.Bool("stdin", false, "read the card file(s) from stdin")
+	wrapper := fs.String("wrapper", "", "the nova-card the copies are started under (default beside this executable)")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "card launch", err.Error()+"; wants --stdin [--wrapper <path>]")
 	}

@@ -1,6 +1,6 @@
 package main
 
-// `nova-sprint card run --sprint <S> --label <L> --attempt <a>` is the
+// `nova-sprint card run --sprint <S> --ids <L> --attempt <a>` is the
 // bench-side card harness (#3681, internal/nsprint/card/run.go): what
 // rowan-tools' bash nova-card-harness did, as Go with Redis state. The card
 // wrapper reaches the same function in-process; this verb is the by-hand
@@ -27,7 +27,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 )
 
-const cardRunWant = "run wants --sprint <S> --label <L> --attempt <a> [--redis <addr>] [--out <dir>] [--job <dir>]; the rest is the bench's card.env in the environment"
+const cardRunWant = "run wants --sprint <S> --ids <L> --attempt <a> [--redis <addr>] [--out <dir>] [--job <dir>]; the rest is the bench's card.env in the environment"
 
 func runCardRun(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	return runCardRunEnv(ctx, args, stdout, stderr, os.Getenv)
@@ -35,12 +35,12 @@ func runCardRun(ctx context.Context, args []string, stdout, stderr io.Writer) in
 
 func runCardRunEnv(ctx context.Context, args []string, stdout, stderr io.Writer, getenv func(string) string) int {
 	fs := verbflag.New("card run")
-	sprint := fs.String("sprint", "", "")
-	label := fs.String("label", "", "")
-	attempt := fs.String("attempt", "", "")
-	addr := fs.String("redis", redisOr(getenv("NOVA_CARD_REDIS")), "")
-	out := fs.String("out", getenv("NOVA_CARD_OUT"), "")
-	job := fs.String("job", getenv("NOVA_CARD_JOB"), "")
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
+	ids := fs.String("ids", "", verbflag.HelpIDs)
+	attempt := fs.String("attempt", "", "the attempt number")
+	addr := fs.String("redis", redisOr(getenv("NOVA_CARD_REDIS")), verbflag.HelpRedis)
+	out := fs.String("out", getenv("NOVA_CARD_OUT"), "the results directory (default NOVA_CARD_OUT)")
+	job := fs.String("job", getenv("NOVA_CARD_JOB"), "the job directory (default NOVA_CARD_JOB)")
 	if err := fs.Parse(args); err != nil {
 		return cardUsage(stderr, err.Error(), cardRunWant)
 	}
@@ -48,8 +48,9 @@ func runCardRunEnv(ctx context.Context, args []string, stdout, stderr io.Writer,
 		return cardUsage(stderr, "takes flags, not positional arguments", cardRunWant)
 	}
 	a, err := strconv.Atoi(*attempt)
-	if *sprint == "" || *label == "" || err != nil || a < 1 {
-		return cardUsage(stderr, "wants --sprint, --label and --attempt (a positive integer)", cardRunWant)
+	label := oneID(*ids)
+	if *sprint == "" || label == "" || err != nil || a < 1 {
+		return cardUsage(stderr, "wants --sprint, --ids <label> and --attempt (a positive integer)", cardRunWant)
 	}
 	cfg, missing := card.RunConfigFromEnv(getenv)
 	if *addr == "" {
@@ -64,7 +65,7 @@ func runCardRunEnv(ctx context.Context, args []string, stdout, stderr io.Writer,
 	if len(missing) > 0 {
 		return cardUsage(stderr, "missing "+strings.Join(missing, ", "), cardRunWant)
 	}
-	cfg.Sprint, cfg.Label, cfg.Attempt = *sprint, *label, a
+	cfg.Sprint, cfg.Label, cfg.Attempt = *sprint, label, a
 	if cfg.OutDir, err = filepath.Abs(*out); err != nil {
 		return cardUsage(stderr, "--out: "+err.Error(), cardRunWant)
 	}

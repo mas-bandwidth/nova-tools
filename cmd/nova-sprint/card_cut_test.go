@@ -71,15 +71,15 @@ const cutIssueBody = "What: `nova-sprint card cut` writes the card.\r\n\r\n" +
 	"DEPENDS-ON: none\r\n" +
 	"STREAM: swarm: cards\r\n" +
 	"BASE: dev\r\n" +
-	"base-sha: " + cutBaseSHA + "\r\n" +
+	"BASE-SHA: " + cutBaseSHA + "\r\n" +
 	"EST: 45 min\r\n"
 
 // TestCardCutWritesRecord is nova-tools#3623: `nova-sprint card cut --repo
 // <r> --issue <n>` reads the issue and writes the card record into Redis in
 // the card-push shape (STREAM, WHO, DEPENDS-ON and WHY, PATHS, DONE-WHEN,
-// BASE, base-sha, EST, ORIGIN), its exact bytes at the body's content address
+// BASE, BASE-SHA, EST, ORIGIN), its exact bytes at the body's content address
 // before the card is published, and no file anywhere. An issue whose
-// dependency is another issue waits; one with no base-sha reads the tip.
+// dependency is another issue waits; one with no BASE-SHA reads the tip.
 func TestCardCutWritesRecord(t *testing.T) {
 	ctx := context.Background()
 	client, addr, src := cutFixture(t, map[int]card.Issue{
@@ -117,7 +117,7 @@ func TestCardCutWritesRecord(t *testing.T) {
 		t.Fatal("the stored body is not the pushed payload")
 	}
 	for _, line := range []string{"WHO: any\n", "STREAM: swarm: cards\n", "DEPENDS-ON: none\n", "ORIGIN: " + origin + "\n",
-		"> What: `nova-sprint card cut` writes the card.\n", "> base-sha: " + cutBaseSHA + "\n"} {
+		"> What: `nova-sprint card cut` writes the card.\n", "> BASE-SHA: " + cutBaseSHA + "\n"} {
 		if !strings.Contains(string(body), line) {
 			t.Errorf("card body lacks %q:\n%s", line, body)
 		}
@@ -132,7 +132,7 @@ func TestCardCutWritesRecord(t *testing.T) {
 		t.Errorf("card cut wrote files: %v", ents)
 	}
 	if src.tips != 0 {
-		t.Errorf("an issue carrying base-sha read the tip %d times", src.tips)
+		t.Errorf("an issue carrying BASE-SHA read the tip %d times", src.tips)
 	}
 	// Recut of the same issue is the same card.
 	if code, out, _ := runSprint("card", "cut", "--redis", addr, "--sprint", "cut-s", "--repo", "mas-bandwidth/nova-tools", "--issue", "9001"); code != 0 || !strings.Contains(out, " place=exists ") {

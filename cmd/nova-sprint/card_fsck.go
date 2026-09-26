@@ -28,9 +28,9 @@ import (
 // 2 usage or Redis.
 func cmdCardFsck(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New("card fsck")
-	sprint := fs.String("sprint", "", "")
-	addr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), "")
-	repair := fs.Bool("repair", false, "")
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
+	addr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), verbflag.HelpRedis)
+	repair := fs.Bool("repair", false, "repair every drift found")
 	if err := fs.Parse(args); err != nil || *sprint == "" || *addr == "" || fs.NArg() > 0 {
 		return refuse(stderr, "card", "fsck needs --sprint <name> and --redis <addr> [--repair]")
 	}
@@ -43,8 +43,8 @@ func cmdCardFsck(ctx context.Context, args []string, stdout, stderr io.Writer) i
 // including bench:<b>:cards:*, and every stray link is removed.
 func runBenchReindex(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New("bench reindex")
-	sprint := fs.String("sprint", "", "")
-	addr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), "")
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
+	addr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), verbflag.HelpRedis)
 	if err := fs.Parse(args); err != nil || *sprint == "" || *addr == "" || fs.NArg() > 0 {
 		return refuse(stderr, "bench", "reindex needs --sprint <name> and --redis <addr>")
 	}
@@ -127,9 +127,9 @@ func fsckNoMirror(ctx context.Context, client redis.UniversalClient, stdout, std
 // (where empty, in no table set), oldest first, then the receipt line.
 func cmdCardLs(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New("card ls")
-	sprint := fs.String("sprint", "", "")
-	addr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), "")
-	unplaced := fs.Bool("unplaced", false, "")
+	sprint := fs.String("sprint", "", verbflag.HelpSprint)
+	addr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), verbflag.HelpRedis)
+	unplaced := fs.Bool("unplaced", false, "list only the cards no table set holds")
 	if err := fs.Parse(args); err != nil || *sprint == "" || *addr == "" || !*unplaced || fs.NArg() > 0 {
 		return refuse(stderr, "card", "ls needs --unplaced --sprint <name> --redis <addr>")
 	}
