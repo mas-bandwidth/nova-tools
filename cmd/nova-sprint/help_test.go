@@ -30,7 +30,7 @@ var helpCases = [][]string{
 	{"consume", "ok-to-friend", "once"},
 	{"consume", "pr-to-read", "once"},
 	{"cost", "import"},
-	{"digest"},
+	{"digest"}, {"doctor"},
 	{"dev-red", "status"}, {"dev-red", "check"}, {"dev-red", "watch"}, {"dev-red", "unwatch"},
 	{"drain"}, {"est"}, {"file"},
 	{"fleet", "state"}, {"fleet", "is-up"}, {"fleet", "hold"}, {"fleet", "release"}, {"fleet", "config"},
