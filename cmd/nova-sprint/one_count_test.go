@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/table"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
@@ -56,25 +57,26 @@ func parseNumbers(t *testing.T, what string, re *regexp.Regexp, text string) one
 	return oneCountNumbers{done: n(1), total: n(2), pct: n(3), left: n(4), eta: m[5]}
 }
 
-// oneCountPrintouts renders the four printouts of the store at now and
-// returns their numbers: sprint status, the table's headline (the one-shot
-// `table --layout live`), the live loop's headline (a primed reader, the
-// path loopTable publishes) and ws counts; plus the stream block's total row
-// cells and ws counts' cells.
-func oneCountPrintouts(t *testing.T, addr string, client redis.UniversalClient, now time.Time) (map[string]oneCountNumbers, [6]int) {
+// oneCountPrintouts renders the four printouts of the store at now through
+// the functions their verbs call, and returns their numbers: sprint status
+// (sprint.StatusLines), the table's headline (tableOnce, the one-shot
+// `table --layout live`), the live loop's headline (a primed reader's
+// steady tick, the path loopTable publishes) and ws counts (wsCountsLine);
+// plus the stream block's total row, whose cells must be ws counts' cells.
+func oneCountPrintouts(t *testing.T, client *redis.Client, now time.Time) (map[string]oneCountNumbers, [6]int) {
 	t.Helper()
-	countsNow = func() time.Time { return now }
+	ctx := context.Background()
 	got := map[string]oneCountNumbers{}
 
-	code, out, errOut := runSprint("sprint", "status", "--redis", addr)
-	if code != 0 || !strings.HasPrefix(out, oneCountSprint+" open ") || strings.Count(out, "\n") != 1 {
-		t.Fatalf("sprint status: exit %d %q %q", code, out, errOut)
+	lines, err := sprint.StatusLines(ctx, store.New(client), "", now)
+	if err != nil || len(lines) != 1 || !strings.HasPrefix(lines[0], oneCountSprint+" open ") {
+		t.Fatalf("sprint status: %q %v", lines, err)
 	}
-	got["sprint status"] = parseNumbers(t, "sprint status", headerRE, out)
+	got["sprint status"] = parseNumbers(t, "sprint status", headerRE, lines[0])
 
-	code, tableOut, errOut := runSprint("table", "--layout", "live", "--redis", addr)
-	if code != 0 {
-		t.Fatalf("table: exit %d %q", code, errOut)
+	tableOut, err := tableOnce(ctx, client, table.SprintConfig{}, now)
+	if err != nil {
+		t.Fatalf("table: %v", err)
 	}
 	got["table header"] = parseNumbers(t, "table header", headerRE, strings.SplitN(tableOut, "\n", 4)[2])
 	m := totalRE.FindStringSubmatch(tableOut)
@@ -90,18 +92,18 @@ func oneCountPrintouts(t *testing.T, addr string, client redis.UniversalClient, 
 	got["table total row"] = oneCountNumbers{done: cells[5], total: sum, pct: cells[5] * 100 / sum, left: sum - cells[5], eta: got["table header"].eta}
 
 	r := table.NewSprintReader(client, table.SprintConfig{})
-	if _, err := r.Read(context.Background(), now); err != nil {
+	if _, err := r.Read(ctx, now); err != nil {
 		t.Fatal(err)
 	}
-	snap, err := r.Read(context.Background(), now) // the loop's steady tick
+	snap, err := r.Read(ctx, now) // the loop's steady tick
 	if err != nil || snap.RoundTrips != 1 {
 		t.Fatalf("live tick: %v, %d round trips", err, snap.RoundTrips)
 	}
 	got["live header"] = parseNumbers(t, "live header", headerRE, snap.Render(now))
 
-	code, out, errOut = runSprint("ws", "counts", "--redis", addr)
-	if code != 0 || strings.Count(out, "\n") != 1 {
-		t.Fatalf("ws counts: exit %d %q %q", code, out, errOut)
+	out, err := wsCountsLine(ctx, client, now)
+	if err != nil {
+		t.Fatalf("ws counts: %v", err)
 	}
 	got["ws counts"] = parseNumbers(t, "ws counts", receiptRE, out)
 	var wsCells [6]int
@@ -134,10 +136,7 @@ func assertOneCount(t *testing.T, got map[string]oneCountNumbers, want oneCountN
 // the sentinels counted and the parked and cancelled cards not; changing one
 // card's state moves all of them together.
 func TestOneCountEveryPrintoutSameNumbers(t *testing.T) {
-	t.Setenv(store.UserEnv, "")
-	t.Setenv("NOVA_SPRINT", "")
-	saved := countsNow
-	t.Cleanup(func() { countsNow = saved })
+	t.Parallel()
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
@@ -169,7 +168,7 @@ func TestOneCountEveryPrintoutSameNumbers(t *testing.T) {
 
 	// 14 cards: alpha 6 + sentinel, beta 3 + sentinel, gamma 2 + sentinel;
 	// 3 landed in the hour, so 11 left at 3 an hour is 3h40m after 13:32 EDT.
-	got, cells := oneCountPrintouts(t, mr.Addr(), client, now)
+	got, cells := oneCountPrintouts(t, client, now)
 	assertOneCount(t, got, oneCountNumbers{done: 3, total: 14, pct: 21, left: 11, eta: "17:12 ET"})
 	if cells != [6]int{5, 2, 2, 1, 1, 3} {
 		t.Fatalf("total row %v; want waiting 5 (2 cards, 3 sentinels) ready 2 working 2 review 1 merging 1 landed 3", cells)
@@ -183,7 +182,7 @@ func TestOneCountEveryPrintoutSameNumbers(t *testing.T) {
 	if _, err := pipe.Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
-	got, cells = oneCountPrintouts(t, mr.Addr(), client, now)
+	got, cells = oneCountPrintouts(t, client, now)
 	// 10 left at 4 an hour: 2h30m after 13:32 EDT.
 	assertOneCount(t, got, oneCountNumbers{done: 4, total: 14, pct: 28, left: 10, eta: "16:02 ET"})
 	if cells != [6]int{5, 2, 1, 1, 1, 4} {

@@ -103,7 +103,16 @@ func TestSeatRowDrivesVerbsWithNoWrapper(t *testing.T) {
 		{"fn", "load"},
 		{"fn", "check"},
 	} {
-		if code, _, errOut := ns(nil, append([]string{"--seat", "coordinator"}, verb...)...); code != 0 {
+		code, out, errOut := ns(nil, append([]string{"--seat", "coordinator"}, verb...)...)
+		if verb[0] == "census" {
+			// seat-probe has no card in the s:<S>:card family: the census
+			// read it and refused (#one-count), which it can only do dialed in
+			if code != 1 || !strings.HasPrefix(out, "REFUSED census reads a retired key family;") {
+				t.Fatalf("--seat coordinator census with no --redis: exit %d out %q stderr %q", code, out, errOut)
+			}
+			continue
+		}
+		if code != 0 {
 			t.Fatalf("--seat coordinator %s with no --redis: exit %d stderr %q", strings.Join(verb, " "), code, errOut)
 		}
 	}

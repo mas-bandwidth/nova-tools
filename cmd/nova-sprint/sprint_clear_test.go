@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/table"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 )
 
 // TestSprintClearZerosBothTables (Glenn 2026-09-26 8:40 AM ET: "reset the
@@ -41,8 +42,15 @@ func TestSprintClearZerosBothTables(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, r := range snap.Streams {
-		if r.Total() != 0 {
-			t.Fatalf("stream %q is not zero after the clear: %+v", r.Name, r)
+		// The stream's sentinel stays with its stream through a clear
+		// (#4318) and the one count counts it like any card (#one-count):
+		// a cleared stream holds its sentinel in waiting and nothing else.
+		stop := int64(0)
+		if _, err := client.ZScore(ctx, ws.Key(r.Name, ws.Waiting), ws.SentinelID(r.Name)).Result(); err == nil {
+			stop = 1
+		}
+		if r.Total() != stop || r.Waiting != stop {
+			t.Fatalf("stream %q holds more than its sentinel after the clear: %+v", r.Name, r)
 		}
 	}
 	for _, c := range snap.Consumers {

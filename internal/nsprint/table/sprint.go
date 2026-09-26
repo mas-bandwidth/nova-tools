@@ -49,7 +49,8 @@
 //
 //	ws:order                ZRANGE, the streams in rank order (the ws index, #3662)
 //	ws:<s>:<state>          ZCARD for waiting, ready, working, review, merging, landed, parked
-//	sprint:order, s:<S>     ZRANGE and HMGET status opened_at: the open sprint and the ETA's clock
+//	ws:log                  XRANGE over the last hour: the landed rate for the ETA
+//	sprint:order, s:<S>     ZRANGE and HGET status, no sprint named: the open sprint
 //	friends, benches,       SMEMBERS: the consumers (friends the --friends roster
 //	consumers               when given; then the benches; then any other
 //	                        enrolled consumer), each once
@@ -95,7 +96,7 @@ var ConsumerSets = []string{"ready", "working", "ok", "fail"}
 // SprintConfig is what the whole table is told; everything else is read.
 type SprintConfig struct {
 	// Sprint names the sprint: its pit stop keys s:<Sprint>:pitstop and
-	// sprint:<Sprint>:pitstop and its opened_at; empty reads the open one.
+	// sprint:<Sprint>:pitstop; empty reads the open one's.
 	Sprint string
 	// Friends is the friend rows' order; empty reads the friends SET,
 	// sorted by name.

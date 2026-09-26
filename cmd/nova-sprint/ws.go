@@ -32,10 +32,6 @@ func init() {
 	register(Verb{Name: "stream", Summary: "list, order or rename the work streams; open, rebase, pr, status or close a stream branch", Run: runStream})
 }
 
-// countsNow is the instant ws counts and the table's one-shot read for (the
-// ETA's hour of ws:log); a test pins it.
-var countsNow = time.Now
-
 // wsStdin is what `--ids @-` reads; a test replaces it.
 var wsStdin io.Reader = os.Stdin
 
@@ -208,8 +204,15 @@ func runWSCounts(ctx context.Context, args []string, out, errOut io.Writer) int 
 	// The one count (ws.Counts), the numbers sprint status and the table
 	// print: the six stream sets per state, parked beside them, the total,
 	// done=landed/total, left and the eta.
-	c, err := (&ws.CountsReader{}).Read(ctx, st.Client(), countsNow())
-	return w.done(err, c.Receipt())
+	line, err := wsCountsLine(ctx, st.Client(), time.Now())
+	return w.done(err, line)
+}
+
+// wsCountsLine is ws counts' receipt: the one count read for now, printed as
+// key=value (ws.SprintCounts.Receipt).
+func wsCountsLine(ctx context.Context, c redis.Cmdable, now time.Time) (string, error) {
+	counts, err := (&ws.CountsReader{}).Read(ctx, c, now)
+	return counts.Receipt(), err
 }
 
 func runWSCheckpoint(ctx context.Context, args []string, out, errOut io.Writer) int {

@@ -18,6 +18,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/table"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/redis/go-redis/v9"
 )
 
 // cmdTableLive is `--layout live`: the whole sprint table (#3530) from the
@@ -60,15 +61,24 @@ func cmdTableLive(opts tableOpts, stdout, stderr io.Writer) int {
 			return tableRefuse(stderr, err.Error())
 		}
 		defer st.Close()
-		now := countsNow()
-		snap, err := table.NewSprintReader(st.Client(), cfg).Read(ctx, now)
+		body, err := tableOnce(ctx, st.Client(), cfg, time.Now())
 		if err != nil {
 			return tableRefuse(stderr, err.Error())
 		}
-		snap.LastGood = now
-		return publishTable(opts.out, snap.Render(now), stdout, stderr)
+		return publishTable(opts.out, body, stdout, stderr)
 	}
 	return loopTable(ctx, addr, cfg, opts, stdout, stderr)
+}
+
+// tableOnce is one render of the whole table read for now (the one-shot
+// --layout live): a fresh reader, so it learns the memberships first.
+func tableOnce(ctx context.Context, client redis.UniversalClient, cfg table.SprintConfig, now time.Time) (string, error) {
+	snap, err := table.NewSprintReader(client, cfg).Read(ctx, now)
+	if err != nil {
+		return "", err
+	}
+	snap.LastGood = now
+	return snap.Render(now), nil
 }
 
 // defaultTableLock is the one writer lock of the published table.

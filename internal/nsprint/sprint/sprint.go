@@ -291,8 +291,9 @@ func Line(name string, s Status) string { return name + " status=" + string(s) }
 // <z>%, left <l>, eta <HH:MM> ET`. An empty name is the open sprint (the last
 // of sprint:order not closed, the table's rule); with none open it prints
 // nothing. The ws index holds one sprint's streams at a time, so the counts
-// are the index's whatever sprint is named; the name picks the status and
-// its status word; the eta is measured from now (--now).
+// are the index's whichever sprint is named; the name picks the status word,
+// and the eta is measured from now (--now). ns_sprint_status (the legacy
+// s:<S>:idx:task and idx:card count) is no longer called.
 func StatusLines(ctx context.Context, st *store.Store, name string, now time.Time) ([]string, error) {
 	if st == nil || st.Client() == nil {
 		return nil, errors.New("sprint: store is required")

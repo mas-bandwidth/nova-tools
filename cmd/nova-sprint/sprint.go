@@ -1,6 +1,7 @@
 // The sprint verb (#2939) opens a sprint from a work set, closes it, folds
 // it once closed (#2618, internal/nsprint/sprint/fold.go) and prints its
-// status as x/y z% -> eta. It registers itself through the registry
+// status from the one count (ws.Counts): <landed>/<total> done <z>%, left <l>,
+// eta <HH:MM> ET. It registers itself through the registry
 // (registry.go), so main.go is unchanged.
 package main
 
@@ -26,7 +27,7 @@ import (
 func init() {
 	register(Verb{
 		Name:    "sprint",
-		Summary: "open --from a work set, close, fold (the end-of-sprint refinement, #2618), and status as x/y z% -> eta",
+		Summary: "open --from a work set, close, fold (the end-of-sprint refinement, #2618), and status as landed/total done z%, left l, eta HH:MM ET (the one count)",
 		Run:     runSprintVerb,
 	})
 }
@@ -70,7 +71,7 @@ func runSprintVerb(ctx context.Context, args []string, out, errOut io.Writer) in
 	if *from != "" && sub != "open" {
 		return refuse(errOut, verb, "--from is for open only")
 	}
-	now := countsNow()
+	now := time.Now()
 	if *nowUnix > 0 {
 		now = time.Unix(*nowUnix, 0)
 	}

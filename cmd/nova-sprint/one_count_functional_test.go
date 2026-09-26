@@ -79,11 +79,8 @@ func oneCountPlace(t *testing.T, c *redis.Client, id, where string) {
 // the live loop's headline, the total row and ws counts print the same
 // numbers; landing one more card moves them all together.
 func TestOneCountFunctional(t *testing.T) {
-	t.Setenv(store.UserEnv, "")
-	t.Setenv("NOVA_SPRINT", "")
-	saved := countsNow
-	t.Cleanup(func() { countsNow = saved })
-	addr, c := wstest.Start(t)
+	t.Parallel()
+	_, c := wstest.Start(t)
 	ctx := context.Background()
 	st := store.New(c)
 	opened := time.Now()
@@ -112,7 +109,7 @@ func TestOneCountFunctional(t *testing.T) {
 	}
 
 	now := time.Now() // after every move: the three lands are in its hour
-	got, cells := oneCountPrintouts(t, addr, c, now)
+	got, cells := oneCountPrintouts(t, c, now)
 	want := got["ws counts"]
 	if want.done != 3 || want.total != 14 || want.left != 11 || want.pct != 21 || !strings.HasSuffix(want.eta, " ET") {
 		t.Fatalf("ws counts %+v; want 3/14 21%%, left 11, an eta in ET", want)
@@ -128,7 +125,7 @@ func TestOneCountFunctional(t *testing.T) {
 		t.Fatalf("land g2: %v", err)
 	}
 	now = time.Now()
-	got, cells = oneCountPrintouts(t, addr, c, now)
+	got, cells = oneCountPrintouts(t, c, now)
 	want = got["ws counts"]
 	if want.done != 4 || want.total != 14 || want.left != 10 || want.pct != 28 {
 		t.Fatalf("after g2 lands ws counts %+v; want 4/14 28%%, left 10", want)
