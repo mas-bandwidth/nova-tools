@@ -32,7 +32,6 @@ func TestLandWatchAlarmsMergeCardAndEscalation(t *testing.T) {
 	const s = "swarm: cards"
 	c.ZAdd(ctx, "ws:order", redis.Z{Score: 1, Member: s})
 	c.ZAdd(ctx, "ws:"+s+":merging", redis.Z{Score: 20, Member: "t2"}, redis.Z{Score: 10, Member: "t1"})
-	c.HSet(ctx, "task:t1", "pr", "nova-tools#1", "paths", "a b")
 	c.HSet(ctx, "task:t2", "pr", "nova-tools#2", "paths", "b c")
 	c.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: "sp"})
 	c.RPush(ctx, "ws:"+s+":notes", "MERGE-NOTE by=rowan at=1 the moves API changed")
@@ -61,11 +60,15 @@ func TestLandWatchAlarmsMergeCardAndEscalation(t *testing.T) {
 
 	// Pass 1: merging_at stamped, one merge card, no alarm.
 	o := pass(0)
-	if at, _ := c.HGet(ctx, "task:t1", "merging_at").Result(); at != "1700000000000" {
-		t.Fatalf("merging_at %q", at)
+	if at, _ := c.HGet(ctx, reconcile.LandMergingKey(s), "t1").Result(); at != "1700000000000" {
+		t.Fatalf("first seen %q", at)
+	}
+	if n, _ := c.Exists(ctx, "task:t1").Result(); n != 0 {
+		// One writer of the task record (#3778): the watch never touches it.
+		t.Fatal("the watch wrote task:t1")
 	}
 	if len(pushed) != 1 || pushed[0].ID != "merge-swarm-cards-1" || pushed[0].Kind != "merge" || pushed[0].To != "stella" ||
-		len(pushed[0].Members) != 2 || pushed[0].Members[0].Task != "t1" || pushed[0].Members[1].Task != "t2" || pushed[0].Paths != "a b c" {
+		len(pushed[0].Members) != 2 || pushed[0].Members[0].Task != "t1" || pushed[0].Members[1].Task != "t2" || pushed[0].Paths != "b c" {
 		t.Fatalf("merge card: %+v", pushed)
 	}
 	if !strings.Contains(o, "MERGE-CARD ") || strings.Contains(o, "LAND-SLOW") || len(wakes) != 0 {
@@ -74,20 +77,25 @@ func TestLandWatchAlarmsMergeCardAndEscalation(t *testing.T) {
 	if v, _ := c.HGet(ctx, reconcile.LandMergeKey(s), "task").Result(); v != "merge-swarm-cards-1" {
 		t.Fatalf("land:merge task %q", v)
 	}
-	body, _ := c.HGet(ctx, "task:merge-swarm-cards-1", "body").Result()
-	for _, want := range []string{"1. t1 pr=nova-tools#1 order=10", "2. t2 pr=nova-tools#2 order=20", "--dry-run", "MERGE-NOTE by=rowan at=1 the moves API changed", "BLOCKED cross-stream"} {
+	body, _ := c.Get(ctx, reconcile.LandBriefKey("merge-swarm-cards-1")).Result()
+	for _, want := range []string{"1. t1 pr=no-pr order=10", "2. t2 pr=nova-tools#2 order=20", "--dry-run", "MERGE-NOTE by=rowan at=1 the moves API changed", "BLOCKED cross-stream"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("brief lacks %q:\n%s", want, body)
 		}
 	}
 	title := reconcile.MergeTitle(pushed[0])
-	if !strings.Contains(title, "STREAM: swarm: cards | land stream swarm: cards: 2 members in work order into dev as one PR | PATHS: a b c | BASE: dev | DONE-WHEN: nova-sprint land") {
+	if !strings.Contains(title, "STREAM: swarm: cards | land stream swarm: cards: 2 members in work order into dev as one PR | PATHS: b c | BASE: dev | DONE-WHEN: nova-sprint land") {
 		t.Fatalf("title %q", title)
 	}
 
-	// Pass 2 at five minutes: the same card, no second one, no alarm.
+	// Pass 2 at five minutes: the same card, no second one, no alarm. The
+	// move's own merging_at on t2 (two minutes in) is what the brief shows.
+	c.HSet(ctx, "task:t2", "merging_at", "1700000120000")
 	if o := pass(5 * time.Minute); len(pushed) != 1 || strings.Contains(o, "LAND-SLOW") {
 		t.Fatalf("pass 2: pushed=%d out=%s", len(pushed), o)
+	}
+	if body, _ := c.Get(ctx, reconcile.LandBriefKey("merge-swarm-cards-1")).Result(); !strings.Contains(body, "2. t2 pr=nova-tools#2 order=20 merging_for=3m0s") {
+		t.Fatalf("brief after the move's stamp:\n%s", body)
 	}
 	// Pass 3 at eleven: LAND-SLOW, one note; pass 4 at twelve: the line
 	// again, still one note.
@@ -134,7 +142,7 @@ func TestLandWatchAlarmsMergeCardAndEscalation(t *testing.T) {
 	if o := pass(35 * time.Minute); o != "" || len(pushed) != 3 {
 		t.Fatalf("empty stream: %q pushed=%d", o, len(pushed))
 	}
-	if n, _ := c.Exists(ctx, reconcile.LandSlowKey(s), reconcile.LandMergeKey(s)).Result(); n != 0 {
+	if n, _ := c.Exists(ctx, reconcile.LandSlowKey(s), reconcile.LandMergeKey(s), reconcile.LandMergingKey(s), reconcile.LandBriefKey("merge-swarm-cards-2")).Result(); n != 0 {
 		t.Fatalf("records left: %d", n)
 	}
 }

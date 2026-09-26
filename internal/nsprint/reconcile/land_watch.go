@@ -11,9 +11,11 @@ package reconcile
 //
 // Every reconciler pass (one second, no GitHub, two pipelines):
 //
-//   - merging_at: every task in any ws:<stream>:merging gets merging_at the
-//     first pass that sees it there (HSETNX: a move that writes the exact
-//     time later wins, the watch never overwrites).
+//   - merging_at: the first pass that sees a task in ws:<stream>:merging
+//     stamps it on the watch's own record, land:merging:<stream> (a hash,
+//     id -> ms, HSETNX). The task record has one writer (the Lua move,
+//     #3778); when that move writes merging_at on the task the watch reads
+//     it and it wins.
 //   - LAND-SLOW: a stream whose oldest merging member is past cfg:land slow
 //     (seconds, default 600) prints `LAND-SLOW <stream> oldest=<id> age=<d>
 //     max=<d>` every pass, writes land:slow:<stream> (oldest, oldest_at,
@@ -28,9 +30,11 @@ package reconcile
 //     frontier type on its desired record, else the coordinator), its title
 //     in the task grammar and its body the brief: the members in work order
 //     (the ws ZSET score, #4342) with PR and merging age, the rules, the
-//     stream's and the sprint's MERGE-NOTEs. The body is refreshed while the
-//     card is open. land:merge:<stream> names the card. When merging empties
-//     (the landing moved the members) both records go.
+//     stream's and the sprint's MERGE-NOTEs, at land:brief:<card> (card
+//     render folds it into the friend brief; the task record has one
+//     writer). The brief is refreshed while the card is open.
+//     land:merge:<stream> names the card. When merging empties (the landing
+//     moved the members) the records go.
 //   - Escalation typed: a merge card closed with a reason naming
 //     cross-stream (the merge child could not land inside its stream's
 //     PATHS) cuts one escalation task to the coordinator (kind work, both
@@ -74,9 +78,13 @@ const (
 	LandMergeKind = task.KindMerge
 )
 
-// LandSlowKey is a stream's slow record; LandMergeKey names its merge card.
-func LandSlowKey(stream string) string  { return "land:slow:" + stream }
-func LandMergeKey(stream string) string { return "land:merge:" + stream }
+// LandSlowKey is a stream's slow record; LandMergeKey names its merge card;
+// LandMergingKey is the watch's first-seen stamp per merging member (id ->
+// ms); LandBriefKey holds a merge card's brief.
+func LandSlowKey(stream string) string    { return "land:slow:" + stream }
+func LandMergeKey(stream string) string   { return "land:merge:" + stream }
+func LandMergingKey(stream string) string { return "land:merging:" + stream }
+func LandBriefKey(card string) string     { return "land:brief:" + card }
 
 // MergeMember is one member of a merge card's brief.
 type MergeMember struct {
@@ -147,6 +155,7 @@ type watchStream struct {
 	members    []redis.Z
 	slow       map[string]string
 	merge      map[string]string
+	seen       map[string]string // land:merging:<stream>: id -> first-seen ms
 }
 
 // Run is one pass.
@@ -161,10 +170,12 @@ func (w *LandWatch) Run(ctx context.Context, l *Lease) (Counts, error) {
 	zs := make([]*redis.ZSliceCmd, len(streams))
 	slows := make([]*redis.MapStringStringCmd, len(streams))
 	merges := make([]*redis.MapStringStringCmd, len(streams))
+	seens := make([]*redis.MapStringStringCmd, len(streams))
 	for i, s := range streams {
 		zs[i] = pipe.ZRangeWithScores(ctx, stream.WSKey(s, "merging"), 0, -1)
 		slows[i] = pipe.HGetAll(ctx, LandSlowKey(s))
 		merges[i] = pipe.HGetAll(ctx, LandMergeKey(s))
+		seens[i] = pipe.HGetAll(ctx, LandMergingKey(s))
 	}
 	cfg := pipe.HMGet(ctx, "cfg:land", "slow", "wall", "repos", "notify")
 	sprints := pipe.ZRange(ctx, "sprint:order", 0, 0)
@@ -194,18 +205,22 @@ func (w *LandWatch) Run(ctx context.Context, l *Lease) (Counts, error) {
 	}
 	var ws []watchStream
 	for i, s := range streams {
-		ws = append(ws, watchStream{name: s, members: zs[i].Val(), slow: slows[i].Val(), merge: merges[i].Val()})
+		ws = append(ws, watchStream{name: s, members: zs[i].Val(), slow: slows[i].Val(), merge: merges[i].Val(), seen: seens[i].Val()})
 	}
 
-	// Pipeline 2: stamp merging_at (first seen) and read every member's
-	// merging_at, pr and paths; read each merge card's state and reason.
+	// Pipeline 2: stamp the first-seen ms on the watch's record and read
+	// every member's merging_at (the move's, when written), pr and paths;
+	// read each merge card's state and reason.
 	pipe = c.Pipeline()
 	reads := map[string]*redis.SliceCmd{}
+	firsts := map[string]*redis.StringCmd{}
 	cards := map[string]*redis.SliceCmd{}
+	nowMS := strconv.FormatInt(now.UnixMilli(), 10)
 	for _, st := range ws {
 		for _, z := range st.members {
 			id := fmt.Sprint(z.Member)
-			pipe.HSetNX(ctx, "task:"+id, "merging_at", strconv.FormatInt(now.UnixMilli(), 10))
+			pipe.HSetNX(ctx, LandMergingKey(st.name), id, nowMS)
+			firsts[id] = pipe.HGet(ctx, LandMergingKey(st.name), id)
 			reads[id] = pipe.HMGet(ctx, "task:"+id, "merging_at", "pr", "paths")
 		}
 		if mid := st.merge["task"]; mid != "" {
@@ -228,6 +243,12 @@ func (w *LandWatch) Run(ctx context.Context, l *Lease) (Counts, error) {
 			}
 			if len(st.merge) > 0 {
 				pipe.Del(ctx, LandMergeKey(st.name))
+				if mid := st.merge["task"]; mid != "" {
+					pipe.Del(ctx, LandBriefKey(mid))
+				}
+			}
+			if len(st.seen) > 0 {
+				pipe.Del(ctx, LandMergingKey(st.name))
 			}
 			continue
 		}
@@ -240,13 +261,22 @@ func (w *LandWatch) Run(ctx context.Context, l *Lease) (Counts, error) {
 		members := make([]MergeMember, 0, len(st.members))
 		var paths []string
 		seenPath := map[string]bool{}
+		inMerging := map[string]bool{}
 		for _, z := range st.members {
 			id := fmt.Sprint(z.Member)
+			inMerging[id] = true
 			v := reads[id].Val()
 			m := MergeMember{Task: id, Order: z.Score}
-			if s, ok := v[0].(string); ok {
-				ms, _ := strconv.ParseInt(s, 10, 64)
+			// The move's stamp when it wrote one, else the watch's first
+			// sight of the member in merging.
+			at := firsts[id].Val()
+			if s, ok := v[0].(string); ok && strings.TrimSpace(s) != "" {
+				at = s
+			}
+			if ms, err := strconv.ParseInt(strings.TrimSpace(at), 10, 64); err == nil {
 				m.MergingAt = time.UnixMilli(ms)
+			} else {
+				m.MergingAt = now
 			}
 			if s, ok := v[1].(string); ok {
 				m.PR = s
@@ -260,6 +290,11 @@ func (w *LandWatch) Run(ctx context.Context, l *Lease) (Counts, error) {
 				}
 			}
 			members = append(members, m)
+		}
+		for id := range st.seen {
+			if !inMerging[id] {
+				pipe.HDel(ctx, LandMergingKey(st.name), id) // it left merging
+			}
 		}
 		// The oldest by merging_at, the work order breaking ties.
 		oldest := members[0]
@@ -412,7 +447,7 @@ func (w *LandWatch) watchCard(ctx context.Context, pipe redis.Pipeliner, st watc
 	if live {
 		// The brief follows the stream while the card waits for its friend.
 		if state != "working" {
-			pipe.HSet(ctx, "task:"+mid, "body", MergeBrief(card))
+			pipe.Set(ctx, LandBriefKey(mid), MergeBrief(card), 0)
 		}
 		if strings.Contains(reason, "cross-stream") {
 			return nil
@@ -474,7 +509,7 @@ func (w *LandWatch) watchCard(ctx context.Context, pipe redis.Pipeliner, st watc
 	}
 	pipe.HSet(ctx, LandMergeKey(st.name), "task", id, "to", to, "cut_at", strconv.FormatInt(now.UnixMilli(), 10),
 		"members", strings.Join(ids, " "))
-	pipe.HSet(ctx, "task:"+id, "body", MergeBrief(card))
+	pipe.Set(ctx, LandBriefKey(id), MergeBrief(card), 0)
 	w.printf("MERGE-CARD %s card=%s to=%s members=%d", oneline.Field(st.name), id, to, len(members))
 	return nil
 }
