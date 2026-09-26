@@ -156,3 +156,44 @@ func TestNativeRefusalReadsTheLineFromTheMark(t *testing.T) {
 		t.Fatalf("got %q %t, want the line from the mark, trimmed", line, ok)
 	}
 }
+
+// TestHarnessRefusalIsReadFromItsOwnLogOnly is #4234's evidence rule on the
+// harness's own refusals: the bench harness's stamped `REFUSED <why> for
+// <card>` in out/harness.log and the in-process receipt `REFUSED card run ...`
+// in harness.log are refusal lines, read from the mark on; the same word in
+// native's output, which may be the model's, is not.
+func TestHarnessRefusalIsReadFromItsOwnLogOnly(t *testing.T) {
+	t.Parallel()
+
+	job := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(job, "out"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(rel, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(job, filepath.FromSlash(rel)), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("harness.log", "START\nEND native rc=2\n")
+	write("out/native.out", "the tool REFUSED the edit; trying again\nNATIVE INCOMPLETE nothing\n")
+	write("out/native.err", "warning: REFUSED is a word\n")
+	if line, ok := card.NativeRefusal(job); ok {
+		t.Fatalf("native's output is not the harness's refusal, got %q", line)
+	}
+	const bench = "REFUSED no payload_sha on s:copies:card:quack-001-c1 for copies/quack-001-c1/1"
+	write("out/harness.log", "2026-09-26T13:18:07Z "+bench+"\n")
+	if line, ok := card.NativeRefusal(job); !ok || line != bench {
+		t.Fatalf("got %q %t, want the bench harness's line from the mark", line, ok)
+	}
+	const receipt = "REFUSED card run copies/quack-001-c1/1 code=2 why=\"no copy task:quack-001~1\""
+	write("harness.log", receipt+"\n")
+	if line, ok := card.NativeRefusal(job); !ok || line != receipt {
+		t.Fatalf("got %q %t, want the in-process receipt first", line, ok)
+	}
+	write("harness.log", "2026-09-26T13:18:07Z START copies/quack-001-c1/1 bench=b: nothing REFUSED here\n")
+	write("out/harness.log", "")
+	if line, ok := card.NativeRefusal(job); ok {
+		t.Fatalf("a mark mid-line after words is not a refusal, got %q", line)
+	}
+}

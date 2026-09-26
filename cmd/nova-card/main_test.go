@@ -67,3 +67,50 @@ func TestLaunchLineMustNameTheCard(t *testing.T) {
 		})
 	}
 }
+
+// TestCopyRunsTheGoHarnessInProcessWhateverCardEnvDeclares is #4234's
+// control: batman and superman kept a card.env naming the retired bash
+// harness, and every copy of the 100-card quack run ended FAILED crash exit 2
+// in under a second (REFUSED no payload_sha on s:copies:card:<label>). The
+// copy protocol lives in the Go harness alone, so a copy's configuration is
+// in-process with the program ignored, while a launched card's still honours it.
+func TestCopyRunsTheGoHarnessInProcessWhateverCardEnvDeclares(t *testing.T) {
+	t.Parallel()
+
+	env := map[string]string{
+		"NOVA_CARD_REDIS": "127.0.0.1:6379", "NOVA_CARD_BENCH": "batman",
+		"NOVA_CARD_HARNESS": "/Users/nova/nova-bench/launch/nova-card-harness",
+		"NOVA_CARD_JOBS":    "/jobs", "NOVA_CARD_RESULTS": "/results", "NOVA_CARD_CLOCK": "30m",
+		"HOME": "/Users/nova", "NOVA_CARD_HARNESS_BIN": "/Users/nova/nova-bench/harness-v1.18.20/opencode",
+		"NOVA_CARD_DEADLINE": "20m", "NOVA_CARD_TOKENS": "200000",
+	}
+	getenv := func(k string) string { return env[k] }
+	l := launch.Line{Sprint: "copies", Label: "quack-001-c1", Attempt: 1}
+
+	cfg, err := copyConfig(l, getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Harness != "" || cfg.InProcess == nil {
+		t.Fatalf("copy harness=%q in-process=%v, want in-process with no program", cfg.Harness, cfg.InProcess != nil)
+	}
+	if cfg.InProcess.HarnessBin != env["NOVA_CARD_HARNESS_BIN"] || cfg.InProcess.Bench != "batman" {
+		t.Fatalf("in-process config %+v, want the bench's card.env", *cfg.InProcess)
+	}
+
+	launched, err := config(l, getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if launched.Harness != env["NOVA_CARD_HARNESS"] || launched.InProcess != nil {
+		t.Fatalf("launched card harness=%q in-process=%v, want the declared program", launched.Harness, launched.InProcess != nil)
+	}
+
+	// A copy's stderr names the ignored program once, the token never.
+	var out, errb bytes.Buffer
+	env["NOVA_CARD_REDIS"] = ""
+	code := run([]string{launch.CopyArg, "quack-001~1"}, strings.NewReader("quack-001~1 "+testToken+"\n"), &out, &errb, getenv)
+	if code != 1 || !strings.Contains(out.String(), "missing or bad NOVA_CARD_REDIS") || strings.Contains(out.String()+errb.String(), testToken[2:]) {
+		t.Fatalf("code=%d out=%q err=%q", code, out.String(), errb.String())
+	}
+}

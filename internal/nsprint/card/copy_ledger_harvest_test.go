@@ -184,3 +184,37 @@ func TestCopyEndHarvestRefusalsAreTypedFails(t *testing.T) {
 		})
 	}
 }
+
+// TestCopyCrashEndCarriesTheHarnessExit is #4234's evidence rule: a copy
+// whose harness ended non-zero is fail with the exit in its why (the bare
+// "crash" the darwin copies recorded said nothing the wrapper line did not),
+// a refusal keeps its line, and a harness that never ran stays "crash: <why>".
+func TestCopyCrashEndCarriesTheHarnessExit(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		end  card.WrapperEnd
+		why  string
+	}{
+		{"exit 2", card.WrapperEnd{Outcome: "FAILED", Reason: "crash", Exit: 2, Commit: card.NoCommit}, "crash: harness exit 2"},
+		{"refused", card.WrapperEnd{Outcome: "FAILED", Reason: "refused", Exit: 2, Commit: card.NoCommit,
+			Why: "REFUSED no payload_sha on s:copies:card:quack-001-c1 for copies/quack-001-c1/1"},
+			"refused: REFUSED no payload_sha on s:copies:card:quack-001-c1 for copies/quack-001-c1/1"},
+		{"never ran", card.WrapperEnd{Outcome: "FAILED", Reason: "crash", Exit: -1, Commit: card.NoCommit, Why: "harness start: no such file"},
+			"crash: harness start: no such file"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c, _, l := workCopyOnBench(t)
+			ctx := context.Background()
+			led := &card.CopyLedger{Client: c, Copy: l.Copy, Bench: "b", Token: l.Token}
+			if code, err := led.End(ctx, tc.end); err != nil || code != 0 {
+				t.Fatalf("end code=%d %v", code, err)
+			}
+			rec := c.HGetAll(ctx, taskcard.Key(l.Copy)).Val()
+			if rec["where"] != "fail" || rec["why"] != tc.why {
+				t.Fatalf("copy record where=%q why=%q, want fail %q", rec["where"], rec["why"], tc.why)
+			}
+		})
+	}
+}

@@ -239,6 +239,12 @@ func (l *CopyLedger) End(ctx context.Context, end WrapperEnd) (int, error) {
 		return l.harvest(ctx, end, c, branch, fields)
 	}
 	why := end.Reason
+	if end.Outcome == "FAILED" && end.Reason == "crash" && end.Exit >= 0 {
+		// The harness's exit is the one number a crash leaves (#4234: a
+		// copy's record said "crash" and nothing else while the wrapper
+		// line held exit=2).
+		why = fmt.Sprintf("crash: harness exit %d", end.Exit)
+	}
 	if end.Outcome == "DONE" {
 		why = "done without card end"
 		if c.Leg != "read" && c.Leg != "fix" {
