@@ -3837,6 +3837,8 @@ writing and acking in one `ns_ci_github` call. `ci status --repo --sha`
 prints the leg under our own record. Nothing in nova-sprint reads a check
 state from GitHub or asks it to rerun one; a rerun is `ci request --again`.
 
+`ci github --from-runner --redis <addr> --repo owner/name --sha <head> --run-id <n> --event <ev> --workflow <name> --conclusion <job.status> [--head-branch <b>] [--base-branch <b>] [--pr <n>] [--at <rfc3339>] --job <name>=<result>...` (card gh-ci-receipts) is the runner as the event source: the ci-ok job of `.github/workflows/ci.yml` calls it at the end of every run, as the bench seat, and it writes what the receiver path would have (one `ev:github` workflow_run row with sender `runner`, `ci:<repo>:<sha>:gh` through `ns_ci_github` with `wf:<workflow>` and one `check:<job>` per `--job`, `source=runner`, and `pr:<repo>:<n>`'s head, base and stream when `--pr` is given; the stream is the head branch `stream/<s>`, else the base's, else the base). Measured 2026-09-26 12:38 PM ET before it: `ev:github` XLEN 0 and no `ci:*:gh` key, because the signed receiver sits behind a tailscale funnel kept off by design, so `land pr` could only print WAITING. One `CIGH RUNNER <key> gh=<word> fail=<f> runs=<n> applied=<n> ev=<id> pr=<key|-> stream=<s|->` line; exit 0 written, 1 the store refused the write (which reddens ci-ok), 2 usage. `webhook.Source(record)` says runner, hook or none for a record.
+
 `read digest --repo <r> --n <n>` records the diff identity of the head a
 typed line is taken at (`diff_sha256` on the unit record; the reader runs
 it at read time). `read carry --repo <r> --n <n>` compares it with the
