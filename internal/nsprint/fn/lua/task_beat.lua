@@ -58,6 +58,16 @@ local function task_beat(keys, args)
   if redis.call('EXISTS', key) == 0 then
     return { 'NOTFOUND' }
   end
+  -- Consumer copies have their own renewal protocol. Refuse explicitly,
+  -- even if a damaged record happens to carry a legacy state or owner field.
+  if NS.task.is_copy(id) then
+    local consumer = redis.call('HGET', key, 'consumer') or ''
+    local next = 'nova-sprint card render --id ' .. id
+    if string.sub(consumer, 1, 7) == 'friend:' then
+      next = 'nova-sprint friend beat --as ' .. consumer .. ' --once'
+    end
+    return redis.error_reply('OWNER id=' .. id .. ' is a consumer copy; no lease renewed; run: ' .. next)
+  end
   if redis.call('HGET', key, 'token') ~= token then
     return { 'FENCED' }
   end

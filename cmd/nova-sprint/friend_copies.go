@@ -180,7 +180,7 @@ func runFriendPull(ctx context.Context, args []string, out, errOut io.Writer) in
 		}
 		pulled++
 		fmt.Fprintf(out, "PULLED %s leg=%s token=%s card=%s\n", id, dash(rec["leg"]), w.Tokens[i], path)
-		fmt.Fprintf(out, "OWNER REQUIRED id=%s state=unknown run=\"nova-sprint card owner --as %s --id %s --token <claim-token> --pid <harness-pid>\"\n", id, k, id)
+		fmt.Fprintf(out, "OWNER REQUIRED id=%s state=unknown run=\"nova-sprint card owner --as %s --id %s --token %s --pid <harness-pid>\"\n", id, k, id, w.Tokens[i])
 	}
 	if !printFriendBeat(ctx, c, k, redisArg(*redisAddr), out) {
 		code = 1
@@ -508,13 +508,9 @@ func runFriendBeat(ctx context.Context, args []string, out, errOut io.Writer) in
 		return refuse(errOut, verb, err.Error())
 	}
 	printBeatSkipped(out, k, res.Skipped)
-	printOwnerRefusals(out, k, res.Refused, nil)
-	for _, id := range res.Dead {
-		fmt.Fprintf(out, "FRIEND OWNER id=%s state=dead renewed=false\n", id)
-	}
-	for _, id := range res.Unknown {
-		fmt.Fprintf(out, "FRIEND OWNER id=%s state=unknown renewed=false\n", id)
-	}
+	printOwnerRefusals(out, k, *redisAddr, res.Refused, nil)
+	ownerStates := map[string]string{}
+	printOwnerStates(out, k, *redisAddr, res, ownerStates)
 	fmt.Fprintf(out, "FRIEND BEAT as=%s host=%s working=%d dead=%d unknown=%d lease_until=%d at=%d\n", k, *host, res.Working, len(res.Dead), len(res.Unknown), res.LeaseUntil, res.AtMS)
 	if *once {
 		return 0
@@ -538,7 +534,8 @@ func runFriendBeat(ctx context.Context, args []string, out, errOut io.Writer) in
 				continue
 			}
 			res, err := friendBeatOnce(signalCtx, st, k, *host, now)
-			printOwnerRefusals(out, k, res.Refused, ownerRefusals)
+			printOwnerRefusals(out, k, *redisAddr, res.Refused, ownerRefusals)
+			printOwnerStates(out, k, *redisAddr, res, ownerStates)
 			if err != nil {
 				if signalCtx.Err() != nil {
 					return 0
@@ -553,16 +550,58 @@ func runFriendBeat(ctx context.Context, args []string, out, errOut io.Writer) in
 	}
 }
 
+// ownerInspectCommand is read-only: uncertainty never advises releasing or
+// rebinding an attempt that may still have executing descendants.
+func ownerInspectCommand(id, addr string) string {
+	command := "nova-sprint card render --id " + id
+	if addr != "" {
+		command += " --redis " + addr
+	}
+	return command
+}
+
+func printOwnerStates(out io.Writer, k taskcard.Consumer, addr string, res life.FriendBeatResult, previous map[string]string) {
+	current := map[string]string{}
+	refused := map[string]bool{}
+	for _, r := range res.Refused {
+		refused[r.ID] = true
+	}
+	for _, group := range []struct {
+		ids        []string
+		state, why string
+	}{
+		{res.Dead, "dead", "bound process exited or its PID was reused; inspect before coordinator recovery"},
+		{res.Unknown, "unknown", "owner identity or liveness unproved; inspect the binding and executing harness"},
+	} {
+		for _, id := range group.ids {
+			if refused[id] {
+				continue
+			}
+			current[id] = group.state
+			if previous != nil && previous[id] == group.state {
+				continue
+			}
+			fmt.Fprintf(out, "FRIEND OWNER id=%s state=%s renewed=false as=%s why=%s next=%s\n", id, group.state, k, quoteField(group.why), quoteField(ownerInspectCommand(id, addr)))
+		}
+	}
+	if previous != nil {
+		clear(previous)
+		for id, state := range current {
+			previous[id] = state
+		}
+	}
+}
+
 // printOwnerRefusals keeps a raced or stale observation distinguishable from
 // unknown process liveness. The loop reports each change in refusal reason.
-func printOwnerRefusals(out io.Writer, k taskcard.Consumer, refusals []life.OwnerRefusal, previous map[string]string) {
+func printOwnerRefusals(out io.Writer, k taskcard.Consumer, addr string, refusals []life.OwnerRefusal, previous map[string]string) {
 	current := make(map[string]string, len(refusals))
 	for _, r := range refusals {
 		current[r.ID] = r.Why
 		if previous != nil && previous[r.ID] == r.Why {
 			continue
 		}
-		fmt.Fprintf(out, "FRIEND OWNER REFUSED as=%s id=%s renewed=false why=%s next=%s\n", k, r.ID, quoteField(r.Why), quoteField("inspect the current copy and owner binding before retrying friend beat"))
+		fmt.Fprintf(out, "FRIEND OWNER REFUSED as=%s id=%s renewed=false why=%s next=%s\n", k, r.ID, quoteField(r.Why), quoteField(ownerInspectCommand(r.ID, addr)))
 	}
 	if previous != nil {
 		clear(previous)
@@ -602,13 +641,12 @@ func runFriendBeatLoop(ctx context.Context, st *store.Store, k taskcard.Consumer
 		}
 	}
 	ownerRefusals := map[string]string{}
+	ownerStates := map[string]string{}
 	l := &life.BeatLoop{Lease: life.StoreLease{Client: c, Friend: k.Name, Me: me}, Friend: k.Name,
 		Tick: func(ctx context.Context, now time.Time) (int, error) {
 			res, err := friendBeatOnce(ctx, st, k, host, now)
-			printOwnerRefusals(out, k, res.Refused, ownerRefusals)
-			for _, change := range res.Changed {
-				fmt.Fprintf(out, "OWNER as=%s copy_state=%s\n", k, change)
-			}
+			printOwnerRefusals(out, k, st.Client().Options().Addr, res.Refused, ownerRefusals)
+			printOwnerStates(out, k, st.Client().Options().Addr, res, ownerStates)
 			return res.Working, err
 		}}
 	fmt.Fprintf(out, "FRIEND BEAT LOOP as=%s host=%s key=%s pid=%d\n", k, host, life.BeatLoopKey(k.Name), os.Getpid())

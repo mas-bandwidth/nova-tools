@@ -2546,6 +2546,9 @@ end)
 -- of a working task renews its lease (the child's beat, every 60 s).
 redis.register_function('ns_tcard_beat', function(keys, args)
   local id, as = args[1], args[2] or ''
+  if TK.copy_id(id) then
+    return 'REFUSED OWNER id=' .. id .. ' is a consumer copy; no lease renewed; run: nova-sprint card render --id ' .. id
+  end
   local p = TK.read(id)
   if not p then return 'REFUSED NOTASK task:' .. id end
   if p.where ~= 'working' then return 'REFUSED NOTWORKING task:' .. id .. ' is ' .. p.where end
@@ -4222,7 +4225,7 @@ function TM.beat(c, ids)
   -- live state is insufficient here: repeated plain beats could keep a dead
   -- owner alive forever. This also covers task beat's copy path.
   if #ids > 0 and TM.parse(c) == 'friend' then
-    return { 'REFUSED', 'OWNER ' .. c .. ' copies require an observed owner; no leases renewed; run: nova-sprint friend beat --as ' .. c .. ' --once' }
+    return { 'REFUSED', 'OWNER ids=' .. table.concat(ids, ',') .. ' ' .. c .. ' copies require an observed owner; no leases renewed; run: nova-sprint friend beat --as ' .. c .. ' --once' }
   end
   for _, id in ipairs(ids) do
     redis.call('HSET', 'task:' .. id, 'lease_until', tostring(at + TM.LEASE), 'beat_at', tostring(at))
@@ -4660,7 +4663,7 @@ redis.register_function('ns_cm_reads', function(keys, args) return TM.ensure(TK.
 -- finish: NS.tm.score(repo, n, line, by) -> {moved, cut, notes}.
 NS.tm = { score = TM.score }
 
-NS.task = { move = TK.move, create = TK.create, read = TK.read, stream_of = TK.stream_of,
+NS.task = { move = TK.move, create = TK.create, read = TK.read, stream_of = TK.stream_of, is_copy = TK.copy_id,
   ms = TK.ms, where = TK.IS, where_of = TK.WHERE_OF, unread = TK.unread,
   -- the stream sentinel (#4318): its id for a stream, and whether an id is one
   sentinel_id = TK.sentinel_id, is_sentinel = TK.is_sentinel, slug = TK.slug, slug_clash = TK.slug_clash,

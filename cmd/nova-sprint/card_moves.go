@@ -350,7 +350,7 @@ func (m *moveCmd) run(ctx context.Context, c *redis.Client, sub string, ids []st
 		}
 		if as.Kind == "friend" {
 			for i, id := range w.IDs {
-				fmt.Fprintf(out, "OWNER REQUIRED id=%s token=%s state=unknown run=\"nova-sprint card owner --as %s --id %s --token <claim-token> --pid <harness-pid>\"\n", id, w.Tokens[i], as, id)
+				fmt.Fprintf(out, "OWNER REQUIRED id=%s token=%s state=unknown run=\"nova-sprint card owner --as %s --id %s --token %s --pid <harness-pid>\"\n", id, w.Tokens[i], as, id, w.Tokens[i])
 			}
 		}
 		fmt.Fprintf(out, "CARD WORK as=%s n=%d free=%d ids=%s ms=%d\n", as, len(w.IDs), w.Free, dash(strings.Join(w.IDs, ",")), ms())
