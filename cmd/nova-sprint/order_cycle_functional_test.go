@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -330,4 +331,111 @@ func TestOrderPushWithoutReorderGrantIsRefused(t *testing.T) {
 		t.Fatalf("order after the granted pushes: %d ranked, stale %v, %v", len(so.Order), so.Stale(), err)
 	}
 	t.Logf("granted: task, card and cut pushes written with their order, not stale; wall %s", time.Since(start).Round(time.Millisecond))
+}
+
+// TestRenameMovesAStreamHoldingACycleWhole is the #4410 fix round 4 item
+// (1): a stream that already holds a DEPENDS-ON cycle (rx on ry, ry on rx,
+// seeded by hand; rz unrelated) renames whole, exit 0. A rename moves every
+// card with its edges, so it adds no edge; TK.move skips the cycle check on
+// a rename move (o.rename), and ns_ws_rename, which moves one task at a
+// time, never stops partway. With that skip removed this test is red the
+// way the cold read saw it: REFUSED ORDER CYCLE after rx moved.
+func TestRenameMovesAStreamHoldingACycleWhole(t *testing.T) {
+	t.Parallel()
+	start := time.Now()
+	addr, c := wstest.Start(t)
+	ctx := context.Background()
+	const a, b = "rn: a", "rn: b"
+	for _, id := range []string{"rx", "ry", "rz"} {
+		if code, out, errOut := runSprint("task", "push", "--redis", addr, "--actor", "rowan", "--id", id, "--stream", a,
+			"--kind", "build", "--title", id); code != 0 {
+			t.Fatalf("push %s: %d %q %q", id, code, out, errOut)
+		}
+	}
+	c.HSet(ctx, "task:rx", "blocked_on", "ry")
+	c.HSet(ctx, "task:ry", "blocked_on", "rx")
+	if so, _ := ws.ReadOrder(ctx, c, a); so.Err == nil {
+		t.Fatalf("the seed holds no cycle")
+	}
+	code, out, errOut := runSprint("stream", "rename", "--redis", addr, a, b)
+	if code != 0 || !strings.HasPrefix(out, `RENAMED from="rn: a" to="rn: b" members=3`) {
+		t.Fatalf("rename of a stream holding a cycle: %d %q %q", code, out, errOut)
+	}
+	for _, id := range []string{"rx", "ry", "rz"} {
+		if got := c.HGet(ctx, "task:"+id, "stream").Val(); got != b {
+			t.Fatalf("task:%s stream %q after the rename, want %q", id, got, b)
+		}
+	}
+	live := append(c.ZRange(ctx, ws.Key(b, "waiting"), 0, -1).Val(), c.ZRange(ctx, ws.Key(b, "ready"), 0, -1).Val()...)
+	done := c.ZRange(ctx, ws.Key(b, "done"), 0, -1).Val()
+	sort.Strings(live)
+	if strings.Join(live, " ") != "rn-b:sentinel rx ry rz" || strings.Join(done, " ") != "rn-a:sentinel" ||
+		c.HGet(ctx, "task:rn-a:sentinel", "where_ok").Val() != "fail" {
+		t.Fatalf("after the rename: waiting and ready %v, done %v (ok=%s)", live, done, c.HGet(ctx, "task:rn-a:sentinel", "where_ok").Val())
+	}
+	for _, w := range []string{"waiting", "ready", "working", "review", "merging", "parked", "landed", "done"} {
+		if n := c.ZCard(ctx, ws.Key(a, w)).Val(); n != 0 {
+			t.Fatalf("%s still holds %d", ws.Key(a, w), n)
+		}
+	}
+	if c.SIsMember(ctx, "ws:names", a).Val() || !c.SIsMember(ctx, "ws:names", b).Val() {
+		t.Fatalf("ws:names %v", c.SMembers(ctx, "ws:names").Val())
+	}
+	t.Logf("%s; %s waiting and ready %v, done %v (ok=fail); ws:names %v; wall %s", strings.TrimSpace(out), b, live, done,
+		c.SMembers(ctx, "ws:names").Val(), time.Since(start).Round(time.Millisecond))
+}
+
+// TestQuackCutProbesTheReorderGrant is the #4410 fix round 4 item (2):
+// quack cut pushes its cards into the stream's waiting set, so it probes the
+// reorder grant as the four other push doors do. A seat without the grant
+// is refused before the stop or any card is written (the store unchanged);
+// with the grant the cards are written and the stream's order with them.
+func TestQuackCutProbesTheReorderGrant(t *testing.T) {
+	t.Parallel()
+	start := time.Now()
+	addr := testutil.Start(t, "--user", "bare", "on", ">bare-pass", "~*", "&*", "+@all", "-fcall",
+		"+fcall|ns_tcard_push", "+fcall|ns_ping", "--user", "granted", "on", ">granted-pass", "~*", "&*", "+@all")
+	ctx := context.Background()
+	admin := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = admin.Close() })
+	if err := fn.Load(ctx, admin); err != nil {
+		t.Fatal(err)
+	}
+	const S, s = "quack-grant", "quack: grant"
+	admin.HSet(ctx, "s:"+S, "status", "open")
+	as := func(name string) *redis.Client {
+		cl := redis.NewClient(&redis.Options{Addr: addr, Username: name, Password: name + "-pass"})
+		t.Cleanup(func() { _ = cl.Close() })
+		return cl
+	}
+	tiers := []string{"flash", "pro"}
+	cuts, err := quackCuts(3, S, s, "mas-bandwidth/quack", "dev", quackBase, tiers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := quackPlan{name: S, stream: s, repo: "mas-bandwidth/quack", who: "rowan", baseSHA: quackBase, tiers: tiers, cuts: cuts}
+
+	before := storeSnapshot(t, admin)
+	var out, errOut bytes.Buffer
+	code := quackCutOn(ctx, as("bare"), plan, &out, &errOut)
+	grant := `ORDER GRANT ns_ws_reorder: NOPERM User bare has no permissions to run the 'fcall' command`
+	if code != 1 || !strings.HasPrefix(out.String(), `CUT REFUSED sprint=quack-grant stream=quack:\x20grant why="`+grant) {
+		t.Fatalf("quack cut without the grant: %d %q %q", code, out.String(), errOut.String())
+	}
+	if after := storeSnapshot(t, admin); after != before {
+		t.Fatalf("quack cut without the grant wrote:\n%s---\n%s", before, after)
+	}
+	t.Logf("quack cut, no grant: exit %d, %s", code, strings.TrimSpace(out.String()))
+
+	out.Reset()
+	errOut.Reset()
+	code = quackCutOn(ctx, as("granted"), plan, &out, &errOut)
+	if code != 0 || !regexp.MustCompile(`^CUT n=3 stream=quack:\\x20grant sprint=quack-grant .* pushed=3 skipped=0 refused=0 base-sha=\w+ pitstop=set order=4 order_rt=\d+ order_ms=\S+ lift=`).MatchString(out.String()) {
+		t.Fatalf("quack cut with the grant: %d %q %q", code, out.String(), errOut.String())
+	}
+	if so, err := ws.ReadOrder(ctx, admin, s); err != nil || so.Stale() || len(so.Order) != 4 {
+		t.Fatalf("order after the granted cut: %d ranked, stale %v, %v", len(so.Order), so.Stale(), err)
+	}
+	t.Logf("quack cut, granted: exit %d, %s; wall %s", code, strings.ReplaceAll(strings.TrimSpace(out.String()), "\n", " | "),
+		time.Since(start).Round(time.Millisecond))
 }

@@ -1680,14 +1680,17 @@ function TK.move(id, to, o)
   -- the work order (#4322): a move into the stream's live cards from outside
   -- them (another stream, or a place the order does not rank), or one that
   -- edits the DEPENDS-ON, is refused when it closes a cycle through the
-  -- record, before any write (TK.create checked its own push already)
+  -- record, before any write (TK.create checked its own push already). A
+  -- rename (o.rename, ns_ws_rename) moves the whole stream with its edges
+  -- unchanged, so it adds no edge and is not checked: ns_ws_rename moves one
+  -- task at a time and could not undo the tasks before a refusal.
   if not o.order_checked and TK.ORDER_LIVE_IS[to] then
     local bo, dep, edits = nil, nil, false
     for i = 1, #fields, 2 do
       if fields[i] == 'blocked_on' then bo, edits = fields[i + 1], true end
       if fields[i] == 'depends_on' then dep, edits = fields[i + 1], true end
     end
-    if edits or nxt.stream ~= cur.stream or not TK.ORDER_LIVE_IS[cur.where] then
+    if edits or (nxt.stream ~= cur.stream and not o.rename) or not TK.ORDER_LIVE_IS[cur.where] then
       local c = redis.call('HMGET', 'task:' .. id, 'blocked_on', 'depends_on')
       if bo == nil then bo = c[1] end
       if dep == nil then dep = c[2] end
