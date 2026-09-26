@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,7 +29,7 @@ import (
 func cmdCardFsck(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New("card fsck")
 	sprint := fs.String("sprint", "", "")
-	addr := fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), "")
+	addr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), "")
 	repair := fs.Bool("repair", false, "")
 	if err := fs.Parse(args); err != nil || *sprint == "" || *addr == "" || fs.NArg() > 0 {
 		return refuse(stderr, "card", "fsck needs --sprint <name> and --redis <addr> [--repair]")
@@ -45,7 +44,7 @@ func cmdCardFsck(ctx context.Context, args []string, stdout, stderr io.Writer) i
 func runBenchReindex(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New("bench reindex")
 	sprint := fs.String("sprint", "", "")
-	addr := fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), "")
+	addr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), "")
 	if err := fs.Parse(args); err != nil || *sprint == "" || *addr == "" || fs.NArg() > 0 {
 		return refuse(stderr, "bench", "reindex needs --sprint <name> and --redis <addr>")
 	}
@@ -129,7 +128,7 @@ func fsckNoMirror(ctx context.Context, client redis.UniversalClient, stdout, std
 func cmdCardLs(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New("card ls")
 	sprint := fs.String("sprint", "", "")
-	addr := fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), "")
+	addr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), "")
 	unplaced := fs.Bool("unplaced", false, "")
 	if err := fs.Parse(args); err != nil || *sprint == "" || *addr == "" || !*unplaced || fs.NArg() > 0 {
 		return refuse(stderr, "card", "ls needs --unplaced --sprint <name> --redis <addr>")

@@ -57,7 +57,7 @@ var cardCutSource card.IssueSource = card.GHIssues{}
 func cmdCardCut(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New("card cut")
 	sprint := fs.String("sprint", "", "")
-	addr := fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), "")
+	addr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), "")
 	repo := fs.String("repo", "", "")
 	issue := fs.Int("issue", 0, "")
 	spec := fs.Int("spec", 0, "")
@@ -121,7 +121,7 @@ func cmdCardCut(ctx context.Context, args []string, stdout, stderr io.Writer) in
 func cmdCardPush(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New("card push")
 	sprint := fs.String("sprint", "", "")
-	addr := fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), "")
+	addr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), "")
 	stdin := fs.Bool("stdin", false, "")
 	dir := fs.String("dir", "", "")
 	mapKind := fs.Bool("map-kind", false, "")
@@ -199,7 +199,7 @@ func readCardFiles(stdin bool, dir string, paths []string) ([]card.CardFile, err
 func cmdCardRelease(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New("card release")
 	sprint := fs.String("sprint", "", "")
-	addr := fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), "")
+	addr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), "")
 	if err := fs.Parse(args); err != nil || *sprint == "" || *addr == "" || fs.NArg() > 0 {
 		return refuse(stderr, "card", "release needs --sprint <name> and --redis <addr>, and no card file")
 	}
@@ -264,7 +264,7 @@ func cmdCardShow(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	fs := verbflag.New("card show")
 	sprint := fs.String("sprint", "", "")
 	label := fs.String("label", "", "")
-	addr := fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), "")
+	addr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), "")
 	if err := fs.Parse(args); err != nil || *sprint == "" || *label == "" || *addr == "" || fs.NArg() > 0 {
 		fmt.Fprintln(stderr, "nova-sprint card: show wants --sprint <S> --label <label> and --redis <addr> (or NOVA_SPRINT_REDIS); run: nova-sprint help")
 		return 2

@@ -42,7 +42,7 @@ func (r *repeated) Set(v string) error { *r = append(*r, v); return nil }
 
 func cmdPreflight(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New("preflight")
-	addr := fs.String("redis", "", "")
+	addr := fs.String("redis", redisDefault(), "")
 	sprint := fs.String("sprint", "", "")
 	policy := fs.String("policy-file", "", "")
 	launcher := fs.String("launcher-config", "", "")

@@ -45,7 +45,7 @@ func runReview(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return refuse(errOut, "review", "wants post: review post --id <primary> --verdict recut|redeal|reassign:<consumer>|drop --why <text>")
 	}
 	fs := verbflag.New("review post")
-	addr := fs.String("redis", "", "Redis address (else NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR)")
+	addr := fs.String("redis", redisDefault(), "Redis address (else NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR)")
 	actor := fs.String("actor", "", "who posts the verdict (else NOVA_FRIEND, else nova-sprint)")
 	id := fs.String("id", "", "the primary in review")
 	verdict := fs.String("verdict", "", "recut | redeal | reassign:<consumer> | drop")

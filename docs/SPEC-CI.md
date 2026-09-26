@@ -2211,6 +2211,39 @@ rest; a wrapper around any other nova tool (`nova-tokens`, `nova-decide`,
 `nova-redis serve`) is not flagged until that tool takes `--seat`; and only
 `docs/` Markdown is read, so a README elsewhere is not.
 
+### `seatredis` — no nova-sprint verb refuses an empty `--redis` while a seat is selected
+
+**The rule.** Every `--redis` flag in `cmd/nova-sprint` and `internal/nsprint`
+(and `--store`, nova-sprint's `note`) defaults to a seat-aware expression:
+`redisDefault(...)`, `redisOr(...)`, `redisDefaultFrom(...)`,
+`rawAddrDefault(...)` or, outside cmd/nova-sprint, `seatcred.Addr()`. Each of
+these is the verb's own environment default first, then the selected seat
+row's address from seats.tsv. A `--redis` read by hand (a `["redis"]` index or
+`flagValues(..., "redis")`) sits in a function that calls `redisOr`.
+**The hurt.** #4357 gave nova-sprint `--seat coordinator` and a seats.tsv row
+naming its Redis, but the cold read found that `table`, `census`, `digest` and
+`fn load` declared `--redis` with no default and refused the empty address
+before `store.Open` could fall back to the seat. So a session still typed
+`--redis` on every line, doing by hand what the retired wrapper script did
+(nova-tools#4330).
+**The test.** `TestNoVerbRefusesAnEmptyRedisUnderASeat`, with its control
+`TestSeatRedisRuleSeesEachShape` (`internal/ci/seatredis_class_test.go`). It
+reads the shared AST and fails when it finds fewer than 100 flags, so it cannot
+pass by matching nothing. The control pins `""`, `os.Getenv(...)`, a
+`StringVar` with `""`, a bare `flags["redis"]` and nova-sprint's `--store` as
+red, and the seat-aware spellings as green. The functional
+`TestSeatRowDrivesVerbsWithNoWrapper` (`cmd/nova-sprint`) runs `table --once`,
+`census`, `digest`, `fn load` and `fn check` on the seat row with no `--redis`.
+**Its allowlist.** None.
+**Its remedy line.** `default the flag to redisDefault() (or
+redisDefault("ENV")), wrap a hand-parsed one in redisOr, or use
+seatcred.Addr() outside cmd/nova-sprint`.
+**Its narrowings.** Only `String`, `StringVar` and the two hand-parse shapes
+are read. A flag named anything other than `redis` (or nova-sprint's `store`)
+is not held, and neither are other tools (`nova-work`, `nova-tokens`,
+`nova-post`, `nova-merge`). A hand-parsed read counts as covered when its
+function calls `redisOr` anywhere, not necessarily on that value.
+
 ### Tests this spec demands
 
 This list sits inside **The class tests** on purpose, as its last entry: half (b) of `TestSpecCIIndexesEveryClassTest` (`internal/docs/spec_ci_index_test.go`) reads every `Test…` name this section prints, so a test named below that is renamed or deleted turns that test red instead of leaving a line that describes a test that no longer runs.

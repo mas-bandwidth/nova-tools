@@ -53,10 +53,7 @@ import (
 var landStreamToken = githubToken
 
 func landRedisAddr(flagVal string) string {
-	if flagVal != "" {
-		return flagVal
-	}
-	return os.Getenv("NOVA_REDIS_ADDR")
+	return redisOr(flagVal, "NOVA_REDIS_ADDR")
 }
 
 func landRepoOK(repo string) bool {
@@ -106,7 +103,7 @@ func runLandStream(ctx context.Context, args []string, out, errOut io.Writer) in
 	fs := taskFlags(verb)
 	var streams multiFlag
 	fs.Var(&streams, "stream", "")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	repo := fs.String("repo", "", "")
 	base := fs.String("base", "dev", "")
 	dry := fs.Bool("dry-run", false, "")
@@ -225,7 +222,7 @@ func memberIndex(ms []stream.Member, n int) int {
 func runLandStreamStatus(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "land status"
 	fs := taskFlags(verb)
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	repo := fs.String("repo", "", "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
@@ -283,7 +280,7 @@ func runLandMerge(ctx context.Context, args []string, out, errOut io.Writer) int
 	fs := taskFlags(verb)
 	var streams multiFlag
 	fs.Var(&streams, "stream", "")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	repo := fs.String("repo", "", "")
 	by := fs.String("by", "rowan", "")
 	api := fs.String("api", "https://api.github.com", "")

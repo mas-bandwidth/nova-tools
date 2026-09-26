@@ -57,6 +57,13 @@ type Cred struct {
 	User     string
 	Key      string
 	Password secrets.Secret
+	// GitHubKey is the key of the seat's file its seats.tsv row names for the
+	// GitHub token (the seventh column), "" when the row names none. GitHub
+	// is the token when the file holds it; GitHubErr says why not when it
+	// does not (nova-tools#4330).
+	GitHubKey string
+	GitHub    secrets.Secret
+	GitHubErr error
 }
 
 func (c Cred) String() string {
@@ -133,6 +140,7 @@ type Selection struct {
 	cred     Cred
 	credErr  error
 	addr     string
+	github   string
 	resolver func(seat string) (Cred, error)
 }
 
@@ -177,7 +185,25 @@ func (s *Selection) Select(seat string) { s.SelectWith(seat, "", nil) }
 func (s *Selection) SelectWith(seat, redisAddr string, resolve func(seat string) (Cred, error)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.selected, s.resolved, s.cred, s.credErr, s.addr, s.resolver = strings.TrimSpace(seat), false, Cred{}, nil, redisAddr, resolve
+	s.selected, s.resolved, s.cred, s.credErr, s.addr, s.github, s.resolver = strings.TrimSpace(seat), false, Cred{}, nil, redisAddr, "", resolve
+}
+
+// SelectProfile is SelectWith for a seats.tsv row: the row's seat, its Redis
+// address and its GitHub token env (GitHubEnv), resolved through resolve.
+func (s *Selection) SelectProfile(p Profile, resolve func(seat string) (Cred, error)) {
+	s.SelectWith(p.Name, p.Addr, resolve)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.github = p.GitHubEnv
+}
+
+// GitHubEnv is the key of the selected seat's file that holds its GitHub
+// token, from its seats.tsv row's seventh column; "" when no seat is selected
+// or its row names none. Nothing is decrypted to answer it.
+func (s *Selection) GitHubEnv() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.github
 }
 
 // Addr is the selected seat's Redis address from its profile row, "" when no

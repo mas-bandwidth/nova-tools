@@ -3923,8 +3923,9 @@ REPAIR, SPEC, SPEC-WRITTEN, CLOSE or JEV-DIFF and the first line carries
 `score=<0..10>`, no head, see `spec` below), or the line is refused. It RPUSHes the line
 onto `pr:<repo>:<n>:lines` and stamps `last_line` and `last_line_at` on the
 record in one MULTI, then mirrors it as one
-REST comment (`POST /repos/<owner>/<repo>/issues/<n>/comments`, the token from
-`GH_TOKEN` or `GITHUB_TOKEN`, the base URL from `GITHUB_API_URL`). `--no-github`
+REST comment (`POST /repos/<owner>/<repo>/issues/<n>/comments`, the token the
+seat's seats.tsv row names, else `GH_TOKEN` or `GITHUB_TOKEN`, the base URL from
+`GITHUB_API_URL`). `--no-github`
 is Redis only (the tests count HTTP calls: 0 with it, exactly 1 without). A
 comment that fails after the Redis write is `READ POST REFUSED ... redis=ok
 github=<why>` (exit 1): the line is in Redis, which is the record.
@@ -4228,7 +4229,7 @@ QUACK RUN sprint=quack-0926 benches=2 refused=0 pitstop=lifted ms=9
 
 `nova-sprint land pr <n> [--repo owner/name] [--redis <addr>] [--api <url>]`
 
-One pull request to its merge commit in one pass (#4311; the scratch script that ran about twenty times on 2026-09-26, as a verb). It reads the PR by REST (one call), then reads its head's check state from Redis, `ci:<repo>:<head>:gh`, which the webhook ingest writes from GitHub's `check_run` and `workflow_run` deliveries (internal/nsprint/webhook); it never reads the check-runs or workflow-runs endpoints and never calls GraphQL (nova-sprint is REST only, and GitHub is events only). It prints `PR <n> CHECKS <word> <pass>/<total> head=<sha8>`. Green: it merges the PR by REST at exactly that head (GitHub refuses when the head moved), skipping the merge queue whose run re-proves the same tree (Glenn 2026-09-26), and prints `MERGED <sha>`. Red: `FAILED <first red run>` (`kind:name`). Pending or nothing recorded yet: `WAITING` and it returns at once; there is no loop and no sleep, so run it again once the webhook has written green. A merged PR is `MERGED <sha>`, a closed one `FAILED closed without a merge`, and `mergeable_state=dirty` is `FAILED conflict`. A final `LAND PR` line carries the state, head, check word, merge sha and REST calls made (at most two; the budget is three). The token comes from the environment (`GH_TOKEN`, then `GITHUB_TOKEN`, as the lander reads it); it never runs `gh`. No token is the typed refusal `REFUSED no GitHub token remedy=...`. `--repo` defaults to `mas-bandwidth/nova-tools`; `--redis` defaults to `NOVA_REDIS_ADDR`. Exit 0 merged, 1 failed, closed or in conflict, 2 usage or refused, 3 waiting, 6 no Redis.
+One pull request to its merge commit in one pass (#4311; the scratch script that ran about twenty times on 2026-09-26, as a verb). It reads the PR by REST (one call), then reads its head's check state from Redis, `ci:<repo>:<head>:gh`, which the webhook ingest writes from GitHub's `check_run` and `workflow_run` deliveries (internal/nsprint/webhook); it never reads the check-runs or workflow-runs endpoints and never calls GraphQL (nova-sprint is REST only, and GitHub is events only). It prints `PR <n> CHECKS <word> <pass>/<total> head=<sha8>`. Green: it merges the PR by REST at exactly that head (GitHub refuses when the head moved), skipping the merge queue whose run re-proves the same tree (Glenn 2026-09-26), and prints `MERGED <sha>`. Red: `FAILED <first red run>` (`kind:name`). Pending or nothing recorded yet: `WAITING` and it returns at once; there is no loop and no sleep, so run it again once the webhook has written green. A merged PR is `MERGED <sha>`, a closed one `FAILED closed without a merge`, and `mergeable_state=dirty` is `FAILED conflict`. A final `LAND PR` line carries the state, head, check word, merge sha and REST calls made (at most two; the budget is three). The token is the seat's when its seats.tsv row names one (#4330), else the environment's (`GH_TOKEN`, then `GITHUB_TOKEN`, as the lander reads it). No token is the typed refusal `REFUSED no GitHub token remedy=...`. `--repo` defaults to `mas-bandwidth/nova-tools`; `--redis` defaults to `NOVA_REDIS_ADDR`. Exit 0 merged, 1 failed, closed or in conflict, 2 usage or refused, 3 waiting, 6 no Redis.
 
 ```text
 nova-sprint land pr 4304
@@ -4336,7 +4337,7 @@ before, from its environment.
 one `redis-cli` command under the seat's login for the rare hand read:
 `redis-cli -h <host> -p <port> --user <user> --no-auth-warning <cmd...>`, with
 the password as `REDISCLI_AUTH` in that child's environment only. `--redis`
-defaults to `NOVA_REDIS_ADDR`. stdout is redis-cli's; the receipt is one line on
+defaults to `NOVA_REDIS_ADDR`, else the seat row's address. stdout is redis-cli's; the receipt is one line on
 stderr, `REDIS-CLI seat=<s> user=<u> key=<k> addr=<a> cmd=<c> exit=<n>`. Exit 0
 the command ran, 1 redis-cli failed, 2 refused (no seat, no address, no command
 after `--`, or a seat that cannot be read, named with its remedy).
@@ -4351,24 +4352,38 @@ nova-sprint redis-cli --seat studio --redis 100.115.99.19:6380 -- ZCARD sprint:S
 The seat is a fact of the machine, not of the shell (nova-tools #4330). The
 fleet play writes `$XDG_CONFIG_HOME/nova-sprint/seats.tsv` (else
 `~/.config/nova-sprint/seats.tsv`), one tab-separated row per seat: name, redis
-addr, redis user, secret env, store, key. Blank lines and `#` lines are
-skipped; a leading `~/` in store or key is `$HOME`. The key's file name names
-the seat's file in the store (`studio.key` opens `<store>/studio.yaml`).
+addr, redis user, secret env, store, key, and an optional seventh column, the
+GitHub token env. Blank lines and `#` lines are skipped; a leading `~/` in store
+or key is `$HOME`. The key's file name names the seat's file in the store
+(`studio.key` opens `<store>/studio.yaml`).
 
 ```
-coordinator	100.115.99.19:6380	coordinator	NOVA_REDIS_COORDINATOR_PASSWORD	~/nova-bench/secrets	~/.config/nova-secrets/studio.key
+coordinator	100.115.99.19:6380	coordinator	NOVA_REDIS_COORDINATOR_PASSWORD	~/nova-bench/secrets	~/.config/nova-secrets/studio.key	GH_GATE_TOKEN
 ```
 
 `nova-sprint --seat coordinator <verb>` (or `NOVA_SPRINT_SEAT=coordinator`,
 which wins over `NOVA_SEAT`) reads the row: the verb logs in as the row's user
 with the password the seat's file holds under the row's secret env, read in
 process through `internal/seatcred` as above (never printed, never in the
-environment). The row's address becomes the default of every verb whose
-`--redis` falls back to `NOVA_SPRINT_REDIS`, `NOVA_REDIS_ADDR` or `NOVA_REDIS`,
-and the address a store dial uses when its verb names none; a `--redis` on the
-line still wins. A seat with no row is the #4052 seat above; when that does not
-open either, the refusal names `seats.tsv` and the row it wants. A malformed
-row is refused before any verb runs, as `seats.tsv:<line>`, exit 2.
+environment). The row's address is every verb's `--redis` default: a verb
+given no `--redis` dials it (`nova-sprint --seat coordinator table --once`,
+`census`, `digest`, `fn load` included), after the verb's own environment
+default (`NOVA_SPRINT_REDIS`, `NOVA_REDIS_ADDR`, `NOVA_REDIS`, which the row
+also sets); a `--redis` on the line still wins. The class test
+`internal/ci/seatredis_class_test.go` holds every `--redis` flag in
+cmd/nova-sprint and internal/nsprint to that default. A seat with no row is the
+#4052 seat above; when that does not open either, the refusal names `seats.tsv`
+and the row it wants. A malformed row is refused before any verb runs, as
+`seats.tsv:<line>`, exit 2.
+
+The seventh column names the key of the seat's file that holds its GitHub
+token. The GitHub verbs (`land`, `ci compare`, `read post`, `file`, `pr reap`,
+`card cut-from`) read the token from the seat's file in process, so no session
+exports `GH_TOKEN`; a file without that key is refused naming the file and the
+`nova-secrets seal` remedy. A six-column row (or a seat with no row) keeps the
+old behaviour, `GH_TOKEN` then `GITHUB_TOKEN` from the environment, and says so
+once per process on stderr:
+`nova-sprint: seat <s>: its seats.tsv row names no GitHub token env (the seventh column), so GitHub verbs read GH_TOKEN from the session as before`.
 
 `nova-sprint [--seat <name>] redis [--redis <host:port>] [--] <cmd...>` sends
 one raw command over the same dial (no redis-cli, the password never leaves the

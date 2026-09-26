@@ -45,7 +45,7 @@ func init() {
 // positional argument, which may come before or after the flags.
 func readFlags(name string, args []string) (redisAddr, sprint string, now time.Time, pos []string, err error) {
 	fs := taskFlags(name)
-	r := fs.String("redis", "", "")
+	r := fs.String("redis", redisDefault(), "")
 	s := fs.String("sprint", "", "")
 	n := fs.Int64("now", 0, "")
 	for len(args) > 0 {

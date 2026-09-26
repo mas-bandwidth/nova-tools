@@ -13,6 +13,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -105,7 +106,7 @@ func (e env) open(ctx context.Context, sub, flagVal string, out io.Writer) (*sto
 
 func runSync(ctx context.Context, args []string, out, errOut io.Writer, e env) int {
 	fs := verbflag.New("jev sync")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", seatcred.Addr(), "")
 	n := fs.Int64("n", 1000, "")
 	if err := fs.Parse(args); err != nil || fs.NArg() > 0 || *n <= 0 {
 		return usage(errOut, "sync", "want sync [--n <moves, 1 or more>] [--redis <addr>]")
@@ -134,7 +135,7 @@ func runSync(ctx context.Context, args []string, out, errOut io.Writer, e env) i
 
 func runAsk(ctx context.Context, args []string, out, errOut io.Writer, e env) int {
 	fs := verbflag.New("jev ask")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", seatcred.Addr(), "")
 	n := fs.Int64("n", 16, "")
 	keyEnv := fs.String("key-env", decide.DefaultKeyEnv, "")
 	baseURL := fs.String("base-url", "", "")
@@ -196,7 +197,7 @@ func ask(ctx context.Context, c redis.Cmdable, a Asker, n int64, out io.Writer) 
 
 func runReport(ctx context.Context, args []string, out, errOut io.Writer, e env) int {
 	fs := verbflag.New("jev report")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", seatcred.Addr(), "")
 	typ := fs.String("type", "", "")
 	version := fs.String("version", "", "")
 	if err := fs.Parse(args); err != nil || fs.NArg() > 0 {
@@ -233,7 +234,7 @@ func Print(out io.Writer, rows []Row, pending int64, typ, version string) {
 
 func runOutcome(ctx context.Context, args []string, out, errOut io.Writer, e env) int {
 	fs := verbflag.New("jev outcome")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", seatcred.Addr(), "")
 	typ := fs.String("type", "", "")
 	subject := fs.String("subject", "", "")
 	outcome := fs.String("outcome", "", "")

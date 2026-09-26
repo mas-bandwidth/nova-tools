@@ -18,7 +18,7 @@ func init() {
 
 func runEst(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("est")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	sprint := fs.String("sprint", "", "")
 	owner := fs.String("owner", "", "")
 	if err := fs.Parse(args); err != nil {

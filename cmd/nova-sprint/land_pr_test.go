@@ -75,7 +75,7 @@ func TestLandPRVerb(t *testing.T) {
 	landStreamToken = func() (string, error) { return "", nil }
 	t.Cleanup(func() { landStreamToken = prev })
 	code, out, errOut = runSprint("land", "pr", "12", "--repo", "o/r", "--redis", mr.Addr(), "--api", srv.URL)
-	if code != 2 || out != "" || !strings.Contains(errOut, "REFUSED no GitHub token remedy=export GH_TOKEN (or GITHUB_TOKEN)") {
+	if code != 2 || out != "" || !strings.Contains(errOut, "REFUSED no GitHub token remedy=name the seat's GitHub token env in its seats.tsv row") {
 		t.Fatalf("no token: exit %d %q %q", code, out, errOut)
 	}
 	for _, args := range [][]string{{}, {"x"}, {"0"}, {"12", "13"}, {"12", "--repo", "norepo"}, {"12", "--timeout", "5m"}, {"12"}} {

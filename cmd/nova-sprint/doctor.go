@@ -194,7 +194,7 @@ func runDoctor(ctx context.Context, args []string, out, errOut io.Writer) int {
 
 func doctorRun(ctx context.Context, args []string, out, errOut io.Writer, d doctorDeps) int {
 	fs := verbflag.New("doctor")
-	addrFlag := fs.String("redis", "", "the store to check (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR)")
+	addrFlag := fs.String("redis", redisDefault(), "the store to check (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat row's address)")
 	bench := fs.String("bench", "", "this machine's registry name (default: the short hostname)")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "doctor", err.Error())

@@ -45,7 +45,7 @@ func parseUntil(s string, now time.Time) (time.Time, error) {
 func runFriendReport(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "friend report"
 	fs := capacityFlags(verb)
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	as := fs.String("as", "", "")
 	outOfCredits := fs.Bool("out-of-credits", false, "")
 	away := fs.Bool("away", false, "")
@@ -108,7 +108,7 @@ func runFriendReport(ctx context.Context, args []string, out, errOut io.Writer) 
 func runFriendShow(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "friend show"
 	fs := capacityFlags(verb)
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
@@ -137,7 +137,7 @@ func runFriendShow(ctx context.Context, args []string, out, errOut io.Writer) in
 func runFriendSweep(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "friend sweep"
 	fs := capacityFlags(verb)
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	as := fs.String("as", "", "")
 	idleTicks := fs.Int("idle-ticks", friend.DefaultPolicy.IdleTicks, "")
 	underfullTicks := fs.Int("underfull-ticks", friend.DefaultPolicy.UnderfullTicks, "")
@@ -212,7 +212,7 @@ func parseInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
 func runCapacityWake(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "capacity friend --wake"
 	fs := capacityFlags(verb)
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	wake := fs.String("wake", "", "")
 	notify := fs.String("notify", "", "")
 	actor := new(string)

@@ -59,6 +59,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/read"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 func init() {
@@ -77,7 +78,7 @@ func runRead(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 	sub := args[0]
 	fs := taskFlags("read " + sub)
-	redisAddr := fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), "")
+	redisAddr := fs.String("redis", redisDefault("NOVA_SPRINT_REDIS"), "")
 	repo := fs.String("repo", "", "")
 	n := fs.String("n", "", "")
 	outDir := fs.String("out", "", "")
@@ -163,12 +164,13 @@ func runRead(ctx context.Context, args []string, out, errOut io.Writer) int {
 	case "post":
 		var poster *read.Poster
 		if !*noGitHub {
-			token := os.Getenv("GH_TOKEN")
-			if token == "" {
-				token = os.Getenv("GITHUB_TOKEN")
+			token, terr := envGitHubToken()
+			if terr != nil {
+				fmt.Fprintf(errOut, "READ POST REFUSED repo=%s n=%s why=%s\n", *repo, *n, oneline.Escape(terr.Error()))
+				return 1
 			}
 			if token == "" {
-				fmt.Fprintf(errOut, "READ POST REFUSED repo=%s n=%s why=no GH_TOKEN or GITHUB_TOKEN in the environment for the comment mirror; run under nova-secrets exec --only GH_TOKEN, or pass --no-github (Redis only)\n", *repo, *n)
+				fmt.Fprintf(errOut, "READ POST REFUSED repo=%s n=%s why=no GH_TOKEN or GITHUB_TOKEN in the environment and no seat token for the comment mirror; pass --seat with a seats.tsv row naming the seat's GitHub token env (seventh column), or pass --no-github (Redis only)\n", *repo, *n)
 				return 1
 			}
 			poster = &read.Poster{BaseURL: os.Getenv("GITHUB_API_URL"), Owner: *owner, Token: token}

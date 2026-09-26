@@ -21,7 +21,7 @@ func init() {
 
 func runWidth(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("width")
-	addr := fs.String("redis", "", "")
+	addr := fs.String("redis", redisDefault(), "")
 	as := fs.String("as", "", "")
 	sprint := fs.String("sprint", "", "")
 	_ = sprint

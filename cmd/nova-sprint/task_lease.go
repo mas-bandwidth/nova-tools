@@ -12,7 +12,7 @@ import (
 // start acknowledgement. The token is the attempt's fence.
 func runTaskBeat(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("task beat")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	sprint := fs.String("sprint", "", "")
 	id := fs.String("id", "", "")
 	token := fs.String("token", "", "")
@@ -41,7 +41,7 @@ func runTaskBeat(ctx context.Context, args []string, out, errOut io.Writer) int 
 
 func runTaskCancel(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("task cancel")
-	redisAddr := fs.String("redis", "", "")
+	redisAddr := fs.String("redis", redisDefault(), "")
 	sprint := fs.String("sprint", "", "")
 	id := fs.String("id", "", "")
 	token := fs.String("token", "", "")

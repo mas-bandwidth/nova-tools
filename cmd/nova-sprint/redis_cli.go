@@ -33,7 +33,7 @@ const redisCLIWants = "wants [--seat <name>] [--redis <host:port>] -- <redis com
 
 func cmdRedisCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New("redis-cli")
-	addr := fs.String("redis", os.Getenv("NOVA_REDIS_ADDR"), "")
+	addr := fs.String("redis", redisDefault("NOVA_REDIS_ADDR"), "")
 	i := indexOf(args, "--")
 	if i < 0 || i == len(args)-1 {
 		// -h before the "--" still answers (verbflag); anything else is refused.
