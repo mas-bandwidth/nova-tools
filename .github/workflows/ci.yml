@@ -1527,7 +1527,7 @@ jobs:
             "test-race-queue:${{ needs.test-race-queue.result }}" \
             "lisp:${{ needs.lisp.result }}" \
             "e2e:${{ needs.e2e.result }}" \
-            "test-hosted-pr:${{ needs.test-hosted-pr.result }}" \
+            "test-hosted-pr:${{ needs.test-hosted-pr.result }}"
           do
             job="${pair%:*}"; result="${pair##*:}"
             echo "$result	$job"
