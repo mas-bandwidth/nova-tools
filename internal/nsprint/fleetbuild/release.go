@@ -107,6 +107,20 @@ type ReleaseResult struct {
 // OK is true when every step it ran answered.
 func (r ReleaseResult) OK() bool { return r.Fn != "refused" }
 
+// Line is the release's last receipt: FLEET RELEASE OK|FAIL version=...
+func (r ReleaseResult) Line() string {
+	word := "OK"
+	if !r.OK() {
+		word = "FAIL"
+	}
+	commit := r.Commit
+	if len(commit) > 12 {
+		commit = commit[:12]
+	}
+	return fmt.Sprintf("FLEET RELEASE %s version=%s commit=%s studio=%s fn=%s rolled=%d skipped=%d",
+		word, r.Version, commit, strings.ToLower(r.Studio), r.Fn, len(r.Rolled), len(r.Skipped))
+}
+
 func (r *Release) printf(format string, a ...any) {
 	if r.Out != nil {
 		fmt.Fprintf(r.Out, format, a...)
