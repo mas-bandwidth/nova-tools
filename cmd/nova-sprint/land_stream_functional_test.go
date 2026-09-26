@@ -109,13 +109,13 @@ func TestLandStreamEndToEnd(t *testing.T) {
 	for id, at := range map[string]float64{"build-101-one": 50, "build-103-three": 60, "build-7-seven": 70} {
 		st := map[string]string{"build-101-one": "working", "build-103-three": "waiting", "build-7-seven": "ready"}[id]
 		c.ZAdd(ctx, "ws:"+swarm+":"+st, redis.Z{Score: at, Member: id})
-		c.HSet(ctx, "task:"+id, "stream", swarm, "state", st, "created_at", fmt.Sprint(at), "ref", "nova-tools#"+strings.Split(id, "-")[1])
+		c.HSet(ctx, "task:"+id, "stream", swarm, "where", st, "state", st, "created_at", fmt.Sprint(at), "ref", "nova-tools#"+strings.Split(id, "-")[1])
 		c.FCall(ctx, "ns_task_refs", nil, id)
 	}
 	for n, at := range map[int]float64{1: 200, 2: 300, 3: 100} {
 		id := fmt.Sprintf("t%d", n)
 		c.ZAdd(ctx, "ws:"+lsStream+":merging", redis.Z{Score: at, Member: id})
-		c.HSet(ctx, "task:"+id, "stream", lsStream, "state", "merging", "pr", fmt.Sprint(n), "created_at", fmt.Sprint(at), "ref", lsOrderRef[n])
+		c.HSet(ctx, "task:"+id, "stream", lsStream, "where", "merging", "state", "merging", "pr", fmt.Sprint(n), "created_at", fmt.Sprint(at), "ref", lsOrderRef[n])
 		if code, out, errOut := runSprint("pr", "record", "--redis", addr, "--repo", lsRepo, "--n", fmt.Sprint(n),
 			"--head", heads[n], "--base", "dev", "--stream", lsStream, "--task", id); code != 0 || !strings.Contains(out, "created=true") {
 			t.Fatalf("pr record: %d %s %s", code, out, errOut)
@@ -208,7 +208,7 @@ func TestLandStreamEndToEnd(t *testing.T) {
 	// into merging outside a read copy's end, NOCOPY.)
 	c.ZRem(ctx, "ws:"+lsStream+":working", "t2")
 	c.ZAdd(ctx, "ws:"+lsStream+":merging", redis.Z{Score: 300, Member: "t2"})
-	c.HSet(ctx, "task:t2", "state", "merging")
+	c.HSet(ctx, "task:t2", "where", "merging", "state", "merging")
 	c.HSet(ctx, "pr:nova-tools:2", "state", "open")
 	fsck("t2 back in merging")
 	work = filepath.Join(t.TempDir(), "clone2")

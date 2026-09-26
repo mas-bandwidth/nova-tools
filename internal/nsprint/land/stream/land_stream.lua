@@ -111,7 +111,10 @@ local function ci_request(repo, head, pr, now)
 end
 
 -- move one task between two ws sets of its stream; returns 1 when it was in
--- `from`. The score is the task's age and a move keeps it (ws-index).
+-- `from`. The score is the task's age and a move keeps it (ws-index). The
+-- record's pointer follows the set: where beside state (#4410 round 6: a
+-- placed record parked with state alone read merging in its hash while its
+-- set said working, and its next move was refused as drift).
 local function move(id, stream, from, to, by, why, at)
   if id == nil or id == '' or stream == nil or stream == '' then return 0 end
   local fromkey = 'ws:' .. stream .. ':' .. from
@@ -119,7 +122,9 @@ local function move(id, stream, from, to, by, why, at)
   if not score then return 0 end
   redis.call('ZREM', fromkey, id)
   redis.call('ZADD', 'ws:' .. stream .. ':' .. to, score, id)
-  redis.call('HSET', 'task:' .. id, 'state', to, 'state_at', at)
+  local ok = '-'
+  if to == 'landed' then ok = 'ok' end
+  redis.call('HSET', 'task:' .. id, 'state', to, 'state_at', at, 'where', to, 'where_at', at, 'where_ok', ok)
   wslog(id, stream, from, to, by, why, at)
   return 1
 end

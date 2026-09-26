@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws/wstest"
 	"github.com/redis/go-redis/v9"
 )
@@ -97,6 +98,12 @@ func TestPlanBindsLandsWithItsStitchAndIsNeverDealt(t *testing.T) {
 	res, err := taskcard.BindPlan(ctx, c, parent, []string{"5001", "5002"}, stitch, "rowan")
 	if err != nil || res.To != "waiting" {
 		t.Fatalf("bind: %v %v", res, err)
+	}
+	// the stream's work order, as every door writes it after its push
+	// (#4322): the stitch after its children, the plan after its stitch,
+	// so each child lands as the head of the live order
+	if _, err := ws.Reorder(ctx, c, hierStream, "test"); err != nil {
+		t.Fatal(err)
 	}
 	rec := c.HGetAll(ctx, taskcard.Key(parent)).Val()
 	for k, want := range map[string]string{"where": "waiting", "kind": "plan", "children": "5001 5002", "stitch": stitch, "blocked_on": stitch} {
@@ -272,6 +279,9 @@ func TestStitchLandedByAnyDoorLandsThePlan(t *testing.T) {
 	parent := "plan-door"
 	stitch := pushPlanCards(t, c, parent, "5301")
 	if _, err := taskcard.BindPlan(ctx, c, parent, []string{"5301"}, stitch, "rowan"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ws.Reorder(ctx, c, hierStream, "test"); err != nil { // the order every door writes (#4322)
 		t.Fatal(err)
 	}
 	if _, err := taskcard.Move(ctx, c, parent, "ready", taskcard.Opts{By: "rowan", Why: "depends-on met"}); err == nil || !strings.Contains(err.Error(), "PLAN task:plan-door is a plan: it waits on its stitch and lands with it, never ready") {

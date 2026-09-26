@@ -361,7 +361,9 @@ func TestReapUnlinksFinishedFromWorking(t *testing.T) {
 
 	c := start(t)
 	ctx := context.Background()
-	ids := []string{"r-live", "r-lapsed", "r-done", "r-landed"}
+	// r-landed is pushed first: a card lands only as the head of its
+	// stream's live order (#4322 round 6)
+	ids := []string{"r-landed", "r-live", "r-lapsed", "r-done"}
 	for _, id := range ids {
 		if _, err := taskcard.Push(ctx, c, taskcard.PushRequest{ID: id, Stream: stream, Friend: "rowan", Sprint: sprint}); err != nil {
 			t.Fatal(err)

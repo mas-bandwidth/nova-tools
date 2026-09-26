@@ -261,13 +261,28 @@ func LandPR(ctx context.Context, gh *GitHub, rdb redis.Cmdable, o LandPROptions)
 		return rep, err
 	}
 
-	// The one merge, at exactly that sha.
 	// A stream member merges only as the head of its stream's live order
-	// (MemberHeadGate), checked immediately before the merge.
-	if h, err := MemberHeadGate(ctx, rdb, o.Repo, o.N); err != nil {
+	// (MemberHeadGate, the computed order: its CONFLICT lines name a cycle or
+	// a predecessor that never finishes), then the fence (#4322 round 6):
+	// ns_tcard_land_claim runs the same check in the store and claims the
+	// landing slot, so nothing enters the stream's live order between this
+	// claim and the card's landing after the merge; a merge that fails
+	// releases the claim.
+	member, h, err := MemberHeadGate(ctx, rdb, o.Repo, o.N)
+	if err != nil {
 		return rep, err
 	} else if h != nil {
 		return rep, orderRefusal(*h)
+	}
+	if member != "" {
+		until, err := taskcard.LandClaim(ctx, rdb, member, "land-pr", LandClaimTTL)
+		if err != nil {
+			if why, refused := taskcard.IsRefused(err); refused {
+				return rep, &Refusal{Why: why, Remedy: "the store refused the landing slot for " + member + "; land pr again once the card ahead has landed (or the claim has lapsed)"}
+			}
+			return rep, err
+		}
+		say("CLAIMED %s until %s", member, until.UTC().Format(time.RFC3339))
 	}
 	// Green at the head: the one merge, at exactly that sha.
 	title := fmt.Sprintf("Merge pull request #%d", o.N)
@@ -276,12 +291,22 @@ func LandPR(ctx context.Context, gh *GitHub, rdb redis.Cmdable, o LandPROptions)
 	}
 	sha, err := gh.MergePR(ctx, o.Repo, o.N, pr.Head.SHA, title)
 	if err != nil {
+		if member != "" {
+			if rerr := taskcard.LandRelease(ctx, rdb, member); rerr != nil {
+				return rep, fmt.Errorf("%w; and the landing claim on %s stays until it lapses: %v", err, member, rerr)
+			}
+		}
 		return rep, err
 	}
 	rep.State, rep.MergeSHA = "merged", sha
 	say("MERGED %s", sha)
 	return afterMerge(ctx, rdb, o, rep, pr.Head.Ref, pr.Base.Ref, say)
 }
+
+// LandClaimTTL is how long land pr's landing claim (taskcard.LandClaim)
+// holds the stream's live order still: the one GitHub merge call, then
+// the card's landing in afterMerge.
+const LandClaimTTL = 2 * time.Minute
 
 // staleRecord refuses a PR record whose head is not GitHub's: the REST
 // head the pass read, or the head the newest delivery named
@@ -379,6 +404,11 @@ func afterMerge(ctx context.Context, rdb redis.Cmdable, o LandPROptions, rep Lan
 		if why, refused := taskcard.IsRefused(err); refused {
 			rep.CardMove = "refused " + why
 			say("CARD %s REFUSED %s", id, why)
+			// the landing did not clear the claim: release it, or every
+			// push onto the stream waits out the lease
+			if rerr := taskcard.LandRelease(ctx, rdb, id); rerr != nil {
+				say("CARD %s claim not released: %v", id, rerr)
+			}
 			return rep, nil
 		}
 		return rep, err

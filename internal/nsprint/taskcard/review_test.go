@@ -164,8 +164,9 @@ func TestControl4072FailedCopyGoesToReview(t *testing.T) {
 
 // TestReviewVerdicts: recut returns the card to waiting with the REVIEW
 // line; reassign:<consumer> cuts its copy on the named consumer; drop moves
-// it to landed with outcome=dropped. A primary not in review refuses every
-// verdict.
+// it to landed with outcome=dropped (a landing: the head of the stream's
+// live order, #4322 round 6, so the oldest card is the one dropped). A
+// primary not in review refuses every verdict.
 func TestReviewVerdicts(t *testing.T) {
 	t.Parallel()
 	c := start(t)
@@ -181,10 +182,10 @@ func TestReviewVerdicts(t *testing.T) {
 	}
 	wantWS(t, c, "three fails", map[string]int64{"review": 3})
 
-	if got := reviewPost(t, c, ids[0], "recut", "PATHS too narrow: add internal/y"); strings.Join(got, " ") != "REVIEWED "+ids[0]+" recut waiting " {
+	if got := reviewPost(t, c, ids[2], "recut", "PATHS too narrow: add internal/y"); strings.Join(got, " ") != "REVIEWED "+ids[2]+" recut waiting " {
 		t.Fatalf("recut: %v", got)
 	}
-	if h := c.HGetAll(ctx, taskcard.Key(ids[0])).Val(); h["where"] != "waiting" || h["review"] != "REVIEW verdict=recut by=rowan: PATHS too narrow: add internal/y" {
+	if h := c.HGetAll(ctx, taskcard.Key(ids[2])).Val(); h["where"] != "waiting" || h["review"] != "REVIEW verdict=recut by=rowan: PATHS too narrow: add internal/y" {
 		t.Fatalf("recut record %v", h)
 	}
 
@@ -199,10 +200,10 @@ func TestReviewVerdicts(t *testing.T) {
 		t.Fatalf("reassigned copy %v", h)
 	}
 
-	if got := reviewPost(t, c, ids[2], "drop", "superseded by #4100"); strings.Join(got, " ") != "REVIEWED "+ids[2]+" drop landed " {
+	if got := reviewPost(t, c, ids[0], "drop", "superseded by #4100"); strings.Join(got, " ") != "REVIEWED "+ids[0]+" drop landed " {
 		t.Fatalf("drop: %v", got)
 	}
-	if h := c.HGetAll(ctx, taskcard.Key(ids[2])).Val(); h["where"] != "landed" || h["outcome"] != "dropped" || h["review_why"] == "" {
+	if h := c.HGetAll(ctx, taskcard.Key(ids[0])).Val(); h["where"] != "landed" || h["outcome"] != "dropped" || h["review_why"] == "" {
 		t.Fatalf("dropped record %v", h)
 	}
 	wantWS(t, c, "verdicts", map[string]int64{"review": 0, "waiting": 1, "working": 1, "landed": 1})

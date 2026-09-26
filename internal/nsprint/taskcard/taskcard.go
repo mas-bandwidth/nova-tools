@@ -31,6 +31,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -44,7 +45,10 @@ const (
 	FnBeat       = "ns_tcard_beat"
 	FnExpire     = "ns_tcard_expire"
 	FnLandStream = "ns_tcard_land_stream"
-	FnFsck       = "ns_tcard_fsck"
+	// FnLandClaim and FnLandRelease are land pr's fence (#4322 round 6).
+	FnLandClaim   = "ns_tcard_land_claim"
+	FnLandRelease = "ns_tcard_land_release"
+	FnFsck        = "ns_tcard_fsck"
 )
 
 // Wheres are the sets a task can be in, in the fsck reply's order: ws.Wheres.
@@ -689,4 +693,48 @@ func LandStream(ctx context.Context, c redis.Cmdable, stream, sha, by, why strin
 		r.Refused[out[3+3*n+2*i]] = out[4+3*n+2*i]
 	}
 	return r, nil
+}
+
+// LandClaim is land pr's fence before its GitHub merge (nova-tools #4322
+// round 6): ns_tcard_land_claim checks, in the store, that task id is the
+// head of its stream's live work order and claims the landing slot until
+// ttl passes (120 s when zero), so nothing enters the stream's live order
+// before the merged card lands (its landing clears the claim). It returns
+// the claim's end; a refusal (ORDER WAIT, ORDER CLAIMED, NOTLIVE) is a
+// *Refused and wrote nothing.
+func LandClaim(ctx context.Context, c redis.Cmdable, id, by string, ttl time.Duration) (time.Time, error) {
+	reply, err := c.FCall(ctx, FnLandClaim, nil, id, by, strconv.FormatInt(ttl.Milliseconds(), 10)).Result()
+	if err != nil {
+		return time.Time{}, fmt.Errorf("%s: %w", FnLandClaim, err)
+	}
+	s, err := str(reply)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("%s: %w", FnLandClaim, err)
+	}
+	if why, ok := strings.CutPrefix(s, "REFUSED "); ok {
+		return time.Time{}, &Refused{Why: why}
+	}
+	v, ok := strings.CutPrefix(s, "CLAIMED ")
+	ms, perr := strconv.ParseInt(v, 10, 64)
+	if !ok || perr != nil {
+		return time.Time{}, fmt.Errorf("%s: unexpected reply %q", FnLandClaim, s)
+	}
+	return time.UnixMilli(ms), nil
+}
+
+// LandRelease clears task id's landing claim (LandClaim) when the merge did
+// not happen; a landing clears it by itself.
+func LandRelease(ctx context.Context, c redis.Cmdable, id string) error {
+	reply, err := c.FCall(ctx, FnLandRelease, nil, id).Result()
+	if err != nil {
+		return fmt.Errorf("%s: %w", FnLandRelease, err)
+	}
+	s, err := str(reply)
+	if err != nil {
+		return fmt.Errorf("%s: %w", FnLandRelease, err)
+	}
+	if why, ok := strings.CutPrefix(s, "REFUSED "); ok {
+		return &Refused{Why: why}
+	}
+	return nil
 }

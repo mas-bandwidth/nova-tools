@@ -41,9 +41,10 @@ func createdAt(t *testing.T, c *redis.Client, id string) float64 {
 
 // TestOrderBaseIsTheOldestLiveCard is the cold read's probe (#4322 fix round
 // item 1): the sentinel is made 8.4 s older than every card (the probe's
-// gap); after a and e land and a reorder, the least score in the stream's
+// gap); after a lands and a reorder, the least score in the stream's
 // ordered sets (what PROGRESS oldest= reads) is the created_at of the
-// oldest live card that is not the sentinel, never the sentinel's.
+// oldest live card that is not the sentinel, never the sentinel's. e, behind
+// b in the order, cannot land past it: the store refuses ORDER WAIT (round 6).
 func TestOrderBaseIsTheOldestLiveCard(t *testing.T) {
 	t.Parallel()
 	_, c := wstest.Start(t)
@@ -61,7 +62,12 @@ func TestOrderBaseIsTheOldestLiveCard(t *testing.T) {
 		t.Fatal(err)
 	}
 	orLand(t, c, "a")
-	orLand(t, c, "e")
+	if _, err := taskcard.Move(ctx, c, "e", "working", taskcard.Opts{By: "test", As: "f1", Friend: "f1", SetFriend: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskcard.Land(ctx, c, "e", "test", "0123abcd", "merged"); err == nil || !strings.Contains(err.Error(), `ORDER WAIT stream="land: order" before=b where=waiting held=e`) {
+		t.Fatalf("e landed past b: %v", err)
+	}
 	r, err := ws.Reorder(ctx, c, orStream, "test")
 	if err != nil {
 		t.Fatal(err)

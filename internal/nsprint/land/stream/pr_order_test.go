@@ -1,3 +1,5 @@
+//go:build functional
+
 package stream
 
 import (
@@ -20,12 +22,13 @@ func TestLandPRMergesAMemberOnlyAsTheHead(t *testing.T) {
 	ctx := context.Background()
 	seedPair := func(c *redis.Client, kind string) {
 		c.ZAdd(ctx, WSKey(strm, "working"), redis.Z{Score: 100, Member: "t1"})
-		c.HSet(ctx, "task:t1", "stream", strm, "where", "working", "created_at", "100", "ref", "nova-tools#1")
+		c.HSet(ctx, "task:t1", "stream", strm, "where", "working", "state", "working", "created_at", "100", "ref", "nova-tools#1")
 		c.ZAdd(ctx, WSKey(strm, "merging"), redis.Z{Score: 200, Member: "t2"})
-		c.HSet(ctx, "task:t2", "stream", strm, "where", "merging", "created_at", "200", "ref", "nova-tools#2")
+		c.HSet(ctx, "task:t2", "stream", strm, "where", "merging", "state", "merging", "created_at", "200", "ref", "nova-tools#2")
+		c.SAdd(ctx, "ws:names", strm)
 		c.HSet(ctx, PRKey("o/r", 7), "head", prHead, "stream", strm, "task", "t2", "kind", kind)
 	}
-	f, c := newFakeForge(), prRedis(t)
+	f, c := newFakeForge(), newRedis(t)
 	ghLeg(t, c, "gh", "green", "wf:ci", "green 1 2026-09-26T12:00:00Z")
 	seedPair(c, "")
 	_, log, _, err := runLandPR(t, f, c)
@@ -39,11 +42,16 @@ func TestLandPRMergesAMemberOnlyAsTheHead(t *testing.T) {
 	c.ZAdd(ctx, WSKey(strm, "landed"), redis.Z{Score: 100, Member: "t1"})
 	c.HSet(ctx, "task:t1", "where", "landed")
 	rep, log, _, err := runLandPR(t, f, c)
-	if err != nil || rep.State != "merged" || len(f.merges) != 1 || !strings.HasSuffix(log, "PR 7 MERGED "+f.mergeSHA+"\n") {
+	if err != nil || rep.State != "merged" || len(f.merges) != 1 || !strings.Contains(log, "PR 7 CLAIMED t2 until ") ||
+		!strings.Contains(log, "PR 7 MERGED "+f.mergeSHA+"\n") || rep.CardMove != "merging->landed" {
 		t.Fatalf("t2 as the head: %+v %v %q", rep, err, log)
 	}
+	if n, _ := c.HLen(ctx, WSKey(strm, "landing")).Result(); n != 0 {
+		t.Fatalf("the landing left a claim: %v", c.HGetAll(ctx, WSKey(strm, "landing")).Val())
+	}
+	t.Logf("t2 as the head: claimed, merged, landed: %s", strings.ReplaceAll(strings.TrimSpace(log), "\n", " | "))
 
-	f2, c2 := newFakeForge(), prRedis(t)
+	f2, c2 := newFakeForge(), newRedis(t)
 	ghLeg(t, c2, "gh", "green", "wf:ci", "green 1 2026-09-26T12:00:00Z")
 	seedPair(c2, "stream")
 	if rep, _, _, err := runLandPR(t, f2, c2); err != nil || rep.State != "merged" {

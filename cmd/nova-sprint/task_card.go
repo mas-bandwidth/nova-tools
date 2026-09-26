@@ -475,6 +475,15 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 		return code
 	case "land":
 		if *c.stream == "" {
+			// a task lands only as the head of its stream's live order
+			// (stream.TaskHeadGate; the store runs the check again in the
+			// move's own call, #4322 round 6)
+			strm := cl.HGet(ctx, taskcard.Key(*c.id), "stream").Val()
+			if h, err := stream.TaskHeadGate(ctx, cl, strm, *c.id, 0); err != nil {
+				return refuse(errOut, c.verb, err.Error())
+			} else if h != nil {
+				return refuse(errOut, c.verb, stream.OrderRefusal(*h).Error())
+			}
 			return moved(taskcard.Land(ctx, cl, *c.id, *c.actor, *c.sha, *c.why))
 		}
 		// the stream lander's step: every merging member, one call; the

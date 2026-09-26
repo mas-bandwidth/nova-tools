@@ -93,7 +93,7 @@ func TestWSOrderVerbs(t *testing.T) {
 	}
 
 	// card push: two cards with STREAM: write that stream's order, one
-	// ORDER line: two (#7) before one (#8), the sentinel last.
+	// ORDER line: one (#8, pushed first) before two (#7), the sentinel last.
 	dir := t.TempDir()
 	card := func(name, origin, depends string) string {
 		path := filepath.Join(dir, name+".md")
@@ -109,8 +109,11 @@ func TestWSOrderVerbs(t *testing.T) {
 		t.Fatalf("card push: exit %d\n%s%s", code, stdout, stderr)
 	}
 	t.Logf("card push: %s", strings.TrimSpace(stdout))
+	// two cards sharing a path go by Position, and created_at is its one
+	// key (round 6): one, pushed first, before two, its lower issue only a
+	// tie-break
 	so, err := ws.ReadOrder(ctx, c, "cards: order")
-	if err != nil || so.Drift() || len(so.Computed) != 3 || !strings.HasSuffix(so.Computed[0], ":two") {
+	if err != nil || so.Drift() || len(so.Computed) != 3 || !strings.HasSuffix(so.Computed[0], ":one") || !strings.HasSuffix(so.Computed[1], ":two") {
 		t.Fatalf("card stream order: %+v %v", so, err)
 	}
 	if code, stdout, _ = runSprint("ws", "check", "--redis", addr); code != 0 {

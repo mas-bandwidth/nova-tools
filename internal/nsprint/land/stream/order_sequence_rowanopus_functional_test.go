@@ -106,10 +106,13 @@ func TestSelectionSequenceFollowsScoresNotOrder_RowanOpus(t *testing.T) {
 	ctx := context.Background()
 	head := strings.Repeat("b", 40)
 	c := newRedis(t)
-	seed(t, c, 1, head, 300, score("rowan", head, 10)) // t1 scored after t2
-	seed(t, c, 2, head, 100, score("rowan", head, 10))
+	seed(t, c, 1, head, 100, score("rowan", head, 10))
+	seed(t, c, 2, head, 300, score("rowan", head, 10))
 	c.HSet(ctx, "task:t1", "where", "merging", "paths", "internal/one.go", "ref", "nova-tools#1")
 	c.HSet(ctx, "task:t2", "where", "merging", "paths", "internal/two.go", "ref", "nova-tools#2")
+	// the drift: t1 (older, #1) is first in the computed order (created_at
+	// is the position's one key, round 6) but its stored score puts it last
+	c.ZAdd(ctx, WSKey(strm, "merging"), redis.Z{Score: 500, Member: "t1"})
 	orders, _ := ws.ReadOrders(ctx, c, []string{strm})
 	rep, err := LandStream(ctx, c, Options{Repo: repo, Streams: []string{strm}, DryRun: true, MinScore: 8})
 	var ids, ord []string

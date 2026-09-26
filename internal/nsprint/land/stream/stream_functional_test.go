@@ -37,7 +37,7 @@ func seed(t *testing.T, c *redis.Client, n int, head string, readAt int64, lines
 	if err := c.ZAdd(ctx, WSKey(strm, "merging"), redis.Z{Score: float64(readAt), Member: id}).Err(); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.HSet(ctx, "task:"+id, "stream", strm, "state", "merging", "pr", fmt.Sprintf("%s#%d", repo, n), "created_at", fmt.Sprint(readAt)).Err(); err != nil {
+	if err := c.HSet(ctx, "task:"+id, "stream", strm, "where", "merging", "state", "merging", "pr", fmt.Sprintf("%s#%d", repo, n), "created_at", fmt.Sprint(readAt)).Err(); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.SAdd(ctx, "ws:names", strm).Err(); err != nil {
@@ -304,7 +304,7 @@ func TestSaveBuiltParksAndLandMembersLands(t *testing.T) {
 		t.Fatalf("#1 closes %q, want the - it was given", recs[1].Closes)
 	}
 	log, _ := c.XRange(ctx, "ws:log", "-", "+").Result()
-	if len(log) != 5 { // one park, the landing, the sentinel's registration, two lands
+	if len(log) != 4 { // one park, the landing, two lands
 		t.Fatalf("ws:log has %d entries", len(log))
 	}
 	if !strings.HasPrefix(fmt.Sprint(log[1].Values["why"]), "LANDED "+repo+"#900") {
@@ -348,7 +348,7 @@ func TestRedisPartsForAThousandAreFixedRoundTrips(t *testing.T) {
 	for n := 1; n <= 1000; n++ {
 		id := fmt.Sprintf("t%d", n)
 		pipe.ZAdd(ctx, WSKey(strm, "merging"), redis.Z{Score: float64(n), Member: id})
-		pipe.HSet(ctx, "task:"+id, "stream", strm, "state", "merging", "pr", fmt.Sprint(n))
+		pipe.HSet(ctx, "task:"+id, "stream", strm, "where", "merging", "state", "merging", "pr", fmt.Sprint(n), "created_at", fmt.Sprint(n))
 		pipe.HSet(ctx, PRKey(repo, n), "head", head, "base", "dev", "stream", strm, "state", "open", "reads", score("rowan", head, 10))
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
@@ -381,7 +381,7 @@ func TestRedisPartsForAThousandAreFixedRoundTrips(t *testing.T) {
 	if rt.n != 7 { // members 3 (merging, task pr, records), built 1, load 1, landed 1, land members 1
 		t.Fatalf("%d round trips for 1,000 members, want 7", rt.n)
 	}
-	if n, _ := c.ZCard(ctx, WSKey(strm, "landed")).Result(); n != 1001 { // the 1,000 and the sentinel the last one landed (#4318)
+	if n, _ := c.ZCard(ctx, WSKey(strm, "landed")).Result(); n != 1000 {
 		t.Fatalf("landed %d", n)
 	}
 }
@@ -430,7 +430,7 @@ func TestLuaOnRealRedis(t *testing.T) {
 	if res, err := LandMembers(ctx, c, got, "rowan", "m", nil); err != nil || res.Moved != 1 {
 		t.Fatalf("land members %+v %v", res, err)
 	}
-	if n, _ := c.XLen(ctx, "ws:log").Result(); n != 4 { // the park, the landing, the sentinel's registration, the land
+	if n, _ := c.XLen(ctx, "ws:log").Result(); n != 3 {
 		t.Fatalf("ws:log %d entries", n)
 	}
 }

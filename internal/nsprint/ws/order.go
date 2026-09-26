@@ -70,45 +70,40 @@ func (e *CycleError) Error() string {
 }
 
 // Position is the tie-break, and every card has one (never "last" for want
-// of an issue): the numbered cards in issue order (then id) and the cards
-// with no issue in created_at order (then id) are merged into one sequence,
-// taking at each step the head with the older created_at (a tie goes to the
-// numbered card). The sentinels follow, by id. With no created_at anywhere
-// it is issue order, then the cards with no issue by id.
+// of an issue). It is pairwise-stable (the #4410 round-5 read: a merge of
+// two sequences let a third card flip two others): one key, created_at,
+// older first; at the same created_at a numbered card before one with
+// none, then the lower issue number, then id. So the order of any two
+// cards is theirs alone, and a card pushed later never reorders the cards
+// before it. The sentinels follow, by id. With no created_at anywhere it
+// is issue order, then the cards with no issue by id.
 func Position(cards []OrderCard) []OrderCard {
-	var num, none, stops []OrderCard
-	for _, c := range cards {
-		switch {
-		case c.Sentinel:
-			stops = append(stops, c)
-		case c.Issue != 0:
-			num = append(num, c)
-		default:
-			none = append(none, c)
-		}
-	}
-	sort.SliceStable(num, func(a, b int) bool {
-		if num[a].Issue != num[b].Issue {
-			return num[a].Issue < num[b].Issue
-		}
-		return num[a].ID < num[b].ID
-	})
-	sort.SliceStable(none, func(a, b int) bool {
-		if none[a].Created != none[b].Created {
-			return none[a].Created < none[b].Created
-		}
-		return none[a].ID < none[b].ID
-	})
-	sort.SliceStable(stops, func(a, b int) bool { return stops[a].ID < stops[b].ID })
 	out := make([]OrderCard, 0, len(cards))
-	for len(num) > 0 || len(none) > 0 {
-		if len(none) == 0 || (len(num) > 0 && num[0].Created <= none[0].Created) {
-			out, num = append(out, num[0]), num[1:]
+	var stops []OrderCard
+	for _, c := range cards {
+		if c.Sentinel {
+			stops = append(stops, c)
 		} else {
-			out, none = append(out, none[0]), none[1:]
+			out = append(out, c)
 		}
 	}
+	sort.SliceStable(out, func(a, b int) bool { return PositionLess(out[a], out[b]) })
+	sort.SliceStable(stops, func(a, b int) bool { return stops[a].ID < stops[b].ID })
 	return append(out, stops...)
+}
+
+// PositionLess is Position's one comparison: a before b.
+func PositionLess(a, b OrderCard) bool {
+	if a.Created != b.Created {
+		return a.Created < b.Created
+	}
+	if (a.Issue != 0) != (b.Issue != 0) {
+		return a.Issue != 0
+	}
+	if a.Issue != b.Issue {
+		return a.Issue < b.Issue
+	}
+	return a.ID < b.ID
 }
 
 // Topo is the order's core, and card cut --from's: Kahn's algorithm over n

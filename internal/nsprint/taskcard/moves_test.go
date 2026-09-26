@@ -323,13 +323,14 @@ func tableMoves(t *testing.T, consumer, reader string) {
 		t.Fatalf("SCORE line %q parsed %+v", line, d)
 	}
 	// score 6 -> the primary stays in review with the finding as why and
-	// a fix copy on the author's consumer (#4097)
-	e, err = taskcard.End(ctx, c, taskcard.EndRequest{IDs: []string{reads[1].Copy}, OK: true, Score: 6,
+	// a fix copy on the author's consumer (#4097); it is the third primary,
+	// so the two merging ones are the heads of the order and land (#4322)
+	e, err = taskcard.End(ctx, c, taskcard.EndRequest{IDs: []string{reads[2].Copy}, OK: true, Score: 6,
 		Finding: "the test does not fail without the fix", By: "rowan"})
 	if err != nil || e[0].To != "review" || e[0].Next == "" {
 		t.Fatalf("score 6: %v %v", e, err)
 	}
-	fixed := c.HGetAll(ctx, taskcard.Key(reads[1].Primary)).Val()
+	fixed := c.HGetAll(ctx, taskcard.Key(reads[2].Primary)).Val()
 	fix := c.HGetAll(ctx, taskcard.Key(e[0].Next)).Val()
 	if fixed["where"] != "review" || fixed["why"] != "the test does not fail without the fix" || fixed["copy"] != e[0].Next ||
 		fix["leg"] != "fix" || fix["kind"] != "fix" || fix["consumer"] != consumer || fix["finding"] == "" {
@@ -338,7 +339,7 @@ func tableMoves(t *testing.T, consumer, reader string) {
 	if c.ZScore(ctx, k.Key("ready"), e[0].Next).Err() != nil {
 		t.Fatalf("fix copy %s is not in %s", e[0].Next, k.Key("ready"))
 	}
-	if _, err := taskcard.End(ctx, c, taskcard.EndRequest{IDs: []string{reads[2].Copy}, OK: true, Score: 10, By: "rowan"}); err != nil {
+	if _, err := taskcard.End(ctx, c, taskcard.EndRequest{IDs: []string{reads[1].Copy}, OK: true, Score: 10, By: "rowan"}); err != nil {
 		t.Fatal(err)
 	}
 	wantWS(t, c, "reads", map[string]int64{"review": 4, "merging": 2, "working": 4})

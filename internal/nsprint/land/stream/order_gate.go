@@ -449,18 +449,33 @@ func StreamLandGate(ctx context.Context, c redis.Cmdable, stream string) (*Order
 // PR whose record makes it a stream MEMBER (a stream and a task, kind not
 // stream) merges only when its task is the head of the stream's current
 // live order and can finish; the stream PR itself (kind=stream) and a PR
-// with no stream pass as before. The hold (ORDER WAIT before=<head>, or
-// ORDER CONFLICT), or nil.
-func MemberHeadGate(ctx context.Context, c redis.Cmdable, repo string, n int) (*OrderHold, error) {
+// with no stream pass as before. The member's task ("" when the PR is no
+// member) and the hold (ORDER WAIT before=<head>, or ORDER CONFLICT), or
+// nil. The store runs the same check again in the landing's own call
+// (cm_order_head) and land pr claims the slot first (taskcard.LandClaim).
+func MemberHeadGate(ctx context.Context, c redis.Cmdable, repo string, n int) (string, *OrderHold, error) {
 	recs, err := LoadPRs(ctx, c, repo, []int{n})
 	if err != nil || len(recs) == 0 {
-		return nil, err
+		return "", nil, err
 	}
 	r := recs[0]
 	if !r.Exists || r.Kind == "stream" || r.Stream == "" || r.Task == "" {
+		return "", nil, nil
+	}
+	h, err := TaskHeadGate(ctx, c, r.Stream, r.Task, n)
+	return r.Task, h, err
+}
+
+// TaskHeadGate is `task land --id <task>`'s check before taskcard.Land (and
+// MemberHeadGate's): task lands only when it is the head of stream's
+// current live order and can finish (OrderGate over the one member). The
+// hold, or nil; a task with no stream passes. The store runs the same
+// check in the move's own call (cm_order_head in ns_tcard_move).
+func TaskHeadGate(ctx context.Context, c redis.Cmdable, stream, task string, n int) (*OrderHold, error) {
+	if stream == "" || task == "" {
 		return nil, nil
 	}
-	_, _, holds, err := OrderGate(ctx, c, []string{r.Stream}, []Member{{Task: r.Task, Stream: r.Stream, N: n}}, nil)
+	_, _, holds, err := OrderGate(ctx, c, []string{stream}, []Member{{Task: task, Stream: stream, N: n}}, nil)
 	if err != nil || len(holds) == 0 {
 		return nil, err
 	}

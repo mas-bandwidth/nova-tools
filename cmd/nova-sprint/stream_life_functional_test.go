@@ -37,7 +37,7 @@ func streamLifeSeed(t *testing.T) (c *redis.Client, addr, url, bare string, gh *
 	for n, at := range map[int]float64{1: 200, 3: 100} {
 		id := fmt.Sprintf("t%d", n)
 		c.ZAdd(ctx, "ws:"+lsStream+":merging", redis.Z{Score: at, Member: id})
-		c.HSet(ctx, "task:"+id, "stream", lsStream, "state", "merging", "pr", fmt.Sprint(n), "created_at", fmt.Sprint(at))
+		c.HSet(ctx, "task:"+id, "stream", lsStream, "where", "merging", "state", "merging", "pr", fmt.Sprint(n), "created_at", fmt.Sprint(at))
 		if code, out, errOut := runSprint("pr", "record", "--redis", addr, "--repo", lsRepo, "--n", fmt.Sprint(n),
 			"--head", heads[n], "--base", "dev", "--stream", lsStream, "--task", id); code != 0 {
 			t.Fatalf("pr record: %d %s %s", code, out, errOut)

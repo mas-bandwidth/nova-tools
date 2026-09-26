@@ -124,6 +124,14 @@ func TestConsumerWiringEndToEnd(t *testing.T) {
 	}
 	cleanMoves(t, c, "bench ended")
 
+	// The two failed primaries stand before the friend's in the stream's
+	// work order and a landing never passes a live predecessor (#4322 round
+	// 6): their verdict is drop (a landing too, taken in order).
+	for _, id := range []string{ids[1], ids[2]} {
+		if _, err := taskcard.Review(ctx, c, id, "drop", "superseded in the wiring test", "rowan"); err != nil {
+			t.Fatalf("drop %s: %v", id, err)
+		}
+	}
 	// The friend: the same card work --fill a seat runs at spawn, then card
 	// end under each copy's token from the child's typed line.
 	w, err := taskcard.Work(ctx, c, friend, "f", 2, true)
@@ -144,8 +152,8 @@ func TestConsumerWiringEndToEnd(t *testing.T) {
 			landed++
 		}
 	}
-	if landed != 3 {
-		t.Fatalf("landed primaries %d, want 3 (one bench copy, two friend copies)", landed)
+	if landed != 5 {
+		t.Fatalf("landed primaries %d, want 5 (one bench copy, two friend copies, two dropped by verdict)", landed)
 	}
 
 	// The tables are the sets: ZCARDs, done = ok + fail derived.

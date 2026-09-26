@@ -276,6 +276,12 @@ local cm_sentinel, cm_slug_check
 -- DEPENDS-ON check (nova-tools #4322), assigned below TK; nil or the ORDER
 -- CYCLE refusal.
 local cm_order_cycle
+-- cm_order_head(stream, id, skip): the work order's landing check (#4322
+-- round 6), assigned below TK: nil when no live card of stream stands
+-- before record id, else the ORDER WAIT refusal. cm_order_claimed(stream,
+-- id): nil when no other member of stream holds a live landing claim
+-- (ns_tcard_land_claim, land pr's fence), else the ORDER CLAIMED refusal.
+local cm_order_head, cm_order_claimed
 local function cm_register(stream)
   if type(stream) ~= 'string' or stream == '' then return end
   redis.call('SADD', 'ws:names', stream)
@@ -900,12 +906,20 @@ local function card_move(id, to, o)
       if dep == nil then dep = c[2] end
       err = cm_order_cycle(nxt.stream, id, bo, dep)
       if err then return err end
+      err = cm_order_claimed(nxt.stream, id)
+      if err then return err end
     end
   end
   -- no path belongs to two open streams (#4322): refused before any write
   if not o.gated and SP.entering(cur.stream, cur.where, nxt.stream, to) then
     local _, perr = SP.gate(id, redis.call('HGET', id, SP.FIELD), cur.stream, cur.where, nxt.stream, '')
     if perr then return perr end
+  end
+  -- the work order (#4322 round 6): a card lands only as the head of its
+  -- stream's live order, checked here, in the one call that writes it
+  if state == 'landed' and cur.state ~= 'landed' and cm_order_head then
+    err = cm_order_head(cur.stream, id, nil)
+    if err then return err end
   end
   local was, keep = {}, {}
   for _, e in ipairs(old) do was[e.k] = true end
@@ -1000,7 +1014,7 @@ local function card_create(id, fields, o)
       if fields[i] == 'blocked_on' then bo = fields[i + 1] end
       if fields[i] == 'depends_on' then dep = fields[i + 1] end
     end
-    local cerr = cm_order_cycle(cstream, id, bo, dep)
+    local cerr = cm_order_cycle(cstream, id, bo, dep) or cm_order_claimed(cstream, id)
     if cerr then return cerr end
   end
   local created = cm_now()
@@ -2000,7 +2014,8 @@ function TK.land_parent(id, o)
   local parent = TK.str(f[2])
   local w = TK.str(redis.call('HGET', 'task:' .. parent, 'where'))
   if w ~= 'waiting' and w ~= 'ready' then return nil end
-  local err = TK.move(parent, 'landed', { by = o.by, why = 'stitch ' .. id .. ' landed: ' .. TK.str(o.why), sha = o.sha })
+  local err = TK.move(parent, 'landed', { by = o.by, why = 'stitch ' .. id .. ' landed: ' .. TK.str(o.why), sha = o.sha,
+    structural = true })
   if err then return nil, err end
   return parent
 end
@@ -2099,7 +2114,24 @@ function TK.move(id, to, o)
       if dep == nil then dep = c[2] end
       err = cm_order_cycle(nxt.stream, id, bo, dep)
       if err then return err end
+      err = cm_order_claimed(nxt.stream, id)
+      if err then return err end
     end
+  end
+  -- the work order (#4322 round 6): a task lands only as the head of its
+  -- stream's live order (no live card of the stream stands before it),
+  -- checked here, in the one call that writes the move, so no read of the
+  -- order a round trip earlier can pass a card that arrived since: every
+  -- door to landed (task land --id, ns_tcard_land_stream, land pr's card,
+  -- a copy's ok with a sha, a review verdict drop) runs it. The stream's
+  -- stop and a plan landing with its stitch (o.structural) are the
+  -- structure's own moves, checked by their callers.
+  if to == 'landed' and cur.where ~= 'landed' and not o.structural and not TK.is_sentinel(id) then
+    local skip
+    local f = redis.call('HMGET', 'task:' .. id, 'phase', 'parent')
+    if TK.str(f[1]) == 'stitch' then skip = TK.str(f[2]) end
+    err = cm_order_head(cur.stream, id, skip)
+    if err then return err end
   end
   -- no path belongs to two open streams (#4322): an unpark, a move to
   -- another stream or a push's first move is refused before any write; a
@@ -2179,6 +2211,8 @@ function TK.move(id, to, o)
   if to == 'landed' and cur.where ~= 'landed' then
     put('landed_at', tostring(at))
     if TK.str(o.sha) ~= '' then put('merge_sha', o.sha) end
+    -- the landing releases land pr's claim on the slot (ns_tcard_land_claim)
+    if cur.stream ~= '' then redis.call('HDEL', 'ws:' .. cur.stream .. ':landing', id) end
   end
   for _, v in ipairs(lh) do h[#h + 1] = v end
   for i = 1, #fields do h[#h + 1] = fields[i] end
@@ -2302,7 +2336,7 @@ function TK.create(id, fields, o)
     if fields[i] == 'blocked_on' then bo = fields[i + 1] end
     if fields[i] == 'depends_on' then dep = fields[i + 1] end
   end
-  local cerr = cm_order_cycle(stream, id, bo, dep)
+  local cerr = cm_order_cycle(stream, id, bo, dep) or cm_order_claimed(stream, id)
   if cerr then return cerr end
   local h = { 'task:' .. id }
   for i = 1, #fields do h[#h + 1] = fields[i] end
@@ -2818,6 +2852,23 @@ redis.register_function('ns_tcard_land_stream', function(keys, args)
   for _, v in ipairs(landed) do out[#out + 1] = v end
   for _, v in ipairs(refused) do out[#out + 1] = v end
   return out
+end)
+
+-- ns_tcard_land_claim(id, by, ttl_ms) -> CLAIMED <until_ms> | REFUSED <why>:
+-- land pr's fence before its GitHub merge (#4322 round 6): the member is
+-- the head of its stream's live order and holds the landing slot until the
+-- lease ends (default 120000 ms, at most 600000); the merge follows, and
+-- its landing clears the claim. ns_tcard_land_release(id) -> RELEASED |
+-- REFUSED <why> clears it when the merge did not happen.
+redis.register_function('ns_tcard_land_claim', function(keys, args)
+  local err, until_ms = TK.land_claim(args[1], args[2], args[3])
+  if err then return 'REFUSED ' .. err end
+  return 'CLAIMED ' .. string.format('%.0f', until_ms)
+end)
+redis.register_function('ns_tcard_land_release', function(keys, args)
+  local err = TK.land_release(args[1])
+  if err then return 'REFUSED ' .. err end
+  return 'RELEASED'
 end)
 
 -- ns_tcard_fsck(S): TK.fsck, read-only.
@@ -4980,6 +5031,109 @@ cm_order_cycle = function(stream, id, blocked_on, depends_on)
       stack[#stack + 1] = { n = nx, i = 0, e = out(nx) }
     end
   end
+  return nil
+end
+
+-- cm_order_pos(m): the position of record m in its stream's stored work
+-- order: its order_score (TK.reorder wrote it from ws.Order), else its
+-- created_at (the position rule's one key, ws.Position: a card the order
+-- has not ranked yet stands where its age puts it). nil for no record.
+local function cm_order_pos(m)
+  local key = cm_record(m)
+  if not key then return nil end
+  local f = redis.call('HMGET', key, 'order_score', 'created_at')
+  return tonumber(f[1]) or TK.ms(f[2]) or 0
+end
+
+-- cm_order_head(stream, id, skip): nil when record id may land now: no
+-- other live card of stream (its waiting, ready, working, review and
+-- merging sets; the sentinel, a consumer copy and skip aside) stands before
+-- it in the stored work order (cm_order_pos; a tie by id). Else the refusal
+--   ORDER WAIT stream="<s>" before=<x> where=<set> held=<id>
+-- naming the first such card, as the Go gate prints it. It runs inside the
+-- one call that writes a move to landed (TK.move, card_move), so the
+-- check and the write are one: no card that arrived ahead since a read can
+-- be landed past. skip is the plan a landing stitch lands with.
+cm_order_head = function(stream, id, skip)
+  stream = TK.str(stream)
+  if stream == '' or type(id) ~= 'string' or id == '' then return nil end
+  local sid = TK.sentinel_id(stream)
+  if id == sid then return nil end
+  local mine = cm_order_pos(id)
+  if mine == nil then return nil end
+  local first, fw, fpos
+  for _, w in ipairs(TK.ORDER_LIVE) do
+    for _, m in ipairs(redis.call('ZRANGE', 'ws:' .. stream .. ':' .. w, 0, -1)) do
+      if m ~= id and m ~= sid and m ~= skip and not TK.copy_id(m) then
+        local pos = cm_order_pos(m)
+        if pos ~= nil and (pos < mine or (pos == mine and m < id)) then
+          if not first or pos < fpos or (pos == fpos and m < first) then first, fw, fpos = m, w, pos end
+        end
+      end
+    end
+  end
+  if not first then return nil end
+  return 'ORDER WAIT stream="' .. string.gsub(stream, '["\\]', '\\%0') .. '" before=' .. first .. ' where=' .. fw ..
+    ' held=' .. id
+end
+
+-- The landing claim (#4322 round 6, land pr's fence): ws:<stream>:landing
+-- is a HASH member -> until (ms). ns_tcard_land_claim runs cm_order_head
+-- for the member and, when it is the head, claims the slot until the lease
+-- ends; the GitHub merge follows the claim, and the landing (TK.move to
+-- landed) or ns_tcard_land_release clears it. While a claim is live no
+-- other card enters the stream's live order (a push, an unpark, a move in,
+-- a DEPENDS-ON edit: every door that runs cm_order_cycle runs
+-- cm_order_claimed), so the merged card's landing cannot be refused by a
+-- card that arrived between the claim and the merge.
+local CM_CLAIM_MAX = 600000
+
+local function cm_claim_key(stream)
+  return 'ws:' .. stream .. ':landing'
+end
+
+cm_order_claimed = function(stream, id)
+  stream = TK.str(stream)
+  if stream == '' then return nil end
+  local now = cm_now()
+  local claims = redis.call('HGETALL', cm_claim_key(stream))
+  for i = 1, #claims, 2 do
+    local m, until_ms = claims[i], tonumber(claims[i + 1]) or 0
+    if m ~= id and until_ms > now then
+      return 'ORDER CLAIMED stream="' .. string.gsub(stream, '["\\]', '\\%0') .. '" by=' .. m .. ' until=' ..
+        string.format('%.0f', until_ms) .. ': land pr is merging ' .. m .. '; nothing enters the stream\'s live order until it lands (' ..
+        string.format('%.0f', until_ms - now) .. ' ms), then retry'
+    end
+  end
+  return nil
+end
+
+-- TK.land_claim(id, by, ttl): the claim; returns nil and the until (ms),
+-- or the refusal (NOTASK, NOSTREAM, NOTLIVE, ORDER WAIT, ORDER CLAIMED).
+function TK.land_claim(id, by, ttl)
+  if type(id) ~= 'string' or id == '' or TK.card_id(id) or TK.copy_id(id) then return 'BADID ' .. TK.str(id) end
+  local p = TK.read(id)
+  if not p then return 'NOTASK task:' .. id end
+  if p.stream == '' then return 'NOSTREAM task:' .. id .. ' names no stream' end
+  if not TK.ORDER_LIVE_IS[p.where] then return 'NOTLIVE task:' .. id .. ' is ' .. (p.where == '' and 'null' or p.where) end
+  local err = cm_order_claimed(p.stream, id) or cm_order_head(p.stream, id, nil)
+  if err then return err end
+  local n = tonumber(ttl) or 0
+  if n <= 0 or n > CM_CLAIM_MAX then n = 120000 end
+  local until_ms = cm_now() + n
+  redis.call('HSET', cm_claim_key(p.stream), id, string.format('%.0f', until_ms))
+  redis.call('XADD', 'ws:log', 'MAXLEN', '~', TK.LOG_MAX, '*', 'id', id, 'stream', p.stream, 'from', p.where,
+    'to', p.where, 'by', TK.str(by), 'why', 'land claim until ' .. string.format('%.0f', until_ms), 'at', tostring(cm_now()))
+  return nil, until_ms
+end
+
+-- TK.land_release(id): the claim released (a merge that did not happen);
+-- returns nil, or NOTASK.
+function TK.land_release(id)
+  if type(id) ~= 'string' or id == '' then return 'BADID ' .. TK.str(id) end
+  local p = TK.read(id)
+  if not p then return 'NOTASK task:' .. id end
+  if p.stream ~= '' then redis.call('HDEL', cm_claim_key(p.stream), id) end
   return nil
 end
 
