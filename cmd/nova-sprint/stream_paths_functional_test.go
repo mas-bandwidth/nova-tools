@@ -46,16 +46,31 @@ func remedyArgs(t *testing.T, receipt string) []string {
 // (remedy nova-sprint scope park --stream work), the park runs, the move
 // goes through; a stream that took work's paths while it was parked makes
 // scope unpark refuse (remedy nova-sprint scope park --stream taker), that
-// park runs, the unpark goes through; ws check then finds no overlap.
+// park runs, the unpark goes through; ws check then finds no overlap. Each
+// remedy runs with the store's --redis (the operator's NOVA_SPRINT_REDIS)
+// and a park's --checkpoint in the test's own directory.
 func TestPathsRemedyRunsVerbatim(t *testing.T) {
-	f := newSeat(t)
-	t.Setenv("NOVA_FRIEND", "")
-	t.Setenv("NOVA_SPRINT_CHECKPOINT_DIR", t.TempDir())
+	t.Parallel()
 	ctx := context.Background()
-	c := f.client
+	addr := testutil.Start(t)
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = c.Close() })
+	if err := fn.Load(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	cp, parks := t.TempDir(), 0
+	cli := func(args ...string) (int, string, string) {
+		t.Helper()
+		args = append(args, "--redis", addr)
+		if len(args) > 1 && args[0] == "scope" && args[1] == "park" {
+			parks++
+			args = append(args, "--checkpoint", cp+"/park"+strconv.Itoa(parks)+".tsv")
+		}
+		return runCLI(args...)
+	}
 	push := func(id, stream, paths string, more ...string) (int, string) {
 		t.Helper()
-		args := append([]string{"push", "--actor", "rowan", "--id", id, "--stream", stream, "--title", id,
+		args := append([]string{"push", "--redis", addr, "--actor", "rowan", "--id", id, "--stream", stream, "--title", id,
 			"--paths", paths}, more...)
 		code, out, errOut := runTaskCLI(args...)
 		return code, out + errOut
@@ -71,7 +86,7 @@ func TestPathsRemedyRunsVerbatim(t *testing.T) {
 	if code != 1 || !strings.HasPrefix(out, want) {
 		t.Fatalf("unbuilt: %d %q; want prefix %q", code, out, want)
 	}
-	if code, out, errOut := runCLI(remedyArgs(t, out)...); code != 0 || !strings.Contains(out, " stale=1 repaired=1 records=1 ") {
+	if code, out, errOut := cli(remedyArgs(t, out)...); code != 0 || !strings.Contains(out, " stale=1 repaired=1 records=1 ") {
 		t.Fatalf("ws check --repair: %d %q %q", code, out, errOut)
 	}
 
@@ -84,33 +99,33 @@ func TestPathsRemedyRunsVerbatim(t *testing.T) {
 		t.Fatalf("push --join work: %d %q stream %q", code, out, c.HGet(ctx, "task:pr-2", "stream").Val())
 	}
 
-	code, out, _ = runTaskCLI("move", "--actor", "rowan", "--id", "pr-2", "--to-stream", "docs")
+	code, out, _ = runTaskCLI("move", "--redis", addr, "--actor", "rowan", "--id", "pr-2", "--to-stream", "docs")
 	want = `REFUSED PATHS overlap stream=work paths=internal/x,internal/x/y.go remedy="nova-sprint scope park --stream work" id=pr-2 ms=`
 	if code != 1 || !strings.HasPrefix(out, want) || c.HGet(ctx, "task:pr-2", "stream").Val() != "work" {
 		t.Fatalf("move --to-stream docs: %d %q; want prefix %q", code, out, want)
 	}
-	if code, out, errOut := runCLI(remedyArgs(t, out)...); code != 0 || !strings.Contains(out, "PARKED") {
+	if code, out, errOut := cli(remedyArgs(t, out)...); code != 0 || !strings.Contains(out, "PARKED") {
 		t.Fatalf("scope park --stream work: %d %q %q", code, out, errOut)
 	}
-	if code, out, errOut := runTaskCLI("move", "--actor", "rowan", "--id", "pr-2", "--to-stream", "docs"); code != 0 {
+	if code, out, errOut := runTaskCLI("move", "--redis", addr, "--actor", "rowan", "--id", "pr-2", "--to-stream", "docs"); code != 0 {
 		t.Fatalf("move after the park: %d %q %q", code, out, errOut)
 	}
 
 	if code, out := push("pr-3", "taker", "internal/x/q"); code != 0 {
 		t.Fatalf("push onto taker while work is parked: %d %q", code, out)
 	}
-	code, out, _ = runCLI("scope", "unpark", "--stream", "work")
+	code, out, _ = cli("scope", "unpark", "--stream", "work")
 	want = `REFUSED PATHS overlap stream=taker paths=internal/x,internal/x/q remedy="nova-sprint scope park --stream taker" unpark=work ms=`
 	if code != 1 || !strings.HasPrefix(out, want) || c.HGet(ctx, "task:pr-1", "where").Val() != "parked" {
 		t.Fatalf("unpark work: %d %q; want prefix %q and pr-1 parked", code, out, want)
 	}
-	if code, out, errOut := runCLI(remedyArgs(t, out)...); code != 0 {
+	if code, out, errOut := cli(remedyArgs(t, out)...); code != 0 {
 		t.Fatalf("scope park --stream taker: %d %q %q", code, out, errOut)
 	}
-	if code, out, errOut := runCLI("scope", "unpark", "--stream", "work"); code != 0 || !strings.Contains(out, "unparked=1") {
+	if code, out, errOut := cli("scope", "unpark", "--stream", "work"); code != 0 || !strings.Contains(out, "unparked=1") {
 		t.Fatalf("unpark work after taker parked: %d %q %q", code, out, errOut)
 	}
-	if code, out, errOut := runCLI("ws", "check"); code != 0 || !strings.Contains(out, " overlaps=0 stale=0 ") {
+	if code, out, errOut := cli("ws", "check"); code != 0 || !strings.Contains(out, " overlaps=0 stale=0 ") {
 		t.Fatalf("ws check: %d %q %q", code, out, errOut)
 	}
 }
