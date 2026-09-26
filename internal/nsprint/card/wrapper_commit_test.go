@@ -117,6 +117,18 @@ func TestWrapperCommitsOutputOnCardBranch(t *testing.T) {
 		t.Setenv(fakeOriginEnv, newOrigin(t))
 		h := newHarnessRun(t, id, self)
 		ledger := &observed{inner: &card.RedisLedger{Store: st, Sprint: id.Sprint, Label: id.Label, Token: token}, events: make(chan string, 64)}
+		// #4227: the end names the checkout the commit lives in, and that
+		// checkout is still on disk when the ledger ends (a copy's ledger
+		// pushes from it); the job dir goes only after the end.
+		wantRepo := filepath.Join(card.WrapperJobDir(h.cfg.JobsRoot, id.Sprint, id.Label, 1), "out", "repo")
+		ledger.onEnd = func(end card.WrapperEnd) {
+			if end.RepoDir != wantRepo {
+				t.Errorf("end.RepoDir %q, want the job's checkout %q", end.RepoDir, wantRepo)
+			}
+			if _, err := os.Stat(filepath.Join(end.RepoDir, ".git")); err != nil {
+				t.Errorf("the checkout is gone at the end: %v", err)
+			}
+		}
 		got := make(chan card.WrapperReport, 1)
 		go func() { got <- card.RunWrapper(ctx, h.cfg, ledger) }()
 		h.waitFor(ledger, "launched")
@@ -127,6 +139,9 @@ func TestWrapperCommitsOutputOnCardBranch(t *testing.T) {
 		rep := h.report(got)
 		if rep.Code != card.WrapperExitEnded || rep.Outcome != "DONE" {
 			t.Fatalf("report %s why=%q; want DONE ended", rep.Line(), rep.Why)
+		}
+		if _, err := os.Stat(wantRepo); err == nil {
+			t.Fatalf("the job dir %s is still there after the end", wantRepo)
 		}
 		rec, err := card.ReadEndRecord(h.results)
 		if err != nil {

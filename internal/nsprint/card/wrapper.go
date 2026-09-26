@@ -55,6 +55,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card/harvestcopy"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
@@ -132,6 +133,10 @@ type WrapperEnd struct {
 	// Why is the end's one-line evidence, written to the card's why by card
 	// end: for FAILED refused, the refusal line (#3194). Empty is no evidence.
 	Why string
+	// RepoDir is the checkout the commit step committed PushedSHA in
+	// (<job>/out/repo), set on a DONE end; a copy's ledger pushes from it
+	// (#4227) before the job dir is deleted.
+	RepoDir string
 }
 
 // WrapperLedger is the Redis side of one attempt. Every method returns the
@@ -664,6 +669,9 @@ func finish(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger, rep *W
 			}
 		}
 		end.PushedSHA, end.Commit = c.SHA, c.Note
+		// The checkout the commit lives in: a copy's end pushes from it
+		// (#4227). The end runs before cleanup, so it is still there.
+		end.RepoDir = filepath.Join(job, "out", "repo")
 		// A code card whose model said DONE and committed nothing ends
 		// done/fail reason no-commit in this same end, never a false ok that
 		// harvest (pushed_sha "-") would skip forever.
@@ -886,12 +894,16 @@ func (h *inprocHarness) kill() {
 }
 
 // harnessEnv is the wrapper's environment minus anything naming a token,
-// plus where the harness runs and writes.
+// plus where the harness runs and writes. The bench's push credential
+// (harvestcopy.TokenEnv, #4227) is named here on its own: it is the
+// wrapper's for its end and never the harness's, whatever the general rules
+// say.
 func harnessEnv(base []string, cfg WrapperConfig, job, results string) []string {
 	var env []string
 	for _, kv := range base {
 		k, _, _ := strings.Cut(kv, "=")
-		if strings.Contains(strings.ToUpper(k), "TOKEN") || strings.HasPrefix(k, "NOVA_CARD_") {
+		if k == harvestcopy.TokenEnv || k == harvestcopy.AskpassEnv ||
+			strings.Contains(strings.ToUpper(k), "TOKEN") || strings.HasPrefix(k, "NOVA_CARD_") {
 			continue
 		}
 		env = append(env, kv)

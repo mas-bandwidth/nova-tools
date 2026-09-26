@@ -128,8 +128,12 @@ func TestConsumerWiringEndToEnd(t *testing.T) {
 		}
 	}
 	wantCells(t, cellsOf(t, c, bench), "bench ended", 0, 0, 1, 2)
-	if why := c.HGet(ctx, taskcard.Key(launched[2].Copy), "why").Val(); !strings.HasPrefix(why, "done without card end") {
-		t.Fatalf("a DONE with no card end: why %q", why)
+	// a work copy's DONE with a commit is the wrapper's push and PR
+	// (#4227); this ledger has no push credential, so it ends fail no-token
+	// with the commit and the branch kept on the record
+	if rec := c.HGetAll(ctx, taskcard.Key(launched[2].Copy)).Val(); !strings.HasPrefix(rec["why"], "no-token: GH_PUSH_TOKEN") ||
+		rec["commit"] != "89abcdef" || !strings.HasPrefix(rec["branch"], "nova/copies/") {
+		t.Fatalf("a DONE work copy with a commit and no push credential: why %q commit %q branch %q", rec["why"], rec["commit"], rec["branch"])
 	}
 	// a fenced beat: the ended copy is no longer working here
 	if code, _ := (&card.CopyLedger{Client: c, Copy: launched[1].Copy, Bench: "b", Token: launched[1].Token}).Beat(ctx); code != card.WrapperExitFenced {

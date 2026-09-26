@@ -18,8 +18,11 @@ import (
 // fields. RenderCopy turns that record into a card file the card linter
 // accepts, so a bench runs a copy like any card: its KIND decides the
 // brief (read: read the PR at its head and end with a score; fix: close the
-// read's finding; work: the primary's own task), and the one way it ends is
-// `nova-sprint card end --id <copy>`.
+// read's finding; work: the primary's own task). A read or fix copy ends
+// with `nova-sprint card end --id <copy>`; a work copy never runs card end
+// (#4227): its model commits on the copy's branch and exits, and the
+// wrapper's end (CopyLedger.End) pushes the branch, opens the PR and ends
+// the copy with the PR and the head.
 
 // CopyCard is the fields of a copy's record the card renders from.
 type CopyCard struct {
@@ -116,9 +119,11 @@ func RenderCopy(c CopyCard) ([]byte, error) {
 			"or:\n  %s --fail '<why>'\n", prRef, c.Head, oneLine(c.Finding), end, full+"#"+c.PR, end)
 	default:
 		// The work copy's card is the primary's harness card (#3911): the
-		// standard lines, the commit contract and the issue text quoted; the
-		// wrapper ends the copy from the commit (#4227), so the model is not
-		// told to run card end, which a sandboxed swarm model cannot.
+		// standard lines, the commit contract and the issue text quoted. The
+		// wrapper ends the copy from the commit (#4227, CopyLedger.End:
+		// push, PR, card end --ok --pr --head), so the model is not told to
+		// run card end, which a sandboxed swarm model cannot; the COMMIT
+		// line is its whole contract.
 		n, _ := CopyNumber(c.ID)
 		branch := WrapperBranch(CopySprint, CopyCardLabel(c.ID), n)
 		var sb strings.Builder

@@ -13,6 +13,13 @@ package card
 //	at its end     card end --id <copy>              (CopyLedger.End, unless the card
 //	                                                  already ended itself)
 //
+// A work copy's end is the boundary step too (#4227): on a DONE harness with
+// a commit, End pushes the copy's branch and opens the PR through
+// harvestcopy (the bench's push credential, GH_PUSH_TOKEN, reaching
+// git only through askpass), writes the PR record and ends the copy
+// `--ok --pr <owner/name>#<n> --head <sha>` itself, so the model never pushes
+// and never runs card end.
+//
 // The wrapper (RunWrapper) runs a copy like a sprint card through CopyLedger:
 // the copy's card file is RenderCopy of its record, its sprint is CopySprint,
 // its label CopyCardLabel and its attempt the copy's number, so the job and
@@ -32,6 +39,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card/harvestcopy"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/redis/go-redis/v9"
 )
@@ -84,6 +93,18 @@ type CopyLedger struct {
 	Bench  string
 	Token  string
 	By     string
+	// PushToken is the bench's push credential (harvestcopy.TokenEnv in the
+	// nova-card process); empty, a work copy's DONE ends fail reason
+	// no-token. It is handed to Harvest only, never to Redis or a receipt.
+	PushToken string
+	// Askpass is the program git asks for the credential (nova-card itself);
+	// "" is this executable.
+	Askpass string
+	// Harvest is the boundary step (#4227); nil is harvestcopy.Harvest. A
+	// test injects one that reaches no forge.
+	Harvest func(context.Context, harvestcopy.Request) (harvestcopy.Result, error)
+	// Now is the clock the PR record is stamped by; nil is time.Now.
+	Now func() time.Time
 }
 
 var _ WrapperLedger = (*CopyLedger)(nil)
@@ -166,14 +187,28 @@ func (l *CopyLedger) Beat(ctx context.Context) (int, error) {
 	return 0, nil
 }
 
-// End is card end --id <copy>. The copy's card tells the model to end it
-// itself (RenderCopy: `nova-sprint card end --id <copy>` with its PR or its
-// score); when it did, the copy is already ok|fail and End writes nothing.
-// Otherwise the wrapper ends it: a FAILED harness fails it with the reason
-// and the evidence, and a DONE harness that never called card end fails it
-// too ("done without card end"), since only the card's own end names the PR
-// or the score its primary needs. The result fields go on the primary either
-// way: the model's two RESULT lines, the commit and the branch.
+// End is card end --id <copy>, the copy's end as the wrapper writes it. A
+// copy that ended itself (a read copy's card ends with its score, a fix
+// copy's with its PR head) is already ok|fail and End writes nothing.
+//
+// A WORK copy never runs card end (its card says so, RenderCopy): a DONE
+// harness with a commit is the boundary step (#4227). End hands the commit
+// to Harvest (harvestcopy: push the branch to the primary's repository,
+// never force; open the PR against the primary's BASE, or find it open),
+// writes the PR record pr:<name>:<n> at that head (what TM.finish's ok with
+// a PR reads) and ends the copy ok with the PR and the head, which moves the
+// primary working -> review and cuts its read copies in that one call. A
+// harvest that fails ends the copy fail with the typed reason and the error
+// text as the why: no-token (GH_PUSH_TOKEN empty in the wrapper's
+// environment), push-refused (the branch moved, no commit, git refused) or
+// pr-refused (REST refused); the commit and the branch stay on the record so
+// a review can see the work.
+//
+// Otherwise the wrapper fails the copy: a FAILED harness with the reason and
+// the evidence, a DONE read or fix copy that never ended itself with "done
+// without card end", a DONE work copy with nothing committed with "done
+// without a commit". The result fields go on the record either way: the
+// model's two RESULT lines, the commit and the branch.
 func (l *CopyLedger) End(ctx context.Context, end WrapperEnd) (int, error) {
 	rec, err := l.record(ctx)
 	if err != nil {
@@ -182,19 +217,15 @@ func (l *CopyLedger) End(ctx context.Context, end WrapperEnd) (int, error) {
 	if w := rec["where"]; w == "ok" || w == "fail" {
 		return 0, nil
 	}
-	why := end.Reason
-	if end.Outcome == "DONE" {
-		why = "done without card end"
-	}
-	if end.Why != "" {
-		why += ": " + end.Why
-	}
+	committed := end.PushedSHA != "" && end.PushedSHA != NoCommit
 	fields := []string{}
-	if end.PushedSHA != "" && end.PushedSHA != NoCommit {
+	if committed {
 		fields = append(fields, "commit", end.PushedSHA)
 	}
+	branch := ""
 	if n, err := CopyNumber(l.Copy); err == nil {
-		fields = append(fields, "branch", WrapperBranch(CopySprint, CopyCardLabel(l.Copy), n))
+		branch = WrapperBranch(CopySprint, CopyCardLabel(l.Copy), n)
+		fields = append(fields, "branch", branch)
 	}
 	l1, l2 := resultLines(end.ResultsDir)
 	if l1 != "" {
@@ -203,8 +234,106 @@ func (l *CopyLedger) End(ctx context.Context, end WrapperEnd) (int, error) {
 	if l2 != "" {
 		fields = append(fields, "line2", l2)
 	}
-	_, err = taskcard.End(ctx, l.Client, taskcard.EndRequest{IDs: []string{l.Copy}, Why: why, Fields: fields,
-		Token: l.Token, By: l.byName()})
+	c := CopyCardFrom(l.Copy, rec)
+	if end.Outcome == "DONE" && committed && c.Leg != "read" && c.Leg != "fix" && branch != "" {
+		return l.harvest(ctx, end, c, branch, fields)
+	}
+	why := end.Reason
+	if end.Outcome == "DONE" {
+		why = "done without card end"
+		if c.Leg != "read" && c.Leg != "fix" {
+			why = "done without a commit"
+		}
+	}
+	if end.Why != "" {
+		why += ": " + end.Why
+	}
+	return l.endCopy(ctx, taskcard.EndRequest{IDs: []string{l.Copy}, Why: why, Fields: fields})
+}
+
+// harvest is the work copy's boundary step (End's comment): push, PR, the
+// PR record, then the ok end; any refusal is the fail end with its reason.
+func (l *CopyLedger) harvest(ctx context.Context, end WrapperEnd, c CopyCard, branch string, fields []string) (int, error) {
+	fail := func(reason, text string) (int, error) {
+		return l.endCopy(ctx, taskcard.EndRequest{IDs: []string{l.Copy}, Why: reason + ": " + oneLine(text), Fields: fields})
+	}
+	if strings.TrimSpace(l.PushToken) == "" {
+		return fail("no-token", harvestcopy.TokenEnv+" is empty in the wrapper's environment; the bench cannot push "+branch+" or open its PR")
+	}
+	if end.RepoDir == "" {
+		return fail("push-refused", "the commit step's checkout is unknown; nothing to push "+end.PushedSHA+" from")
+	}
+	h := l.Harvest
+	if h == nil {
+		h = harvestcopy.Harvest
+	}
+	res, err := h(ctx, harvestcopy.Request{
+		RepoDir: end.RepoDir, SHA: end.PushedSHA, Branch: branch, Repo: c.Repo, Base: c.Base,
+		Title: c.Title, Stream: c.Stream, Origin: c.Origin, DoneWhen: c.DoneWhen,
+		Token: l.PushToken, Askpass: l.Askpass,
+	})
+	if err != nil {
+		return fail(harvestcopy.Reason(err), err.Error())
+	}
+	if err := l.recordPR(ctx, res, c); err != nil {
+		return WrapperExitRedis, err
+	}
+	return l.endCopy(ctx, taskcard.EndRequest{IDs: []string{l.Copy}, OK: true, Repo: res.Repo, PR: strconv.Itoa(res.PR),
+		Head: res.Head, Fields: fields})
+}
+
+// recordPR writes the PR record pr:<name>:<n> the copy's ok end is checked
+// against (TM.prok: the record's head is the end's --head and its base the
+// copy's), the way `nova-sprint pr record` does (land_stream.lua's record
+// op) but in plain commands, since the bench's Redis user may FCALL only the
+// card moves: a new record starts open, ci pending, and asks for CI at the
+// head (ci:<name>:<head>) when cfg:ci:<name> names checks.
+func (l *CopyLedger) recordPR(ctx context.Context, res harvestcopy.Result, c CopyCard) error {
+	name := prkey.Name(res.Repo)
+	key := prkey.Key(res.Repo, res.PR)
+	ciKey := "ci:" + name + ":" + res.Head
+	pipe := l.Client.Pipeline()
+	head := pipe.HGet(ctx, key, "head")
+	checks := pipe.HGet(ctx, "cfg:ci:"+name, "checks")
+	ciThere := pipe.Exists(ctx, ciKey)
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return fmt.Errorf("pr record %s: %w", key, err)
+	}
+	now := l.Now
+	if now == nil {
+		now = time.Now
+	}
+	at := strconv.FormatInt(now().UnixMilli(), 10)
+	pipe = l.Client.Pipeline()
+	if head.Val() == "" {
+		pipe.HSet(ctx, key, "repo", res.Repo, "n", strconv.Itoa(res.PR), "state", "open", "ci", "pending",
+			"mergeable", "", "created_at", at)
+		pipe.HSetNX(ctx, key, "reads", "")
+	} else if head.Val() != res.Head {
+		pipe.HSet(ctx, key, "ci", "pending", "mergeable", "")
+	}
+	set := []any{"head", res.Head, "base", c.Base, "branch", res.Branch, "kind", "member", "updated_at", at}
+	for k, v := range map[string]string{"base_sha": c.BaseSHA, "stream": c.Stream, "task": c.Primary} {
+		if v != "" {
+			set = append(set, k, v)
+		}
+	}
+	pipe.HSet(ctx, key, set...)
+	if checks.Val() != "" && ciThere.Val() == 0 {
+		pipe.HSet(ctx, ciKey, "repo", name, "sha", res.Head, "pr", strconv.Itoa(res.PR), "url", res.URL,
+			"checks", checks.Val(), "requested_at", at, "ci", "pending", "attempt", "0", "bench", "",
+			"token", "", "lease_until", "0", "claimed_at", "0", "ended_at", "0")
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("pr record %s: %w", key, err)
+	}
+	return nil
+}
+
+// endCopy is the one card end call of a copy, under the copy's token.
+func (l *CopyLedger) endCopy(ctx context.Context, r taskcard.EndRequest) (int, error) {
+	r.Token, r.By = l.Token, l.byName()
+	_, err := taskcard.End(ctx, l.Client, r)
 	if err != nil {
 		var r *taskcard.Refused
 		if errors.As(err, &r) {

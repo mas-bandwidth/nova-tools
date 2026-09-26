@@ -31,6 +31,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card/harvestcopy"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/launch"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -57,7 +58,16 @@ by the bench's copy session (` + "`nova-sprint card session --as bench:<b>`" + `
 one ` + "`card work --fill`" + `: its stdin line is <copy> <token>, its card is rendered
 from task:<copy>, it beats with card beat and ends with card end --id <copy>
 (unless the card ended itself). Its job and results paths use the sprint
-` + "`copies`" + ` and the label <primary>-c<n>.
+` + "`copies`" + ` and the label <primary>-c<n>. A WORK copy's DONE with a commit is
+the boundary step (#4227): the wrapper pushes the copy's branch to the
+primary's repository (never force), opens the PR against its BASE (or finds
+it open), records the PR and ends the copy --ok --pr --head itself; the
+model never pushes and never runs card end. That push and PR use
+GH_PUSH_TOKEN, the bench's push credential in this process's
+environment, through git askpass (this binary re-run with
+NOVA_CARD_ASKPASS=1): never in argv, never on disk, never in the harness's or
+the sandbox's environment. Without it the copy ends fail reason no-token; a
+moved branch or a refused push is push-refused, a refused PR pr-refused.
 
 The bench configures it through the environment the launcher runs in:
   NOVA_CARD_REDIS    the sprint Redis address
@@ -71,6 +81,8 @@ The bench configures it through the environment the launcher runs in:
   NOVA_CARD_CLOCK    the card clock, a Go duration (45m)
   NOVA_CARD_BEAT     the beat cadence, a Go duration (default 60s)
   NOVA_CARD_LAUNCH_DEADLINE_MS  launcher's absolute batch deadline
+  GH_PUSH_TOKEN  the bench's push credential for a work copy's
+                     branch and PR (#4227); the wrapper's only
 
 The harness runs in the job dir with NOVA_CARD, NOVA_CARD_BRANCH,
 NOVA_CARD_JOB and NOVA_CARD_OUT set; what it writes under NOVA_CARD_OUT is
@@ -88,6 +100,15 @@ appended to NOVA_CARD_RESULTS/refused/<sprint>/<label>/<attempt>.line (#3420).
 example:
   nova-card version
 `
+
+// init is the askpass mode (#4227): git, pushing a work copy's branch, runs
+// this binary with NOVA_CARD_ASKPASS=1 and reads the push credential from
+// its stdout, so the token is never in argv or on disk.
+func init() {
+	if harvestcopy.Askpass(os.Args[1:], os.Getenv, os.Stdout) {
+		os.Exit(0)
+	}
+}
 
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, os.Getenv)) }
 
@@ -390,7 +411,11 @@ func runCopy(id string, stdin io.Reader, stdout, stderr io.Writer, getenv func(s
 	defer st.Close()
 	cfg.Store = st
 	cfg.Started = func() { ack("LAUNCHED") }
-	ledger := &card.CopyLedger{Client: st.Client(), Copy: id, Bench: cfg.Bench, Token: line.Token}
+	ledger := &card.CopyLedger{Client: st.Client(), Copy: id, Bench: cfg.Bench, Token: line.Token,
+		PushToken: getenv(harvestcopy.TokenEnv)}
+	if exe, err := os.Executable(); err == nil {
+		ledger.Askpass = exe
+	}
 	rep := card.RunWrapper(ctx, cfg, ledger)
 	if rep.Code != card.WrapperExitEnded {
 		ack("REFUSED " + rep.Why)

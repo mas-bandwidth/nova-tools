@@ -382,6 +382,9 @@ func (h *harnessRun) assertNoJobDir() {
 type observed struct {
 	inner  card.WrapperLedger
 	events chan string
+	// onEnd, when set, sees the end the wrapper hands the ledger, before
+	// the ledger writes it and before the job dir is deleted.
+	onEnd func(card.WrapperEnd)
 }
 
 func (o *observed) Card(ctx context.Context) (card.WrapperCard, error) { return o.inner.Card(ctx) }
@@ -406,6 +409,9 @@ func (o *observed) Beat(ctx context.Context) (int, error) {
 }
 
 func (o *observed) End(ctx context.Context, end card.WrapperEnd) (int, error) {
+	if o.onEnd != nil {
+		o.onEnd(end)
+	}
 	code, err := o.inner.End(ctx, end)
 	o.events <- "end"
 	return code, err

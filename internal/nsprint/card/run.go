@@ -50,6 +50,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card/harvestcopy"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/route"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/redis/go-redis/v9"
@@ -424,11 +425,14 @@ func Run(ctx context.Context, st *store.Store, cfg RunConfig) RunReport {
 }
 
 // runnerEnv is base with the picked key kept and the other three dropped,
-// the bench Redis password and redis-cli auth dropped, and this card's
-// NOVA_CARD, NOVA_CARD_JOB and NOVA_CARD_OUT set. have reports whether the
-// picked key had a non-empty value.
+// the bench Redis password and redis-cli auth dropped, the bench's push
+// credential (harvestcopy.TokenEnv, #4227: the wrapper's, never the
+// sandbox's) dropped, and this card's NOVA_CARD, NOVA_CARD_JOB and
+// NOVA_CARD_OUT set. have reports whether the picked key had a non-empty
+// value.
 func runnerEnv(base []string, key string, cfg RunConfig, card string) (env []string, have bool) {
 	drop := map[string]bool{"NOVA_REDIS_BENCH_PASSWORD": true, "REDISCLI_AUTH": true,
+		harvestcopy.TokenEnv: true, harvestcopy.AskpassEnv: true,
 		"NOVA_CARD": true, "NOVA_CARD_JOB": true, "NOVA_CARD_OUT": true}
 	for _, k := range ProviderKeys {
 		if k != key {
