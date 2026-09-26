@@ -44,6 +44,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card/harvestcopy"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pipeerr"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
@@ -483,7 +484,9 @@ func RecordPR(ctx context.Context, client redis.Cmdable, now func() time.Time, r
 	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("pr record %s: %w", key, err)
 	}
-	return nil
+	// The push is GitHub's head: the claim follows it and the head index
+	// moves (card pr-record-follows-github).
+	return land.NoteHead(ctx, client, res.Repo, res.PR, head.Val(), res.Head, "push", now)
 }
 
 // endCopy is the one card end call of a copy, under the copy's token.
