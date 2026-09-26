@@ -21,6 +21,7 @@ internal/ci/parallel_class_test.go
 internal/ci/pathassert_class_test.go
 internal/ci/prmerge_class_test.go
 internal/ci/removeall_class_test.go
+internal/ci/seatredis_class_test.go
 internal/ci/seatwrap_class_test.go
 internal/ci/sharedtemp_class_test.go
 internal/ci/silent_class_test.go
