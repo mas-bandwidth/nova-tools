@@ -36,7 +36,7 @@ import (
 // person's brief instead, the same header, and the body tells the friend to
 // clone the repo at BASE/base_sha, branch, commit, push, open the PR under
 // its own GitHub identity and end the copy itself with `nova-sprint friend
-// done --id <copy> --ok --pr <repo>#<n> --head <sha>` (card end after the PR
+// done --ids <copy> --ok --pr <repo>#<n> --head <sha>` (card end after the PR
 // record; or --fail, or --score for a read), its session's `nova-sprint
 // friend beat` renewing the lease meanwhile.
 // `nova-sprint friend pull` writes these briefs into the friend's own dir.
@@ -144,8 +144,8 @@ func friendBody(c CopyCard, full, label, prRef, branch string) string {
 	who := strings.TrimSpace(c.Consumer)
 	// friend done (friend_copies.go) records the PR before card end, which
 	// refuses an ok whose PR record is missing (NOPR).
-	endOK := fmt.Sprintf("nova-sprint friend done --as %s --id %s --ok --pr %s#<n> --head <sha>", who, c.ID, prkey.Name(c.Repo))
-	endFail := fmt.Sprintf("nova-sprint friend done --as %s --id %s --fail '<why>'", who, c.ID)
+	endOK := fmt.Sprintf("nova-sprint friend done --as %s --ids %s --ok --pr %s#<n> --head <sha>", who, c.ID, prkey.Name(c.Repo))
+	endFail := fmt.Sprintf("nova-sprint friend done --as %s --ids %s --fail '<why>'", who, c.ID)
 	beat := fmt.Sprintf("BEAT: your session's nova-sprint friend beat --as %s renews this copy's lease every second; a lapsed lease returns this copy as a fail.\n", who)
 	about := oneLine(c.Origin)
 	if about == "" {
@@ -158,8 +158,8 @@ func friendBody(c CopyCard, full, label, prRef, branch string) string {
 		fmt.Fprintf(&sb, "DO: read %s at head %s against %s@%s: CI at head, base, scope, then a score 1-10. "+
 			"A score under 10 names each gap and the work that closes it. A read edits nothing inside PATHS.\n",
 			prRef, c.Head, c.Base, c.BaseSHA)
-		fmt.Fprintf(&sb, "END: nova-sprint friend done --as %s --id %s --score N/10 --gates ci:<green|red>,base:<ok|behind>,scope:<ok|over> --finding '<one line>'; "+
-			"when you could not read it: nova-sprint friend done --as %s --id %s --fail 'ABSTAIN <why>'.\n", who, c.ID, who, c.ID)
+		fmt.Fprintf(&sb, "END: nova-sprint friend done --as %s --ids %s --score N/10 --gates ci:<green|red>,base:<ok|behind>,scope:<ok|over> --finding '<one line>'; "+
+			"when you could not read it: nova-sprint friend done --as %s --ids %s --fail 'ABSTAIN <why>'.\n", who, c.ID, who, c.ID)
 	case "fix":
 		onto := oneLine(c.Branch)
 		if onto == "" {
@@ -231,10 +231,10 @@ func RenderCopy(c CopyCard) ([]byte, error) {
 		// or fix leg names that end; a work leg keeps the primary's.
 		switch c.Leg {
 		case "read":
-			done = fmt.Sprintf("this copy is ended with the score of %s at head %s: nova-sprint friend done --as %s --id %s --score N/10", prRef, c.Head, strings.TrimSpace(c.Consumer), c.ID)
+			done = fmt.Sprintf("this copy is ended with the score of %s at head %s: nova-sprint friend done --as %s --ids %s --score N/10", prRef, c.Head, strings.TrimSpace(c.Consumer), c.ID)
 		case "fix":
 			baseSHA = c.Head
-			done = fmt.Sprintf("the fix is committed on top of %s's head %s, pushed to its branch, and this copy is ended with the new head: nova-sprint friend done --as %s --id %s --ok --pr %s --head <sha>",
+			done = fmt.Sprintf("the fix is committed on top of %s's head %s, pushed to its branch, and this copy is ended with the new head: nova-sprint friend done --as %s --ids %s --ok --pr %s --head <sha>",
 				prRef, c.Head, strings.TrimSpace(c.Consumer), c.ID, prRef)
 		}
 		body = friendBody(c, full, label, prRef, branch)
@@ -319,8 +319,8 @@ func RenderCopy(c CopyCard) ([]byte, error) {
 	}
 	line("KIND", copyKind(c))
 	line("BASE", c.Base)
-	line("base-repo", "https://github.com/"+full)
-	line("base-sha", baseSHA)
+	line("BASE-REPO", "https://github.com/"+full)
+	line("BASE-SHA", baseSHA)
 	line("PATHS", c.Paths)
 	line("DEPENDS-ON", "none")
 	line("DONE-WHEN", done)

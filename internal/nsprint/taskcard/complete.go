@@ -34,14 +34,15 @@ const (
 type Spec struct {
 	Route, Who, Kind, Type, Repo, Base, BaseSHA, Paths, Test string
 	DependsOn, DoneWhen, Est, Priority, Source, Task, Body   string
-	Stream, Origin                                           string // header lines that fill the push's own options
+	Stream, Origin                                           string   // header lines that fill the push's own options
+	Retired                                                  []string // header keys in a retired spelling (base-sha:), refused by the push (#4352 A)
 }
 
 // specFields maps each header key an issue may carry to the record field it
 // fills. STREAM and ORIGIN fill the push's stream option and origin field.
 var specFields = []struct{ key, field string }{
 	{"ROUTE", "route"}, {"WHO", "who"}, {"KIND", "kind"}, {"TYPE", "type"}, {"REPO", "repo"},
-	{"BASE", "base"}, {"base-sha", "base_sha"}, {"PATHS", "paths"}, {"TEST", "test"},
+	{"BASE", "base"}, {"BASE-SHA", "base_sha"}, {"PATHS", "paths"}, {"TEST", "test"},
 	{"DEPENDS-ON", "depends_on"}, {"DONE-WHEN", "done_when"}, {"EST", "est"}, {"PRIORITY", "priority"},
 	{"SOURCE", "source"}, {"TASK", "task"}, {"STREAM", "stream"}, {"ORIGIN", "origin"},
 }
@@ -102,6 +103,9 @@ func ParseIssue(text string) Spec {
 		if !ok || seen[k] {
 			continue
 		}
+		if k == "base-sha" || k == "base-repo" {
+			s.Retired = append(s.Retired, k+": is spelled "+strings.ToUpper(k)+":")
+		}
 		for _, f := range specFields {
 			if f.key == k {
 				seen[k] = true
@@ -131,7 +135,7 @@ var (
 // TEST from a `go test <pkg> -run <TestName>` in DONE-WHEN, and the
 // defaults a header states when an issue is silent (WHO any, TYPE code,
 // DEPENDS-ON none, EST 30, PRIORITY 0, SOURCE issue). A swarm route (pro or
-// flash) needs REPO, BASE, base-sha, PATHS, DONE-WHEN and a KIND card push
+// flash) needs REPO, BASE, BASE-SHA, PATHS, DONE-WHEN and a KIND card push
 // accepts; a friend needs nothing more than the record.
 func (s *Spec) Complete(ref, origin string) []string {
 	for _, p := range []*string{&s.Route, &s.Who, &s.Kind, &s.Type, &s.Repo, &s.Base, &s.BaseSHA, &s.Paths,
@@ -178,7 +182,7 @@ func (s *Spec) Complete(ref, origin string) []string {
 	need("REPO", s.Repo)
 	need("BASE", s.Base)
 	if !shaRE.MatchString(s.BaseSHA) {
-		missing = append(missing, "base-sha")
+		missing = append(missing, "BASE-SHA")
 	}
 	need("PATHS", s.Paths)
 	need("DONE-WHEN", s.DoneWhen)
@@ -281,7 +285,7 @@ func RenderHeader(id string, rec map[string]string) ([]byte, error) {
 	line("TYPE", s.Type)
 	line("REPO", s.Repo)
 	line("BASE", s.Base)
-	line("base-sha", s.BaseSHA)
+	line("BASE-SHA", s.BaseSHA)
 	line("PATHS", s.Paths)
 	line("TEST", s.Test)
 	line("DEPENDS-ON", s.DependsOn)

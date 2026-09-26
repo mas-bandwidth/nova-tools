@@ -54,7 +54,7 @@ func TestReadBriefFromFirstReadTaskMirrorDiffZeroGitHubCalls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"saved at " + diffPath, "HEAD: " + head, "base-sha: " + base} {
+	for _, want := range []string{"saved at " + diffPath, "HEAD: " + head, "BASE-SHA: " + base} {
 		if !strings.Contains(string(b), want) {
 			t.Fatalf("brief lacks %q:\n%s", want, b)
 		}

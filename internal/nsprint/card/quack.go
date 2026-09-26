@@ -46,7 +46,7 @@ func QuackFixture(sprint, id string) (path, line string) {
 
 // QuackIssue renders the primary's issue text, the template the push reads
 // through taskcard.ParseIssue: the header lines a card carries (STREAM, WHO,
-// KIND, TYPE, REPO, BASE, base-sha, PATHS, TEST, DEPENDS-ON, PRIORITY, ROUTE,
+// KIND, TYPE, REPO, BASE, BASE-SHA, PATHS, TEST, DEPENDS-ON, PRIORITY, ROUTE,
 // EST, SOURCE, TASK), then the NO-SUBAGENTS, UNATTENDED, DO and DONE-WHEN
 // lines the model reads.
 func QuackIssue(in QuackInput) (string, error) {
@@ -66,7 +66,7 @@ func QuackIssue(in QuackInput) (string, error) {
 	var b strings.Builder
 	for _, kv := range [][2]string{
 		{"STREAM", in.Stream}, {"WHO", "any"}, {"KIND", "fix"}, {"TYPE", "code"}, {"REPO", in.Repo},
-		{"BASE", in.Base}, {"base-sha", in.BaseSHA}, {"PATHS", path}, {"TEST", "none"}, {"DEPENDS-ON", "none"},
+		{"BASE", in.Base}, {"BASE-SHA", in.BaseSHA}, {"PATHS", path}, {"TEST", "none"}, {"DEPENDS-ON", "none"},
 		{"PRIORITY", "100"}, {"ROUTE", in.Tier}, {"EST", "2"}, {"SOURCE", "quack"}, {"TASK", in.ID},
 	} {
 		b.WriteString(kv[0] + ": " + kv[1] + "\n")

@@ -82,7 +82,7 @@ func LintCardBase(raw []byte, bc BaseCheck) []CardHeaderFinding {
 
 	// 1. paths-at-base.
 	if paths := h["PATHS"]; paths.found && paths.value != "none" && paths.value != "" {
-		base, baseLine := h["base-sha"].value, h["base-sha"].line
+		base, baseLine := baseSHAOf(h)
 		if base == "" {
 			base, baseLine = contractSha(firstLine(raw)), 1
 		}
@@ -204,7 +204,7 @@ func LintCardBase(raw []byte, bc BaseCheck) []CardHeaderFinding {
 			add("donewhen-test-name", dwLine, fmt.Sprintf("DONE-WHEN %q %s; an English outcome is not a control", oneLineCap(dw, 120), why))
 			break
 		}
-		base, baseLine := h["base-sha"].value, h["base-sha"].line
+		base, baseLine := baseSHAOf(h)
 		if base == "" {
 			base, baseLine = contractSha(firstLine(raw)), 1
 		}
@@ -752,4 +752,14 @@ func tableRows(p string) ([][]string, error) {
 		rows = append(rows, strings.Fields(line))
 	}
 	return rows, nil
+}
+
+// baseSHAOf is the card's BASE-SHA: line (one case, nova-tools#4352 A), or
+// its retired base-sha: spelling, which a card cut before that still carries.
+func baseSHAOf(h map[string]headerField) (string, int) {
+	bs := h["BASE-SHA"]
+	if !bs.found {
+		bs = h["base-sha"]
+	}
+	return bs.value, bs.line
 }

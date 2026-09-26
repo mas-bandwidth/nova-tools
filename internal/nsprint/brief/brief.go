@@ -73,7 +73,7 @@ type fields struct {
 	Paths, Base, BaseSHA, DependsOn, DoneWhen, Check, Expect, Report, Model, Coauthor string
 }
 
-var baseSHARx = regexp.MustCompile(`base-sha:\s*([^\s|]+)`)
+var baseSHARx = regexp.MustCompile(`(?i)base-sha:\s*([^\s|]+)`)
 
 // taskFields reads the brief fields from a title. MODEL and PATHS are
 // required; every other missing field renders as "-".

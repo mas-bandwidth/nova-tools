@@ -58,9 +58,10 @@ the 58.
 A v2 card's metadata is the **contiguous run of `KEY: value` lines beginning at line 2**, ending
 at the first non-empty line that is not one, blank lines skipped, unknown keys read past. Section
 headings, prose and fenced blocks come *after* the block and never inside it. Keys are canonical
-uppercase with two permanent exceptions, `base-repo:` and `base-sha:`, which are lowercase because
-70 launcher scripts read them case-sensitively from the card's first 40 lines; a card is refused
-if it carries one without the other. Any other key in the block that is not canonical uppercase —
+uppercase, `BASE-REPO:` and `BASE-SHA:` included (nova-tools#4352 A, 2026-09-26: header keys
+are one case; the lowercase `base-repo:`/`base-sha:` of the launcher era is refused by every
+nova-sprint input naming the uppercase one, while the bench readers still read both so a card
+cut before that stages); a card is refused if it carries one without the other. Any other key in the block that is not canonical uppercase —
 lowercase or mixed case, known or unknown (`paths:`, `Paths:`, `source:`) — is refused by name,
 with its line and a remedy naming the uppercase spelling. The parser does not end the block at
 such a key: it reads on, so every later key is still read and diagnosed and nothing is stranded

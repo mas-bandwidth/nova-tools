@@ -16,7 +16,7 @@ const head = "4760b3858aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 func body(swap map[string]string) string {
 	lines := [][2]string{
 		{"BASE", "BASE: dev"},
-		{"base-sha", "base-sha: 2b7b6c443"},
+		{"base-sha", "BASE-SHA: 2b7b6c443"},
 		{"PATHS", "PATHS: internal/jev/ (new), cmd/nova-sprint/jev.go (new)"},
 		{"DEPENDS-ON", "DEPENDS-ON: mas-bandwidth/nova-tools#3595 (WHY: the line store)"},
 		{"DONE-WHEN", "DONE-WHEN: `go test ./internal/jev/` passes"},
@@ -54,11 +54,11 @@ func TestJevLintRefusesMissingField(t *testing.T) {
 		want string
 	}{
 		{"no STREAM", map[string]string{"STREAM": ""}, "missing STREAM:"},
-		{"no base-sha", map[string]string{"base-sha": ""}, "missing base-sha:"},
+		{"no base-sha", map[string]string{"base-sha": ""}, "missing BASE-SHA:"},
 		{"no DONE-WHEN and no Closes", map[string]string{"DONE-WHEN": "", "Closes": ""}, "missing DONE-WHEN: Closes #<n>"},
 		{"DEPENDS-ON dash", map[string]string{"DEPENDS-ON": "DEPENDS-ON: -"}, "DEPENDS-ON: - is not none"},
 		{"DEPENDS-ON spaced ref", map[string]string{"DEPENDS-ON": "DEPENDS-ON: nova-tools #2550"}, "is not none or owner/name#n"},
-		{"base-sha not hex", map[string]string{"base-sha": "base-sha: dev"}, "base-sha: dev is not a 7-40 hex sha"},
+		{"base-sha not hex", map[string]string{"base-sha": "BASE-SHA: dev"}, "BASE-SHA: dev is not a 7-40 hex sha"},
 		{"BASE two words", map[string]string{"BASE": "BASE: dev or main"}, "BASE: dev or main is not one branch name"},
 		{"two BASE lines", map[string]string{"BASE": "BASE: dev\nBASE: main"}, "two BASE: lines"},
 		{"STREAM placeholder", map[string]string{"STREAM": "STREAM: -"}, "STREAM: - is a placeholder"},

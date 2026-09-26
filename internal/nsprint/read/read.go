@@ -267,7 +267,7 @@ func brief(ctx context.Context, c *redis.Client, repo, n, head, id, mirror, outD
 		recordHead, rec.Head, rec.CI = rec.Head, head, ci
 	}
 	if rec.BaseSHA == "" {
-		fmt.Fprintf(stderr, "READ BRIEF REFUSED repo=%s n=%s why=record has no base_sha; the card names it (BASE/base-sha) and harvest writes it\n", repo, n)
+		fmt.Fprintf(stderr, "READ BRIEF REFUSED repo=%s n=%s why=record has no base_sha; the card names it (BASE/BASE-SHA) and harvest writes it\n", repo, n)
 		return 1
 	}
 	d, err := MirrorDiff(ctx, mirror, n, rec.BaseSHA, rec.Head)

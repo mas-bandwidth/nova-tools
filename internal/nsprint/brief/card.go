@@ -101,7 +101,7 @@ func RenderCard(id string, rec map[string]string, model string) ([]byte, error) 
 	if e, ok := task.TitleField(title, "EXPECT"); ok && e != "" {
 		f.Expect = oneLine(e)
 	}
-	f.Report = "the typed line below; nova-sprint card show --id " + id + " holds the rest"
+	f.Report = "the typed line below; nova-sprint card show --ids " + id + " holds the rest"
 	tmplBytes, _ := templateFor(kind)
 	tmpl, err := template.New(kind).Option("missingkey=error").Parse(string(tmplBytes))
 	if err != nil {

@@ -1,7 +1,7 @@
 // Package card pushes a sprint card into Redis and releases it when its
 // parent has landed.
 //
-// Push refuses, before any write, a card missing BASE, base-sha, PATHS,
+// Push refuses, before any write, a card missing BASE, BASE-SHA, PATHS,
 // DEPENDS-ON, or DONE-WHEN, a card whose KIND is not a RESULT kind or a
 // runner kind (kinds.go), and a card whose repository is private. A
 // redirect is private: the page it names can be a login form that returns
@@ -53,9 +53,14 @@ const (
 	exitConflict = 4
 )
 
-// Required header keys, in the order a refusal names them. base-sha stays
-// lowercase because the launchers read that spelling.
-var requiredKeys = []string{"BASE", "base-sha", "PATHS", "DEPENDS-ON", "DONE-WHEN"}
+// Required header keys, in the order a refusal names them. One case
+// (nova-tools#4352 A): BASE-SHA like BASE; the retired lowercase spelling is
+// refused naming this one.
+var requiredKeys = []string{"BASE", "BASE-SHA", "PATHS", "DEPENDS-ON", "DONE-WHEN"}
+
+// retiredKeys are the header spellings the one grammar retired, each with
+// the spelling it has now.
+var retiredKeys = map[string]string{"base-sha": "BASE-SHA", "base-repo": "BASE-REPO"}
 
 var (
 	keyRE    = cardhdr.KeyRE
@@ -134,6 +139,11 @@ func lint(ctx context.Context, body []byte) (cardDoc, error) {
 	if len(dups) > 0 {
 		return cardDoc{}, fmt.Errorf("%s declared twice", dups[0])
 	}
+	for old, now := range retiredKeys {
+		if _, has := header[old]; has {
+			return cardDoc{}, fmt.Errorf("%s: is spelled %s:", old, now)
+		}
+	}
 	var missing []string
 	for _, key := range requiredKeys {
 		if strings.TrimSpace(header[key]) == "" {
@@ -149,9 +159,9 @@ func lint(ctx context.Context, body []byte) (cardDoc, error) {
 	if !idRE.MatchString(label) {
 		return cardDoc{}, errors.New("missing label; the contract line names the card id")
 	}
-	baseSHA := header["base-sha"]
+	baseSHA := header["BASE-SHA"]
 	if !shaRE.MatchString(baseSHA) {
-		return cardDoc{}, errors.New("base-sha is not 40 lowercase hex")
+		return cardDoc{}, errors.New("BASE-SHA is not 40 lowercase hex")
 	}
 	depends, deps, err := parseDepends(label, header["DEPENDS-ON"])
 	if err != nil {

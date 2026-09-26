@@ -121,9 +121,9 @@ var fields = []field{
 		}
 		return ""
 	}},
-	{"BASE-SHA", "base-sha:", func(v string) string {
+	{"BASE-SHA", "BASE-SHA:", func(v string) string {
 		if !shaRx.MatchString(v) {
-			return "base-sha: " + v + " is not a 7-40 hex sha"
+			return "BASE-SHA: " + v + " is not a 7-40 hex sha"
 		}
 		return ""
 	}},

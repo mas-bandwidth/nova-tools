@@ -129,7 +129,7 @@ func TestReadBriefZeroGitHubCalls(t *testing.T) {
 	}
 	b := string(brief)
 	for _, want := range []string{
-		"HEAD: " + head, "base-sha: " + base, "PATHS: internal/x", "DONE-WHEN: go test ./internal/x/ -run TestX",
+		"HEAD: " + head, "BASE-SHA: " + base, "PATHS: internal/x", "DONE-WHEN: go test ./internal/x/ -run TestX",
 		"STREAM: nova sprint migration", "DEPENDS-ON: none", "- state=success", "- shards=3/3",
 		"- JEV who=jev head=" + head, "- internal/x/x.go", "Files outside PATHS (0):\n- none",
 		"nova-sprint read post --repo nova-tools --n 7", "git -C " + mirror + " diff " + base + ".." + head,
