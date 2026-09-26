@@ -2481,10 +2481,12 @@ ledger at the merge base lacks is red: HEAD's first parent in CI, dev's tip on
 a pull request's merge ref and in the queue, the comparison `classtests` makes;
 the merge base with origin/dev on a developer's branch; a base with no ledger is
 the seed), with the controls
-`TestWallClockWaitDetectorFindsTheWaitsAndNotTheSeam` and
-`TestSleepsLedgerGrowthIsReadOutOfGit` (`internal/ci/unitwaits_class_test.go`).
+`TestWallClockWaitDetectorFindsTheWaitsAndNotTheSeam`
+(`internal/ci/unitwaits_class_test.go`) and `TestSleepsLedgerGrowthIsReadOutOfGit`
+(functional-tagged, `internal/ci/unitwaits_git_functional_test.go`: seven
+commits in a repository it builds).
 **The ratchet row (the waits the tree owes).** Seeded by #4413 from dev
-be3e5f8ef plus #4413's changes: 114 wall-clock waits in 95 functions of 1212
+be3e5f8ef plus #4413's changes: 114 wall-clock waits in 95 functions of 1210
 unit-tier test files, 72 functions grandfathered by the seed and 23 already
 SLEEPS-skipped. `TestNoUnitTestWaitsOnTheWallClock -v` prints the count; it
 only falls.

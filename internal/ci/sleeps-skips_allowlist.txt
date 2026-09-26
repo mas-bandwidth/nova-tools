@@ -14,7 +14,7 @@
 #
 # THE SEED (#4413): generated from the tree of dev be3e5f8ef plus #4413's own
 # changes by TestNoUnitTestWaitsOnTheWallClock on 2026-09-26: 114 wall-clock waits
-# in 95 functions of 1212 unit-tier test files; the 85 SLEEPS rows below were
+# in 95 functions of 1210 unit-tier test files; the 85 SLEEPS rows below were
 # already here, and the 72 rows marked "seed #4413" grandfather the 85 waits in
 # functions no SLEEPS row named (where = the first wait and how many more).
 #
