@@ -407,8 +407,9 @@ func runLandMerge(ctx context.Context, args []string, out, errOut io.Writer) int
 }
 
 // landHold claims the streams for this run (nova-tools #4324: one writer per
-// stream). With --card the card must be live and its claim stays the card's
-// (released when the card's episode ends); without it a hand claim is
+// stream). With --card the card must be live and be each stream's merge or
+// escalation card (land:merge:<stream> task or escalation), and its claim
+// stays the card's (released when the card's episode ends); without it a hand claim is
 // renewed while the run lasts and released at its end. Another writer's
 // live claim is a refusal naming it.
 func landHold(ctx context.Context, c stream.Client, streams []string, card, by string) (release func(), err error) {
@@ -428,6 +429,9 @@ func landHold(ctx context.Context, c stream.Client, streams []string, card, by s
 			return nil, &stream.Refusal{Why: fmt.Sprintf("--card %s is not a live card (state=%s)", card, orDash(state)),
 				Remedy: "the stream's card is land:merge:<stream> task; without --card the run claims by hand"}
 		}
+		if err := landCardOf(ctx, c, streams, card); err != nil {
+			return nil, err
+		}
 		now := time.Now()
 		if err := stream.Claim(ctx, c, streams, stream.CardOwner(card), now, now.Add(stream.DefaultHandTTL)); err != nil {
 			return nil, owned(err)
@@ -439,4 +443,29 @@ func landHold(ctx context.Context, c stream.Client, streams []string, card, by s
 		return nil, owned(err)
 	}
 	return rel, nil
+}
+
+// landCardOf refuses a --card that is not every stream's own card: the
+// land:merge:<stream> task (the merge card) or escalation (nova-tools
+// #4324). Any other open task would hold the stream until it closes.
+func landCardOf(ctx context.Context, c stream.Client, streams []string, card string) error {
+	pipe := c.Pipeline()
+	cmds := make([]*redis.SliceCmd, len(streams))
+	for i, s := range streams {
+		cmds[i] = pipe.HMGet(ctx, stream.OwnerKey(s), "task", "escalation")
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return err
+	}
+	for i, s := range streams {
+		v := cmds[i].Val()
+		task, _ := v[0].(string)
+		esc, _ := v[1].(string)
+		if card != task && card != esc {
+			return &stream.Refusal{Why: fmt.Sprintf("--card %s is not stream %s's merge or escalation card (task=%s escalation=%s)",
+				card, oneline.Field(s), orDash(task), orDash(esc)),
+				Remedy: "run as the stream's land:merge:<stream> task or escalation card; without --card the run claims by hand"}
+		}
+	}
+	return nil
 }

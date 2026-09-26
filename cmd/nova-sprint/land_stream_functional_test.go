@@ -183,6 +183,16 @@ func TestLandStreamEndToEnd(t *testing.T) {
 	if code != 2 || !strings.Contains(errOut, "REFUSED LAND-OWNER stream=") || !strings.Contains(errOut, "owner=card:merge-ls-1") || len(gh.Calls()) != 0 {
 		t.Fatalf("land stream with a live merge card: %d\n%s\n%s", code, out, errOut)
 	}
+	// An unrelated open task is not the stream's card: its --card is
+	// refused before any build and the merge card's claim stands.
+	c.HSet(ctx, "task:t-other", "state", "open")
+	code, out, errOut = runSprint("land", "stream", "--redis", addr, "--repo", lsRepo, "--stream", lsStream,
+		"--remote", url, "--mirror", "none", "--workdir", filepath.Join(t.TempDir(), "clone-other"), "--api", gh.srv.URL, "--partial", "--card", "t-other")
+	if code != 2 || !strings.Contains(errOut, "REFUSED --card t-other is not stream ") || !strings.Contains(errOut, "task=merge-ls-1 escalation=-") ||
+		c.HGet(ctx, "land:merge:"+lsStream, "owner").Val() != "card:merge-ls-1" || len(gh.Calls()) != 0 {
+		t.Fatalf("land stream --card of an unrelated task: %d\n%s\n%s", code, out, errOut)
+	}
+	c.Del(ctx, "task:t-other")
 	// t2 is back in merging for the --partial run, as the card's child
 	// (--card): the same build, the line printed as allowed and kept on
 	// the landing record.
