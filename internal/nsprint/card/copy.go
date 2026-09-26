@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
@@ -18,11 +19,15 @@ import (
 // fields. RenderCopy turns that record into a card file the card linter
 // accepts, so a bench runs a copy like any card: its KIND decides the
 // brief (read: read the PR at its head and end with a score; fix: close the
-// read's finding; work: the primary's own task). A read or fix copy ends
-// with `nova-sprint card end --id <copy>`; a work copy never runs card end
-// (#4227): its model commits on the copy's branch and exits, and the
-// wrapper's end (CopyLedger.End) pushes the branch, opens the PR and ends
-// the copy with the PR and the head.
+// read's finding; work: the primary's own task). No copy's model runs
+// `nova-sprint card end` (#4227, #4270): a sandboxed swarm model cannot,
+// and the boundary says it never talks to Redis. The wrapper's end
+// (CopyLedger.End) does it from what the model left: a work copy's commit
+// (push the branch, open the PR, end with the PR and the head); a read
+// copy's RESULT.md line 2, the SCORE line (end with the score, the gates
+// and the finding; ABSTAIN or no line is a typed fail); a fix copy's commit
+// on the PR's branch (push it to that branch, end with the PR and the new
+// head).
 
 // CopyCard is the fields of a copy's record the card renders from.
 type CopyCard struct {
@@ -35,6 +40,10 @@ type CopyCard struct {
 	Review string
 	// Body is the issue text the primary carries (TM.CARRY takes it to the copy).
 	Body string
+	// Branch is the PR's head branch, the work copy's branch the primary
+	// carries once its PR is open (TM.CARRY takes it to the copy): what a
+	// fix copy commits on and the wrapper pushes to.
+	Branch string
 }
 
 // CopyCardFrom reads a copy's record (HGETALL task:<copy>) as a CopyCard.
@@ -42,7 +51,45 @@ func CopyCardFrom(id string, rec map[string]string) CopyCard {
 	return CopyCard{ID: id, Primary: rec["primary"], Leg: rec["leg"], Kind: rec["kind"], Repo: rec["repo"],
 		PR: rec["pr"], Head: rec["head"], Base: rec["base"], BaseSHA: rec["base_sha"], Paths: rec["paths"],
 		DoneWhen: rec["done_when"], Title: rec["title"], Origin: rec["origin"], Stream: rec["stream"],
-		Finding: rec["finding"], Route: rec["route"], Consumer: rec["consumer"], Review: rec["review"], Body: rec["body"]}
+		Finding: rec["finding"], Route: rec["route"], Consumer: rec["consumer"], Review: rec["review"], Body: rec["body"],
+		Branch: rec["branch"]}
+}
+
+// ScoreLine is the read copy's one typed line, RESULT.md line 2 (#4270):
+//
+//	SCORE N/10 gates=ci:<green|red>,base:<ok|behind>,scope:<ok|over> finding=<one line>
+//
+// N is 1-10; gates and finding may be absent (a 10 has no gap to name),
+// but gates present must be the three named gates in that order.
+const ScoreLine = "SCORE N/10 gates=ci:<green|red>,base:<ok|behind>,scope:<ok|over> finding=<one line>"
+
+// Score is a parsed ScoreLine.
+type Score struct {
+	N       int
+	Gates   string
+	Finding string
+}
+
+var (
+	scoreRE = regexp.MustCompile(`^SCORE\s+([0-9]{1,2})/10(?:\s+gates=(\S+))?(?:\s+finding=(.*))?\s*$`)
+	gatesRE = regexp.MustCompile(`^ci:(green|red),base:(ok|behind),scope:(ok|over)$`)
+)
+
+// ParseScore reads a ScoreLine; false for anything else (a missing line,
+// another word, N outside 1-10, gates of another shape).
+func ParseScore(line string) (Score, bool) {
+	m := scoreRE.FindStringSubmatch(strings.TrimSpace(line))
+	if m == nil {
+		return Score{}, false
+	}
+	n, err := strconv.Atoi(m[1])
+	if err != nil || n < 1 || n > 10 {
+		return Score{}, false
+	}
+	if m[2] != "" && !gatesRE.MatchString(m[2]) {
+		return Score{}, false
+	}
+	return Score{N: n, Gates: m[2], Finding: oneLine(m[3])}, true
 }
 
 var labelBad = regexp.MustCompile(`[^A-Za-z0-9._-]`)
@@ -100,23 +147,50 @@ func RenderCopy(c CopyCard) ([]byte, error) {
 		return nil, err
 	}
 	label := CopyLabel(c.ID)
-	end := "nova-sprint card end --id " + c.ID
 	prRef := prkey.Name(c.Repo) + "#" + c.PR
 	done := c.DoneWhen
+	// baseSHA is the sha the job's repo/ is staged at (the stage checks out
+	// base-sha): the primary's base, or the PR's head for a fix copy, which
+	// commits on top of the PR.
+	baseSHA := c.BaseSHA
 	var body string
 	switch c.Leg {
 	case "read":
-		done = fmt.Sprintf("%s --score N/10 --gates ci:<green|red>,base:<ok|behind>,scope:<ok|over> --finding '<one line>' records the SCORE line on pr:%s:%s at head %s",
-			end, prkey.Name(c.Repo), c.PR, c.Head)
+		// The model writes one typed line and never runs nova-sprint
+		// (#4270): the wrapper (CopyLedger.End) records the SCORE line on
+		// the PR record at the head and ends the copy from RESULT.md.
+		done = fmt.Sprintf("RESULT.md line 2 is the SCORE line for %s at head %s; the wrapper records it on pr:%s:%s and ends this copy",
+			prRef, c.Head, prkey.Name(c.Repo), c.PR)
 		body = fmt.Sprintf("Read %s at head %s against %s@%s: CI at head, base, scope, then a score 1-10.\n"+
 			"A score under 10 names each gap and the work that closes it. A read edits nothing inside PATHS.\n"+
-			"End with exactly one call:\n  %s --score N/10 --gates ci:<green|red>,base:<ok|behind>,scope:<ok|over> --finding '<the gap, one line>'\n"+
-			"or, when you could not read it:\n  %s --fail '<why>'\n",
-			prRef, c.Head, c.Base, c.BaseSHA, end, end)
+			"RESULT-FORMAT: RESULT.md in the job dir, outside repo/: line 1 is line 1 of this card verbatim; line 2 is exactly\n"+
+			"  %s\n"+
+			"or, when you could not read it:\n"+
+			"  ABSTAIN <why>\n"+
+			"Write RESULT.md and exit. Never run nova-sprint, never push, never comment on the PR: the wrapper reads line 2 and ends this copy.\n",
+			prRef, c.Head, c.Base, c.BaseSHA, ScoreLine)
 	case "fix":
-		body = fmt.Sprintf("Fix %s at head %s: the read found: %s\n"+
-			"Push the fix to the PR's branch, then end with exactly one call:\n  %s --ok --pr %s --head <the new head sha>\n"+
-			"or:\n  %s --fail '<why>'\n", prRef, c.Head, oneLine(c.Finding), end, full+"#"+c.PR, end)
+		// The model commits the fix on the PR's branch in repo/ and exits
+		// (#4270): repo/ is staged at the PR's head (base-sha below), the
+		// wrapper pushes the commit to the PR's branch and ends the copy
+		// with the new head.
+		baseSHA = c.Head
+		branch := oneLine(c.Branch)
+		if branch == "" {
+			branch = "the PR's branch"
+		}
+		done = fmt.Sprintf("the fix is committed on top of %s's head %s in repo/; the wrapper pushes it to %s and ends this copy with the new head",
+			prRef, c.Head, branch)
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "Fix %s at head %s: the read found: %s\n", prRef, c.Head, oneLine(c.Finding))
+		sb.WriteString("NO-SUBAGENTS: " + taskcard.LineNoSubagents + "\n")
+		sb.WriteString("WALL: " + taskcard.LineWall + "\n")
+		sb.WriteString("TESTS: " + taskcard.LineTests + "\n")
+		sb.WriteString("UNATTENDED: " + taskcard.LineUnattended + "\n")
+		fmt.Fprintf(&sb, "COMMIT: repo/ is checked out at the PR's head %s, which is %s; change only PATHS, close the finding and commit on top of that head with the finding's summary as the first line; never push and never open a PR; the wrapper pushes your commit to %s and ends this copy with the new head; an uncommitted change counts as NO-COMMIT and the card fails.\n",
+			c.Head, branch, branch)
+		sb.WriteString("RESULT-FORMAT: RESULT.md in the job dir, outside repo/: line 1 is line 1 of this card verbatim; line 2 is DONE, ABSTAIN <why> or BLOCKED <why>.\n")
+		body = sb.String()
 	default:
 		// The work copy's card is the primary's harness card (#3911): the
 		// standard lines, the commit contract and the issue text quoted. The
@@ -163,7 +237,7 @@ func RenderCopy(c CopyCard) ([]byte, error) {
 	line("KIND", copyKind(c))
 	line("BASE", c.Base)
 	line("base-repo", "https://github.com/"+full)
-	line("base-sha", c.BaseSHA)
+	line("base-sha", baseSHA)
 	line("PATHS", c.Paths)
 	line("DEPENDS-ON", "none")
 	line("DONE-WHEN", done)
@@ -177,6 +251,9 @@ func RenderCopy(c CopyCard) ([]byte, error) {
 		line("PR", full+"#"+c.PR)
 	}
 	line("HEAD", c.Head)
+	if c.Leg == "fix" {
+		line("BRANCH", c.Branch)
+	}
 	b.WriteString("\n")
 	b.WriteString(body)
 	if r := oneLine(c.Review); r != "" {
