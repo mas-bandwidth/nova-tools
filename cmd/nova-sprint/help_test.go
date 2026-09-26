@@ -23,7 +23,7 @@ var helpCases = [][]string{
 	{"capacity", "hook"},
 	{"card", "cut"}, {"card", "push"}, {"card", "release"}, {"card", "stop"}, {"card", "show"},
 	{"card", "run"}, {"card", "launch"}, {"card", "fsck"}, {"card", "ls"},
-	{"card", "launched"}, {"card", "beat"}, {"card", "end"},
+	{"card", "launched"}, {"card", "beat"}, {"card", "end"}, {"card", "stitch"},
 	{"census"},
 	{"ci", "request"}, {"ci", "run"}, {"ci", "status"}, {"ci", "compare"}, {"ci", "cut"},
 	{"ci", "show"}, {"ci", "rerun"}, {"ci", "dispose"}, {"ci", "parity"},
