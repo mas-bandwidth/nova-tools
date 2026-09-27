@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build unix || windows
 
 package filelock
 
@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -19,44 +18,32 @@ func TestTryLock_Success(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.lock")
 
-	l, err := TryLock(path, "test-job")
+	lock, err := TryLock(path, "worker-1")
 	if err != nil {
 		t.Fatalf("TryLock failed: %v", err)
 	}
-	if l.Path() != path {
-		t.Errorf("Path() = %q, want %q", l.Path(), path)
+	defer lock.Unlock()
+
+	if lock.Path() != path {
+		t.Errorf("lock.Path() = %q, want %q", lock.Path(), path)
 	}
-	if l.Stamp().PID != os.Getpid() {
-		t.Errorf("Stamp().PID = %d, want %d", l.Stamp().PID, os.Getpid())
+	if lock.Stamp().Label != "worker-1" {
+		t.Errorf("lock.Stamp().Label = %q, want worker-1", lock.Stamp().Label)
 	}
-	if l.Stamp().Label != "test-job" {
-		t.Errorf("Stamp().Label = %q, want %q", l.Stamp().Label, "test-job")
+	if lock.Stamp().PID <= 0 {
+		t.Errorf("lock.Stamp().PID = %d, want > 0", lock.Stamp().PID)
 	}
-	if !strings.Contains(l.String(), "test.lock") || !strings.Contains(l.String(), "test-job") {
-		t.Errorf("String() = %q, missing expected details", l.String())
+	if lock.Previous() != nil {
+		t.Errorf("lock.Previous() = %+v, want nil for fresh lock", lock.Previous())
 	}
 
-	state, stamp, err := Probe(path)
+	// Verify file exists on disk and is non-empty while held
+	fi, err := os.Stat(path)
 	if err != nil {
-		t.Fatalf("Probe failed: %v", err)
+		t.Fatalf("Stat failed: %v", err)
 	}
-	if state != StateHeld {
-		t.Errorf("Probe state = %s, want %s", state, StateHeld)
-	}
-	if stamp.PID != os.Getpid() {
-		t.Errorf("Probe stamp PID = %d, want %d", stamp.PID, os.Getpid())
-	}
-
-	if err := l.Unlock(); err != nil {
-		t.Fatalf("Unlock failed: %v", err)
-	}
-
-	stateAfter, _, err := Probe(path)
-	if err != nil {
-		t.Fatalf("Probe after unlock failed: %v", err)
-	}
-	if stateAfter != StateFree {
-		t.Errorf("Probe state after unlock = %s, want %s", stateAfter, StateFree)
+	if fi.Size() == 0 {
+		t.Errorf("lock file size is 0 while held, want > 0")
 	}
 }
 
@@ -66,83 +53,30 @@ func TestTryLock_Held(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "held.lock")
 
-	first, err := TryLock(path, "first-holder")
+	lock1, err := TryLock(path, "holder")
 	if err != nil {
 		t.Fatalf("first TryLock failed: %v", err)
 	}
-	defer first.Unlock()
+	defer lock1.Unlock()
 
-	second, err := TryLock(path, "second-holder")
-	if err == nil {
-		second.Unlock()
-		t.Fatal("second TryLock succeeded on held lock, want ErrHeld")
+	lock2, err := TryLock(path, "contender")
+	if lock2 != nil {
+		lock2.Unlock()
+		t.Fatalf("second TryLock succeeded, want refusal")
 	}
 	if !errors.Is(err, ErrHeld) {
-		t.Fatalf("err = %v, want errors.Is(err, ErrHeld)", err)
+		t.Errorf("second TryLock error = %v, want ErrHeld", err)
 	}
 
 	heldErr, ok := AsHeldError(err)
 	if !ok {
-		t.Fatalf("AsHeldError(err) returned false for %v", err)
+		t.Fatalf("expected *HeldError, got %T: %v", err, err)
 	}
-	if heldErr.Path != path {
-		t.Errorf("heldErr.Path = %q, want %q", heldErr.Path, path)
+	if heldErr.Holder.Label != "holder" {
+		t.Errorf("heldErr.Holder.Label = %q, want holder", heldErr.Holder.Label)
 	}
 	if heldErr.Holder.PID != os.Getpid() {
 		t.Errorf("heldErr.Holder.PID = %d, want %d", heldErr.Holder.PID, os.Getpid())
-	}
-	if heldErr.Holder.Label != "first-holder" {
-		t.Errorf("heldErr.Holder.Label = %q, want %q", heldErr.Holder.Label, "first-holder")
-	}
-}
-
-func TestTryLock_Stale(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	path := filepath.Join(dir, "stale.lock")
-
-	deadStamp := Stamp{
-		PID:     99999999,
-		Host:    "testhost",
-		Started: time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC),
-		Label:   "crashed-worker",
-	}
-	if err := os.WriteFile(path, []byte(deadStamp.Format()), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	// opts with dead PID check
-	opts := Options{
-		ProcessAlive: func(pid int) bool {
-			return false
-		},
-	}
-
-	l, err := TryLockWithOptions(path, "new-claim", opts)
-	if err == nil {
-		l.Unlock()
-		t.Fatal("TryLock on stale lock succeeded, want ErrStale (must never steal stale locks silently)")
-	}
-	if !errors.Is(err, ErrStale) {
-		t.Fatalf("err = %v, want errors.Is(err, ErrStale)", err)
-	}
-
-	staleErr, ok := AsStaleError(err)
-	if !ok {
-		t.Fatalf("AsStaleError(err) returned false for %v", err)
-	}
-	if staleErr.Holder.PID != 99999999 {
-		t.Errorf("staleErr.Holder.PID = %d, want 99999999", staleErr.Holder.PID)
-	}
-
-	// Verify file was NOT stolen or overwritten
-	st, err := ReadStamp(path)
-	if err != nil {
-		t.Fatalf("ReadStamp failed: %v", err)
-	}
-	if st.PID != 99999999 || st.Label != "crashed-worker" {
-		t.Fatalf("file content was modified, want dead stamp preserved; got %v", st)
 	}
 }
 
@@ -152,14 +86,14 @@ func TestLock_Success(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "lock_success.lock")
 
-	l, err := Lock(path, "worker", 100*time.Millisecond)
+	lock, err := Lock(path, "winner", time.Second)
 	if err != nil {
 		t.Fatalf("Lock failed: %v", err)
 	}
-	defer l.Unlock()
+	defer lock.Unlock()
 
-	if l.Stamp().Label != "worker" {
-		t.Errorf("Label = %q, want worker", l.Stamp().Label)
+	if lock.Previous() != nil {
+		t.Errorf("lock.Previous() = %+v, want nil", lock.Previous())
 	}
 }
 
@@ -169,29 +103,31 @@ func TestLock_TimeoutBound(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "timeout.lock")
 
-	first, err := TryLock(path, "holder")
+	lock1, err := TryLock(path, "first")
 	if err != nil {
-		t.Fatalf("first TryLock failed: %v", err)
+		t.Fatalf("TryLock failed: %v", err)
 	}
-	defer first.Unlock()
+	defer lock1.Unlock()
 
-	clk := NewLockStepClock(time.Time{})
+	clk := NewLockStepClock(time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC))
+	timeout := 100 * time.Millisecond
 	opts := Options{
 		Clock:        clk,
-		PollInterval: 25 * time.Millisecond,
-		Jitter:       func(d time.Duration) time.Duration { return d },
+		PollInterval: 10 * time.Millisecond,
 	}
 
-	_, err2 := LockWithOptions(path, "waiter", 200*time.Millisecond, opts)
-	if err2 == nil {
-		t.Fatal("LockWithOptions succeeded while held, want ErrHeld")
+	lock2, err := LockWithOptions(path, "second", timeout, opts)
+	if lock2 != nil {
+		lock2.Unlock()
+		t.Fatalf("LockWithOptions succeeded unexpectedly while held")
 	}
-	if !errors.Is(err2, ErrHeld) {
-		t.Fatalf("err2 = %v, want errors.Is(err2, ErrHeld)", err2)
+	if !errors.Is(err, ErrTimeout) {
+		t.Fatalf("err = %v, want ErrTimeout", err)
 	}
 
-	if waited := clk.Waited(); waited < 200*time.Millisecond {
-		t.Errorf("virtual wait duration = %v, want at least 200ms", waited)
+	waited := clk.Waited()
+	if waited < timeout {
+		t.Errorf("virtual clock waited %v, want >= %v", waited, timeout)
 	}
 }
 
@@ -199,121 +135,97 @@ func TestLock_AcquiresAfterRelease(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	path := filepath.Join(dir, "acquire_after_release.lock")
+	path := filepath.Join(dir, "sequential.lock")
 
-	first, err := TryLock(path, "first")
+	lock1, err := Lock(path, "first", time.Second)
 	if err != nil {
-		t.Fatalf("first TryLock failed: %v", err)
+		t.Fatalf("first Lock failed: %v", err)
+	}
+	if err := lock1.Unlock(); err != nil {
+		t.Fatalf("first Unlock failed: %v", err)
 	}
 
-	// Clock seam that releases the first lock after 2 virtual sleep cycles
-	var mu sync.Mutex
-	var sleeps int
-	clk := NewLockStepClock(time.Time{})
-	seamClock := &hookClock{
-		clk: clk,
-		onSleep: func() {
-			mu.Lock()
-			sleeps++
-			if sleeps == 2 {
-				_ = first.Unlock()
-			}
-			mu.Unlock()
-		},
-	}
-
-	opts := Options{
-		Clock:        seamClock,
-		PollInterval: 25 * time.Millisecond,
-		Jitter:       func(d time.Duration) time.Duration { return d },
-	}
-
-	second, err := LockWithOptions(path, "second", 500*time.Millisecond, opts)
+	lock2, err := Lock(path, "second", time.Second)
 	if err != nil {
-		t.Fatalf("second LockWithOptions failed after release: %v", err)
+		t.Fatalf("second Lock failed: %v", err)
 	}
-	defer second.Unlock()
+	defer lock2.Unlock()
 
-	if second.Stamp().Label != "second" {
-		t.Errorf("Label = %q, want second", second.Stamp().Label)
+	// Clean unlock truncated previous note, so Previous is nil
+	if lock2.Previous() != nil {
+		t.Errorf("lock2.Previous() = %+v, want nil after clean unlock", lock2.Previous())
 	}
 }
 
-type hookClock struct {
-	clk     *LockStepClock
-	onSleep func()
-}
-
-func (h *hookClock) Now() time.Time {
-	return h.clk.Now()
-}
-
-func (h *hookClock) Sleep(d time.Duration) {
-	if h.onSleep != nil {
-		h.onSleep()
-	}
-	h.clk.Sleep(d)
-}
-
-func TestLock_StaleRefusesToSteal(t *testing.T) {
+func TestUnlock_IdempotentAndNeverDeletes(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	path := filepath.Join(dir, "stale_lock_wait.lock")
+	path := filepath.Join(dir, "keep_file.lock")
 
-	deadStamp := Stamp{
-		PID:     99999999,
-		Host:    "box",
-		Started: time.Date(2026, 9, 27, 11, 0, 0, 0, time.UTC),
-		Label:   "dead-runner",
-	}
-	if err := os.WriteFile(path, []byte(deadStamp.Format()), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	clk := NewLockStepClock(time.Time{})
-	opts := Options{
-		Clock: clk,
-		ProcessAlive: func(pid int) bool {
-			return false
-		},
-	}
-
-	_, err := LockWithOptions(path, "taker", 500*time.Millisecond, opts)
-	if err == nil {
-		t.Fatal("Lock on stale file succeeded, want ErrStale")
-	}
-	if !errors.Is(err, ErrStale) {
-		t.Fatalf("err = %v, want errors.Is(err, ErrStale)", err)
-	}
-
-	// Must fail immediately without waiting out the budget
-	if waited := clk.Waited(); waited != 0 {
-		t.Errorf("Lock on stale lock waited %v, want 0", waited)
-	}
-}
-
-func TestUnlock_Idempotent(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	path := filepath.Join(dir, "idempotent.lock")
-
-	l, err := TryLock(path, "holder")
+	lock, err := TryLock(path, "temp")
 	if err != nil {
 		t.Fatalf("TryLock failed: %v", err)
 	}
 
-	if err := l.Unlock(); err != nil {
-		t.Errorf("first Unlock failed: %v", err)
+	if err := lock.Unlock(); err != nil {
+		t.Fatalf("first Unlock failed: %v", err)
 	}
-	if err := l.Unlock(); err != nil {
+	if err := lock.Unlock(); err != nil {
 		t.Errorf("second Unlock failed: %v", err)
 	}
 
 	var nilLock *FileLock
 	if err := nilLock.Unlock(); err != nil {
-		t.Errorf("nilLock.Unlock failed: %v", err)
+		t.Errorf("nilLock.Unlock() = %v, want nil", err)
+	}
+
+	// File MUST NOT be deleted!
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("lock file missing after Unlock: %v", err)
+	}
+	// File must be truncated to zero bytes
+	if fi.Size() != 0 {
+		t.Errorf("lock file size after Unlock = %d, want 0", fi.Size())
+	}
+}
+
+func TestPrevious_UnreleasedHolderObserved(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "crash.lock")
+
+	// Simulate an unreleased crashed holder: create file with stamp without releasing
+	unreleased := Stamp{
+		PID:     9999,
+		Host:    "crashed-host",
+		Started: time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC),
+		Label:   "crashed-worker",
+	}
+	if err := os.WriteFile(path, []byte(unreleased.Format()+"\n"), 0666); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	// Next process takes the lock
+	lock, err := TryLock(path, "recovery-worker")
+	if err != nil {
+		t.Fatalf("TryLock failed: %v", err)
+	}
+	defer lock.Unlock()
+
+	if lock.Previous() == nil {
+		t.Fatalf("lock.Previous() = nil, want crashed holder stamp")
+	}
+	if lock.Previous().PID != 9999 {
+		t.Errorf("Previous().PID = %d, want 9999", lock.Previous().PID)
+	}
+	if lock.Previous().Host != "crashed-host" {
+		t.Errorf("Previous().Host = %q, want crashed-host", lock.Previous().Host)
+	}
+	if lock.Previous().Label != "crashed-worker" {
+		t.Errorf("Previous().Label = %q, want crashed-worker", lock.Previous().Label)
 	}
 }
 
@@ -325,18 +237,18 @@ func TestProbe_AbsentNeverCreatesFile(t *testing.T) {
 
 	state, stamp, err := Probe(path)
 	if err != nil {
-		t.Fatalf("Probe on absent file failed: %v", err)
+		t.Fatalf("Probe failed: %v", err)
 	}
 	if state != StateAbsent {
 		t.Errorf("Probe state = %s, want %s", state, StateAbsent)
 	}
 	if !stamp.IsZero() {
-		t.Errorf("Probe stamp on absent file = %+v, want zero", stamp)
+		t.Errorf("Probe stamp = %+v, want zero", stamp)
 	}
 
-	// Confirm Probe NEVER created the file
+	// Invariant: file MUST NOT exist after Probe
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("Probe created file at %s: err = %v", path, err)
+		t.Errorf("Probe created file at %s: %v", path, err)
 	}
 }
 
@@ -346,8 +258,13 @@ func TestProbe_Free(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "free.lock")
 
-	if err := os.WriteFile(path, []byte{}, 0o644); err != nil {
-		t.Fatal(err)
+	// Create and unlock
+	lock, err := TryLock(path, "temp")
+	if err != nil {
+		t.Fatalf("TryLock failed: %v", err)
+	}
+	if err := lock.Unlock(); err != nil {
+		t.Fatalf("Unlock failed: %v", err)
 	}
 
 	state, stamp, err := Probe(path)
@@ -355,10 +272,10 @@ func TestProbe_Free(t *testing.T) {
 		t.Fatalf("Probe failed: %v", err)
 	}
 	if state != StateFree {
-		t.Errorf("state = %s, want %s", state, StateFree)
+		t.Errorf("Probe state = %s, want %s", state, StateFree)
 	}
 	if !stamp.IsZero() {
-		t.Errorf("stamp = %+v, want zero", stamp)
+		t.Errorf("Probe stamp = %+v, want zero", stamp)
 	}
 }
 
@@ -366,578 +283,344 @@ func TestProbe_Held(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	path := filepath.Join(dir, "probe_held.lock")
+	path := filepath.Join(dir, "held.lock")
 
-	l, err := TryLock(path, "holding-proc")
+	lock, err := TryLock(path, "active-job")
 	if err != nil {
 		t.Fatalf("TryLock failed: %v", err)
 	}
-	defer l.Unlock()
+	defer lock.Unlock()
 
 	state, stamp, err := Probe(path)
 	if err != nil {
 		t.Fatalf("Probe failed: %v", err)
 	}
 	if state != StateHeld {
-		t.Errorf("state = %s, want %s", state, StateHeld)
+		t.Errorf("Probe state = %s, want %s", state, StateHeld)
 	}
-	if stamp.PID != os.Getpid() || stamp.Label != "holding-proc" {
-		t.Errorf("stamp = %+v, unexpected", stamp)
+	if stamp.Label != "active-job" {
+		t.Errorf("Probe stamp.Label = %q, want active-job", stamp.Label)
+	}
+	if stamp.PID != os.Getpid() {
+		t.Errorf("Probe stamp.PID = %d, want %d", stamp.PID, os.Getpid())
 	}
 }
 
-func TestProbe_Stale(t *testing.T) {
+func TestProbe_ConcurrentProbes(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	path := filepath.Join(dir, "probe_stale.lock")
+	path := filepath.Join(dir, "shared_probe.lock")
 
-	deadStamp := Stamp{
-		PID:     99999999,
-		Host:    "hostA",
-		Started: time.Date(2026, 9, 27, 8, 0, 0, 0, time.UTC),
-		Label:   "dead-job",
-	}
-	if err := os.WriteFile(path, []byte(deadStamp.Format()), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	opts := Options{
-		ProcessAlive: func(pid int) bool { return false },
-	}
-
-	state, stamp, err := ProbeWithOptions(path, opts)
-	if err != nil {
-		t.Fatalf("ProbeWithOptions failed: %v", err)
-	}
-	if state != StateStale {
-		t.Errorf("state = %s, want %s", state, StateStale)
-	}
-	if stamp.PID != 99999999 || stamp.Label != "dead-job" {
-		t.Errorf("stamp = %+v, unexpected", stamp)
-	}
-}
-
-func TestProbe_Symlink(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	target := filepath.Join(dir, "target.lock")
-	if err := os.WriteFile(target, []byte{}, 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	link := filepath.Join(dir, "link.lock")
-	if err := os.Symlink(target, link); err != nil {
-		t.Fatal(err)
-	}
-
-	_, _, err := Probe(link)
-	if err == nil {
-		t.Fatal("Probe on symlink succeeded, want error")
-	}
-	if !strings.Contains(err.Error(), "symlink") {
-		t.Errorf("err = %q, want symlink mention", err.Error())
-	}
-}
-
-func TestProbe_Directory(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	subDir := filepath.Join(dir, "somedir.lock")
-	if err := os.MkdirAll(subDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	_, _, err := Probe(subDir)
-	if err == nil {
-		t.Fatal("Probe on directory succeeded, want error")
-	}
-	if !strings.Contains(err.Error(), "directory at the lock path") {
-		t.Errorf("err = %q, want directory refusal", err.Error())
-	}
-}
-
-func TestProcessAlive(t *testing.T) {
-	t.Parallel()
-
-	if ProcessAlive(0) {
-		t.Error("ProcessAlive(0) = true, want false")
-	}
-	if ProcessAlive(-1) {
-		t.Error("ProcessAlive(-1) = true, want false")
-	}
-	if ProcessAlive(-42) {
-		t.Error("ProcessAlive(-42) = true, want false")
-	}
-	if !ProcessAlive(os.Getpid()) {
-		t.Errorf("ProcessAlive(os.Getpid()=%d) = false, want true", os.Getpid())
-	}
-	if ProcessAlive(99999999) {
-		t.Error("ProcessAlive(99999999) = true, want false")
-	}
-}
-
-func TestClearStale(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	path := filepath.Join(dir, "clear.lock")
-
-	// Absent file is a no-op / success
-	if err := ClearStale(filepath.Join(dir, "absent.lock")); err == nil {
-		// absent probe returns StateAbsent, which is not stale
-	}
-
-	// Non-stale (free) file cannot be cleared as stale
-	if err := os.WriteFile(path, []byte{}, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := ClearStale(path); err == nil {
-		t.Fatal("ClearStale on free lock succeeded, want error")
-	}
-
-	// Non-stale (held) file cannot be cleared as stale
-	l, err := TryLock(path, "holding")
+	lock, err := TryLock(path, "shared-test")
 	if err != nil {
 		t.Fatalf("TryLock failed: %v", err)
 	}
-	if err := ClearStale(path); err == nil {
-		l.Unlock()
-		t.Fatal("ClearStale on held lock succeeded, want error")
-	}
-	l.Unlock()
-
-	// Stale file is cleared successfully
-	deadStamp := Stamp{PID: 99999999, Label: "stale-card"}
-	if err := os.WriteFile(path, []byte(deadStamp.Format()), 0o644); err != nil {
-		t.Fatal(err)
+	if err := lock.Unlock(); err != nil {
+		t.Fatalf("Unlock failed: %v", err)
 	}
 
-	opts := Options{ProcessAlive: func(int) bool { return false }}
-	if err := ClearStaleWithOptions(path, opts); err != nil {
-		t.Fatalf("ClearStaleWithOptions failed on stale lock: %v", err)
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			state, _, err := Probe(path)
+			if err != nil {
+				t.Errorf("Probe error: %v", err)
+			}
+			if state != StateFree {
+				t.Errorf("Probe state = %s, want free", state)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+func TestSymlink_NotPermitted(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.txt")
+	if err := os.WriteFile(target, []byte("target"), 0666); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	link := filepath.Join(dir, "link.lock")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink not supported in this environment: %v", err)
 	}
 
-	if state, _, _ := Probe(path); state != StateAbsent {
-		t.Errorf("state after ClearStale = %s, want %s", state, StateAbsent)
+	if _, err := TryLock(link, "test"); err == nil {
+		t.Errorf("TryLock on symlink succeeded, want error")
+	}
+	if _, _, err := Probe(link); err == nil {
+		t.Errorf("Probe on symlink succeeded, want error")
+	}
+}
+
+func TestDirectory_NotPermitted(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	if _, err := TryLock(dir, "test"); err == nil {
+		t.Errorf("TryLock on directory succeeded, want error")
+	}
+	if _, _, err := Probe(dir); err == nil {
+		t.Errorf("Probe on directory succeeded, want error")
+	}
+}
+
+func TestPathEscapingInErrors(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "path with spaces.lock")
+
+	lock1, err := TryLock(path, "holder label")
+	if err != nil {
+		t.Fatalf("TryLock failed: %v", err)
+	}
+	defer lock1.Unlock()
+
+	_, err = TryLock(path, "second")
+	if err == nil {
+		t.Fatalf("expected error on held lock")
+	}
+
+	errStr := err.Error()
+	if !strings.Contains(errStr, `"`) {
+		t.Errorf("error string %q does not quote path with %%q", errStr)
 	}
 }
 
 func TestStamp_FormatsAndParses(t *testing.T) {
 	t.Parallel()
 
-	// Zero stamp
-	var zero Stamp
-	if !zero.IsZero() {
-		t.Error("zero.IsZero() = false, want true")
-	}
-	if zero.String() != "-" {
-		t.Errorf("zero.String() = %q, want \"-\"", zero.String())
-	}
-	parsedZero, err := ParseStamp("")
-	if err != nil || !parsedZero.IsZero() {
-		t.Errorf("ParseStamp(\"\") = %+v, %v", parsedZero, err)
+	now := time.Date(2026, 9, 27, 18, 30, 0, 123456789, time.UTC)
+	s := Stamp{
+		PID:     12345,
+		Host:    "mac-studio",
+		Started: now,
+		Label:   "worker-alpha",
 	}
 
-	// Bare PID
-	bare, err := ParseStamp("54321")
-	if err != nil || bare.PID != 54321 {
-		t.Errorf("ParseStamp bare PID = %+v, %v", bare, err)
-	}
-
-	// Multi-line
-	original := Stamp{
-		PID:     1234,
-		Host:    "bench-mac",
-		Started: time.Date(2026, 9, 27, 14, 30, 0, 123456000, time.UTC),
-		Label:   "card 01/42=run",
-	}
-	formatted := original.Format()
+	formatted := s.Format()
 	parsed, err := ParseStamp(formatted)
 	if err != nil {
 		t.Fatalf("ParseStamp failed: %v", err)
 	}
-	if parsed.PID != original.PID {
-		t.Errorf("parsed.PID = %d, want %d", parsed.PID, original.PID)
+
+	if parsed.PID != s.PID {
+		t.Errorf("parsed.PID = %d, want %d", parsed.PID, s.PID)
 	}
-	if parsed.Host != original.Host {
-		t.Errorf("parsed.Host = %q, want %q", parsed.Host, original.Host)
+	if parsed.Host != s.Host {
+		t.Errorf("parsed.Host = %q, want %q", parsed.Host, s.Host)
 	}
-	if !parsed.Started.Equal(original.Started) {
-		t.Errorf("parsed.Started = %v, want %v", parsed.Started, original.Started)
+	if !parsed.Started.Equal(s.Started) {
+		t.Errorf("parsed.Started = %v, want %v", parsed.Started, s.Started)
 	}
-	if parsed.Label != original.Label {
-		t.Errorf("parsed.Label = %q, want %q", parsed.Label, original.Label)
+	if parsed.Label != s.Label {
+		t.Errorf("parsed.Label = %q, want %q", parsed.Label, s.Label)
 	}
 
-	// Single line space-separated format
-	line := "pid=9876 host=box started=2026-09-27T12:00:00Z label=simple"
-	fromLine, err := ParseStamp(line)
+	// Single line string format
+	str := s.String()
+	parsedSingle, err := ParseStamp(str)
 	if err != nil {
-		t.Fatalf("ParseStamp single-line failed: %v", err)
+		t.Fatalf("ParseStamp(s.String()) failed: %v", err)
 	}
-	if fromLine.PID != 9876 || fromLine.Host != "box" || fromLine.Label != "simple" {
-		t.Errorf("fromLine = %+v, unexpected", fromLine)
-	}
-
-	// ReadStamp missing file
-	_, err = ReadStamp("/nonexistent/file/stamp")
-	if err == nil {
-		t.Error("ReadStamp on missing file succeeded, want error")
+	if parsedSingle.PID != s.PID || parsedSingle.Host != s.Host || parsedSingle.Label != s.Label {
+		t.Errorf("parsedSingle = %+v, unexpected", parsedSingle)
 	}
 }
 
-func TestLockStepClock(t *testing.T) {
+func TestReadStamp(t *testing.T) {
 	t.Parallel()
 
-	start := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
-	clk := NewLockStepClock(start)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "read_stamp.lock")
 
-	if !clk.Now().Equal(start) {
-		t.Errorf("Now() = %v, want %v", clk.Now(), start)
+	lock, err := TryLock(path, "read-test")
+	if err != nil {
+		t.Fatalf("TryLock failed: %v", err)
 	}
-	clk.Sleep(150 * time.Millisecond)
-	if clk.Waited() != 150*time.Millisecond {
-		t.Errorf("Waited() = %v, want 150ms", clk.Waited())
-	}
-	wantNow := start.Add(150 * time.Millisecond)
-	if !clk.Now().Equal(wantNow) {
-		t.Errorf("Now() = %v, want %v", clk.Now(), wantNow)
-	}
-}
+	defer lock.Unlock()
 
-func TestErrors(t *testing.T) {
-	t.Parallel()
-
-	held := &HeldError{
-		Path:   "foo.lock",
-		Holder: Stamp{PID: 123, Label: "job"},
-		Wait:   100 * time.Millisecond,
+	stamp, err := ReadStamp(path)
+	if err != nil {
+		t.Fatalf("ReadStamp failed: %v", err)
 	}
-	if !errors.Is(held, ErrHeld) {
-		t.Error("errors.Is(held, ErrHeld) = false, want true")
+	if stamp.Label != "read-test" {
+		t.Errorf("stamp.Label = %q, want read-test", stamp.Label)
 	}
-	if !strings.Contains(held.Error(), "foo.lock") || !strings.Contains(held.Error(), "123") {
-		t.Errorf("held.Error() = %q, missing details", held.Error())
-	}
-
-	heldZero := &HeldError{Path: "bar.lock"}
-	if !strings.Contains(heldZero.Error(), "bar.lock is held") {
-		t.Errorf("heldZero.Error() = %q", heldZero.Error())
-	}
-
-	stale := &StaleError{
-		Path:   "foo.lock",
-		Holder: Stamp{PID: 456},
-	}
-	if !errors.Is(stale, ErrStale) {
-		t.Error("errors.Is(stale, ErrStale) = false, want true")
-	}
-	if !strings.Contains(stale.Error(), "foo.lock is stale") || !strings.Contains(stale.Error(), "456") {
-		t.Errorf("stale.Error() = %q, missing details", stale.Error())
-	}
-
-	staleZero := &StaleError{Path: "bar.lock"}
-	if !strings.Contains(staleZero.Error(), "bar.lock is stale") {
-		t.Errorf("staleZero.Error() = %q", staleZero.Error())
-	}
-
-	otherErr := errors.New("other")
-	if _, ok := AsHeldError(otherErr); ok {
-		t.Error("AsHeldError(otherErr) = true, want false")
-	}
-	if _, ok := AsStaleError(otherErr); ok {
-		t.Error("AsStaleError(otherErr) = true, want false")
-	}
-}
-
-func TestInvalidPath(t *testing.T) {
-	t.Parallel()
-
-	badPath := "/nonexistent/directory/that/cannot/exist/file.lock"
-	if _, err := TryLock(badPath, "bad"); err == nil {
-		t.Fatal("TryLock on invalid path succeeded, want error")
-	}
-	if _, err := Lock(badPath, "bad", 10*time.Millisecond); err == nil {
-		t.Fatal("Lock on invalid path succeeded, want error")
+	if stamp.PID != os.Getpid() {
+		t.Errorf("stamp.PID = %d, want %d", stamp.PID, os.Getpid())
 	}
 }
 
 func TestOptionsDefaults(t *testing.T) {
 	t.Parallel()
 
-	opts := Options{
-		Host: "custom-host",
-	}
-	if opts.host() != "custom-host" {
-		t.Errorf("host() = %q, want custom-host", opts.host())
-	}
+	opts := Options{}
 	if opts.pollInterval() != defaultPollInterval {
-		t.Errorf("pollInterval() = %v, want default", opts.pollInterval())
+		t.Errorf("pollInterval = %v, want %v", opts.pollInterval(), defaultPollInterval)
 	}
-	jittered := opts.jitter(100 * time.Millisecond)
-	if jittered < 100*time.Millisecond {
-		t.Errorf("jittered = %v, want >= 100ms", jittered)
+	if opts.pid() != os.Getpid() {
+		t.Errorf("pid = %d, want %d", opts.pid(), os.Getpid())
+	}
+	if opts.jitter(100*time.Millisecond) < 100*time.Millisecond {
+		t.Errorf("jitter < base")
+	}
+	if opts.jitter(0) != 0 {
+		t.Errorf("jitter(0) != 0")
+	}
+	if opts.clock() == nil {
+		t.Errorf("clock is nil")
+	}
+
+	customOpts := Options{
+		Host: "custom-host",
+		PID:  777,
+		Jitter: func(d time.Duration) time.Duration {
+			return d * 2
+		},
+	}
+	if customOpts.host() != "custom-host" {
+		t.Errorf("host() = %q, want custom-host", customOpts.host())
+	}
+	if customOpts.pid() != 777 {
+		t.Errorf("pid() = %d, want 777", customOpts.pid())
+	}
+	if customOpts.jitter(10*time.Millisecond) != 20*time.Millisecond {
+		t.Errorf("custom jitter failed")
 	}
 }
 
-func TestTryLockFile_NilFile(t *testing.T) {
+func TestStateStrings(t *testing.T) {
 	t.Parallel()
 
-	ok, err := tryLockFile(nil)
-	if ok || err == nil {
-		t.Errorf("tryLockFile(nil) = %v, %v, want false, error", ok, err)
+	if StateAbsent.String() != "absent" {
+		t.Errorf("StateAbsent.String() = %q", StateAbsent.String())
+	}
+	if StateFree.String() != "free" {
+		t.Errorf("StateFree.String() = %q", StateFree.String())
+	}
+	if StateHeld.String() != "held" {
+		t.Errorf("StateHeld.String() = %q", StateHeld.String())
+	}
+}
+
+func TestHeldErrorFormatting(t *testing.T) {
+	t.Parallel()
+
+	e1 := &HeldError{Path: "lockfile.lock"}
+	if !strings.Contains(e1.Error(), "is held") {
+		t.Errorf("e1.Error() = %q", e1.Error())
+	}
+
+	e2 := &HeldError{Path: "lockfile.lock", Wait: 2 * time.Second}
+	if !strings.Contains(e2.Error(), "waited 2s") {
+		t.Errorf("e2.Error() = %q", e2.Error())
+	}
+
+	holder := Stamp{PID: 1234, Label: "my-holder"}
+	e3 := &HeldError{Path: "lockfile.lock", Holder: holder, Wait: 5 * time.Second}
+	if !strings.Contains(e3.Error(), "waited 5s") || !strings.Contains(e3.Error(), "my-holder") {
+		t.Errorf("e3.Error() = %q", e3.Error())
+	}
+}
+
+func TestFileLock_StringMethod(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "str.lock")
+
+	lock, err := TryLock(path, "str-worker")
+	if err != nil {
+		t.Fatalf("TryLock failed: %v", err)
+	}
+	defer lock.Unlock()
+
+	s := lock.String()
+	if !strings.Contains(s, "str-worker") || !strings.Contains(s, path) {
+		t.Errorf("lock.String() = %q, want path and label", s)
+	}
+}
+
+func TestParseStamp_SpecialCases(t *testing.T) {
+	t.Parallel()
+
+	empty, err := ParseStamp("")
+	if err != nil || !empty.IsZero() {
+		t.Errorf("ParseStamp empty = %+v, %v", empty, err)
+	}
+
+	dash, err := ParseStamp("-")
+	if err != nil || !dash.IsZero() {
+		t.Errorf("ParseStamp dash = %+v, %v", dash, err)
+	}
+
+	barePID, err := ParseStamp("9876\n")
+	if err != nil || barePID.PID != 9876 {
+		t.Errorf("ParseStamp barePID = %+v, %v", barePID, err)
+	}
+
+	multiWithEmptyLines := "pid=456\n\nhost=box\nstarted=2026-09-27T12:00:00Z\nlabel=foo\n"
+	st, err := ParseStamp(multiWithEmptyLines)
+	if err != nil || st.PID != 456 || st.Host != "box" || st.Label != "foo" {
+		t.Errorf("ParseStamp multi = %+v, %v", st, err)
+	}
+
+	singleLine := "pid=789 host=node1 started=2026-09-27T12:00:00Z label=bar"
+	stSingle, err := ParseStamp(singleLine)
+	if err != nil || stSingle.PID != 789 || stSingle.Host != "node1" || stSingle.Label != "bar" {
+		t.Errorf("ParseStamp single = %+v, %v", stSingle, err)
+	}
+}
+
+func TestHelpers_NilAndErrors(t *testing.T) {
+	t.Parallel()
+
+	if ok, err := tryLockFile(nil); ok || err == nil {
+		t.Errorf("tryLockFile(nil) = %v, %v", ok, err)
+	}
+	if ok, err := trySharedLock(nil); ok || err == nil {
+		t.Errorf("trySharedLock(nil) = %v, %v", ok, err)
 	}
 	unlockFile(nil) // should not panic
-}
 
-func TestKindOfMode(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct {
-		mode os.FileMode
-		want string
-	}{
-		{os.ModeDir, "directory"},
-		{os.ModeNamedPipe, "fifo"},
-		{os.ModeSocket, "socket"},
-		{os.ModeDevice, "device"},
-		{os.ModeSymlink, "symlink"},
-		{os.ModeIrregular, "something that is not a regular file"},
+	empty := readExistingStamp(nil)
+	if !empty.IsZero() {
+		t.Errorf("readExistingStamp(nil) = %+v, want zero", empty)
 	}
 
-	for _, tc := range cases {
-		if got := kindOfMode(tc.mode); got != tc.want {
-			t.Errorf("kindOfMode(%v) = %q, want %q", tc.mode, got, tc.want)
-		}
-	}
-}
-
-func TestParseStamp_MoreCases(t *testing.T) {
-	t.Parallel()
-
-	// Multi-line with empty lines, lines without '=', and RFC3339 without nano
-	text := "pid=4321\n\nignored line\nhost=box1\nstarted=2026-09-27T12:00:00Z\nlabel=multi\n"
-	st, err := ParseStamp(text)
-	if err != nil {
-		t.Fatalf("ParseStamp failed: %v", err)
-	}
-	if st.PID != 4321 || st.Host != "box1" || st.Label != "multi" {
-		t.Errorf("st = %+v, unexpected", st)
-	}
-
-	// Single line with tokens without '=', and RFC3339 without nano
-	single := "notoken pid=777 host=box2 started=2026-09-27T12:00:00Z label=test"
-	stSingle, err := ParseStamp(single)
-	if err != nil {
-		t.Fatalf("ParseStamp single failed: %v", err)
-	}
-	if stSingle.PID != 777 || stSingle.Host != "box2" || stSingle.Label != "test" {
-		t.Errorf("stSingle = %+v, unexpected", stSingle)
-	}
-}
-
-func TestUnlock_NilFile(t *testing.T) {
-	t.Parallel()
-
-	fl := &FileLock{}
-	if err := fl.Unlock(); err != nil {
-		t.Errorf("fl.Unlock() with nil file = %v, want nil", err)
-	}
-}
-
-func TestLock_HeldWithStaleStamp(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	path := filepath.Join(dir, "held_stale.lock")
-
-	first, err := TryLock(path, "first")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer first.Unlock()
-
-	// Write dead PID into the file while first holds flock
-	deadStamp := Stamp{PID: 99999999, Label: "dead"}
-	if err := os.WriteFile(path, []byte(deadStamp.Format()), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	opts := Options{
-		ProcessAlive: func(pid int) bool { return false },
-	}
-
-	_, err = LockWithOptions(path, "second", 100*time.Millisecond, opts)
+	_, err := ReadStamp(filepath.Join(t.TempDir(), "nonexistent"))
 	if err == nil {
-		t.Fatal("Lock on held file with dead stamp succeeded, want ErrStale")
+		t.Errorf("ReadStamp nonexistent should error")
 	}
-	if !errors.Is(err, ErrStale) {
-		t.Fatalf("err = %v, want errors.Is(err, ErrStale)", err)
+
+	clk := NewLockStepClock(time.Time{})
+	if clk.Now().IsZero() {
+		t.Errorf("NewLockStepClock(zero) returned zero time")
 	}
 }
 
-func TestClearStale_AlreadyRemoved(t *testing.T) {
+func TestProbe_NotDir(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	path := filepath.Join(dir, "missing_clear.lock")
-
-	deadStamp := Stamp{PID: 99999999, Label: "stale"}
-	if err := os.WriteFile(path, []byte(deadStamp.Format()), 0o644); err != nil {
+	regularFile := filepath.Join(dir, "regular.txt")
+	if err := os.WriteFile(regularFile, []byte("file"), 0666); err != nil {
 		t.Fatal(err)
 	}
+	badPath := filepath.Join(regularFile, "sub.lock")
 
-	// Fake ProcessAlive that removes the file during check
-	opts := Options{
-		ProcessAlive: func(pid int) bool {
-			_ = os.Remove(path)
-			return false
-		},
+	if _, _, err := Probe(badPath); err == nil {
+		t.Errorf("Probe with non-directory parent should error")
 	}
-
-	// ClearStale when file vanished before OpenFile
-	err := ClearStaleWithOptions(path, opts)
-	if err != nil {
-		t.Errorf("ClearStale on vanished file = %v, want nil", err)
-	}
-}
-
-func TestProbe_PermissionDenied(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	path := filepath.Join(dir, "noperm.lock")
-	if err := os.WriteFile(path, []byte{}, 0o000); err != nil {
-		t.Fatal(err)
-	}
-
-	_, _, err := Probe(path)
-	if err == nil {
-		t.Fatal("Probe on 0000 file succeeded, want error")
-	}
-}
-
-func TestClearStale_ProbeError(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	subDir := filepath.Join(dir, "dir.lock")
-	if err := os.MkdirAll(subDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	err := ClearStale(subDir)
-	if err == nil {
-		t.Fatal("ClearStale on directory succeeded, want error")
-	}
-}
-
-func TestClearStale_HeldDuringClear(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	path := filepath.Join(dir, "held_race.lock")
-
-	deadStamp := Stamp{PID: 99999999, Label: "stale"}
-	if err := os.WriteFile(path, []byte(deadStamp.Format()), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	var lockFd *os.File
-	opts := Options{
-		ProcessAlive: func(pid int) bool {
-			if lockFd == nil {
-				f, err := os.OpenFile(path, os.O_RDWR, 0o644)
-				if err == nil {
-					if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err == nil {
-						lockFd = f
-					} else {
-						_ = f.Close()
-					}
-				}
-			}
-			return false
-		},
-	}
-
-	err := ClearStaleWithOptions(path, opts)
-	if lockFd != nil {
-		_ = syscall.Flock(int(lockFd.Fd()), syscall.LOCK_UN)
-		_ = lockFd.Close()
-	}
-	if err == nil {
-		t.Fatal("ClearStale succeeded while file was held, want error")
-	}
-}
-
-func TestClearStale_RevivedDuringClear(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	path := filepath.Join(dir, "revived.lock")
-
-	stamp := Stamp{PID: 99999999, Label: "reviving"}
-	if err := os.WriteFile(path, []byte(stamp.Format()), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	callCount := 0
-	opts := Options{
-		ProcessAlive: func(pid int) bool {
-			callCount++
-			// First call (Probe): returns false (stale)
-			// Subsequent calls (ClearStale double-check): returns true (alive!)
-			return callCount > 1
-		},
-	}
-
-	err := ClearStaleWithOptions(path, opts)
-	if err == nil {
-		t.Fatal("ClearStale succeeded when holder became alive, want error")
-	}
-	if !strings.Contains(err.Error(), "alive") {
-		t.Errorf("err = %q, want mention of alive", err.Error())
-	}
-}
-
-func TestHelpersWithClosedFile(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	path := filepath.Join(dir, "closed.lock")
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = f.Close()
-
-	st := readExistingStamp(f)
-	if !st.IsZero() {
-		t.Errorf("readExistingStamp(closed) = %+v, want zero", st)
-	}
-
-	if err := stampHolder(f, Stamp{PID: 123}); err == nil {
-		t.Error("stampHolder(closed) = nil, want error")
-	}
-
-	ok, err := tryLockFile(f)
-	if ok || err == nil {
-		t.Errorf("tryLockFile(closed) = %v, %v, want false, error", ok, err)
-	}
-}
-
-func TestParseStamp_TokensWithoutEqualsAndPrefixes(t *testing.T) {
-	t.Parallel()
-
-	st1, err := ParseStamp("pid=100 start=2026-09-27T10:00:00Z")
-	if err != nil || st1.PID != 100 || st1.Started.IsZero() {
-		t.Errorf("st1 = %+v, %v", st1, err)
-	}
-	st2, err := ParseStamp("pid=200 at=2026-09-27T10:00:00Z")
-	if err != nil || st2.PID != 200 || st2.Started.IsZero() {
-		t.Errorf("st2 = %+v, %v", st2, err)
+	if _, err := TryLock(badPath, "bad"); err == nil {
+		t.Errorf("TryLock with non-directory parent should error")
 	}
 }

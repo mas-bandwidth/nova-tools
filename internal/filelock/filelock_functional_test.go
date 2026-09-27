@@ -1,4 +1,4 @@
-//go:build functional && !windows
+//go:build functional && (unix || windows)
 
 package filelock_test
 
@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/filelock"
 )
@@ -99,20 +100,21 @@ func TestFunctional_TwoProcessesContend(t *testing.T) {
 	}
 }
 
-// TestFunctional_KilledHolderLeavesStaleLock tests that killing a lock holder leaves
-// behind a stale lock that Probe reports, and that TryLock refuses to silently steal.
-func TestFunctional_KilledHolderLeavesStaleLock(t *testing.T) {
+// TestFunctional_KilledHolderLockFreedByKernelAndPreviousNoteObserved tests that when
+// a lock holder process is killed, the kernel releases the OS lock immediately,
+// and the next taker acquires without delay while observing Previous() *Stamp.
+func TestFunctional_KilledHolderLockFreedByKernelAndPreviousNoteObserved(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	path := filepath.Join(dir, "kill_stale.lock")
+	path := filepath.Join(dir, "kill_release.lock")
 
 	cmd := exec.Command(os.Args[0], "-test.run=^TestFunctional_HelperProcess$")
 	cmd.Env = append(os.Environ(),
 		"FILELOCK_TEST_HELPER=1",
 		"FILELOCK_HELPER_MODE=hold",
 		"FILELOCK_HELPER_PATH="+path,
-		"FILELOCK_HELPER_LABEL=doomed-process",
+		"FILELOCK_HELPER_LABEL=killed-worker",
 	)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -153,49 +155,48 @@ func TestFunctional_KilledHolderLeavesStaleLock(t *testing.T) {
 	_ = stdin.Close()
 	_ = cmd.Wait()
 
-	// Child is dead. Verify filelock.ProcessAlive(holderPID) is false
-	if filelock.ProcessAlive(holderPID) {
-		t.Fatalf("holder PID %d is still reported alive after kill", holderPID)
-	}
-
-	// Probe MUST now report StateStale
-	stateAfter, stampAfter, err := filelock.Probe(path)
+	// The kernel releases the OS lock immediately upon death.
+	// Probe can now acquire a shared lock and report StateFree!
+	stateAfter, _, err := filelock.Probe(path)
 	if err != nil {
 		t.Fatalf("Probe after kill failed: %v", err)
 	}
-	if stateAfter != filelock.StateStale {
-		t.Fatalf("Probe state after kill = %s, want %s", stateAfter, filelock.StateStale)
-	}
-	if stampAfter.PID != holderPID || stampAfter.Label != "doomed-process" {
-		t.Fatalf("Probe stamp after kill = %+v, want PID %d and label doomed-process", stampAfter, holderPID)
+	if stateAfter != filelock.StateFree {
+		t.Fatalf("Probe state after kill = %s, want %s (kernel drops lock)", stateAfter, filelock.StateFree)
 	}
 
-	// TryLock MUST refuse to steal the stale lock silently
-	_, errLock := filelock.TryLock(path, "opportunist")
-	if !errors.Is(errLock, filelock.ErrStale) {
-		t.Fatalf("TryLock on stale lock returned err = %v, want ErrStale", errLock)
-	}
-
-	// ClearStale removes it explicitly
-	if err := filelock.ClearStale(path); err != nil {
-		t.Fatalf("ClearStale failed: %v", err)
-	}
-
-	// Probe now reports StateAbsent
-	stateClean, _, err := filelock.Probe(path)
+	// New taker acquires immediately and observes previous unreleased holder
+	lock, err := filelock.Lock(path, "recovery-taker", time.Second)
 	if err != nil {
-		t.Fatalf("Probe after ClearStale failed: %v", err)
+		t.Fatalf("Lock failed after holder died: %v", err)
 	}
-	if stateClean != filelock.StateAbsent {
-		t.Fatalf("state after ClearStale = %s, want %s", stateClean, filelock.StateAbsent)
+	defer lock.Unlock()
+
+	if lock.Previous() == nil {
+		t.Fatalf("lock.Previous() = nil, want killed holder stamp")
+	}
+	if lock.Previous().PID != holderPID {
+		t.Errorf("Previous().PID = %d, want %d", lock.Previous().PID, holderPID)
+	}
+	if lock.Previous().Label != "killed-worker" {
+		t.Errorf("Previous().Label = %q, want killed-worker", lock.Previous().Label)
 	}
 
-	// Can now acquire fresh lock
-	l, err := filelock.TryLock(path, "clean-run")
-	if err != nil {
-		t.Fatalf("TryLock after ClearStale failed: %v", err)
+	// When recovery-taker unlocks cleanly:
+	if err := lock.Unlock(); err != nil {
+		t.Fatalf("Unlock failed: %v", err)
 	}
-	_ = l.Unlock()
+
+	// Next taker sees nil Previous() because Unlock cleanly truncated the note
+	nextLock, err := filelock.TryLock(path, "clean-taker")
+	if err != nil {
+		t.Fatalf("TryLock failed: %v", err)
+	}
+	defer nextLock.Unlock()
+
+	if nextLock.Previous() != nil {
+		t.Errorf("nextLock.Previous() = %+v, want nil after clean unlock", nextLock.Previous())
+	}
 }
 
 // TestFunctional_HelperProcess is invoked by the functional tests above via exec.Command(os.Args[0]).
@@ -233,10 +234,6 @@ func TestFunctional_HelperProcess(t *testing.T) {
 		if errors.Is(err, filelock.ErrHeld) {
 			os.Stdout.WriteString("HELD\n")
 			os.Exit(2)
-		}
-		if errors.Is(err, filelock.ErrStale) {
-			os.Stdout.WriteString("STALE\n")
-			os.Exit(3)
 		}
 		os.Stderr.WriteString("ERR: " + err.Error() + "\n")
 		os.Exit(1)

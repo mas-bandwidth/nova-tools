@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build unix || windows
 
 package filelock
 
@@ -85,27 +85,12 @@ func TestProperty_JitterBounds(t *testing.T) {
 	const iterations = 10000
 
 	for i := 0; i < iterations; i++ {
-		// test across ranges from 1ms to 1 hour
 		d := time.Duration(rng.Int63n(int64(time.Hour))) + time.Millisecond
 		jittered := defaultJitter(d)
 		min := d
 		max := d + d/2 + 1
 		if jittered < min || jittered > max {
 			t.Fatalf("iteration %d: defaultJitter(%v) = %v; want [%v, %v]", i, d, jittered, min, max)
-		}
-	}
-}
-
-func TestProperty_ProcessAliveNegative(t *testing.T) {
-	t.Parallel()
-
-	rng := rand.New(rand.NewSource(44))
-	const iterations = 5000
-
-	for i := 0; i < iterations; i++ {
-		pid := -rng.Intn(1_000_000) // 0 or negative
-		if ProcessAlive(pid) {
-			t.Fatalf("iteration %d: ProcessAlive(%d) = true; want false", i, pid)
 		}
 	}
 }

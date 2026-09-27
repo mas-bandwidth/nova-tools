@@ -21,8 +21,6 @@ const (
 	StateFree State = "free"
 	// StateHeld means the lock file exists and is held by a live process.
 	StateHeld State = "held"
-	// StateStale means the lock file exists and names a holder whose process is dead.
-	StateStale State = "stale"
 )
 
 func (s State) String() string {
@@ -32,14 +30,13 @@ func (s State) String() string {
 var (
 	// ErrHeld indicates the lock is currently held by another process.
 	ErrHeld = errors.New("lock held")
-	// ErrStale indicates the lock is stale because its recorded holder is dead.
-	// It is never stolen silently.
-	ErrStale = errors.New("lock stale")
+	// ErrTimeout indicates waiting for the lock timed out.
+	ErrTimeout = errors.New("lock timeout")
 	// ErrNotSupported indicates that filelock is not supported on the current platform.
-	ErrNotSupported = errors.New("filelock: locking is not supported on windows")
+	ErrNotSupported = errors.New("filelock: locking is not supported on this platform")
 )
 
-// HeldError describes a refusal because another live process holds the lock.
+// HeldError describes a refusal because another process holds the lock.
 type HeldError struct {
 	Path   string
 	Holder Stamp
@@ -47,10 +44,16 @@ type HeldError struct {
 }
 
 func (e *HeldError) Error() string {
-	if e.Holder.PID > 0 {
-		return fmt.Sprintf("filelock %s is held by %s; waited %s: %v", e.Path, e.Holder, e.Wait, ErrHeld)
+	if !e.Holder.IsZero() {
+		if e.Wait > 0 {
+			return fmt.Sprintf("filelock %q is held by %s; waited %s: %v", e.Path, e.Holder, e.Wait, ErrHeld)
+		}
+		return fmt.Sprintf("filelock %q is held by %s: %v", e.Path, e.Holder, ErrHeld)
 	}
-	return fmt.Sprintf("filelock %s is held; waited %s: %v", e.Path, e.Wait, ErrHeld)
+	if e.Wait > 0 {
+		return fmt.Sprintf("filelock %q is held; waited %s: %v", e.Path, e.Wait, ErrHeld)
+	}
+	return fmt.Sprintf("filelock %q is held: %v", e.Path, ErrHeld)
 }
 
 func (e *HeldError) Unwrap() error {
@@ -64,32 +67,7 @@ func AsHeldError(err error) (*HeldError, bool) {
 	return h, ok
 }
 
-// StaleError describes a refusal because the lock is stale (holder is dead)
-// and cannot be stolen silently.
-type StaleError struct {
-	Path   string
-	Holder Stamp
-}
-
-func (e *StaleError) Error() string {
-	if e.Holder.PID > 0 {
-		return fmt.Sprintf("filelock %s is stale (holder %s is dead): %v", e.Path, e.Holder, ErrStale)
-	}
-	return fmt.Sprintf("filelock %s is stale: %v", e.Path, ErrStale)
-}
-
-func (e *StaleError) Unwrap() error {
-	return ErrStale
-}
-
-// AsStaleError reports whether err is a *StaleError.
-func AsStaleError(err error) (*StaleError, bool) {
-	var s *StaleError
-	ok := errors.As(err, &s)
-	return s, ok
-}
-
-// Stamp records who holds the lock: process ID, host name, start time, and label.
+// Stamp records diagnostic details of who holds the lock: PID, host, start time, and label.
 type Stamp struct {
 	PID     int
 	Host    string
@@ -137,13 +115,12 @@ func (s Stamp) String() string {
 		parts = append(parts, fmt.Sprintf("started=%s", s.Started.UTC().Format(time.RFC3339)))
 	}
 	if s.Label != "" {
-		parts = append(parts, fmt.Sprintf("label=%s", s.Label))
+		parts = append(parts, fmt.Sprintf("label=%q", s.Label))
 	}
 	return strings.Join(parts, " ")
 }
 
-// ParseStamp parses a Stamp from raw text. It accepts multi-line key=value pairs,
-// single-line space-separated key=value pairs, legacy "pid=N at=RFC3339", or bare PID.
+// ParseStamp parses a Stamp from raw text.
 func ParseStamp(s string) (Stamp, error) {
 	if strings.TrimSpace(s) == "" || strings.TrimSpace(s) == "-" {
 		return Stamp{}, nil
@@ -208,20 +185,37 @@ func ParseStamp(s string) (Stamp, error) {
 				stamp.Started = t.UTC()
 			}
 		case "label":
-			stamp.Label = v
+			stamp.Label = strings.Trim(v, `"`)
 		}
 	}
 
 	return stamp, nil
 }
 
-// ReadStamp reads and parses the Stamp from path.
+// ReadStamp reads and parses the Stamp from path without acquiring the lock.
 func ReadStamp(path string) (Stamp, error) {
-	raw, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return Stamp{}, err
 	}
-	return ParseStamp(string(raw))
+	defer f.Close()
+	return readExistingStamp(f), nil
+}
+
+func readExistingStamp(f *os.File) Stamp {
+	if f == nil {
+		return Stamp{}
+	}
+	buf := make([]byte, 4096)
+	n, err := f.ReadAt(buf, 0)
+	if err != nil && n == 0 {
+		return Stamp{}
+	}
+	st, err := ParseStamp(string(buf[:n]))
+	if err != nil {
+		return Stamp{}
+	}
+	return st
 }
 
 // Clock abstracts time measurement and sleeping for fast, deterministic unit tests.
@@ -273,15 +267,18 @@ func (c *LockStepClock) Waited() time.Duration {
 // Options configures Lock, TryLock, and Probe behavior.
 type Options struct {
 	Clock        Clock
-	ProcessAlive func(pid int) bool
 	PollInterval time.Duration
 	Jitter       func(time.Duration) time.Duration
 	Host         string
+	PID          int
 }
 
 const defaultPollInterval = 25 * time.Millisecond
 
 func defaultJitter(d time.Duration) time.Duration {
+	if d <= 0 {
+		return 0
+	}
 	return d + time.Duration(rand.Int63n(int64(d/2)+1))
 }
 
@@ -290,13 +287,6 @@ func (o Options) clock() Clock {
 		return o.Clock
 	}
 	return RealClock{}
-}
-
-func (o Options) isAlive(pid int) bool {
-	if o.ProcessAlive != nil {
-		return o.ProcessAlive(pid)
-	}
-	return ProcessAlive(pid)
 }
 
 func (o Options) pollInterval() time.Duration {
@@ -324,12 +314,19 @@ func (o Options) host() string {
 	return h
 }
 
+func (o Options) pid() int {
+	if o.PID > 0 {
+		return o.PID
+	}
+	return os.Getpid()
+}
+
 // FileLock represents an acquired, open file lock.
 type FileLock struct {
 	path     string
 	file     *os.File
 	stamp    Stamp
-	released bool
+	previous *Stamp
 	mu       sync.Mutex
 }
 
@@ -343,23 +340,91 @@ func (l *FileLock) Stamp() Stamp {
 	return l.stamp
 }
 
-// String returns a description of the held lock.
-func (l *FileLock) String() string {
-	return fmt.Sprintf("lock %s held by %s", l.path, l.stamp)
+// Previous returns the stamp of the previous unreleased holder (e.g. killed/crashed), or nil.
+func (l *FileLock) Previous() *Stamp {
+	return l.previous
 }
 
-func kindOfMode(mode os.FileMode) string {
-	switch {
-	case mode.IsDir():
-		return "directory"
-	case mode&os.ModeNamedPipe != 0:
-		return "fifo"
-	case mode&os.ModeSocket != 0:
-		return "socket"
-	case mode&os.ModeDevice != 0:
-		return "device"
-	case mode&os.ModeSymlink != 0:
-		return "symlink"
+// String returns a description of the held lock.
+func (l *FileLock) String() string {
+	return fmt.Sprintf("filelock %q held by %s", l.path, l.stamp)
+}
+
+// Unlock releases the file lock by truncating the file to zero bytes, syncing,
+// releasing the OS lock, and closing the descriptor. The file is NEVER deleted.
+// Calling Unlock multiple times is safe and returns nil on subsequent calls.
+func (l *FileLock) Unlock() error {
+	if l == nil {
+		return nil
 	}
-	return "something that is not a regular file"
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.file == nil {
+		return nil
+	}
+
+	var errs []error
+	if err := l.file.Truncate(0); err != nil {
+		errs = append(errs, err)
+	}
+	if _, err := l.file.Seek(0, 0); err != nil {
+		errs = append(errs, err)
+	}
+	if err := l.file.Sync(); err != nil {
+		errs = append(errs, err)
+	}
+	unlockFile(l.file)
+	if err := l.file.Close(); err != nil {
+		errs = append(errs, err)
+	}
+	l.file = nil
+	return errors.Join(errs...)
+}
+
+func lockLoop(path string, label string, timeout time.Duration, opts Options, tryLockFn func(string, string, Options) (*FileLock, error)) (*FileLock, error) {
+	clk := opts.clock()
+	poll := opts.pollInterval()
+	deadline := clk.Now().Add(timeout)
+
+	for {
+		lock, err := tryLockFn(path, label, opts)
+		if err == nil {
+			return lock, nil
+		}
+		if !errors.Is(err, ErrHeld) {
+			return nil, err
+		}
+
+		now := clk.Now()
+		remaining := deadline.Sub(now)
+		if remaining <= 0 {
+			// One final non-blocking attempt right at deadline before giving up
+			lock, lastErr := tryLockFn(path, label, opts)
+			if lastErr == nil {
+				return lock, nil
+			}
+			return nil, fmt.Errorf("filelock %q: timeout after %v: %w", path, timeout, ErrTimeout)
+		}
+
+		sleepDur := opts.jitter(poll)
+		if sleepDur > remaining {
+			sleepDur = remaining
+		}
+		clk.Sleep(sleepDur)
+	}
+}
+
+// TryLock attempts to acquire the exclusive file lock on path without waiting.
+func TryLock(path string, label string) (*FileLock, error) {
+	return TryLockWithOptions(path, label, Options{})
+}
+
+// Lock acquires the exclusive file lock on path, waiting up to timeout with jittered backoff.
+func Lock(path string, label string, timeout time.Duration) (*FileLock, error) {
+	return LockWithOptions(path, label, timeout, Options{})
+}
+
+// Probe inspects path without taking an exclusive lock and without creating the file if absent.
+func Probe(path string) (State, Stamp, error) {
+	return ProbeWithOptions(path, Options{})
 }
