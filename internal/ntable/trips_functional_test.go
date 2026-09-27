@@ -59,7 +59,7 @@ func TestEveryTableOperationCountsOneTrip(t *testing.T) {
 	})
 	one("reader changed", func() error {
 		tb, err := reader.Read(ctx, c)
-		if err == nil && !tb.Rows[1].Cells[1].Bound {
+		if err == nil && !tb.Rows[1].Cells[0].Bound {
 			t.Fatal("new binding missing")
 		}
 		return err
@@ -197,7 +197,7 @@ func TestSourceACLTableReaderKeepsReadOnlyAccess(t *testing.T) {
 	if _, err := ntable.CellAdd(ctx, writer, "demo", "r", "ready", "job", 7); err != nil {
 		t.Fatal(err)
 	}
-	if tb, err := ntable.Read(ctx, reader, "demo"); err != nil || len(tb.Rows) != 1 || tb.Rows[0].Cells[1].Unread || tb.Rows[0].Cells[1].Count != 1 {
+	if tb, err := ntable.Read(ctx, reader, "demo"); err != nil || len(tb.Rows) != 1 || tb.Rows[0].Cells[0].Unread || tb.Rows[0].Cells[0].Count != 1 {
 		t.Fatalf("reader snapshot: %+v %v", tb, err)
 	}
 	if names, err := ntable.List(ctx, reader); err != nil || len(names) != 1 {

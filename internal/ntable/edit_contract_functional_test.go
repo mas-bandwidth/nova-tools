@@ -337,3 +337,34 @@ func TestBatchedMembersAndShapeRepair(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestScalarColumnsRefuseOrderedSetMutations(t *testing.T) {
+	t.Parallel()
+	c, tb := editFixture(t)
+	ctx := context.Background()
+	cols, err := ntable.ParseColumns("status:text:none,a,b,x,p:pct(a):pooled")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ntable.Set(ctx, c, tb.Name, ntable.SetOpts{Columns: cols}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ntable.CellAdd(ctx, c, tb.Name, "r", "a", "m", 1); err != nil {
+		t.Fatal(err)
+	}
+	before := review4456Image(t, c)
+	for _, col := range []string{"status", "p"} {
+		for _, call := range []func() error{
+			func() error { _, e := ntable.CellAdd(ctx, c, tb.Name, "r", col, "new", 1); return e },
+			func() error { _, e := ntable.CellRemove(ctx, c, tb.Name, "r", col, "m"); return e },
+			func() error { _, e := ntable.CellMove(ctx, c, tb.Name, "r", "a", col, "m"); return e },
+		} {
+			if e := call(); e == nil {
+				t.Fatalf("ordered-set write accepted on %s", col)
+			}
+			if !reflect.DeepEqual(before, review4456Image(t, c)) {
+				t.Fatal("scalar refusal changed store")
+			}
+		}
+	}
+}

@@ -4787,11 +4787,11 @@ members in a cell, move one to the next cell, and look at it two ways: the
 typed lines a program reads, and the text a person reads.
 
 ```text
-$ nova-table create demo --columns job:text:none,ready,working,done
-TABLE CREATE table=demo columns=4 trips=1
+$ nova-table create demo --columns ready,working,done
+TABLE CREATE table=demo columns=3 trips=1
 
 $ nova-table row add demo build
-TABLE ROW ADD table=demo row=build cols=4 bound=0 trips=1
+TABLE ROW ADD table=demo row=build cols=3 bound=0 trips=1
 
 $ nova-table cell add demo build ready b1
 TABLE CELL table=demo row=build col=ready n=1 trips=1
@@ -4803,7 +4803,7 @@ $ nova-table cell move demo build ready working b1
 TABLE MOVE table=demo row=build member=b1 from=ready to=working n=1 trips=1
 
 $ nova-table show demo
-TABLE table=demo columns=4 rows=1 trips=1 epoch=0 revision=5
+TABLE table=demo columns=3 rows=1 trips=1 epoch=0 revision=5
 TABLE ROW table=demo row=build ready=1 working=1 done=0
 
 $ nova-table render demo
@@ -4823,7 +4823,8 @@ of those the refusal is `--redis <addr> is required`. Flags may follow the
 words on the line. `--columns` is `name[:projection[:fold[:label]]]` per
 column, comma-separated: the projection is what a body cell prints
 (`count`, the set's size, the default; `members`, the members in score
-order; `first`; `last`; `text`, the row's label with no set), the fold what
+order; `first`; `last`; `text`, a value per row set by `row set`, blank
+when none, with no set; the row's label is always the column in front), the fold what
 the footer prints over the column (`sum`, the default for a count; `max`;
 `union` of members; `none`). A fold that does not fit its projection is
 refused naming both. `--footer <label>` names the footer row (`total`);

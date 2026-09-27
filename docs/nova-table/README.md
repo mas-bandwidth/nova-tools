@@ -28,12 +28,13 @@ kinds of cell:
 
 - **Header cells.** The top row is the column labels (each column has a
   label, default its name); the left column is the row labels (each row has
-  a label, default its key). Labels, not sets.
+  a label, default its key), in front of every declared column. Labels, not
+  sets.
 - **Body cells.** Every body cell is an ordered set, printed by its column's
   *projection*: `count` (the set's size, Glenn's |s|; the default),
   `members` (the members in score order, comma-joined), `first` and `last`
-  (the lowest and highest scored member), or `text` (a label column: the
-  row's label, no set).
+  (the lowest and highest scored member), or `text` (a value per row, set
+  by `row set`, blank when none; no set).
 - **Footer cells.** One per column, the column's *fold* over the body:
   `sum` (the default for a count) or `max` of the counts, `union` of the
   members, or `none` (blank). The footer row carries the table's footer
@@ -263,7 +264,7 @@ A view write validates all references and command permissions before either its
 hash or registry is changed. `watch --view` reloads the view each frame and reads
 its tables in one pipeline: two application exchanges, including a summary.
 The timestamp, title, pooled summary and tables form the frame. The summary uses
-the same table snapshot as the body; unread inputs print `?`. ETA remains `-`
+the same table snapshot as the body; unread inputs print `?`. ETA has no value
 until change-stream rate sampling is implemented. Edit a view to change its
 tables or title without restarting watch.
 
@@ -282,7 +283,7 @@ row whose count cells are all zero and all read; the fold is still the
 column's, hidden rows included.
 
 **The empty rule.** An empty table, and a table with no visible row, renders
-as the empty string when no title is supplied. With a title, it prints the title and `(no rows)`. The sprint table hides its
+as the empty string, including its title: no placeholder and no gap. The sprint table hides its
 stream block that way with no extra blank line.
 
 ## Watching
@@ -301,8 +302,8 @@ exit 0.
 ## The first table: the sprint's stream block
 
 The sprint table's stream block (`nova-sprint table --layout live`) is the
-table `streams`: one row per stream of `ws:order`, a `stream` text column 25
-wide, and one `count:sum` column per state of the stream line (waiting,
+table `streams`: one row per stream of `ws:order`, its labels (the stream
+names) headed `stream` and 25 wide, and one `count:sum` column per state of the stream line (waiting,
 ready, working, review, merging, landed), footer `total`. Every cell is
 bound to the set the card model already keeps, `ws:<s>:<state>` under the
 sprint epoch, with the stream's sentinel excluded; nothing is copied. The

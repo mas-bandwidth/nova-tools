@@ -174,7 +174,7 @@ func tableSnapshots(c redis.Cmdable, names []string) func(context.Context) ([]nt
 }
 
 // viewSummary pools the first table's counts from the displayed snapshot.
-// ETA stays unestimated until change-stream rate sampling is available.
+// ETA has no value until change-stream rate sampling is available.
 func viewSummary(t ntable.Table, column string) string {
 	found := false
 	for _, col := range t.Columns {
@@ -183,7 +183,7 @@ func viewSummary(t ntable.Table, column string) string {
 		}
 	}
 	if !found {
-		return "?/? ? -> ETA -"
+		return "?/? ? -> ETA"
 	}
 	var part, total int64
 	for _, r := range t.Rows {
@@ -192,7 +192,7 @@ func viewSummary(t ntable.Table, column string) string {
 				continue
 			}
 			if k >= len(r.Cells) || r.Cells[k].Unread {
-				return "?/? ? -> ETA -"
+				return "?/? ? -> ETA"
 			}
 			total += r.Cells[k].Count
 			if col.Name == column {
@@ -204,7 +204,7 @@ func viewSummary(t ntable.Table, column string) string {
 	if total > 0 {
 		pct = strconv.FormatFloat(100*float64(part)/float64(total), 'f', 1, 64) + "%"
 	}
-	return fmt.Sprintf("%d/%d %s -> ETA -", part, total, pct)
+	return fmt.Sprintf("%d/%d %s -> ETA", part, total, pct)
 }
 
 func isReplyError(err error) bool {

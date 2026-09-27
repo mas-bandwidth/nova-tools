@@ -76,7 +76,7 @@ func TestMoveAndClearAreOneCallEach(t *testing.T) {
 		}
 	}
 	tb, err := ntable.Read(ctx, c, "demo")
-	if err != nil || len(tb.Rows) != 0 || len(tb.Columns) != 5 {
+	if err != nil || len(tb.Rows) != 0 || len(tb.Columns) != 4 {
 		t.Fatalf("read after clear: %+v %v", tb, err)
 	}
 	if _, err := ntable.Clear(ctx, c, "nope"); !errors.Is(err, ntable.ErrNoTable) {
@@ -177,7 +177,7 @@ func TestTableGrantsAreExactlyWhatTheWriterNeeds(t *testing.T) {
 	}
 	bound := ntable.Table{Name: "views", Columns: tb.Columns[:2]}
 	r := ntable.NewRow(bound, "v")
-	r.Cells[1] = ntable.Cell{Key: "ws:elsewhere:ready", Bound: true}
+	r.Cells[0] = ntable.Cell{Key: "ws:elsewhere:ready", Bound: true}
 	bound.Rows = []ntable.Row{r}
 	if err := ntable.Bind(ctx, w, bound, time.Now()); err != nil {
 		t.Fatalf("bind as the writer: %v", err)

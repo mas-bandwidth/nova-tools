@@ -64,7 +64,7 @@ func store(t *testing.T) (*redis.Client, *tripLog) {
 var now = time.Date(2026, 9, 27, 3, 0, 0, 0, time.UTC)
 
 func demo() ntable.Table {
-	cols, err := ntable.ParseColumns("job:text:none:job,ready,working,done,who:members:union")
+	cols, err := ntable.ParseColumns("ready,working,done,who:members:union")
 	if err != nil {
 		panic(err)
 	}
@@ -125,7 +125,7 @@ func TestCreateRowAddCellAddReadRender(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "job        | ready | working | done | who\n" +
+	want := "row        | ready | working | done | who\n" +
 		"-----------+-------+---------+------+-------\n" +
 		"build      |     1 |       1 |    0 | ann\n" +
 		"test suite |     0 |       0 |    1 | bo,ann\n" +
@@ -138,8 +138,8 @@ func TestCreateRowAddCellAddReadRender(t *testing.T) {
 	if err != nil || len(ms) != 2 || ms[0].Member != "bo" || ms[1].Member != "ann" || ms[1].Score != 2 {
 		t.Fatalf("CellMembers = %+v %v", ms, err)
 	}
-	// a cell of a row or column the table lacks, and a text column, refuse
-	for _, bad := range [][3]string{{"nope", "ready", "x"}, {"build", "nope", "x"}, {"build", "job", "x"}} {
+	// a cell of a row or column the table lacks refuses (a text column's: TestReview4456RefusalsAreAtomic, the CLI sitting)
+	for _, bad := range [][3]string{{"nope", "ready", "x"}, {"build", "nope", "x"}} {
 		if _, err := ntable.CellAdd(ctx, c, "demo", bad[0], bad[1], bad[2], 1); err == nil {
 			t.Errorf("cell add %v accepted", bad)
 		}
@@ -179,8 +179,8 @@ func TestRowOrderIsStableAcrossReAdds(t *testing.T) {
 	for _, r := range tb.Rows {
 		keys = append(keys, r.Key)
 	}
-	if strings.Join(keys, ",") != "c,a,b" || tb.Rows[1].Label != "A" || tb.Rows[1].Cells[1].Count != 1 {
-		t.Fatalf("rows after re-add: %v label=%q ready=%d", keys, tb.Rows[1].Label, tb.Rows[1].Cells[1].Count)
+	if strings.Join(keys, ",") != "c,a,b" || tb.Rows[1].Label != "A" || tb.Rows[1].Cells[0].Count != 1 {
+		t.Fatalf("rows after re-add: %v label=%q ready=%d", keys, tb.Rows[1].Label, tb.Rows[1].Cells[0].Count)
 	}
 	if ok, err := ntable.RowDel(ctx, c, "demo", "a"); err != nil || !ok {
 		t.Fatalf("RowDel: %v %v", ok, err)
@@ -262,7 +262,7 @@ func TestReaderTakesOnePipelineInTheSteadyState(t *testing.T) {
 	if trips, _ := log.reset(); trips != 1 {
 		t.Fatalf("read after a bound row add took %d round trips, want 1", trips)
 	}
-	if len(tb.Rows) != 3 || !tb.Rows[2].Cells[1].Bound || tb.Rows[2].Cells[1].Count != 1 || tb.Rows[2].Owner != "other-tool put" {
+	if len(tb.Rows) != 3 || !tb.Rows[2].Cells[0].Bound || tb.Rows[2].Cells[0].Count != 1 || tb.Rows[2].Owner != "other-tool put" {
 		t.Fatalf("bound row read: %+v", tb.Rows[2])
 	}
 	// a write to the bound cell is refused, naming the owner
@@ -302,7 +302,7 @@ func TestBindMakesTheStoreTheCallersTable(t *testing.T) {
 
 	c, _ := store(t)
 	ctx := context.Background()
-	cols, err := ntable.ParseColumns("stream:text:none:stream,waiting,landed")
+	cols, err := ntable.ParseColumns("waiting,landed")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,8 +312,8 @@ func TestBindMakesTheStoreTheCallersTable(t *testing.T) {
 		for _, s := range streams {
 			r := ntable.NewRow(out, s)
 			r.Exclude, r.Owner = s+":sentinel", "other-tool move"
-			r.Cells[1] = ntable.Cell{Key: "ws:" + s + ":waiting", Bound: true}
-			r.Cells[2] = ntable.Cell{Key: "ws:" + s + ":landed", Bound: true}
+			r.Cells[0] = ntable.Cell{Key: "ws:" + s + ":waiting", Bound: true}
+			r.Cells[1] = ntable.Cell{Key: "ws:" + s + ":landed", Bound: true}
 			out.Rows = append(out.Rows, r)
 		}
 		return out
@@ -335,12 +335,12 @@ func TestBindMakesTheStoreTheCallersTable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "stream | waiting | landed\n" +
-		"-------+---------+-------\n" +
-		"b      |       0 |      2\n" +
-		"a      |       1 |      0\n" +
-		"-------+---------+-------\n" +
-		"total  |       1 |      2\n"
+	want := "row   | waiting | landed\n" +
+		"------+---------+-------\n" +
+		"b     |       0 |      2\n" +
+		"a     |       1 |      0\n" +
+		"------+---------+-------\n" +
+		"total |       1 |      2\n"
 	if rendered := ntable.Render(got, ntable.RenderOpts{}); rendered != want {
 		t.Fatalf("bound render:\n%s\nwant:\n%s", rendered, want)
 	}
@@ -363,14 +363,14 @@ func TestQueueCellsFillsAnInMemoryTable(t *testing.T) {
 
 	c, log := store(t)
 	ctx := context.Background()
-	cols, err := ntable.ParseColumns("row:text:none,n,who:members:union")
+	cols, err := ntable.ParseColumns("n,who:members:union")
 	if err != nil {
 		t.Fatal(err)
 	}
 	tb := ntable.Table{Name: "mem", Columns: cols}
 	r := ntable.NewRow(tb, "x")
-	r.Cells[1] = ntable.Cell{Key: "set:n", Bound: true}
-	r.Cells[2] = ntable.Cell{Key: "set:who", Bound: true}
+	r.Cells[0] = ntable.Cell{Key: "set:n", Bound: true}
+	r.Cells[1] = ntable.Cell{Key: "set:who", Bound: true}
 	tb.Rows = []ntable.Row{r}
 	if err := c.ZAdd(ctx, "set:n", redis.Z{Score: 1, Member: "one"}, redis.Z{Score: 2, Member: "two"}).Err(); err != nil {
 		t.Fatal(err)
@@ -386,11 +386,11 @@ func TestQueueCellsFillsAnInMemoryTable(t *testing.T) {
 	if trips, _ := log.reset(); trips != 1 {
 		t.Fatalf("QueueCells took %d round trips, want 1", trips)
 	}
-	if tb.Rows[0].Cells[1].Count != 2 || tb.Rows[0].Cells[1].Unread {
-		t.Fatalf("count cell = %+v", tb.Rows[0].Cells[1])
+	if tb.Rows[0].Cells[0].Count != 2 || tb.Rows[0].Cells[0].Unread {
+		t.Fatalf("count cell = %+v", tb.Rows[0].Cells[0])
 	}
-	if !tb.Rows[0].Cells[2].Unread {
-		t.Fatalf("a set of the wrong type read as %+v, want Unread", tb.Rows[0].Cells[2])
+	if !tb.Rows[0].Cells[1].Unread {
+		t.Fatalf("a set of the wrong type read as %+v, want Unread", tb.Rows[0].Cells[1])
 	}
 	if got := ntable.Render(tb, ntable.RenderOpts{}); !strings.Contains(got, "x   | 2 | ?\n") || !strings.Contains(got, "    | 2 | ?\n") {
 		t.Fatalf("unread cell render:\n%s", got)

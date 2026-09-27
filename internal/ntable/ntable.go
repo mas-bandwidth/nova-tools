@@ -14,12 +14,12 @@
 //
 //   - HEADER cells: the top row is the column labels (Column.Label, default
 //     the column name); the left column is the row labels (Row.Label, default
-//     the row key). Labels, not sets.
+//     the row key), in front of every declared column. Labels, not sets.
 //   - BODY cells: every body cell is an ordered set, a Redis ZSET, rendered
 //     by its column's projection: count (the cardinality, Glenn's |s|),
 //     members (the members in score order, comma-joined), first, last (the
-//     lowest and highest scored member), text (a label column: the row's
-//     label, no set).
+//     lowest and highest scored member), text (a value per row, set by
+//     row set, blank when none; no set).
 //   - FOOTER cells: one per column, the column's fold over the body: sum or
 //     max of the counts, union of the members, none (blank). The footer row
 //     carries the table's footer label (default total). A table whose
@@ -154,7 +154,7 @@ type Row struct {
 	Exclude string
 	Owner   string
 	Cells   []Cell
-	Texts   map[string]string // a text column's value for this row (row set <col>=<value>), else the label prints
+	Texts   map[string]string // a text column's value for this row (row set <col>=<value>), else blank
 	Hidden  bool              // kept and counted in the folds, not drawn (row hide)
 }
 

@@ -78,7 +78,7 @@ nothing at all when it is empty; watch redraws it in place every --every
 exit codes: 0 done, 1 refused, 2 usage
 
 example:
-  nova-table create demo --columns job:text:none,ready,working,done
+  nova-table create demo --columns ready,working,done
   nova-table row add demo build
   nova-table cell add demo build ready b1
   nova-table cell add demo build ready b2

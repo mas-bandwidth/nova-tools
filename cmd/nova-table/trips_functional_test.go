@@ -42,7 +42,7 @@ func TestTableVerbsOneExchange(t *testing.T) {
 		t.Fatalf("MONITOR ready: %q %v", line, err)
 	}
 	steps := [][]string{
-		{"create", "triptable", "--columns", "row:text:none,ready,working"},
+		{"create", "triptable", "--columns", "ready,working"},
 		{"row", "add", "triptable", "first"},
 		{"cell", "add", "triptable", "first", "ready", "job", "--score", "7"},
 		{"cell", "members", "triptable", "first", "ready"},

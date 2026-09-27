@@ -90,32 +90,32 @@ func TestASittingThroughTheVerbs(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"create", "jobs", "--columns", "job:text:none,ready,working,who:members:union", "--footer", "all", "--width", "job=6"}, "TABLE CREATE table=jobs columns=4 trips=1\n"},
-		{[]string{"create", "jobs", "--columns", "job:text:none,ready,working,who:members:union", "--footer", "all", "--width", "job=6"}, "TABLE CREATE table=jobs columns=4 trips=1\n"},
-		{[]string{"row", "add", "jobs", "build"}, "TABLE ROW ADD table=jobs row=build cols=4 bound=0 trips=1\n"},
-		{[]string{"row", "add", "jobs", "the tests", "--label", "tests"}, "TABLE ROW ADD table=jobs row=\"the tests\" cols=4 bound=0 trips=1\n"},
+		{[]string{"create", "jobs", "--columns", "ready,working,who:members:union", "--footer", "all", "--width", "who=6"}, "TABLE CREATE table=jobs columns=3 trips=1\n"},
+		{[]string{"create", "jobs", "--columns", "ready,working,who:members:union", "--footer", "all", "--width", "who=6"}, "TABLE CREATE table=jobs columns=3 trips=1\n"},
+		{[]string{"row", "add", "jobs", "build"}, "TABLE ROW ADD table=jobs row=build cols=3 bound=0 trips=1\n"},
+		{[]string{"row", "add", "jobs", "the tests", "--label", "tests"}, "TABLE ROW ADD table=jobs row=\"the tests\" cols=3 bound=0 trips=1\n"},
 		{[]string{"cell", "add", "jobs", "build", "ready", "b1", "--score", "1"}, "TABLE CELL table=jobs row=build col=ready n=1 trips=1\n"},
 		{[]string{"cell", "add", "jobs", "build", "ready", "b2", "--score", "2"}, "TABLE CELL table=jobs row=build col=ready n=2 trips=1\n"},
 		{[]string{"cell", "add", "jobs", "build", "who", "ann", "--score", "1"}, "TABLE CELL table=jobs row=build col=who n=1 trips=1\n"},
 		{[]string{"cell", "add", "jobs", "the tests", "who", "bo", "--score", "1"}, "TABLE CELL table=jobs row=\"the tests\" col=who n=1 trips=1\n"},
 		{[]string{"cell", "remove", "jobs", "build", "ready", "b2"}, "TABLE CELL table=jobs row=build col=ready n=1 trips=1\n"},
 		{[]string{"cell", "members", "jobs", "build", "ready"}, "TABLE CELL table=jobs row=build col=ready n=1 trips=1\nTABLE MEMBER table=jobs row=build col=ready member=b1 score=1\n"},
-		{[]string{"show", "jobs"}, "TABLE table=jobs columns=4 rows=2 trips=1 epoch=0 revision=9\nTABLE ROW table=jobs row=build ready=1 working=0 who=1\nTABLE ROW table=jobs row=\"the tests\" ready=0 working=0 who=1\n"},
-		{[]string{"render", "jobs"}, "jobs   | ready | working | who\n" +
-			"-------+-------+---------+-------\n" +
-			"build  |     1 |       0 | ann\n" +
-			"tests  |     0 |       0 | bo\n" +
-			"-------+-------+---------+-------\n" +
-			"all    |     1 |       0 | ann,bo\n"},
-		{[]string{"render", "jobs", "--hide-zero-rows", "--width", "job=8"}, "jobs     | ready | working | who\n" +
+		{[]string{"show", "jobs"}, "TABLE table=jobs columns=3 rows=2 trips=1 epoch=0 revision=9\nTABLE ROW table=jobs row=build ready=1 working=0 who=1\nTABLE ROW table=jobs row=\"the tests\" ready=0 working=0 who=1\n"},
+		{[]string{"render", "jobs"}, "jobs  | ready | working | who\n" +
+			"------+-------+---------+-------\n" +
+			"build |     1 |       0 | ann\n" +
+			"tests |     0 |       0 | bo\n" +
+			"------+-------+---------+-------\n" +
+			"all   |     1 |       0 | ann,bo\n"},
+		{[]string{"render", "jobs", "--hide-zero-rows", "--label-width", "8"}, "jobs     | ready | working | who\n" +
 			"---------+-------+---------+-------\n" +
 			"build    |     1 |       0 | ann\n" +
 			"---------+-------+---------+-------\n" +
 			"all      |     1 |       0 | ann,bo\n"}, // the fold is the column's, hidden rows included
-		{[]string{"list"}, "TABLE LIST tables=1 trips=1\nTABLE table=jobs columns=4 rows=2\n"},
+		{[]string{"list"}, "TABLE LIST tables=1 trips=1\nTABLE table=jobs columns=3 rows=2\n"},
 		// a definition changed in place (set: footer, columns, rename; row set: a text cell), rows kept
 		{[]string{"set", "jobs", "--footer", "sum"}, "TABLE SET table=jobs footer=\"sum\" trips=1\n"},
-		{[]string{"set", "jobs", "--columns", "job:text:none,ready,working,who:members:union,pct:pct(ready):pooled:ready%,note:text:none"}, "TABLE SET table=jobs columns=6 trips=1\n"},
+		{[]string{"set", "jobs", "--columns", "ready,working,who:members:union,pct:pct(ready):pooled:ready%,note:text:none"}, "TABLE SET table=jobs columns=5 trips=1\n"},
 		{[]string{"row", "set", "jobs", "build", "note=green"}, "TABLE ROW SET table=jobs row=build cols=1 trips=1\n"},
 		{[]string{"render", "jobs", "--hide-zero-rows"}, "jobs  | ready | working | who    | ready% | note\n" +
 			"------+-------+---------+--------+--------+------\n" +
@@ -123,7 +123,7 @@ func TestASittingThroughTheVerbs(t *testing.T) {
 			"------+-------+---------+--------+--------+------\n" +
 			"sum   |     1 |       0 | ann,bo | 100.0% |\n"},
 		{[]string{"set", "jobs", "--rename", "work"}, "TABLE SET table=jobs renamed=work moved=11 trips=1\n"},
-		{[]string{"list"}, "TABLE LIST tables=1 trips=1\nTABLE table=work columns=6 rows=2\n"},
+		{[]string{"list"}, "TABLE LIST tables=1 trips=1\nTABLE table=work columns=5 rows=2\n"},
 		{[]string{"set", "work", "--rename", "jobs"}, "TABLE SET table=work renamed=jobs moved=11 trips=1\n"},
 		{[]string{"row", "del", "jobs", "the tests"}, "TABLE ROW DEL table=jobs row=\"the tests\" existed=1 trips=1\n"},
 		{[]string{"row", "del", "jobs", "the tests"}, "TABLE ROW DEL table=jobs row=\"the tests\" existed=0 trips=1\n"},
@@ -164,7 +164,7 @@ func TestABoundCellIsAViewTheWritesRefuse(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, args := range [][]string{
-		{"create", "views", "--columns", "stream:text:none,ready,working"},
+		{"create", "views", "--columns", "ready,working"},
 		{"row", "add", "views", "s", "ready=ws:s:ready", "working=ws:s:working", "--owner", "nova-sprint task move", "--exclude", "s:sentinel"},
 	} {
 		if code, _, stderr := runTable(at(addr, args...)...); code != 0 {
@@ -265,7 +265,7 @@ func TestStoredViewReadsChangesWithoutRestartOrSummaryReread(t *testing.T) {
 	}
 	n := trips.N()
 	first, err := read(ctx)
-	if err != nil || trips.N()-n != 2 || !strings.Contains(first, "before\n\n2/2 100.0% -> ETA -") {
+	if err != nil || trips.N()-n != 2 || !strings.Contains(first, "before\n\n2/2 100.0% -> ETA") {
 		t.Fatalf("first view trips=%d err=%v\n%s", trips.N()-n, err, first)
 	}
 	if code, _, stderr := runTable(at(addr, "view", "set", "v", "--tables", "live", "--summary", "a", "--title", "after")...); code != 0 {
@@ -276,7 +276,7 @@ func TestStoredViewReadsChangesWithoutRestartOrSummaryReread(t *testing.T) {
 	}
 	n = trips.N()
 	second, err := read(ctx)
-	if err != nil || trips.N()-n != 2 || !strings.Contains(second, "after\n\n0/2 0.0% -> ETA -") {
+	if err != nil || trips.N()-n != 2 || !strings.Contains(second, "after\n\n0/2 0.0% -> ETA") {
 		t.Fatalf("changed view trips=%d err=%v\n%s", trips.N()-n, err, second)
 	}
 }

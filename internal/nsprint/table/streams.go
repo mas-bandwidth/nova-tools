@@ -3,9 +3,8 @@
 // sets, per-cell" / "and the value printed, happens to be for each cell,
 // |s|". The streams table's rows are the streams of ws:order and its cells
 // are BOUND to the sets the card model owns, ws:<s>:<state> under the
-// epoch (ws.KeyAt), one text column for the stream's name and one count
-// column per state of ws.Stream, each folding to its sum in the footer row
-// total. Nothing is copied: the sprint tick reads every cell through
+// epoch (ws.KeyAt), one count column per state of ws.Stream, each folding
+// to its sum in the footer row total; the row labels are the stream names. Nothing is copied: the sprint tick reads every cell through
 // ntable.QueueCells in its one pipeline (the ws.CellReader seam of
 // ws.CountsReader, so the headline and the block are one count, #4411),
 // renders the block through ntable.Render, and the sprint loop binds the
@@ -32,18 +31,17 @@ const StreamsTable = "streams"
 const StreamsOwner = "nova-sprint task move"
 
 // StreamsRenderOpts renders the block as the sprint table always has:
-// every all-zero row hidden (the whole block when none is left); the
-// widths are the definition's (`nova-table render streams --hide-zero-rows`
-// prints the same bytes).
-var StreamsRenderOpts = ntable.RenderOpts{HideZeroRows: true}
+// the label column headed "stream" and 25 wide, every all-zero row hidden
+// (the whole block when none is left); `nova-table render streams
+// --hide-zero-rows` prints the same block headed by the table's name.
+var StreamsRenderOpts = ntable.RenderOpts{HideZeroRows: true, Title: "stream", LabelWidth: nameWidth}
 
-// StreamsDefinition is the streams table with no rows: stream:text:none 25
-// wide, then waiting, ready, working, review, merging and landed as
-// count:sum as wide as their headers, footer total.
+// StreamsDefinition is the streams table with no rows: waiting, ready,
+// working, review, merging and landed as count:sum as wide as their
+// headers, footer total; the row labels (the stream names) are the render's
+// own first column.
 func StreamsDefinition() ntable.Table {
-	t := ntable.Table{Name: StreamsTable, FooterLabel: ntable.DefaultFooter}
-	t.FooterLabel = "total" // the sprint table names its footer (nova-table's default is none since 2026-09-27)
-	t.Columns = append(t.Columns, ntable.Column{Name: "stream", Label: "stream", Projection: ntable.Text, Fold: ntable.None, Width: nameWidth})
+	t := ntable.Table{Name: StreamsTable, FooterLabel: "total"} // the sprint table names its footer (nova-table's default is none since 2026-09-27)
 	for _, state := range WSStates {
 		t.Columns = append(t.Columns, ntable.Column{Name: state, Projection: ntable.Count, Fold: ntable.Sum})
 	}
@@ -59,7 +57,7 @@ func StreamsShape(streams []string, epoch uint64) ntable.Table {
 		r := ntable.NewRow(t, s)
 		r.Exclude, r.Owner = ws.SentinelID(s), StreamsOwner
 		for j, state := range WSStates {
-			r.Cells[j+1] = ntable.Cell{Key: ws.KeyAt(epoch, s, state), Bound: true}
+			r.Cells[j] = ntable.Cell{Key: ws.KeyAt(epoch, s, state), Bound: true}
 		}
 		t.Rows = append(t.Rows, r)
 	}
@@ -76,7 +74,7 @@ func StreamsOf(counts ws.SprintCounts) ntable.Table {
 		r := ntable.NewRow(t, sc.Stream)
 		r.Exclude, r.Owner = ws.SentinelID(sc.Stream), StreamsOwner
 		for j := range WSStates {
-			r.Cells[j+1] = ntable.Cell{Key: ws.KeyAt(counts.Epoch, sc.Stream, WSStates[j]), Bound: true, Count: sc.Cells[j], Unread: sc.Unread[j]}
+			r.Cells[j] = ntable.Cell{Key: ws.KeyAt(counts.Epoch, sc.Stream, WSStates[j]), Bound: true, Count: sc.Cells[j], Unread: sc.Unread[j]}
 		}
 		t.Rows = append(t.Rows, r)
 	}
@@ -107,7 +105,7 @@ func (q *streamCellsCmd) Rows() ([]ws.StreamCounts, error) {
 	for _, r := range q.t.Rows {
 		row := ws.StreamCounts{Stream: r.Key}
 		for j := range WSStates {
-			cell := r.Cells[j+1]
+			cell := r.Cells[j]
 			row.Cells[j], row.Unread[j] = cell.Count, cell.Unread
 		}
 		rows = append(rows, row)
