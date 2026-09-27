@@ -1,5 +1,11 @@
 # The one line each friend adds to their window's startup
 
+**Superseded by `nova-friend here`** ([nova-friend/README.md](nova-friend/README.md)):
+the one presence process a friend runs when a session opens, on the fleet
+store, with no TTL on the beat. This page describes `nova-wake beat` and the
+retired `nova-sprint friend` verbs; it goes with them in the change that
+retires those verbs.
+
 This is the operational half of `nova-wake beat` and `nova-wake presence`
 ([docs/SPEC-WAKE.md](SPEC-WAKE.md), **beat and presence**; nova-tools #2610).
 One command, started once when a window opens, so that everybody else can tell

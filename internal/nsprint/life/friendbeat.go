@@ -33,6 +33,10 @@ type FriendBeatRequest struct {
 	CPU   string
 	// At is the beat's clock; zero means now.
 	At time.Time
+	// Harness is the beat's harness field: the presence process that made
+	// the observation (nova-friend here names its own); empty writes
+	// FriendBeatHarness.
+	Harness string
 	// Process and ObserverHost are observation seams. Production uses the
 	// kernel probe and the actual local hostname, independently of Host's
 	// presentation label.
@@ -82,7 +86,11 @@ func FriendBeat(ctx context.Context, st *store.Store, req FriendBeatRequest) (Fr
 		at = time.Now()
 	}
 	ms := at.UnixMilli()
-	fields := []any{"host", host, "at", strconv.FormatInt(ms, 10), "harness", FriendBeatHarness}
+	harness := strings.TrimSpace(req.Harness)
+	if harness == "" {
+		harness = FriendBeatHarness
+	}
+	fields := []any{"host", host, "at", strconv.FormatInt(ms, 10), "harness", harness}
 	if v := strings.TrimSpace(req.Load1); v != "" {
 		fields = append(fields, "load1", v)
 	}
