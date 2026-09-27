@@ -111,6 +111,11 @@ and `clear` over a table with any bound cell refuses whole and clears
 nothing. This is the one-writer principle: a set has one writer, and a
 table that shows it does not become a second.
 
+Row keys are nonempty UTF-8 strings without ASCII control characters. Invalid
+bytes are refused before JSON encoding can change an identity. Raw `Bind`
+requests must supply `rows` as a JSON array, including `[]` for no rows; an
+object is refused without changing the table.
+
 A row may name one member its counts and members leave out (`--exclude`).
 The sprint's stream sentinel is the case: the stream's stop, not work.
 
