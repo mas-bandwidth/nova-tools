@@ -4829,12 +4829,12 @@ first, connection flags next, epoch and receipt metadata last. For example,
 | --- | --- |
 | `create <table> --columns <spec>` | Creates a definition; repeated identical creates are accepted; another shape points to `set --columns` |
 | `set <table>` | Edits footer, columns, visibility or name; see `help set` |
-| `drop <table> [--definition]` | Drops the active rows/owned cells; retains the template unless requested and always retains history |
+| `drop <table> [--definition]` | Removes active rows/owned cells; `--definition` also removes the saved column definition; snapshots from earlier epochs stay |
 | `list` | Lists active tables with row and column counts |
 | `row add <table> <row>...` | Adds one or many rows; optional label, exclusion, owner and bound cells |
 | `row set <table> <row> <col>=<value>...` | Writes text values; `col=` clears one |
 | `row hide/show <table> <row>...` | Changes visibility; data and fold contributions stay |
-| `row del <table> <row>` | Deletes the row and its owned cells; external bound sets stay |
+| `row del <table> <row>` | Deletes the row and its owned cells; a missing row succeeds with `existed=0` and a no-op receipt; external bound sets stay |
 | `row move <table> <row> --first/--last/--before/--after` | Moves one row; the others retain their relative order |
 | `row order <table> <row>...` | Puts the named rows first; the rest keep their order |
 | `row sort <table> [--by name/label/<col>] [--desc] [--keep]` | Sorts once; `--keep` maintains name/label order, `--manual` ends it |
@@ -4850,6 +4850,7 @@ first, connection flags next, epoch and receipt metadata last. For example,
 | `clear <table>` | Removes active rows and owned cells, retaining the definition; refuses bound cells |
 | `show <table> [--at-epoch <n>]` | Prints complete projected values as typed lines, including text and percentages |
 | `render <table>` | Prints a text table; an empty table prints nothing |
+| `render --view <name>` | Prints one stored-view frame with timestamp, title and optional summary |
 | `watch <table>[,<table>...]` | Redraws tables; `--once` renders once, `--out` publishes a file atomically |
 | `view set <name> --tables <a,b,...> [--title <text>] [--summary <count-column>]` | Stores a view; summary uses the first table |
 | `view show <name>` | Prints view configuration, including summary |
@@ -4876,8 +4877,8 @@ COL MOVE table= col= place= [of=]`. `col add <table>
 <name[:projection[:fold[:label]]]>` adds one column, last or at a place:
 `TABLE COL ADD table= col= place=`. `col del <table> <col>` prints `TABLE
 COL DEL table= col=` and is refused, exit 1, writing nothing, while the
-column holds a member (the refusal names the members and the `cell remove`
-to run) or a text value, while a `pct(...)` column reads it, and when it is
+column holds a member (the refusal names all blocking rows and members, with a
+batch `cell remove` command for each occupied cell) or a text value, while a `pct(...)` column reads it, and when it is
 the last column. Quote a column that has parentheses, `'share:pct(busy)'`.
 
 ### Columns, identity and output
@@ -4915,7 +4916,9 @@ includes every column's projected value (`note=""`, `progress=50.0%`, `?` for
 unread), all hidden rows/columns, and the snapshot's epoch/revision. `render`
 prints the table alone. A stored view adds timestamp, title and optional pooled
 summary from the same snapshot. ETA has no value until rate sampling is added.
-`view show` is configuration; `watch --view <name> --once` is the rendered view.
+`view show` is configuration; `render --view <name>` prints the rendered view,
+as does `watch --view <name> --once`. Stored views use active epochs;
+`--at-epoch` applies only to table targets.
 
 ### Connection and exit codes
 
@@ -4924,9 +4927,11 @@ otherwise they use `NOVA_SPRINT_REDIS`, `NOVA_REDIS_ADDR`, then the seat address
 Select a seat with `--seat`, `NOVA_SPRINT_SEAT` or `NOVA_SEAT`. Without a seat,
 `NOVA_SPRINT_REDIS_USER` names the user and `NOVA_SPRINT_REDIS_PASSWORD_ENV` names
 the password variable. Never put a password on the command line. Flags may
-follow positional words. See the [local setup](nova-table/README.md#start-locally)
+follow positional words; `--` ends flag parsing for literal members such as
+`--pending`. Unknown flags list the actual command's available flags and name
+its help page. See the [local setup](nova-table/README.md#start-locally)
 for an isolated store and the function-library loading command.
 
 Exit codes: 0 done (including requested help), 1 refused by the store, 2 usage or
-connection failure. A refusal gives one remedy. In watch, a failed read leaves
+connection failure. A refusal gives the commands needed to proceed. In watch, a failed read leaves
 the last good frame and one stale-age line until recovery; Ctrl-C exits 0.

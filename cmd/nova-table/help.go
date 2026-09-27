@@ -42,7 +42,7 @@ var commands = []command{
 	{"check", "<table>", "check demo", cmdCheck},
 	{"clear", "<table>", "clear demo", cmdClear},
 	{"show", "<table> [--at-epoch <n>]", "show demo", cmdShow},
-	{"render", "<table> [--at-epoch <n>] [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>]", "render demo --label-width 16", cmdRender},
+	{"render", "<table> | --view <name> [--at-epoch <n>] [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>]", "render --view work", cmdRender},
 	{"watch", "<table>[,<table>...] | --view <name> [--every <duration>] [--out <file>] [--title <text>] [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>] [--once]", "watch --view work --once", cmdWatch},
 	{"view set", "<name> --tables <a,b,...> [--title <text>] [--summary <count-column>]", "view set work --tables demo --title Work --summary done", func(a []string, o, e io.Writer) int { return cmdView(append([]string{"set"}, a...), o, e) }},
 	{"view show", "<name>", "view show work", func(a []string, o, e io.Writer) int { return cmdView(append([]string{"show"}, a...), o, e) }},
@@ -186,6 +186,9 @@ func printCommandHelp(out io.Writer, c command, fs *flag.FlagSet) {
 				fmt.Fprintln(out, "  --seat <name>  use a configured nova-sprint seat")
 			}
 		}
+	}
+	if c.name == "row del" {
+		fmt.Fprintln(out, "\nA missing row succeeds with existed=0 and leaves a no-op receipt.")
 	}
 	fmt.Fprintln(out, "\nexit codes: 0 done, 1 refused, 2 usage")
 }

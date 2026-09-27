@@ -108,6 +108,21 @@ func (o operation) location() string {
 // shellWord makes the suggested command safe to paste even for spaced
 // rows or members containing shell metacharacters.
 func shellWord(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
+func removeMembersCommand(table, row, col string, members []any) string {
+	args := []string{table, row, col}
+	for _, member := range members {
+		args = append(args, fmt.Sprint(member))
+	}
+	endFlags := false
+	for i, arg := range args {
+		endFlags = endFlags || strings.HasPrefix(arg, "-")
+		args[i] = shellWord(arg)
+	}
+	if endFlags {
+		args = append([]string{"--"}, args...)
+	}
+	return "nova-table cell remove " + strings.Join(args, " ")
+}
 func (o operation) remedy() string {
 	if o.view {
 		if o.table == "" {
@@ -174,7 +189,31 @@ func (o operation) refused(reply []any) error {
 			names = append(names, fmt.Sprintf("%q", member))
 		}
 		cause = fmt.Errorf("%w: %s; move each member to a retained owned cell or remove it first", ErrOccupied, strings.Join(names, ", "))
-		remedy = "nova-table cell remove " + shellWord(o.table) + " " + shellWord(o.row) + " " + shellWord(o.col) + " " + shellWord(fmt.Sprint(members[0]))
+		remedy = removeMembersCommand(o.table, o.row, o.col, members)
+	case "OCCUPIEDCELLS":
+		if len(reply) != 3 {
+			return fmt.Errorf("%s: malformed occupied-cells refusal", o.location())
+		}
+		cells, ok := reply[2].([]any)
+		if !ok || len(cells) == 0 {
+			return fmt.Errorf("%s: malformed occupied cells", o.location())
+		}
+		var blockers, commands []string
+		for _, value := range cells {
+			cell, ok := value.([]any)
+			if !ok || len(cell) != 3 {
+				return fmt.Errorf("%s: malformed occupied cell", o.location())
+			}
+			members, ok := cell[2].([]any)
+			if !ok || len(members) == 0 {
+				return fmt.Errorf("%s: malformed occupied members", o.location())
+			}
+			row, col := fmt.Sprint(cell[0]), fmt.Sprint(cell[1])
+			blockers = append(blockers, fmt.Sprintf("row %q column %q members %q", row, col, members))
+			commands = append(commands, removeMembersCommand(o.table, row, col, members))
+		}
+		cause = fmt.Errorf("%w: %s; move the members or remove them first", ErrOccupied, strings.Join(blockers, "; "))
+		remedy = strings.Join(commands, "; ")
 	case "OWNEDALIAS":
 		if len(reply) != 5 {
 			return fmt.Errorf("%s: malformed owned-alias refusal", o.location())

@@ -47,18 +47,18 @@ func TestARefusalSaysWhatTheInputWants(t *testing.T) {
 		{[]string{"cell", "add", "demo", "r", "c", "--redis", addr}, "wants a table, a row, a column and one or more members"},
 		{[]string{"cell", "add", "demo", "r", "c", "m", "--score", "x", "--redis", addr}, `--score wants a number, got "x"`},
 		{[]string{"cell", "move", "demo", "r", "c", "--redis", addr}, "wants a table, a row, the column left, the column joined and one or more members"},
-		{[]string{"render", "--redis", addr}, "wants one table name: render <table>"},
+		{[]string{"render", "--redis", addr}, "wants one table name or --view <name>: render <table>"},
 		{[]string{"render", "demo", "--width", "a=x", "--redis", addr}, "--width: width \"a=x\" wants col=n"},
 		{[]string{"watch", "--redis", addr}, "wants the tables to watch, comma-separated"},
 		{[]string{"watch", "demo", "--every", "0s", "--redis", addr}, "--every wants a duration between 1ms and 1h"},
 		{[]string{"list", "demo", "--redis", addr}, "takes no table name: list"},
-		{[]string{"show", "--bogus", "--redis", addr}, "flag provided but not defined: -bogus"},
+		{[]string{"show", "--bogus", "--redis", addr}, "unknown flag --bogus; show flags: --at-epoch, --redis"},
 	} {
 		code, stdout, stderr := runTable(c.args...)
 		if code != 2 || stdout != "" {
 			t.Errorf("%v: exit %d stdout %q, want 2 and nothing", c.args, code, stdout)
 		}
-		if !strings.Contains(stderr, c.want) || !strings.HasSuffix(stderr, "; run: nova-table help\n") || strings.Count(stderr, "\n") != 1 {
+		if !strings.Contains(stderr, c.want) || !strings.Contains(stderr, "; run: nova-table help") || strings.Count(stderr, "\n") != 1 {
 			t.Errorf("%v: stderr %q, want one line holding %q and the door", c.args, stderr, c.want)
 		}
 	}

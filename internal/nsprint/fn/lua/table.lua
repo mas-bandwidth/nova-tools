@@ -720,6 +720,15 @@ do
         end
       end
       if #list == 0 then return nil, T.refuse('LASTCOL', gone) end
+      -- Report every owned member that blocks this column removal in the
+      -- same refusal. External bound sets remain owned by their source.
+      local blockers = {}
+      for _, row in ipairs(redis.call('ZRANGE', T.rowskey(d), 0, -1)) do
+        local members = redis.call('ZRANGE', T.cellkey(d, row, gone), 0, -1)
+        if #members > 0 then blockers[#blockers + 1] = {row, gone, members} end
+      end
+      if #blockers == 1 then return nil, T.refuse('OCCUPIED', unpack(blockers[1])) end
+      if #blockers > 1 then return nil, T.refuse('OCCUPIEDCELLS', blockers) end
       for _, col in ipairs(T.split(h.hidden)) do if col ~= gone then hidden[#hidden + 1] = col end end
       h['col:' .. gone], h.order = nil, table.concat(list, ',')
       if h.hidden ~= nil then h.hidden = table.concat(hidden, ',') end
