@@ -1,3 +1,5 @@
+//go:build functional
+
 package wake
 
 import (
@@ -75,11 +77,6 @@ func noteText(from, to, subject string, body int) string {
 // function of how deep the lane is.
 func TestTheBoundedReadSpendsWhatItSaysItSpends(t *testing.T) {
 	t.Parallel()
-	// SLEEPS: this test waits on the wall clock (measured over 5 s on the 2026-09-25 PR run). Skipped 2026-09-25
-	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
-	// mocked-clock unit test or a functional program (nova-tools #4221).
-	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
-
 	dir, anchor := laneRepo(t)
 	// 900 notes IN ONE COMMIT, which is the spec's own separately named
 	// fixture: nine hundred notes added in one commit are one commit and three
@@ -149,11 +146,6 @@ func TestTheBoundedReadSpendsWhatItSaysItSpends(t *testing.T) {
 // TestTheAnswerIsFoundOnThePollThatReachesIt walks the same lane to the answer.
 func TestTheAnswerIsFoundOnThePollThatReachesIt(t *testing.T) {
 	t.Parallel()
-	// SLEEPS: this test waits on the wall clock (measured over 5 s on the 2026-09-25 PR run). Skipped 2026-09-25
-	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
-	// mocked-clock unit test or a functional program (nova-tools #4221).
-	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
-
 	dir, anchor := laneRepo(t)
 	for i := 1; i <= 900; i++ {
 		to := "Somebody-Else"
