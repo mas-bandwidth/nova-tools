@@ -2160,7 +2160,9 @@ function TK.move(id, to, o)
   if entering_merging then
     local g = redis.call('HGET', 'task:' .. id, 'merging_gen')
     if g and g ~= '' then
-      if not string.match(g, '^%d+$') then
+      -- a count: digits only, and short enough that tonumber never rounds
+      -- (Stella's hardening note on #4449: the match alone is no range check)
+      if not string.match(g, '^%d+$') or #g > 15 then
         return 'DRIFT merging_gen of task:' .. id .. ' is not a count (' .. TK.str(g) .. '); run nova-sprint task fsck'
       end
       merging_gen = tonumber(g)
