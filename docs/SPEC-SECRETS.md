@@ -121,6 +121,7 @@ nova-secrets gate   --store <dir> --base <git ref> --head <git ref> [--machines 
 nova-secrets keygen --as <name> --key <path> --age-keygen <path> [--store <dir>]
 nova-secrets seal   --store <dir> --as <seat> --key <path> --sops <path> --name NAME [--stdin] [--no-pr] [--gh <path>] [--git <path>]
 nova-secrets seat add --store <dir> --as <seat> --pub <age1…> --from <source seat> --only <NAME,...> --key <path> --sops <path>
+nova-secrets seat inject --store <dir> --as <seat> --from <source seat> --only <NAME,...> --key <path> --sops <path> [--no-pr] [--gh <path>] [--git <path>]
 nova-secrets help
 ```
 
@@ -128,10 +129,12 @@ nova-secrets help
 no flags or arguments. It opens no store or key and starts no sops, age or network program,
 so an installed-tool inventory can ask it on a bench with no credential setup.
 
-Two verbs write into the store: **`seal`**, which folds one pasted value into one seat file
-and carries that change through a branch and a review, and **`seat add`**, which creates a
+Three verbs write into the store: **`seal`**, which folds one pasted value into one seat file
+and carries that change through a branch and a review; **`seat add`**, which creates a
 new seat's file and its rule in the working copy and stops there, for a person to commit and
-a reviewer to read. Every other store edit is `sops` and `git` in a person's hands. `keygen`
+a reviewer to read; and **`seat inject`**, which re-seals named values out of a seat this
+machine can open into a seat file that already exists and carries that change on `seal`'s
+road. Every other store edit is `sops` and `git` in a person's hands. `keygen`
 writes exactly one file, outside it.
 
 **`--store <dir>` is the store's git working copy**, not a URL and not a repository name:
@@ -587,6 +590,60 @@ exactly as it was**: a refused run leaves the store byte-for-byte unchanged.
 changed files in the working copy and names them, and the store's own gate (`nova-secrets
 gate`) reads the diff before the review, as it does for every other recipient change.
 
+### `seat inject`
+
+```
+nova-secrets seat inject --store ~/secrets --as air --from studio --only NOVA_REDIS_BENCH_PASSWORD \
+  --key ~/.config/nova-secrets/studio.key --sops /opt/homebrew/bin/sops
+SECRETS SEAT INJECT OK seat=air from=studio names=1 pr=#31 merged
+```
+
+**The second circle.** The night the store moved (2026-09-27), every bench seat that already
+existed needed the store's new `NOVA_REDIS_BENCH_PASSWORD`, sealed into the coordinator's seat.
+`seal` runs only where the target's own key lives, because it decrypts before it writes;
+`seat add` refuses a seat file that exists, because a rewrite drops every value the seat holds.
+So a value the coordinator held could reach an existing seat by no verb, and a hand pipe is not
+a road. `seat inject` is `seat add`'s pipe pointed at an existing seat.
+
+**The trust statement.** Any seat that can open the source may deliver to any seat whose file
+names its recipients, and **the recovery key is always kept**: the new ciphertext is encrypted
+to exactly the two recipients the target file's own `sops:` metadata names — the seat's key and
+the key `recovery.pub` declares — which the verb holds equal to the rule `.sops.yaml` carries for
+that file before it encrypts, so a grant is neither widened nor narrowed by it. Values travel on
+stdin only, from the decrypted source straight into the encrypt of the target: never argv, never
+a file in the clear, never an output or progress line.
+
+**What it does, in order.** Reads the target's recipients out of `<store>/<seat>.yaml` without a
+key and holds them to the shape above; reads `<store>/<from>.yaml` through a `sops -d` pipe with
+`--key`; composes the target's new document — every name the target held, in its order, then
+every `--only` name it did not, sorted — and re-encrypts it **from stdin** with
+`--filename-override <seat>.yaml` inside the store, so that rule's recipients are the ones sops
+finds; then walks `seal`'s road: a branch `seal/<seat>-<NAMES>-<stamp>` (the names joined by
+`+`), one commit touching the one file, a push, a pull request the store's gate approves, the
+squash merge, the pull, and `check`. `--no-pr` stops after the commit, returns the working copy
+to its starting branch, and names the branch on the OK line.
+
+**What this key cannot do, said plainly.** It cannot open the target: sops seals every value of
+a file under one data key that only the file's recipients recover, so the verb cannot copy the
+target's other sealed values across unread. **Every sealed value the target holds is re-sealed
+from the source's current value** — the source is upstream of the target, as it was when `seat
+add` made the file — and a value the rule permits in the clear is kept byte for byte from the
+target. A target holding a sealed name the source does not carry is a refusal naming the name:
+seal it into the source first, or seal the target on its own bench.
+
+**What it refuses, at exit 2, before anything is written.** A `<seat>.yaml` that does not exist
+(the remedy is `seat add`, spelled out); a `--from` this machine cannot open, naming the seat and
+the key; an `--only` name the source does not carry, naming the key and never a value; a name
+outside `[A-Z][A-Z0-9_]*`; a target whose recipients cannot be read from its `sops:` metadata,
+that names other than exactly two, that omits the declared recovery key, or whose rule names
+recipients its metadata does not (a pending `updatekeys`, brought to the rule first in a reviewed
+pull request); a target holding a plain value the rule does not permit in the clear; a `--from`
+equal to `--as`. A refused run leaves the store byte for byte and runs no git.
+
+**The gate.** An inject pull request changes one existing seat file, still encrypted, its rule
+unchanged: the shape `seal` opens, which the gate approves with no rule of its own —
+`TestGateApprovesAnInjectPullRequest` measures it.
+
 ### Refused, by name, with where it lives
 
 One line, on stderr, naming the door — exit 2, or 125 from `exec`:
@@ -806,6 +863,10 @@ SECRETS RULE   NEXT: <the next step, never a state of the world>
 SECRETS SEAT ADD NEXT: <the next step>
 SECRETS SEAT ADD OK as=<seat> from=<seat> keys=<n> file=<path> rule=<n>
 SECRETS SEAT ADD FAIL <why>
+SECRETS SEAT INJECT OK seat=<seat> from=<seat> names=<n> pr=#<n> merged
+SECRETS SEAT INJECT OK seat=<seat> from=<seat> names=<n> pr=#<n> open (gate not yet approved)
+SECRETS SEAT INJECT OK seat=<seat> from=<seat> names=<n> committed branch=<seal/…>
+SECRETS SEAT INJECT FAIL <why>
 ```
 
 **Where a verb prints more than one line, its machine-readable block ends on its verdict.**
@@ -1088,6 +1149,19 @@ Two rules, both measured the day a new bench was given its first credentials by 
     `TestTheFakeSopsRefusesWhatRealSopsRefuses` — **the fake in the test refuses what the real
     tool refuses**: a missing recipient, a file in the clear, an encrypt with no file argument.
     A lenient fake shipped a broken `seal` here once already.
+
+## Additions from the store's move (2026-09-27)
+
+13. **An existing seat is given a value the coordinator holds by `seat inject`, never by a
+    hand pipe.** The store moved to hetzner and every bench seat needed the new
+    `NOVA_REDIS_BENCH_PASSWORD` out of the coordinator's seat; `seal` cannot run there and
+    `seat add` refuses a file that exists. The verb re-seals to the target file's own two
+    recipients, read from its metadata and held equal to its rule, and walks `seal`'s road to
+    the merge. Red tests: `TestSeatInjectReSealsNamedValuesIntoAnExistingSeat`,
+    `TestSeatInjectAddsANewNameAndKeepsTheClearOnes`, `TestSeatInjectRefusalsTouchNothing`,
+    `TestSeatInjectWalksSealsRoadToTheMerge`, `TestGateApprovesAnInjectPullRequest`, and, against
+    the real sops and age, `TestSeatInjectReSealsAValueIntoAnExistingSeat` and
+    `TestTheHelpExampleIsWhatSeatInjectPrints` (the help example, run through the one comparator).
 
 ## Owed, and where the rest lives
 

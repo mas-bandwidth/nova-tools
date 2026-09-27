@@ -3060,6 +3060,32 @@ when `--from` does not carry one of the `--only` names. It prints no value on an
 line. It commits nothing: the receipt names the two changed files, and the store's
 gate reads them in a pull request as it does every other recipient change.
 
+### Re-seal values into an existing seat
+
+```sh
+nova-secrets seat inject --store ./secrets --as air --from rowan \
+  --only NOVA_REDIS_BENCH_PASSWORD --key /path/to/rowan.key --sops /path/to/sops
+```
+
+`seal` runs only where the target seat's own key lives, and `seat add` refuses a
+seat file that exists. `seat inject` re-seals the `--only` values out of `--from`,
+a seat this machine can open, into the existing `<seat>.yaml`, encrypted to the
+two recipients that file's own sops metadata names (the seat's key and the
+recovery key, held equal to its rule first), then walks `seal`'s road: a
+`seal/<seat>-<NAMES>-<stamp>` branch, one commit, a push, the pull request the
+store's gate approves, the squash merge, the pull and `check`. `--no-pr` stops
+after the commit, returns the store to its starting branch and names the branch
+on the OK line: `SECRETS SEAT INJECT OK seat=air from=rowan names=1 committed branch=seal/air-NOVA_REDIS_BENCH_PASSWORD-20260927-013000`.
+
+This key cannot open the target, so every sealed value the target holds is
+re-sealed from the source's current value; a value the rule permits in the clear
+is kept from the target byte for byte. It refuses, changing nothing, when the
+seat file does not exist (run `seat add`), when the source cannot be opened with
+`--key` here, when `--from` does not carry one of the `--only` names, when the
+target holds a sealed name the source does not, or when the target's recipients
+cannot be read from its metadata or differ from its rule. It prints no value on
+any line.
+
 ### Reading a `keygen` receipt
 
 `keygen` prints the `.sops.yaml` rule block first, then a `SECRETS RULE NEXT:` line
