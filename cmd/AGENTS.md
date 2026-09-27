@@ -10,6 +10,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `nova-card/` | card wrapper owning one card attempt on a bench | `go test ./cmd/nova-card` | `go test ./cmd/nova-card` |
 | `nova-check/` | codebase hygiene and constraint check CLI | `go test ./cmd/nova-check` | `go test ./cmd/nova-check` |
 | `nova-ci/` | CI slowtests budget and check CLI | `go test ./cmd/nova-ci` | `go test ./cmd/nova-ci` |
+| `nova-config/` | permanent configuration store (Postgres), friends and machines, applied into Redis | `go test ./cmd/nova-config` | `go test ./cmd/nova-config` |
 | `nova-decide/` | criteria evaluation and decision engine CLI | `go test ./cmd/nova-decide` | `go test ./cmd/nova-decide` |
 | `nova-fuse/` | workspace isolation and boundary CLI | `go test ./cmd/nova-fuse` | `go test ./cmd/nova-fuse` |
 | `nova-memory/` | memory indexing and search CLI | `go test ./cmd/nova-memory` | `go test ./cmd/nova-memory` |

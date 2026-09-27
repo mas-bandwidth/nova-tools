@@ -12,6 +12,8 @@ tending/
 /nova-check.exe
 /nova-play
 /nova-play.exe
+/nova-config
+/nova-config.exe
 /nova-sandbox
 /nova-sandbox.exe
 /nova-wake

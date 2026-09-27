@@ -3191,6 +3191,49 @@ those tests; it prints nothing when there are none ([TESTING.md](TESTING.md), "T
 
 See [SPEC-CI.md](SPEC-CI.md).
 
+## nova-config
+
+```
+nova-config kinds                                                        # every kind: its table, its fields, the fields add requires
+nova-config migrate [--pg <dsn>] [--print]                               # create or upgrade schema config from the migrations in the binary; --print lists them and connects to nothing
+nova-config status [--pg <dsn>] [--redis <addr>]                         # the connection, the schema version, rows and revision per kind, and what Redis has applied
+nova-config apply [--pg <dsn>] [--redis <addr>] --as <friend> [--kind <kind>] [--check]   # write Postgres into Redis per kind through the runtime's own functions, compare-and-set on the revision; --check prints the plan and writes nothing
+nova-config <kind> add <name> --<field> <value> ... --as <friend>        # insert a row; a duplicate name is refused with the set to run
+nova-config <kind> set <name> --<field> <value> ... --as <friend>        # update the fields named
+nova-config <kind> remove <name> --as <friend>                           # delete the row (Redis keeps a friend with working copies until apply can remove it)
+nova-config <kind> list                                                  # one typed line per row
+nova-config <kind> show <name>                                           # one line with every field and the stamps
+nova-config <kind> history <name>                                        # every change to the row: who, when, what changed
+nova-config <kind> <verb> -h                                             # the verb's usage line and every flag it takes
+```
+
+`nova-config` is the one tool for the fleet's permanent, non-ephemeral configuration: Postgres (schema `config`) is the permanent store, and `apply` writes it into Redis so Redis is always a rebuildable copy. The kinds are `machine` and `friend`; the contract is [SPEC-CONFIG.md](SPEC-CONFIG.md) and the guide is [nova-config/README.md](nova-config/README.md).
+
+### First run
+
+```sh
+nova-config kinds
+nova-config migrate --print
+```
+
+Neither needs a store. `kinds` prints one `CONFIG KIND` line per kind with its table, its fields in the order every line prints them, and the fields `add` requires; `migrate --print` lists the migrations this binary carries. The executable transcript is in [TESTS.md](TESTS.md#nova-config).
+
+The real first run needs a Postgres and a Redis, so there is no `quickstart`: a verb that made a store nobody asked for would write state on the way to a demonstration. With a database in hand:
+
+```sh
+nova-config migrate --pg postgres://nova_config@space:5432/nova
+nova-config machine add studio --ssh studio --os_arch darwin/arm64 --slots 64 --as rowan
+nova-config friend add rowan --machine studio --slots 32 --roles coordinator --as rowan
+nova-config apply --check --as rowan
+nova-config apply --as rowan
+```
+
+**What the flags want.** `--pg` is `postgres://user@host:port/db` with no password in it (env `NOVA_PG_DSN`); the password is read from the variable `NOVA_PG_PASSWORD_ENV` names (`NOVA_PG_PASSWORD` when unset), never from the line, and a `--pg` carrying one is refused. `--redis` is `host:port` (env `NOVA_SPRINT_REDIS`, then `NOVA_REDIS_ADDR`, then the seat's address). `--as` is the friend making the change (env `NOVA_FRIEND`), required on every write and recorded in `config.history`. A name is lower-case letters, digits and dashes. `add` needs every required field (`kinds` names them) and refuses a value outside its type, every problem in one line; `set` changes only the fields named. A run missing several flags names all of them at once; a typo is one line naming the door (`run: nova-config help`).
+
+**Reading it.** Every write prints `CONFIG ADD|SET|REMOVE kind=<k> name=<n> rev=<id>`, the id of its history row. `list` prints `<KIND> name=<n> <field>=<v> ...` per row and a `CONFIG LIST` count; `history` prints `HISTORY id=<n> ... op=<add|set|remove> actor=<a> at=<t>` with each changed field as `<field>=<before>><after>`. `apply` prints `APPLY ADD|SET|REMOVE kind=<k> name=<n>` per row it writes and one `CONFIG APPLY kind=<k> add=<n> set=<n> remove=<n> rev=<r> ms=<n>` per kind; `--check` prints the same plan as `CHECK` lines and `CONFIG CHECK`. `status` exits 1 with the next step when the schema is missing (`run: nova-config migrate`) or Redis is behind (`run: nova-config apply`).
+
+**Refusals.** Exit 1 is the store or Redis saying no, one stderr line naming the next step: `machine studio exists; run: nova-config machine set studio ...`, `--machine hulk names no machine row`, `machine studio is the --machine of friend rowan`, `--logins rowan-claude is friend rowan's login`, `CONFLICT friend: Redis holds rev 9 and this Postgres is at rev 4`, `CEILING studio: friend stella makes the sum 65 over the machine ceiling 64`, `friend stella holds 2 working copies (card:4410,card:4414)`. Exit 2 is an invocation that could not run.
+
 ## nova-work
 
 `nova-work` is both the thin client of the resident work session ([docs/SPEC-WORK.md](SPEC-WORK.md), "The engine and its client") and the in-process reader of the job graph and bounded `.work` plans ([SPEC-JOBS.md](SPEC-JOBS.md), [SPEC-WORKLANG.md](SPEC-WORKLANG.md)). As a client it sends one request line over the Unix socket `--session` names and prints the session's one answer line, byte for byte; the session is the engine and owns every fact, so the client refuses to guess and second-guesses nothing. The graph and plan verbs read files as data, never as programs.

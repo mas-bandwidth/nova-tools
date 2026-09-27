@@ -504,7 +504,7 @@ type ComparedEntry struct {
 // passes. Production code is not followed, so a usage banner the tool
 // carries never counts as the test naming an example.
 type testReach struct {
-	comparator  bool     // calls onboarding.Compare, Execute or ExecuteWith
+	comparator  bool     // calls onboarding.CompareTranscript, Compare, Execute or ExecuteWith
 	literals    []string // every string literal
 	transcripts [][2]string
 }
@@ -559,7 +559,11 @@ func reachOf(pkgDir, test string) (testReach, bool, error) {
 					return true
 				}
 				switch sel.Sel.Name {
-				case "Compare", "CompareTranscript", "Execute", "ExecuteWith":
+				case "CompareTranscript", "Compare", "Execute", "ExecuteWith":
+					// CompareTranscript is THE comparator (SPEC-TOOLWORK §7
+					// rule 2); a test the transcripts rule holds to it is a
+					// comparator test here too, or no new tool could ever
+					// cover its examples (nova-config, 2026-09-27).
 					r.comparator = true
 				case "FirstRun", "Transcript":
 					if len(x.Args) < 2 {
@@ -606,10 +610,8 @@ func commandText(ex string) string {
 // comparator test FOR ITS EXAMPLE, or "" when it is. docs are the docs the
 // example is pasted in (none for a help-only example). The test must:
 //   - be declared in a _test.go file of the example's tool's package, cmd/<tool>/;
-//   - reach the comparator (onboarding.CompareTranscript, the one comparison a
-//     firstrun_test.go may make since SPEC-TOOLWORK §7 rule 2; or the older
-//     Compare, Execute or ExecuteWith the transcripts allowlist still
-//     tolerates) from its own body or a test helper it calls;
+//   - reach the comparator (onboarding.CompareTranscript, Compare, Execute or
+//     ExecuteWith) from its own body or a test helper it calls;
 //   - carry the example's command text: a string literal naming at least the
 //     tool and its verb that the example is, word for word, or begins with
 //     (`"$ nova-wake presence "` names `$ nova-wake presence --store ...`), or,
@@ -640,7 +642,7 @@ func ComparedEntryProblem(root string, c ComparedEntry, docs []string) string {
 		return fmt.Sprintf("cmd/%s declares no func %s", tool, c.Test)
 	}
 	if !reach.comparator {
-		return fmt.Sprintf("%s never reaches onboarding.CompareTranscript (nor the older onboarding.Compare or onboarding.Execute), so it is not a comparator test", c.Test)
+		return fmt.Sprintf("%s never reaches onboarding.CompareTranscript, onboarding.Compare or onboarding.Execute, so it is not a comparator test", c.Test)
 	}
 	readsDoc := func(doc string) bool {
 		for _, l := range reach.literals {
