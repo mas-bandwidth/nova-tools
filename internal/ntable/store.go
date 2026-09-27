@@ -19,6 +19,8 @@ const (
 	FnDrop       = "ns_table_drop"
 	FnSet        = "ns_table_set"
 	FnRowSet     = "ns_table_row_set"
+	FnRowsAdd    = "ns_table_rows_add"
+	FnRowsHide   = "ns_table_rows_hide"
 	FnRowAdd     = "ns_table_row_add"
 	FnRowDel     = "ns_table_row_del"
 	FnCellAdd    = "ns_table_cell_add"
@@ -93,6 +95,10 @@ func (o operation) refused(reply []any) error {
 	case "NOTMEMBER":
 		cause = ErrNotMember
 		remedy = "nova-table cell members " + shellWord(o.table) + " " + shellWord(o.row) + " " + shellWord(o.col)
+	case "NOMEMBER":
+		cause = errors.New("wants at least one member")
+	case "NOVIEW":
+		cause = errors.New("no such view; run: nova-table view set <name> --tables <a,b,...>")
 	case "NOTTEXT":
 		cause = errors.New("not a text column; row set writes text columns only")
 	case "BOUND":
@@ -168,6 +174,7 @@ type SetOpts struct {
 	Rename  string
 	Columns []Column  // the columns replaced in place: rows kept, cells of removed columns dropped
 	Hidden  *[]string // the hidden columns, replaced whole: kept and read, not drawn
+	Visible *bool     // the whole table drawn by watch (true) or kept but not drawn (false)
 }
 
 // Set changes a table's definition in place, one call: the footer label,
@@ -198,6 +205,13 @@ func Set(ctx context.Context, c redis.Cmdable, name string, o SetOpts) (int, err
 	}
 	if o.Hidden != nil {
 		args = append(args, "hidden", strings.Join(*o.Hidden, ","))
+	}
+	if o.Visible != nil {
+		v := "1"
+		if !*o.Visible {
+			v = "0"
+		}
+		args = append(args, "visible", v)
 	}
 	if len(args) == 0 {
 		return 0, fmt.Errorf("table %q: set wants --footer <label>, --rename <name>, --columns <spec>, --hide <cols> or --show <cols>", name)
@@ -278,6 +292,43 @@ func RowSet(ctx context.Context, c redis.Cmdable, name, key string, texts map[st
 	return int(n), err
 }
 
+// RowsAdd adds many rows with empty specs in one call; every key is
+// checked before the first is written.
+func RowsAdd(ctx context.Context, c redis.Cmdable, name string, keys []string) (int, error) {
+	args := make([]any, 0, len(keys))
+	for _, k := range keys {
+		if !ValidRowKey(k) {
+			return 0, fmt.Errorf("table %q row %q: row wants a non-empty key with no control characters; run: nova-table row help", name, k)
+		}
+		args = append(args, k)
+	}
+	reply, err := (operation{table: name}).call(ctx, c, FnRowsAdd, false, args...)
+	if err != nil {
+		return 0, err
+	}
+	n, err := replyCount(reply)
+	return int(n), err
+}
+
+// RowsHide hides rows from the render (kept, counted in the folds) or
+// shows them again; many rows, one call.
+func RowsHide(ctx context.Context, c redis.Cmdable, name string, hide bool, keys []string) (int, error) {
+	flag := "0"
+	if hide {
+		flag = "1"
+	}
+	args := []any{flag}
+	for _, k := range keys {
+		args = append(args, k)
+	}
+	reply, err := (operation{table: name}).call(ctx, c, FnRowsHide, false, args...)
+	if err != nil {
+		return 0, err
+	}
+	n, err := replyCount(reply)
+	return int(n), err
+}
+
 func RowDel(ctx context.Context, c redis.Cmdable, name, key string) (bool, error) {
 	reply, err := (operation{table: name, row: key}).call(ctx, c, FnRowDel, false, key)
 	if err != nil {
@@ -333,26 +384,88 @@ func Clear(ctx context.Context, c redis.Cmdable, name string) (int64, error) {
 	}
 	return replyCount(reply)
 }
-func CellAdd(ctx context.Context, c redis.Cmdable, name, row, col, member string, score float64) (int64, error) {
-	reply, err := (operation{name, row, col, member}).call(ctx, c, FnCellAdd, false, row, col, member, strconv.FormatFloat(score, 'g', -1, 64))
+
+// CellAdd puts members into a cell at one score, one call; every member
+// is checked before the first write. It returns the cell's count after.
+func CellAdd(ctx context.Context, c redis.Cmdable, name, row, col string, score float64, members ...string) (int64, error) {
+	args := []any{row, col, strconv.FormatFloat(score, 'g', -1, 64)}
+	for _, m := range members {
+		args = append(args, m)
+	}
+	reply, err := (operation{name, row, col, first(members)}).call(ctx, c, FnCellAdd, false, args...)
 	if err != nil {
 		return 0, err
 	}
 	return replyCount(reply)
 }
-func CellRemove(ctx context.Context, c redis.Cmdable, name, row, col, member string) (int64, error) {
-	reply, err := (operation{name, row, col, member}).call(ctx, c, FnCellRemove, false, row, col, member)
+
+// CellRemove takes members out of a cell, one call.
+func CellRemove(ctx context.Context, c redis.Cmdable, name, row, col string, members ...string) (int64, error) {
+	args := []any{row, col}
+	for _, m := range members {
+		args = append(args, m)
+	}
+	reply, err := (operation{name, row, col, first(members)}).call(ctx, c, FnCellRemove, false, args...)
 	if err != nil {
 		return 0, err
 	}
 	return replyCount(reply)
 }
-func CellMove(ctx context.Context, c redis.Cmdable, name, row, from, to, member string) (int64, error) {
-	reply, err := (operation{name, row, from, member}).call(ctx, c, FnCellMove, false, row, from, member, to)
+
+// CellMove moves members from one cell to another of the same row, one
+// call, keeping every score; a member not in the source refuses the whole
+// call (NOTMEMBER names it) and nothing moves.
+func CellMove(ctx context.Context, c redis.Cmdable, name, row, from, to string, members ...string) (int64, error) {
+	args := []any{row, from, to}
+	for _, m := range members {
+		args = append(args, m)
+	}
+	reply, err := (operation{name, row, from, first(members)}).call(ctx, c, FnCellMove, false, args...)
 	if err != nil {
 		return 0, err
 	}
 	return replyCount(reply)
+}
+
+func first(s []string) string {
+	if len(s) == 0 {
+		return ""
+	}
+	return s[0]
+}
+
+// A view: a named list of tables with a title, read by watch every frame.
+type View struct {
+	Name    string
+	Tables  []string
+	Title   string
+	Summary string // the count column of the first table the summary line counts as done ("" for no line)
+}
+
+// ViewSet writes a view; every table must exist.
+func ViewSet(ctx context.Context, c redis.Cmdable, v View) error {
+	_, err := (operation{table: v.Name}).call(ctx, c, "ns_view_set", false, strings.Join(v.Tables, ","), v.Title, v.Summary)
+	return err
+}
+
+// ViewGet reads a view.
+func ViewGet(ctx context.Context, c redis.Cmdable, name string) (View, error) {
+	reply, err := (operation{table: name}).call(ctx, c, "ns_view_get", true)
+	if err != nil {
+		return View{}, err
+	}
+	if len(reply) < 2 {
+		return View{}, fmt.Errorf("view %q: malformed reply", name)
+	}
+	h, err := flatHash(reply[1])
+	if err != nil {
+		return View{}, err
+	}
+	v := View{Name: name, Title: h["title"], Summary: h["summary"]}
+	if t := strings.TrimSpace(h["tables"]); t != "" {
+		v.Tables = strings.Split(t, ",")
+	}
+	return v, nil
 }
 func CellMembers(ctx context.Context, c redis.Cmdable, name, row, col string) ([]Member, error) {
 	reply, err := (operation{table: name, row: row, col: col}).call(ctx, c, FnMembers, true, row, col)

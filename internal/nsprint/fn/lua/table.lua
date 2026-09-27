@@ -50,7 +50,7 @@ do
       local w = tonumber(width)
       if not (valid[proj or ''] or formula) or seen[col] or not w or w < 0 or w ~= math.floor(w) or
         not (fold == 'none' or ((fold == 'sum' or fold == 'max') and proj == 'count') or
-          (fold == 'avg' and (proj == 'count' or formula)) or
+          (fold == 'avg' and proj == 'count') or (fold == 'pooled' and formula) or
           (fold == 'union' and proj ~= 'count' and proj ~= 'text' and not formula)) then
         return nil, {'REFUSED', 'DEFINITION', col}
       end
@@ -136,10 +136,9 @@ do
     if err then return err end
     return T.apply(commands) or {'OK'}
   end)
-  redis.register_function('ns_table_row_add', function(keys, args)
-    local name, row, spec = args[1], args[2], cjson.decode(args[3])
-    local def, err = T.def(name)
-    if not def then return err end
+  -- T.addrow(name, def, row, spec): one row written or rewritten (the
+  -- metadata; owned sets kept); nil, or the refusal.
+  function T.addrow(name, def, row, spec)
     local h, why = T.rowfields(name, def, row, spec)
     if not h then return why end
     T.hash(T.rowkey(name, row)) -- refuse a corrupt row before rewriting it
@@ -152,10 +151,33 @@ do
     local commands = {{'DEL', T.rowkey(name, row)}}
     T.hset(commands, T.rowkey(name, row), h)
     commands[#commands + 1] = {'ZADD', rowsKey, rank, row}
-    local refusal = T.apply(commands)
+    return T.apply(commands)
+  end
+  redis.register_function('ns_table_row_add', function(keys, args)
+    local name, row, spec = args[1], args[2], cjson.decode(args[3])
+    local def, err = T.def(name)
+    if not def then return err end
+    local refusal = T.addrow(name, def, row, spec)
     if refusal then return refusal end
     local _, flat = T.hash(T.rowkey(name, row))
     return {'ROW', def.flat, flat}
+  end)
+  -- ns_table_rows_add(name, row...): many rows in one call, each with an
+  -- empty spec (batch everything: Glenn 2026-09-27); every row is checked
+  -- before the first is written, so a refusal writes nothing.
+  redis.register_function('ns_table_rows_add', function(keys, args)
+    local name = args[1]
+    local def, err = T.def(name)
+    if not def then return err end
+    for i = 2, #args do
+      local _, why = T.rowfields(name, def, args[i], {})
+      if why then return why end
+    end
+    for i = 2, #args do
+      local refusal = T.addrow(name, def, args[i], {})
+      if refusal then return refusal end
+    end
+    return {'OK', #args - 1}
   end)
   -- ns_table_row_set(name, row, col value ...): a text column's value for
   -- one row (SPEC-NOVA-TABLE hole 1: text cells per column; Glenn
@@ -175,6 +197,21 @@ do
       n = n + 1
     end
     return {'OK', n}
+  end)
+  -- ns_table_rows_hide(name, '1'|'0', row...): rows hidden from the render
+  -- (kept, counted in the folds) or shown again; many rows, one call.
+  redis.register_function('ns_table_rows_hide', function(keys, args)
+    local name, flag = args[1], args[2]
+    local def, err = T.def(name)
+    if not def then return err end
+    for i = 3, #args do
+      if not redis.call('ZSCORE', 'table:' .. name .. ':rows', args[i]) then return {'REFUSED', 'NOROW', args[i]} end
+    end
+    for i = 3, #args do
+      if flag == '1' then redis.call('HSET', T.rowkey(name, args[i]), 'hidden', '1')
+      else redis.call('HDEL', T.rowkey(name, args[i]), 'hidden') end
+    end
+    return {'OK', #args - 2}
   end)
   redis.register_function('ns_table_row_del', function(keys, args)
     local name, row = args[1], args[2]
@@ -217,13 +254,29 @@ do
   -- cells; bound cells are references and stay) and the registry entry.
   redis.register_function('ns_table_set', function(keys, args)
     local name = args[1]
-    local def, err = T.def(name)
-    if not def then return err end
+    -- the existing definition need not validate when the columns are being
+    -- replaced (a rule that tightened leaves old definitions behind; set
+    -- --columns is the way out); everything else wants a valid one
+    local replacing = false
+    for i = 2, #args - 1, 2 do if args[i] == 'columns' then replacing = true end end
+    local def, err
+    if replacing then
+      if redis.call('EXISTS', 'table:' .. name) == 0 then return {'REFUSED', 'NOTABLE'} end
+      def = {cols = {}}
+      local h = T.hash('table:' .. name)
+      for col in string.gmatch(h.order or '', '[^,]+') do def.cols[#def.cols + 1] = {name = col} end
+    else
+      def, err = T.def(name)
+      if not def then return err end
+    end
     local footer, newname, columns
     for i = 2, #args - 1, 2 do
       if args[i] == 'footer' then footer = args[i + 1]
       elseif args[i] == 'rename' then newname = args[i + 1]
       elseif args[i] == 'columns' then columns = cjson.decode(args[i + 1])
+      elseif args[i] == 'visible' then
+        if args[i + 1] == '0' then redis.call('HSET', 'table:' .. name, 'visible', '0')
+        else redis.call('HDEL', 'table:' .. name, 'visible') end
       elseif args[i] == 'hidden' then
         for col in string.gmatch(args[i + 1], '[^,]+') do
           local found = false
@@ -281,28 +334,60 @@ do
   end)
   redis.register_function('ns_table_drop', function(keys,args) return T.delete('drop',args) end)
   redis.register_function('ns_table_clear', function(keys,args) return T.delete('clear',args) end)
+  -- T.writecell(op, args): many members in one call (batch everything,
+  -- Glenn 2026-09-27); every member is checked before the first write, so
+  -- a refusal writes nothing. add: name, row, col, score, member...;
+  -- remove: name, row, col, member...; move: name, row, from, to, member...
   function T.writecell(op, args)
-      local name, row, col, member = args[1], args[2], args[3], args[4]
+      local name, row, col = args[1], args[2], args[3]
       local src, err = T.cell(name, row, col, true)
       if not src then return err end
       local commands, target = {}, src.key
       redis.call('ZCARD', src.key) -- wrong type must refuse before mutation
       if op == 'add' then
-        local score = tonumber(args[5])
+        local score = tonumber(args[4])
         if not score or score ~= score then return {'REFUSED', 'SCORE'} end
-        commands[1] = {'ZADD', src.key, args[5], member}
-      elseif op == 'remove' then commands[1] = {'ZREM', src.key, member}
+        if #args < 5 then return {'REFUSED', 'NOMEMBER', row, col} end
+        for i = 5, #args do commands[#commands + 1] = {'ZADD', src.key, args[4], args[i]} end
+      elseif op == 'remove' then
+        if #args < 4 then return {'REFUSED', 'NOMEMBER', row, col} end
+        for i = 4, #args do commands[#commands + 1] = {'ZREM', src.key, args[i]} end
       else
-        local dst, why = T.cell(name, row, args[5], true)
+        local dst, why = T.cell(name, row, args[4], true)
         if not dst then return why end
         redis.call('ZCARD', dst.key)
-        local score = redis.call('ZSCORE', src.key, member)
-        if not score then return {'REFUSED', 'NOTMEMBER', row, col} end
+        if #args < 5 then return {'REFUSED', 'NOMEMBER', row, col} end
+        local scores = {}
+        for i = 5, #args do
+          local score = redis.call('ZSCORE', src.key, args[i])
+          if not score then return {'REFUSED', 'NOTMEMBER', row, col, args[i]} end
+          scores[i] = score
+        end
         target = dst.key
-        commands = {{'ZREM', src.key, member}, {'ZADD', dst.key, score, member}}
+        for i = 5, #args do
+          commands[#commands + 1] = {'ZREM', src.key, args[i]}
+          commands[#commands + 1] = {'ZADD', dst.key, scores[i], args[i]}
+        end
       end
       return T.apply(commands) or {'OK', redis.call('ZCARD', target)}
   end
+  -- A view (SPEC-COORDINATOR section 7; Glenn 2026-09-27: "restarting is
+  -- not cool"): a named list of tables with a title, read by watch every
+  -- frame, so the tables a tab shows change by a verb.
+  redis.register_function('ns_view_set', function(keys, args)
+    local name, tables, title, summary = args[1], args[2], args[3] or '', args[4] or ''
+    for t in string.gmatch(tables, '[^,]+') do
+      if redis.call('EXISTS', 'table:' .. t) == 0 then return {'REFUSED', 'NOTABLE', t} end
+    end
+    redis.call('HSET', 'view:' .. name, 'tables', tables, 'title', title, 'summary', summary)
+    redis.call('SADD', 'views', name)
+    return {'OK'}
+  end)
+  redis.register_function{function_name = 'ns_view_get', flags = {'no-writes'}, callback = function(keys, args)
+    local h = redis.call('HGETALL', 'view:' .. args[1])
+    if #h == 0 then return {'REFUSED', 'NOVIEW', args[1]} end
+    return {'OK', h}
+  end}
   redis.register_function('ns_table_cell_add', function(keys,args) return T.writecell('add',args) end)
   redis.register_function('ns_table_cell_remove', function(keys,args) return T.writecell('remove',args) end)
   redis.register_function('ns_table_cell_move', function(keys,args) return T.writecell('move',args) end)

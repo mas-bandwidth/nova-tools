@@ -40,8 +40,8 @@ type RenderOpts struct {
 func Render(t Table, opts RenderOpts) string {
 	rows := make([]Row, 0, len(t.Rows))
 	for _, r := range t.Rows {
-		if opts.HideZeroRows && allZero(t, r) {
-			continue
+		if r.Hidden || opts.HideZeroRows && allZero(t, r) {
+			continue // a hidden row stays in the folds (Glenn 2026-09-27: "hide the rows a-z but keep them there logically")
 		}
 		rows = append(rows, r)
 	}
@@ -285,29 +285,41 @@ func pctText(v float64) string {
 // included: the fold is the column's, not the screen's).
 func foldText(cols []Column, c Column, rows []Row, j int) string {
 	switch c.Fold {
+	case Pooled:
+		// the share over every row together: the named counts summed over
+		// all counts summed, never the mean of the rows' percentages
+		arg := FormulaArg(c.Projection)
+		var part, total int64
+		for _, r := range rows {
+			for k, o := range cols {
+				if o.Projection != Count {
+					continue
+				}
+				if k >= len(r.Cells) || r.Cells[k].Unread {
+					return "?"
+				}
+				total += r.Cells[k].Count
+				if o.Name == arg {
+					part += r.Cells[k].Count
+				}
+			}
+		}
+		if total == 0 {
+			return "-"
+		}
+		return pctText(100 * float64(part) / float64(total))
 	case Avg:
 		var sum float64
 		n := 0
 		for _, r := range rows {
-			if IsFormula(c.Projection) {
-				v, ok := formulaValue(cols, c, r)
-				if !ok {
-					continue // a row with no tasks has no share; the mean is over the rows that do
-				}
-				sum += v
-			} else {
-				if j >= len(r.Cells) || r.Cells[j].Unread {
-					return "?"
-				}
-				sum += float64(r.Cells[j].Count)
+			if j >= len(r.Cells) || r.Cells[j].Unread {
+				return "?"
 			}
+			sum += float64(r.Cells[j].Count)
 			n++
 		}
 		if n == 0 {
 			return "-"
-		}
-		if IsFormula(c.Projection) {
-			return pctText(sum / float64(n))
 		}
 		return strings.TrimSuffix(strconv.FormatFloat(sum/float64(n), 'f', 1, 64), ".0")
 	case Sum, Max:

@@ -70,11 +70,12 @@ const (
 
 // The folds: what a footer cell prints over its column.
 const (
-	Sum   = "sum"
-	Max   = "max"
-	Union = "union"
-	Avg   = "avg" // the mean of the column's values over the rows (count or formula)
-	None  = "none"
+	Sum    = "sum"
+	Max    = "max"
+	Union  = "union"
+	Avg    = "avg"    // the mean of a count column over the rows
+	Pooled = "pooled" // a pct column's footer: the named counts summed over every row's counts summed (never the mean of percentages: Glenn 2026-09-27)
+	None   = "none"
 )
 
 // A formula projection (SPEC-NOVA-TABLE, computed cells; Glenn 2026-09-27:
@@ -154,6 +155,7 @@ type Row struct {
 	Owner   string
 	Cells   []Cell
 	Texts   map[string]string // a text column's value for this row (row set <col>=<value>), else the label prints
+	Hidden  bool              // kept and counted in the folds, not drawn (row hide)
 }
 
 // LabelOrKey is the row header cell.
@@ -170,6 +172,7 @@ type Table struct {
 	Columns     []Column
 	FooterLabel string
 	Hidden      []string // columns kept, read and used by formulas, but not drawn (set --hide)
+	HiddenTable bool     // the whole table kept and read, not drawn by watch (set --hidden / --visible)
 	Rows        []Row
 }
 
@@ -311,15 +314,22 @@ func validateColumn(c Column, cols []Column) error {
 			return fmt.Errorf("column %s folds %s, which wants the count projection, not %s", c.Name, c.Fold, c.Projection)
 		}
 	case Avg:
-		if c.Projection != Count && !IsFormula(c.Projection) {
-			return fmt.Errorf("column %s folds avg, which wants a count or a pct column, not %s", c.Name, c.Projection)
+		if IsFormula(c.Projection) {
+			return fmt.Errorf("column %s folds avg over percentages, which is not accurate; fold pooled (the counts summed over the rows, then the share)", c.Name)
+		}
+		if c.Projection != Count {
+			return fmt.Errorf("column %s folds avg, which wants a count column, not %s", c.Name, c.Projection)
+		}
+	case Pooled:
+		if !IsFormula(c.Projection) {
+			return fmt.Errorf("column %s folds pooled, which wants a pct column, not %s", c.Name, c.Projection)
 		}
 	case Union:
 		if c.Projection == Count || c.Projection == Text || IsFormula(c.Projection) {
 			return fmt.Errorf("column %s folds union, which wants members, first or last, not %s", c.Name, c.Projection)
 		}
 	default:
-		return fmt.Errorf("column %s wants a fold of sum, max, avg, union or none, not %q", c.Name, c.Fold)
+		return fmt.Errorf("column %s wants a fold of sum, max, avg, pooled, union or none, not %q", c.Name, c.Fold)
 	}
 	return nil
 }
@@ -332,9 +342,12 @@ func ParseColumn(spec string) (Column, error) {
 	if len(parts) > 1 && parts[1] != "" {
 		c.Projection = parts[1]
 	}
-	if c.Projection == Count {
+	switch {
+	case c.Projection == Count:
 		c.Fold = Sum
-	} else {
+	case IsFormula(c.Projection):
+		c.Fold = Pooled
+	default:
 		c.Fold = None
 	}
 	if len(parts) > 2 && parts[2] != "" {
@@ -421,6 +434,9 @@ func definitionFields(t Table) map[string]string {
 	m["order"] = strings.Join(names, ",")
 	m["footer"] = t.Footer()
 	m["hidden"] = strings.Join(t.Hidden, ",")
+	if t.HiddenTable {
+		m["visible"] = "0"
+	}
 	return m
 }
 
@@ -434,6 +450,7 @@ func decodeDefinition(name string, h map[string]string) (Table, bool, error) {
 	if v := strings.TrimSpace(h["hidden"]); v != "" {
 		t.Hidden = strings.Split(v, ",")
 	}
+	t.HiddenTable = h["visible"] == "0"
 	order := h["order"]
 	if order == "" {
 		return Table{}, true, fmt.Errorf("table %s has no column order", name)
@@ -490,7 +507,7 @@ func rowFields(t Table, r Row) map[string]string {
 // where the hash names a key, owned (CellKey) otherwise, none for a text
 // column.
 func decodeRow(t Table, key string, h map[string]string) Row {
-	r := Row{Key: key, Label: h["label"], Exclude: h["exclude"], Owner: h["owner"], Cells: make([]Cell, len(t.Columns))}
+	r := Row{Key: key, Label: h["label"], Exclude: h["exclude"], Owner: h["owner"], Hidden: h["hidden"] == "1", Cells: make([]Cell, len(t.Columns))}
 	for i, c := range t.Columns {
 		if c.Projection == Text {
 			if v, ok := h["text:"+c.Name]; ok {

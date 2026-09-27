@@ -107,7 +107,7 @@ func TestCreateRowAddCellAddReadRender(t *testing.T) {
 		{"build", "ready", "b1", 1}, {"build", "ready", "b2", 2}, {"build", "working", "b3", 3},
 		{"test", "done", "t1", 1}, {"build", "who", "ann", 1}, {"test", "who", "bo", 1}, {"test", "who", "ann", 2},
 	} {
-		if _, err := ntable.CellAdd(ctx, c, "demo", add.row, add.col, add.member, add.score); err != nil {
+		if _, err := ntable.CellAdd(ctx, c, "demo", add.row, add.col, add.score, add.member); err != nil {
 			t.Fatalf("cell add %+v: %v", add, err)
 		}
 	}
@@ -133,7 +133,7 @@ func TestCreateRowAddCellAddReadRender(t *testing.T) {
 	}
 	// a cell of a row or column the table lacks, and a text column, refuse
 	for _, bad := range [][3]string{{"nope", "ready", "x"}, {"build", "nope", "x"}, {"build", "job", "x"}} {
-		if _, err := ntable.CellAdd(ctx, c, "demo", bad[0], bad[1], bad[2], 1); err == nil {
+		if _, err := ntable.CellAdd(ctx, c, "demo", bad[0], bad[1], 1, bad[2]); err == nil {
 			t.Errorf("cell add %v accepted", bad)
 		}
 	}
@@ -158,7 +158,7 @@ func TestRowOrderIsStableAcrossReAdds(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := ntable.CellAdd(ctx, c, "demo", "a", "ready", "m", 1); err != nil {
+	if _, err := ntable.CellAdd(ctx, c, "demo", "a", "ready", 1, "m"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := ntable.RowAdd(ctx, c, "demo", "a", ntable.RowSpec{Label: "A"}); err != nil {
@@ -251,7 +251,7 @@ func TestReaderTakesOnePipelineInTheSteadyState(t *testing.T) {
 		t.Fatalf("bound row read: %+v", tb.Rows[2])
 	}
 	// a write to the bound cell is refused, naming the owner
-	_, err = ntable.CellAdd(ctx, c, "demo", "c", "ready", "x", 1)
+	_, err = ntable.CellAdd(ctx, c, "demo", "c", "ready", 1, "x")
 	var bound *ntable.BoundError
 	if !errors.As(err, &bound) || bound.Key != "elsewhere:ready" || bound.Owner != "other-tool put" {
 		t.Fatalf("cell add on a bound cell: %v", err)

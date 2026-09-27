@@ -43,7 +43,7 @@ func TestMoveAndClearAreOneCallEach(t *testing.T) {
 	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ntable.CellAdd(ctx, c, "demo", "build", "ready", "b1", 7); err != nil {
+	if _, err := ntable.CellAdd(ctx, c, "demo", "build", "ready", 7, "b1"); err != nil {
 		t.Fatal(err)
 	}
 	if n, err := ntable.CellMove(ctx, c, "demo", "build", "ready", "working", "b1"); err != nil || n != 1 {
@@ -64,7 +64,7 @@ func TestMoveAndClearAreOneCallEach(t *testing.T) {
 	if _, err := ntable.RowAdd(ctx, c, "demo", "test", ntable.RowSpec{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ntable.CellAdd(ctx, c, "demo", "test", "done", "t1", 1); err != nil {
+	if _, err := ntable.CellAdd(ctx, c, "demo", "test", "done", 1, "t1"); err != nil {
 		t.Fatal(err)
 	}
 	if n, err := ntable.Clear(ctx, c, "demo"); err != nil || n != 2 {
@@ -86,7 +86,7 @@ func TestMoveAndClearAreOneCallEach(t *testing.T) {
 	if _, err := ntable.RowAdd(ctx, c, "demo", "owned", ntable.RowSpec{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ntable.CellAdd(ctx, c, "demo", "owned", "ready", "o1", 1); err != nil {
+	if _, err := ntable.CellAdd(ctx, c, "demo", "owned", "ready", 1, "o1"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := ntable.RowAdd(ctx, c, "demo", "view", ntable.RowSpec{Binds: map[string]string{"ready": "ws:s:ready"}, Owner: "nova-sprint task move"}); err != nil {
@@ -155,7 +155,7 @@ func TestTableGrantsAreExactlyWhatTheWriterNeeds(t *testing.T) {
 	if _, err := ntable.RowAdd(ctx, w, "demo", "build", ntable.RowSpec{Label: "the build"}); err != nil {
 		t.Fatalf("row add as the writer: %v", err)
 	}
-	if _, err := ntable.CellAdd(ctx, w, "demo", "build", "ready", "b1", 1); err != nil {
+	if _, err := ntable.CellAdd(ctx, w, "demo", "build", "ready", 1, "b1"); err != nil {
 		t.Fatalf("cell add as the writer: %v", err)
 	}
 	if _, err := ntable.CellMove(ctx, w, "demo", "build", "ready", "working", "b1"); err != nil {
@@ -196,7 +196,7 @@ func TestTableGrantsAreExactlyWhatTheWriterNeeds(t *testing.T) {
 	if _, err := ntable.RowAdd(ctx, n, "demo", "build", ntable.RowSpec{}); err != nil {
 		t.Fatalf("row add without the clear grant: %v", err)
 	}
-	if _, err := ntable.CellAdd(ctx, n, "demo", "build", "ready", "b2", 1); err != nil {
+	if _, err := ntable.CellAdd(ctx, n, "demo", "build", "ready", 1, "b2"); err != nil {
 		t.Fatalf("cell add without the clear grant: %v", err)
 	}
 	if _, err := ntable.CellMove(ctx, n, "demo", "build", "ready", "done", "b2"); err != nil {

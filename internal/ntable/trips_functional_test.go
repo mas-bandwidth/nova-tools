@@ -31,7 +31,7 @@ func TestEveryTableOperationCountsOneTrip(t *testing.T) {
 	one("create", func() error { return ntable.Create(ctx, c, demo(), now) })
 	one("same create", func() error { return ntable.Create(ctx, c, demo(), now) })
 	one("row add", func() error { _, err := ntable.RowAdd(ctx, c, "demo", "r", ntable.RowSpec{}); return err })
-	one("cell add", func() error { _, err := ntable.CellAdd(ctx, c, "demo", "r", "ready", "job", 7); return err })
+	one("cell add", func() error { _, err := ntable.CellAdd(ctx, c, "demo", "r", "ready", 7, "job"); return err })
 	one("cell members", func() error { _, err := ntable.CellMembers(ctx, c, "demo", "r", "ready"); return err })
 	one("cell move", func() error { _, err := ntable.CellMove(ctx, c, "demo", "r", "ready", "working", "job"); return err })
 	one("cell remove", func() error { _, err := ntable.CellRemove(ctx, c, "demo", "r", "working", "job"); return err })
@@ -96,7 +96,7 @@ func TestRefusedMoveIsAtomicAndNamesItsRepair(t *testing.T) {
 			t.Fatalf("refusal misses %q: %v", word, err)
 		}
 	}
-	if _, err := ntable.CellAdd(ctx, c, "demo", row, "ready", member, 7); err != nil {
+	if _, err := ntable.CellAdd(ctx, c, "demo", row, "ready", 7, member); err != nil {
 		t.Fatal(err)
 	}
 	dst := ntable.CellKey("demo", row, "working")
@@ -181,7 +181,7 @@ func TestSourceACLTableReaderKeepsReadOnlyAccess(t *testing.T) {
 	if _, err := ntable.RowAdd(ctx, writer, "demo", "r", ntable.RowSpec{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ntable.CellAdd(ctx, writer, "demo", "r", "ready", "job", 7); err != nil {
+	if _, err := ntable.CellAdd(ctx, writer, "demo", "r", "ready", 7, "job"); err != nil {
 		t.Fatal(err)
 	}
 	if tb, err := ntable.Read(ctx, reader, "demo"); err != nil || len(tb.Rows) != 1 || tb.Rows[0].Cells[1].Unread || tb.Rows[0].Cells[1].Count != 1 {
@@ -193,7 +193,7 @@ func TestSourceACLTableReaderKeepsReadOnlyAccess(t *testing.T) {
 	if ms, err := ntable.CellMembers(ctx, reader, "demo", "r", "ready"); err != nil || len(ms) != 1 || ms[0].Member != "job" {
 		t.Fatalf("reader members: %v %v", ms, err)
 	}
-	if _, err := ntable.CellAdd(ctx, reader, "demo", "r", "ready", "forbidden", 1); err == nil || !strings.Contains(err.Error(), "NOPERM") {
+	if _, err := ntable.CellAdd(ctx, reader, "demo", "r", "ready", 1, "forbidden"); err == nil || !strings.Contains(err.Error(), "NOPERM") {
 		t.Fatalf("reader wrote: %v", err)
 	}
 }

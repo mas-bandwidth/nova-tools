@@ -80,6 +80,8 @@ func cmdSet(args []string, stdout, stderr io.Writer) int {
 	columns := fs.String("columns", "", "the columns, replaced in place (the create grammar); rows kept")
 	hide := fs.String("hide", "", "columns to hide (kept, read, used by formulas; not drawn), comma-separated")
 	show := fs.String("show", "", "hidden columns to draw again, comma-separated")
+	hiddenTable := fs.Bool("hidden", false, "the whole table kept and read, not drawn by watch")
+	visibleTable := fs.Bool("visible", false, "the whole table drawn again by watch")
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
@@ -134,11 +136,18 @@ func cmdSet(args []string, stdout, stderr io.Writer) int {
 		}
 		o.Hidden = &list
 	}
+	if *hiddenTable || *visibleTable {
+		v := *visibleTable && !*hiddenTable
+		o.Visible = &v
+	}
 	n, err := ntable.Set(ctx, c, pos[0], o)
 	if err != nil {
 		return storeRefusal(stderr, verb, err)
 	}
 	line := "TABLE SET table=" + pos[0]
+	if o.Visible != nil {
+		line += fmt.Sprintf(" visible=%v", *o.Visible)
+	}
 	if o.Footer != nil {
 		line += fmt.Sprintf(" footer=%q", *o.Footer)
 	}
@@ -338,4 +347,58 @@ func cmdRender(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, verb, "stdout: "+err.Error())
 	}
 	return 0
+}
+
+// cmdView: view set <name> --tables <a,b,...> [--title <text>] writes a
+// stored view (what a watch tab shows, read every frame); view show
+// <name> prints it.
+func cmdView(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		return refuse(stderr, "view", "wants set or show: view set <name> --tables <a,b,...> [--title <text>], view show <name>")
+	}
+	verb := "view " + args[0]
+	fs := verbflag.New(verb)
+	addr := redisFlag(fs)
+	tables := fs.String("tables", "", "the tables, comma-separated, in order")
+	title := fs.String("title", "", "the view's title line")
+	summary := fs.String("summary", "", "a summary line under the view: <col> counts as done (x/y z% -> ETA)")
+	pos, err := parseInterleaved(fs, args[1:])
+	if err != nil {
+		return refuse(stderr, verb, err.Error())
+	}
+	if len(pos) != 1 {
+		return refuse(stderr, verb, "wants one view name")
+	}
+	ctx := context.Background()
+	st, c, code := client(ctx, verb, *addr, stderr)
+	if code != 0 {
+		return code
+	}
+	defer st.Close()
+	trips := st.CountTrips()
+	switch args[0] {
+	case "set":
+		var list []string
+		for _, n := range strings.Split(*tables, ",") {
+			if n = strings.TrimSpace(n); n != "" {
+				list = append(list, n)
+			}
+		}
+		if len(list) == 0 {
+			return refuse(stderr, verb, "wants --tables <a,b,...>")
+		}
+		if err := ntable.ViewSet(ctx, c, ntable.View{Name: pos[0], Tables: list, Title: *title, Summary: *summary}); err != nil {
+			return storeRefusal(stderr, verb, err)
+		}
+		fmt.Fprintf(stdout, "VIEW SET view=%s tables=%s title=%q trips=%d\n", pos[0], strings.Join(list, ","), *title, trips.N())
+		return 0
+	case "show":
+		v, err := ntable.ViewGet(ctx, c, pos[0])
+		if err != nil {
+			return storeRefusal(stderr, verb, err)
+		}
+		fmt.Fprintf(stdout, "VIEW view=%s tables=%s title=%q trips=%d\n", v.Name, strings.Join(v.Tables, ","), v.Title, trips.N())
+		return 0
+	}
+	return refuse(stderr, "view", "unknown subverb "+args[0]+"; wants set or show")
 }

@@ -246,7 +246,7 @@ func TestRenderPutsTheRowLabelFirstAndTitles(t *testing.T) {
 // by row set, else the label.
 func TestRenderFormulaAndTextCells(t *testing.T) {
 	t.Parallel()
-	cols, err := ntable.ParseColumns("waiting,ready,working,done,wpct:pct(waiting):avg:waiting%,status:text:none")
+	cols, err := ntable.ParseColumns("waiting,ready,working,done,wpct:pct(waiting):pooled:waiting%,status:text:none")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,15 +269,22 @@ func TestRenderFormulaAndTextCells(t *testing.T) {
 		"beta    |       5 |     2 |       3 |    0 | 50.0%    | beta\n" +
 		"empty   |       0 |     0 |       0 |    0 | -        | empty\n" +
 		"--------+---------+-------+---------+------+----------+-------\n" +
-		"total   |       6 |     3 |       4 |    0 | 41.7%    |\n"
+		"total   |       6 |     3 |       4 |    0 | 46.2%    |\n"
 	if got := ntable.Render(tb, ntable.RenderOpts{Title: "streams"}); got != want {
 		t.Fatalf("formula and text cells:\n%s\nwant:\n%s", got, want)
 	}
-	if _, err := ntable.ParseColumns("wpct:pct(nothere):avg"); err == nil || !strings.Contains(err.Error(), "count column named nothere") {
+	if _, err := ntable.ParseColumns("wpct:pct(nothere)"); err == nil || !strings.Contains(err.Error(), "count column named nothere") {
 		t.Fatalf("a pct of a missing column: %v", err)
 	}
 	if _, err := ntable.ParseColumns("who:members:avg"); err == nil {
 		t.Fatal("avg over members was accepted")
+	}
+	// the mean of percentages is refused; the pooled share is the fold (Glenn 2026-09-27)
+	if _, err := ntable.ParseColumns("waiting,wpct:pct(waiting):avg"); err == nil || !strings.Contains(err.Error(), "not accurate") {
+		t.Fatalf("avg over a pct column: %v", err)
+	}
+	if c, err := ntable.ParseColumn("wpct:pct(waiting)"); err != nil || c.Fold != ntable.Pooled {
+		t.Fatalf("the default fold of a pct column: %+v %v", c, err)
 	}
 }
 
@@ -287,7 +294,7 @@ func TestRenderFormulaAndTextCells(t *testing.T) {
 // reads it still computes; the row-label column still comes first.
 func TestRenderHidesAColumnButKeepsIt(t *testing.T) {
 	t.Parallel()
-	cols, err := ntable.ParseColumns("waiting,ready,wpct:pct(waiting):avg:waiting%")
+	cols, err := ntable.ParseColumns("waiting,ready,wpct:pct(waiting):pooled:waiting%")
 	if err != nil {
 		t.Fatal(err)
 	}

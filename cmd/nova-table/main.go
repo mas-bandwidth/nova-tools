@@ -33,11 +33,13 @@ usage:
   nova-table version
   nova-table help
   nova-table create <table> --columns <name[:projection[:fold[:label]]],...> [--footer <label>] [--width <col=n,...>]
-  nova-table set <table> [--footer <label>] [--rename <name>] [--columns <spec>] [--hide <cols>] [--show <cols>]
+  nova-table set <table> [--footer <label>] [--rename <name>] [--columns <spec>] [--hide <cols>] [--show <cols>] [--hidden | --visible]
   nova-table drop <table>
   nova-table list
   nova-table row add <table> <row> [--label <text>] [--exclude <member>] [--owner <verb>] [<col>=<key> ...]
+  nova-table row add <table> <row> <row> ...            (many rows, one call)
   nova-table row set <table> <row> <col>=<value> ...
+  nova-table row hide <table> <row> ...   |   row show <table> <row> ...
   nova-table row del <table> <row>
   nova-table cell add <table> <row> <col> <member> [--score <n>]
   nova-table cell remove <table> <row> <col> <member>
@@ -46,7 +48,8 @@ usage:
   nova-table clear <table>
   nova-table show <table>
   nova-table render <table> [--hide-zero-rows] [--width <col=n,...>]
-  nova-table watch <table>[,<table>...] [--every <duration>] [--out <file>] [--title <text>] [--hide-zero-rows] [--once]
+  nova-table watch <table>[,<table>...] | --view <name>  [--every <duration>] [--out <file>] [--title <text>] [--hide-zero-rows] [--once]
+  nova-table view set <name> --tables <a,b,...> [--title <text>]   |   view show <name>
 
 Every verb takes --redis <addr> (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR,
 then the seat's address) and dials as the seat nova-sprint dials as: --seat
@@ -129,6 +132,8 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 		return cmdCreate(args[1:], stdout, stderr)
 	case "set":
 		return cmdSet(args[1:], stdout, stderr)
+	case "view":
+		return cmdView(args[1:], stdout, stderr)
 	case "drop":
 		return cmdDrop(args[1:], stdout, stderr)
 	case "list":

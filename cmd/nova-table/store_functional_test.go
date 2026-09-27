@@ -26,14 +26,14 @@ func TestARefusalSaysWhatTheInputWants(t *testing.T) {
 		{[]string{"create", "demo", "--columns", "a:rows", "--redis", addr}, `column a wants a projection of count, members, first, last, text or pct(<count column>), not "rows"`},
 		{[]string{"create", "demo", "--columns", "a", "--width", "b=3", "--redis", addr}, "--width names column b, which --columns does not declare"},
 		{[]string{"create", "bad name", "--columns", "a", "--redis", addr}, "the table name wants letters, digits, _ . and -"},
-		{[]string{"row", "--redis", addr}, "wants add, set or del"},
+		{[]string{"row", "--redis", addr}, "wants add, set, hide, show or del"},
 		{[]string{"row", "add", "demo", "--redis", addr}, "wants a table and a row: row add <table> <row>"},
-		{[]string{"row", "add", "demo", "r", "ready", "--redis", addr}, "a binding wants <col>=<key>"},
+		{[]string{"row", "add", "demo", "r", "ready=", "--redis", addr}, "a binding wants <col>=<key>"},
 		{[]string{"row", "add", "demo", "r", "ready=ws:s:ready", "--redis", addr}, "a row that binds a set wants --owner <verb>"},
 		{[]string{"cell", "--redis", addr}, "wants add <table> <row> <col> <member>"},
-		{[]string{"cell", "add", "demo", "r", "c", "--redis", addr}, "wants a table, a row, a column and a member"},
+		{[]string{"cell", "add", "demo", "r", "c", "--redis", addr}, "wants a table, a row, a column and one or more members"},
 		{[]string{"cell", "add", "demo", "r", "c", "m", "--score", "x", "--redis", addr}, `--score wants a number, got "x"`},
-		{[]string{"cell", "move", "demo", "r", "c", "--redis", addr}, "wants a table, a row, the column left, the column joined and a member"},
+		{[]string{"cell", "move", "demo", "r", "c", "--redis", addr}, "wants a table, a row, the column left, the column joined and one or more members"},
 		{[]string{"render", "--redis", addr}, "wants one table name: render <table>"},
 		{[]string{"render", "demo", "--width", "a=x", "--redis", addr}, "--width: width \"a=x\" wants col=n"},
 		{[]string{"watch", "--redis", addr}, "wants the tables to watch, comma-separated"},
@@ -112,7 +112,7 @@ func TestASittingThroughTheVerbs(t *testing.T) {
 		{[]string{"list"}, "TABLE LIST tables=1 trips=1\nTABLE table=jobs columns=4 rows=2\n"},
 		// a definition changed in place (set: footer, columns, rename; row set: a text cell), rows kept
 		{[]string{"set", "jobs", "--footer", "sum"}, "TABLE SET table=jobs footer=\"sum\" trips=1\n"},
-		{[]string{"set", "jobs", "--columns", "job:text:none,ready,working,who:members:union,pct:pct(ready):avg:ready%,note:text:none"}, "TABLE SET table=jobs columns=6 trips=1\n"},
+		{[]string{"set", "jobs", "--columns", "job:text:none,ready,working,who:members:union,pct:pct(ready):pooled:ready%,note:text:none"}, "TABLE SET table=jobs columns=6 trips=1\n"},
 		{[]string{"row", "set", "jobs", "build", "note=green"}, "TABLE ROW SET table=jobs row=build cols=1 trips=1\n"},
 		{[]string{"render", "jobs", "--hide-zero-rows"}, "jobs  | ready | working | who    | ready% | note\n" +
 			"------+-------+---------+--------+--------+------\n" +
