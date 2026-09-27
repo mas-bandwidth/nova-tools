@@ -51,6 +51,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `presence/` | friend heartbeat keys with a TTL | `go test ./internal/presence` | `go test ./internal/presence` |
 | `record/` | decision and execution records | `go test ./internal/record` | `go test ./internal/record` |
 | `records/` | database models and record formats | `go test ./internal/records` | `go test ./internal/records` |
+| `redisconn/` | the one way a nova tool opens its Redis connection: options from the environment, one bounded dial, trips counted, errors classified, no secret shown | `go test ./internal/redisconn` | `go test ./internal/redisconn` |
 | `redisfn/` | build, load and check a Redis function library from embedded Lua source | `go test ./internal/redisfn` | `go test ./internal/redisfn` |
 | `redisq/` | Redis transport queue | `go test ./internal/redisq` | `go test ./internal/redisq` |
 | `release/` | release packaging and manifest gates | `go test ./internal/release` | `go test ./internal/release` |
