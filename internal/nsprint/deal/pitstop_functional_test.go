@@ -6,7 +6,10 @@ import (
 	"context"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pitstop"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
+	"github.com/redis/go-redis/v9"
 )
 
 // TestPitstopDealPassPlansNothingUntilCleared is the dealer half of the
@@ -78,5 +81,37 @@ func TestPitstopDealPassPlansNothingUntilCleared(t *testing.T) {
 	}
 	if n := zcard(t, c, "s:"+sprint+":pool"); n != 0 {
 		t.Fatalf("pool = %d after the cleared pass, want 0", n)
+	}
+}
+
+// TestRedisSourceReadsPitstop: the source reads each open sprint's pit stop
+// key: present is stopped, absent is not (through ns_deal_input, so the
+// library is loaded).
+func TestRedisSourceReadsPitstop(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	addr := testutil.Start(t)
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = c.Close() })
+	if err := fn.Load(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []string{"a", "b"} {
+		c.SAdd(ctx, "sprints", s)
+		c.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: s})
+		c.HSet(ctx, "s:"+s, "status", "open")
+	}
+	c.HSet(ctx, pitstop.Key("a"), "by", "rowan", "why", "x", "at", "1")
+	in, err := RedisSource{Client: c}.Read(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, s := range in.Sprints {
+		got[s.Name] = s.Pitstop
+	}
+	if len(got) != 2 || !got["a"] || got["b"] {
+		t.Fatalf("pitstop by sprint = %v, want a stopped and b not", got)
 	}
 }

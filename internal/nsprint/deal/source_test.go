@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/redis/go-redis/v9"
 )
@@ -16,6 +17,10 @@ func throwawayRedis(t *testing.T) *redis.Client {
 	addr := testutil.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = c.Close() })
+	// the source reads through ns_deal_input: the library is loaded
+	if err := fn.Load(context.Background(), c); err != nil {
+		t.Fatalf("load fn: %v", err)
+	}
 	return c
 }
 

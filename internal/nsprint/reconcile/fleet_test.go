@@ -34,7 +34,7 @@ func TestFleetRefillReturnsOnUpOnly(t *testing.T) {
 
 	// 1. Initial pass with state DOWN: not counted as returned.
 	c.HSet(ctx, "bench:"+bench+":state", "state", "DOWN", "at", "1000")
-	ret, err := refill.benchReturns(ctx, []string{bench})
+	ret, err := refill.benchReturns(map[string]string{bench: c.HGet(ctx, "bench:"+bench+":state", "state").Val()}), error(nil)
 	if err != nil {
 		t.Fatalf("benchReturns (DOWN): %v", err)
 	}
@@ -44,7 +44,7 @@ func TestFleetRefillReturnsOnUpOnly(t *testing.T) {
 
 	// 2. Pass with state PROBING: beat is present, but state is PROBING -> not returned.
 	c.HSet(ctx, "bench:"+bench+":state", "state", "PROBING", "at", "1000")
-	ret, err = refill.benchReturns(ctx, []string{bench})
+	ret, err = refill.benchReturns(map[string]string{bench: c.HGet(ctx, "bench:"+bench+":state", "state").Val()}), error(nil)
 	if err != nil {
 		t.Fatalf("benchReturns (PROBING): %v", err)
 	}
@@ -54,7 +54,7 @@ func TestFleetRefillReturnsOnUpOnly(t *testing.T) {
 
 	// 3. Pass with state HELD: beat is present, but state is HELD -> not returned.
 	c.HSet(ctx, "bench:"+bench+":state", "state", "HELD", "at", "1000")
-	ret, err = refill.benchReturns(ctx, []string{bench})
+	ret, err = refill.benchReturns(map[string]string{bench: c.HGet(ctx, "bench:"+bench+":state", "state").Val()}), error(nil)
 	if err != nil {
 		t.Fatalf("benchReturns (HELD): %v", err)
 	}
@@ -64,7 +64,7 @@ func TestFleetRefillReturnsOnUpOnly(t *testing.T) {
 
 	// 4. Control: state transitions to UP -> bench is returned!
 	c.HSet(ctx, "bench:"+bench+":state", "state", "UP", "at", "1000")
-	ret, err = refill.benchReturns(ctx, []string{bench})
+	ret, err = refill.benchReturns(map[string]string{bench: c.HGet(ctx, "bench:"+bench+":state", "state").Val()}), error(nil)
 	if err != nil {
 		t.Fatalf("benchReturns (UP): %v", err)
 	}
@@ -73,7 +73,7 @@ func TestFleetRefillReturnsOnUpOnly(t *testing.T) {
 	}
 
 	// 5. Subsequent pass: state is still UP -> not returned again.
-	ret, err = refill.benchReturns(ctx, []string{bench})
+	ret, err = refill.benchReturns(map[string]string{bench: c.HGet(ctx, "bench:"+bench+":state", "state").Val()}), error(nil)
 	if err != nil {
 		t.Fatalf("benchReturns (still UP): %v", err)
 	}

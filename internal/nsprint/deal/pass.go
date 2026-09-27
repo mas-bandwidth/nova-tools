@@ -66,12 +66,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/metrics"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/benchrole"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pitstop"
 )
 
 // SSH states on the bench row (#2756 2.2 `bench:<b>:beat` ssh: ok, refused,
@@ -833,241 +831,109 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 	if c == nil {
 		return Input{}, fmt.Errorf("deal: nil redis client")
 	}
-	pipe := c.Pipeline()
-	clock := pipe.Time(ctx)
-	benchNames := pipe.SMembers(ctx, "benches")
-	order := pipe.ZRange(ctx, "sprint:order", 0, -1)
-	open := pipe.SMembers(ctx, "sprints")
-	// cfg:deal max_sessions rides the first round (#3706). It is optional:
-	// unset, unreadable (an ACL without cfg:*) or not a positive number, the
-	// pass uses its default. Its own error is the only one the round
-	// forgives; any other command's error (a lost connection, a NOPERM on the
-	// registries) fails the read as before.
-	maxSessions := pipe.HGet(ctx, MaxSessionsKey, "max_sessions")
-	// the sprint epoch (nova-tools#4238) rides this round: the benches'
-	// working sets below are keyed by it
-	epochCmd := pipe.HGet(ctx, ws.EpochKey, ws.EpochField)
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		if err := roundErr(maxSessions, clock, benchNames, order, open); err != nil {
-			return Input{}, err
-		}
-	}
-	epoch, err := ws.ParseEpoch(epochCmd.Val())
+	// One call (2026-09-27, Glenn: "You always need to batch redis"): the
+	// same reads, in the same order, run in the server by ns_deal_input
+	// (internal/nsprint/fn/lua/reconcile_reads.lua), which answers flat
+	// typed rows; the conversions below are the ones the six pipelined
+	// rounds applied before. cfg:deal is still optional (unreadable leaves
+	// the default) and a seat that cannot read consumers still deals, not
+	// enrolled, as before.
+	reply, err := c.FCall(ctx, "ns_deal_input", nil).StringSlice()
 	if err != nil {
-		return Input{}, err
+		return Input{}, fmt.Errorf("deal: ns_deal_input: %w", err)
 	}
-	in := Input{Now: clock.Val()}
-	if n, err := strconv.Atoi(maxSessions.Val()); err == nil && n > 0 && maxSessions.Err() == nil {
-		in.MaxSessions = n
-	}
-	openSet := map[string]bool{}
-	for _, s := range open.Val() {
-		openSet[s] = true
-	}
-	var sprintNames []string
-	for _, s := range order.Val() {
-		if openSet[s] {
-			sprintNames = append(sprintNames, s)
-		}
-	}
-	names := benchNames.Val()
-	sort.Strings(names)
+	return decodeInput(reply)
+}
 
-	pipe = c.Pipeline()
-
-	type benchCmds struct {
-		desired, beat, ssh *redis.MapStringStringCmd
-		state              *redis.StringCmd
-		working            *redis.IntCmd
-	}
-	bc := make([]benchCmds, len(names))
-	for i, b := range names {
-		bc[i] = benchCmds{
-			desired: pipe.HGetAll(ctx, "bench:"+b+":desired"),
-			beat:    pipe.HGetAll(ctx, "bench:"+b+":beat"),
-			state:   pipe.HGet(ctx, "bench:"+b+":state", "state"),
-			ssh:     pipe.HGetAll(ctx, RowKey(b)),
-			working: pipe.ZCard(ctx, ws.ConsumerKeyAt(epoch, "bench:"+b, "working")),
+// decodeInput reads ns_deal_input's rows into an Input.
+func decodeInput(reply []string) (Input, error) {
+	in := Input{}
+	arity := map[string]int{"now": 1, "max_sessions": 1, "bench": 13, "sprint": 7, "card": 14, "dep": 7}
+	sprintAt := map[string]int{}
+	seenDep := false
+	for i := 0; i < len(reply); {
+		tag := reply[i]
+		n, ok := arity[tag]
+		if !ok {
+			return Input{}, fmt.Errorf("deal: ns_deal_input: unexpected row %q at %d", tag, i)
 		}
-	}
-
-	type sprintCmds struct {
-		meta, policy, bp *redis.MapStringStringCmd
-		stop             *redis.IntCmd
-	}
-	sc := make([]sprintCmds, len(sprintNames))
-	for i, s := range sprintNames {
-		sc[i] = sprintCmds{
-			meta:   pipe.HGetAll(ctx, "s:"+s),
-			policy: pipe.HGetAll(ctx, "s:"+s+":policy"),
-			bp:     pipe.HGetAll(ctx, "s:"+s+":backpressure"),
-			stop:   pipe.Exists(ctx, pitstop.Key(s)),
+		if i+n >= len(reply) {
+			return Input{}, fmt.Errorf("deal: ns_deal_input: row %q at %d is short", tag, i)
 		}
-	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return Input{}, err
-	}
-	for i, name := range names {
-		d, beat, ssh := bc[i].desired.Val(), bc[i].beat.Val(), bc[i].ssh.Val()
-		slots, _ := strconv.Atoi(d["slots"])
-		ci, _ := strconv.Atoi(beat["ci"])
-		b := Bench{
-			Name:   name,
-			Host:   beat["host"],
-			User:   beat["user"],
-			Up:     bc[i].state.Val() == "UP",
-			Paused: d["paused"] == "1" || d["paused"] == "true",
-			Legs:   splitList(d["legs"]),
-			Slots:  slots,
-			Leased: int(bc[i].working.Val()),
-			CI:     ci,
-			SSH:    ssh["state"],
-			Role:   d[benchrole.Field],
-		}
-		if ms, err := strconv.ParseInt(ssh["at"], 10, 64); err == nil {
-			b.SSHAt = time.UnixMilli(ms)
-		}
-		in.Benches = append(in.Benches, b)
-	}
-	// Enrollment (#3998) in its own pipeline: a seat whose ACL cannot read
-	// consumers yet deals as before (not enrolled), never fails the pass.
-	if len(names) > 0 {
-		pipe = c.Pipeline()
-		enrolled := make([]*redis.BoolCmd, len(names))
-		for i, b := range names {
-			enrolled[i] = pipe.SIsMember(ctx, "consumers", "bench:"+b)
-		}
-		if _, err := pipe.Exec(ctx); err == nil {
-			for i := range in.Benches {
-				in.Benches[i].Enrolled = enrolled[i].Val()
+		v := reply[i+1 : i+1+n]
+		i += 1 + n
+		switch tag {
+		case "now":
+			ms, err := strconv.ParseInt(v[0], 10, 64)
+			if err != nil {
+				return Input{}, fmt.Errorf("deal: ns_deal_input: now %q: %w", v[0], err)
 			}
-		}
-	}
-	pipe = c.Pipeline()
-	pools := make([]*redis.ZSliceCmd, len(sprintNames))
-	waits := make([]*redis.StringSliceCmd, len(sprintNames))
-	var live []int
-	for i, s := range sprintNames {
-		if sc[i].meta.Val()["status"] != "open" {
-			continue
-		}
-		live = append(live, i)
-		// The pool is scored by age (created_at, #3692), not priority, so
-		// the whole pool is read (O(n)) and the priority comes from each
-		// record.
-		// the dealer's lists under the current epoch (nova-tools#4238): a
-		// card pushed after a clear is in the epoch's pool, an older one is not
-		pools[i] = pipe.ZRangeWithScores(ctx, ws.SprintListAt(epoch, s, "pool"), 0, -1)
-		waits[i] = pipe.SMembers(ctx, ws.SprintListAt(epoch, s, "waiting"))
-
-	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return Input{}, err
-	}
-	pipe = c.Pipeline()
-	type cardCmd struct {
-		sprint  int
-		label   string
-		score   float64
-		waiting bool
-		cmd     *redis.SliceCmd
-	}
-	var cards []cardCmd
-	fields := []string{"state", "leg", "tier", "bench", "depends_on", "repo", "base", "wait_why", "priority", "avoid"}
-	for _, i := range live {
-		for _, z := range pools[i].Val() {
-			label, _ := z.Member.(string)
-			cards = append(cards, cardCmd{i, label, z.Score, false, pipe.HMGet(ctx, "s:"+sprintNames[i]+":card:"+label, fields...)})
-		}
-		labels := waits[i].Val()
-		sort.Strings(labels)
-		for _, label := range labels {
-			cards = append(cards, cardCmd{i, label, 0, true, pipe.HMGet(ctx, "s:"+sprintNames[i]+":card:"+label, fields...)})
-		}
-	}
-	if len(cards) > 0 {
-		if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-			return Input{}, err
-		}
-	}
-	bySprint, waitBySprint := map[int][]Card{}, map[int][]Card{}
-	for _, cc := range cards {
-		v := cc.cmd.Val()
-		if str(v, 0) != "queued" {
-			continue
-		}
-		card := Card{
-			Sprint: sprintNames[cc.sprint], Label: cc.label, Age: cc.score,
-			Leg: str(v, 1), Tier: str(v, 2), Bench: str(v, 3),
-			DependsOn: splitDeps(str(v, 4)), Repo: str(v, 5), Base: str(v, 6), WaitWhy: str(v, 7),
-			Avoid: strings.Fields(str(v, 9)),
-		}
-		card.Priority, _ = strconv.ParseFloat(str(v, 8), 64)
-		if cc.waiting {
-			waitBySprint[cc.sprint] = append(waitBySprint[cc.sprint], card)
-			continue
-		}
-		bySprint[cc.sprint] = append(bySprint[cc.sprint], card)
-	}
-	// The cards named in DEPENDS-ON, one pipelined round (#3066).
-	type depCmd struct {
-		key string
-		cmd *redis.SliceCmd
-	}
-	var depCmds []depCmd
-	seenDep := map[string]bool{}
-	for _, group := range []map[int][]Card{bySprint, waitBySprint} {
-		for _, cs := range group {
-			for _, cd := range cs {
-				for _, e := range cd.DependsOn {
-					if e == "" || e == "-" || e == "none" {
-						continue
-					}
-					if _, _, ok := parseRef(e); ok {
-						continue
-					}
-					k := cd.Sprint + "/" + e
-					if seenDep[k] {
-						continue
-					}
-					seenDep[k] = true
-					depCmds = append(depCmds, depCmd{k, nil})
-				}
+			in.Now = time.UnixMilli(ms)
+		case "max_sessions":
+			if n, err := strconv.Atoi(v[0]); err == nil && n > 0 {
+				in.MaxSessions = n
 			}
-		}
-	}
-	if len(depCmds) > 0 {
-		sort.Slice(depCmds, func(a, b int) bool { return depCmds[a].key < depCmds[b].key })
-		pipe = c.Pipeline()
-		for i := range depCmds {
-			slash := strings.IndexByte(depCmds[i].key, '/')
-			S, label := depCmds[i].key[:slash], depCmds[i].key[slash+1:]
-			depCmds[i].cmd = pipe.HMGet(ctx, "s:"+S+":card:"+label, "state", "outcome", "repo", "base", "pr", "pushed_sha")
-		}
-		if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-			return Input{}, err
-		}
-		in.Deps = map[string]DepCard{}
-		for _, d := range depCmds {
-			v := d.cmd.Val()
-			if len(v) == 0 || v[0] == nil {
+		case "bench":
+			slots, _ := strconv.Atoi(v[6])
+			leased, _ := strconv.Atoi(v[7])
+			ci, _ := strconv.Atoi(v[8])
+			b := Bench{
+				Name:     v[0],
+				Host:     v[1],
+				User:     v[2],
+				Up:       v[3] == "UP",
+				Paused:   v[4] == "1" || v[4] == "true",
+				Legs:     splitList(v[5]),
+				Slots:    slots,
+				Leased:   leased,
+				CI:       ci,
+				SSH:      v[9],
+				Role:     v[11],
+				Enrolled: v[12] == "1",
+			}
+			if ms, err := strconv.ParseInt(v[10], 10, 64); err == nil {
+				b.SSHAt = time.UnixMilli(ms)
+			}
+			in.Benches = append(in.Benches, b)
+		case "sprint":
+			shareN, _ := strconv.Atoi(v[1])
+			on := v[2] == "ON" || v[3] == "1"
+			if v[4] != "1" {
+				// #2756 5.3: a missing hash applies the declared policy;
+				// "open" (fail-open) is OFF, "closed" is ON.
+				on = v[5] == "closed"
+			}
+			sprintAt[v[0]] = len(in.Sprints)
+			in.Sprints = append(in.Sprints, Sprint{Name: v[0], Share: shareN, Backpressure: on, Pitstop: v[6] != "0" && v[6] != ""})
+		case "card":
+			idx, ok := sprintAt[v[0]]
+			if !ok {
+				return Input{}, fmt.Errorf("deal: ns_deal_input: card %s of unknown sprint %s", v[2], v[0])
+			}
+			if v[4] != "queued" {
 				continue
 			}
-			pr, _ := strconv.Atoi(str(v, 4))
-			in.Deps[d.key] = DepCard{Found: true, State: str(v, 0), Outcome: str(v, 1), Repo: str(v, 2), Base: str(v, 3), PR: pr, PushedSHA: str(v, 5)}
+			card := Card{
+				Sprint: v[0], Label: v[2],
+				Leg: v[5], Tier: v[6], Bench: v[7],
+				DependsOn: splitDeps(v[8]), Repo: v[9], Base: v[10], WaitWhy: v[11],
+				Avoid: strings.Fields(v[13]),
+			}
+			card.Age, _ = strconv.ParseFloat(v[3], 64)
+			card.Priority, _ = strconv.ParseFloat(v[12], 64)
+			if v[1] == "waiting" {
+				in.Sprints[idx].Waiting = append(in.Sprints[idx].Waiting, card)
+			} else {
+				in.Sprints[idx].Pool = append(in.Sprints[idx].Pool, card)
+			}
+		case "dep":
+			if !seenDep {
+				in.Deps = map[string]DepCard{}
+				seenDep = true
+			}
+			pr, _ := strconv.Atoi(v[5])
+			in.Deps[v[0]] = DepCard{Found: true, State: v[1], Outcome: v[2], Repo: v[3], Base: v[4], PR: pr, PushedSHA: v[6]}
 		}
-	}
-	for _, i := range live {
-		policy, bp := sc[i].policy.Val(), sc[i].bp.Val()
-		shareN, _ := strconv.Atoi(policy["share"])
-		on := bp["state"] == "ON" || bp["read_bound"] == "1"
-		if len(bp) == 0 {
-			// #2756 5.3: a missing hash applies the declared policy; "open"
-			// (fail-open) is OFF, "closed" is ON.
-			on = policy["backpressure_missing"] == "closed"
-		}
-		in.Sprints = append(in.Sprints, Sprint{Name: sprintNames[i], Share: shareN, Backpressure: on,
-			Pitstop: sc[i].stop.Val() > 0, Pool: bySprint[i], Waiting: waitBySprint[i]})
 	}
 	return in, nil
 }

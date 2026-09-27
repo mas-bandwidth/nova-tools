@@ -29,7 +29,7 @@ import (
 // record.
 var reconcileTripBudget = map[string]int64{
 	"pass":            3,
-	"refill":          2,
+	"refill":          3, // the wake, the deal input, the ack
 	"dev-red":         1,
 	"done-already":    1,
 	"expire":          2,
@@ -38,7 +38,7 @@ var reconcileTripBudget = map[string]int64{
 	"land":            1,
 	"land-watch":      1,
 	"progress":        2,
-	"route":           2,
+	"route":           1,
 	"card-deal":       2,
 	"task-lease":      1,
 	"waiting-resolve": 2,

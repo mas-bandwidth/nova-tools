@@ -93,13 +93,18 @@ func TestRedisSourceRoundErrorsStillFail(t *testing.T) {
 	if err := nopool.ZCard(ctx, "s:"+parallelSprint+":pool").Err(); err == nil {
 		t.Fatal("the ACL fixture reads the pool: vacuous")
 	}
-	if in, err := (RedisSource{Client: nopool}).Read(ctx); err == nil || !strings.Contains(err.Error(), "NOPERM") {
+	// the refusal is the ACL's, through the function ("ACL failure in
+	// script: No permissions ...") as it was NOPERM on the wire
+	aclRefused := func(err error) bool {
+		return err != nil && (strings.Contains(err.Error(), "NOPERM") || strings.Contains(err.Error(), "No permissions"))
+	}
+	if in, err := (RedisSource{Client: nopool}).Read(ctx); !aclRefused(err) {
 		t.Fatalf("pool round refused: err %v input %+v, want the NOPERM", err, in)
 	}
 	// cfg:deal readable, the registries not: the first round fails even
 	// though max_sessions read fine.
 	noreg := user("noreg", "cfg:*", "s:*")
-	if in, err := (RedisSource{Client: noreg}).Read(ctx); err == nil || !strings.Contains(err.Error(), "NOPERM") {
+	if in, err := (RedisSource{Client: noreg}).Read(ctx); !aclRefused(err) {
 		t.Fatalf("registry round refused: err %v input %+v, want the NOPERM", err, in)
 	}
 	// A lost connection.
