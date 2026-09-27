@@ -22,22 +22,9 @@
 # TestReadCopyDealtToBenchRendersALintedCard), then by nine more from the redis
 # stream (seat and #3277 tests on t.Setenv); each owes a per-test seam. Moved
 # from the serialTestsCeiling constant into this file at 876, the count that day.
-# ceiling: 845
-cmd/nova-bus/decide_test.go:TestInboxDecideAnnotatesNotesAndSummarizes serial: t.Setenv
-cmd/nova-bus/decide_test.go:TestInboxDecideBoundsAndRedactsState serial: t.Setenv
-cmd/nova-bus/decide_test.go:TestInboxDecideEmptyInboxMakesNoProviderCalls serial: t.Setenv
-cmd/nova-bus/decide_test.go:TestInboxDecideNeverSendsAPrivateBusToAProvider serial: t.Setenv
-cmd/nova-bus/decide_test.go:TestInboxDecideStopAndHoldBypassProvider serial: t.Setenv
-cmd/nova-bus/decide_test.go:TestInboxDecideWakeTellsAcknowledgementFromAction serial: t.Setenv
+# ceiling: 832
 cmd/nova-bus/issue1451_test.go:TestIssue1451EveryBareVerbRefusalNamesTheDoor serial: t.Setenv
 cmd/nova-bus/main_test.go:TestReceiptMaxWordsDefaultsFromBusFileThenEnv serial: t.Setenv
-cmd/nova-bus/private_test.go:TestInboxDecideRedactsAssignmentShapedSecretsInTheBody serial: t.Setenv
-cmd/nova-bus/private_test.go:TestInboxDecideRedactsAssignmentShapedSecretsInTheSubject serial: t.Setenv
-cmd/nova-bus/private_test.go:TestPrivateBusDecideAnswersFromRulesWithZeroProviderCalls serial: t.Setenv
-cmd/nova-bus/private_test.go:TestPrivateBusRefusalNeverFallsBackToThePublicRoute serial: t.Setenv
-cmd/nova-bus/private_test.go:TestPrivateBusRefusesAPublicRouteBeforeAnyClientKeyOrCall serial: t.Setenv
-cmd/nova-bus/private_test.go:TestPrivateBusTreatsALocalLabelAsNoAdmissionAndMakesZeroNetworkCalls serial: t.Setenv
-cmd/nova-bus/private_test.go:TestPublicBusDecideOutputIsUnchanged serial: t.Setenv
 cmd/nova-bus/reply_test.go:TestAFilesystemWithNoCreateExclusivePublishIsRefused serial: swaps package var main.publishDraft
 cmd/nova-bus/reply_test.go:TestARelativeDraftDirInsideTheCheckoutIsRefused serial: t.Chdir
 cmd/nova-bus/reply_test.go:TestASecondReplyOnOneCheckoutWaitsAndThenRefuses serial: swaps package var main.checkoutLockWait

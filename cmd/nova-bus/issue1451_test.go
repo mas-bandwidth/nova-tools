@@ -56,7 +56,6 @@ func TestIssue1451EveryBareVerbRefusalNamesTheDoor(t *testing.T) {
 		{"nova-bus receipt", []string{"receipt", "--bus", busDir, "--as", "Ada", "--remote", "origin", "--branch", "main"}},
 		{"nova-bus close before", []string{"close", "--bus", busDir, "--as", "Ada", "--before", "not-an-instant"}},
 		{"nova-bus inbox advance", []string{"inbox", "--bus", busDir, "--as", "Ada", "--receipt-max-words", "1", "--advance"}},
-		{"nova-bus inbox floor", []string{"inbox", "--bus", busDir, "--as", "Ada", "--receipt-max-words", "1", "--decide", "--floor", "2"}},
 		{"nova-bus wait timeout", []string{"wait", "--bus", busDir, "--as", "Ada", "--remote", "origin", "--branch", "main", "--receipt-max-words", "1"}},
 		{"nova-bus check baseline", []string{"check", "--bus", busDir}},
 	} {
