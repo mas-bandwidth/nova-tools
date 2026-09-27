@@ -136,10 +136,10 @@ var messageBusAudit = audit.Config{
 		// regexp is redactSK's pattern and replacement: it returns a string that reaches
 		// the provider as the request body, never a stream this package prints to.
 		`"regexp"`,
-		// decide is --decide's provider client, whose Decide returns typed answers; the
+		// jevclient is --decide's provider transport, whose Decide returns typed answers; the
 		// only bytes it touches are the HTTP request body, and every value this package
 		// prints from an answer goes through oneline.Field or is numeric.
-		`"github.com/mas-bandwidth/nova-tools/internal/decide"`,
+		`"github.com/mas-bandwidth/nova-tools/internal/jevclient"`,
 		// questions is S7's shared redaction (Redact, SecretShaped): pure string
 		// functions over the provider-bound state. It holds no writer and reaches no
 		// stream; nothing it returns is printed.

@@ -56,8 +56,8 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
-	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/decide/questions"
+	"github.com/mas-bandwidth/nova-tools/internal/jevclient"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -1302,8 +1302,8 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	diagnostics := f.fs.Bool("diagnostics", false, "name every unreadable file with its reason, even ones already shown; the default collapses unchanged ones to one count line")
 	askDecide := f.fs.Bool("decide", false, "ask the provider for a typed kind, needs_reply and blocked on every INBOX NOTE line")
 	decideFloor := f.fs.Float64("floor", 0.9, "with --decide, the confidence floor below which a decision is only a suggestion")
-	decideKeyEnv := f.fs.String("key-env", decide.DefaultKeyEnv, "with --decide, the environment variable holding the provider key")
-	decideBaseURL := f.fs.String("base-url", decide.DefaultBaseURL, "with --decide, the provider endpoint; read on a public bus only")
+	decideKeyEnv := f.fs.String("key-env", jevclient.DefaultKeyEnv, "with --decide, the environment variable holding the provider key")
+	decideBaseURL := f.fs.String("base-url", jevclient.DefaultBaseURL, "with --decide, the provider endpoint; read on a public bus only")
 	if !f.parse(args, stderr, map[string]*string{"bus": busDir, "as": as}) {
 		return 2
 	}
@@ -2391,7 +2391,7 @@ type noteJudgment struct {
 // inboxDecider is the one method --decide needs from the provider client, so a test can
 // stand in a fake without a socket or a key.
 type inboxDecider interface {
-	Decide(ctx context.Context, state string, qs map[string]decide.Question) (map[string]decide.Answer, decide.Usage, error)
+	Decide(ctx context.Context, state string, qs map[string]jevclient.Question) (map[string]jevclient.Answer, jevclient.Usage, error)
 }
 
 // noteJudge is everything a listing asks of --decide, and the seam the two ROUTES meet at.
@@ -2430,7 +2430,7 @@ func newNoteJudge(o inboxOpts) noteJudge {
 type noteDecider struct {
 	o      inboxOpts
 	client inboxDecider
-	qs     map[string]decide.Question
+	qs     map[string]jevclient.Question
 	cache  map[string]noteJudgment
 	counts decideCounts
 }
@@ -2451,8 +2451,8 @@ func newNoteDecider(o inboxOpts) *noteDecider {
 }
 
 // inboxQuestions is the one question set --decide asks about every note.
-func inboxQuestions() map[string]decide.Question {
-	return map[string]decide.Question{
+func inboxQuestions() map[string]jevclient.Question {
+	return map[string]jevclient.Question{
 		"kind": {
 			Instructions: "Classify this note. start asks to begin work; done reports finished work; question asks and needs an answer; edge carries a structured signal that bypasses semantic filtering; refusal declines or forbids; receipt only acknowledges.",
 			Choice: map[string]string{
@@ -2510,7 +2510,7 @@ func (d *noteDecider) judge(e bus.OpenEntry) (noteJudgment, error) {
 	j, byRule := ruleRow(subject)
 	if !byRule {
 		if d.client == nil {
-			c, err := decide.New(d.o.baseURL, d.o.keyEnv)
+			c, err := jevclient.New(d.o.baseURL, d.o.keyEnv)
 			if err != nil {
 				return noteJudgment{}, err
 			}

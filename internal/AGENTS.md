@@ -31,6 +31,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `hygiene/` | clean checkout and leak assertions | `go test ./internal/hygiene` | `go test ./internal/hygiene` |
 | `jev/` | Jev's mechanical passes (lint, scope, base) as one JEV gate line | `go test ./internal/jev` | `go test ./internal/jev` |
 | `jevcalib/` | Jev prompt files and the calibration rule | `go test ./internal/jevcalib` | `go test ./internal/jevcalib` |
+| `jevclient/` | typed provider transport without policy or storage | `go test ./internal/jevclient` | `go test ./internal/jevclient` |
 | `jobs/` | background job queues and state | `go test ./internal/jobs` | `go test ./internal/jobs` |
 | `keyshape/` | cryptographic key format verification | `go test ./internal/keyshape` | `go test ./internal/keyshape` |
 | `landed/` | did the work land in the base branch | `go test ./internal/landed` | `go test ./internal/landed` |
