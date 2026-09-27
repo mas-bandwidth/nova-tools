@@ -425,8 +425,10 @@ do
     end)
     return rows
   end
-  -- T.rank(d, rows): the rows' order written as ranks 1..n, in one ZADD,
-  -- only when it differs from the order the store holds.
+  -- T.rank(d, rows): write ranks 1..n only when the stored order differs.
+  -- Bound each ZADD to 256 rows so neither ACL preflight nor execution
+  -- unpacks an unbounded argument list. Every chunk is still staged;
+  -- T.finish validates all of them before writing and emits one receipt.
   function T.rank(d, rows)
     local have = redis.call('ZRANGE', T.rowskey(d), 0, -1)
     local same = #have == #rows
@@ -436,8 +438,12 @@ do
     for i, row in ipairs(rows) do
       cmd[#cmd + 1] = tostring(i); cmd[#cmd + 1] = row
       for _, col in ipairs(d.cols) do d.cells[T.place(row, col.name)] = true end
+      if i % 256 == 0 then
+        d.commands[#d.commands + 1] = cmd
+        cmd = {'ZADD', T.rowskey(d)}
+      end
     end
-    d.commands[#d.commands + 1] = cmd
+    if #cmd > 2 then d.commands[#d.commands + 1] = cmd end
   end
   -- Untrimmed change streams are the receipt. All validation (including
   -- stream/revision bounds and ACLs) precedes all writes; XADD is last.
