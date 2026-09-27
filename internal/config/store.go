@@ -20,8 +20,7 @@ type Store interface {
 	// List reads every row of a kind, by name.
 	List(ctx context.Context, kind string) ([]Row, error)
 	// Insert adds a row. A row of that name is ErrExists; a ref field naming
-	// no row of its kind is ErrNoRef; a login another friend holds is
-	// ErrLoginTaken. It returns the history id.
+	// no row of its kind is ErrNoRef. It returns the history id.
 	Insert(ctx context.Context, kind string, row Row, actor string) (int64, error)
 	// Update changes the named fields of a row (ErrNotFound when there is
 	// none) and returns the row after and the history id.
@@ -34,7 +33,8 @@ type Store interface {
 	// Rev is the kind's revision: the greatest history id of the kind, 0
 	// when it has none. apply stamps it into Redis.
 	Rev(ctx context.Context, kind string) (int64, error)
-	// Counts is the row count per kind.
+	// Counts is the row count per kind that has many (a singleton kind is
+	// always one row and is left out).
 	Counts(ctx context.Context) (map[string]int, error)
 }
 
@@ -64,7 +64,6 @@ var (
 	ErrNotFound   = errors.New("not found")
 	ErrNoRef      = errors.New("names no row")
 	ErrReferenced = errors.New("is named by")
-	ErrLoginTaken = errors.New("login is taken")
 )
 
 // RefusedError is a store refusal with the words for the line: Err is one of
@@ -85,35 +84,16 @@ func Refused(err error) bool {
 }
 
 // checkRefs is the cross-row validation every store runs before a write:
-// a ref field must name a row of its kind, and a friend's logins must be
-// unique across friends and never a friend's name (presence.lua's
-// LOGIN-IS-FRIEND and LOGIN-TAKEN, refused here before Redis sees them).
+// a ref field must name a row of its kind (an optional one may be empty).
 func checkRefs(ctx context.Context, st Store, k *Kind, row Row) error {
 	for _, f := range k.Fields {
-		if f.Type != TypeRef {
+		if f.Type != TypeRef || (row.Fields[f.Name] == "" && !f.Required) {
 			continue
 		}
 		if _, found, err := st.Get(ctx, f.Ref, row.Fields[f.Name]); err != nil {
 			return err
 		} else if !found {
 			return &RefusedError{Err: ErrNoRef, Detail: fmt.Sprintf("--%s %s names no %s row", f.Name, row.Fields[f.Name], f.Ref)}
-		}
-	}
-	if k.Name != KindFriend {
-		return nil
-	}
-	rows, err := st.List(ctx, KindFriend)
-	if err != nil {
-		return err
-	}
-	for _, login := range Words(row.Fields["logins"]) {
-		for _, other := range rows {
-			if login == other.Name {
-				return &RefusedError{Err: ErrLoginTaken, Detail: fmt.Sprintf("--logins %s is a friend's name", login)}
-			}
-			if other.Name != row.Name && hasWord(other.Fields["logins"], login) {
-				return &RefusedError{Err: ErrLoginTaken, Detail: fmt.Sprintf("--logins %s is friend %s's login", login, other.Name)}
-			}
 		}
 	}
 	return nil
@@ -137,6 +117,9 @@ func checkReferenced(ctx context.Context, st Store, kind, name string) error {
 					names = append(names, r.Name)
 				}
 			}
+			if len(names) > 0 && other.Singleton {
+				return &RefusedError{Err: ErrReferenced, Detail: fmt.Sprintf("%s %s is the --%s of the %s", kind, name, f.Name, other.Name)}
+			}
 			if len(names) > 0 {
 				return &RefusedError{Err: ErrReferenced, Detail: fmt.Sprintf("%s %s is the --%s of %s %s", kind, name, f.Name, other.Name, strings.Join(names, ","))}
 			}
@@ -154,9 +137,21 @@ type Mem struct {
 	Now     func() time.Time
 }
 
-// NewMem returns an empty store.
+// NewMem returns an empty store: no rows of any kind but the singleton
+// kinds' one row each, as a migrated Postgres has.
 func NewMem() *Mem {
-	return &Mem{rows: map[string]map[string]Row{}, Now: func() time.Time { return time.Unix(1700000000, 0).UTC() }}
+	m := &Mem{rows: map[string]map[string]Row{}, Now: func() time.Time { return time.Unix(1700000000, 0).UTC() }}
+	for _, k := range Kinds {
+		if !k.Singleton {
+			continue
+		}
+		row := Row{Name: k.Name, Fields: map[string]string{}, CreatedAt: m.stamp(), UpdatedAt: m.stamp()}
+		for _, f := range k.Fields {
+			row.Fields[f.Name] = ""
+		}
+		m.rows[k.Name] = map[string]Row{k.Name: row}
+	}
+	return m
 }
 
 func (m *Mem) stamp() string { return m.Now().UTC().Format(time.RFC3339) }
@@ -280,7 +275,9 @@ func (m *Mem) Counts(_ context.Context) (map[string]int, error) {
 	defer m.mu.Unlock()
 	out := map[string]int{}
 	for _, k := range Kinds {
-		out[k.Name] = len(m.rows[k.Name])
+		if !k.Singleton {
+			out[k.Name] = len(m.rows[k.Name])
+		}
 	}
 	return out, nil
 }

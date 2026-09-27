@@ -136,6 +136,11 @@ func Apply(ctx context.Context, st Store, ap Applier, kind, actor string, check 
 	if err != nil {
 		return Result{}, err
 	}
+	if k.Derive != nil {
+		if rows, err = k.Derive(ctx, st, rows); err != nil {
+			return Result{}, err
+		}
+	}
 	rev, err := st.Rev(ctx, kind)
 	if err != nil {
 		return Result{}, err

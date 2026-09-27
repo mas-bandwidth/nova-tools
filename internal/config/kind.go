@@ -12,6 +12,7 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"sort"
@@ -39,9 +40,6 @@ const (
 	// TypeRef is the name of a row of another kind (Field.Ref), stored as
 	// text with a foreign key.
 	TypeRef Type = "ref"
-	// TypeWake is a friend's wake path: unit:<label>@<host>, human:<channel>
-	// or "" (internal/nsprint/friend.ParseWakePath's two shapes).
-	TypeWake Type = "wake"
 )
 
 // Field is one column of a kind: the flag `--<Name>` on add and set, the
@@ -72,6 +70,17 @@ type Kind struct {
 	Fields []Field
 	// Doc is the one sentence `nova-config kinds` prints about the kind.
 	Doc string
+	// Singleton is a kind of exactly one row, named as the kind is (the
+	// fleet: Glenn 2026-09-27, "in the fleet there is only one coordinator
+	// at a time"). Its migration creates the row, so the grammar has no add,
+	// remove or list and its set, show and history take no name
+	// (docs/SPEC-CONFIG.md, "Singleton kinds").
+	Singleton bool
+	// Derive, when set, is run by Apply on the kind's rows before they are
+	// planned: a value another kind's row decides (the sprint's coordinator
+	// as a friend's Redis role) is added here, so Redis holds it and the
+	// stored row does not. nil derives nothing.
+	Derive func(ctx context.Context, st Store, rows []Row) ([]Row, error)
 	// ApplyOrder sorts the rows of this kind for apply: a row with a lower
 	// number is written first. nil keeps name order. Friends put the
 	// coordinator first so ns_friend_roles' bootstrap has one.
@@ -82,66 +91,122 @@ type Kind struct {
 // registry key friends and machines already use in Redis.
 var NamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
-// loginPattern is a GitHub login (internal/nsprint/fn/lua/presence.lua's
-// alias rule): letters, digits and dashes, any case.
-var loginPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]*$`)
+// namesPattern is a word of a TypeNames list: letters, digits and dashes,
+// any case.
+var namesPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]*$`)
 
-// The two kinds of this cut (docs/SPEC-CONFIG.md lists the planned ones).
+// The four kinds of this cut (docs/SPEC-CONFIG.md lists the planned ones).
 const (
-	KindFriend  = "friend"
 	KindMachine = "machine"
+	KindFleet   = "fleet"
+	KindFriend  = "friend"
+	KindSprint  = "sprint"
 )
 
-// FriendRoles are the words ns_friend_roles accepts
-// (internal/nsprint/fn/lua/friend_roles.lua).
-var FriendRoles = []string{"builder", "coordinator", "may-hold", "reader"}
+// FriendRoles are the roles someone decides for a friend. The coordinator
+// role is not one: who coordinates is the sprint row's one field, and apply
+// derives the Redis role from it (Kind.Derive below), so ns_friend_roles
+// still sees exactly one coordinator.
+var FriendRoles = []string{"builder", "may-hold", "reader"}
 
-// MachineRoles are the roles column of the fleet registry (what a machine
-// IS, and so what may be placed on it).
-var MachineRoles = []string{"bench", "coordination", "ingress", "runner", "services"}
+// Tiers are the model tiers a friend can do, capacity.lua's filter_ok
+// spelling (frontier, pro, flash).
+var Tiers = []string{"flash", "frontier", "pro"}
 
-// OSArch are the os/arch words of the fleet registry.
-var OSArch = []string{"darwin/amd64", "darwin/arm64", "linux/arm64", "linux/x64"}
+// CoordinatorRole is the Redis role ns_friend_roles and the deal read
+// (friend:<f>:roles), derived at apply from the sprint row.
+const CoordinatorRole = "coordinator"
 
-// Kinds is the registry, in apply order: machines before friends, because a
-// friend's desired slots are guarded by its machine's ceiling
-// (ns_capacity_desired returns NOCEILING without one).
+// Kinds is the registry, in apply order: machines first, the fleet row next
+// (it names machines, and a friend's desired slots are charged to the
+// fleet's coordinator machine when her beat names none), friends, and the
+// sprint row last (it names a friend).
+//
+// A machine's record is exactly the declared facts something reads, one
+// reader each, and nothing invented (Glenn 2026-09-27: "I only want the
+// fleet to have actual defined useful things associated with each machine,
+// not invented rando stuff"). Its name is the tailnet host: `ssh <name>`
+// reaches it, so there is no address field ("All fleet machines must be on
+// the tailnet. This is a hard requirement."). Measured facts (os, arch,
+// cores, memory) are never typed: they come live from the machine's own
+// beat (Beat, docs/SPEC-CONFIG.md, "Declared and measured").
 var Kinds = []*Kind{
 	{
 		Name:  KindMachine,
 		Table: "machines",
-		Doc:   "a machine of the fleet: what it is, so what may be placed on it (the fleet registry's row)",
+		Doc:   "a machine of the fleet, named by its tailnet host: the login, the seat, and how many cards and runners it takes",
 		Fields: []Field{
-			{Name: "ssh", Type: TypeText, Required: true, Help: "the ssh host alias (or user@host) that reaches it"},
-			{Name: "os_arch", Type: TypeEnum, Required: true, Enum: OSArch, Help: "its platform: " + strings.Join(OSArch, ", ")},
-			{Name: "slots", Type: TypeInt, Required: true, Help: "the machine ceiling: the most desired slots its friends and benches may sum to (machine:<m>:ceiling)"},
-			{Name: "cores", Type: TypeInt, Help: "its cores, for the CI budget the ceiling derives (0 leaves the budget alone)"},
-			{Name: "roles", Type: TypeList, Enum: MachineRoles, Help: "comma list of " + strings.Join(MachineRoles, ", ")},
-			{Name: "seat", Type: TypeText, Help: "the nova-secrets seat on the machine, or none"},
-			{Name: "user", Type: TypeText, Help: "the account the bench runs as"},
-			{Name: "note", Type: TypeText, Help: "free text"},
+			{Name: "user", Type: TypeText, Required: true, Help: "the login the plays and seals use on it (ssh <user>@<name>)"},
+			{Name: "seat", Type: TypeText, Required: true, Help: "its nova-secrets seat (studio, swarm-hulk, ...)"},
+			{Name: "slots", Type: TypeInt, Required: true, Help: "how many cards it may run at once, the machine ceiling (machine:<m>:ceiling); 0 runs none"},
+			{Name: "runners", Type: TypeInt, Help: "how many CI runners it hosts; 0 (the default) hosts none"},
 		},
 	},
 	{
+		Name:      KindFleet,
+		Table:     "fleet",
+		Singleton: true,
+		Doc:       "the one row of fleet-wide facts: which machine is the store and which the coordinator",
+		Fields: []Field{
+			{Name: "store", Type: TypeRef, Ref: KindMachine, Help: "the machine that runs Redis and Postgres (a machine row), or empty"},
+			{Name: "coordinator", Type: TypeRef, Ref: KindMachine, Help: "the machine the coordinator's loops run on (a machine row), or empty"},
+		},
+	},
+	{
+		// A friend's row is what someone decides for her: how wide, which
+		// tiers, which roles. What she would just know (where she runs, her
+		// harness, her logins) is runtime data her own presence reports
+		// (Glenn 2026-09-27, docs/SPEC-CONFIG.md, "What a friend would just
+		// know").
 		Name:  KindFriend,
 		Table: "friends",
-		Doc:   "an AI friend: where it runs, how wide, how it is woken, its roles and the logins that are it",
+		Doc:   "an AI friend: how wide she runs, which tiers she can do, and her roles",
 		Fields: []Field{
-			{Name: "machine", Type: TypeRef, Ref: KindMachine, Required: true, Help: "the machine it runs on (a machine row)"},
-			{Name: "slots", Type: TypeInt, Required: true, Help: "its desired slots, under the machine ceiling"},
-			{Name: "harness", Type: TypeText, Help: "the harness it runs in (claude, opencode, codex, ...)"},
-			{Name: "wake", Type: TypeWake, Help: "how it is woken: unit:<label>@<host>, human:<channel>, or empty"},
-			{Name: "roles", Type: TypeList, Enum: FriendRoles, Help: "comma list of " + strings.Join(FriendRoles, ", ")},
-			{Name: "logins", Type: TypeNames, Help: "comma list of the GitHub logins that are this friend"},
-			{Name: "note", Type: TypeText, Help: "free text"},
+			{Name: "slots", Type: TypeInt, Required: true, Help: "her desired slots, under the ceiling of the machine her beat reports"},
+			{Name: "tiers", Type: TypeList, Enum: Tiers, Required: true, Help: "which tiers she can do: comma list of " + strings.Join(Tiers, ", ")},
+			{Name: "roles", Type: TypeList, Enum: FriendRoles, Help: "comma list of " + strings.Join(FriendRoles, ", ") + " (who coordinates is the sprint row's)"},
 		},
 		ApplyOrder: func(r Row) int {
-			if hasWord(r.Fields["roles"], "coordinator") {
+			if hasWord(r.Fields["roles"], CoordinatorRole) {
 				return 0
 			}
 			return 1
 		},
+		Derive: deriveCoordinator,
 	},
+	{
+		Name:      KindSprint,
+		Table:     "sprint",
+		Singleton: true,
+		Doc:       "the one row of sprint-global facts: which friend coordinates",
+		Fields: []Field{
+			{Name: "coordinator", Type: TypeRef, Ref: KindFriend, Help: "the friend who holds the coordinator role (a friend row), or empty; set it to hand over"},
+		},
+	},
+}
+
+// deriveCoordinator is the friend kind's Derive: the sprint row's
+// coordinator gets the coordinator role in the rows apply writes, so
+// friend:<f>:roles in Redis (what ns_friend_roles guards and the deal
+// reads) carries exactly one coordinator, and a handover (sprint set
+// --coordinator) is two SET lines on the next apply: the new coordinator's
+// roles first (ApplyOrder), then the old one's without it.
+func deriveCoordinator(ctx context.Context, st Store, rows []Row) ([]Row, error) {
+	sprint, _, err := st.Get(ctx, KindSprint, KindSprint)
+	if err != nil {
+		return nil, err
+	}
+	who := sprint.Fields["coordinator"]
+	out := make([]Row, 0, len(rows))
+	for _, r := range rows {
+		r = r.Clone()
+		if r.Name == who {
+			words, _ := splitList(r.Fields["roles"] + "," + CoordinatorRole)
+			r.Fields["roles"] = strings.Join(words, ",")
+		}
+		out = append(out, r)
+	}
+	return out, nil
 }
 
 // Lookup finds a kind by name.
@@ -263,37 +328,22 @@ func (f Field) Canonical(raw string) (string, error) {
 			return "", fmt.Errorf("--%s: %v", f.Name, err)
 		}
 		for _, w := range words {
-			if !loginPattern.MatchString(w) {
-				return "", fmt.Errorf("--%s %q: want a comma list of logins (letters, digits and dashes)", f.Name, w)
+			if !namesPattern.MatchString(w) {
+				return "", fmt.Errorf("--%s %q: want a comma list of names (letters, digits and dashes)", f.Name, w)
 			}
 		}
 		return strings.Join(words, ","), nil
 	case TypeRef:
 		if raw == "" {
-			return "", fmt.Errorf("--%s: want the name of a %s row", f.Name, f.Ref)
+			if f.Required {
+				return "", fmt.Errorf("--%s: want the name of a %s row", f.Name, f.Ref)
+			}
+			return "", nil
 		}
 		if err := ValidateName(raw); err != nil {
 			return "", fmt.Errorf("--%s: %v", f.Name, err)
 		}
 		return raw, nil
-	case TypeWake:
-		if raw == "" {
-			return "", nil
-		}
-		if rest, ok := strings.CutPrefix(raw, "unit:"); ok {
-			label, host, found := strings.Cut(rest, "@")
-			if !found || label == "" || host == "" || strings.ContainsAny(label+host, " \t@") {
-				return "", fmt.Errorf("--%s %q: want unit:<label>@<host>", f.Name, raw)
-			}
-			return raw, nil
-		}
-		if rest, ok := strings.CutPrefix(raw, "human:"); ok {
-			if rest == "" || strings.ContainsAny(rest, " \t") {
-				return "", fmt.Errorf("--%s %q: want human:<channel>", f.Name, raw)
-			}
-			return raw, nil
-		}
-		return "", fmt.Errorf("--%s %q: want unit:<label>@<host>, human:<channel> or empty", f.Name, raw)
 	}
 	return "", fmt.Errorf("--%s: unknown field type %q", f.Name, f.Type)
 }

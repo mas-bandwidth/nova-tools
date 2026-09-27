@@ -28,7 +28,7 @@ func redisApplier(t *testing.T) (*RedisApplier, *redis.Client) {
 	return &RedisApplier{Client: c}, c
 }
 
-// applyKinds applies machines then friends from st into ap.
+// applyKinds applies every kind in order from st into ap.
 func applyKinds(t *testing.T, st Store, ap Applier, actor string) map[string]Result {
 	t.Helper()
 	out := map[string]Result{}
@@ -43,63 +43,75 @@ func applyKinds(t *testing.T, st Store, ap Applier, actor string) map[string]Res
 }
 
 // TestApplyLeavesTheKeysCapacityFriendWould: after apply, Redis holds for a
-// friend exactly what `nova-sprint capacity friend`, `friend roles`,
-// `capacity friend --wake` and a hello's --login would have left: the
-// registry member, the desired hash under the ceiling, the roles hash, the
-// wakepath hash and the login map, plus nova-config's own config hash and
-// the stamp in config:decl.
+// friend exactly what `nova-sprint capacity friend --tiers` and `friend
+// roles` would have left: the registry member, the desired hash under the
+// ceiling of the machine she is charged to, and the roles hash with the
+// sprint's coordinator role on the one friend the sprint row names. Her
+// logins and wake path are her own presence's and are not written.
 func TestApplyLeavesTheKeysCapacityFriendWould(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	ap, c := redisApplier(t)
 	st := seed(t)
+	// stella's beat says she runs on hulk; rowan has no beat and is charged
+	// to the fleet's coordinator machine, studio.
+	c.HSet(ctx, FriendBeatKey("stella"), "host", "hulk", "at", "1790000000000")
 	res := applyKinds(t, st, ap, "rowan")
-	if res[KindMachine].Add != 2 || res[KindFriend].Add != 2 {
+	if res[KindMachine].Add != 2 || res[KindFriend].Add != 2 || res[KindFleet].Set != 1 || res[KindSprint].Set != 1 {
 		t.Fatalf("results %+v", res)
 	}
 
-	// The machine: the ceiling ns_capacity_machine writes and the registry
-	// hash nova-config owns.
-	if got := c.HGetAll(ctx, "machine:studio:ceiling").Val(); got["slots"] != "64" || got["cores"] != "32" || got["at"] == "" {
+	// The machine: the ceiling ns_capacity_machine writes (slots alone:
+	// cores and memory are never declared, so the ceiling carries none and
+	// no budget is derived) and the registry hash nova-config owns, exactly
+	// the four declared fields with the revision and time.
+	if got := c.HGetAll(ctx, "machine:studio:ceiling").Val(); got["slots"] != "64" || got["cores"] != "" || got["mem_gb"] != "" || got["at"] == "" {
 		t.Errorf("machine:studio:ceiling %v", got)
 	}
-	if got := c.HGetAll(ctx, "machine:hulk:ceiling").Val(); got["slots"] != "64" || got["cores"] != "" {
-		t.Errorf("machine:hulk:ceiling %v (cores 0 writes no cores)", got)
+	if c.Exists(ctx, "machine:studio:budget").Val() != 0 {
+		t.Error("a budget was derived from cores nobody declared")
 	}
-	if got := c.HGetAll(ctx, "machine:studio").Val(); got["ssh"] != "studio" || got["os_arch"] != "darwin/arm64" || got["rev"] != "2" || got["at"] == "" {
-		t.Errorf("machine:studio %v", got)
+	if got := c.HGetAll(ctx, "machine:studio").Val(); got["user"] != "glenn" || got["seat"] != "studio" || got["slots"] != "64" || got["runners"] != "1" || got["rev"] != "2" || got["at"] == "" || len(got) != 6 {
+		t.Errorf("machine:studio %v: want user, seat, slots, runners, rev, at and nothing else", got)
+	}
+	if got := c.HGetAll(ctx, "machine:hulk").Val(); got["user"] != "gaffer" || got["seat"] != "swarm-hulk" || got["runners"] != "0" {
+		t.Errorf("machine:hulk %v", got)
 	}
 	if members := c.SMembers(ctx, MachinesKey).Val(); len(members) != 2 {
 		t.Errorf("machines %v", members)
 	}
+	// The fleet and the sprint: one plain key per named field.
+	if got := c.Get(ctx, FleetKey("coordinator")).Val(); got != "studio" || c.Exists(ctx, FleetKey("store")).Val() != 0 {
+		t.Errorf("fleet:coordinator %q, fleet:store exists=%d", got, c.Exists(ctx, FleetKey("store")).Val())
+	}
+	if got := c.Get(ctx, SprintKey("coordinator")).Val(); got != "rowan" {
+		t.Errorf("sprint:coordinator %q", got)
+	}
 
-	// The friend: what the four nova-sprint verbs would have left.
+	// The friend: what capacity friend and friend roles would have left,
+	// and nothing her own presence writes.
 	if !c.SIsMember(ctx, FriendsKey, "rowan").Val() || !c.SIsMember(ctx, FriendsKey, "stella").Val() {
 		t.Error("friends registry lacks rowan or stella")
 	}
-	if got := c.HGetAll(ctx, "friend:rowan:desired").Val(); got["slots"] != "32" || got["machine"] != "studio" || got["paused"] != "0" || got["at"] == "" {
-		t.Errorf("friend:rowan:desired %v", got)
+	if got := c.HGetAll(ctx, "friend:rowan:desired").Val(); got["slots"] != "32" || got["machine"] != "studio" || got["tiers"] != "frontier" || got["paused"] != "0" || got["at"] == "" {
+		t.Errorf("friend:rowan:desired %v (charged to the coordinator machine: no beat)", got)
+	}
+	if got := c.HGetAll(ctx, "friend:stella:desired").Val(); got["slots"] != "32" || got["machine"] != "hulk" || got["tiers"] != "frontier,pro" {
+		t.Errorf("friend:stella:desired %v (charged to the host her beat reports)", got)
 	}
 	if got := c.HGetAll(ctx, "friend:rowan:roles").Val(); got["roles"] != "builder,coordinator" || got["by"] != "rowan" {
-		t.Errorf("friend:rowan:roles %v", got)
+		t.Errorf("friend:rowan:roles %v (the sprint's coordinator carries the role)", got)
 	}
 	if got := c.HGetAll(ctx, "friend:stella:roles").Val(); got["roles"] != "builder,reader" {
 		t.Errorf("friend:stella:roles %v", got)
 	}
-	if got := c.HGetAll(ctx, "friend:rowan:wakepath").Val(); got["kind"] != "unit" || got["unit"] != "rowan" || got["host"] != "studio" || got["notify"] != "" || got["declared_at"] == "" {
-		t.Errorf("friend:rowan:wakepath %v", got)
+	for _, key := range []string{"friend:rowan:wakepath", "friend:stella:wakepath", "friends:login", "friend:rowan:config"} {
+		if c.Exists(ctx, key).Val() != 0 {
+			t.Errorf("%s was written: it is the friend's own presence's, not configuration", key)
+		}
 	}
-	if c.Exists(ctx, "friend:stella:wakepath").Val() != 0 {
-		t.Error("stella has no wake path and a wakepath hash was written")
-	}
-	if got := c.HGetAll(ctx, LoginsKey).Val(); len(got) != 1 || got["rowan-claude"] != "rowan" {
-		t.Errorf("friends:login %v", got)
-	}
-	if got := c.HGetAll(ctx, FriendConfigKey("rowan")).Val(); got["harness"] != "" || got["note"] != "" || got["rev"] != "4" || got["at"] == "" {
-		t.Errorf("friend:rowan:config %v", got)
-	}
-	if got := c.HGetAll(ctx, DeclKey).Val(); got["rev:friend"] != "4" || got["rev:machine"] != "2" || got["at:friend"] == "" {
+	if got := c.HGetAll(ctx, DeclKey).Val(); got["rev:friend"] != "4" || got["rev:machine"] != "2" || got["rev:fleet"] != "5" || got["rev:sprint"] != "6" || got["at:friend"] == "" {
 		t.Errorf("config:decl %v", got)
 	}
 	// The receipts every capacity write leaves.
@@ -107,19 +119,28 @@ func TestApplyLeavesTheKeysCapacityFriendWould(t *testing.T) {
 		t.Errorf("cap:log has %d receipts, want one per desired and ceiling write at least", n)
 	}
 
-	// Read reads back exactly the views the rows are, so a second apply is
-	// a no-op and the stamp is unchanged.
-	views, rev, err := ap.Read(ctx, KindFriend)
-	if err != nil || rev != 4 {
-		t.Fatalf("read friends: rev %d err %v", rev, err)
-	}
-	rows, _ := st.List(ctx, KindFriend)
-	for _, row := range rows {
-		for f, want := range row.Fields {
-			if views[row.Name][f] != want {
-				t.Errorf("view of %s.%s = %q, row has %q", row.Name, f, views[row.Name][f], want)
+	// Read reads back exactly the views the rows are, for every kind, so a
+	// second apply is a no-op and the stamp is unchanged.
+	for _, kind := range KindNames() {
+		views, _, err := ap.Read(ctx, kind)
+		if err != nil {
+			t.Fatalf("read %s: %v", kind, err)
+		}
+		k, _ := Lookup(kind)
+		rows, _ := st.List(ctx, kind)
+		if k.Derive != nil {
+			rows, _ = k.Derive(ctx, st, rows)
+		}
+		for _, row := range rows {
+			for f, want := range row.Fields {
+				if views[row.Name][f] != want {
+					t.Errorf("view of %s %s.%s = %q, row has %q", kind, row.Name, f, views[row.Name][f], want)
+				}
 			}
 		}
+	}
+	if _, rev, err := ap.Read(ctx, KindFriend); err != nil || rev != 4 {
+		t.Fatalf("read friends: rev %d err %v", rev, err)
 	}
 	res = applyKinds(t, st, ap, "rowan")
 	if r := res[KindFriend]; r.Add+r.Set+r.Remove != 0 || r.Rev != 4 || r.RedisRev != 4 {
@@ -138,33 +159,51 @@ func TestApplySetsAndRemovesAFriend(t *testing.T) {
 	st := seed(t)
 	applyKinds(t, st, ap, "rowan")
 
-	// A set in Postgres: slots, a new login, the wake path cleared, a note.
-	if _, _, err := st.Update(ctx, KindFriend, "rowan", map[string]string{"slots": "30", "logins": "rowan-claude,rowan-bot", "wake": "", "note": "wider"}, "rowan"); err != nil {
+	// A set in Postgres: slots, tiers and a role.
+	if _, _, err := st.Update(ctx, KindFriend, "stella", map[string]string{"slots": "30", "tiers": "flash", "roles": "reader"}, "rowan"); err != nil {
 		t.Fatal(err)
 	}
 	res, err := Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {})
 	if err != nil || res.Set != 1 {
 		t.Fatalf("apply after set: %+v %v", res, err)
 	}
-	if got := c.HGet(ctx, "friend:rowan:desired", "slots").Val(); got != "30" {
-		t.Errorf("slots %s", got)
+	if got := c.HGetAll(ctx, "friend:stella:desired").Val(); got["slots"] != "30" || got["tiers"] != "flash" {
+		t.Errorf("stella desired %v", got)
 	}
-	if got := c.HGetAll(ctx, LoginsKey).Val(); got["rowan-bot"] != "rowan" || got["rowan-claude"] != "rowan" {
-		t.Errorf("logins %v", got)
+	if got := c.HGet(ctx, "friend:stella:roles", "roles").Val(); got != "reader" {
+		t.Errorf("stella roles %q", got)
 	}
-	if c.Exists(ctx, "friend:rowan:wakepath").Val() != 0 {
-		t.Error("a cleared wake path left its hash")
+
+	// The handover: the sprint names stella; the next friend apply gives
+	// her the role first and takes it from rowan, as rowan (who holds it).
+	if _, _, err := st.Update(ctx, KindSprint, KindSprint, map[string]string{"coordinator": "stella"}, "rowan"); err != nil {
+		t.Fatal(err)
 	}
-	if got := c.HGet(ctx, FriendConfigKey("rowan"), "note").Val(); got != "wider" {
-		t.Errorf("note %s", got)
+	var reported []string
+	res, err = Apply(ctx, st, ap, KindFriend, "rowan", false, func(op Op) { reported = append(reported, op.Name) })
+	if err != nil || res.Set != 2 || strings.Join(reported, " ") != "stella rowan" {
+		t.Fatalf("handover: %+v %v reported %v", res, err, reported)
+	}
+	if got := c.HGet(ctx, "friend:stella:roles", "roles").Val(); got != "coordinator,reader" {
+		t.Errorf("stella roles after the handover %q", got)
+	}
+	if got := c.HGet(ctx, "friend:rowan:roles", "roles").Val(); got != "builder" {
+		t.Errorf("rowan roles after the handover %q", got)
 	}
 
 	// A remove is refused while the friend holds a working copy, naming it,
 	// and nothing is written; the stamp stays behind.
+	if _, _, err := st.Update(ctx, KindSprint, KindSprint, map[string]string{"coordinator": "rowan"}, "stella"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Apply(ctx, st, ap, KindFriend, "stella", false, func(Op) {}); err != nil {
+		t.Fatalf("handover back as stella: %v", err)
+	}
 	if _, err := st.Delete(ctx, KindFriend, "stella", "rowan"); err != nil {
 		t.Fatal(err)
 	}
 	c.ZAdd(ctx, ws.ConsumerKeyAt(0, "friend:stella", "working"), redis.Z{Score: 1, Member: "card:4410"}, redis.Z{Score: 2, Member: "card:4414"})
+	c.HSet(ctx, "friend:stella:wakepath", "kind", "human", "notify", "#stella")
 	_, err = Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {})
 	if err == nil || !errors.Is(err, ErrWorking) || !Refused(err) {
 		t.Fatalf("remove with working copies: %v", err)
@@ -175,25 +214,116 @@ func TestApplySetsAndRemovesAFriend(t *testing.T) {
 	if !c.SIsMember(ctx, FriendsKey, "stella").Val() || c.Exists(ctx, "friend:stella:desired").Val() != 1 {
 		t.Fatal("a refused remove removed stella")
 	}
-	if got := c.HGet(ctx, DeclKey, "rev:friend").Val(); got != "5" {
-		t.Fatalf("stamp after a refused apply %s, want the previous 5", got)
+	if got := c.HGet(ctx, DeclKey, "rev:friend").Val(); got != "7" {
+		t.Fatalf("stamp after a refused apply %s, want the previous 7 (the handover moved the sprint kind, not this one)", got)
 	}
-	// The copies gone, the remove goes through and every key with it.
+	// The copies gone, the remove goes through: the keys apply wrote go,
+	// her own presence's stay.
 	c.Del(ctx, ws.ConsumerKeyAt(0, "friend:stella", "working"))
 	res, err = Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {})
 	if err != nil || res.Remove != 1 {
 		t.Fatalf("remove: %+v %v", res, err)
 	}
-	for _, key := range []string{"friend:stella:desired", "friend:stella:roles", "friend:stella:wakepath", FriendConfigKey("stella")} {
+	for _, key := range []string{"friend:stella:desired", "friend:stella:roles"} {
 		if c.Exists(ctx, key).Val() != 0 {
 			t.Errorf("%s survived the remove", key)
 		}
 	}
+	if c.Exists(ctx, "friend:stella:wakepath").Val() != 1 {
+		t.Error("the remove took her wake path, which is her presence's own")
+	}
 	if c.SIsMember(ctx, FriendsKey, "stella").Val() {
 		t.Error("stella is still in friends")
 	}
-	if got := c.HGet(ctx, DeclKey, "rev:friend").Val(); got != "6" {
+	if got := c.HGet(ctx, DeclKey, "rev:friend").Val(); got != "10" {
 		t.Fatalf("stamp after remove %s", got)
+	}
+}
+
+// TestApplyRefusesAFriendNobodyCanCharge: a friend with no beat and no
+// coordinator machine in the fleet row cannot be charged to a ceiling; the
+// refusal names the fleet set that fixes it and nothing is written.
+func TestApplyRefusesAFriendNobodyCanCharge(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	ap, c := redisApplier(t)
+	st := seed(t)
+	if _, _, err := st.Update(ctx, KindFleet, KindFleet, map[string]string{"coordinator": ""}, "rowan"); err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []string{KindMachine, KindFleet} {
+		if _, err := Apply(ctx, st, ap, kind, "rowan", false, func(Op) {}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, err := Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {})
+	if err == nil || !Refused(err) || !strings.Contains(err.Error(), "friend rowan has no beat naming a machine and the fleet names no coordinator machine to charge her slots to; run: nova-config fleet set --coordinator <machine>") {
+		t.Fatalf("nobody to charge: %v", err)
+	}
+	if c.SIsMember(ctx, FriendsKey, "rowan").Val() {
+		t.Fatal("a refused friend was registered")
+	}
+}
+
+// TestApplyWritesTheFleetKeysAndTheLiveFactsAreTheBeat: the fleet row is
+// two plain keys of nova-config's own, set or deleted as the row says; a
+// machine's measured facts are read from its beat and never written.
+func TestApplyWritesTheFleetKeysAndTheLiveFactsAreTheBeat(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	ap, c := redisApplier(t)
+	st := seed(t)
+	applyKinds(t, st, ap, "rowan")
+	if _, _, err := st.Update(ctx, KindFleet, KindFleet, map[string]string{"store": "hulk"}, "rowan"); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Apply(ctx, st, ap, KindFleet, "rowan", false, func(Op) {})
+	if err != nil || res.Set != 1 || res.Rev != 7 {
+		t.Fatalf("apply the fleet: %+v %v", res, err)
+	}
+	if got := c.Get(ctx, FleetKey("store")).Val(); got != "hulk" {
+		t.Errorf("fleet:store %q", got)
+	}
+	if got := c.Get(ctx, FleetKey("coordinator")).Val(); got != "studio" {
+		t.Errorf("fleet:coordinator %q", got)
+	}
+	if got := c.HGet(ctx, DeclKey, "rev:fleet").Val(); got != "7" {
+		t.Errorf("rev:fleet %s", got)
+	}
+	// Clearing a field deletes its key.
+	if _, _, err := st.Update(ctx, KindFleet, KindFleet, map[string]string{"store": ""}, "rowan"); err != nil {
+		t.Fatal(err)
+	}
+	res, err = Apply(ctx, st, ap, KindFleet, "rowan", false, func(Op) {})
+	if err != nil || res.Set != 1 {
+		t.Fatalf("apply the cleared store: %+v %v", res, err)
+	}
+	if c.Exists(ctx, FleetKey("store")).Val() != 0 || c.Get(ctx, FleetKey("coordinator")).Val() != "studio" {
+		t.Error("clearing the store did not delete fleet:store, or took the coordinator with it")
+	}
+
+	// The beats: hulk has beaten (today's fields), studio never has.
+	c.HSet(ctx, BeatKey("hulk"), "host", "hulk", "at", "1790000000000", "load1", "0.5", "ncpu", "64", "cpu", "3")
+	beats, err := ap.Beats(ctx, []string{"hulk", "studio"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b := beats["hulk"]; b == nil || b.Cores != "64" || b.OS != "" || b.Arch != "" || b.MemoryGB != "" || b.At != "2026-09-21T14:13:20Z" {
+		t.Errorf("hulk's beat %+v", b)
+	}
+	if beats["studio"] != nil {
+		t.Errorf("studio has no beat and one was read: %+v", beats["studio"])
+	}
+	// The follow-on fields are read when the beat carries them.
+	c.HSet(ctx, BeatKey("hulk"), "os", "linux", "arch", "amd64", "memory_gb", "251")
+	beats, _ = ap.Beats(ctx, []string{"hulk"})
+	if b := beats["hulk"]; b.OS != "linux" || b.Arch != "amd64" || b.MemoryGB != "251" {
+		t.Errorf("hulk's fuller beat %+v", b)
+	}
+	if c.Exists(ctx, BeatKey("hulk")).Val() != 1 || c.HGet(ctx, "machine:hulk", "os").Val() != "" {
+		t.Error("reading a beat wrote something")
 	}
 }
 
@@ -254,9 +384,8 @@ func TestApplyRefusesACeilingAndAMachineInUse(t *testing.T) {
 	if err == nil || !errors.Is(err, ErrCeiling) || !strings.Contains(err.Error(), "CEILING studio: its friends and benches desire 64 slots and the row says 10") {
 		t.Fatalf("ceiling below the sum: %v", err)
 	}
-	// A machine that Redis still has consumers on cannot be removed
-	// (Postgres refuses the row's removal first; here the Redis side is
-	// exercised directly).
+	// A machine that Redis still has consumers on cannot be removed (here
+	// the Redis side is exercised directly).
 	err = ap.Remove(ctx, KindMachine, "studio", "rowan", "test")
 	if err == nil || !errors.Is(err, ErrInUse) || !strings.Contains(err.Error(), "machine studio still carries friend:rowan,friend:stella in Redis") {
 		t.Fatalf("remove a machine in use: %v", err)
@@ -271,11 +400,12 @@ func TestApplyNeedsTheCoordinatorRoleForRoles(t *testing.T) {
 	st := seed(t)
 	// The actor is not a friend at all: the first roles write refuses.
 	var reported bytes.Buffer
-	_, err := Apply(ctx, st, ap, KindMachine, "nobody", false, func(Op) {})
-	if err != nil {
-		t.Fatal(err)
+	for _, kind := range []string{KindMachine, KindFleet} {
+		if _, err := Apply(ctx, st, ap, kind, "nobody", false, func(Op) {}); err != nil {
+			t.Fatal(err)
+		}
 	}
-	_, err = Apply(ctx, st, ap, KindFriend, "nobody", false, func(op Op) { reported.WriteString(op.Name + " ") })
+	_, err := Apply(ctx, st, ap, KindFriend, "nobody", false, func(op Op) { reported.WriteString(op.Name + " ") })
 	if err == nil || !errors.Is(err, ErrActor) || !strings.Contains(err.Error(), "--as nobody is not a registered friend") {
 		t.Fatalf("roles as nobody: %v", err)
 	}
