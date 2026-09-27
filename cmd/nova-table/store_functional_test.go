@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/redis/go-redis/v9"
 	"strings"
 	"testing"
@@ -184,5 +185,45 @@ func TestABoundCellIsAViewTheWritesRefuse(t *testing.T) {
 	}
 	if mr.Exists(ctx, "ws:s:working").Val() != 0 {
 		t.Fatal("a refused move created the bound working set")
+	}
+}
+
+func TestBoundRefusalPrintsTheStoredKey(t *testing.T) {
+	t.Parallel()
+	addr := firstRunStore(t)
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() {
+		if err := c.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	for _, args := range [][]string{
+		{"create", "machines", "--columns", "ready,working"},
+		{"row", "add", "machines", "batman"},
+	} {
+		if code, _, stderr := runTable(at(addr, args...)...); code != 0 {
+			t.Fatalf("setup %v: %d %q", args, code, stderr)
+		}
+	}
+	allBytes := make([]byte, 256)
+	for i := range allBytes {
+		allBytes[i] = byte(i)
+	}
+	for _, key := range []string{"bench:batman:cards:ready", "external:" + string(allBytes)} {
+		if err := c.HSet(context.Background(), "table:machines:row:batman", "key:ready", key).Err(); err != nil {
+			t.Fatal(err)
+		}
+		for _, args := range [][]string{
+			{"cell", "add", "machines", "batman", "ready", "m"},
+			{"cell", "remove", "machines", "batman", "ready", "m"},
+			{"cell", "move", "machines", "batman", "ready", "working", "m"},
+			{"clear", "machines"},
+		} {
+			code, stdout, stderr := runTable(at(addr, args...)...)
+			want := "machines.batman.ready is bound to " + oneline.Escape(key) + ", owned elsewhere"
+			if code != 1 || stdout != "" || !strings.Contains(stderr, want) || strings.Count(stderr, "\n") != 1 {
+				t.Fatalf("%v key=%q: exit=%d stdout=%q stderr=%q", args, key, code, stdout, stderr)
+			}
+		}
 	}
 }

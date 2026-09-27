@@ -286,6 +286,16 @@ reader role. Custom epoch/record namespaces require their own key grants. The st
 `ns_oset_move`. `SCARD` and `SISMEMBER` preflight the registry type before
 multi-key writes. No command silently loads a library or changes live grants.
 
+Redis functions run with the caller's ACL permissions. A writer's underlying
+command grants also allow those same commands directly; Redis ACLs cannot make
+`ZADD` on a key legal only inside `FCALL`. The record/set/receipt contract therefore
+assumes trusted writers using the functions, starting from valid state. `check`
+detects covered forms of drift, but does not prevent an authorized raw writer
+from creating it. Enforcing a function-only boundary for untrusted clients needs
+a gateway holding private writer credentials, with clients unable to write those
+keys directly. A dedicated Redis username whose credentials clients possess
+does not provide that boundary. See the [Redis Lua ACL reference](https://redis.io/docs/latest/develop/programmability/lua-api/#redisacl_check_cmdcommand-arg).
+
 A refused move of an absent member, for example, names its exact source and
 suggests `nova-table cell members <table> <row> <source-column>`; it does not
 suggest replaying a write whose preconditions have not been checked.

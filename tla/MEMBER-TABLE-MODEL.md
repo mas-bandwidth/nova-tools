@@ -56,3 +56,15 @@ Keep every baseline Lua witness. Reverse the desired-contract outcomes against t
 ## Recorded local result (2026-09-27, Studio)
 
 The final default suite completed in **83.96 seconds**, all queues exhausted in the positive cases: member large 11,372,299 generated / 372,127 distinct states; member fixed point 15,518 / 263; epoch large 15,971,793 / 198,223; epoch fixed point 3,323,874 / 17,397. All four deliberately broken controls failed for the expected named property. The run used four workers for positive cases, one for controls, Java 27 and tla2tools v1.7.4 (TLC 2.19). Counts are evidence for these exact instances, not a scale-independent proof. Rowan's independent candidate-model read is still pending.
+
+
+## Implementation trace check
+
+The implementation in the table member-contract change is exercised by
+`check_member_replay.py`. Its generated harness applies the existing named
+`EpochMemberTable` actions, compares each abstract state to actual Redis
+record/set/shape snapshots, and replays the captured receipts into a fresh
+store. It covers selected accepted, refused and no-op actions in two epochs;
+see `README.md` for the exact boundary and mutation controls. The model remains
+an abstraction of valid initial states, not a proof of arbitrary Redis failure
+rollback, allocation/ID reuse, or card lifecycle semantics.

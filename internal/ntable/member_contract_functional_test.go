@@ -238,6 +238,89 @@ func TestMemberRecordFailureDoesNotPartiallyWrite(t *testing.T) {
 	})
 }
 
+// Redis executes functions with the caller's ACL. A command grant is not a
+// function-only grant: a seat holding it can also issue the raw command.
+func TestTableWriterACLUsesCallerPermissions(t *testing.T) {
+	t.Parallel()
+	c, tb := memberFixture(t)
+	ctx := context.Background()
+	if err := c.ACLSetUser(ctx, "writer", "on", ">test-password", "~*", "&*", "+@all", "-zadd").Err(); err != nil {
+		t.Fatal(err)
+	}
+	opts := *c.Options()
+	opts.Username, opts.Password = "writer", "test-password"
+	writer := redis.NewClient(&opts)
+	t.Cleanup(func() {
+		if err := writer.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	key := ntable.CellKey(tb.Name, "build", "working")
+	before := memberStoreImage(t, c)
+	if err := writer.ZAdd(ctx, key, redis.Z{Score: 1, Member: "raw"}).Err(); err == nil || !strings.Contains(err.Error(), "NOPERM") {
+		t.Fatalf("raw write without ZADD grant = %v", err)
+	}
+	if _, err := ntable.CellAdd(ctx, writer, tb.Name, "build", "working", "through-function", 1); err == nil || !strings.Contains(err.Error(), "NOPERM") {
+		t.Fatalf("function write without ZADD grant = %v", err)
+	}
+	if !reflect.DeepEqual(before, memberStoreImage(t, c)) {
+		t.Fatal("denied write changed the store")
+	}
+	if err := c.ACLSetUser(ctx, "writer", "+zadd").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ntable.CellAdd(ctx, writer, tb.Name, "build", "working", "through-function", 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ntable.Check(ctx, c, tb.Name); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.ZAdd(ctx, key, redis.Z{Score: 2, Member: "raw"}).Err(); err != nil {
+		t.Fatalf("same grant did not permit the raw command: %v", err)
+	}
+	if _, err := ntable.Check(ctx, c, tb.Name); !errors.Is(err, ntable.ErrDrift) {
+		t.Fatalf("raw write bypass was not detected: %v", err)
+	}
+}
+
+// A refusal must preserve the stored key byte-for-byte, even for a binding
+// installed by another tool. CLI output escapes terminal control bytes later.
+func TestBoundRefusalPreservesStoredKey(t *testing.T) {
+	t.Parallel()
+	c, tb := memberFixture(t)
+	ctx := context.Background()
+	allBytes := make([]byte, 256)
+	for i := range allBytes {
+		allBytes[i] = byte(i)
+	}
+	for _, key := range []string{"bench:batman:cards:ready", "external:" + string(allBytes)} {
+		if err := c.HSet(ctx, ntable.RowKey(tb.Name, "test"), "key:ready", key).Err(); err != nil {
+			t.Fatal(err)
+		}
+		before := memberStoreImage(t, c)
+		for _, verb := range []string{"add", "remove", "move", "clear"} {
+			var err error
+			switch verb {
+			case "add":
+				_, err = ntable.CellAdd(ctx, c, tb.Name, "test", "ready", "m2", 1)
+			case "remove":
+				_, err = ntable.CellRemove(ctx, c, tb.Name, "test", "ready", "m2")
+			case "move":
+				_, err = ntable.CellMove(ctx, c, tb.Name, "test", "ready", "working", "m2")
+			case "clear":
+				_, err = ntable.Clear(ctx, c, tb.Name)
+			}
+			var bound *ntable.BoundError
+			if !errors.As(err, &bound) || bound.Key != key || !strings.Contains(err.Error(), key) {
+				t.Fatalf("%s lost bound key %q: %v", verb, key, err)
+			}
+			if !reflect.DeepEqual(before, memberStoreImage(t, c)) {
+				t.Fatalf("%s changed store on bound refusal", verb)
+			}
+		}
+	}
+}
+
 // T6: corruption left by the old lossy Bind must not become a ghost when
 // an unbound row is recreated. Refuse until an explicit migration repairs it.
 func TestHiddenOwnedCellRefusesShapeAndRemoval(t *testing.T) {
