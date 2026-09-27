@@ -227,40 +227,6 @@ func TestControl2929PushTakeFromSeat(t *testing.T) {
 		}
 	})
 
-	t.Run("hello_claims_as_initiator", func(t *testing.T) {
-		f := newSeat(t)
-		f.client.Del(ctx, "friend:b:beat")
-		f.client.HSet(ctx, "friend:b:desired", "slots", 2, "machine", "m2929")
-		f.client.HSet(ctx, "machine:m2929:ceiling", "slots", 8)
-		f.as("a")
-		f.push("b", "h1")
-		before := f.xlen()
-		hello := []string{"friend", "hello", "--as", "b", "--once", "--host", "m2929", "--session", "sess-b"}
-		f.run(2, "want --as equal to NOVA_FRIEND", hello...)
-		if n := f.client.Exists(ctx, "friend:b:beat").Val(); n != 0 {
-			t.Fatalf("friend:b:beat exists after a refused hello")
-		}
-		if got := f.xlen(); got != before {
-			t.Fatalf("log grew by %d; want unchanged", got-before)
-		}
-		f.wantOpen("h1")
-
-		f.as("b")
-		out := f.run(0, "", hello...)
-		want := regexp.MustCompile(`^b up slots=2 taken=1\nCLAIMED ` + seatSprint + `/h1 attempt=1 token=1\.[0-9a-f]{32}\n$`)
-		if !want.MatchString(out) {
-			t.Fatalf("hello stdout %q; want b up slots=2 taken=1 and CLAIMED %s/h1", out, seatSprint)
-		}
-		f.wantReceipt("task take", "b", "b")
-		for _, stream := range []string{f.log, "cap:log"} {
-			for _, m := range f.client.XRange(ctx, stream, "-", "+").Val() {
-				if m.Values["actor"] == "friend" {
-					t.Fatalf("%s has a receipt with actor=friend: %v", stream, m.Values)
-				}
-			}
-		}
-	})
-
 	t.Run("push_to_down_friend_refused", func(t *testing.T) {
 		f := newSeat(t)
 		const marker = "out-of-credits@2026-09-23T21:00:00Z"

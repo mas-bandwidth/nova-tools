@@ -24,21 +24,18 @@ import (
 func init() {
 	register(Verb{
 		Name:    "capacity",
-		Summary: "set a friend, bench or machine slot budget under the machine ceiling",
+		Summary: "set a bench or machine slot budget under the machine ceiling (a friend's is nova-config's; owed to nova-fleet)",
 		Run:     runCapacity,
 	})
 }
 
 func runCapacity(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
-		return refuse(errOut, "capacity", "want friend, bench, machine, budget, take, give, renew, reap or hook")
+		return refuse(errOut, "capacity", "want bench, machine, budget, take, give, renew, reap or hook")
 	}
 	switch args[0] {
 	case "friend":
-		if hasWakeFlag(args[1:]) {
-			return runCapacityWake(ctx, args[1:], out, errOut) // friend.go (#3101)
-		}
-		return runCapacityDesired(ctx, capacity.KindFriend, args[1:], out, errOut)
+		return refuse(errOut, "capacity", "capacity friend is gone: a friend's slots, machine, roles and wake path are nova-config's (nova-config friend set, then nova-config apply)")
 	case "bench":
 		return runCapacityDesired(ctx, capacity.KindBench, args[1:], out, errOut)
 	case "machine":
@@ -56,7 +53,7 @@ func runCapacity(ctx context.Context, args []string, out, errOut io.Writer) int 
 	case "hook":
 		return runCapacityHook(ctx, args[1:], out, errOut)
 	default:
-		return refuse(errOut, "capacity", fmt.Sprintf("unknown subverb %s", args[0]))
+		return refuse(errOut, "capacity", fmt.Sprintf("unknown subverb %s; want bench, machine, budget, take, give, renew, reap or hook", args[0]))
 	}
 }
 

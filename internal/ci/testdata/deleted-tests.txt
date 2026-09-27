@@ -11,3 +11,12 @@ internal/ci/testdata/class-tests.txt the tree-resident list of class tests went 
 tools/testdur/budget_test.go TestFastSuiteUnderOneMinute was a second time budget (60 s over docs/TEST-DURATIONS.md); #4413 keeps one, nova-ci slowtests, enforced on the nightly space legs
 tools/testdur/platform_budget_test.go the budget-factor shapes of that second budget; its one record-shape case, TestOnlyTheTableUnderTheHeadingIsTheMeasurement, moved to benches_test.go (#4413)
 internal/nsprint/store/census_cards_functional_test.go census --sprint is refused whatever the s:<S>:card family holds and reads nothing (#4411); the card census read this file drove is gone, and cmd/nova-sprint TestCensusSprintVerb and TestOneCountRetiredFamilyProbe run the refusal
+cmd/nova-sprint/friend_test.go the friend report, show, sweep and capacity friend --wake verbs are gone (nova-friend and nova-config own them; Glenn 2026-09-27: delete the old friend and fleet verbs)
+cmd/nova-sprint/friend_roles_test.go friend roles is gone (nova-config friend set writes roles through ns_friend_roles, which stays)
+cmd/nova-sprint/friend_beatloop_test.go friend pull, done and beat are gone (nova-friend pull, done and here); the beat loop's library, life.BeatLoop, stays with its own tests
+cmd/nova-sprint/friend_beatloop_functional_test.go friend pull, done and beat are gone (nova-friend pull, done and here); life.BeatLoop's functional tests stay in internal/nsprint/life
+cmd/nova-sprint/friend_copies_functional_test.go friend pull, done and beat are gone (nova-friend); the copy moves they ran, card work, end and beat, keep their own tests
+cmd/nova-sprint/life_test.go life event, life wake-mode and the friend hello presence loop are gone (nova-friend here); ns_friend_event and ns_friend_wakemode stay with internal/nsprint/life's tests
+cmd/nova-sprint/wakehealth_test.go friend declare and friend wake-health are gone (nova-config apply writes the wake paths; preflight 7.18 reads them); life.RepairWake keeps its tests in internal/nsprint/life
+cmd/nova-sprint/owner_doors_functional_test.go friend beat and friend pull are gone (nova-friend); the observed-owner door is pinned in internal/nsprint/life/owner_doors_functional_test.go
+cmd/nova-sprint/owner_refusal_test.go friend beat's owner refusal printing went with the verb (nova-friend)

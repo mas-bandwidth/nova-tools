@@ -50,7 +50,7 @@ func runWidth(ctx context.Context, args []string, out, errOut io.Writer) int {
 			return refuse(errOut, "width", err.Error())
 		}
 		if !rows[0].Measured && !rows[0].Declared {
-			return refuse(errOut, "width", fmt.Sprintf("friend %s has no fillstate and no desired slots (set them with capacity friend)", *as))
+			return refuse(errOut, "width", fmt.Sprintf("friend %s has no fillstate and no desired slots (set them with nova-config friend set, then nova-config apply)", *as))
 		}
 		fmt.Fprintln(out, rows[0].Line(nowMs))
 		return 0

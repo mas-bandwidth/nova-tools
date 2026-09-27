@@ -62,8 +62,8 @@ done moves working -> merging when the task names a PR (its pr field or --pr), e
 take, done, beat and cancel are card work, end, beat and cancel for a friend's consumer copies
 (<primary>~<n>, #3929): take works the friend's ready copies first, then takes friend-queue
 tasks; done of a copy returns it to its primary (--pr <n> --head <sha>: the primary is review).
-take records --model, --harness and --child on each copy it works and keeps the friend's one
-beat loop running (a BEATLOOP line, as friend pull and card work print).
+take records --model, --harness and --child on each copy it works; a friend's beat is its
+own runtime's (nova-friend), never this verb's.
 land moves merging (or working) -> landed at the merge sha; a stitch's land lands its plan
 and the receipt adds parent=<plan> ref=<repo#n> origin=<url>; land --stream moves every
 member of ws:<s>:merging and prints LANDED <id> ref=<repo#n> origin=<url> per member (the
@@ -378,13 +378,8 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 			}
 			got = append(got, more...)
 		}
-		// the friend's one beat loop, as friend pull and card work keep it
-		code := 0
-		if !printFriendBeat(ctx, cl, k, redisArg(*c.redis), out) {
-			code = 1
-		}
 		_, _ = fmt.Fprintf(out, "TASK take n=%d ids=%s ms=%d\n", len(got), strings.Join(got, ","), ms())
-		return code
+		return 0
 	case "beat":
 		beat := taskcard.Beat
 		if taskcard.IsCopy(*c.id) { // card beat --as friend:<f> (#3929)
@@ -406,7 +401,7 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 			// (#4313): this door has no checkout, so it names the ones
 			// that run the gate (nova-tools#4401 read, DOORS).
 			if *c.pr != "" && cl.HGet(ctx, taskcard.Key(*c.id), "leg").Val() != "read" {
-				return refused(&taskcard.Refused{Why: card.GateNoTest + " task done --pr of a code copy skips the spec gate: nova-sprint friend done --as friend:<f> --id " + *c.id +
+				return refused(&taskcard.Refused{Why: card.GateNoTest + " task done --pr of a code copy skips the spec gate: nova-friend done --as friend:<f> --id " + *c.id +
 					" --ok --pr <repo>#<n> --head <sha> --repo <your checkout at that head> [--test <finding test>] runs it before the end"})
 			}
 			r := taskcard.EndRequest{IDs: []string{*c.id}, OK: true, PR: *c.pr, Head: *c.head, By: *c.actor,
