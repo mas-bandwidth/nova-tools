@@ -61,10 +61,27 @@ func oneLine(t *testing.T, what, out string) {
 		t.Errorf("%s: not valid UTF-8: %q", what, out)
 	}
 	for _, r := range out {
-		if unicode.IsControl(r) || breaksALine(r) || reordersALine(r) {
+		if mustBeEscaped(r) {
 			t.Errorf("%s: holds %U: %q", what, r, out)
 		}
 	}
+}
+
+// mustBeEscaped is the oracle's own statement of what may not reach a line,
+// by code point, sharing nothing with the package's breaksALine and
+// reordersALine: a classification bug there must not be one here as well.
+func mustBeEscaped(r rune) bool {
+	switch {
+	case unicode.IsControl(r): // Cc: C0, DEL, C1
+		return true
+	case r == 0x2028, r == 0x2029: // the line and paragraph separators
+		return true
+	case r >= 0x202a && r <= 0x202e: // the bidi embeddings and overrides
+		return true
+	case r >= 0x2066 && r <= 0x2069: // the bidi isolates
+		return true
+	}
+	return false
 }
 
 func TestPropertyEscapeIsOneLineAndLeavesCleanTextAlone(t *testing.T) {
@@ -77,7 +94,7 @@ func TestPropertyEscapeIsOneLineAndLeavesCleanTextAlone(t *testing.T) {
 		}
 		clean := utf8.ValidString(s)
 		for _, r := range s {
-			if unicode.IsControl(r) || breaksALine(r) || reordersALine(r) {
+			if mustBeEscaped(r) {
 				clean = false
 			}
 		}
@@ -138,7 +155,13 @@ func TestPropertyCapKeepsAPrefixSaysWhatItDroppedAndHoldsTheCeiling(t *testing.T
 			t.Errorf("Cap(%q, %d) returned nothing", s, n)
 		}
 		if out == s {
-			return // nothing could be dropped without erasing the first rune
+			// Over the ceiling and unchanged: only when the value is one rune,
+			// which Cap keeps whole rather than erase. Anything longer must be
+			// cut (a Cap that returns its input passes nothing else here).
+			if _, size := utf8.DecodeRuneInString(s); size != len(s) {
+				t.Errorf("Cap(%q, %d) left %d bytes over the ceiling uncut", s, n, len(s))
+			}
+			return
 		}
 		at := strings.LastIndex(out, "...+")
 		if at < 0 || !strings.HasSuffix(out, "B") {
@@ -164,6 +187,33 @@ func TestPropertyCapKeepsAPrefixSaysWhatItDroppedAndHoldsTheCeiling(t *testing.T
 		}
 		oneLine(t, "Escape(Cap)", Escape(out))
 	})
+}
+
+// The one case where a value over its ceiling comes back whole, and its
+// neighbours, as examples beside the property.
+func TestCapKeepsOneRuneWholeAndCutsTwo(t *testing.T) {
+	t.Parallel()
+	one, two := u(0x65e5), u(0x65e5)+u(0x672c) // three bytes, six bytes
+	for _, c := range []struct {
+		in   string
+		n    int
+		want string
+	}{
+		{one, 1, one},
+		{one, 0, one},
+		{one, -5, one},
+		{"a", 0, "a"},
+		{two, 1, one + "...+3B"},
+		{two, 5, one + "...+3B"},
+		{two, 6, two},
+		{"ab", 1, "a...+1B"},
+		{"abcdefghij", 9, "ab...+8B"}, // the mark is sized for the whole length, seven bytes
+		{string([]byte{0xff, 0x80, 0x80}), 1, string([]byte{0xff}) + "...+2B"},
+	} {
+		if got := Cap(c.in, c.n); got != c.want {
+			t.Errorf("Cap(%q, %d) = %q, want %q", c.in, c.n, got, c.want)
+		}
+	}
 }
 
 type errString string
