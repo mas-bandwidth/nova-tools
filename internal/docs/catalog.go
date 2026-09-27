@@ -45,6 +45,7 @@ var DefaultCatalog = []Entry{
 	E("cmd/nova-self-talk", "internal dialogue recording CLI", "go test ./cmd/nova-self-talk", "go test ./cmd/nova-self-talk"),
 	E("cmd/nova-sprint", "sprint dealer, table, and CI-card CLI", "go test ./cmd/nova-sprint", "go test ./cmd/nova-sprint"),
 	E("cmd/nova-swarm", "native card runner, bench slot leases and card lint CLI", "go test ./cmd/nova-swarm", "go test ./cmd/nova-swarm"),
+	E("cmd/nova-table", "a table over Redis, every cell an ordered set; the sprint's stream block is its first table", "go test ./cmd/nova-table", "go test ./cmd/nova-table"),
 	E("cmd/nova-test", "validation-layer run store and status CLI", "go test ./cmd/nova-test", "go test ./cmd/nova-test"),
 	E("cmd/nova-tokens", "token consumption metering and budgeting CLI", "go test ./cmd/nova-tokens", "go test ./cmd/nova-tokens"),
 	E("cmd/nova-update", "binary release update CLI", "go test ./cmd/nova-update", "go test ./cmd/nova-update"),
@@ -90,6 +91,7 @@ var DefaultCatalog = []Entry{
 	E("internal/metrics", "Prometheus surface shared by the queue verbs", "go test ./internal/metrics/...", "go test ./internal/metrics/..."),
 	E("internal/nogh", "the refusing gh put first on friend and card child PATHs", "go test ./internal/nogh", "go test ./internal/nogh"),
 	E("internal/nsprint", "nova-sprint dealer, store, fold, and table", "go test ./internal/nsprint/...", "go test ./internal/nsprint/..."),
+	E("internal/ntable", "a general Redis-backed table: ordered sets per cell, projections, folds, the render", "go test ./internal/ntable", "go test ./internal/ntable"),
 	E("internal/onboarding", "onboarding banner and doc verifier", "go test ./internal/onboarding", "go test ./internal/onboarding"),
 	E("internal/oneline", "single-line log and output grammar", "go test ./internal/oneline", "go test ./internal/oneline"),
 	E("internal/play", "sandboxed code experiment runner", "go test ./internal/play", "go test ./internal/play"),
@@ -129,6 +131,7 @@ var DefaultCatalog = []Entry{
 	E("docs/jev", "Jev's versioned decision prompts, one file per type and version (#4316)", "go test ./internal/nsprint/jev", "go test ./internal/nsprint/jev"),
 	E("docs/nova-config", "nova-config guide: the permanent configuration and its apply into Redis", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/nova-sprint", "nova-sprint verb guide", "go test ./internal/docs", "go test ./internal/docs"),
+	E("docs/nova-table", "nova-table guide: the design statement, the keys, the verbs, the render rules", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/roadmaps", "sprint roadmaps and milestones", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/schemas", "event and payload schema definitions", "go test ./internal/docs", "go test ./internal/docs"),
 

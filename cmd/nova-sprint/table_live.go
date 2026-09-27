@@ -19,6 +19,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/table"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
+	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/redis/go-redis/v9"
 )
@@ -149,6 +150,10 @@ func loopTable(ctx context.Context, addr string, cfg table.SprintConfig, named s
 	defer ticker.Stop()
 	var last *table.SprintSnapshot
 	failing := false
+	// the streams table in the store (table.StreamsOf): bound again only
+	// on the tick its shape moves (a stream added or gone, a sprint clear's
+	// epoch), so `nova-table render streams` reads the block's own sets
+	var bound ntable.Table
 	for {
 		now := time.Now()
 		var snap *table.SprintSnapshot
@@ -193,6 +198,15 @@ func loopTable(ctx context.Context, addr string, cfg table.SprintConfig, named s
 			if failing {
 				fmt.Fprintln(stderr, "nova-sprint table: Redis answers again")
 				failing = false
+			}
+			if shape := table.StreamsOf(snap.Counts); ctx.Err() == nil && !ntable.SameShape(shape, bound) {
+				if err := ntable.Bind(ctx, st.Client(), shape, now); err != nil {
+					// the block still renders from this tick's read; the
+					// store's table is bound again next tick
+					fmt.Fprintf(stderr, "nova-sprint table: bind %s: %s; next tick\n", table.StreamsTable, oneline.Escape(err.Error()))
+				} else {
+					bound = shape
+				}
 			}
 		} else {
 			snap = table.FailedSprint(cfg, last)

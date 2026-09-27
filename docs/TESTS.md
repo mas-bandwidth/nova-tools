@@ -1168,3 +1168,43 @@ STATUS RUN id=retry state=completed queued=2026-09-23T10:10:00Z queue=20s drain=
 STATUS RUN id=waiting state=queued queued=2026-09-23T10:20:00Z queue=10m0s+ drain=- exec=- e2e=10m0s+ attempts=- prior_failures=-
 STATUS OK store=cmd/nova-test/testdata/runs since=2026-09-23T00:00:00Z now=2026-09-23T10:30:00Z runs=4 shown=4 older=1
 ```
+
+## nova-table
+
+Run by `cmd/nova-table/firstrun_test.go` on a throwaway redis-server holding
+the nova_sprint function library (`cell move` is one call of `ns_oset_move`),
+so it runs in the functional tier. The documented lines name no `--redis`: on
+a bench the seat's address is the default (`NOVA_SPRINT_REDIS`, then
+`NOVA_REDIS_ADDR`, then the seat's row), and the test appends the throwaway
+server's. Every value below reproduces; nothing is normalised. The usage
+banner's `example:` block is this same sitting, line for line.
+
+### First run
+
+```text
+$ nova-table create demo --columns job:text:none,ready,working,done
+TABLE CREATE table=demo columns=4
+
+$ nova-table row add demo build
+TABLE ROW ADD table=demo row=build cols=4 bound=0
+
+$ nova-table cell add demo build ready b1
+TABLE CELL table=demo row=build col=ready n=1
+
+$ nova-table cell add demo build ready b2
+TABLE CELL table=demo row=build col=ready n=2
+
+$ nova-table cell move demo build ready working b1
+TABLE MOVE table=demo row=build member=b1 from=ready to=working n=1
+
+$ nova-table show demo
+TABLE table=demo columns=4 rows=1
+TABLE ROW table=demo row=build ready=1 working=1 done=0
+
+$ nova-table render demo
+job   | ready | working | done
+------+-------+---------+-----
+build |     1 |       1 |    0
+------+-------+---------+-----
+total |     1 |       1 |    0
+```

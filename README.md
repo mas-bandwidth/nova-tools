@@ -45,6 +45,7 @@ come back to the table below for the problem you want it to solve.
 <tr><td>Ask a model a structured question.</td><td nowrap><a href="docs/CLI.md#nova-decide">nova-decide</a></td><td><strong>Development branch:</strong> typed answers and reported confidence for your workflow to evaluate.</td></tr>
 <tr><td>Keep the fleet's permanent configuration in one place and rebuild Redis from it.</td><td nowrap><a href="docs/CLI.md#nova-config">nova-config</a></td><td><strong>Development branch:</strong> friends and machines in Postgres with a history of every change, applied into Redis through the runtime's own functions.</td></tr>
 <tr><td>Leave notes and replies beside passages in a shared text.</td><td nowrap><a href="docs/USAGE.md#nova-play--notes-beside-a-shared-text">nova-play</a></td><td><strong>Development branch:</strong> attributed annotations in a local sidecar file, with source-change detection.</td></tr>
+<tr><td>Keep a table whose cells are sets and see it live.</td><td nowrap><a href="docs/CLI.md#nova-table">nova-table</a></td><td><strong>Development branch:</strong> a table over Redis, every cell an ordered set, rendered as text once a second; the sprint table's stream block is its first table.</td></tr>
 </tbody>
 </table>
 

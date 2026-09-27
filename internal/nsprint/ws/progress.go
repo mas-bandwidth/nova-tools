@@ -223,6 +223,24 @@ func (e *NotOpen) Error() string {
 	return fmt.Sprintf("--sprint %s: not the open sprint; open=%s", e.Name, open)
 }
 
+// CellReader queues the cells of every stream of ws:order under the epoch
+// the reader keys by, and answers them once the pipeline ran. The default
+// (nil) is QueueStreamCounts; the sprint table reads them through its
+// streams table instead (internal/nsprint/table/streams.go, bound to the
+// same sets and counting through the same primitive), so the headline and
+// the block stay one count (#4411) while the block is a table.
+type CellReader interface {
+	Queue(ctx context.Context, pipe redis.Pipeliner, epoch uint64, streams []string) CellsCmd
+}
+
+// CellsCmd is one queued read of every stream's cells.
+type CellsCmd interface {
+	// Rows is one StreamCounts per stream queued, in order; an error is the
+	// read failing whole (a cell that did not come back is Unread, not an
+	// error).
+	Rows() ([]StreamCounts, error)
+}
+
 // CountsReader reads SprintCounts, keeping the memberships across reads so a
 // reader that reads again (the table's tick) takes one pipeline.
 type CountsReader struct {
@@ -230,6 +248,8 @@ type CountsReader struct {
 	// not the open one is refused with *NotOpen: the open sprint is read
 	// either way (sprint:order and each member's status, in the pipeline).
 	Sprint string
+	// Cells reads the stream cells in place of QueueStreamCounts when set.
+	Cells CellReader
 
 	streams []string
 	sprints []string
@@ -245,6 +265,10 @@ type CountsReader struct {
 // read found.
 func (r *CountsReader) Epoch() uint64 { return r.epoch }
 
+// Streams is ws:order as the last read found it, the streams the next
+// read's cells are queued for.
+func (r *CountsReader) Streams() []string { return r.streams }
+
 // CountsCmd is one queued read.
 type CountsCmd struct {
 	r       *CountsReader
@@ -253,7 +277,7 @@ type CountsCmd struct {
 	sprintQ *redis.StringSliceCmd
 	states  []*redis.StringCmd // HGET s:<S> status per cached sprint
 	log     *redis.XMessageSliceCmd
-	cells   [][]*CardCountCmd // per cached stream: the six, then parked
+	cells   CellsCmd // the cells of every cached stream
 	// epochQ is sprint:epoch read after every cell (#4238): a clear that
 	// lands before or between the cells shows as another epoch
 	epochQ *redis.StringCmd
@@ -271,11 +295,44 @@ func (r *CountsReader) Queue(ctx context.Context, pipe redis.Pipeliner, now time
 	}
 	hourAgo := now.Add(-time.Hour).UnixMilli()
 	q.log = pipe.XRangeN(ctx, "ws:log", strconv.FormatInt(hourAgo, 10), "+", LogWindowMax)
-	for _, s := range r.streams {
-		q.cells = append(q.cells, QueueStreamCounts(ctx, pipe, r.epoch, s))
+	cells := r.Cells
+	if cells == nil {
+		cells = defaultCells{}
 	}
+	q.cells = cells.Queue(ctx, pipe, r.epoch, r.streams)
 	q.epochQ = pipe.HGet(ctx, EpochKey, EpochField)
 	return q
+}
+
+// defaultCells is the CellReader of every reader but the sprint table:
+// QueueStreamCounts per stream, the six sets then parked.
+type defaultCells struct{}
+
+func (defaultCells) Queue(ctx context.Context, pipe redis.Pipeliner, epoch uint64, streams []string) CellsCmd {
+	q := defaultCellsCmd{streams: streams}
+	for _, s := range streams {
+		q.cells = append(q.cells, QueueStreamCounts(ctx, pipe, epoch, s))
+	}
+	return q
+}
+
+type defaultCellsCmd struct {
+	streams []string
+	cells   [][]*CardCountCmd // per stream: the six, then parked
+}
+
+func (q defaultCellsCmd) Rows() ([]StreamCounts, error) {
+	rows := make([]StreamCounts, 0, len(q.streams))
+	for i, s := range q.streams {
+		row := StreamCounts{Stream: s}
+		for j, cmd := range q.cells[i][:CountsCells] {
+			n, err := cmd.Result()
+			row.Cells[j], row.Unread[j] = n, err != nil && !errors.Is(err, redis.Nil)
+		}
+		row.Parked = q.cells[i][CountsCells].Val()
+		rows = append(rows, row)
+	}
+	return rows, nil
 }
 
 // QueueMembers queues the membership reads a caller makes in its own earlier
@@ -362,15 +419,9 @@ func (q *CountsCmd) Result() (SprintCounts, bool, error) {
 	if r.Sprint != "" && r.Sprint != open {
 		return SprintCounts{}, false, &NotOpen{Name: r.Sprint, Open: open}
 	}
-	rows := make([]StreamCounts, 0, len(r.streams))
-	for i, s := range r.streams {
-		row := StreamCounts{Stream: s}
-		for j, cmd := range q.cells[i][:CountsCells] {
-			n, err := cmd.Result()
-			row.Cells[j], row.Unread[j] = n, err != nil && !errors.Is(err, redis.Nil)
-		}
-		row.Parked = q.cells[i][CountsCells].Val()
-		rows = append(rows, row)
+	rows, err := q.cells.Rows()
+	if err != nil {
+		return SprintCounts{}, false, err
 	}
 	c := Sum(rows)
 	c.Sprint, c.Status, c.At, c.Epoch = r.SprintName(), status, q.at, epoch
