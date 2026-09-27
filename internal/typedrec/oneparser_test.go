@@ -68,7 +68,7 @@ var specAllowlist = []allowlistEntry{
 	{file: "internal/nsprint/consume/okfriend.go", fn: "onHarvested", record: "Lua-reply"},
 	{file: "internal/wake/bus.go", fn: "waitBookkeeping", record: "wake-bus"},
 	{file: "internal/nsprint/deal/ready.go", fn: "entryWhy", record: "Redis-outcome"},
-	{file: "internal/secrets/seal.go", fn: "RunSeal", record: "git-HEAD"},
+	{file: "internal/secrets/seal.go", fn: "carry", record: "git-HEAD"},
 	{file: "internal/swarm/wall.go", fn: "WallCommits", record: "git-HEAD"},
 	{file: "internal/swarm/wall.go", fn: "repoCommits", record: "git-HEAD"},
 

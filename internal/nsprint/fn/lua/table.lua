@@ -726,7 +726,7 @@ do
     for _, cmd in ipairs(commands) do redis.call(unpack(cmd)) end
     return {'OK'}
   end)
-  redis.register_function{function_name='ns_view_get', flags={'no-writes'}, callback=function(keys, args)
+  redis.register_function{function_name = 'ns_view_get', flags = {'no-writes'}, callback = function(keys, args)
     if #args ~= 1 or not T.name(args[1]) then return T.refuse('ARGS', 'view_get') end
     local h = redis.call('HGETALL', 'view:' .. args[1])
     if #h == 0 then return T.refuse('NOVIEW', args[1]) end

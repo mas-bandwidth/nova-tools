@@ -185,7 +185,7 @@ func (o operation) refused(reply []any) error {
 func (o operation) call(ctx context.Context, c redis.Cmdable, fn string, ro bool, args ...any) ([]any, error) {
 	all := append([]any{o.table}, args...)
 	key := DefKey(o.table)
-	if strings.HasPrefix(fn, "ns_view_") {
+	if fn == "ns_view_set" || fn == "ns_view_get" {
 		key = "view:" + o.table
 	}
 	var cmd *redis.Cmd

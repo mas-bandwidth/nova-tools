@@ -3,13 +3,13 @@ package ntable
 import (
 	"context"
 	"fmt"
-	"strconv"
 
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 	"github.com/redis/go-redis/v9"
 )
 
 // CheckReport covers both directions of record/set membership in one instant.
-type CheckReport struct{ Epoch, Revision, Members, Cells uint64 }
+type CheckReport = typedrec.TableCheck
 
 // Check is an explicit maintenance operation: it scans the member namespace and
 // the epoch's owned cells atomically, including orphan records and hidden cells.
@@ -19,15 +19,9 @@ func Check(ctx context.Context, c redis.Cmdable, name string) (CheckReport, erro
 	if err != nil {
 		return CheckReport{}, err
 	}
-	if len(reply) != 5 || fmt.Sprint(reply[0]) != "CHECK" {
-		return CheckReport{}, fmt.Errorf("table %q: malformed check reply", name)
+	report, err := typedrec.ParseTableCheck(reply)
+	if err != nil {
+		return CheckReport{}, fmt.Errorf("table %q: %w", name, err)
 	}
-	var out CheckReport
-	for i, p := range []*uint64{&out.Epoch, &out.Revision, &out.Members, &out.Cells} {
-		*p, err = strconv.ParseUint(fmt.Sprint(reply[i+1]), 10, 64)
-		if err != nil {
-			return CheckReport{}, err
-		}
-	}
-	return out, nil
+	return report, nil
 }
