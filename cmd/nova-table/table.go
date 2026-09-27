@@ -71,6 +71,55 @@ func cmdCreate(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func cmdSet(args []string, stdout, stderr io.Writer) int {
+	const verb = "set"
+	fs := verbflag.New(verb)
+	addr := redisFlag(fs)
+	footer := fs.String("footer", "\x00", "the footer row's label ('' for none)")
+	rename := fs.String("rename", "", "the table's new name")
+	columns := fs.String("columns", "", "the columns, replaced in place (the create grammar); rows kept")
+	pos, err := parseInterleaved(fs, args)
+	if err != nil {
+		return refuse(stderr, verb, err.Error())
+	}
+	if len(pos) != 1 {
+		return refuse(stderr, verb, "wants one table name: set <table> [--footer <label>] [--rename <name>] [--columns <spec>]")
+	}
+	o := ntable.SetOpts{Rename: *rename}
+	if *columns != "" {
+		if o.Columns, err = ntable.ParseColumns(*columns); err != nil {
+			return refuse(stderr, verb, err.Error())
+		}
+	}
+	if *footer != "\x00" {
+		f := *footer
+		o.Footer = &f
+	}
+	ctx := context.Background()
+	st, c, code := client(ctx, verb, *addr, stderr)
+	if code != 0 {
+		return code
+	}
+	defer st.Close()
+	trips := st.CountTrips()
+	n, err := ntable.Set(ctx, c, pos[0], o)
+	if err != nil {
+		return storeRefusal(stderr, verb, err)
+	}
+	line := "TABLE SET table=" + pos[0]
+	if o.Footer != nil {
+		line += fmt.Sprintf(" footer=%q", *o.Footer)
+	}
+	if o.Rename != "" {
+		line += fmt.Sprintf(" renamed=%s moved=%d", o.Rename, n)
+	}
+	if len(o.Columns) > 0 {
+		line += fmt.Sprintf(" columns=%d", len(o.Columns))
+	}
+	fmt.Fprintf(stdout, "%s trips=%d\n", line, trips.N())
+	return 0
+}
+
 func cmdDrop(args []string, stdout, stderr io.Writer) int {
 	const verb = "drop"
 	fs := verbflag.New(verb)

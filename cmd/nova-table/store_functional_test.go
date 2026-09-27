@@ -26,7 +26,7 @@ func TestARefusalSaysWhatTheInputWants(t *testing.T) {
 		{[]string{"create", "demo", "--columns", "a:rows", "--redis", addr}, `column a wants a projection of count, members, first, last or text, not "rows"`},
 		{[]string{"create", "demo", "--columns", "a", "--width", "b=3", "--redis", addr}, "--width names column b, which --columns does not declare"},
 		{[]string{"create", "bad name", "--columns", "a", "--redis", addr}, "the table name wants letters, digits, _ . and -"},
-		{[]string{"row", "--redis", addr}, "wants add or del"},
+		{[]string{"row", "--redis", addr}, "wants add, set or del"},
 		{[]string{"row", "add", "demo", "--redis", addr}, "wants a table and a row: row add <table> <row>"},
 		{[]string{"row", "add", "demo", "r", "ready", "--redis", addr}, "a binding wants <col>=<key>"},
 		{[]string{"row", "add", "demo", "r", "ready=ws:s:ready", "--redis", addr}, "a row that binds a set wants --owner <verb>"},
@@ -110,6 +110,18 @@ func TestASittingThroughTheVerbs(t *testing.T) {
 			"---------+-------+---------+-------\n" +
 			"all      |     1 |       0 | ann,bo\n"}, // the fold is the column's, hidden rows included
 		{[]string{"list"}, "TABLE LIST tables=1 trips=1\nTABLE table=jobs columns=4 rows=2\n"},
+		// a definition changed in place (set: footer, columns, rename; row set: a text cell), rows kept
+		{[]string{"set", "jobs", "--footer", "sum"}, "TABLE SET table=jobs footer=\"sum\" trips=1\n"},
+		{[]string{"set", "jobs", "--columns", "job:text:none,ready,working,who:members:union,pct:pct(ready):avg:ready%,note:text:none"}, "TABLE SET table=jobs columns=6 trips=1\n"},
+		{[]string{"row", "set", "jobs", "build", "note=green"}, "TABLE ROW SET table=jobs row=build cols=1 trips=1\n"},
+		{[]string{"render", "jobs", "--hide-zero-rows"}, "jobs  | ready | working | who    | ready% | note\n" +
+			"------+-------+---------+--------+--------+------\n" +
+			"build |     1 |       0 | ann    | 100%   | green\n" +
+			"------+-------+---------+--------+--------+------\n" +
+			"sum   |     1 |       0 | ann,bo | 100%   |\n"},
+		{[]string{"set", "jobs", "--rename", "work"}, "TABLE SET table=jobs renamed=work moved=7 trips=1\n"},
+		{[]string{"list"}, "TABLE LIST tables=1 trips=1\nTABLE table=work columns=6 rows=2\n"},
+		{[]string{"set", "work", "--rename", "jobs"}, "TABLE SET table=work renamed=jobs moved=7 trips=1\n"},
 		{[]string{"row", "del", "jobs", "the tests"}, "TABLE ROW DEL table=jobs row=\"the tests\" existed=1 trips=1\n"},
 		{[]string{"row", "del", "jobs", "the tests"}, "TABLE ROW DEL table=jobs row=\"the tests\" existed=0 trips=1\n"},
 		{[]string{"drop", "jobs"}, "TABLE DROP table=jobs rows=1 trips=1\n"},

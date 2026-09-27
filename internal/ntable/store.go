@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +17,8 @@ const (
 	FnClear      = "ns_table_clear"
 	FnCreate     = "ns_table_create"
 	FnDrop       = "ns_table_drop"
+	FnSet        = "ns_table_set"
+	FnRowSet     = "ns_table_row_set"
 	FnRowAdd     = "ns_table_row_add"
 	FnRowDel     = "ns_table_row_del"
 	FnCellAdd    = "ns_table_cell_add"
@@ -90,6 +93,8 @@ func (o operation) refused(reply []any) error {
 	case "NOTMEMBER":
 		cause = ErrNotMember
 		remedy = "nova-table cell members " + shellWord(o.table) + " " + shellWord(o.row) + " " + shellWord(o.col)
+	case "NOTTEXT":
+		cause = errors.New("not a text column; row set writes text columns only")
 	case "BOUND":
 		if len(reply) < 6 {
 			return fmt.Errorf("%s: malformed bound-cell refusal", o.location())
@@ -156,6 +161,51 @@ func Create(ctx context.Context, c redis.Cmdable, t Table, now time.Time) error 
 }
 
 // Drop removes owned keys and the definition; bound sets remain untouched.
+// SetOpts is what Set changes: the footer label (Footer set, "" for none)
+// and the table's name (Rename non-empty). Rows, cells and bindings stay.
+type SetOpts struct {
+	Footer  *string
+	Rename  string
+	Columns []Column // the columns replaced in place: rows kept, cells of removed columns dropped
+}
+
+// Set changes a table's definition in place, one call: the footer label,
+// the name (every key of the table moved, the registry updated; a name in
+// use is refused EXISTS). It returns how many keys a rename moved.
+func Set(ctx context.Context, c redis.Cmdable, name string, o SetOpts) (int, error) {
+	var args []any
+	if o.Footer != nil {
+		args = append(args, "footer", *o.Footer)
+	}
+	if o.Rename != "" {
+		if !ValidName(o.Rename) {
+			return 0, fmt.Errorf("table %q: the new name wants letters, digits, _ . and -", o.Rename)
+		}
+		args = append(args, "rename", o.Rename)
+	}
+	if len(o.Columns) > 0 {
+		if err := ValidateColumns(o.Columns); err != nil {
+			return 0, fmt.Errorf("table %q: %w; run: nova-table help", name, err)
+		}
+		fields := definitionFields(Table{Name: name, Columns: o.Columns})
+		delete(fields, "footer")
+		body, err := payload(fields)
+		if err != nil {
+			return 0, err
+		}
+		args = append(args, "columns", body)
+	}
+	if len(args) == 0 {
+		return 0, fmt.Errorf("table %q: set wants --footer <label>, --rename <name> or --columns <spec>", name)
+	}
+	reply, err := (operation{table: name}).call(ctx, c, FnSet, false, args...)
+	if err != nil {
+		return 0, err
+	}
+	n, err := replyCount(reply)
+	return int(n), err
+}
+
 func Drop(ctx context.Context, c redis.Cmdable, name string) (int, error) {
 	reply, err := (operation{table: name}).call(ctx, c, FnDrop, false)
 	if err != nil {
@@ -202,6 +252,28 @@ func RowAdd(ctx context.Context, c redis.Cmdable, name, key string, spec RowSpec
 	}
 	return decodeRow(t, key, h), nil
 }
+
+// RowSet writes a text column's value for one row (text:<col> on the row
+// hash), several columns in one call; a column that is not a text column
+// is refused NOTTEXT.
+func RowSet(ctx context.Context, c redis.Cmdable, name, key string, texts map[string]string) (int, error) {
+	args := []any{key}
+	names := make([]string, 0, len(texts))
+	for col := range texts {
+		names = append(names, col)
+	}
+	sort.Strings(names)
+	for _, col := range names {
+		args = append(args, col, texts[col])
+	}
+	reply, err := (operation{table: name, row: key}).call(ctx, c, FnRowSet, false, args...)
+	if err != nil {
+		return 0, err
+	}
+	n, err := replyCount(reply)
+	return int(n), err
+}
+
 func RowDel(ctx context.Context, c redis.Cmdable, name, key string) (bool, error) {
 	reply, err := (operation{table: name, row: key}).call(ctx, c, FnRowDel, false, key)
 	if err != nil {

@@ -75,9 +75,12 @@ func Render(t Table, opts RenderOpts) string {
 	for i, r := range rows {
 		body[i] = make([]string, n)
 		for j, c := range cols {
-			if src[j] < 0 {
+			switch {
+			case src[j] < 0:
 				body[i][j] = r.LabelOrKey()
-			} else {
+			case IsFormula(c.Projection):
+				body[i][j] = formulaText(t.Columns, c, r)
+			default:
 				body[i][j] = cellText(c, r, src[j])
 			}
 		}
@@ -86,7 +89,7 @@ func Render(t Table, opts RenderOpts) string {
 	if hasFooter {
 		for j, c := range cols {
 			if src[j] >= 0 {
-				footer[j] = foldText(c, t.Rows, src[j])
+				footer[j] = foldText(t.Columns, c, t.Rows, src[j])
 			}
 		}
 		footer[0] = t.Footer()
@@ -190,6 +193,9 @@ func allZero(t Table, r Row) bool {
 // cellText is one body cell as printed.
 func cellText(c Column, r Row, j int) string {
 	if c.Projection == Text {
+		if v, ok := r.Texts[c.Name]; ok {
+			return v
+		}
 		return r.LabelOrKey()
 	}
 	if j >= len(r.Cells) {
@@ -227,8 +233,75 @@ func cellText(c Column, r Row, j int) string {
 
 // foldText is one footer cell as printed, over every row (hidden rows
 // included: a fold is the column's, not the screen's).
-func foldText(c Column, rows []Row, j int) string {
+// formulaValue is a pct(<col>) cell's value over the row: the named count
+// as a share of the row's count cells together; ok is false when the row
+// has no tasks or a cell it needs did not come back.
+func formulaValue(cols []Column, c Column, r Row) (float64, bool) {
+	arg := FormulaArg(c.Projection)
+	var part, total int64
+	for k, o := range cols {
+		if o.Projection != Count {
+			continue
+		}
+		if k >= len(r.Cells) || r.Cells[k].Unread {
+			return 0, false
+		}
+		total += r.Cells[k].Count
+		if o.Name == arg {
+			part = r.Cells[k].Count
+		}
+	}
+	if total == 0 {
+		return 0, false
+	}
+	return 100 * float64(part) / float64(total), true
+}
+
+// formulaText prints a formula cell: a percentage with one decimal when
+// it needs one ("33.3%"), "-" when the row has no tasks.
+func formulaText(cols []Column, c Column, r Row) string {
+	v, ok := formulaValue(cols, c, r)
+	if !ok {
+		return "-"
+	}
+	return pctText(v)
+}
+
+func pctText(v float64) string {
+	s := strconv.FormatFloat(v, 'f', 1, 64)
+	s = strings.TrimSuffix(s, ".0")
+	return s + "%"
+}
+
+// foldText is one footer cell as printed, over every row (hidden rows
+// included: the fold is the column's, not the screen's).
+func foldText(cols []Column, c Column, rows []Row, j int) string {
 	switch c.Fold {
+	case Avg:
+		var sum float64
+		n := 0
+		for _, r := range rows {
+			if IsFormula(c.Projection) {
+				v, ok := formulaValue(cols, c, r)
+				if !ok {
+					continue // a row with no tasks has no share; the mean is over the rows that do
+				}
+				sum += v
+			} else {
+				if j >= len(r.Cells) || r.Cells[j].Unread {
+					return "?"
+				}
+				sum += float64(r.Cells[j].Count)
+			}
+			n++
+		}
+		if n == 0 {
+			return "-"
+		}
+		if IsFormula(c.Projection) {
+			return pctText(sum / float64(n))
+		}
+		return strings.TrimSuffix(strconv.FormatFloat(sum/float64(n), 'f', 1, 64), ".0")
 	case Sum, Max:
 		var v int64
 		for _, r := range rows {

@@ -21,8 +21,10 @@ func cmdRow(args []string, stdout, stderr io.Writer) int {
 		return cmdRowAdd(args[1:], stdout, stderr)
 	case "del":
 		return cmdRowDel(args[1:], stdout, stderr)
+	case "set":
+		return cmdRowSet(args[1:], stdout, stderr)
 	}
-	return refuse(stderr, "row", "unknown subverb "+args[0]+"; wants add or del")
+	return refuse(stderr, "row", "unknown subverb "+args[0]+"; wants add, set or del")
 }
 
 func cmdRowAdd(args []string, stdout, stderr io.Writer) int {
@@ -101,5 +103,41 @@ func cmdRowDel(args []string, stdout, stderr io.Writer) int {
 		was = 1
 	}
 	fmt.Fprintf(stdout, "TABLE ROW DEL table=%s row=%s existed=%d trips=%d\n", pos[0], field(pos[1]), was, trips.N())
+	return 0
+}
+
+// cmdRowSet: row set <table> <row> <col>=<value> ...: a text column's value
+// for one row, several columns in one call.
+func cmdRowSet(args []string, stdout, stderr io.Writer) int {
+	const verb = "row set"
+	fs := verbflag.New(verb)
+	addr := redisFlag(fs)
+	pos, err := parseInterleaved(fs, args)
+	if err != nil {
+		return refuse(stderr, verb, err.Error())
+	}
+	if len(pos) < 3 {
+		return refuse(stderr, verb, "wants a table, a row and at least one <col>=<value>: row set <table> <row> <col>=<value> ...")
+	}
+	texts := map[string]string{}
+	for _, kv := range pos[2:] {
+		col, v, ok := strings.Cut(kv, "=")
+		if !ok || col == "" {
+			return refuse(stderr, verb, "wants <col>=<value>, not "+kv)
+		}
+		texts[col] = v
+	}
+	ctx := context.Background()
+	st, c, code := client(ctx, verb, *addr, stderr)
+	if code != 0 {
+		return code
+	}
+	defer st.Close()
+	trips := st.CountTrips()
+	n, err := ntable.RowSet(ctx, c, pos[0], pos[1], texts)
+	if err != nil {
+		return storeRefusal(stderr, verb, err)
+	}
+	fmt.Fprintf(stdout, "TABLE ROW SET table=%s row=%s cols=%d trips=%d\n", pos[0], pos[1], n, trips.N())
 	return 0
 }

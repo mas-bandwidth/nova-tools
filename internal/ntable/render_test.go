@@ -1,6 +1,7 @@
 package ntable_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -233,5 +234,49 @@ func TestRenderPutsTheRowLabelFirstAndTitles(t *testing.T) {
 	}
 	if got := ntable.Render(ntable.Table{Name: "empty"}, ntable.RenderOpts{}); got != "" {
 		t.Fatalf("an empty table without a title stays hidden: %q", got)
+	}
+}
+
+// TestRenderFormulaAndTextCells (Glenn 2026-09-27, the live session: "a new
+// column ... 'waiting%' ... the % of waiting tasks as a % of all tasks in
+// that row ... bottom summary cell the average"; "a new column 'status'
+// which is either up or down"): a pct(<col>) column is computed per row
+// over the row's count cells, folds avg over the rows that have tasks, and
+// prints "-" for a row with none; a text column prints the row's value set
+// by row set, else the label.
+func TestRenderFormulaAndTextCells(t *testing.T) {
+	t.Parallel()
+	cols, err := ntable.ParseColumns("waiting,ready,working,done,wpct:pct(waiting):avg:waiting%,status:text:none")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tb := ntable.Table{Name: "streams", Columns: cols, FooterLabel: "total"}
+	mk := func(key string, n ...int64) ntable.Row {
+		r := ntable.NewRow(tb, key)
+		for i, v := range n {
+			r.Cells[i].Count = v
+		}
+		return r
+	}
+	a := mk("alpha", 1, 1, 1, 0)
+	a.Texts = map[string]string{"status": "up"}
+	b := mk("beta", 5, 2, 3, 0)
+	e := mk("empty", 0, 0, 0, 0)
+	tb.Rows = []ntable.Row{a, b, e}
+	want := "streams | waiting | ready | working | done | waiting% | status\n" +
+		"--------+---------+-------+---------+------+----------+-------\n" +
+		"alpha   |       1 |     1 |       1 |    0 | 33.3%    | up\n" +
+		"beta    |       5 |     2 |       3 |    0 | 50%      | beta\n" +
+		"empty   |       0 |     0 |       0 |    0 | -        | empty\n" +
+		"--------+---------+-------+---------+------+----------+-------\n" +
+		"total   |       6 |     3 |       4 |    0 | 41.7%    |\n"
+	if got := ntable.Render(tb, ntable.RenderOpts{Title: "streams"}); got != want {
+		t.Fatalf("formula and text cells:\n%s\nwant:\n%s", got, want)
+	}
+	if _, err := ntable.ParseColumns("wpct:pct(nothere):avg"); err == nil || !strings.Contains(err.Error(), "count column named nothere") {
+		t.Fatalf("a pct of a missing column: %v", err)
+	}
+	if _, err := ntable.ParseColumns("who:members:avg"); err == nil {
+		t.Fatal("avg over members was accepted")
 	}
 }

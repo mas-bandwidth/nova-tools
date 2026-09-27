@@ -33,9 +33,11 @@ usage:
   nova-table version
   nova-table help
   nova-table create <table> --columns <name[:projection[:fold[:label]]],...> [--footer <label>] [--width <col=n,...>]
+  nova-table set <table> [--footer <label>] [--rename <name>] [--columns <spec>]
   nova-table drop <table>
   nova-table list
   nova-table row add <table> <row> [--label <text>] [--exclude <member>] [--owner <verb>] [<col>=<key> ...]
+  nova-table row set <table> <row> <col>=<value> ...
   nova-table row del <table> <row>
   nova-table cell add <table> <row> <col> <member> [--score <n>]
   nova-table cell remove <table> <row> <col> <member>
@@ -125,6 +127,8 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 		return 0
 	case "create":
 		return cmdCreate(args[1:], stdout, stderr)
+	case "set":
+		return cmdSet(args[1:], stdout, stderr)
 	case "drop":
 		return cmdDrop(args[1:], stdout, stderr)
 	case "list":

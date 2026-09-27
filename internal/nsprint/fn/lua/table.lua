@@ -46,14 +46,16 @@ do
     for col in string.gmatch(h.order, '[^,]+') do
       local proj, fold, width = string.match(h['col:' .. col] or '', '^([^:]+):([^:]+):([^:]+):')
       local valid = {count=true,members=true,first=true,last=true,text=true}
+      local formula = proj and string.match(proj, '^pct%([%w_.-]+%)$') ~= nil  -- a computed cell: no set (SPEC-NOVA-TABLE)
       local w = tonumber(width)
-      if not valid[proj or ''] or seen[col] or not w or w < 0 or w ~= math.floor(w) or
+      if not (valid[proj or ''] or formula) or seen[col] or not w or w < 0 or w ~= math.floor(w) or
         not (fold == 'none' or ((fold == 'sum' or fold == 'max') and proj == 'count') or
-          (fold == 'union' and proj ~= 'count' and proj ~= 'text')) then
+          (fold == 'avg' and (proj == 'count' or formula)) or
+          (fold == 'union' and proj ~= 'count' and proj ~= 'text' and not formula)) then
         return nil, {'REFUSED', 'DEFINITION', col}
       end
       seen[col] = true
-      cols[#cols + 1] = {name = col, projection = proj}
+      cols[#cols + 1] = {name = col, projection = proj, noset = proj == 'text' or formula}
     end
     if #cols == 0 then return nil, {'REFUSED', 'DEFINITION', ''} end
     return {cols = cols, h = h, flat = flat}
@@ -69,7 +71,7 @@ do
     if not redis.call('ZSCORE', 'table:' .. name .. ':rows', row) then return nil, {'REFUSED', 'NOROW', row} end
     local column = T.col(def, col)
     if not column then return nil, {'REFUSED', 'NOCOL', row, col} end
-    if column.projection == 'text' then return nil, {'REFUSED', 'TEXT', row, col} end
+    if column.noset then return nil, {'REFUSED', 'TEXT', row, col} end
     local h = T.hash(T.rowkey(name, row))
     local bound = h['key:' .. col]
     if write and bound and bound ~= '' then return nil, {'REFUSED', 'BOUND', row, col, bound, h.owner or ''} end
@@ -96,7 +98,7 @@ do
     for col, key in pairs(spec.binds or {}) do
       local c = T.col(def, col)
       if not c then return nil, {'REFUSED', 'NOCOL', row, col} end
-      if c.projection == 'text' then return nil, {'REFUSED', 'TEXT', row, col} end
+      if c.noset then return nil, {'REFUSED', 'TEXT', row, col} end
       if key == '' then return nil, {'REFUSED', 'BINDKEY', row, col} end
       h['key:' .. col] = key
     end
@@ -106,7 +108,7 @@ do
     for _, col in ipairs(def.cols) do
       -- A bound set has another writer, even when it happens to have the
       -- same key as this table's normally owned cell.
-      if col.projection ~= 'text' and (not h['key:' .. col.name] or h['key:' .. col.name] == '') then
+      if not col.noset and (not h['key:' .. col.name] or h['key:' .. col.name] == '') then
         commands[#commands + 1] = {'DEL', T.cellkey(name, row, col.name)}
       end
     end
@@ -155,6 +157,25 @@ do
     local _, flat = T.hash(T.rowkey(name, row))
     return {'ROW', def.flat, flat}
   end)
+  -- ns_table_row_set(name, row, col value ...): a text column's value for
+  -- one row (SPEC-NOVA-TABLE hole 1: text cells per column; Glenn
+  -- 2026-09-27, the friends' status), on the row hash as text:<col>.
+  redis.register_function('ns_table_row_set', function(keys, args)
+    local name, row = args[1], args[2]
+    local def, err = T.def(name)
+    if not def then return err end
+    if not redis.call('ZSCORE', 'table:' .. name .. ':rows', row) then return {'REFUSED', 'NOROW', row} end
+    local n = 0
+    for i = 3, #args - 1, 2 do
+      local col, found = args[i], nil
+      for _, c in ipairs(def.cols) do if c.name == col then found = c end end
+      if not found then return {'REFUSED', 'NOCOL', row, col} end
+      if found.projection ~= 'text' then return {'REFUSED', 'NOTTEXT', row, col} end
+      redis.call('HSET', T.rowkey(name, row), 'text:' .. col, args[i + 1])
+      n = n + 1
+    end
+    return {'OK', n}
+  end)
   redis.register_function('ns_table_row_del', function(keys, args)
     local name, row = args[1], args[2]
     local def, err = T.def(name)
@@ -188,6 +209,69 @@ do
       end
       return T.apply(commands) or {'OK', #rows}
   end
+  -- ns_table_set(name, k v ...): a definition changed in place, rows kept
+  -- (SPEC-NOVA-TABLE hole 10; Glenn 2026-09-27: "small changes in table
+  -- view = small changes to config or setup"): footer <label> sets the
+  -- footer label ('' for none); rename <new> moves every key of the table
+  -- to the new name (the definition, the rows, the row hashes, the owned
+  -- cells; bound cells are references and stay) and the registry entry.
+  redis.register_function('ns_table_set', function(keys, args)
+    local name = args[1]
+    local def, err = T.def(name)
+    if not def then return err end
+    local footer, newname, columns
+    for i = 2, #args - 1, 2 do
+      if args[i] == 'footer' then footer = args[i + 1]
+      elseif args[i] == 'rename' then newname = args[i + 1]
+      elseif args[i] == 'columns' then columns = cjson.decode(args[i + 1])
+      else return {'REFUSED', 'BADSET', args[i]} end
+    end
+    if footer ~= nil then redis.call('HSET', 'table:' .. name, 'footer', footer) end
+    local moved = 0
+    if columns then
+      -- the columns replaced in place: the definition's order and col:*
+      -- fields rewritten (validated by the client as create validates), the
+      -- owned cells of columns that went are deleted, new columns start empty
+      local old = redis.call('HGETALL', 'table:' .. name)
+      local oldcols = {}
+      for i = 1, #old, 2 do
+        if string.sub(old[i], 1, 4) == 'col:' then oldcols[#oldcols + 1] = string.sub(old[i], 5) end
+      end
+      local keep = {}
+      for col in string.gmatch(columns.order or '', '[^,]+') do keep[col] = true end
+      local rows = redis.call('ZRANGE', 'table:' .. name .. ':rows', 0, -1)
+      for _, col in ipairs(oldcols) do
+        if not keep[col] then
+          redis.call('HDEL', 'table:' .. name, 'col:' .. col)
+          for _, row in ipairs(rows) do
+            redis.call('DEL', T.cellkey(name, row, col))
+            redis.call('HDEL', T.rowkey(name, row), 'key:' .. col)
+          end
+        end
+      end
+      for k, v in pairs(columns) do redis.call('HSET', 'table:' .. name, k, v) end
+      local _, derr = T.def(name)
+      if derr then return derr end
+    end
+    if newname and newname ~= '' and newname ~= name then
+      if redis.call('EXISTS', 'table:' .. newname) == 1 then return {'REFUSED', 'EXISTS', newname} end
+      local rows = redis.call('ZRANGE', 'table:' .. name .. ':rows', 0, -1)
+      local function mv(from, to)
+        if redis.call('EXISTS', from) == 1 then redis.call('RENAME', from, to); moved = moved + 1 end
+      end
+      for _, row in ipairs(rows) do
+        for _, col in ipairs(def.cols) do
+          mv(T.cellkey(name, row, col.name), T.cellkey(newname, row, col.name))
+        end
+        mv(T.rowkey(name, row), T.rowkey(newname, row))
+      end
+      mv('table:' .. name .. ':rows', 'table:' .. newname .. ':rows')
+      mv('table:' .. name, 'table:' .. newname)
+      redis.call('SREM', 'tables', name)
+      redis.call('SADD', 'tables', newname)
+    end
+    return {'OK', moved}
+  end)
   redis.register_function('ns_table_drop', function(keys,args) return T.delete('drop',args) end)
   redis.register_function('ns_table_clear', function(keys,args) return T.delete('clear',args) end)
   function T.writecell(op, args)
@@ -261,7 +345,7 @@ do
       if mode ~= 'shape' then
         for _, col in ipairs(def.cols) do
           local value = {'OK', 0, {}}
-          if col.projection ~= 'text' then
+          if not col.noset then
             local bound = h['key:' .. col.name]
             local key = bound and bound ~= '' and bound or T.cellkey(name, row, col.name)
             -- A missing/unreadable cell stays unknown, never a false zero.
