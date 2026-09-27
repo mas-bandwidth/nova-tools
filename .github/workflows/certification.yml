@@ -60,7 +60,8 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         shell: bash
         run: |
-          unformatted=$(gofmt -l .)
+          # deprecated/ is out of scope of the testing drive (Glenn 2026-09-27); see deprecated/README.md
+          unformatted=$(gofmt -l . | grep -v '^deprecated/' || true)
           if [ -n "$unformatted" ]; then
             echo "not gofmt-clean:"
             echo "$unformatted"
@@ -521,10 +522,10 @@ jobs:
             esac
             # The other tools are untouched, so the red above is this tool and not the harness.
             case "$out" in
-              *"ok: nova-board $stamp"*) ;;
-              *) echo "nova-board stopped reporting the tag while only nova-tokens was mutated ($how)"; exit 1 ;;
+              *"ok: nova-bus $stamp"*) ;;
+              *) echo "nova-bus stopped reporting the tag while only nova-tokens was mutated ($how)"; exit 1 ;;
             esac
-            echo "ok: a $how of the stamp is refused by name, with nova-board still asserted"
+            echo "ok: a $how of the stamp is refused by name, with nova-bus still asserted"
           done
           restore
 
@@ -536,7 +537,7 @@ jobs:
           # tree has stopped saying what it claims to say, and this is the check that says
           # so.
           rm -rf "${RUNNER_TEMP}/one-tool"
-          mkdir -p "${RUNNER_TEMP}/one-tool/cmd/nova-board"
+          mkdir -p "${RUNNER_TEMP}/one-tool/cmd/nova-bus"
           stale="${RUNNER_TEMP}/assert-with-a-stale-exemption.sh"
           cp .github/scripts/assert-version-stamp.sh "$stale"
           sed -i 's/^LEGACY_NO_VERSION_VERB=.*/LEGACY_NO_VERSION_VERB="nova-departed"/' "$stale"
@@ -720,7 +721,7 @@ jobs:
           # edited, and both say in the script that they exist because the alternative is a
           # check that asserts nothing and passes.
           refuse_assertion_args 'no expected tag given' "" "$dist/%s_${stamp}_linux_amd64"
-          refuse_assertion_args 'holds no %s' "$stamp" "$dist/nova-board_${stamp}_linux_amd64"
+          refuse_assertion_args 'holds no %s' "$stamp" "$dist/nova-bus_${stamp}_linux_amd64"
 
       - name: the certified gate refuses newer-failure-after-older-success and in-flight, and passes one green
         shell: bash

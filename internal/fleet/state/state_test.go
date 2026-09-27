@@ -194,6 +194,10 @@ func TestNoReaderOfFleetStateTSV(t *testing.T) {
 			if d.Name() == ".git" {
 				return filepath.SkipDir
 			}
+			// deprecated/ is out of scope of the testing drive (Glenn 2026-09-27); see deprecated/README.md
+			if path == filepath.Join(root, "deprecated") {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		abs, err := filepath.Abs(path)

@@ -29,7 +29,6 @@ var ghAllowed = map[string]string{
 	"cmd/nova-sandbox/worktree.go":   "nova-sandbox, not a nova-sprint verb",
 	"internal/ci/events_gh.go":       "the old ci events forge, not a nova-sprint verb",
 	"internal/ghcapture/record.go":   "the read-only GraphQL recorder, not a nova-sprint verb",
-	"internal/board/issue.go":        "nova-board reads issues through its gh wrapper; not a nova-sprint verb",
 	"internal/ci/failed_forge.go":    "the old ci failed-run reader through its gh wrapper; not a nova-sprint verb",
 	"internal/converge/forge.go":     "nova-converge's gh binary seam; not a nova-sprint verb",
 	"internal/landed/landed.go":      "nova-work landed criterion, not a nova-sprint verb",

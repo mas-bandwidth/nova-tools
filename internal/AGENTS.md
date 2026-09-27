@@ -4,7 +4,6 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 
 | dir | purpose | guard | command |
 | --- | --- | --- | --- |
-| `board/` | board structures and view rendering | `go test ./internal/board` | `go test ./internal/board` |
 | `bounded/` | bounded readers and byte buffers | `go test ./internal/bounded` | `go test ./internal/bounded` |
 | `buildinfo/` | binary identity and version info | `go test ./internal/buildinfo` | `go test ./internal/buildinfo` |
 | `bus/` | append-only coordination bus | `go test ./internal/bus` | `go test ./internal/bus` |

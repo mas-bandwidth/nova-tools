@@ -314,6 +314,10 @@ var namedPathTestdataDirs = func() func(root string) []string {
 				if d.Name() == ".git" {
 					return filepath.SkipDir
 				}
+				// deprecated/ is out of scope of the testing drive (Glenn 2026-09-27); see deprecated/README.md
+				if isDeprecatedDir(root, path) {
+					return filepath.SkipDir
+				}
 				if d.Name() == "testdata" {
 					dirs = append(dirs, path)
 					return filepath.SkipDir

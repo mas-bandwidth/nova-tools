@@ -95,6 +95,10 @@ func treeHelperReads(t *testing.T, root string, lists map[string]bool) (map[stri
 			case ".git", "testdata", "vendor", "node_modules":
 				return filepath.SkipDir
 			}
+			// deprecated/ is out of scope of the testing drive (Glenn 2026-09-27); see deprecated/README.md
+			if isDeprecatedDir(root, p) {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if strings.HasSuffix(p, ".go") {

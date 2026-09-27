@@ -21,7 +21,6 @@ nova-post     # #1653 -- asserts only that the section is non-empty; its block w
 nova-review   # #1653 -- executed by no test
 
 # T9 (#1654): the set-of-shapes tests, which pass an abridged or reordered block.
-nova-board    # #1654 -- collects what was printed into a set
 nova-bus      # #1654 -- collects what was printed into a set
 nova-cairn    # #1654 -- collects what was printed into a set
 nova-check    # #1654 -- collects what was printed into a set

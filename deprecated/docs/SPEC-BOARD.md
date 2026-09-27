@@ -5,14 +5,14 @@
 **nova-board is retained as the input adapter, and it is retired only after
 nova-work's views and event adapter replace it and are dogfooded.** nova-board
 infers state from events — a read-side projection — while
-[nova-work](SPEC-WORK.md) holds that state as truth with leases, attempts and
+[nova-work](../../docs/SPEC-WORK.md) holds that state as truth with leases, attempts and
 evidence, and `who` and `check` are its views. A second inferred source can
 disagree with the first, so the fold described below becomes the adapter that
 turns a PR opened, a check green and a note received into events on nodes; the
 board page then renders `who` and `check`; and the tool and this spec are retired
 with a pointer only once that replacement is dogfooded. Until then this document
-remains normative for the fold, and nothing is deleted: `cmd/nova-board` and
-`internal/board` stay.
+remains normative for the fold, and nothing is deleted: `deprecated/cmd/nova-board` and
+`deprecated/internal/board` stay.
 
 Five verbs at the **owed-work layer**. A **board** is the list of things a group of
 lines owes: one **card** per item, appended when it is noticed, taken by whoever
@@ -38,7 +38,7 @@ live, and never from a card. As on the bus, **this rule is stated here and is
 nowhere in the code**, deliberately: a tool cannot enforce it, and a tool that
 pretended to would be the most dangerous thing on the board.
 
-This spec is normative. It is a sibling of [SPEC.md](SPEC.md), whose
+This spec is normative. It is a sibling of [SPEC.md](../../docs/SPEC.md), whose
 **Conventions** section — exit codes, no guessed paths, the one-line guarantee,
 the field escape, the cap-and-count law — governs here unchanged. If the code and
 this document disagree, one of them has a bug, and the tests decide which.
@@ -656,8 +656,8 @@ a daemon; it fixes the costs.
 
 ### One read and one append per verb, and no clock of its own
 
-`internal/board/backend.go:8` states the read rule verbatim — **"THE READ IS
-THE WHOLE LOG. There is no window."** — and `internal/board/issue.go:112` is
+`deprecated/internal/board/backend.go:8` states the read rule verbatim — **"THE READ IS
+THE WHOLE LOG. There is no window."** — and `deprecated/internal/board/issue.go:112` is
 where it is paid: one
 `gh api --paginate repos/<owner>/<repo>/issues/<n>/comments`, one round trip,
 measured at **0.44 s** for a seven-comment thread. A board thread of **300
@@ -730,7 +730,7 @@ Each is proven able to fail by a mutation before it is trusted.
    owner; two takes at one injected second by `Ada` and `Bo` name `Bo` from
    every clone and both backends; a mutation that folds in file order turns
    the test red; the source tripwire finds no lock call in
-   `internal/board`; two backends with the same events print identical
+   `deprecated/internal/board`; two backends with the same events print identical
    listings, including an overridden close that shows `BOARD CLOSE by=<name>
    override=true` from both with no git metadata and no comment author read.
    `TestTheIdIsRandomAndCreationIsExclusive`: two rows filed under one name
@@ -877,7 +877,7 @@ Each is proven able to fail by a mutation before it is trusted.
 Standard library only, no third-party imports, no hardcoded paths, and the repo's
 shared packages used rather than re-spelled.
 
-1. **`internal/board/event.go`** — the five event lines: render and parse, anchored
+1. **`deprecated/internal/board/event.go`** — the five event lines: render and parse, anchored
    at the line start, id as the token after the verb, `ev=` and `after=` on
    every later event, `as=` `at=` `override=` on
    every line, `oneline.Field` on every value, the id (128 bits from
@@ -887,7 +887,7 @@ shared packages used rather than re-spelled.
    sentence about another card; an unparsed line is counted and never guessed at; a
    text with a newline files one card; two ids drawn from a source that
    returns the same bytes twice are refused by `O_EXCL`, never overwritten.
-2. **`internal/board/derive.go`** — events in, cards out: the topological
+2. **`deprecated/internal/board/derive.go`** — events in, cards out: the topological
    walk over `after=` edges applied before anything is derived, the key
    `(at, as, id, verb, bytes)` only among concurrent eligible events, missing,
    cross-card and cyclic predecessors quarantined and counted, owner from the latest
@@ -899,26 +899,26 @@ shared packages used rather than re-spelled.
    re-take moves the owner; stale is annotation and writes nothing; identical event
    lists from the two backends derive identical cards; the same events in two
    textual orders derive one owner.
-3. **`internal/board/backend.go`** — the `Backend` interface: `Events() ([]string,
+3. **`deprecated/internal/board/backend.go`** — the `Backend` interface: `Events() ([]string,
    error)` and `Append(string) error`, nothing else, so nothing above it can learn
    which backend it has. Plus the cache rule: valid only while the backend's latest
    marker is unchanged, invalidated by this tool's own append, never truncating.
-4. **`internal/board/issue.go`** — `gh` for read and append, under a timeout, one
+4. **`deprecated/internal/board/issue.go`** — `gh` for read and append, under a timeout, one
    event per comment, full pagination. Tests against a recorded fixture rather than
    the network (CONTRIBUTING: a test that touches the network wants a reason).
-5. **`internal/board/dir.go`** — one file per card, created `O_EXCL` and refused
+5. **`deprecated/internal/board/dir.go`** — one file per card, created `O_EXCL` and refused
    at exit 1 when it exists, the `BOARD v1` version line, append, read every
    file whole and fold, `#` comments and blanks ignored, a
    file without its version line is exit 2, a file that is not `<id>.board` is
    counted and never read. No git, no lock.
-6. **`cmd/nova-board/main.go`** — the five verbs; exactly one backend or exit 2;
+6. **`deprecated/cmd/nova-board/main.go`** — the five verbs; exactly one backend or exit 2;
    `--as` required on every writing verb; `--stale` required on `take` and
    `close` as on `list`; the read-before-append for `take` and `close` with the
    ownership refusals at exit 1 and `--anyway` written as `override=true`; `internal/bounded`
    for `--max` with `BOARD MORE`; the count line printed on failure as well as
    success. Refusals name what the flag wants and report **every** independent
    problem in one go.
-7. **`cmd/nova-board/check.go`** — the dumb matcher, `--all`, `CHECK HIT` capped,
+7. **`deprecated/cmd/nova-board/check.go`** — the dumb matcher, `--all`, `CHECK HIT` capped,
    `matched=` never capped, and **exit 1 on a match**. The test is named for the
    mnemonic: `TestCheckExitsOneOnMatchSoTheShellGuardReads`.
 8. **`quickstart`** — the natural first run: judge **every** flag first, then, only on
