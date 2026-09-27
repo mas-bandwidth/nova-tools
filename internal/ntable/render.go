@@ -11,12 +11,14 @@ type RenderOpts struct {
 	// not cut), over the column's own Width; 0 leaves it as wide as its
 	// widest cell.
 	Widths map[string]int
+	// LabelWidth fixes the row-label column's width the same way (the
+	// sprint's stream block keeps its names 25 wide); 0 fits the labels.
+	LabelWidth int
 	// HideZeroRows hides a row whose count cells are all zero and all read.
 	HideZeroRows bool
 	// Title is the table's name, printed in the top-left cell, the header
 	// of the row-label column (Glenn 2026-09-27: "tables need a title";
-	// "the title goes where 'row' is currently"); an empty table then
-	// prints the title and "(no rows)" instead of nothing.
+	// "the title goes where 'row' is currently").
 	Title string
 }
 
@@ -28,15 +30,20 @@ type RenderOpts struct {
 // set did not come back prints "?", and so does a fold over it. The last
 // column is padded only when it is right-aligned, so no line ends in a
 // space. An empty table, and a table with no visible row, renders as the
-// empty string with no newline (Glenn 2026-09-26 10:00 AM ET: an empty
-// stream table is hidden with no extra newline).
+// empty string with no newline, title or not (Glenn 2026-09-26 10:00 AM
+// ET: an empty stream table is hidden with no extra newline; 2026-09-27:
+// "When a table has no rows, it should automatically hide. When it has
+// rows again, it should show").
 //
 // The row's label is always the first column (Glenn 2026-09-27, the live
-// session: eight benches rendered as eight anonymous rows of numbers): when
-// the definition's first column is not a text column, one is put in front,
-// and the footer label prints under it instead of eating the first count
-// column's fold. Its header is the table's name when the caller gives one
-// (opts.Title), else the column's own label, else "row".
+// session: eight benches rendered as eight anonymous rows of numbers), put
+// in front of every declared column, and the footer label prints under it
+// instead of eating the first count column's fold. Its header is the
+// table's name when the caller gives one (opts.Title), else "row". A text
+// column is a column like any other: it prints the row's value (row set),
+// blank when the row has none; it never stands in for the label (Stella's
+// read of #4456: a value in a leading text column made the row's key
+// vanish; "the row identity must still have its own visible cell").
 func Render(t Table, opts RenderOpts) string {
 	rows := make([]Row, 0, len(t.Rows))
 	for _, r := range t.Rows {
@@ -46,9 +53,6 @@ func Render(t Table, opts RenderOpts) string {
 		rows = append(rows, r)
 	}
 	if len(rows) == 0 {
-		if opts.Title != "" {
-			return opts.Title + "\n(no rows)\n"
-		}
 		return ""
 	}
 	// cols is what is printed; src[j] is the definition's column behind
@@ -65,10 +69,8 @@ func Render(t Table, opts RenderOpts) string {
 		cols = append(cols, c)
 		src = append(src, j)
 	}
-	if len(cols) == 0 || cols[0].Projection != Text {
-		cols = append([]Column{{Name: "row", Label: "row", Projection: Text, Fold: None}}, cols...)
-		src = append([]int{-1}, src...)
-	}
+	cols = append([]Column{{Label: "row", Projection: Text, Fold: None}}, cols...)
+	src = append([]int{-1}, src...)
 	n := len(cols)
 	header := make([]string, n)
 	body := make([][]string, len(rows))
@@ -104,7 +106,9 @@ func Render(t Table, opts RenderOpts) string {
 	widths := make([]int, n)
 	for j, c := range cols {
 		w := c.Width
-		if v, ok := opts.Widths[c.Name]; ok && v > 0 {
+		if j == 0 {
+			w = opts.LabelWidth
+		} else if v, ok := opts.Widths[c.Name]; ok && v > 0 {
 			w = v
 		}
 		if w == 0 {
@@ -200,10 +204,7 @@ func allZero(t Table, r Row) bool {
 // cellText is one body cell as printed.
 func cellText(c Column, r Row, j int) string {
 	if c.Projection == Text {
-		if v, ok := r.Texts[c.Name]; ok {
-			return v
-		}
-		return r.LabelOrKey()
+		return r.Texts[c.Name] // blank when the row has no value
 	}
 	if j >= len(r.Cells) {
 		return "?"
@@ -264,9 +265,15 @@ func formulaValue(cols []Column, c Column, r Row) (float64, bool) {
 	return 100 * float64(part) / float64(total), true
 }
 
-// formulaText prints a formula cell: a percentage with one decimal when
-// it needs one ("33.3%"), "-" when the row has no tasks.
+// formulaText prints a formula cell: a percentage with one decimal
+// ("33.3%"), "-" when the row has no tasks, "?" when a count it needs did
+// not come back (Stella's read of #4456: an unread dependency propagates).
 func formulaText(cols []Column, c Column, r Row) string {
+	for k, o := range cols {
+		if o.Projection == Count && (k >= len(r.Cells) || r.Cells[k].Unread) {
+			return "?"
+		}
+	}
 	v, ok := formulaValue(cols, c, r)
 	if !ok {
 		return "-"

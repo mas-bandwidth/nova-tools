@@ -29,7 +29,7 @@ func QueueCells(ctx context.Context, pipe redis.Pipeliner, t *Table) *CellsCmd {
 	for i := range t.Rows {
 		r := &t.Rows[i]
 		for j, c := range t.Columns {
-			if j >= len(r.Cells) || c.Projection == Text {
+			if j >= len(r.Cells) || !c.HasSet() {
 				continue
 			}
 			key := r.Cells[j].Key

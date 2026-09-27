@@ -99,6 +99,8 @@ func (o operation) refused(reply []any) error {
 		cause = errors.New("wants at least one member")
 	case "NOVIEW":
 		cause = errors.New("no such view; run: nova-table view set <name> --tables <a,b,...>")
+	case "OCCUPIED":
+		cause = errors.New("the column holds owned members in that row; move or remove them first")
 	case "NOTTEXT":
 		cause = errors.New("not a text column; row set writes text columns only")
 	case "BOUND":

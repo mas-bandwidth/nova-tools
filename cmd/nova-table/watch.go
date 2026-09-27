@@ -149,7 +149,8 @@ func viewReader(c redis.Cmdable, name string, opts ntable.RenderOpts) func(conte
 			if total > 0 {
 				pct = strconv.FormatFloat(100*float64(part)/float64(total), 'f', 1, 64) + "%"
 			}
-			fmt.Fprintf(&b, "%d/%d %s -> ETA -\n\n", part, total, pct)
+			// no rate yet, so no ETA value and no placeholder (Glenn 2026-09-27: no trailing " -")
+			fmt.Fprintf(&b, "%d/%d %s -> ETA\n\n", part, total, pct)
 		}
 		b.WriteString(tables)
 		return b.String(), nil

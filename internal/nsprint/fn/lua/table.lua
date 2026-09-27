@@ -39,8 +39,10 @@ do
     for i = 1, #flat, 2 do h[flat[i]] = flat[i + 1] end
     return h, flat
   end
-  function T.def(name)
-    local h, flat = T.hash('table:' .. name)
+  -- T.parse_def(h): the columns of a definition hash, or nil and the
+  -- refusal; used on the stored hash (T.def) and on a proposed one
+  -- (ns_table_set --columns), so a bad shape is refused before any write.
+  function T.parse_def(h)
     if not h.order then return nil, {'REFUSED', 'NOTABLE'} end
     local cols, seen = {}, {}
     for col in string.gmatch(h.order, '[^,]+') do
@@ -58,6 +60,12 @@ do
       cols[#cols + 1] = {name = col, projection = proj, noset = proj == 'text' or formula}
     end
     if #cols == 0 then return nil, {'REFUSED', 'DEFINITION', ''} end
+    return cols
+  end
+  function T.def(name)
+    local h, flat = T.hash('table:' .. name)
+    local cols, err = T.parse_def(h)
+    if not cols then return nil, err end
     return {cols = cols, h = h, flat = flat}
   end
   function T.rowkey(name, row) return 'table:' .. name .. ':row:' .. row end
@@ -141,7 +149,12 @@ do
   function T.addrow(name, def, row, spec)
     local h, why = T.rowfields(name, def, row, spec)
     if not h then return why end
-    T.hash(T.rowkey(name, row)) -- refuse a corrupt row before rewriting it
+    local old = T.hash(T.rowkey(name, row)) -- refuse a corrupt row before rewriting it
+    -- retained per-column data survives a metadata edit (Stella's read of
+    -- #4456): the text values and the hidden flag
+    for k, v in pairs(old) do
+      if (string.sub(k, 1, 5) == 'text:' or k == 'hidden') and h[k] == nil then h[k] = v end
+    end
     local rowsKey = 'table:' .. name .. ':rows'
     local rank = redis.call('ZSCORE', rowsKey, row)
     if not rank then
@@ -187,13 +200,16 @@ do
     local def, err = T.def(name)
     if not def then return err end
     if not redis.call('ZSCORE', 'table:' .. name .. ':rows', row) then return {'REFUSED', 'NOROW', row} end
-    local n = 0
+    -- every column checked before the first write (a refusal writes nothing)
     for i = 3, #args - 1, 2 do
       local col, found = args[i], nil
       for _, c in ipairs(def.cols) do if c.name == col then found = c end end
       if not found then return {'REFUSED', 'NOCOL', row, col} end
       if found.projection ~= 'text' then return {'REFUSED', 'NOTTEXT', row, col} end
-      redis.call('HSET', T.rowkey(name, row), 'text:' .. col, args[i + 1])
+    end
+    local n = 0
+    for i = 3, #args - 1, 2 do
+      redis.call('HSET', T.rowkey(name, row), 'text:' .. args[i], args[i + 1])
       n = n + 1
     end
     return {'OK', n}
@@ -254,74 +270,90 @@ do
   -- cells; bound cells are references and stay) and the registry entry.
   redis.register_function('ns_table_set', function(keys, args)
     local name = args[1]
-    -- the existing definition need not validate when the columns are being
-    -- replaced (a rule that tightened leaves old definitions behind; set
-    -- --columns is the way out); everything else wants a valid one
-    local replacing = false
-    for i = 2, #args - 1, 2 do if args[i] == 'columns' then replacing = true end end
-    local def, err
-    if replacing then
-      if redis.call('EXISTS', 'table:' .. name) == 0 then return {'REFUSED', 'NOTABLE'} end
-      def = {cols = {}}
-      local h = T.hash('table:' .. name)
-      for col in string.gmatch(h.order or '', '[^,]+') do def.cols[#def.cols + 1] = {name = col} end
-    else
-      def, err = T.def(name)
-      if not def then return err end
-    end
-    local footer, newname, columns
+    if redis.call('EXISTS', 'table:' .. name) == 0 then return {'REFUSED', 'NOTABLE'} end
+    local h = T.hash('table:' .. name)
+    -- every change parsed and checked first; nothing is written until all
+    -- of them pass (Stella's read of #4456: a refusal writes nothing)
+    local footer, newname, columns, hidden, visible
     for i = 2, #args - 1, 2 do
       if args[i] == 'footer' then footer = args[i + 1]
       elseif args[i] == 'rename' then newname = args[i + 1]
       elseif args[i] == 'columns' then columns = cjson.decode(args[i + 1])
-      elseif args[i] == 'visible' then
-        if args[i + 1] == '0' then redis.call('HSET', 'table:' .. name, 'visible', '0')
-        else redis.call('HDEL', 'table:' .. name, 'visible') end
-      elseif args[i] == 'hidden' then
-        for col in string.gmatch(args[i + 1], '[^,]+') do
-          local found = false
-          for _, c in ipairs(def.cols) do if c.name == col then found = true end end
-          if not found then return {'REFUSED', 'NOCOL', '', col} end
-        end
-        redis.call('HSET', 'table:' .. name, 'hidden', args[i + 1])
+      elseif args[i] == 'hidden' then hidden = args[i + 1]
+      elseif args[i] == 'visible' then visible = args[i + 1]
       else return {'REFUSED', 'BADSET', args[i]} end
     end
-    if footer ~= nil then redis.call('HSET', 'table:' .. name, 'footer', footer) end
-    local moved = 0
+    if newname and newname ~= '' and newname ~= name and redis.call('EXISTS', 'table:' .. newname) == 1 then
+      return {'REFUSED', 'EXISTS', newname}
+    end
+    -- the definition after the change, validated whole
+    local cand = {}
+    for k, v in pairs(h) do cand[k] = v end
+    local oldcols, gone = {}, {}
     if columns then
-      -- the columns replaced in place: the definition's order and col:*
-      -- fields rewritten (validated by the client as create validates), the
-      -- owned cells of columns that went are deleted, new columns start empty
-      local old = redis.call('HGETALL', 'table:' .. name)
-      local oldcols = {}
-      for i = 1, #old, 2 do
-        if string.sub(old[i], 1, 4) == 'col:' then oldcols[#oldcols + 1] = string.sub(old[i], 5) end
+      for k in pairs(h) do if string.sub(k, 1, 4) == 'col:' then oldcols[#oldcols + 1] = string.sub(k, 5); cand[k] = nil end end
+      for k, v in pairs(columns) do cand[k] = v end
+    end
+    local cols, err = T.parse_def(cand)
+    if not cols then return err end
+    local byname = {}
+    for _, c in ipairs(cols) do byname[c.name] = c end
+    if hidden then
+      for col in string.gmatch(hidden, '[^,]+') do
+        if not byname[col] then return {'REFUSED', 'NOCOL', '', col} end
       end
-      local keep = {}
-      for col in string.gmatch(columns.order or '', '[^,]+') do keep[col] = true end
-      local rows = redis.call('ZRANGE', 'table:' .. name .. ':rows', 0, -1)
+    end
+    local rows = redis.call('ZRANGE', 'table:' .. name .. ':rows', 0, -1)
+    if columns then
+      -- a column that loses its set (removed, or turned into text or a
+      -- formula) must hold no owned member in any row: OCCUPIED, never
+      -- hidden or dropped (Stella's read of #4456)
+      local oldparsed = T.parse_def(h) or {}
+      local oldby = {}
+      for _, c in ipairs(oldparsed) do oldby[c.name] = c end
       for _, col in ipairs(oldcols) do
-        if not keep[col] then
-          redis.call('HDEL', 'table:' .. name, 'col:' .. col)
+        local was = oldby[col]
+        local now = byname[col]
+        if was and not was.noset and (not now or now.noset) then
           for _, row in ipairs(rows) do
-            redis.call('DEL', T.cellkey(name, row, col))
-            redis.call('HDEL', T.rowkey(name, row), 'key:' .. col)
+            local rh = T.hash(T.rowkey(name, row))
+            if not (rh['key:' .. col] and rh['key:' .. col] ~= '') and redis.call('ZCARD', T.cellkey(name, row, col)) > 0 then
+              return {'REFUSED', 'OCCUPIED', row, col}
+            end
           end
+          if not now then gone[#gone + 1] = col end
+        elseif not now then
+          gone[#gone + 1] = col
         end
       end
-      for k, v in pairs(columns) do redis.call('HSET', 'table:' .. name, k, v) end
-      local _, derr = T.def(name)
-      if derr then return derr end
     end
+    -- the writes
+    if footer ~= nil then redis.call('HSET', 'table:' .. name, 'footer', footer) end
+    if hidden then redis.call('HSET', 'table:' .. name, 'hidden', hidden) end
+    if visible then
+      if visible == '0' then redis.call('HSET', 'table:' .. name, 'visible', '0') else redis.call('HDEL', 'table:' .. name, 'visible') end
+    end
+    if columns then
+      for _, col in ipairs(gone) do
+        redis.call('HDEL', 'table:' .. name, 'col:' .. col)
+        for _, row in ipairs(rows) do
+          redis.call('DEL', T.cellkey(name, row, col))
+          redis.call('HDEL', T.rowkey(name, row), 'key:' .. col, 'text:' .. col)
+        end
+      end
+      for _, col in ipairs(oldcols) do
+        if byname[col] == nil then redis.call('HDEL', 'table:' .. name, 'col:' .. col) end
+      end
+      for k, v in pairs(columns) do redis.call('HSET', 'table:' .. name, k, v) end
+    end
+    local moved = 0
     if newname and newname ~= '' and newname ~= name then
-      if redis.call('EXISTS', 'table:' .. newname) == 1 then return {'REFUSED', 'EXISTS', newname} end
-      local rows = redis.call('ZRANGE', 'table:' .. name .. ':rows', 0, -1)
       local function mv(from, to)
         if redis.call('EXISTS', from) == 1 then redis.call('RENAME', from, to); moved = moved + 1 end
       end
       for _, row in ipairs(rows) do
-        for _, col in ipairs(def.cols) do
-          mv(T.cellkey(name, row, col.name), T.cellkey(newname, row, col.name))
+        for _, c in ipairs(cols) do
+          if not c.noset then mv(T.cellkey(name, row, c.name), T.cellkey(newname, row, c.name)) end
         end
         mv(T.rowkey(name, row), T.rowkey(newname, row))
       end
@@ -371,9 +403,9 @@ do
       end
       return T.apply(commands) or {'OK', redis.call('ZCARD', target)}
   end
-  -- A view (SPEC-COORDINATOR section 7; Glenn 2026-09-27: "restarting is
-  -- not cool"): a named list of tables with a title, read by watch every
-  -- frame, so the tables a tab shows change by a verb.
+  -- A view (SPEC-COORDINATOR section 7; Glenn 2026-09-27: no restart to
+  -- change what a tab shows): a named list of tables with a title, read by
+  -- watch every frame, so the tables a tab shows change by a verb.
   redis.register_function('ns_view_set', function(keys, args)
     local name, tables, title, summary = args[1], args[2], args[3] or '', args[4] or ''
     for t in string.gmatch(tables, '[^,]+') do

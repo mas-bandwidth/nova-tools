@@ -9,14 +9,14 @@ import (
 
 // counts builds a count-only table of the given rows for the render tests.
 func counts(cols []string, rows map[string][]int64, order []string) ntable.Table {
-	t := ntable.Table{Name: "t", Columns: []ntable.Column{{Name: "row", Projection: ntable.Text, Fold: ntable.None}}}
+	t := ntable.Table{Name: "t"}
 	for _, c := range cols {
 		t.Columns = append(t.Columns, ntable.Column{Name: c, Projection: ntable.Count, Fold: ntable.Sum})
 	}
 	for _, key := range order {
 		r := ntable.NewRow(t, key)
 		for j, n := range rows[key] {
-			r.Cells[j+1].Count = n
+			r.Cells[j].Count = n
 		}
 		t.Rows = append(t.Rows, r)
 	}
@@ -73,19 +73,19 @@ func TestRenderWidthsAndHiddenRows(t *testing.T) {
 	t.Parallel()
 
 	tb := counts([]string{"n"}, map[string][]int64{"a": {2}, "b": {0}, "c": {3}}, []string{"a", "b", "c"})
-	tb.Rows[2].Cells[1].Unread = true
+	tb.Rows[2].Cells[0].Unread = true
 	want := "row        | n\n" +
 		"-----------+--\n" +
 		"a          | 2\n" +
 		"c          | ?\n" +
 		"-----------+--\n" +
 		"           | ?\n"
-	got := ntable.Render(tb, ntable.RenderOpts{Widths: map[string]int{"row": 10}, HideZeroRows: true})
+	got := ntable.Render(tb, ntable.RenderOpts{LabelWidth: 10, HideZeroRows: true})
 	if got != want {
 		t.Fatalf("widths and hidden rows:\n%s\nwant:\n%s", got, want)
 	}
-	tb.Rows[2].Cells[1].Unread = false
-	tb.Columns[1].Width = 4
+	tb.Rows[2].Cells[0].Unread = false
+	tb.Columns[0].Width = 4
 	tb.FooterLabel = "all"
 	want = "row        |    n\n" +
 		"-----------+-----\n" +
@@ -94,7 +94,7 @@ func TestRenderWidthsAndHiddenRows(t *testing.T) {
 		"c          |    3\n" +
 		"-----------+-----\n" +
 		"all        |    5\n"
-	if got := ntable.Render(tb, ntable.RenderOpts{Widths: map[string]int{"row": 10}}); got != want {
+	if got := ntable.Render(tb, ntable.RenderOpts{LabelWidth: 10}); got != want {
 		t.Fatalf("column width and footer label:\n%s\nwant:\n%s", got, want)
 	}
 }
@@ -106,7 +106,6 @@ func TestRenderProjectionsAndFolds(t *testing.T) {
 	t.Parallel()
 
 	tb := ntable.Table{Name: "t", Columns: []ntable.Column{
-		{Name: "row", Projection: ntable.Text, Fold: ntable.None},
 		{Name: "who", Projection: ntable.Members, Fold: ntable.Union},
 		{Name: "oldest", Projection: ntable.First, Fold: ntable.None},
 		{Name: "newest", Projection: ntable.Last, Fold: ntable.None},
@@ -114,11 +113,11 @@ func TestRenderProjectionsAndFolds(t *testing.T) {
 	}}
 	ms := []ntable.Member{{Member: "ann", Score: 1}, {Member: "bo", Score: 2}}
 	a := ntable.NewRow(tb, "a")
-	a.Cells[1].Members, a.Cells[2].Members, a.Cells[3].Members, a.Cells[4].Count = ms, ms, ms, 7
+	a.Cells[0].Members, a.Cells[1].Members, a.Cells[2].Members, a.Cells[3].Count = ms, ms, ms, 7
 	b := ntable.NewRow(tb, "b")
 	b.Label = "B row"
-	b.Cells[1].Members = []ntable.Member{{Member: "bo", Score: 3}, {Member: "cy", Score: 4}}
-	b.Cells[4].Count = 9
+	b.Cells[0].Members = []ntable.Member{{Member: "bo", Score: 3}, {Member: "cy", Score: 4}}
+	b.Cells[3].Count = 9
 	tb.Rows = []ntable.Row{a, b}
 	// the union is wider than the widest body cell only in the footer, and
 	// the footer counts in the natural width; a blank footer cell leaves
@@ -211,15 +210,10 @@ func TestParseColumnsAndWidths(t *testing.T) {
 // strange"; "tables need a title"): a definition whose first column is a
 // count column gets the row-label column in front, the footer label under
 // it and every fold in its own column; the title is the top-left cell, the
-// header of that column; an empty table with a title prints the title and
-// (no rows).
+// header of that column; an empty table hides, title or not.
 func TestRenderPutsTheRowLabelFirstAndTitles(t *testing.T) {
 	t.Parallel()
 	tb := counts([]string{"waiting", "ready"}, map[string][]int64{"alpha": {2, 1}, "beta": {0, 0}}, []string{"alpha", "beta"})
-	tb.Columns = tb.Columns[1:] // no text column: as `nova-table create demo --columns waiting,ready` makes it
-	for i := range tb.Rows {
-		tb.Rows[i].Cells = tb.Rows[i].Cells[1:]
-	}
 	want := "demo  | waiting | ready\n" +
 		"------+---------+------\n" +
 		"alpha |       2 |     1\n" +
@@ -229,8 +223,8 @@ func TestRenderPutsTheRowLabelFirstAndTitles(t *testing.T) {
 	if got := ntable.Render(tb, ntable.RenderOpts{Title: "demo"}); got != want {
 		t.Fatalf("row label first and a title:\n%s\nwant:\n%s", got, want)
 	}
-	if got := ntable.Render(ntable.Table{Name: "empty"}, ntable.RenderOpts{Title: "empty"}); got != "empty\n(no rows)\n" {
-		t.Fatalf("an empty table with a title: %q", got)
+	if got := ntable.Render(ntable.Table{Name: "empty"}, ntable.RenderOpts{Title: "empty"}); got != "" {
+		t.Fatalf("an empty table with a title hides too (Glenn 2026-09-27): %q", got)
 	}
 	if got := ntable.Render(ntable.Table{Name: "empty"}, ntable.RenderOpts{}); got != "" {
 		t.Fatalf("an empty table without a title stays hidden: %q", got)
@@ -243,7 +237,8 @@ func TestRenderPutsTheRowLabelFirstAndTitles(t *testing.T) {
 // which is either up or down"): a pct(<col>) column is computed per row
 // over the row's count cells, folds avg over the rows that have tasks, and
 // prints "-" for a row with none; a text column prints the row's value set
-// by row set, else the label.
+// by row set, else blank (the row's identity is the label column in front;
+// Stella's read of #4456).
 func TestRenderFormulaAndTextCells(t *testing.T) {
 	t.Parallel()
 	cols, err := ntable.ParseColumns("waiting,ready,working,done,wpct:pct(waiting):pooled:waiting%,status:text:none")
@@ -266,8 +261,8 @@ func TestRenderFormulaAndTextCells(t *testing.T) {
 	want := "streams | waiting | ready | working | done | waiting% | status\n" +
 		"--------+---------+-------+---------+------+----------+-------\n" +
 		"alpha   |       1 |     1 |       1 |    0 | 33.3%    | up\n" +
-		"beta    |       5 |     2 |       3 |    0 | 50.0%    | beta\n" +
-		"empty   |       0 |     0 |       0 |    0 | -        | empty\n" +
+		"beta    |       5 |     2 |       3 |    0 | 50.0%    |\n" +
+		"empty   |       0 |     0 |       0 |    0 | -        |\n" +
 		"--------+---------+-------+---------+------+----------+-------\n" +
 		"total   |       6 |     3 |       4 |    0 | 46.2%    |\n"
 	if got := ntable.Render(tb, ntable.RenderOpts{Title: "streams"}); got != want {
@@ -310,5 +305,24 @@ func TestRenderHidesAColumnButKeepsIt(t *testing.T) {
 		"  |     1 | 75.0%\n"
 	if got := ntable.Render(tb, ntable.RenderOpts{Title: "s"}); got != want {
 		t.Fatalf("hidden column:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// TestRenderFormulaPropagatesUnread (Stella's read of #4456): a pct cell
+// whose count did not come back prints ?, and so does its pooled fold.
+func TestRenderFormulaPropagatesUnread(t *testing.T) {
+	t.Parallel()
+	cols, err := ntable.ParseColumns("waiting,ready,wpct:pct(waiting)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tb := ntable.Table{Name: "s", Columns: cols}
+	r := ntable.NewRow(tb, "a")
+	r.Cells[0].Count = 3
+	r.Cells[1].Unread = true
+	tb.Rows = []ntable.Row{r}
+	got := ntable.Render(tb, ntable.RenderOpts{Title: "s"})
+	if !strings.Contains(got, "a |       3 |     ? | ?\n") || !strings.Contains(got, "  |       3 |     ? | ?\n") {
+		t.Fatalf("unread propagation:\n%s", got)
 	}
 }

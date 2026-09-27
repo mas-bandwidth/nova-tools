@@ -289,22 +289,28 @@ func cmdShow(args []string, stdout, stderr io.Writer) int {
 
 // renderFlags declares the render flags render and watch share.
 type renderFlags struct {
-	hideZero *bool
-	widths   *string
+	hideZero   *bool
+	widths     *string
+	labelWidth *int
 }
 
 func declareRenderFlags(fs interface {
 	Bool(name string, value bool, usage string) *bool
+	Int(name string, value int, usage string) *int
 	String(name, value, usage string) *string
 }) renderFlags {
 	return renderFlags{
-		hideZero: fs.Bool("hide-zero-rows", false, "hide a row whose count cells are all zero"),
-		widths:   fs.String("width", "", "fixed column widths for this render, col=n,..."),
+		hideZero:   fs.Bool("hide-zero-rows", false, "hide a row whose count cells are all zero"),
+		widths:     fs.String("width", "", "fixed column widths for this render, col=n,..."),
+		labelWidth: fs.Int("label-width", 0, "fixed width of the row-label column for this render (0: as wide as the labels)"),
 	}
 }
 
 func (f renderFlags) opts() (ntable.RenderOpts, error) {
-	opts := ntable.RenderOpts{HideZeroRows: *f.hideZero}
+	opts := ntable.RenderOpts{HideZeroRows: *f.hideZero, LabelWidth: *f.labelWidth}
+	if *f.labelWidth < 0 {
+		return opts, fmt.Errorf("--label-width: %d is negative", *f.labelWidth)
+	}
 	if *f.widths != "" {
 		w, err := ntable.ParseWidths(*f.widths)
 		if err != nil {
