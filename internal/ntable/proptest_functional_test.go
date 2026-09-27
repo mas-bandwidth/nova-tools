@@ -28,9 +28,10 @@ import (
 // real store and checks the layer's invariants after every step". rapid draws
 // the sequences, the store is a throwaway redis-server with the library
 // loaded, and the oracle is a Go model beside it. There are two oracles in
-// one harness, chosen by NOVA_TABLE_CONTRACT.
+// one harness. The accepted contract is the default gate; the pinned old
+// runtime can be studied explicitly with NOVA_TABLE_CONTRACT=0.
 //
-// BASELINE (the default) is a model of TODAY's table.lua
+// BASELINE (NOVA_TABLE_CONTRACT=0) is a model of the pinned old table.lua
 // (internal/nsprint/fn/lua/table.lua), the behaviour Stella's TLA+ model of
 // it describes (rowan-new specs/tla/TABLE-MODEL.md and TableMachine.tla,
 // pinned at f77458853): physical owned sets kept apart from the metadata that
@@ -70,13 +71,12 @@ import (
 // text columns, labels and excludes, bind targets other than the one
 // external set (the alias witnesses), scores beyond {1, 2}, ACL, rendering.
 //
-// CANDIDATE (NOVA_TABLE_CONTRACT=1) is the ACCEPTED contract as the oracle,
-// written to SPEC-COORDINATOR section 7 (points 8 and 9), section 11 and
-// Stella's MemberTable.tla AHEAD OF THE CODE (nova-tools #4450, in progress,
-// not on dev), so that when her PR lands the only work is flipping the env
-// in CI. It cannot pass today; it fails on the first accepted mutation the
-// contract refuses, with the shrunk sequence. The contract as the harness
-// reads it:
+// CANDIDATE (the default, or NOVA_TABLE_CONTRACT=1) is the accepted contract
+// from SPEC-COORDINATOR section 7 (points 8 and 9), section 11 and
+// MemberTable.tla, aligned with #4455. This default and #4455 must land in
+// the same integration batch: a normal functional test run must exercise
+// the contract without relying on a manually supplied environment flag.
+// Missing contract machinery fails rather than selecting the old oracle.
 //
 //   - ONE PLACE per member per table inside the epoch (epoch 0 here, the
 //     harness never advances it): the record table::member:<id> carries
@@ -673,7 +673,14 @@ func TestTableVerbsAgainstModel(t *testing.T) {
 	t.Parallel()
 
 	rapidKeepsTheTreeClean(t)
-	candidate := os.Getenv("NOVA_TABLE_CONTRACT") == "1"
+	candidate := true
+	switch mode := os.Getenv("NOVA_TABLE_CONTRACT"); mode {
+	case "", "1":
+	case "0":
+		candidate = false
+	default:
+		t.Fatalf("NOVA_TABLE_CONTRACT wants 0 (pinned baseline) or 1 (accepted contract), got %q", mode)
+	}
 	_, c := live(t)
 	ctx := context.Background()
 	tally := contractTally{gaps: map[string]bool{}}
