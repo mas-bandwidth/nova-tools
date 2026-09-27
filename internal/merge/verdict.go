@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/textbody"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
@@ -33,30 +34,9 @@ type Verdict struct {
 	Kind     string   // "line", "child", "card"
 }
 
-// StripQuotedAndCode removes quotes (lines starting with >) and fenced code blocks.
-// S6: "Quoted material is removed mechanically before the evidence is framed:
-// every line whose first non-space character is >, and every fenced code block,
-// is dropped, because a status comment that quotes a hold is not a hold".
-func StripQuotedAndCode(body string) string {
-	lines := strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n")
-	var out []string
-	inFence := false
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "```") {
-			inFence = !inFence
-			continue
-		}
-		if inFence {
-			continue
-		}
-		if strings.HasPrefix(trimmed, ">") {
-			continue
-		}
-		out = append(out, line)
-	}
-	return strings.Join(out, "\n")
-}
+// StripQuotedAndCode is the existing merge entry point for shared body filtering.
+// New consumers use textbody directly so they need no merge machinery.
+func StripQuotedAndCode(body string) string { return textbody.StripQuotedAndCode(body) }
 
 // ParseDispositionLine is the lenient view of a typed DISPOSITION line,
 // DISPOSITION who=<name> head=<sha> verdict=HOLD [scope="<text>"]. The one
