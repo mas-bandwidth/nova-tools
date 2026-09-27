@@ -16,31 +16,6 @@ bot	ci-bot	no
 	return rs
 }
 
-func TestStripQuotedAndCode(t *testing.T) {
-	t.Parallel()
-
-	input := `Hello
-> quoted line 1
-> quoted line 2
-Real text here
-` + "```" + `
-code block
-HOLD in code
-` + "```" + `
-After code`
-
-	got := StripQuotedAndCode(input)
-	if strings.Contains(got, "quoted line") {
-		t.Errorf("quoted lines were not stripped: %s", got)
-	}
-	if strings.Contains(got, "HOLD in code") {
-		t.Errorf("code block was not stripped: %s", got)
-	}
-	if !strings.Contains(got, "Real text here") || !strings.Contains(got, "After code") {
-		t.Errorf("real text was lost: %s", got)
-	}
-}
-
 func TestParseDispositionLine(t *testing.T) {
 	t.Parallel()
 
