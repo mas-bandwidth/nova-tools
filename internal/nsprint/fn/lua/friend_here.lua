@@ -8,9 +8,10 @@
 -- stops beating reads down after that minute; a session that finds another
 -- session's beat older than the stale window takes it over, never BUSY.
 --
--- Keys: friends (read), friends:login (read), friend:<f>:desired (read),
--- friend:<f>:beat (hash: harness, host, session, at, load1, ncpu, cpu; the
--- one key written here), cap:log (friend-up, friend-takeover receipts).
+-- Keys: friends (read), friend:<f>:desired (read), friend:<f>:beat (hash:
+-- harness, host, session, at, load1, ncpu, cpu), friends:login (alias ->
+-- friend, the --login aliases), cap:log (friend-up, friend-takeover and
+-- friend-login receipts).
 
 local function fh_now_ms()
   local t = redis.call('TIME')
@@ -23,12 +24,16 @@ local function fh_caplog(kind, subject, reason, actor, idem, at)
     'actor', actor or '', 'idem', idem or '', 'at', tostring(at))
 end
 
--- ns_friend_here(friend, host, harness, session, stale_ms, actor, idem)
--- registers a session's presence: UP <slots> <was_up> <took_over>. A name
--- that is a login alias is NAME-IS-LOGIN; a name not in the roster (friends
--- and friend:<f>:desired, which nova-config writes) is UNREGISTERED; another
--- session whose beat is at most stale_ms old is BUSY <host> <session>
--- <age_ms>; an older one is taken over (receipt friend-takeover).
+-- ns_friend_here(friend, host, harness, session, stale_ms, actor, idem,
+-- login...) registers a session's presence: UP <slots> <was_up> <took_over>.
+-- A name that is a login alias is NAME-IS-LOGIN; a name not in the roster
+-- (friends and friend:<f>:desired slots, which nova-config writes) is
+-- UNREGISTERED; another session whose beat is at most stale_ms old is BUSY
+-- <host> <session> <age_ms>; an older one is taken over (receipt
+-- friend-takeover). args[8..] are the friend's login aliases (--login), the
+-- runtime fact hello wrote to friends:login: every alias is checked before
+-- any write (INVALID <alias>, LOGIN-IS-FRIEND <alias>, LOGIN-TAKEN <alias>
+-- <friend>), and a new one is written with a friend-login receipt.
 local function friend_here(keys, args)
   local friend, host, harness, session = args[1], args[2], args[3], args[4]
   local stale = tonumber(args[5] or '')
@@ -43,10 +48,29 @@ local function friend_here(keys, args)
   if redis.call('SISMEMBER', 'friends', friend) == 0 then
     return { 'UNREGISTERED' }
   end
-  local desired = redis.call('HMGET', 'friend:' .. friend .. ':desired', 'slots', 'machine')
-  local slots = tonumber(desired[1] or '')
-  if not slots or not desired[2] or desired[2] == '' then
+  local slots = tonumber(redis.call('HGET', 'friend:' .. friend .. ':desired', 'slots') or '')
+  if not slots then
     return { 'UNREGISTERED' }
+  end
+  local logins, seen = {}, {}
+  for i = 8, #args do
+    local alias = args[i]
+    if not seen[alias] then
+      seen[alias] = true
+      if not string.match(alias, '^[A-Za-z0-9][A-Za-z0-9-]*$') then
+        return { 'INVALID', alias }
+      end
+      if alias == friend or redis.call('SISMEMBER', 'friends', alias) == 1 then
+        return { 'LOGIN-IS-FRIEND', alias }
+      end
+      local mapped = redis.call('HGET', 'friends:login', alias)
+      if mapped and mapped ~= friend then
+        return { 'LOGIN-TAKEN', alias, mapped }
+      end
+      if not mapped then
+        logins[#logins + 1] = alias
+      end
+    end
   end
   local beat_key = 'friend:' .. friend .. ':beat'
   local at = fh_now_ms()
@@ -61,6 +85,10 @@ local function friend_here(keys, args)
     fh_caplog('friend-takeover', friend, 'stale session ' .. cur[1] .. ' on ' .. (cur[2] or '') .. ' age_ms=' .. tostring(age), actor, idem, at)
   end
   local was_up = redis.call('EXISTS', beat_key)
+  for _, alias in ipairs(logins) do
+    redis.call('HSET', 'friends:login', alias, friend)
+    fh_caplog('friend-login', friend, alias, actor, idem, at)
+  end
   redis.call('HSET', beat_key, 'harness', harness or '', 'host', host, 'session', session, 'at', tostring(at))
   redis.call('PERSIST', beat_key)
   if was_up == 0 then
