@@ -46,3 +46,26 @@ Redis error preflight remain concrete-code functional-test obligations. No-ops
 map to unchanged abstract user state; the model does not encode the receipt
 ledger, which the replay runner checks separately. The original pinned baseline
 runner and its deliberately failing desired-contract gate remain unchanged.
+
+## The edit verbs (TableEdit)
+
+`TableEdit.tla` models the edit verbs of nova-table: `set` (footer, rename,
+columns), `row add` and `row hide/show` over many rows, `row set` (text),
+column hide/show, beside the cell verbs that place the members the edits must
+keep, and one outside event (a stored column definition the library no longer
+parses). `Staged = TRUE` is the kernel (every check before the first write);
+`Staged = FALSE` is table.lua at 109939a85, kept as the reversed witness.
+
+Run on a bench, never the Studio, under the 120 s cap:
+
+    timeout 120 java -cp tla2tools.jar tlc2.TLC -workers 4 -deadlock -config <cfg> MCTableEdit.tla
+
+| config | result (space, 2026-09-27) |
+|---|---|
+| `MCTableEdit.cfg` | no error; 77,899,510 states, 1,914,478 distinct, depth 5; TypeOK, RefusalWritesNothing, ShapeLosesNothing, PlacedInShape, TextInTextColumns, HideKeepsData, RenameKeepsData |
+| `MCTableEditBrokenRefusal.cfg` | RefusalWritesNothing violated in 2 states: `row add 1 2` with row 2's key of the wrong type leaves row 1 written (table.lua 109939a85 lines 189-192, checked by hand) |
+| `MCTableEditBrokenShape.cfg` | ShapeLosesNothing violated in 4 states: a text value set, then `set --columns` without the column deletes it (line 341, checked by hand); the unparsable-definition path to a lost member is the same invariant (line 311) |
+
+Not modelled: the receipt ledger and epochs (EpochMemberTable), views, the
+render. Row and column order is not state here yet; it becomes state with the
+move verbs.
