@@ -131,6 +131,8 @@ What it holds the shell to:
   (`NoFalseAlarm`);
 - a store that could not be reached is code 2, whatever the dial said
   (`ConnectionFailureIsTwo`);
+- a write is sent once: when its reply is lost the line ends with code 2 and
+  the write is not sent again, because it may have been done (`AtMostOnce`);
 - without `--keep-going` nothing is read after the first failed line
   (`StopsAtFirstFailure`, `EndOfInputMeansNoFailure`); with it every line is
   read unless the session was told to end (`KeepGoingReadsEveryLine`);
@@ -169,6 +171,7 @@ input of up to four lines over six kinds of line, with and without
 | `MCTableSessionBrokenStale` | NoFalseAlarm violated in 6 states: a line fails while the store refuses, the store comes up, the next line answers the kept error and dials nothing (ed959e1a3: session.go:88, a pool of one; go-redis v9.22.0 pool.go:692) | 2 s |
 | `MCTableSessionBrokenClass` | ConnectionFailureIsTwo violated in 3 states: the store gone from its socket path, the line ends with code 1 (ed959e1a3: main.go:303) | 2 s |
 | `MCTableSessionBrokenLong` | KeepGoingReadsEveryLine violated in 2 states: a line too long ends a `--keep-going` session with a line unread (ed959e1a3: session.go:135) | 1 s |
+| `MCTableSessionBrokenReplay` | AtMostOnce violated in 3 states: a write's reply is lost and the write is sent again (ed959e1a3: session.go:88 opens with go-redis's command retries; v9.22.0 error.go shouldRetry answers true for io.EOF; found by Stella: code 0 and a second receipt) | 3 s |
 | `MCTableSessionBrokenOn` | StopsAtFirstFailure violated: a line is read after a failed one without `--keep-going` | 2 s |
 | `MCTableSessionBrokenLast` | ExitIsHighest violated: `usage` then `ok` exits 0 | 2 s |
 | `MCTableSessionBrokenInt` | StopOnlyWhenStopped violated: SIGINT inside a watch ends the session | 2 s |

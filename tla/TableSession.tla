@@ -11,9 +11,10 @@
 \* and the session has not used since), the dial error the pool keeps (kept),
 \* the exit code so far (exit) and why the session ended (how). The outside:
 \* the store (up; refusing, nothing listens at the address; gone, the socket
-\* path is not there), and two signals. stopped, high, afterStop, afterFail,
-\* falseAlarm and wrongCode are history, kept so the invariants can say what
-\* happened and not only what is.
+\* path is not there), a reply lost on its way back, and two signals.
+\* stopped, high, afterStop, afterFail, falseAlarm, wrongCode and twice are
+\* history, kept so the invariants can say what happened and not only what
+\* is.
 \*
 \* The signals (Stella, stella-ba91222b58ce). SIGTERM is a stop wherever it
 \* arrives: the session ends and no line follows. SIGINT inside a watch is
@@ -45,12 +46,17 @@
 \*            directory"; README:410 promises 2)
 \*   "long"   a line too long ends the session, --keep-going or not
 \*            (ed959e1a3: session.go:135, the scanner cannot go on)
+\*   "replay" a write whose reply was lost is sent again (ed959e1a3:
+\*            session.go:88 opens with go-redis's own command retries, and
+\*            error.go shouldRetry answers true for io.EOF on the reply;
+\*            found by Stella, stella-db2749edae17: code 0 and a second
+\*            receipt)
 \*   "on"     the session goes on after a failed line without --keep-going
 \*   "last"   the exit code is the last line's, not the highest
 \*   "int"    SIGINT inside a watch ends the session
-\* The first four are defects of the code at ed959e1a3, each reproduced on a
-\* store by the second reader and read against the lines named. The last
-\* three are misimplementations the invariants are shown to catch.
+\* The first five are defects of the code at ed959e1a3, each reproduced on a
+\* store and read against the lines named. The last three are
+\* misimplementations the invariants are shown to catch.
 \*
 \* What a stop does to a verb in flight is left open on purpose: the verb
 \* may finish, or the process may end inside it (the store's verb is one
@@ -70,12 +76,12 @@ Down == {"refusing", "gone"}
 NoLine == "-"
 NoEnd == "-"
 VARIABLES input, keep, pc, cur, conn, kept, store, pending, exit, how,
-          stopped, high, afterStop, afterFail, falseAlarm, wrongCode
+          stopped, high, afterStop, afterFail, falseAlarm, wrongCode, twice
 vars == <<input, keep, pc, cur, conn, kept, store, pending, exit, how,
-          stopped, high, afterStop, afterFail, falseAlarm, wrongCode>>
+          stopped, high, afterStop, afterFail, falseAlarm, wrongCode, twice>>
 outside == <<store, pending, stopped>>
 Signals == {"int", "term"}
-link == <<conn, kept, falseAlarm, wrongCode>>
+link == <<conn, kept, falseAlarm, wrongCode, twice>>
 reader == <<input, keep, afterStop, afterFail>>
 Max(a, b) == IF a > b THEN a ELSE b
 
@@ -89,7 +95,7 @@ Init ==
  /\ pending = "none" /\ stopped = FALSE
  /\ exit = 0 /\ high = 0 /\ how = NoEnd
  /\ afterStop = FALSE /\ afterFail = FALSE
- /\ falseAlarm = FALSE /\ wrongCode = FALSE
+ /\ falseAlarm = FALSE /\ wrongCode = FALSE /\ twice = FALSE
 
 \* The line in hand ends with a code: readCommands' `if code > result` and
 \* `if code != 0 && !keepGoing`.
@@ -133,29 +139,45 @@ Code(k) == IF k = "ok" THEN 0 ELSE 1
 \* storeRefusal: a store that could not be reached is 2.
 ConnCode(kind) == IF Broken = "class" /\ kind = "gone" THEN 1 ELSE 2
 
-\* The verb in hand runs. With a live connection it is sent and answered.
-\* Without one the session dials for this line: the store up, the verb is
-\* sent on the new connection; the store down, the line fails with what the
-\* dial said, and the pool keeps that error.
+\* The verb reached the store on a whole connection. Its answer comes back,
+\* or is lost on the way. Lost, the line ends with code 2 and the connection
+\* is dead; the verb is not sent again, because it may have been done.
+Answered ==
+ /\ Finish(Code(cur))
+ /\ conn' = "live"
+ /\ UNCHANGED twice
+Lost ==
+ IF Broken = "replay"
+ THEN /\ Finish(Code(cur))
+      /\ conn' = "live"
+      /\ twice' = (twice \/ cur = "ok")
+ ELSE /\ Finish(2)
+      /\ conn' = "dead"
+      /\ UNCHANGED twice
+
+\* The verb in hand runs. With a live connection it is sent. Without one the
+\* session dials for this line: the store up, the verb is sent on the new
+\* connection; the store down, the line fails with what the dial said, and
+\* the pool keeps that error.
 RunVerb ==
  /\ pc = "verb"
  /\ \/ /\ conn = "live"
-       /\ Finish(Code(cur))
-       /\ UNCHANGED link
+       /\ (Answered \/ Lost)
+       /\ UNCHANGED <<kept, falseAlarm, wrongCode>>
     \/ /\ conn # "live"
        /\ IF Broken = "stale" /\ kept \in Down
           THEN /\ Finish(ConnCode(kept))
                /\ falseAlarm' = TRUE
                /\ wrongCode' = (wrongCode \/ ConnCode(kept) # 2)
-               /\ UNCHANGED <<conn, kept>>
+               /\ UNCHANGED <<conn, kept, twice>>
           ELSE IF store = "up"
-               THEN /\ conn' = "live" /\ kept' = "none"
-                    /\ Finish(Code(cur))
+               THEN /\ kept' = "none"
+                    /\ (Answered \/ Lost)
                     /\ UNCHANGED <<falseAlarm, wrongCode>>
                ELSE /\ conn' = "none" /\ kept' = store
                     /\ Finish(ConnCode(store))
                     /\ wrongCode' = (wrongCode \/ ConnCode(store) # 2)
-                    /\ UNCHANGED falseAlarm
+                    /\ UNCHANGED <<falseAlarm, twice>>
  /\ UNCHANGED <<reader, outside>>
 
 \* A signal reaches a watch. SIGINT leaves the watch with code 0 and the
@@ -195,7 +217,7 @@ StoreDown ==
  /\ store' \in Down
  /\ conn' = IF conn = "live" THEN "dead" ELSE conn
  /\ UNCHANGED <<pc, cur, exit, how, high, reader, pending, stopped, kept,
-                falseAlarm, wrongCode>>
+                falseAlarm, wrongCode, twice>>
 StoreUp ==
  /\ pc # "done" /\ store \in Down
  /\ store' = "up"
@@ -206,7 +228,7 @@ Probe ==
  /\ pc # "done" /\ kept \in Down
  /\ kept' = IF store = "up" THEN "none" ELSE store
  /\ UNCHANGED <<pc, cur, exit, how, high, reader, outside, conn,
-                falseAlarm, wrongCode>>
+                falseAlarm, wrongCode, twice>>
 
 Next == Session \/ Term \/ Int \/ StoreDown \/ StoreUp \/ Probe
 Spec == Init /\ [][Next]_vars /\ WF_vars(Owed)
@@ -222,7 +244,7 @@ TypeOK ==
  /\ exit \in 0..2 /\ high \in 0..2
  /\ how \in {NoEnd, "eof", "quit", "stop", "fail", "long"}
  /\ afterStop \in BOOLEAN /\ afterFail \in BOOLEAN
- /\ falseAlarm \in BOOLEAN /\ wrongCode \in BOOLEAN
+ /\ falseAlarm \in BOOLEAN /\ wrongCode \in BOOLEAN /\ twice \in BOOLEAN
 
 \* After a stop no new line starts. An in-flight write may still complete.
 NothingStartsAfterStop == ~afterStop
@@ -231,6 +253,8 @@ NothingStartsAfterStop == ~afterStop
 NoFalseAlarm == ~falseAlarm
 \* A store that could not be reached is code 2, whatever the dial said.
 ConnectionFailureIsTwo == ~wrongCode
+\* A write is sent once. A lost reply is never a reason to send it again.
+AtMostOnce == ~twice
 \* Without --keep-going nothing is read after the first failed line.
 StopsAtFirstFailure == ~afterFail
 \* Only a stop ends the session as one: SIGINT inside a watch does not.
