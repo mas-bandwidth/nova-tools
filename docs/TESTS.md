@@ -908,6 +908,39 @@ the order every line prints them, and the fields `add` requires. `migrate
 transaction, and applies nothing twice.
 
 
+## nova-friend
+
+Run by `cmd/nova-friend/firstrun_test.go` on a throwaway redis-server holding
+the nova_sprint function library and the roster `nova-config apply` writes
+(rowan: 4 slots, frontier, coordinator; stella: 2 slots, reader; friend
+revision 1), so it runs in the functional tier. The documented lines name no
+`--redis`: on a bench the seat's address is the default (`NOVA_SPRINT_REDIS`,
+then `NOVA_REDIS_ADDR`, then the seat's row), and the test appends the
+throwaway server's. `--host` and `--session` are given on the line so every
+value reproduces; nothing is normalised. The usage banner's `example:` block
+is this same sitting, line for line.
+
+### First run
+
+```text
+$ nova-friend here --as rowan --once --host studio --session s1
+FRIEND HERE as=rowan host=studio session=s1 slots=4 taken=0
+
+$ nova-friend list
+FRIEND name=rowan state=up slots=4 tiers=frontier roles=coordinator host=studio working=0 rev=1
+FRIEND name=stella state=down slots=2 tiers=- roles=reader host=- working=0 rev=1
+FRIEND LIST friends=2 rev=1
+
+$ nova-friend bye --as rowan
+FRIEND BYE as=rowan was=up
+```
+
+`here --once` registers the session and ticks once: the beat is written
+with no TTL, and the reader judges its age. `list` reads the store: rowan
+is up (a beat under a minute old), stella has never beaten, and every line
+ends with the friend revision `nova-config apply` stamped. `bye` deletes the
+beat, so rowan reads down at once.
+
 ## nova-card
 
 The card wrapper (#3059) is started by `nova-sprint card launch --stdin`, never

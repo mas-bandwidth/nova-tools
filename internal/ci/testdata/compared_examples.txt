@@ -35,3 +35,6 @@ cmd/nova-table/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: no
 cmd/nova-table/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-table render demo
 cmd/nova-config/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-config kinds
 cmd/nova-config/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-config migrate --print
+cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend here --as rowan --once --host studio --session s1
+cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend list
+cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend bye --as rowan

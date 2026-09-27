@@ -3234,6 +3234,42 @@ nova-config apply --as rowan
 
 **Refusals.** Exit 1 is the store or Redis saying no, one stderr line naming the next step: `machine studio exists; run: nova-config machine set studio ...`, `--machine hulk names no machine row`, `machine studio is the --machine of friend rowan`, `--logins rowan-claude is friend rowan's login`, `CONFLICT friend: Redis holds rev 9 and this Postgres is at rev 4`, `CEILING studio: friend stella makes the sum 65 over the machine ceiling 64`, `friend stella holds 2 working copies (card:4410,card:4414)`. Exit 2 is an invocation that could not run.
 
+## nova-friend
+
+```
+nova-friend here --as <you> [--harness <h>] [--host <h>] [--login <alias>]... [--pid <harness-pid>] [--session <id>] [--sprint <S>] [--once]   # the one presence process: register, then once a second the beat, the leases, the take; --once ticks once and returns
+nova-friend bye --as <you>                                               # DEL your beat: down at once; registration and dealt work stay
+nova-friend pull --as <you> [--n <k>] [--dir <d>] [--model <m>] [--harness <h>] [--child <id>]   # ready -> working for your copies, one brief per copy under --dir
+nova-friend done --as <you> --id <copy> --ok --pr <repo>#<n> --head <sha> --repo <checkout> [--test <t>] [--branch <b>]   # the spec gate in your checkout, the PR recorded, the copy ended ok
+nova-friend done --as <you> --id <copy> --fail <why>                     # the copy ended failed, the why on the record
+nova-friend done --as <you> --id <copy> --score <N>/10 [--gates <g>] [--finding <text>]   # a read copy's score
+nova-friend list                                                         # one line per registered friend: state, slots, tiers, roles, host, working copies, the applied revision
+nova-friend show <name>                                                  # one friend, with the session's facts: session, harness, load, models, the beat's age, away
+nova-friend away <name> --reason <r> --as <actor>                        # set friend:<name>:down: no push, take or copy until back
+nova-friend back <name> --as <actor>                                     # clear it
+nova-friend <verb> -h                                                    # the verb's usage line and every flag it takes
+```
+
+`nova-friend` is the one tool for what a friend, or a coordinator, does about a friend: the person, who exists whether or not a sprint is running. The roster (who exists, with slots, tiers and roles) is configuration and lives in [nova-config](#nova-config); `nova-friend` reads it and never writes it. What it owns is the runtime a friend reports herself: the beat, the away flag, and her own copies. The guide is [nova-friend/README.md](nova-friend/README.md).
+
+### First run
+
+```sh
+nova-friend here --as rowan --once --host studio --session s1
+nova-friend list
+nova-friend bye --as rowan
+```
+
+The three lines need a store that holds the roster (`nova-config apply` writes it): `here --once` registers the session and ticks once, `list` reads every friend with the revision the configuration was applied at, and `bye` deletes the beat. The executable transcript, on a throwaway store, is in [TESTS.md](TESTS.md#nova-friend). The line each harness runs when its session opens is `nova-friend here --as <you> --harness <h> --pid <harness-pid>`, left running.
+
+There is no `quickstart`: a verb that registered a friend nobody asked for would write configuration, which is nova-config's, and `here --once` is the first run.
+
+**What the flags want.** `--redis` is `host:port` (env `NOVA_SPRINT_REDIS`, then `NOVA_REDIS_ADDR`, then the seat's address). `--as` is you, a lower-case friend name (env `NOVA_FRIEND`, which it must equal when set). `here` takes `--harness` and `--host` for the beat (default `nova-friend` and the hostname), `--login <alias>` repeatable for your forge accounts, `--pid` for the harness process your copies are bound to (their leases renew only while it is seen alive, nova-tools#4415), `--session` for the identity (default a fresh one) and `--sprint` for the take. `done` wants exactly one of `--ok`, `--score <N>/10` and `--fail <why>`; `--pr` wants `--head` and `--repo`, the checkout the spec gate runs in. `away` wants `--reason`.
+
+**Reading it.** Every success is one typed line: `FRIEND HERE as= host= session= slots= taken=`, `FRIEND BYE as= was=`, `FRIEND PULLED id= leg= token= card=` then `FRIEND PULL as= n= free= dir= ms=`, `FRIEND ENDED id= primary= from= to= next=` then `FRIEND DONE as= n= ms=`, `FRIEND name= state= slots= tiers= roles= host= working= rev=` per friend, `FRIEND AWAY name= reason= changed=`, `FRIEND BACK name= changed=`. `state` is `up` (a beat at most a minute old and no away flag), `away` (the flag) or `down`; `rev` is the friend revision `nova-config apply` last stamped in `config:decl`, `-` when none.
+
+**Refusals.** Exit 1 is the store saying no, one stderr line naming the next step: `UNREGISTERED emma: not in the roster; run: nova-config friend add emma --slots <n> --as <you>, then nova-config apply`, `BUSY rowan: a live session is here already on studio (session s1, beat 3s ago); stop it, or wait a minute and it is taken over`, `LOGIN-TAKEN rowan: --login x is stella's login already`, `NOTMINE task:q2~1 is friend:stella's copy, not friend:rowan's`. A stale `--token` on `done` is `FENCED`, exit 3, as `nova-sprint card end` spells it. Exit 2 is an invocation that could not run: a missing flag says what it wants (`--reason wants why stella is away`), a store that does not answer is one line. `here` exits 3 when five beats in a row fail (after bye) or another session took its beat (no bye).
+
 ## nova-work
 
 `nova-work` is both the thin client of the resident work session ([docs/SPEC-WORK.md](SPEC-WORK.md), "The engine and its client") and the in-process reader of the job graph and bounded `.work` plans ([SPEC-JOBS.md](SPEC-JOBS.md), [SPEC-WORKLANG.md](SPEC-WORKLANG.md)). As a client it sends one request line over the Unix socket `--session` names and prints the session's one answer line, byte for byte; the session is the engine and owns every fact, so the client refuses to guess and second-guesses nothing. The graph and plan verbs read files as data, never as programs.
