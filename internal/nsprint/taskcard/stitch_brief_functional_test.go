@@ -185,6 +185,12 @@ func TestMergingGenIsWriterOwned(t *testing.T) {
 	if rec["where"] != "working" || inWorking == 0 || inMerging == nil {
 		t.Fatalf("the refusal moved something: where=%s working=%v merging-err=%v", rec["where"], inWorking, inMerging)
 	}
+	// a count too long for an exact number is corruption too (the regex
+	// alone is no range check)
+	c.HSet(ctx, taskcard.Key("g1"), "merging_gen", "1234567890123456")
+	if _, err := taskcard.Done(ctx, c, "g1", "emma", "DONE", "6001"); err == nil || !strings.Contains(err.Error(), "DRIFT merging_gen") {
+		t.Fatalf("a sixteen-digit count was not refused: err=%v", err)
+	}
 	c.HSet(ctx, taskcard.Key("g1"), "merging_gen", "7")
 	if _, err := taskcard.Done(ctx, c, "g1", "emma", "DONE", "6001"); err != nil {
 		t.Fatal(err)
