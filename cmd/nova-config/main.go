@@ -6,9 +6,11 @@
 // write it. The contract is docs/SPEC-CONFIG.md; the guide is
 // docs/nova-config/README.md.
 //
-// Every kind (friend, machine) has the same six verbs -- add, remove, set,
-// list, show, history -- generated from its descriptor in internal/config,
-// so every kind has identical flags, help and refusals. apply diffs Postgres
+// Every kind (machine, friend, fleet) has the same six verbs -- add, remove,
+// set, list, show, history -- generated from its descriptor in
+// internal/config, so every kind has identical flags, help and refusals; a
+// singleton kind (fleet: one row the migration creates) has set, show and
+// history without a name. apply diffs Postgres
 // against Redis per kind and writes the difference through the runtime's own
 // Redis Functions, compare-and-set on a revision stamped in config:decl.
 //
@@ -68,6 +70,11 @@ usage:
   nova-config <kind> show <name>
   nova-config <kind> history <name>
   nova-config <kind> <verb> -h        prints the verb's usage line and every flag it takes
+  nova-config machine list|show <name> [--redis <addr>]   with Redis, each line ends in the machine's live measured facts (its beat)
+  nova-config fleet set --<field> <value> ... --as <friend>    the one fleet row (store, coordinator machine): no name, no add, remove or list
+  nova-config sprint set --coordinator <friend> --as <friend>  the one sprint row: who coordinates; set it to hand over
+  nova-config fleet|sprint show
+  nova-config fleet|sprint history
 
 Postgres is the permanent store; Redis is a copy of it that apply rebuilds.
 --pg is postgres://user@host:port/db (env NOVA_PG_DSN) with NO password on the
@@ -75,6 +82,14 @@ line: the password is read from the variable NOVA_PG_PASSWORD_ENV names
 (NOVA_PG_PASSWORD when unset). --redis is host:port (env NOVA_SPRINT_REDIS,
 then NOVA_REDIS_ADDR, then the seat's address). --as is the friend making
 the change (env NOVA_FRIEND); every write is a row in config.history with it.
+
+A machine's row is the declared facts something reads (user, seat, slots,
+runners); its name is the tailnet host ssh reaches. Measured facts (os, arch,
+cores, memory) are never typed: machine list and show print them live from
+the machine's beat when --redis (or NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR) is
+given, beat=none when it has none. A friend's row is what someone decides
+for her (slots, tiers, roles); what she would just know is runtime data her
+own presence reports. Who coordinates is the sprint row's one field.
 
 migrate creates or upgrades schema config from the migrations in this binary
 and applies nothing twice. apply reads Postgres and writes Redis, one kind at
@@ -101,6 +116,9 @@ func kindsUsage() string {
 	b.WriteString("kinds:\n")
 	for _, k := range config.Kinds {
 		fmt.Fprintf(&b, "  %-8s %s\n", k.Name, k.Doc)
+		if k.Singleton {
+			fmt.Fprintf(&b, "    %-10s one row, created by migrate: set, show and history take no name; no add, remove or list\n", "")
+		}
 		for _, f := range k.Fields {
 			req := ""
 			if f.Required {
@@ -122,9 +140,11 @@ type pgStore interface {
 	Close() error
 }
 
-// redisSide is the Redis a verb opens.
+// redisSide is the Redis a verb opens: apply's side and the beats machine
+// list and show read live.
 type redisSide interface {
 	config.Applier
+	config.BeatReader
 	Close() error
 }
 
@@ -315,6 +335,19 @@ func redisAddress(flagValue string, getenv func(string) string) (string, error) 
 	return "", fmt.Errorf("--redis is required: host:port (or %s, %s, or a seat)", envSprintRedis, envRedisAddr)
 }
 
+// liveRedisAddress is the Redis machine list and show read beats from when
+// one is given: the flag, else NOVA_SPRINT_REDIS, else NOVA_REDIS_ADDR; ""
+// (no live facts, no store opened) when none is. The seat is not consulted:
+// a list that dials Redis nobody named would be a surprise.
+func liveRedisAddress(flagValue string, getenv func(string) string) string {
+	for _, v := range []string{flagValue, getenv(envSprintRedis), getenv(envRedisAddr)} {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 // actorName resolves --as: the flag, else NOVA_FRIEND.
 func actorName(flagValue string, getenv func(string) string) (string, error) {
 	if flagValue != "" {
@@ -330,9 +363,18 @@ func actorName(flagValue string, getenv func(string) string) (string, error) {
 
 func runKind(ctx context.Context, k *config.Kind, args []string, stdout, stderr io.Writer, d deps) int {
 	if len(args) == 0 {
+		if k.Singleton {
+			return refuse(stderr, k.Name, "want set, show or history")
+		}
 		return refuse(stderr, k.Name, "want add, set, remove, list, show or history")
 	}
 	verb := k.Name + " " + args[0]
+	if k.Singleton {
+		switch args[0] {
+		case "add", "remove", "list":
+			return refuse(stderr, verb, k.Name+" is one row, created by migrate; want set, show or history")
+		}
+	}
 	switch args[0] {
 	case "add", "set":
 		return runKindWrite(ctx, k, args[0] == "add", args[1:], stdout, stderr, d)
@@ -347,12 +389,30 @@ func runKind(ctx context.Context, k *config.Kind, args []string, stdout, stderr 
 }
 
 // nameAndRest takes the row name: the first argument when it is not a flag,
-// else the one positional left after the flags.
-func nameAndRest(args []string) (string, []string) {
+// else the one positional left after the flags. A singleton's name is the
+// kind's own and the line carries none.
+func nameAndRest(k *config.Kind, args []string) (string, []string) {
+	if k.Singleton {
+		return k.Name, args
+	}
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		return args[0], args[1:]
 	}
 	return "", args
+}
+
+// positional resolves the one positional a verb allows: the name when
+// nameAndRest found none. A singleton allows none at all.
+func positional(k *config.Kind, fs *stdflag.FlagSet, name, verb string) (string, error) {
+	switch {
+	case k.Singleton && fs.NArg() > 0:
+		return "", fmt.Errorf("%s takes no name: it is one row; want %s --<field> <value> ...", k.Name, verb)
+	case name == "" && fs.NArg() == 1:
+		return fs.Arg(0), nil
+	case fs.NArg() > 0:
+		return "", fmt.Errorf("want %s <name> --<field> <value> ...; flags follow the name", verb)
+	}
+	return name, nil
 }
 
 func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, stdout, stderr io.Writer, d deps) int {
@@ -366,14 +426,13 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 	for _, f := range k.Fields {
 		values[f.Name] = fs.String(f.Name, "", f.Help)
 	}
-	name, rest := nameAndRest(args)
+	name, rest := nameAndRest(k, args)
 	if err := fs.Parse(rest); err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	if name == "" && fs.NArg() == 1 {
-		name = fs.Arg(0)
-	} else if fs.NArg() > 0 {
-		return refuse(stderr, verb, fmt.Sprintf("want %s <name> --<field> <value> ...; flags follow the name", verb))
+	name, err := positional(k, fs, name, verb)
+	if err != nil {
+		return refuse(stderr, verb, err.Error())
 	}
 	given := map[string]string{}
 	fs.Visit(func(f *stdflag.Flag) {
@@ -420,7 +479,11 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 	}
 	_, id, err := st.Update(ctx, k.Name, name, changes, actor)
 	if err != nil {
-		return storeErr(stderr, verb, err, tool+" "+k.Name+" add "+name+" --<field> <value> ...")
+		next := tool + " " + k.Name + " add " + name + " --<field> <value> ..."
+		if k.Singleton {
+			next = tool + " " + k.Name + " show"
+		}
+		return storeErr(stderr, verb, err, next)
 	}
 	fields := make([]string, 0, len(changes))
 	for f := range changes {
@@ -435,7 +498,7 @@ func runKindRemove(ctx context.Context, k *config.Kind, args []string, stdout, s
 	verb := k.Name + " remove"
 	fs := verbflag.New(verb)
 	pg, _, as := connFlags(fs, false, true)
-	name, rest := nameAndRest(args)
+	name, rest := nameAndRest(k, args)
 	if err := fs.Parse(rest); err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
@@ -472,10 +535,44 @@ func runKindRemove(ctx context.Context, k *config.Kind, args []string, stdout, s
 	return 0
 }
 
+// live is true for the kind whose rows have a beat to read: a machine.
+func live(k *config.Kind) bool { return k.Name == config.KindMachine }
+
+// liveFlag adds --redis to a machine's list and show.
+func liveFlag(fs *stdflag.FlagSet, k *config.Kind) *string {
+	if !live(k) {
+		return new(string)
+	}
+	return fs.String("redis", "", "Redis address host:port (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR); when given, each line ends in the machine's live measured facts from its beat")
+}
+
+// beats reads the named machines' beats when a Redis is named, else nil
+// (no live facts on the lines).
+func beats(ctx context.Context, addr string, names []string, d deps) (map[string]*config.Beat, error) {
+	if addr == "" {
+		return nil, nil
+	}
+	rs, err := d.openRedis(ctx, addr)
+	if err != nil {
+		return nil, err
+	}
+	defer rs.Close()
+	return rs.Beats(ctx, names)
+}
+
+// liveSuffix is the line's live part: nothing when no Redis was named.
+func liveSuffix(bs map[string]*config.Beat, name string) string {
+	if bs == nil {
+		return ""
+	}
+	return config.LiveLine(bs[name])
+}
+
 func runKindList(ctx context.Context, k *config.Kind, args []string, stdout, stderr io.Writer, d deps) int {
 	verb := k.Name + " list"
 	fs := verbflag.New(verb)
 	pg, _, _ := connFlags(fs, false, false)
+	redisFlag := liveFlag(fs, k)
 	if err := fs.Parse(args); err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
@@ -495,8 +592,18 @@ func runKindList(ctx context.Context, k *config.Kind, args []string, stdout, std
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
+	var bs map[string]*config.Beat
+	if live(k) {
+		names := make([]string, 0, len(rows))
+		for _, row := range rows {
+			names = append(names, row.Name)
+		}
+		if bs, err = beats(ctx, liveRedisAddress(*redisFlag, d.getenv), names, d); err != nil {
+			return refuse(stderr, verb, err.Error())
+		}
+	}
 	for _, row := range rows {
-		fmt.Fprintln(stdout, config.RowLine(k, row))
+		fmt.Fprintln(stdout, config.RowLine(k, row)+liveSuffix(bs, row.Name))
 	}
 	fmt.Fprintf(stdout, "CONFIG LIST kind=%s rows=%d\n", k.Name, len(rows))
 	return 0
@@ -506,13 +613,20 @@ func runKindRead(ctx context.Context, k *config.Kind, which string, args []strin
 	verb := k.Name + " " + which
 	fs := verbflag.New(verb)
 	pg, _, _ := connFlags(fs, false, false)
-	name, rest := nameAndRest(args)
+	var redisFlag *string
+	if which == "show" {
+		redisFlag = liveFlag(fs, k)
+	}
+	name, rest := nameAndRest(k, args)
 	if err := fs.Parse(rest); err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	if name == "" && fs.NArg() == 1 {
+	switch {
+	case k.Singleton && fs.NArg() > 0:
+		return refuse(stderr, verb, k.Name+" takes no name: it is one row; want "+verb)
+	case name == "" && fs.NArg() == 1:
 		name = fs.Arg(0)
-	} else if fs.NArg() > 0 {
+	case fs.NArg() > 0:
 		return refuse(stderr, verb, "want "+verb+" <name>")
 	}
 	var problems []string
@@ -539,14 +653,22 @@ func runKindRead(ctx context.Context, k *config.Kind, which string, args []strin
 		if !found {
 			return refused(stderr, verb, k.Name+" "+name+" not found", tool+" "+k.Name+" list")
 		}
-		fmt.Fprintln(stdout, config.ShowLine(k, row))
+		suffix := ""
+		if live(k) {
+			bs, err := beats(ctx, liveRedisAddress(*redisFlag, d.getenv), []string{name}, d)
+			if err != nil {
+				return refuse(stderr, verb, err.Error())
+			}
+			suffix = liveSuffix(bs, name)
+		}
+		fmt.Fprintln(stdout, config.ShowLine(k, row)+suffix)
 		return 0
 	}
 	changes, err := st.History(ctx, k.Name, name)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	if len(changes) == 0 {
+	if len(changes) == 0 && !k.Singleton {
 		return refused(stderr, verb, k.Name+" "+name+" has no history: it was never added", tool+" "+k.Name+" list")
 	}
 	for _, c := range changes {
@@ -637,6 +759,10 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 			return refuse(stderr, verb, err.Error())
 		}
 		revs[k.Name] = rev
+		if k.Singleton {
+			line += fmt.Sprintf(" %s_rev=%d", k.Name, rev)
+			continue
+		}
 		line += fmt.Sprintf(" %s=%d %s_rev=%d", k.Name, counts[k.Name], k.Name, rev)
 	}
 	addr, addrErr := redisAddress(*redisFlag, d.getenv)
