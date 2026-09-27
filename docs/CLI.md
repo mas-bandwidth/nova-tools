@@ -3700,7 +3700,9 @@ error. `file -h` prints its own usage text (exit 2); the batch `task` verbs
 
 **Capacity and the three model types.** `capacity bench [--tiers
 <t>,...] [--kinds work|read|fix,...] <name> <slots>` sets a bench's slot
-budget under its machine ceiling and what it advertises it can run (a
+share (the most it runs at once; live, its slots are the machine ceiling
+less the slots of the friends awake on that machine, so a sleeping friend's
+slots are the swarm's and hers again when she is back) and what it advertises it can run (a
 friend's slots, kinds and tiers are `nova-config friend set`, applied by
 `nova-config apply` through the same Redis Function; the retired `capacity
 friend` refuses naming it). A card's

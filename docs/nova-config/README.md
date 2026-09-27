@@ -169,8 +169,11 @@ HISTORY id=5 kind=friend name=rowan op=set actor=rowan at=2026-09-27T02:11:00Z r
 CONFIG HISTORY kind=friend name=rowan changes=2
 ```
 
-`--slots` is her desired slots, under the ceiling of the machine her beat
-reports (or the fleet's coordinator machine when she has no beat);
+`--slots` is her desired slots; the friends' slots on a machine fit under
+its ceiling together, and are charged to it only while each friend is awake
+(the bench's share on that machine is the remainder, live); she is charged
+to the machine her beat reports (or the fleet's coordinator machine when
+she has no beat);
 `--tiers` is a comma list of flash, frontier, pro, which she can do (the
 deal's tier filter); `--roles` is a comma list of builder, may-hold, reader.
 

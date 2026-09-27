@@ -1,8 +1,16 @@
 // Package capacity implements the machine child-ceiling invariant of spec 2.4:
-// the sum of desired slots over every bench and every friend whose machine is
-// m MUST NOT exceed machine:<m>:ceiling. nova-config apply (a friend), capacity bench and
-// friend hello --slots compute that sum and refuse a raise that would break it
-// with exit 2 CEILING <m> <sum>/<ceiling>; nothing is clamped silently.
+// the sum of desired slots over every FRIEND whose machine is m MUST NOT
+// exceed machine:<m>:ceiling, and a bench's share MUST NOT exceed it on its
+// own. nova-config apply (a friend) and capacity bench compute that and
+// refuse a raise that would break it with exit 2 CEILING <m> <sum>/<ceiling>;
+// nothing is clamped silently.
+//
+// Friends and the swarm share one ceiling per machine (Glenn 2026-09-27): a
+// bench's share is not added to the friends' sum because its slots at run
+// time are the ceiling less the slots of the friends awake on the machine
+// (TM.bench_slots, internal/nsprint/fn/lua/02_card_move.lua), read at every
+// deal and work. A sleeping friend's slots are the swarm's; hers again the
+// moment she is back.
 //
 // The guard is repeated atomically inside a Redis Function (see
 // internal/nsprint/fn/lua/capacity.lua), which also writes the desired hash and
@@ -154,10 +162,19 @@ func Evaluate(ctx context.Context, r Reader, machine, kind, name string, slots i
 	if !ok {
 		return Plan{}, fmt.Errorf("capacity: machine %s has no ceiling; run capacity machine %s <n>", machine, machine)
 	}
+	if kind == KindBench {
+		// A bench's share fits the ceiling on its own; the friends' sum
+		// is not added (its live slots are the remainder, see the package
+		// comment).
+		return Plan{Allowed: slots <= ceiling, Sum: slots, Ceiling: ceiling}, nil
+	}
 	sum := 0
 	counted := false
 	for _, c := range consumers {
-		if c.Kind == kind && c.Name == name {
+		if c.Kind != KindFriend {
+			continue
+		}
+		if c.Name == name {
 			// The requester moves to (or stays on) this machine with the
 			// requested slots; its old contribution is replaced, not added.
 			counted = true
@@ -509,9 +526,13 @@ func SetMachineBudget(ctx context.Context, st *store.Store, machine string, slot
 	if err != nil {
 		return Result{}, err
 	}
+	// the friends' sum alone, as ns_capacity_machine checks it: a bench's
+	// share above a lowered ceiling is capped live (TM.bench_slots), never
+	// refused (Stella's read of #4445, 2026-09-27: the Go door and the Lua
+	// door must agree)
 	sum := 0
 	for _, c := range consumers {
-		if c.Machine == machine {
+		if c.Kind == KindFriend && c.Machine == machine {
 			sum += c.Slots
 		}
 	}
