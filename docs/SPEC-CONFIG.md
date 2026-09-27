@@ -29,6 +29,26 @@ nothing else.
 
 ## Kinds
 
+**The placement rule.** Glenn, 2026-09-27: "Make sure that per-machine facts
+actually belong to machines, and global fleet facts belong to the fleet."
+The test for every field of every kind: does its value vary from machine to
+machine? Then it is a machine field. Is there one value for the whole fleet?
+Then it is a fleet field. Neither: it is invented and is not a field. The
+same test decides a friend's row: what someone decides for her is
+configuration; what she would just know is runtime data in Redis. And the
+person coordinating is sprint-global configuration (Glenn, 2026-09-26): the
+fleet row holds machines only (the store, the coordinator machine); the
+sprint row holds who coordinates; a friend's roles are what the deal reads.
+
+Where each field of this cut sits:
+
+| side | fields |
+| --- | --- |
+| machine (varies per machine) | `user`, `seat`, `slots`, `runners` |
+| fleet (one value for the whole fleet) | `store`, `coordinator` (both machines) |
+| friend (decided for her) | `slots`, `tiers`, `roles` |
+| sprint (one value for the whole sprint) | `coordinator` (a friend) |
+
 A kind is one registry: one table under schema `config`, one Go descriptor
 (`internal/config/kind.go`: `Kind`), one migration, one Redis writer. The
 grammar is one for every kind:
@@ -43,11 +63,32 @@ nova-config <kind> history <name>
 ```
 
 Every kind's table has the same shape: `name text PRIMARY KEY` (the row key,
-`^[a-z0-9][a-z0-9-]*$`), the kind's fields as columns of the same names, a
-`note text` column, `created_at` and `updated_at`. The CLI's flags, help,
-refusals, SQL, typed lines and apply diff are all generated from the
-descriptor, so every kind has identical verbs and a new kind adds no verb
-code.
+`^[a-z0-9][a-z0-9-]*$`), the kind's fields as columns of the same names,
+`created_at` and `updated_at`. There is no `note` column on any kind: notes
+are history, and history lives in git. The CLI's flags, help, refusals, SQL,
+typed lines and apply diff are all generated from the descriptor, so every
+kind has identical verbs and a new kind adds no verb code.
+
+### Singleton kinds
+
+A kind descriptor may declare `Singleton: true`: a kind of exactly one row,
+named as the kind is. Glenn, 2026-09-27: "why is coordinator set
+per-machine, in the fleet there is only one coordinator at a time." Its
+migration creates the row (`INSERT ... ON CONFLICT DO NOTHING`), so the
+grammar has no `add`, `remove` or `list`, and its `set`, `show` and `history`
+take no name:
+
+```
+nova-config fleet set --store <machine> --coordinator <machine> --as <friend>
+nova-config fleet show
+nova-config fleet history
+```
+
+A singleton's `history` with no change yet prints the count line alone and
+exits 0 (the row exists; nobody added it). `kinds` says `rows=one`. `status`
+prints its revision and no count. Apply reads its one view always (the row
+exists on both sides), so its plan is a `SET` of the fields that differ,
+never an `ADD` or a `REMOVE`.
 
 ### Field types
 
@@ -58,64 +99,98 @@ code.
 | `enum` | one word of the field's list | `text` |
 | `list` | a comma list of words from the field's list, deduplicated and sorted | `text` |
 | `names` | a comma list of names (letters, digits, dashes), deduplicated and sorted | `text` |
-| `ref` | the name of a row of another kind | `text` with a foreign key |
-| `wake` | `unit:<label>@<host>`, `human:<channel>` or empty | `text` |
+| `ref` | the name of a row of another kind; an optional one may be empty | `text` with a foreign key, `NULL` for empty |
 
 A value is canonicalised before it is stored (`Field.Canonical`), so a row
 compares equal to its Redis view field by field. `add` refuses a row missing
 a required field, a value outside its type, or a flag the kind has not, and
 names every problem in one line. `set` changes the fields named and no
-other. A `ref` field naming no row is refused (`--machine hulk names no
+other. A `ref` field naming no row is refused (`--store space names no
 machine row`), and a row a `ref` field of another kind names cannot be
-removed (`machine studio is the --machine of friend rowan`): the structure
-enforces it (a foreign key), the tool names it.
+removed (`machine studio is the --coordinator of the fleet`, `friend rowan
+is the --coordinator of the sprint`): the structure enforces it (a foreign
+key), the tool names it.
 
 ### The kinds of this cut
 
-**`machine`** (`config.machines`): the fleet registry's row, what a machine
-is and therefore what may be placed on it.
+**`machine`** (`config.machines`): a machine of the fleet, named by its
+tailnet host. Glenn, 2026-09-27: "All fleet machines *must* be on the
+tailnet. This is a hard requirement." and "All machines can be ssh'd to via
+tailscale." So `ssh <name>` reaches the machine and there is no address
+field. "I only want the fleet to have actual defined useful things
+associated with each machine, not invented rando stuff": the row holds
+exactly the fields something reads, one reader each.
 
-| field | type | required | Redis |
-| --- | --- | --- | --- |
-| `ssh` | text | yes | `machine:<m>` |
-| `os_arch` | enum: darwin/amd64, darwin/arm64, linux/arm64, linux/x64 | yes | `machine:<m>` |
-| `slots` | int | yes | `machine:<m>:ceiling` slots (`ns_capacity_machine`) |
-| `cores` | int | | `machine:<m>:ceiling` cores (0 writes none) |
-| `roles` | list: bench, coordination, ingress, runner, services | | `machine:<m>` |
-| `seat` | text | | `machine:<m>` |
-| `user` | text | | `machine:<m>` |
-| `note` | text | | `machine:<m>` |
+| field | type | required | who reads it | Redis |
+| --- | --- | --- | --- | --- |
+| `user` | text | yes | the plays and the seals: `ssh <user>@<name>` | `machine:<m>` |
+| `seat` | text | yes | nova-secrets: the seat on that machine (studio, swarm-hulk, ...) | `machine:<m>` |
+| `slots` | int | yes | the deal: how many cards it may run; 0 runs none | `machine:<m>:ceiling` (`ns_capacity_machine`) and `machine:<m>` |
+| `runners` | int | (0) | the CI play: how many runners it hosts; 0 hosts none | `machine:<m>` |
 
-**`friend`** (`config.friends`): an AI friend, where it runs, how wide, how
-it is woken, its roles and the logins that are it.
+**Declared and measured.** Measured facts (os, arch, cores, memory) are
+never typed and never columns. Glenn, 2026-09-27: "OK I like measured facts
+coming live, and that's fine. keep it that way. It's more robust." They come
+live from the machine's own heartbeat, `bench:<name>:beat` (today: `host`,
+`at`, `load1`, `ncpu`, `cpu`). `machine list` and `machine show` print them
+after the declared fields when a Redis is named (`--redis`, else
+`NOVA_SPRINT_REDIS`, else `NOVA_REDIS_ADDR`; never the seat: a list that
+dials a store nobody named would be a surprise): `os`, `arch`, `cores`
+(the beat's `ncpu`), `memory_gb`, and `beat=<rfc3339>`; each `-` when the
+beat does not carry it yet, and `beat=none` alone for a machine with no
+beat. Nothing is stored, nothing is typed. The beat carrying os, arch and
+memory_gb is a follow-on to `nova-sprint bench beat`, not this tool's.
 
-| field | type | required | Redis |
-| --- | --- | --- | --- |
-| `machine` | ref machine | yes | `friend:<f>:desired` machine (`ns_capacity_desired`) |
-| `slots` | int | yes | `friend:<f>:desired` slots (`ns_capacity_desired`) |
-| `harness` | text | | `friend:<f>:config` |
-| `wake` | wake | | `friend:<f>:wakepath` (`ns_friend_wakepath`) |
-| `roles` | list: builder, coordinator, may-hold, reader | | `friend:<f>:roles` (`ns_friend_roles`) |
-| `logins` | names | | `friends:login` alias -> friend |
-| `note` | text | | `friend:<f>:config` |
+**`fleet`** (`config.fleet`, singleton): the one row of fleet-wide facts.
+Glenn, 2026-09-27: "the studio is the coordinator. coordinator can be driven
+by rowan (you) or stella."
 
-A friend's logins are unique across friends and never a friend's name
-(presence.lua's LOGIN-TAKEN and LOGIN-IS-FRIEND, refused in Postgres before
-Redis sees them).
+| field | type | required | who reads it | Redis |
+| --- | --- | --- | --- | --- |
+| `store` | ref machine | | the plays: the machine that runs Redis and Postgres | `fleet:store` |
+| `coordinator` | ref machine | | the plays: where the coordinator's loops run; apply: the machine a friend with no beat is charged to | `fleet:coordinator` |
 
-### Planned kinds, not built
+**`friend`** (`config.friends`): what someone decides for a friend. Glenn,
+2026-09-27: "anything that a friend would just know, is runtime redis data."
+Where she runs, her harness, her logins and her wake path are hers: her own
+presence reports them (`friend:<f>:beat`, `friends:login`,
+`friend:<f>:wakepath`), and this tool never writes or reads them as
+configuration. Who coordinates is not her field either: it is the sprint's.
+
+| field | type | required | who reads it | Redis |
+| --- | --- | --- | --- | --- |
+| `slots` | int | yes | the deal: her desired slots, under the ceiling of the machine she is charged to | `friend:<f>:desired` slots (`ns_capacity_desired`) |
+| `tiers` | list: flash, frontier, pro | yes | the deal's tier filter (capacity.lua `filter_ok`): which she can do | `friend:<f>:desired` tiers (`ns_capacity_desired`) |
+| `roles` | list: builder, may-hold, reader | | the deal and the routing: what she may hold | `friend:<f>:roles` (`ns_friend_roles`) |
+
+**`sprint`** (`config.sprint`, singleton): the one row of sprint-global
+facts.
+
+| field | type | required | who reads it | Redis |
+| --- | --- | --- | --- | --- |
+| `coordinator` | ref friend | | the deal and the routing: who holds the coordinator role; `sprint set --coordinator <friend>` is the handover | `sprint:coordinator`, and the `coordinator` word in that friend's `friend:<f>:roles` |
+
+### Planned, not built
 
 Glenn, 2026-09-27: "I would very much like for us to move ALL of this
 configuration data into postgres with nova-config." Each is a later pull
 request: one descriptor, one migration, one Redis writer, no new verb code.
 
+Fields joining the **fleet** row (one value for the whole fleet, now in
+ansible group_vars): the Redis port, the Postgres port and database name,
+the exporter version, the loops on hold.
+
+Fields joining the **sprint** row (now Redis `cfg:*` keys): the review max
+age, the lease length.
+
+A friend's **wake** path: later, when we know what we are doing (Glenn:
+"i think the wake config can be added LATER when we know what we are doing,
+OK? right now we don't so let's not rush ahead.").
+
 | kind | what it holds today | fields |
 | --- | --- | --- |
 | `loop` | the supervised loops table | name, where (coordinator or every-bench), argv, user, description |
-| `runner` | the CI runners | host, count, labels, user |
-| `bench` | per-bench facts now in ansible host_vars | user, seat, roles, os, limits |
 | `route` | model routes and provider lists per tier and per bench | tier, bench, providers |
-| `setting` | the loose scalars now in group_vars: store address, holds, versions | name, value, note |
 
 ## The schema
 
@@ -134,11 +209,20 @@ configuration straight from Postgres does it as that role.
 config.schema_migrations (version integer PK, applied_at timestamptz)
 config.history           (id bigserial PK, kind, name, op add|set|remove,
                           before jsonb, after jsonb, actor, at timestamptz)
-config.machines          (name PK, ssh, os_arch, slots, cores, roles, seat,
-                          "user", note, created_at, updated_at)
-config.friends           (name PK, machine -> machines.name, slots, harness,
-                          wake, roles, logins, note, created_at, updated_at)
+config.machines          (name PK, "user", seat, slots, runners,
+                          created_at, updated_at)
+config.fleet             (name PK = 'fleet', store -> machines.name,
+                          coordinator -> machines.name, created_at, updated_at;
+                          the one row inserted by the migration)
+config.friends           (name PK, slots, tiers, roles, created_at, updated_at)
+config.sprint            (name PK = 'sprint', coordinator -> friends.name,
+                          created_at, updated_at; the one row inserted by
+                          the migration)
 ```
+
+No database has applied `0002_machine.sql` or `0003_friend.sql` in their
+first shape (the fleet Postgres on space is not migrated yet), so this cut
+rewrote both in place rather than adding an alter.
 
 ## History
 
@@ -157,11 +241,14 @@ global ids, so they rise across kinds and never repeat.
 
 ## Apply
 
-`nova-config apply [--kind <k>] [--check]` runs per kind, in kind order
-(machines before friends, because a friend's desired slots are guarded by
-its machine's ceiling):
+`nova-config apply [--kind <k>] [--check]` runs per kind, in kind order:
+machines (the ceilings), the fleet row (a friend with no beat is charged to
+its coordinator machine), friends, the sprint row:
 
-1. read the kind's rows and revision from Postgres;
+1. read the kind's rows and revision from Postgres, then the kind's
+   `Derive` when it has one (the friend kind adds the `coordinator` word to
+   the roles of the friend the sprint row names, so Redis holds it and the
+   stored row does not);
 2. read the kind's rows from Redis (`Applier.Read`, plain commands, no
    write) and Redis's stamp `config:decl rev:<kind>`;
 3. **refuse `CONFLICT`** when the stamp is greater than the Postgres
@@ -170,8 +257,9 @@ its machine's ceiling):
 4. **plan** the difference: `ADD` for a row Redis lacks, `SET` for one that
    differs in any field (naming the fields), `REMOVE` for a name in Redis that
    Postgres has not. Adds and sets come in the kind's apply order (friends:
-   the coordinator first, so `ns_friend_roles` has one to bootstrap), then
-   removes by name;
+   the coordinator first, so `ns_friend_roles` has one to bootstrap and a
+   handover writes the new coordinator before the old), then removes by
+   name;
 5. with `--check`, print the plan as `CHECK` lines and stop; nothing is
    written, not even the function library;
 6. install the `nova_sprint` function library only when the store has none
@@ -191,28 +279,42 @@ zero, the stamp rewritten to the same revision.
 
 ### What apply writes, per kind
 
-**machine:** `ns_capacity_machine(m, slots, cores)` for the ceiling (refused
+**machine:** `ns_capacity_machine(m, slots)` for the ceiling (refused
 `CEILING` when the friends and benches on it already desire more than
-`slots`); the hash `machine:<m>` with ssh, os_arch, roles, seat, user, note,
-rev, at; the set `machines`. Remove: refused while any friend or bench
-desired hash names the machine; else `machine:<m>`, `machine:<m>:ceiling` and
-`machine:<m>:budget` are deleted and the name leaves `machines`.
+`slots`; cores and memory are never declared, so the call carries none and
+derives no budget); the hash `machine:<m>` with user, seat, slots, runners,
+rev, at; the set `machines`. slots is read back from the ceiling, the key the
+runtime guards on, so a ceiling moved by hand is put back by the next apply.
+Remove: refused while any friend or bench desired hash names the machine;
+else `machine:<m>`, `machine:<m>:ceiling` and `machine:<m>:budget` are
+deleted and the name leaves `machines`.
 
-**friend:** `ns_capacity_desired(friend, f, slots, machine)` (registers in
-`friends`, writes `friend:<f>:desired`, refuses `CEILING` and `NOCEILING`);
-`ns_friend_roles(f, roles)` when the roles differ (the actor must hold the
-coordinator role in Redis, or nobody does yet and this row makes the first);
-`ns_friend_wakepath(f, ...)` when the wake path differs (`clear` when the row
-has none); `friends:login` aliases added and stale ones removed; the hash
-`friend:<f>:config` with harness, note, rev, at. Remove: refused while
+**fleet:** a plain `SET fleet:store <machine>` and `SET fleet:coordinator
+<machine>`, `DEL` for a field the row leaves empty. Never removed.
+
+**friend:** `ns_capacity_desired(friend, f, slots, machine, ..., tiers)`
+(registers in `friends`, writes `friend:<f>:desired`, refuses `CEILING`).
+The machine is the one her slots are charged to: the `host` her own beat
+(`friend:<f>:beat`) reports when she has one (friends may run on any bench),
+else the fleet's coordinator machine (`fleet:coordinator`, written a moment
+before) as the default charge; neither is a refusal naming `nova-config
+fleet set --coordinator <machine>`. `ns_friend_roles(f, roles)` when the
+roles differ (the actor must hold the coordinator role in Redis, or nobody
+does yet and this row makes the first): the roles written are the row's
+plus `coordinator` for the friend the sprint row names. Nothing else: her
+logins, wake path and harness are her presence's. Remove: refused while
 `friend:<f>:cards:working` has a member, naming the copies; else the
-registry member, the desired, roles, wakepath and config hashes and the
-friend's aliases are removed in one transaction, with a `config-remove`
-receipt in `cap:log`.
+registry member, the desired and roles hashes are removed in one
+transaction, with a `config-remove` receipt in `cap:log`; her beat, logins
+and wake path stay, they are hers.
 
-`machine:<m>`, `machines` and `friend:<f>:config` are nova-config's own keys:
-no function in the library wrote a machine's registry row or a friend's
-harness before this tool.
+**sprint:** a plain `SET sprint:coordinator <friend>`, `DEL` when empty.
+Never removed. The handover is `nova-config sprint set --coordinator
+stella --as rowan` then `apply`: the sprint kind's own revision moves and
+the friend kind's plan is two `SET ... changed=roles`, stella's first.
+
+`machine:<m>`, `machines`, `fleet:*` and `sprint:coordinator` are
+nova-config's own keys: no function in the library reads or writes them.
 
 ## Lines
 
@@ -224,6 +326,8 @@ CONFIG ADD kind=<k> name=<n> rev=<id>
 CONFIG SET kind=<k> name=<n> rev=<id> changed=<f,g>
 CONFIG REMOVE kind=<k> name=<n> rev=<id>
 <KIND> name=<n> <field>=<v> ...                          (list: one per row)
+MACHINE name=<n> <field>=<v> ... os=<v> arch=<v> cores=<n> memory_gb=<n> beat=<t>   (list and show with a Redis: the live facts, - each when the beat lacks it)
+MACHINE name=<n> <field>=<v> ... beat=none                (with a Redis: no beat)
 CONFIG LIST kind=<k> rows=<n>
 <KIND> name=<n> <field>=<v> ... created=<t> updated=<t>  (show)
 HISTORY id=<id> kind=<k> name=<n> op=<op> actor=<a> at=<t> <field>=<before>><after> ...
@@ -235,14 +339,15 @@ CONFIG APPLY kind=<k> add=<n> set=<n> remove=<n> rev=<r> ms=<n>
 MIGRATION version=<v> file=<f> lines=<n>                 (migrate --print)
 CONFIG MIGRATE print=<n> pg=-
 CONFIG MIGRATE pg=<user@host:port/db> from=<v> to=<v> applied=<n>
-CONFIG STATUS pg=<...> schema=<v> <kind>=<rows> <kind>_rev=<r> ... redis=<addr> <kind>_applied=<r> ...
-CONFIG KIND name=<k> table=config.<t> fields=<f,...> required=<f,...>
+CONFIG STATUS pg=<...> schema=<v> <kind>=<rows> <kind>_rev=<r> ... redis=<addr> <kind>_applied=<r> ...   (a singleton: <kind>_rev alone)
+CONFIG KIND name=<k> table=config.<t> fields=<f,...> required=<f,...> rows=many|one
 CONFIG KINDS count=<n>
 ```
 
 Exit codes: 0 done; 1 refused (the store or Redis said no: a duplicate, a
-missing row, a login taken, a ceiling, working copies, `CONFLICT`, a status
-behind); 2 usage (a flag, a value, a store that did not answer). A refusal is
+missing row, a ref naming no row, a row another names, a ceiling, working
+copies, `CONFLICT`, a status behind); 2 usage (a flag, a value, a name on a
+singleton, a store that did not answer). A refusal is
 one stderr line, `nova-config <verb>: <why>; run: <next step>`.
 
 ## Connecting
@@ -257,8 +362,11 @@ anywhere connects with none (a throwaway database trusts).
 
 `--redis <addr>` is the flag, else `NOVA_SPRINT_REDIS`, else
 `NOVA_REDIS_ADDR`, else the selected seat's address; the Redis login is the
-one every nova-sprint verb uses (`internal/nsprint/store.Open`). `--as` is
-the flag, else `NOVA_FRIEND`, required on every write.
+one every nova-sprint verb uses (`internal/nsprint/store.Open`). `machine
+list` and `machine show` take the same flag for the live facts but stop at
+the environment: with none named they print the declared fields alone and
+open no store. `--as` is the flag, else `NOVA_FRIEND`, required on every
+write.
 
 ## Deliberately not configuration
 

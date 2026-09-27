@@ -3205,9 +3205,13 @@ nova-config <kind> list                                                  # one t
 nova-config <kind> show <name>                                           # one line with every field and the stamps
 nova-config <kind> history <name>                                        # every change to the row: who, when, what changed
 nova-config <kind> <verb> -h                                             # the verb's usage line and every flag it takes
+nova-config machine list|show <name> [--redis <addr>]                    # with a Redis, each line ends in the machine's live measured facts from its beat (os, arch, cores, memory_gb, beat=<t> or beat=none)
+nova-config fleet set --store <m> --coordinator <m> --as <friend>       # the one fleet row: no name, no add, remove or list
+nova-config sprint set --coordinator <friend> --as <friend>              # the one sprint row: who coordinates; set it to hand over
+nova-config fleet|sprint show|history                                    # the one row, its stamps, its changes
 ```
 
-`nova-config` is the one tool for the fleet's permanent, non-ephemeral configuration: Postgres (schema `config`) is the permanent store, and `apply` writes it into Redis so Redis is always a rebuildable copy. The kinds are `machine` and `friend`; the contract is [SPEC-CONFIG.md](SPEC-CONFIG.md) and the guide is [nova-config/README.md](nova-config/README.md).
+`nova-config` is the one tool for the fleet's permanent, non-ephemeral configuration: Postgres (schema `config`) is the permanent store, and `apply` writes it into Redis so Redis is always a rebuildable copy. The kinds are `machine` (user, seat, slots, runners; the name is the tailnet host), `fleet` (one row: the store and coordinator machines), `friend` (slots, tiers, roles) and `sprint` (one row: the coordinating friend); the contract is [SPEC-CONFIG.md](SPEC-CONFIG.md) and the guide is [nova-config/README.md](nova-config/README.md).
 
 ### First run
 
@@ -3222,8 +3226,10 @@ The real first run needs a Postgres and a Redis, so there is no `quickstart`: a 
 
 ```sh
 nova-config migrate --pg postgres://nova_config@space:5432/nova
-nova-config machine add studio --ssh studio --os_arch darwin/arm64 --slots 64 --as rowan
-nova-config friend add rowan --machine studio --slots 32 --roles coordinator --as rowan
+nova-config machine add studio --user glenn --seat studio --slots 64 --as rowan
+nova-config fleet set --store studio --coordinator studio --as rowan
+nova-config friend add rowan --slots 32 --tiers frontier,pro --roles builder --as rowan
+nova-config sprint set --coordinator rowan --as rowan
 nova-config apply --check --as rowan
 nova-config apply --as rowan
 ```
@@ -3232,7 +3238,7 @@ nova-config apply --as rowan
 
 **Reading it.** Every write prints `CONFIG ADD|SET|REMOVE kind=<k> name=<n> rev=<id>`, the id of its history row. `list` prints `<KIND> name=<n> <field>=<v> ...` per row and a `CONFIG LIST` count; `history` prints `HISTORY id=<n> ... op=<add|set|remove> actor=<a> at=<t>` with each changed field as `<field>=<before>><after>`. `apply` prints `APPLY ADD|SET|REMOVE kind=<k> name=<n>` per row it writes and one `CONFIG APPLY kind=<k> add=<n> set=<n> remove=<n> rev=<r> ms=<n>` per kind; `--check` prints the same plan as `CHECK` lines and `CONFIG CHECK`. `status` exits 1 with the next step when the schema is missing (`run: nova-config migrate`) or Redis is behind (`run: nova-config apply`).
 
-**Refusals.** Exit 1 is the store or Redis saying no, one stderr line naming the next step: `machine studio exists; run: nova-config machine set studio ...`, `--machine hulk names no machine row`, `machine studio is the --machine of friend rowan`, `--logins rowan-claude is friend rowan's login`, `CONFLICT friend: Redis holds rev 9 and this Postgres is at rev 4`, `CEILING studio: friend stella makes the sum 65 over the machine ceiling 64`, `friend stella holds 2 working copies (card:4410,card:4414)`. Exit 2 is an invocation that could not run.
+**Refusals.** Exit 1 is the store or Redis saying no, one stderr line naming the next step: `machine studio exists; run: nova-config machine set studio ...`, `--store space names no machine row`, `machine studio is the --coordinator of the fleet`, `friend rowan is the --coordinator of the sprint`, `CONFLICT friend: Redis holds rev 9 and this Postgres is at rev 4`, `CEILING studio: friend stella makes the sum 65 over the machine ceiling 64`, `friend stella holds 2 working copies (card:4410,card:4414)`, `friend emma has no beat naming a machine and the fleet names no coordinator machine to charge her slots to`. Exit 2 is an invocation that could not run (a name on a singleton is one).
 
 ## nova-friend
 

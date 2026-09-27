@@ -85,7 +85,8 @@ func OpLine(word string, kind string, op Op) string {
 }
 
 // KindLine is one line of `nova-config kinds`: `CONFIG KIND name=<k>
-// table=config.<t> fields=<f,g,...> required=<f,...>`.
+// table=config.<t> fields=<f,g,...> required=<f,...> rows=many|one` (one:
+// a singleton kind, whose row the migration creates).
 func KindLine(k *Kind) string {
 	var required []string
 	for _, f := range k.Fields {
@@ -93,5 +94,22 @@ func KindLine(k *Kind) string {
 			required = append(required, f.Name)
 		}
 	}
-	return "CONFIG KIND name=" + k.Name + " table=config." + k.Table + " fields=" + Value(strings.Join(k.FieldNames(), ",")) + " required=" + Value(strings.Join(required, ","))
+	rows := "many"
+	if k.Singleton {
+		rows = "one"
+	}
+	return "CONFIG KIND name=" + k.Name + " table=config." + k.Table + " fields=" + Value(strings.Join(k.FieldNames(), ",")) + " required=" + Value(strings.Join(required, ",")) + " rows=" + rows
+}
+
+// LiveLine is the measured facts a machine's list and show lines carry
+// after the declared fields when Redis is at hand (docs/SPEC-CONFIG.md,
+// "Declared and measured"): ` os=<v> arch=<v> cores=<n> memory_gb=<n>
+// beat=<rfc3339>`, each `-` when the beat does not carry it, and
+// `beat=none` alone when the machine has no beat. Nothing here is stored or
+// typed: it is what the machine reported last.
+func LiveLine(b *Beat) string {
+	if b == nil {
+		return " beat=none"
+	}
+	return " os=" + Value(b.OS) + " arch=" + Value(b.Arch) + " cores=" + Value(b.Cores) + " memory_gb=" + Value(b.MemoryGB) + " beat=" + Value(b.At)
 }

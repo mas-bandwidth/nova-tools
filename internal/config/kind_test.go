@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -41,12 +42,135 @@ func TestEveryKindHasATableAndUniqueFields(t *testing.T) {
 	}
 }
 
-func TestMachinesApplyBeforeFriends(t *testing.T) {
+func TestKindsApplyInDependencyOrder(t *testing.T) {
 	t.Parallel()
 
 	names := KindNames()
-	if len(names) < 2 || names[0] != KindMachine || names[1] != KindFriend {
-		t.Fatalf("kinds %v: a friend's slots are guarded by its machine's ceiling, so machine applies first", names)
+	if strings.Join(names, ",") != "machine,fleet,friend,sprint" {
+		t.Fatalf("kinds %v: machines first (ceilings), the fleet next (a friend's slots are charged to its coordinator machine when her beat names none), friends, the sprint row last (it names a friend)", names)
+	}
+}
+
+// TestTheMachineRowIsTheDeclaredFactsSomethingReads: Glenn 2026-09-27, "I
+// only want the fleet to have actual defined useful things associated with
+// each machine, not invented rando stuff". Four declared fields, no address
+// (the name is the tailnet host), no measured fact, no note.
+func TestTheMachineRowIsTheDeclaredFactsSomethingReads(t *testing.T) {
+	t.Parallel()
+
+	machine, _ := Lookup(KindMachine)
+	if got := strings.Join(machine.FieldNames(), ","); got != "user,seat,slots,runners" {
+		t.Fatalf("machine fields %s, want user,seat,slots,runners", got)
+	}
+	for _, f := range machine.Fields {
+		if want := f.Name != "runners"; f.Required != want {
+			t.Errorf("--%s required=%v, want %v (runners defaults to 0; the rest are typed on add)", f.Name, f.Required, want)
+		}
+	}
+	for _, invented := range []string{"ssh", "address", "os_arch", "os", "arch", "cores", "memory_gb", "roles", "note", "store", "coordinator", "machine", "harness", "logins", "wake"} {
+		if _, ok := machine.Field(invented); ok {
+			t.Errorf("machine has a field %s: an address is the name, a measured fact comes live from the beat, a fleet fact is the fleet's, a note is history", invented)
+		}
+	}
+	if machine.Singleton {
+		t.Error("machine is many rows")
+	}
+}
+
+// TestTheFriendRowIsWhatSomeoneDecidesForHer: Glenn 2026-09-27, "anything
+// that a friend would just know, is runtime redis data". Three fields:
+// slots, tiers, roles; no machine, harness, logins, wake or note; and no
+// coordinator role, which is the sprint row's.
+func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
+	t.Parallel()
+
+	friend, _ := Lookup(KindFriend)
+	if got := strings.Join(friend.FieldNames(), ","); got != "slots,tiers,roles" {
+		t.Fatalf("friend fields %s, want slots,tiers,roles", got)
+	}
+	for _, f := range friend.Fields {
+		if want := f.Name != "roles"; f.Required != want {
+			t.Errorf("--%s required=%v, want %v", f.Name, f.Required, want)
+		}
+	}
+	for _, invented := range []string{"machine", "harness", "logins", "wake", "note", "coordinator"} {
+		if _, ok := friend.Field(invented); ok {
+			t.Errorf("friend has a field %s: what she would just know is runtime data, who coordinates is the sprint's", invented)
+		}
+	}
+	if strings.Join(FriendRoles, ",") != "builder,may-hold,reader" || strings.Join(Tiers, ",") != "flash,frontier,pro" {
+		t.Errorf("roles %v tiers %v", FriendRoles, Tiers)
+	}
+	sprint, _ := Lookup(KindSprint)
+	if !sprint.Singleton || len(sprint.Fields) != 1 || sprint.Fields[0].Name != "coordinator" || sprint.Fields[0].Type != TypeRef || sprint.Fields[0].Ref != KindFriend || sprint.Fields[0].Required {
+		t.Fatalf("sprint %+v: one row, one optional ref to a friend", sprint)
+	}
+}
+
+// TestDeriveGivesTheSprintCoordinatorTheRole: the rows apply plans carry
+// the coordinator role on the friend the sprint row names and on no other;
+// the stored rows are untouched.
+func TestDeriveGivesTheSprintCoordinatorTheRole(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := seed(t)
+	friend, _ := Lookup(KindFriend)
+	rows, _ := st.List(ctx, KindFriend)
+	derived, err := friend.Derive(ctx, st, rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := func(rs []Row, n string) string {
+		for _, r := range rs {
+			if r.Name == n {
+				return r.Fields["roles"]
+			}
+		}
+		return "?"
+	}
+	if byName(derived, "rowan") != "builder,coordinator" || byName(derived, "stella") != "builder,reader" {
+		t.Fatalf("derived roles rowan=%s stella=%s", byName(derived, "rowan"), byName(derived, "stella"))
+	}
+	if byName(rows, "rowan") != "builder" {
+		t.Fatal("Derive changed its input")
+	}
+	if _, _, err := st.Update(ctx, KindSprint, KindSprint, map[string]string{"coordinator": ""}, "rowan"); err != nil {
+		t.Fatal(err)
+	}
+	derived, _ = friend.Derive(ctx, st, rows)
+	if byName(derived, "rowan") != "builder" {
+		t.Fatalf("no coordinator named and rowan still derives %s", byName(derived, "rowan"))
+	}
+}
+
+// TestTheFleetIsOneRowOfTwoMachineRefs: Glenn 2026-09-27, "in the fleet
+// there is only one coordinator at a time": the store and the coordinator
+// are fleet facts, one value each, each a machine row or empty.
+func TestTheFleetIsOneRowOfTwoMachineRefs(t *testing.T) {
+	t.Parallel()
+
+	fleet, _ := Lookup(KindFleet)
+	if !fleet.Singleton || fleet.Table != "fleet" {
+		t.Fatalf("fleet %+v: one row in config.fleet", fleet)
+	}
+	if got := strings.Join(fleet.FieldNames(), ","); got != "store,coordinator" {
+		t.Fatalf("fleet fields %s, want store,coordinator", got)
+	}
+	for _, f := range fleet.Fields {
+		if f.Type != TypeRef || f.Ref != KindMachine || f.Required {
+			t.Errorf("--%s %+v: an optional ref to a machine row", f.Name, f)
+		}
+	}
+	row, err := fleet.NewRow(KindFleet, map[string]string{"store": "hulk"})
+	if err != nil || row.Fields["store"] != "hulk" || row.Fields["coordinator"] != "" {
+		t.Fatalf("fleet row %+v %v", row.Fields, err)
+	}
+	if _, err := fleet.NewRow(KindFleet, map[string]string{"store": "Hulk"}); err == nil || !strings.Contains(err.Error(), "--store: name \"Hulk\": want lower-case") {
+		t.Fatalf("a ref that is not a name: %v", err)
+	}
+	if got, err := fleet.Changes(map[string]string{"coordinator": ""}); err != nil || got["coordinator"] != "" {
+		t.Fatalf("clearing a fleet field: %v %v", got, err)
 	}
 }
 
@@ -55,6 +179,8 @@ func TestCanonicalValidatesEveryType(t *testing.T) {
 
 	friend, _ := Lookup(KindFriend)
 	machine, _ := Lookup(KindMachine)
+	fleet, _ := Lookup(KindFleet)
+	sprint, _ := Lookup(KindSprint)
 	field := func(k *Kind, name string) Field {
 		f, ok := k.Field(name)
 		if !ok {
@@ -73,28 +199,24 @@ func TestCanonicalValidatesEveryType(t *testing.T) {
 		{field(friend, "slots"), "-1", "", "non-negative integer"},
 		{field(friend, "slots"), "x", "", "non-negative integer"},
 		{field(friend, "slots"), "", "", "non-negative integer"},
-		{field(friend, "roles"), "coordinator,builder", "builder,coordinator", ""},
+		{field(friend, "roles"), "reader,builder", "builder,reader", ""},
 		{field(friend, "roles"), "builder builder", "builder", ""},
 		{field(friend, "roles"), "", "", ""},
-		{field(friend, "roles"), "king", "", "want a comma list of builder, coordinator, may-hold, reader"},
-		{field(friend, "logins"), "Rowan-claude,stella", "Rowan-claude,stella", ""},
-		{field(friend, "logins"), "a b", "a,b", ""},
-		{field(friend, "logins"), "a=b", "", "holds no ="},
-		{field(friend, "logins"), "-x", "", "letters, digits and dashes"},
-		{field(friend, "wake"), "unit:rowan@studio", "unit:rowan@studio", ""},
-		{field(friend, "wake"), "human:#rowan", "human:#rowan", ""},
-		{field(friend, "wake"), "", "", ""},
-		{field(friend, "wake"), "unit:rowan", "", "want unit:<label>@<host>"},
-		{field(friend, "wake"), "human:", "", "want human:<channel>"},
-		{field(friend, "wake"), "cron", "", "unit:<label>@<host>, human:<channel> or empty"},
-		{field(friend, "machine"), "studio", "studio", ""},
-		{field(friend, "machine"), "Studio", "", "lower-case"},
-		{field(friend, "machine"), "", "", "want the name of a machine row"},
-		{field(friend, "note"), " two words ", "two words", ""},
-		{field(friend, "note"), "two\nlines", "", "want one line"},
-		{field(machine, "os_arch"), "linux/x64", "linux/x64", ""},
-		{field(machine, "os_arch"), "linux", "", "want one of darwin/amd64, darwin/arm64, linux/arm64, linux/x64"},
-		{field(machine, "roles"), "runner,bench", "bench,runner", ""},
+		{field(friend, "roles"), "coordinator", "", "want a comma list of builder, may-hold, reader"},
+		{field(friend, "roles"), "king", "", "want a comma list of builder, may-hold, reader"},
+		{field(friend, "tiers"), "pro,frontier", "frontier,pro", ""},
+		{field(friend, "tiers"), "a=b", "", "holds no ="},
+		{field(friend, "tiers"), "ultra", "", "want a comma list of flash, frontier, pro"},
+		{field(sprint, "coordinator"), "stella", "stella", ""},
+		{field(sprint, "coordinator"), "", "", ""},
+		{field(sprint, "coordinator"), "Stella", "", "lower-case"},
+		{field(machine, "user"), " gaffer ", "gaffer", ""},
+		{field(machine, "user"), "", "", ""},
+		{field(machine, "runners"), "2", "2", ""},
+		{field(machine, "runners"), "two", "", "non-negative integer"},
+		{field(fleet, "store"), "hulk", "hulk", ""},
+		{field(fleet, "store"), "", "", ""},
+		{field(fleet, "store"), "Hulk", "", "lower-case"},
 	}
 	for _, c := range cases {
 		got, err := c.f.Canonical(c.raw)
@@ -122,12 +244,22 @@ func TestNewRowNamesEveryProblemAtOnce(t *testing.T) {
 	if err == nil {
 		t.Fatal("a row with four problems was accepted")
 	}
-	for _, want := range []string{"lower-case", "--machine is required", "--slots \"x\"", "--roles \"king\"", "--colour is not a friend field"} {
+	for _, want := range []string{"lower-case", "--tiers is required", "--slots \"x\"", "--roles \"king\"", "--colour is not a friend field"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not name %q:\n%s", want, err)
 		}
 	}
-	row, err := friend.NewRow("rowan", map[string]string{"machine": "studio", "slots": "64"})
+	machine, _ := Lookup(KindMachine)
+	_, err = machine.NewRow("hulk", map[string]string{"slots": "40", "ssh": "hulk", "os_arch": "linux/x64"})
+	if err == nil {
+		t.Fatal("a machine row with no user, no seat and two invented fields was accepted")
+	}
+	for _, want := range []string{"--user is required", "--seat is required", "--ssh is not a machine field; the fields are user, seat, slots, runners", "--os_arch is not a machine field"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the machine refusal does not name %q:\n%s", want, err)
+		}
+	}
+	row, err := friend.NewRow("rowan", map[string]string{"tiers": "frontier", "slots": "64"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +268,7 @@ func TestNewRowNamesEveryProblemAtOnce(t *testing.T) {
 			t.Errorf("a new row lacks field %s; every field is present, empty when not given", f.Name)
 		}
 	}
-	if row.Fields["note"] != "" || row.Fields["slots"] != "64" || row.Int("slots") != 64 {
+	if row.Fields["roles"] != "" || row.Fields["slots"] != "64" || row.Int("slots") != 64 {
 		t.Errorf("row %+v", row.Fields)
 	}
 }
@@ -151,8 +283,8 @@ func TestChangesRefusesNoFieldAndUnknownField(t *testing.T) {
 	if _, err := friend.Changes(map[string]string{"colour": "red"}); err == nil || !strings.Contains(err.Error(), "--colour is not a friend field") {
 		t.Errorf("set with an unknown field: %v", err)
 	}
-	got, err := friend.Changes(map[string]string{"roles": "reader,builder", "note": ""})
-	if err != nil || got["roles"] != "builder,reader" || got["note"] != "" {
+	got, err := friend.Changes(map[string]string{"roles": "reader,builder", "tiers": ""})
+	if err != nil || got["roles"] != "builder,reader" || got["tiers"] != "" {
 		t.Errorf("changes %v %v", got, err)
 	}
 }

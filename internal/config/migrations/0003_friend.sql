@@ -1,15 +1,13 @@
--- 0003: the friend kind (internal/config/kind.go: Kinds, "friend"). machine
--- is a foreign key: a friend's desired slots are guarded by its machine's
--- ceiling, so a friend on no machine is refused by the structure.
+-- 0003: the friend kind (internal/config/kind.go: Kinds, "friend"). The row
+-- is what someone decides for a friend: how wide (slots), which tiers she
+-- can do, and her roles. Where she runs, her harness and her logins are
+-- what she would just know, runtime data her own presence reports, never
+-- columns here; who coordinates is the sprint row's field (0005).
 CREATE TABLE IF NOT EXISTS config.friends (
     name       text PRIMARY KEY,
-    machine    text NOT NULL REFERENCES config.machines (name),
     slots      integer NOT NULL DEFAULT 0 CHECK (slots >= 0),
-    harness    text NOT NULL DEFAULT '',
-    wake       text NOT NULL DEFAULT '',
+    tiers      text NOT NULL DEFAULT '',
     roles      text NOT NULL DEFAULT '',
-    logins     text NOT NULL DEFAULT '',
-    note       text NOT NULL DEFAULT '',
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
 );

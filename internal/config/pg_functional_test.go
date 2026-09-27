@@ -78,6 +78,12 @@ func TestMigrateOnAnEmptyDatabaseTwice(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, k := range Kinds {
+		if k.Singleton {
+			if _, found, err := st.Get(ctx, k.Name, k.Name); err != nil || !found {
+				t.Errorf("fresh schema lacks the %s row migrate creates: %v %v", k.Name, found, err)
+			}
+			continue
+		}
 		if counts[k.Name] != 0 {
 			t.Errorf("fresh schema counts %d %s rows", counts[k.Name], k.Name)
 		}

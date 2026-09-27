@@ -211,7 +211,7 @@ func columns(k *Kind) string {
 func scanRow(k *Kind, scan func(dest ...any) error) (Row, error) {
 	row := Row{Fields: map[string]string{}}
 	dest := []any{&row.Name}
-	texts := make([]string, len(k.Fields))
+	texts := make([]sql.NullString, len(k.Fields))
 	ints := make([]int64, len(k.Fields))
 	for i, f := range k.Fields {
 		if f.Type == TypeInt {
@@ -229,7 +229,8 @@ func scanRow(k *Kind, scan func(dest ...any) error) (Row, error) {
 		if f.Type == TypeInt {
 			row.Fields[f.Name] = strconv.FormatInt(ints[i], 10)
 		} else {
-			row.Fields[f.Name] = texts[i]
+			// A NULL (an optional ref naming no row) is the empty value.
+			row.Fields[f.Name] = texts[i].String
 		}
 	}
 	row.CreatedAt = created.UTC().Format(time.RFC3339)
@@ -241,13 +242,23 @@ func scanRow(k *Kind, scan func(dest ...any) error) (Row, error) {
 func values(k *Kind, row Row) []any {
 	args := []any{row.Name}
 	for _, f := range k.Fields {
-		if f.Type == TypeInt {
-			args = append(args, int64(row.Int(f.Name)))
-		} else {
-			args = append(args, row.Fields[f.Name])
-		}
+		args = append(args, fieldArg(f, row.Fields[f.Name]))
 	}
 	return args
+}
+
+// fieldArg is one field's value as the column takes it: an int as a
+// number, an empty optional ref as NULL (the foreign key allows no ”), any
+// other value as text.
+func fieldArg(f Field, v string) any {
+	switch {
+	case f.Type == TypeInt:
+		n, _ := strconv.ParseInt(v, 10, 64)
+		return n
+	case f.Type == TypeRef && v == "":
+		return nil
+	}
+	return v
 }
 
 func kindOf(kind string) (*Kind, error) {
@@ -433,14 +444,6 @@ func (p *PG) Update(ctx context.Context, kind, name string, changes map[string]s
 	return after, id, nil
 }
 
-func fieldArg(f Field, v string) any {
-	if f.Type == TypeInt {
-		n, _ := strconv.ParseInt(v, 10, 64)
-		return n
-	}
-	return v
-}
-
 func (p *PG) Delete(ctx context.Context, kind, name string, actor string) (int64, error) {
 	k, err := kindOf(kind)
 	if err != nil {
@@ -522,6 +525,9 @@ func (p *PG) Rev(ctx context.Context, kind string) (int64, error) {
 func (p *PG) Counts(ctx context.Context) (map[string]int, error) {
 	out := map[string]int{}
 	for _, k := range Kinds {
+		if k.Singleton {
+			continue
+		}
 		var n int
 		if err := p.db.QueryRowContext(ctx, `SELECT count(*) FROM config.`+quoteIdent(k.Table)).Scan(&n); err != nil {
 			return nil, fmt.Errorf("postgres: count %s: %w", k.Name, err)

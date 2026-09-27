@@ -16,27 +16,44 @@ import (
 
 // The Redis keys apply writes, per kind. A friend's keys are the ones the
 // nova-sprint verbs wrote by hand until now, through the same Redis
-// Functions (internal/nsprint/fn/lua: capacity.lua's ns_capacity_desired,
-// friend_roles.lua's ns_friend_roles, friend.lua's ns_friend_wakepath) and
-// the friends:login hash presence.lua reads. A machine's ceiling goes through
-// ns_capacity_machine; its registry row has no writer in the library, so it
-// is the hash machine:<m> and the set `machines`, both nova-config's own.
+// Functions (internal/nsprint/fn/lua: capacity.lua's ns_capacity_desired
+// for slots and tiers, friend_roles.lua's ns_friend_roles for roles). Her
+// logins and wake path are what she would just know: her own presence
+// writes them, apply never touches friends:login or friend:<f>:wakepath. A
+// machine's ceiling goes through ns_capacity_machine; its registry row has
+// no writer in the library, so it is the hash machine:<m> and the set
+// `machines`, both nova-config's own. The fleet row is two plain keys of
+// nova-config's own, fleet:store and fleet:coordinator, each a machine's
+// name; the sprint row is sprint:coordinator, a friend's name (each absent
+// when the row names none).
 //
 // config:decl is the stamp: rev:<kind> is the Postgres revision last applied
 // and at:<kind> the server time it was written (the shape of friends:decl in
 // friend_declare.lua).
 const (
-	DeclKey        = "config:decl"
-	FriendsKey     = "friends"
-	MachinesKey    = "machines"
-	LoginsKey      = "friends:login"
-	CapLogKey      = "cap:log"
-	FriendConfigFn = "config"
+	DeclKey     = "config:decl"
+	FriendsKey  = "friends"
+	MachinesKey = "machines"
+	CapLogKey   = "cap:log"
 )
 
-// FriendConfigKey is the hash holding a friend's fields no runtime key holds
-// (harness, note), with the revision and time they were applied.
-func FriendConfigKey(f string) string { return "friend:" + f + ":" + FriendConfigFn }
+// FleetKey is the plain key one fleet field is written to: fleet:store,
+// fleet:coordinator.
+func FleetKey(field string) string { return "fleet:" + field }
+
+// SprintKey is the plain key one sprint field is written to:
+// sprint:coordinator.
+func SprintKey(field string) string { return "sprint:" + field }
+
+// FriendBeatKey is a friend's own heartbeat (nova-friend): its host field
+// is the machine she runs on now, what her desired slots are charged to.
+func FriendBeatKey(f string) string { return "friend:" + f + ":beat" }
+
+// BeatKey is the machine's own heartbeat, written by the bench that runs on
+// it (nova-sprint bench beat): host, at (unix ms), load1, ncpu, cpu today;
+// os, arch and memory_gb when the beat carries them. nova-config reads it,
+// never writes it.
+func BeatKey(m string) string { return "bench:" + m + ":beat" }
 
 // MachineKey is the machine's registry hash.
 func MachineKey(m string) string { return "machine:" + m }
@@ -70,6 +87,10 @@ func (a *RedisApplier) Read(ctx context.Context, kind string) (map[string]View, 
 		return a.readFriends(ctx)
 	case KindMachine:
 		return a.readMachines(ctx)
+	case KindFleet:
+		return a.readSingleton(ctx, KindFleet, FleetKey)
+	case KindSprint:
+		return a.readSingleton(ctx, KindSprint, SprintKey)
 	}
 	return nil, 0, fmt.Errorf("apply: no Redis reader for kind %q", kind)
 }
@@ -80,6 +101,10 @@ func (a *RedisApplier) Write(ctx context.Context, kind string, row Row, prev Vie
 		return a.writeFriend(ctx, row, prev, actor, idem)
 	case KindMachine:
 		return a.writeMachine(ctx, row, prev, actor, idem)
+	case KindFleet:
+		return a.writeSingleton(ctx, KindFleet, FleetKey, row)
+	case KindSprint:
+		return a.writeSingleton(ctx, KindSprint, SprintKey, row)
 	}
 	return fmt.Errorf("apply: no Redis writer for kind %q", kind)
 }
@@ -90,6 +115,8 @@ func (a *RedisApplier) Remove(ctx context.Context, kind, name, actor, idem strin
 		return a.removeFriend(ctx, name, actor, idem)
 	case KindMachine:
 		return a.removeMachine(ctx, name, actor, idem)
+	case KindFleet, KindSprint:
+		return fmt.Errorf("apply: the %s row is never removed", kind)
 	}
 	return fmt.Errorf("apply: no Redis remover for kind %q", kind)
 }
@@ -161,38 +188,21 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 	pipe := a.Client.Pipeline()
 	desired := make([]*redis.SliceCmd, len(names))
 	roles := make([]*redis.StringCmd, len(names))
-	wake := make([]*redis.SliceCmd, len(names))
-	conf := make([]*redis.SliceCmd, len(names))
 	for i, f := range names {
-		desired[i] = pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "machine")
+		desired[i] = pipe.HMGet(ctx, "friend:"+f+":desired", "slots", "tiers")
 		roles[i] = pipe.HGet(ctx, "friend:"+f+":roles", "roles")
-		wake[i] = pipe.HMGet(ctx, "friend:"+f+":wakepath", "kind", "unit", "host", "notify")
-		conf[i] = pipe.HMGet(ctx, FriendConfigKey(f), "harness", "note")
 	}
-	logins := pipe.HGetAll(ctx, LoginsKey)
 	rev := pipe.HGet(ctx, DeclKey, revField(KindFriend))
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return nil, 0, fmt.Errorf("redis: read friends: %w", err)
 	}
-	byFriend := map[string][]string{}
-	for alias, f := range logins.Val() {
-		byFriend[f] = append(byFriend[f], alias)
-	}
 	views := make(map[string]View, len(names))
 	for i, f := range names {
 		d := desired[i].Val()
-		w := wake[i].Val()
-		c := conf[i].Val()
-		aliases := byFriend[f]
-		sort.Strings(aliases)
 		views[f] = View{
-			"machine": str(d, 1),
-			"slots":   intText(str(d, 0)),
-			"harness": str(c, 0),
-			"wake":    wakeText(str(w, 0), str(w, 1), str(w, 2), str(w, 3)),
-			"roles":   sortedList(roles[i].Val()),
-			"logins":  strings.Join(aliases, ","),
-			"note":    str(c, 1),
+			"slots": intText(str(d, 0)),
+			"tiers": sortedList(str(d, 1)),
+			"roles": sortedList(roles[i].Val()),
 		}
 	}
 	return views, revValue(rev), nil
@@ -224,17 +234,6 @@ func revValue(cmd *redis.StringCmd) int64 {
 	return n
 }
 
-// wakeText is the wake field's one spelling from the wakepath hash.
-func wakeText(kind, unit, host, notify string) string {
-	switch kind {
-	case "unit":
-		return "unit:" + unit + "@" + host
-	case "human":
-		return "human:" + notify
-	}
-	return ""
-}
-
 // replyWords flattens a function reply into words.
 func replyWords(reply any) []string {
 	values, ok := reply.([]any)
@@ -248,10 +247,46 @@ func replyWords(reply any) []string {
 	return out
 }
 
+// charge is the machine a friend's desired slots count against: the host
+// her beat reports (friends may run on any bench), else the fleet's
+// coordinator machine as the default charge, else a refusal naming the
+// fleet set that fixes it.
+func (a *RedisApplier) charge(ctx context.Context, f string) (string, error) {
+	host, err := a.Client.HGet(ctx, FriendBeatKey(f), "host").Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return "", fmt.Errorf("redis: read %s: %w", FriendBeatKey(f), err)
+	}
+	if host != "" {
+		return host, nil
+	}
+	coordinator, err := a.Client.Get(ctx, FleetKey("coordinator")).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return "", fmt.Errorf("redis: read %s: %w", FleetKey("coordinator"), err)
+	}
+	if coordinator == "" {
+		return "", &RefusedError{Err: ErrCeiling, Detail: fmt.Sprintf("friend %s has no beat naming a machine and the fleet names no coordinator machine to charge her slots to; run: nova-config fleet set --coordinator <machine>, then apply", f)}
+	}
+	return coordinator, nil
+}
+
+// tiersArg is the twelfth argument of ns_capacity_desired: the list, or
+// '-' to clear a stored one when the row has none (” would keep it).
+func tiersArg(tiers string) string {
+	if tiers == "" {
+		return "-"
+	}
+	return tiers
+}
+
 func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, actor, idem string) error {
 	f := row.Name
-	// 1. slots and machine, registering the friend (ns_capacity_desired).
-	reply, err := a.Client.FCall(ctx, "ns_capacity_desired", nil, KindFriend, f, row.Fields["slots"], row.Fields["machine"], actor, idem).Result()
+	// 1. slots and tiers, registering the friend (ns_capacity_desired),
+	// charged to the machine her beat reports or the coordinator machine.
+	machine, err := a.charge(ctx, f)
+	if err != nil {
+		return err
+	}
+	reply, err := a.Client.FCall(ctx, "ns_capacity_desired", nil, KindFriend, f, row.Fields["slots"], machine, actor, idem, "", "", "", "", "", tiersArg(row.Fields["tiers"])).Result()
 	if err != nil {
 		return fmt.Errorf("redis: friend %s slots: %w", f, err)
 	}
@@ -262,14 +297,15 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 		return &RefusedError{Err: ErrCeiling, Detail: fmt.Sprintf("CEILING %s: friend %s makes the sum %s over the machine ceiling %s; raise it with nova-config machine set %s --slots <n>, or lower a friend's slots",
 			word(words, 1), f, word(words, 2), word(words, 3), word(words, 1))}
 	case "NOCEILING":
-		return &RefusedError{Err: ErrCeiling, Detail: fmt.Sprintf("machine %s has no ceiling in Redis; run: nova-config apply --kind machine first", row.Fields["machine"])}
+		return &RefusedError{Err: ErrCeiling, Detail: fmt.Sprintf("machine %s has no ceiling in Redis; run: nova-config machine add %s ... (her beat names it) then apply", machine, machine)}
 	case "NAME-IS-LOGIN":
-		return &RefusedError{Err: ErrLoginTaken, Detail: fmt.Sprintf("%s is a login in Redis (friends:login), not a friend", f)}
+		return &RefusedError{Err: ErrActor, Detail: fmt.Sprintf("%s is a login in Redis (friends:login), not a friend", f)}
 	default:
 		return fmt.Errorf("redis: friend %s slots: %s", f, strings.Join(words, " "))
 	}
 	// 2. roles (ns_friend_roles: the actor must be a coordinator, or nobody
-	// is one yet and this row makes the first).
+	// is one yet and this row makes the first; the sprint row's coordinator
+	// carries the role here, derived by Kind.Derive).
 	if prev == nil && row.Fields["roles"] != "" || prev != nil && prev["roles"] != row.Fields["roles"] {
 		reply, err := a.Client.FCall(ctx, "ns_friend_roles", nil, f, row.Fields["roles"], actor, idem).Result()
 		if err != nil {
@@ -284,58 +320,14 @@ func (a *RedisApplier) writeFriend(ctx context.Context, row Row, prev View, acto
 		case "REFUSED":
 			return RedisRefusal("roles of %s: --as %s does not hold the coordinator role in Redis", f, actor)
 		case "LASTCOORD":
-			return RedisRefusal("roles of %s: it is the last coordinator; give another friend the coordinator role first", f)
+			return RedisRefusal("roles of %s: it would leave no coordinator; run: nova-config sprint set --coordinator <friend>, then apply", f)
 		case "BADROLE", "UNKNOWN":
 			return RedisRefusal("roles of %s: %s %s", f, words[0], word(words, 1))
 		default:
 			return fmt.Errorf("redis: friend %s roles: %s", f, strings.Join(words, " "))
 		}
 	}
-	// 3. the wake path (ns_friend_wakepath; clear when the row has none).
-	if prev == nil && row.Fields["wake"] != "" || prev != nil && prev["wake"] != row.Fields["wake"] {
-		kind, unit, host, notify := wakeParts(row.Fields["wake"])
-		reply, err := a.Client.FCall(ctx, "ns_friend_wakepath", nil, f, kind, unit, host, notify, actor, idem).Result()
-		if err != nil {
-			return fmt.Errorf("redis: friend %s wake: %w", f, err)
-		}
-		if words := replyWords(reply); words[0] != "OK" {
-			return fmt.Errorf("redis: friend %s wake: %s", f, strings.Join(words, " "))
-		}
-	}
-	// 4. logins (friends:login alias -> friend), 5. harness and note.
-	want := Words(row.Fields["logins"])
-	var have []string
-	if prev != nil {
-		have = Words(prev["logins"])
-	}
-	pipe := a.Client.TxPipeline()
-	for _, alias := range want {
-		pipe.HSet(ctx, LoginsKey, alias, f)
-	}
-	for _, alias := range have {
-		if !hasWord(row.Fields["logins"], alias) {
-			pipe.HDel(ctx, LoginsKey, alias)
-		}
-	}
-	rev, _ := strings.CutPrefix(idem, "config:"+KindFriend+":")
-	pipe.HSet(ctx, FriendConfigKey(f), "harness", row.Fields["harness"], "note", row.Fields["note"], "rev", rev, "at", strconv.FormatInt(a.now(), 10))
-	if _, err := pipe.Exec(ctx); err != nil {
-		return fmt.Errorf("redis: friend %s logins and config: %w", f, err)
-	}
 	return nil
-}
-
-// wakeParts is the wake field's parts for ns_friend_wakepath: kind unit,
-// human or clear.
-func wakeParts(wake string) (kind, unit, host, notify string) {
-	if rest, ok := strings.CutPrefix(wake, "unit:"); ok {
-		unit, host, _ = strings.Cut(rest, "@")
-		return "unit", unit, host, ""
-	}
-	if rest, ok := strings.CutPrefix(wake, "human:"); ok {
-		return "human", "", "", rest
-	}
-	return "clear", "", "", ""
 }
 
 func word(words []string, i int) string {
@@ -374,18 +366,11 @@ func (a *RedisApplier) removeFriend(ctx context.Context, f, actor, idem string) 
 		sort.Strings(working)
 		return &RefusedError{Err: ErrWorking, Detail: fmt.Sprintf("friend %s holds %d working copies (%s); let them finish or move them before removing the friend", f, len(working), strings.Join(working, ","))}
 	}
-	logins, err := a.Client.HGetAll(ctx, LoginsKey).Result()
-	if err != nil {
-		return fmt.Errorf("redis: read %s: %w", LoginsKey, err)
-	}
+	// Only what apply wrote goes: her presence's own keys (beat, logins,
+	// wake path) are hers.
 	pipe := a.Client.TxPipeline()
 	pipe.SRem(ctx, FriendsKey, f)
-	pipe.Del(ctx, "friend:"+f+":desired", "friend:"+f+":roles", "friend:"+f+":wakepath", FriendConfigKey(f))
-	for alias, owner := range logins {
-		if owner == f {
-			pipe.HDel(ctx, LoginsKey, alias)
-		}
-	}
+	pipe.Del(ctx, "friend:"+f+":desired", "friend:"+f+":roles")
 	pipe.XAdd(ctx, &redis.XAddArgs{Stream: CapLogKey, MaxLen: 100000, Approx: true, Values: map[string]any{
 		"kind": "config-remove", "subject": KindFriend + ":" + f, "actor": actor, "idem": idem, "at": strconv.FormatInt(a.now(), 10)}})
 	if _, err := pipe.Exec(ctx); err != nil {
@@ -403,10 +388,10 @@ func (a *RedisApplier) readMachines(ctx context.Context) (map[string]View, int64
 	}
 	sort.Strings(names)
 	pipe := a.Client.Pipeline()
-	ceiling := make([]*redis.SliceCmd, len(names))
+	ceiling := make([]*redis.StringCmd, len(names))
 	reg := make([]*redis.MapStringStringCmd, len(names))
 	for i, m := range names {
-		ceiling[i] = pipe.HMGet(ctx, MachineCeilingKey(m), "slots", "cores")
+		ceiling[i] = pipe.HGet(ctx, MachineCeilingKey(m), "slots")
 		reg[i] = pipe.HGetAll(ctx, MachineKey(m))
 	}
 	rev := pipe.HGet(ctx, DeclKey, revField(KindMachine))
@@ -416,16 +401,16 @@ func (a *RedisApplier) readMachines(ctx context.Context) (map[string]View, int64
 	k, _ := Lookup(KindMachine)
 	views := make(map[string]View, len(names))
 	for i, m := range names {
-		c := ceiling[i].Val()
+		// slots is read from the ceiling, the key the runtime guards on, so
+		// a ceiling moved by hand is put back by the next apply.
 		r := reg[i].Val()
-		v := View{"slots": intText(str(c, 0)), "cores": intText(str(c, 1))}
+		v := View{"slots": intText(ceiling[i].Val())}
 		for _, f := range k.Fields {
-			if f.Name == "slots" || f.Name == "cores" {
-				continue
-			}
-			if f.Type == TypeList {
-				v[f.Name] = sortedList(r[f.Name])
-			} else {
+			switch {
+			case f.Name == "slots":
+			case f.Type == TypeInt:
+				v[f.Name] = intText(r[f.Name])
+			default:
 				v[f.Name] = r[f.Name]
 			}
 		}
@@ -436,12 +421,11 @@ func (a *RedisApplier) readMachines(ctx context.Context) (map[string]View, int64
 
 func (a *RedisApplier) writeMachine(ctx context.Context, row Row, prev View, actor, idem string) error {
 	m := row.Name
-	cores := ""
-	if row.Int("cores") > 0 {
-		cores = row.Fields["cores"]
-	}
-	if prev == nil || prev["slots"] != row.Fields["slots"] || prev["cores"] != row.Fields["cores"] {
-		reply, err := a.Client.FCall(ctx, "ns_capacity_machine", nil, m, row.Fields["slots"], cores, "", actor, idem, "", "").Result()
+	if prev == nil || prev["slots"] != row.Fields["slots"] {
+		// cores and memory are never declared (they come live from the
+		// beat), so the ceiling call carries none and the CI budget the
+		// function derives from them is left as it is.
+		reply, err := a.Client.FCall(ctx, "ns_capacity_machine", nil, m, row.Fields["slots"], "", "", actor, idem, "", "").Result()
 		if err != nil {
 			return fmt.Errorf("redis: machine %s ceiling: %w", m, err)
 		}
@@ -459,9 +443,6 @@ func (a *RedisApplier) writeMachine(ctx context.Context, row Row, prev View, act
 	rev, _ := strings.CutPrefix(idem, "config:"+KindMachine+":")
 	fields := []any{"rev", rev, "at", strconv.FormatInt(a.now(), 10)}
 	for _, f := range k.Fields {
-		if f.Name == "slots" || f.Name == "cores" {
-			continue
-		}
 		fields = append(fields, f.Name, row.Fields[f.Name])
 	}
 	pipe := a.Client.TxPipeline()
@@ -503,4 +484,86 @@ func (a *RedisApplier) removeMachine(ctx context.Context, m, actor, idem string)
 		return fmt.Errorf("redis: remove machine %s: %w", m, err)
 	}
 	return nil
+}
+
+// --- the fleet and sprint rows ----------------------------------------------
+
+// readSingleton is the one view of a singleton kind: the row always exists
+// on both sides, so a field Redis lacks is "" and the plan is a SET of what
+// differs, never an ADD or a REMOVE.
+func (a *RedisApplier) readSingleton(ctx context.Context, kind string, key func(string) string) (map[string]View, int64, error) {
+	k, _ := Lookup(kind)
+	pipe := a.Client.Pipeline()
+	vals := make([]*redis.StringCmd, len(k.Fields))
+	for i, f := range k.Fields {
+		vals[i] = pipe.Get(ctx, key(f.Name))
+	}
+	rev := pipe.HGet(ctx, DeclKey, revField(kind))
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, 0, fmt.Errorf("redis: read %s: %w", kind, err)
+	}
+	v := View{}
+	for i, f := range k.Fields {
+		v[f.Name] = vals[i].Val()
+	}
+	return map[string]View{kind: v}, revValue(rev), nil
+}
+
+// writeSingleton is a plain SET per field (nova-config's own keys; no
+// function in the library reads or writes them), DEL when the row names
+// nothing.
+func (a *RedisApplier) writeSingleton(ctx context.Context, kind string, key func(string) string, row Row) error {
+	k, _ := Lookup(kind)
+	pipe := a.Client.TxPipeline()
+	for _, f := range k.Fields {
+		if v := row.Fields[f.Name]; v == "" {
+			pipe.Del(ctx, key(f.Name))
+		} else {
+			pipe.Set(ctx, key(f.Name), v, 0)
+		}
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("redis: write %s: %w", kind, err)
+	}
+	return nil
+}
+
+// --- the live, measured facts ------------------------------------------------
+
+// Beat is what a machine reported last, read from BeatKey: never stored in
+// Postgres, never typed (Glenn 2026-09-27: measured facts coming live is
+// "more robust"). Cores is the beat's ncpu; OS, Arch and MemoryGB are ""
+// until the beat carries them; At is the beat's time as RFC 3339 UTC.
+type Beat struct {
+	OS, Arch, Cores, MemoryGB, At string
+}
+
+// BeatReader reads the beats of named machines; nil for one with no beat.
+type BeatReader interface {
+	Beats(ctx context.Context, names []string) (map[string]*Beat, error)
+}
+
+// Beats reads every named machine's beat in one pipeline.
+func (a *RedisApplier) Beats(ctx context.Context, names []string) (map[string]*Beat, error) {
+	pipe := a.Client.Pipeline()
+	cmds := make([]*redis.MapStringStringCmd, len(names))
+	for i, m := range names {
+		cmds[i] = pipe.HGetAll(ctx, BeatKey(m))
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, fmt.Errorf("redis: read beats: %w", err)
+	}
+	out := make(map[string]*Beat, len(names))
+	for i, m := range names {
+		h := cmds[i].Val()
+		if len(h) == 0 {
+			continue
+		}
+		b := &Beat{OS: h["os"], Arch: h["arch"], Cores: h["ncpu"], MemoryGB: h["memory_gb"]}
+		if ms, err := strconv.ParseInt(h["at"], 10, 64); err == nil && ms > 0 {
+			b.At = time.UnixMilli(ms).UTC().Format(time.RFC3339)
+		}
+		out[m] = b
+	}
+	return out, nil
 }
