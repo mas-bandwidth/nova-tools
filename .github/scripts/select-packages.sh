@@ -46,6 +46,11 @@ esac
 errf=$(mktemp)
 trap 'rm -f "$errf"' EXIT
 
+# DEPRECATED PACKAGES ARE NEVER SELECTED (Glenn 2026-09-27: "Tests do not run
+# for deprecated tools and modules."). live-packages.sh drops every package
+# deprecated/PACKAGES names; all three lists below go through it.
+live() { bash .github/scripts/live-packages.sh; }
+
 # go_list runs `go list "$@"` and prints its stdout, or returns 1 with the
 # error left in $errf. It is called as `x=$(go_list ...) || go_list_failed`,
 # never inside `< <(...)`, whose exit status bash throws away.
@@ -71,7 +76,7 @@ tree_from_files() {
   git ls-files -z -- 'cmd/*.go' 'internal/*.go' 'tools/*.go' |
     xargs -0 grep -L '^//go:build' |
     grep -v -E '(^|/)(testdata|vendor|[_.][^/]*)/' |
-    xargs -n1 dirname | sort -u | sed 's|^|./|'
+    xargs -n1 dirname | sort -u | sed 's|^|./|' | live
 }
 
 # go_list_failed ends the script: exit 1 with the go list error (fail), or the
@@ -95,7 +100,7 @@ list_all() {
   while read -r pkg; do
     [ -n "$pkg" ] || continue
     printf './%s\n' "${pkg#github.com/mas-bandwidth/nova-tools/}"
-  done <<<"$pkgs"
+  done <<<"$pkgs" | live
 }
 
 if [ "${1:-}" = "--all" ]; then
@@ -176,6 +181,8 @@ done
 # ZERO PACKAGES FROM A GO DIFF IS AN ERROR, not "nothing to test": a change
 # that moved a .go file under cmd/, internal/ or tools/ and selected nothing
 # means the selection broke, the #4370 shape.
+selected=$(printf '%s' "$selected" | live)
+[ -z "$selected" ] || selected="$selected"$'\n'
 go_changed=$(git diff --name-only "$base" HEAD -- 'cmd/*.go' 'internal/*.go' 'tools/*.go')
 if [ -z "$selected" ] && [ -n "$go_changed" ]; then
   echo "select-packages: the diff touches Go files ($(echo "$go_changed" | head -n1)) but selected zero packages" >"$errf"
