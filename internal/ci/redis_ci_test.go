@@ -142,6 +142,9 @@ func redisCIChild(t *testing.T, mode string) (string, int) {
 func redisServerGates(t *testing.T, root string) []string {
 	t.Helper()
 	const helper = "internal/nsprint/testutil/redis.go"
+	// The helper lifted out of the sprint; the one above goes when its
+	// importers are re-pointed.
+	const lifted = "internal/testredis/testredis.go"
 	const self = "internal/ci/redis_ci_test.go"
 	look := "LookPath(" + `"redis-server"` + ")"
 	spawn := "exec.Command(" + `"redis-server"`
@@ -168,7 +171,7 @@ func redisServerGates(t *testing.T, root string) []string {
 			return err
 		}
 		rel = filepath.ToSlash(rel)
-		if rel == helper || rel == self {
+		if rel == helper || rel == lifted || rel == self {
 			return nil
 		}
 		body, err := os.ReadFile(path)
