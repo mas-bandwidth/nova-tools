@@ -272,6 +272,9 @@ do
   end
   function T.keep_owned(d, row, old, new)
     for _, col in ipairs(d.cols) do
+      if not new and col.projection == 'text' and old['text:' .. col.name] and old['text:' .. col.name] ~= '' then
+        return T.refuse('OCCUPIEDVALUE', row, col.name)
+      end
       local prior, target = old['key:' .. col.name], new and new['key:' .. col.name]
       if (prior and prior ~= '') or col.noset then
         local hidden = redis.call('ZRANGE', T.cellkey(d, row, col.name), 0, -1)

@@ -638,6 +638,8 @@ func RowDel(ctx context.Context, c redis.Cmdable, name, key string, opts ...Writ
 
 // Bind replaces the caller-owned table shape in one atomic call. Existing
 // owned cells of retained rows survive; removed rows leave bound sets alone.
+// Omitting a row holding owned members or nonempty text is refused until the
+// caller explicitly clears that content (or deletes the row).
 func Bind(ctx context.Context, c redis.Cmdable, t Table, now time.Time, opts ...WriteOptions) error {
 	fields, err := definitionPayload(t, now)
 	if err != nil {
