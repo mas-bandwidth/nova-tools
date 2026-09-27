@@ -21,8 +21,14 @@ func cmdRow(args []string, stdout, stderr io.Writer) int {
 		return cmdRowAdd(args[1:], stdout, stderr)
 	case "del":
 		return cmdRowDel(args[1:], stdout, stderr)
+	case "set":
+		return cmdRowSet(args[1:], stdout, stderr)
+	case "hide":
+		return cmdRowsHide(args[1:], stdout, stderr, true)
+	case "show":
+		return cmdRowsHide(args[1:], stdout, stderr, false)
 	}
-	return refuse(stderr, "row", "unknown subverb "+args[0]+"; wants add or del")
+	return refuse(stderr, "row", "unknown subverb "+args[0]+"; wants add, set, hide, show or del")
 }
 
 func cmdRowAdd(args []string, stdout, stderr io.Writer) int {
@@ -41,6 +47,31 @@ func cmdRowAdd(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, verb, "wants a table and a row: row add <table> <row> [--label <text>] [--exclude <member>] [--owner <verb>] [<col>=<key> ...]")
 	}
 	spec := ntable.RowSpec{Label: *label, Exclude: *exclude, Owner: *owner}
+	// batch: row add <table> <r1> <r2> ... (no bindings, no label): one call
+	if len(pos) > 2 {
+		batch := true
+		for _, p := range pos[1:] {
+			if strings.Contains(p, "=") {
+				batch = false
+			}
+		}
+		if batch {
+			ctx := context.Background()
+			st, c, code := client(ctx, verb, *addr, stderr)
+			if code != 0 {
+				return code
+			}
+			defer st.Close()
+			trips := st.CountTrips()
+			n, err := ntable.RowsAddWithSpec(ctx, c, pos[0], pos[1:], spec, *write)
+			if err != nil {
+				return storeRefusal(stderr, verb, err)
+			}
+			fmt.Fprintf(stdout, "TABLE ROWS ADD table=%s rows=%d trips=%d\n", pos[0], n, trips.N())
+			printReceipt(stdout, write, *receipt)
+			return 0
+		}
+	}
 	for _, bind := range pos[2:] {
 		col, key, ok := strings.Cut(bind, "=")
 		if !ok || col == "" || key == "" {
@@ -104,6 +135,81 @@ func cmdRowDel(args []string, stdout, stderr io.Writer) int {
 		was = 1
 	}
 	fmt.Fprintf(stdout, "TABLE ROW DEL table=%s row=%s existed=%d trips=%d\n", pos[0], field(pos[1]), was, trips.N())
+	printReceipt(stdout, write, *receipt)
+	return 0
+}
+
+// cmdRowSet: row set <table> <row> <col>=<value> ...: a text column's value
+// for one row, several columns in one call.
+func cmdRowSet(args []string, stdout, stderr io.Writer) int {
+	const verb = "row set"
+	fs := verbflag.New(verb)
+	addr := redisFlag(fs)
+	write, receipt := writeFlags(fs)
+	pos, err := parseInterleaved(fs, args)
+	if err != nil {
+		return refuse(stderr, verb, err.Error())
+	}
+	if len(pos) < 3 {
+		return refuse(stderr, verb, "wants a table, a row and at least one <col>=<value>: row set <table> <row> <col>=<value> ...")
+	}
+	texts := map[string]string{}
+	for _, kv := range pos[2:] {
+		col, v, ok := strings.Cut(kv, "=")
+		if !ok || col == "" {
+			return refuse(stderr, verb, "wants <col>=<value>, not "+kv)
+		}
+		texts[col] = v
+	}
+	ctx := context.Background()
+	st, c, code := client(ctx, verb, *addr, stderr)
+	if code != 0 {
+		return code
+	}
+	defer st.Close()
+	trips := st.CountTrips()
+	n, err := ntable.RowSet(ctx, c, pos[0], pos[1], texts, *write)
+	if err != nil {
+		return storeRefusal(stderr, verb, err)
+	}
+	fmt.Fprintf(stdout, "TABLE ROW SET table=%s row=%s cols=%d trips=%d\n", pos[0], pos[1], n, trips.N())
+	printReceipt(stdout, write, *receipt)
+	return 0
+}
+
+// cmdRowsHide: row hide|show <table> <row> ...: rows hidden from the render
+// but kept (and counted in the folds), or shown again; one call.
+func cmdRowsHide(args []string, stdout, stderr io.Writer, hide bool) int {
+	verb := "row show"
+	if hide {
+		verb = "row hide"
+	}
+	fs := verbflag.New(verb)
+	addr := redisFlag(fs)
+	write, receipt := writeFlags(fs)
+	pos, err := parseInterleaved(fs, args)
+	if err != nil {
+		return refuse(stderr, verb, err.Error())
+	}
+	if len(pos) < 2 {
+		return refuse(stderr, verb, "wants a table and at least one row: "+verb+" <table> <row> ...")
+	}
+	ctx := context.Background()
+	st, c, code := client(ctx, verb, *addr, stderr)
+	if code != 0 {
+		return code
+	}
+	defer st.Close()
+	trips := st.CountTrips()
+	n, err := ntable.RowsHide(ctx, c, pos[0], hide, pos[1:], *write)
+	if err != nil {
+		return storeRefusal(stderr, verb, err)
+	}
+	word := "shown"
+	if hide {
+		word = "hidden"
+	}
+	fmt.Fprintf(stdout, "TABLE ROWS %s table=%s rows=%d trips=%d\n", strings.ToUpper(word), pos[0], n, trips.N())
 	printReceipt(stdout, write, *receipt)
 	return 0
 }

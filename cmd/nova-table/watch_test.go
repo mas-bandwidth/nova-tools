@@ -73,8 +73,8 @@ func TestWatchDrawsInPlaceTheTableAndNothingElse(t *testing.T) {
 	if code := <-done; code != 0 {
 		t.Fatalf("watch exited %d", code)
 	}
-	want := clearScreen + ntable.Render(tables[0], ntable.RenderOpts{}) +
-		clearScreen + ntable.Render(tables[1], ntable.RenderOpts{})
+	want := clearScreen + ntable.Render(tables[0], ntable.RenderOpts{Title: tables[0].Name}) +
+		clearScreen + ntable.Render(tables[1], ntable.RenderOpts{Title: tables[1].Name})
 	if got := out.buf.String(); got != want {
 		t.Fatalf("watched output:\n%q\nwant:\n%q", got, want)
 	}
@@ -170,25 +170,45 @@ func TestWatchPublishesToAFileByRename(t *testing.T) {
 	}
 }
 
-// TestRenderAllJoinsTablesWithOneBlankLine: the title first, one blank
-// line between two tables that print, and an empty table leaves no gap.
+// TestRenderAllJoinsTablesWithOneBlankLine: the view's title first, every
+// table as a block headed by its name (Glenn 2026-09-27: "tables need a
+// title"), one blank line between blocks, and an empty table a block that
+// says (no rows), so nothing on the screen is anonymous.
 func TestRenderAllJoinsTablesWithOneBlankLine(t *testing.T) {
 	t.Parallel()
 
 	a, b := demoTable(1), demoTable(2)
 	b.Name = "other"
 	empty := ntable.Table{Name: "empty", Columns: a.Columns}
-	ra, rb := ntable.Render(a, ntable.RenderOpts{}), ntable.Render(b, ntable.RenderOpts{})
-	if got := renderAll("", []ntable.Table{a, empty, b}, ntable.RenderOpts{}); got != ra+"\n"+rb {
+	ra, rb := ntable.Render(a, ntable.RenderOpts{Title: "demo"}), ntable.Render(b, ntable.RenderOpts{Title: "other"})
+	if got := renderAll("", []ntable.Table{a, empty, b}, ntable.RenderOpts{}); got != ra+"\nempty\n(no rows)\n\n"+rb {
 		t.Fatalf("two tables and an empty one:\n%q", got)
 	}
 	if got := renderAll("SPRINT", []ntable.Table{a}, ntable.RenderOpts{}); got != "SPRINT\n\n"+ra {
 		t.Fatalf("with a title:\n%q", got)
 	}
-	if got := renderAll("", []ntable.Table{empty}, ntable.RenderOpts{}); got != "" {
-		t.Fatalf("an empty table alone renders %q, want nothing", got)
+	if got := renderAll("", []ntable.Table{empty}, ntable.RenderOpts{}); got != "empty\n(no rows)\n" {
+		t.Fatalf("an empty table alone renders %q, want its name and (no rows)", got)
 	}
 	if strings.Contains(ra, "\n\n") {
 		t.Fatal("a render holds a blank line")
+	}
+}
+
+func TestViewSummaryUsesAllKnownCounts(t *testing.T) {
+	t.Parallel()
+	tb := demoTable(3)
+	tb.Hidden = []string{"ready"}
+	tb.Rows[0].Hidden = true
+	if got := viewSummary(tb, "ready"); got != "3/3 100.0% -> ETA -" {
+		t.Fatalf("hidden counts: %s", got)
+	}
+	tb.Rows[0].Cells[2].Unread = true
+	if got := viewSummary(tb, "ready"); got != "?/? ? -> ETA -" {
+		t.Fatalf("unknown count: %s", got)
+	}
+	tb.Rows[0].Cells[2].Unread = false
+	if got := viewSummary(tb, "missing"); got != "?/? ? -> ETA -" {
+		t.Fatalf("missing column: %s", got)
 	}
 }

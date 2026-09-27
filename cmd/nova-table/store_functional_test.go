@@ -4,6 +4,8 @@ package main
 
 import (
 	"context"
+	nsstore "github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/redis/go-redis/v9"
 	"strings"
@@ -24,17 +26,17 @@ func TestARefusalSaysWhatTheInputWants(t *testing.T) {
 	}{
 		{[]string{"create", "--redis", addr}, "wants one table name: create <table> --columns"},
 		{[]string{"create", "demo", "--redis", addr}, "--columns wants the columns, name[:projection[:fold[:label]]] each"},
-		{[]string{"create", "demo", "--columns", "a:rows", "--redis", addr}, `column a wants a projection of count, members, first, last or text, not "rows"`},
+		{[]string{"create", "demo", "--columns", "a:rows", "--redis", addr}, `column a wants a projection of count, members, first, last, text or pct(<count column>), not "rows"`},
 		{[]string{"create", "demo", "--columns", "a", "--width", "b=3", "--redis", addr}, "--width names column b, which --columns does not declare"},
 		{[]string{"create", "bad name", "--columns", "a", "--redis", addr}, "the table name wants letters, digits, _ . and -"},
-		{[]string{"row", "--redis", addr}, "wants add or del"},
+		{[]string{"row", "--redis", addr}, "wants add, set, hide, show or del"},
 		{[]string{"row", "add", "demo", "--redis", addr}, "wants a table and a row: row add <table> <row>"},
-		{[]string{"row", "add", "demo", "r", "ready", "--redis", addr}, "a binding wants <col>=<key>"},
+		{[]string{"row", "add", "demo", "r", "ready=", "--redis", addr}, "a binding wants <col>=<key>"},
 		{[]string{"row", "add", "demo", "r", "ready=ws:s:ready", "--redis", addr}, "a row that binds a set wants --owner <verb>"},
 		{[]string{"cell", "--redis", addr}, "wants add <table> <row> <col> <member>"},
-		{[]string{"cell", "add", "demo", "r", "c", "--redis", addr}, "wants a table, a row, a column and a member"},
+		{[]string{"cell", "add", "demo", "r", "c", "--redis", addr}, "wants a table, a row, a column and one or more members"},
 		{[]string{"cell", "add", "demo", "r", "c", "m", "--score", "x", "--redis", addr}, `--score wants a number, got "x"`},
-		{[]string{"cell", "move", "demo", "r", "c", "--redis", addr}, "wants a table, a row, the column left, the column joined and a member"},
+		{[]string{"cell", "move", "demo", "r", "c", "--redis", addr}, "wants a table, a row, the column left, the column joined and one or more members"},
 		{[]string{"render", "--redis", addr}, "wants one table name: render <table>"},
 		{[]string{"render", "demo", "--width", "a=x", "--redis", addr}, "--width: width \"a=x\" wants col=n"},
 		{[]string{"watch", "--redis", addr}, "wants the tables to watch, comma-separated"},
@@ -99,18 +101,30 @@ func TestASittingThroughTheVerbs(t *testing.T) {
 		{[]string{"cell", "remove", "jobs", "build", "ready", "b2"}, "TABLE CELL table=jobs row=build col=ready n=1 trips=1\n"},
 		{[]string{"cell", "members", "jobs", "build", "ready"}, "TABLE CELL table=jobs row=build col=ready n=1 trips=1\nTABLE MEMBER table=jobs row=build col=ready member=b1 score=1\n"},
 		{[]string{"show", "jobs"}, "TABLE table=jobs columns=4 rows=2 trips=1 epoch=0 revision=9\nTABLE ROW table=jobs row=build ready=1 working=0 who=1\nTABLE ROW table=jobs row=\"the tests\" ready=0 working=0 who=1\n"},
-		{[]string{"render", "jobs"}, "job    | ready | working | who\n" +
+		{[]string{"render", "jobs"}, "jobs   | ready | working | who\n" +
 			"-------+-------+---------+-------\n" +
 			"build  |     1 |       0 | ann\n" +
 			"tests  |     0 |       0 | bo\n" +
 			"-------+-------+---------+-------\n" +
 			"all    |     1 |       0 | ann,bo\n"},
-		{[]string{"render", "jobs", "--hide-zero-rows", "--width", "job=8"}, "job      | ready | working | who\n" +
+		{[]string{"render", "jobs", "--hide-zero-rows", "--width", "job=8"}, "jobs     | ready | working | who\n" +
 			"---------+-------+---------+-------\n" +
 			"build    |     1 |       0 | ann\n" +
 			"---------+-------+---------+-------\n" +
 			"all      |     1 |       0 | ann,bo\n"}, // the fold is the column's, hidden rows included
 		{[]string{"list"}, "TABLE LIST tables=1 trips=1\nTABLE table=jobs columns=4 rows=2\n"},
+		// a definition changed in place (set: footer, columns, rename; row set: a text cell), rows kept
+		{[]string{"set", "jobs", "--footer", "sum"}, "TABLE SET table=jobs footer=\"sum\" trips=1\n"},
+		{[]string{"set", "jobs", "--columns", "job:text:none,ready,working,who:members:union,pct:pct(ready):pooled:ready%,note:text:none"}, "TABLE SET table=jobs columns=6 trips=1\n"},
+		{[]string{"row", "set", "jobs", "build", "note=green"}, "TABLE ROW SET table=jobs row=build cols=1 trips=1\n"},
+		{[]string{"render", "jobs", "--hide-zero-rows"}, "jobs  | ready | working | who    | ready% | note\n" +
+			"------+-------+---------+--------+--------+------\n" +
+			"build |     1 |       0 | ann    | 100.0% | green\n" +
+			"------+-------+---------+--------+--------+------\n" +
+			"sum   |     1 |       0 | ann,bo | 100.0% |\n"},
+		{[]string{"set", "jobs", "--rename", "work"}, "TABLE SET table=jobs renamed=work moved=11 trips=1\n"},
+		{[]string{"list"}, "TABLE LIST tables=1 trips=1\nTABLE table=work columns=6 rows=2\n"},
+		{[]string{"set", "work", "--rename", "jobs"}, "TABLE SET table=work renamed=jobs moved=11 trips=1\n"},
 		{[]string{"row", "del", "jobs", "the tests"}, "TABLE ROW DEL table=jobs row=\"the tests\" existed=1 trips=1\n"},
 		{[]string{"row", "del", "jobs", "the tests"}, "TABLE ROW DEL table=jobs row=\"the tests\" existed=0 trips=1\n"},
 		{[]string{"drop", "jobs", "--definition"}, "TABLE DROP table=jobs rows=1 trips=1\n"},
@@ -158,11 +172,11 @@ func TestABoundCellIsAViewTheWritesRefuse(t *testing.T) {
 		}
 	}
 	code, stdout, stderr := runTable(at(addr, "render", "views")...)
-	want := "stream | ready | working\n" +
-		"-------+-------+--------\n" +
-		"s      |     1 |       0\n" +
-		"-------+-------+--------\n" +
-		"total  |     1 |       0\n"
+	want := "views | ready | working\n" +
+		"------+-------+--------\n" +
+		"s     |     1 |       0\n" +
+		"------+-------+--------\n" +
+		"      |     1 |       0\n"
 	if code != 0 || stdout != want {
 		t.Fatalf("render of a bound row: exit %d stderr %q\n%s", code, stderr, stdout)
 	}
@@ -225,5 +239,44 @@ func TestBoundRefusalPrintsTheStoredKey(t *testing.T) {
 				t.Fatalf("%v key=%q: exit=%d stdout=%q stderr=%q", args, key, code, stdout, stderr)
 			}
 		}
+	}
+}
+
+func TestStoredViewReadsChangesWithoutRestartOrSummaryReread(t *testing.T) {
+	t.Parallel()
+	addr := firstRunStore(t)
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() {
+		if err := c.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	ctx := context.Background()
+	for _, args := range [][]string{{"create", "live", "--columns", "a,b"}, {"row", "add", "live", "r", "s"}, {"cell", "add", "live", "r", "a", "m1", "m2"}, {"view", "set", "v", "--tables", "live", "--summary", "a", "--title", "before"}} {
+		if code, _, stderr := runTable(at(addr, args...)...); code != 0 {
+			t.Fatalf("%v: %s", args, stderr)
+		}
+	}
+	read := viewReader(c, "v", ntable.RenderOpts{})
+	trips := nsstore.New(c).CountTrips()
+	// Establish the connection before counting application exchanges.
+	if err := c.Ping(ctx).Err(); err != nil {
+		t.Fatal(err)
+	}
+	n := trips.N()
+	first, err := read(ctx)
+	if err != nil || trips.N()-n != 2 || !strings.Contains(first, "before\n\n2/2 100.0% -> ETA -") {
+		t.Fatalf("first view trips=%d err=%v\n%s", trips.N()-n, err, first)
+	}
+	if code, _, stderr := runTable(at(addr, "view", "set", "v", "--tables", "live", "--summary", "a", "--title", "after")...); code != 0 {
+		t.Fatal(stderr)
+	}
+	if code, _, stderr := runTable(at(addr, "cell", "move", "live", "r", "a", "b", "m1", "m2")...); code != 0 {
+		t.Fatal(stderr)
+	}
+	n = trips.N()
+	second, err := read(ctx)
+	if err != nil || trips.N()-n != 2 || !strings.Contains(second, "after\n\n0/2 0.0% -> ETA -") {
+		t.Fatalf("changed view trips=%d err=%v\n%s", trips.N()-n, err, second)
 	}
 }

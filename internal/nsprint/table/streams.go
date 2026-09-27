@@ -42,6 +42,7 @@ var StreamsRenderOpts = ntable.RenderOpts{HideZeroRows: true}
 // count:sum as wide as their headers, footer total.
 func StreamsDefinition() ntable.Table {
 	t := ntable.Table{Name: StreamsTable, FooterLabel: ntable.DefaultFooter}
+	t.FooterLabel = "total" // the sprint table names its footer (nova-table's default is none since 2026-09-27)
 	t.Columns = append(t.Columns, ntable.Column{Name: "stream", Label: "stream", Projection: ntable.Text, Fold: ntable.None, Width: nameWidth})
 	for _, state := range WSStates {
 		t.Columns = append(t.Columns, ntable.Column{Name: state, Projection: ntable.Count, Fold: ntable.Sum})

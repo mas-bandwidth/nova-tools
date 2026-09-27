@@ -70,14 +70,40 @@ const (
 
 // The folds: what a footer cell prints over its column.
 const (
-	Sum   = "sum"
-	Max   = "max"
-	Union = "union"
-	None  = "none"
+	Sum    = "sum"
+	Max    = "max"
+	Union  = "union"
+	Avg    = "avg"    // the mean of a count column over the rows
+	Pooled = "pooled" // a pct column's footer: the named counts summed over every row's counts summed (never the mean of percentages: Glenn 2026-09-27)
+	None   = "none"
 )
 
-// DefaultFooter is the footer label a table has when none is set.
-const DefaultFooter = "total"
+// A formula projection (SPEC-NOVA-TABLE, computed cells; Glenn 2026-09-27:
+// "waiting% ... the % of waiting tasks as a % of all tasks in that row"):
+// pct(<col>) is the named count column as a percentage of the row's count
+// columns together. A formula cell holds no set: computed at render, never
+// stored, never written.
+const pctPrefix = "pct("
+
+// IsFormula is whether a projection is computed rather than read.
+func IsFormula(projection string) bool {
+	return strings.HasPrefix(projection, pctPrefix) && strings.HasSuffix(projection, ")")
+}
+
+// FormulaArg is the column a pct(<col>) projection names.
+func FormulaArg(projection string) string {
+	return strings.TrimSuffix(strings.TrimPrefix(projection, pctPrefix), ")")
+}
+
+// HasSet is whether a column's cells are ordered sets in the store (text
+// and formula columns have none).
+func (c Column) HasSet() bool { return c.Projection != Text && !IsFormula(c.Projection) }
+
+// DefaultFooter is the footer label a table has when none is set: none
+// (Glenn 2026-09-27: "the footer title should be off by default"); the
+// footer row still prints the folds, with a blank label cell, and
+// `create --footer <label>` names it.
+const DefaultFooter = ""
 
 // Registry is the SET of every table name.
 const Registry = "tables"
@@ -128,6 +154,8 @@ type Row struct {
 	Exclude string
 	Owner   string
 	Cells   []Cell
+	Texts   map[string]string // a text column's value for this row (row set <col>=<value>), else the label prints
+	Hidden  bool              // kept and counted in the folds, not drawn (row hide)
 }
 
 // LabelOrKey is the row header cell.
@@ -151,7 +179,19 @@ type Table struct {
 	Name        string
 	Columns     []Column
 	FooterLabel string
+	Hidden      []string // columns kept, read and used by formulas, but not drawn (set --hide)
+	HiddenTable bool     // the whole table kept and read, not drawn by watch (set --hidden / --visible)
 	Rows        []Row
+}
+
+// IsHidden is whether a column is kept but not drawn.
+func (t Table) IsHidden(col string) bool {
+	for _, h := range t.Hidden {
+		if h == col {
+			return true
+		}
+	}
+	return false
 }
 
 // Footer is the footer label, DefaultFooter when unset.
@@ -255,34 +295,67 @@ func ValidateColumns(cols []Column) error {
 	}
 	seen := map[string]bool{}
 	for _, c := range cols {
-		if !ValidName(c.Name) {
-			return fmt.Errorf("column %q wants a name of letters, digits, _ . and -", c.Name)
-		}
 		if seen[c.Name] {
 			return fmt.Errorf("column %s is named twice", c.Name)
 		}
 		seen[c.Name] = true
-		if c.Width < 0 {
-			return fmt.Errorf("column %s wants a width of 0 or more", c.Name)
+		if err := validateColumn(c, cols); err != nil {
+			return err
 		}
-		switch c.Projection {
-		case Count, Members, First, Last, Text:
-		default:
-			return fmt.Errorf("column %s wants a projection of count, members, first, last or text, not %q", c.Name, c.Projection)
-		}
-		switch c.Fold {
-		case None:
-		case Sum, Max:
-			if c.Projection != Count {
-				return fmt.Errorf("column %s folds %s, which wants the count projection, not %s", c.Name, c.Fold, c.Projection)
+	}
+	return nil
+}
+
+// validateColumn checks one column's grammar; with cols (the whole table) it
+// also checks that a pct(<col>) names a count column of that table.
+func validateColumn(c Column, cols []Column) error {
+	if !ValidName(c.Name) {
+		return fmt.Errorf("column %q wants a name of letters, digits, _ . and -", c.Name)
+	}
+	if c.Width < 0 {
+		return fmt.Errorf("column %s wants a width of 0 or more", c.Name)
+	}
+	switch {
+	case c.Projection == Count, c.Projection == Members, c.Projection == First, c.Projection == Last, c.Projection == Text:
+	case IsFormula(c.Projection):
+		if cols != nil {
+			arg := FormulaArg(c.Projection)
+			found := false
+			for _, o := range cols {
+				if o.Name == arg && o.Projection == Count {
+					found = true
+				}
 			}
-		case Union:
-			if c.Projection == Count || c.Projection == Text {
-				return fmt.Errorf("column %s folds union, which wants members, first or last, not %s", c.Name, c.Projection)
+			if !found {
+				return fmt.Errorf("column %s is pct(%s), which wants a count column named %s in the same table", c.Name, arg, arg)
 			}
-		default:
-			return fmt.Errorf("column %s wants a fold of sum, max, union or none, not %q", c.Name, c.Fold)
 		}
+	default:
+		return fmt.Errorf("column %s wants a projection of count, members, first, last, text or pct(<count column>), not %q", c.Name, c.Projection)
+	}
+	switch c.Fold {
+	case None:
+	case Sum, Max:
+		if c.Projection != Count {
+			return fmt.Errorf("column %s folds %s, which wants the count projection, not %s", c.Name, c.Fold, c.Projection)
+		}
+	case Avg:
+		if IsFormula(c.Projection) {
+			return fmt.Errorf("column %s folds avg over percentages, which is not accurate; fold pooled (the counts summed over the rows, then the share)", c.Name)
+		}
+		if c.Projection != Count {
+			return fmt.Errorf("column %s folds avg, which wants a count column, not %s", c.Name, c.Projection)
+		}
+	case Pooled:
+		if !IsFormula(c.Projection) {
+			return fmt.Errorf("column %s folds pooled, which wants a pct column, not %s", c.Name, c.Projection)
+		}
+	case Union:
+		if c.Projection == Count || c.Projection == Text || IsFormula(c.Projection) {
+			return fmt.Errorf("column %s folds union, which wants members, first or last, not %s", c.Name, c.Projection)
+		}
+	default:
+		return fmt.Errorf("column %s wants a fold of sum, max, avg, pooled, union or none, not %q", c.Name, c.Fold)
 	}
 	return nil
 }
@@ -295,9 +368,12 @@ func ParseColumn(spec string) (Column, error) {
 	if len(parts) > 1 && parts[1] != "" {
 		c.Projection = parts[1]
 	}
-	if c.Projection == Count {
+	switch {
+	case c.Projection == Count:
 		c.Fold = Sum
-	} else {
+	case IsFormula(c.Projection):
+		c.Fold = Pooled
+	default:
 		c.Fold = None
 	}
 	if len(parts) > 2 && parts[2] != "" {
@@ -306,7 +382,7 @@ func ParseColumn(spec string) (Column, error) {
 	if len(parts) > 3 {
 		c.Label = parts[3]
 	}
-	if err := ValidateColumns([]Column{c}); err != nil {
+	if err := validateColumn(c, nil); err != nil {
 		return Column{}, err
 	}
 	return c, nil
@@ -366,7 +442,7 @@ func decodeColumn(name, v string) (Column, error) {
 		return Column{}, fmt.Errorf("column %s width %q is not a number", name, parts[2])
 	}
 	c := Column{Name: name, Projection: parts[0], Fold: parts[1], Width: w, Label: parts[3]}
-	if err := ValidateColumns([]Column{c}); err != nil {
+	if err := validateColumn(c, nil); err != nil {
 		return Column{}, err
 	}
 	return c, nil
@@ -393,6 +469,12 @@ func definitionFields(t Table) map[string]string {
 			m["epoch_field"] = "n"
 		}
 	}
+	if len(t.Hidden) > 0 {
+		m["hidden"] = strings.Join(t.Hidden, ",")
+	}
+	if t.HiddenTable {
+		m["visible"] = "0"
+	}
 	return m
 }
 
@@ -412,6 +494,10 @@ func decodeDefinition(name string, h map[string]string) (Table, bool, error) {
 			*dst = n
 		}
 	}
+	if v := strings.TrimSpace(h["hidden"]); v != "" {
+		t.Hidden = strings.Split(v, ",")
+	}
+	t.HiddenTable = h["visible"] == "0"
 	order := h["order"]
 	if order == "" {
 		return Table{}, true, fmt.Errorf("table %s has no column order", name)
@@ -480,9 +566,18 @@ func rowFields(t Table, r Row) map[string]string {
 // where the hash names a key, owned (CellKey) otherwise, none for a text
 // column.
 func decodeRow(t Table, key string, h map[string]string) Row {
-	r := Row{Key: key, Label: h["label"], Exclude: h["exclude"], Owner: h["owner"], Cells: make([]Cell, len(t.Columns))}
+	r := Row{Key: key, Label: h["label"], Exclude: h["exclude"], Owner: h["owner"], Hidden: h["hidden"] == "1", Cells: make([]Cell, len(t.Columns))}
 	for i, c := range t.Columns {
 		if c.Projection == Text {
+			if v, ok := h["text:"+c.Name]; ok {
+				if r.Texts == nil {
+					r.Texts = map[string]string{}
+				}
+				r.Texts[c.Name] = v
+			}
+			continue
+		}
+		if IsFormula(c.Projection) {
 			continue
 		}
 		if k, ok := h["key:"+c.Name]; ok && k != "" {

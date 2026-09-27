@@ -97,7 +97,7 @@ def seed(r):
         assert call(r, 'create', [table, json.dumps(FIELDS, sort_keys=True)], options(1, 'seed'))[0] == 'OK'
         for row in ROWS:
             assert call(r, 'row_add', [table, row, '{}'], options(1, 'seed'))[0] == 'ROW'
-    assert call(r, 'cell_add', ['t1', 'r1', 'c1', 'm1', '1'], options(1, 'seed'))[0] == 'OK'
+    assert call(r, 'cell_add', ['t1', 'r1', 'c1', '1', 'm1'], options(1, 'seed'))[0] == 'OK'
     r.cmd('ZADD', 'external', 2, 'm2')
 
 
@@ -146,35 +146,35 @@ def actions():
     # These are source API actions in the formal model's finite universe. Every
     # captured store state, including refused attempts, is checked by TLC.
     return [
-        ('cell_move', ['t1', 'r1', 'c1', 'm1', 'c2'], 'w1'),
-        ('cell_add', ['t1', 'r2', 'c1', 'm1', '2'], 'w2'),
+        ('cell_move', ['t1', 'r1', 'c1', 'c2', 'm1'], 'w1'),
+        ('cell_add', ['t1', 'r2', 'c1', '2', 'm1'], 'w2'),
         ('bind', ['t1', json.dumps({'fields': FIELDS, 'rows': []}, sort_keys=True)], 'w1'),
         ('row_add', ['t1', 'r1', json.dumps({'binds': {'c2': 'external'}})], 'w2'),
         ('row_add', ['t1', 'r2', json.dumps({'binds': {'c3': 'external'}})], 'w1'),
         ('row_add', ['t1', 'r2', json.dumps({'binds': {'c3': 'table:t2:1:cell:r1:c1'}})], 'w2'),
         ('clear', ['t1'], 'w2'),
         ('cell_remove', ['t1', 'r2', 'c3', 'm2'], 'w2'),
-        ('cell_add', ['t2', 'r1', 'c1', 'm1', '1'], 'w1'),
-        ('cell_add', ['t2', 'r2', 'c1', 'm3', '2'], 'w2'),
+        ('cell_add', ['t2', 'r1', 'c1', '1', 'm1'], 'w1'),
+        ('cell_add', ['t2', 'r2', 'c1', '2', 'm3'], 'w2'),
         ('cell_remove', ['t1', 'r1', 'c2', 'm1'], 'w1'),
         ('cell_remove', ['t1', 'r1', 'c2', 'm1'], 'w1'),
         ('row_del', ['t1', 'r1'], 'w1'),
         ('row_add', ['t1', 'r1', '{}'], 'w1'),
-        ('cell_add', ['t1', 'r1', 'c1', 'm1', '1'], 'w1'),
+        ('cell_add', ['t1', 'r1', 'c1', '1', 'm1'], 'w1'),
         ('drop', ['t1'], 'w1'),
         ('create', ['t1', json.dumps(FIELDS, sort_keys=True)], 'w1'),
         ('advance', [], 'w1'),
-        ('cell_add', ['t1', 'r1', 'c1', 'm1', '1'], 'w2'),
+        ('cell_add', ['t1', 'r1', 'c1', '1', 'm1'], 'w2'),
         ('read_epoch', [], 'w1'),
         ('row_add', ['t1', 'r1', '{}'], 'w1'),
-        ('cell_add', ['t1', 'r1', 'c1', 'm1', '1'], 'w1'),
-        ('cell_add', ['t1', 'r1', 'c1', 'm2', '2'], 'w1'),
-        ('cell_move', ['t1', 'r1', 'c1', 'm2', 'c2'], 'w1'),
+        ('cell_add', ['t1', 'r1', 'c1', '1', 'm1'], 'w1'),
+        ('cell_add', ['t1', 'r1', 'c1', '2', 'm2'], 'w1'),
+        ('cell_move', ['t1', 'r1', 'c1', 'c2', 'm2'], 'w1'),
         ('row_del', ['t1', 'r1'], 'w2'),
         ('read_epoch', [], 'w2'),
         ('row_del', ['t1', 'r1'], 'w2'),
         ('bind', ['t1', json.dumps({'fields': FIELDS, 'rows': [{'key': 'r2'}]}, sort_keys=True)], 'w1'),
-        ('cell_add', ['t1', 'r2', 'c1', 'm2', '1'], 'w1'),
+        ('cell_add', ['t1', 'r2', 'c1', '1', 'm2'], 'w1'),
         ('clear', ['t1'], 'w1'),
         ('drop', ['t1'], 'w1'),
         ('create', ['t1', json.dumps(FIELDS, sort_keys=True)], 'w1'),
@@ -320,12 +320,12 @@ def action_tla(verb, args, actor, epoch):
     c = tla(cell(args[0], epoch, args[1], args[2]))
     m = tla(args[3])
     if verb == 'cell_add':
-        return 'EpochAdd(' + ','.join([w, c, m, args[4]]) + ')'
+        return 'EpochAdd(' + ','.join([w, c, tla(args[4]), args[3]]) + ')'
     if verb == 'cell_remove':
         return 'EpochRemove(' + ','.join([w, c, m]) + ')'
     if verb == 'cell_move':
-        dst = tla(cell(args[0], epoch, args[1], args[4]))
-        return 'EpochMove(' + ','.join([w, c, dst, m]) + ')'
+        dst = tla(cell(args[0], epoch, args[1], args[3]))
+        return 'EpochMove(' + ','.join([w, c, dst, tla(args[4])]) + ')'
     raise ValueError('unmapped verb: ' + verb)
 
 

@@ -130,7 +130,7 @@ func TestCreateRowAddCellAddReadRender(t *testing.T) {
 		"build      |     1 |       1 |    0 | ann\n" +
 		"test suite |     0 |       0 |    1 | bo,ann\n" +
 		"-----------+-------+---------+------+-------\n" +
-		"total      |     1 |       1 |    1 | ann,bo\n"
+		"           |     1 |       1 |    1 | ann,bo\n"
 	if got := ntable.Render(tb, ntable.RenderOpts{}); got != want {
 		t.Fatalf("rendered:\n%s\nwant:\n%s", got, want)
 	}
@@ -392,7 +392,7 @@ func TestQueueCellsFillsAnInMemoryTable(t *testing.T) {
 	if !tb.Rows[0].Cells[2].Unread {
 		t.Fatalf("a set of the wrong type read as %+v, want Unread", tb.Rows[0].Cells[2])
 	}
-	if got := ntable.Render(tb, ntable.RenderOpts{}); !strings.Contains(got, "x     | 2 | ?\n") || !strings.Contains(got, "total | 2 | ?\n") {
+	if got := ntable.Render(tb, ntable.RenderOpts{}); !strings.Contains(got, "x   | 2 | ?\n") || !strings.Contains(got, "    | 2 | ?\n") {
 		t.Fatalf("unread cell render:\n%s", got)
 	}
 }

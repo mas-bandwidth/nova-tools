@@ -14,7 +14,7 @@ import (
 // bound to a set another tool owns is a view: add, remove and move refuse
 // it naming the owner; members reads it freely.
 
-const cellWants = "wants add <table> <row> <col> <member> [--score <n>], remove <table> <row> <col> <member>, move <table> <row> <from-col> <to-col> <member>, or members <table> <row> <col>"
+const cellWants = "wants add <table> <row> <col> <member>... [--score <n>], remove <table> <row> <col> <member>, move <table> <row> <from-col> <to-col> <member>, or members <table> <row> <col>"
 
 func cmdCell(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
@@ -43,8 +43,8 @@ func cmdCellAdd(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	if len(pos) != 4 {
-		return refuse(stderr, verb, "wants a table, a row, a column and a member: cell add <table> <row> <col> <member> [--score <n>]")
+	if len(pos) < 4 {
+		return refuse(stderr, verb, "wants a table, a row, a column and one or more members: cell add <table> <row> <col> <member>... [--score <n>]")
 	}
 	sc, err := scoreOf(*score)
 	if err != nil {
@@ -57,7 +57,7 @@ func cmdCellAdd(args []string, stdout, stderr io.Writer) int {
 	}
 	defer st.Close()
 	trips := st.CountTrips()
-	n, err := ntable.CellAdd(ctx, c, pos[0], pos[1], pos[2], pos[3], sc, *write)
+	n, err := ntable.CellsAdd(ctx, c, pos[0], pos[1], pos[2], sc, pos[3:], *write)
 	if err != nil {
 		return storeRefusal(stderr, verb, err)
 	}
@@ -89,8 +89,8 @@ func cmdCellRemove(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	if len(pos) != 4 {
-		return refuse(stderr, verb, "wants a table, a row, a column and a member: cell remove <table> <row> <col> <member>")
+	if len(pos) < 4 {
+		return refuse(stderr, verb, "wants a table, a row, a column and one or more members: cell remove <table> <row> <col> <member>...")
 	}
 	ctx := context.Background()
 	st, c, code := client(ctx, verb, *addr, stderr)
@@ -99,7 +99,7 @@ func cmdCellRemove(args []string, stdout, stderr io.Writer) int {
 	}
 	defer st.Close()
 	trips := st.CountTrips()
-	n, err := ntable.CellRemove(ctx, c, pos[0], pos[1], pos[2], pos[3], *write)
+	n, err := ntable.CellsRemove(ctx, c, pos[0], pos[1], pos[2], pos[3:], *write)
 	if err != nil {
 		return storeRefusal(stderr, verb, err)
 	}
@@ -117,8 +117,8 @@ func cmdCellMove(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	if len(pos) != 5 {
-		return refuse(stderr, verb, "wants a table, a row, the column left, the column joined and a member: cell move <table> <row> <from-col> <to-col> <member>")
+	if len(pos) < 5 {
+		return refuse(stderr, verb, "wants a table, a row, the column left, the column joined and one or more members: cell move <table> <row> <from-col> <to-col> <member>...")
 	}
 	ctx := context.Background()
 	st, c, code := client(ctx, verb, *addr, stderr)
@@ -127,11 +127,15 @@ func cmdCellMove(args []string, stdout, stderr io.Writer) int {
 	}
 	defer st.Close()
 	trips := st.CountTrips()
-	n, err := ntable.CellMove(ctx, c, pos[0], pos[1], pos[2], pos[3], pos[4], *write)
+	n, err := ntable.CellsMove(ctx, c, pos[0], pos[1], pos[2], pos[3], pos[4:], *write)
 	if err != nil {
 		return storeRefusal(stderr, verb, err)
 	}
-	fmt.Fprintf(stdout, "TABLE MOVE table=%s row=%s member=%s from=%s to=%s n=%d trips=%d\n", pos[0], field(pos[1]), field(pos[4]), pos[2], pos[3], n, trips.N())
+	if len(pos) == 5 {
+		fmt.Fprintf(stdout, "TABLE MOVE table=%s row=%s member=%s from=%s to=%s n=%d trips=%d\n", pos[0], field(pos[1]), field(pos[4]), pos[2], pos[3], n, trips.N())
+	} else {
+		fmt.Fprintf(stdout, "TABLE MOVE table=%s row=%s members=%d from=%s to=%s n=%d trips=%d\n", pos[0], field(pos[1]), len(pos)-4, pos[2], pos[3], n, trips.N())
+	}
 	printReceipt(stdout, write, *receipt)
 	return 0
 }

@@ -1,6 +1,7 @@
 package ntable_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -37,12 +38,12 @@ func TestRenderEmptyTableIsTheEmptyString(t *testing.T) {
 		t.Fatalf("all-zero rows hidden rendered %q, want \"\"", got)
 	}
 	// without HideZeroRows the zero rows show
-	want := "row   | a | b\n" +
-		"------+---+--\n" +
-		"x     | 0 | 0\n" +
-		"y     | 0 | 0\n" +
-		"------+---+--\n" +
-		"total | 0 | 0\n"
+	want := "row | a | b\n" +
+		"----+---+--\n" +
+		"x   | 0 | 0\n" +
+		"y   | 0 | 0\n" +
+		"----+---+--\n" +
+		"    | 0 | 0\n"
 	if got := ntable.Render(zeros, ntable.RenderOpts{}); got != want {
 		t.Fatalf("zero rows shown:\n%s\nwant:\n%s", got, want)
 	}
@@ -59,7 +60,7 @@ func TestRenderOneRowAndTotal(t *testing.T) {
 		"-------------+---------+------\n" +
 		"swarm: cards |     150 |     5\n" +
 		"-------------+---------+------\n" +
-		"total        |     150 |     5\n"
+		"             |     150 |     5\n"
 	if got := ntable.Render(one, ntable.RenderOpts{}); got != want {
 		t.Fatalf("one row:\n%s\nwant:\n%s", got, want)
 	}
@@ -78,7 +79,7 @@ func TestRenderWidthsAndHiddenRows(t *testing.T) {
 		"a          | 2\n" +
 		"c          | ?\n" +
 		"-----------+--\n" +
-		"total      | ?\n"
+		"           | ?\n"
 	got := ntable.Render(tb, ntable.RenderOpts{Widths: map[string]int{"row": 10}, HideZeroRows: true})
 	if got != want {
 		t.Fatalf("widths and hidden rows:\n%s\nwant:\n%s", got, want)
@@ -127,7 +128,7 @@ func TestRenderProjectionsAndFolds(t *testing.T) {
 		"a     | ann,bo    | ann    | bo     | 7\n" +
 		"B row | bo,cy     | -      | -      | 9\n" +
 		"------+-----------+--------+--------+--\n" +
-		"total | ann,bo,cy |        |        | 9\n"
+		"      | ann,bo,cy |        |        | 9\n"
 	if got := ntable.Render(tb, ntable.RenderOpts{}); got != want {
 		t.Fatalf("projections and folds:\n%s\nwant:\n%s", got, want)
 	}
@@ -156,11 +157,13 @@ func TestRenderLastLeftColumnIsNotPadded(t *testing.T) {
 	r.Cells[0].Count = 1
 	r.Cells[1].Members = []ntable.Member{{Member: "x"}}
 	tb.Rows = []ntable.Row{r}
-	want := "    n | who\n" +
-		"------+----\n" +
-		"    1 | x\n" +
-		"------+----\n" +
-		"total |\n"
+	// no text column first: the row-label column is put in front and the
+	// footer label sits under it (the n column keeps its fold)
+	want := "row | n | who\n" +
+		"----+---+----\n" +
+		"r   | 1 | x\n" +
+		"----+---+----\n" +
+		"    | 1 |\n"
 	got := ntable.Render(tb, ntable.RenderOpts{})
 	if got != want {
 		t.Fatalf("left last column:\n%q\nwant:\n%q", got, want)
@@ -200,5 +203,112 @@ func TestParseColumnsAndWidths(t *testing.T) {
 	}
 	if _, err := ntable.ParseWidths("stream=x"); err == nil {
 		t.Error("ParseWidths(stream=x) accepted")
+	}
+}
+
+// TestRenderPutsTheRowLabelFirstAndTitles (Glenn 2026-09-27, the live
+// session: "these tables are hard to interpret. the 'total' under waiting is
+// strange"; "tables need a title"): a definition whose first column is a
+// count column gets the row-label column in front, the footer label under
+// it and every fold in its own column; the title is the top-left cell, the
+// header of that column; an empty table with a title prints the title and
+// (no rows).
+func TestRenderPutsTheRowLabelFirstAndTitles(t *testing.T) {
+	t.Parallel()
+	tb := counts([]string{"waiting", "ready"}, map[string][]int64{"alpha": {2, 1}, "beta": {0, 0}}, []string{"alpha", "beta"})
+	tb.Columns = tb.Columns[1:] // no text column: as `nova-table create demo --columns waiting,ready` makes it
+	for i := range tb.Rows {
+		tb.Rows[i].Cells = tb.Rows[i].Cells[1:]
+	}
+	want := "demo  | waiting | ready\n" +
+		"------+---------+------\n" +
+		"alpha |       2 |     1\n" +
+		"beta  |       0 |     0\n" +
+		"------+---------+------\n" +
+		"      |       2 |     1\n"
+	if got := ntable.Render(tb, ntable.RenderOpts{Title: "demo"}); got != want {
+		t.Fatalf("row label first and a title:\n%s\nwant:\n%s", got, want)
+	}
+	if got := ntable.Render(ntable.Table{Name: "empty"}, ntable.RenderOpts{Title: "empty"}); got != "empty\n(no rows)\n" {
+		t.Fatalf("an empty table with a title: %q", got)
+	}
+	if got := ntable.Render(ntable.Table{Name: "empty"}, ntable.RenderOpts{}); got != "" {
+		t.Fatalf("an empty table without a title stays hidden: %q", got)
+	}
+}
+
+// TestRenderFormulaAndTextCells (Glenn 2026-09-27, the live session: "a new
+// column ... 'waiting%' ... the % of waiting tasks as a % of all tasks in
+// that row ... bottom summary cell the average"; "a new column 'status'
+// which is either up or down"): a pct(<col>) column is computed per row
+// over the row's count cells, folds avg over the rows that have tasks, and
+// prints "-" for a row with none; a text column prints the row's value set
+// by row set, else the label.
+func TestRenderFormulaAndTextCells(t *testing.T) {
+	t.Parallel()
+	cols, err := ntable.ParseColumns("waiting,ready,working,done,wpct:pct(waiting):pooled:waiting%,status:text:none")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tb := ntable.Table{Name: "streams", Columns: cols, FooterLabel: "total"}
+	mk := func(key string, n ...int64) ntable.Row {
+		r := ntable.NewRow(tb, key)
+		for i, v := range n {
+			r.Cells[i].Count = v
+		}
+		return r
+	}
+	a := mk("alpha", 1, 1, 1, 0)
+	a.Texts = map[string]string{"status": "up"}
+	b := mk("beta", 5, 2, 3, 0)
+	e := mk("empty", 0, 0, 0, 0)
+	tb.Rows = []ntable.Row{a, b, e}
+	want := "streams | waiting | ready | working | done | waiting% | status\n" +
+		"--------+---------+-------+---------+------+----------+-------\n" +
+		"alpha   |       1 |     1 |       1 |    0 | 33.3%    | up\n" +
+		"beta    |       5 |     2 |       3 |    0 | 50.0%    | beta\n" +
+		"empty   |       0 |     0 |       0 |    0 | -        | empty\n" +
+		"--------+---------+-------+---------+------+----------+-------\n" +
+		"total   |       6 |     3 |       4 |    0 | 46.2%    |\n"
+	if got := ntable.Render(tb, ntable.RenderOpts{Title: "streams"}); got != want {
+		t.Fatalf("formula and text cells:\n%s\nwant:\n%s", got, want)
+	}
+	if _, err := ntable.ParseColumns("wpct:pct(nothere)"); err == nil || !strings.Contains(err.Error(), "count column named nothere") {
+		t.Fatalf("a pct of a missing column: %v", err)
+	}
+	if _, err := ntable.ParseColumns("who:members:avg"); err == nil {
+		t.Fatal("avg over members was accepted")
+	}
+	// the mean of percentages is refused; the pooled share is the fold (Glenn 2026-09-27)
+	if _, err := ntable.ParseColumns("waiting,wpct:pct(waiting):avg"); err == nil || !strings.Contains(err.Error(), "not accurate") {
+		t.Fatalf("avg over a pct column: %v", err)
+	}
+	if c, err := ntable.ParseColumn("wpct:pct(waiting)"); err != nil || c.Fold != ntable.Pooled {
+		t.Fatalf("the default fold of a pct column: %+v %v", c, err)
+	}
+}
+
+// TestRenderHidesAColumnButKeepsIt (Glenn 2026-09-27: "I no longer wish to
+// see the waiting column ... Keep it, since the calculations depend on it,
+// but hide that column"): a hidden column is not drawn; the formula that
+// reads it still computes; the row-label column still comes first.
+func TestRenderHidesAColumnButKeepsIt(t *testing.T) {
+	t.Parallel()
+	cols, err := ntable.ParseColumns("waiting,ready,wpct:pct(waiting):pooled:waiting%")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tb := ntable.Table{Name: "s", Columns: cols, Hidden: []string{"waiting"}}
+	r := ntable.NewRow(tb, "a")
+	r.Cells[0].Count = 3
+	r.Cells[1].Count = 1
+	tb.Rows = []ntable.Row{r}
+	want := "s | ready | waiting%\n" +
+		"--+-------+---------\n" +
+		"a |     1 | 75.0%\n" +
+		"--+-------+---------\n" +
+		"  |     1 | 75.0%\n"
+	if got := ntable.Render(tb, ntable.RenderOpts{Title: "s"}); got != want {
+		t.Fatalf("hidden column:\n%s\nwant:\n%s", got, want)
 	}
 }

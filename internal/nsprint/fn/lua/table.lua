@@ -75,31 +75,45 @@ do
     a, b = T.config(a), T.config(b)
     return a.epoch_key == b.epoch_key and a.epoch_field == b.epoch_field and a.member_prefix == b.member_prefix
   end
-  function T.shape(h)
+  function T.shape(h, repair)
     if type(h) ~= 'table' or type(h.order) ~= 'string' then return nil, T.refuse('DEFINITION') end
     local cols, seen, order = {}, {}, {}
     for k, v in pairs(h) do
       if type(k) ~= 'string' or type(v) ~= 'string' or
           not (k == 'order' or k == 'footer' or k == 'created_at' or k == 'epoch_key' or
-          k == 'epoch_field' or k == 'member_prefix' or string.sub(k, 1, 4) == 'col:') then
+          k == 'epoch_field' or k == 'member_prefix' or k == 'hidden' or k == 'visible' or string.sub(k, 1, 4) == 'col:') then
         return nil, T.refuse('DEFINITION', tostring(k))
       end
     end
     for col in string.gmatch(h.order, '[^,]+') do
       local proj, fold, width = string.match(h['col:' .. col] or '', '^([^:]+):([^:]+):([^:]+):')
       local valid = {count=true,members=true,first=true,last=true,text=true}
+      local formula = proj and string.match(proj, '^pct%([%w_.-]+%)$') ~= nil
       local w = tonumber(width)
-      if not T.name(col) or not valid[proj or ''] or seen[col] or not T.uint(width) or #width > 19 or
+      if not T.name(col) or not (valid[proj or ''] or formula) or seen[col] or not T.uint(width) or #width > 19 or
         (#width == 19 and width > '9223372036854775807') or not w or w < 0 or w ~= math.floor(w) or
-        not (fold == 'none' or ((fold == 'sum' or fold == 'max') and proj == 'count') or
-          (fold == 'union' and proj ~= 'count' and proj ~= 'text')) then
+        not (repair or fold == 'none' or ((fold == 'sum' or fold == 'max') and proj == 'count') or
+          (fold == 'avg' and proj == 'count') or (fold == 'pooled' and formula) or
+          (fold == 'union' and proj ~= 'count' and proj ~= 'text' and not formula)) then
         return nil, T.refuse('DEFINITION', col)
       end
       seen[col] = true
       order[#order + 1] = col
-      cols[#cols + 1] = {name=col, projection=proj}
+      cols[#cols + 1] = {name=col, projection=proj, noset=proj == 'text' or formula}
     end
     if #cols == 0 or table.concat(order, ',') ~= h.order then return nil, T.refuse('DEFINITION') end
+    for _, col in ipairs(cols) do
+      local arg = string.match(col.projection, '^pct%(([%w_.-]+)%)$')
+      if arg and (not seen[arg] or not string.match(h['col:' .. arg] or '', '^count:')) then return nil, T.refuse('DEFINITION', col.name) end
+    end
+    if not repair then
+      local hidden = {}
+      for col in string.gmatch(h.hidden or '', '[^,]+') do
+        if not seen[col] then return nil, T.refuse('NOCOL', '', col) end
+        hidden[#hidden+1] = col
+      end
+      if table.concat(hidden, ',') ~= (h.hidden or '') or (h.visible and h.visible ~= '0' and h.visible ~= '1') then return nil, T.refuse('DEFINITION') end
+    end
     local cfg = T.config(h)
     if not T.word(cfg.member_prefix) or string.sub(cfg.member_prefix, -1) ~= ':' or
         (string.sub(cfg.member_prefix, 1, 6) == 'table:' and cfg.member_prefix ~= 'table::member:') or
@@ -114,7 +128,7 @@ do
   function T.prefix(name, epoch)
     return 'table:' .. name .. (epoch == '0' and '' or ':' .. epoch)
   end
-  function T.open(name, fields, historical)
+  function T.open(name, fields, historical, repair)
     if not T.name(name) then return nil, T.refuse('NAME') end
     local key = 'table:' .. name
     local template = T.hash(key)
@@ -148,7 +162,7 @@ do
       return nil, T.refuse('NOTABLE')
     end
     if not h then return nil, T.refuse('NOTABLE') end
-    local cols, err = T.shape(h)
+    local cols, err = T.shape(h, repair)
     if not cols then return nil, err end
     local revision = historical and snap._revision or redis.call('HGET', key .. ':revision', 'n')
     revision = revision or '0'
@@ -179,7 +193,7 @@ do
     if not redis.call('ZSCORE', T.rowskey(d), row) then return nil, T.refuse('NOROW', row) end
     local c = T.col(d, col)
     if not c then return nil, T.refuse('NOCOL', row, col) end
-    if c.projection == 'text' then return nil, T.refuse('TEXT', row, col) end
+    if c.noset then return nil, T.refuse('TEXT', row, col) end
     local h = T.hash(T.rowkey(d, row))
     local bound = h['key:' .. col]
     if write and bound and bound ~= '' then return nil, T.refuse('BOUND', row, col, bound, h.owner or '') end
@@ -234,7 +248,7 @@ do
     for col, key in pairs(spec.binds or {}) do
       local c = T.col(d, col)
       if not c then return nil, T.refuse('NOCOL', row, col) end
-      if c.projection == 'text' then return nil, T.refuse('TEXT', row, col) end
+      if c.noset then return nil, T.refuse('TEXT', row, col) end
       if not T.word(key) then return nil, T.refuse('BINDKEY', row, col) end
       -- Reserve the entire table namespace, including future epochs/metadata.
       if key == 'tables' or string.sub(key, 1, 6) == 'table:' then return nil, T.refuse('OWNEDALIAS', row, col, key) end
@@ -242,14 +256,27 @@ do
     end
     return h
   end
+  function T.keep_text(d, old, new)
+    if old.hidden then new.hidden = old.hidden end
+    for _, col in ipairs(d.cols) do
+      local field = 'text:' .. col.name
+      if col.projection == 'text' and old[field] ~= nil then new[field] = old[field] end
+    end
+  end
+  function T.sortedkeys(h)
+    local keys = {}
+    for key in pairs(h) do keys[#keys + 1] = key end
+    table.sort(keys)
+    return keys
+  end
   function T.keep_owned(d, row, old, new)
     for _, col in ipairs(d.cols) do
       local prior, target = old['key:' .. col.name], new and new['key:' .. col.name]
-      if (prior and prior ~= '') or col.projection == 'text' then
+      if (prior and prior ~= '') or col.noset then
         local hidden = redis.call('ZRANGE', T.cellkey(d, row, col.name), 0, -1)
         if #hidden > 0 then return T.refuse('OCCUPIED', row, col.name, hidden) end
       end
-      if col.projection ~= 'text' and (not prior or prior == '') and (not new or (target and target ~= '')) then
+      if not col.noset and (not prior or prior == '') and (not new or (target and target ~= '')) then
         local members = redis.call('ZRANGE', T.cellkey(d, row, col.name), 0, -1)
         if #members > 0 then return T.refuse('OCCUPIED', row, col.name, members) end
       end
@@ -259,11 +286,11 @@ do
     for _, col in ipairs(d.cols) do
       d.cells[T.place(row, col.name)] = true
       local bound = h['key:' .. col.name]
-      if (bound and bound ~= '') or col.projection == 'text' then
+      if (bound and bound ~= '') or col.noset then
         local hidden = redis.call('ZRANGE', T.cellkey(d, row, col.name), 0, -1)
         if #hidden > 0 then return T.refuse('OCCUPIED', row, col.name, hidden) end
       end
-      if col.projection ~= 'text' and (not h['key:' .. col.name] or h['key:' .. col.name] == '') then
+      if not col.noset and (not h['key:' .. col.name] or h['key:' .. col.name] == '') then
         local members = redis.call('ZRANGE', T.cellkey(d, row, col.name), 0, -1, 'WITHSCORES')
         for i = 1, #members, 2 do
           local id, score = members[i], members[i + 1]
@@ -286,10 +313,11 @@ do
     local after = T.next(d.revision)
     if not after then return T.refuse('REVISION', d.revision) end
     local stream = d.key .. ':changes'
-    local kind = redis.call('TYPE', stream).ok
+    local source_stream = d.receipt_source or stream
+    local kind = redis.call('TYPE', source_stream).ok
     if kind ~= 'none' and kind ~= 'stream' then return T.refuse('STREAMTYPE', stream) end
     if kind == 'stream' then
-      local info = redis.call('XINFO', 'STREAM', stream)
+      local info = redis.call('XINFO', 'STREAM', source_stream)
       for i = 1, #info, 2 do
         if info[i] == 'last-generated-id' and info[i + 1] == '18446744073709551615-18446744073709551615' then
           return T.refuse('STREAMFULL', stream)
@@ -302,10 +330,14 @@ do
       T.hset(d.commands, d.key, d.h)
       T.stage(d, 'SADD', 'tables', d.name)
     end
+    if d.definition_changed then
+      T.stage(d, 'DEL', d.key)
+      T.hset(d.commands, d.key, d.h)
+    end
     if d.newidentity then T.hset(d.commands, d.key .. ':identity', d.cfg) end
     -- Materialised epochs retain their own definition after template removal.
-    if d.newtemplate then T.stage(d, 'DEL', d.prefix .. ':definition') end
-    if d.newtemplate or not d.snap.order then T.hset(d.commands, d.prefix .. ':definition', d.h) end
+    if d.newtemplate or d.definition_changed then T.stage(d, 'DEL', d.prefix .. ':definition') end
+    if d.newtemplate or d.definition_changed or not d.snap.order then T.hset(d.commands, d.prefix .. ':definition', d.h) end
     T.stage(d, 'HSET', d.prefix .. ':definition', '_present', d.present and '1' or '0', '_revision', after)
     T.stage(d, 'HSET', d.key .. ':revision', 'n', after)
     local cells = {}
@@ -317,6 +349,7 @@ do
       'epoch', d.epoch, 'rev_before', d.revision, 'rev_after', after, 'actor', opts.actor or '',
       'fence', opts.fence or '', 'idem', opts.idem or '', 'cells', #cells == 0 and '[]' or cjson.encode(cells),
       'members', #d.members == 0 and '[]' or cjson.encode(d.members), 'outcome', outcome}
+    if d.renamed_keys then event[#event + 1] = 'renamed_keys'; event[#event + 1] = cjson.encode(d.renamed_keys) end
     T.stage(d, unpack(event))
     for _, cmd in ipairs(d.commands) do
       if not redis.acl_check_cmd(unpack(cmd)) then return T.refuse('NOPERM', cmd[1], cmd[2]) end
@@ -331,7 +364,7 @@ do
   end
   function T.write(verb, argc, handler, declaration)
     return function(keys, args)
-      if #args ~= argc then return T.refuse('ARGS', verb) end
+      if (argc >= 0 and #args ~= argc) or (argc < 0 and #args < -argc) then return T.refuse('ARGS', verb) end
       local opts = T.decode(args[#args])
       if not opts or not T.uint(opts.epoch) then return T.refuse('EPOCH', 'observed epoch required') end
       for _, k in ipairs({'actor','fence','idem'}) do
@@ -344,7 +377,8 @@ do
         fields = declaration == 'bind' and spec.fields or spec
         if type(fields) ~= 'table' then return T.refuse('DEFINITION') end
       end
-      local d, err = T.open(args[1], fields)
+      local edit = verb == 'set' and T.decode(args[2])
+      local d, err = T.open(args[1], fields, nil, edit and edit.columns ~= nil)
       if not d then return err end
       if opts.epoch ~= d.active then return T.refuse('STALE', opts.epoch, d.active) end
       if not d.present and not declaration and verb ~= 'drop_definition' then return T.refuse('NOTABLE') end
@@ -355,25 +389,227 @@ do
     end
   end
   redis.register_function('ns_table_create', T.write('create', 3, function(d) return {'OK'} end, 'create'))
-  redis.register_function('ns_table_row_add', T.write('row_add', 4, function(d, args)
-    local row, spec = args[2], T.decode(args[3])
+  function T.addrow(d, row, spec)
     local h, err = T.rowfields(d, row, spec)
     if not h then return nil, err end
     local old = T.hash(T.rowkey(d, row))
+    T.keep_text(d, old, h)
     local loss = T.keep_owned(d, row, old, h)
     if loss then return nil, loss end
     local rank = redis.call('ZSCORE', T.rowskey(d), row)
     if not rank then
-      local tail = redis.call('ZRANGE', T.rowskey(d), -1, -1, 'WITHSCORES')
-      local n = tonumber(tail[2]) or 0
+      if not d.tailrank then
+        local tail = redis.call('ZRANGE', T.rowskey(d), -1, -1, 'WITHSCORES')
+        d.tailrank = tonumber(tail[2]) or 0
+      end
+      local n = d.tailrank
       if n ~= n or n + 1 == n or n == math.huge then return nil, T.refuse('RANK') end
-      rank = tostring(n + 1)
+      d.tailrank, rank = n + 1, tostring(n + 1)
     end
     T.stage(d, 'DEL', T.rowkey(d, row))
     T.hset(d.commands, T.rowkey(d, row), h)
     T.stage(d, 'ZADD', T.rowskey(d), rank, row)
     for _, col in ipairs(d.cols) do d.cells[T.place(row, col.name)] = true end
+    return h
+  end
+  function T.list(values)
+    if type(values) ~= 'table' or #values == 0 then return nil end
+    local seen, count = {}, 0
+    for key, value in pairs(values) do
+      if type(key) ~= 'number' or key < 1 or key > #values or key ~= math.floor(key) or not T.word(value) or seen[value] then return nil end
+      seen[value], count = true, count + 1
+    end
+    return count == #values
+  end
+  redis.register_function('ns_table_row_add', T.write('row_add', 4, function(d, args)
+    local h, err = T.addrow(d, args[2], T.decode(args[3]))
+    if not h then return nil, err end
     return function() return {'ROW', T.flatdef(d), T.flat(h)} end
+  end))
+  redis.register_function('ns_table_rows_add', T.write('rows_add', 3, function(d, args)
+    local spec = T.decode(args[2])
+    if not spec or not T.list(spec.rows) or type(spec.spec) ~= 'table' then return nil, T.refuse('ROW') end
+    for _, row in ipairs(spec.rows) do
+      local h, err = T.addrow(d, row, spec.spec)
+      if not h then return nil, err end
+    end
+    return {'OK', #spec.rows}
+  end))
+  redis.register_function('ns_table_rows_hide', T.write('rows_hide', 4, function(d, args)
+    local rows, flag = T.decode(args[3]), args[2]
+    if not T.list(rows) or (flag ~= '0' and flag ~= '1') then return nil, T.refuse('ROW') end
+    for _, row in ipairs(rows) do
+      if not redis.call('ZSCORE', T.rowskey(d), row) then return nil, T.refuse('NOROW', row) end
+      local h = T.hash(T.rowkey(d, row))
+      if flag == '1' and h.hidden ~= '1' then T.stage(d, 'HSET', T.rowkey(d, row), 'hidden', '1') end
+      if flag == '0' and h.hidden then T.stage(d, 'HDEL', T.rowkey(d, row), 'hidden') end
+      for _, col in ipairs(d.cols) do d.cells[T.place(row, col.name)] = true end
+    end
+    return {'OK', #rows}
+  end))
+  -- Scalar edits and definition changes use the same observed-epoch,
+  -- staged-command and receipt protocol as every member mutation.
+  redis.register_function('ns_table_row_set', T.write('row_set', 4, function(d, args)
+    local row, values = args[2], T.decode(args[3])
+    if not T.word(row) or type(values) ~= 'table' or not next(values) then return nil, T.refuse('ROW') end
+    if not redis.call('ZSCORE', T.rowskey(d), row) then return nil, T.refuse('NOROW', row) end
+    local h = T.hash(T.rowkey(d, row))
+    for col, value in pairs(values) do
+      if type(col) ~= 'string' or type(value) ~= 'string' then return nil, T.refuse('ROW', row) end
+      local c = T.col(d, col)
+      if not c then return nil, T.refuse('NOCOL', row, col) end
+      if c.projection ~= 'text' then return nil, T.refuse('NOTTEXT', row, col) end
+    end
+    local columns = T.sortedkeys(values)
+    for _, col in ipairs(columns) do
+      if h['text:' .. col] ~= values[col] then
+        T.stage(d, 'HSET', T.rowkey(d, row), 'text:' .. col, values[col])
+        d.cells[T.place(row, col)] = true
+      end
+    end
+    return {'OK', #columns}
+  end))
+  function T.reshape(d, cols)
+    local kept, oldcols = {}, {}
+    for _, col in ipairs(cols) do kept[col.name] = col end
+    for _, col in ipairs(d.cols) do oldcols[col.name] = col end
+    for _, row in ipairs(redis.call('ZRANGE', T.rowskey(d), 0, -1)) do
+      local h = T.hash(T.rowkey(d, row))
+      for _, col in ipairs(d.cols) do
+        local replacement = kept[col.name]
+        local bound = h['key:' .. col.name]
+        -- Never hide, erase, or resurrect physical owned members via shape.
+        if col.noset or (bound and bound ~= '') or not replacement or replacement.noset then
+          local members = redis.call('ZRANGE', T.cellkey(d, row, col.name), 0, -1)
+          if #members > 0 then return T.refuse('OCCUPIED', row, col.name, members) end
+        end
+        if col.projection == 'text' and (not replacement or replacement.projection ~= 'text') then
+          if h['text:' .. col.name] and h['text:' .. col.name] ~= '' then return T.refuse('OCCUPIEDVALUE', row, col.name) end
+          T.stage(d, 'HDEL', T.rowkey(d, row), 'text:' .. col.name)
+        end
+        if not replacement or replacement.noset then T.stage(d, 'HDEL', T.rowkey(d, row), 'key:' .. col.name) end
+        d.cells[T.place(row, col.name)] = true
+      end
+      for _, col in ipairs(cols) do
+        if not oldcols[col.name] then
+          local members = redis.call('ZRANGE', T.cellkey(d, row, col.name), 0, -1)
+          if #members > 0 then return T.refuse('OCCUPIED', row, col.name, members) end
+          T.stage(d, 'HDEL', T.rowkey(d, row), 'text:' .. col.name, 'key:' .. col.name)
+        end
+        d.cells[T.place(row, col.name)] = true
+      end
+    end
+  end
+  function T.rename(d, name)
+    if not T.name(name) then return nil, T.refuse('NAME', name) end
+    if name == d.name then return 0 end
+    local dest = 'table:' .. name
+    if redis.call('EXISTS', dest) ~= 0 then return nil, T.refuse('EXISTS', name) end
+    local collision = T.scan(T.pattern(dest .. ':'), function() return T.refuse('EXISTS', name) end)
+    if collision then return nil, collision end
+    redis.call('SCARD', 'tables')
+    local keys, records = {[d.key]=true}, {}
+    T.scan(T.pattern(d.key .. ':'), function(key) keys[key] = true end)
+    -- SCAN may repeat keys; collect before staging so RENAME executes once.
+    T.scan(T.pattern(d.cfg.member_prefix), function(key)
+      local record = T.hash(key)
+      if record['place:' .. d.name] then records[key] = record end
+    end)
+    local edits = d.commands
+    d.commands = {}
+    for _, key in ipairs(T.sortedkeys(records)) do
+      local record = records[key]
+      local id, at, epoch = string.sub(key, #d.cfg.member_prefix + 1), record['place:' .. d.name], record.epoch or '0'
+      local row, col = string.match(at, '^(.+):([^:]+)$')
+      if not row or not T.uint(epoch) or record['place:' .. name] then return nil, T.refuse('DRIFT', id, at) end
+      local score = redis.call('ZSCORE', T.prefix(d.name, epoch) .. ':cell:' .. row .. ':' .. col, id)
+      if not score then return nil, T.refuse('DRIFT', id, at) end
+      T.stage(d, 'HSET', key, 'place:' .. name, at)
+      T.stage(d, 'HDEL', key, 'place:' .. d.name)
+      d.members[#d.members + 1] = {id=id, from=at, to=at, score=score, epoch=epoch, from_table=d.name, to_table=name}
+      d.cells[at] = true
+    end
+    local sources = T.sortedkeys(keys)
+    d.renamed_keys = {}
+    for _, row in ipairs(redis.call('ZRANGE', T.rowskey(d), 0, -1)) do
+      for _, col in ipairs(d.cols) do d.cells[T.place(row, col.name)] = true end
+    end
+    for _, key in ipairs(sources) do
+      local target = dest .. string.sub(key, #d.key + 1)
+      T.stage(d, 'RENAME', key, target)
+      d.renamed_keys[#d.renamed_keys + 1] = {from=key, to=target}
+    end
+    -- Rename before deleting row fields: HDEL can remove the last field and
+    -- hence the source key. Retarget the already validated edits afterward.
+    for _, cmd in ipairs(edits) do
+      if cmd[2] == d.key or string.sub(cmd[2], 1, #d.key + 1) == d.key .. ':' then
+        cmd[2] = dest .. string.sub(cmd[2], #d.key + 1)
+      end
+      d.commands[#d.commands + 1] = cmd
+    end
+    T.stage(d, 'SREM', 'tables', d.name)
+    T.stage(d, 'SADD', 'tables', name)
+    d.receipt_source = d.key .. ':changes'
+    d.name, d.key, d.prefix = name, dest, T.prefix(name, d.epoch)
+    return #sources
+  end
+  redis.register_function('ns_table_set', T.write('set', 3, function(d, args)
+    local spec = T.decode(args[2])
+    if type(spec) ~= 'table' or not next(spec) then return nil, T.refuse('DEFINITION') end
+    for key in pairs(spec) do
+      if key ~= 'footer' and key ~= 'columns' and key ~= 'rename' and key ~= 'hidden' and key ~= 'hide' and key ~= 'show' and key ~= 'visible' then return nil, T.refuse('BADSET', key) end
+    end
+    if spec.footer ~= nil and type(spec.footer) ~= 'string' then return nil, T.refuse('DEFINITION') end
+    if spec.rename ~= nil and not T.name(spec.rename) then return nil, T.refuse('NAME') end
+    local h = {}
+    for key, value in pairs(d.h) do h[key] = value end
+    if spec.columns ~= nil then
+      if type(spec.columns) ~= 'table' then return nil, T.refuse('DEFINITION') end
+      for key in pairs(h) do if key == 'order' or string.sub(key, 1, 4) == 'col:' then h[key] = nil end end
+      for key, value in pairs(spec.columns) do
+        if type(key) ~= 'string' or (key ~= 'order' and string.sub(key, 1, 4) ~= 'col:') then return nil, T.refuse('DEFINITION') end
+        h[key] = value
+      end
+    end
+    if spec.footer ~= nil then h.footer = spec.footer end
+    if spec.hidden ~= nil then
+      if type(spec.hidden) ~= 'string' then return nil, T.refuse('DEFINITION') end
+      h.hidden = spec.hidden
+    end
+    if spec.visible ~= nil then
+      if type(spec.visible) ~= 'boolean' then return nil, T.refuse('DEFINITION') end
+      h.visible = spec.visible and '1' or '0'
+    end
+    if spec.hide ~= nil or spec.show ~= nil then
+      local hidden, list = {}, {}
+      for col in string.gmatch(h.hidden or '', '[^,]+') do hidden[col] = true end
+      for _, change in ipairs({'hide', 'show'}) do
+        if spec[change] ~= nil then
+          if not T.list(spec[change]) then return nil, T.refuse('DEFINITION') end
+          for _, col in ipairs(spec[change]) do
+            if not h['col:' .. col] then return nil, T.refuse('NOCOL', '', col) end
+            hidden[col] = change == 'hide'
+          end
+        end
+      end
+      for col in string.gmatch(h.order or '', '[^,]+') do if hidden[col] then list[#list+1] = col end end
+      h.hidden = table.concat(list, ',')
+    end
+    local cols, err = T.shape(h)
+    if not cols then return nil, err end
+    if spec.columns then
+      local loss = T.reshape(d, cols)
+      if loss then return nil, loss end
+    end
+    local moved = 0
+    if spec.rename then
+      local count, problem = T.rename(d, spec.rename)
+      if count == nil then return nil, problem end
+      moved = count
+    end
+    d.h, d.cols = h, cols
+    d.definition_changed = spec.footer ~= nil or spec.columns ~= nil or spec.hidden ~= nil or spec.visible ~= nil or spec.hide ~= nil or spec.show ~= nil
+    return {'OK', moved}
   end))
   redis.register_function('ns_table_row_del', T.write('row_del', 3, function(d, args)
     local row = args[2]
@@ -408,55 +644,94 @@ do
   redis.register_function('ns_table_drop_definition', T.write('drop_definition', 2, function(d, args) return T.delete(d, args, 'drop_definition') end))
   redis.register_function('ns_table_clear', T.write('clear', 2, function(d, args) return T.delete(d, args, 'clear') end))
   function T.writecell(d, args, op)
-    local row, col, id = args[2], args[3], args[4]
+    local row, col = args[2], args[3]
     local src, err = T.cell(d, row, col, true)
     if not src then return nil, err end
-    local count = redis.call('ZCARD', src.key)
-    local record, exists, why = T.member(d, id)
-    if why then return nil, why end
-    local placed, here = record['place:' .. d.name], T.place(row, col)
+    local count, first, dst = redis.call('ZCARD', src.key), 5, nil
     if op == 'add' then
-      local score = tonumber(args[5])
+      local score = tonumber(args[4])
       if not score or score ~= score or score == math.huge or score == -math.huge then return nil, T.refuse('SCORE') end
-      if placed then return nil, T.refuse('PLACED', placed, id) end
-      local drift = T.unindexed(d, id)
-      if drift then return nil, drift end
-      T.stage(d, 'ZADD', src.key, args[5], id)
-      T.record(d, id, here, record, exists)
-      T.change(d, id, nil, here, args[5])
-      count = count + 1
-    elseif op == 'remove' then
-      local score = redis.call('ZSCORE', src.key, id)
-      if placed ~= here then
-        if score then return nil, T.refuse('DRIFT', row, col, id) end
-        return {'OK', count}
-      end
-      if not score then return nil, T.refuse('DRIFT', row, col, id) end
-      T.stage(d, 'ZREM', src.key, id)
-      T.record(d, id, nil, record, exists)
-      T.change(d, id, here, nil, score)
-      count = count - 1
+    elseif op == 'remove' then first = 4
     else
-      local dst, problem = T.cell(d, row, args[5], true)
-      if not dst then return nil, problem end
+      dst, err = T.cell(d, row, args[4], true)
+      if not dst then return nil, err end
       count = redis.call('ZCARD', dst.key)
-      local score = redis.call('ZSCORE', src.key, id)
-      if not score then return nil, T.refuse('NOTMEMBER', row, col) end
-      if placed ~= here then return nil, T.refuse('DRIFT', row, col, id) end
-      if dst.key ~= src.key and redis.call('ZSCORE', dst.key, id) then return nil, T.refuse('DRIFT', row, args[5], id) end
-      if dst.key ~= src.key then
-        T.stage(d, 'ZREM', src.key, id)
-        T.stage(d, 'ZADD', dst.key, score, id)
-        T.record(d, id, T.place(row, args[5]), record, exists)
-        T.change(d, id, here, T.place(row, args[5]), score)
+    end
+    local seen, here = {}, T.place(row, col)
+    for i = first, #args - 1 do
+      local id = args[i]
+      if seen[id] then return nil, T.refuse('TWICE', id) end
+      seen[id] = true
+      local record, exists, why = T.member(d, id)
+      if why then return nil, why end
+      local placed = record['place:' .. d.name]
+      if op == 'add' then
+        if placed then return nil, T.refuse('PLACED', placed, id) end
+        local drift = T.unindexed(d, id)
+        if drift then return nil, drift end
+        T.stage(d, 'ZADD', src.key, args[4], id)
+        T.record(d, id, here, record, exists)
+        T.change(d, id, nil, here, args[4])
         count = count + 1
+      elseif op == 'remove' then
+        local score = redis.call('ZSCORE', src.key, id)
+        if placed ~= here then
+          if score then return nil, T.refuse('DRIFT', row, col, id) end
+        else
+          if not score then return nil, T.refuse('DRIFT', row, col, id) end
+          T.stage(d, 'ZREM', src.key, id)
+          T.record(d, id, nil, record, exists)
+          T.change(d, id, here, nil, score)
+          count = count - 1
+        end
+      else
+        local score = redis.call('ZSCORE', src.key, id)
+        if not score then return nil, T.refuse('NOTMEMBER', row, col, id) end
+        if placed ~= here then return nil, T.refuse('DRIFT', row, col, id) end
+        if dst.key ~= src.key and redis.call('ZSCORE', dst.key, id) then return nil, T.refuse('DRIFT', row, args[4], id) end
+        if dst.key ~= src.key then
+          T.stage(d, 'ZREM', src.key, id)
+          T.stage(d, 'ZADD', dst.key, score, id)
+          T.record(d, id, T.place(row, args[4]), record, exists)
+          T.change(d, id, here, T.place(row, args[4]), score)
+          count = count + 1
+        end
       end
     end
     return {'OK', count}
   end
-  redis.register_function('ns_table_cell_add', T.write('cell_add', 6, function(d, args) return T.writecell(d, args, 'add') end))
-  redis.register_function('ns_table_cell_remove', T.write('cell_remove', 5, function(d, args) return T.writecell(d, args, 'remove') end))
-  redis.register_function('ns_table_cell_move', T.write('cell_move', 6, function(d, args) return T.writecell(d, args, 'move') end))
+  redis.register_function('ns_table_cell_add', T.write('cell_add', -6, function(d, args) return T.writecell(d, args, 'add') end))
+  redis.register_function('ns_table_cell_remove', T.write('cell_remove', -5, function(d, args) return T.writecell(d, args, 'remove') end))
+  redis.register_function('ns_table_cell_move', T.write('cell_move', -6, function(d, args) return T.writecell(d, args, 'move') end))
+  -- Views are presentation configuration, separate from a table's epoch and ledger.
+  -- Validate every referenced table and every command before publishing the view.
+  redis.register_function('ns_view_set', function(keys, args)
+    if #args ~= 4 or not T.name(args[1]) then return T.refuse('ARGS', 'view_set') end
+    local names = {}
+    for name in string.gmatch(args[2], '[^,]+') do
+      local d, err = T.def(name)
+      if not d then return err end
+      if #names == 0 and args[4] ~= '' then
+        local summary = T.col(d, args[4])
+        if not summary or summary.projection ~= 'count' then return T.refuse('NOCOL', '', args[4]) end
+      end
+      names[#names+1] = name
+    end
+    if #names == 0 or table.concat(names, ',') ~= args[2] then return T.refuse('ARGS', 'tables') end
+    local key = 'view:' .. args[1]
+    T.hash(key)
+    redis.call('SCARD', 'views')
+    local commands = {{'HSET', key, 'tables', args[2], 'title', args[3], 'summary', args[4]}, {'SADD', 'views', args[1]}}
+    for _, cmd in ipairs(commands) do if not redis.acl_check_cmd(unpack(cmd)) then return T.refuse('NOPERM', cmd[1], cmd[2]) end end
+    for _, cmd in ipairs(commands) do redis.call(unpack(cmd)) end
+    return {'OK'}
+  end)
+  redis.register_function{function_name='ns_view_get', flags={'no-writes'}, callback=function(keys, args)
+    if #args ~= 1 or not T.name(args[1]) then return T.refuse('ARGS', 'view_get') end
+    local h = redis.call('HGETALL', 'view:' .. args[1])
+    if #h == 0 then return T.refuse('NOVIEW', args[1]) end
+    return {'OK', h}
+  end}
   redis.register_function('ns_table_member_create', T.write('member_create', 3, function(d, args)
     local record, exists, err = T.member(d, args[2])
     if err then return nil, err end
@@ -475,6 +750,7 @@ do
       local prior = T.hash(T.rowkey(d, row.key))
       local h, err = T.rowfields(d, row.key, row)
       if not h then return nil, err end
+      T.keep_text(d, prior, h)
       local loss = T.keep_owned(d, row.key, prior, h)
       if loss then return nil, loss end
       T.stage(d, 'DEL', T.rowkey(d, row.key))
@@ -517,7 +793,7 @@ do
       if args[2] ~= 'shape' then
         for _, col in ipairs(d.cols) do
           local value = {'OK', 0, {}}
-          if col.projection ~= 'text' then
+          if not col.noset then
             local bound = h['key:' .. col.name]
             local key = bound and bound ~= '' and bound or T.cellkey(d, row, col.name)
             local count = redis.pcall('ZCARD', key)
@@ -568,7 +844,7 @@ do
       for _, col in ipairs(d.cols) do
         local bound = h['key:' .. col.name]
         if bound and (bound == 'tables' or string.sub(bound, 1, 6) == 'table:') then return T.refuse('OWNEDALIAS', row, col.name, bound) end
-        if col.projection ~= 'text' and (not bound or bound == '') then
+        if not col.noset and (not bound or bound == '') then
           local key, place = T.cellkey(d, row, col.name), T.place(row, col.name)
           owned[key] = true; cells = cells + 1
           for _, id in ipairs(redis.call('ZRANGE', key, 0, -1)) do

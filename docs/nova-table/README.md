@@ -154,7 +154,7 @@ cold reads and reads after row or binding changes. Writes validate and
 mutate atomically in the `ns_table_*` functions in the shared Redis library.
 `ns_table_read`, `ns_table_list`, and `ns_table_members` are read-only
 functions (`FCALL_RO`). A multi-table watch pipelines one snapshot function
-per table in one exchange, on the first tick as well as later ticks. Normal reads and writes use neither `KEYS` nor `SCAN`. The explicit
+per table in one exchange, on the first tick as well as later ticks. Normal reads and member writes use neither `KEYS` nor `SCAN`. Rename scans the source table and member namespaces to preserve retained history and placement links. The explicit
 maintenance `check` scans the member namespace and current owned-cell keys
 inside one read-only function; its cost scales with that namespace.
 
@@ -173,20 +173,27 @@ said no.
 
 ```
 nova-table create <table> --columns <name[:projection[:fold[:label]]],...> [--footer <label>] [--width <col=n,...>]
+nova-table set <table> [--footer <label>] [--rename <name>] [--columns <spec>] [--hide <cols>] [--show <cols>] [--hidden | --visible]
 nova-table drop <table> [--definition]
 nova-table list
 nova-table row add <table> <row> [--label <text>] [--exclude <member>] [--owner <verb>] [<col>=<key> ...]
+nova-table row add <table> <row> <row> ...
+nova-table row set <table> <row> <col>=<value> ...
+nova-table row hide <table> <row> ...
+nova-table row show <table> <row> ...
 nova-table row del <table> <row>
-nova-table cell add <table> <row> <col> <member> [--score <n>]
-nova-table cell remove <table> <row> <col> <member>
-nova-table cell move <table> <row> <from-col> <to-col> <member>
+nova-table cell add <table> <row> <col> <member>... [--score <n>]
+nova-table cell remove <table> <row> <col> <member>...
+nova-table cell move <table> <row> <from-col> <to-col> <member>...
 nova-table cell members <table> <row> <col>
 nova-table member create <table> <id>
 nova-table check <table>
 nova-table clear <table>
 nova-table show <table> [--at-epoch <n>]
 nova-table render <table> [--hide-zero-rows] [--width <col=n,...>]
-nova-table watch <table>[,<table>...] [--every <duration>] [--out <file>] [--title <text>] [--hide-zero-rows] [--once]
+nova-table view set <name> --tables <a,b,...> [--title <text>] [--summary <count-column>]
+nova-table view show <name>
+nova-table watch <table>[,<table>...] | --view <name> [--every <duration>] [--out <file>] [--title <text>] [--hide-zero-rows] [--once]
 ```
 
 | verb | prints |
@@ -206,6 +213,60 @@ nova-table watch <table>[,<table>...] [--every <duration>] [--out <file>] [--tit
 
 A value holding a space is quoted, `row="swarm: cards"`.
 
+## Editing, batches and rename
+
+`set` validates the entire definition edit before writing. Removing a nonempty
+owned set, changing it to text or a formula, or removing nonempty text is refused;
+move/remove members or clear text first. Bound external sets remain untouched.
+`row set` writes text values stored by column; later row metadata or binding
+edits retain those text values and row visibility. `pct(<count-column>)` computes
+the named count divided by all count columns in the row. Its default footer is
+`pooled`: sum the counts first, then divide. A percentage cannot fold `avg`.
+A stored definition with the former `pct:avg` rule can be repaired using
+`set --columns`; replacement columns are validated under the current rules.
+
+`cell add/remove/move` accept lists of members. `row add` accepts multiple row
+names with a shared metadata specification, and `row hide/show` accepts lists.
+Each table call validates every item, checks its observed epoch, and commits
+one revision and one receipt for the whole accepted list. Duplicate members or
+row names within one list are refused. A late invalid item leaves the complete
+store unchanged, including receipts. Go's single-member helpers delegate to
+`CellsAdd`, `CellsRemove`, and `CellsMove` with a one-element list; their optional
+`WriteOptions` remain available.
+
+`set --hide/--show` applies column visibility changes on the server in one call,
+without a read-modify-write race. Hidden rows and columns still contribute to
+formulas and folds. `set --hidden/--visible` controls whether watch draws the
+whole table. Every table edit uses the epoch and receipt options described above.
+
+Rename moves the stable definition, permanent identity, all materialized epochs,
+revision counter, change stream and its consumer groups. It updates every retained
+member's `place:<table>` field. A destination with any existing table namespace
+keys, including old history, is refused. The final receipt is written at the
+new name and records all physical key moves in `renamed_keys`; prior stream
+events remain byte-for-byte the same. Consumers must switch to the new name.
+Rename does not create an alias or rewrite stored views referencing the old name.
+
+The raw function wire ends every table write with the JSON options object.
+`set` takes `name, editJSON, optionsJSON`; `row_set` takes
+`name, row, valuesJSON, optionsJSON`; `rows_add` takes
+`name, {"rows":[...],"spec":{...}}, optionsJSON`; `rows_hide` takes
+`name, 0|1, rowsJSON, optionsJSON`. Cell add takes
+`name, row, col, score, members..., optionsJSON`; remove takes
+`name, row, col, members..., optionsJSON`; move takes
+`name, row, from, to, members..., optionsJSON`. Deploy the rebuilt clients,
+function library and source ACL declarations together; the older no-options
+wire is refused.
+
+Stored views are presentation configuration, separate from table epoch receipts.
+A view write validates all references and command permissions before either its
+hash or registry is changed. `watch --view` reloads the view each frame and reads
+its tables in one pipeline: two application exchanges, including a summary.
+The timestamp, title, pooled summary and tables form the frame. The summary uses
+the same table snapshot as the body; unread inputs print `?`. ETA remains `-`
+until change-stream rate sampling is implemented. Edit a view to change its
+tables or title without restarting watch.
+
 ## The render rules
 
 The header row of column labels, a rule, one line per row (its label, then
@@ -221,7 +282,7 @@ row whose count cells are all zero and all read; the fold is still the
 column's, hidden rows included.
 
 **The empty rule.** An empty table, and a table with no visible row, renders
-as the empty string: no header, no newline. The sprint table hides its
+as the empty string when no title is supplied. With a title, it prints the title and `(no rows)`. The sprint table hides its
 stream block that way with no extra blank line.
 
 ## Watching
@@ -232,8 +293,7 @@ on the terminal: the ANSI home-and-clear sequence, then the text, so a
 console tab shows the live table with no shell loop. `--out <file>`
 publishes each tick by writing a temp file beside it and renaming it over,
 the sprint table's way, so a reader sees one whole table. `--once` renders
-once and exits, with no clear. Every tick is exactly one Redis pipeline of read-only snapshots for
-every named table, including cold and changed shapes. The screen holds the tables and nothing
+once and exits, with no clear. With explicit table names, every tick is exactly one Redis pipeline of read-only snapshots, including cold and changed shapes. A stored view adds one exchange to reload its configuration. The screen holds the tables and nothing
 else; a tick whose read fails leaves the last good text standing with one
 `stale: <n>s` line under it, and stderr says why once. A signal ends it,
 exit 0.
@@ -275,12 +335,12 @@ column and member where applicable, plus the relevant inspection or repair verb.
 The function library and source ACL declarations must be deployed together by
 the store owner. Writers need `FCALL` grants for `ns_table_create`, `drop`,
 `row_add`, `row_del`, `cell_add`, `cell_remove`, `cell_move`, `bind`, `clear`,
-`member_create`, and `drop_definition`
+`member_create`, `drop_definition`, `set`, `row_set`, `rows_add`, and `rows_hide`
 (each with the `ns_table_` prefix); readers need `FCALL_RO` for
 `ns_table_read`, `ns_table_list`, and `ns_table_members`, plus the underlying
 commands and authorized key patterns. Writers also need `HDEL`, `TYPE`,
 `XINFO STREAM` and `XADD` for records and receipt preflight; revision counters
-use the existing `HGET`/`HSET` grants. The explicit maintenance check needs
+use the existing `HGET`/`HSET` grants. Rename additionally needs `SCAN` and `RENAME`. Stored views need `ns_view_set`/`ns_view_get` and grants for `view:*` and `views`. The explicit maintenance check needs
 `FCALL_RO ns_table_check` and `SCAN`; these are not added to the display-only
 reader role. Custom epoch/record namespaces require their own key grants. The standalone ordered-set move retains
 `ns_oset_move`. `SCARD` and `SISMEMBER` preflight the registry type before

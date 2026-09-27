@@ -4807,11 +4807,11 @@ TABLE table=demo columns=4 rows=1 trips=1 epoch=0 revision=5
 TABLE ROW table=demo row=build ready=1 working=1 done=0
 
 $ nova-table render demo
-job   | ready | working | done
+demo  | ready | working | done
 ------+-------+---------+-----
 build |     1 |       1 |    0
 ------+-------+---------+-----
-total |     1 |       1 |    0
+      |     1 |       1 |    0
 ```
 
 **What the flags want.** Every verb takes `--redis <addr>`, else

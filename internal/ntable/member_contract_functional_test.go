@@ -99,7 +99,7 @@ func TestMemberContractRefusalsPreserveStore(t *testing.T) {
 			return err
 		}},
 		{"raw-function-duplicate", func(ctx context.Context, c *redis.Client, tb ntable.Table) error {
-			reply, err := c.FCall(ctx, ntable.FnCellAdd, []string{ntable.DefKey(tb.Name)}, tb.Name, "build", "working", "m1", "99", `{"epoch":"0"}`).Slice()
+			reply, err := c.FCall(ctx, ntable.FnCellAdd, []string{ntable.DefKey(tb.Name)}, tb.Name, "build", "working", "99", "m1", `{"epoch":"0"}`).Slice()
 			if err != nil {
 				return err
 			}
