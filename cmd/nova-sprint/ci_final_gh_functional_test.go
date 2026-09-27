@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -86,24 +85,23 @@ func TestFriendDoneReadPassesOnTheGitHubLegOrThePRRecord(t *testing.T) {
 	if _, err := taskcard.Work(ctx, c, reader, "rowan", 0, true); err != nil {
 		t.Fatal(err)
 	}
-	done := func(i int) (int, string) {
-		var out, errOut bytes.Buffer
-		code := runFriend(ctx, []string{"done", "--redis", addr, "--as", "friend:" + me, "--id", reads[i], "--score", "10/10"}, &out, &errOut)
-		return code, out.String() + errOut.String()
+	// the read ends through the door nova-friend done uses: taskcard.End
+	// with the score (the sprint store's friend verb left with #4443)
+	done := func(i int) ([]taskcard.Ended, error) {
+		return taskcard.End(ctx, c, taskcard.EndRequest{IDs: []string{reads[i]}, OK: true, Score: 10, Reader: me, By: me})
 	}
 	ends := func(when string, i int) {
 		t.Helper()
-		code, out := done(i)
-		if code != 0 || !strings.Contains(out, "ENDED "+reads[i]+" primary=q"+fmt.Sprintf("%02d", i)+" from=review to=merging") ||
-			!strings.Contains(out, "FRIEND DONE as=friend:"+me+" n=1 ms=") {
-			t.Fatalf("%s: friend done --score 10/10 = %d %q, want ENDED to merging", when, code, out)
+		e, err := done(i)
+		if err != nil || len(e) != 1 || e[0].To != "merging" || e[0].Primary != fmt.Sprintf("q%02d", i) {
+			t.Fatalf("%s: read end --score 10/10 = %v %v, want ENDED to merging", when, e, err)
 		}
 	}
 	refused := func(when string, i int, why string) {
 		t.Helper()
-		code, out := done(i)
-		if code != 1 || !strings.Contains(out, "FRIEND DONE REFUSED id="+reads[i]+" why=\""+why) {
-			t.Fatalf("%s: friend done --score 10/10 = %d %q, want a %s refusal", when, code, out, why)
+		e, err := done(i)
+		if err == nil || !strings.Contains(err.Error(), why) {
+			t.Fatalf("%s: read end --score 10/10 = %v %v, want a %s refusal", when, e, err, why)
 		}
 		if got := c.HGet(ctx, "task:q"+fmt.Sprintf("%02d", i), "where").Val(); got != "review" {
 			t.Fatalf("%s: primary is %s after a refused read, want review", when, got)
