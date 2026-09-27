@@ -278,6 +278,9 @@ func (app *application) client(ctx context.Context, verb, addr string, stderr io
 		if addr != app.addr {
 			return nil, nil, refuse(stderr, verb, "the shell connection is fixed; choose --redis when entering nova-table shell")
 		}
+		if err := app.shared.prepare(); err != nil {
+			return nil, nil, refuse(stderr, verb, err.Error())
+		}
 		return app.shared, app.shared.Client(), 0
 	}
 	st, err := open(ctx, addr)
@@ -300,7 +303,7 @@ func field(s string) string {
 // store that could not be reached is 2, the store's own no is 1.
 func storeRefusal(stderr io.Writer, verb string, err error) int {
 	msg := err.Error()
-	if strings.Contains(msg, "connection refused") || strings.Contains(msg, "NOAUTH") || strings.Contains(msg, "WRONGPASS") || strings.Contains(msg, "i/o timeout") || strings.Contains(msg, "no such host") {
+	if store.Unreachable(err) {
 		return refuse(stderr, verb, msg)
 	}
 	return refused(stderr, verb, msg)

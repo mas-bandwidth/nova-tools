@@ -123,7 +123,7 @@ by a stop reports the signal (143, 130), not the codes of its lines.
 
 What it holds the shell to:
 
-- after a stop no line is started, so nothing is written after a stop
+- after a stop no new line starts (an in-flight write may complete)
   (`NothingStartsAfterStop`); SIGTERM ends the session (`TermEnds`); only a
   stop ends the session as one (`StopOnlyWhenStopped`), and SIGINT leaves a
   watch (`IntLeavesWatch`);
@@ -151,6 +151,11 @@ temp directory under a 60 s cap:
       timeout 60 java -Djava.io.tmpdir=/tmp/tlc-$c -cp tla2tools.jar tlc2.TLC -workers 2 \
         -deadlock -metadir /tmp/tlc-$c/meta -config $cfg MCTableSession.tla > $c.log 2>&1 &
     done; wait
+
+The measurements below are for Rowan's `0cece7980` model. #4458 further
+strengthens `NoFalseAlarm`: every return from the cached-error path is a
+violation, even if the store is still down, so the statement about a fresh
+dial matches the invariant. TLC of that one-line strengthening is pending.
 
 Measured on space, 2026-09-27, load 9, all nine at once: 7 s wall. Every
 input of up to four lines over six kinds of line, with and without

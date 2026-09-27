@@ -202,6 +202,9 @@ func printCommandHelp(out io.Writer, c command, fs *flag.FlagSet) {
 			}
 		}
 	}
+	if c.name == "shell" {
+		fmt.Fprintln(out, "\n"+shellUsageDetails)
+	}
 	if c.name == "row del" {
 		fmt.Fprintln(out, "\nA missing row succeeds with existed=0 and leaves a no-op receipt.")
 	}

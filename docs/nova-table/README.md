@@ -399,7 +399,8 @@ Enter just the verb, or paste a full `nova-table ...` command. Single/double
 quotes and backslash escapes keep a value together. Blank lines and `#`
 comments are skipped. Variables, globs and command substitutions remain literal;
 pipes and command separators must be quoted when they are part of a value.
-Use one complete command per line, up to 1 MiB. `help row move`, for example,
+Use one complete command per line, up to exactly 1 MiB (1,048,576 bytes),
+excluding the LF or CRLF delimiter. `help row move`, for example,
 shows the same help as outside the session.
 
 Writes print `TABLE RECEIPT` by default. Session flags `--epoch`, `--actor`,
@@ -416,6 +417,16 @@ the final failure status; a terminal defaults to this behavior and prints
 committed. `quit`, `exit` or EOF ends the session. `watch` runs in it too: use
 `--once` for a script, or Ctrl-C to stop a continuous watch and return to the
 prompt. A script can also use `watch --out <path>` to publish each frame.
+On Unix, SIGTERM terminates the whole shell (status 143), including during watch;
+Ctrl-C at the prompt terminates it (status 130). No later line starts. A write
+already sent may have committed even when its reply was not received.
+
+With `--keep-going`, an overlong line is refused and discarded through its
+newline, then the next line is read. Other input read errors end the session.
+Command failures name the input line on stderr. After a connection failure,
+the next store command gets a fresh client at the pinned address and seat;
+the shell never replays the failed command. Healthy commands reuse their one
+connection, and help/version need no Redis command.
 
 ## Order
 

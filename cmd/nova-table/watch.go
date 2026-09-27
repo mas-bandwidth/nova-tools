@@ -72,7 +72,15 @@ func (app *application) cmdWatch(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	// In a resident shell, SIGTERM keeps its process-wide default: terminate
+	// immediately, including while reading input, with no following command.
+	// Ctrl-C is the watch-local return-to-prompt action. Standalone watch keeps
+	// its existing graceful SIGTERM behavior.
+	signals := []os.Signal{os.Interrupt}
+	if app.shared == nil {
+		signals = append(signals, syscall.SIGTERM)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), signals...)
 	defer stop()
 	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {

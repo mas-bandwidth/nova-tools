@@ -6,12 +6,16 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/redis/go-redis/v9"
 )
@@ -266,5 +270,111 @@ func TestDocumentedShellSessionRuns(t *testing.T) {
 	}
 	if tab.Revision != 5 || len(tab.Rows) != 1 || tab.Rows[0].Cells[1].Count != 2 || tab.Rows[0].Texts["note"] != "Running both checks" {
 		t.Fatalf("documented session result: %+v", tab)
+	}
+}
+
+// The first client's dial always refuses, reproducing a saturated pool even
+// if the library starts a background probe. A fresh client's first dial can
+// reach the same store. No sleep or race against the probe's timer is needed.
+func TestShellFreshDialAfterConnectionFailureWithoutReplay(t *testing.T) {
+	t.Parallel()
+	addr := firstRunStore(t)
+	bad := redis.NewClient(&redis.Options{Addr: addr, PoolSize: 1, MaxRetries: -1, DialerRetries: 1,
+		Dialer: func(context.Context, string, string) (net.Conn, error) {
+			return nil, &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}
+		},
+	})
+	reopens := 0
+	var hellos atomic.Int64
+	shared := sharedConnection(store.New(bad), func() (*store.Store, error) {
+		reopens++
+		return store.New(redis.NewClient(&redis.Options{Addr: addr, PoolSize: 1, DisableIdentity: true,
+			OnConnect: func(context.Context, *redis.Conn) error { hellos.Add(1); return nil },
+		})), nil
+	})
+	defer func() { _ = shared.Store.Close() }()
+	var out, errs bytes.Buffer
+	app := &application{shared: shared, addr: addr}
+	// A failed create must not be replayed after the store recovers. Help needs
+	// no connection; two later list calls must reuse the single fresh one.
+	code := app.readCommands(strings.NewReader("create failed --columns ready\nversion\nlist\nlist\n"), &out, &errs, true, false)
+	if code != 2 || reopens != 1 || hellos.Load() != 1 || strings.Count(out.String(), "TABLE LIST tables=0 trips=1") != 2 || !strings.Contains(errs.String(), "line 1") {
+		t.Fatalf("recovery: code=%d reopens=%d hellos=%d out=%s err=%s", code, reopens, hellos.Load(), &out, &errs)
+	}
+}
+
+// Drop one reply only after the server produced it. This is an uncertain
+// write outcome, not a dial failure: retrying would append a second receipt.
+type shellLostReplyConn struct {
+	net.Conn
+	lost *atomic.Bool
+	drop bool
+}
+
+func (c *shellLostReplyConn) Write(p []byte) (int, error) {
+	if bytes.Contains(p, []byte("\r\nfcall\r\n")) && c.lost.CompareAndSwap(false, true) {
+		c.drop = true
+	}
+	return c.Conn.Write(p)
+}
+func (c *shellLostReplyConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	if c.drop && n > 0 {
+		c.drop = false
+		return 0, io.EOF
+	}
+	return n, err
+}
+
+type shellLostReplyHook struct{ lost *atomic.Bool }
+
+func (h shellLostReplyHook) DialHook(next redis.DialHook) redis.DialHook {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		c, err := next(ctx, network, addr)
+		if err != nil {
+			return nil, err
+		}
+		return &shellLostReplyConn{Conn: c, lost: h.lost}, nil
+	}
+}
+func (shellLostReplyHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook { return next }
+func (shellLostReplyHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+
+func TestShellLostWriteReplyIsNeverReplayed(t *testing.T) {
+	t.Parallel()
+	addr := firstRunStore(t)
+	if code, out, err := runTable(at(addr, "create", "jobs", "--columns", "ready")...); code != 0 {
+		t.Fatalf("setup %d %s %s", code, out, err)
+	}
+	var lost atomic.Bool
+	open := func() (*store.Store, error) {
+		st, err := openShellStore(addr)
+		if err == nil {
+			st.Client().AddHook(shellLostReplyHook{lost: &lost})
+		}
+		return st, err
+	}
+	st, err := open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared := sharedConnection(st, open)
+	defer func() { _ = shared.Store.Close() }()
+	var out, errs bytes.Buffer
+	code := (&application{shared: shared, addr: addr}).readCommands(strings.NewReader("row add jobs committed\nlist\n"), &out, &errs, true, false)
+	admin := redis.NewClient(&redis.Options{Addr: addr})
+	defer admin.Close()
+	tab, err := ntable.Read(context.Background(), admin, "jobs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := admin.XLen(context.Background(), ntable.ChangesKey("jobs")).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code != 2 || !lost.Load() || tab.Revision != 2 || events != 2 || len(tab.Rows) != 1 || !strings.Contains(out.String(), "TABLE LIST tables=1 trips=1") {
+		t.Fatalf("lost reply: code=%d lost=%v revision=%d events=%d rows=%d out=%s err=%s", code, lost.Load(), tab.Revision, events, len(tab.Rows), &out, &errs)
 	}
 }

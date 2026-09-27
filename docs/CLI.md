@@ -4802,7 +4802,13 @@ The store and seat stay fixed. File input stops on the first error unless
 `--keep-going`; a terminal prompts on stderr and defaults to continuing. The
 final status retains errors: 1 for a store refusal, 2 for a usage/input/connection
 error. Continuous `watch` returns to the prompt on Ctrl-C; scripts can use
-`watch --once`. See the [resident shell example](nova-table/README.md#resident-shell).
+`watch --once`. On Unix, SIGTERM ends the whole shell (143), including during
+watch, and Ctrl-C at the prompt ends it (130). An in-flight write may already
+have committed. A failed connection is replaced before the next store command;
+the failed command is never replayed. Lines may contain exactly 1,048,576 bytes
+excluding LF/CRLF; `--keep-going` discards an overlong line and continues at the
+next newline. Failures name their input line. See the
+[resident shell example](nova-table/README.md#resident-shell).
 
 ### Columns, identity and output
 

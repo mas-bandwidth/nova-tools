@@ -3,14 +3,17 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+	"sync/atomic"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -28,6 +31,61 @@ type connection struct {
 	*store.Store
 	shared  bool
 	counter *store.Trips
+	reopen  func() (*store.Store, error)
+	broken  atomic.Bool
+}
+
+// A transport failure can saturate go-redis's one-connection dial circuit.
+// Retire that client before the next command uses it. Never replay the failed
+// command: the store may have committed a write before its reply was lost.
+func sharedConnection(st *store.Store, reopen func() (*store.Store, error)) *connection {
+	c := &connection{Store: st, shared: true, reopen: reopen}
+	st.Client().AddHook(c)
+	return c
+}
+
+func (c *connection) prepare() error {
+	if c.reopen == nil || !c.broken.Load() {
+		return nil
+	}
+	st, err := c.reopen()
+	if err != nil {
+		return err
+	}
+	if err := c.Store.Close(); err != nil {
+		return errors.Join(err, st.Close())
+	}
+	c.Store, c.counter = st, nil
+	c.broken.Store(false)
+	st.Client().AddHook(c)
+	return nil
+}
+
+func (c *connection) DialHook(next redis.DialHook) redis.DialHook { return next }
+func (c *connection) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		err := next(ctx, cmd)
+		if store.Unreachable(err) {
+			c.broken.Store(true)
+		}
+		return err
+	}
+}
+func (c *connection) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		err := next(ctx, cmds)
+		if store.Unreachable(err) {
+			c.broken.Store(true)
+		}
+		// A pipeline's first error may be a logical refusal while a later
+		// command lost the connection. Inspect every command before reusing it.
+		for _, cmd := range cmds {
+			if store.Unreachable(cmd.Err()) {
+				c.broken.Store(true)
+			}
+		}
+		return err
+	}
 }
 
 func (c *connection) Close() error {
@@ -66,9 +124,7 @@ func (app *application) cmdShell(args []string, stdout, stderr io.Writer) int {
 	}
 	interactive := false
 	if f, ok := in.(*os.File); ok {
-		if info, err := f.Stat(); err == nil {
-			interactive = info.Mode()&os.ModeCharDevice != 0
-		}
+		interactive = shellTerminal(f)
 	}
 	keepGoing := fs.Bool("keep-going", interactive, "continue after errors; final exit still reports failure (default true on a terminal)")
 	pos, err := parseInterleaved(fs, args)
@@ -85,30 +141,60 @@ func (app *application) cmdShell(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, verb, "--redis <addr> is required (or a configured seat)")
 	}
 	quietRedisOnce.Do(func() { redis.SetLogger(quietRedis{}) })
-	st, err := store.OpenSingle(context.Background(), *addr)
+	st, err := openShellStore(*addr)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	defer st.Close()
-	child := &application{in: in, shared: &connection{Store: st, shared: true}, addr: *addr, defaults: *defaults, receipts: *receipts}
+	child := &application{in: in, shared: sharedConnection(st, func() (*store.Store, error) {
+		return openShellStore(*addr)
+	}), addr: *addr, defaults: *defaults, receipts: *receipts}
+	// prepare may replace the store, so close the final owner, not the first.
+	defer func() { _ = child.shared.Store.Close() }()
 	return child.readCommands(in, stdout, stderr, *keepGoing, interactive)
+}
+
+// Keep one connection, but do not automatically retry commands after a lost
+// reply: the write may already have committed. OpenProbe supplies one bounded
+// dial attempt and no command retries; the client remains reusable on success.
+func openShellStore(addr string) (*store.Store, error) {
+	return store.OpenProbe(context.Background(), addr, seatcred.Process())
 }
 
 const maxShellLine = 1024 * 1024
 
+const shellUsageDetails = `Enter one command per line, optionally prefixed with nova-table.
+Quotes and backslashes preserve values; blank lines and # comments are skipped.
+No variable, glob or command expansion. Maximum line: 1048576 bytes, excluding LF/CRLF.
+File/pipe input stops at the first error. --keep-going discards an overlong line
+and continues at the next line; terminal input defaults to continuing and prints
+nova-table> on stderr. Command failures name their input line.
+The ordinary exit is the highest command status: 0 success, 1 store refusal,
+2 usage/input/connection failure. Earlier successful writes stay committed.
+A failed connection is replaced for the next command; a failed write is not replayed.
+Use help <verb>, quit, exit or EOF. Ctrl-C in watch returns to the shell.
+On Unix, SIGTERM terminates the whole process (status 143); Ctrl-C at the prompt
+terminates it (status 130). A write already sent may have committed.`
+
 func (app *application) readCommands(in io.Reader, stdout, stderr io.Writer, keepGoing, prompt bool) int {
-	scanner := bufio.NewScanner(in)
-	scanner.Buffer(make([]byte, 4096), maxShellLine)
+	reader := bufio.NewReader(in)
 	result, line := 0, 0
 	for {
 		if prompt {
 			fmt.Fprint(stderr, "nova-table> ")
 		}
-		if !scanner.Scan() {
-			break
+		text, readErr := readShellLine(reader)
+		if errors.Is(readErr, io.EOF) {
+			return result
 		}
 		line++
-		args, err := shellWords(scanner.Text())
+		if readErr != nil {
+			result = refuse(stderr, "shell", fmt.Sprintf("reading line %d (maximum %d bytes): %v", line, maxShellLine, readErr))
+			if keepGoing && errors.Is(readErr, errShellLineTooLong) {
+				continue
+			}
+			return result
+		}
+		args, err := shellWords(text)
 		if err == nil && len(args) > 0 && args[0] == "nova-table" {
 			args = args[1:]
 			if len(args) == 0 {
@@ -124,6 +210,9 @@ func (app *application) readCommands(in io.Reader, stdout, stderr io.Writer, kee
 			return result
 		} else {
 			code = app.run(args, stdout, stderr)
+			if code != 0 {
+				fmt.Fprintf(stderr, "nova-table shell: line %d failed (exit %d)\n", line, code)
+			}
 		}
 		if code > result {
 			result = code
@@ -132,10 +221,46 @@ func (app *application) readCommands(in io.Reader, stdout, stderr io.Writer, kee
 			return result
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return refuse(stderr, "shell", fmt.Sprintf("reading line %d (maximum %d bytes): %v", line+1, maxShellLine, err))
+}
+
+var errShellLineTooLong = errors.New("line too long")
+
+// Bound retained input even for a huge line, but consume the whole rejected
+// line so --keep-going resumes at the next command. Reserve one byte for CR
+// before removing LF/CRLF. A read failure cannot execute an incomplete line.
+func readShellLine(reader *bufio.Reader) (string, error) {
+	var data []byte
+	tooLong := false
+	for {
+		part, err := reader.ReadSlice('\n')
+		if err != nil && !errors.Is(err, bufio.ErrBufferFull) && !errors.Is(err, io.EOF) {
+			return "", err
+		}
+		if len(part) > 0 && part[len(part)-1] == '\n' {
+			part = part[:len(part)-1]
+		}
+		if !tooLong {
+			if len(data)+len(part) > maxShellLine+1 {
+				tooLong = true
+				data = nil
+			} else {
+				data = append(data, part...)
+			}
+		}
+		if errors.Is(err, bufio.ErrBufferFull) {
+			continue
+		}
+		if errors.Is(err, io.EOF) && len(data) == 0 && !tooLong {
+			return "", io.EOF
+		}
+		if len(data) > 0 && data[len(data)-1] == '\r' {
+			data = data[:len(data)-1]
+		}
+		if tooLong || len(data) > maxShellLine {
+			return "", errShellLineTooLong
+		}
+		return string(data), nil
 	}
-	return result
 }
 
 // shellWords reads words, quotes and escapes, not an operating-system shell.

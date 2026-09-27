@@ -145,7 +145,7 @@ RunVerb ==
     \/ /\ conn # "live"
        /\ IF Broken = "stale" /\ kept \in Down
           THEN /\ Finish(ConnCode(kept))
-               /\ falseAlarm' = (falseAlarm \/ store = "up")
+               /\ falseAlarm' = TRUE
                /\ wrongCode' = (wrongCode \/ ConnCode(kept) # 2)
                /\ UNCHANGED <<conn, kept>>
           ELSE IF store = "up"
@@ -224,9 +224,10 @@ TypeOK ==
  /\ afterStop \in BOOLEAN /\ afterFail \in BOOLEAN
  /\ falseAlarm \in BOOLEAN /\ wrongCode \in BOOLEAN
 
-\* After a stop no line is started: nothing is written after a stop.
+\* After a stop no new line starts. An in-flight write may still complete.
 NothingStartsAfterStop == ~afterStop
-\* A line fails for the connection only when a dial for that line failed.
+\* A line fails for the connection only when a dial for that line failed,
+\* even if the store remains down when a kept error would be returned.
 NoFalseAlarm == ~falseAlarm
 \* A store that could not be reached is code 2, whatever the dial said.
 ConnectionFailureIsTwo == ~wrongCode
