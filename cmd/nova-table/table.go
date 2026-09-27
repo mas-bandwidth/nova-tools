@@ -19,7 +19,7 @@ func cmdCreate(args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New(verb)
 	addr := redisFlag(fs)
 	columns := fs.String("columns", "", "the columns, name[:projection[:fold[:label]]] each, comma-separated")
-	footer := fs.String("footer", ntable.DefaultFooter, "the footer row's label")
+	footer := fs.String("footer", ntable.DefaultFooter, "the footer row's label (none by default)")
 	widths := fs.String("width", "", "fixed column widths, col=n,...")
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {

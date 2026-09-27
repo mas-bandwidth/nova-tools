@@ -37,12 +37,12 @@ func TestRenderEmptyTableIsTheEmptyString(t *testing.T) {
 		t.Fatalf("all-zero rows hidden rendered %q, want \"\"", got)
 	}
 	// without HideZeroRows the zero rows show
-	want := "row   | a | b\n" +
-		"------+---+--\n" +
-		"x     | 0 | 0\n" +
-		"y     | 0 | 0\n" +
-		"------+---+--\n" +
-		"total | 0 | 0\n"
+	want := "row | a | b\n" +
+		"----+---+--\n" +
+		"x   | 0 | 0\n" +
+		"y   | 0 | 0\n" +
+		"----+---+--\n" +
+		"    | 0 | 0\n"
 	if got := ntable.Render(zeros, ntable.RenderOpts{}); got != want {
 		t.Fatalf("zero rows shown:\n%s\nwant:\n%s", got, want)
 	}
@@ -59,7 +59,7 @@ func TestRenderOneRowAndTotal(t *testing.T) {
 		"-------------+---------+------\n" +
 		"swarm: cards |     150 |     5\n" +
 		"-------------+---------+------\n" +
-		"total        |     150 |     5\n"
+		"             |     150 |     5\n"
 	if got := ntable.Render(one, ntable.RenderOpts{}); got != want {
 		t.Fatalf("one row:\n%s\nwant:\n%s", got, want)
 	}
@@ -78,7 +78,7 @@ func TestRenderWidthsAndHiddenRows(t *testing.T) {
 		"a          | 2\n" +
 		"c          | ?\n" +
 		"-----------+--\n" +
-		"total      | ?\n"
+		"           | ?\n"
 	got := ntable.Render(tb, ntable.RenderOpts{Widths: map[string]int{"row": 10}, HideZeroRows: true})
 	if got != want {
 		t.Fatalf("widths and hidden rows:\n%s\nwant:\n%s", got, want)
@@ -127,7 +127,7 @@ func TestRenderProjectionsAndFolds(t *testing.T) {
 		"a     | ann,bo    | ann    | bo     | 7\n" +
 		"B row | bo,cy     | -      | -      | 9\n" +
 		"------+-----------+--------+--------+--\n" +
-		"total | ann,bo,cy |        |        | 9\n"
+		"      | ann,bo,cy |        |        | 9\n"
 	if got := ntable.Render(tb, ntable.RenderOpts{}); got != want {
 		t.Fatalf("projections and folds:\n%s\nwant:\n%s", got, want)
 	}
@@ -158,11 +158,11 @@ func TestRenderLastLeftColumnIsNotPadded(t *testing.T) {
 	tb.Rows = []ntable.Row{r}
 	// no text column first: the row-label column is put in front and the
 	// footer label sits under it (the n column keeps its fold)
-	want := "row   | n | who\n" +
-		"------+---+----\n" +
-		"r     | 1 | x\n" +
-		"------+---+----\n" +
-		"total | 1 |\n"
+	want := "row | n | who\n" +
+		"----+---+----\n" +
+		"r   | 1 | x\n" +
+		"----+---+----\n" +
+		"    | 1 |\n"
 	got := ntable.Render(tb, ntable.RenderOpts{})
 	if got != want {
 		t.Fatalf("left last column:\n%q\nwant:\n%q", got, want)
@@ -208,9 +208,10 @@ func TestParseColumnsAndWidths(t *testing.T) {
 // TestRenderPutsTheRowLabelFirstAndTitles (Glenn 2026-09-27, the live
 // session: "these tables are hard to interpret. the 'total' under waiting is
 // strange"; "tables need a title"): a definition whose first column is a
-// count column gets the row-label column in front, headed row, the footer
-// label under it and every fold in its own column; a title prints above the
-// grid; an empty table with a title prints the title and (no rows).
+// count column gets the row-label column in front, the footer label under
+// it and every fold in its own column; the title is the top-left cell, the
+// header of that column; an empty table with a title prints the title and
+// (no rows).
 func TestRenderPutsTheRowLabelFirstAndTitles(t *testing.T) {
 	t.Parallel()
 	tb := counts([]string{"waiting", "ready"}, map[string][]int64{"alpha": {2, 1}, "beta": {0, 0}}, []string{"alpha", "beta"})
@@ -218,13 +219,12 @@ func TestRenderPutsTheRowLabelFirstAndTitles(t *testing.T) {
 	for i := range tb.Rows {
 		tb.Rows[i].Cells = tb.Rows[i].Cells[1:]
 	}
-	want := "demo\n" +
-		"row   | waiting | ready\n" +
+	want := "demo  | waiting | ready\n" +
 		"------+---------+------\n" +
 		"alpha |       2 |     1\n" +
 		"beta  |       0 |     0\n" +
 		"------+---------+------\n" +
-		"total |       2 |     1\n"
+		"      |       2 |     1\n"
 	if got := ntable.Render(tb, ntable.RenderOpts{Title: "demo"}); got != want {
 		t.Fatalf("row label first and a title:\n%s\nwant:\n%s", got, want)
 	}

@@ -76,8 +76,11 @@ const (
 	None  = "none"
 )
 
-// DefaultFooter is the footer label a table has when none is set.
-const DefaultFooter = "total"
+// DefaultFooter is the footer label a table has when none is set: none
+// (Glenn 2026-09-27: "the footer title should be off by default"); the
+// footer row still prints the folds, with a blank label cell, and
+// `create --footer <label>` names it.
+const DefaultFooter = ""
 
 // Registry is the SET of every table name.
 const Registry = "tables"

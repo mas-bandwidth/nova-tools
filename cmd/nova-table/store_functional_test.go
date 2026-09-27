@@ -98,13 +98,13 @@ func TestASittingThroughTheVerbs(t *testing.T) {
 		{[]string{"cell", "remove", "jobs", "build", "ready", "b2"}, "TABLE CELL table=jobs row=build col=ready n=1 trips=1\n"},
 		{[]string{"cell", "members", "jobs", "build", "ready"}, "TABLE CELL table=jobs row=build col=ready n=1 trips=1\nTABLE MEMBER table=jobs row=build col=ready member=b1 score=1\n"},
 		{[]string{"show", "jobs"}, "TABLE table=jobs columns=4 rows=2 trips=1\nTABLE ROW table=jobs row=build ready=1 working=0 who=1\nTABLE ROW table=jobs row=\"the tests\" ready=0 working=0 who=1\n"},
-		{[]string{"render", "jobs"}, "jobs\njob    | ready | working | who\n" +
+		{[]string{"render", "jobs"}, "jobs   | ready | working | who\n" +
 			"-------+-------+---------+-------\n" +
 			"build  |     1 |       0 | ann\n" +
 			"tests  |     0 |       0 | bo\n" +
 			"-------+-------+---------+-------\n" +
 			"all    |     1 |       0 | ann,bo\n"},
-		{[]string{"render", "jobs", "--hide-zero-rows", "--width", "job=8"}, "jobs\njob      | ready | working | who\n" +
+		{[]string{"render", "jobs", "--hide-zero-rows", "--width", "job=8"}, "jobs     | ready | working | who\n" +
 			"---------+-------+---------+-------\n" +
 			"build    |     1 |       0 | ann\n" +
 			"---------+-------+---------+-------\n" +
@@ -157,11 +157,11 @@ func TestABoundCellIsAViewTheWritesRefuse(t *testing.T) {
 		}
 	}
 	code, stdout, stderr := runTable(at(addr, "render", "views")...)
-	want := "views\nstream | ready | working\n" +
-		"-------+-------+--------\n" +
-		"s      |     1 |       0\n" +
-		"-------+-------+--------\n" +
-		"total  |     1 |       0\n"
+	want := "views | ready | working\n" +
+		"------+-------+--------\n" +
+		"s     |     1 |       0\n" +
+		"------+-------+--------\n" +
+		"      |     1 |       0\n"
 	if code != 0 || stdout != want {
 		t.Fatalf("render of a bound row: exit %d stderr %q\n%s", code, stderr, stdout)
 	}

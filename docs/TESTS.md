@@ -1252,10 +1252,9 @@ TABLE table=demo columns=4 rows=1 trips=1
 TABLE ROW table=demo row=build ready=1 working=1 done=0
 
 $ nova-table render demo
-demo
-job   | ready | working | done
+demo  | ready | working | done
 ------+-------+---------+-----
 build |     1 |       1 |    0
 ------+-------+---------+-----
-total |     1 |       1 |    0
+      |     1 |       1 |    0
 ```

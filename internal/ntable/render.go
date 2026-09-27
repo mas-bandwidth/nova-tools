@@ -13,9 +13,10 @@ type RenderOpts struct {
 	Widths map[string]int
 	// HideZeroRows hides a row whose count cells are all zero and all read.
 	HideZeroRows bool
-	// Title is printed on its own line above the grid when set (the CLI
-	// passes the table's name: Glenn 2026-09-27, "tables need a title"); an
-	// empty table then prints the title and "(no rows)" instead of nothing.
+	// Title is the table's name, printed in the top-left cell, the header
+	// of the row-label column (Glenn 2026-09-27: "tables need a title";
+	// "the title goes where 'row' is currently"); an empty table then
+	// prints the title and "(no rows)" instead of nothing.
 	Title string
 }
 
@@ -33,8 +34,9 @@ type RenderOpts struct {
 // The row's label is always the first column (Glenn 2026-09-27, the live
 // session: eight benches rendered as eight anonymous rows of numbers): when
 // the definition's first column is not a text column, one is put in front,
-// headed "row", and the footer label prints under it instead of eating the
-// first count column's fold.
+// and the footer label prints under it instead of eating the first count
+// column's fold. Its header is the table's name when the caller gives one
+// (opts.Title), else the column's own label, else "row".
 func Render(t Table, opts RenderOpts) string {
 	rows := make([]Row, 0, len(t.Rows))
 	for _, r := range t.Rows {
@@ -66,6 +68,9 @@ func Render(t Table, opts RenderOpts) string {
 	footer := make([]string, n)
 	for j, c := range cols {
 		header[j] = c.LabelOrName()
+	}
+	if opts.Title != "" {
+		header[0] = opts.Title
 	}
 	for i, r := range rows {
 		body[i] = make([]string, n)
@@ -108,10 +113,6 @@ func Render(t Table, opts RenderOpts) string {
 		right[j] = c.Projection == Count
 	}
 	var b, l strings.Builder
-	if opts.Title != "" {
-		b.WriteString(opts.Title)
-		b.WriteByte('\n')
-	}
 	line := func(cells []string, footerRow bool) {
 		l.Reset()
 		for j, s := range cells {
