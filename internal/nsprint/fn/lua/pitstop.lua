@@ -229,7 +229,7 @@ local function pitstop_open(keys, args)
   for _, s in ipairs(names) do
     local status = redis.call('HGET', 's:' .. s, 'status')
     if status ~= 'closed' then
-      local legacy = redis.call('EXISTS', 's:' .. s .. ':pitstop:legacy')
+      local legacy = redis.call('EXISTS', 'sprint:' .. s .. ':pitstop') -- pitstop.LegacyKey (Stella 2026-09-27: the port read s:<S>:pitstop:legacy and lost a legacy-only hold)
       local kind = redis.call('TYPE', 's:' .. s .. ':pitstop')['ok']
       out[#out + 1] = 'sprint'
       out[#out + 1] = s
