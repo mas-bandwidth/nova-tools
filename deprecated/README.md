@@ -7,7 +7,8 @@ when that cleanup ends.
 Nothing deprecated is built, tested, shipped or maintained. A deprecated
 test never runs and never stops a build, a landing or a release. Nobody
 fixes deprecated code; what is general in it is lifted out into a shared
-module first, and the rest is left as it is.
+module first, and the rest is left as it is. The class tests that walk the
+source tree skip this folder.
 
 Glenn, 2026-09-27: "Tests do not run for deprecated tools and modules."
 "We keep them in deprecated only as reference as we focus on living tools."
@@ -24,6 +25,8 @@ Glenn, 2026-09-27: "Tests do not run for deprecated tools and modules."
 
 | tool | why | since |
 |---|---|---|
+| nova-bus `inbox --decide` | the bus carries messages over git and nothing else (Glenn, 2026-09-27); the classifier routes, their tests and their spec are under `nova-bus-decide/` | 2026-09-27 |
+| nova-board | superseded: who is doing what is the job of nova-sprint as it is rebuilt on nova-table (Glenn, 2026-09-27). Moved here: `cmd/nova-board`, `internal/board`, and its spec, command reference and transcript under `docs/` | 2026-09-27 |
 | nova-sprint | does not work; to be rewritten on nova-table | 2026-09-27 |
 | nova-card, nova-friend | the sprint's runtime, implemented inside it | 2026-09-27 |
 | nova-play, nova-test | new tools with no use on record | 2026-09-27 |

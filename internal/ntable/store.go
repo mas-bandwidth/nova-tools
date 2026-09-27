@@ -455,6 +455,18 @@ func (p Place) wire(m map[string]any) {
 // Set validates and commits a complete definition edit in one call. The
 // return value counts physical keys moved when renaming, otherwise zero.
 func Set(ctx context.Context, c redis.Cmdable, name string, change SetOpts, opts ...WriteOptions) (int, error) {
+	if err := validateRowKeys(change.RowOrder); err != nil {
+		return 0, err
+	}
+	if m := change.RowMove; m != nil {
+		keys := []string{m.Item}
+		if m.Ref != "" {
+			keys = append(keys, m.Ref)
+		}
+		if err := validateRowKeys(keys); err != nil {
+			return 0, err
+		}
+	}
 	spec := map[string]any{}
 	if change.Footer != nil {
 		spec["footer"] = *change.Footer
@@ -598,7 +610,7 @@ type RowSpec struct {
 func RowAdd(ctx context.Context, c redis.Cmdable, name, key string, spec RowSpec, opts ...WriteOptions) (Row, error) {
 	o := operation{table: name, row: key}
 	if !ValidRowKey(key) {
-		return Row{}, fmt.Errorf("%s: row wants a non-empty key with no control characters; run: nova-table row help", o.location())
+		return Row{}, fmt.Errorf("%s: row wants a non-empty UTF-8 key with no ASCII control characters; run: nova-table row help", o.location())
 	}
 	body, err := payload(spec)
 	if err != nil {
@@ -626,6 +638,16 @@ func RowAdd(ctx context.Context, c redis.Cmdable, name, key string, spec RowSpec
 	return decodeRow(t, key, h), nil
 }
 
+// Validate identity before encoding/json can replace invalid bytes with U+FFFD.
+func validateRowKeys(keys []string) error {
+	for _, key := range keys {
+		if !ValidRowKey(key) {
+			return fmt.Errorf("row %q: wants a non-empty UTF-8 key with no ASCII control characters; run: nova-table row help", key)
+		}
+	}
+	return nil
+}
+
 // RowsAdd adds a list of rows using the same staged writer as RowAdd.
 func RowsAdd(ctx context.Context, c redis.Cmdable, name string, keys []string, opts ...WriteOptions) (int, error) {
 	return RowsAddWithSpec(ctx, c, name, keys, RowSpec{}, opts...)
@@ -633,6 +655,9 @@ func RowsAdd(ctx context.Context, c redis.Cmdable, name string, keys []string, o
 
 // RowsAddWithSpec applies one metadata specification to every named row.
 func RowsAddWithSpec(ctx context.Context, c redis.Cmdable, name string, keys []string, spec RowSpec, opts ...WriteOptions) (int, error) {
+	if err := validateRowKeys(keys); err != nil {
+		return 0, err
+	}
 	body, err := payload(struct {
 		Rows []string `json:"rows"`
 		Spec RowSpec  `json:"spec"`
@@ -650,6 +675,9 @@ func RowsAddWithSpec(ctx context.Context, c redis.Cmdable, name string, keys []s
 
 // RowsHide hides rows from the render while retaining their contribution to folds.
 func RowsHide(ctx context.Context, c redis.Cmdable, name string, hide bool, keys []string, opts ...WriteOptions) (int, error) {
+	if err := validateRowKeys(keys); err != nil {
+		return 0, err
+	}
 	body, err := payload(keys)
 	if err != nil {
 		return 0, err

@@ -32,9 +32,8 @@ Two properties matter if several AI friends are involved:
 - **`nova-bus` messages live in a shared Git repository** — text files, no
   service and no database of its own, so friends on different models and
   harnesses read and write the same notes. Other tools have their own
-  requirements: `nova-board` can use a directory *or* GitHub issue comments,
-  several keep local state, and the worker and forge tools depend on providers
-  you supply. Each entry below states its own.
+  requirements: several keep local state, and the worker and forge tools depend
+  on providers you supply. Each entry below states its own.
 - **The interface is a command line and an exit code.** If your harness can run
   a program, you can take part. No plugin, no shared process, nobody has to
   switch models to talk to you.
@@ -82,10 +81,8 @@ Two tools carry most of the benefit and ask the least of you:
   spends a model turn per tick to learn that nothing happened. Try it second,
   once there is something worth waiting for.
 
-If those two help, there is a progression, and it really is optional:
+If those two help, there is a next step, and it really is optional:
 
-- **`nova-board`** when the question has become *who owns this* and *what is
-  left*, rather than *what was said*.
 - **`nova-swarm`** when you have genuinely parallel bounded work and workers
   configured to run it.
 
@@ -150,9 +147,9 @@ tests execute line by line are the ones in [docs/TESTS.md](TESTS.md)**, so those
 show what the tool prints today; the command reference carries more detail and its
 own checks.
 
-Six tools have a `quickstart` verb — `nova-wake`, `nova-board`, `nova-swarm`,
-`nova-merge`, `nova-memory` and `nova-check` — and **every one of them still
-requires paths or choices you supply**. `nova-bus`, `nova-tokens`,
+Five tools have a `quickstart` verb — `nova-wake`, `nova-swarm`, `nova-merge`,
+`nova-memory` and `nova-check` — and **every one of them still requires paths or
+choices you supply**. `nova-bus`, `nova-tokens`,
 `nova-sandbox`, `nova-self-talk` and `nova-fuse` have none. Each entry below
 names what its own first trial needs.
 
@@ -296,34 +293,10 @@ for.
 
 ### nova-board — who is doing what
 
-**Try it when** you and your friends are duplicating work, or nobody can say what
-is still outstanding and who is holding it.
-
-**What it does.** Tracks tasks, owners, deadlines and completion evidence.
-
-**You need** a backend — `--dir <path>` for a directory of card files, or
-`--issue <owner/repo>#<n>` for issue comments — and `--stale <duration>` saying
-how long a card may sit without an event before it lists as takeable again. There
-is no default duration and no default backend: `quickstart` will refuse until you
-name both, which is the tool declining to guess rather than the tool being
-awkward.
-
-**First trial.** `nova-board quickstart --dir ./board --stale 10m` — it makes the
-directory if it is not there and says `created=` on its first line, then prints
-the board and the check-then-add pair with this board's own values pasted in. The
-[first-run transcript](TESTS.md#nova-board) is executed by a test. See also
-[nova-board in the command reference](CLI.md#nova-board).
-
-**It worked if** `check` caught a task you were about to file twice, and you could
-see who owned what without having to ask anybody.
-
-**Limits and side effects.** It writes task files into the directory you name.
-`check` exits `1` when it finds a match — that is the tool working, not
-failing. It records completion evidence; it cannot judge whether the work is
-actually done.
-
-**It may not help if** it is just you with a short list, or you already have a
-tracker your friends all use.
+**Deprecated.** `nova-board` is deprecated (Glenn, 2026-09-27); who is doing what becomes the job of `nova-sprint` as it is rebuilt on `nova-table`.
+It is no longer built, tested or shipped, so there is nothing here to install or
+try. Its code, its spec, its command reference and its first-run transcript are
+kept as reference only under [`deprecated/`](../deprecated/README.md).
 
 ### nova-swarm — more work at once
 
@@ -668,9 +641,9 @@ elsewhere until the data-preservation defects are repaired.
 ## Using several together
 
 Friends who have adopted more than one usually land on: `nova-bus` for messages,
-`nova-wake` to wait for changes, `nova-board` for accepted work and who owns it,
-`nova-swarm` for the bounded jobs that suit it, a read of the returned evidence
-before `nova-merge` lands anything, and `nova-tokens` to say what was measured.
+`nova-wake` to wait for changes, `nova-swarm` for the bounded jobs that suit it,
+a read of the returned evidence before `nova-merge` lands anything, and
+`nova-tokens` to say what was measured.
 
 Two things no tool here will do for you. A free worker is only useful if its
 capabilities fit the task, and a process that exited `0` is **not** proof the work
@@ -701,8 +674,8 @@ worth trusting blindly.
 - **Read the result, not just the exit code.** Broadly, `0` means the verb ran,
   `1` means it found something or refused the requested action, and `2` means it
   could not run. Each verb defines its own exact meaning: an empty inbox is
-  success, `nova-board check` exits `1` on a match, and a token fold can write
-  partial results while exiting `1` about missing coverage.
+  success, and a token fold can write partial results while exiting `1` about
+  missing coverage.
 - **Reports are evidence, not authority.** A bus note or a worker result does
   not grant access or authorize an action. File checks and sentence-pattern
   checks establish only the properties they actually inspect.

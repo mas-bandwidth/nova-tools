@@ -11,7 +11,7 @@ A verb earns its place by taking a hand-written script out of `~/rowan-working/b
 | script | the verb that replaces it |
 | --- | --- |
 | `status-page.sh`, `status.sh`, `progress.sh` | `nova-sprint table` (the nova-pulse verbs that first replaced them are deleted, #3801) |
-| `board.sh` | `nova-board list`, `add`, `take`, `close`, `check` |
+| `board.sh` | `nova-board list`, `add`, `take`, `close`, `check` first replaced it; `nova-board` is deprecated (2026-09-27, see `deprecated/README.md`) |
 | `token-fold.sh` | `nova-tokens fold --claude <label>=<dir>` |
 | `token-fold-opencode.sh` | `nova-tokens fold --opencode <label>=<file> --scratch <dir>` |
 | `token-collate.sh` | `nova-tokens fold --out <dir> --repos <file> --bus <dir>`, then `sum` and `check` |
@@ -629,11 +629,12 @@ nova-bus inbox --bus <dir> --as <you> --receipt-max-words 40 \
 
 `--legacy-before` takes a UTC date (midnight at its start) or an RFC 3339 instant; a note dated before the line is not carried and not listed, only counted on one `INBOX LEGACY` line. `--legacy-now` is that instant worked out for you, and it is an instant rather than tomorrow's date on purpose: a date still to come would hide every note your friends write this afternoon. A reader's first `--advance` over notes older than today is refused until it carries `--legacy-before`, `--legacy-now` or `--carry-history`, and the refusal hands you the exact line to run; a line that did not know took 602 old notes onto its open list and printed all 602 on every poll. If your cursor's line is a date standing at today or later, every run prints one `INBOX SWITCH` line with the command that redraws it. Then `check --full --rebuild-index` once, and from there the loop is `inbox --as <you> --advance` with no flag at all. Nothing is deleted and no note is changed; an old note is still on the bus, still answerable by id or path.
 
-### Reading a backlog with a typed decision
+### What inbox does not do
 
-`--decide` is opt-in and asks TypeSafe Jev (`internal/decide`) one typed decision per `INBOX NOTE` line: the note's subject and the first 600 characters of its body, with any `sk-` key redacted, are sent with a `kind` choice (`start`, `done`, `question`, `edge`, `refusal`, `receipt`), `needs_reply` and `blocked` noul questions, and a `wake` choice (`ack`, `info`, `needs-action`) that says whether the note wakes its reader: `ack` only confirms receipt or completion and asks nothing, `info` reports a fact and asks nothing of this reader, and `needs-action` asks this reader to do, decide, review, answer or stop something. Each `INBOX NOTE` line then carries ` kind=<k> needs_reply=<p> blocked=<p> conf=<c> wake=<w> owner=<lane> ref=<refs>`, where `owner` is the note's `To:` header and `ref` is every `#<digits>` and `<owner>/<repo>#<digits>` in the subject and body (at most four, then `+<n>`), both read mechanically and never asked of the provider. The run ends with `INBOX DECIDED n=<n> needs_reply=<m> below_floor=<b> wake=<w>` where `n` is the notes judged, `needs_reply` how many of them at or above 0.5, `below_floor` how many kinds the provider was less sure of than `--floor` (default 0.9), and `wake` how many notes read `needs-action` or `unknown` and so must wake a window. A decision below the floor is a suggestion: the listing still prints it and the caller keeps today's behaviour. `--key-env` names the environment variable holding the key (default `JEV_API_KEY`) and `--base-url` names the endpoint. The key is never printed and never a file or an argument. A subject starting `STOP:` or `HOLD:` is a structured signal and is never sent: it is always marked `kind=edge needs_reply=1.00 wake=needs-action` by rule, because a structured signal asks for action and is never something a model filters (Stella's rule — structured signals bypass semantic filtering). That is the **rule table**, and it is consulted first on every bus. The pass is lazy, so an empty inbox makes zero provider calls.
-
-**On a private bus — a clone with no `.public` marker — `--decide` runs from the rule table and from nothing else.** The marker is the clone's own statement that its text may leave, and its absence is the default. A private run builds no provider client, reads no provider key and opens no socket: the route is chosen from the marker before the first note is opened, and the value it uses (`privateDecider`, `cmd/nova-bus/private.go`) has no endpoint, no key-env and no client in it, so there is nothing in it to call out with. Every note the rule table can answer is answered — its `INBOX NOTE` line still carries `wake=`, `owner=` and `ref=` like any other, read mechanically off the same local file — and the run's own `INBOX DECIDED` line carries `wake=<w>` plus two more fields — `privacy=private decider=rules` — so the receipt says what actually decided. A note the table has **no** row for is refused by name before the client, before the key and before any call: one `INBOX REFUSED: privacy=private decider=rules why=private-evidence id=<id> path=<path>` line and exit 2. The run never retries that note on the public route. **There is no override**: no `--allow-private` (removed here), no marker file, no environment variable, and `wait` has never had `--decide` at all and does not decide. A `local` label — a loopback `--base-url`, say — is a string and buys nothing; a locally-run decider becomes usable on a private bus when it can be admitted mechanically, and until then it is refused with this same reason. This settles #1644 in favour of [SPEC-DECIDE.md](SPEC-DECIDE.md) rule 4 and S7; an explicit remote-private exception is a separate, live, scoped authorization and is not in the tool.
+`nova-bus` carries messages over Git. It does not classify notes or contact an
+AI provider. The retired `--decide`, `--floor`, `--key-env` and `--base-url`
+flags are refused; read the notes and choose how to respond. A `.public`
+marker does not change how inbox works.
 
 ### The rule this tool does not enforce
 
@@ -1666,103 +1667,6 @@ longer the entry's head prints `PACKET STALE entry=… asked=… current=…`, e
 naming the head it moved to. Every refusal is one `PACKET REFUSED: …` line,
 exit 2, and a `--reuse` candidate built for another (entry, head, range) is a
 `PACKET REUSE` line naming what it was built for.
-
-## nova-board
-
-```
-nova-board list  (--issue <owner/repo>#<n> --gh-timeout <seconds> | --dir <path>) --stale <duration> [--list] [--open] [--owner <name>] [--max <n>]
-nova-board add   (--issue ... | --dir ...) --as <name> --text <text> --by <duration-or-stamp> --default <text>
-                 [--owner <name>] [--thing <name> --leg <name>] [--evidence <path>] [--id <thirty-two hex>]
-nova-board take  (--issue ... | --dir ...) --as <name> --card <id> --stale <duration> [--anyway]
-nova-board close (--issue ... | --dir ...) --as <name> --card <id> --stale <duration> (--how <text> | --landed <repo>#<n> | --probed <evidence>) [--anyway]
-nova-board check (--issue ... | --dir ...) --words <text> [--max <n>] [--all]     # EXIT 1 WHEN IT MATCHES
-nova-board quickstart (--issue ... | --dir ...) --stale <duration>
-```
-
-A **board** is the list of things a group of lines owes: one **card** per item, appended
-when it is noticed, taken by whoever picks it up, closed with a sentence saying how.
-Nothing on it is ever deleted and nothing is ever edited — it is an append-only log of
-events, and the list of open cards is *derived* from that log rather than stored anywhere.
-The rules, the failures each one closes and what the prototype did wrong are in
-[docs/SPEC-BOARD.md](SPEC-BOARD.md), which is the contract.
-
-**The verb that earns the tool is `check`, and it exits 1 when it matches.** The NO a board
-owes a filer is *this is already on the board, do not file it*, so the rule every reader and
-fixer follows is one line of shell — and the guard tells a NO from a could-not-run:
-
-```sh
-nova-board check --dir ./board --words "windows runner skips" || { [ $? -eq 1 ] && exit 0; exit 2; }
-nova-board add   --dir ./board --as rowan --text "the Windows runner skips three steps" \
-                 --by 4h --default "rowan files it on the schema board as a known gap"
-```
-
-**A card matches only when EVERY word appears** in its text (lower-cased, as a substring):
-more words is a *narrower* check, never a broader one — `--words "the Windows CI skips
-steps"` does not match the card *the windows runner skips three steps*. Two or three rare
-words is the query that works, and `matched=0` over three or more words says so in a
-`BOARD NOTE`. A check whose every word is in more than half the board still **exits 1** —
-a matched check exits 1, always — and says so in a `BOARD NOTE`: the hits are about the
-board's prose rather than about your finding, and narrowing `--words` is what sharpens it.
-
-**The default view is counts, not cards**: one line per owner, one per leg, one `BOARD OK`
-and exactly one `BOARD NEXT` naming the one thing to do first. At 500 cards across 20 lines
-it is 27 lines and under 4 KB, and it does not grow with the number of cards. Cards print
-under `--list`, capped at `--max` with one `MORE` line; `--list --owner <name>` is one
-line's own batch.
-
-**Every card has a deadline and a default** (`--by`, `--default`): nothing here waits
-forever. **Every path and every duration comes from a flag** — there is no default board,
-no default `--stale` and no default `--gh-timeout` (required under `--issue`, which is the
-backend that runs `gh`), and no environment variable configures anything. A card taken by a
-line that then goes silent is `stale=true` past `--stale` and is takeable again without
-`--anyway`; a take or a close over somebody's *live* take is refused at exit 1 and names
-the holder. Two backends, one format: a directory of card files (`--dir`, which this tool
-appends to and never commits — landing it is yours) and issue comments (`--issue` with
-`--gh-timeout <seconds>`, durable when the command returns). On the issue backend, the
-comment's actual author (from GitHub's `user.login`) is used for card ownership and
-closing; the `--as` value remains as a display label on the event. The file backend has
-no author, so it uses `--as` as before.
-
-### First run
-
-`quickstart` needs a board and a stale window. It prints the board's counts and then the
-check-then-add pair with this board's own values in it, quoted so it can be pasted.
-`cmd/nova-board/testdata/example-board` is a board the size of a first run, and the
-transcript the tests execute against it is in [TESTS.md](TESTS.md#nova-board).
-
-`quickstart`, and the first `add`, make the directory if it is not there — `created=` on
-`quickstart`'s first line says whether that run made it — while `list`, `check`, `take` and
-`close` refuse one that is missing rather than making it, so a wrong path is a refusal and
-not an empty board:
-
-```
-$ nova-board quickstart --dir ./board --stale 10m
-QUICKSTART OK backend=dir source=./board stale=10m0s created=false: the board, then the rule every filer runs in front of add
-BOARD LINE name=emma open=1 overdue=1 stale=1
-BOARD LINE name=bo open=1 overdue=0 stale=1
-BOARD LINE name=rowan open=1 overdue=0 stale=1
-BOARD LINE name=freddy open=1 overdue=0 stale=1
-BOARD LEG leg=cpp owed=1 probed=0
-BOARD LEG leg=go owed=0 probed=1
-BOARD NEXT the oldest OVERDUE card 283e2dd1e5c5424d7637d28488365e98, owed by emma, due 2026-09-11T09:00:00Z -- the token ledger has no September rows yet
-BOARD OK cards=5 open=4 closed=1 stale=4 overdue=1 owed=1 lines=4 conflicts=0 quarantined=0 shown=8 backend=dir source=./board
-QUICKSTART LINE n=1 what=check: "nova-board check --dir ./board --words 'the token ledger' || { [ $? -eq 1 ] && exit 0; exit 2; }"
-QUICKSTART LINE n=2 what=add: "nova-board add --dir ./board --as <your-name> --text 'the token ledger has no September rows yet' --by 4h --default 'the filer files it as a known gap'"
-QUICKSTART NOTE check EXITS 1 WHEN IT MATCHES, so the guard reads "if it is already there, stop"; the exit-2 arm tells a NO from a board that could not be read
-QUICKSTART NOTE --stale 10m0s is this family's number and this run passed it in words: there is no default duration here, and --by and --default are required on every card
-```
-
-**What a first run gets wrong.** `--dir` naming a directory that is not there: `quickstart`
-and the first `add` make it, because a first run has nowhere to write yet and a board is an
-append-only log, so an empty directory is a valid empty ledger; `list`, `check`, `take` and
-`close` refuse — a read or a take against a directory that is not there is a path typed
-wrong, and making it would answer the typo with an empty board. That refusal names the
-`mkdir -p` that fixes it, quoted so a `--dir` with a space in it pastes. `--stale` missing: it wants how long a card may go without
-an event before it lists as takeable again, and the family's number is 10m — the tool will
-not guess one. No backend, or both: name exactly one, because a board written to two places
-is two boards with one name. `--by` or `--default` missing on `add`: a card with no deadline
-cannot be filed. And reading `check`'s exit backwards: 1 means *found it, do not file*, so
-the natural `&&` chain would file exactly the duplicates.
 
 ## nova-swarm
 

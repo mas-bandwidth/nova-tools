@@ -127,6 +127,10 @@ func copyTree(src, dst string) error {
 		if d.IsDir() && d.Name() == ".git" {
 			return fs.SkipDir
 		}
+		// deprecated/ is out of scope of the testing drive (Glenn 2026-09-27); see deprecated/README.md
+		if d.IsDir() && rel == "deprecated" {
+			return fs.SkipDir
+		}
 		target := filepath.Join(dst, rel)
 		if d.IsDir() {
 			return os.MkdirAll(target, 0o755)

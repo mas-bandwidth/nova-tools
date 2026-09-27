@@ -15,7 +15,6 @@
 $ HOME=/Users/me/pool/jobs/j1/home \
 $ go build -o ~/bin/nova-sandbox ./cmd/nova-sandbox      # or name it with --sandbox <path>
 $ mkdir -p /Users/me/pool/jobs/j1/home
-$ nova-board quickstart --dir ./board --stale 10m
 $ nova-bus draft --bus ./bus --as Bo --to Ada --subject gate > draft.md
 $ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --advance --remote origin --branch main
 $ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --full --advance --remote origin --branch main
@@ -89,9 +88,6 @@ example: nova-work next --file ./units.lisp --for rowan-child --lanes ./lanes.ts
 example: nova-work attempt record --file ./units.lisp --unit certify:verb --by rowan-child --outcome ok --proof 8a132e77 --pr 1369
 example: nova-work events --redis 127.0.0.1:6379 --once
 example: go run cmd/nova-ci/timing.go --log internal/ci/timing/testdata/events.jsonl
-example: nova-board check --dir ./board --words windows
-example: nova-board list --dir ./board --stale 10m --list --max 3
-example: nova-board quickstart --dir ./board --stale 10m
 example: nova-bus check --bus ./bus --full
 example: nova-bus draft --bus ./bus --as Ada --to Bo --subject gate
 example: nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --full --open

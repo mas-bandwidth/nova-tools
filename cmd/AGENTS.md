@@ -4,7 +4,6 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 
 | dir | purpose | guard | command |
 | --- | --- | --- | --- |
-| `nova-board/` | board viewer and coordinator CLI | `go test ./cmd/nova-board` | `go test ./cmd/nova-board` |
 | `nova-bus/` | coordination bus inbox, send, and wait CLI | `go test ./cmd/nova-bus` | `go test ./cmd/nova-bus` |
 | `nova-cairn/` | dusk memory distillation CLI | `go test ./cmd/nova-cairn` | `go test ./cmd/nova-cairn` |
 | `nova-card/` | card wrapper owning one card attempt on a bench | `go test ./cmd/nova-card` | `go test ./cmd/nova-card` |

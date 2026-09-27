@@ -94,11 +94,7 @@ var messageBusAudit = audit.Config{
 		// site without an if. Its body is walked by the same classifier, which is where the
 		// oneline.Field is read.
 		//
-		// decideSuffix builds the typed-decision suffix on an INBOX NOTE line: every text
-		// field (kind, wake, owner, ref) goes through oneline.Field inside it and the three
-		// numbers use numeric verbs, so its result is safe to interpolate raw. It exists so
-		// the two INBOX NOTE sites cannot drift apart (#1617).
-		"oneline.Quote", "quoteList", "cappedList", "hostField", "decideSuffix",
+		"oneline.Quote", "quoteList", "cappedList", "hostField",
 	},
 	Imports: []string{
 		// version.go's resolution order, which now lives once in internal/buildinfo
@@ -131,19 +127,6 @@ var messageBusAudit = audit.Config{
 		// duration is rendered through oneline.Field like every other line here.
 		`"sync"`,
 
-		// context carries the Decide call's cancellation only; it holds no writer.
-		`"context"`,
-		// regexp is redactSK's pattern and replacement: it returns a string that reaches
-		// the provider as the request body, never a stream this package prints to.
-		`"regexp"`,
-		// decide is --decide's provider client, whose Decide returns typed answers; the
-		// only bytes it touches are the HTTP request body, and every value this package
-		// prints from an answer goes through oneline.Field or is numeric.
-		`"github.com/mas-bandwidth/nova-tools/internal/decide"`,
-		// questions is S7's shared redaction (Redact, SecretShaped): pure string
-		// functions over the provider-bound state. It holds no writer and reaches no
-		// stream; nothing it returns is printed.
-		`"github.com/mas-bandwidth/nova-tools/internal/decide/questions"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/bus"`,
 		// errors is reply.go's: errors.Is over the two sentinel refusals a no-replace
 		// publish makes, and errors.New for one refusal's own text. It holds no writer at
