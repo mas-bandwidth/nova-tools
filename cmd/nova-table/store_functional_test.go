@@ -23,7 +23,7 @@ func TestARefusalSaysWhatTheInputWants(t *testing.T) {
 	}{
 		{[]string{"create", "--redis", addr}, "wants one table name: create <table> --columns"},
 		{[]string{"create", "demo", "--redis", addr}, "--columns wants the columns, name[:projection[:fold[:label]]] each"},
-		{[]string{"create", "demo", "--columns", "a:rows", "--redis", addr}, `column a wants a projection of count, members, first, last or text, not "rows"`},
+		{[]string{"create", "demo", "--columns", "a:rows", "--redis", addr}, `column a wants a projection of count, members, first, last, text or pct(<count column>), not "rows"`},
 		{[]string{"create", "demo", "--columns", "a", "--width", "b=3", "--redis", addr}, "--width names column b, which --columns does not declare"},
 		{[]string{"create", "bad name", "--columns", "a", "--redis", addr}, "the table name wants letters, digits, _ . and -"},
 		{[]string{"row", "--redis", addr}, "wants add, set or del"},
@@ -116,9 +116,9 @@ func TestASittingThroughTheVerbs(t *testing.T) {
 		{[]string{"row", "set", "jobs", "build", "note=green"}, "TABLE ROW SET table=jobs row=build cols=1 trips=1\n"},
 		{[]string{"render", "jobs", "--hide-zero-rows"}, "jobs  | ready | working | who    | ready% | note\n" +
 			"------+-------+---------+--------+--------+------\n" +
-			"build |     1 |       0 | ann    | 100%   | green\n" +
+			"build |     1 |       0 | ann    | 100.0% | green\n" +
 			"------+-------+---------+--------+--------+------\n" +
-			"sum   |     1 |       0 | ann,bo | 100%   |\n"},
+			"sum   |     1 |       0 | ann,bo | 100.0% |\n"},
 		{[]string{"set", "jobs", "--rename", "work"}, "TABLE SET table=jobs renamed=work moved=7 trips=1\n"},
 		{[]string{"list"}, "TABLE LIST tables=1 trips=1\nTABLE table=work columns=6 rows=2\n"},
 		{[]string{"set", "work", "--rename", "jobs"}, "TABLE SET table=work renamed=jobs moved=7 trips=1\n"},

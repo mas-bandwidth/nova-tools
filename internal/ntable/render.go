@@ -267,10 +267,11 @@ func formulaText(cols []Column, c Column, r Row) string {
 	return pctText(v)
 }
 
+// pctText prints a percentage with one decimal always, "50.0%" (Glenn
+// 2026-09-27: "standardize on one decimal point of precision for the %,
+// even if it is .0").
 func pctText(v float64) string {
-	s := strconv.FormatFloat(v, 'f', 1, 64)
-	s = strings.TrimSuffix(s, ".0")
-	return s + "%"
+	return strconv.FormatFloat(v, 'f', 1, 64) + "%"
 }
 
 // foldText is one footer cell as printed, over every row (hidden rows

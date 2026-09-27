@@ -266,7 +266,7 @@ func TestRenderFormulaAndTextCells(t *testing.T) {
 	want := "streams | waiting | ready | working | done | waiting% | status\n" +
 		"--------+---------+-------+---------+------+----------+-------\n" +
 		"alpha   |       1 |     1 |       1 |    0 | 33.3%    | up\n" +
-		"beta    |       5 |     2 |       3 |    0 | 50%      | beta\n" +
+		"beta    |       5 |     2 |       3 |    0 | 50.0%    | beta\n" +
 		"empty   |       0 |     0 |       0 |    0 | -        | empty\n" +
 		"--------+---------+-------+---------+------+----------+-------\n" +
 		"total   |       6 |     3 |       4 |    0 | 41.7%    |\n"
