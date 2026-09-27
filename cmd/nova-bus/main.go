@@ -41,14 +41,12 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -56,8 +54,6 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
-	"github.com/mas-bandwidth/nova-tools/internal/decide"
-	"github.com/mas-bandwidth/nova-tools/internal/decide/questions"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -75,7 +71,6 @@ usage:
         [--legacy-before <date-or-instant>|--legacy-now|--carry-history]
         [--advance --remote <name> --branch <name> [--attempts <n>] [--no-push]]
         [--diagnostics]
-        [--decide [--floor <f>] [--key-env <name>] [--base-url <url>]]
   nova-bus wait --bus <dir> --as <name> --receipt-max-words <n> --timeout <duration> --remote <name> --branch <name>
         [--until <instant>] [--idle-exit <n>]
         [--bodies [--max-notes <n>] [--max-bytes <n>] [--after <token>]]
@@ -1300,10 +1295,6 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	legacyNow := f.fs.Bool("legacy-now", false, "draw the switch-day line at THIS run's UTC instant: exactly --legacy-before <now>, so everything already on the bus is history and everything after this moment is news")
 	carryHistory := f.fs.Bool("carry-history", false, "on your FIRST --advance, carry every old note on your open list instead of drawing a switch-day line; does nothing otherwise")
 	diagnostics := f.fs.Bool("diagnostics", false, "name every unreadable file with its reason, even ones already shown; the default collapses unchanged ones to one count line")
-	askDecide := f.fs.Bool("decide", false, "ask the provider for a typed kind, needs_reply and blocked on every INBOX NOTE line")
-	decideFloor := f.fs.Float64("floor", 0.9, "with --decide, the confidence floor below which a decision is only a suggestion")
-	decideKeyEnv := f.fs.String("key-env", decide.DefaultKeyEnv, "with --decide, the environment variable holding the provider key")
-	decideBaseURL := f.fs.String("base-url", decide.DefaultBaseURL, "with --decide, the provider endpoint; read on a public bus only")
 	if !f.parse(args, stderr, map[string]*string{"bus": busDir, "as": as}) {
 		return 2
 	}
@@ -1381,23 +1372,6 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 			return 2
 		}
 	}
-	if *askDecide && (*decideFloor < 0 || *decideFloor > 1) {
-		fmt.Fprintf(stderr, "nova-bus inbox: --floor is a confidence and stands between 0 and 1 (got %g); refusing to guess; run: nova-bus help\n", *decideFloor)
-		return 2
-	}
-	// A BUS WITH NO .public MARKER IS A PRIVATE ONE, AND IT IS NO LONGER BLANKET-REFUSED.
-	//
-	// #1644's contract, settled by Stella's ruling of 2026-09-19T23:13Z: an explicit
-	// `inbox --decide` on a private bus answers from the mechanical rule table, with no
-	// client, no provider key and no call; a note the table has no row for is refused by
-	// name before all three, and the run never falls back to the public route. What that
-	// costs is written into the TYPE the private route uses (cmd/nova-bus/private.go), not
-	// into a flag: `--allow-private` is GONE, and nothing replaces it. The earlier blanket
-	// refusal stood here and sent every reader of a private bus to that flag.
-	//
-	// The marker is read once, before the listing, so the route is fixed before a single
-	// note is opened. Its ABSENCE is the default: a bus nobody has said anything about is
-	// private.
 	o := inboxOpts{
 		busDir: *busDir, as: *as, maxWords: maxWordsValue,
 		full: *full, openList: *openList, openMax: *openMax, openWarn: *openWarn, advance: *advance,
@@ -1406,8 +1380,6 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 		bodies: *bodies, maxNotes: *maxNotes, maxBytes: *maxBytes, after: *after,
 		maxCommits: *maxCommits, walkProgress: true,
 		diagnostics: *diagnostics,
-		decide:      *askDecide, floor: *decideFloor, keyEnv: *decideKeyEnv, baseURL: *decideBaseURL,
-		private: busIsPrivate(*busDir),
 	}
 	// THE ROOT CHECK COMES BEFORE THE ROSTER, and it did not. Point --bus at a
 	// subdirectory of a bigger repository and the run refused with "participants.json: no
@@ -1475,21 +1447,6 @@ type inboxOpts struct {
 	// way; only the narration is a verb's choice.
 	walkProgress bool
 	diagnostics  bool
-	// decide turns the semantic pass on: every INBOX NOTE line is sent to the
-	// provider as one typed decision, and the line carries the answer. floor is the
-	// confidence floor below which the answer is only a suggestion, keyEnv names the
-	// environment variable holding the key, and baseURL is the provider endpoint.
-	// All four are `inbox`'s only; `wait` leaves decide false.
-	decide  bool
-	floor   float64
-	keyEnv  string
-	baseURL string
-	// private is read from the bus clone -- it is true when the clone carries no .public
-	// marker -- and it is NOT a flag: no caller sets it, and there is nothing to pass that
-	// changes it. It chooses which decider the listing builds, and the private one is a
-	// type with no client, no key-env and no base URL in it. `wait` leaves decide false,
-	// so it builds neither.
-	private bool
 	// quietBeats records that the caller passed `wait --quiet-beats`. Since #328 a change
 	// that is only beats and cursors never wakes a wait, so the flag is accepted and
 	// changes nothing; it is kept so callers that pass it keep working. It is `wait`'s
@@ -1567,14 +1524,6 @@ type inboxReading struct {
 // because `wait` holds it across a poll's fetch as well as its listing.
 func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, inboxReading) {
 	var r inboxReading
-	// When --decide is on, this judges the notes it prints. It is lazy, so a listing
-	// with no notes builds no client and calls no provider. WHICH decider it is comes
-	// from the bus clone and not from any flag: a clone with no .public marker gets the
-	// private one, whose type has nothing in it to call a provider with.
-	var d noteJudge
-	if o.decide {
-		d = newNoteJudge(o)
-	}
 	c, err := bus.LoadConfig(o.busDir)
 	if err != nil {
 		fmt.Fprintf(stderr, "nova-bus inbox: %s\n", oneline.Err(err))
@@ -1919,11 +1868,7 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 				fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(pageErr))
 				return 2, r
 			}
-			if err := printBodyPage(stdout, page, o.maxBytes, d); err != nil {
-				if o.decide {
-					fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(err))
-					return 2, r
-				}
+			if err := printBodyPage(stdout, page, o.maxBytes); err != nil {
 				fmt.Fprintf(stderr, "INBOX FAIL output: %s\n", oneline.Err(err))
 				return 1, r
 			}
@@ -1957,11 +1902,7 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 				return 1, inboxReading{}
 			}
 		} else {
-			if _, err := printOpenEntries(stdout, res.Fresh, len(res.Fresh), d); err != nil {
-				if o.decide {
-					fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(err))
-					return 2, r
-				}
+			if _, err := printOpenEntries(stdout, res.Fresh, len(res.Fresh)); err != nil {
 				fmt.Fprintf(stderr, "INBOX FAIL output: %s\n", oneline.Err(err))
 				return 1, r
 			}
@@ -2000,12 +1941,8 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 	// the listing says how many were left and which flag widens it.
 	if listCarried {
 		rows := bus.SortForListing(res.Open)
-		shown, err := printOpenEntries(stdout, rows, o.openMax, d)
+		shown, err := printOpenEntries(stdout, rows, o.openMax)
 		if err != nil {
-			if o.decide {
-				fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(err))
-				return 2, r
-			}
 			fmt.Fprintf(stderr, "INBOX FAIL output: %s\n", oneline.Err(err))
 			return 1, r
 		}
@@ -2032,26 +1969,6 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 	// BOTH, under the same names, beside the decomposition that makes them add up.
 	fmt.Fprintf(stdout, "INBOX OK as=%s carrying=%d open=%d notes=%d receipts=%d heard=%d unaddressed=%d unreadable=%d\n",
 		oneline.Field(me.Name), len(res.Open), notes+receipts, notes, receipts, heard, len(res.Unaddressed), len(res.Unreadable))
-	// AND, LAST, WHAT --decide FOUND. n is the notes it judged, needs_reply how many of
-	// them at or above 0.5, and below_floor how many kinds the provider was less sure of
-	// than the floor -- those are suggestions, and the caller keeps today's behaviour.
-	// TWO LITERAL LINES, not one line with a computed tail. The public one is byte for
-	// byte the line it has always been; the private one adds the actual privacy and the
-	// actual decider to that SAME receipt rather than printing a new one (Stella: "Report
-	// the actual privacy/source/refusal through existing typed receipts"). They are spelled
-	// out rather than assembled so that a reader greps the line they will see, and so that
-	// every printed argument stays literal, quoted or escaped
-	// (internal/ci TestEveryPrintedArgumentIsLiteralQuotedOrEscaped).
-	if d != nil {
-		c := d.decided()
-		if d.privateRoute() {
-			fmt.Fprintf(stdout, "INBOX DECIDED n=%d needs_reply=%d below_floor=%d wake=%d privacy=private decider=rules\n",
-				c.n, c.needsReply, c.belowFloor, c.wake)
-		} else {
-			fmt.Fprintf(stdout, "INBOX DECIDED n=%d needs_reply=%d below_floor=%d wake=%d\n",
-				c.n, c.needsReply, c.belowFloor, c.wake)
-		}
-	}
 	r.Me, r.Legacy, r.Cursor, r.Full = me, legacy, cursor.Commit, scope.Full
 	r.Changed, r.NoteChanges = scope.Changed, res.NoteChanges
 	if !o.bodies {
@@ -2368,299 +2285,6 @@ func (p *walkProgress) abort() {
 	p.stopped.Wait()
 }
 
-// publicMarker is the file a bus clone carries to say it is public. --decide refuses a
-// clone without it, because a provider may train on what it is sent, and the marker is the
-// clone's own statement that the text may leave.
-const publicMarker = ".public"
-
-// noteJudgment is one note's typed decision, rendered as the suffix on its INBOX NOTE
-// line. kind is the choice, needsReply and blocked are the provider's noul probabilities,
-// wake says whether this note needs its reader (the note reading, #1617), and conf is how
-// sure it was of the kind. owner and refs are mechanical: the note's To: header and the
-// issue references its subject and body carry, read by the tool and asked of nobody.
-type noteJudgment struct {
-	kind       string
-	needsReply float64
-	blocked    float64
-	wake       string
-	owner      string
-	refs       string
-	conf       float64
-}
-
-// inboxDecider is the one method --decide needs from the provider client, so a test can
-// stand in a fake without a socket or a key.
-type inboxDecider interface {
-	Decide(ctx context.Context, state string, qs map[string]decide.Question) (map[string]decide.Answer, decide.Usage, error)
-}
-
-// noteJudge is everything a listing asks of --decide, and the seam the two ROUTES meet at.
-// There are exactly two implementations and they are chosen by the bus clone, never by a
-// caller: noteDecider on a bus carrying .public, privateDecider on one that does not.
-//
-// The seam is a type and not a flag on one type on purpose. A bool inside a single decider
-// would leave the client, the key-env and the base URL sitting in the value the private
-// path holds, one mistaken branch away from being used; the private route instead holds a
-// value that HAS none of them. That is what "mechanically admitted" means here.
-type noteJudge interface {
-	// judge returns one note's typed decision, or the typed refusal that stops the run.
-	judge(e bus.OpenEntry) (noteJudgment, error)
-	// decided is the tally behind the INBOX DECIDED line.
-	decided() decideCounts
-	// privateRoute says which of the two INBOX DECIDED lines this run prints. It is a
-	// bool and not a string because the line is a literal either way: the public one is
-	// the line dev has always printed, and the private one names the privacy and the
-	// decider on that same receipt.
-	privateRoute() bool
-}
-
-// newNoteJudge picks the route from the bus clone. This is the ONE place the choice is
-// made, and it is made before any note is opened.
-func newNoteJudge(o inboxOpts) noteJudge {
-	if o.private {
-		return newPrivateDecider(o.busDir, o.floor)
-	}
-	return newNoteDecider(o)
-}
-
-// noteDecider makes one typed decision per printed INBOX NOTE line. It is LAZY: the
-// client is built and the provider is called on the first note that actually prints, so a
-// listing with no notes makes zero provider calls whatever the flags say. STOP:/HOLD:
-// subjects are structured signals and bypass the provider entirely.
-type noteDecider struct {
-	o      inboxOpts
-	client inboxDecider
-	qs     map[string]decide.Question
-	cache  map[string]noteJudgment
-	counts decideCounts
-}
-
-// decideCounts is the running tally behind the final INBOX DECIDED line.
-type decideCounts struct {
-	n          int
-	needsReply int
-	belowFloor int
-	// wake is how many notes need their reader: `needs-action` by rule or by answer,
-	// and `unknown` (a note the decider did not label), because an unlabelled note
-	// fails toward a wake and never toward silence.
-	wake int
-}
-
-func newNoteDecider(o inboxOpts) *noteDecider {
-	return &noteDecider{o: o, qs: inboxQuestions(), cache: map[string]noteJudgment{}}
-}
-
-// inboxQuestions is the one question set --decide asks about every note.
-func inboxQuestions() map[string]decide.Question {
-	return map[string]decide.Question{
-		"kind": {
-			Instructions: "Classify this note. start asks to begin work; done reports finished work; question asks and needs an answer; edge carries a structured signal that bypasses semantic filtering; refusal declines or forbids; receipt only acknowledges.",
-			Choice: map[string]string{
-				"start":    "asks to begin work",
-				"done":     "reports finished work",
-				"question": "asks a question that needs an answer",
-				"edge":     "a structured signal that bypasses semantic filtering",
-				"refusal":  "declines or forbids",
-				"receipt":  "only acknowledges",
-			},
-		},
-		"needs_reply": {Instructions: "The probability, from 0 to 1, that this note needs a reply from its reader.", Noul: true},
-		"blocked":     {Instructions: "The probability, from 0 to 1, that this note blocks the reader's work until it is answered.", Noul: true},
-		"wake": {
-			Instructions: "Does this note wake its reader? ack: the note only confirms receipt or completion of something the reader already knows, and asks nothing; info: the note reports a fact and asks nothing of this reader; needs-action: the note asks this reader to do, decide, review, answer or stop something, or reports something broken that this reader owns.",
-			Choice: map[string]string{
-				"ack":          "only confirms receipt or completion of something the reader already knows, and asks nothing",
-				"info":         "reports a fact and asks nothing of this reader",
-				"needs-action": "asks this reader to do, decide, review, answer or stop something, or reports something broken that this reader owns",
-			},
-		},
-	}
-}
-
-// decideSuffix is the typed decision appended to an INBOX NOTE line. The four fields
-// that were here before the note reading -- kind, needs_reply, blocked and conf -- keep
-// their names, order and spelling; wake, owner and ref are appended after them, so no
-// existing reader's field positions move.
-func decideSuffix(j noteJudgment) string {
-	return fmt.Sprintf("kind=%s needs_reply=%.2f blocked=%.2f conf=%.2f wake=%s owner=%s ref=%s",
-		oneline.Field(j.kind), j.needsReply, j.blocked, j.conf,
-		oneline.Field(j.wake), oneline.Field(j.owner), oneline.Field(j.refs))
-}
-
-// judge returns the decision for one note, reading its file for the body and cacheing by
-// path. A STOP: or HOLD: subject is never sent: it is marked edge with needs_reply=1.00 by
-// rule, because a structured signal is not something a model filters.
-func (d *noteDecider) judge(e bus.OpenEntry) (noteJudgment, error) {
-	if j, ok := d.cache[e.Path]; ok {
-		return j, nil
-	}
-	subject, body, owner := e.Subject, "", ""
-	if raw, err := os.ReadFile(filepath.Join(d.o.busDir, filepath.FromSlash(e.Path))); err == nil {
-		if n, perr := bus.ParseNote(e.Path, string(raw)); perr == nil {
-			if subject == "" {
-				subject = n.Header.Subject
-			}
-			body = n.Body
-			owner = n.Header.To
-		}
-	}
-	// The rule table is consulted first and it is ONE table, shared with the private
-	// route (ruleRow, cmd/nova-bus/private.go), so the two routes cannot drift into
-	// disagreeing about a note either of them can judge without a provider.
-	j, byRule := ruleRow(subject)
-	if !byRule {
-		if d.client == nil {
-			c, err := decide.New(d.o.baseURL, d.o.keyEnv)
-			if err != nil {
-				return noteJudgment{}, err
-			}
-			d.client = c
-		}
-		state, err := decideState(e, subject, body)
-		if err != nil {
-			return noteJudgment{}, err
-		}
-		answers, _, err := d.client.Decide(context.Background(), state, d.qs)
-		if err != nil {
-			return noteJudgment{}, err
-		}
-		kind := answers["kind"]
-		j = noteJudgment{
-			kind:       kind.Choice,
-			needsReply: answers["needs_reply"].Noul,
-			blocked:    answers["blocked"].Noul,
-			wake:       answers["wake"].Choice,
-			conf:       kind.Confidence,
-		}
-	}
-	if j.wake == "" {
-		// A note no decider labelled is `unknown`: the absence of an answer wakes,
-		// because silence about a note must never read as permission to sleep.
-		j.wake = wakeUnknown
-	}
-	j.owner = owner
-	j.refs = noteRefs(subject, body)
-	d.cache[e.Path] = j
-	d.counts.n++
-	if j.needsReply >= 0.5 {
-		d.counts.needsReply++
-	}
-	if j.conf < d.o.floor {
-		d.counts.belowFloor++
-	}
-	if wakesReader(j.wake) {
-		d.counts.wake++
-	}
-	return j, nil
-}
-
-// The note reading's three answers, and the absence of one (#1617, SPEC-DECIDE
-// "1. The note reading"). ack and info report a note that asks nothing; needs-action
-// asks the reader to act; unknown is what a note no decider labelled reads.
-const (
-	wakeAck         = "ack"
-	wakeInfo        = "info"
-	wakeNeedsAction = "needs-action"
-	wakeUnknown     = "unknown"
-)
-
-// wakesReader reports whether an answer is one the reader must be woken for. ack and
-// info defer; everything else -- needs-action, unknown, or any value this code does not
-// know -- wakes, so an answer can never put a window to sleep past a note that needed it.
-func wakesReader(wake string) bool {
-	switch wake {
-	case wakeAck, wakeInfo:
-		return false
-	default:
-		return true
-	}
-}
-
-// noteRefPattern is every issue reference a note names: a bare `#<digits>` and the
-// `<owner>/<repo>#<digits>` that carries a repository. Read mechanically from the text,
-// never asked of a provider.
-var noteRefPattern = regexp.MustCompile(`[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[0-9]+|#[0-9]+`)
-
-// noteRefs lists the issue references in the parts given, in order, at most four of
-// them, then `+<n>`; `-` when there are none.
-func noteRefs(parts ...string) string {
-	var refs []string
-	for _, p := range parts {
-		refs = append(refs, noteRefPattern.FindAllString(p, -1)...)
-	}
-	if len(refs) == 0 {
-		return "-"
-	}
-	if len(refs) > 4 {
-		return strings.Join(refs[:4], ",") + fmt.Sprintf("+%d", len(refs)-4)
-	}
-	return strings.Join(refs, ",")
-}
-
-// decided and privateRoute put the public route behind noteJudge. privateRoute is false
-// here by construction -- this type is built only for a bus that carries .public -- so a
-// public bus's INBOX DECIDED line is the line it has always been.
-func (d *noteDecider) decided() decideCounts { return d.counts }
-
-func (d *noteDecider) privateRoute() bool { return false }
-
-// decideState is what a note sends to the provider: its subject and the first 600
-// characters of its body, redacted by SPEC-DECIDE S7's shared rule before either is cut
-// or framed. Every sk- token and every <NAME>_KEY=, <NAME>_TOKEN= and <NAME>_SECRET=
-// assignment -- in the subject as well as the body -- is replaced with a placeholder by
-// questions.Redact, the one redaction every decider path uses, and the WHOLE body is
-// redacted before the 600-character cut, so a secret straddling the cut cannot leave half
-// of itself behind. Evidence that still reads secret-shaped after redaction is refused
-// with why=secret-shaped (secretShapedError) and never sent.
-func decideState(e bus.OpenEntry, subject, body string) (string, error) {
-	subject = questions.Redact(redactSK(subject))
-	body = questions.Redact(redactSK(body))
-	if questions.SecretShaped(subject) || questions.SecretShaped(body) {
-		return "", &secretShapedError{ID: e.ID, Path: e.Path}
-	}
-	return subject + "\n\n" + firstChars(body, decideStateChars), nil
-}
-
-// secretShapedError is S7's refusal for evidence redaction could not clean: it is raised
-// before the state is framed, so the provider is never called with it.
-type secretShapedError struct {
-	ID   string
-	Path string
-}
-
-func (e *secretShapedError) Error() string {
-	return fmt.Sprintf("why=secret-shaped id=%s path=%s: this note still reads secret-shaped after redaction, so --decide will not send it to a provider",
-		oneline.Field(dash(e.ID)), oneline.Field(e.Path))
-}
-
-// decideStateChars is how much of a note's body --decide sends.
-const decideStateChars = 600
-
-// firstChars returns at most n characters of s, cut on a rune boundary so a multi-byte
-// character is never split.
-func firstChars(s string, n int) string {
-	if n <= 0 {
-		return ""
-	}
-	count := 0
-	for i := range s {
-		if count == n {
-			return s[:i]
-		}
-		count++
-	}
-	return s
-}
-
-// skPattern is an sk- key: the prefix and the token that follows it.
-var skPattern = regexp.MustCompile(`sk-[A-Za-z0-9_-]+`)
-
-// redactSK replaces every sk- key in s with a placeholder, so a key pasted into a note
-// cannot leave on the wire.
-func redactSK(s string) string {
-	return skPattern.ReplaceAllString(s, "sk-[redacted]")
-}
-
 // printOpenEntries prints an open list in the order it is listed in -- the notes that carry
 // something, then what has been heard and still owes an answer, then the bare
 // acknowledgements -- and stops after max of them. It returns how many it printed.
@@ -2669,12 +2293,12 @@ func redactSK(s string) string {
 // receipts is the reason they are separated rather than interleaved by clock. HEARD is
 // between them because a note I have already said "heard" to is still owed an answer, and
 // the receipt that says so must not make it disappear. Every field comes from the open
-// list, so nothing here opens a note unless --decide asked for a judgement.
+// list, so listing a header never opens or classifies the note body.
 //
 // The cap counts PRINTED entries and not entries considered, so a capped listing is the
 // first max of the same order a full one would have printed: the notes first, and the bare
 // acknowledgements last, which is the right end to lose.
-func printOpenEntries(stdout io.Writer, entries []bus.OpenEntry, max int, d noteJudge) (int, error) {
+func printOpenEntries(stdout io.Writer, entries []bus.OpenEntry, max int) (int, error) {
 	shown := 0
 	for _, group := range []string{"NOTE", "HEARD", "RECEIPT"} {
 		for _, e := range entries {
@@ -2694,18 +2318,7 @@ func printOpenEntries(stdout io.Writer, entries []bus.OpenEntry, max int, d note
 			if shown >= max {
 				return shown, nil
 			}
-			if token == "NOTE" && d != nil {
-				j, err := d.judge(e)
-				if err != nil {
-					return shown, err
-				}
-				fmt.Fprintf(stdout, "INBOX %s id=%s from=%s addr=%s at=%s path=%s: %s %s\n",
-					token, oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), oneline.Field(dash(e.Addr)),
-					oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject),
-					decideSuffix(j))
-				shown++
-				continue
-			}
+
 			fmt.Fprintf(stdout, "INBOX %s id=%s from=%s %saddr=%s at=%s path=%s: %s\n",
 				token, oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), hostField(e.Host), oneline.Field(dash(e.Addr)),
 				oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject))
@@ -2757,7 +2370,7 @@ const (
 	maxBodiesBytesCeiling int64 = 1048576
 )
 
-func printBodyPage(stdout io.Writer, page bus.BodyPage, maxBytes int64, d noteJudge) error {
+func printBodyPage(stdout io.Writer, page bus.BodyPage, maxBytes int64) error {
 	// Selection, continuation identities, and safe-frontier accounting stay in canonical
 	// snapshot order. Display follows the inbox's established NOTE, HEARD, RECEIPT groups;
 	// an earlier receipt must not push a later note below the summary groups on this page.
@@ -2772,7 +2385,7 @@ func printBodyPage(stdout io.Writer, page bus.BodyPage, maxBytes int64, d noteJu
 			if bodyDisplayGroup(*emission.Item) != group {
 				continue
 			}
-			if err := printBodyItem(stdout, *emission.Item, d); err != nil {
+			if err := printBodyItem(stdout, *emission.Item); err != nil {
 				return err
 			}
 		}
@@ -2815,7 +2428,7 @@ func hostField(host string) string {
 	return "host=" + oneline.Field(host) + " "
 }
 
-func printBodyItem(stdout io.Writer, item bus.BodyItem, d noteJudge) error {
+func printBodyItem(stdout io.Writer, item bus.BodyItem) error {
 	e := item.Entry
 	kind := bodyDisplayGroup(item)
 	if kind != "NOTE" {
@@ -2825,15 +2438,7 @@ func printBodyItem(stdout io.Writer, item bus.BodyItem, d noteJudge) error {
 		return nil
 	}
 	bodyBytes := item.Body
-	if d != nil {
-		j, err := d.judge(e)
-		if err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintf(stdout, "INBOX NOTE id=%s from=%s addr=%s at=%s path=%s: %s %s\n", oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), oneline.Field(dash(e.Addr)), oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject), decideSuffix(j)); err != nil {
-			return err
-		}
-	} else if _, err := fmt.Fprintf(stdout, "INBOX NOTE id=%s from=%s %saddr=%s at=%s path=%s: %s\n", oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), hostField(e.Host), oneline.Field(dash(e.Addr)), oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject)); err != nil {
+	if _, err := fmt.Fprintf(stdout, "INBOX NOTE id=%s from=%s %saddr=%s at=%s path=%s: %s\n", oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), hostField(e.Host), oneline.Field(dash(e.Addr)), oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject)); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintf(stdout, "INBOX BODY id=%s bytes=%d\n", oneline.Field(dash(e.ID)), len(item.Body)); err != nil {
@@ -3652,7 +3257,7 @@ func onNoteFrame(o inboxOpts, wakes []bus.OpenEntry) (string, error) {
 			break
 		}
 		if int64(len(body)) > budget {
-			if _, err := printOpenEntries(&b, []bus.OpenEntry{e}, 1, nil); err != nil {
+			if _, err := printOpenEntries(&b, []bus.OpenEntry{e}, 1); err != nil {
 				return "", err
 			}
 			fmt.Fprintf(&b, "INBOX BODY OVERSIZE id=%s bytes=%d max-bytes=%d path=%s\n",
@@ -3662,7 +3267,7 @@ func onNoteFrame(o inboxOpts, wakes []bus.OpenEntry) (string, error) {
 		budget -= int64(len(body))
 		// The INBOX NOTE line and the body frame through the one audited printer the
 		// --bodies page uses, so the verbatim body has one writer in this file.
-		if err := printBodyItem(&b, bus.BodyItem{Path: e.Path, Entry: e, Body: []byte(body)}, nil); err != nil {
+		if err := printBodyItem(&b, bus.BodyItem{Path: e.Path, Entry: e, Body: []byte(body)}); err != nil {
 			return "", err
 		}
 	}

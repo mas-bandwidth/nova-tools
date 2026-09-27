@@ -3,6 +3,8 @@ package ntable
 import (
 	"strconv"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // RenderOpts is what Render is told beyond the table.
@@ -44,6 +46,8 @@ type RenderOpts struct {
 // blank when the row has none; it never stands in for the label (Stella's
 // read of #4456: a value in a leading text column made the row's key
 // vanish; "the row identity must still have its own visible cell").
+// Display values are escaped before measuring widths: stored text cannot add
+// terminal controls or line breaks, and rendering never changes the snapshot.
 func Render(t Table, opts RenderOpts) string {
 	rows := make([]Row, 0, len(t.Rows))
 	for _, r := range t.Rows {
@@ -76,19 +80,19 @@ func Render(t Table, opts RenderOpts) string {
 	body := make([][]string, len(rows))
 	footer := make([]string, n)
 	for j, c := range cols {
-		header[j] = c.LabelOrName()
+		header[j] = oneline.Escape(c.LabelOrName())
 	}
 	if opts.Title != "" {
-		header[0] = opts.Title
+		header[0] = oneline.Escape(opts.Title)
 	}
 	for i, r := range rows {
 		body[i] = make([]string, n)
 		for j := range cols {
 			switch {
 			case src[j] < 0:
-				body[i][j] = r.LabelOrKey()
+				body[i][j] = oneline.Escape(r.LabelOrKey())
 			default:
-				body[i][j] = CellText(t.Columns, r, src[j])
+				body[i][j] = oneline.Escape(CellText(t.Columns, r, src[j]))
 			}
 		}
 	}
@@ -96,10 +100,10 @@ func Render(t Table, opts RenderOpts) string {
 	if hasFooter {
 		for j, c := range cols {
 			if src[j] >= 0 {
-				footer[j] = foldText(t.Columns, c, t.Rows, src[j])
+				footer[j] = oneline.Escape(foldText(t.Columns, c, t.Rows, src[j]))
 			}
 		}
-		footer[0] = t.Footer()
+		footer[0] = oneline.Escape(t.Footer())
 	}
 	widths := make([]int, n)
 	for j, c := range cols {

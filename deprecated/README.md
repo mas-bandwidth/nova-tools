@@ -25,6 +25,7 @@ Glenn, 2026-09-27: "Tests do not run for deprecated tools and modules."
 
 | tool | why | since |
 |---|---|---|
+| nova-bus `inbox --decide` | the bus carries messages over git and nothing else (Glenn, 2026-09-27); the classifier routes, their tests and their spec are under `nova-bus-decide/` | 2026-09-27 |
 | nova-board | superseded: who is doing what is the job of nova-sprint as it is rebuilt on nova-table (Glenn, 2026-09-27). Moved here: `cmd/nova-board`, `internal/board`, and its spec, command reference and transcript under `docs/` | 2026-09-27 |
 | nova-sprint | does not work; to be rewritten on nova-table | 2026-09-27 |
 | nova-card, nova-friend | the sprint's runtime, implemented inside it | 2026-09-27 |
