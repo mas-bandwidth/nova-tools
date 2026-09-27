@@ -207,5 +207,48 @@ local function pitstop_clear(keys, args)
   return { 'NARROWED', tostring(at), was[1], was[2], was[3] }
 end
 
+-- ns_pitstop_open() -> the open sprints' stops in one call (pitstop.HeldOpen
+-- read them in two rounds; 2026-09-27, Glenn: batch): every name of
+-- `sprints` and `sprint:order` in name order, each with its status, whether
+-- its legacy stop key is set, and its stop hash: rows, flat,
+--   sprint <name> <status> <legacy 0|1> hash <n> (<field> <value>)...
+--   sprint <name> <status> <legacy 0|1> wrongtype 0
+-- A closed sprint is left out, as HeldOpen left it out.
+local function pitstop_open(keys, args)
+  local seen, names = {}, {}
+  local all = redis.call('SMEMBERS', 'sprints')
+  for _, s in ipairs(redis.call('ZRANGE', 'sprint:order', 0, -1)) do all[#all + 1] = s end
+  for _, s in ipairs(all) do
+    if s ~= '' and not seen[s] then
+      seen[s] = true
+      names[#names + 1] = s
+    end
+  end
+  table.sort(names)
+  local out = {}
+  for _, s in ipairs(names) do
+    local status = redis.call('HGET', 's:' .. s, 'status')
+    if status ~= 'closed' then
+      local legacy = redis.call('EXISTS', 's:' .. s .. ':pitstop:legacy')
+      local kind = redis.call('TYPE', 's:' .. s .. ':pitstop')['ok']
+      out[#out + 1] = 'sprint'
+      out[#out + 1] = s
+      out[#out + 1] = status or ''
+      out[#out + 1] = tostring(legacy)
+      if kind == 'hash' or kind == 'none' then
+        local h = kind == 'hash' and redis.call('HGETALL', 's:' .. s .. ':pitstop') or {}
+        out[#out + 1] = 'hash'
+        out[#out + 1] = tostring(#h / 2)
+        for _, v in ipairs(h) do out[#out + 1] = v end
+      else
+        out[#out + 1] = 'wrongtype'
+        out[#out + 1] = '0'
+      end
+    end
+  end
+  return out
+end
+
+redis.register_function{ function_name = 'ns_pitstop_open', callback = pitstop_open, flags = { 'no-writes' } }
 redis.register_function('ns_pitstop_set', pitstop_set)
 redis.register_function('ns_pitstop_clear', pitstop_clear)

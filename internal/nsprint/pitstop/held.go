@@ -18,7 +18,9 @@ package pitstop
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/redis/go-redis/v9"
@@ -159,6 +161,53 @@ func read(ctx context.Context, c redis.Cmdable, names []string) (Holds, error) {
 		case len(h) > 0:
 			out = append(out, Hold{Sprint: s, Stop: FromHash(s, h)})
 		case cs[i].legacy.Val() > 0:
+			out = append(out, Hold{Sprint: s, Stop: Stop{Sprint: s, Set: true, By: "legacy",
+				Why: LegacyKey(s) + " is set"}})
+		}
+	}
+	return out, nil
+}
+
+// HeldCmd is a queued HeldOpen: one FCALL of ns_pitstop_open on a
+// pipeline, so the reconciler pass reads every open sprint's stop in the
+// same round trip as its lease renewal (2026-09-27, Glenn: batch).
+type HeldCmd struct{ cmd *redis.Cmd }
+
+// QueueHeldOpen queues the read on pipe.
+func QueueHeldOpen(ctx context.Context, pipe redis.Pipeliner) *HeldCmd {
+	return &HeldCmd{cmd: pipe.FCall(ctx, "ns_pitstop_open", nil)}
+}
+
+// Result is the holds, decoded as HeldOpen decodes its two rounds.
+func (h *HeldCmd) Result() (Holds, error) {
+	reply, err := h.cmd.StringSlice()
+	if err != nil {
+		return nil, err
+	}
+	var out Holds
+	for i := 0; i < len(reply); {
+		if reply[i] != "sprint" || i+5 >= len(reply) {
+			return nil, fmt.Errorf("ns_pitstop_open: unexpected reply at %d: %v", i, reply[i:])
+		}
+		s, kind := reply[i+1], reply[i+4]
+		legacy := reply[i+3] == "1"
+		n, _ := strconv.Atoi(reply[i+5])
+		i += 6
+		switch {
+		case kind == "wrongtype":
+			out = append(out, Hold{Sprint: s, Stop: Stop{Sprint: s, Set: true, By: "wrongtype",
+				Why: Key(s) + " is not a hash; nova-sprint pitstop clear repairs it"}})
+		case n > 0:
+			if i+2*n > len(reply) {
+				return nil, fmt.Errorf("ns_pitstop_open: stop of %s is short", s)
+			}
+			hash := make(map[string]string, n)
+			for j := 0; j < n; j++ {
+				hash[reply[i+2*j]] = reply[i+2*j+1]
+			}
+			i += 2 * n
+			out = append(out, Hold{Sprint: s, Stop: FromHash(s, hash)})
+		case legacy:
 			out = append(out, Hold{Sprint: s, Stop: Stop{Sprint: s, Set: true, By: "legacy",
 				Why: LegacyKey(s) + " is set"}})
 		}
