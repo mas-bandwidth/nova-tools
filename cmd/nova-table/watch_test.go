@@ -198,6 +198,9 @@ func TestRenderAllJoinsTablesWithOneBlankLine(t *testing.T) {
 
 func TestViewSummaryUsesAllKnownCounts(t *testing.T) {
 	t.Parallel()
+	if got := viewSummary(demoTable(0), "ready"); got != "0/0 0.0% -> ETA" {
+		t.Fatalf("empty known counts: %s", got)
+	}
 	tb := demoTable(3)
 	tb.Hidden = []string{"ready"}
 	tb.Rows[0].Hidden = true

@@ -200,7 +200,7 @@ func viewSummary(t ntable.Table, column string) string {
 			}
 		}
 	}
-	pct := "-"
+	pct := "0.0%" // empty known totals use the same numeric display as other percentages
 	if total > 0 {
 		pct = strconv.FormatFloat(100*float64(part)/float64(total), 'f', 1, 64) + "%"
 	}
