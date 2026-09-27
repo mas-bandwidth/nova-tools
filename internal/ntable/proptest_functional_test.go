@@ -4,6 +4,7 @@ package ntable_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -83,33 +84,23 @@ import (
 //     refuses a member that has a place in that table (PLACED); move
 //     requires the source to be the recorded place (NOTMEMBER otherwise)
 //     and keeps the score; a remove of a member placed elsewhere or nowhere
-//     changes nothing (the contract leaves the answer open: an OK with the
-//     count unchanged, or NOTMEMBER; the store must not change); remove,
+//     is an accepted no-op: user state stays unchanged while one receipt
+//     and revision commit; remove,
 //     row-del, clear and drop clear the placements with the sets;
 //   - lossless shape: row-add and bind refuse a shape that would delete or
 //     hide an occupied owned cell (OCCUPIED), the whole store unchanged;
 //   - no table-owned alias: a binding never names a key under table:*
-//     (ALIAS), created or not; candidate mode draws such bindings;
-//   - drop is epoch-local: the rows, bindings, cells and placements of the
-//     active epoch go, the definition and the registry entry stay, so Read
-//     answers with the columns and no rows (only `drop --definition`
-//     removes the template, and the harness never calls it); this is the
-//     harness's reading of section 7 point 9, one method to change if the
-//     implementation reads it otherwise;
-//   - a revision counter per table, HASH table:<t>:revision field n, +1 per
-//     accepted mutation, and one event per accepted mutation on the stream
-//     table:<t>:changes, none on a refusal (the refusal snapshot covers
-//     both keys); a verb that changed nothing (an identical re-create, a
-//     row-del of an absent row, a remove that changes nothing, a clear or
-//     drop of an empty table) is no mutation; a move onto its own cell is
-//     not drawn in candidate mode, the contract does not say whether it
-//     counts;
-//   - the read-only check, Check(ctx, c, name) = epoch, revision, the
-//     members with their places, the cells with their counts, compared
-//     after every step through the store function ns_table_check (a Go
-//     symbol cannot be named before it exists; swapping the call to
-//     ntable.Check is one line when it does; decodeCheck spells the reply
-//     shape the harness expects).
+//     (OWNEDALIAS), created or not; candidate mode draws such bindings;
+//   - drop removes active-epoch presence, rows, bindings, cells and places.
+//     Read returns ErrNoTable and List omits it; the stable template,
+//     identity, revision and stream survive and Create can restore presence.
+//     The harness does not call drop-definition or advance epochs;
+//   - one revision/event per accepted mutation, including identical Create,
+//     missing RowDel, absent Remove, empty Clear/Drop and self-Move; none
+//     on refusal, whose whole-store snapshot includes the receipt ledger;
+//   - read-only Check returns epoch, revision, placed-member count and
+//     owned-cell count. Record/set contents are independently checked after
+//     every step; missing contract machinery is a failing GAP.
 //
 // Every candidate check that needs a piece of the implementation is behind
 // a presence check, never a silent pass: the member records, the revision
@@ -156,12 +147,15 @@ func revisionKey(table string) string { return "table:" + table + ":revision" }
 func changesKey(table string) string  { return "table:" + table + ":changes" }
 
 // candidateTokens is the contract's refusal vocabulary as candidate mode
-// reads it off a verb's error, case-insensitively (a reason store.go does
-// not know reaches the error as its name), written ahead of the code.
+// reads it off the published Go error text, with raw reason tokens retained
+// for a store.go that predates those sentinels. This file must also compile
+// on the deliberately broken baseline, which lacks the new Go symbols.
 var candidateTokens = []struct{ kind, token string }{
+	{"occupied", "shape would delete or hide placed members"},
+	{"alias", "binding target is table-owned storage"},
+	{"placed", "member already has a place in this table"},
 	{"occupied", "occupied"},
 	{"alias", "alias"},
-	{"placed", "place"},
 	{"stale", "stale"},
 }
 
@@ -538,6 +532,9 @@ func (m *model) rowAddShape(tn, r string, binds map[string]string) map[string]ma
 func shapeVerdict(targets, endangered []string) verdict {
 	for _, k := range targets {
 		if tableOwned(k) {
+			if len(endangered) > 0 {
+				return verdict{kind: "alias-or-occupied", why: "both an owned alias and a lossy shape; refusal priority is unspecified"}
+			}
 			return verdict{kind: "alias", why: "binding " + k + " names a table-owned key"}
 		}
 	}
@@ -562,7 +559,7 @@ func bindTargets(shape map[string]map[string]string) []string {
 // verdict is what the oracle says a verb does: it succeeds, or it refuses
 // for one reason, a bound refusal naming the cell and its owner, or (the
 // candidate's remove of a member placed elsewhere) it changes nothing,
-// answering OK or NOTMEMBER. why is detail for the message, not compared.
+// answering OK with one receipt. why is detail for the message, not compared.
 type verdict struct {
 	kind                 string
 	row, col, key, owner string
@@ -578,6 +575,9 @@ func (v verdict) ok() bool { return v.kind == "ok" }
 // matches says a verb's answer is the verdict: the kind, and for a bound
 // refusal the cell and owner it names.
 func (v verdict) matches(got verdict) bool {
+	if v.kind == "alias-or-occupied" {
+		return got.kind == "alias" || got.kind == "occupied"
+	}
 	if v.kind != got.kind {
 		return false
 	}
@@ -767,18 +767,6 @@ func (h *harness) column() string              { return rapid.SampledFrom(propCo
 func (h *harness) cellColumn() string          { return rapid.SampledFrom(cellColumns).Draw(h.t, "column") }
 func (h *harness) score() float64              { return rapid.SampledFrom(propScores).Draw(h.t, "score") }
 
-// otherColumn is a cell column other than col: candidate mode does not
-// draw a move onto its own cell.
-func (h *harness) otherColumn(col string) string {
-	others := make([]string, 0, len(cellColumns))
-	for _, c := range cellColumns {
-		if c != col {
-			others = append(others, c)
-		}
-	}
-	return rapid.SampledFrom(others).Draw(h.t, "column")
-}
-
 // bindTarget is what a binding names: the external set, and in candidate
 // mode one draw in four a table-owned key, which the contract refuses.
 func (h *harness) bindTarget() string {
@@ -856,7 +844,33 @@ func (h *harness) before(want verdict) map[string]string {
 	if want.ok() {
 		return nil
 	}
+	if want.kind == "unchanged" {
+		return h.userSnapshot()
+	}
 	return h.snapshot()
+}
+
+// An accepted no-op changes only the receipt ledger. Preserve the full
+// remaining store comparison, including every other definition field.
+func (h *harness) userSnapshot() map[string]string {
+	out := h.snapshot()
+	for key := range out {
+		if strings.HasSuffix(key, ":revision") || strings.HasSuffix(key, ":changes") {
+			delete(out, key)
+		} else if strings.HasSuffix(key, ":definition") {
+			fields, err := h.c.HGetAll(h.ctx, key).Result()
+			if err != nil {
+				h.fail("read definition for no-op comparison: %v", err)
+			}
+			delete(fields, "_revision")
+			body, err := json.Marshal(fields)
+			if err != nil {
+				h.fail("encode definition for no-op comparison: %v", err)
+			}
+			out[key] = string(body)
+		}
+	}
+	return out
 }
 
 func diffSnapshots(before, after map[string]string) string {
@@ -884,14 +898,17 @@ func (h *harness) expect(action string, want verdict, err error, before map[stri
 	h.t.Helper()
 	got := classify(err)
 	if want.kind == "unchanged" {
-		if !got.ok() && got.kind != "notmember" {
-			h.fail("%s: the verb answered %s (%v); the contract says it changes nothing, OK or NOTMEMBER", action, got, err)
+		if !got.ok() {
+			h.fail("%s: the verb answered %s (%v); the contract says accepted no-op", action, got, err)
+		}
+		if diff := diffSnapshots(before, h.userSnapshot()); diff != "" {
+			h.fail("%s: accepted no-op changed user state: %s", action, diff)
 		}
 	} else if !want.matches(got) {
 		h.fail("%s: the verb answered %s (%v); the %s says %s", action, got, err, h.oracle(), want)
 	}
 	h.tally.steps++
-	if want.ok() {
+	if want.ok() || want.kind == "unchanged" {
 		h.tally.ok++
 		return
 	}
@@ -1050,10 +1067,9 @@ func (h *harness) verify(*rapid.T) {
 
 // verifyPhysical is the key space under table:*: every cell key is a
 // non-empty set the model holds at that key, every non-empty set the model
-// holds is a key, and every other key belongs to a live table and a present
-// row. The candidate contract's keys (a member record, a revision hash, a
-// change stream) are tolerated here in both modes; candidate mode compares
-// them in verifyCandidate.
+// holds is a key; row keys require active presence. Candidate template,
+// identity, epoch snapshot and receipt keys survive Drop and are checked in
+// verifyCandidate. Member identities survive unlinking as well.
 func (h *harness) verifyPhysical() {
 	h.t.Helper()
 	keys, err := h.c.Keys(h.ctx, "table:*").Result()
@@ -1070,9 +1086,15 @@ func (h *harness) verifyPhysical() {
 			cellKeys = append(cellKeys, k)
 		case len(parts) == 4 && parts[1] == "" && parts[2] == "member":
 			// a member record, table::member:<id>
-		case len(parts) == 3 && (parts[2] == "revision" || parts[2] == "changes"):
-			// the revision hash and the change stream
-		case len(parts) == 2, len(parts) == 3 && parts[2] == "rows":
+		case len(parts) == 3 && (parts[2] == "revision" || parts[2] == "changes" || parts[2] == "identity" || parts[2] == "definition"):
+			if h.m.candidate && h.m.mutations[tn] == 0 {
+				h.fail("metadata %s belongs to an unknown table", k)
+			}
+		case len(parts) == 2:
+			if h.m.live[tn] == nil && !(h.m.candidate && h.m.mutations[tn] > 0) {
+				h.fail("template %s belongs to an unknown table", k)
+			}
+		case len(parts) == 3 && parts[2] == "rows":
 			if h.m.live[tn] == nil {
 				h.fail("key %s is in the store; the %s has no table %s", k, h.oracle(), tn)
 			}
@@ -1111,14 +1133,43 @@ func (h *harness) verifyPhysical() {
 }
 
 // verifyCandidate is candidate mode's own invariant, each piece behind a
-// presence check that records a GAP when the store lacks it: per live
-// table the revision counter and the change stream, then the member
+// presence check that records a GAP when the store lacks it: per known
+// table (even when dropped) the revision counter and the change stream, then the member
 // records' places, then the store's check function.
 func (h *harness) verifyCandidate() {
 	h.t.Helper()
 	ctx, c, m := h.ctx, h.c, h.m
-	for _, tn := range m.liveNames() {
+	for _, tn := range sortedKeys(m.mutations) {
 		want := m.mutations[tn]
+		for _, suffix := range []string{"", ":identity", ":definition"} {
+			key := ntable.DefKey(tn) + suffix
+			hash, err := c.HGetAll(ctx, key).Result()
+			if err != nil {
+				h.fail("read retained table metadata %s: %v", key, err)
+			}
+			if len(hash) == 0 {
+				h.gap("retained table metadata absent: %s", key)
+				continue
+			}
+			if suffix == ":identity" {
+				if hash["epoch_key"] != "" || hash["epoch_field"] != "n" || hash["member_prefix"] != "table::member:" {
+					h.fail("table %s identity changed: %v", tn, hash)
+				}
+				continue
+			}
+			if hash["order"] != "a,b,c" {
+				h.fail("table %s retained definition changed: %v", tn, hash)
+			}
+			if suffix == ":definition" {
+				present := "0"
+				if m.live[tn] != nil {
+					present = "1"
+				}
+				if hash["_present"] != present || hash["_revision"] != strconv.Itoa(want) {
+					h.fail("table %s epoch snapshot=%v; model presence=%s revision=%d", tn, hash, present, want)
+				}
+			}
+		}
 		n, err := c.HGet(ctx, revisionKey(tn), "n").Result()
 		switch {
 		case errors.Is(err, redis.Nil):
@@ -1146,6 +1197,14 @@ func (h *harness) verifyCandidate() {
 			got, err := c.XLen(ctx, changesKey(tn)).Result()
 			if err != nil || got != int64(want) {
 				h.fail("table %s: %d change events on %s (%v); the contract appends one per accepted mutation, %d so far", tn, got, changesKey(tn), err, want)
+			}
+			events, err := c.XRevRangeN(ctx, changesKey(tn), "+", "-", 1).Result()
+			if err != nil || len(events) != 1 {
+				h.fail("table %s: latest receipt missing: %v", tn, err)
+			}
+			fields := events[0].Values
+			if fmt.Sprint(fields["epoch"]) != "0" || fmt.Sprint(fields["rev_before"]) != strconv.Itoa(want-1) || fmt.Sprint(fields["rev_after"]) != strconv.Itoa(want) {
+				h.fail("table %s: latest receipt has wrong epoch/revision: %v", tn, fields)
 			}
 		}
 	}
@@ -1176,12 +1235,12 @@ func (h *harness) verifyRecords() {
 		}
 		placed := m.place[mem]
 		if len(rec) == 0 {
-			if len(placed) > 0 {
-				h.gap("member records absent: %s, wanted while a member has a place", recordKey("<id>"))
+			if _, known := m.place[mem]; known {
+				h.gap("member record absent: %s, identity must survive unlinking", recordKey(mem))
 			}
 			continue
 		}
-		if e, ok := rec["epoch"]; ok && e != "0" {
+		if e := rec["epoch"]; e != "0" {
 			h.fail("record %s epoch %q; the active epoch is 0 and the harness never advances it", recordKey(mem), e)
 		}
 		for _, tn := range propTables {
@@ -1197,62 +1256,24 @@ func (h *harness) verifyRecords() {
 	}
 }
 
-// checkReply is the contract's Check as candidate mode reads the store
-// function's answer: {'CHECK', 'epoch', e, 'revision', n, 'members', {id,
-// row:col, empty for none, ...}, 'cells', {row:col, count, ...}}, names in
-// any order, unknown names skipped. decodeCheck is the one place to align
-// with the API when it lands.
+// checkReply is the published read-only wire: CHECK, epoch, revision,
+// placed-member count, owned-cell count. Contents are verified independently
+// from the actual records and sets, never inferred from these summary counts.
 type checkReply struct {
-	epoch, revision int64
-	members         map[string]string
-	cells           map[string]int64
+	epoch, revision, members, cells uint64
 }
 
 func decodeCheck(reply []any) (checkReply, error) {
-	out := checkReply{members: map[string]string{}, cells: map[string]int64{}}
-	if len(reply) == 0 || fmt.Sprint(reply[0]) != "CHECK" {
-		return out, fmt.Errorf("want CHECK first, got %v", reply)
+	var out checkReply
+	if len(reply) != 5 || fmt.Sprint(reply[0]) != "CHECK" {
+		return out, fmt.Errorf("want CHECK and four counts, got %v", reply)
 	}
-	seen := map[string]bool{}
-	for i := 1; i+1 < len(reply); i += 2 {
-		name := fmt.Sprint(reply[i])
-		switch name {
-		case "epoch", "revision":
-			n, err := strconv.ParseInt(fmt.Sprint(reply[i+1]), 10, 64)
-			if err != nil {
-				return out, fmt.Errorf("%s %v is not a number", name, reply[i+1])
-			}
-			if name == "epoch" {
-				out.epoch = n
-			} else {
-				out.revision = n
-			}
-		case "members", "cells":
-			flat, ok := reply[i+1].([]any)
-			if !ok || len(flat)%2 != 0 {
-				return out, fmt.Errorf("%s is not a flat list of pairs: %v", name, reply[i+1])
-			}
-			for j := 0; j < len(flat); j += 2 {
-				k, v := fmt.Sprint(flat[j]), fmt.Sprint(flat[j+1])
-				if name == "members" {
-					out.members[k] = v
-					continue
-				}
-				n, err := strconv.ParseInt(v, 10, 64)
-				if err != nil {
-					return out, fmt.Errorf("cell %s count %q is not a number", k, v)
-				}
-				out.cells[k] = n
-			}
-		default:
-			continue
+	for i, target := range []*uint64{&out.epoch, &out.revision, &out.members, &out.cells} {
+		n, err := strconv.ParseUint(fmt.Sprint(reply[i+1]), 10, 64)
+		if err != nil {
+			return out, fmt.Errorf("check field %d is not uint64: %v", i+1, reply[i+1])
 		}
-		seen[name] = true
-	}
-	for _, name := range []string{"epoch", "revision", "members", "cells"} {
-		if !seen[name] {
-			return out, fmt.Errorf("the reply lacks %s: %v", name, reply)
-		}
+		*target = n
 	}
 	return out, nil
 }
@@ -1280,22 +1301,20 @@ func (h *harness) verifyCheck() {
 		if got.epoch != 0 {
 			h.fail("table %s: check says epoch %d; the active epoch is 0", tn, got.epoch)
 		}
-		if got.revision != int64(m.mutations[tn]) {
+		if got.revision != uint64(m.mutations[tn]) {
 			h.fail("table %s: check says revision %d; the contract counts %d accepted mutations", tn, got.revision, m.mutations[tn])
 		}
-		for _, mem := range propMembers {
-			p, want := m.placeOf(mem, tn)
-			if got := got.members[mem]; want != (got != "") || (want && got != p.String()) {
-				h.fail("table %s: check places %s at %q; the contract records %v %s", tn, mem, got, want, p)
-			}
-		}
+		var cells uint64
 		for _, r := range m.rowsInOrder(tn) {
 			for _, col := range propColumns {
-				_, set := m.shown(tn, r, col)
-				if n := got.cells[r+":"+col]; n != int64(len(set)) {
-					h.fail("table %s: check counts %d in cell %s:%s; the contract shows %s", tn, n, r, col, set)
+				if m.live[tn].rows[r].binds[col] == "" {
+					cells++
 				}
 			}
+		}
+		members := uint64(len(m.ownedMembers(tn)))
+		if got.members != members || got.cells != cells {
+			h.fail("table %s: check counts members=%d cells=%d; independent model owns members=%d cells=%d", tn, got.members, got.cells, members, cells)
 		}
 	}
 }
@@ -1311,8 +1330,8 @@ func (h *harness) create(*rapid.T) {
 	h.expect(action, succeeds, err, nil)
 	if absent {
 		h.m.live[tn] = &modelTable{rows: map[string]*modelRow{}}
-		h.m.mutated(tn)
 	}
+	h.m.mutated(tn)
 	h.m.note("%s -> OK", action)
 }
 
@@ -1389,8 +1408,8 @@ func (h *harness) rowDel(*rapid.T) {
 		if present {
 			h.tally.orphaned += h.m.removeRow(tn, r)
 			h.m.clearPlaces(tn, r)
-			h.m.mutated(tn)
 		}
+		h.m.mutated(tn)
 	}
 	h.m.note("%s -> %s", action, outcome(want))
 }
@@ -1494,7 +1513,7 @@ func (h *harness) cellAdd(*rapid.T) {
 
 // cellRemove takes a member out of a cell. The contract clears the place
 // with the set; a member placed elsewhere or nowhere leaves the store
-// unchanged (OK with the count unchanged, or NOTMEMBER).
+// unchanged, with OK and one revision/event as an accepted no-op.
 func (h *harness) cellRemove(*rapid.T) {
 	tn := h.table()
 	r, col := h.row(tn), h.cellColumn()
@@ -1525,12 +1544,13 @@ func (h *harness) cellRemove(*rapid.T) {
 		if n != int64(len(h.m.phys[key])) {
 			h.fail("%s: the verb answered OK counting %d; the cell holds %s unchanged", action, n, h.m.phys[key])
 		}
+		h.m.mutated(tn)
 	}
 	h.m.note("%s -> %s", action, outcome(want))
 }
 
-// cellMove moves a member between two columns of one row (in baseline mode
-// the same column twice is a move onto itself). The Lua checks the source
+// cellMove moves a member between two columns of one row; selecting the
+// same column is an accepted no-op in candidate mode. The Lua checks the source
 // cell, then the destination, then that the member is in the source; the
 // contract requires the source to be the member's recorded place and moves
 // the place with the set.
@@ -1538,9 +1558,6 @@ func (h *harness) cellMove(*rapid.T) {
 	tn := h.table()
 	r, from := h.row(tn), h.cellColumn()
 	to := h.cellColumn()
-	if h.m.candidate {
-		to = h.otherColumn(from)
-	}
 	fromKey, toKey := ntable.CellKey(tn, r, from), ntable.CellKey(tn, r, to)
 	mem := h.member(h.m.membersAt(fromKey))
 	action := fmt.Sprintf("cellMove %s %s %s->%s %s", tn, r, from, to, mem)
@@ -1607,9 +1624,7 @@ func (h *harness) clear(*rapid.T) {
 			h.tally.orphaned += h.m.removeRow(tn, r)
 		}
 		h.m.clearPlaces(tn, "")
-		if len(rows) > 0 {
-			h.m.mutated(tn)
-		}
+		h.m.mutated(tn)
 		if n != int64(len(rows)) {
 			h.fail("%s: the verb counts %d rows cleared; the %s had %d", action, n, h.oracle(), len(rows))
 		}
@@ -1623,11 +1638,10 @@ func (h *harness) clear(*rapid.T) {
 	h.m.note("%s -> %s", action, outcome(want))
 }
 
-// drop removes a table's rows with their owned sets (the owned key behind
-// a bound column stays in the baseline, as on any row removal) and its
-// bindings; the baseline removes the definition and the registry entry
-// too, the contract keeps both (drop is epoch-local; see the header). The
-// external set stays in both.
+// Drop removes active presence and rows/owned sets in both modes. Only the
+// baseline deletes the stable template/registry entry. Candidate identity,
+// template and receipt ledger survive, while its placements are unlinked.
+// The external set stays in both.
 func (h *harness) drop(*rapid.T) {
 	tn := h.table()
 	action := "drop " + tn
@@ -1645,18 +1659,12 @@ func (h *harness) drop(*rapid.T) {
 		}
 		if h.m.candidate {
 			h.m.clearPlaces(tn, "")
-			if len(rows) > 0 {
-				h.m.mutated(tn)
+			h.m.mutated(tn)
+			if _, err := ntable.Read(h.ctx, h.c, tn); !errors.Is(err, ntable.ErrNoTable) {
+				h.fail("%s: dropped epoch remains readable: %v", action, err)
 			}
-			// the contract's drop is epoch-local: the definition and the
-			// registry entry stay, the rows go
-			tb, err := ntable.Read(h.ctx, h.c, tn)
-			if err != nil || columnNames(tb) != "a,b,c" || len(tb.Rows) != 0 {
-				h.fail("%s: read after drop gives columns %q, %d rows (%v); the contract's drop is epoch-local and keeps the definition with no rows (only `drop --definition` removes the template)", action, columnNames(tb), len(tb.Rows), err)
-			}
-		} else {
-			delete(h.m.live, tn)
 		}
+		delete(h.m.live, tn)
 		if n != len(rows) {
 			h.fail("%s: the verb counts %d rows dropped; the %s had %d", action, n, h.oracle(), len(rows))
 		}
