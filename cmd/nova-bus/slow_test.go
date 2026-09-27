@@ -294,7 +294,7 @@ func TestTwoClonesOfOneLaneRacingTenRoundsAllLand(t *testing.T) {
 // the slow tag since 2026-09-25, run by hand and nightly.
 // THE BUS CARRIES NOTES, NEVER BEATS (#3144). Until 2026-09-24 a wait rewrote
 // from-<lane>/BEAT every tick and pushed it as `beat <name>` every --beat: 393 of 500 bus
-// commits on 2026-09-23. Presence is friend:<name> in Redis, written by `nova-wake beat`.
+// commits on 2026-09-23. Presence is friend:<name> in Redis, written by the friend's runtime (nova-friend).
 // A wait given the old --beat and --beat-lease, over many polls and many whole beats, makes
 // no beat commit, writes no BEAT file, and says once that the flags are retired.
 func TestWaitNeverCommitsABeat(t *testing.T) {

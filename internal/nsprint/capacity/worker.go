@@ -59,7 +59,7 @@ func (w Worker) Line() string {
 type UnknownWorker struct{ ID string }
 
 func (e *UnknownWorker) Error() string {
-	return "UNKNOWN " + e.ID + " is not a registered friend or bench; run nova-sprint capacity friend|bench"
+	return "UNKNOWN " + e.ID + " is not a registered friend or bench; run nova-config friend set then nova-config apply, or nova-sprint capacity bench"
 }
 
 // PauseWorker sets (paused true) or clears the paused flag of kind:name in

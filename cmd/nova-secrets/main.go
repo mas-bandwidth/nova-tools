@@ -184,9 +184,9 @@ func friendWidthName(tok string) string {
 // another tool's law (nova-tools#2676): redis-cli writing
 // friend:<name>:width, the sprint table's working column. Since #3447 that
 // column is the friend row's working count, written by the row loop
-// (rowan-tools friend-row) from the friend's leased tasks; nova-wake beat
-// refuses the row, so the remedy is taking work through the queue, never a
-// beat and never a hand-write (nova-tools#3807). The hand-write reached the
+// (rowan-tools friend-row) from the friend's leased tasks; no beat writes the
+// row (the retired nova-wake beat refused it), so the remedy is taking work
+// through the queue, never a beat and never a hand-write (nova-tools#3807). The hand-write reached the
 // store only because the store held REDISCLI_AUTH. Reads of the key still run.
 func refusedWidthHandWrite(cmdArgs []string) error {
 	base := filepath.Base(cmdArgs[0])

@@ -64,7 +64,7 @@ local function task_beat(keys, args)
     local consumer = redis.call('HGET', key, 'consumer') or ''
     local next = 'nova-sprint card render --id ' .. id
     if string.sub(consumer, 1, 7) == 'friend:' then
-      next = 'nova-sprint friend beat --as ' .. consumer .. ' --once'
+      next = 'nova-friend here (its beat observes the owner; nova-sprint friend beat is gone)'
     end
     return redis.error_reply('OWNER id=' .. id .. ' is a consumer copy; no lease renewed; run: ' .. next)
   end

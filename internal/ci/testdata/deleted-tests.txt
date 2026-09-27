@@ -22,3 +22,4 @@ cmd/nova-sprint/owner_doors_functional_test.go friend beat and friend pull are g
 cmd/nova-sprint/owner_refusal_test.go friend beat's owner refusal printing went with the verb (nova-friend)
 cmd/nova-wake/presence_test.go nova-wake beat and presence are gone (nova-friend here, list and show); awake --store keeps its tests
 cmd/nova-wake/issue3277_test.go nova-wake beat's loop is gone with the verb (nova-friend here); presence.Beat keeps internal/presence's tests
+internal/nsprint/life/declare_test.go ns_friend_declare and life.Declare are gone: nova-config apply writes friends:declared and friend:<f>:wakepath through ns_friend_wakepath; the repair lock keeps friend_wakelock.lua

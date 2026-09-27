@@ -33,7 +33,7 @@ func TestFriendCopyPlainBeatNeverSubstitutesForObservation(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, ids := range [][]string{nil, {id}} {
-			if _, err := taskcard.BeatCopies(ctx, c, as, ids...); err == nil || !strings.Contains(err.Error(), "nova-sprint friend beat --as friend:doors --once") {
+			if _, err := taskcard.BeatCopies(ctx, c, as, ids...); err == nil || !strings.Contains(err.Error(), "run: nova-friend here") {
 				t.Fatalf("state=%q ids=%v beat must refuse with the observed-owner door: %v", state, ids, err)
 			}
 			v, err := c.HGet(ctx, taskcard.Key(id), "lease_until").Int64()
