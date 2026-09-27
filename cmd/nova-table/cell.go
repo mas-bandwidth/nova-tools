@@ -55,11 +55,12 @@ func cmdCellAdd(args []string, stdout, stderr io.Writer) int {
 		return code
 	}
 	defer st.Close()
+	trips := st.CountTrips()
 	n, err := ntable.CellAdd(ctx, c, pos[0], pos[1], pos[2], pos[3], sc)
 	if err != nil {
 		return storeRefusal(stderr, verb, err)
 	}
-	fmt.Fprintf(stdout, "TABLE CELL table=%s row=%s col=%s n=%d\n", pos[0], field(pos[1]), pos[2], n)
+	fmt.Fprintf(stdout, "TABLE CELL table=%s row=%s col=%s n=%d trips=%d\n", pos[0], field(pos[1]), pos[2], n, trips.N())
 	return 0
 }
 
@@ -94,11 +95,12 @@ func cmdCellRemove(args []string, stdout, stderr io.Writer) int {
 		return code
 	}
 	defer st.Close()
+	trips := st.CountTrips()
 	n, err := ntable.CellRemove(ctx, c, pos[0], pos[1], pos[2], pos[3])
 	if err != nil {
 		return storeRefusal(stderr, verb, err)
 	}
-	fmt.Fprintf(stdout, "TABLE CELL table=%s row=%s col=%s n=%d\n", pos[0], field(pos[1]), pos[2], n)
+	fmt.Fprintf(stdout, "TABLE CELL table=%s row=%s col=%s n=%d trips=%d\n", pos[0], field(pos[1]), pos[2], n, trips.N())
 	return 0
 }
 
@@ -119,11 +121,12 @@ func cmdCellMove(args []string, stdout, stderr io.Writer) int {
 		return code
 	}
 	defer st.Close()
+	trips := st.CountTrips()
 	n, err := ntable.CellMove(ctx, c, pos[0], pos[1], pos[2], pos[3], pos[4])
 	if err != nil {
 		return storeRefusal(stderr, verb, err)
 	}
-	fmt.Fprintf(stdout, "TABLE MOVE table=%s row=%s member=%s from=%s to=%s n=%d\n", pos[0], field(pos[1]), field(pos[4]), pos[2], pos[3], n)
+	fmt.Fprintf(stdout, "TABLE MOVE table=%s row=%s member=%s from=%s to=%s n=%d trips=%d\n", pos[0], field(pos[1]), field(pos[4]), pos[2], pos[3], n, trips.N())
 	return 0
 }
 
@@ -144,11 +147,12 @@ func cmdCellMembers(args []string, stdout, stderr io.Writer) int {
 		return code
 	}
 	defer st.Close()
+	trips := st.CountTrips()
 	ms, err := ntable.CellMembers(ctx, c, pos[0], pos[1], pos[2])
 	if err != nil {
 		return storeRefusal(stderr, verb, err)
 	}
-	fmt.Fprintf(stdout, "TABLE CELL table=%s row=%s col=%s n=%d\n", pos[0], field(pos[1]), pos[2], len(ms))
+	fmt.Fprintf(stdout, "TABLE CELL table=%s row=%s col=%s n=%d trips=%d\n", pos[0], field(pos[1]), pos[2], len(ms), trips.N())
 	for _, m := range ms {
 		fmt.Fprintf(stdout, "TABLE MEMBER table=%s row=%s col=%s member=%s score=%s\n", pos[0], field(pos[1]), pos[2], field(m.Member), strconv.FormatFloat(m.Score, 'f', -1, 64))
 	}

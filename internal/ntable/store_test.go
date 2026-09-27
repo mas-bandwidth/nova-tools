@@ -1,3 +1,5 @@
+//go:build functional
+
 package ntable_test
 
 import (
@@ -8,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/redis/go-redis/v9"
 )
@@ -54,9 +55,7 @@ func (l *tripLog) reset() (int, []string) {
 
 func store(t *testing.T) (*redis.Client, *tripLog) {
 	t.Helper()
-	mr := miniredis.RunT(t)
-	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = c.Close() })
+	_, c := live(t)
 	log := &tripLog{}
 	c.AddHook(log)
 	return c, log
@@ -197,10 +196,8 @@ func TestRowOrderIsStableAcrossReAdds(t *testing.T) {
 	}
 }
 
-// TestReaderTakesOnePipelineInTheSteadyState: the first read learns the
-// shape (two round trips: the definition and rows, then the row hashes and
-// the cells), every later read is one pipeline, a row added between reads
-// costs one more that read, and the tick never sends KEYS or SCAN.
+// TestReaderTakesOnePipelineInTheSteadyState also pins the cold and changed
+// shape cases: each returns the current bound cells in one round trip.
 func TestReaderTakesOnePipelineInTheSteadyState(t *testing.T) {
 	t.Parallel()
 
@@ -219,11 +216,9 @@ func TestReaderTakesOnePipelineInTheSteadyState(t *testing.T) {
 	if _, err := r.Read(ctx, c); err != nil {
 		t.Fatal(err)
 	}
-	// two from cold: the definition and the rows, then the row hashes and
-	// the cells of the shape guessed from them (every cell owned), which is
-	// the shape found; a bound row costs the third
-	if trips, _ := log.reset(); trips != 2 {
-		t.Fatalf("cold read took %d round trips, want 2", trips)
+	// The cold read includes its shape and values in the same snapshot.
+	if trips, _ := log.reset(); trips != 1 {
+		t.Fatalf("cold read took %d round trips, want 1", trips)
 	}
 	if _, err := r.Read(ctx, c); err != nil {
 		t.Fatal(err)
@@ -248,10 +243,9 @@ func TestReaderTakesOnePipelineInTheSteadyState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// the new row is seen (one more trip), and its hash binds a cell, so
-	// the guessed owned shape is wrong once more (the third)
-	if trips, _ := log.reset(); trips != 3 {
-		t.Fatalf("read after a bound row add took %d round trips, want 3", trips)
+	// The changed shape and its bound values still arrive in one read.
+	if trips, _ := log.reset(); trips != 1 {
+		t.Fatalf("read after a bound row add took %d round trips, want 1", trips)
 	}
 	if len(tb.Rows) != 3 || !tb.Rows[2].Cells[1].Bound || tb.Rows[2].Cells[1].Count != 1 || tb.Rows[2].Owner != "other-tool put" {
 		t.Fatalf("bound row read: %+v", tb.Rows[2])

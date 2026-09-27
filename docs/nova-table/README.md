@@ -69,16 +69,18 @@ table:<t>:row:<r>          HASH  label, exclude, owner, key:<col> (a bound
 table:<t>:cell:<r>:<c>     ZSET  an owned cell
 ```
 
-Reads are pipelines: a reader keeps a table's shape (the definition, the
-row order, every row's bindings) across reads, re-reads it in the same
-pipeline as the cells, and reads again when it moved, so a watch tick is
-one round trip in the steady state. Never `KEYS`, never `SCAN`. Writes are
-plain pipelined commands (`HSET`, `ZADD`, `ZREM`, `DEL`), except the two that
-touch several keys and must land whole, which are functions of the
-nova_sprint library (`internal/nsprint/fn/lua/table.lua`): `ns_oset_move`
-(`cell move`: `ZREM` from, `ZADD` to, refused `NOTMEMBER`) and
-`ns_table_clear` (`clear`: every owned cell emptied and every row removed,
-refused `BOUND`).
+Every table operation takes **one round trip after connecting**, including
+cold reads and reads after row or binding changes. Writes validate and
+mutate atomically in the `ns_table_*` functions in the shared Redis library.
+`ns_table_read`, `ns_table_list`, and `ns_table_members` are read-only
+functions (`FCALL_RO`). A multi-table watch pipelines one snapshot function
+per table in one exchange, on the first tick as well as later ticks. No
+`KEYS` or `SCAN` is used.
+
+The typed success receipt includes `trips=1`, measured by `store.CountTrips`.
+`render` and `watch` print only their table text; their trip budget is checked
+by the module counter and local MONITOR regression, without adding metadata
+to the display. Connection setup is excluded from the application-trip count.
 
 ## The verbs
 
@@ -147,8 +149,8 @@ on the terminal: the ANSI home-and-clear sequence, then the text, so a
 console tab shows the live table with no shell loop. `--out <file>`
 publishes each tick by writing a temp file beside it and renaming it over,
 the sprint table's way, so a reader sees one whole table. `--once` renders
-once and exits, with no clear. Every tick is exactly one Redis pipeline for
-every cell of every named table. The screen holds the tables and nothing
+once and exits, with no clear. Every tick is exactly one Redis pipeline of read-only snapshots for
+every named table, including cold and changed shapes. The screen holds the tables and nothing
 else; a tick whose read fails leaves the last good text standing with one
 `stale: <n>s` line under it, and stderr says why once. A signal ends it,
 exit 0.
@@ -175,3 +177,27 @@ prints the same block from the same sets, and a write through nova-table is
 refused naming `nova-sprint task move`. `sprint clear` needs no table
 call: the epoch moves, the tick binds the new epoch's sets, they are empty,
 and the block hides.
+
+## Module integration and deployment
+
+The module retains `QueueCells` and `QueueCount` for nova-sprint callers that
+already hold a shape and batch other reads in the same pipeline. `Reader.Queue`
+returns an atomic snapshot; its compatibility `changed` result is always false.
+`Shape`, `Bind`, and `Summaries` are also single-call APIs, so synchronizing a
+changed sprint table does not introduce a chain of dependent network reads.
+Bound cells retain their owner and exclude metadata; deleting a row or dropping
+a table never deletes a bound set. A refused write includes the table, row,
+column and member where applicable, plus the relevant inspection or repair verb.
+
+The function library and source ACL declarations must be deployed together by
+the store owner. Writers need `FCALL` grants for `ns_table_create`, `drop`,
+`row_add`, `row_del`, `cell_add`, `cell_remove`, `cell_move`, `bind`, and `clear`
+(each with the `ns_table_` prefix); readers need `FCALL_RO` for
+`ns_table_read`, `ns_table_list`, and `ns_table_members`, plus the underlying
+commands and authorized key patterns. The standalone ordered-set move retains
+`ns_oset_move`. `SCARD` and `SISMEMBER` preflight the registry type before
+multi-key writes. No command silently loads a library or changes live grants.
+
+A refused move of an absent member, for example, names its exact source and
+suggests `nova-table cell members <table> <row> <source-column>`; it does not
+suggest replaying a write whose preconditions have not been checked.

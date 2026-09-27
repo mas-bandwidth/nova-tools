@@ -16,7 +16,7 @@ import (
 )
 
 // live is a throwaway redis-server with the nova_sprint library loaded
-// (table.lua registers ns_oset_move and ns_table_clear), as the default user.
+// (table.lua registers the table operations), as the default user.
 func live(t *testing.T, extra ...string) (string, *redis.Client) {
 	t.Helper()
 	addr := testutil.Start(t, extra...)
@@ -113,22 +113,21 @@ func TestMoveAndClearAreOneCallEach(t *testing.T) {
 
 // tableGrants are the ACL tokens a seat needs to write and read tables
 // through ntable, exactly: the key roots (~table:* and the tables registry)
-// and the commands the library sends (the plain writes, the reads, and the
-// two functions). The PR body's OWED list is this list; a token dropped
-// here is a NOPERM below.
+// and the function calls and underlying commands used by the library.
 var tableGrants = []string{
 	"~table:*", "~tables",
 	"+hset", "+hget", "+hgetall", "+del", "+exists",
-	"+sadd", "+srem", "+smembers",
+	"+sadd", "+srem", "+smembers", "+scard", "+sismember",
 	"+zadd", "+zrem", "+zrange", "+zcard", "+zscore",
 	"+fcall|" + ntable.FnMove, "+fcall|" + ntable.FnClear,
+	"+fcall|ns_table_create", "+fcall|ns_table_drop", "+fcall|ns_table_row_add", "+fcall|ns_table_row_del", "+fcall|ns_table_cell_add", "+fcall|ns_table_cell_remove", "+fcall|ns_table_cell_move", "+fcall|ns_table_bind", "+fcall_ro|ns_table_read", "+fcall_ro|ns_table_list", "+fcall_ro|ns_table_members",
 }
 
 // TestTableGrantsAreExactlyWhatTheWriterNeeds runs every write and read of
 // the library as a throwaway user holding tableGrants and nothing else
 // (resetkeys -@all +ping, the shape of every ns-* row), and proves each
-// grant is load-bearing: a user without one of the two functions is refused
-// that call and no other.
+// clear grant is load-bearing: a user without it is refused that call
+// while its other table operations still work.
 func TestTableGrantsAreExactlyWhatTheWriterNeeds(t *testing.T) {
 	t.Parallel()
 
