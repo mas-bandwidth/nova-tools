@@ -16,28 +16,28 @@ import (
 
 const cellWants = "wants add <table> <row> <col> <member>... [--score <n>], remove <table> <row> <col> <member>, move <table> <row> <from-col> <to-col> <member>, or members <table> <row> <col>"
 
-func cmdCell(args []string, stdout, stderr io.Writer) int {
+func (app *application) cmdCell(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		return refuse(stderr, "cell", cellWants)
 	}
 	switch args[0] {
 	case "add":
-		return cmdCellAdd(args[1:], stdout, stderr)
+		return app.cmdCellAdd(args[1:], stdout, stderr)
 	case "remove":
-		return cmdCellRemove(args[1:], stdout, stderr)
+		return app.cmdCellRemove(args[1:], stdout, stderr)
 	case "move":
-		return cmdCellMove(args[1:], stdout, stderr)
+		return app.cmdCellMove(args[1:], stdout, stderr)
 	case "members":
-		return cmdCellMembers(args[1:], stdout, stderr)
+		return app.cmdCellMembers(args[1:], stdout, stderr)
 	}
 	return refuse(stderr, "cell", "unknown subverb "+args[0]+"; "+cellWants)
 }
 
-func cmdCellAdd(args []string, stdout, stderr io.Writer) int {
+func (app *application) cmdCellAdd(args []string, stdout, stderr io.Writer) int {
 	const verb = "cell add"
 	fs := verbflag.New(verb)
-	addr := redisFlag(fs)
-	write, receipt := writeFlags(fs)
+	addr := app.redisFlag(fs)
+	write, receipt := app.writeFlags(fs)
 	score := fs.String("score", "", "the member's score, its place in the set's order (default the unix time in ms)")
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
@@ -51,7 +51,7 @@ func cmdCellAdd(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, verb, err.Error())
 	}
 	ctx := context.Background()
-	st, c, code := client(ctx, verb, *addr, stderr)
+	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
 		return code
 	}
@@ -80,11 +80,11 @@ func scoreOf(s string) (float64, error) {
 	return v, nil
 }
 
-func cmdCellRemove(args []string, stdout, stderr io.Writer) int {
+func (app *application) cmdCellRemove(args []string, stdout, stderr io.Writer) int {
 	const verb = "cell remove"
 	fs := verbflag.New(verb)
-	addr := redisFlag(fs)
-	write, receipt := writeFlags(fs)
+	addr := app.redisFlag(fs)
+	write, receipt := app.writeFlags(fs)
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
@@ -93,7 +93,7 @@ func cmdCellRemove(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, verb, "wants a table, a row, a column and one or more members: cell remove <table> <row> <col> <member>...")
 	}
 	ctx := context.Background()
-	st, c, code := client(ctx, verb, *addr, stderr)
+	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
 		return code
 	}
@@ -108,11 +108,11 @@ func cmdCellRemove(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func cmdCellMove(args []string, stdout, stderr io.Writer) int {
+func (app *application) cmdCellMove(args []string, stdout, stderr io.Writer) int {
 	const verb = "cell move"
 	fs := verbflag.New(verb)
-	addr := redisFlag(fs)
-	write, receipt := writeFlags(fs)
+	addr := app.redisFlag(fs)
+	write, receipt := app.writeFlags(fs)
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
@@ -121,7 +121,7 @@ func cmdCellMove(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, verb, "wants a table, a row, the column left, the column joined and one or more members: cell move <table> <row> <from-col> <to-col> <member>...")
 	}
 	ctx := context.Background()
-	st, c, code := client(ctx, verb, *addr, stderr)
+	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
 		return code
 	}
@@ -140,10 +140,10 @@ func cmdCellMove(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func cmdCellMembers(args []string, stdout, stderr io.Writer) int {
+func (app *application) cmdCellMembers(args []string, stdout, stderr io.Writer) int {
 	const verb = "cell members"
 	fs := verbflag.New(verb)
-	addr := redisFlag(fs)
+	addr := app.redisFlag(fs)
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
@@ -152,7 +152,7 @@ func cmdCellMembers(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, verb, "wants a table, a row and a column: cell members <table> <row> <col>")
 	}
 	ctx := context.Background()
-	st, c, code := client(ctx, verb, *addr, stderr)
+	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
 		return code
 	}

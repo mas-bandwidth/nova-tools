@@ -60,6 +60,9 @@ row added later takes its place, and row move and row order are refused
 until row sort --manual. col del refuses a column that holds members or
 text, naming what to move or clear first.
 
+shell reads one command per line on a shared connection. It prints write
+receipts by default; --receipt=false disables them. Enter help, quit or exit.
+
 exit codes: 0 done, 1 refused, 2 usage
 
 example:
@@ -100,7 +103,11 @@ func refused(stderr io.Writer, verb, what string) int {
 	return 1
 }
 
-func run(args []string, stdout, stderr io.Writer) (code int) {
+func run(args []string, stdout, stderr io.Writer) int {
+	return (&application{in: os.Stdin}).run(args, stdout, stderr)
+}
+
+func (app *application) run(args []string, stdout, stderr io.Writer) (code int) {
 	defer recoverHelp(stdout, &code)
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb; available: "+rootNames())
@@ -119,11 +126,13 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 		}
 	}
 	var err error
-	args, err = selectSeat(seatcred.Process(), args, os.Getenv, os.Setenv)
-	if err != nil {
-		return refuse(stderr, "", err.Error())
+	if app.shared == nil {
+		args, err = selectSeat(seatcred.Process(), args, os.Getenv, os.Setenv)
+		if err != nil {
+			return refuse(stderr, "", err.Error())
+		}
 	}
-	return dispatch(args, stdout, stderr)
+	return app.dispatch(args, stdout, stderr)
 }
 
 // selectSeat is nova-sprint's seat resolution (cmd/nova-sprint/seat.go,
@@ -179,10 +188,14 @@ func selectSeat(sel *seatcred.Selection, args []string, getenv func(string) stri
 }
 
 // redisFlag declares --redis on fs with the seat-aware default.
-func redisFlag(fs interface {
+func (app *application) redisFlag(fs interface {
 	String(name, value, usage string) *string
 }) *string {
-	return fs.String("redis", redisDefault(os.Getenv), "the Redis address (else NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR, then the seat's)")
+	addr := redisDefault(os.Getenv)
+	if app.shared != nil {
+		addr = app.addr
+	}
+	return fs.String("redis", addr, "the Redis address (else NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR, then the seat's)")
 }
 
 // redisDefault is NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's
@@ -239,13 +252,19 @@ func (quietRedis) Printf(context.Context, string, ...interface{}) {}
 var quietRedisOnce sync.Once
 
 // client is open's client for a verb, or its refusal.
-func client(ctx context.Context, verb, addr string, stderr io.Writer) (*store.Store, *redis.Client, int) {
+func (app *application) client(ctx context.Context, verb, addr string, stderr io.Writer) (*connection, *redis.Client, int) {
 	quietRedisOnce.Do(func() { redis.SetLogger(quietRedis{}) })
+	if app.shared != nil {
+		if addr != app.addr {
+			return nil, nil, refuse(stderr, verb, "the shell connection is fixed; choose --redis when entering nova-table shell")
+		}
+		return app.shared, app.shared.Client(), 0
+	}
 	st, err := open(ctx, addr)
 	if err != nil {
 		return nil, nil, refuse(stderr, verb, err.Error())
 	}
-	return st, st.Client(), 0
+	return &connection{Store: st}, st.Client(), 0
 }
 
 // field is a value of a key=value field: quoted when it holds a space, a

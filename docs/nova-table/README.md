@@ -233,6 +233,7 @@ one line on stderr and exit 2 for a usage refusal, exit 1 when the store
 said no.
 
 ```
+nova-table shell [--redis <addr> | --seat <name>] [--keep-going] [--epoch <n>] [--receipt=false]
 nova-table create <table> --columns <name[:projection[:fold[:label]]],...> [--footer <label>] [--width <col=n,...>]
 nova-table set <table> [--footer <label>] [--rename <name>] [--columns <spec>] [--hide <cols>] [--show <cols>] [--hidden | --visible]
 nova-table drop <table> [--definition]
@@ -361,6 +362,50 @@ The timestamp, title, pooled summary and tables form the frame. The summary uses
 the same table snapshot as the body; unread inputs print `?`. ETA has no value
 until change-stream rate sampling is implemented. Edit a view to change its
 tables or title without restarting watch.
+
+## Resident shell
+
+`nova-table shell` reads commands from stdin and reuses one store connection.
+Choose `--seat <name>` or `--redis <addr>` when entering. The seat is resolved
+once; later commands keep that connection and use the same handlers, help and
+output as separate invocations. Ordinary table verbs use one application
+exchange each; a stored-view frame uses two. Multi-table watch reads remain
+pipelined. Lines run in order and commit independently.
+
+```sh
+nova-table shell --redis localhost:6379 <<'TABLE'
+create session-demo --columns 'ready,working,done,note:text,pct:pct(done)'
+row add session-demo 'the tests'
+cell add session-demo 'the tests' ready check-1 check-2
+cell move session-demo 'the tests' ready working check-1 check-2
+row set session-demo 'the tests' 'note=Running both checks'
+watch session-demo --once
+check session-demo
+quit
+TABLE
+```
+
+Enter just the verb, or paste a full `nova-table ...` command. Single/double
+quotes and backslash escapes keep a value together. Blank lines and `#`
+comments are skipped. Variables, globs and command substitutions remain literal;
+pipes and command separators must be quoted when they are part of a value.
+Use one complete command per line, up to 1 MiB. `help row move`, for example,
+shows the same help as outside the session.
+
+Writes print `TABLE RECEIPT` by default. Session flags `--epoch`, `--actor`,
+`--fence` and `--idem` supply defaults; a command can override them without
+changing the following command's defaults. `--receipt=false` suppresses receipt
+lines for the whole session or one command. A stale epoch refuses the write;
+the shell does not advance it automatically. A command cannot switch to another
+store or select another seat inside the session.
+
+File/pipe input stops at the first error. `--keep-going` continues and retains
+the final failure status; a terminal defaults to this behavior and prints
+`nova-table> ` on stderr. Exit is 0 for success, 1 if any store call refused, or
+2 if any usage/input/connection error occurred. Earlier successful lines remain
+committed. `quit`, `exit` or EOF ends the session. `watch` runs in it too: use
+`--once` for a script, or Ctrl-C to stop a continuous watch and return to the
+prompt. A script can also use `watch --out <path>` to publish each frame.
 
 ## Order
 

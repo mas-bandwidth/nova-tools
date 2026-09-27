@@ -37,10 +37,10 @@ const clearScreen = "\033[H\033[2J"
 // nowMillis is the clock the default cell score reads.
 func nowMillis() int64 { return time.Now().UnixMilli() }
 
-func cmdWatch(args []string, stdout, stderr io.Writer) int {
+func (app *application) cmdWatch(args []string, stdout, stderr io.Writer) int {
 	const verb = "watch"
 	fs := verbflag.New(verb)
-	addr := redisFlag(fs)
+	addr := app.redisFlag(fs)
 	every := fs.Duration("every", time.Second, "the tick, a duration (1s)")
 	out := fs.String("out", "", "publish to this file by atomic rename instead of drawing in place")
 	title := fs.String("title", "", "a title line above the tables")
@@ -74,7 +74,7 @@ func cmdWatch(args []string, stdout, stderr io.Writer) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	st, c, code := client(ctx, verb, *addr, stderr)
+	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
 		return code
 	}

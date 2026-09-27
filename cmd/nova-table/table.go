@@ -14,11 +14,11 @@ import (
 
 // The table verbs: create, drop, list, clear, show, render.
 
-func cmdCreate(args []string, stdout, stderr io.Writer) int {
+func (app *application) cmdCreate(args []string, stdout, stderr io.Writer) int {
 	const verb = "create"
 	fs := verbflag.New(verb)
-	addr := redisFlag(fs)
-	write, receipt := writeFlags(fs)
+	addr := app.redisFlag(fs)
+	write, receipt := app.writeFlags(fs)
 	epochKey := fs.String("epoch-key", "", "hash key naming the epoch domain (empty means epoch 0)")
 	epochField := fs.String("epoch-field", "n", "field in the epoch hash")
 	memberPrefix := fs.String("member-prefix", "", "member record prefix (default table::member:)")
@@ -62,7 +62,7 @@ func cmdCreate(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, verb, "the table name wants letters, digits, _ . and -, got "+strconv.Quote(t.Name))
 	}
 	ctx := context.Background()
-	st, c, code := client(ctx, verb, *addr, stderr)
+	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
 		return code
 	}
@@ -76,11 +76,11 @@ func cmdCreate(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func cmdSet(args []string, stdout, stderr io.Writer) int {
+func (app *application) cmdSet(args []string, stdout, stderr io.Writer) int {
 	const verb = "set"
 	fs := verbflag.New(verb)
-	addr := redisFlag(fs)
-	write, receipt := writeFlags(fs)
+	addr := app.redisFlag(fs)
+	write, receipt := app.writeFlags(fs)
 	footer := fs.String("footer", "\x00", "the footer row's label ('' for none)")
 	rename := fs.String("rename", "", "the table's new name")
 	columns := fs.String("columns", "", "the columns, replaced in place (the create grammar); rows kept")
@@ -106,7 +106,7 @@ func cmdSet(args []string, stdout, stderr io.Writer) int {
 		o.Footer = &f
 	}
 	ctx := context.Background()
-	st, c, code := client(ctx, verb, *addr, stderr)
+	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
 		return code
 	}
@@ -153,11 +153,11 @@ func cmdSet(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func cmdDrop(args []string, stdout, stderr io.Writer) int {
+func (app *application) cmdDrop(args []string, stdout, stderr io.Writer) int {
 	const verb = "drop"
 	fs := verbflag.New(verb)
-	addr := redisFlag(fs)
-	write, receipt := writeFlags(fs)
+	addr := app.redisFlag(fs)
+	write, receipt := app.writeFlags(fs)
 	definition := fs.Bool("definition", false, "also remove the template; keep materialised history")
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
@@ -167,7 +167,7 @@ func cmdDrop(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, verb, "wants one table name: drop <table>")
 	}
 	ctx := context.Background()
-	st, c, code := client(ctx, verb, *addr, stderr)
+	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
 		return code
 	}
@@ -186,10 +186,10 @@ func cmdDrop(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func cmdList(args []string, stdout, stderr io.Writer) int {
+func (app *application) cmdList(args []string, stdout, stderr io.Writer) int {
 	const verb = "list"
 	fs := verbflag.New(verb)
-	addr := redisFlag(fs)
+	addr := app.redisFlag(fs)
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
@@ -198,7 +198,7 @@ func cmdList(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, verb, "takes no table name: list")
 	}
 	ctx := context.Background()
-	st, c, code := client(ctx, verb, *addr, stderr)
+	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
 		return code
 	}
@@ -215,11 +215,11 @@ func cmdList(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func cmdClear(args []string, stdout, stderr io.Writer) int {
+func (app *application) cmdClear(args []string, stdout, stderr io.Writer) int {
 	const verb = "clear"
 	fs := verbflag.New(verb)
-	addr := redisFlag(fs)
-	write, receipt := writeFlags(fs)
+	addr := app.redisFlag(fs)
+	write, receipt := app.writeFlags(fs)
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
@@ -228,7 +228,7 @@ func cmdClear(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, verb, "wants one table name: clear <table>")
 	}
 	ctx := context.Background()
-	st, c, code := client(ctx, verb, *addr, stderr)
+	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
 		return code
 	}
@@ -244,10 +244,10 @@ func cmdClear(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func cmdShow(args []string, stdout, stderr io.Writer) int {
+func (app *application) cmdShow(args []string, stdout, stderr io.Writer) int {
 	const verb = "show"
 	fs := verbflag.New(verb)
-	addr := redisFlag(fs)
+	addr := app.redisFlag(fs)
 	atEpoch := fs.String("at-epoch", "", "inspect a materialised epoch instead of the active one")
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
@@ -264,7 +264,7 @@ func cmdShow(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	ctx := context.Background()
-	st, c, code := client(ctx, verb, *addr, stderr)
+	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
 		return code
 	}
@@ -329,10 +329,10 @@ func (f renderFlags) opts() (ntable.RenderOpts, error) {
 	return opts, nil
 }
 
-func cmdRender(args []string, stdout, stderr io.Writer) int {
+func (app *application) cmdRender(args []string, stdout, stderr io.Writer) int {
 	const verb = "render"
 	fs := verbflag.New(verb)
-	addr := redisFlag(fs)
+	addr := app.redisFlag(fs)
 	atEpoch := fs.String("at-epoch", "", "inspect a materialised epoch instead of the active one")
 	rf := declareRenderFlags(fs)
 	pos, err := parseInterleaved(fs, args)
@@ -354,7 +354,7 @@ func cmdRender(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	ctx := context.Background()
-	st, c, code := client(ctx, verb, *addr, stderr)
+	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
 		return code
 	}
@@ -377,7 +377,7 @@ func cmdRender(args []string, stdout, stderr io.Writer) int {
 }
 
 // cmdView manages presentation configuration independently of table receipts.
-func cmdView(args []string, stdout, stderr io.Writer) int {
+func (app *application) cmdView(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		return refuse(stderr, "view", "wants set, show, list or del")
 	}
@@ -387,7 +387,7 @@ func cmdView(args []string, stdout, stderr io.Writer) int {
 	}
 	verb := "view " + sub
 	fs := verbflag.New(verb)
-	addr := redisFlag(fs)
+	addr := app.redisFlag(fs)
 	var tables, title, summary string
 	if sub == "set" {
 		fs.StringVar(&tables, "tables", "", "the tables, comma-separated, in order")
@@ -416,7 +416,7 @@ func cmdView(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	ctx := context.Background()
-	st, c, code := client(ctx, verb, *addr, stderr)
+	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
 		return code
 	}
