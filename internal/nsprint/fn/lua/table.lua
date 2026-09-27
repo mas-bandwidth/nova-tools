@@ -68,9 +68,9 @@ do
   function T.row(n)
     if not T.word(n) then return false end
     local i = 1
+    local function continuation(v) return v and v >= 128 and v <= 191 end
     while i <= #n do
       local a, b, c, e = string.byte(n, i, i + 3)
-      local function continuation(v) return v and v >= 128 and v <= 191 end
       if a < 128 then i = i + 1
       elseif a >= 194 and a <= 223 and continuation(b) then i = i + 2
       elseif a >= 224 and a <= 239 and continuation(b) and continuation(c) and
