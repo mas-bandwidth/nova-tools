@@ -124,12 +124,16 @@ func selectFixture(t *testing.T, script string) (string, string, []string) {
 	}
 	files := map[string]string{
 		".github/scripts/select-packages.sh": script,
-		"cmd/foo/foo.go":                     "package main\n",
-		"internal/bar/bar.go":                "package bar\n",
-		"internal/ci/ci.go":                  "package ci\n",
-		"internal/docs/docs.go":              "package docs\n",
-		"internal/tagged/tagged.go":          "//go:build swarmtest\n\npackage tagged\n",
-		"internal/bar/testdata/x/x.go":       "package x\n",
+		// the filter every list goes through, and a list naming one package
+		// the fixture does not hold, so the whole trees below are unchanged
+		".github/scripts/live-packages.sh": readFile(t, filepath.Join(repoRoot(t), ".github", "scripts", "live-packages.sh")),
+		"deprecated/PACKAGES":              "# the fixture's list\ncmd/gone\n",
+		"cmd/foo/foo.go":                   "package main\n",
+		"internal/bar/bar.go":              "package bar\n",
+		"internal/ci/ci.go":                "package ci\n",
+		"internal/docs/docs.go":            "package docs\n",
+		"internal/tagged/tagged.go":        "//go:build swarmtest\n\npackage tagged\n",
+		"internal/bar/testdata/x/x.go":     "package x\n",
 	}
 	for name, body := range files {
 		p := filepath.Join(repo, filepath.FromSlash(name))
