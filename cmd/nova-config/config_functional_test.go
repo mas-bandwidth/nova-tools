@@ -13,6 +13,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil/pg"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -200,7 +201,7 @@ func TestApplyEndToEnd(t *testing.T) {
 	// Removing a friend is refused by apply while it holds working copies,
 	// and goes through once they are gone.
 	r.run(t, 0, "friend", "remove", "stella")
-	r.client.SAdd(ctx, "friend:stella:cards:working", "card:4410")
+	r.client.ZAdd(ctx, ws.ConsumerKeyAt(0, "friend:stella", "working"), redis.Z{Score: 1, Member: "card:4410"})
 	out, errs := r.run(t, 1, "apply", "--kind", "friend")
 	if !strings.Contains(errs, "friend stella holds 1 working copies (card:4410)") || out != "APPLY REMOVE kind=friend name=stella\n" {
 		t.Fatalf("remove with a working copy: %q %q", out, errs)
@@ -208,7 +209,7 @@ func TestApplyEndToEnd(t *testing.T) {
 	if !r.client.SIsMember(ctx, "friends", "stella").Val() {
 		t.Fatal("a refused remove unregistered stella")
 	}
-	r.client.Del(ctx, "friend:stella:cards:working")
+	r.client.Del(ctx, ws.ConsumerKeyAt(0, "friend:stella", "working"))
 	out, _ = r.run(t, 0, "apply", "--kind", "friend")
 	if !strings.HasPrefix(out, "APPLY REMOVE kind=friend name=stella\nCONFIG APPLY kind=friend add=0 set=0 remove=1 rev=5 ms=") {
 		t.Fatalf("remove: %q", out)

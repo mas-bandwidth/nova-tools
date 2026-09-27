@@ -86,7 +86,11 @@ exit codes: 0 done, 1 refused, 2 usage
 
 `
 
-const usageExamples = `example:
+// usageExamples ends the banner: the two lines a stranger can paste that
+// need no store (docs/ONBOARDING.md point 1). The heading's leading newline
+// is what onboarding.ExampleHeading and the pasted-examples rule read.
+const usageExamples = `
+example:
   nova-config kinds
   nova-config migrate --print
 `
@@ -105,7 +109,6 @@ func kindsUsage() string {
 			fmt.Fprintf(&b, "    --%-8s %s%s\n", f.Name, f.Help, req)
 		}
 	}
-	b.WriteString("\n")
 	return b.String()
 }
 

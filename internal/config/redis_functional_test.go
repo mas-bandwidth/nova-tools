@@ -11,6 +11,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -163,7 +164,7 @@ func TestApplySetsAndRemovesAFriend(t *testing.T) {
 	if _, err := st.Delete(ctx, KindFriend, "stella", "rowan"); err != nil {
 		t.Fatal(err)
 	}
-	c.SAdd(ctx, "friend:stella:cards:working", "card:4410", "card:4414")
+	c.ZAdd(ctx, ws.ConsumerKeyAt(0, "friend:stella", "working"), redis.Z{Score: 1, Member: "card:4410"}, redis.Z{Score: 2, Member: "card:4414"})
 	_, err = Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {})
 	if err == nil || !errors.Is(err, ErrWorking) || !Refused(err) {
 		t.Fatalf("remove with working copies: %v", err)
@@ -178,7 +179,7 @@ func TestApplySetsAndRemovesAFriend(t *testing.T) {
 		t.Fatalf("stamp after a refused apply %s, want the previous 5", got)
 	}
 	// The copies gone, the remove goes through and every key with it.
-	c.Del(ctx, "friend:stella:cards:working")
+	c.Del(ctx, ws.ConsumerKeyAt(0, "friend:stella", "working"))
 	res, err = Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {})
 	if err != nil || res.Remove != 1 {
 		t.Fatalf("remove: %+v %v", res, err)

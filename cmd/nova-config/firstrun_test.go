@@ -21,14 +21,6 @@ import (
 // Nothing is normalised: `kinds` and `migrate --print` read the descriptors
 // and the embedded migrations, so every value reproduces on every bench.
 
-// documentedExamples are the banner's example lines, named here so the
-// pasted-examples rule (internal/ci, SPEC-TOOLWORK §7 rule 7) reads the
-// command text in this test and the transcript below holds the same lines.
-var documentedExamples = []string{
-	"nova-config kinds",
-	"nova-config migrate --print",
-}
-
 func runDocumented(s onboarding.Step) (onboarding.Result, error) {
 	var out, errb bytes.Buffer
 	code := run(s.Args, &out, &errb, newHarness().deps())
@@ -38,6 +30,13 @@ func runDocumented(s onboarding.Step) (onboarding.Result, error) {
 func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	t.Parallel()
 
+	// The banner's example lines, named in this test's own body so the
+	// pasted-examples rule (internal/ci, SPEC-TOOLWORK §7 rule 7) reads
+	// the command text here; the transcript below holds the same lines.
+	documentedExamples := []string{
+		"nova-config kinds",
+		"nova-config migrate --print",
+	}
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatal(err)

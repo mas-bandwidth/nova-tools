@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -358,7 +359,14 @@ func RedisRefusal(format string, args ...any) *RefusedError {
 }
 
 func (a *RedisApplier) removeFriend(ctx context.Context, f, actor, idem string) error {
-	working, err := a.Client.SMembers(ctx, "friend:"+f+":cards:working").Result()
+	// The friend's working set is a table set, named by the sprint epoch
+	// (ws.ConsumerKeyAt, nova-tools#4238): a copy it still holds keeps the
+	// friend in Redis.
+	epoch, err := ws.Epoch(ctx, a.Client)
+	if err != nil {
+		return fmt.Errorf("redis: read the sprint epoch: %w", err)
+	}
+	working, err := a.Client.ZRange(ctx, ws.ConsumerKeyAt(epoch, KindFriend+":"+f, "working"), 0, -1).Result()
 	if err != nil {
 		return fmt.Errorf("redis: read friend %s working copies: %w", f, err)
 	}
