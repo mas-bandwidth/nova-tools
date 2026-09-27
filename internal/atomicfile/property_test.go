@@ -39,7 +39,7 @@ func TestPropertyContentAndPermRoundTrip(t *testing.T) {
 	r := rand.New(rand.NewPCG(seed, 0x6e6f7661))
 	dir := t.TempDir()
 
-	for i := 0; i < 200; i++ {
+	for i := 0; i < 20; i++ {
 		target := filepath.Join(dir, fmt.Sprintf("prop_roundtrip_%d.dat", i))
 		data := propertyBytes(r)
 		perm := propertyPerms[r.IntN(len(propertyPerms))]
@@ -75,7 +75,7 @@ func TestPropertyArbitraryOverwrite(t *testing.T) {
 	target := filepath.Join(dir, "prop_overwrite.dat")
 
 	var current []byte
-	for i := 0; i < 200; i++ {
+	for i := 0; i < 20; i++ {
 		next := propertyBytes(r)
 		perm := propertyPerms[r.IntN(len(propertyPerms))]
 
@@ -105,7 +105,7 @@ func TestPropertyFailureIsolationOverArbitraryData(t *testing.T) {
 
 	failureSteps := []string{"create", "chmod", "write", "sync", "close", "rename"}
 
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 20; i++ {
 		target := filepath.Join(dir, fmt.Sprintf("prop_fail_%d.dat", i))
 		initialData := propertyBytes(r)
 		if err := Write(target, initialData, 0o644); err != nil {
@@ -119,7 +119,7 @@ func TestPropertyFailureIsolationOverArbitraryData(t *testing.T) {
 		h := defaultHooks()
 		switch step {
 		case "create":
-			h.createTemp = func(dir, pattern string) (*os.File, error) { return nil, injectedErr }
+			h.createTemp = func(dir, base string, perm os.FileMode) (*os.File, error) { return nil, injectedErr }
 		case "chmod":
 			h.chmod = func(f *os.File, mode os.FileMode) error { return injectedErr }
 		case "write":

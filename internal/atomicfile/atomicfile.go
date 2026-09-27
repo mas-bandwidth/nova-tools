@@ -5,23 +5,60 @@ sees either the old content or the new content in full, never a part of either.
 # Contract and Guarantees
 
 Every write follows a strict, bounded sequence:
- 1. The target path and its parent directory are validated. The parent directory
-    must already exist; atomicfile never creates parent directories silently.
-    If the target is an existing directory or symlink, or if the parent directory
-    is read-only or does not exist, the operation is refused immediately with an
-    error naming the path.
- 2. A temporary file is created exclusively in the SAME directory as the target
-    file, using a unique name ("." + base + "-*.tmp") that never collides with
-    concurrent writers or existing files.
- 3. The temporary file's permissions are set to the caller's requested FileMode.
- 4. The data is written to the temporary file in full.
- 5. The temporary file is flushed to storage media using fsync (f.Sync()).
- 6. The temporary file is closed.
- 7. The temporary file is renamed over the target path (os.Rename).
+ 1. Path and parent directory validation: The target path and its parent directory
+    are validated. The parent directory must already exist; atomicfile never creates
+    parent directories silently. The base filename must not exceed 241 bytes so
+    that the temporary file's fixed 14-byte overhead does not exceed the filesystem
+    NAME_MAX (255 bytes). If the target is an existing directory or symlink, or if
+    the parent directory is read-only, does not exist, or is not a directory, the
+    operation is refused immediately with an error naming the path.
+ 2. Exclusive temporary file creation: A temporary file is created exclusively in the
+    SAME directory as the target file, using a fixed-length name of the form
+    ".<base>.tmp-%08x" where the suffix is drawn from crypto/rand. This guarantees
+    that concurrent writers never collide and temporary files never escape their
+    parent directory.
+ 3. Explicit permissions: The temporary file is created with and explicitly chmoded
+    to the caller's requested os.FileMode.
+ 4. Full write: The data payload is written to the temporary file in full.
+ 5. Media flush (fsync): The file contents and inode metadata are flushed to durable
+    storage media using fsync (f.Sync()).
+ 6. Clean closure: The temporary file descriptor is closed.
+ 7. Atomic rename: The temporary file is renamed over the target path (os.Rename).
 
-On any failure at any step (create, chmod, write, sync, close, or rename), the
-temporary file is removed immediately and the target file is left completely
-untouched. Nothing outside the target's directory is touched.
+# Failure and Cleanup Guarantees
+
+On any failure during creation, chmod, write, sync, close, or rename, atomicfile
+attempts to remove the temporary file immediately (os.Remove), leaving the target
+file completely untouched. If removing the temporary file fails (for example due
+to sudden permission loss or filesystem error), the cleanup error is joined to the
+returned error via errors.Join, explicitly naming the leftover temporary path so
+callers can detect and inspect any uncollected file.
+
+# Directory Boundary and Concurrency Note
+
+The initial symlink and directory check is a safeguard against accidental caller
+mistakes (e.g. attempting to overwrite a symlink or directory path). It is designed
+for caller-owned directories; it is not an adversarial race-free lock against
+malicious actors concurrently swapping directory contents on untrusted trees.
+
+# Differences from os.WriteFile
+
+Callers migrating from os.WriteFile should note five key differences:
+ 1. Atomicity: os.WriteFile truncates and overwrites in-place, allowing concurrent
+    readers to observe truncated or empty intermediate states. atomicfile writes
+    to a sibling temporary file first and renames, ensuring readers always see
+    a complete version.
+ 2. Permissions & umask: os.WriteFile creates new files masked by the process umask
+    and preserves permissions of existing files without updating them. atomicfile
+    applies the caller's perm directly to the target via chmod, replacing prior
+    permissions and bypassing umask reduction.
+ 3. Inodes and hard links: Because atomicfile replaces the directory entry via
+    rename(2), the target receives a new inode. Existing hard links to the target
+    path continue pointing to the previous inode and will not reflect new writes.
+ 4. Special files: atomicfile cannot write in-place to special files such as FIFOs,
+    device nodes, or sockets.
+ 5. fsync: atomicfile flushes file data and metadata with fsync before renaming;
+    os.WriteFile performs no fsync.
 
 # Power-Loss Durability (What is and is not promised)
 
@@ -31,7 +68,7 @@ What is promised:
     truncated file, zero-filled pages, or a partially overwritten mixture of the two.
   - Data and file-metadata durability: The temporary file data and inode metadata
     are synced to persistent storage via fsync prior to rename. Once Write returns
-    nil, the contents are safely on disk.
+    nil, the file contents are safely flushed to media.
 
 What is NOT promised:
   - Parent directory durability across power loss: The parent directory is not
@@ -46,35 +83,81 @@ What is NOT promised:
 package atomicfile
 
 import (
+	crand "crypto/rand"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+)
+
+const (
+	maxFilenameLen = 255
+	// tempOverhead is the length of "." prefix (1) + ".tmp-%08x" suffix (13) = 14 bytes.
+	tempOverhead          = 14
+	maxBaseNameLen        = maxFilenameLen - tempOverhead // 241
+	maxCreateTempAttempts = 1000
 )
 
 // hooks provides injection seams for step failure testing.
 type hooks struct {
 	stat       func(name string) (os.FileInfo, error)
 	lstat      func(name string) (os.FileInfo, error)
-	createTemp func(dir, pattern string) (*os.File, error)
+	createTemp func(dir, base string, perm os.FileMode) (*os.File, error)
 	chmod      func(f *os.File, mode os.FileMode) error
 	write      func(f *os.File, data []byte) (int, error)
 	sync       func(f *os.File) error
 	close      func(f *os.File) error
 	rename     func(oldpath, newpath string) error
+	remove     func(name string) error
 }
 
 func defaultHooks() *hooks {
 	return &hooks{
 		stat:       os.Stat,
 		lstat:      os.Lstat,
-		createTemp: os.CreateTemp,
+		createTemp: defaultCreateTemp,
 		chmod:      func(f *os.File, mode os.FileMode) error { return f.Chmod(mode) },
 		write:      func(f *os.File, data []byte) (int, error) { return f.Write(data) },
 		sync:       func(f *os.File) error { return f.Sync() },
 		close:      func(f *os.File) error { return f.Close() },
 		rename:     os.Rename,
+		remove:     os.Remove,
 	}
+}
+
+func defaultCreateTemp(dir, base string, perm os.FileMode) (*os.File, error) {
+	return createTempFile(dir, base, perm, func() (uint32, error) {
+		return randomUint32(crand.Reader)
+	})
+}
+
+func createTempFile(dir, base string, perm os.FileMode, randFn func() (uint32, error)) (*os.File, error) {
+	for i := 0; i < maxCreateTempAttempts; i++ {
+		r, err := randFn()
+		if err != nil {
+			return nil, err
+		}
+		name := filepath.Join(dir, fmt.Sprintf(".%s.tmp-%08x", base, r))
+		f, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL, perm)
+		if errors.Is(err, os.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		return f, nil
+	}
+	return nil, fmt.Errorf("atomicfile: could not create unique temporary file after %d attempts", maxCreateTempAttempts)
+}
+
+func randomUint32(r io.Reader) (uint32, error) {
+	var b [4]byte
+	if _, err := io.ReadFull(r, b[:]); err != nil {
+		return 0, err
+	}
+	return binary.BigEndian.Uint32(b[:]), nil
 }
 
 // Write writes data to path atomically with the specified file mode permissions.
@@ -83,12 +166,13 @@ func defaultHooks() *hooks {
 //
 // The write is performed by creating a temporary file in the same directory,
 // setting permissions to perm, flushing data and metadata to disk with fsync,
-// closing the file, and renaming it over path. On any failure, the temporary file
-// is removed and the target file remains untouched.
+// closing the file, and renaming it over path. On any failure, removal of the
+// temporary file is attempted, leaving the target file untouched; if removal
+// fails, the cleanup error is joined to the returned error naming the leftover file.
 //
 // Write refuses to replace directories, refuses to follow or replace symlinks,
-// and returns an error naming path if the parent directory does not exist or
-// is read-only.
+// refuses base names longer than 241 bytes, and returns an error naming path if
+// the parent directory does not exist or is read-only.
 //
 // Durability note: Write syncs the file's data and inode to storage before
 // renaming, but does not fsync the parent directory after rename. Refer to the
@@ -97,15 +181,20 @@ func Write(path string, data []byte, perm os.FileMode) error {
 	return writeWithHooks(path, data, perm, nil)
 }
 
-// WriteFile is an alias for Write, matching os.WriteFile's signature and behavior
-// with atomic replacement guarantees.
+// WriteFile is an alias for Write, matching os.WriteFile's signature with atomic
+// replacement guarantees.
 func WriteFile(path string, data []byte, perm os.FileMode) error {
 	return Write(path, data, perm)
 }
 
-func writeWithHooks(path string, data []byte, perm os.FileMode, h *hooks) error {
+func writeWithHooks(path string, data []byte, perm os.FileMode, h *hooks) (err error) {
 	if path == "" {
 		return fmt.Errorf("atomicfile: path is empty")
+	}
+
+	base := filepath.Base(path)
+	if len(base) > maxBaseNameLen {
+		return fmt.Errorf("atomicfile: base name of %q exceeds maximum length %d: name too long", path, maxBaseNameLen)
 	}
 
 	if h == nil {
@@ -133,8 +222,7 @@ func writeWithHooks(path string, data []byte, perm os.FileMode, h *hooks) error 
 		return fmt.Errorf("atomicfile: stat %q: %w", path, err)
 	}
 
-	pattern := "." + filepath.Base(path) + "-*.tmp"
-	f, err := h.createTemp(dir, pattern)
+	f, err := h.createTemp(dir, base, perm)
 	if err != nil {
 		return fmt.Errorf("atomicfile: create temporary file for %q: %w", path, err)
 	}
@@ -147,7 +235,9 @@ func writeWithHooks(path string, data []byte, perm os.FileMode, h *hooks) error 
 			_ = f.Close()
 		}
 		if !cleaned {
-			_ = os.Remove(tmpName)
+			if cleanErr := h.remove(tmpName); cleanErr != nil {
+				err = errors.Join(err, fmt.Errorf("atomicfile: cleanup failed for %q: %w", tmpName, cleanErr))
+			}
 		}
 	}()
 

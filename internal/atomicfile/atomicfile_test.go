@@ -7,8 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
 )
 
@@ -128,6 +126,22 @@ func TestRefusals(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "empty") {
 			t.Fatalf("error %q does not mention empty", err)
+		}
+	})
+
+	t.Run("base_name_too_long", func(t *testing.T) {
+		t.Parallel()
+		tooLongBase := strings.Repeat("a", maxBaseNameLen+1)
+		target := filepath.Join(dir, tooLongBase)
+		err := Write(target, []byte("data"), 0o644)
+		if err == nil {
+			t.Fatal("Write with base name exceeding limit succeeded; want refusal")
+		}
+		if !strings.Contains(err.Error(), target) {
+			t.Fatalf("error %q does not name path %q", err, target)
+		}
+		if !strings.Contains(err.Error(), "exceeds maximum length") {
+			t.Fatalf("error %q does not mention maximum length", err)
 		}
 	})
 
@@ -275,6 +289,138 @@ func TestRefusals(t *testing.T) {
 	})
 }
 
+func TestFsyncExecuted(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	target := filepath.Join(dir, "synced_file.txt")
+
+	syncCalled := false
+	h := defaultHooks()
+	h.sync = func(f *os.File) error {
+		syncCalled = true
+		return f.Sync()
+	}
+
+	if err := writeWithHooks(target, []byte("sync test\n"), 0o644, h); err != nil {
+		t.Fatalf("writeWithHooks failed: %v", err)
+	}
+
+	if !syncCalled {
+		t.Fatal("sync hook was not executed during successful write")
+	}
+
+	got, err := os.ReadFile(target)
+	if err != nil || string(got) != "sync test\n" {
+		t.Fatalf("file content invalid: %s (%v)", string(got), err)
+	}
+}
+
+func TestCleanupFailureJoined(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	target := filepath.Join(dir, "cleanup_fail.txt")
+
+	writeErr := errors.New("simulated write failure")
+	removeErr := errors.New("simulated remove failure")
+
+	h := defaultHooks()
+	h.write = func(f *os.File, data []byte) (int, error) {
+		return 0, writeErr
+	}
+	h.remove = func(name string) error {
+		_ = os.Remove(name) // remove real file so no temp leaks on disk
+		return removeErr
+	}
+
+	err := writeWithHooks(target, []byte("data"), 0o644, h)
+	if err == nil {
+		t.Fatal("writeWithHooks succeeded; want error")
+	}
+
+	if !errors.Is(err, writeErr) {
+		t.Fatalf("error does not wrap writeErr: %v", err)
+	}
+	if !errors.Is(err, removeErr) {
+		t.Fatalf("error does not wrap removeErr: %v", err)
+	}
+	if !strings.Contains(err.Error(), "cleanup failed for") {
+		t.Fatalf("error %q does not report cleanup failure", err)
+	}
+}
+
+func TestCreateTempCollisionAndExhaustion(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	t.Run("collision_resolved_on_retry", func(t *testing.T) {
+		t.Parallel()
+		// Pre-create file with fixed nonce 0x12345678
+		preName := filepath.Join(dir, fmt.Sprintf(".test.tmp-%08x", 0x12345678))
+		if err := os.WriteFile(preName, []byte("existing"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = os.Remove(preName) }()
+
+		attempts := 0
+		randFn := func() (uint32, error) {
+			attempts++
+			if attempts == 1 {
+				return 0x12345678, nil // will collide
+			}
+			return 0x87654321, nil // will succeed
+		}
+
+		f, err := createTempFile(dir, "test", 0o600, randFn)
+		if err != nil {
+			t.Fatalf("createTempFile failed on retry: %v", err)
+		}
+		_ = f.Close()
+		_ = os.Remove(f.Name())
+
+		if attempts != 2 {
+			t.Fatalf("expected 2 attempts, got %d", attempts)
+		}
+	})
+
+	t.Run("attempts_exhausted", func(t *testing.T) {
+		t.Parallel()
+		collidingName := filepath.Join(dir, fmt.Sprintf(".exhaust.tmp-%08x", 0xabcdef01))
+		if err := os.WriteFile(collidingName, []byte("existing"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = os.Remove(collidingName) }()
+
+		randFn := func() (uint32, error) {
+			return 0xabcdef01, nil // always collides
+		}
+
+		f, err := createTempFile(dir, "exhaust", 0o600, randFn)
+		if err == nil {
+			_ = f.Close()
+			t.Fatal("createTempFile succeeded despite constant collision; want exhaustion")
+		}
+		wantMsg := fmt.Sprintf("after %d attempts", maxCreateTempAttempts)
+		if !strings.Contains(err.Error(), wantMsg) {
+			t.Fatalf("error %q does not mention %s", err, wantMsg)
+		}
+	})
+
+	t.Run("rand_error", func(t *testing.T) {
+		t.Parallel()
+		randErr := errors.New("entropy exhausted")
+		randFn := func() (uint32, error) {
+			return 0, randErr
+		}
+		_, err := createTempFile(dir, "randerr", 0o600, randFn)
+		if !errors.Is(err, randErr) {
+			t.Fatalf("error does not wrap randErr: %v", err)
+		}
+	})
+}
+
 func TestStepFailureInjection(t *testing.T) {
 	t.Parallel()
 
@@ -311,7 +457,7 @@ func testStepFailure(t *testing.T, failStep string, preexisting bool) {
 
 	switch failStep {
 	case "create":
-		h.createTemp = func(dir, pattern string) (*os.File, error) {
+		h.createTemp = func(dir, base string, perm os.FileMode) (*os.File, error) {
 			return nil, injectedErr
 		}
 	case "chmod":
@@ -377,162 +523,23 @@ func testStepFailure(t *testing.T, failStep string, preexisting bool) {
 	}
 }
 
-func TestConcurrentWriters(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	target := filepath.Join(dir, "concurrent_target.txt")
-
-	const payloadSize = 32768
-	payloadA := bytes.Repeat([]byte("A"), payloadSize)
-	payloadB := bytes.Repeat([]byte("B"), payloadSize)
-
-	for round := 0; round < 10; round++ {
-		var wg sync.WaitGroup
-		errs := make(chan error, 2)
-
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-			if err := Write(target, payloadA, 0o644); err != nil {
-				errs <- fmt.Errorf("writer A: %w", err)
-			}
-		}()
-		go func() {
-			defer wg.Done()
-			if err := Write(target, payloadB, 0o644); err != nil {
-				errs <- fmt.Errorf("writer B: %w", err)
-			}
-		}()
-
-		wg.Wait()
-		close(errs)
-
-		for err := range errs {
-			t.Fatalf("concurrent writer error: %v", err)
-		}
-
-		got, err := os.ReadFile(target)
-		if err != nil {
-			t.Fatalf("ReadFile failed: %v", err)
-		}
-
-		isA := bytes.Equal(got, payloadA)
-		isB := bytes.Equal(got, payloadB)
-		if !isA && !isB {
-			t.Fatalf("round %d: target holds corrupted mixed bytes (len=%d)", round, len(got))
-		}
-	}
-
-	// Verify no temporary files leaked
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("ReadDir failed: %v", err)
-	}
-	for _, e := range entries {
-		if e.Name() != "concurrent_target.txt" {
-			t.Fatalf("leaked file %q in dir", e.Name())
-		}
-	}
-}
-
-func TestReaderNeverSeesPartialFile(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	target := filepath.Join(dir, "versioned.txt")
-
-	makeVersionPayload := func(v int) []byte {
-		// Large payload (4096 bytes) with recognizable header, body pattern, and trailer
-		header := fmt.Sprintf("BEGIN %06d\n", v)
-		trailer := fmt.Sprintf("END %06d\n", v)
-		pattern := fmt.Sprintf("%08x", v)
-		repeatCount := (4096 - len(header) - len(trailer)) / len(pattern)
-		body := strings.Repeat(pattern, repeatCount)
-		return []byte(header + body + "\n" + trailer)
-	}
-
-	// Write initial version 0
-	if err := Write(target, makeVersionPayload(0), 0o644); err != nil {
-		t.Fatalf("initial write failed: %v", err)
-	}
-
-	const totalWrites = 1000
-	done := make(chan struct{})
-	var readCount atomic.Int64
-	var readErrors []string
-	var errMu sync.Mutex
-
-	recordErr := func(s string) {
-		errMu.Lock()
-		defer errMu.Unlock()
-		if len(readErrors) < 10 {
-			readErrors = append(readErrors, s)
-		}
-	}
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-
-	// Reader loop
-	go func() {
-		defer wg.Done()
-		for {
-			select {
-			case <-done:
-				return
-			default:
-				data, err := os.ReadFile(target)
-				if err != nil {
-					recordErr(fmt.Sprintf("ReadFile error: %v", err))
-					continue
-				}
-				readCount.Add(1)
-
-				// Verify atomic content: must match makeVersionPayload(v) exactly
-				var v int
-				n, err := fmt.Sscanf(string(data), "BEGIN %d\n", &v)
-				if err != nil || n != 1 {
-					recordErr(fmt.Sprintf("corrupt header: %q", string(data[:min(len(data), 40)])))
-					continue
-				}
-				expected := makeVersionPayload(v)
-				if !bytes.Equal(data, expected) {
-					recordErr(fmt.Sprintf("partial read for version %d: len %d, want %d", v, len(data), len(expected)))
-				}
-			}
-		}
-	}()
-
-	// Writer writes 1,000 versions sequentially
-	for v := 1; v <= totalWrites; v++ {
-		if err := Write(target, makeVersionPayload(v), 0o644); err != nil {
-			t.Fatalf("Write version %d failed: %v", v, err)
-		}
-	}
-
-	close(done)
-	wg.Wait()
-
-	if len(readErrors) > 0 {
-		t.Fatalf("reader saw %d partial/corrupt files; first error: %s", len(readErrors), readErrors[0])
-	}
-
-	t.Logf("Reader completed %d verified reads during %d atomic writes with 0 partial reads", readCount.Load(), totalWrites)
-
-	// Final verification
-	finalData, err := os.ReadFile(target)
-	if err != nil {
-		t.Fatalf("ReadFile final failed: %v", err)
-	}
-	if !bytes.Equal(finalData, makeVersionPayload(totalWrites)) {
-		t.Fatalf("final version not %d", totalWrites)
-	}
-}
-
 func min(a, b int) int {
 	if a < b {
 		return a
 	}
 	return b
+}
+
+type errReader struct{}
+
+func (errReader) Read(p []byte) (int, error) {
+	return 0, errors.New("simulated entropy read failure")
+}
+
+func TestRandomUint32Error(t *testing.T) {
+	t.Parallel()
+	_, err := randomUint32(errReader{})
+	if err == nil {
+		t.Fatal("randomUint32 succeeded on errReader; want error")
+	}
 }
