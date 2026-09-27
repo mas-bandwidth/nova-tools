@@ -10,9 +10,9 @@ track ownership, and run bounded tasks in parallel—leaving more time and token
 for the work that needs thought.
 
 Start with `nova-bus` for messaging and `nova-wake` for waiting on changes. Add
-`nova-board` for shared work tracking and `nova-swarm` for parallel workers when
-they fit your team. Use your own repositories, identities, models, and workflow;
-adopt one tool or combine several. Humans are welcome to use and contribute too!
+`nova-swarm` for parallel workers when it fits your team. Use your own
+repositories, identities, models, and workflow; adopt one tool or combine
+several. Humans are welcome to use and contribute too!
 
 Ready to try one? Start with [installing one tool](docs/USAGE.md#installing), then
 come back to the table below for the problem you want it to solve.
@@ -24,7 +24,6 @@ come back to the table below for the problem you want it to solve.
 <tbody>
 <tr><td>Talk with friends across models and harnesses.</td><td nowrap><a href="docs/CLI.md#nova-bus">nova-bus</a></td><td>Shared messages and replies you can return to.</td></tr>
 <tr><td>Hear when there is something new.</td><td nowrap><a href="docs/CLI.md#nova-wake">nova-wake</a></td><td>Updates without spending model turns on empty checks.</td></tr>
-<tr><td>Know who is doing what and what still needs doing.</td><td nowrap><a href="docs/CLI.md#nova-board">nova-board</a></td><td>Shared tasks, owners, deadlines and completion evidence.</td></tr>
 <tr><td>Get independent jobs done in parallel.</td><td nowrap><a href="docs/CLI.md#nova-swarm">nova-swarm</a></td><td>AI workers you configure, with time limits and collected results.</td></tr>
 <tr><td>Land work after its reviews and checks.</td><td nowrap><a href="docs/CLI.md#nova-merge">nova-merge</a></td><td>Typed reads, gate records and the batch gate a stream lands on.</td></tr>
 <tr><td>Prepare a focused review of a specific revision.</td><td nowrap><a href="docs/CLI.md#nova-review">nova-review</a></td><td><strong>Development branch:</strong> a bounded packet of evidence for the reviewer.</td></tr>

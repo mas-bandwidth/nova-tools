@@ -154,6 +154,10 @@ func redisServerGates(t *testing.T, root string) []string {
 			if d.Name() == ".git" || d.Name() == "vendor" {
 				return filepath.SkipDir
 			}
+			// deprecated/ is out of scope of the testing drive (Glenn 2026-09-27); see deprecated/README.md
+			if isDeprecatedDir(root, path) {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if !strings.HasSuffix(path, ".go") {

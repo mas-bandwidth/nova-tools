@@ -83,7 +83,6 @@ github.com/mas-bandwidth/nova-tools/cmd/nova-review	-	23.7
 github.com/mas-bandwidth/nova-tools/internal/pulse	-	22.5
 github.com/mas-bandwidth/nova-tools/cmd/nova-secrets	-	13.6
 github.com/mas-bandwidth/nova-tools/internal/review	-	10.4
-github.com/mas-bandwidth/nova-tools/cmd/nova-board	-	10.0
 github.com/mas-bandwidth/nova-tools/internal/merge	-	9.5
 github.com/mas-bandwidth/nova-tools/cmd/nova-fuse	-	8.9
 github.com/mas-bandwidth/nova-tools/cmd/nova-tokens	-	8.6
@@ -107,7 +106,6 @@ github.com/mas-bandwidth/nova-tools/cmd/nova-decide	-	1.0
 github.com/mas-bandwidth/nova-tools/cmd/nova-post	-	1.0
 github.com/mas-bandwidth/nova-tools/internal/decide	-	1.0
 github.com/mas-bandwidth/nova-tools/internal/worklang	-	0.9
-github.com/mas-bandwidth/nova-tools/internal/board	-	0.8
 github.com/mas-bandwidth/nova-tools/internal/docs	-	0.8
 github.com/mas-bandwidth/nova-tools/internal/safepath	-	0.8
 github.com/mas-bandwidth/nova-tools/internal/sandbox	-	0.8

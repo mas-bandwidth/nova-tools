@@ -31,16 +31,15 @@ is available today.
   nova-merge, an entry stopped with its reason while the lane moves on. Two
   senses. ([SPEC-SWARM.md, The RESULT.md template](SPEC-SWARM.md#the-resultmd-template) · [SPEC-MERGE.md, output grammar](SPEC-MERGE.md#output-grammar))
 - **board** — nova-board's owed-work layer: an append-only log of events from
-  which the open list is derived. It is retained as the **input adapter** that
-  folds GitHub and bus events into nova-work node events, and is retired only
-  after [nova-work](SPEC-WORK.md)'s `who` and `check` views and event adapter
-  replace it and are dogfooded.
-  ([SPEC-BOARD.md](SPEC-BOARD.md#status-the-input-adapter-not-yet-retired) · [SPEC-WORK.md](SPEC-WORK.md))
+  which the open list is derived. nova-board is **deprecated**: it is superseded
+  by nova-sprint (Glenn, 2026-09-27), and its code and spec are kept for
+  reference under `deprecated/`, out of scope of the testing drive.
+  ([deprecated/README.md](../deprecated/README.md) · [SPEC-BOARD.md](../deprecated/docs/SPEC-BOARD.md))
 - **bug node** — a nova-work node that stands for a bug, pooled by pulse when it
   is open, unleased and unblocked. ([SPEC-WORK.md, Bugs found while working](SPEC-WORK.md#bugs-found-while-working-rowan-on-glenns-word-of-2026-09-15-nova-tools463-additive-to-the-lock-at-231) · SPEC-PULSE.md rule 1)
 - **card** — a unit of work: in nova-pulse and nova-swarm, a file whose line 1
   binds it to its contract line; on nova-board, an obligation a group of lines
-  owes. Two senses. (SPEC-PULSE.md rule 5 · [SPEC-BOARD.md, The card](SPEC-BOARD.md#the-card-and-the-events))
+  owes. Two senses. (SPEC-PULSE.md rule 5 · [SPEC-BOARD.md, The card](../deprecated/docs/SPEC-BOARD.md#the-card-and-the-events))
 - **clip** — the act of writing the resident state to the repository as one
   deterministic snapshot carrying the retained history. Clips are periodic;
   shutdown and handoff request one. ([SPEC-WORK.md, Accept locally, then clip into Git](SPEC-WORK.md#accept-locally-then-clip-into-git))
@@ -155,7 +154,7 @@ is available today.
   free when no job holds it and its log is quiet. ([SPEC-SWARM.md rule 17](SPEC-SWARM.md#the-rules-numbered) · SPEC-PULSE.md rule 8)
 - **stale** — in nova-merge, a read or gate for an older revision, kept but not
   counted; on nova-board, an open card with no event for longer than `--stale`.
-  Two senses. ([SPEC-MERGE.md, The read condition](SPEC-MERGE.md#the-read-condition) · [SPEC-BOARD.md rule 6](SPEC-BOARD.md#the-rules-of-the-last-two-days))
+  Two senses. ([SPEC-MERGE.md, The read condition](SPEC-MERGE.md#the-read-condition) · [SPEC-BOARD.md rule 6](../deprecated/docs/SPEC-BOARD.md#the-rules-of-the-last-two-days))
 - **takeover** — the verb that begins a manager shift. It refuses when `OWNER`
   names a live process on a reachable host; a stale lock is taken with one note.
   (SPEC-PULSE.md, Handoff)

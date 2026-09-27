@@ -679,7 +679,7 @@ the variable the tool that acts already reads.
 |---|---|---|---|
 | a pool's provider | `ANTHROPIC_API_KEY`, `XAI_API_KEY`, `GEMINI_API_KEY`, `INCEPTION_API_KEY` | `swarm-<name>` | nova-swarm workers and the gemini CLI — one key per pool file |
 | DeepSeek | `DEEPSEEK_API_KEY` | `rowan` | nova-swarm's OpenCode workers, dispatched by the coordinator |
-| GitHub, **org roles** | `GH_TOKEN` | `rowan` | `gh`, nova-bus, nova-board, nova-merge, the coordinator's pushes |
+| GitHub, **org roles** | `GH_TOKEN` | `rowan` | `gh`, nova-bus, nova-merge, the coordinator's pushes |
 | GitHub, **the keeper's own repositories, plus the store** | `GH_TOKEN` | `rowan-keeper` | the keeper's own pushes, and his pull requests against `mas-bandwidth/secrets` — no org role |
 | space, who and where | `SPACE_USER`, `SPACE_HOST` | `rowan` | the profiling launcher; the key itself lives on the seat, per **The model** |
 | email, send and its fallback | `SMTP_PASSWORD`, `SMTP_PASSWORD_BACKUP` | `rowan-keeper` | rowan-email producer |

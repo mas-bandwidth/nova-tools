@@ -43,7 +43,7 @@ func writeSeatBenchExe(t *testing.T, path, body string) {
 }
 
 // oneSeatBenchHome builds the closed world the bench standard runs in:
-// the 16 nova bins print the wanted version, a fake go prints the wanted
+// the 15 nova bins print the wanted version, a fake go prints the wanted
 // toolchain, a fake sbcl is on PATH, the toolchain roots exist under HOME,
 // a fake harness sits under $HOME/nova-bench/harness-<ver>/opencode, and a
 // fake nova-secrets whose `check` returns 0. The seat directory holds the
@@ -61,10 +61,10 @@ func oneSeatBenchHome(t *testing.T, seatFiles ...string) (home, bin string) {
 	bin = t.TempDir()
 	localBin := filepath.Join(home, ".local", "bin")
 	for _, name := range []string{
-		"nova-board", "nova-bus", "nova-check", "nova-fuse",
-		"nova-memory", "nova-merge", "nova-pulse", "nova-review",
-		"nova-sandbox", "nova-secrets", "nova-self-talk", "nova-swarm",
-		"nova-tokens", "nova-update", "nova-version", "nova-wake",
+		"nova-bus", "nova-check", "nova-fuse", "nova-memory",
+		"nova-merge", "nova-pulse", "nova-review", "nova-sandbox",
+		"nova-secrets", "nova-self-talk", "nova-swarm", "nova-tokens",
+		"nova-update", "nova-version", "nova-wake",
 	} {
 		writeSeatBenchExe(t, filepath.Join(localBin, name), "#!/bin/sh\necho '"+want+"'\n")
 	}

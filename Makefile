@@ -113,8 +113,9 @@ new-verb:
 build:
 	$(GO) build ./...
 
+# deprecated/ is out of scope of the testing drive (Glenn 2026-09-27); see deprecated/README.md
 fmt:
-	@unformatted="$$(gofmt -l .)"; \
+	@unformatted="$$(gofmt -l . | grep -v '^deprecated/' || true)"; \
 	if [ -n "$$unformatted" ]; then \
 		echo "not gofmt-clean:"; \
 		echo "$$unformatted"; \
