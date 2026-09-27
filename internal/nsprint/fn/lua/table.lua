@@ -224,6 +224,13 @@ do
       if args[i] == 'footer' then footer = args[i + 1]
       elseif args[i] == 'rename' then newname = args[i + 1]
       elseif args[i] == 'columns' then columns = cjson.decode(args[i + 1])
+      elseif args[i] == 'hidden' then
+        for col in string.gmatch(args[i + 1], '[^,]+') do
+          local found = false
+          for _, c in ipairs(def.cols) do if c.name == col then found = true end end
+          if not found then return {'REFUSED', 'NOCOL', '', col} end
+        end
+        redis.call('HSET', 'table:' .. name, 'hidden', args[i + 1])
       else return {'REFUSED', 'BADSET', args[i]} end
     end
     if footer ~= nil then redis.call('HSET', 'table:' .. name, 'footer', footer) end

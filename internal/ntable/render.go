@@ -53,13 +53,20 @@ func Render(t Table, opts RenderOpts) string {
 	}
 	// cols is what is printed; src[j] is the definition's column behind
 	// cols[j], or -1 for the row-label column put in front.
-	cols := t.Columns
-	src := make([]int, len(t.Columns))
-	for j := range src {
-		src[j] = j
+	// hidden columns stay in the table (read, and formulas use them) and
+	// are not drawn (Glenn 2026-09-27: "Keep it, since the calculations
+	// depend on it, but hide that column")
+	cols := make([]Column, 0, len(t.Columns))
+	src := make([]int, 0, len(t.Columns))
+	for j, c := range t.Columns {
+		if t.IsHidden(c.Name) {
+			continue
+		}
+		cols = append(cols, c)
+		src = append(src, j)
 	}
-	if len(t.Columns) == 0 || t.Columns[0].Projection != Text {
-		cols = append([]Column{{Name: "row", Label: "row", Projection: Text, Fold: None}}, t.Columns...)
+	if len(cols) == 0 || cols[0].Projection != Text {
+		cols = append([]Column{{Name: "row", Label: "row", Projection: Text, Fold: None}}, cols...)
 		src = append([]int{-1}, src...)
 	}
 	n := len(cols)

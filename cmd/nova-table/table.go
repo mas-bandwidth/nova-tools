@@ -78,6 +78,8 @@ func cmdSet(args []string, stdout, stderr io.Writer) int {
 	footer := fs.String("footer", "\x00", "the footer row's label ('' for none)")
 	rename := fs.String("rename", "", "the table's new name")
 	columns := fs.String("columns", "", "the columns, replaced in place (the create grammar); rows kept")
+	hide := fs.String("hide", "", "columns to hide (kept, read, used by formulas; not drawn), comma-separated")
+	show := fs.String("show", "", "hidden columns to draw again, comma-separated")
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
@@ -102,6 +104,36 @@ func cmdSet(args []string, stdout, stderr io.Writer) int {
 	}
 	defer st.Close()
 	trips := st.CountTrips()
+	if *hide != "" || *show != "" {
+		// the hidden list is read, edited and written whole (two trips
+		// when editing; the definition read is the first)
+		cur, err := ntable.Shape(ctx, c, pos[0])
+		if err != nil {
+			return storeRefusal(stderr, verb, err)
+		}
+		hidden := map[string]bool{}
+		for _, h := range cur.Hidden {
+			hidden[h] = true
+		}
+		for _, h := range strings.Split(*hide, ",") {
+			if h != "" {
+				hidden[h] = true
+			}
+		}
+		for _, h := range strings.Split(*show, ",") {
+			delete(hidden, h)
+		}
+		var list []string
+		for _, c := range cur.Columns {
+			if hidden[c.Name] {
+				list = append(list, c.Name)
+			}
+		}
+		if list == nil {
+			list = []string{}
+		}
+		o.Hidden = &list
+	}
 	n, err := ntable.Set(ctx, c, pos[0], o)
 	if err != nil {
 		return storeRefusal(stderr, verb, err)
@@ -115,6 +147,9 @@ func cmdSet(args []string, stdout, stderr io.Writer) int {
 	}
 	if len(o.Columns) > 0 {
 		line += fmt.Sprintf(" columns=%d", len(o.Columns))
+	}
+	if o.Hidden != nil {
+		line += fmt.Sprintf(" hidden=%q", strings.Join(*o.Hidden, ","))
 	}
 	fmt.Fprintf(stdout, "%s trips=%d\n", line, trips.N())
 	return 0

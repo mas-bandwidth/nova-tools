@@ -166,7 +166,8 @@ func Create(ctx context.Context, c redis.Cmdable, t Table, now time.Time) error 
 type SetOpts struct {
 	Footer  *string
 	Rename  string
-	Columns []Column // the columns replaced in place: rows kept, cells of removed columns dropped
+	Columns []Column  // the columns replaced in place: rows kept, cells of removed columns dropped
+	Hidden  *[]string // the hidden columns, replaced whole: kept and read, not drawn
 }
 
 // Set changes a table's definition in place, one call: the footer label,
@@ -195,8 +196,11 @@ func Set(ctx context.Context, c redis.Cmdable, name string, o SetOpts) (int, err
 		}
 		args = append(args, "columns", body)
 	}
+	if o.Hidden != nil {
+		args = append(args, "hidden", strings.Join(*o.Hidden, ","))
+	}
 	if len(args) == 0 {
-		return 0, fmt.Errorf("table %q: set wants --footer <label>, --rename <name> or --columns <spec>", name)
+		return 0, fmt.Errorf("table %q: set wants --footer <label>, --rename <name>, --columns <spec>, --hide <cols> or --show <cols>", name)
 	}
 	reply, err := (operation{table: name}).call(ctx, c, FnSet, false, args...)
 	if err != nil {

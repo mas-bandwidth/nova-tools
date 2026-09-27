@@ -33,7 +33,7 @@ usage:
   nova-table version
   nova-table help
   nova-table create <table> --columns <name[:projection[:fold[:label]]],...> [--footer <label>] [--width <col=n,...>]
-  nova-table set <table> [--footer <label>] [--rename <name>] [--columns <spec>]
+  nova-table set <table> [--footer <label>] [--rename <name>] [--columns <spec>] [--hide <cols>] [--show <cols>]
   nova-table drop <table>
   nova-table list
   nova-table row add <table> <row> [--label <text>] [--exclude <member>] [--owner <verb>] [<col>=<key> ...]

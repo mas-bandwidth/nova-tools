@@ -169,7 +169,18 @@ type Table struct {
 	Name        string
 	Columns     []Column
 	FooterLabel string
+	Hidden      []string // columns kept, read and used by formulas, but not drawn (set --hide)
 	Rows        []Row
+}
+
+// IsHidden is whether a column is kept but not drawn.
+func (t Table) IsHidden(col string) bool {
+	for _, h := range t.Hidden {
+		if h == col {
+			return true
+		}
+	}
+	return false
 }
 
 // Footer is the footer label, DefaultFooter when unset.
@@ -409,6 +420,7 @@ func definitionFields(t Table) map[string]string {
 	}
 	m["order"] = strings.Join(names, ",")
 	m["footer"] = t.Footer()
+	m["hidden"] = strings.Join(t.Hidden, ",")
 	return m
 }
 
@@ -419,6 +431,9 @@ func decodeDefinition(name string, h map[string]string) (Table, bool, error) {
 		return Table{}, false, nil
 	}
 	t := Table{Name: name, FooterLabel: h["footer"]}
+	if v := strings.TrimSpace(h["hidden"]); v != "" {
+		t.Hidden = strings.Split(v, ",")
+	}
 	order := h["order"]
 	if order == "" {
 		return Table{}, true, fmt.Errorf("table %s has no column order", name)

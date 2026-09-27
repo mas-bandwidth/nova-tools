@@ -280,3 +280,28 @@ func TestRenderFormulaAndTextCells(t *testing.T) {
 		t.Fatal("avg over members was accepted")
 	}
 }
+
+// TestRenderHidesAColumnButKeepsIt (Glenn 2026-09-27: "I no longer wish to
+// see the waiting column ... Keep it, since the calculations depend on it,
+// but hide that column"): a hidden column is not drawn; the formula that
+// reads it still computes; the row-label column still comes first.
+func TestRenderHidesAColumnButKeepsIt(t *testing.T) {
+	t.Parallel()
+	cols, err := ntable.ParseColumns("waiting,ready,wpct:pct(waiting):avg:waiting%")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tb := ntable.Table{Name: "s", Columns: cols, Hidden: []string{"waiting"}}
+	r := ntable.NewRow(tb, "a")
+	r.Cells[0].Count = 3
+	r.Cells[1].Count = 1
+	tb.Rows = []ntable.Row{r}
+	want := "s | ready | waiting%\n" +
+		"--+-------+---------\n" +
+		"a |     1 | 75.0%\n" +
+		"--+-------+---------\n" +
+		"  |     1 | 75.0%\n"
+	if got := ntable.Render(tb, ntable.RenderOpts{Title: "s"}); got != want {
+		t.Fatalf("hidden column:\n%s\nwant:\n%s", got, want)
+	}
+}
