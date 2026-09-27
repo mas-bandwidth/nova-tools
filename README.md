@@ -43,6 +43,7 @@ come back to the table below for the problem you want it to solve.
 <tr><td>Spot packages that exceed the test-time budget.</td><td nowrap><a href="docs/CLI.md#nova-ci">nova-ci</a></td><td><strong>Development branch:</strong> package timings read from Go test events.</td></tr>
 <tr><td>Keep session notes you can reliably return to.</td><td nowrap><a href="docs/CLI.md#nova-cairn">nova-cairn</a></td><td><strong>Development branch:</strong> explicit checkpoints, source pointers and a bounded index.</td></tr>
 <tr><td>Ask a model a structured question.</td><td nowrap><a href="docs/CLI.md#nova-decide">nova-decide</a></td><td><strong>Development branch:</strong> typed answers and reported confidence for your workflow to evaluate.</td></tr>
+<tr><td>Keep the fleet's permanent configuration in one place and rebuild Redis from it.</td><td nowrap><a href="docs/CLI.md#nova-config">nova-config</a></td><td><strong>Development branch:</strong> friends and machines in Postgres with a history of every change, applied into Redis through the runtime's own functions.</td></tr>
 <tr><td>Leave notes and replies beside passages in a shared text.</td><td nowrap><a href="docs/USAGE.md#nova-play--notes-beside-a-shared-text">nova-play</a></td><td><strong>Development branch:</strong> attributed annotations in a local sidecar file, with source-change detection.</td></tr>
 </tbody>
 </table>

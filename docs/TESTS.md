@@ -877,6 +877,37 @@ REPORT OK checked=1 known=1 unknown=0 changed=- sent=- took=8ms file=cmd/nova-ve
 ```
 
 
+## nova-config
+
+No fixture and no store: the first run reads the kind descriptors and the
+migrations compiled into the binary, so every value below reproduces on
+every bench. The real runs need a Postgres (`nova-config migrate`) and a
+Redis (`nova-config apply`); `docs/nova-config/README.md` walks them, and
+`cmd/nova-config/config_functional_test.go` runs them against a throwaway
+Postgres and a throwaway Redis.
+
+### First run
+
+```text
+$ nova-config kinds
+CONFIG KIND name=machine table=config.machines fields=ssh,os_arch,slots,cores,roles,seat,user,note required=ssh,os_arch,slots
+CONFIG KIND name=friend table=config.friends fields=machine,slots,harness,wake,roles,logins,note required=machine,slots
+CONFIG KINDS count=2
+
+$ nova-config migrate --print
+MIGRATION version=1 file=0001_schema.sql lines=23
+MIGRATION version=2 file=0002_machine.sql lines=15
+MIGRATION version=3 file=0003_friend.sql lines=15
+CONFIG MIGRATE print=3 pg=-
+```
+
+`kinds` is one line per kind: its table under schema `config`, its fields in
+the order every line prints them, and the fields `add` requires. `migrate
+--print` lists the migrations this binary carries and connects to nothing;
+`migrate --pg <dsn>` applies the ones the database lacks, each in its own
+transaction, and applies nothing twice.
+
+
 ## nova-card
 
 The card wrapper (#3059) is started by `nova-sprint card launch --stdin`, never

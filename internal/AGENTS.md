@@ -12,6 +12,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `check/` | hygiene rules and tree checkers | `go test ./internal/check` | `go test ./internal/check` |
 | `ci/` | class tests and CI budget invariants | `go test ./internal/ci` | `go test ./internal/ci` |
 | `civerdict/` | reader of a commit's CI verdict record | `go test ./internal/civerdict` | `go test ./internal/civerdict` |
+| `config/` | nova-config library: kind descriptors, the Postgres store and history, apply into Redis | `go test ./internal/config` | `go test ./internal/config` |
 | `converge/` | convergence state and progress math | `go test ./internal/converge` | `go test ./internal/converge` |
 | `ctxindex/` | per-repo spec, test and symbol index for cards | `go test ./internal/ctxindex` | `go test ./internal/ctxindex` |
 | `decide/` | criteria evaluation and decisions | `go test ./internal/decide` | `go test ./internal/decide` |
