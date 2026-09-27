@@ -153,25 +153,25 @@ func TestSeatInjectRefusesASeatWithNoFile(t *testing.T) {
 	}
 }
 
-// seatInjectTranscript is the help banner's `seat inject` example and what it
-// prints, held here beside the test that runs it: this tool's section of the
-// transcripts document is not yet converted to the one comparator (#1657), so
-// this example's transcript lives with its test and claims nothing about that
-// section. The `$` line is asserted to BE the banner's example; the branch's
-// stamp is the one declared run-owned value.
-var seatInjectTranscript = []string{
-	"$ nova-secrets seat inject --store ./secrets --as air --from rowan --only NOVA_REDIS_BENCH_PASSWORD --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops --no-pr",
-	"! seat inject: reading rowan.yaml",
-	"! seat inject: encrypting 1 value(s) to air.yaml's own recipients",
-	"! seat inject: returning the store to its branch",
-	"SECRETS SEAT INJECT OK seat=air from=rowan names=1 committed branch=seal/air-NOVA_REDIS_BENCH_PASSWORD-20260927-013000",
-}
-
 // TestTheHelpExampleIsWhatSeatInjectPrints runs the banner's own example, as a
 // reader would type it -- `./secrets` under the directory they sit in, `~` their
 // home, `/opt/homebrew/bin/sops` the sops they have -- through the one comparator.
+//
+// The transcript is held here beside the test that runs it: this tool's section
+// of the transcripts document is not yet converted to the one comparator (#1657),
+// so this example's transcript claims nothing about that section. The `$` line is
+// asserted to BE the banner's example; the branch's stamp is the one declared
+// run-owned value.
 func TestTheHelpExampleIsWhatSeatInjectPrints(t *testing.T) {
 	t.Parallel()
+
+	seatInjectTranscript := []string{
+		"$ nova-secrets seat inject --store ./secrets --as air --from rowan --only NOVA_REDIS_BENCH_PASSWORD --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops --no-pr",
+		"! seat inject: reading rowan.yaml",
+		"! seat inject: encrypting 1 value(s) to air.yaml's own recipients",
+		"! seat inject: returning the store to its branch",
+		"SECRETS SEAT INJECT OK seat=air from=rowan names=1 committed branch=seal/air-NOVA_REDIS_BENCH_PASSWORD-20260927-013000",
+	}
 
 	sopsPath := findSops(t)
 	bin := buildNovaSecrets(t)

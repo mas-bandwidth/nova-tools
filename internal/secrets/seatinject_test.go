@@ -62,7 +62,7 @@ func newInjectFixture(t *testing.T) *injectFixture {
 			"exit 0\n")
 	f.ghPath = f.writeScript(t, "gh",
 		"printf '%s\\n' \"$@\" >> \""+f.ghArgs+"\"\n"+
-			"if [ \"$1 $2\" = \"pr create\" ]; then echo \"https://github.com/mas-bandwidth/secrets/pull/42\"; fi\n"+
+			"if [ \"$1 $2\" = \"pr create\" ]; then echo \"https://example.com/mas-bandwidth/secrets/pull/42\"; fi\n"+
 			"if [ \"$1 $2\" = \"pr view\" ]; then echo \"APPROVED\"; fi\n"+
 			"exit 0\n")
 	return f
