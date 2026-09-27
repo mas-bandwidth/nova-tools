@@ -1,0 +1,31 @@
+# Packages that are deprecated and still in the tree, because living tools
+# import them. CI never selects a package named here or under a prefix named
+# here (.github/scripts/select-packages.sh). One path per line, from the
+# repository root. A line "keep <path>" names one package under a prefix that
+# living tools stand on today: it stays tested until it is lifted out into a
+# shared module, and then its line goes. This list only shrinks: a package
+# leaves it by moving under deprecated/ or by being deleted.
+
+# nova-sprint (Glenn 2026-09-27: deprecated, to be rewritten on nova-table)
+cmd/nova-sprint
+internal/nsprint
+internal/sprinttable
+internal/sprintline
+
+# what nova-table, nova-config and others stand on until it is lifted out
+keep internal/nsprint/store
+keep internal/nsprint/redisauth
+keep internal/nsprint/pipeerr
+keep internal/nsprint/fn
+keep internal/nsprint/testutil
+keep internal/nsprint/testutil/pg
+keep internal/nsprint/verbflag
+
+# the sprint's runtime tools, implemented inside internal/nsprint (Glenn
+# 2026-09-27: "If it is a new tool, and you are in doubt, it is deprecated.")
+cmd/nova-card
+cmd/nova-friend
+
+# new tools with no use on record
+cmd/nova-play
+cmd/nova-test
