@@ -27,3 +27,4 @@ internal/docs/issue3807_test.go it pinned docs/CLI.md's nova-wake beat and prese
 cmd/nova-sprint/expire_test.go the expire sweep left the reconciler pass 2026-09-27 (Glenn: "Go for retiring"; the sprint-store model); the reconcile package keeps the duty's own tests
 cmd/nova-sprint/hold_route_duty_test.go pr-to-read with hold-to-fix left the reconciler pass 2026-09-27 (the sprint-store model); the consume verb keeps its tests
 cmd/nova-sprint/okfriend_bound_test.go ok-to-friend left the reconciler pass 2026-09-27 (the sprint-store model); the consume verb keeps its tests
+cmd/nova-wake/slow_test.go TestAWedgedGitCannotHoldThePollOpen moved to deadline_functional_test.go; completion and child-exit checks replace its elapsed-time assertion, with the same real wedged Git fixture
