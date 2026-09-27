@@ -406,7 +406,7 @@ func awakeRefused(stderr io.Writer, what string) int {
 // in the bus clone, the newest commit touching from-<name>/CURSOR is that
 // friend's last beat (docs/SPEC-WORK.md, Presence, source bus-cursor).
 //
-// With --store it first reads the live heartbeat `nova-wake beat` writes
+// With --store it first reads the live heartbeat a friend's runtime writes
 // (#2610's friend:<name>, a TTL'd key renewed every beat and never deleted):
 // a key that is there is "I am here now" and reads awake with source=presence;
 // a key that has aged out says nothing, so the lane falls through to the bus

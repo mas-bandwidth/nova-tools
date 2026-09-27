@@ -336,7 +336,7 @@ func TestPreflightFleetChecksInOrder(t *testing.T) {
 		TableFileAge: time.Second, TableFilePresent: true,
 		REST:        RESTBudget{Known: true, Remaining: 4000, CallsPerPass: 1, Cadence: 10 * time.Second},
 		OrphanGrace: 5 * time.Minute,
-		Wake:        WakeInput{DeclPresent: true, Friends: 2},
+		Wake:        WakeInput{Friends: 2},
 	}
 	lines := FleetChecks(ctx, green)
 	var got []string
@@ -477,7 +477,7 @@ func TestPreflightUnreadInputRefuses(t *testing.T) {
 		TableFilePresent: true,
 		REST:             RESTBudget{Known: true, Remaining: 4000, CallsPerPass: 1, Cadence: 10 * time.Second},
 		OrphanGrace:      5 * time.Minute,
-		Wake:             WakeInput{DeclPresent: true, Friends: 2},
+		Wake:             WakeInput{Friends: 2},
 	}
 	cases := []struct {
 		unset  func(*Loaded)

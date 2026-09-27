@@ -1,5 +1,6 @@
 // The capacity verb registers itself through the S0 registry (registry.go), so
-// adding it never edits main.go. capacity friend, capacity bench and
+// adding it never edits main.go. capacity bench (capacity friend is gone:
+// nova-config apply writes a friend's desired hash) and
 // capacity machine are each one call into internal/nsprint/capacity, which is
 // one Redis Function call that guards the machine ceiling and receipts the
 // write. A refusal prints CEILING <m> <sum>/<ceiling> and exits 2 (spec 2.4).
@@ -72,7 +73,7 @@ func runCapacityDesired(ctx context.Context, kind string, args []string, out, er
 	fs.StringVar(actor, "actor", "", "")
 	idem := fs.String("idem", "", "")
 	// #3206 rev 4 PR A: --paused 0|1 sets the paused flag (omitted keeps it;
-	// a bench's too since #4308); every capacity friend write adds the friend
+	// a bench's too since #4308); every desired write of a friend adds the friend
 	// to `friends` (#2934).
 	paused := fs.String("paused", "", "")
 	// #3349: --legs go,schema declares a bench's CI legs on its desired hash

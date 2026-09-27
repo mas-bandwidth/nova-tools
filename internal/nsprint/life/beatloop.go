@@ -14,7 +14,8 @@ import (
 // friend held two working copies while the only thing beating for it was a
 // shell loop in a session scratchpad that died with the session, so the
 // table called the one worker down): while a friend holds working copies,
-// ONE `nova-sprint friend beat --as friend:<f> --loop` runs for it, started
+// ONE beat loop runs for it (nova-friend's; the retired `nova-sprint friend
+// beat --loop` before it), started
 // in its own session by the verb that gave the friend the copy (friend
 // pull, card work --as friend:<f>, task take), and it stops when the friend
 // holds none.

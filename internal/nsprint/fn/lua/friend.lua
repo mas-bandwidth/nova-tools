@@ -31,8 +31,8 @@
 -- friend:outbox is the zero-token outbox a bus relay reads; no model is called.
 --
 -- friend:<f>:wakepath (hash; kind unit|human, unit, host, notify,
--- declared_at) is written by ns_friend_wakepath from `capacity friend <f> --as <actor>
--- --wake` (config, etc/friends.conf).
+-- declared_at) is written by ns_friend_wakepath from nova-config apply (before
+-- it, the retired `capacity friend <f> --as <actor> --wake`).
 --
 -- friend:<f>:wakemode (hash; mode, deliver, turn, lag_ms, actor, declared_at;
 -- #3153) is written only by ns_friend_wakemode, which re-reads the firing
