@@ -157,7 +157,7 @@ func TestABoundCellIsAViewTheWritesRefuse(t *testing.T) {
 		}
 	}
 	code, stdout, stderr := runTable(at(addr, "render", "views")...)
-	want := "stream | ready | working\n" +
+	want := "views\nstream | ready | working\n" +
 		"-------+-------+--------\n" +
 		"s      |     1 |       0\n" +
 		"-------+-------+--------\n" +
