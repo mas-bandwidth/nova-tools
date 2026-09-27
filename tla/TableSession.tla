@@ -11,9 +11,20 @@
 \* and the session has not used since), the dial error the pool keeps (kept),
 \* the exit code so far (exit) and why the session ended (how). The outside:
 \* the store (up; refusing, nothing listens at the address; gone, the socket
-\* path is not there) and a stop signal (SIGINT, SIGTERM). stopped, high,
-\* afterStop, afterFail, falseAlarm and wrongCode are history, kept so the
-\* invariants can say what happened and not only what is.
+\* path is not there), and two signals. stopped, high, afterStop, afterFail,
+\* falseAlarm and wrongCode are history, kept so the invariants can say what
+\* happened and not only what is.
+\*
+\* The signals (Stella, stella-ba91222b58ce). SIGTERM is a stop wherever it
+\* arrives: the session ends and no line follows. SIGINT inside a watch is
+\* not a stop: it is how a watch is left, and the reader goes on to the next
+\* line. SIGINT at the prompt or inside a verb is a stop. A session ended by
+\* a stop reports the signal (143, 130), not the codes of its lines.
+\*
+\* The reader waits for input as long as the outside likes: a shell left
+\* open at its prompt is not stuck. So the liveness here is only of what
+\* the session itself owes: a verb ends, a watch is left when asked, a stop
+\* ends the session.
 \*
 \* A line is one of: "ok" (a verb the store takes, code 0), "no" (a verb the
 \* store refuses, code 1), "usage" (refused before the store, code 2),
@@ -22,9 +33,9 @@
 \*
 \* Broken = "none" is the design. Every other value is a reversed witness, a
 \* misimplementation one invariant must catch:
-\*   "term"   a stop signal during a watch ends the watch, and the session
-\*            reads the next line (ed959e1a3: watch.go:75 takes the signal,
-\*            watchLoop returns 0, session.go:126 goes on)
+\*   "term"   SIGTERM during a watch ends the watch, and the session reads
+\*            the next line (ed959e1a3: watch.go:75 takes both signals
+\*            alike, watchLoop returns 0, session.go:126 goes on)
 \*   "stale"  a line answers from the pool's kept dial error and dials
 \*            nothing (ed959e1a3: session.go:88 opens a pool of one;
 \*            pool.go:692 returns the kept error until tryDial's probe, once
@@ -36,12 +47,13 @@
 \*            (ed959e1a3: session.go:135, the scanner cannot go on)
 \*   "on"     the session goes on after a failed line without --keep-going
 \*   "last"   the exit code is the last line's, not the highest
+\*   "int"    SIGINT inside a watch ends the session
 \* The first four are defects of the code at ed959e1a3, each reproduced on a
-\* store by the second reader and read against the lines named. The last two
-\* are misimplementations the invariants are shown to catch.
+\* store by the second reader and read against the lines named. The last
+\* three are misimplementations the invariants are shown to catch.
 \*
-\* What a stop signal does to a verb in flight is left open on purpose: the
-\* verb may finish, or the process may end inside it (the store's verb is one
+\* What a stop does to a verb in flight is left open on purpose: the verb
+\* may finish, or the process may end inside it (the store's verb is one
 \* call, whole or not at all). What is fixed: no line starts after it.
 \*
 \* Not here: words and quoting (shellWords), the prompt, the byte limit's own
@@ -62,6 +74,7 @@ VARIABLES input, keep, pc, cur, conn, kept, store, pending, exit, how,
 vars == <<input, keep, pc, cur, conn, kept, store, pending, exit, how,
           stopped, high, afterStop, afterFail, falseAlarm, wrongCode>>
 outside == <<store, pending, stopped>>
+Signals == {"int", "term"}
 link == <<conn, kept, falseAlarm, wrongCode>>
 reader == <<input, keep, afterStop, afterFail>>
 Max(a, b) == IF a > b THEN a ELSE b
@@ -73,7 +86,7 @@ Init ==
  \* entering the shell dials nothing: the first verb is the probe
  /\ conn = "none" /\ kept = "none"
  /\ store \in {"up"} \cup Down
- /\ pending = FALSE /\ stopped = FALSE
+ /\ pending = "none" /\ stopped = FALSE
  /\ exit = 0 /\ high = 0 /\ how = NoEnd
  /\ afterStop = FALSE /\ afterFail = FALSE
  /\ falseAlarm = FALSE /\ wrongCode = FALSE
@@ -88,10 +101,10 @@ Finish(code) ==
     THEN pc' = "done" /\ how' = "fail"
     ELSE pc' = "read" /\ how' = how
 
-\* A line is read. A stop signal that is pending at the prompt ends the
-\* session (Stop); it is never followed by a read.
+\* A line is read. A signal that is pending at the prompt ends the session
+\* (Stop); it is never followed by a read.
 ReadLine ==
- /\ pc = "read" /\ input # <<>> /\ ~pending
+ /\ pc = "read" /\ input # <<>> /\ pending = "none"
  /\ input' = Tail(input)
  /\ afterStop' = (afterStop \/ stopped)
  /\ afterFail' = (afterFail \/ (high # 0 /\ ~keep))
@@ -112,7 +125,7 @@ ReadLine ==
  /\ UNCHANGED <<keep, outside, link>>
 
 EndOfInput ==
- /\ pc = "read" /\ input = <<>> /\ ~pending
+ /\ pc = "read" /\ input = <<>> /\ pending = "none"
  /\ pc' = "done" /\ how' = "eof"
  /\ UNCHANGED <<cur, exit, high, reader, outside, link>>
 
@@ -145,29 +158,37 @@ RunVerb ==
                     /\ UNCHANGED falseAlarm
  /\ UNCHANGED <<reader, outside>>
 
-\* The stop signal reaches a watch.
+\* A signal reaches a watch. SIGINT leaves the watch with code 0 and the
+\* reader goes on; SIGTERM ends the session.
 WatchStops ==
- /\ pc = "watch" /\ pending
- /\ pending' = FALSE
- /\ IF Broken = "term"
+ /\ pc = "watch" /\ pending \in Signals
+ /\ pending' = "none"
+ /\ IF (pending = "int" /\ Broken # "int") \/ Broken = "term"
     THEN Finish(0)
     ELSE /\ pc' = "done" /\ how' = "stop" /\ cur' = NoLine
          /\ UNCHANGED <<exit, high>>
  /\ UNCHANGED <<reader, store, stopped, link>>
 
-\* The stop signal reaches the session at the prompt or inside a verb.
+\* Either signal reaches the session at the prompt or inside a verb.
 Stop ==
- /\ pc \in {"read", "verb"} /\ pending
+ /\ pc \in {"read", "verb"} /\ pending \in Signals
  /\ pc' = "done" /\ how' = "stop" /\ cur' = NoLine
- /\ pending' = FALSE
+ /\ pending' = "none"
  /\ UNCHANGED <<exit, high, reader, store, stopped, link>>
 
-Session == ReadLine \/ EndOfInput \/ RunVerb \/ WatchStops \/ Stop
+\* What the session owes whatever the outside does. Reading a line is not
+\* among them: the next line comes when the outside sends it.
+Owed == RunVerb \/ WatchStops \/ Stop
+Session == ReadLine \/ EndOfInput \/ Owed
 
 \* The outside.
-Signal ==
+Term ==
  /\ pc # "done"
- /\ pending' = TRUE /\ stopped' = TRUE
+ /\ pending' = "term" /\ stopped' = TRUE
+ /\ UNCHANGED <<pc, cur, exit, how, high, reader, store, link>>
+Int ==
+ /\ pc # "done" /\ pending # "term"
+ /\ pending' = "int" /\ stopped' = (stopped \/ pc # "watch")
  /\ UNCHANGED <<pc, cur, exit, how, high, reader, store, link>>
 StoreDown ==
  /\ pc # "done" /\ store = "up"
@@ -187,8 +208,8 @@ Probe ==
  /\ UNCHANGED <<pc, cur, exit, how, high, reader, outside, conn,
                 falseAlarm, wrongCode>>
 
-Next == Session \/ Signal \/ StoreDown \/ StoreUp \/ Probe
-Spec == Init /\ [][Next]_vars /\ WF_vars(Session)
+Next == Session \/ Term \/ Int \/ StoreDown \/ StoreUp \/ Probe
+Spec == Init /\ [][Next]_vars /\ WF_vars(Owed)
 
 TypeOK ==
  /\ input \in Inputs /\ keep \in BOOLEAN
@@ -197,13 +218,13 @@ TypeOK ==
  /\ conn \in {"none", "live", "dead"}
  /\ kept \in {"none"} \cup Down
  /\ store \in {"up"} \cup Down
- /\ pending \in BOOLEAN /\ stopped \in BOOLEAN
+ /\ pending \in {"none"} \cup Signals /\ stopped \in BOOLEAN
  /\ exit \in 0..2 /\ high \in 0..2
  /\ how \in {NoEnd, "eof", "quit", "stop", "fail", "long"}
  /\ afterStop \in BOOLEAN /\ afterFail \in BOOLEAN
  /\ falseAlarm \in BOOLEAN /\ wrongCode \in BOOLEAN
 
-\* After a stop signal no line is started: nothing is written after a stop.
+\* After a stop no line is started: nothing is written after a stop.
 NothingStartsAfterStop == ~afterStop
 \* A line fails for the connection only when a dial for that line failed.
 NoFalseAlarm == ~falseAlarm
@@ -211,8 +232,10 @@ NoFalseAlarm == ~falseAlarm
 ConnectionFailureIsTwo == ~wrongCode
 \* Without --keep-going nothing is read after the first failed line.
 StopsAtFirstFailure == ~afterFail
-\* The exit code is the highest code of any line.
-ExitIsHighest == exit = high
+\* Only a stop ends the session as one: SIGINT inside a watch does not.
+StopOnlyWhenStopped == (how = "stop") => stopped
+\* The exit code is the highest code of any line, unless a stop ended it.
+ExitIsHighest == how # "stop" => exit = high
 \* With --keep-going every line is read, unless the session was told to end.
 KeepGoingReadsEveryLine ==
  (pc = "done" /\ keep /\ how \notin {"quit", "stop"}) => input = <<>>
@@ -223,8 +246,10 @@ EndsForAReason == (pc = "done") = (how # NoEnd)
 LineInHand == (cur # NoLine) = (pc \in {"verb", "watch"})
 LiveMeansUp == conn = "live" => store = "up"
 
-\* A stop signal ends the session.
-StopEnds == pending ~> (pc = "done")
-\* The session is never stuck anywhere but in a watch it was asked for.
-NeverStuck == <>[](pc \in {"done", "watch"})
+\* SIGTERM ends the session, wherever it arrives.
+TermEnds == (pending = "term") ~> (pc = "done")
+\* SIGINT leaves a watch.
+IntLeavesWatch == (pc = "watch" /\ pending = "int") ~> (pc # "watch")
+\* A verb ends: the session is never stuck inside a line.
+VerbEnds == (pc = "verb") ~> (pc # "verb")
 =============================================================================
