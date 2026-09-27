@@ -2574,10 +2574,11 @@ or a doc teaches the next session to rebuild it.
 **The test.** `TestNoSecretsExecWrapsASeatTool`, with its control
 `TestSeatWrapRuleSeesEachShape` (`internal/ci/seatwrap_class_test.go`), which
 pins the two retired wrappers, the multi-line `nova-wake beat` launch this
-change rewrote in `docs/FRIEND-PRESENCE.md` and two siblings as red, and a
-model-key wrapper, a tool outside the set and the `--seat` spellings as green.
+change rewrote in the FRIEND-PRESENCE page (deleted 2026-09-27 with the beat
+verb) and two siblings as red, and a model-key wrapper, a tool outside the
+set and the `--seat` spellings as green.
 **Its allowlist.** None. The one offender in the tree when the rule landed,
-the beat launch in `docs/FRIEND-PRESENCE.md`, was rewritten to `--seat`.
+the beat launch in that FRIEND-PRESENCE page, was rewritten to `--seat`.
 **Its remedy line.** `pass the tool --seat <name> (or set NOVA_SEAT) and, for a
 hand read, run nova-sprint redis-cli --seat <name> -- <cmd...>`.
 **Its narrowings.** A command is one line after backslash continuations are
