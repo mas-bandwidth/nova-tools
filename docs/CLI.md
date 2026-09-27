@@ -1198,8 +1198,7 @@ future reads `awake` `source=bus-beat` even when its stamp and cursor are both
 past `--window`. Since #3144 `wait` writes no BEAT (the bus carries notes, never
 beats; `--beat` and `--beat-lease` are accepted and ignored with one
 `WAIT NOTE`), so this source reads only a BEAT an older wait left, and live
-presence is `awake --store`, read from the store the way `presence` below
-reads it:
+presence is `awake --store`, read from the store:
 
 ```
 $ nova-wake awake --bus ./bus
@@ -1210,71 +1209,13 @@ FRIEND rowan awake age=500 source=bus-beat
 AWAKE OK friends=4 awake=2 asleep=1 unknown=1 window=300
 ```
 
-And two that cost nothing at all. `nova-wake beat --as <name> --store <host:port>`
-is the process a friend's window starts once at startup and forgets: every
-`--every` (default 30s) it writes the hash `friend:<name>` (field
-`at = <RFC3339 utc>`) and gives it a `--ttl` (default 90s) on the fleet store,
-with `friend:<name>:last` and no TTL beside it, all in one `MULTI`. It reads
-nothing, prints one line and then nothing, and **no model runs on either
-side** — the cost of presence has to be zero or the heartbeat is the first
-thing dropped under load. A window that exits, runs out of credit or is killed
-simply stops writing, and the hash lapses within the TTL: there is no shutdown
-hook to forget to run, which is the whole point. Presence is Redis only: the
-git bus carries notes and never beats (#3144). That is the beat on a store with
-no row loop. On the fleet store `friend:<name>` is the friend row and
-`nova-wake beat` refuses it (#3447): it writes nothing, exits 2 naming the
-hash, and its loop stops, because the row has one writer.
-
-Two flags sit beside that and change nothing when they are left off.
-`--window <time>` is the cap's reset time, stored as passed in the `window`
-field — the beat does not read a clock to invent one — and `--width <n>` is
-how many children are in use now, in the `width` field (#2673). Zero is a real
-count. A missing flag writes no field and does not fail the beat. Both lapse
-with the hash. A friend whose width changes re-runs `beat` with the new number.
-
-`nova-wake presence --store <host:port>` reads the `friends` SET (one
-`SMEMBERS`, never a scan) and then every member's hash in one pipeline, and
-prints one line for the swarm table:
-
-```
-$ nova-wake presence --store 100.115.99.19:6380
-friends: emma down 1h12m (last 09:41Z) · freddy down · johnny up 12s width=8 · stella up 4s
-```
-
-A friend is `up` or `down` and nothing else. On the fleet store the presence
-is the friend row (#3447): `friend:<name>` is a hash with no TTL whose one
-writer is the row loop (rowan-tools `friend-row`, one pass a second), and the
-row's `up` and `at` decide. `up=1` with an `at` no older than 10s is `up`, with
-the age of `at` and the row's `width=<n>`; `up=0` is `down` with no age,
-because the row does not say since when; a row whose `at` is older than 10s is
-a silent row loop, `down` with the age and clock time of its last write. A TTL
-on the row means nothing. Where no row loop runs, the beat's own hash is the
-presence: `up` is a beat inside the TTL, with the age of it and the
-`width=<n>` (and `window=<time>`) that beat carried; `down` is a hash that
-lapsed, with the age of the last beat and its clock time from the untimed key,
-or a friend who has never beaten, with nothing after it. The untimed key is
-not presence, and this verb reads no hand-written override. The
-roster is the store's `friends` SET, sorted, minus Glenn and Rowan; `--bus
-<dir>` (its `participants.json`), `--participants <file>` or
-`--friends <a,b,c>` names one instead, and there is no built-in list, because a
-copy of a roster is the thing that goes stale. A store that cannot be read, or
-an empty `friends` SET, is a refusal and exit 2, never an empty line: four
-friends reported down is a fact, and four friends not reported at all reads as
-good news.
-
-The password is never a flag, a file this tool opens or a word in its output.
-It reaches `beat` as `NOVA_REDIS_BENCH_PASSWORD` through
-`nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD`, exactly the way
-`bench-row` hands it to `redis-cli`, and the ACL user it authenticates as
-(`--user`, default `bench`) holds `~friend:*` and nothing wider. The startup
-line each friend adds to their own window is in
-[docs/FRIEND-PRESENCE.md](FRIEND-PRESENCE.md).
-
-This is the measured half of `awake`: `awake` reads presence out of the bus
-checkout, which is a git commit per cursor move and lags by a fetch, and
-`presence` reads it out of the store, which is one `MULTI` per beat and lags by
-nothing. Both
-report; neither decides. Issue #2610.
+**`beat` and `presence` are retired** (2026-09-27). The friend heartbeat
+(#2610: the hash `friend:<name>` with a TTL, `friend:<name>:last` beside it)
+and the one-line presence read are a friend's own runtime now, `nova-friend`
+(`here` beats, `list` and `show` read); the two verbs answer with one refusal
+naming it. What stays here is `awake --store`, which reads the same hash the
+way it always did. Presence is Redis only: the bus carries notes, never beats
+(#3144).
 
 ### First run
 
@@ -3119,6 +3060,32 @@ when `--from` does not carry one of the `--only` names. It prints no value on an
 line. It commits nothing: the receipt names the two changed files, and the store's
 gate reads them in a pull request as it does every other recipient change.
 
+### Re-seal values into an existing seat
+
+```sh
+nova-secrets seat inject --store ./secrets --as air --from rowan \
+  --only NOVA_REDIS_BENCH_PASSWORD --key /path/to/rowan.key --sops /path/to/sops
+```
+
+`seal` runs only where the target seat's own key lives, and `seat add` refuses a
+seat file that exists. `seat inject` re-seals the `--only` values out of `--from`,
+a seat this machine can open, into the existing `<seat>.yaml`, encrypted to the
+two recipients that file's own sops metadata names (the seat's key and the
+recovery key, held equal to its rule first), then walks `seal`'s road: a
+`seal/<seat>-<NAMES>-<stamp>` branch, one commit, a push, the pull request the
+store's gate approves, the squash merge, the pull and `check`. `--no-pr` stops
+after the commit, returns the store to its starting branch and names the branch
+on the OK line: `SECRETS SEAT INJECT OK seat=air from=rowan names=1 committed branch=seal/air-NOVA_REDIS_BENCH_PASSWORD-20260927-013000`.
+
+This key cannot open the target, so every sealed value the target holds is
+re-sealed from the source's current value; a value the rule permits in the clear
+is kept from the target byte for byte. It refuses, changing nothing, when the
+seat file does not exist (run `seat add`), when the source cannot be opened with
+`--key` here, when `--from` does not carry one of the `--only` names, when the
+target holds a sealed name the source does not, or when the target's recipients
+cannot be read from its metadata or differ from its rule. It prints no value on
+any line.
+
 ### Reading a `keygen` receipt
 
 `keygen` prints the `.sops.yaml` rule block first, then a `SECRETS RULE NEXT:` line
@@ -3190,6 +3157,91 @@ that hold `//go:build functional` tests and a `-run` pattern naming exactly
 those tests; it prints nothing when there are none ([TESTING.md](TESTING.md), "The two tiers").
 
 See [SPEC-CI.md](SPEC-CI.md).
+
+## nova-config
+
+```
+nova-config kinds                                                        # every kind: its table, its fields, the fields add requires
+nova-config migrate [--pg <dsn>] [--print]                               # create or upgrade schema config from the migrations in the binary; --print lists them and connects to nothing
+nova-config status [--pg <dsn>] [--redis <addr>]                         # the connection, the schema version, rows and revision per kind, and what Redis has applied
+nova-config apply [--pg <dsn>] [--redis <addr>] --as <friend> [--kind <kind>] [--check]   # write Postgres into Redis per kind through the runtime's own functions, compare-and-set on the revision; --check prints the plan and writes nothing
+nova-config <kind> add <name> --<field> <value> ... --as <friend>        # insert a row; a duplicate name is refused with the set to run
+nova-config <kind> set <name> --<field> <value> ... --as <friend>        # update the fields named
+nova-config <kind> remove <name> --as <friend>                           # delete the row (Redis keeps a friend with working copies until apply can remove it)
+nova-config <kind> list                                                  # one typed line per row
+nova-config <kind> show <name>                                           # one line with every field and the stamps
+nova-config <kind> history <name>                                        # every change to the row: who, when, what changed
+nova-config <kind> <verb> -h                                             # the verb's usage line and every flag it takes
+nova-config machine list|show <name> [--redis <addr>]                    # with a Redis, each line ends in the machine's live measured facts from its beat (os, arch, cores, memory_gb, beat=<t> or beat=none)
+nova-config fleet set --store <m> --coordinator <m> --as <friend>       # the one fleet row: no name, no add, remove or list
+nova-config sprint set --coordinator <friend> --as <friend>              # the one sprint row: who coordinates; set it to hand over
+nova-config fleet|sprint show|history                                    # the one row, its stamps, its changes
+```
+
+`nova-config` is the one tool for the fleet's permanent, non-ephemeral configuration: Postgres (schema `config`) is the permanent store, and `apply` writes it into Redis so Redis is always a rebuildable copy. The kinds are `machine` (user, seat, slots, runners; the name is the tailnet host), `fleet` (one row: the store and coordinator machines), `friend` (slots, tiers, roles) and `sprint` (one row: the coordinating friend); the contract is [SPEC-CONFIG.md](SPEC-CONFIG.md) and the guide is [nova-config/README.md](nova-config/README.md).
+
+### First run
+
+```sh
+nova-config kinds
+nova-config migrate --print
+```
+
+Neither needs a store. `kinds` prints one `CONFIG KIND` line per kind with its table, its fields in the order every line prints them, and the fields `add` requires; `migrate --print` lists the migrations this binary carries. The executable transcript is in [TESTS.md](TESTS.md#nova-config).
+
+The real first run needs a Postgres and a Redis, so there is no `quickstart`: a verb that made a store nobody asked for would write state on the way to a demonstration. With a database in hand:
+
+```sh
+nova-config migrate --pg postgres://nova_config@space:5432/nova
+nova-config machine add studio --user glenn --seat studio --slots 64 --as rowan
+nova-config fleet set --store studio --coordinator studio --as rowan
+nova-config friend add rowan --slots 32 --tiers frontier,pro --roles builder --as rowan
+nova-config sprint set --coordinator rowan --as rowan
+nova-config apply --check --as rowan
+nova-config apply --as rowan
+```
+
+**What the flags want.** `--pg` is `postgres://user@host:port/db` with no password in it (env `NOVA_PG_DSN`); the password is read from the variable `NOVA_PG_PASSWORD_ENV` names (`NOVA_PG_PASSWORD` when unset), never from the line, and a `--pg` carrying one is refused. `--redis` is `host:port` (env `NOVA_SPRINT_REDIS`, then `NOVA_REDIS_ADDR`, then the seat's address). `--as` is the friend making the change (env `NOVA_FRIEND`), required on every write and recorded in `config.history`. A name is lower-case letters, digits and dashes. `add` needs every required field (`kinds` names them) and refuses a value outside its type, every problem in one line; `set` changes only the fields named. A run missing several flags names all of them at once; a typo is one line naming the door (`run: nova-config help`).
+
+**Reading it.** Every write prints `CONFIG ADD|SET|REMOVE kind=<k> name=<n> rev=<id>`, the id of its history row. `list` prints `<KIND> name=<n> <field>=<v> ...` per row and a `CONFIG LIST` count; `history` prints `HISTORY id=<n> ... op=<add|set|remove> actor=<a> at=<t>` with each changed field as `<field>=<before>><after>`. `apply` prints `APPLY ADD|SET|REMOVE kind=<k> name=<n>` per row it writes and one `CONFIG APPLY kind=<k> add=<n> set=<n> remove=<n> rev=<r> ms=<n>` per kind; `--check` prints the same plan as `CHECK` lines and `CONFIG CHECK`. `status` exits 1 with the next step when the schema is missing (`run: nova-config migrate`) or Redis is behind (`run: nova-config apply`).
+
+**Refusals.** Exit 1 is the store or Redis saying no, one stderr line naming the next step: `machine studio exists; run: nova-config machine set studio ...`, `--store space names no machine row`, `machine studio is the --coordinator of the fleet`, `friend rowan is the --coordinator of the sprint`, `CONFLICT friend: Redis holds rev 9 and this Postgres is at rev 4`, `CEILING studio: friend stella makes the sum 65 over the machine ceiling 64`, `friend stella holds 2 working copies (card:4410,card:4414)`, `friend emma has no beat naming a machine and the fleet names no coordinator machine to charge her slots to`. Exit 2 is an invocation that could not run (a name on a singleton is one).
+
+## nova-friend
+
+```
+nova-friend here --as <you> [--harness <h>] [--host <h>] [--login <alias>]... [--pid <harness-pid>] [--session <id>] [--sprint <S>] [--once]   # the one presence process: register, then once a second the beat, the leases, the take; --once ticks once and returns
+nova-friend bye --as <you>                                               # DEL your beat: down at once; registration and dealt work stay
+nova-friend pull --as <you> [--n <k>] [--dir <d>] [--model <m>] [--harness <h>] [--child <id>]   # ready -> working for your copies, one brief per copy under --dir
+nova-friend done --as <you> --id <copy> --ok --pr <repo>#<n> --head <sha> --repo <checkout> [--test <t>] [--branch <b>]   # the spec gate in your checkout, the PR recorded, the copy ended ok
+nova-friend done --as <you> --id <copy> --fail <why>                     # the copy ended failed, the why on the record
+nova-friend done --as <you> --id <copy> --score <N>/10 [--gates <g>] [--finding <text>]   # a read copy's score
+nova-friend list                                                         # one line per registered friend: state, slots, tiers, roles, host, working copies, the applied revision
+nova-friend show <name>                                                  # one friend, with the session's facts: session, harness, load, models, the beat's age, away
+nova-friend away <name> --reason <r> --as <actor>                        # set friend:<name>:down: no push, take or copy until back
+nova-friend back <name> --as <actor>                                     # clear it
+nova-friend <verb> -h                                                    # the verb's usage line and every flag it takes
+```
+
+`nova-friend` is the one tool for what a friend, or a coordinator, does about a friend: the person, who exists whether or not a sprint is running. The roster (who exists, with slots, tiers and roles) is configuration and lives in [nova-config](#nova-config); `nova-friend` reads it and never writes it. What it owns is the runtime a friend reports herself: the beat, the away flag, and her own copies. The guide is [nova-friend/README.md](nova-friend/README.md).
+
+### First run
+
+```sh
+nova-friend here --as rowan --once --host studio --session s1
+nova-friend list
+nova-friend bye --as rowan
+```
+
+The three lines need a store that holds the roster (`nova-config apply` writes it): `here --once` registers the session and ticks once, `list` reads every friend with the revision the configuration was applied at, and `bye` deletes the beat. The executable transcript, on a throwaway store, is in [TESTS.md](TESTS.md#nova-friend). The line each harness runs when its session opens is `nova-friend here --as <you> --harness <h> --pid <harness-pid>`, left running.
+
+There is no `quickstart`: a verb that registered a friend nobody asked for would write configuration, which is nova-config's, and `here --once` is the first run.
+
+**What the flags want.** `--redis` is `host:port` (env `NOVA_SPRINT_REDIS`, then `NOVA_REDIS_ADDR`, then the seat's address). `--as` is you, a lower-case friend name (env `NOVA_FRIEND`, which it must equal when set). `here` takes `--harness` and `--host` for the beat (default `nova-friend` and the hostname), `--login <alias>` repeatable for your forge accounts, `--pid` for the harness process your copies are bound to (their leases renew only while it is seen alive, nova-tools#4415), `--session` for the identity (default a fresh one) and `--sprint` for the take. `done` wants exactly one of `--ok`, `--score <N>/10` and `--fail <why>`; `--pr` wants `--head` and `--repo`, the checkout the spec gate runs in. `away` wants `--reason`.
+
+**Reading it.** Every success is one typed line: `FRIEND HERE as= host= session= slots= taken=`, `FRIEND BYE as= was=`, `FRIEND PULLED id= leg= token= card=` then `FRIEND PULL as= n= free= dir= ms=`, `FRIEND ENDED id= primary= from= to= next=` then `FRIEND DONE as= n= ms=`, `FRIEND name= state= slots= tiers= roles= host= working= rev=` per friend, `FRIEND AWAY name= reason= changed=`, `FRIEND BACK name= changed=`. `state` is `up` (a beat at most a minute old and no away flag), `away` (the flag) or `down`; `rev` is the friend revision `nova-config apply` last stamped in `config:decl`, `-` when none.
+
+**Refusals.** Exit 1 is the store saying no, one stderr line naming the next step: `UNREGISTERED emma: not in the roster; run: nova-config friend add emma --slots <n> --as <you>, then nova-config apply`, `BUSY rowan: a live session is here already on studio (session s1, beat 3s ago); stop it, or wait a minute and it is taken over`, `LOGIN-TAKEN rowan: --login x is stella's login already`, `NOTMINE task:q2~1 is friend:stella's copy, not friend:rowan's`. A stale `--token` on `done` is `FENCED`, exit 3, as `nova-sprint card end` spells it. Exit 2 is an invocation that could not run: a missing flag says what it wants (`--reason wants why stella is away`), a store that does not answer is one line. `here` exits 3 when five beats in a row fail (after bye) or another session took its beat (no bye).
 
 ## nova-work
 
@@ -3646,9 +3698,14 @@ dialling Redis. A mistyped flag stays the verb's one-line refusal on standard
 error. `file -h` prints its own usage text (exit 2); the batch `task` verbs
 (`cancel`, `move`, `front`, `block`, `unblock`, `sweep`) print theirs and exit 0.
 
-**Capacity and the three model types.** `capacity friend|bench [--tiers
-<t>,...] [--kinds work|read|fix,...] <name> <slots>` sets a worker's slot
-budget under its machine ceiling and what it advertises it can run. A card's
+**Capacity and the three model types.** `capacity bench [--tiers
+<t>,...] [--kinds work|read|fix,...] <name> <slots>` sets a bench's slot
+share (the most it runs at once; live, its slots are the machine ceiling
+less the slots of the friends awake on that machine, so a sleeping friend's
+slots are the swarm's and hers again when she is back) and what it advertises it can run (a
+friend's slots, kinds and tiers are `nova-config friend set`, applied by
+`nova-config apply` through the same Redis Function; the retired `capacity
+friend` refuses naming it). A card's
 `ROUTE:` names one of three model types, `frontier` (the most recent Astra or
 Fable model only), `pro` or `flash`; `--tiers` takes those three words and
 refuses any other, an empty value clears, omitted keeps the stored list. The
@@ -3664,8 +3721,8 @@ worker's desired hash (`<kind>:<name>:desired`) in one call and prints
 `PAUSED <worker>`; `worker resume <worker>` clears it and prints `RESUMED
 <worker>`; a flag already at the value prints the same word and writes
 nothing. It is the one verb for benches and friends (it replaces `capacity
-bench <b> 0` and `capacity friend --paused 1` as the way to pause, though
-`--paused 0|1` still works on either kind). The deal pass deals a paused
+bench <b> 0` and the retired `capacity friend --paused 1` as the way to
+pause, though `--paused 0|1` still works on a bench). The deal pass deals a paused
 worker nothing; it keeps working what it already holds, so a pause is
 never a cancel. The sprint table prints `paused` in the worker's status
 column while it is up (down wins). A worker neither registry holds prints
@@ -3699,7 +3756,12 @@ itself signals only the unit's pid.
 watches (#3530): the headline (`SPRINT TABLE *** PIT STOP ***` while
 `s:<name>:pitstop` or `sprint:<name>:pitstop` exists), the
 `<landed>/<total> done <z>%, left <l>, eta <HH:MM> ET` line, the streams block and the
-worker table, one blank line between them. The streams are the
+worker table, one blank line between them. The streams block is the
+nova-table `streams` ([nova-table](#nova-table), `internal/ntable`): its
+cells are bound to the sets named here, the tick reads them through it in
+its one pipeline, renders through it, and the loop binds the table in the
+store whenever its shape moves, so `nova-table render streams
+--hide-zero-rows` prints the same block. The streams are the
 rows of `ws:order` (the ws index, #3662) with
 the ZCARDs of their `waiting`, `ready`, `working`, `review`, `reading`,
 `merging` and `landed` sets (`ws:<stream>:<where>`, `ws:<e>:<stream>:<where>`
@@ -4606,7 +4668,7 @@ The card is a spec (nova-tools#4313): its `TEST` line names the one test the cha
 
 One receipt: `CARD CUT <S>/<repo>#<n> label=... place=pool|waiting|exists stream=... contexts=<k> origin=<url>`. Exit 0 cut; 1 refused with `REFUSED card cut ... why=...` (no `STREAM` and no `--stream`, a `DEPENDS-ON` that is not a card id, owner/repo#n, stream/<slug> or task:<id>, no `PATHS` or `DONE-WHEN`, a `DONE-WHEN` no test can fail, or a missing index, each before any write; or the push's own refusal); 2 usage.
 
-The wrapper (internal/nsprint/card/wrapper_spec.go) holds every code card's commit to the card before its end pushes or harvests anything, a copy's (`nova-card copy`) and a sprint card's (`nova-card <S>/<label>/<n>`) alike: the diff adds or changes at least one `_test.go`; `TEST` passes at the head and fails at `base-sha` with the diff's test files checked out over it (a `TEST: none <why>` card is excused from that, not from CI). `TEST` runs under `go test -json`, and green is the named test's own `pass` event: `[no test files]`, `[no tests to run]` and a subtest's pass are not green, and a red at base is the named test's own `fail` event, or its package failing to build only when the diff's test files add or change the named test (never `[setup failed]`, and a `pass` of the named test at base is never red); `TEST` names one package, never a `...` pattern. `TEST: -tags <tags> <package> <TestName>` runs with those tags, and `go test -p 2 -tags functional ./pkg -run TestX` in `DONE-WHEN` derives it. A fix copy's commit sits on the PR head, where the primary's `TEST` is green already, so a fix is held to the finding test it names on `RESULT.md` line 3 (`TEST: <package> <TestName>`, never `none`), not to the primary's. A friend's copy has no wrapper: `friend done --ok --pr` runs the same gate in `--repo <checkout at --head>` (a fix names its finding test with `--test`) and refuses the end on a red; then `nova-ci local --base <base-sha>` in the checkout (#4360: the unit tier CI runs for the diff), or, where the verb cannot run, `go test -json -p 2 -count=1` of the touched packages. A red ends the copy `FAILED` with the typed reason (`no-test`, `test-not-green`, `test-not-red`, `ci-red`; a sprint card's end is `FAILED tests-red`, the reason `ns_card_end` takes, with `gate=<reason>:` leading its why) and one line naming the red and the remedy; no PR is opened; the rows, every `RED package=<p> test=<t>` line included, go under `## Gates` in `RESULT.md`; `wrapper.line` carries `gate=<pass|reason>` and the copy's record `evidence` = `gate=<pass|reason> red=<names|->`.
+The wrapper (internal/nsprint/card/wrapper_spec.go) holds every code card's commit to the card before its end pushes or harvests anything, a copy's (`nova-card copy`) and a sprint card's (`nova-card <S>/<label>/<n>`) alike: the diff adds or changes at least one `_test.go`; `TEST` passes at the head and fails at `base-sha` with the diff's test files checked out over it (a `TEST: none <why>` card is excused from that, not from CI). `TEST` runs under `go test -json`, and green is the named test's own `pass` event: `[no test files]`, `[no tests to run]` and a subtest's pass are not green, and a red at base is the named test's own `fail` event, or its package failing to build only when the diff's test files add or change the named test (never `[setup failed]`, and a `pass` of the named test at base is never red); `TEST` names one package, never a `...` pattern. `TEST: -tags <tags> <package> <TestName>` runs with those tags, and `go test -p 2 -tags functional ./pkg -run TestX` in `DONE-WHEN` derives it. A fix copy's commit sits on the PR head, where the primary's `TEST` is green already, so a fix is held to the finding test it names on `RESULT.md` line 3 (`TEST: <package> <TestName>`, never `none`), not to the primary's. A friend's copy has no wrapper: `nova-friend done --ok --pr` (the retired `nova-sprint friend done`) runs the same gate in `--repo <checkout at --head>` (a fix names its finding test with `--test`) and refuses the end on a red; then `nova-ci local --base <base-sha>` in the checkout (#4360: the unit tier CI runs for the diff), or, where the verb cannot run, `go test -json -p 2 -count=1` of the touched packages. A red ends the copy `FAILED` with the typed reason (`no-test`, `test-not-green`, `test-not-red`, `ci-red`; a sprint card's end is `FAILED tests-red`, the reason `ns_card_end` takes, with `gate=<reason>:` leading its why) and one line naming the red and the remedy; no PR is opened; the rows, every `RED package=<p> test=<t>` line included, go under `## Gates` in `RESULT.md`; `wrapper.line` carries `gate=<pass|reason>` and the copy's record `evidence` = `gate=<pass|reason> red=<names|->`.
 
 ### Many cards from one file: `nova-sprint card cut --from`
 
@@ -4698,3 +4760,127 @@ nova-sprint digest: wants --redis <host:port>; run: nova-sprint help
 ```
 
 The other refusals name their remedy the same way: `wants --since <RFC3339 UTC>`, `wants --until <RFC3339 UTC>`, `since must be before until`, `takes flags, not positional arguments`, a `--repo` that is not `<owner>/<name>` (the parser's `invalid value` line), and `redis <addr>: <error>` when the store cannot be reached. A read that fails after that exits 1.
+
+## nova-table
+
+A general table over Redis, every body cell an ordered set (a ZSET), built
+from one primitive and knowing nothing about sprints: the sprint table's
+stream block is its first table. The guide is
+[docs/nova-table/README.md](nova-table/README.md); the library is
+`internal/ntable`.
+
+### First run
+
+A table is columns, rows and a set per cell. Make one, put a row in it, put
+members in a cell, move one to the next cell, and look at it two ways: the
+typed lines a program reads, and the text a person reads.
+
+```text
+$ nova-table create demo --columns job:text:none,ready,working,done
+TABLE CREATE table=demo columns=4 trips=1
+
+$ nova-table row add demo build
+TABLE ROW ADD table=demo row=build cols=4 bound=0 trips=1
+
+$ nova-table cell add demo build ready b1
+TABLE CELL table=demo row=build col=ready n=1 trips=1
+
+$ nova-table cell add demo build ready b2
+TABLE CELL table=demo row=build col=ready n=2 trips=1
+
+$ nova-table cell move demo build ready working b1
+TABLE MOVE table=demo row=build member=b1 from=ready to=working n=1 trips=1
+
+$ nova-table show demo
+TABLE table=demo columns=4 rows=1 trips=1
+TABLE ROW table=demo row=build ready=1 working=1 done=0
+
+$ nova-table render demo
+job   | ready | working | done
+------+-------+---------+-----
+build |     1 |       1 |    0
+------+-------+---------+-----
+total |     1 |       1 |    0
+```
+
+**What the flags want.** Every verb takes `--redis <addr>`, else
+`NOVA_SPRINT_REDIS`, then `NOVA_REDIS_ADDR`, then the selected seat's
+address (`--seat <name>` or `NOVA_SEAT`, nova-sprint's seat: its row names
+the store and the login; with no seat, `NOVA_SPRINT_REDIS_USER` and the
+password in the variable `NOVA_SPRINT_REDIS_PASSWORD_ENV` names). With none
+of those the refusal is `--redis <addr> is required`. Flags may follow the
+words on the line. `--columns` is `name[:projection[:fold[:label]]]` per
+column, comma-separated: the projection is what a body cell prints
+(`count`, the set's size, the default; `members`, the members in score
+order; `first`; `last`; `text`, the row's label with no set), the fold what
+the footer prints over the column (`sum`, the default for a count; `max`;
+`union` of members; `none`). A fold that does not fit its projection is
+refused naming both. `--footer <label>` names the footer row (`total`);
+`--width col=n,...` fixes column widths in the definition, and `render
+--width` for one render. `cell add --score <n>` is the member's place in
+the set's order (the unix time in ms when omitted, so a set reads oldest
+first). `render --hide-zero-rows` hides a row whose count cells are all
+zero, the sprint table's rule.
+
+**A bound cell is a view.** `row add <table> <row> <col>=<key> ... --owner
+<verb>` binds a column's cell to a set another tool owns instead of the
+table's own `table:<t>:cell:<row>:<col>`. It is read and rendered freely,
+and `cell add`, `cell remove`, `cell move` and `clear` refuse it, one line,
+exit 1: `nova-table cell add: <t>.<row>.<col> is bound to <key>, owned
+elsewhere; run: <owner verb>`. `clear` over a table
+holding any bound cell refuses the same way and clears nothing. `row add
+--exclude <member>` names one member the row's counts and members leave
+out (the sprint's sentinel).
+
+Typed success receipts append `trips=1`, measured after connection setup.
+Render and watch retain table-only output. Every table operation, including
+cold reads and shape changes, is one exchange.
+
+**The verbs.** `create <table> --columns ... [--footer] [--width]` prints
+`TABLE CREATE table= columns=` (an existing table with the same definition
+is left as it is; another definition is refused, exit 1). `drop <table>`
+prints `TABLE DROP table= rows=` and deletes the definition, the rows and
+every owned cell (a bound set stays). `list` prints `TABLE LIST tables=`
+then `TABLE table= columns= rows=` per table. `row add <table> <row>
+[--label] [--exclude] [--owner] [<col>=<key> ...]` prints `TABLE ROW ADD
+table= row= cols= bound=`; a row already there keeps its place and its
+cells; `row del` prints `TABLE ROW DEL table= row= existed=`. `cell add`
+and `cell remove` print `TABLE CELL table= row= col= n=`, the cell's count
+after; `cell move <table> <row> <from> <to> <member>` is one library call
+(`ns_table_cell_move`) that keeps the member's score, prints `TABLE MOVE table=
+row= member= from= to= n=`, and refuses `NOTMEMBER` (exit 1) writing
+nothing when the member is not in `<from>`; `cell members` prints `TABLE
+CELL ... n=` then one `TABLE MEMBER table= row= col= member= score=` per
+member. `clear <table>` is one library call (`ns_table_clear`) that
+empties every owned cell and removes every row, keeping the definition:
+`TABLE CLEAR table= rows= ms=`. `show <table>` prints `TABLE table=
+columns= rows=` then one `TABLE ROW table= row= <col>=<count> ...` per row
+(`?` for a set that did not come back). `render <table>` prints the table
+as text and nothing else, nothing at all when it is empty. A value holding
+a space is quoted (`row="swarm: cards"`).
+
+**Watching.** `watch <table>[,<table>...] [--every 1s] [--out <file>]
+[--title <text>] [--hide-zero-rows] [--once]` renders the named tables once
+per tick, one blank line between two that print, the title first. With no
+`--out` it draws in place on the terminal (the ANSI home-and-clear
+sequence, then the text) so a console tab shows the live table with no
+shell loop; `--out <file>` publishes each tick by writing a temp file
+beside it and renaming it over, the sprint table's way; `--once` renders
+once and exits. Every tick is exactly one Redis pipeline for every cell of
+every named table (read-only snapshots include cold and changed shapes), and
+the screen holds the tables and nothing else: no clock, no key, no status
+line. A tick whose read fails leaves the last good text standing with one
+`stale: <n>s` line under it. A signal ends it, exit 0.
+
+**The render.** The header row is the column labels, then a rule, one line
+per row (its label, then its cells), and, when any column folds, a rule and
+the footer row. Text, members, first and last cells are left-aligned, count
+cells right-aligned; cells are separated by ` | ` and the rule joins dashes
+with `-+-`; a column is as wide as its widest cell unless its width is
+fixed. A cell whose set did not come back prints `?`, and so does the fold
+over it. An empty table renders as the empty string: no header, no newline.
+
+There is no `quickstart` verb: a first run is a table you name, and a verb
+that made one for you would write a table nobody asked for.
+
+Exit codes: 0 done, 1 refused (the store said no), 2 usage (could not run).

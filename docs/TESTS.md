@@ -233,6 +233,17 @@ $ nova-secrets exec --store ./secrets --as other --key /Users/me/.config/nova-se
 fake-gh
 ```
 
+`nova-secrets seat inject` is measured against the real sops and age
+(`cmd/nova-secrets/seat_inject_functional_test.go`, functional tier): a store with
+two seats, the coordinator's holding the new value and the bench's holding the old
+one; the verb run with the coordinator's key and `--no-pr`; then the seal branch's
+file opens with the bench's key alone and holds the new value beside the names it
+had, the store is back on `main`, and `nova-secrets gate` approves the branch. The
+help banner's own `seat inject` example is run through the one comparator in the
+same package, its transcript held beside the test, ending
+`SECRETS SEAT INJECT OK seat=air from=rowan names=1 committed branch=seal/air-NOVA_REDIS_BENCH_PASSWORD-20260927-013000`
+with the branch's stamp the one declared run-owned value.
+
 **The Studio's store file is `studio.yaml`, not `swarm-studio.yaml`.** Every Linux
 bench's store follows the `swarm-<name>.yaml` convention (`swarm-hulk.yaml`,
 `swarm-space.yaml`, `swarm-vision.yaml`, …). The Studio is the only bench whose
@@ -877,6 +888,76 @@ REPORT OK checked=1 known=1 unknown=0 changed=- sent=- took=8ms file=cmd/nova-ve
 ```
 
 
+## nova-config
+
+No fixture and no store: the first run reads the kind descriptors and the
+migrations compiled into the binary, so every value below reproduces on
+every bench. The real runs need a Postgres (`nova-config migrate`) and a
+Redis (`nova-config apply`); `docs/nova-config/README.md` walks them, and
+`cmd/nova-config/config_functional_test.go` runs them against a throwaway
+Postgres and a throwaway Redis.
+
+### First run
+
+```text
+$ nova-config kinds
+CONFIG KIND name=machine table=config.machines fields=user,seat,slots,runners required=user,seat,slots rows=many
+CONFIG KIND name=fleet table=config.fleet fields=store,coordinator required=- rows=one
+CONFIG KIND name=friend table=config.friends fields=slots,tiers,roles required=slots,tiers rows=many
+CONFIG KIND name=sprint table=config.sprint fields=coordinator required=- rows=one
+CONFIG KINDS count=4
+
+$ nova-config migrate --print
+MIGRATION version=1 file=0001_schema.sql lines=23
+MIGRATION version=2 file=0002_machine.sql lines=16
+MIGRATION version=3 file=0003_friend.sql lines=13
+MIGRATION version=4 file=0004_fleet.sql lines=14
+MIGRATION version=5 file=0005_sprint.sql lines=12
+CONFIG MIGRATE print=5 pg=-
+```
+
+`kinds` is one line per kind: its table under schema `config`, its fields in
+the order every line prints them, the fields `add` requires, and whether the
+kind is many rows or one (`rows=one`: the fleet and the sprint, a row
+`migrate` creates and `set` changes, with no add, remove or list). `migrate --print` lists the
+migrations this binary carries and connects to nothing; `migrate --pg <dsn>`
+applies the ones the database lacks, each in its own transaction, and applies
+nothing twice.
+
+
+## nova-friend
+
+Run by `cmd/nova-friend/firstrun_test.go` on a throwaway redis-server holding
+the nova_sprint function library and the roster `nova-config apply` writes
+(rowan: 4 slots, frontier, coordinator; stella: 2 slots, reader; friend
+revision 1), so it runs in the functional tier. The documented lines name no
+`--redis`: on a bench the seat's address is the default (`NOVA_SPRINT_REDIS`,
+then `NOVA_REDIS_ADDR`, then the seat's row), and the test appends the
+throwaway server's. `--host` and `--session` are given on the line so every
+value reproduces; nothing is normalised. The usage banner's `example:` block
+is this same sitting, line for line.
+
+### First run
+
+```text
+$ nova-friend here --as rowan --once --host studio --session s1
+FRIEND HERE as=rowan host=studio session=s1 slots=4 taken=0
+
+$ nova-friend list
+FRIEND name=rowan state=up slots=4 tiers=frontier roles=coordinator host=studio working=0 rev=1
+FRIEND name=stella state=down slots=2 tiers=- roles=reader host=- working=0 rev=1
+FRIEND LIST friends=2 rev=1
+
+$ nova-friend bye --as rowan
+FRIEND BYE as=rowan was=up
+```
+
+`here --once` registers the session and ticks once: the beat is written
+with no TTL, and the reader judges its age. `list` reads the store: rowan
+is up (a beat under a minute old), stella has never beaten, and every line
+ends with the friend revision `nova-config apply` stamped. `bye` deletes the
+beat, so rowan reads down at once.
+
 ## nova-card
 
 The card wrapper (#3059) is started by `nova-sprint card launch --stdin`, never
@@ -1136,4 +1217,44 @@ STATUS RUN id=cancel state=cancelled queued=2026-09-23T10:05:00Z queue=5s drain=
 STATUS RUN id=retry state=completed queued=2026-09-23T10:10:00Z queue=20s drain=- exec=4m0s e2e=4m20s attempts=retry.a1,retry.a2 prior_failures=retry.a1:lint
 STATUS RUN id=waiting state=queued queued=2026-09-23T10:20:00Z queue=10m0s+ drain=- exec=- e2e=10m0s+ attempts=- prior_failures=-
 STATUS OK store=cmd/nova-test/testdata/runs since=2026-09-23T00:00:00Z now=2026-09-23T10:30:00Z runs=4 shown=4 older=1
+```
+
+## nova-table
+
+Run by `cmd/nova-table/firstrun_test.go` on a throwaway redis-server holding
+the nova_sprint function library (`cell move` is one call of `ns_oset_move`),
+so it runs in the functional tier. The documented lines name no `--redis`: on
+a bench the seat's address is the default (`NOVA_SPRINT_REDIS`, then
+`NOVA_REDIS_ADDR`, then the seat's row), and the test appends the throwaway
+server's. Every value below reproduces; nothing is normalised. The usage
+banner's `example:` block is this same sitting, line for line.
+
+### First run
+
+```text
+$ nova-table create demo --columns job:text:none,ready,working,done
+TABLE CREATE table=demo columns=4 trips=1
+
+$ nova-table row add demo build
+TABLE ROW ADD table=demo row=build cols=4 bound=0 trips=1
+
+$ nova-table cell add demo build ready b1
+TABLE CELL table=demo row=build col=ready n=1 trips=1
+
+$ nova-table cell add demo build ready b2
+TABLE CELL table=demo row=build col=ready n=2 trips=1
+
+$ nova-table cell move demo build ready working b1
+TABLE MOVE table=demo row=build member=b1 from=ready to=working n=1 trips=1
+
+$ nova-table show demo
+TABLE table=demo columns=4 rows=1 trips=1
+TABLE ROW table=demo row=build ready=1 working=1 done=0
+
+$ nova-table render demo
+job   | ready | working | done
+------+-------+---------+-----
+build |     1 |       1 |    0
+------+-------+---------+-----
+total |     1 |       1 |    0
 ```

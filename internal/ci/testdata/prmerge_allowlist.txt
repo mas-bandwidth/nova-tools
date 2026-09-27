@@ -12,4 +12,4 @@
 
 internal/merge/gitops.go:guard  # the mutation guard NAMES --auto in order to refuse it; this is the refusal, not a call
 internal/merge/audit.go:disableAutoMergeArgs  # the one spelling that unmerges: `gh pr merge <n> -R <repo> --disable-auto` takes an auto-merge OFF, and the audit is the sweep that removed 27 of them
-internal/secrets/seal.go:RunSeal  # the SECRETS STORE's own pull request, squash-merged in a repository that has no merge queue and no batches; it lands a sealed secret, never a change to this tree
+internal/secrets/seal.go:sealCarry.carry  # the SECRETS STORE's own pull request (seal, seat inject), squash-merged in a repository that has no merge queue and no batches; it lands a sealed secret, never a change to this tree

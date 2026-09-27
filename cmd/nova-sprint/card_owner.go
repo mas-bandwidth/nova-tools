@@ -59,8 +59,5 @@ func runCardOwner(ctx context.Context, args []string, out, errOut io.Writer) int
 		return refuse(errOut, verb, err.Error())
 	}
 	fmt.Fprintf(out, "CARD OWNER id=%s host=%s pid=%d start=%s\n", *id, host, *pid, observed.Start)
-	if !printFriendBeat(ctx, st.Client(), asConsumer, redisArg(*addr), out) {
-		return 1
-	}
 	return 0
 }

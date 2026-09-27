@@ -72,7 +72,7 @@ func runTaskWidth(ctx context.Context, args []string, out, errOut io.Writer) int
 			return refuse(errOut, "task width", "read "+capacity.DesiredKey(capacity.KindFriend, *as)+" machine: "+err.Error())
 		}
 		if machine == "" {
-			return refuse(errOut, "task width", "friend has no machine; set it with capacity friend --machine")
+			return refuse(errOut, "task width", "friend has no machine; set it with nova-config friend set --machine, then nova-config apply")
 		}
 		if _, err := capacity.SetFriend(ctx, st, *as, machine, n, *actor, *idem); err != nil {
 			return refuseCapacity(errOut, "task width", err)

@@ -10,7 +10,9 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `nova-card/` | card wrapper owning one card attempt on a bench | `go test ./cmd/nova-card` | `go test ./cmd/nova-card` |
 | `nova-check/` | codebase hygiene and constraint check CLI | `go test ./cmd/nova-check` | `go test ./cmd/nova-check` |
 | `nova-ci/` | CI slowtests budget and check CLI | `go test ./cmd/nova-ci` | `go test ./cmd/nova-ci` |
+| `nova-config/` | permanent configuration store (Postgres), friends and machines, applied into Redis | `go test ./cmd/nova-config` | `go test ./cmd/nova-config` |
 | `nova-decide/` | criteria evaluation and decision engine CLI | `go test ./cmd/nova-decide` | `go test ./cmd/nova-decide` |
+| `nova-friend/` | a friend's runtime: presence (here, bye), away and back, pull and done, list and show | `go test ./cmd/nova-friend` | `go test ./cmd/nova-friend` |
 | `nova-fuse/` | workspace isolation and boundary CLI | `go test ./cmd/nova-fuse` | `go test ./cmd/nova-fuse` |
 | `nova-memory/` | memory indexing and search CLI | `go test ./cmd/nova-memory` | `go test ./cmd/nova-memory` |
 | `nova-merge/` | batch gate and stream fold CLI | `go test ./cmd/nova-merge` | `go test ./cmd/nova-merge` |
@@ -23,6 +25,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `nova-self-talk/` | internal dialogue recording CLI | `go test ./cmd/nova-self-talk` | `go test ./cmd/nova-self-talk` |
 | `nova-sprint/` | sprint dealer, table, and CI-card CLI | `go test ./cmd/nova-sprint` | `go test ./cmd/nova-sprint` |
 | `nova-swarm/` | native card runner, bench slot leases and card lint CLI | `go test ./cmd/nova-swarm` | `go test ./cmd/nova-swarm` |
+| `nova-table/` | a table over Redis, every cell an ordered set; the sprint's stream block is its first table | `go test ./cmd/nova-table` | `go test ./cmd/nova-table` |
 | `nova-test/` | validation-layer run store and status CLI | `go test ./cmd/nova-test` | `go test ./cmd/nova-test` |
 | `nova-tokens/` | token consumption metering and budgeting CLI | `go test ./cmd/nova-tokens` | `go test ./cmd/nova-tokens` |
 | `nova-update/` | binary release update CLI | `go test ./cmd/nova-update` | `go test ./cmd/nova-update` |

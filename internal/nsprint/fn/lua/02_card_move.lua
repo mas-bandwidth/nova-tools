@@ -3058,14 +3058,55 @@ function TM.list(s)
   return table.concat(names, ',')
 end
 
+-- TM.awake(f): friend f is here: her beat is within TM.LIVE_MS (nova-friend
+-- here, the harness beat) and no friend:<f>:down marker (bye, away).
+function TM.awake(f)
+  return redis.call('EXISTS', 'friend:' .. f .. ':down') == 0 and TM.live('friend:' .. f)
+end
+
+-- TM.bench_slots(b, share): a bench's slots now. One ceiling per machine,
+-- friends and the swarm share it (Glenn 2026-09-27): the bench's slots are
+-- its declared share capped at the machine's ceiling less the slots of
+-- every friend awake on that machine, so a sleeping friend's slots are the
+-- swarm's and hers again the moment she is back (the swarm starts no new
+-- copy until its working set is under the new number; nothing is revoked).
+-- Read at every deal and work: the split moves within a tick and nothing
+-- is re-registered. A bench with no machine or a machine with no ceiling
+-- keeps its share. Returns slots, then charged (the awake friends' slots)
+-- and their names, comma-joined, for the refusal that names them.
+function TM.bench_slots(b, share)
+  local m = TK.str(redis.call('HGET', 'bench:' .. b .. ':desired', 'machine'))
+  local ceiling = m ~= '' and tonumber(redis.call('HGET', 'machine:' .. m .. ':ceiling', 'slots') or '') or nil
+  if not share or not ceiling then return share, 0, '' end
+  local charged, names = 0, {}
+  for _, f in ipairs(redis.call('SMEMBERS', 'friends')) do
+    local d = redis.call('HMGET', 'friend:' .. f .. ':desired', 'machine', 'slots')
+    if TK.str(d[1]) == m and TM.awake(f) then
+      charged = charged + (tonumber(d[2]) or 0)
+      names[#names + 1] = f
+    end
+  end
+  table.sort(names)
+  local slots = ceiling - charged
+  if share < slots then slots = share end
+  if slots < 0 then slots = 0 end
+  return slots, charged, table.concat(names, ',')
+end
+
 -- TM.desired: the consumer's declared capacity and filters, one HMGET.
 -- tiers is what it advertises (TM.DEFAULT_TIERS when it declared none;
--- declared says which).
+-- declared says which). A bench's slots are TM.bench_slots (its share is
+-- the declared number); a friend's are her own.
 function TM.desired(c)
   local d = redis.call('HMGET', c .. ':desired', 'slots', 'paused', 'tiers', 'kinds')
   local tiers = TM.set(d[3])
-  return { slots = tonumber(d[1]), paused = TK.str(d[2]) == '1', tiers = tiers or TM.set(TM.DEFAULT_TIERS),
-    declared = tiers ~= nil, kinds = TM.set(d[4]) }
+  local out = { slots = tonumber(d[1]), share = tonumber(d[1]), paused = TK.str(d[2]) == '1',
+    tiers = tiers or TM.set(TM.DEFAULT_TIERS), declared = tiers ~= nil, kinds = TM.set(d[4]), charged = 0, awake = '' }
+  local kind, name = TM.parse(c)
+  if kind == 'bench' then
+    out.slots, out.charged, out.awake = TM.bench_slots(name, out.slots)
+  end
+  return out
 end
 
 -- TM.names: whether c is named in the name set s (by id, by name, or as
@@ -3336,7 +3377,13 @@ function TM.work(c, by, k, fill, ids, who)
       end
       take[#take + 1] = id
     end
-    if #take > free then return { 'REFUSED', 'FULL ' .. c .. ' has ' .. free .. ' free of ' .. d.slots .. ' slots' } end
+    if #take > free then
+      local why = 'FULL ' .. c .. ' has ' .. free .. ' free of ' .. d.slots .. ' slots'
+      if d.awake ~= '' then
+        why = why .. ' (its share is ' .. d.share .. '; ' .. d.charged .. ' of the machine\'s ceiling held by ' .. d.awake .. ', awake)'
+      end
+      return { 'REFUSED', why }
+    end
   else
     local n = free
     if not fill and k < n then n = k end
@@ -4448,7 +4495,7 @@ function TM.beat(c, ids)
   -- live state is insufficient here: repeated plain beats could keep a dead
   -- owner alive forever. This also covers task beat's copy path.
   if #ids > 0 and TM.parse(c) == 'friend' then
-    return { 'REFUSED', 'OWNER ids=' .. table.concat(ids, ',') .. ' ' .. c .. ' copies require an observed owner; no leases renewed; run: nova-sprint friend beat --as ' .. c .. ' --once' }
+    return { 'REFUSED', 'OWNER ids=' .. table.concat(ids, ',') .. ' ' .. c .. ' copies require an observed owner; no leases renewed; run: nova-friend here (its beat observes the owner; nova-sprint friend beat is gone)' }
   end
   for _, id in ipairs(ids) do
     redis.call('HSET', 'task:' .. id, 'lease_until', tostring(at + TM.LEASE), 'beat_at', tostring(at))

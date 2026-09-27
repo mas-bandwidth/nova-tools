@@ -49,10 +49,18 @@ local function add_consumer(total, kind, name, m, req_kind, req_name, req_slots)
   return total
 end
 
--- machine_sum is the prospective sum of desired slots over every friend and
--- bench whose machine is m, with the requester counted even before it is
+-- machine_sum is the prospective sum of desired slots over every FRIEND
+-- whose machine is m, with a requesting friend counted even before it is
 -- registered. It is the same rule Go's capacity.Evaluate applies; running it
 -- here makes the guard and the write atomic.
+--
+-- Benches are not in the sum (Glenn 2026-09-27: one ceiling per machine,
+-- friends and the swarm share it; a sleeping friend's slots are the
+-- swarm's). A bench's share is checked against the ceiling on its own
+-- (capacity_desired below), and at run time its slots are the ceiling
+-- less the slots of the friends awake on its machine, read at every deal
+-- and work (TM.bench_slots in 02_card_move.lua), so the split follows who
+-- is here within a tick and nothing is re-registered.
 local function machine_sum(m, req_kind, req_name, req_slots)
   local total = 0
   local counted = false
@@ -62,13 +70,7 @@ local function machine_sum(m, req_kind, req_name, req_slots)
     end
     total = add_consumer(total, 'friend', name, m, req_kind, req_name, req_slots)
   end
-  for _, name in ipairs(redis.call('SMEMBERS', 'benches')) do
-    if req_kind == 'bench' and name == req_name then
-      counted = true
-    end
-    total = add_consumer(total, 'bench', name, m, req_kind, req_name, req_slots)
-  end
-  if not counted and req_name ~= '' and (req_kind == 'friend' or req_kind == 'bench') then
+  if not counted and req_name ~= '' and req_kind == 'friend' then
     total = add_consumer(total, req_kind, req_name, m, req_kind, req_name, req_slots)
   end
   return total
@@ -153,7 +155,7 @@ local function capacity_desired(keys, args)
     return { 'INVALID', machine, '0', '0' }
   end
   -- NAME-IS-LOGIN (#3604): a name mapped in friends:login never registers as
-  -- a friend, so capacity friend refuses it before any ceiling or write, the
+  -- a friend, so the desired write refuses it before any ceiling or write, the
   -- same rule hello enforces (#3593, #3092 rev 6).
   if kind == 'friend' and redis.call('HEXISTS', 'friends:login', name) == 1 then
     return { 'NAME-IS-LOGIN', name }
@@ -186,7 +188,12 @@ local function capacity_desired(keys, args)
   end
   local ceiling = tonumber(ceiling_text)
 
-  local sum = machine_sum(machine, kind, name, slots)
+  -- a friend's slots join the friends' sum on the machine; a bench's share
+  -- fits the ceiling on its own (its live slots are the remainder)
+  local sum = slots
+  if kind == 'friend' then
+    sum = machine_sum(machine, kind, name, slots)
+  end
   if sum > ceiling then
     return { 'CEILING', machine, tostring(sum), tostring(ceiling) }
   end
@@ -227,8 +234,9 @@ local function capacity_desired(keys, args)
 end
 
 -- capacity_machine: set machine:<m>:ceiling and machine:<m>:budget (spec 5.1).
--- Refuses a ceiling below the slots already desired on the machine so config
--- can never break the invariant.
+-- Refuses a ceiling below the friends' slots already desired on the machine
+-- so config can never break the invariant (a bench's share above a lowered
+-- ceiling is capped live by TM.bench_slots, never refused).
 -- args = machine, slots, cores, mem_gb, actor, idem, cpu_milli, mem_mb.
 local function capacity_machine(keys, args)
   local machine, slots = args[1], tonumber(args[2])
@@ -274,20 +282,32 @@ local function key_type(key)
 end
 
 -- plan_machine_sum is the ceiling rule of a sprint plan (#2380 rev 4): on
--- machine m, the plan slots of every plan row whose machine is m, plus the
--- stored slots of every registered consumer outside the plan whose stored
--- machine is m (outside, summed once per call of ns_sprint_plan). A consumer
+-- machine m, the plan slots of every FRIEND row whose machine is m, plus the
+-- stored slots of every registered friend outside the plan whose stored
+-- machine is m (outside, summed once per call of ns_sprint_plan). A friend
 -- the plan moves off m no longer counts on m. Every plan row is substituted
--- at once, so a transfer between two consumers is never refused by the order
--- of its rows.
+-- at once, so a transfer between two friends is never refused by the order
+-- of its rows. Bench rows are not summed (machine_sum above): each fits
+-- the ceiling on its own.
 local function plan_machine_sum(m, rows, outside)
   local total = outside[m] or 0
   for _, r in ipairs(rows) do
-    if r.machine == m then
+    if r.machine == m and r.kind == 'friend' then
       total = total + r.slots
     end
   end
   return total
+end
+
+-- plan_bench_over is the first bench row on m whose share is over the
+-- ceiling, or nil.
+local function plan_bench_over(m, rows, ceiling)
+  for _, r in ipairs(rows) do
+    if r.machine == m and r.kind == 'bench' and r.slots > ceiling then
+      return r
+    end
+  end
+  return nil
 end
 
 -- sprint_plan applies one validated sprint plan (#2380 rev 4) in three phases:
@@ -362,7 +382,7 @@ local function sprint_plan(keys, args)
   end
 
   local outside = {}
-  for _, kind in ipairs({ 'friend', 'bench' }) do
+  for _, kind in ipairs({ 'friend' }) do
     for _, name in ipairs(redis.call('SMEMBERS', registry_set(kind))) do
       if not in_plan[kind .. ':' .. name] then
         local key = desired_key(kind, name)
@@ -404,6 +424,10 @@ local function sprint_plan(keys, args)
       local sum = plan_machine_sum(m, rows, outside)
       if sum > ceiling then
         return { 'CEILING', m, tostring(sum), tostring(ceiling) }
+      end
+      local over = plan_bench_over(m, rows, ceiling)
+      if over then
+        return { 'CEILING', m, tostring(over.slots), tostring(ceiling) }
       end
     end
   end

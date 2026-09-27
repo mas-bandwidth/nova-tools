@@ -40,7 +40,7 @@
 // cards); an up consumer whose desired hash has paused 1 (worker pause,
 // #4308) prints paused instead; an up bench whose last fleet play stopped
 // (bench:<b>:play result failed:<role>, #4356) prints behind: <role>; load is the beat's cpu or load1 (a bench
-// beat's, or a friend beat's, which `nova-sprint friend beat` measures on
+// beat's, or a friend beat's, which nova-friend's beat measures on
 // the machine the friend's session runs on, #4233; - when the beat has
 // none). The old friend:<f> row hash and bench:<b> hash are never read, and
 // no friend's load is read from another consumer's beat.
@@ -83,6 +83,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
+	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 )
 
 // WSStates are the six per-stream sets the table counts, in reply order:
@@ -352,7 +353,11 @@ func (r *SprintReader) loadMax(id string, now time.Time, v float64) float64 {
 // NewSprintReader is a reader with no membership yet: its first Read takes
 // two round trips (the sets, then the values).
 func NewSprintReader(client redis.UniversalClient, cfg SprintConfig) *SprintReader {
-	return &SprintReader{Client: client, Config: cfg, counts: &ws.CountsReader{Sprint: cfg.Sprint}}
+	r := &SprintReader{Client: client, Config: cfg, counts: &ws.CountsReader{Sprint: cfg.Sprint}}
+	// the stream cells are read through the streams table (streams.go),
+	// the one count's cells and the block's the same reads
+	r.counts.Cells = streamCells{}
+	return r
 }
 
 // Read is one tick at now.
@@ -612,8 +617,6 @@ func FailedSprint(cfg SprintConfig, last *SprintSnapshot) *SprintSnapshot {
 	return &snap
 }
 
-const streamRule = "--------------------------+---------+-------+---------+--------+---------+-------\n"
-
 // Render prints the whole table at now.
 func (s *SprintSnapshot) Render(now time.Time) string {
 	var b strings.Builder
@@ -778,52 +781,21 @@ func ReleaseLock(ctx context.Context, client redis.UniversalClient, key, token s
 	return client.Eval(ctx, lockReleaseScript, []string{key}, token).Err()
 }
 
-// renderStreams is the stream block: one plain ZCARD per cell, every card in
-// exactly one set. No LAND line (#4088), no REVIEW line (Glenn 2026-09-26
-// 8:03 AM ET), no <read>/<unread> split (Glenn 2026-09-26 8:22 AM ET, "Let's
-// remove it, and use review as that state").
+// renderStreams is the stream block: the streams table (streams.go)
+// rendered by ntable.Render, one plain count per cell with the sentinel
+// left out, every card in exactly one set. No LAND line (#4088), no REVIEW
+// line (Glenn 2026-09-26 8:03 AM ET), no <read>/<unread> split (Glenn
+// 2026-09-26 8:22 AM ET, "Let's remove it, and use review as that state").
+// An empty stream table is hidden (Glenn 2026-09-26 10:00 AM ET: "when the
+// work sprint table has no sprints in it, you can hide it. make sure there
+// is not an extra newline when it's hidden"): the headline's blank line is
+// the only gap before the worker table. The total row is the one count's
+// total, the headline's numbers: the footer's sum over every row.
 func (s *SprintSnapshot) renderStreams(b *strings.Builder) {
-	// An empty stream table is hidden (Glenn 2026-09-26 10:00 AM ET: "when
-	// the work sprint table has no sprints in it, you can hide it. make sure
-	// there is not an extra newline when it's hidden"): the headline's blank
-	// line is the only gap before the worker table.
-	any := false
-	for _, r := range s.Counts.Streams {
-		if r.Sum() != 0 || r.AnyUnread() {
-			any = true
-			break
-		}
-	}
-	if !any {
+	block := ntable.Render(StreamsOf(s.Counts), StreamsRenderOpts)
+	if block == "" {
 		return
 	}
-	fmt.Fprintf(b, "%-25s | %7s | %5s | %7s | %6s | %7s | %6s\n", "stream", "waiting", "ready", "working", "review",
-		"merging", "landed")
-	b.WriteString(streamRule)
-	for _, r := range s.Counts.Streams {
-		if r.Sum() == 0 && !r.AnyUnread() {
-			continue
-		}
-		var cell [6]string
-		for j, v := range r.Cells {
-			cell[j] = strconv.FormatInt(v, 10)
-			if r.Unread[j] {
-				// A ZCARD that did not come back prints "?", never a false 0.
-				cell[j] = "?"
-			}
-		}
-		fmt.Fprintf(b, "%-25s | %7s | %5s | %7s | %6s | %7s | %6s\n", r.Stream, cell[0], cell[1], cell[2], cell[3], cell[4], cell[5])
-	}
-	b.WriteString(streamRule)
-	// The total row is the one count's total, the headline's numbers.
-	tot := s.Counts.Total
-	var cell [6]string
-	for j, v := range tot.Cells {
-		cell[j] = strconv.FormatInt(v, 10)
-		if tot.Unread[j] {
-			cell[j] = "?"
-		}
-	}
-	fmt.Fprintf(b, "%-25s | %7s | %5s | %7s | %6s | %7s | %6s\n", "total", cell[0], cell[1], cell[2], cell[3], cell[4], cell[5])
+	b.WriteString(block)
 	b.WriteByte('\n')
 }

@@ -15,7 +15,7 @@ func FillstateKey(friend string) string {
 	return "friend:" + friend + ":fillstate"
 }
 
-// DesiredKey returns the key for friend's declared slots hash (capacity friend
+// DesiredKey returns the key for friend's declared slots hash (nova-config apply
 // writes it; the slots field is the width the friend asked for).
 func DesiredKey(friend string) string {
 	return "friend:" + friend + ":desired"

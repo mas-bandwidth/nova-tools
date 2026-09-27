@@ -12,6 +12,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `check/` | hygiene rules and tree checkers | `go test ./internal/check` | `go test ./internal/check` |
 | `ci/` | class tests and CI budget invariants | `go test ./internal/ci` | `go test ./internal/ci` |
 | `civerdict/` | reader of a commit's CI verdict record | `go test ./internal/civerdict` | `go test ./internal/civerdict` |
+| `config/` | nova-config library: kind descriptors, the Postgres store and history, apply into Redis | `go test ./internal/config` | `go test ./internal/config` |
 | `converge/` | convergence state and progress math | `go test ./internal/converge` | `go test ./internal/converge` |
 | `ctxindex/` | per-repo spec, test and symbol index for cards | `go test ./internal/ctxindex` | `go test ./internal/ctxindex` |
 | `decide/` | criteria evaluation and decisions | `go test ./internal/decide` | `go test ./internal/decide` |
@@ -40,6 +41,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `metrics/` | Prometheus surface shared by the queue verbs | `go test ./internal/metrics/...` | `go test ./internal/metrics/...` |
 | `nogh/` | the refusing gh put first on friend and card child PATHs | `go test ./internal/nogh` | `go test ./internal/nogh` |
 | `nsprint/` | nova-sprint dealer, store, fold, and table | `go test ./internal/nsprint/...` | `go test ./internal/nsprint/...` |
+| `ntable/` | a general Redis-backed table: ordered sets per cell, projections, folds, the render | `go test ./internal/ntable` | `go test ./internal/ntable` |
 | `onboarding/` | onboarding banner and doc verifier | `go test ./internal/onboarding` | `go test ./internal/onboarding` |
 | `oneline/` | single-line log and output grammar | `go test ./internal/oneline` | `go test ./internal/oneline` |
 | `play/` | sandboxed code experiment runner | `go test ./internal/play` | `go test ./internal/play` |

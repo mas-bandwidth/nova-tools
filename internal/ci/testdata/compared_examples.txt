@@ -1,6 +1,7 @@
 # The pasted examples that ARE executed by a test through the comparator
-# (onboarding.Compare, directly or via onboarding.Execute), per SPEC-TOOLWORK §7
-# rule 7. One per line: `<test file>:<TestName> <the $ line, exactly as pasted>`
+# (onboarding.CompareTranscript, the one comparator of SPEC-TOOLWORK §7 rule 2;
+# or the older onboarding.Compare, directly or via onboarding.Execute, where a
+# section is still on the transcripts allowlist), per SPEC-TOOLWORK §7 rule 7. One per line: `<test file>:<TestName> <the $ line, exactly as pasted>`
 # or `<test file>:<TestName> example: <a help banner's example line>`.
 #
 # TestIssue2218 checks every entry: the example is a real pasted or help example;
@@ -17,4 +18,23 @@ cmd/nova-merge/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: no
 cmd/nova-sprint/table_test.go:TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints $ nova-sprint table --once
 cmd/nova-sprint/table_test.go:TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints $ nova-sprint table --once --fixture table.txt
 cmd/nova-sprint/table_test.go:TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints $ nova-sprint table --check
-cmd/nova-wake/presence_test.go:TestTheCommandReferencePresenceExampleMatchesWhatTheToolPrints $ nova-wake presence --store 100.115.99.19:6380
+cmd/nova-table/firstrun_test.go:TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints $ nova-table create demo --columns job:text:none,ready,working,done
+cmd/nova-table/firstrun_test.go:TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints $ nova-table row add demo build
+cmd/nova-table/firstrun_test.go:TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints $ nova-table cell add demo build ready b1
+cmd/nova-table/firstrun_test.go:TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints $ nova-table cell add demo build ready b2
+cmd/nova-table/firstrun_test.go:TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints $ nova-table cell move demo build ready working b1
+cmd/nova-table/firstrun_test.go:TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints $ nova-table show demo
+cmd/nova-table/firstrun_test.go:TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints $ nova-table render demo
+cmd/nova-table/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-table create demo --columns job:text:none,ready,working,done
+cmd/nova-table/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-table row add demo build
+cmd/nova-table/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-table cell add demo build ready b1
+cmd/nova-table/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-table cell add demo build ready b2
+cmd/nova-table/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-table cell move demo build ready working b1
+cmd/nova-table/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-table show demo
+cmd/nova-table/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-table render demo
+cmd/nova-config/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-config kinds
+cmd/nova-config/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-config migrate --print
+cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend here --as rowan --once --host studio --session s1
+cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend list
+cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend bye --as rowan
+cmd/nova-secrets/seat_inject_functional_test.go:TestTheHelpExampleIsWhatSeatInjectPrints example: nova-secrets seat inject --store ./secrets --as air --from rowan --only NOVA_REDIS_BENCH_PASSWORD --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops --no-pr

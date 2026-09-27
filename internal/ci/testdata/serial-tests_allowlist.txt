@@ -22,7 +22,7 @@
 # TestReadCopyDealtToBenchRendersALintedCard), then by nine more from the redis
 # stream (seat and #3277 tests on t.Setenv); each owes a per-test seam. Moved
 # from the serialTestsCeiling constant into this file at 876, the count that day.
-# ceiling: 875
+# ceiling: 861
 cmd/nova-board/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
 cmd/nova-board/fold_test.go:TestABrokenRandomSourceIsRefusedInBothBackends serial: t.Setenv
 cmd/nova-board/fold_test.go:TestAnIdRetryUnderIssueIsTheSameFilingOrARefusal serial: t.Setenv
@@ -277,12 +277,6 @@ cmd/nova-sprint/firstrun_functional_test.go:TestUsageBannerExamplesRun serial: t
 cmd/nova-sprint/fleet_build_test.go:TestFleetBuildVerbSetDryRunAndDeploy serial: swaps package var main.fleetBuildHome, swaps package var main.fleetBuildRunner
 cmd/nova-sprint/fleet_test.go:TestFleetDownKeepsLeases serial: swaps package var main.reconcileSeams, t.Setenv
 cmd/nova-sprint/fleet_test.go:TestFleetIsUpExits serial: t.Setenv
-cmd/nova-sprint/friend_roles_test.go:TestHelloDoesNotWriteFriendRoles serial: t.Setenv
-cmd/nova-sprint/friend_roles_test.go:TestRolesBootstrapOnlyWhenNoCoordinator serial: t.Setenv
-cmd/nova-sprint/friend_roles_test.go:TestRolesLastCoordinatorKept serial: t.Setenv
-cmd/nova-sprint/friend_roles_test.go:TestRolesNonCoordinatorRefused serial: t.Setenv
-cmd/nova-sprint/friend_roles_test.go:TestRolesRefusalNamesBadValue serial: t.Setenv
-cmd/nova-sprint/friend_roles_test.go:TestRolesRequiresExplicitRolesFlag serial: t.Setenv
 cmd/nova-sprint/help_test.go:TestVerbHelpNamesEveryFlag serial: t.Setenv
 cmd/nova-sprint/hold_route_duty_test.go:TestReconcileRoutesHoldToFix serial: swaps package var main.bodySeq, swaps package var main.consumeHarvestSeams, swaps package var main.consumePRReadRemote, swaps package var main.reconcileReaders, swaps package var main.reconcileSeams, t.Setenv
 cmd/nova-sprint/hold_functional_test.go:TestControl40 serial: swaps package var main.bodySeq, t.Setenv
@@ -326,8 +320,6 @@ cmd/nova-sprint/land_whole_functional_test.go:TestLandRefusesRedCI serial: swaps
 cmd/nova-sprint/lander_test.go:TestLanderRefusesAMemberWithNoRecord serial: swaps package var main.landerSeams
 cmd/nova-sprint/lander_test.go:TestLanderShadowNeedsNoPrograms serial: swaps package var main.landerSeams
 cmd/nova-sprint/lander_test.go:TestLanderVerbServesMetrics serial: swaps package var main.landerClock, swaps package var main.landerSeams
-cmd/nova-sprint/life_test.go:TestLifeEventPrintsId serial: t.Setenv
-cmd/nova-sprint/life_test.go:TestLifeVerbRefusals serial: t.Setenv
 cmd/nova-sprint/lineup_test.go:TestLineupPublishStampsRunMarker serial: t.Setenv
 cmd/nova-sprint/main_functional_test.go:TestEndRefusesRelativeResults serial: t.Setenv
 cmd/nova-sprint/main_functional_test.go:TestResultsPathUnixAbsolute serial: t.Setenv
@@ -380,11 +372,6 @@ cmd/nova-sprint/table_functional_test.go:TestTableWritesNoFile serial: t.Chdir
 cmd/nova-sprint/table_test.go:TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints serial: t.Chdir
 cmd/nova-sprint/task_card_functional_test.go:TestTaskCardCLI serial: t.Setenv
 cmd/nova-sprint/task_seat_test.go:TestControl2929PushTakeFromSeat serial: os.Unsetenv, t.Setenv
-cmd/nova-sprint/wakehealth_test.go:TestAcceptance3048 serial: swaps package var main.newWakeHost
-cmd/nova-sprint/wakehealth_test.go:TestPreflight718RedOnBeatStale serial: swaps package var main.newWakeHost
-cmd/nova-sprint/wakehealth_test.go:TestRepairLockOneRepairer serial: swaps package var main.newWakeHost
-cmd/nova-sprint/wakehealth_test.go:TestRepairRefusesOtherHost serial: swaps package var main.newWakeHost
-cmd/nova-sprint/wakehealth_test.go:TestWakeHealthReadOnlyTouchesNoHost serial: swaps package var main.newWakeHost
 cmd/nova-sprint/ws_functional_test.go:TestWSVerbRefusals serial: t.Setenv
 cmd/nova-sprint/ws_functional_test.go:TestWSVerbsOnAThousandTasks serial: t.Setenv
 cmd/nova-sprint/ws_test.go:TestWSVerbsRefuseHelpAndUsage serial: t.Setenv

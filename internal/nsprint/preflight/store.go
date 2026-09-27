@@ -553,7 +553,11 @@ func checkReceipts(ctx context.Context, c *redis.Client, sprints ...string) Line
 	return verdict(n, name, reds, fmt.Sprintf("%d sprints, %d indexed ids, each at its latest receipt", len(sprints), ids))
 }
 
-// 7.15: width per machine (2.4).
+// 7.15: width per machine (2.4). The friends' desired slots on a machine
+// fit under its ceiling together; a bench's share fits on its own and is
+// not added to the friends' sum (2026-09-27: friends and the swarm share
+// one ceiling, and the bench's live slots are the ceiling less the friends
+// awake, TM.bench_slots).
 func checkCeiling(ctx context.Context, c *redis.Client) Line {
 	const n, name = "7.15", "machine-ceiling"
 	cs, err := consumers(ctx, c)
@@ -576,6 +580,11 @@ func checkCeiling(ctx context.Context, c *redis.Client) Line {
 	}
 	var reds []string
 	sum := map[string]int{}
+	type share struct {
+		name  string
+		width int
+	}
+	shares := map[string][]share{}
 	for i, k := range cs {
 		v := desired[i].Val()
 		slots, machine := str(v, 0), str(v, 1)
@@ -593,7 +602,14 @@ func checkCeiling(ctx context.Context, c *redis.Client) Line {
 		case err != nil:
 			reds = append(reds, fmt.Sprintf("%s %s desired slots %q is not a number", k.kind, k.name, slots))
 		}
-		sum[machine] += width
+		if k.kind == "bench" {
+			shares[machine] = append(shares[machine], share{k.name, width})
+			if _, seen := sum[machine]; !seen {
+				sum[machine] = 0
+			}
+		} else {
+			sum[machine] += width
+		}
 		if host := beat[i].Val(); host != "" && host != machine {
 			reds = append(reds, fmt.Sprintf("%s %s beats on %s, desired %s", k.kind, k.name, host, machine))
 		}
@@ -622,7 +638,16 @@ func checkCeiling(ctx context.Context, c *redis.Client) Line {
 		case sum[m] > ceiling:
 			reds = append(reds, fmt.Sprintf("%s %d/%d over its ceiling", m, sum[m], ceiling))
 		default:
-			green = append(green, fmt.Sprintf("%s %d/%d", m, sum[m], ceiling))
+			line := fmt.Sprintf("%s %d/%d", m, sum[m], ceiling)
+			// a bench's share above the ceiling (a ceiling lowered after the
+			// share was declared) is capped live by TM.bench_slots, never a
+			// defect: the line says so
+			for _, b := range shares[m] {
+				if b.width > ceiling {
+					line += fmt.Sprintf(" (bench %s share %d capped to %d)", b.name, b.width, ceiling)
+				}
+			}
+			green = append(green, line)
 		}
 	}
 	if len(green) == 0 {

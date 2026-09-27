@@ -103,7 +103,7 @@ func Hello(ctx context.Context, st *store.Store, req HelloRequest) (HelloResult,
 	}
 	status := fmt.Sprint(values[0])
 	if status == "UNREGISTERED" {
-		return HelloResult{}, fmt.Errorf("UNREGISTERED %s: nova-sprint capacity friend", req.As)
+		return HelloResult{}, fmt.Errorf("UNREGISTERED %s: nova-config friend set, then nova-config apply", req.As)
 	}
 	if status != "UP" {
 		words := make([]string, 0, len(values))

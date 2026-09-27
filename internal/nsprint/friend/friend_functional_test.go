@@ -165,19 +165,15 @@ func TestControl43(t *testing.T) {
 	fsMust(t, err)
 	_ = res
 
-	// friend show prints the state, the reset and the counts from the store.
-	rows, err := friend.Show(ctx, st, "emma")
-	fsMust(t, err)
-	if len(rows) != 1 {
-		t.Fatalf("show rows %v", rows)
+	// the state, the reset and the wake path are in the store (what nova-friend
+	// show reads; the nova-sprint show verb is gone)
+	sv := client.HGetAll(ctx, friend.StateKey("emma")).Val()
+	if sv["state"] != friend.StateOutOfCredits || sv["until"] == "" {
+		t.Fatalf("state after sweep: %v", sv)
 	}
-	line := rows[0].Line()
-	for _, want := range []string{"friend=emma", "state=out-of-credits", "until=", "wake=none"} {
-		if !strings.Contains(line, want) {
-			t.Fatalf("show line %q lacks %q", line, want)
-		}
+	if kind := client.HGet(ctx, friend.WakePathKey("emma"), "kind").Val(); kind != "" {
+		t.Fatalf("emma has a wake path %q, want none", kind)
 	}
-	t.Log(line)
 }
 
 // fsIdleFixture: johnny is UP with 8 slots, living 0 and three open tasks (an
@@ -319,16 +315,18 @@ func TestControl45(t *testing.T) {
 		if client.Exists(ctx, "friend:glenn:wake").Val() != 0 || len(fsOutbox(t, client, "glenn", "wake")) != 0 {
 			t.Fatal("a human wake path got a unit wake")
 		}
-		rows, err := friend.Show(ctx, st, "glenn")
-		fsMust(t, err)
-		if line := rows[0].Line(); !strings.Contains(line, "waiting on human since") || !strings.Contains(line, "wake=human:bus:To:Glenn") {
-			t.Fatalf("show line %q", line)
+		// rung 2 on a human wake path: waiting on the human since the rung's
+		// since, the path as declared
+		sv := client.HGetAll(ctx, friend.StateKey("glenn")).Val()
+		wv := client.HGetAll(ctx, friend.WakePathKey("glenn")).Val()
+		if sv["rung"] < "2" || sv["since"] == "" || wv["kind"] != "human" || wv["notify"] != "bus:To:Glenn" {
+			t.Fatalf("state %v wake %v", sv, wv)
 		}
 		fsNoAsleep(t, st, client)
 	})
 }
 
-// fsNoAsleep: no key value and no show line says asleep.
+// fsNoAsleep: no key value says asleep.
 func fsNoAsleep(t *testing.T, st *store.Store, client *redis.Client) {
 	t.Helper()
 	ctx := context.Background()
@@ -340,13 +338,6 @@ func fsNoAsleep(t *testing.T, st *store.Store, client *redis.Client) {
 			if strings.Contains(field+value, "asleep") {
 				t.Fatalf("%s %s=%s says asleep", key, field, value)
 			}
-		}
-	}
-	rows, err := friend.Show(ctx, st, "")
-	fsMust(t, err)
-	for _, r := range rows {
-		if strings.Contains(r.Line(), "asleep") {
-			t.Fatalf("show says asleep: %s", r.Line())
 		}
 	}
 }

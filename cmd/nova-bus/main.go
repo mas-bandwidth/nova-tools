@@ -2940,7 +2940,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	until := f.fs.String("until", "", "an absolute deadline as an RFC 3339 UTC instant (e.g. 2026-09-18T18:00:00Z); the wait ends at that moment or at --timeout, whichever comes first")
 	idleExit := f.fs.Int("idle-exit", 0, "exit with this code instead of 0 when the wait times out, so a harness that cannot loop can branch on the code without parsing anything; 1 and 2 are refused, they are this tool's own")
 	interval := f.fs.Duration("interval", defaultWaitInterval, "how long between polls")
-	beat := f.fs.Duration("beat", defaultBeatInterval, "retired (#3144) and ignored with one WAIT NOTE: the bus carries notes, never beats; presence is friend:<name> in Redis, written by nova-wake beat")
+	beat := f.fs.Duration("beat", defaultBeatInterval, "retired (#3144) and ignored with one WAIT NOTE: the bus carries notes, never beats; presence is friend:<name> in Redis, written by the friend's own runtime (nova-friend)")
 	beatLease := f.fs.Duration("beat-lease", defaultBeatLease, "retired (#3144) and ignored with one WAIT NOTE, as --beat")
 	noBeat := f.fs.Bool("no-beat", false, "this wait does not own the lane's BEAT, so it never discards one an older wait left: a read-only poll for a process that runs beside a line rather than as it; no wait writes a BEAT since #3144; cannot be given with --beat or --beat-lease")
 	openList := f.fs.Bool("open", false, "list every open note when this wait returns, not only what is new")
@@ -3123,10 +3123,11 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	// THE BUS CARRIES NOTES, NEVER BEATS (#3144). On 2026-09-23, 393 of 500 bus commits
 	// were `beat <friend>`: every clone pulled them and every bus monitor woke on them.
-	// Presence is friend:<name> in Redis, written by `nova-wake beat`. --beat and
+	// Presence is friend:<name> in Redis, written by the friend's runtime (nova-friend;
+	// `nova-wake beat` is gone too). --beat and
 	// --beat-lease stay parseable so a caller's argv does not break, and say so once.
 	if f.set("beat") || f.set("beat-lease") {
-		fmt.Fprint(stderr, "WAIT NOTE --beat and --beat-lease are retired and ignored: the bus carries notes, never beats; presence is friend:<name> in Redis, written by nova-wake beat --as <name> --store <host:port> (nova-tools #3144)\n")
+		fmt.Fprint(stderr, "WAIT NOTE --beat and --beat-lease are retired and ignored: the bus carries notes, never beats; presence is friend:<name> in Redis, written by the friend's own runtime, nova-friend (nova-tools #3144)\n")
 	}
 	// A wait always runs git, so the root check is unconditional -- see the same check, and
 	// the same reason for the order it is in, in cmdInbox.
@@ -3401,7 +3402,7 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, idleExit int, next s
 	// NO BEAT IS WRITTEN OR PUSHED HERE (#3144). Until 2026-09-24 every tick rewrote
 	// from-<lane>/BEAT and every --beat pushed it as its own `beat <name>` commit: 79% of
 	// the bus's commits, pulled by every clone. Presence is friend:<name> in Redis, written
-	// by `nova-wake beat`; a wait leaves the checkout exactly as its polls left it.
+	// by the friend's runtime (nova-friend); a wait leaves the checkout exactly as its polls left it.
 	for {
 		polls++
 		elapsed := time.Since(start).Round(time.Millisecond)

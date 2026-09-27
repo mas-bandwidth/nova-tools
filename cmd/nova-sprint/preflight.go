@@ -105,7 +105,7 @@ func cmdPreflight(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	} else {
 		in = f.Input()
 	}
-	// #3048: 7.18 reads the friend wake registry the way `friend wake-health` does.
+	// #3048: 7.18 reads the friend wake registry (life.ReadWake).
 	if w, err := gatherWake(ctx, client); err != nil {
 		fmt.Fprintf(stderr, "preflight: wake gather: %v\n", err)
 	} else {
@@ -133,14 +133,14 @@ func preflightFleet(ctx context.Context, c *redis.Client, sprint string, std pre
 	return code
 }
 
-// gatherWake is 7.18's input: the registry read and gate of `friend
-// wake-health --all` (life.ReadWake, WakeSnapshot.Rows).
+// gatherWake is 7.18's input: the registry read and gate (life.ReadWake,
+// WakeSnapshot.Rows; the retired `friend wake-health --all` read the same).
 func gatherWake(ctx context.Context, c redis.Cmdable) (preflight.WakeInput, error) {
 	snap, err := life.ReadWake(ctx, c)
 	if err != nil {
 		return preflight.WakeInput{}, err
 	}
-	in := preflight.WakeInput{DeclPresent: snap.DeclPresent, Friends: len(snap.Friends)}
+	in := preflight.WakeInput{Friends: len(snap.Friends)}
 	for _, r := range snap.Rows() {
 		if r.Named {
 			in.Named = append(in.Named, preflight.WakeNamed{Friend: r.Friend, Why: r.Why})

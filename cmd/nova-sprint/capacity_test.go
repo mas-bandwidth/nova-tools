@@ -9,11 +9,17 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/capacity"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/preflight"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 )
 
+// TestStage1CapacityIsTheOneWidthWriter: a friend's desired slots have one
+// writer, ns_capacity_desired, which nova-config apply calls
+// (capacity.SetFriendWith is the same call); `capacity friend` is gone and
+// says so. The read-only width verb prints the desired slots (#3591).
 func TestStage1CapacityIsTheOneWidthWriter(t *testing.T) {
 	addr := testutil.Start(t)
 	client := redis.NewClient(&redis.Options{Addr: addr})
@@ -41,22 +47,34 @@ func TestStage1CapacityIsTheOneWidthWriter(t *testing.T) {
 		t.Fatalf("legacy preflight=%s", line.String())
 	}
 
+	// the verb is gone: exit 2 naming nova-config, nothing written
 	var out, errOut bytes.Buffer
-	if code := runCapacity(ctx, []string{"friend", "--redis", addr, "--as", "ops", "--machine", "m", "f", "32"}, &out, &errOut); code != 0 {
-		t.Fatalf("capacity friend code=%d stderr=%q", code, errOut.String())
+	if code := runCapacity(ctx, []string{"friend", "--redis", addr, "--as", "ops", "--machine", "m", "f", "32"}, &out, &errOut); code != 2 || !strings.Contains(errOut.String(), "nova-config") {
+		t.Fatalf("capacity friend code=%d stderr=%q; want 2 naming nova-config", code, errOut.String())
 	}
-	// #3265: the receipt names its round trips, one pipeline and one FCALL.
-	if got := out.String(); got != "SET friend f machine=m slots=32 desired=40/40 trips=2\n" {
-		t.Fatalf("capacity friend receipt=%q", got)
+	if got := client.HGet(ctx, "friend:f:desired", "slots").Val(); got != "" {
+		t.Fatalf("the retired verb wrote desired slots=%q", got)
+	}
+
+	st, err := store.Open(ctx, addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	// the bench's 8 on m is not in the friends' sum (2026-09-27: a bench's
+	// share fits the ceiling on its own; its live slots are the remainder)
+	res, err := capacity.SetFriendWith(ctx, st, "f", "m", 32, "ops", "", capacity.DesiredOpts{})
+	if err != nil || res.Slots != 32 || res.Sum != 32 || res.Ceiling != 40 {
+		t.Fatalf("SetFriendWith f 32: %+v %v", res, err)
 	}
 	if !client.SIsMember(ctx, "friends", "f").Val() {
-		t.Fatal("capacity friend did not register f")
+		t.Fatal("the desired write did not register f")
 	}
 	if got := client.HGet(ctx, "friend:f:desired", "slots").Val(); got != "32" {
 		t.Fatalf("desired slots=%q", got)
 	}
 	if client.Exists(ctx, "friend:f:slots").Val() != 0 {
-		t.Fatal("capacity friend left legacy width")
+		t.Fatal("the desired write left legacy width")
 	}
 	entries := client.XRange(ctx, "cap:log", "-", "+").Val()
 	if len(entries) != 1 || entries[0].Values["actor"] != "ops" || entries[0].Values["legacy"] != "32" {
@@ -66,31 +84,19 @@ func TestStage1CapacityIsTheOneWidthWriter(t *testing.T) {
 		t.Fatalf("post-migration preflight=%s", line.String())
 	}
 
-	t.Setenv(seatEnv, "f")
-	out.Reset()
-	errOut.Reset()
-	if code := runFriendHello(ctx, []string{"--redis", addr, "--as", "f", "--slots", "8", "--host", "m", "--once"}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "nova-sprint capacity friend") {
-		t.Fatalf("hello --slots code=%d out=%q err=%q", code, out.String(), errOut.String())
-	}
-	if got := client.HGet(ctx, "friend:f:desired", "slots").Val(); got != "32" {
-		t.Fatalf("refused hello changed desired=%q", got)
-	}
-
-	// Reader: the read-only width verb prints the desired slots; capacity is
-	// the one writer (#3591).
+	// Reader: the read-only width verb prints the desired slots; the
+	// desired write is the one writer (#3591).
 	out.Reset()
 	errOut.Reset()
 	if code := runWidth(ctx, []string{"--redis", addr, "--as", "f"}, &out, &errOut); code != 0 || !strings.Contains(out.String(), "WIDTH f ") || !strings.Contains(out.String(), "slots=32") {
 		t.Fatalf("width code=%d out=%q err=%q", code, out.String(), errOut.String())
 	}
-	// Setter: a 33 through capacity friend is refused at the machine ceiling.
-	out.Reset()
-	errOut.Reset()
-	if code := runCapacity(ctx, []string{"friend", "--redis", addr, "--as", "ops", "f", "33"}, &out, &errOut); code != 2 || !strings.Contains(errOut.String(), "CEILING m 41/40") {
-		t.Fatalf("capacity friend 33 code=%d out=%q err=%q", code, out.String(), errOut.String())
+	// Setter: a 41 is refused at the machine ceiling (the friends' sum alone).
+	if _, err := capacity.SetFriendWith(ctx, st, "f", "m", 41, "ops", "", capacity.DesiredOpts{}); err == nil || !strings.Contains(err.Error(), "CEILING m 41/40") {
+		t.Fatalf("SetFriendWith f 41: %v; want CEILING m 41/40", err)
 	}
 	if got := client.HGet(ctx, "friend:f:desired", "slots").Val(); got != "32" {
-		t.Fatalf("refused capacity friend 33 changed desired=%q", got)
+		t.Fatalf("refused 41 changed desired=%q", got)
 	}
 }
 
@@ -111,11 +117,11 @@ func TestCapacityAsActorControlReceipt(t *testing.T) {
 	if code := runCapacity(ctx, []string{"machine", "--redis", addr, "--as", "operator", "ctl-machine", "64"}, &out, &errOut); code != 0 {
 		t.Fatalf("capacity machine code=%d stderr=%q", code, errOut.String())
 	}
-	client.SAdd(ctx, "friends", "alice")
+	client.SAdd(ctx, "benches", "alice")
 	out.Reset()
 	errOut.Reset()
-	if code := runCapacity(ctx, []string{"friend", "--redis", addr, "--as", "operator", "--machine", "ctl-machine", "alice", "32"}, &out, &errOut); code != 0 {
-		t.Fatalf("capacity friend code=%d stderr=%q", code, errOut.String())
+	if code := runCapacity(ctx, []string{"bench", "--redis", addr, "--as", "operator", "--machine", "ctl-machine", "alice", "32"}, &out, &errOut); code != 0 {
+		t.Fatalf("capacity bench code=%d stderr=%q", code, errOut.String())
 	}
 	entries, err := client.XRange(ctx, "cap:log", "-", "+").Result()
 	if err != nil {
@@ -258,11 +264,6 @@ func TestCapacityBenchWritesLegs(t *testing.T) {
 	if code, _, errOut := run("--legs", "go;rm", "b", "8"); code != 2 || !strings.Contains(errOut, "--legs") {
 		t.Fatalf("malformed --legs code=%d err=%q; want a refusal naming --legs", code, errOut)
 	}
-	var out, errOut bytes.Buffer
-	if code := runCapacity(ctx, []string{"friend", "--redis", addr, "--as", "ops", "--machine", "m", "--legs", "go", "f", "4"}, &out, &errOut); code != 2 {
-		t.Fatalf("capacity friend --legs code=%d; want a refusal (legs is a bench flag)", code)
-	}
-
 	// The legs reach ci cut: the bench is UP and declares go, so the cut is
 	// CREATED, never RUNNER-ONLY, with no hand HSET of the desired hash.
 	client.HSet(ctx, "bench:b:state", "state", "UP")
@@ -275,10 +276,10 @@ func TestCapacityBenchWritesLegs(t *testing.T) {
 }
 
 // TestCapacityRefusesMappedLogin (#3604): a name bound in friends:login is a
-// login alias and never registers as a friend, so `capacity friend` refuses it
-// with exit 2 NAME-IS-LOGIN <name> before any ceiling check or write, exactly
-// as friend hello does (#3593). The refusal must hold even when the ceiling
-// would allow the raise, and must leave the name out of the friends set.
+// login alias and never registers as a friend, so the desired write
+// (ns_capacity_desired, what nova-config apply calls) refuses it by name
+// (#3593). The refusal must hold even when the ceiling would allow the
+// raise, and must leave the name out of the friends set.
 func TestCapacityRefusesMappedLogin(t *testing.T) {
 	t.Parallel()
 
@@ -293,10 +294,13 @@ func TestCapacityRefusesMappedLogin(t *testing.T) {
 	client.HSet(ctx, "friends:login", "rowan-claude", "rowan")
 	client.SAdd(ctx, "friends", "rowan")
 	client.HSet(ctx, "friend:rowan:desired", "slots", 32, "machine", "m")
-
-	var out, errOut bytes.Buffer
-	if code := runCapacity(ctx, []string{"friend", "--redis", addr, "--as", "ops", "--machine", "m", "rowan-claude", "8"}, &out, &errOut); code != 2 || !strings.Contains(errOut.String(), "NAME-IS-LOGIN rowan-claude") {
-		t.Fatalf("capacity friend on a mapped login: exit %d %q, want 2 NAME-IS-LOGIN", code, errOut.String())
+	st, err := store.Open(ctx, addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if _, err := capacity.SetFriendWith(ctx, st, "rowan-claude", "m", 8, "ops", "", capacity.DesiredOpts{}); err == nil || !strings.Contains(err.Error(), "NAME-IS-LOGIN rowan-claude") {
+		t.Fatalf("desired write on a mapped login: %v, want NAME-IS-LOGIN", err)
 	}
 	if client.SIsMember(ctx, "friends", "rowan-claude").Val() {
 		t.Fatalf("a mapped login registered as a friend")
@@ -304,13 +308,13 @@ func TestCapacityRefusesMappedLogin(t *testing.T) {
 	if got := client.Exists(ctx, "friend:rowan-claude:desired").Val(); got != 0 {
 		t.Fatalf("a refused mapped login left friend:rowan-claude:desired")
 	}
-
 	// A plain friend name on the same machine still registers: the login guard
-	// refuses by name only.
-	out.Reset()
-	errOut.Reset()
-	if code := runCapacity(ctx, []string{"friend", "--redis", addr, "--as", "ops", "--machine", "m", "alice", "8"}, &out, &errOut); code != 0 {
-		t.Fatalf("capacity friend alice: exit %d %q", code, errOut.String())
+	// refuses aliases, not friends.
+	if _, err := capacity.SetFriendWith(ctx, st, "alice", "m", 8, "ops", "", capacity.DesiredOpts{}); err != nil {
+		t.Fatalf("desired write alice: %v", err)
+	}
+	if !client.SIsMember(ctx, "friends", "alice").Val() {
+		t.Fatalf("alice did not register")
 	}
 }
 
@@ -396,11 +400,5 @@ func TestCapacityWritesKindsAndTiers(t *testing.T) {
 	}
 	if _, tr := desired(); tr != "frontier,pro" {
 		t.Fatalf("after the refused Lua write tiers=%q; want frontier,pro kept", tr)
-	}
-	if code, out, errOut := run("friend", "--kinds", "read", "f", "4"); code != 0 || !strings.Contains(out, " kinds=read ") {
-		t.Fatalf("capacity friend --kinds code=%d out=%q err=%q", code, out, errOut)
-	}
-	if got := client.HGet(ctx, "friend:f:desired", "kinds").Val(); got != "read" {
-		t.Fatalf("friend:f:desired kinds=%q; want read", got)
 	}
 }

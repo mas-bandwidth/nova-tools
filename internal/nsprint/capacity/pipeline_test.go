@@ -84,9 +84,11 @@ func TestCapacityFourFriendsElevenBenchesOnePipeline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 2+3+4 + 1+2+3+4+5+6 = 30 for the others, 5 for f1.
-	if !plan.Allowed || plan.Sum != 80 || plan.Ceiling != 100 {
-		t.Fatalf("plan=%+v, want allowed 80/100", plan)
+	// the friends' sum alone (2026-09-27: a bench's share is not in it):
+	// 2+3+4 for the other friends, 5 for f1; the eleven benches are read
+	// in the same pipeline and add nothing.
+	if !plan.Allowed || plan.Sum != 14 || plan.Ceiling != 100 {
+		t.Fatalf("plan=%+v, want allowed 14/100", plan)
 	}
 	t.Logf("capacity guard, 4 friends 6 benches: pipeline=%d single=%d in %s", h.pipeline.Load(), h.single.Load(), time.Since(start))
 	if h.pipeline.Load() != 1 || h.single.Load() != 0 {

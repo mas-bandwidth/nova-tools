@@ -149,7 +149,7 @@ func TestQuackRun(t *testing.T) {
 	for _, want := range []string{
 		"SLOTS REFUSED bench=ghost slots=2 why=no-machine remedy=\"nova-sprint capacity bench --as rowan --machine <m> ghost 2\"\n",
 		"SLOTS SET bench=hetzner machine=m slots=8 desired=8/40\n",
-		"SLOTS SET bench=hulk machine=m slots=16 desired=24/40\n",
+		"SLOTS SET bench=hulk machine=m slots=16 desired=16/40\n",
 		"PITSTOP CLEAR sprint=quack-t2 by=rowan at=",
 		" was_by=rowan was_why=\"quack cut: cutting 2 quack cards into quack\"\n",
 		"QUACK RUN sprint=quack-t2 benches=2 refused=1 pitstop=lifted ms=",

@@ -311,7 +311,7 @@ func TestHelloUnregisteredRefuses(t *testing.T) {
 	client.HSet(ctx, "machine:m:ceiling", "slots", 40)
 	if _, err := life.Hello(ctx, st, life.HelloRequest{
 		As: "new", Slots: 1, Host: "m", Session: "s", Actor: "new",
-	}); err == nil || !strings.Contains(err.Error(), "UNREGISTERED new: nova-sprint capacity friend") {
+	}); err == nil || !strings.Contains(err.Error(), "UNREGISTERED new: nova-config friend set, then nova-config apply") {
 		t.Fatalf("hello error=%v", err)
 	}
 	if client.SIsMember(ctx, "friends", "new").Val() || client.Exists(ctx, "friend:new:desired").Val() != 0 {

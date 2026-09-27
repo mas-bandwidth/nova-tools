@@ -164,7 +164,11 @@ func openWith(ctx context.Context, addr string, sel *seatcred.Selection, tune fu
 	}
 	// No PING (#3277): go-redis dials on the first command, so the caller's
 	// first pipeline is the probe and an unreachable store fails there.
-	opts := &redis.Options{Addr: addr, Username: user, Password: password}
+	// No CLIENT SETINFO either (2026-09-27, Glenn: "You always need to
+	// batch redis"): go-redis sends the library name and version in a
+	// round trip of its own after HELLO, and the store is 128 ms away, so
+	// every one-shot verb paid it for nothing. The connect is HELLO alone.
+	opts := &redis.Options{Addr: addr, Username: user, Password: password, DisableIdentity: true}
 	tune(opts)
 	if noRetryWaits.Load() {
 		// The attempts are go-redis's own; only the waits between them go.

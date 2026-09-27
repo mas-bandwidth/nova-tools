@@ -16,10 +16,10 @@ package life
 // within its TTL, and repairs what it can: bootstrap an unloaded unit (twice at
 // most in one tick), fetch the declared remote and branch and fast-forward to
 // exactly the fetched id. What it cannot repair it prints as `wake: down` in
-// red. The registry is friends:declared and friend:<f>:wakepath, written only
-// by `friend declare` (declare.go); `friend wake-health` reads it, and with
-// --repair (and every 10th `bench beat`) runs WakeTick for the friends
-// declared on this host.
+// red. The registry is friends:declared and friend:<f>:wakepath, written by
+// nova-config apply (the retired `friend declare` and `friend wake-health`
+// left nova-sprint); every 10th `bench beat` runs WakeTick for the friends
+// declared on this host, and preflight 7.18 reads the registry.
 
 import (
 	"context"
@@ -610,7 +610,19 @@ const WakeRepairEvery = 10
 // wakeLockMS is the one repairer's lock on friend:<f>:wakerepair.
 const wakeLockMS = 30000
 
-// Function names registered by friend_declare.lua.
+// Registry keys. friends:declared and friend:<f>:wakepath are written by
+// nova-config apply (ns_friend_wakepath); friends:decl was the retired
+// `friend declare`'s stamp and is read here only to say whether one exists.
+const (
+	DeclKey     = "friends:decl"
+	DeclaredKey = "friends:declared"
+	FriendsKey  = "friends" // registered friends (nova-config apply, hello)
+)
+
+// WakePathKey is a friend's declared wake path.
+func WakePathKey(f string) string { return "friend:" + f + ":wakepath" }
+
+// Function names registered by friend_wakelock.lua.
 const (
 	FunctionWakeLock   = "ns_friend_wakelock"
 	FunctionWakeUnlock = "ns_friend_wakeunlock"

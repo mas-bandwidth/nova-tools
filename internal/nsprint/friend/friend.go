@@ -262,7 +262,8 @@ func (w WakePath) String() string {
 	return "none"
 }
 
-// SetWakePath declares f's wake path (`capacity friend <f> --wake`).
+// SetWakePath declares f's wake path (ns_friend_wakepath, what nova-config
+// apply calls; the retired `capacity friend <f> --wake` called it too).
 func SetWakePath(ctx context.Context, st *store.Store, f string, wp WakePath, actor, idem string) error {
 	if st == nil || f == "" {
 		return fmt.Errorf("friend wake path: store and friend are required")

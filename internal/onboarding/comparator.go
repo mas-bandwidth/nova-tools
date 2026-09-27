@@ -83,10 +83,11 @@ type VolatileField struct {
 // green" means the same in every binary. Growing it is a reading, not a call
 // site's decision -- which is what the refusal below is for.
 //
-// The five entries are the ones docs/SPEC-TOOLWORK.md §7 rule 2 names: `at=`,
-// `took=`, `created=`, a temporary directory and a fresh sha.
+// The six entries are the ones docs/SPEC-TOOLWORK.md §7 rule 2 names: `at=`,
+// `took=`, `created=`, a temporary directory, a fresh sha, and the stamp on a
+// `branch=` nova-secrets seals on.
 //
-// FOUR OF THE FIVE ARE TOKEN-ANCHORED, and the fifth says why it is not. A norm
+// FIVE OF THE SIX ARE TOKEN-ANCHORED, and the sixth says why it is not. A norm
 // that names a field replaces only a whitespace-delimited token spelled
 // `<field>=<value>` in full (Norm.apply, transcript.go): a pattern that ran over
 // the whole line would let an entry declared for one field swallow a
@@ -155,6 +156,34 @@ var Volatile = []VolatileField{
 			}
 		},
 	},
+	{
+		Name: "branch",
+		What: "branch= (the seal branch this run stamped with its instant)",
+		// nova-secrets carries a change on `seal/<seat>-<NAMES>-<stamp>` and names
+		// the branch on its OK line; the stamp is the run's UTC instant. The whole
+		// token goes, because a norm replaces a token and never part of one -- the
+		// seat and the names are also `seat=` and `names=` on the same line, where
+		// they are compared as written. The stamp is PARSED, as Instant's is: a
+		// branch whose stamp is not a real instant stays on the line.
+		norm: func(Field) Norm {
+			return Norm{
+				Name:  "branch= (the seal branch this run stamped with its instant)",
+				Re:    regexp.MustCompile(`^branch=seal/[A-Za-z0-9_+-]+-[0-9]{8}-[0-9]{6}$`),
+				As:    "branch=<the seal branch this run stamped>",
+				field: "branch",
+				valid: isStampedBranch,
+			}
+		},
+	},
+}
+
+// isStampedBranch answers whether v ends in a real `-YYYYMMDD-HHMMSS` instant.
+func isStampedBranch(v string) bool {
+	if len(v) < len("20060102-150405") {
+		return false
+	}
+	_, err := time.Parse("20060102-150405", v[len(v)-len("20060102-150405"):])
+	return err == nil
 }
 
 // VolatileNames returns the table's names in the table's order, which is the

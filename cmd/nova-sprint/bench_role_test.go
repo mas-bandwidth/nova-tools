@@ -63,11 +63,6 @@ func TestBenchRoleFriendsRefusedOnEverySwarmAndCIPath(t *testing.T) {
 		!strings.Contains(stderr, "want friends or fleet") {
 		t.Fatalf("--role ci: %d %q, want exit 2 naming friends or fleet", code, stderr)
 	}
-	if code, _, stderr := runVerb(t, "capacity", "friend", "--redis", addr, "--machine", "m1", "--as", "t", "--role", "fleet", "ann", "1"); code != 2 ||
-		!strings.Contains(stderr, "--role is a bench flag") {
-		t.Fatalf("capacity friend --role: %d %q, want exit 2", code, stderr)
-	}
-
 	// bench ls prints the column and the counts.
 	code, stdout, stderr = runVerb(t, "bench", "ls", "--redis", addr)
 	want := "BENCH hulk role=fleet machine=m1 slots=8 legs=- paused=0\n" +
