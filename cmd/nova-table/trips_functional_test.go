@@ -42,16 +42,16 @@ func TestTableVerbsOneExchange(t *testing.T) {
 		t.Fatalf("MONITOR ready: %q %v", line, err)
 	}
 	steps := [][]string{
-		{"create", "triptable", "--columns", "row:text:none,ready,working"},
+		{"create", "triptable", "--columns", "ready,working"},
 		{"row", "add", "triptable", "first"},
 		{"cell", "add", "triptable", "first", "ready", "job", "--score", "7"},
 		{"cell", "members", "triptable", "first", "ready"},
 		{"cell", "move", "triptable", "first", "ready", "working", "job"},
 		{"cell", "remove", "triptable", "first", "working", "job"},
-		{"show", "triptable"}, {"render", "triptable"}, {"watch", "triptable", "--once"}, {"list"},
-		{"row", "add", "triptable", "view", "--owner", "nova-sprint task move", "ready=table:other:ready"},
+		{"member", "create", "triptable", "unplaced", "--receipt"}, {"check", "triptable"}, {"show", "triptable", "--at-epoch", "0"}, {"show", "triptable"}, {"render", "triptable"}, {"watch", "triptable", "--once"}, {"list"},
+		{"row", "add", "triptable", "view", "--owner", "nova-sprint task move", "ready=external:other:ready"},
 		{"render", "triptable"}, {"watch", "triptable", "--once"},
-		{"row", "del", "triptable", "view"}, {"clear", "triptable"}, {"drop", "triptable"},
+		{"row", "del", "triptable", "view"}, {"clear", "triptable"}, {"drop", "triptable"}, {"drop", "triptable", "--definition"},
 	}
 	for i, args := range steps {
 		code, out, errout := runTable(at(addr, args...)...)

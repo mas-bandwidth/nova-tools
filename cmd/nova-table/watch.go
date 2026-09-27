@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -43,23 +44,26 @@ func cmdWatch(args []string, stdout, stderr io.Writer) int {
 	every := fs.Duration("every", time.Second, "the tick, a duration (1s)")
 	out := fs.String("out", "", "publish to this file by atomic rename instead of drawing in place")
 	title := fs.String("title", "", "a title line above the tables")
+	view := fs.String("view", "", "a stored view: its tables and title, read every frame (view set <name> --tables ...)")
 	once := fs.Bool("once", false, "render once and exit, with no clear")
 	rf := declareRenderFlags(fs)
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	if len(pos) != 1 {
-		return refuse(stderr, verb, "wants the tables to watch, comma-separated: watch <table>[,<table>...] [--every 1s] [--out <file>] [--title <text>] [--once]")
+	if (*view != "" && len(pos) != 0) || (*view == "" && len(pos) != 1) {
+		return refuse(stderr, verb, "wants the tables to watch, comma-separated, or --view <name>: watch <table>[,<table>...] | --view <name> [--every 1s] [--out <file>] [--title <text>] [--once]")
 	}
 	var names []string
-	for _, n := range strings.Split(pos[0], ",") {
-		if n = strings.TrimSpace(n); n != "" {
-			names = append(names, n)
+	if len(pos) == 1 {
+		for _, n := range strings.Split(pos[0], ",") {
+			if n = strings.TrimSpace(n); n != "" {
+				names = append(names, n)
+			}
 		}
 	}
-	if len(names) == 0 {
-		return refuse(stderr, verb, "wants at least one table name")
+	if len(names) == 0 && *view == "" {
+		return refuse(stderr, verb, "wants at least one table name, or --view <name>")
 	}
 	if *every <= 0 || *every > time.Hour {
 		return refuse(stderr, verb, "--every wants a duration between 1ms and 1h, got "+every.String())
@@ -76,6 +80,9 @@ func cmdWatch(args []string, stdout, stderr io.Writer) int {
 	}
 	defer st.Close()
 	read := tablesReader(c, names, *title, opts)
+	if *view != "" {
+		read = viewReader(c, *view, opts)
+	}
 	if *once {
 		text, err := read(ctx)
 		if err != nil {
@@ -91,30 +98,113 @@ func cmdWatch(args []string, stdout, stderr io.Writer) int {
 // tablesReader reads and renders the named tables: one pipeline per tick
 // over every reader, including changed shapes, the renders joined by one
 // blank line, the title first when there is one.
+// viewReader reads the view first, every frame (one extra trip), then its
+// tables in one trip, so the tables a tab shows change by a verb and never
+// by a restart (Glenn 2026-09-27: "restarting is not cool").
+func viewReader(c redis.Cmdable, name string, opts ntable.RenderOpts) func(context.Context) (string, error) {
+	return func(ctx context.Context) (string, error) {
+		v, err := ntable.ViewGet(ctx, c, name)
+		if err != nil {
+			return "", err
+		}
+		if len(v.Tables) == 0 {
+			return v.Title + "\n(no tables in view " + name + ")\n", nil
+		}
+		// The view's frame, Glenn's layout (2026-09-27): the time to the
+		// second, a blank line, the title, a blank line, the summary
+		// "x/y z% -> ETA" when the view names a done column, a blank line,
+		// the tables. Nothing else goes in.
+		tables, err := tableSnapshots(c, v.Tables)(ctx)
+		if err != nil {
+			return "", err
+		}
+		var b strings.Builder
+		b.WriteString(time.Now().Format("2006-01-02 15:04:05 MST"))
+		b.WriteString("\n\n")
+		if v.Title != "" {
+			b.WriteString(v.Title)
+			b.WriteString("\n\n")
+		}
+		if v.Summary != "" {
+			// Reuse the same snapshot as the table body. Unread input stays
+			// unknown in the summary, including hidden rows and columns.
+			b.WriteString(viewSummary(tables[0], v.Summary))
+			b.WriteString("\n\n")
+		}
+		b.WriteString(renderAll("", tables, opts))
+		return b.String(), nil
+	}
+}
+
 func tablesReader(c redis.Cmdable, names []string, title string, opts ntable.RenderOpts) func(context.Context) (string, error) {
+	read := tableSnapshots(c, names)
+	return func(ctx context.Context) (string, error) {
+		tables, err := read(ctx)
+		if err != nil {
+			return "", err
+		}
+		return renderAll(title, tables, opts), nil
+	}
+}
+
+func tableSnapshots(c redis.Cmdable, names []string) func(context.Context) ([]ntable.Table, error) {
 	readers := make([]*ntable.Reader, len(names))
 	for i, n := range names {
 		readers[i] = ntable.NewReader(n)
 	}
-	return func(ctx context.Context) (string, error) {
+	return func(ctx context.Context) ([]ntable.Table, error) {
 		pipe := c.Pipeline()
 		cmds := make([]*ntable.ReadCmd, len(readers))
 		for i, r := range readers {
 			cmds[i] = r.Queue(ctx, pipe)
 		}
 		if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !isReplyError(err) {
-			return "", err
+			return nil, err
 		}
 		tables := make([]ntable.Table, 0, len(readers))
 		for _, cmd := range cmds {
 			t, _, err := cmd.Result()
 			if err != nil {
-				return "", err
+				return nil, err
 			}
 			tables = append(tables, t)
 		}
-		return renderAll(title, tables, opts), nil
+		return tables, nil
 	}
+}
+
+// viewSummary pools the first table's counts from the displayed snapshot.
+// ETA has no value until change-stream rate sampling is available.
+func viewSummary(t ntable.Table, column string) string {
+	found := false
+	for _, col := range t.Columns {
+		if col.Name == column && col.Projection == ntable.Count {
+			found = true
+		}
+	}
+	if !found {
+		return "?/? ? -> ETA"
+	}
+	var part, total int64
+	for _, r := range t.Rows {
+		for k, col := range t.Columns {
+			if col.Projection != ntable.Count {
+				continue
+			}
+			if k >= len(r.Cells) || r.Cells[k].Unread {
+				return "?/? ? -> ETA"
+			}
+			total += r.Cells[k].Count
+			if col.Name == column {
+				part += r.Cells[k].Count
+			}
+		}
+	}
+	pct := "0.0%" // empty known totals use the same numeric display as other percentages
+	if total > 0 {
+		pct = strconv.FormatFloat(100*float64(part)/float64(total), 'f', 1, 64) + "%"
+	}
+	return fmt.Sprintf("%d/%d %s -> ETA", part, total, pct)
 }
 
 func isReplyError(err error) bool {
@@ -130,7 +220,12 @@ func renderAll(title string, tables []ntable.Table, opts ntable.RenderOpts) stri
 		parts = append(parts, title+"\n")
 	}
 	for _, t := range tables {
-		if text := ntable.Render(t, opts); text != "" {
+		if t.HiddenTable {
+			continue // set --hidden: kept and read, not drawn (Glenn 2026-09-27: "hide it" / "show it again", no restart)
+		}
+		o := opts
+		o.Title = t.Name // every block says which table it is (Glenn 2026-09-27)
+		if text := ntable.Render(t, o); text != "" {
 			parts = append(parts, text)
 		}
 	}

@@ -29,7 +29,7 @@ func QueueCells(ctx context.Context, pipe redis.Pipeliner, t *Table) *CellsCmd {
 	for i := range t.Rows {
 		r := &t.Rows[i]
 		for j, c := range t.Columns {
-			if j >= len(r.Cells) || c.Projection == Text {
+			if j >= len(r.Cells) || !c.HasSet() {
 				continue
 			}
 			key := r.Cells[j].Key
@@ -88,6 +88,15 @@ func (q *ReadCmd) Result() (Table, bool, error) {
 }
 func Read(ctx context.Context, c redis.Cmdable, name string) (Table, error) {
 	return NewReader(name).Read(ctx, c)
+}
+
+// ReadAt inspects one materialised epoch, including after its template was removed.
+func ReadAt(ctx context.Context, c redis.Cmdable, name string, epoch uint64) (Table, error) {
+	reply, err := (operation{table: name}).call(ctx, c, FnRead, true, "read", strconv.FormatUint(epoch, 10))
+	if err != nil {
+		return Table{}, err
+	}
+	return decodeSnapshot(name, reply)
 }
 func (r *Reader) Read(ctx context.Context, c redis.Cmdable) (Table, error) {
 	reply, err := (operation{table: r.Name}).call(ctx, c, FnRead, true, "read")

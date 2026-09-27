@@ -4774,9 +4774,9 @@ The other refusals name their remedy the same way: `wants --since <RFC3339 UTC>`
 
 ## nova-table
 
-A general table over Redis, every body cell an ordered set (a ZSET), built
-from one primitive and knowing nothing about sprints: the sprint table's
-stream block is its first table. The guide is
+Work tables over Redis: ordered-set cells, text notes, percentage formulas,
+batch writes and stored live views. Every table mutation checks its observed
+epoch and writes a change receipt. The guide and disposable local setup are in
 [docs/nova-table/README.md](nova-table/README.md); the library is
 `internal/ntable`.
 
@@ -4784,14 +4784,16 @@ stream block is its first table. The guide is
 
 A table is columns, rows and a set per cell. Make one, put a row in it, put
 members in a cell, move one to the next cell, and look at it two ways: the
-typed lines a program reads, and the text a person reads.
+typed lines a program reads, and the text a person reads. These commands assume
+a configured store with the matching function library loaded; for a fresh
+local Redis, follow [Start locally](nova-table/README.md#start-locally) first.
 
 ```text
-$ nova-table create demo --columns job:text:none,ready,working,done
-TABLE CREATE table=demo columns=4 trips=1
+$ nova-table create demo --columns ready,working,done
+TABLE CREATE table=demo columns=3 trips=1
 
 $ nova-table row add demo build
-TABLE ROW ADD table=demo row=build cols=4 bound=0 trips=1
+TABLE ROW ADD table=demo row=build cols=3 bound=0 trips=1
 
 $ nova-table cell add demo build ready b1
 TABLE CELL table=demo row=build col=ready n=1 trips=1
@@ -4803,95 +4805,133 @@ $ nova-table cell move demo build ready working b1
 TABLE MOVE table=demo row=build member=b1 from=ready to=working n=1 trips=1
 
 $ nova-table show demo
-TABLE table=demo columns=4 rows=1 trips=1
+TABLE table=demo columns=3 rows=1 trips=1 epoch=0 revision=5
 TABLE ROW table=demo row=build ready=1 working=1 done=0
 
 $ nova-table render demo
-job   | ready | working | done
+demo  | ready | working | done
 ------+-------+---------+-----
 build |     1 |       1 |    0
 ------+-------+---------+-----
-total |     1 |       1 |    0
+      |     1 |       1 |    0
 ```
 
-**What the flags want.** Every verb takes `--redis <addr>`, else
-`NOVA_SPRINT_REDIS`, then `NOVA_REDIS_ADDR`, then the selected seat's
-address (`--seat <name>` or `NOVA_SEAT`, nova-sprint's seat: its row names
-the store and the login; with no seat, `NOVA_SPRINT_REDIS_USER` and the
-password in the variable `NOVA_SPRINT_REDIS_PASSWORD_ENV` names). With none
-of those the refusal is `--redis <addr> is required`. Flags may follow the
-words on the line. `--columns` is `name[:projection[:fold[:label]]]` per
-column, comma-separated: the projection is what a body cell prints
-(`count`, the set's size, the default; `members`, the members in score
-order; `first`; `last`; `text`, the row's label with no set), the fold what
-the footer prints over the column (`sum`, the default for a count; `max`;
-`union` of members; `none`). A fold that does not fit its projection is
-refused naming both. `--footer <label>` names the footer row (`total`);
-`--width col=n,...` fixes column widths in the definition, and `render
---width` for one render. `cell add --score <n>` is the member's place in
-the set's order (the unix time in ms when omitted, so a set reads oldest
-first). `render --hide-zero-rows` hides a row whose count cells are all
-zero, the sprint table's rule.
+### Find a command
 
-**A bound cell is a view.** `row add <table> <row> <col>=<key> ... --owner
-<verb>` binds a column's cell to a set another tool owns instead of the
-table's own `table:<t>:cell:<row>:<col>`. It is read and rendered freely,
-and `cell add`, `cell remove`, `cell move` and `clear` refuse it, one line,
-exit 1: `nova-table cell add: <t>.<row>.<col> is bound to <key>, owned
-elsewhere; run: <owner verb>`. `clear` over a table
-holding any bound cell refuses the same way and clears nothing. `row add
---exclude <member>` names one member the row's counts and members leave
-out (the sprint's sentinel).
+`nova-table help` lists every verb. `help <verb> [subverb]` and `--help` at each
+level show the same syntax and examples, exit 0 on stdout. Product flags come
+first, connection flags next, epoch and receipt metadata last. For example,
+`nova-table help row set` and `nova-table row set --help` describe the text edit.
 
-Typed success receipts append `trips=1`, measured after connection setup.
-Render and watch retain table-only output. Every table operation, including
-cold reads and shape changes, is one exchange.
+### Commands
 
-**The verbs.** `create <table> --columns ... [--footer] [--width]` prints
-`TABLE CREATE table= columns=` (an existing table with the same definition
-is left as it is; another definition is refused, exit 1). `drop <table>`
-prints `TABLE DROP table= rows=` and deletes the definition, the rows and
-every owned cell (a bound set stays). `list` prints `TABLE LIST tables=`
-then `TABLE table= columns= rows=` per table. `row add <table> <row>
-[--label] [--exclude] [--owner] [<col>=<key> ...]` prints `TABLE ROW ADD
-table= row= cols= bound=`; a row already there keeps its place and its
-cells; `row del` prints `TABLE ROW DEL table= row= existed=`. `cell add`
-and `cell remove` print `TABLE CELL table= row= col= n=`, the cell's count
-after; `cell move <table> <row> <from> <to> <member>` is one library call
-(`ns_table_cell_move`) that keeps the member's score, prints `TABLE MOVE table=
-row= member= from= to= n=`, and refuses `NOTMEMBER` (exit 1) writing
-nothing when the member is not in `<from>`; `cell members` prints `TABLE
-CELL ... n=` then one `TABLE MEMBER table= row= col= member= score=` per
-member. `clear <table>` is one library call (`ns_table_clear`) that
-empties every owned cell and removes every row, keeping the definition:
-`TABLE CLEAR table= rows= ms=`. `show <table>` prints `TABLE table=
-columns= rows=` then one `TABLE ROW table= row= <col>=<count> ...` per row
-(`?` for a set that did not come back). `render <table>` prints the table
-as text and nothing else, nothing at all when it is empty. A value holding
-a space is quoted (`row="swarm: cards"`).
+| Command | What it does |
+| --- | --- |
+| `create <table> --columns <spec>` | Creates a definition; repeated identical creates are accepted; another shape points to `set --columns` |
+| `set <table>` | Edits footer, columns, visibility or name; see `help set` |
+| `drop <table> [--definition]` | Removes active rows/owned cells; `--definition` also removes the saved column definition; snapshots from earlier epochs stay |
+| `list` | Lists active tables with row and column counts |
+| `row add <table> <row>...` | Adds one or many rows; optional label, exclusion, owner and bound cells |
+| `row set <table> <row> <col>=<value>...` | Writes text values; `col=` clears one |
+| `row hide/show <table> <row>...` | Changes visibility; data and fold contributions stay |
+| `row del <table> <row>` | Deletes the row and its owned cells; a missing row succeeds with `existed=0` and a no-op receipt; external bound sets stay |
+| `row move <table> <row> --first/--last/--before/--after` | Moves one row; the others retain their relative order |
+| `row order <table> <row>...` | Puts the named rows first; the rest keep their order |
+| `row sort <table> [--by name/label/<col>] [--desc] [--keep]` | Sorts once; `--keep` maintains name/label order, `--manual` ends it |
+| `col add <table> <spec> [--first/--last/--before/--after]` | Adds one column, last unless a place is named |
+| `col del <table> <col>` | Removes an empty column with no formula dependency |
+| `col move <table> <col> --first/--last/--before/--after` | Moves one column |
+| `cell add/remove <table> <row> <col> <member>...` | Adds or removes a batch; add takes `--score` |
+| `cell move <table> <row> <from> <to> <member>...` | Moves a batch atomically while preserving scores |
+| `cell members <table> <row> <col>` | Lists member IDs and scores in order |
+| `member create <table> <id>` | Allocates an unplaced identity |
+| `member find <table> <id>` | Reports its owned location or `state=missing/unplaced`, with epoch and revision |
+| `check <table>` | Audits both directions of all record/set links, including hidden cells |
+| `clear <table>` | Removes active rows and owned cells, retaining the definition; refuses bound cells |
+| `show <table> [--at-epoch <n>]` | Prints complete projected values as typed lines, including text and percentages |
+| `render <table>` | Prints a text table; an empty table prints nothing |
+| `render --view <name>` | Prints one stored-view frame with timestamp, title and optional summary |
+| `watch <table>[,<table>...]` | Redraws tables; `--once` renders once, `--out` publishes a file atomically |
+| `view set <name> --tables <a,b,...> [--title <text>] [--summary <count-column>]` | Stores a view; summary uses the first table |
+| `view show <name>` | Prints view configuration, including summary |
+| `view list` | Lists view names |
+| `view del <name>` | Deletes the view configuration, preserving tables |
+| `watch --view <name>` | Reloads configuration each frame; edits appear without restarting |
+| `version` | Prints the build version |
 
-**Watching.** `watch <table>[,<table>...] [--every 1s] [--out <file>]
-[--title <text>] [--hide-zero-rows] [--once]` renders the named tables once
-per tick, one blank line between two that print, the title first. With no
-`--out` it draws in place on the terminal (the ANSI home-and-clear
-sequence, then the text) so a console tab shows the live table with no
-shell loop; `--out <file>` publishes each tick by writing a temp file
-beside it and renaming it over, the sprint table's way; `--once` renders
-once and exits. Every tick is exactly one Redis pipeline for every cell of
-every named table (read-only snapshots include cold and changed shapes), and
-the screen holds the tables and nothing else: no clock, no key, no status
-line. A tick whose read fails leaves the last good text standing with one
-`stale: <n>s` line under it. A signal ends it, exit 0.
+**Order.** Rows draw in the order they were added and columns in the
+order they were declared, until a verb moves them; each of these is one
+exchange, checked whole before the first write, with one receipt. `row move
+<table> <row> --first | --last | --before <row> | --after <row>` prints
+`TABLE ROW MOVE table= row= place= [of=]` and moves that row only. `row
+order <table> <row> <row> ...` prints `TABLE ROW ORDER table= first=`: the
+named rows first, in the order named, the rest after them in the order they
+had. `row sort <table> [--by name|label|<col>] [--desc]` prints `TABLE ROW
+SORT table= by= desc= keep=` and sorts once, by the row's name (the
+default), its label, a count column or a text column, ties by name;
+`--keep` (name or label) makes the sort stand, so every row added or rebound later
+takes its place, and `row move` and `row order` are refused, exit 1, naming
+`row sort <table> --manual`, which ends it and leaves the rows where they
+are. `col move <table> <col>` takes the same four places and prints `TABLE
+COL MOVE table= col= place= [of=]`. `col add <table>
+<name[:projection[:fold[:label]]]>` adds one column, last or at a place:
+`TABLE COL ADD table= col= place=`. `col del <table> <col>` prints `TABLE
+COL DEL table= col=` and is refused, exit 1, writing nothing, while the
+column holds a member (the refusal names all blocking rows and members, with a
+batch `cell remove` command for each occupied cell) or a text value, while a `pct(...)` column reads it, and when it is
+the last column. Quote a column that has parentheses, `'share:pct(busy)'`.
 
-**The render.** The header row is the column labels, then a rule, one line
-per row (its label, then its cells), and, when any column folds, a rule and
-the footer row. Text, members, first and last cells are left-aligned, count
-cells right-aligned; cells are separated by ` | ` and the rule joins dashes
-with `-+-`; a column is as wide as its widest cell unless its width is
-fixed. A cell whose set did not come back prints `?`, and so does the fold
-over it. An empty table renders as the empty string: no header, no newline.
+### Columns, identity and output
 
-There is no `quickstart` verb: a first run is a table you name, and a verb
-that made one for you would write a table nobody asked for.
+`--columns` is `name[:projection[:fold[:label]]]`, comma-separated. The projections
+are `count` (default), `members`, `first`, `last`, `text`, and
+`pct(<count-column>)`. Text is blank until `row set` writes it; the row label
+always has a separate leading cell. Quote specs containing parentheses, for
+example `'ready,done,note:text,progress:pct(done)'`, so zsh passes them unchanged.
 
-Exit codes: 0 done, 1 refused (the store said no), 2 usage (could not run).
+Folds are `sum` (count default), `max`, `avg` (count only), `union` (members),
+`pooled` (percentage default), or `none`. Percentages divide their named count by
+all count columns. Pooled footers divide the summed counts, not the row
+percentages. Known-empty percentages are `0.0%`; an unread dependency is `?`.
+`--footer <label>` names the otherwise blank footer label. `--width col=n,...`
+sets column widths; render/watch also accept `--label-width` and `--hide-zero-rows`.
+Hidden rows and columns continue contributing to formulas and folds.
+
+One member has one owned placement per table. A duplicate add names its current
+place; use `cell move` to move it. An occupied column or nonempty text cannot be
+removed by a shape edit: move/remove its members, or clear the text first. A row
+may bind a cell to another tool's set using `<col>=<key> --owner <verb>`; reads
+are allowed, writes refuse naming the owner. Bound sets do not own table member
+placements. `member find` reads the active epoch; `check` scans the full namespace.
+
+Writes accept `--epoch` (default 0), `--actor`, `--fence`, `--idem`, and `--receipt`.
+Stale epochs refuse; metadata is recorded, not authorization or deduplication.
+`create` also accepts `--epoch-key`, `--epoch-field`, and `--member-prefix`.
+Accepted table writes each produce one revision and one durable receipt,
+including accepted no-ops. View configuration is separate from table receipts.
+
+Success lines report `trips=1` after connection setup. A stored view frame uses
+two exchanges, one for configuration and one for all table snapshots. `show`
+includes every column's projected value (`note=""`, `progress=50.0%`, `?` for
+unread), all hidden rows/columns, and the snapshot's epoch/revision. `render`
+prints the table alone. A stored view adds timestamp, title and optional pooled
+summary from the same snapshot. ETA has no value until rate sampling is added.
+`view show` is configuration; `render --view <name>` prints the rendered view,
+as does `watch --view <name> --once`. Stored views use active epochs;
+`--at-epoch` applies only to table targets.
+
+### Connection and exit codes
+
+Store commands accept `--redis <host:port>` or an absolute Unix socket path;
+otherwise they use `NOVA_SPRINT_REDIS`, `NOVA_REDIS_ADDR`, then the seat address.
+Select a seat with `--seat`, `NOVA_SPRINT_SEAT` or `NOVA_SEAT`. Without a seat,
+`NOVA_SPRINT_REDIS_USER` names the user and `NOVA_SPRINT_REDIS_PASSWORD_ENV` names
+the password variable. Never put a password on the command line. Flags may
+follow positional words; `--` ends flag parsing for literal members such as
+`--pending`. Unknown flags list the actual command's available flags and name
+its help page. See the [local setup](nova-table/README.md#start-locally)
+for an isolated store and the function-library loading command.
+
+Exit codes: 0 done (including requested help), 1 refused by the store, 2 usage or
+connection failure. A refusal gives the commands needed to proceed. In watch, a failed read leaves
+the last good frame and one stale-age line until recovery; Ctrl-C exits 0.
