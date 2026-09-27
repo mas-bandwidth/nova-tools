@@ -75,7 +75,7 @@ two runs sharing one collide), each under a 60 s cap; a timeout is a failure:
         -deadlock -metadir /tmp/tlc-$c/meta -config $cfg $m > $c.log 2>&1 &
     done; wait
 
-Measured on space, 2026-09-27, load 9, all twelve at once: 38 s wall.
+Measured on space, 2026-09-27, load 9, all thirteen at once: 38 s wall.
 
 | config | result | time |
 |---|---|---|
@@ -83,17 +83,23 @@ Measured on space, 2026-09-27, load 9, all twelve at once: 38 s wall.
 | `MCTableEditBrokenRefusal` | RefusalWritesNothing violated in 2 states: `row add 1 2`, row 2's key of the wrong type, row 1 left written (109939a85 lines 189-192) | 1 s |
 | `MCTableEditBrokenText` | ShapeLosesNoText violated in 4 states: a text value set, `set --columns` without the column deletes it (line 341) | 2 s |
 | `MCTableEditBrokenLegacy` | ShapeLosesNoMember violated in 5 states: a member placed, a formula column's stored fold stops parsing, `set --columns` drops the member's column with no OCCUPIED check (line 311) | 8 s |
-| `MCTableOrder` | no error, 241,073 distinct states, depth 4, 3 rows, 3 columns: TypeOK, RefusalWritesNothing, RowMoveIsExact, RowOrderIsExact, ColMoveIsExact, AddIsExact, BindIsExact, StandingSortHolds, ReorderIsPermutation, HeldInShape, OnlyRowDelDrops, RowsAndColumnsApart | 19 s |
+| `MCTableOrder` | no error, 241,073 distinct states, depth 4, 3 rows, 3 columns: TypeOK, RefusalWritesNothing, RowMoveIsExact, RowOrderIsExact, ColMoveIsExact, AddIsExact, BindIsExact, RowSortIsExact, StandingSortHolds, ReorderIsPermutation, HeldInShape, OnlyRowDelDrops, RowsAndColumnsApart | 19 s |
 | `MCTableOrderBrokenBind` | StandingSortHolds violated: bind writes its input order under a standing sort (3ee97bea: bind never reached the standing-sort step; Stella's probe 1) | 2 s |
 | `MCTableOrderBrokenCombined` | StandingSortHolds violated: one call sets `--keep` and moves a row (3ee97bea: the guard read the sort before the edit and exempted any call with row_sort; Stella's probe 2) | 2 s |
+| `MCTableOrderBrokenOnce` | RowSortIsExact violated: a sort without `--keep` leaves the rows as they were | 2 s |
 | `MCTableOrderBrokenSort` | StandingSortHolds violated: row add ignores the standing sort | 2 s |
 | `MCTableOrderBrokenPrefix` | RowOrderIsExact violated: the named rows put last | 2 s |
 | `MCTableOrderBrokenItem` | RowMoveIsExact violated: `--first` moves another row | 1 s |
 | `MCTableOrderBrokenDel` | OnlyRowDelDrops violated: `col del` removes a column that holds a member | 2 s |
 | `MCTableOrderBrokenBindLoss` | OnlyRowDelDrops violated: bind drops an omitted row that holds a member | 2 s |
 
-The first four witnesses of the edit model and the Bind and Combined witnesses
-of the order model are defects that were in the code, each checked by hand
-against the lines named. The other five are misimplementations the invariants
-are shown to catch. A depth-5 run of the edit model with one member (1,652,467
+The three witnesses of the edit model and the Bind and Combined witnesses of
+the order model are defects that were in the code, each checked by hand
+against the lines named. The other six are misimplementations the invariants
+are shown to catch. The order model also found one defect by disagreeing with
+the code: it refuses a bind that omits a row holding a text value, and the
+kernel at 6b3346174 deleted the text (Stella's read, stella-9a49e4eda437); the
+kernel was changed to refuse, the model was not. Bounds of the instance: a
+combined sort-and-move places at `--first` or `--last`, a combined
+sort-and-order names one row. A depth-5 run of the edit model with one member (1,652,467
 distinct states, no error) took 92 s on the same bench and is not in the set.
