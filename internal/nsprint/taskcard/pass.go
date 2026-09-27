@@ -3,13 +3,10 @@ package taskcard
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pipeerr"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -105,106 +102,46 @@ func FreeSlots(slots, working, ci int64) int {
 	return 0
 }
 
-// DealPass is one pass of the deal duty at now.
+// DealPass is one pass of the deal duty at now: one call of ns_cm_pass
+// (02_card_move.lua), which expires the lapsed copies, ensures the review
+// column's reads, reads every consumer of the roster and deals each live,
+// unpaused one with room the copies it needs, most room first. The Go
+// pass made three to five round trips for the same work (2026-09-27,
+// Glenn: "You always need to batch redis").
 func DealPass(ctx context.Context, c redis.Cmdable, by string, now time.Time) (PassResult, error) {
 	var res PassResult
-	x, err := ExpireCopies(ctx, c, by)
+	out, err := fcall(ctx, c, "ns_cm_pass", by, now.UnixMilli())
 	if err != nil {
-		return res, err
+		return res, fmt.Errorf("deal pass: %w", err)
 	}
-	for _, e := range x {
-		if e.Why != "" {
-			res.Lines = append(res.Lines, fmt.Sprintf("EXPIRE %s REFUSED why=%s", e.Copy, e.Why))
-			continue
+	if len(out) > 0 && out[0] == "REFUSED" {
+		return res, fmt.Errorf("deal pass: ns_cm_reads: %s", strings.Join(out[1:], " "))
+	}
+	arity := map[string]int{"expired": 2, "expire-refused": 2, "reads": 2, "skip": 2, "deal": 4, "deal-refused": 2}
+	for i := 0; i < len(out); {
+		n, ok := arity[out[i]]
+		if !ok || i+n >= len(out) {
+			return res, fmt.Errorf("deal pass: ns_cm_pass: unexpected reply at %d: %v", i, out[i:])
 		}
-		res.Expired++
-		res.Lines = append(res.Lines, fmt.Sprintf("EXPIRED %s to=%s why=lease-lapsed", e.Copy, e.To))
-	}
-	reads, err := EnsureReads(ctx, c, by)
-	if err != nil {
-		return res, err
-	}
-	for _, r := range reads {
-		res.Lines = append(res.Lines, fmt.Sprintf("READS %s copies=%s", r.Primary, strings.Join(r.Copies, ",")))
-	}
-	roster, err := Roster(ctx, c)
-	if err != nil || len(roster) == 0 {
-		return res, err
-	}
-	epoch, err := ws.Epoch(ctx, c)
-	if err != nil {
-		return res, err
-	}
-	pipe := c.Pipeline()
-
-	type cmds struct {
-		desired        *redis.SliceCmd
-		ready, working *redis.IntCmd
-		down           *redis.IntCmd
-		at, ci         *redis.StringCmd
-	}
-	cs := make([]cmds, len(roster))
-	for i, k := range roster {
-		cs[i] = cmds{
-			desired: pipe.HMGet(ctx, k.DesiredKey(), "slots", "paused"),
-			ready:   pipe.ZCard(ctx, k.KeyAt(epoch, "ready")),
-			working: pipe.ZCard(ctx, k.KeyAt(epoch, "working")),
-			down:    pipe.Exists(ctx, k.DownKey()),
-			at:      pipe.HGet(ctx, k.BeatKey(), "at"),
-			ci:      pipe.HGet(ctx, k.MachineBeatKey(), "ci"),
-		}
-	}
-	if err := pipeerr.Exec(ctx, pipe); err != nil {
-		return res, fmt.Errorf("deal pass: read: %w", err)
-	}
-	var rows []passRow
-	for i, k := range roster {
-		d := cs[i].desired.Val()
-		slots, err := strconv.ParseInt(fmt.Sprint(valueAt(d, 0)), 10, 64)
-		if err != nil {
-			// A consumer on the roster whose slots cannot be read is never
-			// dealt to: that is a line, not a quiet skip every pass.
-			res.Lines = append(res.Lines, fmt.Sprintf("DEAL %s SKIP why=slots %q on %s is not a number", k, fmt.Sprint(valueAt(d, 0)), k.DesiredKey()))
-			continue
-		}
-		t, ok := beatAt(cs[i].at.Val())
-		r := passRow{k: k, slots: slots, ready: cs[i].ready.Val(), down: cs[i].down.Val() > 0,
-			paused: fmt.Sprint(valueAt(d, 1)) == "1", live: ok && now.Sub(t) < Live && t.Sub(now) < Live}
-		// The CI legs on the consumer's machine (a friend's too: the Studio
-		// hosts friends and CI both) each hold a slot while they run.
-		r.ci, _ = strconv.ParseInt(cs[i].ci.Val(), 10, 64)
-		r.free = FreeSlots(slots, cs[i].working.Val(), r.ci)
-		r.need = r.free - int(r.ready)
-		if r.live && !r.down && !r.paused && r.free > 0 {
-			rows = append(rows, r)
-		}
-	}
-	sort.SliceStable(rows, func(a, b int) bool {
-		if rows[a].free != rows[b].free {
-			return rows[a].free > rows[b].free
-		}
-		return rows[a].k.String() < rows[b].k.String()
-	})
-	for _, r := range rows {
-		dealt := 0
-		if r.need > 0 {
-			d, err := Deal(ctx, c, DealRequest{To: r.k, N: r.need, By: by})
-			if err != nil {
-				res.Lines = append(res.Lines, fmt.Sprintf("DEAL %s REFUSED why=%s", r.k, err))
-				continue
-			}
-			dealt = len(d)
+		v := out[i+1 : i+1+n]
+		switch out[i] {
+		case "expired":
+			res.Expired++
+			res.Lines = append(res.Lines, fmt.Sprintf("EXPIRED %s to=%s why=lease-lapsed", v[0], v[1]))
+		case "expire-refused":
+			res.Lines = append(res.Lines, fmt.Sprintf("EXPIRE %s REFUSED why=%s", v[0], v[1]))
+		case "reads":
+			res.Lines = append(res.Lines, fmt.Sprintf("READS %s copies=%s", v[0], v[1]))
+		case "skip":
+			res.Lines = append(res.Lines, fmt.Sprintf("DEAL %s SKIP why=%s", v[0], v[1]))
+		case "deal":
+			dealt, _ := strconv.Atoi(v[1])
 			res.Dealt += dealt
+			res.Lines = append(res.Lines, fmt.Sprintf("DEAL %s dealt=%s free=%s ci=%s", v[0], v[1], v[2], v[3]))
+		case "deal-refused":
+			res.Lines = append(res.Lines, fmt.Sprintf("DEAL %s REFUSED why=%s", v[0], v[1]))
 		}
-		// The dealer deals; it never takes a copy into working on a consumer's
-		// behalf. A bench's beat session and a friend's serve call card work
-		// themselves, then launch: a copy worked here by the reconciler has no
-		// launcher, its lease lapses, and the primary lands in review for
-		// nothing (the first copy-model quack, 2026-09-25 10:41 PM ET: copy
-		// worked "by reconciler why work", no process on the bench).
-		if dealt > 0 {
-			res.Lines = append(res.Lines, fmt.Sprintf("DEAL %s dealt=%d free=%d ci=%d", r.k, dealt, r.free, r.ci))
-		}
+		i += 1 + n
 	}
 	return res, nil
 }
