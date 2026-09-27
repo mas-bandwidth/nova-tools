@@ -96,9 +96,14 @@ func TestWithBriefReplacesTheGeneratedSectionOnly(t *testing.T) {
 	if strings.Count(second, taskcard.BriefMarker) != 1 || strings.Contains(second, "(no children)") || !strings.Contains(second, "pr=x#1") || !strings.HasSuffix(second, strings.TrimRight(brief, "\n")+"\n") {
 		t.Fatalf("the generated section is replaced, once, by the brief returned:\n%s", second)
 	}
-	// The same fields written through the one writer: the record's why.
-	if why, _ := c.HGet(ctx, taskcard.Key(stitch), "why").Result(); why != "stitch brief" {
-		t.Errorf("why=%q, want the brief's", why)
+	// Written through the one writer's same-place path (TK.move: only the
+	// fields change; the pointer, state and why stay the push's), so the
+	// stitch is still where it was, with its why unchanged.
+	if where, _ := c.HGet(ctx, taskcard.Key(stitch), "where").Result(); where != "waiting" {
+		t.Errorf("where=%q after the brief, want waiting", where)
+	}
+	if why, _ := c.HGet(ctx, taskcard.Key(stitch), "why").Result(); why != "push" {
+		t.Errorf("why=%q after the brief; the same-place write changes only the fields (want push)", why)
 	}
 	c.HSet(ctx, taskcard.Key(stitch), "body", "")
 	if _, err := taskcard.WriteStitchBrief(ctx, c, parent); err != nil {
