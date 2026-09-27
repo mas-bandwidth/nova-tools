@@ -110,35 +110,49 @@ func viewReader(c redis.Cmdable, name string, opts ntable.RenderOpts) func(conte
 		if len(v.Tables) == 0 {
 			return v.Title + "\n(no tables in view " + name + ")\n", nil
 		}
-		text, err := tablesReader(c, v.Tables, v.Title, opts)(ctx)
-		if err != nil || v.Summary == "" {
-			return text, err
-		}
-		// the summary line under the view (Glenn 2026-09-27: "the x/y z%
-		// -> ETA summary we are used to"): the named count column of the
-		// first table summed over its rows, over every count summed, and
-		// the ETA once a rate exists (the change stream; owed: "-")
-		t, err := ntable.Read(ctx, c, v.Tables[0])
+		// The view's frame, Glenn's layout (2026-09-27): the time to the
+		// second, a blank line, the title, a blank line, the summary
+		// "x/y z% -> ETA" when the view names a done column, a blank line,
+		// the tables. Nothing else goes in.
+		tables, err := tablesReader(c, v.Tables, "", opts)(ctx)
 		if err != nil {
-			return text, nil
+			return "", err
 		}
-		var part, total int64
-		for _, r := range t.Rows {
-			for k, col := range t.Columns {
-				if col.Projection != ntable.Count || k >= len(r.Cells) {
-					continue
-				}
-				total += r.Cells[k].Count
-				if col.Name == v.Summary {
-					part += r.Cells[k].Count
+		var b strings.Builder
+		b.WriteString(time.Now().Format("2006-01-02 15:04:05 MST"))
+		b.WriteString("\n\n")
+		if v.Title != "" {
+			b.WriteString(v.Title)
+			b.WriteString("\n\n")
+		}
+		if v.Summary != "" {
+			// the named count column of the first table summed over its
+			// rows, over every count summed; the ETA once a rate exists
+			// (the change stream; owed: "-")
+			t, err := ntable.Read(ctx, c, v.Tables[0])
+			if err != nil {
+				return "", err
+			}
+			var part, total int64
+			for _, r := range t.Rows {
+				for k, col := range t.Columns {
+					if col.Projection != ntable.Count || k >= len(r.Cells) {
+						continue
+					}
+					total += r.Cells[k].Count
+					if col.Name == v.Summary {
+						part += r.Cells[k].Count
+					}
 				}
 			}
+			pct := "-"
+			if total > 0 {
+				pct = strconv.FormatFloat(100*float64(part)/float64(total), 'f', 1, 64) + "%"
+			}
+			fmt.Fprintf(&b, "%d/%d %s -> ETA -\n\n", part, total, pct)
 		}
-		pct := "-"
-		if total > 0 {
-			pct = strconv.FormatFloat(100*float64(part)/float64(total), 'f', 1, 64) + "%"
-		}
-		return text + fmt.Sprintf("\n%s %d/%d %s -> ETA -\n", v.Summary, part, total, pct), nil
+		b.WriteString(tables)
+		return b.String(), nil
 	}
 }
 
