@@ -6,13 +6,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ghevent"
 	"github.com/redis/go-redis/v9"
 )
 
 func add(t *testing.T, rdb *redis.Client, kind, repo, number, head string) string {
 	t.Helper()
-	id, err := rdb.XAdd(context.Background(), &redis.XAddArgs{Stream: ghevent.Stream, Values: map[string]any{
+	// Write the public key independently: producer and reader sharing the
+	// same mistaken constant must not make this compatibility check pass.
+	id, err := rdb.XAdd(context.Background(), &redis.XAddArgs{Stream: "ev:github", Values: map[string]any{
 		"repo": repo, "kind": kind, "number": number, "head": head, "action": "completed",
 	}}).Result()
 	if err != nil {

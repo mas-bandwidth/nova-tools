@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ghevent"
+	gheventwire "github.com/mas-bandwidth/nova-tools/internal/ghevent/wire"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -18,7 +18,7 @@ import (
 type EvGithub struct{ rdb *redis.Client }
 
 // EvGithubStream is the stream name, the one ghevent writes.
-const EvGithubStream = ghevent.Stream
+const EvGithubStream = gheventwire.Stream
 
 // Event is one ev:github entry, the fields a watch prints, each trimmed.
 type Event struct {
@@ -43,7 +43,7 @@ func (e *EvGithub) Close() error { return e.rdb.Close() }
 // Tip is the id of the newest entry, or "0-0" when the stream is empty or
 // absent: the cursor a cold watch starts from, so history is not news.
 func (e *EvGithub) Tip(ctx context.Context) (string, error) {
-	msgs, err := e.rdb.XRevRangeN(ctx, ghevent.Stream, "+", "-", 1).Result()
+	msgs, err := e.rdb.XRevRangeN(ctx, gheventwire.Stream, "+", "-", 1).Result()
 	if err != nil {
 		return "", err
 	}
@@ -57,7 +57,7 @@ func (e *EvGithub) Tip(ctx context.Context) (string, error) {
 // A block that ends with nothing is (nil, nil), not an error.
 func (e *EvGithub) Read(ctx context.Context, cursor string, count int64, block time.Duration) ([]Event, error) {
 	res, err := e.rdb.XRead(ctx, &redis.XReadArgs{
-		Streams: []string{ghevent.Stream, cursor}, Count: count, Block: block,
+		Streams: []string{gheventwire.Stream, cursor}, Count: count, Block: block,
 	}).Result()
 	if errors.Is(err, redis.Nil) {
 		return nil, nil
