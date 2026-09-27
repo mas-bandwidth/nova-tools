@@ -9,13 +9,20 @@ package reconcile
 // stuck or taking too long, or going one at a time." ~11:40 AM: "you
 // frequently get stuck on it, and I have to prod and poke you for hours".
 //
-// Every reconciler pass (one second, no GitHub, two pipelines):
+// Every reconciler pass (one second, no GitHub, one call: ns_land_watch_pass
+// reads, stamps, cleans and keeps the slow record; a second trip only for a
+// note or a card, nova-tools #4449; the model is rowan-new
+// specs/tla/LandWatch.tla, findings L1 and L2):
 //
 //   - merging_at: the first pass that sees a task in ws:<stream>:merging
 //     stamps it on the watch's own record, land:merging:<stream> (a hash,
 //     id -> ms, HSETNX). The task record has one writer (the Lua move,
 //     #3778); when that move writes merging_at on the task the watch reads
-//     it and it wins.
+//     it and it wins. The note's episode is the member's stay, keyed on
+//     the watch's own first sight (L1: the move's stamp can arrive later
+//     and older); the words noted follow the member in land:noted:<stream>
+//     (L2: one record per stream re-noted when the oldest changed and
+//     changed back).
 //   - LAND-SLOW: a stream whose oldest merging member is past cfg:land slow
 //     (seconds, default 600) prints `LAND-SLOW <stream> oldest=<id> age=<d>
 //     max=<d>` when the word or the oldest member changes (not every 1 s
@@ -97,16 +104,18 @@ const (
 
 // LandSlowKey is a stream's slow record; LandMergeKey names its merge card;
 // LandMergingKey is the watch's first-seen stamp per merging member (id ->
-// ms); LandBriefKey holds a merge card's brief.
+// ms); LandNotedKey is the words noted per member for its stay (id ->
+// LAND-SLOW[,LAND-WALL]).
 func LandSlowKey(stream string) string    { return "land:slow:" + stream }
 func LandMergeKey(s string) string        { return stream.OwnerKey(s) }
 func LandMergingKey(stream string) string { return "land:merging:" + stream }
-func LandBriefKey(card string) string     { return "land:brief:" + card }
+func LandNotedKey(stream string) string   { return "land:noted:" + stream }
 
 // MergeMember is one member of a merge card's brief.
 type MergeMember struct {
 	Task      string
 	PR        string
+	Paths     string  // the record's PATHS
 	Order     float64 // the ws:<stream>:merging score: the work order
 	MergingAt time.Time
 }
@@ -172,99 +181,57 @@ func (w *LandWatch) printf(format string, a ...any) {
 
 type watchStream struct {
 	name, slug string
-	members    []redis.Z
-	slow       map[string]string
-	merge      map[string]string
-	seen       map[string]string // land:merging:<stream>: id -> first-seen ms
-	notes      []string          // ws:<stream>:notes
+	members    []MergeMember
+	merge      map[string]string // land:merge:<stream>
+	cardState  string            // the merge card's state, reason, dest (when named)
+	cardReason string
+	escState   string          // the escalation's state (when named)
+	stops      map[string]bool // after= sentinel -> landed
+	notes      []string        // ws:<stream>:notes
+	slow       *slowRow        // the record the function kept, when the oldest is past slow
 }
 
-// Run is one pass.
+// slowRow is the function's slow row: the word and the oldest, whether
+// either changed this pass, and whether a note is due for the oldest and
+// the word in this stay.
+type slowRow struct {
+	word, oldest  string
+	at            time.Time
+	age, max      time.Duration
+	changed, note bool
+	noted         string // the words already noted for the oldest
+}
+
+// landCfg is cfg:land as the function resolved it.
+type landCfg struct {
+	slow, wall    time.Duration
+	repos, notify string
+}
+
+// Run is one pass: one call of ns_land_watch_pass (the read, the stamps,
+// the empty episode's cleanup, the slow record), then the lines, the note
+// when one is due, and the cards: the rare work, on a pipeline that is
+// empty on the steady tick, so no second trip.
 func (w *LandWatch) Run(ctx context.Context, l *Lease) (Counts, error) {
 	c := w.Client
 	now := w.now()
-	// The read is one call, ns_land_watch_read (2026-09-27, Glenn: batch):
-	// the streams and the epoch, every stream's merging set with its watch
-	// hashes and notes, cfg:land, the sprint and its notes.
-	sts, cv, sprint, sprintNoteLines, err := landWatchRead(ctx, c)
+	sts, cfg, sprint, sprintNoteLines, err := landWatchPass(ctx, c, now, w.Slow, w.Wall)
 	if err != nil {
 		return Counts{}, fmt.Errorf("land watch: %w", err)
 	}
-	slow, wall := w.Slow, w.Wall
-	if slow <= 0 {
-		slow = seconds(cv[0], DefaultLandSlow)
-	}
-	if wall <= 0 {
-		wall = seconds(cv[1], DefaultLandWall)
-	}
 	repo := w.Repo
 	if repo == "" {
-		if s, _ := cv[2].(string); strings.TrimSpace(s) != "" {
+		if s := strings.TrimSpace(cfg.repos); s != "" {
 			repo = strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' })[0]
 		} else {
 			repo = DefaultLandRepo
 		}
 	}
-	notify, _ := cv[3].(string)
-
-	// Pipeline 2: stamp the first-seen ms on the watch's record and read
-	// every member's merging_at (the move's, when written), pr and paths;
-	// read each merge card's state and reason, and each sentinel a
-	// cross-stream end waits on.
 	pipe := c.Pipeline()
-	reads := map[string]*redis.SliceCmd{}
-	firsts := map[string]*redis.StringCmd{}
-	cards := map[string]*redis.SliceCmd{}
-	stops := map[string]*redis.SliceCmd{}
-	nowMS := strconv.FormatInt(now.UnixMilli(), 10)
-	for _, st := range sts {
-		for _, z := range st.members {
-			id := fmt.Sprint(z.Member)
-			pipe.HSetNX(ctx, LandMergingKey(st.name), id, nowMS)
-			firsts[id] = pipe.HGet(ctx, LandMergingKey(st.name), id)
-			reads[id] = pipe.HMGet(ctx, "task:"+id, "merging_at", "pr", "paths")
-		}
-		if mid := st.merge["task"]; mid != "" {
-			cards[mid] = pipe.HMGet(ctx, "task:"+mid, "state", "reason", "dest")
-		}
-		if esc := st.merge["escalation"]; esc != "" {
-			cards[esc] = pipe.HMGet(ctx, "task:"+esc, "state", "reason", "dest")
-		}
-		for _, sid := range strings.Fields(st.merge["after"]) {
-			stops[sid] = pipe.HMGet(ctx, "task:"+sid, "state", "where")
-		}
-	}
-	// (an idle fleet queues nothing here, and an empty pipeline is no trip)
-	if err := execPipe(ctx, pipe); err != nil {
-		return Counts{}, fmt.Errorf("land watch: %w", err)
-	}
-
-	pipe = c.Pipeline()
 	var errs []string
 	for _, st := range sts {
 		if len(st.members) == 0 {
-			if len(st.slow) > 0 {
-				pipe.Del(ctx, LandSlowKey(st.name))
-			}
-			if len(st.merge) > 0 {
-				// The card fields go; seq stays so the next episode's id is
-				// new (task.Push answers CONFLICT or CLOSED to a repeated id).
-				pipe.HDel(ctx, LandMergeKey(st.name), "task", "to", "cut_at", "members", "escalated", "escalation", "after")
-				if mid := st.merge["task"]; mid != "" {
-					pipe.Del(ctx, LandBriefKey(mid))
-				}
-				// A card's claim goes with its episode (compare and delete:
-				// a claim another writer took since is kept).
-				if o := st.merge["owner"]; strings.HasPrefix(o, "card:") {
-					if _, err := stream.Release(ctx, c, []string{st.name}, o); err != nil {
-						errs = append(errs, st.name+": release: "+err.Error())
-					}
-				}
-			}
-			if len(st.seen) > 0 {
-				pipe.Del(ctx, LandMergingKey(st.name))
-			}
-			continue
+			continue // the function cleaned the episode's records
 		}
 		slug, serr := stream.Slug(st.name)
 		if serr != nil {
@@ -272,57 +239,22 @@ func (w *LandWatch) Run(ctx context.Context, l *Lease) (Counts, error) {
 			continue
 		}
 		st.slug = slug
-		members := make([]MergeMember, 0, len(st.members))
 		var paths []string
 		seenPath := map[string]bool{}
-		inMerging := map[string]bool{}
-		for _, z := range st.members {
-			id := fmt.Sprint(z.Member)
-			inMerging[id] = true
-			v := reads[id].Val()
-			m := MergeMember{Task: id, Order: z.Score}
-			// The move's stamp when it wrote one, else the watch's first
-			// sight of the member in merging.
-			at := firsts[id].Val()
-			if s, ok := v[0].(string); ok && strings.TrimSpace(s) != "" {
-				at = s
-			}
-			if ms, err := strconv.ParseInt(strings.TrimSpace(at), 10, 64); err == nil {
-				m.MergingAt = time.UnixMilli(ms)
-			} else {
-				m.MergingAt = now
-			}
-			if s, ok := v[1].(string); ok {
-				m.PR = s
-			}
-			if s, ok := v[2].(string); ok {
-				for _, p := range strings.Fields(s) {
-					if !seenPath[p] {
-						seenPath[p] = true
-						paths = append(paths, p)
-					}
+		for _, m := range st.members {
+			for _, p := range strings.Fields(m.Paths) {
+				if !seenPath[p] {
+					seenPath[p] = true
+					paths = append(paths, p)
 				}
 			}
-			members = append(members, m)
 		}
-		for id := range st.seen {
-			if !inMerging[id] {
-				pipe.HDel(ctx, LandMergingKey(st.name), id) // it left merging
-			}
-		}
-		// The oldest by merging_at, the work order breaking ties.
-		oldest := members[0]
-		for _, m := range members[1:] {
-			if m.MergingAt.Before(oldest.MergingAt) {
-				oldest = m
-			}
-		}
-		age := now.Sub(oldest.MergingAt)
-		w.watchSlow(ctx, pipe, st, oldest, age, slow, wall, notify, &errs)
-		if err := w.watchCard(ctx, pipe, st, cards, stops, repo, sprint, members, paths, sprintNoteLines, now); err != nil {
+		w.watchSlow(ctx, pipe, st, cfg.notify, &errs)
+		if err := w.watchCard(ctx, pipe, st, repo, sprint, paths, sprintNoteLines, now); err != nil {
 			errs = append(errs, st.name+": "+err.Error())
 		}
 	}
+	// (the steady tick queues nothing here, and an empty pipeline is no trip)
 	if err := execPipe(ctx, pipe); err != nil {
 		return Counts{}, fmt.Errorf("land watch: %w", err)
 	}
@@ -332,47 +264,34 @@ func (w *LandWatch) Run(ctx context.Context, l *Lease) (Counts, error) {
 	return Counts{}, nil
 }
 
-// watchSlow is one stream's LAND-SLOW / LAND-WALL: the line, the record,
-// and one note per episode.
-func (w *LandWatch) watchSlow(ctx context.Context, pipe redis.Pipeliner, st watchStream, oldest MergeMember, age, slow, wall time.Duration, notify string, errs *[]string) {
-	if age < slow {
-		if len(st.slow) > 0 {
-			pipe.Del(ctx, LandSlowKey(st.name))
-		}
+// watchSlow is one stream's LAND-SLOW / LAND-WALL: the line when the word
+// or the oldest changed (never every one-second pass), and the note once
+// per member and word for one stay: the function says note=1 until the
+// word is marked noted here, after the note went; a note that did not go
+// is on the pass line and the next pass sends it again.
+func (w *LandWatch) watchSlow(ctx context.Context, pipe redis.Pipeliner, st watchStream, notify string, errs *[]string) {
+	s := st.slow
+	if s == nil {
 		return
 	}
-	word, max, stalled := "LAND-SLOW", slow, "0"
-	if age >= wall {
-		word, max, stalled = "LAND-WALL", wall, "1"
-	}
-	line := fmt.Sprintf("%s %s oldest=%s age=%s max=%s", word, oneline.Field(st.name), oldest.Task, age.Truncate(time.Second), max.Truncate(time.Second))
-	// The line prints on change (the word or the oldest member), never
-	// every one-second pass; the record moves every pass.
-	if st.slow["word"] != word || st.slow["oldest"] != oldest.Task {
+	line := fmt.Sprintf("%s %s oldest=%s age=%s max=%s", s.word, oneline.Field(st.name), s.oldest, s.age.Truncate(time.Second), s.max.Truncate(time.Second))
+	if s.changed {
 		w.printf("%s", line)
 	}
-	episode := fmt.Sprintf("%s@%d", oldest.Task, oldest.MergingAt.UnixMilli())
-	pipe.HSet(ctx, LandSlowKey(st.name), "word", word, "oldest", oldest.Task, "oldest_at", strconv.FormatInt(oldest.MergingAt.UnixMilli(), 10),
-		"age_ms", strconv.FormatInt(age.Milliseconds(), 10), "stalled", stalled, "at", strconv.FormatInt(w.now().UnixMilli(), 10))
-	// One note per episode for the slow word and one more for the wall,
-	// each keyed on the episode so a restart never sends it twice.
-	notedField := "noted"
-	if stalled == "1" {
-		notedField = "noted_wall"
-	}
-	if st.slow[notedField] == episode {
+	if !s.note {
 		return
 	}
-	wake := LandWake{Stream: st.name, Oldest: oldest.Task, Age: age, Max: max, Wall: stalled == "1", Line: line}
-	err := w.notify(ctx, wake, notify)
-	if err != nil {
-		// A note that did not go is on the pass line; the next pass sends
-		// it again.
+	wake := LandWake{Stream: st.name, Oldest: s.oldest, Age: s.age, Max: s.max, Wall: s.word == "LAND-WALL", Line: line}
+	if err := w.notify(ctx, wake, notify); err != nil {
 		*errs = append(*errs, fmt.Sprintf("%s note: %v", st.name, err))
 		return
 	}
-	pipe.HSet(ctx, LandSlowKey(st.name), notedField, episode)
-	w.printf("LAND-NOTE %s %s oldest=%s age=%s sent=1", word, oneline.Field(st.name), oldest.Task, age.Truncate(time.Second))
+	words := s.word
+	if s.noted != "" {
+		words = s.noted + "," + s.word
+	}
+	pipe.HSet(ctx, LandNotedKey(st.name), s.oldest, words)
+	w.printf("LAND-NOTE %s %s oldest=%s age=%s sent=1", s.word, oneline.Field(st.name), s.oldest, s.age.Truncate(time.Second))
 }
 
 func (w *LandWatch) notify(ctx context.Context, wake LandWake, notify string) error {
@@ -455,16 +374,13 @@ const DefaultCardGrace = time.Minute
 // merging; otherwise the next card is cut. Every cut claims the stream
 // first: a live claim of another writer (the land duty building, a hand
 // run) cuts nothing this pass.
-func (w *LandWatch) watchCard(ctx context.Context, pipe redis.Pipeliner, st watchStream, cards, stops map[string]*redis.SliceCmd, repo, sprint string, members []MergeMember, paths []string, sprintNotes []string, now time.Time) error {
+func (w *LandWatch) watchCard(ctx context.Context, pipe redis.Pipeliner, st watchStream, repo, sprint string, paths []string, sprintNotes []string, now time.Time) error {
 	mid := st.merge["task"]
 	state, reason := "", ""
 	if mid != "" {
-		if cmd := cards[mid]; cmd != nil {
-			v := cmd.Val()
-			state, _ = v[0].(string)
-			reason, _ = v[1].(string)
-		}
+		state, reason = st.cardState, st.cardReason
 	}
+	members := st.members
 	notes := append(append([]string(nil), st.notes...), sprintNotes...)
 	base := w.Base
 	if base == "" {
@@ -473,11 +389,8 @@ func (w *LandWatch) watchCard(ctx context.Context, pipe redis.Pipeliner, st watc
 	card := MergeCard{Kind: string(LandMergeKind), Stream: st.name, Slug: st.slug, Repo: repo, Base: base, Sprint: sprint,
 		Paths: strings.Join(paths, " "), Members: members, Notes: notes, Now: now}
 	if mid != "" && state != "" && state != "closed" {
-		// The brief follows the stream while the card waits for its friend.
-		if state != "working" {
-			card.ID = mid
-			pipe.Set(ctx, LandBriefKey(mid), MergeBrief(card), 0)
-		}
+		// A live card: nothing to cut. Its brief is a view (MergeBriefFor),
+		// rendered when the card is read, so the steady tick writes nothing.
 		return nil
 	}
 	if mid != "" && state == "closed" && st.merge["escalated"] != mid {
@@ -496,13 +409,11 @@ func (w *LandWatch) watchCard(ctx context.Context, pipe redis.Pipeliner, st watc
 		// The coordinator holds the escalation: no new merge card until it
 		// closes, and after a cross-stream end until every sentinel it
 		// waits on has landed (the claim refuses the same).
-		if cmd := cards[esc]; cmd != nil {
-			if es, _ := cmd.Val()[0].(string); es != "" && es != "closed" {
-				return nil
-			}
+		if st.escState != "" && st.escState != "closed" {
+			return nil
 		}
 		for _, sid := range strings.Fields(st.merge["after"]) {
-			if !stopLanded(stops[sid]) {
+			if !st.stops[sid] {
 				return nil
 			}
 		}
@@ -522,16 +433,12 @@ func (w *LandWatch) watchCard(ctx context.Context, pipe redis.Pipeliner, st watc
 	if held, err := w.claim(ctx, st.name, card.ID, now); err != nil || held {
 		return err
 	}
-	if mid != "" {
-		pipe.Del(ctx, LandBriefKey(mid)) // the closed card's brief
-	}
 	id, err := w.push(ctx, card)
 	if err != nil {
 		return fmt.Errorf("merge card %s: %w", card.ID, err)
 	}
 	pipe.HSet(ctx, LandMergeKey(st.name), "seq", strconv.FormatInt(seq, 10), "task", id, "to", to,
 		"cut_at", strconv.FormatInt(now.UnixMilli(), 10), "members", memberIDs(members))
-	pipe.Set(ctx, LandBriefKey(id), MergeBrief(card), 0)
 	w.printf("MERGE-CARD %s card=%s to=%s members=%d", oneline.Field(st.name), id, to, len(members))
 	return nil
 }
@@ -609,16 +516,6 @@ func memberIDs(members []MergeMember) string {
 		ids = append(ids, m.Task)
 	}
 	return strings.Join(ids, " ")
-}
-
-func stopLanded(cmd *redis.SliceCmd) bool {
-	if cmd == nil {
-		return false
-	}
-	v := cmd.Val()
-	st, _ := v[0].(string)
-	where, _ := v[1].(string)
-	return st == "landed" || where == "landed"
 }
 
 // crossPaths is the files a cross-stream end names: paths=<a>,<b> (commas
@@ -848,103 +745,259 @@ func orderAndEpoch(ctx context.Context, c redis.Cmdable) ([]string, uint64, erro
 	return order.Val(), epoch, nil
 }
 
-// landWatchRead is the pass's read, one call of ns_land_watch_read: every
-// stream of ws:order with its merging members under the epoch, its watch
-// hashes and notes; cfg:land (slow, wall, repos, notify) as the HMGET
-// answered; the first sprint of sprint:order and its notes.
-func landWatchRead(ctx context.Context, c redis.Cmdable) (sts []watchStream, cfg []any, sprint string, sprintNotes []string, err error) {
-	reply, err := c.FCall(ctx, "ns_land_watch_read", nil).StringSlice()
+// landWatchPass is the pass's one call, ns_land_watch_pass: every stream of
+// ws:order with its merging members (each with its at, pr and paths), its
+// merge record, the card, escalation and stop states it names, its notes,
+// and the slow row the function kept; cfg:land as resolved (slow and wall
+// overridden by the watch's own when set); the first sprint of sprint:order
+// and its notes.
+func landWatchPass(ctx context.Context, c redis.Cmdable, now time.Time, slow, wall time.Duration) (sts []watchStream, cfg landCfg, sprint string, sprintNotes []string, err error) {
+	args := []any{strconv.FormatInt(now.UnixMilli(), 10), "", ""}
+	if slow > 0 {
+		args[1] = strconv.FormatInt(slow.Milliseconds(), 10)
+	}
+	if wall > 0 {
+		args[2] = strconv.FormatInt(wall.Milliseconds(), 10)
+	}
+	reply, err := c.FCall(ctx, "ns_land_watch_pass", nil, args...).StringSlice()
 	if err != nil {
-		return nil, nil, "", nil, fmt.Errorf("ns_land_watch_read: %w", err)
+		return nil, cfg, "", nil, fmt.Errorf("ns_land_watch_pass: %w", err)
 	}
-	cfg = []any{"", "", "", ""}
-	need := func(i, n int) error {
-		if i+n > len(reply) {
-			return fmt.Errorf("ns_land_watch_read: reply is short at %d", i)
-		}
-		return nil
-	}
-	hash := func(i int) (map[string]string, int, error) {
-		n, _ := strconv.Atoi(reply[i])
-		if err := need(i+1, 2*n); err != nil {
-			return nil, 0, err
-		}
-		h := make(map[string]string, n)
-		for j := 0; j < n; j++ {
-			h[reply[i+1+2*j]] = reply[i+2+2*j]
-		}
-		return h, i + 1 + 2*n, nil
-	}
-	list := func(i int) ([]string, int, error) {
-		n, _ := strconv.Atoi(reply[i])
-		if err := need(i+1, n); err != nil {
-			return nil, 0, err
-		}
-		return append([]string{}, reply[i+1:i+1+n]...), i + 1 + n, nil
-	}
-	for i := 0; i < len(reply); {
-		switch reply[i] {
+	r := &rows{name: "ns_land_watch_pass", reply: reply}
+	var cur *watchStream
+	for r.more() {
+		switch k := r.kind(); k {
 		case "epoch":
-			if err := need(i, 2); err != nil {
-				return nil, nil, "", nil, err
-			}
-			i += 2
+			_, err = r.take(1)
 		case "cfg":
-			if err := need(i, 5); err != nil {
-				return nil, nil, "", nil, err
+			var v []string
+			if v, err = r.take(4); err == nil {
+				cfg.slow = msDuration(v[0])
+				cfg.wall = msDuration(v[1])
+				cfg.repos, cfg.notify = v[2], v[3]
 			}
-			for j := 0; j < 4; j++ {
-				if reply[i+1+j] != "" {
-					cfg[j] = reply[i+1+j]
-				}
-			}
-			i += 5
 		case "sprint":
-			if err := need(i, 2); err != nil {
-				return nil, nil, "", nil, err
+			var v []string
+			if v, err = r.take(1); err == nil {
+				sprint = v[0]
 			}
-			sprint = reply[i+1]
-			i += 2
 		case "sprintnotes":
-			var lines []string
-			lines, i, err = list(i + 1)
-			if err != nil {
-				return nil, nil, "", nil, err
-			}
-			sprintNotes = lines
+			sprintNotes, err = r.list()
 		case "stream":
-			if err := need(i, 3); err != nil {
-				return nil, nil, "", nil, err
+			var v []string
+			if v, err = r.take(2); err == nil {
+				sts = append(sts, watchStream{name: v[0], merge: map[string]string{}, stops: map[string]bool{}})
+				cur = &sts[len(sts)-1]
 			}
-			st := watchStream{name: reply[i+1]}
-			m, _ := strconv.Atoi(reply[i+2])
-			i += 3
-			if err := need(i, 2*m); err != nil {
-				return nil, nil, "", nil, err
+		case "member", "merge", "card", "escalation", "stop", "notes", "slow":
+			if cur == nil {
+				return nil, cfg, "", nil, fmt.Errorf("ns_land_watch_pass: %s row before any stream at %d", k, r.i)
 			}
-			for j := 0; j < m; j++ {
-				score, _ := strconv.ParseFloat(reply[i+2*j+1], 64)
-				st.members = append(st.members, redis.Z{Member: reply[i+2*j], Score: score})
-			}
-			i += 2 * m
-			if st.slow, i, err = hash(i); err != nil {
-				return nil, nil, "", nil, err
-			}
-			if st.merge, i, err = hash(i); err != nil {
-				return nil, nil, "", nil, err
-			}
-			if st.seen, i, err = hash(i); err != nil {
-				return nil, nil, "", nil, err
-			}
-			if st.notes, i, err = list(i); err != nil {
-				return nil, nil, "", nil, err
-			}
-			sts = append(sts, st)
+			err = cur.decode(r, k)
 		default:
-			return nil, nil, "", nil, fmt.Errorf("ns_land_watch_read: unexpected row %q at %d", reply[i], i)
+			return nil, cfg, "", nil, fmt.Errorf("ns_land_watch_pass: unexpected row %q at %d", k, r.i)
+		}
+		if err != nil {
+			return nil, cfg, "", nil, err
 		}
 	}
 	return sts, cfg, sprint, sprintNotes, nil
+}
+
+// decode reads one of a stream's rows.
+func (st *watchStream) decode(r *rows, k string) error {
+	switch k {
+	case "member":
+		v, err := r.take(5)
+		if err != nil {
+			return err
+		}
+		score, _ := strconv.ParseFloat(v[1], 64)
+		at, _ := strconv.ParseInt(v[2], 10, 64)
+		st.members = append(st.members, MergeMember{Task: v[0], Order: score, MergingAt: time.UnixMilli(at), PR: v[3], Paths: v[4]})
+	case "merge":
+		h, err := r.hash()
+		if err != nil {
+			return err
+		}
+		st.merge = h
+	case "card":
+		v, err := r.take(4)
+		if err != nil {
+			return err
+		}
+		st.cardState, st.cardReason = v[1], v[2]
+	case "escalation":
+		v, err := r.take(2)
+		if err != nil {
+			return err
+		}
+		st.escState = v[1]
+	case "stop":
+		v, err := r.take(3)
+		if err != nil {
+			return err
+		}
+		st.stops[v[0]] = v[1] == "landed" || v[2] == "landed"
+	case "notes":
+		l, err := r.list()
+		if err != nil {
+			return err
+		}
+		st.notes = l
+	case "slow":
+		v, err := r.take(8)
+		if err != nil {
+			return err
+		}
+		at, _ := strconv.ParseInt(v[2], 10, 64)
+		st.slow = &slowRow{word: v[0], oldest: v[1], at: time.UnixMilli(at), age: msDuration(v[3]),
+			changed: v[4] == "1", note: v[5] == "1", max: msDuration(v[6]), noted: v[7]}
+	}
+	return nil
+}
+
+// rows walks a function's flat reply: a row kind, then its fields.
+type rows struct {
+	name  string
+	reply []string
+	i     int
+}
+
+func (r *rows) more() bool   { return r.i < len(r.reply) }
+func (r *rows) kind() string { return r.reply[r.i] }
+
+// take reads n fields after the kind and moves past them.
+func (r *rows) take(n int) ([]string, error) {
+	if r.i+1+n > len(r.reply) {
+		return nil, fmt.Errorf("%s: reply is short at %d (%s)", r.name, r.i, r.reply[r.i])
+	}
+	v := r.reply[r.i+1 : r.i+1+n]
+	r.i += 1 + n
+	return v, nil
+}
+
+// list reads <n> then n lines.
+func (r *rows) list() ([]string, error) {
+	c, err := r.take(1)
+	if err != nil {
+		return nil, err
+	}
+	n, _ := strconv.Atoi(c[0])
+	if r.i+n > len(r.reply) {
+		return nil, fmt.Errorf("%s: list is short at %d", r.name, r.i)
+	}
+	out := append([]string{}, r.reply[r.i:r.i+n]...)
+	r.i += n
+	return out, nil
+}
+
+// hash reads <n> then n field, value pairs.
+func (r *rows) hash() (map[string]string, error) {
+	c, err := r.take(1)
+	if err != nil {
+		return nil, err
+	}
+	n, _ := strconv.Atoi(c[0])
+	if r.i+2*n > len(r.reply) {
+		return nil, fmt.Errorf("%s: hash is short at %d", r.name, r.i)
+	}
+	h := make(map[string]string, n)
+	for j := 0; j < n; j++ {
+		h[r.reply[r.i+2*j]] = r.reply[r.i+2*j+1]
+	}
+	r.i += 2 * n
+	return h, nil
+}
+
+func msDuration(s string) time.Duration {
+	n, _ := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+	return time.Duration(n) * time.Millisecond
+}
+
+// MergeBriefFor is a merge card's brief as a view of its stream now
+// (nova-tools #4449: the watch writes no text every second): the merging
+// members in work order with PR and merging age, the rules, the stream's
+// and the sprint's MERGE-NOTEs, from one read-only call
+// (ns_land_brief_read). rec is the card's record (stream, repo, ref as the
+// base). An empty merging set is no brief: "", nil, and the card renders
+// from its title alone.
+func MergeBriefFor(ctx context.Context, c redis.Cmdable, id string, rec map[string]string, now time.Time) (string, error) {
+	streamName := rec["stream"]
+	if streamName == "" {
+		if rest, ok := strings.CutPrefix(rec["title"], "STREAM: "); ok {
+			streamName, _, _ = strings.Cut(rest, " |")
+		}
+	}
+	if streamName == "" {
+		return "", fmt.Errorf("merge brief: task:%s names no stream", id)
+	}
+	reply, err := c.FCall(ctx, "ns_land_brief_read", nil, streamName, strconv.FormatInt(now.UnixMilli(), 10)).StringSlice()
+	if err != nil {
+		return "", fmt.Errorf("ns_land_brief_read: %w", err)
+	}
+	r := &rows{name: "ns_land_brief_read", reply: reply}
+	st := watchStream{name: streamName, stops: map[string]bool{}}
+	var repos, sprint string
+	var sprintNotes []string
+	for r.more() {
+		switch k := r.kind(); k {
+		case "cfg":
+			v, err := r.take(1)
+			if err != nil {
+				return "", err
+			}
+			repos = v[0]
+		case "sprint":
+			v, err := r.take(1)
+			if err != nil {
+				return "", err
+			}
+			sprint = v[0]
+		case "sprintnotes":
+			if sprintNotes, err = r.list(); err != nil {
+				return "", err
+			}
+		case "member", "notes":
+			if err := st.decode(r, k); err != nil {
+				return "", err
+			}
+		default:
+			return "", fmt.Errorf("ns_land_brief_read: unexpected row %q at %d", k, r.i)
+		}
+	}
+	if len(st.members) == 0 {
+		return "", nil
+	}
+	slug, err := stream.Slug(streamName)
+	if err != nil {
+		return "", err
+	}
+	repo := rec["repo"]
+	if repo == "" {
+		if s := strings.TrimSpace(repos); s != "" {
+			repo = strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' })[0]
+		} else {
+			repo = DefaultLandRepo
+		}
+	}
+	base := rec["ref"]
+	if base == "" {
+		base = "dev"
+	}
+	var paths []string
+	seenPath := map[string]bool{}
+	for _, m := range st.members {
+		for _, p := range strings.Fields(m.Paths) {
+			if !seenPath[p] {
+				seenPath[p] = true
+				paths = append(paths, p)
+			}
+		}
+	}
+	card := MergeCard{ID: id, Kind: string(LandMergeKind), Stream: streamName, Slug: slug, Repo: repo, Base: base, Sprint: sprint,
+		Paths: strings.Join(paths, " "), Members: st.members, Notes: append(append([]string(nil), st.notes...), sprintNotes...), Now: now}
+	return MergeBrief(card), nil
 }
 
 func execPipe(ctx context.Context, pipe redis.Pipeliner) error {
