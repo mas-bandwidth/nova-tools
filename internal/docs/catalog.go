@@ -83,7 +83,6 @@ var DefaultCatalog = []Entry{
 	E("internal/hygiene", "clean checkout and leak assertions", "go test ./internal/hygiene", "go test ./internal/hygiene"),
 	E("internal/jev", "Jev's mechanical passes (lint, scope, base) as one JEV gate line", "go test ./internal/jev", "go test ./internal/jev"),
 	E("internal/jevcalib", "Jev prompt files and the calibration rule", "go test ./internal/jevcalib", "go test ./internal/jevcalib"),
-	E("internal/jevclient", "typed provider transport without policy or storage", "go test ./internal/jevclient", "go test ./internal/jevclient"),
 	E("internal/jobs", "background job queues and state", "go test ./internal/jobs", "go test ./internal/jobs"),
 	E("internal/keyshape", "cryptographic key format verification", "go test ./internal/keyshape", "go test ./internal/keyshape"),
 	E("internal/lanes", "lane cursor and dispatch isolation", "go test ./internal/lanes", "go test ./internal/lanes"),
