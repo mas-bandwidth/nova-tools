@@ -1296,15 +1296,31 @@ jobs:
           cache: false
 
       - name: cache go build and module cache
+        id: gocache
         if: runner.environment == 'github-hosted'
         # Only on GitHub-hosted runners. A self-hosted runner is PERSISTENT: its Go build cache is
         # already on disk, and this step's save phase tars the whole multi-GB cache on every job,
         # outlives the job's timeout, and is orphaned still compressing (82 of them put the Studio
         # at load 147 on 2026-09-17). internal/ci holds the class test.
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        #
+        # THE BUILD CACHE PATH IS PER OS (2026-09-27, dev push run 36357749371 at 3a3f5be93).
+        # Go's GOCACHE is os.UserCacheDir()/go-build: ~/.cache/go-build on Linux but
+        # ~/Library/Caches/go-build on macOS (the step's own `go env` prints
+        # GOCACHE='/Users/runner/Library/Caches/go-build'). The single path this step carried
+        # never held a macOS build: the macOS entry was 107 MB of module cache against Linux's
+        # 636 MB, every macos-latest shard compiled the tree cold (build 43-90 s, vet 6-13 s,
+        # against 12-18 s and 0-2 s on ubuntu-latest), and seven of eight macOS shards were
+        # cancelled by the two-minute cap. The Linux spelling is unchanged, so the Linux path
+        # list, and with it the Linux cache version and entry, is untouched.
+        #
+        # RESTORE HERE, SAVE AFTER BUILD. actions/cache's own save runs as a post step with
+        # post-if success(), so a job the cap cancels never saves, and a leg that only goes
+        # green once warm would never be warmed. The save below runs as soon as the build is
+        # in the cache, whatever the tests do after it.
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
-            ~/.cache/go-build
+            ${{ runner.os == 'macOS' && '~/Library/Caches/go-build' || '~/.cache/go-build' }}
             ~/go/pkg/mod
           key: ${{ runner.os }}-go-${{ hashFiles('go.mod') }}
           restore-keys: |
@@ -1312,6 +1328,17 @@ jobs:
 
       - name: build
         run: make build
+
+      - name: save go build and module cache
+        # On a miss or a restore-keys fallback only: an exact hit is already the entry. Shards
+        # race for the key; the first reserves it and the rest log a warning and go on.
+        if: runner.environment == 'github-hosted' && steps.gocache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ${{ runner.os == 'macOS' && '~/Library/Caches/go-build' || '~/.cache/go-build' }}
+            ~/go/pkg/mod
+          key: ${{ steps.gocache.outputs.cache-primary-key }}
 
       - name: deal this shard's packages
         # The heavy packages first, one per shard: cmd/nova-bus (46 s -short on

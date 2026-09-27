@@ -1505,7 +1505,8 @@ the allowlist is matched by prefix.
 
 ### `cache` — no cache step on a self-hosted runner
 
-**The rule.** Every `actions/cache` step in `ci.yml` carries
+**The rule.** Every `actions/cache` step in `ci.yml` (including its `restore` and
+`save` halves) carries
 `if: runner.environment == 'github-hosted'`, and every `setup-go` step there says
 `cache: false`; a persistent runner already has its cache on disk.
 **The hurt.** 2026-09-17: the merge gate's darwin leg moved to the Studio's
