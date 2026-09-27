@@ -6,10 +6,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"regexp"
 	"sort"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -99,14 +97,28 @@ func TestReconcilePassTrips(t *testing.T) {
 	}
 	var out, errb bytes.Buffer
 	named := &namedDuties{errOut: &errb, counter: st.CountTrips()}
+	// two passes: the first pays the instance's one-time work (groups
+	// created, pending claimed, tables bound); the second is the tick the
+	// loop repeats every second, and the budget is its
+	var passes []map[string]int64
+	var last map[string]int64
 	loop := &reconcile.Loop{
 		Lease:        lease,
 		Duties:       named.wrap(duties, names),
 		Names:        names,
-		Passes:       1,
+		Passes:       2,
 		Out:          &out,
 		StreamScoped: reconcileStreamScoped,
-		AfterPass:    func(reconcile.PassResult) { named.report(&out, true) },
+		AfterPass: func(reconcile.PassResult) {
+			named.report(&out, true)
+			now := named.counter.ByLabel()
+			delta := map[string]int64{}
+			for k, v := range now {
+				delta[k] = v - last[k]
+			}
+			last = now
+			passes = append(passes, delta)
+		},
 	}
 	if err := loop.Run(ctx); err != nil {
 		t.Fatalf("pass: %v\n%s", err, errb.String())
@@ -117,31 +129,25 @@ func TestReconcilePassTrips(t *testing.T) {
 	if err := lease.Release(ctx); err != nil {
 		t.Fatalf("release: %v", err)
 	}
-
-	// every duty's trips off its DUTY line, the pass's own off the counter
-	line := regexp.MustCompile(`^DUTY (\S+) .* trips=(\d+) err=(.*)$`)
-	got := map[string]int64{}
-	for _, l := range strings.Split(out.String(), "\n") {
-		if m := line.FindStringSubmatch(l); m != nil {
-			n, _ := strconv.ParseInt(m[2], 10, 64)
-			got[m[1]] = n
-			if m[3] != "" {
-				t.Errorf("duty %s: %s", m[1], m[3])
-			}
-		}
+	if len(passes) != 2 {
+		t.Fatalf("%d passes recorded, want 2", len(passes))
 	}
-	got["pass"] = named.counter.Of("pass")
+	if errb.Len() > 0 {
+		t.Errorf("duty errors:\n%s", errb.String())
+	}
+	first, got := passes[0], passes[1]
 	keys := make([]string, 0, len(got))
 	for k := range got {
 		keys = append(keys, k)
 	}
-	sort.Slice(keys, func(i, j int) bool { return got[keys[i]] > got[keys[j]] })
-	var sum int64
+	sort.Slice(keys, func(i, j int) bool { return got[keys[i]] > got[keys[j]] || got[keys[i]] == got[keys[j]] && keys[i] < keys[j] })
+	var sum, sumFirst int64
 	for _, k := range keys {
 		sum += got[k]
-		t.Logf("%-16s trips=%-3d budget=%d", k, got[k], reconcileTripBudget[k])
+		sumFirst += first[k]
+		t.Logf("%-16s trips=%-3d budget=%-3d (first pass %d)", k, got[k], reconcileTripBudget[k], first[k])
 	}
-	t.Logf("%-16s trips=%-3d (the counter's total, the heartbeat's included: %d)", "PASS", sum, named.counter.N())
+	t.Logf("%-16s trips=%-3d (first pass %d; the counter's total, the heartbeat's included: %d)", "PASS", sum, sumFirst, named.counter.N())
 	for _, name := range append(names, "pass") {
 		budget, ok := reconcileTripBudget[name]
 		if !ok {
