@@ -4,6 +4,8 @@ import (
 	"context"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 )
 
 // The one count of a stream set's cards (#4318): the set's ZCARD less the
@@ -13,39 +15,19 @@ import (
 // scope ls, stream ls), the progress duty's PROGRESS left=, and ws show's
 // STREAM line (show.go counts the members it lists by the same rule).
 
-// CardCountCmd is one queued card count: the ZCARD and the sentinel's ZSCORE
-// on the same set, read in the caller's pipeline.
+// CardCountCmd is one queued card count: the ordered set's count with the
+// sentinel left out (internal/ntable.CountCmd: the ZCARD and the excluded
+// member's ZSCORE on the same set, read in the caller's pipeline). The
+// sprint table's stream block counts through the same primitive, bound to
+// the same sets (internal/nsprint/table/streams.go), so the two never
+// disagree.
 type CardCountCmd struct {
-	n    *redis.IntCmd
-	stop *redis.FloatCmd
+	*ntable.CountCmd
 }
 
 // QueueCardCount queues the two reads of one set's card count on pipe.
 func QueueCardCount(ctx context.Context, pipe redis.Pipeliner, epoch uint64, stream, where string) *CardCountCmd {
-	c := &CardCountCmd{n: pipe.ZCard(ctx, KeyAt(epoch, stream, where))}
-	if sid := SentinelID(stream); sid != "" {
-		c.stop = pipe.ZScore(ctx, KeyAt(epoch, stream, where), sid)
-	}
-	return c
-}
-
-// Result is the count: the ZCARD's error when it failed; the sentinel's
-// absence (redis.Nil) is not an error.
-func (c *CardCountCmd) Result() (int64, error) {
-	n, err := c.n.Result()
-	if err != nil {
-		return 0, err
-	}
-	if c.stop != nil && c.stop.Err() == nil {
-		n--
-	}
-	return n, nil
-}
-
-// Val is Result's count, 0 on an error.
-func (c *CardCountCmd) Val() int64 {
-	n, _ := c.Result()
-	return n
+	return &CardCountCmd{CountCmd: ntable.QueueCount(ctx, pipe, KeyAt(epoch, stream, where), SentinelID(stream))}
 }
 
 // QueueStreamCounts queues one stream's card counts on pipe: the six sets of

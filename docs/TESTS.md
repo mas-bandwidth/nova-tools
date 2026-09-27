@@ -877,6 +877,37 @@ REPORT OK checked=1 known=1 unknown=0 changed=- sent=- took=8ms file=cmd/nova-ve
 ```
 
 
+## nova-config
+
+No fixture and no store: the first run reads the kind descriptors and the
+migrations compiled into the binary, so every value below reproduces on
+every bench. The real runs need a Postgres (`nova-config migrate`) and a
+Redis (`nova-config apply`); `docs/nova-config/README.md` walks them, and
+`cmd/nova-config/config_functional_test.go` runs them against a throwaway
+Postgres and a throwaway Redis.
+
+### First run
+
+```text
+$ nova-config kinds
+CONFIG KIND name=machine table=config.machines fields=ssh,os_arch,slots,cores,roles,seat,user,note required=ssh,os_arch,slots
+CONFIG KIND name=friend table=config.friends fields=machine,slots,harness,wake,roles,logins,note required=machine,slots
+CONFIG KINDS count=2
+
+$ nova-config migrate --print
+MIGRATION version=1 file=0001_schema.sql lines=23
+MIGRATION version=2 file=0002_machine.sql lines=15
+MIGRATION version=3 file=0003_friend.sql lines=15
+CONFIG MIGRATE print=3 pg=-
+```
+
+`kinds` is one line per kind: its table under schema `config`, its fields in
+the order every line prints them, and the fields `add` requires. `migrate
+--print` lists the migrations this binary carries and connects to nothing;
+`migrate --pg <dsn>` applies the ones the database lacks, each in its own
+transaction, and applies nothing twice.
+
+
 ## nova-card
 
 The card wrapper (#3059) is started by `nova-sprint card launch --stdin`, never
@@ -1136,4 +1167,44 @@ STATUS RUN id=cancel state=cancelled queued=2026-09-23T10:05:00Z queue=5s drain=
 STATUS RUN id=retry state=completed queued=2026-09-23T10:10:00Z queue=20s drain=- exec=4m0s e2e=4m20s attempts=retry.a1,retry.a2 prior_failures=retry.a1:lint
 STATUS RUN id=waiting state=queued queued=2026-09-23T10:20:00Z queue=10m0s+ drain=- exec=- e2e=10m0s+ attempts=- prior_failures=-
 STATUS OK store=cmd/nova-test/testdata/runs since=2026-09-23T00:00:00Z now=2026-09-23T10:30:00Z runs=4 shown=4 older=1
+```
+
+## nova-table
+
+Run by `cmd/nova-table/firstrun_test.go` on a throwaway redis-server holding
+the nova_sprint function library (`cell move` is one call of `ns_oset_move`),
+so it runs in the functional tier. The documented lines name no `--redis`: on
+a bench the seat's address is the default (`NOVA_SPRINT_REDIS`, then
+`NOVA_REDIS_ADDR`, then the seat's row), and the test appends the throwaway
+server's. Every value below reproduces; nothing is normalised. The usage
+banner's `example:` block is this same sitting, line for line.
+
+### First run
+
+```text
+$ nova-table create demo --columns job:text:none,ready,working,done
+TABLE CREATE table=demo columns=4
+
+$ nova-table row add demo build
+TABLE ROW ADD table=demo row=build cols=4 bound=0
+
+$ nova-table cell add demo build ready b1
+TABLE CELL table=demo row=build col=ready n=1
+
+$ nova-table cell add demo build ready b2
+TABLE CELL table=demo row=build col=ready n=2
+
+$ nova-table cell move demo build ready working b1
+TABLE MOVE table=demo row=build member=b1 from=ready to=working n=1
+
+$ nova-table show demo
+TABLE table=demo columns=4 rows=1
+TABLE ROW table=demo row=build ready=1 working=1 done=0
+
+$ nova-table render demo
+job   | ready | working | done
+------+-------+---------+-----
+build |     1 |       1 |    0
+------+-------+---------+-----
+total |     1 |       1 |    0
 ```

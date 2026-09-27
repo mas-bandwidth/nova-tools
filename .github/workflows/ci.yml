@@ -1129,6 +1129,14 @@ jobs:
         # loopback; the unit tier refuses one. It does not dial the fleet store.
         run: bash .github/scripts/install-redis-server.sh
 
+      - name: install postgres
+        if: matrix.entry.packages != ''
+        # nova-config's functional tests spawn a throwaway Postgres (initdb,
+        # pg_ctl) on loopback under the test's directory
+        # (internal/nsprint/testutil/pg); a runner without the binaries
+        # FAILS them, never skips. It does not dial the fleet store.
+        run: bash .github/scripts/install-postgres.sh
+
       - name: functional tests
         if: matrix.entry.packages != ''
         run: make test-functional PKGS="${{ matrix.entry.packages }}"
