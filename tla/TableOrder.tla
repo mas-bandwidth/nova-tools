@@ -22,6 +22,12 @@
 \*   "item"      row move --first moves the last row, whatever was asked
 \*   "del"       col del removes a column that holds something
 \*   "bindloss"  bind drops an omitted row that holds something
+\*   "once"      row sort without --keep leaves the rows as they were
+\*
+\* Bounds of this instance, stated so the claim is no wider than the check:
+\* a combined call that sorts and moves places at --first or --last only,
+\* and one that sorts and orders names one row; alone, row move takes all
+\* four places and row order every list. Three rows, three columns, depth 4.
 \*
 \* Not here: labels and sorting by a column's value (modelled as sorting by
 \* name: the key differs, the properties do not), epochs, receipts, rename,
@@ -125,7 +131,8 @@ RowOrder(first) ==
  IN IF sorted \/ ~(Range(first) \subseteq Range(rows)) THEN Refuse("row-order", q)
     ELSE Commit("row-order", [State EXCEPT !.rows = Ordered(rows, first)], q)
 \* row sort: once, standing (--keep), or the standing sort ended (--manual).
-Base(mode) == IF mode = "manual" THEN rows ELSE Sorted(Range(rows))
+Base(mode) == IF mode = "manual" \/ (mode = "once" /\ Broken = "once") THEN rows
+              ELSE Sorted(Range(rows))
 RowSort(mode) ==
  Commit("row-sort", [State EXCEPT !.rows = Base(mode), !.sorted = (mode = "keep")],
         [NoReq EXCEPT !.mode = mode])
@@ -209,6 +216,13 @@ AddIsExact == (Ok({"rows-add"}) /\ ~prev.sorted) =>
 BindIsExact == Ok({"bind"}) =>
  /\ Range(rows) = Range(req.list)
  /\ ~prev.sorted => rows = req.list
+\* A sort leaves the same rows in ascending order, once or standing, and
+\* says which it is; --manual leaves them where they were.
+RowSortIsExact == Ok({"row-sort"}) =>
+ /\ Range(rows) = Range(prev.rows)
+ /\ req.mode = "manual" => rows = prev.rows
+ /\ req.mode # "manual" => Ascending(rows)
+ /\ sorted = (req.mode = "keep")
 \* While a sort stands, the rows are in its order after every call.
 StandingSortHolds == sorted => Ascending(rows)
 \* Order verbs permute; they add nothing, lose nothing, and hold what was held.

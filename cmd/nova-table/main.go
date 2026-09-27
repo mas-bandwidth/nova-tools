@@ -12,6 +12,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -28,7 +29,8 @@ import (
 const usageDetails = `Table write verbs take --epoch <observed epoch> (default 0), --actor, --fence,
 --idem (receipt metadata) and --receipt. create also takes --epoch-key,
 --epoch-field (default n), and --member-prefix (default table::member:).
-A stale epoch is refused; drop retains the template unless --definition.
+A stale epoch is refused. drop keeps the saved column definition unless
+--definition is given; snapshots from earlier epochs remain available.
 View configuration has no table epoch or receipt.
 Quote column specs containing parentheses, for example 'done,pct:pct(done)'.
 
@@ -43,22 +45,24 @@ score order), first, last, text (the value written by row set, no set), or pct(<
 (the share of all count columns in the row). The row label is a separate cell.
 The fold is
 what the footer prints over the column, sum (the default for count), max,
-avg (of count cells), union (of members), pooled (for pct), or none.
+avg (of count cells), union (of members), pooled (the default for pct), or none.
 Known-empty percentages print 0.0%; unread inputs print ?.
 set --hide/--show hides or shows columns without removing their data. A row's cells are owned by the table unless
 row add binds a column to a set another tool owns (<col>=<key>): a bound
 cell is a view, read freely, and cell add, cell remove, cell move and clear
 refuse it, naming the --owner verb. --exclude names one member the row's
-counts and members leave out. render prints the table and nothing else,
-nothing at all when it is empty; watch redraws it in place every --every
+counts and members leave out. render <table> prints the table and nothing else,
+nothing at all when it is empty. render --view <name> prints one frame with
+the view's timestamp, title and summary. watch redraws it in place every --every
 (1s) with no shell loop, or publishes it to --out by atomic rename.
 
 Order is kept by the table: rows draw in the order they were added and
 columns in the order they were declared, until a verb moves them. row sort
 orders the rows once; with --keep (by name or label) the sort stands, every
 row added later takes its place, and row move and row order are refused
-until row sort --manual. col del refuses a column that holds members or
-text, naming what to move or clear first.
+until row sort --manual. row del of a missing row succeeds with existed=0.
+col del refuses a column that holds members or text, naming all blocking
+members and batch removal commands, or the text to clear first.
 
 shell reads one command per line on a shared connection. It prints write
 receipts by default; --receipt=false disables them. Enter help, quit or exit.
@@ -213,22 +217,38 @@ func redisDefault(getenv func(string) string) string {
 // line: every argument the flag set does not take is a positional, in
 // order, so `create demo --columns ...` and `create --columns ... demo`
 // read the same.
-func parseInterleaved(fs interface {
-	Parse([]string) error
-	Args() []string
-}, args []string) ([]string, error) {
+func parseInterleaved(fs *flag.FlagSet, args []string) ([]string, error) {
 	var pos []string
 	rest := args
 	for len(rest) > 0 {
-		if err := fs.Parse(rest); err != nil {
+		if rest[0] == "--" {
+			return append(pos, rest[1:]...), nil
+		}
+		if !strings.HasPrefix(rest[0], "-") || rest[0] == "-" {
+			pos = append(pos, rest[0])
+			rest = rest[1:]
+			continue
+		}
+		// Parse one flag and its value at a time, so flag.Parse cannot consume
+		// a -- separator before this loop sees it. A flag value of -- is legal.
+		n := 1
+		name, _, inline := strings.Cut(strings.TrimLeft(rest[0], "-"), "=")
+		if f := fs.Lookup(name); f != nil && !inline && len(rest) > 1 {
+			boolean, ok := f.Value.(interface{ IsBoolFlag() bool })
+			if !ok || !boolean.IsBoolFlag() {
+				n = 2
+			}
+		}
+		if err := fs.Parse(rest[:n]); err != nil {
+			const prefix = "flag provided but not defined: "
+			if bad, found := strings.CutPrefix(err.Error(), prefix); found {
+				var names []string
+				fs.VisitAll(func(f *flag.Flag) { names = append(names, "--"+f.Name) })
+				return nil, fmt.Errorf("unknown flag --%s; %s flags: %s; run: nova-table help %s", strings.TrimLeft(bad, "-"), fs.Name(), strings.Join(names, ", "), fs.Name())
+			}
 			return nil, err
 		}
-		rest = fs.Args()
-		if len(rest) == 0 {
-			break
-		}
-		pos = append(pos, rest[0])
-		rest = rest[1:]
+		rest = rest[n:]
 	}
 	return pos, nil
 }

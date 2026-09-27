@@ -47,7 +47,7 @@ func init() {
 		{"check", "<table>", "check demo", (*application).cmdCheck},
 		{"clear", "<table>", "clear demo", (*application).cmdClear},
 		{"show", "<table> [--at-epoch <n>]", "show demo", (*application).cmdShow},
-		{"render", "<table> [--at-epoch <n>] [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>]", "render demo --label-width 16", (*application).cmdRender},
+		{"render", "<table> | --view <name> [--at-epoch <n>] [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>]", "render --view work", (*application).cmdRender},
 		{"watch", "<table>[,<table>...] | --view <name> [--every <duration>] [--out <file>] [--title <text>] [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>] [--once]", "watch --view work --once", (*application).cmdWatch},
 		{"view set", "<name> --tables <a,b,...> [--title <text>] [--summary <count-column>]", "view set work --tables demo --title Work --summary done", func(app *application, a []string, o, e io.Writer) int {
 			return app.cmdView(append([]string{"set"}, a...), o, e)
@@ -201,6 +201,9 @@ func printCommandHelp(out io.Writer, c command, fs *flag.FlagSet) {
 				fmt.Fprintln(out, "  --seat <name>  use a configured nova-sprint seat")
 			}
 		}
+	}
+	if c.name == "row del" {
+		fmt.Fprintln(out, "\nA missing row succeeds with existed=0 and leaves a no-op receipt.")
 	}
 	fmt.Fprintln(out, "\nexit codes: 0 done, 1 refused, 2 usage")
 }

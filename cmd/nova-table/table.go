@@ -22,7 +22,7 @@ func (app *application) cmdCreate(args []string, stdout, stderr io.Writer) int {
 	epochKey := fs.String("epoch-key", "", "hash key naming the epoch domain (empty means epoch 0)")
 	epochField := fs.String("epoch-field", "n", "field in the epoch hash")
 	memberPrefix := fs.String("member-prefix", "", "member record prefix (default table::member:)")
-	columns := fs.String("columns", "", "the columns, name[:projection[:fold[:label]]] each, comma-separated")
+	columns := fs.String("columns", "", "the columns, name[:projection[:fold[:label]]] each, comma-separated; pct defaults to the pooled fold")
 	footer := fs.String("footer", ntable.DefaultFooter, "the footer row's label (none by default)")
 	widths := fs.String("width", "", "fixed column widths, col=n,...")
 	pos, err := parseInterleaved(fs, args)
@@ -33,7 +33,7 @@ func (app *application) cmdCreate(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, verb, "wants one table name: create <table> --columns <name[:projection[:fold[:label]]],...>")
 	}
 	if *columns == "" {
-		return refuse(stderr, verb, "--columns wants the columns, name[:projection[:fold[:label]]] each, comma-separated")
+		return refuse(stderr, verb, "--columns wants the columns, name[:projection[:fold[:label]]] each, comma-separated; pct defaults to the pooled fold")
 	}
 	cols, err := ntable.ParseColumns(*columns)
 	if err != nil {
@@ -158,7 +158,7 @@ func (app *application) cmdDrop(args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New(verb)
 	addr := app.redisFlag(fs)
 	write, receipt := app.writeFlags(fs)
-	definition := fs.Bool("definition", false, "also remove the template; keep materialised history")
+	definition := fs.Bool("definition", false, "also remove the saved column definition; keep snapshots from earlier epochs")
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
@@ -333,14 +333,18 @@ func (app *application) cmdRender(args []string, stdout, stderr io.Writer) int {
 	const verb = "render"
 	fs := verbflag.New(verb)
 	addr := app.redisFlag(fs)
-	atEpoch := fs.String("at-epoch", "", "inspect a materialised epoch instead of the active one")
+	view := fs.String("view", "", "render a stored view once, including its title and summary")
+	atEpoch := fs.String("at-epoch", "", "read a saved epoch snapshot (table targets only)")
 	rf := declareRenderFlags(fs)
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	if len(pos) != 1 {
-		return refuse(stderr, verb, "wants one table name: render <table> [--hide-zero-rows] [--width col=n,...]")
+	if (*view != "" && len(pos) != 0) || (*view == "" && len(pos) != 1) {
+		return refuse(stderr, verb, "wants one table name or --view <name>: render <table> | --view <name> [--hide-zero-rows] [--width col=n,...]")
+	}
+	if *view != "" && *atEpoch != "" {
+		return refuse(stderr, verb, "--at-epoch applies to a table; stored views read the active epochs")
 	}
 	opts, err := rf.opts()
 	if err != nil {
@@ -359,6 +363,13 @@ func (app *application) cmdRender(args []string, stdout, stderr io.Writer) int {
 		return code
 	}
 	defer st.Close()
+	if *view != "" {
+		text, err := viewReader(c, *view, opts)(ctx)
+		if err != nil {
+			return storeRefusal(stderr, verb, err)
+		}
+		return publish("", text, stdout, stderr, verb)
+	}
 	var t ntable.Table
 	if *atEpoch == "" {
 		t, err = ntable.Read(ctx, c, pos[0])

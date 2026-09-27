@@ -150,9 +150,10 @@ integers, including values beyond floating-point integer precision.
 Columns and footer form a stable template. Presence, rows, metadata and owned
 cells belong to one epoch. Advancing the domain exposes that template with
 empty rows while preserving historical data and member links. `clear` empties
-only the active epoch. `drop` removes its presence; a later epoch again sees
-the template. Only `drop --definition` removes the template. Every materialised
-epoch retains a definition snapshot, and `show`/`render --at-epoch <n>` (module
+only the active epoch. `drop` removes its active rows and owned cells but keeps
+the saved column definition, which is reused in later epochs. `drop --definition`
+also removes that saved definition. Snapshots from earlier epochs remain, and
+`show`/`render --at-epoch <n>` (module
 `ReadAt`) can inspect its history. A permanent identity hash retains the epoch
 domain and member prefix, preventing template recreation from silently
 reassigning old records to a different namespace. `show` reports epoch and
@@ -228,7 +229,9 @@ to the display. Connection setup is excluded from the application-trip count.
 
 Every store verb takes `--redis <addr>`, else `NOVA_SPRINT_REDIS`, then
 `NOVA_REDIS_ADDR`, then the seat's address, and dials as the seat nova-sprint
-dials as. Flags may follow the words. One typed line per success on stdout;
+dials as. Flags may follow the words; `--` ends flag parsing so a member such as
+`--pending` can be passed literally. Unknown flags name the command's available
+flags and its specific help page. One typed line per success on stdout;
 one line on stderr and exit 2 for a usage refusal, exit 1 when the store
 said no.
 
@@ -261,6 +264,7 @@ nova-table check <table>
 nova-table clear <table>
 nova-table show <table> [--at-epoch <n>]
 nova-table render <table> [--at-epoch <n>] [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>]
+nova-table render --view <name> [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>]
 nova-table view set <name> --tables <a,b,...> [--title <text>] [--summary <count-column>]
 nova-table view show <name>
 nova-table view list
@@ -271,10 +275,10 @@ nova-table watch <table>[,<table>...] | --view <name> [--every <duration>] [--ou
 | verb | prints |
 | --- | --- |
 | `create` | `TABLE CREATE table=<t> columns=<n>`; an existing table with the same definition is left; another definition is refused |
-| `drop` | `TABLE DROP table=<t> rows=<n>`; the active epoch's rows and owned cells go; the template remains unless `--definition`; a bound set stays |
+| `drop` | `TABLE DROP table=<t> rows=<n>`; active rows and owned cells go; the saved column definition stays unless `--definition`; earlier epoch snapshots and external bound sets stay |
 | `list` | `TABLE LIST tables=<n>`, then `TABLE table=<t> columns=<n> rows=<n>` per table |
 | `row add` | `TABLE ROW ADD table=<t> row=<r> cols=<n> bound=<n>`; a row already there keeps its place and its cells; a binding wants `--owner` |
-| `row del` | `TABLE ROW DEL table=<t> row=<r> existed=<0\|1>`; its owned cells go with it |
+| `row del` | `TABLE ROW DEL table=<t> row=<r> existed=<0\|1>`; its owned cells go with it; a missing row succeeds with `existed=0` and a no-op receipt |
 | `row move` | `TABLE ROW MOVE table=<t> row=<r> place=<first\|last\|before\|after> [of=<row>]`; the other rows keep their order |
 | `row order` | `TABLE ROW ORDER table=<t> first=<r,r,...>`; the named rows first, in the order named; the rest follow in theirs |
 | `row sort` | `TABLE ROW SORT table=<t> by=<key> desc=<bool> keep=<bool>`, or `manual=true` |
@@ -286,7 +290,7 @@ nova-table watch <table>[,<table>...] | --view <name> [--every <duration>] [--ou
 | `cell members` | `TABLE CELL ... n=<n>`, then `TABLE MEMBER table=<t> row=<r> col=<c> member=<m> score=<s>` per member |
 | `clear` | `TABLE CLEAR table=<t> rows=<n> ms=<n>`; one call; the definition stays |
 | `show` | `TABLE table=<t> columns=<n> rows=<n> trips=1 epoch=<n> revision=<n>`, then `TABLE ROW table=<t> row=<r> <col>=<projected-value> ...` per row, including hidden rows/columns, text, members and percentages |
-| `render` | the text, nothing else; nothing at all when the table is empty |
+| `render` | table text, empty when the table is empty; `--view` prints one stored-view frame with timestamp, title and summary |
 | `watch` | the text, once per tick, in place or to `--out` |
 
 Empty values and values holding spaces or quotes are quoted, `note=""`,
@@ -303,8 +307,9 @@ refuses with the two epochs. Use `check` for a full audit of all record/set link
 A custom member prefix needs read access to that namespace.
 
 `view list` lists stored view names in lexical order. `view show` prints the
-configuration, including its summary column; `watch --view <name> --once` renders
-it. `view del` deletes only that configuration and reports `existed=0|1`; tables
+configuration, including its summary column; `render --view <name>` renders it
+once, as does `watch --view <name> --once`. `--at-epoch` is for table targets;
+stored views read active epochs. `view del` deletes only that configuration and reports `existed=0|1`; tables
 and their receipts remain. Dropping or renaming a table does not rewrite a view;
 edit or delete the reference explicitly. A view summary names a **count** column
 in its first table, such as `done`, not a `pct(done)` formula.
@@ -444,13 +449,15 @@ when a standing sort is active.
 
 While a sort stands, `row move` and `row order` are refused and name
 `row sort <table> --manual`. `col del` refuses a column that holds members
-(naming them and the `cell remove` to run), a text column with a value (clear
+(naming all blocking rows and members, with one batch `cell remove` command per
+occupied cell), a text column with a value (clear
 it with `row set <table> <row> <col>=`), a column a `pct(...)` column reads
 (remove that one first) and the last column. Quote a column spec that has
 parentheses: the shell reads `pct(busy)` unquoted as a pattern.
 
-`ns_table_bind` (the sprint's stream block) states its rows' order itself and
-is not re-sorted. The model is `tla/TableOrder.tla`; the tests are
+`ns_table_bind` (the sprint's stream block) uses its supplied order in manual
+mode and maintains the table's standing sort when one is active. The model is
+`tla/TableOrder.tla`; the tests are
 `internal/ntable/order_functional_test.go`.
 
 ## The render rules

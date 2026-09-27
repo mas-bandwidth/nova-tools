@@ -49,6 +49,7 @@ cell move jobs 'the tests' ready working m1 m2
 member find jobs m1
 view set work --tables jobs --summary done
 watch --view work --once
+render --view work
 nova-table show jobs
 quit
 drop jobs
@@ -88,7 +89,7 @@ drop jobs
 		}
 	}
 	t.Logf("wire: hellos=%d client_connections=%d application_calls=%d", hellos, len(clients), calls)
-	if hellos != 1 || len(clients) != 1 || calls != 10 {
+	if hellos != 1 || len(clients) != 1 || calls != 12 {
 		t.Fatalf("wire: hello=%d clients=%d calls=%d", hellos, len(clients), calls)
 	}
 	if strings.Count(out.String(), "TABLE RECEIPT ") != 5 {
