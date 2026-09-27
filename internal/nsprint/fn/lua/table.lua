@@ -411,7 +411,7 @@ do
       if not rows then return why end
       T.rank(d, rows)
     end
-    local outcome = #d.commands == 0 and not d.newtemplate and d.snap._present ~= '0' and 'noop' or 'changed'
+    local outcome = #d.commands == 0 and not d.newtemplate and not d.definition_changed and d.snap._present ~= '0' and 'noop' or 'changed'
     if d.newtemplate then
       redis.call('SCARD', 'tables')
       T.hset(d.commands, d.key, d.h)

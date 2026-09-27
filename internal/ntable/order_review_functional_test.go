@@ -220,3 +220,42 @@ func TestOrderReceiptsNameEveryRankedRow(t *testing.T) {
 		})
 	}
 }
+
+func TestOrderDefinitionOnlyReceiptsReportChange(t *testing.T) {
+	t.Parallel()
+	_, c := live(t)
+	ctx := context.Background()
+	orderTable(t, c)
+	// Put rows in name order before enabling a standing sort: the definition
+	// changes even when no rank needs to be written.
+	if _, err := ntable.Set(ctx, c, "t", ntable.SetOpts{RowSort: &ntable.Sort{By: "name"}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range []struct {
+		change ntable.SetOpts
+		want   string
+	}{
+		{ntable.SetOpts{RowSort: &ntable.Sort{By: "name", Keep: true}}, "changed"},
+		{ntable.SetOpts{RowSort: &ntable.Sort{By: "name", Keep: true}}, "noop"},
+		{ntable.SetOpts{RowSort: &ntable.Sort{Manual: true}}, "changed"},
+		{ntable.SetOpts{RowSort: &ntable.Sort{Manual: true}}, "noop"},
+		{ntable.SetOpts{ColMove: &ntable.Reorder{Item: "note", Place: at("first", "")}}, "changed"},
+		{ntable.SetOpts{ColMove: &ntable.Reorder{Item: "note", Place: at("first", "")}}, "noop"},
+		{ntable.SetOpts{Footer: ptr("total")}, "changed"},
+	} {
+		var receipt ntable.Receipt
+		if _, err := ntable.Set(ctx, c, "t", step.change, ntable.WriteOptions{Receipt: &receipt}); err != nil {
+			t.Fatal(err)
+		}
+		if receipt.Outcome != step.want || receipt.After != receipt.Before+1 {
+			t.Fatalf("definition edit %+v: receipt %+v, want %s", step.change, receipt, step.want)
+		}
+		events, err := c.XRevRangeN(ctx, "table:t:changes", "+", "-", 1).Result()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if events[0].Values["outcome"] != step.want {
+			t.Fatalf("durable receipt: %v, want %s", events[0], step.want)
+		}
+	}
+}
