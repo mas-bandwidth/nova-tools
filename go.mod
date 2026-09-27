@@ -10,6 +10,7 @@ require (
 	github.com/yuin/gopher-lua v1.1.1
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.59.0
+	pgregory.net/rapid v1.3.0
 )
 
 require (
