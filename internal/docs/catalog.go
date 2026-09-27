@@ -79,7 +79,7 @@ var DefaultCatalog = []Entry{
 	E("internal/ghcapture", "read-only GitHub issue adapter for nova-work", "go test ./internal/ghcapture/...", "go test ./internal/ghcapture/..."),
 	Page("internal/ghevent", "GitHub webhook to Redis stream", "go test ./internal/ghevent", "go test ./internal/ghevent"),
 	E("internal/ghevent/testdata", "GitHub delivery fixtures for the decoder", "go test ./internal/ghevent", "go test ./internal/ghevent"),
-	E("internal/ghevent/wire", "shared GitHub event stream identity without ingestion dependencies", "go test ./internal/ci", "go test ./internal/gh ./internal/wake"),
+	E("internal/ghevent/wire", "shared GitHub event stream identity without ingestion dependencies", "go test ./internal/ci", "go test -tags functional ./internal/gh ./internal/wake"),
 	E("internal/goenv", "Go environment scrubber for child processes", "go test ./internal/goenv", "go test ./internal/goenv"),
 	E("internal/hygiene", "clean checkout and leak assertions", "go test ./internal/hygiene", "go test ./internal/hygiene"),
 	E("internal/jev", "Jev's mechanical passes (lint, scope, base) as one JEV gate line", "go test ./internal/jev", "go test ./internal/jev"),
