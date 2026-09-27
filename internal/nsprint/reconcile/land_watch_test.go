@@ -1,3 +1,5 @@
+//go:build functional
+
 package reconcile_test
 
 import (
@@ -8,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land/stream"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 )
 
 // TestLandWatchAlarmsMergeCardAndEscalation (nova-tools #4324): on an
@@ -25,7 +27,7 @@ import (
 // merging empties both records go.
 func TestLandWatchAlarmsMergeCardAndEscalation(t *testing.T) {
 	t.Parallel()
-	mr := miniredis.RunT(t)
+	mr := testutil.StartStore(t)
 	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = c.Close() })
 	ctx := context.Background()
@@ -79,7 +81,13 @@ func TestLandWatchAlarmsMergeCardAndEscalation(t *testing.T) {
 	if v, _ := c.HGet(ctx, reconcile.LandMergeKey(s), "task").Result(); v != "merge-swarm-cards-1" {
 		t.Fatalf("land:merge task %q", v)
 	}
-	body, _ := c.Get(ctx, reconcile.LandBriefKey("merge-swarm-cards-1")).Result()
+	// The brief is a view of the stream (#4449): rendered when the card is
+	// read, never written by the pass.
+	cardRec := map[string]string{"stream": s, "repo": "mas-bandwidth/nova-tools", "ref": "dev"}
+	body, err := reconcile.MergeBriefFor(ctx, c, "merge-swarm-cards-1", cardRec, now)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, want := range []string{"1. t1 pr=no-pr order=10", "2. t2 pr=nova-tools#2 order=20", "--dry-run", "MERGE-NOTE by=rowan at=1 the moves API changed", "BLOCKED cross-stream"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("brief lacks %q:\n%s", want, body)
@@ -96,7 +104,7 @@ func TestLandWatchAlarmsMergeCardAndEscalation(t *testing.T) {
 	if o := pass(5 * time.Minute); len(pushed) != 1 || strings.Contains(o, "LAND-SLOW") {
 		t.Fatalf("pass 2: pushed=%d out=%s", len(pushed), o)
 	}
-	if body, _ := c.Get(ctx, reconcile.LandBriefKey("merge-swarm-cards-1")).Result(); !strings.Contains(body, "2. t2 pr=nova-tools#2 order=20 merging_for=3m0s") {
+	if body, _ := reconcile.MergeBriefFor(ctx, c, "merge-swarm-cards-1", cardRec, now); !strings.Contains(body, "2. t2 pr=nova-tools#2 order=20 merging_for=3m0s") {
 		t.Fatalf("brief after the move's stamp:\n%s", body)
 	}
 	// Pass 3 at eleven: LAND-SLOW, one note; pass 4 at twelve: the line
@@ -105,8 +113,12 @@ func TestLandWatchAlarmsMergeCardAndEscalation(t *testing.T) {
 	if !strings.Contains(o, "LAND-SLOW swarm:\\x20cards oldest=t1 age=11m0s max=10m0s\n") || len(wakes) != 1 || wakes[0].Oldest != "t1" || wakes[0].Wall {
 		t.Fatalf("pass 3:\n%s wakes=%+v", o, wakes)
 	}
-	if rec, _ := c.HGetAll(ctx, reconcile.LandSlowKey(s)).Result(); rec["oldest"] != "t1" || rec["stalled"] != "0" || rec["noted"] != "t1@1700000000000" {
+	if rec, _ := c.HGetAll(ctx, reconcile.LandSlowKey(s)).Result(); rec["oldest"] != "t1" || rec["stalled"] != "0" {
 		t.Fatalf("land:slow %v", rec)
+	}
+	// The words noted follow the member, for its stay (LandWatch.tla L2).
+	if v, _ := c.HGet(ctx, reconcile.LandNotedKey(s), "t1").Result(); v != "LAND-SLOW" {
+		t.Fatalf("land:noted t1 = %q", v)
 	}
 	// Pass 4 at twelve: nothing changed, so nothing prints; the record
 	// moved; still one note.
@@ -148,12 +160,12 @@ func TestLandWatchAlarmsMergeCardAndEscalation(t *testing.T) {
 	if pass(35 * time.Minute); len(pushed) != 3 || pushed[2].ID != "merge-swarm-cards-2" || pushed[2].Kind != "merge" {
 		t.Fatalf("after the escalation closed: %+v", pushed)
 	}
-	// The re-cut dropped the closed card's brief and wrote the new one.
-	if n, _ := c.Exists(ctx, reconcile.LandBriefKey("merge-swarm-cards-1")).Result(); n != 0 {
-		t.Fatal("the closed card's brief is still there")
+	// The new card's brief is the stream's view, both members.
+	if body, _ := reconcile.MergeBriefFor(ctx, c, "merge-swarm-cards-2", cardRec, now); !strings.Contains(body, "--card merge-swarm-cards-2") || !strings.Contains(body, "2. t2 pr=nova-tools#2") {
+		t.Fatalf("the new card's brief:\n%s", body)
 	}
-	if n, _ := c.Exists(ctx, reconcile.LandBriefKey("merge-swarm-cards-2")).Result(); n != 1 {
-		t.Fatal("no brief for the new card")
+	if v, _ := c.HGet(ctx, reconcile.LandNotedKey(s), "t1").Result(); v != "LAND-SLOW,LAND-WALL" {
+		t.Fatalf("land:noted t1 after the wall = %q", v)
 	}
 	// The landing moved the members: the card fields, the brief, the slow
 	// and first-seen records go; seq stays so the next episode's id is new.
@@ -161,8 +173,13 @@ func TestLandWatchAlarmsMergeCardAndEscalation(t *testing.T) {
 	if o := pass(36 * time.Minute); o != "" || len(pushed) != 3 {
 		t.Fatalf("empty stream: %q pushed=%d", o, len(pushed))
 	}
-	if n, _ := c.Exists(ctx, reconcile.LandSlowKey(s), reconcile.LandMergingKey(s), reconcile.LandBriefKey("merge-swarm-cards-2")).Result(); n != 0 {
+	if n, _ := c.Exists(ctx, reconcile.LandSlowKey(s), reconcile.LandMergingKey(s), reconcile.LandNotedKey(s)).Result(); n != 0 {
 		t.Fatalf("records left: %d", n)
+	}
+	// No brief for a card whose stream has nothing merging: it renders from
+	// its title alone.
+	if body, err := reconcile.MergeBriefFor(ctx, c, "merge-swarm-cards-2", cardRec, now); err != nil || body != "" {
+		t.Fatalf("brief after the landing: %q %v", body, err)
 	}
 	if rec, _ := c.HGetAll(ctx, reconcile.LandMergeKey(s)).Result(); len(rec) != 1 || rec["seq"] != "2" {
 		t.Fatalf("land:merge after the episode: %v", rec)
@@ -180,7 +197,7 @@ func TestLandWatchAlarmsMergeCardAndEscalation(t *testing.T) {
 // in the same episode adds none.
 func TestLandWatchNoteGoesToTheOutbox(t *testing.T) {
 	t.Parallel()
-	mr := miniredis.RunT(t)
+	mr := testutil.StartStore(t)
 	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = c.Close() })
 	ctx := context.Background()
@@ -221,7 +238,7 @@ func TestLandWatchNoteGoesToTheOutbox(t *testing.T) {
 // Push (the pushed card's task is open) and fixed friends.
 func newWatchFixture(t *testing.T) (*redis.Client, *reconcile.LandWatch, *[]reconcile.MergeCard, *bytes.Buffer, func() string) {
 	t.Helper()
-	mr := miniredis.RunT(t)
+	mr := testutil.StartStore(t)
 	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = c.Close() })
 	ctx := context.Background()

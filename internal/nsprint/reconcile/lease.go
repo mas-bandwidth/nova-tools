@@ -34,6 +34,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/redis/go-redis/v9"
 	"os"
 	"strconv"
 	"sync"
@@ -260,6 +261,70 @@ func (l *Lease) Renew(ctx context.Context) error {
 		l.renewedAt(sent)
 	}
 	return err
+}
+
+// RenewAnd is Renew with more on the same round trip (2026-09-27, Glenn:
+// batch): queue adds the pass's other reads to the pipeline the renewal
+// rides, so the renewal and the pit stop read cost one trip. A renewal
+// within renewAfter of the last sends nothing, and the queue rides alone.
+// Under a RenewSeam (a test's) the seam renews and the queue runs after.
+func (l *Lease) RenewAnd(ctx context.Context, queue func(pipe redis.Pipeliner)) error {
+	if err := l.fencedErr(); err != nil {
+		return err
+	}
+	l.rmu.Lock()
+	defer l.rmu.Unlock()
+	if err := l.fencedErr(); err != nil {
+		return err
+	}
+	due := true
+	if last := l.lastRenewed(); !last.IsZero() && l.now().Sub(last) < l.renewAfter {
+		due = false
+	}
+	if l.RenewSeam != nil {
+		if due {
+			err := l.RenewSeam(ctx)
+			if errors.Is(err, ErrFenced) {
+				l.Fence(err)
+			}
+			if err != nil {
+				return err
+			}
+			l.renewedAt(l.now())
+		}
+		pipe := l.st.Client().Pipeline()
+		queue(pipe)
+		_, err := pipe.Exec(ctx)
+		return err
+	}
+	sent := l.now()
+	pipe := l.st.Client().Pipeline()
+	var renew *redis.Cmd
+	if due {
+		renew = pipe.FCall(ctx, fnRenew, nil, l.token, l.ttl.Milliseconds())
+	}
+	queue(pipe)
+	_, _ = pipe.Exec(ctx)
+	if renew != nil {
+		reply, err := renew.StringSlice()
+		if err != nil {
+			return fmt.Errorf("reconcile %s: %w", fnRenew, err)
+		}
+		if len(reply) == 0 {
+			return fmt.Errorf("reconcile %s: empty reply", fnRenew)
+		}
+		if reply[0] == "FENCED" {
+			holder := ""
+			if len(reply) >= 3 && reply[1] != "" {
+				holder = fmt.Sprintf(" (holder instance=%s host=%s)", reply[1], reply[2])
+			}
+			err := fmt.Errorf("instance=%s%s: %w", l.instance, holder, ErrFenced)
+			l.Fence(err)
+			return err
+		}
+		l.renewedAt(sent)
+	}
+	return nil
 }
 
 // heartbeat renews the lease every l.every until Release or a fence. A

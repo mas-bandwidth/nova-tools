@@ -1,0 +1,162 @@
+//go:build functional
+
+package main
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"sort"
+	"strconv"
+	"testing"
+	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/redis/go-redis/v9"
+)
+
+// reconcileTripBudget is each duty's round trips per pass, the most it may
+// make over a store shaped like the fleet's (below). Glenn 2026-09-27: "You
+// always need to batch redis. This is standard." The store is 128 ms from
+// the Studio, so a pass of 28 trips took 3.5 s on a 1 s tick. A duty's reads
+// go in one pipeline (two when a read depends on a read) and its writes in
+// one function or pipeline; the DUTY line prints trips=<n> and this test
+// pins it. "pass" is the loop's own: the renew, the pit stop read and the
+// record.
+var reconcileTripBudget = map[string]int64{
+	"pass":            2, // the renewal with the pit stops, then the record
+	"fleet":           1,
+	"dev-red":         1,
+	"fleet-deploy":    1,
+	"land":            1, // the take-all call; the landing itself runs on its own goroutine under "land-worker"
+	"land-watch":      1,
+	"progress":        2,
+	"route":           1,
+	"card-deal":       1,
+	"task-lease":      1,
+	"waiting-resolve": 1,
+}
+
+// TestReconcilePassTrips runs one production pass (every duty, as
+// nova-sprint reconcile --once runs them) over a store shaped like the
+// fleet's: eight benches up, four friends declared, one open sprint, two
+// streams with two waiting cards each, and reads every duty's trips off its
+// DUTY line.
+func TestReconcilePassTrips(t *testing.T) {
+	t.Parallel()
+
+	// a throwaway Redis with the library, no process-wide seam (t.Setenv is
+	// not parallel-safe)
+	addr := startThrowawayRedis(t)
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = c.Close() })
+	ctx := context.Background()
+	if err := fn.Load(ctx, c); err != nil {
+		t.Fatalf("load nova_sprint library: %v", err)
+	}
+	st := store.New(c)
+
+	now := strconv.FormatInt(time.Now().UnixMilli(), 10)
+	for _, b := range []string{"batman", "captainamerica", "hetzner", "hulk", "space", "studio", "superman", "vision"} {
+		c.SAdd(ctx, "benches", b)
+		c.HSet(ctx, "machine:"+b+":ceiling", "slots", "64", "cores", "8")
+		c.HSet(ctx, "bench:"+b+":desired", "slots", "8", "machine", b, "paused", "0", "legs", "go")
+		c.HSet(ctx, "bench:"+b+":beat", "host", b, "user", "nova", "at", now)
+		c.HSet(ctx, "bench:"+b+":state", "state", "UP", "at", now)
+	}
+	for _, f := range []string{"emma", "johnny", "rowan", "stella"} {
+		c.SAdd(ctx, "friends", f)
+		c.HSet(ctx, "friend:"+f+":desired", "slots", "32", "machine", "studio", "paused", "0")
+	}
+	const S = "trips-2026-09-27"
+	c.SAdd(ctx, "sprints", S)
+	c.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: S})
+	c.HSet(ctx, "s:"+S, "status", "open")
+	c.HSet(ctx, "s:"+S+":policy", "share", "1", "backpressure_missing", "open")
+	for i, s := range []string{"swarm: cards", "friends"} {
+		for j := 0; j < 2; j++ {
+			id := fmt.Sprintf("c%d%d", i, j)
+			code, out, errOut := runTaskCLI("push", "--redis", addr, "--actor", "rowan", "--id", id, "--stream", s, "--waiting",
+				"--kind", "build", "--repo", "mas-bandwidth/nova-tools", "--title", "t")
+			if code != 0 {
+				t.Fatalf("push %s: %d %q %q", id, code, out, errOut)
+			}
+		}
+	}
+
+	duties, names, stops, err := productionDuties(st, nil)
+	if err != nil {
+		t.Fatalf("productionDuties: %v", err)
+	}
+	lease, err := reconcile.Acquire(ctx, st, reconcile.AcquireOptions{Host: "test-host"})
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	var out, errb bytes.Buffer
+	named := &namedDuties{errOut: &errb, counter: st.CountTrips()}
+	// two passes: the first pays the instance's one-time work (groups
+	// created, pending claimed, tables bound); the second is the tick the
+	// loop repeats every second, and the budget is its
+	var passes []map[string]int64
+	var last map[string]int64
+	loop := &reconcile.Loop{
+		Lease:        lease,
+		Duties:       named.wrap(duties, names),
+		Names:        names,
+		Passes:       2,
+		Out:          &out,
+		StreamScoped: reconcileStreamScoped,
+		AfterPass: func(reconcile.PassResult) {
+			named.report(&out, true)
+			now := named.counter.ByLabel()
+			delta := map[string]int64{}
+			for k, v := range now {
+				delta[k] = v - last[k]
+			}
+			last = now
+			passes = append(passes, delta)
+		},
+	}
+	if err := loop.Run(ctx); err != nil {
+		t.Fatalf("pass: %v\n%s", err, errb.String())
+	}
+	for _, s := range stops {
+		s.Stop(ctx)
+	}
+	if err := lease.Release(ctx); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	if len(passes) != 2 {
+		t.Fatalf("%d passes recorded, want 2", len(passes))
+	}
+	if errb.Len() > 0 {
+		t.Errorf("duty errors:\n%s", errb.String())
+	}
+	first, got := passes[0], passes[1]
+	keys := make([]string, 0, len(got))
+	for k := range got {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		return got[keys[i]] > got[keys[j]] || got[keys[i]] == got[keys[j]] && keys[i] < keys[j]
+	})
+	var sum, sumFirst int64
+	for _, k := range keys {
+		sum += got[k]
+		sumFirst += first[k]
+		t.Logf("%-16s trips=%-3d budget=%-3d (first pass %d)", k, got[k], reconcileTripBudget[k], first[k])
+	}
+	t.Logf("%-16s trips=%-3d (first pass %d; the counter's total, the heartbeat's included: %d)", "PASS", sum, sumFirst, named.counter.N())
+	for _, name := range append(names, "pass") {
+		budget, ok := reconcileTripBudget[name]
+		if !ok {
+			t.Errorf("duty %s has no trip budget; add it to reconcileTripBudget", name)
+			continue
+		}
+		if got[name] > budget {
+			t.Errorf("duty %s made %d round trips in one pass; its budget is %d", name, got[name], budget)
+		}
+	}
+}

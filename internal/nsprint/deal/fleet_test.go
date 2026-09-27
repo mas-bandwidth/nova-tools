@@ -71,6 +71,9 @@ func TestFleetPassUpFromState(t *testing.T) {
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = c.Close() })
 	ctx := context.Background()
+	if err := fn.Load(ctx, c); err != nil {
+		t.Fatalf("load fn: %v", err)
+	}
 
 	const bench = "ctl-p"
 	c.SAdd(ctx, "benches", bench)

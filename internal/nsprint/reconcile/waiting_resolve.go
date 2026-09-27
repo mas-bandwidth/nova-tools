@@ -61,17 +61,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pipeerr"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pitstop"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 )
 
@@ -194,80 +190,17 @@ const (
 	wrRef
 )
 
-var (
-	wrRefRE = regexp.MustCompile(`^(?:([A-Za-z0-9_.-]+)/)?([A-Za-z0-9_.-]+)#([0-9]+)$`)
-	wrURLRE = regexp.MustCompile(`^https?://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/(?:issues|pull)/([0-9]+)(?:[/?#].*)?$`)
-	// a task id, or a stream sentinel's (<slug>:sentinel, ws.IsSentinel)
-	wrIDRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$|^[a-z0-9][a-z0-9-]*:sentinel$`)
-)
-
-// wrRefKey is owner/repo#n (the owner defaulting to prkey.DefaultOwner),
-// lower-cased, for an owner/repo#n, repo#n or GitHub issue/PR URL; "" for
-// anything else.
-func wrRefKey(s string) string {
-	s = strings.TrimSpace(s)
-	m := wrRefRE.FindStringSubmatch(s)
-	if m == nil {
-		m = wrURLRE.FindStringSubmatch(s)
-	}
-	if m == nil {
-		return ""
-	}
-	owner := m[1]
-	if owner == "" {
-		owner = prkey.DefaultOwner
-	}
-	return strings.ToLower(owner + "/" + m[2] + "#" + m[3])
-}
-
-// wrParse splits a blocked_on value (ws.SplitDeps, the one splitter). none
-// is true for "none" or "-" alone; an empty value returns no deps and none
-// false.
-func wrParse(text string) (deps []wrDep, none bool) {
-	parts := ws.SplitDeps(text)
-	if len(parts) == 0 {
-		t := strings.TrimSpace(text)
-		return nil, t == "none" || t == "-"
-	}
-	for _, p := range parts {
-		dep := wrDep{raw: p}
-		if id, ok := strings.CutPrefix(p, "task:"); ok {
-			if wrIDRE.MatchString(id) {
-				dep.kind, dep.key = wrTask, id
-			}
-		} else if k := wrRefKey(p); k != "" {
-			dep.kind, dep.key = wrRef, k
-		} else if wrIDRE.MatchString(p) && p != "none" {
-			dep.kind, dep.key = wrTask, p
-		}
-		deps = append(deps, dep)
-	}
-	return deps, false
-}
-
-// wrLanded is whether a task record's fields say landed.
-func wrLanded(state, where, whereOK string) bool {
-	return state == "landed" || where == "landed" || (where == "done" && whereOK != "fail")
-}
-
-// wrStatus is what the records say of one dependency.
-type wrStatus int
-
-const (
-	wrUnknown wrStatus = iota // no record
-	wrUnmet                   // a record, not landed
-	wrMet
-)
-
-type wrWaiter struct {
-	id, stream, blockedOn string
-	deps                  []wrDep
-	none                  bool
-	stitch                bool // a plan's stitch (#4317): its brief is rewritten on release
-}
-
-// Pass resolves every stream's waiting set once and returns one line per
-// stream that had waiting tasks, in ws:order.
+// Pass resolves every stream's waiting set once: one call of
+// ns_waiting_resolve_pass (internal/nsprint/fn/lua/waiting_resolve.lua).
+// The rounds the Go pass made over the wire (the streams in rank order, each
+// stream's waiting set under the epoch, each waiter's DEPENDS-ON, the task
+// records named and, for a repo#n, every stream member that can name it)
+// run in the server, and the releases go through the one task move there,
+// grouped by DEPENDS-ON text so the ws:log why names the entries met. The
+// reply is one line per stream that had waiting tasks or a ready stop, in
+// ws:order. A released stitch's brief is written inside the call (#4317:
+// it starts with the whole picture; stitch_brief.lua, one trip). Bounded by the lease (#3805):
+// with less than the write margin left the pass does not start.
 func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, error) {
 	if d.Client == nil || l == nil {
 		return nil, errors.New("waiting-resolve: client and lease are required")
@@ -275,379 +208,83 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 	if err := l.fencedErr(); err != nil {
 		return nil, err
 	}
+	if left, m := l.Remaining(), d.margin(l); left < m {
+		return nil, fmt.Errorf("waiting-resolve: the pass not started: LEASE-MARGIN: %s of the lease left, below the %s write margin",
+			left.Round(time.Millisecond), m)
+	}
 	c := d.Client
-
-	// Round 1: the streams, in rank order.
-	streams, err := c.ZRange(ctx, "ws:order", 0, -1).Result()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		return nil, fmt.Errorf("waiting-resolve: ws:order: %w", err)
-	}
-	// A stream a pit stop holds keeps its waiting tasks where they are.
-	if streams, err = unheld(ctx, c, streams); err != nil {
-		return nil, fmt.Errorf("waiting-resolve: %w", err)
-	}
-	if len(streams) == 0 {
-		return nil, nil
-	}
-
-	// Round 2: every stream's waiting set under the current epoch
-	// (nova-tools#4238), oldest first.
-	epoch, err := ws.Epoch(ctx, c)
+	// A stream a pit stop holds keeps its waiting tasks where they are: the
+	// pass's holds go with the call (a stop naming streams holds those; a
+	// whole stop holds every stream but the lifted).
+	hs, err := pitstop.Current(ctx, c)
 	if err != nil {
-		return nil, fmt.Errorf("waiting-resolve: %w", err)
+		return nil, fmt.Errorf("waiting-resolve: pitstop: %w", err)
 	}
-	pipe := c.Pipeline()
-	waitCmds := make([]*redis.StringSliceCmd, len(streams))
-	for i, s := range streams {
-		waitCmds[i] = pipe.ZRange(ctx, ws.KeyAt(epoch, s, "waiting"), 0, -1)
-	}
-	if err := pipeerr.Exec(ctx, pipe); err != nil {
-		return nil, fmt.Errorf("waiting-resolve: waiting sets: %w", err)
-	}
-	var waiters []*wrWaiter
-	stops := map[string]string{} // stream -> its waiting sentinel
-	for i, s := range streams {
-		for _, id := range waitCmds[i].Val() {
-			if ws.IsSentinel(id) {
-				stops[s] = id // the stream's stop: the coordinator's acceptance lands it, never this duty (#4412)
-				continue
-			}
-			waiters = append(waiters, &wrWaiter{id: id, stream: s})
-		}
-	}
-	// A waiting stop with no live card left is named with its remedy.
-	ready, err := wrStopsReady(ctx, c, epoch, streams, stops)
-	if err != nil {
-		return nil, err
-	}
-	if len(waiters) == 0 && len(ready) == 0 {
-		return nil, nil
-	}
-
-	// Round 3: each waiting task's blocked_on (and its phase: a stitch's
-	// brief is regenerated when it is released).
-	pipe = c.Pipeline()
-	boCmds := make([]*redis.SliceCmd, len(waiters))
-	for i, w := range waiters {
-		boCmds[i] = pipe.HMGet(ctx, "task:"+w.id, "blocked_on", taskcard.FieldPhase, "kind")
-	}
-	if err := pipeerr.Exec(ctx, pipe); err != nil {
-		return nil, fmt.Errorf("waiting-resolve: blocked_on: %w", err)
-	}
-	taskDeps, refDeps := map[string]wrStatus{}, map[string]wrStatus{}
-	// A plan (kind plan, #4317) is never released: it waits on its stitch
-	// and lands with it, so it is not a waiter here.
-	kept := waiters[:0]
-	keptCmds := boCmds[:0]
-	for i, w := range waiters {
-		if wrStr(boCmds[i].Val(), 2) == taskcard.KindPlan {
+	args := []any{d.actor()}
+	for _, h := range hs {
+		if !h.Stop.Set {
 			continue
 		}
-		kept = append(kept, w)
-		keptCmds = append(keptCmds, boCmds[i])
-	}
-	waiters, boCmds = kept, keptCmds
-	if len(waiters) == 0 {
-		return nil, nil
-	}
-	for i, w := range waiters {
-		w.blockedOn = strings.TrimSpace(wrStr(boCmds[i].Val(), 0))
-		w.stitch = wrStr(boCmds[i].Val(), 1) == taskcard.PhaseStitch
-		w.deps, w.none = wrParse(w.blockedOn)
-		for _, dep := range w.deps {
-			switch dep.kind {
-			case wrTask:
-				taskDeps[dep.key] = wrUnknown
-			case wrRef:
-				refDeps[dep.key] = wrUnknown
+		if h.Stop.Streams != nil {
+			args = append(args, "only", len(h.Stop.Streams))
+			for _, s := range h.Stop.Streams {
+				args = append(args, s)
+			}
+		} else {
+			args = append(args, "all", len(h.Stop.Lifted))
+			for _, s := range h.Stop.Lifted {
+				args = append(args, s)
 			}
 		}
 	}
-
-	// Round 4: the task records named, and, when a repo#n is named, every
-	// ws set's members (the tasks that can name it).
-	pipe = c.Pipeline()
-	taskIDs := wrKeys(taskDeps)
-	taskCmds := make([]*redis.SliceCmd, len(taskIDs))
-	for i, id := range taskIDs {
-		taskCmds[i] = pipe.HMGet(ctx, "task:"+id, "state", "where", "where_ok")
+	reply, err := c.FCall(ctx, "ns_waiting_resolve_pass", nil, args...).StringSlice()
+	if err != nil {
+		return nil, fmt.Errorf("waiting-resolve: ns_waiting_resolve_pass: %w", err)
 	}
-	var setCmds []*redis.StringSliceCmd
-	if len(refDeps) > 0 {
-		for _, s := range streams {
-			for _, st := range ws.States {
-				setCmds = append(setCmds, pipe.ZRange(ctx, ws.KeyAt(epoch, s, st), 0, -1))
-			}
-		}
-
-	}
-	if err := pipeerr.Exec(ctx, pipe); err != nil {
-		return nil, fmt.Errorf("waiting-resolve: dependencies: %w", err)
-	}
-	for i, id := range taskIDs {
-		v := taskCmds[i].Val()
-		state, where, ok := wrStr(v, 0), wrStr(v, 1), wrStr(v, 2)
-		switch {
-		case state == "" && where == "":
-			taskDeps[id] = wrUnknown
-		case ws.IsSentinel(id) && (state == "landed" || where == "landed"):
-			taskDeps[id] = wrMet // a stop is met by its landing alone
-		case ws.IsSentinel(id):
-			taskDeps[id] = wrUnmet
-		case wrLanded(state, where, ok):
-			taskDeps[id] = wrMet
-		default:
-			taskDeps[id] = wrUnmet
-		}
-	}
-
-	// Round 5: the members' names (pr, ref, origin) and whether each landed.
-	if len(refDeps) > 0 {
-		seen := map[string]bool{}
-		var members []string
-		for _, cmd := range setCmds {
-			for _, m := range cmd.Val() {
-				if !seen[m] {
-					seen[m] = true
-					members = append(members, m)
-				}
-			}
-		}
-		pipe = c.Pipeline()
-		memCmds := make([]*redis.SliceCmd, len(members))
-		for i, m := range members {
-			memCmds[i] = pipe.HMGet(ctx, "task:"+m, "state", "where", "where_ok", "pr", "ref", "origin", "repo")
-		}
-		if len(members) > 0 {
-			if err := pipeerr.Exec(ctx, pipe); err != nil {
-				return nil, fmt.Errorf("waiting-resolve: members: %w", err)
-			}
-		}
-		for i := range members {
-			v := memCmds[i].Val()
-			landed := wrLanded(wrStr(v, 0), wrStr(v, 1), wrStr(v, 2))
-			for _, k := range wrNames(wrStr(v, 3), wrStr(v, 4), wrStr(v, 5), wrStr(v, 6)) {
-				st, named := refDeps[k]
-				if !named || st == wrMet {
-					continue
-				}
-				if landed {
-					refDeps[k] = wrMet
-				} else {
-					refDeps[k] = wrUnmet
-				}
-			}
-		}
-	}
-
-	// The verdicts, per stream in rank order.
-	// lines never grows past len(streams), so the pointers into it hold.
-	lines := make([]ResolveLine, 0, len(streams))
-	byStream := map[string]*ResolveLine{}
-	for _, s := range streams {
-		if ready[s] {
-			lines = append(lines, ResolveLine{Stream: s, Stop: stops[s]})
-			byStream[s] = &lines[len(lines)-1]
-		}
-	}
-	type group struct {
-		stream, why   string
-		ids, stitches []string
-	}
-	var groups []*group
-	groupOf := map[string]*group{}
-	for _, w := range waiters {
-		r := byStream[w.stream]
-		if r == nil {
-			lines = append(lines, ResolveLine{Stream: w.stream})
-			r = &lines[len(lines)-1]
-			byStream[w.stream] = r
-		}
-		met := w.none
-		if !w.none && len(w.deps) > 0 {
-			met = true
-			for _, dep := range w.deps {
-				st := wrUnknown
-				switch dep.kind {
-				case wrTask:
-					st = taskDeps[dep.key]
-				case wrRef:
-					st = refDeps[dep.key]
-				}
-				switch st {
-				case wrMet:
-					continue
-				case wrUnmet:
-					r.On = wrAdd(r.On, dep.raw)
-				default:
-					r.Unknown = wrAdd(r.Unknown, dep.raw)
-				}
-				met = false
-			}
-		}
-		if !met {
-			r.Still++
-			continue
-		}
-		gk := w.stream + "\x00" + w.blockedOn
-		g := groupOf[gk]
-		if g == nil {
-			why := "depends-on met: none"
-			if !w.none {
-				raws := make([]string, len(w.deps))
-				for i, dep := range w.deps {
-					raws[i] = dep.raw
-				}
-				why = "depends-on met: " + strings.Join(raws, ",")
-			}
-			g = &group{stream: w.stream, why: why}
-			groupOf[gk] = g
-			groups = append(groups, g)
-		}
-		g.ids = append(g.ids, w.id)
-		if w.stitch {
-			g.stitches = append(g.stitches, w.id)
-		}
-	}
-
-	// The moves, each bounded by the lease.
+	var lines []ResolveLine
+	byStream := map[string]int{}
 	var errs []string
-	for gi, g := range groups {
-		if err := l.fencedErr(); err != nil {
-			return lines, err
+	arity := map[string]int{"line": 2, "still": 2, "on": 2, "unknown": 2, "ready": 2, "refused": 3, "stitch": 2}
+	for i := 0; i < len(reply); {
+		n, ok := arity[reply[i]]
+		if !ok || i+n >= len(reply) {
+			return lines, fmt.Errorf("waiting-resolve: ns_waiting_resolve_pass: unexpected reply at %d: %v", i, reply[i:])
 		}
-		if left, m := l.Remaining(), d.margin(l); left < m {
-			skipped := 0
-			for _, rest := range groups[gi:] {
-				skipped += len(rest.ids)
-				byStream[rest.stream].Still += len(rest.ids)
+		v := reply[i+1 : i+1+n]
+		switch reply[i] {
+		case "line":
+			byStream[v[0]] = len(lines)
+			lines = append(lines, ResolveLine{Stream: v[0], Stop: v[1]})
+		case "stitch":
+			// a released stitch: its brief was written in the call; v[1] is
+			// the refusal when it was not
+			if v[1] != "" {
+				errs = append(errs, fmt.Sprintf("stitch %s brief: %s", v[0], v[1]))
 			}
-			errs = append(errs, fmt.Sprintf("%d of %d move(s) not started, %d task(s) left waiting: LEASE-MARGIN: %s of the lease left, below the %s write margin",
-				len(groups)-gi, len(groups), skipped, left.Round(time.Millisecond), m))
-			break
-		}
-		res, err := ws.MoveMany(ctx, c, "ready", d.actor(), g.why, g.ids)
-		r := byStream[g.stream]
-		if err != nil {
-			r.Still += len(g.ids)
-			errs = append(errs, fmt.Sprintf("stream %s: %v", g.stream, err))
-			continue
-		}
-		refused := map[string]bool{}
-		for _, x := range res.Refused {
-			refused[x.ID] = true
-			r.Refused = append(r.Refused, x)
-			errs = append(errs, fmt.Sprintf("stream %s: %s refused: %s", g.stream, x.ID, x.Why))
-		}
-		for _, id := range g.ids {
-			if refused[id] {
-				r.Still++
-				continue
+		default:
+			idx, ok := byStream[v[0]]
+			if !ok {
+				return lines, fmt.Errorf("waiting-resolve: ns_waiting_resolve_pass: %s row for a stream with no line: %s", reply[i], v[0])
 			}
-			r.Ready = append(r.Ready, id)
-		}
-		// A released stitch starts with the whole picture (#4317): its body's
-		// generated section is every child's PR, RESULT.md summary and read
-		// score as the records hold them now, after every child landed.
-		for _, id := range g.stitches {
-			if refused[id] {
-				continue
-			}
-			if _, _, err := taskcard.WriteStitchBrief(ctx, c, id); err != nil {
-				errs = append(errs, fmt.Sprintf("stream %s: stitch %s brief: %v", g.stream, id, err))
+			r := &lines[idx]
+			switch reply[i] {
+			case "still":
+				r.Still, _ = strconv.Atoi(v[1])
+			case "on":
+				r.On = append(r.On, v[1])
+			case "unknown":
+				r.Unknown = append(r.Unknown, v[1])
+			case "ready":
+				r.Ready = append(r.Ready, v[1])
+			case "refused":
+				r.Refused = append(r.Refused, ws.IDWhy{ID: v[1], Why: v[2]})
+				errs = append(errs, fmt.Sprintf("stream %s: %s refused: %s", v[0], v[1], v[2]))
 			}
 		}
-	}
-	for i := range lines {
-		sort.Strings(lines[i].On)
-		sort.Strings(lines[i].Unknown)
+		i += 1 + n
 	}
 	if len(errs) > 0 {
 		return lines, fmt.Errorf("waiting-resolve: %s", strings.Join(errs, "; "))
 	}
 	return lines, nil
-}
-
-// wrStopsReady reads, for every stream with a waiting sentinel, whether any
-// other card of the stream is live (waiting, ready, working, review,
-// merging or parked), one pipelined round; ready[s] is true when none is.
-func wrStopsReady(ctx context.Context, c *redis.Client, epoch uint64, streams []string, stops map[string]string) (map[string]bool, error) {
-	ready := map[string]bool{}
-	if len(stops) == 0 {
-		return ready, nil
-	}
-	live := []string{ws.Waiting, ws.Ready, ws.Working, ws.Review, ws.Merging, ws.Parked}
-	pipe := c.Pipeline()
-	cmds := map[string][]*ws.CardCountCmd{}
-	for _, s := range streams {
-		if stops[s] == "" {
-			continue
-		}
-		for _, w := range live {
-			cmds[s] = append(cmds[s], ws.QueueCardCount(ctx, pipe, epoch, s, w))
-		}
-	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return nil, fmt.Errorf("waiting-resolve: stops: %w", err)
-	}
-	for s, cs := range cmds {
-		n := int64(0)
-		for _, cmd := range cs {
-			n += cmd.Val()
-		}
-		ready[s] = n == 0
-	}
-	return ready, nil
-}
-
-// wrNames is every owner/repo#n a task's pr, ref and origin name.
-func wrNames(pr, ref, origin, repo string) []string {
-	var out []string
-	for _, s := range []string{ref, origin, pr} {
-		if k := wrRefKey(s); k != "" {
-			out = append(out, k)
-		}
-	}
-	n := strings.TrimPrefix(strings.TrimSpace(pr), "#")
-	if _, err := strconv.Atoi(n); err == nil && n != "" {
-		r := repo
-		if r == "" {
-			// The ref's repo when the task carries no repo field.
-			if k := wrRefKey(ref); k != "" {
-				r = k[:strings.LastIndex(k, "#")]
-			}
-		}
-		if r != "" {
-			if full, err := prkey.Full(r); err == nil {
-				out = append(out, strings.ToLower(full+"#"+n))
-			}
-		}
-	}
-	return out
-}
-
-func wrStr(v []any, i int) string {
-	if i >= len(v) || v[i] == nil {
-		return ""
-	}
-	s, _ := v[i].(string)
-	return s
-}
-
-func wrAdd(xs []string, x string) []string {
-	for _, y := range xs {
-		if y == x {
-			return xs
-		}
-	}
-	return append(xs, x)
-}
-
-func wrKeys(m map[string]wrStatus) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }

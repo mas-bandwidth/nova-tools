@@ -1,14 +1,8 @@
 package deal
 
 import (
-	"context"
 	"testing"
 	"time"
-
-	"github.com/alicebob/miniredis/v2"
-	"github.com/redis/go-redis/v9"
-
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pitstop"
 )
 
 // TestPlanSkipsOnlyThePitStoppedSprint: a stop on one sprint leaves the
@@ -28,34 +22,5 @@ func TestPlanSkipsOnlyThePitStoppedSprint(t *testing.T) {
 		if c.Sprint != "running" {
 			t.Fatalf("planned %s/%s from the pit-stopped sprint", c.Sprint, c.Label)
 		}
-	}
-}
-
-// TestRedisSourceReadsPitstopOnMiniredis reads the key with the plain
-// commands RedisSource pipelines (no function needed): present is stopped,
-// absent is not.
-func TestRedisSourceReadsPitstopOnMiniredis(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	m := miniredis.RunT(t)
-	c := redis.NewClient(&redis.Options{Addr: m.Addr()})
-	t.Cleanup(func() { _ = c.Close() })
-	for _, s := range []string{"a", "b"} {
-		c.SAdd(ctx, "sprints", s)
-		c.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: s})
-		c.HSet(ctx, "s:"+s, "status", "open")
-	}
-	c.HSet(ctx, pitstop.Key("a"), "by", "rowan", "why", "x", "at", "1")
-	in, err := RedisSource{Client: c}.Read(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := map[string]bool{}
-	for _, s := range in.Sprints {
-		got[s.Name] = s.Pitstop
-	}
-	if len(got) != 2 || !got["a"] || got["b"] {
-		t.Fatalf("pitstop by sprint = %v, want a stopped and b not", got)
 	}
 }

@@ -66,48 +66,6 @@ func dutyLine(t *testing.T, out, name string) string {
 	return ""
 }
 
-// TestReconcileOnceDealsPooledCard (nova-tools #3199): a pooled card and one
-// UP bench with a free slot; one `reconcile --once` deals it (dealt, an
-// attempt and a token, one `card launch --stdin` batch at the ssh seam) and
-// the pass prints one DUTY line per duty, the refill's saying dealt=1.
-func TestReconcileOnceDealsPooledCard(t *testing.T) {
-	const S, bench, label = "control-3199d3a1", "ctl-deal", "card-redis-auth"
-	ctx, c, addr, ssh := routeFixture(t, S)
-	pipe := c.TxPipeline()
-	pipe.SAdd(ctx, "benches", bench)
-	pipe.HSet(ctx, "bench:"+bench+":desired", "slots", "2")
-	pipe.HSet(ctx, "bench:"+bench+":beat", "host", bench, "at", "1")
-	pipe.HSet(ctx, "bench:"+bench+":state", "state", "UP", "at", "1")
-	pipe.HSet(ctx, "s:"+S+":card:"+label, "state", "queued", "priority", "1",
-		"attempt", "0", "retries", "0", "base_sha", "0123456789abcdef", "bench", "", "leg", "", "tier", "")
-	pipe.ZAdd(ctx, "s:"+S+":pool", redis.Z{Score: 1, Member: label})
-	pipe.SAdd(ctx, "s:"+S+":idx:card:queued", label)
-	if _, err := pipe.Exec(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	out := reconcileOnce(t, addr)
-	card, err := c.HGetAll(ctx, "s:"+S+":card:"+label).Result()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if card["state"] != "dealt" || card["attempt"] != "1" || card["token"] == "" || card["bench"] != bench {
-		t.Fatalf("card after reconcile --once: state=%q attempt=%q token=%q bench=%q; want dealt/1/token/%s\n%s",
-			card["state"], card["attempt"], card["token"], card["bench"], bench, out)
-	}
-	if n := ssh.launched(); n != 1 {
-		t.Fatalf("ssh seam saw %d launch lines, want 1\n%s", n, out)
-	}
-	if l := dutyLine(t, out, "refill"); !strings.Contains(l, "dealt=1") || !strings.HasSuffix(l, "err=") {
-		t.Fatalf("refill receipt: %q", l)
-	}
-	for _, d := range []string{"ok-to-friend", "expire", "route"} {
-		if l := dutyLine(t, out, d); !strings.HasSuffix(l, "err=") {
-			t.Fatalf("%s receipt: %q", d, l)
-		}
-	}
-}
-
 // TestReconcileOnceRoutesReadFixMerging (nova-tools #3323): the route duty
 // over records alone. An OK (harvested) card with a PR record and a JEV line
 // at head yields exactly one read task, read-<n>-<sha8>, on the least-loaded

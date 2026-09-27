@@ -1604,7 +1604,10 @@ local TK = {
   REPLACE = { waiting = true, ready = true, parked = true },
   POINTER = { where = true, where_ok = true, where_at = true, state = true, state_at = true, stream = true,
     friend = true, owner = true, created_at = true, sprint = true, queue = true, xid = true, cancelled = true,
-    lease_until = true, copy = true, primary = true, reads = true, epoch = true },
+    lease_until = true, copy = true, primary = true, reads = true, epoch = true,
+    -- the entry into merging: the move's stamp and its count (LandWatch.tla L3);
+    -- writer-owned (Stella's P1 on #4449: a caller's field could break the count)
+    merging_at = true, merging_gen = true },
   FIELDS = { 'where', 'where_ok', 'stream', 'friend', 'owner', 'created_at', 'sprint', 'state', 'title',
     'queue', 'xid', 'front', 'cancelled', 'pr', 'kind', 'ref', 'lease_until', 'beat_at', 'leased_at', 'where_at',
     'priority', 'dest', 'claimed_at', 'token', 'copy', 'attempts', 'reads', 'head', 'author', 'epoch' },
@@ -2149,6 +2152,20 @@ function TK.move(id, to, o)
   end
   local cur = TK.read(id)
   if not cur then return 'NOTASK task:' .. id end
+  -- the count of entries into merging is validated before any write: a
+  -- function does not roll back, so a bad count is refused here, never
+  -- met after the sets have moved (Stella's P1 on #4449)
+  local entering_merging = to == 'merging' and cur.where ~= 'merging'
+  local merging_gen = 0
+  if entering_merging then
+    local g = redis.call('HGET', 'task:' .. id, 'merging_gen')
+    if g and g ~= '' then
+      if not string.match(g, '^%d+$') then
+        return 'DRIFT merging_gen of task:' .. id .. ' is not a count (' .. TK.str(g) .. '); run nova-sprint task fsck'
+      end
+      merging_gen = tonumber(g)
+    end
+  end
   local adopted = false
   if not cur.placed then
     local err, w, k = TK.adopt(id, cur, o, o.dry)
@@ -2241,6 +2258,16 @@ function TK.move(id, to, o)
   if to ~= cur.where then
     put('where_at', tostring(at))
     put('state_at', tostring(at))
+    -- every entry into merging is stamped here, atomically with the set,
+    -- so the land watch tells a new stay from the one it saw (a stamp
+    -- newer than its first sight; rowan-new specs/tla/LandWatch.tla L3,
+    -- Stella's re-entry probe on nova-tools #4449)
+    if to == 'merging' then
+      put('merging_at', tostring(at))
+      -- and the stay's identity: a count the clock cannot tie, written in
+      -- the one HSET with the other fields (validated above)
+      put('merging_gen', tostring(merging_gen + 1))
+    end
   end
   if cur.created_at ~= tostring(created) then put('created_at', string.format('%.0f', created)) end
   if nxt.stream ~= cur.stream or TK.str(redis.call('HGET', 'task:' .. id, 'stream')) ~= nxt.stream then
@@ -4841,6 +4868,76 @@ end)
 -- ns_cm_beat(consumer, id...) -> BEAT n lease_until skipped... | REFUSED
 -- <why>; with no id, every copy in <consumer>:cards:working, and skipped
 -- names each member that is no copy (a friend-queue task).
+-- ns_cm_pass(by, now_ms) -> the card-deal duty's whole pass in one call
+-- (Glenn 2026-09-27: batch; the store is 128 ms from the Studio and the Go
+-- pass made three to five trips): the lapsed copies expired (TM.expire),
+-- the review column's reads ensured (TM.ensure), then every consumer of
+-- the roster read (its desired, ready, working, down marker, beat, the CI
+-- legs on its machine) and each live, unpaused one with room dealt the
+-- copies it needs, most room first (taskcard.DealPass's rule). Reply, flat
+-- rows: expired <copy> <to>, expire-refused <copy> <why>, reads <primary>
+-- <copies,comma>, skip <consumer> <why>, deal <consumer> <dealt> <free>
+-- <ci>, deal-refused <consumer> <why>.
+redis.register_function('ns_cm_pass', function(keys, args)
+  local by = TK.str(args[1])
+  local now = tonumber(args[2] or '') or cm_now()
+  local out = {}
+  local function emit(...)
+    local n, t = select('#', ...), { ... }
+    for i = 1, n do out[#out + 1] = TK.str(t[i]) end
+  end
+  local x = TM.expire(by, {})
+  for i = 3, #x, 2 do
+    local w = TK.str(x[i + 1])
+    if string.sub(w, 1, 8) == 'REFUSED ' then emit('expire-refused', x[i], string.sub(w, 9)) else emit('expired', x[i], w) end
+  end
+  local r = TM.ensure(by)
+  if r[1] == 'REFUSED' then return { 'REFUSED', r[2] } end
+  for i = 3, #r, 2 do emit('reads', r[i], r[i + 1]) end
+  local e = cm_epoch()
+  local rows = {}
+  -- the deal duty's roster is the consumers set alone (taskcard.Roster:
+  -- an enrolled bench:<b> or friend:<f>), not every registered name
+  local roster = redis.call('SMEMBERS', 'consumers')
+  table.sort(roster)
+  for _, c in ipairs(roster) do
+    local d = TM.parse(c) and TM.desired(c) or nil
+    if not d then
+      -- a name that is not bench:<b> or friend:<f> is no consumer
+    elseif not d.slots then
+      emit('skip', c, 'slots "' .. TK.str(redis.call('HGET', c .. ':desired', 'slots')) .. '" on ' .. c .. ':desired is not a number')
+    else
+      local at = TK.ms(redis.call('HGET', c .. ':beat', 'at'))
+      local live = at ~= nil and math.abs(now - at) < TM.LIVE_MS
+      local down = redis.call('EXISTS', c .. ':down') == 1
+      local ci = TM.ci_legs(c)
+      local working = redis.call('ZCARD', cm_ckey(e, c, 'working'))
+      local ready = redis.call('ZCARD', cm_ckey(e, c, 'ready'))
+      local free = d.slots - ci - working
+      if free < 0 then free = 0 end
+      if live and not down and not d.paused and free > 0 then
+        rows[#rows + 1] = { c = c, free = free, need = free - ready, ci = ci }
+      end
+    end
+  end
+  table.sort(rows, function(a, b)
+    if a.free ~= b.free then return a.free > b.free end
+    return a.c < b.c
+  end)
+  for _, row in ipairs(rows) do
+    if row.need > 0 then
+      local reply = TM.deal(row.c, by, row.need, '', {})
+      if reply[1] == 'REFUSED' then
+        emit('deal-refused', row.c, reply[2])
+      else
+        local dealt = tonumber(reply[2]) or 0
+        if dealt > 0 then emit('deal', row.c, dealt, row.free, row.ci) end
+      end
+    end
+  end
+  return out
+end)
+
 redis.register_function('ns_cm_beat', function(keys, args) return TM.beat(args[1], TM.ids(args, 2)) end)
 
 -- ns_cm_expire(by, consumer...) -> EXPIRED n, then per copy: id, where.

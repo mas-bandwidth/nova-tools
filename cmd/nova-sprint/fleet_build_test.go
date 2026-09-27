@@ -1,3 +1,5 @@
+//go:build functional
+
 package main
 
 import (
@@ -10,9 +12,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/alicebob/miniredis/v2"
-
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fleetbuild"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 )
 
 type verbFakeBench struct {
@@ -55,7 +56,7 @@ func (f *verbFakeBench) Run(ctx context.Context, argv []string) (string, error) 
 // bench runner: set writes the plan, a gap is refused (exit 1) before any
 // child, --dry-run starts nothing, and the deploy prints FLEET BUILD OK.
 func TestFleetBuildVerbSetDryRunAndDeploy(t *testing.T) {
-	mr := miniredis.RunT(t)
+	mr := testutil.StartStore(t)
 	mr.SAdd("benches", "hulk", "space")
 	f := &verbFakeBench{home: t.TempDir()}
 	oldRunner, oldHome := fleetBuildRunner, fleetBuildHome

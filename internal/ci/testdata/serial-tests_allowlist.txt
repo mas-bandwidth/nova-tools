@@ -22,7 +22,7 @@
 # TestReadCopyDealtToBenchRendersALintedCard), then by nine more from the redis
 # stream (seat and #3277 tests on t.Setenv); each owes a per-test seam. Moved
 # from the serialTestsCeiling constant into this file at 876, the count that day.
-# ceiling: 861
+# ceiling: 856
 cmd/nova-board/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
 cmd/nova-board/fold_test.go:TestABrokenRandomSourceIsRefusedInBothBackends serial: t.Setenv
 cmd/nova-board/fold_test.go:TestAnIdRetryUnderIssueIsTheSameFilingOrARefusal serial: t.Setenv
@@ -271,14 +271,12 @@ cmd/nova-sprint/card_cut_test.go:TestCardCutWritesRecord serial: swaps package v
 cmd/nova-sprint/card_harness_functional_test.go:TestCardRunEndToEnd serial: t.Setenv
 cmd/nova-sprint/control42_redis_test.go:TestControl42Redis serial: t.Setenv
 cmd/nova-sprint/cost_test.go:TestCostImportExitCodes serial: t.Setenv
-cmd/nova-sprint/expire_test.go:TestExpireDutyReplacesSprintRequeue serial: swaps package var main.expireProber, swaps package var main.reconcileDuties, swaps package var main.reconcileSeams
 cmd/nova-sprint/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
 cmd/nova-sprint/firstrun_functional_test.go:TestUsageBannerExamplesRun serial: t.Chdir
 cmd/nova-sprint/fleet_build_test.go:TestFleetBuildVerbSetDryRunAndDeploy serial: swaps package var main.fleetBuildHome, swaps package var main.fleetBuildRunner
 cmd/nova-sprint/fleet_test.go:TestFleetDownKeepsLeases serial: swaps package var main.reconcileSeams, t.Setenv
 cmd/nova-sprint/fleet_test.go:TestFleetIsUpExits serial: t.Setenv
 cmd/nova-sprint/help_test.go:TestVerbHelpNamesEveryFlag serial: t.Setenv
-cmd/nova-sprint/hold_route_duty_test.go:TestReconcileRoutesHoldToFix serial: swaps package var main.bodySeq, swaps package var main.consumeHarvestSeams, swaps package var main.consumePRReadRemote, swaps package var main.reconcileReaders, swaps package var main.reconcileSeams, t.Setenv
 cmd/nova-sprint/hold_functional_test.go:TestControl40 serial: swaps package var main.bodySeq, t.Setenv
 cmd/nova-sprint/hold_functional_test.go:TestControl53 serial: swaps package var main.bodySeq, t.Setenv
 cmd/nova-sprint/hold_functional_test.go:TestHoldReleaseHolderOnly serial: swaps package var main.bodySeq, t.Setenv
@@ -342,10 +340,7 @@ cmd/nova-sprint/read_functional_test.go:TestReadPostVerbNoGitHub serial: t.Seten
 cmd/nova-sprint/read_test.go:TestReadUsageRefusalsOpenNoStore serial: t.Setenv
 cmd/nova-sprint/ready_test.go:TestReadyWhy serial: swaps package var main.readyForge
 cmd/nova-sprint/reconcile_test.go:TestReconcileOnceSurfacesDutyErrors serial: swaps package var main.reconcileDuties, swaps package var main.reconcileSeams
-cmd/nova-sprint/reconcile_test.go:TestReconcileVerbDealsOnEvent serial: swaps package var main.reconcileDuties, swaps package var main.reconcileSeams
-cmd/nova-sprint/reconcile_test.go:TestReconcileVerbServesDealerMetrics serial: swaps package var main.reconcileDuties, swaps package var main.reconcileSeams
 cmd/nova-sprint/registry_test.go:TestRegisteredVerbDispatchAndHelp serial: registers a verb in the package-wide verbs map every parallel run() reads (go test -race, 2026-09-25)
-cmd/nova-sprint/route_duty_test.go:TestReconcileOnceDealsPooledCard serial: swaps package var main.consumeHarvestSeams, swaps package var main.reconcileReaders, swaps package var main.reconcileSeams
 cmd/nova-sprint/route_duty_test.go:TestReconcileOnceRoutesReadFixMerging serial: swaps package var main.consumeHarvestSeams, swaps package var main.reconcileReaders, swaps package var main.reconcileSeams
 cmd/nova-sprint/spec_test.go:TestReadPostSpecLineWritesFacts serial: t.Setenv
 cmd/nova-sprint/spec_test.go:TestSpecMarkDoneOnTwoTensFiresSpecUnblock serial: t.Setenv

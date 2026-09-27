@@ -40,7 +40,6 @@ cmd/nova-sprint	TestHoldRouteCrashReplay	#4221 calls time.Sleep
 cmd/nova-sprint	TestLandTakesStreamPRsOldestFirst	#4221 measured over 5 s on the 2026-09-25 PR run
 cmd/nova-sprint	TestLandGateAtHeadNoReadGate	#4221 measured over 5 s on the 2026-09-25 PR run
 cmd/nova-sprint	TestBenchBeatReconnectsWithBackoff	#4221 calls time.Sleep
-cmd/nova-sprint	TestReconcileVerbDealsOnEvent	#4221 calls time.Sleep
 cmd/nova-sprint	TestRoutesCheckReadsFold	#4221 measured over 5 s on the 2026-09-25 PR run
 cmd/nova-sprint	TestControl3530LoopPublishesOneWriter	#4221 calls time.Sleep
 cmd/nova-sprint	TestTableOutAtomic	#4221 calls time.Sleep

@@ -198,18 +198,46 @@ type LandPass struct {
 // on its own goroutine; the worker's Pass takes the lease or returns. l may
 // be nil (a pass outside the reconciler).
 func (d *LandDuty) Run(ctx context.Context, l *Lease) (Counts, error) {
-	repos, err := d.repos(ctx)
-	if err != nil {
-		return Counts{}, fmt.Errorf("land: %w", err)
-	}
 	instance := "reconciler"
 	if l != nil {
 		instance += "-" + l.Instance()
 	}
-	for _, r := range repos {
-		d.start(ctx, l, instance, r)
+	if len(d.Repos) > 0 {
+		for _, r := range d.Repos {
+			d.start(ctx, l, instance, r, "")
+		}
+		return Counts{}, nil
+	}
+	// One call takes every repo of cfg:land repos whose lease is free and
+	// whose pass is due (2026-09-27, Glenn: batch; it was the repos read and
+	// then one take per repo): a worker starts for each taken, with the
+	// pass's one token.
+	token, err := newLandToken()
+	if err != nil {
+		return Counts{}, err
+	}
+	reply, err := d.Client.FCall(ctx, fnLandTake, nil, "*", instance, token, d.Host, d.ttl().Milliseconds(), DefaultLandRepo).StringSlice()
+	if err != nil {
+		return Counts{}, fmt.Errorf("land: %s: %w", fnLandTake, err)
+	}
+	if word(reply, 0) != "REPOS" {
+		return Counts{}, fmt.Errorf("land: %s: %v", fnLandTake, reply)
+	}
+	for i := 2; i+2 < len(reply)+1 && i+1 < len(reply); i += 3 {
+		if reply[i+1] == "TAKEN" {
+			d.start(ctx, l, instance, reply[i], token)
+		}
 	}
 	return Counts{}, nil
+}
+
+// newLandToken mints a pass token: 128 random bits, hex.
+func newLandToken() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
 }
 
 func (d *LandDuty) repos(ctx context.Context) ([]string, error) {
@@ -227,7 +255,10 @@ func (d *LandDuty) repos(ctx context.Context) ([]string, error) {
 	return out, nil
 }
 
-func (d *LandDuty) start(ctx context.Context, l *Lease, instance, repo string) {
+// start runs one repo's pass on its own goroutine: with token the lease was
+// taken by the duty's one take call and the pass runs under it; with "" the
+// pass takes the lease itself (Pass).
+func (d *LandDuty) start(ctx context.Context, l *Lease, instance, repo, token string) {
 	d.mu.Lock()
 	if d.busy == nil {
 		d.busy, d.held = map[string]bool{}, map[string]string{}
@@ -239,7 +270,10 @@ func (d *LandDuty) start(ctx context.Context, l *Lease, instance, repo string) {
 		d.mu.Unlock()
 		return
 	}
-	wctx := d.ctx
+	// the worker's trips (the landing's renewals, its pass line, the
+	// release) are the landing's, counted under their own label, not the
+	// duty's one call per tick
+	wctx := store.WithTripLabel(d.ctx, "land-worker")
 	d.inst = instance
 	d.busy[repo] = true
 	d.wg.Add(1)
@@ -251,7 +285,13 @@ func (d *LandDuty) start(ctx context.Context, l *Lease, instance, repo string) {
 			delete(d.busy, repo)
 			d.mu.Unlock()
 		}()
-		p, err := d.Pass(wctx, instance, repo)
+		var p LandPass
+		var err error
+		if token != "" {
+			p, err = d.run(wctx, instance, repo, token, LandPass{Repo: repo, Status: "TAKEN"})
+		} else {
+			p, err = d.Pass(wctx, instance, repo)
+		}
 		d.print(p, err)
 	}()
 }
@@ -347,11 +387,10 @@ func (d *LandDuty) setHeld(repo, token string, held bool) {
 // the pass.
 func (d *LandDuty) Pass(ctx context.Context, instance, repo string) (LandPass, error) {
 	p := LandPass{Repo: repo}
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
+	token, err := newLandToken()
+	if err != nil {
 		return p, err
 	}
-	token := hex.EncodeToString(b[:])
 	ttl := d.ttl()
 	reply, err := d.Client.FCall(ctx, fnLandTake, nil, repo, instance, token, d.Host, ttl.Milliseconds()).StringSlice()
 	if err != nil {
@@ -368,6 +407,13 @@ func (d *LandDuty) Pass(ctx context.Context, instance, repo string) (LandPass, e
 	default:
 		return p, fmt.Errorf("%s %s: %v", fnLandTake, repo, reply)
 	}
+	return d.run(ctx, instance, repo, token, p)
+}
+
+// run is the pass once the lease is taken: the renewal beat, the landing,
+// the pass line, the release of the held token.
+func (d *LandDuty) run(ctx context.Context, instance, repo, token string, p LandPass) (LandPass, error) {
+	ttl := d.ttl()
 	d.setHeld(repo, token, true)
 	start := time.Now()
 	pctx, cancel := context.WithCancel(ctx)

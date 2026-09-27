@@ -34,7 +34,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -616,10 +615,11 @@ func (m *moveCmd) run(ctx context.Context, c *redis.Client, sub string, ids []st
 		var body []byte
 		if rec["kind"] == string(task.KindMerge) && strings.TrimSpace(rec["body"]) == "" {
 			// A merge card's brief (the members in work order, the rules,
-			// the MERGE-NOTEs) is the land watch's, at land:brief:<card>
-			// (#4324): the task record has one writer.
-			b, err := c.Get(ctx, reconcile.LandBriefKey(ids[0])).Result()
-			if err != nil && !errors.Is(err, redis.Nil) {
+			// the MERGE-NOTEs) is a view of its stream (#4324, #4449:
+			// reconcile.MergeBriefFor, one read-only call): the task record
+			// has one writer and nothing writes a text every second.
+			b, err := reconcile.MergeBriefFor(ctx, c, ids[0], rec, time.Now())
+			if err != nil {
 				return refuse(errOut, "card render", "merge brief: "+err.Error())
 			}
 			rec["body"] = b

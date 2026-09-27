@@ -91,24 +91,31 @@ type stoppableDuty interface {
 	Stop(ctx context.Context) []string
 }
 
-// productionDuties is the loop's duty list: the refill and its deal pass over
-// Redis, then every registered duty. It returns the names in order. set
-// receives the deal pass's metrics (nx-g61); nil exports nothing. stops are
-// the Stop of every duty with work of its own past its Run, for the way out.
+// productionDuties is the loop's duty list: the fleet's state machine
+// (fleet.Step: bench UP/PROBING/DOWN), then every registered duty. It
+// returns the names in order. stops are the Stop of every duty with work of
+// its own past its Run, for the way out. set is kept for the deal pass's
+// metrics seam; the pass exports nothing through it now.
+//
+// The pass runs the copy model (primaries in stream cells, copies on
+// consumers, ends and reads through the one move, 02_card_move.lua). The
+// sprint-store model's duties are retired from the pass (Glenn 2026-09-27,
+// "Go for retiring", after the round-trip measurement: they made half the
+// pass's trips on a store that runs no sprint of that model): the refill's
+// deal pass over s:<S>:pool with its ssh launches, ok-to-friend, pr-to-read
+// with hold-to-fix, done-already, the expire sweep and the old card fsck.
+// Their verbs stay (consume, card fsck) for a sprint that still uses that
+// model; internal/nsprint/reconcile keeps their code and tests.
 func productionDuties(st *store.Store, set *metrics.Set) (duties []reconcile.Duty, names []string, stops []stoppableDuty, err error) {
-	dialer, prs := reconcileSeams(st)
-	refill := &reconcile.Refill{
-		Client: st.Client(),
-		Deal:   &deal.Pass{Dialer: dialer, PRs: prs, Metrics: set},
-	}
-	fleetRefill := func(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, error) {
+	_ = set
+	fleetStep := func(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, error) {
 		if err := fleet.Step(ctx, st.Client()); err != nil {
 			return reconcile.Counts{}, err
 		}
-		return refill.Run(ctx, l)
+		return reconcile.Counts{}, nil
 	}
-	duties = []reconcile.Duty{fleetRefill}
-	names = []string{"refill"}
+	duties = []reconcile.Duty{fleetStep}
+	names = []string{"fleet"}
 	for _, b := range reconcileDuties {
 		d, err := b.Build(st)
 		if err != nil {
@@ -191,7 +198,7 @@ func runReconcile(ctx context.Context, args []string, out, errOut io.Writer) int
 
 	fmt.Fprintf(out, "DUTIES %s\n", strings.Join(names, ","))
 
-	named := &namedDuties{errOut: errOut}
+	named := &namedDuties{errOut: errOut, counter: st.CountTrips()}
 	loop := &reconcile.Loop{
 		Lease:   lease,
 		Duties:  named.wrap(duties, names),
@@ -285,9 +292,10 @@ func (n *namedDuties) report(out io.Writer, all bool) {
 		if !all && c.Zero() && e == "" {
 			continue
 		}
-		fmt.Fprintf(out, "DUTY %s %s err=%s\n", name, c.Line(), e)
+		fmt.Fprintf(out, "DUTY %s %s trips=%d err=%s\n", name, c.Line(), n.trips[name], e)
 	}
 	n.counts = map[string]reconcile.Counts{}
+	n.trips = map[string]int64{}
 }
 
 // namedDuties wraps each duty so its error reaches stderr under the duty's
@@ -296,13 +304,15 @@ func (n *namedDuties) report(out io.Writer, all bool) {
 // or changes, so a long-running loop does not repeat it every second. A fence
 // passes through untouched: the loop stops on it.
 type namedDuties struct {
-	errOut io.Writer
-	mu     sync.Mutex
-	names  []string                    // duty names in pass order
-	counts map[string]reconcile.Counts // duty name -> its counts in the current pass
-	last   map[string]string           // duty name -> its last error text ("" when clean)
-	streak map[string]int              // duty name -> passes in a row its error text stood unchanged
-	any    bool                        // any duty errored in any pass
+	errOut  io.Writer
+	counter *store.Trips // the store's round-trip counter (nil: every duty reads trips=0)
+	mu      sync.Mutex
+	names   []string                    // duty names in pass order
+	counts  map[string]reconcile.Counts // duty name -> its counts in the current pass
+	trips   map[string]int64            // duty name -> the store round trips it made in the current pass
+	last    map[string]string           // duty name -> its last error text ("" when clean)
+	streak  map[string]int              // duty name -> passes in a row its error text stood unchanged
+	any     bool                        // any duty errored in any pass
 }
 
 // repeats is every duty whose error text has stood unchanged for one or
@@ -324,19 +334,25 @@ func (n *namedDuties) wrap(duties []reconcile.Duty, names []string) []reconcile.
 	n.last = map[string]string{}
 	n.counts = map[string]reconcile.Counts{}
 	n.streak = map[string]int{}
+	n.trips = map[string]int64{}
 	out := make([]reconcile.Duty, len(duties))
 	for i, d := range duties {
 		d, name := d, names[i]
 		out[i] = func(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, error) {
+			// The duty's round trips are counted under its name (Glenn
+			// 2026-09-27: batch; the store is 128 ms away, so a duty's
+			// trips are its cost): the DUTY line prints trips=<n>.
+			ctx = store.WithTripLabel(ctx, name)
+			before := n.counter.Of(name)
 			c, err := d(ctx, l)
-			n.note(name, c, err)
+			n.note(name, c, err, n.counter.Of(name)-before)
 			return c, err
 		}
 	}
 	return out
 }
 
-func (n *namedDuties) note(name string, c reconcile.Counts, err error) {
+func (n *namedDuties) note(name string, c reconcile.Counts, err error, trips int64) {
 	if errors.Is(err, reconcile.ErrFenced) {
 		return
 	}
@@ -347,6 +363,7 @@ func (n *namedDuties) note(name string, c reconcile.Counts, err error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.counts[name] = c
+	n.trips[name] = trips
 	if err != nil {
 		n.any = true
 	}

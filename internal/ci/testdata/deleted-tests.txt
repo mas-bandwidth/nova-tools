@@ -24,3 +24,6 @@ cmd/nova-wake/presence_test.go nova-wake beat and presence are gone (nova-friend
 cmd/nova-wake/issue3277_test.go nova-wake beat's loop is gone with the verb (nova-friend here); presence.Beat keeps internal/presence's tests
 internal/nsprint/life/declare_test.go ns_friend_declare and life.Declare are gone: nova-config apply writes friends:declared and friend:<f>:wakepath through ns_friend_wakepath; the repair lock keeps friend_wakelock.lua
 internal/docs/issue3807_test.go it pinned docs/CLI.md's nova-wake beat and presence paragraphs, retired with the verbs (nova-friend)
+cmd/nova-sprint/expire_test.go the expire sweep left the reconciler pass 2026-09-27 (Glenn: "Go for retiring"; the sprint-store model); the reconcile package keeps the duty's own tests
+cmd/nova-sprint/hold_route_duty_test.go pr-to-read with hold-to-fix left the reconciler pass 2026-09-27 (the sprint-store model); the consume verb keeps its tests
+cmd/nova-sprint/okfriend_bound_test.go ok-to-friend left the reconciler pass 2026-09-27 (the sprint-store model); the consume verb keeps its tests

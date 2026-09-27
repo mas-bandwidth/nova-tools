@@ -1,3 +1,5 @@
+//go:build functional
+
 package fleetbuild
 
 import (
@@ -11,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/table"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 )
 
 // playRecap is ansible-playbook's real output (ansible-core 2.21, the
@@ -177,7 +179,7 @@ func TestParsePlayEdges(t *testing.T) {
 // the benches that stopped.
 func TestPlayRunsThroughTheReleaseRunner(t *testing.T) {
 	t.Parallel()
-	mr := miniredis.RunT(t)
+	mr := testutil.StartStore(t)
 	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	defer c.Close()
 	f := &playFake{playOut: playRecap(t), playErr: errors.New("exit status 4")}
@@ -238,7 +240,7 @@ func TestPlayOKAndDryRun(t *testing.T) {
 	t.Parallel()
 	good := "TASK [bench : x] ****\nok: [batman]\nchanged: [space]\n\nPLAY RECAP ****\n" +
 		"batman : ok=1 changed=0 unreachable=0 failed=0\nspace : ok=1 changed=1 unreachable=0 failed=0\n"
-	mr := miniredis.RunT(t)
+	mr := testutil.StartStore(t)
 	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	defer c.Close()
 	p, out := newPlay(t, &playFake{playOut: good}, c)
@@ -270,7 +272,7 @@ func TestPlayOKAndDryRun(t *testing.T) {
 // receipt is written.
 func TestPlayWithNoRecapFailsAndWritesNothing(t *testing.T) {
 	t.Parallel()
-	mr := miniredis.RunT(t)
+	mr := testutil.StartStore(t)
 	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	defer c.Close()
 	p, out := newPlay(t, &playFake{playOut: "ERROR! couldn't resolve module/action 'x'\n", playErr: errors.New("exit status 4")}, c)
@@ -312,7 +314,7 @@ func TestPlayRefusesBeforeThePlay(t *testing.T) {
 		{"no registry", &playFake{}, func(p *Play) { p.Registry = "" }, "--machines <file>, or NOVA_FLEET_MACHINES"},
 	} {
 		f := tc.fake
-		mr := miniredis.RunT(t)
+		mr := testutil.StartStore(t)
 		c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 		p, _ := newPlay(t, f, c)
 		if tc.edit != nil {

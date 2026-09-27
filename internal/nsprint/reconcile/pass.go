@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/redis/go-redis/v9"
 	"io"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pitstop"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -139,13 +141,18 @@ type Loop struct {
 // pass that recorded itself took under the lease TTL on the clock the lease
 // deadline is kept on.
 func (lp *Loop) Pass(ctx context.Context) (PassResult, error) {
+	// The pass's own trips (the renew, the pit stop read, the record) are
+	// counted under "pass"; each duty relabels for its own.
+	ctx = store.WithTripLabel(ctx, "pass")
 	start := lp.Lease.now()
-	if err := lp.Lease.Renew(ctx); err != nil {
+	// the renewal and the pit stop read ride one round trip
+	var stops *pitstop.HeldCmd
+	if err := lp.Lease.RenewAnd(ctx, func(pipe redis.Pipeliner) { stops = pitstop.QueueHeldOpen(ctx, pipe) }); err != nil {
 		return PassResult{}, err
 	}
 	var res PassResult
 	var errs []string
-	holds, err := pitstop.HeldOpen(ctx, lp.Lease.st.Client())
+	holds, err := stops.Result()
 	if err != nil {
 		return PassResult{}, fmt.Errorf("reconcile pass: pitstop: %w", err)
 	}

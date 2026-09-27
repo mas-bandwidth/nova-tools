@@ -154,7 +154,6 @@ type Refill struct {
 
 	mu        sync.Mutex
 	instance  string              // the lease instance the state below belongs to
-	groups    map[string]bool     // streams whose group this instance ensured
 	up        map[string]bool     // bench -> beat present at the last pass
 	lastDeal  time.Time           // the last deal pass that succeeded
 	retry     bool                // the last deal pass failed
@@ -175,26 +174,22 @@ func (r *Refill) Run(ctx context.Context, l *Lease) (Counts, error) {
 	if r.instance != l.Instance() {
 		// A new instance: the state of the old one is not evidence.
 		r.instance = l.Instance()
-		r.groups, r.up, r.unacked, r.routeIDs = map[string]bool{}, nil, map[string][]string{}, map[string][]string{}
+		r.up, r.unacked, r.routeIDs = nil, map[string][]string{}, map[string][]string{}
 		r.lastDeal, r.retry, r.firstPass = time.Time{}, false, true
 	}
 	consumer := r.consumer(l)
 
-	streams, benches, err := r.registry(ctx)
+	// The wake read is one call (2026-09-27, Glenn: "You always need to
+	// batch redis"): the streams to follow with the group ensured on each,
+	// the benches' states, the restart claim and this consumer's new
+	// entries, classified, come back from ns_refill_wake together; the
+	// duty's own state (what it holds unacknowledged, which benches were
+	// up) stays here.
+	var w Wake
+	w.Restart = r.firstPass
+	streams, states, err := r.wake(ctx, consumer, &w)
 	if err != nil {
 		return Counts{}, fmt.Errorf("refill: %w", err)
-	}
-	if err := r.ensureGroups(ctx, streams); err != nil {
-		return Counts{}, fmt.Errorf("refill: %w", err)
-	}
-	var w Wake
-	if r.firstPass {
-		w.Restart = true
-		n, err := r.claim(ctx, streams, consumer)
-		if err != nil {
-			return Counts{}, fmt.Errorf("refill: restart claim: %w", err)
-		}
-		w.Claimed = n
 	}
 	// Route events still pending from a failed Route (or claimed at restart)
 	// are replayed to Route this pass; they do not wake the deal.
@@ -203,17 +198,13 @@ func (r *Refill) Run(ctx context.Context, l *Lease) (Counts, error) {
 	if !r.lastDeal.IsZero() && r.now().Sub(r.lastDeal) >= r.sweep() {
 		w.Sweep = true
 	}
-	returned, err := r.benchReturns(ctx, benches)
-	if err != nil {
-		return Counts{}, fmt.Errorf("refill: bench beats: %w", err)
-	}
-	w.Benches = returned
-	block := time.Duration(-1)
-	if r.Block > 0 && !w.Dealing() && w.RouteReplay == 0 {
-		block = r.Block
-	}
-	if err := r.read(ctx, streams, consumer, block, &w); err != nil {
-		return Counts{}, fmt.Errorf("refill: read: %w", err)
+	w.Benches = r.benchReturns(states)
+	if r.Block > 0 && !w.Dealing() && w.RouteReplay == 0 && w.Route == 0 {
+		// A pass with nothing to do may wait for its first event, so the
+		// event is dealt in the pass it arrives in: the one blocking read.
+		if err := r.read(ctx, streams, consumer, r.Block, &w); err != nil {
+			return Counts{}, fmt.Errorf("refill: read: %w", err)
+		}
 	}
 
 	var c Counts
@@ -332,95 +323,95 @@ func (r *Refill) pass(l *Lease) *deal.Pass {
 	return &p
 }
 
-// registry reads the streams to follow (cap:log, then every open sprint's
-// log in sprint order) and the registered benches, in one round.
-func (r *Refill) registry(ctx context.Context) ([]string, []string, error) {
-	pipe := r.Client.Pipeline()
-	sprints := pipe.SMembers(ctx, "sprints")
-	benches := pipe.SMembers(ctx, "benches")
-	if err := pipeerr.Exec(ctx, pipe); err != nil {
-		return nil, nil, err
+// wake is the refill duty's wake read, one call of ns_refill_wake
+// (internal/nsprint/fn/lua/reconcile_reads.lua): the streams to follow
+// (cap:log, then every sprint's log in name order) with the reconciler
+// group ensured on each at its end, every registered bench's state, on the
+// first pass every entry a dead instance left pending claimed into this
+// consumer (held to be acknowledged by the restart sweep's deal), and this
+// consumer's new entries on every stream, each classified and held (keep)
+// and counted into w.
+func (r *Refill) wake(ctx context.Context, consumer string, w *Wake) (streams []string, states map[string]string, err error) {
+	first := "0"
+	if w.Restart {
+		first = "1"
 	}
-	names := sprints.Val()
-	sort.Strings(names)
-	streams := []string{CapLog}
-	for _, s := range names {
-		streams = append(streams, "s:"+s+":log")
+	reply, err := r.Client.FCall(ctx, "ns_refill_wake", nil, consumer, first, r.actor(), strconv.Itoa(DefaultEventCount)).StringSlice()
+	if err != nil {
+		return nil, nil, fmt.Errorf("ns_refill_wake: %w", err)
 	}
-	b := benches.Val()
-	sort.Strings(b)
-	return streams, b, nil
+	states = map[string]string{}
+	var errs []string
+	for i := 0; i < len(reply); {
+		switch reply[i] {
+		case "streams":
+			n, _ := strconv.Atoi(word(reply, i+1))
+			if i+2+n > len(reply) {
+				return nil, nil, fmt.Errorf("ns_refill_wake: streams row is short")
+			}
+			streams = append(streams, reply[i+2:i+2+n]...)
+			i += 2 + n
+		case "benches":
+			n, _ := strconv.Atoi(word(reply, i+1))
+			if i+2+2*n > len(reply) {
+				return nil, nil, fmt.Errorf("ns_refill_wake: benches row is short")
+			}
+			for j := 0; j < n; j++ {
+				states[reply[i+2+2*j]] = reply[i+3+2*j]
+			}
+			i += 2 + 2*n
+		case "claimed", "event":
+			if i+3 >= len(reply) {
+				return nil, nil, fmt.Errorf("ns_refill_wake: %s row is short", reply[i])
+			}
+			stream, id, class := reply[i+1], reply[i+2], reply[i+3]
+			if class == WakeRoute {
+				r.routeIDs[stream] = append(r.routeIDs[stream], id)
+			} else {
+				r.unacked[stream] = append(r.unacked[stream], id)
+			}
+			if reply[i] == "claimed" {
+				w.Claimed++
+			} else {
+				switch class {
+				case WakeDeal:
+					w.Deal++
+				case WakeRoute:
+					w.Route++
+				}
+			}
+			i += 4
+		case "err":
+			errs = append(errs, word(reply, i+1))
+			i += 2
+		default:
+			return nil, nil, fmt.Errorf("ns_refill_wake: unexpected row %q at %d", reply[i], i)
+		}
+	}
+	if len(errs) > 0 {
+		return nil, nil, errors.New(strings.Join(errs, "; "))
+	}
+	return streams, states, nil
 }
 
-// ensureGroups creates the group on a stream this instance has not seen,
-// at the stream's end: what came before is covered by the restart sweep.
-func (r *Refill) ensureGroups(ctx context.Context, streams []string) error {
-	for _, s := range streams {
-		if r.groups[s] {
-			continue
-		}
-		err := r.Client.XGroupCreateMkStream(ctx, s, Group, "$").Err()
-		if err != nil && !strings.HasPrefix(err.Error(), "BUSYGROUP") {
-			return fmt.Errorf("group %s on %s: %w", Group, s, err)
-		}
-		r.groups[s] = true
-	}
-	return nil
-}
-
-// claim takes every entry pending in the group (any consumer's: a dead
-// instance's wakes) into this consumer, to be acknowledged by the restart
-// sweep's deal.
-func (r *Refill) claim(ctx context.Context, streams []string, consumer string) (int, error) {
-	n := 0
-	for _, s := range streams {
-		start := "0-0"
-		for {
-			msgs, next, err := r.Client.XAutoClaim(ctx, &redis.XAutoClaimArgs{
-				Stream: s, Group: Group, Consumer: consumer, MinIdle: 0, Start: start, Count: DefaultEventCount,
-			}).Result()
-			if err != nil && !errors.Is(err, redis.Nil) {
-				return n, fmt.Errorf("%s: %w", s, err)
-			}
-			for _, m := range msgs {
-				r.keep(s, m, r.actor())
-			}
-			n += len(msgs)
-			if next == "" || next == "0-0" {
-				break
-			}
-			start = next
-		}
-	}
-	return n, nil
-}
-
-// benchReturns reads each registered bench's state in one round and
-// names the benches whose state changed to UP since the last pass.
-// The first pass records presence only (it deals anyway).
-func (r *Refill) benchReturns(ctx context.Context, benches []string) ([]string, error) {
-	if len(benches) == 0 {
-		r.up = map[string]bool{}
-		return nil, nil
-	}
-	pipe := r.Client.Pipeline()
-	cmds := make([]*redis.StringCmd, len(benches))
-	for i, b := range benches {
-		cmds[i] = pipe.HGet(ctx, "bench:"+b+":state", "state")
-	}
-	if err := pipeerr.Exec(ctx, pipe); err != nil {
-		return nil, err
-	}
-	up := make(map[string]bool, len(benches))
+// benchReturns names the benches whose state is UP now and was not at the
+// last pass. The first pass records presence only (it deals anyway).
+func (r *Refill) benchReturns(states map[string]string) []string {
+	up := make(map[string]bool, len(states))
 	var returned []string
-	for i, b := range benches {
-		up[b] = cmds[i].Val() == "UP"
+	names := make([]string, 0, len(states))
+	for b := range states {
+		names = append(names, b)
+	}
+	sort.Strings(names)
+	for _, b := range names {
+		up[b] = states[b] == "UP"
 		if up[b] && r.up != nil && !r.up[b] {
 			returned = append(returned, b)
 		}
 	}
 	r.up = up
-	return returned, nil
+	return returned
 }
 
 // read takes this consumer's new events on every stream in one call and
