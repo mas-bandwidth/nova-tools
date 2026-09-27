@@ -75,7 +75,6 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/friend"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land/stream"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/note"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
@@ -184,34 +183,14 @@ type watchStream struct {
 func (w *LandWatch) Run(ctx context.Context, l *Lease) (Counts, error) {
 	c := w.Client
 	now := w.now()
-	// the streams and the sprint epoch (nova-tools#4238) in one round: every
-	// merging set below is the current epoch's
-	streams, epoch, err := orderAndEpoch(ctx, c)
+	// The read is one call, ns_land_watch_read (2026-09-27, Glenn: batch):
+	// the streams and the epoch, every stream's merging set with its watch
+	// hashes and notes, cfg:land, the sprint and its notes.
+	sts, cv, sprint, sprintNoteLines, err := landWatchRead(ctx, c)
 	if err != nil {
 		return Counts{}, fmt.Errorf("land watch: %w", err)
 	}
-	pipe := c.Pipeline()
-	zs := make([]*redis.ZSliceCmd, len(streams))
-	slows := make([]*redis.MapStringStringCmd, len(streams))
-	merges := make([]*redis.MapStringStringCmd, len(streams))
-	seens := make([]*redis.MapStringStringCmd, len(streams))
-	for i, s := range streams {
-		zs[i] = pipe.ZRangeWithScores(ctx, stream.WSKeyAt(epoch, s, "merging"), 0, -1)
-		slows[i] = pipe.HGetAll(ctx, LandSlowKey(s))
-		merges[i] = pipe.HGetAll(ctx, LandMergeKey(s))
-		seens[i] = pipe.HGetAll(ctx, LandMergingKey(s))
-	}
-	cfg := pipe.HMGet(ctx, "cfg:land", "slow", "wall", "repos", "notify")
-	sprints := pipe.ZRange(ctx, "sprint:order", 0, 0)
-	streamNotes := make([]*redis.StringSliceCmd, len(streams))
-	for i, s := range streams {
-		streamNotes[i] = pipe.LRange(ctx, note.StreamNotesKey(s), 0, -1)
-	}
-	if err := execPipe(ctx, pipe); err != nil {
-		return Counts{}, fmt.Errorf("land watch: %w", err)
-	}
 	slow, wall := w.Slow, w.Wall
-	cv := cfg.Val()
 	if slow <= 0 {
 		slow = seconds(cv[0], DefaultLandSlow)
 	}
@@ -227,21 +206,12 @@ func (w *LandWatch) Run(ctx context.Context, l *Lease) (Counts, error) {
 		}
 	}
 	notify, _ := cv[3].(string)
-	sprint := ""
-	if v := sprints.Val(); len(v) > 0 {
-		sprint = v[0]
-	}
-	var sts []watchStream
-	for i, s := range streams {
-		sts = append(sts, watchStream{name: s, members: zs[i].Val(), slow: slows[i].Val(), merge: merges[i].Val(), seen: seens[i].Val(),
-			notes: streamNotes[i].Val()})
-	}
 
 	// Pipeline 2: stamp the first-seen ms on the watch's record and read
 	// every member's merging_at (the move's, when written), pr and paths;
 	// read each merge card's state and reason, and each sentinel a
 	// cross-stream end waits on.
-	pipe = c.Pipeline()
+	pipe := c.Pipeline()
 	reads := map[string]*redis.SliceCmd{}
 	firsts := map[string]*redis.StringCmd{}
 	cards := map[string]*redis.SliceCmd{}
@@ -264,16 +234,9 @@ func (w *LandWatch) Run(ctx context.Context, l *Lease) (Counts, error) {
 			stops[sid] = pipe.HMGet(ctx, "task:"+sid, "state", "where")
 		}
 	}
-	var sprintNotes *redis.StringSliceCmd
-	if sprint != "" {
-		sprintNotes = pipe.LRange(ctx, note.SprintKey(sprint), 0, -1)
-	}
+	// (an idle fleet queues nothing here, and an empty pipeline is no trip)
 	if err := execPipe(ctx, pipe); err != nil {
 		return Counts{}, fmt.Errorf("land watch: %w", err)
-	}
-	var sprintNoteLines []string
-	if sprintNotes != nil {
-		sprintNoteLines = sprintNotes.Val()
 	}
 
 	pipe = c.Pipeline()
@@ -868,6 +831,9 @@ func seconds(v any, def time.Duration) time.Duration {
 // execPipe runs a pipeline; a Nil reply inside it is not an error.
 // orderAndEpoch reads ws:order and the sprint epoch (nova-tools#4238) in one
 // round trip: the watch's stream sets are keyed by the epoch it read.
+// orderAndEpoch reads ws:order and the sprint epoch in one round (the
+// cross-stream stops read after a landing, afterStops; the pass itself reads
+// through landWatchRead).
 func orderAndEpoch(ctx context.Context, c redis.Cmdable) ([]string, uint64, error) {
 	pipe := c.Pipeline()
 	order := pipe.ZRange(ctx, "ws:order", 0, -1)
@@ -880,6 +846,105 @@ func orderAndEpoch(ctx context.Context, c redis.Cmdable) ([]string, uint64, erro
 		return nil, 0, err
 	}
 	return order.Val(), epoch, nil
+}
+
+// landWatchRead is the pass's read, one call of ns_land_watch_read: every
+// stream of ws:order with its merging members under the epoch, its watch
+// hashes and notes; cfg:land (slow, wall, repos, notify) as the HMGET
+// answered; the first sprint of sprint:order and its notes.
+func landWatchRead(ctx context.Context, c redis.Cmdable) (sts []watchStream, cfg []any, sprint string, sprintNotes []string, err error) {
+	reply, err := c.FCall(ctx, "ns_land_watch_read", nil).StringSlice()
+	if err != nil {
+		return nil, nil, "", nil, fmt.Errorf("ns_land_watch_read: %w", err)
+	}
+	cfg = []any{"", "", "", ""}
+	need := func(i, n int) error {
+		if i+n > len(reply) {
+			return fmt.Errorf("ns_land_watch_read: reply is short at %d", i)
+		}
+		return nil
+	}
+	hash := func(i int) (map[string]string, int, error) {
+		n, _ := strconv.Atoi(reply[i])
+		if err := need(i+1, 2*n); err != nil {
+			return nil, 0, err
+		}
+		h := make(map[string]string, n)
+		for j := 0; j < n; j++ {
+			h[reply[i+1+2*j]] = reply[i+2+2*j]
+		}
+		return h, i + 1 + 2*n, nil
+	}
+	list := func(i int) ([]string, int, error) {
+		n, _ := strconv.Atoi(reply[i])
+		if err := need(i+1, n); err != nil {
+			return nil, 0, err
+		}
+		return append([]string{}, reply[i+1:i+1+n]...), i + 1 + n, nil
+	}
+	for i := 0; i < len(reply); {
+		switch reply[i] {
+		case "epoch":
+			if err := need(i, 2); err != nil {
+				return nil, nil, "", nil, err
+			}
+			i += 2
+		case "cfg":
+			if err := need(i, 5); err != nil {
+				return nil, nil, "", nil, err
+			}
+			for j := 0; j < 4; j++ {
+				if reply[i+1+j] != "" {
+					cfg[j] = reply[i+1+j]
+				}
+			}
+			i += 5
+		case "sprint":
+			if err := need(i, 2); err != nil {
+				return nil, nil, "", nil, err
+			}
+			sprint = reply[i+1]
+			i += 2
+		case "sprintnotes":
+			var lines []string
+			lines, i, err = list(i + 1)
+			if err != nil {
+				return nil, nil, "", nil, err
+			}
+			sprintNotes = lines
+		case "stream":
+			if err := need(i, 3); err != nil {
+				return nil, nil, "", nil, err
+			}
+			st := watchStream{name: reply[i+1]}
+			m, _ := strconv.Atoi(reply[i+2])
+			i += 3
+			if err := need(i, 2*m); err != nil {
+				return nil, nil, "", nil, err
+			}
+			for j := 0; j < m; j++ {
+				score, _ := strconv.ParseFloat(reply[i+2*j+1], 64)
+				st.members = append(st.members, redis.Z{Member: reply[i+2*j], Score: score})
+			}
+			i += 2 * m
+			if st.slow, i, err = hash(i); err != nil {
+				return nil, nil, "", nil, err
+			}
+			if st.merge, i, err = hash(i); err != nil {
+				return nil, nil, "", nil, err
+			}
+			if st.seen, i, err = hash(i); err != nil {
+				return nil, nil, "", nil, err
+			}
+			if st.notes, i, err = list(i); err != nil {
+				return nil, nil, "", nil, err
+			}
+			sts = append(sts, st)
+		default:
+			return nil, nil, "", nil, fmt.Errorf("ns_land_watch_read: unexpected row %q at %d", reply[i], i)
+		}
+	}
+	return sts, cfg, sprint, sprintNotes, nil
 }
 
 func execPipe(ctx context.Context, pipe redis.Pipeliner) error {

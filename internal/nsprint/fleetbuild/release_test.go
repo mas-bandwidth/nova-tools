@@ -1,3 +1,5 @@
+//go:build functional
+
 package fleetbuild
 
 import (
@@ -15,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -27,11 +29,6 @@ const (
 )
 
 // call is one child a fake runner was asked to start.
-type call struct {
-	dir  string
-	env  []string
-	argv []string
-}
 
 const rollRecap = `PLAY [benches] *****
 
@@ -204,9 +201,9 @@ func playDir(t *testing.T) string {
 
 // relStore is a store with three benches: space already on the release,
 // hulk on an older build, batman with no beat.
-func relStore(t *testing.T) *miniredis.Miniredis {
+func relStore(t *testing.T) *testutil.Store {
 	t.Helper()
-	mr := miniredis.RunT(t)
+	mr := testutil.StartStore(t)
 	mr.SAdd("benches", "space", "hulk", "batman")
 	mr.HSet("bench:space:beat", "build", beatLine(relVersion, "linux/amd64"))
 	mr.HSet("bench:hulk:beat", "build", beatLine(relOld, "linux/amd64"))
@@ -215,7 +212,7 @@ func relStore(t *testing.T) *miniredis.Miniredis {
 
 // catchUp makes a fake's beat restart put the restarted benches on the
 // release, as a restarted beat does within a tick.
-func catchUp(mr *miniredis.Miniredis) func([]string) {
+func catchUp(mr *testutil.Store) func([]string) {
 	return func(hosts []string) {
 		for _, h := range hosts {
 			mr.HSet("bench:"+h+":beat", "build", beatLine(relVersion, "linux/amd64"))
@@ -223,7 +220,7 @@ func catchUp(mr *miniredis.Miniredis) func([]string) {
 	}
 }
 
-func newRelease(t *testing.T, f *relFake, mr *miniredis.Miniredis) (*Release, *bytes.Buffer, *int) {
+func newRelease(t *testing.T, f *relFake, mr *testutil.Store) (*Release, *bytes.Buffer, *int) {
 	t.Helper()
 	var out bytes.Buffer
 	sleeps := 0

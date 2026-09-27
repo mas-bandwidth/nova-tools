@@ -1,3 +1,5 @@
+//go:build functional
+
 package main
 
 import (
@@ -9,9 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alicebob/miniredis/v2"
-
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fleetbuild"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 )
 
 // The play answers (#4383 fix) through the REAL releaseExec.Run: a fake
@@ -206,7 +207,7 @@ func TestFleetReleaseReportsWhatAnsibleSaid(t *testing.T) {
 		os.WriteFile(filepath.Join(bin, "ansible.out"), []byte("hulk | CHANGED | rc=0 >>\n\n"), 0o644)
 		dir, reg := execPlayDir(t, tc.inv), releaseRegistry(t)
 
-		mr := miniredis.RunT(t)
+		mr := testutil.StartStore(t)
 		mr.SAdd("benches", "space", "hulk")
 		mr.HSet("bench:space:beat", "build", "nova-sprint "+verbVersion+" linux/amd64 go1.26.6")
 		f := &verbRelFake{home: t.TempDir(), mr: mr}

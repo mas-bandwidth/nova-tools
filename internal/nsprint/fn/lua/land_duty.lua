@@ -33,11 +33,33 @@ do
   -- the lease is free and the repo's pass is due (due_at then moves to now +
   -- tick); HELD holder while another worker holds it; WAIT due_at when the
   -- last pass was under a tick ago.
+  -- ld_take_one is the take for one repo (the reply of ns_land_duty_take).
+  local ld_take_one
+
+  -- With repo '*' (2026-09-27, Glenn: batch; the duty read cfg:land repos
+  -- and then took each in its own call): every repo of cfg:land repos
+  -- (args[6], the default, when unset) is taken in this one call, the same
+  -- token for each; reply REPOS n, then per repo its name, status and detail.
   local function land_duty_take(keys, args)
     local repo, instance, token, host, ttl = args[1] or '', args[2] or '', args[3] or '', args[4] or '', tonumber(args[5] or '')
     if repo == '' or instance == '' or token == '' or not ttl or ttl <= 0 then
       return { 'USAGE' }
     end
+    if repo ~= '*' then return ld_take_one(repo, instance, token, host, ttl) end
+    local repos = {}
+    for r in string.gmatch(redis.call('HGET', 'cfg:land', 'repos') or '', '[^,%s]+') do repos[#repos + 1] = r end
+    if #repos == 0 and (args[6] or '') ~= '' then repos = { args[6] } end
+    local out = { 'REPOS', tostring(#repos) }
+    for _, r in ipairs(repos) do
+      local reply = ld_take_one(r, instance, token, host, ttl)
+      out[#out + 1] = r
+      out[#out + 1] = reply[1]
+      out[#out + 1] = reply[2] or ''
+    end
+    return out
+  end
+
+  ld_take_one = function(repo, instance, token, host, ttl)
     local key, proc = 'lease:land:' .. repo, 'proc:land:' .. repo
     local holder = redis.call('HGET', key, 'instance')
     if holder then

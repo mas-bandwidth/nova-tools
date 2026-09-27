@@ -20,11 +20,11 @@ package fleetbuild
 import (
 	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/redis/go-redis/v9"
@@ -143,45 +143,55 @@ type Facts struct {
 }
 
 // ReadFacts reads fleet:release, the benches set, and every bench's desired
-// platform and beat build: two pipelined round trips. The self named in
-// fleet:release is read with the benches.
+// platform and beat build in one call, ns_fleet_facts (2026-09-27, Glenn:
+// batch; it was two dependent round trips). The self named in fleet:release
+// is read with the benches.
 func ReadFacts(ctx context.Context, c *redis.Client) (Facts, error) {
-	pipe := c.Pipeline()
-	h := pipe.HGetAll(ctx, ConfigKey)
-	m := pipe.SMembers(ctx, BenchesKey)
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return Facts{}, err
+	reply, err := c.FCall(ctx, "ns_fleet_facts", nil).StringSlice()
+	if err != nil {
+		return Facts{}, fmt.Errorf("ns_fleet_facts: %w", err)
 	}
-	f := Facts{Release: h.Val(), Benches: m.Val(), Desired: map[string]string{}, Beat: map[string]string{}}
+	f := Facts{Release: map[string]string{}, Desired: map[string]string{}, Beat: map[string]string{}}
+	for i := 0; i < len(reply); {
+		switch reply[i] {
+		case "release":
+			n, _ := strconv.Atoi(replyWord(reply, i+1))
+			if i+2+2*n > len(reply) {
+				return Facts{}, fmt.Errorf("ns_fleet_facts: release row is short")
+			}
+			for j := 0; j < n; j++ {
+				f.Release[reply[i+2+2*j]] = reply[i+3+2*j]
+			}
+			i += 2 + 2*n
+		case "bench":
+			if i+5 >= len(reply) {
+				return Facts{}, fmt.Errorf("ns_fleet_facts: bench row is short")
+			}
+			b, inSet, platform, beating, build := reply[i+1], reply[i+2], reply[i+3], reply[i+4], reply[i+5]
+			if inSet == "1" {
+				f.Benches = append(f.Benches, b)
+			}
+			if platform != "" {
+				f.Desired[b] = platform
+			}
+			if beating == "1" {
+				f.Beat[b] = build
+			}
+			i += 6
+		default:
+			return Facts{}, fmt.Errorf("ns_fleet_facts: unexpected row %q at %d", reply[i], i)
+		}
+	}
 	sort.Strings(f.Benches)
-	names := append([]string{}, f.Benches...)
-	if s := f.Release["self"]; s != "" && !contains(names, s) {
-		names = append(names, s)
-	}
-	if len(names) == 0 {
-		return f, nil
-	}
-	pipe = c.Pipeline()
-	desired := make([]*redis.StringCmd, len(names))
-	exists := make([]*redis.IntCmd, len(names))
-	beat := make([]*redis.StringCmd, len(names))
-	for i, b := range names {
-		desired[i] = pipe.HGet(ctx, "bench:"+b+":desired", "platform")
-		exists[i] = pipe.Exists(ctx, "bench:"+b+":beat")
-		beat[i] = pipe.HGet(ctx, "bench:"+b+":beat", "build")
-	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return Facts{}, err
-	}
-	for i, b := range names {
-		if v := desired[i].Val(); v != "" {
-			f.Desired[b] = v
-		}
-		if exists[i].Val() == 1 {
-			f.Beat[b] = beat[i].Val()
-		}
-	}
 	return f, nil
+}
+
+// replyWord is reply[i], "" past the end.
+func replyWord(reply []string, i int) string {
+	if i < len(reply) {
+		return reply[i]
+	}
+	return ""
 }
 
 func contains(xs []string, x string) bool {

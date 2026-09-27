@@ -50,6 +50,10 @@ var epochRuleLines = map[string][]string{
 		`if es == '0' then return 'ws:' .. s .. ':' .. w end`,
 		`return 'ws:' .. es .. ':' .. s .. ':' .. w`,
 	},
+	"land_watch.lua": {
+		// ws:<s>:notes is the stream's notes list (note.StreamNotesKey), not a table set
+		`local sn = redis.call('LRANGE', 'ws:' .. s .. ':notes', 0, -1)`,
+	},
 	"land/stream/land_stream.lua": {
 		`if not e or e == '' or e == '0' then return 'ws:' .. stream .. ':' .. w end`,
 		`return 'ws:' .. e .. ':' .. stream .. ':' .. w`,

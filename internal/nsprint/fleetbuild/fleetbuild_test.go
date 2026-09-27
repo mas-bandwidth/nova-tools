@@ -1,3 +1,5 @@
+//go:build functional
+
 package fleetbuild
 
 import (
@@ -13,14 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 	"github.com/redis/go-redis/v9"
-)
-
-const (
-	testV = "v0.16.0-dev.c8178673"
-	testC = "c8178673f5e19ffbfe841e11826e611b74b6900d"
 )
 
 // fakeBench stands in for every child the deploy starts: the build, each
@@ -120,9 +117,9 @@ func (f *fakeBench) byFirst(prog string) [][]string {
 	return out
 }
 
-func seed(t *testing.T) (*miniredis.Miniredis, *redis.Client) {
+func seed(t *testing.T) (*testutil.Store, *redis.Client) {
 	t.Helper()
-	mr := miniredis.RunT(t)
+	mr := testutil.StartStore(t)
 	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { c.Close() })
 	mr.SAdd(BenchesKey, "hulk", "batman", "space")
@@ -330,18 +327,18 @@ func TestFleetBuildRefusesIncompleteConfig(t *testing.T) {
 	ctx := context.Background()
 	for _, tc := range []struct {
 		name  string
-		edit  func(mr *miniredis.Miniredis)
+		edit  func(mr *testutil.Store)
 		only  []string
 		match string
 	}{
-		{"no version", func(mr *miniredis.Miniredis) { mr.HDel(ConfigKey, "version") }, nil, "HSET fleet:release version"},
-		{"commit not the version's", func(mr *miniredis.Miniredis) { mr.HSet(ConfigKey, "commit", strings.Repeat("a", 40)) }, nil, "not the version's sha"},
-		{"short commit", func(mr *miniredis.Miniredis) { mr.HSet(ConfigKey, "commit", "c8178673") }, nil, "full 40-hex"},
-		{"no builder", func(mr *miniredis.Miniredis) { mr.HDel(ConfigKey, "builder") }, nil, "builder"},
-		{"no self", func(mr *miniredis.Miniredis) { mr.HDel(ConfigKey, "self") }, nil, "self"},
-		{"bench without platform", func(mr *miniredis.Miniredis) { mr.HDel(ConfigKey, "platform:batman") }, nil, "platform:batman"},
-		{"tools without nova-sprint", func(mr *miniredis.Miniredis) { mr.HSet(ConfigKey, "tools", "nova-card") }, nil, "leave out nova-sprint"},
-		{"unknown bench", func(mr *miniredis.Miniredis) {}, []string{"vision"}, "neither in the benches set"},
+		{"no version", func(mr *testutil.Store) { mr.HDel(ConfigKey, "version") }, nil, "HSET fleet:release version"},
+		{"commit not the version's", func(mr *testutil.Store) { mr.HSet(ConfigKey, "commit", strings.Repeat("a", 40)) }, nil, "not the version's sha"},
+		{"short commit", func(mr *testutil.Store) { mr.HSet(ConfigKey, "commit", "c8178673") }, nil, "full 40-hex"},
+		{"no builder", func(mr *testutil.Store) { mr.HDel(ConfigKey, "builder") }, nil, "builder"},
+		{"no self", func(mr *testutil.Store) { mr.HDel(ConfigKey, "self") }, nil, "self"},
+		{"bench without platform", func(mr *testutil.Store) { mr.HDel(ConfigKey, "platform:batman") }, nil, "platform:batman"},
+		{"tools without nova-sprint", func(mr *testutil.Store) { mr.HSet(ConfigKey, "tools", "nova-card") }, nil, "leave out nova-sprint"},
+		{"unknown bench", func(mr *testutil.Store) {}, []string{"vision"}, "neither in the benches set"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mr, c := seed(t)

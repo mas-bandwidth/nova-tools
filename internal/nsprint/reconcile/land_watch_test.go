@@ -1,3 +1,5 @@
+//go:build functional
+
 package reconcile_test
 
 import (
@@ -8,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land/stream"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 )
 
 // TestLandWatchAlarmsMergeCardAndEscalation (nova-tools #4324): on an
@@ -25,7 +27,7 @@ import (
 // merging empties both records go.
 func TestLandWatchAlarmsMergeCardAndEscalation(t *testing.T) {
 	t.Parallel()
-	mr := miniredis.RunT(t)
+	mr := testutil.StartStore(t)
 	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = c.Close() })
 	ctx := context.Background()
@@ -180,7 +182,7 @@ func TestLandWatchAlarmsMergeCardAndEscalation(t *testing.T) {
 // in the same episode adds none.
 func TestLandWatchNoteGoesToTheOutbox(t *testing.T) {
 	t.Parallel()
-	mr := miniredis.RunT(t)
+	mr := testutil.StartStore(t)
 	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = c.Close() })
 	ctx := context.Background()
@@ -221,7 +223,7 @@ func TestLandWatchNoteGoesToTheOutbox(t *testing.T) {
 // Push (the pushed card's task is open) and fixed friends.
 func newWatchFixture(t *testing.T) (*redis.Client, *reconcile.LandWatch, *[]reconcile.MergeCard, *bytes.Buffer, func() string) {
 	t.Helper()
-	mr := miniredis.RunT(t)
+	mr := testutil.StartStore(t)
 	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = c.Close() })
 	ctx := context.Background()

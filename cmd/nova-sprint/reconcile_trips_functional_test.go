@@ -30,7 +30,7 @@ var reconcileTripBudget = map[string]int64{
 	"fleet":           1,
 	"dev-red":         1,
 	"fleet-deploy":    1,
-	"land":            1,
+	"land":            1, // the take-all call; the landing itself runs on its own goroutine under "land-worker"
 	"land-watch":      1,
 	"progress":        2,
 	"route":           1,

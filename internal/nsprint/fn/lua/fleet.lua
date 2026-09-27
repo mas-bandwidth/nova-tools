@@ -351,6 +351,43 @@ local function fleet_step(keys, args)
   return { 'OK' }
 end
 
+-- ns_fleet_facts() -> fleetbuild.ReadFacts in one call (2026-09-27, Glenn:
+-- batch; it was two dependent round trips): fleet:release as stored, then
+-- every bench of the benches set in name order and the release's self when
+-- it is not one, each with its desired platform and, when it beats, its
+-- beat's build. Rows, flat:
+--   release <n> (<field> <value>)...
+--   bench <name> <in the set 1|0> <platform> <beating 1|0> <build>
+local function fleet_facts(keys, args)
+  local out = {}
+  local h = redis.call('HGETALL', 'fleet:release')
+  out[#out + 1] = 'release'
+  out[#out + 1] = tostring(#h / 2)
+  for _, v in ipairs(h) do out[#out + 1] = v end
+  local self = ''
+  for i = 1, #h, 2 do
+    if h[i] == 'self' then self = h[i + 1] end
+  end
+  local names = redis.call('SMEMBERS', 'benches')
+  table.sort(names)
+  local inset = {}
+  for _, b in ipairs(names) do inset[b] = true end
+  if self ~= '' and not inset[self] then names[#names + 1] = self end
+  for _, b in ipairs(names) do
+    local beating = redis.call('EXISTS', 'bench:' .. b .. ':beat')
+    local build = ''
+    if beating == 1 then build = redis.call('HGET', 'bench:' .. b .. ':beat', 'build') or '' end
+    out[#out + 1] = 'bench'
+    out[#out + 1] = b
+    out[#out + 1] = inset[b] and '1' or '0'
+    out[#out + 1] = redis.call('HGET', 'bench:' .. b .. ':desired', 'platform') or ''
+    out[#out + 1] = tostring(beating)
+    out[#out + 1] = build
+  end
+  return out
+end
+
+redis.register_function{ function_name = 'ns_fleet_facts', callback = fleet_facts, flags = { 'no-writes' } }
 redis.register_function('ns_fleet_config', fleet_config)
 redis.register_function('ns_fleet_hold', fleet_hold)
 redis.register_function('ns_fleet_release', fleet_release)

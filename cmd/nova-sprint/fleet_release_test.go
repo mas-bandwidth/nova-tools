@@ -1,3 +1,5 @@
+//go:build functional
+
 package main
 
 import (
@@ -12,16 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
-
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fleetbuild"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
-)
-
-const (
-	verbSha     = "c8178673f5e19ffbfe841e11826e611b74b6900d"
-	verbVersion = "v0.16.0-dev.c8178673"
-	verbPW      = "pw-seat-4356"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 )
 
 // verbRelFake is the verb test's ExecRunner: every child answers as it
@@ -29,7 +24,7 @@ const (
 // up in the store.
 type verbRelFake struct {
 	home  string
-	mr    *miniredis.Miniredis
+	mr    *testutil.Store
 	mu    sync.Mutex
 	calls []string
 	envs  map[string][]string // argv -> the extra environment it was given
@@ -89,27 +84,6 @@ func (f *verbRelFake) Run(ctx context.Context, dir string, env []string, argv []
 	return "", errors.New("unexpected " + line)
 }
 
-func releaseRegistry(t *testing.T) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "machines.tsv")
-	body := "space\tspace\tlinux/x64\tbench,services\nhulk\thulk\tlinux/x64\tbench\nstudio\tlocalhost\tdarwin/arm64\tcoordination\n"
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	return path
-}
-
-func releasePlayDir(t *testing.T) string {
-	t.Helper()
-	d := t.TempDir()
-	for _, f := range []string{"inventory.py", "tools.yml"} {
-		if err := os.WriteFile(filepath.Join(d, f), nil, 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	return d
-}
-
 // verbDeps are the fakes: env is the environment, seat the run's seat, and
 // the seat holds verbPW as its admin password.
 func verbDeps(f *verbRelFake, env map[string]string, seat string, sleeps *int) releaseDeps {
@@ -131,7 +105,7 @@ func verbDeps(f *verbRelFake, env map[string]string, seat string, sleeps *int) r
 // exit 0; nothing waits on the clock.
 func TestFleetReleaseIsOneCommand(t *testing.T) {
 	t.Parallel()
-	mr := miniredis.RunT(t)
+	mr := testutil.StartStore(t)
 	mr.SAdd("benches", "space", "hulk")
 	mr.HSet("bench:space:beat", "build", "nova-sprint "+verbVersion+" linux/amd64 go1.26.6")
 	f := &verbRelFake{home: t.TempDir(), mr: mr}
@@ -192,7 +166,7 @@ func TestFleetReleaseAdminPassword(t *testing.T) {
 		}
 	}
 
-	mr := miniredis.RunT(t)
+	mr := testutil.StartStore(t)
 	mr.SAdd("benches", "hulk")
 	f := &verbRelFake{home: t.TempDir(), mr: mr}
 	sleeps := 0

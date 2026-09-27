@@ -1,3 +1,5 @@
+//go:build functional
+
 package fleetbuild
 
 import (
@@ -9,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -22,7 +24,7 @@ const testMachines = "# name\tssh\tos/arch\troles\tseat\tcores\tnotes\n" +
 	"batman\tbatman\tdarwin/amd64\tbench,runner\tswarm-batman\t8\t-\n" +
 	"hetzner\thetzner\tlinux/x64\tbench,ingress\tswarm-hetzner\t8\t-\n"
 
-func beat(mr *miniredis.Miniredis, bench, line string) {
+func beat(mr *testutil.Store, bench, line string) {
 	mr.HSet("bench:"+bench+":beat", "at", "1", "build", line)
 	mr.SetTTL("bench:"+bench+":beat", 3*time.Second)
 }
@@ -40,7 +42,7 @@ func TestConvergeFillsBuilderSelfAndPlatforms(t *testing.T) {
 	if len(ms) != 5 || ms[4].Name != "hetzner" || ms[4].Platform != "linux-amd64" || ms[3].Platform != "darwin-amd64" {
 		t.Fatalf("machines = %+v", ms)
 	}
-	mr := miniredis.RunT(t)
+	mr := testutil.StartStore(t)
 	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { c.Close() })
 	mr.SAdd(BenchesKey, "hulk", "space", "batman", "vision", "studio")
@@ -160,7 +162,7 @@ func TestDutyWouldInstallEveryDriftingBench(t *testing.T) {
 func TestDutyNoPlanWithoutARelease(t *testing.T) {
 	t.Parallel()
 
-	mr := miniredis.RunT(t)
+	mr := testutil.StartStore(t)
 	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { c.Close() })
 	mr.SAdd(BenchesKey, "hulk")
