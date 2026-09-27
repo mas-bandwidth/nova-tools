@@ -369,6 +369,20 @@ func TestPreflightMachineCeiling(t *testing.T) {
 		t.Fatalf("65 over 64: %s", l)
 	}
 	c.HSet(ctx, "friend:ctl-b:desired", "slots", "32")
+	// a bench's share is not in the friends' sum (2026-09-27): the whole
+	// machine beside friends of 64 is green; a share over the ceiling alone
+	// is red by name
+	c.SAdd(ctx, "benches", "ctl-studio")
+	c.HSet(ctx, "bench:ctl-studio:desired", "slots", "64", "machine", "ctl-studio")
+	if l := checkCeiling(ctx, c); l.Red || !strings.Contains(l.Why, "ctl-studio 64/64") {
+		t.Fatalf("bench share 64 beside friends of 64: %s", l)
+	}
+	c.HSet(ctx, "bench:ctl-studio:desired", "slots", "65")
+	if l := checkCeiling(ctx, c); !l.Red || !strings.Contains(l.Why, "bench ctl-studio share 65/64 over its ceiling on ctl-studio") {
+		t.Fatalf("bench share 65 over 64: %s", l)
+	}
+	c.SRem(ctx, "benches", "ctl-studio")
+	c.Del(ctx, "bench:ctl-studio:desired")
 	c.HSet(ctx, "bench:ctl-bench:beat", "host", "ctl-other")
 	if l := checkCeiling(ctx, c); !l.Red || !strings.Contains(l.Why, "bench ctl-bench beats on ctl-other, desired ctl-hulk") {
 		t.Fatalf("beat host differs: %s", l)

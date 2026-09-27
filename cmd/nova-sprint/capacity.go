@@ -25,7 +25,7 @@ import (
 func init() {
 	register(Verb{
 		Name:    "capacity",
-		Summary: "set a bench or machine slot budget under the machine ceiling (a friend's is nova-config's; owed to nova-fleet)",
+		Summary: "set a bench's share or a machine's ceiling (a bench runs the ceiling less the friends awake on its machine; a friend's slots are nova-config's; owed to nova-fleet)",
 		Run:     runCapacity,
 	})
 }

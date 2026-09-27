@@ -61,8 +61,10 @@ func TestStage1CapacityIsTheOneWidthWriter(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
+	// the bench's 8 on m is not in the friends' sum (2026-09-27: a bench's
+	// share fits the ceiling on its own; its live slots are the remainder)
 	res, err := capacity.SetFriendWith(ctx, st, "f", "m", 32, "ops", "", capacity.DesiredOpts{})
-	if err != nil || res.Slots != 32 || res.Sum != 40 || res.Ceiling != 40 {
+	if err != nil || res.Slots != 32 || res.Sum != 32 || res.Ceiling != 40 {
 		t.Fatalf("SetFriendWith f 32: %+v %v", res, err)
 	}
 	if !client.SIsMember(ctx, "friends", "f").Val() {
@@ -89,12 +91,12 @@ func TestStage1CapacityIsTheOneWidthWriter(t *testing.T) {
 	if code := runWidth(ctx, []string{"--redis", addr, "--as", "f"}, &out, &errOut); code != 0 || !strings.Contains(out.String(), "WIDTH f ") || !strings.Contains(out.String(), "slots=32") {
 		t.Fatalf("width code=%d out=%q err=%q", code, out.String(), errOut.String())
 	}
-	// Setter: a 33 is refused at the machine ceiling.
-	if _, err := capacity.SetFriendWith(ctx, st, "f", "m", 33, "ops", "", capacity.DesiredOpts{}); err == nil || !strings.Contains(err.Error(), "CEILING m 41/40") {
-		t.Fatalf("SetFriendWith f 33: %v; want CEILING m 41/40", err)
+	// Setter: a 41 is refused at the machine ceiling (the friends' sum alone).
+	if _, err := capacity.SetFriendWith(ctx, st, "f", "m", 41, "ops", "", capacity.DesiredOpts{}); err == nil || !strings.Contains(err.Error(), "CEILING m 41/40") {
+		t.Fatalf("SetFriendWith f 41: %v; want CEILING m 41/40", err)
 	}
 	if got := client.HGet(ctx, "friend:f:desired", "slots").Val(); got != "32" {
-		t.Fatalf("refused 33 changed desired=%q", got)
+		t.Fatalf("refused 41 changed desired=%q", got)
 	}
 }
 

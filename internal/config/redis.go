@@ -433,7 +433,7 @@ func (a *RedisApplier) writeMachine(ctx context.Context, row Row, prev View, act
 		switch words[0] {
 		case "SET":
 		case "CEILING":
-			return &RefusedError{Err: ErrCeiling, Detail: fmt.Sprintf("CEILING %s: its friends and benches desire %s slots and the row says %s; lower their slots first, or set --slots to at least %s",
+			return &RefusedError{Err: ErrCeiling, Detail: fmt.Sprintf("CEILING %s: its friends desire %s slots and the row says %s; lower their slots first, or set --slots to at least %s",
 				m, word(words, 2), word(words, 3), word(words, 2))}
 		default:
 			return fmt.Errorf("redis: machine %s ceiling: %s", m, strings.Join(words, " "))

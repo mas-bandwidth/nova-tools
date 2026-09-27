@@ -127,3 +127,56 @@ func TestNormalizeTiersIsTheThreeModelTypes(t *testing.T) {
 		}
 	}
 }
+
+// TestBenchShareOutsideFriendsSum is the 2026-09-27 rule: friends and the
+// swarm share one ceiling per machine. The friends' slots on a machine fit
+// under its ceiling together; a bench's share fits on its own and is not
+// added to the friends' sum (its live slots are the ceiling less the
+// friends awake, TM.bench_slots). Four friends of 32 on a 128 machine and a
+// bench share of 128 on the same machine are all allowed; a fifth friend
+// of 1 is refused 129/128; a bench share of 129 is refused 129/128.
+func TestBenchShareOutsideFriendsSum(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	r := &fakeReader{
+		ceilings: map[string]int{"studio": 128},
+		consumers: []capacity.Consumer{
+			{Kind: capacity.KindFriend, Name: "rowan", Slots: 32, Machine: "studio"},
+			{Kind: capacity.KindFriend, Name: "stella", Slots: 32, Machine: "studio"},
+			{Kind: capacity.KindFriend, Name: "emma", Slots: 32, Machine: "studio"},
+			{Kind: capacity.KindFriend, Name: "johnny", Slots: 32, Machine: "studio"},
+			{Kind: capacity.KindBench, Name: "studio", Slots: 128, Machine: "studio"},
+		},
+	}
+	plan, err := capacity.Evaluate(ctx, r, "studio", capacity.KindBench, "studio", 128)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.Allowed || plan.Sum != 128 || plan.Ceiling != 128 {
+		t.Fatalf("bench share 128 beside four friends of 32: %+v; want allowed 128/128", plan)
+	}
+	plan, err = capacity.Evaluate(ctx, r, "studio", capacity.KindBench, "studio", 129)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Allowed || plan.Sum != 129 {
+		t.Fatalf("bench share 129: %+v; want refused 129/128", plan)
+	}
+	// the friends' sum is the friends alone: johnny's 32 again is SAME, a
+	// fifth friend of 1 is over
+	plan, err = capacity.Evaluate(ctx, r, "studio", capacity.KindFriend, "johnny", 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.Allowed || plan.Sum != 128 {
+		t.Fatalf("johnny 32 again: %+v; want allowed 128/128 (the bench share is not in the sum)", plan)
+	}
+	plan, err = capacity.Evaluate(ctx, r, "studio", capacity.KindFriend, "patrick", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Allowed || plan.Sum != 129 {
+		t.Fatalf("a fifth friend of 1: %+v; want refused 129/128", plan)
+	}
+}

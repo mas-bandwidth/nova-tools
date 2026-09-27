@@ -381,7 +381,7 @@ func TestApplyRefusesACeilingAndAMachineInUse(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = Apply(ctx, st, ap, KindMachine, "rowan", false, func(Op) {})
-	if err == nil || !errors.Is(err, ErrCeiling) || !strings.Contains(err.Error(), "CEILING studio: its friends and benches desire 64 slots and the row says 10") {
+	if err == nil || !errors.Is(err, ErrCeiling) || !strings.Contains(err.Error(), "CEILING studio: its friends desire 64 slots and the row says 10") {
 		t.Fatalf("ceiling below the sum: %v", err)
 	}
 	// A machine that Redis still has consumers on cannot be removed (here
