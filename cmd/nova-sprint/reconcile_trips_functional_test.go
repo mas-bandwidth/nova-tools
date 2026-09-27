@@ -26,7 +26,7 @@ import (
 // pins it. "pass" is the loop's own: the renew, the pit stop read and the
 // record.
 var reconcileTripBudget = map[string]int64{
-	"pass":            3,
+	"pass":            2, // the renewal with the pit stops, then the record
 	"fleet":           1,
 	"dev-red":         1,
 	"fleet-deploy":    1,
@@ -34,9 +34,9 @@ var reconcileTripBudget = map[string]int64{
 	"land-watch":      1,
 	"progress":        2,
 	"route":           1,
-	"card-deal":       2,
+	"card-deal":       1,
 	"task-lease":      1,
-	"waiting-resolve": 2,
+	"waiting-resolve": 1,
 }
 
 // TestReconcilePassTrips runs one production pass (every duty, as
