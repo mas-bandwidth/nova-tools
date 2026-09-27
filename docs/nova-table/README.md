@@ -425,7 +425,11 @@ is as wide as its widest cell (the footer counts) unless its width is fixed
 in the definition (`create --width`) or for one render (`render --width`);
 a wider cell is not cut. A last column is padded only when right-aligned,
 so no line ends in a space. `--label-width <n>` sets the separate row-label
-column width. Known-empty percentages, including pooled footers, print `0.0%`. A cell whose set did not come back prints `?`,
+column width. Labels, text, member names, footers and view titles display control
+characters as literal escapes (for example, newline as `\x0a` and ESC as `\x1b`).
+Widths are measured after escaping. Stored values remain unchanged; text cannot
+add a row or execute a terminal control sequence.
+Known-empty percentages, including pooled footers, print `0.0%`. A cell whose set did not come back prints `?`,
 never a false 0, and so does the fold over it. `--hide-zero-rows` hides a
 row whose count cells are all zero and all read; the fold is still the
 column's, hidden rows included.
