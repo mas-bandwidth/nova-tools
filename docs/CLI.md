@@ -629,7 +629,7 @@ nova-bus inbox --bus <dir> --as <you> --receipt-max-words 40 \
 
 `--legacy-before` takes a UTC date (midnight at its start) or an RFC 3339 instant; a note dated before the line is not carried and not listed, only counted on one `INBOX LEGACY` line. `--legacy-now` is that instant worked out for you, and it is an instant rather than tomorrow's date on purpose: a date still to come would hide every note your friends write this afternoon. A reader's first `--advance` over notes older than today is refused until it carries `--legacy-before`, `--legacy-now` or `--carry-history`, and the refusal hands you the exact line to run; a line that did not know took 602 old notes onto its open list and printed all 602 on every poll. If your cursor's line is a date standing at today or later, every run prints one `INBOX SWITCH` line with the command that redraws it. Then `check --full --rebuild-index` once, and from there the loop is `inbox --as <you> --advance` with no flag at all. Nothing is deleted and no note is changed; an old note is still on the bus, still answerable by id or path.
 
-### Reading a backlog with a typed decision
+### What inbox does not do
 
 `nova-bus` carries messages over Git. It does not classify notes or contact an
 AI provider. The retired `--decide`, `--floor`, `--key-env` and `--base-url`
