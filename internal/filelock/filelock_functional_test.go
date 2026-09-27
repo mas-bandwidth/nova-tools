@@ -257,4 +257,3 @@ func TestFunctional_RealClock(t *testing.T) {
 	}
 	rc.Sleep(0)
 }
-

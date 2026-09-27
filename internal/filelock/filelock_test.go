@@ -941,6 +941,3 @@ func TestParseStamp_TokensWithoutEqualsAndPrefixes(t *testing.T) {
 		t.Errorf("st2 = %+v, %v", st2, err)
 	}
 }
-
-
-
