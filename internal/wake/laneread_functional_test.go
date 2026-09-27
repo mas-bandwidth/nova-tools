@@ -203,10 +203,17 @@ func TestAWedgedProcessIsKilledByTheWholeReadBound(t *testing.T) {
 	r := &LaneRead{Dir: dir, Ref: "HEAD", Lane: "from-peer", Anchor: anchor,
 		Caller: "Rowan", PingID: "rowan-00000000000a",
 		MaxItems: 300, MaxBytes: 1 << 20, Wall: time.Millisecond, Whole: 5 * time.Millisecond}
-	started := time.Now()
-	res := r.Run(context.Background(), "-")
-	if d := time.Since(started); d > 30*time.Second {
-		t.Errorf("the read ran %s past a 5ms whole-read bound", d)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan LaneResult, 1)
+	go func() { done <- r.Run(ctx, "-") }()
+	// Wait for the bounded read's completion event. The outer timeout is a
+	// hang detector; the product's 5 ms deadline must leave the read partial.
+	var res LaneResult
+	select {
+	case res = <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the whole-read deadline did not release the reader")
 	}
 	if res.Complete {
 		t.Errorf("a read the clock ended is never complete")
