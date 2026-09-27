@@ -4848,6 +4848,9 @@ NS.tm = { score = TM.score }
 
 NS.task = { move = TK.move, create = TK.create, read = TK.read, stream_of = TK.stream_of, is_copy = TK.copy_id,
   ms = TK.ms, where = TK.IS, where_of = TK.WHERE_OF, unread = TK.unread,
+  -- the sprint epoch and a stream's set under it (ws.Epoch and ws.KeyAt in
+  -- Go): a later file that reads a stream's cells names them this way
+  epoch = cm_epoch, wskey = cm_wskey,
   -- the stream sentinel (#4318): its id for a stream, and whether an id is one
   sentinel_id = TK.sentinel_id, is_sentinel = TK.is_sentinel, slug = TK.slug, slug_clash = TK.slug_clash,
   live_siblings = TK.live_siblings,

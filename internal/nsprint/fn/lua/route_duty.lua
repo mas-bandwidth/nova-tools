@@ -551,9 +551,271 @@ do
     return { string.upper(kind), id, to }
   end
 
+  -- The whole route pass in one call (Glenn 2026-09-27: "You always need
+  -- to batch redis"; the store is 128 ms from the Studio and the Go pass
+  -- made 17 round trips, one per read it chained). The open sprints, the
+  -- live readers and the coordinator are read here; then, per sprint, the
+  -- four legs call the local functions above exactly as the Go pass called
+  -- them over the wire. Every function checks the fence itself, so a pass
+  -- that lost its lease writes nothing past the first refusal.
+
+  -- trim(s, chars): s without leading and trailing chars (Go strings.Trim).
+  local function trim(s, chars)
+    chars = chars or '%s'
+    return (string.gsub(string.gsub(s, '^[' .. chars .. ']+', ''), '[' .. chars .. ']+$', ''))
+  end
+
+  -- pr_ref reads a task's PR fields (pr as 123, #123, <repo>#123 or a pulls
+  -- URL; repo; ref as <owner/repo>#<n>) into the record's repo and number,
+  -- the reconcile package's prRef; nil when they name no PR.
+  local function pr_ref(pr, repo, ref)
+    pr, repo, ref = trim(pr), trim(repo), trim(ref)
+    local num = ''
+    local last = nil
+    local from = 1
+    while true do
+      local i = string.find(pr, '/pull/', from, true)
+      if not i then break end
+      last, from = i, i + 1
+    end
+    if last then
+      local parts = {}
+      for w in string.gmatch(trim(string.sub(pr, 1, last - 1), '/'), '[^/]+') do parts[#parts + 1] = w end
+      if #parts >= 2 then repo = parts[#parts - 1] .. '/' .. parts[#parts] end
+      num = trim(string.sub(pr, last + 6), '/')
+    else
+      local l, r = string.match(pr, '^([^#]*)#(.*)$')
+      if l then
+        if l ~= '' then repo = l end
+        num = r
+      else
+        num = pr
+      end
+    end
+    local rl, rr = string.match(ref, '^([^#]*)#(.*)$')
+    if rl then
+      if repo == '' or not string.find(repo, '/', 1, true) then
+        if repo == '' or string.sub(rl, -(#repo + 1)) == '/' .. repo then repo = rl end
+      end
+      if num == '' then num = rr end
+    end
+    local n = tonumber(num)
+    if not n or n <= 0 or n ~= math.floor(n) or repo == '' or not string.match(num, '^%d+$') then return nil end
+    return repo, n
+  end
+
+  -- held_at: some HOLD line, or DISPOSITION verdict=HOLD line, names this
+  -- head (the Go prefilter of the fix leg; route_pr_fix re-reads the lines
+  -- with the author and the last-line-wins rule, this only spares a call).
+  local function held_at(reads, head)
+    head = string.lower(head)
+    for line in string.gmatch(reads or '', '[^\n]+') do
+      local words = {}
+      for w in string.gmatch(line, '%S+') do words[#words + 1] = w end
+      local kind = words[1] or ''
+      local h, hold = '', false
+      if kind == 'HOLD' or kind == 'DISPOSITION' then
+        local kv = {}
+        for i = 2, #words do
+          local k, v = string.match(words[i], '^([^=]+)=(.*)$')
+          if k then kv[k] = string.gsub(v, '[:,;]+$', '') end
+        end
+        h = string.lower(kv['head'] or '')
+        hold = kind == 'HOLD' or string.upper(kv['verdict'] or '') == 'HOLD'
+      end
+      if hold and #h >= 7 and string.sub(head, 1, #h) == h then return true end
+    end
+    return false
+  end
+
+  -- ns_route_pass token actor bar instance sweep max_idle_ms now_ms reader...
+  -- reader... is the verb's --readers (empty: the readers set, else every
+  -- friend); a reader counts when it is a registered friend with a beat
+  -- within a minute (beat.Window) and is not jev. sweep=1 deletes the route
+  -- group's consumers idle past max_idle_ms with nothing pending (once a
+  -- minute per instance, #3808). Reply: pairs, a kind then a value, in the
+  -- order the moves were made: read <id>, fix <id>, merging <id>, carried
+  -- <id>, skip <why>, err <text>; FENCED alone when the token is not the
+  -- lease's.
+  local function route_pass(keys, args)
+    local token, actor = args[1], args[2]
+    local bar = tonumber(args[3] or '') or 8
+    local instance = args[4] or ''
+    local sweep, max_idle = args[5] == '1', tonumber(args[6] or '') or 3600000
+    local now = tonumber(args[7] or '') or now_ms()
+    if fenced(token) then return { 'FENCED' } end
+    local out = {}
+    local function emit(k, v)
+      out[#out + 1] = k
+      out[#out + 1] = v
+    end
+    local function moved(reply, made)
+      local w = reply[1]
+      if w == 'FENCED' then return true end
+      if made[w] then emit(made[w], reply[2]) elseif w == 'SKIP' then emit('skip', reply[2]) end
+      return false
+    end
+    -- the open sprints, in name order
+    local all = redis.call('SMEMBERS', 'sprints')
+    table.sort(all)
+    local sprints = {}
+    for _, S in ipairs(all) do
+      if redis.call('HGET', 's:' .. S, 'status') == 'open' then sprints[#sprints + 1] = S end
+    end
+    -- the live readers
+    local names = {}
+    for i = 8, #args do names[#names + 1] = args[i] end
+    if #names == 0 then names = redis.call('SMEMBERS', 'readers') end
+    if #names == 0 then names = redis.call('SMEMBERS', 'friends') end
+    local readers = {}
+    for _, f in ipairs(names) do
+      if f ~= 'jev' and redis.call('SISMEMBER', 'friends', f) == 1 then
+        local at = NS.task.ms(redis.call('HGET', 'friend:' .. f .. ':beat', 'at'))
+        if at and math.abs(now - at) <= 60000 then readers[#readers + 1] = f end
+      end
+    end
+    table.sort(readers)
+    -- the coordinator: the first friend whose roles hold coordinator, else rowan
+    local friends = redis.call('SMEMBERS', 'friends')
+    table.sort(friends)
+    local coordinator = ''
+    for _, f in ipairs(friends) do
+      if coordinator == '' then
+        for r in string.gmatch(redis.call('HGET', 'friend:' .. f .. ':roles', 'roles') or '', '[^,]+') do
+          if trim(r) == 'coordinator' then coordinator = f end
+        end
+      end
+    end
+    if coordinator == '' then
+      for _, f in ipairs(friends) do
+        if f == 'rowan' then coordinator = f end
+      end
+    end
+    local epoch = NS.task.epoch()
+    for _, S in ipairs(sprints) do
+      local stream = redis.call('HGET', 's:' .. S, 'stream')
+      if not stream or stream == '' then stream = S end
+      -- reads: every harvested card with the live readers
+      local labels = redis.call('SMEMBERS', 's:' .. S .. ':idx:card:harvested')
+      table.sort(labels)
+      if #readers == 0 and #labels > 0 then
+        for _ = 1, #labels do emit('skip', 'no-reader') end
+      else
+        for _, label in ipairs(labels) do
+          local a = { token, S, label, stream, actor }
+          for _, r in ipairs(readers) do a[#a + 1] = r end
+          if moved(route_read({}, a), { CREATED = 'read' }) then return { 'FENCED' } end
+        end
+      end
+      -- fixes: the hold events under the route group; a pending entry a dead
+      -- instance left is claimed first; a note or repair is acknowledged
+      -- here, a hold by the function; a hold router's sprint (fix_to and
+      -- release_reader in its policy) has its events acknowledged unrouted
+      local ev = 's:' .. S .. ':hold:events'
+      local consumer = 'reconciler-' .. instance
+      local pol = redis.call('HMGET', 's:' .. S .. ':policy', 'fix_to', 'release_reader')
+      local hold_router = (pol[1] ~= false and pol[1] ~= '') and (pol[2] ~= false and pol[2] ~= '')
+      local made = redis.pcall('XGROUP', 'CREATE', ev, 'route', '0', 'MKSTREAM')
+      if type(made) == 'table' and made.err and not string.find(made.err, 'BUSYGROUP', 1, true) then
+        emit('err', S .. ': group: ' .. made.err)
+      else
+        redis.call('XGROUP', 'CREATECONSUMER', ev, 'route', consumer)
+        local msgs = {}
+        local claimed = redis.call('XAUTOCLAIM', ev, 'route', consumer, '0', '0-0', 'COUNT', '1000')
+        for _, m in ipairs(claimed[2] or {}) do msgs[#msgs + 1] = m end
+        local read = redis.call('XREADGROUP', 'GROUP', 'route', consumer, 'COUNT', '1000', 'STREAMS', ev, '>')
+        if read then
+          for _, st in ipairs(read) do
+            for _, m in ipairs(st[2]) do msgs[#msgs + 1] = m end
+          end
+        end
+        local ack = {}
+        for _, m in ipairs(msgs) do
+          local id, fl = m[1], m[2] or {}
+          local v = {}
+          for i = 1, #fl, 2 do v[fl[i]] = fl[i + 1] end
+          if hold_router or v['type'] ~= 'hold' then
+            if hold_router then emit('skip', 'hold-router') end
+            ack[#ack + 1] = id
+          else
+            local reply = route_fix({}, { token, S, id, v['unit'] or '', v['repo'] or '', v['pr'] or '',
+              v['who'] or '', v['head'] or '', stream, actor })
+            if moved(reply, { CREATED = 'fix' }) then return { 'FENCED' } end
+          end
+        end
+        if #ack > 0 then redis.call('XACK', ev, 'route', unpack(ack)) end
+        if sweep then
+          for _, c in ipairs(redis.call('XINFO', 'CONSUMERS', ev, 'route')) do
+            local cv = {}
+            for i = 1, #c, 2 do cv[c[i]] = c[i + 1] end
+            if cv['name'] ~= consumer and (tonumber(cv['pending']) or 0) == 0 and (tonumber(cv['idle']) or 0) >= max_idle then
+              redis.call('XGROUP', 'DELCONSUMER', ev, 'route', cv['name'])
+            end
+          end
+        end
+      end
+      -- merging: a unit that may be ready (open, a PR, no open hold, CI
+      -- receipts at head) is offered to route_merging, which re-checks
+      local units = redis.call('SMEMBERS', 's:' .. S .. ':units')
+      table.sort(units)
+      for _, u in ipairs(units) do
+        local r = redis.call('HMGET', 's:' .. S .. ':u:' .. u, 'head', 'state', 'repo', 'pr', 'holds_open')
+        local head, state, repo, pr = r[1] or '', r[2] or '', r[3] or '', r[4] or ''
+        if head ~= '' and pr ~= '' and state ~= 'landed' and state ~= 'landing' and state ~= 'dropped' then
+          if (tonumber(r[5] or '0') or 0) > 0 then
+            emit('skip', 'holds-open')
+          elseif redis.call('SCARD', 'ci:' .. repo .. ':' .. head .. ':gids') == 0 then
+            emit('skip', 'no-ci')
+          elseif moved(route_merging({}, { token, S, u, tostring(bar), stream, actor }), { MERGING = 'merging' }) then
+            return { 'FENCED' }
+          end
+        end
+      end
+      -- the PR record legs over the stream's working and merging tasks
+      local ids = {}
+      for _, w in ipairs({ 'working', 'merging' }) do
+        for _, id in ipairs(redis.call('ZRANGE', NS.task.wskey(epoch, stream, w), 0, -1)) do ids[#ids + 1] = id end
+      end
+      local cands, seen = {}, {}
+      for _, id in ipairs(ids) do
+        local t = redis.call('HMGET', 'task:' .. id, 'pr', 'repo', 'ref')
+        local repo, n = pr_ref(t[1] or '', t[2] or '', t[3] or '')
+        if repo and not seen[repo .. '#' .. n] then
+          seen[repo .. '#' .. n] = true
+          cands[#cands + 1] = { repo = repo, n = n }
+        end
+      end
+      table.sort(cands, function(a, b)
+        if a.repo ~= b.repo then return a.repo < b.repo end
+        return a.n < b.n
+      end)
+      for _, c in ipairs(cands) do
+        local n = string.format('%d', c.n)
+        local key = 'pr:' .. (string.match(c.repo, '([^/]+)$') or c.repo) .. ':' .. n
+        local rec = redis.call('HMGET', key, 'head', 'state', 'reads')
+        local head, state, reads = rec[1] or '', rec[2] or '', rec[3] or ''
+        if head ~= '' and (state == '' or state == 'open') then
+          if #readers == 0 then
+            emit('skip', 'no-reader')
+          else
+            local a = { token, S, c.repo, n, stream, actor }
+            for _, r in ipairs(readers) do a[#a + 1] = r end
+            if moved(route_pr_read({}, a), { CREATED = 'read', CARRIED = 'carried' }) then return { 'FENCED' } end
+          end
+          if held_at(reads, head) then
+            local reply = route_pr_fix({}, { token, S, c.repo, n, stream, actor, coordinator })
+            if moved(reply, { FIX = 'fix', RECUT = 'fix', CLOSE = 'fix' }) then return { 'FENCED' } end
+          end
+        end
+      end
+    end
+    return out
+  end
+
   redis.register_function('ns_route_pr_read', route_pr_read)
   redis.register_function('ns_route_pr_fix', route_pr_fix)
   redis.register_function('ns_route_read', route_read)
   redis.register_function('ns_route_fix', route_fix)
   redis.register_function('ns_route_merging', route_merging)
+  redis.register_function('ns_route_pass', route_pass)
 end

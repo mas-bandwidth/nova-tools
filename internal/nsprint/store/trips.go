@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/redis/go-redis/v9"
@@ -13,7 +14,11 @@ import (
 // one however many commands it carries. Verbs print the count on their
 // receipt (`trips=<n>`, #3261 and #3265) so a regression to serial reads
 // shows in the output, not only in a test.
-type Trips struct{ n atomic.Int64 }
+type Trips struct {
+	n      atomic.Int64
+	mu     sync.Mutex
+	labels map[string]int64
+}
 
 // CountTrips attaches a round-trip counter to the store's client.
 func (s *Store) CountTrips() *Trips {
@@ -30,6 +35,63 @@ func (t *Trips) N() int64 {
 	return t.n.Load()
 }
 
+// Labels (Glenn 2026-09-27: "You always need to batch redis. This is
+// standard."). A caller that wants its trips attributed labels its context
+// with WithTripLabel; every trip made with that context, or one derived
+// from it, is counted under the label as well as in N. The reconciler's
+// loop labels each duty and prints trips=<n> on its DUTY line, and a
+// functional test pins each duty's budget so a chain of dependent reads
+// cannot creep back in.
+
+type tripLabelKey struct{}
+
+// WithTripLabel returns ctx labelled label.
+func WithTripLabel(ctx context.Context, label string) context.Context {
+	return context.WithValue(ctx, tripLabelKey{}, label)
+}
+
+// TripLabel is the label ctx carries, "" when none.
+func TripLabel(ctx context.Context) string {
+	s, _ := ctx.Value(tripLabelKey{}).(string)
+	return s
+}
+
+// Of is the number of round trips counted under label so far.
+func (t *Trips) Of(label string) int64 {
+	if t == nil {
+		return 0
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.labels[label]
+}
+
+// ByLabel is every label's count, a copy.
+func (t *Trips) ByLabel() map[string]int64 {
+	out := map[string]int64{}
+	if t == nil {
+		return out
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for k, v := range t.labels {
+		out[k] = v
+	}
+	return out
+}
+
+func (t *Trips) count(ctx context.Context) {
+	t.n.Add(1)
+	if l := TripLabel(ctx); l != "" {
+		t.mu.Lock()
+		if t.labels == nil {
+			t.labels = map[string]int64{}
+		}
+		t.labels[l]++
+		t.mu.Unlock()
+	}
+}
+
 // DialHook passes dials through; a dial is not a command round trip.
 func (t *Trips) DialHook(next redis.DialHook) redis.DialHook { return next }
 
@@ -37,7 +99,7 @@ func (t *Trips) DialHook(next redis.DialHook) redis.DialHook { return next }
 func (t *Trips) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 	return func(ctx context.Context, cmd redis.Cmder) error {
 		if !handshake(cmd) {
-			t.n.Add(1)
+			t.count(ctx)
 		}
 		return next(ctx, cmd)
 	}
@@ -48,7 +110,7 @@ func (t *Trips) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.Proces
 	return func(ctx context.Context, cmds []redis.Cmder) error {
 		for _, c := range cmds {
 			if !handshake(c) {
-				t.n.Add(1)
+				t.count(ctx)
 				break
 			}
 		}
