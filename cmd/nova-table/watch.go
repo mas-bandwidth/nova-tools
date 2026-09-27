@@ -128,7 +128,7 @@ func viewReader(c redis.Cmdable, name string, opts ntable.RenderOpts) func(conte
 		if v.Summary != "" {
 			// the named count column of the first table summed over its
 			// rows, over every count summed; the ETA once a rate exists
-			// (the change stream; owed: "-")
+			// (the change stream; owed: nothing printed after ETA until then)
 			t, err := ntable.Read(ctx, c, v.Tables[0])
 			if err != nil {
 				return "", err
@@ -145,7 +145,7 @@ func viewReader(c redis.Cmdable, name string, opts ntable.RenderOpts) func(conte
 					}
 				}
 			}
-			pct := "-"
+			pct := "0.0%" // of nothing: no placeholder dash (Glenn 2026-09-27), one decimal always
 			if total > 0 {
 				pct = strconv.FormatFloat(100*float64(part)/float64(total), 'f', 1, 64) + "%"
 			}
