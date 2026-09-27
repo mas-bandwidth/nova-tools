@@ -62,7 +62,7 @@ python3 tla/check_table.py --jar /path/to/tla2tools.jar --mode all --out /tmp/ta
 python3 tla/check_table.py --jar /path/to/tla2tools.jar --mode strict --out /tmp/table-model-strict
 # Extract the exact pin in a nova-tools checkout, then replay locally:
 git show f77458853af46fdbbafd6881a4b46006431f266f:internal/nsprint/fn/lua/table.lua > /tmp/table-f7745885.lua
-python3 /path/to/rowan-new/tla/check_lua_witnesses.py /tmp/table-f7745885.lua
+python3 tla/check_lua_witnesses.py /tmp/table-f7745885.lua
 ```
 
 `all` means current-contract checks plus **five expected failures and one allowed cross-table scope control**, not all desired invariants passing. The entire TLC runner has a 120-second budget, including all cases; timeout is a failure, not success or an inconclusive green. `strict` is expected to return TLC exit 12 today. A newly missing or changed counterexample fails witness mode so a repair requires updating the model and its disposition. Do not install the positive-only suite as proof that ONE PLACE is solved. CI integration into nova-tools is still owed with the implementation repair and its cross-repository source pin.
