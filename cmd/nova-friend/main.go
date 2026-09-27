@@ -1,10 +1,11 @@
 // nova-friend is the one tool for what a friend, or a coordinator, does about
 // a friend: the person (rowan, stella, emma, johnny), who exists whether or
 // not a sprint is running. The store is the one fleet Redis and the keys are
-// the friend:* family. The roster (who exists, slots, machine, roles, wake
-// kind) is configuration and lives in nova-config; nova-friend reads it and
-// never writes it. What it owns is the runtime: the beat, the away flag, the
-// wake, and the friend's own copies (pull, done).
+// the friend:* family. The roster (who exists, with slots, tiers and roles)
+// is configuration and lives in nova-config; nova-friend reads it and never
+// writes it. What it owns is the runtime: the beat with what a friend just
+// knows (host, harness, login, load), the away flag, and the friend's own
+// copies (pull, done). Waking a friend comes later.
 //
 // Exit 0 done, 1 refused, 2 usage. `here` exits 3 when its beat fails five
 // times in a row or another session took its beat; `done` exits 3 on a
@@ -27,7 +28,7 @@ const usage = `nova-friend: a friend's presence and work on the fleet store (see
 usage:
   nova-friend version
   nova-friend help
-  nova-friend here --as <you> [--harness <h>] [--host <h>] [--session <id>] [--sprint <S>] [--once]
+  nova-friend here --as <you> [--harness <h>] [--host <h>] [--login <alias>]... [--pid <harness-pid>] [--session <id>] [--sprint <S>] [--once]
   nova-friend bye --as <you>
   nova-friend pull --as <you> [--n <k>] [--dir <d>] [--model <m>] [--harness <h>] [--child <id>]
   nova-friend done --as <you> --id <copy> --ok --pr <repo>#<n> --head <sha> --repo <checkout> [--test <t>] [--branch <b>]
@@ -35,21 +36,22 @@ usage:
   nova-friend done --as <you> --id <copy> --score <N>/10 [--gates <g>] [--finding <text>]
   nova-friend list
   nova-friend show <name>
-  nova-friend wake <name> [--reason <r>] --as <actor>
   nova-friend away <name> --reason <r> --as <actor>
   nova-friend back <name> --as <actor>
   nova-friend <verb> -h
 
 Every verb takes --redis <addr> (default NOVA_SPRINT_REDIS, then
-NOVA_REDIS_ADDR). --as is you: when NOVA_FRIEND is set it is the default and
---as must equal it. The roster (who exists, slots, machine, roles, wake kind)
-is configuration and lives in nova-config; nova-friend never writes it, and
-a name it does not hold is UNREGISTERED here.
+NOVA_REDIS_ADDR, then the seat's). --as is you: when NOVA_FRIEND is set it
+is the default and --as must equal it. The roster (who exists, with slots,
+tiers and roles) is configuration and lives in nova-config; nova-friend
+never writes it, and a name it does not hold is UNREGISTERED here.
+Everything a friend just knows (host, harness, login, load, copies, away)
+is runtime she reports through here. Waking a friend comes later.
 
 here is the one presence process. Run it once when your session opens and
 leave it running: once a second it writes your beat (no TTL; readers judge
 its age), renews the lease of every copy you hold whose owner it can see,
-takes the wake and the queued work routed to you, and on SIGINT or SIGTERM
+takes the queued work routed to you, and on SIGINT or SIGTERM
 says bye and exits 0. --once registers, ticks once and returns, leaving you
 up. A second live session of your name is refused BUSY; a stale one (no
 beat for a minute) is taken over.
@@ -59,16 +61,16 @@ five times in a row or another session took its beat; done exits 3 on a
 FENCED token and 4 on CONFLICT, as nova-sprint card end does.
 
 example:
-  nova-friend here --as rowan --once --redis 127.0.0.1:6379
-  nova-friend list --redis 127.0.0.1:6379
-  nova-friend bye --as rowan --redis 127.0.0.1:6379
+  nova-friend here --as rowan --once --host studio --session s1
+  nova-friend list
+  nova-friend bye --as rowan
 `
 
 // version is empty in every ordinary build; a release stamps it with
 // -ldflags "-X main.version=<tag>".
 var version string
 
-const verbs = "here, bye, pull, done, list, show, wake, away or back"
+const verbs = "here, bye, pull, done, list, show, away or back"
 
 func main() { os.Exit(run(os.Args[1:], os.Getenv, os.Stdout, os.Stderr)) }
 
@@ -108,8 +110,6 @@ func run(args []string, getenv func(string) string, stdout, stderr io.Writer) (c
 		return runList(ctx, e, args[1:], stdout, stderr)
 	case "show":
 		return runShow(ctx, e, args[1:], stdout, stderr)
-	case "wake":
-		return runWake(ctx, e, args[1:], stdout, stderr)
 	case "away":
 		return runAway(ctx, e, true, args[1:], stdout, stderr)
 	case "back":
