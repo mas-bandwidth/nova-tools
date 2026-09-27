@@ -13,6 +13,10 @@ type RenderOpts struct {
 	Widths map[string]int
 	// HideZeroRows hides a row whose count cells are all zero and all read.
 	HideZeroRows bool
+	// Title is printed on its own line above the grid when set (the CLI
+	// passes the table's name: Glenn 2026-09-27, "tables need a title"); an
+	// empty table then prints the title and "(no rows)" instead of nothing.
+	Title string
 }
 
 // Render prints the table as fixed-width text: the header row of column
@@ -25,6 +29,12 @@ type RenderOpts struct {
 // space. An empty table, and a table with no visible row, renders as the
 // empty string with no newline (Glenn 2026-09-26 10:00 AM ET: an empty
 // stream table is hidden with no extra newline).
+//
+// The row's label is always the first column (Glenn 2026-09-27, the live
+// session: eight benches rendered as eight anonymous rows of numbers): when
+// the definition's first column is not a text column, one is put in front,
+// headed "row", and the footer label prints under it instead of eating the
+// first count column's fold.
 func Render(t Table, opts RenderOpts) string {
 	rows := make([]Row, 0, len(t.Rows))
 	for _, r := range t.Rows {
@@ -34,30 +44,50 @@ func Render(t Table, opts RenderOpts) string {
 		rows = append(rows, r)
 	}
 	if len(rows) == 0 {
+		if opts.Title != "" {
+			return opts.Title + "\n(no rows)\n"
+		}
 		return ""
 	}
-	n := len(t.Columns)
+	// cols is what is printed; src[j] is the definition's column behind
+	// cols[j], or -1 for the row-label column put in front.
+	cols := t.Columns
+	src := make([]int, len(t.Columns))
+	for j := range src {
+		src[j] = j
+	}
+	if len(t.Columns) == 0 || t.Columns[0].Projection != Text {
+		cols = append([]Column{{Name: "row", Label: "row", Projection: Text, Fold: None}}, t.Columns...)
+		src = append([]int{-1}, src...)
+	}
+	n := len(cols)
 	header := make([]string, n)
 	body := make([][]string, len(rows))
 	footer := make([]string, n)
-	for j, c := range t.Columns {
+	for j, c := range cols {
 		header[j] = c.LabelOrName()
 	}
 	for i, r := range rows {
 		body[i] = make([]string, n)
-		for j, c := range t.Columns {
-			body[i][j] = cellText(c, r, j)
+		for j, c := range cols {
+			if src[j] < 0 {
+				body[i][j] = r.LabelOrKey()
+			} else {
+				body[i][j] = cellText(c, r, src[j])
+			}
 		}
 	}
 	hasFooter := t.HasFooter()
 	if hasFooter {
-		for j, c := range t.Columns {
-			footer[j] = foldText(c, t.Rows, j)
+		for j, c := range cols {
+			if src[j] >= 0 {
+				footer[j] = foldText(c, t.Rows, src[j])
+			}
 		}
 		footer[0] = t.Footer()
 	}
 	widths := make([]int, n)
-	for j, c := range t.Columns {
+	for j, c := range cols {
 		w := c.Width
 		if v, ok := opts.Widths[c.Name]; ok && v > 0 {
 			w = v
@@ -74,10 +104,14 @@ func Render(t Table, opts RenderOpts) string {
 		widths[j] = w
 	}
 	right := make([]bool, n)
-	for j, c := range t.Columns {
+	for j, c := range cols {
 		right[j] = c.Projection == Count
 	}
 	var b, l strings.Builder
+	if opts.Title != "" {
+		b.WriteString(opts.Title)
+		b.WriteByte('\n')
+	}
 	line := func(cells []string, footerRow bool) {
 		l.Reset()
 		for j, s := range cells {

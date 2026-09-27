@@ -156,11 +156,13 @@ func TestRenderLastLeftColumnIsNotPadded(t *testing.T) {
 	r.Cells[0].Count = 1
 	r.Cells[1].Members = []ntable.Member{{Member: "x"}}
 	tb.Rows = []ntable.Row{r}
-	want := "    n | who\n" +
-		"------+----\n" +
-		"    1 | x\n" +
-		"------+----\n" +
-		"total |\n"
+	// no text column first: the row-label column is put in front and the
+	// footer label sits under it (the n column keeps its fold)
+	want := "row   | n | who\n" +
+		"------+---+----\n" +
+		"r     | 1 | x\n" +
+		"------+---+----\n" +
+		"total | 1 |\n"
 	got := ntable.Render(tb, ntable.RenderOpts{})
 	if got != want {
 		t.Fatalf("left last column:\n%q\nwant:\n%q", got, want)
@@ -200,5 +202,36 @@ func TestParseColumnsAndWidths(t *testing.T) {
 	}
 	if _, err := ntable.ParseWidths("stream=x"); err == nil {
 		t.Error("ParseWidths(stream=x) accepted")
+	}
+}
+
+// TestRenderPutsTheRowLabelFirstAndTitles (Glenn 2026-09-27, the live
+// session: "these tables are hard to interpret. the 'total' under waiting is
+// strange"; "tables need a title"): a definition whose first column is a
+// count column gets the row-label column in front, headed row, the footer
+// label under it and every fold in its own column; a title prints above the
+// grid; an empty table with a title prints the title and (no rows).
+func TestRenderPutsTheRowLabelFirstAndTitles(t *testing.T) {
+	t.Parallel()
+	tb := counts([]string{"waiting", "ready"}, map[string][]int64{"alpha": {2, 1}, "beta": {0, 0}}, []string{"alpha", "beta"})
+	tb.Columns = tb.Columns[1:] // no text column: as `nova-table create demo --columns waiting,ready` makes it
+	for i := range tb.Rows {
+		tb.Rows[i].Cells = tb.Rows[i].Cells[1:]
+	}
+	want := "demo\n" +
+		"row   | waiting | ready\n" +
+		"------+---------+------\n" +
+		"alpha |       2 |     1\n" +
+		"beta  |       0 |     0\n" +
+		"------+---------+------\n" +
+		"total |       2 |     1\n"
+	if got := ntable.Render(tb, ntable.RenderOpts{Title: "demo"}); got != want {
+		t.Fatalf("row label first and a title:\n%s\nwant:\n%s", got, want)
+	}
+	if got := ntable.Render(ntable.Table{Name: "empty"}, ntable.RenderOpts{Title: "empty"}); got != "empty\n(no rows)\n" {
+		t.Fatalf("an empty table with a title: %q", got)
+	}
+	if got := ntable.Render(ntable.Table{Name: "empty"}, ntable.RenderOpts{}); got != "" {
+		t.Fatalf("an empty table without a title stays hidden: %q", got)
 	}
 }

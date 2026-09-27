@@ -130,7 +130,9 @@ func renderAll(title string, tables []ntable.Table, opts ntable.RenderOpts) stri
 		parts = append(parts, title+"\n")
 	}
 	for _, t := range tables {
-		if text := ntable.Render(t, opts); text != "" {
+		o := opts
+		o.Title = t.Name // every block says which table it is (Glenn 2026-09-27)
+		if text := ntable.Render(t, o); text != "" {
 			parts = append(parts, text)
 		}
 	}

@@ -249,6 +249,7 @@ func cmdRender(args []string, stdout, stderr io.Writer) int {
 		return storeRefusal(stderr, verb, err)
 	}
 	// the table and nothing else: an empty table prints nothing at all
+	opts.Title = t.Name
 	if _, err := io.WriteString(stdout, ntable.Render(t, opts)); err != nil {
 		return refuse(stderr, verb, "stdout: "+err.Error())
 	}
