@@ -99,6 +99,7 @@ var DefaultCatalog = []Entry{
 	E("internal/presence", "friend heartbeat keys with a TTL", "go test ./internal/presence", "go test ./internal/presence"),
 	E("internal/record", "decision and execution records", "go test ./internal/record", "go test ./internal/record"),
 	E("internal/records", "database models and record formats", "go test ./internal/records", "go test ./internal/records"),
+	E("internal/redisfn", "build, load and check a Redis function library from embedded Lua source", "go test ./internal/redisfn", "go test ./internal/redisfn"),
 	E("internal/redisq", "Redis transport queue", "go test ./internal/redisq", "go test ./internal/redisq"),
 	E("internal/release", "release packaging and manifest gates", "go test ./internal/release", "go test ./internal/release"),
 	E("internal/review", "peer review verdict parser and evaluator", "go test ./internal/review", "go test ./internal/review"),

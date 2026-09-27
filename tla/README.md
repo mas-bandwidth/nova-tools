@@ -10,6 +10,7 @@ The TLA+ modules here are the specifications of the state machines this repo imp
 | `MemberTable.tla`, `EpochMemberTable.tla` | `MCMember*`, `MCEpochMember*` | the corrected member placement and epoch protocol (Stella): one place per table inside the epoch, lossless shape, no owned alias, stale writers refused |
 | `TableEdit.tla`, `TableOrder.tla` | `MCTableEdit*`, `MCTableOrder*` | nova-table's edit verbs and the order of its rows and columns, with reversed witnesses |
 | `TableSession.tla` | `MCTableSession*` | `nova-table shell`: lines, one connection, the store coming and going, a stop signal, the exit code (the design #4458 is held to) |
+| `RedisFn.tla` | `MCRedisFn*` | the function libraries of one Redis under several loaders (internal/redisfn: Check, Load, LoadMissing): one holder to a function name, a refusal that writes nothing, no moment without the library |
 
 Runners. The table/member model checkers and the member execution replay each run their whole suite under one 120 s budget (a timeout is a failure, never a green); the bare java commands and the Lua replay carry no cap of their own, so wrap them (`timeout 120 ...`) when a bound matters. `-deadlock` on the java commands turns TLC's deadlock check OFF: these models end in a terminal stutter by design, and the safety and liveness properties are what they check.
 
@@ -186,3 +187,34 @@ the lines named. On, Last and Int are misimplementations the
 invariants are shown to catch; the code at ed959e1a3 has none of them. What a
 stop does to a verb in flight is left open: the verb may finish, or the
 process may end inside it. The model says only that no line starts afterwards.
+
+## The function library loader (RedisFn)
+
+`RedisFn.tla` is the store of internal/redisfn: under each library name one
+build or none, a function name held by one library, and loaders that each
+carry one build and run LoadMissing (a read, then a load when the store does
+not hold the build, then a second read to name the holder when the store
+refuses the load for a function another library holds). `Atomic = TRUE` is
+the code, FUNCTION LOAD REPLACE; `Atomic = FALSE` is FUNCTION DELETE followed
+by FUNCTION LOAD. What it leaves out is listed in its header.
+
+NOT YET RUN WITH TLC. The modules were written on the Studio, which runs no
+models and carries no tla2tools.jar; the run is owed on a bench, and until it
+is made the modules are unparsed and the table below is what the run is
+expected to show, not what one showed. Each line of the table was checked by
+an enumeration of the same machine written for the purpose, which is not TLC
+and does not read the modules.
+
+    for c in MCRedisFn MCRedisFnDeleteThenLoad MCRedisFnHolderGone MCRedisFnTwoDeployers MCRedisFnOneDeployer; do
+      mkdir -p /tmp/tlc-$c
+      timeout 60 java -Djava.io.tmpdir=/tmp/tlc-$c -cp tla2tools.jar tlc2.TLC -workers 2 \
+        -metadir /tmp/tlc-$c/meta -config $c.cfg MCRedisFn.tla > $c.log 2>&1 &
+    done; wait
+
+| config | expected |
+|---|---|
+| `MCRedisFn` | no error. The migration: `old` on the store registers f and g, loader a carries the `old` that registers g alone, loader b carries the `new` that registers f, both deploy on every pass. TypeOK, OneHolder, NoGap, RefusalWritesNothing, HolderHeld, Settles, MCMigrated |
+| `MCRedisFnDeleteThenLoad` | NoGap violated in 3 states: a reads, a deletes `old`, and the store holds no `old` until a's second command. The reason Load is one FUNCTION LOAD REPLACE |
+| `MCRedisFnHolderGone` | HolderFound violated in 6 states: b is refused for f, a loads the `old` that lets f go, b looks for the holder and there is none. The reason CollisionError has a line for a function with no holder |
+| `MCRedisFnTwoDeployers` | Settles violated: two deployers carry two builds of one library and each replaces the other's on every pass, for ever (nova-tools #3620: an older binary's load took the functions a newer one had deployed). The reason LoadMissing's comment says to call it from the one place that deploys |
+| `MCRedisFnOneDeployer` | no error: the same two builds, b loading once and a deploying; the library comes to rest at a's build. TypeOK, OneHolder, NoGap, RefusalWritesNothing, HolderHeld, Settles |
