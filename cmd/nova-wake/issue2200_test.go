@@ -12,11 +12,11 @@ import (
 
 // #2200, docs/SPEC-STATE.md: the presence key "expires on its own; the beat
 // renews it. A crashed line ages out with no tombstone", and `nova-wake awake`
-// reads that same "I am here now" signal. The key is the one the production
-// beat writes (#2610's friend:<name>, `nova-wake beat`), and the reader is the
-// production awake verb with --store: nothing here calls a helper that only a
-// test calls. One clock drives the verbs and the store, so a TTL lapse is a
-// function call and not ninety seconds of test.
+// reads that same "I am here now" signal. The key is the one a friend's beat
+// writes (#2610's friend:<name>, presence.Beat, the library nova-friend here
+// runs on now that `nova-wake beat` is gone), and the reader is the
+// production awake verb with --store. One clock drives the verb and the
+// store, so a TTL lapse is a function call and not ninety seconds of test.
 func TestPresenceKeyExpiresAndLeavesNoTombstone(t *testing.T) {
 	t.Parallel()
 
@@ -33,10 +33,8 @@ func TestPresenceKeyExpiresAndLeavesNoTombstone(t *testing.T) {
 
 	beat := func() {
 		t.Helper()
-		var out, errb bytes.Buffer
-		if code := cmdBeat([]string{"--as", "stella", "--store", "store.invalid:6380", "--once"},
-			&out, &errb, clock, open); code != 0 {
-			t.Fatalf("beat --once exited %d: %s", code, errb.String())
+		if err := presence.Beat(t.Context(), st, "stella", clock.Now(), presence.DefaultTTL); err != nil {
+			t.Fatalf("beat: %v", err)
 		}
 	}
 	keys := func() (live, last string) {

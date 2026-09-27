@@ -20,3 +20,5 @@ cmd/nova-sprint/life_test.go life event, life wake-mode and the friend hello pre
 cmd/nova-sprint/wakehealth_test.go friend declare and friend wake-health are gone (nova-config apply writes the wake paths; preflight 7.18 reads them); life.RepairWake keeps its tests in internal/nsprint/life
 cmd/nova-sprint/owner_doors_functional_test.go friend beat and friend pull are gone (nova-friend); the observed-owner door is pinned in internal/nsprint/life/owner_doors_functional_test.go
 cmd/nova-sprint/owner_refusal_test.go friend beat's owner refusal printing went with the verb (nova-friend)
+cmd/nova-wake/presence_test.go nova-wake beat and presence are gone (nova-friend here, list and show); awake --store keeps its tests
+cmd/nova-wake/issue3277_test.go nova-wake beat's loop is gone with the verb (nova-friend here); presence.Beat keeps internal/presence's tests
