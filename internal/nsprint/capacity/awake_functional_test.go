@@ -81,6 +81,19 @@ func TestBenchSlotsFollowAwakeFriends(t *testing.T) {
 		t.Fatal(err)
 	}
 	free(40, "share 40 under the remainder 64")
+	// the ceiling may be lowered under a bench's share (capped live) but not
+	// under the friends' sum: the Go door (SetMachineBudget) and the Lua
+	// door (ns_capacity_machine) agree
+	if _, err := capacity.SetMachineBudget(ctx, st, "m", 100, 32, 192, 0, 0, "test", ""); err != nil {
+		t.Fatalf("ceiling 100 under the bench share 128 (capped live): %v", err)
+	}
+	free(40, "ceiling 100: the share 40 still under the remainder")
+	if _, err := capacity.SetMachineBudget(ctx, st, "m", 63, 32, 192, 0, 0, "test", ""); err == nil || !strings.Contains(err.Error(), "CEILING m 64/63") {
+		t.Fatalf("ceiling 63 under the friends' 64: %v; want CEILING m 64/63", err)
+	}
+	if _, err := capacity.SetMachineBudget(ctx, st, "m", 128, 32, 192, 0, 0, "test", ""); err != nil {
+		t.Fatal(err)
+	}
 	// a friend on another machine is not charged here
 	c.SAdd(ctx, "friends", "g")
 	if _, err := capacity.SetMachineBudget(ctx, st, "n", 64, 8, 32, 0, 0, "test", ""); err != nil {

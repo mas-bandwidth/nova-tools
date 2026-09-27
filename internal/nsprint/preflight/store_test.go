@@ -377,8 +377,10 @@ func TestPreflightMachineCeiling(t *testing.T) {
 	if l := checkCeiling(ctx, c); l.Red || !strings.Contains(l.Why, "ctl-studio 64/64") {
 		t.Fatalf("bench share 64 beside friends of 64: %s", l)
 	}
+	// a share above the ceiling (a ceiling lowered after the share was
+	// declared) is capped live, never red: the green line says so
 	c.HSet(ctx, "bench:ctl-studio:desired", "slots", "65")
-	if l := checkCeiling(ctx, c); !l.Red || !strings.Contains(l.Why, "bench ctl-studio share 65/64 over its ceiling on ctl-studio") {
+	if l := checkCeiling(ctx, c); l.Red || !strings.Contains(l.Why, "bench ctl-studio share 65 capped to 64") {
 		t.Fatalf("bench share 65 over 64: %s", l)
 	}
 	c.SRem(ctx, "benches", "ctl-studio")

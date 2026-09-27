@@ -3379,7 +3379,9 @@ function TM.work(c, by, k, fill, ids, who)
     end
     if #take > free then
       local why = 'FULL ' .. c .. ' has ' .. free .. ' free of ' .. d.slots .. ' slots'
-      if d.awake ~= '' then why = why .. ' (' .. d.charged .. ' of the machine\'s ' .. d.share .. ' held by ' .. d.awake .. ', awake)' end
+      if d.awake ~= '' then
+        why = why .. ' (its share is ' .. d.share .. '; ' .. d.charged .. ' of the machine\'s ceiling held by ' .. d.awake .. ', awake)'
+      end
       return { 'REFUSED', why }
     end
   else

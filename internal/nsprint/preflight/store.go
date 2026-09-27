@@ -638,14 +638,16 @@ func checkCeiling(ctx context.Context, c *redis.Client) Line {
 		case sum[m] > ceiling:
 			reds = append(reds, fmt.Sprintf("%s %d/%d over its ceiling", m, sum[m], ceiling))
 		default:
-			green = append(green, fmt.Sprintf("%s %d/%d", m, sum[m], ceiling))
-		}
-		if err == nil {
+			line := fmt.Sprintf("%s %d/%d", m, sum[m], ceiling)
+			// a bench's share above the ceiling (a ceiling lowered after the
+			// share was declared) is capped live by TM.bench_slots, never a
+			// defect: the line says so
 			for _, b := range shares[m] {
 				if b.width > ceiling {
-					reds = append(reds, fmt.Sprintf("bench %s share %d/%d over its ceiling on %s", b.name, b.width, ceiling, m))
+					line += fmt.Sprintf(" (bench %s share %d capped to %d)", b.name, b.width, ceiling)
 				}
 			}
+			green = append(green, line)
 		}
 	}
 	if len(green) == 0 {

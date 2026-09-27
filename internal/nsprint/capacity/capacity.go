@@ -526,9 +526,13 @@ func SetMachineBudget(ctx context.Context, st *store.Store, machine string, slot
 	if err != nil {
 		return Result{}, err
 	}
+	// the friends' sum alone, as ns_capacity_machine checks it: a bench's
+	// share above a lowered ceiling is capped live (TM.bench_slots), never
+	// refused (Stella's read of #4445, 2026-09-27: the Go door and the Lua
+	// door must agree)
 	sum := 0
 	for _, c := range consumers {
-		if c.Machine == machine {
+		if c.Kind == KindFriend && c.Machine == machine {
 			sum += c.Slots
 		}
 	}
