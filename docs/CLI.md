@@ -3699,7 +3699,12 @@ itself signals only the unit's pid.
 watches (#3530): the headline (`SPRINT TABLE *** PIT STOP ***` while
 `s:<name>:pitstop` or `sprint:<name>:pitstop` exists), the
 `<landed>/<total> done <z>%, left <l>, eta <HH:MM> ET` line, the streams block and the
-worker table, one blank line between them. The streams are the
+worker table, one blank line between them. The streams block is the
+nova-table `streams` ([nova-table](#nova-table), `internal/ntable`): its
+cells are bound to the sets named here, the tick reads them through it in
+its one pipeline, renders through it, and the loop binds the table in the
+store whenever its shape moves, so `nova-table render streams
+--hide-zero-rows` prints the same block. The streams are the
 rows of `ws:order` (the ws index, #3662) with
 the ZCARDs of their `waiting`, `ready`, `working`, `review`, `reading`,
 `merging` and `landed` sets (`ws:<stream>:<where>`, `ws:<e>:<stream>:<where>`
@@ -4698,3 +4703,123 @@ nova-sprint digest: wants --redis <host:port>; run: nova-sprint help
 ```
 
 The other refusals name their remedy the same way: `wants --since <RFC3339 UTC>`, `wants --until <RFC3339 UTC>`, `since must be before until`, `takes flags, not positional arguments`, a `--repo` that is not `<owner>/<name>` (the parser's `invalid value` line), and `redis <addr>: <error>` when the store cannot be reached. A read that fails after that exits 1.
+
+## nova-table
+
+A general table over Redis, every body cell an ordered set (a ZSET), built
+from one primitive and knowing nothing about sprints: the sprint table's
+stream block is its first table. The guide is
+[docs/nova-table/README.md](nova-table/README.md); the library is
+`internal/ntable`.
+
+### First run
+
+A table is columns, rows and a set per cell. Make one, put a row in it, put
+members in a cell, move one to the next cell, and look at it two ways: the
+typed lines a program reads, and the text a person reads.
+
+```text
+$ nova-table create demo --columns job:text:none,ready,working,done
+TABLE CREATE table=demo columns=4
+
+$ nova-table row add demo build
+TABLE ROW ADD table=demo row=build cols=4 bound=0
+
+$ nova-table cell add demo build ready b1
+TABLE CELL table=demo row=build col=ready n=1
+
+$ nova-table cell add demo build ready b2
+TABLE CELL table=demo row=build col=ready n=2
+
+$ nova-table cell move demo build ready working b1
+TABLE MOVE table=demo row=build member=b1 from=ready to=working n=1
+
+$ nova-table show demo
+TABLE table=demo columns=4 rows=1
+TABLE ROW table=demo row=build ready=1 working=1 done=0
+
+$ nova-table render demo
+job   | ready | working | done
+------+-------+---------+-----
+build |     1 |       1 |    0
+------+-------+---------+-----
+total |     1 |       1 |    0
+```
+
+**What the flags want.** Every verb takes `--redis <addr>`, else
+`NOVA_SPRINT_REDIS`, then `NOVA_REDIS_ADDR`, then the selected seat's
+address (`--seat <name>` or `NOVA_SEAT`, nova-sprint's seat: its row names
+the store and the login; with no seat, `NOVA_SPRINT_REDIS_USER` and the
+password in the variable `NOVA_SPRINT_REDIS_PASSWORD_ENV` names). With none
+of those the refusal is `--redis <addr> is required`. Flags may follow the
+words on the line. `--columns` is `name[:projection[:fold[:label]]]` per
+column, comma-separated: the projection is what a body cell prints
+(`count`, the set's size, the default; `members`, the members in score
+order; `first`; `last`; `text`, the row's label with no set), the fold what
+the footer prints over the column (`sum`, the default for a count; `max`;
+`union` of members; `none`). A fold that does not fit its projection is
+refused naming both. `--footer <label>` names the footer row (`total`);
+`--width col=n,...` fixes column widths in the definition, and `render
+--width` for one render. `cell add --score <n>` is the member's place in
+the set's order (the unix time in ms when omitted, so a set reads oldest
+first). `render --hide-zero-rows` hides a row whose count cells are all
+zero, the sprint table's rule.
+
+**A bound cell is a view.** `row add <table> <row> <col>=<key> ... --owner
+<verb>` binds a column's cell to a set another tool owns instead of the
+table's own `table:<t>:cell:<row>:<col>`. It is read and rendered freely,
+and `cell add`, `cell remove`, `cell move` and `clear` refuse it, one line,
+exit 1: `nova-table cell add: <t>.<row>.<col> is bound to <key>, owned
+elsewhere; run: <owner verb>; run: nova-table help`. `clear` over a table
+holding any bound cell refuses the same way and clears nothing. `row add
+--exclude <member>` names one member the row's counts and members leave
+out (the sprint's sentinel).
+
+**The verbs.** `create <table> --columns ... [--footer] [--width]` prints
+`TABLE CREATE table= columns=` (an existing table with the same definition
+is left as it is; another definition is refused, exit 1). `drop <table>`
+prints `TABLE DROP table= rows=` and deletes the definition, the rows and
+every owned cell (a bound set stays). `list` prints `TABLE LIST tables=`
+then `TABLE table= columns= rows=` per table. `row add <table> <row>
+[--label] [--exclude] [--owner] [<col>=<key> ...]` prints `TABLE ROW ADD
+table= row= cols= bound=`; a row already there keeps its place and its
+cells; `row del` prints `TABLE ROW DEL table= row= existed=`. `cell add`
+and `cell remove` print `TABLE CELL table= row= col= n=`, the cell's count
+after; `cell move <table> <row> <from> <to> <member>` is one library call
+(`ns_oset_move`) that keeps the member's score, prints `TABLE MOVE table=
+row= member= from= to= n=`, and refuses `NOTMEMBER` (exit 1) writing
+nothing when the member is not in `<from>`; `cell members` prints `TABLE
+CELL ... n=` then one `TABLE MEMBER table= row= col= member= score=` per
+member. `clear <table>` is one library call (`ns_table_clear`) that
+empties every owned cell and removes every row, keeping the definition:
+`TABLE CLEAR table= rows= ms=`. `show <table>` prints `TABLE table=
+columns= rows=` then one `TABLE ROW table= row= <col>=<count> ...` per row
+(`?` for a set that did not come back). `render <table>` prints the table
+as text and nothing else, nothing at all when it is empty. A value holding
+a space is quoted (`row="swarm: cards"`).
+
+**Watching.** `watch <table>[,<table>...] [--every 1s] [--out <file>]
+[--title <text>] [--hide-zero-rows] [--once]` renders the named tables once
+per tick, one blank line between two that print, the title first. With no
+`--out` it draws in place on the terminal (the ANSI home-and-clear
+sequence, then the text) so a console tab shows the live table with no
+shell loop; `--out <file>` publishes each tick by writing a temp file
+beside it and renaming it over, the sprint table's way; `--once` renders
+once and exits. Every tick is exactly one Redis pipeline for every cell of
+every named table (the readers keep the tables' shapes across ticks), and
+the screen holds the tables and nothing else: no clock, no key, no status
+line. A tick whose read fails leaves the last good text standing with one
+`stale: <n>s` line under it. A signal ends it, exit 0.
+
+**The render.** The header row is the column labels, then a rule, one line
+per row (its label, then its cells), and, when any column folds, a rule and
+the footer row. Text, members, first and last cells are left-aligned, count
+cells right-aligned; cells are separated by ` | ` and the rule joins dashes
+with `-+-`; a column is as wide as its widest cell unless its width is
+fixed. A cell whose set did not come back prints `?`, and so does the fold
+over it. An empty table renders as the empty string: no header, no newline.
+
+There is no `quickstart` verb: a first run is a table you name, and a verb
+that made one for you would write a table nobody asked for.
+
+Exit codes: 0 done, 1 refused (the store said no), 2 usage (could not run).

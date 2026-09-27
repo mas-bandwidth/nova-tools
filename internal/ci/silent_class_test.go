@@ -30,6 +30,7 @@ var silentLivePackages = []string{
 	"internal/nsprint/reconcile", "internal/nsprint/taskcard", "internal/nsprint/table",
 	"internal/nsprint/card", "internal/nsprint/launch", "internal/nsprint/fn",
 	"internal/nsprint/capacity", "internal/nsprint/pipeerr",
+	"internal/ntable", "cmd/nova-table",
 }
 
 // silentErrIdent is an identifier that holds an error by its name: err,

@@ -559,7 +559,7 @@ func reachOf(pkgDir, test string) (testReach, bool, error) {
 					return true
 				}
 				switch sel.Sel.Name {
-				case "Compare", "Execute", "ExecuteWith":
+				case "Compare", "CompareTranscript", "Execute", "ExecuteWith":
 					r.comparator = true
 				case "FirstRun", "Transcript":
 					if len(x.Args) < 2 {
@@ -606,8 +606,10 @@ func commandText(ex string) string {
 // comparator test FOR ITS EXAMPLE, or "" when it is. docs are the docs the
 // example is pasted in (none for a help-only example). The test must:
 //   - be declared in a _test.go file of the example's tool's package, cmd/<tool>/;
-//   - reach the comparator (onboarding.Compare, Execute or ExecuteWith) from its
-//     own body or a test helper it calls;
+//   - reach the comparator (onboarding.CompareTranscript, the one comparison a
+//     firstrun_test.go may make since SPEC-TOOLWORK §7 rule 2; or the older
+//     Compare, Execute or ExecuteWith the transcripts allowlist still
+//     tolerates) from its own body or a test helper it calls;
 //   - carry the example's command text: a string literal naming at least the
 //     tool and its verb that the example is, word for word, or begins with
 //     (`"$ nova-wake presence "` names `$ nova-wake presence --store ...`), or,
@@ -638,7 +640,7 @@ func ComparedEntryProblem(root string, c ComparedEntry, docs []string) string {
 		return fmt.Sprintf("cmd/%s declares no func %s", tool, c.Test)
 	}
 	if !reach.comparator {
-		return fmt.Sprintf("%s never reaches onboarding.Compare or onboarding.Execute, so it is not a comparator test", c.Test)
+		return fmt.Sprintf("%s never reaches onboarding.CompareTranscript (nor the older onboarding.Compare or onboarding.Execute), so it is not a comparator test", c.Test)
 	}
 	readsDoc := func(doc string) bool {
 		for _, l := range reach.literals {
