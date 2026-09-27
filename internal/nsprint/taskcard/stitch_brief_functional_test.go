@@ -120,3 +120,32 @@ func TestWithBriefReplacesTheGeneratedSectionOnly(t *testing.T) {
 		t.Errorf("a body that is only the section is replaced; got %q", got)
 	}
 }
+
+// TestMoveIntoMergingStampsMergingAt (LandWatch.tla L3): the one task
+// writer stamps merging_at on every entry into merging, atomically with
+// the set, and only on entry: a same-place write keeps it.
+func TestMoveIntoMergingStampsMergingAt(t *testing.T) {
+	t.Parallel()
+	_, c := wstest.Start(t)
+	ctx := context.Background()
+	stitch := pushPlanCards(t, c, "p-stamp", "s1")
+	if _, err := taskcard.BindPlan(ctx, c, "p-stamp", []string{"s1"}, stitch, "rowan"); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := c.HGet(ctx, taskcard.Key("s1"), "merging_at").Result(); v != "" {
+		t.Fatalf("merging_at before merging = %q", v)
+	}
+	if _, err := taskcard.Move(ctx, c, "s1", "ready", taskcard.Opts{By: "rowan", Why: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskcard.Take(ctx, c, "emma", 1, "emma", "s1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskcard.Done(ctx, c, "s1", "emma", "DONE", "6001"); err != nil {
+		t.Fatal(err)
+	}
+	rec, _ := c.HGetAll(ctx, taskcard.Key("s1")).Result()
+	if rec["where"] != "merging" || rec["merging_at"] == "" || rec["merging_at"] != rec["where_at"] {
+		t.Fatalf("after done: where=%s merging_at=%q where_at=%q", rec["where"], rec["merging_at"], rec["where_at"])
+	}
+}

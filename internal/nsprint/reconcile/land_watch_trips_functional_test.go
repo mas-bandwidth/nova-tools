@@ -4,6 +4,7 @@ package reconcile_test
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -67,5 +68,67 @@ func TestLandWatchBusyTickOneTrip(t *testing.T) {
 	}
 	if got := trips.N() - before; got != 1 {
 		t.Errorf("the pass after the note took %d trips; the budget is 1", got)
+	}
+}
+
+// TestLandWatchNewStayGetsNewAlarm (Stella's retest of nova-tools #4449 at
+// 6ddb3d8c0, 2026-09-27, her probe TestStellaLandWatchNewStayGetsNewAlarm;
+// LandWatch.tla L3): a member that leaves merging and re-enters between
+// two watch ticks is a new stay with a new deadline; its alarm reaches the
+// coordinator again. The one task writer stamps merging_at on every entry
+// (02_card_move.lua), and the watch reads a stamp newer than its first
+// sight as the new stay: first sight and the noted words start over.
+func TestLandWatchNewStayGetsNewAlarm(t *testing.T) {
+	t.Parallel()
+	mr := testutil.StartStore(t)
+	c := mr.Client
+	ctx := context.Background()
+	const s = "reentry"
+	start := time.UnixMilli(1700000000000)
+	now := start
+	c.ZAdd(ctx, "ws:order", redis.Z{Score: 1, Member: s})
+	c.ZAdd(ctx, "ws:"+s+":merging", redis.Z{Score: 1, Member: "m1"})
+	c.HSet(ctx, "task:m1", "merging_at", start.UnixMilli())
+	c.HSet(ctx, reconcile.LandMergeKey(s), "task", "merge-reentry-1", "members", "m1", "seq", "1")
+	c.HSet(ctx, "task:merge-reentry-1", "state", "open", "kind", "merge")
+	var wakes []reconcile.LandWake
+	w := &reconcile.LandWatch{Client: c, Repo: "mas-bandwidth/nova-tools", Now: func() time.Time { return now },
+		Notify: func(_ context.Context, wake reconcile.LandWake) error { wakes = append(wakes, wake); return nil }}
+	pass := func() {
+		t.Helper()
+		if _, err := w.Run(ctx, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pass()
+	now = start.Add(11 * time.Minute)
+	pass()
+	if len(wakes) != 1 {
+		t.Fatalf("first stay: wakes=%+v", wakes)
+	}
+	// The member leaves and re-enters between ticks; the move stamps the
+	// new merging_at; the watch never sees an empty merging set.
+	now = start.Add(12 * time.Minute)
+	c.ZRem(ctx, "ws:"+s+":merging", "m1")
+	c.HSet(ctx, "task:m1", "merging_at", now.UnixMilli())
+	c.ZAdd(ctx, "ws:"+s+":merging", redis.Z{Score: 1, Member: "m1"})
+	pass()
+	if first, _ := c.HGet(ctx, reconcile.LandMergingKey(s), "m1").Result(); first != strconv.FormatInt(now.UnixMilli(), 10) {
+		t.Fatalf("first sight after the re-entry = %q, want the pass's now", first)
+	}
+	if n, _ := c.HExists(ctx, reconcile.LandNotedKey(s), "m1").Result(); n {
+		t.Fatal("the old stay's noted words survived the re-entry")
+	}
+	now = start.Add(23 * time.Minute)
+	pass()
+	if len(wakes) != 2 || wakes[1].Oldest != "m1" {
+		t.Fatalf("the new stay got no new alarm: wakes=%+v", wakes)
+	}
+	// The L1 control: an older stamp on the same stay is not a new stay.
+	c.HSet(ctx, "task:m1", "merging_at", start.Add(12*time.Minute).UnixMilli()-1)
+	now = start.Add(24 * time.Minute)
+	pass()
+	if len(wakes) != 2 {
+		t.Fatalf("an older stamp re-noted the same stay: wakes=%+v", wakes)
 	}
 }

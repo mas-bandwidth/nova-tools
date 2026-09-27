@@ -67,7 +67,16 @@ do
       if write then redis.call('HSETNX', mk, id, now) end
       local first = ms(redis.call('HGET', mk, id)) or now
       local v = redis.call('HMGET', 'task:' .. id, 'merging_at', 'pr', 'paths')
-      local at = ms(v[1]) or first
+      local mat = ms(v[1])
+      if write and mat and mat > first then
+        -- a stamp newer than the watch's first sight: the member left and
+        -- came back between two passes (L3, Stella's re-entry probe on
+        -- #4449); the stay starts again: first sight now, nothing noted
+        first = now
+        redis.call('HSET', mk, id, now)
+        redis.call('HDEL', 'land:noted:' .. s, id)
+      end
+      local at = mat or first
       out[#out + 1] = { id = id, score = z[i + 1], at = at, first = first, pr = str(v[2]), paths = str(v[3]) }
     end
     if write then
