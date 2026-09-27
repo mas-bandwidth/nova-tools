@@ -6,7 +6,7 @@ Source pin: nova-tools `f77458853af46fdbbafd6881a4b46006431f266f` (merged PR #44
 
 ## What was checked
 
-`TableMachine.tla` models live definitions, row membership, binding targets, physical member/score entries, and two writers choosing interleaved complete operations. Physical entries are separate from visible owned cells: changing metadata can hide a live entry without deleting it. A bound view can name an external set or, in the alias counterexamples, another table cell key.
+`tla/TableMachine.tla` models live definitions, row membership, binding targets, physical member/score entries, and two writers choosing interleaved complete operations. Physical entries are separate from visible owned cells: changing metadata can hide a live entry without deleting it. A bound view can name an external set or, in the alias counterexamples, another table cell key.
 
 | Operator | Lua correspondence |
 | --- | --- |
@@ -58,11 +58,11 @@ ONE PLACE should be “at most one owned location per member within the chosen n
 Use the official [TLA+ tools v1.7.4 release](https://github.com/tlaplus/tlaplus/releases/tag/v1.7.4), `tla2tools.jar` SHA-1 `bee4a54f3ee3d4afc347c3240ec2d9e93b075104`. It identifies itself as TLC 2.19. The local run used OpenJDK 27, 2 TLC workers, a 2 GiB heap and no remote services. Java's local RMI listener may require the normal local-execution permission in a sandbox. The runner does not download anything.
 
 ```sh
-python3 specs/tla/check_table.py --jar /path/to/tla2tools.jar --mode all --out /tmp/table-model-results
-python3 specs/tla/check_table.py --jar /path/to/tla2tools.jar --mode strict --out /tmp/table-model-strict
+python3 tla/check_table.py --jar /path/to/tla2tools.jar --mode all --out /tmp/table-model-results
+python3 tla/check_table.py --jar /path/to/tla2tools.jar --mode strict --out /tmp/table-model-strict
 # Extract the exact pin in a nova-tools checkout, then replay locally:
 git show f77458853af46fdbbafd6881a4b46006431f266f:internal/nsprint/fn/lua/table.lua > /tmp/table-f7745885.lua
-python3 /path/to/rowan-new/specs/tla/check_lua_witnesses.py /tmp/table-f7745885.lua
+python3 /path/to/rowan-new/tla/check_lua_witnesses.py /tmp/table-f7745885.lua
 ```
 
 `all` means current-contract checks plus **five expected failures and one allowed cross-table scope control**, not all desired invariants passing. The entire TLC runner has a 120-second budget, including all cases; timeout is a failure, not success or an inconclusive green. `strict` is expected to return TLC exit 12 today. A newly missing or changed counterexample fails witness mode so a repair requires updating the model and its disposition. Do not install the positive-only suite as proof that ONE PLACE is solved. CI integration into nova-tools is still owed with the implementation repair and its cross-repository source pin.

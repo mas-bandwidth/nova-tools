@@ -1,6 +1,6 @@
 # Proposed member placement and epoch protocol
 
-This is the **proposed replacement**, separate from `TableMachine.tla`, which still models nova-tools `f77458853af46fdbbafd6881a4b46006431f266f` and still fails its strict gate. The proposal follows SPEC-COORDINATOR section 7 at `599f786b9` (the wording cleanup at `00f6f18` does not change that contract). It has not yet been implemented or independently reviewed. Do not describe these green design checks as proof about deployed Lua.
+This is the **proposed replacement**, separate from `tla/TableMachine.tla`, which still models nova-tools `f77458853af46fdbbafd6881a4b46006431f266f` and still fails its strict gate. The proposal follows SPEC-COORDINATOR section 7 at `599f786b9` (the wording cleanup at `00f6f18` does not change that contract). It has not yet been implemented or independently reviewed. Do not describe these green design checks as proof about deployed Lua.
 
 ## State and contract
 
@@ -44,7 +44,7 @@ The mutation controls must fail with the named property and TLC exit code. Forge
 Run with a locally installed Java and `tla2tools.jar` (validated with release v1.7.4 / TLC 2.19):
 
 ```sh
-python3 specs/tla/check_member.py --jar /absolute/path/to/tla2tools.jar --out /tmp/member-results
+python3 tla/check_member.py --jar /absolute/path/to/tla2tools.jar --out /tmp/member-results
 ```
 
 The runner has a **single 120-second wall-clock budget**, including all selected checks; timeout is exit 124, never green. It defaults to four TLC workers for the positive cases and one for counterexamples. `--suite member`, `--suite epoch` and `--suite small` select diagnostic subsets and retain the same total cap. Deadlock checking is enabled; bounded cases have an explicit terminal stutter. No download, server, production Redis or external account is used.
