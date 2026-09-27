@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/board"
+	"github.com/mas-bandwidth/nova-tools/deprecated/internal/board"
 )
 
 // seq is the injected random source: distinct bytes per draw, so ids differ and a test can

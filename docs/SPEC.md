@@ -31,15 +31,18 @@ pull request at all, onto one base branch, one at a time, and refuses to land
 anything whose evidence it cannot name. `nova-board`: five verbs at the
 **owed-work layer** — what a group of lines owes, as an append-only log of cards
 that are appended, taken and closed but never edited or deleted, with `check`
-as the verb that earns it. `nova-tokens`: one binary at the **accounting
+as the verb that earns it; it is **deprecated**, its job going to `nova-sprint` as rebuilt on `nova-table`
+(Glenn, 2026-09-27), and no longer built, tested or shipped. `nova-tokens`:
+one binary at the **accounting
 layer** — it folds token spend from declared sources into one file per day, keyed
 by (day, model, repo), and sums those day files into a month; it reads sources,
 and never estimates. `nova-swarm`: one binary at the **worker layer** — a pool
 of one-task workers, any provider and any model through one harness, each with
 its own working directory, data home, job directory and deadline, held by the
 machinery rather than by the worker. Each of those five has its own normative
-spec under `docs/`, named in its section below; this file states the count, the
-layer and the Conventions they all keep.
+spec under `docs/`, named in its section below (nova-board's is kept as
+reference under `deprecated/docs/`); this file states the count, the layer and
+the Conventions they all keep.
 
 This spec is normative. If the code and this document disagree, one of them has a
 bug, and the tests decide which.
@@ -4947,6 +4950,11 @@ there, and nothing it says is restated here.
 
 ## nova-board — what a group of lines owes
 
+**Deprecated.** nova-board is deprecated (Glenn, 2026-09-27); who is doing what becomes the job of nova-sprint as it is rebuilt on nova-table. It
+is no longer built, tested or shipped; its code and its spec are kept as
+reference only under `deprecated/` ([deprecated/README.md](../deprecated/README.md)).
+What follows describes the tool as it stood.
+
 Five verbs at the **owed-work layer**. A board is one card per item, appended
 when it is noticed, taken by whoever picks it up, closed with a sentence saying
 how; nothing is ever edited and nothing is ever deleted, so the open list is
@@ -4955,9 +4963,9 @@ is the NO a board owes a filer: this is already here, do not file it again.
 
 Verbs: `list`, `add`, `take`, `close`, `check`, plus `quickstart` and `version`.
 
-Its governing text is **[docs/SPEC-BOARD.md](SPEC-BOARD.md)**, which is
-normative; the Conventions above apply to it unchanged and are not restated
-there, and nothing it says is restated here.
+Its governing text is **[deprecated/docs/SPEC-BOARD.md](../deprecated/docs/SPEC-BOARD.md)**,
+which was normative while the tool was live; the Conventions above apply to it
+unchanged and are not restated there, and nothing it says is restated here.
 
 ## nova-tokens — spend, folded per day
 

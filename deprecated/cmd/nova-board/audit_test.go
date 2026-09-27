@@ -49,7 +49,7 @@ var boardAudit = audit.Config{
 		// pasteable pair. It holds no writer either, and the digits it returns are joined
 		// into a line that goes out through oneline.Quote like the rest of that pair.
 		`"crypto/rand"`, `"flag"`, `"fmt"`, `"io"`, `"os"`, `"path/filepath"`, `"runtime"`, `"runtime/debug"`, `"strconv"`, `"strings"`, `"time"`,
-		`"github.com/mas-bandwidth/nova-tools/internal/board"`,
+		`"github.com/mas-bandwidth/nova-tools/deprecated/internal/board"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
 	},
 	MinClassified: 40,

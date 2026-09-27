@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/board"
+	"github.com/mas-bandwidth/nova-tools/deprecated/internal/board"
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
 

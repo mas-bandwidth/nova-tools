@@ -26,6 +26,20 @@ var (
 	parseSource = parseSourceFile
 )
 
+// deprecatedDir is the one top-level directory no walk of this repository's
+// source descends into. The tools kept there are reference only: a module of
+// their own that nothing builds, tests or ships, so no rule holds them to
+// anything (deprecated/README.md). A walk skips it where it walks; the class
+// tests that read the shared tree skip it there, once.
+const deprecatedDir = "deprecated"
+
+// isDeprecatedDir reports whether path is root's top-level deprecated/
+// directory. A directory of the same name deeper in the tree is somebody's
+// package and is walked like any other.
+func isDeprecatedDir(root, path string) bool {
+	return path == filepath.Join(root, deprecatedDir)
+}
+
 // parseSourceFile is parseSource's production answer: a fresh FileSet and one
 // parser.ParseFile.
 func parseSourceFile(name string, src []byte, mode parser.Mode) (*token.FileSet, *ast.File, error) {

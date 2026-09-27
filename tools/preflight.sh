@@ -76,7 +76,8 @@ elif [ -z "${PKGS:-}" ]; then
 fi
 
 echo "=== [1/3] Preflight: gofmt check ==="
-unformatted="$("$GOFMT" -l . 2>/dev/null || true)"
+# deprecated/ is out of scope of the testing drive (Glenn 2026-09-27); see deprecated/README.md
+unformatted="$("$GOFMT" -l . 2>/dev/null | grep -v '^deprecated/' || true)"
 if [ -n "$unformatted" ]; then
   echo "preflight: gofmt check FAILED: unformatted files detected:" >&2
   echo "$unformatted" >&2

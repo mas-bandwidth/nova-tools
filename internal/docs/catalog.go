@@ -14,7 +14,7 @@ var DefaultCatalog = []Entry{
 	E(".github", "CI workflows and automation", "go test ./internal/ci", "make test"),
 	E("assets", "static assets and schemas", "none", "none"),
 	E("fleet", "fleet loop units and bench templates", "none", "none"),
-	Page("cmd", "28 nova command-line tools", "nova-ci local", "make build"),
+	Page("cmd", "27 nova command-line tools", "nova-ci local", "make build"),
 	Page("docs", "specs, guides, and proposals", "go test ./internal/docs", "go test ./internal/docs"),
 	E("infra", "runner images and scripts", "none", "none"),
 	Page("internal", "packages and libraries", "nova-ci local", "make test"),
@@ -27,7 +27,6 @@ var DefaultCatalog = []Entry{
 	Page("tools", "developer and bench tools", "nova-ci local", "make map"),
 
 	// cmd/
-	E("cmd/nova-board", "board viewer and coordinator CLI", "go test ./cmd/nova-board", "go test ./cmd/nova-board"),
 	E("cmd/nova-bus", "coordination bus inbox, send, and wait CLI", "go test ./cmd/nova-bus", "go test ./cmd/nova-bus"),
 	E("cmd/nova-cairn", "dusk memory distillation CLI", "go test ./cmd/nova-cairn", "go test ./cmd/nova-cairn"),
 	E("cmd/nova-card", "card wrapper owning one card attempt on a bench", "go test ./cmd/nova-card", "go test ./cmd/nova-card"),
@@ -57,7 +56,6 @@ var DefaultCatalog = []Entry{
 	E("cmd/nova-work", "work item execution and lifecycle CLI", "go test ./cmd/nova-work", "go test ./cmd/nova-work"),
 
 	// internal/
-	E("internal/board", "board structures and view rendering", "go test ./internal/board", "go test ./internal/board"),
 	E("internal/bounded", "bounded readers and byte buffers", "go test ./internal/bounded", "go test ./internal/bounded"),
 	E("internal/buildinfo", "binary identity and version info", "go test ./internal/buildinfo", "go test ./internal/buildinfo"),
 	E("internal/bus", "append-only coordination bus", "go test ./internal/bus", "go test ./internal/bus"),
