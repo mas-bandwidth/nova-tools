@@ -5,15 +5,20 @@ sees either the old content or the new content in full, never a part of either.
 # Contract and Guarantees
 
 Every write follows a strict, bounded sequence:
- 1. Path and parent directory validation: The target path and its parent directory
-    are validated. The parent directory must already exist; atomicfile never creates
-    parent directories silently. The base filename must not exceed 241 bytes so
-    that the temporary file's fixed 14-byte overhead does not exceed the filesystem
-    NAME_MAX (255 bytes). If the target is an existing directory or symlink, or if
-    the parent directory is read-only, does not exist, or is not a directory, the
-    operation is refused immediately with an error naming the path.
+ 1. Path and parent directory validation: The target path must be in clean canonical
+    form (filepath.Clean(path) == path); non-clean paths (e.g. holding lexical ".."
+    traversals or redundant slashes) are refused immediately to prevent lexical
+    versus physical directory divergence. The parent directory must already exist;
+    atomicfile never creates parent directories silently. The base filename must
+    not exceed 241 bytes so that the temporary file's fixed 14-byte overhead does
+    not exceed the filesystem NAME_MAX (255 bytes). Only standard file permissions
+    0000-0777 are supported; mode bits outside this mask (such as setuid 04755,
+    setgid, sticky, or file-type bits) are refused. If the target is an existing
+    directory or symlink, or if the parent directory is read-only, does not exist,
+    or fails to resolve via EvalSymlinks, the operation is refused immediately with
+    an error naming the path.
  2. Exclusive temporary file creation: A temporary file is created exclusively in the
-    SAME directory as the target file, using a fixed-length name of the form
+    SAME physical directory as the target file, using a fixed-length name of the form
     ".<base>.tmp-%08x" where the suffix is drawn from crypto/rand. This guarantees
     that concurrent writers never collide and temporary files never escape their
     parent directory.
@@ -34,6 +39,10 @@ to sudden permission loss or filesystem error), the cleanup error is joined to t
 returned error via errors.Join, explicitly naming the leftover temporary path so
 callers can detect and inspect any uncollected file.
 
+Temporary files left behind by abrupt process termination outside runtime control
+(such as SIGKILL, power loss, or kernel panic) cannot be swept by defer and are
+not automatically removed on subsequent invocations.
+
 # Directory Boundary and Concurrency Note
 
 The initial symlink and directory check is a safeguard against accidental caller
@@ -50,13 +59,15 @@ Callers migrating from os.WriteFile should note five key differences:
     a complete version.
  2. Permissions & umask: os.WriteFile creates new files masked by the process umask
     and preserves permissions of existing files without updating them. atomicfile
-    applies the caller's perm directly to the target via chmod, replacing prior
-    permissions and bypassing umask reduction.
+    only accepts standard permissions 0000-0777 and applies the caller's perm
+    directly to the target via chmod, replacing prior permissions and bypassing
+    umask reduction.
  3. Inodes and hard links: Because atomicfile replaces the directory entry via
     rename(2), the target receives a new inode. Existing hard links to the target
     path continue pointing to the previous inode and will not reflect new writes.
- 4. Special files: atomicfile cannot write in-place to special files such as FIFOs,
-    device nodes, or sockets.
+ 4. Special files and FIFOs: If the target is an existing FIFO, socket, or device
+    node, atomicfile does not write into the stream; atomic rename replaces the
+    directory entry with a regular file.
  5. fsync: atomicfile flushes file data and metadata with fsync before renaming;
     os.WriteFile performs no fsync.
 
@@ -90,6 +101,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 const (
@@ -102,28 +115,30 @@ const (
 
 // hooks provides injection seams for step failure testing.
 type hooks struct {
-	stat       func(name string) (os.FileInfo, error)
-	lstat      func(name string) (os.FileInfo, error)
-	createTemp func(dir, base string, perm os.FileMode) (*os.File, error)
-	chmod      func(f *os.File, mode os.FileMode) error
-	write      func(f *os.File, data []byte) (int, error)
-	sync       func(f *os.File) error
-	close      func(f *os.File) error
-	rename     func(oldpath, newpath string) error
-	remove     func(name string) error
+	stat         func(name string) (os.FileInfo, error)
+	lstat        func(name string) (os.FileInfo, error)
+	evalSymlinks func(path string) (string, error)
+	createTemp   func(dir, base string, perm os.FileMode) (*os.File, error)
+	chmod        func(f *os.File, mode os.FileMode) error
+	write        func(f *os.File, data []byte) (int, error)
+	sync         func(f *os.File) error
+	close        func(f *os.File) error
+	rename       func(oldpath, newpath string) error
+	remove       func(name string) error
 }
 
 func defaultHooks() *hooks {
 	return &hooks{
-		stat:       os.Stat,
-		lstat:      os.Lstat,
-		createTemp: defaultCreateTemp,
-		chmod:      func(f *os.File, mode os.FileMode) error { return f.Chmod(mode) },
-		write:      func(f *os.File, data []byte) (int, error) { return f.Write(data) },
-		sync:       func(f *os.File) error { return f.Sync() },
-		close:      func(f *os.File) error { return f.Close() },
-		rename:     os.Rename,
-		remove:     os.Remove,
+		stat:         os.Stat,
+		lstat:        os.Lstat,
+		evalSymlinks: filepath.EvalSymlinks,
+		createTemp:   defaultCreateTemp,
+		chmod:        func(f *os.File, mode os.FileMode) error { return f.Chmod(mode) },
+		write:        func(f *os.File, data []byte) (int, error) { return f.Write(data) },
+		sync:         func(f *os.File) error { return f.Sync() },
+		close:        func(f *os.File) error { return f.Close() },
+		rename:       os.Rename,
+		remove:       os.Remove,
 	}
 }
 
@@ -160,6 +175,29 @@ func randomUint32(r io.Reader) (uint32, error) {
 	return binary.BigEndian.Uint32(b[:]), nil
 }
 
+type sanitizedError struct {
+	msg string
+	err error
+}
+
+func (e *sanitizedError) Error() string {
+	return e.msg
+}
+
+func (e *sanitizedError) Unwrap() error {
+	return e.err
+}
+
+func wrapErr(prefix string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return &sanitizedError{
+		msg: prefix + ": " + oneline.Escape(err.Error()),
+		err: err,
+	}
+}
+
 // Write writes data to path atomically with the specified file mode permissions.
 // If path does not exist, Write creates it with permissions perm; if path already
 // exists, Write replaces it atomically.
@@ -170,9 +208,10 @@ func randomUint32(r io.Reader) (uint32, error) {
 // temporary file is attempted, leaving the target file untouched; if removal
 // fails, the cleanup error is joined to the returned error naming the leftover file.
 //
-// Write refuses to replace directories, refuses to follow or replace symlinks,
-// refuses base names longer than 241 bytes, and returns an error naming path if
-// the parent directory does not exist or is read-only.
+// Write refuses paths that are not clean (filepath.Clean(path) != path), refuses
+// base names longer than 241 bytes, refuses mode bits outside 0000-0777, refuses
+// to replace directories or symlinks, and returns an error naming path if the
+// parent directory does not exist, is read-only, or fails to resolve.
 //
 // Durability note: Write syncs the file's data and inode to storage before
 // renaming, but does not fsync the parent directory after rename. Refer to the
@@ -192,6 +231,14 @@ func writeWithHooks(path string, data []byte, perm os.FileMode, h *hooks) (err e
 		return fmt.Errorf("atomicfile: path is empty")
 	}
 
+	if filepath.Clean(path) != path {
+		return fmt.Errorf("atomicfile: path %q is not clean: use filepath.Clean", path)
+	}
+
+	if perm&^0o777 != 0 {
+		return fmt.Errorf("atomicfile: unsupported file mode %04o for %q: only permissions 0000-0777 supported", perm, path)
+	}
+
 	base := filepath.Base(path)
 	if len(base) > maxBaseNameLen {
 		return fmt.Errorf("atomicfile: base name of %q exceeds maximum length %d: name too long", path, maxBaseNameLen)
@@ -204,10 +251,14 @@ func writeWithHooks(path string, data []byte, perm os.FileMode, h *hooks) (err e
 	dir := filepath.Dir(path)
 	dirInfo, err := h.stat(dir)
 	if err != nil {
-		return fmt.Errorf("atomicfile: parent directory for %q: %w", path, err)
+		return wrapErr(fmt.Sprintf("atomicfile: parent directory for %q", path), err)
 	}
 	if !dirInfo.IsDir() {
 		return fmt.Errorf("atomicfile: parent directory %q for %q is not a directory", dir, path)
+	}
+
+	if _, err := h.evalSymlinks(dir); err != nil {
+		return wrapErr(fmt.Sprintf("atomicfile: resolve parent directory for %q", path), err)
 	}
 
 	targetInfo, err := h.lstat(path)
@@ -219,12 +270,12 @@ func writeWithHooks(path string, data []byte, perm os.FileMode, h *hooks) (err e
 			return fmt.Errorf("atomicfile: target %q is a directory", path)
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("atomicfile: stat %q: %w", path, err)
+		return wrapErr(fmt.Sprintf("atomicfile: stat %q", path), err)
 	}
 
 	f, err := h.createTemp(dir, base, perm)
 	if err != nil {
-		return fmt.Errorf("atomicfile: create temporary file for %q: %w", path, err)
+		return wrapErr(fmt.Sprintf("atomicfile: create temporary file for %q", path), err)
 	}
 
 	tmpName := f.Name()
@@ -236,31 +287,32 @@ func writeWithHooks(path string, data []byte, perm os.FileMode, h *hooks) (err e
 		}
 		if !cleaned {
 			if cleanErr := h.remove(tmpName); cleanErr != nil {
-				err = errors.Join(err, fmt.Errorf("atomicfile: cleanup failed for %q: %w", tmpName, cleanErr))
+				cleanWrapped := wrapErr(fmt.Sprintf("atomicfile: cleanup failed for %q", tmpName), cleanErr)
+				err = errors.Join(err, cleanWrapped)
 			}
 		}
 	}()
 
 	if err := h.chmod(f, perm); err != nil {
-		return fmt.Errorf("atomicfile: chmod %q: %w", path, err)
+		return wrapErr(fmt.Sprintf("atomicfile: chmod %q", path), err)
 	}
 
 	if _, err := h.write(f, data); err != nil {
-		return fmt.Errorf("atomicfile: write %q: %w", path, err)
+		return wrapErr(fmt.Sprintf("atomicfile: write %q", path), err)
 	}
 
 	if err := h.sync(f); err != nil {
-		return fmt.Errorf("atomicfile: sync %q: %w", path, err)
+		return wrapErr(fmt.Sprintf("atomicfile: sync %q", path), err)
 	}
 
 	closed = true
 	if err := h.close(f); err != nil {
 		_ = f.Close()
-		return fmt.Errorf("atomicfile: close %q: %w", path, err)
+		return wrapErr(fmt.Sprintf("atomicfile: close %q", path), err)
 	}
 
 	if err := h.rename(tmpName, path); err != nil {
-		return fmt.Errorf("atomicfile: rename %q: %w", path, err)
+		return wrapErr(fmt.Sprintf("atomicfile: rename %q", path), err)
 	}
 
 	cleaned = true

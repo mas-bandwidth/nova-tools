@@ -268,6 +268,56 @@ func TestRefusals(t *testing.T) {
 		}
 	})
 
+	t.Run("not_clean_path", func(t *testing.T) {
+		t.Parallel()
+		dirtyPath := dir + "/sub/../file.txt"
+		err := Write(dirtyPath, []byte("data"), 0o644)
+		if err == nil {
+			t.Fatal("Write with non-clean path succeeded; want refusal")
+		}
+		if !strings.Contains(err.Error(), "not clean") {
+			t.Fatalf("error %q does not mention clean", err)
+		}
+		if !strings.Contains(err.Error(), dirtyPath) {
+			t.Fatalf("error %q does not name path %q", err, dirtyPath)
+		}
+	})
+
+	t.Run("unsupported_mode_bits", func(t *testing.T) {
+		t.Parallel()
+		target := filepath.Join(dir, "setuid_file.txt")
+		err := Write(target, []byte("data"), 0o4755)
+		if err == nil {
+			t.Fatal("Write with setuid 04755 succeeded; want refusal")
+		}
+		if !strings.Contains(err.Error(), "unsupported file mode") {
+			t.Fatalf("error %q does not mention unsupported file mode", err)
+		}
+		if !strings.Contains(err.Error(), target) {
+			t.Fatalf("error %q does not name path %q", err, target)
+		}
+	})
+
+	t.Run("eval_symlinks_error", func(t *testing.T) {
+		t.Parallel()
+		target := filepath.Join(dir, "eval_err.txt")
+		injectedErr := errors.New("injected eval symlinks failure")
+		h := defaultHooks()
+		h.evalSymlinks = func(path string) (string, error) {
+			return "", injectedErr
+		}
+		err := writeWithHooks(target, []byte("data"), 0o644, h)
+		if err == nil {
+			t.Fatal("writeWithHooks succeeded; want error")
+		}
+		if !strings.Contains(err.Error(), target) {
+			t.Fatalf("error %q does not name path %q", err, target)
+		}
+		if !errors.Is(err, injectedErr) {
+			t.Fatalf("error %v does not wrap injected error %v", err, injectedErr)
+		}
+	})
+
 	t.Run("unexpected_lstat_error", func(t *testing.T) {
 		t.Parallel()
 		target := filepath.Join(dir, "lstat_err.txt")
@@ -287,6 +337,53 @@ func TestRefusals(t *testing.T) {
 			t.Fatalf("error %v does not wrap injected error %v", err, injectedErr)
 		}
 	})
+}
+
+func TestSanitizedError(t *testing.T) {
+	t.Parallel()
+
+	rawErr := errors.New("raw message\nwith newline and \x1b[31mescape sequence")
+	wrapped := wrapErr("atomicfile: test operation", rawErr)
+
+	if wrapped == nil {
+		t.Fatal("wrapErr returned nil")
+	}
+	if strings.Contains(wrapped.Error(), "\n") {
+		t.Fatalf("wrapped Error() contains raw newline: %q", wrapped.Error())
+	}
+	if strings.Contains(wrapped.Error(), "\x1b") {
+		t.Fatalf("wrapped Error() contains raw ESC byte: %q", wrapped.Error())
+	}
+	if !errors.Is(wrapped, rawErr) {
+		t.Fatal("wrapped error does not satisfy errors.Is for rawErr")
+	}
+
+	nilWrapped := wrapErr("prefix", nil)
+	if nilWrapped != nil {
+		t.Fatalf("wrapErr with nil err = %v, want nil", nilWrapped)
+	}
+}
+
+func TestDefaultHooksSyncWithTeeth(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	f, err := os.CreateTemp(dir, "teeth-*.tmp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := f.Name()
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Remove(name) }()
+
+	// Calling sync on a closed file descriptor MUST return an error.
+	// If defaultHooks().sync was mutated to a dummy `return nil`, this test fails immediately!
+	syncErr := defaultHooks().sync(f)
+	if syncErr == nil {
+		t.Fatal("defaultHooks().sync on closed file succeeded; want error (fsync tooth failed)")
+	}
 }
 
 func TestFsyncExecuted(t *testing.T) {
