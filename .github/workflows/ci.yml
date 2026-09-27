@@ -1323,7 +1323,7 @@ jobs:
         # internal/ci: TestHostedDealSplitsTheHeavyPackages (hostedHeavy).
         shell: bash
         run: |
-          heavy="cmd/nova-bus cmd/nova-merge cmd/nova-sprint cmd/nova-swarm"
+          heavy="cmd/nova-bus cmd/nova-merge cmd/nova-swarm"
           deal='
             BEGIN { h = split(heavy, hv, " ") }
             {
@@ -1332,7 +1332,7 @@ jobs:
               if (k) s = (k - 1) % n; else { s = (h + r) % n; r++ }
               if (s == i - 1) print
             }'
-          pkgs=$(go list ./... | awk -v n=${{ matrix.shards }} -v i=${{ matrix.shard }} -v heavy="$heavy" "$deal" | tr '\n' ' ')
+          pkgs=$(go list ./... | bash .github/scripts/live-packages.sh | awk -v n=${{ matrix.shards }} -v i=${{ matrix.shard }} -v heavy="$heavy" "$deal" | tr '\n' ' ')
           echo "$pkgs"
           echo "HOSTED_PKGS=$pkgs" >> "$GITHUB_ENV"
 

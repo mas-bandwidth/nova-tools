@@ -34,7 +34,7 @@ const hostedDealStep = "deal this shard's packages"
 // (28.6 s) held shard 3 of 4 together, the ubuntu leg cancelled at 123 s
 // (reader measurement, #4421 round 2); cmd/nova-sprint and cmd/nova-swarm are
 // the reader's named heavy commands. ci.yml's deal step spells the same list.
-var hostedHeavy = []string{"cmd/nova-bus", "cmd/nova-merge", "cmd/nova-sprint", "cmd/nova-swarm"}
+var hostedHeavy = []string{"cmd/nova-bus", "cmd/nova-merge", "cmd/nova-swarm"}
 
 type hostedMatrix struct {
 	OS      []string         `yaml:"os"`
@@ -161,6 +161,14 @@ func TestHostedShardsUnderTheCap(t *testing.T) {
 	}
 }
 
+// liveScript is the deal step's filter by its real path: runStep runs the step
+// in an empty directory, and the step reads the tree's list through
+// .github/scripts/live-packages.sh (deprecated packages are never dealt).
+func liveScript(t *testing.T) string {
+	t.Helper()
+	return filepath.Join(repoRoot(t), ".github", "scripts", "live-packages.sh")
+}
+
 // TestHostedDealPartitionsTheTree runs the deal step itself over a stand-in
 // package list at each OS's shard count: every package lands in exactly one
 // shard, so more shards never drops a package.
@@ -180,6 +188,7 @@ func TestHostedDealPartitionsTheTree(t *testing.T) {
 			script = strings.ReplaceAll(script, "${{ matrix.shards }}", strconv.Itoa(n))
 			script = strings.ReplaceAll(script, "${{ matrix.shard }}", strconv.Itoa(i))
 			script = strings.ReplaceAll(script, "go list ./...", fmt.Sprintf("seq -f 'p%%02g' 1 %d", packages))
+			script = strings.ReplaceAll(script, ".github/scripts/live-packages.sh", liveScript(t))
 			env := filepath.Join(t.TempDir(), "env")
 			runStep(t, script, "GITHUB_ENV="+env)
 			b, err := os.ReadFile(env)
@@ -240,6 +249,7 @@ func TestHostedDealSplitsTheHeavyPackages(t *testing.T) {
 			script = strings.ReplaceAll(script, "${{ matrix.shards }}", strconv.Itoa(n))
 			script = strings.ReplaceAll(script, "${{ matrix.shard }}", strconv.Itoa(i))
 			script = strings.ReplaceAll(script, "go list ./...", "cat "+listFile)
+			script = strings.ReplaceAll(script, ".github/scripts/live-packages.sh", liveScript(t))
 			env := filepath.Join(t.TempDir(), "env")
 			runStep(t, script, "GITHUB_ENV="+env)
 			b, err := os.ReadFile(env)
