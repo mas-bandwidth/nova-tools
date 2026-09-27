@@ -4,6 +4,9 @@ package main
 
 import (
 	"context"
+	nsstore "github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/redis/go-redis/v9"
 	"strings"
 	"testing"
@@ -23,29 +26,39 @@ func TestARefusalSaysWhatTheInputWants(t *testing.T) {
 	}{
 		{[]string{"create", "--redis", addr}, "wants one table name: create <table> --columns"},
 		{[]string{"create", "demo", "--redis", addr}, "--columns wants the columns, name[:projection[:fold[:label]]] each"},
-		{[]string{"create", "demo", "--columns", "a:rows", "--redis", addr}, `column a wants a projection of count, members, first, last or text, not "rows"`},
+		{[]string{"create", "demo", "--columns", "a:rows", "--redis", addr}, `column a wants a projection of count, members, first, last, text or pct(<count column>), not "rows"`},
 		{[]string{"create", "demo", "--columns", "a", "--width", "b=3", "--redis", addr}, "--width names column b, which --columns does not declare"},
 		{[]string{"create", "bad name", "--columns", "a", "--redis", addr}, "the table name wants letters, digits, _ . and -"},
-		{[]string{"row", "--redis", addr}, "wants add or del"},
+		{[]string{"row", "--redis", addr}, "wants add, set, hide, show, del, move, order, sort"},
 		{[]string{"row", "add", "demo", "--redis", addr}, "wants a table and a row: row add <table> <row>"},
-		{[]string{"row", "add", "demo", "r", "ready", "--redis", addr}, "a binding wants <col>=<key>"},
+		{[]string{"row", "add", "demo", "r", "ready=", "--redis", addr}, "a binding wants <col>=<key>"},
 		{[]string{"row", "add", "demo", "r", "ready=ws:s:ready", "--redis", addr}, "a row that binds a set wants --owner <verb>"},
-		{[]string{"cell", "--redis", addr}, "wants add <table> <row> <col> <member>"},
-		{[]string{"cell", "add", "demo", "r", "c", "--redis", addr}, "wants a table, a row, a column and a member"},
+		{[]string{"row", "move", "demo", "r", "--redis", addr}, "wants a table, a row and a place: row move <table> <row> --first | --last | --before <name> | --after <name>"},
+		{[]string{"row", "move", "demo", "r", "--first", "--after", "s", "--redis", addr}, "wants one place, not 2"},
+		{[]string{"row", "order", "demo", "--redis", addr}, "wants a table and the rows that go first, in order"},
+		{[]string{"row", "sort", "--redis", addr}, "wants one table: row sort <table>"},
+		{[]string{"row", "sort", "demo", "--manual", "--keep", "--redis", addr}, "--manual ends a standing sort and takes no --keep or --desc"},
+		{[]string{"col", "--redis", addr}, "wants add, del, move"},
+		{[]string{"col", "add", "demo", "--redis", addr}, "wants a table and one column: col add <table>"},
+		{[]string{"col", "add", "demo", "a:rows", "--redis", addr}, `column a wants a projection of count`},
+		{[]string{"col", "del", "demo", "--redis", addr}, "wants a table and a column: col del <table> <col>"},
+		{[]string{"col", "move", "demo", "a", "--redis", addr}, "wants a table, a column and a place: col move <table> <col>"},
+		{[]string{"cell", "--redis", addr}, "wants add, remove, move, members"},
+		{[]string{"cell", "add", "demo", "r", "c", "--redis", addr}, "wants a table, a row, a column and one or more members"},
 		{[]string{"cell", "add", "demo", "r", "c", "m", "--score", "x", "--redis", addr}, `--score wants a number, got "x"`},
-		{[]string{"cell", "move", "demo", "r", "c", "--redis", addr}, "wants a table, a row, the column left, the column joined and a member"},
-		{[]string{"render", "--redis", addr}, "wants one table name: render <table>"},
+		{[]string{"cell", "move", "demo", "r", "c", "--redis", addr}, "wants a table, a row, the column left, the column joined and one or more members"},
+		{[]string{"render", "--redis", addr}, "wants one table name or --view <name>: render <table>"},
 		{[]string{"render", "demo", "--width", "a=x", "--redis", addr}, "--width: width \"a=x\" wants col=n"},
 		{[]string{"watch", "--redis", addr}, "wants the tables to watch, comma-separated"},
 		{[]string{"watch", "demo", "--every", "0s", "--redis", addr}, "--every wants a duration between 1ms and 1h"},
 		{[]string{"list", "demo", "--redis", addr}, "takes no table name: list"},
-		{[]string{"show", "--bogus", "--redis", addr}, "flag provided but not defined: -bogus"},
+		{[]string{"show", "--bogus", "--redis", addr}, "unknown flag --bogus; show flags: --at-epoch, --redis"},
 	} {
 		code, stdout, stderr := runTable(c.args...)
 		if code != 2 || stdout != "" {
 			t.Errorf("%v: exit %d stdout %q, want 2 and nothing", c.args, code, stdout)
 		}
-		if !strings.Contains(stderr, c.want) || !strings.HasSuffix(stderr, "; run: nova-table help\n") || strings.Count(stderr, "\n") != 1 {
+		if !strings.Contains(stderr, c.want) || !strings.Contains(stderr, "; run: nova-table help") || strings.Count(stderr, "\n") != 1 {
 			t.Errorf("%v: stderr %q, want one line holding %q and the door", c.args, stderr, c.want)
 		}
 	}
@@ -87,32 +100,44 @@ func TestASittingThroughTheVerbs(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"create", "jobs", "--columns", "job:text:none,ready,working,who:members:union", "--footer", "all", "--width", "job=6"}, "TABLE CREATE table=jobs columns=4 trips=1\n"},
-		{[]string{"create", "jobs", "--columns", "job:text:none,ready,working,who:members:union", "--footer", "all", "--width", "job=6"}, "TABLE CREATE table=jobs columns=4 trips=1\n"},
-		{[]string{"row", "add", "jobs", "build"}, "TABLE ROW ADD table=jobs row=build cols=4 bound=0 trips=1\n"},
-		{[]string{"row", "add", "jobs", "the tests", "--label", "tests"}, "TABLE ROW ADD table=jobs row=\"the tests\" cols=4 bound=0 trips=1\n"},
+		{[]string{"create", "jobs", "--columns", "ready,working,who:members:union", "--footer", "all", "--width", "who=6"}, "TABLE CREATE table=jobs columns=3 trips=1\n"},
+		{[]string{"create", "jobs", "--columns", "ready,working,who:members:union", "--footer", "all", "--width", "who=6"}, "TABLE CREATE table=jobs columns=3 trips=1\n"},
+		{[]string{"row", "add", "jobs", "build"}, "TABLE ROW ADD table=jobs row=build cols=3 bound=0 trips=1\n"},
+		{[]string{"row", "add", "jobs", "the tests", "--label", "tests"}, "TABLE ROW ADD table=jobs row=\"the tests\" cols=3 bound=0 trips=1\n"},
 		{[]string{"cell", "add", "jobs", "build", "ready", "b1", "--score", "1"}, "TABLE CELL table=jobs row=build col=ready n=1 trips=1\n"},
 		{[]string{"cell", "add", "jobs", "build", "ready", "b2", "--score", "2"}, "TABLE CELL table=jobs row=build col=ready n=2 trips=1\n"},
 		{[]string{"cell", "add", "jobs", "build", "who", "ann", "--score", "1"}, "TABLE CELL table=jobs row=build col=who n=1 trips=1\n"},
 		{[]string{"cell", "add", "jobs", "the tests", "who", "bo", "--score", "1"}, "TABLE CELL table=jobs row=\"the tests\" col=who n=1 trips=1\n"},
 		{[]string{"cell", "remove", "jobs", "build", "ready", "b2"}, "TABLE CELL table=jobs row=build col=ready n=1 trips=1\n"},
 		{[]string{"cell", "members", "jobs", "build", "ready"}, "TABLE CELL table=jobs row=build col=ready n=1 trips=1\nTABLE MEMBER table=jobs row=build col=ready member=b1 score=1\n"},
-		{[]string{"show", "jobs"}, "TABLE table=jobs columns=4 rows=2 trips=1\nTABLE ROW table=jobs row=build ready=1 working=0 who=1\nTABLE ROW table=jobs row=\"the tests\" ready=0 working=0 who=1\n"},
-		{[]string{"render", "jobs"}, "job    | ready | working | who\n" +
-			"-------+-------+---------+-------\n" +
-			"build  |     1 |       0 | ann\n" +
-			"tests  |     0 |       0 | bo\n" +
-			"-------+-------+---------+-------\n" +
-			"all    |     1 |       0 | ann,bo\n"},
-		{[]string{"render", "jobs", "--hide-zero-rows", "--width", "job=8"}, "job      | ready | working | who\n" +
+		{[]string{"show", "jobs"}, "TABLE table=jobs columns=3 rows=2 trips=1 epoch=0 revision=9\nTABLE ROW table=jobs row=build ready=1 working=0 who=ann\nTABLE ROW table=jobs row=\"the tests\" ready=0 working=0 who=bo\n"},
+		{[]string{"render", "jobs"}, "jobs  | ready | working | who\n" +
+			"------+-------+---------+-------\n" +
+			"build |     1 |       0 | ann\n" +
+			"tests |     0 |       0 | bo\n" +
+			"------+-------+---------+-------\n" +
+			"all   |     1 |       0 | ann,bo\n"},
+		{[]string{"render", "jobs", "--hide-zero-rows", "--label-width", "8"}, "jobs     | ready | working | who\n" +
 			"---------+-------+---------+-------\n" +
 			"build    |     1 |       0 | ann\n" +
 			"---------+-------+---------+-------\n" +
 			"all      |     1 |       0 | ann,bo\n"}, // the fold is the column's, hidden rows included
-		{[]string{"list"}, "TABLE LIST tables=1 trips=1\nTABLE table=jobs columns=4 rows=2\n"},
+		{[]string{"list"}, "TABLE LIST tables=1 trips=1\nTABLE table=jobs columns=3 rows=2\n"},
+		// a definition changed in place (set: footer, columns, rename; row set: a text cell), rows kept
+		{[]string{"set", "jobs", "--footer", "sum"}, "TABLE SET table=jobs footer=\"sum\" trips=1\n"},
+		{[]string{"set", "jobs", "--columns", "ready,working,who:members:union,pct:pct(ready):pooled:ready%,note:text:none"}, "TABLE SET table=jobs columns=5 trips=1\n"},
+		{[]string{"row", "set", "jobs", "build", "note=green"}, "TABLE ROW SET table=jobs row=build cols=1 trips=1\n"},
+		{[]string{"render", "jobs", "--hide-zero-rows"}, "jobs  | ready | working | who    | ready% | note\n" +
+			"------+-------+---------+--------+--------+------\n" +
+			"build |     1 |       0 | ann    | 100.0% | green\n" +
+			"------+-------+---------+--------+--------+------\n" +
+			"sum   |     1 |       0 | ann,bo | 100.0% |\n"},
+		{[]string{"set", "jobs", "--rename", "work"}, "TABLE SET table=jobs renamed=work moved=11 trips=1\n"},
+		{[]string{"list"}, "TABLE LIST tables=1 trips=1\nTABLE table=work columns=5 rows=2\n"},
+		{[]string{"set", "work", "--rename", "jobs"}, "TABLE SET table=work renamed=jobs moved=11 trips=1\n"},
 		{[]string{"row", "del", "jobs", "the tests"}, "TABLE ROW DEL table=jobs row=\"the tests\" existed=1 trips=1\n"},
 		{[]string{"row", "del", "jobs", "the tests"}, "TABLE ROW DEL table=jobs row=\"the tests\" existed=0 trips=1\n"},
-		{[]string{"drop", "jobs"}, "TABLE DROP table=jobs rows=1 trips=1\n"},
+		{[]string{"drop", "jobs", "--definition"}, "TABLE DROP table=jobs rows=1 trips=1\n"},
 		{[]string{"list"}, "TABLE LIST tables=0 trips=1\n"},
 	}
 	for _, s := range steps {
@@ -126,7 +151,7 @@ func TestASittingThroughTheVerbs(t *testing.T) {
 		t.Fatalf("create after drop: exit %d stderr %q", code, stderr)
 	}
 	code, _, stderr := runTable(at(addr, "create", "jobs", "--columns", "a,b")...)
-	if code != 1 || !strings.Contains(stderr, `table "jobs": exists with another definition; run: nova-table show`) {
+	if code != 1 || !strings.Contains(stderr, `table "jobs": exists with another definition; run: nova-table set`) {
 		t.Fatalf("create with another definition: exit %d stderr %q", code, stderr)
 	}
 }
@@ -149,7 +174,7 @@ func TestABoundCellIsAViewTheWritesRefuse(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, args := range [][]string{
-		{"create", "views", "--columns", "stream:text:none,ready,working"},
+		{"create", "views", "--columns", "ready,working"},
 		{"row", "add", "views", "s", "ready=ws:s:ready", "working=ws:s:working", "--owner", "nova-sprint task move", "--exclude", "s:sentinel"},
 	} {
 		if code, _, stderr := runTable(at(addr, args...)...); code != 0 {
@@ -157,11 +182,11 @@ func TestABoundCellIsAViewTheWritesRefuse(t *testing.T) {
 		}
 	}
 	code, stdout, stderr := runTable(at(addr, "render", "views")...)
-	want := "stream | ready | working\n" +
-		"-------+-------+--------\n" +
-		"s      |     1 |       0\n" +
-		"-------+-------+--------\n" +
-		"total  |     1 |       0\n"
+	want := "views | ready | working\n" +
+		"------+-------+--------\n" +
+		"s     |     1 |       0\n" +
+		"------+-------+--------\n" +
+		"      |     1 |       0\n"
 	if code != 0 || stdout != want {
 		t.Fatalf("render of a bound row: exit %d stderr %q\n%s", code, stderr, stdout)
 	}
@@ -184,5 +209,120 @@ func TestABoundCellIsAViewTheWritesRefuse(t *testing.T) {
 	}
 	if mr.Exists(ctx, "ws:s:working").Val() != 0 {
 		t.Fatal("a refused move created the bound working set")
+	}
+}
+
+func TestBoundRefusalPrintsTheStoredKey(t *testing.T) {
+	t.Parallel()
+	addr := firstRunStore(t)
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() {
+		if err := c.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	for _, args := range [][]string{
+		{"create", "machines", "--columns", "ready,working"},
+		{"row", "add", "machines", "batman"},
+	} {
+		if code, _, stderr := runTable(at(addr, args...)...); code != 0 {
+			t.Fatalf("setup %v: %d %q", args, code, stderr)
+		}
+	}
+	allBytes := make([]byte, 256)
+	for i := range allBytes {
+		allBytes[i] = byte(i)
+	}
+	for _, key := range []string{"bench:batman:cards:ready", "external:" + string(allBytes)} {
+		if err := c.HSet(context.Background(), "table:machines:row:batman", "key:ready", key).Err(); err != nil {
+			t.Fatal(err)
+		}
+		for _, args := range [][]string{
+			{"cell", "add", "machines", "batman", "ready", "m"},
+			{"cell", "remove", "machines", "batman", "ready", "m"},
+			{"cell", "move", "machines", "batman", "ready", "working", "m"},
+			{"clear", "machines"},
+		} {
+			code, stdout, stderr := runTable(at(addr, args...)...)
+			want := "machines.batman.ready is bound to " + oneline.Escape(key) + ", owned elsewhere"
+			if code != 1 || stdout != "" || !strings.Contains(stderr, want) || strings.Count(stderr, "\n") != 1 {
+				t.Fatalf("%v key=%q: exit=%d stdout=%q stderr=%q", args, key, code, stdout, stderr)
+			}
+		}
+	}
+}
+
+func TestStoredViewReadsChangesWithoutRestartOrSummaryReread(t *testing.T) {
+	t.Parallel()
+	addr := firstRunStore(t)
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() {
+		if err := c.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	ctx := context.Background()
+	for _, args := range [][]string{{"create", "live", "--columns", "a,b"}, {"row", "add", "live", "r", "s"}, {"cell", "add", "live", "r", "a", "m1", "m2"}, {"view", "set", "v", "--tables", "live", "--summary", "a", "--title", "before"}} {
+		if code, _, stderr := runTable(at(addr, args...)...); code != 0 {
+			t.Fatalf("%v: %s", args, stderr)
+		}
+	}
+	read := viewReader(c, "v", ntable.RenderOpts{})
+	trips := nsstore.New(c).CountTrips()
+	// Establish the connection before counting application exchanges.
+	if err := c.Ping(ctx).Err(); err != nil {
+		t.Fatal(err)
+	}
+	n := trips.N()
+	first, err := read(ctx)
+	if err != nil || trips.N()-n != 2 || !strings.Contains(first, "before\n\n2/2 100.0% -> ETA") {
+		t.Fatalf("first view trips=%d err=%v\n%s", trips.N()-n, err, first)
+	}
+	if code, _, stderr := runTable(at(addr, "view", "set", "v", "--tables", "live", "--summary", "a", "--title", "after")...); code != 0 {
+		t.Fatal(stderr)
+	}
+	if code, _, stderr := runTable(at(addr, "cell", "move", "live", "r", "a", "b", "m1", "m2")...); code != 0 {
+		t.Fatal(stderr)
+	}
+	n = trips.N()
+	second, err := read(ctx)
+	if err != nil || trips.N()-n != 2 || !strings.Contains(second, "after\n\n0/2 0.0% -> ETA") {
+		t.Fatalf("changed view trips=%d err=%v\n%s", trips.N()-n, err, second)
+	}
+}
+
+// TestOrderVerbsThroughTheCommand: the rows and columns of a table moved by
+// the verbs, one exchange each, and the render follows.
+func TestOrderVerbsThroughTheCommand(t *testing.T) {
+	t.Parallel()
+
+	addr := throwaway(t)
+	for _, step := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"create", "crew", "--columns", "busy,idle,note:text:none"}, "TABLE CREATE table=crew columns=3 trips=1\n"},
+		{[]string{"row", "add", "crew", "studio", "hetzner", "stella", "rowan"}, "TABLE ROWS ADD table=crew rows=4 trips=1\n"},
+		{[]string{"row", "order", "crew", "rowan", "stella"}, "TABLE ROW ORDER table=crew first=rowan,stella trips=1\n"},
+		{[]string{"row", "move", "crew", "hetzner", "--before", "studio"}, "TABLE ROW MOVE table=crew row=hetzner place=before of=studio trips=1\n"},
+		{[]string{"col", "move", "crew", "note", "--first"}, "TABLE COL MOVE table=crew col=note place=first trips=1\n"},
+		{[]string{"col", "add", "crew", "share:pct(busy)", "--after", "busy"}, "TABLE COL ADD table=crew col=share place=after of=busy trips=1\n"},
+		{[]string{"col", "del", "crew", "idle"}, "TABLE COL DEL table=crew col=idle trips=1\n"},
+		{[]string{"render", "crew"}, "crew    | note | busy | share\n--------+------+------+------\nrowan   |      |    0 | 0.0%\nstella  |      |    0 | 0.0%\nhetzner |      |    0 | 0.0%\nstudio  |      |    0 | 0.0%\n--------+------+------+------\n        |      |    0 | 0.0%\n"},
+		{[]string{"row", "sort", "crew", "--keep"}, "TABLE ROW SORT table=crew by=name desc=false keep=true trips=1\n"},
+		{[]string{"row", "add", "crew", "alex"}, "TABLE ROW ADD table=crew row=alex cols=3 bound=0 trips=1\n"},
+	} {
+		code, stdout, stderr := runTable(at(addr, step.args...)...)
+		if code != 0 || stdout != step.want {
+			t.Fatalf("%v: exit %d\nstdout %q\nwant   %q\nstderr %q", step.args, code, stdout, step.want, stderr)
+		}
+	}
+	code, stdout, stderr := runTable(at(addr, "row", "move", "crew", "alex", "--last")...)
+	if code != 1 || stdout != "" || !strings.Contains(stderr, "the rows are kept sorted by name") || !strings.HasSuffix(stderr, "; run: nova-table row sort 'crew' --manual\n") {
+		t.Fatalf("a move under a standing sort: exit %d stdout %q stderr %q", code, stdout, stderr)
+	}
+	code, stdout, _ = runTable(at(addr, "show", "crew")...)
+	if code != 0 || !strings.Contains(stdout, " sort=name\n") || !strings.Contains(stdout, "row=alex") || strings.Index(stdout, "row=alex") > strings.Index(stdout, "row=hetzner") {
+		t.Fatalf("the standing sort places the new row: %q", stdout)
 	}
 }

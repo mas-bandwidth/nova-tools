@@ -2145,7 +2145,7 @@ function TK.move(id, to, o)
   if not TK.IS[to] then return 'WHERE ' .. TK.str(to) end
   local fields = o.fields or {}
   for i = 1, #fields, 2 do
-    if TK.POINTER[fields[i]] then return 'FIELD ' .. fields[i] .. ' is the pointer' end
+    if TK.POINTER[fields[i]] or string.sub(fields[i], 1, 6) == 'place:' then return 'FIELD ' .. fields[i] .. ' is the pointer' end
     -- no move changes a record's paths past the gate (#4322)
     local ferr = SP.field(fields[i])
     if ferr then return ferr end
@@ -2363,7 +2363,7 @@ function TK.create(id, fields, o)
   if redis.call('EXISTS', 'task:' .. id) == 1 then return 'EXISTS task:' .. id end
   local title = ''
   for i = 1, #fields, 2 do
-    if TK.POINTER[fields[i]] then return 'FIELD ' .. fields[i] .. ' is the pointer' end
+    if TK.POINTER[fields[i]] or string.sub(fields[i], 1, 6) == 'place:' then return 'FIELD ' .. fields[i] .. ' is the pointer' end
     if fields[i] == 'title' then title = fields[i + 1] end
   end
   local stream = TK.stream_of(o.stream, title)

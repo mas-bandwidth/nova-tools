@@ -1,4 +1,4 @@
-# nova-table: a table over Redis, every cell an ordered set
+# nova-table: work tables and live views over Redis
 
 ## The design, in Glenn's words (2026-09-27)
 
@@ -16,6 +16,65 @@ bottom rows are the sum of the column above."
 once per-second in a console window" / "it should only contain that table
 data, no bullshit around it. don't let extra stuff creep in."
 
+## Start locally
+
+`nova-table help` lists every command. `nova-table help row`, `nova-table row
+--help`, and `nova-table row help` list row operations. For syntax, real flags
+and an example, use `nova-table help row set` or `nova-table row set --help`.
+Requested help exits 0 on stdout and needs no store.
+
+Install `nova-table`, `nova-sprint` and Redis. The matching `nova-sprint` binary
+loads the shared function library; an empty Redis alone is not enough. From a
+source checkout, build both clients from the same revision:
+
+```sh
+go build -o ./nova-table ./cmd/nova-table
+go build -o ./nova-sprint ./cmd/nova-sprint
+```
+
+This creates an isolated local store with no TCP listener or saved data. The
+wrapper clears seat selection and authentication only for these local calls:
+
+```sh
+table_demo_dir=$(mktemp -d "${TMPDIR:-/tmp}/nova-table.XXXXXX")
+redis-server --port 0 --unixsocket "$table_demo_dir/redis.sock" \
+  --unixsocketperm 700 --save '' --appendonly no --daemonize yes \
+  --pidfile "$table_demo_dir/redis.pid" --logfile "$table_demo_dir/redis.log"
+local_table_store() {
+  env -u NOVA_SEAT -u NOVA_SPRINT_SEAT -u NOVA_SPRINT_REDIS_USER \
+    -u NOVA_SPRINT_REDIS_PASSWORD_ENV -u NOVA_REDIS_BENCH_PASSWORD \
+    "$@" --redis "$table_demo_dir/redis.sock"
+}
+local_table_store ./nova-sprint fn load
+local_table_store ./nova-table create work --columns 'todo,doing,done,note:text,progress:pct(done)' --footer total
+local_table_store ./nova-table row add work build docs
+local_table_store ./nova-table cell add work build todo check-a check-b
+local_table_store ./nova-table cell move work build todo done check-a
+local_table_store ./nova-table row set work build 'note=One check passed'
+local_table_store ./nova-table member find work check-a
+local_table_store ./nova-table view set today --tables work --title 'My work' --summary done
+local_table_store ./nova-table watch --view today --once
+```
+
+Quote column specs containing parentheses, especially in zsh. `pct(done)` means
+the count in `done` divided by all count columns in that row. Here the build
+row and the view summary both show 50.0%. Text notes and formula columns do not
+add to that denominator. The empty docs row shows 0.0%.
+
+Run `local_table_store ./nova-table watch --view today` to keep it live. Use
+another terminal with the same socket path to edit the table or the view; the
+next frame picks up those edits. Ctrl-C ends watch. When finished, shut down
+only this disposable store:
+
+```sh
+redis-cli -s "$table_demo_dir/redis.sock" shutdown nosave
+```
+
+For an existing configured store, use `--seat <name>` or explicit `--redis
+<host:port>`. An absolute Unix socket path is also accepted. Load the matching
+function library through that store's deployment process; the local setup above
+is for a new disposable store. The commands below omit connection flags.
+
 ## What a table is
 
 The primitive is the ordered set: a Redis ZSET, members with scores, read in
@@ -23,21 +82,23 @@ score order. `internal/ntable` gives it five verbs (`Add`, `Remove`, `Move`,
 `Members`, `Card`) and one count (`QueueCount`: the set's size, one member
 left out when a row names it) and knows nothing about sprints.
 
-A table is columns, rows and one ordered set per body cell. It has three
+A table is ordered columns and rows. Set cells, text values and formulas have three
 kinds of cell:
 
 - **Header cells.** The top row is the column labels (each column has a
   label, default its name); the left column is the row labels (each row has
-  a label, default its key). Labels, not sets.
-- **Body cells.** Every body cell is an ordered set, printed by its column's
+  a label, default its key), in front of every declared column. Labels, not
+  sets.
+- **Body cells.** A set cell is printed by its column's
   *projection*: `count` (the set's size, Glenn's |s|; the default),
   `members` (the members in score order, comma-joined), `first` and `last`
-  (the lowest and highest scored member), or `text` (a label column: the
-  row's label, no set).
+  (the lowest and highest scored member), or `text` (a value per row, set
+  by `row set`, blank when none; no set). `pct(<count-column>)` is a formula
+  over count cells, with no set of its own.
 - **Footer cells.** One per column, the column's *fold* over the body:
-  `sum` (the default for a count) or `max` of the counts, `union` of the
-  members, or `none` (blank). The footer row carries the table's footer
-  label (default `total`). A table whose columns all fold `none` prints no
+  `sum` (the default for a count), `max` or `avg` of the counts, `union` of the
+  members, `pooled` for percentages, or `none` (blank). The footer row carries the table's footer
+  label (blank by default; use `--footer total` to name it). A table whose columns all fold `none` prints no
   footer row.
 
 A cell's set is either **owned** by the table, at
@@ -53,6 +114,81 @@ table that shows it does not become a second.
 A row may name one member its counts and members leave out (`--exclude`).
 The sprint's stream sentinel is the case: the stream's stop, not work.
 
+## Member identity, placement and epochs
+
+An owned member has at most one place in a logical table, across all rows and
+columns. The same record may have a place in another table. `cell add` creates
+a missing record atomically with its placement; a repeated add refuses, even
+in the same cell, preserving the existing score. `cell move` moves between
+columns of one row and retains the score. Removing a member clears that
+table's place field and retains its identity. `member create` makes an unplaced
+record and refuses an existing ID; removal never permits ID reuse as a new
+record. A removed record may be placed again in its original epoch.
+
+Records default to `table::member:<id>`, with immutable `epoch` and a
+`place:<table>` field holding `row:column`. A definition's `--member-prefix`
+can select an existing namespace, such as `task:`. Existing unrelated hash
+fields survive; absent epoch on a legacy record means zero. Generic task
+create/move fields cannot write `place:*`. Other record owners must likewise
+reserve those fields and preserve identity. Table operations do not implement
+the task/card lifecycle or protect against out-of-band raw Redis writes.
+
+`row add` and module `Bind` refuse a shape edit that would hide or delete a
+placed owned member. Their refusal identifies the occupied cell and members;
+move or explicitly remove them first. A binding cannot name any `table:*`
+storage, including a future cell, epoch or metadata key. External bindings
+remain live views of their owner's data, including on historical reads.
+
+A definition with `--epoch-key <hash>` uses its `--epoch-field` (default `n`)
+as the shared epoch domain; no key means epoch zero permanently. The domain
+owner must advance epochs monotonically. Every mutation carries the epoch the
+caller observed (`--epoch`, default zero). A stale write refuses unchanged;
+it is never retried in the new epoch. Members from an older epoch cannot be
+placed in the current one. Epochs and revisions use exact unsigned decimal
+integers, including values beyond floating-point integer precision.
+
+Columns and footer form a stable template. Presence, rows, metadata and owned
+cells belong to one epoch. Advancing the domain exposes that template with
+empty rows while preserving historical data and member links. `clear` empties
+only the active epoch. `drop` removes its active rows and owned cells but keeps
+the saved column definition, which is reused in later epochs. `drop --definition`
+also removes that saved definition. Snapshots from earlier epochs remain, and
+`show`/`render --at-epoch <n>` (module
+`ReadAt`) can inspect its history. A permanent identity hash retains the epoch
+domain and member prefix, preventing template recreation from silently
+reassigning old records to a different namespace. `show` reports epoch and
+revision; `render` and `watch` retain their plain table display.
+
+`check` verifies both directions of record/set membership, duplicate places,
+and hidden owned cells in one store instant. The runtime assumes valid initial
+state for its preservation guarantees. Legacy owned cells without record
+links, or hidden under old bindings, require a separately reviewed migration;
+operations refuse detected drift rather than silently inventing identity.
+
+## Change receipts
+
+Every accepted mutation, including an accepted no-op, increments the table's
+revision once and appends one event to `table:<t>:changes`. Refusals change no
+record, cell, revision or event. The event is the receipt: verb, original call
+arguments (JSON, excluding WriteOptions), epoch, `rev_before`, `rev_after`,
+actor, fence, idem, affected cells (`row:column`), member transitions
+(`id`, `from`, `to`, score), and outcome (`changed` or `noop`). Empty endpoints
+are empty strings; empty change lists are JSON arrays.
+
+Writes accept `--actor`, `--fence`, `--idem` and `--receipt`. The last prints the
+committed event ID and revision without a second store call. Go callers pass
+`WriteOptions{Epoch, Actor, Fence, Idem, Receipt: &receipt}`. Actor, fence and
+idem are recorded metadata here: authorization, lease fencing and retry
+deduplication belong to the coordinator layer. The primitive makes no claim
+that a repeated attempt with the same idem value is deduplicated.
+
+Streams are untrimmed in this foundation. Future trimming needs an archive,
+an acknowledgement watermark covering every registered consumer group, and
+explicit gap/replay handling. The function validates input, key types, counter
+bounds and every staged command's ACL before writing; it appends the event
+last. Redis functions do not provide rollback after resource exhaustion or
+server failure; this is not a claim of universal error rollback.
+
 ## The keys
 
 All under one prefix, so one ACL pattern grants them (`~table:*`), plus the
@@ -66,7 +202,13 @@ table:<t>                  HASH  order (the column names, comma-joined),
 table:<t>:rows             ZSET  row key -> rank: the render order
 table:<t>:row:<r>          HASH  label, exclude, owner, key:<col> (a bound
                                  cell's set; absent: the owned cell)
-table:<t>:cell:<r>:<c>     ZSET  an owned cell
+table:<t>:cell:<r>:<c>     ZSET  an owned cell (epoch zero)
+table:<t>:<e>:rows/row:/cell:     the same epoch-local keys for e > 0
+table:<t>[:<e>]:definition HASH  retained definition, _present, _revision
+table:<t>:identity         HASH  immutable epoch_key, epoch_field, member_prefix
+table:<t>:revision         HASH  n (revision, retained across epochs/drop)
+table:<t>:changes        STREAM  untrimmed committed change receipts
+table::member:<id>         HASH  epoch, place:<table> and caller-owned metadata
 ```
 
 Every table operation takes **one round trip after connecting**, including
@@ -74,8 +216,9 @@ cold reads and reads after row or binding changes. Writes validate and
 mutate atomically in the `ns_table_*` functions in the shared Redis library.
 `ns_table_read`, `ns_table_list`, and `ns_table_members` are read-only
 functions (`FCALL_RO`). A multi-table watch pipelines one snapshot function
-per table in one exchange, on the first tick as well as later ticks. No
-`KEYS` or `SCAN` is used.
+per table in one exchange, on the first tick as well as later ticks. Normal reads and member writes use neither `KEYS` nor `SCAN`. Rename scans the source table and member namespaces to preserve retained history and placement links. The explicit
+maintenance `check` scans the member namespace and current owned-cell keys
+inside one read-only function; its cost scales with that namespace.
 
 The typed success receipt includes `trips=1`, measured by `store.CountTrips`.
 `render` and `watch` print only their table text; their trip budget is checked
@@ -84,44 +227,193 @@ to the display. Connection setup is excluded from the application-trip count.
 
 ## The verbs
 
-Every verb takes `--redis <addr>`, else `NOVA_SPRINT_REDIS`, then
+Every store verb takes `--redis <addr>`, else `NOVA_SPRINT_REDIS`, then
 `NOVA_REDIS_ADDR`, then the seat's address, and dials as the seat nova-sprint
-dials as. Flags may follow the words. One typed line per success on stdout;
+dials as. Flags may follow the words; `--` ends flag parsing so a member such as
+`--pending` can be passed literally. Unknown flags name the command's available
+flags and its specific help page. One typed line per success on stdout;
 one line on stderr and exit 2 for a usage refusal, exit 1 when the store
 said no.
 
 ```
 nova-table create <table> --columns <name[:projection[:fold[:label]]],...> [--footer <label>] [--width <col=n,...>]
-nova-table drop <table>
+nova-table set <table> [--footer <label>] [--rename <name>] [--columns <spec>] [--hide <cols>] [--show <cols>] [--hidden | --visible]
+nova-table drop <table> [--definition]
 nova-table list
 nova-table row add <table> <row> [--label <text>] [--exclude <member>] [--owner <verb>] [<col>=<key> ...]
+nova-table row add <table> <row> <row> ...
+nova-table row set <table> <row> <col>=<value> ...
+nova-table row hide <table> <row> ...
+nova-table row show <table> <row> ...
 nova-table row del <table> <row>
-nova-table cell add <table> <row> <col> <member> [--score <n>]
-nova-table cell remove <table> <row> <col> <member>
-nova-table cell move <table> <row> <from-col> <to-col> <member>
+nova-table row move <table> <row> --first | --last | --before <row> | --after <row>
+nova-table row order <table> <row> <row> ...
+nova-table row sort <table> [--by name|label|<col>] [--desc] [--keep]
+nova-table row sort <table> --manual
+nova-table col add <table> <name[:projection[:fold[:label]]]> [--first | --last | --before <col> | --after <col>]
+nova-table col del <table> <col>
+nova-table col move <table> <col> --first | --last | --before <col> | --after <col>
+nova-table cell add <table> <row> <col> <member>... [--score <n>]
+nova-table cell remove <table> <row> <col> <member>...
+nova-table cell move <table> <row> <from-col> <to-col> <member>...
 nova-table cell members <table> <row> <col>
+nova-table member create <table> <id>
+nova-table member find <table> <id>
+nova-table check <table>
 nova-table clear <table>
-nova-table show <table>
-nova-table render <table> [--hide-zero-rows] [--width <col=n,...>]
-nova-table watch <table>[,<table>...] [--every <duration>] [--out <file>] [--title <text>] [--hide-zero-rows] [--once]
+nova-table show <table> [--at-epoch <n>]
+nova-table render <table> [--at-epoch <n>] [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>]
+nova-table render --view <name> [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>]
+nova-table view set <name> --tables <a,b,...> [--title <text>] [--summary <count-column>]
+nova-table view show <name>
+nova-table view list
+nova-table view del <name>
+nova-table watch <table>[,<table>...] | --view <name> [--every <duration>] [--out <file>] [--title <text>] [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>] [--once]
 ```
 
 | verb | prints |
 | --- | --- |
 | `create` | `TABLE CREATE table=<t> columns=<n>`; an existing table with the same definition is left; another definition is refused |
-| `drop` | `TABLE DROP table=<t> rows=<n>`; the definition, rows and owned cells go, a bound set stays |
+| `drop` | `TABLE DROP table=<t> rows=<n>`; active rows and owned cells go; the saved column definition stays unless `--definition`; earlier epoch snapshots and external bound sets stay |
 | `list` | `TABLE LIST tables=<n>`, then `TABLE table=<t> columns=<n> rows=<n>` per table |
 | `row add` | `TABLE ROW ADD table=<t> row=<r> cols=<n> bound=<n>`; a row already there keeps its place and its cells; a binding wants `--owner` |
-| `row del` | `TABLE ROW DEL table=<t> row=<r> existed=<0\|1>`; its owned cells go with it |
+| `row del` | `TABLE ROW DEL table=<t> row=<r> existed=<0\|1>`; its owned cells go with it; a missing row succeeds with `existed=0` and a no-op receipt |
+| `row move` | `TABLE ROW MOVE table=<t> row=<r> place=<first\|last\|before\|after> [of=<row>]`; the other rows keep their order |
+| `row order` | `TABLE ROW ORDER table=<t> first=<r,r,...>`; the named rows first, in the order named; the rest follow in theirs |
+| `row sort` | `TABLE ROW SORT table=<t> by=<key> desc=<bool> keep=<bool>`, or `manual=true` |
+| `col add` | `TABLE COL ADD table=<t> col=<c> place=<...>`; last unless a place is named |
+| `col del` | `TABLE COL DEL table=<t> col=<c>`; refused while the column holds a member or a text value, or a percentage reads it |
+| `col move` | `TABLE COL MOVE table=<t> col=<c> place=<...>`; the other columns keep their order |
 | `cell add`, `cell remove` | `TABLE CELL table=<t> row=<r> col=<c> n=<count after>`; `--score` is the member's place (the unix ms when omitted) |
 | `cell move` | `TABLE MOVE table=<t> row=<r> member=<m> from=<c> to=<c> n=<count of to>`; one call, the score kept; `NOTMEMBER` refused |
 | `cell members` | `TABLE CELL ... n=<n>`, then `TABLE MEMBER table=<t> row=<r> col=<c> member=<m> score=<s>` per member |
 | `clear` | `TABLE CLEAR table=<t> rows=<n> ms=<n>`; one call; the definition stays |
-| `show` | `TABLE table=<t> columns=<n> rows=<n>`, then `TABLE ROW table=<t> row=<r> <col>=<count> ...` per row |
-| `render` | the text, nothing else; nothing at all when the table is empty |
+| `show` | `TABLE table=<t> columns=<n> rows=<n> trips=1 epoch=<n> revision=<n>`, then `TABLE ROW table=<t> row=<r> <col>=<projected-value> ...` per row, including hidden rows/columns, text, members and percentages |
+| `render` | table text, empty when the table is empty; `--view` prints one stored-view frame with timestamp, title and summary |
 | `watch` | the text, once per tick, in place or to `--out` |
 
-A value holding a space is quoted, `row="swarm: cards"`.
+Empty values and values holding spaces or quotes are quoted, `note=""`,
+`row="swarm: cards"`. Counts stay numeric; percentages have one decimal and `%`.
+`show` uses the same full projected cell values as `render`, with `?` for unknown
+inputs. It is an unpadded record of every row and column.
+
+`member find` answers where an identity is placed in this table, with
+`state=placed row=<r> col=<c>`, `state=unplaced`, or `state=missing`. All three are
+successful reads (exit 0), with epoch, revision and `trips=1`. The read checks
+that a reported placement is present in its owned set; disagreement refuses as
+drift. It does not search bound external sets. An identity from another epoch
+refuses with the two epochs. Use `check` for a full audit of all record/set links.
+A custom member prefix needs read access to that namespace.
+
+`view list` lists stored view names in lexical order. `view show` prints the
+configuration, including its summary column; `render --view <name>` renders it
+once, as does `watch --view <name> --once`. `--at-epoch` is for table targets;
+stored views read active epochs. `view del` deletes only that configuration and reports `existed=0|1`; tables
+and their receipts remain. Dropping or renaming a table does not rewrite a view;
+edit or delete the reference explicitly. A view summary names a **count** column
+in its first table, such as `done`, not a `pct(done)` formula.
+
+## Editing, batches and rename
+
+`set` validates the entire definition edit before writing. Removing a nonempty
+owned set, changing it to text or a formula, or removing nonempty text is refused;
+move/remove members or clear text first. Bound external sets remain untouched.
+`row set` writes text values stored by column; later row metadata or binding
+edits retain those text values and row visibility. `pct(<count-column>)` computes
+the named count divided by all count columns in the row. Its default footer is
+`pooled`: sum the counts first, then divide. A percentage cannot fold `avg`.
+A stored definition with the former `pct:avg` rule can be repaired using
+`set --columns`; replacement columns are validated under the current rules.
+
+`cell add/remove/move` accept lists of members. `row add` accepts multiple row
+names with a shared metadata specification, and `row hide/show` accepts lists.
+Each table call validates every item, checks its observed epoch, and commits
+one revision and one receipt for the whole accepted list. Duplicate members or
+row names within one list are refused. A late invalid item leaves the complete
+store unchanged, including receipts. Go's single-member helpers delegate to
+`CellsAdd`, `CellsRemove`, and `CellsMove` with a one-element list; their optional
+`WriteOptions` remain available.
+
+`set --hide/--show` applies column visibility changes on the server in one call,
+without a read-modify-write race. Hidden rows and columns still contribute to
+formulas and folds. `set --hidden/--visible` controls whether watch draws the
+whole table. Every table edit uses the epoch and receipt options described above.
+
+Rename moves the stable definition, permanent identity, all materialized epochs,
+revision counter, change stream and its consumer groups. It updates every retained
+member's `place:<table>` field. A destination with any existing table namespace
+keys, including old history, is refused. The final receipt is written at the
+new name and records all physical key moves in `renamed_keys`; prior stream
+events remain byte-for-byte the same. Consumers must switch to the new name.
+Rename does not create an alias or rewrite stored views referencing the old name.
+
+The raw function wire ends every table write with the JSON options object.
+`set` takes `name, editJSON, optionsJSON`; `row_set` takes
+`name, row, valuesJSON, optionsJSON`; `rows_add` takes
+`name, {"rows":[...],"spec":{...}}, optionsJSON`; `rows_hide` takes
+`name, 0|1, rowsJSON, optionsJSON`. Cell add takes
+`name, row, col, score, members..., optionsJSON`; remove takes
+`name, row, col, members..., optionsJSON`; move takes
+`name, row, from, to, members..., optionsJSON`. Deploy the rebuilt clients,
+function library and source ACL declarations together; the older no-options
+wire is refused.
+
+Stored views are presentation configuration, separate from table epoch receipts.
+A view write validates all references and command permissions before either its
+hash or registry is changed. `watch --view` reloads the view each frame and reads
+its tables in one pipeline: two application exchanges, including a summary.
+The timestamp, title, pooled summary and tables form the frame. The summary uses
+the same table snapshot as the body; unread inputs print `?`. ETA has no value
+until change-stream rate sampling is implemented. Edit a view to change its
+tables or title without restarting watch.
+
+## Order
+
+Order is state the table keeps. Rows draw in the order they were added and
+columns in the order they were declared, until a verb moves them. Every order
+verb is one call to the staged `set` kernel: checked whole, then written, one
+receipt; a refusal writes nothing. A move to where the thing already is
+leaves a `noop` receipt.
+
+```
+$ nova-table render crew
+crew    | busy | idle | note
+--------+------+------+-----
+studio  |    1 |    0 |
+hetzner |    0 |    0 |
+stella  |    0 |    0 |
+rowan   |    0 |    0 | here
+$ nova-table row order crew rowan stella        # friends on top, machines keep their order below
+$ nova-table row move crew hetzner --before studio
+$ nova-table col move crew note --first
+$ nova-table col add crew 'share:pct(busy)' --after busy
+```
+
+| you want | run |
+| --- | --- |
+| one row or column somewhere else | `row move` / `col move` with `--first`, `--last`, `--before <x>` or `--after <x>` |
+| some rows on top, in a given order | `row order <table> <row> <row> ...` |
+| all rows sorted once | `row sort <table> --by name` (or `label`, a count column, a text column; `--desc` reverses; ties go by name) |
+| rows kept sorted as rows arrive | `row sort <table> --by name --keep` (name or label) |
+| to place rows by hand again | `row sort <table> --manual` |
+| one more column | `col add <table> <spec>`, with a place or last |
+| one column gone | `col del <table> <col>` |
+
+`show` includes `sort=name`, `sort=label` (or `-name`/`-label` for descending)
+when a standing sort is active.
+
+While a sort stands, `row move` and `row order` are refused and name
+`row sort <table> --manual`. `col del` refuses a column that holds members
+(naming all blocking rows and members, with one batch `cell remove` command per
+occupied cell), a text column with a value (clear
+it with `row set <table> <row> <col>=`), a column a `pct(...)` column reads
+(remove that one first) and the last column. Quote a column spec that has
+parentheses: the shell reads `pct(busy)` unquoted as a pattern.
+
+`ns_table_bind` (the sprint's stream block) uses its supplied order in manual
+mode and maintains the table's standing sort when one is active. The model is
+`tla/TableOrder.tla`; the tests are
+`internal/ntable/order_functional_test.go`.
 
 ## The render rules
 
@@ -132,13 +424,14 @@ Cells are separated by ` | ` and the rule joins dashes with `-+-`. A column
 is as wide as its widest cell (the footer counts) unless its width is fixed
 in the definition (`create --width`) or for one render (`render --width`);
 a wider cell is not cut. A last column is padded only when right-aligned,
-so no line ends in a space. A cell whose set did not come back prints `?`,
+so no line ends in a space. `--label-width <n>` sets the separate row-label
+column width. Known-empty percentages, including pooled footers, print `0.0%`. A cell whose set did not come back prints `?`,
 never a false 0, and so does the fold over it. `--hide-zero-rows` hides a
 row whose count cells are all zero and all read; the fold is still the
 column's, hidden rows included.
 
 **The empty rule.** An empty table, and a table with no visible row, renders
-as the empty string: no header, no newline. The sprint table hides its
+as the empty string, including its title: no placeholder and no gap. The sprint table hides its
 stream block that way with no extra blank line.
 
 ## Watching
@@ -149,17 +442,16 @@ on the terminal: the ANSI home-and-clear sequence, then the text, so a
 console tab shows the live table with no shell loop. `--out <file>`
 publishes each tick by writing a temp file beside it and renaming it over,
 the sprint table's way, so a reader sees one whole table. `--once` renders
-once and exits, with no clear. Every tick is exactly one Redis pipeline of read-only snapshots for
-every named table, including cold and changed shapes. The screen holds the tables and nothing
-else; a tick whose read fails leaves the last good text standing with one
+once and exits, with no clear. With explicit table names, every tick is exactly one Redis pipeline of read-only snapshots, including cold and changed shapes. A stored view adds one exchange to reload its configuration. An explicit table watch holds the tables; a stored view also has its timestamp,
+title and optional summary. In either mode, a tick whose read fails leaves the last good text standing with one
 `stale: <n>s` line under it, and stderr says why once. A signal ends it,
 exit 0.
 
 ## The first table: the sprint's stream block
 
 The sprint table's stream block (`nova-sprint table --layout live`) is the
-table `streams`: one row per stream of `ws:order`, a `stream` text column 25
-wide, and one `count:sum` column per state of the stream line (waiting,
+table `streams`: one row per stream of `ws:order`, its labels (the stream
+names) headed `stream` and 25 wide, and one `count:sum` column per state of the stream line (waiting,
 ready, working, review, merging, landed), footer `total`. Every cell is
 bound to the set the card model already keeps, `ws:<s>:<state>` under the
 sprint epoch, with the stream's sentinel excluded; nothing is copied. The
@@ -191,12 +483,27 @@ column and member where applicable, plus the relevant inspection or repair verb.
 
 The function library and source ACL declarations must be deployed together by
 the store owner. Writers need `FCALL` grants for `ns_table_create`, `drop`,
-`row_add`, `row_del`, `cell_add`, `cell_remove`, `cell_move`, `bind`, and `clear`
+`row_add`, `row_del`, `cell_add`, `cell_remove`, `cell_move`, `bind`, `clear`,
+`member_create`, `drop_definition`, `set`, `row_set`, `rows_add`, and `rows_hide`
 (each with the `ns_table_` prefix); readers need `FCALL_RO` for
 `ns_table_read`, `ns_table_list`, and `ns_table_members`, plus the underlying
-commands and authorized key patterns. The standalone ordered-set move retains
+commands and authorized key patterns. Writers also need `HDEL`, `TYPE`,
+`XINFO STREAM` and `XADD` for records and receipt preflight; revision counters
+use the existing `HGET`/`HSET` grants. Rename additionally needs `SCAN` and `RENAME`. Stored views need `ns_view_set`/`ns_view_get` and grants for `view:*` and `views`. The explicit maintenance check needs
+`FCALL_RO ns_table_check` and `SCAN`; these are not added to the display-only
+reader role. Custom epoch/record namespaces require their own key grants. The standalone ordered-set move retains
 `ns_oset_move`. `SCARD` and `SISMEMBER` preflight the registry type before
 multi-key writes. No command silently loads a library or changes live grants.
+
+Redis functions run with the caller's ACL permissions. A writer's underlying
+command grants also allow those same commands directly; Redis ACLs cannot make
+`ZADD` on a key legal only inside `FCALL`. The record/set/receipt contract therefore
+assumes trusted writers using the functions, starting from valid state. `check`
+detects covered forms of drift, but does not prevent an authorized raw writer
+from creating it. Enforcing a function-only boundary for untrusted clients needs
+a gateway holding private writer credentials, with clients unable to write those
+keys directly. A dedicated Redis username whose credentials clients possess
+does not provide that boundary. See the [Redis Lua ACL reference](https://redis.io/docs/latest/develop/programmability/lua-api/#redisacl_check_cmdcommand-arg).
 
 A refused move of an absent member, for example, names its exact source and
 suggests `nova-table cell members <table> <row> <source-column>`; it does not

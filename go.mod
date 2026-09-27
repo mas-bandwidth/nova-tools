@@ -3,6 +3,7 @@ module github.com/mas-bandwidth/nova-tools
 go 1.26.6
 
 require (
+	pgregory.net/rapid v1.3.0
 	github.com/alicebob/miniredis/v2 v2.39.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/prometheus/client_golang v1.24.1
