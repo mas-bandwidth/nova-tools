@@ -21,6 +21,7 @@ var DefaultCatalog = []Entry{
 	E("tla", "the TLA+ models of the state machines and their runners", "tla/check_table.py, tla/check_member.py (each under a 120 s budget)", "none"),
 	E("lisp", "nova-work lisp kernel", "go test ./internal/ci", "make test-lisp"),
 	E("profiles", "swarm worker profiles", "go test ./internal/swarm", "nova-swarm lint"),
+	E("deprecated", "tools and modules no longer in use, kept for reference only; never built, tested or maintained", "none", "none"),
 	E("scripts", "maintenance and operational scripts", "none", "none"),
 	E("testdata", "shared test fixtures and data", "go test ./internal/ci", "make test"),
 	Page("tools", "developer and bench tools", "nova-ci local", "make map"),
