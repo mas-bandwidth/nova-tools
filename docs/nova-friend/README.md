@@ -115,6 +115,5 @@ we know what we are doing". The here loop still takes an entry off the
 existing wake list each tick, as the hello loop did, and prints `FRIEND
 HERE WOKEN as= wake=` when it took one; nothing in this tool puts one
 there. The nova-sprint `friend` verbs this tool replaces (`hello`, `beat`,
-`pull`, `done`, `down`, `up`) retire in their own change, and
-[FRIEND-PRESENCE.md](../FRIEND-PRESENCE.md), the `nova-wake beat` page, with
-them.
+`pull`, `done`, `down`, `up`, and the rest) are gone since 2026-09-27, and
+FRIEND-PRESENCE.md, the retired `nova-wake beat` page, went with them.

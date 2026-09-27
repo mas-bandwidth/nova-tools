@@ -1198,8 +1198,7 @@ future reads `awake` `source=bus-beat` even when its stamp and cursor are both
 past `--window`. Since #3144 `wait` writes no BEAT (the bus carries notes, never
 beats; `--beat` and `--beat-lease` are accepted and ignored with one
 `WAIT NOTE`), so this source reads only a BEAT an older wait left, and live
-presence is `awake --store`, read from the store the way `presence` below
-reads it:
+presence is `awake --store`, read from the store:
 
 ```
 $ nova-wake awake --bus ./bus
@@ -1210,71 +1209,13 @@ FRIEND rowan awake age=500 source=bus-beat
 AWAKE OK friends=4 awake=2 asleep=1 unknown=1 window=300
 ```
 
-And two that cost nothing at all. `nova-wake beat --as <name> --store <host:port>`
-is the process a friend's window starts once at startup and forgets: every
-`--every` (default 30s) it writes the hash `friend:<name>` (field
-`at = <RFC3339 utc>`) and gives it a `--ttl` (default 90s) on the fleet store,
-with `friend:<name>:last` and no TTL beside it, all in one `MULTI`. It reads
-nothing, prints one line and then nothing, and **no model runs on either
-side** — the cost of presence has to be zero or the heartbeat is the first
-thing dropped under load. A window that exits, runs out of credit or is killed
-simply stops writing, and the hash lapses within the TTL: there is no shutdown
-hook to forget to run, which is the whole point. Presence is Redis only: the
-git bus carries notes and never beats (#3144). That is the beat on a store with
-no row loop. On the fleet store `friend:<name>` is the friend row and
-`nova-wake beat` refuses it (#3447): it writes nothing, exits 2 naming the
-hash, and its loop stops, because the row has one writer.
-
-Two flags sit beside that and change nothing when they are left off.
-`--window <time>` is the cap's reset time, stored as passed in the `window`
-field — the beat does not read a clock to invent one — and `--width <n>` is
-how many children are in use now, in the `width` field (#2673). Zero is a real
-count. A missing flag writes no field and does not fail the beat. Both lapse
-with the hash. A friend whose width changes re-runs `beat` with the new number.
-
-`nova-wake presence --store <host:port>` reads the `friends` SET (one
-`SMEMBERS`, never a scan) and then every member's hash in one pipeline, and
-prints one line for the swarm table:
-
-```
-$ nova-wake presence --store 100.115.99.19:6380
-friends: emma down 1h12m (last 09:41Z) · freddy down · johnny up 12s width=8 · stella up 4s
-```
-
-A friend is `up` or `down` and nothing else. On the fleet store the presence
-is the friend row (#3447): `friend:<name>` is a hash with no TTL whose one
-writer is the row loop (rowan-tools `friend-row`, one pass a second), and the
-row's `up` and `at` decide. `up=1` with an `at` no older than 10s is `up`, with
-the age of `at` and the row's `width=<n>`; `up=0` is `down` with no age,
-because the row does not say since when; a row whose `at` is older than 10s is
-a silent row loop, `down` with the age and clock time of its last write. A TTL
-on the row means nothing. Where no row loop runs, the beat's own hash is the
-presence: `up` is a beat inside the TTL, with the age of it and the
-`width=<n>` (and `window=<time>`) that beat carried; `down` is a hash that
-lapsed, with the age of the last beat and its clock time from the untimed key,
-or a friend who has never beaten, with nothing after it. The untimed key is
-not presence, and this verb reads no hand-written override. The
-roster is the store's `friends` SET, sorted, minus Glenn and Rowan; `--bus
-<dir>` (its `participants.json`), `--participants <file>` or
-`--friends <a,b,c>` names one instead, and there is no built-in list, because a
-copy of a roster is the thing that goes stale. A store that cannot be read, or
-an empty `friends` SET, is a refusal and exit 2, never an empty line: four
-friends reported down is a fact, and four friends not reported at all reads as
-good news.
-
-The password is never a flag, a file this tool opens or a word in its output.
-It reaches `beat` as `NOVA_REDIS_BENCH_PASSWORD` through
-`nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD`, exactly the way
-`bench-row` hands it to `redis-cli`, and the ACL user it authenticates as
-(`--user`, default `bench`) holds `~friend:*` and nothing wider. The startup
-line each friend adds to their own window is in
-[docs/FRIEND-PRESENCE.md](FRIEND-PRESENCE.md).
-
-This is the measured half of `awake`: `awake` reads presence out of the bus
-checkout, which is a git commit per cursor move and lags by a fetch, and
-`presence` reads it out of the store, which is one `MULTI` per beat and lags by
-nothing. Both
-report; neither decides. Issue #2610.
+**`beat` and `presence` are retired** (2026-09-27). The friend heartbeat
+(#2610: the hash `friend:<name>` with a TTL, `friend:<name>:last` beside it)
+and the one-line presence read are a friend's own runtime now, `nova-friend`
+(`here` beats, `list` and `show` read); the two verbs answer with one refusal
+naming it. What stays here is `awake --store`, which reads the same hash the
+way it always did. Presence is Redis only: the bus carries notes, never beats
+(#3144).
 
 ### First run
 
@@ -3731,9 +3672,12 @@ dialling Redis. A mistyped flag stays the verb's one-line refusal on standard
 error. `file -h` prints its own usage text (exit 2); the batch `task` verbs
 (`cancel`, `move`, `front`, `block`, `unblock`, `sweep`) print theirs and exit 0.
 
-**Capacity and the three model types.** `capacity friend|bench [--tiers
-<t>,...] [--kinds work|read|fix,...] <name> <slots>` sets a worker's slot
-budget under its machine ceiling and what it advertises it can run. A card's
+**Capacity and the three model types.** `capacity bench [--tiers
+<t>,...] [--kinds work|read|fix,...] <name> <slots>` sets a bench's slot
+budget under its machine ceiling and what it advertises it can run (a
+friend's slots, kinds and tiers are `nova-config friend set`, applied by
+`nova-config apply` through the same Redis Function; the retired `capacity
+friend` refuses naming it). A card's
 `ROUTE:` names one of three model types, `frontier` (the most recent Astra or
 Fable model only), `pro` or `flash`; `--tiers` takes those three words and
 refuses any other, an empty value clears, omitted keeps the stored list. The
@@ -3749,8 +3693,8 @@ worker's desired hash (`<kind>:<name>:desired`) in one call and prints
 `PAUSED <worker>`; `worker resume <worker>` clears it and prints `RESUMED
 <worker>`; a flag already at the value prints the same word and writes
 nothing. It is the one verb for benches and friends (it replaces `capacity
-bench <b> 0` and `capacity friend --paused 1` as the way to pause, though
-`--paused 0|1` still works on either kind). The deal pass deals a paused
+bench <b> 0` and the retired `capacity friend --paused 1` as the way to
+pause, though `--paused 0|1` still works on a bench). The deal pass deals a paused
 worker nothing; it keeps working what it already holds, so a pause is
 never a cancel. The sprint table prints `paused` in the worker's status
 column while it is up (down wins). A worker neither registry holds prints
@@ -4696,7 +4640,7 @@ The card is a spec (nova-tools#4313): its `TEST` line names the one test the cha
 
 One receipt: `CARD CUT <S>/<repo>#<n> label=... place=pool|waiting|exists stream=... contexts=<k> origin=<url>`. Exit 0 cut; 1 refused with `REFUSED card cut ... why=...` (no `STREAM` and no `--stream`, a `DEPENDS-ON` that is not a card id, owner/repo#n, stream/<slug> or task:<id>, no `PATHS` or `DONE-WHEN`, a `DONE-WHEN` no test can fail, or a missing index, each before any write; or the push's own refusal); 2 usage.
 
-The wrapper (internal/nsprint/card/wrapper_spec.go) holds every code card's commit to the card before its end pushes or harvests anything, a copy's (`nova-card copy`) and a sprint card's (`nova-card <S>/<label>/<n>`) alike: the diff adds or changes at least one `_test.go`; `TEST` passes at the head and fails at `base-sha` with the diff's test files checked out over it (a `TEST: none <why>` card is excused from that, not from CI). `TEST` runs under `go test -json`, and green is the named test's own `pass` event: `[no test files]`, `[no tests to run]` and a subtest's pass are not green, and a red at base is the named test's own `fail` event, or its package failing to build only when the diff's test files add or change the named test (never `[setup failed]`, and a `pass` of the named test at base is never red); `TEST` names one package, never a `...` pattern. `TEST: -tags <tags> <package> <TestName>` runs with those tags, and `go test -p 2 -tags functional ./pkg -run TestX` in `DONE-WHEN` derives it. A fix copy's commit sits on the PR head, where the primary's `TEST` is green already, so a fix is held to the finding test it names on `RESULT.md` line 3 (`TEST: <package> <TestName>`, never `none`), not to the primary's. A friend's copy has no wrapper: `friend done --ok --pr` runs the same gate in `--repo <checkout at --head>` (a fix names its finding test with `--test`) and refuses the end on a red; then `nova-ci local --base <base-sha>` in the checkout (#4360: the unit tier CI runs for the diff), or, where the verb cannot run, `go test -json -p 2 -count=1` of the touched packages. A red ends the copy `FAILED` with the typed reason (`no-test`, `test-not-green`, `test-not-red`, `ci-red`; a sprint card's end is `FAILED tests-red`, the reason `ns_card_end` takes, with `gate=<reason>:` leading its why) and one line naming the red and the remedy; no PR is opened; the rows, every `RED package=<p> test=<t>` line included, go under `## Gates` in `RESULT.md`; `wrapper.line` carries `gate=<pass|reason>` and the copy's record `evidence` = `gate=<pass|reason> red=<names|->`.
+The wrapper (internal/nsprint/card/wrapper_spec.go) holds every code card's commit to the card before its end pushes or harvests anything, a copy's (`nova-card copy`) and a sprint card's (`nova-card <S>/<label>/<n>`) alike: the diff adds or changes at least one `_test.go`; `TEST` passes at the head and fails at `base-sha` with the diff's test files checked out over it (a `TEST: none <why>` card is excused from that, not from CI). `TEST` runs under `go test -json`, and green is the named test's own `pass` event: `[no test files]`, `[no tests to run]` and a subtest's pass are not green, and a red at base is the named test's own `fail` event, or its package failing to build only when the diff's test files add or change the named test (never `[setup failed]`, and a `pass` of the named test at base is never red); `TEST` names one package, never a `...` pattern. `TEST: -tags <tags> <package> <TestName>` runs with those tags, and `go test -p 2 -tags functional ./pkg -run TestX` in `DONE-WHEN` derives it. A fix copy's commit sits on the PR head, where the primary's `TEST` is green already, so a fix is held to the finding test it names on `RESULT.md` line 3 (`TEST: <package> <TestName>`, never `none`), not to the primary's. A friend's copy has no wrapper: `nova-friend done --ok --pr` (the retired `nova-sprint friend done`) runs the same gate in `--repo <checkout at --head>` (a fix names its finding test with `--test`) and refuses the end on a red; then `nova-ci local --base <base-sha>` in the checkout (#4360: the unit tier CI runs for the diff), or, where the verb cannot run, `go test -json -p 2 -count=1` of the touched packages. A red ends the copy `FAILED` with the typed reason (`no-test`, `test-not-green`, `test-not-red`, `ci-red`; a sprint card's end is `FAILED tests-red`, the reason `ns_card_end` takes, with `gate=<reason>:` leading its why) and one line naming the red and the remedy; no PR is opened; the rows, every `RED package=<p> test=<t>` line included, go under `## Gates` in `RESULT.md`; `wrapper.line` carries `gate=<pass|reason>` and the copy's record `evidence` = `gate=<pass|reason> red=<names|->`.
 
 ### Many cards from one file: `nova-sprint card cut --from`
 
