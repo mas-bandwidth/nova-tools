@@ -71,6 +71,13 @@ It exits 1 with the next step on stderr when the schema is not there yet
 
 ## The kinds
 
+The placement rule (Glenn, 2026-09-27): "Make sure that per-machine facts
+actually belong to machines, and global fleet facts belong to the fleet."
+So a machine's row holds what varies per machine, the fleet's one row holds
+what has one value for the whole fleet, a friend's row holds what someone
+decides for her, and the sprint's one row holds who coordinates. Anything
+else is invented and is not a field.
+
 Every kind has the same six verbs, generated from its descriptor, so what is
 true of one is true of all:
 
@@ -86,51 +93,98 @@ nova-config <kind> <verb> -h
 
 A name is lower-case letters, digits and dashes. `add` needs every required
 field and refuses a value outside its type, naming every problem in one line.
-`set` changes the fields named and no other; `--note ""` clears one. `-h` on
-any verb prints its flags with one help line each.
+`set` changes the fields named and no other; `--roles ""` clears a list.
+`-h` on any verb prints its flags with one help line each. A singleton kind
+(the fleet, the sprint) is one row `migrate` creates: `set`, `show` and
+`history` take no name, and there is no `add`, `remove` or `list`.
 
 ### machine
 
-The fleet registry's row: what a machine is, and so what may be placed on it.
+A machine of the fleet, named by its tailnet host: `ssh <name>` reaches it
+("All fleet machines *must* be on the tailnet. This is a hard requirement."),
+so there is no address field. The row is exactly the four declared facts
+something reads, "not invented rando stuff".
 
 ```
-nova-config machine add studio --ssh studio --os_arch darwin/arm64 --slots 64 --cores 32 --roles bench,coordination,runner --seat studio --user glenn --note "Glenn's Mac Studio" --as rowan
-CONFIG ADD kind=machine name=studio rev=1
+nova-config machine add hulk --user gaffer --seat swarm-hulk --slots 40 --runners 0 --as rowan
+CONFIG ADD kind=machine name=hulk rev=1
+nova-config machine add studio --user glenn --seat studio --slots 64 --runners 1 --as rowan
+CONFIG ADD kind=machine name=studio rev=2
+nova-config machine list
+MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0
+MACHINE name=studio user=glenn seat=studio slots=64 runners=1
+CONFIG LIST kind=machine rows=2
 ```
 
-`--ssh` is the host alias (or `user@host`) that reaches it; `--os_arch` is
-one of darwin/amd64, darwin/arm64, linux/arm64, linux/x64; `--slots` is the
-machine ceiling, the most desired slots its friends and benches may sum to
-(`machine:<m>:ceiling`); `--cores` feeds the CI budget the ceiling derives
-(0 writes none); `--roles` is a comma list of bench, coordination, ingress,
-runner, services; `--seat` is the nova-secrets seat on the machine; `--user`
-the account the bench runs as.
+`--user` is the login the plays and the seals use on it; `--seat` its
+nova-secrets seat; `--slots` how many cards it may run at once, the machine
+ceiling (`machine:<m>:ceiling`; 0 runs none); `--runners` how many CI
+runners it hosts (0, the default, hosts none).
+
+Measured facts (os, arch, cores, memory) are never typed: "I like measured
+facts coming live ... It's more robust." With a Redis named (`--redis`, or
+`NOVA_SPRINT_REDIS`, `NOVA_REDIS_ADDR`), `list` and `show` end each line in
+what the machine's own beat (`bench:<name>:beat`) says, `-` for a fact the
+beat does not carry yet and `beat=none` for a machine that has never beaten:
+
+```
+nova-config machine list --redis space:6380
+MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z
+MACHINE name=studio user=glenn seat=studio slots=64 runners=1 beat=none
+CONFIG LIST kind=machine rows=2
+```
+
+### fleet
+
+The one row of fleet-wide facts: which machine is the store (Redis and
+Postgres) and which the coordinator ("the studio is the coordinator.
+coordinator can be driven by rowan (you) or stella."). Both name machine
+rows; a machine the fleet names cannot be removed.
+
+```
+nova-config fleet set --store hulk --coordinator studio --as rowan
+CONFIG SET kind=fleet name=fleet rev=3 changed=coordinator,store
+nova-config fleet show
+FLEET name=fleet store=hulk coordinator=studio created=2026-09-27T02:00:00Z updated=2026-09-27T02:10:00Z
+```
 
 ### friend
 
-An AI friend: where it runs, how wide, how it is woken, its roles and the
-logins that are it.
+What someone decides for a friend: how wide she runs, which tiers she can
+do, her roles. "Anything that a friend would just know, is runtime redis
+data": where she runs, her harness, her logins and her wake path are her own
+presence's, never here. Who coordinates is the sprint row's.
 
 ```
-nova-config friend add rowan --machine studio --slots 64 --harness claude --wake unit:rowan@studio --roles coordinator,builder --logins rowan-claude --as rowan
-CONFIG ADD kind=friend name=rowan rev=2
-nova-config friend set rowan --slots 32 --note "half width tonight" --as rowan
-CONFIG SET kind=friend name=rowan rev=3 changed=note,slots
+nova-config friend add rowan --slots 64 --tiers frontier,pro --roles builder --as rowan
+CONFIG ADD kind=friend name=rowan rev=4
+nova-config friend set rowan --slots 32 --roles builder,reader --as rowan
+CONFIG SET kind=friend name=rowan rev=5 changed=roles,slots
 nova-config friend list
-FRIEND name=rowan machine=studio slots=32 harness=claude wake=unit:rowan@studio roles=builder,coordinator logins=rowan-claude note=half\x20width\x20tonight
+FRIEND name=rowan slots=32 tiers=frontier,pro roles=builder,reader
 CONFIG LIST kind=friend rows=1
 nova-config friend history rowan
-HISTORY id=2 kind=friend name=rowan op=add actor=rowan at=2026-09-27T02:10:00Z harness=claude logins=rowan-claude machine=studio note=- roles=builder,coordinator slots=64 wake=unit:rowan@studio
-HISTORY id=3 kind=friend name=rowan op=set actor=rowan at=2026-09-27T02:11:00Z note=->half\x20width\x20tonight slots=64>32
+HISTORY id=4 kind=friend name=rowan op=add actor=rowan at=2026-09-27T02:10:00Z roles=builder slots=64 tiers=frontier,pro
+HISTORY id=5 kind=friend name=rowan op=set actor=rowan at=2026-09-27T02:11:00Z roles=builder>builder,reader slots=64>32
 CONFIG HISTORY kind=friend name=rowan changes=2
 ```
 
-`--machine` must name a machine row (a friend's slots are guarded by its
-machine's ceiling, so a friend on no machine is refused by the structure);
-`--wake` is `unit:<label>@<host>`, `human:<channel>` or empty; `--roles` is
-a comma list of builder, coordinator, may-hold, reader; `--logins` are the
-GitHub logins that are this friend, unique across friends and never a
-friend's name.
+`--slots` is her desired slots, under the ceiling of the machine her beat
+reports (or the fleet's coordinator machine when she has no beat);
+`--tiers` is a comma list of flash, frontier, pro, which she can do (the
+deal's tier filter); `--roles` is a comma list of builder, may-hold, reader.
+
+### sprint
+
+The one row of sprint-global facts: who holds the coordinator role. Setting
+it is the handover; a friend the sprint names cannot be removed.
+
+```
+nova-config sprint set --coordinator rowan --as rowan
+CONFIG SET kind=sprint name=sprint rev=6 changed=coordinator
+nova-config sprint show
+SPRINT name=sprint coordinator=rowan created=2026-09-27T02:00:00Z updated=2026-09-27T02:12:00Z
+```
 
 ### Refusals
 
@@ -138,10 +192,11 @@ One stderr line each, naming the next step:
 
 ```
 nova-config machine add: machine studio exists; run: nova-config machine set studio --<field> <value>
-nova-config friend add: --machine hulk names no machine row; run: nova-config friend set rowan --<field> <value>
+nova-config fleet set: --store space names no machine row; run: nova-config fleet show
 nova-config friend set: friend nobody not found; run: nova-config friend add nobody --<field> <value> ...
-nova-config machine remove: machine studio is the --machine of friend rowan; run: nova-config machine list
-nova-config friend add: --logins rowan-claude is friend rowan's login; run: ...
+nova-config machine remove: machine studio is the --coordinator of the fleet; run: nova-config machine list
+nova-config friend remove: friend rowan is the --coordinator of the sprint; run: nova-config friend list
+nova-config fleet set: fleet takes no name: it is one row; want fleet set --<field> <value> ...; run: nova-config help
 ```
 
 Exit 1 is the store saying no; exit 2 is an invocation that could not run
@@ -152,26 +207,42 @@ ends `run: nova-config help`.
 
 ```
 nova-config apply --check --as rowan
+CHECK ADD kind=machine name=hulk
 CHECK ADD kind=machine name=studio
-CONFIG CHECK kind=machine add=1 set=0 remove=0 rev=1 applied=0
+CONFIG CHECK kind=machine add=2 set=0 remove=0 rev=2 applied=0
+CHECK SET kind=fleet name=fleet changed=store,coordinator
+CONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=3 applied=0
 CHECK ADD kind=friend name=rowan
-CONFIG CHECK kind=friend add=1 set=0 remove=0 rev=3 applied=0
+CONFIG CHECK kind=friend add=1 set=0 remove=0 rev=5 applied=0
+CHECK SET kind=sprint name=sprint changed=coordinator
+CONFIG CHECK kind=sprint add=0 set=1 remove=0 rev=6 applied=0
 nova-config apply --as rowan
+APPLY ADD kind=machine name=hulk
 APPLY ADD kind=machine name=studio
-CONFIG APPLY kind=machine add=1 set=0 remove=0 rev=1 ms=4
+CONFIG APPLY kind=machine add=2 set=0 remove=0 rev=2 ms=4
+APPLY SET kind=fleet name=fleet changed=store,coordinator
+CONFIG APPLY kind=fleet add=0 set=1 remove=0 rev=3 ms=1
 APPLY ADD kind=friend name=rowan
-CONFIG APPLY kind=friend add=1 set=0 remove=0 rev=3 ms=6
+CONFIG APPLY kind=friend add=1 set=0 remove=0 rev=5 ms=6
+APPLY SET kind=sprint name=sprint changed=coordinator
+CONFIG APPLY kind=sprint add=0 set=1 remove=0 rev=6 ms=1
 ```
 
-`apply` reads Postgres and writes Redis, one kind at a time, machines before
-friends. For every row it writes exactly what the nova-sprint verbs used to
-write by hand, through the same Redis Functions: `capacity friend`
-(`ns_capacity_desired`, the desired hash under the machine ceiling), `friend
-roles` (`ns_friend_roles`), `capacity friend --wake` (`ns_friend_wakepath`)
-and a hello's `--login` (`friends:login`); for a machine, `capacity machine`
-(`ns_capacity_machine`) and its registry hash `machine:<m>`. A name in Redis
-that Postgres has not is removed. `--check` prints the plan and writes
-nothing. `--kind friend` applies one kind.
+`apply` reads Postgres and writes Redis, one kind at a time: machines, the
+fleet row, friends, the sprint row. For a machine it writes what `capacity
+machine` would (`ns_capacity_machine`, the ceiling from `--slots`; cores and
+memory are never declared, so none are passed) and its registry hash
+`machine:<m>`. For the fleet row, `fleet:store` and `fleet:coordinator`,
+plain keys. For a friend it writes what `capacity friend --tiers` and
+`friend roles` would (`ns_capacity_desired`, `ns_friend_roles`), charging
+her slots to the machine her own beat reports, else to the fleet's
+coordinator machine; the friend the sprint row names gets the `coordinator`
+role in Redis on top of her row's roles, so a handover (`sprint set
+--coordinator stella`, then `apply`) is two `SET ... changed=roles`, hers
+first. It never touches her logins or wake path: they are her presence's.
+For the sprint row, `sprint:coordinator`. A name in Redis that Postgres has
+not is removed. `--check` prints the plan and writes nothing. `--kind friend`
+applies one kind.
 
 Every apply is compare-and-set on a revision: `config:decl` in Redis holds
 `rev:<kind>`, the Postgres revision last applied, and `apply` refuses
@@ -190,6 +261,9 @@ What Redis refuses, apply reports and stops at, stamping nothing:
   roles are written by a coordinator (or by the first coordinator, when none
   is set yet). Apply as the coordinator; the coordinator's own row is applied
   first;
+- `friend emma has no beat naming a machine and the fleet names no
+  coordinator machine to charge her slots to`: run `nova-config fleet set
+  --coordinator <machine>`, then apply;
 - `machine mini still carries friend:emma in Redis`: a removed machine keeps
   its keys while a desired hash names it.
 
@@ -199,8 +273,11 @@ stamps are set. Nothing about the fleet's configuration lives only in Redis.
 
 ## What is deliberately not here
 
-Runtime state (beats, states, copies, leases, the table), history other than
-the configuration's own (scores, receipts, ledgers, `cap:log`), secrets (the
-store holds the name of a variable, never a password), and the sprint plan.
-The kinds still to come, loop, runner, bench, route and setting, are listed
+Runtime state (beats, states, copies, leases, the table), what a friend
+would just know (her machine, harness, logins, wake path: her presence's),
+measured facts (a machine's os, arch, cores, memory: its beat's), history
+other than the configuration's own (scores, receipts, ledgers, `cap:log`),
+secrets (the store holds the name of a variable, never a password), and the
+sprint plan. What is still to come (more fleet and sprint fields, loops,
+routes, and the wake path "later, when we know what we are doing") is listed
 in [SPEC-CONFIG.md](../SPEC-CONFIG.md) as planned, not built.
