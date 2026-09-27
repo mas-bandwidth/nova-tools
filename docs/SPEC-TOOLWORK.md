@@ -1025,7 +1025,8 @@ runs `--channel fake` six times and the shipped tool refuses it
 2. **One comparator, in one place.** `onboarding.CompareTranscript(doc, got, volatile)`
    is the only comparison a `firstrun_test.go` may make. Values are compared **as
    written**; the only values matched by shape are the fields in one shared table of
-   run-owned values (`at=`, `took=`, `created=`, a temp path, a fresh sha) —
+   run-owned values (`at=`, `took=`, `created=`, a temp path, a fresh sha, and the
+   stamp on the `branch=` a nova-secrets seal or seat inject commits on) —
    `onboarding.Volatile` — and a test may name a field from that table and may not
    invent one. The set-of-shapes helper and every `printed map[string]bool` are
    deleted.
