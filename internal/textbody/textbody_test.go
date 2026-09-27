@@ -46,6 +46,12 @@ func TestLineFilterEdges(t *testing.T) {
 		{"blank lines stay", "a\n\n>gone\n\nb\n", "a\n\n\nb\n"},
 		{"bytes stay", "a\xff\x00\tb\rc", "a\xff\x00\tb\rc"},
 		{"tilde is ordinary", "~~~\nbody\n~~~", "~~~\nbody\n~~~"},
+		{"one backtick prefix", "`x` flag\nvisible", "`x` flag\nvisible"},
+		{"two backtick prefix", "``x`` flag\nvisible", "``x`` flag\nvisible"},
+		{"four backtick fence", "````\nhidden\n````\nvisible", "visible"},
+		{"closing fence trailing text", "```\nfoo\n``` bar\nkept\n```\nlost", "kept"},
+		{"backtick in fence info", "``` a`b\nhidden\n```\nvisible", "visible"},
+		{"indented fences", "    ```\nhidden\n\t```\nvisible", "visible"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
