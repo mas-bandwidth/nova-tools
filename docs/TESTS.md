@@ -1233,22 +1233,22 @@ banner's `example:` block is this same sitting, line for line.
 
 ```text
 $ nova-table create demo --columns job:text:none,ready,working,done
-TABLE CREATE table=demo columns=4
+TABLE CREATE table=demo columns=4 trips=1
 
 $ nova-table row add demo build
-TABLE ROW ADD table=demo row=build cols=4 bound=0
+TABLE ROW ADD table=demo row=build cols=4 bound=0 trips=1
 
 $ nova-table cell add demo build ready b1
-TABLE CELL table=demo row=build col=ready n=1
+TABLE CELL table=demo row=build col=ready n=1 trips=1
 
 $ nova-table cell add demo build ready b2
-TABLE CELL table=demo row=build col=ready n=2
+TABLE CELL table=demo row=build col=ready n=2 trips=1
 
 $ nova-table cell move demo build ready working b1
-TABLE MOVE table=demo row=build member=b1 from=ready to=working n=1
+TABLE MOVE table=demo row=build member=b1 from=ready to=working n=1 trips=1
 
 $ nova-table show demo
-TABLE table=demo columns=4 rows=1
+TABLE table=demo columns=4 rows=1 trips=1
 TABLE ROW table=demo row=build ready=1 working=1 done=0
 
 $ nova-table render demo

@@ -44,12 +44,11 @@
 //	                                cell's set; absent: the owned cell)
 //	table:<t>:cell:<r>:<c>     ZSET an owned cell
 //
-// Reads are pipelines (Reader, QueueCells): one round trip per tick in the
-// steady state, never KEYS or SCAN. Writes are plain pipelined commands
-// (HSET, ZADD, ZREM, DEL), except the two that must be atomic over several
-// keys, which are functions of the nova_sprint library
-// (internal/nsprint/fn/lua/table.lua): ns_oset_move (Move) and
-// ns_table_clear (Clear).
+// Each table operation is one Redis function call. Read-only snapshots
+// include the definition, current rows, bindings and cells even on a cold
+// read. QueueCells remains available to callers already holding a shape,
+// so they can include cell reads in their own larger pipeline. Writes
+// validate bindings and permissions before changing any key.
 package ntable
 
 import (

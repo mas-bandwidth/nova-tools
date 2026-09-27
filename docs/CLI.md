@@ -4775,22 +4775,22 @@ typed lines a program reads, and the text a person reads.
 
 ```text
 $ nova-table create demo --columns job:text:none,ready,working,done
-TABLE CREATE table=demo columns=4
+TABLE CREATE table=demo columns=4 trips=1
 
 $ nova-table row add demo build
-TABLE ROW ADD table=demo row=build cols=4 bound=0
+TABLE ROW ADD table=demo row=build cols=4 bound=0 trips=1
 
 $ nova-table cell add demo build ready b1
-TABLE CELL table=demo row=build col=ready n=1
+TABLE CELL table=demo row=build col=ready n=1 trips=1
 
 $ nova-table cell add demo build ready b2
-TABLE CELL table=demo row=build col=ready n=2
+TABLE CELL table=demo row=build col=ready n=2 trips=1
 
 $ nova-table cell move demo build ready working b1
-TABLE MOVE table=demo row=build member=b1 from=ready to=working n=1
+TABLE MOVE table=demo row=build member=b1 from=ready to=working n=1 trips=1
 
 $ nova-table show demo
-TABLE table=demo columns=4 rows=1
+TABLE table=demo columns=4 rows=1 trips=1
 TABLE ROW table=demo row=build ready=1 working=1 done=0
 
 $ nova-table render demo
@@ -4825,10 +4825,14 @@ zero, the sprint table's rule.
 table's own `table:<t>:cell:<row>:<col>`. It is read and rendered freely,
 and `cell add`, `cell remove`, `cell move` and `clear` refuse it, one line,
 exit 1: `nova-table cell add: <t>.<row>.<col> is bound to <key>, owned
-elsewhere; run: <owner verb>; run: nova-table help`. `clear` over a table
+elsewhere; run: <owner verb>`. `clear` over a table
 holding any bound cell refuses the same way and clears nothing. `row add
 --exclude <member>` names one member the row's counts and members leave
 out (the sprint's sentinel).
+
+Typed success receipts append `trips=1`, measured after connection setup.
+Render and watch retain table-only output. Every table operation, including
+cold reads and shape changes, is one exchange.
 
 **The verbs.** `create <table> --columns ... [--footer] [--width]` prints
 `TABLE CREATE table= columns=` (an existing table with the same definition
@@ -4841,7 +4845,7 @@ table= row= cols= bound=`; a row already there keeps its place and its
 cells; `row del` prints `TABLE ROW DEL table= row= existed=`. `cell add`
 and `cell remove` print `TABLE CELL table= row= col= n=`, the cell's count
 after; `cell move <table> <row> <from> <to> <member>` is one library call
-(`ns_oset_move`) that keeps the member's score, prints `TABLE MOVE table=
+(`ns_table_cell_move`) that keeps the member's score, prints `TABLE MOVE table=
 row= member= from= to= n=`, and refuses `NOTMEMBER` (exit 1) writing
 nothing when the member is not in `<from>`; `cell members` prints `TABLE
 CELL ... n=` then one `TABLE MEMBER table= row= col= member= score=` per
@@ -4861,7 +4865,7 @@ sequence, then the text) so a console tab shows the live table with no
 shell loop; `--out <file>` publishes each tick by writing a temp file
 beside it and renaming it over, the sprint table's way; `--once` renders
 once and exits. Every tick is exactly one Redis pipeline for every cell of
-every named table (the readers keep the tables' shapes across ticks), and
+every named table (read-only snapshots include cold and changed shapes), and
 the screen holds the tables and nothing else: no clock, no key, no status
 line. A tick whose read fails leaves the last good text standing with one
 `stale: <n>s` line under it. A signal ends it, exit 0.

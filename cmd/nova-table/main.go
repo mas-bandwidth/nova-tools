@@ -93,7 +93,10 @@ func refuse(stderr io.Writer, verb, what string) int {
 
 // refused is the store's no, one line: exit 1.
 func refused(stderr io.Writer, verb, what string) int {
-	fmt.Fprintf(stderr, "nova-table %s: %s; run: nova-table help\n", verb, oneline.Escape(what))
+	if !strings.Contains(what, "; run:") {
+		what += "; run: nova-table help"
+	}
+	fmt.Fprintf(stderr, "nova-table %s: %s\n", verb, oneline.Escape(what))
 	return 1
 }
 

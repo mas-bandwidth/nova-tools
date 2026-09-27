@@ -23,7 +23,7 @@ var ErrNotMember = errors.New("NOTMEMBER")
 // Add puts member into the set at key with score (ZADD).
 func Add(ctx context.Context, c redis.Cmdable, key, member string, score float64) error {
 	if err := c.ZAdd(ctx, key, redis.Z{Score: score, Member: member}).Err(); err != nil {
-		return fmt.Errorf("zadd %s: %w", key, err)
+		return fmt.Errorf("zadd %q member %q: %w", key, member, err)
 	}
 	return nil
 }
@@ -32,7 +32,7 @@ func Add(ctx context.Context, c redis.Cmdable, key, member string, score float64
 // not an error.
 func Remove(ctx context.Context, c redis.Cmdable, key, member string) error {
 	if err := c.ZRem(ctx, key, member).Err(); err != nil {
-		return fmt.Errorf("zrem %s: %w", key, err)
+		return fmt.Errorf("zrem %q member %q: %w", key, member, err)
 	}
 	return nil
 }
@@ -51,7 +51,7 @@ func Move(ctx context.Context, c redis.Cmdable, from, to, member string, keepSco
 	}
 	if len(reply) >= 2 && fmt.Sprint(reply[0]) == "REFUSED" {
 		if fmt.Sprint(reply[1]) == "NOTMEMBER" {
-			return ErrNotMember
+			return fmt.Errorf("ordered set %q -> %q member %q: %w; inspect the source with ZRANGE before retrying the move", from, to, member, ErrNotMember)
 		}
 		return fmt.Errorf("%s: REFUSED %v", FnMove, reply[1])
 	}

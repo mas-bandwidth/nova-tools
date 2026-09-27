@@ -24,8 +24,8 @@ import (
 // to render this table to text, efficiently and mechanically, once
 // per-second in a console window"), or published to --out by atomic rename
 // the way the sprint table is. Efficient and mechanical: exactly one Redis
-// pipeline per tick for every cell of every named table (the readers keep
-// their shapes across ticks), and the screen holds the table and nothing
+// pipeline per tick for every named table, including the first tick.
+// Each read-only snapshot holds the shape and cells; the screen holds the table and nothing
 // else (Glenn: "it should only contain that table data, no bullshit around
 // it") -- no clock, no tick time, no key names; a store that did not answer
 // leaves the last good text standing with ONE line, stale: <n>s, under it.
@@ -89,7 +89,7 @@ func cmdWatch(args []string, stdout, stderr io.Writer) int {
 }
 
 // tablesReader reads and renders the named tables: one pipeline per tick
-// over every reader (again while a shape moves), the renders joined by one
+// over every reader, including changed shapes, the renders joined by one
 // blank line, the title first when there is one.
 func tablesReader(c redis.Cmdable, names []string, title string, opts ntable.RenderOpts) func(context.Context) (string, error) {
 	readers := make([]*ntable.Reader, len(names))
@@ -97,31 +97,23 @@ func tablesReader(c redis.Cmdable, names []string, title string, opts ntable.Ren
 		readers[i] = ntable.NewReader(n)
 	}
 	return func(ctx context.Context) (string, error) {
-		var tables []ntable.Table
-		for trip := 0; trip < 4; trip++ {
-			pipe := c.Pipeline()
-			cmds := make([]*ntable.ReadCmd, len(readers))
-			for i, r := range readers {
-				cmds[i] = r.Queue(ctx, pipe)
-			}
-			if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !isReplyError(err) {
+		pipe := c.Pipeline()
+		cmds := make([]*ntable.ReadCmd, len(readers))
+		for i, r := range readers {
+			cmds[i] = r.Queue(ctx, pipe)
+		}
+		if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !isReplyError(err) {
+			return "", err
+		}
+		tables := make([]ntable.Table, 0, len(readers))
+		for _, cmd := range cmds {
+			t, _, err := cmd.Result()
+			if err != nil {
 				return "", err
 			}
-			tables = tables[:0]
-			again := false
-			for _, cmd := range cmds {
-				t, changed, err := cmd.Result()
-				if err != nil {
-					return "", err
-				}
-				again = again || changed
-				tables = append(tables, t)
-			}
-			if !again {
-				return renderAll(title, tables, opts), nil
-			}
+			tables = append(tables, t)
 		}
-		return "", fmt.Errorf("the tables' shapes changed on four reads in a row")
+		return renderAll(title, tables, opts), nil
 	}
 }
 

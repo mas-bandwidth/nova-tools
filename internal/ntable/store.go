@@ -2,27 +2,36 @@ package ntable
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 )
 
-// FnClear is the library function Clear calls: every owned cell of the
-// table emptied and every row removed in one call; refused BOUND when any
-// cell is bound (internal/nsprint/fn/lua/table.lua).
-const FnClear = "ns_table_clear"
+const (
+	FnClear      = "ns_table_clear"
+	FnCreate     = "ns_table_create"
+	FnDrop       = "ns_table_drop"
+	FnRowAdd     = "ns_table_row_add"
+	FnRowDel     = "ns_table_row_del"
+	FnCellAdd    = "ns_table_cell_add"
+	FnCellRemove = "ns_table_cell_remove"
+	FnCellMove   = "ns_table_cell_move"
+	FnBind       = "ns_table_bind"
+	FnRead       = "ns_table_read"
+	FnList       = "ns_table_list"
+	FnMembers    = "ns_table_members"
+)
 
-// ErrExists is Create's refusal: the table exists with another definition.
 var ErrExists = errors.New("exists with another definition")
 
-// BoundError is the refusal of a write to a bound cell, or of a clear over
-// a table holding one: the set is owned elsewhere, and Owner names the verb
-// that writes it (Glenn's one-writer principle).
-type BoundError struct {
-	Table, Row, Col, Key, Owner string
-}
+// BoundError names the other writer. The table may read the binding but
+// cannot acquire write ownership merely by displaying it.
+type BoundError struct{ Table, Row, Col, Key, Owner string }
 
 func (e *BoundError) Error() string {
 	s := fmt.Sprintf("%s.%s.%s is bound to %s, owned elsewhere", e.Table, e.Row, e.Col, e.Key)
@@ -32,334 +41,250 @@ func (e *BoundError) Error() string {
 	return s
 }
 
-// Create defines the table: its columns, its footer label and the
-// registry membership, in one pipeline after one read. An existing table
-// with the same definition is left as it is; one with another is refused
-// with ErrExists.
-func Create(ctx context.Context, c redis.Cmdable, t Table, now time.Time) error {
+type operation struct{ table, row, col, member string }
+
+func (o operation) location() string {
+	s := fmt.Sprintf("table %q", o.table)
+	if o.row != "" {
+		s += fmt.Sprintf(" row %q", o.row)
+	}
+	if o.col != "" {
+		s += fmt.Sprintf(" column %q", o.col)
+	}
+	if o.member != "" {
+		s += fmt.Sprintf(" member %q", o.member)
+	}
+	return s
+}
+
+// shellWord makes the suggested command safe to paste even for spaced
+// rows or members containing shell metacharacters.
+func shellWord(s string) string    { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
+func (o operation) remedy() string { return "nova-table show " + shellWord(o.table) }
+func (o operation) refused(reply []any) error {
+	if len(reply) == 0 {
+		return fmt.Errorf("%s: empty function reply; run: %s", o.location(), o.remedy())
+	}
+	if fmt.Sprint(reply[0]) != "REFUSED" {
+		return nil
+	}
+	if len(reply) < 2 {
+		return fmt.Errorf("%s: malformed refusal; run: %s", o.location(), o.remedy())
+	}
+	reason := fmt.Sprint(reply[1])
+	var cause error
+	remedy := o.remedy()
+	switch reason {
+	case "NOTABLE":
+		cause = ErrNoTable
+		remedy = "nova-table create " + shellWord(o.table) + " --columns <columns>"
+	case "EXISTS":
+		cause = ErrExists
+	case "NOROW":
+		cause = errors.New("no such row")
+		remedy = "nova-table row add " + shellWord(o.table) + " " + shellWord(o.row)
+	case "NOCOL":
+		cause = errors.New("no such column")
+	case "TEXT":
+		cause = errors.New("text column holds no ordered set; choose a body column")
+	case "NOTMEMBER":
+		cause = ErrNotMember
+		remedy = "nova-table cell members " + shellWord(o.table) + " " + shellWord(o.row) + " " + shellWord(o.col)
+	case "BOUND":
+		if len(reply) < 6 {
+			return fmt.Errorf("%s: malformed bound-cell refusal", o.location())
+		}
+		return fmt.Errorf("%s: %w", o.location(), &BoundError{Table: o.table, Row: fmt.Sprint(reply[2]), Col: fmt.Sprint(reply[3]), Key: fmt.Sprint(reply[4]), Owner: fmt.Sprint(reply[5])})
+	default:
+		cause = fmt.Errorf("%s %v", reason, reply[2:])
+	}
+	// The server can identify a different column (e.g. the move destination).
+	if (reason == "NOCOL" || reason == "TEXT") && len(reply) >= 4 {
+		o.row = fmt.Sprint(reply[2])
+		o.col = fmt.Sprint(reply[3])
+	}
+	return fmt.Errorf("%s: %w; run: %s", o.location(), cause, remedy)
+}
+func (o operation) call(ctx context.Context, c redis.Cmdable, fn string, ro bool, args ...any) ([]any, error) {
+	all := append([]any{o.table}, args...)
+	var cmd *redis.Cmd
+	if ro {
+		cmd = c.FCallRO(ctx, fn, []string{DefKey(o.table)}, all...)
+	} else {
+		cmd = c.FCall(ctx, fn, []string{DefKey(o.table)}, all...)
+	}
+	reply, err := cmd.Slice()
+	if err != nil {
+		return nil, fmt.Errorf("%s: %s: %w; run: %s", o.location(), fn, err, o.remedy())
+	}
+	if err := o.refused(reply); err != nil {
+		return nil, err
+	}
+	return reply, nil
+}
+func replyCount(reply []any) (int64, error) {
+	if len(reply) < 2 {
+		return 0, fmt.Errorf("table function returned no count: %v", reply)
+	}
+	return strconv.ParseInt(fmt.Sprint(reply[1]), 10, 64)
+}
+func definitionPayload(t Table, now time.Time) (map[string]string, error) {
 	if !ValidName(t.Name) {
-		return fmt.Errorf("table %q wants a name of letters, digits, _ . and -", t.Name)
+		return nil, fmt.Errorf("table %q wants letters, digits, _ . and -; run: nova-table help", t.Name)
 	}
 	if err := ValidateColumns(t.Columns); err != nil {
-		return err
-	}
-	h, err := c.HGetAll(ctx, DefKey(t.Name)).Result()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		return fmt.Errorf("hgetall %s: %w", DefKey(t.Name), err)
-	}
-	if have, ok, err := decodeDefinition(t.Name, h); err != nil {
-		return err
-	} else if ok {
-		if !SameDefinition(have, t) {
-			return fmt.Errorf("table %s: %w", t.Name, ErrExists)
-		}
-		return nil
+		return nil, fmt.Errorf("table %q: %w; run: nova-table help", t.Name, err)
 	}
 	fields := definitionFields(t)
 	fields["created_at"] = now.UTC().Format(time.RFC3339)
-	pipe := c.Pipeline()
-	pipe.HSet(ctx, DefKey(t.Name), fields)
-	pipe.SAdd(ctx, Registry, t.Name)
-	if _, err := pipe.Exec(ctx); err != nil {
-		return fmt.Errorf("create table %s: %w", t.Name, err)
+	return fields, nil
+}
+func payload(v any) (string, error) { b, err := json.Marshal(v); return string(b), err }
+
+// Create checks the definition and writes it atomically in one round trip.
+func Create(ctx context.Context, c redis.Cmdable, t Table, now time.Time) error {
+	fields, err := definitionPayload(t, now)
+	if err != nil {
+		return err
 	}
-	return nil
+	body, err := payload(fields)
+	if err != nil {
+		return err
+	}
+	_, err = (operation{table: t.Name}).call(ctx, c, FnCreate, false, body)
+	return err
 }
 
-// Drop deletes the table: its definition, its row order, every row hash,
-// every owned cell and its registry membership. A bound cell's set is left
-// where it is. It returns the rows it dropped.
+// Drop removes owned keys and the definition; bound sets remain untouched.
 func Drop(ctx context.Context, c redis.Cmdable, name string) (int, error) {
-	t, err := Shape(ctx, c, name)
+	reply, err := (operation{table: name}).call(ctx, c, FnDrop, false)
 	if err != nil {
 		return 0, err
 	}
-	pipe := c.Pipeline()
-	keys := []string{DefKey(name), RowsKey(name)}
-	for _, r := range t.Rows {
-		keys = append(keys, RowKey(name, r.Key))
-		for _, cell := range r.Cells {
-			if cell.Key != "" && !cell.Bound {
-				keys = append(keys, cell.Key)
-			}
-		}
-	}
-	pipe.Del(ctx, keys...)
-	pipe.SRem(ctx, Registry, name)
-	if _, err := pipe.Exec(ctx); err != nil {
-		return 0, fmt.Errorf("drop table %s: %w", name, err)
-	}
-	return len(t.Rows), nil
+	n, err := replyCount(reply)
+	return int(n), err
 }
 
-// RowSpec is what RowAdd is told about a row: its label, the member its
-// counts leave out, the bindings (column -> the set another tool owns) and
-// the verb that owns them.
 type RowSpec struct {
-	Label   string
-	Exclude string
-	Owner   string
-	Binds   map[string]string
+	Label   string            `json:"label"`
+	Exclude string            `json:"exclude"`
+	Owner   string            `json:"owner"`
+	Binds   map[string]string `json:"binds,omitempty"`
 }
 
-// RowAdd puts a row in the table: its hash written whole and its place in
-// the row order taken after the last row (an existing row keeps its place
-// and its cells). Every bound column must be one the table defines and not
-// a text column.
 func RowAdd(ctx context.Context, c redis.Cmdable, name, key string, spec RowSpec) (Row, error) {
-	t, err := Shape(ctx, c, name)
-	if err != nil {
-		return Row{}, err
-	}
+	o := operation{table: name, row: key}
 	if !ValidRowKey(key) {
-		return Row{}, fmt.Errorf("row %q wants a non-empty key with no control character", key)
+		return Row{}, fmt.Errorf("%s: row wants a non-empty key with no control characters; run: nova-table row help", o.location())
 	}
-	row, err := specRow(t, key, spec)
+	body, err := payload(spec)
 	if err != nil {
 		return Row{}, err
 	}
-	rank := float64(len(t.Rows) + 1)
-	if i := t.Row(key); i >= 0 {
-		rank = float64(i + 1)
-	}
-	if err := writeRows(ctx, c, t, []Row{row}, []float64{rank}, nil, false); err != nil {
+	reply, err := o.call(ctx, c, FnRowAdd, false, key, body)
+	if err != nil {
 		return Row{}, err
 	}
-	return row, nil
+	if len(reply) != 3 {
+		return Row{}, fmt.Errorf("%s: malformed row reply", o.location())
+	}
+	h, err := flatHash(reply[1])
+	if err != nil {
+		return Row{}, err
+	}
+	t, _, err := decodeDefinition(name, h)
+	if err != nil {
+		return Row{}, err
+	}
+	h, err = flatHash(reply[2])
+	if err != nil {
+		return Row{}, err
+	}
+	return decodeRow(t, key, h), nil
 }
-
-// specRow builds the row spec describes, checked against t.
-func specRow(t Table, key string, spec RowSpec) (Row, error) {
-	row := NewRow(t, key)
-	row.Label, row.Exclude, row.Owner = spec.Label, spec.Exclude, spec.Owner
-	for col, k := range spec.Binds {
-		j := t.Column(col)
-		if j < 0 {
-			return Row{}, fmt.Errorf("table %s has no column %s to bind", t.Name, col)
-		}
-		if t.Columns[j].Projection == Text {
-			return Row{}, fmt.Errorf("column %s is a text column and binds no set", col)
-		}
-		if k == "" {
-			return Row{}, fmt.Errorf("column %s wants a key to bind to", col)
-		}
-		row.Cells[j] = Cell{Key: k, Bound: true}
-	}
-	return row, nil
-}
-
-// writeRows is one pipeline: each row's hash deleted and written whole and
-// its rank set (NX unless rerank), and each gone row's hash, owned cells
-// and place removed.
-func writeRows(ctx context.Context, c redis.Cmdable, t Table, rows []Row, ranks []float64, gone []Row, rerank bool) error {
-	pipe := c.Pipeline()
-	for i, r := range rows {
-		pipe.Del(ctx, RowKey(t.Name, r.Key))
-		if fields := rowFields(t, r); len(fields) > 0 {
-			pipe.HSet(ctx, RowKey(t.Name, r.Key), fields)
-		}
-		z := redis.Z{Score: ranks[i], Member: r.Key}
-		if rerank {
-			pipe.ZAdd(ctx, RowsKey(t.Name), z)
-		} else {
-			pipe.ZAddNX(ctx, RowsKey(t.Name), z)
-		}
-	}
-	for _, r := range gone {
-		keys := []string{RowKey(t.Name, r.Key)}
-		for _, cell := range r.Cells {
-			if cell.Key != "" && !cell.Bound {
-				keys = append(keys, cell.Key)
-			}
-		}
-		pipe.Del(ctx, keys...)
-		pipe.ZRem(ctx, RowsKey(t.Name), r.Key)
-	}
-	if _, err := pipe.Exec(ctx); err != nil {
-		return fmt.Errorf("write table %s rows: %w", t.Name, err)
-	}
-	return nil
-}
-
-// RowDel takes a row out of the table: its hash, its owned cells and its
-// place. A row the table does not hold is not an error; it returns whether
-// one was there.
 func RowDel(ctx context.Context, c redis.Cmdable, name, key string) (bool, error) {
-	t, err := Shape(ctx, c, name)
+	reply, err := (operation{table: name, row: key}).call(ctx, c, FnRowDel, false, key)
 	if err != nil {
 		return false, err
 	}
-	i := t.Row(key)
-	if i < 0 {
-		return false, nil
-	}
-	if err := writeRows(ctx, c, t, nil, nil, []Row{t.Rows[i]}, false); err != nil {
-		return false, err
-	}
-	return true, nil
+	n, err := replyCount(reply)
+	return n != 0, err
 }
 
-// Bind makes the store's table the one the caller holds: the definition
-// created when absent (refused when it exists with another), every row
-// written whole in the given order with its bindings, and every row the
-// store holds that the caller does not removed. It is the writer's one
-// verb for a table whose rows are a view of sets owned elsewhere (the
-// sprint's streams), called only when the shape moved: one read and one
-// pipeline of writes.
+// Bind replaces the caller-owned table shape in one atomic call. Existing
+// owned cells of retained rows survive; removed rows leave bound sets alone.
 func Bind(ctx context.Context, c redis.Cmdable, t Table, now time.Time) error {
-	if err := Create(ctx, c, t, now); err != nil {
-		return err
-	}
-	have, err := Shape(ctx, c, t.Name)
+	fields, err := definitionPayload(t, now)
 	if err != nil {
 		return err
 	}
-	keep := map[string]bool{}
-	ranks := make([]float64, len(t.Rows))
-	for i, r := range t.Rows {
-		if !ValidRowKey(r.Key) {
-			return fmt.Errorf("row %q wants a non-empty key with no control character", r.Key)
+	type boundRow struct {
+		Key string `json:"key"`
+		RowSpec
+	}
+	rows := make([]boundRow, 0, len(t.Rows))
+	seen := map[string]bool{}
+	for _, r := range t.Rows {
+		if !ValidRowKey(r.Key) || seen[r.Key] {
+			return fmt.Errorf("table %q row %q: invalid or repeated row key; run: nova-table show %s", t.Name, r.Key, shellWord(t.Name))
 		}
+		seen[r.Key] = true
 		if len(r.Cells) != len(t.Columns) {
-			return fmt.Errorf("row %s has %d cells for %d columns", r.Key, len(r.Cells), len(t.Columns))
+			return fmt.Errorf("table %q row %q: %d cells for %d columns", t.Name, r.Key, len(r.Cells), len(t.Columns))
 		}
-		keep[r.Key] = true
-		ranks[i] = float64(i + 1)
-	}
-	var gone []Row
-	for _, r := range have.Rows {
-		if !keep[r.Key] {
-			gone = append(gone, r)
-		}
-	}
-	return writeRows(ctx, c, t, t.Rows, ranks, gone, true)
-}
-
-// Clear empties every owned cell of the table and removes every row, in one
-// library call; the definition stays. A table with a bound cell is refused
-// whole (BoundError) and nothing is cleared. It returns the rows removed.
-func Clear(ctx context.Context, c redis.Cmdable, name string) (int64, error) {
-	reply, err := c.FCall(ctx, FnClear, []string{DefKey(name)}, name).Slice()
-	if err != nil {
-		return 0, fmt.Errorf("%s %s: %w", FnClear, name, err)
-	}
-	if len(reply) >= 2 && fmt.Sprint(reply[0]) == "REFUSED" {
-		switch fmt.Sprint(reply[1]) {
-		case "NOTABLE":
-			return 0, fmt.Errorf("table %s: %w", name, ErrNoTable)
-		case "BOUND":
-			e := &BoundError{Table: name}
-			if len(reply) >= 6 {
-				e.Row, e.Col, e.Key, e.Owner = fmt.Sprint(reply[2]), fmt.Sprint(reply[3]), fmt.Sprint(reply[4]), fmt.Sprint(reply[5])
+		spec := RowSpec{Label: r.Label, Exclude: r.Exclude, Owner: r.Owner, Binds: map[string]string{}}
+		for i, cell := range r.Cells {
+			if cell.Bound {
+				spec.Binds[t.Columns[i].Name] = cell.Key
 			}
-			return 0, e
 		}
-		return 0, fmt.Errorf("%s: REFUSED %v", FnClear, reply[1])
+		rows = append(rows, boundRow{r.Key, spec})
 	}
-	if len(reply) < 2 {
-		return 0, fmt.Errorf("%s: short reply %v", FnClear, reply)
-	}
-	var n int64
-	switch v := reply[1].(type) {
-	case int64:
-		n = v
-	default:
-		if _, err := fmt.Sscan(fmt.Sprint(v), &n); err != nil {
-			return 0, fmt.Errorf("%s: rows %v is not a number", FnClear, v)
-		}
-	}
-	return n, nil
-}
-
-// cellOf finds a row's cell in the table's shape, refusing a bound one
-// for a write.
-func cellOf(ctx context.Context, c redis.Cmdable, name, row, col string, write bool) (Table, Cell, error) {
-	t, err := Shape(ctx, c, name)
+	body, err := payload(struct {
+		Fields map[string]string `json:"fields"`
+		Rows   []boundRow        `json:"rows"`
+	}{fields, rows})
 	if err != nil {
-		return Table{}, Cell{}, err
+		return err
 	}
-	i, j := t.Row(row), t.Column(col)
-	if i < 0 {
-		return Table{}, Cell{}, fmt.Errorf("table %s has no row %s", name, row)
-	}
-	if j < 0 {
-		return Table{}, Cell{}, fmt.Errorf("table %s has no column %s", name, col)
-	}
-	if t.Columns[j].Projection == Text {
-		return Table{}, Cell{}, fmt.Errorf("column %s is a text column and holds no set", col)
-	}
-	cell := t.Rows[i].Cells[j]
-	if write && cell.Bound {
-		return Table{}, Cell{}, &BoundError{Table: name, Row: row, Col: col, Key: cell.Key, Owner: t.Rows[i].Owner}
-	}
-	return t, cell, nil
+	_, err = (operation{table: t.Name}).call(ctx, c, FnBind, false, body)
+	return err
 }
-
-// CellAdd puts member in the owned cell at row, col and returns the cell's
-// count after; a bound cell is refused (BoundError).
+func Clear(ctx context.Context, c redis.Cmdable, name string) (int64, error) {
+	reply, err := (operation{table: name}).call(ctx, c, FnClear, false)
+	if err != nil {
+		return 0, err
+	}
+	return replyCount(reply)
+}
 func CellAdd(ctx context.Context, c redis.Cmdable, name, row, col, member string, score float64) (int64, error) {
-	_, cell, err := cellOf(ctx, c, name, row, col, true)
+	reply, err := (operation{name, row, col, member}).call(ctx, c, FnCellAdd, false, row, col, member, strconv.FormatFloat(score, 'g', -1, 64))
 	if err != nil {
 		return 0, err
 	}
-	if err := Add(ctx, c, cell.Key, member, score); err != nil {
-		return 0, err
-	}
-	return Card(ctx, c, cell.Key)
+	return replyCount(reply)
 }
-
-// CellRemove takes member out of the owned cell at row, col and returns
-// the cell's count after; a bound cell is refused (BoundError).
 func CellRemove(ctx context.Context, c redis.Cmdable, name, row, col, member string) (int64, error) {
-	_, cell, err := cellOf(ctx, c, name, row, col, true)
+	reply, err := (operation{name, row, col, member}).call(ctx, c, FnCellRemove, false, row, col, member)
 	if err != nil {
 		return 0, err
 	}
-	if err := Remove(ctx, c, cell.Key, member); err != nil {
-		return 0, err
-	}
-	return Card(ctx, c, cell.Key)
+	return replyCount(reply)
 }
-
-// CellMove moves member from the owned cell at row, from to the owned cell
-// at row, to, keeping its score, in one library call; either cell bound is
-// refused (BoundError), and a member not in from is ErrNotMember. It
-// returns the count of to after.
 func CellMove(ctx context.Context, c redis.Cmdable, name, row, from, to, member string) (int64, error) {
-	_, src, err := cellOf(ctx, c, name, row, from, true)
+	reply, err := (operation{name, row, from, member}).call(ctx, c, FnCellMove, false, row, from, member, to)
 	if err != nil {
 		return 0, err
 	}
-	_, dst, err := cellOf(ctx, c, name, row, to, true)
-	if err != nil {
-		return 0, err
-	}
-	if err := Move(ctx, c, src.Key, dst.Key, member, true, 0); err != nil {
-		return 0, err
-	}
-	return Card(ctx, c, dst.Key)
+	return replyCount(reply)
 }
-
-// CellMembers is every member of the cell at row, col, bound or owned, the
-// row's excluded member left out.
 func CellMembers(ctx context.Context, c redis.Cmdable, name, row, col string) ([]Member, error) {
-	t, cell, err := cellOf(ctx, c, name, row, col, false)
+	reply, err := (operation{table: name, row: row, col: col}).call(ctx, c, FnMembers, true, row, col)
 	if err != nil {
 		return nil, err
 	}
-	ms, err := MembersOf(ctx, c, cell.Key)
-	if err != nil {
-		return nil, err
+	if len(reply) != 2 {
+		return nil, fmt.Errorf("table %q row %q column %q: malformed members reply", name, row, col)
 	}
-	exclude := t.Rows[t.Row(row)].Exclude
-	if exclude == "" {
-		return ms, nil
-	}
-	kept := ms[:0]
-	for _, m := range ms {
-		if m.Member != exclude {
-			kept = append(kept, m)
-		}
-	}
-	return kept, nil
+	return flatMembers(reply[1])
 }

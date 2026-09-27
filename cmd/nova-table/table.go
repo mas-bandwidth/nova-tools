@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -11,7 +10,6 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
-	"github.com/redis/go-redis/v9"
 )
 
 // The table verbs: create, drop, list, clear, show, render.
@@ -65,10 +63,11 @@ func cmdCreate(args []string, stdout, stderr io.Writer) int {
 		return code
 	}
 	defer st.Close()
+	trips := st.CountTrips()
 	if err := ntable.Create(ctx, c, t, time.Now()); err != nil {
 		return storeRefusal(stderr, verb, err)
 	}
-	fmt.Fprintf(stdout, "TABLE CREATE table=%s columns=%d\n", t.Name, len(t.Columns))
+	fmt.Fprintf(stdout, "TABLE CREATE table=%s columns=%d trips=%d\n", t.Name, len(t.Columns), trips.N())
 	return 0
 }
 
@@ -89,11 +88,12 @@ func cmdDrop(args []string, stdout, stderr io.Writer) int {
 		return code
 	}
 	defer st.Close()
+	trips := st.CountTrips()
 	n, err := ntable.Drop(ctx, c, pos[0])
 	if err != nil {
 		return storeRefusal(stderr, verb, err)
 	}
-	fmt.Fprintf(stdout, "TABLE DROP table=%s rows=%d\n", pos[0], n)
+	fmt.Fprintf(stdout, "TABLE DROP table=%s rows=%d trips=%d\n", pos[0], n, trips.N())
 	return 0
 }
 
@@ -114,28 +114,14 @@ func cmdList(args []string, stdout, stderr io.Writer) int {
 		return code
 	}
 	defer st.Close()
-	names, err := ntable.List(ctx, c)
+	trips := st.CountTrips()
+	summaries, err := ntable.Summaries(ctx, c)
 	if err != nil {
 		return storeRefusal(stderr, verb, err)
 	}
-	// one pipeline: each table's column order and row count
-	pipe := c.Pipeline()
-	orders := make([]*redis.StringCmd, len(names))
-	rows := make([]*redis.IntCmd, len(names))
-	for i, name := range names {
-		orders[i] = pipe.HGet(ctx, ntable.DefKey(name), "order")
-		rows[i] = pipe.ZCard(ctx, ntable.RowsKey(name))
-	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return storeRefusal(stderr, verb, err)
-	}
-	fmt.Fprintf(stdout, "TABLE LIST tables=%d\n", len(names))
-	for i, name := range names {
-		cols := 0
-		if order, err := orders[i].Result(); err == nil && order != "" {
-			cols = len(strings.Split(order, ","))
-		}
-		fmt.Fprintf(stdout, "TABLE table=%s columns=%d rows=%d\n", name, cols, rows[i].Val())
+	fmt.Fprintf(stdout, "TABLE LIST tables=%d trips=%d\n", len(summaries), trips.N())
+	for _, row := range summaries {
+		fmt.Fprintf(stdout, "TABLE table=%s columns=%d rows=%d\n", row.Name, row.Columns, row.Rows)
 	}
 	return 0
 }
@@ -157,12 +143,13 @@ func cmdClear(args []string, stdout, stderr io.Writer) int {
 		return code
 	}
 	defer st.Close()
+	trips := st.CountTrips()
 	start := time.Now()
 	n, err := ntable.Clear(ctx, c, pos[0])
 	if err != nil {
 		return storeRefusal(stderr, verb, err)
 	}
-	fmt.Fprintf(stdout, "TABLE CLEAR table=%s rows=%d ms=%d\n", pos[0], n, time.Since(start).Milliseconds())
+	fmt.Fprintf(stdout, "TABLE CLEAR table=%s rows=%d ms=%d trips=%d\n", pos[0], n, time.Since(start).Milliseconds(), trips.N())
 	return 0
 }
 
@@ -183,11 +170,12 @@ func cmdShow(args []string, stdout, stderr io.Writer) int {
 		return code
 	}
 	defer st.Close()
+	trips := st.CountTrips()
 	t, err := ntable.Read(ctx, c, pos[0])
 	if err != nil {
 		return storeRefusal(stderr, verb, err)
 	}
-	fmt.Fprintf(stdout, "TABLE table=%s columns=%d rows=%d\n", t.Name, len(t.Columns), len(t.Rows))
+	fmt.Fprintf(stdout, "TABLE table=%s columns=%d rows=%d trips=%d\n", t.Name, len(t.Columns), len(t.Rows), trips.N())
 	for _, r := range t.Rows {
 		var b strings.Builder
 		fmt.Fprintf(&b, "TABLE ROW table=%s row=%s", t.Name, field(r.Key))
