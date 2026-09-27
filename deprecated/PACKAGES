@@ -20,12 +20,3 @@ keep internal/nsprint/fn
 keep internal/nsprint/testutil
 keep internal/nsprint/testutil/pg
 keep internal/nsprint/verbflag
-
-# the sprint's runtime tools, implemented inside internal/nsprint (Glenn
-# 2026-09-27: "If it is a new tool, and you are in doubt, it is deprecated.")
-cmd/nova-card
-cmd/nova-friend
-
-# new tools with no use on record
-cmd/nova-play
-cmd/nova-test

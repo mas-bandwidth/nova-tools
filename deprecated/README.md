@@ -27,6 +27,6 @@ Glenn, 2026-09-27: "Tests do not run for deprecated tools and modules."
 |---|---|---|
 | nova-bus `inbox --decide` | the bus carries messages over git and nothing else (Glenn, 2026-09-27); the classifier routes, their tests and their spec are under `nova-bus-decide/` | 2026-09-27 |
 | nova-board | superseded: who is doing what is the job of nova-sprint as it is rebuilt on nova-table (Glenn, 2026-09-27). Moved here: `cmd/nova-board`, `internal/board`, and its spec, command reference and transcript under `docs/` | 2026-09-27 |
-| nova-sprint | does not work; to be rewritten on nova-table | 2026-09-27 |
-| nova-card, nova-friend | the sprint's runtime, implemented inside it | 2026-09-27 |
-| nova-play, nova-test | new tools with no use on record | 2026-09-27 |
+| nova-sprint | does not work; to be rewritten on nova-table. Still at `cmd/nova-sprint` and named in `PACKAGES` (never tested): CI's receipt step (`.github/workflows/ci.yml`, "report this run to Redis from the runner") falls back to `go run ./cmd/nova-sprint`, and live tests build or read it, so it moves once those stop | 2026-09-27 |
+| nova-card, nova-friend | the sprint's runtime, implemented inside it. Moved here: `cmd/nova-card`, `cmd/nova-friend`, and their command reference and transcripts under `docs/` | 2026-09-27 |
+| nova-play, nova-test | new tools with no use on record. Moved here: `cmd/nova-play`, `cmd/nova-test`, and their command reference, usage entry and transcripts under `docs/` | 2026-09-27 |

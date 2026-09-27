@@ -116,8 +116,8 @@ slice's `run`).
 
 These tests run against fake manifests, a temp-dir run store and a fake swarm/runner
 substrate; nothing reaches a network, a real runner or a real secret, and each test is
-proven able to fail (seen red) before it is trusted. `cmd/nova-test` implements `status`
-only (15-18, in `cmd/nova-test/status_test.go`); every other behaviour below is the work
+proven able to fail (seen red) before it is trusted. `deprecated/cmd/nova-test` implements `status`
+only (15-18, in `deprecated/cmd/nova-test/status_test.go`); every other behaviour below is the work
 that turns the two document-only tests in `internal/docs` (which assert that
 `docs/SPEC-TEST.md` *mentions* strings, not that anything behaves) into real coverage.
 

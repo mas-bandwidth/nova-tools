@@ -785,36 +785,6 @@ SUM OK month=2026-09 days=1 missing=0 pairs=3 models=2 units=1 nonutc=0
 ```
 
 
-## nova-play
-
-Fixture: `story.txt`, three lines of prose holding the documented passage once,
-written into `t.TempDir()` by `cmd/nova-play/firstrun_test.go`, which runs the
-sitting below there. The notes live beside the source, in `story.txt.notes`;
-every path is a flag, and nothing here leaves that directory.
-
-This block is compared LINE BY LINE AND IN ORDER, which most of the transcripts
-in this document are not: a run that prints one line fewer or one line more than
-is written here is red. The ids are content addresses and reproduce exactly, so
-they are compared as written; the `created=` instant is the one value belonging
-to the run rather than to the document, and is matched as an instant.
-
-### First run
-
-```text
-$ nova-play annotate --source story.txt --author Emma --passage "The lantern room held a brass fitting." --note "I wonder what alloy this is."
-ANNOTATE OK id=f24beb35f0df author=Emma created=2026-09-19T06:29:53Z
-
-$ nova-play read --source story.txt
-READ OK source=story.txt notes=1
-NOTE id=f24beb35f0df author=Emma created=2026-09-19T06:29:53Z
-  PASSAGE The lantern room held a brass fitting.
-  BODY I wonder what alloy this is.
-
-$ nova-play reply --source story.txt --id f24beb35f0df --author Stella --body "Ship's brass, probably 70/30."
-REPLY OK id=727fe2158637 author=Stella created=2026-09-19T06:29:53Z
-```
-
-
 ## nova-update
 
 ### First run
@@ -880,54 +850,6 @@ kind is many rows or one (`rows=one`: the fleet and the sprint, a row
 migrations this binary carries and connects to nothing; `migrate --pg <dsn>`
 applies the ones the database lacks, each in its own transaction, and applies
 nothing twice.
-
-
-## nova-friend
-
-Run by `cmd/nova-friend/firstrun_test.go` on a throwaway redis-server holding
-the nova_sprint function library and the roster `nova-config apply` writes
-(rowan: 4 slots, frontier, coordinator; stella: 2 slots, reader; friend
-revision 1), so it runs in the functional tier. The documented lines name no
-`--redis`: on a bench the seat's address is the default (`NOVA_SPRINT_REDIS`,
-then `NOVA_REDIS_ADDR`, then the seat's row), and the test appends the
-throwaway server's. `--host` and `--session` are given on the line so every
-value reproduces; nothing is normalised. The usage banner's `example:` block
-is this same sitting, line for line.
-
-### First run
-
-```text
-$ nova-friend here --as rowan --once --host studio --session s1
-FRIEND HERE as=rowan host=studio session=s1 slots=4 taken=0
-
-$ nova-friend list
-FRIEND name=rowan state=up slots=4 tiers=frontier roles=coordinator host=studio working=0 rev=1
-FRIEND name=stella state=down slots=2 tiers=- roles=reader host=- working=0 rev=1
-FRIEND LIST friends=2 rev=1
-
-$ nova-friend bye --as rowan
-FRIEND BYE as=rowan was=up
-```
-
-`here --once` registers the session and ticks once: the beat is written
-with no TTL, and the reader judges its age. `list` reads the store: rowan
-is up (a beat under a minute old), stella has never beaten, and every line
-ends with the friend revision `nova-config apply` stamped. `bye` deletes the
-beat, so rowan reads down at once.
-
-## nova-card
-
-The card wrapper (#3059) is started by `nova-sprint card launch --stdin`, never
-by hand, and its real run needs the sprint Redis and a dealt card; that run is
-`TestWrapperOwnsOneCardEndToEnd` in `internal/nsprint/card/wrapper_functional_test.go`.
-The first run a stranger can type reads nothing and writes nothing.
-
-### First run
-
-```text
-$ nova-card version
-nova-card v0.16.0-dev darwin/arm64 go1.26.6
-```
 
 
 ## nova-cairn
@@ -1156,25 +1078,6 @@ flags, while `--out <file>` now publishes the wide table by atomic rename
 (#3530). The second and third name the server the table is read
 from. `TestTableWritesNoFile` renders from a throwaway server twice (a second
 start) and checks the directory stays empty.
-
-## nova-test
-
-The fixture is `cmd/nova-test/testdata/runs`: five runs at varied states, one
-queued before the boundary. The clock comes from `--now` because a transcript
-must read the same twice; a stranger's first run omits it and the real clock
-answers. Plain files only: no runner, no network. `cmd/nova-test/firstrun_test.go`
-runs the `$` line and compares every line printed.
-
-### First run
-
-```text
-$ nova-test status --store cmd/nova-test/testdata/runs --since 2026-09-23T00:00:00Z --now 2026-09-23T10:30:00Z
-STATUS RUN id=done state=completed queued=2026-09-23T10:00:00Z queue=30s drain=- exec=2m0s e2e=2m30s attempts=done.a1 prior_failures=-
-STATUS RUN id=cancel state=cancelled queued=2026-09-23T10:05:00Z queue=5s drain=45s exec=1m40s e2e=1m45s attempts=cancel.a1 prior_failures=-
-STATUS RUN id=retry state=completed queued=2026-09-23T10:10:00Z queue=20s drain=- exec=4m0s e2e=4m20s attempts=retry.a1,retry.a2 prior_failures=retry.a1:lint
-STATUS RUN id=waiting state=queued queued=2026-09-23T10:20:00Z queue=10m0s+ drain=- exec=- e2e=10m0s+ attempts=- prior_failures=-
-STATUS OK store=cmd/nova-test/testdata/runs since=2026-09-23T00:00:00Z now=2026-09-23T10:30:00Z runs=4 shown=4 older=1
-```
 
 ## nova-table
 

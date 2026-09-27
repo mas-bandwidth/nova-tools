@@ -57,9 +57,6 @@ $ nova-memory quickstart --root ./corpus
 $ nova-memory search --root ./corpus --channels bm25 --k 3 glazing signal tide
 $ nova-memory search --root ./corpus --channels bm25 --k 3 lantern glazing brass
 $ nova-memory stats --root ./corpus
-$ nova-play annotate --source story.txt --author Emma --passage "The lantern room held a brass fitting." --note "I wonder what alloy this is."
-$ nova-play read --source story.txt
-$ nova-play reply --source story.txt --id f24beb35f0df --author Stella --body "Ship's brass, probably 70/30."
 $ nova-pulse fold --db ./ev.sqlite --report
 $ nova-sandbox check
 $ nova-sandbox reap
@@ -78,7 +75,6 @@ $ nova-wake probe --here
 $ nova-wake quickstart --state ./wake.state --reports ./reports
 $ nova-wake serve --bus ./bus --as rowan --on-note ./wake-me --interval 60s \
 $ nova-wake watch --state ./wake.state --max 5s --on-deadline report --interval 5s --reports ./reports
-$ printf 'The keeper climbed the last stair before dawn.\nThe lantern room held a brass fitting.\nBelow, the harbour was still asleep.\n' > story.txt
 example: nova-work dependencies --graph ./deps.json --node b
 example: nova-work dependencies --graph ./deps.json --node a --needs b
 example: nova-work ready --node a --graph ./deps.json
@@ -96,7 +92,6 @@ example: nova-cairn append --store ./cairns --session s1 --entry e1 --text "the 
 example: nova-cairn index --store ./cairns
 example: nova-cairn open --store ./cairns --session s1 --publish manual
 example: nova-cairn receipt --store ./cairns --session s1 --entry e1
-example: nova-card version
 example: nova-check attest --home ./self --manifest ./self/MANIFEST
 example: nova-check corpus --ledger ./self/corpus/anchors.md --root ./self --min-anchors 2
 example: nova-check dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts
@@ -120,10 +115,6 @@ example: nova-fuse status --box ./fuse-box.json
 example: nova-memory check --root ./corpus --channels bm25 --k 3 draft.md
 example: nova-memory quickstart --root ./corpus
 example: nova-memory search --root ./corpus --channels bm25 --k 3 lantern glazing brass
-example: nova-play annotate --source story.txt --author Emma --passage "The lantern room held a brass fitting." --note "I wonder what alloy this is."
-example: nova-play read --source story.txt
-example: nova-play reply --source story.txt --id f24beb35f0df --author Stella --body "Ship's brass, probably 70/30."
-example: nova-play view story.txt
 example: nova-post help
 example: nova-post version
 example: nova-redis recall --addr 127.0.0.1:6379 --owner rowan --name note
@@ -148,8 +139,6 @@ example: nova-sprint table --redis 127.0.0.1:6379 --sprint control-a --once
 example: nova-swarm quickstart --pool ./pool
 example: nova-swarm status --pool ./pool --max 20
 example: nova-swarm template --name read-pr
-example: nova-test status --store cmd/nova-test/testdata/runs --since 2026-09-23T00:00:00Z --now 2026-09-23T10:30:00Z
-example: nova-test version
 example: nova-tokens check --out ./out
 example: nova-tokens fold --out ./out --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts --bus ./bus
 example: nova-tokens report --who emma --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts
