@@ -63,6 +63,56 @@ do
   end
   function T.name(n) return type(n) == 'string' and string.match(n, '^[%w_][%w_.-]*$') end
   function T.word(n) return type(n) == 'string' and n ~= '' and not string.find(n, '%c') end
+  -- Redis strings are arbitrary bytes; row identities also travel in JSON.
+  -- Reject malformed UTF-8 instead of letting a client rename them to U+FFFD.
+  function T.row(n)
+    if not T.word(n) then return false end
+    local i = 1
+    local function continuation(v) return v and v >= 128 and v <= 191 end
+    while i <= #n do
+      local a, b, c, e = string.byte(n, i, i + 3)
+      if a < 128 then i = i + 1
+      elseif a >= 194 and a <= 223 and continuation(b) then i = i + 2
+      elseif a >= 224 and a <= 239 and continuation(b) and continuation(c) and
+          (a ~= 224 or b >= 160) and (a ~= 237 or b <= 159) then i = i + 3
+      elseif a >= 240 and a <= 244 and continuation(b) and continuation(c) and continuation(e) and
+          (a ~= 240 or b >= 144) and (a ~= 244 or b <= 143) then i = i + 4
+      else return false end
+    end
+    return true
+  end
+  -- cjson maps both [] and {} to an empty Lua table on supported Redis
+  -- versions. Inspect the already-decoded JSON's top-level field token so
+  -- an object cannot masquerade as an empty replacement row list. Skip
+  -- quoted strings (including escapes) and nested containers; do not match
+  -- spelling inside a label or a nested object. Repeated fields are refused.
+  function T.arrayfield(raw, field)
+    local i, depth, found = 1, 0, false
+    while i <= #raw do
+      local ch = string.sub(raw, i, i)
+      if ch == '"' then
+        local start = i
+        i = i + 1
+        while i <= #raw do
+          local v = string.sub(raw, i, i)
+          if v == '\\' then i = i + 2
+          elseif v == '"' then break
+          else i = i + 1 end
+        end
+        if depth == 1 then
+          local colon = string.find(raw, '%S', i + 1)
+          if colon and string.sub(raw, colon, colon) == ':' and cjson.decode(string.sub(raw, start, i)) == field then
+            local value = string.find(raw, '%S', colon + 1)
+            if found or not value or string.sub(raw, value, value) ~= '[' then return false end
+            found = true
+          end
+        end
+      elseif ch == '{' or ch == '[' then depth = depth + 1
+      elseif ch == '}' or ch == ']' then depth = depth - 1 end
+      i = i + 1
+    end
+    return found
+  end
   function T.decode(s)
     local ok, v = pcall(cjson.decode, s or '')
     if ok and type(v) == 'table' then return v end
@@ -239,7 +289,7 @@ do
     end
   end
   function T.rowfields(d, row, spec)
-    if not T.word(row) or type(spec) ~= 'table' then return nil, T.refuse('ROW') end
+    if not T.row(row) or type(spec) ~= 'table' then return nil, T.refuse('ROW') end
     local h = {}
     for _, k in ipairs({'label', 'exclude', 'owner'}) do
       if spec[k] and type(spec[k]) ~= 'string' then return nil, T.refuse('ROW', row) end
@@ -508,7 +558,7 @@ do
     if type(values) ~= 'table' or #values == 0 then return nil end
     local seen, count = {}, 0
     for key, value in pairs(values) do
-      if type(key) ~= 'number' or key < 1 or key > #values or key ~= math.floor(key) or not T.word(value) or seen[value] then return nil end
+      if type(key) ~= 'number' or key < 1 or key > #values or key ~= math.floor(key) or not T.row(value) or seen[value] then return nil end
       seen[value], count = true, count + 1
     end
     return count == #values
@@ -543,7 +593,7 @@ do
   -- staged-command and receipt protocol as every member mutation.
   redis.register_function('ns_table_row_set', T.write('row_set', 4, function(d, args)
     local row, values = args[2], T.decode(args[3])
-    if not T.word(row) or type(values) ~= 'table' or not next(values) then return nil, T.refuse('ROW') end
+    if not T.row(row) or type(values) ~= 'table' or not next(values) then return nil, T.refuse('ROW') end
     if not redis.call('ZSCORE', T.rowskey(d), row) then return nil, T.refuse('NOROW', row) end
     local h = T.hash(T.rowkey(d, row))
     for col, value in pairs(values) do
@@ -787,7 +837,7 @@ do
     end
     if spec.row_move ~= nil then
       local m = spec.row_move
-      if type(m) ~= 'table' or type(m.row) ~= 'string' then return nil, T.refuse('ROW') end
+      if type(m) ~= 'table' or not T.row(m.row) or (m.ref ~= nil and not T.row(m.ref)) then return nil, T.refuse('ROW') end
       local why
       rows, why = T.reorder(rows or redis.call('ZRANGE', T.rowskey(d), 0, -1), m.row, m.where, m.ref, T.norow)
       if not rows then return nil, why end
@@ -977,11 +1027,11 @@ do
     return {'OK'}
   end))
   redis.register_function('ns_table_bind', T.write('bind', 3, function(d, args, spec)
-    if type(spec.rows) ~= 'table' then return nil, T.refuse('ROW') end
+    if type(spec.rows) ~= 'table' or not T.arrayfield(args[2], 'rows') then return nil, T.refuse('ROW') end
     local old, keep = redis.call('ZRANGE', T.rowskey(d), 0, -1), {}
     d.touched, d.removed = {}, {}
     for i, row in ipairs(spec.rows) do
-      if type(row) ~= 'table' or not T.word(row.key) then return nil, T.refuse('ROW') end
+      if type(row) ~= 'table' or not T.row(row.key) then return nil, T.refuse('ROW') end
       if keep[row.key] then return nil, T.refuse('TWICE', row.key) end
       keep[row.key] = true
       local prior = T.hash(T.rowkey(d, row.key))
