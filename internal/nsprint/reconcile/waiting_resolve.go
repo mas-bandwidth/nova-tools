@@ -68,7 +68,6 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pitstop"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 )
 
@@ -199,8 +198,8 @@ const (
 // run in the server, and the releases go through the one task move there,
 // grouped by DEPENDS-ON text so the ws:log why names the entries met. The
 // reply is one line per stream that had waiting tasks or a ready stop, in
-// ws:order. A released stitch's brief is written here after the call
-// (#4317: it starts with the whole picture). Bounded by the lease (#3805):
+// ws:order. A released stitch's brief is written inside the call (#4317:
+// it starts with the whole picture; stitch_brief.lua, one trip). Bounded by the lease (#3805):
 // with less than the write margin left the pass does not start.
 func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, error) {
 	if d.Client == nil || l == nil {
@@ -244,8 +243,8 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 	}
 	var lines []ResolveLine
 	byStream := map[string]int{}
-	var stitches, errs []string
-	arity := map[string]int{"line": 2, "still": 2, "on": 2, "unknown": 2, "ready": 2, "refused": 3, "stitch": 1}
+	var errs []string
+	arity := map[string]int{"line": 2, "still": 2, "on": 2, "unknown": 2, "ready": 2, "refused": 3, "stitch": 2}
 	for i := 0; i < len(reply); {
 		n, ok := arity[reply[i]]
 		if !ok || i+n >= len(reply) {
@@ -257,7 +256,11 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 			byStream[v[0]] = len(lines)
 			lines = append(lines, ResolveLine{Stream: v[0], Stop: v[1]})
 		case "stitch":
-			stitches = append(stitches, v[0])
+			// a released stitch: its brief was written in the call; v[1] is
+			// the refusal when it was not
+			if v[1] != "" {
+				errs = append(errs, fmt.Sprintf("stitch %s brief: %s", v[0], v[1]))
+			}
 		default:
 			idx, ok := byStream[v[0]]
 			if !ok {
@@ -279,11 +282,6 @@ func (d *WaitingResolve) Pass(ctx context.Context, l *Lease) ([]ResolveLine, err
 			}
 		}
 		i += 1 + n
-	}
-	for _, id := range stitches {
-		if _, _, err := taskcard.WriteStitchBrief(ctx, c, id); err != nil {
-			errs = append(errs, fmt.Sprintf("stitch %s brief: %v", id, err))
-		}
 	}
 	if len(errs) > 0 {
 		return lines, fmt.Errorf("waiting-resolve: %s", strings.Join(errs, "; "))

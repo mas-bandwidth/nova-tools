@@ -58,65 +58,6 @@ func TestPlanStateIsDerived(t *testing.T) {
 	}
 }
 
-// TestStitchBriefCarriesEveryChildsResult: the generated brief names each
-// child's PR, head, read score, RESULT.md line 2 and finding, in order, and
-// the plan's DONE-WHEN as the stitch's.
-func TestStitchBriefCarriesEveryChildsResult(t *testing.T) {
-	t.Parallel()
-	p := taskcard.Plan{ID: "nova-tools-4317", Ref: "mas-bandwidth/nova-tools#4317", Where: "waiting",
-		DoneWhen: "the plan's DONE-WHEN holds at the stitch's head",
-		Children: []taskcard.Child{
-			{ID: "nova-tools-5001", Title: "child one", Where: "landed", Repo: "mas-bandwidth/nova-tools", PR: "6001",
-				Head: "abcdef0123456789abcdef0123456789abcdef01", Score: "9", Line2: "DONE", Finding: "one dup helper\nleft in pass.go", Paths: "a.go b.go"},
-			{ID: "nova-tools-5002", Title: "child two", Where: "review", Ref: "mas-bandwidth/nova-tools#5002", Line2: "BLOCKED the fixture is red on dev", WhereOK: "fail"},
-			{ID: "nova-tools-5003", Where: "waiting"},
-		},
-		Stitch: taskcard.Child{ID: "nova-tools-4317-stitch", Where: "waiting"}}
-	b := taskcard.StitchBrief(p)
-	if !strings.HasPrefix(b, taskcard.BriefMarker+" ") {
-		t.Fatalf("brief starts %q, want the marker %q", b[:20], taskcard.BriefMarker)
-	}
-	for _, want := range []string{
-		"Plan nova-tools-4317 (mas-bandwidth/nova-tools#4317), state working. DONE-WHEN (the stitch's): the plan's DONE-WHEN holds at the stitch's head",
-		"- nova-tools-5001 landed pr=nova-tools#6001 head=abcdef012345 score=9/10\n  title: child one\n  result: DONE\n  finding: one dup helper left in pass.go\n  paths: a.go b.go\n",
-		"- nova-tools-5002 review pr=mas-bandwidth/nova-tools#5002 head=- score=- outcome=fail\n  title: child two\n  result: BLOCKED the fixture is red on dev\n",
-		"- nova-tools-5003 waiting pr=- head=- score=-\n",
-	} {
-		if !strings.Contains(b, want) {
-			t.Errorf("brief lacks %q:\n%s", want, b)
-		}
-	}
-	// The order is the plan's.
-	if strings.Index(b, "nova-tools-5001") > strings.Index(b, "nova-tools-5002") || strings.Index(b, "nova-tools-5002") > strings.Index(b, "nova-tools-5003") {
-		t.Errorf("children out of order:\n%s", b)
-	}
-	if got := taskcard.StitchBrief(taskcard.Plan{ID: "p"}); !strings.Contains(got, "- (no children)") {
-		t.Errorf("an empty plan's brief says so; got:\n%s", got)
-	}
-}
-
-// TestWithBriefReplacesTheGeneratedSectionOnly: the stitch's own text
-// before the marker is kept verbatim across rewrites; the section after it
-// is replaced, not appended.
-func TestWithBriefReplacesTheGeneratedSectionOnly(t *testing.T) {
-	t.Parallel()
-	head := "STREAM: s\nPATHS: a.go\nDONE-WHEN: x\n\nStitch of plan p: read every child."
-	first := taskcard.WithBrief(head+"\n\n"+taskcard.BriefMarker+" (0)\n\n- (no children)\n", taskcard.BriefMarker+" (2)\n\n- c1 landed\n- c2 landed\n")
-	second := taskcard.WithBrief(first, taskcard.BriefMarker+" (2)\n\n- c1 landed\n- c2 landed pr=x#1\n")
-	if !strings.HasPrefix(second, head+"\n\n"+taskcard.BriefMarker) {
-		t.Fatalf("the head is not kept verbatim:\n%s", second)
-	}
-	if strings.Count(second, taskcard.BriefMarker) != 1 || strings.Contains(second, "(no children)") || !strings.Contains(second, "pr=x#1") {
-		t.Fatalf("the generated section is replaced, once:\n%s", second)
-	}
-	if got := taskcard.WithBrief("", "## Children (0)\n\n- (no children)\n"); got != "## Children (0)\n\n- (no children)\n" {
-		t.Errorf("an empty body is the brief alone; got %q", got)
-	}
-	if got := taskcard.WithBrief("## Children (0)\n- old", "## Children (1)\n- new\n"); got != "## Children (1)\n- new\n" {
-		t.Errorf("a body that is only the section is replaced; got %q", got)
-	}
-}
-
 func TestStitchIDAndPRRef(t *testing.T) {
 	t.Parallel()
 	if got := taskcard.StitchID("nova-tools-4317"); got != "nova-tools-4317-stitch" {

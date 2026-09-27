@@ -146,7 +146,7 @@ do
   --   unknown <stream> <entry>           an entry with no record
   --   ready <stream> <id>                moved waiting -> ready
   --   refused <stream> <id> <why>        the move refused (left waiting, in still)
-  --   stitch <id>                        a released stitch (its brief is Go's to write)
+  --   stitch <id> <why or ''>            a released stitch; its brief written here (NS.stitch.write), or why not
   local function resolve_pass(keys, args)
     local actor = str(args[1])
     if actor == '' then actor = 'reconciler' end
@@ -350,7 +350,12 @@ do
         end
       end
       for _, id in ipairs(g.stitches) do
-        if not refused[id] then emit('stitch', id) end
+        if not refused[id] then
+          -- the released stitch starts with the whole picture (#4317): its
+          -- brief is generated and written in this call (stitch_brief.lua)
+          local text, why = NS.stitch.write(id)
+          emit('stitch', id, text and '' or why)
+        end
       end
     end
     return flush()

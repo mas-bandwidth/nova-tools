@@ -107,14 +107,18 @@ func cmdCardStitch(ctx context.Context, args []string, stdout, stderr io.Writer)
 	for _, ch := range p.Children {
 		fmt.Fprintf(stdout, "  child %s %s pr=%s score=%s\n", ch.ID, orDash(ch.Where), orDash(ch.PRRef()), orDash(ch.Score))
 	}
-	brief := taskcard.StitchBrief(p)
+	brief, err := taskcard.RenderStitchBrief(ctx, c, parent)
+	if err != nil {
+		fmt.Fprintf(stdout, "REFUSED card stitch id=%s why=%s\n", *id, oneline.Field(err.Error()))
+		return 1
+	}
 	written := 0
 	if *write {
 		if p.Stitch.ID == "" {
 			fmt.Fprintf(stdout, "REFUSED card stitch id=%s why=%s remedy=%s\n", *id, oneline.Field("task:"+parent+" has no stitch"), oneline.Field("nova-sprint card cut --parent "+parent+" --from <children.tsv>"))
 			return 1
 		}
-		if _, brief, err = taskcard.WriteStitchBrief(ctx, c, p.Stitch.ID); err != nil {
+		if brief, err = taskcard.WriteStitchBrief(ctx, c, p.Stitch.ID); err != nil {
 			fmt.Fprintf(stdout, "REFUSED card stitch id=%s why=%s\n", *id, oneline.Field(err.Error()))
 			return 1
 		}

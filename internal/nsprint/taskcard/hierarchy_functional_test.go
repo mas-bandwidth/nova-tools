@@ -160,7 +160,11 @@ func TestPlanBindsLandsWithItsStitchAndIsNeverDealt(t *testing.T) {
 	}
 
 	// The stitch's brief, regenerated, carries both PRs and scores.
-	p, brief, err := taskcard.WriteStitchBrief(ctx, c, stitch)
+	brief, err := taskcard.WriteStitchBrief(ctx, c, stitch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := taskcard.ReadPlan(ctx, c, parent)
 	if err != nil {
 		t.Fatal(err)
 	}
