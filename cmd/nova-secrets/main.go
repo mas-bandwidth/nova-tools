@@ -26,6 +26,7 @@ usage:
   nova-secrets placed --machine <name> [--receipts <dir>]
   nova-secrets seal   --store <dir> --as <seat> --key <path> --sops <path> --name NAME [--stdin] [--no-pr] [--gh <path>] [--git <path>]
   nova-secrets seat add --store <dir> --as <seat> --pub <age1…> --from <source seat> --only <NAME,...> --key <path> --sops <path>
+  nova-secrets seat inject --store <dir> --as <seat> --from <source seat> --only <NAME,...> --key <path> --sops <path> [--no-pr] [--gh <path>] [--git <path>]
   nova-secrets help
 
 flags:
@@ -35,7 +36,7 @@ flags:
   --key <path>         path to age private key identity file (mode 0600)
   --sops <path>        path to sops executable
   --age-keygen <path>  path to age-keygen executable
-  --only <names|all>   comma-separated list of keys to inject, or 'all'
+  --only <names|all>   comma-separated list of keys to deliver, or 'all' (exec only)
   --require <name>     assert key must be present in the file (repeatable)
   --max <n>            maximum items shown before MORE line (default 20, 0=unlimited)
   --machine <name>     fleet machine to place a secret on (its target comes from --machines)
@@ -49,11 +50,11 @@ flags:
   --ssh <path>         ssh executable to use (default ssh)
   --name NAME          key to seal (seal only)
   --pub <age1…>        the new seat's age public key, from its own keygen receipt (seat add only)
-  --from <seat>        a seat this machine can open, whose values are re-sealed (seat add only)
+  --from <seat>        a seat this machine can open, whose values are re-sealed (seat add, seat inject)
   --stdin              read the value from stdin instead of the terminal (seal only)
-  --no-pr              stop after the commit; make no gh call; return the store to its starting branch (seal only)
-  --gh <path>          path to the gh executable (seal only, default: gh)
-  --git <path>         path to the git executable (seal only, default: git)
+  --no-pr              stop after the commit; make no gh call; return the store to its starting branch (seal, seat inject)
+  --gh <path>          path to the gh executable (seal, seat inject; default: gh)
+  --git <path>         path to the git executable (seal, seat inject; default: git)
 
 example:
   nova-secrets keygen --as rowan --key ~/.config/nova-secrets/rowan.key --age-keygen /opt/homebrew/bin/age-keygen
@@ -63,6 +64,7 @@ example:
   nova-secrets place  --store ./secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops --machine mini --secret DEEPSEEK_API_KEY --machines ./fleet.tsv
   nova-secrets placed --machine mini
   nova-secrets seat add --store ./secrets --as air --pub age1… --from rowan --only GH_TOKEN,DEEPSEEK_API_KEY --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops
+  nova-secrets seat inject --store ./secrets --as air --from rowan --only NOVA_REDIS_BENCH_PASSWORD --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops --no-pr
 `
 
 // storeUpstreamHelp is the store prerequisite check and exec enforce (SPEC-SECRETS
@@ -507,23 +509,74 @@ func runKeygenCLI(args []string) {
 	os.Exit(0)
 }
 
-// runSeatCLI dispatches the seat subverbs. `add` is the only one: every other change to
-// a seat is a pull request against .sops.yaml that the store's gate reviews.
+// runSeatCLI dispatches the seat subverbs: `add` gives a new seat its first values,
+// `inject` re-seals named values into a seat that exists. Every other change to a seat
+// is a pull request against .sops.yaml that the store's gate reviews.
 func runSeatCLI(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: seat takes a subverb; the only one is 'add'; run: nova-secrets help\n")
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: seat takes a subverb, 'add' or 'inject'; run: nova-secrets help\n")
 		os.Exit(2)
 	}
 	switch args[0] {
 	case "add":
 		runSeatAddCLI(args[1:])
+	case "inject":
+		runSeatInjectCLI(args[1:])
 	case "help", "--help", "-h":
 		fmt.Print(usage)
 		os.Exit(0)
 	default:
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unknown seat subverb %q; the only one is 'add'\n", oneline.Field(args[0]))
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unknown seat subverb %q; the subverbs are 'add' and 'inject'\n", oneline.Field(args[0]))
 		os.Exit(2)
 	}
+}
+
+func runSeatInjectCLI(args []string) {
+	if len(args) > 0 && isHelpArg(args[0]) {
+		fmt.Print(usage)
+		os.Exit(0)
+	}
+
+	fs := flag.NewFlagSet("seat inject", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+
+	storeFlag := fs.String("store", "", "store dir")
+	asFlag := fs.String("as", "", "the existing seat")
+	fromFlag := fs.String("from", "", "a seat this machine can open")
+	onlyFlag := fs.String("only", "", "keys to deliver")
+	keyFlag := fs.String("key", "", "this machine's key path")
+	sopsFlag := fs.String("sops", "", "sops path")
+	ghFlag := fs.String("gh", "gh", "gh path")
+	gitFlag := fs.String("git", "git", "git path")
+	noPRFlag := fs.Bool("no-pr", false, "stop after commit; return the store to its starting branch")
+
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
+		os.Exit(2)
+	}
+	if len(fs.Args()) > 0 {
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unexpected argument %q\n", oneline.Field(fs.Args()[0]))
+		os.Exit(2)
+	}
+
+	line, err := secrets.RunSeatInject(secrets.SeatInjectOptions{
+		StoreDir: *storeFlag,
+		AsName:   *asFlag,
+		From:     *fromFlag,
+		Only:     *onlyFlag,
+		KeyPath:  *keyFlag,
+		SopsPath: *sopsFlag,
+		GHPath:   *ghFlag,
+		GitPath:  *gitFlag,
+		NoPR:     *noPRFlag,
+		Progress: os.Stderr,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "SECRETS SEAT INJECT FAIL %s\n", oneline.Err(err))
+		os.Exit(2)
+	}
+	fmt.Println(line)
+	os.Exit(0)
 }
 
 func runSeatAddCLI(args []string) {

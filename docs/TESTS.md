@@ -233,6 +233,17 @@ $ nova-secrets exec --store ./secrets --as other --key /Users/me/.config/nova-se
 fake-gh
 ```
 
+`nova-secrets seat inject` is measured against the real sops and age
+(`cmd/nova-secrets/seat_inject_functional_test.go`, functional tier): a store with
+two seats, the coordinator's holding the new value and the bench's holding the old
+one; the verb run with the coordinator's key and `--no-pr`; then the seal branch's
+file opens with the bench's key alone and holds the new value beside the names it
+had, the store is back on `main`, and `nova-secrets gate` approves the branch. The
+help banner's own `seat inject` example is run through the one comparator in the
+same package, its transcript held beside the test, ending
+`SECRETS SEAT INJECT OK seat=air from=rowan names=1 committed branch=seal/air-NOVA_REDIS_BENCH_PASSWORD-20260927-013000`
+with the branch's stamp the one declared run-owned value.
+
 **The Studio's store file is `studio.yaml`, not `swarm-studio.yaml`.** Every Linux
 bench's store follows the `swarm-<name>.yaml` convention (`swarm-hulk.yaml`,
 `swarm-space.yaml`, `swarm-vision.yaml`, …). The Studio is the only bench whose

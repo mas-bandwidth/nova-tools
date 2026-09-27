@@ -37,3 +37,4 @@ cmd/nova-config/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: n
 cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend here --as rowan --once --host studio --session s1
 cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend list
 cmd/nova-friend/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-friend bye --as rowan
+cmd/nova-secrets/seat_inject_functional_test.go:TestTheHelpExampleIsWhatSeatInjectPrints example: nova-secrets seat inject --store ./secrets --as air --from rowan --only NOVA_REDIS_BENCH_PASSWORD --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops --no-pr

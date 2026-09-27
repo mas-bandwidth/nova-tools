@@ -154,7 +154,10 @@ func TestVolatileFieldOutsideTheTableIsRefused(t *testing.T) {
 func TestTheVolatileTableHoldsTheNamedRunOwnedValues(t *testing.T) {
 	t.Parallel()
 
-	want := []string{"at", "took", "created", "tmpdir", "sha"}
+	// `branch` joined on 2026-09-27 with `nova-secrets seat inject`, whose OK line
+	// names the seal branch it committed on, stamped with the run's instant
+	// (SPEC-TOOLWORK §7 rule 2 names it with the other five).
+	want := []string{"at", "took", "created", "tmpdir", "sha", "branch"}
 	got := VolatileNames()
 	if len(got) != len(want) {
 		t.Fatalf("onboarding.Volatile holds %v, want %v", got, want)
@@ -284,6 +287,7 @@ func TestAVolatileEntryNeverSwallowsANeighbouringFieldsValue(t *testing.T) {
 		{name: "took", field: "took", docValue: "5ms", runValue: "9h", mine: "8ms"},
 		{name: "created", field: "created", docValue: "2026-09-16T08:22:37Z", runValue: "2026-09-16T09:00:00Z", mine: "2026-09-16T08:22:37Z"},
 		{name: "sha", field: "sha", docValue: "abc1234", runValue: "0000000", mine: "def5678"},
+		{name: "branch", field: "branch", docValue: "seal/air-GH_TOKEN-20260927-013000", runValue: "seal/air-GH_TOKEN-20260927-020000", mine: "seal/air-GH_TOKEN-20260926-120000"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// `last_` and `base_` are how a neighbour's name ends in this

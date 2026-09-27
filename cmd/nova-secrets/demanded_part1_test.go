@@ -465,6 +465,7 @@ func TestNoVerbPrintsAValue(t *testing.T) {
 		{"keygen", "--as", "rowan", "--key", keyA.privPath, "--age-keygen", ageKeygen},
 		cat([]string{"place"}, withKey, []string{"--secret", "GH_TOKEN"}),
 		cat([]string{"seat", "add"}, withKey),
+		cat([]string{"seat", "inject"}, withKey),
 		{"get", "--store", storeDir, "--as", "rowan", "GH_TOKEN"},
 		{"print", "GH_TOKEN"}, {"show", "GH_TOKEN"}, {"cat", "GH_TOKEN"}, {"put", "GH_TOKEN"},
 		{"no-such-verb", "GH_TOKEN"},
