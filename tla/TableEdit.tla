@@ -11,6 +11,19 @@
 \* a batch writes item by item, set writes the footer before RENAME, and an
 \* unparsable stored definition empties the OCCUPIED check (Stella's read
 \* of #4456, stella-64cde7fb5261, six findings verified against the code).
+\*
+\* What the abstraction is, and is not (Stella's read, stella-9347ea015210):
+\* - denied is the one hazard of RENAME refused by the ACL. The kernel's
+\*   preflight covers every staged command, the key types, the revision and
+\*   the stream bounds; the functional tests hold those, not this model.
+\* - "invalid" is a legacy parse failure only: a stored formula column whose
+\*   fold a later library no longer reads (pct:avg). In the old code that one
+\*   column made the whole-definition parse nil, so no column was checked
+\*   for members. It is not an arbitrary malformed definition.
+\* - Not here: bound sets, epochs, the receipt and revision log, rename
+\*   history, consumer groups, many members in one cell call, and footer,
+\*   shape and rename combined in one call. An accepted no-op is a Commit
+\*   that leaves the state as it was (the model has no revision to advance).
 EXTENDS Naturals, FiniteSets
 CONSTANTS NRows, Cols, Members, Texts, Names, Taken, InitName, InitDef,
           Staged, MaxSteps
@@ -73,9 +86,9 @@ SetName(f, n, denied) ==
  IF n \in Taken THEN Refuse("set")
  ELSE IF denied /\ n # name THEN Partial("set", [State EXCEPT !.footer = f])
  ELSE Commit("set", [State EXCEPT !.footer = f, !.name = n])
-\* ns_table_set columns: the definition replaced, rows kept.
-Known(c) == IF Staged THEN def[c] \in {"set","invalid"}
-            ELSE def[c] = "set" /\ \A d \in Cols : def[d] # "invalid"
+\* ns_table_set columns: the definition replaced, rows kept. The old code
+\* checked a column for members only when the whole stored definition parsed.
+Known(c) == def[c] = "set" /\ (Staged \/ \A d \in Cols : def[d] # "invalid")
 Occupied(nd) == \E c \in Cols : Known(c) /\ nd[c] # "set" /\ Holds(c)
 TextHeld(nd) == \E c \in Cols, r \in Rows :
                   def[c] = "text" /\ nd[c] # "text" /\ text[<<r,c>>] # ""
@@ -101,13 +114,17 @@ CellAdd(m, r, c) ==
 CellMove(m, c) ==
  IF place[m] = None \/ def[c] # "set" \/ def[place[m][2]] # "set" THEN Refuse("cell-move")
  ELSE Commit("cell-move", [State EXCEPT !.place[m] = <<place[m][1], c>>])
-CellRemove(m) ==
- IF place[m] = None \/ def[place[m][2]] # "set" THEN Refuse("cell-remove")
- ELSE Commit("cell-remove", [State EXCEPT !.place[m] = None])
-\* Outside event: a stored column definition no later library parses (the
-\* legacy pct:avg of the repair-occupied probe). The set stays where it was.
+\* cell remove names the cell. A member that is not in it is an accepted
+\* no-op (T.writecell: nothing staged, the receipt says noop).
+CellRemove(m, r, c) ==
+ IF r \notin rows \/ def[c] # "set" THEN Refuse("cell-remove")
+ ELSE IF place[m] = <<r,c>> THEN Commit("cell-remove", [State EXCEPT !.place[m] = None])
+ ELSE Commit("cell-remove", State)
+\* Outside event: a stored formula column whose fold the library no longer
+\* reads (the legacy pct:avg of the repair-occupied probe). It holds no set;
+\* the sets of the other columns stay where they were.
 Legacy(c) ==
- /\ def[c] = "set" /\ \A d \in Cols : def[d] # "invalid"
+ /\ def[c] = "formula" /\ \A d \in Cols : def[d] # "invalid"
  /\ Commit("legacy", [State EXCEPT !.def[c] = "invalid"])
 Next ==
  /\ step < MaxSteps
@@ -119,18 +136,20 @@ Next ==
     \/ \E r \in Rows, c \in Cols, v \in Texts \cup {""} : RowSet(r, c, v)
     \/ \E m \in Members, r \in Rows, c \in Cols : CellAdd(m, r, c)
     \/ \E m \in Members, c \in Cols : CellMove(m, c)
-    \/ \E m \in Members : CellRemove(m)
+    \/ \E m \in Members, r \in Rows, c \in Cols : CellRemove(m, r, c)
     \/ \E c \in Cols : Legacy(c)
 Spec == Init /\ [][Next \/ (step = MaxSteps /\ UNCHANGED vars)]_vars
 \* A refusal writes nothing.
 RefusalWritesNothing == outcome = "refused" => State = prev
 \* A definition change never drops a placed member or a text value.
-ShapeLosesNothing == (op = "shape" /\ outcome = "ok") =>
- /\ \A m \in Members : prev.place[m] # None => place[m] = prev.place[m]
- /\ \A k \in Rows \X Cols : prev.text[k] # "" => text[k] = prev.text[k]
+ShapeLosesNoMember == (op = "shape" /\ outcome = "ok") =>
+ \A m \in Members : prev.place[m] # None => place[m] = prev.place[m]
+ShapeLosesNoText == (op = "shape" /\ outcome = "ok") =>
+ \A k \in Rows \X Cols : prev.text[k] # "" => text[k] = prev.text[k]
+ShapeLosesNothing == ShapeLosesNoMember /\ ShapeLosesNoText
 \* Every placed member sits in a row and a set column the table has.
 PlacedInShape == \A m \in Members : place[m] # None =>
- place[m][1] \in rows /\ def[place[m][2]] \in {"set","invalid"}
+ place[m][1] \in rows /\ def[place[m][2]] = "set"
 \* Text lives in text columns only.
 TextInTextColumns == \A k \in Rows \X Cols : text[k] # "" => def[k[2]] = "text"
 \* Hiding changes what is drawn, never what is held.

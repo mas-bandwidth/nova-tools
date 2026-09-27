@@ -47,42 +47,53 @@ map to unchanged abstract user state; the model does not encode the receipt
 ledger, which the replay runner checks separately. The original pinned baseline
 runner and its deliberately failing desired-contract gate remain unchanged.
 
-## The edit verbs (TableEdit)
+## The edit verbs (TableEdit) and order (TableOrder)
 
-`TableEdit.tla` models the edit verbs of nova-table: `set` (footer, rename,
-columns), `row add` and `row hide/show` over many rows, `row set` (text),
-column hide/show, beside the cell verbs that place the members the edits must
-keep, and one outside event (a stored column definition the library no longer
-parses). `Staged = TRUE` is the kernel (every check before the first write);
-`Staged = FALSE` is table.lua at 109939a85, kept as the reversed witness.
+Two bounded safety models of nova-table's edit surface, each an abstraction
+with reversed witnesses, neither a refinement proof of table.lua. What each
+leaves out is listed in its header. The functional tests hold the rest.
 
-Run on a bench, never the Studio, under the 120 s cap:
+`TableEdit.tla`: `set` (footer, rename, columns), `row add` and `row
+hide/show` over many rows, `row set` (text), column hide/show, the cell
+verbs, and one outside event (a stored formula column whose fold the library
+no longer reads). `Staged = FALSE` is table.lua at 109939a85.
 
-    timeout 120 java -cp tla2tools.jar tlc2.TLC -workers 4 -deadlock -config <cfg> MCTableEdit.tla
+`TableOrder.tla`: `row add`, `row del`, `row move`, `row order`, `row sort`
+(once, `--keep`, `--manual`), `bind`, one `set` call that sorts and places,
+`col add`, `col del`, `col move`. Every call records what it asked for, and
+the invariants say the result is the one requested, not only a permutation.
+`Broken` names the misimplementation a witness config turns on.
 
-| config | result (space, 2026-09-27) |
-|---|---|
-| `MCTableEdit.cfg` | no error; 77,899,510 states, 1,914,478 distinct, depth 5; TypeOK, RefusalWritesNothing, ShapeLosesNothing, PlacedInShape, TextInTextColumns, HideKeepsData, RenameKeepsData |
-| `MCTableEditBrokenRefusal.cfg` | RefusalWritesNothing violated in 2 states: `row add 1 2` with row 2's key of the wrong type leaves row 1 written (table.lua 109939a85 lines 189-192, checked by hand) |
-| `MCTableEditBrokenShape.cfg` | ShapeLosesNothing violated in 4 states: a text value set, then `set --columns` without the column deletes it (line 341, checked by hand); the unparsable-definition path to a lost member is the same invariant (line 311) |
+Run on a bench, never the Studio. Every config runs at once, each in its own
+temp directory (TLC unpacks its standard modules into `java.io.tmpdir`, and
+two runs sharing one collide), each under a 60 s cap; a timeout is a failure:
 
-Not modelled: the receipt ledger and epochs (EpochMemberTable), views, the
-render. Order is its own model, below.
+    for cfg in MCTableEdit*.cfg MCTableOrder*.cfg; do c=${cfg%.cfg}
+      m=MCTableOrder.tla; case $c in MCTableEdit*) m=MCTableEdit.tla;; esac
+      mkdir -p /tmp/tlc-$c
+      timeout 60 java -Djava.io.tmpdir=/tmp/tlc-$c -cp tla2tools.jar tlc2.TLC -workers 2 \
+        -deadlock -metadir /tmp/tlc-$c/meta -config $cfg $m > $c.log 2>&1 &
+    done; wait
 
-## Order (TableOrder)
+Measured on space, 2026-09-27, load 9, all twelve at once: 38 s wall.
 
-`TableOrder.tla` models the rows' and columns' order as sequences: `row add`,
-`row del`, `row move`, `row order`, `row sort` (once, standing with `--keep`,
-ended with `--manual`), `col add`, `col del`, `col move`. `Staged = FALSE` is
-the reversed witness: a standing sort `row add` does not honour and a `col
-del` that does not look at what the column holds.
+| config | result | time |
+|---|---|---|
+| `MCTableEdit` | no error, 468,243 distinct states, depth 4: TypeOK, RefusalWritesNothing, ShapeLosesNothing, PlacedInShape, TextInTextColumns, HideKeepsData, RenameKeepsData | 37 s |
+| `MCTableEditBrokenRefusal` | RefusalWritesNothing violated in 2 states: `row add 1 2`, row 2's key of the wrong type, row 1 left written (109939a85 lines 189-192) | 1 s |
+| `MCTableEditBrokenText` | ShapeLosesNoText violated in 4 states: a text value set, `set --columns` without the column deletes it (line 341) | 2 s |
+| `MCTableEditBrokenLegacy` | ShapeLosesNoMember violated in 5 states: a member placed, a formula column's stored fold stops parsing, `set --columns` drops the member's column with no OCCUPIED check (line 311) | 8 s |
+| `MCTableOrder` | no error, 241,073 distinct states, depth 4, 3 rows, 3 columns: TypeOK, RefusalWritesNothing, RowMoveIsExact, RowOrderIsExact, ColMoveIsExact, AddIsExact, BindIsExact, StandingSortHolds, ReorderIsPermutation, HeldInShape, OnlyRowDelDrops, RowsAndColumnsApart | 19 s |
+| `MCTableOrderBrokenBind` | StandingSortHolds violated: bind writes its input order under a standing sort (3ee97bea: bind never reached the standing-sort step; Stella's probe 1) | 2 s |
+| `MCTableOrderBrokenCombined` | StandingSortHolds violated: one call sets `--keep` and moves a row (3ee97bea: the guard read the sort before the edit and exempted any call with row_sort; Stella's probe 2) | 2 s |
+| `MCTableOrderBrokenSort` | StandingSortHolds violated: row add ignores the standing sort | 2 s |
+| `MCTableOrderBrokenPrefix` | RowOrderIsExact violated: the named rows put last | 2 s |
+| `MCTableOrderBrokenItem` | RowMoveIsExact violated: `--first` moves another row | 1 s |
+| `MCTableOrderBrokenDel` | OnlyRowDelDrops violated: `col del` removes a column that holds a member | 2 s |
+| `MCTableOrderBrokenBindLoss` | OnlyRowDelDrops violated: bind drops an omitted row that holds a member | 2 s |
 
-| config | result (space, 2026-09-27) |
-|---|---|
-| `MCTableOrder.cfg` | no error; 1,978,101 states, 38,708 distinct, depth 5, 3 rows, 3 columns; TypeOK, RefusalWritesNothing, ReorderIsPermutation, OthersKeepOrder, OrderKeepsTheRest, StandingSortHolds, HeldColumnsStay, ColDelLosesNothing, RowsAndColumnsApart |
-| `MCTableOrderBrokenSort.cfg` | StandingSortHolds violated in 4 states: row 2 added, `row sort --keep`, row 1 added lands last |
-| `MCTableOrderBrokenDel.cfg` | ColDelLosesNothing violated in 4 states: a column comes to hold a member, `col del` removes it |
-
-Sorting by a column's value or by label is modelled as sorting by name: the
-key differs, the properties (a permutation, one order only, the standing sort
-holding) are the same.
+The first four witnesses of the edit model and the Bind and Combined witnesses
+of the order model are defects that were in the code, each checked by hand
+against the lines named. The other five are misimplementations the invariants
+are shown to catch. A depth-5 run of the edit model with one member (1,652,467
+distinct states, no error) took 92 s on the same bench and is not in the set.
