@@ -23,21 +23,28 @@ func TestWorkingStateAndViewLifecycle(t *testing.T) {
 	success("cell", "add", "work", "stream: build", "todo", "check-a", "check-b")
 	success("cell", "move", "work", "stream: build", "todo", "done", "check-a")
 	success("row", "set", "work", "stream: build", "note=review passed")
+	if out := success("set", "work", "--hide", "note"); !strings.Contains(out, `hide="note" trips=1`) {
+		t.Errorf("hide confirmation: %s", out)
+	}
+	if out := success("set", "work", "--show", "note"); !strings.Contains(out, `show="note" trips=1`) {
+		t.Errorf("show confirmation: %s", out)
+	}
+
 	out := success("show", "work")
-	for _, part := range []string{`row="stream: build" todo=1 done=1 note="review passed" progress=50.0%`, `row=empty todo=0 done=0 note="" progress=0.0%`, `trips=1 epoch=0 revision=5`} {
+	for _, part := range []string{`row="stream: build" todo=1 done=1 note="review passed" progress=50.0%`, `row=empty todo=0 done=0 note="" progress=0.0%`, `trips=1 epoch=0 revision=7`} {
 		if !strings.Contains(out, part) {
 			t.Errorf("show missing %q: %s", part, out)
 		}
 	}
 	out = success("member", "find", "work", "check-a")
-	if !strings.Contains(out, `state=placed row="stream: build" col=done epoch=0 revision=5 trips=1`) {
+	if !strings.Contains(out, `state=placed row="stream: build" col=done epoch=0 revision=7 trips=1`) {
 		t.Errorf("find: %s", out)
 	}
 	success("member", "create", "work", "new")
-	if out = success("member", "find", "work", "new"); !strings.Contains(out, "state=unplaced epoch=0 revision=6 trips=1") {
+	if out = success("member", "find", "work", "new"); !strings.Contains(out, "state=unplaced epoch=0 revision=8 trips=1") {
 		t.Errorf("unplaced: %s", out)
 	}
-	if out = success("member", "find", "work", "unknown"); !strings.Contains(out, "state=missing epoch=0 revision=6 trips=1") {
+	if out = success("member", "find", "work", "unknown"); !strings.Contains(out, "state=missing epoch=0 revision=8 trips=1") {
 		t.Errorf("missing: %s", out)
 	}
 	success("view", "set", "today", "--tables", "work", "--summary", "done", "--title", "My work")
@@ -74,7 +81,7 @@ func TestWorkingStateAndViewLifecycle(t *testing.T) {
 	if out = success("view", "list"); out != "VIEW LIST views=0 trips=1\n" {
 		t.Errorf("empty list: %s", out)
 	}
-	if out = success("check", "work"); !strings.Contains(out, "revision=6 members=2") {
+	if out = success("check", "work"); !strings.Contains(out, "revision=8 members=2") {
 		t.Errorf("view operations changed table: %s", out)
 	}
 }

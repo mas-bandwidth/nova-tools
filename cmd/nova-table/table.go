@@ -139,6 +139,12 @@ func cmdSet(args []string, stdout, stderr io.Writer) int {
 	if len(o.Columns) > 0 {
 		line += fmt.Sprintf(" columns=%d", len(o.Columns))
 	}
+	if len(o.Hide) > 0 {
+		line += fmt.Sprintf(" hide=%q", strings.Join(o.Hide, ","))
+	}
+	if len(o.Show) > 0 {
+		line += fmt.Sprintf(" show=%q", strings.Join(o.Show, ","))
+	}
 	if o.Hidden != nil {
 		line += fmt.Sprintf(" hidden=%q", strings.Join(*o.Hidden, ","))
 	}
