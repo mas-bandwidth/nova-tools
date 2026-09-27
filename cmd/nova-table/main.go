@@ -53,6 +53,13 @@ counts and members leave out. render prints the table and nothing else,
 nothing at all when it is empty; watch redraws it in place every --every
 (1s) with no shell loop, or publishes it to --out by atomic rename.
 
+Order is kept by the table: rows draw in the order they were added and
+columns in the order they were declared, until a verb moves them. row sort
+orders the rows once; with --keep (by name or label) the sort stands, every
+row added later takes its place, and row move and row order are refused
+until row sort --manual. col del refuses a column that holds members or
+text, naming what to move or clear first.
+
 exit codes: 0 done, 1 refused, 2 usage
 
 example:

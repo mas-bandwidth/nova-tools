@@ -29,10 +29,20 @@ func TestARefusalSaysWhatTheInputWants(t *testing.T) {
 		{[]string{"create", "demo", "--columns", "a:rows", "--redis", addr}, `column a wants a projection of count, members, first, last, text or pct(<count column>), not "rows"`},
 		{[]string{"create", "demo", "--columns", "a", "--width", "b=3", "--redis", addr}, "--width names column b, which --columns does not declare"},
 		{[]string{"create", "bad name", "--columns", "a", "--redis", addr}, "the table name wants letters, digits, _ . and -"},
-		{[]string{"row", "--redis", addr}, "wants add, set, hide, show, del"},
+		{[]string{"row", "--redis", addr}, "wants add, set, hide, show, del, move, order, sort"},
 		{[]string{"row", "add", "demo", "--redis", addr}, "wants a table and a row: row add <table> <row>"},
 		{[]string{"row", "add", "demo", "r", "ready=", "--redis", addr}, "a binding wants <col>=<key>"},
 		{[]string{"row", "add", "demo", "r", "ready=ws:s:ready", "--redis", addr}, "a row that binds a set wants --owner <verb>"},
+		{[]string{"row", "move", "demo", "r", "--redis", addr}, "wants a table, a row and a place: row move <table> <row> --first | --last | --before <name> | --after <name>"},
+		{[]string{"row", "move", "demo", "r", "--first", "--after", "s", "--redis", addr}, "wants one place, not 2"},
+		{[]string{"row", "order", "demo", "--redis", addr}, "wants a table and the rows that go first, in order"},
+		{[]string{"row", "sort", "--redis", addr}, "wants one table: row sort <table>"},
+		{[]string{"row", "sort", "demo", "--manual", "--keep", "--redis", addr}, "--manual ends a standing sort and takes no --keep or --desc"},
+		{[]string{"col", "--redis", addr}, "wants add, del, move"},
+		{[]string{"col", "add", "demo", "--redis", addr}, "wants a table and one column: col add <table>"},
+		{[]string{"col", "add", "demo", "a:rows", "--redis", addr}, `column a wants a projection of count`},
+		{[]string{"col", "del", "demo", "--redis", addr}, "wants a table and a column: col del <table> <col>"},
+		{[]string{"col", "move", "demo", "a", "--redis", addr}, "wants a table, a column and a place: col move <table> <col>"},
 		{[]string{"cell", "--redis", addr}, "wants add, remove, move, members"},
 		{[]string{"cell", "add", "demo", "r", "c", "--redis", addr}, "wants a table, a row, a column and one or more members"},
 		{[]string{"cell", "add", "demo", "r", "c", "m", "--score", "x", "--redis", addr}, `--score wants a number, got "x"`},
@@ -278,5 +288,41 @@ func TestStoredViewReadsChangesWithoutRestartOrSummaryReread(t *testing.T) {
 	second, err := read(ctx)
 	if err != nil || trips.N()-n != 2 || !strings.Contains(second, "after\n\n0/2 0.0% -> ETA") {
 		t.Fatalf("changed view trips=%d err=%v\n%s", trips.N()-n, err, second)
+	}
+}
+
+// TestOrderVerbsThroughTheCommand: the rows and columns of a table moved by
+// the verbs, one exchange each, and the render follows.
+func TestOrderVerbsThroughTheCommand(t *testing.T) {
+	t.Parallel()
+
+	addr := throwaway(t)
+	for _, step := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"create", "crew", "--columns", "busy,idle,note:text:none"}, "TABLE CREATE table=crew columns=3 trips=1\n"},
+		{[]string{"row", "add", "crew", "studio", "hetzner", "stella", "rowan"}, "TABLE ROWS ADD table=crew rows=4 trips=1\n"},
+		{[]string{"row", "order", "crew", "rowan", "stella"}, "TABLE ROW ORDER table=crew first=rowan,stella trips=1\n"},
+		{[]string{"row", "move", "crew", "hetzner", "--before", "studio"}, "TABLE ROW MOVE table=crew row=hetzner place=before of=studio trips=1\n"},
+		{[]string{"col", "move", "crew", "note", "--first"}, "TABLE COL MOVE table=crew col=note place=first trips=1\n"},
+		{[]string{"col", "add", "crew", "share:pct(busy)", "--after", "busy"}, "TABLE COL ADD table=crew col=share place=after of=busy trips=1\n"},
+		{[]string{"col", "del", "crew", "idle"}, "TABLE COL DEL table=crew col=idle trips=1\n"},
+		{[]string{"render", "crew"}, "crew    | note | busy | share\n--------+------+------+------\nrowan   |      |    0 | 0.0%\nstella  |      |    0 | 0.0%\nhetzner |      |    0 | 0.0%\nstudio  |      |    0 | 0.0%\n--------+------+------+------\n        |      |    0 | 0.0%\n"},
+		{[]string{"row", "sort", "crew", "--keep"}, "TABLE ROW SORT table=crew by=name desc=false keep=true trips=1\n"},
+		{[]string{"row", "add", "crew", "alex"}, "TABLE ROW ADD table=crew row=alex cols=3 bound=0 trips=1\n"},
+	} {
+		code, stdout, stderr := runTable(at(addr, step.args...)...)
+		if code != 0 || stdout != step.want {
+			t.Fatalf("%v: exit %d\nstdout %q\nwant   %q\nstderr %q", step.args, code, stdout, step.want, stderr)
+		}
+	}
+	code, stdout, stderr := runTable(at(addr, "row", "move", "crew", "alex", "--last")...)
+	if code != 1 || stdout != "" || !strings.Contains(stderr, "the rows are kept sorted by name") || !strings.HasSuffix(stderr, "; run: nova-table row sort 'crew' --manual\n") {
+		t.Fatalf("a move under a standing sort: exit %d stdout %q stderr %q", code, stdout, stderr)
+	}
+	code, stdout, _ = runTable(at(addr, "show", "crew")...)
+	if code != 0 || !strings.Contains(stdout, " sort=name\n") || !strings.Contains(stdout, "row=alex") || strings.Index(stdout, "row=alex") > strings.Index(stdout, "row=hetzner") {
+		t.Fatalf("the standing sort places the new row: %q", stdout)
 	}
 }

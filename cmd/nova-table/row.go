@@ -10,11 +10,11 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 )
 
-// The row verbs: row add, row del.
+// The row verbs: row add, set, hide, show, del here; move, order, sort in order.go.
 
 func cmdRow(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		return refuse(stderr, "row", "wants add or del: row add <table> <row> [<col>=<key> ...], row del <table> <row>")
+		return refuse(stderr, "row", "wants add, set, hide, show, move, order, sort or del: row add <table> <row> ..., row set <table> <row> <col>=<value> ..., row hide|show <table> <row> ..., row move <table> <row> "+placeUsage+", row order <table> <row> ..., row sort <table> [--by name|label|<col>] [--desc] [--keep], row del <table> <row>")
 	}
 	switch args[0] {
 	case "add":
@@ -27,8 +27,14 @@ func cmdRow(args []string, stdout, stderr io.Writer) int {
 		return cmdRowsHide(args[1:], stdout, stderr, true)
 	case "show":
 		return cmdRowsHide(args[1:], stdout, stderr, false)
+	case "move":
+		return cmdRowMove(args[1:], stdout, stderr)
+	case "order":
+		return cmdRowOrder(args[1:], stdout, stderr)
+	case "sort":
+		return cmdRowSort(args[1:], stdout, stderr)
 	}
-	return refuse(stderr, "row", "unknown subverb "+args[0]+"; wants add, set, hide, show or del")
+	return refuse(stderr, "row", "unknown subverb "+args[0]+"; wants add, set, hide, show, move, order, sort or del")
 }
 
 func cmdRowAdd(args []string, stdout, stderr io.Writer) int {

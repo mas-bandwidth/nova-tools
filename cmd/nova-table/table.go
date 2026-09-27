@@ -279,7 +279,11 @@ func cmdShow(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return storeRefusal(stderr, verb, err)
 	}
-	fmt.Fprintf(stdout, "TABLE table=%s columns=%d rows=%d trips=%d epoch=%d revision=%d\n", t.Name, len(t.Columns), len(t.Rows), trips.N(), t.Epoch, t.Revision)
+	fmt.Fprintf(stdout, "TABLE table=%s columns=%d rows=%d trips=%d epoch=%d revision=%d", t.Name, len(t.Columns), len(t.Rows), trips.N(), t.Epoch, t.Revision)
+	if t.Sort != "" {
+		fmt.Fprintf(stdout, " sort=%s", t.Sort)
+	}
+	fmt.Fprintln(stdout)
 	for _, r := range t.Rows {
 		var b strings.Builder
 		fmt.Fprintf(&b, "TABLE ROW table=%s row=%s", t.Name, field(r.Key))

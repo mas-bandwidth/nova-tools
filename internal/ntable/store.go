@@ -198,6 +198,30 @@ func (o operation) refused(reply []any) error {
 		}
 		cause = fmt.Errorf("summary wants a count column in table %q; %q is not one", reply[2], reply[3])
 		remedy = "nova-table show " + shellWord(fmt.Sprint(reply[2]))
+	case "SELF":
+		cause = fmt.Errorf("%v cannot go before or after itself", reply[2])
+	case "WHERE":
+		cause = errors.New("a place is --first, --last, --before <x> or --after <x>")
+	case "COLEXISTS":
+		o.col = fmt.Sprint(reply[2])
+		cause = errors.New("the column is already there")
+		remedy = "nova-table col move " + shellWord(o.table) + " " + shellWord(o.col) + " --last"
+	case "DEPENDS":
+		o.col = fmt.Sprint(reply[2])
+		cause = fmt.Errorf("column %q is a percentage of it; remove that column first", reply[3])
+		remedy = "nova-table col del " + shellWord(o.table) + " " + shellWord(fmt.Sprint(reply[3]))
+	case "LASTCOL":
+		o.col = fmt.Sprint(reply[2])
+		cause = errors.New("a table keeps at least one column")
+		remedy = "nova-table drop " + shellWord(o.table)
+	case "SORTED":
+		cause = fmt.Errorf("the rows are kept sorted by %v, so no row is placed by hand; end the standing sort first", reply[2])
+		remedy = "nova-table row sort " + shellWord(o.table) + " --manual"
+	case "SORTKEY":
+		cause = fmt.Errorf("rows sort by name, label, a count column or a text column, not %v", reply[2])
+	case "SORTKEEP":
+		cause = fmt.Errorf("a standing sort is by name or label; by %v the rows are sorted once, without --keep", reply[2])
+		remedy = "nova-table row sort " + shellWord(o.table) + " --by " + shellWord(fmt.Sprint(reply[2]))
 	case "NOTTEXT":
 		cause = errors.New("not a text column; row set writes text columns only")
 	case "BOUND":
@@ -212,6 +236,10 @@ func (o operation) refused(reply []any) error {
 	if (reason == "NOCOL" || reason == "TEXT") && len(reply) >= 4 {
 		o.row = fmt.Sprint(reply[2])
 		o.col = fmt.Sprint(reply[3])
+	}
+	if reason == "NOROW" && len(reply) >= 3 {
+		o.row = fmt.Sprint(reply[2])
+		remedy = "nova-table row add " + shellWord(o.table) + " " + shellWord(o.row)
 	}
 	return fmt.Errorf("%s: %w; run: %s", o.location(), cause, remedy)
 }
@@ -325,6 +353,64 @@ type SetOpts struct {
 	Hidden     *[]string
 	Hide, Show []string // atomic deltas to the hidden column list
 	Visible    *bool
+	// One column added (at the end, or where At says), removed (refused
+	// while it holds members or text) or moved; the other columns stand.
+	ColAdd  *Column
+	ColAt   *Place // where ColAdd enters; nil is last
+	ColDel  string
+	ColMove *Reorder
+	// The rows' order: all sorted, then the named rows first, then one row
+	// moved, in that order when several are given. A standing sort refuses
+	// RowOrder and RowMove unless RowSort clears it in the same call.
+	RowSort  *Sort
+	RowOrder []string
+	RowMove  *Reorder
+}
+
+// Place is a position in an order: first, last, or before or after Ref.
+type Place struct {
+	Where string // first, last, before, after
+	Ref   string // the neighbour, for before and after
+}
+
+// Reorder puts one column or one row at a place; nothing else moves.
+type Reorder struct {
+	Item string
+	Place
+}
+
+// Sort orders the rows once by name, label, or a column's value (a count,
+// or a text value). Keep makes it standing (name and label only): every
+// row added or rebound later takes its place. Manual ends a standing sort and leaves
+// the rows where they are.
+type Sort struct {
+	By     string
+	Desc   bool
+	Keep   bool
+	Manual bool
+}
+
+func (p Place) valid() error {
+	switch p.Where {
+	case "first", "last":
+		if p.Ref != "" {
+			return fmt.Errorf("--%s takes no neighbour", p.Where)
+		}
+		return nil
+	case "before", "after":
+		if p.Ref == "" {
+			return fmt.Errorf("--%s wants a neighbour", p.Where)
+		}
+		return nil
+	}
+	return fmt.Errorf("a place is --first, --last, --before <x> or --after <x>")
+}
+
+func (p Place) wire(m map[string]any) {
+	m["where"] = p.Where
+	if p.Ref != "" {
+		m["ref"] = p.Ref
+	}
 }
 
 // Set validates and commits a complete definition edit in one call. The
@@ -364,8 +450,46 @@ func Set(ctx context.Context, c redis.Cmdable, name string, change SetOpts, opts
 	if change.Visible != nil {
 		spec["visible"] = *change.Visible
 	}
+	if change.ColAdd != nil {
+		if err := validateColumn(*change.ColAdd, nil); err != nil {
+			return 0, err
+		}
+		add := map[string]any{"name": change.ColAdd.Name, "def": encodeColumn(*change.ColAdd)}
+		if change.ColAt != nil {
+			if err := change.ColAt.valid(); err != nil {
+				return 0, err
+			}
+			change.ColAt.wire(add)
+		}
+		spec["col_add"] = add
+	}
+	if change.ColDel != "" {
+		spec["col_del"] = change.ColDel
+	}
+	for key, m := range map[string]*Reorder{"col_move": change.ColMove, "row_move": change.RowMove} {
+		if m == nil {
+			continue
+		}
+		if err := m.valid(); err != nil {
+			return 0, err
+		}
+		item := map[string]any{}
+		if key == "col_move" {
+			item["col"] = m.Item
+		} else {
+			item["row"] = m.Item
+		}
+		m.wire(item)
+		spec[key] = item
+	}
+	if len(change.RowOrder) > 0 {
+		spec["row_order"] = change.RowOrder
+	}
+	if change.RowSort != nil {
+		spec["row_sort"] = map[string]any{"by": change.RowSort.By, "desc": change.RowSort.Desc, "keep": change.RowSort.Keep, "manual": change.RowSort.Manual}
+	}
 	if len(spec) == 0 {
-		return 0, fmt.Errorf("table %q: set wants --footer <label>, --rename <name> or --columns <spec> (also --hide, --show, --hidden, --visible)", name)
+		return 0, fmt.Errorf("table %q: set wants a change: --footer <label>, --rename <name>, --columns <spec>, --hide, --show, --hidden or --visible", name)
 	}
 	body, err := payload(spec)
 	if err != nil {

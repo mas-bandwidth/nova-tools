@@ -67,5 +67,22 @@ Run on a bench, never the Studio, under the 120 s cap:
 | `MCTableEditBrokenShape.cfg` | ShapeLosesNothing violated in 4 states: a text value set, then `set --columns` without the column deletes it (line 341, checked by hand); the unparsable-definition path to a lost member is the same invariant (line 311) |
 
 Not modelled: the receipt ledger and epochs (EpochMemberTable), views, the
-render. Row and column order is not state here yet; it becomes state with the
-move verbs.
+render. Order is its own model, below.
+
+## Order (TableOrder)
+
+`TableOrder.tla` models the rows' and columns' order as sequences: `row add`,
+`row del`, `row move`, `row order`, `row sort` (once, standing with `--keep`,
+ended with `--manual`), `col add`, `col del`, `col move`. `Staged = FALSE` is
+the reversed witness: a standing sort `row add` does not honour and a `col
+del` that does not look at what the column holds.
+
+| config | result (space, 2026-09-27) |
+|---|---|
+| `MCTableOrder.cfg` | no error; 1,978,101 states, 38,708 distinct, depth 5, 3 rows, 3 columns; TypeOK, RefusalWritesNothing, ReorderIsPermutation, OthersKeepOrder, OrderKeepsTheRest, StandingSortHolds, HeldColumnsStay, ColDelLosesNothing, RowsAndColumnsApart |
+| `MCTableOrderBrokenSort.cfg` | StandingSortHolds violated in 4 states: row 2 added, `row sort --keep`, row 1 added lands last |
+| `MCTableOrderBrokenDel.cfg` | ColDelLosesNothing violated in 4 states: a column comes to hold a member, `col del` removes it |
+
+Sorting by a column's value or by label is modelled as sorting by name: the
+key differs, the properties (a permutation, one order only, the standing sort
+holding) are the same.

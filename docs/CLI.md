@@ -4835,6 +4835,12 @@ first, connection flags next, epoch and receipt metadata last. For example,
 | `row set <table> <row> <col>=<value>...` | Writes text values; `col=` clears one |
 | `row hide/show <table> <row>...` | Changes visibility; data and fold contributions stay |
 | `row del <table> <row>` | Deletes the row and its owned cells; external bound sets stay |
+| `row move <table> <row> --first/--last/--before/--after` | Moves one row; the others retain their relative order |
+| `row order <table> <row>...` | Puts the named rows first; the rest keep their order |
+| `row sort <table> [--by name/label/<col>] [--desc] [--keep]` | Sorts once; `--keep` maintains name/label order, `--manual` ends it |
+| `col add <table> <spec> [--first/--last/--before/--after]` | Adds one column, last unless a place is named |
+| `col del <table> <col>` | Removes an empty column with no formula dependency |
+| `col move <table> <col> --first/--last/--before/--after` | Moves one column |
 | `cell add/remove <table> <row> <col> <member>...` | Adds or removes a batch; add takes `--score` |
 | `cell move <table> <row> <from> <to> <member>...` | Moves a batch atomically while preserving scores |
 | `cell members <table> <row> <col>` | Lists member IDs and scores in order |
@@ -4851,6 +4857,28 @@ first, connection flags next, epoch and receipt metadata last. For example,
 | `view del <name>` | Deletes the view configuration, preserving tables |
 | `watch --view <name>` | Reloads configuration each frame; edits appear without restarting |
 | `version` | Prints the build version |
+
+**Order.** Rows draw in the order they were added and columns in the
+order they were declared, until a verb moves them; each of these is one
+exchange, checked whole before the first write, with one receipt. `row move
+<table> <row> --first | --last | --before <row> | --after <row>` prints
+`TABLE ROW MOVE table= row= place= [of=]` and moves that row only. `row
+order <table> <row> <row> ...` prints `TABLE ROW ORDER table= first=`: the
+named rows first, in the order named, the rest after them in the order they
+had. `row sort <table> [--by name|label|<col>] [--desc]` prints `TABLE ROW
+SORT table= by= desc= keep=` and sorts once, by the row's name (the
+default), its label, a count column or a text column, ties by name;
+`--keep` (name or label) makes the sort stand, so every row added or rebound later
+takes its place, and `row move` and `row order` are refused, exit 1, naming
+`row sort <table> --manual`, which ends it and leaves the rows where they
+are. `col move <table> <col>` takes the same four places and prints `TABLE
+COL MOVE table= col= place= [of=]`. `col add <table>
+<name[:projection[:fold[:label]]]>` adds one column, last or at a place:
+`TABLE COL ADD table= col= place=`. `col del <table> <col>` prints `TABLE
+COL DEL table= col=` and is refused, exit 1, writing nothing, while the
+column holds a member (the refusal names the members and the `cell remove`
+to run) or a text value, while a `pct(...)` column reads it, and when it is
+the last column. Quote a column that has parentheses, `'share:pct(busy)'`.
 
 ### Columns, identity and output
 

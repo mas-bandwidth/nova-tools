@@ -27,7 +27,7 @@ func TestEveryCommandHasEquivalentDiscoverableHelp(t *testing.T) {
 			}
 		}
 	}
-	for _, group := range []string{"row", "cell", "member", "view"} {
+	for _, group := range []string{"row", "col", "cell", "member", "view"} {
 		_, want, _ := runTable("help", group)
 		for _, alias := range []string{"--help", "-h", "help"} {
 			code, got, errout := runTable(group, alias)
