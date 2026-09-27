@@ -81,7 +81,7 @@ do
     for k, v in pairs(h) do
       if type(k) ~= 'string' or type(v) ~= 'string' or
           not (k == 'order' or k == 'footer' or k == 'created_at' or k == 'epoch_key' or
-          k == 'epoch_field' or k == 'member_prefix' or k == 'hidden' or k == 'visible' or string.sub(k, 1, 4) == 'col:') then
+          k == 'epoch_field' or k == 'member_prefix' or k == 'hidden' or k == 'visible' or k == 'sort' or string.sub(k, 1, 4) == 'col:') then
         return nil, T.refuse('DEFINITION', tostring(k))
       end
     end
@@ -102,6 +102,7 @@ do
       cols[#cols + 1] = {name=col, projection=proj, noset=proj == 'text' or formula}
     end
     if #cols == 0 or table.concat(order, ',') ~= h.order then return nil, T.refuse('DEFINITION') end
+    if h.sort and not (string.match(h.sort, '^-?name$') or string.match(h.sort, '^-?label$')) then return nil, T.refuse('DEFINITION', 'sort') end
     for _, col in ipairs(cols) do
       local arg = string.match(col.projection, '^pct%(([%w_.-]+)%)$')
       if arg and (not seen[arg] or not string.match(h['col:' .. arg] or '', '^count:')) then return nil, T.refuse('DEFINITION', col.name) end
@@ -307,6 +308,81 @@ do
     T.stage(d, 'DEL', T.rowkey(d, row))
     T.stage(d, 'ZREM', T.rowskey(d), row)
   end
+  -- Order is state (Glenn 2026-09-27: "take column y and put it after column
+  -- z", "friends on top, machines on bottom"). T.reorder is the one move: the
+  -- item leaves the list and enters at first, last, before or after a
+  -- reference; a permutation, nothing added, nothing lost (tla/TableOrder.tla).
+  function T.split(s)
+    local list = {}
+    for item in string.gmatch(s or '', '[^,]+') do list[#list + 1] = item end
+    return list
+  end
+  function T.reorder(list, item, where, ref, missing)
+    local out, found, at = {}, false, nil
+    for _, v in ipairs(list) do if v == item then found = true else out[#out + 1] = v end end
+    if not found then return nil, missing(item) end
+    if where == 'first' then at = 1
+    elseif where == 'last' then at = #out + 1
+    elseif where == 'before' or where == 'after' then
+      if ref == item then return nil, T.refuse('SELF', tostring(item)) end
+      for i, v in ipairs(out) do if v == ref then at = where == 'before' and i or i + 1 end end
+      if not at then return nil, missing(ref) end
+    else return nil, T.refuse('WHERE', tostring(where)) end
+    table.insert(out, at, item)
+    return out
+  end
+  function T.norow(row) return T.refuse('NOROW', tostring(row)) end
+  function T.nocol(col) return T.refuse('NOCOL', '', tostring(col)) end
+  -- T.sorted(d, by, desc): the table's rows (and the rows this call adds or
+  -- rewrites, d.touched) in the order of name, label, or a column's value (a
+  -- count, or a text value); ties by name, so the result is one order only.
+  function T.sorted(d, by, desc)
+    local rows, seen, keys = {}, {}, {}
+    for _, row in ipairs(redis.call('ZRANGE', T.rowskey(d), 0, -1)) do
+      if not (d.removed and d.removed[row]) then rows[#rows + 1] = row; seen[row] = true end
+    end
+    for _, row in ipairs(T.sortedkeys(d.touched or {})) do
+      if not seen[row] then rows[#rows + 1] = row; seen[row] = true end
+    end
+    local col
+    if by ~= 'name' and by ~= 'label' then
+      col = T.col(d, by)
+      if not col then return nil, T.nocol(by) end
+      if col.noset and col.projection ~= 'text' then return nil, T.refuse('SORTKEY', by) end
+    end
+    for _, row in ipairs(rows) do
+      local h = (d.touched and d.touched[row]) or T.hash(T.rowkey(d, row))
+      if by == 'name' then keys[row] = string.lower(row)
+      elseif by == 'label' then keys[row] = string.lower((h.label and h.label ~= '') and h.label or row)
+      elseif col.projection == 'text' then keys[row] = string.lower(h['text:' .. by] or '')
+      else
+        local bound = h['key:' .. by]
+        local key = (bound and bound ~= '') and bound or T.cellkey(d, row, by)
+        local n = redis.call('ZCARD', key)
+        if h.exclude and h.exclude ~= '' and redis.call('ZSCORE', key, h.exclude) then n = n - 1 end
+        keys[row] = n
+      end
+    end
+    table.sort(rows, function(a, b)
+      if keys[a] ~= keys[b] then
+        if desc then return keys[a] > keys[b] end
+        return keys[a] < keys[b]
+      end
+      return a < b
+    end)
+    return rows
+  end
+  -- T.rank(d, rows): the rows' order written as ranks 1..n, in one ZADD,
+  -- only when it differs from the order the store holds.
+  function T.rank(d, rows)
+    local have = redis.call('ZRANGE', T.rowskey(d), 0, -1)
+    local same = #have == #rows
+    for i, row in ipairs(rows) do if have[i] ~= row then same = false end end
+    if same or #rows == 0 then return end
+    local cmd = {'ZADD', T.rowskey(d)}
+    for i, row in ipairs(rows) do cmd[#cmd + 1] = tostring(i); cmd[#cmd + 1] = row end
+    d.commands[#d.commands + 1] = cmd
+  end
   -- Untrimmed change streams are the receipt. All validation (including
   -- stream/revision bounds and ACLs) precedes all writes; XADD is last.
   function T.finish(d, verb, args, opts, reply)
@@ -323,6 +399,14 @@ do
           return T.refuse('STREAMFULL', stream)
         end
       end
+    end
+    -- a standing sort (set by row sort --keep) places the rows this call
+    -- added or relabelled; the rank in the store is always the order drawn
+    if d.h.sort and d.touched then
+      local by, desc = string.match(d.h.sort, '^-?(%a+)$'), string.sub(d.h.sort, 1, 1) == '-'
+      local rows, why = T.sorted(d, by, desc)
+      if not rows then return why end
+      T.rank(d, rows)
     end
     local outcome = #d.commands == 0 and not d.newtemplate and d.snap._present ~= '0' and 'noop' or 'changed'
     if d.newtemplate then
@@ -410,6 +494,8 @@ do
     T.hset(d.commands, T.rowkey(d, row), h)
     T.stage(d, 'ZADD', T.rowskey(d), rank, row)
     for _, col in ipairs(d.cols) do d.cells[T.place(row, col.name)] = true end
+    d.touched = d.touched or {}
+    d.touched[row] = h
     return h
   end
   function T.list(values)
@@ -557,7 +643,8 @@ do
     local spec = T.decode(args[2])
     if type(spec) ~= 'table' or not next(spec) then return nil, T.refuse('DEFINITION') end
     for key in pairs(spec) do
-      if key ~= 'footer' and key ~= 'columns' and key ~= 'rename' and key ~= 'hidden' and key ~= 'hide' and key ~= 'show' and key ~= 'visible' then return nil, T.refuse('BADSET', key) end
+      if key ~= 'footer' and key ~= 'columns' and key ~= 'rename' and key ~= 'hidden' and key ~= 'hide' and key ~= 'show' and key ~= 'visible' and
+          key ~= 'col_add' and key ~= 'col_del' and key ~= 'col_move' and key ~= 'row_move' and key ~= 'row_order' and key ~= 'row_sort' then return nil, T.refuse('BADSET', key) end
     end
     if spec.footer ~= nil and type(spec.footer) ~= 'string' then return nil, T.refuse('DEFINITION') end
     if spec.rename ~= nil and not T.name(spec.rename) then return nil, T.refuse('NAME') end
@@ -595,20 +682,102 @@ do
       for col in string.gmatch(h.order or '', '[^,]+') do if hidden[col] then list[#list+1] = col end end
       h.hidden = table.concat(list, ',')
     end
+    -- one column added, removed or moved; the rest of the definition stands
+    if spec.col_add ~= nil then
+      local a = spec.col_add
+      if type(a) ~= 'table' or not T.name(a.name) or type(a.def) ~= 'string' then return nil, T.refuse('DEFINITION') end
+      if h['col:' .. a.name] then return nil, T.refuse('COLEXISTS', a.name) end
+      local list = T.split(h.order)
+      list[#list + 1] = a.name
+      if a.where ~= nil then
+        local moved, why = T.reorder(list, a.name, a.where, a.ref, T.nocol)
+        if not moved then return nil, why end
+        list = moved
+      end
+      h['col:' .. a.name], h.order = a.def, table.concat(list, ',')
+    end
+    if spec.col_del ~= nil then
+      local gone = spec.col_del
+      if type(gone) ~= 'string' or not h['col:' .. gone] then return nil, T.nocol(gone) end
+      local list, hidden = {}, {}
+      for _, col in ipairs(T.split(h.order)) do
+        if col ~= gone then
+          list[#list + 1] = col
+          if string.match(h['col:' .. col] or '', '^pct%(([%w_.-]+)%)') == gone then return nil, T.refuse('DEPENDS', gone, col) end
+        end
+      end
+      if #list == 0 then return nil, T.refuse('LASTCOL', gone) end
+      for _, col in ipairs(T.split(h.hidden)) do if col ~= gone then hidden[#hidden + 1] = col end end
+      h['col:' .. gone], h.order = nil, table.concat(list, ',')
+      if h.hidden ~= nil then h.hidden = table.concat(hidden, ',') end
+    end
+    if spec.col_move ~= nil then
+      local m = spec.col_move
+      if type(m) ~= 'table' or type(m.col) ~= 'string' then return nil, T.refuse('DEFINITION') end
+      local list, why = T.reorder(T.split(h.order), m.col, m.where, m.ref, T.nocol)
+      if not list then return nil, why end
+      h.order = table.concat(list, ',')
+    end
+    -- the rows' order: one row moved, some rows named first, or all sorted
+    local rows
+    if (spec.row_move ~= nil or spec.row_order ~= nil) and h.sort and spec.row_sort == nil then
+      return nil, T.refuse('SORTED', h.sort)
+    end
+    if spec.row_sort ~= nil then
+      local o = spec.row_sort
+      if type(o) ~= 'table' then return nil, T.refuse('DEFINITION') end
+      if o.manual then h.sort = nil
+      else
+        if type(o.by) ~= 'string' or o.by == '' then return nil, T.refuse('SORTKEY', tostring(o.by)) end
+        if o.keep and o.by ~= 'name' and o.by ~= 'label' then return nil, T.refuse('SORTKEEP', o.by) end
+        local why
+        rows, why = T.sorted(d, o.by, o.desc and true or false)
+        if not rows then return nil, why end
+        if o.keep then h.sort = (o.desc and '-' or '') .. o.by else h.sort = nil end
+      end
+    end
+    if spec.row_order ~= nil then
+      if not T.list(spec.row_order) then return nil, T.refuse('ROW') end
+      local named = {}
+      for _, row in ipairs(spec.row_order) do named[row] = true end
+      local have, out = rows or redis.call('ZRANGE', T.rowskey(d), 0, -1), {}
+      local present = {}
+      for _, row in ipairs(have) do present[row] = true end
+      for _, row in ipairs(spec.row_order) do
+        if not present[row] then return nil, T.norow(row) end
+        out[#out + 1] = row
+      end
+      for _, row in ipairs(have) do if not named[row] then out[#out + 1] = row end end
+      rows = out
+    end
+    if spec.row_move ~= nil then
+      local m = spec.row_move
+      if type(m) ~= 'table' or type(m.row) ~= 'string' then return nil, T.refuse('ROW') end
+      local why
+      rows, why = T.reorder(rows or redis.call('ZRANGE', T.rowskey(d), 0, -1), m.row, m.where, m.ref, T.norow)
+      if not rows then return nil, why end
+    end
     local cols, err = T.shape(h)
     if not cols then return nil, err end
-    if spec.columns then
+    if spec.columns or spec.col_add or spec.col_del then
       local loss = T.reshape(d, cols)
       if loss then return nil, loss end
     end
+    if rows then T.rank(d, rows) end
     local moved = 0
     if spec.rename then
       local count, problem = T.rename(d, spec.rename)
       if count == nil then return nil, problem end
       moved = count
     end
+    local function differs(a, b)
+      for k, v in pairs(a) do if b[k] ~= v then return true end end
+      for k in pairs(b) do if a[k] == nil then return true end end
+      return false
+    end
+    d.definition_changed = spec.footer ~= nil or spec.columns ~= nil or spec.hidden ~= nil or spec.visible ~= nil or spec.hide ~= nil or spec.show ~= nil or
+      ((spec.col_add ~= nil or spec.col_del ~= nil or spec.col_move ~= nil or spec.row_sort ~= nil) and differs(d.h, h))
     d.h, d.cols = h, cols
-    d.definition_changed = spec.footer ~= nil or spec.columns ~= nil or spec.hidden ~= nil or spec.visible ~= nil or spec.hide ~= nil or spec.show ~= nil
     return {'OK', moved}
   end))
   redis.register_function('ns_table_row_del', T.write('row_del', 3, function(d, args)

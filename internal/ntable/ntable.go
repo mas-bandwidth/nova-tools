@@ -181,6 +181,7 @@ type Table struct {
 	FooterLabel string
 	Hidden      []string // columns kept, read and used by formulas, but not drawn (set --hide)
 	HiddenTable bool     // the whole table kept and read, not drawn by watch (set --hidden / --visible)
+	Sort        string   // the standing row sort (row sort --keep): name, -name, label, -label; empty is by hand
 	Rows        []Row
 }
 
@@ -498,6 +499,7 @@ func decodeDefinition(name string, h map[string]string) (Table, bool, error) {
 		t.Hidden = strings.Split(v, ",")
 	}
 	t.HiddenTable = h["visible"] == "0"
+	t.Sort = h["sort"]
 	order := h["order"]
 	if order == "" {
 		return Table{}, true, fmt.Errorf("table %s has no column order", name)

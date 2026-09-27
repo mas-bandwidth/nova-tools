@@ -183,6 +183,13 @@ nova-table row set <table> <row> <col>=<value> ...
 nova-table row hide <table> <row> ...
 nova-table row show <table> <row> ...
 nova-table row del <table> <row>
+nova-table row move <table> <row> --first | --last | --before <row> | --after <row>
+nova-table row order <table> <row> <row> ...
+nova-table row sort <table> [--by name|label|<col>] [--desc] [--keep]
+nova-table row sort <table> --manual
+nova-table col add <table> <name[:projection[:fold[:label]]]> [--first | --last | --before <col> | --after <col>]
+nova-table col del <table> <col>
+nova-table col move <table> <col> --first | --last | --before <col> | --after <col>
 nova-table cell add <table> <row> <col> <member>... [--score <n>]
 nova-table cell remove <table> <row> <col> <member>...
 nova-table cell move <table> <row> <from-col> <to-col> <member>...
@@ -204,6 +211,12 @@ nova-table watch <table>[,<table>...] | --view <name> [--every <duration>] [--ou
 | `list` | `TABLE LIST tables=<n>`, then `TABLE table=<t> columns=<n> rows=<n>` per table |
 | `row add` | `TABLE ROW ADD table=<t> row=<r> cols=<n> bound=<n>`; a row already there keeps its place and its cells; a binding wants `--owner` |
 | `row del` | `TABLE ROW DEL table=<t> row=<r> existed=<0\|1>`; its owned cells go with it |
+| `row move` | `TABLE ROW MOVE table=<t> row=<r> place=<first\|last\|before\|after> [of=<row>]`; the other rows keep their order |
+| `row order` | `TABLE ROW ORDER table=<t> first=<r,r,...>`; the named rows first, in the order named; the rest follow in theirs |
+| `row sort` | `TABLE ROW SORT table=<t> by=<key> desc=<bool> keep=<bool>`, or `manual=true` |
+| `col add` | `TABLE COL ADD table=<t> col=<c> place=<...>`; last unless a place is named |
+| `col del` | `TABLE COL DEL table=<t> col=<c>`; refused while the column holds a member or a text value, or a percentage reads it |
+| `col move` | `TABLE COL MOVE table=<t> col=<c> place=<...>`; the other columns keep their order |
 | `cell add`, `cell remove` | `TABLE CELL table=<t> row=<r> col=<c> n=<count after>`; `--score` is the member's place (the unix ms when omitted) |
 | `cell move` | `TABLE MOVE table=<t> row=<r> member=<m> from=<c> to=<c> n=<count of to>`; one call, the score kept; `NOTMEMBER` refused |
 | `cell members` | `TABLE CELL ... n=<n>`, then `TABLE MEMBER table=<t> row=<r> col=<c> member=<m> score=<s>` per member |
@@ -267,6 +280,49 @@ The timestamp, title, pooled summary and tables form the frame. The summary uses
 the same table snapshot as the body; unread inputs print `?`. ETA has no value
 until change-stream rate sampling is implemented. Edit a view to change its
 tables or title without restarting watch.
+
+## Order
+
+Order is state the table keeps. Rows draw in the order they were added and
+columns in the order they were declared, until a verb moves them. Every order
+verb is one call to the staged `set` kernel: checked whole, then written, one
+receipt; a refusal writes nothing. A move to where the thing already is
+leaves a `noop` receipt.
+
+```
+$ nova-table render crew
+crew    | busy | idle | note
+--------+------+------+-----
+studio  |    1 |    0 |
+hetzner |    0 |    0 |
+stella  |    0 |    0 |
+rowan   |    0 |    0 | here
+$ nova-table row order crew rowan stella        # friends on top, machines keep their order below
+$ nova-table row move crew hetzner --before studio
+$ nova-table col move crew note --first
+$ nova-table col add crew 'share:pct(busy)' --after busy
+```
+
+| you want | run |
+| --- | --- |
+| one row or column somewhere else | `row move` / `col move` with `--first`, `--last`, `--before <x>` or `--after <x>` |
+| some rows on top, in a given order | `row order <table> <row> <row> ...` |
+| all rows sorted once | `row sort <table> --by name` (or `label`, a count column, a text column; `--desc` reverses; ties go by name) |
+| rows kept sorted as rows arrive | `row sort <table> --by name --keep` (name or label) |
+| to place rows by hand again | `row sort <table> --manual` |
+| one more column | `col add <table> <spec>`, with a place or last |
+| one column gone | `col del <table> <col>` |
+
+While a sort stands, `row move` and `row order` are refused and name
+`row sort <table> --manual`. `col del` refuses a column that holds members
+(naming them and the `cell remove` to run), a text column with a value (clear
+it with `row set <table> <row> <col>=`), a column a `pct(...)` column reads
+(remove that one first) and the last column. Quote a column spec that has
+parentheses: the shell reads `pct(busy)` unquoted as a pattern.
+
+`ns_table_bind` (the sprint's stream block) states its rows' order itself and
+is not re-sorted. The model is `tla/TableOrder.tla`; the tests are
+`internal/ntable/order_functional_test.go`.
 
 ## The render rules
 

@@ -4871,6 +4871,28 @@ columns= rows=` then one `TABLE ROW table= row= <col>=<count> ...` per row
 as text and nothing else, nothing at all when it is empty. A value holding
 a space is quoted (`row="swarm: cards"`).
 
+**Order.** Rows draw in the order they were added and columns in the
+order they were declared, until a verb moves them; each of these is one
+exchange, checked whole before the first write, with one receipt. `row move
+<table> <row> --first | --last | --before <row> | --after <row>` prints
+`TABLE ROW MOVE table= row= place= [of=]` and moves that row only. `row
+order <table> <row> <row> ...` prints `TABLE ROW ORDER table= first=`: the
+named rows first, in the order named, the rest after them in the order they
+had. `row sort <table> [--by name|label|<col>] [--desc]` prints `TABLE ROW
+SORT table= by= desc= keep=` and sorts once, by the row's name (the
+default), its label, a count column or a text column, ties by name;
+`--keep` (name or label) makes the sort stand, so every row added later
+takes its place, and `row move` and `row order` are refused, exit 1, naming
+`row sort <table> --manual`, which ends it and leaves the rows where they
+are. `col move <table> <col>` takes the same four places and prints `TABLE
+COL MOVE table= col= place= [of=]`. `col add <table>
+<name[:projection[:fold[:label]]]>` adds one column, last or at a place:
+`TABLE COL ADD table= col= place=`. `col del <table> <col>` prints `TABLE
+COL DEL table= col=` and is refused, exit 1, writing nothing, while the
+column holds a member (the refusal names the members and the `cell remove`
+to run) or a text value, while a `pct(...)` column reads it, and when it is
+the last column. Quote a column that has parentheses, `'share:pct(busy)'`.
+
 **Watching.** `watch <table>[,<table>...] [--every 1s] [--out <file>]
 [--title <text>] [--hide-zero-rows] [--once]` renders the named tables once
 per tick, one blank line between two that print, the title first. With no

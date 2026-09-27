@@ -41,6 +41,12 @@ usage:
   nova-table row set <table> <row> <col>=<value> ...
   nova-table row hide <table> <row> ...   |   row show <table> <row> ...
   nova-table row del <table> <row>
+  nova-table row move <table> <row> --first | --last | --before <row> | --after <row>
+  nova-table row order <table> <row> <row> ...          (these first, in this order; the rest keep theirs)
+  nova-table row sort <table> [--by name|label|<col>] [--desc] [--keep]   |   row sort <table> --manual
+  nova-table col add <table> <name[:projection[:fold[:label]]]> [--first | --last | --before <col> | --after <col>]
+  nova-table col del <table> <col>
+  nova-table col move <table> <col> --first | --last | --before <col> | --after <col>
   nova-table cell add <table> <row> <col> <member>... [--score <n>]
   nova-table cell remove <table> <row> <col> <member>...
   nova-table cell move <table> <row> <from-col> <to-col> <member>...
@@ -74,6 +80,13 @@ refuse it, naming the --owner verb. --exclude names one member the row's
 counts and members leave out. render prints the table and nothing else,
 nothing at all when it is empty; watch redraws it in place every --every
 (1s) with no shell loop, or publishes it to --out by atomic rename.
+
+Order is kept by the table: rows draw in the order they were added and
+columns in the order they were declared, until a verb moves them. row sort
+orders the rows once; with --keep (by name or label) the sort stands, every
+row added later takes its place, and row move and row order are refused
+until row sort --manual. col del refuses a column that holds members or
+text, naming what to move or clear first.
 
 exit codes: 0 done, 1 refused, 2 usage
 
@@ -151,6 +164,8 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 		return cmdList(args[1:], stdout, stderr)
 	case "row":
 		return cmdRow(args[1:], stdout, stderr)
+	case "col":
+		return cmdCol(args[1:], stdout, stderr)
 	case "cell":
 		return cmdCell(args[1:], stdout, stderr)
 	case "clear":
