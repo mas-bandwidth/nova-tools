@@ -154,31 +154,35 @@ temp directory under a 60 s cap:
         -deadlock -metadir /tmp/tlc-$c/meta -config $cfg MCTableSession.tla > $c.log 2>&1 &
     done; wait
 
-The measurements below are for Rowan's `0cece7980` model. #4458 further
-strengthens `NoFalseAlarm`: every return from the cached-error path is a
-violation, even if the store is still down, so the statement about a fresh
-dial matches the invariant. TLC of that one-line strengthening is pending.
+Rowan reported the exact-head run on space on 2026-09-27. At `a03a52655`,
+all nine configurations passed their expected outcomes in 8 s: the positive
+model retained 87,925 states and the stronger cached-error witness failed in
+5 states. The strengthened `NoFalseAlarm` rejects a cached error even while
+the store remains down, matching the fresh-dial requirement.
 
-Measured on space, 2026-09-27, load 9, all nine at once: 7 s wall. Every
-input of up to four lines over six kinds of line, with and without
-`--keep-going`, from each state of the store.
+At model commit `b0107f910`, the added lost-reply transition and `AtMostOnce`
+invariant bring the positive run to 92,331 distinct states, thirteen invariants
+and three liveness properties. All ten configurations ran in 9 s; all eight
+negative witnesses were caught. These are Rowan's bench measurements, not a
+new run on the reader's machine. Inputs have up to four lines over six kinds
+of line, with and without `--keep-going`, from each state of the store.
 
-| config | result | time |
-|---|---|---|
-| `MCTableSession` | no error, 87,925 distinct states: TypeOK, NothingStartsAfterStop, StopOnlyWhenStopped, NoFalseAlarm, ConnectionFailureIsTwo, StopsAtFirstFailure, ExitIsHighest, KeepGoingReadsEveryLine, EndOfInputMeansNoFailure, EndsForAReason, LineInHand, LiveMeansUp; TermEnds, IntLeavesWatch and VerbEnds under weak fairness of what the session owes | 7 s |
-| `MCTableSessionBrokenTerm` | NothingStartsAfterStop violated in 5 states: `watch`, SIGTERM, the watch returns 0, the next line `ok` is run (ed959e1a3: watch.go:75, watchLoop, session.go:126) | 2 s |
-| `MCTableSessionBrokenTermLive` | TermEnds violated: `watch`, SIGTERM, the watch returns 0 and the session is still there | 4 s |
-| `MCTableSessionBrokenStale` | NoFalseAlarm violated in 6 states: a line fails while the store refuses, the store comes up, the next line answers the kept error and dials nothing (ed959e1a3: session.go:88, a pool of one; go-redis v9.22.0 pool.go:692) | 2 s |
-| `MCTableSessionBrokenClass` | ConnectionFailureIsTwo violated in 3 states: the store gone from its socket path, the line ends with code 1 (ed959e1a3: main.go:303) | 2 s |
-| `MCTableSessionBrokenLong` | KeepGoingReadsEveryLine violated in 2 states: a line too long ends a `--keep-going` session with a line unread (ed959e1a3: session.go:135) | 1 s |
-| `MCTableSessionBrokenReplay` | AtMostOnce violated in 3 states: a write's reply is lost and the write is sent again (ed959e1a3: session.go:88 opens with go-redis's command retries; v9.22.0 error.go shouldRetry answers true for io.EOF; found by Stella: code 0 and a second receipt) | 3 s |
-| `MCTableSessionBrokenOn` | StopsAtFirstFailure violated: a line is read after a failed one without `--keep-going` | 2 s |
-| `MCTableSessionBrokenLast` | ExitIsHighest violated: `usage` then `ok` exits 0 | 2 s |
-| `MCTableSessionBrokenInt` | StopOnlyWhenStopped violated: SIGINT inside a watch ends the session | 2 s |
+| config | result |
+|---|---|
+| `MCTableSession` | no error, 92,331 distinct states: TypeOK, NothingStartsAfterStop, StopOnlyWhenStopped, NoFalseAlarm, ConnectionFailureIsTwo, AtMostOnce, StopsAtFirstFailure, ExitIsHighest, KeepGoingReadsEveryLine, EndOfInputMeansNoFailure, EndsForAReason, LineInHand, LiveMeansUp; TermEnds, IntLeavesWatch and VerbEnds under weak fairness of what the session owes |
+| `MCTableSessionBrokenTerm` | NothingStartsAfterStop violated in 5 states: `watch`, SIGTERM, the watch returns 0, the next line `ok` is run (ed959e1a3: watch.go:75, watchLoop, session.go:126) |
+| `MCTableSessionBrokenTermLive` | TermEnds violated: `watch`, SIGTERM, the watch returns 0 and the session is still there |
+| `MCTableSessionBrokenStale` | NoFalseAlarm violated in 5 states: a line answers the cached error without making a fresh dial, whether or not the store recovered (ed959e1a3: session.go:88, a pool of one; go-redis v9.22.0 pool.go:692) |
+| `MCTableSessionBrokenClass` | ConnectionFailureIsTwo violated in 3 states: the store gone from its socket path, the line ends with code 1 (ed959e1a3: main.go:303) |
+| `MCTableSessionBrokenLong` | KeepGoingReadsEveryLine violated in 2 states: a line too long ends a `--keep-going` session with a line unread (ed959e1a3: session.go:135) |
+| `MCTableSessionBrokenReplay` | AtMostOnce violated in 3 states: a write's reply is lost and the write is sent again (ed959e1a3: session.go:88 opens with go-redis's command retries; v9.22.0 error.go shouldRetry answers true for io.EOF; found by Stella: code 0 and a second receipt) |
+| `MCTableSessionBrokenOn` | StopsAtFirstFailure violated: a line is read after a failed one without `--keep-going` |
+| `MCTableSessionBrokenLast` | ExitIsHighest violated: `usage` then `ok` exits 0 |
+| `MCTableSessionBrokenInt` | StopOnlyWhenStopped violated: SIGINT inside a watch ends the session |
 
-Term, Stale, Class and Long are defects of the shell at ed959e1a3, each
-reproduced on a store by the second reader of #4458 and checked by hand
-against the lines named. On, Last and Int are misimplementations the
+Term, Stale, Class, Long and Replay are defects of the shell at ed959e1a3,
+reproduced on a store by the second reader or Stella and checked against
+the lines named. On, Last and Int are misimplementations the
 invariants are shown to catch; the code at ed959e1a3 has none of them. What a
 stop does to a verb in flight is left open: the verb may finish, or the
 process may end inside it. The model says only that no line starts afterwards.
