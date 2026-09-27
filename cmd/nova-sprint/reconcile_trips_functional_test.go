@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/deal"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/redis/go-redis/v9"
@@ -27,12 +27,9 @@ import (
 // record.
 var reconcileTripBudget = map[string]int64{
 	"pass":            3,
-	"refill":          3, // the wake, the deal input, the ack
+	"fleet":           1,
 	"dev-red":         1,
-	"done-already":    1,
-	"expire":          2,
 	"fleet-deploy":    1,
-	"fsck":            1,
 	"land":            1,
 	"land-watch":      1,
 	"progress":        2,
@@ -48,16 +45,18 @@ var reconcileTripBudget = map[string]int64{
 // streams with two waiting cards each, and reads every duty's trips off its
 // DUTY line.
 func TestReconcilePassTrips(t *testing.T) {
-	addr, c := sprintRedis(t)
-	t.Setenv("NOVA_SPRINT_REDIS", addr)
-	t.Setenv("NOVA_REDIS_ADDR", "")
-	t.Setenv("NOVA_FRIEND", "")
+	t.Parallel()
+
+	// a throwaway Redis with the library, no process-wide seam (t.Setenv is
+	// not parallel-safe)
+	addr := startThrowawayRedis(t)
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = c.Close() })
 	ctx := context.Background()
+	if err := fn.Load(ctx, c); err != nil {
+		t.Fatalf("load nova_sprint library: %v", err)
+	}
 	st := store.New(c)
-	ssh := &verbSSH{}
-	seams := reconcileSeams
-	reconcileSeams = func(*store.Store) (deal.Dialer, deal.PRs) { return ssh, verbForge{} }
-	t.Cleanup(func() { reconcileSeams = seams })
 
 	now := strconv.FormatInt(time.Now().UnixMilli(), 10)
 	for _, b := range []string{"batman", "captainamerica", "hetzner", "hulk", "space", "studio", "superman", "vision"} {
@@ -79,7 +78,7 @@ func TestReconcilePassTrips(t *testing.T) {
 	for i, s := range []string{"swarm: cards", "friends"} {
 		for j := 0; j < 2; j++ {
 			id := fmt.Sprintf("c%d%d", i, j)
-			code, out, errOut := runTaskCLI("push", "--actor", "rowan", "--id", id, "--stream", s, "--waiting",
+			code, out, errOut := runTaskCLI("push", "--redis", addr, "--actor", "rowan", "--id", id, "--stream", s, "--waiting",
 				"--kind", "build", "--repo", "mas-bandwidth/nova-tools", "--title", "t")
 			if code != 0 {
 				t.Fatalf("push %s: %d %q %q", id, code, out, errOut)
@@ -140,7 +139,9 @@ func TestReconcilePassTrips(t *testing.T) {
 	for k := range got {
 		keys = append(keys, k)
 	}
-	sort.Slice(keys, func(i, j int) bool { return got[keys[i]] > got[keys[j]] || got[keys[i]] == got[keys[j]] && keys[i] < keys[j] })
+	sort.Slice(keys, func(i, j int) bool {
+		return got[keys[i]] > got[keys[j]] || got[keys[i]] == got[keys[j]] && keys[i] < keys[j]
+	})
 	var sum, sumFirst int64
 	for _, k := range keys {
 		sum += got[k]

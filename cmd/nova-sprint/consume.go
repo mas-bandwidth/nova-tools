@@ -27,13 +27,10 @@ import (
 	"os"
 	"os/signal"
 	"sort"
-	"strings"
-	"sync"
 	"syscall"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/consume"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
@@ -53,17 +50,10 @@ func init() {
 		Summary: "run one consumer (ok-to-friend, pr-to-read, hold-to-fix): consume <group> once|run --redis <addr>, or consume list",
 		Run:     runConsume,
 	})
-	registerReconcileDuty(consume.GroupOkFriend, func(st *store.Store) (reconcileDuty, error) {
-		return &okFriendDuty{st: st, started: map[string]bool{}}, nil
-	})
-	registerReconcileDuty(groupPRToRead, func(st *store.Store) (reconcileDuty, error) {
-		return &prReadDuty{st: st, out: consumePRReadOut}, nil
-	})
+	// ok-to-friend and pr-to-read were reconciler duties until 2026-09-27
+	// (Glenn: "Go for retiring"): the pass runs the copy model only. They
+	// remain verbs here for a sprint of the sprint-store model.
 }
-
-// consumePRReadOut receives the pr-to-read duty's receipt lines (PRREAD
-// JOINED, READ QUEUED): the reconciler's stdout, its log.
-var consumePRReadOut io.Writer = os.Stdout
 
 // Exit 0 every pass finished (an event left pending for want of readers is
 // not a failure; its line says PENDING); 1 a pass failed; 2 usage or a
@@ -254,132 +244,4 @@ func okFriendPass(ctx context.Context, st *store.Store, only, consumer, actor st
 		}
 	}
 	return code
-}
-
-// okFriendDuty is ok-to-friend as a reconcile duty: every pass, each open
-// sprint's log once, without blocking, as consumer reconciler-<instance>. A
-// new lease instance reclaims what a killed one left pending (Start). No
-// sprint starts with less than the lease write margin left (#3805): the
-// duty returns what it routed and names the sprints it left.
-type okFriendDuty struct {
-	st      *store.Store
-	started map[string]bool // "<consumer>/<sprint>"
-}
-
-func (d *okFriendDuty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, error) {
-	var counts reconcile.Counts
-	sprints, err := consumeSprints(ctx, d.st, "")
-	if err != nil {
-		return counts, fmt.Errorf("ok-to-friend: %w", err)
-	}
-	consumer := "reconciler-" + l.Instance()
-	var errs []string
-	for i, s := range sprints {
-		if err := l.Bounded(0); errors.Is(err, reconcile.ErrFenced) {
-			return counts, err
-		} else if err != nil {
-			prior := ""
-			if len(errs) > 0 {
-				prior = strings.Join(errs, "; ") + "; "
-			}
-			return counts, fmt.Errorf("ok-to-friend: %s%d of %d sprint(s) not started (%s): %w",
-				prior, len(sprints)-i, len(sprints), strings.Join(sprints[i:], ","), err)
-		}
-		o := &consume.OkFriend{Store: d.st, Sprint: s, Consumer: consumer, Actor: "reconciler", Block: -1}
-		if key := consumer + "/" + s; !d.started[key] {
-			if err := o.Start(ctx); err != nil {
-				errs = append(errs, fmt.Sprintf("%s: %v", s, err))
-				continue
-			}
-			d.started[key] = true
-		}
-		n, err := o.Pass(ctx)
-		counts.Routed += n
-		if err != nil && !pendingOnReaders(err) {
-			errs = append(errs, fmt.Sprintf("%s: %v", s, err))
-		}
-	}
-	if len(errs) > 0 {
-		return counts, fmt.Errorf("ok-to-friend: %s", strings.Join(errs, "; "))
-	}
-	return counts, nil
-}
-
-// prReadDuty is pr-to-read and hold-to-fix as a reconcile duty: every pass,
-// every open sprint in `sprints` (read again each pass, so a sprint opened
-// after the reconciler started is joined on the next pass) gets one
-// pr-to-read pass and then one hold-to-fix pass (#3799) under its own
-// lease:route:<S> (consume.PRReadSprints with Hold), as consumer
-// reconciler-<instance>. A sprint a `nova-sprint route --sprint <S>` process
-// serves is held by it and skipped. The passes run off the reconciler's
-// goroutine, one at a time, since a pass may run git ls-remote; Run reports
-// what the last finished pass moved and its error.
-type prReadDuty struct {
-	st  *store.Store
-	out io.Writer
-
-	mu      sync.Mutex
-	all     *consume.PRReadSprints
-	busy    bool
-	moved   int
-	lastErr error
-	ctx     context.Context
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
-}
-
-func (d *prReadDuty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	counts, err := reconcile.Counts{Routed: d.moved}, d.lastErr
-	d.moved, d.lastErr = 0, nil
-	if d.busy || l.Fenced() {
-		return counts, err
-	}
-	if d.ctx == nil {
-		d.ctx, d.cancel = context.WithCancel(ctx)
-	}
-	if d.ctx.Err() != nil {
-		return counts, err
-	}
-	instance := "reconciler-" + l.Instance()
-	if d.all == nil || d.all.Instance != instance {
-		d.all = &consume.PRReadSprints{Store: d.st, Instance: instance, Actor: "reconciler",
-			Remote: consumePRReadRemote, Out: d.out, Hold: true}
-	}
-	all, wctx := d.all, d.ctx
-	d.busy = true
-	d.wg.Add(1)
-	go func() {
-		defer d.wg.Done()
-		n, perr := all.Pass(wctx)
-		d.mu.Lock()
-		d.moved += n
-		if perr != nil {
-			d.lastErr = perr
-		}
-		d.busy = false
-		d.mu.Unlock()
-	}()
-	return counts, err
-}
-
-// Stop cancels the pass in flight and waits for it until ctx ends; the pass
-// gives back its lease:route:<S> on the way (PRRead.OnceN).
-func (d *prReadDuty) Stop(ctx context.Context) []string {
-	d.mu.Lock()
-	if d.cancel != nil {
-		d.cancel()
-	}
-	d.mu.Unlock()
-	waited := make(chan struct{})
-	go func() {
-		d.wg.Wait()
-		close(waited)
-	}()
-	select {
-	case <-waited:
-	case <-ctx.Done():
-	}
-	return nil
 }

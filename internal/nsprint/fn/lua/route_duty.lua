@@ -691,7 +691,7 @@ do
         if f == 'rowan' then coordinator = f end
       end
     end
-    local epoch = NS.task.epoch()
+    local epoch = NS.card.epoch()
     for _, S in ipairs(sprints) do
       local stream = redis.call('HGET', 's:' .. S, 'stream')
       if not stream or stream == '' then stream = S end
@@ -774,7 +774,7 @@ do
       -- the PR record legs over the stream's working and merging tasks
       local ids = {}
       for _, w in ipairs({ 'working', 'merging' }) do
-        for _, id in ipairs(redis.call('ZRANGE', NS.task.wskey(epoch, stream, w), 0, -1)) do ids[#ids + 1] = id end
+        for _, id in ipairs(redis.call('ZRANGE', NS.card.wskey(epoch, stream, w), 0, -1)) do ids[#ids + 1] = id end
       end
       local cands, seen = {}, {}
       for _, id in ipairs(ids) do

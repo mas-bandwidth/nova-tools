@@ -31,20 +31,6 @@ do
     return string.sub(s, 1, #prefix) == prefix
   end
 
-  -- sprint_list(e, S, list): the sprint's dealer list (pool or waiting)
-  -- under epoch e (ws.SprintListAt).
-  local function sprint_list(e, S, list)
-    if e == 0 then return 's:' .. S .. ':' .. list end
-    return 's:' .. S .. ':' .. string.format('%d', e) .. ':' .. list
-  end
-
-  -- consumer_key(e, c, col): consumer c's set at col under epoch e
-  -- (ws.ConsumerKeyAt).
-  local function consumer_key(e, c, col)
-    if e == 0 then return c .. ':cards:' .. col end
-    return c .. ':' .. string.format('%d', e) .. ':cards:' .. col
-  end
-
   -- is_ref: a DEPENDS-ON entry that names a repository PR (<owner/repo>#<n>),
   -- deal.parseRef; anything else is a card label.
   local function is_ref(entry)
@@ -88,13 +74,13 @@ do
     -- leaves the default
     local ms = redis.pcall('HGET', 'cfg:deal', 'max_sessions')
     if type(ms) == 'string' then emit('max_sessions', ms) end
-    local e = NS.task.epoch()
+    local e = NS.card.epoch()
     for _, b in ipairs(sorted(redis.call('SMEMBERS', 'benches'))) do
       local d = tomap(redis.call('HGETALL', 'bench:' .. b .. ':desired'))
       local beat = tomap(redis.call('HGETALL', 'bench:' .. b .. ':beat'))
       local state = redis.call('HGET', 'bench:' .. b .. ':state', 'state')
       local ssh = tomap(redis.call('HGETALL', 'bench:' .. b .. ':ssh'))
-      local working = redis.call('ZCARD', consumer_key(e, 'bench:' .. b, 'working'))
+      local working = redis.call('ZCARD', NS.card.ckey(e, 'bench:' .. b, 'working'))
       -- enrolment (#3998): a seat whose ACL cannot read consumers deals as
       -- before, not enrolled, never refused
       local enrolled = redis.pcall('SISMEMBER', 'consumers', 'bench:' .. b)
@@ -135,9 +121,9 @@ do
             want_dep(S, (string.gsub(entry, '^%s+', ''):gsub('%s+$', '')))
           end
         end
-        local pool = redis.call('ZRANGE', sprint_list(e, S, 'pool'), 0, -1, 'WITHSCORES')
+        local pool = redis.call('ZRANGE', NS.card.skey(e, S, 'pool'), 0, -1, 'WITHSCORES')
         for i = 1, #pool, 2 do card('pool', pool[i], pool[i + 1]) end
-        for _, label in ipairs(sorted(redis.call('SMEMBERS', sprint_list(e, S, 'waiting')))) do
+        for _, label in ipairs(sorted(redis.call('SMEMBERS', NS.card.skey(e, S, 'waiting')))) do
           card('waiting', label, '0')
         end
       end

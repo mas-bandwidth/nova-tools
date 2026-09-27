@@ -91,24 +91,31 @@ type stoppableDuty interface {
 	Stop(ctx context.Context) []string
 }
 
-// productionDuties is the loop's duty list: the refill and its deal pass over
-// Redis, then every registered duty. It returns the names in order. set
-// receives the deal pass's metrics (nx-g61); nil exports nothing. stops are
-// the Stop of every duty with work of its own past its Run, for the way out.
+// productionDuties is the loop's duty list: the fleet's state machine
+// (fleet.Step: bench UP/PROBING/DOWN), then every registered duty. It
+// returns the names in order. stops are the Stop of every duty with work of
+// its own past its Run, for the way out. set is kept for the deal pass's
+// metrics seam; the pass exports nothing through it now.
+//
+// The pass runs the copy model (primaries in stream cells, copies on
+// consumers, ends and reads through the one move, 02_card_move.lua). The
+// sprint-store model's duties are retired from the pass (Glenn 2026-09-27,
+// "Go for retiring", after the round-trip measurement: they made half the
+// pass's trips on a store that runs no sprint of that model): the refill's
+// deal pass over s:<S>:pool with its ssh launches, ok-to-friend, pr-to-read
+// with hold-to-fix, done-already, the expire sweep and the old card fsck.
+// Their verbs stay (consume, card fsck) for a sprint that still uses that
+// model; internal/nsprint/reconcile keeps their code and tests.
 func productionDuties(st *store.Store, set *metrics.Set) (duties []reconcile.Duty, names []string, stops []stoppableDuty, err error) {
-	dialer, prs := reconcileSeams(st)
-	refill := &reconcile.Refill{
-		Client: st.Client(),
-		Deal:   &deal.Pass{Dialer: dialer, PRs: prs, Metrics: set},
-	}
-	fleetRefill := func(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, error) {
+	_ = set
+	fleetStep := func(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, error) {
 		if err := fleet.Step(ctx, st.Client()); err != nil {
 			return reconcile.Counts{}, err
 		}
-		return refill.Run(ctx, l)
+		return reconcile.Counts{}, nil
 	}
-	duties = []reconcile.Duty{fleetRefill}
-	names = []string{"refill"}
+	duties = []reconcile.Duty{fleetStep}
+	names = []string{"fleet"}
 	for _, b := range reconcileDuties {
 		d, err := b.Build(st)
 		if err != nil {

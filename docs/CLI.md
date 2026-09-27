@@ -4352,6 +4352,17 @@ PITSTOP NARROW sprint=nova-sprint-0924 by=rowan at=1790000060000 lifted="nova-wo
 
 ### reconcile: the progress duty
 
+**The pass's duties (2026-09-27).** `nova-sprint reconcile` runs the copy
+model only: `fleet` (bench UP/PROBING/DOWN), `dev-red`, `fleet-deploy`,
+`land`, `land-watch`, `progress`, `route`, `card-deal`, `task-lease` and
+`waiting-resolve`, in that order, each one round trip or two (the DUTY line
+prints `trips=`; a functional test pins each duty's budget). The
+sprint-store model's duties, the refill's deal pass over `s:<S>:pool` with
+its ssh launches, `ok-to-friend`, `pr-to-read` with hold-to-fix,
+`done-already`, the expire sweep and the old card fsck, are retired from the
+pass (Glenn: "Go for retiring", after the round-trip measurement); their
+verbs stay (`consume`, `card fsck`) for a sprint that still uses that model.
+
 `nova-sprint reconcile` runs the progress duty (nova-tools #4319; internal/nsprint/reconcile/progress.go) with its other duties: it measures whether each stream of `ws:order` is converging, and when one is not it stops that stream and asks for help. It reads `cfg:progress` (a hash; a missing or non-positive field keeps its default): `window_s` (1800, the stall window), `every_s` (10, the cadence), `refusals` (20, passes a duty error may repeat unchanged) and `ask` (`glenn,rowan`, who the wake note goes to). The `every_s` gate comes before any read: a gated pass costs no round trip and a run three (the index, the measurement, the record); a changed `every_s` applies from the next run.
 
 Per stream, `left` is waiting + ready + working + review + merging; the stream is **in play** when no pit stop holds it and a card is working or a ready card has a consumer with room (live beat, not down, not paused, a free slot). It is `converging` while in play inside the window since it last fell, `idle` when not in play, and `stalled` when in play for the whole window with no fall. A card that churns working -> ready -> working never falls, so it stalls the stream. Each run prints one line per stream whose numbers changed:
