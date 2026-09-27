@@ -108,7 +108,7 @@ func viewReader(c redis.Cmdable, name string, opts ntable.RenderOpts) func(conte
 			return "", err
 		}
 		if len(v.Tables) == 0 {
-			return v.Title + "\n(no tables in view " + name + ")\n", nil
+			return oneline.Escape(v.Title) + "\n(no tables in view " + oneline.Escape(name) + ")\n", nil
 		}
 		// The view's frame, Glenn's layout (2026-09-27): the time to the
 		// second, a blank line, the title, a blank line, the summary
@@ -122,7 +122,7 @@ func viewReader(c redis.Cmdable, name string, opts ntable.RenderOpts) func(conte
 		b.WriteString(time.Now().Format("2006-01-02 15:04:05 MST"))
 		b.WriteString("\n\n")
 		if v.Title != "" {
-			b.WriteString(v.Title)
+			b.WriteString(oneline.Escape(v.Title))
 			b.WriteString("\n\n")
 		}
 		if v.Summary != "" {
@@ -217,7 +217,7 @@ func isReplyError(err error) bool {
 func renderAll(title string, tables []ntable.Table, opts ntable.RenderOpts) string {
 	var parts []string
 	if title != "" {
-		parts = append(parts, title+"\n")
+		parts = append(parts, oneline.Escape(title)+"\n")
 	}
 	for _, t := range tables {
 		if t.HiddenTable {

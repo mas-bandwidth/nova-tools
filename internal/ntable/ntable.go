@@ -57,6 +57,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // The projections: what a body cell prints.
@@ -273,9 +274,9 @@ var (
 // '_', '.' and '-', starting with a letter, digit or '_'.
 func ValidName(s string) bool { return nameRE.MatchString(s) }
 
-// ValidRowKey says a row key is non-empty and holds no control character.
+// ValidRowKey says a row key is non-empty, valid UTF-8 and holds no ASCII control character.
 func ValidRowKey(s string) bool {
-	if s == "" {
+	if s == "" || !utf8.ValidString(s) {
 		return false
 	}
 	for _, r := range s {

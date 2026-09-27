@@ -41,7 +41,7 @@ import (
 	"strings"
 
 	gheventwire "github.com/mas-bandwidth/nova-tools/internal/ghevent/wire"
-	"github.com/mas-bandwidth/nova-tools/internal/merge"
+	"github.com/mas-bandwidth/nova-tools/internal/textbody"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 	"github.com/redis/go-redis/v9"
 )
@@ -365,7 +365,7 @@ func fillHeadFromLine(e *Entry, body string) {
 	if e == nil || e.Head != "" || strings.TrimSpace(body) == "" {
 		return
 	}
-	clean := merge.StripQuotedAndCode(body)
+	clean := textbody.StripQuotedAndCode(body)
 	for _, line := range strings.Split(clean, "\n") {
 		c, ok := typedrec.ParseDisposition(line)
 		if ok && c.Head != "" {

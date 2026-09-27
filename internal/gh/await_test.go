@@ -88,8 +88,10 @@ func TestAwaitReturnsUnderAMillisecond(t *testing.T) {
 	if err != nil || hit || tip != "0-0" {
 		t.Fatalf("past the deadline: tip %q hit=%v err=%v", tip, hit, err)
 	}
-	// With time left and no block needed for the read, the entry matches.
-	tip, hit, err = AwaitAt(ctx, rdb, "0-0", time.Hour, HeadEvent(head), func() time.Time { return t0 })
+	// The entry is already present, so no blocking is needed. A split stream
+	// key must fail promptly too: this is the Redis BLOCK input, not an
+	// assertion on machine timing, and the injected clock cannot run it down.
+	tip, hit, err = AwaitAt(ctx, rdb, "0-0", time.Millisecond, HeadEvent(head), func() time.Time { return t0 })
 	if err != nil || !hit || tip == "0-0" {
 		t.Fatalf("with time left: tip %q hit=%v err=%v", tip, hit, err)
 	}
