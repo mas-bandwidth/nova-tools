@@ -20,7 +20,7 @@
 --   friend:<f>                  the friend table row (at, up, ready, queue,
 --                                    working, waiting, width, done, slots),
 --                                    no TTL, and friend:<f>:last (#3440)
---   machine:<m>:ceiling         hash with slots, shared with capacity friend
+--   machine:<m>:ceiling         hash with slots, shared with ns_capacity_desired
 --   cap:log                     presence-change stream
 --   friend:<f>:events           lifecycle events (#3153): beat, deliver,
 --                                    turn-start [cause], turn-end, turn-error,

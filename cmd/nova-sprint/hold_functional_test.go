@@ -15,9 +15,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/capacity"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/disposition"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/life"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
@@ -51,34 +53,46 @@ func newHoldEnv(t *testing.T, sprint string) *holdEnv {
 
 func (e *holdEnv) run(args ...string) (int, string, string) {
 	e.t.Helper()
-	if len(args) > 1 && args[0] == "friend" && args[1] == "hello" {
-		// #2929 rev 4: hello's --as must equal the seat (NOVA_FRIEND).
-		for i := 2; i+1 < len(args); i++ {
-			if args[i] == "--as" {
-				e.t.Setenv(seatEnv, args[i+1])
-			}
-		}
-	}
 	var out, errb bytes.Buffer
 	code := run(append(args, "--redis", e.addr), &out, &errb)
 	return code, out.String(), errb.String()
 }
 
 // register writes a friend's desired capacity through the one width writer,
-// `capacity friend` (#2934); friend hello never registers or sets slots.
+// ns_capacity_desired (capacity.SetFriendWith, what nova-config apply calls;
+// #2934); a hello never registers or sets slots.
 func (e *holdEnv) register(f string, slots int) {
 	e.t.Helper()
-	if err := e.c.HSetNX(context.Background(), "machine:ctl:ceiling", "slots", 64).Err(); err != nil {
+	ctx := context.Background()
+	if err := e.c.HSetNX(ctx, "machine:ctl:ceiling", "slots", 64).Err(); err != nil {
 		e.t.Fatal(err)
 	}
-	var out, errb bytes.Buffer
-	if code := run([]string{"capacity", "friend", "--redis", e.addr, "--as", "config", "--machine", "ctl", f, strconv.Itoa(slots)}, &out, &errb); code != 0 {
-		e.t.Fatalf("capacity friend %s %d: exit %d %s", f, slots, code, errb.String())
+	st, err := store.Open(ctx, e.addr)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	defer st.Close()
+	if _, err := capacity.SetFriendWith(ctx, st, f, "ctl", slots, "config", "", capacity.DesiredOpts{}); err != nil {
+		e.t.Fatalf("desired %s %d: %v", f, slots, err)
 	}
 }
 
-// friends registers each friend through the real writers: capacity friend,
-// then friend hello.
+// hello brings a friend up through the library nova-friend here runs on
+// (life.Hello, one ns_friend_hello call); the nova-sprint verb is gone.
+func (e *holdEnv) hello(f string, logins ...string) error {
+	e.t.Helper()
+	ctx := context.Background()
+	st, err := store.Open(ctx, e.addr)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	defer st.Close()
+	_, err = life.Hello(ctx, st, life.HelloRequest{As: f, Slots: -1, Host: "ctl", Session: "ctl-" + f, Actor: f, Logins: logins})
+	return err
+}
+
+// friends registers each friend through the real writers: the desired
+// write, then a hello.
 func (e *holdEnv) friends(names ...string) {
 	e.t.Helper()
 	ctx := context.Background()
@@ -87,8 +101,8 @@ func (e *holdEnv) friends(names ...string) {
 	}
 	for _, f := range names {
 		e.register(f, 0)
-		if code, _, errOut := e.run("friend", "hello", "--as", f, "--once", "--host", "ctl", "--session", "ctl-"+f); code != 0 {
-			e.t.Fatalf("hello %s: exit %d %s", f, code, errOut)
+		if err := e.hello(f); err != nil {
+			e.t.Fatalf("hello %s: %v", f, err)
 		}
 	}
 }
@@ -261,9 +275,8 @@ func TestIngestDeployedLines(t *testing.T) {
 	}
 	e.friends("stella", "johnny")
 	e.register("rowan", 32)
-	if code, _, errOut := e.run("friend", "hello", "--as", "rowan", "--login", "rowan-claude",
-		"--once", "--host", "ctl", "--session", "ctl-rowan"); code != 0 {
-		t.Fatalf("hello rowan --login: %d %s", code, errOut)
+	if err := e.hello("rowan", "rowan-claude"); err != nil {
+		t.Fatalf("hello rowan --login: %v", err)
 	}
 	members := e.c.SMembers(ctx, "friends").Val()
 	sort.Strings(members)
@@ -290,9 +303,8 @@ func TestIngestDeployedLines(t *testing.T) {
 		{"stella", "rowan-claude", "LOGIN-TAKEN rowan-claude rowan"},
 		{"johnny", "stella", "LOGIN-IS-FRIEND stella"},
 	} {
-		code, _, errOut := e.run("friend", "hello", "--as", tc.as, "--login", tc.alias, "--once", "--host", "ctl", "--session", "ctl-"+tc.as)
-		if code != 2 || !strings.Contains(errOut, tc.want) {
-			t.Fatalf("hello %s --login %s: exit %d %q, want 2 %q", tc.as, tc.alias, code, errOut, tc.want)
+		if err := e.hello(tc.as, tc.alias); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("hello %s --login %s: %v, want %q", tc.as, tc.alias, err, tc.want)
 		}
 		if got := e.c.HGetAll(ctx, "friends:login").Val(); len(got) != 1 || got["rowan-claude"] != "rowan" {
 			t.Fatalf("friends:login changed by a refused hello: %v", got)
@@ -388,9 +400,8 @@ func TestIngestDeployedLines(t *testing.T) {
 	e2.policy("rowan", "stella")
 	e2.c.HSet(ctx, "machine:ctl:ceiling", "slots", 64)
 	e2.register("rowan", 32)
-	hello := []string{"friend", "hello", "--as", "rowan", "--once", "--host", "ctl", "--session", "ctl-rowan"}
-	if code, _, errOut := e2.run(hello...); code != 0 {
-		t.Fatalf("contrast hello: %s", errOut)
+	if err := e2.hello("rowan"); err != nil {
+		t.Fatalf("contrast hello: %v", err)
 	}
 	e2.unit(3286, "b2d830d36bef4d7d907b461e7a176c6009996d9d", "johnny")
 	claude := strings.Replace(body, "who=stella", "who=rowan-claude", 1)
@@ -401,8 +412,8 @@ func TestIngestDeployedLines(t *testing.T) {
 	if after := e2.c.DBSize(ctx).Val(); after != before {
 		t.Fatalf("refused ingest wrote keys")
 	}
-	if code, _, errOut := e2.run(append(hello, "--login", "rowan-claude")...); code != 0 {
-		t.Fatalf("contrast hello --login: %s", errOut)
+	if err := e2.hello("rowan", "rowan-claude"); err != nil {
+		t.Fatalf("contrast hello --login: %v", err)
 	}
 	e2.mustIngest(3286, claude, "RECORD hold")
 	if e2.c.Exists(ctx, "s:"+e2.S+":read:"+unitOf(3286)+":rowan").Val() != 1 {
@@ -411,16 +422,16 @@ func TestIngestDeployedLines(t *testing.T) {
 
 	// Hold 5 on #3473 at 90527217: NAME-IS-LOGIN on every hello, aliases or
 	// not; a mapped login never registers as a friend.
-	if code, _, errOut := e.run("friend", "hello", "--as", "rowan-claude", "--once", "--host", "ctl", "--session", "ctl-rc"); code != 2 || !strings.Contains(errOut, "NAME-IS-LOGIN rowan-claude") {
-		t.Fatalf("hello --as a mapped login, no --login: exit %d %q, want 2 NAME-IS-LOGIN", code, errOut)
+	if err := e.hello("rowan-claude"); err == nil || !strings.Contains(err.Error(), "NAME-IS-LOGIN rowan-claude") {
+		t.Fatalf("hello as a mapped login, no login: %v, want NAME-IS-LOGIN", err)
 	}
 	if e.c.SIsMember(ctx, "friends", "rowan-claude").Val() {
 		t.Fatalf("a mapped login registered as a friend")
 	}
 	// A duplicate alias in one hello is one mapping and one receipt.
 	receipts := countLogin()
-	if code, _, errOut := e.run("friend", "hello", "--as", "johnny", "--login", "jz-bot", "--login", "jz-bot", "--once", "--host", "ctl", "--session", "ctl-johnny"); code != 0 {
-		t.Fatalf("hello johnny --login jz-bot twice: %d %s", code, errOut)
+	if err := e.hello("johnny", "jz-bot", "jz-bot"); err != nil {
+		t.Fatalf("hello johnny --login jz-bot twice: %v", err)
 	}
 	if n := countLogin(); n != receipts+1 {
 		t.Fatalf("duplicate alias receipts = %d, want %d", n, receipts+1)
@@ -435,8 +446,8 @@ func TestControl40(t *testing.T) {
 	e := newHoldEnv(t, "s40")
 	e.friends("stella", "johnny")
 	e.register("rowan", 0)
-	if code, _, errOut := e.run("friend", "hello", "--as", "rowan", "--login", "rowan-claude", "--once", "--host", "ctl", "--session", "ctl-rowan"); code != 0 {
-		t.Fatal(errOut)
+	if err := e.hello("rowan", "rowan-claude"); err != nil {
+		t.Fatal(err)
 	}
 	e.policy("rowan", "stella")
 	e.unit(40, headA, "johnny")
@@ -534,8 +545,8 @@ func TestHoldRouteOneOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.register("rowan", 4)
-	if code, _, errOut := e.run("friend", "hello", "--as", "rowan", "--once", "--host", "ctl", "--session", "ctl-rowan"); code != 0 {
-		t.Fatalf("hello rowan (4 slots): %s", errOut)
+	if err := e.hello("rowan"); err != nil {
+		t.Fatalf("hello rowan (4 slots): %v", err)
 	}
 	claims, err := task.TakeAvailable(ctx, st, "rowan", e.S, fix6, 1, "rowan", "take-fix6")
 	if err != nil || len(claims) != 1 {
@@ -1053,8 +1064,8 @@ func (e *holdEnv) reviewTask(pr int, head, f string) (string, string) {
 		e.t.Fatal(err)
 	}
 	e.register(f, 8)
-	if code, _, errOut := e.run("friend", "hello", "--as", f, "--once", "--host", "ctl", "--session", "ctl-"+f); code != 0 {
-		e.t.Fatalf("hello %s (8 slots): %s", f, errOut)
+	if err := e.hello(f); err != nil {
+		e.t.Fatalf("hello %s (8 slots): %v", f, err)
 	}
 	claims, err := task.TakeAvailable(ctx, st, f, e.S, id, 1, f, "take-"+id)
 	if err != nil || len(claims) != 1 {

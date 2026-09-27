@@ -25,8 +25,8 @@
 //	card render --id <copy>               the copy's card file (the bench runs it)
 //	card session --as bench:<b> [--wrapper <path>]   the bench harness's session start (#3998):
 //	                                      card work --fill, then one detached nova-card copy per copy
-//	(a friend's session pulls, ends and beats its copies through friend pull | done | beat,
-//	friend_copies.go, #4233: the same moves, the person's brief instead of the wrapper)
+//	(a friend's session pulls, ends and beats its copies through nova-friend, #4233: the
+//	same moves, the person's brief instead of the wrapper; the friend verbs left nova-sprint)
 //
 // every verb also takes --redis <addr> (else NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR)
 // and --actor <a> (else NOVA_FRIEND, else nova-sprint).
@@ -277,7 +277,7 @@ func (m *moveCmd) usage(sub string, ids []string) string {
 		}
 	case "session":
 		if !strings.HasPrefix(*m.as, "bench:") {
-			return "session wants --as bench:<b> (a friend takes its copies through friend pull)"
+			return "session wants --as bench:<b> (a friend takes its copies through nova-friend pull)"
 		}
 	}
 	return ""
@@ -349,9 +349,6 @@ func (m *moveCmd) run(ctx context.Context, c *redis.Client, sub string, ids []st
 			return refused(err, "as="+as.String())
 		}
 		code := 0
-		if !printFriendBeat(ctx, c, as, redisArg(*m.redis), out) {
-			code = 1
-		}
 		if as.Kind == "friend" {
 			for i, id := range w.IDs {
 				fmt.Fprintf(out, "OWNER REQUIRED id=%s token=%s state=unknown run=\"nova-sprint card owner --as %s --id %s --token %s --pid <harness-pid>\"\n", id, w.Tokens[i], as, id, w.Tokens[i])
@@ -380,7 +377,7 @@ func (m *moveCmd) run(ctx context.Context, c *redis.Client, sub string, ids []st
 			r.Score = s
 		}
 		if r.OK && r.PR != "" {
-			// the spec gate (#4313) at this door as at friend done: a code
+			// the spec gate (#4313) at this door as at nova-friend done: a code
 			// copy's ok with a PR runs it in --repo, the checkout at --head,
 			// before the end (nova-tools#4401 read, DOORS)
 			rec, err := c.HGetAll(ctx, taskcard.Key(ids[0])).Result()

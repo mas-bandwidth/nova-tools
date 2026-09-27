@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
@@ -125,7 +124,7 @@ func TestEveryOkDoorRunsTheSpecGate(t *testing.T) {
 	// task done --pr of a code copy: no checkout, refused, naming friend done
 	var out, errOut bytes.Buffer
 	if code := runTaskCard(ctx, "done", []string{"--redis", addr, "--id", one, "--pr", "4501", "--head", head, "--actor", "friend:" + me, "--evidence", "the work"}, &out, &errOut); code != 1 ||
-		!strings.Contains(out.String(), "why=\"no-test task done --pr of a code copy skips the spec gate: nova-sprint friend done") {
+		!strings.Contains(out.String(), "why=\"no-test task done --pr of a code copy skips the spec gate: nova-friend done") {
 		t.Fatalf("task done --pr: exit %d %s%s", code, out.String(), errOut.String())
 	}
 	still("task done --pr", one)
@@ -148,83 +147,10 @@ func TestEveryOkDoorRunsTheSpecGate(t *testing.T) {
 	}
 	onlyTheCheckout("after a green gate")
 
-	// (e) a fix copy's finding test is never none
-	fix := map[string]any{"leg": "fix", "head": base}
-	c.HSet(ctx, taskcard.Key(two), fix)
-	if code, out, _ := runFriendDoneCLI(ctx, addr, me, two, head, checkout, "none cosmetic"); code != 1 || !strings.Contains(out, "a fix's finding test is never none (cosmetic)") {
-		t.Fatalf("a fix with --test none cosmetic: exit %d %s", code, out)
-	}
-	c.HSet(ctx, taskcard.Key(two), "leg", "work", "head", "")
-
-	// (g) twenty friend done --ok --pr at once on the same head: one end.
-	// The race is on the end, so its copy's diff is one text file and its
-	// TEST none with a why: each gate is CI's answer, no go test twenty
-	// times over.
-	race := filepath.Join(t.TempDir(), "g2")
-	rgit := func(args ...string) string {
-		cmd := exec.Command("git", append([]string{"-C", race, "-c", "user.email=f@example.com", "-c", "user.name=f", "-c", "core.hooksPath=/dev/null"}, args...)...)
-		b, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %v: %v %s", args, err, b)
-		}
-		return strings.TrimSpace(string(b))
-	}
-	if err := os.MkdirAll(race, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	rgit("init", "-q")
-	rgit("commit", "-q", "--allow-empty", "-m", "base")
-	raceBase := rgit("rev-parse", "HEAD")
-	if err := os.WriteFile(filepath.Join(race, "notes.txt"), []byte("the work\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	rgit("add", "notes.txt")
-	rgit("commit", "-q", "-m", "the work")
-	raceHead := rgit("rev-parse", "HEAD")
-	c.HSet(ctx, taskcard.Key(two), "base_sha", raceBase, "test", "none the race probes one end, not a test")
-	const n = 20
-	outs := make([]string, n)
-	codes := make([]int, n)
-	var wg sync.WaitGroup
-	for i := 0; i < n; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			codes[i], outs[i], _ = runFriendDoneCLI(ctx, addr, me, two, raceHead, race, "")
-		}(i)
-	}
-	wg.Wait()
-	ended, already := 0, 0
-	for i, o := range outs {
-		switch {
-		case codes[i] == 0 && strings.Contains(o, "\nENDED "+two+" primary=g2 from=working to=review"):
-			ended++
-		case codes[i] == 0 && strings.Contains(o, "\nALREADY "+two+" "):
-			already++
-		default:
-			t.Errorf("gate %d: exit %d %s", i, codes[i], o)
-		}
-	}
-	if ended != 1 || already != n-1 {
-		t.Fatalf("%d ended and %d already of %d, want exactly one end", ended, already, n)
-	}
-	if where, ok := c.HGet(ctx, taskcard.Key(two), "where").Val(), c.ZCard(ctx, friend.KeyAt(0, "ok")).Val(); where != "ok" || ok != 1 {
-		t.Fatalf("after the race the copy is %s and %d copies are ok, want ok and 1", where, ok)
-	}
-	if wt := rgit("worktree", "list", "--porcelain"); strings.Count(wt, "worktree ") != 1 {
-		t.Fatalf("after twenty gates a worktree is left:\n%s", wt)
-	}
+	// (e) a fix copy's finding test is never none, and (g) twenty ends at
+	// once on one head are one end: both are the friend's own end door,
+	// which left nova-sprint with the friend verbs (nova-friend done runs
+	// card.GateFriendCopy, whose tests are internal/nsprint/card's).
+	_ = two
 	onlyTheCheckout("at the end")
-}
-
-// runFriendDoneCLI is friend done --ok --pr nova-tools#4501 for copy id at
-// head, the gate in checkout, test the fix's --test ("" for none given).
-func runFriendDoneCLI(ctx context.Context, addr, me, id, head, checkout, test string) (int, string, string) {
-	args := []string{"done", "--redis", addr, "--as", "friend:" + me, "--id", id, "--ok", "--pr", "nova-tools#4501", "--head", head, "--repo", checkout}
-	if test != "" {
-		args = append(args, "--test", test)
-	}
-	var out, errOut bytes.Buffer
-	code := runFriend(ctx, args, &out, &errOut)
-	return code, out.String(), errOut.String()
 }

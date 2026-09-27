@@ -58,7 +58,7 @@ func IsRunnerKind(kind string) bool {
 // its model from (nova-sprint routes --tier <route>, first allowed route). A
 // card with no ROUTE line is flash. Every worker (a friend or a bench)
 // advertises the types it runs on its desired record's tiers field
-// (nova-sprint capacity friend|bench --tiers ...); the dealer matches a
+// (nova-sprint capacity bench --tiers ..., nova-config for a friend); the dealer matches a
 // card's route against that, and a worker advertising nothing is flash,pro.
 // Nothing in code names a worker.
 const (

@@ -290,7 +290,7 @@ function DF.rebalance_reply(f, moves, refused, nready)
 end
 
 -- ns_friend_rebalance: the reconciler's deal duty calls it in the pass that
--- sees friend f change status, and `nova-sprint friend down|up` right after
+-- sees friend f change status, and a down|up write (the retired `nova-sprint friend down|up`) right after
 -- it writes friend:<f>:down. f is down when friend:<f>:down exists or stale
 -- is '1' (the caller saw f's beat older than the down window); an up friend
 -- keeps its queue (UP) and the next deal fills it. token is the reconciler

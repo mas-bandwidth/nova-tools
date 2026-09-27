@@ -11,7 +11,7 @@ import (
 // flag of a worker's desired hash, friend and bench alike. A worker is what
 // the code calls a consumer, friend:<f> or bench:<b>; the table's header
 // already says worker. Pausing used to be capacity bench <b> 0 for a bench
-// and capacity friend --paused 1 for a friend. The deal pass
+// and the same flag on a friend's desired hash. The deal pass
 // (internal/nsprint/taskcard pass.go) and the card moves' TM.room read the
 // flag, so a paused worker is dealt nothing until it is resumed and keeps
 // working what it already holds; the table prints paused in its status.
@@ -59,7 +59,7 @@ func (w Worker) Line() string {
 type UnknownWorker struct{ ID string }
 
 func (e *UnknownWorker) Error() string {
-	return "UNKNOWN " + e.ID + " is not a registered friend or bench; run nova-sprint capacity friend|bench"
+	return "UNKNOWN " + e.ID + " is not a registered friend or bench; run nova-config friend set then nova-config apply, or nova-sprint capacity bench"
 }
 
 // PauseWorker sets (paused true) or clears the paused flag of kind:name in

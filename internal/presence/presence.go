@@ -3,12 +3,13 @@
 // is about to hand that friend work.
 //
 // The whole mechanism is one MULTI per beat and one pipeline per read, and no
-// model anywhere. A friend's harness startup runs `nova-wake beat --as <name>`,
-// which writes the hash `friend:<name>` (field `at` = <RFC3339 utc>, plus
-// `width` and `window` when the caller passed them) and gives it a 90s TTL
-// every 30s; a window that exits, runs out of credit or is killed simply stops
-// writing, and the hash lapses. `nova-wake presence` reads the hashes of every
-// member of the `friends` SET and prints one line. Nothing here spends a token,
+// model anywhere. A friend's runtime (nova-friend; the retired `nova-wake
+// beat` before it) writes the hash `friend:<name>` (field `at` = <RFC3339
+// utc>, plus `width` and `window` when the caller passed them) through Beat
+// and gives it a 90s TTL every 30s; a window that exits, runs out of credit
+// or is killed simply stops writing, and the hash lapses. Read reads the
+// hashes of every member of the `friends` SET (`nova-wake awake --store`; the
+// retired `nova-wake presence` printed the line). Nothing here spends a token,
 // because the cost of presence has to be zero or the heartbeat is the first
 // thing dropped under load (Glenn, 2026-09-22: "As long as this can be done
 // with zero tokens, that's fine. It's a heartbeat for a timeout.").

@@ -233,8 +233,9 @@ fleet row, friends, the sprint row. For a machine it writes what `capacity
 machine` would (`ns_capacity_machine`, the ceiling from `--slots`; cores and
 memory are never declared, so none are passed) and its registry hash
 `machine:<m>`. For the fleet row, `fleet:store` and `fleet:coordinator`,
-plain keys. For a friend it writes what `capacity friend --tiers` and
-`friend roles` would (`ns_capacity_desired`, `ns_friend_roles`), charging
+plain keys. For a friend it writes what the retired `nova-sprint capacity
+friend --tiers` and `friend roles` did (`ns_capacity_desired`,
+`ns_friend_roles`; the verbs are gone since 2026-09-27), charging
 her slots to the machine her own beat reports, else to the fleet's
 coordinator machine; the friend the sprint row names gets the `coordinator`
 role in Redis on top of her row's roles, so a handover (`sprint set

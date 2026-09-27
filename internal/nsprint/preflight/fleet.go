@@ -224,12 +224,11 @@ type FleetInput struct {
 	Wake WakeInput
 }
 
-// WakeInput is the friend wake registry as `friend wake-health` reads it
-// (internal/nsprint/life ReadWake and Rows).
+// WakeInput is the friend wake registry as life.ReadWake reads it (Rows):
+// friends:declared and friend:<f>:wakepath, written by nova-config apply.
 type WakeInput struct {
-	DeclPresent bool        // friends:decl exists
-	Friends     int         // friends read (registered or declared)
-	Named       []WakeNamed // every friend the gate names
+	Friends int         // friends read (registered or declared)
+	Named   []WakeNamed // every friend the gate names
 }
 
 // WakeNamed is one friend 7.18 names and why: down, undeclared or stale.
@@ -253,14 +252,13 @@ func FleetChecks(ctx context.Context, in FleetInput) []FleetLine {
 }
 
 // CheckFriendWake is 7.18 (#3048): every friend has a declared wake path that
-// its host's repair tick holds up. RED when friends:decl is absent, a friend
-// has no wakepath (undeclared), or any wake cell is down or older than 30 s.
+// its host's repair tick holds up. RED when a friend has no wakepath
+// (undeclared: nova-config friend set --wake, then nova-config apply), or any
+// wake cell is down or older than 30 s. (friends:decl, the retired `friend
+// declare`'s stamp, is no longer required: nothing writes it.)
 func CheckFriendWake(in FleetInput) FleetLine {
 	reds := unread(need{"friend wake paths", in.Loaded.Wake})
 	if in.Loaded.Wake {
-		if !in.Wake.DeclPresent {
-			reds = append(reds, "friends:decl absent (MISSING): run nova-sprint friend declare from the fleet converge")
-		}
 		for _, n := range in.Wake.Named {
 			reds = append(reds, n.Friend+" "+n.Why)
 		}

@@ -1,6 +1,6 @@
 // Package capacity implements the machine child-ceiling invariant of spec 2.4:
 // the sum of desired slots over every bench and every friend whose machine is
-// m MUST NOT exceed machine:<m>:ceiling. capacity friend, capacity bench and
+// m MUST NOT exceed machine:<m>:ceiling. nova-config apply (a friend), capacity bench and
 // friend hello --slots compute that sum and refuse a raise that would break it
 // with exit 2 CEILING <m> <sum>/<ceiling>; nothing is clamped silently.
 //
@@ -92,7 +92,7 @@ func (e *CeilingError) ExitCode() int { return 2 }
 
 // NameIsLoginError is the exit 2 refusal of #3604: a name mapped in
 // friends:login is a login alias and never registers as a friend, so
-// capacity friend refuses it by name before any ceiling check or write,
+// the desired write refuses it by name before any ceiling check or write,
 // exactly as friend hello does (#3593).
 type NameIsLoginError struct {
 	Name string

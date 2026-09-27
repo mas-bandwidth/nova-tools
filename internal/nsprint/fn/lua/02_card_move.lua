@@ -4404,7 +4404,7 @@ function TM.beat(c, ids)
   -- live state is insufficient here: repeated plain beats could keep a dead
   -- owner alive forever. This also covers task beat's copy path.
   if #ids > 0 and TM.parse(c) == 'friend' then
-    return { 'REFUSED', 'OWNER ids=' .. table.concat(ids, ',') .. ' ' .. c .. ' copies require an observed owner; no leases renewed; run: nova-sprint friend beat --as ' .. c .. ' --once' }
+    return { 'REFUSED', 'OWNER ids=' .. table.concat(ids, ',') .. ' ' .. c .. ' copies require an observed owner; no leases renewed; run: nova-friend here (its beat observes the owner; nova-sprint friend beat is gone)' }
   end
   for _, id in ipairs(ids) do
     redis.call('HSET', 'task:' .. id, 'lease_until', tostring(at + TM.LEASE), 'beat_at', tostring(at))

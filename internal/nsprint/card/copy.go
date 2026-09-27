@@ -35,12 +35,13 @@ import (
 // their ready queue") has no wrapper and no bench: RenderCopy renders the
 // person's brief instead, the same header, and the body tells the friend to
 // clone the repo at BASE/base_sha, branch, commit, push, open the PR under
-// its own GitHub identity and end the copy itself with `nova-sprint friend
+// its own GitHub identity and end the copy itself with `nova-friend
 // done --id <copy> --ok --pr <repo>#<n> --head <sha>` (card end after the PR
 // record; or --fail, or --score for a read), the friend's one beat loop
-// (`nova-sprint friend beat --loop`, which friend pull started) renewing
+// (nova-friend's, started by its pull) renewing
 // the lease meanwhile only after binding an observed local process owner.
-// `nova-sprint friend pull` writes these briefs into the friend's own dir.
+// `nova-friend pull` writes these briefs into the friend's own dir (the
+// nova-sprint friend verbs are gone).
 
 // CopyCard is the fields of a copy's record the card renders from.
 type CopyCard struct {
@@ -71,7 +72,7 @@ type CopyCard struct {
 	// carries it.
 	Notes []string
 	// Model, Harness and Child are who works the copy (taskcard.Who: what
-	// card work and friend pull record); the card's WORKER line (not WHO,
+	// card work and nova-friend pull record); the card's WORKER line (not WHO,
 	// which is the primary's who-may-do-it header, cut.go cutKeys).
 	Model, Harness, Child string
 }
@@ -197,19 +198,19 @@ func (c CopyCard) IsFriendCopy() bool {
 // PR, card end) itself, so every step names its command.
 func friendBody(c CopyCard, full, label, prRef, branch string) string {
 	who := strings.TrimSpace(c.Consumer)
-	// friend done (friend_copies.go) records the PR before card end, which
-	// refuses an ok whose PR record is missing (NOPR).
-	endOK := fmt.Sprintf("nova-sprint friend done --as %s --id %s --ok --pr %s#<n> --head <sha> --repo <your checkout at that head>", who, c.ID, prkey.Name(c.Repo))
+	// nova-friend done records the PR before card end, which refuses an ok
+	// whose PR record is missing (NOPR); the nova-sprint friend verbs are gone.
+	endOK := fmt.Sprintf("nova-friend done --as %s --id %s --ok --pr %s#<n> --head <sha> --repo <your checkout at that head>", who, c.ID, prkey.Name(c.Repo))
 	if c.Leg == "fix" {
 		endOK += " --test '<package> <TestName>'"
 	}
-	endFail := fmt.Sprintf("nova-sprint friend done --as %s --id %s --fail '<why>'", who, c.ID)
+	endFail := fmt.Sprintf("nova-friend done --as %s --id %s --fail '<why>'", who, c.ID)
 	beat := fmt.Sprintf("BEAT: bind the actual local harness process before the startup lease lapses: "+
 		"nova-sprint card owner --as %s --id %s --token <claim-token> --pid <harness-pid>. "+
 		"Use the token from PULLED and the process that does this work, never a child UUID or the beat daemon. "+
 		"The detached loop renews only while that same process is observed alive. Missing, remote or unreadable identity is UNKNOWN and does not renew; "+
-		"inspect with nova-sprint friend beat --as %s --once. If your harness exposes no process identity, report that limitation to the coordinator. "+
-		"A lapsed lease must be reclaimed, not revived.\n", who, c.ID, who)
+		"inspect with nova-friend show. If your harness exposes no process identity, report that limitation to the coordinator. "+
+		"A lapsed lease must be reclaimed, not revived.\n", who, c.ID)
 	about := oneLine(c.Origin)
 	if about == "" {
 		about = "primary " + c.Primary
@@ -221,8 +222,8 @@ func friendBody(c CopyCard, full, label, prRef, branch string) string {
 		fmt.Fprintf(&sb, "DO: read %s at head %s against %s@%s: CI at head, base, scope, then a score 1-10. "+
 			"A score under 10 names each gap and the work that closes it. A read edits nothing inside PATHS.\n",
 			prRef, c.Head, c.Base, c.BaseSHA)
-		fmt.Fprintf(&sb, "END: nova-sprint friend done --as %s --id %s --score N/10 --gates ci:<green|red>,base:<ok|behind>,scope:<ok|over> --finding '<one line>'; "+
-			"when you could not read it: nova-sprint friend done --as %s --id %s --fail 'ABSTAIN <why>'.\n", who, c.ID, who, c.ID)
+		fmt.Fprintf(&sb, "END: nova-friend done --as %s --id %s --score N/10 --gates ci:<green|red>,base:<ok|behind>,scope:<ok|over> --finding '<one line>'; "+
+			"when you could not read it: nova-friend done --as %s --id %s --fail 'ABSTAIN <why>'.\n", who, c.ID, who, c.ID)
 	case "fix":
 		onto := oneLine(c.Branch)
 		if onto == "" {
@@ -234,7 +235,7 @@ func friendBody(c CopyCard, full, label, prRef, branch string) string {
 			onto, full, label, label, c.Head)
 		fmt.Fprintf(&sb, "DO: fix %s at head %s: the read found: %s. Change only PATHS, close the finding, commit on top of %s with the finding's summary as the first line, and push to %s under your own GitHub identity.\n",
 			prRef, c.Head, oneLine(c.Finding), c.Head, onto)
-		fmt.Fprintf(&sb, "FINDING-TEST: your fix carries its own test for the finding: it fails at the PR head %s and passes at your commit; friend done --ok runs it there (--test, the finding test, not the primary's) with nova-ci local before it records anything, and refuses the end on a red.\n", c.Head)
+		fmt.Fprintf(&sb, "FINDING-TEST: your fix carries its own test for the finding: it fails at the PR head %s and passes at your commit; nova-friend done --ok runs it there (--test, the finding test, not the primary's) with nova-ci local before it records anything, and refuses the end on a red.\n", c.Head)
 		fmt.Fprintf(&sb, "END: %s (the PR's number, your new head, your checkout and the finding test); when you cannot: %s.\n", endOK, endFail)
 		sb.WriteString(beat)
 	default:
@@ -244,7 +245,7 @@ func friendBody(c CopyCard, full, label, prRef, branch string) string {
 			c.Base, full, label, label, c.BaseSHA, label, branch)
 		fmt.Fprintf(&sb, "DO: the work is the issue text quoted below (%s): change only PATHS, make DONE-WHEN hold, commit on %s with the DONE-WHEN summary as the first line, push %s and open the PR against %s with the DONE-WHEN in its body.\n",
 			about, branch, branch, c.Base)
-		fmt.Fprintf(&sb, "GATE: friend done --ok runs TEST at base-sha %s (it must fail) and at your head (it must pass) in --repo, then nova-ci local, before it records anything, and refuses the end on a red.\n", c.BaseSHA)
+		fmt.Fprintf(&sb, "GATE: nova-friend done --ok runs TEST at base-sha %s (it must fail) and at your head (it must pass) in --repo, then nova-ci local, before it records anything, and refuses the end on a red.\n", c.BaseSHA)
 		fmt.Fprintf(&sb, "END: %s (the PR's number, its head commit and your checkout); when you cannot: %s.\n", endOK, endFail)
 		sb.WriteString(beat)
 		sb.WriteString("\n---\n")
@@ -296,10 +297,10 @@ func RenderCopy(c CopyCard) ([]byte, error) {
 		// or fix leg names that end; a work leg keeps the primary's.
 		switch c.Leg {
 		case "read":
-			done = fmt.Sprintf("this copy is ended with the score of %s at head %s: nova-sprint friend done --as %s --id %s --score N/10", prRef, c.Head, strings.TrimSpace(c.Consumer), c.ID)
+			done = fmt.Sprintf("this copy is ended with the score of %s at head %s: nova-friend done --as %s --id %s --score N/10", prRef, c.Head, strings.TrimSpace(c.Consumer), c.ID)
 		case "fix":
 			baseSHA = c.Head
-			done = fmt.Sprintf("the fix is committed on top of %s's head %s, pushed to its branch, and this copy is ended with the new head, the gate run in your checkout on the finding test (never none): nova-sprint friend done --as %s --id %s --ok --pr %s --head <sha> --repo <your checkout at that head> --test '<package> <TestName>'",
+			done = fmt.Sprintf("the fix is committed on top of %s's head %s, pushed to its branch, and this copy is ended with the new head, the gate run in your checkout on the finding test (never none): nova-friend done --as %s --id %s --ok --pr %s --head <sha> --repo <your checkout at that head> --test '<package> <TestName>'",
 				prRef, c.Head, strings.TrimSpace(c.Consumer), c.ID, prRef)
 		}
 		body = friendBody(c, full, label, prRef, branch)

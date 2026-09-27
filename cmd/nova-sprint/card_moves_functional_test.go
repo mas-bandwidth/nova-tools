@@ -134,12 +134,13 @@ func TestCardMovesCLI(t *testing.T) {
 	// writes RESULT.md for its wrapper instead, #4270)
 	code, out, _ = runCLI("card", "render", "--id", "c0~2")
 	if code != 0 || !strings.Contains(out, "\nKIND: read\n") || !strings.Contains(out, "FRIEND: friend:emma reads this PR itself") ||
-		!strings.Contains(out, "nova-sprint friend done --as friend:emma --id c0~2 --score N/10") || strings.Contains(out, "RESULT.md") {
+		!strings.Contains(out, "nova-friend done --as friend:emma --id c0~2 --score N/10") || strings.Contains(out, "RESULT.md") {
 		t.Fatalf("render = %d %q", code, out)
 	}
 	code, out, _ = runTaskCLI("take", "--actor", "emma")
-	// the friend now holds a working copy: task take keeps its one beat loop
-	if code != 0 || !strings.HasPrefix(out, "BEATLOOP as=friend:emma started pid=4242 working=1 log=") || !strings.Contains(out, "\nTASK take n=1 ids=c0~2 ms=") {
+	// the friend now holds a working copy; its beat loop is nova-friend's,
+	// not this verb's (the nova-sprint friend verbs are gone)
+	if code != 0 || !strings.HasPrefix(out, "TASK take n=1 ids=c0~2 ms=") {
 		t.Fatalf("task take of a copy = %d %q", code, out)
 	}
 	// CI gates the read copy: a passing score waits for CI OK at the head

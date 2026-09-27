@@ -83,15 +83,6 @@ usage:
   nova-wake serve --bus <dir> --as <name> --state <file> --redeliver <id> --on-note <command>
         [--on-note-idempotent]
   nova-wake awake --bus <dir> [--window <seconds>] [--max <n>] [--store <host:port> [--user <acl user>]]
-  nova-wake beat --as <name> --store <host:port>
-        [--every <duration>] [--ttl <duration>]   default 30s and 90s
-        [--window <time>]   the cap's reset time, the window field of friend:<name>, only when passed; this beat does not read a clock to invent one
-        [--width <n>]       how many children are in use now, the width field of friend:<name>, only when passed; zero is a count
-        [--once]            write one beat and return, for a check or a test
-        [--user <name>]     the store's ACL user; default bench
-  nova-wake presence --store <host:port>
-        [--bus <dir> | --participants <file> | --friends <a,b,c>]   the roster; default the store's friends SET
-        [--user <name>]
   nova-wake version
   nova-wake quickstart --state <file> [--max <duration>] [--on-deadline <word>]
         [--reports <dir> ...] [--bus <dir> --as <name> --receipt-max-words <n>]
@@ -103,18 +94,9 @@ landed. There is no third shape: a harness /loop, a scheduler prompt or a
 heartbeat that runs a model on an interval is not a wake, and this tool offers
 no verb for it.
 
-beat and presence are the one heartbeat that is NOT a wake and spends nothing:
-beat is a process a friend's window starts once and forgets, writing the hash
-friend:<name> (at = <utc>) with a TTL every --every and reading nothing, and
-presence prints one line saying who is up and who is down. When the caller
-passes them, the beat also writes the window field (the cap's reset time, as
-given -- not a clock this beat reads) and the width field (how many children
-are in use); a missing flag writes no field and does not fail the beat, and
-presence prints whichever of the two a live beat holds. Presence is Redis
-only: the bus carries notes, never beats. No model runs on either side, and
-a window that exits, runs out of credit or is killed simply stops writing until
-the key lapses. The password is never a flag: it reaches beat as
-NOVA_REDIS_BENCH_PASSWORD, through nova-secrets exec --only and no other way.
+The beat and presence verbs are retired: a friend's heartbeat and presence
+are nova-friend's (here, list, show). Presence is Redis only: the bus carries
+notes, never beats, and awake --store still reads the store's friend:<name>.
 
 serve FETCHES every --interval, which is why --remote and --branch are its own
 flags and not --receipt's, and its --on-note command is started as
@@ -365,10 +347,8 @@ func runWith(args []string, stdout, stderr io.Writer, clock wake.Clock) int {
 		return cmdServe(args[1:], stdout, stderr, clock)
 	case "awake":
 		return cmdAwake(cfg, args[1:], stdout, stderr, clock, dialStore)
-	case "beat":
-		return cmdBeat(args[1:], stdout, stderr, clock, dialStore)
-	case "presence":
-		return cmdPresence(args[1:], stdout, stderr, clock, dialStore)
+	case "beat", "presence":
+		return refuse(stderr, "", args[0]+" is gone: a friend's heartbeat and presence are nova-friend's (here, list, show); awake --store still reads the store")
 	case "version", "--version":
 		// The first question after a table misbehaves is which build each line
 		// is running, and a tool that cannot answer it costs a person the
@@ -426,7 +406,7 @@ func awakeRefused(stderr io.Writer, what string) int {
 // in the bus clone, the newest commit touching from-<name>/CURSOR is that
 // friend's last beat (docs/SPEC-WORK.md, Presence, source bus-cursor).
 //
-// With --store it first reads the live heartbeat `nova-wake beat` writes
+// With --store it first reads the live heartbeat a friend's runtime writes
 // (#2610's friend:<name>, a TTL'd key renewed every beat and never deleted):
 // a key that is there is "I am here now" and reads awake with source=presence;
 // a key that has aged out says nothing, so the lane falls through to the bus

@@ -7,8 +7,8 @@ package main
 // nova-secrets leg: exec refuses to be the vehicle for that hand-write and
 // names the column's one writer on the refusal line, so the column is never a
 // redis-cli line through this exec. Since #3447 that writer is the friend row
-// loop and nova-wake beat refuses the row, so the line names the row loop and
-// the queue, never the beat (#3807). sops and redis-cli are fakes on disk, so no test opens a real store or
+// loop and no beat writes the row (the retired nova-wake beat refused it), so
+// the line names the row loop and the queue, never a beat (#3807). sops and redis-cli are fakes on disk, so no test opens a real store or
 // touches a real Redis.
 
 import (
@@ -111,15 +111,15 @@ func TestIssue2676(t *testing.T) {
 		t.Fatalf("the refusal is one SECRETS EXEC FAIL line, got %d lines:\n%s", len(lines), errOut)
 	}
 	// Since #3447 the working column is the friend row's, written by the row
-	// loop; nova-wake beat refuses the row, so the refusal names the row loop
-	// and never the beat (nova-tools #3807).
+	// loop; no beat writes the row (the retired nova-wake beat refused it),
+	// so the refusal names the row loop and never a beat (nova-tools #3807).
 	for _, want := range []string{"friend:emma:width", "friend row", "rowan-tools friend-row", "#3447"} {
 		if !strings.Contains(lines[0], want) {
 			t.Errorf("the refusal must name %s (the friend row loop, nova-tools#3807):\n%s", want, lines[0])
 		}
 	}
 	if strings.Contains(lines[0], "nova-wake beat") {
-		t.Errorf("the refusal must not send anyone to nova-wake beat, which refuses the friend row since #3447 (nova-tools#3807):\n%s", lines[0])
+		t.Errorf("the refusal must not send anyone to nova-wake beat, a retired verb that refused the friend row since #3447 (nova-tools#3807):\n%s", lines[0])
 	}
 
 	// A read of the same key still runs: the table's working column reads

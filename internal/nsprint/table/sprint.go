@@ -40,7 +40,7 @@
 // cards); an up consumer whose desired hash has paused 1 (worker pause,
 // #4308) prints paused instead; an up bench whose last fleet play stopped
 // (bench:<b>:play result failed:<role>, #4356) prints behind: <role>; load is the beat's cpu or load1 (a bench
-// beat's, or a friend beat's, which `nova-sprint friend beat` measures on
+// beat's, or a friend beat's, which nova-friend's beat measures on
 // the machine the friend's session runs on, #4233; - when the beat has
 // none). The old friend:<f> row hash and bench:<b> hash are never read, and
 // no friend's load is read from another consumer's beat.

@@ -25,7 +25,8 @@ func Load1Now() string {
 	return ""
 }
 
-// FriendRowRequest is one pass of `nova-sprint friend row` (#3440).
+// FriendRowRequest is one pass of the friend row (#3440; the retired
+// `nova-sprint friend row` ran it, nova-friend does now).
 type FriendRowRequest struct {
 	Friend string
 	Sprint string
