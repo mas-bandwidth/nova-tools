@@ -23,4 +23,5 @@ make map            # regenerate AGENTS.md and per-directory maps
 | `profiles/` | swarm worker profiles | `go test ./internal/swarm` | `nova-swarm lint` |
 | `scripts/` | maintenance and operational scripts | none | none |
 | `testdata/` | shared test fixtures and data | `go test ./internal/ci` | `make test` |
+| `tla/` | the TLA+ models of the state machines and their runners | `tla/check_table.py, tla/check_member.py (each under a 120 s budget)` | none |
 | [tools/](tools/AGENTS.md) | developer and bench tools | `nova-ci local` | `make map` |

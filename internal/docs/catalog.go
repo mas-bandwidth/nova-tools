@@ -18,6 +18,7 @@ var DefaultCatalog = []Entry{
 	Page("docs", "specs, guides, and proposals", "go test ./internal/docs", "go test ./internal/docs"),
 	E("infra", "runner images and scripts", "none", "none"),
 	Page("internal", "packages and libraries", "nova-ci local", "make test"),
+	E("tla", "the TLA+ models of the state machines and their runners", "tla/check_table.py, tla/check_member.py (each under a 120 s budget)", "none"),
 	E("lisp", "nova-work lisp kernel", "go test ./internal/ci", "make test-lisp"),
 	E("profiles", "swarm worker profiles", "go test ./internal/swarm", "nova-swarm lint"),
 	E("scripts", "maintenance and operational scripts", "none", "none"),
