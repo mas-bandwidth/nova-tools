@@ -53,11 +53,6 @@ cmd/nova-swarm	TestProviderBodyThatResumesInsideTheDeadlineIsNotUnknown	#4221 ca
 cmd/nova-swarm	TestProviderDelayedHeadersInsideTheWaitAreNotUnknown	#4221 calls time.Sleep
 cmd/nova-tokens	TestConcurrentWritersDoNotMutateTheBareRemote	#4221 calls time.Sleep
 cmd/nova-update	TestHelpExampleLinesRunAsPrinted	#4221 measured over 5 s on the 2026-09-25 PR run
-cmd/nova-wake	TestTheRealBusRelaysNewMailWithinTwoAdvancingPolls	#4221 measured over 5 s on the 2026-09-25 PR run
-cmd/nova-wake	TestTheRealBusAdvanceRecoversAnInterruptedRead	#4221 measured over 5 s on the 2026-09-25 PR run
-cmd/nova-wake	TestTheRecoveryReadsTheCountAndNeverAConstant	#4221 measured over 5 s on the 2026-09-25 PR run
-cmd/nova-wake	TestBlocksRatherThanTicks	#4221 measured over 5 s on the 2026-09-25 PR run
-cmd/nova-wake	TestTheBoundedCorrelationRead	#4221 measured over 5 s on the 2026-09-25 PR run
 cmd/nova-work	TestSetCheckEvaluateDerivesDoneFromCriteria	#4221 measured over 5 s on the 2026-09-25 PR run
 internal/bus	TestTwoConcurrentRunsSerialiseOnOneCheckout	#4221 calls time.Sleep
 internal/bus	TestSendPreparedProcessDeathRecovery	#4221 measured over 5 s on the 2026-09-25 PR run
@@ -126,8 +121,6 @@ cmd/nova-swarm	waitGroupGone	seed #4413: time.Sleep at recovery_test.go:97
 cmd/nova-swarm	waitIdentified	seed #4413: time.Sleep at recovery_test.go:165
 cmd/nova-swarm	waitStopped	seed #4413: time.Sleep at recovery_test.go:132
 cmd/nova-tokens	fakeSqlite3Main	seed #4413: time.Sleep at helpers_test.go:236
-cmd/nova-wake	TestWatchStoreWakesOnEvGithubWithNoGhAndNoGit	seed #4413: time.After at storewatch_test.go:143
-cmd/nova-wake	waitFor	seed #4413: time.Sleep at storewatch_test.go:98
 cmd/nova-work	TestAFarFutureDeadlineStillGivesUpOnASilentSession	seed #4413: time.After at deadline_test.go:59
 cmd/nova-work	TestAMalformedDeadlineRefusesBeforeAnythingIsDialled	seed #4413: time.After at deadline_test.go:158
 cmd/nova-work	TestASessionThatNeverAnswersIsRefusedAtTwoAndNotCalledMissing	seed #4413: time.After at main_test.go:912

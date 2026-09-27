@@ -22,7 +22,6 @@ cmd/nova-swarm/native_test.go:826 bound 2026-09-17 a short bound used with a fak
 cmd/nova-swarm/native_test.go:862 bound 2026-09-17 a short bound used with a fake clock or a subprocess; predates the checker
 cmd/nova-swarm/slow_test.go:317 bound 2026-09-17 a short bound used with a fake clock or a subprocess; predates the checker
 cmd/nova-tokens/slow_test.go:38 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
-cmd/nova-wake/slow_test.go:47 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
 internal/swarm/launch_bound_functional_test.go:51 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
 internal/swarm/launch_bound_functional_test.go:69 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
 internal/swarm/launch_bound_functional_test.go:74 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
