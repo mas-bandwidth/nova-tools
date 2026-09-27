@@ -29,6 +29,7 @@ func cmdRowAdd(args []string, stdout, stderr io.Writer) int {
 	const verb = "row add"
 	fs := verbflag.New(verb)
 	addr := redisFlag(fs)
+	write, receipt := writeFlags(fs)
 	label := fs.String("label", "", "the row's label, the row header cell (default the row key)")
 	exclude := fs.String("exclude", "", "one member the row's counts and members leave out")
 	owner := fs.String("owner", "", "the verb that writes the row's bound sets, named by the refusal of a write here")
@@ -60,7 +61,7 @@ func cmdRowAdd(args []string, stdout, stderr io.Writer) int {
 	}
 	defer st.Close()
 	trips := st.CountTrips()
-	row, err := ntable.RowAdd(ctx, c, pos[0], pos[1], spec)
+	row, err := ntable.RowAdd(ctx, c, pos[0], pos[1], spec, *write)
 	if err != nil {
 		return storeRefusal(stderr, verb, err)
 	}
@@ -71,6 +72,7 @@ func cmdRowAdd(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	fmt.Fprintf(stdout, "TABLE ROW ADD table=%s row=%s cols=%d bound=%d trips=%d\n", pos[0], field(pos[1]), len(row.Cells), bound, trips.N())
+	printReceipt(stdout, write, *receipt)
 	return 0
 }
 
@@ -78,6 +80,7 @@ func cmdRowDel(args []string, stdout, stderr io.Writer) int {
 	const verb = "row del"
 	fs := verbflag.New(verb)
 	addr := redisFlag(fs)
+	write, receipt := writeFlags(fs)
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
@@ -92,7 +95,7 @@ func cmdRowDel(args []string, stdout, stderr io.Writer) int {
 	}
 	defer st.Close()
 	trips := st.CountTrips()
-	existed, err := ntable.RowDel(ctx, c, pos[0], pos[1])
+	existed, err := ntable.RowDel(ctx, c, pos[0], pos[1], *write)
 	if err != nil {
 		return storeRefusal(stderr, verb, err)
 	}
@@ -101,5 +104,6 @@ func cmdRowDel(args []string, stdout, stderr io.Writer) int {
 		was = 1
 	}
 	fmt.Fprintf(stdout, "TABLE ROW DEL table=%s row=%s existed=%d trips=%d\n", pos[0], field(pos[1]), was, trips.N())
+	printReceipt(stdout, write, *receipt)
 	return 0
 }

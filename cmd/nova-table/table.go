@@ -18,6 +18,10 @@ func cmdCreate(args []string, stdout, stderr io.Writer) int {
 	const verb = "create"
 	fs := verbflag.New(verb)
 	addr := redisFlag(fs)
+	write, receipt := writeFlags(fs)
+	epochKey := fs.String("epoch-key", "", "hash key naming the epoch domain (empty means epoch 0)")
+	epochField := fs.String("epoch-field", "n", "field in the epoch hash")
+	memberPrefix := fs.String("member-prefix", "", "member record prefix (default table::member:)")
 	columns := fs.String("columns", "", "the columns, name[:projection[:fold[:label]]] each, comma-separated")
 	footer := fs.String("footer", ntable.DefaultFooter, "the footer row's label")
 	widths := fs.String("width", "", "fixed column widths, col=n,...")
@@ -53,7 +57,7 @@ func cmdCreate(args []string, stdout, stderr io.Writer) int {
 			cols[i].Width = n
 		}
 	}
-	t := ntable.Table{Name: pos[0], Columns: cols, FooterLabel: *footer}
+	t := ntable.Table{EpochKey: *epochKey, EpochField: *epochField, MemberPrefix: *memberPrefix, Name: pos[0], Columns: cols, FooterLabel: *footer}
 	if !ntable.ValidName(t.Name) {
 		return refuse(stderr, verb, "the table name wants letters, digits, _ . and -, got "+strconv.Quote(t.Name))
 	}
@@ -64,10 +68,11 @@ func cmdCreate(args []string, stdout, stderr io.Writer) int {
 	}
 	defer st.Close()
 	trips := st.CountTrips()
-	if err := ntable.Create(ctx, c, t, time.Now()); err != nil {
+	if err := ntable.Create(ctx, c, t, time.Now(), *write); err != nil {
 		return storeRefusal(stderr, verb, err)
 	}
 	fmt.Fprintf(stdout, "TABLE CREATE table=%s columns=%d trips=%d\n", t.Name, len(t.Columns), trips.N())
+	printReceipt(stdout, write, *receipt)
 	return 0
 }
 
@@ -75,6 +80,8 @@ func cmdDrop(args []string, stdout, stderr io.Writer) int {
 	const verb = "drop"
 	fs := verbflag.New(verb)
 	addr := redisFlag(fs)
+	write, receipt := writeFlags(fs)
+	definition := fs.Bool("definition", false, "also remove the template; keep materialised history")
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
@@ -89,11 +96,16 @@ func cmdDrop(args []string, stdout, stderr io.Writer) int {
 	}
 	defer st.Close()
 	trips := st.CountTrips()
-	n, err := ntable.Drop(ctx, c, pos[0])
+	drop := ntable.Drop
+	if *definition {
+		drop = ntable.DropDefinition
+	}
+	n, err := drop(ctx, c, pos[0], *write)
 	if err != nil {
 		return storeRefusal(stderr, verb, err)
 	}
 	fmt.Fprintf(stdout, "TABLE DROP table=%s rows=%d trips=%d\n", pos[0], n, trips.N())
+	printReceipt(stdout, write, *receipt)
 	return 0
 }
 
@@ -130,6 +142,7 @@ func cmdClear(args []string, stdout, stderr io.Writer) int {
 	const verb = "clear"
 	fs := verbflag.New(verb)
 	addr := redisFlag(fs)
+	write, receipt := writeFlags(fs)
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
@@ -145,11 +158,12 @@ func cmdClear(args []string, stdout, stderr io.Writer) int {
 	defer st.Close()
 	trips := st.CountTrips()
 	start := time.Now()
-	n, err := ntable.Clear(ctx, c, pos[0])
+	n, err := ntable.Clear(ctx, c, pos[0], *write)
 	if err != nil {
 		return storeRefusal(stderr, verb, err)
 	}
 	fmt.Fprintf(stdout, "TABLE CLEAR table=%s rows=%d ms=%d trips=%d\n", pos[0], n, time.Since(start).Milliseconds(), trips.N())
+	printReceipt(stdout, write, *receipt)
 	return 0
 }
 
@@ -157,12 +171,20 @@ func cmdShow(args []string, stdout, stderr io.Writer) int {
 	const verb = "show"
 	fs := verbflag.New(verb)
 	addr := redisFlag(fs)
+	atEpoch := fs.String("at-epoch", "", "inspect a materialised epoch instead of the active one")
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
 	if len(pos) != 1 {
 		return refuse(stderr, verb, "wants one table name: show <table>")
+	}
+	var epoch uint64
+	if *atEpoch != "" {
+		epoch, err = strconv.ParseUint(*atEpoch, 10, 64)
+		if err != nil {
+			return refuse(stderr, verb, "--at-epoch wants an unsigned integer")
+		}
 	}
 	ctx := context.Background()
 	st, c, code := client(ctx, verb, *addr, stderr)
@@ -171,11 +193,16 @@ func cmdShow(args []string, stdout, stderr io.Writer) int {
 	}
 	defer st.Close()
 	trips := st.CountTrips()
-	t, err := ntable.Read(ctx, c, pos[0])
+	var t ntable.Table
+	if *atEpoch == "" {
+		t, err = ntable.Read(ctx, c, pos[0])
+	} else {
+		t, err = ntable.ReadAt(ctx, c, pos[0], epoch)
+	}
 	if err != nil {
 		return storeRefusal(stderr, verb, err)
 	}
-	fmt.Fprintf(stdout, "TABLE table=%s columns=%d rows=%d trips=%d\n", t.Name, len(t.Columns), len(t.Rows), trips.N())
+	fmt.Fprintf(stdout, "TABLE table=%s columns=%d rows=%d trips=%d epoch=%d revision=%d\n", t.Name, len(t.Columns), len(t.Rows), trips.N(), t.Epoch, t.Revision)
 	for _, r := range t.Rows {
 		var b strings.Builder
 		fmt.Fprintf(&b, "TABLE ROW table=%s row=%s", t.Name, field(r.Key))
@@ -226,6 +253,7 @@ func cmdRender(args []string, stdout, stderr io.Writer) int {
 	const verb = "render"
 	fs := verbflag.New(verb)
 	addr := redisFlag(fs)
+	atEpoch := fs.String("at-epoch", "", "inspect a materialised epoch instead of the active one")
 	rf := declareRenderFlags(fs)
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
@@ -238,13 +266,25 @@ func cmdRender(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
+	var epoch uint64
+	if *atEpoch != "" {
+		epoch, err = strconv.ParseUint(*atEpoch, 10, 64)
+		if err != nil {
+			return refuse(stderr, verb, "--at-epoch wants an unsigned integer")
+		}
+	}
 	ctx := context.Background()
 	st, c, code := client(ctx, verb, *addr, stderr)
 	if code != 0 {
 		return code
 	}
 	defer st.Close()
-	t, err := ntable.Read(ctx, c, pos[0])
+	var t ntable.Table
+	if *atEpoch == "" {
+		t, err = ntable.Read(ctx, c, pos[0])
+	} else {
+		t, err = ntable.ReadAt(ctx, c, pos[0], epoch)
+	}
 	if err != nil {
 		return storeRefusal(stderr, verb, err)
 	}

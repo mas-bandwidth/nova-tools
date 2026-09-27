@@ -20,12 +20,21 @@ func TestEveryTableOperationCountsOneTrip(t *testing.T) {
 	trips := nsstore.New(c).CountTrips()
 	one := func(name string, f func() error) {
 		t.Helper()
+		events := c.XLen(ctx, ntable.ChangesKey("demo")).Val()
 		before := trips.N()
 		if err := f(); err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
 		if n := trips.N() - before; n != 1 {
 			t.Fatalf("%s took %d trips; want 1", name, n)
+		}
+		writes := map[string]bool{"create": true, "same create": true, "row add": true, "cell add": true, "cell move": true, "cell remove": true, "bound row add": true, "row del": true, "clear": true, "bind": true, "drop": true, "drop definition": true, "member create": true}
+		want := events
+		if writes[name] {
+			want++
+		}
+		if got := c.XLen(ctx, ntable.ChangesKey("demo")).Val(); got != want {
+			t.Fatalf("%s committed %d events; want %d", name, got-events, want-events)
 		}
 	}
 	one("create", func() error { return ntable.Create(ctx, c, demo(), now) })
@@ -35,6 +44,9 @@ func TestEveryTableOperationCountsOneTrip(t *testing.T) {
 	one("cell members", func() error { _, err := ntable.CellMembers(ctx, c, "demo", "r", "ready"); return err })
 	one("cell move", func() error { _, err := ntable.CellMove(ctx, c, "demo", "r", "ready", "working", "job"); return err })
 	one("cell remove", func() error { _, err := ntable.CellRemove(ctx, c, "demo", "r", "working", "job"); return err })
+	one("member create", func() error { return ntable.MemberCreate(ctx, c, "demo", "unplaced") })
+	one("check", func() error { _, err := ntable.Check(ctx, c, "demo"); return err })
+	one("history", func() error { _, err := ntable.ReadAt(ctx, c, "demo", 0); return err })
 	one("shape", func() error { _, err := ntable.Shape(ctx, c, "demo"); return err })
 	one("cold read", func() error { _, err := ntable.Read(ctx, c, "demo"); return err })
 	one("list", func() error { _, err := ntable.List(ctx, c); return err })
@@ -42,7 +54,7 @@ func TestEveryTableOperationCountsOneTrip(t *testing.T) {
 	reader := ntable.NewReader("demo")
 	one("reader first", func() error { _, err := reader.Read(ctx, c); return err })
 	one("bound row add", func() error {
-		_, err := ntable.RowAdd(ctx, c, "demo", "bound", ntable.RowSpec{Owner: "other-tool move", Binds: map[string]string{"ready": "table:other:ready"}})
+		_, err := ntable.RowAdd(ctx, c, "demo", "bound", ntable.RowSpec{Owner: "other-tool move", Binds: map[string]string{"ready": "external:other:ready"}})
 		return err
 	})
 	one("reader changed", func() error {
@@ -73,6 +85,7 @@ func TestEveryTableOperationCountsOneTrip(t *testing.T) {
 		return ntable.Bind(ctx, c, tb, now)
 	})
 	one("drop", func() error { _, err := ntable.Drop(ctx, c, "demo"); return err })
+	one("drop definition", func() error { _, err := ntable.DropDefinition(ctx, c, "demo"); return err })
 }
 
 func TestRefusedMoveIsAtomicAndNamesItsRepair(t *testing.T) {

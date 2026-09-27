@@ -140,6 +140,14 @@ func (r Row) LabelOrKey() string {
 
 // Table is a table as read, or as a caller declares it before binding.
 type Table struct {
+	// EpochKey/Field bind this table to a shared epoch domain. An empty key
+	// means epoch zero permanently; the default field for a key is "n".
+	EpochKey     string
+	EpochField   string
+	MemberPrefix string
+	// Epoch and Revision describe the snapshot returned by the store.
+	Epoch       uint64
+	Revision    uint64
 	Name        string
 	Columns     []Column
 	FooterLabel string
@@ -189,14 +197,32 @@ func (t Table) HasFooter() bool {
 // DefKey is the table's definition hash.
 func DefKey(table string) string { return "table:" + table }
 
-// RowsKey is the table's row order set.
-func RowsKey(table string) string { return "table:" + table + ":rows" }
+// EpochPrefix is the storage namespace for one table generation.
+func EpochPrefix(table string, epoch uint64) string {
+	p := DefKey(table)
+	if epoch != 0 {
+		p += ":" + strconv.FormatUint(epoch, 10)
+	}
+	return p
+}
 
-// RowKey is one row's hash.
-func RowKey(table, row string) string { return "table:" + table + ":row:" + row }
+func RowsKeyAt(table string, epoch uint64) string { return EpochPrefix(table, epoch) + ":rows" }
+func RowKeyAt(table, row string, epoch uint64) string {
+	return EpochPrefix(table, epoch) + ":row:" + row
+}
+func CellKeyAt(table, row, col string, epoch uint64) string {
+	return EpochPrefix(table, epoch) + ":cell:" + row + ":" + col
+}
 
-// CellKey is one owned cell's set.
-func CellKey(table, row, col string) string { return "table:" + table + ":cell:" + row + ":" + col }
+// The original key helpers name epoch zero for existing callers.
+func RowsKey(table string) string           { return RowsKeyAt(table, 0) }
+func RowKey(table, row string) string       { return RowKeyAt(table, row, 0) }
+func CellKey(table, row, col string) string { return CellKeyAt(table, row, col, 0) }
+
+// MemberKey is reserved metadata, outside every valid table-name prefix.
+func MemberKey(id string) string      { return "table::member:" + id }
+func ChangesKey(table string) string  { return DefKey(table) + ":changes" }
+func RevisionKey(table string) string { return DefKey(table) + ":revision" }
 
 var (
 	nameRE = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]*$`)
@@ -357,6 +383,16 @@ func definitionFields(t Table) map[string]string {
 	}
 	m["order"] = strings.Join(names, ",")
 	m["footer"] = t.Footer()
+	if t.MemberPrefix != "" {
+		m["member_prefix"] = t.MemberPrefix
+	}
+	if t.EpochKey != "" {
+		m["epoch_key"] = t.EpochKey
+		m["epoch_field"] = t.EpochField
+		if m["epoch_field"] == "" {
+			m["epoch_field"] = "n"
+		}
+	}
 	return m
 }
 
@@ -366,7 +402,16 @@ func decodeDefinition(name string, h map[string]string) (Table, bool, error) {
 	if len(h) == 0 {
 		return Table{}, false, nil
 	}
-	t := Table{Name: name, FooterLabel: h["footer"]}
+	t := Table{Name: name, FooterLabel: h["footer"], EpochKey: h["epoch_key"], EpochField: h["epoch_field"], MemberPrefix: h["member_prefix"]}
+	for key, dst := range map[string]*uint64{"read_epoch": &t.Epoch, "read_revision": &t.Revision} {
+		if v := h[key]; v != "" {
+			n, err := strconv.ParseUint(v, 10, 64)
+			if err != nil {
+				return Table{}, true, fmt.Errorf("table %s: malformed %s %q", name, key, v)
+			}
+			*dst = n
+		}
+	}
 	order := h["order"]
 	if order == "" {
 		return Table{}, true, fmt.Errorf("table %s has no column order", name)
@@ -387,7 +432,19 @@ func decodeDefinition(name string, h map[string]string) (Table, bool, error) {
 
 // SameDefinition says two tables declare the same columns and footer.
 func SameDefinition(a, b Table) bool {
-	if a.Footer() != b.Footer() || len(a.Columns) != len(b.Columns) {
+	if a.EpochField == "" || a.EpochKey == "" {
+		a.EpochField = "n"
+	}
+	if b.EpochField == "" || b.EpochKey == "" {
+		b.EpochField = "n"
+	}
+	if a.MemberPrefix == "" {
+		a.MemberPrefix = "table::member:"
+	}
+	if b.MemberPrefix == "" {
+		b.MemberPrefix = "table::member:"
+	}
+	if a.Footer() != b.Footer() || len(a.Columns) != len(b.Columns) || a.EpochKey != b.EpochKey || a.EpochField != b.EpochField || a.MemberPrefix != b.MemberPrefix {
 		return false
 	}
 	for i := range a.Columns {
@@ -431,7 +488,7 @@ func decodeRow(t Table, key string, h map[string]string) Row {
 		if k, ok := h["key:"+c.Name]; ok && k != "" {
 			r.Cells[i] = Cell{Key: k, Bound: true}
 		} else {
-			r.Cells[i] = Cell{Key: CellKey(t.Name, key, c.Name)}
+			r.Cells[i] = Cell{Key: CellKeyAt(t.Name, key, c.Name, t.Epoch)}
 		}
 	}
 	return r

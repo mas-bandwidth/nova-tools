@@ -89,6 +89,15 @@ func (q *ReadCmd) Result() (Table, bool, error) {
 func Read(ctx context.Context, c redis.Cmdable, name string) (Table, error) {
 	return NewReader(name).Read(ctx, c)
 }
+
+// ReadAt inspects one materialised epoch, including after its template was removed.
+func ReadAt(ctx context.Context, c redis.Cmdable, name string, epoch uint64) (Table, error) {
+	reply, err := (operation{table: name}).call(ctx, c, FnRead, true, "read", strconv.FormatUint(epoch, 10))
+	if err != nil {
+		return Table{}, err
+	}
+	return decodeSnapshot(name, reply)
+}
 func (r *Reader) Read(ctx context.Context, c redis.Cmdable) (Table, error) {
 	reply, err := (operation{table: r.Name}).call(ctx, c, FnRead, true, "read")
 	if err != nil {

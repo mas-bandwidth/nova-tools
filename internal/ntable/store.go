@@ -13,21 +13,33 @@ import (
 )
 
 const (
-	FnClear      = "ns_table_clear"
-	FnCreate     = "ns_table_create"
-	FnDrop       = "ns_table_drop"
-	FnRowAdd     = "ns_table_row_add"
-	FnRowDel     = "ns_table_row_del"
-	FnCellAdd    = "ns_table_cell_add"
-	FnCellRemove = "ns_table_cell_remove"
-	FnCellMove   = "ns_table_cell_move"
-	FnBind       = "ns_table_bind"
-	FnRead       = "ns_table_read"
-	FnList       = "ns_table_list"
-	FnMembers    = "ns_table_members"
+	FnClear          = "ns_table_clear"
+	FnCreate         = "ns_table_create"
+	FnDrop           = "ns_table_drop"
+	FnDropDefinition = "ns_table_drop_definition"
+	FnMemberCreate   = "ns_table_member_create"
+	FnRowAdd         = "ns_table_row_add"
+	FnRowDel         = "ns_table_row_del"
+	FnCellAdd        = "ns_table_cell_add"
+	FnCellRemove     = "ns_table_cell_remove"
+	FnCellMove       = "ns_table_cell_move"
+	FnBind           = "ns_table_bind"
+	FnRead           = "ns_table_read"
+	FnCheck          = "ns_table_check"
+	FnList           = "ns_table_list"
+	FnMembers        = "ns_table_members"
 )
 
-var ErrExists = errors.New("exists with another definition")
+var (
+	ErrExists       = errors.New("exists with another definition")
+	ErrOccupied     = errors.New("shape would delete or hide placed members")
+	ErrOwnedAlias   = errors.New("binding target is table-owned storage")
+	ErrStale        = errors.New("observed epoch is stale")
+	ErrMemberEpoch  = errors.New("member belongs to another epoch")
+	ErrPlaced       = errors.New("member already has a place in this table")
+	ErrDrift        = errors.New("member record and owned set disagree")
+	ErrMemberExists = errors.New("member identity already exists")
+)
 
 // BoundError names the other writer. The table may read the binding but
 // cannot acquire write ownership merely by displaying it.
@@ -39,6 +51,27 @@ func (e *BoundError) Error() string {
 		s += "; run: " + e.Owner
 	}
 	return s
+}
+
+// WriteOptions binds a mutation to the epoch its caller observed. Omitting
+// options means epoch zero; a stale call is never retried into a new epoch.
+// Actor, Fence and Idem accompany the change event; authorization and the
+// coordinator lease are separate from this table primitive.
+type WriteOptions struct {
+	Epoch uint64
+	Actor string
+	Fence string
+	Idem  string
+	// Receipt receives the committed event without another store exchange.
+	Receipt *Receipt
+}
+
+// Receipt identifies the durable table change. Idem is recorded as caller
+// metadata; this primitive does not deduplicate attempts.
+type Receipt struct {
+	ID                   string
+	Epoch, Before, After uint64
+	Outcome              string
 }
 
 type operation struct{ table, row, col, member string }
@@ -75,6 +108,16 @@ func (o operation) refused(reply []any) error {
 	var cause error
 	remedy := o.remedy()
 	switch reason {
+	case "STALE":
+		cause = fmt.Errorf("%w: observed %v, active %v", ErrStale, reply[2], reply[3])
+	case "MEMBEREPOCH":
+		cause = fmt.Errorf("%w: %v", ErrMemberEpoch, reply[2:])
+	case "MEMBEREXISTS":
+		cause = ErrMemberExists
+	case "PLACED":
+		cause = fmt.Errorf("%w: %v", ErrPlaced, reply[2:])
+	case "DRIFT":
+		cause = fmt.Errorf("%w: %v", ErrDrift, reply[2:])
 	case "NOTABLE":
 		cause = ErrNoTable
 		remedy = "nova-table create " + shellWord(o.table) + " --columns <columns>"
@@ -90,6 +133,27 @@ func (o operation) refused(reply []any) error {
 	case "NOTMEMBER":
 		cause = ErrNotMember
 		remedy = "nova-table cell members " + shellWord(o.table) + " " + shellWord(o.row) + " " + shellWord(o.col)
+	case "OCCUPIED":
+		if len(reply) != 5 {
+			return fmt.Errorf("%s: malformed occupied-cell refusal", o.location())
+		}
+		members, ok := reply[4].([]any)
+		if !ok || len(members) == 0 {
+			return fmt.Errorf("%s: malformed occupied members", o.location())
+		}
+		o.row, o.col = fmt.Sprint(reply[2]), fmt.Sprint(reply[3])
+		names := make([]string, 0, len(members))
+		for _, member := range members {
+			names = append(names, fmt.Sprintf("%q", member))
+		}
+		cause = fmt.Errorf("%w: %s; move each member to a retained owned cell or remove it first", ErrOccupied, strings.Join(names, ", "))
+		remedy = "nova-table cell remove " + shellWord(o.table) + " " + shellWord(o.row) + " " + shellWord(o.col) + " " + shellWord(fmt.Sprint(members[0]))
+	case "OWNEDALIAS":
+		if len(reply) != 5 {
+			return fmt.Errorf("%s: malformed owned-alias refusal", o.location())
+		}
+		o.row, o.col = fmt.Sprint(reply[2]), fmt.Sprint(reply[3])
+		cause = fmt.Errorf("%w: %q; choose a set owned outside nova-table", ErrOwnedAlias, reply[4])
 	case "BOUND":
 		if len(reply) < 6 {
 			return fmt.Errorf("%s: malformed bound-cell refusal", o.location())
@@ -122,6 +186,48 @@ func (o operation) call(ctx context.Context, c redis.Cmdable, fn string, ro bool
 	}
 	return reply, nil
 }
+func (o operation) write(ctx context.Context, c redis.Cmdable, fn string, options []WriteOptions, args ...any) ([]any, error) {
+	if len(options) > 1 {
+		return nil, fmt.Errorf("%s: one write-options value is allowed", o.location())
+	}
+	var opts WriteOptions
+	if len(options) == 1 {
+		opts = options[0]
+	}
+	body, err := payload(struct {
+		Epoch string `json:"epoch"`
+		Actor string `json:"actor"`
+		Fence string `json:"fence"`
+		Idem  string `json:"idem"`
+	}{strconv.FormatUint(opts.Epoch, 10), opts.Actor, opts.Fence, opts.Idem})
+	if err != nil {
+		return nil, err
+	}
+	reply, err := o.call(ctx, c, fn, false, append(args, body)...)
+	if err != nil {
+		return nil, err
+	}
+	if len(reply) < 2 {
+		return nil, fmt.Errorf("%s: missing committed receipt", o.location())
+	}
+	wire, ok := reply[len(reply)-1].([]any)
+	if !ok || len(wire) != 6 || fmt.Sprint(wire[0]) != "RECEIPT" {
+		return nil, fmt.Errorf("%s: malformed committed receipt", o.location())
+	}
+	var r Receipt
+	r.ID, r.Outcome = fmt.Sprint(wire[1]), fmt.Sprint(wire[5])
+	for i, target := range []*uint64{&r.Epoch, &r.Before, &r.After} {
+		*target, err = strconv.ParseUint(fmt.Sprint(wire[i+2]), 10, 64)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if opts.Receipt != nil {
+		*opts.Receipt = r
+	}
+	return reply[:len(reply)-1], nil
+}
+
 func replyCount(reply []any) (int64, error) {
 	if len(reply) < 2 {
 		return 0, fmt.Errorf("table function returned no count: %v", reply)
@@ -142,7 +248,7 @@ func definitionPayload(t Table, now time.Time) (map[string]string, error) {
 func payload(v any) (string, error) { b, err := json.Marshal(v); return string(b), err }
 
 // Create checks the definition and writes it atomically in one round trip.
-func Create(ctx context.Context, c redis.Cmdable, t Table, now time.Time) error {
+func Create(ctx context.Context, c redis.Cmdable, t Table, now time.Time, opts ...WriteOptions) error {
 	fields, err := definitionPayload(t, now)
 	if err != nil {
 		return err
@@ -151,18 +257,37 @@ func Create(ctx context.Context, c redis.Cmdable, t Table, now time.Time) error 
 	if err != nil {
 		return err
 	}
-	_, err = (operation{table: t.Name}).call(ctx, c, FnCreate, false, body)
+	_, err = (operation{table: t.Name}).write(ctx, c, FnCreate, opts, body)
 	return err
 }
 
-// Drop removes owned keys and the definition; bound sets remain untouched.
-func Drop(ctx context.Context, c redis.Cmdable, name string) (int, error) {
-	reply, err := (operation{table: name}).call(ctx, c, FnDrop, false)
+// Drop removes the active epoch and its owned cells. The template and older
+// epochs survive; a later epoch starts with the same definition and no rows.
+func Drop(ctx context.Context, c redis.Cmdable, name string, opts ...WriteOptions) (int, error) {
+	reply, err := (operation{table: name}).write(ctx, c, FnDrop, opts)
 	if err != nil {
 		return 0, err
 	}
 	n, err := replyCount(reply)
 	return int(n), err
+}
+
+// DropDefinition also removes the stable template. Materialised epoch
+// snapshots and immutable member identities remain available for inspection.
+func DropDefinition(ctx context.Context, c redis.Cmdable, name string, opts ...WriteOptions) (int, error) {
+	reply, err := (operation{table: name}).write(ctx, c, FnDropDefinition, opts)
+	if err != nil {
+		return 0, err
+	}
+	n, err := replyCount(reply)
+	return int(n), err
+}
+
+// MemberCreate allocates an unplaced identity in the table's record namespace.
+// Existing IDs, including removed members and older epochs, are refused.
+func MemberCreate(ctx context.Context, c redis.Cmdable, name, id string, opts ...WriteOptions) error {
+	_, err := (operation{table: name, member: id}).write(ctx, c, FnMemberCreate, opts, id)
+	return err
 }
 
 type RowSpec struct {
@@ -172,7 +297,7 @@ type RowSpec struct {
 	Binds   map[string]string `json:"binds,omitempty"`
 }
 
-func RowAdd(ctx context.Context, c redis.Cmdable, name, key string, spec RowSpec) (Row, error) {
+func RowAdd(ctx context.Context, c redis.Cmdable, name, key string, spec RowSpec, opts ...WriteOptions) (Row, error) {
 	o := operation{table: name, row: key}
 	if !ValidRowKey(key) {
 		return Row{}, fmt.Errorf("%s: row wants a non-empty key with no control characters; run: nova-table row help", o.location())
@@ -181,7 +306,7 @@ func RowAdd(ctx context.Context, c redis.Cmdable, name, key string, spec RowSpec
 	if err != nil {
 		return Row{}, err
 	}
-	reply, err := o.call(ctx, c, FnRowAdd, false, key, body)
+	reply, err := o.write(ctx, c, FnRowAdd, opts, key, body)
 	if err != nil {
 		return Row{}, err
 	}
@@ -202,8 +327,8 @@ func RowAdd(ctx context.Context, c redis.Cmdable, name, key string, spec RowSpec
 	}
 	return decodeRow(t, key, h), nil
 }
-func RowDel(ctx context.Context, c redis.Cmdable, name, key string) (bool, error) {
-	reply, err := (operation{table: name, row: key}).call(ctx, c, FnRowDel, false, key)
+func RowDel(ctx context.Context, c redis.Cmdable, name, key string, opts ...WriteOptions) (bool, error) {
+	reply, err := (operation{table: name, row: key}).write(ctx, c, FnRowDel, opts, key)
 	if err != nil {
 		return false, err
 	}
@@ -213,7 +338,7 @@ func RowDel(ctx context.Context, c redis.Cmdable, name, key string) (bool, error
 
 // Bind replaces the caller-owned table shape in one atomic call. Existing
 // owned cells of retained rows survive; removed rows leave bound sets alone.
-func Bind(ctx context.Context, c redis.Cmdable, t Table, now time.Time) error {
+func Bind(ctx context.Context, c redis.Cmdable, t Table, now time.Time, opts ...WriteOptions) error {
 	fields, err := definitionPayload(t, now)
 	if err != nil {
 		return err
@@ -247,32 +372,32 @@ func Bind(ctx context.Context, c redis.Cmdable, t Table, now time.Time) error {
 	if err != nil {
 		return err
 	}
-	_, err = (operation{table: t.Name}).call(ctx, c, FnBind, false, body)
+	_, err = (operation{table: t.Name}).write(ctx, c, FnBind, opts, body)
 	return err
 }
-func Clear(ctx context.Context, c redis.Cmdable, name string) (int64, error) {
-	reply, err := (operation{table: name}).call(ctx, c, FnClear, false)
+func Clear(ctx context.Context, c redis.Cmdable, name string, opts ...WriteOptions) (int64, error) {
+	reply, err := (operation{table: name}).write(ctx, c, FnClear, opts)
 	if err != nil {
 		return 0, err
 	}
 	return replyCount(reply)
 }
-func CellAdd(ctx context.Context, c redis.Cmdable, name, row, col, member string, score float64) (int64, error) {
-	reply, err := (operation{name, row, col, member}).call(ctx, c, FnCellAdd, false, row, col, member, strconv.FormatFloat(score, 'g', -1, 64))
+func CellAdd(ctx context.Context, c redis.Cmdable, name, row, col, member string, score float64, opts ...WriteOptions) (int64, error) {
+	reply, err := (operation{name, row, col, member}).write(ctx, c, FnCellAdd, opts, row, col, member, strconv.FormatFloat(score, 'g', -1, 64))
 	if err != nil {
 		return 0, err
 	}
 	return replyCount(reply)
 }
-func CellRemove(ctx context.Context, c redis.Cmdable, name, row, col, member string) (int64, error) {
-	reply, err := (operation{name, row, col, member}).call(ctx, c, FnCellRemove, false, row, col, member)
+func CellRemove(ctx context.Context, c redis.Cmdable, name, row, col, member string, opts ...WriteOptions) (int64, error) {
+	reply, err := (operation{name, row, col, member}).write(ctx, c, FnCellRemove, opts, row, col, member)
 	if err != nil {
 		return 0, err
 	}
 	return replyCount(reply)
 }
-func CellMove(ctx context.Context, c redis.Cmdable, name, row, from, to, member string) (int64, error) {
-	reply, err := (operation{name, row, from, member}).call(ctx, c, FnCellMove, false, row, from, member, to)
+func CellMove(ctx context.Context, c redis.Cmdable, name, row, from, to, member string, opts ...WriteOptions) (int64, error) {
+	reply, err := (operation{name, row, from, member}).write(ctx, c, FnCellMove, opts, row, from, member, to)
 	if err != nil {
 		return 0, err
 	}

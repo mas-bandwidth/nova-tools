@@ -33,7 +33,7 @@ usage:
   nova-table version
   nova-table help
   nova-table create <table> --columns <name[:projection[:fold[:label]]],...> [--footer <label>] [--width <col=n,...>]
-  nova-table drop <table>
+  nova-table drop <table> [--definition]
   nova-table list
   nova-table row add <table> <row> [--label <text>] [--exclude <member>] [--owner <verb>] [<col>=<key> ...]
   nova-table row del <table> <row>
@@ -41,10 +41,17 @@ usage:
   nova-table cell remove <table> <row> <col> <member>
   nova-table cell move <table> <row> <from-col> <to-col> <member>
   nova-table cell members <table> <row> <col>
+  nova-table member create <table> <id> [--epoch <n>]
+  nova-table check <table>
   nova-table clear <table>
-  nova-table show <table>
-  nova-table render <table> [--hide-zero-rows] [--width <col=n,...>]
+  nova-table show <table> [--at-epoch <n>]
+  nova-table render <table> [--at-epoch <n>] [--hide-zero-rows] [--width <col=n,...>]
   nova-table watch <table>[,<table>...] [--every <duration>] [--out <file>] [--title <text>] [--hide-zero-rows] [--once]
+
+Write verbs take --epoch <observed epoch> (default 0), --actor, --fence,
+--idem (receipt metadata) and --receipt. create also takes --epoch-key,
+--epoch-field (default n), and --member-prefix (default table::member:).
+A stale epoch is refused; drop retains the template unless --definition.
 
 Every verb takes --redis <addr> (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR,
 then the seat's address) and dials as the seat nova-sprint dials as: --seat
@@ -123,6 +130,10 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 		}
 		fmt.Fprintln(stdout, buildinfo.Line("nova-table", version))
 		return 0
+	case "member":
+		return cmdMember(args[1:], stdout, stderr)
+	case "check":
+		return cmdCheck(args[1:], stdout, stderr)
 	case "create":
 		return cmdCreate(args[1:], stdout, stderr)
 	case "drop":

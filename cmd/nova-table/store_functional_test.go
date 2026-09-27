@@ -97,7 +97,7 @@ func TestASittingThroughTheVerbs(t *testing.T) {
 		{[]string{"cell", "add", "jobs", "the tests", "who", "bo", "--score", "1"}, "TABLE CELL table=jobs row=\"the tests\" col=who n=1 trips=1\n"},
 		{[]string{"cell", "remove", "jobs", "build", "ready", "b2"}, "TABLE CELL table=jobs row=build col=ready n=1 trips=1\n"},
 		{[]string{"cell", "members", "jobs", "build", "ready"}, "TABLE CELL table=jobs row=build col=ready n=1 trips=1\nTABLE MEMBER table=jobs row=build col=ready member=b1 score=1\n"},
-		{[]string{"show", "jobs"}, "TABLE table=jobs columns=4 rows=2 trips=1\nTABLE ROW table=jobs row=build ready=1 working=0 who=1\nTABLE ROW table=jobs row=\"the tests\" ready=0 working=0 who=1\n"},
+		{[]string{"show", "jobs"}, "TABLE table=jobs columns=4 rows=2 trips=1 epoch=0 revision=9\nTABLE ROW table=jobs row=build ready=1 working=0 who=1\nTABLE ROW table=jobs row=\"the tests\" ready=0 working=0 who=1\n"},
 		{[]string{"render", "jobs"}, "job    | ready | working | who\n" +
 			"-------+-------+---------+-------\n" +
 			"build  |     1 |       0 | ann\n" +
@@ -112,7 +112,7 @@ func TestASittingThroughTheVerbs(t *testing.T) {
 		{[]string{"list"}, "TABLE LIST tables=1 trips=1\nTABLE table=jobs columns=4 rows=2\n"},
 		{[]string{"row", "del", "jobs", "the tests"}, "TABLE ROW DEL table=jobs row=\"the tests\" existed=1 trips=1\n"},
 		{[]string{"row", "del", "jobs", "the tests"}, "TABLE ROW DEL table=jobs row=\"the tests\" existed=0 trips=1\n"},
-		{[]string{"drop", "jobs"}, "TABLE DROP table=jobs rows=1 trips=1\n"},
+		{[]string{"drop", "jobs", "--definition"}, "TABLE DROP table=jobs rows=1 trips=1\n"},
 		{[]string{"list"}, "TABLE LIST tables=0 trips=1\n"},
 	}
 	for _, s := range steps {

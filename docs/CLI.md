@@ -4803,7 +4803,7 @@ $ nova-table cell move demo build ready working b1
 TABLE MOVE table=demo row=build member=b1 from=ready to=working n=1 trips=1
 
 $ nova-table show demo
-TABLE table=demo columns=4 rows=1 trips=1
+TABLE table=demo columns=4 rows=1 trips=1 epoch=0 revision=5
 TABLE ROW table=demo row=build ready=1 working=1 done=0
 
 $ nova-table render demo

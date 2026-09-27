@@ -94,10 +94,10 @@ func TestCreateRowAddCellAddReadRender(t *testing.T) {
 	if names, err := ntable.List(ctx, c); err != nil || strings.Join(names, ",") != "demo" {
 		t.Fatalf("List = %v %v", names, err)
 	}
-	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}); err != nil {
+	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{Binds: map[string]string{"who": "people:build"}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ntable.RowAdd(ctx, c, "demo", "test", ntable.RowSpec{Label: "test suite"}); err != nil {
+	if _, err := ntable.RowAdd(ctx, c, "demo", "test", ntable.RowSpec{Label: "test suite", Binds: map[string]string{"who": "people:test"}}); err != nil {
 		t.Fatal(err)
 	}
 	for _, add := range []struct {
@@ -107,7 +107,14 @@ func TestCreateRowAddCellAddReadRender(t *testing.T) {
 		{"build", "ready", "b1", 1}, {"build", "ready", "b2", 2}, {"build", "working", "b3", 3},
 		{"test", "done", "t1", 1}, {"build", "who", "ann", 1}, {"test", "who", "bo", 1}, {"test", "who", "ann", 2},
 	} {
-		if _, err := ntable.CellAdd(ctx, c, "demo", add.row, add.col, add.member, add.score); err != nil {
+		var err error
+		if add.col == "who" {
+			// A bound projection may repeat an external member across rows; owned placements may not.
+			err = c.ZAdd(ctx, "people:"+add.row, redis.Z{Score: add.score, Member: add.member}).Err()
+		} else {
+			_, err = ntable.CellAdd(ctx, c, "demo", add.row, add.col, add.member, add.score)
+		}
+		if err != nil {
 			t.Fatalf("cell add %+v: %v", add, err)
 		}
 	}
@@ -191,8 +198,16 @@ func TestRowOrderIsStableAcrossReAdds(t *testing.T) {
 	if n, err := ntable.Drop(ctx, c, "demo"); err != nil || n != 2 {
 		t.Fatalf("Drop: %d %v", n, err)
 	}
-	if keys, err := c.Keys(ctx, "*").Result(); err != nil || len(keys) != 0 {
-		t.Fatalf("Drop left keys %v (%v)", keys, err)
+	for _, pattern := range []string{"table:demo:row:*", "table:demo:cell:*"} {
+		if keys, err := c.Keys(ctx, pattern).Result(); err != nil || len(keys) != 0 {
+			t.Fatalf("Drop left owned keys %v: %v", keys, err)
+		}
+	}
+	if _, err := ntable.Read(ctx, c, "demo"); !errors.Is(err, ntable.ErrNoTable) {
+		t.Fatalf("dropped presence: %v", err)
+	}
+	if !c.HExists(ctx, ntable.DefKey("demo"), "order").Val() || !c.HExists(ctx, ntable.MemberKey("m"), "epoch").Val() {
+		t.Fatal("drop lost definition or member identity")
 	}
 }
 

@@ -37,6 +37,7 @@ func cmdCellAdd(args []string, stdout, stderr io.Writer) int {
 	const verb = "cell add"
 	fs := verbflag.New(verb)
 	addr := redisFlag(fs)
+	write, receipt := writeFlags(fs)
 	score := fs.String("score", "", "the member's score, its place in the set's order (default the unix time in ms)")
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
@@ -56,11 +57,12 @@ func cmdCellAdd(args []string, stdout, stderr io.Writer) int {
 	}
 	defer st.Close()
 	trips := st.CountTrips()
-	n, err := ntable.CellAdd(ctx, c, pos[0], pos[1], pos[2], pos[3], sc)
+	n, err := ntable.CellAdd(ctx, c, pos[0], pos[1], pos[2], pos[3], sc, *write)
 	if err != nil {
 		return storeRefusal(stderr, verb, err)
 	}
 	fmt.Fprintf(stdout, "TABLE CELL table=%s row=%s col=%s n=%d trips=%d\n", pos[0], field(pos[1]), pos[2], n, trips.N())
+	printReceipt(stdout, write, *receipt)
 	return 0
 }
 
@@ -82,6 +84,7 @@ func cmdCellRemove(args []string, stdout, stderr io.Writer) int {
 	const verb = "cell remove"
 	fs := verbflag.New(verb)
 	addr := redisFlag(fs)
+	write, receipt := writeFlags(fs)
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
@@ -96,11 +99,12 @@ func cmdCellRemove(args []string, stdout, stderr io.Writer) int {
 	}
 	defer st.Close()
 	trips := st.CountTrips()
-	n, err := ntable.CellRemove(ctx, c, pos[0], pos[1], pos[2], pos[3])
+	n, err := ntable.CellRemove(ctx, c, pos[0], pos[1], pos[2], pos[3], *write)
 	if err != nil {
 		return storeRefusal(stderr, verb, err)
 	}
 	fmt.Fprintf(stdout, "TABLE CELL table=%s row=%s col=%s n=%d trips=%d\n", pos[0], field(pos[1]), pos[2], n, trips.N())
+	printReceipt(stdout, write, *receipt)
 	return 0
 }
 
@@ -108,6 +112,7 @@ func cmdCellMove(args []string, stdout, stderr io.Writer) int {
 	const verb = "cell move"
 	fs := verbflag.New(verb)
 	addr := redisFlag(fs)
+	write, receipt := writeFlags(fs)
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
@@ -122,11 +127,12 @@ func cmdCellMove(args []string, stdout, stderr io.Writer) int {
 	}
 	defer st.Close()
 	trips := st.CountTrips()
-	n, err := ntable.CellMove(ctx, c, pos[0], pos[1], pos[2], pos[3], pos[4])
+	n, err := ntable.CellMove(ctx, c, pos[0], pos[1], pos[2], pos[3], pos[4], *write)
 	if err != nil {
 		return storeRefusal(stderr, verb, err)
 	}
 	fmt.Fprintf(stdout, "TABLE MOVE table=%s row=%s member=%s from=%s to=%s n=%d trips=%d\n", pos[0], field(pos[1]), field(pos[4]), pos[2], pos[3], n, trips.N())
+	printReceipt(stdout, write, *receipt)
 	return 0
 }
 

@@ -53,6 +53,80 @@ table that shows it does not become a second.
 A row may name one member its counts and members leave out (`--exclude`).
 The sprint's stream sentinel is the case: the stream's stop, not work.
 
+## Member identity, placement and epochs
+
+An owned member has at most one place in a logical table, across all rows and
+columns. The same record may have a place in another table. `cell add` creates
+a missing record atomically with its placement; a repeated add refuses, even
+in the same cell, preserving the existing score. `cell move` moves between
+columns of one row and retains the score. Removing a member clears that
+table's place field and retains its identity. `member create` makes an unplaced
+record and refuses an existing ID; removal never permits ID reuse as a new
+record. A removed record may be placed again in its original epoch.
+
+Records default to `table::member:<id>`, with immutable `epoch` and a
+`place:<table>` field holding `row:column`. A definition's `--member-prefix`
+can select an existing namespace, such as `task:`. Existing unrelated hash
+fields survive; absent epoch on a legacy record means zero. Generic task
+create/move fields cannot write `place:*`. Other record owners must likewise
+reserve those fields and preserve identity. Table operations do not implement
+the task/card lifecycle or protect against out-of-band raw Redis writes.
+
+`row add` and module `Bind` refuse a shape edit that would hide or delete a
+placed owned member. Their refusal identifies the occupied cell and members;
+move or explicitly remove them first. A binding cannot name any `table:*`
+storage, including a future cell, epoch or metadata key. External bindings
+remain live views of their owner's data, including on historical reads.
+
+A definition with `--epoch-key <hash>` uses its `--epoch-field` (default `n`)
+as the shared epoch domain; no key means epoch zero permanently. The domain
+owner must advance epochs monotonically. Every mutation carries the epoch the
+caller observed (`--epoch`, default zero). A stale write refuses unchanged;
+it is never retried in the new epoch. Members from an older epoch cannot be
+placed in the current one. Epochs and revisions use exact unsigned decimal
+integers, including values beyond floating-point integer precision.
+
+Columns and footer form a stable template. Presence, rows, metadata and owned
+cells belong to one epoch. Advancing the domain exposes that template with
+empty rows while preserving historical data and member links. `clear` empties
+only the active epoch. `drop` removes its presence; a later epoch again sees
+the template. Only `drop --definition` removes the template. Every materialised
+epoch retains a definition snapshot, and `show`/`render --at-epoch <n>` (module
+`ReadAt`) can inspect its history. A permanent identity hash retains the epoch
+domain and member prefix, preventing template recreation from silently
+reassigning old records to a different namespace. `show` reports epoch and
+revision; `render` and `watch` retain their plain table display.
+
+`check` verifies both directions of record/set membership, duplicate places,
+and hidden owned cells in one store instant. The runtime assumes valid initial
+state for its preservation guarantees. Legacy owned cells without record
+links, or hidden under old bindings, require a separately reviewed migration;
+operations refuse detected drift rather than silently inventing identity.
+
+## Change receipts
+
+Every accepted mutation, including an accepted no-op, increments the table's
+revision once and appends one event to `table:<t>:changes`. Refusals change no
+record, cell, revision or event. The event is the receipt: verb, original call
+arguments (JSON, excluding WriteOptions), epoch, `rev_before`, `rev_after`,
+actor, fence, idem, affected cells (`row:column`), member transitions
+(`id`, `from`, `to`, score), and outcome (`changed` or `noop`). Empty endpoints
+are empty strings; empty change lists are JSON arrays.
+
+Writes accept `--actor`, `--fence`, `--idem` and `--receipt`. The last prints the
+committed event ID and revision without a second store call. Go callers pass
+`WriteOptions{Epoch, Actor, Fence, Idem, Receipt: &receipt}`. Actor, fence and
+idem are recorded metadata here: authorization, lease fencing and retry
+deduplication belong to the coordinator layer. The primitive makes no claim
+that a repeated attempt with the same idem value is deduplicated.
+
+Streams are untrimmed in this foundation. Future trimming needs an archive,
+an acknowledgement watermark covering every registered consumer group, and
+explicit gap/replay handling. The function validates input, key types, counter
+bounds and every staged command's ACL before writing; it appends the event
+last. Redis functions do not provide rollback after resource exhaustion or
+server failure; this is not a claim of universal error rollback.
+
 ## The keys
 
 All under one prefix, so one ACL pattern grants them (`~table:*`), plus the
@@ -66,7 +140,13 @@ table:<t>                  HASH  order (the column names, comma-joined),
 table:<t>:rows             ZSET  row key -> rank: the render order
 table:<t>:row:<r>          HASH  label, exclude, owner, key:<col> (a bound
                                  cell's set; absent: the owned cell)
-table:<t>:cell:<r>:<c>     ZSET  an owned cell
+table:<t>:cell:<r>:<c>     ZSET  an owned cell (epoch zero)
+table:<t>:<e>:rows/row:/cell:     the same epoch-local keys for e > 0
+table:<t>[:<e>]:definition HASH  retained definition, _present, _revision
+table:<t>:identity         HASH  immutable epoch_key, epoch_field, member_prefix
+table:<t>:revision         HASH  n (revision, retained across epochs/drop)
+table:<t>:changes        STREAM  untrimmed committed change receipts
+table::member:<id>         HASH  epoch, place:<table> and caller-owned metadata
 ```
 
 Every table operation takes **one round trip after connecting**, including
@@ -74,8 +154,9 @@ cold reads and reads after row or binding changes. Writes validate and
 mutate atomically in the `ns_table_*` functions in the shared Redis library.
 `ns_table_read`, `ns_table_list`, and `ns_table_members` are read-only
 functions (`FCALL_RO`). A multi-table watch pipelines one snapshot function
-per table in one exchange, on the first tick as well as later ticks. No
-`KEYS` or `SCAN` is used.
+per table in one exchange, on the first tick as well as later ticks. Normal reads and writes use neither `KEYS` nor `SCAN`. The explicit
+maintenance `check` scans the member namespace and current owned-cell keys
+inside one read-only function; its cost scales with that namespace.
 
 The typed success receipt includes `trips=1`, measured by `store.CountTrips`.
 `render` and `watch` print only their table text; their trip budget is checked
@@ -92,7 +173,7 @@ said no.
 
 ```
 nova-table create <table> --columns <name[:projection[:fold[:label]]],...> [--footer <label>] [--width <col=n,...>]
-nova-table drop <table>
+nova-table drop <table> [--definition]
 nova-table list
 nova-table row add <table> <row> [--label <text>] [--exclude <member>] [--owner <verb>] [<col>=<key> ...]
 nova-table row del <table> <row>
@@ -100,8 +181,10 @@ nova-table cell add <table> <row> <col> <member> [--score <n>]
 nova-table cell remove <table> <row> <col> <member>
 nova-table cell move <table> <row> <from-col> <to-col> <member>
 nova-table cell members <table> <row> <col>
+nova-table member create <table> <id>
+nova-table check <table>
 nova-table clear <table>
-nova-table show <table>
+nova-table show <table> [--at-epoch <n>]
 nova-table render <table> [--hide-zero-rows] [--width <col=n,...>]
 nova-table watch <table>[,<table>...] [--every <duration>] [--out <file>] [--title <text>] [--hide-zero-rows] [--once]
 ```
@@ -109,7 +192,7 @@ nova-table watch <table>[,<table>...] [--every <duration>] [--out <file>] [--tit
 | verb | prints |
 | --- | --- |
 | `create` | `TABLE CREATE table=<t> columns=<n>`; an existing table with the same definition is left; another definition is refused |
-| `drop` | `TABLE DROP table=<t> rows=<n>`; the definition, rows and owned cells go, a bound set stays |
+| `drop` | `TABLE DROP table=<t> rows=<n>`; the active epoch's rows and owned cells go; the template remains unless `--definition`; a bound set stays |
 | `list` | `TABLE LIST tables=<n>`, then `TABLE table=<t> columns=<n> rows=<n>` per table |
 | `row add` | `TABLE ROW ADD table=<t> row=<r> cols=<n> bound=<n>`; a row already there keeps its place and its cells; a binding wants `--owner` |
 | `row del` | `TABLE ROW DEL table=<t> row=<r> existed=<0\|1>`; its owned cells go with it |
@@ -191,10 +274,15 @@ column and member where applicable, plus the relevant inspection or repair verb.
 
 The function library and source ACL declarations must be deployed together by
 the store owner. Writers need `FCALL` grants for `ns_table_create`, `drop`,
-`row_add`, `row_del`, `cell_add`, `cell_remove`, `cell_move`, `bind`, and `clear`
+`row_add`, `row_del`, `cell_add`, `cell_remove`, `cell_move`, `bind`, `clear`,
+`member_create`, and `drop_definition`
 (each with the `ns_table_` prefix); readers need `FCALL_RO` for
 `ns_table_read`, `ns_table_list`, and `ns_table_members`, plus the underlying
-commands and authorized key patterns. The standalone ordered-set move retains
+commands and authorized key patterns. Writers also need `HDEL`, `TYPE`,
+`XINFO STREAM` and `XADD` for records and receipt preflight; revision counters
+use the existing `HGET`/`HSET` grants. The explicit maintenance check needs
+`FCALL_RO ns_table_check` and `SCAN`; these are not added to the display-only
+reader role. Custom epoch/record namespaces require their own key grants. The standalone ordered-set move retains
 `ns_oset_move`. `SCARD` and `SISMEMBER` preflight the registry type before
 multi-key writes. No command silently loads a library or changes live grants.
 

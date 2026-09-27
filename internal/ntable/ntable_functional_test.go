@@ -70,9 +70,10 @@ func TestMoveAndClearAreOneCallEach(t *testing.T) {
 	if n, err := ntable.Clear(ctx, c, "demo"); err != nil || n != 2 {
 		t.Fatalf("clear: rows=%d err=%v", n, err)
 	}
-	keys, err := c.Keys(ctx, "table:demo*").Result()
-	if err != nil || len(keys) != 1 || keys[0] != ntable.DefKey("demo") {
-		t.Fatalf("after clear the keys are %v (%v); want the definition alone", keys, err)
+	for _, pattern := range []string{"table:demo:row:*", "table:demo:cell:*"} {
+		if keys, err := c.Keys(ctx, pattern).Result(); err != nil || len(keys) != 0 {
+			t.Fatalf("clear left owned keys %v: %v", keys, err)
+		}
 	}
 	tb, err := ntable.Read(ctx, c, "demo")
 	if err != nil || len(tb.Rows) != 0 || len(tb.Columns) != 5 {
@@ -115,8 +116,8 @@ func TestMoveAndClearAreOneCallEach(t *testing.T) {
 // through ntable, exactly: the key roots (~table:* and the tables registry)
 // and the function calls and underlying commands used by the library.
 var tableGrants = []string{
-	"~table:*", "~tables",
-	"+hset", "+hget", "+hgetall", "+del", "+exists",
+	"~table:*", "~tables", "~ws:*",
+	"+hdel", "+type", "+xadd", "+xinfo|stream", "+hset", "+hget", "+hgetall", "+del", "+exists",
 	"+sadd", "+srem", "+smembers", "+scard", "+sismember",
 	"+zadd", "+zrem", "+zrange", "+zcard", "+zscore",
 	"+fcall|" + ntable.FnMove, "+fcall|" + ntable.FnClear,
@@ -176,7 +177,7 @@ func TestTableGrantsAreExactlyWhatTheWriterNeeds(t *testing.T) {
 	}
 	bound := ntable.Table{Name: "views", Columns: tb.Columns[:2]}
 	r := ntable.NewRow(bound, "v")
-	r.Cells[1] = ntable.Cell{Key: "table:elsewhere:ready", Bound: true}
+	r.Cells[1] = ntable.Cell{Key: "ws:elsewhere:ready", Bound: true}
 	bound.Rows = []ntable.Row{r}
 	if err := ntable.Bind(ctx, w, bound, time.Now()); err != nil {
 		t.Fatalf("bind as the writer: %v", err)
