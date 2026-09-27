@@ -149,3 +149,47 @@ func TestMoveIntoMergingStampsMergingAt(t *testing.T) {
 		t.Fatalf("after done: where=%s merging_at=%q where_at=%q merging_gen=%q", rec["where"], rec["merging_at"], rec["where_at"], rec["merging_gen"])
 	}
 }
+
+// TestMergingGenIsWriterOwned (Stella's P1 on nova-tools #4449 at 160c25ce5):
+// merging_gen and merging_at are the move's, refused in a caller's fields;
+// and a bad count on the record (raw corruption) is refused before any
+// write, so the record and its set stay linked: a function does not roll
+// back, so the check comes first.
+func TestMergingGenIsWriterOwned(t *testing.T) {
+	t.Parallel()
+	_, c := wstest.Start(t)
+	ctx := context.Background()
+	stitch := pushPlanCards(t, c, "p-gen", "g1")
+	if _, err := taskcard.BindPlan(ctx, c, "p-gen", []string{"g1"}, stitch, "rowan"); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"merging_gen", "merging_at"} {
+		if _, err := taskcard.Move(ctx, c, "g1", "waiting", taskcard.Opts{By: "rowan", Why: "test", Fields: []string{f, "bad"}}); err == nil || !strings.Contains(err.Error(), "FIELD "+f+" is the pointer") {
+			t.Fatalf("a caller wrote %s: err=%v", f, err)
+		}
+	}
+	if _, err := taskcard.Move(ctx, c, "g1", "ready", taskcard.Opts{By: "rowan", Why: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskcard.Take(ctx, c, "emma", 1, "emma", "g1"); err != nil {
+		t.Fatal(err)
+	}
+	c.HSet(ctx, taskcard.Key("g1"), "merging_gen", "bad") // raw corruption, no verb writes this
+	_, err := taskcard.Done(ctx, c, "g1", "emma", "DONE", "6001")
+	if err == nil || !strings.Contains(err.Error(), "DRIFT merging_gen") {
+		t.Fatalf("a bad count was not refused: err=%v", err)
+	}
+	rec, _ := c.HGetAll(ctx, taskcard.Key("g1")).Result()
+	inWorking, _ := c.ZScore(ctx, taskcard.StreamKeyAt(0, hierStream, "working"), "g1").Result()
+	inMerging := c.ZScore(ctx, taskcard.StreamKeyAt(0, hierStream, "merging"), "g1").Err()
+	if rec["where"] != "working" || inWorking == 0 || inMerging == nil {
+		t.Fatalf("the refusal moved something: where=%s working=%v merging-err=%v", rec["where"], inWorking, inMerging)
+	}
+	c.HSet(ctx, taskcard.Key("g1"), "merging_gen", "7")
+	if _, err := taskcard.Done(ctx, c, "g1", "emma", "DONE", "6001"); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := c.HGet(ctx, taskcard.Key("g1"), "merging_gen").Result(); v != "8" {
+		t.Fatalf("merging_gen after the entry = %q, want 8", v)
+	}
+}

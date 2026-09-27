@@ -1604,7 +1604,10 @@ local TK = {
   REPLACE = { waiting = true, ready = true, parked = true },
   POINTER = { where = true, where_ok = true, where_at = true, state = true, state_at = true, stream = true,
     friend = true, owner = true, created_at = true, sprint = true, queue = true, xid = true, cancelled = true,
-    lease_until = true, copy = true, primary = true, reads = true, epoch = true },
+    lease_until = true, copy = true, primary = true, reads = true, epoch = true,
+    -- the entry into merging: the move's stamp and its count (LandWatch.tla L3);
+    -- writer-owned (Stella's P1 on #4449: a caller's field could break the count)
+    merging_at = true, merging_gen = true },
   FIELDS = { 'where', 'where_ok', 'stream', 'friend', 'owner', 'created_at', 'sprint', 'state', 'title',
     'queue', 'xid', 'front', 'cancelled', 'pr', 'kind', 'ref', 'lease_until', 'beat_at', 'leased_at', 'where_at',
     'priority', 'dest', 'claimed_at', 'token', 'copy', 'attempts', 'reads', 'head', 'author', 'epoch' },
@@ -2149,6 +2152,20 @@ function TK.move(id, to, o)
   end
   local cur = TK.read(id)
   if not cur then return 'NOTASK task:' .. id end
+  -- the count of entries into merging is validated before any write: a
+  -- function does not roll back, so a bad count is refused here, never
+  -- met after the sets have moved (Stella's P1 on #4449)
+  local entering_merging = to == 'merging' and cur.where ~= 'merging'
+  local merging_gen = 0
+  if entering_merging then
+    local g = redis.call('HGET', 'task:' .. id, 'merging_gen')
+    if g and g ~= '' then
+      if not string.match(g, '^%d+$') then
+        return 'DRIFT merging_gen of task:' .. id .. ' is not a count (' .. TK.str(g) .. '); run nova-sprint task fsck'
+      end
+      merging_gen = tonumber(g)
+    end
+  end
   local adopted = false
   if not cur.placed then
     local err, w, k = TK.adopt(id, cur, o, o.dry)
@@ -2247,8 +2264,9 @@ function TK.move(id, to, o)
     -- Stella's re-entry probe on nova-tools #4449)
     if to == 'merging' then
       put('merging_at', tostring(at))
-      -- and the stay's identity: a count the clock cannot tie
-      redis.call('HINCRBY', 'task:' .. id, 'merging_gen', 1)
+      -- and the stay's identity: a count the clock cannot tie, written in
+      -- the one HSET with the other fields (validated above)
+      put('merging_gen', tostring(merging_gen + 1))
     end
   end
   if cur.created_at ~= tostring(created) then put('created_at', string.format('%.0f', created)) end
