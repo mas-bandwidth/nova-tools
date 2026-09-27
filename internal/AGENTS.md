@@ -19,6 +19,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `docs/` | documentation guards and map generator | `go test ./internal/docs` | `go test ./internal/docs` |
 | `dogfood/` | dogfood self-test gates | `go test ./internal/dogfood` | `go test ./internal/dogfood` |
 | `events/` | card event stream and SQLite fold | `go test ./internal/events` | `go test ./internal/events` |
+| `filelock/` | process-exclusive file locks with holder stamps and state probing | `go test ./internal/filelock` | `go test ./internal/filelock` |
 | `fleet/` | runner fleet discovery and status | `go test ./internal/fleet` | `go test ./internal/fleet` |
 | `friendread/` | per-friend read done counts | `go test ./internal/friendread` | `go test ./internal/friendread` |
 | `friends/` | friend registry and signatures | `go test ./internal/friends` | `go test ./internal/friends` |
