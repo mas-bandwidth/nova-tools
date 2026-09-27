@@ -66,15 +66,23 @@ do
       present[id] = true
       if write then redis.call('HSETNX', mk, id, now) end
       local first = ms(redis.call('HGET', mk, id)) or now
-      local v = redis.call('HMGET', 'task:' .. id, 'merging_at', 'pr', 'paths')
+      local v = redis.call('HMGET', 'task:' .. id, 'merging_at', 'pr', 'paths', 'merging_gen')
       local mat = ms(v[1])
-      if write and mat and mat > first then
-        -- a stamp newer than the watch's first sight: the member left and
-        -- came back between two passes (L3, Stella's re-entry probe on
-        -- #4449); the stay starts again: first sight now, nothing noted
-        first = now
-        redis.call('HSET', mk, id, now)
-        redis.call('HDEL', 'land:noted:' .. s, id)
+      if write then
+        -- the stay's identity is the move's generation (merging_gen, one
+        -- writer, counted on every entry into merging): a generation the
+        -- watch has not seen is a new stay, whatever the clock says (L3,
+        -- Stella's re-entry probe on #4449; a same-instant re-entry ties
+        -- the clock): first sight now, nothing noted
+        local g = str(v[4])
+        local gk = 'land:gen:' .. s
+        local seen = redis.call('HGET', gk, id)
+        if seen and seen ~= g then
+          first = now
+          redis.call('HSET', mk, id, now)
+          redis.call('HDEL', 'land:noted:' .. s, id)
+        end
+        redis.call('HSET', gk, id, g)
       end
       local at = mat or first
       out[#out + 1] = { id = id, score = z[i + 1], at = at, first = first, pr = str(v[2]), paths = str(v[3]) }
@@ -87,6 +95,7 @@ do
       if #left > 0 then
         redis.call('HDEL', mk, unpack(left))
         redis.call('HDEL', 'land:noted:' .. s, unpack(left))
+        redis.call('HDEL', 'land:gen:' .. s, unpack(left))
       end
     end
     return out
@@ -107,7 +116,7 @@ do
         redis.call('HDEL', mk, 'owner', 'owner_until', 'owner_at')
       end
     end
-    redis.call('DEL', 'land:slow:' .. s, 'land:merging:' .. s, 'land:noted:' .. s)
+    redis.call('DEL', 'land:slow:' .. s, 'land:merging:' .. s, 'land:noted:' .. s, 'land:gen:' .. s)
   end
 
   local function emit_into(out)

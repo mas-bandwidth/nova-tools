@@ -110,6 +110,7 @@ func LandSlowKey(stream string) string    { return "land:slow:" + stream }
 func LandMergeKey(s string) string        { return stream.OwnerKey(s) }
 func LandMergingKey(stream string) string { return "land:merging:" + stream }
 func LandNotedKey(stream string) string   { return "land:noted:" + stream }
+func LandGenKey(stream string) string     { return "land:gen:" + stream } // the move's generation the watch saw with its first sight: a generation it has not seen is a new stay
 
 // MergeMember is one member of a merge card's brief.
 type MergeMember struct {

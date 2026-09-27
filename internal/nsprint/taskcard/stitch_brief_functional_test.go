@@ -145,7 +145,7 @@ func TestMoveIntoMergingStampsMergingAt(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec, _ := c.HGetAll(ctx, taskcard.Key("s1")).Result()
-	if rec["where"] != "merging" || rec["merging_at"] == "" || rec["merging_at"] != rec["where_at"] {
-		t.Fatalf("after done: where=%s merging_at=%q where_at=%q", rec["where"], rec["merging_at"], rec["where_at"])
+	if rec["where"] != "merging" || rec["merging_at"] == "" || rec["merging_at"] != rec["where_at"] || rec["merging_gen"] != "1" {
+		t.Fatalf("after done: where=%s merging_at=%q where_at=%q merging_gen=%q", rec["where"], rec["merging_at"], rec["where_at"], rec["merging_gen"])
 	}
 }

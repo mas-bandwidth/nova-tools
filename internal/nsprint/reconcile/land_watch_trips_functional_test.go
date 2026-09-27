@@ -88,7 +88,7 @@ func TestLandWatchNewStayGetsNewAlarm(t *testing.T) {
 	now := start
 	c.ZAdd(ctx, "ws:order", redis.Z{Score: 1, Member: s})
 	c.ZAdd(ctx, "ws:"+s+":merging", redis.Z{Score: 1, Member: "m1"})
-	c.HSet(ctx, "task:m1", "merging_at", start.UnixMilli())
+	c.HSet(ctx, "task:m1", "merging_at", start.UnixMilli(), "merging_gen", "1")
 	c.HSet(ctx, reconcile.LandMergeKey(s), "task", "merge-reentry-1", "members", "m1", "seq", "1")
 	c.HSet(ctx, "task:merge-reentry-1", "state", "open", "kind", "merge")
 	var wakes []reconcile.LandWake
@@ -107,10 +107,12 @@ func TestLandWatchNewStayGetsNewAlarm(t *testing.T) {
 		t.Fatalf("first stay: wakes=%+v", wakes)
 	}
 	// The member leaves and re-enters between ticks; the move stamps the
-	// new merging_at; the watch never sees an empty merging set.
+	// new merging_at and counts the entry; the watch never sees an empty
+	// merging set.
 	now = start.Add(12 * time.Minute)
 	c.ZRem(ctx, "ws:"+s+":merging", "m1")
 	c.HSet(ctx, "task:m1", "merging_at", now.UnixMilli())
+	c.HIncrBy(ctx, "task:m1", "merging_gen", 1)
 	c.ZAdd(ctx, "ws:"+s+":merging", redis.Z{Score: 1, Member: "m1"})
 	pass()
 	if first, _ := c.HGet(ctx, reconcile.LandMergingKey(s), "m1").Result(); first != strconv.FormatInt(now.UnixMilli(), 10) {
@@ -124,11 +126,25 @@ func TestLandWatchNewStayGetsNewAlarm(t *testing.T) {
 	if len(wakes) != 2 || wakes[1].Oldest != "m1" {
 		t.Fatalf("the new stay got no new alarm: wakes=%+v", wakes)
 	}
-	// The L1 control: an older stamp on the same stay is not a new stay.
+	// The L1 control: an older stamp on the same stay (the same generation)
+	// is not a new stay.
 	c.HSet(ctx, "task:m1", "merging_at", start.Add(12*time.Minute).UnixMilli()-1)
 	now = start.Add(24 * time.Minute)
 	pass()
 	if len(wakes) != 2 {
 		t.Fatalf("an older stamp re-noted the same stay: wakes=%+v", wakes)
+	}
+	// A re-entry within the same instant as the watch's first sight (the
+	// clock ties) is still a new stay: the generation moved.
+	now = start.Add(25 * time.Minute)
+	c.ZRem(ctx, "ws:"+s+":merging", "m1")
+	c.HSet(ctx, "task:m1", "merging_at", now.UnixMilli())
+	c.HIncrBy(ctx, "task:m1", "merging_gen", 1)
+	c.ZAdd(ctx, "ws:"+s+":merging", redis.Z{Score: 1, Member: "m1"})
+	pass()
+	now = start.Add(36 * time.Minute)
+	pass()
+	if len(wakes) != 3 {
+		t.Fatalf("a same-instant re-entry got no new alarm: wakes=%+v", wakes)
 	}
 }

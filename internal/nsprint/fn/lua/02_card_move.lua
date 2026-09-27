@@ -2245,7 +2245,11 @@ function TK.move(id, to, o)
     -- so the land watch tells a new stay from the one it saw (a stamp
     -- newer than its first sight; rowan-new specs/tla/LandWatch.tla L3,
     -- Stella's re-entry probe on nova-tools #4449)
-    if to == 'merging' then put('merging_at', tostring(at)) end
+    if to == 'merging' then
+      put('merging_at', tostring(at))
+      -- and the stay's identity: a count the clock cannot tie
+      redis.call('HINCRBY', 'task:' .. id, 'merging_gen', 1)
+    end
   end
   if cur.created_at ~= tostring(created) then put('created_at', string.format('%.0f', created)) end
   if nxt.stream ~= cur.stream or TK.str(redis.call('HGET', 'task:' .. id, 'stream')) ~= nxt.stream then
