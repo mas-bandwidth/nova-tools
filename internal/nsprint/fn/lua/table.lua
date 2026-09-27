@@ -710,10 +710,13 @@ do
     local names = {}
     for name in string.gmatch(args[2], '[^,]+') do
       local d, err = T.def(name)
-      if not d then return err end
+      if not d then
+        if err[2] == 'NOTABLE' then return T.refuse('VIEWTABLE', name) end
+        return err
+      end
       if #names == 0 and args[4] ~= '' then
         local summary = T.col(d, args[4])
-        if not summary or summary.projection ~= 'count' then return T.refuse('NOCOL', '', args[4]) end
+        if not summary or summary.projection ~= 'count' then return T.refuse('SUMMARY', name, args[4]) end
       end
       names[#names+1] = name
     end
@@ -731,6 +734,41 @@ do
     local h = redis.call('HGETALL', 'view:' .. args[1])
     if #h == 0 then return T.refuse('NOVIEW', args[1]) end
     return {'OK', h}
+  end}
+  redis.register_function{function_name = 'ns_view_list', flags = {'no-writes'}, callback = function(keys, args)
+    if #args ~= 0 then return T.refuse('ARGS', 'view_list') end
+    local names = redis.call('SMEMBERS', 'views')
+    table.sort(names)
+    return {'OK', names}
+  end}
+  redis.register_function('ns_view_del', function(keys, args)
+    if #args ~= 1 or not T.name(args[1]) then return T.refuse('ARGS', 'view_del') end
+    local key = 'view:' .. args[1]
+    local h = T.hash(key)
+    redis.call('SCARD', 'views')
+    local commands = {{'DEL', key}, {'SREM', 'views', args[1]}}
+    for _, cmd in ipairs(commands) do if not redis.acl_check_cmd(unpack(cmd)) then return T.refuse('NOPERM', cmd[1], cmd[2]) end end
+    for _, cmd in ipairs(commands) do redis.call(unpack(cmd)) end
+    return {'OK', next(h) and 1 or 0}
+  end)
+  -- The member's indexed owned location, verified against the same snapshot's
+  -- cell. External bindings are views and do not own placement records.
+  redis.register_function{function_name = 'ns_table_member_find', flags = {'no-writes'}, callback = function(keys, args)
+    if #args ~= 2 then return T.refuse('ARGS', 'member_find') end
+    local d, err = T.def(args[1])
+    if not d then return err end
+    local h, exists, why = T.member(d, args[2])
+    if why then return why end
+    local state, row, col = exists and 'unplaced' or 'missing', '', ''
+    local place = h['place:' .. d.name]
+    if place then
+      row, col = string.match(place, '^(.*):([^:]+)$')
+      if not row or not T.word(row) then return T.refuse('DRIFT', args[2], place) end
+      local cell = T.cell(d, row, col, true)
+      if not cell or not redis.call('ZSCORE', cell.key, args[2]) then return T.refuse('DRIFT', args[2], place) end
+      state = 'placed'
+    end
+    return {'MEMBER', d.epoch, d.revision, state, row, col}
   end}
   redis.register_function('ns_table_member_create', T.write('member_create', 3, function(d, args)
     local record, exists, err = T.member(d, args[2])

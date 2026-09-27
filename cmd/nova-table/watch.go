@@ -51,8 +51,8 @@ func cmdWatch(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	if len(pos) != 1 && *view == "" {
-		return refuse(stderr, verb, "wants the tables to watch, comma-separated, or --view <name>: watch <table>[,<table>...] [--view <name>] [--every 1s] [--out <file>] [--title <text>] [--once]")
+	if (*view != "" && len(pos) != 0) || (*view == "" && len(pos) != 1) {
+		return refuse(stderr, verb, "wants the tables to watch, comma-separated, or --view <name>: watch <table>[,<table>...] | --view <name> [--every 1s] [--out <file>] [--title <text>] [--once]")
 	}
 	var names []string
 	if len(pos) == 1 {

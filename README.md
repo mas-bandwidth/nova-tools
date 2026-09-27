@@ -46,7 +46,7 @@ come back to the table below for the problem you want it to solve.
 <tr><td>Keep the fleet's permanent configuration in one place and rebuild Redis from it.</td><td nowrap><a href="docs/CLI.md#nova-config">nova-config</a></td><td><strong>Development branch:</strong> friends and machines in Postgres with a history of every change, applied into Redis through the runtime's own functions.</td></tr>
 <tr><td>Say you are here, and work your own copies.</td><td nowrap><a href="docs/CLI.md#nova-friend">nova-friend</a></td><td><strong>Development branch:</strong> a friend's runtime on the fleet store: the presence beat with no TTL, away and back, pull and done for the copies dealt to you; the roster stays in nova-config.</td></tr>
 <tr><td>Leave notes and replies beside passages in a shared text.</td><td nowrap><a href="docs/USAGE.md#nova-play--notes-beside-a-shared-text">nova-play</a></td><td><strong>Development branch:</strong> attributed annotations in a local sidecar file, with source-change detection.</td></tr>
-<tr><td>Keep a table whose cells are sets and see it live.</td><td nowrap><a href="docs/CLI.md#nova-table">nova-table</a></td><td><strong>Development branch:</strong> a table over Redis, every cell an ordered set, rendered as text once a second; the sprint table's stream block is its first table.</td></tr>
+<tr><td>Track work in tables and live views.</td><td nowrap><a href="docs/CLI.md#nova-table">nova-table</a></td><td>Ordered-set cells, text notes and pooled percentages; batch edits, member locations, epoch checks and change receipts. Edit stored views while they run. <a href="docs/nova-table/README.md">Guide and local setup.</a></td></tr>
 </tbody>
 </table>
 

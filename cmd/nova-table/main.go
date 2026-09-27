@@ -1,5 +1,5 @@
-// nova-table: a general table over Redis whose every body cell is an
-// ordered set (internal/ntable). A table is columns with a projection and a
+// nova-table: work tables of ordered sets, text and formulas over Redis
+// (internal/ntable). A table is columns with a projection and a
 // fold each, rows in a stable order, and one Redis ZSET per body cell, owned
 // by the table or bound to a set another tool owns; render prints it as
 // fixed-width text, watch redraws it once a second. The sprint table's
@@ -19,55 +19,33 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 	"github.com/redis/go-redis/v9"
 )
 
-const usage = `nova-table: a table over Redis, every cell an ordered set (see docs/nova-table/README.md)
-
-usage:
-  nova-table version
-  nova-table help
-  nova-table create <table> --columns <name[:projection[:fold[:label]]],...> [--footer <label>] [--width <col=n,...>]
-  nova-table set <table> [--footer <label>] [--rename <name>] [--columns <spec>] [--hide <cols>] [--show <cols>] [--hidden | --visible]
-  nova-table drop <table> [--definition]
-  nova-table list
-  nova-table row add <table> <row> [--label <text>] [--exclude <member>] [--owner <verb>] [<col>=<key> ...]
-  nova-table row add <table> <row> <row> ...            (many rows, one call)
-  nova-table row set <table> <row> <col>=<value> ...
-  nova-table row hide <table> <row> ...   |   row show <table> <row> ...
-  nova-table row del <table> <row>
-  nova-table cell add <table> <row> <col> <member>... [--score <n>]
-  nova-table cell remove <table> <row> <col> <member>...
-  nova-table cell move <table> <row> <from-col> <to-col> <member>...
-  nova-table cell members <table> <row> <col>
-  nova-table member create <table> <id> [--epoch <n>]
-  nova-table check <table>
-  nova-table clear <table>
-  nova-table show <table> [--at-epoch <n>]
-  nova-table render <table> [--at-epoch <n>] [--hide-zero-rows] [--width <col=n,...>]
-  nova-table watch <table>[,<table>...] | --view <name>  [--every <duration>] [--out <file>] [--title <text>] [--hide-zero-rows] [--once]
-  nova-table view set <name> --tables <a,b,...> [--title <text>]   |   view show <name>
-
-Write verbs take --epoch <observed epoch> (default 0), --actor, --fence,
+const usageDetails = `Table write verbs take --epoch <observed epoch> (default 0), --actor, --fence,
 --idem (receipt metadata) and --receipt. create also takes --epoch-key,
 --epoch-field (default n), and --member-prefix (default table::member:).
 A stale epoch is refused; drop retains the template unless --definition.
+View configuration has no table epoch or receipt.
+Quote column specs containing parentheses, for example 'done,pct:pct(done)'.
 
-Every verb takes --redis <addr> (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR,
+Store verbs take --redis <addr> (host:port or an absolute Unix socket path) (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR,
 then the seat's address) and dials as the seat nova-sprint dials as: --seat
 <name> or NOVA_SEAT, else NOVA_SPRINT_REDIS_USER with the password in the
 variable NOVA_SPRINT_REDIS_PASSWORD_ENV names. Flags may follow the words.
 
 A column is name[:projection[:fold[:label]]]: the projection is what a body
 cell prints, count (the set's size, the default), members (the members in
-score order), first, last, or text (the row's label, no set); the fold is
+score order), first, last, text (the value written by row set, no set), or pct(<count-column>)
+(the share of all count columns in the row). The row label is a separate cell.
+The fold is
 what the footer prints over the column, sum (the default for count), max,
-union (of members) or none. A row's cells are owned by the table unless
+avg (of count cells), union (of members), pooled (for pct), or none.
+Known-empty percentages print 0.0%; unread inputs print ?.
+set --hide/--show hides or shows columns without removing their data. A row's cells are owned by the table unless
 row add binds a column to a set another tool owns (<col>=<key>): a bound
 cell is a view, read freely, and cell add, cell remove, cell move and clear
 refuse it, naming the --owner verb. --exclude names one member the row's
@@ -99,7 +77,10 @@ func refuse(stderr io.Writer, verb, what string) int {
 	if verb != "" {
 		where = " " + verb
 	}
-	fmt.Fprintf(stderr, "nova-table%s: %s; run: nova-table help\n", where, oneline.Escape(what))
+	if !strings.Contains(what, "; run:") {
+		what += "; run: nova-table help"
+	}
+	fmt.Fprintf(stderr, "nova-table%s: %s\n", where, oneline.Escape(what))
 	return 2
 }
 
@@ -113,56 +94,29 @@ func refused(stderr io.Writer, verb, what string) int {
 }
 
 func run(args []string, stdout, stderr io.Writer) (code int) {
-	// -h on any verb: its usage line and flags on stdout, exit 2.
-	defer verbflag.Recover(stdout, "nova-table", &code)
-	args, err := selectSeat(seatcred.Process(), args, os.Getenv, os.Setenv)
+	defer recoverHelp(stdout, &code)
+	if len(args) == 0 {
+		return refuse(stderr, "", "no verb; available: "+rootNames())
+	}
+	if isHelp(args[0]) || args[0] == "help" {
+		return helpCommand(args[1:], stdout, stderr)
+	}
+	// Help never needs a seat profile or credentials.
+	if len(args) == 2 && (isHelp(args[1]) || args[1] == "help") && isGroup(args[0]) {
+		return helpCommand(args[:1], stdout, stderr)
+	}
+	for _, c := range commands {
+		words := strings.Fields(c.name)
+		if len(args) == len(words)+1 && strings.Join(args[:len(words)], " ") == c.name && isHelp(args[len(words)]) {
+			return helpCommand(words, stdout, stderr)
+		}
+	}
+	var err error
+	args, err = selectSeat(seatcred.Process(), args, os.Getenv, os.Setenv)
 	if err != nil {
 		return refuse(stderr, "", err.Error())
 	}
-	if len(args) == 0 {
-		return refuse(stderr, "", "no verb; create, row, cell, clear, show, render or watch a table")
-	}
-	switch args[0] {
-	case "help", "-h", "--help":
-		if len(args) > 1 {
-			return refuse(stderr, "help", "help takes no arguments")
-		}
-		fmt.Fprint(stdout, usage)
-		return 0
-	case "version", "--version":
-		if len(args) > 1 {
-			return refuse(stderr, "version", "version takes no arguments")
-		}
-		fmt.Fprintln(stdout, buildinfo.Line("nova-table", version))
-		return 0
-	case "member":
-		return cmdMember(args[1:], stdout, stderr)
-	case "check":
-		return cmdCheck(args[1:], stdout, stderr)
-	case "create":
-		return cmdCreate(args[1:], stdout, stderr)
-	case "set":
-		return cmdSet(args[1:], stdout, stderr)
-	case "view":
-		return cmdView(args[1:], stdout, stderr)
-	case "drop":
-		return cmdDrop(args[1:], stdout, stderr)
-	case "list":
-		return cmdList(args[1:], stdout, stderr)
-	case "row":
-		return cmdRow(args[1:], stdout, stderr)
-	case "cell":
-		return cmdCell(args[1:], stdout, stderr)
-	case "clear":
-		return cmdClear(args[1:], stdout, stderr)
-	case "show":
-		return cmdShow(args[1:], stdout, stderr)
-	case "render":
-		return cmdRender(args[1:], stdout, stderr)
-	case "watch":
-		return cmdWatch(args[1:], stdout, stderr)
-	}
-	return refuse(stderr, "", "unknown verb "+args[0]+"; create, row, cell, clear, show, render or watch a table")
+	return dispatch(args, stdout, stderr)
 }
 
 // selectSeat is nova-sprint's seat resolution (cmd/nova-sprint/seat.go,
@@ -290,7 +244,7 @@ func client(ctx context.Context, verb, addr string, stderr io.Writer) (*store.St
 // field is a value of a key=value field: quoted when it holds a space, a
 // tab or a quote (nova-sprint's spelling), else as it is.
 func field(s string) string {
-	if strings.ContainsAny(s, " \t\"") {
+	if s == "" || strings.ContainsAny(s, " \t\"") {
 		return strconv.Quote(s)
 	}
 	return oneline.Escape(s)

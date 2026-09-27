@@ -20,7 +20,7 @@ func TestBareCommandNamesTheDoor(t *testing.T) {
 	t.Parallel()
 
 	code, stdout, stderr := runTable()
-	if code != 2 || stdout != "" || stderr != "nova-table: no verb; create, row, cell, clear, show, render or watch a table; run: nova-table help\n" {
+	if code != 2 || stdout != "" || stderr != "nova-table: no verb; available: help, create, set, drop, list, row, cell, member, check, clear, show, render, watch, view, version; run: nova-table help\n" {
 		t.Fatalf("bare: exit %d stdout %q stderr %q", code, stdout, stderr)
 	}
 	code, _, stderr = runTable("bogus")

@@ -1,4 +1,4 @@
-# nova-table: a table over Redis, every cell an ordered set
+# nova-table: work tables and live views over Redis
 
 ## The design, in Glenn's words (2026-09-27)
 
@@ -16,6 +16,65 @@ bottom rows are the sum of the column above."
 once per-second in a console window" / "it should only contain that table
 data, no bullshit around it. don't let extra stuff creep in."
 
+## Start locally
+
+`nova-table help` lists every command. `nova-table help row`, `nova-table row
+--help`, and `nova-table row help` list row operations. For syntax, real flags
+and an example, use `nova-table help row set` or `nova-table row set --help`.
+Requested help exits 0 on stdout and needs no store.
+
+Install `nova-table`, `nova-sprint` and Redis. The matching `nova-sprint` binary
+loads the shared function library; an empty Redis alone is not enough. From a
+source checkout, build both clients from the same revision:
+
+```sh
+go build -o ./nova-table ./cmd/nova-table
+go build -o ./nova-sprint ./cmd/nova-sprint
+```
+
+This creates an isolated local store with no TCP listener or saved data. The
+wrapper clears seat selection and authentication only for these local calls:
+
+```sh
+table_demo_dir=$(mktemp -d "${TMPDIR:-/tmp}/nova-table.XXXXXX")
+redis-server --port 0 --unixsocket "$table_demo_dir/redis.sock" \
+  --unixsocketperm 700 --save '' --appendonly no --daemonize yes \
+  --pidfile "$table_demo_dir/redis.pid" --logfile "$table_demo_dir/redis.log"
+local_table_store() {
+  env -u NOVA_SEAT -u NOVA_SPRINT_SEAT -u NOVA_SPRINT_REDIS_USER \
+    -u NOVA_SPRINT_REDIS_PASSWORD_ENV -u NOVA_REDIS_BENCH_PASSWORD \
+    "$@" --redis "$table_demo_dir/redis.sock"
+}
+local_table_store ./nova-sprint fn load
+local_table_store ./nova-table create work --columns 'todo,doing,done,note:text,progress:pct(done)' --footer total
+local_table_store ./nova-table row add work build docs
+local_table_store ./nova-table cell add work build todo check-a check-b
+local_table_store ./nova-table cell move work build todo done check-a
+local_table_store ./nova-table row set work build 'note=One check passed'
+local_table_store ./nova-table member find work check-a
+local_table_store ./nova-table view set today --tables work --title 'My work' --summary done
+local_table_store ./nova-table watch --view today --once
+```
+
+Quote column specs containing parentheses, especially in zsh. `pct(done)` means
+the count in `done` divided by all count columns in that row. Here the build
+row and the view summary both show 50.0%. Text notes and formula columns do not
+add to that denominator. The empty docs row shows 0.0%.
+
+Run `local_table_store ./nova-table watch --view today` to keep it live. Use
+another terminal with the same socket path to edit the table or the view; the
+next frame picks up those edits. Ctrl-C ends watch. When finished, shut down
+only this disposable store:
+
+```sh
+redis-cli -s "$table_demo_dir/redis.sock" shutdown nosave
+```
+
+For an existing configured store, use `--seat <name>` or explicit `--redis
+<host:port>`. An absolute Unix socket path is also accepted. Load the matching
+function library through that store's deployment process; the local setup above
+is for a new disposable store. The commands below omit connection flags.
+
 ## What a table is
 
 The primitive is the ordered set: a Redis ZSET, members with scores, read in
@@ -23,22 +82,23 @@ score order. `internal/ntable` gives it five verbs (`Add`, `Remove`, `Move`,
 `Members`, `Card`) and one count (`QueueCount`: the set's size, one member
 left out when a row names it) and knows nothing about sprints.
 
-A table is columns, rows and one ordered set per body cell. It has three
+A table is ordered columns and rows. Set cells, text values and formulas have three
 kinds of cell:
 
 - **Header cells.** The top row is the column labels (each column has a
   label, default its name); the left column is the row labels (each row has
   a label, default its key), in front of every declared column. Labels, not
   sets.
-- **Body cells.** Every body cell is an ordered set, printed by its column's
+- **Body cells.** A set cell is printed by its column's
   *projection*: `count` (the set's size, Glenn's |s|; the default),
   `members` (the members in score order, comma-joined), `first` and `last`
   (the lowest and highest scored member), or `text` (a value per row, set
-  by `row set`, blank when none; no set).
+  by `row set`, blank when none; no set). `pct(<count-column>)` is a formula
+  over count cells, with no set of its own.
 - **Footer cells.** One per column, the column's *fold* over the body:
-  `sum` (the default for a count) or `max` of the counts, `union` of the
-  members, or `none` (blank). The footer row carries the table's footer
-  label (default `total`). A table whose columns all fold `none` prints no
+  `sum` (the default for a count), `max` or `avg` of the counts, `union` of the
+  members, `pooled` for percentages, or `none` (blank). The footer row carries the table's footer
+  label (blank by default; use `--footer total` to name it). A table whose columns all fold `none` prints no
   footer row.
 
 A cell's set is either **owned** by the table, at
@@ -166,7 +226,7 @@ to the display. Connection setup is excluded from the application-trip count.
 
 ## The verbs
 
-Every verb takes `--redis <addr>`, else `NOVA_SPRINT_REDIS`, then
+Every store verb takes `--redis <addr>`, else `NOVA_SPRINT_REDIS`, then
 `NOVA_REDIS_ADDR`, then the seat's address, and dials as the seat nova-sprint
 dials as. Flags may follow the words. One typed line per success on stdout;
 one line on stderr and exit 2 for a usage refusal, exit 1 when the store
@@ -188,13 +248,16 @@ nova-table cell remove <table> <row> <col> <member>...
 nova-table cell move <table> <row> <from-col> <to-col> <member>...
 nova-table cell members <table> <row> <col>
 nova-table member create <table> <id>
+nova-table member find <table> <id>
 nova-table check <table>
 nova-table clear <table>
 nova-table show <table> [--at-epoch <n>]
-nova-table render <table> [--hide-zero-rows] [--width <col=n,...>]
+nova-table render <table> [--at-epoch <n>] [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>]
 nova-table view set <name> --tables <a,b,...> [--title <text>] [--summary <count-column>]
 nova-table view show <name>
-nova-table watch <table>[,<table>...] | --view <name> [--every <duration>] [--out <file>] [--title <text>] [--hide-zero-rows] [--once]
+nova-table view list
+nova-table view del <name>
+nova-table watch <table>[,<table>...] | --view <name> [--every <duration>] [--out <file>] [--title <text>] [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>] [--once]
 ```
 
 | verb | prints |
@@ -208,11 +271,29 @@ nova-table watch <table>[,<table>...] | --view <name> [--every <duration>] [--ou
 | `cell move` | `TABLE MOVE table=<t> row=<r> member=<m> from=<c> to=<c> n=<count of to>`; one call, the score kept; `NOTMEMBER` refused |
 | `cell members` | `TABLE CELL ... n=<n>`, then `TABLE MEMBER table=<t> row=<r> col=<c> member=<m> score=<s>` per member |
 | `clear` | `TABLE CLEAR table=<t> rows=<n> ms=<n>`; one call; the definition stays |
-| `show` | `TABLE table=<t> columns=<n> rows=<n>`, then `TABLE ROW table=<t> row=<r> <col>=<count> ...` per row |
+| `show` | `TABLE table=<t> columns=<n> rows=<n> trips=1 epoch=<n> revision=<n>`, then `TABLE ROW table=<t> row=<r> <col>=<projected-value> ...` per row, including hidden rows/columns, text, members and percentages |
 | `render` | the text, nothing else; nothing at all when the table is empty |
 | `watch` | the text, once per tick, in place or to `--out` |
 
-A value holding a space is quoted, `row="swarm: cards"`.
+Empty values and values holding spaces or quotes are quoted, `note=""`,
+`row="swarm: cards"`. Counts stay numeric; percentages have one decimal and `%`.
+`show` uses the same full projected cell values as `render`, with `?` for unknown
+inputs. It is an unpadded record of every row and column.
+
+`member find` answers where an identity is placed in this table, with
+`state=placed row=<r> col=<c>`, `state=unplaced`, or `state=missing`. All three are
+successful reads (exit 0), with epoch, revision and `trips=1`. The read checks
+that a reported placement is present in its owned set; disagreement refuses as
+drift. It does not search bound external sets. An identity from another epoch
+refuses with the two epochs. Use `check` for a full audit of all record/set links.
+A custom member prefix needs read access to that namespace.
+
+`view list` lists stored view names in lexical order. `view show` prints the
+configuration, including its summary column; `watch --view <name> --once` renders
+it. `view del` deletes only that configuration and reports `existed=0|1`; tables
+and their receipts remain. Dropping or renaming a table does not rewrite a view;
+edit or delete the reference explicitly. A view summary names a **count** column
+in its first table, such as `done`, not a `pct(done)` formula.
 
 ## Editing, batches and rename
 
@@ -277,7 +358,8 @@ Cells are separated by ` | ` and the rule joins dashes with `-+-`. A column
 is as wide as its widest cell (the footer counts) unless its width is fixed
 in the definition (`create --width`) or for one render (`render --width`);
 a wider cell is not cut. A last column is padded only when right-aligned,
-so no line ends in a space. A cell whose set did not come back prints `?`,
+so no line ends in a space. `--label-width <n>` sets the separate row-label
+column width. Known-empty percentages, including pooled footers, print `0.0%`. A cell whose set did not come back prints `?`,
 never a false 0, and so does the fold over it. `--hide-zero-rows` hides a
 row whose count cells are all zero and all read; the fold is still the
 column's, hidden rows included.
@@ -294,8 +376,8 @@ on the terminal: the ANSI home-and-clear sequence, then the text, so a
 console tab shows the live table with no shell loop. `--out <file>`
 publishes each tick by writing a temp file beside it and renaming it over,
 the sprint table's way, so a reader sees one whole table. `--once` renders
-once and exits, with no clear. With explicit table names, every tick is exactly one Redis pipeline of read-only snapshots, including cold and changed shapes. A stored view adds one exchange to reload its configuration. The screen holds the tables and nothing
-else; a tick whose read fails leaves the last good text standing with one
+once and exits, with no clear. With explicit table names, every tick is exactly one Redis pipeline of read-only snapshots, including cold and changed shapes. A stored view adds one exchange to reload its configuration. An explicit table watch holds the tables; a stored view also has its timestamp,
+title and optional summary. In either mode, a tick whose read fails leaves the last good text standing with one
 `stale: <n>s` line under it, and stderr says why once. A signal ends it,
 exit 0.
 

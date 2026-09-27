@@ -25,3 +25,20 @@ func Check(ctx context.Context, c redis.Cmdable, name string) (CheckReport, erro
 	}
 	return report, nil
 }
+
+// MemberLocation is an indexed placement in this table, or missing/unplaced.
+type MemberLocation = typedrec.TableMember
+
+// MemberFind reads and verifies one member's owned placement atomically. It
+// does not search external bindings; Check audits the complete namespace.
+func MemberFind(ctx context.Context, c redis.Cmdable, name, id string) (MemberLocation, error) {
+	reply, err := (operation{table: name, member: id}).call(ctx, c, FnMemberFind, true, id)
+	if err != nil {
+		return MemberLocation{}, err
+	}
+	loc, err := typedrec.ParseTableMember(reply)
+	if err != nil {
+		return MemberLocation{}, fmt.Errorf("table %q member %q: %w", name, id, err)
+	}
+	return loc, nil
+}

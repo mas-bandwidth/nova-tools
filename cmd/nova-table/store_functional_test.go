@@ -29,11 +29,11 @@ func TestARefusalSaysWhatTheInputWants(t *testing.T) {
 		{[]string{"create", "demo", "--columns", "a:rows", "--redis", addr}, `column a wants a projection of count, members, first, last, text or pct(<count column>), not "rows"`},
 		{[]string{"create", "demo", "--columns", "a", "--width", "b=3", "--redis", addr}, "--width names column b, which --columns does not declare"},
 		{[]string{"create", "bad name", "--columns", "a", "--redis", addr}, "the table name wants letters, digits, _ . and -"},
-		{[]string{"row", "--redis", addr}, "wants add, set, hide, show or del"},
+		{[]string{"row", "--redis", addr}, "wants add, set, hide, show, del"},
 		{[]string{"row", "add", "demo", "--redis", addr}, "wants a table and a row: row add <table> <row>"},
 		{[]string{"row", "add", "demo", "r", "ready=", "--redis", addr}, "a binding wants <col>=<key>"},
 		{[]string{"row", "add", "demo", "r", "ready=ws:s:ready", "--redis", addr}, "a row that binds a set wants --owner <verb>"},
-		{[]string{"cell", "--redis", addr}, "wants add <table> <row> <col> <member>"},
+		{[]string{"cell", "--redis", addr}, "wants add, remove, move, members"},
 		{[]string{"cell", "add", "demo", "r", "c", "--redis", addr}, "wants a table, a row, a column and one or more members"},
 		{[]string{"cell", "add", "demo", "r", "c", "m", "--score", "x", "--redis", addr}, `--score wants a number, got "x"`},
 		{[]string{"cell", "move", "demo", "r", "c", "--redis", addr}, "wants a table, a row, the column left, the column joined and one or more members"},
@@ -100,7 +100,7 @@ func TestASittingThroughTheVerbs(t *testing.T) {
 		{[]string{"cell", "add", "jobs", "the tests", "who", "bo", "--score", "1"}, "TABLE CELL table=jobs row=\"the tests\" col=who n=1 trips=1\n"},
 		{[]string{"cell", "remove", "jobs", "build", "ready", "b2"}, "TABLE CELL table=jobs row=build col=ready n=1 trips=1\n"},
 		{[]string{"cell", "members", "jobs", "build", "ready"}, "TABLE CELL table=jobs row=build col=ready n=1 trips=1\nTABLE MEMBER table=jobs row=build col=ready member=b1 score=1\n"},
-		{[]string{"show", "jobs"}, "TABLE table=jobs columns=3 rows=2 trips=1 epoch=0 revision=9\nTABLE ROW table=jobs row=build ready=1 working=0 who=1\nTABLE ROW table=jobs row=\"the tests\" ready=0 working=0 who=1\n"},
+		{[]string{"show", "jobs"}, "TABLE table=jobs columns=3 rows=2 trips=1 epoch=0 revision=9\nTABLE ROW table=jobs row=build ready=1 working=0 who=ann\nTABLE ROW table=jobs row=\"the tests\" ready=0 working=0 who=bo\n"},
 		{[]string{"render", "jobs"}, "jobs  | ready | working | who\n" +
 			"------+-------+---------+-------\n" +
 			"build |     1 |       0 | ann\n" +
@@ -141,7 +141,7 @@ func TestASittingThroughTheVerbs(t *testing.T) {
 		t.Fatalf("create after drop: exit %d stderr %q", code, stderr)
 	}
 	code, _, stderr := runTable(at(addr, "create", "jobs", "--columns", "a,b")...)
-	if code != 1 || !strings.Contains(stderr, `table "jobs": exists with another definition; run: nova-table show`) {
+	if code != 1 || !strings.Contains(stderr, `table "jobs": exists with another definition; run: nova-table set`) {
 		t.Fatalf("create with another definition: exit %d stderr %q", code, stderr)
 	}
 }

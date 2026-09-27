@@ -83,14 +83,12 @@ func Render(t Table, opts RenderOpts) string {
 	}
 	for i, r := range rows {
 		body[i] = make([]string, n)
-		for j, c := range cols {
+		for j := range cols {
 			switch {
 			case src[j] < 0:
 				body[i][j] = r.LabelOrKey()
-			case IsFormula(c.Projection):
-				body[i][j] = formulaText(t.Columns, c, r)
 			default:
-				body[i][j] = cellText(c, r, src[j])
+				body[i][j] = CellText(t.Columns, r, src[j])
 			}
 		}
 	}
@@ -201,6 +199,19 @@ func allZero(t Table, r Row) bool {
 	return counts > 0
 }
 
+// CellText returns a full, unpadded projected cell. Render and machine-readable
+// show use the same value, including text, percentages and unread dependencies.
+func CellText(cols []Column, r Row, j int) string {
+	if j < 0 || j >= len(cols) {
+		return "?"
+	}
+	c := cols[j]
+	if IsFormula(c.Projection) {
+		return formulaText(cols, c, r)
+	}
+	return cellText(c, r, j)
+}
+
 // cellText is one body cell as printed.
 func cellText(c Column, r Row, j int) string {
 	if c.Projection == Text {
@@ -243,7 +254,7 @@ func cellText(c Column, r Row, j int) string {
 // included: a fold is the column's, not the screen's).
 // formulaValue is a pct(<col>) cell's value over the row: the named count
 // as a share of the row's count cells together; ok is false when the row
-// has no tasks or a cell it needs did not come back.
+// a cell it needs did not come back. A known empty row is zero percent.
 func formulaValue(cols []Column, c Column, r Row) (float64, bool) {
 	arg := FormulaArg(c.Projection)
 	var part, total int64
@@ -260,13 +271,13 @@ func formulaValue(cols []Column, c Column, r Row) (float64, bool) {
 		}
 	}
 	if total == 0 {
-		return 0, false
+		return 0, true
 	}
 	return 100 * float64(part) / float64(total), true
 }
 
 // formulaText prints a formula cell: a percentage with one decimal
-// ("33.3%"), "-" when the row has no tasks, "?" when a count it needs did
+// ("33.3%"), "0.0%" when the row has no tasks, "?" when a count it needs did
 // not come back (Stella's read of #4456: an unread dependency propagates).
 func formulaText(cols []Column, c Column, r Row) string {
 	for k, o := range cols {
@@ -276,7 +287,7 @@ func formulaText(cols []Column, c Column, r Row) string {
 	}
 	v, ok := formulaValue(cols, c, r)
 	if !ok {
-		return "-"
+		return "?"
 	}
 	return pctText(v)
 }
@@ -312,7 +323,7 @@ func foldText(cols []Column, c Column, rows []Row, j int) string {
 			}
 		}
 		if total == 0 {
-			return "-"
+			return pctText(0)
 		}
 		return pctText(100 * float64(part) / float64(total))
 	case Avg:

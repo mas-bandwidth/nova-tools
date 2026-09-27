@@ -262,7 +262,7 @@ func TestRenderFormulaAndTextCells(t *testing.T) {
 		"--------+---------+-------+---------+------+----------+-------\n" +
 		"alpha   |       1 |     1 |       1 |    0 | 33.3%    | up\n" +
 		"beta    |       5 |     2 |       3 |    0 | 50.0%    |\n" +
-		"empty   |       0 |     0 |       0 |    0 | -        |\n" +
+		"empty   |       0 |     0 |       0 |    0 | 0.0%     |\n" +
 		"--------+---------+-------+---------+------+----------+-------\n" +
 		"total   |       6 |     3 |       4 |    0 | 46.2%    |\n"
 	if got := ntable.Render(tb, ntable.RenderOpts{Title: "streams"}); got != want {
@@ -324,5 +324,24 @@ func TestRenderFormulaPropagatesUnread(t *testing.T) {
 	got := ntable.Render(tb, ntable.RenderOpts{Title: "s"})
 	if !strings.Contains(got, "a |       3 |     ? | ?\n") || !strings.Contains(got, "  |       3 |     ? | ?\n") {
 		t.Fatalf("unread propagation:\n%s", got)
+	}
+}
+
+func TestKnownEmptyPercentageBodyAndFooter(t *testing.T) {
+	t.Parallel()
+	cols, err := ntable.ParseColumns("ready,done,progress:pct(done)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	table := ntable.Table{Name: "empty", Columns: cols, FooterLabel: "total"}
+	table.Rows = []ntable.Row{ntable.NewRow(table, "r")}
+	got := ntable.Render(table, ntable.RenderOpts{})
+	if strings.Count(got, "0.0%") != 2 || strings.Contains(got, "?") {
+		t.Fatalf("known empty row/footer: %s", got)
+	}
+	table.Rows[0].Cells[0].Unread = true
+	got = ntable.Render(table, ntable.RenderOpts{})
+	if strings.Contains(got, "0.0%") || strings.Count(got, "?") != 4 {
+		t.Fatalf("unread row/footer: %s", got)
 	}
 }

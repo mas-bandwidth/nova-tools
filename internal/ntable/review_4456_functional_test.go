@@ -225,8 +225,21 @@ func TestReview4456DeclaredWriterCanUseEdits(t *testing.T) {
 	if _, err := ntable.Read(ctx, reader, "renamed"); err != nil {
 		t.Fatal(err)
 	}
+	if names, err := ntable.ViewList(ctx, reader); err != nil || len(names) != 1 || names[0] != "v" {
+		t.Fatalf("reader view list: %v %v", names, err)
+	}
+	if loc, err := ntable.MemberFind(ctx, reader, "renamed", "m1"); err != nil || loc.State != "placed" || loc.Row != "s" || loc.Column != "b" {
+		t.Fatalf("reader member find: %+v %v", loc, err)
+	}
+	if _, err := ntable.ViewDelete(ctx, reader, "v"); err == nil {
+		t.Fatal("reader deleted view")
+	}
+
 	if err := ntable.ViewSet(ctx, reader, ntable.View{Name: "v", Tables: []string{"renamed"}}); err == nil {
 		t.Fatal("reader wrote view")
+	}
+	if n, err := ntable.ViewDelete(ctx, writer, "v"); err != nil || n != 1 {
+		t.Fatalf("writer delete: %d %v", n, err)
 	}
 
 }

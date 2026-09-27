@@ -22,6 +22,7 @@ const (
 	FnDrop           = "ns_table_drop"
 	FnDropDefinition = "ns_table_drop_definition"
 	FnMemberCreate   = "ns_table_member_create"
+	FnMemberFind     = "ns_table_member_find"
 	FnRowAdd         = "ns_table_row_add"
 	FnRowDel         = "ns_table_row_del"
 	FnCellAdd        = "ns_table_cell_add"
@@ -78,10 +79,20 @@ type Receipt struct {
 	Outcome              string
 }
 
-type operation struct{ table, row, col, member string }
+type operation struct {
+	table, row, col, member string
+	view                    bool
+}
 
 func (o operation) location() string {
-	s := fmt.Sprintf("table %q", o.table)
+	kind := "table"
+	if o.view {
+		if o.table == "" {
+			return "views"
+		}
+		kind = "view"
+	}
+	s := fmt.Sprintf("%s %q", kind, o.table)
 	if o.row != "" {
 		s += fmt.Sprintf(" row %q", o.row)
 	}
@@ -96,8 +107,16 @@ func (o operation) location() string {
 
 // shellWord makes the suggested command safe to paste even for spaced
 // rows or members containing shell metacharacters.
-func shellWord(s string) string    { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
-func (o operation) remedy() string { return "nova-table show " + shellWord(o.table) }
+func shellWord(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
+func (o operation) remedy() string {
+	if o.view {
+		if o.table == "" {
+			return "nova-table help view"
+		}
+		return "nova-table view show " + shellWord(o.table)
+	}
+	return "nova-table show " + shellWord(o.table)
+}
 func (o operation) refused(reply []any) error {
 	if len(reply) == 0 {
 		return fmt.Errorf("%s: empty function reply; run: %s", o.location(), o.remedy())
@@ -127,6 +146,7 @@ func (o operation) refused(reply []any) error {
 		remedy = "nova-table create " + shellWord(o.table) + " --columns <columns>"
 	case "EXISTS":
 		cause = ErrExists
+		remedy = "nova-table set " + shellWord(o.table) + " --columns <columns>"
 	case "NOROW":
 		cause = errors.New("no such row")
 		remedy = "nova-table row add " + shellWord(o.table) + " " + shellWord(o.row)
@@ -164,7 +184,20 @@ func (o operation) refused(reply []any) error {
 	case "NOMEMBER":
 		cause = errors.New("wants at least one member")
 	case "NOVIEW":
-		cause = errors.New("no such view; run: nova-table view set <name> --tables <a,b,...>")
+		cause = errors.New("no such view")
+		remedy = "nova-table view set " + shellWord(o.table) + " --tables <a,b,...>"
+	case "VIEWTABLE":
+		if len(reply) != 3 {
+			return fmt.Errorf("%s: malformed view-table refusal", o.location())
+		}
+		cause = fmt.Errorf("referenced table %q does not exist", reply[2])
+		remedy = "nova-table create " + shellWord(fmt.Sprint(reply[2])) + " --columns <columns>"
+	case "SUMMARY":
+		if len(reply) != 4 {
+			return fmt.Errorf("%s: malformed summary refusal", o.location())
+		}
+		cause = fmt.Errorf("summary wants a count column in table %q; %q is not one", reply[2], reply[3])
+		remedy = "nova-table show " + shellWord(fmt.Sprint(reply[2]))
 	case "NOTTEXT":
 		cause = errors.New("not a text column; row set writes text columns only")
 	case "BOUND":
@@ -185,8 +218,12 @@ func (o operation) refused(reply []any) error {
 func (o operation) call(ctx context.Context, c redis.Cmdable, fn string, ro bool, args ...any) ([]any, error) {
 	all := append([]any{o.table}, args...)
 	key := DefKey(o.table)
-	if fn == "ns_view_set" || fn == "ns_view_get" {
+	if o.view {
 		key = "view:" + o.table
+	}
+	if fn == "ns_view_list" {
+		key = "views"
+		all = nil
 	}
 	var cmd *redis.Cmd
 	if ro {
@@ -583,13 +620,13 @@ type View struct {
 
 // ViewSet writes a view; every table must exist.
 func ViewSet(ctx context.Context, c redis.Cmdable, v View) error {
-	_, err := (operation{table: v.Name}).call(ctx, c, "ns_view_set", false, strings.Join(v.Tables, ","), v.Title, v.Summary)
+	_, err := (operation{table: v.Name, view: true}).call(ctx, c, "ns_view_set", false, strings.Join(v.Tables, ","), v.Title, v.Summary)
 	return err
 }
 
 // ViewGet reads a view.
 func ViewGet(ctx context.Context, c redis.Cmdable, name string) (View, error) {
-	reply, err := (operation{table: name}).call(ctx, c, "ns_view_get", true)
+	reply, err := (operation{table: name, view: true}).call(ctx, c, "ns_view_get", true)
 	if err != nil {
 		return View{}, err
 	}
@@ -605,4 +642,37 @@ func ViewGet(ctx context.Context, c redis.Cmdable, name string) (View, error) {
 		v.Tables = strings.Split(t, ",")
 	}
 	return v, nil
+}
+
+// ViewList returns stored view names in lexical order, in one exchange.
+func ViewList(ctx context.Context, c redis.Cmdable) ([]string, error) {
+	reply, err := (operation{view: true}).call(ctx, c, "ns_view_list", true)
+	if err != nil {
+		return nil, err
+	}
+	if len(reply) != 2 {
+		return nil, fmt.Errorf("views: malformed list reply")
+	}
+	raw, ok := reply[1].([]any)
+	if !ok {
+		return nil, fmt.Errorf("views: malformed names")
+	}
+	names := make([]string, len(raw))
+	for i, v := range raw {
+		name, ok := v.(string)
+		if !ok || !ValidName(name) {
+			return nil, fmt.Errorf("views: malformed name")
+		}
+		names[i] = name
+	}
+	return names, nil
+}
+
+// ViewDelete removes only presentation configuration; tables are untouched.
+func ViewDelete(ctx context.Context, c redis.Cmdable, name string) (int64, error) {
+	reply, err := (operation{table: name, view: true}).call(ctx, c, "ns_view_del", false)
+	if err != nil {
+		return 0, err
+	}
+	return replyCount(reply)
 }
