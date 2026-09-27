@@ -122,7 +122,11 @@ func TestBatchCopiesCardOnly(t *testing.T) {
 	if !strings.HasPrefix(lines[0], a+" ") {
 		t.Fatalf("the one file copied is the card: %q", lines[0])
 	}
-	if strings.Contains(lines[0], "runner") || strings.Contains(lines[0], "auth") || strings.Contains(lines[0], "config") {
+	// The names that cross, without the test's own directory: a CI runner's
+	// work directory is itself named runner-<n> (the merge queue's run of
+	// 2026-09-27 on /home/nova/runner-nova-tools-4 failed here on its path).
+	crossed := strings.ReplaceAll(lines[0], dir, "")
+	if strings.Contains(crossed, "runner") || strings.Contains(crossed, "auth") || strings.Contains(crossed, "config") {
 		t.Fatalf("no runner script, config or key crosses: %q", lines[0])
 	}
 }
