@@ -112,14 +112,21 @@ distinct states, no error) took 92 s on the same bench and is not in the set.
 nova-tools#4458 is held to. The session owns its input, where its reader is
 (at a line, in a verb, in a watch, ended), one connection (none, live, or dead
 and not yet used again), the dial error its pool keeps, and its exit code. The
-outside is the store (up; refusing; gone from its socket path) and a stop
-signal. A bounded design model with reversed witnesses, not a refinement proof
-of session.go. What it leaves out is listed in its header.
+outside is the store (up; refusing; gone from its socket path) and two
+signals. A bounded design model with reversed witnesses, not a refinement
+proof of session.go. What it leaves out is listed in its header.
+
+The signals (Stella, stella-ba91222b58ce): SIGTERM is a stop wherever it
+arrives. SIGINT inside a watch is how a watch is left, and the reader goes on
+to the next line; at the prompt or inside a verb it is a stop. A session ended
+by a stop reports the signal (143, 130), not the codes of its lines.
 
 What it holds the shell to:
 
-- after a stop signal no line is started, so nothing is written after a stop
-  (`NothingStartsAfterStop`), and a stop signal ends the session (`StopEnds`);
+- after a stop no line is started, so nothing is written after a stop
+  (`NothingStartsAfterStop`); SIGTERM ends the session (`TermEnds`); only a
+  stop ends the session as one (`StopOnlyWhenStopped`), and SIGINT leaves a
+  watch (`IntLeavesWatch`);
 - a line fails for the connection only when a dial made for that line failed
   (`NoFalseAlarm`);
 - a store that could not be reached is code 2, whatever the dial said
@@ -127,9 +134,14 @@ What it holds the shell to:
 - without `--keep-going` nothing is read after the first failed line
   (`StopsAtFirstFailure`, `EndOfInputMeansNoFailure`); with it every line is
   read unless the session was told to end (`KeepGoingReadsEveryLine`);
-- the exit code is the highest code of any line (`ExitIsHighest`);
-- the session is never stuck anywhere but in a watch it was asked for
-  (`NeverStuck`).
+- the exit code is the highest code of any line, unless a stop ended the
+  session (`ExitIsHighest`);
+- a verb ends: the session is never stuck inside a line (`VerbEnds`).
+
+The reader waits for input as long as the outside likes, so nothing here says
+a session must end: a shell left open at its prompt is not stuck, and a watch
+draws until it is told to stop. Fairness is on what the session owes (a verb
+in hand, a signal received), never on the arrival of a line.
 
 Run as the edit and order models are, every config at once, each in its own
 temp directory under a 60 s cap:
@@ -140,24 +152,25 @@ temp directory under a 60 s cap:
         -deadlock -metadir /tmp/tlc-$c/meta -config $cfg MCTableSession.tla > $c.log 2>&1 &
     done; wait
 
-Measured on space, 2026-09-27, load 9, all eight at once: 5 s wall. Every
+Measured on space, 2026-09-27, load 9, all nine at once: 7 s wall. Every
 input of up to four lines over six kinds of line, with and without
 `--keep-going`, from each state of the store.
 
 | config | result | time |
 |---|---|---|
-| `MCTableSession` | no error, 64,752 distinct states: TypeOK, NothingStartsAfterStop, NoFalseAlarm, ConnectionFailureIsTwo, StopsAtFirstFailure, ExitIsHighest, KeepGoingReadsEveryLine, EndOfInputMeansNoFailure, EndsForAReason, LineInHand, LiveMeansUp; StopEnds and NeverStuck under weak fairness of the session's own steps | 5 s |
-| `MCTableSessionBrokenTerm` | NothingStartsAfterStop violated in 5 states: `watch`, a stop signal, the watch returns 0, the next line `ok` is run (ed959e1a3: watch.go:75, watchLoop, session.go:126) | 3 s |
-| `MCTableSessionBrokenTermLive` | StopEnds violated: `watch`, a stop signal, the second `watch` draws for ever | 4 s |
+| `MCTableSession` | no error, 87,925 distinct states: TypeOK, NothingStartsAfterStop, StopOnlyWhenStopped, NoFalseAlarm, ConnectionFailureIsTwo, StopsAtFirstFailure, ExitIsHighest, KeepGoingReadsEveryLine, EndOfInputMeansNoFailure, EndsForAReason, LineInHand, LiveMeansUp; TermEnds, IntLeavesWatch and VerbEnds under weak fairness of what the session owes | 7 s |
+| `MCTableSessionBrokenTerm` | NothingStartsAfterStop violated in 5 states: `watch`, SIGTERM, the watch returns 0, the next line `ok` is run (ed959e1a3: watch.go:75, watchLoop, session.go:126) | 2 s |
+| `MCTableSessionBrokenTermLive` | TermEnds violated: `watch`, SIGTERM, the watch returns 0 and the session is still there | 4 s |
 | `MCTableSessionBrokenStale` | NoFalseAlarm violated in 6 states: a line fails while the store refuses, the store comes up, the next line answers the kept error and dials nothing (ed959e1a3: session.go:88, a pool of one; go-redis v9.22.0 pool.go:692) | 2 s |
 | `MCTableSessionBrokenClass` | ConnectionFailureIsTwo violated in 3 states: the store gone from its socket path, the line ends with code 1 (ed959e1a3: main.go:303) | 2 s |
-| `MCTableSessionBrokenLong` | KeepGoingReadsEveryLine violated in 2 states: a line too long ends a `--keep-going` session with a line unread (ed959e1a3: session.go:135) | 2 s |
+| `MCTableSessionBrokenLong` | KeepGoingReadsEveryLine violated in 2 states: a line too long ends a `--keep-going` session with a line unread (ed959e1a3: session.go:135) | 1 s |
 | `MCTableSessionBrokenOn` | StopsAtFirstFailure violated: a line is read after a failed one without `--keep-going` | 2 s |
 | `MCTableSessionBrokenLast` | ExitIsHighest violated: `usage` then `ok` exits 0 | 2 s |
+| `MCTableSessionBrokenInt` | StopOnlyWhenStopped violated: SIGINT inside a watch ends the session | 2 s |
 
 Term, Stale, Class and Long are defects of the shell at ed959e1a3, each
 reproduced on a store by the second reader of #4458 and checked by hand
-against the lines named. On and Last are misimplementations the invariants are
-shown to catch; the code at ed959e1a3 has neither. What a stop signal does to
-a verb in flight is left open: the verb may finish, or the process may end
-inside it. The model says only that no line starts afterwards.
+against the lines named. On, Last and Int are misimplementations the
+invariants are shown to catch; the code at ed959e1a3 has none of them. What a
+stop does to a verb in flight is left open: the verb may finish, or the
+process may end inside it. The model says only that no line starts afterwards.
