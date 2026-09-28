@@ -6,10 +6,12 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
 	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
@@ -84,13 +86,22 @@ func TestEveryAllowlistIsReadThroughTheOneHelper(t *testing.T) {
 // one, each read named by its path relative to root.
 func treeHelperReads(t *testing.T, root string, lists map[string]bool) (map[string]bool, []string) {
 	t.Helper()
-	tree := repoTree(t)
+	var tree *repoTreeIndex
+	if root == repoRoot(t) {
+		tree = repoTree(t)
+	} else {
+		var err error
+		tree, err = loadRepoTree(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	pkgs := map[string][]*treeFile{}
 	for _, f := range tree.Files {
 		if !f.Go || f.AST == nil {
 			continue
 		}
-		if f.HasDirNamed(".git") || f.HasDirNamed("testdata") || f.HasDirNamed("vendor") || f.HasDirNamed("node_modules") || f.HasDirNamed("deprecated") {
+		if f.HasDirNamed(".git") || f.HasDirNamed("testdata") || f.HasDirNamed("vendor") || f.HasDirNamed("node_modules") || f.InDir("deprecated") {
 			continue
 		}
 		dir := filepath.Dir(f.Rel)
@@ -380,3 +391,37 @@ func (r listResolver) local(fn *ast.FuncDecl, name string, depth int) []string {
 	}
 	return out
 }
+
+// TestTreeHelperReadsExaminesNestedDeprecatedDirectories verifies that
+// treeHelperReads does not exclude nested directories named "deprecated"
+// (like cmd/live/deprecated/), only the root deprecated/ directory.
+func TestTreeHelperReadsExaminesNestedDeprecatedDirectories(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	for rel, body := range map[string]string{
+		"cmd/live/deprecated/nested.go": "package nested\n\nimport \"os\"\n\nfunc f() {\n\tos.ReadFile(\"test.allow\")\n}\n",
+	} {
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	lists := map[string]bool{"test.allow": true}
+	_, raw := treeHelperReads(t, root, lists)
+	found := false
+	for _, r := range raw {
+		if strings.Contains(r, "cmd/live/deprecated/nested.go") && strings.Contains(r, "test.allow") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("raw reads = %v; want raw read in cmd/live/deprecated/nested.go to be examined", raw)
+	}
+}
+
