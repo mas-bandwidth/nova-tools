@@ -2,8 +2,7 @@
 
 Nova-bus carries messages over Git and uses only the Go standard library and
 its general bus, build-info and one-line modules. It does not classify notes
-or contact an AI provider. The old `--decide` surface is retired (2026-09-27);
-coordination and decision features belong in other tools.
+or contact an AI provider.
 
 Status: specified, not implemented; no code. Every path comes from a flag, every
 verb prints one line of output, a refusal is exit 2 with one remedy line, output is
