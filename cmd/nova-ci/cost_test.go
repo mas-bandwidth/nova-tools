@@ -219,9 +219,9 @@ func TestCostCloseFailureAfterSuccessfulWrite(t *testing.T) {
 	}
 }
 
-// TestStellaCostReviewWitnesses keeps Stella's review witnesses active as a
-// regression control.
-func TestStellaCostReviewWitnesses(t *testing.T) {
+// TestCostPaginationAndCloseFailureControls keeps pagination and close-failure
+// controls active as a regression check.
+func TestCostPaginationAndCloseFailureControls(t *testing.T) {
 	t.Parallel()
 
 	t.Run("partial", func(t *testing.T) {

@@ -2,18 +2,24 @@ package main
 
 // cost.go is `nova-ci cost`: the one COST line every CI run writes to its log
 // and to the ci:cost stream. It reads the forge's job listing for the run on
-// stdin (the body of `repos/<owner>/<name>/actions/runs/<id>/jobs`, one page
-// or every page's jobs under one `jobs` array), prices it
-// (internal/cicost) and prints the line on stdout; with --redis it appends
-// the same entry to ci:cost first and the line ends in the entry's id. The
-// run's identity is the run receipt's: the flags are `nova-ci github
-// receipt`'s, spelt the same, so the ci-ok step that writes the receipt
-// writes the cost from the same context, and the store is opened the same
-// way (the seat's user and password from the environment, never a flag).
+// stdin (the body of `repos/<owner>/<name>/actions/runs/<id>/jobs`: one JSON
+// object whose jobs array holds exactly total_count jobs, whether one complete
+// page or jobs combined across every page into one object; raw concatenated
+// pages are refused), prices it (internal/cicost) and prints the line on
+// stdout; with --redis it appends the same entry to ci:cost first and the line
+// ends in the entry's id. The run's identity is the run receipt's: the flags
+// are `nova-ci github receipt`'s, spelt the same, so the ci-ok step that writes
+// the receipt writes the cost from the same context, and the store is opened
+// the same way (the seat's user and password from the environment, never a flag).
 //
 // The verb makes no call of its own: what fetched the listing is the
-// caller's business, and everything on stdin is DATA from a host. A write
-// that fails is one line on stderr at exit 1, never a line that pretends.
+// caller's business, and everything on stdin is DATA from a host. A complete
+// listing is required; a partial or count-mismatched listing is refused (exit 2)
+// before any dial. A write the store will not take is one line on stderr at
+// exit 1. If an XADD write succeeds but closing the connection subsequently
+// fails, the COST line with its event id is printed on stdout, the close
+// failure is reported on stderr, and the verb exits 1 without instructing the
+// caller to rerun the write (preventing duplicate entries).
 
 import (
 	"context"
@@ -59,9 +65,11 @@ func openCostStore(ctx context.Context, addr string) (cicost.Writer, func() erro
 }
 
 // cmdCost is the verb. Exit 0 with the COST line on stdout; 1 when the store
-// would not take the entry or closing it failed; 2 for a refusal before any
-// dial: a flag the receipt refuses, a partial listing, or a listing that is
-// not the forge's.
+// would not take the entry or closing it failed (on close failure after a
+// successful write, stdout retains the line with its event id, stderr reports
+// the close error, and no rerun is recommended); 2 for a refusal before any
+// dial: a flag the receipt refuses, a partial or count-mismatched listing, or a
+// listing that is not the forge's.
 func cmdCost(args []string, stdin io.Reader, stdout, stderr io.Writer, open costOpener) int {
 	const where = " cost"
 	fs := flag.NewFlagSet("cost", flag.ContinueOnError)

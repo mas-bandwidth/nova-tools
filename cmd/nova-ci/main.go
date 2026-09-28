@@ -90,21 +90,28 @@ usage:
   nova-ci cost --repo owner/name --sha <40hex> --run-id <n> --workflow <name>
                --conclusion success|failure|cancelled [--pr <n>] [--at <rfc3339>]
                [--redis <addr>] < jobs.json
-                      the one COST line of a CI run: read the run's job listing
-                      (repos/<owner>/<name>/actions/runs/<id>/jobs) on stdin
-                      and print job-seconds per job, the total, and spin (the
-                      seconds of the failed, cancelled and rerun jobs); the
-                      flags are the run receipt's. --redis appends the same
-                      entry to the ci:cost stream first and the line ends in
-                      its id. Exit 0 with the line, 1 the store would not take
-                      the entry, 2 a refusal (a flag the receipt refuses, a
-                      listing that is not the forge's).
+                      the one COST line of a CI run: read the run's complete
+                      job listing (repos/<owner>/<name>/actions/runs/<id>/jobs:
+                      one JSON object whose jobs array holds exactly total_count
+                      jobs, one complete page or pages combined into one object;
+                      raw concatenated pages are refused) on stdin and print
+                      job-seconds per job, the total, and spin (the seconds of
+                      the failed, cancelled and rerun jobs); the flags are the
+                      run receipt's. --redis appends the same entry to the
+                      ci:cost stream first and the line ends in its id. Exit 0
+                      with the line; 1 when the store would not take the entry
+                      or closing it failed (on close failure after a successful
+                      write, stdout retains the line and event id, stderr
+                      reports the close error, with no rerun); 2 a refusal before
+                      any dial (a flag the receipt refuses, a partial or
+                      count-mismatched listing, a listing that is not the
+                      forge's).
 
 exit codes: 0 inside budget or measured, 2 a CI-SLEEPS line, a CI-SLOW
             line under --enforce, or the invocation could not run (bad flag,
-            unreadable stdin); local adds 1 for a red test or a package that
-            did not build, and github receipt and cost add 1 for a write the
-            store refused.
+            unreadable stdin, partial listing); local adds 1 for a red test or
+            a package that did not build, and github receipt and cost add 1 for
+            a write the store refused or a close failure.
 
 example:
   nova-ci help

@@ -1493,11 +1493,13 @@ nova-ci github receipt: --conclusion wants success, failure or cancelled (job.st
 --conclusion success|failure|cancelled [--pr <n>] [--at <rfc3339>] [--redis <addr>]
 < jobs.json` is the one COST line of a CI run: where the run's job-seconds went.
 It reads the forge's job listing for the run on stdin (the body of
-`repos/<owner>/<name>/actions/runs/<id>/jobs`, one page or every page's jobs
-under one `jobs` array), prices it, and prints one line: the receipt's identity
-(the flags are `github receipt`'s, spelt the same, so the `ci-ok` step writes
-both from the same context), then `jobs=<n> total=<s> spin=<s> unknown=<n>` and
-one `job=<name>:<seconds>:<conclusion>:<attempt>:<why>` field per job in the
+`repos/<owner>/<name>/actions/runs/<id>/jobs`: one JSON object whose `jobs`
+array holds exactly `total_count` jobs, whether a single complete page or pages
+combined into one object; raw concatenated pages are refused), prices it, and
+prints one line: the receipt's identity (the flags are `github receipt`'s, spelt
+the same, so the `ci-ok` step writes both from the same context), then
+`jobs=<n> total=<s> spin=<s> unknown=<n>` and one
+`job=<name>:<seconds>:<conclusion>:<attempt>:<why>` field per job in the
 listing's order. A job's seconds are its `completed_at` minus its `started_at`
 as the forge stamped them; `spin` is the seconds that bought no verdict, the
 jobs whose `why` is `failed`, `cancelled`, `rerun` (attempt above one) or
@@ -1506,6 +1508,11 @@ with no `completed_at` yet has unknown seconds, printed `-` and counted in
 `unknown=`, never summed as zero. The verb makes no call of its own: what
 fetched the listing is the caller's business (internal/cicost).
 
+A complete listing is required: if `total_count` exceeds the jobs read, or if
+the counts mismatch, the command refuses before any dial (exit 2) naming the
+jobs read, expected count, and pagination guidance (`listing is partial (<n>
+jobs read, <m> expected); page through the forge's listing, or pass every page`).
+
 `--redis <addr>` appends the same entry to the `ci:cost` stream first (one
 entry per run: the receipt's fields, the totals, one `job:<name>:<attempt>`
 field per job; a reader joins it to the run's `ev:github` row by `repo`, `sha`
@@ -1513,8 +1520,13 @@ and `run_id`) and the line ends in the entry's id; without it the line ends in
 `ev=-`. The store is dialled as the environment's seat, the receipt's way. Exit
 0 with the line; 1 when the store would not take the entry, one line on stderr
 ending `the COST entry was not written: fix the store or the bench seat and
-rerun ci-ok`; 2 a refusal before any dial, for a flag the receipt refuses, an
-empty stdin, a listing that is not the forge's JSON, or one holding no jobs.
+rerun ci-ok`. If an XADD write succeeds but closing the connection subsequently
+fails, the COST line with its event id is printed on stdout, the close failure
+is reported on stderr (`nova-ci cost: close: <err>`), and the command exits 1
+without instructing the caller to rerun the write (preventing duplicate entries);
+2 a refusal before any dial, for a flag the receipt refuses, an empty stdin, a
+listing that is not the forge's JSON, a listing holding no jobs, or a partial or
+count-mismatched listing.
 
 ```
 $ nova-ci cost --repo mas-bandwidth/nova-tools --sha 0123456789abcdef0123456789abcdef01234567 --run-id 777 --workflow ci --conclusion failure --pr 4328 < internal/cicost/testdata/jobs.json

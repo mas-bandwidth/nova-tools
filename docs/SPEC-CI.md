@@ -324,8 +324,11 @@ It takes the run receipt's flags (`--repo`, `--sha`, `--run-id`, `--workflow`,
 `--conclusion`, `--pr`, `--at`), spelt as `nova-ci github receipt` takes them,
 so the `ci-ok` step that writes the receipt writes the cost from the same
 context, and the listing it reads is the body of
-`repos/<owner>/<name>/actions/runs/<id>/jobs`, one page or every page's jobs
-under one `jobs` array. The verb makes no call of its own: what fetched the
+`repos/<owner>/<name>/actions/runs/<id>/jobs`: one JSON object whose `jobs`
+array holds exactly `total_count` jobs (one complete page, or the pages' jobs
+combined into one object; raw concatenated pages are refused). A complete
+listing is required before writing a run-total entry; partial listings are
+refused before any dial. The verb makes no call of its own: what fetched the
 listing is the caller's business, and everything on stdin is data from a host.
 
 **The invariant.** A job's seconds are its `completed_at` minus its
@@ -357,11 +360,16 @@ receipt's own `Validate`, so a cost never names a run the receipt could not.
 **Its refusals.** Exit 2 before any dial, one line each ending `run: nova-ci
 help`: a flag the receipt refuses (its own remedy, `--sha wants the 40-hex head
 the run tested`), an empty stdin (`it wants the run's job listing`), bytes that
-are not the forge's JSON, a listing holding no jobs, a positional argument.
+are not the forge's JSON, a listing holding no jobs, a partial or
+count-mismatched listing (`listing is partial (<n> jobs read, <m> expected); page
+through the forge's listing, or pass every page`), a positional argument.
 Exit 1, the receipt's code for the same failure, when the store would not take
 the entry: one line naming the cause and ending `the COST entry was not
 written: fix the store or the bench seat and rerun ci-ok`, never a line that
-pretends the entry landed.
+pretends the entry landed. If an XADD write succeeds but closing the connection
+subsequently fails, stdout retains the COST line with its write event ID, stderr
+reports the close failure (`nova-ci cost: close: <err>`), and the command exits 1
+without instructing the caller to rerun the write (preventing duplicate writes).
 
 **The mistake it prevents.** A CI bill is read as a total, and a total hides
 the part that bought nothing: the red job's minutes, the rerun's, the attempt a
