@@ -515,6 +515,59 @@ func TestSpellingCommonMarkContainerBoundaries(t *testing.T) {
 			t.Errorf("updated = %q, want %q", updated, text)
 		}
 	})
+
+	t.Run("loose-list-blank-line-before-fence", func(t *testing.T) {
+		t.Parallel()
+		text := "-   intro\n\n    ~~~go\n    func recieve() {}\n    ~~~\n"
+		findings, updated, err := check.CheckSpellingText("note.md", text, check.SpellingOptions{Markdown: true})
+		if err != nil {
+			t.Fatalf("CheckSpellingText error: %v", err)
+		}
+		if len(findings) != 0 {
+			t.Errorf("expected 0 findings in loose list fence, got: %+v", findings)
+		}
+		if updated != text {
+			t.Errorf("updated = %q, want %q", updated, text)
+		}
+	})
+
+	t.Run("loose-list-unclosed-fence-ends-at-list-exit", func(t *testing.T) {
+		t.Parallel()
+		text := "- intro\n\n  ~~~go\n  recieve\n\nrecieve in prose.\n"
+		findings, updated, err := check.CheckSpellingText("note.md", text, check.SpellingOptions{Markdown: true})
+		if err != nil {
+			t.Fatalf("CheckSpellingText error: %v", err)
+		}
+		if len(findings) != 1 {
+			t.Fatalf("expected 1 finding for prose after loose list fence, got: %+v", findings)
+		}
+		if findings[0].Original != "recieve" || findings[0].Line != 6 {
+			t.Errorf("unexpected finding: %+v", findings[0])
+		}
+		want := "- intro\n\n  ~~~go\n  recieve\n\nreceive in prose.\n"
+		if updated != want {
+			t.Errorf("updated = %q, want %q", updated, want)
+		}
+	})
+
+	t.Run("tab-stop-marker-indentation", func(t *testing.T) {
+		t.Parallel()
+		text := "-\t~~~go\n  recieve in prose.\n"
+		findings, updated, err := check.CheckSpellingText("note.md", text, check.SpellingOptions{Markdown: true})
+		if err != nil {
+			t.Fatalf("CheckSpellingText error: %v", err)
+		}
+		if len(findings) != 1 {
+			t.Fatalf("expected 1 finding for prose outside tab-indented list item, got: %+v", findings)
+		}
+		if findings[0].Original != "recieve" || findings[0].Line != 2 {
+			t.Errorf("unexpected finding: %+v", findings[0])
+		}
+		want := "-\t~~~go\n  receive in prose.\n"
+		if updated != want {
+			t.Errorf("updated = %q, want %q", updated, want)
+		}
+	})
 }
 
 func TestSpellingRelativeDirGlobAndDirectoryExclusion(t *testing.T) {

@@ -267,7 +267,7 @@ func StripCode(text string) string {
 
 		// Step 1: Match existing open containers against the current line.
 		matchedDepth := 0
-		for k, c := range openContainers {
+		for _, c := range openContainers {
 			if c.kind == containerBlockquote {
 				// Blockquote requires 0-3 leading spaces, then '>'.
 				sp := 0
@@ -284,13 +284,10 @@ func StripCode(text string) string {
 					break
 				}
 			} else if c.kind == containerList {
-				// Blank line inside a fence within a list item matches the container.
+				// Blank line inside a list item matches the container.
 				if strings.TrimSpace(lineStr[pos:]) == "" {
-					if inFence && fenceDepth > k {
-						matchedDepth++
-						continue
-					}
-					break
+					matchedDepth++
+					continue
 				}
 				col := 0
 				adv := 0
@@ -375,15 +372,25 @@ func StripCode(text string) string {
 				if sp <= 3 && pos+sp < len(lineStr) {
 					if markerLen, ok := matchListItemMarker(lineStr[pos+sp:]); ok {
 						afterMarker := pos + sp + markerLen
-						postSp := 0
-						for afterMarker+postSp < len(lineStr) && (lineStr[afterMarker+postSp] == ' ' || lineStr[afterMarker+postSp] == '\t') {
-							postSp++
+						col := sp + markerLen
+						postAdv := 0
+						for afterMarker+postAdv < len(lineStr) {
+							ch := lineStr[afterMarker+postAdv]
+							if ch == ' ' {
+								col++
+								postAdv++
+							} else if ch == '\t' {
+								col += 4 - (col % 4)
+								postAdv++
+							} else {
+								break
+							}
 						}
-						indent := sp + markerLen + postSp
-						if afterMarker+postSp == len(lineStr) {
+						indent := col
+						if afterMarker+postAdv == len(lineStr) {
 							indent = sp + markerLen + 1
 						}
-						pos = afterMarker + postSp
+						pos = afterMarker + postAdv
 						openContainers = append(openContainers, containerItem{kind: containerList, indent: indent})
 						continue
 					}

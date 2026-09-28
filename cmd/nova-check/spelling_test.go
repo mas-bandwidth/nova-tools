@@ -506,3 +506,29 @@ func TestSpellingRevisedWitnesses(t *testing.T) {
 		})
 	}
 }
+
+func TestReviewSpellingLooseListContainers(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, before, want string }{
+		{"blank-before-fence-with-four-space-continuation", "-   intro\n\n    ~~~go\n    func recieve() {}\n    ~~~\n", "-   intro\n\n    ~~~go\n    func recieve() {}\n    ~~~\n"},
+		{"blank-before-unclosed-list-fence", "- intro\n\n  ~~~go\n  recieve\n\nrecieve in prose.\n", "- intro\n\n  ~~~go\n  recieve\n\nreceive in prose.\n"},
+		{"tab-marker-width", "-\t~~~go\n  recieve in prose.\n", "-\t~~~go\n  receive in prose.\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := filepath.Join(t.TempDir(), "note.md")
+			if err := os.WriteFile(p, []byte(tc.before), 0600); err != nil {
+				t.Fatal(err)
+			}
+			code, out, err := runSpelling(t, "--file", p, "--write")
+			after, e := os.ReadFile(p)
+			if e != nil {
+				t.Fatal(e)
+			}
+			t.Logf("exit=%d out=%q err=%q after=%q", code, out, err, after)
+			if code != 0 || string(after) != tc.want {
+				t.Errorf("CommonMark container boundary mismatch: want %q", tc.want)
+			}
+		})
+	}
+}
