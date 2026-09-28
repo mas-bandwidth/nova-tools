@@ -246,14 +246,8 @@ help banner's own `seat inject` example is run through the one comparator in the
 same package, including its committed-branch receipt. The transcript is held
 beside that test, with the branch's timestamp the one declared run-owned value.
 
-**The Studio's store file is `studio.yaml`, not `swarm-studio.yaml`.** Every Linux
-bench's store follows the `swarm-<name>.yaml` convention (`swarm-hulk.yaml`,
-`swarm-space.yaml`, `swarm-vision.yaml`, …). The Studio is the only bench whose
-store file omits the `swarm-` prefix, and the darwin launcher used to ask for
-the prefixed name — `swarm-studio.yaml` — and lost every card it took (80 of 80,
-nova-tools #2000). The launcher's seat name must resolve to `studio.yaml` on the
-Studio; a seat called `studio` that resolves to `swarm-studio.yaml` is a silent
-empty wave.
+A bench whose store file omits the `swarm-` prefix must be asked for under that
+file's name, or the launcher reads an empty store.
 
 ## nova-check
 
@@ -307,8 +301,8 @@ HYGIENE FINDING reason=stray-file at=sign/RESULT.md: an added file matching the 
 HYGIENE NO base=main head=card paths=sign/** findings=4
 ```
 
-`--identity` takes ONE pair of angle brackets. The second pair the help used to
-show is refused rather than matched against nobody (#1805):
+`--identity` takes one pair of angle brackets. A second pair is refused rather
+than matched against nobody:
 
 ```
 $ nova-check hygiene --repo . --base main --head card --identity "Rowan <<rowan@mas-bandwidth.com>>"
@@ -617,7 +611,7 @@ produces. Each package's total is its package-level `Elapsed`, and the
 `slowest=` list names the few test-level rows that spent it, so the first run
 tells the reader whether one test or the whole package is the cost. `--budget`
 is whole seconds and defaults to 60. Both runs exit 0: a CI-SLOW line is a
-measurement, and only `--enforce` (the nightly space legs) makes it exit 2. The
+measurement, and only `--enforce` makes it exit 2. The
 CI-LOAD line is the host's load average, printed and never judged; `--load` and
 `--cpus` hand it in here so the transcript is the same on every machine. The common mistake is forgetting the
 redirect: with an empty stdin the verb reads zero packages and prints

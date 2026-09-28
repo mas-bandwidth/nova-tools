@@ -6,11 +6,9 @@ import (
 	"testing"
 )
 
-// TestIssue2000StudioYamlNaming documents and checks that docs/TESTS.md names
-// the Studio's secrets store as studio.yaml (without the swarm- prefix), which
-// is the one bench whose store file does not follow the swarm-<name>.yaml
-// convention. The darwin fill loop lost 80 cards (#2000) because the launcher
-// asked for swarm-studio.yaml while the store held studio.yaml.
+// TestIssue2000StudioYamlNaming keeps the seat-file naming rule from
+// nova-tools #2000: a store file without the shared prefix is requested
+// under its actual name. The documentation states the rule without host names.
 func TestIssue2000StudioYamlNaming(t *testing.T) {
 	t.Parallel()
 
@@ -18,12 +16,11 @@ func TestIssue2000StudioYamlNaming(t *testing.T) {
 	if err != nil {
 		t.Fatalf("docs/TESTS.md: %v", err)
 	}
-	content := string(body)
+	content := strings.Join(strings.Fields(string(body)), " ")
 
 	for _, want := range []string{
-		"studio.yaml",
-		"swarm-studio.yaml",
-		"swarm-",
+		"`swarm-` prefix",
+		"must be asked for under that file's name",
 	} {
 		if !strings.Contains(content, want) {
 			t.Errorf("docs/TESTS.md missing %q (nova-tools #2000)", want)
