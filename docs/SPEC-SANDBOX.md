@@ -119,7 +119,7 @@ The test requirements are listed under **Tests this spec demands**.
    (`(allow network-outbound (remote ip))` on darwin), and the line says
    `net=nopromise`. Darwin's broader `network*` grant would also allow
    unix-domain sockets outside the named paths, including agent sockets.
-   Measured 2026-09-11 on this Mac: under `(allow network*)` a connect to a
+   Measured on macOS: under `(allow network*)` a connect to a
    socket one directory outside the write set succeeds `rc=0`; under
    `(allow network-outbound (remote ip))` the same connect is `rc=1` inside
    the wall and `rc=0` outside it. **Unix-domain sockets are reachable only
@@ -151,8 +151,7 @@ The test requirements are listed under **Tests this spec demands**.
    **One unix socket is granted by literal, and it is DNS.** macOS does not
    resolve names over IP from the process: it asks `mDNSResponder` over the
    unix socket `/private/var/run/mDNSResponder`, so IP-only outbound is a wall
-   with a working network and no name resolution — measured 2026-09-11 on this
-   Mac, `curl https://example.com` inside the wall is `rc=6`, `http_code=000`,
+   with a working network and no name resolution — measured on macOS, `curl https://example.com` inside the wall is `rc=6`, `http_code=000`,
    and `nslookup` is `bind: Operation not permitted`; with
    `(allow network-outbound (remote ip) (literal "/private/var/run/mDNSResponder"))`
    the same curl is `200`. Every wrapped worker would otherwise fail its first
@@ -253,7 +252,7 @@ The test requirements are listed under **Tests this spec demands**.
    environment through `/proc/<pid>/environ` — same uid, and Yama's
    `ptrace_scope` does not apply to `PTRACE_MODE_READ` — so the harness's key
    is reachable whatever the child's own environment holds (measured inside
-   the wall on `space`, 2026-09-19: the read succeeds and carries one
+   the wall on Linux: the read succeeds and carries one
    secret-named entry; the probe reported a yes/no and a count, never a value).
    The read roots below name `/proc` and not `/proc/self` **because a
    `/proc/self` opened `O_PATH` resolves to the pid that opened it**, which is
@@ -517,7 +516,7 @@ the deadline ended the run, not which signal did it.
 
 **No sudo.** `diskutil apfs addVolume` and `diskutil apfs deleteVolume` on the
 boot container are the ordinary user's to run, measured on the Studio (macOS 26,
-arm64, 2026-09-18): rule 2 holds here as it does everywhere else, and a verb
+arm64): rule 2 holds here as it does everywhere else, and a verb
 that needed root would be a different thing than the one measured.
 
 **Every other platform REFUSES**, with `reason=no_sandbox` and one remedy line
@@ -572,8 +571,7 @@ rest, and only `file-read*` and `file-write*` operations are reported: a
 `mach-lookup` denial is real and no `--read` answers it. A run that exits **0**
 asks nothing at all — the query costs a process, and a clean run has no question.
 
-**What this can and cannot see, measured on the Studio (macOS 26, arm64,
-2026-09-18).** macOS *does* report seatbelt violations to the unified log, under
+**What this can and cannot see, measured on macOS 26, arm64.** macOS *does* report seatbelt violations to the unified log, under
 subsystem `com.apple.sandbox.reporting`, category `violation`, and the parser
 reads that exact shape. It does **not** report them for a profile applied with
 `sandbox-exec -p`: a denial produced by this tool is absent from `log show` at
@@ -1248,7 +1246,7 @@ is gone by then (rule 12) — so the sentence lives in the usage banner instead:
 
 On Linux the sandbox always reads the system roots the resolver needs;
 a harness that cannot resolve a name inside the sandbox is a sandbox bug, not a
-network one. Measured 2026-09-17 on hulk (landlock abi=4): inside nova-sandbox
+network one. Measured on Linux (Landlock ABI 4): inside nova-sandbox
 the harness could not resolve DNS, because `/etc/resolv.conf` is a symlink into
 `/run/systemd/resolve`, which the default read set did not include, so the
 resolver runtime path was hidden and curl said `Could not resolve host`; adding
@@ -1262,7 +1260,7 @@ no flag that turns them off. The `SANDBOX OK` line's `read=` count is the
 caller's `--read` list and does not include these roots.
 
 The same shape has a machine-chosen target, and a fixed row cannot name it:
-measured 2026-09-19 on WSL2 (kernel 6.18.33.2), the distro's `/etc/resolv.conf`
+measured on WSL2 (kernel 6.18.33.2), the distro's `/etc/resolv.conf`
 is a symlink to `/mnt/wsl/resolv.conf`, `/mnt/wsl` is in no row above, and glibc
 inside the wall had no nameserver — every lookup failed with `Could not resolve
 host` while TCP by IP still worked. So `addRules` applies `linuxRoots`, not the
@@ -1348,9 +1346,8 @@ read:
   `lstat`/`stat`/`access` resolve, and no read of an ancestor's contents is ever
   allowed.
 
-  **The optional roots were missing from that set, and it cost a toolchain.**
-  Measured 2026-09-18, dogfooding `nova-sandbox run` on a real card step: a
-  `go build` inside the wall died with Go's own sentence and nothing else — `go:
+  **Optional roots need ancestor metadata access too.** Measured on macOS:
+  without that access, `go build` inside the wall fails with `go:
   cannot find GOROOT directory: 'go' binary is trimmed and GOROOT is not set`.
   The profile granted `(allow file-read* (subpath "/opt/homebrew"))`, so every
   *file* of the toolchain was readable; what was not readable was **`/opt`**.
@@ -1381,9 +1378,9 @@ write set cannot be connected to while the job's own socket **inside** it can
 a caller variable beside them survives. One line per check,
 `CHECK OK name=...` / `CHECK FAIL name=...`, exit 1 on any FAIL. **The count is
 the script's own** and no number is stated here: a document that named one would
-be wrong the first time a check was added, and it has been wrong three different
-ways at once. All `OK` on this Mac (macOS 26.6.2, arm64), 2026-09-11. No
-platform claim is verified until the script has been run on a Mac and
+be wrong the first time a check was added. The recorded macOS 26.6.2 arm64
+measurement has every check `OK`. A platform claim requires the script to run
+on that platform and
 its output pasted into the commit.
 
 The script's child-environment filter is the **script's**, so it can only agree
