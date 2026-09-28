@@ -78,7 +78,7 @@ var (
 // the contract is written.
 func readGrammar(t *testing.T) map[string]grammarLine {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-SWARM.md"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "deprecated", "docs", "SPEC-SWARM.md"))
 	if err != nil {
 		t.Fatalf("the grammar is the spec's: %s", err)
 	}
@@ -115,12 +115,13 @@ func readGrammar(t *testing.T) map[string]grammarLine {
 	return nil
 }
 
-// runFormats is every RUN line the tool can print: the format strings of the packages that
-// print them, tests excluded -- a line only a test prints is not a line the tool prints.
+// runFormats is every RUN line the package can print: its format strings, tests excluded --
+// a line only a test prints is not a line the tool prints. cmd/nova-swarm, which printed the
+// rest, moved to deprecated/ and is not read.
 func runFormats(t *testing.T) []string {
 	t.Helper()
 	var out []string
-	for _, dir := range []string{filepath.Join("..", "..", "internal", "swarm"), filepath.Join("..", "..", "cmd", "nova-swarm")} {
+	for _, dir := range []string{filepath.Join("..", "..", "internal", "swarm")} {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			t.Fatal(err)

@@ -41,7 +41,7 @@ import (
 //
 // The measurement that argues the pin -- SPEC-WAKE's "How the checkout receives
 // mail" -- is repeated per release against the pair that ships, which is what
-// cmd/nova-wake's advancing tests do against the nova-bus built from this tree.
+// deprecated/cmd/nova-wake's advancing tests do against the nova-bus built from this tree.
 
 // AcceptBus answers whether a nova-wake built at tool may run against a
 // nova-bus that reports found. Both arguments are passed in rather than read,
@@ -175,7 +175,7 @@ func (b *Bus) Counts() (read, suppress, relay, standing int) {
 }
 
 // Budget is the time this poll may block for: the time to the earliest due
-// source, AT MOST --interval (docs/SPEC-WAKE.md, "The bus inbox", --refresh).
+// source, AT MOST --interval (deprecated/docs/SPEC-WAKE.md, "The bus inbox", --refresh).
 // It is set by the loop before each bus poll, because the earliest due source
 // is a fact about the whole watch and not about this source. --gh-timeout is
 // the budget for a forge call and was never this one: at the documented

@@ -1,7 +1,7 @@
 # nova-swarm per-job profiles — proposal
 
 This document is the normative owner for the per-job profile amendment to
-[`SPEC-SWARM.md`](SPEC-SWARM.md). It generalizes the existing one-task worker
+[`SPEC-SWARM.md`](../deprecated/docs/SPEC-SWARM.md). It generalizes the existing one-task worker
 without adding a second dispatcher, provider ledger or identity layer. It is a
 proposal only: it records the contract to review and the gates to implement;
 it does not claim that the feature or a provider account exists, and it does

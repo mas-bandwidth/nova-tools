@@ -1,4 +1,4 @@
-// The decider chain (docs/SPEC-DECIDE.md D1-D2, :719-756).
+// The decider chain (deprecated/docs/SPEC-DECIDE.md D1-D2, :719-756).
 //
 // A decider is anything that answers a typed question over framed evidence.
 // Four ship: `rules`, a deterministic table that sees private evidence and

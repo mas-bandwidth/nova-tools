@@ -57,7 +57,7 @@ the counts and not from zero.
 | Test | Squeeze run | Result |
 | --- | --- | --- |
 | `cmd/nova-secrets` `TestPlaceNeverPrintsTheValue` | the package under `GOMAXPROCS=1` on one core, `-parallel 8`/`16`, alone and with every other test in the package, ~120 package runs across four shapes, including ten concurrent copies of the test binary pinned to a single core | green every time |
-| `cmd/nova-merge` `TestBatchDropsTheConflictAndGoesRedOnTheFailingMember` | the same shapes over `./cmd/nova-merge/` | green every time |
+| `deprecated/cmd/nova-merge` `TestBatchDropsTheConflictAndGoesRedOnTheFailingMember` | the same shapes over `./cmd/nova-merge/` | green every time |
 
 What the scan DID find, on the dev CI run of 2026-09-18T20:12Z (run 35390201127,
 `test-hosted (macos-latest, 2)`), is a sibling in the same fixture:

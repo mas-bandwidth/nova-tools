@@ -17,7 +17,7 @@ import (
 // never done.
 //
 // The table lives in the spec and in this binary as one slice, and the two agree: a test
-// reads docs/SPEC-SWARM.md and compares it against failureSignatures row for row.
+// reads deprecated/docs/SPEC-SWARM.md and compares it against failureSignatures row for row.
 
 // failureSignature is one row of the failure-signature table: the text that matches a
 // mechanical failure in a run's harness-output.log, the class that names its kind, and the

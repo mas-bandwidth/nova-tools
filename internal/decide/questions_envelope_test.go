@@ -19,9 +19,9 @@ func TestAQuestionFileMayCarryItsCriteriaMetadata(t *testing.T) {
 	t.Parallel()
 
 	for _, path := range []string{
-		"../../docs/decide/questions-reader.json",
-		"../../docs/decide/questions-triage.json",
-		"../../docs/decide/questions-escalate.json",
+		"../../deprecated/docs/decide/questions-reader.json",
+		"../../deprecated/docs/decide/questions-triage.json",
+		"../../deprecated/docs/decide/questions-escalate.json",
 	} {
 		raw, err := os.ReadFile(path)
 		if err != nil {

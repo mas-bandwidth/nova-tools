@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-// The queue section of docs/SPEC-MERGE.md (#1142): one queue, one hold file, one order.
+// The queue section of deprecated/docs/SPEC-MERGE.md (#1142): one queue, one hold file, one order.
 // The queue is the order `run` walks; the hold is a person's and never the tool's; a park
 // is a skip plus a record naming why.
 

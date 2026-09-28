@@ -424,7 +424,7 @@ func sandboxEcho(t *testing.T) string {
 func TestSpecNamesTheHarnessWall(t *testing.T) {
 	t.Parallel()
 
-	swarmDoc := readSpec(t, "SPEC-SWARM.md")
+	swarmDoc := readSpec(t, "../deprecated/docs/SPEC-SWARM.md")
 	sandboxDoc := readSpec(t, "SPEC-SANDBOX.md")
 	section := swarmSection(t, swarmDoc, "## The harness wall (S7, issue #2498)")
 	for _, phrase := range []string{

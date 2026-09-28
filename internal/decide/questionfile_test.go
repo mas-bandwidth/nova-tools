@@ -190,7 +190,7 @@ func TestTheBytesOnTheWireCarryTheNamedCriteriaAndNothingElse(t *testing.T) {
 func TestTheShippedQuestionFilesLoadWithTheirCriteria(t *testing.T) {
 	t.Parallel()
 
-	matches, err := filepath.Glob("../../docs/decide/questions-*.json")
+	matches, err := filepath.Glob("../../deprecated/docs/decide/questions-*.json")
 	if err != nil || len(matches) < 3 {
 		t.Fatalf("want the three shipped question files, got %v (%v)", matches, err)
 	}

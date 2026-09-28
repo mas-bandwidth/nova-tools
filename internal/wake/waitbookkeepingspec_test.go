@@ -9,7 +9,7 @@ import (
 // specWakePath is the document this test reads, relative to this package. It is
 // written the way internal/docs/spec_ci_index_test.go writes its own
 // specCIPath: two levels up to the module root, then the docs tree.
-const specWakePath = "../../docs/SPEC-WAKE.md"
+const specWakePath = "../../deprecated/docs/SPEC-WAKE.md"
 
 // TestTheSpecNamesEveryWaitShapeTheCodeSuppresses holds the sentence that
 // governs the classifier to the classifier itself, in both directions.

@@ -16,9 +16,7 @@
 # change.
 
 # T8 (#1653): the sections no test executes at all.
-nova-decide   # #1653 -- executed by no test
 nova-post     # #1653 -- asserts only that the section is non-empty; its block waits on the #1631 re-cut (SPEC-TOOLWORK Q5)
-nova-review   # #1653 -- executed by no test
 
 # T9 (#1654): the set-of-shapes tests, which pass an abridged or reordered block.
 nova-bus      # #1654 -- collects what was printed into a set
@@ -26,11 +24,9 @@ nova-cairn    # #1654 -- collects what was printed into a set
 nova-check    # #1654 -- collects what was printed into a set
 nova-fuse     # #1654 -- collects what was printed into a set
 nova-self-talk # #1654 -- collects what was printed into a set
-nova-wake     # #1654 -- collects what was printed into a set
 
 # T12 (#1657): the two security kinds, which are the designated mind's, and the two
 # remaining set-of-shapes sections.
-nova-merge    # #1657 -- collects what was printed into a set
 nova-sandbox  # #1657 -- one line pinned by substring
 nova-secrets  # #1657 -- no firstrun_test.go at all
 
@@ -39,7 +35,6 @@ nova-secrets  # #1657 -- no firstrun_test.go at all
 nova-memory   # #1722 -- its firstrun_test.go executes README.md, not this section
 nova-redis    # #1722 -- compares through onboarding.Execute, not the shared comparator
 nova-sprint   # #1722 -- compares through onboarding.Execute, not the shared comparator
-nova-swarm    # #1722 -- compares the event prefix and the field names, dropping every value
 nova-tokens   # #1722 -- compares the event prefix and the field names, dropping every value
 nova-update   # #1722 -- compares the event prefix and the field names, dropping every value
 nova-version  # #1722 -- compares the event prefix and the field names, dropping every value

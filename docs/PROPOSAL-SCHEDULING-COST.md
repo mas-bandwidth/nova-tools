@@ -1,6 +1,6 @@
 # Smart scheduling: spend less getting work accepted
 
-Status: required outcome for the [coordination proposal (#151)](https://github.com/mas-bandwidth/nova-tools/issues/151); the interface and scheduling mechanism remain proposed, not shipped. Read with [retained token records](PROPOSAL-TOKENS-RECORDS.md), [their format](PROPOSAL-TOKENS-FORMAT.md), and [nova-swarm's execution contract](SPEC-SWARM.md).
+Status: required outcome for the [coordination proposal (#151)](https://github.com/mas-bandwidth/nova-tools/issues/151); the interface and scheduling mechanism remain proposed, not shipped. Read with [retained token records](PROPOSAL-TOKENS-RECORDS.md), [their format](PROPOSAL-TOKENS-FORMAT.md), and [nova-swarm's execution contract](../deprecated/docs/SPEC-SWARM.md).
 
 You want to get good work done with your AI friends without exhausting the budget that keeps the team available. A cheaper builder helps only when the saving survives review, corrections and retries. The two primary goals are **the highest-quality useful work with the fewest tokens** and **the lowest average cost per token**. Track both; neither is replaced by cost per landed change, because differently sized changes are not comparable work units. Total virtual cost through acceptance remains a diagnostic that exposes shifted review and correction expense. Actual monetary spend and account limits are separate constraints and reports.
 
