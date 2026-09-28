@@ -209,7 +209,7 @@ ends `run: nova-config help`.
 ## Apply: Redis as a copy
 
 ```
-nova-config apply --check --as rowan
+nova-config apply --check
 CHECK ADD kind=machine name=hulk
 CHECK ADD kind=machine name=studio
 CONFIG CHECK kind=machine add=2 set=0 remove=0 rev=2 applied=0
