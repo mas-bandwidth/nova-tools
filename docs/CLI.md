@@ -94,7 +94,7 @@ of those nobody has filed an issue for, and `unmatched=` how many receipts named
 a verb the list does not declare. Each row also carries `open=<n>`, the findings
 open on that verb, printed whether it is zero or not. `gate` is the same read
 with an exit code: 1 on an open edge always, 1 on any **unmatched not-ok
-receipt**, and with `--require-all` on every verb no non-author has passed.
+receipt** no receipt's `--closes` names, and with `--require-all` on every verb no non-author has passed.
 `--shipped <cmd dir>` scopes the gate to the tools a release ships: a receipt
 naming a tool that is not under that `cmd/` is set aside and counted on
 `DOGFOOD NOTE shipped=<n> outside=<n> cmd=<dir>`, and judges nothing.
