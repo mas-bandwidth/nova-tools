@@ -222,3 +222,19 @@ func TestReplayNeedsItsInputs(t *testing.T) {
 		}
 	}
 }
+
+// A read in progress ends with the budget: a command that blocks in the store
+// for thirty seconds, under a budget of ten, is a failed check. Were the budget
+// not to reach the socket, the store would answer nil after thirty seconds and
+// the check would not fail; the test asserts that event, not the clock.
+func TestASlowCommandUnderAShortBudgetFailsWithinTheBudget(t *testing.T) {
+	t.Parallel()
+	so := redisServer(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	err := WithStore(ctx, so, func(r *Store) { r.Cmd("BLPOP", "no-such-list", 30) })
+	var f *Failure
+	if !errors.As(err, &f) {
+		t.Fatalf("error = %v, want a failed check when the budget ends first", err)
+	}
+}

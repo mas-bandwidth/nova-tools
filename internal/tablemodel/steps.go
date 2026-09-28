@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/tlc"
 )
 
@@ -186,7 +187,7 @@ func RunSteps(steps []Step, o StepOptions) ([]StepResult, error) {
 			Config:  s.Name + ".cfg",
 			Module:  s.Module,
 		}, log)
-		os.RemoveAll(scratch)
+		_ = safepath.RemoveUnder(dir, scratch)
 		raw, err := os.ReadFile(log)
 		if err != nil {
 			return results, fmt.Errorf("cannot read %s: %v", log, err)

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/tlc"
 )
 
@@ -271,7 +272,7 @@ func runHarness(ctx context.Context, o ReplayOptions, dir, label string, mutate 
 	if err != nil {
 		return "", err
 	}
-	defer os.RemoveAll(root)
+	defer func() { _ = safepath.RemoveUnder(dir, root) }()
 	for _, m := range modelModules {
 		raw, err := os.ReadFile(filepath.Join(o.Models, m+".tla"))
 		if err != nil {

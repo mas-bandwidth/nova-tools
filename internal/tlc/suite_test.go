@@ -246,3 +246,47 @@ func TestRunSuiteRecordsAManualRun(t *testing.T) {
 		t.Fatalf("records = %+v, %v", res.Records, err)
 	}
 }
+
+func TestRunSuiteRefusesModelsEditedBetweenTheDigestAndTheCopy(t *testing.T) {
+	t.Parallel()
+	root, cases := suiteTree(t)
+	out := filepath.Join(t.TempDir(), "o")
+	ran := 0
+	clock := &fakeClock{now: time.Now(), step: time.Millisecond}
+	exec := func(context.Context, Run, string) int { ran++; return 0 }
+	o := suiteOptions(root, cases, out, exec, clock)
+	// TLC would check the edited bytes while the records named the old digest.
+	o.beforeCopy = func() {
+		_ = os.WriteFile(filepath.Join(root, "tla", "MCA.tla"), []byte("edited before the copy\n"), 0o644)
+	}
+	res, err := RunSuite(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Failed || res.Refused != "model inputs changed while the models were copied" || ran != 0 || len(res.Records) != 0 {
+		t.Fatalf("suite = %+v, ran %d cases", res, ran)
+	}
+	if _, err := os.Stat(filepath.Join(out, RunsFile)); err == nil {
+		t.Fatal("records were written for models that were not the digest's")
+	}
+}
+
+func TestACopyOfTheModelsHasTheFingerprintOfItsSource(t *testing.T) {
+	t.Parallel()
+	root, _ := suiteTree(t)
+	work := filepath.Join(t.TempDir(), "work")
+	if err := CopyModels(filepath.Join(root, "tla"), work); err != nil {
+		t.Fatal(err)
+	}
+	want, _ := Fingerprint(root)
+	got, err := fingerprint(root, work)
+	if err != nil || got != want {
+		t.Fatalf("copy fingerprint %s (%v), source %s", got, err, want)
+	}
+	if err := os.WriteFile(filepath.Join(work, "MCA.tla"), []byte("other\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := fingerprint(root, work); got == want {
+		t.Fatal("an edited copy has its source's fingerprint")
+	}
+}

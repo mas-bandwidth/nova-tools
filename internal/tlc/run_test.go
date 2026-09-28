@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -147,5 +148,53 @@ func TestCheckLimits(t *testing.T) {
 		if got := CheckLimits(d, tc.workers, tc.manual); (got == nil) != tc.ok {
 			t.Errorf("CheckLimits(%s, %d, manual=%v) = %v, want ok=%v", tc.budget, tc.workers, tc.manual, got, tc.ok)
 		}
+	}
+}
+
+// The program is started with another working directory than the caller's, so
+// an override that is relative to the caller must be made absolute when it is
+// checked. The override is a ./bin/java of an owned directory, a symlink to the
+// helper, named relative to this test's own directory.
+func TestARelativeOverrideRunsInAnotherWorkingDirectory(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need a privilege the Windows path does not have")
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	owned := t.TempDir()
+	if err := os.Mkdir(filepath.Join(owned, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(exe, filepath.Join(owned, "bin", "java")); err != nil {
+		t.Fatal(err)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	relative, err := filepath.Rel(cwd, filepath.Join(owned, "bin", "java"))
+	if err != nil || filepath.IsAbs(relative) {
+		t.Skipf("no relative path from %s to %s", cwd, owned)
+	}
+	java, err := FindHelper("java", relative, LookPath)
+	if err != nil || !filepath.IsAbs(java) {
+		t.Fatalf("override %q resolved to %q, %v", relative, java, err)
+	}
+	private := t.TempDir() // the private working directory the program starts in
+	run := Run{Java: java, Dir: private, Jar: "j", Workers: 1, Config: "c", Module: "m",
+		JVM: []string{"-test.run=^TestExecuteHelper$", "tlc-helper-exit=13", "--"}}
+	if got := Execute(context.Background(), run, filepath.Join(private, "out.log")); got != 13 {
+		t.Fatalf("exit = %d, want 13 (127 is a program that did not start)", got)
+	}
+}
+
+func TestAPathFoundOnPATHIsAbsoluteToo(t *testing.T) {
+	t.Parallel()
+	got, err := FindHelper("java", "", func(string) (string, error) { return filepath.Join("bin", "java"), nil })
+	if err != nil || !filepath.IsAbs(got) {
+		t.Fatalf("path = %q, %v", got, err)
 	}
 }

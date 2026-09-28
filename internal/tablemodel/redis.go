@@ -89,12 +89,12 @@ func StartServer(ctx context.Context, program, tmp string, startup time.Duration
 	}
 	s := &Server{Dir: dir, Socket: filepath.Join(dir, "redis.sock")}
 	if len(s.Socket) > maxSocketPath {
-		os.RemoveAll(dir)
+		removeDir(dir)
 		return nil, cannotRun(fmt.Errorf("the store's socket path is %d bytes and a Unix socket path holds at most %d; set TMPDIR to a shorter directory", len(s.Socket), maxSocketPath))
 	}
 	log, err := os.Create(filepath.Join(dir, "redis.log"))
 	if err != nil {
-		os.RemoveAll(dir)
+		removeDir(dir)
 		return nil, cannotRun(err)
 	}
 	defer log.Close()
@@ -102,7 +102,7 @@ func StartServer(ctx context.Context, program, tmp string, startup time.Duration
 	s.cmd.Dir = dir
 	s.cmd.Stdout, s.cmd.Stderr = log, log
 	if err := s.cmd.Start(); err != nil {
-		os.RemoveAll(dir)
+		removeDir(dir)
 		return nil, cannotRun(fmt.Errorf("cannot start %s: %v", program, err))
 	}
 	exited := make(chan struct{})
@@ -118,7 +118,7 @@ func StartServer(ctx context.Context, program, tmp string, startup time.Duration
 		select {
 		case <-exited:
 			why := lastLine(filepath.Join(dir, "redis.log"))
-			os.RemoveAll(dir)
+			removeDir(dir)
 			return nil, cannotRun(fmt.Errorf("disposable redis exited during startup: %s", why))
 		case <-limit.C:
 			s.kill(exited)
@@ -133,6 +133,10 @@ func StartServer(ctx context.Context, program, tmp string, startup time.Duration
 		Network: "unix", Addr: s.Socket, Protocol: 2,
 		DialTimeout: 15 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second,
 		MaxRetries: -1, PoolSize: 1, DisableIdentity: true,
+		// A command's deadline is the context's: a read in progress ends with the
+		// suite's budget, not fifteen seconds after it. The fixed timeouts above
+		// bound a command on a context with no deadline.
+		ContextTimeoutEnabled: true,
 	})
 	s.exited = exited
 	return s, nil
@@ -165,7 +169,11 @@ func (s *Server) kill(exited chan struct{}) {
 
 // remove deletes the store's own directory, which sits strictly below the
 // directory it was made in.
-func (s *Server) remove() { _ = safepath.RemoveUnder(filepath.Dir(s.Dir), s.Dir) }
+func (s *Server) remove() { removeDir(s.Dir) }
+
+// removeDir deletes a directory this package made, which sits strictly below
+// the directory it was made in.
+func removeDir(dir string) { _ = safepath.RemoveUnder(filepath.Dir(dir), dir) }
 
 // Close stops the server (terminate, then kill after five seconds) and removes
 // its directory.

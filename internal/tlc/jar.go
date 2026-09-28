@@ -52,18 +52,30 @@ func FindJar(flag string, getenv func(string) string) (Jar, error) {
 // FindHelper resolves an external program: the override when it is not empty
 // (it must exist), otherwise the name on PATH. The path found is returned so a
 // caller can echo it. lookPath is exec.LookPath in production.
+//
+// The path is returned absolute. The program is started with another working
+// directory than the caller's (a private copy of the models), so a path that
+// is relative to the caller would name nothing there.
 func FindHelper(name, override string, lookPath func(string) (string, error)) (string, error) {
 	if override != "" {
-		if _, err := os.Stat(override); err != nil {
+		abs, err := filepath.Abs(override)
+		if err != nil {
+			return "", fmt.Errorf("%s override %s cannot be resolved: %v", name, override, err)
+		}
+		if _, err := os.Stat(abs); err != nil {
 			return "", fmt.Errorf("%s override %s does not exist", name, override)
 		}
-		return override, nil
+		return abs, nil
 	}
 	path, err := lookPath(name)
 	if err != nil {
 		return "", fmt.Errorf("%s is not on PATH", name)
 	}
-	return path, nil
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("%s at %s cannot be resolved: %v", name, path, err)
+	}
+	return abs, nil
 }
 
 // LookPath is exec.LookPath, named so callers pass one seam.

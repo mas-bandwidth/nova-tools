@@ -51,6 +51,8 @@ type Options struct {
 	Clock  func() time.Time // time.Now when nil
 	Exec   Executor         // Execute when nil
 	OnCase func(Record)     // called with each record as it is made
+
+	beforeCopy func() // a test's seam: runs between the digest and the copy
 }
 
 // Result is what a suite did.
@@ -87,12 +89,27 @@ func RunSuite(o Options) (Result, error) {
 		return res, fmt.Errorf("cannot create %s: %v", out, err)
 	}
 	res.Work = filepath.Join(out, workDir)
-	if err := CopyModels(filepath.Join(o.Root, "tla"), res.Work); err != nil {
-		return res, err
-	}
+	// The digest is taken first and the copy is checked against it: TLC checks
+	// the copy, the records name the digest, and a module edited between the two
+	// would make them different bytes. Then the suite refuses to run.
 	digest, err := Fingerprint(o.Root)
 	if err != nil {
 		return res, err
+	}
+	if o.beforeCopy != nil {
+		o.beforeCopy()
+	}
+	if err := CopyModels(filepath.Join(o.Root, "tla"), res.Work); err != nil {
+		return res, err
+	}
+	copied, err := fingerprint(o.Root, res.Work)
+	if err != nil {
+		return res, err
+	}
+	if copied != digest {
+		res.Failed = true
+		res.Refused = "model inputs changed while the models were copied"
+		return res, nil
 	}
 	begin := clock()
 	deadline := begin.Add(o.Budget)
@@ -131,7 +148,7 @@ func RunSuite(o Options) (Result, error) {
 				Module:       c.Module,
 			}, log)
 			cancel()
-			os.RemoveAll(scratch)
+			_ = safepath.RemoveUnder(out, scratch)
 		}
 		raw, err := os.ReadFile(log)
 		if err != nil {
