@@ -2577,11 +2577,12 @@ VERIFY FAIL gating=<n> shown=<n> info=<n> coverage=<n> frontmatter=<n> links=<ga
 VERIFY OK gating=0 info=<n> shown=<n> coverage=<n> frontmatter=<n> links=<gate|info>
 ```
 
-Verification applies `--exclude` to every check, including both coverage selectors,
-frontmatter selectors, and link resolution. An excluded directory also hides its
-children when a selector names one directly. Excluded targets are outside the
-verified corpus; a retained file linking to one still reports an unresolved link.
-A selector left with no files refuses rather than claiming a successful check.
+**One verified corpus.** `--exclude` narrows the index, the wikilink check,
+and every `--coverage` and `--frontmatter` selector. An excluded directory
+also hides its children when a selector names one directly. Excluded targets
+are outside the verified corpus; a retained file linking to one still reports
+an unresolved link. A selector left with no files refuses rather than claiming
+a successful check.
 The summary's `coverage=` counts coverage and backlink findings, and
 `frontmatter=` counts missing-name findings. These totals are uncapped; they do
 not count the flags supplied.
@@ -2596,13 +2597,6 @@ output at 5,000 entries is about 197,000 tokens, N lines and never N.
 
 `<kind>` is one of `coverage`, `backlink`, `frontmatter`, `wikilink`. It
 **over-reports by design**: it finds, the author decides.
-
-**Two scoping mechanisms, deliberately independent, and the seam is named.**
-`--exclude` narrows the **index**, so it narrows the wikilink check (which
-reads the corpus) and does **not** narrow `--coverage` or `--frontmatter`
-(whose globs are the caller's own explicit statement of what to check). To
-drop files from a coverage or frontmatter check, write a narrower glob; do not
-expect `--exclude` to do it.
 
 **Says NO when** any gating finding exists — up to `--fail-max` `VERIFY FAIL`
 lines per kind on stderr, one `VERIFY MORE` line per elided kind, a
@@ -5347,7 +5341,7 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 268. `TestVerifyLinksRulingIsTheCallersBothWays` — `--links gate|info` has no default; the same findings exit 0 or 1 by caller choice.
 269. `TestVerifyCapsFindingsAndAlwaysPrintsTheCount` / `TestVerifyFailMaxWidensAndZeroPrintsAll` / `TestVerifyCapsEachKindSeparately` — `--fail-max` defaults to 20, `0` means all, and the cap is per kind.
 270. `TestVerifyCapsFindingsAndAlwaysPrintsTheCount` — the `gating=` count is never capped and prints on failure as well as success.
-271. `-` — `--exclude` narrows the index (and the wikilink check that reads it) but not `--coverage` or `--frontmatter`.
+271. `TestVerifyExcludesEveryCheck` / `TestVerifyLinksToExcludedTargetsRemainFindings` — `--exclude` narrows the whole verified corpus: the index, wikilinks, and every coverage and frontmatter selector; retained links to excluded targets remain findings.
 272. `TestVerifySaysNoOnPlantedFaults` / `TestVerifyDoesNotFlagLinksThatResolve` — verify says NO (exit 1, VERIFY FAIL lines, no OK) on any gating finding; informational findings don't touch the exit.
 273. `TestRefusesToGuess` / `TestVerifyRefusesAnEmptyCheck` — verify refuses a missing root/links, a non-gate/info `--links`, a coverage value not `A:B`, an empty glob side, `--exempt` without `--frontmatter`, or no gating check at all.
 274. `TestEvalOnTheShippedExampleGold` / `TestEvalRefusesABrokenGoldFile` — the gold file is `query<TAB>expected-substrings` per line; a row hits when any expected substring appears in a top-k path.
