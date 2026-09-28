@@ -204,16 +204,19 @@ func ReadNoSpendFile(path string) (map[string]bool, error) {
 }
 
 // isAtomicTemp reports whether name is an atomicfile temporary file left behind
-// by an interrupted atomic write: a dotfile with a ".tmp-%08x" suffix.
+// by an interrupted atomic write of a day file: a dotfile matching
+// .<YYYY-MM-DD>.tsv.tmp-%08x where YYYY-MM-DD is a valid day and the suffix
+// is exactly 8 hexadecimal characters.
 func isAtomicTemp(name string) bool {
 	if !strings.HasPrefix(name, ".") {
 		return false
 	}
-	idx := strings.LastIndex(name, ".tmp-")
+	rest := strings.TrimPrefix(name, ".")
+	idx := strings.LastIndex(rest, ".tmp-")
 	if idx < 0 {
 		return false
 	}
-	hexPart := name[idx+len(".tmp-"):]
+	hexPart := rest[idx+len(".tmp-"):]
 	if len(hexPart) != 8 {
 		return false
 	}
@@ -222,5 +225,10 @@ func isAtomicTemp(name string) bool {
 			return false
 		}
 	}
-	return true
+	target := rest[:idx]
+	if !strings.HasSuffix(target, FileSuffix) {
+		return false
+	}
+	day := strings.TrimSuffix(target, FileSuffix)
+	return ValidDay(day)
 }

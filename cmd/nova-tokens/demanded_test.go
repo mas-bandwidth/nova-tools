@@ -536,9 +536,9 @@ func TestRule7ARoughLineFoldsAsItsNumberAndIsCountedApart(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------- rule 8: one temp name, one lock
+// ---------------------------------------------------------------- rule 8: atomic write, random-sibling temp, one lock
 
-func TestRule8TheTempNameIsFixedAndIsNotAStray(t *testing.T) {
+func TestRule8RandomSiblingTempIsNotAStrayAndIsPreserved(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -560,10 +560,24 @@ func TestRule8TheTempNameIsFixedAndIsNotAStray(t *testing.T) {
 	wantExit(t, c, 0)
 	wantNotContains(t, c.all(), "CHECK STRAY")
 
+	// An unrelated dotfile is not recognized as this day's temp; check reports it as a stray.
+	unrelated := write(t, filepath.Join(out, ".unrelated.txt.tmp-12345678"), "foreign temp\n")
+	cUnrelated := invoke(t, "check", "--out", out)
+	wantContains(t, cUnrelated.all(), "CHECK STRAY")
+	wantContains(t, cUnrelated.all(), ".unrelated.txt.tmp-12345678")
+	if err := os.Remove(unrelated); err != nil {
+		t.Fatal(err)
+	}
+
 	// The next fold writes the day file atomically via internal/atomicfile.
+	// Stale random-sibling temporaries from an interrupted run are preserved.
 	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "glenn="+tr), 0)
-	_ = stranded
-	_ = strandedAtomic
+	if _, err := os.Stat(stranded); err != nil {
+		t.Errorf("legacy stranded temp was unexpectedly removed: %v", err)
+	}
+	if _, err := os.Stat(strandedAtomic); err != nil {
+		t.Errorf("stranded atomic temp was unexpectedly removed: %v", err)
+	}
 }
 
 // ---------------------------------------------------------------- rule 9: one file per day, nothing removed
