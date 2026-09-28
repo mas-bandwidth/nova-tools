@@ -356,7 +356,8 @@ The label is rendered rather than renamed: a reader who has seen `floor list`
 in a finding reads the same words on the summary line. The flag
 parser is given no stream, so an unknown flag after a verb is this tool's own
 one-line refusal — `nova-check <verb>: <what was wrong>; run: nova-check help`,
-and nothing else — at exit 2, `-h` included. Pinned by
+and nothing else — at exit 2. `-h` after a verb is not a refusal: it prints that
+verb's help on stdout at exit 0 (internal/nsprint/verbflag). Pinned by
 `TestNoCallerPathCanForgeALine` and by the source audit every binary runs
 (`internal/oneline/audit`), which classifies every printed argument as
 quoted, numeric, literal, escaped or exempted with a stated reason, and fails

@@ -61,6 +61,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `testguard/` | host seam and leak interception | `go test ./internal/testguard` | `go test ./internal/testguard` |
 | `testpg/` | a throwaway Postgres for one test or one package: loopback only, trust authentication, stopped with the test | `go test ./internal/testpg` | `go test ./internal/testpg` |
 | `testredis/` | a throwaway redis-server for one test: loopback only, nothing kept, never outlives its test binary | `go test ./internal/testredis` | `go test ./internal/testredis` |
+| `testverbhelp/` | per-tool check that every verb answers -h at exit 0 and touches nothing | `go test ./internal/testverbhelp` | `go test ./internal/testverbhelp` |
 | `textbody/` | shared line-oriented message body filtering | `go test ./internal/textbody` | `go test ./internal/textbody` |
 | `tokens/` | token counter and budget tracker | `go test ./internal/tokens` | `go test ./internal/tokens` |
 | `typedrec/` | typed RESULT record contract, parser and legacy adapter | `go test ./internal/typedrec` | `go test ./internal/typedrec` |

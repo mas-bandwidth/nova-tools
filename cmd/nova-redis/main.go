@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/redis/go-redis/v9"
@@ -147,7 +148,10 @@ func refuse(stderr io.Writer, where, what string) int {
 	return 2
 }
 
-func run(args []string, stdout, stderr io.Writer, d deps) int {
+func run(args []string, stdout, stderr io.Writer, d deps) (code int) {
+	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
+	// before anything is dialed, launched or written (the CLI style's rule (b), #4505).
+	defer verbflag.Recover(stdout, "nova-redis", usage, &code)
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb given; serve runs the instance, spill writes scratch, recall reads it, fn loads or checks the function library")
 	}
@@ -161,12 +165,16 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 	case "fn":
 		return cmdFn(args[1:], stdout, stderr, d)
 	case "version", "--version":
+		verbflag.HelpIfAsked(args[1:], "version")
 		if len(args) > 1 {
 			return refuse(stderr, " version", fmt.Sprintf("takes no arguments, got %d", len(args)-1))
 		}
 		fmt.Fprintln(stdout, buildinfo.Line("nova-redis", version))
 		return 0
 	case "help", "-h", "--help":
+		if args[0] == "help" && len(args) > 1 && args[1] != "help" && !verbflag.IsHelp(args[1]) {
+			return run(append(args[1:], "--help"), stdout, stderr, d)
+		}
 		fmt.Fprint(stdout, usage)
 		return 0
 	default:
@@ -179,7 +187,7 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 func parse(fs *flag.FlagSet, args []string, stderr io.Writer, required ...string) bool {
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
-	if err := fs.Parse(args); err != nil {
+	if err := verbflag.Parse(fs, args); err != nil {
 		refuse(stderr, " "+fs.Name(), err.Error())
 		return false
 	}

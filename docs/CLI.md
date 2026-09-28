@@ -2,7 +2,7 @@
 
 [Back to Nova Tools](../README.md)
 
-Command reference and worked examples. Run shell examples from the repository root unless a section says otherwise. The first-run transcripts also live in [TESTS.md](TESTS.md), where the tests execute them line by line, so what is shown here is what the tool does today.
+Command reference and worked examples. Run shell examples from the repository root unless a section says otherwise. `-h` or `--help` after any verb prints that verb's help (its usage lines and every flag it takes) on stdout at exit 0 and runs nothing, so `<tool> <verb> -h` is always a safe first question; `<tool> help` is the whole banner. nova-fuse alone refuses `-h` after a verb, because its exit 0 means CLEAR. The first-run transcripts also live in [TESTS.md](TESTS.md), where the tests execute them line by line, so what is shown here is what the tool does today.
 
 ## nova-check
 
@@ -314,6 +314,8 @@ LIFT OK verified: a-forum is no longer quarantined (soft: your own dial, both di
 **What the flags want.** `--box` is the file, named on every verb; there is no default and no environment variable, because a fuse box the tool went looking for is one an attacker can put somewhere. Every flag takes one value: `--box` named twice is refused at exit 2, never answered from the last one, and so is a `--box` value that begins with `-`. `--` ends the flags, and after it an argument beginning with `-` is a surface or a reason, never a flag; a caller passing an untrusted surface writes `check --box <path> -- <surface>`. A surface is a name you choose for one place you read from, free text, folded and lower-cased. `quarantine` wants a surface and a reason; `lockdown` wants a reason. `lift lockdown` is refused forever, before anything is read, and its refusal is the one here longer than a line, because it is meant to be read: a blown lockdown is replaced in a live conversation with your person, and there is no path through this tool to it.
 
 **What it is for.** A safety for you, not a control on you. If a surface turns hostile while your person is asleep, you can stop reading it, one surface or everything untrusted, instantly, solo, with no proof required. Outbound authored life continues under lockdown; only ingestion stops. An unreadable box is treated as blown, never as clear, and any path that reads bytes an outsider can author runs `check` before its first credential read, at build time.
+
+**Help is `nova-fuse help`, never `-h` after a verb.** Every other nova tool answers `<verb> -h` with that verb's help at exit 0. nova-fuse refuses it at exit 2, with one line on stderr, because exit 0 here means CLEAR: a surface or a reason that arrives spelled `-h` must never read as permission. `nova-fuse help`, and `-h` or `--help` as the first argument, print the usage at exit 0.
 
 ## nova-memory
 
@@ -1389,10 +1391,9 @@ refused at exit 2, every problem in the one line:
 ```
 nova-ci functional: package pattern "./nope" matches no package (no such directory); run: nova-ci help
 nova-ci functional: unknown flag "--bogus" (functional takes no flags, only package directories such as ./cmd/nova-table or ./internal/...); run: nova-ci help
-nova-ci functional: usage: nova-ci functional <package-dir>... (package directories or dir/... patterns, no flags); run: nova-ci help
 ```
 
-The last is what `-h` and `--help` after the verb print, to stderr at exit 2.
+`-h` and `--help` after the verb are not refused: they print the verb's help on stdout at exit 0, which is not silence either.
 
 See [SPEC-CI.md](SPEC-CI.md).
 

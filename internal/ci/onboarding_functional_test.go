@@ -95,6 +95,9 @@ func TestEveryCommandMeetsTheOnboardingStandard(t *testing.T) {
 			if exit != 0 {
 				t.Errorf("`%s help` exits %d, want 0; stderr: %s", tool, exit, helpErr)
 			}
+			// Every verb of it answers -h with that verb's help (verbhelp_functional_test.go).
+			everyVerbAnswersHelp(t, root, tool, bin, banner)
+
 			examples, err := onboarding.ExampleLines(banner, tool)
 			if err != nil {
 				t.Fatalf("%v\n(docs/ONBOARDING.md point 1)\n\nwhat it printed:\n%s", err, banner)

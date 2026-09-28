@@ -183,25 +183,32 @@ func realDeps() deps {
 }
 
 func run(args []string, stdout, stderr io.Writer, d deps) (code int) {
-	defer verbflag.Recover(stdout, tool, &code)
+	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
+	// before anything is dialed or written (the CLI style's rule (b), #4505).
+	defer verbflag.Recover(stdout, tool, usageTop+kindsUsage()+usageExamples, &code)
 	ctx := context.Background()
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb; want kinds, migrate, status, apply, or <kind> add|set|remove|list|show|history")
 	}
 	switch args[0] {
 	case "help", "-h", "--help":
-		if len(args) > 1 {
-			return refuse(stderr, "help", "help takes no arguments")
+		if args[0] == "help" && len(args) > 1 && args[1] != "help" && !verbflag.IsHelp(args[1]) {
+			return run(append(args[1:], "--help"), stdout, stderr, d)
+		}
+		if len(args) > 1 && args[1] != "help" {
+			return refuse(stderr, "help", "help takes a verb or nothing")
 		}
 		fmt.Fprint(stdout, usageTop+kindsUsage()+usageExamples)
 		return 0
 	case "version", "--version":
+		verbflag.HelpIfAsked(args[1:], "version")
 		if len(args) > 1 {
 			return refuse(stderr, "version", "version takes no arguments")
 		}
 		fmt.Fprintln(stdout, buildinfo.Line(tool, version))
 		return 0
 	case "kinds":
+		verbflag.HelpIfAsked(args[1:], "kinds")
 		if len(args) > 1 {
 			return refuse(stderr, "kinds", "kinds takes no arguments")
 		}
@@ -362,6 +369,9 @@ func actorName(flagValue string, getenv func(string) string) (string, error) {
 // --- the kind verbs ---------------------------------------------------------
 
 func runKind(ctx context.Context, k *config.Kind, args []string, stdout, stderr io.Writer, d deps) int {
+	if len(args) > 0 {
+		verbflag.HelpIfAsked(args[:1], k.Name)
+	}
 	if len(args) == 0 {
 		if k.Singleton {
 			return refuse(stderr, k.Name, "want set, show or history")

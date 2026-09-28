@@ -345,6 +345,18 @@ line. Do that, rather than guessing. A class test's refusal names its
 `remedy="…"`; do what it says instead of adding an allowlist row. A `FAIL` line
 at exit 1 means the check ran and said NO — that is the check working.
 
+**Help is never a refusal.** `<tool> <verb> -h` (or `--help`, or `<tool> help
+<verb>` where the tool has a help verb) prints that verb's help on stdout and
+exits 0: its usage lines from `<tool> help`, then every flag it takes, before
+anything is read, dialled or written. Every verb parses its flags through the one
+seam, `internal/nsprint/verbflag` (`verbflag.Parse`, or `verbflag.HelpIfAsked`
+for a verb that reads its arguments by hand), with `verbflag.Recover` deferred in
+the dispatcher; `internal/testverbhelp` is the per-tool check, and
+`internal/ci`'s functional walk holds every verb of every living tool to it.
+`flag: help requested` at exit 2 reads to an AI as a syntax error, not as the
+answer it asked for. nova-fuse is the one exception, on purpose: its exit 0
+means CLEAR, so its verbs still refuse `-h`.
+
 **When the refusal is wrong, that is a gift.** Say three things, in this order:
 what works, where it caught you with the exact sentence it printed, and the fix
 you would make. Open an issue; do not work around it quietly.
