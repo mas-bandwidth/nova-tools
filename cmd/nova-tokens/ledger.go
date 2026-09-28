@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/record"
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
@@ -109,7 +110,7 @@ func cmdLedger(args []string, stdout, stderr io.Writer) int {
 	addr := fs.String("redis", "", "")
 	user := fs.String("user", "", "")
 	passwordEnv := fs.String("password-env", "", "")
-	if err := fs.Parse(args); err != nil {
+	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, " ledger", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if code, refused := noPositional(fs, stderr, "ledger"); refused {

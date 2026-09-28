@@ -42,8 +42,7 @@ a failure. A section states each one in a single line of its own prose,
 beginning with a keyword, exactly as `Platform:` already does:
 
 - `Platform:` — the machine the block was recorded on, and what a different
-  machine prints instead. Already in use under [`## nova-sandbox`](#nova-sandbox)
-  and [`## nova-swarm`](#nova-swarm), and checked by
+  machine prints instead. See [`## nova-sandbox`](#nova-sandbox); checked by
   `internal/ci/firstrun_platform_test.go`.
 - `Requires:` — something a step needs that the machine running it may not have,
   and in a sandboxed test bench must sometimes *not* have: a key, a forge
@@ -57,16 +56,12 @@ it skipped names a precondition stated here. **A step skipped for a reason this
 file does not state is a defect in this file, not a pass** — being able to tell
 those two apart is the whole value of writing the line down.
 
-Two `Requires:` lines are owed today, one per section, from the same dogfood
-run: `## nova-decide` (the ladder block routes through JEV and wants
-`JEV_API_KEY`) and `## nova-secrets` (two steps invoke `nova-check`, which is a different tool's
-binary). nova-merge has no section since its lane-making verbs (`init`,
-`quickstart`, `add`) left with the per-PR lander role; its kept verbs are
-exercised by deprecated/cmd/nova-merge's own tests.
+The `nova-secrets` fixture invokes `nova-check` in its child-command examples;
+those steps need that binary on PATH.
 
 ## nova-bus
 
-Fixture: `cmd/nova-bus/testdata/example-bus`, copied out and given a repository of its own, with a bare repository beside it as `origin`. That is what the example's own README tells a reader to do and what the tool requires — every git-reading verb refuses a `--bus` that is not its repository's root, because git reports changed paths from the root and a bus one directory down would report an empty change set over unread notes. `cmd/nova-bus/firstrun_functional_test.go` builds both in `t.TempDir()`, so every push below lands in a bare repository on this disk and no line here reaches a network. A real bus is a **private** repository; this one is three participants and four notes, small enough to read in a sitting.
+Fixture: `cmd/nova-bus/testdata/example-bus`, copied out and given a repository of its own, with a bare repository beside it as `origin`. That is the setup block of docs/CLI.md's nova-bus `### First run`, which `cmd/nova-bus/firstrun_functional_test.go` runs as written to build this bus, and it is what the tool requires — every git-reading verb refuses a `--bus` that is not its repository's root, because git reports changed paths from the root and a bus one directory down would report an empty change set over unread notes. It builds both in `t.TempDir()`, so every push below lands in a bare repository on this disk and no line here reaches a network. A real bus is a **private** repository; this one is three participants and four notes, small enough to read in a sitting.
 
 Two AI friends share it. Ada has already written; Bo is arriving. The sitting below is Bo's whole first one — who is on this bus, is the bus sound, what is she carrying, say heard, put her cursor down, write one note — and then Ada's two reads, because the cursor is the thing worth seeing twice.
 
@@ -568,13 +563,15 @@ RECEIPT OK session=s1 entry=e1 stamp=2026-09-17T12:05:00Z bytes=17 source=bench-
 
 ## nova-redis
 
-No fixture and no instance: the lines below are the two refusals `spill`
-makes BEFORE it dials anything, so they read the same on every bench.
+No fixture and no instance: the lines below are refusals `spill` and
+`fn load` make BEFORE they dial anything, so they read the same on every bench.
 `cmd/nova-redis/firstrun_test.go` runs each `$` line and compares the output.
 A write with no owner, or with no TTL, is refused and nothing is stored; the
 round trip against an instance (`spill`, `recall`, and `recall` refusing an
 expired key under a controlled clock) is in `cmd/nova-redis/spill_test.go`
-over a miniredis fake.
+over a miniredis fake. `fn load` and `fn check` on a store are in
+`cmd/nova-redis/fn_test.go` over a fake and, against a throwaway
+redis-server, in `cmd/nova-redis/fn_functional_test.go`.
 
 ### First run
 
@@ -584,6 +581,9 @@ nova-redis spill: --owner is required; refusing to guess; run: nova-redis help
 
 $ nova-redis spill --addr 127.0.0.1:6379 --owner rowan --name note --ttl 0s --value hi
 nova-redis spill: --ttl is required and must be above zero; an unbounded key is a bug; run: nova-redis help
+
+$ nova-redis fn load
+nova-redis fn load: --addr is required; refusing to guess; run: nova-redis help
 ```
 
 ## nova-ci

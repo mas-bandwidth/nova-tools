@@ -8,7 +8,10 @@ import (
 )
 
 // The bus is messages over Git. Only its bus, build-info and one-line modules
-// are needed; every other import is standard library. Walk all platforms
+// are needed, and the verb-help seam every living tool parses its flags through
+// (internal/nsprint/verbflag: standard library only, no decision and no
+// storage; it prints a verb's help on -h); every other import is standard
+// library. Walk all platforms
 // transitively so an intermediate package cannot hide an added dependency.
 func TestBusHasOnlyGeneralModulesAndStandardLibrary(t *testing.T) {
 	t.Parallel()
@@ -46,7 +49,7 @@ func TestBusHasOnlyGeneralModulesAndStandardLibrary(t *testing.T) {
 			visited[pkg] = true
 			for _, dep := range imports[pkg] {
 				if strings.HasPrefix(dep, module) {
-					if dep != module+"internal/bus" && dep != module+"internal/buildinfo" && dep != module+"internal/oneline" {
+					if dep != module+"internal/bus" && dep != module+"internal/buildinfo" && dep != module+"internal/oneline" && dep != module+"internal/nsprint/verbflag" {
 						t.Errorf("%s reaches %s through %s; the bus carries messages over Git without decision or storage dependencies", root, dep, pkg)
 					}
 					if _, ok := imports[dep]; !ok {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 )
 
 // snapshotChildTimeout is the default deadline one binary's `version` gets, and
@@ -140,7 +141,7 @@ func snapshotVerb(name string, args []string, out, errs io.Writer, env Environme
 	fs.StringVar(&file, "file", "", "manifest of adopted tools")
 	fs.DurationVar(&timeout, "timeout", timeout, "one binary's read deadline")
 	fs.DurationVar(&budget, "budget", budget, "whole run deadline")
-	if err := fs.Parse(interspersed(fs, args)); err != nil {
+	if err := verbflag.Parse(fs, interspersed(fs, args)); err != nil {
 		return refusal(errs, "SNAPSHOT", fmt.Errorf("%s (run %s help)", err, name))
 	}
 	if file != "" {

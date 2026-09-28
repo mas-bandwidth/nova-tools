@@ -356,7 +356,8 @@ The label is rendered rather than renamed: a reader who has seen `floor list`
 in a finding reads the same words on the summary line. The flag
 parser is given no stream, so an unknown flag after a verb is this tool's own
 one-line refusal — `nova-check <verb>: <what was wrong>; run: nova-check help`,
-and nothing else — at exit 2, `-h` included. Pinned by
+and nothing else — at exit 2. `-h` after a verb is not a refusal: it prints that
+verb's help on stdout at exit 0 (internal/nsprint/verbflag). Pinned by
 `TestNoCallerPathCanForgeALine` and by the source audit every binary runs
 (`internal/oneline/audit`), which classifies every printed argument as
 quoted, numeric, literal, escaped or exempted with a stated reason, and fails
@@ -1485,7 +1486,7 @@ it is shown is not a check.
 ```
 nova-check dogfood ledger (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--git-timeout <s>] [--tools-timeout <s>] [--fail-max <n>]
 nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] --receipts <dir>
-nova-check dogfood gate   (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--require-all] [--fail-max <n>]
+nova-check dogfood gate   (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--shipped <cmd dir>] [--authors <file>] [--repo <dir>] [--require-all] [--fail-max <n>]
 ```
 
 **Why it exists.** Glenn, 2026-09-18: *a tool is not finished until it is
@@ -1624,6 +1625,9 @@ half a dogfooder is least likely to use.
   printed at all**: a ledger read from records it could not parse would
   understate the truth in the one direction that lets a tool ship.
 - `gate` finds an open edge, always, with or without `--require-all`.
+- `gate --shipped <cmd dir>` judges only the tools under that directory: a
+  receipt naming any other tool is set aside, counted on `DOGFOOD NOTE
+  shipped=<n> outside=<n> cmd=<dir>`, and finds nothing.
 - `gate --require-all` finds a verb no non-author has run and passed. Each
   finding is one `DOGFOOD GATE FAIL tool=… verb=…: <why>` line, capped the same
   way, then `DOGFOOD GATE FAIL verbs=<n> findings=<n> shown=<n>`. A green gate
@@ -1943,6 +1947,18 @@ caller passes can lift anything, and the tool does not verify the path is the
 *right* box — the flag is the caller's statement of where the box lives, and a
 caller that names the wrong box gets that box's truth. Wire the path once, at
 build time, into each caller.
+
+**Every flag takes one value.** A flag named twice — `--box` on any verb,
+`--max` on `status` — is refused at exit 2 with one line naming the flag,
+before any box is read; the tool never answers from the last value, because
+`check --box <blown> --box=<elsewhere>` would then answer for a box the caller
+did not mean. A `--box` value that begins with `-` is refused the same way: it
+is the shape of a flag, and a box in such a file is named `./-name`. Flags
+come before positional arguments, and an argument beginning with `-` before
+`--` is refused; `--` ends the flags, and after it such an argument is a
+surface or a reason, never a flag. A caller passing an untrusted surface
+writes `check --box <path> -- <surface>`. Pinned by
+`cmd/nova-fuse/repeatflag_test.go`.
 
 **The read has three answers, never two.** An absent box is VERIFIED CLEAR —
 the read failed with the one error that means *nonexistent* rather than

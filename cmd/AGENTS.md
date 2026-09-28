@@ -11,7 +11,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `nova-config/` | permanent configuration store (Postgres), friends and machines, applied into Redis | `go test ./cmd/nova-config` | `go test ./cmd/nova-config` |
 | `nova-fuse/` | workspace isolation and boundary CLI | `go test ./cmd/nova-fuse` | `go test ./cmd/nova-fuse` |
 | `nova-memory/` | memory indexing and search CLI | `go test ./cmd/nova-memory` | `go test ./cmd/nova-memory` |
-| `nova-redis/` | Redis scratch spill/recall CLI | `go test ./cmd/nova-redis` | `go test ./cmd/nova-redis` |
+| `nova-redis/` | Redis instance owner: serve, scratch spill/recall, and fn load/check of the function library | `go test ./cmd/nova-redis` | `go test ./cmd/nova-redis` |
 | `nova-sandbox/` | OS-level process sandbox CLI | `go test ./cmd/nova-sandbox` | `go test ./cmd/nova-sandbox` |
 | `nova-secrets/` | zero-leak secrets store CLI | `go test ./cmd/nova-secrets` | `go test ./cmd/nova-secrets` |
 | `nova-self-talk/` | internal dialogue recording CLI | `go test ./cmd/nova-self-talk` | `go test ./cmd/nova-self-talk` |

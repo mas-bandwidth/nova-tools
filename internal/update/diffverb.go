@@ -1,6 +1,8 @@
 package update
 
 import (
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
+
 	"bufio"
 	"flag"
 	"fmt"
@@ -50,7 +52,7 @@ func diffVerb(name string, args []string, out, errs io.Writer) int {
 	var from, to string
 	fs.StringVar(&from, "from", "", "snapshot to compare from")
 	fs.StringVar(&to, "to", "", "snapshot to compare to")
-	if err := fs.Parse(interspersed(fs, args)); err != nil {
+	if err := verbflag.Parse(fs, interspersed(fs, args)); err != nil {
 		return refusal(errs, "DIFF", fmt.Errorf("%s (run %s help)", err, name))
 	}
 	var missing []string

@@ -262,8 +262,9 @@ func parseInterleaved(fs *flag.FlagSet, args []string) ([]string, error) {
 // open dials the store for a verb through redisconn, the one way a nova
 // tool opens Redis (#4492): the dial and the handshake (HELLO 3, with the
 // login) are done, or refused in one line, before the verb's first command,
-// which is still its first round trip. A missing address is a usage
-// refusal.
+// which is still its first round trip. The client's first hook puts the
+// function library on a store that holds none (withLibrary, library.go).
+// A missing address is a usage refusal.
 func open(ctx context.Context, addr string, getenv func(string) string) (*redisconn.Conn, error) {
 	if strings.TrimSpace(addr) == "" {
 		return nil, fmt.Errorf("--redis <addr> is required (or NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR, or a seat)")
@@ -279,6 +280,7 @@ func open(ctx context.Context, addr string, getenv func(string) string) (*redisc
 		}
 		return nil, err
 	}
+	withLibrary(conn.Client())
 	return conn, nil
 }
 

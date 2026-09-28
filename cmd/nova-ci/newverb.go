@@ -6,6 +6,7 @@ import (
 	"io"
 	"path/filepath"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/scaffold"
 )
@@ -14,7 +15,7 @@ func cmdNewVerb(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("new-verb", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	root := fs.String("root", ".", "nova-tools checkout directory")
-	if err := fs.Parse(args); err != nil {
+	if err := verbflag.Parse(fs, args); err != nil {
 		return 2
 	}
 	if fs.NArg() != 2 {

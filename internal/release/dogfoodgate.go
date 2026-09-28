@@ -100,6 +100,11 @@ var errDogfood = errors.New("dogfood-gate")
 type DogfoodVerdict struct {
 	Verbs int
 	Open  int
+	// Shipped is how many tools the gate judged, and Outside how many
+	// receipts it set aside because they name a tool the release does not
+	// ship. Both are said on the line: evidence left out is counted.
+	Shipped int
+	Outside int
 	// Findings are the gate's own lines, one per open edge, in the words
 	// `nova-check dogfood gate` prints them. The release lane says what the
 	// gate says rather than paraphrasing it: two spellings of one finding is
@@ -108,12 +113,14 @@ type DogfoodVerdict struct {
 }
 
 // Dogfood is the seam. A nil Dogfood in Deps is the production one, which
-// reads two files off disk and reaches nothing else -- no forge, no network,
-// no shell.
-type Dogfood func(cli, receipts string) (DogfoodVerdict, error)
+// reads the reference, the receipts and the cmd/ directory off disk and
+// reaches nothing else -- no forge, no network, no shell.
+type Dogfood func(cli, receipts, cmd string) (DogfoodVerdict, error)
 
-// ReadDogfood is that production gate.
-func ReadDogfood(cli, receipts string) (DogfoodVerdict, error) {
+// ReadDogfood is that production gate. cmd is the checkout's cmd/ directory:
+// the tools under it are the shipped set, and the gate judges only them. An
+// empty cmd judges every tool the receipts name, which is the stricter read.
+func ReadDogfood(cli, receipts, cmd string) (DogfoodVerdict, error) {
 	verbs, err := dogfood.ParseCLI(cli)
 	if err != nil {
 		return DogfoodVerdict{}, refuse("name the command reference with --cli <file>, usually docs/CLI.md",
@@ -138,8 +145,22 @@ func ReadDogfood(cli, receipts string) (DogfoodVerdict, error) {
 	// non-author. The stronger question is `dogfood gate --require-all`, and a
 	// tag held hostage to the last unrun verb in a 200-verb reference is a tag
 	// nobody ever cuts.
+	// THE GATE JUDGES WHAT SHIPS. A receipt about a tool parked under
+	// deprecated/ is true about that tool and says nothing about this
+	// release, which does not contain it.
+	var shipped, outside int
+	if cmd != "" {
+		set, err := dogfood.ReadShipped(cmd)
+		if err != nil {
+			return DogfoodVerdict{}, refuse("run from a nova-tools checkout whose cmd/ holds the tools the release ships",
+				"cannot read the shipped set: %s", err)
+		}
+		var aside []dogfood.Receipt
+		verbs, got, aside = set.Scope(verbs, got)
+		shipped, outside = len(set.Tools()), len(aside)
+	}
 	findings, summary := dogfood.Gate(verbs, got, nil, false)
-	v := DogfoodVerdict{Verbs: summary.Verbs, Open: len(findings)}
+	v := DogfoodVerdict{Verbs: summary.Verbs, Open: len(findings), Shipped: shipped, Outside: outside}
 	for _, f := range findings {
 		v.Findings = append(v.Findings, f.Line())
 	}
@@ -155,13 +176,18 @@ func ReadDogfood(cli, receipts string) (DogfoodVerdict, error) {
 // and there is nothing to gate against. Deciding that before the home
 // directory is consulted is also what keeps this package's own tests honest:
 // a test working in a temp directory can never reach a real fleet's receipts.
-func dogfoodPaths(o options, derived string) (cli, receipts string) {
+func dogfoodPaths(o options, checkout string) (cli, receipts, cmd string) {
 	cli = o.cli
-	if cli == "" && derived != "" && exists(derived) {
+	if derived := filepath.Join(checkout, "docs", "CLI.md"); cli == "" && checkout != "" && exists(derived) {
 		cli = derived
 	}
 	if cli == "" {
-		return "", ""
+		return "", "", ""
+	}
+	// The shipped set is the checkout's own cmd/, beside the reference and the
+	// changelog the verb was already given.
+	if c := filepath.Join(checkout, "cmd"); checkout != "" && exists(c) {
+		cmd = c
 	}
 	receipts = o.receipts
 	if receipts == "" {
@@ -171,7 +197,7 @@ func dogfoodPaths(o options, derived string) (cli, receipts string) {
 			}
 		}
 	}
-	return cli, receipts
+	return cli, receipts, cmd
 }
 
 func exists(path string) bool {
@@ -183,7 +209,7 @@ func exists(path string) bool {
 // the receipt line carries -- ok, waived or skipped -- and an error, which is
 // either an ordinary refusal or errDogfood for the one whose line is already
 // written.
-func dogfoodCheck(token string, o options, deps Deps, derived string, out, errs io.Writer) (string, error) {
+func dogfoodCheck(token string, o options, deps Deps, checkout string, out, errs io.Writer) (string, error) {
 	if o.noDogfood {
 		// A WAIVER WITHOUT A REASON IS NOT A WAIVER. It is the gate turned
 		// off, which is the state this whole file exists to make impossible to
@@ -198,7 +224,7 @@ func dogfoodCheck(token string, o options, deps Deps, derived string, out, errs 
 		fmt.Fprintf(out, "RELEASE %s DOGFOOD WAIVED reason=%s\n", token, field(o.reason))
 		return "waived", nil
 	}
-	cli, receipts := dogfoodPaths(o, derived)
+	cli, receipts, cmd := dogfoodPaths(o, checkout)
 	if cli == "" || receipts == "" {
 		// NAMED, NEVER SILENT. The gate could not run, which is not the same
 		// as the gate passing, and the line says which of the two inputs was
@@ -213,9 +239,14 @@ func dogfoodCheck(token string, o options, deps Deps, derived string, out, errs 
 		read = ReadDogfood
 	}
 	progress(errs, "asking the dogfood gate about %s against the receipts in %s", cli, receipts)
-	v, err := read(cli, receipts)
+	v, err := read(cli, receipts, cmd)
 	if err != nil {
 		return "", err
+	}
+	if cmd != "" {
+		// NAMED, NEVER SILENT: what the gate judged, and how much it set
+		// aside as being about tools this release does not ship.
+		fmt.Fprintf(errs, "RELEASE %s NOTE dogfood-gate shipped=%d outside=%d cmd=%s\n", token, v.Shipped, v.Outside, field(cmd))
 	}
 	if v.Open == 0 {
 		return "ok", nil
