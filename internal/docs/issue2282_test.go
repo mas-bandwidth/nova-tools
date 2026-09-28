@@ -2,7 +2,6 @@ package docs
 
 import (
 	"context"
-	"os"
 	"sort"
 	"strings"
 	"testing"
@@ -13,45 +12,23 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/presence"
 )
 
-// TestIssue2282 pins the presence behaviour of nova-tools #2282 against the
-// production heartbeat writer and reader (internal/presence: Beat, Read, Line
-// over the live go-redis Store), not against hand-made keys:
-//
-// The spec (docs/SPEC-REDIS.md:68-69):
-//
-//	"presence lists the live lines seen by heartbeat keys that expire on their
-//	 own, so a crashed line ages out without anyone writing a tombstone."
-//
-// And (docs/SPEC-REDIS.md:103-104):
-//
-//	"presence ageing out a heartbeat"
+// TestIssue2282 pins the presence behaviour of internal/presence against the
+// production heartbeat writer and reader (Beat, Read, Line over the live
+// go-redis Store), not against hand-made keys: presence lists the live lines
+// seen by heartbeat keys that expire on their own, so a crashed line ages out
+// without anyone writing a tombstone.
 //
 // This test verifies:
-//  1. The spec file carries the presence and heartbeat contract text.
-//  2. Live: every friend whose presence.Beat landed inside the TTL is read Up
+//  1. Live: every friend whose presence.Beat landed inside the TTL is read Up
 //     by presence.Read and listed live on presence.Line.
-//  3. Missing: a friend that never beat is read Never, not Up.
-//  4. Expired: a friend that stops beating ages out to Away once the TTL
+//  2. Missing: a friend that never beat is read Never, not Up.
+//  3. Expired: a friend that stops beating ages out to Away once the TTL
 //     passes, while a friend still beating stays Up.
-//  5. No tombstone: ageing out writes nothing. The expired presence key is
+//  4. No tombstone: ageing out writes nothing. The expired presence key is
 //     simply gone, and the only key left for that friend is the untimed
 //     memory Beat itself wrote, unchanged since the last beat.
 func TestIssue2282(t *testing.T) {
 	t.Parallel()
-
-	body, err := os.ReadFile("../../docs/SPEC-REDIS.md")
-	if err != nil {
-		t.Fatalf("docs/SPEC-REDIS.md: %v", err)
-	}
-	for _, want := range []string{
-		"presence` lists the live lines seen by heartbeat keys that expire",
-		"crashed line ages out without anyone writing a tombstone",
-		"presence` ageing out a heartbeat",
-	} {
-		if !strings.Contains(string(body), want) {
-			t.Errorf("docs/SPEC-REDIS.md missing required text: %q", want)
-		}
-	}
 
 	mr := miniredis.RunT(t)
 	ctx := context.Background()

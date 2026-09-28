@@ -926,7 +926,7 @@ func parseBranchSelector(file string, form Form) (branchSelector, error) {
 
 // issueSubs returns the {n}, {slug}, {url} substitution table for one issue.
 // n is the issue's number, slug the issue's title-slug, url the issue URL --
-// the same names the (a) sweep template in docs/SPEC-WORKLANG.md uses.
+// the names a :derive template substitutes.
 func issueSubs(i Issue) map[string]string {
 	return map[string]string{
 		"n":    fmt.Sprintf("%d", i.Number),

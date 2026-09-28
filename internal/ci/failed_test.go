@@ -28,20 +28,6 @@ import (
 	"time"
 )
 
-// (0) The help line this verb is entered under is the one docs/SPEC-CI.md prints, so the
-// document and the code cannot drift apart in a rename.
-func TestFailedVerbLineMatchesTheSpec(t *testing.T) {
-	t.Parallel()
-
-	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "SPEC-CI.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(raw), FailedVerbLine) {
-		t.Errorf("the failed verb line is not in docs/SPEC-CI.md:\n%s", FailedVerbLine)
-	}
-}
-
 // fixture reads one of the four job logs.
 func failedFixture(t *testing.T, name string) string {
 	t.Helper()

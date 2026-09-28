@@ -4,7 +4,7 @@
 The fixture files this document describes stay executable data and live in
 [`testdata/tokens/antigravity/`](../../../testdata/tokens/antigravity).
 
-These test fixtures provide synthetic, un-metered empirical data representing the Antigravity 2.12.2 token telemetry source. They establish the ground-truth encoding, Proto3 field presence semantics, and 1:1 identity join rules required for `nova-tokens records` collection under [`docs/PROPOSAL-TOKENS-FORMAT.md`](../../PROPOSAL-TOKENS-FORMAT.md).
+These test fixtures provide synthetic, un-metered empirical data representing the Antigravity 2.12.2 token telemetry source. They establish the ground-truth encoding, Proto3 field presence semantics, and 1:1 identity join rules used by the retained observation format in [`docs/PROPOSAL-TOKENS-FORMAT.md`](../../PROPOSAL-TOKENS-FORMAT.md).
 
 ## Source Structure
 Antigravity stores step-level generator telemetry in two distinct locations:

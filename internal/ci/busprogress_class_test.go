@@ -86,7 +86,7 @@ func TestEveryNovaBusConsumerDropsProgressLines(t *testing.T) {
 	// started nova-bus and discarded its output, and it went with the frozen verbs.
 	_ = discarders
 	for _, rel := range missing {
-		t.Errorf("%s reads nova-bus's output and nothing in its package reaches internal/bus.IsProgress; a progress line on stderr will be parsed as protocol, which is the 2026-09-18 defect -- drop progress through the registry, or read stdout alone", rel)
+		t.Errorf("%s reads nova-bus's output and nothing in its package reaches internal/bus.IsProgress; a progress line on stderr will be parsed as protocol -- drop progress through the registry, or read stdout alone", rel)
 	}
 }
 

@@ -1,21 +1,10 @@
 # nova-secrets — specification
 
-**Revision 7, 2026-09-12.** Reads 6 (Fable and DeepSeek) held the spec on revision 6's one
-addition: `check --github-token` wanted a GitHub token in a plaintext file on the bench to buy a
-warning — a new secret with no row and no home on this page, on the very bench whose token is
-the threat. The flag is dropped, `check` asks GitHub nothing, the `WARN` line kind goes with it,
-and the ruleset question is a person's again: one `gh api` line the store's README carries. So
-this tool opens no network socket, as it did before. Also here: the synopsis lists the flags
-that exist, `keygen --store` states its refusals, and the tests follow. Each read's findings and
-each revision's decisions are in this pull request's body, not in this document.
-
 The tool is a thin wrapper over [sops](https://github.com/getsops/sops) and
-[age](https://age-encryption.org). Revision 1 specified a store of our own; Glenn ruled
-against it — *"something generic and open source, not evil"*, *"git is our substrate"*.
-The store is [`mas-bandwidth/secrets`](https://github.com/mas-bandwidth/secrets)
-(private), already built: `.sops.yaml` carrying one recipient rule per file, sealed yaml files,
-and a README carrying the protocol — and, owed in **the store's own repair** below,
-`recovery.pub` declaring the recovery key. **That repository is the store. This tool never
+[age](https://age-encryption.org): the store is something generic and open source, and git
+is its substrate. The store is [`mas-bandwidth/secrets`](https://github.com/mas-bandwidth/secrets)
+(private): `.sops.yaml` carrying one recipient rule per file, sealed yaml files, a README
+carrying the protocol, and `recovery.pub` declaring the recovery key. **That repository is the store. This tool never
 becomes one.**
 
 Five verbs: four at the **credential layer**, measured against one sentence:
@@ -28,11 +17,21 @@ has a keypair; `names` answers *what is in my file* **with no key at all**; and 
 fifth, stands at the **review layer** — the store's `seat-rule-gate.sh` as a verb, so the
 workflow calls this tool rather than a shell script living in the store it is guarding. Everything else a
 person wants to do to a secret is `sops`, `git` or the provider's console, and this tool
-refuses it **by name, with where it lives**. In one paragraph: it reads one sealed yaml out
+refuses it **by name, with where it lives**. Five more verbs carry a value or a seat, each
+below: `place` and `placed` put one value on a fleet machine and list what was put there, and
+`seal`, `seat add` and `seat inject` change the store along its own review road. In one
+paragraph: it reads one sealed yaml out
 of a git working copy by running `sops` at a path the caller named, keeps the plaintext in its
 own memory for the length of one call, and then execs, prints, proves or writes one key. It
-links no cryptography, opens no network socket, starts no shell, writes no state of its own,
-and reads no Keychain — about two hundred lines of Go over two binaries it did not write, and
+links no cryptography, starts no shell and reads no Keychain. **What touches the network is
+per verb, and the tool's own process opens no socket:** its store operations — reading the
+working copy and running `sops` — make no network call, and `names`, `check`, `gate`,
+`keygen`, `placed`, `seat add` and `version` start no network program (`gate` runs `git`
+against refs already in the working copy). `exec` makes no network call of its own and then
+becomes the caller's command, which may use the network as it likes. `place` runs `ssh` to
+the machine it names and writes a receipt under `--receipts`. `seal` and `seat inject` run
+`git push`, `gh pr create`, `gh pr view`, `gh pr merge` and `git pull` against the store's
+remote, unless `--no-pr` stops them after the commit. About two hundred lines of Go over two binaries it did not write, and
 the day a better generic store exists it should be two hundred lines of Go over that one.
 
 This spec is normative, and a sibling of [SPEC.md](SPEC.md), whose **Conventions** govern
@@ -43,8 +42,7 @@ codes**, and its single OK line on stderr, argued in **Output grammar**.
 this tool changes that.** sops and age give *cryptographic* certainty that a ciphertext
 in git yields nothing to a line holding no key; they give **nothing** about a second
 process running as the same unix user as the AI that holds one. That half is won by
-per-AI unix users and nova-sandbox's read sets
-([security#20](https://github.com/mas-bandwidth/security/issues/20)).
+per-AI unix users and nova-sandbox's read sets.
 
 ## The model
 
@@ -55,18 +53,15 @@ nowhere else. The public half is not a secret and is printed, pasted and committ
 **One sealed yaml per seat, `<name>.yaml`, and one bench key per file.** A line with one
 seat has one file, sealed to that bench's key plus Glenn's recovery key. A line with two
 benches has two files, and neither is sealed to the other bench's key — **The credential
-shape** carries Glenn's ruling on which token lives in which, `--as` names the file, and
-**invariant 1 holds the shape**, so the ruling is checked and not only written down.
+shape** carries which token lives in which, `--as` names the file, and
+**invariant 1 holds the shape**, so the split is checked and not only written down.
 
 **A file-shaped secret is not in this store.** A value with a newline in it — an SSH
 private key, an age key — is **generated on the seat that uses it and never leaves that
 seat**, exactly as this spec's own age keys already are; its public half is authorized on
-the box that accepts it by that box's own recipe (nova-run,
-[ideas#766](https://github.com/mas-bandwidth/ideas/issues/766)). The store holds no such
-value in v1: no sibling file, no second lifetime model, no verb that hands a program a path,
-and `exec` refuses a multi-line value **by name** with that remedy. The one on the bench today
-— the space SSH key, sealed as `space_key` in `<line>.yaml` — is a line of the store's README
-to remove: a work item, not a design question.
+the box that accepts it by that box's own recipe. The store holds no such
+value: no sibling file, no second lifetime model, no verb that hands a program a path,
+and `exec` refuses a multi-line value **by name** with that remedy.
 
 **The recovery key** is Glenn's, generated at his console, kept **off every bench** (his
 password manager or paper), and a recipient on every rule. Its public half is **declared and
@@ -119,6 +114,8 @@ nova-secrets names  --store <dir> --as <name> [--max <n>]
 nova-secrets check  --store <dir> --as <name> --key <path> --sops <path> [--max <n>]
 nova-secrets gate   --store <dir> --base <git ref> --head <git ref> [--machines <registry>]
 nova-secrets keygen --as <name> --key <path> --age-keygen <path> [--store <dir>]
+nova-secrets place  --store <dir> --as <name> --key <path> --sops <path> --machine <name> --secret <name> [--path <remote path>] [--machines <file>] [--receipts <dir>] [--ssh <path>]
+nova-secrets placed --machine <name> [--receipts <dir>]
 nova-secrets seal   --store <dir> --as <seat> --key <path> --sops <path> --name NAME [--stdin] [--no-pr] [--gh <path>] [--git <path>]
 nova-secrets seat add --store <dir> --as <seat> --pub <age1…> --from <source seat> --only <NAME,...> --key <path> --sops <path>
 nova-secrets seat inject --store <dir> --as <seat> --from <source seat> --only <NAME,...> --key <path> --sops <path> [--no-pr] [--gh <path>] [--git <path>]
@@ -138,7 +135,7 @@ road. Every other store edit is `sops` and `git` in a person's hands. `keygen`
 writes exactly one file, outside it.
 
 **`--store <dir>` is the store's git working copy**, not a URL and not a repository name:
-this tool does no network. A working copy in the strong sense — invariant 8 reads `.git` as
+the store-reading verbs never fetch it. A working copy in the strong sense — invariant 8 reads `.git` as
 files — so a `--store` that is not a directory, holds no `.sops.yaml`, or has no `.git`, is a
 refusal naming the fact and the `git clone` line: **exit 2**, or **125** from `exec`, as every
 refusal of `exec`'s is.
@@ -293,7 +290,7 @@ file and the repair. In a fixed order, against the working copy at `--store`:
    `HEAD` tree object (inspected via local git loose objects or local `git ls-tree -r`), ensuring
    staged but uncommitted modifications (`git add`) are detected and refused. Local git consistency
    (clean tree, index, HEAD) detects local drift and never authenticates owner intent by itself;
-   launch refuses when the protected-boundary prerequisite from 0f70c7f cannot be established;
+   launch refuses when the protected-boundary prerequisite cannot be established;
    check and exec agree on the admissible committed artifact. Behind it is a bench running a value
    a rotation replaced; ahead of it is a local edit nobody reviewed; both are exit 1 naming
    `git -C <store> pull --ff-only`, and `exec` refuses the same case at 125, the value it is about
@@ -304,28 +301,26 @@ file and the repair. In a fixed order, against the working copy at `--store`:
    compare by eye. **What it notices is a fetch nobody merged, never a fetch nobody ran**: a
    remote-tracking ref is only as fresh as the last fetch, so a clone nobody fetches satisfies
    invariant 8 forever, which is why every launcher line carries `git -C <store> pull --ff-only &&` —
-   the one network call on this page, the launcher's and never the tool's. The cost is that a bench
+   a network call that is the launcher's and never `exec`'s or `check`'s. The cost is that a bench
    which cannot reach GitHub cannot clear the refusal at seat start; accepted, the alternative being
    a seat running a revoked value with a green `check` beside it, the row this tool exists to close.
 
 Any of the eight is its own `SECRETS CHECK FAIL` line, every failure in one run, capped per
 kind at `--max` with a MORE line, the counts never capped and printed on failure as well as
 success. `mine=` counts the files whose recipients list **this key**: the same store is `mine=1`
-on Rowan's keeper bench and `mine=1` plus one per pool file on the admin bench — the
-dispatcher runs there, so every `swarm-<name>.yaml` is sealed to that bench's key — green on
-both.
+on Rowan's keeper bench and `mine=1` plus one per pool file on the admin bench — every
+`swarm-<name>.yaml` is sealed to that bench's key — green on both.
 
 **And one thing `check` does not do: ask GitHub anything.** The store's ruleset and its
 collaborators' permissions are the open door under **"Reviewed" is a control** below, and the
-hand that reads them is a person's — one line, carried by the store's README beside the protocol
-(owed below) and run at a bench:
+hand that reads them is a person's — one line, run at a bench:
 
 ```
 gh api repos/mas-bandwidth/secrets/collaborators --jq '.[] | "\(.login) \(.role_name)"'
 ```
 
-The answer this page expects once the demotion lands is `gafferongames admin` and `rowan-claude
-write`; anything else is a permission somebody changed. A flag that asked the same question from
+The answer this page expects is `gafferongames admin` and `rowan-claude write`; anything else is
+a permission somebody changed. A flag that asked the same question from
 inside `check` would want a GitHub token in a plaintext file on the bench — a fourth file-shaped
 secret, with no row in the credential table and no home in **The model** — to buy a warning,
 which is not a trade this page makes.
@@ -389,11 +384,10 @@ other's witness, and neither substitutes for the other.
 Removing a seat is how a seat loses its credentials inside a pull request whose subject says
 it is adding one, and it is never part of adding a seat. Keep what exists.
 
-**`--machines <registry>`: the fleet stands in for the reviewer who is no longer there.**
-Glenn's ruling of 2026-09-18 is that a secrets seat is set up **automatically** when he asks —
-no second human approval on `mas-bandwidth/secrets`, the mechanical gate is the required
-check. So the question a reviewer used to ask — *whose key is this, and does that machine
-exist?* — has to become a machine's question, and the fleet's machines registry
+**`--machines <registry>`: the fleet stands in for a second reviewer.** A secrets seat is set
+up **automatically** when Glenn asks — no second human approval on `mas-bandwidth/secrets`; the
+mechanical gate is the required check. So the reviewer's question — *whose key is this, and
+does that machine exist?* — is a machine's question, and the fleet's machines registry
 (`name<TAB>ssh<TAB>os/arch<TAB>roles<TAB>seat<TAB>cores<TAB>notes`, `queue/control/machines.tsv`)
 is the one place that already answers it. **With `--machines` given, a recipient key this
 diff introduces — one no creation rule named at `--base`, the recovery key aside — is
@@ -426,16 +420,14 @@ Done. Your new key is at <path>. Nothing failed.
 Next: send this public key to whoever seals your seat: age1…
 ```
 
-**The order is the contract, and the run ends on a plain closing line.** Glenn ran this on the Air on
-2026-09-18 and read a successful run as a failure (nova-tools#1393): the verdict was printed
-first and the placeholder note — "`<recovery key>` stands unfilled" — was the last line on the
-screen, and the last line of a command's output is the line a reader takes for the answer.
-Nothing was wrong; the tool had left its verdict at the top and its homework at the bottom. So
-the rule block comes first, the `NEXT:` line after it, then `SECRETS KEYGEN OK` as the last
+**The order is the contract, and the run ends on a plain closing line.** The last line of a
+command's output is the line a reader takes for the answer, so a verdict at the top and a
+placeholder note at the bottom reads a successful run as a failure. So the rule block comes
+first, the `NEXT:` line after it, then `SECRETS KEYGEN OK` as the last
 machine-readable line (callers that parse the receipt keep it), and the run closes with two
 plain lines a person cannot misread — `Done. Your new key is at <path>. Nothing failed.` and
 `Next: send this public key to whoever seals your seat: <pub>` — so the last line on the screen
-says it worked and what to do next (nova-tools#1560). The `NEXT:` line is phrased as a **next
+says it worked and what to do next. The `NEXT:` line is phrased as a **next
 step, not a state of the world** — "add these two lines" rather than "stands unfilled" —
 because only one of those two reads as an instruction at the end of a green run.
 `TestKeygenEndsWithThePlainClosingLine`, `TestKeygenPrintsTheOKLineAfterTheRuleBlock` and
@@ -457,48 +449,40 @@ else. **With `--store` given, the recovery key is the line `keygen` reads out of
 `recovery.pub`** — its one read of the store, and it writes nothing there. A `--store` that
 fails its own refusals, or whose `recovery.pub` is in any of invariant 1's five bad states, is a
 refusal naming the file at **exit 2** — never the placeholder in silence. So the pasted block
-satisfies invariant 1 as printed, which a literal placeholder cannot now that the invariant
-demands exactly the declared key. Without `--store` the second recipient is the literal
+satisfies invariant 1 as printed, which a literal placeholder cannot, the invariant demanding
+exactly the declared key. Without `--store` the second recipient is the literal
 `<recovery key>` and the `NOTE` line prints beside it, because a block that fails invariant 1
 until it is filled must say so rather than look finished. Guessed in neither case.
 
-**"Reviewed" is a control, and today the controlled account can switch it off.** Measured
-2026-09-12: `mas-bandwidth/secrets` carries ruleset **22995725** (`secrets-review-required`),
-active on the default branch — pull request required, one approving review, **last-push
-approval required**, stale reviews dismissed on push, no deletion, no non-fast-forward,
-**`bypass_actors` empty**. It has exactly two collaborators, `gafferongames` (Glenn) and
-`rowan-claude` (Rowan), and **both measure `admin`**. An empty `bypass_actors` stops an admin
-*bypassing* the rule; it does not stop an admin *editing* it — either account can disable or
-delete the ruleset with no pull request, and one of those tokens is the `GH_TOKEN` in
+**"Reviewed" is a control only while no admin edits the ruleset.** `mas-bandwidth/secrets`
+carries the ruleset `secrets-review-required`, active on the default branch — pull request
+required, one approving review, **last-push approval required**, stale reviews dismissed on push,
+no deletion, no non-fast-forward, **`bypass_actors` empty**. It has exactly two collaborators,
+`gafferongames` (Glenn) and `rowan-claude` (Rowan). An empty `bypass_actors` stops an admin
+*bypassing* the rule; it does not stop an admin *editing* it — an `admin` account can disable
+or delete the ruleset with no pull request, and one of those tokens is the `GH_TOKEN` in
 `rowan.yaml`, on the unwalled coordinator bench whose loose child is the threat this split
-exists for. So *every change is a pull request approved by the other account* holds while no
-admin touches the ruleset, and the party it should bind can untie it. What that buys an
-attacker with the cryptography intact: a direct push editing `rowan.yaml`'s own rule — that
-bench holds a current recipient key, so `updatekeys` runs — swapping Glenn's recovery key out
-of that one file, invariants 2 and 4 green afterwards. **Invariant 1 is what turns the one-file
-swap red on every other bench**, not the ruleset — and it can only because the recovery key is
-*declared* (invariant 1, declared and not counted). Editing `recovery.pub` in the same push —
-declaring the keeper's key the recovery key — passes every invariant on every bench:
-`{A_admin, A_keeper}` and `{A_keeper, R}` are each the declared key plus one other, and nothing
-in the store tells that shape from an honest one. A direct push has no approver, so nothing
-catches it; under `write` it is a pull request whose diff touches a one-line file, which an
-approver's eye catches where two `age1…` strings inside a rule are not. **That is what the
-demotion below is for**, and until it lands the two-file edit is this page's named gap — which
-is why the collaborator line above is a person's to run: the one thing a store can say about a
-control its own admin can untie is to say out loud that it can. And which rule a pull request touches is
-read by the approver, not enforced: no code owners, no required reviewers.
+exists for. What an admin push buys an attacker with the cryptography intact: a direct push
+editing `rowan.yaml`'s own rule — that bench holds a current recipient key, so `updatekeys`
+runs — swapping Glenn's recovery key out of that one file, invariants 2 and 4 green afterwards.
+**Invariant 1 is what turns the one-file swap red on every other bench**, not the ruleset — and
+it can only because the recovery key is *declared* (invariant 1, declared and not counted).
+Editing `recovery.pub` in the same push — declaring the keeper's key the recovery key — passes
+every invariant on every bench: `{A_admin, A_keeper}` and `{A_keeper, R}` are each the declared
+key plus one other, and nothing in the store tells that shape from an honest one. A direct push
+has no approver, so nothing catches it; under `write` it is a pull request whose diff touches a
+one-line file, which an approver's eye catches where two `age1…` strings inside a rule are not.
+That is why this page puts `rowan-claude` at `write` and not `admin` on the store, and why the
+collaborator line above is a person's to run: the one thing a store can say about a control its own admin can
+untie is to say out loud that it can. Which rule a pull request touches is read by the approver,
+not enforced: no code owners, no required reviewers.
 
-**The ruling, and it is Glenn's hand.** *Default if he is silent: `rowan-claude` is demoted to
-`write` on `mas-bandwidth/secrets`*, one line on
-[security#22](https://github.com/mas-bandwidth/security/issues/22) beside the ruleset paste it
-already carries. Write opens branches, pushes them, opens pull requests, approves and merges —
-every step this spec asks of that account — and cannot edit or delete a ruleset, so the control
-stops being one the controlled account administers. What remains is the milder consequence:
-with two collaborators and no bypass, the approver of every one of Glenn's changes, **including
-one that grants a key access to a file**, is an AI — the ruleset's design, not an accident, and
-a third collaborator is the repair on the day there is one to add (*default: accepted*). If
-Glenn keeps `admin` on both accounts, the review is a courtesy between two administrators and
-this page must stop calling it a control.
+**Write, not admin.** `write` opens branches, pushes them, opens pull requests, approves and
+merges — every step this spec asks of that account — and cannot edit or delete a ruleset, so the
+control is not one the controlled account administers. With two collaborators and no bypass,
+the approver of every one of Glenn's changes, **including one that grants a key access to a
+file**, is an AI — the ruleset's design, not an accident. If both accounts held `admin`, the
+review would be a courtesy between two administrators and this page could not call it a control.
 
 ### `place` and `placed`
 
@@ -512,24 +496,20 @@ SECRETS PLACED OK   machine=<name> count=<n>
 SECRETS PLACED ITEM machine=<name> secret=<name> path=<path> sha256=<hex> stamp=<stamp>
 ```
 
-**What it asserts.** Issue #764: a bench or a runner gets the keys it needs by machinery rather
-than by a person's `scp`. `place` decrypts `<store>/<as>.yaml`, takes exactly the one `--secret`
+**What it asserts.** A bench or a runner gets the keys it needs by machinery rather than by a
+person's `scp`. `place` decrypts `<store>/<as>.yaml`, takes exactly the one `--secret`
 named, and writes it to `--path` on the machine named by `--machine` over ssh, mode `0600` — or,
 without `--path`, to `<home>/.config/nova-secrets/<secret>.env` using the machine's home from the
 fleet registry. The machine's ssh target comes from `--machines` (the tab-separated fleet file:
-name, ssh target, home, the fourth pulse column ignored), defaulting to
-`~/.config/nova-tools/fleet.tsv`; it is the materialised form of the **machines** section of
-nova-work's CONFIG, and a name it does not hold is refused naming the file, because a route whose
-key was never placed is a bench the routing rule must skip. **The value travels on the ssh child's
+name, ssh target, home, an optional fourth column ignored), defaulting to
+`~/.config/nova-tools/fleet.tsv`, and a name it does not hold is refused naming the file. **The value travels on the ssh child's
 stdin, never in an argument list, and `place` writes a receipt — machine, secret, path, sha256 of
 the value, stamp — under `--receipts` (default `~/.config/nova-secrets/placed`), keyed by machine
 and replaced per secret.** `placed` reads those receipts back by name and hash; a machine with
 none placed is `count=0` at exit 0, an answer and not a failure. **No value, fragment, length or
 transcript appears on any line or in any receipt**, and a `place` refusal is exit 2 naming the
-missing machine or the store and the file to add it to, before anything is copied. Reading the
-machine set from nova-work's CONFIG records rather than this file, its fourth-column mac, and the
-routing rule that benches a route whose key is absent are **owed and not done**; this verb does
-the file it is handed.
+missing machine or the store and the file to add it to, before anything is copied. This verb
+reads the machine file it is handed and no other source.
 
 ### `seal`
 
@@ -545,7 +525,7 @@ encrypt child **on stdin** and existed in no argument list, no file in the clear
 line, and every event line carries a name, a seat and a PR number and never a byte of the
 value. The value comes from stdin when `--stdin` is given **or stdin is not a terminal**, and
 otherwise from the controlling terminal with echo off, opened **twice** — one handle to write
-the prompt, one to read — because a single read-write open of `/dev/tty` did not work. An
+the prompt, one to read — because a single read-write open of `/dev/tty` does not work. An
 **empty value is refused, exit 2**, before any helper runs.
 
 **How it seals.** It decrypts the seat file through a `sops` pipe (never a file), drops any
@@ -577,10 +557,9 @@ able to. To fold a value into `<seat>.yaml` it must first **decrypt** that file 
 the whole document, so the entries already in it have to be read back — and the only key that
 opens a seat's file is that seat's own. A bench that has just run `keygen` holds exactly one
 thing, its own key, and there is no file for that key to open; the moment a file exists, only
-that bench can open it, and that bench is the one with nothing to seal from. Measured on the
-Air, 2026-09-18: the store's pull request #15 broke the circle **by hand**, with a sops pipe
-out of a seat the operator's machine could open into the new seat's file. This verb is that
-pipe, with the refusals the hand pipe had to remember.
+that bench can open it, and that bench is the one with nothing to seal from. This verb breaks
+the circle with a sops pipe out of a seat the operator's machine can open into the new seat's
+file, with the refusals a hand pipe would have to remember.
 
 **What it does, in order.** Reads `<store>/<from>.yaml` through a `sops -d` pipe with `--key`;
 takes the `--only` entries out of that plaintext and **no others**; writes the new seat's rule
@@ -614,12 +593,11 @@ nova-secrets seat inject --store ~/secrets --as air --from studio --only NOVA_RE
 SECRETS SEAT INJECT OK seat=air from=studio names=1 pr=#31 merged
 ```
 
-**The second circle.** The night the store moved (2026-09-27), every bench seat that already
-existed needed the store's new `NOVA_REDIS_BENCH_PASSWORD`, sealed into the coordinator's seat.
+**The second circle.** A value one seat holds must sometimes reach seats that already exist.
 `seal` runs only where the target's own key lives, because it decrypts before it writes;
 `seat add` refuses a seat file that exists, because a rewrite drops every value the seat holds.
-So a value the coordinator held could reach an existing seat by no verb, and a hand pipe is not
-a road. `seat inject` is `seat add`'s pipe pointed at an existing seat.
+So without it a value one seat holds reaches an existing seat by no verb, and a hand pipe is
+not a road. `seat inject` is `seat add`'s pipe pointed at an existing seat.
 
 **The trust statement.** Any seat that can open the source may deliver to any seat whose file
 names its recipients, and **the recovery key is always kept**: the new ciphertext is encrypted
@@ -670,7 +648,7 @@ One line, on stderr, naming the door — exit 2, or 125 from `exec`:
 | `put`, `set`, `add`, `edit` a value | `sops <store>/<name>.yaml`, or `sops set`; then `git add`, `git commit`, and a pull request the other collaborator approves. |
 | `rotate` | The provider's console (Glenn's hand), then `sops`, then an approved pull request, then a pull on every bench, then a probe. See **Rotation**. |
 | `delete` a key, or a file | `sops unset`, or `git rm`, and a rotation of whatever the deleted value was. |
-| a file-shaped secret (an SSH key, an age key) handed to a program that wants a path | **Not in this store.** Generate it on the seat that uses it, authorize its public half on the box that accepts it (nova-run's box recipe, [ideas#766](https://github.com/mas-bandwidth/ideas/issues/766)), and never move the private half. |
+| a file-shaped secret (an SSH key, an age key) handed to a program that wants a path | **Not in this store.** Generate it on the seat that uses it, authorize its public half on the box that accepts it by that box's own recipe, and never move the private half. |
 | `recipients`, `grant`, `revoke access` | A pull request against `.sops.yaml` editing one rule, approved by the other collaborator and merged under the ruleset, then `sops updatekeys` in a second one. |
 | reading or writing the macOS Keychain | Not this tool, on any bench, ever. See **The migration from the Keychain** and the tripwire that pins it. |
 | a daemon, an agent, a cache, a session | Not this tool. Every call opens the file again; a cached plaintext is a plaintext with a lifetime nobody is watching. |
@@ -686,16 +664,15 @@ SECRETS EXEC FAIL key=SPACE_KEY: value is multi-line; a file-shaped secret is no
 
 ## The credential shape: per AI, per surface
 
-Glenn, 2026-09-12: *"Generally, each AI (including you) should have all their secrets in
-nova-secrets. Their own API key, their own email, bsky, discord, ghost access, github."* So the
-file is not a provider list: it is **every surface that AI acts through**, and the key name is
+Each AI has all its secrets in nova-secrets: its own API key, its own email, Bluesky, Discord,
+Ghost access and GitHub. So the file is not a provider list: it is **every surface that AI acts through**, and the key name is
 the variable the tool that acts already reads.
 
 | surface | key | file | who reads it |
 |---|---|---|---|
-| a pool's provider | `ANTHROPIC_API_KEY`, `XAI_API_KEY`, `GEMINI_API_KEY`, `INCEPTION_API_KEY` | `swarm-<name>` | nova-swarm workers and the gemini CLI — one key per pool file |
-| DeepSeek | `DEEPSEEK_API_KEY` | `rowan` | nova-swarm's OpenCode workers, dispatched by the coordinator |
-| GitHub, **org roles** | `GH_TOKEN` | `rowan` | `gh`, nova-bus, nova-merge, the coordinator's pushes |
+| a pool's provider | `ANTHROPIC_API_KEY`, `XAI_API_KEY`, `GEMINI_API_KEY`, `INCEPTION_API_KEY` | `swarm-<name>` | pool workers and the gemini CLI — one key per pool file |
+| DeepSeek | `DEEPSEEK_API_KEY` | `rowan` | OpenCode workers, dispatched by the coordinator |
+| GitHub, **org roles** | `GH_TOKEN` | `rowan` | `gh`, nova-bus, the coordinator's pushes |
 | GitHub, **the keeper's own repositories, plus the store** | `GH_TOKEN` | `rowan-keeper` | the keeper's own pushes, and his pull requests against `mas-bandwidth/secrets` — no org role |
 | space, who and where | `SPACE_USER`, `SPACE_HOST` | `rowan` | the profiling launcher; the key itself lives on the seat, per **The model** |
 | email, send and its fallback | `SMTP_PASSWORD`, `SMTP_PASSWORD_BACKUP` | `rowan-keeper` | rowan-email producer |
@@ -704,10 +681,7 @@ the variable the tool that acts already reads.
 | Discord | `DISCORD_BOT_TOKEN` | `rowan-keeper` | rowan-discord producer and consumer |
 | Ghost | `GHOST_ADMIN_KEY` | `rowan-keeper` | rowan-ghost |
 
-**Rowan's two files, and which key opens each** — Glenn, decided 2026-09-12 after read 2,
-replacing the earlier record in which `rowan.yaml` was sealed to both benches. His words:
-*"you should be the only one who can do it, not even rowan keeper"*, *"rowan keeper
-manages himself, autonomous rowan."*, *"NOT admin"*. So `rowan.yaml` is sealed to the
+**Rowan's two files, and which key opens each.** `rowan.yaml` is sealed to the
 **admin bench key alone**, plus the recovery key, and holds the **admin** `GH_TOKEN` — the
 one carrying org roles — with the coordinator's working needs beside it;
 `rowan-keeper.yaml` is sealed to the **keeper bench key alone**, plus the recovery key, and
@@ -717,8 +691,8 @@ fine-grained token on the same `rowan-claude` account**, scoped to his own repos
 both halves because every re-seal of his own file is a branch pushed **and** a pull request
 opened against the org's store, and `contents` alone pushes the branch without opening the
 request. A second token and not a second account, so the store's collaborators stay the
-**exactly two** counted above, and the demotion ruled there caps this token at `write` with
-them. No more than that: no org role, no admin anywhere, no second org repository.
+**exactly two** counted above, and the account's `write` role caps this token too. No more than
+that: no org role, no admin anywhere, no second org repository.
 Neither bench opens the other's file, and that is the point of the split rather
 than a consequence of it: the admin bench is the unwalled coordinator running many children,
 and a child that gets loose there must not be able to send mail, post to Bluesky, speak in
@@ -729,19 +703,17 @@ secret, by who acts with it**, and sealed once in that seat's file — `DEEPSEEK
 dispatched by the coordinator, so it is in `rowan.yaml` and nowhere else. Two copies of one
 value is two rotations, one forgotten.
 
-**API keys, never OAuth tokens, and never an auth file.** Glenn: *"I would prefer API keys
-per-AI instead of OAuth tokens."* An OAuth token has a refresh dance, a device flow, an expiry
+**API keys, never OAuth tokens, and never an auth file.** Each AI holds its own API keys. An
+OAuth token has a refresh dance, a device flow, an expiry
 and a file the harness rewrites behind your back. So **no harness auth file** is held here or
 handed over; a harness that can only authenticate that way is one we start by hand. **The one
-exception, and it is Glenn's:** *"The exception being that I will run Claude here manually for
-you."* **Rowan's own Claude Code seat authenticates through Glenn's manual login on the admin
+exception is Glenn's: Rowan's own Claude Code seat authenticates through Glenn's manual login on the admin
 bench: not in the store, no `ANTHROPIC_API_KEY` in `rowan.yaml` for it, and nobody should put
 one there.** That row is for *workers*, and whether they move off the plan seat is billing.
 
 **Per seat, so per file.** Stella, Emma, Johnny and Freddy have one seat each and one file
 each, and an AI with no Bluesky simply has no `BSKY_APP_PASSWORD`. A swarm pool's file holds
-exactly one provider key plus a **read-only** `GH_TOKEN`
-([security#1](https://github.com/mas-bandwidth/security/issues/1)) and nothing else: a worker
+exactly one provider key plus a **read-only** `GH_TOKEN` and nothing else: a worker
 holding a line's send credential is a worker that can post as that line.
 
 ## The launcher, and why the order is load-bearing
@@ -759,7 +731,7 @@ nova-secrets exec --store /Users/rowan/secrets --as rowan \
 
 The pull is the launcher's, never the tool's (invariant 8). The `--only` names the four this
 harness needs, because a launcher knows that and a default cannot. The
-inner line is **nova-sandbox's own grammar** at PR #70, two of whose rules are load-bearing
+inner line is **nova-sandbox's own grammar**, two of whose rules are load-bearing
 here: the harness's `HOME` inside a `--write` path (its rule 9), and the environment passing
 through the wrap untouched.
 
@@ -771,16 +743,10 @@ reads a key file**, by construction rather than by care; and a profile mistake c
 harness fail but cannot make it run *without* its keys. The reverse order — sandbox outside,
 secrets inside — needs the wall to permit the read a wall exists to refuse: **forbidden**.
 
-**The second caller is nova-swarm's dispatcher**, for the pool's provider key: started under
-`nova-secrets exec`, with one new field beside the `key_file` its worker description already
-has. **That field is a change to SPEC-SWARM.md and to nova-swarm, owed and not done, and
-nothing here claims it exists.**
-
 ## The migration from the Keychain
 
-Every surface above exists **today** on the keeper bench as a macOS Keychain item read by a
-rowan-tool calling `security find-generic-password`, so the move is not *copy a value*, it is
-*change a reader*. The per-surface runbook belongs in **rowan-tools**; the order belongs here,
+A surface held as a macOS Keychain item, read by a rowan-tool calling
+`security find-generic-password`, moves by *changing a reader*, not by *copying a value*. The per-surface runbook belongs in **rowan-tools**; the order belongs here,
 because at no step may there be a live consumer with a dead credential. **Issue** alongside the
 old (where issuing *revokes* the old, as a Ghost admin key does, the job is unloaded first and
 the migration is one sitting); **seal** in an approved pull request and pull on every bench,
@@ -802,7 +768,7 @@ user's home, so that user has done the first run, and the edit is Glenn's sudo.
 
 ## Dependencies, pinned
 
-| binary | pinned minimum | measured on the Studio bench, 2026-09-12 | probe |
+| binary | pinned minimum | measured on the Studio bench | probe |
 |---|---|---|---|
 | `sops` | **3.13.3** | `sops 3.13.3` | `<--sops> --version --disable-version-check` |
 | `age-keygen` | **1.3.2** | `v1.3.2` | `<--age-keygen> --version` |
@@ -893,8 +859,8 @@ receipt stops at the `OK` line and has read everything. `seat add` prints nothin
 prints past its verdict: after `SECRETS KEYGEN OK` come two plain closing lines that are not
 part of the machine-readable block — `Done. Your new key is at <path>. Nothing failed.` and
 `Next: send this public key to whoever seals your seat: <pub>` — written for the person, so the
-last line on the screen says it worked and names the next step (nova-tools#1560), because the
-last line on the screen is the one a reader takes for the answer (nova-tools#1393). A `NEXT:`
+last line on the screen says it worked and names the next step, because the last line on the
+screen is the one a reader takes for the answer. A `NEXT:`
 line is an instruction and is written as one; so is the plain `Next:` closing line.
 
 **No value, no fragment of a value, and no value's length ever appears on any line, in any
@@ -926,7 +892,7 @@ real git working copy with one commit and a remote-tracking ref, invariant 8 rea
    `b.yaml` → `{B, R}`, `swarm-p.yaml` → `{B, R}`, `c.yaml` → `{C, R}`. With `A_admin`: `exec
    --as a` succeeds, `exec --as a-keeper` is **125 naming the key**, `sops -d a-keeper.yaml`
    exits 128, `check` is `mine=1 foreign=4`. With `A_keeper`, the mirror: `a-keeper.yaml` opens
-   and `a.yaml` refuses. **That pair is the assertion Glenn's ruling needs**, and it is proven
+   and `a.yaml` refuses. **That pair is the assertion the two-file split needs**, and it is proven
    by **recipients**, not by a filename. With `B`: `mine=2 foreign=3`, green, because a seat
    with two files must not turn its own negative half red. `R` opens all five, asserted so
    nobody later "fixes" the negative test by making recovery impossible. The mutations, each red
@@ -939,7 +905,7 @@ real git working copy with one commit and a remote-tracking ref, invariant 8 rea
    changes nothing — and only then the review); adding `A_keeper` to `a.yaml`'s **rule** without
    `updatekeys` → **invariant 2**, the grant that grants nothing; that same rule change **merged
    and then `updatekeys`-ed with `R`**, so every recipient list agrees and invariants 2 and 4
-   are green → **invariant 1**, the ruling that no file carries two seat keys; removing a
+   are green → **invariant 1**, the rule that no file carries two seat keys; removing a
    recipient from `b.yaml`'s rule while the file still opens for it → **invariant 2**, the
    revoke case; planting `A_admin` in the sops child's `keys.txt` → **invariant 4** on
    `a-keeper.yaml`, the only way a file whose recipients do not list this key can open, and the
@@ -1000,8 +966,8 @@ real git working copy with one commit and a remote-tracking ref, invariant 8 rea
    and would make invariant 4 pass vacuously.
 8. `TestTheVersionProbeMakesNoNetworkCall` — the probe answers with egress blocked; `sops
    3.9.0` is refused naming `brew upgrade`; `banana` is refused as unparseable, **not**
-   accepted; absent and non-executable are two different sentences. With egress blocked every
-   verb is green: no line of this tool opens a socket.
+   accepted; absent and non-executable are two different sentences. With egress blocked the
+   probe is green: it opens no socket.
 9. `TestARequireThatIsMissingRefusesBeforeTheCommandStarts` — the command writes a sentinel;
    after the refusal the sentinel does not exist; every missing `--require` is named in one
    run, sorted.
@@ -1033,7 +999,7 @@ real git working copy with one commit and a remote-tracking ref, invariant 8 rea
     a `--store` with no `.sops.yaml` and one whose `recovery.pub` is empty are each **exit 2**
     naming the file and never the placeholder; the store's tree hash is unchanged by every run.
 15. `TestTheLauncherOrderWorksWithTheStoreFullyDenied` — end to end in nova-sandbox's real
-    grammar at PR #70, the write set carrying the probe's `HOME` and neither the store nor the
+    grammar, the write set carrying the probe's `HOME` and neither the store nor the
     key directory in any read set: the probe sees the keys. The reverse nesting is asserted to
     **fail**. It skips with a stated reason when `nova-sandbox` is not built, never vacuously.
 16. `TestNoKeychainAndNoCryptoDependency` — a source tripwire: no `security` invocation, no
@@ -1047,7 +1013,7 @@ real git working copy with one commit and a remote-tracking ref, invariant 8 rea
     pull-requests state — rule merged, file not yet `updatekeys`-ed — all three as the page
     states them.
 18. `TestOutputSizeAtTheLargestPlausibleState` — 12 files × 16 keys; lines and bytes for every
-    verb in green and red, stdout and stderr; the table in the commit.
+    verb in green and red, stdout and stderr.
 19. `TestNoFileContentOrCallerArgumentCanForgeALine` — a key name, a file name, a `--require`
     and a sops error carrying `\nSECRETS CHECK OK …`, a terminal repaint, a bidi control: none
     authors a second line, including from the flag parser before our first instruction runs.
@@ -1103,23 +1069,25 @@ above names** — your rule merged, the file not yet `updatekeys`-ed — **exit 
 with the `updatekeys` line. The first two are the right answer rather than a stumble; the third
 is the wait, said as a red, and it clears when the second pull request lands.
 
-## Additions from dogfooding (2026-09-16/17)
+## Rules from dogfooding
 
-Ten rules measured on the 2026-09-16/17 dogfooding, each with the hurt that produced it and the
-red test that carries it. They extend **The model** and **Rotation**; they do not replace them.
+Ten rules from dogfooding, each with the mistake it prevents and what holds it: a test where
+code can hold it, and the practice it is where only a person can. They extend **The model** and **Rotation**; they do not replace them.
 
 1. **ingest is rotation** — a value enters by seal and the old value is revoked at the provider the
    same hour, because sealing the new value while the old one still works banks a rotation nobody
-   finished. Red test demanded: `TestIngestIsRotation`.
+   finished. A practice of the person sealing: the revocation happens at the provider, where no
+test of this tool can see it.
 2. **one seat per OS user, keys for swarms not people** — an AI is a unix user with one file and
    one key, and a pool of workers shares a swarm key, because a person's credential in a shared
    seat cannot be told from a worker's. Red test demanded: `TestOneSeatPerOSUser`.
 3. A seat file is **opened only by its seat key and the recovery key, exactly two recipients**,
    enforced by the seat-rule gate on `.sops.yaml`, because a third recipient is the grant every
-   review is meant to catch. Red test demanded: `TestSeatRuleGateIsExactlyTwoRecipients`.
+   review is meant to catch. Held by `TestGateRefusesARuleWithThreeRecipients`.
 4. A value reaches a process **only by `exec --only NAME`, never a file, argv, log or transcript**,
-   because every other road leaves the plaintext where a sibling process can read it. Red test
-   demanded: `TestValuesReachProcessesOnlyByExecOnly`.
+   because every other road leaves the plaintext where a sibling process can read it. Its edges
+   are held by `TestExecSetsExactlyTheKeysInTheFile` and
+   `TestSealPipedValueLandsInEncryptStdinNotArgv`.
 5. All **harness configs reference `{env:NAME}`**; a literal key in a config is DRIFT, because a
    copied value outlives its rotation in a file nobody watches. Red test demanded:
    `TestHarnessConfigsReferenceEnvNames`.
@@ -1129,106 +1097,52 @@ red test that carries it. They extend **The model** and **Rotation**; they do no
 7. The store is pulled on a bench over **the bench's own SSH key, generated on that bench**, its
    public half authorized on the GitHub account the bench acts as; **never a person's credential**,
    because a person's key in a bench's clone is that person on that bench; and **never present
-   inside the card wall**, because a card that can read the key can pull or push as the bench.
+   inside a sandboxed job's wall**, because a job that can read the key can pull or push as the
+   bench.
    Red test demanded: `TestStorePullUsesBenchOwnedKey`.
 8. A key is **generated off-bench for recovery only**; the **private half lives in the owner's password manager**,
-   because recovery that sits beside the ciphertext is not recovery. Red test
-   demanded: `TestRecoveryKeyLivesOnlyInThePasswordManager`.
-9. **seal is one step** (see #910): stdin or hidden prompt, PR, gate, merge, check, because a
-   multi-step seal is a step somebody stops halfway. Red test demanded: `TestSealIsOneStep`.
-10. The ADOPT pass and the bench standard **fail loudly on any plaintext key file** (`auth.json`,
-    `*.env`) anywhere under `HOME`, because a plaintext key on the bench is the boundary this page
-    is about, already crossed. Red test demanded: `TestPlaintextKeyFilesFailLoudly`.
+   because recovery that sits beside the ciphertext is not recovery. A practice of the owner:
+   the password manager is outside anything this tool or its tests can read.
+9. **seal is one step**: stdin or hidden prompt, PR, gate, merge, check, because a
+   multi-step seal is a step somebody stops halfway. Held by `TestSealFullPathOpensPRAndMerges`.
+10. The bench standard **fails loudly on a plaintext key file**, because a plaintext key on the
+    bench is the boundary this page is about, already crossed. `tools/bench-standard.sh` check
+    (6) drifts on the ones it knows: `~/.local/share/opencode/auth.json`,
+    `~/.config/deepseek/env`, and a literal `apiKey": "sk-` in `~/.config/opencode/*.json`. No
+    test holds that check.
 
-## Additions from the Air seat (2026-09-18)
+## Rules for receipts and new seats
 
-Two rules, both measured the day a new bench was given its first credentials by hand.
+Two rules for a verb's receipt and a new seat's first credentials.
 
 11. **A multi-line receipt's machine-readable block ends on its verdict.** The `OK` line is the
     last machine-readable line a verb prints, and whatever the receipt leaves to do is a `NEXT:`
     line above it, phrased as an instruction rather than as a state of the world. Only plain
     lines for a person may follow the verdict: `keygen` closes with two, `Done. ... Nothing
     failed.` and `Next: send this public key ...`, which are not part of the machine-readable
-    block, so its last line reads as success to a person (nova-tools#1560). A green `keygen`
-    whose last line said a placeholder "stands unfilled" was read as an error by the person who
-    ran it (nova-tools#1393). Red tests: `TestKeygenEndsWithThePlainClosingLine`,
+    block, so its last line reads as success to a person: a green run whose last line names a
+    placeholder that "stands unfilled" reads as an error. Red tests: `TestKeygenEndsWithThePlainClosingLine`,
     `TestKeygenPrintsTheOKLineAfterTheRuleBlock`, `TestKeygenNextStepSaysItIsANextStep`.
 12. **A new seat is given its first values by `seat add`, never by `seal`.** `seal` decrypts
     before it writes, and only the new seat's own key opens the new seat's file, so the first
     value must be re-sealed out of a seat the operator's machine CAN open — with the new seat's
-    rule written first, so the encrypt has recipients to find. The hand version of this is the
-    store's pull request #15. Red tests: `TestSeatAddReSealsNamedValuesIntoTheNewSeatsFile`,
+    rule written first, so the encrypt has recipients to find. Red tests: `TestSeatAddReSealsNamedValuesIntoTheNewSeatsFile`,
     `TestSeatAddLeavesAFileOnlyTheNewSeatCanOpen`,
     `TestSeatAddRefusesWhenTheSourceSeatCannotBeOpenedHere`,
     `TestSeatAddRefusesAnExistingTargetFile`, `TestSeatAddRefusesAnExistingRule`,
     `TestSeatAddGivesANewSeatItsFirstValues` (against the real sops and age), and
     `TestTheFakeSopsRefusesWhatRealSopsRefuses` — **the fake in the test refuses what the real
-    tool refuses**: a missing recipient, a file in the clear, an encrypt with no file argument.
-    A lenient fake shipped a broken `seal` here once already.
+    tool refuses**: a missing recipient, a file in the clear, an encrypt with no file argument,
+    because a lenient fake lets a broken `seal` pass.
 
-## Additions from the store's move (2026-09-27)
+## Rules for existing seats
 
-13. **An existing seat is given a value the coordinator holds by `seat inject`, never by a
-    hand pipe.** The store moved to hetzner and every bench seat needed the new
-    `NOVA_REDIS_BENCH_PASSWORD` out of the coordinator's seat; `seal` cannot run there and
-    `seat add` refuses a file that exists. The verb re-seals to the target file's own two
+13. **An existing seat is given a value another seat holds by `seat inject`, never by a hand
+    pipe.** `seal` cannot run where the target's own key is absent, and `seat add` refuses a
+    file that exists. The verb re-seals to the target file's own two
     recipients, read from its metadata and held equal to its rule, and walks `seal`'s road to
     the merge. Red tests: `TestSeatInjectReSealsNamedValuesIntoAnExistingSeat`,
     `TestSeatInjectAddsANewNameAndKeepsTheClearOnes`, `TestSeatInjectRefusalsTouchNothing`,
     `TestSeatInjectWalksSealsRoadToTheMerge`, `TestGateApprovesAnInjectPullRequest`, and, against
     the real sops and age, `TestSeatInjectReSealsAValueIntoAnExistingSeat` and
     `TestTheHelpExampleIsWhatSeatInjectPrints` (the help example, run through the one comparator).
-
-## Owed, and where the rest lives
-
-The full work list is in this pull request's body, and new ideas are issues. Owed before this
-spec is true: revision 1's library deleted (`internal/secrets/*`, nova-tools **PR #72**,
-carrying forward only `internal/secrets/secret.go`); the tool registered in
-[SPEC.md](SPEC.md); `cmd/nova-secrets` and the twenty-one tests, each red before green; the
-command reference and the six-line first run, then **a cold hour by a line that did not write this**; the
-Keychain migration, one surface at a time; and `GOOS=windows go test -c` before the first push.
-
-**The store's own repair, Rowan's hand, as a pull request under the ruleset**: remove the
-README's `space_key` line and unseal that value from `<line>.yaml` (generated on the seat now,
-the old one revoked at the box); add to that README the collaborator line above and the answer
-it should give; add the `rowan-keeper.yaml` rule with the keeper key alone and
-give `rowan.yaml` the admin key alone; **commit `recovery.pub` at the store root** and add that
-key as the recovery recipient of every rule. That last is necessarily Rowan's hand and Glenn's
-approval — adding `R` to a sealed file is `updatekeys` by a current recipient, and his approval
-of that one pull request is the **one review that compares `recovery.pub` against his own record
-of the public half**, character for character, a first line having no diff to catch and the pull
-request being written on the unwalled bench — and until it lands nothing in the store is
-recoverable. The store's one rule is anchored at both ends
-already, so invariant 1's anchor half is green there today; the declared-recovery half lands
-with the same pull request, and is green on a one-rule store the moment `recovery.pub` exists.
-
-Open for Glenn, each taken by default if he is silent past the next window he is at the bench,
-recorded on [security#20](https://github.com/mas-bandwidth/security/issues/20): whether swarm
-workers on Claude models move to an `ANTHROPIC_API_KEY` (*default: they stay*); whether the
-store stays one repository (*default: one*); what belongs in `unencrypted_regex` beyond
-`SPACE_USER|SPACE_HOST` (*default: leave it*); which AIs get a unix user and when (*default:
-Rowan first*); and the two the ruleset raises above — demoting `rowan-claude` to `write` on the
-store, on [security#22](https://github.com/mas-bandwidth/security/issues/22) (*default:
-demote*), and an AI account as the approver of record for his own store changes (*default:
-accepted*).
-
----
-
-*Rowan, 2026-09-12. No credential value was read, written, printed or named anywhere in this
-work; the real store was read only through its `.sops.yaml`, its README, its ruleset and its
-collaborator permissions, and no `sops` or `age` command was run against it.*
-
-## Future additions from the first adoption (2026-09-16, Glenn and Stella dogfooding; nova-tools #881)
-
-The first real adoption ran on the studio seat, then Stella's, then four bench seats, by hand. Glenn's verdict: "It should be a single step then 'yes'." Each item below is a hurt from that night and the verb or rule that removes it; each lands with its red test.
-
-1. **`adopt` is one verb.** `nova-secrets adopt --as <seat> [--store <url>] [--bench <ssh host>]` installs sops and age if absent, generates the deploy key and the age identity in place, registers the deploy key by API, clones the store, opens the rule PR (seat key + recovery.pub), waits for the seat-rule gate, merges, pulls, re-seals the calling seat's swarm values into the new file through a pipe when the seat is a swarm seat, proves the seat (`check` OK, `exec` by length) and prints `ADOPT OK seat=<name> store=<sha>`. A human gives "yes" once; a person's value is entered once by `set`. A partial adoption rolls back; every refusal is one remedy line.
-2. **`set` and `rotate`.** `nova-secrets set --as <seat> --name NAME` reads the value from a prompt or stdin, seals it through a pipe (never argv, disk or history), commits and pushes a PR. `rotate` is `set` plus the note that revocation at the provider is the human's step. Ingest is rotate: every value enters fresh.
-3. **The recovery key is generated off-bench, enforced.** `keygen --recovery` refuses on a bench that holds any seat key, or prints the off-bench instruction and stops.
-4. **A seat's `check` and `exec` fail only on the seat's own files.** Other files are reported as foreign, never fatal (a stale rule on one file blocked every seat).
-5. **Remedy lines name the seat that can act,** never a command the caller cannot run (`sops updatekeys` on a bench that cannot decrypt).
-6. **The seat-rule gate is the second pair of eyes** for the one shape a seat PR has (two recipients with recovery.pub second; ciphertext only; no other file); it lives in the store (`.github/seat-rule-gate.sh`) and approves; anything else a human reads.
-7. **A worker description names its secret,** `secret: NAME`, delivered by `exec` into the environment; `key_file` is the legacy shape; `nova-swarm native` never copies an auth file into a job and refuses a `--model` other than the description's (a key may be authorized for one model).
-8. **Harness configs hold `{env:NAME}`, never a literal;** `fleet survey` reports a literal key or a key-shaped file on a bench as DRIFT.
-9. **One seat per OS user.** Two lines on one user share the key ("wouldn't", not "can't"); the survey reports it.
-10. **Keys are for swarms, not people.** A swarm seat holds model keys; a person's own keys are that line's seat, entered by that line.

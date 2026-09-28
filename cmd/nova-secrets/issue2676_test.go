@@ -113,13 +113,13 @@ func TestIssue2676(t *testing.T) {
 	// Since #3447 the working column is the friend row's, written by the row
 	// loop; no beat writes the row (the retired nova-wake beat refused it),
 	// so the refusal names the row loop and never a beat (nova-tools #3807).
-	for _, want := range []string{"friend:emma:width", "friend row", "rowan-tools friend-row", "#3447"} {
+	for _, want := range []string{"friend:emma:width", "friend row loop", "#3447"} {
 		if !strings.Contains(lines[0], want) {
 			t.Errorf("the refusal must name %s (the friend row loop, nova-tools#3807):\n%s", want, lines[0])
 		}
 	}
-	if strings.Contains(lines[0], "nova-sprint") {
-		t.Errorf("the refusal must name no parked tool as a remedy:\n%s", lines[0])
+	if strings.Contains(lines[0], "nova-sprint") || strings.Contains(lines[0], "rowan-tools") {
+		t.Errorf("the refusal must name no parked tool and no tool outside nova-tools:\n%s", lines[0])
 	}
 	if strings.Contains(lines[0], "nova-wake beat") {
 		t.Errorf("the refusal must not send anyone to nova-wake beat, a retired verb that refused the friend row since #3447 (nova-tools#3807):\n%s", lines[0])
