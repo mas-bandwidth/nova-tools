@@ -42,8 +42,7 @@ a failure. A section states each one in a single line of its own prose,
 beginning with a keyword, exactly as `Platform:` already does:
 
 - `Platform:` — the machine the block was recorded on, and what a different
-  machine prints instead. Already in use under [`## nova-sandbox`](#nova-sandbox)
-  and [`## nova-swarm`](#nova-swarm), and checked by
+  machine prints instead. See [`## nova-sandbox`](#nova-sandbox); checked by
   `internal/ci/firstrun_platform_test.go`.
 - `Requires:` — something a step needs that the machine running it may not have,
   and in a sandboxed test bench must sometimes *not* have: a key, a forge
@@ -57,12 +56,8 @@ it skipped names a precondition stated here. **A step skipped for a reason this
 file does not state is a defect in this file, not a pass** — being able to tell
 those two apart is the whole value of writing the line down.
 
-Two `Requires:` lines are owed today, one per section, from the same dogfood
-run: `## nova-decide` (the ladder block routes through JEV and wants
-`JEV_API_KEY`) and `## nova-secrets` (two steps invoke `nova-check`, which is a different tool's
-binary). nova-merge has no section since its lane-making verbs (`init`,
-`quickstart`, `add`) left with the per-PR lander role; its kept verbs are
-exercised by deprecated/cmd/nova-merge's own tests.
+The `nova-secrets` fixture invokes `nova-check` in its child-command examples;
+those steps need that binary on PATH.
 
 ## nova-bus
 
