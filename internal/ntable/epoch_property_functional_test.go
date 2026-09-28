@@ -35,6 +35,8 @@ import (
 // writer, revision and membership delta. A second owned Redis replays accepted
 // commands FROM those receipts, as tla/check_member_replay.py does; refused
 // commands have no receipt and are checked against complete-store snapshots.
+// Accepted commands also compare complete-store snapshots, permitting changes
+// only to keys named by the model transition, on both source and replay stores.
 // External bindings, batches, definition edits and row sorting retain their
 // separate randomized/functional gates; no claim of concurrent server writers
 // or exhaustive TLC exploration is made by this bounded execution test.
@@ -424,6 +426,10 @@ func (h *epochProperty) step(a epochAction) {
 				h.fail("refusal wrote state or returned a receipt")
 			}
 		} else {
+			allowed := h.writeKeys(a, before, after)
+			if keys := unexpectedEpochWrites(image, memberStoreImage(h.t, c), allowed); len(keys) != 0 {
+				h.fail("store%d accepted action changed keys outside model: %v", i, keys)
+			}
 			event := h.event(c, a.table)
 			if i == 0 {
 				h.receipt(a, opts, receipt, event, before, after)
@@ -440,6 +446,76 @@ func (h *epochProperty) step(a epochAction) {
 		h.revision[a.table]++
 	}
 	h.verify()
+}
+
+// writeKeys describes the model's possible write footprint. It does not read
+// receipts, Redis contents or Lua staging commands. In particular, a table
+// prefix is never permission to introduce arbitrary keys beneath that prefix.
+func (h *epochProperty) writeKeys(a epochAction, before, after *epochTableState) map[string]bool {
+	allowed := map[string]bool{
+		ntable.EpochPrefix(a.table, h.active) + ":definition": true,
+		ntable.RevisionKey(a.table):                           true,
+		ntable.ChangesKey(a.table):                            true,
+	}
+	if !h.template[a.table] {
+		allowed["tables"] = true
+		allowed[ntable.DefKey(a.table)] = true
+		allowed[ntable.DefKey(a.table)+":identity"] = true
+	}
+	var rows []string
+	switch a.verb {
+	case "row_add", "row_del":
+		rows = []string{a.row}
+	case "bind":
+		rows = append(slices.Clone(before.rows), after.rows...)
+	case "clear", "drop":
+		rows = before.rows
+	}
+	if len(rows) > 0 {
+		allowed[ntable.RowsKeyAt(a.table, h.active)] = true
+		for _, row := range rows {
+			allowed[ntable.RowKeyAt(a.table, row, h.active)] = true
+		}
+	}
+	for _, row := range []string{"r1", "r2"} {
+		for _, col := range []string{"a", "b"} {
+			at := row + ":" + col
+			if !reflect.DeepEqual(before.cells[at], after.cells[at]) {
+				allowed[ntable.CellKeyAt(a.table, row, col, h.active)] = true
+			}
+		}
+	}
+	for n := 1; n <= 3; n++ {
+		id := epochMember(h.active, n)
+		from, _ := before.location(id)
+		to, _ := after.location(id)
+		if from != to {
+			allowed[ntable.MemberKey(id)] = true
+		}
+	}
+	return allowed
+}
+
+func unexpectedEpochWrites(before, after map[string]string, allowed map[string]bool) []string {
+	keys := map[string]bool{}
+	for key, value := range before {
+		if next, exists := after[key]; !exists || next != value {
+			keys[key] = true
+		}
+	}
+	for key := range after {
+		if _, exists := before[key]; !exists {
+			keys[key] = true
+		}
+	}
+	var unexpected []string
+	for key := range keys {
+		if !allowed[key] {
+			unexpected = append(unexpected, key)
+		}
+	}
+	slices.Sort(unexpected)
+	return unexpected
 }
 
 func (h *epochProperty) verify() {
@@ -554,6 +630,9 @@ func TestTableEpochActionsAndReceiptReplay(t *testing.T) {
 				frozen: [2]map[string]string{{}, {}}}
 			for _, c := range h.stores {
 				if err := c.FlushAll(h.ctx).Err(); err != nil {
+					t.Fatal(err)
+				}
+				if err := c.HSet(h.ctx, "fixture:unrelated", "n", "unchanged").Err(); err != nil {
 					t.Fatal(err)
 				}
 				if err := c.HSet(h.ctx, epochPropertyKey, "n", 1).Err(); err != nil {
