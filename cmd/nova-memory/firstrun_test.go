@@ -907,3 +907,28 @@ func repoRoot(t *testing.T) string {
 	}
 	return root
 }
+
+func TestVerifyHelpExampleMatchesWhatTheToolPrints(t *testing.T) {
+	t.Parallel()
+	found := false
+	for _, line := range usageExamples(t) {
+		if !strings.HasPrefix(line, "nova-memory verify ") {
+			continue
+		}
+		found = true
+		code, out, errOut := runCLI(t, "", localize(strings.Fields(line)[1:], "")...)
+		if code != 0 {
+			t.Fatalf("example exit %d: %s", code, errOut)
+		}
+		want := onboarding.Step{Line: line, Want: []string{
+			"VERIFY INFO wikilink: [[storm-glass]] resolves to no file (e.g. from log/1974-03-11.md)",
+			"VERIFY OK gating=0 info=1 shown=1 coverage=0 frontmatter=0 links=info",
+		}}
+		for _, problem := range onboarding.CompareTranscript([]onboarding.Step{want}, []onboarding.Result{{Code: code, Stdout: out, Stderr: errOut}}, nil) {
+			t.Error(problem)
+		}
+	}
+	if !found {
+		t.Fatal("help has no nova-memory verify example")
+	}
+}
