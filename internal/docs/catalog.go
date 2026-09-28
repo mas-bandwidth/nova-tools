@@ -69,6 +69,7 @@ var DefaultCatalog = []Entry{
 	E("internal/docs", "documentation guards and map generator", "go test ./internal/docs", "go test ./internal/docs"),
 	E("internal/dogfood", "dogfood self-test gates", "go test ./internal/dogfood", "go test ./internal/dogfood"),
 	E("internal/events", "card event stream and SQLite fold", "go test ./internal/events", "go test ./internal/events"),
+	E("internal/filelock", "process-exclusive file locks with holder stamps and state probing", "go test ./internal/filelock", "go test ./internal/filelock"),
 	E("internal/fleet", "runner fleet discovery and status", "go test ./internal/fleet", "go test ./internal/fleet"),
 	E("internal/friendread", "per-friend read done counts", "go test ./internal/friendread", "go test ./internal/friendread"),
 	E("internal/friends", "friend registry and signatures", "go test ./internal/friends", "go test ./internal/friends"),
