@@ -64,7 +64,9 @@ usage:
                       print the packages among these that hold functional tests
                       (a _test.go built only under the functional build tag) on
                       one line and a go test -run pattern naming exactly those
-                      tests on the next; print nothing when there are none.
+                      tests on the next; when there are none, one line
+                      CI FUNCTIONAL OK packages=0 reason=<why>. A flag, and a
+                      pattern matching no package, are refused (exit 2).
   nova-ci new-rule [--root <checkout>] <rule-name>
                       scaffold a new class rule skeleton: class test, fixture, and makefile
   nova-ci new-verb [--root <checkout>] <tool> <verb>
@@ -216,16 +218,37 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	return code
 }
 
+// functionalUsage is the verb's usage line; -h and --help after the verb
+// print it as a refusal (exit 2), never as silence.
+const functionalUsage = "usage: nova-ci functional <package-dir>... (package directories or dir/... patterns, no flags)"
+
 // cmdFunctional prints the functional tier's selection for `make
 // test-functional`: the package directories among args that hold functional
-// tests, space-separated, then one -run pattern naming exactly those tests. A
-// change whose packages carry none prints nothing and exits 0, and the target
-// runs nothing.
+// tests, space-separated, then one -run pattern naming exactly those tests.
+// A change whose packages carry none prints one `CI FUNCTIONAL OK packages=0
+// reason=<why>` line and exits 0, and the target runs nothing. An unknown flag
+// and a pattern that matches no package are refused, every one in one line: a
+// typo in CI's package list must never skip the functional tier in silence.
 func cmdFunctional(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		return refuse(stderr, " functional", "no package directory given; pass the packages the change touched (./cmd/nova-sprint ...)")
 	}
-	dirs, err := functional.Expand(args)
+	var problems, patterns []string
+	for _, arg := range args {
+		switch {
+		case arg == "-h" || arg == "--help" || arg == "-help":
+			return refuse(stderr, " functional", functionalUsage)
+		case strings.HasPrefix(arg, "-"):
+			problems = append(problems, fmt.Sprintf("unknown flag %q (functional takes no flags, only package directories such as ./cmd/nova-sprint or ./internal/...)", arg))
+		default:
+			patterns = append(patterns, arg)
+		}
+	}
+	problems = append(problems, functional.Unmatched(patterns)...)
+	if len(problems) > 0 {
+		return refuse(stderr, " functional", strings.Join(problems, "; "))
+	}
+	dirs, err := functional.Expand(patterns)
 	if err != nil {
 		return refuse(stderr, " functional", oneline.Err(err))
 	}
@@ -234,6 +257,7 @@ func cmdFunctional(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, " functional", oneline.Err(err))
 	}
 	if len(pkgs) == 0 {
+		fmt.Fprintf(stdout, "CI FUNCTIONAL OK packages=0 reason=no-functional-tag-in-%d-dirs\n", len(dirs))
 		return 0
 	}
 	dirs = make([]string, 0, len(pkgs))
