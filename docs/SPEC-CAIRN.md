@@ -60,8 +60,10 @@ RFC 3339 UTC replay for tests), the stable entry/session identifiers and
 the source pointers, which are recorded and never opened. Exactly one of
 `--text` or `--file` names the words, so the tool never picks between two
 candidates for what was chosen. A retry of the same request succeeds with
-`duplicate=true` and no second entry; the same entry id carrying different
-prose is exit 1, a conflict, never an overwrite. Each entry lands atomically through internal/atomicfile: a unique sibling temp file honors the process umask, the file is synced and renamed, and parent-directory sync is attempted on a best-effort basis. Stale random-sibling temp files from interrupted appends are never indexed or overwritten by a retry. The retry writes the complete entry and heals a missing pointer line without touching another writer's files. Success reports local persistence and remote publication
+`duplicate=true`, the original stored timestamp, and no second entry. The
+reported stamp uses the stored precision (whole seconds for a bench heading);
+a malformed stored stamp refuses rather than inventing a time. The same entry
+id carrying different prose is exit 1, a conflict, never an overwrite. Each entry lands atomically through internal/atomicfile: a unique sibling temp file honors the process umask, the file is synced and renamed, and parent-directory sync is attempted on a best-effort basis. Stale random-sibling temp files from interrupted appends are never indexed or overwritten by a retry. The retry writes the complete entry and heals a missing pointer line without touching another writer's files. Success reports local persistence and remote publication
 separately — `persisted=true published=false` — because meaningful notes
 are fsync-durable before success is acknowledged, independently of Redis;
 local durability is real while remote publication is pending, and neither
