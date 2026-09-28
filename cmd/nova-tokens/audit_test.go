@@ -22,7 +22,7 @@ func TestNoOtherWriterOrShadowCanBypassTheEscape(t *testing.T) {
 }
 
 var tokensAudit = audit.Config{
-	Escapers: []string{"sourceLine", "unreadableLine", "unparsedLine", "dayLine", "aggFields"},
+	Escapers: []string{"sourceLine", "unreadableLine", "unparsedLine", "dayLine", "aggFields", "collateLine"},
 	// One entry per site, keyed by file, function and source text; each is a claim a
 	// reader can check.
 	Exempt: map[string]string{
