@@ -37,6 +37,25 @@ func RunGate(in GateInput) (string, int) {
 	if head == "" {
 		return "SECRETS REFUSED: missing --head <git ref>", 2
 	}
+	// The two refs become commits before anything reads them. A ref is handed to git as an
+	// argument, and one beginning with "-" is read by git as an OPTION: --head=--diff-filter=U
+	// made the diff empty and the gate APPROVE files=0 at exit 0, and --base=--output=<f> made
+	// git write a file. So a ref of that shape is refused, each is resolved to one commit
+	// with rev-parse --verify behind --end-of-options, and every later git call is given the
+	// resolved SHA, again behind --end-of-options.
+	for _, r := range []struct{ flag, ref string }{{"--base", base}, {"--head", head}} {
+		if strings.HasPrefix(r.ref, "-") {
+			return fmt.Sprintf("SECRETS REFUSED: %s %s begins with \"-\", the shape of an option, not a git ref", r.flag, oneline.Field(r.ref)), 2
+		}
+	}
+	base, err := gateResolveCommit(storeDir, "--base", base)
+	if err != nil {
+		return gateRefuse(0, "", err.Error()), 2
+	}
+	head, err = gateResolveCommit(storeDir, "--head", head)
+	if err != nil {
+		return gateRefuse(0, "", err.Error()), 2
+	}
 
 	// The registry is read FIRST and read WHOLE, before any judgement leans on it: half a
 	// registry is the half that lets a recipient through, so unreadable or malformed is a
@@ -306,9 +325,26 @@ func firstPlainValue(data []byte, unencryptedRegex string) (string, bool) {
 	return "", false
 }
 
+// gateResolveCommit turns one ref into the SHA of the commit it names in the store, or
+// refuses it. A ref beginning with "-" is the shape of an option, not a ref, and is refused
+// before git sees it (RunGate refuses it first, as argv; this is the second wall); anything
+// else is asked of `git rev-parse --verify` behind --end-of-options, so git reads it only as
+// a revision.
+func gateResolveCommit(storeDir, flagName, ref string) (string, error) {
+	if strings.HasPrefix(ref, "-") {
+		return "", fmt.Errorf("%s %s begins with \"-\", the shape of an option, not a git ref", flagName, oneline.Field(ref))
+	}
+	out, err := exec.Command("git", "-C", storeDir, "rev-parse", "--verify", "--quiet", "--end-of-options", ref+"^{commit}").Output()
+	sha := strings.TrimSpace(string(out))
+	if err != nil || sha == "" || strings.HasPrefix(sha, "-") {
+		return "", fmt.Errorf("%s %s does not name a commit in the store %s", flagName, oneline.Field(ref), oneline.Field(storeDir))
+	}
+	return sha, nil
+}
+
 // gitChangedFiles lists the files that differ between base and head.
 func gitChangedFiles(storeDir, base, head string) ([]string, error) {
-	out, err := exec.Command("git", "-C", storeDir, "diff", "--name-only", base, head).Output()
+	out, err := exec.Command("git", "-C", storeDir, "diff", "--name-only", "--end-of-options", base, head, "--").Output()
 	if err != nil {
 		return nil, fmt.Errorf("git diff %s %s failed: %v", base, head, err)
 	}
@@ -317,7 +353,7 @@ func gitChangedFiles(storeDir, base, head string) ([]string, error) {
 
 // gitTreeFiles lists every path in the tree at ref.
 func gitTreeFiles(storeDir, ref string) ([]string, error) {
-	out, err := exec.Command("git", "-C", storeDir, "ls-tree", "-r", "--name-only", ref).Output()
+	out, err := exec.Command("git", "-C", storeDir, "ls-tree", "-r", "--name-only", "--end-of-options", ref).Output()
 	if err != nil {
 		return nil, err
 	}
@@ -328,7 +364,7 @@ func gitTreeFiles(storeDir, ref string) ([]string, error) {
 
 // gitShowFile reads one file's bytes out of the tree at ref.
 func gitShowFile(storeDir, ref, path string) ([]byte, error) {
-	return exec.Command("git", "-C", storeDir, "show", ref+":"+path).Output()
+	return exec.Command("git", "-C", storeDir, "show", "--end-of-options", ref+":"+path).Output()
 }
 
 func splitLines(out []byte) []string {

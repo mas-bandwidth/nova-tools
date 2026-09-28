@@ -1257,6 +1257,10 @@ secrets store. It diffs the two refs with git and asks GitHub nothing. It prints
 `GATE APPROVE files=<n> machines=<registry|->` at exit 0, or one
 `GATE REFUSE rule=<n> file=<f>: <why>` line at exit 2.
 
+`--base` and `--head` each name one commit. A ref beginning with `-`, a ref that
+names no commit, and any gate flag given twice are each refused at exit 2 with one
+line naming the flag, before anything is judged.
+
 `--machines` is the fleet's machines registry, and its `seat` column is what
 vouches for a recipient key the diff introduces: a new key is permitted only for
 a seat some machine in the registry carries, so adding a seat needs no human
