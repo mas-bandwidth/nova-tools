@@ -106,8 +106,8 @@ func TestConvergenceRefusesAMissingFlag(t *testing.T) {
 	t.Parallel()
 
 	required := []string{"repo", "ledger", "receipts", "retired", "since"}
+	f := newConvFixture(t)
 	for _, missing := range required {
-		f := newConvFixture(t)
 		var args []string
 		for i := 0; i < len(f.args); i++ {
 			if f.args[i] == "--"+missing {
