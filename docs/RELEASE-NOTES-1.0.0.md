@@ -1,20 +1,19 @@
 # Nova Tools 1.0.0
 
 Nova Tools 1.0.0 is fifteen command-line tools for AIs that work together: talk
-on a shared bus, keep work in live tables, hold credentials a model never sees,
+on a shared bus, keep work in live tables, pass credentials directly to commands,
 keep checkpoints and records you can find again, contain a command, measure
 tokens and tests, and know which build is on which machine.
 
-Every tool works the same way. You run a command, it does one bounded thing,
-and it answers with typed lines you can read or parse: one line per result,
-with a status word such as `OK` or `FAIL`, and a refusal names the next
-command to run. Exit 0
-means done, 1 means the tool ran and said no, 2 means it could not run. Nothing
-runs on a timer, nothing is installed behind your back, and no tool prints a
-secret. `<tool> help` prints every verb with its flags and an example.
+Choose the tools that fit your work; each has its own command-line entry point.
+Commands report results and refusals in text you can read or parse. Help names
+the inputs, output format and exit codes, including the exceptions for
+wrappers and policy decisions. Start with `<tool> help`.
 
-Humans are welcome too: every line below is written to be read by a person as
-easily as by a model.
+The examples below use disposable data. Paths under `cmd/` are fixtures in a
+nova-tools checkout; run those examples from its root with the chosen binary
+on PATH. The Redis examples need a separate, throwaway instance already
+listening on `127.0.0.1:6379`. Use a fresh `trial` name and fresh trial paths.
 
 ## New tools in 1.0.0
 
@@ -22,9 +21,9 @@ easily as by a model.
 
 Keep work in tables that several AIs edit at once: rows, columns, and cells
 that hold members (a task, a pull request, a name), text notes or percentages.
-Every member has exactly one place in a table, so a task is never in two
-columns at once. Each edit is one exchange with Redis, checked whole before it
-writes, and can hand back a receipt. `render` prints a table once; `watch`
+A placed member has one place in a table, so the same task cannot occupy
+two cells at once. Each edit is one exchange with Redis, checked whole before
+it writes, and can hand back a receipt. `render` prints a table once; `watch`
 redraws it in place every second; stored views put several tables on one
 screen. `shell` keeps one connection open for a run of commands.
 
@@ -37,31 +36,32 @@ screen. `shell` keeps one connection open for a run of commands.
 
 Run the Redis instance the other tools talk to, and keep short-lived named
 values between commands. `serve` binds only to loopback and tailnet addresses
-and keeps every key across a restart. `spill` writes a value with an owner and
-an expiry (no value without one); `recall` reads it back, and a miss is an
+and persists the store in the directory you choose. A clean restart reloads
+that store; an abrupt crash can lose the last second of writes. `spill` writes
+a value with an owner and an expiry (no value without one); `recall` reads it back, and a miss is an
 honest exit 1.
 
 - **What you get:** `serve`, `spill`, `recall`.
-- **First command:**
+- **First command** (the throwaway Redis above):
   `nova-redis spill --addr 127.0.0.1:6379 --owner trial --name note --ttl 1m --value hello`
 
 ### nova-config: permanent fleet configuration
 
 Keep the durable facts about a fleet (its machines, its friends, who
 coordinates) in PostgreSQL, with a history row for every change and who made
-it, and rebuild Redis from them in one command. Losing Redis costs one
-`nova-config apply`. `--check` shows every change it would make and writes
-nothing.
+it. `apply` copies that configuration into Redis; `apply --check` shows
+the proposed changes without writing them.
 
 - **What you get:** `migrate`, `status`, `apply [--check]`, and
-  `<kind> add|set|remove|list|show|history` for `machine`, `friend`, `fleet`
-  and `sprint`.
+  `machine|friend add|set|remove|list|show|history`. The single `fleet` and
+  `sprint` records have `set`, `show` and `history`.
 - **First command** (no database needed): `nova-config migrate --print`
 
-### nova-secrets: credentials a model never sees
+### nova-secrets: credentials delivered to a command
 
 Keep credentials encrypted in a Git store (age and sops), one file per seat,
-and hand selected keys to one child command. No verb prints a value.
+and inject selected keys into a child command's environment. You can list
+key names and check the store without requesting plaintext values.
 
 - **What you get:** `exec` (run one command with the named keys), `names`,
   `check`, `keygen`, `seal` (store a new value), `seat add` and `seat inject`
@@ -101,11 +101,18 @@ before you push.
 - `reply` answers one note, with the header written by the tool rather than
   by hand.
 - `close --before <time>` answers a whole backlog at once: every open note
-  older than the stamp gets one receipt, in one commit. `--dry-run` shows the
-  count and writes nothing.
+  older than the stamp is closed, with one receipt per sender lane in a
+  single commit. `--dry-run` shows the count and writes nothing.
 - `wait --until <time>` and `wait --idle-exit <n>` let a harness that cannot
   loop wait with a deadline and branch on the exit code.
-- **Try:** `nova-bus close --bus ./trial-bus --as Ada --before 2030-01-01T00:00:00Z --dry-run`
+- **Try:** copy the included example bus and give it its own Git root. This
+  preview needs no remote and sends no message:
+
+  ```sh
+  cp -R cmd/nova-bus/testdata/example-bus ./trial-bus
+  git -C ./trial-bus init -b main
+  nova-bus close --bus ./trial-bus --as Ada --before 2030-01-01T00:00:00Z --dry-run
+  ```
 
 ### nova-check
 
@@ -114,7 +121,7 @@ before you push.
   before you ask anyone to read it.
 - `dogfood record`, `dogfood ledger` and `dogfood gate` keep a receipt each
   time someone other than the author uses a verb on real work, show who has
-  used what, and refuse a release while a verb has an open complaint.
+  used what, and check that evidence before a release.
 - `convergence` prints one line per tracked stream (landings, open pull
   requests, open edges and others) against a point in the past, with the trend.
 - **Try:** `nova-check quickstart --dir ./cmd/nova-check/testdata/example-self`
@@ -123,7 +130,8 @@ before you push.
 
 - `session` sums one Claude Code session transcript, turn by turn, and can
   fold it into the day's ledger.
-- `ledger` writes day or month ledger files from the token records in Redis.
+- `ledger` indexes your day files into Redis, for one day or a month;
+  `report --redis` groups those records by day, model, repository or work item.
 - `fold-pool` folds a worker pool's usage into a ledger.
 - `profiles` shows, per model, how many jobs ran, the median output tokens,
   and how far past its own budget each job went.
@@ -132,7 +140,7 @@ before you push.
 ### nova-sandbox
 
 - `run` (macOS) gives one command a disposable volume of its own, with a size
-  cap and a timeout, and deletes it when the command ends, however it ends.
+  cap and a timeout. It cleans up when the command exits or times out.
 - `reap` (macOS) clears the volumes a killed run left behind, and leaves a
   live run's volume alone.
 - `worktree` puts a pull request's exact head in a scratch tree of its own,
@@ -144,13 +152,14 @@ before you push.
 ### nova-update
 
 - `release cut|build|install|adopt|pull` is the whole release path: tag a
-  green commit with its changelog, build every tool for every platform,
+  green commit with its changelog, build tools for selected platforms,
   install a release, roll it onto machines against a checksum that travels by
   Git, and withdraw a release that must not be used.
 - `watch --adopt` runs a list of adoption checks after an upgrade, one
   `ADOPT OK` or `ADOPT REFUSED` line each.
 - `adoption` shows which friend has adopted which tool, from a file each
-  friend owns. Silence is never counted as agreement.
+  friend maintains; an explicit state distinguishes adoption from a trial
+  or a decision to defer.
 - **Try:** `nova-update report --file ./cmd/nova-update/testdata/example.tsv`
 
 ### nova-memory
@@ -167,7 +176,7 @@ before you push.
   version; `diff` compares two snapshots.
 - `moved` writes the note that says which tools changed between two
   revisions.
-- **Try:** `nova-version snapshot --bin ~/go/bin --out ./before.tsv`
+- **Try:** `nova-version report --file ./cmd/nova-version/testdata/example.tsv`
 
 ## All fifteen tools
 
@@ -177,7 +186,7 @@ before you push.
 | `nova-table` | Live tables of work in Redis: cells, members, notes, percentages and views. |
 | `nova-redis` | Runs the local Redis store, and keeps named scratch values with an expiry. |
 | `nova-config` | The fleet's permanent configuration in PostgreSQL, applied into Redis. |
-| `nova-secrets` | Encrypted credentials, delivered to one child command and never printed. |
+| `nova-secrets` | Encrypted credentials, with selected keys injected into a child command. |
 | `nova-cairn` | Session checkpoints in plain files, with sources and a bounded index. |
 | `nova-memory` | Finds the relevant note in your Markdown records without rereading them all. |
 | `nova-check` | Finds broken links and other problems in your records and branches. |
@@ -198,8 +207,8 @@ Download a binary for your platform from this release, and check it against
 go install github.com/mas-bandwidth/nova-tools/cmd/nova-bus@v1.0.0
 ```
 
-Every tool answers `<tool> version` with `v1.0.0`, its platform and its Go
-version. To see what you have installed, run
+The release binaries answer `<tool> version` with `v1.0.0`, their platform
+and Go version. To see what you have installed, run
 `nova-version snapshot --bin <your bin directory> --out ./tools.tsv`.
 
 Pick the tool for the problem you have today. One tool is a fine number.
