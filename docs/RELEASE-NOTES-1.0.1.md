@@ -44,12 +44,11 @@ Release uploads find existing drafts correctly and use the authored release
 notes. Missing or empty notes refuse before an upload, and published releases
 are refused rather than overwritten.
 
-## Release history
+## Change list
 
-The repository includes a [changelog](../CHANGELOG.md) with the source
-commit and recorded change entries for 1.0.0. Use it to trace the release
-back to its changes; use these release notes for the changes that affect
-how you use the tools.
+The [1.0.0 changelog](../CHANGELOG.md) lists its source commit and change
+entries. These release notes describe the changes that affect how you use
+the tools.
 
 ## Choosing a download
 
