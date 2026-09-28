@@ -123,7 +123,9 @@ near the end, and the sections below say how each is met.
    Before opening the fold lock or writing a day file, the writer refuses an
    output directory that is itself a symlink or a child of a symlink directory,
    including a spelling with a trailing separator or `/.`. It leaves the link
-   and its target unchanged.
+   and its target unchanged. The `fold.lock` file itself must be regular:
+   a symlink (including a dangling one) or other file type is refused before
+   the lock writes a PID.
 9. **One file per day. A month is a sum of day files. The tool removes
    nothing.** There is no month file. `sum` reads day files and writes
    nothing. No verb deletes, truncates or trims any file, including any log.

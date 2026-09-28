@@ -40,7 +40,7 @@ func TakeFoldLock(out string, wait time.Duration) (func(), error) {
 	if err := checkOutputDirectory(out); err != nil {
 		return nil, fmt.Errorf("the lock that keeps two folds off one --out could not be opened at %s: %w", path, err)
 	}
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
+	f, err := openFoldLock(path)
 	if err != nil {
 		return nil, fmt.Errorf("the lock that keeps two folds off one --out could not be opened at %s: %w", path, err)
 	}
@@ -72,6 +72,37 @@ func TakeFoldLock(out string, wait time.Duration) (func(), error) {
 		}
 		time.Sleep(lockPoll + jitter)
 	}
+}
+
+// openFoldLock creates a new lock exclusively or opens an existing regular file.
+// An existing path is never opened with O_CREATE: a dangling symlink cannot make
+// a file elsewhere. Validate the opened file against the directory entry before
+// the caller locks or writes it. Unix also refuses symlinks at the open itself.
+func openFoldLock(path string) (*os.File, error) {
+	f, err := openFoldLockFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL)
+	if os.IsExist(err) {
+		info, statErr := os.Lstat(path)
+		if statErr != nil {
+			return nil, statErr
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("lock path is a symlink; use a regular fold.lock file")
+		}
+		if !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("lock path is not a regular file; use a regular fold.lock file")
+		}
+		f, err = openFoldLockFile(path, os.O_RDWR)
+	}
+	if err != nil {
+		return nil, err
+	}
+	info, statErr := f.Stat()
+	entry, entryErr := os.Lstat(path)
+	if statErr != nil || entryErr != nil || !info.Mode().IsRegular() || !entry.Mode().IsRegular() || !os.SameFile(info, entry) {
+		f.Close()
+		return nil, fmt.Errorf("lock path changed or is not a regular file; use a stable regular fold.lock file")
+	}
+	return f, nil
 }
 
 // HolderPID is the pid inside the lock file, or a dash when it holds none. It is read
