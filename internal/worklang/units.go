@@ -1,7 +1,7 @@
 package worklang
 
-// The work-set form and the amendment's keys (docs/SPEC-WORKLANG.md,
-// "Amendment 1 (2026-09-18)"). A coordinator writes a set as
+// The work-set form and its unit keys (docs/SPEC-WORKLANG.md, sections 2 to 4).
+// A coordinator writes a set as
 //
 //	(work-set "<id>" :title "..." :under (:open-root) :units ((unit "<id>" ...) ...))
 //

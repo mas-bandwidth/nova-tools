@@ -1,6 +1,6 @@
 package swarm
 
-// The pull is docs/SPEC-JOBS.md section 5: nova-swarm pull drains the priority
+// The pull is deprecated/docs/SPEC-JOBS.md section 5: nova-swarm pull drains the priority
 // lanes red (fixes to a red bench or a red PR), then green (small,
 // already-approved PRs), then small (the shortest step budget), then next. The
 // ordering is internal/lanes'; this verb names the floor and prints the one line.

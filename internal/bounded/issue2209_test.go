@@ -1,9 +1,9 @@
 // issue2209_test.go — TestIssue2209 reproduces nova-tools #2209:
 //
 //	"Implement the nova-test `receipt` verb and the per-outcome failure
-//	 receipts" (docs/SPEC-TEST.md:46-69).
+//	 receipts" (deprecated/docs/SPEC-TEST.md).
 //
-// SPEC-TEST.md promises the receipt verb prints:
+// deprecated/docs/SPEC-TEST.md promises the receipt verb prints:
 //
 //   - identity, equivalence key, bounded failing steps and excerpts, and
 //     latency (line 46-47)

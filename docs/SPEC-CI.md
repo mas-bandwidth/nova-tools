@@ -4,8 +4,7 @@ This specification holds the class tests that guard the CI path by reading the
 repository's own test files as text. It stands beside [SPEC.md](SPEC.md), whose
 **Conventions** section — exit codes, no guessed paths, the one-line output
 grammar, the cap-and-count rule, `internal/oneline` and `internal/bounded` —
-applies here unchanged and is not restated, and beside [SPEC-TEST.md](SPEC-TEST.md),
-which owns the verbs that run the local and CI suites. Related: the budget law
+applies here unchanged and is not restated. Related: the budget law
 `TestNoTestAssertsAWallClockBoundUnderTenSeconds`.
 
 ## The CI class test against fixed waits on the CI path

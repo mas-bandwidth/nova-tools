@@ -7,24 +7,16 @@ import (
 )
 
 // wsl2bench_test.go holds tools/bench-wsl2.ps1 against the one-step bootstrap
-// the Threadripper asked for (#1458) and against the fleet page that has to name
-// it.
+// and against the Windows bench standard that has to name it.
 //
-// The Windows box joins the fleet as a LINUX machine under WSL2 (Glenn,
-// 2026-09-18: "drop the native windows CI runners. WSL only from now on."), so
-// docs/BENCH-STANDARD-WINDOWS.md is parked: the host half of the standard --
-// winget, the .wslconfig memory ceiling, the mirrored network, the startup task
-// that brings sshd back with nobody logged in, the distro-side user, sudo,
-// systemd and the Go SDK -- is provisioned by tools/bench-wsl2.ps1 and by
-// nothing else. Before it there was no file at all, and the setup was counted
-// by hand at about twenty hands from Glenn: winget, `wsl --install`, the
-// interactive user prompt, .wslconfig, one admin paste, an apt + Go +
-// git-identity paste inside the distro, `gh auth login`, `wsl --set-default`,
-// the seat key twice, and four pushes past a hook.
+// A Windows box joins the fleet as a LINUX machine under WSL2, so the host half of
+// the standard -- winget, the .wslconfig memory ceiling, the mirrored network, the
+// startup task that brings sshd back with nobody logged in, the distro-side user,
+// sudo, systemd and the Go SDK -- is provisioned by tools/bench-wsl2.ps1 and by
+// nothing else, in one run rather than a score of hand steps.
 //
 // It reads the script as text and runs nothing; a Windows box is not on this
 // host and the script is not executable here.
-
 const (
 	wsl2BootstrapPath = "../../tools/bench-wsl2.ps1"
 	wsl2FleetSpecPath = "../../docs/BENCH-STANDARD-WINDOWS.md"

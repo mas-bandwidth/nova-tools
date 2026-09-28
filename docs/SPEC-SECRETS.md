@@ -1071,20 +1071,23 @@ is the wait, said as a red, and it clears when the second pull request lands.
 
 ## Rules from dogfooding
 
-Ten rules from dogfooding, each with the hurt it closes and the red test that carries it. They extend **The model** and **Rotation**; they do not replace them.
+Ten rules from dogfooding, each with the mistake it prevents and what holds it: a test where
+code can hold it, and the practice it is where only a person can. They extend **The model** and **Rotation**; they do not replace them.
 
 1. **ingest is rotation** — a value enters by seal and the old value is revoked at the provider the
    same hour, because sealing the new value while the old one still works banks a rotation nobody
-   finished. Red test demanded: `TestIngestIsRotation`.
+   finished. A practice of the person sealing: the revocation happens at the provider, where no
+test of this tool can see it.
 2. **one seat per OS user, keys for swarms not people** — an AI is a unix user with one file and
    one key, and a pool of workers shares a swarm key, because a person's credential in a shared
    seat cannot be told from a worker's. Red test demanded: `TestOneSeatPerOSUser`.
 3. A seat file is **opened only by its seat key and the recovery key, exactly two recipients**,
    enforced by the seat-rule gate on `.sops.yaml`, because a third recipient is the grant every
-   review is meant to catch. Red test demanded: `TestSeatRuleGateIsExactlyTwoRecipients`.
+   review is meant to catch. Held by `TestGateRefusesARuleWithThreeRecipients`.
 4. A value reaches a process **only by `exec --only NAME`, never a file, argv, log or transcript**,
-   because every other road leaves the plaintext where a sibling process can read it. Red test
-   demanded: `TestValuesReachProcessesOnlyByExecOnly`.
+   because every other road leaves the plaintext where a sibling process can read it. Its edges
+   are held by `TestExecSetsExactlyTheKeysInTheFile` and
+   `TestSealPipedValueLandsInEncryptStdinNotArgv`.
 5. All **harness configs reference `{env:NAME}`**; a literal key in a config is DRIFT, because a
    copied value outlives its rotation in a file nobody watches. Red test demanded:
    `TestHarnessConfigsReferenceEnvNames`.
@@ -1098,13 +1101,15 @@ Ten rules from dogfooding, each with the hurt it closes and the red test that ca
    bench.
    Red test demanded: `TestStorePullUsesBenchOwnedKey`.
 8. A key is **generated off-bench for recovery only**; the **private half lives in the owner's password manager**,
-   because recovery that sits beside the ciphertext is not recovery. Red test
-   demanded: `TestRecoveryKeyLivesOnlyInThePasswordManager`.
+   because recovery that sits beside the ciphertext is not recovery. A practice of the owner:
+   the password manager is outside anything this tool or its tests can read.
 9. **seal is one step**: stdin or hidden prompt, PR, gate, merge, check, because a
-   multi-step seal is a step somebody stops halfway. Red test demanded: `TestSealIsOneStep`.
-10. The bench standard's checks **fail loudly on any plaintext key file** (`auth.json`,
-    `*.env`) anywhere under `HOME`, because a plaintext key on the bench is the boundary this page
-    is about, already crossed. Red test demanded: `TestPlaintextKeyFilesFailLoudly`.
+   multi-step seal is a step somebody stops halfway. Held by `TestSealFullPathOpensPRAndMerges`.
+10. The bench standard **fails loudly on a plaintext key file**, because a plaintext key on the
+    bench is the boundary this page is about, already crossed. `tools/bench-standard.sh` check
+    (6) drifts on the ones it knows: `~/.local/share/opencode/auth.json`,
+    `~/.config/deepseek/env`, and a literal `apiKey": "sk-` in `~/.config/opencode/*.json`. No
+    test holds that check.
 
 ## Rules for receipts and new seats
 

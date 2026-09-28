@@ -1,4 +1,4 @@
-// Package jobs is the job graph of docs/SPEC-JOBS.md section 1: typed edges needs and
+// Package jobs is the job graph of deprecated/docs/SPEC-JOBS.md section 1: typed edges needs and
 // blocks, a seeded graph refused acyclic by validator rule 3, and the mechanical ready
 // set launch reads.
 //

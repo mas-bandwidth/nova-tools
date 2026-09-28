@@ -25,7 +25,7 @@ func plantCard(t *testing.T, benchDir, name string) {
 	}
 }
 
-// two-workers-cannot-take-one-card (docs/SPEC-JOBS.md section 2, line 57): a worker
+// two-workers-cannot-take-one-card (deprecated/docs/SPEC-JOBS.md section 2, line 57): a worker
 // takes a card by rename(<name>.card, taken/<worker>-<name>.card), which is atomic
 // within the directory, so two workers racing for one card cannot both take it --
 // exactly one wins and the card is on exactly one worker.
@@ -86,7 +86,7 @@ func TestTwoWorkersCannotTakeOneCard(t *testing.T) {
 	}
 }
 
-// a-steal-never-starves-the-victim (docs/SPEC-JOBS.md section 2, line 57): an idle
+// a-steal-never-starves-the-victim (deprecated/docs/SPEC-JOBS.md section 2, line 57): an idle
 // worker steals from the fullest bench, but a steal leaves the victim at or above its
 // own capacity line, and a victim already at the line is left alone.
 func TestAStealNeverStarvesTheVictim(t *testing.T) {

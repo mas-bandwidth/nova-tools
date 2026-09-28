@@ -1,6 +1,6 @@
 package swarm
 
-// Pull workers with leases and heartbeats (docs/SPEC-JOBS.md section 3).
+// Pull workers with leases and heartbeats (deprecated/docs/SPEC-JOBS.md section 3).
 //
 // `nova-swarm pull` takes a one-slot lease from the bench store before it runs a
 // card. A card lives in <store>/queue/<name>.card; taking it renames it to

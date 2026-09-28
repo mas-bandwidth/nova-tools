@@ -46,7 +46,7 @@ A deterministic digest can name allowlisted canonical metadata and numeric conte
 
 Conflicting values for one event without an evidenced revision order produce a visible conflict. No last-Git-commit-wins, file-order-wins or maximum-counter-wins rule. An explicit correction names every conflicting predecessor it resolves and retains each predecessor. Cyclic or incomplete supersession chains fail validation.
 
-Copying Studio sessions to Air preserves source identity and Studio origin. A later evidenced bench correction supersedes the earlier provenance rather than duplicating spend. Source and wrapper overlaps, such as an OpenCode session and its nova-swarm job total, need a declared relationship and one selected counting source. If no relationship can be proved, incompatible scopes are refused for a combined report; the report names the unresolved overlap.
+Copying Studio sessions to Air preserves source identity and Studio origin. A later evidenced bench correction supersedes the earlier provenance rather than duplicating spend. Source and wrapper overlaps, such as an OpenCode session and a job total that wraps it, need a declared relationship and one selected counting source. If no relationship can be proved, incompatible scopes are refused for a combined report; the report names the unresolved overlap.
 
 ## Counter and time semantics
 

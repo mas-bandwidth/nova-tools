@@ -8,11 +8,10 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/worklang"
 )
 
-// The amendment's reader contract (docs/SPEC-WORKLANG.md, "Amendment 1"), seen
-// red first. This slice is PARSE ONLY: the reader accepts the new keys, checks
-// their shape, and refuses what it cannot represent. Nothing here schedules,
-// admits, serialises or leases -- that is the kernel's side and it is Stella's
-// and Emma's to write.
+// The work-set reader contract (docs/SPEC-WORKLANG.md, sections 2 to 4). The
+// reader is PARSE ONLY: it accepts the unit keys, checks their shape, and
+// refuses what it cannot represent. Nothing here schedules, admits, serialises
+// or leases.
 func TestWorklangWorkSet(t *testing.T) {
 	t.Parallel()
 
