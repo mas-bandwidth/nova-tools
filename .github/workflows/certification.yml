@@ -94,12 +94,13 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: go.mod
-          # This job manages its cache below; setup-go's own saves in a post step, which a
-          # cancelled job never reaches.
-          cache: false
+      - name: name the Go toolchain's tool-cache directory
+        # The toolchain rides in the race cache entry below. setup-go downloads, extracts and
+        # then copies it into the runner's tool cache: 26-27 s on macos-latest, 16 s of it the
+        # copy (run 36376038363). Restored into the tool cache first, setup-go finds it there
+        # and does neither. The version is go.mod's, which the cache key already hashes.
+        shell: bash
+        run: echo "GO_TOOL_DIR=${RUNNER_TOOL_CACHE}/go/$(sed -n 's/^go \([0-9.]*\)$/\1/p' go.mod)" >> "$GITHUB_ENV"
 
       - name: restore the race build cache
         id: gocache
@@ -109,9 +110,17 @@ jobs:
           path: |
             ${{ runner.os == 'macOS' && '~/Library/Caches/go-build' || '~/.cache/go-build' }}
             ~/go/pkg/mod
+            ${{ env.GO_TOOL_DIR }}
           key: ${{ runner.os }}-gorace-${{ hashFiles('go.mod') }}
           restore-keys: |
             ${{ runner.os }}-gorace-
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          # This job manages its cache above and below; setup-go's own saves in a post step,
+          # which a cancelled job never reaches.
+          cache: false
 
       - name: gofmt
         # gofmt -l prints unformatted files and exits 0 either way, so the exit
@@ -177,6 +186,7 @@ jobs:
           path: |
             ${{ runner.os == 'macOS' && '~/Library/Caches/go-build' || '~/.cache/go-build' }}
             ~/go/pkg/mod
+            ${{ env.GO_TOOL_DIR }}
           key: ${{ steps.gocache.outputs.cache-primary-key }}
 
       - name: install redis-server

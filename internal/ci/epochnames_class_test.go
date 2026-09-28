@@ -75,6 +75,20 @@ var (
 
 // epochNameHits is every line of src (file n, Go or Lua) that spells a table
 // set's name outside the rule; comments are not code.
+// epochMayMatch is the substring every alternative of the four epoch regexps
+// carries: "Key(", "keyPool(" or "keyWaiting(" (epochRetired), ":cards:"
+// (epochCards), "ws:" (epochWS), ":pool" or ":waiting" (epochList). A line
+// with none of them cannot match, so the regexps, which cost seconds over the
+// tree under -race, never see it.
+func epochMayMatch(code string) bool {
+	for _, lit := range []string{"Key(", "keyPool(", "keyWaiting(", ":cards:", "ws:", ":pool", ":waiting"} {
+		if strings.Contains(code, lit) {
+			return true
+		}
+	}
+	return false
+}
+
 func epochNameHits(n, src string, lua bool) []string {
 	var out []string
 	for i, line := range strings.Split(src, "\n") {
@@ -89,6 +103,9 @@ func epochNameHits(n, src string, lua bool) []string {
 			code = strings.TrimSpace(code[:j])
 		}
 		if code == "" || !strings.Contains(code, ":") && !strings.Contains(code, "Key") && !strings.Contains(code, "key") {
+			continue
+		}
+		if !epochMayMatch(code) {
 			continue
 		}
 		if !epochRetired.MatchString(code) && !epochCards.MatchString(code) && !epochWS.MatchString(code) && !epochList.MatchString(code) {
