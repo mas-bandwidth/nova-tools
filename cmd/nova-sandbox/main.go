@@ -160,6 +160,9 @@ a path from it and an inherited HOME is denied by the wall.
 a toolchain in a user directory is exactly a caller-supplied read-only root.
 
 example:
+  nova-sandbox check
+
+macOS job examples (replace /path/to with your own paths):
   HOME=/path/to/pool/jobs/j1/home \
   nova-sandbox --read /opt/homebrew --write /path/to/pool/jobs/j1 \
                -- /opt/homebrew/bin/git -C /path/to/pool/jobs/j1/repo status
