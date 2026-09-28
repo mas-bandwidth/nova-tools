@@ -21,6 +21,12 @@ MCFirstConnBrokenMisaligned.cfg	MCFirstConn.tla	invariant	TakenOnlyWhenDue	ignor
 MCFirstConnBrokenRefused.cfg	MCFirstConn.tla	invariant	TakenOnlyWhenDue	ignore-terminal	firstconn	required	-
 MCFirstConnBrokenShort.cfg	MCFirstConn.tla	invariant	AnswerStandsInPlace	ignore-terminal	firstconn	required	-
 MCFirstConnBrokenTwice.cfg	MCFirstConn.tla	invariant	TakenOnlyWhenDue	ignore-terminal	firstconn	required	-
+MCFuseBox.cfg	MCFuseBox.tla	pass	-	ignore-terminal	fusebox	required	-
+MCFuseBoxBrokenAbsentClear.cfg	MCFuseBox.tla	invariant	GateAnswersOnlyFromEveryNamedBox	ignore-terminal	fusebox	required	-
+MCFuseBoxBrokenInitReplaces.cfg	MCFuseBox.tla	invariant	InitOnlyWhereNoBox	ignore-terminal	fusebox	required	-
+MCFuseBoxBrokenLastWins.cfg	MCFuseBox.tla	invariant	GateAnswersOnlyFromEveryNamedBox	ignore-terminal	fusebox	required	-
+MCFuseBoxBrokenLockdownNeedsBox.cfg	MCFuseBox.tla	invariant	LockdownAlwaysBlows	ignore-terminal	fusebox	required	-
+MCFuseBoxBrokenQuarantineMakes.cfg	MCFuseBox.tla	invariant	OnlyALiftInitOrHandClears	ignore-terminal	fusebox	required	-
 MCLandWatch.cfg	MCLandWatch.tla	pass	-	ignore-terminal	landwatch	bench	original-instance-over-budget
 MCMemberBrokenAlias.cfg	MCMemberTable.tla	invariant	NoOwnedAlias	ignore-terminal	membertable	required	-
 MCMemberBrokenMove.cfg	MCMemberTable.tla	invariant	RecordSetLink	ignore-terminal	membertable	required	-

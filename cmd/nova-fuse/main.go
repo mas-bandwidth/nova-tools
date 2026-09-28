@@ -19,9 +19,11 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"sort"
 	"strings"
@@ -36,6 +38,7 @@ const usage = `nova-fuse: the ingestion fuse -- lockdown and quarantine (see doc
 
 usage:
   nova-fuse version    print this build identity (--version also accepted)
+  nova-fuse init --box <path>                              create an empty box where none is; never replaces one
   nova-fuse status --box <path> [--max <n>]                what is blown, and since when (REPORTS; never gate on it)
   nova-fuse check --box <path> [surface]                   may I read? -- the gate; act only on exit 0
   nova-fuse lockdown --box <path> "<reason>"               blow the one hard fuse: all untrusted reads stop
@@ -47,8 +50,8 @@ usage:
 
 exit codes: 0 clear, or done and verified by re-reading the box; 1 blown
 (check), or could not do it / could not verify it; 2 could not run -- missing
-flag, unreadable box (treated as BLOWN, never as clear), bad invocation, or
-a lift this tool refuses by design.
+flag, no box at the path or an unreadable one (both treated as BLOWN, never as
+clear), bad invocation, or a lift this tool refuses by design.
 
 -h or --help after a verb is refused at exit 2, never answered with help:
 exit 0 is this tool's CLEAR, so a surface or a reason spelled -h cannot reach
@@ -74,9 +77,10 @@ example:
   nova-fuse lift quarantine --box ./fuse-box.json a-forum
 
 Those five are one sitting, in order: look, ask, blow the soft fuse, watch the
-answer change, rescind it. ./fuse-box.json is a path of yours -- a path that
-does not exist yet reads as CLEAR, and the first quarantine or lockdown
-creates the file.
+answer change, rescind it. ./fuse-box.json is a box of yours, made once with
+nova-fuse init --box ./fuse-box.json. A path with no box at it is refused by
+every verb but init and lockdown, never read as CLEAR; init makes an empty box
+there and refuses if anything is already there.
 `
 
 // boxHint turns this binary's most-hit refusal into a next step. The
@@ -84,7 +88,7 @@ creates the file.
 // says "refusing to guess" -- but a refusal that names only what was wrong
 // leaves a first caller to guess what the flag wanted, which is the same
 // guessing the tool refuses to do, moved onto the reader.
-const boxHint = `--box <path> is the JSON file your fuses live in, named on every verb: there is no default path and no environment variable, because a fuse box the tool went looking for is one an attacker can put somewhere. A path that does not exist yet reads as CLEAR, and the first quarantine or lockdown creates it.`
+const boxHint = `--box <path> is the JSON file your fuses live in, named on every verb: there is no default path and no environment variable, because a fuse box the tool went looking for is one an attacker can put somewhere. A path with no box at it is refused, never read as CLEAR: nova-fuse init --box <path> makes an empty one, once.`
 
 // hintFor returns the already-indented hint line for a required flag, newline
 // included. It returns package constants only, which is why printing its
@@ -151,6 +155,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdQuarantine(rest, stdout, stderr, now)
 	case "path":
 		return cmdPath(rest, stdout, stderr)
+	case "init":
+		return cmdInit(rest, stdout, stderr)
 	}
 	return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", cmd))
 }
@@ -265,6 +271,16 @@ func (o *onceValue) IsBoolFlag() bool {
 	return ok && b.IsBoolFlag()
 }
 
+// remedy names the next step after a read that proved nothing: a box that is not
+// there is made by init; a box that cannot be read is repaired by your person. It
+// carries the caller's --box raw, so every call site prints it through oneline.Escape.
+func remedy(err error, box string) string {
+	if errors.Is(err, fuse.ErrNoBox) {
+		return "if this is where your box belongs, make it: nova-fuse init --box " + box
+	}
+	return "repair the box with your person, live"
+}
+
 // ---------------------------------------------------------------------------- the verbs
 
 // cmdLift: the fuse design made code, and the asymmetry runs BETWEEN the powers.
@@ -317,7 +333,7 @@ func liftQuarantine(box, surface string, stdout, stderr io.Writer) int {
 		// REFUSE, the mirror of quarantine's refusal to narrow: while the box is
 		// unreadable every fuse is treated as BLOWN, and nothing provable can be lifted
 		// from a box that cannot be read. The corrupt bytes stay put -- they are evidence.
-		fmt.Fprintf(stderr, "nova-fuse lift quarantine: %s -- while the box is unreadable every fuse is treated as BLOWN; nothing provable can be lifted from a box that cannot be read; run: nova-fuse help\n", oneline.Err(readErr))
+		fmt.Fprintf(stderr, "nova-fuse lift quarantine: %s -- while the box cannot be read every fuse is treated as BLOWN; nothing provable can be lifted from it; %s; run: nova-fuse help\n", oneline.Err(readErr), oneline.Escape(remedy(readErr, box)))
 		return 2
 	}
 
@@ -402,7 +418,7 @@ func cmdStatus(rest []string, stdout, stderr io.Writer) int {
 
 	b, err := fuse.ReadBox(box)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-fuse status: %s -- an unreadable box is treated as BLOWN, never as clear; repair or replace it with your person, live; run: nova-fuse help\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "nova-fuse status: %s -- a box that cannot be read is treated as BLOWN, never as clear; %s; run: nova-fuse help\n", oneline.Err(err), oneline.Escape(remedy(err, box)))
 		return 2
 	}
 
@@ -453,7 +469,7 @@ func cmdCheck(rest []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		// FAIL CLOSED, and say WHICH fact this is: "could not be read" is deliberately not
 		// "a fuse is blown" -- a claim must never outrun the measurement. Both refuse.
-		fmt.Fprintf(stderr, "nova-fuse check: %s -- cannot prove no fuse is blown, so treating every fuse as BLOWN, never as clear; repair the box with your person, live; run: nova-fuse help\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "nova-fuse check: %s -- cannot prove no fuse is blown, so treating every fuse as BLOWN, never as clear; %s; run: nova-fuse help\n", oneline.Err(err), oneline.Escape(remedy(err, box)))
 		return 2
 	}
 
@@ -507,7 +523,11 @@ func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 
 	b, readErr := fuse.ReadBox(box)
-	if readErr != nil {
+	if errors.Is(readErr, fuse.ErrNoBox) {
+		// A fuse you cannot blow is not a fuse: with no box there, the lockdown makes
+		// one. Nothing is less blocked than before, since no box already refused.
+		b = fuse.Box{Quarantine: map[string]fuse.Fuse{}}
+	} else if readErr != nil {
 		// PROCEED ANYWAY, and this direction is safe to argue precisely: before, an
 		// unreadable box made every caller refuse; after, a recorded lockdown makes every
 		// caller refuse. Nothing is less blocked than it was, and the box becomes readable
@@ -562,6 +582,13 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 
 	b, readErr := fuse.ReadBox(box)
+	if errors.Is(readErr, fuse.ErrNoBox) {
+		// REFUSE, for the same reason as an unreadable box: with no box there every
+		// surface is refused, and a new box holding only this quarantine would clear
+		// the rest.
+		fmt.Fprintf(stderr, "nova-fuse quarantine: %s -- refusing to make a box holding only this quarantine: with no box every surface is refused, and that box would clear the rest; make the box first (nova-fuse init --box %s), or blow lockdown; run: nova-fuse help\n", oneline.Err(readErr), oneline.Escape(box))
+		return 2
+	}
 	if readErr != nil {
 		// REFUSE -- and this is the asymmetry with lockdown, not an inconsistency with it.
 		// An unreadable box blocks EVERY surface. Replacing it with a fresh box holding
@@ -592,6 +619,46 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time) int {
 
 	fmt.Fprintf(stdout, "QUARANTINE OK %s since=%s: %s (verified by re-reading the box; soft: yours to lift when the surface is safe again; tell your person now)\n",
 		oneline.Field(surface), since(landed), oneline.Escape(reason))
+	return 0
+}
+
+// cmdInit makes an empty box where none is. It is the one way a box comes into being
+// clear, and it NEVER replaces a box: a box already at the path, blown or not,
+// readable or not, is left as it is and the run exits 1, because replacing a box is
+// the lockdown reset this tool does not have.
+//
+// tla/FuseBox.tla is the model of the box these verbs act on: its invariants are
+// that the gate answers only from a box it read and from every --box named, that
+// only a lift, init or your person's hand makes a surface clear, that init never
+// replaces a box and that a lockdown always blows (MCFuseBox*.cfg, five reversed
+// witnesses).
+func cmdInit(rest []string, stdout, stderr io.Writer) int {
+	box, positional, ok, parsed := parseBox("init", rest, stderr)
+	if !parsed {
+		return 2
+	}
+	if len(positional) > 0 {
+		refuse(stderr, " init", fmt.Sprintf("unexpected argument %q", positional[0]))
+		ok = false
+	}
+	if !ok {
+		return 2
+	}
+	if err := fuse.CreateBox(box); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			fmt.Fprintf(stderr, "INIT FAIL box=%s: something is already there, and init never replaces a box (a blown lockdown is replaced only in a live conversation with your person); read it with nova-fuse status --box %s\n", oneline.Field(box), oneline.Escape(box))
+			return 1
+		}
+		fmt.Fprintf(stderr, "INIT FAIL box=%s: could not make the box: %s\n", oneline.Field(box), oneline.Err(err))
+		return 1
+	}
+	// Re-ask. The exit code of a remedy is not evidence the remedy worked.
+	after, err := fuse.ReadBox(box)
+	if err != nil || after.Lockdown != nil || len(after.Quarantine) != 0 {
+		fmt.Fprintf(stderr, "INIT FAIL box=%s: made but unverifiable (%s): do not trust it; tell your person\n", oneline.Field(box), oneline.Err(err))
+		return 1
+	}
+	fmt.Fprintf(stdout, "INIT OK box=%s: an empty box, no fuse blown (verified by re-reading the box)\n", oneline.Field(box))
 	return 0
 }
 

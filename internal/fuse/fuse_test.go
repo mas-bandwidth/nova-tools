@@ -13,6 +13,8 @@ defect this package exists to prevent and is the one that fails OPEN.
 package fuse
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -33,25 +35,43 @@ func write(t *testing.T, path, content string) {
 	}
 }
 
-// ------------------------------------------------- 1. THE READ HAS THREE ANSWERS, NOT TWO
+// ------------------------------------------------- 1. THE READ HAS ONE YES AND TWO NOES
 
-// TestAbsentBoxIsVerifiedClearNotAnError: a box that was never created holds no blown
-// fuses -- that is a VERIFIED FACT: the read failed with the one error that means
-// NONEXISTENT rather than UNREADABLE. (That error cannot say whether the missing thing
-// was the file or its parent directory; the collapse is accepted -- see note 1 in the
-// package comment -- and pinned separately in cmd/nova-fuse's tests.)
-func TestAbsentBoxIsVerifiedClearNotAnError(t *testing.T) {
+// TestAnAbsentBoxIsErrNoBoxNeverClear: nothing at the path -- the file or a directory
+// above it -- is CANNOT TELL, an error every caller treats as BLOWN, told apart from an
+// unreadable box by ErrNoBox so a refusal can name CreateBox.
+func TestAnAbsentBoxIsErrNoBoxNeverClear(t *testing.T) {
 	t.Parallel()
 
-	b, err := ReadBox(boxIn(t))
-	if err != nil {
-		t.Fatalf("absent box must be VERIFIED CLEAR, got error: %v", err)
+	for _, path := range []string{boxIn(t), filepath.Join(t.TempDir(), "no", "such", "dir", "fuses.json")} {
+		if _, err := ReadBox(path); !errors.Is(err, ErrNoBox) {
+			t.Errorf("ReadBox(%s) = %v, want ErrNoBox", path, err)
+		}
 	}
-	if b.Lockdown != nil {
-		t.Error("absent box must have no lockdown")
+}
+
+// TestCreateBoxIsEmptyExclusiveAndNeverReplaces: CreateBox makes a readable empty box
+// once, and anything already at the path is left byte for byte with fs.ErrExist.
+func TestCreateBoxIsEmptyExclusiveAndNeverReplaces(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "sub", "fuses.json")
+	if err := CreateBox(path); err != nil {
+		t.Fatal(err)
 	}
-	if b.Quarantine == nil {
-		t.Error("Quarantine must be non-nil so callers can range without a nil check")
+	b, err := ReadBox(path)
+	if err != nil || b.Lockdown != nil || b.Quarantine == nil || len(b.Quarantine) != 0 {
+		t.Fatalf("a created box reads %+v, %v; want empty, non-nil Quarantine", b, err)
+	}
+	write(t, path, `{"lockdown":{"at":"t","reason":"r"}}`)
+	if err := CreateBox(path); !errors.Is(err, fs.ErrExist) {
+		t.Errorf("CreateBox over a box = %v, want fs.ErrExist", err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != `{"lockdown":{"at":"t","reason":"r"}}` {
+		t.Errorf("CreateBox replaced a box: %q", got)
+	}
+	if entries, _ := os.ReadDir(filepath.Dir(path)); len(entries) != 1 {
+		t.Errorf("CreateBox left litter: %v", entries)
 	}
 }
 
