@@ -11,14 +11,20 @@ import (
 )
 
 // TestPreserveUnreadablePreservesModeUnderUmask asserts that an existing 0600 destination
-// is not widened to 0644 by PreserveUnreadable under an ordinary umask 022, and that a
-// newly created unreadable backup receives 0644 subject to umask.
+// is not widened under umask 022, an existing 0640 destination is not narrowed
+// under umask 077, and new backups receive 0644 subject to the current umask.
 // The umask is isolated in a selected child process so other parallel tests are not affected.
 func TestPreserveUnreadablePreservesModeUnderUmask(t *testing.T) {
 	t.Parallel()
 
-	if os.Getenv("GO_TEST_SUBPROCESS_PRESERVE_UMASK") == "022" {
-		syscall.Umask(0o022)
+	if mask := os.Getenv("GO_TEST_SUBPROCESS_PRESERVE_UMASK"); mask == "022" || mask == "077" {
+		wantExisting, wantNew := os.FileMode(0o600), os.FileMode(0o644)
+		if mask == "077" {
+			syscall.Umask(0o077)
+			wantExisting, wantNew = 0o640, 0o600
+		} else {
+			syscall.Umask(0o022)
+		}
 		dir := t.TempDir()
 		path := filepath.Join(dir, "fuses.json")
 		if err := os.WriteFile(path, []byte(`{"lockdown":{"corrupt":`), 0o644); err != nil {
@@ -29,7 +35,7 @@ func TestPreserveUnreadablePreservesModeUnderUmask(t *testing.T) {
 		if err := os.WriteFile(dst, []byte("existing backup\n"), 0o600); err != nil {
 			t.Fatalf("write dst: %v", err)
 		}
-		if err := os.Chmod(dst, 0o600); err != nil {
+		if err := os.Chmod(dst, wantExisting); err != nil {
 			t.Fatalf("chmod dst: %v", err)
 		}
 
@@ -41,11 +47,11 @@ func TestPreserveUnreadablePreservesModeUnderUmask(t *testing.T) {
 		if err != nil {
 			t.Fatalf("stat dst: %v", err)
 		}
-		if perm := fi.Mode().Perm(); perm != 0o600 {
-			t.Fatalf("destination mode under umask 022 = %04o, want 0600 (mode was widened!)", perm)
+		if perm := fi.Mode().Perm(); perm != wantExisting {
+			t.Fatalf("destination mode under umask %s = %04o, want %04o", mask, perm, wantExisting)
 		}
 
-		// Newly created destination gets 0644 under umask 022.
+		// A newly created destination still honors the current umask.
 		path2 := filepath.Join(dir, "fuses2.json")
 		if err := os.WriteFile(path2, []byte(`{"lockdown":{"corrupt2":`), 0o644); err != nil {
 			t.Fatalf("write box2: %v", err)
@@ -58,17 +64,19 @@ func TestPreserveUnreadablePreservesModeUnderUmask(t *testing.T) {
 		if err != nil {
 			t.Fatalf("stat dst2: %v", err)
 		}
-		if perm := fi2.Mode().Perm(); perm != 0o644 {
-			t.Fatalf("new destination mode under umask 022 = %04o, want 0644", perm)
+		if perm := fi2.Mode().Perm(); perm != wantNew {
+			t.Fatalf("new destination mode under umask %s = %04o, want %04o", mask, perm, wantNew)
 		}
 		return
 	}
 
-	cmd := exec.Command(os.Args[0], "-test.run=^TestPreserveUnreadablePreservesModeUnderUmask$")
-	cmd.Env = append(os.Environ(), "GO_TEST_SUBPROCESS_PRESERVE_UMASK=022")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("subprocess failed: %v\n%s", err, string(out))
+	for _, mask := range []string{"022", "077"} {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestPreserveUnreadablePreservesModeUnderUmask$")
+		cmd.Env = append(os.Environ(), "GO_TEST_SUBPROCESS_PRESERVE_UMASK="+mask)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("umask %s subprocess failed: %v\n%s", mask, err, string(out))
+		}
 	}
 }
 

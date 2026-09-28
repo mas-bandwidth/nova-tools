@@ -662,7 +662,7 @@ func TestCreateTempCollisionAndExhaustion(t *testing.T) {
 func TestStepFailureInjection(t *testing.T) {
 	t.Parallel()
 
-	steps := []string{"create", "write", "sync", "close", "rename"}
+	steps := []string{"create", "write", "chmod", "sync", "close", "rename"}
 
 	for _, step := range steps {
 		step := step
@@ -702,6 +702,8 @@ func testStepFailure(t *testing.T, failStep string, preexisting bool) {
 		h.write = func(f *os.File, data []byte) (int, error) {
 			return 0, injectedErr
 		}
+	case "chmod":
+		h.chmod = func(f *os.File, mode os.FileMode) error { return injectedErr }
 	case "sync":
 		h.sync = func(f *os.File) error {
 			return injectedErr
@@ -719,7 +721,11 @@ func testStepFailure(t *testing.T, failStep string, preexisting bool) {
 		t.Fatalf("unknown step %q", failStep)
 	}
 
-	err := writeWithHooks(target, []byte(newContent), 0o644, h)
+	var opts []Option
+	if failStep == "chmod" {
+		opts = append(opts, ExactMode())
+	}
+	err := writeWithHooks(target, []byte(newContent), 0o644, h, opts...)
 	if err == nil {
 		t.Fatalf("writeWithHooks unexpectedly succeeded at %s step", failStep)
 	}
@@ -775,5 +781,30 @@ func TestRandomUint32Error(t *testing.T) {
 	_, err := randomUint32(errReader{})
 	if err == nil {
 		t.Fatal("randomUint32 succeeded on errReader; want error")
+	}
+}
+
+// The final file sync must cover the metadata ExactMode changes as well as data.
+func TestExactModeIsSetBeforeSync(t *testing.T) {
+	t.Parallel()
+	target := filepath.Join(t.TempDir(), "note")
+	h := defaultHooks()
+	chmod := h.chmod
+	changed := false
+	h.chmod = func(f *os.File, mode os.FileMode) error {
+		if err := chmod(f, mode); err != nil {
+			return err
+		}
+		changed = true
+		return nil
+	}
+	h.sync = func(f *os.File) error {
+		if !changed {
+			return errors.New("file sync precedes ExactMode chmod")
+		}
+		return f.Sync()
+	}
+	if err := writeWithHooks(target, []byte("complete\n"), 0o644, h, ExactMode()); err != nil {
+		t.Fatal(err)
 	}
 }

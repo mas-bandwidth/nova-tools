@@ -280,12 +280,14 @@ func PreserveUnreadable(path string) (string, error) {
 		cleanDst = filepath.Clean(cleanDst)
 	}
 	mode := os.FileMode(0o644)
+	var opts []atomicfile.Option
 	if fi, err := os.Lstat(cleanDst); err == nil && fi.Mode().IsRegular() {
 		mode = fi.Mode().Perm()
+		opts = append(opts, atomicfile.ExactMode())
 	}
 	// Atomic write per internal/atomicfile model: writes dst atomically, preserving
 	// any existing destination permissions (or defaulting to 0o644 subject to umask)
 	// via temporary file and rename so preserved unreadable box evidence is never
 	// left torn or mode-widened.
-	return dst, atomicfile.WriteFile(cleanDst, data, mode)
+	return dst, atomicfile.WriteFile(cleanDst, data, mode, opts...)
 }
