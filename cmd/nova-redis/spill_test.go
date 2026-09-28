@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
-	"github.com/redis/go-redis/v9"
+	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 )
 
 // fakeClock is the controlled clock: it reads t and only moves when a test
@@ -24,12 +24,12 @@ type fakeClock struct{ t time.Time }
 
 func (c *fakeClock) now() time.Time { return c.t }
 
-// harness is one fake instance plus the deps run() is given.
+// harness is one fake instance plus the deps run() is given. run() opens the
+// fake through redisconn at the --addr it is given, as main() does.
 type harness struct {
 	mr    *miniredis.Miniredis
 	clock *fakeClock
 	d     deps
-	dials int // how many times run() reached the dial seam
 }
 
 func newHarness(t *testing.T) *harness {
@@ -38,13 +38,7 @@ func newHarness(t *testing.T) *harness {
 	clock := &fakeClock{t: time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)}
 	h := &harness{mr: mr, clock: clock}
 	h.d = deps{
-		now: clock.now,
-		dial: func(addr, password string) redis.Cmdable {
-			h.dials++
-			c := redis.NewClient(&redis.Options{Addr: addr, Password: password})
-			t.Cleanup(func() { _ = c.Close() })
-			return c
-		},
+		now:    clock.now,
 		getenv: func(string) string { return "" },
 	}
 	return h
@@ -65,20 +59,19 @@ func (h *harness) runBare(args ...string) (int, string, string) {
 }
 
 // TestAddrRefusedWhenMissingOrEmpty: an address that is missing, empty, blank
-// or lacks a host or a port is refused (exit 2) BEFORE the dial seam is
-// reached, for spill and for recall. The Redis client would otherwise fill an
-// empty address in as localhost:6379, which is a guess the tool refuses to make.
+// or lacks a host or a port is refused (exit 2) BEFORE the store is opened,
+// for spill and for recall. The Redis client would otherwise fill an empty
+// address in as localhost:6379, which is a guess the tool refuses to make.
 func TestAddrRefusedWhenMissingOrEmpty(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
-	// A regression must fail here, never reach a real host: the seam counts
-	// the dial and hands back a client on the fake whatever address it got.
-	h.d.dial = func(addr, password string) redis.Cmdable {
-		h.dials++
-		c := redis.NewClient(&redis.Options{Addr: h.mr.Addr()})
-		t.Cleanup(func() { _ = c.Close() })
-		return c
+	// A regression must fail here, never reach a real host: connect reads the
+	// environment before it opens anything, so the first read stops the test
+	// (t.Fatalf ends this goroutine) before redisconn.Open can dial.
+	h.d.getenv = func(k string) string {
+		t.Fatalf("a refused address reached connect (it read %s); the refusal comes before the store is opened", k)
+		return ""
 	}
 	verbs := map[string][]string{
 		"spill":  {"--owner", "rowan", "--name", "note", "--ttl", "1h", "--value", "hi"},
@@ -109,8 +102,8 @@ func TestAddrRefusedWhenMissingOrEmpty(t *testing.T) {
 			}
 		}
 	}
-	if h.dials != 0 {
-		t.Errorf("a refused address reached the dial seam %d times; the refusal comes before the dial", h.dials)
+	if n := h.mr.TotalConnectionCount(); n != 0 {
+		t.Errorf("a refused address opened %d connections to the fake; the refusal comes before the dial", n)
 	}
 	if keys := h.mr.Keys(); len(keys) != 0 {
 		t.Errorf("a refused address stored %v; a refusal writes nothing", keys)
@@ -230,8 +223,13 @@ func TestEveryEphemeralKeyCarriesOwnerAndTTL(t *testing.T) {
 
 	// The package seam, below the CLI: a caller that skips the flag parser
 	// still cannot write a key without an owner or a TTL.
-	s := &scratch{rdb: h.d.dial(h.mr.Addr(), ""), now: h.clock.now}
 	ctx := context.Background()
+	conn, err := redisconn.Open(ctx, redisconn.Options{Addr: h.mr.Addr()}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	s := &scratch{rdb: conn.Client(), now: h.clock.now}
 	if _, err := s.spill(ctx, "", "g", "7", time.Hour); err == nil {
 		t.Error("scratch.spill with no owner returned no error")
 	}
@@ -240,5 +238,34 @@ func TestEveryEphemeralKeyCarriesOwnerAndTTL(t *testing.T) {
 	}
 	if n := len(h.mr.Keys()); n != 2 {
 		t.Errorf("the package seam stored a key it should have refused: %v", h.mr.Keys())
+	}
+}
+
+// TestSpillAndRecallAreOneRoundTripEach: each verb's work on the store is one
+// batch (spill one transaction, recall one pipeline), counted by
+// redisconn.CountTrips on the connection redisconn.Open made.
+func TestSpillAndRecallAreOneRoundTripEach(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	ctx := context.Background()
+	conn, err := redisconn.Open(ctx, redisconn.Options{Addr: h.mr.Addr()}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	trips := redisconn.CountTrips(conn.Client())
+	s := &scratch{rdb: conn.Client(), now: h.clock.now}
+	if _, err := s.spill(ctx, "rowan", "note", "hi", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if n := trips.N(); n != 1 {
+		t.Errorf("spill made %d round trips, want 1", n)
+	}
+	if v, err := s.recall(ctx, "rowan", "note"); err != nil || v != "hi" {
+		t.Fatalf("recall = %q, %v; want hi", v, err)
+	}
+	if n := trips.N(); n != 2 {
+		t.Errorf("spill then recall made %d round trips, want 2", n)
 	}
 }
