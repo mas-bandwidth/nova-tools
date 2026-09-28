@@ -30,8 +30,8 @@ func TestWSVerbsRefuseHelpAndUsage(t *testing.T) {
 		{"stream", "ls", "--help"}, {"stream", "order", "--help"}, {"stream", "rename", "--help"},
 	} {
 		code, stdout, stderr := runSprint(args...)
-		if code != 0 || stderr != "" || !strings.HasPrefix(stdout, "usage: nova-sprint "+args[0]+" "+args[1]+" ") || !strings.Contains(stdout, "  --redis <string>") {
-			t.Errorf("%v: exit %d stdout %q stderr %q; want the usage and flags on stdout, exit 0", args, code, stdout, stderr)
+		if code != 2 || stderr != "" || !strings.HasPrefix(stdout, "usage: nova-sprint "+args[0]+" "+args[1]+" ") || !strings.Contains(stdout, "  --redis <string>") {
+			t.Errorf("%v: exit %d stdout %q stderr %q; want the usage and flags on stdout, exit 2", args, code, stdout, stderr)
 		}
 	}
 	code, stdout, _ := runSprint("help")

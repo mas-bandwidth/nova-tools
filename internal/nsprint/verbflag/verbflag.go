@@ -97,7 +97,7 @@ func Recover(out io.Writer, prog, banner string, code *int) {
 func IsHelp(a string) bool { return a == "-h" || a == "-help" || a == "--help" || a == "--h" }
 
 // Verb is the verb a flag set is named for, with the tool's name taken off
-// the front: some sets are named "nova-post draft", most "draft".
+// the front: some sets are named "<tool> <verb>", most "<verb>".
 func Verb(prog string, fs *flag.FlagSet) string {
 	name := strings.TrimSpace(fs.Name())
 	if name == prog {

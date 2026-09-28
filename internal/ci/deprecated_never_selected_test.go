@@ -32,8 +32,6 @@ func TestDeprecatedPackagesAreNeverSelected(t *testing.T) {
 	root := repoRoot(t)
 	const mod = "github.com/mas-bandwidth/nova-tools/"
 	in := strings.Join([]string{
-		"./cmd/nova-sprint",
-		mod + "cmd/nova-sprint",
 		"./internal/nsprint/ws",
 		mod + "internal/nsprint/land/stream",
 		"./internal/nsprint",

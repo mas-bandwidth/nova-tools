@@ -99,7 +99,7 @@ func TestInterruptedAppendRecoversAndPreservesOtherWriters(t *testing.T) {
 	if err := os.MkdirAll(edir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(edir, "mine.json.tmp"), []byte("{partial"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(edir, ".mine.json.tmp-deadbeef"), []byte("{partial"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	res, err := Append(store, "s", "mine", "my note after the crash", "src", now, "never")

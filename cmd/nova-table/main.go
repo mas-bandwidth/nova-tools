@@ -145,12 +145,12 @@ func (app *application) run(args []string, stdout, stderr io.Writer) (code int) 
 	return app.dispatch(args, stdout, stderr)
 }
 
-// selectSeat is nova-sprint's seat resolution (cmd/nova-sprint/seat.go,
-// nova-tools#4330), the same here so a session that names a seat for one
-// tool names it for the other: --seat <name> (or NOVA_SPRINT_SEAT, then
-// NOVA_SEAT) is taken off the line, its row in nova-sprint's seats.tsv
-// names its Redis address (the --redis default) and login, and a seat with
-// no row is the nova-secrets seat of that name.
+// selectSeat is the seat resolution nova-sprint defined
+// (deprecated/cmd/nova-sprint/seat.go, nova-tools#4330), carried here:
+// --seat <name> (or NOVA_SPRINT_SEAT, then NOVA_SEAT) is taken off the line,
+// its row in nova-sprint's seats.tsv names its Redis address (the --redis
+// default) and login, and a seat with no row is the nova-secrets seat of that
+// name.
 func selectSeat(sel *seatcred.Selection, args []string, getenv func(string) string, setenv func(k, v string) error) ([]string, error) {
 	rest, err := sel.FromArgs(args, func(k string) string {
 		if k == seatcred.SeatEnv {

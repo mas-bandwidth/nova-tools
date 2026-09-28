@@ -12,10 +12,9 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/post"
-	"github.com/mas-bandwidth/nova-tools/internal/post/issue"
+	"github.com/mas-bandwidth/nova-tools/deprecated/internal/post"
+	"github.com/mas-bandwidth/nova-tools/deprecated/internal/post/issue"
 )
 
 const usage = `nova-post: draft, show and send outward posts behind Glenn's approval (see docs/SPEC-OUTBOUND.md)
@@ -80,25 +79,18 @@ func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
-func run(args []string, stdout, stderr io.Writer) (code int) {
-	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
-	// before anything is read, sent or written (the CLI style's rule (b), #4505).
-	defer verbflag.Recover(stdout, "nova-post", usage, &code)
+func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		return refuseLine(stderr, "no-arguments", "give one of draft, show, send, version or help", 2)
 	}
 	switch args[0] {
 	case "version", "--version":
-		verbflag.HelpIfAsked(args[1:], "version")
 		if len(args) > 1 {
 			return refuseLine(stderr, "bad-flags", "version takes no arguments", 2)
 		}
 		fmt.Fprintln(stdout, buildinfo.Line("nova-post", version))
 		return 0
 	case "help", "-h", "--help":
-		if args[0] == "help" && len(args) > 1 && args[1] != "help" && !verbflag.IsHelp(args[1]) {
-			return run(append(args[1:], "--help"), stdout, stderr)
-		}
 		fmt.Fprint(stdout, usage)
 		return 0
 	case "draft":
@@ -130,7 +122,7 @@ func runDraft(args []string, stdout, stderr io.Writer) int {
 	fleet := fs.String("fleet", "", "fleet file for the digest")
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
-	if err := verbflag.Parse(fs, args); err != nil {
+	if err := fs.Parse(args); err != nil {
 		return refuseLine(stderr, "bad-flags", oneline.Cap(err.Error(), oneline.TailBytes), 2)
 	}
 	if fs.NArg() > 0 {
@@ -177,7 +169,7 @@ func runShow(args []string, stdout, stderr io.Writer) int {
 	drafts := fs.String("drafts", "", "the draft store")
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
-	if err := verbflag.Parse(fs, args); err != nil {
+	if err := fs.Parse(args); err != nil {
 		return refuseLine(stderr, "bad-flags", oneline.Cap(err.Error(), oneline.TailBytes), 2)
 	}
 	if fs.NArg() > 0 {
@@ -208,7 +200,7 @@ func runSend(args []string, stdout, stderr io.Writer) int {
 	allow := fs.String("allowlist", "", "the allowlist file")
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
-	if err := verbflag.Parse(fs, args); err != nil {
+	if err := fs.Parse(args); err != nil {
 		return refuseLine(stderr, "bad-flags", oneline.Cap(err.Error(), oneline.TailBytes), 2)
 	}
 	if fs.NArg() > 0 {
@@ -262,7 +254,7 @@ func runIssue(args []string, stdout, stderr io.Writer) int {
 	repo := fs.String("repo", "", "the issue repo")
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
-	if err := verbflag.Parse(fs, args); err != nil {
+	if err := fs.Parse(args); err != nil {
 		return refuseLine(stderr, "bad-flags", oneline.Cap(err.Error(), oneline.TailBytes), 2)
 	}
 	if fs.NArg() > 0 {

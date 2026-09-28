@@ -98,7 +98,7 @@ nova-bus version
 
 Those commands install the named tool from `v0.15.2`. This guide also
 describes development-branch features where it labels them explicitly;
-`nova-post`, `nova-secrets`, `nova-pulse`, `nova-work`, `nova-ci`,
+`nova-secrets`, `nova-pulse`, `nova-work`, `nova-ci`,
 `nova-cairn` and `nova-sandbox egress` are not available from the
 pinned release.
 

@@ -238,13 +238,13 @@ func cmdFunctional(args []string, stdout, stderr io.Writer) int {
 	// fails on it out loud.
 	verbflag.HelpIfAsked(args, "functional")
 	if len(args) == 0 {
-		return refuse(stderr, " functional", "no package directory given; pass the packages the change touched (./cmd/nova-sprint ...)")
+		return refuse(stderr, " functional", "no package directory given; pass the packages the change touched (./cmd/nova-table ...)")
 	}
 	var problems, patterns []string
 	for _, arg := range args {
 		switch {
 		case strings.HasPrefix(arg, "-"):
-			problems = append(problems, fmt.Sprintf("unknown flag %q (functional takes no flags, only package directories such as ./cmd/nova-sprint or ./internal/...)", arg))
+			problems = append(problems, fmt.Sprintf("unknown flag %q (functional takes no flags, only package directories such as ./cmd/nova-table or ./internal/...)", arg))
 		default:
 			patterns = append(patterns, arg)
 		}
