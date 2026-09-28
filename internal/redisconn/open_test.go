@@ -567,6 +567,108 @@ func TestClose(t *testing.T) {
 	}
 }
 
+// TestReconnectSocketCleanup: when a connection drops and a reconnect attempt
+// fails its handshake (HELLO or AUTH refused), upstream go-redis drops the
+// connection from its pool without closing the raw socket. Conn.Close must
+// close all leaked sockets from failed reconnect handshakes, with repeated
+// and concurrent failures covered, and Close must be idempotent.
+func TestReconnectSocketCleanup(t *testing.T) {
+	t.Parallel()
+
+	// Single reconnect failure and idempotent close.
+	store := newFakeStore(t, func(conn int, cmd []string) string {
+		if conn == 1 {
+			if cmd[0] == "hello" {
+				return helloAccepted
+			}
+			return hangUp // drops conn 1 on first GET
+		}
+		// conn == 2 (reconnect attempt)
+		if cmd[0] == "hello" || cmd[0] == "auth" {
+			return "-WRONGPASS invalid username-password pair or user is disabled.\r\n"
+		}
+		return accepting(conn, cmd)
+	})
+	conn, err := open(context.Background(), Options{Addr: storeAddr, User: "bench", PasswordEnv: "PW"}, environment(map[string]string{"PW": "s3cret"}), store.dial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	_ = conn.Client().Get(ctx, "k").Err()  // drops conn 1
+	_ = conn.Client().Get(ctx, "k2").Err() // reconnect refused
+	if n := store.dialed(); n != 2 {
+		t.Fatalf("%d dials; want 2", n)
+	}
+	if err := conn.Close(); err != nil {
+		t.Errorf("first close: %v", err)
+	}
+	if err := conn.Close(); err != nil {
+		t.Errorf("second close: %v", err)
+	}
+	if n := store.open(); n != 0 {
+		t.Fatalf("%d sockets left open after Conn.Close; want 0", n)
+	}
+
+	// Repeated reconnect failures.
+	storeRepeated := newFakeStore(t, func(conn int, cmd []string) string {
+		if conn == 1 {
+			if cmd[0] == "hello" {
+				return helloAccepted
+			}
+			return hangUp
+		}
+		return "-WRONGPASS invalid username-password pair or user is disabled.\r\n"
+	})
+	connRepeated, err := open(context.Background(), Options{Addr: storeAddr, User: "bench", PasswordEnv: "PW"}, environment(map[string]string{"PW": "s3cret"}), storeRepeated.dial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = connRepeated.Client().Get(ctx, "drop").Err()
+	for i := 0; i < 4; i++ {
+		_ = connRepeated.Client().Get(ctx, "fail").Err()
+	}
+	if n := storeRepeated.dialed(); n != 5 {
+		t.Fatalf("repeated: %d dials; want 5", n)
+	}
+	if err := connRepeated.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if n := storeRepeated.open(); n != 0 {
+		t.Fatalf("repeated: %d sockets left open after Conn.Close; want 0", n)
+	}
+
+	// Concurrent reconnect failures.
+	storeConcurrent := newFakeStore(t, func(conn int, cmd []string) string {
+		if conn == 1 {
+			if cmd[0] == "hello" {
+				return helloAccepted
+			}
+			return hangUp
+		}
+		return "-WRONGPASS invalid username-password pair or user is disabled.\r\n"
+	})
+	connConcurrent, err := open(context.Background(), Options{Addr: storeAddr, User: "bench", PasswordEnv: "PW"}, environment(map[string]string{"PW": "s3cret"}), storeConcurrent.dial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = connConcurrent.Client().Get(ctx, "drop").Err()
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = connConcurrent.Client().Get(ctx, "concurrent").Err()
+		}()
+	}
+	wg.Wait()
+	if err := connConcurrent.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if n := storeConcurrent.open(); n != 0 {
+		t.Fatalf("concurrent: %d sockets left open after Conn.Close; want 0", n)
+	}
+}
+
 // TestExplain: an error a command returned becomes this package's, with the
 // connection named, the class kept and the next thing to do.
 func TestExplain(t *testing.T) {
@@ -675,10 +777,28 @@ func TestTheFirstConnectionOfASocketIsStillASocket(t *testing.T) {
 		t.Errorf("%T says it is a socket; the connection it wraps is not", conn)
 	}
 
-	// After Open, a dial is the dialer's connection and nothing around it.
+	// After Open, dials remain tracked and preserve socket identity.
 	plain.done()
 	conn, err = plain.dialer(context.Background(), "tcp", storeAddr)
-	if err != nil || conn != net.Conn(pipe) {
-		t.Errorf("a dial after Open = %T, %v; want the connection as dialed", conn, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, ok := conn.(syscall.Conn); ok {
+		t.Errorf("%T says it is a socket; the connection it wraps is not", conn)
+	}
+
+	socketPlain := &rawSocket{Conn: client}
+	socketDialer := &firstDial{dial: func(context.Context, string, string) (net.Conn, error) { return socketPlain, nil }}
+	socketDialer.done()
+	sconn, err := socketDialer.dialer(context.Background(), "tcp", storeAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sconn.Close()
+	if sys, ok := sconn.(syscall.Conn); !ok {
+		t.Fatalf("%T is not a socket; the connection it wraps is", sconn)
+	} else if _, err := sys.SyscallConn(); err != errRawSocket || socketPlain.asked != 1 {
+		t.Errorf("SyscallConn = %v after %d calls; want the socket's answer", err, socketPlain.asked)
 	}
 }

@@ -224,3 +224,56 @@ func TestHiderProperty(t *testing.T) {
 		}
 	}
 }
+
+// TestPasswordHiddenInEncodedAndTruncatedDiagnostics: a handshake reply from
+// an outside server or mock can echo the password with special characters or
+// exceed the 100-character truncation limit of go-redis's %.100q wire reader.
+// The error and unwrap chain must never expose the password, escaped or
+// truncated.
+func TestPasswordHiddenInEncodedAndTruncatedDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	// 1. Password with double quote, escaped as \" in go-redis's %.100q map reply diagnostic.
+	quotePass := `synth"pass`
+	storeQuote := newFakeStore(t, func(_ int, cmd []string) string {
+		return "+unexpected" + quotePass + "\r\n"
+	})
+	_, err := open(context.Background(), Options{Addr: storeAddr, User: "bench", PasswordEnv: "PW"}, environment(map[string]string{"PW": quotePass}), storeQuote.dial)
+	if err == nil {
+		t.Fatal("expected Open to fail")
+	}
+	for _, text := range errorsText(err) {
+		if strings.Contains(text, `synth"pass`) || strings.Contains(text, `synth\"pass`) {
+			t.Fatalf("error text exposed escaped password: %q", text)
+		}
+	}
+	cause := errors.Unwrap(err)
+	if cause == nil || (cause.Error() != withheld && cause.Error() != "***") || errors.Unwrap(cause) != nil {
+		t.Fatalf("cause not withheld or has unwrap chain: %#v", cause)
+	}
+	if got := Classify(err); got != Other {
+		t.Errorf("class = %v; want Other", got)
+	}
+
+	// 2. Long password truncated at 100 characters in go-redis's %.100q map reply diagnostic.
+	longPass := strings.Repeat("x", 150)
+	storeLong := newFakeStore(t, func(_ int, cmd []string) string {
+		return "+unexpected" + longPass + "\r\n"
+	})
+	_, err = open(context.Background(), Options{Addr: storeAddr, User: "bench", PasswordEnv: "PW"}, environment(map[string]string{"PW": longPass}), storeLong.dial)
+	if err == nil {
+		t.Fatal("expected Open to fail")
+	}
+	for _, text := range errorsText(err) {
+		if strings.Contains(text, strings.Repeat("x", 20)) {
+			t.Fatalf("error text exposed truncated password: %q", text)
+		}
+	}
+	cause = errors.Unwrap(err)
+	if cause == nil || (cause.Error() != withheld && cause.Error() != "***") || errors.Unwrap(cause) != nil {
+		t.Fatalf("cause not withheld or has unwrap chain: %#v", cause)
+	}
+	if got := Classify(err); got != Other {
+		t.Errorf("class = %v; want Other", got)
+	}
+}

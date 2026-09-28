@@ -198,6 +198,18 @@ func everythingShown(t *testing.T, password string) []showing {
 		out = append(out, s)
 	}
 
+	store = newFakeStore(t, func(int, []string) string {
+		return "+unexpected" + password + "\r\n"
+	})
+	_, err = open(ctx, Options{Env: GeneralEnv}, env, store.dial)
+	if err == nil {
+		t.Fatalf("Open to a store that echoes as malformed handshake, with the password %q: no error", password)
+	}
+	for _, s := range failed("Open, the store writing the password into a malformed handshake reply", err) {
+		s.varies = true
+		out = append(out, s)
+	}
+
 	// The password put where the name of its variable belongs.
 	if !envName(password) {
 		misplaced := environment(map[string]string{GeneralEnv.Addr: storeAddr, GeneralEnv.User: "bench", GeneralEnv.PasswordEnv: password})

@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -188,10 +189,13 @@ func startOnSocket(t *testing.T, socket string) string {
 	}
 	cmd.Stdout, cmd.Stderr = pw, pw
 	if err := cmd.Start(); err != nil {
+		_ = pr.Close()
+		_ = pw.Close()
 		t.Fatalf("%s: %v", bin, err)
 	}
 	_ = pw.Close()
 	var (
+		mu    sync.Mutex
 		out   strings.Builder
 		ready = make(chan struct{})
 		ended = make(chan error, 1)
@@ -200,8 +204,11 @@ func startOnSocket(t *testing.T, socket string) string {
 		sc := bufio.NewScanner(pr)
 		seen := false
 		for sc.Scan() {
-			out.WriteString(sc.Text() + "\n")
-			if !seen && strings.Contains(sc.Text(), readyLine) {
+			text := sc.Text()
+			mu.Lock()
+			out.WriteString(text + "\n")
+			mu.Unlock()
+			if !seen && strings.Contains(text, readyLine) {
 				seen = true
 				close(ready)
 			}
@@ -213,13 +220,18 @@ func startOnSocket(t *testing.T, socket string) string {
 		<-ended
 		_ = pr.Close()
 	})
+	output := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		return out.String()
+	}
 	select {
 	case <-ready:
 	case err := <-ended:
 		ended <- err
-		t.Fatalf("redis-server exited before it was ready: %v\n%s", err, out.String())
+		t.Fatalf("redis-server exited before it was ready: %v\n%s", err, output())
 	case <-time.After(socketWait):
-		t.Fatalf("redis-server was not ready within %v\n%s", socketWait, out.String())
+		t.Fatalf("redis-server was not ready within %v\n%s", socketWait, output())
 	}
 	c, err := net.Dial("unix", socket)
 	if err != nil {
