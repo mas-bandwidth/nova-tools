@@ -1,0 +1,30 @@
+# The ratchet: packages that are permitted to import non-keep deprecated
+# packages, one `<importer> -> <imported>  # reason` per line.
+#
+# Living packages must not depend on packages deprecated/PACKAGES drops without
+# a keep line. A keep line in deprecated/PACKAGES permits importing that package;
+# it is never permission for that package's test dependencies to import non-keep
+# retired packages. Every lift out of nsprint eliminates one or more edges.
+#
+# THE LIST ONLY SHRINKS. TestLivingPackagesDoNotImportDroppedDeprecatedPackages
+# checks it in both directions: an unlisted edge is a red run, and a listed edge
+# whose import has been removed is also a red run.
+#
+# ceiling: 16
+
+cmd/nova-config -> internal/nsprint/ws  # config_functional_test.go exercises workspace configuration
+cmd/nova-redis -> internal/nsprint/preflight  # serve_functional_test.go runs preflight store checks
+cmd/nova-swarm -> internal/nsprint/card  # native_cardout_test.go renders card fixtures
+internal/config -> internal/nsprint/ws  # redis.go and redis_functional_test.go manage workspace friends
+internal/jev -> internal/nsprint/land/stream  # jev_test.go verifies land stream score boundaries
+internal/jev -> internal/nsprint/pr  # jev.go parses and canonicalizes PR path lines
+internal/nsprint/fn -> internal/nsprint/life  # test fixtures in fn/testutil
+internal/nsprint/fn -> internal/nsprint/taskcard  # test fixtures in fn/testutil
+internal/nsprint/fn -> internal/nsprint/ws  # test fixtures in fn/testutil
+internal/nsprint/fn -> internal/nsprint/ws/wstest  # test fixtures in fn/testutil
+internal/nsprint/store -> internal/nsprint/card  # store_functional_test.go tests card storage
+internal/nsprint/store -> internal/nsprint/taskcard  # store_functional_test.go tests taskcard records
+internal/nsprint/store -> internal/nsprint/ws  # store_functional_test.go tests workspace streams
+internal/ntable -> internal/nsprint/taskcard  # epoch_contract_functional_test.go verifies table epoch placement
+internal/typedrec -> internal/nsprint/card  # consumers_test.go verifies card parser outcomes
+internal/typedrec -> internal/nsprint/consume  # consumers_test.go verifies consume parser outcomes
