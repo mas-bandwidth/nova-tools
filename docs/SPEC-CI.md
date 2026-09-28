@@ -1105,6 +1105,77 @@ bounds; the class tests do not time a hosted leg, dev's push run does.
 The heavy list is named from one reader measurement, not from a hosted
 per-package timing.
 
+### `cert-race-shards` — the whole-tree race run meets the cap by shards, its cache saved before the tests
+
+**The rule.** certification.yml's `test` job keeps `timeout-minutes: 2` and meets
+it by shard count: ubuntu-latest and macos-latest each run shards 1..8, every leg
+carrying its OS's `shards`. Its `deal this shard's packages` step is test-hosted's
+deal over the live packages (`live-packages.sh`), with the measured heavy list
+(`internal/ci`, `internal/gh`, `cmd/nova-tokens`, `cmd/nova-sandbox`,
+`cmd/nova-self-talk`, `internal/update`, `cmd/nova-secrets`, `internal/bus`) dealt
+first, one per shard. Every shard
+restores the `<os>-gorace-` cache (the race build cache, the module cache and the
+Go toolchain's tool-cache directory, so setup-go finds the toolchain rather than
+installing it), builds every external package the live tree's tests import under
+`-race`, SAVES the cache, and only then runs `go test -race -count=1` over its
+packages. The legs need `race-cache`, one leg per OS, which looks the exact entry
+up without downloading it and, only on a miss, builds and saves it, so the test
+legs of a cold run start warm.
+**The mistake it prevents.** Unsharded, the job builds, vets and race-tests the
+whole tree on one runner: it reaches the test step well into the two-minute cap,
+the race tests alone take minutes, so the cap cancels it on every push, and a
+post-step cache save never runs, so every run starts cold.
+**The test.** `TestCertificationRaceShardsPartitionTheLiveTree`
+(`internal/ci/cert_race_shards_class_test.go`): both OSes at shards 1..n with n at
+least 8; the deal step, run over the real `go list ./...`, lands every live
+package in exactly one shard and no deprecated one in any; no two heavy packages
+share a shard; restore, race dependency build, save and test in that order; the
+test step carries `-race`, `-count=1` and `$HOSTED_PKGS`.
+**Its allowlist.** `certRaceHeavy` in that file, which the step spells verbatim.
+**Its remedy line.** Add a shard to the matrix and both `include` entries, or name
+a package in `certRaceHeavy` and in the step's `heavy=`; never raise the timeout.
+**Its narrowings.** The heavy list and the shard count come from the per-package
+times one hosted certification run reports (`ok <pkg> <seconds>`, the larger of the
+two OSes); the class test does not time a hosted leg, a certification run does. The build and vet this job used to run are
+ci.yml's (lint on every event, test-hosted on push); a package's race compile in
+its shard is the macOS and Linux compile of the race build.
+
+### `release-legs` — the release and its dry run build one leg per platform and sum the whole set on one machine
+
+**The rule.** release.yml's `build` and certification.yml's `release-build` are a
+matrix of one leg per line of `.github/scripts/release-targets`, the same list in
+all three places. Each leg's only compile is `.github/scripts/release-build.sh
+<stamp> <goos> <goarch> dist` (every `cmd/*/` tool, `-trimpath`, `CGO_ENABLED=0`,
+the ldflags `release-ldflags.sh` composes, named `<tool>_<stamp>_<goos>_<goarch>[.exe]`),
+and each uploads the artifact `release-<goos>-<goarch>`. release.yml's `release`
+and certification.yml's `release-dry-run` need those legs, download every
+`release-*` artifact into one directory, run `assert-version-stamp.sh` over the
+linux/amd64 binaries, and then run `.github/scripts/release-sums.sh`, which
+refuses a directory that is not exactly the shipped set and writes and verifies
+`SHA256SUMS` over the whole of it. In release.yml that runs in the step that
+attaches the set to the release. release.yml restores the certification build
+cache and never saves one.
+**The mistake it prevents.** One runner cross-building every platform in one job
+does not fit the two-minute cap: the cap cancels it inside that build, and
+release.yml's build is the same loop. Two copies of
+a target list drift, and a dry run that builds differently from the release proves
+nothing about the release.
+**The test.** `TestReleaseMatricesAreTheTargetsFile` and
+`TestReleaseSumsAreOneMachineOverTheWholeSet`
+(`internal/ci/release_matrix_class_test.go`): both matrices equal the targets
+file; no `go build` in a build leg, one `release-build.sh` call over the matrix
+target, one `release-<goos>-<goarch>` upload; no cache save in release.yml; the
+final job needs the legs and downloads every `release-*` artifact, asserts the
+stamp, then runs `release-sums.sh`, in release.yml in the attaching step.
+**Its allowlist.** None. The targets file is the list.
+**Its remedy line.** A platform is added or dropped in `release-targets` and in
+both matrices in one change; a compile change goes into `release-build.sh`.
+**Its narrowings.** The tests read the workflow text; whether a leg fits the cap is
+measured by a certification run. The negative controls of the release scripts
+(stamp refusals, tag alphabet, certified gate, upload boundary) run in
+certification.yml's `release-checks`, which builds its fixtures on the
+linux-amd64 leg's cache; they are fixtures and are never summed or shipped.
+
 ### `onboarding` — every command meets the onboarding standard
 
 **The rule.** `docs/ONBOARDING.md`, asserted for EVERY directory under `cmd/` by

@@ -122,9 +122,11 @@ dev, and nightly.
 
 The **certification tier** (`.github/workflows/certification.yml`) holds
 everything that cannot fit that budget, under the same job names it always had:
-the whole-tree `go test -race` on Linux and macOS, `go build` and `go vet` on
-Windows, the per-package Windows tests, the three-OS smoke of the shipped
-binary, the release dry-run, and the nightly `-tags perf` wall clock. It runs on
+the whole-tree `go test -race` on Linux and macOS, sharded by package, the
+three-OS smoke of the shipped binary, the release dry-run (one build leg per
+shipped platform, the sums over the whole set, and the negative controls of the
+release scripts), and the `-tags perf` wall clock. Every job is under the
+two-minute cap. It runs on
 a daily schedule and on demand — from the repository's Actions page, pick the
 "certification" workflow and Run workflow. Nothing here skips: the race detector
 and the platform coverage a change's fast tier does not carry live here. A red
@@ -133,11 +135,12 @@ certification is a blocker for the next release, never for a CL, whose gate is
 newest completed certification run on the tagged commit is green, so cutting a
 release begins with `gh workflow run certification.yml --ref <ref>` and waits for
 `certification-ok` before the tag is pushed. The `perf` job runs every wall-clock
-test behind `-tags perf`, over
-`./...` one test at a time rather than over a list — a list of test names or
-packages in a workflow goes stale silently — and a bound in seconds is evidence
-about the machine as much as about the tool, which is why it gates a release and
-not a change.
+test behind `-tags perf`, one test at a time. It finds them rather than naming
+them — a list of test names or packages in a workflow goes stale silently: the
+live packages holding a file whose build constraint names `perf`, and in each
+the tests `go test -tags perf -list` names and `go test -list` does not. A bound
+in seconds is evidence about the machine as much as about the tool, which is why
+it gates a release and not a change.
 
 Where CI runs follows the cost of the machine, not the shape of the change.
 Pull requests run on the self-hosted runners only: one job per `./cmd/<tool>`
@@ -274,7 +277,7 @@ with its sweep of the tree or it does not land.
 `templates`, `goenv`, `pathassert`, `busprogress`,
 `outputs`, `cache`, `pinned-actions`, `ci-ok`, `nightly-tags`, `functional` (a test that starts a redis-server, execs a whole program or asserts a real-time bound is behind `//go:build functional`), `selection`, `toolchainroots`, `walltoolchain`, `hostseam`,
 `ciworkspace`, `namedpaths`, `one section`, `testbins`, `fieldsindex`, `cardtemplates`, `transcripts`, `parallel`, `slowwaits`, `unitwaits`, `allowlist`,
-`seatwrap`, `tiers`, `hosted-shards` (test-hosted meets the two-minute cap by shards, heavy packages one per shard), `seatredis` (no verb of a live tool that selects a seat refuses an empty `--redis`), `wholetree` (no doc or card spells a whole-tree `go test`; run `nova-ci local`), `silent` (no `_ = err` and no `|| true` literal on the copy model's live path), `classtests` (no merge deletes a `_test.go` or an `internal/ci/testdata` list that its first parent had unless the same change declares it in `deleted-tests.txt`), `ci-receipt` (ci-ok reports every run to Redis from the runner, every field, failing loudly). Every entry — the ten above too — is written out in
+`seatwrap`, `tiers`, `hosted-shards` (test-hosted meets the two-minute cap by shards, heavy packages one per shard), `cert-race-shards` (certification's whole-tree race run meets the cap by shards, its race build cache saved before the tests), `release-legs` (the release and its dry run build one leg per platform and sum the whole set on one machine), `seatredis` (no verb of a live tool that selects a seat refuses an empty `--redis`), `wholetree` (no doc or card spells a whole-tree `go test`; run `nova-ci local`), `silent` (no `_ = err` and no `|| true` literal on the copy model's live path), `classtests` (no merge deletes a `_test.go` or an `internal/ci/testdata` list that its first parent had unless the same change declares it in `deleted-tests.txt`), `ci-receipt` (ci-ok reports every run to Redis from the runner, every field, failing loudly). Every entry — the ten above too — is written out in
 [SPEC-CI.md](SPEC-CI.md) under **The class tests** with its rule, the mistake
 it prevents, its allowlist, its remedy line and its narrowings. Read the entry, not
 the test. An allowlist only ever shrinks: a new row is a refusal, not a parking place.
