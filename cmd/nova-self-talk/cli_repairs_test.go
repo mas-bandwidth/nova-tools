@@ -46,7 +46,7 @@ func TestAllSkippedReportsNoScan(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "skip.md")
 	var out, errOut bytes.Buffer
 	code := run([]string{"--skip", "skip.md", missing}, &out, &errOut)
-	if code != 0 || errOut.Len() != 0 || !strings.Contains(out.String(), "SELFTALK SKIP files=0 skipped=1 reason=all-skipped") || strings.Contains(out.String(), "SELFTALK OK") {
+	if code != 0 || errOut.Len() != 0 || !strings.Contains(out.String(), "SELFTALK SKIP files=0 skipped=1 reason=all-skipped") || strings.Contains(out.String(), "SELFTALK OK") || !strings.Contains(out.String(), "SELFTALK NOTE") {
 		t.Fatalf("all skipped: exit %d out=%q err=%q", code, out.String(), errOut.String())
 	}
 }

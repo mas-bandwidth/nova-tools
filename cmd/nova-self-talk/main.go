@@ -328,6 +328,7 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 	skipLines.More()
 	if scanned == 0 {
 		fmt.Fprintf(stdout, "SELFTALK SKIP files=0 skipped=%d reason=all-skipped\n", len(files))
+		fmt.Fprint(stdout, note)
 		return 0
 	}
 	banners.More()
