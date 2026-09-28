@@ -358,6 +358,10 @@ func paths(ctx context.Context, o options, deps Deps, previous, sha string, out,
 		progress(errs, "asking git in %s which paths %s touched", o.localDiff, rangeName)
 		files, err := git.DiffNames(ctx, o.localDiff, previous, sha)
 		if err != nil {
+			var limit *diffOutputLimitError
+			if errors.As(err, &limit) {
+				return nil, false, fmt.Errorf("cannot classify %s: %w", rangeName, err)
+			}
 			return nil, false, fmt.Errorf("cannot read %s in %s: %w (name a checkout holding both %s and %s; `git fetch --tags` first)", rangeName, o.localDiff, err, previous, sha)
 		}
 		if o.pathsFrom != "" {
