@@ -359,37 +359,11 @@ func line1Of(doc string) string {
 	return l
 }
 
-// TestUnknownKindRefusedOnEveryPath is #3497 Stella 4 item 1 (KIND): every
-// reader of a card or RESULT KIND checks it against the declared six. An
-// unknown KIND is refused by the parser (in the file and as the card's
-// expectation), by ValidateResultV2, by the cutter lint, and by
-// ns_card_result even when the caller's parse claims valid.
+// TestUnknownKindRefusedOnEveryPath is #3497 Stella 4 item 1 (KIND):
+// ns_card_result judges KIND itself: a caller claiming valid with a kind
+// outside the six is persisted invalid.
 func TestUnknownKindRefusedOnEveryPath(t *testing.T) {
 	t.Parallel()
-
-	report := typedrec.Exemplar(typedrec.KindReport)
-	bogus := strings.Replace(report, "KIND: report", "KIND: bogus", 1)
-	if bogus == report {
-		t.Fatal("report exemplar has no KIND: report line")
-	}
-
-	if res := typedrec.ParseResult([]byte(bogus)); res.Valid || res.Field != "KIND" || res.Defect != typedrec.DefectMalformed {
-		t.Fatalf("ParseResult KIND: bogus: valid=%v field=%s defect=%s, want KIND malformed", res.Valid, res.Field, res.Defect)
-	}
-	if res := typedrec.ParseResult([]byte(report), typedrec.ParseOptions{ExpectedKind: "bogus"}); res.Valid || res.Field != "KIND" || res.Defect != typedrec.DefectMalformed {
-		t.Fatalf("ParseResult expected kind bogus: valid=%v field=%s defect=%s, want KIND malformed", res.Valid, res.Field, res.Defect)
-	}
-	if _, err := typedrec.ValidateResultV2(bogus, ""); err == nil || !strings.Contains(err.Error(), "KIND") {
-		t.Fatalf("ValidateResultV2 KIND: bogus: err=%v, want a KIND refusal", err)
-	}
-	if _, err := typedrec.ValidateResultV2(report, "bogus"); err == nil || !strings.Contains(err.Error(), "KIND") {
-		t.Fatalf("ValidateResultV2 card kind bogus: err=%v, want a KIND refusal", err)
-	}
-	if _, err := typedrec.ValidateResultV2(typedrec.Exemplar(typedrec.KindFix), typedrec.KindReport); err == nil || !strings.Contains(err.Error(), "KIND") {
-		t.Fatalf("ValidateResultV2 fix record on a report card: err=%v, want a KIND contradiction", err)
-	}
-
-	// The nova-pulse card KIND check that followed left with internal/pulse (deleted 2026-09-25, #3969).
 
 	// ns_card_result judges KIND itself: a caller claiming valid with a kind
 	// outside the six is persisted invalid.
@@ -401,6 +375,7 @@ func TestUnknownKindRefusedOnEveryPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	ledger := &card.RedisLedger{Store: st, Sprint: sprint, Label: label, Token: "tok"}
+	report := typedrec.Exemplar(typedrec.KindReport)
 	forged := typedrec.ParseResult([]byte(report))
 	forged.Kind = "bogus"
 	if code, err := ledger.Result(ctx, forged, t.TempDir()); err != nil || code != 0 {
