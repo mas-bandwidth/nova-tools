@@ -13,6 +13,8 @@ defect this package exists to prevent and is the one that fails OPEN.
 package fuse
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -33,25 +35,43 @@ func write(t *testing.T, path, content string) {
 	}
 }
 
-// ------------------------------------------------- 1. THE READ HAS THREE ANSWERS, NOT TWO
+// ------------------------------------------------- 1. THE READ HAS ONE YES AND TWO NOES
 
-// TestAbsentBoxIsVerifiedClearNotAnError: a box that was never created holds no blown
-// fuses -- that is a VERIFIED FACT: the read failed with the one error that means
-// NONEXISTENT rather than UNREADABLE. (That error cannot say whether the missing thing
-// was the file or its parent directory; the collapse is accepted -- see note 1 in the
-// package comment -- and pinned separately in cmd/nova-fuse's tests.)
-func TestAbsentBoxIsVerifiedClearNotAnError(t *testing.T) {
+// TestAnAbsentBoxIsErrNoBoxNeverClear: nothing at the path -- the file or a directory
+// above it -- is CANNOT TELL, an error every caller treats as BLOWN, told apart from an
+// unreadable box by ErrNoBox so a refusal can name CreateBox.
+func TestAnAbsentBoxIsErrNoBoxNeverClear(t *testing.T) {
 	t.Parallel()
 
-	b, err := ReadBox(boxIn(t))
-	if err != nil {
-		t.Fatalf("absent box must be VERIFIED CLEAR, got error: %v", err)
+	for _, path := range []string{boxIn(t), filepath.Join(t.TempDir(), "no", "such", "dir", "fuses.json")} {
+		if _, err := ReadBox(path); !errors.Is(err, ErrNoBox) {
+			t.Errorf("ReadBox(%s) = %v, want ErrNoBox", path, err)
+		}
 	}
-	if b.Lockdown != nil {
-		t.Error("absent box must have no lockdown")
+}
+
+// TestCreateBoxIsEmptyExclusiveAndNeverReplaces: CreateBox makes a readable empty box
+// once, and anything already at the path is left byte for byte with fs.ErrExist.
+func TestCreateBoxIsEmptyExclusiveAndNeverReplaces(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "sub", "fuses.json")
+	if err := CreateBox(path); err != nil {
+		t.Fatal(err)
 	}
-	if b.Quarantine == nil {
-		t.Error("Quarantine must be non-nil so callers can range without a nil check")
+	b, err := ReadBox(path)
+	if err != nil || b.Lockdown != nil || b.Quarantine == nil || len(b.Quarantine) != 0 {
+		t.Fatalf("a created box reads %+v, %v; want empty, non-nil Quarantine", b, err)
+	}
+	write(t, path, `{"lockdown":{"at":"t","reason":"r"}}`)
+	if err := CreateBox(path); !errors.Is(err, fs.ErrExist) {
+		t.Errorf("CreateBox over a box = %v, want fs.ErrExist", err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != `{"lockdown":{"at":"t","reason":"r"}}` {
+		t.Errorf("CreateBox replaced a box: %q", got)
+	}
+	if entries, _ := os.ReadDir(filepath.Dir(path)); len(entries) != 1 {
+		t.Errorf("CreateBox left litter: %v", entries)
 	}
 }
 
@@ -249,8 +269,9 @@ func TestWriteLeavesNoTempLitter(t *testing.T) {
 	}
 }
 
-// TestWrittenBoxIsWorldReadable. CreateTemp makes 0600; the box is not a secret and other
-// tools must be able to read it. A fuse nobody else can see is a fuse that stops nothing.
+// TestWrittenBoxIsWorldReadable. The box is not a secret and other tools must be able to read
+// it (a fuse nobody else can see is a fuse that stops nothing). The written box has 0644
+// permissions strictly via ExactMode.
 func TestWrittenBoxIsWorldReadable(t *testing.T) {
 	t.Parallel()
 
@@ -266,7 +287,112 @@ func TestWrittenBoxIsWorldReadable(t *testing.T) {
 		t.Fatalf("stat: %v", err)
 	}
 	if perm := fi.Mode().Perm(); perm != 0o644 {
-		t.Errorf("want mode 0644 so other tools can read the box, got %#o", perm)
+		t.Errorf("want mode 0644, got %04o", perm)
+	}
+}
+
+// TestWriteBoxResolvesSymlink asserts that WriteBox refuses a symlink at the
+// cleaned path. The link stays a link and the target bytes do not change.
+func TestWriteBoxResolvesSymlink(t *testing.T) {
+	t.Parallel()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: symlink creation requires special privileges")
+	}
+
+	dir := t.TempDir()
+	target := filepath.Join(dir, "real.json")
+	if err := WriteBox(target, Box{}); err != nil {
+		t.Fatalf("WriteBox(target) failed: %v", err)
+	}
+	before, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("ReadFile(target) failed: %v", err)
+	}
+
+	link := filepath.Join(dir, "link.json")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("Symlink failed: %v", err)
+	}
+
+	b := Box{
+		Quarantine: map[string]Fuse{
+			"discord": {At: "2026-09-28T00:00:00Z", Reason: "must not be written"},
+		},
+	}
+	if err := WriteBox(link, b); err == nil {
+		t.Fatal("WriteBox(link) succeeded; want refusal")
+	} else if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("WriteBox(link) error %q does not refuse a symlink", err)
+	}
+
+	lst, err := os.Lstat(link)
+	if err != nil {
+		t.Fatalf("Lstat(%q) failed: %v", link, err)
+	}
+	if lst.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("link %q is no longer a symlink", link)
+	}
+
+	after, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("ReadFile(target) failed: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("target bytes changed:\nbefore: %s\nafter: %s", before, after)
+	}
+}
+
+// TestWriteBoxRefusesParentSymlink asserts that WriteBox refuses writing when
+// the parent directory is a symlink. The real target bytes remain unchanged.
+func TestWriteBoxRefusesParentSymlink(t *testing.T) {
+	t.Parallel()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: symlink creation requires special privileges")
+	}
+
+	root := t.TempDir()
+	outside := filepath.Join(root, "outside")
+	intended := filepath.Join(root, "intended")
+	if err := os.Mkdir(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(intended, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(outside, "fuses.json")
+	if err := WriteBox(target, Box{}); err != nil {
+		t.Fatalf("WriteBox(target) failed: %v", err)
+	}
+	before, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	linkdir := filepath.Join(intended, "linkdir")
+	if err := os.Symlink(outside, linkdir); err != nil {
+		t.Fatal(err)
+	}
+
+	b := Box{
+		Quarantine: map[string]Fuse{
+			"discord": {At: "2026-09-28T00:00:00Z", Reason: "must not be written"},
+		},
+	}
+	linkBox := filepath.Join(linkdir, "fuses.json")
+	if err := WriteBox(linkBox, b); err == nil {
+		t.Fatal("WriteBox through parent symlink succeeded; want refusal")
+	} else if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("WriteBox error %q does not mention symlink", err)
+	}
+
+	after, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("target bytes changed:\nbefore: %s\nafter: %s", before, after)
 	}
 }
 
@@ -395,6 +521,41 @@ func TestPreserveUnreadableNamesTheDestinationEvenWhenItFails(t *testing.T) {
 	}
 	if dst != path+UnreadableSuffix {
 		t.Errorf("the destination must be named even on failure, got %q", dst)
+	}
+}
+
+// TestPreserveUnreadablePreservesExistingPermissions asserts that when the destination
+// unreadable file already exists with 0600 permissions, PreserveUnreadable preserves
+// those permissions rather than widening them to 0644.
+func TestPreserveUnreadablePreservesExistingPermissions(t *testing.T) {
+	t.Parallel()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: unix permission bits are not faithfully reported here")
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fuses.json")
+	write(t, path, `{"corrupt":`)
+
+	dst := path + UnreadableSuffix
+	if err := os.WriteFile(dst, []byte("existing corrupt bytes\n"), 0o600); err != nil {
+		t.Fatalf("write dst: %v", err)
+	}
+	if err := os.Chmod(dst, 0o600); err != nil {
+		t.Fatalf("chmod dst: %v", err)
+	}
+
+	if _, err := PreserveUnreadable(path); err != nil {
+		t.Fatalf("PreserveUnreadable: %v", err)
+	}
+
+	fi, err := os.Stat(dst)
+	if err != nil {
+		t.Fatalf("stat dst: %v", err)
+	}
+	if perm := fi.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("preserved destination mode = %04o, want 0600 (existing permissions were widened)", perm)
 	}
 }
 

@@ -71,3 +71,34 @@ func TestUmaskGroupWritableHonored(t *testing.T) {
 		t.Fatalf("subprocess failed: %v\n%s", err, string(out))
 	}
 }
+
+func TestExactModeBypassesUmask(t *testing.T) {
+	t.Parallel()
+
+	if os.Getenv("GO_TEST_SUBPROCESS_EXACT_MODE") == "077" {
+		syscall.Umask(0o077)
+		dir := t.TempDir()
+		target := filepath.Join(dir, "exact_mode_077_test.txt")
+
+		if err := Write(target, []byte("exact content\n"), 0o644, ExactMode()); err != nil {
+			t.Fatalf("Write with ExactMode failed: %v", err)
+		}
+
+		info, err := os.Stat(target)
+		if err != nil {
+			t.Fatalf("Stat failed: %v", err)
+		}
+
+		if perm := info.Mode().Perm(); perm != 0o644 {
+			t.Fatalf("file perm with ExactMode under umask 077 = %04o, want 0644", perm)
+		}
+		return
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestExactModeBypassesUmask$")
+	cmd.Env = append(os.Environ(), "GO_TEST_SUBPROCESS_EXACT_MODE=077")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("subprocess failed: %v\n%s", err, string(out))
+	}
+}

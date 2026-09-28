@@ -281,6 +281,7 @@ SELFTALK FAIL ./pages/RULES.md:8: INSTALLATION VERDICT-IDIOM: A rule weakened to
 ## nova-fuse
 
 ```
+nova-fuse init --box <path>                              make an empty box where none is; never replaces one
 nova-fuse status --box <path> [--max <n>]                what is blown, and since when (reports; never gate on it)
 nova-fuse check --box <path> [surface]                   may I read? -- act only on exit 0
 nova-fuse lockdown --box <path> "<reason>"               blow the one hard fuse: all untrusted reads stop
@@ -292,7 +293,7 @@ nova-fuse path --box <path>                              echo the box path this 
 
 ### First run
 
-One sitting: look, ask, blow the soft fuse, watch the answer change, rescind it. `./fuse-box.json` is a path of yours; a path that does not exist yet reads as CLEAR, and the first `quarantine` or `lockdown` creates it. The box below starts with one surface already quarantined (`cmd/nova-fuse/testdata/example-box.json`, which the tests run these lines against).
+One sitting: look, ask, blow the soft fuse, watch the answer change, rescind it. `./fuse-box.json` is a box of yours, made once with `nova-fuse init --box ./fuse-box.json`; every verb except init, lockdown, and path refuses a path with no box, never read as CLEAR. The box below starts with one surface already quarantined (`cmd/nova-fuse/testdata/example-box.json`, which the tests run these lines against).
 
 ```
 $ nova-fuse status --box ./fuse-box.json

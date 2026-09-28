@@ -43,7 +43,18 @@ func mustRun(t *testing.T, args []string, now time.Time) {
 	}
 }
 
+// boxIn is an empty box, made the one way a box is made clear (init).
 func boxIn(t *testing.T) string {
+	t.Helper()
+	box := absentBoxIn(t)
+	if err := fuse.CreateBox(box); err != nil {
+		t.Fatalf("fixture box: %v", err)
+	}
+	return box
+}
+
+// absentBoxIn is a path in a tempdir with no box at it.
+func absentBoxIn(t *testing.T) string {
 	t.Helper()
 	return filepath.Join(t.TempDir(), "fuses.json")
 }
@@ -424,13 +435,25 @@ func TestBlowingFailsLoudlyWhenItCannotWrite(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
 	box := filepath.Join(dir, "fuses.json")
+	// quarantine writes only into a box it has read, so its failure is pinned on a box
+	// that exists in a directory that then refuses writes.
+	qdir := t.TempDir()
+	qbox := filepath.Join(qdir, "fuses.json")
+	if err := fuse.CreateBox(qbox); err != nil {
+		t.Fatal(err)
+	}
+	qbefore := readRaw(t, qbox)
+	if err := os.Chmod(qdir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(qdir, 0o755) })
 
 	for _, tc := range []struct {
 		args []string
 		want string
 	}{
 		{[]string{"lockdown", "--box", box, "suspected compromise"}, "LOCKDOWN FAIL"},
-		{[]string{"quarantine", "--box", box, "discord", "many the same way"}, "QUARANTINE FAIL"},
+		{[]string{"quarantine", "--box", qbox, "discord", "many the same way"}, "QUARANTINE FAIL"},
 	} {
 		code, out, errOut := capture(t, tc.args, nowish())
 		if code != 1 {
@@ -448,6 +471,9 @@ func TestBlowingFailsLoudlyWhenItCannotWrite(t *testing.T) {
 	}
 	if _, err := os.Stat(box); !os.IsNotExist(err) {
 		t.Error("a failed write must not leave a half-made box")
+	}
+	if got := readRaw(t, qbox); got != qbefore {
+		t.Error("a failed quarantine must leave the box it read as it was")
 	}
 }
 
@@ -733,52 +759,89 @@ func TestHelpIsNotAnError(t *testing.T) {
 
 // ------------------------------------------------------------- 5. THE CONTROL
 
-// TestAbsentBoxIsClear. A machine that has never blown a fuse must not be blocked by
-// this tool, or its owner disables it and then nothing is guarded. "Never created" is a
-// verified fact -- the read failed with the one error that means NONEXISTENT rather than
-// UNREADABLE -- and that is a different answer from "could not look".
-func TestAbsentBoxIsClear(t *testing.T) {
+// TestAnAbsentBoxIsNeverClear: a box that is not where --box says proves nothing, so
+// every verb that reads it refuses at exit 2 and names init, and none of them makes
+// a box. A mistyped path, a moved or deleted box and a second --box pointing at an
+// empty place (TestASecondBoxCannotAnswerForABlownOne) all land here.
+func TestAnAbsentBoxIsNeverClear(t *testing.T) {
 	t.Parallel()
 
-	box := boxIn(t)
-	now := nowish()
-
-	code, out, _ := capture(t, []string{"check", "--box", box, "discord"}, now)
-	if code != 0 {
-		t.Fatalf("exit = %d, want 0", code)
-	}
-	if !strings.Contains(out, "FUSE OK") {
-		t.Errorf("stdout = %q", out)
-	}
-
-	code, out, _ = capture(t, []string{"status", "--box", box}, now)
-	if code != 0 {
-		t.Fatalf("exit = %d, want 0", code)
-	}
-	if !strings.Contains(out, "STATUS OK lockdown=clear quarantines=0") {
-		t.Errorf("stdout = %q", out)
+	for _, box := range []string{
+		absentBoxIn(t),
+		filepath.Join(t.TempDir(), "no", "such", "dir", "fuses.json"),
+	} {
+		for _, args := range [][]string{
+			{"check", "--box", box, "discord"},
+			{"check", "--box", box},
+			{"status", "--box", box},
+			{"quarantine", "--box", box, "discord", "many the same way"},
+			{"lift", "quarantine", "--box", box, "discord"},
+		} {
+			code, out, errOut := capture(t, args, nowish())
+			if code != 2 || out != "" {
+				t.Errorf("%q: exit %d stdout %q, want exit 2 and no OK line", args, code, out)
+			}
+			if !strings.Contains(errOut, "no box at") || !strings.Contains(errOut, "nova-fuse init --box") || strings.Count(errOut, "\n") != 1 {
+				t.Errorf("%q: stderr %q, want one line naming the absent box and init", args, errOut)
+			}
+		}
+		if _, err := os.Stat(box); !os.IsNotExist(err) {
+			t.Errorf("a refusal over an absent box made %s", box)
+		}
 	}
 }
 
-// TestCheckIntoANonexistentDirectoryIsAlsoClear pins a DOCUMENTED DECISION, so a future
-// "fix" is a deliberate one. fs.ErrNotExist is true both when the directory exists and
-// the box file is not in it AND when a parent directory itself does not exist: the read
-// distinguishes unreadable from nonexistent, but it cannot distinguish missing-file from
-// missing-directory. The behavior is kept on purpose -- --box is a locator, the caller's
-// statement of where the box lives, and a caller that names the wrong box gets that
-// box's truth, here an empty one (SPEC, "The box"). If this test goes red, someone has
-// changed an accepted answer of a safety control, and must mean it: rewrite note 1 in
-// internal/fuse's package comment and SPEC's three-answers paragraph in the same commit.
-func TestCheckIntoANonexistentDirectoryIsAlsoClear(t *testing.T) {
+// TestLockdownMakesAnAbsentBox: a fuse you cannot blow is not a fuse, so lockdown is
+// the one write verb that proceeds with no box there, and nothing is less blocked
+// than before, since the absent box already refused.
+func TestLockdownMakesAnAbsentBox(t *testing.T) {
 	t.Parallel()
 
 	box := filepath.Join(t.TempDir(), "no", "such", "dir", "fuses.json")
-	code, out, errOut := capture(t, []string{"check", "--box", box, "discord"}, nowish())
-	if code != 0 {
-		t.Fatalf("exit = %d, want 0 -- an absent parent directory answers the same as an absent box\nstderr: %s", code, errOut)
+	mustRun(t, []string{"lockdown", "--box", box, "suspected compromise"}, nowish())
+	if code, _, errOut := capture(t, []string{"check", "--box", box}, nowish()); code != 1 || !strings.Contains(errOut, "FUSE FAIL lockdown") {
+		t.Errorf("check after lockdown: exit %d stderr %q, want 1 and FUSE FAIL lockdown", code, errOut)
 	}
-	if !strings.Contains(out, "FUSE OK") {
-		t.Errorf("stdout = %q, want FUSE OK", out)
+}
+
+// TestInitMakesAnEmptyBoxOnceAndNeverReplacesOne: init is how a box comes into being
+// clear, and replacing a box is the lockdown reset this tool does not have. Whatever
+// is at the path -- a blown box, a clear one, bytes that are not a box -- is left
+// byte for byte, and the run exits 1.
+func TestInitMakesAnEmptyBoxOnceAndNeverReplacesOne(t *testing.T) {
+	t.Parallel()
+
+	box := absentBoxIn(t)
+	code, out, errOut := capture(t, []string{"init", "--box", box}, nowish())
+	if code != 0 || !strings.HasPrefix(out, "INIT OK box=") || errOut != "" {
+		t.Fatalf("init: exit %d stdout %q stderr %q", code, out, errOut)
+	}
+	if code, out, _ := capture(t, []string{"check", "--box", box, "discord"}, nowish()); code != 0 || !strings.Contains(out, "FUSE OK") {
+		t.Fatalf("check on an initialised box: exit %d stdout %q", code, out)
+	}
+
+	mustRun(t, []string{"lockdown", "--box", box, "suspected compromise"}, nowish())
+	for _, content := range []string{"", "not json", `{"quarantine":{}}`} {
+		if content != "" {
+			writeRaw(t, box, content)
+		}
+		before := readRaw(t, box)
+		code, out, errOut := capture(t, []string{"init", "--box", box}, nowish())
+		if code != 1 || out != "" || !strings.HasPrefix(errOut, "INIT FAIL") || !strings.Contains(errOut, "never replaces") {
+			t.Errorf("init over %q: exit %d stdout %q stderr %q, want exit 1 and INIT FAIL", before, code, out, errOut)
+		}
+		if got := readRaw(t, box); got != before {
+			t.Errorf("init replaced %q with %q", before, got)
+		}
+	}
+	if entries, _ := os.ReadDir(filepath.Dir(box)); len(entries) != 1 {
+		t.Errorf("init left litter beside the box: %v", entries)
+	}
+
+	for _, args := range [][]string{{"init"}, {"init", "--box", box, "extra"}} {
+		if code, _, _ := capture(t, args, nowish()); code != 2 {
+			t.Errorf("%q: exit %d, want 2", args, code)
+		}
 	}
 }
 
@@ -1274,13 +1337,16 @@ func TestAFailFileErrorStaysOnOneLine(t *testing.T) {
 	for _, tc := range []struct {
 		args []string
 		want string
+		code int
 	}{
-		{[]string{"lockdown", "--box", box, "suspected compromise"}, "LOCKDOWN FAIL"},
-		{[]string{"quarantine", "--box", box, "discord", "many the same way"}, "QUARANTINE FAIL"},
+		{[]string{"lockdown", "--box", box, "suspected compromise"}, "LOCKDOWN FAIL", 1},
+		// No box there: quarantine refuses before it writes, and the refusal carries
+		// the same path.
+		{[]string{"quarantine", "--box", box, "discord", "many the same way"}, "nova-fuse quarantine:", 2},
 	} {
 		code, out, errOut := capture(t, tc.args, nowish())
-		if code != 1 {
-			t.Fatalf("%v: exit = %d, want 1\nstdout: %q\nstderr: %q", tc.args, code, out, errOut)
+		if code != tc.code {
+			t.Fatalf("%v: exit = %d, want %d\nstdout: %q\nstderr: %q", tc.args, code, tc.code, out, errOut)
 		}
 		if got := strings.Count(strings.TrimRight(errOut, "\n"), "\n") + 1; got != 1 {
 			t.Errorf("%v: the failure printed %d lines, want 1: %q", tc.args, got, errOut)
@@ -1426,6 +1492,9 @@ var fuseAudit = audit.Config{
 		// field through oneline.Field before it is returned.
 		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"sort"`, `"strings"`, `"time"`,
+		// errors and io/fs classify an error (errors.Is against fuse.ErrNoBox and
+		// fs.ErrExist); neither holds a writer.
+		`"errors"`, `"io/fs"`,
 		// bounded prints the capped quarantine listing and the one MORE line that stands
 		// for what it did not print. Every line reaching it is rendered by a fmt.Sprintf
 		// in THIS package, which the classifier walks like any other print site, and
@@ -1852,5 +1921,109 @@ func TestLateFlagRefusalNamesDoor(t *testing.T) {
 	}
 	if !strings.Contains(errOut, `flags come before positional arguments, got "--extra-flag" late; run: nova-fuse help`) {
 		t.Errorf("late flag refusal = %q, want standard refusal naming help door", errOut)
+	}
+}
+
+// TestLockdownOnSymlinkedBoxRefuses asserts that lockdown on a symlinked box
+// path is refused because WriteBox does not follow symlinks. The symlink
+// remains intact and the target file is unchanged.
+func TestLockdownOnSymlinkedBoxRefuses(t *testing.T) {
+	t.Parallel()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: symlink creation requires special privileges")
+	}
+
+	dir := t.TempDir()
+	realBox := filepath.Join(dir, "real-fuses.json")
+	if err := fuse.WriteBox(realBox, fuse.Box{}); err != nil {
+		t.Fatalf("WriteBox failed: %v", err)
+	}
+	before, err := os.ReadFile(realBox)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+
+	symlinkedBox := filepath.Join(dir, "symlink-fuses.json")
+	if err := os.Symlink(realBox, symlinkedBox); err != nil {
+		t.Fatalf("Symlink failed: %v", err)
+	}
+
+	now := nowish()
+	code, out, errOut := capture(t, []string{"lockdown", "--box", symlinkedBox, "symlink lockdown test"}, now)
+	if code != 1 {
+		t.Fatalf("lockdown on symlinked box exit = %d, want 1\nstdout: %q\nstderr: %q", code, out, errOut)
+	}
+	if !strings.Contains(errOut, "LOCKDOWN FAIL") || !strings.Contains(errOut, "symlink") {
+		t.Errorf("stderr = %q, want LOCKDOWN FAIL naming symlink", errOut)
+	}
+
+	// Symlink must still be intact as a symlink
+	lst, err := os.Lstat(symlinkedBox)
+	if err != nil {
+		t.Fatalf("Lstat(%q) failed: %v", symlinkedBox, err)
+	}
+	if lst.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("symlinked box %q is no longer a symlink", symlinkedBox)
+	}
+
+	// Target bytes must not change
+	after, err := os.ReadFile(realBox)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("target bytes changed:\nbefore: %s\nafter: %s", before, after)
+	}
+}
+
+// TestLockdownOnParentSymlinkedBoxRefuses asserts that lockdown on a box path
+// whose parent directory is a symlink is refused. The target file is unchanged.
+func TestLockdownOnParentSymlinkedBoxRefuses(t *testing.T) {
+	t.Parallel()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: symlink creation requires special privileges")
+	}
+
+	root := t.TempDir()
+	outside := filepath.Join(root, "outside")
+	intended := filepath.Join(root, "intended")
+	if err := os.Mkdir(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(intended, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	realBox := filepath.Join(outside, "fuses.json")
+	if err := fuse.WriteBox(realBox, fuse.Box{}); err != nil {
+		t.Fatalf("WriteBox failed: %v", err)
+	}
+	before, err := os.ReadFile(realBox)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+
+	linkdir := filepath.Join(intended, "linkdir")
+	if err := os.Symlink(outside, linkdir); err != nil {
+		t.Fatal(err)
+	}
+	symlinkedBox := filepath.Join(linkdir, "fuses.json")
+
+	now := nowish()
+	code, out, errOut := capture(t, []string{"lockdown", "--box", symlinkedBox, "parent symlink lockdown test"}, now)
+	if code != 1 {
+		t.Fatalf("lockdown on box in symlinked parent dir exit = %d, want 1\nstdout: %q\nstderr: %q", code, out, errOut)
+	}
+	if !strings.Contains(errOut, "LOCKDOWN FAIL") || !strings.Contains(errOut, "symlink") {
+		t.Errorf("stderr = %q, want LOCKDOWN FAIL naming symlink", errOut)
+	}
+
+	after, err := os.ReadFile(realBox)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("target bytes changed:\nbefore: %s\nafter: %s", before, after)
 	}
 }
