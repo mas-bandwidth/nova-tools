@@ -3,8 +3,8 @@ module github.com/mas-bandwidth/nova-tools
 go 1.26.6
 
 require (
-	pgregory.net/rapid v1.3.0
 	github.com/alicebob/miniredis/v2 v2.39.0
+	github.com/client9/misspell v0.3.4
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/prometheus/client_golang v1.24.1
 	github.com/redis/go-redis/v9 v9.22.0
@@ -12,6 +12,7 @@ require (
 	golang.org/x/sys v0.47.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.59.0
+	pgregory.net/rapid v1.3.0
 )
 
 require (

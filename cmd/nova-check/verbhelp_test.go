@@ -25,7 +25,8 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 		{Verb: "dogfood gate", Flags: []string{"--receipts", "{dir}/receipts"}},
 		{Verb: "dogfood"},
 		{Verb: "convergence", Flags: []string{"--state", "{dir}/state"}},
+		{Verb: "spelling", Flags: []string{"--dir", "{dir}/self"}},
 		{Verb: "version"},
 	})
-	testverbhelp.HelpVerb(t, run, "nova-check", "quickstart", "dogfood gate", "version")
+	testverbhelp.HelpVerb(t, run, "nova-check", "quickstart", "dogfood gate", "spelling", "version")
 }
