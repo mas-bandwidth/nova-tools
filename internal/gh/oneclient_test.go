@@ -17,11 +17,11 @@ import (
 var ghUse = regexp.MustCompile(`Command(Context)?\(\s*(ctx,\s*)?"gh"|\{"gh",|(?i:(program|bin|path)\w*) = "gh"\s*$|google/go-github|https://` + `api\.github\.com|api\.github\.com/` +
 	`|(\.(gh|run|api)|\bgh)\([^)]*"api"`)
 
-// ghAllowed are the files outside nova-sprint (cmd/nova-sprint,
-// internal/nsprint) that still talk to GitHub on their own, each with its
-// reason. They are not nova-sprint verbs and are outside #4343's PATHS; a
-// follow-up moves each onto internal/gh or retires it. Inside nova-sprint
-// there is no allowlist: every verb uses the one client.
+// ghAllowed are the files outside nova-sprint (internal/nsprint; its
+// command moved to deprecated/cmd/nova-sprint) that still talk to GitHub on
+// their own, each with its reason. They are not nova-sprint verbs and are
+// outside #4343's PATHS; a follow-up moves each onto internal/gh or retires
+// it. Inside nova-sprint there is no allowlist: every verb uses the one client.
 var ghAllowed = map[string]string{
 	"cmd/nova-sandbox/worktree.go":   "nova-sandbox, not a nova-sprint verb",
 	"internal/ci/failed_forge.go":    "the old ci failed-run reader through its gh wrapper; not a nova-sprint verb",
@@ -42,10 +42,9 @@ var ghAllowed = map[string]string{
 }
 
 // TestOneGitHubClient (#4343 BUILD 1): every GitHub call in nova-sprint
-// goes through internal/gh. No file under cmd/nova-sprint or
-// internal/nsprint shells out to gh, imports go-github or names the REST
-// root; elsewhere in the module only the named files do, and a row whose
-// file no longer does is dropped.
+// goes through internal/gh. No file under internal/nsprint shells out to
+// gh, imports go-github or names the REST root; elsewhere in the module only
+// the named files do, and a row whose file no longer does is dropped.
 func TestOneGitHubClient(t *testing.T) {
 	t.Parallel()
 	for _, sample := range []string{
@@ -104,7 +103,7 @@ func TestOneGitHubClient(t *testing.T) {
 		t.Fatalf("read %d files; the walk is broken", n)
 	}
 	for rel, lines := range hits {
-		inSprint := strings.HasPrefix(rel, "cmd/nova-sprint/") || strings.HasPrefix(rel, "internal/nsprint/")
+		inSprint := strings.HasPrefix(rel, "internal/nsprint/")
 		if _, ok := ghAllowed[rel]; ok && !inSprint {
 			continue
 		}

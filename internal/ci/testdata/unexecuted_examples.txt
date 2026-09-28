@@ -88,9 +88,6 @@ example: nova-secrets placed --machine mini
 example: nova-secrets seat add --store ./secrets --as air --pub age1… --from rowan --only GH_TOKEN,DEEPSEEK_API_KEY --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops
 example: nova-self-talk --rule-doc RULES.md ./pages/RULES.md ./pages/journal.md
 example: nova-self-talk ./pages/journal.md
-example: nova-sprint table --check --redis 127.0.0.1:6379
-example: nova-sprint table --redis 127.0.0.1:6379 --once
-example: nova-sprint table --redis 127.0.0.1:6379 --sprint control-a --once
 example: nova-tokens check --out ./out
 example: nova-tokens fold --out ./out --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts --bus ./bus
 example: nova-tokens report --who emma --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts

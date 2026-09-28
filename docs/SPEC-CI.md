@@ -1519,7 +1519,7 @@ what is enforced on every leg is static (`unitwaits`).
 **The hurt.** "The constant bottleneck in our working process in CI. This is the
 real 'blocker' for merging." Four shards of every PR each took the whole of a
 box, 133 test files started a redis-server each, and 13 tests ran over a
-second (merge-group run 36251462268: cmd/nova-sprint 23.7 s, internal/ci 11.4 s).
+second (merge-group run 36251462268: deprecated/cmd/nova-sprint 23.7 s, internal/ci 11.4 s).
 **The test.** `TestUnitTierRefusesRedisServer` (runs the shim step: exit 86
 and its line), `TestStartFailsClosedOnTheUnitTierShim` (functional-tagged, in
 `internal/ci/redis_ci_test.go`: `testutil.Start` against that shim fails
@@ -2236,7 +2236,7 @@ Python one-liner, is invisible to it.
 `cmd/` or `internal/`, whatever its build tags, has `t.Parallel()` as its FIRST
 statement, or sits on the serial allowlist with its reason.
 **The hurt.** Glenn, 2026-09-25: "Go tests always run in parallel." On that day
-843 of 6,417 test functions were parallel; `cmd/nova-sprint` ran 267 tests one
+843 of 6,417 test functions were parallel; `deprecated/cmd/nova-sprint` ran 267 tests one
 after another and `go-test-cmd` took 129 s on the Linux bench against a
 two-minute ceiling and a one-minute target. The same change made 4,487 more
 tests parallel (5,330 of 6,417) with a Go program: a test that calls
@@ -2311,7 +2311,7 @@ injected clock seam is not a wall-clock wait and is not found: the seams the
 tree has are internal/wake.Clock, internal/bus's lockClock, internal/swarm's
 batchClock and pullClock, internal/nsprint/land.Clock, internal/log.Clock and
 the injected `Sleep func(time.Duration)` and `now func() time.Time` fields of
-internal/merge, internal/gh, internal/swarm, deprecated/cmd/nova-merge and cmd/nova-sprint.
+internal/merge, internal/gh, internal/swarm, deprecated/cmd/nova-merge and deprecated/cmd/nova-sprint.
 **The hurt.** A load gate made the wall-time verdict depend on the machine:
 PR #4413's own head was red at load 3 of 32 CPUs on
 TestJoinInterruptionNegativeControlWithoutKillFails (1.6 s, run 36264290984),
@@ -2407,15 +2407,19 @@ rest; a wrapper around any other nova tool (`nova-tokens`, `nova-decide`,
 `nova-redis serve`) is not flagged until that tool takes `--seat`; and only
 `docs/` Markdown is read, so a README elsewhere is not.
 
-### `seatredis` — no nova-sprint verb refuses an empty `--redis` while a seat is selected
+### `seatredis` — no verb of a live tool that selects a seat refuses an empty `--redis`
 
-**The rule.** Every `--redis` flag in `cmd/nova-sprint` and `internal/nsprint`
-(and `--store`, nova-sprint's `note`) defaults to a seat-aware expression:
-`redisDefault(...)`, `redisOr(...)`, `redisDefaultFrom(...)`,
-`rawAddrDefault(...)` or, outside cmd/nova-sprint, `seatcred.Addr()`. Each of
-these is the verb's own environment default first, then the selected seat
-row's address from seats.tsv. A `--redis` read by hand (a `["redis"]` index or
-`flagValues(..., "redis")`) sits in a function that calls `redisOr`.
+**The rule.** Every `--redis` flag of a live package that selects a seat (a
+package whose Go calls seatcred's `FromArgs`, directly or on
+`seatcred.Process()`; `cmd/nova-table` among them) defaults to a seat-aware
+expression: the tool's seat-first default (`redisDefault(...)`, or a name the
+function declared from it), `redisOr(...)` around a hand-parsed value, or
+`seatcred.Addr()`. Each of these is the verb's own environment default first,
+then the selected seat row's address from seats.tsv. A `--redis` read by hand
+(a `["redis"]` index or `flagValues(..., "redis")`) sits in a function that
+calls `redisOr`. The rule was written over nova-sprint, which is deprecated
+(Glenn 2026-09-27) and lives under `deprecated/cmd/nova-sprint`, outside the
+live packages the rule reads.
 **The hurt.** #4357 gave nova-sprint `--seat coordinator` and a seats.tsv row
 naming its Redis, but the cold read found that `table`, `census`, `digest` and
 `fn load` declared `--redis` with no default and refused the empty address
@@ -2424,21 +2428,22 @@ before `store.Open` could fall back to the seat. So a session still typed
 (nova-tools#4330).
 **The test.** `TestNoVerbRefusesAnEmptyRedisUnderASeat`, with its control
 `TestSeatRedisRuleSeesEachShape` (`internal/ci/seatredis_class_test.go`). It
-reads the shared AST and fails when it finds fewer than 100 flags, so it cannot
-pass by matching nothing. The control pins `""`, `os.Getenv(...)`, a
-`StringVar` with `""`, a bare `flags["redis"]` and nova-sprint's `--store` as
-red, and the seat-aware spellings as green. The functional
-`TestSeatRowDrivesVerbsWithNoWrapper` (`cmd/nova-sprint`) runs `table --once`,
-`census`, `digest`, `fn load` and `fn check` on the seat row with no `--redis`.
+reads the shared AST and fails when the set of seat-selecting packages lacks
+`cmd/nova-table` or no `--redis` flag is found there, so it cannot pass by
+matching nothing. The control pins `""`, `os.Getenv(...)`, a `StringVar` with
+`""`, a bare `flags["redis"]`, `redisDefaultFrom()` and a name declared from
+anything else as red, and the seat-aware spellings and a `--store` flag as
+green. The functional test that ran nova-sprint's verbs on a seat row with no
+`--redis` moved with it to `deprecated/cmd/nova-sprint` and does not run.
 **Its allowlist.** None.
-**Its remedy line.** `default the flag to redisDefault() (or
-redisDefault("ENV")), wrap a hand-parsed one in redisOr, or use
-seatcred.Addr() outside cmd/nova-sprint`.
+**Its remedy line.** `default the flag to the tool's seat-first default
+(nova-table: redisDefault(os.Getenv)), wrap a hand-parsed one in redisOr, or use
+seatcred.Addr()`.
 **Its narrowings.** Only `String`, `StringVar` and the two hand-parse shapes
-are read. A flag named anything other than `redis` (or nova-sprint's `store`)
-is not held, and neither are other tools (`nova-work`, `nova-tokens`,
-`nova-post`, `nova-merge`). A hand-parsed read counts as covered when its
-function calls `redisOr` anywhere, not necessarily on that value.
+are read, and only a flag named `redis`. A live tool that selects no seat is
+not held (`nova-tokens`, `nova-post`): it has no seat to fall back to. A
+hand-parsed read counts as covered when its function calls `redisOr` anywhere,
+not necessarily on that value.
 
 ### Tests this spec demands
 
@@ -2484,7 +2489,7 @@ Every class test reads this repository's own text — `.go` files, `.github/work
 41. `TestTableSetsHaveOneWriter` / `TestTableSetsRuleCatchesAnInjectedWriter` — nothing but the one move file, `internal/nsprint/fn/lua/02_card_move.lua`, writes a set behind the three tables: `ws:<stream>:<where>` (the stream table's primaries), `bench:<b>:cards:<col>` and `friend:<f>:cards:<col>` (the host and friend tables' copies), the dealer's lists `s:<S>:pool|waiting`, each also under the sprint epoch (`ws:<e>:...`, `<kind>:<name>:<e>:cards:...`, `s:<S>:<e>:...`, #4238: the scanner knows the literals and every epoch-keyed helper, `ws.KeyAt`, `ConsumerKeyAt`, `SprintListAt` and their package twins in Go, `NS.card.ckey|wskey|skey`, `CARD.*`, `cm_*`, `DF.*` and the lander's `wskey` in Lua), and the bench lease ledgers `bench:<b>:living|starting` being folded into `bench:<b>:cards:working` (#3929, the table moves; Glenn 2026-09-25: "it's YOUR JOB to make sure that these links are always valid"). **The hurt:** the table printed counts no card record could account for, because several files each kept their own copy of a set, so a move in one left a stale member in another. **The sweep:** every Lua file under `internal/nsprint/fn/lua` and the stream lander's standalone script (`internal/nsprint/land/stream/*.lua`) (a ZADD, ZREM, SADD, SREM, SMOVE, pop, range removal, store, DEL, UNLINK or RENAME of one of those keys, directly or through a local bound to one) and every non-test Go file under `cmd/` and `internal/` (the go-redis write methods and raw command lists on the same keys). **The allowlist:** fixtures (`*fixture*.go`) seed a throwaway store; `knownTableWriters` is a ratchet that only goes down, holding the lander script's two ws writes (its park) and `ns_card_resume`'s pool write in `card_pool.lua` until they fold into the one move; the legacy ledger writers were a ratchet (`legacyLedgerWriters` in `internal/ci/tablemoves_class_test.go`), now empty since the fold landed (#3998): any write of an old ledger fails. **The remedy line:** `a second writer of a table set (the one writer is 02_card_move.lua; verbs call it: nova-sprint card deal|work|end|land|cancel): <file>:<line>`, or the ratchet's `lower legacyLedgerWriters[...]`. **The control:** `TestTableSetsRuleCatchesAnInjectedWriter` feeds the scanner Lua and Go writers of the table sets and the ledgers and wants each found, and wants the move file, a fixture and a ZCARD read left alone.
 42. `TestNoOldLeaseLedgerLeft` — nothing reads or writes the old lease ledgers `bench:<b>:living|starting` and `friend:<f>:living|starting` any more, in the Lua library or in any non-test Go file: they fold into `<consumer>:cards:working`, the one lease ledger, and the width in use is its ZCARD (#3998, #3877's other half). **The hurt:** a bench or friend kept two ledgers beside its working set, so the width a table printed, the width a take was refused at and the width the dealer reserved against could each read a different set. **The sweep:** every Lua file under `internal/nsprint/fn/lua` (code before a `--` comment) and every non-test Go file under `cmd/` and `internal/`, for a string spelling of a bench or friend key ending `:living` or `:starting`. **No allowlist:** fixtures seed the consumer sets. **The remedy line:** `an old lease ledger key (folded into <consumer>:cards:working, #3998): <file>:<line>: <line>`; hold and drop a friend-queue lease with `NS.moves.hold` / `NS.moves.drop` (02_card_move.lua) and read width as ZCARD `<consumer>:cards:working`. **The control:** the test feeds the pattern a Lua ZCARD of a friend's `:starting`, a Go ZCard of a bench's `:living` and a fixture ZADD of a friend's `:living` and wants each found, and wants `bench:<b>:cards:working` left alone.
 43. `TestCopiesRunNiced` — every path that execs a copy's harness, or a coordinator child's local test run, steps its OWN process down to nice 15 (`internal/yield`, `Nice = 15`: `setpriority(PRIO_PROCESS, 0, n)` on darwin, where a nice belongs to the process, and on Linux, where a nice belongs to a THREAD and a child forked from an un-niced thread inherits 0, `setpriority(PRIO_PROCESS, tid, n)` over every thread in `/proc/self/task`, repeated until a pass sets none — measured on hetzner 2026-09-26: the one-thread form left 31 of 32 children of a wrapper at nice 0) BEFORE the exec: `RunWrapper` (`internal/nsprint/card/wrapper.go`, before `proc.start()`), `Run` (`internal/nsprint/card/run.go`, before `cmd.Start()`) and `cmdLocal` (`cmd/nova-ci/local.go`, before its first `localCapture(`; its `nice -n` is pinned to `yield.Nice`); the card paths default their `Yield` seam to the package's `yieldToCI` (`yield = yieldToCI`, assigned once in `nice.go` to `yield.ToCI`), and no production caller sets a `Yield` of its own (nova-tools#4293, Glenn 2026-09-26 ~12:00 PM ET: "CI over work is a permanent setting. It's a GOOD idea. because work creates more CI, so without this, it is unstable"). **The hurt:** the morning of 2026-09-26, with slots raised to hulk 24, space 12 and vision 24, one-minute load per core reached 5.0, 4.1 and 3.8 while the PR CI shards ran on the same machines and the darwin shard on the Studio reached 1m53s against the two-minute cap; copies at nice 0 shared the cores evenly with the legs, so more work meant slower CI meant more work waiting. **The sweep:** the three named exec paths, read as text: the yield call's index in the function body against the exec call's. **No allowlist:** a new worker kind gets its nice by calling `yield.ToCI` before its exec and joining the list. **The remedy line:** `<file> <func>: no <yield> call: a copy or a local test run must yield to CI before it execs`, or `<yield> stands after <exec>: a yield after the exec yields nothing`, or `production may set the wrapper's yield only in nice.go, to yield.ToCI`, or `nice_linux.go: the one-thread form setpriority(PRIO_PROCESS, 0, n) nices the calling thread only`. **The control:** `internal/nsprint/card/nice_test.go` gives the wrapper a recording `Yield` and wants it called once, before the ledger's first read, and wants a failing one refused with `yield to CI: ...`; `internal/yield/yield_test.go` reads the process's own priority back after `ToCI`; `internal/yield/child_test.go` starts sixteen children from fresh goroutines after `ToCI` and wants each to read its own nice as 15 (the one-thread form fails it: 15 of 16 at 0 on hetzner).
-44. `TestSlotsShrinkByCILegs` — no slot computation, a bench's or a friend's, ignores the CI legs running on the machine: the bench beat and the friend beat write the count measured there as `ci` every beat (`ns_bench_beat` args[21] and `ns_friend_beat` args[5] in `presence.lua`; `cmd/nova-sprint/life.go` measures it with `life.CILegsNow`, one `Runner.Worker` process per running job; a friend is not free of legs, the Studio hosts friends and CI both), and every slot subtraction in Go and Lua under `internal/nsprint` and `cmd/nova-sprint` — `slots - ...`, or the desired hash's slots read as a number and subtracted from, the form `ns_card_deal`'s in-Redis re-check used (`deal.lua`) — names `ci`, `CI` or `TM.ci_legs(`: `deal.Bench.Free`, `taskcard.FreeSlots` (the deal pass and the progress duty's room), `ns_cm_work`'s fill and `TM.room`'s read route in `02_card_move.lua`, `ns_card_deal`'s re-check, `DF.take` and `DF.open` in `deal_friend.lua`, `task.WidthFrom`, the friend ladder's underfull, and `preflight`'s fleet rows (nova-tools#4293: "a bench's free slots = declared slots minus the CI legs running on it"). **The hurt:** the same morning: the deal filled every bench to its declared slots whether or not a CI leg was already on it, so a leg landed beside a full bench and the copies took its cores. **The sweep:** every non-test `.go` and `.lua` under the two trees, code lines only (a `//` or `--` line is not a computation), for `[sS]lots\s*-\s*<name or paren>` or `desired ... ) - <name or paren>`; at least eight such lines must be found, or one has moved out of reach. **No allowlist:** a friend's slots shrink by its own beat's `ci` like a bench's. **The remedy line:** `<file>:<line>: "<line>" computes free slots without the CI legs running on the bench (nova-tools#4293)`, or `the beat must write the CI leg count as ci (args[21]) every beat`. **The control:** `TestBenchFreeShrinksByCILegs` (deal), `TestFreeSlotsShrinkByCILegs` (taskcard) and `TestCountCILegsCountsRunnerWorkers` (life) pin the arithmetic and the count; `TestDealAndFillTakeCILegsOffABenchsSlots` and `TestBenchBeatCarriesCILegs` (`-tags functional`) prove it in Redis.
+44. `TestSlotsShrinkByCILegs` — no slot computation, a bench's or a friend's, ignores the CI legs running on the machine: the bench beat and the friend beat write the count measured there as `ci` every beat (`ns_bench_beat` args[21] and `ns_friend_beat` args[5] in `presence.lua`; `deprecated/cmd/nova-sprint/life.go` measured it with `life.CILegsNow`, one `Runner.Worker` process per running job; a friend is not free of legs, the Studio hosts friends and CI both), and every slot subtraction in Go and Lua in the live packages under `cmd/` and `internal/` (the reading CI's selection uses, deprecated/PACKAGES) — `slots - ...`, or the desired hash's slots read as a number and subtracted from, the form `ns_card_deal`'s in-Redis re-check used (`deal.lua`) — names `ci`, `CI` or `TM.ci_legs(`: `deal.Bench.Free`, `taskcard.FreeSlots` (the deal pass and the progress duty's room), `ns_cm_work`'s fill and `TM.room`'s read route in `02_card_move.lua`, `ns_card_deal`'s re-check, `DF.take` and `DF.open` in `deal_friend.lua`, `task.WidthFrom`, the friend ladder's underfull, and `preflight`'s fleet rows (nova-tools#4293: "a bench's free slots = declared slots minus the CI legs running on it"). **The hurt:** the same morning: the deal filled every bench to its declared slots whether or not a CI leg was already on it, so a leg landed beside a full bench and the copies took its cores. **The sweep:** every non-test `.go` and `.lua` under the two trees, code lines only (a `//` or `--` line is not a computation), for `[sS]lots\s*-\s*<name or paren>` or `desired ... ) - <name or paren>`; at least eight such lines must be found, or one has moved out of reach. **No allowlist:** a friend's slots shrink by its own beat's `ci` like a bench's. **The remedy line:** `<file>:<line>: "<line>" computes free slots without the CI legs running on the bench (nova-tools#4293)`, or `the beat must write the CI leg count as ci (args[21]) every beat`. **The control:** `TestBenchFreeShrinksByCILegs` (deal), `TestFreeSlotsShrinkByCILegs` (taskcard) and `TestCountCILegsCountsRunnerWorkers` (life) pin the arithmetic and the count; `TestDealAndFillTakeCILegsOffABenchsSlots` and `TestBenchBeatCarriesCILegs` (`-tags functional`) prove it in Redis.
 45. `TestEveryTableSetIsNamedByTheEpochRule` / `TestEpochNameRuleCatchesAnInjectedName` — no Lua file of the library or the stream lander and no non-test Go file under `cmd/` or `internal/` (fixtures included) spells a table set's name but through the epoch rule: a literal `ws:<s>:...` (`'ws:' ..`, `"ws:"+`, `"ws:%`, a two-segment ws literal), `<kind>:<name>:cards:` (or a bare `:cards:` piece) or `s:<S>:pool|waiting`, and no retired epoch-0 helper (`StreamKey`, `FriendKey`, `BenchCardsKey`, `BenchWorkingKey`, `WSKey`, `FriendCardsKey`, `PoolViewKey`, `keyPool`, `keyWaiting`, `ws.Key`, `Consumer.Key`) is back (#4238, Glenn 2026-09-26 9:25 AM ET: "if the numbers from the async things are not the same sequence as current table view, the display is zero"). **The hurt:** the first fix round named most sets by the epoch, but the deal pass read `s:<S>:pool` literally, so after the first clear it never saw a card pushed after it, and the probe guard matched one name shape, so it was off from epoch 1 (the 4/10 read of #4377); a dozen other paths still used the old names. **The allowlist:** `epochRuleLines`, the rule's own lines only (`ws.KeyAt`/`key0`, `ws.ConsumerKeyAt` in `internal/nsprint/ws`; `cm_ckey`, `cm_wskey` in `02_card_move.lua`; the lander script's `wskey`), each a whole line, and a row whose line is gone fails (the list only shrinks). The global ws keys (`ws:order`, `ws:names`, `ws:log`, `ws:checkpoint`, `ws:done0`) are one segment and not table sets. **The remedy line:** `a table set named outside the epoch rule (name it through ws.KeyAt|ConsumerKeyAt|SprintListAt, or NS.card.ckey|wskey|skey, keyed by the epoch; nova-tools#4238): <file>:<line>: <code>`. **The control:** `TestEpochNameRuleCatchesAnInjectedName` feeds every spelling the read found and each retired helper and wants each caught, and wants the helpers keyed by the epoch, the global ws keys, a comment and `ci:<repo>:<head>:waiting` left alone.
 
 ### `cap` — every job two minutes, permanently, on every platform
@@ -2619,8 +2624,9 @@ for breadcrumbs as you work, failing silent is not allowed. Without this every
 thing we have done shows it is not possible to make a reliable system"; and
 2026-09-26 11:30 AM ET: "every verb in nova tools related to current work should
 not fail silently. Scan for silent failures and fix." In the live packages
-(`cmd/nova-sprint`, `internal/nsprint/{reconcile, taskcard,
-table, card, launch, fn, capacity, pipeerr}`), no non-test `.go` file holds
+(`internal/nsprint/{reconcile, taskcard,
+table, card, launch, fn, capacity, pipeerr}`, `internal/ntable`,
+`cmd/nova-table`), no non-test `.go` file holds
 `_ = err` (any error-named identifier assigned to the blank identifier) or a
 `|| true` inside a Go string literal (an embedded script step whose exit is
 thrown away). A failure is returned, printed as one typed line (`REFUSED <verb>:

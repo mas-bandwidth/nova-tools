@@ -6,8 +6,9 @@
 # shared module, and then its line goes. This list only shrinks: a package
 # leaves it by moving under deprecated/ or by being deleted.
 
-# nova-sprint (Glenn 2026-09-27: deprecated, to be rewritten on nova-table)
-cmd/nova-sprint
+# nova-sprint (Glenn 2026-09-27: deprecated, to be rewritten on nova-table).
+# cmd/nova-sprint moved to deprecated/cmd/; its packages stay here until
+# nothing living imports them.
 internal/nsprint
 internal/sprinttable
 internal/sprintline
@@ -40,9 +41,10 @@ keep internal/decide
 # internal/decide
 keep internal/decide/questions
 
-# Jev's gate line: imported only by cmd/nova-sprint and
-# internal/nsprint/land/stream, both deprecated and still in the root module;
-# it moves under deprecated/internal/ when they do.
+# Jev's gate line: imported in the root module only by
+# internal/nsprint/land/stream, deprecated and still here (and by
+# deprecated/cmd/nova-sprint); it moves under deprecated/internal/ when that
+# package does.
 internal/jev
 
 # nova-merge and nova-review (Glenn 2026-09-27: not proven) moved to
