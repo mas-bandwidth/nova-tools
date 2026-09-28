@@ -17,6 +17,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -200,7 +201,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 			"backend="+sandbox.Backend, "platform="+runtime.GOOS))
 		return 0
 	case "check":
-		return checkVerb(stdout)
+		return checkVerb(args[1:], stdout, stderr)
 	case "run":
 		return runVerb(args[1:], stdin, stdout, stderr, env)
 	case "reap":
@@ -215,6 +216,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 		return probeVerb(args[1:], stdout, stderr, env)
 	case probeStepVerbName:
 		return probeStepVerb(args[1:], stderr, env)
+	}
+	if !strings.HasPrefix(args[0], "-") {
+		fmt.Fprintf(stderr, "SANDBOX REFUSED unknown verb %q; run: nova-sandbox help\n", args[0])
+		return sandbox.ExitCannotRun
 	}
 	return execVerb(args, stdin, stdout, stderr, env)
 }
@@ -435,7 +440,29 @@ func asRefusal(err error, out *sandbox.Refusal) bool {
 
 // checkVerb reports what this machine can enforce and exits 0 either way, because it is
 // a question, not an attempt.
-func checkVerb(stdout io.Writer) int {
+func checkVerb(args []string, stdout, stderr io.Writer) int {
+	for _, a := range args {
+		if a == "-h" || a == "--help" || a == "help" {
+			fmt.Fprint(stdout, usage)
+			return 0
+		}
+	}
+	fs := flag.NewFlagSet("check", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.Usage = func() {}
+	max := fs.Int("max", 20, "how many lines a listing prints before one MORE line stands for the rest")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(stderr, "nova-sandbox check: %s; run: nova-sandbox help\n", oneline.Escape(err.Error()))
+		return sandbox.ExitCannotRun
+	}
+	if fs.NArg() > 0 {
+		fmt.Fprintf(stderr, "nova-sandbox check: unexpected argument %q; run: nova-sandbox help\n", oneline.Field(fs.Arg(0)))
+		return sandbox.ExitCannotRun
+	}
+	if *max < 0 {
+		fmt.Fprintf(stderr, "nova-sandbox check: --max wants a whole number, 0 for all: --max <n>; run: nova-sandbox help\n")
+		return sandbox.ExitCannotRun
+	}
 	backend, ok := sandbox.Available()
 	name, note := sandbox.Backend, sandbox.Note()
 	net := "unenforceable"

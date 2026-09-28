@@ -2071,3 +2071,144 @@ func TestReadNoExecReadsAndRefusesToExecuteOnDarwin(t *testing.T) {
 		t.Fatalf("the control failed: the same script under --read did not run: exit %d, %s", code, errOut)
 	}
 }
+
+// An unknown verb exits 2 and names the unknown verb explicitly, rather than
+// falling into bare wrap and treating the verb as a flag or command.
+func TestUnknownVerbRefused(t *testing.T) {
+	t.Parallel()
+
+	j := newJob(t)
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "bogus verb",
+			args: []string{"bogus"},
+			want: "SANDBOX REFUSED unknown verb \"bogus\"; run: nova-sandbox help\n",
+		},
+		{
+			name: "unknown verb with args",
+			args: []string{"some-other-verb", "--flag"},
+			want: "SANDBOX REFUSED unknown verb \"some-other-verb\"; run: nova-sandbox help\n",
+		},
+		{
+			name: "positional command not treated as bare wrap",
+			args: []string{"echo", "hello"},
+			want: "SANDBOX REFUSED unknown verb \"echo\"; run: nova-sandbox help\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, out, errOut := j.tool(t, j.env(), tc.args...)
+			if code != sandbox.ExitCannotRun {
+				t.Fatalf("exit %d, want %d (ExitCannotRun)", code, sandbox.ExitCannotRun)
+			}
+			if out != "" {
+				t.Fatalf("stdout %q, want empty", out)
+			}
+			if errOut != tc.want {
+				t.Fatalf("stderr %q, want %q", errOut, tc.want)
+			}
+		})
+	}
+}
+
+// check parses its arguments: rejects unrecognized flags with exit 2, validates
+// --max as a whole number, rejects unexpected positional arguments, and responds
+// to -h/--help.
+func TestCheckFlagParsing(t *testing.T) {
+	t.Parallel()
+
+	j := newJob(t)
+	for _, tc := range []struct {
+		name     string
+		args     []string
+		wantCode int
+		wantOut  string
+		wantErr  string
+	}{
+		{
+			name:     "bare check",
+			args:     []string{"check"},
+			wantCode: 0,
+			wantOut:  "CHECK OK",
+		},
+		{
+			name:     "check with valid max",
+			args:     []string{"check", "--max", "10"},
+			wantCode: 0,
+			wantOut:  "CHECK OK",
+		},
+		{
+			name:     "check with max 0",
+			args:     []string{"check", "--max", "0"},
+			wantCode: 0,
+			wantOut:  "CHECK OK",
+		},
+		{
+			name:     "unrecognized double-dash flag",
+			args:     []string{"check", "--bogus"},
+			wantCode: sandbox.ExitCannotRun,
+			wantErr:  "flag provided but not defined: -bogus; run: nova-sandbox help",
+		},
+		{
+			name:     "unrecognized single-dash flag",
+			args:     []string{"check", "-bogus"},
+			wantCode: sandbox.ExitCannotRun,
+			wantErr:  "flag provided but not defined: -bogus; run: nova-sandbox help",
+		},
+		{
+			name:     "invalid integer for max",
+			args:     []string{"check", "--max", "notanint"},
+			wantCode: sandbox.ExitCannotRun,
+			wantErr:  "invalid value \"notanint\" for flag -max",
+		},
+		{
+			name:     "missing value for max",
+			args:     []string{"check", "--max"},
+			wantCode: sandbox.ExitCannotRun,
+			wantErr:  "flag needs an argument: -max",
+		},
+		{
+			name:     "negative max",
+			args:     []string{"check", "--max", "-1"},
+			wantCode: sandbox.ExitCannotRun,
+			wantErr:  "--max wants a whole number, 0 for all: --max <n>; run: nova-sandbox help",
+		},
+		{
+			name:     "unexpected positional argument",
+			args:     []string{"check", "extra"},
+			wantCode: sandbox.ExitCannotRun,
+			wantErr:  "unexpected argument \"extra\"; run: nova-sandbox help",
+		},
+		{
+			name:     "check -h",
+			args:     []string{"check", "-h"},
+			wantCode: 0,
+			wantOut:  "nova-sandbox: one command, contained by the OS",
+		},
+		{
+			name:     "check --help",
+			args:     []string{"check", "--help"},
+			wantCode: 0,
+			wantOut:  "nova-sandbox: one command, contained by the OS",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, out, errOut := j.tool(t, j.env(), tc.args...)
+			if code != tc.wantCode {
+				t.Fatalf("exit %d, want %d; stderr: %q", code, tc.wantCode, errOut)
+			}
+			if tc.wantOut != "" && !strings.Contains(out, tc.wantOut) {
+				t.Errorf("stdout %q does not contain %q", out, tc.wantOut)
+			}
+			if tc.wantErr != "" && !strings.Contains(errOut, tc.wantErr) {
+				t.Errorf("stderr %q does not contain %q", errOut, tc.wantErr)
+			}
+			if tc.wantCode == sandbox.ExitCannotRun && !strings.Contains(errOut, "run: nova-sandbox help") {
+				t.Errorf("stderr %q does not contain door 'run: nova-sandbox help'", errOut)
+			}
+		})
+	}
+}
