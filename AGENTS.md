@@ -14,7 +14,7 @@ make map            # regenerate AGENTS.md and per-directory maps
 | --- | --- | --- | --- |
 | `.github/` | CI workflows and automation | `go test ./internal/ci` | `make test` |
 | `assets/` | static assets and schemas | none | none |
-| [cmd/](cmd/AGENTS.md) | 16 nova command-line tools | `nova-ci local` | `make build` |
+| [cmd/](cmd/AGENTS.md) | 15 nova command-line tools | `nova-ci local` | `make build` |
 | `deprecated/` | tools and modules no longer in use, kept for reference only; never built, tested or maintained | none | none |
 | [docs/](docs/AGENTS.md) | specs, guides, and proposals | `go test ./internal/docs` | `go test ./internal/docs` |
 | `fleet/` | fleet loop units and bench templates | none | none |
