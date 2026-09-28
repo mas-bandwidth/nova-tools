@@ -11,6 +11,7 @@ The TLA+ modules here are the specifications of the state machines this repo imp
 | `TableEdit.tla`, `TableOrder.tla` | `MCTableEdit*`, `MCTableOrder*` | nova-table's edit verbs and the order of its rows and columns, with reversed witnesses |
 | `TableSession.tla` | `MCTableSession*` | `nova-table shell`: lines, one connection, the store coming and going, a stop signal, the exit code (the design #4458 is held to) |
 | `RedisFn.tla` | `MCRedisFn*` | the function libraries of one Redis under several loaders (internal/redisfn: Check, Load, Ensure, LoadMissing): one holder to a function name, a refusal that writes nothing, no moment without the library, a LoadMissing that never replaces |
+| `FirstConn.tla` | `MCFirstConn*` | `internal/redisconn`'s first connection: the probe Open sends, taken and answered in the store's place only after HELLO was accepted, with seven reversed witnesses |
 
 Runners. The table/member model checkers and the member execution replay each run their whole suite under one 120 s budget (a timeout is a failure, never a green); the bare java commands and the Lua replay carry no cap of their own, so wrap them (`timeout 120 ...`) when a bound matters. `-deadlock` on the java commands turns TLC's deadlock check OFF: these models end in a terminal stutter by design, and the safety and liveness properties are what they check.
 
@@ -229,3 +230,69 @@ The first five configs, before `Missers` was added, gave the same outcomes at
 | `MCRedisFnOneDeployer` | no error, 14 distinct states: the same two builds, b running Ensure once and a deploying; the library comes to rest at a's build. TypeOK, OneHolder, NoGap, RefusalWritesNothing, HolderHeld, Settles |
 | `MCRedisFnLoadMissing` | no error, 25 distinct states: the rivals on a store that starts empty, a deploying and b, the older binary, running LoadMissing once. TypeOK, OneHolder, NoGap, RefusalWritesNothing, HolderHeld, MissNeverReplaces, Settles, MCDeployed (the store comes to rest at the deployer's build) |
 | `MCRedisFnMissReplaces` | MissNeverReplaces violated, a counterexample of 5 states (23 distinct found): b reads the name free, a deploys build 1, b's load with REPLACE puts build 2 over it. The reversed witness for LoadMissing's FUNCTION LOAD without REPLACE (#3620); the unit test `TestLoadMissingNeverReplacesALibraryTheStoreHolds` holds the same two cases against the code, with Ensure as its own reversed witness |
+
+## The first connection (FirstConn)
+
+`FirstConn.tla`: the connection `redisconn.Open` dials (internal/redisconn/open.go
+at f6ec9e2b8, `firstConn`), as a state machine over the seven events of
+`firstconn_test.go`: the store sends a reply that begins `%` (HELLO accepted)
+or `-` (refused); the client reads with room to spare, or a few bytes at a
+time; the client writes the probe, or another command; Open returns. go-redis
+shakes hands inside the first command on a connection, so Open sends a probe
+(PING); when, and only when, the first byte from the store was `%`, the probe
+is taken and answered here (+PONG) and never written, so Open costs one
+exchange and not two. A bounded design model with reversed witnesses, not a
+refinement proof of open.go; its header lists what it leaves out.
+
+The rules are the test's, stated on what went in and what came out and not
+on the states the code keeps: a write is taken only when it is the probe, the
+first byte read was `%`, nothing but the handshake was written before, no
+write was taken before and Open has not returned, and then it is taken
+(`TakenOnlyWhenDue`, `TakenWhenDue`); every other write reaches the store
+whole and in order (`TheRestTravels`); the client reads the store's bytes in
+order (`StoreBytesInOrder`), with the answer whole, once, first and alone after
+the taken write, and never otherwise (`AnswerStandsInPlace`); inert is for
+good (`InertStays`); a taken write is answered, so the client is never left
+waiting for it (`AnswerDelivered`, under weak fairness of the client's reads).
+
+Run as the others are, every config at once, each in its own temp directory
+under a 60 s cap:
+
+    for cfg in MCFirstConn*.cfg; do c=${cfg%.cfg}
+      mkdir -p /tmp/tlc-$c
+      timeout 60 java -Djava.io.tmpdir=/tmp/tlc-$c -cp tla2tools.jar tlc2.TLC -workers 2 \
+        -deadlock -metadir /tmp/tlc-$c/meta -config $cfg MCFirstConn.tla > $c.log 2>&1 &
+    done; wait
+
+Rowan ran it on space on 2026-09-28 00:40 UTC (load 11 of 32 cores), all
+eight configs at once, the positive one with 4 workers: 3 s wall for the set.
+The instance: six counted events (sends, writes, Open's return; reads are
+uncounted, each consumes what it reads), a reply of three bytes, an answer of
+three bytes, a short read of two. The same positive model with eight events
+ran to 303,578 distinct states in 10 s on 8 workers, no error; it is not in
+the set because of the cap.
+
+| config | result |
+|---|---|
+| `MCFirstConn` | no error, 30,832 distinct states, depth 14: TypeOK, TakenOnlyWhenDue, TakenWhenDue, TheRestTravels, StoreBytesInOrder, AnswerStandsInPlace, InertStays; AnswerDelivered under weak fairness of the reads |
+| `MCFirstConnBrokenRefused` | TakenOnlyWhenDue violated in 4 states: `-` read, the connection armed, the probe taken (open.go:268 without the `%` test) |
+| `MCFirstConnBrokenAny` | TakenOnlyWhenDue violated in 4 states: `%` read, a write that is not the probe taken (:282 without bytes.Equal) |
+| `MCFirstConnBrokenMisaligned` | TakenOnlyWhenDue violated in 5 states: `%` read, another write travels and leaves the connection armed, the probe after it is taken (:285 missing) |
+| `MCFirstConnBrokenTwice` | TakenOnlyWhenDue violated in 6 states: the answer read whole, the connection armed again, a second probe taken (:261 storing armed) |
+| `MCFirstConnBrokenShort` | AnswerStandsInPlace violated in 6 states: two of the answer's three bytes read, the connection inert, the store's next bytes read where the third should be (:260 without the count) |
+| `MCFirstConnBrokenLate` | TakenOnlyWhenDue violated in 5 states: `%` read, Open returns, the probe written after it is taken (:293 missing) |
+| `MCFirstConnBrokenHang` | AnswerDelivered violated: the probe taken, no read is possible, the client waits for an answer that never comes (:257 reading the store) |
+
+None of the seven was a defect of the code at f6ec9e2b8: `firstconn_test.go`
+holds the same rules over every order of the seven events up to six and over
+long orders. Each is a misimplementation the model is shown to catch. The
+Misaligned trace was read against the code by hand: state 3, `%` read,
+`Read` at :267-271 swaps watching for armed; state 4, a write that is not
+the probe, `Write` at :281-285 finds armed, `bytes.Equal` false, and swaps
+armed for inert, which the witness omits; state 5, the probe, the code at
+:287 passes it to the store because the connection is inert, and the test's
+named order `writeOther, sendAccepted, readAll, writeOther, writeProbe`
+(firstconn_test.go:223) says the same: not taken. The Hang trace: states 7
+and 8, `%` read and the probe taken, then no read is enabled because the
+witness reads the store, which sent nothing; the code at :257-263 reads the
+answer from `probeAnswer` and never touches the store while answering.
