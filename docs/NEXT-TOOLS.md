@@ -87,7 +87,7 @@ cost.
   zero; the first field `verify` disagrees on.
 - **Who asked.** Rowan, 17:30Z, from #229 and that morning's v0.15.0 preparation.
 
-## nova-wake, wake on a change and never a poll ([SPEC-WAKE.md](SPEC-WAKE.md) amendment draft 2, #239 at 8e459652)
+## nova-wake, wake on a change and never a poll ([SPEC-WAKE.md](../deprecated/docs/SPEC-WAKE.md) amendment draft 2, #239 at 8e459652)
 
 - **Friction.** 2026-09-11: 1,204 turns in the coordinating window, 1.19M written against 652M cache-read, most of
   them polls; the tell was one status check run twice in a minute. 2026-09-12: two review HOLDs unread 100 and 45

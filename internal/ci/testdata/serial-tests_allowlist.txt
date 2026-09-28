@@ -22,7 +22,7 @@
 # TestReadCopyDealtToBenchRendersALintedCard), then by nine more from the redis
 # stream (seat and #3277 tests on t.Setenv); each owes a per-test seam. Moved
 # from the serialTestsCeiling constant into this file at 876, the count that day.
-# ceiling: 565
+# ceiling: 489
 cmd/nova-bus/issue1451_test.go:TestIssue1451EveryBareVerbRefusalNamesTheDoor serial: t.Setenv
 cmd/nova-bus/main_functional_test.go:TestReceiptMaxWordsDefaultsFromBusFileThenEnv serial: t.Setenv
 cmd/nova-bus/reply_functional_test.go:TestAFilesystemWithNoCreateExclusivePublishIsRefused serial: swaps package var main.publishDraft
@@ -270,82 +270,6 @@ cmd/nova-update/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineFo
 cmd/nova-version/firstrun_test.go:TestExecutableFirstRun serial: t.Chdir
 cmd/nova-version/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine serial: t.Chdir
 cmd/nova-version/friendsequence_test.go:TestFriendSequenceSnapshotReport serial: t.Setenv
-cmd/nova-wake/advance_functional_test.go:TestTheAdvanceRunsOnlyInsideABusPollBeforeTheDeadline serial: t.Setenv
-cmd/nova-wake/advance_functional_test.go:TestTheRealBusAdvanceLockIsExclusiveAndInvisible serial: t.Setenv
-cmd/nova-wake/advance_functional_test.go:TestTheRealBusAdvanceRecoversAnInterruptedRead serial: swaps package var wake.AdvanceKillPoint, t.Setenv
-cmd/nova-wake/advance_functional_test.go:TestTheRealBusCursorWaitsBehindThePrint serial: t.Setenv
-cmd/nova-wake/advance_functional_test.go:TestTheRealBusRelaysNewMailWithinTwoAdvancingPolls serial: t.Setenv
-cmd/nova-wake/advance_functional_test.go:TestTheRecoveryReadsTheCountAndNeverAConstant serial: t.Setenv
-cmd/nova-wake/awake_functional_test.go:TestAwakeReadsBusAndWindowFromConfig serial: t.Setenv
-cmd/nova-wake/awake_functional_test.go:TestAwakeReadsMaxAndAsFromConfig serial: t.Setenv
-cmd/nova-wake/awake_functional_test.go:TestFlagBeatsConfig serial: t.Setenv
-cmd/nova-wake/efficiency_card_functional_test.go:TestWatchEfficiencyCardContract serial: t.Setenv
-cmd/nova-wake/events_functional_test.go:TestABranchMovingIsItsTwoShas serial: t.Setenv
-cmd/nova-wake/events_functional_test.go:TestARunIsAnEntryWithoutAState serial: t.Setenv
-cmd/nova-wake/events_test.go:TestAStopIsAVerdict serial: swaps package var main.watchStopHook
-cmd/nova-wake/events_functional_test.go:TestEveryWaitIsASource serial: t.Setenv
-cmd/nova-wake/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
-cmd/nova-wake/issue1517_functional_test.go:TestIssue1517ServeNoBeatReachesTheBusArgv serial: t.Setenv
-cmd/nova-wake/issue487_functional_test.go:TestIssue487AnUnknownConfigKeyIsRefusedNotIgnored serial: t.Setenv
-cmd/nova-wake/laneread_functional_test.go:TestAHugeReceiptsAppendIsNeverHeldWhole serial: t.Setenv
-cmd/nova-wake/laneread_functional_test.go:TestAStandingGapIsRetainedOnceAndNeverGrows serial: t.Setenv
-cmd/nova-wake/lessons_functional_test.go:TestABacklogOfThreeThousandNotesIsThreeThousandQueueRecords serial: t.Setenv
-cmd/nova-wake/lessons_functional_test.go:TestALinesFutureSubjectIsDataAndTheCommitStampDecides serial: t.Setenv
-cmd/nova-wake/lessons_functional_test.go:TestAStandingLineIsNeverEvictedWhileItStands serial: t.Setenv
-cmd/nova-wake/lessons_functional_test.go:TestBlocksRatherThanTicks serial: t.Setenv
-cmd/nova-wake/lessons_functional_test.go:TestFinalOnlySuppressesTheWakeAndNotTheState serial: t.Setenv
-cmd/nova-wake/lessons_functional_test.go:TestNoFalseWakeOnReload serial: t.Setenv
-cmd/nova-wake/lessons_functional_test.go:TestServeBoundsItsSightingMemory serial: t.Setenv
-cmd/nova-wake/lessons_functional_test.go:TestTenMinutesSilentIsOfflineOnce serial: t.Setenv
-cmd/nova-wake/lessons_functional_test.go:TestTheLineViewIsPolledAtTheIntervalAndNotTheLoopsCadence serial: t.Setenv
-cmd/nova-wake/lessons_functional_test.go:TestWakeOutputIsBoundedAtTheLargestPlausibleState serial: t.Setenv
-cmd/nova-wake/main_test.go:TestAKillAtEachOrderBoundaryReplaysRatherThanLoses serial: swaps package var main.watchKillPoint
-cmd/nova-wake/main_functional_test.go:TestALineThatNeverSignedDoesNotFlip serial: t.Setenv
-cmd/nova-wake/main_functional_test.go:TestARefreshWhoseCarriedListWasRefusedIsAFailedPoll serial: t.Setenv
-cmd/nova-wake/main_functional_test.go:TestARefusingBusIsBrokenAndNotAChange serial: t.Setenv
-cmd/nova-wake/main_functional_test.go:TestASourceThatRecoversHasItsChangeCounted serial: t.Setenv
-cmd/nova-wake/main_functional_test.go:TestAStandingBusLineIsShownEveryTimeAndWokenOnOnce serial: t.Setenv
-cmd/nova-wake/main_functional_test.go:TestAnUnreadableEntryWakesUnderFinalOnly serial: t.Setenv
-cmd/nova-wake/main_functional_test.go:TestDeliveryIsThePrintedLine serial: t.Setenv
-cmd/nova-wake/main_functional_test.go:TestEveryBusLineIsClassifiedAndCounted serial: t.Setenv
-cmd/nova-wake/main_functional_test.go:TestNewMailReachesTheCheckoutThroughTheAdvance serial: t.Setenv
-cmd/nova-wake/main_functional_test.go:TestRefreshListsWhatIsOwedBeforeWhatIsNewAndSurvivesAFailedPoll serial: t.Setenv
-cmd/nova-wake/main_functional_test.go:TestTheEntryIntervalIsTheRunLength serial: t.Setenv
-cmd/nova-wake/main_functional_test.go:TestTheRefreshWaitEndsAtTheEarliestDueSourceAndNeverPastTheDeadline serial: t.Setenv
-cmd/nova-wake/main_test.go:TestTheToolSaysWhichBuildItIs serial: swaps package var main.version
-cmd/nova-wake/main_functional_test.go:TestTheToolStampsAndATypedTimeIsData serial: t.Setenv
-cmd/nova-wake/main_functional_test.go:TestThreeFailedPollsEndTheWatchLoudly serial: t.Setenv
-cmd/nova-wake/main_functional_test.go:TestWatchSuppressesStandingReprintInSameCall serial: t.Setenv
-cmd/nova-wake/main_functional_test.go:TestWhatWokeYouIsNamed serial: t.Setenv
-cmd/nova-wake/pin_functional_test.go:TestAWakeBuiltAtAVersionRunsAgainstTheBusOfTheSameRelease serial: swaps package var main.version, t.Setenv
-cmd/nova-wake/probe_functional_test.go:TestTheBoundedCorrelationRead serial: t.Setenv
-cmd/nova-wake/recovery_functional_test.go:TestAnUnresolvedRecoveryHoldsTheCursorAndKeepsItsMarker serial: t.Setenv
-cmd/nova-wake/recovery_functional_test.go:TestTheRecoveryCountsEveryCarriedEntryAndNotAMaxOfPartialSums serial: t.Setenv
-cmd/nova-wake/serve_functional_test.go:TestASoLongBusLineIsCappedWhenServeRelaysIt serial: t.Setenv
-cmd/nova-wake/serve_functional_test.go:TestServeAKillAfterDeliveredFiresNothingMore serial: swaps package var main.serveKillPoint, t.Setenv
-cmd/nova-wake/serve_functional_test.go:TestServeAKilledDispatchIsUncertainAndBlocksTheQueue serial: swaps package var main.serveKillPoint, t.Setenv
-cmd/nova-wake/serve_functional_test.go:TestServeBatchesAndReceiptsAfterDelivered serial: t.Setenv
-cmd/nova-wake/serve_functional_test.go:TestServeBlocksQueuedNotesBehindFailedDispatchUntilRedeliver serial: t.Setenv
-cmd/nova-wake/serve_functional_test.go:TestServeCoalescesWhatWaitedAndMeasuresHowLongItWaited serial: t.Setenv
-cmd/nova-wake/serve_functional_test.go:TestServeDoesNotLoseANoteWhoseCommandFailed serial: t.Setenv
-cmd/nova-wake/serve_functional_test.go:TestServeEndsOnItsStopFile serial: t.Setenv
-cmd/nova-wake/serve_functional_test.go:TestServeFetchesEveryIntervalAndPinsTheVersion serial: t.Setenv
-cmd/nova-wake/serve_functional_test.go:TestServeFiresNothingOnAnEmptyHour serial: t.Setenv
-cmd/nova-wake/serve_functional_test.go:TestServeKeepsBusOrderAcrossARestart serial: t.Setenv
-cmd/nova-wake/serve_functional_test.go:TestServeNeverFiltersTheStatusLine serial: t.Setenv
-cmd/nova-wake/serve_functional_test.go:TestServeRefusesABudgetThatCanNeverFinish serial: t.Setenv
-cmd/nova-wake/serve_functional_test.go:TestServeRefusesADeadlineItWouldPollNothingInside serial: t.Setenv
-cmd/nova-wake/serve_functional_test.go:TestServeRunsNoThirdAttemptOnItsOwn serial: swaps package var main.serveKillPoint, t.Setenv
-cmd/nova-wake/serve_functional_test.go:TestServeSurfacesTheUncertainAndWakesOnlyTo serial: t.Setenv
-cmd/nova-wake/serve_functional_test.go:TestServeTheIdempotentRetryAndItsCompletionBoundary serial: swaps package var main.serveKillPoint, t.Setenv
-cmd/nova-wake/serve_functional_test.go:TestServesPollBudgetCoversTheIntervalItFetchesFor serial: t.Setenv
-cmd/nova-wake/serve_functional_test.go:TestSpawnRefusesALeadingDashID serial: t.Setenv
-cmd/nova-wake/deadline_functional_test.go:TestAWedgedGitCannotHoldThePollOpen serial: t.Setenv
-cmd/nova-wake/storewatch_functional_test.go:TestWatchStoreCursorSpansCalls serial: swaps package var main.storeBlockSlice, t.Setenv
-cmd/nova-wake/storewatch_functional_test.go:TestWatchStoreRefusesPollingSources serial: t.Setenv
-cmd/nova-wake/storewatch_functional_test.go:TestWatchStoreWakesOnEvGithubWithNoGhAndNoGit serial: swaps package var main.storeBlockSlice, t.Setenv
-cmd/nova-wake/watch_config_test.go:TestWatchReadsOnDeadlineFromConfig serial: t.Setenv
-cmd/nova-wake/watch_config_functional_test.go:TestWatchReadsReceiptMaxWordsFromConfig serial: t.Setenv
 internal/bus/cursor_test.go:TestAReceiptInTheChangeSetSetsTheFlagInOpen serial: counts the process-wide NoteParses(), which every parallel test in the package adds to
 internal/bus/cursor_test.go:TestAnOpenNoteWhoseFileVanishedIsCarriedUntilAFullRead serial: counts the process-wide NoteParses(), which every parallel test in the package adds to
 internal/bus/cursor_test.go:TestAnUnreadableFileBehindTheLineIsCountedAndNotOpened serial: counts the process-wide NoteParses(), which every parallel test in the package adds to

@@ -68,7 +68,7 @@ var wakeAudit = audit.Config{
 		// discipline over internal/wake's State. It writes state records and
 		// returns strings/ints the caller prints through oneline.Field; it
 		// prints nothing and shadows nothing.
-		`"github.com/mas-bandwidth/nova-tools/internal/dispatch"`,
+		`"github.com/mas-bandwidth/nova-tools/deprecated/internal/dispatch"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/wake"`,
 		// internal/presence is the friend heartbeat of #2610: the keys a

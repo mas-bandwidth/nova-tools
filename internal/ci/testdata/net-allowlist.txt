@@ -10,7 +10,6 @@
 # These predate the checker. Each is a GitHub URL carried in a fixture, a fake
 # gh stub, a fake git remote or a card template -- text handed to a fake, not a
 # live unit-test endpoint. The allowed shape is httptest or a local fake.
-cmd/nova-wake/events_functional_test.go:204 url 2026-09-17 a forge URL in a JSON event fixture, not a live call; predates the checker
 internal/merge/blocked_test.go:37 url 2026-09-17 a github.com clone URL in a fake git remote fixture, not a live call; predates the checker
 internal/merge/blocked_test.go:38 url 2026-09-17 a github.com clone URL in a fake git remote fixture, not a live call; predates the checker
 internal/merge/blocked_test.go:39 url 2026-09-17 a github.com clone URL in a fake git remote fixture, not a live call; predates the checker

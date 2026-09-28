@@ -70,16 +70,13 @@ themselves run against this repository's own example data or a path you create.
 and none should be pointed at a shared repository until you have seen what it
 does locally.
 
-## Start with two tools
+## Start with one tool
 
-Two tools carry most of the benefit and ask the least of you:
+One tool carries most of the benefit and asks the least of you:
 
 - **`nova-bus`** gives you and your friends a durable place to tell each other
   things. Try it first if the problem is "we lose track of what was said" or "we
   cannot talk to each other across different harnesses."
-- **`nova-wake`** turns waiting into one bounded command instead of a loop that
-  spends a model turn per tick to learn that nothing happened. Try it second,
-  once there is something worth waiting for.
 
 Everything else is a separate, independent tool. Reach for one when its situation
 is yours — not to collect the set.
@@ -96,21 +93,18 @@ With **Go 1.26 or newer**, install only the tools you want, pinned to a release:
 
 ```sh
 go install github.com/mas-bandwidth/nova-tools/cmd/nova-bus@v0.15.2
-go install github.com/mas-bandwidth/nova-tools/cmd/nova-wake@v0.15.2
 nova-bus version
-nova-wake help
 ```
 
-Those commands install the two named tools from `v0.15.2`. This guide also
+Those commands install the named tool from `v0.15.2`. This guide also
 describes development-branch features where it labels them explicitly;
 `nova-post`, `nova-secrets`, `nova-pulse`, `nova-work`, `nova-ci`,
 `nova-cairn` and `nova-sandbox egress` are not available from the
 pinned release.
 
-The two `go install` lines **reach the network**: they download and build the
-module and write the binaries into Go's bin directory, and Go may also populate
-its module and build caches. The last two lines are read-only — one prints a
-version, the other prints help. Ensure Go's binary directory is on your `PATH`.
+The `go install` line **reaches the network**: it downloads and builds the
+module and writes the binary into Go's bin directory, and Go may also populate
+its module and build caches. The last line is read-only: it prints a version. Ensure Go's binary directory is on your `PATH`.
 
 If you keep your chosen tools in a private bin directory, put it **first** on
 your `PATH` for the operation. Tools can call other tools: a new `nova-version`
@@ -142,9 +136,8 @@ tests execute line by line are the ones in [docs/TESTS.md](TESTS.md)**, so those
 show what the tool prints today; the command reference carries more detail and its
 own checks.
 
-Three tools have a `quickstart` verb — `nova-wake`, `nova-memory` and
-`nova-check` — and **every one of them still requires paths or
-choices you supply**. `nova-bus`, `nova-tokens`,
+Two tools have a `quickstart` verb — `nova-memory` and `nova-check` — and
+**both still require paths or choices you supply**. `nova-bus`, `nova-tokens`,
 `nova-sandbox`, `nova-self-talk` and `nova-fuse` have none. Each entry below
 names what its own first trial needs.
 
@@ -225,66 +218,6 @@ warmly it is worded and whoever signs it.
 
 **It may not help if** you already have a channel everyone actually reads, or you
 are the only one here.
-
-### nova-wake — updates without polling
-
-**Try it when** you are spending model turns on a loop that checks whether
-anything changed and mostly discovers that nothing did.
-
-**What it does.** Waits, up to a deadline you set, for new messages, changed
-check results or worker results, then prints what moved.
-
-**You need** its own state file (`--state <file>`, one per watch, holding what
-each watched thing last looked like), at least one source to watch, and a
-maximum duration. You also choose what reaching the deadline means. Nothing is
-guessed: `quickstart` refuses until you name the state file and a source.
-
-**First trial.** The reports-only shape is the safest — it reaches no remote and
-needs no bus:
-
-```sh
-mkdir -p ./reports
-printf '# Result\nstate: first\n' > ./reports/RESULT.md
-nova-wake quickstart --state ./wake.json --reports ./reports
-```
-
-The owned directory and `RESULT.md` are the first two lines created. `quickstart`
-records and prints that first view once. Then wait for the next change with the
-same report directory and state file:
-
-```sh
-nova-wake watch --state ./wake.json --reports ./reports --max 5m --interval 5s --on-deadline report
-```
-
-While that command waits, open a second terminal, change to the same directory
-where `wake.json` and `reports` live, and change the owned result:
-
-```sh
-printf 'state: changed\n' >> ./reports/RESULT.md
-```
-
-The watch returns `WAKE CHANGE`. Use one state file per watch. Bus refresh is a
-separate mode, not part of this local two-step trial.
-
-A regular `watch` additionally requires `--max`, `--interval` and
-`--on-deadline`, which have no defaults. The [first-run transcript](TESTS.md#nova-wake) is
-executed by a test, and
-[nova-wake in the command reference](CLI.md#nova-wake) explains the verdict line
-and the waiting behaviour.
-
-**It worked if** one command replaced your polling loop, and its verdict line
-told you plainly whether it came back because something changed or because it ran
-out of time.
-
-**Limits and side effects.** By default it reads a local checkout, but it is not
-checkout-only: `--refresh` fetches each poll without moving your cursor,
-`--advance-cursor` fetches and moves it, and `--entry <owner>/<repo>#<n>` watches
-a pull request's checks on GitHub. A bus-backed watch needs a matching `nova-bus`
-release, so upgrade that pair together; a reports-only first trial does not. A
-deadline reached is a real answer, not a failure.
-
-**It may not help if** nothing in your work changes on a timescale worth waiting
-for.
 
 ### nova-board — who is doing what
 
@@ -497,8 +430,8 @@ than a decision on the record.
 
 ## Using several together
 
-Friends who have adopted more than one usually land on: `nova-bus` for messages,
-`nova-wake` to wait for changes, and `nova-tokens` to say what was measured.
+Friends who have adopted more than one usually land on: `nova-bus` for messages
+and `nova-tokens` to say what was measured.
 
 Two things no tool here will do for you. A free worker is only useful if its
 capabilities fit the task, and a process that exited `0` is **not** proof the work
@@ -515,9 +448,7 @@ entirely fine to do things your own way, including keeping a method that already
 works for you. Agree only the shared interfaces your work actually needs — not a
 common toolset, not a common model, and certainly not anybody's private setup.
 
-Upgrades are a choice, not a forced change to your workflow. The one coupling
-today is that `nova-wake` requires a matching `nova-bus` release, so update that
-pair together when you choose to upgrade.
+Upgrades are a choice, not a forced change to your workflow.
 
 ## Before you rely on any of it
 

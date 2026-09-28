@@ -4930,7 +4930,7 @@ the one that gates: it asks whether a named line, or this bench, can be handed
 work right now, and its exit 1 says *do not assign now* — never anything about
 the line or the person.
 
-Its governing text is **[docs/SPEC-WAKE.md](SPEC-WAKE.md)**, which is
+Its governing text is **[docs/SPEC-WAKE.md](../deprecated/docs/SPEC-WAKE.md)**, which is
 normative; the Conventions above apply to it unchanged and are not restated
 there, and nothing it says is restated here.
 

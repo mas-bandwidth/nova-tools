@@ -43,7 +43,6 @@ var DefaultCatalog = []Entry{
 	E("cmd/nova-tokens", "token consumption metering and budgeting CLI", "go test ./cmd/nova-tokens", "go test ./cmd/nova-tokens"),
 	E("cmd/nova-update", "binary release update CLI", "go test ./cmd/nova-update", "go test ./cmd/nova-update"),
 	E("cmd/nova-version", "build identity and version CLI", "go test ./cmd/nova-version", "go test ./cmd/nova-version"),
-	E("cmd/nova-wake", "worker wakeup and slot lease CLI", "go test ./cmd/nova-wake", "go test ./cmd/nova-wake"),
 
 	// internal/
 	E("internal/atomicfile", "atomic file write: standard-library rename beside the target", "go test ./internal/atomicfile", "go test ./internal/atomicfile"),
@@ -60,7 +59,6 @@ var DefaultCatalog = []Entry{
 	E("internal/converge", "convergence state and progress math", "go test ./internal/converge", "go test ./internal/converge"),
 	E("internal/ctxindex", "per-repo spec, test and symbol index for cards", "go test ./internal/ctxindex", "go test ./internal/ctxindex"),
 	E("internal/decide", "criteria evaluation and decisions", "go test ./internal/decide", "go test ./internal/decide"),
-	E("internal/dispatch", "command dispatch and runner interface", "go test ./internal/dispatch", "go test ./internal/dispatch"),
 	E("internal/docs", "documentation guards and map generator", "go test ./internal/docs", "go test ./internal/docs"),
 	E("internal/dogfood", "dogfood self-test gates", "go test ./internal/dogfood", "go test ./internal/dogfood"),
 	E("internal/events", "card event stream and SQLite fold", "go test ./internal/events", "go test ./internal/events"),

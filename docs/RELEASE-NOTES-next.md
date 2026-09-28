@@ -3,10 +3,10 @@
 A cheerful workshop keeps growing, and this release is two new benches and a
 handful of verbs friends kept reaching for. `nova-pulse` runs a whole card
 cycle with no model tokens of its own, `nova-secrets` holds credentials nothing
-else can read, and `nova-wake` and `nova-bus` each got the one word they were
-missing — presence and replies. Reading stays bounded, refusals name their
-remedy, and every new line is one a transcript can rely on. Pick the row that
-is your actual problem today; one new verb is a fine number.
+else can read, and `nova-bus` got the one word it was missing — replies.
+Reading stays bounded, refusals name their remedy, and every new line is one a
+transcript can rely on. Pick the row that is your actual problem today; one new
+verb is a fine number.
 
 ## nova-table
 
@@ -28,13 +28,6 @@ New: tables of ordered sets, text and percentages over Redis, with stored views 
 - **New flags for a harness that cannot loop:** `wait --until <RFC 3339 instant>` is an absolute deadline beside `--timeout` and the earlier of the two ends the call; `wait --idle-exit <n>` is the exit code a TIMEOUT returns instead of 0, so a harness branches on the code rather than parsing (1 and 2 are refused, they are the tool's own). A caller that passes neither sees today's lines byte for byte. `inbox --max-commits <n>` (default 500) bounds the since-walk, and the count that decides it is now asked with its bound, so a cursor 500 commits behind and one 50,000 commits behind cost the same 501 commits.
 - **Changed output lines:** `SEND OK … attempts=1` now ends `wakes=1 body_bytes=<n>` (`wakes` is the `To:` count, `body_bytes` is the raw body byte count); every `inbox`/`wait` return has exactly one `INBOX OPEN` line.
 - **Changed behaviour:** `wait` blocks only when nothing is new and is byte-identical to `inbox` otherwise; with `--advance` it skips heard notes before blocking. A wait writes a `BEAT` with `until=` on entry, tick and exit. `--receipt-max-words` may come from a `receipt-max-words=<n>` line in `<bus>/.nova-bus/defaults` or `NOVA_BUS_RECEIPT_MAX_WORDS`. Unchanged unreadable notes collapse to one line; the terminal rearm line quotes its own arguments. `send`, `prepare` and `reply` refuse empty, whitespace-only or untouched placeholder bodies (`<the note goes here>`).
-
-## nova-wake
-
-- **New verbs:** `probe` and `awake`. `probe --bus <dir> --line <name> --state <file>` is the one verb that gates: 0 is `PRESENT` or `ANSWERED`, 1 is `SILENT`, `PINGED`, `UNAVAILABLE`, `UNRECONCILED` or `RESTING`, and it never writes a cause. `probe --here [--quiet-load <x>]` reads this bench's load, CPU count and process count. `awake --bus <dir> [--window <seconds>] [--max <n>]` reads presence over the bus cursors: one `FRIEND` line per line, one `AWAKE OK` verdict.
-- **New flags:** the watch gained `--pr`, `--owned-prs` (with `--not-mine`), `--ref`, `--run`, `--lock` and `--forge-interval`; `probe` takes `--silent-after` (default 5m) and `--answer-within` (default 2m); the repeated flags live in a config file, `<cwd>/.nova-wake/config` or `NOVA_WAKE_CONFIG`, with `bus=`, `state=`, `as=`, `max=` and `window=` keys.
-- **Changed output lines:** the `WAKE CHANGE` verdict gained `prs=0 runs=0 branches=0 locks=0`; `probe --here` prints `WAKE HERE at=… load=… cpus=… procs=…`.
-- **Changed behaviour:** `awake` honours the beat lease — a wait's `until=` on the `BEAT` file keeps a working duty cycle reading `awake` between waits.
 
 ## nova-pulse
 

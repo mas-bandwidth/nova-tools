@@ -53,3 +53,11 @@ internal/jev
 # internal/nsprint/land and internal/nsprint/disposition import it).
 internal/merge
 keep internal/merge
+
+# nova-wake (Glenn 2026-09-27: not proven) moved to deprecated/cmd/, with
+# internal/dispatch, which only it imported. internal/wake stays and stays
+# tested until it is lifted out: internal/update's cli.go calls
+# wake.AcceptBus (nova-update, nova-version) and internal/redisq's
+# issue2277_test reads wake.Reports.
+internal/wake
+keep internal/wake

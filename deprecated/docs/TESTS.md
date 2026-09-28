@@ -510,3 +510,22 @@ hex, which differs for every build. Everything else on the line is compared.
 $ nova-merge version
 nova-merge devel darwin/arm64 go1.27.1 build=391dac11a7b7
 ```
+
+## nova-wake
+
+Fixture: `cmd/nova-wake/testdata/example-reports`.
+
+### First run
+
+```
+$ nova-wake quickstart --state ./wake.state --reports ./reports
+WAKE NOTE quickstart chose --baseline, --interval 5s and --max 5s, so a first run returns with the world listed once rather than blocking; --on-deadline report is the word it echoes back
+WAKE at=2026-09-11T18:56:43Z as=- max=5s interval=5s on-deadline=report sources=reports state=./wake.state cold=false nova-bus=- pending=0
+WAKE REPORT path=reports/first-job/RESULT.md lines=8 bytes=220 new
+WAKE REPORT path=reports/second-job/RESULT.md lines=7 bytes=199 new
+WAKE CHANGE after=0s polls=1 bus=0 entries=0 reports=2 lines=0 prs=0 runs=0 branches=0 locks=0 pending=0
+
+$ nova-wake watch --state ./wake.state --max 5s --on-deadline report --interval 5s --reports ./reports
+WAKE at=2026-09-11T18:56:43Z as=- max=5s interval=5s on-deadline=report sources=reports state=./wake.state cold=false nova-bus=- pending=0
+WAKE QUIET after=5s polls=1 default=report sources-failing=0: deadline, default taken
+```

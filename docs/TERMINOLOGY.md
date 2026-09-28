@@ -21,10 +21,10 @@ is available today.
   idle, stalled, benches. ([SPEC-SWARM.md, output grammar](../deprecated/docs/SPEC-SWARM.md#output-grammar))
 - **beat** — the `BEAT` heartbeat record a line writes to stay readable as awake,
   separate from the read cursor; `awake` reads it from `from-<name>/BEAT` by
-  content and freshness, extended by a live lease. ([SPEC-WAKE.md, The verb](SPEC-WAKE.md#the-verb))
+  content and freshness, extended by a live lease. ([SPEC-WAKE.md, The verb](../deprecated/docs/SPEC-WAKE.md#the-verb))
 - **beat lease** — an `until=` time that keeps a friend readable as awake even
   when its beat and cursor are older than the freshness window. It is bounded
-  presence evidence, not proof a parent model woke. ([SPEC-WAKE.md, The verb](SPEC-WAKE.md#the-verb))
+  presence evidence, not proof a parent model woke. ([SPEC-WAKE.md, The verb](../deprecated/docs/SPEC-WAKE.md#the-verb))
 - **bench** — a place work runs, usually a remote machine reached by ssh with
   pinned cores; a local machine that runs slots is a bench too. ([SPEC-SWARM.md, Benches](../deprecated/docs/SPEC-SWARM.md#benches-a-remote-bench-reached-by-ssh-with-pinned-cores))
 - **BLOCKED** — a worker's verdict, `RESULT.md` line 2 `BLOCKED <why>`; in
@@ -126,7 +126,7 @@ is available today.
   (SPEC-PULSE.md rule 2)
 - **presence and its four facts** — whether a friend is awake is four separate
   facts, each proven or unproven on its own: process alive, beat written,
-  delivery handled, wake fired. ([SPEC-WAKE.md, output grammar](SPEC-WAKE.md#output-grammar))
+  delivery handled, wake fired. ([SPEC-WAKE.md, output grammar](../deprecated/docs/SPEC-WAKE.md#output-grammar))
 - **quiet time** — manager time that makes no model call and sends no status
   note. (SPEC-PULSE.md, The manager tier)
 - **read (APPROVE and HOLD)** — a reader's recorded verdict for an exact
@@ -173,7 +173,7 @@ is available today.
   background=<n>`; the survivors are killed and the result is quarantined.
   ([SPEC-SWARM.md rule 11](../deprecated/docs/SPEC-SWARM.md#the-rules-numbered))
 - **wake drill** — the test of waking: a note sent after the parent's turn ended
-  must produce a wake within the window. ([SPEC-WAKE.md, output grammar](SPEC-WAKE.md#output-grammar))
+  must produce a wake within the window. ([SPEC-WAKE.md, output grammar](../deprecated/docs/SPEC-WAKE.md#output-grammar))
 - **wall** — the kernel-enforced filesystem boundary a job runs inside, with
   separate read and write permissions. A pulse card names its job directory and
   scratch space within that boundary. ([SPEC-SANDBOX.md, The rules, numbered](SPEC-SANDBOX.md#the-rules-numbered) · SPEC-PULSE.md rule 5)

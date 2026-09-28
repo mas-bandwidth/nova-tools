@@ -137,3 +137,63 @@ for a different one.
 
 **It may not help if** one of you lands everything anyway, or your forge already
 enforces this for you.
+
+### nova-wake — updates without polling
+
+**Try it when** you are spending model turns on a loop that checks whether
+anything changed and mostly discovers that nothing did.
+
+**What it does.** Waits, up to a deadline you set, for new messages, changed
+check results or worker results, then prints what moved.
+
+**You need** its own state file (`--state <file>`, one per watch, holding what
+each watched thing last looked like), at least one source to watch, and a
+maximum duration. You also choose what reaching the deadline means. Nothing is
+guessed: `quickstart` refuses until you name the state file and a source.
+
+**First trial.** The reports-only shape is the safest — it reaches no remote and
+needs no bus:
+
+```sh
+mkdir -p ./reports
+printf '# Result\nstate: first\n' > ./reports/RESULT.md
+nova-wake quickstart --state ./wake.json --reports ./reports
+```
+
+The owned directory and `RESULT.md` are the first two lines created. `quickstart`
+records and prints that first view once. Then wait for the next change with the
+same report directory and state file:
+
+```sh
+nova-wake watch --state ./wake.json --reports ./reports --max 5m --interval 5s --on-deadline report
+```
+
+While that command waits, open a second terminal, change to the same directory
+where `wake.json` and `reports` live, and change the owned result:
+
+```sh
+printf 'state: changed\n' >> ./reports/RESULT.md
+```
+
+The watch returns `WAKE CHANGE`. Use one state file per watch. Bus refresh is a
+separate mode, not part of this local two-step trial.
+
+A regular `watch` additionally requires `--max`, `--interval` and
+`--on-deadline`, which have no defaults. The [first-run transcript](TESTS.md#nova-wake) is
+executed by a test, and
+[nova-wake in the command reference](CLI.md#nova-wake) explains the verdict line
+and the waiting behaviour.
+
+**It worked if** one command replaced your polling loop, and its verdict line
+told you plainly whether it came back because something changed or because it ran
+out of time.
+
+**Limits and side effects.** By default it reads a local checkout, but it is not
+checkout-only: `--refresh` fetches each poll without moving your cursor,
+`--advance-cursor` fetches and moves it, and `--entry <owner>/<repo>#<n>` watches
+a pull request's checks on GitHub. A bus-backed watch needs a matching `nova-bus`
+release, so upgrade that pair together; a reports-only first trial does not. A
+deadline reached is a real answer, not a failure.
+
+**It may not help if** nothing in your work changes on a timescale worth waiting
+for.

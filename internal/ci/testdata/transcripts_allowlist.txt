@@ -24,7 +24,6 @@ nova-cairn    # #1654 -- collects what was printed into a set
 nova-check    # #1654 -- collects what was printed into a set
 nova-fuse     # #1654 -- collects what was printed into a set
 nova-self-talk # #1654 -- collects what was printed into a set
-nova-wake     # #1654 -- collects what was printed into a set
 
 # T12 (#1657): the two security kinds, which are the designated mind's, and the two
 # remaining set-of-shapes sections.

@@ -1288,7 +1288,7 @@ shared packages used rather than re-spelled (`internal/oneline`,
 13. **The room's newest id for rule 17's gap switch — owed at the first dogfood, before item 5's adapter is written.** Rule 26 polls `GET /channels/{id}/messages?after=<cursor>`, which Discord pages at `limit` ≤ 100, while rule 17's gap switch compares the room's newest id against `gap-messages 200`; so the tool needs that newest id from a source this spec does not name — the channel object's `last_message_id`, or a second read of the room's most recent message — and the message poll itself pages when a non-gap backlog is 101-200 messages, so rule 26's one GET per interval is one *idle* GET, and item 5's paging clause names paging for members only. Rule 20's volume is unaffected, because a poll's volume is what the poll returns, paged or not. Name the extra read here before the adapter is coded.
 
 Two more are filed as issues rather than carried here, because each blocks
-nothing and none is v1: **`--transport page`** (#94), and **`internal/dispatch`**,
+nothing and none is v1: **`--transport page`** (#94), and **`deprecated/internal/dispatch`**,
 lifted out of `nova-wake serve` when that lands so item 3 stops re-spelling it
 (#95).
 

@@ -45,7 +45,7 @@ times come from.
 | deprecated/cmd/nova-swarm | 16.8 | - |
 | deprecated/cmd/nova-merge | 16.7 | - |
 | internal/swarm | 12.7 | - |
-| cmd/nova-wake | 12.4 | - |
+| deprecated/cmd/nova-wake | 12.4 | - |
 | internal/bus | 6.8 | - |
 | cmd/nova-secrets | 5.7 | - |
 | internal/update | 5.1 | - |
@@ -87,7 +87,7 @@ times come from.
 | internal/goenv | 0.0 | - |
 | internal/jobs | 0.0 | - |
 | internal/buildinfo | 0.0 | - |
-| internal/dispatch | 0.0 | - |
+| deprecated/internal/dispatch | 0.0 | - |
 | internal/oneline/audit | 0.0 | - |
 | internal/ci/slowtests | 0.0 | - |
 | internal/log | 0.0 | - |
@@ -122,7 +122,7 @@ the cost is not spread evenly -- it lands almost entirely on the packages that s
 git and child processes, which is the same shape the 2026-09-15 note recorded for the
 Studio. `internal/*` packages that only compute are within noise of the Linux bench.
 
-**`cmd/nova-wake` is over budget here at 62.9 s**, against 12.4 s on Space -- a 5.1x
+**`deprecated/cmd/nova-wake` is over budget here at 62.9 s**, against 12.4 s on Space -- a 5.1x
 ratio, the worst in the file, and the only package over 60 s on any recorded bench. It
 is not enforced (this is not the budget bench) and it is not a red on this change, but
 it is the package to look at first if darwin ever becomes a bench that gates anything:
@@ -130,7 +130,7 @@ five of its tests are over 5 s and every one of them is a real `exec`.
 
 | package | total seconds | slowest test |
 | --- | --- | --- |
-| cmd/nova-wake | 62.9 | TestTheRecoveryReadsTheCountAndNeverAConstant 7.5 |
+| deprecated/cmd/nova-wake | 62.9 | TestTheRecoveryReadsTheCountAndNeverAConstant 7.5 |
 | deprecated/cmd/nova-merge | 51.4 | TestTwoReadsAndAGateFromOneStartingBranchReachTheCoordinator 6.5 |
 | cmd/nova-bus | 47.2 | TestRetryAfterAPartialResumesAtNext 11.4 |
 | deprecated/cmd/nova-swarm | 34.8 | - |
@@ -173,7 +173,7 @@ five of its tests are over 5 s and every one of them is a real `exec`.
 | internal/oneline/audit | 0.3 | - |
 | internal/fleet | 0.2 | - |
 | internal/ci/slowtests | 0.2 | - |
-| internal/dispatch | 0.2 | - |
+| deprecated/internal/dispatch | 0.2 | - |
 | internal/worklang | 0.2 | - |
 | internal/selftalk | 0.2 | - |
 | internal/oneline | 0.2 | - |
@@ -190,7 +190,7 @@ to its Linux cost is compute, and one several times over is paying for process s
 
 | package | darwin/arm64 | linux/amd64 | ratio |
 | --- | --- | --- | --- |
-| cmd/nova-wake | 62.9 | 12.4 | 5.1x |
+| deprecated/cmd/nova-wake | 62.9 | 12.4 | 5.1x |
 | deprecated/cmd/nova-merge | 51.4 | 16.7 | 3.1x |
 | cmd/nova-bus | 47.2 | 30.4 | 1.6x |
 | deprecated/cmd/nova-swarm | 34.8 | 16.8 | 2.1x |
@@ -213,7 +213,7 @@ property of the TEST, and none of these is over the line on the budget bench -- 
 | cmd/nova-bus | TestTwoClonesOfOneLaneRacingTenRoundsAllLand | 8.0 |
 | cmd/nova-bus | TestEarlierGapSurvivesLaterPages | 7.7 |
 | cmd/nova-pulse | TestBenchStandardDriftNamesBinary | 7.6 |
-| cmd/nova-wake | TestTheRecoveryReadsTheCountAndNeverAConstant | 7.5 |
+| deprecated/cmd/nova-wake | TestTheRecoveryReadsTheCountAndNeverAConstant | 7.5 |
 | cmd/nova-bus | TestBodiesModeCapsTheNewSummaryLinesToo | 7.1 |
 | deprecated/cmd/nova-merge | TestTwoReadsAndAGateFromOneStartingBranchReachTheCoordinator | 6.5 |
 | deprecated/cmd/nova-merge | TestThePacketIsPointersNotDiff | 6.5 |
@@ -224,10 +224,10 @@ property of the TEST, and none of these is over the line on the budget bench -- 
 | cmd/nova-bus | TestBodiesWithoutAdvanceMovesNoCursor | 5.6 |
 | deprecated/cmd/nova-merge | TestAStaleApproveIsKeptCountedAndAuthorizesNothing | 5.5 |
 | cmd/nova-bus | TestContinuationSurvivesOrdinaryCursorAdvance | 5.4 |
-| cmd/nova-wake | TestTheRealBusAdvanceRecoversAnInterruptedRead | 5.3 |
+| deprecated/cmd/nova-wake | TestTheRealBusAdvanceRecoversAnInterruptedRead | 5.3 |
 | cmd/nova-bus | TestTwoNotesInOneCommitWithMaxNotesOneLosesNeither | 5.3 |
 | cmd/nova-bus | TestRetryAfterAPartialResumesAtNext/WithAdvance | 5.2 |
-| cmd/nova-wake | TestTheBoundedCorrelationRead | 5.0 |
+| deprecated/cmd/nova-wake | TestTheBoundedCorrelationRead | 5.0 |
 | cmd/nova-bus | TestInboxParsesOnlyWhatIsNewSinceTheCursor | 5.0 |
 
 ### One package does not pass on darwin

@@ -47,11 +47,6 @@ $ nova-sandbox run --name j1 --size 8g --out ./handoff \
 $ nova-sandbox run --name j1 --size 8g --timeout 30m --read /opt/homebrew -- /bin/sh -c 'echo hi > out'
 $ nova-self-talk --rule-doc RULES.md ./pages/RULES.md ./pages/journal.md
 $ nova-self-talk ./pages/journal.md
-$ nova-wake awake --bus ./bus
-$ nova-wake probe --here
-$ nova-wake quickstart --state ./wake.state --reports ./reports
-$ nova-wake serve --bus ./bus --as rowan --on-note ./wake-me --interval 60s \
-$ nova-wake watch --state ./wake.state --max 5s --on-deadline report --interval 5s --reports ./reports
 example: go run cmd/nova-ci/timing.go --log internal/ci/timing/testdata/events.jsonl
 example: nova-bus check --bus ./bus --full
 example: nova-bus draft --bus ./bus --as Ada --to Bo --subject gate
@@ -102,7 +97,3 @@ example: nova-tokens report --who emma --day 2026-09-11 --repos ./repos.tsv --cl
 example: nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts
 example: nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts --unattributed --max 20
 example: nova-tokens sum --out ./out --month 2026-09
-example: nova-wake probe --here
-example: nova-wake quickstart --state ./wake.state --reports ./reports
-example: nova-wake watch --state ./wake.state --max 5s --on-deadline hold --interval 5s --reports ./reports --max-lines 0 --baseline
-example: nova-wake watch --state ./wake.state --max 5s --on-deadline report --interval 5s --reports ./reports

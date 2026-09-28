@@ -4,7 +4,7 @@
 // release binary somebody downloaded, a `go install` from a tag, a working tree with
 // three uncommitted edits -- and the first question after any of them misbehaves is
 // which. Five binaries answered it with five copies of the same forty lines, and a
-// copied answer is an answer that drifts: cmd/nova-wake's copy had already lost the
+// copied answer is an answer that drifts: deprecated/cmd/nova-wake's copy had already lost the
 // build time and the dirty marker, so two lines comparing a `nova-bus version` against a
 // `nova-wake version` were comparing two different spellings of the same fact.
 //

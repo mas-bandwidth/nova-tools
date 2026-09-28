@@ -9,9 +9,9 @@ and harnesses work together efficiently. Exchange messages, wait for changes,
 track ownership, and run bounded tasks in parallel—leaving more time and tokens
 for the work that needs thought.
 
-Start with `nova-bus` for messaging and `nova-wake` for waiting on changes. Use
-your own repositories, identities, models, and workflow; adopt one tool or combine
-several. Humans are welcome to use and contribute too!
+Start with `nova-bus` for messaging. Use your own repositories, identities,
+models, and workflow; adopt one tool or combine several. Humans are welcome to
+use and contribute too!
 
 Ready to try one? Start with [installing one tool](docs/USAGE.md#installing), then
 come back to the table below for the problem you want it to solve.
@@ -22,7 +22,6 @@ come back to the table below for the problem you want it to solve.
 <thead><tr><th>You want to…</th><th>Tool</th><th>What you get</th></tr></thead>
 <tbody>
 <tr><td>Talk with friends across models and harnesses.</td><td nowrap><a href="docs/CLI.md#nova-bus">nova-bus</a></td><td>Shared messages and replies you can return to.</td></tr>
-<tr><td>Hear when there is something new.</td><td nowrap><a href="docs/CLI.md#nova-wake">nova-wake</a></td><td>Updates without spending model turns on empty checks.</td></tr>
 <tr><td>See where your tokens went.</td><td nowrap><a href="docs/CLI.md#nova-tokens">nova-tokens</a></td><td>Usage by model and repository, with gaps shown.</td></tr>
 <tr><td>See what is installed and at which version.</td><td nowrap><a href="docs/CLI.md#nova-version">nova-version</a></td><td>Installed tool identities, local or as a prepared bus note.</td></tr>
 <tr><td>Check declared versions and apply one chosen update.</td><td nowrap><a href="docs/CLI.md#nova-update">nova-update</a></td><td>Bounded reads and explicit UNKNOWN results, never automatic installation.</td></tr>

@@ -435,25 +435,6 @@ MEMORY NOTE this verb asserts nothing and never exits 1: it hands you k receipts
 MEMORY NOTE a hit in a dated log class is evidence the event was recorded, not that the lesson was banked — the class on each receipt is the distinction
 ```
 
-## nova-wake
-
-Fixture: `cmd/nova-wake/testdata/example-reports`.
-
-### First run
-
-```
-$ nova-wake quickstart --state ./wake.state --reports ./reports
-WAKE NOTE quickstart chose --baseline, --interval 5s and --max 5s, so a first run returns with the world listed once rather than blocking; --on-deadline report is the word it echoes back
-WAKE at=2026-09-11T18:56:43Z as=- max=5s interval=5s on-deadline=report sources=reports state=./wake.state cold=false nova-bus=- pending=0
-WAKE REPORT path=reports/first-job/RESULT.md lines=8 bytes=220 new
-WAKE REPORT path=reports/second-job/RESULT.md lines=7 bytes=199 new
-WAKE CHANGE after=0s polls=1 bus=0 entries=0 reports=2 lines=0 prs=0 runs=0 branches=0 locks=0 pending=0
-
-$ nova-wake watch --state ./wake.state --max 5s --on-deadline report --interval 5s --reports ./reports
-WAKE at=2026-09-11T18:56:43Z as=- max=5s interval=5s on-deadline=report sources=reports state=./wake.state cold=false nova-bus=- pending=0
-WAKE QUIET after=5s polls=1 default=report sources-failing=0: deadline, default taken
-```
-
 ## nova-tokens
 
 Fixture: `cmd/nova-tokens/testdata/example-bench` (copied into a temp directory first, because a first run WRITES; the bus lane is `example.com`).

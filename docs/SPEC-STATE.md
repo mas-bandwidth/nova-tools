@@ -15,7 +15,7 @@ it retires. **Nothing here invents a thing Redis, SQLite or git already does.** 
 [SPEC-REDIS.md](SPEC-REDIS.md) (the instance, its owner prefix and TTL, its file fallbacks),
 the job spec `docs/SPEC-JOBS.md` (on `rowan/spec-jobs`) and the work-language spec
 `docs/SPEC-WORKLANG.md` (on `rowan/spec-worklang`), [SPEC-BUS-DELIVERY.md](SPEC-BUS-DELIVERY.md)
-and [SPEC-WAKE.md](SPEC-WAKE.md) (notes, cursors, wakes), [SPEC-SWARM.md](../deprecated/docs/SPEC-SWARM.md) (slots,
+and [SPEC-WAKE.md](../deprecated/docs/SPEC-WAKE.md) (notes, cursors, wakes), [SPEC-SWARM.md](../deprecated/docs/SPEC-SWARM.md) (slots,
 leases, caps), [SPEC-TOKENS.md](SPEC-TOKENS.md) (the ledger), [SPEC-MERGE.md](../deprecated/docs/SPEC-MERGE.md) (CI
 and PR verdicts).
 

@@ -473,7 +473,7 @@ measurement of the same packages.
 nothing noticed, because nothing summed the per-package elapsed time `go test
 -json` was already printing. A green that hides a doubling suite is the same
 mistake as a flaky wait, one layer up. The same mistake one layer out is a
-number RECORDED and enforced against nothing: `cmd/nova-wake` was recorded at
+number RECORDED and enforced against nothing: `deprecated/cmd/nova-wake` was recorded at
 62.9 s on the Air -- over a minute -- and nothing read it; a live run's
 CI-SLOW line is where such a number is read now.
 
@@ -1158,7 +1158,7 @@ whole verb down, in a loop nobody is watching, on the one input nobody had.
 `TestFieldsIndexAllowlistIsShrinkOnly`.
 **Its allowlist.** `internal/ci/testdata/fieldsindex_allowlist.txt`, one
 `file:function # reason` per row. The one offender the rule found on its first
-run was fixed rather than listed (`cmd/nova-wake/serve.go`, `server.spawn`, which
+run was fixed rather than listed (`deprecated/cmd/nova-wake/serve.go`, `server.spawn`, which
 indexed `strings.Fields(s.onNote)` with no length check of its own); two rows
 arrived with the rebase onto dev (`deprecated/internal/friendread/count.go:Parse`,
 `internal/pulse/cut_template.go:OperativeRegion`), each in range by construction and
@@ -3014,11 +3014,11 @@ five-minute per-leg cap on superman, and a cancelled shard drops the whole group
 and restarts every PR behind it. The log does not say what the headline says:
 NO package came near the 100 s per-package ceiling. Shard 0 finished 27 packages
 summing 211.8 s of `go test` between 16:36:43 and 16:41:24 and was killed partway
-through the rest, its largest single invocation `cmd/nova-wake` at 50.7 s. What
+through the rest, its largest single invocation `deprecated/cmd/nova-wake` at 50.7 s. What
 ran out was the SHARD'S SUM, and the sum is decided by how many ways each package
 is dealt. Dealing came off the LINUX table, and FOUR of the five largest darwin
 packages sit under its 40 s budget, so each was dealt three ways instead of six:
-`cmd/nova-wake` 24.6 s on hulk against 120.3 s measured on superman,
+`deprecated/cmd/nova-wake` 24.6 s on hulk against 120.3 s measured on superman,
 `deprecated/cmd/nova-merge` 7.7 against 68.8, `internal/swarm` 17.4 against 64.4 and
 `cmd/nova-bus` 10.0 against 54.2. The second half of the hurt
 is the machine's STATE: superman was in its post-power-on condition, Spotlight
