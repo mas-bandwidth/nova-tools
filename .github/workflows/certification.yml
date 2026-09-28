@@ -1155,7 +1155,7 @@ jobs:
           # published release silently extended with a second set of artifacts. So the script
           # is driven here, the way the certified gate above is driven, through a fake `gh`,
           # against the answers the release lookup can give: published 200, 404 with drafts
-          # listed, 404 with no drafts (both with and without 'v' notes), 404 with published
+          # listed, 404 with no drafts, 404 with published
           # match in listing, 404 with ambiguous drafts, 404 with invalid/non-array listing,
           # absent release notes, and non-answers (403).
           #
@@ -1212,7 +1212,7 @@ jobs:
           mkdir -p docs
           echo "# 0.14.0 release notes" > "docs/RELEASE-NOTES-0.14.0.md"
           cleanup_upload_test() {
-            rm -f "docs/RELEASE-NOTES-v0.14.0.md" "docs/RELEASE-NOTES-0.14.0.md"
+            rm -f "docs/RELEASE-NOTES-0.14.0.md"
             rm -rf dist
             rm -rf "${RUNNER_TEMP}/fake-gh-release"
           }
@@ -1221,7 +1221,6 @@ jobs:
           # ONE: tag 404 + draft in list -> upload with --clobber
           upload_env
           echo "# 0.14.0 release notes" > "docs/RELEASE-NOTES-0.14.0.md"
-          rm -f "docs/RELEASE-NOTES-v0.14.0.md"
           set +e
           out=$(RELEASE_UPLOAD_STATUS=404 \
             RELEASE_UPLOAD_LIST_RESPONSE=.github/testdata/release-upload/single-draft-list.json \
@@ -1235,10 +1234,9 @@ jobs:
             *) echo "the script did not upload to the draft: $out"; exit 1 ;;
           esac
 
-          # TWO (a): tag 404 + no draft in list, notes file without 'v' -> create with --notes-file naming the path without 'v'
+          # TWO: tag 404 + no draft in list -> create with --notes-file naming the canonical path
           upload_env
           echo "# 0.14.0 release notes" > "docs/RELEASE-NOTES-0.14.0.md"
-          rm -f "docs/RELEASE-NOTES-v0.14.0.md"
           set +e
           out=$(RELEASE_UPLOAD_STATUS=404 \
             RELEASE_UPLOAD_LIST_RESPONSE=.github/testdata/release-upload/empty-list.json \
@@ -1246,30 +1244,10 @@ jobs:
           rc=$?
           set -e
           printf '%s\n' "$out"
-          [ "$rc" -eq 0 ] || { echo "the upload REFUSED to create the missing release draft with notes without 'v'"; exit 1; }
+          [ "$rc" -eq 0 ] || { echo "the upload REFUSED to create the missing release draft"; exit 1; }
           case "$out" in
-            *"gh release create"*"--draft"*"--notes-file"*"docs/RELEASE-NOTES-0.14.0.md"*) echo "ok: missing release is created as draft with --notes-file without 'v'" ;;
-            *) echo "the script did not create a draft with non-v --notes-file: $out"; exit 1 ;;
-          esac
-          case "$out" in
-            *"--generate-notes"*) echo "the script used --generate-notes instead of --notes-file"; exit 1 ;;
-          esac
-
-          # TWO (b): tag 404 + no draft in list, notes file with 'v' -> create with --notes-file naming the path with 'v'
-          upload_env
-          echo "# v0.14.0 release notes" > "docs/RELEASE-NOTES-v0.14.0.md"
-          rm -f "docs/RELEASE-NOTES-0.14.0.md"
-          set +e
-          out=$(RELEASE_UPLOAD_STATUS=404 \
-            RELEASE_UPLOAD_LIST_RESPONSE=.github/testdata/release-upload/empty-list.json \
-            .github/scripts/release-upload.sh 2>&1)
-          rc=$?
-          set -e
-          printf '%s\n' "$out"
-          [ "$rc" -eq 0 ] || { echo "the upload REFUSED to create the missing release draft with notes with 'v'"; exit 1; }
-          case "$out" in
-            *"gh release create"*"--draft"*"--notes-file"*"docs/RELEASE-NOTES-v0.14.0.md"*) echo "ok: missing release is created as draft with --notes-file with 'v'" ;;
-            *) echo "the script did not create a draft with v-prefixed --notes-file: $out"; exit 1 ;;
+            *"gh release create"*"--draft"*"--notes-file"*"docs/RELEASE-NOTES-0.14.0.md"*) echo "ok: missing release is created as draft with canonical --notes-file" ;;
+            *) echo "the script did not create a draft with canonical --notes-file: $out"; exit 1 ;;
           esac
           case "$out" in
             *"--generate-notes"*) echo "the script used --generate-notes instead of --notes-file"; exit 1 ;;
@@ -1278,7 +1256,6 @@ jobs:
           # THREE: published release on tag lookup (200) -> refuse
           upload_env
           echo "# 0.14.0 release notes" > "docs/RELEASE-NOTES-0.14.0.md"
-          rm -f "docs/RELEASE-NOTES-v0.14.0.md"
           set +e
           out=$(RELEASE_UPLOAD_STATUS=200 RELEASE_UPLOAD_RESPONSE=.github/testdata/release-upload/published.json \
             .github/scripts/release-upload.sh 2>&1)
@@ -1297,7 +1274,6 @@ jobs:
           # FOUR: published release in release listing (404 on tag, but list has published match) -> refuse
           upload_env
           echo "# 0.14.0 release notes" > "docs/RELEASE-NOTES-0.14.0.md"
-          rm -f "docs/RELEASE-NOTES-v0.14.0.md"
           set +e
           out=$(RELEASE_UPLOAD_STATUS=404 \
             RELEASE_UPLOAD_LIST_RESPONSE=.github/testdata/release-upload/published-list.json \
@@ -1314,10 +1290,9 @@ jobs:
             *"gh release"*) echo "the script reached a gh release command after matching published release in list"; exit 1 ;;
           esac
 
-          # FIVE: invalid / non-array listing response -> refuse
+          # FIVE (a): invalid / non-array listing response -> refuse fail-closed
           upload_env
           echo "# 0.14.0 release notes" > "docs/RELEASE-NOTES-0.14.0.md"
-          rm -f "docs/RELEASE-NOTES-v0.14.0.md"
           set +e
           out=$(RELEASE_UPLOAD_STATUS=404 \
             RELEASE_UPLOAD_LIST_RESPONSE=.github/testdata/release-upload/not-an-array.json \
@@ -1334,10 +1309,104 @@ jobs:
             *"gh release"*) echo "the script reached a gh release command on invalid listing"; exit 1 ;;
           esac
 
+          # FIVE (b): invalid metadata (string draft) -> refuse fail-closed
+          upload_env
+          echo "# 0.14.0 release notes" > "docs/RELEASE-NOTES-0.14.0.md"
+          set +e
+          out=$(RELEASE_UPLOAD_STATUS=404 \
+            RELEASE_UPLOAD_LIST_RESPONSE=.github/testdata/release-upload/string-draft.json \
+            .github/scripts/release-upload.sh 2>&1)
+          rc=$?
+          set -e
+          printf '%s\n' "$out"
+          [ "$rc" -ne 0 ] || { echo "the upload ACCEPTED a listing with string draft"; exit 1; }
+          case "$out" in
+            *"is invalid or non-array"*) echo "ok: string draft listing refused fail-closed" ;;
+            *) echo "the script did not fail-closed on string draft listing: $out"; exit 1 ;;
+          esac
+          case "$out" in
+            *"gh release"*) echo "the script reached a gh release command on invalid listing"; exit 1 ;;
+          esac
+
+          # FIVE (c): invalid metadata (null draft) -> refuse fail-closed
+          upload_env
+          echo "# 0.14.0 release notes" > "docs/RELEASE-NOTES-0.14.0.md"
+          set +e
+          out=$(RELEASE_UPLOAD_STATUS=404 \
+            RELEASE_UPLOAD_LIST_RESPONSE=.github/testdata/release-upload/null-draft.json \
+            .github/scripts/release-upload.sh 2>&1)
+          rc=$?
+          set -e
+          printf '%s\n' "$out"
+          [ "$rc" -ne 0 ] || { echo "the upload ACCEPTED a listing with null draft"; exit 1; }
+          case "$out" in
+            *"is invalid or non-array"*) echo "ok: null draft listing refused fail-closed" ;;
+            *) echo "the script did not fail-closed on null draft listing: $out"; exit 1 ;;
+          esac
+          case "$out" in
+            *"gh release"*) echo "the script reached a gh release command on invalid listing"; exit 1 ;;
+          esac
+
+          # FIVE (d): invalid metadata (null id) -> refuse fail-closed
+          upload_env
+          echo "# 0.14.0 release notes" > "docs/RELEASE-NOTES-0.14.0.md"
+          set +e
+          out=$(RELEASE_UPLOAD_STATUS=404 \
+            RELEASE_UPLOAD_LIST_RESPONSE=.github/testdata/release-upload/null-id.json \
+            .github/scripts/release-upload.sh 2>&1)
+          rc=$?
+          set -e
+          printf '%s\n' "$out"
+          [ "$rc" -ne 0 ] || { echo "the upload ACCEPTED a listing with null id"; exit 1; }
+          case "$out" in
+            *"is invalid or non-array"*) echo "ok: null id listing refused fail-closed" ;;
+            *) echo "the script did not fail-closed on null id listing: $out"; exit 1 ;;
+          esac
+          case "$out" in
+            *"gh release"*) echo "the script reached a gh release command on invalid listing"; exit 1 ;;
+          esac
+
+          # FIVE (e): invalid metadata (string id) -> refuse fail-closed
+          upload_env
+          echo "# 0.14.0 release notes" > "docs/RELEASE-NOTES-0.14.0.md"
+          set +e
+          out=$(RELEASE_UPLOAD_STATUS=404 \
+            RELEASE_UPLOAD_LIST_RESPONSE=.github/testdata/release-upload/string-id.json \
+            .github/scripts/release-upload.sh 2>&1)
+          rc=$?
+          set -e
+          printf '%s\n' "$out"
+          [ "$rc" -ne 0 ] || { echo "the upload ACCEPTED a listing with string id"; exit 1; }
+          case "$out" in
+            *"is invalid or non-array"*) echo "ok: string id listing refused fail-closed" ;;
+            *) echo "the script did not fail-closed on string id listing: $out"; exit 1 ;;
+          esac
+          case "$out" in
+            *"gh release"*) echo "the script reached a gh release command on invalid listing"; exit 1 ;;
+          esac
+
+          # FIVE (f): invalid metadata (null tag_name) -> refuse fail-closed
+          upload_env
+          echo "# 0.14.0 release notes" > "docs/RELEASE-NOTES-0.14.0.md"
+          set +e
+          out=$(RELEASE_UPLOAD_STATUS=404 \
+            RELEASE_UPLOAD_LIST_RESPONSE=.github/testdata/release-upload/null-tag.json \
+            .github/scripts/release-upload.sh 2>&1)
+          rc=$?
+          set -e
+          printf '%s\n' "$out"
+          [ "$rc" -ne 0 ] || { echo "the upload ACCEPTED a listing with null tag_name"; exit 1; }
+          case "$out" in
+            *"is invalid or non-array"*) echo "ok: null tag_name listing refused fail-closed" ;;
+            *) echo "the script did not fail-closed on null tag_name listing: $out"; exit 1 ;;
+          esac
+          case "$out" in
+            *"gh release"*) echo "the script reached a gh release command on invalid listing"; exit 1 ;;
+          esac
+
           # SIX: two drafts -> refuse as ambiguous
           upload_env
           echo "# 0.14.0 release notes" > "docs/RELEASE-NOTES-0.14.0.md"
-          rm -f "docs/RELEASE-NOTES-v0.14.0.md"
           set +e
           out=$(RELEASE_UPLOAD_STATUS=404 \
             RELEASE_UPLOAD_LIST_RESPONSE=.github/testdata/release-upload/two-drafts-list.json \
@@ -1356,7 +1425,7 @@ jobs:
 
           # SEVEN: notes file absent -> refuse before any API call, naming the missing notes file
           upload_env
-          rm -f "docs/RELEASE-NOTES-v0.14.0.md" "docs/RELEASE-NOTES-0.14.0.md"
+          rm -f "docs/RELEASE-NOTES-0.14.0.md"
           rm -f "${RUNNER_TEMP}/fake-gh-release/api-calls.log"
           set +e
           out=$(RELEASE_UPLOAD_STATUS=404 .github/scripts/release-upload.sh 2>&1)

@@ -264,15 +264,9 @@ jobs:
           }
 
           # THE RELEASE NOTES FILE MUST EXIST in this tree, before any API call.
-          # Support both docs/RELEASE-NOTES-${TAG#v}.md and docs/RELEASE-NOTES-${TAG}.md.
-          notes_ver="docs/RELEASE-NOTES-${TAG#v}.md"
-          notes_tag="docs/RELEASE-NOTES-${TAG}.md"
-          if [ -s "$notes_ver" ]; then
-            notes="$notes_ver"
-          elif [ -s "$notes_tag" ]; then
-            notes="$notes_tag"
-          else
-            echo "refusing: $notes_ver does not exist in the tagged tree; write it, land it, and tag the commit that carries it"
+          NOTES_FILE="docs/RELEASE-NOTES-${TAG#v}.md"
+          if [ ! -s "$NOTES_FILE" ]; then
+            echo "refusing: $NOTES_FILE does not exist in the tagged tree; write it, land it, and tag the commit that carries it"
             exit 1
           fi
 

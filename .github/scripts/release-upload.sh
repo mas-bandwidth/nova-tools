@@ -15,14 +15,9 @@
 set -euo pipefail
 : "${GITHUB_REPOSITORY:?}" "${TAG:?}" "${GH_TOKEN:?}"
 
-NOTES_TAG="docs/RELEASE-NOTES-${TAG}.md"
-NOTES_VER="docs/RELEASE-NOTES-${TAG#v}.md"
-if [ -s "$NOTES_VER" ]; then
-  NOTES_FILE="$NOTES_VER"
-elif [ -s "$NOTES_TAG" ]; then
-  NOTES_FILE="$NOTES_TAG"
-else
-  echo "refusing: $NOTES_VER does not exist in the tagged tree; write it, land it, and tag the commit that carries it" >&2
+NOTES_FILE="docs/RELEASE-NOTES-${TAG#v}.md"
+if [ ! -s "$NOTES_FILE" ]; then
+  echo "refusing: $NOTES_FILE does not exist in the tagged tree; write it, land it, and tag the commit that carries it" >&2
   exit 1
 fi
 
@@ -73,7 +68,7 @@ summary=$(printf '%s' "$releases" | jq -s --arg tag "$TAG" '
   if length == 0 then
     error("releases listing is empty")
   elif all(.[]; type == "array") then
-    if all(.[][]; type == "object" and has("id") and has("tag_name") and has("draft")) then
+    if all(.[][]; type == "object" and (.id | type == "number" and . > 0) and (.tag_name | type == "string" and length > 0) and (.draft | type == "boolean")) then
       [.[][]]
     else
       error("releases listing contains item missing required metadata")
