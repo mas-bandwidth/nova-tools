@@ -42,8 +42,7 @@ a failure. A section states each one in a single line of its own prose,
 beginning with a keyword, exactly as `Platform:` already does:
 
 - `Platform:` — the machine the block was recorded on, and what a different
-  machine prints instead. Already in use under [`## nova-sandbox`](#nova-sandbox)
-  and [`## nova-swarm`](#nova-swarm), and checked by
+  machine prints instead. See [`## nova-sandbox`](#nova-sandbox); checked by
   `internal/ci/firstrun_platform_test.go`.
 - `Requires:` — something a step needs that the machine running it may not have,
   and in a sandboxed test bench must sometimes *not* have: a key, a forge
@@ -57,17 +56,12 @@ it skipped names a precondition stated here. **A step skipped for a reason this
 file does not state is a defect in this file, not a pass** — being able to tell
 those two apart is the whole value of writing the line down.
 
-Three `Requires:` lines are owed today, one per section, from the same dogfood
-run: `## nova-decide` (the ladder block routes through JEV and wants
-`JEV_API_KEY`), `## nova-post` (`send` wants a posting credential) and
-`## nova-secrets` (two steps invoke `nova-check`, which is a different tool's
-binary). nova-merge has no section since its lane-making verbs (`init`,
-`quickstart`, `add`) left with the per-PR lander role; its kept verbs are
-exercised by deprecated/cmd/nova-merge's own tests.
+The `nova-secrets` fixture invokes `nova-check` in its child-command examples;
+those steps need that binary on PATH.
 
 ## nova-bus
 
-Fixture: `cmd/nova-bus/testdata/example-bus`, copied out and given a repository of its own, with a bare repository beside it as `origin`. That is what the example's own README tells a reader to do and what the tool requires — every git-reading verb refuses a `--bus` that is not its repository's root, because git reports changed paths from the root and a bus one directory down would report an empty change set over unread notes. `cmd/nova-bus/firstrun_functional_test.go` builds both in `t.TempDir()`, so every push below lands in a bare repository on this disk and no line here reaches a network. A real bus is a **private** repository; this one is three participants and four notes, small enough to read in a sitting.
+Fixture: `cmd/nova-bus/testdata/example-bus`, copied out and given a repository of its own, with a bare repository beside it as `origin`. That is the setup block of docs/CLI.md's nova-bus `### First run`, which `cmd/nova-bus/firstrun_functional_test.go` runs as written to build this bus, and it is what the tool requires — every git-reading verb refuses a `--bus` that is not its repository's root, because git reports changed paths from the root and a bus one directory down would report an empty change set over unread notes. It builds both in `t.TempDir()`, so every push below lands in a bare repository on this disk and no line here reaches a network. A real bus is a **private** repository; this one is three participants and four notes, small enough to read in a sitting.
 
 Two AI friends share it. Ada has already written; Bo is arriving. The sitting below is Bo's whole first one — who is on this bus, is the bus sound, what is she carrying, say heard, put her cursor down, write one note — and then Ada's two reads, because the cursor is the thing worth seeing twice.
 
@@ -263,7 +257,7 @@ Fixture: `cmd/nova-check/testdata/example-self`.
 $ nova-check quickstart --dir ./self
 QUICKSTART OK dir=./self checks=2: links, then nocode
 LINKS OK files=4 links=3 excluded=0
-NOCODE OK files=5 clean deny-list=floor\x20list
+NOCODE OK files=5 clean deny-list=floor-list
 QUICKSTART OK done=2 worst-exit=0 next=kernel,attest,floors,corpus (each wants a budget, a manifest or a ledger of yours: nova-check help)
 
 $ nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
@@ -554,10 +548,10 @@ it and the real clock answers instead.
 
 ```text
 $ nova-cairn open --store ./cairns --session s1 --source bench-a/session-7 --publish manual --now 2026-09-17T12:00:00Z
-OPEN OK session=s1 store=./cairns publish=manual stamp=2026-09-17T12:00:00Z
+OPEN OK session=s1 store=./cairns source=bench-a/session-7 publish=manual stamp=2026-09-17T12:00:00Z
 
 $ nova-cairn append --store ./cairns --session s1 --entry e1 --text "the words to keep" --source bench-a/session-7#L3 --publish manual --now 2026-09-17T12:05:00Z
-APPEND OK session=s1 entry=e1 persisted=true published=false publish=manual duplicate=false stamp=2026-09-17T12:05:00Z
+APPEND OK session=s1 entry=e1 source=bench-a/session-7#L3 persisted=true published=false publish=manual duplicate=false stamp=2026-09-17T12:05:00Z
 
 $ nova-cairn index --store ./cairns
 INDEX ENTRY session=s1 entry=e1 stamp=2026-09-17T12:05:00Z bytes=17 source=bench-a/session-7#L3
@@ -569,13 +563,15 @@ RECEIPT OK session=s1 entry=e1 stamp=2026-09-17T12:05:00Z bytes=17 source=bench-
 
 ## nova-redis
 
-No fixture and no instance: the lines below are the two refusals `spill`
-makes BEFORE it dials anything, so they read the same on every bench.
+No fixture and no instance: the lines below are refusals `spill` and
+`fn load` make BEFORE they dial anything, so they read the same on every bench.
 `cmd/nova-redis/firstrun_test.go` runs each `$` line and compares the output.
 A write with no owner, or with no TTL, is refused and nothing is stored; the
 round trip against an instance (`spill`, `recall`, and `recall` refusing an
 expired key under a controlled clock) is in `cmd/nova-redis/spill_test.go`
-over a miniredis fake.
+over a miniredis fake. `fn load` and `fn check` on a store are in
+`cmd/nova-redis/fn_test.go` over a fake and, against a throwaway
+redis-server, in `cmd/nova-redis/fn_functional_test.go`.
 
 ### First run
 
@@ -585,49 +581,9 @@ nova-redis spill: --owner is required; refusing to guess; run: nova-redis help
 
 $ nova-redis spill --addr 127.0.0.1:6379 --owner rowan --name note --ttl 0s --value hi
 nova-redis spill: --ttl is required and must be above zero; an unbounded key is a bug; run: nova-redis help
-```
 
-## nova-post
-
-The gate is draft, show, approve, send: the tool prepares and renders, and Glenn's
-bus receipt releases. A draft is rendered once, written under `--drafts` as
-`<hash>.post` and `<hash>.meta`, and shown byte for byte; `send` refuses unless the
-receipt exists in `--bus`, is Glenn's, names this hash and is under 24 hours old, and
-it transmits the stored bytes only. The examples below name throwaway drafts, an
-allowlist and a body of your own; a missing flag is one line on stderr at exit 2, and
-a target the allowlist does not name is exit 1.
-Fixture: a drafts directory you create, an allowlist with one
-`channel<TAB>target` line, and a body file. Every test runs against fake
-endpoints — an `httptest` server per channel, a fake mailer, an injected clock
-— and the refusals below open no socket. A credential is read only from the
-environment `nova-secrets exec` delivers, is never printed, and is never
-measured.
-
-The outward gate of [docs/SPEC-OUTBOUND.md](SPEC-OUTBOUND.md), on one of its four
-channels: `ghost`. Every line below is local, and no socket, no credential and no
-provider is touched: `draft` renders the payload and writes it under `./drafts`,
-and `show` prints the exact payload bytes to stdout and its OK line to stderr
-(the `! ` line). `send` releases only on a bus receipt from Glenn that names the
-hash and is under 24 hours old, so it is not in this block: without a receipt it
-refuses at exit 1. The fixture is exact, because the hash is: `./body.md` holds
-the one line `A first post for the ghost channel.`, `./allowlist` holds the one
-line `ghost<TAB>example.com`, and `./drafts` is an empty directory you create.
-The hash is the SHA-256 of the payload the draft wrote, so
-`shasum -a 256 ./drafts/<hash>.post` prints it back.
-`cmd/nova-post/firstrun_test.go` writes that fixture and runs every `$` line.
-
-### First run
-
-```text
-$ nova-post draft --channel ghost --target example.com --file ./body.md --drafts ./drafts --allowlist ./allowlist
-POST DRAFT OK hash=b150f3e20ecedbf62ea231eca325d74de5dc1123d0e061c7453f524fb6c8315f channel=ghost target=example.com bytes=115 drafts=./drafts
-
-$ nova-post show --draft b150f3e20ecedbf62ea231eca325d74de5dc1123d0e061c7453f524fb6c8315f --drafts ./drafts
-{"posts":[{"title":"","html":"A first post for the ghost channel.\n","status":"published","tags":["example.com"]}]}
-! POST SHOW OK hash=b150f3e20ecedbf62ea231eca325d74de5dc1123d0e061c7453f524fb6c8315f channel=ghost bytes=115 drafts=./drafts
-
-$ nova-post version
-nova-post devel linux/amd64 go1.26.5
+$ nova-redis fn load
+nova-redis fn load: --addr is required; refusing to guess; run: nova-redis help
 ```
 
 ## nova-ci
@@ -660,32 +616,6 @@ redirect: with an empty stdin the verb reads zero packages and prints
 `CI-SLOW OK packages=0 slowest=none`, which is why the test step always tees
 the stream first (`.github/workflows/ci.yml`).
 
-
-## nova-sprint
-
-Run by `cmd/nova-sprint/firstrun_test.go` in an empty directory, which must
-still be empty afterwards: the wide table is read from Redis and written nowhere
-(#3326), so none of these lines needs a server and none writes a file.
-
-### First run
-
-```text
-$ nova-sprint table --once --fixture table.txt
-! nova-sprint table: flag provided but not defined: -fixture; the wide table is read from Redis and written nowhere: --redis <addr> [--sprint <name>] (--once | --loop), or --check --redis <addr>; the whole sprint table is --layout live [--loop 1] [--out <file>]; run: nova-sprint help
-
-$ nova-sprint table --once
-! nova-sprint table: --redis <addr> is required; the wide table is read from Redis and written nowhere: --redis <addr> [--sprint <name>] (--once | --loop), or --check --redis <addr>; the whole sprint table is --layout live [--loop 1] [--out <file>]; run: nova-sprint help
-
-$ nova-sprint table --check
-! nova-sprint table: --check needs --redis <addr>, a throwaway server for the fixture keyspace; run: nova-sprint help
-```
-
-The first is the deleted file cut: `--fixture` and `--refresh` are unknown
-flags, while `--out <file>` now publishes the wide table by atomic rename
-(#3343) and `--layout live [--out <file>]` publishes the whole sprint table
-(#3530). The second and third name the server the table is read
-from. `TestTableWritesNoFile` renders from a throwaway server twice (a second
-start) and checks the directory stays empty.
 
 ## nova-table
 

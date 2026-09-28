@@ -118,6 +118,9 @@ func TestIssue2676(t *testing.T) {
 			t.Errorf("the refusal must name %s (the friend row loop, nova-tools#3807):\n%s", want, lines[0])
 		}
 	}
+	if strings.Contains(lines[0], "nova-sprint") {
+		t.Errorf("the refusal must name no parked tool as a remedy:\n%s", lines[0])
+	}
 	if strings.Contains(lines[0], "nova-wake beat") {
 		t.Errorf("the refusal must not send anyone to nova-wake beat, a retired verb that refused the friend row since #3447 (nova-tools#3807):\n%s", lines[0])
 	}

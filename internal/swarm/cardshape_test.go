@@ -45,7 +45,7 @@ func TestAdmitRefusesCapitalisedContractForDeepSeek(t *testing.T) {
 	if !strings.HasPrefix(line, "ADMIT REFUSED c1 card-shape: capitalised contract block") {
 		t.Fatalf("refusal names the shape: %q", line)
 	}
-	if !strings.Contains(line, "docs/WORKER-CARDS.md practice 17") {
+	if !strings.Contains(line, "deprecated/docs/WORKER-CARDS.md practice 17") {
 		t.Fatalf("refusal cites practice 17: %q", line)
 	}
 }

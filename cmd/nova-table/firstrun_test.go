@@ -19,7 +19,7 @@ import (
 // firstrun_test.go pins the onboarding standard for this binary: the
 // docs/TESTS.md and docs/CLI.md `### First run` transcripts are RUN, line for
 // line and in order, through the one comparator (onboarding.CompareTranscript,
-// SPEC-TOOLWORK §7 rule 2), and the usage banner's `example:` block is that
+// SPEC-TOOLWORK.md documents rule 2), and the usage banner's `example:` block is that
 // same sitting. The sitting moves a member between two cells (ns_oset_move,
 // a function of the nova_sprint library), so it runs on a throwaway
 // redis-server with the library loaded: the functional tier's.
@@ -136,7 +136,7 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 }
 
 // TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints executes
-// docs/CLI.md's `### First run` the same way (SPEC-TOOLWORK §7 rule 7: the
+// docs/CLI.md's `### First run` the same way (SPEC-TOOLWORK.md documents rule 6: the
 // reference is a document a stranger pastes from).
 func TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints(t *testing.T) {
 	t.Parallel()

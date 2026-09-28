@@ -607,7 +607,7 @@ func TestNoCodeCLI(t *testing.T) {
 		out := stdout.String()
 		// source= is a field, so the floor's label reads as one token: see
 		// TestTheDenyListFieldIsOneToken for the rule and the other three sites.
-		for _, want := range []string{"source=floor\\x20list", ".go", ".py", ".zsh"} {
+		for _, want := range []string{"source=floor-list", ".go", ".py", ".zsh"} {
 			if !strings.Contains(out, want) {
 				t.Errorf("output missing %q\n%s", want, out)
 			}
@@ -634,7 +634,7 @@ func TestNoCodeCLI(t *testing.T) {
 		if got := run([]string{"nocode", "--dir", dir}, &stdout, &stderr); got != 0 {
 			t.Fatalf("exit = %d, want 0 (stderr: %s)", got, stderr.String())
 		}
-		if !strings.Contains(stdout.String(), "deny-list=floor\\x20list") {
+		if !strings.Contains(stdout.String(), "deny-list=floor-list") {
 			t.Errorf("OK line does not name the list: %s", stdout.String())
 		}
 	})
@@ -951,18 +951,17 @@ func TestAnUnusableInvocationCarriesTheDoor(t *testing.T) {
 	}
 }
 
-// TestTheDenyListFieldIsOneToken is SPEC.md's "A field is one token" at the one field
-// that was not: `deny-list=` and `source=` hold one of three provenance labels, two of
-// which carry spaces, so `deny-list=floor list` read as `deny-list=floor` to a
-// whitespace-splitting scanner and `list` read as a further field. The labels are the
-// tool's own literals, not caller text -- which is why the escape was not applied and why
-// the field-counting half of the rule was missed. The spelling is preserved and rendered:
-// `floor list` prints as `floor\x20list`, one token that still says what it said.
+// TestTheDenyListFieldIsOneToken is SPEC.md's "A field is one token" at the
+// `deny-list=` and `source=` fields: each holds one of three provenance labels, and each
+// label is one token with no space and no "=" -- `floor-list`, `--deny-ext`,
+// `floor-list+--deny-ext-add` -- so a whitespace-splitting scanner reads the field the
+// tool wrote, with no escape for a reader to decode, and the finding's reason spells the
+// label the same way.
 func TestTheDenyListFieldIsOneToken(t *testing.T) {
 	t.Parallel()
 
 	// The rendered spellings of the three provenance labels, as oneline.Field writes them.
-	floor := "floor\\x20list"
+	floor := "floor-list"
 
 	lineWith := func(t *testing.T, stream, token string) string {
 		t.Helper()
@@ -1024,7 +1023,7 @@ func TestTheDenyListFieldIsOneToken(t *testing.T) {
 		if rc := run([]string{"nocode", "--dir", dir, "--deny-ext-add", ".xyz"}, &stdout, &stderr); rc != 0 {
 			t.Fatalf("exit = %d, want 0; stderr: %s", rc, stderr.String())
 		}
-		want := "NOCODE OK files=1 clean deny-list=floor\\x20list\\x20+\\x20--deny-ext-add"
+		want := "NOCODE OK files=1 clean deny-list=floor-list+--deny-ext-add"
 		if got := lineWith(t, stdout.String(), "NOCODE OK"); got != want {
 			t.Errorf("OK line = %q, want %q", got, want)
 		}

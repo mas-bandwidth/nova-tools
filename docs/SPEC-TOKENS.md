@@ -275,6 +275,12 @@ is the day it was learned.
     names those too. **Both counts print on the OK line**, so nothing was hidden
     to make it green, and the two flags are one question with two answers —
     giving both is a refusal. `check` still removes nothing.
+
+    **`--through <YYYY-MM-DD>` gates freshness.** When `--through` is given,
+    `check` verifies that the last folded day under `--out` is at least the given
+    day. If the directory has no folded days or its last day is older than the
+    requested day, `check` prints `CHECK FAIL stale last=<d> through=<d>` on
+    standard error, marks the check failed, and exits 1.
 14. **The swarm's usage files are a source.** SPEC-SWARM rule 12 writes one
     usage file per job, `<pool>/usage/<job>.tsv`, outside the directory
     `reclaim` removes, before the job's files move. `--swarm <label>=<pool>`
@@ -469,7 +475,7 @@ nova-tokens report  --who <name> --day <YYYY-MM-DD> --repos <file>
                     [--supersedes <note-id>]... [--note <path>] [--scratch <dir>] [--timeout <seconds>]
 nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
                     --swarm-root <dir> --day <YYYY-MM-DD> --out <ledger.tsv>
-nova-tokens check   --out <dir> [--max <n>]
+nova-tokens check   --out <dir> [--strict | --no-spend <file>] [--through <YYYY-MM-DD>] [--max <n>]
 nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all)
                     [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<dir>]... [--bus <dir>]
                     [--provider <label>=<file>]...
@@ -641,9 +647,10 @@ computed, per repo where a model shows on more than one.
 ### `check`
 
 Asserts what rule 13 says. Says NO (exit 1) on any malformed file, any
-malformed row, any missing day, any stray file. Deliberately does not check:
-whether a day's numbers are plausible, or whether a source was declared that
-day. `check` is a **wall**, and it is the gate.
+malformed row, any missing day, any stray file, or when `--through <day>` is
+given and the last folded day is older than `<day>` (`CHECK FAIL stale`).
+Deliberately does not check: whether a day's numbers are plausible, or whether a
+source was declared that day. `check` is a **wall**, and it is the gate.
 
 ### `sources`
 
@@ -735,6 +742,7 @@ SUM OK month=<m> days=<n> missing=<n> pairs=<n> models=<n> units=<n> nonutc=<n>
 SUM REFUSED: <reason>
 CHECK FAIL <path>: <reason>
 CHECK FAIL <path>:<line>: <reason>
+CHECK FAIL stale last=<d> through=<d>
 CHECK MISSING date=<d>
 CHECK STRAY <path>
 CHECK MORE kind=<file|row|missing|stray> shown=<n> total=<t> nova-tokens check --out <dir> --max 0
@@ -1979,9 +1987,6 @@ remedy line. The rules are numbered on from rule 21.
 - **It does not price anything.** Tokens, by type, per model. Dollars are a
   rate card times a count, the rate card changes, and a tool that carried
   one would carry a stale one.
-  [The proposed scheduling cost layer](PROPOSAL-SCHEDULING-COST.md) uses
-  separately versioned, configured weights over retained usage. That is a
-  future derived view, not a pricing claim about this shipped binary.
 - **It does not claim coverage.** Every total is the sum of what the declared
   sources reported; `dashes=`, `missing=`, `unknown=` and `unreadable=` say
   what it does not cover, and no line calls a sum complete.

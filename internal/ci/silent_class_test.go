@@ -21,12 +21,13 @@ const silentAllowlistPath = "testdata/silent_allowlist.txt"
 
 // silentLivePackages are the packages of the copy model's live path (Glenn
 // 2026-09-26 11:30 AM ET: "every verb in nova tools related to current work
-// should not fail silently"): the nova-sprint verbs, the
-// reconciler and its duties, the table, the wrapper and the copy ledger,
-// the launcher, the function library loader, capacity and the pipeline
-// reader. A new live package is added here, never the other way round.
+// should not fail silently"): the reconciler and its duties, the table,
+// the wrapper and the copy ledger, the launcher, the function library
+// loader, capacity and the pipeline reader. The nova-sprint verbs were first
+// on this list; they moved to deprecated/cmd/nova-sprint (deprecated, Glenn
+// 2026-09-27) and left it. A new live package is added here, never the other
+// way round.
 var silentLivePackages = []string{
-	"cmd/nova-sprint",
 	"internal/nsprint/reconcile", "internal/nsprint/taskcard", "internal/nsprint/table",
 	"internal/nsprint/card", "internal/nsprint/launch", "internal/nsprint/fn",
 	"internal/nsprint/capacity", "internal/nsprint/pipeerr",

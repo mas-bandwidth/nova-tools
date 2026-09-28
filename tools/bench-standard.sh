@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
-# tools/bench-standard.sh — the acceptance WITNESS for a Linux bench
-# (SPEC-FLEET-KUBE.md, "What bench-standard.sh stops doing"): it checks a
-# bench against the standard and prints one DRIFT line per finding.
+# tools/bench-standard.sh — the acceptance WITNESS for a Linux bench: it
+# checks a bench against the standard and prints one DRIFT line per finding.
 #
 # THIS SCRIPT IS A WITNESS, NOT A PROVISIONER. It does not install packages,
 # does not create users, does not write unit files, does not arm timers, does
 # not install k3s, does not mount volumes, and does not authorize seat keys --
-# all of that is Terraform's job (SPEC-FLEET-KUBE.md "A new bench is one apply")
-# and a `DRIFT` line this script prints is the witness that the declaration and
+# all of that is the fleet declaration's job, and a `DRIFT` line this script prints is the witness that the declaration and
 # the host disagreed, not a ticket for this script to repair.
 #
 # Usage:

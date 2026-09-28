@@ -1,0 +1,21 @@
+# The ratchet: packages that are permitted to import non-keep deprecated
+# packages, one `<importer> -> <imported>  # reason` per line.
+#
+# Living packages must not depend on packages deprecated/PACKAGES drops without
+# a keep line. A keep line in deprecated/PACKAGES permits importing that package;
+# it is never permission for that package's test dependencies to import non-keep
+# retired packages. Every lift out of nsprint eliminates one or more edges.
+#
+# THE LIST ONLY SHRINKS. TestLivingPackagesDoNotImportDroppedDeprecatedPackages
+# checks it in both directions: an unlisted edge is a red run, and a listed edge
+# whose import has been removed is also a red run.
+#
+# ceiling: 13
+
+internal/nsprint/fn -> internal/nsprint/life  # test fixtures in fn/probe_sets_functional_test.go
+internal/nsprint/fn -> internal/nsprint/taskcard  # test fixtures in fn/probe_sets_functional_test.go
+internal/nsprint/fn -> internal/nsprint/ws  # test fixtures in fn/probe_sets_functional_test.go
+internal/nsprint/fn -> internal/nsprint/ws/wstest  # test fixtures in fn/probe_sets_functional_test.go
+internal/nsprint/store -> internal/nsprint/card  # acl_cards_test.go and acl_epoch_test.go test card storage
+internal/nsprint/store -> internal/nsprint/taskcard  # acl_cards_test.go and acl_epoch_test.go test taskcard records
+internal/nsprint/store -> internal/nsprint/ws  # acl_cards_test.go and acl_epoch_test.go test workspace streams

@@ -2,7 +2,7 @@
 # preflight_test.sh: class test for tools/preflight.sh (#2498 Item S4).
 #
 # No bats, no external harness: plain sh, run directly, matching the shape of
-# roadmap-parity_test.sh in this directory.
+# bench-standard_test.sh in this directory.
 #
 # THE CLASS: CAN PREFLIGHT FALSELY CLEAR A DEFECT OR DROP AN ARGUMENT ON THE
 # WAY THROUGH MAKE? The test step hands off to `make test-full`, so each case

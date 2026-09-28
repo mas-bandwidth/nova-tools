@@ -12,7 +12,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `cardhdr/` | card header vocabulary and one-invariant lint | `go test ./internal/cardhdr` | `go test ./internal/cardhdr` |
 | `check/` | hygiene rules and tree checkers | `go test ./internal/check` | `go test ./internal/check` |
 | `ci/` | class tests and CI budget invariants | `go test ./internal/ci` | `go test ./internal/ci` |
-| `cireceipt/` | ci-ok's run receipt: one ev:github row, the row nova-wake watch --store reads | `go test ./internal/cireceipt` | `go test -tags functional ./internal/cireceipt` |
+| `cireceipt/` | ci-ok's run receipt: one ev:github row of the workflow_run shape | `go test ./internal/cireceipt` | `go test -tags functional ./internal/cireceipt` |
 | `civerdict/` | reader of a commit's CI verdict record | `go test ./internal/civerdict` | `go test ./internal/civerdict` |
 | `config/` | nova-config library: kind descriptors, the Postgres store and history, apply into Redis | `go test ./internal/config` | `go test ./internal/config` |
 | `converge/` | convergence state and progress math | `go test ./internal/converge` | `go test ./internal/converge` |
@@ -41,7 +41,6 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `onboarding/` | onboarding banner and doc verifier | `go test ./internal/onboarding` | `go test ./internal/onboarding` |
 | `oneline/` | single-line log and output grammar | `go test ./internal/oneline` | `go test ./internal/oneline` |
 | `play/` | sandboxed code experiment runner | `go test ./internal/play` | `go test ./internal/play` |
-| `post/` | GitHub PR and issue client | `go test ./internal/post` | `go test ./internal/post` |
 | `presence/` | friend heartbeat keys with a TTL | `go test ./internal/presence` | `go test ./internal/presence` |
 | `record/` | decision and execution records | `go test ./internal/record` | `go test ./internal/record` |
 | `records/` | database models and record formats | `go test ./internal/records` | `go test ./internal/records` |
@@ -62,6 +61,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `testguard/` | host seam and leak interception | `go test ./internal/testguard` | `go test ./internal/testguard` |
 | `testpg/` | a throwaway Postgres for one test or one package: loopback only, trust authentication, stopped with the test | `go test ./internal/testpg` | `go test ./internal/testpg` |
 | `testredis/` | a throwaway redis-server for one test: loopback only, nothing kept, never outlives its test binary | `go test ./internal/testredis` | `go test ./internal/testredis` |
+| `testverbhelp/` | per-tool check that every verb answers -h at exit 0 and touches nothing | `go test ./internal/testverbhelp` | `go test ./internal/testverbhelp` |
 | `textbody/` | shared line-oriented message body filtering | `go test ./internal/textbody` | `go test ./internal/textbody` |
 | `tokens/` | token counter and budget tracker | `go test ./internal/tokens` | `go test ./internal/tokens` |
 | `typedrec/` | typed RESULT record contract, parser and legacy adapter | `go test ./internal/typedrec` | `go test ./internal/typedrec` |

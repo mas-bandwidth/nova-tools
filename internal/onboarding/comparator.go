@@ -8,7 +8,7 @@ import (
 )
 
 // CompareTranscript is the ONE comparison a firstrun_test.go may make
-// (docs/SPEC-TOOLWORK.md §7 rule 2, draft 5).
+// (docs/SPEC-TOOLWORK.md documents rule 2).
 //
 // Before it there were three comparisons in this repository and they were worth
 // three different things. A `printed map[string]bool` asked whether each
@@ -83,7 +83,7 @@ type VolatileField struct {
 // green" means the same in every binary. Growing it is a reading, not a call
 // site's decision -- which is what the refusal below is for.
 //
-// The six entries are the ones docs/SPEC-TOOLWORK.md §7 rule 2 names: `at=`,
+// The six entries are the ones docs/SPEC-TOOLWORK.md documents rule 2 names: `at=`,
 // `took=`, `created=`, a temporary directory, a fresh sha, and the stamp on a
 // `branch=` nova-secrets seals on.
 //

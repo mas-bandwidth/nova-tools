@@ -147,6 +147,12 @@ func namedPathsIn(text string) []string {
 	if strings.IndexByte(text, '/') < 0 {
 		return nil
 	}
+	// And every candidate starts with one of namedPathRe's roots and a slash, so a
+	// line naming none of them is not handed over either: most lines that carry a
+	// slash are URLs and import paths, and the regexp costs seconds under -race.
+	if !namedPathMayMatch(text) {
+		return nil
+	}
 	var found []string
 	for _, loc := range namedPathRe.FindAllStringIndex(text, -1) {
 		start, end := loc[0], loc[1]
@@ -166,6 +172,18 @@ func namedPathsIn(text string) []string {
 		found = append(found, name)
 	}
 	return found
+}
+
+// namedPathRoots are namedPathRe's alternatives, each with its slash.
+var namedPathRoots = []string{".github/", "cmd/", "internal/", "docs/", "tools/", "scripts/", "testdata/", "fleet/", "infra/"}
+
+func namedPathMayMatch(text string) bool {
+	for _, root := range namedPathRoots {
+		if strings.Contains(text, root) {
+			return true
+		}
+	}
+	return false
 }
 
 // namedPathStartsAToken reports whether the candidate begins a word. It is what keeps an

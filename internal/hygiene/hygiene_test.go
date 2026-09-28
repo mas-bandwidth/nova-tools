@@ -10,7 +10,7 @@ import (
 )
 
 // The four checks, each seen red on the defect it exists for and green on a range that
-// does not carry it. SPEC-TOOLWORK.md §3 (PR #1637), issue #1647.
+// does not carry it. SPEC-TOOLWORK.md, Hygiene (PR #1637), issue #1647.
 
 func git(t *testing.T, dir string, args ...string) string {
 	t.Helper()
@@ -571,7 +571,7 @@ func TestValidatePathsRefusesAWindowsDriveLetter(t *testing.T) {
 }
 
 // #1853.4 THE NAME SET IS kinds.txt. A kind the file does not hold is not declared;
-// there is no default kind (SPEC-TOOLWORK.md §5 rule 3).
+// there is no default kind (SPEC-TOOLWORK.md hygiene rule 6).
 func TestKindDeclaredRefusesAnUnknownKind(t *testing.T) {
 	t.Parallel()
 
@@ -668,7 +668,7 @@ func TestHygieneIgnoresTheSubjectReposDiffConfig(t *testing.T) {
 }
 
 // hygiene-ignores-the-subject-repos-replace-refs: a worker who can write the job
-// clone's `.git` -- the gate's worktree shares it, SPEC-TOOLWORK §1 rule 3 -- can
+// clone's `.git` -- the gate's worktree shares it -- can
 // `git replace <head> <base>`. That writes one ref under `refs/replace/`, never a
 // commit in the range, so `out-of-path` and `stray-file` never look at it; every git
 // this package then runs follows the replacement and the four checks report clean over

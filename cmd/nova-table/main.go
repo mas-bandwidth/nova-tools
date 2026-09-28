@@ -34,10 +34,11 @@ A stale epoch is refused. drop keeps the saved column definition unless
 View configuration has no table epoch or receipt.
 Quote column specs containing parentheses, for example 'done,pct:pct(done)'.
 
-Store verbs take --redis <addr> (host:port or an absolute Unix socket path) (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR,
-then the seat's address) and dials as the seat nova-sprint dials as: --seat
-<name> or NOVA_SEAT, else NOVA_SPRINT_REDIS_USER with the password in the
-variable NOVA_SPRINT_REDIS_PASSWORD_ENV names. Flags may follow the words.
+Store verbs take --redis <addr> (host:port or an absolute Unix socket path)
+(else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address) and
+dial as the seat --seat <name> or NOVA_SEAT names, else as
+NOVA_SPRINT_REDIS_USER with the password in the variable
+NOVA_SPRINT_REDIS_PASSWORD_ENV names. Flags may follow the words.
 
 A column is name[:projection[:fold[:label]]]: the projection is what a body
 cell prints, count (the set's size, the default), members (the members in
@@ -145,12 +146,12 @@ func (app *application) run(args []string, stdout, stderr io.Writer) (code int) 
 	return app.dispatch(args, stdout, stderr)
 }
 
-// selectSeat is nova-sprint's seat resolution (cmd/nova-sprint/seat.go,
-// nova-tools#4330), the same here so a session that names a seat for one
-// tool names it for the other: --seat <name> (or NOVA_SPRINT_SEAT, then
-// NOVA_SEAT) is taken off the line, its row in nova-sprint's seats.tsv
-// names its Redis address (the --redis default) and login, and a seat with
-// no row is the nova-secrets seat of that name.
+// selectSeat is the seat resolution nova-sprint defined
+// (deprecated/cmd/nova-sprint/seat.go, nova-tools#4330), carried here:
+// --seat <name> (or NOVA_SPRINT_SEAT, then NOVA_SEAT) is taken off the line,
+// its row in nova-sprint's seats.tsv names its Redis address (the --redis
+// default) and login, and a seat with no row is the nova-secrets seat of that
+// name.
 func selectSeat(sel *seatcred.Selection, args []string, getenv func(string) string, setenv func(k, v string) error) ([]string, error) {
 	rest, err := sel.FromArgs(args, func(k string) string {
 		if k == seatcred.SeatEnv {
@@ -262,8 +263,9 @@ func parseInterleaved(fs *flag.FlagSet, args []string) ([]string, error) {
 // open dials the store for a verb through redisconn, the one way a nova
 // tool opens Redis (#4492): the dial and the handshake (HELLO 3, with the
 // login) are done, or refused in one line, before the verb's first command,
-// which is still its first round trip. A missing address is a usage
-// refusal.
+// which is still its first round trip. The client's first hook puts the
+// function library on a store that holds none (withLibrary, library.go).
+// A missing address is a usage refusal.
 func open(ctx context.Context, addr string, getenv func(string) string) (*redisconn.Conn, error) {
 	if strings.TrimSpace(addr) == "" {
 		return nil, fmt.Errorf("--redis <addr> is required (or NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR, or a seat)")
@@ -279,6 +281,7 @@ func open(ctx context.Context, addr string, getenv func(string) string) (*redisc
 		}
 		return nil, err
 	}
+	withLibrary(conn.Client())
 	return conn, nil
 }
 

@@ -12,12 +12,22 @@ import (
 	"strings"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/mas-bandwidth/nova-tools/internal/redisfn"
 )
 
 const Library = "nova_sprint"
 
 //go:embed lua/*.lua
 var sources embed.FS
+
+// Spec is nova_sprint as internal/redisfn describes a library: this package's
+// files, glob and prelude, so a living tool loads and checks it with redisfn
+// (nova-redis fn). Its Source is this package's Source, byte for byte, and so
+// its digest is Sum's. Remedy is left for the tool to fill in its own words.
+func Spec() redisfn.Library {
+	return redisfn.Library{Name: Library, Files: sources, Glob: "lua/*.lua", Prelude: Prelude}
+}
 
 // Prelude is the one chunk-level local of the assembled library: NS, the
 // table through which a file hands helpers to a file that sorts after it

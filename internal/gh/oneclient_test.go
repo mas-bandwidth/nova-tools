@@ -17,11 +17,22 @@ import (
 var ghUse = regexp.MustCompile(`Command(Context)?\(\s*(ctx,\s*)?"gh"|\{"gh",|(?i:(program|bin|path)\w*) = "gh"\s*$|google/go-github|https://` + `api\.github\.com|api\.github\.com/` +
 	`|(\.(gh|run|api)|\bgh)\([^)]*"api"`)
 
-// ghAllowed are the files outside nova-sprint (cmd/nova-sprint,
-// internal/nsprint) that still talk to GitHub on their own, each with its
-// reason. They are not nova-sprint verbs and are outside #4343's PATHS; a
-// follow-up moves each onto internal/gh or retires it. Inside nova-sprint
-// there is no allowlist: every verb uses the one client.
+// isGHUse is ghUse behind a substring prefilter: every alternative of ghUse
+// contains "gh" in quotes, "github" or "api" in quotes, so a line holding none
+// of them cannot match. The regexp costs ~20 s over the tree under -race and
+// the prefilter skips it on almost every line.
+func isGHUse(line string) bool {
+	if !strings.Contains(line, `"gh"`) && !strings.Contains(line, "github") && !strings.Contains(line, `"api"`) {
+		return false
+	}
+	return ghUse.MatchString(line)
+}
+
+// ghAllowed are the files outside nova-sprint (internal/nsprint; its
+// command moved to deprecated/cmd/nova-sprint) that still talk to GitHub on
+// their own, each with its reason. They are not nova-sprint verbs and are
+// outside #4343's PATHS; a follow-up moves each onto internal/gh or retires
+// it. Inside nova-sprint there is no allowlist: every verb uses the one client.
 var ghAllowed = map[string]string{
 	"cmd/nova-sandbox/worktree.go":   "nova-sandbox, not a nova-sprint verb",
 	"internal/ci/failed_forge.go":    "the old ci failed-run reader through its gh wrapper; not a nova-sprint verb",
@@ -42,10 +53,9 @@ var ghAllowed = map[string]string{
 }
 
 // TestOneGitHubClient (#4343 BUILD 1): every GitHub call in nova-sprint
-// goes through internal/gh. No file under cmd/nova-sprint or
-// internal/nsprint shells out to gh, imports go-github or names the REST
-// root; elsewhere in the module only the named files do, and a row whose
-// file no longer does is dropped.
+// goes through internal/gh. No file under internal/nsprint shells out to
+// gh, imports go-github or names the REST root; elsewhere in the module only
+// the named files do, and a row whose file no longer does is dropped.
 func TestOneGitHubClient(t *testing.T) {
 	t.Parallel()
 	for _, sample := range []string{
@@ -58,7 +68,7 @@ func TestOneGitHubClient(t *testing.T) {
 		`	out, err := g.gh(false, "api", fmt.Sprintf("repos/%s/actions/runs", g.Repo))`,
 		`	rawRuns, err := gh(ctx, r.Timeout, &r.calls, "api",`,
 	} {
-		if !ghUse.MatchString(sample) {
+		if !isGHUse(sample) {
 			t.Fatalf("the pattern misses %q; the test would pass on nothing", sample)
 		}
 	}
@@ -90,7 +100,7 @@ func TestOneGitHubClient(t *testing.T) {
 				return err
 			}
 			for i, line := range strings.Split(string(b), "\n") {
-				if ghUse.MatchString(line) {
+				if isGHUse(line) {
 					hits[rel] = append(hits[rel], rel+":"+strconv.Itoa(i+1)+": "+strings.TrimSpace(line))
 				}
 			}
@@ -104,7 +114,7 @@ func TestOneGitHubClient(t *testing.T) {
 		t.Fatalf("read %d files; the walk is broken", n)
 	}
 	for rel, lines := range hits {
-		inSprint := strings.HasPrefix(rel, "cmd/nova-sprint/") || strings.HasPrefix(rel, "internal/nsprint/")
+		inSprint := strings.HasPrefix(rel, "internal/nsprint/")
 		if _, ok := ghAllowed[rel]; ok && !inSprint {
 			continue
 		}
@@ -202,13 +212,22 @@ var (
 	storeSet      = regexp.MustCompile(`\.Redis = `)
 )
 
+// isClientLiteral is clientLiteral behind a substring prefilter: every
+// alternative ends in "{" or is "gh.New(", so a line with neither cannot match.
+func isClientLiteral(line string) bool {
+	if !strings.Contains(line, "{") && !strings.Contains(line, "gh.New(") {
+		return false
+	}
+	return clientLiteral.MatchString(line)
+}
+
 // TestEveryProductionClientHasAStore (#4343 BUILD 1, the read of #4371):
 // every client built in production code names its Redis where it is built,
 // or the file sets it once the store is open; a client without a store
 // counts nothing and paces alone, and that is a test's shape only.
 func TestEveryProductionClientHasAStore(t *testing.T) {
 	t.Parallel()
-	if !clientLiteral.MatchString(`c := &gh.Client{API: f.BaseURL, Token: f.Token}`) || !storeSet.MatchString(`	gh.Redis = st.Client()`) {
+	if !isClientLiteral(`c := &gh.Client{API: f.BaseURL, Token: f.Token}`) || !storeSet.MatchString(`	gh.Redis = st.Client()`) {
 		t.Fatal("the pattern misses a known construction; the test would pass on nothing")
 	}
 	root := moduleRoot(t)
@@ -229,7 +248,7 @@ func TestEveryProductionClientHasAStore(t *testing.T) {
 			}
 			body := string(b)
 			for i, line := range strings.Split(body, "\n") {
-				if !clientLiteral.MatchString(line) {
+				if !isClientLiteral(line) {
 					continue
 				}
 				n++

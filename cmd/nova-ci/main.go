@@ -19,6 +19,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/functional"
 	"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -60,6 +61,13 @@ usage:
                       with --enforce. A test skipped with the SLEEPS marker and
                       not on --sleeps (pkg<TAB>test<TAB>where) is a CI-SLEEPS
                       line and fails the run on every leg.
+                      A package go test served from its test cache reports a
+                      package elapsed near zero, so a cached run can never
+                      trip --package-budget (or --budget); its tests replay
+                      the times of the run that was cached, which
+                      --test-budget still reads. CI's unit legs run with the
+                      cache on (GOTEST_COUNT_FLAG=); its --enforce leg runs
+                      -count=1, and so does a measurement by hand.
   nova-ci functional <package-dir>...
                       print the packages among these that hold functional tests
                       (a _test.go built only under the functional build tag) on
@@ -75,9 +83,9 @@ usage:
                     --sha <40hex> --run-id <n> --workflow <name>
                     --conclusion success|failure|cancelled [--pr <n>] [--at <rfc3339>]
                       the ci-ok job's run receipt: one ev:github row of the
-                      workflow_run shape, sender runner, the row nova-wake
-                      watch --store blocks on; dialled as the environment's
-                      seat (NOVA_SPRINT_REDIS_USER). One CI RECEIPT line;
+                      workflow_run shape, sender runner; dialled as the
+                      environment's seat (NOVA_SPRINT_REDIS_USER). One CI
+                      RECEIPT line;
                       exit 0 written, 1 the store refused it, 2 usage.
 
 exit codes: 0 inside budget or measured, 2 a CI-SLEEPS line, a CI-SLOW
@@ -104,7 +112,10 @@ func main() {
 	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
 
-func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
+	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
+	// before anything is read, run or written (the CLI style's rule (b), #4505).
+	defer verbflag.Recover(stdout, "nova-ci", usage, &code)
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb given; the verb is slowtests (a package over its time budget)")
 	}
@@ -124,6 +135,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "github":
 		return cmdGitHub(args[1:], stdout, stderr, os.Getenv)
 	case "help", "-h", "--help":
+		if args[0] == "help" && len(args) > 1 && args[1] != "help" && !verbflag.IsHelp(args[1]) {
+			return run(append(args[1:], "--help"), stdin, stdout, stderr)
+		}
 		fmt.Fprint(stdout, usage)
 		return 0
 	default:
@@ -148,7 +162,7 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	enforce := fs.Bool("enforce", false, "fail the run on a CI-SLOW line (the nightly reference leg only); without it the times are printed and only a CI-SLEEPS line fails")
 	loadFlag := fs.Float64("load", -1, "the host's load average, instead of reading it")
 	cpusFlag := fs.Int("cpus", 0, "the host's logical CPUs, instead of runtime.NumCPU")
-	if err := fs.Parse(args); err != nil {
+	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, " slowtests", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {
@@ -218,10 +232,6 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	return code
 }
 
-// functionalUsage is the verb's usage line; -h and --help after the verb
-// print it as a refusal (exit 2), never as silence.
-const functionalUsage = "usage: nova-ci functional <package-dir>... (package directories or dir/... patterns, no flags)"
-
 // cmdFunctional prints the functional tier's selection for `make
 // test-functional`: the package directories among args that hold functional
 // tests, space-separated, then one -run pattern naming exactly those tests.
@@ -230,16 +240,18 @@ const functionalUsage = "usage: nova-ci functional <package-dir>... (package dir
 // and a pattern that matches no package are refused, every one in one line: a
 // typo in CI's package list must never skip the functional tier in silence.
 func cmdFunctional(args []string, stdout, stderr io.Writer) int {
+	// -h and --help are the verb's help on stdout at exit 0, never silence and never a
+	// package list: make test-functional would hand the help text to go test, which
+	// fails on it out loud.
+	verbflag.HelpIfAsked(args, "functional")
 	if len(args) == 0 {
-		return refuse(stderr, " functional", "no package directory given; pass the packages the change touched (./cmd/nova-sprint ...)")
+		return refuse(stderr, " functional", "no package directory given; pass the packages the change touched (./cmd/nova-table ...)")
 	}
 	var problems, patterns []string
 	for _, arg := range args {
 		switch {
-		case arg == "-h" || arg == "--help" || arg == "-help":
-			return refuse(stderr, " functional", functionalUsage)
 		case strings.HasPrefix(arg, "-"):
-			problems = append(problems, fmt.Sprintf("unknown flag %q (functional takes no flags, only package directories such as ./cmd/nova-sprint or ./internal/...)", arg))
+			problems = append(problems, fmt.Sprintf("unknown flag %q (functional takes no flags, only package directories such as ./cmd/nova-table or ./internal/...)", arg))
 		default:
 			patterns = append(patterns, arg)
 		}

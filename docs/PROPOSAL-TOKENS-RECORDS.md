@@ -2,7 +2,7 @@
 
 Status: proposed replacement accounting contract for #117; not a claim about the shipped binary. Read with the [shared adoption proposal](https://github.com/mas-bandwidth/nova-tools/issues/117#issuecomment-5646457908). New adapters wait for the shared contract and their source mappings to be reviewed. Existing v1 day files remain readable and unchanged.
 
-[Smart scheduling and virtual token cost](PROPOSAL-SCHEDULING-COST.md) adds a derived cost view over these retained observations: configurable weights per model and token category, complete task cost including review/rework, and scheduling within quality, availability and shared-budget constraints. It does not replace raw usage with priced totals.
+A derived cost view over these retained observations never replaces raw usage with priced totals.
 
 ## Result and compatibility boundary
 
