@@ -529,6 +529,80 @@ func TestAServerThatStartedAndDoesNotAnswerIsStopped(t *testing.T) {
 	}
 }
 
+// A start pg_ctl gave up waiting for is an error, and the server it left
+// starting is stopped, not left. pg_ctl -t 0 gives up before any server can
+// be up.
+func TestAStartThatPgCtlGaveUpOnIsStopped(t *testing.T) {
+	t.Parallel()
+
+	l := real
+	l.up = 0
+	taken := 0
+	l.port = func() (string, error) { taken++; return real.port() }
+	dir := t.TempDir()
+	s, err := l.startServer(dir)
+	if s != nil || err == nil || !strings.Contains(err.Error(), "server did not start in time") {
+		t.Fatalf("StartServer that pg_ctl waits no time for = %v, %v; want pg_ctl's timeout", s, err)
+	}
+	if taken != 1 {
+		t.Fatalf("%d ports were taken; want one: a timeout is not a lost port", taken)
+	}
+	// The server's own record: a server was there, pg_ctl stop took it and
+	// removed its postmaster.pid. Asking pg_ctl status alone could race a
+	// server that had not written the file yet.
+	if !strings.Contains(err.Error(), "the server pg_ctl gave up waiting for was stopped") {
+		t.Errorf("the error does not say the server was stopped:\n%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "data", "postmaster.pid")); err == nil || running(t, dir) {
+		if bin, err := Binaries(); err == nil {
+			_ = (&Server{Dir: dir, Bin: bin}).Stop()
+		}
+		t.Fatal("the server pg_ctl gave up on was left running")
+	}
+}
+
+// A lost port is read from this attempt's part of the log: pg_ctl -l
+// appends, and an earlier attempt's "could not bind" is not this one's.
+func TestAnEarlierLostPortIsNotReadAsThisAttempts(t *testing.T) {
+	t.Parallel()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	_, held, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := real
+	var handed []string
+	l.port = func() (string, error) {
+		if len(handed) == 0 {
+			handed = append(handed, held)
+			return held, nil
+		}
+		// The second attempt fails for another reason: postgres refuses
+		// the port before it tries to bind.
+		handed = append(handed, "0")
+		return "0", nil
+	}
+	dir := t.TempDir()
+	s, err := l.startServer(dir)
+	if s != nil || err == nil {
+		t.Fatalf("StartServer = %v, %v; want an error", s, err)
+	}
+	if len(handed) != 2 || strings.Contains(err.Error(), "attempts") || !strings.Contains(err.Error(), "pg_ctl start on port 0") {
+		t.Fatalf("ports handed over: %v; error:\n%v\nwant two, and the second attempt's failure returned as it is", handed, err)
+	}
+	if strings.Contains(err.Error(), "could not bind") {
+		t.Fatalf("the second attempt's failure carries the first attempt's log:\n%v", err)
+	}
+	if running(t, dir) {
+		t.Fatal("a server runs")
+	}
+}
+
 // Start's cleanup says so when its Stop fails, and the test goes on.
 func TestACleanupThatCannotStopSaysSo(t *testing.T) {
 	t.Parallel()

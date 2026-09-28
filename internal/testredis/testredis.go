@@ -114,9 +114,9 @@ func FreePort(t testing.TB) string {
 	return real.freePort(t)
 }
 
-// User is the extra arguments of the fleet's shape: the default user off, and
-// one named user with a password and every permission. A client that does not
-// log in is answered NOAUTH.
+// User is the extra arguments of a server that requires a login: the default
+// user off, and one named user with a password and every permission. A client
+// that does not log in is answered NOAUTH.
 func User(name, password string) []string {
 	return []string{"--user", "default", "off", "--user", name, "on", ">" + password, "~*", "&*", "+@all"}
 }

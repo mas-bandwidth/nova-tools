@@ -505,8 +505,10 @@ func TestPingTakesPongAndNoauthForAServer(t *testing.T) {
 			t.Errorf("answer %q: ping = %v; want an error with %q", reply, err, want)
 		}
 	}
-	// Nothing listens there.
-	if err := ping(net.JoinHostPort("127.0.0.1", FreePort(t)), until); err == nil {
-		t.Fatal("ping to a port nothing listens on = nil; want the refusal")
+	// Nothing can listen there: port 0 is no port to connect to, so no
+	// parallel test can take it and answer, as it can a port freed a moment
+	// ago. The dial's own error is ping's.
+	if err := ping("127.0.0.1:0", until); err == nil || !strings.HasPrefix(err.Error(), "dial tcp 127.0.0.1:0: ") {
+		t.Fatalf("ping to port 0 = %v; want the dial's error", err)
 	}
 }

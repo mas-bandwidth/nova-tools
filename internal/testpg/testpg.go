@@ -82,6 +82,7 @@ type launch struct {
 	look   func(file string) (string, error) // exec.LookPath
 	known  []string                          // wellKnown
 	port   func() (string, error)            // a loopback port that is free now
+	up     time.Duration                     // how long pg_ctl waits for a start (-t, whole seconds)
 	wait   time.Duration                     // how long a started server may take to answer
 	tries  int                               // how many ports are taken before StartServer gives up
 }
@@ -93,6 +94,7 @@ var real = launch{
 	look:   exec.LookPath,
 	known:  wellKnown,
 	port:   func() (string, error) { return freePort(net.Listen) },
+	up:     30 * time.Second,
 	wait:   30 * time.Second,
 	tries:  5,
 }
@@ -172,8 +174,9 @@ func (s *Server) DSN(database string) string {
 //
 // A start that lost its port to another process is made again on a fresh
 // one, five times at most; any other failure is returned with what pg_ctl
-// and the server's log said. A server that started and does not answer
-// within thirty seconds is stopped and is an error.
+// and the server's log said. A start pg_ctl does not see finish within thirty
+// seconds is an error, and the server it left starting is stopped; so is a
+// server that started and does not answer within thirty seconds.
 func StartServer(dir string) (*Server, error) { return real.startServer(dir) }
 
 func (l launch) startServer(dir string) (*Server, error) {
@@ -197,7 +200,10 @@ func (l launch) startServer(dir string) (*Server, error) {
 			return nil, err
 		}
 		opts := fmt.Sprintf("-p %s -c listen_addresses=127.0.0.1 -c unix_socket_directories='' -c fsync=off -c synchronous_commit=off -c full_page_writes=off -c log_min_messages=warning", port)
-		start := exec.Command(filepath.Join(bin, "pg_ctl"), "-D", data, "-l", s.log, "-o", opts, "-w", "-t", "60", "start")
+		// pg_ctl -l appends: this attempt's log is what is written after
+		// here, so an earlier attempt's lost port is not read as this one's.
+		from := logSize(s.log)
+		start := exec.Command(filepath.Join(bin, "pg_ctl"), "-D", data, "-l", s.log, "-o", opts, "-w", "-t", strconv.Itoa(int(l.up/time.Second)), "start")
 		start.Env = s.env
 		out, err := start.CombinedOutput()
 		if err == nil {
@@ -207,9 +213,22 @@ func (l launch) startServer(dir string) (*Server, error) {
 			}
 			return s, nil
 		}
-		body, _ := os.ReadFile(s.log)
+		// pg_ctl -w that gave up waiting leaves the server it started
+		// running: it is stopped here, not left.
+		var left error
+		if strings.Contains(string(out), "did not start in time") {
+			stopped, err := stopStarting(bin, data, s.env, l.wait)
+			if stopped {
+				out = append(out, "the server pg_ctl gave up waiting for was stopped\n"...)
+			}
+			left = err
+		}
+		body := logSince(s.log, from)
 		said := fmt.Sprintf("pg_ctl start on port %s: %v\n%s\n%s", port, err, out, body)
-		if !strings.Contains(string(body), "Address already in use") && !strings.Contains(string(body), "could not bind") {
+		if left != nil {
+			return nil, errors.Join(errors.New(said), left)
+		}
+		if !strings.Contains(body, "Address already in use") && !strings.Contains(body, "could not bind") {
 			return nil, errors.New(said)
 		}
 		if try >= l.tries {
@@ -262,13 +281,58 @@ func (s *Server) Stop() error {
 	if s.stopped {
 		return nil
 	}
-	stop := exec.Command(filepath.Join(s.Bin, "pg_ctl"), "-D", filepath.Join(s.Dir, "data"), "-m", "immediate", "-w", "stop")
-	stop.Env = s.env
-	if out, err := stop.CombinedOutput(); err != nil {
-		return fmt.Errorf("pg_ctl stop: %v\n%s", err, out)
+	if err := stop(s.Bin, filepath.Join(s.Dir, "data"), s.env); err != nil {
+		return err
 	}
 	s.stopped = true
 	return nil
+}
+
+// stop stops the server of one data directory, immediate mode, and returns
+// when it is gone.
+func stop(bin, data string, env []string) error {
+	cmd := exec.Command(filepath.Join(bin, "pg_ctl"), "-D", data, "-m", "immediate", "-w", "stop")
+	cmd.Env = env
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("pg_ctl stop: %v\n%s", err, out)
+	}
+	return nil
+}
+
+// stopStarting stops the server a pg_ctl start gave up waiting for, and
+// says whether there was one. That server may not have written its
+// postmaster.pid yet, and pg_ctl stop finds the server by it: the file is
+// waited for, wait at most. A server that never wrote it has ended by itself
+// (its start failed), and there is nothing to stop.
+func stopStarting(bin, data string, env []string, wait time.Duration) (bool, error) {
+	until := time.Now().Add(wait)
+	for {
+		if _, err := os.Stat(filepath.Join(data, "postmaster.pid")); err == nil {
+			return true, stop(bin, data, env)
+		}
+		if time.Now().After(until) {
+			return false, nil
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// logSize is how long the log is now; a log not yet written is empty.
+func logSize(path string) int64 {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return info.Size()
+}
+
+// logSince is what the log holds from offset on.
+func logSince(path string, offset int64) string {
+	body, err := os.ReadFile(path)
+	if err != nil || offset > int64(len(body)) {
+		return string(body)
+	}
+	return string(body[offset:])
 }
 
 // Database creates a fresh, empty database on the server and returns its

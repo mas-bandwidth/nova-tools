@@ -126,7 +126,8 @@ func kill(pid int) {
 	}
 }
 
-// refused reports whether nothing listens at addr.
+// refused reports whether nothing listens at addr. It is asked only of a port
+// a live server holds: a port freed a moment ago can be a parallel test's.
 func refused(addr string) bool {
 	conn, err := net.DialTimeout("tcp", addr, 30*time.Second)
 	if err == nil {
@@ -276,9 +277,8 @@ func TestCleanupKillsTheServerAndRemovesItsDirectory(t *testing.T) {
 	if _, err := os.Stat(s.dir); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("the test has ended and its server's directory %s is there: %v", s.dir, err)
 	}
-	if !refused(s.Addr()) {
-		t.Fatalf("the test has ended and %s still takes clients", s.Addr())
-	}
+	// The port is not asked: the process that held it is gone, so the port
+	// is anyone's, and a parallel test may take it and answer there.
 }
 
 func TestAServerWithAUserAndAPasswordRefusesTheDefaultUser(t *testing.T) {
@@ -329,13 +329,12 @@ func TestStopMakesTheNextCommandFailAtOnce(t *testing.T) {
 	if s.Addr() != addr || s.PID() != pid {
 		t.Fatalf("after Stop the server is %s, pid %d; it was %s, pid %d", s.Addr(), s.PID(), addr, pid)
 	}
-	// The client that was connected is hung up on, and a new one is refused:
-	// the failure is the kernel's answer, not a deadline that ran out.
+	// The client that was connected is hung up on: the failure is the
+	// kernel's answer, not a deadline that ran out. A new client is not
+	// tried: the port was freed with the process, and a parallel test may
+	// take it and answer there.
 	if err := c.Ping(ctx).Err(); err == nil || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, os.ErrDeadlineExceeded) {
 		t.Fatalf("PING on the old connection after Stop = %v; want a connection that ended", err)
-	}
-	if err := dial(t, addr).Ping(ctx).Err(); !errors.Is(err, syscall.ECONNREFUSED) {
-		t.Fatalf("PING from a new client after Stop = %v; want connection refused", err)
 	}
 	// A second Stop, and the cleanup's after it, only wait.
 	s.Stop()
@@ -731,11 +730,10 @@ func TestAServerDoesNotOutliveItsTestBinary(t *testing.T) {
 			if !strings.Contains(e.said, c.said) {
 				t.Fatalf("the child did not end the way it was asked to (%q):\n%s", c.said, e.said)
 			}
+			// The process is asked, not the port: once the server is gone
+			// its port is anyone's, and a parallel test may take it.
 			if !gone(e.pid) {
 				t.Fatalf("the test binary is gone and its server, pid %d, is alive", e.pid)
-			}
-			if !refused(e.addr) {
-				t.Fatalf("the test binary is gone and %s still takes clients", e.addr)
 			}
 			if _, err := os.Stat(e.dir); c.cleanups != errors.Is(err, fs.ErrNotExist) {
 				t.Fatalf("the server's directory %s: %v; the child ran its cleanups: %v", e.dir, err, c.cleanups)
@@ -850,7 +848,9 @@ func TestTheSentryKillsItsServersWhenItsInputCloses(t *testing.T) {
 		case <-time.After(30 * time.Second):
 			t.Fatalf("the sentry is gone and the server with pid %d is alive; nobody stopped it", s.PID())
 		}
-		if alive(s.PID()) || !refused(s.Addr()) {
+		// The process is asked, not the port: the port of a server that
+		// has exited is anyone's, and a parallel test may take it.
+		if alive(s.PID()) {
 			t.Errorf("the server with pid %d at %s outlived its sentry", s.PID(), s.Addr())
 		}
 	}

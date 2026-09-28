@@ -148,15 +148,20 @@ func TestCommandCounterStopsServingAClientThatHungUp(t *testing.T) {
 	}
 }
 
-// The cleanup hangs up on a client the test left open, and ends.
+// The cleanup hangs up on a client the test left open, closes its listener,
+// and ends. The listener is asked, not the port: once it is closed the port
+// is anyone's, and a parallel test may take it and answer there.
 func TestCommandCounterHangsUpOnItsClientsAtCleanup(t *testing.T) {
 	t.Parallel()
 
 	var left net.Conn
-	var addr string
+	var ln net.Listener
 	t.Run("a test that leaves its client open", func(t *testing.T) {
-		var count func() int64
-		addr, count = CommandCounter(t)
+		addr, count := real.counter(t, func(network, address string) (net.Listener, error) {
+			var err error
+			ln, err = net.Listen(network, address)
+			return ln, err
+		})
 		var err error
 		if left, err = net.Dial("tcp", addr); err != nil {
 			t.Fatal(err)
@@ -169,12 +174,15 @@ func TestCommandCounterHangsUpOnItsClientsAtCleanup(t *testing.T) {
 		}
 	})
 	defer left.Close()
-	if got, err := io.ReadAll(left); err != nil && !errors.Is(err, io.EOF) && len(got) != 0 {
-		t.Fatalf("after the cleanup the client read %q, %v; want the end", got, err)
+	// The end of the stream: ReadAll reads it as no error and nothing more.
+	if got, err := io.ReadAll(left); err != nil || len(got) != 0 {
+		t.Fatalf("after the cleanup the client read %q, %v; want the end and nothing before it", got, err)
 	}
-	if conn, err := net.Dial("tcp", addr); err == nil {
-		_ = conn.Close()
-		t.Fatalf("after the cleanup %s still takes clients", addr)
+	if conn, err := ln.Accept(); !errors.Is(err, net.ErrClosed) {
+		if conn != nil {
+			_ = conn.Close()
+		}
+		t.Fatalf("after the cleanup the counter's listener accepts: %v; want it closed", err)
 	}
 }
 
