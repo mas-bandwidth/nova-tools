@@ -2623,6 +2623,15 @@ VERIFY FAIL gating=<n> shown=<n> info=<n> coverage=<n> frontmatter=<n> links=<ga
 VERIFY OK gating=0 info=<n> shown=<n> coverage=<n> frontmatter=<n> links=<gate|info>
 ```
 
+Verification applies `--exclude` to every check, including both coverage selectors,
+frontmatter selectors, and link resolution. An excluded directory also hides its
+children when a selector names one directly. Excluded targets are outside the
+verified corpus; a retained file linking to one still reports an unresolved link.
+A selector left with no files refuses rather than claiming a successful check.
+The summary's `coverage=` counts coverage and backlink findings, and
+`frontmatter=` counts missing-name findings. These totals are uncapped; they do
+not count the flags supplied.
+
 **`--fail-max <n>`, default 20, `0` for all.** At most n finding lines PER
 KIND, then one `VERIFY MORE` line per kind that elided anything. Per kind
 because a corpus with 10,000 unresolved wikilinks and one missing frontmatter

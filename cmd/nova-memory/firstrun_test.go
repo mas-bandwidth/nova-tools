@@ -86,8 +86,8 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 	t.Parallel()
 
 	examples := usageExamples(t)
-	if len(examples) != 3 {
-		t.Fatalf("want a quickstart, a search and a check example under `example:`, got %d: %q", len(examples), examples)
+	if len(examples) != 4 {
+		t.Fatalf("want quickstart, search, check and verify examples under `example:`, got %d: %q", len(examples), examples)
 	}
 	if !strings.HasPrefix(examples[0], "nova-memory quickstart ") {
 		t.Errorf("the first example is not the quickstart: %q", examples[0])
@@ -97,6 +97,9 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 	}
 	if !strings.HasPrefix(examples[2], "nova-memory check ") {
 		t.Errorf("the third example is not a check: %q", examples[2])
+	}
+	if !strings.HasPrefix(examples[3], "nova-memory verify ") {
+		t.Errorf("the fourth example is not a verify: %q", examples[3])
 	}
 	draft := writeDraft(t)
 	for _, ex := range examples {
