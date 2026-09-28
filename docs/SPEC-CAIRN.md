@@ -59,7 +59,9 @@ chosen words byte-for-byte** with a real clock stamp (UTC; `--now` names an
 RFC 3339 UTC replay for tests), the stable entry/session identifiers and
 the source pointers, which are recorded and never opened. An append with no
 `--source` carries the session's `open --source`, read back from the open
-record in `log.jsonl`, so the entry, its index row and its receipt name where
+record in `log.jsonl`; a log that exists and cannot be read, or an open record
+for the session that does not decode, refuses at exit 2 naming the log before
+anything is written, because corrupt provenance never reads as none. So the entry, its index row and its receipt name where
 it came from; every line prints `source=<ptr>`, and `source=-` is an entry with
 no pointer. Exactly one of
 `--text` or `--file` names the words, so the tool never picks between two
@@ -89,7 +91,7 @@ reported, so a reader never infers the remote from the local.
 
 ## Tests this spec demands
 
-One numbered line per Go test function: 28 lines, 28 tests. 17 exist in `internal/cairn` or
+One numbered line per Go test function: 30 lines, 30 tests. 19 exist in `internal/cairn` or
 `cmd/nova-cairn`; 11 (lines 5, 12, 13, 19 and 21–27) are named here and not yet written.
 Where one test holds several behaviours of the spec, they share its line; where two tests hold
 one rule of the spec (lines 9–10 and 15–16), each test has its own line.
@@ -98,7 +100,7 @@ Every test that touches a store uses a throwaway `t.TempDir()` store named on th
 Not every test writes entries: lines 2, 14, 17 and 28 are refusal-only, as 19 and 22 will be,
 and assert an exit code or an error with nothing stored.
 Each of the 11 unwritten tests must be shown red before it is green when it lands; this section
-makes no red-first claim for the 17 that exist.
+makes no red-first claim for the 19 that exist.
 
 1. `TestOpenAppendIndexReceiptRoundTrip` — `open` starts one session record under a caller-named store; the record is written to and read back; `index` builds the bounded section/entry index and coverage ledger mechanically.
 2. `TestMissingFlagsAreRefusedNeverGuessed` — there is no default store, no environment variable and no discovery; a missing `--store` is a refusal.
@@ -128,3 +130,5 @@ makes no red-first claim for the 17 that exist.
 26. `TestCoverageCarriesTheTotalWhenCapped` — the count is never capped and the `INDEX COVERAGE` line carries the total whether the run passed or failed.
 27. `TestReceiptReportsStampSourceSizeAndPublish` — `receipt` names stamp, source pointers, size and the `persisted=true published=false publish=<policy>` split.
 28. `TestLifecycleVerbsStayRefused` — there is deliberately no seal/consume/delete/grade/consolidate/wake/rollup/retention verb; naming one on the command line is exit 2, unknown subcommand.
+29. `TestAnUnreadableLogRefusesTheAppendAndWritesNothing` — a `log.jsonl` that exists and cannot be read is not a store with no source: an append that would inherit the session's pointer refuses at exit 2 naming the log, and writes no entry and no pointer line.
+30. `TestAMalformedOpenRecordRefusesTheAppendAndWritesNothing` — an open record for the session that does not decode is corrupt provenance and never reads as none: the append refuses at exit 2 naming the log and writes nothing; another session's malformed line does not block this one.

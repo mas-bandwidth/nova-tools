@@ -311,3 +311,90 @@ func TestSourcePointerIsRecordedNeverOpened(t *testing.T) {
 		t.Fatalf("receipt with no pointer printed %q, want source=-", out)
 	}
 }
+
+// appendWroteNothing is the "nothing written" half of the two provenance
+// refusals: no entry file for the id and no pointer line in the session file.
+func appendWroteNothing(t *testing.T, store, session, entry string) {
+	t.Helper()
+	if _, err := os.Stat(filepath.Join(store, "entries", session, entry+".json")); !os.IsNotExist(err) {
+		t.Fatalf("a refused append left an entry file: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(store, "sessions", session+".md"))
+	if err != nil {
+		t.Fatalf("read the session file: %v", err)
+	}
+	if strings.Contains(string(raw), "ENTRY "+entry+" ") {
+		t.Fatalf("a refused append left a pointer line:\n%s", raw)
+	}
+}
+
+// TestAnUnreadableLogRefusesTheAppendAndWritesNothing is SPEC-CAIRN line 29:
+// a log.jsonl that exists and cannot be read (mode 0200, so still appendable)
+// is not a store with no source. The append that would have inherited the
+// session's pointer refuses at exit 2, names the log, and writes nothing,
+// rather than filing APPEND OK source=- over the pointer open recorded.
+func TestAnUnreadableLogRefusesTheAppendAndWritesNothing(t *testing.T) {
+	t.Parallel()
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a 0200 file; the permission case cannot be made")
+	}
+
+	store := t.TempDir()
+	runOK(t, "", "open", "--store", store, "--session", "s1", "--source", "session:x", "--publish", "manual")
+	log := filepath.Join(store, "log.jsonl")
+	if err := os.Chmod(log, 0o200); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(log, 0o644) })
+
+	code, out, errOut := runCode("", "append", "--store", store, "--session", "s1", "--entry", "e1",
+		"--text", "words that would inherit the pointer", "--publish", "manual")
+	if code != 2 {
+		t.Fatalf("append over an unreadable log exited %d, want 2: stdout=%q stderr=%q", code, out, errOut)
+	}
+	if strings.Contains(out, "APPEND OK") || !strings.Contains(errOut, log) {
+		t.Fatalf("want a refusal naming %s and no APPEND OK: stdout=%q stderr=%q", log, out, errOut)
+	}
+	appendWroteNothing(t, store, "s1", "e1")
+}
+
+// TestAMalformedOpenRecordRefusesTheAppendAndWritesNothing is SPEC-CAIRN line
+// 30: an open record for the session that does not decode (a torn line, or a
+// source that is not a string) is corrupt provenance, and corrupt provenance
+// never reads as none. The append refuses at exit 2 naming the log and
+// writes nothing; another session's malformed line is not this one's.
+func TestAMalformedOpenRecordRefusesTheAppendAndWritesNothing(t *testing.T) {
+	t.Parallel()
+
+	for name, bad := range map[string]string{
+		"torn":       `{"event":"open","session":"s1","source":"sess`,
+		"not-string": `{"event":"open","session":"s1","source":7}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			store := t.TempDir()
+			runOK(t, "", "open", "--store", store, "--session", "s1", "--source", "session:x", "--publish", "manual")
+			log := filepath.Join(store, "log.jsonl")
+			if err := os.WriteFile(log, []byte(bad+"\n"), 0o644); err != nil {
+				t.Fatalf("write log: %v", err)
+			}
+			code, out, errOut := runCode("", "append", "--store", store, "--session", "s1", "--entry", "e1",
+				"--text", "words that would inherit the pointer", "--publish", "manual")
+			if code != 2 || strings.Contains(out, "APPEND OK") || !strings.Contains(errOut, log) {
+				t.Fatalf("want exit 2 naming %s: code=%d stdout=%q stderr=%q", log, code, out, errOut)
+			}
+			appendWroteNothing(t, store, "s1", "e1")
+			if raw, _ := os.ReadFile(log); string(raw) != bad+"\n" {
+				t.Fatalf("a refused append changed the log:\n%s", raw)
+			}
+
+			// A malformed line that names another session is not this one's.
+			runOK(t, "", "open", "--store", store, "--session", "s2", "--source", "session:y", "--publish", "manual")
+			out, _ = runOK(t, "", "append", "--store", store, "--session", "s2", "--entry", "e2",
+				"--text", "words of another session", "--publish", "manual")
+			if !strings.Contains(out, " source=session:y ") {
+				t.Fatalf("s2 append printed %q, want its own session's source", out)
+			}
+		})
+	}
+}

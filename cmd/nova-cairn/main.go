@@ -211,8 +211,12 @@ func cmdOpen(args []string, stdout, stderr io.Writer) int {
 	if err := cairn.Open(*store, *session, *source, stamp, *publish); err != nil {
 		return refuse(stderr, " open", oneline.Err(err))
 	}
+	stored, err := cairn.SessionSource(*store, *session)
+	if err != nil {
+		return refuse(stderr, " open", oneline.Err(err))
+	}
 	fmt.Fprintf(stdout, "OPEN OK session=%s store=%s source=%s publish=%s stamp=%s\n",
-		oneline.Field(*session), oneline.Escape(*store), sourceField(cairn.SessionSource(*store, *session)), oneline.Field(*publish), stamp.Format(time.RFC3339Nano))
+		oneline.Field(*session), oneline.Escape(*store), sourceField(stored), oneline.Field(*publish), stamp.Format(time.RFC3339Nano))
 	return 0
 }
 

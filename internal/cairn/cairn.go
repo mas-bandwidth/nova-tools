@@ -338,23 +338,48 @@ func appendLog(store, event, session, id, stamp, policy, source string) error {
 
 // SessionSource reads back the --source the session was opened with, from
 // the open record in log.jsonl. The session file's header is convention only
-// and is never parsed, so the log is where the pointer is read from. A store
-// whose open record carries no source (or has no log) answers "".
-func SessionSource(store, session string) string {
-	raw, err := os.ReadFile(filepath.Join(store, "log.jsonl"))
-	if err != nil {
-		return ""
+// and is never parsed, so the log is where the pointer is read from.
+//
+// CORRUPT PROVENANCE NEVER READS AS NONE. An absent log is a store with no
+// open records in it (a bench store, or one opened before the log carried a
+// source) and answers "" with no error, as does an open record with no source
+// key. A log that exists and cannot be read is an error, and so is a line
+// that may be this session's open record and does not decode as one: a line
+// naming the session and the open event that is not valid JSON, or whose
+// fields are not strings. Answering "" for either would let an append file
+// source=- over a pointer that open recorded.
+func SessionSource(store, session string) (string, error) {
+	name := filepath.Join(store, "log.jsonl")
+	raw, err := os.ReadFile(name)
+	if os.IsNotExist(err) {
+		return "", nil
 	}
-	for _, line := range strings.Split(string(raw), "\n") {
+	if err != nil {
+		var pe *os.PathError
+		if errors.As(err, &pe) {
+			err = pe.Err
+		}
+		return "", fmt.Errorf("cannot read the session's source from %s: %v", name, err)
+	}
+	quotedSession, _ := json.Marshal(session)
+	for i, line := range strings.Split(string(raw), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
 		var rec map[string]string
 		if json.Unmarshal([]byte(line), &rec) != nil {
+			// Not a record this reader can decode. It is only this
+			// session's business if it could be this session's open.
+			if strings.Contains(line, string(quotedSession)) && strings.Contains(line, `"open"`) {
+				return "", fmt.Errorf("%s:%d may be the open record of session %q and does not decode as one; refusing to read its source as none", name, i+1, session)
+			}
 			continue
 		}
 		if rec["event"] == "open" && rec["session"] == session {
-			return rec["source"]
+			return rec["source"], nil
 		}
 	}
-	return ""
+	return "", nil
 }
 
 // Open starts (or re-starts, idempotently) one session record. Concurrent
@@ -368,6 +393,11 @@ func Open(store, session, source string, now time.Time, publish string) error {
 	}
 	if !validPublish(publish) {
 		return fmt.Errorf("bad publish policy %q: never|manual|deferred|immediate", publish)
+	}
+	// The source a session was opened with must be readable before anything
+	// is written or reported: open prints it, and append inherits it.
+	if _, err := SessionSource(store, session); err != nil {
+		return err
 	}
 	// Re-open is a no-op: the record already stands, in whichever shape the
 	// store keeps it. A bench file counts, or open would write a second
@@ -452,8 +482,14 @@ func Append(store, session, id, text, source string, now time.Time, publish stri
 	// from the same place, so the entry records that pointer and index and
 	// receipt read it back. The dogfood finding (2026-09-18): open carried
 	// --source session:x, and every entry line then printed source= empty.
+	// The read comes BEFORE any entry or pointer write, so a log that cannot
+	// be read refuses with nothing written.
 	if source == "" {
-		source = SessionSource(store, session)
+		inherited, err := SessionSource(store, session)
+		if err != nil {
+			return res, err
+		}
+		source = inherited
 	}
 	final := entryPath(store, session, id)
 	if raw, err := os.ReadFile(final); err == nil {
