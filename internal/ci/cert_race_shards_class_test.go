@@ -134,6 +134,12 @@ func TestCertificationRaceShardsPartitionTheLiveTree(t *testing.T) {
 	}
 
 	// One deal per distinct shard count: two OSes at the same n deal the same.
+	// n is the EXPANDED MATRIX's count, never certRaceMinShards: the minimum is
+	// only the floor asserted above. Reversed witness (Stella's read of #4487,
+	// stella-d0fb88089706): with the matrix at shard 1..9, shards: 9, and the
+	// deal's awk printing `if (s == i - 1 && !(n == 9 && s == 8))`, a deal at
+	// the floor of eight passed while the real nine-shard deal lost 13 live
+	// packages; dealing at len(legs[runner]) fails it naming all 13.
 	runners := make([]string, 0, len(certRaceMinShards))
 	for runner := range certRaceMinShards {
 		runners = append(runners, runner)
@@ -141,7 +147,7 @@ func TestCertificationRaceShardsPartitionTheLiveTree(t *testing.T) {
 	sort.Strings(runners)
 	counts := map[int]string{}
 	for _, runner := range runners {
-		n := certRaceMinShards[runner]
+		n := len(legs[runner])
 		counts[n] = strings.TrimSpace(counts[n] + " " + runner)
 	}
 	for n, runner := range counts {
