@@ -18,6 +18,10 @@ Retrying an identical append returns the original stored timestamp and
 
 ## Findings and commands you can act on
 
+`nova-config apply` batches reads and reports failed pipeline commands even when an earlier key is absent.
+
+`nova-fuse init` creates a missing box without replacing an existing box; status and lift refuse a missing box.
+
 `nova-check spelling` checks Markdown prose and applies corrections only with `--write`.
 
 `nova-tokens ledger --month` batches validated day files into one Redis call.
@@ -53,6 +57,8 @@ The table epoch test harness checks the store image after every accepted action 
 Release uploads find existing drafts correctly and use the authored release
 notes. Missing or empty notes refuse before an upload, and published releases
 are refused rather than overwritten.
+
+Release commands refuse final-component symlink destinations and preserve literal backslashes in Unix filenames.
 
 ## Change list
 
