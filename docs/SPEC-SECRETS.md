@@ -343,6 +343,22 @@ text lives beside the rules it measures. It diffs `--base..--head` with **git, a
 nothing**: a store already cloned, two refs already present, no network socket. `--base` and
 `--head` are required; a missing one is a refusal at exit 2.
 
+**Each ref is a commit, resolved once, before anything reads it.** A ref beginning with `-`
+is the shape of a git option and is refused at exit 2 as
+`SECRETS REFUSED: --head <ref> begins with "-", the shape of an option, not a git ref`
+before git sees it. Every other ref is resolved with
+`git rev-parse --verify --end-of-options <ref>^{commit}`; a ref that names no commit (an
+unknown name, a tree, two words) is `GATE REFUSE rule=0 file=: --head <ref> does not name a
+commit in the store <dir>` at exit 2. The diff, the tree listings and every file read are
+then made from the two resolved SHAs, each behind `--end-of-options`, so no value the caller
+passes is ever read by git as an option. Two refs naming one commit are an empty diff, and an
+empty diff approves: `GATE APPROVE files=0`.
+
+**Every gate flag takes one value.** `--store`, `--base`, `--head` or `--machines` given twice
+is refused at exit 2 with one line on stderr naming the flag,
+`SECRETS REFUSED: --head is given more than once; every gate flag takes one value`, before
+any ref is read.
+
 **It refuses, at exit 2, unless every changed `.sops.yaml` rule has exactly two age
 recipients, one of which is the key `recovery.pub` declares at the head, and its
 `path_regex` names exactly one seat file; unless every changed seat file `<seat>.yaml` is
