@@ -20,15 +20,26 @@ import (
 // test and no runner's installed build matters: the step names no nova-sprint
 // (deprecated, Glenn 2026-09-27), no installed receipt writer under
 // .local/bin, and probes no installed binary. This test reads the step as
-// YAML and holds it to that shape, the command text exactly.
+// YAML and holds it to that shape, the command text exactly, and holds the
+// two conditions exactly: the job's, with no head-repo guard, and the step's,
+// with it.
 
 const runnerReceiptVerb = "github receipt --from-runner"
 
 // ciokIf is the ci-ok job's condition, exactly: every event but the nightly
-// schedule, and the head-repo guard every self-hosted job carries, because the
-// receipt step runs this tree's code holding the bench seat's password and a
-// pull_request from a fork must not reach it.
-const ciokIf = `always() && github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)`
+// schedule, and NO head-repo guard. Every self-hosted job carries that guard,
+// so on a fork's pull_request they are all skipped and ci-ok reads the skips
+// as red, which is what keeps a fork PR out of the merge queue. A guard on the
+// job would skip ci-ok instead, and GitHub counts a skipped required check as
+// passing (cold read of #4495, 2026-09-27).
+const ciokIf = `always() && github.event_name != 'schedule'`
+
+// receiptStepIf is the receipt step's condition, exactly: always(), so a red
+// run is reported as red, and the head-repo guard, because this step runs the
+// checked-out tree's code holding the bench seat's password and a
+// pull_request from a fork must never reach it. The guard is on the step and
+// not on the job, so the fork PR's ci-ok still runs and stays red.
+const receiptStepIf = `always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)`
 
 // receiptRun is the step's whole run block, exactly: the prelude that reads
 // the bench's card.env, then the bench seat's nova-secrets wrapper around this
@@ -88,7 +99,7 @@ func TestCIOKReportsEveryRunToRedisFromTheRunner(t *testing.T) {
 		t.Fatal("ci.yml has no ci-ok job")
 	}
 	if strings.TrimSpace(job.If) != ciokIf {
-		t.Errorf("the ci-ok job's if is\n  %s\nwant\n  %s\n(the head-repo guard: a fork's pull_request must not run this tree's receipt writer with the bench password)", job.If, ciokIf)
+		t.Errorf("the ci-ok job's if is\n  %s\nwant\n  %s\n(no head-repo guard on the job: a skipped ci-ok counts as a passing required check, so a fork PR could enter the merge queue with no PR-stage CI; the guard belongs on the receipt step)", job.If, ciokIf)
 	}
 	var run, cond string
 	found := 0
@@ -105,8 +116,8 @@ func TestCIOKReportsEveryRunToRedisFromTheRunner(t *testing.T) {
 	if found != 1 {
 		t.Fatalf("ci-ok has %d steps calling %q, want exactly one", found, runnerReceiptVerb)
 	}
-	if strings.TrimSpace(cond) != "always()" {
-		t.Errorf("the receipt step's if is %q, want always(): a red run is reported as red", cond)
+	if strings.TrimSpace(cond) != receiptStepIf {
+		t.Errorf("the receipt step's if is\n  %s\nwant\n  %s\n(always(): a red run is reported as red; the head-repo guard: a fork's pull_request must not run this tree's receipt writer with the bench password)", cond, receiptStepIf)
 	}
 	if !strings.Contains(run, "set -euo pipefail") || strings.Contains(run, "|| true") {
 		t.Errorf("the receipt step must fail loudly (set -euo pipefail, no `|| true`):\n%s", run)

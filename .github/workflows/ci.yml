@@ -1969,10 +1969,15 @@ jobs:
     # certification-ok; a red certification is a blocker for the next release, never for a
     # CL. The nightly schedule fires test-hosted only, so ci-ok does not run on schedule:
     # the nightly run is evidence to read, not a gate to merge against.
-    # The head-repo guard every self-hosted job carries: a pull_request from a
-    # fork skips ci-ok too, because its receipt step runs this tree's code
-    # (`go run ./cmd/nova-ci`) holding the bench seat's Redis password.
-    if: always() && github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    # NO head-repo guard here, on purpose. Every self-hosted job carries one, so
+    # on a fork's pull_request they are all skipped and this aggregate reads
+    # those skips as red: a fork PR's ci-ok is red and the PR cannot enter the
+    # merge queue. A guard on this job would skip ci-ok instead, and GitHub
+    # counts a skipped required check as passing, so the fork PR could be
+    # enqueued with no PR-stage CI at all (cold read of #4495, 2026-09-27). The
+    # guard lives on the one step that must not see fork code, the receipt
+    # step below, which runs this tree's code holding the bench seat's password.
+    if: always() && github.event_name != 'schedule'
     # A STATIC needs list. GitHub does not evaluate expressions in `needs`, so the
     # conditional array the previous revision used was refused as an invalid job
     # reference and the run was never created. test-hosted is skipped on a pull
@@ -2180,8 +2185,16 @@ jobs:
       # nova-sprint wrote this before
       # (Rowan 2026-09-27: it is deprecated; the ci:*:gh fold and pr:* claim it
       # also wrote had only nova-sprint readers and are not written).
+      # THE HEAD-REPO GUARD IS ON THIS STEP, NOT ON THE JOB. This step runs the
+      # checked-out tree's code with NOVA_REDIS_BENCH_PASSWORD in its
+      # environment, so a pull_request from a fork must never reach it. It
+      # cannot be the job's guard: a skipped ci-ok counts as a passing required
+      # check on GitHub, and a fork PR could then be enqueued with no PR-stage
+      # CI, whereas ci-ok running over its skipped needs stays red exactly as
+      # on dev. So on a fork PR ci-ok runs, is red, and writes no receipt;
+      # everywhere else the receipt is written for a red run too.
       - name: report this run to Redis from the runner
-        if: always()
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         shell: bash
         run: |
           set -euo pipefail

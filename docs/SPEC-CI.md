@@ -2557,8 +2557,11 @@ the Makefile's `test-full` and `test-slow` targets, which CI's whole-tree runs
 call.
 ### `ci-receipt` — ci-ok reports every run to Redis from the runner
 
-**The rule.** The `ci-ok` job of `.github/workflows/ci.yml` has exactly one
-step that runs `nova-ci github receipt --from-runner`, under `if: always()`,
+**The rule.** The `ci-ok` job of `.github/workflows/ci.yml`, whose own `if`
+is exactly `always() && github.event_name != 'schedule'`, has exactly one
+step that runs `nova-ci github receipt --from-runner`, under `if: always() &&
+(github.event_name != 'pull_request' ||
+github.event.pull_request.head.repo.full_name == github.repository)`,
 with `set -euo pipefail` and no `|| true` or `continue-on-error`, and its
 command is exactly this tree's writer, `go run ./cmd/nova-ci github receipt
 --from-runner`, under the bench seat (`"$HOME/.local/bin/nova-secrets" exec …
@@ -2586,16 +2589,24 @@ that does not compile writes no receipt and exits 1, so it never wakes a
 `nova-wake watch --store`, where the installed writer wrote a red receipt;
 this is accepted, because the red ci-ok is itself the signal, the store watch
 is for the green-or-red completion of runs that reached the step, and a tree
-that does not compile fails the other jobs first. The ci-ok job carries the
+that does not compile fails the other jobs first. The receipt STEP carries the
 head-repo guard every self-hosted job carries (`github.event_name !=
 'pull_request' || github.event.pull_request.head.repo.full_name ==
-github.repository`), because the step runs this tree's code holding the bench
-seat's Redis password and a fork's pull request must not reach it; the `ci:<repo>:<sha>:gh` fold and the
+github.repository`), because it runs this tree's code holding the bench
+seat's Redis password and a fork's pull request must not reach it. The ci-ok
+JOB does not carry it, on purpose: on a fork's pull request every self-hosted
+need is skipped and ci-ok reads those skips as red, which is what keeps the
+fork PR out of the merge queue; a guard on the job would skip ci-ok, and
+GitHub counts a skipped required check as passing, so the fork PR could be
+enqueued with no PR-stage CI (cold read of #4495, 2026-09-27). So a fork PR's
+ci-ok runs, is red, and writes no receipt; the `ci:<repo>:<sha>:gh` fold and the
 `pr:<repo>:<n>` claim nova-sprint also wrote had only nova-sprint readers and
 are not written.
 **The test.** `TestCIOKReportsEveryRunToRedisFromTheRunner`
 (`internal/ci/ciok_receipt_class_test.go`), reading the job as YAML,
-comparing the job's `if` exactly and the step's whole run block line by line.
+comparing the job's `if` exactly (no head-repo guard), the receipt step's
+`if` exactly (`always()` and the head-repo guard) and the step's whole run
+block line by line.
 **Its allowlist.** None: one step, one command, no exceptions.
 **Its remedy line.** Each red names what the step lacks or names, e.g. `the
 receipt step names "nova-sprint"`; the fix is the step, never the test.
