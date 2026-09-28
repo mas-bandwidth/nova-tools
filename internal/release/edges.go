@@ -11,6 +11,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
@@ -35,6 +36,11 @@ const childCap = 64 * 1024
 // been apart, and it is still a ceiling: a runaway gh cannot fill memory, and a
 // read that reaches it REFUSES by name below rather than returning a prefix.
 const forgeCap = 4 * 1024 * 1024
+
+// localDiffCap bounds the complete path list independently of ordinary child
+// diagnostics. The 1.0.0 range has 4,134 paths / 170,175 bytes; childCap killed
+// that read at 64 KiB. Reaching this larger ceiling still refuses the list.
+const localDiffCap = 8 * 1024 * 1024
 
 // runCommand runs one argv directly -- no shell, no pipe, no glob, no
 // environment expansion -- and returns its output, stdout and stderr together,
@@ -325,19 +331,54 @@ type ExecGit struct{}
 
 // DiffNames lists the paths a range touched, with THREE dots -- what head
 // carries since the merge base, which is the same range the forge's compare
-// answers and therefore the same question, asked where there is no ceiling.
+// answers and therefore the same question, without the forge's file-count cap.
 func (ExecGit) DiffNames(ctx context.Context, dir, base, head string) ([]string, error) {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	capture := bounded.NewCapture(childCap, cancel)
+	stdout := &diffCapture{Capture: bounded.NewCapture(localDiffCap, cancel)}
+	stderr := &diffCapture{Capture: bounded.NewCapture(childCap, cancel)}
 	cmd := exec.CommandContext(runCtx, "git", "-C", dir, "diff", "--name-only", base+"..."+head)
-	cmd.Stdout = capture
-	cmd.Stderr = capture
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(capture.Bytes())))
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	return diffNamesResult(stdout, stderr, cmd.Run())
+}
+
+// diffCapture counts bytes observed, including bytes beyond the retained
+// prefix. Each stream remains bounded and cancels the same child on overflow.
+type diffCapture struct {
+	*bounded.Capture
+	seen atomic.Int64
+}
+
+func (c *diffCapture) Write(p []byte) (int, error) {
+	c.seen.Add(int64(len(p)))
+	return c.Capture.Write(p)
+}
+
+type diffOutputLimitError struct {
+	stream string
+	limit  int
+	seen   int64
+}
+
+func (e *diffOutputLimitError) Error() string {
+	return fmt.Sprintf("git diff %s reached the %d-byte capture limit (observed=%d bytes); refusing to classify partial output", e.stream, e.limit, e.seen)
+}
+
+func diffNamesResult(stdout, stderr *diffCapture, runErr error) ([]string, error) {
+	// A child can exit successfully while cancellation races with its exit.
+	// The capture's verdict therefore precedes the process error, even nil.
+	if stdout.Hit() {
+		return nil, &diffOutputLimitError{"path list", localDiffCap, stdout.seen.Load()}
+	}
+	if stderr.Hit() {
+		return nil, &diffOutputLimitError{"diagnostics", childCap, stderr.seen.Load()}
+	}
+	if runErr != nil {
+		return nil, fmt.Errorf("%w: %s", runErr, strings.TrimSpace(string(stderr.Bytes())))
 	}
 	var files []string
-	for _, line := range strings.Split(string(capture.Bytes()), "\n") {
+	for _, line := range strings.Split(string(stdout.Bytes()), "\n") {
 		if line = strings.TrimSpace(line); line != "" {
 			files = append(files, line)
 		}
