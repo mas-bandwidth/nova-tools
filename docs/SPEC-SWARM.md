@@ -235,7 +235,6 @@ P7. **The fix-card shape is three calls, not thirty turns.** Step 1 (model):
 - P4, P5: `TestAdmissionRefusesAFourthCallWithoutExplore` -- a fourth call without `MODE: explore` is refused, with the remedy line, and the same card with `MODE: explore` is admitted.
 - P6: `TestExploreOverTurnBudgetIsStoppedWithTheBudgetNamed` -- a `MODE: explore` card carries a turn budget the harness enforces: over its turn budget it is stopped and the partial RESULT names the budget.
 
-
 ## The task templates
 
 ### `read-pr`

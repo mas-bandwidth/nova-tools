@@ -16,7 +16,7 @@
 
 ```bash
 nova-swarm native \
-  --harness /path/to/harness-v1.18.20/opencode \
+  --harness /path/to/harness/opencode \
   --model opencode/deepseek-v4-flash \
   --card cards/card-smoke-ds.md \
   --slot /path/to/root/slot-ds/jobs/card-smoke-ds \
@@ -101,12 +101,12 @@ fi
 if [ -f "$HOME/.config/opencode/opencode.json" ]; then
   cp "$HOME/.config/opencode/opencode.json" "$JOB_DIR/opencode.json"
 fi
-if [ -z "${INCEPTION_API_KEY:-}" ] && [ -f "$HOME/.config/freddy/env" ]; then
-  export INCEPTION_API_KEY="$(cat "$HOME/.config/freddy/env" | tr -d '\n\r ')"
+if [ -z "${INCEPTION_API_KEY:-}" ] && [ -f "/path/to/provider.env" ]; then
+  export INCEPTION_API_KEY="$(cat "/path/to/provider.env" | tr -d '\n\r ')"
 fi
 
 exec nova-swarm native \
-  --harness /path/to/harness-v1.18.20/opencode \
+  --harness /path/to/harness/opencode \
   --model "$MODEL" \
   --label "$LABEL" \
   --card "$CARD" \
