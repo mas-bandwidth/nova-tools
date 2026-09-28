@@ -239,6 +239,59 @@ func TestSpellingCLISymlinkWriteRefusal(t *testing.T) {
 	}
 }
 
+// Directory symlink scan/linkdir -> outside. A lexical path under scan is not
+// containment: --file and a glob must both leave outside/note.md unchanged
+// and must not exit 0. Same refusal shape as a final-component symlink.
+func TestSpellingCLIDirectorySymlinkWriteRefusal(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"file", "glob"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			scan := filepath.Join(root, "scan")
+			outside := filepath.Join(root, "outside")
+			if err := os.Mkdir(scan, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(outside, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			note := filepath.Join(outside, "note.md")
+			before := "recieve\n"
+			if err := os.WriteFile(note, []byte(before), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, filepath.Join(scan, "linkdir")); err != nil {
+				t.Fatal(err)
+			}
+
+			var code int
+			var stdout, stderr string
+			switch mode {
+			case "file":
+				code, stdout, stderr = runSpelling(t, "--dir", scan, "--file", "linkdir/note.md", "--write")
+			case "glob":
+				code, stdout, stderr = runSpelling(t, "--dir", scan, "--path", "linkdir/*.md", "--write")
+			default:
+				t.Fatalf("unknown mode %q", mode)
+			}
+			if code == 0 {
+				t.Fatalf("exit = 0, want non-zero; stdout = %q, stderr = %q", stdout, stderr)
+			}
+			if !strings.Contains(stderr, "is a symlink") {
+				t.Errorf("stderr does not report symlink refusal: %q", stderr)
+			}
+			after, err := os.ReadFile(note)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(after) != before {
+				t.Errorf("outside/note.md rewritten through directory symlink: got %q, want %q", string(after), before)
+			}
+		})
+	}
+}
+
 func TestSpellingCLIRootRelativeExcludeAllModes(t *testing.T) {
 	t.Parallel()
 

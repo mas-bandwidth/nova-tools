@@ -731,6 +731,81 @@ func CheckSpellingDir(dir string, opts SpellingOptions) (res SpellingResult, err
 	return res, err
 }
 
+// spellingOutsideRoot reports whether path is outside root. Equal paths are inside.
+func spellingOutsideRoot(root, path string) bool {
+	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(path))
+	if err != nil {
+		return true
+	}
+	if rel == "." {
+		return false
+	}
+	return escapesRoot(rel)
+}
+
+// pathEnteredRoot reports whether any component of path resolves under root.
+// Used when the caller's spelling of path is not the spelling of the resolved
+// root (/tmp versus /private/tmp) but the walk still passes through root.
+func pathEnteredRoot(rootResolved, path string) bool {
+	vol := filepath.VolumeName(path)
+	rest := path[len(vol):]
+	cur := vol
+	if strings.HasPrefix(rest, string(filepath.Separator)) {
+		cur = vol + string(filepath.Separator)
+	}
+	seen := false
+	for _, part := range strings.Split(rest, string(filepath.Separator)) {
+		if part == "" || part == "." {
+			continue
+		}
+		cur = filepath.Join(cur, part)
+		resolved, err := filepath.EvalSymlinks(cur)
+		if err != nil {
+			return seen
+		}
+		if !spellingOutsideRoot(rootResolved, resolved) {
+			seen = true
+			continue
+		}
+		if seen {
+			return true
+		}
+	}
+	return seen
+}
+
+// spellingSymlinkEscape refuses a write selected under root whose resolved
+// path is not under the resolved root. A lexical filepath.Rel is not
+// containment: a directory symlink inside root is followed on write, and
+// atomicfile only Lstats the final component. The error matches that
+// final-component refusal. A path that never enters root is not this case
+// (an explicit --file outside the working directory is written as given).
+func spellingSymlinkEscape(root, path string) error {
+	if root == "" || path == "" {
+		return nil
+	}
+	rootResolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return fmt.Errorf("dir %q: %w", root, err)
+	}
+	cleaned := filepath.Clean(path)
+	if !filepath.IsAbs(cleaned) {
+		abs, absErr := filepath.Abs(cleaned)
+		if absErr != nil {
+			return fmt.Errorf("file %q: %w", path, absErr)
+		}
+		cleaned = abs
+	}
+	resolved, evalErr := filepath.EvalSymlinks(cleaned)
+	if evalErr == nil && !spellingOutsideRoot(rootResolved, resolved) {
+		return nil
+	}
+	if !spellingOutsideRoot(rootResolved, cleaned) || pathEnteredRoot(rootResolved, cleaned) {
+		return fmt.Errorf("atomicfile: target %q is a symlink", cleaned)
+	}
+	return nil
+}
+
 // CheckSpellingFiles checks the listed files relative to dir (or opts.Dir, or cwd if both empty).
 func CheckSpellingFiles(dir string, files []string, opts SpellingOptions) (res SpellingResult, err error) {
 	root := dir
@@ -844,6 +919,15 @@ func CheckSpellingFiles(dir string, files []string, opts SpellingOptions) (res S
 		if opts.Write && updated != text {
 			perm := info.Mode().Perm()
 			cleanTarget := filepath.Clean(targetPath)
+			rootFor := rootResolved
+			if rootFor == "" {
+				rootFor = cleanRoot
+			}
+			// EvalSymlinks before write. Lexical containment above can be a
+			// directory symlink; refuse that the same way as a final-component symlink.
+			if escErr := spellingSymlinkEscape(rootFor, cleanTarget); escErr != nil {
+				return res, fmt.Errorf("writing %q: %w", f, escErr)
+			}
 			if writeErr := atomicfile.WriteFile(cleanTarget, []byte(updated), perm); writeErr != nil {
 				return res, fmt.Errorf("writing %q: %w", f, writeErr)
 			}
