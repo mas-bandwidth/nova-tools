@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// The six card classes docs/SPEC-WORKLANG.md fixes, plus the two container
+// The six card classes a plan node may name, plus the two container
 // kinds a node may carry. An unknown :kind is refused, never guessed.
 var knownKinds = []string{
 	"go-fix", "lisp-replay", "docs", "schema-leg", "audit", "fold",

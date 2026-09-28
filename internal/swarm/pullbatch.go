@@ -1,6 +1,6 @@
 package swarm
 
-// Batching by shared clone: docs/SPEC-JOBS.md section 6.
+// Batching by shared clone: deprecated/docs/SPEC-JOBS.md section 6.
 //
 // Small jobs that touch one data set are packed into one worker turn: the clone is loaded
 // once, each card runs, and the clone is reset between cards, so setup is amortised and the

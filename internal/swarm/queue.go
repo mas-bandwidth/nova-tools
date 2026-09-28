@@ -1,6 +1,6 @@
 package swarm
 
-// Per-bench queues with work stealing (docs/SPEC-JOBS.md section 2).
+// Per-bench queues with work stealing (deprecated/docs/SPEC-JOBS.md section 2).
 //
 // Each bench holds queue/ as a directory of card files. A worker takes one card by
 // rename(queue/<name>.card, taken/<worker>-<name>.card): the rename is atomic within
@@ -141,7 +141,7 @@ func TakeCard(benchDir, worker string) (string, bool, error) {
 
 // CapacityLine is a bench's capacity line: min(cores*1.5 - load1, (free_gb-25)/2,
 // memfree_gb/2), floored to a whole number of workers and never negative
-// (docs/SPEC-JOBS.md section 2). A non-positive cores count is a bench with no
+// (deprecated/docs/SPEC-JOBS.md section 2). A non-positive cores count is a bench with no
 // pinning and no bound on the load term, so the line is the smaller memory term.
 func CapacityLine(cores int, load1, freeGB, memFreeGB float64) int {
 	line := math.Min((freeGB-25)/2, memFreeGB/2)

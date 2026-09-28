@@ -35,7 +35,7 @@ func sameIDs(a, b []string) bool {
 	return true
 }
 
-// red-lane-drains-before-green (docs/SPEC-JOBS.md section 5, line 112):
+// red-lane-drains-before-green (deprecated/docs/SPEC-JOBS.md section 5, line 112):
 // nova-swarm pull drains red (fixes to a red bench or a red PR), then green
 // (small, already-approved PRs), then small (the shortest step budget), then
 // next; ordering inside a lane is source order.
@@ -63,7 +63,7 @@ func TestRedLaneDrainsBeforeGreen(t *testing.T) {
 	}
 }
 
-// a-scorer-refusal-keeps-source-order (docs/SPEC-JOBS.md section 5, line 112):
+// a-scorer-refusal-keeps-source-order (deprecated/docs/SPEC-JOBS.md section 5, line 112):
 // a tie the rule cannot break is asked of Jev as one typed decision behind the
 // 0.9 floor, and a refusal keeps source order.
 func TestAScorerRefusalKeepsSourceOrder(t *testing.T) {

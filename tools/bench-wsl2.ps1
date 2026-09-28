@@ -1,4 +1,4 @@
-# tools/bench-wsl2.ps1 -- the one-step WSL2 bench bootstrap (#1458).
+# tools/bench-wsl2.ps1 -- the one-step WSL2 bench bootstrap.
 #
 # Run this ONCE, from an ELEVATED PowerShell, on the Windows box that is to join
 # the fleet as a Linux/WSL2 bench:
@@ -7,9 +7,9 @@
 #
 # The run IS the one approval: a UAC prompt to open it, and a Tailscale auth key
 # minted once in the admin console -- reusable, tagged, pre-approved. After that
-# the keeper does everything else over ssh: `nova-pulse fleet add`, the registry
-# row, `nova-update release adopt --platform linux-amd64`, the Linux runners,
-# `nova-pulse fleet standard`. Not twenty hands.
+# the keeper does everything else over ssh: the machine row (`nova-config machine
+# add`), `nova-update release adopt --platform linux-amd64`, the Linux runners and
+# tools/bench-standard.sh. Not twenty hands.
 #
 # The fleet's public keys -- the half of an ssh keypair that is meant to be
 # published -- are carried beside this script in fleet/authorized_keys. They are
@@ -17,10 +17,8 @@
 # key is ever generated or invented here. The Tailscale auth key is the one
 # secret at the one approval and it reaches no printed line.
 #
-# WSL2 is what the box is, per Glenn 2026-09-18: "drop the native windows CI
-# runners. WSL only from now on." docs/BENCH-STANDARD-WINDOWS.md is the record of
-# what a native Windows bench would have needed and is parked; this script is
-# the live host half of the Linux standard.
+# WSL2 is what the box is: docs/BENCH-STANDARD-WINDOWS.md is the standard, and
+# this script is its host half; the Linux standard applies inside the distro.
 
 [CmdletBinding()]
 param(

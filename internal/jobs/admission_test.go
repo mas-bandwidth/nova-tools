@@ -1,7 +1,7 @@
 package jobs_test
 
 // The kernel's side of docs/SPEC-WORKLANG.md Amendment 1, which the reader
-// slice (#1350) named red and left unimplemented, and of docs/SPEC-JOBS.md
+// slice (#1350) named red and left unimplemented, and of deprecated/docs/SPEC-JOBS.md
 // section 9. Every subtest below carries the spec's OWN name for it, so a
 // reader of either document can run the rule by name:
 //
