@@ -1,5 +1,5 @@
-# generality_allowlist.txt -- existing occurrences of friend/person names
-# and hostnames in living Go files (Rule 1: generality guardrail; note rowan-524f2007dbb4).
+# generality_allowlist.txt -- existing occurrences of friend/person names,
+# hostnames, and fleet identifiers in living Go files (Rule 1: generality guardrail).
 #
 # "everything must be general. Not tied to the specifics of our fleet, or friends,
 # just the general concepts behind. No host, machine, tailnet name, friend or person
@@ -8,443 +8,575 @@
 # knows; our fleet is one nova-config configuration; our names only in our config, receipts
 # and docs examples marked as examples."
 #
-# Format: path/to/file.go:token
+# Format: path/to/file.go:token count
 #
-# The list only shrinks. Checked in both directions:
+# The list only shrinks. Checked in both directions with per-key counts:
 # - An entry no longer present on the tree is stale and fails the test.
 # - Any new occurrence not listed fails the test.
+# - Adding a second occurrence to an already-allowed file exceeds the ceiling and fails.
+# - A count lower than the allowed count requires shrinking the allowlist entry.
 #
-# ceiling: 433
-cmd/nova-bus/main.go:freddy
-cmd/nova-bus/main.go:glenn
-cmd/nova-bus/main.go:johnny
-cmd/nova-bus/main.go:stella
-cmd/nova-check/convergence.go:glenn
-cmd/nova-check/convergence.go:rowan
-cmd/nova-check/dogfood.go:glenn
-cmd/nova-check/hygiene.go:emma
-cmd/nova-check/hygiene.go:rowan
-cmd/nova-ci/local.go:glenn
-cmd/nova-redis/main.go:rowan
-cmd/nova-redis/serve.go:rowan
-cmd/nova-sandbox/denied.go:studio
-cmd/nova-sandbox/denied_darwin.go:studio
-cmd/nova-sandbox/egress.go:johnny
-cmd/nova-sandbox/main.go:emma
-cmd/nova-sandbox/main.go:johnny
-cmd/nova-sandbox/reapverb.go:studio
-cmd/nova-sandbox/run.go:glenn
-cmd/nova-sandbox/run.go:studio
-cmd/nova-sandbox/runwin.go:glenn
-cmd/nova-sandbox/runwin_windows.go:glenn
-cmd/nova-sandbox/volumes_darwin.go:studio
-cmd/nova-secrets/main.go:glenn
-cmd/nova-secrets/main.go:mini
-cmd/nova-secrets/main.go:rowan
-cmd/nova-table/order.go:glenn
-cmd/nova-table/watch.go:glenn
-cmd/nova-tokens/main.go:emma
-internal/bus/cursor.go:freddy
-internal/bus/note.go:rowan
-internal/bus/note.go:studio
-internal/bus/ops.go:hulk
-internal/bus/ops.go:rowan
-internal/bus/ops.go:studio
-internal/bus/protocol.go:glenn
-internal/cairn/cairn.go:rowan
-internal/cardhdr/cardhdr.go:glenn
-internal/cardhdr/invariant.go:glenn
-internal/ci/ci_cardtemplates.go:hulk
-internal/ci/ci_cardtemplates.go:mini
-internal/ci/ci_cardtemplates.go:studio
-internal/ci/ci_cardtemplates.go:vision
-internal/ci/ci_net.go:glenn
-internal/ci/ci_templates.go:glenn
-internal/ci/ci_testbins.go:stella
-internal/ci/failed.go:rowan
-internal/ci/failed.go:studio
-internal/ci/functional/functional.go:glenn
-internal/ci/slowtests/slowtests.go:batman
-internal/ci/slowtests/slowtests.go:rowan
-internal/ci/slowtests/slowtests.go:studio
-internal/ci/slowtests/slowtests.go:superman
-internal/ci/source.go:glenn
-internal/config/kind.go:glenn
-internal/config/kind.go:hulk
-internal/config/kind.go:studio
-internal/config/redis.go:glenn
-internal/converge/converge.go:glenn
-internal/converge/converge.go:rowan
-internal/converge/sources.go:hulk
-internal/converge/streams.go:glenn
-internal/ctxindex/ctxindex.go:glenn
-internal/ctxindex/ctxindex.go:studio
-internal/decide/answers.go:glenn
-internal/decide/decide.go:glenn
-internal/decide/decide.go:stella
-internal/decide/decisions.go:stella
-internal/decide/friends.go:glenn
-internal/decide/friends.go:stella
-internal/decide/harvestclass.go:johnny
-internal/decide/help.go:glenn
-internal/decide/ladder.go:glenn
-internal/decide/ladder.go:johnny
-internal/decide/ladder.go:rowan
-internal/decide/ladder.go:stella
-internal/decide/ledgerstream.go:emma
-internal/decide/logsink.go:johnny
-internal/decide/logsink.go:rowan
-internal/decide/questionfile.go:stella
-internal/decide/readers.go:stella
-internal/decide/registry.go:glenn
-internal/decide/registry.go:johnny
-internal/decide/registry.go:rowan
-internal/decide/registry.go:stella
-internal/decide/routelog.go:glenn
-internal/decide/routelog.go:rowan
-internal/decide/routelog.go:stella
-internal/decide/tune.go:stella
-internal/decide/whoreads.go:stella
-internal/decide/worktype.go:glenn
-internal/decide/worktype.go:rowan
-internal/docs/agentsmap.go:glenn
-internal/dogfood/authors.go:rowan
-internal/dogfood/authors.go:stella
-internal/dogfood/cli.go:glenn
-internal/dogfood/ledger.go:glenn
-internal/events/decide.go:johnny
-internal/events/decide.go:rowan
-internal/events/decide_fold.go:rowan
-internal/events/events.go:johnny
-internal/events/events.go:rowan
-internal/events/fold.go:johnny
-internal/events/stream.go:johnny
-internal/fleet/certify.go:glenn
-internal/fleet/certify.go:hulk
-internal/fleet/certify.go:stella
-internal/fleet/certify.go:vision
-internal/fleet/registry.go:batman
-internal/fleet/registry.go:glenn
-internal/fleet/registry.go:hulk
-internal/fleet/registry.go:studio
-internal/fleet/registry.go:vision
-internal/fleet/state/state.go:rowan
-internal/gh/client.go:glenn
-internal/hygiene/glob.go:emma
-internal/jobs/admission.go:stella
-internal/jobs/admission.go:studio
-internal/merge/admin.go:johnny
-internal/merge/admin.go:stella
-internal/merge/cisource.go:glenn
-internal/merge/enqueue.go:glenn
-internal/merge/enqueue.go:rowan
-internal/merge/gitops.go:glenn
-internal/merge/gitops.go:hulk
-internal/merge/gitops.go:stella
-internal/merge/gitops.go:vision
-internal/merge/packet.go:stella
-internal/merge/read.go:emma
-internal/merge/read.go:glenn
-internal/merge/read.go:johnny
-internal/merge/read.go:rowan
-internal/merge/read.go:stella
-internal/merge/rebase.go:rowan
-internal/merge/reviewers.go:johnny
-internal/merge/sweep.go:glenn
-internal/merge/sweep.go:rowan
-internal/merge/sweepgh.go:rowan
-internal/merge/verdict.go:emma
-internal/merge/verdict.go:glenn
-internal/merge/verdict.go:johnny
-internal/merge/verdict.go:rowan
-internal/merge/verdict.go:stella
-internal/nsprint/acl/acl.go:rowan
-internal/nsprint/adopt/adopt.go:rowan
-internal/nsprint/beat/beat.go:glenn
-internal/nsprint/benchrole/role.go:glenn
-internal/nsprint/benchrole/role.go:studio
-internal/nsprint/capacity/capacity.go:glenn
-internal/nsprint/capacity/capacity.go:stella
-internal/nsprint/card/copy.go:glenn
-internal/nsprint/card/copy.go:rowan
-internal/nsprint/card/copy_ledger.go:rowan
-internal/nsprint/card/end.go:rowan
-internal/nsprint/card/fsck.go:glenn
-internal/nsprint/card/fsck.go:rowan
-internal/nsprint/card/quack.go:rowan
-internal/nsprint/card/run.go:glenn
-internal/nsprint/card/run.go:rowan
-internal/nsprint/card/wrapper_result.go:glenn
-internal/nsprint/card/wrapper_result.go:rowan
-internal/nsprint/card/wrapper_spec.go:glenn
-internal/nsprint/ci/env.go:studio
-internal/nsprint/ci/run.go:glenn
-internal/nsprint/ci/run.go:rowan
-internal/nsprint/ci/run.go:vision
-internal/nsprint/consume/prread.go:rowan
-internal/nsprint/consume/route.go:glenn
-internal/nsprint/deal/backpressure.go:johnny
-internal/nsprint/deal/pass.go:batman
-internal/nsprint/deal/pass.go:glenn
-internal/nsprint/deal/pass.go:hulk
-internal/nsprint/deal/pass.go:studio
-internal/nsprint/deal/pass.go:superman
-internal/nsprint/deal/pass.go:vision
-internal/nsprint/deal/rank.go:emma
-internal/nsprint/deal/rank.go:freddy
-internal/nsprint/deal/rank.go:johnny
-internal/nsprint/deal/rank.go:rowan
-internal/nsprint/deal/rank.go:stella
-internal/nsprint/deal/ready.go:rowan
-internal/nsprint/deal/ready.go:stella
-internal/nsprint/deal/ssh.go:studio
-internal/nsprint/disposition/line.go:studio
-internal/nsprint/fleet/ps.go:rowan
-internal/nsprint/fleetbuild/compile.go:rowan
-internal/nsprint/fleetbuild/converge.go:glenn
-internal/nsprint/fleetbuild/fleetbuild.go:rowan
-internal/nsprint/fleetbuild/play.go:rowan
-internal/nsprint/fleetbuild/release.go:rowan
-internal/nsprint/fleetbuild/release.go:studio
-internal/nsprint/fleetbuild/roll.go:rowan
-internal/nsprint/fleetbuild/selfupdate.go:studio
-internal/nsprint/fold/ci.go:stella
-internal/nsprint/fold/fold.go:johnny
-internal/nsprint/fold/fold.go:rowan
-internal/nsprint/fold/fold.go:stella
-internal/nsprint/fold/rote.go:rowan
-internal/nsprint/fold/rote.go:stella
-internal/nsprint/friend/friend.go:stella
-internal/nsprint/jev/jev.go:glenn
-internal/nsprint/jev/plan.go:rowan
-internal/nsprint/land/eval_unit.go:glenn
-internal/nsprint/land/load.go:glenn
-internal/nsprint/land/select.go:stella
-internal/nsprint/land/stream/git.go:rowan
-internal/nsprint/land/stream/land.go:rowan
-internal/nsprint/land/stream/pr.go:glenn
-internal/nsprint/land/stream/run.go:rowan
-internal/nsprint/land/stream/steps.go:glenn
-internal/nsprint/land/stream/stream.go:rowan
-internal/nsprint/launch/envfile.go:rowan
-internal/nsprint/launch/stop.go:rowan
-internal/nsprint/life/cilegs.go:glenn
-internal/nsprint/life/cpu.go:glenn
-internal/nsprint/life/row.go:rowan
-internal/nsprint/life/wakehealth.go:johnny
-internal/nsprint/life/wakehealth.go:rowan
-internal/nsprint/life/wakehealth.go:stella
-internal/nsprint/life/wakehealth.go:studio
-internal/nsprint/mirror/mirror.go:rowan
-internal/nsprint/pipeerr/pipeerr.go:glenn
-internal/nsprint/pitstop/held.go:glenn
-internal/nsprint/preflight/fleetrows.go:glenn
-internal/nsprint/preflight/fleetrows.go:rowan
-internal/nsprint/preflight/lineup.go:rowan
-internal/nsprint/preflight/store.go:johnny
-internal/nsprint/prkey/prkey.go:rowan
-internal/nsprint/ready/ready.go:johnny
-internal/nsprint/ready/ready.go:stella
-internal/nsprint/reconcile/expire.go:rowan
-internal/nsprint/reconcile/fsck.go:glenn
-internal/nsprint/reconcile/land_duty.go:glenn
-internal/nsprint/reconcile/land_duty.go:rowan
-internal/nsprint/reconcile/land_duty.go:studio
-internal/nsprint/reconcile/land_watch.go:glenn
-internal/nsprint/reconcile/land_watch.go:rowan
-internal/nsprint/reconcile/lease.go:glenn
-internal/nsprint/reconcile/lease.go:studio
-internal/nsprint/reconcile/pass.go:glenn
-internal/nsprint/reconcile/progress.go:glenn
-internal/nsprint/reconcile/progress.go:rowan
-internal/nsprint/reconcile/rebalance.go:emma
-internal/nsprint/reconcile/rebalance.go:glenn
-internal/nsprint/reconcile/refill.go:glenn
-internal/nsprint/reconcile/route_duty.go:glenn
-internal/nsprint/reconcile/route_duty.go:rowan
-internal/nsprint/reconcile/route_duty.go:studio
-internal/nsprint/reconcile/waiting_resolve.go:glenn
-internal/nsprint/reconcile/waiting_resolve.go:rowan
-internal/nsprint/reconcile/waiting_resolve.go:stella
-internal/nsprint/route/preamble.go:rowan
-internal/nsprint/route/spread.go:glenn
-internal/nsprint/store/store.go:glenn
-internal/nsprint/store/trips.go:glenn
-internal/nsprint/table/fleet_fixture.go:emma
-internal/nsprint/table/fleet_fixture.go:johnny
-internal/nsprint/table/fleet_fixture.go:rowan
-internal/nsprint/table/fleet_fixture.go:stella
-internal/nsprint/table/live.go:glenn
-internal/nsprint/table/live.go:rowan
-internal/nsprint/table/live_fixture.go:emma
-internal/nsprint/table/live_fixture.go:johnny
-internal/nsprint/table/live_fixture.go:rowan
-internal/nsprint/table/live_fixture.go:stella
-internal/nsprint/table/sprint.go:emma
-internal/nsprint/table/sprint.go:glenn
-internal/nsprint/table/sprint.go:studio
-internal/nsprint/table/sprint_fixture.go:batman
-internal/nsprint/table/sprint_fixture.go:emma
-internal/nsprint/table/sprint_fixture.go:glenn
-internal/nsprint/table/sprint_fixture.go:hulk
-internal/nsprint/table/sprint_fixture.go:johnny
-internal/nsprint/table/sprint_fixture.go:rowan
-internal/nsprint/table/sprint_fixture.go:stella
-internal/nsprint/table/sprint_fixture.go:studio
-internal/nsprint/table/sprint_fixture.go:superman
-internal/nsprint/table/sprint_fixture.go:vision
-internal/nsprint/table/streams.go:glenn
-internal/nsprint/task/beat.go:johnny
-internal/nsprint/task/push.go:rowan
-internal/nsprint/taskcard/complete.go:glenn
-internal/nsprint/taskcard/complete.go:rowan
-internal/nsprint/taskcard/hierarchy.go:glenn
-internal/nsprint/taskcard/hierarchy.go:stella
-internal/nsprint/taskcard/moves.go:rowan
-internal/nsprint/taskcard/pass.go:glenn
-internal/nsprint/taskcard/taskcard.go:glenn
-internal/nsprint/taskcard/taskcard.go:rowan
-internal/nsprint/ws/epoch.go:glenn
-internal/nsprint/ws/progress.go:glenn
-internal/nsprint/ws/sentinel.go:glenn
-internal/nsprint/ws/ws.go:glenn
-internal/nsprint/ws/ws.go:rowan
-internal/ntable/ntable.go:glenn
-internal/ntable/render.go:glenn
-internal/ntable/render.go:stella
-internal/onboarding/transcript.go:rowan
-internal/onboarding/transcript.go:stella
-internal/presence/presence.go:emma
-internal/presence/presence.go:freddy
-internal/presence/presence.go:glenn
-internal/presence/presence.go:johnny
-internal/presence/presence.go:rowan
-internal/presence/presence.go:stella
-internal/records/doc.go:stella
-internal/redisq/dirq.go:stella
-internal/release/adopt.go:emma
-internal/release/adopt.go:glenn
-internal/release/adopt.go:hulk
-internal/release/adopt.go:johnny
-internal/release/adopt.go:rowan
-internal/release/adopt.go:studio
-internal/release/adopt.go:vision
-internal/release/build.go:hulk
-internal/release/build.go:studio
-internal/release/cli.go:glenn
-internal/release/cli.go:johnny
-internal/release/cli.go:studio
-internal/release/cut.go:johnny
-internal/release/dogfoodgate.go:glenn
-internal/release/dogfoodgate.go:rowan
-internal/release/edges.go:johnny
-internal/release/install.go:glenn
-internal/release/install.go:johnny
-internal/release/pull.go:johnny
-internal/release/release.go:hulk
-internal/release/sensitive.go:johnny
-internal/safepath/safepath.go:glenn
-internal/safepath/safepath.go:johnny
-internal/sandbox/egress.go:johnny
-internal/sandbox/landlock_linux.go:johnny
-internal/sandbox/pathcase.go:stella
-internal/sandbox/policy.go:johnny
-internal/scaffold/verb.go:rowan
-internal/seatcred/seatcred.go:studio
-internal/secrets/exec.go:rowan
-internal/secrets/gate.go:glenn
-internal/secrets/keygen.go:glenn
-internal/secrets/seal.go:stella
-internal/secrets/seatinject.go:glenn
-internal/secrets/storepull.go:studio
-internal/swarm/batch.go:glenn
-internal/swarm/batch.go:studio
-internal/swarm/cardbudget.go:stella
-internal/swarm/cost.go:glenn
-internal/swarm/fence.go:rowan
-internal/swarm/fileretry.go:stella
-internal/swarm/gatebench.go:hulk
-internal/swarm/inflight.go:hulk
-internal/swarm/inflight.go:vision
-internal/swarm/inputlimit.go:freddy
-internal/swarm/lease.go:stella
-internal/swarm/lintbase.go:rowan
-internal/swarm/lintcontract.go:rowan
-internal/swarm/lintheader.go:emma
-internal/swarm/lintheader.go:rowan
-internal/swarm/lock.go:stella
-internal/swarm/lock.go:studio
-internal/swarm/nativeasked.go:emma
-internal/swarm/nativeasked.go:glenn
-internal/swarm/nativeasked.go:hulk
-internal/swarm/nativeasked.go:rowan
-internal/swarm/nativeasked.go:studio
-internal/swarm/nativeidle.go:hulk
-internal/swarm/nativeidle.go:johnny
-internal/swarm/pathcase.go:stella
-internal/swarm/providerproxy.go:stella
-internal/swarm/providerread.go:stella
-internal/swarm/pullworker.go:hulk
-internal/swarm/reap.go:hulk
-internal/swarm/reap.go:vision
-internal/swarm/resultlint.go:hulk
-internal/swarm/resultlint.go:rowan
-internal/swarm/resultlint.go:vision
-internal/swarm/routeladder.go:glenn
-internal/swarm/routeladder.go:stella
-internal/swarm/run.go:freddy
-internal/swarm/run.go:glenn
-internal/swarm/run.go:rowan
-internal/swarm/run.go:stella
-internal/swarm/sandbox.go:rowan
-internal/swarm/share.go:hulk
-internal/swarm/share.go:vision
-internal/swarm/signature.go:glenn
-internal/swarm/slots.go:johnny
-internal/swarm/slots.go:stella
-internal/swarm/stage.go:hulk
-internal/swarm/stage.go:rowan
-internal/swarm/staging.go:rowan
-internal/swarm/supervise.go:freddy
-internal/swarm/timeline.go:glenn
-internal/swarm/toolchain.go:hulk
-internal/swarm/toolchain.go:johnny
-internal/swarm/triage.go:freddy
-internal/swarm/wall.go:glenn
-internal/swarm/wall.go:hulk
-internal/swarm/wall.go:johnny
-internal/swarm/wall.go:stella
-internal/swarm/wallread.go:hulk
-internal/swarm/wallread.go:studio
-internal/swarm/wallterms.go:johnny
-internal/swarm/wallterms.go:rowan
-internal/swarm/worker.go:rowan
-internal/swarm/worker.go:stella
-internal/swarm/worker.go:studio
-internal/testguard/testguard.go:hulk
-internal/tokens/bus.go:emma
-internal/tokens/claude_session.go:glenn
-internal/tokens/dayfile.go:freddy
-internal/tokens/provider.go:emma
-internal/tokens/provider.go:johnny
-internal/tokens/provider.go:stella
-internal/tokens/repo.go:freddy
-internal/tokens/repo.go:glenn
-internal/tokens/repo.go:rowan
-internal/tokens/units.go:glenn
-internal/tokens/units.go:rowan
-internal/typedrec/disposition.go:johnny
-internal/typedrec/result.go:stella
-internal/typedrec/synth.go:glenn
-internal/typedrec/template.go:emma
-internal/update/snapverb.go:studio
-internal/wake/advance.go:emma
-internal/wake/bus.go:emma
-internal/wake/daemon.go:johnny
-internal/wake/line.go:johnny
-internal/wake/probe.go:glenn
-internal/wake/report.go:freddy
-internal/worklang/units.go:emma
-internal/worklang/units.go:stella
-internal/worklang/workset.go:stella
-internal/yield/yield.go:glenn
+# ceiling: 563
+cmd/nova-bus/main.go:freddy 3
+cmd/nova-bus/main.go:glenn 2
+cmd/nova-bus/main.go:johnny 3
+cmd/nova-bus/main.go:space 10
+cmd/nova-bus/main.go:stella 1
+cmd/nova-bus/version.go:space 1
+cmd/nova-cairn/main.go:space 1
+cmd/nova-check/convergence.go:glenn 1
+cmd/nova-check/convergence.go:mas-bandwidth 1
+cmd/nova-check/convergence.go:rowan 1
+cmd/nova-check/dogfood.go:glenn 1
+cmd/nova-check/dogfood.go:space 1
+cmd/nova-check/hygiene.go:space 1
+cmd/nova-check/staged.go:space 1
+cmd/nova-ci/local.go:glenn 1
+cmd/nova-ci/main.go:space 1
+cmd/nova-ci/timing.go:mas-bandwidth 4
+cmd/nova-redis/main.go:rowan 2
+cmd/nova-redis/serve.go:rowan 1
+cmd/nova-sandbox/denied.go:studio 1
+cmd/nova-sandbox/denied_darwin.go:studio 1
+cmd/nova-sandbox/egress.go:johnny 2
+cmd/nova-sandbox/main.go:emma 1
+cmd/nova-sandbox/main.go:johnny 1
+cmd/nova-sandbox/reapverb.go:studio 1
+cmd/nova-sandbox/run.go:glenn 1
+cmd/nova-sandbox/run.go:studio 1
+cmd/nova-sandbox/runwin.go:glenn 1
+cmd/nova-sandbox/runwin.go:space 2
+cmd/nova-sandbox/runwin_windows.go:glenn 1
+cmd/nova-sandbox/runwin_windows.go:space 1
+cmd/nova-sandbox/volumes_darwin.go:studio 2
+cmd/nova-secrets/main.go:glenn 1
+cmd/nova-secrets/main.go:mini 2
+cmd/nova-secrets/main.go:rowan 14
+cmd/nova-table/main.go:space 1
+cmd/nova-table/order.go:glenn 1
+cmd/nova-table/watch.go:glenn 6
+cmd/nova-tokens/main.go:emma 2
+cmd/nova-tokens/version.go:space 1
+internal/bus/address.go:space 2
+internal/bus/bus.go:space 1
+internal/bus/cursor.go:freddy 1
+internal/bus/cursor.go:space 1
+internal/bus/git.go:space 1
+internal/bus/note.go:rowan 1
+internal/bus/note.go:space 1
+internal/bus/note.go:studio 1
+internal/bus/ops.go:hulk 1
+internal/bus/ops.go:rowan 1
+internal/bus/ops.go:space 2
+internal/bus/ops.go:studio 2
+internal/bus/protocol.go:glenn 1
+internal/bus/protocol.go:space 1
+internal/bus/reply.go:space 2
+internal/cairn/cairn.go:rowan 1
+internal/cardhdr/cardhdr.go:glenn 2
+internal/cardhdr/invariant.go:glenn 1
+internal/cardhdr/invariant.go:space 3
+internal/check/floors.go:space 5
+internal/check/nocode.go:space 3
+internal/ci/allowlist/allowlist.go:space 1
+internal/ci/ci_cardtemplates.go:hulk 2
+internal/ci/ci_cardtemplates.go:mini 1
+internal/ci/ci_cardtemplates.go:space 1
+internal/ci/ci_cardtemplates.go:studio 1
+internal/ci/ci_cardtemplates.go:vision 1
+internal/ci/ci_net.go:glenn 2
+internal/ci/ci_templates.go:glenn 1
+internal/ci/ci_testbins.go:stella 1
+internal/ci/failed.go:rowan 2
+internal/ci/failed.go:space 1
+internal/ci/failed.go:studio 1
+internal/ci/functional/functional.go:glenn 1
+internal/ci/slowtests/slowtests.go:batman 2
+internal/ci/slowtests/slowtests.go:rowan 1
+internal/ci/slowtests/slowtests.go:space 2
+internal/ci/slowtests/slowtests.go:studio 4
+internal/ci/slowtests/slowtests.go:superman 2
+internal/ci/source.go:glenn 1
+internal/ci/timing/timing.go:mas-bandwidth 4
+internal/config/kind.go:glenn 4
+internal/config/kind.go:hulk 1
+internal/config/kind.go:space 1
+internal/config/kind.go:studio 1
+internal/config/redis.go:glenn 1
+internal/converge/converge.go:glenn 1
+internal/converge/converge.go:rowan 1
+internal/converge/sources.go:hulk 1
+internal/converge/streams.go:glenn 1
+internal/ctxindex/ctxindex.go:glenn 1
+internal/ctxindex/ctxindex.go:studio 1
+internal/decide/answers.go:glenn 1
+internal/decide/decide.go:glenn 1
+internal/decide/decide.go:stella 1
+internal/decide/decisions.go:stella 2
+internal/decide/friends.go:glenn 3
+internal/decide/friends.go:stella 1
+internal/decide/harvestclass.go:johnny 1
+internal/decide/harvestclass.go:space 1
+internal/decide/help.go:glenn 11
+internal/decide/ladder.go:glenn 1
+internal/decide/ladder.go:johnny 4
+internal/decide/ladder.go:rowan 1
+internal/decide/ladder.go:stella 4
+internal/decide/ledgerstream.go:emma 1
+internal/decide/logsink.go:johnny 1
+internal/decide/logsink.go:rowan 3
+internal/decide/questionfile.go:stella 1
+internal/decide/questions/questions.go:space 2
+internal/decide/readers.go:stella 1
+internal/decide/registry.go:glenn 3
+internal/decide/registry.go:johnny 3
+internal/decide/registry.go:rowan 2
+internal/decide/registry.go:stella 1
+internal/decide/routelog.go:glenn 1
+internal/decide/routelog.go:rowan 4
+internal/decide/routelog.go:stella 1
+internal/decide/tune.go:stella 2
+internal/decide/whoreads.go:stella 2
+internal/decide/worktype.go:glenn 1
+internal/decide/worktype.go:rowan 1
+internal/docs/agentsmap.go:glenn 2
+internal/dogfood/authors.go:rowan 1
+internal/dogfood/authors.go:stella 1
+internal/dogfood/cli.go:glenn 1
+internal/dogfood/cli.go:space 1
+internal/dogfood/ledger.go:glenn 1
+internal/events/decide.go:johnny 1
+internal/events/decide.go:rowan 9
+internal/events/decide_fold.go:rowan 2
+internal/events/events.go:johnny 3
+internal/events/events.go:rowan 1
+internal/events/fold.go:johnny 1
+internal/events/stream.go:johnny 1
+internal/fleet/certify.go:glenn 3
+internal/fleet/certify.go:hulk 6
+internal/fleet/certify.go:space 3
+internal/fleet/certify.go:stella 3
+internal/fleet/certify.go:vision 1
+internal/fleet/registry.go:batman 3
+internal/fleet/registry.go:glenn 1
+internal/fleet/registry.go:hulk 1
+internal/fleet/registry.go:studio 1
+internal/fleet/registry.go:vision 1
+internal/fleet/state/state.go:rowan 1
+internal/fuse/fuse.go:space 4
+internal/gh/client.go:glenn 1
+internal/hygiene/glob.go:emma 1
+internal/hygiene/hygiene.go:space 1
+internal/jobs/admission.go:stella 1
+internal/jobs/admission.go:studio 1
+internal/log/slog.go:space 1
+internal/memindex/memindex.go:space 5
+internal/memindex/verify.go:space 1
+internal/merge/admin.go:johnny 1
+internal/merge/admin.go:stella 1
+internal/merge/blocked.go:space 1
+internal/merge/build.go:space 2
+internal/merge/cisource.go:glenn 1
+internal/merge/enqueue.go:glenn 1
+internal/merge/enqueue.go:rowan 3
+internal/merge/gitops.go:glenn 1
+internal/merge/gitops.go:hulk 3
+internal/merge/gitops.go:space 1
+internal/merge/gitops.go:stella 2
+internal/merge/gitops.go:vision 1
+internal/merge/packet.go:stella 1
+internal/merge/read.go:emma 2
+internal/merge/read.go:glenn 3
+internal/merge/read.go:johnny 2
+internal/merge/read.go:rowan 13
+internal/merge/read.go:stella 5
+internal/merge/rebase.go:rowan 4
+internal/merge/rebase.go:space 4
+internal/merge/reviewers.go:johnny 4
+internal/merge/sweep.go:glenn 1
+internal/merge/sweep.go:rowan 3
+internal/merge/sweepgh.go:rowan 1
+internal/merge/verdict.go:emma 3
+internal/merge/verdict.go:glenn 5
+internal/merge/verdict.go:johnny 9
+internal/merge/verdict.go:rowan 4
+internal/merge/verdict.go:space 2
+internal/merge/verdict.go:stella 12
+internal/nsprint/acl/acl.go:rowan 10
+internal/nsprint/adopt/adopt.go:rowan 1
+internal/nsprint/beat/beat.go:glenn 1
+internal/nsprint/benchrole/role.go:glenn 1
+internal/nsprint/benchrole/role.go:studio 1
+internal/nsprint/capacity/capacity.go:glenn 1
+internal/nsprint/capacity/capacity.go:stella 1
+internal/nsprint/card/copy.go:glenn 1
+internal/nsprint/card/copy.go:rowan 1
+internal/nsprint/card/copy_ledger.go:rowan 1
+internal/nsprint/card/end.go:rowan 2
+internal/nsprint/card/fsck.go:glenn 1
+internal/nsprint/card/fsck.go:rowan 1
+internal/nsprint/card/quack.go:rowan 1
+internal/nsprint/card/run.go:glenn 1
+internal/nsprint/card/run.go:rowan 4
+internal/nsprint/card/wrapper_result.go:glenn 1
+internal/nsprint/card/wrapper_result.go:rowan 1
+internal/nsprint/card/wrapper_spec.go:glenn 1
+internal/nsprint/ci/compare.go:mas-bandwidth 2
+internal/nsprint/ci/env.go:studio 1
+internal/nsprint/ci/run.go:glenn 1
+internal/nsprint/ci/run.go:rowan 2
+internal/nsprint/ci/run.go:space 1
+internal/nsprint/ci/run.go:vision 1
+internal/nsprint/consume/prread.go:mas-bandwidth 1
+internal/nsprint/consume/prread.go:rowan 1
+internal/nsprint/consume/readrule.go:space 1
+internal/nsprint/consume/route.go:glenn 1
+internal/nsprint/deal/backpressure.go:johnny 1
+internal/nsprint/deal/pass.go:batman 1
+internal/nsprint/deal/pass.go:glenn 2
+internal/nsprint/deal/pass.go:hetzner 2
+internal/nsprint/deal/pass.go:hulk 1
+internal/nsprint/deal/pass.go:space 1
+internal/nsprint/deal/pass.go:studio 2
+internal/nsprint/deal/pass.go:superman 1
+internal/nsprint/deal/pass.go:vision 1
+internal/nsprint/deal/rank.go:emma 1
+internal/nsprint/deal/rank.go:freddy 1
+internal/nsprint/deal/rank.go:johnny 1
+internal/nsprint/deal/rank.go:rowan 1
+internal/nsprint/deal/rank.go:stella 1
+internal/nsprint/deal/ready.go:rowan 1
+internal/nsprint/deal/ready.go:stella 1
+internal/nsprint/deal/ssh.go:studio 1
+internal/nsprint/digest/grammar.go:space 1
+internal/nsprint/digest/render.go:space 1
+internal/nsprint/disposition/line.go:mas-bandwidth 1
+internal/nsprint/disposition/line.go:space 1
+internal/nsprint/disposition/line.go:studio 1
+internal/nsprint/file/file.go:mas-bandwidth 1
+internal/nsprint/fleet/ps.go:rowan 3
+internal/nsprint/fleet/ps.go:space 1
+internal/nsprint/fleetbuild/compile.go:mas-bandwidth 1
+internal/nsprint/fleetbuild/compile.go:rowan 1
+internal/nsprint/fleetbuild/compile.go:space 8
+internal/nsprint/fleetbuild/converge.go:glenn 1
+internal/nsprint/fleetbuild/fleetbuild.go:rowan 1
+internal/nsprint/fleetbuild/fleetbuild.go:space 3
+internal/nsprint/fleetbuild/play.go:rowan 7
+internal/nsprint/fleetbuild/release.go:mas-bandwidth 1
+internal/nsprint/fleetbuild/release.go:rowan 2
+internal/nsprint/fleetbuild/release.go:studio 1
+internal/nsprint/fleetbuild/roll.go:rowan 4
+internal/nsprint/fleetbuild/selfupdate.go:studio 2
+internal/nsprint/fold/ci.go:stella 1
+internal/nsprint/fold/fold.go:johnny 1
+internal/nsprint/fold/fold.go:rowan 1
+internal/nsprint/fold/fold.go:stella 1
+internal/nsprint/fold/rote.go:rowan 1
+internal/nsprint/fold/rote.go:stella 1
+internal/nsprint/friend/friend.go:stella 1
+internal/nsprint/jev/jev.go:glenn 1
+internal/nsprint/jev/plan.go:rowan 1
+internal/nsprint/land/eval_unit.go:glenn 1
+internal/nsprint/land/load.go:glenn 1
+internal/nsprint/land/rest_filer.go:mas-bandwidth 1
+internal/nsprint/land/select.go:stella 1
+internal/nsprint/land/stream/git.go:mas-bandwidth 1
+internal/nsprint/land/stream/git.go:rowan 4
+internal/nsprint/land/stream/land.go:rowan 1
+internal/nsprint/land/stream/pr.go:glenn 1
+internal/nsprint/land/stream/run.go:rowan 1
+internal/nsprint/land/stream/steps.go:glenn 1
+internal/nsprint/land/stream/stream.go:rowan 2
+internal/nsprint/land/stream/stream.go:space 5
+internal/nsprint/land/train.go:mas-bandwidth 2
+internal/nsprint/launch/envfile.go:rowan 1
+internal/nsprint/launch/stop.go:rowan 1
+internal/nsprint/life/cilegs.go:glenn 1
+internal/nsprint/life/cpu.go:glenn 1
+internal/nsprint/life/facts_statfs.go:space 1
+internal/nsprint/life/row.go:rowan 1
+internal/nsprint/life/wakehealth.go:johnny 1
+internal/nsprint/life/wakehealth.go:rowan 2
+internal/nsprint/life/wakehealth.go:stella 2
+internal/nsprint/life/wakehealth.go:studio 1
+internal/nsprint/mirror/mirror.go:mas-bandwidth 1
+internal/nsprint/mirror/mirror.go:rowan 2
+internal/nsprint/mirror/mirror.go:space 3
+internal/nsprint/pipeerr/pipeerr.go:glenn 1
+internal/nsprint/pitstop/held.go:glenn 2
+internal/nsprint/pr/pr.go:space 1
+internal/nsprint/preflight/fleetrows.go:glenn 1
+internal/nsprint/preflight/fleetrows.go:rowan 2
+internal/nsprint/preflight/fleetrows.go:space 1
+internal/nsprint/preflight/lineup.go:rowan 4
+internal/nsprint/preflight/store.go:johnny 1
+internal/nsprint/prkey/prkey.go:mas-bandwidth 2
+internal/nsprint/prkey/prkey.go:rowan 3
+internal/nsprint/prkey/prkey.go:space 1
+internal/nsprint/ready/ready.go:johnny 1
+internal/nsprint/ready/ready.go:stella 1
+internal/nsprint/reconcile/expire.go:rowan 1
+internal/nsprint/reconcile/fsck.go:glenn 1
+internal/nsprint/reconcile/land_duty.go:glenn 2
+internal/nsprint/reconcile/land_duty.go:mas-bandwidth 2
+internal/nsprint/reconcile/land_duty.go:rowan 5
+internal/nsprint/reconcile/land_duty.go:space 1
+internal/nsprint/reconcile/land_duty.go:studio 1
+internal/nsprint/reconcile/land_watch.go:glenn 2
+internal/nsprint/reconcile/land_watch.go:rowan 1
+internal/nsprint/reconcile/land_watch.go:space 1
+internal/nsprint/reconcile/lease.go:glenn 1
+internal/nsprint/reconcile/lease.go:studio 1
+internal/nsprint/reconcile/pass.go:glenn 1
+internal/nsprint/reconcile/progress.go:glenn 3
+internal/nsprint/reconcile/progress.go:rowan 2
+internal/nsprint/reconcile/rebalance.go:emma 2
+internal/nsprint/reconcile/rebalance.go:glenn 1
+internal/nsprint/reconcile/rebalance.go:space 1
+internal/nsprint/reconcile/refill.go:glenn 2
+internal/nsprint/reconcile/route_duty.go:glenn 2
+internal/nsprint/reconcile/route_duty.go:rowan 2
+internal/nsprint/reconcile/route_duty.go:studio 1
+internal/nsprint/reconcile/waiting_resolve.go:glenn 2
+internal/nsprint/reconcile/waiting_resolve.go:rowan 1
+internal/nsprint/reconcile/waiting_resolve.go:stella 1
+internal/nsprint/route/allowed.go:space 1
+internal/nsprint/route/preamble.go:rowan 1
+internal/nsprint/route/spread.go:glenn 2
+internal/nsprint/store/store.go:glenn 2
+internal/nsprint/store/store.go:space 1
+internal/nsprint/store/trips.go:glenn 1
+internal/nsprint/table/fleet_fixture.go:emma 1
+internal/nsprint/table/fleet_fixture.go:johnny 1
+internal/nsprint/table/fleet_fixture.go:mas-bandwidth 1
+internal/nsprint/table/fleet_fixture.go:rowan 1
+internal/nsprint/table/fleet_fixture.go:stella 1
+internal/nsprint/table/live.go:glenn 1
+internal/nsprint/table/live.go:rowan 1
+internal/nsprint/table/live.go:space 1
+internal/nsprint/table/live_fixture.go:emma 3
+internal/nsprint/table/live_fixture.go:johnny 1
+internal/nsprint/table/live_fixture.go:rowan 2
+internal/nsprint/table/live_fixture.go:stella 2
+internal/nsprint/table/sprint.go:emma 1
+internal/nsprint/table/sprint.go:glenn 16
+internal/nsprint/table/sprint.go:hetzner 1
+internal/nsprint/table/sprint.go:studio 2
+internal/nsprint/table/sprint_fixture.go:batman 1
+internal/nsprint/table/sprint_fixture.go:emma 9
+internal/nsprint/table/sprint_fixture.go:glenn 1
+internal/nsprint/table/sprint_fixture.go:hetzner 2
+internal/nsprint/table/sprint_fixture.go:hulk 1
+internal/nsprint/table/sprint_fixture.go:johnny 6
+internal/nsprint/table/sprint_fixture.go:rowan 12
+internal/nsprint/table/sprint_fixture.go:space 1
+internal/nsprint/table/sprint_fixture.go:stella 7
+internal/nsprint/table/sprint_fixture.go:studio 5
+internal/nsprint/table/sprint_fixture.go:superman 1
+internal/nsprint/table/sprint_fixture.go:vision 1
+internal/nsprint/table/streams.go:glenn 1
+internal/nsprint/task/beat.go:johnny 1
+internal/nsprint/task/push.go:rowan 1
+internal/nsprint/taskcard/complete.go:glenn 1
+internal/nsprint/taskcard/complete.go:rowan 3
+internal/nsprint/taskcard/complete.go:space 1
+internal/nsprint/taskcard/hierarchy.go:glenn 1
+internal/nsprint/taskcard/hierarchy.go:stella 1
+internal/nsprint/taskcard/moves.go:rowan 1
+internal/nsprint/taskcard/pass.go:glenn 2
+internal/nsprint/taskcard/taskcard.go:glenn 1
+internal/nsprint/taskcard/taskcard.go:rowan 1
+internal/nsprint/ws/epoch.go:glenn 1
+internal/nsprint/ws/ids.go:space 1
+internal/nsprint/ws/paths.go:space 2
+internal/nsprint/ws/progress.go:glenn 4
+internal/nsprint/ws/sentinel.go:glenn 1
+internal/nsprint/ws/show.go:space 1
+internal/nsprint/ws/ws.go:glenn 1
+internal/nsprint/ws/ws.go:rowan 1
+internal/nsprint/ws/wstest/wstest.go:space 1
+internal/ntable/ntable.go:glenn 6
+internal/ntable/render.go:glenn 6
+internal/ntable/render.go:space 2
+internal/ntable/render.go:stella 2
+internal/onboarding/transcript.go:rowan 1
+internal/onboarding/transcript.go:space 1
+internal/onboarding/transcript.go:stella 1
+internal/oneline/audit/audit.go:mas-bandwidth 1
+internal/oneline/oneline.go:space 4
+internal/play/play.go:space 2
+internal/presence/presence.go:emma 3
+internal/presence/presence.go:freddy 2
+internal/presence/presence.go:glenn 8
+internal/presence/presence.go:johnny 1
+internal/presence/presence.go:rowan 6
+internal/presence/presence.go:space 1
+internal/presence/presence.go:stella 1
+internal/records/doc.go:stella 1
+internal/redisconn/options.go:space 1
+internal/redisfn/redisfn.go:space 1
+internal/redisq/dirq.go:stella 1
+internal/release/adopt.go:emma 1
+internal/release/adopt.go:glenn 1
+internal/release/adopt.go:hulk 2
+internal/release/adopt.go:johnny 4
+internal/release/adopt.go:rowan 1
+internal/release/adopt.go:space 2
+internal/release/adopt.go:studio 6
+internal/release/adopt.go:vision 1
+internal/release/build.go:hulk 2
+internal/release/build.go:studio 3
+internal/release/cli.go:glenn 2
+internal/release/cli.go:johnny 3
+internal/release/cli.go:studio 1
+internal/release/cut.go:johnny 6
+internal/release/dogfoodgate.go:glenn 3
+internal/release/dogfoodgate.go:rowan 1
+internal/release/edges.go:johnny 3
+internal/release/install.go:glenn 1
+internal/release/install.go:johnny 1
+internal/release/pull.go:johnny 1
+internal/release/pull.go:space 1
+internal/release/release.go:hulk 1
+internal/release/sensitive.go:johnny 2
+internal/safepath/safepath.go:glenn 4
+internal/safepath/safepath.go:johnny 1
+internal/sandbox/egress.go:johnny 2
+internal/sandbox/landlock_linux.go:johnny 1
+internal/sandbox/landlock_linux.go:space 1
+internal/sandbox/pathcase.go:stella 1
+internal/sandbox/policy.go:johnny 1
+internal/sandbox/policy.go:space 1
+internal/scaffold/verb.go:rowan 1
+internal/seatcred/profile.go:space 1
+internal/seatcred/seatcred.go:studio 2
+internal/secrets/exec.go:rowan 2
+internal/secrets/gate.go:glenn 1
+internal/secrets/git.go:space 4
+internal/secrets/keygen.go:glenn 1
+internal/secrets/seal.go:stella 1
+internal/secrets/seatinject.go:glenn 1
+internal/secrets/seatinject.go:hetzner 1
+internal/selftalk/installation.go:space 2
+internal/swarm/batch.go:glenn 2
+internal/swarm/batch.go:studio 2
+internal/swarm/cardbudget.go:stella 1
+internal/swarm/cost.go:glenn 1
+internal/swarm/fence.go:rowan 1
+internal/swarm/fileretry.go:stella 1
+internal/swarm/gatebench.go:hulk 1
+internal/swarm/inflight.go:hulk 2
+internal/swarm/inflight.go:space 2
+internal/swarm/inflight.go:vision 1
+internal/swarm/inputlimit.go:freddy 1
+internal/swarm/inputlimit.go:space 1
+internal/swarm/lease.go:stella 2
+internal/swarm/lintbase.go:rowan 1
+internal/swarm/lintbase.go:space 1
+internal/swarm/lintcontract.go:rowan 1
+internal/swarm/lintdepends.go:mas-bandwidth 2
+internal/swarm/lintdepends.go:space 2
+internal/swarm/lintheader.go:emma 4
+internal/swarm/lintheader.go:rowan 2
+internal/swarm/lock.go:stella 1
+internal/swarm/lock.go:studio 1
+internal/swarm/nativeasked.go:emma 1
+internal/swarm/nativeasked.go:glenn 1
+internal/swarm/nativeasked.go:hulk 1
+internal/swarm/nativeasked.go:rowan 1
+internal/swarm/nativeasked.go:studio 1
+internal/swarm/nativeidle.go:hulk 1
+internal/swarm/nativeidle.go:johnny 1
+internal/swarm/pathcase.go:stella 1
+internal/swarm/pool.go:space 1
+internal/swarm/providererr.go:space 2
+internal/swarm/providerproxy.go:stella 1
+internal/swarm/providerread.go:stella 1
+internal/swarm/reap.go:hulk 1
+internal/swarm/reap.go:vision 1
+internal/swarm/result.go:space 4
+internal/swarm/resultlint.go:hulk 1
+internal/swarm/resultlint.go:rowan 1
+internal/swarm/resultlint.go:space 2
+internal/swarm/resultlint.go:vision 2
+internal/swarm/routeladder.go:glenn 3
+internal/swarm/routeladder.go:stella 1
+internal/swarm/run.go:freddy 1
+internal/swarm/run.go:glenn 2
+internal/swarm/run.go:rowan 1
+internal/swarm/run.go:stella 2
+internal/swarm/sandbox.go:rowan 1
+internal/swarm/share.go:hulk 1
+internal/swarm/share.go:vision 1
+internal/swarm/signature.go:glenn 1
+internal/swarm/signature.go:space 1
+internal/swarm/slots.go:johnny 1
+internal/swarm/slots.go:stella 2
+internal/swarm/slotweight.go:captainamerica 1
+internal/swarm/stage.go:hulk 1
+internal/swarm/stage.go:mas-bandwidth 1
+internal/swarm/stage.go:rowan 6
+internal/swarm/staging.go:rowan 2
+internal/swarm/supervise.go:freddy 1
+internal/swarm/taxonomy.go:space 3
+internal/swarm/timeline.go:glenn 1
+internal/swarm/toolchain.go:hulk 2
+internal/swarm/toolchain.go:johnny 2
+internal/swarm/triage.go:freddy 1
+internal/swarm/wall.go:glenn 3
+internal/swarm/wall.go:hulk 1
+internal/swarm/wall.go:johnny 1
+internal/swarm/wall.go:stella 3
+internal/swarm/wallread.go:hulk 2
+internal/swarm/wallread.go:studio 1
+internal/swarm/wallterms.go:johnny 1
+internal/swarm/wallterms.go:rowan 3
+internal/swarm/worker.go:rowan 3
+internal/swarm/worker.go:space 1
+internal/swarm/worker.go:stella 1
+internal/swarm/worker.go:studio 1
+internal/testguard/testguard.go:hulk 1
+internal/testguard/testguard.go:space 2
+internal/testredis/testredis.go:space 1
+internal/textbody/textbody.go:space 1
+internal/tokens/bus.go:emma 2
+internal/tokens/bus.go:space 1
+internal/tokens/claude_session.go:glenn 1
+internal/tokens/dayfile.go:freddy 1
+internal/tokens/grok.go:space 1
+internal/tokens/provider.go:emma 4
+internal/tokens/provider.go:johnny 1
+internal/tokens/provider.go:space 1
+internal/tokens/provider.go:stella 1
+internal/tokens/repo.go:freddy 1
+internal/tokens/repo.go:glenn 2
+internal/tokens/repo.go:rowan 3
+internal/tokens/units.go:glenn 1
+internal/tokens/units.go:rowan 10
+internal/typedrec/contract.go:space 4
+internal/typedrec/disposition.go:johnny 2
+internal/typedrec/disposition.go:space 4
+internal/typedrec/pathsrefusal.go:space 1
+internal/typedrec/result.go:space 12
+internal/typedrec/result.go:stella 1
+internal/typedrec/synth.go:glenn 1
+internal/typedrec/template.go:emma 4
+internal/typedrec/template.go:mas-bandwidth 6
+internal/update/snapshot.go:space 1
+internal/update/snapverb.go:studio 1
+internal/wake/advance.go:emma 1
+internal/wake/bus.go:emma 1
+internal/wake/daemon.go:johnny 3
+internal/wake/entry.go:mas-bandwidth 3
+internal/wake/forge.go:mas-bandwidth 3
+internal/wake/line.go:johnny 1
+internal/wake/probe.go:glenn 1
+internal/wake/report.go:freddy 1
+internal/worklang/units.go:emma 1
+internal/worklang/units.go:stella 1
+internal/worklang/worklang.go:space 5
+internal/worklang/workset.go:space 1
+internal/worklang/workset.go:stella 1
+internal/yield/nice_linux.go:hetzner 1
+internal/yield/yield.go:glenn 1
