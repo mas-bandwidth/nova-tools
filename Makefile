@@ -10,7 +10,14 @@
 
 GO ?= go
 PKGS ?= ./...
-CL_PKGS := ./cmd/... ./internal/...
+# CL_PKGS IS THE LIVING TREE, read the way ci.yml's test-packages job reads it:
+# `select-packages.sh --all` lists every package under cmd/, internal/ and
+# tools/ and drops the ones deprecated/PACKAGES names (a deprecated package is
+# never tested), or fails loudly when `go list` fails; it never selects nothing
+# in silence. Recursive (`=`), and the `test` and `test-functional` lines that
+# take it are recursive too, so the go list runs when one of those targets
+# runs and not on every make call; `make test PKGS=<shard>` never runs it.
+CL_PKGS = $(shell bash .github/scripts/select-packages.sh --all)
 
 # THE HOST GUARD, on for every target. internal/testguard makes every ssh, scp
 # and rsync seam in this tree panic with its command line when this is 1, so a
@@ -178,10 +185,9 @@ lint: fmt vet vet-functional vet-laws
 preflight:
 	./tools/preflight.sh $(if $(RUN),-run "$(RUN)",) $(PKGS)
 
-# The fast tier. The package set is the one ci.yml's test-packages job reads out
-# of the source with `go list ./cmd/... ./internal/...`, minus the darwin-only
-# packages that only the studio legs carry; a caller that wants a shard passes
-# PKGS explicitly.
+# The fast tier. The package set is CL_PKGS, the living tree exactly as
+# ci.yml's test-packages job selects it with --all; a caller that wants a shard
+# passes PKGS explicitly.
 #
 # The run is teed through `-json` so cmd/nova-ci's slowtests verb reads the
 # stream once and reports every package over the budget, and the same bytes
@@ -242,7 +248,7 @@ GOTEST_LDFLAGS ?=
 # local --functional` sets it to build and run the redis-backed tests behind
 # `//go:build functional` beside the unit tests, on a developer's machine.
 GOTEST_TAGS ?=
-test: PKGS := $(CL_PKGS)
+test: PKGS = $(CL_PKGS)
 test:
 	@bash -o pipefail -c 'GOFLAGS=-json $(GO) test $(GOTEST_COUNT_FLAG) $(PKGS) -p $(GOTEST_P) -parallel $(GOTEST_P) -tags=$(GOTEST_TAGS) $(GOTEST_LDFLAGS) -timeout $(GOTEST_TIMEOUT) | tee "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; status=$${PIPESTATUS[0]}; $(GO) run ./cmd/nova-ci slowtests $(SLOWTESTS_FLAGS) $(if $(filter 1,$(SLOWTESTS_ENFORCE)),--enforce,) < "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json" || { [ "$$status" -ne 0 ] || status=2; }; exit $$status'
 
@@ -257,7 +263,7 @@ test:
 # are not run a second time; PKGS with no functional file run nothing,
 # and say so on one `CI FUNCTIONAL OK packages=0 reason=<why>` line.
 FUNCTIONAL_TIMEOUT ?= 100s
-test-functional: PKGS := $(CL_PKGS)
+test-functional: PKGS = $(CL_PKGS)
 test-functional:
 	@bash -o pipefail -c 'sel=$$($(GO) run ./cmd/nova-ci functional $(PKGS)) || exit 2; case "$$sel" in "CI FUNCTIONAL OK "*) echo "functional: $$sel"; exit 0;; "") echo "functional: nova-ci functional printed nothing; refusing to run nothing in silence" >&2; exit 2;; esac; pkgs=$$(printf "%s\n" "$$sel" | sed -n 1p); run=$$(printf "%s\n" "$$sel" | sed -n 2p); echo "functional: $$pkgs"; $(GO) test -tags functional -p $(GOTEST_P) -count=1 -timeout $(FUNCTIONAL_TIMEOUT) -run "$$run" $$pkgs'
 
