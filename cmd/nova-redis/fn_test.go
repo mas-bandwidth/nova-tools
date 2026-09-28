@@ -8,7 +8,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
@@ -111,7 +113,7 @@ func newFnHarness(t *testing.T) *fnHarness {
 	t.Helper()
 	h := &fnHarness{store: newFnStore()}
 	h.d = deps{
-		dial: func(addr, password string) redis.UniversalClient {
+		dial: func(addr, user, password string) redis.UniversalClient {
 			h.dials++
 			if password != "pw" {
 				t.Errorf("dial got password %q; the fn verbs read %s like every verb", password, PasswordEnv)
@@ -186,19 +188,19 @@ func TestFnLoadAndCheckOnAStore(t *testing.T) {
 		sent   []string
 	}{
 		{"check an empty store", nil, []string{"fn", "check", "--addr", addr}, 1,
-			"MISSING nova_sprint loaded=none want=" + sha + " store=" + addr + remedy + "\n", []string{list}},
+			"MISSING nova_sprint sha=" + sha + " loaded=none want=" + sha + " store=" + addr + remedy + "\n", []string{list}},
 		{"load onto it", nil, []string{"fn", "load", "--addr", addr}, 0,
 			"LOADED nova_sprint sha=" + sha + " store=" + addr + "\n", []string{list, "FUNCTION LOAD REPLACE"}},
 		{"check it", nil, []string{"fn", "check", "--addr", addr}, 0,
-			"OK nova_sprint loaded=" + sha + " want=" + sha + " store=" + addr + "\n", []string{list}},
+			"OK nova_sprint sha=" + sha + " loaded=" + sha + " want=" + sha + " store=" + addr + "\n", []string{list}},
 		{"load it again", nil, []string{"fn", "load", "--addr", addr}, 0,
 			"UNCHANGED nova_sprint sha=" + sha + " store=" + addr + "\n", []string{list}},
 		{"check other code", func() { h.store.held["nova_sprint"] = other }, []string{"fn", "check", "--addr", addr}, 1,
-			"STALE nova_sprint loaded=" + redisfn.DigestOf(other) + " want=" + sha + " store=" + addr + remedy + "\n", []string{list}},
+			"STALE nova_sprint sha=" + sha + " loaded=" + redisfn.DigestOf(other) + " want=" + sha + " store=" + addr + remedy + "\n", []string{list}},
 		{"replace it", nil, []string{"fn", "load", "--addr", addr}, 0,
 			"REPLACED nova_sprint sha=" + sha + " was=" + redisfn.DigestOf(other) + " store=" + addr + "\n", []string{list, "FUNCTION LOAD REPLACE"}},
 		{"check the replacement", nil, []string{"fn", "check", "--addr", addr}, 0,
-			"OK nova_sprint loaded=" + sha + " want=" + sha + " store=" + addr + "\n", []string{list}},
+			"OK nova_sprint sha=" + sha + " loaded=" + sha + " want=" + sha + " store=" + addr + "\n", []string{list}},
 	}
 	for i, s := range steps {
 		if s.before != nil {
@@ -233,7 +235,7 @@ func TestFnFailuresNameTheStateAndTheRemedy(t *testing.T) {
 		notSent string
 	}{
 		{"check, store unreachable", func(s *fnStore) { s.listErr = errors.New("dial tcp 127.0.0.1:6399: connect: connection refused") }, "check", 2,
-			[]string{"FAILED nova_sprint want=", "store=127.0.0.1:6399", "redisfn: check nova_sprint: the store did not answer", "nothing was changed", "remedy=\"check --addr and NOVA_REDIS_PASSWORD"}, ""},
+			[]string{"FAILED nova_sprint sha=", "store=127.0.0.1:6399", "redisfn: check nova_sprint: the store did not answer", "nothing was changed", "remedy=\"check --addr, --user (NOVA_REDIS_USER) and NOVA_REDIS_PASSWORD"}, ""},
 		{"load, store unreachable", func(s *fnStore) { s.listErr = errors.New("dial tcp 127.0.0.1:6399: connect: connection refused") }, "load", 1,
 			[]string{"FAILED nova_sprint sha=", "redisfn: check nova_sprint: the store did not answer", "nothing was changed", "then nova-redis fn check --addr 127.0.0.1:6399"}, "FUNCTION LOAD REPLACE"},
 		{"load, store refuses the library", func(s *fnStore) {
@@ -289,6 +291,74 @@ func TestFnRefusesBeforeTheDial(t *testing.T) {
 		}
 		if h.dials != 0 {
 			t.Errorf("%q: dialled %d times; a refusal comes before the dial", c.args, h.dials)
+		}
+	}
+}
+
+// TestEveryVerbLogsInAsTheUserItIsGiven: spill, recall, fn load and fn check
+// hand the one dial seam the user --user names, else NOVA_REDIS_USER, else
+// none (the default user), always with NOVA_REDIS_PASSWORD; and a user with
+// an empty password, or a name holding whitespace, is refused (exit 2)
+// before the dial.
+func TestEveryVerbLogsInAsTheUserItIsGiven(t *testing.T) {
+	t.Parallel()
+	verbs := [][]string{
+		{"spill", "--addr", "127.0.0.1:6399", "--owner", "o", "--name", "n", "--ttl", "1m", "--value", "v"},
+		{"recall", "--addr", "127.0.0.1:6399", "--owner", "o", "--name", "n"},
+		{"fn", "load", "--addr", "127.0.0.1:6399"},
+		{"fn", "check", "--addr", "127.0.0.1:6399"},
+	}
+	cases := []struct {
+		name     string
+		flag     []string
+		env      map[string]string
+		wantUser string
+		refusal  string // "" when the verb dials
+	}{
+		{"no user", nil, map[string]string{PasswordEnv: "pw"}, "", ""},
+		{"the environment's", nil, map[string]string{PasswordEnv: "pw", UserEnv: "coordinator"}, "coordinator", ""},
+		{"the flag's", []string{"--user", "fnuser"}, map[string]string{PasswordEnv: "pw"}, "fnuser", ""},
+		{"the flag over the environment", []string{"--user", "fnuser"}, map[string]string{PasswordEnv: "pw", UserEnv: "coordinator"}, "fnuser", ""},
+		{"a user without a password", []string{"--user", "fnuser"}, map[string]string{}, "",
+			"user fnuser (from --user or NOVA_REDIS_USER) but NOVA_REDIS_PASSWORD is empty; run under nova-secrets exec --only NOVA_REDIS_PASSWORD, refusing to log in without a password; run: nova-redis help\n"},
+		{"a name with a space", nil, map[string]string{PasswordEnv: "pw", UserEnv: "fn user"}, "",
+			"--user \"fn user\" holds whitespace; give the ACL user's name (or set NOVA_REDIS_USER); run: nova-redis help\n"},
+	}
+	for _, c := range cases {
+		for _, verb := range verbs {
+			args := append(slices.Clone(verb), c.flag...)
+			var got []string
+			// fn talks to the function fake, spill and recall to a miniredis;
+			// the test reads only what the seam was handed.
+			var client redis.UniversalClient = newFnStore()
+			if verb[0] != "fn" {
+				c := redis.NewClient(&redis.Options{Addr: miniredis.RunT(t).Addr()})
+				t.Cleanup(func() { _ = c.Close() })
+				client = c
+			}
+			d := deps{
+				now:    func() time.Time { return time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC) },
+				getenv: func(k string) string { return c.env[k] },
+				dial: func(addr, user, password string) redis.UniversalClient {
+					got = append(got, user+"/"+password)
+					return client
+				},
+			}
+			var out, errb bytes.Buffer
+			code := run(args, &out, &errb, d)
+			if c.refusal != "" {
+				verbName := verb[0]
+				if verb[0] == "fn" {
+					verbName = "fn " + verb[1]
+				}
+				if want := "nova-redis " + verbName + ": " + c.refusal; code != 2 || errb.String() != want || len(got) != 0 {
+					t.Errorf("%s, %q: exit %d stderr %q dials %q; want exit 2, %q and no dial", c.name, args, code, errb.String(), got, want)
+				}
+				continue
+			}
+			if want := []string{c.wantUser + "/" + c.env[PasswordEnv]}; !slices.Equal(got, want) {
+				t.Errorf("%s, %q: dialled as %q, want %q (stderr %q)", c.name, args, got, want, errb.String())
+			}
 		}
 	}
 }

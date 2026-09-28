@@ -11,8 +11,13 @@ package main
 //     replaced with one FUNCTION LOAD REPLACE. One receipt line:
 //     LOADED|UNCHANGED|REPLACED nova_sprint sha=<digest> [was=<digest>] store=<addr>.
 //   - fn check is redisfn's Check and changes nothing: OK (exit 0), STALE or
-//     MISSING (exit 1), each with the store's digest and this binary's, or
-//     FAILED when the store could not be read (exit 2).
+//     MISSING (exit 1): OK|STALE|MISSING nova_sprint sha=<digest>
+//     loaded=<digest|none> want=<digest> store=<addr>; or FAILED when the
+//     store could not be read (exit 2). Every line holds one sha=, this
+//     binary's digest.
+//
+// Both log in as --user (default NOVA_REDIS_USER) with NOVA_REDIS_PASSWORD,
+// through the one dial seam every nova-redis verb uses.
 //
 // A tool on its way to an FCALL never calls these: it calls redisfn's
 // LoadMissing, which never replaces a library (nova-tools #3620). fn load is
@@ -46,31 +51,32 @@ func cmdFn(args []string, stdout, stderr io.Writer, d deps) int {
 		return refuse(stderr, " fn", fmt.Sprintf("unknown subverb %q; want load or check", sub))
 	}
 	fs := flag.NewFlagSet("fn "+sub, flag.ContinueOnError)
-	addr := fs.String("addr", "", "store address")
+	store := loginFlags(fs, d)
 	if !parse(fs, args[1:], stderr, "addr") {
 		return 2
 	}
-	if err := validAddr(*addr); err != nil {
+	if err := store.check(d); err != nil {
 		return refuse(stderr, " fn "+sub, err.Error())
 	}
+	addr := store.addr
 	lib := library()
 	want, err := lib.Digest()
 	if err != nil {
 		return refuse(stderr, " fn "+sub, fmt.Sprintf("this binary's library does not build, so nothing was sent to the store: %s; fix the Lua and rebuild", err))
 	}
-	client := d.dial(*addr, d.getenv(PasswordEnv))
+	client := store.dial(d)
 	defer func() { _ = client.Close() }()
-	store := oneline.Field(*addr)
+	at := oneline.Field(*addr)
 	ctx := context.Background()
 
 	if sub == "load" {
 		r, err := lib.Ensure(ctx, client)
 		if err != nil {
-			fmt.Fprintf(stderr, "FAILED %s sha=%s store=%s err=%s remedy=%q\n", oneline.Field(lib.Name), want, store, oneline.Err(err),
-				"check --addr and "+PasswordEnv+", and that the store's user may FUNCTION LIST and FUNCTION LOAD; then nova-redis fn check --addr "+*addr)
+			fmt.Fprintf(stderr, "FAILED %s sha=%s store=%s err=%s remedy=%q\n", oneline.Field(lib.Name), want, at, oneline.Err(err),
+				"check --addr, --user ("+UserEnv+") and "+PasswordEnv+", and that the user may FUNCTION LIST and FUNCTION LOAD; then nova-redis fn check --addr "+*addr)
 			return 1
 		}
-		fmt.Fprintf(stdout, "%s store=%s\n", r, store)
+		fmt.Fprintf(stdout, "%s store=%s\n", r, at)
 		return 0
 	}
 
@@ -82,18 +88,18 @@ func cmdFn(args []string, stdout, stderr io.Writer, d deps) int {
 	}
 	switch state {
 	case redisfn.Same:
-		fmt.Fprintf(stdout, "OK %s loaded=%s want=%s store=%s\n", oneline.Field(lib.Name), want, want, store)
+		fmt.Fprintf(stdout, "OK %s sha=%s loaded=%s want=%s store=%s\n", oneline.Field(lib.Name), want, want, want, at)
 		return 0
 	case redisfn.Different, redisfn.Absent:
 		word := "STALE"
 		if state == redisfn.Absent {
 			word = "MISSING"
 		}
-		fmt.Fprintf(stdout, "%s %s loaded=%s want=%s store=%s remedy=%q\n", word, oneline.Field(lib.Name), loaded, want, store,
+		fmt.Fprintf(stdout, "%s %s sha=%s loaded=%s want=%s store=%s remedy=%q\n", word, oneline.Field(lib.Name), want, loaded, want, at,
 			"nova-redis fn load --addr "+*addr+" puts this binary's library on the store")
 		return 1
 	}
-	fmt.Fprintf(stderr, "FAILED %s want=%s store=%s err=%s remedy=%q\n", oneline.Field(lib.Name), want, store, oneline.Err(err),
-		"check --addr and "+PasswordEnv+", and that the store's user may FUNCTION LIST")
+	fmt.Fprintf(stderr, "FAILED %s sha=%s store=%s err=%s remedy=%q\n", oneline.Field(lib.Name), want, at, oneline.Err(err),
+		"check --addr, --user ("+UserEnv+") and "+PasswordEnv+", and that the user may FUNCTION LIST")
 	return 2
 }

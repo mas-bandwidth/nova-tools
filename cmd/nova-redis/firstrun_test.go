@@ -37,7 +37,7 @@ func TestFirstRunTranscriptIsWhatTheToolPrints(t *testing.T) {
 	}
 	d := deps{
 		now: func() time.Time { return time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC) },
-		dial: func(addr, password string) redis.UniversalClient {
+		dial: func(addr, user, password string) redis.UniversalClient {
 			t.Fatalf("a first-run refusal dialled %s; a refused write must never reach the instance", addr)
 			return nil
 		},

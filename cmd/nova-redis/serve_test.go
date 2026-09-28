@@ -45,7 +45,7 @@ func newServeHarness(t *testing.T, password string) *serveHarness {
 	h.d = deps{
 		now:    func() time.Time { return time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC) },
 		getenv: func(k string) string { return h.env[k] },
-		dial: func(addr, pw string) redis.UniversalClient {
+		dial: func(addr, user, pw string) redis.UniversalClient {
 			c := redis.NewClient(&redis.Options{Addr: addr, Password: pw})
 			t.Cleanup(func() { _ = c.Close() })
 			return c

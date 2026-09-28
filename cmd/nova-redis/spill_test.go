@@ -39,7 +39,7 @@ func newHarness(t *testing.T) *harness {
 	h := &harness{mr: mr, clock: clock}
 	h.d = deps{
 		now: clock.now,
-		dial: func(addr, password string) redis.UniversalClient {
+		dial: func(addr, user, password string) redis.UniversalClient {
 			h.dials++
 			c := redis.NewClient(&redis.Options{Addr: addr, Password: password})
 			t.Cleanup(func() { _ = c.Close() })
@@ -74,7 +74,7 @@ func TestAddrRefusedWhenMissingOrEmpty(t *testing.T) {
 	h := newHarness(t)
 	// A regression must fail here, never reach a real host: the seam counts
 	// the dial and hands back a client on the fake whatever address it got.
-	h.d.dial = func(addr, password string) redis.UniversalClient {
+	h.d.dial = func(addr, user, password string) redis.UniversalClient {
 		h.dials++
 		c := redis.NewClient(&redis.Options{Addr: h.mr.Addr()})
 		t.Cleanup(func() { _ = c.Close() })
@@ -230,7 +230,7 @@ func TestEveryEphemeralKeyCarriesOwnerAndTTL(t *testing.T) {
 
 	// The package seam, below the CLI: a caller that skips the flag parser
 	// still cannot write a key without an owner or a TTL.
-	s := &scratch{rdb: h.d.dial(h.mr.Addr(), ""), now: h.clock.now}
+	s := &scratch{rdb: h.d.dial(h.mr.Addr(), "", ""), now: h.clock.now}
 	ctx := context.Background()
 	if _, err := s.spill(ctx, "", "g", "7", time.Hour); err == nil {
 		t.Error("scratch.spill with no owner returned no error")

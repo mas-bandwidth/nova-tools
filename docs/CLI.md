@@ -3068,13 +3068,18 @@ nova-config apply --as rowan
 
 ```
 nova-redis serve  --bind <addr>[,<addr>...] --port <port> --dir <store-dir>             # run redis-server in the foreground, loopback and tailnet only, AOF on
-nova-redis spill  --addr <host:port> --owner <owner> --name <name> --ttl <d> --value <v> # write scratch under <owner>:<name> with a required TTL
-nova-redis recall --addr <host:port> --owner <owner> --name <name>                       # read it back; exit 1 on a missing or expired key
-nova-redis fn load  --addr <host:port>                                                   # put this binary's function library on the store unless it holds exactly that code
-nova-redis fn check --addr <host:port>                                                   # compare the store's library with this binary's; changes nothing
+nova-redis spill  --addr <host:port> [--user <name>] --owner <o> --name <n> --ttl <d> --value <v> # write scratch under <o>:<n> with a required TTL
+nova-redis recall --addr <host:port> [--user <name>] --owner <o> --name <n>                       # read it back; exit 1 on a missing or expired key
+nova-redis fn load  --addr <host:port> [--user <name>]                                            # put this binary's function library on the store unless it holds exactly that code
+nova-redis fn check --addr <host:port> [--user <name>]                                            # compare the store's library with this binary's; changes nothing
 ```
 
-`nova-redis` owns a Redis instance ([SPEC-REDIS.md](SPEC-REDIS.md)). Auth is read from `NOVA_REDIS_PASSWORD`, never from an argument, and every verb that talks to a store refuses a missing or malformed `--addr` (exit 2) before it dials.
+`nova-redis` owns a Redis instance ([SPEC-REDIS.md](SPEC-REDIS.md)). Every verb that talks to a store dials it one way:
+- `--addr` is the store's `host:port`.
+- `--user` is the ACL user to log in as. Its default is `NOVA_REDIS_USER`, and with neither set the verb logs in as the store's default user.
+- The password is read from `NOVA_REDIS_PASSWORD`, never from an argument.
+
+A missing or malformed `--addr`, a user name holding whitespace, and a user with an empty `NOVA_REDIS_PASSWORD` are each refused (exit 2) before the dial.
 
 **The function library.** The `fn` verbs handle the `nova_sprint` Redis function library, the Lua that nova-table and nova-config call with `FCALL`. The library is the one this binary embeds (`internal/nsprint/fn`'s `lua/`), and the machinery is `internal/redisfn`. A library's identity is its code as the store holds it, and its digest is the first 16 hex digits of the code's SHA-256.
 
@@ -3084,12 +3089,14 @@ nova-redis fn check --addr <host:port>                                          
   - `REPLACED nova_sprint sha=<d> was=<old> store=<a>`: other code was under the name.
   
   A failure is one `FAILED nova_sprint sha=<d> store=<a> err=<...> remedy="..."` line on stderr, exit 1. The error says what was being done, why it failed, and what the store holds after it.
-- `fn check` changes nothing (`redisfn.Check`). Its line is `OK|STALE|MISSING nova_sprint loaded=<d|none> want=<d> store=<a>`:
+- `fn check` changes nothing (`redisfn.Check`). Its line is `OK|STALE|MISSING nova_sprint sha=<want> loaded=<d|none> want=<d> store=<a>`, so every line of both verbs holds one `sha=`, this binary's digest:
   - `OK`: the store holds this binary's code, exit 0.
   - `STALE`: the store holds other code, exit 1.
   - `MISSING`: the store holds no library of the name, exit 1.
   
-  `STALE` and `MISSING` end in the remedy, `nova-redis fn load --addr <a>`. A store that could not be read is a `FAILED` line on stderr, exit 2.
+  `STALE` and `MISSING` end in the remedy, `nova-redis fn load --addr <a>`. A store that could not be read, or that refuses the user (`NOPERM`, `WRONGPASS`), is a `FAILED nova_sprint sha=<d> ...` line on stderr, exit 2.
+
+The user needs `FUNCTION LIST` for `fn check`, and `FUNCTION LIST` and `FUNCTION LOAD` for `fn load`. A user with `~* &* +@all -@dangerous` has both. A user without them gets one `FAILED` line naming `NOPERM` from `fn load`, exit 1.
 
 `fn load` replaces, so it belongs to the one place that deploys. Two deployers with different builds replace each other's library for as long as both run (`tla/RedisFn.tla`, `MCRedisFnTwoDeployers`). A tool on its way to an `FCALL` calls `redisfn.LoadMissing`, which never replaces a library (nova-tools #3620). The first run's refusals are in [TESTS.md](TESTS.md#nova-redis).
 

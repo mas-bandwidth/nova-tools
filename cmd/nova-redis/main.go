@@ -39,6 +39,10 @@ var version string
 // PasswordEnv names the variable auth is read from; never an argument.
 const PasswordEnv = "NOVA_REDIS_PASSWORD"
 
+// UserEnv names the ACL user a verb logs in as when --user is not given.
+// With neither, the verb logs in as the store's default user.
+const UserEnv = "NOVA_REDIS_USER"
+
 // The hash fields a spilled key carries: the value, and the moment it lapses
 // by the spiller's clock, so recall can refuse an expired key even before the
 // instance has aged it out.
@@ -51,10 +55,10 @@ const usage = `nova-redis — owns the local Redis instance and its scratch verb
 
 usage:
   nova-redis serve  --bind <addr>[,<addr>...] --port <port> --dir <store-dir>
-  nova-redis spill  --addr <host:port> --owner <owner> --name <name> --ttl <duration> --value <text>
-  nova-redis recall --addr <host:port> --owner <owner> --name <name>
-  nova-redis fn load  --addr <host:port>
-  nova-redis fn check --addr <host:port>
+  nova-redis spill  --addr <host:port> [--user <name>] --owner <owner> --name <name> --ttl <duration> --value <text>
+  nova-redis recall --addr <host:port> [--user <name>] --owner <owner> --name <name>
+  nova-redis fn load  --addr <host:port> [--user <name>]
+  nova-redis fn check --addr <host:port> [--user <name>]
   nova-redis version
   nova-redis help
 
@@ -63,7 +67,10 @@ one without a host and a port (exit 2), before anything is dialled. spill
 refuses a missing owner or a missing, zero or negative TTL (exit 2) and
 writes nothing; an unbounded key is a bug.
 recall exits 1 on a missing or expired key: scratch is allowed to miss.
-Auth is read from NOVA_REDIS_PASSWORD, never from an argument.
+Auth is read from NOVA_REDIS_PASSWORD, never from an argument. --user names
+the ACL user to log in as (default NOVA_REDIS_USER; with neither, the store's
+default user); a user with an empty NOVA_REDIS_PASSWORD is refused (exit 2)
+before anything is dialled.
 fn load puts the nova_sprint function library this binary embeds on the store
 unless the store holds exactly its code (LOADED, UNCHANGED or REPLACED, with
 its digest; exit 1 on a failure). fn check changes nothing: OK (exit 0),
@@ -89,7 +96,7 @@ example:
 // clock and the environment. main() passes the real ones; tests pass a fake
 // instance and a controlled clock.
 type deps struct {
-	dial   func(addr, password string) redis.UniversalClient
+	dial   func(addr, user, password string) redis.UniversalClient
 	now    func() time.Time
 	getenv func(string) string
 
@@ -102,9 +109,9 @@ type deps struct {
 
 func realDeps() deps {
 	return deps{
-		dial: func(addr, password string) redis.UniversalClient {
+		dial: func(addr, user, password string) redis.UniversalClient {
 			quietRedisOnce.Do(func() { redis.SetLogger(quietRedis{}) })
-			return redis.NewClient(&redis.Options{Addr: addr, Password: password})
+			return redis.NewClient(&redis.Options{Addr: addr, Username: user, Password: password})
 		},
 		now:      time.Now,
 		getenv:   os.Getenv,
@@ -185,7 +192,7 @@ func parse(fs *flag.FlagSet, args []string, stderr io.Writer, required ...string
 
 func cmdSpill(args []string, stdout, stderr io.Writer, d deps) int {
 	fs := flag.NewFlagSet("spill", flag.ContinueOnError)
-	addr := fs.String("addr", "", "instance address")
+	store := loginFlags(fs, d)
 	owner := fs.String("owner", "", "owner prefix")
 	name := fs.String("name", "", "key name")
 	ttlText := fs.String("ttl", "", "time to live")
@@ -193,7 +200,7 @@ func cmdSpill(args []string, stdout, stderr io.Writer, d deps) int {
 	if !parse(fs, args, stderr, "addr", "owner", "name", "ttl", "value") {
 		return 2
 	}
-	if err := validAddr(*addr); err != nil {
+	if err := store.check(d); err != nil {
 		return refuse(stderr, " spill", err.Error())
 	}
 	ttl, err := time.ParseDuration(*ttlText)
@@ -205,7 +212,7 @@ func cmdSpill(args []string, stdout, stderr io.Writer, d deps) int {
 	if err := validKey(*owner, *name, ttl); err != nil {
 		return refuse(stderr, " spill", err.Error())
 	}
-	s := &scratch{rdb: d.dial(*addr, d.getenv(PasswordEnv)), now: d.now}
+	s := &scratch{rdb: store.dial(d), now: d.now}
 	key, err := s.spill(context.Background(), *owner, *name, *value, ttl)
 	if err != nil {
 		fmt.Fprintf(stderr, "SPILL FAIL key=%s err=%s\n", oneline.Field(*owner+":"+*name), oneline.Err(err))
@@ -218,19 +225,19 @@ func cmdSpill(args []string, stdout, stderr io.Writer, d deps) int {
 
 func cmdRecall(args []string, stdout, stderr io.Writer, d deps) int {
 	fs := flag.NewFlagSet("recall", flag.ContinueOnError)
-	addr := fs.String("addr", "", "instance address")
+	store := loginFlags(fs, d)
 	owner := fs.String("owner", "", "owner prefix")
 	name := fs.String("name", "", "key name")
 	if !parse(fs, args, stderr, "addr", "owner", "name") {
 		return 2
 	}
-	if err := validAddr(*addr); err != nil {
+	if err := store.check(d); err != nil {
 		return refuse(stderr, " recall", err.Error())
 	}
 	if err := validKey(*owner, *name, time.Hour); err != nil {
 		return refuse(stderr, " recall", err.Error())
 	}
-	s := &scratch{rdb: d.dial(*addr, d.getenv(PasswordEnv)), now: d.now}
+	s := &scratch{rdb: store.dial(d), now: d.now}
 	key := *owner + ":" + *name
 	v, err := s.recall(context.Background(), *owner, *name)
 	switch {
@@ -259,6 +266,40 @@ var (
 	errExpired   = errors.New("expired")
 	errUnbounded = errors.New("unbounded")
 )
+
+// login is the store a verb dials: --addr, and --user with UserEnv as its
+// default. The password is PasswordEnv's, never an argument. Every verb that
+// dials a store takes these flags and dials through d.dial, the one seam.
+type login struct{ addr, user *string }
+
+func loginFlags(fs *flag.FlagSet, d deps) login {
+	return login{
+		addr: fs.String("addr", "", "store address"),
+		user: fs.String("user", d.getenv(UserEnv), "ACL user"),
+	}
+}
+
+// check refuses, before anything is dialled, an address the verb would have
+// to guess at and a user it could not log in as.
+func (l login) check(d deps) error {
+	if err := validAddr(*l.addr); err != nil {
+		return err
+	}
+	switch {
+	case *l.user == "":
+		return nil
+	case strings.ContainsAny(*l.user, " \t\r\n"):
+		return fmt.Errorf("--user %q holds whitespace; give the ACL user's name (or set %s)", *l.user, UserEnv)
+	case d.getenv(PasswordEnv) == "":
+		return fmt.Errorf("user %s (from --user or %s) but %s is empty; run under nova-secrets exec --only %s, refusing to log in without a password", *l.user, UserEnv, PasswordEnv, PasswordEnv)
+	}
+	return nil
+}
+
+// dial is the client for the store check accepted.
+func (l login) dial(d deps) redis.UniversalClient {
+	return d.dial(*l.addr, *l.user, d.getenv(PasswordEnv))
+}
 
 // validAddr refuses an address the tool would have to guess at. The Redis
 // client fills an empty address in as localhost:6379 and an empty host as the

@@ -47,9 +47,9 @@ func TestFnVerbsOnARedisServer(t *testing.T) {
 		}
 	}
 
-	expect("check", 1, "MISSING nova_sprint loaded=none want="+sha+" ")
+	expect("check", 1, "MISSING nova_sprint sha="+sha+" loaded=none want="+sha+" ")
 	expect("load", 0, "LOADED nova_sprint sha="+sha+" ")
-	expect("check", 0, "OK nova_sprint loaded="+sha+" want="+sha+" ")
+	expect("check", 0, "OK nova_sprint sha="+sha+" loaded="+sha+" want="+sha+" ")
 	expect("load", 0, "UNCHANGED nova_sprint sha="+sha+" ")
 
 	c := redis.NewClient(&redis.Options{Addr: addr, Password: pw})
@@ -77,7 +77,56 @@ func TestFnVerbsOnARedisServer(t *testing.T) {
 	if err := c.FunctionLoadReplace(ctx, other).Err(); err != nil {
 		t.Fatal(err)
 	}
-	expect("check", 1, "STALE nova_sprint loaded=")
+	expect("check", 1, "STALE nova_sprint sha="+sha+" loaded=")
 	expect("load", 0, "REPLACED nova_sprint sha="+sha+" was=")
-	expect("check", 0, "OK nova_sprint loaded="+sha+" ")
+	expect("check", 0, "OK nova_sprint sha="+sha+" loaded="+sha+" ")
+}
+
+// TestFnVerbsLogInAsTheACLUser: on a store whose default user is off, fn load
+// and fn check log in as the user --user (or NOVA_REDIS_USER) names, with
+// NOVA_REDIS_PASSWORD. As a user with the coordinator seat's rules they load
+// and check; as a user without FUNCTION, load is one FAILED line naming
+// NOPERM and the remedy, exit 1, and the store holds no library.
+func TestFnVerbsLogInAsTheACLUser(t *testing.T) {
+	t.Parallel()
+	const pw = "pw-from-nova-secrets"
+	// The coordinator seat's rules (internal/nsprint/acl/testdata/acl-rows.tsv),
+	// and the same with FUNCTION taken away.
+	addr := testredis.Start(t,
+		"--user", "default", "off",
+		"--user", "fnuser", "on", ">"+pw, "~*", "&*", "+@all", "-@dangerous", "+info", "+config|get",
+		"--user", "nofn", "on", ">"+pw, "~*", "&*", "+@all", "-@dangerous", "-function")
+	env := map[string]string{PasswordEnv: pw}
+	d := realDeps()
+	d.getenv = func(k string) string { return env[k] }
+	fnRun := func(args ...string) (int, string, string) {
+		t.Helper()
+		var out, errb bytes.Buffer
+		code := run(args, &out, &errb, d)
+		return code, out.String(), errb.String()
+	}
+	sha := want(t)
+
+	code, out, errOut := fnRun("fn", "load", "--addr", addr, "--user", "nofn")
+	if code != 1 || out != "" || strings.Count(errOut, "\n") != 1 ||
+		!strings.HasPrefix(errOut, "FAILED nova_sprint sha="+sha+" store="+addr+" ") ||
+		!strings.Contains(errOut, "NOPERM") || !strings.Contains(errOut, "remedy=") {
+		t.Fatalf("fn load as nofn: exit %d stdout %q stderr %q; want exit 1 and one FAILED line naming NOPERM and the remedy", code, out, errOut)
+	}
+
+	env[UserEnv] = "fnuser" // the environment's user, no flag
+	if code, out, errOut = fnRun("fn", "check", "--addr", addr); code != 1 || !strings.HasPrefix(out, "MISSING nova_sprint sha="+sha+" loaded=none ") || errOut != "" {
+		t.Fatalf("fn check as NOVA_REDIS_USER=fnuser after the refused load: exit %d %q %q; want MISSING", code, out, errOut)
+	}
+	if code, out, errOut = fnRun("fn", "load", "--addr", addr); code != 0 || !strings.HasPrefix(out, "LOADED nova_sprint sha="+sha+" ") || errOut != "" {
+		t.Fatalf("fn load as NOVA_REDIS_USER=fnuser: exit %d %q %q; want LOADED", code, out, errOut)
+	}
+	delete(env, UserEnv) // the flag's user
+	if code, out, errOut = fnRun("fn", "check", "--addr", addr, "--user", "fnuser"); code != 0 || !strings.HasPrefix(out, "OK nova_sprint sha="+sha+" loaded="+sha+" want="+sha+" ") || errOut != "" {
+		t.Fatalf("fn check --user fnuser: exit %d %q %q; want OK", code, out, errOut)
+	}
+	// With no user the default user is used, and it is off.
+	if code, _, errOut = fnRun("fn", "check", "--addr", addr); code != 2 || !strings.Contains(errOut, "NOAUTH") && !strings.Contains(errOut, "WRONGPASS") {
+		t.Fatalf("fn check with no user on a store whose default user is off: exit %d %q; want exit 2 naming the refused login", code, errOut)
+	}
 }
