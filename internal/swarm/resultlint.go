@@ -9,7 +9,7 @@ import (
 // RESULT LINE 2 IS A GRAMMAR, AND A TEMPLATE COPIED INTO IT IS NOT A DONE (issue #2917).
 //
 // Line 2 of a card's RESULT.md is its disposition: one of `DONE`, `ABSTAIN <why>`,
-// `BLOCKED <why>` (docs/spec-pulse/10-the-card-as-cut-writes-it.md:8), and on the kinds
+// `BLOCKED <why>` (deprecated/docs/spec-pulse/10-the-card-as-cut-writes-it.md:8), and on the kinds
 // that read a rule, `RED <line>`, `GAP <why>` or `CONFORMS <where>`. The harvest counted a
 // DONE by asking whether line 2 BEGAN with the word, and on 2026-09-22 eight cards copied
 // the card's own template line

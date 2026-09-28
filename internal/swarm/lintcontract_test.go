@@ -10,8 +10,7 @@ import (
 //
 // `cut` renders line 1, `lint --card` checks it on the bench, and `gather` compares the
 // `RESULT.md`'s line 1 against the card's. They did not agree: `cut` writes and accepts
-// `RESULT <label> sha=<sha12>` (the deleted internal/pulse cut, and the example in
-// docs/spec-pulse/10-the-card-as-cut-writes-it.md), while the lint's `result-first`
+// `RESULT <label> sha=<sha12>` (the deleted internal/pulse cut), while the lint's `result-first`
 // wanted `RESULT: ` with a colon (deprecated/docs/WORKER-CARDS.md practice 1). Every card `cut`
 // writes therefore drew a `result-first` drift, which is how six cards written this
 // session each drew one.
@@ -21,8 +20,9 @@ import (
 // cannot import internal/pulse -- that package imports THIS one -- so it reads its
 // source as text, which is the same thing a class test over a document does.
 
+// cardCutDocPath holds the card contract line as a card's line 1 carries it.
 const (
-	cardCutDocPath = "../../docs/spec-pulse/10-the-card-as-cut-writes-it.md"
+	cardCutDocPath = "testdata/card-contract-line.txt"
 )
 
 func readOr(t *testing.T, path string) string {
@@ -34,7 +34,7 @@ func readOr(t *testing.T, path string) string {
 	return string(b)
 }
 
-// The example line 1 of the document `cut` is written from is a line the lint accepts.
+// The card contract line in testdata is a line the lint accepts.
 func TestTheDocumentsContractLineIsOneTheLintAccepts(t *testing.T) {
 	t.Parallel()
 
