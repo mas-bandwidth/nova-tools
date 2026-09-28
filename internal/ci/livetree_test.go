@@ -13,8 +13,8 @@ import (
 // run (Glenn 2026-09-27), so a rule walks the packages CI selects and no
 // others. A path names that package and everything under it; `keep <path>`
 // names one package under such a path that stays live. The script is the
-// selection's own reading; TestLiveTreeAgreesWithLivePackages holds the two
-// to the same answer.
+// selection's own reading; TestDeprecatedPackagesAreNeverSelected holds the
+// two to the same answer.
 type liveTree struct {
 	root string
 	drop []string
