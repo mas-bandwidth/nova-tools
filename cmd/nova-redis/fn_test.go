@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
@@ -374,28 +373,33 @@ func TestFnRefusesBeforeTheDial(t *testing.T) {
 	}
 }
 
-// TestEveryVerbLogsInAsTheUserItIsGiven: spill, recall, fn load and fn check
-// log in as the user --user names, else NOVA_REDIS_USER, else
-// none (the default user), with the password in the variable --password-env
-// names, else NOVA_REDIS_PASSWORD_ENV names, else NOVA_REDIS_PASSWORD. A
-// password variable that is not a name, a user name holding whitespace and a
-// user whose password variable is empty are refused (exit 2) before the dial,
+// loginCase is one login a verb is given: the flags after --addr, the
+// environment, and either the user/password the login is made with or the
+// refusal (without the "nova-redis <verb>: " prefix) made before any dial.
+type loginCase struct {
+	name    string
+	flag    []string
+	env     map[string]string
+	want    string // user/password the login is made with
+	refusal string // "" when the verb opens the store
+}
+
+// loginVerbs are the four verbs that open a store, each with --addr at
+// index 2.
+var loginVerbs = [][]string{
+	{"spill", "--addr", "127.0.0.1:1", "--owner", "o", "--name", "n", "--ttl", "1m", "--value", "v"},
+	{"recall", "--addr", "127.0.0.1:1", "--owner", "o", "--name", "n"},
+	{"fn", "load", "--addr", "127.0.0.1:1"},
+	{"fn", "check", "--addr", "127.0.0.1:1"},
+}
+
+// loginCases are the logins every verb that opens a store is held to: the
+// user --user names, else NOVA_REDIS_USER, else none (the default user), with
+// the password in the variable --password-env names, else
+// NOVA_REDIS_PASSWORD_ENV names, else NOVA_REDIS_PASSWORD; and the refusals,
 // each naming where the bad value came from.
-func TestEveryVerbLogsInAsTheUserItIsGiven(t *testing.T) {
-	t.Parallel()
-	verbs := [][]string{
-		{"spill", "--addr", "127.0.0.1:6399", "--owner", "o", "--name", "n", "--ttl", "1m", "--value", "v"},
-		{"recall", "--addr", "127.0.0.1:6399", "--owner", "o", "--name", "n"},
-		{"fn", "load", "--addr", "127.0.0.1:6399"},
-		{"fn", "check", "--addr", "127.0.0.1:6399"},
-	}
-	cases := []struct {
-		name    string
-		flag    []string
-		env     map[string]string
-		want    string // user/password the login is made with
-		refusal string // "" when the verb opens the store
-	}{
+func loginCases() []loginCase {
+	return []loginCase{
 		{"no user", nil, map[string]string{PasswordEnv: "pw"}, "/pw", ""},
 		{"the environment's user", nil, map[string]string{PasswordEnv: "pw", UserEnv: "coordinator"}, "coordinator/pw", ""},
 		{"the flag's user", []string{"--user", "fnuser"}, map[string]string{PasswordEnv: "pw"}, "fnuser/pw", ""},
@@ -415,30 +419,50 @@ func TestEveryVerbLogsInAsTheUserItIsGiven(t *testing.T) {
 		{"a password variable from the environment that is not a name", nil, map[string]string{PasswordEnvEnv: "SEAT PW"}, "",
 			"NOVA_REDIS_PASSWORD_ENV \"SEAT PW\" is not a variable name; name the variable that holds the password (default NOVA_REDIS_PASSWORD); run: nova-redis help\n"},
 	}
-	for _, c := range cases {
-		for _, verb := range verbs {
+}
+
+// TestEveryVerbLogsInAsTheUserItIsGiven: spill, recall, fn load and fn check
+// share one login (loginFlags, check, options), which every case resolves here
+// to the redisconn options the verb opens the store with, without a dial: the
+// user, the variable the password is read from and what it holds, and no
+// variable of redisconn's own. Each verb then runs whole: fn over an opener
+// that records the options it is handed; every refusal (exit 2, one line)
+// through run(), refused before the store is opened. Nothing listens at the
+// verbs' address, 127.0.0.1:1, and no store is started: this file owns no
+// socket. The login made on a real store, for spill and recall, is the
+// functional TestSpillAndRecallLogInAsTheUserItIsGiven.
+func TestEveryVerbLogsInAsTheUserItIsGiven(t *testing.T) {
+	t.Parallel()
+	for _, c := range loginCases() {
+		d := deps{
+			now:    func() time.Time { return time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC) },
+			getenv: func(k string) string { return c.env[k] },
+		}
+		user, password, _ := strings.Cut(c.want, "/")
+
+		fs := flag.NewFlagSet("login", flag.ContinueOnError)
+		l := loginFlags(fs)
+		if err := fs.Parse(append([]string{"--addr", "127.0.0.1:1"}, c.flag...)); err != nil {
+			t.Fatal(err)
+		}
+		err := l.check(d)
+		if c.refusal != "" {
+			if err == nil || err.Error()+"; run: nova-redis help\n" != c.refusal {
+				t.Errorf("%s: check %v; want the refusal %q", c.name, err, c.refusal)
+			}
+		} else {
+			o := l.options(d)
+			if err != nil || o.Addr != "127.0.0.1:1" || o.User != user || d.getenv(o.PasswordEnv) != password || o.Env != (redisconn.Env{}) {
+				t.Errorf("%s: check %v, options %s (the variable holds %q); want user %q, password %q and no variable of redisconn's own", c.name, err, o, d.getenv(o.PasswordEnv), user, password)
+			}
+		}
+
+		for _, verb := range loginVerbs {
 			args := append(slices.Clone(verb), c.flag...)
-			user, password, _ := strings.Cut(c.want, "/")
+			if c.refusal == "" && verb[0] != "fn" {
+				continue // opening the store is the functional test's
+			}
 			var got []string
-			var mr *miniredis.Miniredis
-			if verb[0] != "fn" {
-				// spill and recall open a miniredis through redisconn; it lets
-				// in only the login the case wants, so an exit 0 (spill) or a
-				// RECALL MISSING (recall) is that login made.
-				mr = miniredis.RunT(t)
-				switch {
-				case c.refusal != "":
-				case user != "":
-					mr.RequireUserAuth(user, password)
-				default:
-					mr.RequireAuth(password)
-				}
-				args[2] = mr.Addr()
-			}
-			d := deps{
-				now:    func() time.Time { return time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC) },
-				getenv: func(k string) string { return c.env[k] },
-			}
 			var out, errb bytes.Buffer
 			var code int
 			if verb[0] == "fn" {
@@ -456,24 +480,13 @@ func TestEveryVerbLogsInAsTheUserItIsGiven(t *testing.T) {
 				if verb[0] == "fn" {
 					verbName = "fn " + verb[1]
 				}
-				if want := "nova-redis " + verbName + ": " + c.refusal; code != 2 || errb.String() != want || len(got) != 0 || (mr != nil && mr.TotalConnectionCount() != 0) {
+				if want := "nova-redis " + verbName + ": " + c.refusal; code != 2 || errb.String() != want || len(got) != 0 {
 					t.Errorf("%s, %q: exit %d stderr %q opens %q; want exit 2, %q and no open", c.name, args, code, errb.String(), got, want)
 				}
 				continue
 			}
-			switch verb[0] {
-			case "fn":
-				if want := []string{c.want}; !slices.Equal(got, want) {
-					t.Errorf("%s, %q: opened as %q, want %q (stderr %q)", c.name, args, got, want, errb.String())
-				}
-			case "spill":
-				if code != 0 || !strings.HasPrefix(out.String(), "SPILL OK ") {
-					t.Errorf("%s, %q: exit %d stdout %q stderr %q; want SPILL OK as %s", c.name, args, code, out.String(), errb.String(), c.want)
-				}
-			case "recall":
-				if code != 1 || !strings.HasPrefix(out.String(), "RECALL MISSING ") {
-					t.Errorf("%s, %q: exit %d stdout %q stderr %q; want RECALL MISSING as %s", c.name, args, code, out.String(), errb.String(), c.want)
-				}
+			if want := []string{c.want}; !slices.Equal(got, want) {
+				t.Errorf("%s, %q: opened as %q, want %q (stderr %q)", c.name, args, got, want, errb.String())
 			}
 		}
 	}
