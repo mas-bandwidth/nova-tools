@@ -3011,7 +3011,18 @@ with `t.Skip("SLEEPS: ...")` that `--sleeps` does not name is a `CI-SLEEPS` line
 and exits 2 on every leg. `nova-ci
 functional <package-dir>...` prints, for `make test-functional`, the packages
 that hold `//go:build functional` tests and a `-run` pattern naming exactly
-those tests; it prints nothing when there are none ([TESTING.md](TESTING.md), "The two tiers").
+those tests; when there are none it prints one line, `CI FUNCTIONAL OK packages=0
+reason=<why>`, and exits 0 ([TESTING.md](TESTING.md), "The two tiers"). It never
+exits in silence: a flag, and a package pattern that matches no package, are
+refused at exit 2, every problem in the one line:
+
+```
+nova-ci functional: package pattern "./nope" matches no package (no such directory); run: nova-ci help
+nova-ci functional: unknown flag "--bogus" (functional takes no flags, only package directories such as ./cmd/nova-sprint or ./internal/...); run: nova-ci help
+nova-ci functional: usage: nova-ci functional <package-dir>... (package directories or dir/... patterns, no flags); run: nova-ci help
+```
+
+The last is what `-h` and `--help` after the verb print, to stderr at exit 2.
 
 See [SPEC-CI.md](SPEC-CI.md).
 

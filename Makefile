@@ -254,11 +254,12 @@ test:
 # merge_group, schedule and workflow_dispatch only, never on a pull request.
 # `nova-ci functional` picks, among PKGS, the packages holding such files and a
 # -run pattern naming exactly their tests, so the unit tests of those packages
-# are not run a second time; PKGS with no functional file run nothing.
+# are not run a second time; PKGS with no functional file run nothing,
+# and say so on one `CI FUNCTIONAL OK packages=0 reason=<why>` line.
 FUNCTIONAL_TIMEOUT ?= 100s
 test-functional: PKGS := $(CL_PKGS)
 test-functional:
-	@bash -o pipefail -c 'sel=$$($(GO) run ./cmd/nova-ci functional $(PKGS)) || exit 2; if [ -z "$$sel" ]; then echo "functional: no test in these packages carries the functional build tag; nothing to run"; exit 0; fi; pkgs=$$(printf "%s\n" "$$sel" | sed -n 1p); run=$$(printf "%s\n" "$$sel" | sed -n 2p); echo "functional: $$pkgs"; $(GO) test -tags functional -p $(GOTEST_P) -count=1 -timeout $(FUNCTIONAL_TIMEOUT) -run "$$run" $$pkgs'
+	@bash -o pipefail -c 'sel=$$($(GO) run ./cmd/nova-ci functional $(PKGS)) || exit 2; case "$$sel" in "CI FUNCTIONAL OK "*) echo "functional: $$sel"; exit 0;; "") echo "functional: nova-ci functional printed nothing; refusing to run nothing in silence" >&2; exit 2;; esac; pkgs=$$(printf "%s\n" "$$sel" | sed -n 1p); run=$$(printf "%s\n" "$$sel" | sed -n 2p); echo "functional: $$pkgs"; $(GO) test -tags functional -p $(GOTEST_P) -count=1 -timeout $(FUNCTIONAL_TIMEOUT) -run "$$run" $$pkgs'
 
 test-full:
 	$(GO) test -count=1 $(if $(RUN),-run "$(RUN)",) $(PKGS)

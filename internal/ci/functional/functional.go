@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -165,4 +166,62 @@ func Expand(args []string) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// Unmatched returns one clause per pattern that matches no package, in the
+// order given: a directory that does not exist, a path that is not a
+// directory, or a directory (for `dir/...`, a tree) holding no .go file at all,
+// the cases where `go list` would list nothing for it. A typo in CI's package
+// list must be a refusal, never a functional tier that silently runs nothing.
+// It reads the file system only; build constraints are not applied, so a
+// package whose files build only on another GOOS still matches, as go list
+// lists it.
+func Unmatched(patterns []string) []string {
+	var out []string
+	for _, pat := range patterns {
+		root, tree := strings.CutSuffix(pat, "/...")
+		info, err := os.Stat(root)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			out = append(out, "package pattern "+strconv.Quote(pat)+" matches no package (no such directory)")
+			continue
+		case err != nil:
+			out = append(out, "package pattern "+strconv.Quote(pat)+": "+err.Error())
+			continue
+		case !info.IsDir():
+			out = append(out, "package pattern "+strconv.Quote(pat)+" matches no package (not a directory)")
+			continue
+		}
+		dirs := []string{root}
+		if tree {
+			if dirs, err = Expand([]string{pat}); err != nil {
+				out = append(out, "package pattern "+strconv.Quote(pat)+": "+err.Error())
+				continue
+			}
+		}
+		if !anyGo(dirs) {
+			what := "the directory holds no .go file"
+			if tree {
+				what = "no directory under it holds a .go file"
+			}
+			out = append(out, "package pattern "+strconv.Quote(pat)+" matches no package ("+what+")")
+		}
+	}
+	return out
+}
+
+// anyGo reports whether any of dirs holds a .go file directly.
+func anyGo(dirs []string) bool {
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".go") {
+				return true
+			}
+		}
+	}
+	return false
 }
