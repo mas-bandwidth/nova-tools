@@ -52,10 +52,10 @@ The test requirements are listed under **Tests this spec demands**.
    present but cannot apply the policy is `reason=sandbox_failed` and is equally
    fatal. There is no fallback, no degraded mode, and no partial wall.
 2. **No dedicated users, no root, no admin, no VM.** Every backend chosen here
-   is usable by an ordinary unprivileged user in their own session (Glenn's
-   ruling). A design that needs `sudo`, a second login account, a container
-   runtime or a Hyper-V feature is out of scope for this tool, and the reasons
-   the obvious ones were not chosen are in **what it deliberately does not do**.
+   is usable by an ordinary unprivileged user in their own session. A design
+   that needs `sudo`, a second login account, a container runtime or a Hyper-V
+   feature is out of scope for this tool, and the reasons the obvious ones are
+   not chosen are in **what it deliberately does not do**.
 3. **Deny by default; read the roots and the read set; write only the write
    set.** The policy denies filesystem access, then grants: **read** on the OS
    and toolchain roots (the platform lists are below, and they are data, not

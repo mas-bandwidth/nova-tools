@@ -7,12 +7,10 @@ Every list only shrinks, and every one is read and written by the one helper,
 
 ## The two tiers
 
-Glenn, 2026-09-26 11:20 AM ET (nova-tools#4328): "Only run tests that you
-actually need to, according to the changes being made." "We should be minimal
-and frugal with what we do in unit tests. And we should run functional tests,
-not on every small PR being merged or worked on, but only as we merge whole work
-streams, and functional tests themselves should be frugal and built wisely to
-not waste resources."
+Only run the tests the change needs. Unit tests are minimal and frugal.
+Functional tests do not run on every small pull request; they run as whole work
+streams merge, and they are frugal and built wisely so they do not waste
+resources.
 
 **Unit tests mock.** A unit test starts no server, dials nothing and waits on no
 clock: it fakes the store, the network and the process it talks to. It runs on

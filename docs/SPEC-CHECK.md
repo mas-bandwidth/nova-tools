@@ -1,9 +1,9 @@
 # nova-check convergence — specification
 
-Glenn, 2026-09-15: **convergence is the health metric** — the contraction ratio per
-stream, every tick. Rowan answered *are we converging?* by hand on 2026-09-18: six
-windows read out of six different places, an hour of it, and the answer was a
-paragraph nobody could diff against the next one. This verb is that hour, mechanised.
+**Convergence is the health metric**: the contraction ratio per stream, every
+tick. Answered by hand, *are we converging?* is six windows read out of six
+different places, an hour of it, and a paragraph nobody can diff against the next
+one. This verb is that hour, mechanised.
 
 `docs/SPEC.md`'s **Conventions** govern — exit codes, the one-line grammar, the field
 law, no guessed paths — and [SPEC.md's `## nova-check`](SPEC.md) holds the record-layer
