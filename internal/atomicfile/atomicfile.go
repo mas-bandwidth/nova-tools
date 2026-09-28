@@ -26,8 +26,10 @@ Every write follows a strict, bounded sequence:
  3. Umask-honoring permissions: The temporary file is created with the caller's
     requested os.FileMode, allowing the process umask to apply naturally (perm & ^umask),
     matching the permission semantics of os.OpenFile and os.WriteFile. No explicit
-    chmod is performed so that the process umask is strictly preserved.
- 4. Full write: The data payload is written to the temporary file in full.
+    chmod is performed by default, so the process umask is preserved.
+ 4. Full write and final permissions: The data payload is written to the temporary
+    file in full. With ExactMode, chmod then sets the requested permission bits
+    exactly, overriding the umask before the file is synced.
  5. Media flush (fsync): The file contents and inode metadata are flushed to durable
     storage media using fsync (f.Sync()).
  6. Clean closure: The temporary file descriptor is closed.
@@ -39,7 +41,7 @@ Every write follows a strict, bounded sequence:
 
 # Failure and Cleanup Guarantees
 
-On any failure during creation, write, sync, close, or rename, atomicfile
+On any failure during creation, write, chmod, sync, close, or rename, atomicfile
 attempts to remove the temporary file immediately (os.Remove), leaving the target
 file completely untouched. If removing the temporary file fails (for example due
 to sudden permission loss or filesystem error), the cleanup error is joined to the
@@ -70,7 +72,8 @@ Callers migrating from os.WriteFile should note five key differences:
     atomicfile creates a new sibling temporary file with perm masked naturally by
     the process umask (perm & ^umask) and renames it over the target; thus, the
     resulting file mode reflects perm & ^umask regardless of whether the target
-    already existed. No explicit chmod is applied.
+    already existed. With ExactMode, chmod sets perm exactly before fsync;
+    callers preserving an existing mode must explicitly select that option.
  3. Inodes and hard links: Because atomicfile replaces the directory entry via
     rename(2), the target receives a new inode. Existing hard links to the target
     path continue pointing to the previous inode and will not reflect new writes.
@@ -217,9 +220,25 @@ func wrapErr(prefix string, err error) error {
 	}
 }
 
+// Option configures atomic write behavior.
+type Option func(*options)
+
+type options struct {
+	exactMode bool
+}
+
+// ExactMode configures atomicfile to explicitly chmod the temporary file to
+// perm before the final file sync and rename, even when the process umask
+// would otherwise restrict it.
+func ExactMode() Option {
+	return func(o *options) {
+		o.exactMode = true
+	}
+}
+
 // Write writes data to path atomically with the specified file mode permissions,
-// subject to the process umask. If path does not exist, Write creates it; if path
-// already exists, Write replaces it atomically.
+// subject to the process umask unless ExactMode is selected. If path does not
+// exist, Write creates it; otherwise, Write replaces it atomically.
 //
 // The write is performed by creating a temporary file in the same directory with
 // mode perm (perm & ^umask), writing the data payload, flushing data and metadata
@@ -229,30 +248,13 @@ func wrapErr(prefix string, err error) error {
 // if removal fails, the cleanup error is joined to the returned error naming the
 // leftover file.
 //
-// Permissions note: atomicfile does not explicitly chmod the file, allowing the
-// process umask to apply naturally (creating the file with perm & ^umask), matching
-// the permission semantics of os.OpenFile and os.WriteFile.
+// Permissions note: by default the process umask applies when the temporary file
+// is created. ExactMode explicitly sets perm after writing and before fsync.
 //
 // Durability note: Write flushes both the file data/metadata (before rename) and
 // the parent directory (after rename, best-effort) to ensure durable directory entry
 // creation across power loss.
 //
-// Option configures atomic write behavior.
-type Option func(*options)
-
-type options struct {
-	exactMode bool
-}
-
-// ExactMode configures atomicfile to explicitly chmod the temporary file to
-// perm prior to renaming it, ensuring the target file receives perm even when
-// the process umask would otherwise restrict it.
-func ExactMode() Option {
-	return func(o *options) {
-		o.exactMode = true
-	}
-}
-
 // Write refuses paths that are not clean (filepath.Clean(path) != path), refuses
 // base names longer than 241 bytes, refuses mode bits outside 0000-0777, refuses
 // to replace directories or symlinks, and returns an error naming path if the
@@ -262,8 +264,8 @@ func Write(path string, data []byte, perm os.FileMode, opts ...Option) error {
 	return writeWithHooks(path, data, perm, nil, opts...)
 }
 
-// WriteFile is an alias for Write, matching os.WriteFile's signature with atomic
-// replacement guarantees, umask preservation, and parent directory durability.
+// WriteFile is an alias for Write. Its optional ExactMode setting overrides the
+// default umask behavior; atomic replacement and directory durability match Write.
 func WriteFile(path string, data []byte, perm os.FileMode, opts ...Option) error {
 	return Write(path, data, perm, opts...)
 }
@@ -351,14 +353,14 @@ func writeWithHooks(path string, data []byte, perm os.FileMode, h *hooks, opts .
 		return wrapErr(fmt.Sprintf("atomicfile: write %q", path), err)
 	}
 
-	if err := h.sync(f); err != nil {
-		return wrapErr(fmt.Sprintf("atomicfile: sync %q", path), err)
-	}
-
 	if opt.exactMode {
 		if err := h.chmod(f, perm); err != nil {
 			return wrapErr(fmt.Sprintf("atomicfile: chmod %q", path), err)
 		}
+	}
+
+	if err := h.sync(f); err != nil {
+		return wrapErr(fmt.Sprintf("atomicfile: sync %q", path), err)
 	}
 
 	closed = true
