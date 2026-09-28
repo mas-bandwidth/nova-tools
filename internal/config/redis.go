@@ -188,6 +188,22 @@ func (a *RedisApplier) Stamp(ctx context.Context, kind string, prev, rev int64) 
 	return err
 }
 
+// execReadPipeline accepts absent values, but never lets an earlier redis.Nil
+// hide a later command failure. Exec reports only the first command error.
+// Callers must validate the whole batch before consuming results or caching them.
+func execReadPipeline(ctx context.Context, pipe redis.Pipeliner) error {
+	cmds, err := pipe.Exec(ctx)
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return err
+	}
+	for _, cmd := range cmds {
+		if err := cmd.Err(); err != nil && !errors.Is(err, redis.Nil) {
+			return fmt.Errorf("%s: %w", cmd.Name(), err)
+		}
+	}
+	return nil
+}
+
 // --- friends ---------------------------------------------------------------
 
 func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64, error) {
@@ -207,7 +223,7 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 	}
 	coordCmd := pipe.Get(ctx, FleetKey("coordinator"))
 	rev := pipe.HGet(ctx, DeclKey, revField(KindFriend))
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+	if err := execReadPipeline(ctx, pipe); err != nil {
 		return nil, 0, fmt.Errorf("redis: read friends: %w", err)
 	}
 	a.friendHosts = make(map[string]string, len(names))
@@ -253,7 +269,7 @@ func (a *RedisApplier) PrefetchFriends(ctx context.Context, names []string) erro
 	if !a.coordinatorRead {
 		coordCmd = pipe.Get(ctx, FleetKey("coordinator"))
 	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+	if err := execReadPipeline(ctx, pipe); err != nil {
 		return fmt.Errorf("redis: prefetch friends: %w", err)
 	}
 	if a.friendHosts == nil {
@@ -457,7 +473,7 @@ func (a *RedisApplier) readMachines(ctx context.Context) (map[string]View, int64
 		reg[i] = pipe.HGetAll(ctx, MachineKey(m))
 	}
 	rev := pipe.HGet(ctx, DeclKey, revField(KindMachine))
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+	if err := execReadPipeline(ctx, pipe); err != nil {
 		return nil, 0, fmt.Errorf("redis: read machines: %w", err)
 	}
 	k, _ := Lookup(KindMachine)
@@ -531,7 +547,7 @@ func (a *RedisApplier) removeMachine(ctx context.Context, m, actor, idem string)
 		for i, n := range names {
 			cmds[i] = pipe.HGet(ctx, kind+":"+n+":desired", "machine")
 		}
-		if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		if err := execReadPipeline(ctx, pipe); err != nil {
 			return fmt.Errorf("redis: read %ss: %w", kind, err)
 		}
 		for i, n := range names {
@@ -568,7 +584,7 @@ func (a *RedisApplier) readSingleton(ctx context.Context, kind string, key func(
 		vals[i] = pipe.Get(ctx, key(f.Name))
 	}
 	rev := pipe.HGet(ctx, DeclKey, revField(kind))
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+	if err := execReadPipeline(ctx, pipe); err != nil {
 		return nil, 0, fmt.Errorf("redis: read %s: %w", kind, err)
 	}
 	v := View{}
@@ -619,7 +635,7 @@ func (a *RedisApplier) Beats(ctx context.Context, names []string) (map[string]*B
 	for i, m := range names {
 		cmds[i] = pipe.HGetAll(ctx, BeatKey(m))
 	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+	if err := execReadPipeline(ctx, pipe); err != nil {
 		return nil, fmt.Errorf("redis: read beats: %w", err)
 	}
 	out := make(map[string]*Beat, len(names))
