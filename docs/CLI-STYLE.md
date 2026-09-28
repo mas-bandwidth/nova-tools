@@ -33,7 +33,7 @@ A resource limit keeps its unit or scope in its name; these spellings stand: nov
 
 **(d) Exits.** 0 passed or done. 1 ran and said NO. 2 could not run. A wrapper may pass through its program's code; no tool invents another. The protocol exceptions:
 - nova-fuse's write verbs (SPEC.md's table).
-- nova-bus wait `--idle-exit <n>`, a caller-selected timeout code (an open decision below).
+- nova-bus wait `--idle-exit <n>`, a caller-selected code for an idle timeout.
 
 **(e) Output: events and payloads.**
 - EVENT output is one line per event, `<TOKEN> OK|FAIL key=value ...`; OK to stdout, FAIL and REFUSED to stderr. One exception, per SPEC.md: nova-self-talk's `SELFTALK FAIL files=...` summary count line goes to stdout beside its advisory note.
@@ -41,7 +41,7 @@ A resource limit keeps its unit or scope in its name; these spellings stand: nov
 - PAYLOAD output: a verb documented to emit a payload names its format in help and emits exactly that payload on stdout and nothing else; its events go to stderr. The documented cases: nova-bus prepare (a JSON artifact), nova-bus draft (a drafted note) and nova-fuse path (a bare value). A payload is never capped like a listing.
 - A remedy is a command, printed shell-quoted so it pastes.
 
-**(e2) Token and escaping grammar: not decided here.** SPEC.md's oneline escaping, whitespace-safe `key=value` fields and `VERB STATUS` token shape govern. Two candidate changes are open decisions below.
+**(e2) Token and escaping grammar.** SPEC.md's oneline escaping, whitespace-safe `key=value` fields and the `VERB STATUS` token shape govern. The caller knows which tool it ran, so the token does not repeat it, and a field needs no quoted-string parser.
 
 ## Refusals and silence
 
@@ -50,7 +50,7 @@ A resource limit keeps its unit or scope in its name; these spellings stand: nov
 - It names every missing required flag at once, never in rounds.
 - An unknown flag is named. An unknown verb is named, lists the verbs, and points at the root `<tool> help`, since it has no verb help.
 - A RUNTIME failure (an unreachable store, a refused login, a missing input file, a lost reply) keeps the one-line shape, and its remedy is the concrete next command for that failure, not `-h`.
-- nova-check's hints stand: each missing required flag gets its own refusal line and one hint line from a fixed set the binary ships, saying what the flag is and what a first run puts there. Its refusals point at the root `nova-check help` (an open decision below).
+- nova-check's hints stand: each missing required flag gets its own refusal line and one hint line from a fixed set the binary ships, saying what the flag is and what a first run puts there. Its refusals point at the root `nova-check help`; they move to `nova-check <verb> -h` with the rest.
 
 **(g) No silent success.** Three cases:
 - A missing INPUT (a required path, root, store, session, machine, friend or seat that must exist and be readable) is a refusal, exit 2, never `count=0 OK`.
@@ -82,17 +82,13 @@ An ignored flag is a refusal; a stale checker (`last=` past its bound) is FAIL.
 
 **(n) Used means delivered.** A delivery loop reports `delivered=` and `refused=` truthfully; an idle poll is a valid empty result. Dated delivery evidence is a release criterion.
 
-## Decisions for Glenn
+## Settled choices
 
-These are open; every other rule holds either way.
-
-1. **Token shape:** `VERB STATUS`, or `TOOL VERB STATUS`.
-2. **Field quoting:** oneline escaping, or fields in Go `%q`, which needs a quoted-string parser.
-
-   Either change costs every parser and class test that reads lines, in one cut.
-3. **The seat's Redis:** whether a tool may default to the seat's Redis, as the class test requires, or refuses without `--addr`.
-4. **`--idle-exit`:** whether nova-bus wait keeps its caller-selected code, or its callers move off it.
-5. **Help pointer:** whether a malformed invocation's remedy is `<tool> <verb> -h`, or the root `<tool> help`, as nova-check prints.
+1. **Token shape:** `VERB STATUS`.
+2. **Field quoting:** oneline escaping.
+3. **The seat's Redis:** a tool may default to the Redis its seat is configured with; that is configuration, not a guess. Every other store is named with `--addr`.
+4. **`--idle-exit`:** nova-bus wait keeps its caller-selected code.
+5. **Help pointer:** a malformed invocation's remedy is `<tool> <verb> -h`.
 
 ## Enforce in this order
 
