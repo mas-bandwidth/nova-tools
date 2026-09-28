@@ -2783,7 +2783,7 @@ for breadcrumbs as you work, failing silent is not allowed. Without this every
 thing we have done shows it is not possible to make a reliable system"; and
 2026-09-26 11:30 AM ET: "every verb in nova tools related to current work should
 not fail silently. Scan for silent failures and fix." In the live packages
-(`cmd/nova-sprint`, `deprecated/cmd/nova-card`, `internal/nsprint/{reconcile, taskcard,
+(`cmd/nova-sprint`, `internal/nsprint/{reconcile, taskcard,
 table, card, launch, fn, capacity, pipeerr}`), no non-test `.go` file holds
 `_ = err` (any error-named identifier assigned to the blank identifier) or a
 `|| true` inside a Go string literal (an embedded script step whose exit is

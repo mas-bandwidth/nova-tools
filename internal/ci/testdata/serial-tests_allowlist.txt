@@ -22,7 +22,7 @@
 # TestReadCopyDealtToBenchRendersALintedCard), then by nine more from the redis
 # stream (seat and #3277 tests on t.Setenv); each owes a per-test seam. Moved
 # from the serialTestsCeiling constant into this file at 876, the count that day.
-# ceiling: 827
+# ceiling: 825
 cmd/nova-bus/issue1451_test.go:TestIssue1451EveryBareVerbRefusalNamesTheDoor serial: t.Setenv
 cmd/nova-bus/main_test.go:TestReceiptMaxWordsDefaultsFromBusFileThenEnv serial: t.Setenv
 cmd/nova-bus/reply_test.go:TestAFilesystemWithNoCreateExclusivePublishIsRefused serial: swaps package var main.publishDraft
@@ -671,8 +671,6 @@ internal/nsprint/land/fleet_test.go:TestL15 serial: t.Setenv
 internal/nsprint/launch/launch_test.go:TestLaunchOverrunsWithNothingRefused serial: t.Setenv
 internal/nsprint/launch/launch_test.go:TestLaunchRefusesASecondLaunchOfOneAttempt serial: t.Setenv
 internal/nsprint/launch/launch_test.go:TestLaunchRefusesLinesPastTheBudget serial: t.Setenv
-internal/nsprint/launch/realwrapper_slow_test.go:TestLaunchRealWrapper serial: t.Setenv
-internal/nsprint/launch/realwrapper_slow_test.go:TestLaunchRealWrapperReportsNotDealtAsRefused serial: t.Setenv
 internal/nsprint/lessons/lessons_test.go:TestWaitersRaceAnOldLockAndEveryAcknowledgedRowSurvives serial: swaps package var lessons.lockBusy
 internal/nsprint/mirror/mirror_test.go:TestFetchFailureLeavesMirror serial: t.Setenv
 internal/nsprint/mirror/mirror_test.go:TestFirstCloneAtomic serial: t.Setenv
