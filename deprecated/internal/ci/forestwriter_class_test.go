@@ -170,7 +170,7 @@ func fileWriteCalls(body *ast.BlockStmt) []*ast.CallExpr {
 		}
 		switch pkg.Name + "." + sel.Sel.Name {
 		case "os.WriteFile", "os.Create", "os.CreateTemp", "os.Rename", "os.Truncate", "os.Link", "os.Symlink",
-			"ioutil.WriteFile", "ioutil.TempFile":
+			"ioutil.WriteFile", "ioutil.TempFile", "atomicfile.Write", "atomicfile.WriteFile":
 			out = append(out, call)
 		case "os.OpenFile":
 			if len(call.Args) >= 2 && isSelector(call.Args[1], "os", "O_RDONLY") {

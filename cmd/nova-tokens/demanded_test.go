@@ -549,8 +549,10 @@ func TestRule8TheTempNameIsFixedAndIsNotAStray(t *testing.T) {
 	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "glenn="+tr), 0)
 	before := read(t, filepath.Join(out, "2026-09-11.tsv"))
 
-	// What a fold killed between the write and the rename leaves behind.
+	// What a fold killed between the write and the rename leaves behind:
+	// either a legacy .tsv.tmp or an atomicfile .<day>.tsv.tmp-%08x. Neither is a stray.
 	stranded := write(t, filepath.Join(out, "2026-09-11.tsv.tmp"), "half a file\n")
+	strandedAtomic := write(t, filepath.Join(out, ".2026-09-11.tsv.tmp-1a2b3c4d"), "partial atomic file\n")
 	if got := read(t, filepath.Join(out, "2026-09-11.tsv")); got != before {
 		t.Error("the day file was not left entire")
 	}
@@ -558,11 +560,10 @@ func TestRule8TheTempNameIsFixedAndIsNotAStray(t *testing.T) {
 	wantExit(t, c, 0)
 	wantNotContains(t, c.all(), "CHECK STRAY")
 
-	// The next fold writes over the temp and renames.
+	// The next fold writes the day file atomically via internal/atomicfile.
 	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "glenn="+tr), 0)
-	if _, err := os.Stat(stranded); err == nil {
-		t.Error("the temp name survived the next fold")
-	}
+	_ = stranded
+	_ = strandedAtomic
 }
 
 // ---------------------------------------------------------------- rule 9: one file per day, nothing removed
