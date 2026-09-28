@@ -45,6 +45,7 @@ table_demo_dir=$(mktemp -d "${TMPDIR:-/tmp}/nova-table.XXXXXX")
 redis-server --port 0 --unixsocket "$table_demo_dir/redis.sock" \
   --unixsocketperm 700 --save '' --appendonly no --daemonize yes \
   --pidfile "$table_demo_dir/redis.pid" --logfile "$table_demo_dir/redis.log"
+for _ in $(seq 50); do redis-cli -s "$table_demo_dir/redis.sock" ping >/dev/null 2>&1 && break; sleep 0.1; done
 local_table_store() {
   env -u NOVA_SEAT -u NOVA_SPRINT_SEAT -u NOVA_SPRINT_REDIS_USER \
     -u NOVA_SPRINT_REDIS_PASSWORD_ENV -u NOVA_REDIS_BENCH_PASSWORD \
