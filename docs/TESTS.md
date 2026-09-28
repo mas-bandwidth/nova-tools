@@ -246,14 +246,8 @@ help banner's own `seat inject` example is run through the one comparator in the
 same package, including its committed-branch receipt. The transcript is held
 beside that test, with the branch's timestamp the one declared run-owned value.
 
-**The Studio's store file is `studio.yaml`, not `swarm-studio.yaml`.** Every Linux
-bench's store follows the `swarm-<name>.yaml` convention (`swarm-hulk.yaml`,
-`swarm-space.yaml`, `swarm-vision.yaml`, …). The Studio is the only bench whose
-store file omits the `swarm-` prefix, and the darwin launcher used to ask for
-the prefixed name — `swarm-studio.yaml` — and lost every card it took (80 of 80,
-nova-tools #2000). The launcher's seat name must resolve to `studio.yaml` on the
-Studio; a seat called `studio` that resolves to `swarm-studio.yaml` is a silent
-empty wave.
+A bench whose store file omits the `swarm-` prefix must be asked for under that
+file's name, or the launcher reads an empty store.
 
 ## nova-check
 
