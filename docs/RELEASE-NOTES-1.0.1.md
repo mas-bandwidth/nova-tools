@@ -18,6 +18,12 @@ Retrying an identical append returns the original stored timestamp and
 
 ## Findings and commands you can act on
 
+`nova-memory verify --exclude` applies to the whole verified corpus,
+including coverage and frontmatter selectors. An excluded directory also
+excludes its children. A retained note that links to an excluded target still
+reports an unresolved link, and a selector left with no files refuses.
+Summary counts report all findings, even when the display limit hides some.
+
 `nova-self-talk` reports findings at their original source line numbers.
 If every input is skipped, it prints an explicit `SKIP` result and exits 0.
 Flags placed after a file operand refuse before the tool reads files, so
