@@ -7,6 +7,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/redis/go-redis/v9"
@@ -225,7 +226,7 @@ func holdsSecret(text, secret string) bool {
 
 	// go-redis wire parse diagnostics quote wire replies with %.100q (e.g.
 	// "redis: can't parse map reply: %.100q"). An unquoted wire line holds
-	// the store's exact reply without Go escaping, bounded to 100 bytes.
+	// the store's exact reply without Go escaping, bounded to 100 code points (runes).
 	for _, quoted := range findQuotedStrings(text) {
 		unquoted, err := strconv.Unquote(quoted)
 		if err != nil {
@@ -238,7 +239,7 @@ func holdsSecret(text, secret string) bool {
 			return true
 		}
 		// A line truncated at the 100-character bound of %.100q ends with a prefix of secret.
-		if len(unquoted) == 100 {
+		if utf8.RuneCountInString(unquoted) == 100 {
 			for k := min(len(secret), 100); k >= 3; k-- {
 				if strings.HasSuffix(unquoted, secret[:k]) {
 					return true
