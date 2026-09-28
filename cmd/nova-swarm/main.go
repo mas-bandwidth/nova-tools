@@ -35,6 +35,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/events"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
@@ -91,6 +92,13 @@ example:
   nova-swarm template --name read-pr
 `
 
+// helpVerbs are the verbs `help <verb>` answers with that verb's help, the same text
+// `<verb> -h` prints.
+var helpVerbs = map[string]bool{
+	"version": true, "doctor": true, "batch": true, "verify": true, "lint": true,
+	"template": true, "profile": true, "native": true, "route": true, "slots": true, "worker": true,
+}
+
 // refuse is what an unusable invocation costs: ONE line naming what was wrong and the door
 // to the usage, never the banner, which is 60 lines and is behind `nova-swarm help`.
 func refuse(stderr io.Writer, where, what string) int {
@@ -109,7 +117,11 @@ func main() {
 	os.Exit(run(args, os.Stdin, os.Stdout, os.Stderr, time.Now().UTC()))
 }
 
-func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time) int {
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time) (code int) {
+	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0, before
+	// anything is read, dialed or written (the CLI style's rule (b), #4505). Only -h:
+	// every other exit of this tool is unchanged.
+	defer verbflag.Recover(stdout, "nova-swarm", usage, &code)
 	// --seat <name> (or NOVA_SEAT): the Redis login is read from that seat's
 	// file through nova-secrets' library, in this process (#4052).
 	args, err := seatcred.FromArgs(args, os.Getenv)
@@ -122,6 +134,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 	cmd, rest := args[0], args[1:]
 	switch cmd {
 	case "help", "-h", "--help":
+		// help <verb> for a NAMED verb only: anything else is the banner.
+		if cmd == "help" && len(rest) > 0 && helpVerbs[rest[0]] {
+			return run(append(append([]string{}, rest...), "--help"), stdin, stdout, stderr, now)
+		}
 		fmt.Fprint(stdout, usage)
 		return 0
 	case "version", "--version":
@@ -211,7 +227,7 @@ func (s *secondsFlag) Set(v string) error {
 // want and wantCount, which collect EVERY independent problem so that one run names them
 // all (ONBOARDING point 2) rather than sending a first run back three times.
 func (f *flags) parse(args []string, stderr io.Writer) bool {
-	if err := f.fs.Parse(args); err != nil {
+	if err := verbflag.Parse(f.fs, args); err != nil {
 		refuse(stderr, " "+f.verb, oneline.Cap(err.Error(), oneline.TailBytes))
 		return false
 	}
