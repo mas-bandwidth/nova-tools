@@ -25,12 +25,12 @@ import (
 // knows; our fleet is one nova-config configuration; our names only in our config,
 // receipts and docs examples marked as examples." (see docs/SPEC-CI.md#generality).
 //
-// Token list derivation (curated inventory derived from fleet configuration evidence):
-// 1. Machines / hosts / tailnet nodes:
+// Token lists are a curated inventory.
+// 1. Machines / hosts / tailnet nodes (curated; no source file):
 //    - space, hetzner, hulk, vision, batman, superman, studio, mini, captainamerica, antman, macbook
 // 2. Friends / persons (AGENTS.md, message-bus sender lanes):
 //    - alex, emma, freddy, glenn, johnny, rowan, stella
-// 3. GitHub accounts & organizations:
+// 3. GitHub accounts and organizations (curated; no source file):
 //    - mas-bandwidth, spacegame
 //
 // Boundary controls & exclusions:
@@ -61,7 +61,7 @@ import (
 const generalityAllowlistPath = "testdata/generality_allowlist.txt"
 
 // forbiddenTokens is the curated inventory of friend/person names, hostnames,
-// tailnet nodes, and GitHub accounts derived from fleet configuration evidence.
+// tailnet nodes, and GitHub accounts.
 var forbiddenTokens = map[string]bool{
 	"alex":           true,
 	"antman":         true,
