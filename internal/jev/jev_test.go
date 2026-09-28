@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/jev"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land/stream"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
@@ -132,8 +131,8 @@ func TestJevBaseRefusesStackedPR(t *testing.T) {
 }
 
 // TestJevLineIsOneTypedLineAndNeverARead: the line round-trips through
-// Parse, is one line with no field smuggled into why, and neither ReadAt nor
-// the typed DISPOSITION parser takes it for a read.
+// Parse, is one line with no field smuggled into why, and the typed
+// DISPOSITION parser does not take it for a read.
 func TestJevLineIsOneTypedLineAndNeverARead(t *testing.T) {
 	t.Parallel()
 
@@ -153,9 +152,6 @@ func TestJevLineIsOneTypedLineAndNeverARead(t *testing.T) {
 		t.Fatalf("parse %+v %v", p, ok)
 	}
 	lines := []string{s, "JEV head=" + head + " verdict=PASS score=9 conf=0.90 rubric=x base=ok checks=x model=m cost=$- explain=x"}
-	if r := stream.ReadAt(lines, head); r.Score != -1 || r.Who != "" || r.Held != "" {
-		t.Fatalf("ReadAt counted a JEV line: %+v", r)
-	}
 	if _, ok := typedrec.ParseDisposition(s); ok {
 		t.Fatal("the typed DISPOSITION parser took the JEV line")
 	}

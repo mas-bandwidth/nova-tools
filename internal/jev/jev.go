@@ -26,7 +26,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pr"
+	"github.com/mas-bandwidth/nova-tools/internal/canonpath"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -167,9 +167,9 @@ func dependsForm(v string) string {
 }
 
 // CanonPaths reads a PATHS line: parenthesised notes such as (new) go, and
-// what is left is the one path list internal/nsprint/pr canonicalises.
+// what is left is the one path list internal/canonpath canonicalises.
 func CanonPaths(line string) ([]string, error) {
-	return pr.CanonPaths(parenRx.ReplaceAllString(line, " "))
+	return canonpath.CanonPaths(parenRx.ReplaceAllString(line, " "))
 }
 
 // Lint is every typed body line present, once (a second line with another
