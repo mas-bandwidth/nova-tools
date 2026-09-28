@@ -1505,7 +1505,8 @@ the allowlist is matched by prefix.
 
 ### `cache` — no cache step on a self-hosted runner
 
-**The rule.** Every `actions/cache` step in `ci.yml` carries
+**The rule.** Every `actions/cache` step in `ci.yml` (including its `restore` and
+`save` halves) carries
 `if: runner.environment == 'github-hosted'`, and every `setup-go` step there says
 `cache: false`; a persistent runner already has its cache on disk.
 **The hurt.** 2026-09-17: the merge gate's darwin leg moved to the Studio's
@@ -1612,18 +1613,37 @@ shard count: ubuntu-latest runs shards 1..6 and macos-latest 1..8, every leg
 carrying its OS's `shards`. The `deal this shard's packages` step places the
 heavy packages (`cmd/nova-bus`, `cmd/nova-merge`, `cmd/nova-sprint`,
 `cmd/nova-swarm`) first, one per shard, then every other package round-robin in
-`go list` order; vet and test both read the deal's `HOSTED_PKGS`.
+`go list` order; vet and test both read the deal's `HOSTED_PKGS`. The Go cache
+is restored at the path Go uses on each OS (`~/Library/Caches/go-build` on
+macOS, `~/.cache/go-build` on Linux, plus `~/go/pkg/mod`) by
+`actions/cache/restore` before `build`, and written by `actions/cache/save`
+after `build` and before the test step, only when the key was not an exact hit.
+**Why the per-OS path.** GOCACHE is `os.UserCacheDir()/go-build`, which is
+`~/Library/Caches/go-build` on macos-latest (the job's own `go env`), so the one
+Linux path cached no macOS build at all.
+**Why restore and save are split.** The combined `actions/cache` saves in a post
+step with `post-if: success()`, so a shard the cap cancels never saves and a leg
+that only fits warm would never be warmed.
+**Why the save comes before the tests.** The tests are the step the cap cancels;
+cold dispatch run 36360695785 saved on shard 2 at 00:04:19 and cancelled its
+test step at 00:04:52, and the 198 MB entry warmed the shards that started after.
 **The hurt.** Dev push run 36269122367 at f7aa36530: at four shards per OS,
 ubuntu-latest's shard 3 was cancelled at 123 s and all four macos-latest shards
 at 125-173 s, turning `ci-ok` red. Shard 3 of 4 held `cmd/nova-bus` (46 s
 `-short` on the Studio) and `cmd/nova-merge` (28 s) together, and a count-only
-deal kept them together at eight.
+deal kept them together at eight. Dev push run 36357749371 at 3a3f5be93: the
+cache step cached `~/.cache/go-build` on every OS, the macOS entry was 107 MB of
+module cache against Linux's 636 MB while the step logged "cache hit", macOS
+`build` took 43-90 s and vet 6-13 s against ubuntu's 12-18 s and 0-2 s, and
+seven of eight macOS shards were cancelled by the cap.
 **The test.** `TestHostedShardsUnderTheCap` (every ci.yml job at two minutes;
 both hosted OSes; shards 1..n with n at least 6 and 8), `TestHostedDealPartitionsTheTree`
 (the deal step over a stand-in list lands every package in exactly one shard)
 and `TestHostedDealSplitsTheHeavyPackages` (the deal step over the real
 `go list ./...`: no two heavy packages share a shard)
-(`internal/ci/hosted_shards_class_test.go`).
+(`internal/ci/hosted_shards_class_test.go`), and `TestHostedCacheIsWhereGoKeepsIt`
+(restore and save carry the per-OS path, no combined `actions/cache`, restore
+before `build` before save before the tests; `internal/ci/hosted_cache_class_test.go`).
 **Its allowlist.** `hostedHeavy` in that file, which the step spells verbatim.
 **Its remedy line.** Add a shard to the OS's matrix and `include`, or name a
 package in `hostedHeavy` and in the step's `heavy=`; never raise the timeout.
