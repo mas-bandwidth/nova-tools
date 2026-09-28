@@ -36,9 +36,9 @@ func guardedByMergeRule(rel string) bool {
 // main's tip, so Deleted is every deletion dev accumulated since the last
 // promotion, each already declared in the change that made it on dev; the
 // class test recognises that pull request (promotionSkip) and does not run
-// the comparison on it; once the promotion has landed, the push run on main
-// and a workflow_dispatch at that sha compare the merge with its second
-// parent instead, dev's tip (comparisonParent).
+// the comparison on it; once the promotion has landed, the push run on main,
+// a workflow_dispatch at that sha and a scheduled run there compare the merge
+// with its second parent instead, dev's tip (comparisonParent).
 type mergeDeletions struct {
 	Head, Parent, Subject string
 	// Deleted is every path gone from the tree, renames excluded (-M).
@@ -56,7 +56,8 @@ func readMergeDeletions(root string) (*mergeDeletions, error) {
 
 // readMergeDeletionsFor is readMergeDeletions with the comparison parent
 // chosen by comparisonParent from GitHub's event and ref: the second parent
-// for a merge on main under push or workflow_dispatch, the first otherwise.
+// for a merge on main under push, workflow_dispatch or schedule, the first
+// otherwise.
 // The note, when there is one, names the parent used.
 func readMergeDeletionsFor(root, event, ref string) (*mergeDeletions, string, error) {
 	parents, err := commitParents(root)
@@ -153,8 +154,10 @@ func parentInCheckout(root, parent string) error {
 // comparisonParent chooses which parent HEAD is compared with, from GitHub's
 // event and ref (GITHUB_EVENT_NAME, GITHUB_REF) and HEAD's parents in order.
 // It is the second parent exactly when HEAD is a two-parent merge, the ref is
-// refs/heads/main and the event is push or workflow_dispatch: the run on main
-// after a promotion lands, and certification dispatched at that sha. There
+// refs/heads/main and the event is push, workflow_dispatch or schedule: the
+// run on main after a promotion lands, certification dispatched at that sha,
+// and the nightly runs while that sha is main's tip (main is the default
+// branch, where schedules run). There
 // the first parent is main's old tip, and comparing with it would see every
 // deletion dev accumulated since the last promotion; the second parent is
 // dev's tip, and what HEAD lacks that it had is what the merge itself took
@@ -163,7 +166,7 @@ func parentInCheckout(root, parent string) error {
 // parent: a squash on main (one parent), a merge on dev, a pull request's
 // merge ref, a local run with no environment.
 func comparisonParent(event, ref string, parents []string) (parent, note string) {
-	if len(parents) == 2 && ref == "refs/heads/main" && (event == "push" || event == "workflow_dispatch") {
+	if len(parents) == 2 && ref == "refs/heads/main" && (event == "push" || event == "workflow_dispatch" || event == "schedule") {
 		return parents[1], "NOTE: " + event + " on " + ref + " at a merge commit: HEAD is compared with its second parent " + parents[1][:9] + " (dev's tip), so the set is what the merge itself deleted beyond dev; what it brought from dev was checked on dev's queue, change by change"
 	}
 	return parents[0], ""
@@ -404,11 +407,11 @@ func TestPromotionSkipReadsTheEvent(t *testing.T) {
 }
 
 // TestComparisonParentReadsTheEventAndTheRef pins the one shape compared with
-// its second parent, a two-parent merge on refs/heads/main under push or
-// workflow_dispatch, against its reversed witnesses: one parent on main (a
-// squash, compared with its first parent as everywhere), a merge on dev, a
-// pull request's merge ref (that case is promotionSkip's), and no
-// environment.
+// its second parent, a two-parent merge on refs/heads/main under push,
+// workflow_dispatch or schedule, against its reversed witnesses: one parent
+// on main (a squash, compared with its first parent as everywhere), a merge
+// on dev under push and under schedule, a pull request's merge ref (that
+// case is promotionSkip's), and no environment.
 func TestComparisonParentReadsTheEventAndTheRef(t *testing.T) {
 	t.Parallel()
 	one := []string{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
@@ -420,8 +423,10 @@ func TestComparisonParentReadsTheEventAndTheRef(t *testing.T) {
 	}{
 		{"push on main at a merge", "push", "refs/heads/main", two, true},
 		{"workflow_dispatch on main at a merge", "workflow_dispatch", "refs/heads/main", two, true},
+		{"schedule on main at a merge", "schedule", "refs/heads/main", two, true},
 		{"push on main at a squash", "push", "refs/heads/main", one, false},
 		{"push on dev at a merge", "push", "refs/heads/dev", two, false},
+		{"schedule on dev at a merge", "schedule", "refs/heads/dev", two, false},
 		{"a pull request's merge ref", "pull_request", "refs/pull/4549/merge", two, false},
 		{"merge_group on main's queue ref", "merge_group", "refs/heads/gh-readonly-queue/main/pr-1-aaaa", two, false},
 		{"no environment", "", "", two, false},

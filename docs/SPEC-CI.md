@@ -2076,8 +2076,9 @@ saying why: the first parent is main's tip, so the set would be every
 deletion dev accumulated since the last promotion, each declared in the
 change that made it on dev, where this rule ran; main takes pull requests
 only, so no other event carries a promotion. Once the promotion has landed,
-the `push` run on main and a `workflow_dispatch` at that sha (`GITHUB_REF`
-`refs/heads/main`, HEAD a two-parent merge) compare HEAD with its SECOND
+the `push` run on main, a `workflow_dispatch` at that sha and a scheduled
+run there (`GITHUB_REF` `refs/heads/main`, HEAD a two-parent merge; main is
+the default branch, where schedules run) compare HEAD with its SECOND
 parent, dev's tip (`comparisonParent`, with a NOTE naming it): the set is
 what the merge itself deleted beyond dev, nothing for a true promotion and a
 real deletion for anything smuggled into the merge commit; a squash on main
