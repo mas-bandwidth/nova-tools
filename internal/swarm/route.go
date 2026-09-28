@@ -1,6 +1,6 @@
 package swarm
 
-// The typed-decision route (docs/SPEC-DECIDE.md): a card's worker is chosen by a
+// The typed-decision route (deprecated/docs/SPEC-DECIDE.md): a card's worker is chosen by a
 // small judgment behind a floor, and a decision below the floor is a suggestion,
 // never an authorization -- the caller keeps the default worker.
 //

@@ -231,7 +231,7 @@ const functionalUsage = "usage: nova-ci functional <package-dir>... (package dir
 // typo in CI's package list must never skip the functional tier in silence.
 func cmdFunctional(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		return refuse(stderr, " functional", "no package directory given; pass the packages the change touched (./cmd/nova-sprint ...)")
+		return refuse(stderr, " functional", "no package directory given; pass the packages the change touched (./cmd/nova-table ...)")
 	}
 	var problems, patterns []string
 	for _, arg := range args {
@@ -239,7 +239,7 @@ func cmdFunctional(args []string, stdout, stderr io.Writer) int {
 		case arg == "-h" || arg == "--help" || arg == "-help":
 			return refuse(stderr, " functional", functionalUsage)
 		case strings.HasPrefix(arg, "-"):
-			problems = append(problems, fmt.Sprintf("unknown flag %q (functional takes no flags, only package directories such as ./cmd/nova-sprint or ./internal/...)", arg))
+			problems = append(problems, fmt.Sprintf("unknown flag %q (functional takes no flags, only package directories such as ./cmd/nova-table or ./internal/...)", arg))
 		default:
 			patterns = append(patterns, arg)
 		}

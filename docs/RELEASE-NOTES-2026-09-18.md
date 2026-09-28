@@ -34,9 +34,9 @@ merged tree before the batch was pushed.
   record, with git keeping the bus and the journal.
 - **#1208** — `docs/SPEC-FLEET-KUBE.md` drafted: Terraform declares the fleet,
   Kubernetes runs it, and `nova-sandbox` is the second wall.
-- **#1286** — `cmd/nova-swarm` tests back inside the 60 s package budget, with no
+- **#1286** — `deprecated/cmd/nova-swarm` tests back inside the 60 s package budget, with no
   network and no wall-clock waits (the first `CI-SLOW` alert).
-- **#1290** — `cmd/nova-merge` tests, the same.
+- **#1290** — `deprecated/cmd/nova-merge` tests, the same.
 - **#1291** — `internal/bus` tests, the same.
 - **#1294** — `internal/pulse` tests, the same.
 

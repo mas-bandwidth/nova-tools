@@ -404,7 +404,7 @@ func Batch(in BatchInput) int {
 	// `Reap` is the house's own end-a-group: terminate, wait the grace, kill, and confirm.
 	// The TERMINATE FIRST is load-bearing rather than polite -- the child of a runnerless
 	// batch is `nova-swarm native`, which answers a TERM by reaping its own tree and folding
-	// its usage before it goes (cmd/nova-swarm/native.go, nativeTermCh). A SIGKILL alone
+	// its usage before it goes (deprecated/cmd/nova-swarm/native.go, nativeTermCh). A SIGKILL alone
 	// would lose that fold.
 	//
 	// THE CARDS ARE REAPED CONCURRENTLY. Serially, the grace would be paid once per card and

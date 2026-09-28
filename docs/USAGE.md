@@ -70,21 +70,13 @@ themselves run against this repository's own example data or a path you create.
 and none should be pointed at a shared repository until you have seen what it
 does locally.
 
-## Start with two tools
+## Start with one tool
 
-Two tools carry most of the benefit and ask the least of you:
+One tool carries most of the benefit and asks the least of you:
 
 - **`nova-bus`** gives you and your friends a durable place to tell each other
   things. Try it first if the problem is "we lose track of what was said" or "we
   cannot talk to each other across different harnesses."
-- **`nova-wake`** turns waiting into one bounded command instead of a loop that
-  spends a model turn per tick to learn that nothing happened. Try it second,
-  once there is something worth waiting for.
-
-If those two help, there is a next step, and it really is optional:
-
-- **`nova-swarm`** when you have genuinely parallel bounded work and workers
-  configured to run it.
 
 Everything else is a separate, independent tool. Reach for one when its situation
 is yours — not to collect the set.
@@ -101,21 +93,18 @@ With **Go 1.26 or newer**, install only the tools you want, pinned to a release:
 
 ```sh
 go install github.com/mas-bandwidth/nova-tools/cmd/nova-bus@v0.15.2
-go install github.com/mas-bandwidth/nova-tools/cmd/nova-wake@v0.15.2
 nova-bus version
-nova-wake help
 ```
 
-Those commands install the two named tools from `v0.15.2`. This guide also
+Those commands install the named tool from `v0.15.2`. This guide also
 describes development-branch features where it labels them explicitly;
-`nova-post`, `nova-review`, `nova-secrets`, `nova-pulse`, `nova-work`, `nova-ci`,
-`nova-cairn`, `nova-decide` and `nova-sandbox egress` are not available from the
+`nova-post`, `nova-secrets`, `nova-pulse`, `nova-work`, `nova-ci`,
+`nova-cairn` and `nova-sandbox egress` are not available from the
 pinned release.
 
-The two `go install` lines **reach the network**: they download and build the
-module and write the binaries into Go's bin directory, and Go may also populate
-its module and build caches. The last two lines are read-only — one prints a
-version, the other prints help. Ensure Go's binary directory is on your `PATH`.
+The `go install` line **reaches the network**: it downloads and builds the
+module and writes the binary into Go's bin directory, and Go may also populate
+its module and build caches. The last line is read-only: it prints a version. Ensure Go's binary directory is on your `PATH`.
 
 If you keep your chosen tools in a private bin directory, put it **first** on
 your `PATH` for the operation. Tools can call other tools: a new `nova-version`
@@ -147,9 +136,8 @@ tests execute line by line are the ones in [docs/TESTS.md](TESTS.md)**, so those
 show what the tool prints today; the command reference carries more detail and its
 own checks.
 
-Five tools have a `quickstart` verb — `nova-wake`, `nova-swarm`, `nova-merge`,
-`nova-memory` and `nova-check` — and **every one of them still requires paths or
-choices you supply**. `nova-bus`, `nova-tokens`,
+Two tools have a `quickstart` verb — `nova-memory` and `nova-check` — and
+**both still require paths or choices you supply**. `nova-bus`, `nova-tokens`,
 `nova-sandbox`, `nova-self-talk` and `nova-fuse` have none. Each entry below
 names what its own first trial needs.
 
@@ -231,174 +219,12 @@ warmly it is worded and whoever signs it.
 **It may not help if** you already have a channel everyone actually reads, or you
 are the only one here.
 
-### nova-wake — updates without polling
-
-**Try it when** you are spending model turns on a loop that checks whether
-anything changed and mostly discovers that nothing did.
-
-**What it does.** Waits, up to a deadline you set, for new messages, changed
-check results or worker results, then prints what moved.
-
-**You need** its own state file (`--state <file>`, one per watch, holding what
-each watched thing last looked like), at least one source to watch, and a
-maximum duration. You also choose what reaching the deadline means. Nothing is
-guessed: `quickstart` refuses until you name the state file and a source.
-
-**First trial.** The reports-only shape is the safest — it reaches no remote and
-needs no bus:
-
-```sh
-mkdir -p ./reports
-printf '# Result\nstate: first\n' > ./reports/RESULT.md
-nova-wake quickstart --state ./wake.json --reports ./reports
-```
-
-The owned directory and `RESULT.md` are the first two lines created. `quickstart`
-records and prints that first view once. Then wait for the next change with the
-same report directory and state file:
-
-```sh
-nova-wake watch --state ./wake.json --reports ./reports --max 5m --interval 5s --on-deadline report
-```
-
-While that command waits, open a second terminal, change to the same directory
-where `wake.json` and `reports` live, and change the owned result:
-
-```sh
-printf 'state: changed\n' >> ./reports/RESULT.md
-```
-
-The watch returns `WAKE CHANGE`. Use one state file per watch. Bus refresh is a
-separate mode, not part of this local two-step trial.
-
-A regular `watch` additionally requires `--max`, `--interval` and
-`--on-deadline`, which have no defaults. The [first-run transcript](TESTS.md#nova-wake) is
-executed by a test, and
-[nova-wake in the command reference](CLI.md#nova-wake) explains the verdict line
-and the waiting behaviour.
-
-**It worked if** one command replaced your polling loop, and its verdict line
-told you plainly whether it came back because something changed or because it ran
-out of time.
-
-**Limits and side effects.** By default it reads a local checkout, but it is not
-checkout-only: `--refresh` fetches each poll without moving your cursor,
-`--advance-cursor` fetches and moves it, and `--entry <owner>/<repo>#<n>` watches
-a pull request's checks on GitHub. A bus-backed watch needs a matching `nova-bus`
-release, so upgrade that pair together; a reports-only first trial does not. A
-deadline reached is a real answer, not a failure.
-
-**It may not help if** nothing in your work changes on a timescale worth waiting
-for.
-
 ### nova-board — who is doing what
 
 **Deprecated.** `nova-board` is deprecated (Glenn, 2026-09-27); who is doing what becomes the job of `nova-sprint` as it is rebuilt on `nova-table`.
 It is no longer built, tested or shipped, so there is nothing here to install or
 try. Its code, its spec, its command reference and its first-run transcript are
 kept as reference only under [`deprecated/`](../deprecated/README.md).
-
-### nova-swarm — more work at once
-
-**Try it when** you have bounded, independent jobs and workers configured to run
-them, and doing them one after another is what is slowing you down.
-
-**What it does.** Runs tasks in parallel using AI workers you configure, with
-deadlines, collected results and usage accounting where the source supports it.
-
-**You need** a pool directory, a worker description naming whose model runs, and
-a harness and provider setup that actually works. **Every job runs inside
-`nova-sandbox` on every supported platform**: `run` proves the wall once before
-the first worker and refuses to start without a usable sandbox unless you
-explicitly pass `--no-sandbox`, **which provides no containment at all**. macOS
-uses `sandbox-exec`; Linux uses Landlock when the running kernel supports it.
-Windows has no containment backend yet.
-
-**First trial.** `nova-swarm quickstart --pool <dir>` makes the pool structure
-and names the commands that follow, without running a worker or spending a
-token. See the
-[first-run transcript](TESTS.md#nova-swarm) and
-[nova-swarm in the command reference](CLI.md#nova-swarm).
-
-**It worked if** several jobs finished inside their deadlines and you could read
-each result and the evidence behind it.
-
-**Limits and side effects.** It runs other programs, writes job directories, and
-spends real tokens once workers start. A worker exiting `0` means the process
-succeeded, **not** that the requested work is complete — read the evidence. A
-free worker helps only if its capabilities fit the task. The development branch
-adds `nova-sandbox run` on macOS; it is not in `v0.15.2`, and its Linux form
-refuses. On macOS, starting it from inside an existing sandbox may fail while
-creating its APFS volume because the outer wall does not permit the mount. Start
-the disposable volume from outside the existing wall; retrying the same nested
-command does not grant the missing mount access.
-
-**It may not help if** your work is mostly sequential, or you have no worker setup
-to point it at yet.
-
-### nova-merge — a controlled queue for landing work
-
-**Try it when** changes land out of order, or land without the review and the
-tests they were supposed to have had.
-
-**What it does.** Checks reviews and tests before merging changes in order.
-
-**You need** the lane's own directory (`--lane`), the repository it lands into
-(`--repo <owner>/<name>`), the branch entries are merged onto (`--base`), the
-lane's own branch (`--lane-branch`), `git`, and `gh` with access you already
-have. `quickstart` names each missing one rather than assuming it.
-
-**Read this before the first trial: `init` and `quickstart` create and PUSH the
-lane branch.** They are not read-only. So rehearse against a bare repository of
-your own, with an absolute `--remote` and a lane directory of its own, which
-keeps the whole first run off any forge:
-
-```sh
-git init -q --bare ./rehearsal.git
-nova-merge quickstart --lane ./rehearsal-lane --repo mas-bandwidth/nova-tools --base main \
-           --lane-branch nova-merge/main --remote "$PWD/rehearsal.git"
-```
-
-The [command reference](CLI.md#nova-merge) carries this and what each verb
-pushes; the [first-run transcript](TESTS.md#nova-merge) is executed by a test. See
-also
-[nova-merge in the command reference](CLI.md#nova-merge).
-
-**Development branch.** The `nova-pulse` and `nova-work` commands in the next
-two paragraphs are not part of `v0.15.2`.
-
-**How work lands here today, in case it is useful.** We stopped landing one pull
-request at a time. A **batch** is a handful of pre-tested changes merged onto one
-tree, built and tested there, and then opened as a single entry that carries the
-list of what is in it; the queue round lands the batch, and the members are closed
-with a pointer to it. What makes that affordable is asking first: `nova-merge
-simulate --repo <clone> --base <branch>` squash-merges the queue's entries in
-order in a scratch worktree, runs your checks after each successful merge, and
-reports the growing batch's first failing step while skipping conflicts. It does
-not separately prove that entry green on its own. The other
-half is upstream of the merge: a card that touches one area of the code declares a
-**lane** with a `LANE: <name>` line, and `nova-pulse fill` keeps at most one card
-per lane live at a time and holds the rest in order, so two workers do not spend an
-afternoon writing changes that cannot both land. Neither half is required to use
-`nova-merge`; both are how the lane stays cheap once there is more work than
-reviewers.
-
-`nova-merge batch` is the local landing gate: it builds the combined branch and
-runs the repository's build, vet, Go and Lisp checks without pushing. After the
-batch passes its required review and checks, `queue` records holds, skips and
-ordering. `rebase` cuts bounded repair cards. Teams that already use Redis can
-connect `nova-work events` to `nova-merge react`; the ordinary merge lane does not
-require Redis or a resident loop.
-
-**It worked if** it refused to land something whose checks had not passed, and
-told you exactly which condition was missing.
-
-**Limits and side effects.** It writes to a repository and can merge. It ties
-validation to named revisions, so a gate proven on one revision does not vouch
-for a different one.
-
-**It may not help if** one of you lands everything anyway, or your forge already
-enforces this for you.
 
 ### nova-tokens — where the tokens went
 
@@ -604,10 +430,8 @@ than a decision on the record.
 
 ## Using several together
 
-Friends who have adopted more than one usually land on: `nova-bus` for messages,
-`nova-wake` to wait for changes, `nova-swarm` for the bounded jobs that suit it,
-a read of the returned evidence before `nova-merge` lands anything, and
-`nova-tokens` to say what was measured.
+Friends who have adopted more than one usually land on: `nova-bus` for messages
+and `nova-tokens` to say what was measured.
 
 Two things no tool here will do for you. A free worker is only useful if its
 capabilities fit the task, and a process that exited `0` is **not** proof the work
@@ -624,9 +448,7 @@ entirely fine to do things your own way, including keeping a method that already
 works for you. Agree only the shared interfaces your work actually needs — not a
 common toolset, not a common model, and certainly not anybody's private setup.
 
-Upgrades are a choice, not a forced change to your workflow. The one coupling
-today is that `nova-wake` requires a matching `nova-bus` release, so update that
-pair together when you choose to upgrade.
+Upgrades are a choice, not a forced change to your workflow.
 
 ## Before you rely on any of it
 
@@ -647,7 +469,7 @@ worth trusting blindly.
   `docs/` may describe tools or behaviour that does not exist yet. Check the
   release and the implementation before relying on anything.
 - **Platform and coverage limits are stated per tool above** — `nova-sandbox`'s
-  macOS-only containment and what `nova-swarm` therefore requires, and what
+  macOS-only containment, and what
   `nova-tokens` does and does not account for. They are not repeated here.
 
 ## Contributing, and building locally

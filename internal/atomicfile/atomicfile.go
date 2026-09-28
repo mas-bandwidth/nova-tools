@@ -22,17 +22,23 @@ Every write follows a strict, bounded sequence:
     ".<base>.tmp-%08x" where the suffix is drawn from crypto/rand. This guarantees
     that concurrent writers never collide and temporary files never escape their
     parent directory.
- 3. Explicit permissions: The temporary file is created with and explicitly chmoded
-    to the caller's requested os.FileMode.
+ 3. Umask-honoring permissions: The temporary file is created with the caller's
+    requested os.FileMode, allowing the process umask to apply naturally (perm & ^umask),
+    matching the permission semantics of os.OpenFile and os.WriteFile. No explicit
+    chmod is performed so that the process umask is strictly preserved.
  4. Full write: The data payload is written to the temporary file in full.
  5. Media flush (fsync): The file contents and inode metadata are flushed to durable
     storage media using fsync (f.Sync()).
  6. Clean closure: The temporary file descriptor is closed.
  7. Atomic rename: The temporary file is renamed over the target path (os.Rename).
+ 8. Parent directory fsync: The parent directory is fsynced (best-effort) after the
+    rename so that the directory entry is durable on filesystems requiring directory
+    flushes. Errors from directory fsync are ignored on platforms or filesystems where
+    directory fsync is unsupported.
 
 # Failure and Cleanup Guarantees
 
-On any failure during creation, chmod, write, sync, close, or rename, atomicfile
+On any failure during creation, write, sync, close, or rename, atomicfile
 attempts to remove the temporary file immediately (os.Remove), leaving the target
 file completely untouched. If removing the temporary file fails (for example due
 to sudden permission loss or filesystem error), the cleanup error is joined to the
@@ -57,18 +63,20 @@ Callers migrating from os.WriteFile should note five key differences:
     readers to observe truncated or empty intermediate states. atomicfile writes
     to a sibling temporary file first and renames, ensuring readers always see
     a complete version.
- 2. Permissions & umask: os.WriteFile creates new files masked by the process umask
-    and preserves permissions of existing files without updating them. atomicfile
-    only accepts standard permissions 0000-0777 and applies the caller's perm
-    directly to the target via chmod, replacing prior permissions and bypassing
-    umask reduction.
+ 2. Permissions & umask: os.WriteFile preserves the permissions of existing files
+    when overwriting them, and applies the process umask to newly created files.
+    atomicfile creates a new sibling temporary file with perm masked naturally by
+    the process umask (perm & ^umask) and renames it over the target; thus, the
+    resulting file mode reflects perm & ^umask regardless of whether the target
+    already existed. No explicit chmod is applied.
  3. Inodes and hard links: Because atomicfile replaces the directory entry via
     rename(2), the target receives a new inode. Existing hard links to the target
     path continue pointing to the previous inode and will not reflect new writes.
  4. Special files and FIFOs: If the target is an existing FIFO, socket, or device
     node, atomicfile does not write into the stream; atomic rename replaces the
     directory entry with a regular file.
- 5. fsync: atomicfile flushes file data and metadata with fsync before renaming;
+ 5. fsync: atomicfile flushes file data and metadata with fsync before renaming,
+    and performs a best-effort fsync on the parent directory after rename;
     os.WriteFile performs no fsync.
 
 # Power-Loss Durability (What is and is not promised)
@@ -80,16 +88,15 @@ What is promised:
   - Data and file-metadata durability: The temporary file data and inode metadata
     are synced to persistent storage via fsync prior to rename. Once Write returns
     nil, the file contents are safely flushed to media.
+  - Directory entry durability: The parent directory is fsynced after rename on a
+    best-effort basis, making directory entry creation durable across sudden power loss
+    on filesystems that support directory fsync.
 
 What is NOT promised:
-  - Parent directory durability across power loss: The parent directory is not
-    fsynced after the rename operation. On POSIX filesystems without full metadata
-    journaling, an abrupt system crash or power loss occurring immediately after
-    Write returns could leave the parent directory's directory entry pointing to the
-    old inode or in an uncommitted state, even though the file data itself was synced.
-    Callers that require absolute crash-durability of the directory entry across
-    sudden power loss must fsync the parent directory themselves according to their
-    platform and filesystem requirements.
+  - Platforms without directory sync: On platforms or filesystems that do not support
+    directory fsync (e.g. Windows or filesystems where syncing a directory descriptor
+    returns an error or is unsupported), parent directory sync is best-effort and
+    silently ignored.
 */
 package atomicfile
 
@@ -119,12 +126,12 @@ type hooks struct {
 	lstat        func(name string) (os.FileInfo, error)
 	evalSymlinks func(path string) (string, error)
 	createTemp   func(dir, base string, perm os.FileMode) (*os.File, error)
-	chmod        func(f *os.File, mode os.FileMode) error
 	write        func(f *os.File, data []byte) (int, error)
 	sync         func(f *os.File) error
 	close        func(f *os.File) error
 	rename       func(oldpath, newpath string) error
 	remove       func(name string) error
+	syncDir      func(dir string) error
 }
 
 func defaultHooks() *hooks {
@@ -133,13 +140,23 @@ func defaultHooks() *hooks {
 		lstat:        os.Lstat,
 		evalSymlinks: filepath.EvalSymlinks,
 		createTemp:   defaultCreateTemp,
-		chmod:        func(f *os.File, mode os.FileMode) error { return f.Chmod(mode) },
 		write:        func(f *os.File, data []byte) (int, error) { return f.Write(data) },
 		sync:         func(f *os.File) error { return f.Sync() },
 		close:        func(f *os.File) error { return f.Close() },
 		rename:       os.Rename,
 		remove:       os.Remove,
+		syncDir:      defaultSyncDir,
 	}
+}
+
+func defaultSyncDir(dir string) error {
+	dirFile, err := os.Open(dir)
+	if err != nil {
+		return nil
+	}
+	defer dirFile.Close()
+	_ = dirFile.Sync()
+	return nil
 }
 
 func defaultCreateTemp(dir, base string, perm os.FileMode) (*os.File, error) {
@@ -198,30 +215,36 @@ func wrapErr(prefix string, err error) error {
 	}
 }
 
-// Write writes data to path atomically with the specified file mode permissions.
-// If path does not exist, Write creates it with permissions perm; if path already
-// exists, Write replaces it atomically.
+// Write writes data to path atomically with the specified file mode permissions,
+// subject to the process umask. If path does not exist, Write creates it; if path
+// already exists, Write replaces it atomically.
 //
-// The write is performed by creating a temporary file in the same directory,
-// setting permissions to perm, flushing data and metadata to disk with fsync,
-// closing the file, and renaming it over path. On any failure, removal of the
-// temporary file is attempted, leaving the target file untouched; if removal
-// fails, the cleanup error is joined to the returned error naming the leftover file.
+// The write is performed by creating a temporary file in the same directory with
+// mode perm (perm & ^umask), writing the data payload, flushing data and metadata
+// to disk with fsync, closing the file, renaming it over path, and performing a
+// best-effort fsync of the parent directory. On any failure prior to rename,
+// removal of the temporary file is attempted, leaving the target file untouched;
+// if removal fails, the cleanup error is joined to the returned error naming the
+// leftover file.
+//
+// Permissions note: atomicfile does not explicitly chmod the file, allowing the
+// process umask to apply naturally (creating the file with perm & ^umask), matching
+// the permission semantics of os.OpenFile and os.WriteFile.
+//
+// Durability note: Write flushes both the file data/metadata (before rename) and
+// the parent directory (after rename, best-effort) to ensure durable directory entry
+// creation across power loss.
 //
 // Write refuses paths that are not clean (filepath.Clean(path) != path), refuses
 // base names longer than 241 bytes, refuses mode bits outside 0000-0777, refuses
 // to replace directories or symlinks, and returns an error naming path if the
 // parent directory does not exist, is read-only, or fails to resolve.
-//
-// Durability note: Write syncs the file's data and inode to storage before
-// renaming, but does not fsync the parent directory after rename. Refer to the
-// package documentation for power-loss durability guarantees.
 func Write(path string, data []byte, perm os.FileMode) error {
 	return writeWithHooks(path, data, perm, nil)
 }
 
 // WriteFile is an alias for Write, matching os.WriteFile's signature with atomic
-// replacement guarantees.
+// replacement guarantees, umask preservation, and parent directory durability.
 func WriteFile(path string, data []byte, perm os.FileMode) error {
 	return Write(path, data, perm)
 }
@@ -293,10 +316,6 @@ func writeWithHooks(path string, data []byte, perm os.FileMode, h *hooks) (err e
 		}
 	}()
 
-	if err := h.chmod(f, perm); err != nil {
-		return wrapErr(fmt.Sprintf("atomicfile: chmod %q", path), err)
-	}
-
 	if _, err := h.write(f, data); err != nil {
 		return wrapErr(fmt.Sprintf("atomicfile: write %q", path), err)
 	}
@@ -316,5 +335,11 @@ func writeWithHooks(path string, data []byte, perm os.FileMode, h *hooks) (err e
 	}
 
 	cleaned = true
+
+	// Parent directory fsync (best-effort): flush directory entry to media so that
+	// rename is durable across power loss on filesystems that require it.
+	// Ignore errors on platforms or filesystems where directory fsync is unsupported.
+	_ = h.syncDir(dir)
+
 	return nil
 }

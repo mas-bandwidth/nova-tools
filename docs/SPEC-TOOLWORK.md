@@ -23,8 +23,8 @@ restated. **No code lands with this document**; the work list at the end is the 
 is made from exit codes, git objects and typed lines, by a verb that makes **no model
 call** and reads **no prose as an instruction**. Mechanical acceptance decides whether a
 card's commit becomes a pull request in the read queue. It never lands anything: the
-read condition (`docs/SPEC-MERGE.md:808-827`) and the one entry to the merge queue
-(`docs/SPEC-MERGE.md:1540-1561`, *"swarms produce branches, never queue entries"*) stand
+read condition (`deprecated/docs/SPEC-MERGE.md:808-827`) and the one entry to the merge queue
+(`deprecated/docs/SPEC-MERGE.md:1540-1561`, *"swarms produce branches, never queue entries"*) stand
 exactly as written, and §6 makes the lane hold them harder, not softer.
 
 ## The failures it closes
@@ -33,7 +33,7 @@ exactly as written, and §6 makes the lane hold them harder, not softer.
 |---|---|
 | `harvest` pushes and opens a PR for every card whose `RESULT.md` line 1 matches, on the worker's own line-2 word; nothing executes anything (`docs/SPEC-PULSE.md:194-218`) | §1: the accept gate runs before any push |
 | card-13 pasted a red row and thirteen green rows; an independent reproduction still failed both families (`docs/WORKER-CARDS.md:87-101`) | §1 rules 3-4: the red is reproduced by the gate, never read from the report |
-| `nova-review mutate` is specified as *"the harvest runs it before any reader is spawned"* (`docs/SPEC-REVIEW.md:659`) and no file under `internal/pulse`, `cmd/nova-pulse`, `internal/swarm` or `cmd/nova-swarm` calls it | §1 rule 4 and work item T3 |
+| `nova-review mutate` is specified as *"the harvest runs it before any reader is spawned"* (`deprecated/docs/SPEC-REVIEW.md:659`) and no file under `internal/pulse`, `cmd/nova-pulse`, `internal/swarm` or `deprecated/cmd/nova-swarm` calls it | §1 rule 4 and work item T3 |
 | a suite that was green with a rule's guard removed: 335 cases, one red, and that one incidental (nova-work mutation M01, 2026-09-19) | §1 rules 6-8: the gate's own negative control; §5 kind `mutation-kill` |
 | `NATIVE OK rc=0 harness=ok` printed over cards whose gates never compiled anything (#1465, #1463, #912) | §2: a result is trusted only from a certified bench |
 | every C and C++ invocation, and every `make` target, fails inside the wall on macOS (#1557); dotnet cannot run inside the wall on any Linux bench (#1495) | §2 rules 1-3 |
@@ -76,7 +76,7 @@ measurement also **bounds** the decision.
    `<queue>/decide/outcomes.jsonl`, the file `harvest` already appends (§4 rule 5). A
    card **passes** when the gate said `ACCEPT OK` **and a read of it was recorded** at its
    head with no HOLD; it **fails** when the gate said `REJECT`, or a HOLD landed on it
-   after an `ACCEPT OK` (a hold is what the one fold of `docs/SPEC-DECIDE.md` reading 3,
+   after an `ACCEPT OK` (a hold is what the one fold of `deprecated/docs/SPEC-DECIDE.md` reading 3,
    #1627, says it is; §6). **An accepted result nobody has read yet counts for neither**,
    like an `ABSTAIN`, which is the bench's: a result nobody looked at cannot draw a HOLD,
    and a rate that counted it as a pass would rise by not looking — a rule over nothing
@@ -95,7 +95,7 @@ measurement also **bounds** the decision.
    produce one — runs as **trial**: the coordinator may cut its cards and a swarm may
    run them, the gate accepts or rejects each, and **every accepted result gets a read
    before it lands** (`needs_read=yes`, the read condition exactly as it stands,
-   `docs/SPEC-MERGE.md:808-827`). Trial costs nothing but the reads it already costs
+   `deprecated/docs/SPEC-MERGE.md:808-827`). Trial costs nothing but the reads it already costs
    today, and it is how the record gets made.
 3. **The coordinator decides when a kind is trusted, and the record bounds the
    decision.**
@@ -116,9 +116,9 @@ measurement also **bounds** the decision.
    for a trusted kind that per-result read drops to a sample — `audit_rate`, default 0.1,
    in data, untuned, the same idea as #1627's `--audit-rate`. **The landing read is
    untouched.** Every change that lands, trusted or not, still needs what
-   `docs/SPEC-MERGE.md:808-837` demands: an approve recorded by a line that is not the
+   `deprecated/docs/SPEC-MERGE.md:808-837` demands: an approve recorded by a line that is not the
    author, for the current head (Glenn, 2026-09-09: shared tools merge only after reads
-   from other lines, `docs/SPEC-MERGE.md:836`). Nothing here sets `needs_read=no`, and
+   from other lines, `deprecated/docs/SPEC-MERGE.md:836`). Nothing here sets `needs_read=no`, and
    no record stands in for that approve. Trust saves the coordinator's attention; it
    never lets a change land unread.
 4. **The record decays by itself, a run of fails resets it, and one command pauses a
@@ -136,28 +136,28 @@ measurement also **bounds** the decision.
    of this needs Glenn or a friend to author anything.**
 5. **The classifier's half is the route, not a new question.** `nova-decide route`
    already answers one unit of work with the lowest rung the evidence supports
-   (`docs/SPEC-DECIDE.md:126-134`), and the swarm's fill path already asks it per card
-   before dispatch (`docs/SPEC-DECIDE.md:342-366`). Condition (b) is: the card's
+   (`deprecated/docs/SPEC-DECIDE.md:126-134`), and the swarm's fill path already asks it per card
+   before dispatch (`deprecated/docs/SPEC-DECIDE.md:342-366`). Condition (b) is: the card's
    `ROUTE` line reads `jev=<rung>` with `why=-`, and that rung is one a swarm **runs**
    (its registry row carries a `model`). `why=below-floor`, `refused`,
    `rung-is-asked-not-run`, `card-names-no-kind` or `no-ladder` is **not eligible**: the
    card is not dispatched to a swarm, and its line is the record of work owed to a child
    or a friend. The floor is the route's tuned floor, a row in the floors file with its
    trial behind it, and a floor with no rows is refused as untuned
-   (`docs/SPEC-DECIDE.md:581`).
+   (`deprecated/docs/SPEC-DECIDE.md:581`).
 6. **With no provider, the rule table decides, or the answer is "not eligible", said
    plainly.** `why=no-key` or `why=no-accounting`: the route is asked `--no-jev`, *"by
-   the rules alone, with no key and no network"* (`docs/SPEC-DECIDE.md:254-255`). If the
+   the rules alone, with no key and no network"* (`deprecated/docs/SPEC-DECIDE.md:254-255`). If the
    rule table names a rung a swarm runs for the card's kind, condition (b) holds and the
    line says `eligible=rules`. If the table is silent, the line says
    `eligible=no why=no-provider-and-no-rule`, and the card waits. **This differs from
    the fill path's fallback on purpose**: there, a missing answer keeps today's model
-   (`docs/SPEC-DECIDE.md:357-363`); here, a missing answer keeps today's **hands**.
+   (`deprecated/docs/SPEC-DECIDE.md:357-363`); here, a missing answer keeps today's **hands**.
    Falling back to "dispatch anyway" would make the second condition optional whenever
    the provider is down.
 7. **The outcome is written at harvest, so the floor stays honest.** For every card
    the route made eligible, `harvest` runs `nova-decide outcome --log <path> --unit-id
-   <id> --result green|red|blocked` (`docs/SPEC-DECIDE.md:219-226`) from the card's
+   <id> --result green|red|blocked` (`deprecated/docs/SPEC-DECIDE.md:219-226`) from the card's
    `OUTCOME` line (§4): `accept=ok` is `green`, `accept=reject` is `red`, anything else
    `blocked`. A later HOLD on the accepted PR appends a second outcome row, `red`, keyed
    to the same unit. `nova-decide tune` then moves the floor from rows. A route that
@@ -176,7 +176,7 @@ measurement also **bounds** the decision.
    stands and is simply stricter (rule 6). **After:** the accept gate with its negative
    control (§1), hygiene (§3), and the read condition and the hold fold (§6) — none of
    which any answer, at any confidence, can satisfy, skip or lift
-   (`docs/SPEC-DECIDE.md:66-71`, rule 6: *confidence never authorizes*). The route's
+   (`deprecated/docs/SPEC-DECIDE.md:66-71`, rule 6: *confidence never authorizes*). The route's
    state is built from the card's typed header and the issue's public text inside
    #1627's untrusted-text frame; nothing in an issue body can make a card eligible,
    because a measured state and a gate stand on either side of the answer.
@@ -203,7 +203,7 @@ every card whatever its area, and the ruling does not loosen them:
     is to change an existing test carries `TEST-EDIT: <file>` in its header — written
     by the card writer, inside the contract hash (§5 rule 1) — and only the named file
     is excused. A deleted test file is never excused.
-12. **HOLDs still block** (§6, which is the fold of `docs/SPEC-DECIDE.md` reading 3, #1627),
+12. **HOLDs still block** (§6, which is the fold of `deprecated/docs/SPEC-DECIDE.md` reading 3, #1627),
     and nothing here lifts one.
 13. **A security-kind unit is the designated mind's, by machinery, and that IS the
     classifier's answer.** A card whose `PATHS:` or diff touches a guard, secrets, the
@@ -211,7 +211,7 @@ every card whatever its area, and the ruling does not loosen them:
     height"*, chosen *"by the machinery rather than the provider … so no provider call
     is made"*, resolved *"to the designated rung on EVERY path: with the provider on or
     off, at any floor"*, where handing it to another mind because the right one is busy
-    *"is the failure this rule exists to prevent"* (`docs/SPEC-DECIDE.md:136-148`). The
+    *"is the failure this rule exists to prevent"* (`deprecated/docs/SPEC-DECIDE.md:136-148`). The
     rule routes the **unit**, not only its read. So for these kinds condition (b) is
     answered, and the answer is not a swarm: the route resolves to a rung that is asked
     and not run, the line reads `why=rung-is-asked-not-run`, and by rule 5 the card is
@@ -224,7 +224,7 @@ every card whatever its area, and the ruling does not loosen them:
     **waits**; it is never re-routed to whoever is awake.
 14. **Reading needs no track record.** `read`, `probe`, `text` and `tone` change no code and
     have no gate, so there is nothing to be on trial for: the coordinator cuts them over any
-    path, as today (504 read cards in one day, `docs/SPEC-REVIEW.md:644`).
+    path, as today (504 read cards in one day, `deprecated/docs/SPEC-REVIEW.md:644`).
 
 **Red tests for this rule**, the provider a fake and the queue a fixture:
 `no-path-is-refused-as-such` (a `fix-red` card over `internal/swarm/**`, on trial, with
@@ -261,13 +261,13 @@ provider saying yes at 0.99 still cut nothing: no provider call is made at all);
 **Builds on.** `harvest` is gated on the verdict and never on mergeability
 (`docs/SPEC-PULSE.md:194-199`); line 1 must match or nothing is pushed
 (`docs/SPEC-PULSE.md:200-218`); `gather` scores a card `done` on line 1 alone, whatever
-the exit code (`docs/SPEC-SWARM.md:1470`), which is why line 1 never carries the answer
+the exit code (`deprecated/docs/SPEC-SWARM.md:1470`), which is why line 1 never carries the answer
 (`docs/WORKER-CARDS.md:310-321`); a fix card names its reproducing test and the manager
 refuses a fix PR that carries neither the `red:` line nor the test file
 (`docs/WORKER-CARDS.md:323-340`); `nova-review mutate` reverts the change, keeps the
-tests and demands they go red (`docs/SPEC-REVIEW.md:643-660`, grammar `:818-824`, exits
+tests and demands they go red (`deprecated/docs/SPEC-REVIEW.md:643-660`, grammar `:818-824`, exits
 `:787-789`); the card is a three-call pipeline whose tools the harness runs
-(`docs/SPEC-SWARM.md:771-838`).
+(`deprecated/docs/SPEC-SWARM.md:771-838`).
 
 **What those rules do not hold.** Every one of them reads what the worker **said**. The
 contract line proves which card this is. Line 2 is the worker's own verdict. The `red:`
@@ -314,7 +314,7 @@ failing selftest); 2 is could-not-run, which includes `ABSTAIN` and `REFUSED`.
 2. **The gate reads the card and the commit, never the report.** Its inputs are the
    card file `cut` wrote (whose typed header lines are the card writer's), the job's git
    objects, and `--base`. `RESULT.md` is data and is not opened by `accept` at all (its
-   line 1 is `verify`'s, one step earlier). This keeps `docs/SPEC-SWARM.md:2470` true — *"`nova-swarm` does not
+   line 1 is `verify`'s, one step earlier). This keeps `deprecated/docs/SPEC-SWARM.md:2470` true — *"`nova-swarm` does not
    read a worker's `RESULT.md` and act on it"* — and means a worker cannot name its own
    gate, widen its own paths or supply its own seed. The gate's commands come from the
    kind's declaration in the tool, parameterised only by the card's `TEST:` and
@@ -323,7 +323,7 @@ failing selftest); 2 is could-not-run, which includes `ABSTAIN` and `REFUSED`.
 3. **The gate runs in its own tree, inside the wall, on a certified bench.** `accept`
    makes a throwaway worktree of the job's head under `--job`'s slot, runs every
    command through `nova-sandbox` with the read and write lists of
-   `docs/SPEC-SWARM.md:2245-2275`, and removes the tree on every path. It never runs in
+   `deprecated/docs/SPEC-SWARM.md:2245-2275`, and removes the tree on every path. It never runs in
    the worker's own working copy: an untracked file the worker left behind must not be
    able to turn a test green. `--cert` names the bench's certification record (§2); a
    missing, stale or failing record is `ACCEPT ABSTAIN reason=bench-uncertified`.
@@ -342,7 +342,7 @@ failing selftest); 2 is could-not-run, which includes `ABSTAIN` and `REFUSED`.
    (§5): `nova-review mutate --repo <tree> --base <base> --head <head>` must print `PASS`.
    A `MUTATE GREEN` line **for a test the card wrote or changed** is
    `reason=vacuous-test at=<test>`: a test that is green without the change it claims
-   to cover proves nothing (`docs/SPEC-REVIEW.md:653-654`), and that is now a rejection
+   to cover proves nothing (`deprecated/docs/SPEC-REVIEW.md:653-654`), and that is now a rejection
    and not a reader's finding. A pre-existing test the card did not touch is not
    charged: `mutate` runs every `Test` in a changed file, so such a test is `MUTATE
    GREEN` under the revert on every ordinary fix card, and the letter of draft 5
@@ -419,12 +419,12 @@ failing selftest); 2 is could-not-run, which includes `ABSTAIN` and `REFUSED`.
    The seed is a unified diff applied in the throwaway worktree with `git apply`; the
    verb counts changed lines from the patch it applied, never from the patch file's own
    header. The range form gains `reverted=<n>` (hunks put back) on its verdict line, so
-   *"every non-test hunk"* (`docs/SPEC-REVIEW.md:647`) is a number a caller can gate on.
+   *"every non-test hunk"* (`deprecated/docs/SPEC-REVIEW.md:647`) is a number a caller can gate on.
    `mutate` still records nothing and writes nothing into the repo it is pointed at.
 10. **The gate makes no model call and no network call.** It reads no forge, asks no
     provider and never consults `--decide`: Jev's harvest classification (§4) runs
     **after** the gate, over its typed line, and can only route a result — it can never
-    turn a `REJECT` into a push. (Floors: `docs/SPEC-DECIDE.md` rule 5, *"a decision
+    turn a `REJECT` into a push. (Floors: `deprecated/docs/SPEC-DECIDE.md` rule 5, *"a decision
     below the floor is a suggestion"*; a decision above the floor is still not an
     acceptance.)
 
@@ -449,14 +449,14 @@ still passes); `a-deleted-base-test-is-test-weakened`; `a-skip-added-to-a-base-t
 ## 2. A wall that can build this repository, and a bench that is certified to
 
 **Builds on.** Every job runs inside `nova-sandbox`, argv built by the dispatcher and
-never from the task text (`docs/SPEC-SWARM.md:2245-2275`); `--go` puts `GOROOT` and
+never from the task text (`deprecated/docs/SPEC-SWARM.md:2245-2275`); `--go` puts `GOROOT` and
 `GOMODCACHE` in the read set as `go env` reports them (`docs/SPEC-SANDBOX.md:597-612`);
 a toolchain under a user directory is named with `--read`, and *"a command that runs
 outside the wall and dies inside it is missing a `--read`"*
 (`docs/SPEC-SANDBOX.md:1195-1210`), which already names the `xcode_select_link` shim;
 `tools/bench-standard.sh` checks a Linux bench's `go version` and `sbcl` on `PATH`
 (`docs/SPEC-PULSE.md:384-392`); every launcher takes a bench slot lease
-(`docs/SPEC-SWARM.md:2103-2147`).
+(`deprecated/docs/SPEC-SWARM.md:2103-2147`).
 
 **What those rules do not hold.** They say how to let a toolchain through the wall; none
 says **which toolchains this repository's own gate needs**, none proves a bench can run
@@ -593,7 +593,7 @@ with the Command Line Tools absent the argv holds `--read` on the `.app` that `x
 (`docs/WORKER-CARDS.md:129-135`); `harvest` pushes by explicit refspec, never bare and
 never to `main` (`docs/SPEC-PULSE.md:203-206`), with a lease from `ls-remote` and a
 refusal of any branch off `rowan/*` (`docs/SPEC-PULSE.md:2049-2051`); the key is in
-neither of the wall's lists (`docs/SPEC-SWARM.md:2268`); the work is anchored to named
+neither of the wall's lists (`deprecated/docs/SPEC-SWARM.md:2268`); the work is anchored to named
 files (`files-named`, `docs/WORKER-CARDS.md:28`).
 
 **What those rules do not hold.** Nothing says whose name a card's commit carries, so
@@ -665,11 +665,11 @@ mechanical, and the harvest half never trusts that the staging half ran.
 
 **Builds on.** Line 2 is one of `DONE`, `ABSTAIN <why>`, `BLOCKED <why>`
 (`docs/spec-pulse/10-the-card-as-cut-writes-it.md:8`); every abstain names one reason
-token so the packet is the whole read (`docs/SPEC-SWARM.md:1481-1503`); the working
+token so the packet is the whole read (`deprecated/docs/SPEC-SWARM.md:1481-1503`); the working
 layout's five harvest classes are *"the typed decision behind the floor"*
 (`docs/SPEC-PULSE.md:2045`); SPEC-DECIDE's **nova-pulse harvest class** asks one
 `choice` over {fixed, already-fixed, no-change, failed, off-branch} over bounded public
-state (`docs/SPEC-DECIDE.md:407-417`).
+state (`deprecated/docs/SPEC-DECIDE.md:407-417`).
 
 **The Jev lane owns the SPEC-DECIDE amendment** (the 2026-09-19 Jev integration lane,
 umbrella #896). This section does not restate or change it. It fixes only the
@@ -690,7 +690,7 @@ is handed.
    and `accept=reject` is the new class **`rejected`**, with `conf=-`, and no decision call is
    made. It is not `failed`: that word already means *"the push or the read could not
    complete"* (`docs/SPEC-PULSE.md:2045`) and SPEC-DECIDE says `fixed` and `failed` *"push as
-   today"* (`docs/SPEC-DECIDE.md:413`); a rejected card pushes nothing, and an implementer
+   today"* (`deprecated/docs/SPEC-DECIDE.md:413`); a rejected card pushes nothing, and an implementer
    reading either sentence must not be able to conclude otherwise. The Jev lane's amendment
    adds `rejected` to the class set as a member no provider is ever asked for:
    a typed judgment over evidence a verb already settled is a paid coin-flip over a
@@ -708,7 +708,7 @@ is handed.
 4. **A classification routes; it never accepts.** No `class`, at any confidence, turns
    `accept=reject` or `accept=abstain` into a push, lifts a HOLD, or skips a read. The
    red test is SPEC-DECIDE's own shape, `a-merge-classification-never-merges`
-   (`docs/SPEC-DECIDE.md:510`), restated for harvest:
+   (`deprecated/docs/SPEC-DECIDE.md:510`), restated for harvest:
    `a-harvest-class-never-pushes-a-rejected-card`.
 5. **Every `OUTCOME` is a row for tuning.** `harvest` appends it to
    `<queue>/decide/outcomes.jsonl` beside the route log, so the Jev lane measures
@@ -729,10 +729,10 @@ fake sees zero requests); `decide-state-is-built-from-outcome-only`;
 (`docs/spec-pulse/02-the-rules-numbered.md:33-51`); text-only templates forbid the
 build (`:52-55`); the contract line's `sha12` binds everything below line 1
 (`docs/spec-pulse/10-the-card-as-cut-writes-it.md:12-14`); the fix-card shape is three
-model calls (`docs/SPEC-SWARM.md:822-830`) and a fourth without `MODE: explore` is
+model calls (`deprecated/docs/SPEC-SWARM.md:822-830`) and a fourth without `MODE: explore` is
 refused at admission (`:808-813`); `nova-swarm lint --card` checks twelve rule tokens
 (`docs/WORKER-CARDS.md:23-36`); *"a template is text and nothing else"*
-(`docs/SPEC-SWARM.md:2470`).
+(`deprecated/docs/SPEC-SWARM.md:2470`).
 
 **What those rules do not hold.** A template fixes what a card **says**. Nothing fixes
 what **accepting** that kind of card means, so every kind is accepted the same way — by
@@ -820,17 +820,17 @@ the worker never sees and cannot edit.
    out on every card; the first card is how it goes out on one. A first card that is
    `REJECT` or `ABSTAIN` leaves the pair unproven. This is about the template, and it
    holds for a trusted kind as much as for one on trial.
-6. **A kind never widens itself.** The templates stay text (`docs/SPEC-SWARM.md:2470`);
+6. **A kind never widens itself.** The templates stay text (`deprecated/docs/SPEC-SWARM.md:2470`);
    the gate is chosen by `KIND:` from the tool's table and by nothing the worker wrote.
    A `RESULT.md` that names a different kind, a different test or more paths is not
    read (§1 rule 2), so it changes nothing.
 7. **The contract line has one form, `RESULT: <label> sha=<sha12>`, with the colon: it is
    SPEC-SWARM's, and the writers follow it.** Read on `dev@702b0133`, the two forms and who
-   holds each. **Colon**: `docs/SPEC-SWARM.md:969,976` (the swarm's own law: *"line 1 starts
+   holds each. **Colon**: `deprecated/docs/SPEC-SWARM.md:969,976` (the swarm's own law: *"line 1 starts
    with `RESULT: `"*); `internal/pulse/cutkind.go:189-201` (`cut --kind`, wired at
    `cmd/nova-pulse/cut_kind.go:48` and `wire.go:502`) and `internal/pulse/manager.go:739`,
    which write `RESULT: CARD-<n> …`; `nova-swarm lint --card`'s `result-first`
-   (`cmd/nova-swarm/lint.go:55,140`); `internal/worklang/expand.go:227`. **No colon**: the
+   (`deprecated/cmd/nova-swarm/lint.go:55,140`); `internal/worklang/expand.go:227`. **No colon**: the
    plain `cut` templates (`internal/pulse/cut.go:472` writes, `:433` checks,
    `cut_test.go:110` asserts) and, before this draft, `docs/spec-pulse/10:4` and
    `docs/WORKER-CARDS.md:312`. **Both accepted**: `internal/pulse/harvestbench.go:349`,
@@ -860,13 +860,13 @@ the worker never sees and cannot edit.
 ## 6. Lanes and landing that refuse a held member, mechanically
 
 **Builds on.** *"A hold blocks, and nothing outvotes it"*; per `(who, head)` the newest
-`at` wins and a tie folds hold-last (`docs/SPEC-MERGE.md:820-827`); a read is recorded
+`at` wins and a tie folds hold-last (`deprecated/docs/SPEC-MERGE.md:820-827`); a read is recorded
 by the reader, with the verb, for the head the reader read, and a verdict whose head is
 not the entry's current `oid` is kept, counted `stale` and authorizes nothing
-(`docs/SPEC-MERGE.md:286-304`); an approve from the author is not a read, and `who` is
-*"a line at a keyboard"*, never a host login (`docs/SPEC-MERGE.md:828-837`); nothing
+(`deprecated/docs/SPEC-MERGE.md:286-304`); an approve from the author is not a read, and `who` is
+*"a line at a keyboard"*, never a host login (`deprecated/docs/SPEC-MERGE.md:828-837`); nothing
 reaches the merge queue but a batch, and `land` re-reads the PR from the forge
-(`docs/SPEC-MERGE.md:1540-1561`); `batch` drops a member with no green required check before
+(`deprecated/docs/SPEC-MERGE.md:1540-1561`); `batch` drops a member with no green required check before
 the merge (`docs/CLI.md` batch, `checks=required`; the name is `ci-ok` here, `--check-name` or `.nova-merge` `required-check=` elsewhere).
 
 **What those rules do not hold — #1572.** The read condition is held by `run`, over the
@@ -880,7 +880,7 @@ everything it was specified to check. Three more were one command from the same 
 the day of the triage: #1430 and #1588 (green, MERGEABLE, HOLD at the exact head) and
 #1479 (green, MERGEABLE, approved, and does not compile on `dev`).
 
-**The fold is specified once, in `docs/SPEC-DECIDE.md`, reading 3, *The hold check: no held
+**The fold is specified once, in `deprecated/docs/SPEC-DECIDE.md`, reading 3, *The hold check: no held
 head is batched or landed* (#1627), and this section restates none of it.** Drafts 1 to 4 of
 this file carried their own fold beside #1627's, and two implementations following their own
 spec could have disagreed on a landing. There is now one contract, and where this file and that
@@ -889,7 +889,7 @@ paragraphs of reading 3 that hold each sentence, so that an implementer of T16 o
 
 1. **What the fold takes** is reading 3, *The inputs*: the lane's line-level APPROVE/HOLD read
    records (`nova-merge read`, and the `nova-review verdict --kind line` that writes the same
-   record, `docs/SPEC-REVIEW.md:253-260`), the forge's `CHANGES_REQUESTED` reviews, and the
+   record, `deprecated/docs/SPEC-REVIEW.md:253-260`), the forge's `CHANGES_REQUESTED` reviews, and the
    comments from a login in the reviewer file. **An ABSTAIN record, a `child` record and a `card`
    record are not inputs.** The fold is over **unresolved holds**, each with its holder, its head
    and its release condition, and nothing newer masks one: a same-head or a later-head ABSTAIN
@@ -906,7 +906,7 @@ paragraphs of reading 3 that hold each sentence, so that an implementer of T16 o
    first-line hold token, the word `HOLD` as a heading word or in bold, a `CHANGES_REQUESTED`
    review, a decided `hold` at any confidence; each binds to a head and **carries across a
    push**, with no time filter (SPEC-REVIEW rule 7, *"a HOLD never expires"*,
-   `docs/SPEC-REVIEW.md:269`). The forge source is one-way: it only ever adds. A false drop costs
+   `deprecated/docs/SPEC-REVIEW.md:269`). The forge source is one-way: it only ever adds. A false drop costs
    one verb from the reviewer; a false admit costs a held head on `dev`.
 4. **What releases a hold** is reading 3, *What releases a hold*: only its holder, only by the
    verb (`nova-merge read --verdict approve --head <sha40>`, or the `nova-review verdict` line
@@ -916,7 +916,7 @@ paragraphs of reading 3 that hold each sentence, so that an implementer of T16 o
    of a review, a comment typed or untyped, a decider's answer and a push each release nothing.
    A `who=unknown` hold, and a pending comment, are released only by a `may-hold` reader's verb
    naming them with `--releases`, or taken over by that reader's own recorded HOLD. A scoped
-   APPROVE record satisfies nothing in the read condition (`docs/SPEC-MERGE.md:808-816`); only an
+   APPROVE record satisfies nothing in the read condition (`deprecated/docs/SPEC-MERGE.md:808-816`); only an
    unscoped one does.
 5. **What no flag does** is reading 3, *No flag ignores a hold* and *An untyped comment is
    pending, and pending stops*: there is no `--ignore-hold`. An untyped comment from a
@@ -958,13 +958,13 @@ paragraphs of reading 3 that hold each sentence, so that an implementer of T16 o
 8. **A mechanical accept is never a read.** `ACCEPT OK` satisfies nothing in the read
    condition; `needs_read` stands for every swarm PR that changes code, on trial or trusted
    (the eligibility rule, 3), and the reader
-   *"judges spec fit and nothing else"* (`docs/SPEC-REVIEW.md:659-660`) because the
+   *"judges spec fit and nothing else"* (`deprecated/docs/SPEC-REVIEW.md:659-660`) because the
    gate already did the rest. What the gate cannot judge it hands over by name: a
    pre-existing test body changed under `TEST-EDIT:`, and a rebase's conflicted files.
    And for a security-kind member the read that counts is the designated mind's and
    nobody else's (the eligibility rule, 13).
 
-**Red tests.** The fold's tests are reading 3's *Demanded tests* in `docs/SPEC-DECIDE.md`
+**Red tests.** The fold's tests are reading 3's *Demanded tests* in `deprecated/docs/SPEC-DECIDE.md`
 (#1627), by name, each a transition table over a fake forge, and T16 is not done until every one
 of them is red then green; this file names the ones its reviewers asked for so that no reading of
 this file can miss them: `an-abstain-record-is-not-an-input` (a recorded HOLD at H1, then the
@@ -1055,7 +1055,7 @@ runs `--channel fake` six times and the shipped tool refuses it
    card afterwards — nova-post's `fake` channel is the first such decision (Q5).
 7. **The other documents a stranger pastes from are counted, and the count only
    shrinks.** Every `$ ` line in a fenced block of `README.md`, `docs/USAGE.md`,
-   `docs/CLI.md`'s `### First run` sections and `docs/nova-swarm-quickstart.md`, and
+   `docs/CLI.md`'s `### First run` sections and `deprecated/docs/nova-swarm-quickstart.md`, and
    every `example:` line of every `help` (#1455: 28 of 61 exit 2 when pasted), is
    either executed by a test through the same comparator or listed in
    `internal/ci/testdata/unexecuted_examples.txt` with its reason. The list is
@@ -1097,7 +1097,7 @@ narrowest, most mechanical kinds with the strongest controls.
 | T13 (#1658) | builder: no kind yet | kinds `rebase`, `sweep` and `mutation-kill` in the table, each with its control and its selftest seed | §5 rule 2 |
 | T14 (#1659) | trial, trusted after a track record | `rebase`: the conflicting open PRs that are ours, oldest first, one per card (54 conflicted at the triage); the read card lists the files that conflicted | §5 `rebase` |
 | T15 (#1660) | trial, trusted after a track record | `mutation-kill`: one card per surviving mutant, from a mutation pass a builder runs with hand-written one-edit seeds and files (Q8) | §5 `mutation-kill` |
-| T16 (#1572) | builder: no kind yet | #1572: the one fold exactly as `docs/SPEC-DECIDE.md` reading 3 (#1627) specifies it — the forge adding holds only, the holder's verb alone releasing, `batch` drops a held member, `land` reads again at the door, `sweep` and `react` fold too, no flag ignores a hold — with reading 3's demanded tests | §6 rules 1-6, SPEC-DECIDE reading 3 |
+| T16 (#1572) | builder: no kind yet | #1572: the one fold exactly as `deprecated/docs/SPEC-DECIDE.md` reading 3 (#1627) specifies it — the forge adding holds only, the holder's verb alone releasing, `batch` drops a held member, `land` reads again at the door, `sweep` and `react` fold too, no flag ignores a hold — with reading 3's demanded tests | §6 rules 1-6, SPEC-DECIDE reading 3 |
 | T17 (#1661) | builder: no kind yet | `batch` admits a swarm member only with its `ACCEPT OK`, runs hygiene on every member, names the member that breaks the build; a security-kind member needs the designated mind's APPROVE | §6 rule 7, eligibility rule 13 |
 | T18 (#1662) | builder: no kind yet | `nova-sandbox --toolchain` on darwin: `cc`, `make`, `sbcl`, `sqlite3` (#1557), and `native` defaults to the `go` leg and hands the fence the same roots (#1465, #1463) | §2 rules 1-3 |
 | T19 (#1663) | builder: no kind yet | `tools/legs.tsv`, `nova-pulse certify`, the record, its expiry; `accept` and the router refuse an uncertified leg | §2 rules 4-6 |
@@ -1125,7 +1125,7 @@ would come back `BLOCKED` — and, until T19, §2 rule 5 held by hand: T8-T11 ca
   to do this, and the classifier (Jev) says its work they can handle."* There is no
   never-touch set. The eligibility rule replaces it, and the invariant that survives is
   mechanical: a card never edits what judges it (rules 10-11).
-- **Q2. Whose HOLD counts. — SETTLED in `docs/SPEC-DECIDE.md` reading 3 (#1627), *Who
+- **Q2. Whose HOLD counts. — SETTLED in `deprecated/docs/SPEC-DECIDE.md` reading 3 (#1627), *Who
   holds*, and S6:** every name in the lane's reviewer file with `may-hold`, keyed by `who`
   and never by login, seeded by commit with Glenn and every friend who reads for this
   repository; plus `who=unknown` for a hold with no mapped name, which fails closed.

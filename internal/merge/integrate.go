@@ -25,7 +25,7 @@ import (
 // ways something reaches it that nobody meant to. A test drives FakeIntegrateForge and
 // reaches no network.
 //
-// Issue #1845 (L6 of #1725). Law: docs/SPEC-MERGE.md:808-837 and docs/SPEC-DECIDE.md
+// Issue #1845 (L6 of #1725). Law: deprecated/docs/SPEC-MERGE.md:808-837 and deprecated/docs/SPEC-DECIDE.md
 // reading 3 -- this file writes, it never decides; the hold fold is verdict.go's and
 // nothing here re-reads a DISPOSITION line.
 
@@ -89,7 +89,7 @@ func (g *GHIntegrate) gh(args ...string) (string, error) {
 // THE BODY IS AN ARGUMENT AND NEVER A FILE THIS PACKAGE WROTE.
 //
 // `--body-file` would be the natural spelling and it is the one the hand loop typed, but
-// rule 7 of docs/SPEC-MERGE.md holds this package to four writing sites, each named in
+// rule 7 of deprecated/docs/SPEC-MERGE.md holds this package to four writing sites, each named in
 // internal/merge/source_test.go: the lane's state, its log, its lock and the rebase
 // marker. A temp file for a pull request body is a fifth, and a rule whose exemption list
 // grows whenever somebody needs one is not a rule. `--body <text>` costs nothing here: it
@@ -147,7 +147,7 @@ func (g *GHIntegrate) ClosePR(n int, comment string) error {
 
 // FakeIntegrateForge is the write side with no network in it: it records every write and
 // hands back the numbers a test set. It is in the package proper, beside FakeHost, so
-// that cmd/nova-merge's tests can drive it too.
+// that deprecated/cmd/nova-merge's tests can drive it too.
 type FakeIntegrateForge struct {
 	// Created is every pull request opened, in order.
 	Created []NewPR
@@ -208,9 +208,9 @@ func (f *FakeIntegrateForge) ClosePR(n int, comment string) error {
 // IntegrationBody is the batch pull request's body: the gate's receipt verbatim, the
 // caller's basis file whole, the lease said out loud, and the hold read named.
 //
-// IT IS PROSE AND IT LIVES HERE RATHER THAN IN cmd/nova-merge, where every printed
+// IT IS PROSE AND IT LIVES HERE RATHER THAN IN deprecated/cmd/nova-merge, where every printed
 // argument goes through internal/oneline and nothing may write bytes past that path
-// (cmd/nova-merge/audit_test.go). That rule is right for a tool whose stdout a harness
+// (deprecated/cmd/nova-merge/audit_test.go). That rule is right for a tool whose stdout a harness
 // parses, and a markdown body escaped for a one-line grammar would be a body nobody
 // could read. The caller's basis is copied WORD FOR WORD and never summarised: what a
 // member landed on is a judgement, and a tool that composed that sentence would be a

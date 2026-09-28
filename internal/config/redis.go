@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -341,7 +340,6 @@ func word(words []string, i int) string {
 var (
 	ErrCeiling = errors.New("ceiling")
 	ErrActor   = errors.New("actor")
-	ErrWorking = errors.New("working copies")
 	ErrInUse   = errors.New("in use")
 )
 
@@ -351,21 +349,6 @@ func RedisRefusal(format string, args ...any) *RefusedError {
 }
 
 func (a *RedisApplier) removeFriend(ctx context.Context, f, actor, idem string) error {
-	// The friend's working set is a table set, named by the sprint epoch
-	// (ws.ConsumerKeyAt, nova-tools#4238): a copy it still holds keeps the
-	// friend in Redis.
-	epoch, err := ws.Epoch(ctx, a.Client)
-	if err != nil {
-		return fmt.Errorf("redis: read the sprint epoch: %w", err)
-	}
-	working, err := a.Client.ZRange(ctx, ws.ConsumerKeyAt(epoch, KindFriend+":"+f, "working"), 0, -1).Result()
-	if err != nil {
-		return fmt.Errorf("redis: read friend %s working copies: %w", f, err)
-	}
-	if len(working) > 0 {
-		sort.Strings(working)
-		return &RefusedError{Err: ErrWorking, Detail: fmt.Sprintf("friend %s holds %d working copies (%s); let them finish or move them before removing the friend", f, len(working), strings.Join(working, ","))}
-	}
 	// Only what apply wrote goes: her presence's own keys (beat, logins,
 	// wake path) are hers.
 	pipe := a.Client.TxPipeline()

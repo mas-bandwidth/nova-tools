@@ -25,7 +25,7 @@ func Template(kind string) string {
 		b.WriteString("- harvest throughput measured within nominal envelope\n")
 	case KindDocsGuard:
 		b.WriteString("## Verification\n")
-		b.WriteString("- docs/SPEC-SWARM.md: verified\n")
+		b.WriteString("- deprecated/docs/SPEC-SWARM.md: verified\n")
 		b.WriteString("## Gates\n")
 		b.WriteString("- make preflight: pass 1.05s\n")
 	default: // fix, recut, port
@@ -108,9 +108,9 @@ ATTEMPT: 1
 CHECK: pass
 REPO: mas-bandwidth/nova-tools
 BRANCH: emma/docs-guard-swarm
-PATHS: docs/SPEC-SWARM.md
+PATHS: deprecated/docs/SPEC-SWARM.md
 ## Verification
-- docs/SPEC-SWARM.md:1448: verified
+- deprecated/docs/SPEC-SWARM.md:1448: verified
 ## Gates
 - go test ./internal/docs -run TestDocLinks: pass 0.45s
 - make preflight: pass 1.05s`

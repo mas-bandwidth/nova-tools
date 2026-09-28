@@ -9,7 +9,7 @@ the ask: a tool, so the behaviour is locked in and never drifts.
 One tool, five verbs, all mechanical. **The tool makes no model call**: it enumerates work,
 cuts cards from templates, admits them through `nova-swarm batch`, and folds what comes back.
 Every token spent is a card's, and the card's usage is already summed on the swarm's `BATCH`
-line ([SPEC-SWARM.md](docs/SPEC-SWARM.md), **Batch: scatter, wait, gather**). The coordinator's
+line ([SPEC-SWARM.md](deprecated/docs/SPEC-SWARM.md), **Batch: scatter, wait, gather**). The coordinator's
 window reads one line per cycle.
 
 - `nova-pulse pool` enumerates bounded open work from declared sources into `pool.tsv`.
@@ -26,7 +26,7 @@ window reads one line per cycle.
 SPEC.md's **Conventions** govern — exit codes, the one-line grammar, the field law,
 `internal/oneline`, `internal/bounded`, no guessed paths — and this file says only what is
 more. Merges are not this tool's: `nova-merge` and a person hold the gates
-([SPEC-MERGE.md](docs/SPEC-MERGE.md), **The merge condition**).
+([SPEC-MERGE.md](deprecated/docs/SPEC-MERGE.md), **The merge condition**).
 
 ## The loop, in words
 

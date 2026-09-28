@@ -16,7 +16,7 @@ import (
 func TestNovaMergeEfficiencyCardNamesItsRules(t *testing.T) {
 	t.Parallel()
 
-	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-MERGE.md"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "deprecated", "docs", "SPEC-MERGE.md"))
 	if err != nil {
 		t.Fatalf("the efficiency card's contract is the spec's: %s", err)
 	}

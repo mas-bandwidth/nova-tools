@@ -32,7 +32,7 @@ func (app *application) cmdMember(args []string, stdout, stderr io.Writer) int {
 	defer st.Close()
 	trips := st.CountTrips()
 	if err := ntable.MemberCreate(ctx, c, pos[0], pos[1], *write); err != nil {
-		return storeRefusal(stderr, verb, err)
+		return st.refusal(stderr, verb, err)
 	}
 	fmt.Fprintf(stdout, "TABLE MEMBER CREATE table=%s member=%s trips=%d\n", pos[0], field(pos[1]), trips.N())
 	printReceipt(stdout, write, *receipt)
@@ -59,7 +59,7 @@ func (app *application) cmdCheck(args []string, stdout, stderr io.Writer) int {
 	trips := st.CountTrips()
 	report, err := ntable.Check(ctx, c, pos[0])
 	if err != nil {
-		return storeRefusal(stderr, verb, err)
+		return st.refusal(stderr, verb, err)
 	}
 	fmt.Fprintf(stdout, "TABLE CHECK table=%s epoch=%d revision=%d members=%d cells=%d trips=%d\n", pos[0], report.Epoch, report.Revision, report.Members, report.Cells, trips.N())
 	return 0
@@ -85,7 +85,7 @@ func (app *application) cmdMemberFind(args []string, stdout, stderr io.Writer) i
 	trips := st.CountTrips()
 	loc, err := ntable.MemberFind(ctx, c, pos[0], pos[1])
 	if err != nil {
-		return storeRefusal(stderr, verb, err)
+		return st.refusal(stderr, verb, err)
 	}
 	fmt.Fprintf(stdout, "TABLE MEMBER table=%s member=%s state=%s", pos[0], field(pos[1]), loc.State)
 	if loc.State == "placed" {

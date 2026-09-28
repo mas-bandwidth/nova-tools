@@ -23,7 +23,6 @@ var pollAllowed = map[string]string{
 	// `ci compare`: one manual REST read per invocation, never on a loop, the
 	// parity evidence for retiring Actions; the lander never calls it.
 	"internal/nsprint/ci/compare.go": "one budgeted parity read",
-	"cmd/nova-decide/review.go":      "nova-decide reads check-runs by gh; not a nova-sprint verb",
 	"internal/merge/flaky.go":        "nova-merge reads a workflow run's jobs by gh; not a nova-sprint verb",
 	"internal/ci/failed_forge.go":    "the old ci failed-run reader; not a nova-sprint verb",
 	"internal/release/edges.go":      "nova-release reads check-runs by gh; not a nova-sprint verb",

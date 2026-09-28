@@ -7,7 +7,7 @@
 //
 // Its second job is the one Johnny reads first. Everything a card writes is
 // untrusted text written by somebody else, and some of it is written to be read
-// by a classifier (docs/SPEC-DECIDE.md:587-594, S1). So the state this package
+// by a classifier (deprecated/docs/SPEC-DECIDE.md:587-594, S1). So the state this package
 // builds is not "the card's output, cleaned up". It is three enumerated fields
 // read mechanically from the OUTCOME line, each checked against a closed set
 // before anything is framed. RESULT.md prose has no path through this file --
@@ -51,7 +51,7 @@ const (
 	Line2None    = "-"
 )
 
-// The harvest question's class set (docs/SPEC-DECIDE.md:938-947, reading 2).
+// The harvest question's class set (deprecated/docs/SPEC-DECIDE.md:938-947, reading 2).
 const (
 	ClassClean            = "clean"
 	ClassDefect           = "defect"
@@ -373,7 +373,7 @@ func namesMissingExecutable(line string) bool {
 }
 
 // ChangesBench reports whether this classification moves the unit to another
-// bench on the bench-red ground (docs/SPEC-DECIDE.md:1175-1184, reading 2).
+// bench on the bench-red ground (deprecated/docs/SPEC-DECIDE.md:1175-1184, reading 2).
 // That is a loosening, so it rests on mechanical facts (S4) and on no answer:
 // the class must be the rule table's OWN toolchain row -- blocked-toolchain
 // answered by the rules, never a provider's label -- AND a fact the card did
@@ -431,7 +431,7 @@ func AppendOutcomeRow(path, unit string, c Classification) error {
 }
 
 // The observed events a later harvest of the SAME unit on another bench
-// appends (D6, docs/SPEC-DECIDE.md:1186-1190, reading 2). Neither is truth: a
+// appends (D6, deprecated/docs/SPEC-DECIDE.md:1186-1190, reading 2). Neither is truth: a
 // card that is clean elsewhere may have been racing a flaky fixture, and one
 // red elsewhere may have hit a second bench's second defect. Truth comes from
 // the escalated reader's --truth and the audit sample (D6).

@@ -3,7 +3,7 @@ package merge
 import "fmt"
 
 // FakeHost is the host the tests drive. It lives beside the production one rather than in
-// a _test.go file because two packages need it -- internal/merge and cmd/nova-merge --
+// a _test.go file because two packages need it -- internal/merge and deprecated/cmd/nova-merge --
 // and a fake copied into both is two fakes that drift.
 //
 // It reaches nothing: no network, no subprocess, no environment. Every answer is a field
@@ -25,7 +25,7 @@ type FakeHost struct {
 	Atomic       bool
 	Merges       []string
 	Err          error
-	// CreatePR and ClosePR are the fold verb's forge operations (docs/SPEC-MERGE.md
+	// CreatePR and ClosePR are the fold verb's forge operations (deprecated/docs/SPEC-MERGE.md
 	// "The fold (#1142)"). Created is one line per opened pull request and Closed is
 	// the numbers closed as superseded by a squash; nextPR hands out numbers so a fold
 	// reads one back on its FOLD OK line.
@@ -190,7 +190,7 @@ func (f *FakeHost) Merge(n int, headOID, baseSHA, mergeSHA string) error {
 }
 
 // CreatePR records one opened pull request and hands back a fresh number. It is the
-// fold verb's forge side (docs/SPEC-MERGE.md "The fold (#1142)").
+// fold verb's forge side (deprecated/docs/SPEC-MERGE.md "The fold (#1142)").
 func (f *FakeHost) CreatePR(head, base, title, body string) (int, error) {
 	if f.Err != nil {
 		return 0, f.Err

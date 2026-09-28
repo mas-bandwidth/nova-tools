@@ -37,7 +37,7 @@ import (
 // CardTestGateRemedy is what the `test-gate` token wants, in one line, in the same table
 // shape as `depends-on` (CardDependsRemedy). It is not merged into the typed-header
 // remedies map on purpose -- that map's size is pinned by the `--rules` listing and the
-// cardLintChecks count in cmd/nova-swarm/lint.go, which is the wiring this card's PATHS
+// cardLintChecks count in deprecated/cmd/nova-swarm/lint.go, which is the wiring this card's PATHS
 // does not reach.
 const CardTestGateRemedy = "the card's gate (`RUN:` and/or its `## Run` region) must run the package its `TEST:` line names: `go test <package>`, `go test ./...`, `go test <ancestor>/...`, or a `make`/`gmake` gate; a TEST: naming a package no command runs has no gate that runs it (SPEC-CARD.md §5, §6)"
 

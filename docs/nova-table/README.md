@@ -23,13 +23,18 @@ data, no bullshit around it. don't let extra stuff creep in."
 and an example, use `nova-table help row set` or `nova-table row set --help`.
 Requested help exits 0 on stdout and needs no store.
 
-Install `nova-table`, `nova-sprint` and Redis. The matching `nova-sprint` binary
-loads the shared function library; an empty Redis alone is not enough. From a
-source checkout, build both clients from the same revision:
+Install `nova-table` and Redis. The store must hold the shared function library
+(`nova_sprint`, from `internal/nsprint/fn`) of the same revision as
+`nova-table`; an empty Redis alone is not enough. The verb that loads it,
+`nova-sprint fn load`, went with nova-sprint to `deprecated/cmd/nova-sprint`
+(deprecated, Glenn 2026-09-27) and is no longer built or shipped. No living
+tool loads or upgrades the library on a bare store yet: `nova-config apply`
+loads it only when the store has none. Until one does, the line below needs a
+`nova-sprint` binary from an earlier release on `PATH`. From a source checkout,
+build the client:
 
 ```sh
 go build -o ./nova-table ./cmd/nova-table
-go build -o ./nova-sprint ./cmd/nova-sprint
 ```
 
 This creates an isolated local store with no TCP listener or saved data. The
@@ -45,7 +50,7 @@ local_table_store() {
     -u NOVA_SPRINT_REDIS_PASSWORD_ENV -u NOVA_REDIS_BENCH_PASSWORD \
     "$@" --redis "$table_demo_dir/redis.sock"
 }
-local_table_store ./nova-sprint fn load
+local_table_store nova-sprint fn load
 local_table_store ./nova-table create work --columns 'todo,doing,done,note:text,progress:pct(done)' --footer total
 local_table_store ./nova-table row add work build docs
 local_table_store ./nova-table cell add work build todo check-a check-b

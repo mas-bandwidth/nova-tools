@@ -64,7 +64,7 @@ import (
 // a second name list here would be the same mistake `validGlobs` just undid.
 
 // CardHeaderFinding is one typed-header defect: the check's token, the 1-based line it
-// sits on and the line's own text. It is the shape `cmd/nova-swarm/lint.go` prints on a
+// sits on and the line's own text. It is the shape `deprecated/cmd/nova-swarm/lint.go` prints on a
 // LINT DRIFT line, remedy and all.
 type CardHeaderFinding struct {
 	Check   string

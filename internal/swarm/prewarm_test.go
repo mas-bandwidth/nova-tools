@@ -28,7 +28,7 @@ func TestPrepareLispJobCacheRefusesSymlinkOverlay(t *testing.T) {
 func TestSpecNamesExactTipPrewarmAndItsFleetMeasurement(t *testing.T) {
 	t.Parallel()
 
-	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-SWARM.md"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "deprecated", "docs", "SPEC-SWARM.md"))
 	if err != nil {
 		t.Fatal(err)
 	}

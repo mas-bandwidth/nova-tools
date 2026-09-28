@@ -6,8 +6,9 @@
 # shared module, and then its line goes. This list only shrinks: a package
 # leaves it by moving under deprecated/ or by being deleted.
 
-# nova-sprint (Glenn 2026-09-27: deprecated, to be rewritten on nova-table)
-cmd/nova-sprint
+# nova-sprint (Glenn 2026-09-27: deprecated, to be rewritten on nova-table).
+# cmd/nova-sprint moved to deprecated/cmd/; its packages stay here until
+# nothing living imports them.
 internal/nsprint
 internal/sprinttable
 internal/sprintline
@@ -20,3 +21,45 @@ keep internal/nsprint/fn
 keep internal/nsprint/testutil
 keep internal/nsprint/testutil/pg
 keep internal/nsprint/verbflag
+
+# nova-swarm (Glenn 2026-09-27: retired for now; its pool dispatcher is reachable
+# from no command and is to be rewritten on nova-table with the sprint).
+# cmd/nova-swarm moved to deprecated/cmd/. Living code still stands on
+# internal/swarm, so it stays here and stays tested until it is lifted out:
+# internal/ci's card-template and toolchain-root class tests, and internal/redisq's
+# and internal/secrets' tests.
+internal/swarm
+keep internal/swarm
+
+# nova-decide (Glenn 2026-09-27: parked because it is not proven yet; the Jev
+# client, to return when its value is measured). cmd/nova-decide,
+# internal/jevcalib and internal/decide/redtriage moved to deprecated/. Living
+# tools stand on the rest, so it stays tested until it is lifted out.
+internal/decide
+# internal/swarm (kept above)
+keep internal/decide
+# internal/decide
+keep internal/decide/questions
+
+# Jev's gate line: imported in the root module only by
+# internal/nsprint/land/stream, deprecated and still here (and by
+# deprecated/cmd/nova-sprint); it moves under deprecated/internal/ when that
+# package does.
+internal/jev
+
+# nova-merge and nova-review (Glenn 2026-09-27: not proven) moved to
+# deprecated/cmd/, with internal/review, internal/prereview, internal/nogh,
+# internal/friendread and internal/merge/bench, which nothing living imports.
+# internal/merge stays and stays tested: internal/typedrec's functional
+# consumers_test reads merge.ParseComment and merge.ParseReviewers (and deprecated
+# internal/nsprint/land and internal/nsprint/disposition import it).
+internal/merge
+keep internal/merge
+
+# nova-wake (Glenn 2026-09-27: not proven) moved to deprecated/cmd/, with
+# internal/dispatch, which only it imported. internal/wake stays and stays
+# tested until it is lifted out: internal/update's cli.go calls
+# wake.AcceptBus (nova-update, nova-version) and internal/redisq's
+# issue2277_test reads wake.Reports.
+internal/wake
+keep internal/wake

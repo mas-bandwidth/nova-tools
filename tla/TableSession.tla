@@ -136,7 +136,7 @@ EndOfInput ==
  /\ UNCHANGED <<cur, exit, high, reader, outside, link>>
 
 Code(k) == IF k = "ok" THEN 0 ELSE 1
-\* storeRefusal: a store that could not be reached is 2.
+\* connection.refusal (main.go): a store that could not be reached is 2.
 ConnCode(kind) == IF Broken = "class" /\ kind = "gone" THEN 1 ELSE 2
 
 \* The verb reached the store on a whole connection. Its answer comes back,
@@ -158,7 +158,11 @@ Lost ==
 \* The verb in hand runs. A connection recorded as live may be replaced by
 \* the pool's health check before sending (including after a store restart).
 \* Answered includes that successful reconnect; Lost covers a write whose
-\* reply is lost. Platforms without the socket peek can take the Lost path.
+\* reply is lost. After a store restart either path is taken on every
+\* platform: the pool's health-check peek replaces the dead connection only
+\* when the store's close has reached this process before the line is sent;
+\* otherwise the line is written to the dead connection and takes Lost (exit
+\* 2, never replayed).
 \* Without a live connection the session dials for this line. With the store
 \* up, the verb is sent on the new connection; with it down, the line fails
 \* with what the dial said, and the pool keeps that error.

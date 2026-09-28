@@ -104,7 +104,7 @@ func LaunchArgv(provider, goos string) ([]string, error) {
 
 // LaunchArgvFor is LaunchArgv for one run: the table's row for provider gives the
 // argv shape, and the request's non-empty fields fill it. This is the one launcher:
-// `nova-swarm native` builds every harness argv here (cmd/nova-swarm nativeLaunchArgv),
+// `nova-swarm native` builds every harness argv here (deprecated/cmd/nova-swarm nativeLaunchArgv),
 // so the table, not a per-provider script and not a literal in the caller, decides the
 // shape a provider is launched with. The table declares OS-specific columns
 // (linuxHarness, darwinHarness) and only those differ between the two OSes.
