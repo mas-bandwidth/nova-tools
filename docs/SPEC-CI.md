@@ -2206,6 +2206,59 @@ this rule having run on it, and a main run excuses it all the same.
 `origin/dev` is trusted to be dev's; the workflow's own fetch
 (`+dev:refs/remotes/origin/dev`) makes it so.
 
+
+
+### `tlc` — bounded model evidence
+
+`make tlc` runs one declared `TLC_GROUP` on a Linux bench, using explicit
+`TLC_JAR` and `TLC_OUT` paths. It downloads nothing, uses at most two TLC
+workers and two JVM processors, and caps the whole group at 110 seconds.
+Each case has an owned temporary state directory. Expected counterexamples
+must name the selected invariant, action or temporal property and return its
+expected TLC exit; a timeout, parse failure or unrelated violation is a failure.
+Final liveness checking remains enabled.
+
+`tla/CASES.tsv` declares every MC configuration, instance module, expected result,
+property, deadlock policy, execution group, gate and debt. Layer one's required
+gate covers MemberTable, EpochMemberTable, TableEdit, TableOrder, TableSession,
+TableFirstContact, RedisFn and FirstConn, including their negative witnesses.
+The epoch fixed-point instance has its own group so it does not spend the main
+epoch instance's budget. Other measured cases remain recorded. CardMachine and
+LandWatch have explicit failed measurement debt; they are not counted as passing
+proofs or silently replaced by smaller configurations.
+
+`tla/RUNS.tsv` retains each measured module/configuration, generated and distinct
+states, elapsed time, result, exit, declared expectation, budget and run mode.
+It also records the bench, UTC start, installed jar hash and an input fingerprint
+covering all TLA modules, MC configurations, case declarations and runner bytes.
+Unknown state counts on a failed timeout stay unknown, never zero-state success.
+Updating any fingerprinted input requires refreshing the records on a bench.
+
+`TestTLCRecordsCoverCurrentModels` checks declaration coverage and current evidence
+without executing Java or making a network call. Required models cannot become
+bench debt to evade their gate. Only the two named deferred models may retain
+failed or missing measurements, and the class lists that debt explicitly; any
+existing debt record must still have a current fingerprint and honest provenance.
+`TestTLCRecordFreshnessAndCoverageWitnesses` proves changed models, changed bounds,
+changed runners, omitted/added cases, wrong exits and invalid gate waivers refuse,
+while a declared failed bench measurement is retained as debt, never PASS.
+
+The scheduled/on-demand `.github/workflows/tlc.yml` derives its required matrix
+from the case plan and runs only on self-hosted Linux runners, with two-minute
+job timeouts and a 110-second group limit. The repository's `TLC_JAR` variable
+names the preinstalled jar; Java and Python must already be on PATH. Logs and
+TSV records are uploaded even on failure. This workflow does not accept PR events.
+The ordinary change gate checks the committed records; the nightly repeats the
+actual model runs. A failing or absent nightly is not evidence of a checked model.
+
+`make tlc-full` is a separate manual bench experiment with an explicitly supplied
+`TLC_BUDGET` of at most 3600 seconds. It refuses CI environments. Its full-instance
+records carry `mode=manual` and their actual budget; they cannot satisfy a required
+bounded gate. No workflow job gets a longer timeout. A smaller model, if introduced,
+needs a separate configuration and a stated coverage difference; it cannot replace
+the original failed measurement.
+
+
 ## How the class tests read the tree: one walk, one parse, in parallel
 
 Every rule above is a sweep of this repository's own source. A rule that pays

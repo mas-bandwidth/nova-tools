@@ -273,7 +273,7 @@ with its sweep of the tree or it does not land.
     `os.TempDir()`, and every path a tool writes is named there
     (`testoutpath`, `sharedtemp`).
 
-**The rest of the index, by name.** `cap` (every job two minutes, permanently, every platform),
+**The rest of the index, by name.** `tlc` (fresh bounded model evidence and explicit bench debt), `cap` (every job two minutes, permanently, every platform),
 `templates`, `goenv`, `pathassert`, `busprogress`,
 `outputs`, `cache`, `pinned-actions`, `ci-ok`, `nightly-tags`, `functional` (a test that starts a redis-server, execs a whole program or asserts a real-time bound is behind `//go:build functional`), `selection`, `toolchainroots`, `walltoolchain`, `hostseam`,
 `ciworkspace`, `namedpaths`, `one section`, `testbins`, `fieldsindex`, `cardtemplates`, `transcripts`, `parallel`, `slowwaits`, `unitwaits`, `allowlist`,
