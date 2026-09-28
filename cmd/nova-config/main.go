@@ -34,9 +34,9 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/config"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 )
 
@@ -52,6 +52,17 @@ const (
 	envSprintRedis = "NOVA_SPRINT_REDIS"
 	envRedisAddr   = "NOVA_REDIS_ADDR"
 	envActor       = "NOVA_FRIEND"
+)
+
+// The Redis login, the names the fleet's tools have always read
+// (internal/nsprint/redisauth): the ACL user turns the login on, and its
+// password is in the variable NOVA_SPRINT_REDIS_PASSWORD_ENV names, else in
+// NOVA_REDIS_BENCH_PASSWORD. With no user the login is the default user's,
+// with no password.
+const (
+	envRedisUser        = "NOVA_SPRINT_REDIS_USER"
+	envRedisPassEnv     = "NOVA_SPRINT_REDIS_PASSWORD_ENV"
+	defaultRedisPassEnv = "NOVA_REDIS_BENCH_PASSWORD"
 )
 
 const usageTop = `nova-config: the fleet's permanent configuration, in Postgres, applied into Redis (see docs/CLI.md)
@@ -150,20 +161,39 @@ type redisSide interface {
 
 // deps are the seams: the environment, the two stores and the clock. The
 // unit tests hand in config.Mem and a fake Applier; main hands in Postgres
-// and the fleet Redis.
+// and the fleet Redis. openRedis reads the login from the getenv it is
+// handed, never from the process on its own.
 type deps struct {
 	getenv    func(string) string
 	openStore func(ctx context.Context, dsn string) (pgStore, error)
-	openRedis func(ctx context.Context, addr string) (redisSide, error)
+	openRedis func(ctx context.Context, addr string, getenv func(string) string) (redisSide, error)
 	now       func() time.Time
 }
 
-type redisApplier struct {
-	*config.RedisApplier
-	st *store.Store
+// redisLogin is who nova-config logs in to Redis as, from the variables
+// above: redisconn reads no default password variable of its own, so the
+// default is named here.
+func redisLogin(addr string, getenv func(string) string) redisconn.Options {
+	o := redisconn.Options{Addr: addr, Env: redisconn.Env{User: envRedisUser}}
+	if getenv(envRedisUser) != "" {
+		o.PasswordEnv = getenv(envRedisPassEnv)
+		if o.PasswordEnv == "" {
+			o.PasswordEnv = defaultRedisPassEnv
+		}
+	}
+	return o
 }
 
-func (r redisApplier) Close() error { return r.st.Close() }
+// redisApplier is the Redis side on a redisconn connection. The connection
+// explains its own failures (redisconn.Open's hook): an error of the store
+// being unreachable, refusing the login, or losing a reply comes back from
+// every call already one line of redisconn's, found by redisconn.Failed.
+type redisApplier struct {
+	*config.RedisApplier
+	conn *redisconn.Conn
+}
+
+func (r redisApplier) Close() error { return r.conn.Close() }
 
 func realDeps() deps {
 	return deps{
@@ -171,12 +201,12 @@ func realDeps() deps {
 		openStore: func(ctx context.Context, dsn string) (pgStore, error) {
 			return config.OpenPG(ctx, dsn)
 		},
-		openRedis: func(ctx context.Context, addr string) (redisSide, error) {
-			st, err := store.Open(ctx, addr)
+		openRedis: func(ctx context.Context, addr string, getenv func(string) string) (redisSide, error) {
+			conn, err := redisconn.Open(ctx, redisLogin(addr, getenv), getenv)
 			if err != nil {
 				return nil, err
 			}
-			return redisApplier{RedisApplier: &config.RedisApplier{Client: st.Client()}, st: st}, nil
+			return redisApplier{RedisApplier: &config.RedisApplier{Client: conn.Client()}, conn: conn}, nil
 		},
 		now: time.Now,
 	}
@@ -240,9 +270,41 @@ func refused(stderr io.Writer, verb, what, next string) int {
 	return 1
 }
 
+// redisRefused is the line of a Redis that could not be used, redisconn's
+// own, which names the store, the login and the next step. Its exit code is
+// the class's (redisconn doc.go): not reached, or the login refused, is 2; a
+// reply lost after the command was sent is 1, the write may have committed.
+func redisRefused(stderr io.Writer, verb string, err error) int {
+	fmt.Fprintf(stderr, "%s %s: %s\n", tool, verb, oneline.Escape(err.Error()))
+	if class, _ := redisconn.Failed(err); class == redisconn.Unconfirmed {
+		return 1
+	}
+	return 2
+}
+
+// refuseErr is refuse for an error that may be a Redis that could not be
+// used, which is redisRefused's line instead.
+func refuseErr(stderr io.Writer, verb string, err error) int {
+	if isRedisError(err) {
+		return redisRefused(stderr, verb, err)
+	}
+	return refuse(stderr, verb, err.Error())
+}
+
+// isRedisError reports a Redis that could not be used (redisRefused): an
+// error of redisconn's, from Open or from the connection's hook.
+func isRedisError(err error) bool {
+	_, ok := redisconn.Failed(err)
+	return ok
+}
+
 // storeErr turns a store error into the right line: a refusal (exit 1) with
-// its remedy, or a store that did not answer (exit 2).
+// its remedy, a Redis that could not be used (redisRefused), or a store that
+// did not answer (exit 2).
 func storeErr(stderr io.Writer, verb string, err error, next string) int {
+	if isRedisError(err) {
+		return redisRefused(stderr, verb, err)
+	}
 	if config.Refused(err) {
 		return refused(stderr, verb, err.Error(), next)
 	}
@@ -552,7 +614,7 @@ func beats(ctx context.Context, addr string, names []string, d deps) (map[string
 	if addr == "" {
 		return nil, nil
 	}
-	rs, err := d.openRedis(ctx, addr)
+	rs, err := d.openRedis(ctx, addr, d.getenv)
 	if err != nil {
 		return nil, err
 	}
@@ -599,7 +661,7 @@ func runKindList(ctx context.Context, k *config.Kind, args []string, stdout, std
 			names = append(names, row.Name)
 		}
 		if bs, err = beats(ctx, liveRedisAddress(*redisFlag, d.getenv), names, d); err != nil {
-			return refuse(stderr, verb, err.Error())
+			return refuseErr(stderr, verb, err)
 		}
 	}
 	for _, row := range rows {
@@ -657,7 +719,7 @@ func runKindRead(ctx context.Context, k *config.Kind, which string, args []strin
 		if live(k) {
 			bs, err := beats(ctx, liveRedisAddress(*redisFlag, d.getenv), []string{name}, d)
 			if err != nil {
-				return refuse(stderr, verb, err.Error())
+				return refuseErr(stderr, verb, err)
 			}
 			suffix = liveSuffix(bs, name)
 		}
@@ -770,9 +832,9 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 		fmt.Fprintln(stdout, line+" redis=-")
 		return 0
 	}
-	rs, err := d.openRedis(ctx, addr)
+	rs, err := d.openRedis(ctx, addr, d.getenv)
 	if err != nil {
-		return refuse(stderr, verb, err.Error())
+		return refuseErr(stderr, verb, err)
 	}
 	defer rs.Close()
 	line += " redis=" + config.Value(addr)
@@ -780,7 +842,7 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 	for _, k := range config.Kinds {
 		_, applied, err := rs.Read(ctx, k.Name)
 		if err != nil {
-			return refuse(stderr, verb, err.Error())
+			return refuseErr(stderr, verb, err)
 		}
 		line += fmt.Sprintf(" %s_applied=%d", k.Name, applied)
 		if applied != revs[k.Name] {
@@ -835,9 +897,9 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 		return refuse(stderr, verb, err.Error())
 	}
 	defer st.Close()
-	rs, err := d.openRedis(ctx, addr)
+	rs, err := d.openRedis(ctx, addr, d.getenv)
 	if err != nil {
-		return refuse(stderr, verb, err.Error())
+		return refuseErr(stderr, verb, err)
 	}
 	defer rs.Close()
 	word := "APPLY"

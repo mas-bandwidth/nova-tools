@@ -204,7 +204,11 @@ nova-config fleet set: fleet takes no name: it is one row; want fleet set --<fie
 
 Exit 1 is the store saying no; exit 2 is an invocation that could not run
 (a missing flag, a bad value, a store that did not answer), and its line
-ends `run: nova-config help`.
+ends `run: nova-config help`. A Redis that could not be used is one line in
+the connection's words (the store, the login, what came back, `next:` the
+step): exit 2 when it was not reached or refused the login, exit 1 when a
+reply was lost after the command was sent, because the write may have
+committed and is read back before apply runs again.
 
 ## Apply: Redis as a copy
 
