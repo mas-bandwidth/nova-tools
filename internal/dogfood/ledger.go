@@ -445,10 +445,22 @@ func Gate(verbs []Verb, receipts []Receipt, authors Authors, requireAll bool) ([
 		}
 	}
 
+	// A stranded finding is answered the way any finding is: by a receipt that
+	// names it. The answer is recorded against the verb as the list spells it
+	// (`record` refuses any other spelling), so the ids are gathered from every
+	// receipt, not from one verb's.
+	answered := map[string]bool{}
+	for _, r := range receipts {
+		if id := strings.TrimSpace(r.Closes); id != "" {
+			answered[id] = true
+		}
+	}
+
 	var findings []GateFinding
-	// What was thrown away is said first, and only a NOT-OK one is a failure.
+	// What was thrown away is said first, and only a NOT-OK one nobody has
+	// answered is a failure.
 	for _, s := range Stranded(verbs, receipts) {
-		if s.Receipt.OK {
+		if s.Receipt.OK || answered[s.Receipt.ID()] {
 			continue
 		}
 		where := s.File

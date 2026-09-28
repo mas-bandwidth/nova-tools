@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -143,7 +144,7 @@ func medianOut(outs []int64) string {
 func cmdProfiles(args []string, stdout, stderr io.Writer, now time.Time) int {
 	fs := newFlagSet("profiles")
 	swarmRoot := fs.String("swarm-root", "", "")
-	if err := fs.Parse(args); err != nil {
+	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, " profiles", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if code, refused := noPositional(fs, stderr, "profiles"); refused {

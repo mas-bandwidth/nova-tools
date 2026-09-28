@@ -2,7 +2,7 @@
 
 [Back to Nova Tools](../README.md)
 
-Command reference and worked examples. Run shell examples from the repository root unless a section says otherwise. The first-run transcripts also live in [TESTS.md](TESTS.md), where the tests execute them line by line, so what is shown here is what the tool does today.
+Command reference and worked examples. Run shell examples from the repository root unless a section says otherwise. `-h` or `--help` after any verb prints that verb's help (its usage lines and every flag it takes) on stdout at exit 0 and runs nothing, so `<tool> <verb> -h` is always a safe first question; `<tool> help` is the whole banner. nova-fuse alone refuses `-h` after a verb, because its exit 0 means CLEAR. The first-run transcripts also live in [TESTS.md](TESTS.md), where the tests execute them line by line, so what is shown here is what the tool does today.
 
 ## nova-check
 
@@ -19,7 +19,7 @@ nova-check corpus --ledger <file> --root <dir> --min-anchors <n>   # the materia
 nova-check hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <email>" [--paths <glob>,...] [--kind <kind>] [--max <n>] [--timeout <s>]   # the accept gate's four mechanical checks on a branch before you ask for a read: identity, out-of-path, stray-file, secret (exit 0 clean, 1 findings, 2 could not run)
 nova-check dogfood ledger (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>]   # one row per verb: who has run it, when, and whether it did what they needed
 nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] --receipts <dir>   # append one receipt, refusing a verb the list does not declare
-nova-check dogfood gate (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--require-all] [--allow-empty]   # exit 1 with the verbs no non-author has run and the edges nobody has cleared: the line a release calls
+nova-check dogfood gate (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--shipped <cmd dir>] [--require-all] [--allow-empty]   # exit 1 with the verbs no non-author has run and the edges nobody has cleared: the line a release calls
 nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir> --retired <file> --since <RFC3339|24h> [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>] [--certs <tsv>] [--state <file>] [--by <name>] [--json] [--timeout <n>]   # are we converging: one line per stream, now against --since, with the ratio and the trend
 ```
 
@@ -80,7 +80,10 @@ of those nobody has filed an issue for, and `unmatched=` how many receipts named
 a verb the list does not declare. Each row also carries `open=<n>`, the findings
 open on that verb, printed whether it is zero or not. `gate` is the same read
 with an exit code: 1 on an open edge always, 1 on any **unmatched not-ok
-receipt**, and with `--require-all` on every verb no non-author has passed.
+receipt** no receipt's `--closes` names, and with `--require-all` on every verb no non-author has passed.
+`--shipped <cmd dir>` scopes the gate to the tools a release ships: a receipt
+naming a tool that is not under that `cmd/` is set aside and counted on
+`DOGFOOD NOTE shipped=<n> outside=<n> cmd=<dir>`, and judges nothing.
 
 **An edge is answered, not outlived.** It used to be cleared by anybody running
 the verb again later and finding nothing — so where two people dogfood the same
@@ -316,6 +319,8 @@ LIFT OK verified: a-forum is no longer quarantined (soft: your own dial, both di
 **What the flags want.** `--box` is the file, named on every verb; there is no default and no environment variable, because a fuse box the tool went looking for is one an attacker can put somewhere. Every flag takes one value: `--box` named twice is refused at exit 2, never answered from the last one, and so is a `--box` value that begins with `-`. `--` ends the flags, and after it an argument beginning with `-` is a surface or a reason, never a flag; a caller passing an untrusted surface writes `check --box <path> -- <surface>`. A surface is a name you choose for one place you read from, free text, folded and lower-cased. `quarantine` wants a surface and a reason; `lockdown` wants a reason. `lift lockdown` is refused forever, before anything is read, and its refusal is the one here longer than a line, because it is meant to be read: a blown lockdown is replaced in a live conversation with your person, and there is no path through this tool to it.
 
 **What it is for.** A safety for you, not a control on you. If a surface turns hostile while your person is asleep, you can stop reading it, one surface or everything untrusted, instantly, solo, with no proof required. Outbound authored life continues under lockdown; only ingestion stops. An unreadable box is treated as blown, never as clear, and any path that reads bytes an outsider can author runs `check` before its first credential read, at build time.
+
+**Help is `nova-fuse help`, never `-h` after a verb.** Every other nova tool answers `<verb> -h` with that verb's help at exit 0. nova-fuse refuses it at exit 2, with one line on stderr, because exit 0 here means CLEAR: a surface or a reason that arrives spelled `-h` must never read as permission. `nova-fuse help`, and `-h` or `--help` as the first argument, print the usage at exit 0.
 
 ## nova-memory
 
@@ -1091,7 +1096,9 @@ that nobody has run since and said it did, is an **open edge**, and an open edge
 --reason <why>"`. `--cli` defaults to `docs/CLI.md` beside the checkout the verb was already given
 (`--changelog` for `cut`, `--source` for `build`); `--receipts` defaults to `~/rowan-working/dogfood`
 when that directory exists, and a run with neither says `dogfood-gate=skipped` rather than passing
-quietly. `--no-dogfood-gate` needs `--reason <why>`, and the reason is printed, put on the release
+quietly. The gate judges the **shipped set** only: the tools under the checkout's `cmd/`. A receipt
+naming any other tool is set aside and counted on `RELEASE CUT NOTE dogfood-gate shipped=<n>
+outside=<n> cmd=<dir>`. `--no-dogfood-gate` needs `--reason <why>`, and the reason is printed, put on the release
 line as `dogfood=waived`, and written into the CHANGELOG section as `Dogfood gate waived: <why>`.
 Every release line carries `dogfood=ok|waived|skipped`. Glenn, 2026-09-18: a tool is done when it is
 tested, dogfooded by a non-author on real work, and the feedback is applied — see
@@ -1400,10 +1407,9 @@ refused at exit 2, every problem in the one line:
 ```
 nova-ci functional: package pattern "./nope" matches no package (no such directory); run: nova-ci help
 nova-ci functional: unknown flag "--bogus" (functional takes no flags, only package directories such as ./cmd/nova-table or ./internal/...); run: nova-ci help
-nova-ci functional: usage: nova-ci functional <package-dir>... (package directories or dir/... patterns, no flags); run: nova-ci help
 ```
 
-The last is what `-h` and `--help` after the verb print, to stderr at exit 2.
+`-h` and `--help` after the verb are not refused: they print the verb's help on stdout at exit 0, which is not silence either.
 
 See [SPEC-CI.md](SPEC-CI.md).
 
@@ -1483,6 +1489,60 @@ nova-config apply --as rowan
 
 **Refusals.** Exit 1 is the store or Redis saying no, one stderr line naming the next step: `machine studio exists; run: nova-config machine set studio ...`, `--store space names no machine row`, `machine studio is the --coordinator of the fleet`, `friend rowan is the --coordinator of the sprint`, `CONFLICT friend: Redis holds rev 9 and this Postgres is at rev 4`, `CEILING studio: friend stella makes the sum 65 over the machine ceiling 64`, `friend emma has no beat naming a machine and the fleet names no coordinator machine to charge her slots to`. Exit 2 is an invocation that could not run (a name on a singleton is one).
 
+## nova-redis
+
+```
+nova-redis serve  --bind <addr>[,<addr>...] --port <port> --dir <store-dir>  # run redis-server in the foreground, loopback and tailnet only, AOF on
+nova-redis spill  <login> --owner <o> --name <n> --ttl <d> --value <v>        # write scratch under <o>:<n> with a required TTL
+nova-redis recall <login> --owner <o> --name <n>                              # read it back; exit 1 on a missing or expired key
+nova-redis fn load  <login>                                                   # put this binary's function library on the store unless it holds exactly that code
+nova-redis fn check <login>                                                   # compare the store's library with this binary's; changes nothing
+# <login> is --addr <host:port> [--user <name>] [--password-env <NAME>]
+```
+
+`nova-redis` owns a Redis instance ([SPEC-REDIS.md](SPEC-REDIS.md)). Every verb that talks to a store opens it one way, through `internal/redisconn`: one dial, the handshake and the login bounded, no retry.
+- `--addr` is the store's `host:port`.
+- `--user` is the ACL user to log in as. Its default is `NOVA_REDIS_USER`, and with neither set the verb logs in as the store's default user.
+- `--password-env` names the variable that holds the password. Its default is the variable `NOVA_REDIS_PASSWORD_ENV` names, else `NOVA_REDIS_PASSWORD`. A seat whose secret has its own name (`nova-secrets exec --only <NAME>`) passes `--password-env <NAME>` and needs no copy. The password itself is never an argument.
+
+Each of these is refused (exit 2) before the dial, and the refusal names where the bad value came from, the flag or the variable. A store that cannot be reached, or a login it refuses, exits 2 in every verb.
+- a missing or malformed `--addr`;
+- a `--password-env` that is not a variable name (capital letters, digits and underscores);
+- a user name holding whitespace;
+- a user whose password variable is empty.
+
+**The function library.** The `fn` verbs handle the `nova_sprint` Redis function library, the Lua that nova-table and nova-config call with `FCALL`. The library is the one this binary embeds (`internal/nsprint/fn`'s `lua/`), and the machinery is `internal/redisfn`. A library's identity is its code as the store holds it, and its digest is the first 16 hex digits of the code's SHA-256.
+
+- `fn load` is the deployer's load (`redisfn.Ensure`). It writes nothing when the store holds exactly this code. Otherwise it sends one `FUNCTION LOAD REPLACE`, so the store holds the whole old library or the whole new one. It prints one line:
+  - `LOADED nova_sprint sha=<d> store=<a>`: the name was free.
+  - `UNCHANGED nova_sprint sha=<d> store=<a>`: nothing was sent after the read.
+  - `REPLACED nova_sprint sha=<d> was=<old> store=<a>`: other code was under the name.
+  
+- `fn check` changes nothing (`redisfn.Check`). Its line is `OK|STALE|MISSING nova_sprint sha=<want> loaded=<d|none> want=<d> store=<a>`, so every line of both verbs holds one `sha=`, this binary's digest:
+  - `OK`: the store holds this binary's code, exit 0.
+  - `STALE`: the store holds other code, exit 1.
+  - `MISSING`: the store holds no library of the name, exit 1.
+  
+  `STALE` and `MISSING` end in the remedy, `nova-redis fn load <login>`, which logs in as the check did. It keeps every login flag given on the line, even an empty one or one equal to the default, and adds what the environment set to other than the default. Each value is quoted as one POSIX shell word, so the printed command can be pasted as it is.
+
+**Failures.** A failure of either verb is one `FAILED nova_sprint sha=<d> store=<a> err=<...> remedy="..."` line on stderr, and nothing on stdout. `err` says what was being done, why it failed, and what the store holds after it. `remedy` is the one next step for that cause, and its command carries the verb's login:
+- A function name another library holds: `remedy` names that library and the function.
+- `NOPERM`, or a login the store refused (`WRONGPASS`, `NOAUTH`): log in as a user that may run the commands.
+- A library the store would not compile: fix the Lua that `err` names.
+- No answer: check that the store is up and `--addr` is right, then `fn check`.
+
+**Exit codes.** This is the convention for both verbs:
+
+| exit | meaning |
+|---|---|
+| 0 | OK, LOADED, UNCHANGED or REPLACED |
+| 1 | STALE or MISSING, or the store answered with a refusal (`NOPERM`, a library it would not take, a function name another library holds) |
+| 2 | refused before the dial, no answer from the store (unreachable, or the wait ended), or a login the store refused |
+
+The user needs `FUNCTION LIST` for `fn check`, and `FUNCTION LIST` and `FUNCTION LOAD` for `fn load`. A user with `~* &* +@all -@dangerous` has both. `-h` and `--help` after a verb are refused like any unknown flag (exit 2), as for every nova-redis verb. `nova-redis help` prints the usage.
+
+`fn load` replaces, so it belongs to the one place that deploys. Two deployers with different builds replace each other's library for as long as both run (`tla/RedisFn.tla`, `MCRedisFnTwoDeployers`). A tool on its way to an `FCALL` calls `redisfn.LoadMissing`, which never replaces a library (nova-tools #3620): nova-table does so on its first `Function not found` (see [nova-table](#nova-table)). The first run's refusals are in [TESTS.md](TESTS.md#nova-redis).
+
 ## nova-cairn
 
 Keeps explicit session checkpoints, their source pointers and a bounded index.
@@ -1544,8 +1604,10 @@ epoch and writes a change receipt. The guide and disposable local setup are in
 A table is columns, rows and a set per cell. Make one, put a row in it, put
 members in a cell, move one to the next cell, and look at it two ways: the
 typed lines a program reads, and the text a person reads. These commands assume
-a configured store with the matching function library loaded; for a fresh
-local Redis, follow [Start locally](nova-table/README.md#start-locally) first.
+a configured store that holds this build's function library. On a store that
+holds none, the first verb loads it (first contact, never replacing a library
+the store holds) and its `trips=` counts the load; for a fresh local Redis,
+follow [Start locally](nova-table/README.md#start-locally).
 
 ```text
 $ nova-table create demo --columns ready,working,done

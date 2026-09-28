@@ -33,6 +33,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/cairn"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -106,7 +107,10 @@ func refuse(stderr io.Writer, where, what string) int {
 
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
 
-func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
+	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
+	// before anything is read or written (the CLI style's rule (b), #4505).
+	defer verbflag.Recover(stdout, "nova-cairn", usage, &code)
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb given; open starts a record")
 	}
@@ -122,6 +126,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "version", "--version":
 		return cmdVersion(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
+		if args[0] == "help" && len(args) > 1 && args[1] != "help" && !verbflag.IsHelp(args[1]) {
+			return run(append(args[1:], "--help"), stdin, stdout, stderr)
+		}
 		fmt.Fprint(stdout, usage)
 		return 0
 	default:
@@ -135,7 +142,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 func parse(fs *flag.FlagSet, args []string, stderr io.Writer, required ...string) (given map[string]bool, ok bool) {
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
-	if err := fs.Parse(args); err != nil {
+	if err := verbflag.Parse(fs, args); err != nil {
 		refuse(stderr, " "+fs.Name(), oneline.Cap(err.Error(), oneline.TailBytes))
 		return nil, false
 	}
@@ -170,6 +177,7 @@ func clock(given map[string]bool, now string, verb string, stderr io.Writer) (ti
 }
 
 func cmdVersion(args []string, stdout, stderr io.Writer) int {
+	verbflag.HelpIfAsked(args, "version")
 	if len(args) > 0 {
 		return refuse(stderr, " version", fmt.Sprintf("takes no flags and no arguments, got %d", len(args)))
 	}

@@ -23,6 +23,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -37,7 +38,7 @@ func cmdHygiene(args []string, stdout, stderr io.Writer) int {
 	kind := fs.String("kind", "", "")
 	maxFlag := fs.Int("max", bounded.Default, "")
 	timeout := fs.Int("timeout", 120, "")
-	if fs.Parse(args) != nil || fs.NArg() != 0 {
+	if verbflag.Parse(fs, args) != nil || fs.NArg() != 0 {
 		return refuse(stderr, " hygiene", "bad flags")
 	}
 	if *repo == "" || *base == "" || *head == "" {
