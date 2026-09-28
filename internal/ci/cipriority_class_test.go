@@ -1,6 +1,9 @@
 package ci
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -18,7 +21,7 @@ import (
 //     yield.Nice (15) BEFORE the exec, on darwin and on Linux, through the
 //     one package internal/yield.
 //   - TestSlotsShrinkByCILegs: no bench slot computation ignores the CI
-//     legs running on it: every `slots - ...` in Go and Lua takes the
+//     legs running on it: every `slots - ...` in live Go and Lua takes the
 //     beat's ci off, and the beat writes it.
 //
 // It holds on every bench and every worker kind; a new exec path or a new
@@ -136,11 +139,38 @@ func TestCopiesRunNiced(t *testing.T) {
 	}
 }
 
-// slotSubtraction finds a slot computation: `slots - <something>` in Go
-// (slots, Slots) or Lua (d.slots), or the desired hash's slots field read
-// as a number and subtracted from (`(tonumber(desired[1]) or 0) -`, the
-// form deal.lua's in-Redis re-check used and the first pattern missed).
+// slotSubtraction finds a slot computation in Lua: `slots - <something>`
+// (d.slots), or the desired hash's slots field read as a number and
+// subtracted from (`(tonumber(desired[1]) or 0) -`, the form deal.lua's
+// in-Redis re-check used and the first pattern missed).
 var slotSubtraction = regexp.MustCompile(`\b[sS]lots\s*-\s*[A-Za-z(]|\bdesired\b[^\n]*\)\s*-\s*[A-Za-z(]`)
+
+// goSlotLines are the lines of a Go file holding a slot computation: a
+// subtraction whose left operand is slots or Slots (`slots - ci`,
+// `b.Slots - b.CI`). Go is read by its syntax, not by slotSubtraction: over
+// the whole live tree the pattern also matched the flag name --slots-store
+// inside strings (cmd/nova-swarm, internal/swarm), which is no subtraction.
+func goSlotLines(fset *token.FileSet, f *ast.File) map[int]bool {
+	lines := map[int]bool{}
+	ast.Inspect(f, func(n ast.Node) bool {
+		b, ok := n.(*ast.BinaryExpr)
+		if !ok || b.Op != token.SUB {
+			return true
+		}
+		name := ""
+		switch x := b.X.(type) {
+		case *ast.Ident:
+			name = x.Name
+		case *ast.SelectorExpr:
+			name = x.Sel.Name
+		}
+		if name == "slots" || name == "Slots" {
+			lines[fset.Position(b.Pos()).Line] = true
+		}
+		return true
+	})
+	return lines
+}
 
 // namesCILegs is what a slot computation must name to be taking the CI legs
 // off: the Go field or variable ci/CI, or the Lua TM.ci_legs.
@@ -158,15 +188,20 @@ func TestSlotsShrinkByCILegs(t *testing.T) {
 	if !strings.Contains(funcBody(t, "presence.lua", lua, "local function friend_beat("), "'ci', args[5] or ''") {
 		t.Errorf("presence.lua friend_beat: a friend's beat must write the CI leg count of its machine as ci (args[5]) every beat")
 	}
-	life := readFile(t, filepath.Join(root, "cmd/nova-sprint/life.go"))
-	if strings.Count(life, "req.CI = life.CILegsNow()") < 2 {
-		t.Errorf("cmd/nova-sprint/life.go: the bench beat must measure the CI legs (life.CILegsNow) for the first beat and every tick")
-	}
+	// The Go side of the beat, where the legs are measured (cmd/nova-sprint's
+	// life.go, life.CILegsNow for the first beat and every tick), was read
+	// here; nova-sprint is deprecated (Glenn 2026-09-27: deprecated code is
+	// not tested and never blocks CI), and no live tool writes a bench beat,
+	// so that clause has no live subject. The Lua the beat calls is live
+	// (internal/nsprint/fn, kept in deprecated/PACKAGES) and is read above.
 
-	// 2. Every slot computation, Go and Lua, under the sprint tools takes
-	// the legs off. Comments and tests do not count; a line does.
+	// 2. Every slot computation, Go and Lua, in the live packages (liveTree,
+	// the reading CI's selection uses; a class rule over deprecated code is
+	// a test of it) takes the legs off. Comments and tests do not count; a
+	// line does.
+	lt := loadLiveTree(t, root)
 	var checked int
-	for _, base := range []string{"internal/nsprint", "cmd/nova-sprint"} {
+	for _, base := range []string{"cmd", "internal"} {
 		err := filepath.WalkDir(filepath.Join(root, base), func(path string, d os.DirEntry, err error) error {
 			if err != nil {
 				return err
@@ -175,10 +210,26 @@ func TestSlotsShrinkByCILegs(t *testing.T) {
 				return nil
 			}
 			rel, _ := filepath.Rel(root, path)
+			if !lt.File(rel) {
+				return nil
+			}
 			src := readFile(t, path)
+			var goLines map[int]bool
+			if strings.HasSuffix(path, ".go") {
+				fset := token.NewFileSet()
+				f, err := parser.ParseFile(fset, path, src, 0)
+				if err != nil {
+					t.Fatalf("%s: %v", filepath.ToSlash(rel), err)
+				}
+				goLines = goSlotLines(fset, f)
+			}
 			for i, line := range strings.Split(src, "\n") {
 				code := strings.TrimSpace(line)
-				if strings.HasPrefix(code, "//") || strings.HasPrefix(code, "--") || !slotSubtraction.MatchString(code) {
+				if goLines != nil {
+					if !goLines[i+1] {
+						continue
+					}
+				} else if strings.HasPrefix(code, "--") || !slotSubtraction.MatchString(code) {
 					continue
 				}
 				checked++
@@ -192,13 +243,16 @@ func TestSlotsShrinkByCILegs(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// The eight the rule was written against: the two deal passes, the
-	// fill, the read route, deal.lua's re-check, the friend deal's two, and
-	// task width. Fewer means one moved out of the sweep's reach. A friend
-	// is not free of legs: the Studio hosts friends and CI both, so a
-	// friend's slots shrink by its own beat's ci like a bench's.
-	if checked < 8 {
-		t.Errorf("found %d slot computations under internal/nsprint and cmd/nova-sprint, want at least 8 (deal, taskcard, ns_cm_work, TM.room, ns_card_deal, DF x2, width)", checked)
+	// The rule was written against eight; the two Go deal passes
+	// (internal/nsprint/deal, internal/nsprint/taskcard) and the preflight
+	// row are deprecated, and the six live ones are the Lua in
+	// internal/nsprint/fn: ns_cm_work, TM.room, the width, deal.lua's
+	// re-check and the friend deal's two. Fewer means one moved out of the
+	// sweep's reach. A friend is not free of legs: the Studio hosts friends
+	// and CI both, so a friend's slots shrink by its own beat's ci like a
+	// bench's.
+	if checked < 6 {
+		t.Errorf("found %d slot computations in the live packages, want at least 6 (ns_cm_work, TM.room, width, ns_card_deal, DF x2)", checked)
 	}
 }
 

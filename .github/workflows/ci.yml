@@ -2027,10 +2027,12 @@ jobs:
           done
           [ "$bad" -eq 0 ] || { echo "$bad job(s) did not succeed"; exit 1; }
 
-      # The receipt below needs this tree (go build ./cmd/nova-sprint), so the
-      # job checks out the way every self-hosted job does: clean, borrow the
-      # bench mirror, checkout, the installed Go. always(): the receipt is
-      # written for a red run too.
+      # The receipt below once fell back to `go run ./cmd/nova-sprint` of this
+      # tree, and these steps (clean, borrow the bench mirror, checkout, the
+      # installed Go) were for that. The fallback is gone (nova-sprint is
+      # deprecated and never built by CI); no step of ci-ok reads this tree
+      # now, and taking these steps out is its own change. always(): they ran
+      # for a red run too.
       - name: remove stale build dirs from the shared runner
         if: always()
         # The self-hosted runners reuse the _work directory across jobs; a tree left
@@ -2147,10 +2149,15 @@ jobs:
       # that silently did not happen. The password never touches a flag or
       # a file: nova-secrets exec under the bench seat (card.env names it).
       # NEVER BUILD THE THING WITH ITSELF: the receipt is written by the
-      # bench's installed, released nova-sprint (fleet release), not by this
-      # tree, so a PR that changes the writer cannot write the check that
-      # lands itself. `go run` of this tree is the one-time bootstrap while
-      # the installed binary predates the verb, and it says so in the log.
+      # bench's installed, released nova-sprint (the rowan-tools tools play
+      # installs the declared build into ~/.local/bin), not by this tree, so a
+      # PR that changes the writer cannot write the check that lands itself.
+      # There is no fallback to this tree: nova-sprint is deprecated (Glenn
+      # 2026-09-27) and CI never builds it. The `go run ./cmd/nova-sprint`
+      # bootstrap that stood here ran in none of the 40 ci.yml runs created
+      # 2026-09-27 22:07Z to 23:59Z (each logged RECEIPT WRITER installed). An
+      # installed binary that is absent or lacks the verb is a loud refusal
+      # naming the play that installs it.
       - name: report this run to Redis from the runner
         if: always()
         shell: bash
@@ -2165,18 +2172,16 @@ jobs:
           # the installed binary's own refusal of the verb's flag is the probe (its exit is 2 either way)
           probe=""
           if [ -x "$ns" ]; then probe=$("$ns" ci github --from-runner 2>&1; echo "exit=$?"); fi
-          if [ -x "$ns" ] && ! grep -q "flag provided but not defined" <<<"$probe"; then
-            echo "RECEIPT WRITER installed $("$ns" version 2>/dev/null | head -1)"
-            writer=("$ns")
-          else
-            echo "BOOTSTRAP: $ns is absent or predates ci github --from-runner; go run of this tree writes this one receipt; roll the release (nova-sprint fleet release dev) so the next run uses the installed binary"
-            writer=("$(command -v go)" run ./cmd/nova-sprint)
+          if [ ! -x "$ns" ] || grep -q "flag provided but not defined" <<<"$probe"; then
+            echo "NO RECEIPT WRITER: $ns is absent or predates ci github --from-runner, and this tree is never built to write it (cmd/nova-sprint is deprecated); install the declared build on $(hostname) (rowan-tools: make -C fleet tools) and rerun ci-ok"
+            exit 1
           fi
+          echo "RECEIPT WRITER installed $("$ns" version 2>/dev/null | head -1)"
           exec "$HOME/.local/bin/nova-secrets" exec --store "$HOME/nova-bench/secrets" --as "$NOVA_BENCH_SEAT" \
             --key "$HOME/.config/nova-secrets/$NOVA_BENCH_SEAT.key" --sops "$NOVA_BENCH_SOPS" \
             --only NOVA_REDIS_BENCH_PASSWORD --require NOVA_REDIS_BENCH_PASSWORD -- \
             /usr/bin/env NOVA_SPRINT_REDIS_USER=bench NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_BENCH_PASSWORD \
-            "${writer[@]}" ci github --from-runner --redis "$NOVA_CARD_REDIS" \
+            "$ns" ci github --from-runner --redis "$NOVA_CARD_REDIS" \
             --repo "${{ github.repository }}" \
             --sha "${{ github.event.pull_request.head.sha || github.sha }}" \
             --run-id "${{ github.run_id }}" \

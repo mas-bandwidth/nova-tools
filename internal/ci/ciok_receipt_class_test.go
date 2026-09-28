@@ -19,10 +19,13 @@ import (
 // --from-runner`, and that step must carry every field the record needs and
 // must fail the job when the write fails: a landing never waits on a
 // receipt that silently did not happen. And it must run the bench's
-// installed nova-sprint, not this tree (never build the thing with itself:
-// a PR that changes the writer must not write the check that lands it);
-// go run of the tree is the one bootstrap while the installed binary lacks
-// the verb. This test reads the step as YAML and holds it to that shape.
+// installed nova-sprint, never this tree (never build the thing with itself:
+// a PR that changes the writer must not write the check that lands it; and
+// nova-sprint is deprecated, Glenn 2026-09-27, so CI never builds it): an
+// installed binary that is absent or lacks the verb is a refusal that reddens
+// ci-ok, not a go run of the tree. The bootstrap that stood here ran in none
+// of the 40 ci.yml runs created 2026-09-27 22:07Z to 23:59Z. This test reads
+// the step as YAML and holds it to that shape.
 
 const runnerReceiptVerb = "ci github --from-runner"
 
@@ -122,16 +125,26 @@ func TestCIOKReportsEveryRunToRedisFromTheRunner(t *testing.T) {
 	}
 
 	// Never build the thing with itself: the installed nova-sprint writes the
-	// receipt; go run of this tree is the bootstrap only while the installed
-	// binary lacks the verb, detected by its own flag refusal, and it says so.
-	for _, want := range []string{`ns="$HOME/.local/bin/nova-sprint"`, `grep -q "flag provided but not defined"`, `writer=("$ns")`,
-		`echo "BOOTSTRAP:`, `writer=("$(command -v go)" run ./cmd/nova-sprint)`, `"${writer[@]}" ci github --from-runner`} {
+	// receipt, and nothing else does. An installed binary that is absent or
+	// lacks the verb, detected by its own flag refusal, is refused loudly with
+	// the play that installs it; this tree is never built or run.
+	for _, want := range []string{`ns="$HOME/.local/bin/nova-sprint"`, `grep -q "flag provided but not defined"`,
+		`if [ ! -x "$ns" ] || grep -q "flag provided but not defined" <<<"$probe"; then`,
+		`echo "NO RECEIPT WRITER: $ns is absent or predates ci github --from-runner`, `make -C fleet tools`,
+		`"$ns" ci github --from-runner --redis`} {
 		if !strings.Contains(run, want) {
-			t.Errorf("the receipt step does not prefer the installed nova-sprint over this tree: missing %s", want)
+			t.Errorf("the receipt step does not run only the installed nova-sprint: missing %s", want)
 		}
 	}
-	if strings.Contains(run, "go build") || strings.Count(run, "go run") != 1 {
-		t.Errorf("the receipt step builds this tree more than the one bootstrap:\n%s", run)
+	if i := strings.Index(run, `echo "NO RECEIPT WRITER:`); i >= 0 {
+		if next := strings.SplitN(run[i:], "\n", 3); len(next) < 2 || strings.TrimSpace(next[1]) != "exit 1" {
+			t.Errorf("the receipt step's NO RECEIPT WRITER line is not followed by exit 1; an absent writer must redden ci-ok:\n%s", run)
+		}
+	}
+	for _, never := range []string{"go build", "go run", "./cmd/nova-sprint", "BOOTSTRAP", "writer=("} {
+		if strings.Contains(run, never) {
+			t.Errorf("the receipt step builds or runs this tree (%q); it runs the installed nova-sprint only:\n%s", never, run)
+		}
 	}
 
 	// The bench seat: the password from nova-secrets exec, never a flag or a file.

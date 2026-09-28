@@ -44,7 +44,19 @@ func TestDeprecatedPackagesAreNeverSelected(t *testing.T) {
 		mod + "internal/ntable",
 		"./cmd/nova-bus",
 	}, "\n") + "\n"
-	got := strings.Join(livePackages(t, root, in), " ")
+	kept := livePackages(t, root, in)
+	got := strings.Join(kept, " ")
+	// The class tests read the same list in Go (liveTree): it gives the
+	// script's answer for every package of the fixture.
+	lt, keptSet := loadLiveTree(t, root), map[string]bool{}
+	for _, p := range kept {
+		keptSet[p] = true
+	}
+	for _, p := range strings.Fields(in) {
+		if live := lt.Package(strings.TrimPrefix(p, mod)); live != keptSet[p] {
+			t.Errorf("liveTree says %s live=%v, live-packages.sh says %v; the two readings of deprecated/PACKAGES disagree", p, live, keptSet[p])
+		}
+	}
 	want := strings.Join([]string{
 		"./internal/nsprint/store",
 		mod + "internal/nsprint/verbflag",

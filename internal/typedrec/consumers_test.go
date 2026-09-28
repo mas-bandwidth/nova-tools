@@ -5,12 +5,10 @@ package typedrec_test
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/consume"
@@ -120,28 +118,17 @@ func TestEveryConsumerRefusesMissingFieldByName(t *testing.T) {
 			}
 		}
 
-		// The raw file goes; the typed record in Redis is what show reads.
+		// The raw file goes; the typed record in Redis is what a reader reads.
+		// This once built cmd/nova-sprint and ran its `result show` over the
+		// record; nova-sprint is deprecated (never built by a living test), and
+		// show only printed this hash's fields, so the record itself is read:
+		// with RESULT.md gone it still names the field and the defect.
 		if err := os.Remove(filepath.Join(resDirs[label], "RESULT.md")); err != nil {
 			t.Fatal(err)
 		}
-
-		root := findRoot(t)
-		bin := filepath.Join(t.TempDir(), "nova-sprint")
-		cmdBuild := exec.Command("go", "build", "-o", bin, "./cmd/nova-sprint")
-		cmdBuild.Dir = root
-		cmdBuild.Env = goenv.Clean(os.Environ())
-		if out, err := cmdBuild.CombinedOutput(); err != nil {
-			t.Fatalf("build nova-sprint: %v\n%s", err, out)
-		}
-
-		cmdShow := exec.Command(bin, "result", "show", "--sprint", sprint, "--redis", addr, label)
-		out, err := cmdShow.CombinedOutput()
-		if err != nil {
-			t.Fatalf("result show failed: %v\n%s", err, out)
-		}
-		want := "valid=0 field=PROBES defect=missing"
-		if !strings.Contains(string(out), want) {
-			t.Fatalf("result show output %q does not contain %q", out, want)
+		h, err := client.HGetAll(ctx, "s:"+sprint+":card:"+label+":result:a1").Result()
+		if err != nil || h["valid"] != "0" || h["field"] != "PROBES" || h["defect"] != "missing" {
+			t.Fatalf("result hash after RESULT.md is gone = %v (err %v), want valid=0 field=PROBES defect=missing", h, err)
 		}
 	})
 
