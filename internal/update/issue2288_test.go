@@ -93,11 +93,12 @@ while [ $# -gt 0 ]; do
 	*) shift ;;
 	esac
 done
-rev=$(basename "$out")
+rev=${out##*/}
 mkdir -p "$out"
 for d in "$wt"/cmd/*/; do
 	[ -d "$d" ] || continue
-	tool=$(basename "$d")
+	d=${d%/}
+	tool=${d##*/}
 	bin="$out/$tool"
 	{
 		echo '#!/bin/sh'

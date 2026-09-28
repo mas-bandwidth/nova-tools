@@ -297,7 +297,7 @@ func TestDiffRefusesANonSnapshotFile(t *testing.T) {
 // 11. TestSnapshotIsBoundedByTheClock.
 func TestSnapshotIsBoundedByTheClock(t *testing.T) {
 	old := snapshotChildTimeout
-	snapshotChildTimeout = 150 * time.Millisecond
+	snapshotChildTimeout = 20 * time.Millisecond
 	t.Cleanup(func() { snapshotChildTimeout = old })
 	bin := t.TempDir()
 	specScript(t, bin, "nova-slow", "sleep 5\nprintf 'nova-slow v1.0.0 linux/amd64 go1.0\\n'")
@@ -326,11 +326,11 @@ func TestSnapshotTakesItsBoundsFromFlags(t *testing.T) {
 		bin := t.TempDir()
 		specScript(t, bin, "nova-slow", "sleep 30\nprintf 'nova-slow v1.0.0 linux/amd64 go1.0\\n'")
 		out := filepath.Join(t.TempDir(), "s.tsv")
-		code, _, stderr := specRun(t, Environment{}, "snapshot", "--bin", bin, "--out", out, "--timeout", "200ms")
+		code, _, stderr := specRun(t, Environment{}, "snapshot", "--bin", bin, "--out", out, "--timeout", "20ms")
 		if code != 2 {
 			t.Fatalf("exit %d stderr=%s", code, stderr)
 		}
-		need(t, stderr, "nova-slow", "200ms")
+		need(t, stderr, "nova-slow", "20ms")
 		if _, err := os.Stat(out); err == nil {
 			t.Fatal("a partial --out was written")
 		}
@@ -341,11 +341,11 @@ func TestSnapshotTakesItsBoundsFromFlags(t *testing.T) {
 			specScript(t, bin, n, "sleep 30\nprintf '"+n+" v1.0.0 linux/amd64 go1.0\\n'")
 		}
 		out := filepath.Join(t.TempDir(), "s.tsv")
-		code, _, stderr := specRun(t, Environment{}, "snapshot", "--bin", bin, "--out", out, "--timeout", "10s", "--budget", "300ms")
+		code, _, stderr := specRun(t, Environment{}, "snapshot", "--bin", bin, "--out", out, "--timeout", "10s", "--budget", "30ms")
 		if code != 2 {
 			t.Fatalf("exit %d stderr=%s", code, stderr)
 		}
-		need(t, stderr, "budget", "300ms")
+		need(t, stderr, "budget", "30ms")
 	})
 	t.Run("a bound must be positive", func(t *testing.T) {
 		bin := t.TempDir()

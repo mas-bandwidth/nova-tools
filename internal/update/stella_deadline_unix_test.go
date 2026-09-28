@@ -14,11 +14,11 @@ import (
 func TestDeadlineEscapedPipeGrandchildReturnsInsideBudget(t *testing.T) {
 	p := manifest(t, row("x", "tool", command(t, "escaped", "30s"), "npm:unused", "none"))
 	started := time.Now()
-	c, out, errs := run(t, Environment{}, "check", "--file", p, "--budget", "300ms", "--timeout", "200ms")
+	c, out, errs := run(t, Environment{}, "check", "--file", p, "--budget", "50ms", "--timeout", "20ms")
 	if c != 1 {
 		t.Fatalf("%d %s %s", c, out, errs)
 	}
 	if took := time.Since(started); took > 30*time.Second {
-		t.Fatalf("a 300ms budget with an escaped grandchild took %s", took)
+		t.Fatalf("a 50ms budget with an escaped grandchild took %s", took)
 	}
 }

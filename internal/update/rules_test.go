@@ -204,11 +204,11 @@ func TestRule26NoClockOfItsOwnNoInstallNoSendNobodyAsked(t *testing.T) {
 	// run by a fixed grace begun at cancellation.
 	hanging := manifest(t, row("h", "tool", command(t, "hang"), "npm:unused", "none"))
 	started := time.Now()
-	if c, _, _ = run(t, env, "check", "--file", hanging, "--budget", "300ms", "--timeout", "200ms"); c != 1 {
+	if c, _, _ = run(t, env, "check", "--file", hanging, "--budget", "50ms", "--timeout", "20ms"); c != 1 {
 		t.Fatalf("a hanging read was not a finding: %d", c)
 	}
 	if took := time.Since(started); took > 30*time.Second {
-		t.Fatalf("a 300ms budget took %s", took)
+		t.Fatalf("a 50ms budget took %s", took)
 	}
 }
 

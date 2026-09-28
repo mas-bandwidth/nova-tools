@@ -213,7 +213,7 @@ func TestProcessesAreBoundedAndRawSurvivesFailure(t *testing.T) {
 	}{
 		{command(t, "fail"), "exit 3", 5 * time.Second, 6 * time.Second},
 		{command(t, "huge"), "output", 5 * time.Second, 6 * time.Second},
-		{command(t, "hang"), "timeout", 100 * time.Millisecond, time.Second + killGrace},
+		{command(t, "hang"), "timeout", 20 * time.Millisecond, time.Second + killGrace},
 		{"nova-version-no-such-binary", "not_found", 5 * time.Second, time.Second},
 	} {
 		a, _ := argv(tc.cmd)
@@ -384,7 +384,7 @@ func TestFourReadLimitAndOverallBudget(t *testing.T) {
 	for i := 0; i < 40; i++ {
 		entries = append(entries, Entry{Name: fmt.Sprint(i), Kind: "tool", Installed: a, Latest: "npm:p"})
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
 	defer cancel()
 	started := time.Now()
 	r := readEntries(ctx, entries, options{timeout: time.Second}, Environment{Client: client}, false)
@@ -456,7 +456,7 @@ func TestCheckCapsAndFilterActuallyAvoidsReads(t *testing.T) {
 // finishing. A ten millisecond grace lost that race under load and reported a
 // healthy tool as UNKNOWN. The grace has to outlast an ordinary handoff.
 func TestHealthyCommandWithLingeringGrandchildStillReads(t *testing.T) {
-	e := Entry{Name: "x", Kind: "tool", Installed: mustArgv(t, command(t, "linger", base64.StdEncoding.EncodeToString([]byte("x 1.2.3\n")), "300ms"))}
+	e := Entry{Name: "x", Kind: "tool", Installed: mustArgv(t, command(t, "linger", base64.StdEncoding.EncodeToString([]byte("x 1.2.3\n")), "40ms"))}
 	r := Installed(context.Background(), e, 5*time.Second, false)
 	if !r.Known() || r.Version != "1.2.3" {
 		t.Fatalf("healthy read refused: reason=%q version=%q raw=%q", r.Reason, r.Version, r.Raw)
