@@ -94,7 +94,7 @@ func (app *application) cmdWatch(args []string, stdout, stderr io.Writer) int {
 	if *once {
 		text, err := read(ctx)
 		if err != nil {
-			return storeRefusal(stderr, verb, err)
+			return st.refusal(stderr, verb, err)
 		}
 		return publish(*out, text, stdout, stderr, verb)
 	}
