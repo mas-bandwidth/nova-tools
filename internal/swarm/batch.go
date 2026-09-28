@@ -95,17 +95,9 @@ type BatchInput struct {
 	// the spec's own numbers (30 s, one second), and the tests take short ones.
 	PullWait time.Duration
 	PullPoll time.Duration
-	// SlotsStore and SlotOwner are the bench slot store a card's `nova-swarm native` takes
-	// its one lease from, and the owner whose share it counts against (nova-tools#1546).
-	// They are REQUIRED of any batch that launches native -- which is every batch without
-	// a --runner of its own -- and the refusal is NoSlotsStoreRefusal, said once before a
-	// card runs rather than once per card.
-	//
-	// THE PATH IS ON THE MACHINE THAT RUNS THE CARD. For a local card that is this
-	// machine; for a bench row it is the bench, reached over ssh, and the path must exist
-	// THERE. One batch spanning local and remote benches therefore wants a store path that
-	// means the same thing on each, which today means naming the same absolute path on
-	// every bench. Said plainly here because it is the seam a reader will meet.
+	// SlotsStore and SlotOwner are required when batch builds native invocations.
+	// Native accepts them as compatibility inputs; its leases protect the job and
+	// slot directories rather than reserving capacity in this store.
 	SlotsStore string
 	SlotOwner  string
 	// Tokens is the budget word this batch carries for EVERY card (SPEC-SWARM rule 13d,
@@ -115,8 +107,8 @@ type BatchInput struct {
 	// `native` argv it builds" and `native` is the one verb that decides what a budget word
 	// means.
 	//
-	// IT IS EACH CARD'S OWN BUDGET, NOT THE BATCH'S. The same word goes to every card, the
-	// shape `batch --tasks` already has: it is never divided among the cards and never a
+	// IT IS EACH CARD'S OWN BUDGET, NOT THE BATCH'S. The same word goes to every card:
+	// it is never divided among the cards and never a
 	// total for the batch. Ten cards under `--tokens 100000` may spend a million tokens
 	// between them, and that is what the caller said.
 	Tokens  string
@@ -281,15 +273,8 @@ func Batch(in BatchInput) int {
 			return 2
 		}
 	}
-	// A LAUNCH WITHOUT A LEASE IS REFUSED (nova-tools#1546). Every path out of this
-	// function that starts a card starts it through `nova-swarm native` -- selfNative
-	// locally, remoteRun on a bench -- and native now refuses without a slot store. The
-	// batch says so ONCE, here, before a single card runs, rather than letting every card
-	// fail one at a time with the same sentence. The remedy is the one native prints, word
-	// for word: a caller who greps for it finds the same string wherever it came from.
-	//
-	// A batch with its own --runner launches no native and is not held to this: the runner
-	// is somebody else's program and the bench cannot speak for what it takes.
+	// Preserve batch's required compatibility inputs for its native invocation path.
+	// A caller supplying its own runner does not use this path.
 	if in.Runner == "" && (in.SlotsStore == "" || in.SlotOwner == "") {
 		fmt.Fprintln(in.Stderr, NoSlotsStoreRefusal)
 		return 2

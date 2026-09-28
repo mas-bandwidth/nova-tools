@@ -44,24 +44,4 @@ func TestAnUnusableInvocationCostsOneLine(t *testing.T) {
 	}
 }
 
-// An empty task directory is a BATCH REFUSED at exit 1, and one unreadable file queues
-// nothing at all: a batch is all of its tasks or none.
-func TestABatchIsAllOfItsTasksOrNone(t *testing.T) {
-	t.Parallel()
-
-	b := newBench(t)
-	empty := filepath.Join(b.dir, "empty")
-	write(b.t, filepath.Join(empty, "keep"), "")
-	if err := removeFile(filepath.Join(empty, "keep")); err != nil {
-		t.Fatal(err)
-	}
-	exit, _, stderr := b.swarm("batch", "--pool", b.pool, "--tasks", empty, "--files", "3", "--tokens", "1000")
-	if exit != 1 {
-		t.Errorf("a batch over a directory with no task file exits %d, want 1; stderr: %s", exit, stderr)
-	}
-	if !strings.Contains(stderr, "BATCH REFUSED") {
-		t.Errorf("stderr wants a BATCH REFUSED line:\n%s", stderr)
-	}
-}
-
 func removeFile(path string) error { return os.Remove(path) }

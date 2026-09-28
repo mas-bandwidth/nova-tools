@@ -13,22 +13,6 @@ import (
 // meeting this tool for the first time actually hit, written as the assertion that would
 // have stopped it.
 
-// S5: `--pool` on a missing directory named no remedy, and `mkdir -p` is the remedy.
-func TestAMissingPoolNamesTheVerbThatMakesOne(t *testing.T) {
-	t.Parallel()
-	b := newBench(t)
-	missing := filepath.Join(b.dir, "nopool")
-	tasks := filepath.Join(b.dir, "tasks")
-	if err := os.MkdirAll(tasks, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	exit, stdout, stderr := b.swarm("batch", "--pool", missing, "--tasks", tasks, "--files", "1", "--tokens", "100")
-	if exit != 2 {
-		t.Fatalf("batch on a missing pool exits %d, want 2:\n%s%s", exit, stdout, stderr)
-	}
-	mustContain(t, "the refusal", stderr, "mkdir -p "+missing)
-}
-
 // #632: `template` must print the six typed card templates nova-pulse `cut` reads from a
 // templates directory (read, fix, text, replay, drift, tone) plus models.tsv, so a templates
 // dir can be built from the tool instead of copied out of cmd/nova-pulse/testdata.

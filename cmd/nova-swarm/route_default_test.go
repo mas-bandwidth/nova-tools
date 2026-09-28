@@ -37,7 +37,7 @@ func TestLaunchCannotSkipTheRouteWithoutALoggedReason(t *testing.T) {
 	// card starts. This test is about --no-route/--reason, so the budget is named and
 	// the --reason refusal stays the only one.
 	exit, _, stderr := runSwarm(t, "batch", "--id", "b1", "--cards", cards,
-		"--deadline", "60", "--runner", "true", "--root", dir, "--files", "1",
+		"--deadline", "60", "--runner", "true", "--root", dir,
 		"--tokens", "unmetered", "--no-route")
 	if exit != 2 || !strings.Contains(stderr, "--reason") {
 		t.Fatalf("--no-route without --reason must be refused by name (exit 2 naming --reason), got exit=%d stderr=%q", exit, stderr)

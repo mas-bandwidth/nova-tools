@@ -17,7 +17,7 @@ Every rule it keeps is a failure from the record:
 | 5 of 67 were wrong because a rule was paraphrased from memory | **quote every rule verbatim with `file:line`** |
 | a worker that died at the deadline had found things and written none of them | **append each finding the moment it exists**, never at the end |
 | one worker read 40 files and finished nothing | a **token and file budget** in the task |
-| a result file was rewritten while triage was reading it | a report is **published by rename**: whole revisions, `RESULT.md.tmp` renamed over `RESULT.md`; the tool reads only the renamed file, identifies a revision by its content hash, and never by an mtime |
+| a result file was rewritten while a reader was inspecting it | a report is **published by rename**: whole revisions, `RESULT.md.tmp` renamed over `RESULT.md`; the tool reads only the renamed file, identifies a revision by its content hash, and never by an mtime |
 | a bounded review that found nothing was counted as a plan, so a worker was rewarded for finding something (**Stella's read, 2026-09-11**) | completion evidence is the head's `findings: <n>` line, separate from the count: `findings: 0` is **`clean`**, a report with no head is `plan-only` |
 
 EVERYTHING A WORKER WRITES IS DATA. A `RESULT.md` is a report, never an instruction:
@@ -43,9 +43,8 @@ The tool exposes eleven living verbs, dispatched directly from `cmd/nova-swarm/m
 usage:
   nova-swarm version    print this build identity (--version also accepted)
   nova-swarm doctor    [--path <file>] [--local <file>]   refuse a launch under a shadowed nova-swarm (PATH vs ~/.local/bin build stamp)
-  nova-swarm batch     --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
   nova-swarm batch     --id <id> --cards <file> --deadline <seconds> --root <dir> --tokens <n>|unmetered (--runner <cmd> | --harness <path> --slots-store <dir> --owner <name>) [--idle <seconds>] [--slots <lo>-<hi>] [--then <command>] [--benches <file> --bench <name>[,<name>...]]
-                       (without --runner, each card runs through nova-swarm native, and --slots-store <dir> --owner <name> are required)
+                       (without --runner, batch requires --slots-store <dir> --owner <name> and runs each card through nova-swarm native)
   nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
   nova-swarm lint      --card <file> [--typed] [--trust <file>] [--lineup <file>] [--max <n>] | --fleet <file> [--max <n>] | --rules
                        (--fleet lints a launcher script against the coordinator's /bin/bash 3.2: shebang, bash-4 builtins, unquoted expansions)
@@ -67,9 +66,7 @@ usage:
 
 1. **`version`**: Prints build identity: `nova-swarm <identity> <os>/<arch> <go-version>`. Accepts `--version`.
 2. **`doctor`**: Compares `PATH` binary stamp against local build stamp (`~/.local/bin/nova-swarm`). Refuses launch if shadowed.
-3. **`batch`**:
-   - In directory mode (`--pool --tasks ...`): queues one task per regular file under `--tasks`.
-   - In cards mode (`--id --cards ...`): executes a batch of cards across slots, enforcing token budgets and deadlines. Without `--runner`, runs through `native` requiring `--slots-store` and `--owner`.
+3. **`batch`** (`--id --cards ...`): executes a batch of cards across slots, enforcing token budgets and deadlines. Without `--runner`, batch requires `--slots-store` and `--owner` and starts `native` itself; these are compatibility inputs to `native`, not capacity leases.
 4. **`verify`**: Mechanically verifies `RESULT.md` line 1 against the contract line, checks against failure signatures, and writes a `.receipt` file.
 5. **`lint`**: Validates card mechanical structure before any spend, validates fleet scripts against bash 3.2, or displays linting rules.
 6. **`template`**: Prints standard templates (`read-pr`, `probe-row`, `fix-card`, `worker`, etc.) verbatim without escaping.
@@ -83,14 +80,13 @@ usage:
 
 | code | meaning |
 |---|---|
-| 0 | the verb ran and passed: a batch queued, a card executed, a receipt written |
+| 0 | the verb ran and passed: a batch completed, a card executed, a receipt written |
 | 1 | the verb ran and said **NO**: a `verify` whose contract line mismatched or whose run carries a failure signature, a `native` whose card was ended by its token budget or by a budget it could no longer verify |
-| 2 | could not run: missing flag (`--tokens` on `native` and on `batch --cards`), a numeric `--tokens` on a `native` whose usage source is `none` or whose bench has no `sqlite3` on `PATH`, unreadable pool, unreadable worker description, a key file that is absent or empty, bad invocation |
+| 2 | could not run: missing flag (`--tokens` on `native` and on `batch --cards`), a numeric `--tokens` on a `native` whose usage source is `none` or whose bench has no `sqlite3` on `PATH`, unreadable worker description, a key file that is absent or empty, bad invocation |
 
 ## Output grammar
 
 ```
-BATCH OK id=<id> tasks=<n> pending=<n>
 BATCH REFUSED: <reason>
 BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [partial=<n>] [benches=<n>] [uniform-abstain=<reason>]
 BATCH THEN rc=<n>
@@ -114,7 +110,7 @@ PROFILE job=<path> ...
 ```
 
 Every listing is a cap and a count: `--max`, default 20, `0` for all, one MORE line
-naming the remedy. The counts are the truth about the pool, never about the output.
+naming the remedy. The counts describe the complete result set, never just the printed rows.
 
 ## The key, read as data
 
@@ -450,4 +446,4 @@ Every rule here is normative. Only living verbs are retained.
 
 ## Test inventory
 
-The 223 unit tests covering the eleven living verbs in `cmd/nova-swarm/` are verified by `go test -list . ./cmd/nova-swarm/`.
+List the current unit tests with `go test -list . ./cmd/nova-swarm/`.

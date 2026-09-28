@@ -222,9 +222,9 @@ them, and doing them one after another is what is slowing you down.
 **What it does.** Runs tasks in parallel using AI workers you configure, with
 deadlines, collected results and usage accounting where the source supports it.
 
-**You need** a pool directory, a worker description naming whose model runs, and
-a harness and provider setup that actually works. **Every job runs inside
-`nova-sandbox` on every supported platform.** macOS uses `sandbox-exec`; Linux
+**You need** a card, a job directory under an explicit root, and a working
+harness and provider setup. A batch also needs a TSV naming its cards.
+**Native runs use `nova-sandbox` on every supported platform.** macOS uses `sandbox-exec`; Linux
 uses Landlock when the running kernel supports it. Windows has no containment
 backend yet.
 

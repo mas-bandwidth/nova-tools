@@ -431,25 +431,15 @@ MEMORY NOTE a hit in a dated log class is evidence the event was recorded, not t
 
 ## nova-swarm
 
-Fixture: a pool this tool makes in `t.TempDir()`, `cmd/nova-swarm/testdata/fakeharness`, a fake harness on `PATH` so the dispatcher is tested end to end with no provider, and the WALL every job runs inside: `nova-sandbox` itself, built from this repository into the same directory, with `cmd/nova-swarm/testdata/fakesandbox` beside it for the seam tests that must run on a platform whose sandbox body is not built.
-
-Every contract test in `cmd/nova-swarm` runs its jobs **inside the real wall** on darwin (`--sandbox <the built binary>`) and takes this tool's one loud workaround (`--no-sandbox`, SPEC-SWARM; `nova-sandbox` has no such flag) where no body is built, which is the argv a reader sees in the test's own output.
-
-### The wall at the launch seam
-
-Inside the wall, on darwin, the job's own words from `harness.log` — a write outside the job directory and a read of the key file, both denied by the kernel, with the key's VALUE arriving in the environment all the same:
-
-```
-fake harness: the key is present, length 28
-fake harness: touch /…/outside-every-list: open /…/outside-every-list: operation not permitted
-fake harness: cat /…/key: open /…/key: operation not permitted
-```
-
+Fixture: owned directories under `t.TempDir()` and fake harnesses. The transcript
+comparators invoke the dispatcher with fixture paths and compare its output with
+the examples below. The [quickstart guide](nova-swarm-quickstart.md) includes a
+complete local batch fixture using a synthetic runner.
 
 ### The budget word on the native route
 
 Every `nova-swarm native` launch carries `--tokens <n>` or `--tokens unmetered`
-(SPEC-SWARM rule 13d, issue #1545). Recorded against the same fake harness, with the paths
+(SPEC-SWARM rule 13d, issue #1545). Recorded against the fake harness, with the paths
 abridged:
 
 ```

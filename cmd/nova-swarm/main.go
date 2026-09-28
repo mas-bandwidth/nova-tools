@@ -46,9 +46,8 @@ const usage = `nova-swarm: a pool of one-task workers, with the ways a swarm fai
 usage:
   nova-swarm version    print this build identity (--version also accepted)
   nova-swarm doctor    [--path <file>] [--local <file>]   refuse a launch under a shadowed nova-swarm (PATH vs ~/.local/bin build stamp)
-  nova-swarm batch     --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
   nova-swarm batch     --id <id> --cards <file> --deadline <seconds> --root <dir> --tokens <n>|unmetered (--runner <cmd> | --harness <path> --slots-store <dir> --owner <name>) [--idle <seconds>] [--slots <lo>-<hi>] [--then <command>] [--benches <file> --bench <name>[,<name>...]]
-                       (without --runner, each card runs through nova-swarm native, and --slots-store <dir> --owner <name> are required)
+                       (without --runner, batch requires --slots-store <dir> --owner <name> and runs each card through nova-swarm native)
   nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
   nova-swarm lint      --card <file> [--typed] [--trust <file>] [--lineup <file>] [--max <n>] | --fleet <file> [--max <n>] | --rules
                        (--fleet lints a launcher script against the coordinator's /bin/bash 3.2: shebang, bash-4 builtins, unquoted expansions)
@@ -130,7 +129,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 	case "doctor":
 		return cmdDoctor(rest, stdout, stderr)
 	case "batch":
-		return cmdBatch(rest, stdout, stderr, now)
+		return cmdBatch(rest, stdout, stderr)
 	case "verify":
 		return cmdVerify(rest, stdout, stderr)
 	case "lint":
@@ -240,17 +239,6 @@ func (f *flags) wantCount(value int, name, wants string) {
 
 func (f *flags) add(problem string) { f.problems = append(f.problems, problem) }
 
-// maxInput reads --max-input, the OPTIONAL ceiling a task names on the prompt this tool hands
-// the harness, in BYTES (#103). It is optional because a window is a fact about somebody
-// else's provider and this tool guesses nothing; a NEGATIVE one is a typo with two readings
-// and is refused rather than read as "none".
-func (f *flags) maxInput(value int) int {
-	if value < 0 {
-		f.add(fmt.Sprintf("--max-input is 0 or more, got %d; 0 is how a caller says this task names no window, and a negative ceiling is a typo with two readings", value))
-	}
-	return value
-}
-
 // refused prints every problem this run found, one line each, and reports whether there
 // were any. Three independent flags cost one run, not three.
 func (f *flags) refused(stderr io.Writer) bool {
@@ -291,16 +279,6 @@ func parseInt(s string) (int, error) {
 	return n, err
 }
 
-func openPool(verb, dir string, stderr io.Writer) (*swarm.Pool, bool) {
-	p, err := swarm.OpenPool(dir)
-	if err != nil {
-		fmt.Fprintf(stderr, "nova-swarm %s: %s; mkdir -p %s\n",
-			verb, oneline.Err(err), oneline.Escape(dir))
-		return nil, false
-	}
-	return p, true
-}
-
 // maxFlag is the ceiling every listing here carries.
 func maxFlag(fs *flag.FlagSet) *int {
 	return fs.Int("max", bounded.Default, "at most this many item lines, 0 for all")
@@ -317,17 +295,11 @@ func (f *flags) wantMax(value int) {
 
 // ------------------------------------------------------------------------------- verbs
 
-func cmdBatch(args []string, stdout, stderr io.Writer, now time.Time) int {
+func cmdBatch(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("batch")
-	pool := f.fs.String("pool", "", "")
-	tasks := f.fs.String("tasks", "", "")
-	files := f.fs.Int("files", 0, "")
 	tokens := f.fs.String("tokens", "", "")
-	label := f.fs.String("label", "", "")
-	template := f.fs.String("template", "", "")
 	deadline := f.fs.String("deadline", "", "")
-	maxInput := f.fs.Int("max-input", 0, "")
-	// The scatter/wait/gather half (SPEC-SWARM.md "Batch: scatter, wait, gather"): one id,
+	// Scatter/wait/gather: one id,
 	// one deadline held by the machinery, one runner process per card, one bounded packet.
 	cards := f.fs.String("cards", "", "")
 	runner := f.fs.String("runner", "", "")
@@ -348,11 +320,8 @@ func cmdBatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	harness := f.fs.String("harness", "", "")
 	auth := f.fs.String("auth", "", "")
 	slots := f.fs.String("slots", "", "")
-	// THE BENCH SLOT LEASE (nova-tools#1546): the store each card's own `nova-swarm
-	// native` takes its one lease from, and the owner whose share that lease counts
-	// against. REQUIRED of any batch without a --runner of its own, because every such
-	// card launches native, and native refuses without them. The path is resolved on the
-	// machine that runs the card, which for a bench row is the bench.
+	// Batch requires these compatibility inputs when it builds native invocations.
+	// Native itself uses job and slot directory leases, not a capacity-store lease.
 	slotsStore := f.fs.String("slots-store", "", "")
 	slotOwner := f.fs.String("owner", "", "")
 	// THE ROUTE (Glenn 2026-09-19). With --route the model a card is dispatched
@@ -383,110 +352,12 @@ func cmdBatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if *noRoute && strings.TrimSpace(*routeReason) == "" {
 		f.add("--no-route needs --reason <text>: a skipped route is a fact in the log, so the reason that opens the skip is not optional")
 	}
-	if *cards != "" {
-		return cmdBatchGather(f, *id, *cards, *deadline, *runner, *root, *idle, *maxInflight, *stallAfter, *benches, *bench, *then, *harness, *auth, *slots, *slotsStore, *slotOwner, *workerFile, *tokens,
-			routeFlags{on: routeOn, reason: *routeReason, registry: *routeRegistry, floor: *routeFloor, log: *routeLog,
-				usage: *routeUsage, keyEnv: *routeKeyEnv, baseURL: *routeBaseURL}, stdout, stderr)
-	}
-	f.want(*pool, "pool", "the directory that holds this pool's tasks")
-	f.want(*tasks, "tasks", "a directory holding one task file per job")
-	f.wantCount(*files, "files", "the file budget every job in this batch carries")
-	budget, unmetered := f.tokens(*tokens)
-	window := f.maxInput(*maxInput)
-	if f.refused(stderr) {
-		return 2
-	}
-	p, ok := openPool("batch", *pool, stderr)
-	if !ok {
-		return 2
-	}
-	entries, err := os.ReadDir(*tasks)
-	if err != nil {
-		fmt.Fprintf(stderr, "nova-swarm batch: --tasks wants a readable directory of task files: %s\n", oneline.Err(err))
-		return 2
-	}
-	// A BATCH IS ALL OF ITS TASKS OR NONE: every file is read first, and one that cannot be
-	// read queues nothing at all.
-	type queued struct {
-		name string
-		text []byte
-	}
-	var all []queued
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		raw, err := os.ReadFile(filepath.Join(*tasks, e.Name()))
-		if err != nil {
-			fmt.Fprintf(stderr, "nova-swarm batch: %s could not be read, so nothing was queued: %s\n", oneline.Escape(e.Name()), oneline.Err(err))
-			return 2
-		}
-		all = append(all, queued{e.Name(), raw})
-	}
-	if len(all) == 0 {
-		fmt.Fprintf(stderr, "BATCH REFUSED: %s holds no regular file; a batch of no tasks is a typo\n", oneline.Field(*tasks))
-		return 1
-	}
-	// THE PUBLIC-CLASS GATE (CARD-8390) on the queueing half: with --worker
-	// naming a public-class worker, a card cloning an unlisted repo is refused
-	// with CARD REFUSED and nothing is queued.
-	var gateWorker swarm.Worker
-	gatePublic := false
-	if *workerFile != "" {
-		w, problems := swarm.LoadWorker(*workerFile)
-		if len(problems) > 0 {
-			for _, problem := range problems {
-				fmt.Fprintf(stderr, "nova-swarm batch: %s\n", oneline.Err(problem))
-			}
-			return 2
-		}
-		gateWorker, gatePublic = w, w.IsPublic()
-	}
-	if gatePublic {
-		for _, q := range all {
-			text := q.text
-			if *template != "" {
-				wrapped, err := swarm.WrapTemplate(*template, *files, text)
-				if err != nil {
-					fmt.Fprintf(stderr, "nova-swarm batch: %s\n", oneline.Err(err))
-					return 2
-				}
-				text = wrapped
-			}
-			if repo, refused := swarm.CheckPublicCard(gateWorker, string(text), *pool); refused {
-				fmt.Fprintln(stderr, swarm.PublicRefusalLine(repo, gateWorker.Name))
-				return 1
-			}
-		}
-	}
-	batchID := swarm.NewID(now, *label)
-	for i, q := range all {
-		text := q.text
-		if *template != "" {
-			wrapped, err := swarm.WrapTemplate(*template, *files, text)
-			if err != nil {
-				fmt.Fprintf(stderr, "nova-swarm batch: %s\n", oneline.Err(err))
-				return 2
-			}
-			text = wrapped
-		}
-		sc := swarm.Sidecar{
-			ID: swarm.NewID(now.Add(time.Duration(i)*time.Millisecond), *label), Label: *label,
-			Template: *template, Files: *files, Tokens: budget, Unmetered: unmetered,
-			Deadline: *deadline, Batch: batchID, MaxInput: window, RC: -1,
-		}
-		if err := p.Add(text, sc); err != nil {
-			fmt.Fprintf(stderr, "BATCH REFUSED: %s\n", oneline.Err(err))
-			return 2
-		}
-	}
-	pending, _ := p.List(swarm.Pending)
-	fmt.Fprintf(stdout, "BATCH OK id=%s tasks=%d pending=%d\n", oneline.Field(batchID), len(all), len(pending))
-	return 0
+	return cmdBatchGather(f, *id, *cards, *deadline, *runner, *root, *idle, *maxInflight, *stallAfter, *benches, *bench, *then, *harness, *auth, *slots, *slotsStore, *slotOwner, *workerFile, *tokens,
+		routeFlags{on: routeOn, reason: *routeReason, registry: *routeRegistry, floor: *routeFloor, log: *routeLog,
+			usage: *routeUsage, keyEnv: *routeKeyEnv, baseURL: *routeBaseURL}, stdout, stderr)
 }
 
-// cmdBatchGather is the scatter/wait/gather half of `batch`, entered when --cards names a
-// TSV. It has no pool and no admission queue: it starts one runner process per card, waits
+// cmdBatchGather executes a TSV of cards: it starts one runner process per card, waits
 // until they all end or the batch's deadline, and folds every card's RESULT.md into one
 // bounded packet.
 // routeFlags is the --route family, held together so the batch verb's own
@@ -548,13 +419,12 @@ func routeInput(f *flags, r routeFlags, stderr io.Writer) *swarm.RouteInput {
 
 func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle, maxInflight, stallAfter int, benches, bench, then, harness, auth, slots, slotsStore, slotOwner, workerFile, tokens string, route routeFlags, stdout, stderr io.Writer) int {
 	f.want(id, "id", "the batch id; it is the packet's first token so a reader can match it to admission")
-	// THE BUDGET WORD (SPEC-SWARM rule 13d, issue #1545), read by the SAME f.tokens that
-	// reads `add`'s and `batch --tasks`'s, so a missing word, a non-number and a zero are
-	// refused in the same sentence wherever a caller meets them. What is CARRIED is the
+	// THE BUDGET WORD is validated by the same f.tokens as native. A non-number
+	// or zero is refused before launch. What is CARRIED is the
 	// word as typed: rule 13d puts it "verbatim into every `native` argv", and `native` is
 	// the verb that decides what it means.
 	//
-	// AN ABSENT WORD IS THE BATCH'S OWN REFUSAL (#3202): f.tokens's sentence is `add`'s
+	// AN ABSENT WORD IS THE BATCH'S OWN REFUSAL (#3202): f.tokens's sentence is per-job
 	// ("a token budget for this job"), and the one a batch caller needs says the word is
 	// for EACH card and never divided, which is swarm.NoBatchTokensRefusal. It is said
 	// here, beside every other flag problem, so it reaches a caller of the binary and not
@@ -780,15 +650,10 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// and they are read by nothing.
 	_ = f.fs.String("slots-store", "", "")
 	_ = f.fs.String("owner", "", "")
-	// THE BUDGET (SPEC-SWARM rule 13d, issue #1545). "`native` takes `--tokens <n>` or
-	// `--tokens unmetered`; without it the verb is exit 2 naming the flag, and `0` is
-	// refused, exactly as on `add`." It is read by the SAME f.tokens that reads `add`'s,
-	// `batch --tasks`'s and `requeue`'s, so the three verbs refuse a missing word, a
-	// non-number and a zero in the same sentence: a card launched by `native` and a job
-	// launched by `run` can spend the same key, so they answer to the same rule.
+	// Native requires an explicit token budget or the word unmetered, validated by
+	// the same helper as batch. Zero and non-numeric budget words are refused.
 	tokensWord := f.fs.String("tokens", "", "")
-	// THE SAMPLE INTERVAL (rule 13d): "a flag `native` takes as `run` does", same name,
-	// same default, same spelling -- a bare number of seconds or a Go duration.
+	// The sample interval accepts seconds or a Go duration.
 	usageInterval := newSecondsFlag(f.fs, "usage-interval", swarm.DefaultUsageInterval)
 	// THE CARD-END EVENT (nova-tools #2563 item 1). --events-store names the fleet Redis
 	// this card's one `ok`/`fail` entry is XADDed to. It is OPTIONAL and it defaults to the

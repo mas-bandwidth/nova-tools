@@ -1,77 +1,91 @@
 # nova-swarm Quickstart
 
-`nova-swarm` coordinates bounded, isolated worker execution across multiple LLM harnesses and models. Slices 1–4 provide:
-1. **Per-job profiles and preimages** (`nova-swarm profile`, `SPEC-SWARM-PROFILES.md`)
-2. **Native execution** bound to a frozen configuration (`nova-swarm native`, issue #296)
-3. **Result contract and receipts** (`nova-swarm verify`, issue #241)
-4. **Batch scatter, wait, gather** (`nova-swarm batch --cards`, issue #353)
+`nova-swarm native` runs one card through a harness. `nova-swarm batch --cards`
+starts a runner for each card, waits for the runners, and gathers their published
+`RESULT.md` files. Both require an explicit token budget.
 
----
+## Try a local card batch
 
-## 1. Native Run (`nova-swarm native`)
+This macOS/Linux shell example creates its own fixture in a new directory. It
+uses a synthetic runner that copies the card's two-line answer into `RESULT.md`;
+it calls no model or provider. Have `nova-swarm` on `PATH` before running it.
 
-`nova-swarm native` executes one frozen run configuration against a native harness binary (e.g. `opencode`). The configuration is verified before anything is started: the harness binary must exist and be executable, the model must have a valid `provider/model` prefix, the slot directory must reside strictly under the configured root, and any auth entries are copied mode `0600` into an isolated `$XDG_DATA_HOME`.
+```bash
+example_dir="$(mktemp -d)"
+mkdir -p "$example_dir/root"
+cat > "$example_dir/card.md" <<'CARD'
+RESULT: smoke
+PASS: local runner published the result
+CARD
+printf 'smoke\t1\tvendor/local\t%s\n' "$example_dir/card.md" > "$example_dir/cards.tsv"
+cat > "$example_dir/runner.sh" <<'RUNNER'
+#!/bin/sh
+set -eu
+label="$1"
+slot="$2"
+card="$4"
+root="$5"
+tokens="${6:?batch must supply the token budget}"
+job="$root/$slot/jobs/$label"
+mkdir -p "$job"
+head -n 2 "$card" > "$job/RESULT.md.tmp"
+mv "$job/RESULT.md.tmp" "$job/RESULT.md"
+RUNNER
+chmod +x "$example_dir/runner.sh"
+nova-swarm batch \
+  --id smoke \
+  --cards "$example_dir/cards.tsv" \
+  --deadline 30 \
+  --runner "$example_dir/runner.sh" \
+  --root "$example_dir/root" \
+  --tokens unmetered \
+  --no-route --reason local-fixture
+```
 
-### Invocation
+The batch exits 0 and prints:
+
+```text
+BATCH smoke n=1 done=1 abstain=0 in=0 out=0 usd=0.0000 idle=0 stalled=0
+smoke slot=1: PASS: local runner published the result log=0
+```
+
+The fixture remains at `$example_dir` for inspection. Its result is
+`$example_dir/root/1/jobs/smoke/RESULT.md`.
+
+## Run a card through your harness
+
+Replace these paths with your prepared harness, card, root, and credentials:
 
 ```bash
 nova-swarm native \
   --harness /path/to/harness/opencode \
   --model opencode/deepseek-v4-flash \
-  --card cards/card-smoke-ds.md \
-  --slot /path/to/root/slot-ds/jobs/card-smoke-ds \
+  --card /path/to/cards/card.md \
+  --slot /path/to/root/1/jobs/card \
   --root /path/to/root \
   --deadline 120s \
   --tokens 200000 \
-  --auth ~/.local/share/opencode/auth.json \
-  --label card-smoke-ds
+  --auth /path/to/auth.json \
+  --label card
 ```
 
-### Expected Output
+The slot directory must be below the root. `native` takes job and slot directory
+leases (`.lease` and `.slot-lease`). It does not require a bench capacity store or
+owner. Each card needs a RESULT contract as its first line; the published
+`RESULT.md` must repeat that contract on line 1 and put its disposition on line 2.
+DeepSeek cards also need numbered STEPs for admission.
 
-On success:
-```text
-NATIVE OK label=card-smoke-ds rc=0 wall=36.58s card_sha256=1aec32417858179f524b045e675442e0a03220528a1a8248ac71601ea0f11419 binary_sha256=9598c27bda0e2d88ce4db5f853e25504c20ac6152e10205785a1cf8f45559952
-```
+A numeric token budget needs a supported live usage source. Use `unmetered`
+explicitly when no live accounting is available; the deadline still bounds the
+run. See [the native command reference](CLI.md#nova-swarm) for output, usage
+accounting, and containment details.
 
-On invalid configuration (refusal, exit code 2):
-```text
-NATIVE REFUSED: the slot directory "..." is outside the configured root "..."
-```
+## Use your runner in a batch
 
-### Invariants
-
-- **Isolation**: Child runs with `HOME` and `XDG_DATA_HOME` pointing at `<slot>/data`.
-- **Environment**: `NOVA_SWARM_JOB` is set to `<slot>`. Standard input is EOF (`/dev/null`).
-- **Standard output/error**: Captured to `<slot>/native.log`.
-- **Exit Code**: Returns `0` if the child exited 0; returns child exit code (or 1) if child exited non-zero; returns `2` for configuration refusals.
-
----
-
-## 2. Batch Execution (`nova-swarm batch --cards`)
-
-`nova-swarm batch` coordinates parallel execution across $N$ cards:
-1. **Scatter**: Spawns one runner process per admitted card in TSV order.
-2. **Wait**: Waits until all card runners exit or the batch deadline expires. Stragglers are killed on deadline expiry.
-3. **Gather**: Inspects `<root>/<slot>/jobs/<label>/RESULT.md` for every card, verifies line 1 against the card's admission contract, and emits a single bounded summary packet.
-
-### Input Format: `cards.tsv`
-
-A tab-separated file with four columns: `label<TAB>slot<TAB>model<TAB>card-path`.
-
-```tsv
-card-smoke-mc	1	inception/mercury-2.5	/path/to/cards/card-mercury.md
-card-smoke-ds	2	opencode/deepseek-v4-flash	/path/to/cards/card-deepseek.md
-```
-
-**Card convention**: Line 1 of the card file is the RESULT contract line and `RESULT.md` line 1 must equal it byte-for-byte; cards for DeepSeek models must use numbered STEPs (practice 17) or admission refuses them.
-
-
-### Runner Script (`batch-runner.sh`)
-
-The runner executable receives five positional arguments:
-`$1=label`, `$2=slot`, `$3=model`, `$4=card-path`, `$5=root`.
-It also inherits `NOVA_SWARM_ROOT` and `NOVA_SWARM_JOB`.
+The TSV has four columns:
+`label<TAB>slot<TAB>model<TAB>card-path`. A runner executable receives six
+positional arguments: label, slot, model, card path, root, and the token budget
+word. Pass that sixth argument through to `native` unchanged. For example:
 
 ```bash
 #!/usr/bin/env bash
@@ -81,114 +95,31 @@ SLOT="$2"
 MODEL="$3"
 CARD="$4"
 ROOT="$5"
-# The budget word, handed to a --runner as its SIXTH argument since SPEC-SWARM rule 13d
-# (nova-tools#1545). The runner does not invent it and does not default it: a runner that
-# reaches `native` without passing it on meets `native`'s own refusal.
-TOKENS="${6:?the batch hands the token budget as the sixth argument: a number, or the word unmetered}"
-JOB_DIR="$ROOT/$SLOT/jobs/$LABEL"
-# The bench slot lease (nova-tools#1546): native refuses to launch without a store and an
-# owner. The store is made ONCE per bench, by hand, and is NOT created here -- a runner that
-# made its own store would be a runner that cannot be refused.
-OWNER="${NOVA_SWARM_SLOT_OWNER:?set NOVA_SWARM_SLOT_OWNER to the owner whose bench share this runner holds}"
-mkdir -p "$JOB_DIR"
-
-# Scope git root to the slot directory so OpenCode does not traverse into parent checkouts
-if [ ! -d "$JOB_DIR/.git" ]; then
-  git -C "$JOB_DIR" init -q
-fi
-
-# If using a custom OpenAI-compatible provider (e.g. inception/mercury-2.5)
-if [ -f "$HOME/.config/opencode/opencode.json" ]; then
-  cp "$HOME/.config/opencode/opencode.json" "$JOB_DIR/opencode.json"
-fi
-if [ -z "${INCEPTION_API_KEY:-}" ] && [ -f "/path/to/provider.env" ]; then
-  export INCEPTION_API_KEY="$(cat "/path/to/provider.env" | tr -d '\n\r ')"
-fi
-
+TOKENS="${6:?batch must supply the token budget}"
 exec nova-swarm native \
   --harness /path/to/harness/opencode \
   --model "$MODEL" \
   --label "$LABEL" \
   --card "$CARD" \
-  --slot "$JOB_DIR" \
+  --slot "$ROOT/$SLOT/jobs/$LABEL" \
   --root "$ROOT" \
   --deadline 120s \
-  --slots-store "$ROOT/slots-store" \
-  --owner "$OWNER" \
   --tokens "$TOKENS" \
-  --auth ~/.local/share/opencode/auth.json
+  --auth /path/to/auth.json
 ```
 
-### Invocation
+Make that script executable and supply it with `--runner`, as in the local
+fixture. Choose the batch deadline and each card's token budget for the actual
+work: the token word applies to **each card**, never to the batch total.
 
-```bash
-nova-swarm batch \
-  --id batch-smoke-proof \
-  --cards cards.tsv \
-  --deadline 180 \
-  --runner ./batch-runner.sh \
-  --root /path/to/root
-```
+Without `--runner`, batch uses `--harness` to start `native` itself. The batch
+entry point currently requires `--slots-store` and `--owner` in that form, even
+though `native` treats those flags as compatibility inputs and takes only its
+job and slot directory leases.
 
-### Expected Output
-
-```text
-BATCH batch-smoke-proof n=2 done=2 abstain=0 usd=0.0000
-card-smoke-mc PASS: pwd verified and model is inception/mercury-2.5
-card-smoke-ds PASS: pwd verified and model is opencode/deepseek-v4-flash
-```
-
-If a card's `RESULT.md` is missing or line 1 does not match the contract, the card is gathered as `abstain`:
-```text
-BATCH batch-smoke-proof n=2 done=1 abstain=1 usd=0.0000
-card-smoke-mc abstain
-card-smoke-ds PASS: pwd verified and model is opencode/deepseek-v4-flash
-```
-
-### Packet Bounds
-
-- The batch summary packet is strictly bounded: 1 `BATCH` line, $N$ per-card disposition lines, and at most 11 `HOLD:` lines (ceiling: $N + 12$ lines).
-- Exit codes:
-  - `0`: All cards completed (`done == n`) with no `HOLD` lines.
-  - `1`: Batch completed with one or more `abstain` or `HOLD` rows.
-  - `2`: Admission error (e.g. invalid TSV, missing flags, unexecutable runner).
-
----
-
-## 3. Result Contract and Verification (`nova-swarm verify`)
-
-`nova-swarm verify` checks a job's `RESULT.md` against its contract line and emits a durable receipt.
-
-### The RESULT.md Contract
-
-1. **Line 1**: Line 1 of the card file is the RESULT contract line and `RESULT.md` line 1 must equal it byte-for-byte; admission and gather refuse any mismatch.
-2. **Line 2**: The disposition line (e.g. `PASS: ...`, `CLEAR: ...`, `HOLD: ...`).
-3. **Lines 3+**: Evidence lines, bounded by `--max` (default 20 lines).
-
-### Invocation
-
-```bash
-nova-swarm verify \
-  --result /path/to/root/slot/jobs/card-smoke-ds/RESULT.md \
-  --contract "# smoke-deepseek-v4-flash" \
-  --label card-smoke-ds \
-  --card cards/card-smoke-ds.md
-```
-
-### Expected Output
-
-```text
-RESULT OK "card-smoke-ds" line2="PASS: pwd verified and model is opencode/deepseek-v4-flash"
-```
-
-### Receipt Artifact
-
-When verification succeeds, `nova-swarm verify` writes `<result>.receipt` alongside `RESULT.md`:
-
-```text
-label=card-smoke-ds
-card_sha256=1aec32417858179f524b045e675442e0a03220528a1a8248ac71601ea0f11419
-line2=PASS: pwd verified and model is opencode/deepseek-v4-flash
-lines=4
-```
-
+Batch returns 0 when all cards finish without holds, 1 when the result packet
+contains abstentions or holds, and 2 when it cannot run. Missing or mismatched
+results are abstentions. The packet has one summary, one disposition per card,
+and at most eleven `HOLD:` lines. Use `nova-swarm verify --help` for independent
+verification and receipt flags, and `nova-swarm profile --help` to summarize job
+timelines.
