@@ -101,24 +101,49 @@ func TestDiffNamesFailureReportsStderrWithoutReturningPaths(t *testing.T) {
 
 func TestCutLocalDiffOverflowDoesNotWriteOrSuggestFetchingTags(t *testing.T) {
 	t.Parallel()
-	f := truncatedForge()
-	dir := t.TempDir()
-	changelog, paths := filepath.Join(dir, "CHANGELOG.md"), filepath.Join(dir, "paths.txt")
-	deps := cutDeps(t, f)
-	deps.Git = &fakeGit{fail: &diffOutputLimitError{"path list", localDiffCap, localDiffCap + 1}}
-	var out, errs bytes.Buffer
-	code := Run("nova-update", []string{"cut", "--repo", "o/n", "--from", "main",
-		"--version", "v0.16.0", "--changelog", changelog, "--local-diff", dir,
-		"--paths-from", paths, "--security-read", "review-123"}, &out, &errs, deps)
-	if code != 2 || !strings.Contains(errs.String(), "capture limit") || strings.Contains(errs.String(), "fetch --tags") {
-		t.Fatalf("wrong refusal: code=%d out=%s err=%s", code, out.String(), errs.String())
-	}
-	if len(f.tagged) != 0 || strings.Contains(out.String(), "RELEASE CUT PATHS") {
-		t.Fatalf("overflow was classified or tagged: out=%s tags=%v", out.String(), f.tagged)
-	}
-	for _, path := range []string{changelog, paths} {
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			t.Fatalf("refused cut wrote %s: %v", path, err)
-		}
+	for _, tc := range []struct {
+		stream string
+		limit  int
+		remedy string
+	}{
+		{"path list", localDiffCap, "report this range and observed byte count to the release tool maintainer"},
+		{"diagnostics", childCap, "inspect Git's diagnostics for this range"},
+	} {
+		t.Run(tc.stream, func(t *testing.T) {
+			t.Parallel()
+			f := truncatedForge()
+			dir := t.TempDir()
+			changelog, paths := filepath.Join(dir, "CHANGELOG.md"), filepath.Join(dir, "paths.txt")
+			deps := cutDeps(t, f)
+			deps.Git = &fakeGit{fail: &diffOutputLimitError{tc.stream, tc.limit, int64(tc.limit + 1)}}
+			var out, errs bytes.Buffer
+			code := Run("nova-update", []string{"cut", "--repo", "o/n", "--from", "main",
+				"--version", "v0.16.0", "--changelog", changelog, "--local-diff", dir,
+				"--paths-from", paths, "--security-read", "review-123"}, &out, &errs, deps)
+			if code != 2 || !strings.Contains(errs.String(), "capture limit") || strings.Contains(errs.String(), "fetch --tags") {
+				t.Fatalf("wrong refusal: code=%d out=%s err=%s", code, out.String(), errs.String())
+			}
+			for _, want := range []string{"no path list, changelog or tag written", tc.remedy} {
+				if !strings.Contains(errs.String(), want) {
+					t.Errorf("refusal missing %q: %s", want, errs.String())
+				}
+			}
+			if tc.stream == "diagnostics" && !strings.Contains(errs.String(), dir) {
+				t.Errorf("diagnostic remedy omits the checkout: %s", errs.String())
+			}
+			for _, bypass := range []string{"--paths-from", "nearer tag", "hand-written"} {
+				if strings.Contains(errs.String(), bypass) {
+					t.Errorf("overflow remedy suggests %q: %s", bypass, errs.String())
+				}
+			}
+			if len(f.tagged) != 0 || strings.Contains(out.String(), "RELEASE CUT PATHS") {
+				t.Fatalf("overflow was classified or tagged: out=%s tags=%v", out.String(), f.tagged)
+			}
+			for _, path := range []string{changelog, paths} {
+				if _, err := os.Stat(path); !os.IsNotExist(err) {
+					t.Fatalf("refused cut wrote %s: %v", path, err)
+				}
+			}
+		})
 	}
 }

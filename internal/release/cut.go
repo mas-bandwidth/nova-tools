@@ -335,8 +335,8 @@ func ReadPathsFile(path, rangeName string) ([]string, error) {
 
 // paths answers the list `cut` classifies, and whether that list is COMPLETE.
 // Three sources, in the order a person reaches for them: the checkout, a list
-// this verb wrote earlier, and the forge -- which is the default and the only
-// one with a ceiling.
+// this verb wrote earlier, and the forge, which is the default. Local output
+// is byte-bounded; forge output also has a file-count ceiling.
 func paths(ctx context.Context, o options, deps Deps, previous, sha string, out, errs io.Writer) ([]string, bool, error) {
 	rangeName := previous + "..." + sha
 	if previous == "" {
@@ -360,7 +360,11 @@ func paths(ctx context.Context, o options, deps Deps, previous, sha string, out,
 		if err != nil {
 			var limit *diffOutputLimitError
 			if errors.As(err, &limit) {
-				return nil, false, fmt.Errorf("cannot classify %s: %w", rangeName, err)
+				remedy := "report this range and observed byte count to the release tool maintainer for review of the path-list limit; retry with the reviewed tool"
+				if limit.stream == "diagnostics" {
+					remedy = fmt.Sprintf("inspect Git's diagnostics for this range in %s, resolve their cause, and retry", o.localDiff)
+				}
+				return nil, false, fmt.Errorf("cannot classify %s: %w; no path list, changelog or tag written (%s)", rangeName, err, remedy)
 			}
 			return nil, false, fmt.Errorf("cannot read %s in %s: %w (name a checkout holding both %s and %s; `git fetch --tags` first)", rangeName, o.localDiff, err, previous, sha)
 		}
