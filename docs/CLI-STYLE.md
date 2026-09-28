@@ -36,12 +36,12 @@ A resource limit keeps its unit or scope in its name; these spellings stand: nov
 - nova-bus wait `--idle-exit <n>`, a caller-selected timeout code (an open decision below).
 
 **(e) Output: events and payloads.**
-- EVENT output is one line per event, `<TOKEN> OK|FAIL key=value ...`; OK to stdout, FAIL and REFUSED to stderr.
+- EVENT output is one line per event, `<TOKEN> OK|FAIL key=value ...`; OK to stdout, FAIL and REFUSED to stderr. One exception, per SPEC.md: nova-self-talk's `SELFTALK FAIL files=...` summary count line goes to stdout beside its advisory note.
 - Item OK events may precede a later failure; the closing status is then FAIL, exit not 0.
 - PAYLOAD output: a verb documented to emit a payload names its format in help and emits exactly that payload on stdout and nothing else; its events go to stderr. The documented cases: nova-bus prepare (a JSON artifact), nova-bus draft (a drafted note) and nova-fuse path (a bare value). A payload is never capped like a listing.
 - A remedy is a command, printed shell-quoted so it pastes.
 
-**(e2) Token and escaping grammar: not decided here.** SPEC.md's oneline escaping, whitespace-safe `key=value` fields and `VERB STATUS` token shape govern. Two candidate changes are open decisions below; every other rule holds either way.
+**(e2) Token and escaping grammar: not decided here.** SPEC.md's oneline escaping, whitespace-safe `key=value` fields and `VERB STATUS` token shape govern. Two candidate changes are open decisions below.
 
 ## Refusals and silence
 
@@ -84,7 +84,7 @@ An ignored flag is a refusal; a stale checker (`last=` past its bound) is FAIL.
 
 ## Decisions for Glenn
 
-These are open. Every other rule holds whichever way each goes.
+These are open; every other rule holds either way.
 
 1. **Token shape:** `VERB STATUS`, or `TOOL VERB STATUS`.
 2. **Field quoting:** oneline escaping, or fields in Go `%q`, which needs a quoted-string parser.
