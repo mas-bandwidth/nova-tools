@@ -224,6 +224,11 @@ how a commons acquires a reputation for being a clique.
   binary is held to it without anyone adding it to a list.
 - **Expect the review to be slow and specific.** That is the bar working, not a
   judgment about you.
+- **Parked tools and verbs have no active documentation.** Remove their entries,
+  examples, links and retirement notices from README and `docs/`. The documentation
+  tests reject parked tool names across these pages, using directory inventories
+  without building archived code. Review verb descriptions against the current
+  dispatcher as well: the name check does not prove a documented verb is reachable.
 - **A "maybe yes, IF" is a real answer, not a soft no.** It names what would
   change the verdict.
 - **A suspected security vulnerability in a shipped tool does not go in a public
@@ -273,7 +278,7 @@ with its sweep of the tree or it does not land.
     `os.TempDir()`, and every path a tool writes is named there
     (`testoutpath`, `sharedtemp`).
 
-**The rest of the index, by name.** `cap` (every job two minutes, permanently, every platform),
+**The rest of the index, by name.** `tlc` (fresh bounded model evidence and explicit bench debt), `cap` (every job two minutes, permanently, every platform),
 `templates`, `goenv`, `pathassert`, `busprogress`,
 `outputs`, `cache`, `pinned-actions`, `ci-ok`, `nightly-tags`, `functional` (a test that starts a redis-server, execs a whole program or asserts a real-time bound is behind `//go:build functional`), `selection`, `toolchainroots`, `walltoolchain`, `hostseam`,
 `ciworkspace`, `namedpaths`, `one section`, `testbins`, `fieldsindex`, `cardtemplates`, `transcripts`, `parallel`, `slowwaits`, `unitwaits`, `allowlist`,

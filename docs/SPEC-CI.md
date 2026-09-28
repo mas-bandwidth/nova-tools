@@ -310,6 +310,80 @@ verb end to end:
 5. The slowest list is sorted and capped at three.
 6. More than one package over budget prints one line each, worst first, an order
    that does not depend on map iteration.
+## The COST line of a run
+
+**The verb.** `nova-ci cost` is where a run's job-seconds went:
+
+```
+cost  read the forge's job listing for a run on stdin; print one COST line with
+      job-seconds per job, their total, and spin (the seconds of the failed,
+      cancelled and rerun jobs); --redis appends the same entry to ci:cost
+```
+
+It takes the run receipt's flags (`--repo`, `--sha`, `--run-id`, `--workflow`,
+`--conclusion`, `--pr`, `--at`), spelt as `nova-ci github receipt` takes them,
+so the `ci-ok` step that writes the receipt writes the cost from the same
+context, and the listing it reads is the body of
+`repos/<owner>/<name>/actions/runs/<id>/jobs`: one JSON object whose `jobs`
+array holds exactly `total_count` jobs (one complete page, or the pages' jobs
+combined into one object; raw concatenated pages are refused). A complete
+listing is required before writing a run-total entry; partial listings are
+refused before any dial. The verb makes no call of its own: what fetched the
+listing is the caller's business, and everything on stdin is data from a host.
+
+**The invariant.** A job's seconds are its `completed_at` minus its
+`started_at` as the forge stamped them, whole seconds; `total` is the seconds
+of every job whose stamps are known; `spin` is, of those, the seconds of the
+jobs whose seconds bought no verdict: a red conclusion (`failed`; `cancelled`
+named as such, in either of the forge's spellings), a `run_attempt` above one
+(`rerun`), or an earlier attempt of a job the listing also holds a later
+attempt of (`superseded`, since the forge lists every attempt under
+`filter=all`). A job with no `completed_at` is still running: its seconds are
+unknown, printed `-`, counted in `unknown=` and never summed as zero, and a
+stamp out of order is unknown too, never negative. The engine is
+`internal/cicost`: `ParseJobs` turns the bytes into jobs, `FromJobs` turns
+jobs into seconds, `Line` prints them, and nothing reads a file, the clock or
+the network.
+
+**Its one-line output.** `COST repo=<owner/name> sha=<sha> run=<id>
+workflow=<name> conclusion=<word> pr=<n|-> jobs=<n> total=<s> spin=<s>
+unknown=<n> job=<name>:<seconds>:<conclusion>:<attempt>:<ok|failed|cancelled|rerun|superseded>
+... ev=<stream id|->`, one `job=` field per job in the listing's order, every
+value one token (a job named `test (linux)` prints `test\x20(linux)`), on
+stdout, so one `COST` grep reads a log. With `--redis` the entry is appended to
+the `ci:cost` stream first, the receipt's fields, the totals and one
+`job:<name>:<attempt>` field per job, in one XADD that touches no other key,
+and the line ends in the entry's id; a reader joins the entry to the run's
+`ev:github` row by `repo`, `sha` and `run_id`. The write goes through the
+receipt's own `Validate`, so a cost never names a run the receipt could not.
+
+**Its refusals.** Exit 2 before any dial, one line each ending `run: nova-ci
+help`: a flag the receipt refuses (its own remedy, `--sha wants the 40-hex head
+the run tested`), an empty stdin (`it wants the run's job listing`), bytes that
+are not the forge's JSON, a listing holding no jobs, a partial or
+count-mismatched listing (`listing is partial (<n> jobs read, <m> expected); page
+through the forge's listing, or pass every page`), a positional argument.
+Exit 1, the receipt's code for the same failure, when the store would not take
+the entry: one line naming the cause and ending `the COST entry was not
+written: fix the store or the bench seat and rerun ci-ok`, never a line that
+pretends the entry landed. If an XADD write succeeds but closing the connection
+subsequently fails, stdout retains the COST line with its write event ID, stderr
+reports the close failure (`nova-ci cost: close: <err>`), and the command exits 1
+without instructing the caller to rerun the write (preventing duplicate writes).
+
+**The mistake it prevents.** A CI bill is read as a total, and a total hides
+the part that bought nothing: the red job's minutes, the rerun's, the attempt a
+rerun superseded. One line per run, on the receipt's identity, is what lets a
+reader sum spin over a day and name the job that spent it.
+
+**Its tests.** `internal/cicost/cicost_test.go` prices the fixture listing
+`internal/cicost/testdata/jobs.json` (one failed job at 42 s, one rerun at
+33 s: `spin=75`, `total=150`), every attempt of a rerun, a cancelled job in
+both spellings, unknown seconds, and the entry's field set through a fake
+writer; `cmd/nova-ci/cost_test.go` runs the verb end to end through `run()`,
+every refusal, the store seam, and executes the `### cost` transcript of
+docs/CLI.md line for line through `onboarding.CompareTranscript`.
+
 ## The CI class test against a real network host on the CI path
 
 **The help line.** The class test is entered in the CI check roster and in help
@@ -2205,6 +2279,59 @@ gated by a required check, so what it deletes enters dev's history without
 this rule having run on it, and a main run excuses it all the same.
 `origin/dev` is trusted to be dev's; the workflow's own fetch
 (`+dev:refs/remotes/origin/dev`) makes it so.
+
+
+
+### `tlc` — bounded model evidence
+
+`make tlc` runs one declared `TLC_GROUP` on a Linux bench, using explicit
+`TLC_JAR` and `TLC_OUT` paths. It downloads nothing, uses at most two TLC
+workers and two JVM processors, and caps the whole group at 110 seconds.
+Each case has an owned temporary state directory. Expected counterexamples
+must name the selected invariant, action or temporal property and return its
+expected TLC exit; a timeout, parse failure or unrelated violation is a failure.
+Final liveness checking remains enabled.
+
+`tla/CASES.tsv` declares every MC configuration, instance module, expected result,
+property, deadlock policy, execution group, gate and debt. Layer one's required
+gate covers MemberTable, EpochMemberTable, TableEdit, TableOrder, TableSession,
+TableFirstContact, RedisFn and FirstConn, including their negative witnesses.
+The epoch fixed-point instance has its own group so it does not spend the main
+epoch instance's budget. Other measured cases remain recorded. CardMachine and
+LandWatch have explicit failed measurement debt; they are not counted as passing
+proofs or silently replaced by smaller configurations.
+
+`tla/RUNS.tsv` retains each measured module/configuration, generated and distinct
+states, elapsed time, result, exit, declared expectation, budget and run mode.
+It also records the bench, UTC start, installed jar hash and an input fingerprint
+covering all TLA modules, MC configurations, case declarations and runner bytes.
+Unknown state counts on a failed timeout stay unknown, never zero-state success.
+Updating any fingerprinted input requires refreshing the records on a bench.
+
+`TestTLCRecordsCoverCurrentModels` checks declaration coverage and current evidence
+without executing Java or making a network call. Required models cannot become
+bench debt to evade their gate. Only the two named deferred models may retain
+failed or missing measurements, and the class lists that debt explicitly; any
+existing debt record must still have a current fingerprint and honest provenance.
+`TestTLCRecordFreshnessAndCoverageWitnesses` proves changed models, changed bounds,
+changed runners, omitted/added cases, wrong exits and invalid gate waivers refuse,
+while a declared failed bench measurement is retained as debt, never PASS.
+
+The scheduled/on-demand `.github/workflows/tlc.yml` derives its required matrix
+from the case plan and runs only on self-hosted Linux runners, with two-minute
+job timeouts and a 110-second group limit. The repository's `TLC_JAR` variable
+names the preinstalled jar; Java and Python must already be on PATH. Logs and
+TSV records are uploaded even on failure. This workflow does not accept PR events.
+The ordinary change gate checks the committed records; the nightly repeats the
+actual model runs. A failing or absent nightly is not evidence of a checked model.
+
+`make tlc-full` is a separate manual bench experiment with an explicitly supplied
+`TLC_BUDGET` of at most 3600 seconds. It refuses CI environments. Its full-instance
+records carry `mode=manual` and their actual budget; they cannot satisfy a required
+bounded gate. No workflow job gets a longer timeout. A smaller model, if introduced,
+needs a separate configuration and a stated coverage difference; it cannot replace
+the original failed measurement.
+
 
 ## How the class tests read the tree: one walk, one parse, in parallel
 

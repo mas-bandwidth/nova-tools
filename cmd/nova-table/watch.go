@@ -46,6 +46,7 @@ func (app *application) cmdWatch(args []string, stdout, stderr io.Writer) int {
 	title := fs.String("title", "", "a title line above the tables")
 	view := fs.String("view", "", "a stored view: its tables and title, read every frame (view set <name> --tables ...)")
 	once := fs.Bool("once", false, "render once and exit, with no clear")
+	checkFlag := fs.Bool("check", false, "run table check every tick; show a stall row on invariant violation")
 	rf := declareRenderFlags(fs)
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
@@ -87,9 +88,9 @@ func (app *application) cmdWatch(args []string, stdout, stderr io.Writer) int {
 		return code
 	}
 	defer st.Close()
-	read := tablesReader(c, names, *title, opts)
+	read := tablesReader(c, names, *title, opts, *checkFlag)
 	if *view != "" {
-		read = viewReader(c, *view, opts)
+		read = viewReader(c, *view, opts, *checkFlag)
 	}
 	if *once {
 		text, err := read(ctx)
@@ -105,13 +106,26 @@ func (app *application) cmdWatch(args []string, stdout, stderr io.Writer) int {
 
 // tablesReader reads and renders the named tables: one pipeline per tick
 // over every reader, including changed shapes, the renders joined by one
-// blank line, the title first when there is one.
+// blank line, the title first when there is one. When check is true, it audits
+// invariant integrity for each table and appends a stall row on violation.
 // viewReader reads the view first, every frame (one extra trip), then its
 // tables in one trip, so the tables a tab shows change by a verb and never
 // by a restart (Glenn 2026-09-27: "restarting is not cool").
-func viewReader(c redis.Cmdable, name string, opts ntable.RenderOpts) func(context.Context) (string, error) {
+func viewReader(c redis.Cmdable, name string, opts ntable.RenderOpts, check bool) func(context.Context) (string, error) {
+	return viewReaderWith(c, name, opts, check, ntable.ViewGet, tableSnapshots, ntable.Check)
+}
+
+func viewReaderWith(
+	c redis.Cmdable,
+	name string,
+	opts ntable.RenderOpts,
+	check bool,
+	viewGet func(context.Context, redis.Cmdable, string) (ntable.View, error),
+	snapshotter func(c redis.Cmdable, names []string) func(context.Context) ([]ntable.Table, error),
+	checker func(context.Context, redis.Cmdable, string) (ntable.CheckReport, error),
+) func(context.Context) (string, error) {
 	return func(ctx context.Context) (string, error) {
-		v, err := ntable.ViewGet(ctx, c, name)
+		v, err := viewGet(ctx, c, name)
 		if err != nil {
 			return "", err
 		}
@@ -122,7 +136,7 @@ func viewReader(c redis.Cmdable, name string, opts ntable.RenderOpts) func(conte
 		// second, a blank line, the title, a blank line, the summary
 		// "x/y z% -> ETA" when the view names a done column, a blank line,
 		// the tables. Nothing else goes in.
-		tables, err := tableSnapshots(c, v.Tables)(ctx)
+		tables, err := snapshotter(c, v.Tables)(ctx)
 		if err != nil {
 			return "", err
 		}
@@ -140,19 +154,78 @@ func viewReader(c redis.Cmdable, name string, opts ntable.RenderOpts) func(conte
 			b.WriteString("\n\n")
 		}
 		b.WriteString(renderAll("", tables, opts))
+		if check && checker != nil {
+			var stalls []string
+			for _, t := range tables {
+				if _, err := checker(ctx, c, t.Name); err != nil {
+					stalls = append(stalls, formatStall(t.Name, err))
+				}
+			}
+			return appendStalls(b.String(), stalls), nil
+		}
 		return b.String(), nil
 	}
 }
 
-func tablesReader(c redis.Cmdable, names []string, title string, opts ntable.RenderOpts) func(context.Context) (string, error) {
-	read := tableSnapshots(c, names)
+func tablesReader(c redis.Cmdable, names []string, title string, opts ntable.RenderOpts, check bool) func(context.Context) (string, error) {
+	return tablesReaderWith(c, names, title, opts, check, tableSnapshots(c, names), ntable.Check)
+}
+
+func tablesReaderWith(
+	c redis.Cmdable,
+	names []string,
+	title string,
+	opts ntable.RenderOpts,
+	check bool,
+	snapshots func(context.Context) ([]ntable.Table, error),
+	checker func(context.Context, redis.Cmdable, string) (ntable.CheckReport, error),
+) func(context.Context) (string, error) {
 	return func(ctx context.Context) (string, error) {
-		tables, err := read(ctx)
+		tables, err := snapshots(ctx)
 		if err != nil {
 			return "", err
 		}
-		return renderAll(title, tables, opts), nil
+		text := renderAll(title, tables, opts)
+		if check && checker != nil {
+			var stalls []string
+			for _, t := range tables {
+				if _, err := checker(ctx, c, t.Name); err != nil {
+					stalls = append(stalls, formatStall(t.Name, err))
+				}
+			}
+			text = appendStalls(text, stalls)
+		}
+		return text, nil
 	}
+}
+
+// formatStall formats a table invariant check failure as a stall row:
+// stall: <table>: <detail>
+// It strips table name prefixes and CLI remedy suffixes, and escapes
+// terminal control bytes through oneline.Escape. Never repairs or mutates.
+func formatStall(tableName string, err error) string {
+	msg := err.Error()
+	prefix := "table " + tableName + ": "
+	if strings.HasPrefix(msg, prefix) {
+		msg = strings.TrimPrefix(msg, prefix)
+	} else if strings.HasPrefix(msg, "table \""+tableName+"\": ") {
+		msg = strings.TrimPrefix(msg, "table \""+tableName+"\": ")
+	}
+	if idx := strings.Index(msg, "; run: "); idx != -1 {
+		msg = msg[:idx]
+	}
+	return fmt.Sprintf("stall: %s: %s", tableName, oneline.Escape(msg))
+}
+
+// appendStalls appends stall rows to rendered table or view text.
+func appendStalls(rendered string, stalls []string) string {
+	if len(stalls) == 0 {
+		return rendered
+	}
+	if rendered != "" && !strings.HasSuffix(rendered, "\n") {
+		rendered += "\n"
+	}
+	return rendered + strings.Join(stalls, "\n") + "\n"
 }
 
 func tableSnapshots(c redis.Cmdable, names []string) func(context.Context) ([]ntable.Table, error) {
