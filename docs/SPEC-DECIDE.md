@@ -232,7 +232,7 @@ one of them was REFUSED — `want one of rebase, stack, fixture-retarget, fleet-
 row-test, ...` — so twelve units got no answer at all and the managers dispatched them by hand.
 They ran on the bottom rung, direct: tools13's t1 to t6 (#1802, #1789, #1798, #1799, #1795) and
 tools10's c17 and c18. Eleven came back green; the twelfth was an ABSTAIN on the manager's own
-wrong premise (`cmd/nova-play/firstrun_test.go:200` already compared line for line), which is a
+wrong premise (`deprecated/cmd/nova-play/firstrun_test.go:200` already compared line for line), which is a
 card fault and not the rung's failure. A kind the table does not hold is not a conservative
 answer, it is no answer: the work is dispatched anyway, off the ladder, and the log learns nothing
 from it.

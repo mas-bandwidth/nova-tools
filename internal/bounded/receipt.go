@@ -8,7 +8,7 @@ naming the log that holds the whole list.
 The cap, the count, and the escape are the three things a receipt cannot
 get wrong without becoming the state it was meant to be a window into, and
 those are exactly the three jobs the rest of this package already does.
-Defining Receipt here, beside List and Group, means the verb in cmd/nova-test
+Defining Receipt here, beside List and Group, means the verb in deprecated/cmd/nova-test
 will reuse the same machinery its listings already use, and a reader who
 parses one RECEIPT line parses every RECEIPT line.
 
