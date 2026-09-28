@@ -199,7 +199,7 @@ type GeneralitySourceFile struct {
 
 type allowlistDiscardReporter struct{}
 
-func (allowlistDiscardReporter) Helper()                         {}
+func (allowlistDiscardReporter) Helper()                           {}
 func (allowlistDiscardReporter) Errorf(format string, args ...any) {}
 
 // checkGenerality scans the given source files against the allowlist and returns all violations.
