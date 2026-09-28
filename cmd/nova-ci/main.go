@@ -87,12 +87,24 @@ usage:
                       environment's seat (NOVA_SPRINT_REDIS_USER). One CI
                       RECEIPT line;
                       exit 0 written, 1 the store refused it, 2 usage.
+  nova-ci cost --repo owner/name --sha <40hex> --run-id <n> --workflow <name>
+               --conclusion success|failure|cancelled [--pr <n>] [--at <rfc3339>]
+               [--redis <addr>] < jobs.json
+                      the one COST line of a CI run: read the run's job listing
+                      (repos/<owner>/<name>/actions/runs/<id>/jobs) on stdin
+                      and print job-seconds per job, the total, and spin (the
+                      seconds of the failed, cancelled and rerun jobs); the
+                      flags are the run receipt's. --redis appends the same
+                      entry to the ci:cost stream first and the line ends in
+                      its id. Exit 0 with the line, 1 the store would not take
+                      the entry, 2 a refusal (a flag the receipt refuses, a
+                      listing that is not the forge's).
 
 exit codes: 0 inside budget or measured, 2 a CI-SLEEPS line, a CI-SLOW
             line under --enforce, or the invocation could not run (bad flag,
             unreadable stdin); local adds 1 for a red test or a package that
-            did not build, and github receipt adds 1 for a write the store
-            refused.
+            did not build, and github receipt and cost add 1 for a write the
+            store refused.
 
 example:
   nova-ci help
@@ -134,6 +146,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 		return cmdNewVerb(args[1:], stdout, stderr)
 	case "github":
 		return cmdGitHub(args[1:], stdout, stderr, os.Getenv)
+	case "cost":
+		return cmdCost(args[1:], stdin, stdout, stderr, openCostStore)
 	case "help", "-h", "--help":
 		if args[0] == "help" && len(args) > 1 && args[1] != "help" && !verbflag.IsHelp(args[1]) {
 			return run(append(args[1:], "--help"), stdin, stdout, stderr)
