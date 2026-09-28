@@ -128,6 +128,7 @@ type hooks struct {
 	createTemp   func(dir, base string, perm os.FileMode) (*os.File, error)
 	write        func(f *os.File, data []byte) (int, error)
 	sync         func(f *os.File) error
+	chmod        func(f *os.File, mode os.FileMode) error
 	close        func(f *os.File) error
 	rename       func(oldpath, newpath string) error
 	remove       func(name string) error
@@ -142,6 +143,7 @@ func defaultHooks() *hooks {
 		createTemp:   defaultCreateTemp,
 		write:        func(f *os.File, data []byte) (int, error) { return f.Write(data) },
 		sync:         func(f *os.File) error { return f.Sync() },
+		chmod:        func(f *os.File, mode os.FileMode) error { return f.Chmod(mode) },
 		close:        func(f *os.File) error { return f.Close() },
 		rename:       os.Rename,
 		remove:       os.Remove,
@@ -235,21 +237,43 @@ func wrapErr(prefix string, err error) error {
 // the parent directory (after rename, best-effort) to ensure durable directory entry
 // creation across power loss.
 //
+// Option configures atomic write behavior.
+type Option func(*options)
+
+type options struct {
+	exactMode bool
+}
+
+// ExactMode configures atomicfile to explicitly chmod the temporary file to
+// perm prior to renaming it, ensuring the target file receives perm even when
+// the process umask would otherwise restrict it.
+func ExactMode() Option {
+	return func(o *options) {
+		o.exactMode = true
+	}
+}
+
 // Write refuses paths that are not clean (filepath.Clean(path) != path), refuses
 // base names longer than 241 bytes, refuses mode bits outside 0000-0777, refuses
 // to replace directories or symlinks, and returns an error naming path if the
 // parent directory does not exist, is read-only, or fails to resolve.
-func Write(path string, data []byte, perm os.FileMode) error {
-	return writeWithHooks(path, data, perm, nil)
+func Write(path string, data []byte, perm os.FileMode, opts ...Option) error {
+	return writeWithHooks(path, data, perm, nil, opts...)
 }
 
 // WriteFile is an alias for Write, matching os.WriteFile's signature with atomic
 // replacement guarantees, umask preservation, and parent directory durability.
-func WriteFile(path string, data []byte, perm os.FileMode) error {
-	return Write(path, data, perm)
+func WriteFile(path string, data []byte, perm os.FileMode, opts ...Option) error {
+	return Write(path, data, perm, opts...)
 }
 
-func writeWithHooks(path string, data []byte, perm os.FileMode, h *hooks) (err error) {
+func writeWithHooks(path string, data []byte, perm os.FileMode, h *hooks, opts ...Option) (err error) {
+	var opt options
+	for _, fn := range opts {
+		if fn != nil {
+			fn(&opt)
+		}
+	}
 	if path == "" {
 		return fmt.Errorf("atomicfile: path is empty")
 	}
@@ -322,6 +346,12 @@ func writeWithHooks(path string, data []byte, perm os.FileMode, h *hooks) (err e
 
 	if err := h.sync(f); err != nil {
 		return wrapErr(fmt.Sprintf("atomicfile: sync %q", path), err)
+	}
+
+	if opt.exactMode {
+		if err := h.chmod(f, perm); err != nil {
+			return wrapErr(fmt.Sprintf("atomicfile: chmod %q", path), err)
+		}
 	}
 
 	closed = true

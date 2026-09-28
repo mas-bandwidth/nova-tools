@@ -250,8 +250,8 @@ func TestWriteLeavesNoTempLitter(t *testing.T) {
 }
 
 // TestWrittenBoxIsWorldReadable. The box is not a secret and other tools must be able to read
-// it (a fuse nobody else can see is a fuse that stops nothing). The written box requests 0644
-// permissions, honored subject to the process umask.
+// it (a fuse nobody else can see is a fuse that stops nothing). The written box has 0644
+// permissions strictly via ExactMode.
 func TestWrittenBoxIsWorldReadable(t *testing.T) {
 	t.Parallel()
 
@@ -266,26 +266,57 @@ func TestWrittenBoxIsWorldReadable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat: %v", err)
 	}
-	wantPerm := referencePerm(t, filepath.Dir(path), 0o644)
-	if perm := fi.Mode().Perm(); perm != wantPerm {
-		t.Errorf("want mode %04o (0644 subject to umask), got %04o", wantPerm, perm)
+	if perm := fi.Mode().Perm(); perm != 0o644 {
+		t.Errorf("want mode 0644, got %04o", perm)
 	}
 }
 
-func referencePerm(t *testing.T, dir string, perm os.FileMode) os.FileMode {
-	t.Helper()
-	ref := filepath.Join(dir, ".perm.ref")
-	f, err := os.OpenFile(ref, os.O_CREATE|os.O_EXCL, perm)
-	if err != nil {
-		t.Fatalf("referencePerm create: %v", err)
+// TestWriteBoxResolvesSymlink asserts that WriteBox resolves symlink targets before writing
+// so that the atomic write lands on the target file while leaving the symlink intact.
+func TestWriteBoxResolvesSymlink(t *testing.T) {
+	t.Parallel()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: symlink creation requires special privileges")
 	}
-	_ = f.Close()
-	defer os.Remove(ref)
-	st, err := os.Stat(ref)
-	if err != nil {
-		t.Fatalf("referencePerm stat: %v", err)
+
+	dir := t.TempDir()
+	target := filepath.Join(dir, "real.json")
+	if err := WriteBox(target, Box{}); err != nil {
+		t.Fatalf("WriteBox(target) failed: %v", err)
 	}
-	return st.Mode().Perm()
+
+	link := filepath.Join(dir, "link.json")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("Symlink failed: %v", err)
+	}
+
+	b := Box{
+		Quarantine: map[string]Fuse{
+			"discord": {At: "2026-09-28T00:00:00Z", Reason: "testing symlink resolution"},
+		},
+	}
+	if err := WriteBox(link, b); err != nil {
+		t.Fatalf("WriteBox(link) failed: %v", err)
+	}
+
+	// Verify that the link is still a symlink
+	lst, err := os.Lstat(link)
+	if err != nil {
+		t.Fatalf("Lstat(%q) failed: %v", link, err)
+	}
+	if lst.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("link %q is no longer a symlink", link)
+	}
+
+	// Verify that the target was updated with the new contents
+	readBox, err := ReadBox(target)
+	if err != nil {
+		t.Fatalf("ReadBox(target) failed: %v", err)
+	}
+	if _, ok := readBox.Quarantine["discord"]; !ok {
+		t.Fatalf("target was not updated through symlink write: %v", readBox)
+	}
 }
 
 // TestWriteNormalisesNilQuarantine so a box written from a zero value reads back as an
@@ -420,10 +451,11 @@ func TestPreserveUnreadableNamesTheDestinationEvenWhenItFails(t *testing.T) {
 // unreadable file already exists with 0600 permissions, PreserveUnreadable preserves
 // those permissions rather than widening them to 0644.
 func TestPreserveUnreadablePreservesExistingPermissions(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("windows: unix permission bits are not faithfully reported here")
 	}
-	t.Parallel()
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "fuses.json")

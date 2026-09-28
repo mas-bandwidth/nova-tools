@@ -1854,3 +1854,58 @@ func TestLateFlagRefusalNamesDoor(t *testing.T) {
 		t.Errorf("late flag refusal = %q, want standard refusal naming help door", errOut)
 	}
 }
+
+func TestLockdownOnSymlinkedBoxLandsAndCheckFails(t *testing.T) {
+	t.Parallel()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: symlink creation requires special privileges")
+	}
+
+	dir := t.TempDir()
+	realBox := filepath.Join(dir, "real-fuses.json")
+	if err := fuse.WriteBox(realBox, fuse.Box{}); err != nil {
+		t.Fatalf("WriteBox failed: %v", err)
+	}
+
+	symlinkedBox := filepath.Join(dir, "symlink-fuses.json")
+	if err := os.Symlink(realBox, symlinkedBox); err != nil {
+		t.Fatalf("Symlink failed: %v", err)
+	}
+
+	now := nowish()
+	code, out, errOut := capture(t, []string{"lockdown", "--box", symlinkedBox, "symlink lockdown test"}, now)
+	if code != 0 {
+		t.Fatalf("lockdown on symlinked box failed: exit %d\nstdout: %q\nstderr: %q", code, out, errOut)
+	}
+	if !strings.Contains(out, "LOCKDOWN OK") {
+		t.Errorf("stdout = %q, want LOCKDOWN OK", out)
+	}
+
+	// Symlink must still be intact as a symlink
+	lst, err := os.Lstat(symlinkedBox)
+	if err != nil {
+		t.Fatalf("Lstat(%q) failed: %v", symlinkedBox, err)
+	}
+	if lst.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("symlinked box %q is no longer a symlink", symlinkedBox)
+	}
+
+	// Check on the symlink must fail because lockdown was recorded on the real box
+	code, _, errOut = capture(t, []string{"check", "--box", symlinkedBox}, now)
+	if code != 1 {
+		t.Fatalf("check on symlinked box: exit = %d, want 1", code)
+	}
+	if !strings.Contains(errOut, "FUSE FAIL lockdown") {
+		t.Errorf("stderr = %q, want FUSE FAIL lockdown", errOut)
+	}
+
+	// Check on the real box must also fail
+	code, _, errOut = capture(t, []string{"check", "--box", realBox}, now)
+	if code != 1 {
+		t.Fatalf("check on real box: exit = %d, want 1", code)
+	}
+	if !strings.Contains(errOut, "FUSE FAIL lockdown") {
+		t.Errorf("stderr = %q, want FUSE FAIL lockdown", errOut)
+	}
+}

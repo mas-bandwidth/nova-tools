@@ -72,11 +72,11 @@ func TestPreserveUnreadablePreservesModeUnderUmask(t *testing.T) {
 	}
 }
 
-// TestWriteBoxHonorsRestrictiveUmask asserts that WriteBox creates files honoring
-// restrictive process umask (e.g. 077), yielding 0600 permissions instead of
-// unconditionally forcing 0644 via chmod.
+// TestWriteBoxUnderUmask077Is0644 asserts that WriteBox creates files with 0644
+// permissions even under a restrictive process umask (e.g. 077) via atomicfile.ExactMode(),
+// ensuring the fuse box remains readable across users and tools.
 // The umask is isolated in a selected child process so other parallel tests are not affected.
-func TestWriteBoxHonorsRestrictiveUmask(t *testing.T) {
+func TestWriteBoxUnderUmask077Is0644(t *testing.T) {
 	t.Parallel()
 
 	if os.Getenv("GO_TEST_SUBPROCESS_WRITEBOX_UMASK") == "077" {
@@ -92,13 +92,13 @@ func TestWriteBoxHonorsRestrictiveUmask(t *testing.T) {
 		if err != nil {
 			t.Fatalf("stat box: %v", err)
 		}
-		if perm := fi.Mode().Perm(); perm != 0o600 {
-			t.Fatalf("box perm with umask 077 = %04o, want 0600 (umask was ignored!)", perm)
+		if perm := fi.Mode().Perm(); perm != 0o644 {
+			t.Fatalf("box perm with umask 077 = %04o, want 0644", perm)
 		}
 		return
 	}
 
-	cmd := exec.Command(os.Args[0], "-test.run=^TestWriteBoxHonorsRestrictiveUmask$")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestWriteBoxUnderUmask077Is0644$")
 	cmd.Env = append(os.Environ(), "GO_TEST_SUBPROCESS_WRITEBOX_UMASK=077")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
