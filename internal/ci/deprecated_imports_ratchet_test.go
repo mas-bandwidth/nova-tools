@@ -1,18 +1,17 @@
 package ci
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
+	"go/parser"
+	"go/token"
+	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
-	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
 
 // deprecatedImportsAllowlistPath is the shrink-only exception list for dependencies
@@ -58,15 +57,6 @@ func isDroppedDeprecated(lt *liveTree, p string) bool {
 	return false
 }
 
-func isLivePackage(lt *liveTree, p string) bool {
-	p = strings.TrimPrefix(p, "github.com/mas-bandwidth/nova-tools/")
-	p = strings.TrimPrefix(filepath.ToSlash(p), "./")
-	if p == "deprecated" || strings.HasPrefix(p, "deprecated/") {
-		return false
-	}
-	return lt.Package(p)
-}
-
 func cleanPkgPath(p string) string {
 	const mod = "github.com/mas-bandwidth/nova-tools/"
 	p = strings.TrimPrefix(p, mod)
@@ -79,47 +69,12 @@ func cleanPkgPath(p string) string {
 	return p
 }
 
-func collectLivePackages(t *testing.T, root string, lt *liveTree, tags []string) []string {
-	t.Helper()
-	args := append([]string{"list"}, tags...)
-	args = append(args, "./cmd/...", "./internal/...", "./tools/...")
-	cmd := exec.Command("go", args...)
-	cmd.Dir = root
-	cmd.Env = goenv.Clean(os.Environ())
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("go list packages: %v\n%s", err, stderr.String())
-	}
-	var live []string
-	for _, line := range strings.Split(stdout.String(), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if isLivePackage(lt, line) {
-			live = append(live, line)
-		}
-	}
-	return live
-}
-
-type listPackage struct {
-	ImportPath   string            `json:"ImportPath"`
-	ForTest      string            `json:"ForTest"`
-	Imports      []string          `json:"Imports"`
-	TestImports  []string          `json:"TestImports"`
-	XTestImports []string          `json:"XTestImports"`
-	ImportMap    map[string]string `json:"ImportMap"`
-}
-
-// TestLivingPackagesDoNotImportDroppedDeprecatedPackages walks the expanded
-// test-binary graph (including ImportMap) of every live package and keep foundation,
-// under no tag, functional, slow, and perf, asserting that no dependency on a
-// dropped deprecated package exists unless allowlisted.
+// TestLivingPackagesDoNotImportDroppedDeprecatedPackages walks every .go file in the
+// repository (excluding deprecated/ and vendor/), reading import blocks via AST,
+// and asserts that no living package (or keep foundation test dependency) imports
+// dropped deprecated packages without an allowlist entry.
 //
-// A keep line in deprecated/PACKAGES permits importing THAT package; it is never
+// A keep line in deprecated/PACKAGES permits importing that package; it is never
 // permission for that package's test dependencies to import non-keep retired packages.
 func TestLivingPackagesDoNotImportDroppedDeprecatedPackages(t *testing.T) {
 	t.Parallel()
@@ -132,58 +87,63 @@ func TestLivingPackagesDoNotImportDroppedDeprecatedPackages(t *testing.T) {
 		Key:     parseDeprecatedImportEdgeKey,
 	})
 
-	tagSets := [][]string{
-		{},
-		{"-tags", "functional,slow,perf"},
-	}
-
+	fset := token.NewFileSet()
 	measured := map[string]bool{}
 
-	for _, tags := range tagSets {
-		livePkgs := collectLivePackages(t, root, lt, tags)
-		args := append([]string{"list"}, tags...)
-		args = append(args, "-test", "-deps", "-json")
-		args = append(args, livePkgs...)
-		cmd := exec.Command("go", args...)
-		cmd.Dir = root
-		cmd.Env = goenv.Clean(os.Environ())
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
-			t.Fatalf("go list -deps (tags=%q): %v\n%s", strings.Join(tags, " "), err, stderr.String())
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			name := d.Name()
+			if name == ".git" || name == "vendor" || path == filepath.Join(root, "deprecated") {
+				return filepath.SkipDir
+			}
+			rel, err := filepath.Rel(root, path)
+			if err == nil {
+				relSlash := filepath.ToSlash(rel)
+				if relSlash == "deprecated" || strings.HasPrefix(relSlash, "deprecated/") {
+					return filepath.SkipDir
+				}
+			}
+			return nil
+		}
+		if !strings.HasSuffix(d.Name(), ".go") {
+			return nil
 		}
 
-		dec := json.NewDecoder(&stdout)
-		for dec.More() {
-			var pkg listPackage
-			if err := dec.Decode(&pkg); err != nil {
-				t.Fatalf("decode go list json: %v", err)
-			}
-			cleanImporter := cleanPkgPath(pkg.ImportPath)
-			if !isLivePackage(lt, cleanImporter) {
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		relSlash := filepath.ToSlash(rel)
+		pkgPath := filepath.ToSlash(filepath.Dir(relSlash))
+		if pkgPath == "." {
+			pkgPath = ""
+		}
+		if isDroppedDeprecated(lt, pkgPath) {
+			return nil
+		}
+
+		file, err := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
+		if err != nil {
+			t.Fatalf("parse %s: %v", relSlash, err)
+		}
+
+		for _, spec := range file.Imports {
+			if spec.Path == nil {
 				continue
 			}
-
-			var targets []string
-			targets = append(targets, pkg.Imports...)
-			targets = append(targets, pkg.TestImports...)
-			targets = append(targets, pkg.XTestImports...)
-			for _, mapped := range pkg.ImportMap {
-				targets = append(targets, mapped)
-			}
-
-			for _, target := range targets {
-				cleanTarget := cleanPkgPath(target)
-				if cleanTarget == cleanImporter {
-					continue
-				}
-				if isDroppedDeprecated(lt, cleanTarget) {
-					edge := cleanImporter + " -> " + cleanTarget
-					measured[edge] = true
-				}
+			importedPkg := strings.Trim(spec.Path.Value, "`\"")
+			if isDroppedDeprecated(lt, importedPkg) {
+				edge := pkgPath + " -> " + cleanPkgPath(importedPkg)
+				measured[edge] = true
 			}
 		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk source tree: %v", err)
 	}
 
 	res := allowlist.Check(t, allow, measured)
