@@ -1958,4 +1958,3 @@ func TestLockdownOnParentSymlinkedBoxRefuses(t *testing.T) {
 		t.Fatalf("target bytes changed:\nbefore: %s\nafter: %s", before, after)
 	}
 }
-
