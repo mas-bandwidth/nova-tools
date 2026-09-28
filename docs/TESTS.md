@@ -197,7 +197,7 @@ The last run is the whole tool in three lines: the job's own write landed, and t
 
 `nova-sandbox run --go` is what a card that builds Go uses; a plain `go build` inside a disposable volume was measured working with no flags at all once the optional roots' ancestors were granted (`internal/sandbox`, `TestAnOptionalRootsAncestorsAreGranted`).
 
-Measured on the Studio, macOS 26 arm64, 2026-09-18: a 64m volume made, `sh -c 'echo hi > out; sleep 1'` run inside the wall with the volume as its only writable directory, and the volume gone from `/Volumes` and from `diskutil apfs list` afterwards — `SANDBOX DONE name=e2e63562 exit=0 wall=9.500 freed=32768`.
+Measured on macOS 26 arm64, 2026-09-18: a 64m volume made, `sh -c 'echo hi > out; sleep 1'` run inside the wall with the volume as its only writable directory, and the volume gone from `/Volumes` and from `diskutil apfs list` afterwards — `SANDBOX DONE name=e2e63562 exit=0 wall=9.500 freed=32768`.
 
 ## nova-secrets
 
@@ -243,9 +243,8 @@ one; the verb run with the coordinator's key and `--no-pr`; then the seal branch
 file opens with the bench's key alone and holds the new value beside the names it
 had, the store is back on `main`, and `nova-secrets gate` approves the branch. The
 help banner's own `seat inject` example is run through the one comparator in the
-same package, its transcript held beside the test, ending
-`SECRETS SEAT INJECT OK seat=air from=rowan names=1 committed branch=seal/air-NOVA_REDIS_BENCH_PASSWORD-20260927-013000`
-with the branch's stamp the one declared run-owned value.
+same package, including its committed-branch receipt. The transcript is held
+beside that test, with the branch's timestamp the one declared run-owned value.
 
 **The Studio's store file is `studio.yaml`, not `swarm-studio.yaml`.** Every Linux
 bench's store follows the `swarm-<name>.yaml` convention (`swarm-hulk.yaml`,
