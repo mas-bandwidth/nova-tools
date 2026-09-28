@@ -76,3 +76,13 @@ func TestSwarmProfilesRoundTrip(t *testing.T) {
 		t.Errorf("a second run printed different lines; the verb is a pure fold:\nfirst:\n%s\nsecond:\n%s", first.stdout, second.stdout)
 	}
 }
+
+func TestSwarmProfilesRefusesNonexistentRoot(t *testing.T) {
+	t.Parallel()
+
+	r := invoke(t, "profiles", "--swarm-root", filepath.Join(t.TempDir(), "nope"))
+	wantExit(t, r, 2)
+	wantContains(t, r.stderr, "PROFILES REFUSED:")
+	wantContains(t, r.stderr, "does not exist")
+	wantContains(t, r.stderr, "nope")
+}

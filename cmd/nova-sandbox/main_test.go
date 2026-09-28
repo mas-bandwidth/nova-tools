@@ -2179,13 +2179,13 @@ func TestCheckFlagParsing(t *testing.T) {
 			name:     "check -h",
 			args:     []string{"check", "-h"},
 			wantCode: 0,
-			wantOut:  "nova-sandbox: one command, contained by the OS",
+			wantOut:  "usage: nova-sandbox check",
 		},
 		{
 			name:     "check --help",
 			args:     []string{"check", "--help"},
 			wantCode: 0,
-			wantOut:  "nova-sandbox: one command, contained by the OS",
+			wantOut:  "usage: nova-sandbox check",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

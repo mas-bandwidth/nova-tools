@@ -123,6 +123,17 @@ func removeMembersCommand(table, row, col string, members []any) string {
 	}
 	return "nova-table cell remove " + strings.Join(args, " ")
 }
+
+// runUnlessNamed is "; run: <remedy>", or nothing when err names its own next
+// step already (a "; run:" of its own, as nova-table's refusal of an FCALL the
+// store's library lacks does), so a line carries one remedy.
+func runUnlessNamed(err error, remedy string) string {
+	if strings.Contains(err.Error(), "; run: ") {
+		return ""
+	}
+	return "; run: " + remedy
+}
+
 func (o operation) remedy() string {
 	if o.view {
 		if o.table == "" {
@@ -300,7 +311,7 @@ func (o operation) call(ctx context.Context, c redis.Cmdable, fn string, ro bool
 	}
 	reply, err := cmd.Slice()
 	if err != nil {
-		return nil, fmt.Errorf("%s: %s: %w; run: %s", o.location(), fn, err, o.remedy())
+		return nil, fmt.Errorf("%s: %s: %w%s", o.location(), fn, err, runUnlessNamed(err, o.remedy()))
 	}
 	if err := o.refused(reply); err != nil {
 		return nil, err

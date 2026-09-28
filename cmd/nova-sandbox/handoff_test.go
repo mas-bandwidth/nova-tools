@@ -1,3 +1,5 @@
+//go:build darwin || linux
+
 package main
 
 import (
@@ -13,7 +15,10 @@ import (
 )
 
 // handoff_test.go is the red-test contract of the handoff, docs/SPEC-SANDBOX.md
-// "The handoff: what leaves the disposable place". The copy itself is tested
+// "The handoff: what leaves the disposable place". The copy reads the volume
+// through openat and fstat, which only the darwin and linux builds carry, so
+// these cases build there; the flag checks that hold on every platform are in
+// handoff_flags_test.go. The copy itself is tested
 // over two ordinary directories -- no volume, no diskutil, no child -- and the
 // ORDER, which is the part that cannot be got wrong twice, is tested through
 // runDisposable with a fake whose Delete really removes the mount: an artifact
@@ -273,61 +278,6 @@ func TestRunRefusesWhenTheHandoffFailsAfterACleanCommand(t *testing.T) {
 	}
 	if strings.Join(vols.calls, " ") != "create delete" {
 		t.Errorf("a failed handoff left the volume: %v", vols.calls)
-	}
-}
-
-// 8. The flags are checked before a volume is made: --artifact without --out,
-// a bad --out-max-bytes, a `..` in an artifact, and --out on windows.
-func TestRunValidatesTheHandoffFlagsBeforeAnythingIsMade(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct {
-		name string
-		goos string
-		args []string
-		want string
-	}{
-		{"artifact without out", "darwin", []string{"--artifact", "RESULT.md"}, "no_out"},
-		{"cap without out", "darwin", []string{"--out-max-bytes", "64m"}, "no_out"},
-		{"bad cap", "darwin", []string{"--out", "/tmp/x", "--out-max-bytes", "lots"}, "bad_out_max"},
-		{"dotdot artifact", "darwin", []string{"--out", "/tmp/x", "--artifact", "../x"}, "bad_artifact"},
-		{"out on windows", "windows", []string{"--out", `C:\h`, "--scratch", `C:\nova`}, "no_out"},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			args := append([]string{"--name", "j1"}, c.args...)
-			if c.goos != "windows" {
-				args = append(args, "--size", "64m")
-			}
-			args = append(args, "--", "/bin/sh", "-c", "true")
-			f := parseRun(args)
-			_, bad := validateRun(&f, c.goos)
-			var reasons []string
-			for _, r := range bad {
-				reasons = append(reasons, r.Reason)
-			}
-			found := false
-			for _, r := range reasons {
-				if r == c.want {
-					found = true
-				}
-			}
-			if !found {
-				t.Fatalf("reasons = %v, want one %s", reasons, c.want)
-			}
-		})
-	}
-}
-
-// 9. The banner answers the question. `run --help` names the door, the default
-// artifacts and the bundle that carries a commit out.
-func TestRunUsageNamesTheHandoffAndTheBundle(t *testing.T) {
-	t.Parallel()
-
-	for _, want := range []string{"--out <dir>", "--artifact <p>", "--out-max-bytes", "repo.bundle", "git bundle create"} {
-		if !strings.Contains(runUsage, want) {
-			t.Errorf("run --help does not name %q", want)
-		}
 	}
 }
 

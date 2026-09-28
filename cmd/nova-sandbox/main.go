@@ -27,6 +27,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
 )
@@ -175,7 +176,12 @@ var version string
 
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, os.Environ())) }
 
-func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string) int {
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string) (code int) {
+	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
+	// before anything is probed, wrapped or written (the CLI style's rule (b), #4505).
+	// Only -h: every other exit of this tool, the bare wrap's 125 included, is
+	// unchanged, and nothing after -- is ever read as help.
+	defer verbflag.Recover(stdout, "nova-sandbox", usage, &code)
 	if len(args) == 0 {
 		// ONBOARDING.md point 2: the banner is behind `help`, not in front of every
 		// mistake. No arguments is "could not run", which is the 2 of SPEC.md's
@@ -185,9 +191,15 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 	}
 	switch args[0] {
 	case "help", "--help", "-h":
+		// help <verb> for a NAMED verb only: anything else falls through to the bare
+		// wrap below, and help must never reach it.
+		if args[0] == "help" && len(args) > 1 && helpVerbs[args[1]] {
+			return run(append(args[1:], "--help"), stdin, stdout, stderr, env)
+		}
 		fmt.Fprint(stdout, usage)
 		return 0
 	case "version", "--version":
+		verbflag.HelpIfAsked(args[1:], "version")
 		// The same four tokens every other binary prints, then the two facts a
 		// sandbox is judged by as named extras. This line used to be a shape of its
 		// own -- `SANDBOX VERSION tool=... version=...` -- and a shape of its own is
@@ -198,18 +210,28 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 			"backend="+sandbox.Backend, "platform="+runtime.GOOS))
 		return 0
 	case "check":
+		verbflag.HelpIfAsked(args[1:], "check")
 		return checkVerb(args[1:], stdout, stderr)
 	case "run":
 		return runVerb(args[1:], stdin, stdout, stderr, env)
 	case "reap":
 		return reapVerb(args[1:], stdout, stderr)
 	case "worktree":
+		verbflag.HelpIfAsked(args[1:], "worktree")
 		return worktreeVerb(args[1:], stdout, stderr, env)
 	case "egress":
+		if len(args) > 1 {
+			if egressVerbs[args[1]] {
+				verbflag.HelpIfAsked(args[2:], "egress "+args[1])
+			}
+			verbflag.HelpIfAsked(args[1:2], "egress")
+		}
 		return egressVerb(args[1:], stderr)
 	case "policy":
+		verbflag.HelpIfAsked(args[1:], "policy")
 		return policyVerb(args[1:], stdout, stderr, env)
 	case "probe":
+		verbflag.HelpIfAsked(args[1:], "probe")
 		return probeVerb(args[1:], stdout, stderr, env)
 	case probeStepVerbName:
 		return probeStepVerb(args[1:], stderr, env)
@@ -220,6 +242,13 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 	}
 	return execVerb(args, stdin, stdout, stderr, env)
 }
+
+// helpVerbs are the verbs `help <verb>` answers for; egressVerbs the four egress
+// sub-verbs, the only words after `egress` a help line may name.
+var (
+	helpVerbs   = map[string]bool{"version": true, "check": true, "run": true, "reap": true, "worktree": true, "egress": true, "policy": true, "probe": true}
+	egressVerbs = map[string]bool{"plan": true, "apply": true, "check": true, "drop": true}
+)
 
 // flags is the argv before --, parsed by hand because every list flag is repeatable and
 // because the split at -- must be exact: everything after it is the command, verbatim.
