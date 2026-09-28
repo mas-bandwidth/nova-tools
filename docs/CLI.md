@@ -46,8 +46,6 @@ KERNEL OK bytes=771 budget=4000
 
 ### The dogfood ledger
 
-*Draft, for Stella, who owns the docs.*
-
 A tool is not finished until it is tested, dogfooded by a non-author on real
 work with the edges filed, the feedback applied, documented and released.
 The middle of that sentence needs a record, or the claim is whatever the last
