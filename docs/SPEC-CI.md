@@ -2557,41 +2557,62 @@ the Makefile's `test-full` and `test-slow` targets, which CI's whole-tree runs
 call.
 ### `ci-receipt` — ci-ok reports every run to Redis from the runner
 
-**The rule.** The `ci-ok` job of `.github/workflows/ci.yml` has exactly one
-step that runs `nova-sprint ci github --from-runner`, under `if: always()`,
-with `set -euo pipefail` and no `|| true` or `continue-on-error`, and that
-step passes every field of the record from the run's own context — `--repo`,
-`--sha` (the PR head, else `github.sha`), `--run-id`, `--event`,
-`--head-branch`, `--base-branch`, `--pr`, `--workflow`, `--conclusion`
-(`job.status`) — plus one `--job <name>=${{ needs.<name>.result }}` for every
-job in ci-ok's `needs` and none it does not need, as the bench seat
-(`nova-secrets exec … --require NOVA_REDIS_BENCH_PASSWORD`,
-`NOVA_SPRINT_REDIS_USER=bench`, `--redis "$NOVA_CARD_REDIS"`), never
-`curl`, `gh api` or `api.github.com`, and with the bench's installed
-nova-sprint as the writer (`$HOME/.local/bin/nova-sprint`); `go run` of the
-tree under test is the one bootstrap, taken only when the installed binary
-refuses the verb's flag, and announced as `BOOTSTRAP:`.
-**The hurt.** Measured 2026-09-26 12:38 PM ET: `ev:github` XLEN 0 and zero
-`ci:*:gh` keys, so `nova-sprint land pr` (#4326) could only print WAITING.
-The signed webhook receiver sits behind a tailscale funnel kept off by
-design, and no nova-sprint path may poll GitHub for a check state
-(`TestNoPollingPathsRemain`). The runners are ours and run as the bench
-seat, so the run reports itself; a receipt that silently did not happen
-would leave a landing waiting forever, which is why the step must fail the
-job. And never build the thing with itself: a PR that changes the writer
-must not write the check that lands it, which is why the installed binary
-writes and the tree only bootstraps.
+**The rule.** The `ci-ok` job of `.github/workflows/ci.yml`, whose own `if`
+is exactly `always() && github.event_name != 'schedule'`, has exactly one
+step that runs `nova-ci github receipt --from-runner`, under `if: always() &&
+(github.event_name != 'pull_request' ||
+github.event.pull_request.head.repo.full_name == github.repository)`,
+with `set -euo pipefail` and no `|| true` or `continue-on-error`, and its
+command is exactly this tree's writer, `go run ./cmd/nova-ci github receipt
+--from-runner`, under the bench seat (`"$HOME/.local/bin/nova-secrets" exec …
+--only NOVA_REDIS_BENCH_PASSWORD --require NOVA_REDIS_BENCH_PASSWORD`,
+`NOVA_SPRINT_REDIS_USER=bench`, `--redis "$NOVA_CARD_REDIS"`), passing every
+field of the row from the run's own context — `--repo`, `--sha` (the PR head,
+else `github.sha`), `--run-id`, `--pr`, `--workflow`, `--conclusion`
+(`job.status`) — and nothing the row does not carry (`--job`, `--event`,
+`--head-branch`, `--base-branch`). It never calls `curl`, `gh api` or
+`api.github.com`, never names `nova-sprint`, never runs an installed receipt
+writer (the nova-secrets wrapper is the one installed binary it runs), and
+never probes an installed binary's flags or version.
+**The hurt.** Measured 2026-09-26 12:38 PM ET: `ev:github` XLEN 0, because the
+signed webhook receiver sits behind a tailscale funnel kept off by design, and
+nothing may poll GitHub for a check state (`TestNoPollingPathsRemain`). The
+runners are ours and run as the bench seat, so the run reports itself: one
+`ev:github` row (internal/cireceipt), the row `nova-wake watch --store` blocks
+on. A receipt that silently did not happen must never read as one that did,
+which is why the step must fail the job. The writer was the installed
+nova-sprint until 2026-09-27; nova-sprint is deprecated and is not shipped
+once it moves under `deprecated/`, so a rebuilt runner would have had no
+writer. The writer is now this tree's, versioned with the commit under test,
+so no runner's installed build matters. The cost is stated, not hidden: a tree
+that does not compile writes no receipt and exits 1, so it never wakes a
+`nova-wake watch --store`, where the installed writer wrote a red receipt;
+this is accepted, because the red ci-ok is itself the signal, the store watch
+is for the green-or-red completion of runs that reached the step, and a tree
+that does not compile fails the other jobs first. The receipt STEP carries the
+head-repo guard every self-hosted job carries (`github.event_name !=
+'pull_request' || github.event.pull_request.head.repo.full_name ==
+github.repository`), because it runs this tree's code holding the bench
+seat's Redis password and a fork's pull request must not reach it. The ci-ok
+JOB does not carry it, on purpose: on a fork's pull request every self-hosted
+need is skipped and ci-ok reads those skips as red, which is what keeps the
+fork PR out of the merge queue; a guard on the job would skip ci-ok, and
+GitHub counts a skipped required check as passing, so the fork PR could be
+enqueued with no PR-stage CI (cold read of #4495, 2026-09-27). So a fork PR's
+ci-ok runs, is red, and writes no receipt; the `ci:<repo>:<sha>:gh` fold and the
+`pr:<repo>:<n>` claim nova-sprint also wrote had only nova-sprint readers and
+are not written.
 **The test.** `TestCIOKReportsEveryRunToRedisFromTheRunner`
-(`internal/ci/ciok_receipt_class_test.go`), reading the job as YAML.
-**Its allowlist.** None: one step, every field, no exceptions.
-**Its remedy line.** Each red names the flag, the expression or the guard
-the step is missing, e.g. `the receipt step does not pass --job
-"lisp=${{ needs.lisp.result }}"`; the fix is the step, never the test.
-**Its narrowings.** It reads the step's text: an expression that names the
-right context but is quoted differently passes as long as the flag and the
-expression are adjacent, and it does not run the step, so a bench with no
-`card.env` is found by the run itself (the step's own refusal names the
-rowan-tools bench play), not here.
+(`internal/ci/ciok_receipt_class_test.go`), reading the job as YAML,
+comparing the job's `if` exactly (no head-repo guard), the receipt step's
+`if` exactly (`always()` and the head-repo guard) and the step's whole run
+block line by line.
+**Its allowlist.** None: one step, one command, no exceptions.
+**Its remedy line.** Each red names what the step lacks or names, e.g. `the
+receipt step names "nova-sprint"`; the fix is the step, never the test.
+**Its narrowings.** It reads the step's text and does not run it, so a bench
+with no `card.env` is found by the run itself (the step's own refusal names
+the rowan-tools bench play), not here.
 
 ### `silent` — no silent failure on the copy model's live path
 

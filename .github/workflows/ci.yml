@@ -1969,6 +1969,14 @@ jobs:
     # certification-ok; a red certification is a blocker for the next release, never for a
     # CL. The nightly schedule fires test-hosted only, so ci-ok does not run on schedule:
     # the nightly run is evidence to read, not a gate to merge against.
+    # NO head-repo guard here, on purpose. Every self-hosted job carries one, so
+    # on a fork's pull_request they are all skipped and this aggregate reads
+    # those skips as red: a fork PR's ci-ok is red and the PR cannot enter the
+    # merge queue. A guard on this job would skip ci-ok instead, and GitHub
+    # counts a skipped required check as passing, so the fork PR could be
+    # enqueued with no PR-stage CI at all (cold read of #4495, 2026-09-27). The
+    # guard lives on the one step that must not see fork code, the receipt
+    # step below, which runs this tree's code holding the bench seat's password.
     if: always() && github.event_name != 'schedule'
     # A STATIC needs list. GitHub does not evaluate expressions in `needs`, so the
     # conditional array the previous revision used was refused as an invalid job
@@ -2053,12 +2061,10 @@ jobs:
           done
           [ "$bad" -eq 0 ] || { echo "$bad job(s) did not succeed"; exit 1; }
 
-      # The receipt below once fell back to `go run ./cmd/nova-sprint` of this
-      # tree, and these steps (clean, borrow the bench mirror, checkout, the
-      # installed Go) were for that. The fallback is gone (nova-sprint is
-      # deprecated and never built by CI); no step of ci-ok reads this tree
-      # now, and taking these steps out is its own change. always(): they ran
-      # for a red run too.
+      # The receipt below is written by this tree's nova-ci (`go run
+      # ./cmd/nova-ci`), and these steps (clean, borrow the bench mirror,
+      # checkout, the installed Go) are what it builds from. always(): they
+      # run for a red run too, which is reported as red.
       - name: remove stale build dirs from the shared runner
         if: always()
         # The self-hosted runners reuse the _work directory across jobs; a tree left
@@ -2162,30 +2168,33 @@ jobs:
           echo "GO SETUP want=${want:-none} go=$(command -v go) gomodcache=$(go env GOMODCACHE) gocache=$(go env GOCACHE)"
 
 
-      # THE RUNNER IS THE EVENT SOURCE (card gh-ci-receipts). Measured
-      # 2026-09-26 12:38 PM ET: ev:github empty (XLEN 0), zero ci:*:gh keys,
-      # so `nova-sprint land pr` could only print WAITING: the signed webhook
-      # receiver sits behind a tailscale funnel that is kept off by design.
-      # This job runs on our own runner as the bench seat, so it reports the
-      # run itself at the end of every run: the same ci:<repo>:<sha>:gh
-      # record, ev:github row and pr:<repo>:<n> refresh the receiver path
-      # would produce, from the verdict above and needs.*.result, no GitHub
-      # call. always(): a red run is reported as red. A write that fails is
-      # loud here and reddens ci-ok: a landing must never wait on a receipt
-      # that silently did not happen. The password never touches a flag or
-      # a file: nova-secrets exec under the bench seat (card.env names it).
-      # NEVER BUILD THE THING WITH ITSELF: the receipt is written by the
-      # bench's installed, released nova-sprint (the rowan-tools tools play
-      # installs the declared build into ~/.local/bin), not by this tree, so a
-      # PR that changes the writer cannot write the check that lands itself.
-      # There is no fallback to this tree: nova-sprint is deprecated (Glenn
-      # 2026-09-27) and CI never builds it. The `go run ./cmd/nova-sprint`
-      # bootstrap that stood here ran in none of the 40 ci.yml runs created
-      # 2026-09-27 22:07Z to 23:59Z (each logged RECEIPT WRITER installed). An
-      # installed binary that is absent or lacks the verb is a loud refusal
-      # naming the play that installs it.
+      # THE RUNNER IS THE EVENT SOURCE. The signed webhook receiver sits behind
+      # a tailscale funnel kept off by design, so this job, on our own runner
+      # as the bench seat, reports the run itself at the end of every run: one
+      # ev:github row of the workflow_run shape, sender runner, from the run's
+      # own context, no GitHub call. Its reader is `nova-wake watch --store`,
+      # which blocks on ev:github for the PRs it names. always(): a red run is
+      # reported as red. A write that fails is loud here and reddens ci-ok: a
+      # receipt that silently did not happen must never read as one that did.
+      # The password never touches a flag or a file: nova-secrets exec under
+      # the bench seat (card.env names it).
+      # THE WRITER IS THIS TREE'S nova-ci (internal/cireceipt), run from the
+      # checkout above, so the writer is versioned with the commit under test
+      # and no runner's installed build matters. A tree that does not compile
+      # writes no receipt and exits 1: the red ci-ok is itself the signal.
+      # nova-sprint wrote this before
+      # (Rowan 2026-09-27: it is deprecated; the ci:*:gh fold and pr:* claim it
+      # also wrote had only nova-sprint readers and are not written).
+      # THE HEAD-REPO GUARD IS ON THIS STEP, NOT ON THE JOB. This step runs the
+      # checked-out tree's code with NOVA_REDIS_BENCH_PASSWORD in its
+      # environment, so a pull_request from a fork must never reach it. It
+      # cannot be the job's guard: a skipped ci-ok counts as a passing required
+      # check on GitHub, and a fork PR could then be enqueued with no PR-stage
+      # CI, whereas ci-ok running over its skipped needs stays red exactly as
+      # on dev. So on a fork PR ci-ok runs, is red, and writes no receipt;
+      # everywhere else the receipt is written for a red run too.
       - name: report this run to Redis from the runner
-        if: always()
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         shell: bash
         run: |
           set -euo pipefail
@@ -2194,34 +2203,14 @@ jobs:
           # shellcheck disable=SC1090
           . "$env_file"
           : "${NOVA_BENCH_SEAT:?card.env names no NOVA_BENCH_SEAT}" "${NOVA_BENCH_SOPS:?card.env names no NOVA_BENCH_SOPS}" "${NOVA_CARD_REDIS:?card.env names no NOVA_CARD_REDIS}"
-          ns="$HOME/.local/bin/nova-sprint"
-          # the installed binary's own refusal of the verb's flag is the probe (its exit is 2 either way)
-          probe=""
-          if [ -x "$ns" ]; then probe=$("$ns" ci github --from-runner 2>&1; echo "exit=$?"); fi
-          if [ ! -x "$ns" ] || grep -q "flag provided but not defined" <<<"$probe"; then
-            echo "NO RECEIPT WRITER: $ns is absent or predates ci github --from-runner, and this tree is never built to write it (cmd/nova-sprint is deprecated); install the declared build on $(hostname) (rowan-tools: make -C fleet tools) and rerun ci-ok"
-            exit 1
-          fi
-          echo "RECEIPT WRITER installed $("$ns" version 2>/dev/null | head -1)"
           exec "$HOME/.local/bin/nova-secrets" exec --store "$HOME/nova-bench/secrets" --as "$NOVA_BENCH_SEAT" \
             --key "$HOME/.config/nova-secrets/$NOVA_BENCH_SEAT.key" --sops "$NOVA_BENCH_SOPS" \
             --only NOVA_REDIS_BENCH_PASSWORD --require NOVA_REDIS_BENCH_PASSWORD -- \
             /usr/bin/env NOVA_SPRINT_REDIS_USER=bench NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_BENCH_PASSWORD \
-            "$ns" ci github --from-runner --redis "$NOVA_CARD_REDIS" \
+            go run ./cmd/nova-ci github receipt --from-runner --redis "$NOVA_CARD_REDIS" \
             --repo "${{ github.repository }}" \
             --sha "${{ github.event.pull_request.head.sha || github.sha }}" \
             --run-id "${{ github.run_id }}" \
-            --event "${{ github.event_name }}" \
-            --head-branch "${{ github.head_ref || github.ref_name }}" \
-            --base-branch "${{ github.base_ref || github.event.merge_group.base_ref || github.ref_name }}" \
             --pr "${{ github.event.pull_request.number }}" \
             --workflow "${{ github.workflow }}" \
-            --conclusion "${{ job.status }}" \
-            --job "lint=${{ needs.lint.result }}" \
-            --job "test=${{ needs.test.result }}" \
-            --job "functional=${{ needs.functional.result }}" \
-            --job "test-race-queue=${{ needs.test-race-queue.result }}" \
-            --job "e2e=${{ needs.e2e.result }}" \
-            --job "lisp=${{ needs.lisp.result }}" \
-            --job "test-hosted=${{ needs.test-hosted.result }}" \
-            --job "test-hosted-pr=${{ needs.test-hosted-pr.result }}"
+            --conclusion "${{ job.status }}"

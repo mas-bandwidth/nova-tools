@@ -1,5 +1,5 @@
 // nova-ci runs the checks this repository's CI path makes on its own output.
-// Its one verb, slowtests, reads the newline-delimited `go test -json`
+// Its first verb, slowtests, reads the newline-delimited `go test -json`
 // TestEvents on stdin, sums the package-level elapsed time for each package,
 // and refuses (exit 2) every package whose total is over the budget, one line
 // each. It exists because a slow test must surface the moment it happens:
@@ -69,11 +69,20 @@ usage:
                       scaffold a new class rule skeleton: class test, fixture, and makefile
   nova-ci new-verb [--root <checkout>] <tool> <verb>
                       scaffold a new CLI verb skeleton: command, test, fixture, and makefile
+  nova-ci github receipt --from-runner --redis <addr> --repo owner/name
+                    --sha <40hex> --run-id <n> --workflow <name>
+                    --conclusion success|failure|cancelled [--pr <n>] [--at <rfc3339>]
+                      the ci-ok job's run receipt: one ev:github row of the
+                      workflow_run shape, sender runner, the row nova-wake
+                      watch --store blocks on; dialled as the environment's
+                      seat (NOVA_SPRINT_REDIS_USER). One CI RECEIPT line;
+                      exit 0 written, 1 the store refused it, 2 usage.
 
 exit codes: 0 inside budget or measured, 2 a CI-SLEEPS line, a CI-SLOW
             line under --enforce, or the invocation could not run (bad flag,
             unreadable stdin); local adds 1 for a red test or a package that
-            did not build.
+            did not build, and github receipt adds 1 for a write the store
+            refused.
 
 example:
   nova-ci help
@@ -110,6 +119,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return cmdNewRule(args[1:], stdout, stderr)
 	case "new-verb":
 		return cmdNewVerb(args[1:], stdout, stderr)
+	case "github":
+		return cmdGitHub(args[1:], stdout, stderr, os.Getenv)
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0
