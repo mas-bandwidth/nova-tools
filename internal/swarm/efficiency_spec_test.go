@@ -8,12 +8,13 @@ import (
 )
 
 // SPEC CARD #80 (docs/SPEC-SWARM.md, Efficiency: lessons absorbed 2026-09-12):
-// the card is one of the seven-tool efficiency cards and records three measured
-// operations of nova-swarm -- the per-job clone, the width of `triage`, and the
-// waits a job holds -- as normative contract. This doc test reads the section
-// out of the spec the way TestBenchSlotLeasesSectionNamesItsRules does: the spec
-// is the one place the contract is written.
-func TestEfficiencyCardSectionNamesItsThreeMeasuredOperations(t *testing.T) {
+// the card is one of the seven-tool efficiency cards and records two measured
+// operations of nova-swarm -- the per-job clone and the waits a job holds -- as
+// normative contract (status and triage measurements were excised with the dead
+// pool verbs). This doc test reads the section out of the spec the way
+// TestBenchSlotLeasesSectionNamesItsRules does: the spec is the one place the
+// contract is written.
+func TestEfficiencyCardSectionNamesItsTwoMeasuredOperations(t *testing.T) {
 	t.Parallel()
 
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-SWARM.md"))
@@ -22,18 +23,13 @@ func TestEfficiencyCardSectionNamesItsThreeMeasuredOperations(t *testing.T) {
 	}
 	section := efficiencySection(t, string(raw))
 	for _, want := range []string{
-		// The three measured operations, named as the card names them.
+		// The two measured operations, named as the card names them.
 		"REPEATS: one full clone of the repository per job",
-		"COORDINATOR READ: `triage` is the widest listing of the seven",
 		"WAITS ON: a deadline, a sampler, and a person",
 		// REPEATS: the shape the card points at.
 		"--reference-if-able",
 		"--dissociate",
 		"86,794 cache-read tokens per tool call",
-		// COORDINATOR READ: the measurement and the rule.
-		"TRIAGE FINDING",
-		"20 of 47 at the default",
-		"15,490 B",
 		// WAITS ON: the deadline and the sampler.
 		"--deadline",
 		"--usage-interval",
