@@ -277,3 +277,35 @@ func TestPasswordHiddenInEncodedAndTruncatedDiagnostics(t *testing.T) {
 		t.Errorf("class = %v; want Other", got)
 	}
 }
+
+// TestUnicodePreambleDoesNotExposePasswordPrefix: %.100q counts Unicode code
+// points, not bytes. A non-ASCII preamble can expose fewer than 32 bytes of a
+// long password past holdsSecret's tests unless rune count is checked.
+func TestUnicodePreambleDoesNotExposePasswordPrefix(t *testing.T) {
+	t.Parallel()
+	const secret = "ReviewSyntheticLongPassword1234567890-unshared-tail"
+	reply := "+" + strings.Repeat("x", 68) + "é" + secret + "\r\n"
+	store := newFakeStore(t, func(_ int, _ []string) string {
+		return reply
+	})
+	conn, err := open(context.Background(), Options{Addr: storeAddr, User: "review", PasswordEnv: "PW"}, environment(map[string]string{"PW": secret}), store.dial)
+	if conn != nil {
+		conn.Close()
+		t.Fatal("expected bad-handshake refusal")
+	}
+	if err == nil {
+		t.Fatal("expected refusal")
+	}
+	for _, text := range errorsText(err) {
+		if strings.Contains(text, secret[:30]) {
+			t.Errorf("diagnostic exposes 30 bytes of synthetic password: %s", text)
+		}
+	}
+	cause := errors.Unwrap(err)
+	if cause == nil || (cause.Error() != withheld && cause.Error() != "***") || errors.Unwrap(cause) != nil {
+		t.Fatalf("cause not withheld or has unwrap chain: %#v", cause)
+	}
+	if got := Classify(err); got != Other {
+		t.Errorf("class = %v; want Other", got)
+	}
+}
