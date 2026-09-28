@@ -14,10 +14,10 @@ var goodCardLines = []string{
 	"RESULT: card-lint-one-invariant sha=0123456789ab",
 	"KIND: fix",
 	"INVARIANT: every push path refuses a card that is not one invariant.",
-	"PATHS: internal/nsprint/cardhdr/invariant.go, cmd/nova-sprint/card.go, internal/nsprint/card/push.go",
+	"PATHS: internal/cardhdr/invariant.go, cmd/nova-sprint/card.go, internal/nsprint/card/push.go",
 	"CLASS-TEST: TestLintOneInvariantRefusesEachRule",
 	"PLATFORMS: darwin,linux",
-	"DONE-WHEN: `go test ./internal/nsprint/cardhdr -run TestLintOneInvariantRefusesEachRule` passes in under 2 s.",
+	"DONE-WHEN: `go test ./internal/cardhdr -run TestLintOneInvariantRefusesEachRule` passes in under 2 s.",
 	"",
 	"BUILD: the one refusal function, cardhdr.LintOneInvariant.",
 }
@@ -262,15 +262,15 @@ func TestSentences(t *testing.T) {
 
 func TestPackagesCountsDistinctPackages(t *testing.T) {
 	t.Parallel()
-	tree := []string{"cmd/nova-sprint/card.go", "cmd/nova-sprint/card_cut_from.go", "internal/nsprint/cardhdr/cardhdr.go",
+	tree := []string{"cmd/nova-sprint/card.go", "cmd/nova-sprint/card_cut_from.go", "internal/cardhdr/cardhdr.go",
 		"internal/nsprint/card/push.go", "internal/nsprint/card/lint.go", "internal/nsprint/task/push.go"}
 	for paths, want := range map[string][]string{
 		// three strings, one package
 		"cmd/nova-sprint/card.go, cmd/nova-sprint/card_cut*.go cmd/nova-sprint/": {"cmd/nova-sprint"},
 		// a new file is its directory; a doc is no package
-		"internal/nsprint/cardhdr/invariant.go, docs/CLI.md": {"internal/nsprint/cardhdr"},
+		"internal/cardhdr/invariant.go, docs/CLI.md": {"internal/cardhdr"},
 		// a directory spans every package below it
-		"internal/nsprint/...": {"internal/nsprint/card", "internal/nsprint/cardhdr", "internal/nsprint/task"},
+		"internal/nsprint/...": {"internal/nsprint/card", "internal/nsprint/task"},
 	} {
 		if got := Packages(paths, tree); !reflect.DeepEqual(got, want) {
 			t.Errorf("Packages(%q) = %v, want %v", paths, got, want)
@@ -333,7 +333,7 @@ func TestParseTypedLines(t *testing.T) {
 // not block; run with -v to read it.
 func TestLintOneInvariantOverTreeFixtures(t *testing.T) {
 	t.Parallel()
-	root, err := filepath.Abs("../../..")
+	root, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -406,7 +406,7 @@ func TestSentencesEndAtClosingQuoteOrBracket(t *testing.T) {
 // rule or a fence) continues it, so a second sentence there is refused.
 func TestLintOneInvariantReadsContinuationLines(t *testing.T) {
 	t.Parallel()
-	done := "DONE-WHEN: `go test ./internal/nsprint/cardhdr -run TestX` passes."
+	done := "DONE-WHEN: `go test ./internal/cardhdr -run TestX` passes."
 	inv := goodCardLines[2]
 	for name, c := range map[string]struct {
 		text, rules string

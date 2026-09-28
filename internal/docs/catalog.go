@@ -57,6 +57,7 @@ var DefaultCatalog = []Entry{
 	E("internal/buildinfo", "binary identity and version info", "go test ./internal/buildinfo", "go test ./internal/buildinfo"),
 	E("internal/bus", "append-only coordination bus", "go test ./internal/bus", "go test ./internal/bus"),
 	E("internal/cairn", "memory distillation and cairn builder", "go test ./internal/cairn", "go test ./internal/cairn"),
+	E("internal/cardhdr", "card header vocabulary and one-invariant lint", "go test ./internal/cardhdr", "go test ./internal/cardhdr"),
 	E("internal/check", "hygiene rules and tree checkers", "go test ./internal/check", "go test ./internal/check"),
 	E("internal/ci", "class tests and CI budget invariants", "go test ./internal/ci", "go test ./internal/ci"),
 	E("internal/civerdict", "reader of a commit's CI verdict record", "go test ./internal/civerdict", "go test ./internal/civerdict"),

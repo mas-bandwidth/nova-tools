@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 )
 
 // QUACK: THE PRIMARY CARDS OF A PROBE RUN (nova-tools#4307).
