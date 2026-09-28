@@ -10,7 +10,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"net"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -241,31 +244,97 @@ func TestEveryEphemeralKeyCarriesOwnerAndTTL(t *testing.T) {
 	}
 }
 
-// TestSpillAndRecallAreOneRoundTripEach: each verb's work on the store is one
-// batch (spill one transaction, recall one pipeline), counted by
-// redisconn.CountTrips on the connection redisconn.Open made.
+// TestSpillAndRecallAreOneRoundTripEach: each verb, run whole through run(),
+// makes one round trip for its work (spill one transaction, recall one
+// pipeline) after the connect's one exchange (HELLO, which redisconn.Open
+// guarantees is the only one). The trips are counted on the wire by a proxy in
+// front of the fake, so a command added anywhere in the verb (a PING in
+// cmdSpill, a read before the pipeline) shows as a third trip.
 func TestSpillAndRecallAreOneRoundTripEach(t *testing.T) {
 	t.Parallel()
 
+	const handshake = 1
 	h := newHarness(t)
-	ctx := context.Background()
-	conn, err := redisconn.Open(ctx, redisconn.Options{Addr: h.mr.Addr()}, nil)
+	verbs := [][]string{
+		{"spill", "--owner", "rowan", "--name", "note", "--ttl", "1h", "--value", "hi"},
+		{"recall", "--owner", "rowan", "--name", "note"},
+	}
+	for _, v := range verbs {
+		addr, trips := tripProxy(t, h.mr.Addr())
+		args := append([]string{v[0], "--addr", addr}, v[1:]...)
+		if code, stdout, stderr := h.runBare(args...); code != 0 {
+			t.Fatalf("%s exits %d; stdout=%q stderr=%q", v[0], code, stdout, stderr)
+		}
+		if n := trips(); n != handshake+1 {
+			t.Errorf("%s made %d round trips, want %d: the handshake and one batch", v[0], n, handshake+1)
+		}
+	}
+}
+
+// tripProxy listens on loopback in front of target and counts the round trips
+// its clients make: bytes from a client that open the connection or follow a
+// reply begin one trip, however many writes carry them.
+func tripProxy(t *testing.T, target string) (addr string, trips func() int64) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = conn.Close() })
-	trips := redisconn.CountTrips(conn.Client())
-	s := &scratch{rdb: conn.Client(), now: h.clock.now}
-	if _, err := s.spill(ctx, "rowan", "note", "hi", time.Hour); err != nil {
-		t.Fatal(err)
+	var n atomic.Int64
+	var mu sync.Mutex
+	var open []net.Conn
+	var wg sync.WaitGroup
+	t.Cleanup(func() {
+		_ = ln.Close()
+		mu.Lock()
+		for _, c := range open {
+			_ = c.Close()
+		}
+		mu.Unlock()
+		wg.Wait()
+	})
+	pipe := func(from, to net.Conn, onData func()) {
+		defer wg.Done()
+		defer func() { _ = from.Close(); _ = to.Close() }()
+		buf := make([]byte, 32<<10)
+		for {
+			k, err := from.Read(buf)
+			if k > 0 {
+				onData()
+				if _, werr := to.Write(buf[:k]); werr != nil {
+					return
+				}
+			}
+			if err != nil {
+				return
+			}
+		}
 	}
-	if n := trips.N(); n != 1 {
-		t.Errorf("spill made %d round trips, want 1", n)
-	}
-	if v, err := s.recall(ctx, "rowan", "note"); err != nil || v != "hi" {
-		t.Fatalf("recall = %q, %v; want hi", v, err)
-	}
-	if n := trips.N(); n != 2 {
-		t.Errorf("spill then recall made %d round trips, want 2", n)
-	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			up, err := net.Dial("tcp", target)
+			if err != nil {
+				_ = c.Close()
+				continue
+			}
+			mu.Lock()
+			open = append(open, c, up)
+			mu.Unlock()
+			var sending atomic.Bool
+			wg.Add(2)
+			go pipe(c, up, func() {
+				if sending.CompareAndSwap(false, true) {
+					n.Add(1)
+				}
+			})
+			go pipe(up, c, func() { sending.Store(false) })
+		}
+	}()
+	return ln.Addr().String(), n.Load
 }

@@ -7,7 +7,8 @@ package main
 // (TestMain, asMainEnv), so what go-redis would write to the process's own
 // stderr is seen, which run() over a buffer cannot see. An unreachable
 // --addr and a wrong password are each one FAIL line on stderr, exit 2, with
-// redisconn's next step and no go-redis pool log (pool.go).
+// redisconn's next step and no go-redis pool log (pool.go); with
+// NOVA_REDIS_PASSWORD unset, a refused login also names that variable.
 
 import (
 	"bytes"
@@ -84,6 +85,7 @@ func TestOpenFailureIsOneLineExitTwo(t *testing.T) {
 	}{
 		{"unreachable", down, "class=unreachable", "next: start the store or correct the address", nil},
 		{"wrong password", locked, "class=auth-refused", "next: name the user", []string{PasswordEnv + "=" + wrong}},
+		{"no password", locked, "class=auth-refused", "remedy=\"nova-redis reads the store's password from " + PasswordEnv + ", which is not set", nil},
 	}
 	verbs := [][]string{
 		{"spill", "--owner", "rowan", "--name", "note", "--ttl", "1m", "--value", "hi"},

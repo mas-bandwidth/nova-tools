@@ -192,13 +192,13 @@ func cmdSpill(args []string, stdout, stderr io.Writer, d deps) int {
 	ctx := context.Background()
 	conn, err := connect(ctx, *addr, d)
 	if err != nil {
-		return failed(stderr, "SPILL", *owner+":"+*name, err)
+		return failed(stderr, "SPILL", *owner+":"+*name, err, d)
 	}
 	defer func() { _ = conn.Close() }()
 	s := &scratch{rdb: conn.Client(), now: d.now}
 	key, err := s.spill(ctx, *owner, *name, *value, ttl)
 	if err != nil {
-		return failed(stderr, "SPILL", *owner+":"+*name, conn.Explain(err))
+		return failed(stderr, "SPILL", *owner+":"+*name, conn.Explain(err), d)
 	}
 	expires := d.now().Add(ttl).UTC().Format(time.RFC3339)
 	fmt.Fprintf(stdout, "SPILL OK key=%s ttl=%s expires=%s bytes=%d\n", oneline.Field(key), ttl, expires, len(*value))
@@ -223,7 +223,7 @@ func cmdRecall(args []string, stdout, stderr io.Writer, d deps) int {
 	ctx := context.Background()
 	conn, err := connect(ctx, *addr, d)
 	if err != nil {
-		return failed(stderr, "RECALL", key, err)
+		return failed(stderr, "RECALL", key, err, d)
 	}
 	defer func() { _ = conn.Close() }()
 	s := &scratch{rdb: conn.Client(), now: d.now}
@@ -239,7 +239,7 @@ func cmdRecall(args []string, stdout, stderr io.Writer, d deps) int {
 		fmt.Fprintf(stdout, "RECALL UNBOUNDED key=%s remedy=%q\n", oneline.Field(key), "an unbounded key is a bug; it was not written by nova-redis spill")
 		return 1
 	case err != nil:
-		return failed(stderr, "RECALL", key, conn.Explain(err))
+		return failed(stderr, "RECALL", key, conn.Explain(err), d)
 	}
 	fmt.Fprintf(stdout, "RECALL OK key=%s bytes=%d value=%s\n", oneline.Field(key), len(v), oneline.Field(v))
 	return 0
@@ -292,11 +292,21 @@ func connect(ctx context.Context, addr string, d deps) (*redisconn.Conn, error) 
 // failed prints a verb's one FAIL line for err, which is redisconn's (an
 // Open failure, or a command's error through Conn.Explain), so it names the
 // store, the login, what came back and the next step. A store that could not
-// be reached and a login it refused exit 2: nothing was done, and the fix is
-// the caller's. Anything else the store answered exits 1.
-func failed(stderr io.Writer, verb, key string, err error) int {
+// be reached and a login it refused exit 2: the fix is the caller's. The
+// store may still have taken the write: redisconn classes a connection that
+// dropped, or a reply that never came, as unreachable too, and by then a
+// spill's EXEC may have landed. Anything else the store answered exits 1.
+//
+// A refused login with NOVA_REDIS_PASSWORD unset gets one more field, the
+// variable this tool reads: redisconn's next step names no variable when the
+// caller named none, and the operator needs to know which one to set.
+func failed(stderr io.Writer, verb, key string, err error, d deps) int {
 	class := redisconn.Classify(err)
-	fmt.Fprintf(stderr, "%s FAIL key=%s class=%s err=%s\n", verb, oneline.Field(key), class, oneline.Err(err))
+	line := fmt.Sprintf("%s FAIL key=%s class=%s err=%s", verb, oneline.Field(key), class, oneline.Err(err))
+	if class == redisconn.AuthRefused && d.getenv(PasswordEnv) == "" {
+		line += fmt.Sprintf(" remedy=%q", "nova-redis reads the store's password from "+PasswordEnv+", which is not set: export it, holding the password of the default user")
+	}
+	fmt.Fprintln(stderr, line)
 	if class == redisconn.Unreachable || class == redisconn.AuthRefused {
 		return 2
 	}
