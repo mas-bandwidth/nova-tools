@@ -84,12 +84,14 @@ func collectLivePackages(t *testing.T, root string, lt *liveTree) []string {
 	cmd := exec.Command("go", "list", "./cmd/...", "./internal/...", "./tools/...")
 	cmd.Dir = root
 	cmd.Env = goenv.Clean(os.Environ())
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("go list packages: %v\n%s", err, out)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("go list packages: %v\n%s", err, stderr.String())
 	}
 	var live []string
-	for _, line := range strings.Split(string(out), "\n") {
+	for _, line := range strings.Split(stdout.String(), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -131,10 +133,7 @@ func TestLivingPackagesDoNotImportDroppedDeprecatedPackages(t *testing.T) {
 
 	tagSets := [][]string{
 		{},
-		{"-tags", "functional"},
-		{"-tags", "slow"},
-		{"-tags", "perf"},
-		{"-tags", "functional slow perf"},
+		{"-tags", "functional,slow,perf"},
 	}
 
 	measured := map[string]bool{}
@@ -146,12 +145,14 @@ func TestLivingPackagesDoNotImportDroppedDeprecatedPackages(t *testing.T) {
 		cmd := exec.Command("go", args...)
 		cmd.Dir = root
 		cmd.Env = goenv.Clean(os.Environ())
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("go list -deps (tags=%q): %v\n%s", strings.Join(tags, " "), err, out)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("go list -deps (tags=%q): %v\n%s", strings.Join(tags, " "), err, stderr.String())
 		}
 
-		dec := json.NewDecoder(bytes.NewReader(out))
+		dec := json.NewDecoder(&stdout)
 		for dec.More() {
 			var pkg listPackage
 			if err := dec.Decode(&pkg); err != nil {
