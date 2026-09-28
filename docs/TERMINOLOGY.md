@@ -71,7 +71,7 @@ is available today.
   decomposes into sub-features recursively. ([SPEC-WORK.md, The data](SPEC-WORK.md#the-data-rowan))
 - **friend** — a named line or participant you exchange notes with, the
   coordinator included, tracked by the same indexes as everyone else; the role is
-  ownership, never an exemption. ([SPEC-WORK.md, Friends, CONFIG and ACTIVE](SPEC-WORK.md#friends-config-and-active-stella-docsspec-work-pilotmd-at-81c2885) · [SPEC-CHAT.md rule 11](SPEC-CHAT.md#11-membership-in-the-own-server-is-closed-and-it-is-re-checked-on-every-wake))
+  ownership, never an exemption. ([SPEC-WORK.md, Friends, CONFIG and ACTIVE](SPEC-WORK.md#friends-config-and-active-stella-docsspec-work-pilotmd-at-81c2885))
 - **gate / gated card** — a condition that must pass before an action proceeds; a
   card with `AFTER: PR<n> merged` stays gated until the dependency merges, then
   launches itself. (SPEC-PULSE.md, Rate and convergence rule 4)
@@ -118,7 +118,7 @@ is available today.
 - **pit stop** — a cascading worker failure is not fixed by more workers; the
   coordinator's deliberate slow-down to spend the machine on the faults that
   make every card slower, doing bugs only until one trust batch proves them
-  gone. (SPEC-PULSE.md, The pit stop · [PIT-STOP.md](PIT-STOP.md))
+  gone.
 - **policy** — the approved, finite rule set the manager executes without
   expanding it. (SPEC-PULSE.md, The manager tier)
 - **pool** — the enumeration of bounded open work a pulse can draw from, written
