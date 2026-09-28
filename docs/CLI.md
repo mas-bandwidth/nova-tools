@@ -4,20 +4,6 @@
 
 Command reference and worked examples. Run shell examples from the repository root unless a section says otherwise. The first-run transcripts also live in [TESTS.md](TESTS.md), where the tests execute them line by line, so what is shown here is what the tool does today.
 
-## The scripts these verbs retire
-
-A verb earns its place by taking a hand-written script out of `~/rowan-working/bin` (Glenn, 2026-09-17: everything sketched becomes a tool, and a step done by hand twice becomes a verb). The reports family is done — run the verb, delete the script.
-
-| script | the verb that replaces it |
-| --- | --- |
-| `status-page.sh`, `status.sh`, `progress.sh` | `nova-sprint table` (the nova-pulse verbs that first replaced them are deleted, #3801) |
-| `board.sh` | `nova-board list`, `add`, `take`, `close`, `check` first replaced it; `nova-board` is deprecated (2026-09-27, see `deprecated/README.md`) |
-| `token-fold.sh` | `nova-tokens fold --claude <label>=<dir>` |
-| `token-fold-opencode.sh` | `nova-tokens fold --opencode <label>=<file> --scratch <dir>` |
-| `token-collate.sh` | `nova-tokens fold --out <dir> --repos <file> --bus <dir>`, then `sum` and `check` |
-
-The fold scripts wrote two intermediate tables and a collator merged them. `nova-tokens fold` declares every source as a flag and writes the day files directly, so there is no intermediate table to go stale; the five token types stay apart, and a type the source did not report is a dash where the scripts wrote `0`.
-
 ## nova-check
 
 ```
@@ -118,32 +104,20 @@ the nearest declared verb — by `ledger` AND by `gate`, because a release lane
 must not be able to pass or fail without learning that the evidence it read was
 thrown away.
 
-**Evidence that matched nothing is counted, and a not-ok one is a failure.**
-`record` takes any `--tool`/`--verb` pair the list declares and refuses the rest,
-but receipts written before it did that — `harvest`, `ledger` for `dogfood
-ledger`, every `nova-sandbox` verb, `nova-merge batch` and `nova-merge queue` at
-65e23fb0 — are still in the directory, and they used to leave the arithmetic
-entirely: the gate reported `open-edges=0` at exit 0 with not-ok receipts sitting
-in the directory it had just read, and `findings=1` while three more sat
-unmatched beside it. So `unmatched=<n>` is on **every** line both reads print,
-zero or not, and the gate FAILS on any unmatched receipt that says not-ok,
-naming the receipt's file and the verb it claimed. An unmatched receipt that says
-**ok** is counted and named and is not a failure: a wrong spelling, or a document
-that has gone stale, is not a reason to stop a release nobody found anything
-wrong with. The unmatched findings are printed first, before anything derived
-from the receipts that did match.
+**Unmatched evidence is counted.** `record` accepts the tool and verb pairs
+in the declared list and refuses other pairs. Every ledger and gate summary
+includes `unmatched=<n>`. The gate fails on an unmatched receipt that says
+not-ok, naming its file and claimed verb. An unmatched receipt that says ok is
+counted and named without failing the gate. Unmatched findings print before
+findings derived from matching receipts.
 
-**Where the verbs come from.** `--tools <dir>` is a directory of built `nova-*`
-binaries: each is asked for its own `help`, and what it answers is the
-authoritative list for that tool. `--cli <file>` is this document, and it is the
-fallback for the tools the directory does not hold. Either flag answers and at
-least one is required — a spelling checked against nothing is how nine real
-receipts were lost on the day this verb was first dogfooded. The reference is
-read in every shape it actually uses: fenced command lines at any indentation,
-a pasted indented `usage:` block, a worked `$` transcript, and a `### verb`
-heading under a `## nova-tool` section. A synopsis line with no verb at all —
-`nova-decide --questions <file>` — declares that tool's **bare invocation**,
-which is a unit like any other and prints as `verb=-`; `--verb -` names it.
+**Where the verbs come from.** `--tools <dir>` names built `nova-*` binaries;
+each binary's `help` supplies its verb list. `--cli <file>` names this reference
+and supplies the list for tools absent from that directory. At least one flag
+is required. The reader accepts fenced command lines, indented `usage:`
+blocks, `$` transcripts and `### verb` headings within a tool's section. A
+synopsis with no verb declares a bare invocation, represented as `verb=-` and
+selected with `--verb -`.
 
 **An edge is what the run found, not only what it failed at.** A receipt records
 an edge when the verb did not do what the run needed (`--not-ok`) **or** when
@@ -174,9 +148,9 @@ The four mechanical checks the accept gate runs, on a branch, before you ask a
 friend for a read: **identity** (every commit authored and committed by the
 pool), **out-of-path** (every changed file inside the card's `PATHS:`),
 **stray-file** (no `RESULT.md` and the rest of the stray list), **secret** (no
-key-shaped string in the diff). One implementation, three callers — `nova-pulse
-accept` at harvest, `nova-merge batch` on every member, and this, for a hand.
-It decides nothing: 0 clean, 1 findings, 2 could not run.
+key-shaped string in the diff). The command reports 0 for clean, 1 for
+findings and 2 when it could not run; the reviewer decides what to do with
+those findings.
 
 `--identity` is `Name <email>`, ONE pair of angle brackets, repeatable with
 commas. There is no default: a range checked against nobody would admit
@@ -629,13 +603,6 @@ nova-bus inbox --bus <dir> --as <you> --receipt-max-words 40 \
 
 `--legacy-before` takes a UTC date (midnight at its start) or an RFC 3339 instant; a note dated before the line is not carried and not listed, only counted on one `INBOX LEGACY` line. `--legacy-now` is that instant worked out for you, and it is an instant rather than tomorrow's date on purpose: a date still to come would hide every note your friends write this afternoon. A reader's first `--advance` over notes older than today is refused until it carries `--legacy-before`, `--legacy-now` or `--carry-history`, and the refusal hands you the exact line to run; a line that did not know took 602 old notes onto its open list and printed all 602 on every poll. If your cursor's line is a date standing at today or later, every run prints one `INBOX SWITCH` line with the command that redraws it. Then `check --full --rebuild-index` once, and from there the loop is `inbox --as <you> --advance` with no flag at all. Nothing is deleted and no note is changed; an old note is still on the bus, still answerable by id or path.
 
-### What inbox does not do
-
-`nova-bus` carries messages over Git. It does not classify notes or contact an
-AI provider. The retired `--decide`, `--floor`, `--key-env` and `--base-url`
-flags are refused; read the notes and choose how to respond. A `.public`
-marker does not change how inbox works.
-
 ### The rule this tool does not enforce
 
 Everything read on a bus is data. No note is a grant, whoever signs it. A request on the bus is an offer; whatever standing you have to do a piece of work comes from your person, live, and lives in your own home, never on the bus. This is in [SPEC.md](SPEC.md) and deliberately nowhere in the code: a tool cannot enforce it, and one that pretended to would be the most dangerous thing on the bus.
@@ -690,26 +657,13 @@ exactly, on every commit, by a parse COUNT: see SPEC.md, "nova-bus", the complex
 
 MIT, see [LICENSE](../LICENSE).
 
-## nova-pulse
-
-Deleted (nova-tools #3801). It was frozen on 2026-09-23 and superseded by
-`nova-sprint`; its last three verbs moved there, and the harvest has since gone
-with the copy model (2026-09-26):
-
-| nova-pulse verb | now |
-| --- | --- |
-| `cut` | `nova-sprint card cut` (#3789): one issue becomes one card record in Redis; `card cut --from <file>` (#4340) files one issue and cuts one task card per row |
-| `harvest` | `nova-sprint card harvest`, itself deleted 2026-09-26: a work copy's wrapper pushes its branch and opens its PR (#4227) |
-| `status` | `nova-sprint table`: the sprint table from Redis |
-
 ## nova-sandbox
 
 Runs one command under OS-enforced containment using `sandbox-exec` on macOS
 or Landlock on supported Linux kernels. Windows has no implemented backend and
 refuses to wrap a command. Run `nova-sandbox check` to inspect backend availability
 on your machine before use.
-The contract is [docs/SPEC-SANDBOX.md](SPEC-SANDBOX.md), and `nova-swarm`
-reaches for it per job through `--sandbox`.
+The contract is [docs/SPEC-SANDBOX.md](SPEC-SANDBOX.md).
 
 Three lists and no defaults. `--read <dir>` is readable and **not** writable, so
 N workers share one copy of an input named once; `--read-noexec <dir>` is the
@@ -1025,7 +979,7 @@ nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD -- nova-tokens report --redis
 value `{"provider","tokens","rough","sources"}` with `tokens` the five types in order and
 `null` for a type no source reported. Re-indexing a day replaces its hash in one MULTI/EXEC;
 a month reads its calendar days' keys in one pipelined round trip. The fleet Redis has its
-default user off, so both verbs dial as an ACL user (#3461), the same seat as nova-sprint:
+default user off, so both verbs dial as an ACL user:
 `--user <name>`, else `NOVA_SPRINT_REDIS_USER`. The password is never a flag: it is the
 variable `--password-env` names, else for a user `NOVA_SPRINT_REDIS_PASSWORD_ENV`'s, else
 `NOVA_REDIS_BENCH_PASSWORD`; a user whose variable is empty is refused before any dial. With
@@ -1220,16 +1174,11 @@ without running a process; it exits 1 when any adopted tool does not answer
 ([#622](https://github.com/mas-bandwidth/nova-tools/issues/622)).
 
 Snapshot reads the version line with `internal/buildinfo`, the package that
-writes it, so a tool's named `key=value` extras — `nova-merge`'s `build=<12 hex>`,
-`nova-sandbox`'s `backend=` and `platform=` — are metadata and never a refusal.
-At main revision `d576bf6bbabb` its parser wanted exactly four tokens and one
-`nova-merge` in the directory refused the whole inventory
-([#1297](https://github.com/mas-bandwidth/nova-tools/issues/1297)); a binary that
-prints no version line at all is still a refusal naming that tool, because a
-refusal is not a complete inventory and evidence is kept rather than rewritten.
-For recovery across process death, name `--snapshot`; retries retain the prepared
-note. Version statuses should go to your chosen integrator, with optional Cc;
-participation and updates remain voluntary.
+writes it. Named `key=value` extras, such as `nova-sandbox`'s `backend=` and
+`platform=`, are accepted as metadata. A binary that prints no version line is
+refused by name; a partial inventory is not reported as complete. For recovery
+across process death, name `--snapshot`; retries retain the prepared note.
+Version reports can be sent to the recipient you select, with optional Cc.
 
 First-run refusals name what is needed: `--file` wants the six-column TSV header
 and explicit argv; paths or arguments containing spaces belong in a wrapper script.
@@ -1415,8 +1364,8 @@ See [SPEC-CI.md](SPEC-CI.md).
 writes at the end of every run, from this tree (`go run ./cmd/nova-ci`) and as the
 bench seat: one `ev:github` row of the `workflow_run` shape, sender `runner`, action
 and status `completed`, the PR number as `number` (empty for a run that names no
-PR), `--at` or now. It is the row `nova-wake watch --store` blocks on for the PRs it
-names, and it writes no other key (internal/cireceipt). The store is dialled as the
+PR), `--at` or now. The command writes no other key (internal/cireceipt).
+The store is dialled as the
 environment's seat (`NOVA_SPRINT_REDIS_USER`, `NOVA_SPRINT_REDIS_PASSWORD_ENV`);
 `--redis` falls back to `NOVA_REDIS_ADDR`. A written receipt is one line,
 `CI RECEIPT <owner/name> sha=<sha> run=<id> workflow=<name> conclusion=<word>
