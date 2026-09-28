@@ -113,3 +113,23 @@ func TestUnmatchedFindingsComeFirst(t *testing.T) {
 		t.Errorf("the discarded evidence is said first, got %q then %q", findings[0].Kind, findings[1].Kind)
 	}
 }
+
+// A stranded not-ok receipt is answered by a receipt that names it: the answer
+// is recorded against the verb as the list spells it, since record refuses any
+// other spelling, and a --closes that names nothing answers nothing.
+func TestAStrandedNotOkReceiptIsAnsweredByAReceiptThatNamesIt(t *testing.T) {
+	t.Parallel()
+
+	list := verbs("nova-check dogfood ledger")
+	lost := stranded("nova-check ledger", "Stella", "2026-09-18T09:05:00Z", false, "receipts/b.json:1")
+	typo := receipt("nova-check dogfood ledger", "Rowan", "2026-09-27T09:00:00Z", true, 0)
+	typo.Closes = "00000000"
+	if findings, _ := Gate(list, []Receipt{lost, typo}, nil, false); len(findings) != 1 || findings[0].Kind != "unmatched" {
+		t.Fatalf("findings = %+v, want the stranded one still open under a --closes that names nothing", findings)
+	}
+	answer := receipt("nova-check dogfood ledger", "Rowan", "2026-09-27T09:01:00Z", true, 0)
+	answer.Closes = lost.ID()
+	if findings, _ := Gate(list, []Receipt{lost, typo, answer}, nil, false); len(findings) != 0 {
+		t.Fatalf("findings = %+v, want none once a receipt names the stranded finding", findings)
+	}
+}

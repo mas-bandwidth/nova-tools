@@ -97,6 +97,10 @@ var messageBusAudit = audit.Config{
 		"oneline.Quote", "quoteList", "cappedList", "hostField",
 	},
 	Imports: []string{
+		// the verb-help seam (the CLI style's rule (b), #4505): it prints only flag names, their
+		// usage literals and lines of this package's own usage const, to the stdout run hands
+		// it, on -h; it never prints an argument, so nothing it writes can carry a newline in.
+		`"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"`,
 		// version.go's resolution order, which now lives once in internal/buildinfo
 		// rather than in a copy per binary: it reads debug.ReadBuildInfo, holds no
 		// writer of its own, and returns a string this package renders through

@@ -280,9 +280,6 @@ func TestFunctionalRefusesWhatItCannotRun(t *testing.T) {
 		{"missing tree", []string{"./nope/..."}, []string{`package pattern "./nope/..." matches no package (no such directory)`}},
 		{"not a dir", []string{file}, []string{"matches no package (not a directory)"}},
 		{"no go files", []string{empty}, []string{"matches no package (the directory holds no .go file)"}},
-		{"-h", []string{"-h"}, []string{functionalUsage}},
-		{"--help", []string{"--help"}, []string{functionalUsage}},
-		{"--help after a dir", []string{".", "--help"}, []string{functionalUsage}},
 		{"unknown flag", []string{"--bogus"}, []string{`unknown flag "--bogus" (functional takes no flags`}},
 		// Every independent problem in the one refusal.
 		{"all at once", []string{"--bogus", "./nope", ".", "./also-nope"}, []string{`unknown flag "--bogus"`, `"./nope" matches no package`, `"./also-nope" matches no package`}},

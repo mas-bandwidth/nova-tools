@@ -33,7 +33,7 @@ var DefaultCatalog = []Entry{
 	E("cmd/nova-ci", "CI slowtests budget and check CLI, and ci-ok's run receipt", "go test ./cmd/nova-ci", "go test ./cmd/nova-ci"),
 	E("cmd/nova-fuse", "workspace isolation and boundary CLI", "go test ./cmd/nova-fuse", "go test ./cmd/nova-fuse"),
 	E("cmd/nova-memory", "memory indexing and search CLI", "go test ./cmd/nova-memory", "go test ./cmd/nova-memory"),
-	E("cmd/nova-redis", "Redis scratch spill/recall CLI", "go test ./cmd/nova-redis", "go test ./cmd/nova-redis"),
+	E("cmd/nova-redis", "Redis instance owner: serve, scratch spill/recall, and fn load/check of the function library", "go test ./cmd/nova-redis", "go test ./cmd/nova-redis"),
 	E("cmd/nova-sandbox", "OS-level process sandbox CLI", "go test ./cmd/nova-sandbox", "go test ./cmd/nova-sandbox"),
 	E("cmd/nova-secrets", "zero-leak secrets store CLI", "go test ./cmd/nova-secrets", "go test ./cmd/nova-secrets"),
 	E("cmd/nova-self-talk", "internal dialogue recording CLI", "go test ./cmd/nova-self-talk", "go test ./cmd/nova-self-talk"),
@@ -102,6 +102,7 @@ var DefaultCatalog = []Entry{
 	E("internal/testguard", "host seam and leak interception", "go test ./internal/testguard", "go test ./internal/testguard"),
 	E("internal/testpg", "a throwaway Postgres for one test or one package: loopback only, trust authentication, stopped with the test", "go test ./internal/testpg", "go test ./internal/testpg"),
 	E("internal/testredis", "a throwaway redis-server for one test: loopback only, nothing kept, never outlives its test binary", "go test ./internal/testredis", "go test ./internal/testredis"),
+	E("internal/testverbhelp", "per-tool check that every verb answers -h at exit 0 and touches nothing", "go test ./internal/testverbhelp", "go test ./internal/testverbhelp"),
 	E("internal/textbody", "shared line-oriented message body filtering", "go test ./internal/textbody", "go test ./internal/textbody"),
 	E("internal/tokens", "token counter and budget tracker", "go test ./internal/tokens", "go test ./internal/tokens"),
 	E("internal/typedrec", "typed RESULT record contract, parser and legacy adapter", "go test ./internal/typedrec", "go test ./internal/typedrec"),
@@ -112,11 +113,8 @@ var DefaultCatalog = []Entry{
 
 	// docs/
 	E("docs/spec-pulse", "the card contract the pulse cut engine writes (10-the-card-as-cut-writes-it.md); the rest of the spec folder deleted 2026-09-24", "go test ./internal/docs", "go test ./internal/docs"),
-	E("docs/drafts", "in-flight design drafts and proposals", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/fixtures", "doc examples and test fixtures", "go test ./internal/docs", "go test ./internal/docs"),
-	E("docs/jev", "Jev's versioned decision prompts, one file per type and version (#4316)", "go test ./internal/nsprint/jev", "go test ./internal/nsprint/jev"),
 	E("docs/nova-config", "nova-config guide: the permanent configuration and its apply into Redis", "go test ./internal/docs", "go test ./internal/docs"),
-	E("docs/nova-friend", "nova-friend guide: the presence process, the verbs, the keys it owns", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/nova-table", "nova-table guide: the design statement, the keys, the verbs, the render rules", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/roadmaps", "sprint roadmaps and milestones", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/schemas", "event and payload schema definitions", "go test ./internal/docs", "go test ./internal/docs"),

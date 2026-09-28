@@ -48,3 +48,20 @@ func TestGateRefusesAFlagGivenTwice(t *testing.T) {
 		t.Errorf("each flag once: exit=%d stdout=%q stderr=%q", code, stdout, stderr)
 	}
 }
+
+// The once-only wrapper does not break the verb-help seam: `gate -h` is help at exit 0, and
+// the help reads the flags' own types, because the wrapper is taken off before verbflag's
+// Recover prints them.
+func TestGateHelpSurvivesTheOnceOnlyFlags(t *testing.T) {
+	t.Parallel()
+	bin := buildNovaSecrets(t)
+	for _, h := range []string{"-h", "--help"} {
+		stdout, stderr, code := runNovaSecrets(bin, "gate", h)
+		if code != 0 || !strings.HasPrefix(stdout, "usage: nova-secrets gate") {
+			t.Errorf("gate %s: exit=%d stdout=%q stderr=%q; want help at exit 0", h, code, stdout, stderr)
+		}
+		if !strings.Contains(stdout, "--head <string>") || strings.Contains(stdout, "<value>") {
+			t.Errorf("gate %s: the help does not read the flags' own types:\n%s", h, stdout)
+		}
+	}
+}

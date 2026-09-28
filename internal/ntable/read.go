@@ -210,7 +210,7 @@ type Summary struct {
 func Summaries(ctx context.Context, c redis.Cmdable) ([]Summary, error) {
 	reply, err := c.FCallRO(ctx, FnList, []string{Registry}).Slice()
 	if err != nil {
-		return nil, fmt.Errorf("list tables: %w; run: nova-table help", err)
+		return nil, fmt.Errorf("list tables: %w%s", err, runUnlessNamed(err, "nova-table help"))
 	}
 	if err := (operation{table: "tables registry"}).refused(reply); err != nil {
 		return nil, err
