@@ -145,11 +145,15 @@ func LinksFiles(dir string, files []string, exclude []string) (res LinksResult, 
 // "testdata" excludes "testdata" and everything under it, never a sibling like
 // "testdata-set".
 func underExclude(rel string, exclude []string) bool {
-	rel = filepath.ToSlash(rel)
+	rel = filepath.ToSlash(filepath.Clean(rel))
+	rel = strings.TrimPrefix(rel, "./")
+	rel = strings.TrimPrefix(rel, "/")
 	for _, ex := range exclude {
-		ex = filepath.ToSlash(ex)
+		ex = filepath.ToSlash(filepath.Clean(ex))
+		ex = strings.TrimPrefix(ex, "./")
+		ex = strings.TrimPrefix(ex, "/")
 		ex = strings.TrimSuffix(ex, "/")
-		if ex == "" {
+		if ex == "" || ex == "." {
 			continue
 		}
 		if rel == ex || strings.HasPrefix(rel, ex+"/") {

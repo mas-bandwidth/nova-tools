@@ -203,3 +203,164 @@ func TestSpellingCLIFailMax(t *testing.T) {
 		t.Errorf("expected shown=2 in summary line, got: %q", stderr)
 	}
 }
+
+func TestSpellingCLISymlinkWriteRefusal(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	scan := filepath.Join(root, "scan")
+	if err := os.Mkdir(scan, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(root, "outside.md")
+	before := "recieve\n"
+	if err := os.WriteFile(outside, []byte(before), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(scan, "link.md")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+
+	code, stdout, stderr := runSpelling(t, "--dir", scan, "--write")
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2; stdout = %q, stderr = %q", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "is a symlink") {
+		t.Errorf("stderr does not report symlink refusal: %q", stderr)
+	}
+
+	// Verify outside target bytes remain strictly unchanged.
+	after, err := os.ReadFile(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != before {
+		t.Errorf("outside file was rewritten through symlink: got %q, want %q", string(after), before)
+	}
+}
+
+func TestSpellingCLIRootRelativeExcludeAllModes(t *testing.T) {
+	t.Parallel()
+
+	// Mode 1: --dir root with --path glob
+	t.Run("dir-with-path-glob", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		if err := os.Mkdir(filepath.Join(root, "vendor"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(root, "vendor", "doc.md")
+		before := "recieve\n"
+		if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		code, stdout, stderr := runSpelling(t, "--dir", root, "--path", "vendor/*.md", "--exclude", "vendor", "--write")
+		if code != 0 {
+			t.Fatalf("exit = %d, want 0; stdout = %q, stderr = %q", code, stdout, stderr)
+		}
+		after, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(after) != before {
+			t.Errorf("excluded vendor file rewritten: got %q, want %q", string(after), before)
+		}
+	})
+
+	// Mode 2: --dir root with --file explicit
+	t.Run("dir-with-file-explicit", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		if err := os.Mkdir(filepath.Join(root, "vendor"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(root, "vendor", "doc.md")
+		before := "recieve\n"
+		if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		code, stdout, stderr := runSpelling(t, "--dir", root, "--file", "vendor/doc.md", "--exclude", "vendor", "--write")
+		if code != 0 {
+			t.Fatalf("exit = %d, want 0; stdout = %q, stderr = %q", code, stdout, stderr)
+		}
+		after, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(after) != before {
+			t.Errorf("excluded vendor file rewritten: got %q, want %q", string(after), before)
+		}
+	})
+
+	// Mode 3: --dir root walk alone
+	t.Run("dir-walk-alone", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		if err := os.Mkdir(filepath.Join(root, "vendor"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(root, "vendor", "doc.md")
+		before := "recieve\n"
+		if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		code, stdout, stderr := runSpelling(t, "--dir", root, "--exclude", "vendor", "--write")
+		if code != 0 {
+			t.Fatalf("exit = %d, want 0; stdout = %q, stderr = %q", code, stdout, stderr)
+		}
+		after, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(after) != before {
+			t.Errorf("excluded vendor file rewritten: got %q, want %q", string(after), before)
+		}
+	})
+}
+
+func TestSpellingCLIMultilineCodeSpan(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "code.md")
+	before := "Code `recieve\nseperate` remains code.\n"
+	if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	code, stdout, stderr := runSpelling(t, "--file", path, "--write")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stdout = %q, stderr = %q", code, stdout, stderr)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != before {
+		t.Errorf("multiline inline code span was rewritten: got %q, want %q", string(after), before)
+	}
+}
+
+func TestSpellingCLIContainerFencesAndEscapes(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "container.md")
+	before := "> ```go\n> func recieve() {}\n> ```\n> ~~~python\n> recieve = 1\n> ~~~\n"
+	if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	code, stdout, stderr := runSpelling(t, "--file", path, "--write")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stdout = %q, stderr = %q", code, stdout, stderr)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != before {
+		t.Errorf("code in container fence was rewritten: got %q, want %q", string(after), before)
+	}
+}

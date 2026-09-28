@@ -46,6 +46,7 @@ func cmdSpelling(args []string, stdout, stderr io.Writer) int {
 		Ignore:  ignore,
 		Write:   *write,
 		Exclude: exclude,
+		Dir:     *dir,
 	}
 
 	var (

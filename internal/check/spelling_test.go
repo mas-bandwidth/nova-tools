@@ -293,3 +293,173 @@ func TestSpellingCheckPatterns(t *testing.T) {
 		t.Errorf("Findings = %d, want 1", len(res.Findings))
 	}
 }
+
+func TestSpellingMultilineCodeSpan(t *testing.T) {
+	t.Parallel()
+	text := "Code `recieve\nseperate` remains code.\n"
+	findings, updated, err := check.CheckSpellingText("code.md", text, check.SpellingOptions{Markdown: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 0 {
+		t.Errorf("expected 0 findings for multiline code span, got %+v", findings)
+	}
+	if updated != text {
+		t.Errorf("updated = %q, want %q", updated, text)
+	}
+}
+
+func TestSpellingContainerFences(t *testing.T) {
+	t.Parallel()
+	text := "> ```go\n> func recieve() {}\n> ```\n> ~~~python\n> recieve = 1\n> ~~~\nProse after with colour.\n"
+	findings, _, err := check.CheckSpellingText("test.md", text, check.SpellingOptions{Markdown: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("got %d findings, want 1: %+v", len(findings), findings)
+	}
+	if findings[0].Original != "colour" {
+		t.Errorf("expected colour, got %+v", findings[0])
+	}
+}
+
+func TestSpellingEscapedBackticks(t *testing.T) {
+	t.Parallel()
+	// An odd number of backslashes escapes the backtick, so recieve is prose.
+	escaped := "A literal \\`recieve\\` here.\n"
+	findings, _, err := check.CheckSpellingText("test.md", escaped, check.SpellingOptions{Markdown: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 || findings[0].Original != "recieve" {
+		t.Errorf("expected recieve to be flagged when backtick is escaped, got %+v", findings)
+	}
+
+	// An even number of backslashes escapes the backslash, so backtick starts a code span.
+	unescaped := "A literal \\\\`recieve\\\\` here.\n"
+	findings2, _, err := check.CheckSpellingText("test.md", unescaped, check.SpellingOptions{Markdown: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings2) != 0 {
+		t.Errorf("expected 0 findings when backtick is not escaped, got %+v", findings2)
+	}
+}
+
+func TestSpellingBlankLineTerminatesSpan(t *testing.T) {
+	t.Parallel()
+	// A code span cannot cross a blank line (CommonMark 0.31.2).
+	text := "`start\n\nrecieve`\n"
+	findings, _, err := check.CheckSpellingText("test.md", text, check.SpellingOptions{Markdown: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 || findings[0].Original != "recieve" {
+		t.Errorf("expected recieve to be flagged across blank line, got %+v", findings)
+	}
+}
+
+func TestSpellingSymlinkWriteRefusal(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	outside := filepath.Join(root, "outside.md")
+	before := "recieve\n"
+	if err := os.WriteFile(outside, []byte(before), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	scan := filepath.Join(root, "scan")
+	if err := os.Mkdir(scan, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(scan, "link.md")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+
+	opts := check.SpellingOptions{Write: true}
+
+	// 1. CheckSpellingFile refuses symlink
+	_, err := check.CheckSpellingFile(link, opts)
+	if err == nil || !strings.Contains(err.Error(), "is a symlink") {
+		t.Fatalf("CheckSpellingFile did not refuse symlink: %v", err)
+	}
+
+	// 2. CheckSpellingDir refuses symlink
+	_, err = check.CheckSpellingDir(scan, opts)
+	if err == nil || !strings.Contains(err.Error(), "is a symlink") {
+		t.Fatalf("CheckSpellingDir did not refuse symlink: %v", err)
+	}
+
+	// 3. CheckSpellingFiles refuses symlink
+	_, err = check.CheckSpellingFiles(scan, []string{"link.md"}, opts)
+	if err == nil || !strings.Contains(err.Error(), "is a symlink") {
+		t.Fatalf("CheckSpellingFiles did not refuse symlink: %v", err)
+	}
+
+	// Verify outside target bytes remain strictly unchanged across all attempts
+	after, err := os.ReadFile(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != before {
+		t.Errorf("outside.md was modified through symlink: got %q, want %q", string(after), before)
+	}
+}
+
+func TestSpellingRootRelativeExcludeAllModes(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	vendorDir := filepath.Join(root, "vendor")
+	if err := os.Mkdir(vendorDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(vendorDir, "doc.md")
+	before := "recieve\n"
+	if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	opts := check.SpellingOptions{
+		Exclude: []string{"vendor"},
+		Write:   true,
+		Dir:     root,
+	}
+
+	// 1. CheckSpellingDir
+	resDir, err := check.CheckSpellingDir(root, opts)
+	if err != nil {
+		t.Fatalf("CheckSpellingDir: %v", err)
+	}
+	if resDir.Excluded != 1 || resDir.FilesScanned != 0 {
+		t.Errorf("CheckSpellingDir Excluded = %d, FilesScanned = %d", resDir.Excluded, resDir.FilesScanned)
+	}
+
+	// 2. CheckSpellingFiles with relative path
+	resFiles, err := check.CheckSpellingFiles(root, []string{"vendor/doc.md"}, opts)
+	if err != nil {
+		t.Fatalf("CheckSpellingFiles: %v", err)
+	}
+	if resFiles.Excluded != 1 || resFiles.FilesScanned != 0 {
+		t.Errorf("CheckSpellingFiles Excluded = %d, FilesScanned = %d", resFiles.Excluded, resFiles.FilesScanned)
+	}
+
+	// 3. CheckSpelling with glob pattern
+	resGlob, err := check.CheckSpelling([]string{filepath.Join(root, "vendor", "*.md")}, opts)
+	if err != nil {
+		t.Fatalf("CheckSpelling: %v", err)
+	}
+	if resGlob.Excluded != 1 || resGlob.FilesScanned != 0 {
+		t.Errorf("CheckSpelling glob Excluded = %d, FilesScanned = %d", resGlob.Excluded, resGlob.FilesScanned)
+	}
+
+	// Target bytes remain unchanged
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != before {
+		t.Errorf("excluded file was rewritten: got %q, want %q", string(after), before)
+	}
+}

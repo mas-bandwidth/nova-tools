@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/client9/misspell"
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
@@ -35,6 +36,7 @@ type SpellingOptions struct {
 	Write    bool     // rewrite files with corrections applied
 	Markdown bool     // force markdown mode (blanking code blocks/spans)
 	Exclude  []string // path prefixes to exclude
+	Dir      string   // root directory for relative paths and exclusions
 }
 
 // SpellingChecker wraps misspell.Replacer with allowlist and code-stripping rules.
@@ -43,16 +45,63 @@ type SpellingChecker struct {
 	ignore []string
 }
 
+var (
+	defaultOnce    sync.Once
+	defaultChecker *SpellingChecker
+	checkerCacheMu sync.RWMutex
+	checkerCache   = make(map[string]*SpellingChecker)
+)
+
+func defaultSpellingChecker() *SpellingChecker {
+	defaultOnce.Do(func() {
+		r := misspell.New()
+		r.AddRuleList(misspell.DictAmerican)
+		r.Compile()
+		defaultChecker = &SpellingChecker{rep: r}
+	})
+	return defaultChecker
+}
+
 // NewSpellingChecker compiles a misspell Replacer with DictAmerican and removes ignored words.
+// It caches compiled checkers so repetitive compilation across tests and files is avoided.
 func NewSpellingChecker(ignore []string) *SpellingChecker {
+	words, err := ParseIgnoreSpec(ignore)
+	if err != nil || len(words) == 0 {
+		return defaultSpellingChecker()
+	}
+
+	sorted := make([]string, len(words))
+	copy(sorted, words)
+	sort.Strings(sorted)
+
+	dedup := sorted[:0]
+	for i, w := range sorted {
+		if i == 0 || w != sorted[i-1] {
+			dedup = append(dedup, w)
+		}
+	}
+	cacheKey := strings.Join(dedup, ",")
+
+	checkerCacheMu.RLock()
+	c, ok := checkerCache[cacheKey]
+	checkerCacheMu.RUnlock()
+	if ok {
+		return c
+	}
+
+	checkerCacheMu.Lock()
+	defer checkerCacheMu.Unlock()
+	if c, ok = checkerCache[cacheKey]; ok {
+		return c
+	}
+
 	r := misspell.New()
 	r.AddRuleList(misspell.DictAmerican)
-	words, _ := ParseIgnoreSpec(ignore)
-	if len(words) > 0 {
-		r.RemoveRule(words)
-	}
+	r.RemoveRule(dedup)
 	r.Compile()
-	return &SpellingChecker{rep: r, ignore: words}
+	c = &SpellingChecker{rep: r, ignore: dedup}
+	checkerCache[cacheKey] = c
+	return c
 }
 
 // ParseAllowlist parses allowlist content: one word per line, ignoring blank lines and # comments.
@@ -114,90 +163,172 @@ func IsMarkdown(filename string) bool {
 	return ext == ".md" || ext == ".markdown" || ext == ".mdown"
 }
 
+func stripBlockquotePrefix(s string) string {
+	s = strings.TrimLeft(s, " \t")
+	for strings.HasPrefix(s, ">") {
+		s = strings.TrimPrefix(s, ">")
+		s = strings.TrimLeft(s, " \t")
+	}
+	return strings.TrimRight(s, "\r")
+}
+
+func isBlankLine(s string) bool {
+	return strings.TrimSpace(stripBlockquotePrefix(s)) == ""
+}
+
+type lineRange struct {
+	start int
+	end   int // index of '\n' or len(text)
+}
+
+func findLine(lines []lineRange, pos int) int {
+	idx := sort.Search(len(lines), func(n int) bool {
+		return lines[n].end >= pos
+	})
+	if idx < len(lines) && lines[idx].start <= pos {
+		return idx
+	}
+	return -1
+}
+
 // StripCode blanks fenced code blocks (```...``` or ~~~...~~~) and inline code spans (`...`)
 // with spaces, preserving all newlines, byte lengths, and column positions.
+// Inline code spans can span multiple lines without resetting at newline (CommonMark 0.31.2).
+// Code spans cannot cross blank lines or fenced code block boundaries.
+// Backtick characters escaped by an odd number of preceding backslashes outside a code span
+// do not start or end a code span.
 func StripCode(text string) string {
-	var b strings.Builder
-	b.Grow(len(text))
+	if text == "" {
+		return ""
+	}
+	out := []byte(text)
+
+	var lines []lineRange
+	start := 0
+	for i := 0; i <= len(text); i++ {
+		if i == len(text) || text[i] == '\n' {
+			lines = append(lines, lineRange{start: start, end: i})
+			start = i + 1
+		}
+	}
+
+	inFence := false
 	var fenceChar byte
 	var fenceLen int
-	inFence := false
-	rest := text
-	for len(rest) > 0 {
-		line, nl := rest, false
-		if i := strings.IndexByte(rest, '\n'); i >= 0 {
-			line, rest, nl = rest[:i], rest[i+1:], true
-		} else {
-			rest = ""
-		}
-		trimmed := strings.TrimLeft(line, " \t")
+	fencedLine := make([]bool, len(lines))
+
+	for idx, lr := range lines {
+		lineStr := text[lr.start:lr.end]
+		trimmed := stripBlockquotePrefix(lineStr)
 		if m := fenceRE.FindStringSubmatch(trimmed); m != nil {
 			delim := m[1]
 			if !inFence {
-				inFence, fenceChar, fenceLen = true, delim[0], len(delim)
-				blankLine(&b, line)
+				info := m[2]
+				if delim[0] != '`' || !strings.ContainsRune(info, '`') {
+					inFence = true
+					fenceChar = delim[0]
+					fenceLen = len(delim)
+					fencedLine[idx] = true
+				}
 			} else if delim[0] == fenceChar && len(delim) >= fenceLen && strings.TrimSpace(m[2]) == "" {
 				inFence = false
-				blankLine(&b, line)
+				fencedLine[idx] = true
 			} else {
-				blankLine(&b, line)
+				fencedLine[idx] = true
 			}
 		} else if inFence {
-			blankLine(&b, line)
-		} else {
-			stripSpans(&b, line)
-		}
-		if nl {
-			b.WriteByte('\n')
+			fencedLine[idx] = true
 		}
 	}
-	return b.String()
-}
 
-func blankLine(b *strings.Builder, line string) {
-	b.WriteString(strings.Repeat(" ", len(line)))
-}
+	// Blank fenced code block lines in full, preserving newlines.
+	for idx, lr := range lines {
+		if fencedLine[idx] {
+			for k := lr.start; k < lr.end; k++ {
+				if out[k] != '\r' {
+					out[k] = ' '
+				}
+			}
+		}
+	}
 
-func stripSpans(b *strings.Builder, line string) {
-	for i := 0; i < len(line); {
-		if line[i] != '`' {
-			b.WriteByte(line[i])
+	// Step 2: Blank inline code spans in non-fenced lines.
+	for i := 0; i < len(text); {
+		lineIdx := findLine(lines, i)
+		if lineIdx >= 0 && fencedLine[lineIdx] {
+			i = lines[lineIdx].end + 1
+			continue
+		}
+
+		if text[i] != '`' {
 			i++
 			continue
 		}
-		open := runLen(line, i)
-		end := findClose(line, i+open, open)
-		if end < 0 {
-			// No matching closing backtick run on this line: treat as literal text.
-			b.WriteString(line[i : i+open])
-			i += open
+
+		// Count preceding backslashes to check if this backtick is escaped.
+		numBackslashes := 0
+		for k := i - 1; k >= 0 && text[k] == '\\'; k-- {
+			numBackslashes++
+		}
+		if numBackslashes%2 != 0 {
+			i++
 			continue
 		}
-		b.WriteString(strings.Repeat(" ", end+open-i))
-		i = end + open
-	}
-}
 
-func runLen(s string, i int) int {
-	n := 0
-	for i+n < len(s) && s[i+n] == '`' {
-		n++
-	}
-	return n
-}
+		// Count opening backtick run length.
+		openLen := 0
+		for i+openLen < len(text) && text[i+openLen] == '`' {
+			openLen++
+		}
 
-func findClose(s string, i, n int) int {
-	for ; i < len(s); i++ {
-		if s[i] != '`' {
-			continue
+		// Search forward for a closing backtick run of exactly openLen length.
+		matchEnd := -1
+		curLine := lineIdx
+		for j := i + openLen; j < len(text); {
+			if text[j] == '\n' {
+				nextLine := curLine + 1
+				if nextLine < len(lines) {
+					if fencedLine[nextLine] {
+						break
+					}
+					nxtStr := text[lines[nextLine].start:lines[nextLine].end]
+					if isBlankLine(nxtStr) {
+						break
+					}
+					curLine = nextLine
+				}
+				j++
+				continue
+			}
+
+			if text[j] == '`' {
+				runLen := 0
+				for j+runLen < len(text) && text[j+runLen] == '`' {
+					runLen++
+				}
+				if runLen == openLen {
+					matchEnd = j + runLen
+					break
+				}
+				j += runLen
+				continue
+			}
+			j++
 		}
-		run := runLen(s, i)
-		if run == n {
-			return i
+
+		if matchEnd >= 0 {
+			for k := i; k < matchEnd; k++ {
+				if out[k] != '\n' && out[k] != '\r' {
+					out[k] = ' '
+				}
+			}
+			i = matchEnd
+		} else {
+			i += openLen
 		}
-		i += run - 1
 	}
-	return -1
+
+	return string(out)
 }
 
 // applyDiffs applies spelling replacements to originalText based on diff line and column positions.
@@ -291,11 +422,9 @@ func CheckSpellingFile(path string, opts SpellingOptions) ([]SpellingFinding, er
 	isMD := opts.Markdown || IsMarkdown(path)
 	findings, updated := checker.CheckText(path, text, isMD)
 	if opts.Write && updated != text {
-		writeErr := atomicfile.WriteFile(path, []byte(updated), info.Mode().Perm())
-		if writeErr != nil {
-			if writeErr = os.WriteFile(path, []byte(updated), info.Mode().Perm()); writeErr != nil {
-				return findings, fmt.Errorf("writing %q: %w", path, writeErr)
-			}
+		cleanPath := filepath.Clean(path)
+		if writeErr := atomicfile.WriteFile(cleanPath, []byte(updated), info.Mode().Perm()); writeErr != nil {
+			return findings, fmt.Errorf("writing %q: %w", path, writeErr)
 		}
 	}
 	return findings, nil
@@ -354,10 +483,9 @@ func CheckSpellingDir(dir string, opts SpellingOptions) (res SpellingResult, err
 			if fi != nil {
 				perm = fi.Mode().Perm()
 			}
-			if writeErr := atomicfile.WriteFile(path, []byte(updated), perm); writeErr != nil {
-				if writeErr = os.WriteFile(path, []byte(updated), perm); writeErr != nil {
-					return fmt.Errorf("writing %q: %w", path, writeErr)
-				}
+			cleanPath := filepath.Clean(path)
+			if writeErr := atomicfile.WriteFile(cleanPath, []byte(updated), perm); writeErr != nil {
+				return fmt.Errorf("writing %q: %w", path, writeErr)
 			}
 			res.Corrected++
 		}
@@ -366,32 +494,64 @@ func CheckSpellingDir(dir string, opts SpellingOptions) (res SpellingResult, err
 	return res, err
 }
 
-// CheckSpellingFiles checks the listed files relative to dir (or as given if dir is empty).
+// CheckSpellingFiles checks the listed files relative to dir (or opts.Dir, or cwd if both empty).
 func CheckSpellingFiles(dir string, files []string, opts SpellingOptions) (res SpellingResult, err error) {
-	if dir != "" {
-		root, statErr := filepath.EvalSymlinks(dir)
+	root := dir
+	if root == "" {
+		root = opts.Dir
+	}
+	var cleanRoot string
+	var rootResolved string
+	if root != "" {
+		resolved, statErr := filepath.EvalSymlinks(root)
 		if statErr != nil {
-			return res, fmt.Errorf("dir %q: %w", dir, statErr)
+			return res, fmt.Errorf("dir %q: %w", root, statErr)
 		}
-		info, statErr := os.Stat(root)
+		info, statErr := os.Stat(resolved)
 		if statErr != nil {
-			return res, fmt.Errorf("dir %q: %w", dir, statErr)
+			return res, fmt.Errorf("dir %q: %w", root, statErr)
 		}
 		if !info.IsDir() {
-			return res, fmt.Errorf("dir %q is not a directory", dir)
+			return res, fmt.Errorf("dir %q is not a directory", root)
 		}
-		dir = root
+		cleanRoot = filepath.Clean(root)
+		rootResolved = resolved
+	} else if cwd, cwdErr := os.Getwd(); cwdErr == nil {
+		cleanRoot = filepath.Clean(cwd)
+		rootResolved, _ = filepath.EvalSymlinks(cleanRoot)
 	}
 
 	checker := NewSpellingChecker(opts.Ignore)
 	for _, f := range files {
 		targetPath := f
-		relPath := f
-		if dir != "" && !filepath.IsAbs(f) {
-			targetPath = filepath.Join(dir, filepath.FromSlash(f))
-			relPath = filepath.ToSlash(f)
+		var relPath string
+
+		if !filepath.IsAbs(f) {
+			relPath = filepath.ToSlash(filepath.Clean(f))
+			relPath = strings.TrimPrefix(relPath, "./")
+			if cleanRoot != "" {
+				targetPath = filepath.Join(cleanRoot, filepath.FromSlash(f))
+			} else {
+				targetPath = filepath.Clean(f)
+			}
 		} else {
-			relPath = filepath.ToSlash(f)
+			targetPath = filepath.Clean(f)
+			if cleanRoot != "" {
+				if rel, relErr := filepath.Rel(cleanRoot, targetPath); relErr == nil && !strings.HasPrefix(rel, "..") {
+					relPath = filepath.ToSlash(rel)
+				} else if rootResolved != "" {
+					targetResolved, _ := filepath.EvalSymlinks(targetPath)
+					if rel2, relErr2 := filepath.Rel(rootResolved, targetResolved); relErr2 == nil && !strings.HasPrefix(rel2, "..") {
+						relPath = filepath.ToSlash(rel2)
+					} else {
+						relPath = filepath.ToSlash(targetPath)
+					}
+				} else {
+					relPath = filepath.ToSlash(targetPath)
+				}
+			} else {
+				relPath = filepath.ToSlash(targetPath)
+			}
 		}
 
 		if underExclude(relPath, opts.Exclude) {
@@ -419,10 +579,9 @@ func CheckSpellingFiles(dir string, files []string, opts SpellingOptions) (res S
 		res.Findings = append(res.Findings, findings...)
 		if opts.Write && updated != text {
 			perm := info.Mode().Perm()
-			if writeErr := atomicfile.WriteFile(targetPath, []byte(updated), perm); writeErr != nil {
-				if writeErr = os.WriteFile(targetPath, []byte(updated), perm); writeErr != nil {
-					return res, fmt.Errorf("writing %q: %w", f, writeErr)
-				}
+			cleanTarget := filepath.Clean(targetPath)
+			if writeErr := atomicfile.WriteFile(cleanTarget, []byte(updated), perm); writeErr != nil {
+				return res, fmt.Errorf("writing %q: %w", f, writeErr)
 			}
 			res.Corrected++
 		}
@@ -473,7 +632,7 @@ func CheckSpelling(targets []string, opts SpellingOptions) (res SpellingResult, 
 	}
 
 	if len(fileList) > 0 {
-		subRes, subErr := CheckSpellingFiles("", fileList, opts)
+		subRes, subErr := CheckSpellingFiles(opts.Dir, fileList, opts)
 		if subErr != nil {
 			return res, subErr
 		}
