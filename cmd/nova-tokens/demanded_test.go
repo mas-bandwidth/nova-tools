@@ -69,6 +69,34 @@ func TestRule1EveryPathIsAFlagAndNoEnvironmentIsConsulted(t *testing.T) {
 	}
 }
 
+func TestFoldRefusesSymlinkedOutputBeforeWritingLock(t *testing.T) {
+	t.Parallel()
+	for _, suffix := range []string{"", string(os.PathSeparator), string(os.PathSeparator) + "."} {
+		t.Run("out"+suffix, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			target := mkdir(t, filepath.Join(dir, "target"))
+			link := filepath.Join(dir, "out")
+			transcripts := mkdir(t, filepath.Join(dir, "transcripts"))
+			write(t, filepath.Join(target, tokens.LockName), "original lock\n")
+			write(t, filepath.Join(target, "2026-09-11.tsv"), "original day\n")
+			if err := os.Symlink(target, link); err != nil {
+				t.Fatal(err)
+			}
+			result := invoke(t, "fold", "--out", link+suffix, "--day", "2026-09-11",
+				"--repos", reposFile(t, dir), "--claude", "fixture="+transcripts)
+			wantExit(t, result, 2)
+			wantContains(t, result.stderr, "symlink")
+			if got := read(t, filepath.Join(target, tokens.LockName)); got != "original lock\n" {
+				t.Errorf("lock changed: %q", got)
+			}
+			if got := read(t, filepath.Join(target, "2026-09-11.tsv")); got != "original day\n" {
+				t.Errorf("day changed: %q", got)
+			}
+		})
+	}
+}
+
 // ---------------------------------------------------------------- rule 2: sources are declared, rows name them
 
 func TestRule2EveryRowNamesItsSources(t *testing.T) {

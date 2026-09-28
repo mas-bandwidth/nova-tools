@@ -36,6 +36,9 @@ const lockPoll = 50 * time.Millisecond
 // TakeFoldLock takes the output directory's lock, waiting up to wait, and returns the
 // release. The release is safe to call more than once.
 func TakeFoldLock(out string, wait time.Duration) (func(), error) {
+	if err := checkOutputDirectory(out); err != nil {
+		return nil, err
+	}
 	path := filepath.Join(out, LockName)
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {
@@ -65,7 +68,7 @@ func TakeFoldLock(out string, wait time.Duration) (func(), error) {
 		if !time.Now().Before(deadline) {
 			held := HolderPID(path)
 			f.Close()
-			return nil, fmt.Errorf("another nova-tokens fold holds %s (pid %s); this run waited %s and will not write beside it, because two folds on one --out write one temp name", path, held, wait)
+			return nil, fmt.Errorf("another nova-tokens fold holds %s (pid %s); this run waited %s and will not write beside it, because two folds on one --out would race to replace the same day files", path, held, wait)
 		}
 		time.Sleep(lockPoll + jitter)
 	}
