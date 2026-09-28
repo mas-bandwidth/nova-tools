@@ -33,8 +33,11 @@ import (
 // of member placement, immutable member epochs, and retained historical bytes.
 // Accepted receipts must identify the drawn model action, arguments, epoch,
 // writer, revision and membership delta. A second owned Redis replays accepted
-// commands FROM those receipts, as tla/check_member_replay.py does; refused
-// commands have no receipt and are checked against complete-store snapshots.
+// commands FROM those receipts, as tla/check_member_replay.py does. Refused
+// commands have no receipt and must leave the store image unchanged. An
+// accepted action, on the source store and on receipt replay, may create or
+// change only the modeled definition, rows, cells, member records, revision,
+// changes stream, and epoch register.
 // External bindings, batches, definition edits and row sorting retain their
 // separate randomized/functional gates; no claim of concurrent server writers
 // or exhaustive TLC exploration is made by this bounded execution test.
@@ -338,6 +341,63 @@ func (h *epochProperty) receipt(a epochAction, opts ntable.WriteOptions, r ntabl
 	}
 }
 
+// epochActionKey is a key an accepted action may create or change. Definition
+// materialization is the template, its identity, the registry, and the
+// epoch snapshot; the rest are rows, cells, member records, revision, the
+// changes stream, and the epoch register.
+func epochActionKey(key string) bool {
+	if key == epochPropertyKey || key == ntable.Registry {
+		return true
+	}
+	if strings.HasPrefix(key, "table::member:") {
+		return true
+	}
+	for _, table := range propTables {
+		def := ntable.DefKey(table)
+		switch key {
+		case def, def + ":identity", ntable.ChangesKey(table), ntable.RevisionKey(table):
+			return true
+		}
+		rest, ok := strings.CutPrefix(key, def+":")
+		if !ok {
+			continue
+		}
+		epoch, suffix, ok := strings.Cut(rest, ":")
+		if !ok {
+			continue
+		}
+		if _, err := strconv.ParseUint(epoch, 10, 64); err != nil {
+			continue
+		}
+		if suffix == "rows" || suffix == "definition" || strings.HasPrefix(suffix, "row:") || strings.HasPrefix(suffix, "cell:") {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *epochProperty) acceptImage(store int, before map[string]string, c *redis.Client) {
+	h.t.Helper()
+	after := memberStoreImage(h.t, c)
+	var bad []string
+	for key, value := range after {
+		if prev, ok := before[key]; !ok || prev != value {
+			if !epochActionKey(key) {
+				bad = append(bad, key)
+			}
+		}
+	}
+	for key := range before {
+		if _, ok := after[key]; !ok && !epochActionKey(key) {
+			bad = append(bad, key)
+		}
+	}
+	if len(bad) > 0 {
+		slices.Sort(bad)
+		h.fail("store%d accepted action created or changed %s", store, strings.Join(bad, ", "))
+	}
+}
+
 func (h *epochProperty) step(a epochAction) {
 	h.t.Helper()
 	h.trace = append(h.trace, fmt.Sprintf("%d %s writer=%d seen=%d active=%d args=%s", len(h.trace), epochActionNames[a.verb], a.actor, h.seen[a.actor], h.active, epochJSON(a.wire())))
@@ -424,6 +484,7 @@ func (h *epochProperty) step(a epochAction) {
 				h.fail("refusal wrote state or returned a receipt")
 			}
 		} else {
+			h.acceptImage(i, image, c)
 			event := h.event(c, a.table)
 			if i == 0 {
 				h.receipt(a, opts, receipt, event, before, after)
