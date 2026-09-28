@@ -235,23 +235,6 @@ P7. **The fix-card shape is three calls, not thirty turns.** Step 1 (model):
 - P4, P5: `TestAdmissionRefusesAFourthCallWithoutExplore` -- a fourth call without `MODE: explore` is refused, with the remedy line, and the same card with `MODE: explore` is admitted.
 - P6: `TestExploreOverTurnBudgetIsStoppedWithTheBudgetNamed` -- a `MODE: explore` card carries a turn budget the harness enforces: over its turn budget it is stopped and the partial RESULT names the budget.
 
-## Exact-tip bench prewarm (#2498 S3)
-
-Exact-tip bench prewarm prepares the inputs a new job would otherwise compile cold.
-The source is an existing local checkout that already holds the full 40-character
-commit; the verb never fetches, guesses a branch or contacts a fleet host. It makes
-`<root>/ref/<owner>/<name>@<tip>` as the reference checkout already consumed by
-staging and runs four phases against that exact detached tree: modules, ordinary builds, compiled Go test binaries and ASDF FASLs. The phases use the same
-`<root>/cache/go-mod`, `<root>/cache/go-build` and
-`<root>/cache/common-lisp/<tip>` seed. Before a card starts, that exact-tip seed
-is copied into a private overlay under the card's job directory.
-
-A new reference checkout stays under an owned temporary directory and is hidden until all four phases succeed. A failed phase names itself and publishes neither
-the reference checkout nor `<root>/prewarm/<owner>/<name>@<tip>.receipt`.
-
-The success line and durable receipt are `PREWARM OK repo=<owner/name> tip=<full-sha> phases=modules,build,test-binaries,lisp`. A PREWARM receipt proves preparation, not fleet adoption. S3 is adopted only when this command has run at
-the current tip on every intended bench and `make test` in a fresh job on each adopted bench finishes in under 60 seconds.
-
 ## The task templates
 
 ### `read-pr`
@@ -385,13 +368,12 @@ is trusted.
 
 Measured 2026-09-12 on the live pool and the worker homes. Correctness is the
 rest of this spec; this section records what `nova-swarm` costs the coordinator
-and the bench, and the rules that bound that cost. Three operations are the
+and the bench, and the rules that bound that cost. Two operations are the
 widest, and each has one rule.
 
 | the operation, measured | the measurement | the rule that bounds it |
 |---|---|---|
 | **REPEATS: one full clone of the repository per job** | 21 clones, 307 MB and 36 s of wall clock for one object graph; 1,128,320 cache-read tokens over 13 tool calls, 86,794 cache-read tokens per tool call, with the clone and the `gh pr checkout` two of them — about 174K per job and 3.6M across the 21 | the reference clone |
-| **COORDINATOR READ: `triage` is the widest listing of the seven** | `status` 22 lines/3,174 B; `triage` 45 lines/15,490 B with 20 of 47 at the default; `triage --all --max 0` 71/24,810 B — the counts on `TRIAGE OK` are 27 B of it | counts first, findings capped |
 | **WAITS ON: a deadline, a sampler, and a person** | a job's own clock is `--deadline` (40m in `deepseek.json`); the usage budget is read by the sampler at `--usage-interval` (default 5 s); a verdict waits on a person | one owner per wait, one line back |
 
 1. **The reference clone.** A job's clone is its own and is taken with
@@ -399,13 +381,7 @@ widest, and each has one rule.
    so the object graph is shared with a checkout already on the bench and the
    job directory holds only its own objects; `--dissociate` keeps the job's
    clone independent of a reference it does not own.
-2. **Counts first; a finding's prose is the second read.** The narrow return of
-   `triage` is the counts: `TRIAGE BATCH` and `TRIAGE OK` are the lines a
-   coordinator reads, and a `TRIAGE FINDING` line carries the finding's own
-   prose, bounded by `--max` and capped by `internal/oneline`, with `TRIAGE
-   MORE kind=finding shown=<n> total=<t> at=<path>` naming the page that holds
-   the rest.
-3. **One owner per wait, and one line back.** A job's own clock is the deadline
+2. **One owner per wait, and one line back.** A job's own clock is the deadline
    held by the machinery; the usage budget is read by the sampler at
    `--usage-interval` and never by a second poll; and a verdict waits on a
    person, never on a scan.

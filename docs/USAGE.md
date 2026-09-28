@@ -224,15 +224,13 @@ deadlines, collected results and usage accounting where the source supports it.
 
 **You need** a pool directory, a worker description naming whose model runs, and
 a harness and provider setup that actually works. **Every job runs inside
-`nova-sandbox` on every supported platform**: `run` proves the wall once before
-the first worker and refuses to start without a usable sandbox unless you
-explicitly pass `--no-sandbox`, **which provides no containment at all**. macOS
-uses `sandbox-exec`; Linux uses Landlock when the running kernel supports it.
-Windows has no containment backend yet.
+`nova-sandbox` on every supported platform.** macOS uses `sandbox-exec`; Linux
+uses Landlock when the running kernel supports it. Windows has no containment
+backend yet.
 
-**First trial.** `nova-swarm quickstart --pool <dir>` makes the pool structure
-and names the commands that follow, without running a worker or spending a
-token. See the
+**First trial.** `nova-swarm template --name read-pr` prints the read-pr
+template. `nova-swarm lint --rules` prints the lint rules. Neither starts a
+worker nor spends a token. See the
 [first-run transcript](TESTS.md#nova-swarm) and
 [nova-swarm in the command reference](CLI.md#nova-swarm).
 
