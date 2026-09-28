@@ -501,8 +501,7 @@ row whose count cells are all zero and all read; the fold is still the
 column's, hidden rows included.
 
 **The empty rule.** An empty table, and a table with no visible row, renders
-as the empty string, including its title: no placeholder and no gap. The sprint table hides its
-stream block that way with no extra blank line.
+as the empty string, including its title: no placeholder and no gap.
 
 ## Watching
 
@@ -511,42 +510,19 @@ between two that print, `--title` first. With no `--out` it draws in place
 on the terminal: the ANSI home-and-clear sequence, then the text, so a
 console tab shows the live table with no shell loop. `--out <file>`
 publishes each tick by writing a temp file beside it and renaming it over,
-the sprint table's way, so a reader sees one whole table. `--once` renders
+so a reader sees one whole table. `--once` renders
 once and exits, with no clear. With explicit table names, every tick is exactly one Redis pipeline of read-only snapshots, including cold and changed shapes. A stored view adds one exchange to reload its configuration. An explicit table watch holds the tables; a stored view also has its timestamp,
 title and optional summary. In either mode, a tick whose read fails leaves the last good text standing with one
 `stale: <n>s` line under it, and stderr says why once. A signal ends it,
 exit 0.
 
-## The first table: the sprint's stream block
-
-The sprint table's stream block (`nova-sprint table --layout live`) is the
-table `streams`: one row per stream of `ws:order`, its labels (the stream
-names) headed `stream` and 25 wide, and one `count:sum` column per state of the stream line (waiting,
-ready, working, review, merging, landed), footer `total`. Every cell is
-bound to the set the card model already keeps, `ws:<s>:<state>` under the
-sprint epoch, with the stream's sentinel excluded; nothing is copied. The
-sprint tick reads every cell through `ntable` in its one pipeline (the
-headline and the block stay one count), renders the block through
-`ntable.Render`, byte for byte what it printed before, and the sprint loop
-binds the table in the store whenever its shape moves (a stream added or
-gone, a `sprint clear`'s new epoch), so
-
-```
-nova-table render streams --hide-zero-rows
-```
-
-prints the same block from the same sets, and a write through nova-table is
-refused naming `nova-sprint task move`. `sprint clear` needs no table
-call: the epoch moves, the tick binds the new epoch's sets, they are empty,
-and the block hides.
-
 ## Module integration and deployment
 
-The module retains `QueueCells` and `QueueCount` for nova-sprint callers that
-already hold a shape and batch other reads in the same pipeline. `Reader.Queue`
+The module exposes `QueueCells` and `QueueCount` for callers that hold a
+shape and batch other reads in the same pipeline. `Reader.Queue`
 returns an atomic snapshot; its compatibility `changed` result is always false.
 `Shape`, `Bind`, and `Summaries` are also single-call APIs, so synchronizing a
-changed sprint table does not introduce a chain of dependent network reads.
+changed table does not introduce a chain of dependent network reads.
 Bound cells retain their owner and exclude metadata; deleting a row or dropping
 a table never deletes a bound set. A refused write includes the table, row,
 column and member where applicable, plus the relevant inspection or repair verb.
@@ -563,7 +539,8 @@ use the existing `HGET`/`HSET` grants. Rename additionally needs `SCAN` and `REN
 `FCALL_RO ns_table_check` and `SCAN`; these are not added to the display-only
 reader role. Custom epoch/record namespaces require their own key grants. The standalone ordered-set move retains
 `ns_oset_move`. `SCARD` and `SISMEMBER` preflight the registry type before
-multi-key writes. No command silently loads a library or changes live grants.
+multi-key writes. No command changes live grants. Function-library setup is described in
+[Start locally](#start-locally).
 
 Redis functions run with the caller's ACL permissions. A writer's underlying
 command grants also allow those same commands directly; Redis ACLs cannot make
