@@ -21,7 +21,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	stdflag "flag"
 	"fmt"
 	"io"
@@ -185,50 +184,13 @@ func redisLogin(addr string, getenv func(string) string) redisconn.Options {
 	return o
 }
 
-// redisError is a failure to reach the store or to log in to it after it
-// was opened, already one line of redisconn's; any other error of the
-// store (a refusal, a conflict) is passed through as it came.
-type redisError struct{ error }
-
-func (e redisError) Unwrap() error { return e.error }
-
-// redisApplier is the Redis side on a redisconn connection. Every error
-// that is the store being unreachable or refusing the login is explained by
-// the connection (redisconn.Conn.Explain) and marked a redisError.
+// redisApplier is the Redis side on a redisconn connection. The connection
+// explains its own failures (redisconn.Open's hook): an error of the store
+// being unreachable, refusing the login, or losing a reply comes back from
+// every call already one line of redisconn's, found by redisconn.Failed.
 type redisApplier struct {
-	a    *config.RedisApplier
+	*config.RedisApplier
 	conn *redisconn.Conn
-}
-
-func (r redisApplier) explain(err error) error {
-	if c := redisconn.Classify(err); c == redisconn.Unreachable || c == redisconn.AuthRefused {
-		return redisError{r.conn.Explain(err)}
-	}
-	return err
-}
-
-func (r redisApplier) Read(ctx context.Context, kind string) (map[string]config.View, int64, error) {
-	v, rev, err := r.a.Read(ctx, kind)
-	return v, rev, r.explain(err)
-}
-
-func (r redisApplier) Prepare(ctx context.Context) error { return r.explain(r.a.Prepare(ctx)) }
-
-func (r redisApplier) Write(ctx context.Context, kind string, row config.Row, prev config.View, actor, idem string) error {
-	return r.explain(r.a.Write(ctx, kind, row, prev, actor, idem))
-}
-
-func (r redisApplier) Remove(ctx context.Context, kind, name, actor, idem string) error {
-	return r.explain(r.a.Remove(ctx, kind, name, actor, idem))
-}
-
-func (r redisApplier) Stamp(ctx context.Context, kind string, prev, rev int64) error {
-	return r.explain(r.a.Stamp(ctx, kind, prev, rev))
-}
-
-func (r redisApplier) Beats(ctx context.Context, names []string) (map[string]*config.Beat, error) {
-	bs, err := r.a.Beats(ctx, names)
-	return bs, r.explain(err)
 }
 
 func (r redisApplier) Close() error { return r.conn.Close() }
@@ -242,9 +204,9 @@ func realDeps() deps {
 		openRedis: func(ctx context.Context, addr string, getenv func(string) string) (redisSide, error) {
 			conn, err := redisconn.Open(ctx, redisLogin(addr, getenv), getenv)
 			if err != nil {
-				return nil, redisError{err}
+				return nil, err
 			}
-			return redisApplier{a: &config.RedisApplier{Client: conn.Client()}, conn: conn}, nil
+			return redisApplier{RedisApplier: &config.RedisApplier{Client: conn.Client()}, conn: conn}, nil
 		},
 		now: time.Now,
 	}
@@ -308,11 +270,15 @@ func refused(stderr io.Writer, verb, what, next string) int {
 	return 1
 }
 
-// redisRefused is the exit 2 line of a Redis that could not be used: it was
-// not reached, or it refused the login. The line is redisconn's own, which
-// names the store, the login and the next step.
+// redisRefused is the line of a Redis that could not be used, redisconn's
+// own, which names the store, the login and the next step. Its exit code is
+// the class's (redisconn doc.go): not reached, or the login refused, is 2; a
+// reply lost after the command was sent is 1, the write may have committed.
 func redisRefused(stderr io.Writer, verb string, err error) int {
 	fmt.Fprintf(stderr, "%s %s: %s\n", tool, verb, oneline.Escape(err.Error()))
+	if class, _ := redisconn.Failed(err); class == redisconn.Unconfirmed {
+		return 1
+	}
 	return 2
 }
 
@@ -325,15 +291,16 @@ func refuseErr(stderr io.Writer, verb string, err error) int {
 	return refuse(stderr, verb, err.Error())
 }
 
-// isRedisError reports a Redis that could not be used (redisRefused).
+// isRedisError reports a Redis that could not be used (redisRefused): an
+// error of redisconn's, from Open or from the connection's hook.
 func isRedisError(err error) bool {
-	var r redisError
-	return errors.As(err, &r)
+	_, ok := redisconn.Failed(err)
+	return ok
 }
 
 // storeErr turns a store error into the right line: a refusal (exit 1) with
-// its remedy, a Redis that could not be used (exit 2, redisRefused), or a
-// store that did not answer (exit 2).
+// its remedy, a Redis that could not be used (redisRefused), or a store that
+// did not answer (exit 2).
 func storeErr(stderr io.Writer, verb string, err error, next string) int {
 	if isRedisError(err) {
 		return redisRefused(stderr, verb, err)
