@@ -97,6 +97,71 @@ func TestFoldRefusesSymlinkedOutputBeforeWritingLock(t *testing.T) {
 	}
 }
 
+func TestFoldRefusesParentSymlinkedOutputBeforeWritingLock(t *testing.T) {
+	t.Parallel()
+	for _, suffix := range []string{"", string(os.PathSeparator), string(os.PathSeparator) + "."} {
+		t.Run("out"+suffix, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			target := mkdir(t, filepath.Join(dir, "target"))
+			child := mkdir(t, filepath.Join(target, "child"))
+			link := filepath.Join(dir, "parent_link")
+			transcripts := mkdir(t, filepath.Join(dir, "transcripts"))
+			write(t, filepath.Join(child, tokens.LockName), "original lock\n")
+			write(t, filepath.Join(child, "2026-09-11.tsv"), "original day\n")
+			if err := os.Symlink(target, link); err != nil {
+				t.Fatal(err)
+			}
+			outPath := filepath.Join(link, "child") + suffix
+			result := invoke(t, "fold", "--out", outPath, "--day", "2026-09-11",
+				"--repos", reposFile(t, dir), "--claude", "fixture="+transcripts)
+			wantExit(t, result, 2)
+			wantContains(t, result.stderr, "symlink")
+			if got := read(t, filepath.Join(child, tokens.LockName)); got != "original lock\n" {
+				t.Errorf("lock changed: %q", got)
+			}
+			if got := read(t, filepath.Join(child, "2026-09-11.tsv")); got != "original day\n" {
+				t.Errorf("day changed: %q", got)
+			}
+		})
+	}
+}
+
+func TestFoldRefusesParentSymlinkCreatesNoFiles(t *testing.T) {
+	t.Parallel()
+	for _, suffix := range []string{"", string(os.PathSeparator), string(os.PathSeparator) + "."} {
+		t.Run("out"+suffix, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			target := mkdir(t, filepath.Join(dir, "target"))
+			child := mkdir(t, filepath.Join(target, "child"))
+			link := filepath.Join(dir, "parent_link")
+			transcripts := mkdir(t, filepath.Join(dir, "transcripts"))
+			if err := os.Symlink(target, link); err != nil {
+				t.Fatal(err)
+			}
+			outPath := filepath.Join(link, "child") + suffix
+			result := invoke(t, "fold", "--out", outPath, "--day", "2026-09-11",
+				"--repos", reposFile(t, dir), "--claude", "fixture="+transcripts)
+			wantExit(t, result, 2)
+			wantContains(t, result.stderr, "symlink")
+			if _, err := os.Stat(filepath.Join(child, tokens.LockName)); !os.IsNotExist(err) {
+				t.Errorf("fold.lock created in referent child: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(child, "2026-09-11.tsv")); !os.IsNotExist(err) {
+				t.Errorf("day file created in referent child: %v", err)
+			}
+			entries, err := os.ReadDir(child)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 0 {
+				t.Fatalf("referent child has %d entries, want 0: %v", len(entries), entries)
+			}
+		})
+	}
+}
+
 // ---------------------------------------------------------------- rule 2: sources are declared, rows name them
 
 func TestRule2EveryRowNamesItsSources(t *testing.T) {

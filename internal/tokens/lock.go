@@ -36,10 +36,10 @@ const lockPoll = 50 * time.Millisecond
 // TakeFoldLock takes the output directory's lock, waiting up to wait, and returns the
 // release. The release is safe to call more than once.
 func TakeFoldLock(out string, wait time.Duration) (func(), error) {
-	if err := checkOutputDirectory(out); err != nil {
-		return nil, err
-	}
 	path := filepath.Join(out, LockName)
+	if err := checkOutputDirectory(out); err != nil {
+		return nil, fmt.Errorf("the lock that keeps two folds off one --out could not be opened at %s: %w", path, err)
+	}
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("the lock that keeps two folds off one --out could not be opened at %s: %w", path, err)

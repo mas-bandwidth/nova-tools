@@ -91,6 +91,63 @@ func TestDayWritersRefuseSymlinkedOutputDirectory(t *testing.T) {
 	}
 }
 
+func TestDayWritersRefuseParentSymlinkedOutputDirectory(t *testing.T) {
+	t.Parallel()
+	day := &DayFile{Day: "2026-09-11", Build: "fixture"}
+	operations := map[string]func(string) error{
+		"save": day.Save,
+		"lock": func(out string) error {
+			release, err := TakeFoldLock(out, 0)
+			if release != nil {
+				release()
+			}
+			return err
+		},
+	}
+	for name, write := range operations {
+		for _, suffix := range []string{"", string(os.PathSeparator), string(os.PathSeparator) + "."} {
+			t.Run(name+"/"+fmt.Sprintf("suffix=%q", suffix), func(t *testing.T) {
+				t.Parallel()
+				root := t.TempDir()
+				target := filepath.Join(root, "target")
+				child := filepath.Join(target, "child")
+				link := filepath.Join(root, "parent_link")
+				if err := os.MkdirAll(child, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(target, link); err != nil {
+					t.Fatal(err)
+				}
+				out := filepath.Join(link, "child") + suffix
+				err := write(out)
+				if err == nil || !strings.Contains(err.Error(), "symlink") {
+					t.Fatalf("write through parent symlink error=%v, want symlink refusal", err)
+				}
+				if name == "lock" && !strings.Contains(err.Error(), "lock") {
+					t.Fatalf("lock error=%v, want mention of lock", err)
+				}
+				info, err := os.Lstat(link)
+				if err != nil || info.Mode()&os.ModeSymlink == 0 {
+					t.Fatalf("parent link changed: %v / %v", info, err)
+				}
+				entries, err := os.ReadDir(child)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(entries) != 0 {
+					t.Fatalf("referent child directory changed: %d entries, want 0: %v", len(entries), entries)
+				}
+				if _, err := os.Stat(filepath.Join(child, LockName)); !os.IsNotExist(err) {
+					t.Errorf("lock file created in referent child: %v", err)
+				}
+				if _, err := os.Stat(filepath.Join(child, day.Day+FileSuffix)); !os.IsNotExist(err) {
+					t.Errorf("day file created in referent child: %v", err)
+				}
+			})
+		}
+	}
+}
+
 func TestDayWritersAcceptRealOutputDirectorySpellings(t *testing.T) {
 	t.Parallel()
 	for _, suffix := range []string{"", string(os.PathSeparator), string(os.PathSeparator) + "."} {

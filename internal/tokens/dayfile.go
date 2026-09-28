@@ -135,11 +135,20 @@ func (d *DayFile) Save(out string) error {
 	return atomicfile.WriteFile(Path(out, d.Day), []byte(d.Render()), 0o644)
 }
 
-// checkOutputDirectory inspects the named directory itself before a writer
-// opens anything below it. Clean first so a trailing separator or /. cannot
-// turn Lstat into a lookup through a directory symlink.
+// checkOutputDirectory inspects the named directory itself and its parent
+// directory before a writer opens or creates anything below it. Clean first
+// so a trailing separator or /. cannot turn Lstat into a lookup through a
+// directory symlink.
 func checkOutputDirectory(out string) error {
-	info, err := os.Lstat(filepath.Clean(out))
+	cleanDir := filepath.Clean(out)
+	parent := filepath.Dir(cleanDir)
+	if parent != cleanDir {
+		pinfo, err := os.Lstat(parent)
+		if err == nil && pinfo.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("output parent directory %q for %q is a symlink; use a real directory", parent, out)
+		}
+	}
+	info, err := os.Lstat(cleanDir)
 	if err != nil {
 		return fmt.Errorf("output directory %q: %w", out, err)
 	}

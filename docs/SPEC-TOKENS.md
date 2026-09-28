@@ -121,8 +121,9 @@ near the end, and the sections below say how each is met.
    removed on retry), and `check` steps over valid day-file temporaries while
    flagging unrelated temporaries as strays (lessons 53, 54, 67).
    Before opening the fold lock or writing a day file, the writer refuses an
-   output directory that is itself a symlink, including a spelling with a
-   trailing separator or `/.`. It leaves the link and its target unchanged.
+   output directory that is itself a symlink or a child of a symlink directory,
+   including a spelling with a trailing separator or `/.`. It leaves the link
+   and its target unchanged.
 9. **One file per day. A month is a sum of day files. The tool removes
    nothing.** There is no month file. `sum` reads day files and writes
    nothing. No verb deletes, truncates or trims any file, including any log.
