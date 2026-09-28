@@ -468,3 +468,39 @@ func TestOnCycleStillSeesARealCycle(t *testing.T) {
 		t.Fatal("onCycle missed a cycle through a supersedes back edge")
 	}
 }
+
+func TestCheckThroughStale(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	hdr := "date\tmodel\trepo\tinput\toutput\tcache_write\tcache_read\treasoning\trough\tday_basis\tsources\n"
+	row := "2026-09-18\tm\tr\t10\t10\t-\t-\t-\t0\tUTC\tx\n"
+	content := "nova-tokens v1 day=2026-09-18 at=2026-09-18T23:55:00Z build=b turns=1 sources=x\n" + hdr + row
+	if err := os.WriteFile(filepath.Join(dir, "2026-09-18.tsv"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Check(dir, CheckOptions{Through: "2026-09-20"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Stale {
+		t.Errorf("Check with Through=2026-09-20 when last=2026-09-18 want Stale=true, got false")
+	}
+
+	res, err = Check(dir, CheckOptions{Through: "2026-09-18"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Stale {
+		t.Errorf("Check with Through=2026-09-18 when last=2026-09-18 want Stale=false, got true")
+	}
+
+	res, err = Check(dir, CheckOptions{Through: "2026-09-15"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Stale {
+		t.Errorf("Check with Through=2026-09-15 when last=2026-09-18 want Stale=false, got true")
+	}
+}
