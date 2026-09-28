@@ -3,7 +3,6 @@ package release
 import (
 	"errors"
 	"os"
-	"strings"
 	"syscall"
 )
 
@@ -39,7 +38,8 @@ func writeNoFollow(op, path string, data []byte, perm os.FileMode) error {
 
 // refuseSymlinkDestination reports a final component that is a symlink.
 // A trailing separator is stripped only for this look: on macOS, Lstat of
-// the path with one reports the target directory and hides the link.
+// the path with one reports the target directory and hides the link. A backslash
+// is a literal filename byte on Unix, so only the host's separators are stripped.
 func refuseSymlinkDestination(op, path string) error {
 	fi, err := os.Lstat(pathWithoutTrailingSep(path))
 	if err != nil || fi.Mode()&os.ModeSymlink == 0 {
@@ -50,9 +50,12 @@ func refuseSymlinkDestination(op, path string) error {
 }
 
 func pathWithoutTrailingSep(path string) string {
-	trimmed := strings.TrimRight(path, `/\`)
-	if trimmed == "" {
+	end := len(path)
+	for end > 0 && os.IsPathSeparator(path[end-1]) {
+		end--
+	}
+	if end == 0 {
 		return path
 	}
-	return trimmed
+	return path[:end]
 }
