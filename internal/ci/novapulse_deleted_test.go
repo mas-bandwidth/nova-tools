@@ -16,7 +16,7 @@ var novaPulseRun = regexp.MustCompile(`(Command(Context)?\(|\.String\()[^\n]*"no
 // TestTheNovaPulseCommandIsDeleted is the DONE-WHEN of nova-tools #3801: cmd/nova-pulse is
 // gone, nothing in the tree runs the nova-pulse binary (internal/pulse, the frozen
 // engine no command reaches, is the one package left to delete), no bench
-// script installs or checks it, and docs/CLI.md's section says where its verbs went.
+// script installs or checks it, and living command references omit it.
 func TestTheNovaPulseCommandIsDeleted(t *testing.T) {
 	t.Parallel()
 
@@ -72,21 +72,13 @@ func TestTheNovaPulseCommandIsDeleted(t *testing.T) {
 			}
 		}
 	}
-	doc, err := os.ReadFile(filepath.Join(root, "docs", "CLI.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, section, ok := strings.Cut(string(doc), "\n## nova-pulse\n")
-	if !ok {
-		t.Fatal("docs/CLI.md has no ## nova-pulse section saying where its verbs went")
-	}
-	section, _, _ = strings.Cut(section, "\n## ")
-	for _, want := range []string{"Deleted (nova-tools #3801)", "nova-sprint card cut", "nova-sprint card harvest", "nova-sprint table"} {
-		if !strings.Contains(section, want) {
-			t.Errorf("docs/CLI.md's nova-pulse section does not say %q", want)
+	for _, name := range []string{"CLI.md", "TESTS.md"} {
+		doc, err := os.ReadFile(filepath.Join(root, "docs", name))
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-	if strings.Contains(section, "\nnova-pulse ") {
-		t.Error("docs/CLI.md's nova-pulse section still gives a synopsis for the deleted binary")
+		if strings.Contains(string(doc), "nova-pulse") {
+			t.Errorf("docs/%s names nova-pulse; living references must omit deleted tools", name)
+		}
 	}
 }
