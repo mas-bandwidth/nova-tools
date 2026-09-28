@@ -18,7 +18,7 @@ The 1.0.0 set is fifteen tools. Nothing outside it ships in 1.0.0.
 | [nova-config](docs/CLI.md#nova-config) | the permanent configuration in Postgres, applied into Redis |
 | [nova-fuse](docs/CLI.md#nova-fuse) | a recorded decision to stop reading a source |
 | [nova-memory](docs/CLI.md#nova-memory) | matching sources from your Markdown records |
-| nova-redis | Redis scratch: spill and recall |
+| [nova-redis](docs/CLI.md#nova-redis) | the Redis store: `serve` runs it, `spill` and `recall` keep scratch with a TTL, `fn load` puts this binary's function library on it and `fn check` compares without changing anything |
 | [nova-sandbox](docs/CLI.md#nova-sandbox) | filesystem restrictions for a command |
 | [nova-secrets](docs/CLI.md#nova-secrets) | encrypted storage, and selected credentials delivered to a child command |
 | [nova-self-talk](docs/CLI.md#nova-self-talk) | flagged sentence patterns in how you write about yourself |

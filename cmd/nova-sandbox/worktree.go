@@ -85,6 +85,7 @@ var worktreeForgeFactory = func(repo string, env []string) worktreeForge {
 var (
 	worktreeNow   = time.Now
 	worktreeInUse = inUseByAProcess
+	worktreeGUID  = newGUID
 )
 
 // The three sentinel failures the forge seam can report, which the verb turns
@@ -231,7 +232,7 @@ func worktreeOne(f worktreeFlags, stdout, stderr io.Writer, env []string) int {
 		_ = removeWorktree(f.repo, f.scratch, path)
 	}
 	if guid == "" {
-		guid = newGUID()
+		guid = worktreeGUID()
 	}
 	path := filepath.Join(f.scratch, guid)
 	if err := addWorktree(f.repo, path, head); err != nil {

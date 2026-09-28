@@ -12,9 +12,8 @@ import (
 // the files they name: a link resolves relative to the file it stands in.
 // docs/SPEC.md DESCRIBES this checker, so it quotes markdown grammar inside
 // inline code spans that are not links; fences and code spans are skipped
-// first, or the description would fail the check it describes. docs/spec-pulse/
-// has its own test, so this one reads the repo root and docs/ directly and
-// never descends into a subdirectory.
+// first, or the description would fail the check it describes. It reads the
+// repo root and docs/ directly and never descends into a subdirectory.
 
 // inlineCodeRe is one backtick, any run of non-backticks, one backtick — the
 // inline code span stripped before a line is searched for links.

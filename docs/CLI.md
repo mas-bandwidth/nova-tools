@@ -18,7 +18,7 @@ nova-check floors --core <SEED-CORE.md> --source <SEED.md>   # the door's floor 
 nova-check corpus --ledger <file> --root <dir> --min-anchors <n>   # the material you have chosen never to lose silently is still where your ledger says (and the ledger has not shrunk)
 nova-check hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <email>" [--paths <glob>,...] [--kind <kind>] [--max <n>] [--timeout <s>]   # the accept gate's four mechanical checks on a branch before you ask for a read: identity, out-of-path, stray-file, secret (exit 0 clean, 1 findings, 2 could not run)
 nova-check dogfood ledger (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>]   # one row per verb: who has run it, when, and whether it did what they needed
-nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] --receipts <dir>   # append one receipt, refusing a verb the list does not declare
+nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] [--closes <id>] --receipts <dir> [--tools-timeout <s>] [--fail-max <n>]   # append one receipt, refusing a verb the list does not declare
 nova-check dogfood gate (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--shipped <cmd dir>] [--require-all] [--allow-empty]   # exit 1 with the verbs no non-author has run and the edges nobody has cleared: the line a release calls
 nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir> --retired <file> --since <RFC3339|24h> [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>] [--certs <tsv>] [--state <file>] [--by <name>] [--json] [--timeout <n>]   # are we converging: one line per stream, now against --since, with the ratio and the trend
 ```
@@ -31,7 +31,7 @@ nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir> --reti
 $ nova-check quickstart --dir ./self
 QUICKSTART OK dir=./self checks=2: links, then nocode
 LINKS OK files=4 links=3 excluded=0
-NOCODE OK files=5 clean deny-list=floor\x20list
+NOCODE OK files=5 clean deny-list=floor-list
 QUICKSTART OK done=2 worst-exit=0 next=kernel,attest,floors,corpus (each wants a budget, a manifest or a ledger of yours: nova-check help)
 
 $ nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
@@ -120,7 +120,9 @@ and supplies the list for tools absent from that directory. At least one flag
 is required. The reader accepts fenced command lines, indented `usage:`
 blocks, `$` transcripts and `### verb` headings within a tool's section. A
 synopsis with no verb declares a bare invocation, represented as `verb=-` and
-selected with `--verb -`.
+selected with `--verb -`. A `--verb` that names the bare form instead of
+spelling it — `(default)`, `bare`, `none`, `no verb` — is refused with
+`did you mean: <tool> --verb -` when the tool declares a bare invocation.
 
 **An edge is what the run found, not only what it failed at.** A receipt records
 an edge when the verb did not do what the run needed (`--not-ok`) **or** when
@@ -746,7 +748,25 @@ Ask the machine what it can enforce, then prove the wall before the first job:
 ```
 $ nova-sandbox check
 CHECK OK backend=sandbox-exec abi=- net=enforceable note=sandbox-exec is deprecated by Apple and works on macOS 26; the wall is the profile it applies; backend at /usr/bin/sandbox-exec
+```
 
+Invalid flags or unexpected arguments refuse with exit 2 naming the flag as typed:
+
+```
+$ nova-sandbox check --bogus
+CHECK REFUSED reason=bad_flag: flag "--bogus"; run: nova-sandbox check -h
+```
+
+Unknown verbs refuse explicitly with exit 2 rather than falling into the bare wrap:
+
+```
+$ nova-sandbox bogus
+SANDBOX REFUSED reason=unknown_verb: unknown verb "bogus"; available: check, egress, policy, probe, reap, run, version, worktree; run: nova-sandbox help
+```
+
+Prove the wall before the first job:
+
+```
 $ mkdir -p /Users/me/pool/jobs/j1/home
 $ HOME=/Users/me/pool/jobs/j1/home \
   nova-sandbox probe --write /Users/me/pool/jobs/j1 \
@@ -959,11 +979,38 @@ on this OS the line is usually silent and a `SANDBOX NOTE` naming the size of th
 allowed set is printed instead. [SPEC-SANDBOX.md](SPEC-SANDBOX.md) has the whole
 measurement.
 
+### worktree
+
+Materialises one pull request's exact head in an isolated scratch tree of its own. It is not a wrapper and builds no wall: it uses SPEC.md's 0/1/2 grammar (0 the verb ran, 2 could not run), reads the repository through git on `PATH`, and reads the pull request through the forge client (`gh`).
+
+```
+$ nova-sandbox worktree --repo /path/to/workdir --scratch /path/to/workdir/scratch --pr 123
+WORKTREE OK path=/path/to/workdir/scratch/1f450ab70c635e66f675ff8a4e395760 head=0123456789abcdef0123456789abcdef01234567
+```
+
+A subsequent invocation on the same clean head reuses the existing tree rather than rebuilding it:
+
+```
+$ nova-sandbox worktree --repo /path/to/workdir --scratch /path/to/workdir/scratch --pr 123
+WORKTREE OK path=/path/to/workdir/scratch/1f450ab70c635e66f675ff8a4e395760 head=0123456789abcdef0123456789abcdef01234567
+```
+
+`--prune` walks `<scratch>/*.pr`, inspects process usage, and deletes idle trees older than 24 hours:
+
+```
+$ nova-sandbox worktree --repo /path/to/workdir --scratch /path/to/workdir/scratch --prune
+WORKTREE OK removed=0 kept=1
+```
+
 ## nova-tokens
 
 Token spend, folded from declared sources into **one file per day**, keyed exactly by `(day, model, repo)`, with the five token types kept apart — and those day files summed into a month. It reads sources. It never estimates, never fills a gap, and never removes a file. The contract is [docs/SPEC-TOKENS.md](SPEC-TOKENS.md).
 
 The core accounting verbs are `fold`, `report`, `sum`, `check` and `sources` — `nova-tokens help` lists all ten verbs. `fold` reads every declared source and writes the days it could compute. `report` is for a friend on another machine: it folds that machine's own sources for one day and prints, on standard output, exactly the body of a tokens note, so nobody types a number. `sum` is two calls, and `nova-tokens help` prints one synopsis line for each: `sum --out <dir> --month <YYYY-MM>` adds day files into a month and asserts nothing, and `sum --swarm-root <dir> --day <YYYY-MM-DD> --out <ledger.tsv>` writes the daily ledger. The two forms do not combine — `--month` beside `--swarm-root` is refused — so the banner never presents them as one call with two `--out` flags. `check` is the gate. `sources` shows what a fold would count before it writes.
+
+```sh
+nova-tokens check --out <dir> [--strict | --no-spend <file>] [--through <YYYY-MM-DD>] [--max <n>]
+```
 
 `check --out <dir>` counts what it does not name, so that it can go green on a real directory: a calendar day between the first and the last with no file is `gap=<n>`, and a `*.md`, a `*.log` or a `pre-*` archive directory beside the day files is `notes=<n>`. A gap becomes `CHECK MISSING` only when something says there was spend on it — `--strict` names every gap (and every non-day entry, which is the old reading whole), and `--no-spend <file>`, one `YYYY-MM-DD` per line, names the gaps your list does not account for. The two flags are two answers to one question and giving both is exit 2. `--through <YYYY-MM-DD>` asserts that the ledger is current through the specified day; when the newest folded day under `--out` is older than the given day (or if `--out` has no folded days), `check` prints `CHECK FAIL stale last=<last> through=<day>` on standard error, marks the run failed, and exits 1. `sources --unattributed [--max <n>]` prints the path stems that were seen and matched no rule, heaviest first, which is what the `other=<pct>%` share on a `TOKENS DAY` line is made of and the one evidence for improving the `--repos` file; `SOURCES OK` then carries `unattributed=<n>`, and `-` when the flag was not given. `profiles --swarm-root <dir>` walks a swarm root's card usage files and prints, per model, the card count, the median `tokens_out` and the budget overshoots, writing nothing. `version` prints the build identity. `sum --swarm-root <dir> --day <d> --out <ledger.tsv>` writes the daily ledger and, when a card's receipt carries a `tool` column, prints one `TOOLS` line naming each tool and its invocation count for the day — `TOOLS review:1,pulse:2` — so a tool nobody used is visible by its absence on the line. A harness that records nothing a tool can read (Antigravity, Grok, Codex) is counted provider-side, never apportioned: `--provider <kind>:<label>=<file>`, the kind one of `google`, `openai`, `xai`. The `xai` parser reads both the comma-separated export and the `grok usage` JSON (a `sessionId` and a `turns` array), folding each turn's five token counts and its `costUsdTicks` — an integer count of micro-dollar ticks — into the model's `usd=` on the day's `TOKENS AVG` lines. One `--provider xai:<label>=<file>` names one file. A missing path is `TOKENS UNREADABLE` and is not a search of a session store; a directory is not walked.
 
@@ -1074,7 +1121,12 @@ nova-update release cut --repo mas-bandwidth/nova-tools --from main --version v0
 ```
 
 `cut` refuses a commit whose checks are not green, refuses a version that is already a tag, writes the
-changelog section and creates the **annotated** tag carrying `sums=<sha256 of SHA256SUMS>`. It also
+changelog section and creates the **annotated** tag carrying `sums=<sha256 of SHA256SUMS>`. `build`
+writes one `SHA256SUMS` per platform, under `<out>/<version>/<goos-goarch>/`, and `--sums` takes one
+of them: the tag and the changelog section carry that platform's digest, and `adopt --repo` verifies
+that platform only. Every other platform the release built is adopted with `--expect-sums-from
+<out>/<version>/<goos-goarch>/SUMS.digest` on the host that built it, or `--expect-sums <sha256>`
+from the `sums=` field of its `RELEASE BUILT` line. It also
 classifies the range since the previous tag against the sensitive path list and refuses until
 `--security-read <note id|url>` names Johnny's read. A compare the forge could only answer in part —
 300 files, its ceiling — is a different refusal, `reason=compare-truncated`, and a read does not get
@@ -1355,7 +1407,6 @@ OK line succeeded; a `NEXT:` line above it is the next step, not a failure.
 ## nova-ci
 
 Reads Go test events and reports packages whose accumulated elapsed time exceeds
-Reads Go test events and reports packages whose accumulated elapsed time exceeds
 a budget. It also reports its own build with `nova-ci version`.
 
 ```sh
@@ -1389,7 +1440,12 @@ measured, not a verdict` line follows (`--load` and `--cpus` give the figures by
 hand). A CI-SLOW line exits 0 (a measurement) unless `--enforce` is given, which
 only the nightly space legs pass (`make test SLOWTESTS_ENFORCE=1`). A test skipped
 with `t.Skip("SLEEPS: ...")` that `--sleeps` does not name is a `CI-SLEEPS` line
-and exits 2 on every leg. `nova-ci
+and exits 2 on every leg. A package `go test` served from its test cache reports a
+package elapsed near zero (`ok ... (cached)`, `"Elapsed":0`), so a cached run can
+never trip `--package-budget` (or `--budget`); its tests replay the times of the run
+that was cached, which `--test-budget` still reads. CI's unit legs run with the
+cache on (`GOTEST_COUNT_FLAG=` in `.github/workflows/ci.yml`); its `--enforce` leg
+runs `-count=1`, and so does a measurement by hand. `nova-ci
 functional <package-dir>...` prints, for `make test-functional`, the packages
 that hold `//go:build functional` tests and a `-run` pattern naming exactly
 those tests; when there are none it prints one line, `CI FUNCTIONAL OK packages=0
@@ -1554,6 +1610,11 @@ duplicate; different bytes under an existing ID refuse. Each write requires an
 explicit publication policy. These examples choose local-only `never`. The current
 slice implements no transport: successful writes report `persisted=true` and
 `published=false`, even when another publication policy is recorded.
+
+Every line names the entry's `source=`. `open --source <ptr>` records the
+session's pointer; an `append` with no `--source` carries that pointer, and an
+`append --source` names the entry's own. `index` and `receipt` print what the
+entry holds, and `source=-` is an entry with no pointer at all.
 
 Two store shapes are read. The tool's own is `sessions/<id>.md` with `entries/`
 and `log.jsonl` beside it. A **bench store** keeps one markdown file per session

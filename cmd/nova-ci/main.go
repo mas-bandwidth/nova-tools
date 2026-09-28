@@ -61,6 +61,13 @@ usage:
                       with --enforce. A test skipped with the SLEEPS marker and
                       not on --sleeps (pkg<TAB>test<TAB>where) is a CI-SLEEPS
                       line and fails the run on every leg.
+                      A package go test served from its test cache reports a
+                      package elapsed near zero, so a cached run can never
+                      trip --package-budget (or --budget); its tests replay
+                      the times of the run that was cached, which
+                      --test-budget still reads. CI's unit legs run with the
+                      cache on (GOTEST_COUNT_FLAG=); its --enforce leg runs
+                      -count=1, and so does a measurement by hand.
   nova-ci functional <package-dir>...
                       print the packages among these that hold functional tests
                       (a _test.go built only under the functional build tag) on
@@ -76,9 +83,9 @@ usage:
                     --sha <40hex> --run-id <n> --workflow <name>
                     --conclusion success|failure|cancelled [--pr <n>] [--at <rfc3339>]
                       the ci-ok job's run receipt: one ev:github row of the
-                      workflow_run shape, sender runner, the row nova-wake
-                      watch --store blocks on; dialled as the environment's
-                      seat (NOVA_SPRINT_REDIS_USER). One CI RECEIPT line;
+                      workflow_run shape, sender runner; dialled as the
+                      environment's seat (NOVA_SPRINT_REDIS_USER). One CI
+                      RECEIPT line;
                       exit 0 written, 1 the store refused it, 2 usage.
 
 exit codes: 0 inside budget or measured, 2 a CI-SLEEPS line, a CI-SLOW

@@ -34,10 +34,11 @@ A stale epoch is refused. drop keeps the saved column definition unless
 View configuration has no table epoch or receipt.
 Quote column specs containing parentheses, for example 'done,pct:pct(done)'.
 
-Store verbs take --redis <addr> (host:port or an absolute Unix socket path) (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR,
-then the seat's address) and dials as the seat nova-sprint dials as: --seat
-<name> or NOVA_SEAT, else NOVA_SPRINT_REDIS_USER with the password in the
-variable NOVA_SPRINT_REDIS_PASSWORD_ENV names. Flags may follow the words.
+Store verbs take --redis <addr> (host:port or an absolute Unix socket path)
+(else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address) and
+dial as the seat --seat <name> or NOVA_SEAT names, else as
+NOVA_SPRINT_REDIS_USER with the password in the variable
+NOVA_SPRINT_REDIS_PASSWORD_ENV names. Flags may follow the words.
 
 A column is name[:projection[:fold[:label]]]: the projection is what a body
 cell prints, count (the set's size, the default), members (the members in
