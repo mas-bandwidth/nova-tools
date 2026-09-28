@@ -78,6 +78,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -251,37 +252,16 @@ func WriteBox(path string, b Box) error {
 		return err
 	}
 
-	// The temp file is created in the SAME directory, because rename is only atomic within
-	// one filesystem and the system temp dir is not guaranteed to be on this one.
-	tmp, err := os.CreateTemp(dir, ".fuses-*.json.tmp")
-	if err != nil {
-		return err
+	// Atomic write per internal/atomicfile model: temporary file created
+	// exclusively in parent directory, explicit 0o644 mode, fsync to media,
+	// and atomic rename over target path. The box is not a secret and other
+	// tools must be able to read it; a fuse nobody else can see is a fuse that
+	// stops nothing.
+	cleanPath := path
+	if cleanPath != "" {
+		cleanPath = filepath.Clean(cleanPath)
 	}
-	name := tmp.Name()
-	// Harmless once the rename has taken the file away; the point is the failure paths,
-	// where a litter of .fuses-*.tmp beside the box would be the only trace left.
-	defer func() { _ = os.Remove(name) }()
-
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	// Sync before rename: a rename that lands while the CONTENT is still in the page cache
-	// gives a crash the chance to leave an empty file under the real name, which is the
-	// torn write this whole dance exists to prevent.
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	// CreateTemp makes 0600. The box is not a secret and other tools must be able to read
-	// it; a fuse nobody else can see is a fuse that stops nothing.
-	if err := os.Chmod(name, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(name, path)
+	return atomicfile.WriteFile(cleanPath, data, 0o644)
 }
 
 // PreserveUnreadable copies an unreadable box aside before it is replaced. It returns the
@@ -293,5 +273,12 @@ func PreserveUnreadable(path string) (string, error) {
 	if err != nil {
 		return dst, err
 	}
-	return dst, os.WriteFile(dst, data, 0o644)
+	// Atomic write per internal/atomicfile model: writes dst atomically with 0o644
+	// permissions via temporary file and rename so preserved unreadable box evidence
+	// is never left torn.
+	cleanDst := dst
+	if cleanDst != "" {
+		cleanDst = filepath.Clean(cleanDst)
+	}
+	return dst, atomicfile.WriteFile(cleanDst, data, 0o644)
 }
