@@ -24,8 +24,11 @@ line), [SPEC-SECRETS.md](SPEC-SECRETS.md) (the secrets a line must never carry).
 
 The clock and the guid are always injected: a test passes fixed ones and never reads
 `time.Now` or `/proc`. The production guid is `ProcessGUID`: the kernel's boot id, the pid
-and the process start time, so a run's lines group and two runs that share a pid after a
-reboot still differ (`noboot`/`nostart` stand in where `/proc` is absent). The writer is
+and the process start time, joined as `<boot>-<pid>-<start>`. **The guid is a run's identity**:
+a run's lines share it, and with both halves read from `/proc` two runs that share a pid after a
+reboot still differ. Where `/proc` is absent, `noboot` and `nostart` stand in and the guid is
+only the pid between them, so on such a host it names no run uniquely and nothing here claims it
+does. The writer is
 injected too: stderr in production (a unit's stderr is the systemd journal), a buffer or a
 file in a test.
 
@@ -50,7 +53,7 @@ illustrative):
 | `bench` | the machine, by its fleet name | `""` |
 | `verb` | the verb within the tool | `""` |
 | `job` / `card` / `pr` / `run` / `slot` | the work item's ids | `""`, and `0` for `pr` |
-| `guid` | one per process run | never |
+| `guid` | the run's identity (see `ProcessGUID` above for when it is unique) | never |
 | `event` | the state change: `start`, `refuse`, `retry`, `done`, or the part's own noun | never |
 | `msg` | one human sentence, **escaped through `oneline.Field`** so it cannot add a line | never |
 | `dur_ms` | milliseconds from `start` to this event | `0` |
@@ -87,8 +90,10 @@ scope and the receipt.
 
 A verb that does one unit of work and exits builds a `Line`, writes it, and is gone. A verb that
 changes state many times over one run holds a `LongVerb`: the run's `source`, `bench` and `verb`
-ride on every line, so selecting on those three returns exactly one run's log, and each `Event`
-carries the same fifteen fields, escaped and redacted the same way as a `Line`.
+ride on every line as labels, and each `Event` carries the same fifteen fields, escaped and
+redacted the same way as a `Line`. Those labels are shared by every run of that verb on that
+host, repeated or concurrent, and `LongVerb` enforces no exclusion between runs; one run's lines
+are the ones carrying its `guid`.
 
 ## Tests this spec demands
 

@@ -14,7 +14,14 @@ its checks). No fleet bench runs native Windows.
 
 ## The host half: `tools/bench-wsl2.ps1`
 
-Run it once from an **elevated** PowerShell in a checkout of this repository:
+**First, the fleet's public keys.** An ordinary checkout carries no fleet public-key file,
+so the script refuses until the operator obtains the approved fleet public keys and places
+them, as one `authorized_keys`-format file, at the path the script's `$KeysFile` assignment
+names (near the top of `tools/bench-wsl2.ps1`, relative to the checkout root). Only public
+halves go in that file: no private key is ever copied to the box, by the operator or by the
+script, and the script only reads the file.
+
+Then run it once from an **elevated** PowerShell in that checkout:
 
 ```
 .\tools\bench-wsl2.ps1 -AuthKey <tailscale auth key>
@@ -23,8 +30,8 @@ Run it once from an **elevated** PowerShell in a checkout of this repository:
 The run is the one approval: a UAC prompt to open it, and a Tailscale auth key
 minted once in the admin console. The key reaches no printed line. The script
 refuses at exit 2, with one line naming what was wrong, when it is not elevated,
-when the fleet's public keys (the `authorized_keys` file it reads from the checkout it
-runs in, never writes and never generates) are missing, or when its Go version does not match `go.mod`'s `go` line.
+when that public-key file is missing (it reads it, never writes it and never generates a
+key), or when its Go version does not match `go.mod`'s `go` line.
 
 On the host it:
 

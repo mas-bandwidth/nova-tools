@@ -85,8 +85,10 @@ before any dial, with the remedy (`run under nova-secrets exec --only <NAME>`).
 
 ## Tests this spec demands
 
-The tests run against **miniredis**, every path is a `t.TempDir()`, and nothing reaches the
-network. The list is numbered from 17: `cmd/nova-tokens` and `internal/record` cite the
+The tests run against **miniredis**, an in-process Redis each test owns: `miniredis.RunT`
+listens on a loopback port and the real Redis client connects to it over that socket. It is an
+owned loopback fixture, never a fleet or external Redis, and every path is a `t.TempDir()`; the
+tests are not socket-free, and `internal/record/ledger_test.go` carries no build tag. The list is numbered from 17: `cmd/nova-tokens` and `internal/record` cite the
 monthly-report test as this spec's test 17.
 
 17. `TestTheMonthlyTokenReportFromTheRedisLedgerEqualsTheFoldedTsv` — `nova-tokens report
