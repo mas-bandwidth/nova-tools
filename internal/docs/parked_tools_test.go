@@ -12,7 +12,7 @@ import (
 	"testing/fstest"
 )
 
-var documentedToolName = regexp.MustCompile(`\bnova-[a-z][a-z0-9]*(?:-[a-z0-9]+)*\b`)
+var documentedToolName = regexp.MustCompile(`(?i)\bnova-[a-z][a-z0-9]*(?:-[a-z0-9]+)*\b`)
 
 // Read directory names only: archived code is never built or tested. A tool
 // returned to cmd/ is living again; its former archive location is not a ban.
@@ -58,7 +58,7 @@ func parkedDocumentationReferences(tree fs.FS) ([]string, error) {
 		}
 		for index, line := range strings.Split(string(body), "\n") {
 			for _, name := range documentedToolName.FindAllString(line, -1) {
-				if parked[name] {
+				if parked[strings.ToLower(name)] {
 					findings = append(findings, fmt.Sprintf("%s:%d: parked tool %s; remove its documentation, including examples and retirement notices", page, index+1, name))
 				}
 			}
@@ -100,6 +100,7 @@ func TestParkedDocumentationReferences(t *testing.T) {
 		{"readme", "README.md", "nova-retired help", 1},
 		{"command", "docs/CLI.md", "`nova-retired run`", 1},
 		{"notice", "docs/CLI.md", "Retired: nova-retired; use nova-active.", 1},
+		{"capitalized", "docs/CLI.md", "Nova-Retired is parked.", 1},
 		{"link", "docs/guide/nested.md", "[guide](../nova-retired.md)", 1},
 		{"nested", "docs/guide/nested.md", "nova-retired help\nnova-retired run", 2},
 		{"distinct-name", "docs/CLI.md", "nova-retired-helper help", 0},
