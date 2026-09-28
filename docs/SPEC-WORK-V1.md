@@ -57,7 +57,7 @@ integration ships as part of this contract.
 
 ## 3. Tree shape and identities
 
-The root has `schema`, `repos`, `receipts` and `policy` objects. Under `repos`, an
+The root has `schema`, `repos`, `receipts` and `policy` fields. Under `repos`, an
 owner contains repositories, each repository contains `issues`, and each issue
 is a child keyed by its identity. A reader can traverse root to issue and issue
 to repository to owner to root. Parents are derived from the structural path,
