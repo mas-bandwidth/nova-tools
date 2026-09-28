@@ -3015,6 +3015,31 @@ those tests; it prints nothing when there are none ([TESTING.md](TESTING.md), "T
 
 See [SPEC-CI.md](SPEC-CI.md).
 
+### github receipt
+
+`nova-ci github receipt --from-runner --redis <addr> --repo owner/name --sha <40hex>
+--run-id <n> --workflow <name> --conclusion success|failure|cancelled [--pr <n>]
+[--at <rfc3339>]` is the run receipt the `ci-ok` job of `.github/workflows/ci.yml`
+writes at the end of every run, from this tree (`go run ./cmd/nova-ci`) and as the
+bench seat: one `ev:github` row of the `workflow_run` shape, sender `runner`, action
+and status `completed`, the PR number as `number` (empty for a run that names no
+PR), `--at` or now. It is the row `nova-wake watch --store` blocks on for the PRs it
+names, and it writes no other key (internal/cireceipt). The store is dialled as the
+environment's seat (`NOVA_SPRINT_REDIS_USER`, `NOVA_SPRINT_REDIS_PASSWORD_ENV`);
+`--redis` falls back to `NOVA_REDIS_ADDR`. A written receipt is one line,
+`CI RECEIPT <owner/name> sha=<sha> run=<id> workflow=<name> conclusion=<word>
+pr=<n|-> ev=<stream id>`, exit 0; a write the store refuses (`XADD ev:github:
+WRONGTYPE ...`, a NOPERM seat, a store that is down) is one line on stderr ending
+`no receipt is on ev:github: fix the store or the bench seat and rerun ci-ok`, exit
+1, which reddens ci-ok; a refused field is exit 2 before any dial:
+
+```
+$ nova-ci github receipt --from-runner --repo nova-tools --sha 9af23a05e0000000000000000000000000000000 --run-id 1 --workflow CI --conclusion success
+nova-ci github receipt: --repo wants owner/name, got "nova-tools"; run: nova-ci help
+$ nova-ci github receipt --from-runner --repo mas-bandwidth/nova-tools --sha 9af23a05e0000000000000000000000000000000 --run-id 1 --workflow CI --conclusion skipped
+nova-ci github receipt: --conclusion wants success, failure or cancelled (job.status), got "skipped"; run: nova-ci help
+```
+
 ## nova-config
 
 ```
@@ -3396,7 +3421,7 @@ writing and acking in one `ns_ci_github` call. `ci status --repo --sha`
 prints the leg under our own record. Nothing in nova-sprint reads a check
 state from GitHub or asks it to rerun one; a rerun is `ci request --again`.
 
-`ci github --from-runner --redis <addr> --repo owner/name --sha <head> --run-id <n> --event <ev> --workflow <name> --conclusion <job.status> [--head-branch <b>] [--base-branch <b>] [--pr <n>] [--at <rfc3339>] --job <name>=<result>...` (card gh-ci-receipts) is the runner as the event source: the ci-ok job of `.github/workflows/ci.yml` calls it at the end of every run, as the bench seat and with the bench's installed nova-sprint (never this tree: `go run` is the one bootstrap while the installed binary lacks the verb), and it writes what the receiver path would have: one `ev:github` workflow_run row with sender `runner`, and `ci:<repo>:<sha>:gh` through `ns_ci_github` with `wf:<workflow>`, one `check:<job>` per `--job` (the run id as the id, so an older run's receipt is KEPT), `source=runner`, and the `--pr` number on the record's `pr` field. For a pull_request run that was not cancelled it also claims the PR's head on `pr:<repo>:<n>` (`land.RecordPRHead`: creates the record with the branch's card's stream or `-`, moves head and the head index `pr:<repo>:head:<sha>`, ordered by run id; an existing record's stream is never touched) and folds a final word onto every open record at that head (`ci`, `ci_sha`, `ci_at`, `ci_why`), printing `PR HEAD <key> outcome=created|moved|same|kept ...` and `CIGH FOLD <key> ci=<word> prs=<n,...>` (card pr-record-follows-github). `read brief --pr` and `land pr` refuse `STALE <key> head=<h> github=<g> src=<s> ev=<id>` when the record's head is not the head GitHub last named (or, for `land pr`, the REST head); `land pr` after MERGED writes the record from the REST reply when it has none (`land.RecordPRHead` source `rest`: head.sha, head.ref, the card `land.BranchCardID(head.ref)` spells; `PR <n> RECORD <key> outcome=created ...`), marks it merged and lands the card the record names (`PR <n> CARD <id> <from>->landed`), under a pit stop too (`PR <n> PITSTOP kept sprint=<S> scope=<scope> card=<id>`). Measured 2026-09-26 12:38 PM ET before it: `ev:github` XLEN 0 and no `ci:*:gh` key, because the signed receiver sits behind a tailscale funnel kept off by design, so `land pr` could only print WAITING. One `CIGH RUNNER <key> gh=<word> fail=<f> runs=<n> applied=<n> ev=<id>` line; exit 0 written, 1 the store refused the write (which reddens ci-ok), 2 usage. `webhook.Source(record)` says runner, hook or none for a record, `webhook.SourceOf(sender)` the same for an `ev:github` row, which `doctor`'s ingest line prints as `source=`.
+`ci github --from-runner --redis <addr> --repo owner/name --sha <head> --run-id <n> --event <ev> --workflow <name> --conclusion <job.status> [--head-branch <b>] [--base-branch <b>] [--pr <n>] [--at <rfc3339>] --job <name>=<result>...` (card gh-ci-receipts) was the runner as the event source until the ci-ok job of `.github/workflows/ci.yml` moved to `nova-ci github receipt --from-runner` (see nova-ci), which writes only the `ev:github` row; this verb writes what the receiver path would have: one `ev:github` workflow_run row with sender `runner`, and `ci:<repo>:<sha>:gh` through `ns_ci_github` with `wf:<workflow>`, one `check:<job>` per `--job` (the run id as the id, so an older run's receipt is KEPT), `source=runner`, and the `--pr` number on the record's `pr` field. For a pull_request run that was not cancelled it also claims the PR's head on `pr:<repo>:<n>` (`land.RecordPRHead`: creates the record with the branch's card's stream or `-`, moves head and the head index `pr:<repo>:head:<sha>`, ordered by run id; an existing record's stream is never touched) and folds a final word onto every open record at that head (`ci`, `ci_sha`, `ci_at`, `ci_why`), printing `PR HEAD <key> outcome=created|moved|same|kept ...` and `CIGH FOLD <key> ci=<word> prs=<n,...>` (card pr-record-follows-github). `read brief --pr` and `land pr` refuse `STALE <key> head=<h> github=<g> src=<s> ev=<id>` when the record's head is not the head GitHub last named (or, for `land pr`, the REST head); `land pr` after MERGED writes the record from the REST reply when it has none (`land.RecordPRHead` source `rest`: head.sha, head.ref, the card `land.BranchCardID(head.ref)` spells; `PR <n> RECORD <key> outcome=created ...`), marks it merged and lands the card the record names (`PR <n> CARD <id> <from>->landed`), under a pit stop too (`PR <n> PITSTOP kept sprint=<S> scope=<scope> card=<id>`). Measured 2026-09-26 12:38 PM ET before it: `ev:github` XLEN 0 and no `ci:*:gh` key, because the signed receiver sits behind a tailscale funnel kept off by design, so `land pr` could only print WAITING. One `CIGH RUNNER <key> gh=<word> fail=<f> runs=<n> applied=<n> ev=<id>` line; exit 0 written, 1 the store refused the write (which reddens ci-ok), 2 usage. `webhook.Source(record)` says runner, hook or none for a record, `webhook.SourceOf(sender)` the same for an `ev:github` row, which `doctor`'s ingest line prints as `source=`.
 
 `read digest --repo <r> --n <n>` records the diff identity of the head a
 typed line is taken at (`diff_sha256` on the unit record; the reader runs
