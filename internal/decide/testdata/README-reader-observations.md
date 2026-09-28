@@ -14,6 +14,6 @@ what the label is:
   They are not evidence about the current pair.
 * The stopping classes are sparse: 38 rows on one answer, 6, 2 and 1 on the others.
 
-The file is here as the arithmetic fixture for `nova-decide tune --default`, which is a
-CALCULATION over a decisions log. What the calculation says about this log is a statement about
+The file is the arithmetic fixture for the decision library's tuning tests, which
+calculate over a decisions log. What the calculation says about this log is a statement about
 this log.

@@ -16,8 +16,6 @@ docs/templates SPEC-CI cardtemplates: one of CardTemplateDirs, skipped until a t
 internal/pkgvalid PROPOSAL-TOKENS-RECORDS-185's plan: the package the proposal would add
 internal/pulse/cardheader.go the typed-header grammar that lands with #1721; lintheader.go names it as the parser not yet in this tree
 internal/pulse/kinds.go SPEC-TOOLWORK §5's kinds-table file; the six kinds live in cutkind.go until the accept gate's table is one file of its own
-internal/sandbox/exec.go SPEC-SANDBOX's plan: the exec seam
-internal/sandbox/wrap_windows.go SPEC-SANDBOX's plan: the Windows wrapper
 internal/tokens/message.go SPEC-TOKENS' plan: the message record
 tools/templates SPEC-CI cardtemplates: one of CardTemplateDirs, skipped until a template is written there
 
@@ -43,7 +41,6 @@ internal/pulse/queue.go deleted with the frozen nova-pulse (2026-09-24); the lin
 internal/pulse/queue_test.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
 internal/sprintci deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
 cmd/nova-pulse/testdata deleted by #3801 (card cut in nova-sprint, #3789); the line naming it is history
-cmd/nova-pulse/testdata/templates/fix.md deleted by #3801 (card cut in nova-sprint, #3789); the line naming it is history
 
 # internal/pulse (nova-pulse's package, frozen 2026-09-23 #3439) was deleted on 2026-09-25 (#3969, Glenn: "Yes it's dead. remove."); the specs cite its files at named commits as history.
 internal/pulse internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit

@@ -36,7 +36,7 @@ Reporting selects a consistent set of observations under a named mapping version
 | `raw_usage` | Allowlisted original numeric field names, values and units, including unknown/absent distinction. No serialized transcript object. |
 | `mapping_id`, `source_receipt` | Mapping revision and portable metadata-only receipt needed to trace this observation locally. Private paths stay in a local side index. |
 
-The [format and command decision packet](PROPOSAL-TOKENS-FORMAT.md) proposes exact encoding, identifiers and a separate records command namespace for review. Arbitrary extension objects are not a route for private prompt content. A source with no stable native event identifier needs an explicitly reviewed deterministic identity method; ambiguity is a conflict, not permission to count twice.
+The [format decision packet](PROPOSAL-TOKENS-FORMAT.md) proposes exact encoding and identifiers for review. Arbitrary extension objects are not a route for private prompt content. A source with no stable native event identifier needs an explicitly reviewed deterministic identity method; ambiguity is a conflict, not permission to count twice.
 
 ## Identity, revisions and overlap
 
@@ -68,25 +68,19 @@ Use an explicit source task/repository binding or another reviewed event attribu
 
 An operator may select an explicit accounting policy such as charging a whole bound task to one repo, but the report must name that policy and distinguish it from measured attribution. The first shared report should use verified bindings and unattributed counts; no quiet migration of v1's heuristic into a claim of measured usage. Private repository paths need not leave the bench; canonical repository labels suffice.
 
-## Shared private Git publication
+## Storage and privacy
 
-The agreed private ledger is provisioned; the record contract is still under review. Use existing authorized access. The `friend` field identifies usage, independently of Git commit authorship. This design neither creates accounts nor changes credentials or access controls.
+Observations and coverage contributions use the immutable shard-digest and coverage-digest names specified in the format packet. Record paths partition original execution friend/bench and honest day allocation; coverage paths describe collection provenance, with the inspected source interval explicit in the body. Undated/interval evidence has an explicit unallocated location, never a guessed day. A fixed coverage filename can only be a generated index, not the sole retained history.
 
-Observations and coverage contributions use the immutable shard-digest and coverage-digest names specified in the format packet. Record paths partition original execution friend/bench and honest day allocation; coverage paths describe collection provenance, with the inspected source interval explicit in the body. Undated/interval evidence has an explicit unallocated location, never a guessed day. A fixed coverage filename can only be a generated index, not the sole retained history. Publication validates the entire contribution before adding only its named files.
+The ledger and total reports remain private. A repository label alone grants no permission to disclose records. Shared record bodies contain only the allowlisted usage fields and metadata; private paths stay in a local side index.
 
-A bounded publisher stages an immutable batch and pushes one atomic commit; on a race it fetches and retries while preserving both writers. Identical identities/content are already-published; conflicting content is refused. Dirty unrelated work is preserved, there is no force push, reset, clean, removal or broad staging. Ambiguous push results are resolved by querying exact contribution identity before retrying. No blind replay with a fresh identity.
+## Collection coverage
 
-The accounting reader remains read-only. The format packet selects the separate `nova-tokens publish` verb, which preserves that boundary and exposes its exact writes. No hidden network access in collect/report/check.
+Each friend chooses their compatible local extraction/scheduling method. Inspect only their own authorized source scope over an explicit interval; collect on other benches when that bench is available and authorized. Preserve originals. Record coverage per friend/bench/day even when partial or unavailable. A missing source/day is not a zero day. Live sessions are partial until the declared cut-off and completeness conditions are met.
 
-The ledger and total reports remain private. Any future public report requires an explicit reviewed allowlist of open-source repositories, removes friend/bench/source identifiers unless deliberately included, excludes unattributed/private work and is published only by a separate deliberate step. A repository label alone is not a publication grant. No autonomous public export is part of daily collection.
+After backfill, a collector may reuse validated receipts/indexes to avoid repeated whole-history scans; correctness on append, truncation, rewrite and schema change must be explicit before claiming incremental completeness. No model turn is required for unchanged collection or checking. Errors can be deduplicated locally and surfaced through the friend's chosen notification path.
 
-## September coverage and daily operation
-
-Each friend chooses their compatible local extraction/scheduling method. Inspect their own authorized source scope once for September 1 through collection start, including the previous week; collect on other benches when that bench is available and authorized. Preserve originals. Record coverage per friend/bench/day even when partial or unavailable. A missing source/day is not a zero day. Live sessions are partial until the declared cut-off and completeness conditions are met.
-
-After backfill, a collector may reuse validated receipts/indexes to avoid repeated whole-history scans; correctness on append, truncation, rewrite and schema change must be explicit before claiming incremental completeness. No model turn is required for unchanged collection, checking or publication. Errors can be deduplicated locally and surfaced through the friend's chosen notification path.
-
-Daily and monthly views carry mapping version, selected contributions, covered interval, unknown fields, conflicts, unresolved overlap and unattributed counts. They can group or filter without deleting the underlying dimensions. September accuracy means honest coverage with recomputable totals, not filling every calendar cell with a number.
+Daily and monthly views carry mapping version, selected contributions, covered interval, unknown fields, conflicts, unresolved overlap and unattributed counts. They can group or filter without deleting the underlying dimensions. Accuracy means honest coverage with recomputable totals, not filling every calendar cell with a number.
 
 ## Acceptance evidence before adoption
 
@@ -94,7 +88,7 @@ Daily and monthly views carry mapping version, selected contributions, covered i
 - The same source copied to another bench, ingested by backfill and live collection, counts once; correcting its origin also counts once. Different real events with equal values both survive.
 - Stream revisions, reordered files, duplicate IDs with conflicting values, unresolved wrapper/source overlap and supersession forks produce the specified selection or visible refusal.
 - A midnight cumulative interval and a cross-month interval retain truthful allocation; no timestamp invention. A mixed-repo task remains unattributed unless an explicit policy is selected and shown.
-- Two Git writers racing preserve both contributions. Lost push acknowledgment followed by retry is idempotent. Conflicting identities fail without overwriting history. Dirty unrelated files and original sources remain byte-identical.
-- Secret/prompt/private-path sentinels in non-usage source fields never enter published records or diagnostics. Public subset generation excludes non-allowlisted and unattributed records; it does not publish itself.
+- Conflicting identities fail without overwriting retained records. Original sources remain byte-identical.
+- Secret/prompt/private-path sentinels in non-usage source fields never enter shared records or diagnostics.
 - Recompute two different reports from the same retained observations and reproduce them from their input/mapping manifests. Corrupt or missing contributions make the corresponding coverage incomplete.
 - Each friend can describe and demonstrate their chosen collection path with its actual build/mapping IDs, source scope and first retained contribution. Installed-only and manually typed counts do not satisfy this endpoint.
