@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/prereview"
+	"github.com/mas-bandwidth/nova-tools/deprecated/internal/prereview"
 )
 
 // TestSeedPromptIsScoreQuestion: the seed file is today's score question

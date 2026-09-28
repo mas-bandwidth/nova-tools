@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/deprecated/internal/prereview"
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
-	"github.com/mas-bandwidth/nova-tools/internal/prereview"
 )
 
 // reviewersTSV is the reviewers file the lander runs under today: rowan posts

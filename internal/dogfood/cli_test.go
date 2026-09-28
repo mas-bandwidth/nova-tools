@@ -137,7 +137,6 @@ func TestParseCLIReadsThisRepositorysOwnReference(t *testing.T) {
 		"nova-check corpus":         false,
 		"nova-bus send":             false,
 		"nova-fuse lift quarantine": false,
-		"nova-review packet":        false,
 		"nova-version snapshot":     false,
 		"nova-memory quickstart":    false,
 	}

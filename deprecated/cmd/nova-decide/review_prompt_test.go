@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/deprecated/internal/jevcalib"
-	"github.com/mas-bandwidth/nova-tools/internal/prereview"
+	"github.com/mas-bandwidth/nova-tools/deprecated/internal/prereview"
 )
 
 // TestMain keeps every review test off the machine's own jev.conf: the verb

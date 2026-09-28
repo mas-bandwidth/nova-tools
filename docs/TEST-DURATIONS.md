@@ -43,15 +43,15 @@ times come from.
 | cmd/nova-bus | 30.4 | - |
 | internal/ci | 17.9 | TestEveryToolPrintsTheOneVersionLine 5.3 |
 | deprecated/cmd/nova-swarm | 16.8 | - |
-| cmd/nova-merge | 16.7 | - |
+| deprecated/cmd/nova-merge | 16.7 | - |
 | internal/swarm | 12.7 | - |
 | cmd/nova-wake | 12.4 | - |
 | internal/bus | 6.8 | - |
 | cmd/nova-secrets | 5.7 | - |
 | internal/update | 5.1 | - |
-| cmd/nova-review | 3.8 | - |
+| deprecated/cmd/nova-review | 3.8 | - |
 | cmd/nova-tokens | 2.4 | - |
-| internal/review | 1.0 | - |
+| deprecated/internal/review | 1.0 | - |
 | internal/merge | 0.9 | - |
 | cmd/nova-sandbox | 0.6 | - |
 | cmd/nova-self-talk | 0.5 | - |
@@ -70,7 +70,7 @@ times come from.
 | internal/release | 0.0 | - |
 | deprecated/cmd/nova-decide | 0.0 | - |
 | cmd/nova-version | 0.0 | - |
-| cmd/nova-post | 0.0 | - |
+| deprecated/cmd/nova-post | 0.0 | - |
 | internal/sandbox | 0.0 | - |
 | cmd/nova-update | 0.0 | - |
 | internal/decide | 0.0 | - |
@@ -99,7 +99,7 @@ One test is over the line, and it is over it because it runs every tool binary i
 repo for its version line: the cost is real `exec`, and it grows with the number of
 tools rather than with anything that can be tuned. `internal/ci` sits at under a third
 of its budget, so the test is listed here rather than tagged, and the tag is the answer
-if it grows. The two `cmd/nova-merge` tests listed on 2026-09-15 at 5.1 s each now
+if it grows. The two `deprecated/cmd/nova-merge` tests listed on 2026-09-15 at 5.1 s each now
 measure 0.09 s and 0.06 s -- they waited on a clock and now have a sync point -- so they
 have dropped off this list entirely.
 
@@ -131,20 +131,20 @@ five of its tests are over 5 s and every one of them is a real `exec`.
 | package | total seconds | slowest test |
 | --- | --- | --- |
 | cmd/nova-wake | 62.9 | TestTheRecoveryReadsTheCountAndNeverAConstant 7.5 |
-| cmd/nova-merge | 51.4 | TestTwoReadsAndAGateFromOneStartingBranchReachTheCoordinator 6.5 |
+| deprecated/cmd/nova-merge | 51.4 | TestTwoReadsAndAGateFromOneStartingBranchReachTheCoordinator 6.5 |
 | cmd/nova-bus | 47.2 | TestRetryAfterAPartialResumesAtNext 11.4 |
 | deprecated/cmd/nova-swarm | 34.8 | - |
 | internal/swarm | 22.0 | - |
 | cmd/nova-pulse | 20.0 | TestBenchStandardDriftNamesBinary 7.6 |
 | internal/bus | 18.9 | - |
-| cmd/nova-review | 16.6 | - |
+| deprecated/cmd/nova-review | 16.6 | - |
 | internal/ci | 14.2 | TestEveryToolPrintsTheOneVersionLine 5.6 |
 | internal/update | 13.8 | - |
 | cmd/nova-secrets | 6.6 | - |
 | cmd/nova-sandbox | 6.1 | - |
 | internal/merge | 5.6 | - |
 | cmd/nova-tokens | 4.3 | - |
-| internal/review | 3.9 | - |
+| deprecated/internal/review | 3.9 | - |
 | internal/secrets | 3.8 | - |
 | cmd/nova-fuse | 2.6 | - |
 | internal/wake | 2.0 | - |
@@ -165,7 +165,7 @@ five of its tests are over 5 s and every one of them is a real `exec`.
 | internal/buildinfo | 0.3 | - |
 | internal/bounded | 0.3 | - |
 | internal/decide | 0.3 | - |
-| cmd/nova-post | 0.3 | - |
+| deprecated/cmd/nova-post | 0.3 | - |
 | internal/fuse | 0.3 | - |
 | internal/sandbox | 0.3 | - |
 | internal/memindex | 0.3 | - |
@@ -191,7 +191,7 @@ to its Linux cost is compute, and one several times over is paying for process s
 | package | darwin/arm64 | linux/amd64 | ratio |
 | --- | --- | --- | --- |
 | cmd/nova-wake | 62.9 | 12.4 | 5.1x |
-| cmd/nova-merge | 51.4 | 16.7 | 3.1x |
+| deprecated/cmd/nova-merge | 51.4 | 16.7 | 3.1x |
 | cmd/nova-bus | 47.2 | 30.4 | 1.6x |
 | deprecated/cmd/nova-swarm | 34.8 | 16.8 | 2.1x |
 | internal/swarm | 22.0 | 12.7 | 1.7x |
@@ -215,14 +215,14 @@ property of the TEST, and none of these is over the line on the budget bench -- 
 | cmd/nova-pulse | TestBenchStandardDriftNamesBinary | 7.6 |
 | cmd/nova-wake | TestTheRecoveryReadsTheCountAndNeverAConstant | 7.5 |
 | cmd/nova-bus | TestBodiesModeCapsTheNewSummaryLinesToo | 7.1 |
-| cmd/nova-merge | TestTwoReadsAndAGateFromOneStartingBranchReachTheCoordinator | 6.5 |
-| cmd/nova-merge | TestThePacketIsPointersNotDiff | 6.5 |
+| deprecated/cmd/nova-merge | TestTwoReadsAndAGateFromOneStartingBranchReachTheCoordinator | 6.5 |
+| deprecated/cmd/nova-merge | TestThePacketIsPointersNotDiff | 6.5 |
 | cmd/nova-bus | TestBrokenOutputCannotAcknowledgeUnprintedBodies | 6.0 |
-| cmd/nova-merge | TestAHoldBeatsThreeApproves | 5.9 |
-| cmd/nova-merge | TestAPacketIsHandedOverCorrectlyWhileAFlushRuns | 5.9 |
+| deprecated/cmd/nova-merge | TestAHoldBeatsThreeApproves | 5.9 |
+| deprecated/cmd/nova-merge | TestAPacketIsHandedOverCorrectlyWhileAFlushRuns | 5.9 |
 | internal/ci | TestEveryToolPrintsTheOneVersionLine | 5.6 |
 | cmd/nova-bus | TestBodiesWithoutAdvanceMovesNoCursor | 5.6 |
-| cmd/nova-merge | TestAStaleApproveIsKeptCountedAndAuthorizesNothing | 5.5 |
+| deprecated/cmd/nova-merge | TestAStaleApproveIsKeptCountedAndAuthorizesNothing | 5.5 |
 | cmd/nova-bus | TestContinuationSurvivesOrdinaryCursorAdvance | 5.4 |
 | cmd/nova-wake | TestTheRealBusAdvanceRecoversAnInterruptedRead | 5.3 |
 | cmd/nova-bus | TestTwoNotesInOneCommitWithMaxNotesOneLosesNeither | 5.3 |

@@ -20,8 +20,8 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/mas-bandwidth/nova-tools/deprecated/internal/friendread"
 	"github.com/mas-bandwidth/nova-tools/internal/events"
-	"github.com/mas-bandwidth/nova-tools/internal/friendread"
 )
 
 // readEventClaimTTL is how long a read's identity stays claimed. The fold counts one

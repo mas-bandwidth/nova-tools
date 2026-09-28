@@ -26,8 +26,6 @@
 # for a row is an injected clock seam or //go:build functional, then delete it.
 cmd/nova-ci	TestNewVerbYieldsABuildingTestingSkeleton	#4221 measured over 5 s on the 2026-09-25 PR run
 cmd/nova-redis	TestRestartOnTheSameDirKeepsTheStore	#4221 calls time.Sleep
-cmd/nova-review	TestIssue2063	#4221 measured over 5 s on the 2026-09-25 PR run
-cmd/nova-review	TestMutateSeedFlagCombinationsAreRefused	#4221 calls time.Sleep
 cmd/nova-sandbox	TestTheCheckScriptPassesAgainstTheToolsProfile	#4221 measured over 5 s on the 2026-09-25 PR run
 cmd/nova-sandbox	TestAForkedChildIsReapedWithTheCallersGroup	#4221 calls time.Sleep
 cmd/nova-sandbox	TestWindowsHasNo128PlusN	#4221 calls time.Sleep
@@ -65,7 +63,6 @@ internal/nsprint/reconcile	TestLandDutyOneWorkerPerRepoAndNextTickMerges	#4221 m
 internal/nsprint/reconcile	TestControl10StaleInstanceCannotDeal	#4221 calls time.Sleep
 internal/nsprint/reconcile	TestRouteConsumerSweepBoundsRestarts	#4221 calls time.Sleep
 internal/nsprint/verbs	TestVerbsUnused	#4221 measured over 5 s on the 2026-09-25 PR run
-internal/nsprint/webhook	TestWorkflowRunEventWritesCI	#4221 calls time.Sleep
 internal/secrets	TestSealNoPRMakesNoGHCalls	#4221 measured over 5 s on the 2026-09-25 PR run
 internal/sprinttable	TestRefreshInTheUnitGroupDiesWithTheUnit	#4221 calls time.Sleep
 internal/swarm	TestOSProcessTreeCPUAccrual	#4221 calls time.Sleep

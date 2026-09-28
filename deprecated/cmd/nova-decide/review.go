@@ -16,10 +16,10 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/deprecated/internal/jevcalib"
+	"github.com/mas-bandwidth/nova-tools/deprecated/internal/prereview"
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/events"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/prereview"
 )
 
 // It fetches the diff and the card, runs four mechanical checks in Go with no

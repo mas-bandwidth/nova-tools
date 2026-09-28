@@ -18,8 +18,8 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/deprecated/internal/prereview"
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
-	"github.com/mas-bandwidth/nova-tools/internal/prereview"
 )
 
 //go:embed prompts/*.txt

@@ -508,13 +508,13 @@ the end. The date on a rule is the day it was learned.
     nova-merge's fold, CAS push, outbox and checkout lock apply unchanged
     (SPEC-MERGE rule 22). **It is composed by `internal/merge` and not by this
     binary.** Today the record is built and marshalled in
-    `cmd/nova-merge/verbs.go:384-386`, in a `main` package a second binary
+    `deprecated/cmd/nova-merge/verbs.go:384-386`, in a `main` package a second binary
     cannot import, so "one writer of that format" is a claim only a golden
     test could hold up; the work list moves that construction into
     `internal/merge` as `merge.ReadItem(entry, who, head, verdict, note
     string, s merge.Submission) (merge.Item, error)` — where `entry` is the
     directory name `merge.EntryDirName(id)` returns, which is exactly what
-    `cmd/nova-merge/verbs.go:384` passes today, and never the raw pull request
+    `deprecated/cmd/nova-merge/verbs.go:384` passes today, and never the raw pull request
     number or branch (draft 3) — nova-merge's `read` verb calls it, and nova-review calls the same function with the same
     submission. That is what makes the sentence true in the code rather than
     in a comparison. Rule 7's **policy record** is written the same way, through the same outbox,
@@ -2109,7 +2109,7 @@ One line per rule. Each must be seen red before it is trusted.
 
 ## The work list
 
-To build it in Go under `cmd/nova-review`, the way `cmd/nova-merge` is built:
+To build it in Go under `deprecated/cmd/nova-review`, the way `deprecated/cmd/nova-merge` is built:
 standard library only, `internal/oneline` for every printed value,
 `internal/bounded` for every listing, `internal/merge` for the lane's records,
 host and checkout lock, `docs/ONBOARDING.md`'s first-day standard, and tests
@@ -2141,7 +2141,7 @@ that execute `docs/CLI.md`'s `### First run`.
    removes what it knows it wrote and leaves alone what it does not.
    **(b)** `merge.ReadItem(entry, who, head, verdict, note string,
    s merge.Submission) (merge.Item, error)`, the read record's construction
-   and marshal moved out of `cmd/nova-merge/verbs.go:384-386` so both binaries
+   and marshal moved out of `deprecated/cmd/nova-merge/verbs.go:384-386` so both binaries
    build that format through one function (rule 11); `entry` is the directory
    name `merge.EntryDirName(id)` returns — what that line passes today — and
    never the raw pull request number or branch. **(c)** A lock-free fold of a
@@ -2149,7 +2149,7 @@ that execute `docs/CLI.md`'s `### First run`.
    reason and its single re-read — so a report verb never takes the checkout
    lock. Each with nova-merge's own tests green and a golden over the read
    record's bytes.
-1. **`internal/review/record.go`** — the review, answer and policy records:
+1. **`deprecated/internal/review/record.go`** — the review, answer and policy records:
    strict decode, `version` first, `findings` with every field required and
    `side`/`rule_kind` in the closed sets and `spec_pin` beside them, `usage`
    in nova-swarm's names with the `source`/`bench`/`job`/`attempt` join and
@@ -2188,7 +2188,7 @@ that execute `docs/CLI.md`'s `### First run`.
    lane's clone, the byte bound with per-file cuts and the remedy command, the
    positive `--max-bytes` and the too-small-for-the-header refusal, the
    unique `O_EXCL` temporary and the rename. Tests: demanded 1 and 12.
-6. **`cmd/nova-review/main.go`** — the verbs including `policy`, the flag refusals
+6. **`deprecated/cmd/nova-review/main.go`** — the verbs including `policy`, the flag refusals
    (the `--readers`/`--policy` exclusion, `--base` for a `base:` row, `--reuse`
    and its id check, the reserved `answer` and `policy` names), the output
    grammar exactly as above, `--max` and `--max-bytes`, the exit table, `help`

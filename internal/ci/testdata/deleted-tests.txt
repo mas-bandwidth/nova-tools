@@ -32,3 +32,8 @@ internal/nsprint/launch/realwrapper_slow_test.go TestLaunchRealWrapper and TestL
 internal/nsprint/launch/realwrapper_functional_test.go buildRealWrapper, startLaunchRedis and waitJobsEmpty, the helpers only realwrapper_slow_test.go called, went with it (#4481)
 internal/docs/cli_swarm_lint_test.go held docs/CLI.md's nova-swarm lint entry; that section moved to deprecated/docs/CLI.md with cmd/nova-swarm (Glenn 2026-09-27: deprecated, rewritten with the sprint), and deprecated docs are not tested
 internal/docs/cli_swarm_lint_flags_test.go read cmd/nova-swarm/lint.go's flags against docs/CLI.md; both moved to deprecated/ with the tool
+internal/docs/cli_merge_batch_flags_test.go read the moved nova-merge batch flags against docs/CLI.md; the tool and its section moved to deprecated/ (Glenn 2026-09-27: not proven, landing goes through the GitHub merge queue)
+internal/docs/guard_lines_test.go held docs/CLI.md's and SPEC-REVIEW.md's nova-review guard lines; the tool and its CLI section moved to deprecated/ (Glenn 2026-09-27: not proven)
+internal/docs/mutate_lines_test.go held docs/CLI.md's and SPEC-REVIEW.md's nova-review mutate lines; the tool and its CLI section moved to deprecated/ (Glenn 2026-09-27: not proven; mutate may be lifted alone later)
+internal/nsprint/webhook/webhook_test.go a functional test of deprecated nsprint code that drove internal/post/hook's handler as its fixture; internal/post moved to deprecated/ with nova-post (Glenn 2026-09-27: not proven, PRs and comments go through gh), and deprecated code is not tested
+internal/ci/transcript_drift_functional_test.go its last subject, nova-review's version line, moved to deprecated/ with the tool; nova-decide's route lines and nova-work's refusal had left with theirs, so it built nothing

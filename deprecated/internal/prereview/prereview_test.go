@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/prereview"
+	"github.com/mas-bandwidth/nova-tools/deprecated/internal/prereview"
 )
 
 // The cells under testdata/cells are the pull requests two friends read

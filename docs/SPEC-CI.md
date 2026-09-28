@@ -1160,7 +1160,7 @@ whole verb down, in a loop nobody is watching, on the one input nobody had.
 `file:function # reason` per row. The one offender the rule found on its first
 run was fixed rather than listed (`cmd/nova-wake/serve.go`, `server.spawn`, which
 indexed `strings.Fields(s.onNote)` with no length check of its own); two rows
-arrived with the rebase onto dev (`internal/friendread/count.go:Parse`,
+arrived with the rebase onto dev (`deprecated/internal/friendread/count.go:Parse`,
 `internal/pulse/cut_template.go:OperativeRegion`), each in range by construction and
 each carrying its reason. Shrink-only in both directions, and every row must carry a
 reason.
@@ -1296,7 +1296,7 @@ from `os.TempDir()` — no `filepath.Glob`, `os.ReadDir` or `ioutil.ReadDir` ove
 an expression naming it, directly or through a local assigned from it. It is the
 read side of `testoutpath`: that one holds the paths a tool WRITES inside
 `t.TempDir()`, this one holds the directories a test READS.
-**The hurt.** `internal/review.TestMutateRemovesItsWorktreeOnBothPaths` proved
+**The hurt.** `deprecated/internal/review.TestMutateRemovesItsWorktreeOnBothPaths` proved
 that `review.Mutate` removes its throwaway worktree by globbing
 `os.TempDir()/nova-review-mutate-*` before the run and again after it, refusing
 any entry that was not in the snapshot. On a laptop that is exact; on a
@@ -1554,8 +1554,7 @@ server by an absolute path is not caught by the shim.
 **The rule.** ci.yml's `test-hosted` keeps `timeout-minutes: 2` and meets it by
 shard count: ubuntu-latest runs shards 1..6 and macos-latest 1..8, every leg
 carrying its OS's `shards`. The `deal this shard's packages` step places the
-heavy packages (`cmd/nova-bus`, `cmd/nova-merge`) first, one per shard, then every other
-package round-robin in
+heavy package (`cmd/nova-bus`) first, then every other package round-robin in
 `go list` order; vet and test both read the deal's `HOSTED_PKGS`. The Go cache
 is restored at the path Go uses on each OS (`~/Library/Caches/go-build` on
 macOS, `~/.cache/go-build` on Linux, plus `~/go/pkg/mod`) by
@@ -1573,7 +1572,7 @@ test step at 00:04:52, and the 198 MB entry warmed the shards that started after
 **The hurt.** Dev push run 36269122367 at f7aa36530: at four shards per OS,
 ubuntu-latest's shard 3 was cancelled at 123 s and all four macos-latest shards
 at 125-173 s, turning `ci-ok` red. Shard 3 of 4 held `cmd/nova-bus` (46 s
-`-short` on the Studio) and `cmd/nova-merge` (28 s) together, and a count-only
+`-short` on the Studio) and `deprecated/cmd/nova-merge` (28 s) together, and a count-only
 deal kept them together at eight. Dev push run 36357749371 at 3a3f5be93: the
 cache step cached `~/.cache/go-build` on every OS, the macOS entry was 107 MB of
 module cache against Linux's 636 MB while the step logged "cache hit", macOS
@@ -2312,7 +2311,7 @@ injected clock seam is not a wall-clock wait and is not found: the seams the
 tree has are internal/wake.Clock, internal/bus's lockClock, internal/swarm's
 batchClock and pullClock, internal/nsprint/land.Clock, internal/log.Clock and
 the injected `Sleep func(time.Duration)` and `now func() time.Time` fields of
-internal/merge, internal/gh, internal/swarm, cmd/nova-merge and cmd/nova-sprint.
+internal/merge, internal/gh, internal/swarm, deprecated/cmd/nova-merge and cmd/nova-sprint.
 **The hurt.** A load gate made the wall-time verdict depend on the machine:
 PR #4413's own head was red at load 3 of 32 CPUs on
 TestJoinInterruptionNegativeControlWithoutKillFails (1.6 s, run 36264290984),
@@ -3020,13 +3019,13 @@ ran out was the SHARD'S SUM, and the sum is decided by how many ways each packag
 is dealt. Dealing came off the LINUX table, and FOUR of the five largest darwin
 packages sit under its 40 s budget, so each was dealt three ways instead of six:
 `cmd/nova-wake` 24.6 s on hulk against 120.3 s measured on superman,
-`cmd/nova-merge` 7.7 against 68.8, `internal/swarm` 17.4 against 64.4 and
+`deprecated/cmd/nova-merge` 7.7 against 68.8, `internal/swarm` 17.4 against 64.4 and
 `cmd/nova-bus` 10.0 against 54.2. The second half of the hurt
 is the machine's STATE: superman was in its post-power-on condition, Spotlight
 settling and XprotectService scanning fresh test binaries with sixteen runners
 live, so the numbers of that moment were the state's and not the host's. That is
 why the rule names the conditions and not only the number — and why the margin is
-measured rather than assumed, on the same host both ways: `cmd/nova-merge` is
+measured rather than assumed, on the same host both ways: `deprecated/cmd/nova-merge` is
 68.8 s whole on a quiet superman against about 147 s on the loaded superman of
 that run, which is 2.1x.
 **The test.** `TestDarwinMergeShardPlanIsDerivedFromMeasurements`
@@ -3056,7 +3055,7 @@ EVERY slot the group opened; only linux still keeps the Linux table, which is it
 own measurement.
 **The hurt.** The same run, 35369433950, and the same shape as `windows-table`
 one platform later: a leg dealing from a table measured on another machine. Linux
-could not have said otherwise — `cmd/nova-merge` is 7.7 s on hulk and 68.8 s on a
+could not have said otherwise — `deprecated/cmd/nova-merge` is 7.7 s on hulk and 68.8 s on a
 quiet x64 Mac, `cmd/nova-bus` 10.0 s there and 54.2 s here — so four of the five
 packages that dominate this leg sat under the 40 s budget in the only table it
 read, and were dealt three ways instead of six. Three platforms are three

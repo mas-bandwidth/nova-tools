@@ -147,7 +147,7 @@ func (g *GHIntegrate) ClosePR(n int, comment string) error {
 
 // FakeIntegrateForge is the write side with no network in it: it records every write and
 // hands back the numbers a test set. It is in the package proper, beside FakeHost, so
-// that cmd/nova-merge's tests can drive it too.
+// that deprecated/cmd/nova-merge's tests can drive it too.
 type FakeIntegrateForge struct {
 	// Created is every pull request opened, in order.
 	Created []NewPR
@@ -208,9 +208,9 @@ func (f *FakeIntegrateForge) ClosePR(n int, comment string) error {
 // IntegrationBody is the batch pull request's body: the gate's receipt verbatim, the
 // caller's basis file whole, the lease said out loud, and the hold read named.
 //
-// IT IS PROSE AND IT LIVES HERE RATHER THAN IN cmd/nova-merge, where every printed
+// IT IS PROSE AND IT LIVES HERE RATHER THAN IN deprecated/cmd/nova-merge, where every printed
 // argument goes through internal/oneline and nothing may write bytes past that path
-// (cmd/nova-merge/audit_test.go). That rule is right for a tool whose stdout a harness
+// (deprecated/cmd/nova-merge/audit_test.go). That rule is right for a tool whose stdout a harness
 // parses, and a markdown body escaped for a one-line grammar would be a body nobody
 // could read. The caller's basis is copied WORD FOR WORD and never summarised: what a
 // member landed on is a judgement, and a tool that composed that sentence would be a

@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/merge/bench"
+	"github.com/mas-bandwidth/nova-tools/deprecated/internal/merge/bench"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 

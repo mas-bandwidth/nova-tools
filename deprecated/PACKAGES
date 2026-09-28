@@ -35,7 +35,7 @@ keep internal/swarm
 # internal/jevcalib and internal/decide/redtriage moved to deprecated/. Living
 # tools stand on the rest, so it stays tested until it is lifted out.
 internal/decide
-# cmd/nova-merge, cmd/nova-review, internal/prereview and internal/swarm (kept)
+# internal/swarm (kept above)
 keep internal/decide
 # internal/decide
 keep internal/decide/questions
@@ -44,3 +44,20 @@ keep internal/decide/questions
 # internal/nsprint/land/stream, both deprecated and still in the root module;
 # it moves under deprecated/internal/ when they do.
 internal/jev
+
+# nova-merge, nova-review and nova-post (Glenn 2026-09-27: not proven) moved to
+# deprecated/cmd/, with internal/review, internal/post, internal/prereview,
+# internal/nogh, internal/friendread and internal/merge/bench, which nothing
+# living imports. internal/merge stays and stays tested: internal/typedrec's
+# functional consumers_test reads merge.ParseComment and merge.ParseReviewers
+# (and deprecated internal/nsprint/land and internal/nsprint/disposition import
+# it).
+internal/merge
+keep internal/merge
+# internal/ghevent is imported only by deprecated packages still in the root
+# module, so it stays until they move:
+# cmd/nova-sprint, internal/nsprint/ci, internal/nsprint/consume,
+# internal/nsprint/land and internal/nsprint/webhook
+internal/ghevent
+# internal/wake and internal/gh
+keep internal/ghevent/wire

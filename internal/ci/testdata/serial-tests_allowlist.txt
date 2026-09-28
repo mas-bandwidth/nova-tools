@@ -22,7 +22,7 @@
 # TestReadCopyDealtToBenchRendersALintedCard), then by nine more from the redis
 # stream (seat and #3277 tests on t.Setenv); each owes a per-test seam. Moved
 # from the serialTestsCeiling constant into this file at 876, the count that day.
-# ceiling: 615
+# ceiling: 552
 cmd/nova-bus/issue1451_test.go:TestIssue1451EveryBareVerbRefusalNamesTheDoor serial: t.Setenv
 cmd/nova-bus/main_functional_test.go:TestReceiptMaxWordsDefaultsFromBusFileThenEnv serial: t.Setenv
 cmd/nova-bus/reply_functional_test.go:TestAFilesystemWithNoCreateExclusivePublishIsRefused serial: swaps package var main.publishDraft
@@ -49,67 +49,6 @@ cmd/nova-memory/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineFo
 cmd/nova-memory/main_test.go:TestRootIsNeverTakenFromTheEnvironment serial: t.Setenv
 cmd/nova-memory/version_test.go:TestVersionIdentityIsTheStampWhenThereIsOne serial: swaps package var main.version
 cmd/nova-memory/version_test.go:TestVersionLineHoldsWhateverTheStampContains serial: swaps package var main.version
-cmd/nova-merge/batch_functional_test.go:TestTheFixtureStartsNoGitItDoesNotWaitFor serial: t.Setenv
-cmd/nova-merge/classify_functional_test.go:TestClassifyBelowFloorLeavesToday serial: t.Setenv
-cmd/nova-merge/classify_functional_test.go:TestClassifyFlakyUnderLoadReruns serial: t.Setenv
-cmd/nova-merge/classify_functional_test.go:TestClassifyOwnChangeParks serial: t.Setenv
-cmd/nova-merge/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
-cmd/nova-merge/issue3016_functional_test.go:TestClassifyEmitsGroupStartAndVerdict serial: swaps package var merge.DefaultEvents, t.Setenv
-cmd/nova-merge/version_test.go:TestVersionIdentityIsTheStampWhenThereIsOne serial: swaps package var main.version
-cmd/nova-merge/version_test.go:TestVersionLineHoldsWhateverTheStampContains serial: swaps package var main.version
-cmd/nova-post/docsnippet_test.go:TestDocsCLISnippetRunsAsPrinted serial: t.Chdir
-cmd/nova-post/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
-cmd/nova-post/hook_dispatch_test.go:TestHookReadsTheSecretFromTheUnitEnv serial: t.Setenv
-cmd/nova-post/issue1451exit_test.go:TestOnlyExitTwoRefusalsCarryTheDoor serial: swaps package var main.now, swaps package var main.transport, t.Setenv
-cmd/nova-post/main_test.go:TestApprovalForAnotherHashIsRefused serial: swaps package var main.now, swaps package var main.transport, t.Setenv
-cmd/nova-post/main_test.go:TestApprovalNotFromGlennIsRefused serial: swaps package var main.now, swaps package var main.transport, t.Setenv
-cmd/nova-post/main_test.go:TestBodyNamingASecretIsRefused serial: swaps package var main.now, swaps package var main.transport
-cmd/nova-post/main_test.go:TestDigestForFixtureDayMatchesGolden serial: swaps package var main.now, swaps package var main.transport
-cmd/nova-post/main_test.go:TestSendIsIdempotent serial: swaps package var main.now, swaps package var main.transport, t.Setenv
-cmd/nova-post/main_test.go:TestSendWithoutApprovalIsRefused serial: swaps package var main.now, swaps package var main.transport, t.Setenv
-cmd/nova-post/main_test.go:TestShownBytesEqualSentBytes serial: swaps package var main.now, swaps package var main.transport, t.Setenv
-cmd/nova-post/main_test.go:TestStaleApprovalIsRefused serial: swaps package var main.now, swaps package var main.transport, t.Setenv
-cmd/nova-post/main_test.go:TestTargetNotInAllowlistIsRefused serial: swaps package var main.now, swaps package var main.transport, t.Setenv
-cmd/nova-review/decide_test.go:TestPacketDecideAppendsRiskAndSecondReaderLine serial: os.Chdir, t.Setenv
-cmd/nova-review/decide_test.go:TestPacketDecideBelowFloorIsOnlyAdvice serial: os.Chdir, t.Setenv
-cmd/nova-review/decide_test.go:TestPacketDecideRefusesNonPublicRepo serial: os.Chdir
-cmd/nova-review/decide_test.go:TestPacketDecideWithCardAsksScope serial: os.Chdir, t.Setenv
-cmd/nova-review/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
-cmd/nova-review/guard_test.go:TestGuardVerbIgnoresTheCallersGOFLAGS serial: t.Setenv
-cmd/nova-review/issue2063_test.go:TestIssue2063 serial: swaps package var main.prRemoteURL, swaps package var main.viewPRReviews, t.Setenv
-cmd/nova-review/main_test.go:TestMaxFlagTruncatesEarlierVerdicts serial: os.Chdir
-cmd/nova-review/main_test.go:TestPacketAcceptsAbsoluteOutUnderCwd serial: os.Chdir
-cmd/nova-review/main_test.go:TestPacketAcceptsAbsoluteOutUnderSymlinkedCwd serial: os.Chdir
-cmd/nova-review/main_test.go:TestPacketDiffOnlyStripsUnchangedContext serial: os.Chdir
-cmd/nova-review/main_test.go:TestPacketFirstLineIsTypedTuple serial: os.Chdir
-cmd/nova-review/main_test.go:TestPacketHeadBypassBuildsWhenTheEntryHeadFetchFails serial: os.Chdir
-cmd/nova-review/main_test.go:TestPacketHeadBypassRefusesFabricatedSHA serial: os.Chdir
-cmd/nova-review/main_test.go:TestPacketMissingEntryRefusalNamesRemedy serial: os.Chdir
-cmd/nova-review/main_test.go:TestPacketRefusalNamesAddRemedy serial: os.Chdir
-cmd/nova-review/main_test.go:TestPacketRefusesStaleHeadAndOverwrite serial: os.Chdir
-cmd/nova-review/main_test.go:TestPacketReuseCopiesOnlyAnExactTuple serial: os.Chdir
-cmd/nova-review/main_test.go:TestPacketReuseRejectsArbitraryLineScanning serial: os.Chdir
-cmd/nova-review/main_test.go:TestPacketWritesTheSelectedDiffAndHonestBound serial: os.Chdir
-cmd/nova-review/main_test.go:TestPerFileDiffOmissionAndRemedy serial: os.Chdir
-cmd/nova-review/main_test.go:TestThePacketIsTheDelta serial: os.Chdir
-cmd/nova-review/main_test.go:TestThePacketIsTheDelta_OnePacketServesEveryReaderInRange serial: os.Chdir
-cmd/nova-review/main_test.go:TestThePacketIsTheDelta_StaleAndCurrentArePrinted serial: os.Chdir
-cmd/nova-review/mutate_test.go:TestMutateVerbIgnoresTheCallersGOFLAGS serial: t.Setenv
-cmd/nova-review/port_test.go:TestPortBothWitnessesOK serial: swaps package var main.openPortHost
-cmd/nova-review/port_test.go:TestPortConcurrentRunsToOneOut serial: swaps package var main.openPortHost
-cmd/nova-review/port_test.go:TestPortEmptyDiffRefusesNamingExistingGate serial: swaps package var main.openPortHost
-cmd/nova-review/port_test.go:TestPortKilledRunLeavesNoOut serial: swaps package var main.linkFile
-cmd/nova-review/port_test.go:TestPortMissingFlagsRefuseBeforeHostCalls serial: swaps package var main.openPortHost
-cmd/nova-review/port_test.go:TestPortMissingLaneRemedyNamesLane serial: swaps package var main.openPortHost
-cmd/nova-review/port_test.go:TestPortMissingNegativeRemedyNamesRule serial: swaps package var main.openPortHost
-cmd/nova-review/port_test.go:TestPortUnknownSectionNamesHeadings serial: swaps package var main.openPortHost
-cmd/nova-review/port_test.go:TestPortWitnessHeadDoesNotHoldRefused serial: swaps package var main.openPortHost
-cmd/nova-review/root_packet_review_test.go:TestRootAdvertisedTripleDotUsesMergeBase serial: os.Chdir
-cmd/nova-review/spec_test.go:TestChangedSpecHunkQuotesBothExactSides serial: os.Chdir
-cmd/nova-review/spec_test.go:TestPacketMechanicallySelectsRulesAndPrintsEveryDiffFile serial: os.Chdir
-cmd/nova-review/spec_test.go:TestRuleFlagScopesPacketToThatRuleOnly serial: os.Chdir
-cmd/nova-review/version_test.go:TestVersionIdentityIsTheStampWhenThereIsOne serial: swaps package var main.version
-cmd/nova-review/version_test.go:TestVersionLineHoldsWhateverTheStampContains serial: swaps package var main.version
 cmd/nova-sandbox/denied_test.go:TestTheDenialReaderUsesPosixPathsOnEveryPlatform serial: swaps package var main.denialStat
 cmd/nova-sandbox/denied_test.go:TestTheDeniedLineNamesThePathTheOpAndTheRemedy serial: swaps package var main.denialStat
 cmd/nova-sandbox/egress_test.go:TestEgressApplyAndDropRefuseOffLinux serial: swaps package var main.egressGOOS, swaps package var main.egressLookup, swaps package var main.egressPriv
@@ -505,8 +444,6 @@ internal/nsprint/testutil/github_test.go:TestGitHubStubInterceptsHTTPCalls seria
 internal/nsprint/testutil/github_test.go:TestGitHubStubStartsCleanly serial: t.Setenv
 internal/release/certify_test.go:TestScriptRemoteOverTheRealSSHIsStillRefusedUnderTheHostGuard serial: t.Setenv
 internal/release/certify_test.go:TestScriptRemoteWithAFakeSSHRunsUnderTheHostGuard serial: t.Setenv
-internal/review/seed_test.go:TestMutateSeedDoesNotRunCardGitFiltersOrTheCardsTestInTheGateProcess serial: t.Setenv
-internal/review/seed_test.go:TestMutateSeedRunsNoWorkerFilterAndHandsNoSecretToTheCardsTest serial: t.Setenv
 internal/safepath/unsaferoots_test.go:TestRemoveUnderIdentifiesTheHomeByIdentityNotBySpelling serial: t.Chdir, t.Setenv
 internal/safepath/unsaferoots_test.go:TestRemoveUnderRefusesARootThatResolvesToAnUnsafeDirectory serial: t.Setenv
 internal/safepath/unsaferoots_test.go:TestRemoveUnderRootsIdentifiesTheHomeByIdentityNotBySpelling serial: t.Chdir, t.Setenv

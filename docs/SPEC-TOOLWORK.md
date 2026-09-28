@@ -1015,7 +1015,7 @@ nova-play the first line-for-line test. Nine more —
 collect what was printed into a `printed map[string]bool` and ask whether each
 documented line is in it, so an abridged or reordered block passes. nova-post's section
 runs `--channel fake` six times and the shipped tool refuses it
-(`internal/post/post.go:111-118`). Every drift found that week was found by a person.
+(`deprecated/internal/post/post.go:111-118`). Every drift found that week was found by a person.
 
 1. **Every transcript is executed, line for line, in order.** For every `## <tool>`
    section, a test in `cmd/<tool>` runs every `$` line of every fenced block under

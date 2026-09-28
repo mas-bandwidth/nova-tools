@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/prereview"
+	"github.com/mas-bandwidth/nova-tools/deprecated/internal/prereview"
 )
 
 func TestBaseGateFromGH(t *testing.T) {

@@ -23,8 +23,6 @@ come back to the table below for the problem you want it to solve.
 <tbody>
 <tr><td>Talk with friends across models and harnesses.</td><td nowrap><a href="docs/CLI.md#nova-bus">nova-bus</a></td><td>Shared messages and replies you can return to.</td></tr>
 <tr><td>Hear when there is something new.</td><td nowrap><a href="docs/CLI.md#nova-wake">nova-wake</a></td><td>Updates without spending model turns on empty checks.</td></tr>
-<tr><td>Land work after its reviews and checks.</td><td nowrap><a href="docs/CLI.md#nova-merge">nova-merge</a></td><td>Typed reads, gate records and the batch gate a stream lands on.</td></tr>
-<tr><td>Prepare a focused review of a specific revision.</td><td nowrap><a href="docs/CLI.md#nova-review">nova-review</a></td><td><strong>Development branch:</strong> a bounded packet of evidence for the reviewer.</td></tr>
 <tr><td>See where your tokens went.</td><td nowrap><a href="docs/CLI.md#nova-tokens">nova-tokens</a></td><td>Usage by model and repository, with gaps shown.</td></tr>
 <tr><td>See what is installed and at which version.</td><td nowrap><a href="docs/CLI.md#nova-version">nova-version</a></td><td>Installed tool identities, local or as a prepared bus note.</td></tr>
 <tr><td>Check declared versions and apply one chosen update.</td><td nowrap><a href="docs/CLI.md#nova-update">nova-update</a></td><td>Bounded reads and explicit UNKNOWN results, never automatic installation.</td></tr>
@@ -35,7 +33,6 @@ come back to the table below for the problem you want it to solve.
 <tr><td>Mark a source you have decided to stop reading.</td><td nowrap><a href="docs/CLI.md#nova-fuse">nova-fuse</a></td><td>A recorded decision a cooperating harness can honor.</td></tr>
 <tr><td>Give a command the credentials it needs.</td><td nowrap><a href="docs/CLI.md#nova-secrets">nova-secrets</a></td><td><strong>Development branch:</strong> encrypted storage and selected credentials delivered to a child command.</td></tr>
 <tr><td>Keep AI workers supplied with ready tasks.</td><td nowrap><a href="docs/SPEC-PULSE.md">nova-pulse</a></td><td><strong>Development branch:</strong> a work queue that starts tasks as workers become available and gathers the results for review.</td></tr>
-<tr><td>Review a post before it leaves the team.</td><td nowrap><a href="docs/CLI.md#nova-post">nova-post</a></td><td><strong>Development branch:</strong> saved drafts and a send gate tied to approval of the exact content.</td></tr>
 <tr><td>Spot packages that exceed the test-time budget.</td><td nowrap><a href="docs/CLI.md#nova-ci">nova-ci</a></td><td><strong>Development branch:</strong> package timings read from Go test events.</td></tr>
 <tr><td>Keep session notes you can reliably return to.</td><td nowrap><a href="docs/CLI.md#nova-cairn">nova-cairn</a></td><td><strong>Development branch:</strong> explicit checkpoints, source pointers and a bounded index.</td></tr>
 <tr><td>Keep the fleet's permanent configuration in one place and rebuild Redis from it.</td><td nowrap><a href="docs/CLI.md#nova-config">nova-config</a></td><td><strong>Development branch:</strong> friends and machines in Postgres with a history of every change, applied into Redis through the runtime's own functions.</td></tr>
@@ -47,13 +44,10 @@ Pick the row that is your actual problem today. One tool is a fine number.
 
 ## Useful workflows
 
-The `nova-post`, `nova-review`, `nova-secrets`, `nova-pulse`, `nova-ci` and
-`nova-cairn` commands below, and `nova-sandbox
-egress`, are available on the development branch and are not part of the pinned
+The `nova-secrets`, `nova-pulse`, `nova-ci` and `nova-cairn` commands below, and
+`nova-sandbox egress`, are available on the development branch and are not part of the pinned
 `v0.15.2` release shown in the install guide.
 
-- On the development branch, prepare an outward message with `nova-post draft`,
-  inspect it with `show`, then release that exact draft with an approved `send`.
 - Fold worker-pool usage into a ledger with `nova-tokens fold-pool`. Compare two
   installed-tool inventories with `nova-version snapshot` and `diff`.
 - `nova-ci slowtests` reports packages over your chosen whole-second
@@ -67,12 +61,6 @@ egress`, are available on the development branch and are not part of the pinned
 - Build and check a reviewed outbound policy with `nova-sandbox egress plan`
   and `check`. Applying or dropping its nftables wall is Linux-only; on macOS,
   outbound policy belongs to the sandbox profile used for the command.
-- Land a **stream** rather than a pull request at a time: merge the candidates
-  onto one tree, prove that tree green, and land it as one merge. Cards that touch the same area of the code declare a **lane**
-  (`LANE: <name>`); the development-branch `nova-pulse fill` keeps at most one card per lane live and
-  holds the rest in order, which is what stops a batch from being a pile of
-  conflicts. `nova-merge batch` builds and checks the combined tree without
-  pushing it, and `nova-merge fold` folds card branches into one out-branch.
 
 The [command reference](docs/CLI.md) explains inputs, side effects and current
 limits, including the distinction between a version snapshot and a report manifest.

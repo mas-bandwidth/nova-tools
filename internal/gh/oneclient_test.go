@@ -23,8 +23,6 @@ var ghUse = regexp.MustCompile(`Command(Context)?\(\s*(ctx,\s*)?"gh"|\{"gh",|(?i
 // follow-up moves each onto internal/gh or retires it. Inside nova-sprint
 // there is no allowlist: every verb uses the one client.
 var ghAllowed = map[string]string{
-	"cmd/nova-review/main.go":        "nova-review, not a nova-sprint verb",
-	"cmd/nova-review/reads.go":       "nova-review, not a nova-sprint verb",
 	"cmd/nova-sandbox/worktree.go":   "nova-sandbox, not a nova-sprint verb",
 	"internal/ci/failed_forge.go":    "the old ci failed-run reader through its gh wrapper; not a nova-sprint verb",
 	"internal/converge/forge.go":     "nova-converge's gh binary seam; not a nova-sprint verb",

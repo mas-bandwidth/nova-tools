@@ -17,7 +17,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/mas-bandwidth/nova-tools/internal/friendread"
+	"github.com/mas-bandwidth/nova-tools/deprecated/internal/friendread"
 )
 
 func TestIssue2683(t *testing.T) {

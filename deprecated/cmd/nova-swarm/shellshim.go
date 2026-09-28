@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nogh"
+	"github.com/mas-bandwidth/nova-tools/deprecated/internal/nogh"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 

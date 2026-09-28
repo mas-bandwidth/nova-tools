@@ -548,7 +548,9 @@ jobs:
           # 51) ran nova-bus for 773 s beside nova-merge, which hit the 18m go test
           # timeout with 287 PASS and 0 FAIL. Dealt first, they take shards 1 and 2
           # (and space shards 1 and 2); every package is still covered once per OS.
-          heavy=" ./cmd/nova-merge ./cmd/nova-bus "
+          # cmd/nova-merge has since moved to deprecated/, so cmd/nova-bus is dealt
+          # first alone.
+          heavy=" ./cmd/nova-bus "
           front=()
           rest=()
           for pkg in ${all[@]+"${all[@]}"}; do
@@ -968,12 +970,6 @@ jobs:
         # the -json stream to $RUNNER_TEMP/test.json and runs cmd/nova-ci slowtests
         # exactly as the inline command here did.
         # GOTEST_TIMEOUT: run 35999520176's studio-nova-13 shard failed only on Go's default 10m (cmd/nova-bus 600.3 s, cmd/nova-merge 600.5 s, 9,916 passes, 0 failing tests), so studio legs get 18m under the 20-minute push cap and 11m under the 12-minute PR/merge-group cap; space keeps Go's default 10m. internal/ci: TestShardGoTestTimeoutFitsTheJobCap.
-        # NOVA_CI_PR_STUDIO (2026-09-24, #3497 run 36010839171 and #3547 run 36014606764): a PR's Studio leg sets it,
-        # and cmd/nova-merge's git-lab tests skip there (cmd/nova-merge/helpers_functional_test.go, skipLabOnPRStudioLeg). The
-        # package has no darwin-specific file; it rode onto the Studio as an importer of internal/bus, and its 240
-        # parallel lab tests ran 660 s at GOMAXPROCS=4 (Go's 11m timeout) and 12 min (the cap) on a loaded Studio.
-        # They run in full on the same PR's Linux leg, on every push to dev (8 Studio shards) and in the merge group.
-        # Not a global -short: that would also skip internal/bus's multi-process tests, the darwin evidence this leg is for.
         # SLOWTESTS_FLAGS: the Makefile's default is the unit tier's 2 s package
         # and 1 s test budgets with internal/ci/slow-tests_allowlist.txt and
         # the SLEEPS ledger. A push or a manual run tests the WHOLE tree and
@@ -989,7 +985,6 @@ jobs:
         # skips are not the unit tier the budgets describe, on a two-core hosted
         # runner no pull request leg runs on.
         env:
-          NOVA_CI_PR_STUDIO: ${{ matrix.entry.group == 'macOS' && github.event_name == 'pull_request' && '1' || '' }}
           WHOLE_TREE_SLOWTESTS: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && '--budget 60 --sleeps internal/ci/sleeps-skips_allowlist.txt' || '' }}
           NIGHTLY_ENFORCE: ${{ github.event_name == 'schedule' && matrix.entry.group == 'space' && '1' || '0' }}
         # GOTEST_COUNT_FLAG= turns Go's test cache on (Makefile): a shard whose
@@ -1333,13 +1328,14 @@ jobs:
         # The heavy packages first, one per shard: cmd/nova-bus (46 s -short on
         # the Studio) and cmd/nova-merge (28 s) shared shard 3 of 4, the ubuntu
         # leg the cap cancelled at 123 s, and a count-only deal kept them together
-        # at eight. Then every other package round-robin in go list order (stable:
-        # go list sorts), continuing after the heavy ones. One line of
+        # at eight. cmd/nova-merge has since moved to deprecated/, so the list is
+        # cmd/nova-bus alone. Then every other package round-robin in go list order
+        # (stable: go list sorts), continuing after the heavy ones. One line of
         # space-separated packages, so vet and test below read the same deal.
         # internal/ci: TestHostedDealSplitsTheHeavyPackages (hostedHeavy).
         shell: bash
         run: |
-          heavy="cmd/nova-bus cmd/nova-merge"
+          heavy="cmd/nova-bus"
           deal='
             BEGIN { h = split(heavy, hv, " ") }
             {

@@ -46,7 +46,7 @@ import (
 // card writes the same string (#1898).
 const BatchBranchPrefix = "rowan/integration-"
 
-// batchOKPrefix is the gate's verdict line, from cmd/nova-merge/batch.go:
+// batchOKPrefix is the gate's verdict line, from deprecated/cmd/nova-merge/batch.go:
 //
 //	BATCH OK name=<name> base=<sha> head=<sha> members=<list> dropped=<list>
 //

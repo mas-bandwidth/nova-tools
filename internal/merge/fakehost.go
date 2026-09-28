@@ -3,7 +3,7 @@ package merge
 import "fmt"
 
 // FakeHost is the host the tests drive. It lives beside the production one rather than in
-// a _test.go file because two packages need it -- internal/merge and cmd/nova-merge --
+// a _test.go file because two packages need it -- internal/merge and deprecated/cmd/nova-merge --
 // and a fake copied into both is two fakes that drift.
 //
 // It reaches nothing: no network, no subprocess, no environment. Every answer is a field

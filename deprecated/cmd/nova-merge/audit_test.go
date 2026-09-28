@@ -80,7 +80,7 @@ var mergeAudit = audit.Config{
 		// internal/merge/bench holds no writer of its own: Validate reads the machines
 		// registry and returns an error whose message is already escaped through
 		// oneline.Field and oneline.Err; it prints nothing.
-		`"github.com/mas-bandwidth/nova-tools/internal/merge/bench"`,
+		`"github.com/mas-bandwidth/nova-tools/deprecated/internal/merge/bench"`,
 		// hygiene holds no writer of its own (#1661): Check runs read-only git over a
 		// member's range and RETURNS findings; batch renders the one it names through
 		// oneline.Escape/Cap and %q before printing, and a matched secret's text is never
@@ -119,7 +119,7 @@ var mergeAudit = audit.Config{
 		// friendread owns the read event's spelling (Stream, EventRead), so the writer
 		// in readevent.go and the fold the 1 s table runs agree on the wire by one
 		// constant. It is a fold over caller-supplied entries and prints nothing.
-		`"github.com/mas-bandwidth/nova-tools/internal/friendread"`,
+		`"github.com/mas-bandwidth/nova-tools/deprecated/internal/friendread"`,
 		// events owns the one stream's write contract; readevent.go takes only MaxLen,
 		// the approximate cap every writer trims the stream to, and prints nothing.
 		`"github.com/mas-bandwidth/nova-tools/internal/events"`,

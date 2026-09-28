@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/deprecated/internal/prereview"
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
-	"github.com/mas-bandwidth/nova-tools/internal/prereview"
 )
 
 // toolPRDir holds the eight tool pull requests of the 2026-09-22 dry pass

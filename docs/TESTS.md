@@ -63,7 +63,7 @@ run: `## nova-decide` (the ladder block routes through JEV and wants
 `## nova-secrets` (two steps invoke `nova-check`, which is a different tool's
 binary). nova-merge has no section since its lane-making verbs (`init`,
 `quickstart`, `add`) left with the per-PR lander role; its kept verbs are
-exercised by cmd/nova-merge's own tests.
+exercised by deprecated/cmd/nova-merge's own tests.
 
 ## nova-bus
 
@@ -454,89 +454,6 @@ WAKE at=2026-09-11T18:56:43Z as=- max=5s interval=5s on-deadline=report sources=
 WAKE QUIET after=5s polls=1 default=report sources-failing=0: deadline, default taken
 ```
 
-## nova-review
-
-### First run
-
-`nova-review` builds an artifact from an existing nova-merge lane; it has no state-creating quickstart. Its first safe command only
-identifies the binary.
-
-Two parts of the line below belong to the run and not to the document, and both
-are declared by `cmd/nova-review/firstrun_test.go`. The build triple
-`<goos>/<goarch> go<version>` is whichever machine runs it -- the one pasted
-here is the Mac it was recorded on (2026-09-19). The version word is whatever
-the build stamped itself with: a build you make prints the stamp shown here,
-and the unstamped binary `go test` builds prints `devel`. Everything else on
-the line is compared.
-
-```
-$ nova-review version
-nova-review v0.16.0-dev.c839379e.0.20260919144920-705dd1c92534 darwin/arm64 go1.27.1
-```
-
-A packet needs the lane, one selector, a reader and a new relative output
-path. It refuses an existing output rather than replacing a packet, and it
-refuses a supplied head that differs from the entry's current head. The packet
-records the exact range and either includes its selected diff or says that the
-byte budget omitted it with the command that prints it.
-
-### mutate: the selected form, and the abstain
-
-A lab with the #1828 shape: one fix in `sign/sign.go`, the test that detects it,
-and a co-touched test in `shape/shape_test.go` that is correctly insensitive to
-it. The default verdict is per FILE, so it says `FAIL` although the card's named
-`TEST:` is red — which is what `--test` exists to answer (#1849).
-
-```
-$ nova-review mutate --repo . --base main --head card
-MUTATE GREEN test=TestShapeOnly file=shape/shape_test.go: green with the change reverted; it proves nothing
-MUTATE GREEN test=TestSignPositive file=sign/sign_test.go: green with the change reverted; it proves nothing
-MUTATE 19947c2e reverted=1 red=1 green=2 FAIL
-
-$ nova-review mutate --repo . --base main --head card --test TestSignZero
-MUTATE 19947c2e reverted=1 red=1 green=2 test=TestSignZero PASS
-```
-
-The counts do not move: the co-touched units are still the evidence for how the
-question was answered. What moves is which unit the verdict is about. A name that
-cannot be resolved among the test units of the files this range changed is
-refused, never answered for a different test:
-
-```
-$ nova-review mutate --repo . --base main --head card --test TestNoSuchThing
-MUTATE REFUSED: the named test was not run: --test TestNoSuchThing names no test declared by a test file this range changed
-```
-
-A range that changes only test files — every `internal/docs` and `internal/ci`
-doc-rule repair — abstains on stdout, exit 2. It is inability to prove the
-control, never acceptance (#1850):
-
-```
-$ nova-review mutate --repo . --base card --head tests-only
-MUTATE be009676 ABSTAIN reason=no-change-to-revert: every changed file is a test file, so there is no production hunk to revert and this control cannot be proved either way; choose the seed form's control or hold
-```
-
-## nova-merge
-
-### First run
-
-`nova-merge` keeps the evidence a stream lands on (`read`, `gate`, `classify`,
-`batch`, `fold`); the lane-making verbs left with the per-PR lander role on
-2026-09-24, so it has no state-creating quickstart. Its first safe command only
-identifies the binary.
-
-Three parts of the line below belong to the run and not to the document, and all
-three are declared by `cmd/nova-merge/firstrun_test.go`: the build triple
-`<goos>/<goarch> go<version>` is whichever machine runs it, the version word is
-whatever the build stamped itself with (`devel` for the unstamped binary
-`go test` builds), and `build=` is the sha256 of the binary's own file, twelve
-hex, which differs for every build. Everything else on the line is compared.
-
-```
-$ nova-merge version
-nova-merge devel darwin/arm64 go1.27.1 build=391dac11a7b7
-```
-
 ## nova-tokens
 
 Fixture: `cmd/nova-tokens/testdata/example-bench` (copied into a temp directory first, because a first run WRITES; the bus lane is `example.com`).
@@ -687,49 +604,6 @@ nova-redis spill: --owner is required; refusing to guess; run: nova-redis help
 
 $ nova-redis spill --addr 127.0.0.1:6379 --owner rowan --name note --ttl 0s --value hi
 nova-redis spill: --ttl is required and must be above zero; an unbounded key is a bug; run: nova-redis help
-```
-
-## nova-post
-
-The gate is draft, show, approve, send: the tool prepares and renders, and Glenn's
-bus receipt releases. A draft is rendered once, written under `--drafts` as
-`<hash>.post` and `<hash>.meta`, and shown byte for byte; `send` refuses unless the
-receipt exists in `--bus`, is Glenn's, names this hash and is under 24 hours old, and
-it transmits the stored bytes only. The examples below name throwaway drafts, an
-allowlist and a body of your own; a missing flag is one line on stderr at exit 2, and
-a target the allowlist does not name is exit 1.
-Fixture: a drafts directory you create, an allowlist with one
-`channel<TAB>target` line, and a body file. Every test runs against fake
-endpoints — an `httptest` server per channel, a fake mailer, an injected clock
-— and the refusals below open no socket. A credential is read only from the
-environment `nova-secrets exec` delivers, is never printed, and is never
-measured.
-
-The outward gate of [docs/SPEC-OUTBOUND.md](SPEC-OUTBOUND.md), on one of its four
-channels: `ghost`. Every line below is local, and no socket, no credential and no
-provider is touched: `draft` renders the payload and writes it under `./drafts`,
-and `show` prints the exact payload bytes to stdout and its OK line to stderr
-(the `! ` line). `send` releases only on a bus receipt from Glenn that names the
-hash and is under 24 hours old, so it is not in this block: without a receipt it
-refuses at exit 1. The fixture is exact, because the hash is: `./body.md` holds
-the one line `A first post for the ghost channel.`, `./allowlist` holds the one
-line `ghost<TAB>example.com`, and `./drafts` is an empty directory you create.
-The hash is the SHA-256 of the payload the draft wrote, so
-`shasum -a 256 ./drafts/<hash>.post` prints it back.
-`cmd/nova-post/firstrun_test.go` writes that fixture and runs every `$` line.
-
-### First run
-
-```text
-$ nova-post draft --channel ghost --target example.com --file ./body.md --drafts ./drafts --allowlist ./allowlist
-POST DRAFT OK hash=b150f3e20ecedbf62ea231eca325d74de5dc1123d0e061c7453f524fb6c8315f channel=ghost target=example.com bytes=115 drafts=./drafts
-
-$ nova-post show --draft b150f3e20ecedbf62ea231eca325d74de5dc1123d0e061c7453f524fb6c8315f --drafts ./drafts
-{"posts":[{"title":"","html":"A first post for the ghost channel.\n","status":"published","tags":["example.com"]}]}
-! POST SHOW OK hash=b150f3e20ecedbf62ea231eca325d74de5dc1123d0e061c7453f524fb6c8315f channel=ghost bytes=115 drafts=./drafts
-
-$ nova-post version
-nova-post devel linux/amd64 go1.26.5
 ```
 
 ## nova-ci

@@ -1677,3 +1677,322 @@ and not the diagnosis
 The exit is 2 and the job directory is named, so the result and the usage row the
 child did write are still there to harvest. A run typed `--no-wall` had no
 sandbox, is told so, and is offered no read set.
+
+## nova-merge
+
+`nova-merge` keeps the **evidence a stream lands on**: a typed read at a head, a
+local gate's verdict for a merge, a typed classification of a failed merge-group
+run, a batch gate that merges N heads onto a base and runs the tests, and a fold of
+branches onto a base into one out-branch. Its contract is
+[docs/SPEC-MERGE.md](SPEC-MERGE.md), which is normative; this section is the door.
+
+The per-PR lander role is **retired** (stream is the unit, 2026-09-24): `init`,
+`quickstart`, `add`, `add-branch`, `run`, `status`, `dry-run`, `packet`, `stop`,
+`queue` (and `queue audit`), `wait`, `sweep`, `simulate`, `rebase`, `react`,
+`land`, `integrate`, `stack` and `receipt` are gone, and each is now an unknown
+subcommand at exit 2. A stream lands onto dev by hand until the stream-lander spec
+names the verb that does it.
+
+```
+nova-merge version
+nova-merge read     --lane <dir> (--pr <n>|--branch <name>) --who <name> --head <sha> --verdict approve|hold [--note <text>] [--redis <addr>]
+nova-merge gate     --lane <dir> (--pr <n>|--branch <name>) --head <sha> --base-sha <sha> --merge <sha> --verdict green|red --summary <path>
+nova-merge fold     --branches <file> --onto <base> --out <branch> --lane <dir>
+nova-merge fold     --close-folded --pr <n>
+nova-merge classify --lane <dir> --run <id> [--base-url <url>] [--key-env <name>]
+```
+
+`batch` has its own section below, with its full flag list.
+
+### read and gate
+
+A read and a gate are each **one immutable file in the lane's branch**, written to a
+durable outbox first and pushed in a compare-and-swap loop, so a reader on another
+machine records a verdict where every lane on that branch folds it
+([SPEC-MERGE.md](SPEC-MERGE.md), *The read condition* and *The local gate*). The lane
+directory is an existing one; the verbs that made lanes left with the lander role,
+and the stream-lander spec says where these records live next (Redis, per the
+"GitHub is a git remote only" ruling).
+
+- **`gate --base <sha>`** — exit 2, naming `--base-sha`. The lane's branch and the
+  base **sha** a gate was taken against are different words on purpose.
+- **`read` with no `--head`** — exit 2. A verdict binds to the sha the reader had
+  open, never to whatever the entry's head is when the verb runs: an approve
+  recorded a minute after the author pushed is an approve for code nobody read.
+- **a verb on a directory that is not a lane** — exit 2, and nothing written on the
+  way past.
+
+### fold
+
+`fold --branches <file> --onto <base> --out <branch> --lane <dir>` merges the
+listed branches in the file's order onto `--onto` in a scratch clone of the lane's
+repository, drops a branch whose conflict it may not resolve or that stays red
+after three tries, squashes the rest to one commit on `--out` and opens it as one
+pull request — card PRs into a stream branch. `fold --close-folded --pr <n>`
+closes the member pull requests a merged fold carried. See
+[SPEC-MERGE.md](SPEC-MERGE.md), *The fold (#1142)*.
+
+### classify
+
+`classify` asks one typed decision about **one failed merge-group run**: was the
+failure flaky under the queue's load, the environment, or the pull request's own
+change. It is advisory and it merges nothing. The floor is 0.90 and is not a flag —
+above it the kind drives the action, and below it the kind is `unknown`, neither
+action is taken, and the line names the raw answer it did not trust:
+
+```
+CLASSIFY run=<n> pr=<n> kind=<flaky-under-load|own-change|environment|unknown> conf=<x.xx> floor=0.90 rerun=<yes|no> park=<yes|no> [below=<the raw answer>]
+```
+
+`flaky-under-load` and `environment` are `rerun=yes park=no`; `own-change` is
+`rerun=no park=yes`. The evidence put to the route is bounded and public — the run,
+its failing jobs, their packages, whether the pull request changed those packages,
+and the runner — and never a secret and never a body. `--base-url` and `--key-env`
+are the decide route's, as everywhere else; a run the host cannot read, a route that
+will not answer, or a `--run` that is not a positive number is `CLASSIFY REFUSED`,
+exit 2. See [SPEC-DECIDE.md](SPEC-DECIDE.md), *Git and GitHub — classify, order,
+risk; never a merge*.
+
+### batch
+
+```
+nova-merge batch --name <name> --pr <list> --repo <owner>/<name> --root <dir> (--reviewers <file> --lane <dir> | --no-require-holds --reason <text>) [--untyped-comments ignore] [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--check-name <name>] [--receipt-file <path>] [--accept-control <dir>] [--sibling <name>=<url>@<ref>]
+```
+
+`batch` is the landing gate and **it pushes nothing**. It clones `--repo` under
+`--root`, merges each `--pr` head onto `--base` in the order given on a branch
+`rowan/<name>`, drops a head that will not merge and says so, then runs the suite —
+`build`, `vet`, `vet-windows`, `test`, `lisp` — over what is left.
+
+**Exactly one of `--reviewers <file>` and `--no-require-holds --reason <text>` is
+required**, and neither or both is exit 2: a gate that cannot say whose reads it
+honoured is not a gate. `--reviewers` names the reviewers file, and under it
+`--lane <dir>` is required too -- the lane directory the typed read records are
+read from, which may not be the literal `none`. `--no-require-holds` lands over
+an unlifted hold and says so on the verdict line, which is why it demands a
+`--reason`. `--untyped-comments ignore` sets aside untyped comments on the same
+terms and demands the same `--reason` (SPEC-DECIDE reading 3, *No flag ignores a
+hold*; nova-tools #1748).
+
+```
+BATCH OK   name=<name> base=<sha> head=<sha> members=<list> dropped=<list> skipped=<list> checks=<required|waived> [check=<name>]
+BATCH FAIL <the same fields> step=<name> packages=<list> tests=<list> reason="<condensed failure capped at oneline.TailBytes (500); a red build quotes the compiler lines; a red test step starts stream=<root>/test-<round>.jsonl>"
+BATCH DROP #<n> reason="the merge conflicts with the members ahead"
+BATCH DROP #<n> reason="head <sha> has no green <check> (state=<pending|failure|none>)" check=<name>
+BATCH SKIP <step> reason="<why it could not run>"
+BATCH STEP <step> command="<what it runs>"
+BATCH NOTE checks=waived reason="<what the caller took on>"
+BATCH NOTE #<n> checks=<batch-branch|receipt> reason="<the gate's own evidence for this member>"
+BATCH SIBLING name=<name> ref=<ref>
+BATCH REFUSED: <reason>
+```
+
+`skipped=<list>` **names every step that did not run**, so a green line never claims a
+suite it only ran part of: `BATCH SKIP lisp` went to stderr and `BATCH OK` said nothing
+about it. **`--require-lisp`** turns a skipped lisp step into `BATCH FAIL` for a caller
+who needs it run. A program that is not on `PATH` is also looked for under
+`~/sdk/<toolchain>/bin` — this fleet's toolchains live there — before its step is
+skipped.
+
+**The toolchain is checked against the tree's `go.mod` before the first merge.** With
+`go1.22` on `PATH` and a `go.mod` asking for 1.26 the whole gate ran and the failure
+surfaced as `step=build reason="go: downloading go1.26 (linux/amd64)"` — a progress
+notice naming nothing to fix. It is now one `BATCH REFUSED` with the remedy, and a
+`go: downloading …` line is never what a `reason=` quotes.
+
+**A red test step keeps the stream it condensed.** The gate used to reduce
+`go test -json` to that one `reason=` and discard the rest, so a `--- FAIL` block and
+its assertion text were nowhere on disk (#2626). The test step now writes the complete
+stream to `<root>/test-<round>.jsonl`, whether the step passed or failed. Round is `1`
+the first time that root keeps a stream and the next free integer after that, so a later
+run in the same root does not replace the file. The working directory `<root>/<name>`
+is removed at the start of the next run; the stream is not inside it. On `step=test` the `reason=`
+begins with `stream=<path>`.
+
+**A red build keeps the compiler lines.** `go build` prints `# package` then the
+diagnostics; `reason=` used to quote only that header, so a failure in
+`bench/tools/realpacket-gen` named the package and not `undefined: Foo`
+(nova-tools #2499 item 3 / #2508). The reason is now the captured stderr with
+those notices stripped, capped at `oneline.TailBytes` (500 bytes); the mark
+`...+<n>B` says when more was dropped.
+
+**`checks=required` is the default (edge 25).** A member whose own head has no green
+required check is **dropped before the merge**, by name and with the state it was in.
+The check's name is `ci-ok` in this repository — CI's one rollup — and a repo whose
+rollup is named something else (schema's `tests`) passes **`--check-name <name>`** or
+writes `required-check=<name>` in **`.nova-merge`** at the clone's root (#2499). The
+flag wins over the file; a missing file is the default, not a refusal. The name is
+printed as `check=<name>` on `BATCH OK` and on the check `BATCH DROP` so a lane script
+can parse it (#2508). `checks=waived` omits `check=`. The gate
+runs on one operating system and CI runs on three: three members went green under the
+gate on linux and red on CI's windows legs, and the batch pull request went red after
+the gate had said OK. A member that has not been green on its own is a member nobody
+has judged on every platform, and putting it in a batch asks this gate a question it
+cannot answer. A member whose head is **a batch's own branch** (`rowan/integration-*`) or is named by a
+`BATCH OK` line in **`--receipt-file`** is admitted on the gate's own evidence instead of
+the forge's rollup, read by the same
+parser — so a batch pull request whose own CI is still running is never refused as a
+member of the next one. `--no-require-checks` waives the whole check and says so on
+`BATCH NOTE` and on the verdict line. The `vet-windows` step (`GOOS=windows go vet ./...`) catches the
+build-level half of the same class on the bench, in seconds, with no second machine; it
+does not catch a windows-only **test** failure, which is what the forge's own windows
+leg is for.
+
+**`--sibling <name>=<url>@<ref>` (repeatable) stages a checkout beside `repo/`.**
+`--root/<name>` is rebuilt on every run, so a neighbour the tree's tests resolve
+as `../serialize.go` is gone unless this flag clones it again (nova-tools #2499
+item 2: schema's serialize runtimes). `name` is one path element — dots allowed,
+so `serialize.go` is a legal dest — and `repo` and `tmp` are reserved for the
+batch's own checkout and temp dir. `url` is a git URL; `ref` is a branch or tag.
+The last `@` splits url from ref, so an ssh URL is
+`git@host:path.git@v1.16.2`. A sibling that cannot be cloned is `BATCH REFUSED`,
+not a red test. Tests stage a `file://` fixture; they do not clone the real
+serialize runtimes.
+
+## nova-review
+
+One bounded, exact-revision **review packet** at the review layer, specified in
+[docs/SPEC-REVIEW.md](SPEC-REVIEW.md). It builds the file a reader needs to
+read one entry at one head — the range since that reader's last recorded head,
+the rules the diff touches, the prior verdicts and the open findings — and it
+never forms an opinion about code and never merges anything.
+
+```
+nova-review packet --lane <dir> (--pr <n>|--branch <name>) --who <name> --out <file> [--head <sha>] [--spec <path>]... [--rule <spec>:<n>]... [--max <n>] [--max-bytes <n>] [--diff-only] [--files <glob>] [--reuse <file>] [--timeout <seconds>]
+nova-review mutate --repo <dir> --base <ref> --head <ref> [--test <name>] [--timeout <seconds>] [--max <n>]
+nova-review mutate --repo <dir> --head <ref> --seed <patch file> --tests <package>[,<package>...] [--timeout <seconds>]
+nova-review guard --repo <dir> --head <ref> [--tests <package>[,<package>...]] [--timeout <seconds>] [--max <n>]
+nova-review version
+nova-review help
+```
+
+`mutate` is the mechanical half of a read, taken off the reader, and it has two
+forms. The **range** form reverts every non-test hunk in a throwaway worktree at
+`--head` and runs the tests the change touched: they must fail, or the change has
+no red test of its own. Its verdict line says how much it put back —
+
+```
+MUTATE <head8> reverted=<n> red=<n> green=<n> <PASS|FAIL>
+```
+
+— so "every non-test hunk" is a number a caller can gate on, and a `PASS` with
+`reverted=0` is visibly a control that never ran. The **seed** form is the other
+half, and the one every negative control in the accept gate is built from: one
+deliberate defect goes INTO the head and the named suites must kill it.
+
+```
+MUTATE <head8> seed=<hex8> edits=<n> red=<n> green=<n> <PASS|FAIL>
+```
+
+`seed=` is the first 8 hex of the patch's SHA-256, so a report names which control
+ran. The edit count is asserted, not reported: exactly one, counted from the
+worktree after `git apply` and never from the patch's own `@@` header, else
+`MUTATE REFUSED` and exit 2 before the seeded run. Five more things refuse rather
+than answer, because each of them kills every seed and would print a `PASS` that
+is not about the seed: a patch that does not apply, a `--tests` package `go list`
+does not resolve at that head, a named suite already red at the unseeded head, a
+seeded tree that does not BUILD (a control that did not compile is the `broken`
+seed of SPEC-TOOLWORK §1 rule 6, whose want is the token `build` and not a kill,
+and it kills every suite it is pointed at: `MUTATE REFUSED: seed does not build:
+<the compiler's own line>`), and a `--timeout` deadline that killed the run
+mid-flight. Neither form writes anything
+into the repo it is pointed at, on any path. Full grammar in
+[docs/SPEC-REVIEW.md](SPEC-REVIEW.md).
+
+`--test <name>` is optional and range-only, and asks SPEC-TOOLWORK §1 rule 4(d)'s
+own question: does THAT test detect the reverted change. The default verdict is
+per FILE, which is stricter and a different question — a card that also touched a
+second test file whose tests are correctly insensitive to the change came back
+`FAIL` with its named `TEST:` red (#1849). Given, the verdict is that unit's, and
+the line carries `test=<resolved name>` beside the usual counts:
+
+```
+MUTATE <head8> reverted=<n> red=<n> green=<n> test=<name> <PASS|FAIL>
+```
+
+The name is resolved among the test units of the files THIS RANGE CHANGED and
+nowhere else, and may be qualified `<file>:<name>` where two of them declare it.
+One that resolves to none of them, to more than one, or to a unit whose suite
+could not be run is `MUTATE REFUSED`, exit 2 — never a vacuous `PASS`, never an
+inferred `FAIL`, and never a guess at which test was meant. The co-touched units
+are still counted and still listed; another test's result no longer answers the
+question that was asked. Every `MORE` remedy carries `--test`, so rerunning it
+asks the same question. The singular `--test` is the range form's unit and the
+seed form's plural `--tests` is its package selector: together they are malformed.
+
+A range that changes ONLY test files does not refuse — it ABSTAINS, on stdout,
+still exit 2 (#1850).
+
+```
+MUTATE <head8> ABSTAIN reason=no-change-to-revert: every changed file is a test file, so there is no production hunk to revert and this control cannot be proved either way; choose the seed form's control or hold
+```
+
+`guard` is the post-landing negative control (#2042). It reverts the commit's
+non-test files, keeps the tests, and runs the named packages. The verdict is
+computed from exit codes and test names, never judged: `GUARDED` when tests go
+red, `UNGUARDED` when they stay green, `COMPILER-HELD` when the revert does not
+compile, `NOT-APPLICABLE` when the file is excluded on this OS. `--tests` is the
+only judgement (which packages to run); omitted, the packages are the commit's
+changed `.go` files. Both test tails and `platform=<goos>/<goarch>` are recorded.
+The verdict is `status=`, never the last token. It writes nothing into the repo
+it is pointed at.
+
+```
+GUARD <head8> platform=<goos>/<goarch> reverted=<n> red=<n> green=<n> status=<GUARDED|UNGUARDED|COMPILER-HELD>
+GUARD <head8> platform=<goos>/<goarch> status=NOT-APPLICABLE reason=build-tags
+```
+
+Reverting nothing runs the head's own suite, so the control cannot be PROVED,
+which is not the same as a run that broke and is not acceptance either: it is
+never a `PASS`, never a `REJECT` and never permission to push. Every
+`internal/docs` and `internal/ci` doc-rule repair has this shape, and each one
+used to be sent to the seed form by hand. A range that changes NO test file is a
+different condition and still refuses, `MUTATE <head8> no-tests-changed`: it can
+be an ordinary production fix missing the red test it was required to have, and
+calling that harmless is the inference this verb must not make.
+
+The other verbs are `packet`, `version` and `help`. `guard` is above. `packet` is the one that works:
+it reads one entry on a lane at one head and writes one bounded file, capped at
+`--max-bytes` (default 131072), past which the packet holds the hunk list and
+the command that prints the rest; `--max` (default 20) caps the prior-verdicts
+table, the open-findings table and the rules section inside it. `--reuse
+<file>` hands a second reader with the same range the same bytes and reads no
+tree at all. `--rule <spec>:<n>` (with the matching `--spec`) writes a
+**scoped** packet — the first line and only that rule's section, its text
+quoted at the head, both sides when the rule changed since the base — and reads
+no diff, no verdicts and no findings, so a rule question costs one rule, not a
+SPEC-WORK-sized whole-packet build. `--diff-only` drops the context lines around a change, so a
+multi-file PR contributes only its changed lines and none of the unchanged
+whole-file context; `--files <glob>` narrows the diff to the paths
+matching the glob, and both refuse to combine with `--reuse`.
+
+**Reading it.** Success writes the packet to `--out` exclusively — packets are
+immutable, and an `--out` that already exists is a refusal — and prints one
+receipt line: `PACKET OK entry=… id=… head=… base=… range=… files=… hunks=…
+rules=… prior=… open=… bytes=… cut=… reused=… out=…`. A `--head` that is no
+longer the entry's head prints `PACKET STALE entry=… asked=… current=…`, exit 1,
+naming the head it moved to. Every refusal is one `PACKET REFUSED: …` line,
+exit 2, and a `--reuse` candidate built for another (entry, head, range) is a
+`PACKET REUSE` line naming what it was built for.
+
+## nova-post
+
+Prepares outward messages for Ghost, Bluesky, email or Discord. `draft` saves the
+payload, `show` displays those saved bytes, and `send` checks the approval receipt
+before contacting the provider. See [SPEC-OUTBOUND.md](SPEC-OUTBOUND.md).
+
+```sh
+mkdir -p ./drafts && printf 'email\tteam\n' > ./targets.tsv && printf 'a first post for the first run.\n' > ./message.md
+nova-post draft --channel email --target team --file ./message.md --drafts ./drafts --allowlist ./targets.tsv
+nova-post show --draft <hash-from-draft> --drafts ./drafts
+```
+
+Create the draft directory first. The allowlist contains one `channel<TAB>target`
+per line; `team` above must be an explicitly allowed target. Optional `--title`
+sets the title or subject. The draft's hash identifies the exact content.
+
+`send` requires `--draft`, `--drafts`, `--allowlist`, `--bus` and `--approval`.
+The shipped approval gate requires a bus note from Glenn carrying
+`APPROVE nova-post sha256=<hash>`, received less than 24 hours ago. It does not
+expose a flag for choosing another approver. Provider credentials are supplied
+through the child environment. Drafting and showing do not authorize a send.

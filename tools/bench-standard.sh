@@ -375,11 +375,11 @@ if [ "$OS" = "Linux" ]; then
   fi
 fi
 
-# (4) the 13 nova bins each report $NOVA_WANT (nova-swarm moved to deprecated/ and ships no more).
+# (4) the 11 nova bins each report $NOVA_WANT (nova-swarm, nova-merge and nova-review moved to deprecated/ and ship no more).
 if [ -z "$NOVA_WANT" ]; then
   drift "NOVA_WANT unset (set NOVA_WANT to the wanted version)"
 else
-  for name in nova-bus nova-check nova-fuse nova-memory nova-merge nova-review nova-sandbox nova-secrets nova-self-talk nova-tokens nova-update nova-version nova-wake; do
+  for name in nova-bus nova-check nova-fuse nova-memory nova-sandbox nova-secrets nova-self-talk nova-tokens nova-update nova-version nova-wake; do
     bin="$HOME_DIR/.local/bin/$name"
     if [ ! -x "$bin" ]; then
       drift "$name missing at $bin"
