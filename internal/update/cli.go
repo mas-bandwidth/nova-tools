@@ -25,8 +25,9 @@ import (
 // Environment supplies deterministic clock/network seams. Nil values use the
 // machine clock and a credential-free, redirect-bounded HTTP client.
 type Environment struct {
-	Now    func() time.Time
-	Client *http.Client
+	Now     func() time.Time
+	Client  *http.Client
+	Context context.Context
 }
 type options struct {
 	file, host, snapshot, as, to, bus, remote, branch, target, adopt, store string
@@ -351,7 +352,11 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 	}
 	sort.Strings(kinds)
 	started := env.Now()
-	ctx, cancel := context.WithTimeout(context.Background(), o.budget)
+	baseCtx := env.Context
+	if baseCtx == nil {
+		baseCtx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(baseCtx, o.budget)
 	defer cancel()
 	if verb == "report" {
 		return report(ctx, entries, selected, o, strings.Join(kinds, ","), started, out, errs, env)

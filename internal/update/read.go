@@ -223,6 +223,9 @@ func process(ctx context.Context, args []string, input io.Reader, cap int) Proce
 // budget leaves, floored, so a held pipe is closed promptly rather than kept
 // open by a fixed grace begun at cancellation.
 func drainAllowance(ctx context.Context) time.Duration {
+	if ctx.Err() != nil {
+		return drainFloor
+	}
 	drain := killGrace
 	if deadline, ok := ctx.Deadline(); ok {
 		if remaining := time.Until(deadline); remaining < drain {

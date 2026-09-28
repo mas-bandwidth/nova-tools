@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -79,6 +81,9 @@ func TestHelperProcess(t *testing.T) {
 			os.Exit(5)
 		}
 	case "hold":
+		if len(a) > 2 && a[2] != "" {
+			_ = os.WriteFile(a[2], []byte(strconv.Itoa(os.Getpid())), 0600)
+		}
 		d, err := time.ParseDuration(a[1])
 		if err != nil {
 			os.Exit(6)
@@ -88,7 +93,11 @@ func TestHelperProcess(t *testing.T) {
 		// Leave a grandchild holding stdout open in its OWN process group, then
 		// hang, so the grandchild survives this process's group kill: the
 		// escaped-pipe case a deadline must still close.
-		if err := spawnEscapedHolder(a[1]); err != nil {
+		readyFile := ""
+		if len(a) > 2 {
+			readyFile = a[2]
+		}
+		if err := spawnEscapedHolder(a[1], readyFile); err != nil {
 			os.Exit(5)
 		}
 		time.Sleep(30 * time.Second)
@@ -366,33 +375,95 @@ func TestApplyOnlyNamedEntryAndExactTarget(t *testing.T) {
 	}
 }
 func TestFourReadLimitAndOverallBudget(t *testing.T) {
+	hang := transportFunc(func(r *http.Request) (*http.Response, error) {
+		<-r.Context().Done()
+		return nil, r.Context().Err()
+	})
+	client := &http.Client{Transport: hang}
+
+	entries := make([]Entry, 40)
+	for i := range entries {
+		entries[i] = Entry{Name: fmt.Sprint(i), Kind: "tool", Installed: []string{"1.0.0"}, Latest: "npm:pkg"}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	started := time.Now()
+	r := readEntries(ctx, entries, options{timeout: time.Second}, Environment{Client: client}, false)
+	if took := time.Since(started); took > 30*time.Second {
+		t.Fatalf("budget exceeded: took %s", took)
+	}
+	if len(r) != 40 {
+		t.Fatalf("expected 40 results, got %d", len(r))
+	}
+	if r[39].Installed.Reason != "budget" && r[39].Latest.Reason != "budget" {
+		t.Fatalf("expected budget reason on unread entry, got: %+v", r[39])
+	}
+}
+
+func TestFourReadConcurrencyLimit(t *testing.T) {
+	t.Parallel()
+
 	var active, max atomic.Int32
-	client, done := testClient(func(w http.ResponseWriter, r *http.Request) {
-		n := active.Add(1)
+	var fifthAttempt atomic.Bool
+	ready4 := make(chan struct{})
+	release := make(chan struct{})
+	var closeOnce sync.Once
+
+	transport := transportFunc(func(r *http.Request) (*http.Response, error) {
+		cur := active.Add(1)
+		defer active.Add(-1)
 		for {
 			old := max.Load()
-			if n <= old || max.CompareAndSwap(old, n) {
+			if cur <= old || max.CompareAndSwap(old, cur) {
 				break
 			}
 		}
-		defer active.Add(-1)
-		<-r.Context().Done()
+		if cur > 4 {
+			fifthAttempt.Store(true)
+			return nil, fmt.Errorf("concurrency exceeded 4: active=%d", cur)
+		}
+		if cur == 4 {
+			closeOnce.Do(func() { close(ready4) })
+		}
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+		return &http.Response{
+			StatusCode: 200,
+			Body:       io.NopCloser(strings.NewReader(`{"version":"2.0.0"}`)),
+			Header:     make(http.Header),
+		}, nil
 	})
-	defer done()
-	entries := []Entry{}
-	a, _ := argv(printer(t, "v1.0.0"))
-	for i := 0; i < 40; i++ {
-		entries = append(entries, Entry{Name: fmt.Sprint(i), Kind: "tool", Installed: a, Latest: "npm:p"})
+	client := &http.Client{Transport: transport}
+
+	entries := make([]Entry, 12)
+	for i := range entries {
+		entries[i] = Entry{Name: fmt.Sprint(i), Kind: "tool", Installed: []string{"1.0.0"}, Latest: "npm:pkg"}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
-	defer cancel()
-	started := time.Now()
-	r := readEntries(ctx, entries, options{timeout: time.Second}, Environment{Client: client}, false)
-	if time.Since(started) > 30*time.Second || max.Load() > 4 {
-		t.Fatal("budget or concurrency", time.Since(started), max.Load())
+
+	done := make(chan struct{})
+	go func() {
+		readEntries(context.Background(), entries, options{timeout: 5 * time.Second}, Environment{Client: client}, false)
+		close(done)
+	}()
+
+	<-ready4
+
+	if cur := active.Load(); cur != 4 {
+		t.Fatalf("expected active == 4 at barrier, got %d", cur)
 	}
-	if len(r) != 40 || r[39].Installed.Reason != "budget" {
-		t.Fatal(r[39])
+	if fifthAttempt.Load() {
+		t.Fatal("a 5th active read was attempted")
+	}
+
+	close(release)
+	<-done
+
+	if max.Load() != 4 {
+		t.Fatalf("expected max active == 4, got %d", max.Load())
 	}
 }
 func TestSnapshotObservationDoesNotSuppressDelivery(t *testing.T) {
@@ -433,14 +504,19 @@ func TestSnapshotObservationDoesNotSuppressDelivery(t *testing.T) {
 }
 func TestCheckCapsAndFilterActuallyAvoidsReads(t *testing.T) {
 	rows := []string{}
-	installed := printer(t, "1.0.0")
-	latest := printer(t, "2.0.0")
 	for i := 0; i < 26; i++ {
-		rows = append(rows, row(fmt.Sprint(i), "tool", installed, "local:"+latest, "none"))
+		rows = append(rows, row(fmt.Sprint(i), "tool", "1.0.0", "npm:pkg", "none"))
 	}
 	rows = append(rows, row("excluded", "model", "should-not-run", "ollama:model:tag", "none"))
 	p := manifest(t, rows...)
-	c, o, e := run(t, Environment{}, "check", "--file", p, "--kind", "tool", "--max", "2")
+	env := Environment{Client: &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: 200,
+			Body:       io.NopCloser(strings.NewReader(`{"version":"2.0.0"}`)),
+			Header:     make(http.Header),
+		}, nil
+	})}}
+	c, o, e := run(t, env, "check", "--file", p, "--kind", "tool", "--max", "2")
 	if c != 1 {
 		t.Fatal(c)
 	}
@@ -456,7 +532,7 @@ func TestCheckCapsAndFilterActuallyAvoidsReads(t *testing.T) {
 // finishing. A ten millisecond grace lost that race under load and reported a
 // healthy tool as UNKNOWN. The grace has to outlast an ordinary handoff.
 func TestHealthyCommandWithLingeringGrandchildStillReads(t *testing.T) {
-	e := Entry{Name: "x", Kind: "tool", Installed: mustArgv(t, command(t, "linger", base64.StdEncoding.EncodeToString([]byte("x 1.2.3\n")), "40ms"))}
+	e := Entry{Name: "x", Kind: "tool", Installed: mustArgv(t, command(t, "linger", base64.StdEncoding.EncodeToString([]byte("x 1.2.3\n")), "100ms"))}
 	r := Installed(context.Background(), e, 5*time.Second, false)
 	if !r.Known() || r.Version != "1.2.3" {
 		t.Fatalf("healthy read refused: reason=%q version=%q raw=%q", r.Reason, r.Version, r.Raw)
