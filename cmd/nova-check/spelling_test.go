@@ -555,4 +555,3 @@ func TestStellaQuotedListTabFence(t *testing.T) {
 		})
 	}
 }
-
