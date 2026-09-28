@@ -168,8 +168,11 @@ func TestFoldPoolNonCanonicalLedgerPath(t *testing.T) {
 		poolRow("t1", "2026-09-11T10:00:00Z", "deepseek", "m1", "r1", "100", "50", "10", "20", "5", "0.010000"),
 	)
 
-	ledgerWithDot := filepath.Join(dir, ".", "ledger.tsv")
-	r := invoke(t, "fold-pool", "--pool", filepath.Join(dir, "pool"), "--ledger", ledgerWithDot)
+	rawPath := dir + "/./ledger.tsv"
+	if filepath.Clean(rawPath) == rawPath {
+		t.Fatalf("rawPath must be non-canonical")
+	}
+	r := invoke(t, "fold-pool", "--pool", filepath.Join(dir, "pool"), "--ledger", rawPath)
 	wantExit(t, r, 0)
 	wantContains(t, r.stdout, "FOLD OK")
 	if _, err := os.Stat(filepath.Join(dir, "ledger.tsv")); err != nil {

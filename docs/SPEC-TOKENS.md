@@ -112,12 +112,14 @@ near the end, and the sections below say how each is met.
    rest of the file's rows over unchanged (rule 10, #268). The write goes
    through `internal/atomicfile`: a unique temporary sibling
    `.<day>.tsv.tmp-%08x` in the same directory, fsynced to media, and landed
-   by one atomic rename, with parent-directory fsync. The exclusive temporary
-   file guarantees that concurrent writers never collide and temporary files
-   never escape their parent directory; a stranded random-sibling temporary
-   left by an interrupted fold is preserved (never overwritten or removed on
-   retry), and `check` steps over valid day-file temporaries while flagging
-   unrelated temporaries as strays (lessons 53, 54, 67).
+   by one atomic rename, with best-effort parent-directory fsync. Unique
+   temporary names guarantee that temporary files never collide and never
+   escape their parent directory, but fold locking (`<out>/fold.lock`, released
+   on death; a second fold waits a bounded, jittered time and exits 2 naming the
+   holder) serializes concurrent final updates; a stranded random-sibling
+   temporary left by an interrupted fold is preserved (never overwritten or
+   removed on retry), and `check` steps over valid day-file temporaries while
+   flagging unrelated temporaries as strays (lessons 53, 54, 67).
 9. **One file per day. A month is a sum of day files. The tool removes
    nothing.** There is no month file. `sum` reads day files and writes
    nothing. No verb deletes, truncates or trims any file, including any log.

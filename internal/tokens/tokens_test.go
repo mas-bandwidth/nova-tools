@@ -511,7 +511,10 @@ func TestWritePoolLedgerNonCanonicalPath(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	ledgerPath := filepath.Join(dir, ".", "ledger.tsv")
+	rawPath := dir + "/./ledger.tsv"
+	if filepath.Clean(rawPath) == rawPath {
+		t.Fatalf("rawPath must be non-canonical")
+	}
 	groups := map[PoolKey]*PoolAgg{
 		{Day: "2026-09-11", Provider: "deepseek", Model: "m1", Repo: "r1"}: {
 			Tasks: 2, In: 300, HasIn: true, Out: 150, HasOut: true,
@@ -520,14 +523,14 @@ func TestWritePoolLedgerNonCanonicalPath(t *testing.T) {
 		},
 	}
 
-	if err := WritePoolLedger(ledgerPath, groups); err != nil {
-		t.Fatalf("WritePoolLedger failed on non-canonical path %q: %v", ledgerPath, err)
+	if err := WritePoolLedger(rawPath, groups); err != nil {
+		t.Fatalf("WritePoolLedger failed on non-canonical path %q: %v", rawPath, err)
 	}
 
 	// ReadPoolLedger should also succeed on non-canonical path
-	rows, err := ReadPoolLedger(ledgerPath)
+	rows, err := ReadPoolLedger(rawPath)
 	if err != nil {
-		t.Fatalf("ReadPoolLedger failed on non-canonical path %q: %v", ledgerPath, err)
+		t.Fatalf("ReadPoolLedger failed on non-canonical path %q: %v", rawPath, err)
 	}
 	if len(rows) != 1 {
 		t.Fatalf("ReadPoolLedger got %d rows, want 1", len(rows))
