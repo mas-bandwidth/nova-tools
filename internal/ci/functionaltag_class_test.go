@@ -31,6 +31,7 @@ import (
 var redisHelpers = map[string][]string{
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil":  {"Start", "Program"},
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws/wstest": {"Start"},
+	"github.com/mas-bandwidth/nova-tools/internal/testredis":         {"Start", "StartServer", "Program"},
 }
 
 // startsRedis reports whether src calls one of redisHelpers through its import.
