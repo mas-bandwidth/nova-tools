@@ -5,6 +5,33 @@ has its own entry point; choose the tools that fit your work. The
 [1.0.0 release notes](RELEASE-NOTES-1.0.0.md) describe their capabilities,
 and the [README](../README.md) gives a first command for each tool.
 
+## Checkpoints and receipts
+
+`nova-cairn index` and `receipt` read dated entries in flat session files as
+well as nested entry stores. A missing store or named session refuses;
+an existing empty store produces an empty index. Flat receipts report
+`publish=unknown` because those records do not store a publication policy.
+Listings report the full count when the display limit hides entries.
+
+Retrying an identical append returns the original stored timestamp and
+`duplicate=true`. A malformed stored timestamp refuses without writing.
+
+## Findings and commands you can act on
+
+`nova-self-talk` reports findings at their original source line numbers.
+If every input is skipped, it prints an explicit `SKIP` result and exits 0.
+Flags placed after a file operand refuse before the tool reads files, so
+an option cannot silently become a filename.
+
+The commands suggested by `nova-fuse lift` and `nova-cairn` refusals preserve
+paths and reasons containing shell punctuation. Copying a remedy keeps the
+arguments intact.
+
+## Checks for contributors
+
+The CI class check validates hosted package assignments at the shard
+counts the workflow actually runs. Existing time budgets stay in force.
+
 ## Release history
 
 The repository includes a [changelog](../CHANGELOG.md) with the source
