@@ -322,6 +322,38 @@ LIFT OK verified: a-forum is no longer quarantined (soft: your own dial, both di
 
 **Help is `nova-fuse help`, never `-h` after a verb.** Every other nova tool answers `<verb> -h` with that verb's help at exit 0. nova-fuse refuses it at exit 2, with one line on stderr, because exit 0 here means CLEAR: a surface or a reason that arrives spelled `-h` must never read as permission. `nova-fuse help`, and `-h` or `--help` as the first argument, print the usage at exit 0.
 
+### Migration from rowan-fuse
+
+`nova-fuse` replaces `rowan-fuse` as the canonical ingestion guard across all tools (`modules/gates`, `rowan-github`, `rowan-email`, `rowan-discord`, `rowan-bsky`). `nova-fuse` delivers complete verb parity with hardened safety invariants.
+
+#### Verb and argument mapping
+
+| `rowan-fuse` invocation | `nova-fuse` invocation | Notes |
+|---|---|---|
+| `rowan-fuse status` | `nova-fuse status --box <path> [--max <n>]` | Explicit `--box` required; `--max 20` default bounds terminal output |
+| `rowan-fuse check [surface]` | `nova-fuse check --box <path> [surface]` | Explicit `--box` required; gate exits 0 on clear, 1 on blown |
+| `rowan-fuse lockdown "<reason>"` | `nova-fuse lockdown --box <path> "<reason>"` | Auto-creates absent box; multi-word reasons joined and folded |
+| `rowan-fuse quarantine <surface> "<reason>"` | `nova-fuse quarantine --box <path> <surface> "<reason>"` | Refuses on absent/unreadable box (asymmetric to lockdown) |
+| `rowan-fuse lift quarantine <surface>` | `nova-fuse lift quarantine --box <path> <surface>` | Rescinds soft quarantine; re-reads and announces verification |
+| `rowan-fuse lift lockdown` | `nova-fuse lift lockdown` | Refused forever by design; exits 2 before reading any box |
+| `rowan-fuse path` | `nova-fuse path --box <path>` | Echoes path bare; verifies caller plumbing |
+| *(None)* | `nova-fuse init --box <path>` | Creates an empty clear box where none exists; never replaces |
+| *(None)* | `nova-fuse version` / `--version` | Prints build identity line at exit 0 |
+
+#### Seam differences and caller adjustments
+
+1. **Explicit box path (`--box <path>`):** `rowan-fuse` walked repository parent directories searching for `<tending>/fuses.json`. `nova-fuse` strictly requires `--box <path>` on every verb ("refusing to guess") to prevent ambient path hijacking. Callers must pass the explicit box path.
+2. **Exit code mapping (seam inversion):**
+   - **Clear / Allowed:** Both tools return exit `0` when all fuses are clear (`FUSE OK`).
+   - **Blown fuse:** `rowan-fuse` returned exit `2`; `nova-fuse` returns exit `1` (`FUSE FAIL`).
+   - **Cannot run / Missing or unreadable box:** `rowan-fuse` returned exit `1`; `nova-fuse` returns exit `2` (`CANNOT RUN`).
+   - Gate adapters (e.g. `modules/gates.FuseDecision`) must map:
+     - Exit `0` -> `Cleared` (Allow ingestion)
+     - Exit `1` -> `Refused` (Fuse blown)
+     - Exit `2` -> `Unchecked` / Error (Unreadable or uninitialized box)
+3. **Absent box handling:** In `rowan-fuse`, an absent `fuses.json` evaluated as clear. In `nova-fuse`, a missing box fails closed with exit `2` (`cannot prove no fuse is blown`). New checkouts and worktrees must initialize their box with `nova-fuse init --box <path>`.
+4. **Machine output and bounding:** `nova-fuse` standardizes on single-line CLI-STYLE events (`FUSE OK`, `FUSE FAIL`, `STATUS OK`, `LIFT OK`, `LOCKDOWN OK`, `QUARANTINE OK`, `INIT OK`) with `oneline` escaping to prevent newline or escape-sequence forging. `status` is bounded by `--max` (default 20, 0 lists all).
+
 ## nova-memory
 
 ```
