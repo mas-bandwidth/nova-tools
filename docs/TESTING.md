@@ -44,6 +44,8 @@ Accepted receipt arguments and member deltas must match the independent state
 model; the replay store executes those receipts and must reach the same state.
 Both stores compare complete key snapshots before and after accepted writes;
 added, changed or deleted keys outside the model transition's allowed set fail.
+Catalog membership and the complete template and immutable identity hashes must
+also equal the model after every action, including their initial registration.
 Failure output includes the seed and complete action trace. A `-run` selection
 ending in `/seed_1$` reproduces just that seed in the functional test.
 

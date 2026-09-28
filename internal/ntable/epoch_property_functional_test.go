@@ -37,6 +37,8 @@ import (
 // commands have no receipt and are checked against complete-store snapshots.
 // Accepted commands also compare complete-store snapshots, permitting changes
 // only to keys named by the model transition, on both source and replay stores.
+// Catalog membership, templates and immutable identity hashes must exactly match
+// the model, including their first registration; allowed keys are not free-form.
 // External bindings, batches, definition edits and row sorting retain their
 // separate randomized/functional gates; no claim of concurrent server writers
 // or exhaustive TLC exploration is made by this bounded execution test.
@@ -133,12 +135,16 @@ func epochJSON(v any) string {
 	return string(b)
 }
 
+func epochDefinitionFields() map[string]string {
+	return map[string]string{"order": "a,b", "footer": "total", "col:a": "count:sum:0:", "col:b": "count:sum:0:",
+		"epoch_key": epochPropertyKey, "epoch_field": "n", "created_at": "2026-01-01T00:00:00Z"}
+}
+
 // wire is independently specified input for receipt comparison, not the input
 // used by the Go API call. JSON payloads are compared as values, not map order.
 func (a epochAction) wire() []string {
 	args := []string{a.table}
-	fields := map[string]string{"order": "a,b", "footer": "total", "col:a": "count:sum:0:", "col:b": "count:sum:0:",
-		"epoch_key": epochPropertyKey, "epoch_field": "n", "created_at": "2026-01-01T00:00:00Z"}
+	fields := epochDefinitionFields()
 	switch a.verb {
 	case "create":
 		return append(args, epochJSON(fields))
@@ -458,6 +464,8 @@ func (h *epochProperty) writeKeys(a epochAction, before, after *epochTableState)
 		ntable.ChangesKey(a.table):                            true,
 	}
 	if !h.template[a.table] {
+		// Registration is a permitted write, with its exact contents checked
+		// by verify against the model after this transition on both stores.
 		allowed["tables"] = true
 		allowed[ntable.DefKey(a.table)] = true
 		allowed[ntable.DefKey(a.table)+":identity"] = true
@@ -522,6 +530,18 @@ func (h *epochProperty) verify() {
 	h.t.Helper()
 	for i, c := range h.stores {
 		image := memberStoreImage(h.t, c)
+		var wantCatalog []string
+		for _, table := range propTables {
+			if h.template[table] {
+				wantCatalog = append(wantCatalog, table)
+			}
+		}
+		slices.Sort(wantCatalog)
+		catalog, err := c.SMembers(h.ctx, "tables").Result()
+		slices.Sort(catalog)
+		if err != nil || !slices.Equal(catalog, wantCatalog) {
+			h.fail("store%d catalog=%v (%v), model=%v", i, catalog, err, wantCatalog)
+		}
 		historical := map[string]string{}
 		for key, value := range image {
 			for epoch := uint64(1); epoch < h.active; epoch++ {
@@ -538,6 +558,20 @@ func (h *epochProperty) verify() {
 			h.fail("store%d historical namespace changed", i)
 		}
 		for _, table := range propTables {
+			wantTemplate, wantIdentity := map[string]string{}, map[string]string{}
+			if h.template[table] {
+				wantTemplate = epochDefinitionFields()
+				wantIdentity = map[string]string{"epoch_key": epochPropertyKey, "epoch_field": "n", "member_prefix": "table::member:"}
+			}
+			for _, metadata := range []struct {
+				key  string
+				want map[string]string
+			}{{ntable.DefKey(table), wantTemplate}, {ntable.DefKey(table) + ":identity", wantIdentity}} {
+				got, err := c.HGetAll(h.ctx, metadata.key).Result()
+				if err != nil || !reflect.DeepEqual(got, metadata.want) {
+					h.fail("store%d registration %s=%v (%v), model=%v", i, metadata.key, got, err, metadata.want)
+				}
+			}
 			s := h.state[table]
 			tb, err := ntable.Read(h.ctx, c, table)
 			if !s.present {
