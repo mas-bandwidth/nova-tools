@@ -428,7 +428,7 @@ A bus is an ordinary git repository where several lines, people and minds alike,
 
 ### First run
 
-Copy `cmd/nova-bus/testdata/example-bus` out and give it a repository of its own — its README is the recipe, and it is the bus the tests run these lines against. A first sitting proves three things: the roster is where identity lives, and `names` says who may speak; a note is sent from a draft carrying the `To` and `Subject` headers; and the example bus ships a `CURSOR` naming a commit from the history it was written in, so a copied-out bus refuses it and the first read is `--full` once.
+Copy `cmd/nova-bus/testdata/example-bus` out and give it a repository of its own — its README is the recipe, and it is the bus the tests run these lines against. A first sitting proves three things: the roster is where identity lives, and `names` says who may speak; a note is sent from a draft carrying the `To` and `Subject` headers and a body you wrote; and the example bus ships a `CURSOR` naming a commit from the history it was written in, so a copied-out bus refuses it and the first read is `--full` once. A line marked `! ` is one the tool writes to standard error.
 
 ```
 $ nova-bus names --bus ./bus
@@ -439,24 +439,29 @@ NAMES GROUP name="Everybody on the bus" members="Ada";"Bo";"Dana"
 NAMES OK participants=3 groups=1 senders=2
 
 $ nova-bus draft --bus ./bus --as Bo --to Ada --subject gate > draft.md
+! DRAFT NOTE redirect this to a file, then send: nova-bus send --file <that file>
+```
 
+`draft.md` now holds the header and one placeholder line, `<the note goes here>`, and `send` refuses a draft whose body is still that line. Write the note over it — in your editor, or for this sitting in one line: `sed -i.bak 's/<the note goes here>/Ada, the gate is green on all three platforms./' draft.md` (the `.bak` suffix is what lets one spelling run under both BSD and GNU `sed`). Then:
+
+```
 $ nova-bus send --bus ./bus --file draft.md --as Bo --remote origin --branch main
-SEND OK id=bo-a57f65f4f21c path=from-bo/2026-09-12T2033Z-gate-a57f65f4f21c.md commit=ae0580b5f796c4593641c6ebb9a58846d5795b55 pushed=true attempts=1 wakes=1 body_bytes=46
+SEND OK id=bo-d95f4cc80be2 path=from-bo/2026-09-28T0232Z-gate-d95f4cc80be2.md commit=c8fa925d8e01c3d14372055bc325cc954a656cc4 pushed=true attempts=1 wakes=1 body_bytes=47
 
 $ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --advance --remote origin --branch main
-INBOX REFUSED: the cursor 3f9a1c2b8d40e7c6a5b4938271605f4e3d2c1b0a is not an ancestor of HEAD, so a diff from it would report changes that are not changes and miss notes that are (a rewritten history, or a cursor from another branch); read once with --full, and --advance will replace it
+! INBOX REFUSED: the cursor 3f9a1c2b8d40e7c6a5b4938271605f4e3d2c1b0a is not an ancestor of HEAD, so a diff from it would report changes that are not changes and miss notes that are (a rewritten history, or a cursor from another branch); read once with --full, and --advance will replace it
 
 $ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --full --advance --remote origin --branch main
 INBOX SCOPE mode=full cursor=- changed=0 carrying=3
 INBOX OPEN carrying=3 heard=1 large=false remedy=inbox --advance
-INBOX NOTE id=bo-a57f65f4f21c from=Bo addr=to at=2026-09-12T20:33:50Z path=from-bo/2026-09-12T2033Z-gate-a57f65f4f21c.md: gate
+INBOX NOTE id=bo-d95f4cc80be2 from=Bo addr=to at=2026-09-28T02:32:36Z path=from-bo/2026-09-28T0232Z-gate-d95f4cc80be2.md: gate
 INBOX HEARD id=bo-222222222222 from=Bo addr=to at=2026-09-09T14:00:00Z path=from-bo/2026-09-09T1400Z-the-windows-runner-222222222222.md: The Windows runner skips three steps
 INBOX RECEIPT id=bo-111111111111 from=Bo addr=to at=2026-09-09T13:00:00Z path=from-bo/2026-09-09T1300Z-heard-111111111111.md: Heard
 INBOX OK as=Ada carrying=3 open=2 notes=1 receipts=1 heard=1 unaddressed=0 unreadable=0
-INBOX CURSOR commit=ae0580b5f796c4593641c6ebb9a58846d5795b55 carrying=3 pushed=true attempts=1
+INBOX CURSOR commit=c8fa925d8e01c3d14372055bc325cc954a656cc4 carrying=3 pushed=true attempts=1
 ```
 
-**Reading it.** A participant with a lane can send; one without a lane (Dana) can be written to and never writes, and `--as` takes a name or any alias on that `names` line. `draft` prints the header a first note needs — `From:`, `To:` and `Subject:` — and nothing else, so `> draft.md` redirects it to a file and the writer replaces the `<the note goes here>` placeholder with a body before `send`. The shipped `CURSOR` names a commit from the history the example was written in, so a copied-out bus has a new history under it and the first `inbox --advance` is refused rather than diffed from it; `--full --advance` replaces it, and the read after that is `mode=since` over the change, not the bus.
+**Reading it.** A participant with a lane can send; one without a lane (Dana) can be written to and never writes, and `--as` takes a name or any alias on that `names` line. `draft` prints the header a first note needs — `From:`, `To:` and `Subject:` — and a placeholder body, so `> draft.md` redirects it to a file and the writer replaces the `<the note goes here>` line before `send`; skip that step and `send` stops at `SEND FAIL draft.md: the body is the unedited template placeholder (<the note goes here>)`, exit 1, and nothing is written. The shipped `CURSOR` names a commit from the history the example was written in, so a copied-out bus has a new history under it and the first `inbox --advance` is refused rather than diffed from it; `--full --advance` replaces it, and the read after that is `mode=since` over the change, not the bus. To answer Bo's note, `reply` is the one line (below, under the ten verbs).
 
 ### Setting up a bus
 
@@ -530,6 +535,27 @@ nova-bus send --bus ~/bus --file ~/drafts/draft.md --as Rowan --host air --remot
 A host is one word — lower-case letters, digits, `-`, `.` and `_`, at most 40 characters — because it is printed as one space-separated field. A draft that carries its own `Host:` line keeps it, and a `--host` naming a different machine is refused rather than guessed at, the same way `--as` is against a `From:` line that names somebody else. Everything about it is optional: a note sent without it carries no `Host:` line, lists with no `host=` field, and is byte for byte the note this tool has always written. It is not part of the id.
 
 Four things a first draft gets wrong, and what `send` does about each, one `SEND NOTE` line per fix so nothing is rewritten silently: a markdown heading at the top becomes the `Subject:` when the draft has none; a pasted `Date:` is replaced from the clock; a missing `From:` is written from `--as`; bold asterisks around a key come off and blank lines above the header are skipped. The refusals that remain are the ones that would be a guess about what you meant.
+
+**`reply`** is how you answer a note: one line, from a file holding the body and nothing else, and the tool writes `From:`, `To:`, `Re:` and `Subject:` from the note it answers, so the `Re:` that closes it cannot be misspelled. It fetches first and resolves `--re` against the bus as it stands on the remote; `--advance` moves your cursor in the same commit as the reply, and `--dry-run` shapes the reply and writes nothing. A body file carrying one of the four header lines it fills is refused, and a `--re` naming no note is refused with the command that lists the ones you can name. Continuing the first run above, Ada answers Bo's note with `Bo, green here too; merging.` in `reply.md`, and her next read carries one note fewer:
+
+```
+nova-bus reply --bus ./bus --as Ada --re bo-d95f4cc80be2 --file reply.md --advance --remote origin --branch main
+REPLY OK id=ada-61fec2eb3303 re=bo-d95f4cc80be2 path=from-ada/2026-09-28T0232Z-re-gate-61fec2eb3303.md to=Bo subject=Re:\x20gate commit=15c09be4117d03a54f483f9ebe53a2ddb4ff95f9 pushed=true advanced=true attempts=1
+
+nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40
+! INBOX WALK commits=1/1 notes=1 elapsed=12ms
+INBOX SCOPE mode=since cursor=8b8a941d2d90a265602fd9b425766e09eaf2bae3 changed=3 carrying=2
+INBOX OPEN carrying=2 heard=1 large=false remedy=inbox --advance
+INBOX OK as=Ada carrying=2 open=1 notes=0 receipts=1 heard=1 unaddressed=0 unreadable=0
+```
+
+`open=2` became `open=1`: the reply's `Re:` line closed Bo's note. `draft --reply-to <note> --body-file <path> --draft-dir <dir>` is the same answer as a file you can read before it goes, for a writer who wants to look at the headers first; `reply` is the one-step form.
+
+**`prepare`** computes a note's id and `Date:` from a draft before anything on the bus changes, and prints them as one JSON artifact on standard output; `send --prepared <that file>` then publishes exactly that note, and re-running the same `send --prepared` is the retry after an uncertain push, never a second note:
+
+```
+nova-bus prepare --bus <dir> --as <name> (--file <path>|--stdin) [--slug <s>]
+```
 
 **`inbox`** lists what is addressed to you and not yet answered:
 

@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -164,50 +165,12 @@ func TestTheFirstRunTranscriptIsWhatTheToolPrints(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "drafts"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	var printed map[string]bool
-	seen := map[string]int{}
-	commands := 0
-	for _, line := range lines {
-		cmd, isCommand := strings.CutPrefix(line, "$ ")
-		if !isCommand {
-			shape := onboarding.Shape(line)
-			if shape == "" {
-				continue
-			}
-			if printed == nil {
-				t.Fatalf("a transcript line stands before any command: %q", line)
-			}
-			if !printed[shape] {
-				t.Errorf("docs/TESTS.md line\n  %s\nhas shape %q, which this tool never printed here. Re-run the command and paste what it said.", line, shape)
-			}
-			seen[strings.Join(strings.Fields(shape)[:2], " ")]++
-			continue
-		}
-		commands++
-		fields, redirect := splitRedirect(strings.Fields(cmd))
-		r := runAt(t, "", localize(dir, busPath, fields[1:])...)
-		if r.code == 2 {
-			t.Fatalf("the documented command %q does not run: exit 2 (could not run)\nstderr: %s", line, r.stderr)
-		}
-		if redirect != "" {
-			// What the shell does with the redirect, and then what the WRITER does
-			// with the file: a body over the placeholder. The send line after this
-			// one is documented as reading a draft somebody finished.
-			body := strings.Replace(r.stdout, bus.PlaceholderBody, "Ada, the gate is green on all three platforms.", 1)
-			if body == r.stdout {
-				t.Fatalf("the skeleton %q carries no %q placeholder for a writer to replace:\n%s", line, bus.PlaceholderBody, r.stdout)
-			}
-			if err := os.WriteFile(filepath.Join(dir, redirect), []byte(body), 0o644); err != nil {
-				t.Fatal(err)
-			}
-		}
-		printed = map[string]bool{}
-		for _, out := range strings.Split(r.stdout+"\n"+r.stderr, "\n") {
-			if shape := onboarding.Shape(out); shape != "" {
-				printed[shape] = true
-			}
-		}
-	}
+	seen, commands := runFirstRunShapes(t, "docs/TESTS.md", lines, dir, busPath, func(stdout string) string {
+		// What the WRITER does with the file: a body over the placeholder. The send
+		// line after this one is documented as reading a draft somebody finished;
+		// docs/TESTS.md says so in its prose, and this is that sentence done.
+		return strings.Replace(stdout, bus.PlaceholderBody, "Ada, the gate is green on all three platforms.", 1)
+	})
 	if commands < 8 {
 		t.Fatalf("the transcript runs %d commands; the documented sitting is the whole first one", commands)
 	}
@@ -227,6 +190,115 @@ func TestTheFirstRunTranscriptIsWhatTheToolPrints(t *testing.T) {
 	} {
 		if seen[prefix] != want {
 			t.Errorf("docs/TESTS.md's nova-bus `### First run` shows %d %s lines, want %d", seen[prefix], prefix, want)
+		}
+	}
+}
+
+// runFirstRunShapes EXECUTES a documented nova-bus `### First run`, in order, on the
+// fixture in dir, and holds every documented output line to a shape the command above
+// it printed. finish is what the writer does to a redirected draft between `draft` and
+// `send`: it gets what the shell wrote to the file and returns what the file holds
+// when `send` reads it. It returns the documented lines' two-token prefixes, counted,
+// and the number of commands run.
+func runFirstRunShapes(t *testing.T, doc string, lines []string, dir, busPath string, finish func(stdout string) string) (map[string]int, int) {
+	t.Helper()
+	var printed map[string]bool
+	seen := map[string]int{}
+	commands := 0
+	for _, line := range lines {
+		cmd, isCommand := strings.CutPrefix(line, "$ ")
+		if !isCommand {
+			shape := onboarding.Shape(line)
+			if shape == "" {
+				continue
+			}
+			if printed == nil {
+				t.Fatalf("%s: a transcript line stands before any command: %q", doc, line)
+			}
+			if !printed[shape] {
+				t.Errorf("%s line\n  %s\nhas shape %q, which this tool never printed here. Re-run the command and paste what it said.", doc, line, shape)
+			}
+			seen[strings.Join(strings.Fields(shape)[:2], " ")]++
+			continue
+		}
+		commands++
+		fields, redirect := splitRedirect(strings.Fields(cmd))
+		r := runAt(t, "", localize(dir, busPath, fields[1:])...)
+		if r.code == 2 {
+			t.Fatalf("%s: the documented command %q does not run: exit 2 (could not run)\nstderr: %s", doc, line, r.stderr)
+		}
+		if redirect != "" {
+			if !strings.Contains(r.stdout, bus.PlaceholderBody) {
+				t.Fatalf("%s: the skeleton %q carries no %q placeholder for a writer to replace:\n%s", doc, line, bus.PlaceholderBody, r.stdout)
+			}
+			if err := os.WriteFile(filepath.Join(dir, redirect), []byte(finish(r.stdout)), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		printed = map[string]bool{}
+		for _, out := range strings.Split(r.stdout+"\n"+r.stderr, "\n") {
+			if shape := onboarding.Shape(out); shape != "" {
+				printed[shape] = true
+			}
+		}
+	}
+	return seen, commands
+}
+
+// docs/CLI.md's `### First run` is the page a stranger copies from, and until this test
+// nothing ran it: the executed copy was docs/TESTS.md's, whose harness replaced the
+// draft's placeholder by itself, so a CLI.md sitting whose `send` could only answer
+// `SEND FAIL ... the unedited template placeholder` was green (the 2026-09-27 audit).
+//
+// This runs CLI.md's lines in order on the same fixture, and the step between `draft`
+// and `send` is the one the page WRITES: the `sed` line in its prose, run with sh in
+// the directory the transcript runs in. A page that loses that line is red here, and
+// so is a page whose line leaves the placeholder standing, because `send` then prints
+// no SEND OK.
+func TestTheCommandReferenceFirstRunRunsAsWritten(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "CLI.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines, err := onboarding.FirstRun(string(raw), "nova-bus")
+	if err != nil {
+		t.Fatal(err)
+	}
+	edit, err := documentedDraftEdit(string(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, busPath := firstTrialBus(t)
+	seen, commands := runFirstRunShapes(t, "docs/CLI.md", lines, dir, busPath, func(stdout string) string {
+		path := filepath.Join(dir, "draft.md")
+		if err := os.WriteFile(path, []byte(stdout), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		sh := exec.Command("sh", "-c", edit)
+		sh.Dir = dir
+		if out, err := sh.CombinedOutput(); err != nil {
+			t.Fatalf("docs/CLI.md's edit step %q: %v\n%s", edit, err, out)
+		}
+		finished, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(finished)
+	})
+	if commands != 5 {
+		t.Errorf("docs/CLI.md's nova-bus `### First run` runs %d commands, want 5: names, draft, send, and Ada's two reads", commands)
+	}
+	for prefix, want := range map[string]int{
+		"NAMES OK":      1,
+		"DRAFT NOTE":    1,
+		"SEND OK":       1, // the note went: the edit step is what makes this line possible
+		"INBOX REFUSED": 1,
+		"INBOX NOTE":    1, // and Ada is carrying it
+		"INBOX CURSOR":  1,
+	} {
+		if seen[prefix] != want {
+			t.Errorf("docs/CLI.md's nova-bus `### First run` shows %d %s lines, want %d", seen[prefix], prefix, want)
 		}
 	}
 }
