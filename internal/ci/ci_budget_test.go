@@ -2,6 +2,7 @@ package ci
 
 import (
 	"bytes"
+	"fmt"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -22,12 +23,15 @@ import (
 // lines, exactly as strict as the shape they assert and nothing more.
 //
 // Three invariants:
-//   (a) every job in ci.yml declares timeout-minutes, and no job ON THE CL PATH
-//       exceeds 2 — the aggregate ci-ok may be 1 — so the CL tier cannot
-//       silently exceed the budget. A job whose `if:` runs it only on push to
-//       main and on the nightly schedule is not on the CL path: no pull request
-//       waits on it to merge, so the two-minute law does not reach it. It must
-//       still declare a ceiling, which is what (a) checks for every job;
+//   (a) every job in every workflow file (.yml and .yaml) declares a literal
+//       `timeout-minutes` of at most 2 at job level, on every event: there is
+//       no schedule, push-to-main or release exemption (twoMinuteCap below).
+//       A scheduled run executes the DEFAULT BRANCH's copy of the workflow, not
+//       this tree's: the nightly of 2026-09-27 (run 36292578789) ran main's
+//       ci.yml from 2026-09-18, whose test-hosted still said 15 and still had
+//       windows-latest, and its windows legs ran 178-195 s uncancelled. This
+//       test polices the tree it runs in; the cap reaches a schedule only once
+//       these files are on the default branch;
 //   (b) every job name that left ci.yml in the split is present in the
 //       certification workflow by the same name, and certification-ok needs
 //       every one of them, so the split deleted nothing;
@@ -54,10 +58,16 @@ func TestEveryCIJobIsCappedAtTwoMinutes(t *testing.T) {
 	t.Parallel()
 
 	root := repoRoot(t)
+	// GitHub runs both extensions; a .yaml workflow must not be a way around the cap.
 	files, err := filepath.Glob(filepath.Join(root, ".github", "workflows", "*.yml"))
 	if err != nil || len(files) == 0 {
 		t.Fatalf("no workflow files under .github/workflows: %v", err)
 	}
+	yamls, err := filepath.Glob(filepath.Join(root, ".github", "workflows", "*.yaml"))
+	if err != nil {
+		t.Fatalf("glob .yaml workflows: %v", err)
+	}
+	files = append(files, yamls...)
 	for _, file := range files {
 		src := readFile(t, file)
 		names := jobNames(src)
@@ -84,22 +94,59 @@ func TestEveryCIJobIsCappedAtTwoMinutes(t *testing.T) {
 
 // goTestTimeoutRe reads the sharded test job's `go test -timeout`, which must
 // end the run with a Go stack before the job cap kills it without one.
-var goTestTimeoutRe = regexp.MustCompile(`GOTEST_TIMEOUT="([0-9]+)s"`)
+var goTestTimeoutRe = regexp.MustCompile(`GOTEST_TIMEOUT="(-?[0-9]+)s"`)
+
+// checkPositiveTimeoutUnderCap validates that a timeout duration d is strictly
+// positive and strictly under the job cap (0 < d < cap).
+//
+// A zero or negative timeout disables the timeout mechanism in `go test`
+// (per `go help testflag`: "The default is 10 minutes (10m). A value of 0 disables
+// the timeout."), which leads to the exact missing-stack failure the cap guard
+// exists to prevent: a hung test is killed by the CI runner without printing a
+// Go goroutine stack trace. A duration at or above the cap risks the runner
+// terminating the job before Go can capture and report the stack.
+func checkPositiveTimeoutUnderCap(d, cap time.Duration) error {
+	if d <= 0 {
+		return fmt.Errorf("is not positive; zero disables the timeout (go help testflag)")
+	}
+	if d >= cap {
+		if cap%time.Minute == 0 {
+			return fmt.Errorf("is not under the %d-minute job cap", int(cap.Minutes()))
+		}
+		return fmt.Errorf("is not under the %s job cap", cap)
+	}
+	return nil
+}
+
+// requirePositiveTimeoutUnderCap asserts that d is strictly positive and under
+// the cap, reporting a test error on where if not.
+func requirePositiveTimeoutUnderCap(t *testing.T, where string, d, cap time.Duration) {
+	t.Helper()
+	if err := checkPositiveTimeoutUnderCap(d, cap); err != nil {
+		t.Errorf("%s %v", where, err)
+	}
+}
 
 func TestShardGoTestTimeoutIsUnderTheJobCap(t *testing.T) {
 	t.Parallel()
 
+	jobCap := time.Duration(twoMinuteCap) * time.Minute
 	job := jobBody(readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml")), "test")
-	m := goTestTimeoutRe.FindStringSubmatch(job)
-	if m == nil {
+	matches := goTestTimeoutRe.FindAllStringSubmatch(job, -1)
+	if len(matches) == 0 {
 		t.Fatal("the test job passes no literal GOTEST_TIMEOUT=\"<n>s\" to make test")
 	}
-	secs, _ := strconv.Atoi(m[1])
-	if secs >= twoMinuteCap*60 {
-		t.Errorf("go test -timeout %ds is not under the %d-minute job cap", secs, twoMinuteCap)
+	for _, m := range matches {
+		d, err := time.ParseDuration(m[1] + "s")
+		if err != nil {
+			t.Errorf("workflow GOTEST_TIMEOUT %q is not a duration: %v", m[1]+"s", err)
+			continue
+		}
+		requirePositiveTimeoutUnderCap(t, fmt.Sprintf("go test -timeout %s", m[1]+"s"), d, jobCap)
 	}
+
 	mk := parseMakefile(t, filepath.Join(repoRoot(t), "Makefile"))
-	for _, v := range []string{"GOTEST_TIMEOUT", "MERGE_TIMEOUT", "DARWIN_TIMEOUT"} {
+	for _, v := range []string{"GOTEST_TIMEOUT", "MERGE_TIMEOUT", "DARWIN_TIMEOUT", "SHORT_TIMEOUT"} {
 		raw, ok := mk.vars[v]
 		if !ok {
 			t.Errorf("the Makefile declares no %s", v)
@@ -110,9 +157,109 @@ func TestShardGoTestTimeoutIsUnderTheJobCap(t *testing.T) {
 			t.Errorf("%s = %q is not a Go duration: %v", v, raw, err)
 			continue
 		}
-		if d >= time.Duration(twoMinuteCap)*time.Minute {
-			t.Errorf("Makefile %s = %s is not under the %d-minute job cap", v, d, twoMinuteCap)
+		requirePositiveTimeoutUnderCap(t, fmt.Sprintf("Makefile %s = %s", v, d), d, jobCap)
+	}
+}
+
+// recipeTimeoutRe reads a `go test -timeout <d>` in a Makefile recipe.
+var recipeTimeoutRe = regexp.MustCompile(`-timeout[ =](\S+)`)
+
+// TestEveryMakeTimeoutIsUnderTheJobCap: every `-timeout` a Makefile recipe
+// passes, expanded, is under the two-minute job cap, so a hung test ends with
+// a Go stack naming it instead of the runner killing the job silently.
+// test-short (the hosted legs' target) carried a literal 12m that no check
+// read until 2026-09-27.
+func TestEveryMakeTimeoutIsUnderTheJobCap(t *testing.T) {
+	t.Parallel()
+
+	jobCap := time.Duration(twoMinuteCap) * time.Minute
+	mk := parseMakefile(t, filepath.Join(repoRoot(t), "Makefile"))
+	seen := 0
+	for target, lines := range mk.recipes {
+		for _, line := range lines {
+			if strings.HasPrefix(strings.TrimLeft(line, "@-+ "), "echo ") {
+				continue // help text names the variable; it runs nothing
+			}
+			for _, m := range recipeTimeoutRe.FindAllStringSubmatch(line, -1) {
+				raw := strings.Trim(mk.expand(mk.vars, m[1]), `"'`)
+				d, err := time.ParseDuration(raw)
+				if err != nil {
+					t.Errorf("make %s: -timeout %q (from %q) is not a Go duration: %v", target, raw, m[1], err)
+					continue
+				}
+				seen++
+				requirePositiveTimeoutUnderCap(t, fmt.Sprintf("make %s: -timeout %s", target, d), d, jobCap)
+			}
 		}
+	}
+	if seen == 0 {
+		t.Fatal("no -timeout read from any Makefile recipe; the parser is looking in the wrong place")
+	}
+}
+
+// TestPositiveTimeoutUnderJobCapWitnesses exercises checkPositiveTimeoutUnderCap
+// across the exact witness cases required by review (stella-30687d2af333,
+// rowan-0355d2660990): 0s and -1s must fail (zero/negative disables go test
+// timeout per `go help testflag`), 50s passes, 120s fails (at cap, not strictly
+// under), and 12m fails as the over-cap control.
+func TestPositiveTimeoutUnderJobCapWitnesses(t *testing.T) {
+	t.Parallel()
+
+	jobCap := time.Duration(twoMinuteCap) * time.Minute // 2m0s = 120s
+	cases := []struct {
+		raw     string
+		valid   bool
+		wantErr string
+	}{
+		{
+			raw:     "0s",
+			valid:   false,
+			wantErr: "is not positive; zero disables the timeout (go help testflag)",
+		},
+		{
+			raw:     "-1s",
+			valid:   false,
+			wantErr: "is not positive; zero disables the timeout (go help testflag)",
+		},
+		{
+			raw:   "50s",
+			valid: true,
+		},
+		{
+			raw:     "120s",
+			valid:   false,
+			wantErr: "is not under the 2-minute job cap",
+		},
+		{
+			raw:     "12m",
+			valid:   false,
+			wantErr: "is not under the 2-minute job cap",
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.raw, func(t *testing.T) {
+			t.Parallel()
+
+			d, err := time.ParseDuration(tc.raw)
+			if err != nil {
+				t.Fatalf("time.ParseDuration(%q): %v", tc.raw, err)
+			}
+
+			err = checkPositiveTimeoutUnderCap(d, jobCap)
+			if tc.valid {
+				if err != nil {
+					t.Errorf("checkPositiveTimeoutUnderCap(%s, %s) = %v, want nil", tc.raw, jobCap, err)
+				}
+			} else {
+				if err == nil {
+					t.Errorf("checkPositiveTimeoutUnderCap(%s, %s) unexpectedly succeeded, want error", tc.raw, jobCap)
+				} else if !strings.Contains(err.Error(), tc.wantErr) {
+					t.Errorf("checkPositiveTimeoutUnderCap(%s, %s) error = %q, want substring %q", tc.raw, jobCap, err.Error(), tc.wantErr)
+				}
+			}
+		})
 	}
 }
 
@@ -396,11 +543,10 @@ func jobNames(src string) []string {
 	return names
 }
 
-// jobTimeouts returns each job's declared timeout-minutes. A job whose ceiling
-// differs per matrix leg declares `timeout-minutes: ${{ matrix.leg.timeout }}`
-// and carries the numbers in its matrix; for those the LARGEST leg value is
-// returned, because the budget question this answers is "how long can this job
-// run", and legTimeouts below is what reads them apart.
+// jobTimeouts returns each job's literal job-level timeout-minutes (a line at
+// four spaces). A step-level timeout sits deeper and is not read, so a job
+// whose only ceiling is on a step has none here and is refused, and an
+// expression is refused by the caller.
 func jobTimeouts(src string) map[string]int {
 	out := make(map[string]int)
 	cur := ""
