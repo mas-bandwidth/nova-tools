@@ -61,17 +61,18 @@ type Conn struct {
 // Open makes one dial attempt and no retry. After Open the same holds for
 // every command: it is sent at most once, a connection that broke is dialed
 // again by the next command, once, and nothing waits longer than the bounds
-// of this package. The password is read from getenv when Open runs and at
-// no other time.
+// of this package. The password is read from getenv or from Secret.Read
+// when Resolve or Open runs.
 //
 // An error is one of this package's (Classify): Unreachable, AuthRefused
 // or Other, with one line that names what was tried and the next thing to
 // do, and it never holds the password. On an error nothing is left open.
 //
 // The connection Open returns explains its own failures: any command or
-// pipeline on its Client whose error Classify calls Unreachable or
-// AuthRefused comes back as Explain would make it, in the command's Err
-// and in what Exec returns. Every other error (redis.Nil, a refusal the
+// pipeline on its Client whose error is Unreachable, AuthRefused or
+// Unconfirmed comes back as Explain would make it, in the command's Err
+// and in what Exec returns. Unconfirmed becomes Unreachable when the
+// command was never sent. Every other error (redis.Nil, a refusal the
 // store wrote, a cancelled context, a closed client) comes back as go-redis
 // made it. So a tool reads Failed on what a command returned and needs no
 // wrapper of its own around the client.

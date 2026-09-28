@@ -351,7 +351,7 @@ Unconfirmed after it was written (the reply lost; the write may have
 committed), and rewrites the error, sending and reading nothing. The pool's
 size, the dial's bound, a password handed over from memory and the count of
 the handshake's round trips (read from `firstConn`'s record that the probe
-was taken, the model's `taken`) change no action either; TLC was not rerun
+was taken, the model's `taken`) change no action either; TLC is not rerun
 for a change of comments only.
 
 None of the seven is a defect of the code: `firstconn_test.go`
