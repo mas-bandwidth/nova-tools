@@ -86,21 +86,23 @@ func two() Library {
 
 const twoSource = `#!lua name=lib_one
 local NS = {}
--- lua/a.lua: its line 1 is line 5 of this library
+-- lua/a.lua
 do
 redis.register_function('fa', function(keys, args) return 'fa' end)
 end -- lua/a.lua
--- lua/b.lua: its line 1 is line 9 of this library
+
+-- lua/b.lua
 do
 local b = 1
 redis.register_function('fb', function(keys, args) return 'fb' end)
+
 end -- lua/b.lua
 `
 
 // twoDigest is DigestOf(twoSource), written down: the digest of a library is
 // the same on every machine and in every run, and a change of the source's
 // form changes the digest of every library that is deployed.
-const twoDigest = "89e7277fa241abdf"
+const twoDigest = "77104ff021266326"
 
 func TestSourceIsEveryMatchedFileInItsOwnBlockInSortedOrder(t *testing.T) {
 	t.Parallel()
@@ -121,7 +123,7 @@ func TestSourceWithoutAPreludeStartsWithTheFirstFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "#!lua name=lib_one\n-- lua/a.lua: its line 1 is line 4 of this library\ndo\n"
+	want := "#!lua name=lib_one\n\n-- lua/a.lua\ndo\n"
 	if !strings.HasPrefix(got, want) {
 		t.Fatalf("Source starts:\n%s\nwant it to start:\n%s", got, want)
 	}
@@ -137,7 +139,7 @@ func TestSourcePutsThePreludeBeforeEveryBlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "#!lua name=lib_one\nlocal NS = {}\nlocal shared = 1\n-- lua/a.lua: its line 1 is line 6 of this library\ndo\n"
+	want := "#!lua name=lib_one\nlocal NS = {}\nlocal shared = 1\n\n-- lua/a.lua\ndo\n"
 	if !strings.HasPrefix(got, want) {
 		t.Fatalf("Source starts:\n%s\nwant it to start:\n%s", got, want)
 	}
@@ -425,6 +427,42 @@ var refusals = []struct {
 		[]string{"its source is over 4194304 bytes (MaxSourceBytes)", "split the library"}},
 	{"a prelude over the bound", Library{Name: "lib_one", Files: tree(map[string]string{"a.lua": fn("fa")}), Glob: "*.lua", Prelude: "--" + strings.Repeat("x", MaxSourceBytes)},
 		[]string{"its source is over 4194304 bytes (MaxSourceBytes)"}},
+	{"a file over the locals", Library{Name: "lib_one", Files: tree(map[string]string{"a.lua": fn("fa"), "b.lua": locals("b", MaxLocals+1) + fn("fb")}), Glob: "*.lua"},
+		[]string{"its main function would hold 181 local variables at once (b.lua holds 181), over 180 (MaxLocals; Lua refuses over 200)"}},
+	{"a prelude and a file over the locals", Library{Name: "lib_one", Files: tree(map[string]string{"a.lua": fn("fa"), "b.lua": locals("b", MaxLocals) + fn("fb")}), Glob: "*.lua", Prelude: "local NS = {}\n"},
+		[]string{"would hold 181 local variables at once (the prelude leaves 1 in scope and b.lua holds 180)"}},
+	{"a prelude over the locals", Library{Name: "lib_one", Files: tree(map[string]string{"a.lua": fn("fa")}), Glob: "*.lua", Prelude: "do\n" + locals("p", MaxLocals+1) + "end\n"},
+		[]string{"would hold 181 local variables at once (the prelude holds 181)"}},
+}
+
+// locals is a text of that many top-level locals, one to a line.
+func locals(prefix string, n int) string {
+	var b strings.Builder
+	for i := 1; i <= n; i++ {
+		fmt.Fprintf(&b, "local %s%d = %d\n", prefix, i, i)
+	}
+	return b.String()
+}
+
+// MaxLocals is the most the main function may hold at once: the prelude's
+// that are in scope at its end and the largest file's. Files of MaxLocals
+// each, a hundred of them, are taken, because each file's leave scope at its
+// end; one more in any one of them is refused.
+func TestTheLocalsBoundIsOnTheMostHeldAtOnce(t *testing.T) {
+	t.Parallel()
+	files := map[string]string{}
+	for i := 0; i < 100; i++ {
+		files[fmt.Sprintf("f%03d.lua", i)] = locals("x", MaxLocals-1) + fn(fmt.Sprintf("f%d", i))
+	}
+	lib := Library{Name: "lib_one", Files: tree(files), Glob: "*.lua", Prelude: "local NS = {}\n"}
+	if _, err := lib.Source(); err != nil {
+		t.Fatalf("a hundred files of %d locals and a prelude of one: %v", MaxLocals-1, err)
+	}
+	files["f050.lua"] = "local extra = 1\n" + files["f050.lua"]
+	lib.Files = tree(files)
+	if _, err := lib.Source(); !errors.Is(err, ErrRefused) || !strings.Contains(err.Error(), "f050.lua holds 180") {
+		t.Fatalf("one file with one local more: %v, want the refusal that names it", err)
+	}
 }
 
 func TestALibraryThatCannotBeLoadedIsRefusedWithTheReason(t *testing.T) {

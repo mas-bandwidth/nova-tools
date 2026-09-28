@@ -108,24 +108,33 @@ func (e *CollisionError) Error() string {
 // Unwrap is Unread, so errors.Is sees why the holders could not be read.
 func (e *CollisionError) Unwrap() error { return e.Unread }
 
-// Outcome is what LoadMissing did to the store.
+// Outcome is what Ensure or LoadMissing did to the store.
 type Outcome int
 
 const (
 	// Failed is the outcome beside an error: what the store holds is not
 	// known from this call.
 	Failed Outcome = iota
-	// Unchanged: the store held this library already and nothing was written.
+	// Unchanged: nothing was written, because the store held the library
+	// already. For Ensure that is this code; for LoadMissing it is a library
+	// of this name, whatever its code, and it may have been put there by
+	// another loader between LoadMissing's read and its load.
 	Unchanged
 	// Loaded: the store held no library of this name and holds this one now.
 	Loaded
-	// Replaced: the store held other code under this name and holds this
-	// library now.
+	// Replaced (Ensure only): the store held other code under this name and
+	// holds this library now.
 	Replaced
+	// Skipped (LoadMissing only): nothing was written, and the store may not
+	// hold the library, because the store refused this caller the read of
+	// its libraries (NOPERM: the caller is not the deployer) or refused the
+	// load for a function name another library holds. Receipt.Why is the
+	// store's reply. The caller's FCALL answers for the store.
+	Skipped
 )
 
 // String is the outcome in one upper-case word, the first word of a
-// Receipt's line: FAILED, UNCHANGED, LOADED, REPLACED.
+// Receipt's line: FAILED, UNCHANGED, LOADED, REPLACED, SKIPPED.
 func (o Outcome) String() string {
 	switch o {
 	case Unchanged:
@@ -134,24 +143,31 @@ func (o Outcome) String() string {
 		return "LOADED"
 	case Replaced:
 		return "REPLACED"
+	case Skipped:
+		return "SKIPPED"
 	}
 	return "FAILED"
 }
 
-// Receipt is what one LoadMissing did.
+// Receipt is what one Ensure or LoadMissing did.
 type Receipt struct {
 	Library string  // the library's name
 	Outcome Outcome // what was done
 	Digest  string  // the digest of this binary's library
-	Was     string  // the digest of the code the store held before; "" when it held none or was not read
+	Was     string  // the digest of the code the store held before; "" when it held none or was not read (LoadMissing never reads it)
+	Why     string  // the store's reply when the outcome is Skipped; "" otherwise
 }
 
 // String is the receipt on one line, "LOADED my_library sha=<digest>", with
-// was=<digest> after it when code was replaced.
+// was=<digest> after it when code was replaced and why="<the store's reply>"
+// when the load was skipped.
 func (r Receipt) String() string {
 	line := r.Outcome.String() + " " + oneline.Field(r.Library) + " sha=" + r.Digest
-	if r.Outcome == Replaced {
+	switch r.Outcome {
+	case Replaced:
 		line += " was=" + r.Was
+	case Skipped:
+		line += " why=" + oneline.Quote(r.Why)
 	}
 	return line
 }
@@ -276,25 +292,27 @@ func (l Library) Load(ctx context.Context, client redis.UniversalClient) (string
 	return b.digest, nil
 }
 
-// LoadMissing loads the library only when the store does not hold it: it
-// reads the store as Check does, and when the state is Absent or Different
-// it loads as Load does. The receipt says which happened: Unchanged (nothing
-// was written), Loaded (the name was free) or Replaced (other code was under
-// the name, whose digest is Was). Beside an error the outcome is Failed, and
-// the error is Check's for the read or Load's for the load.
+// Ensure is the deployer's load: it puts this library on the store unless
+// the store holds exactly this code, replacing other code under the name. It
+// reads the store as Check does, and when the state is Absent or Different it
+// loads as Load does. The receipt says which happened: Unchanged (the store
+// held this code; nothing was written), Loaded (the name was free) or
+// Replaced (other code was under the name, whose digest is Was). Beside an
+// error the outcome is Failed, and the error is Check's for the read or
+// Load's for the load.
 //
 // The read and the load are two commands, and another loader may act between
 // them; the load replaces whatever is there by then, so a receipt that says
 // Loaded may have replaced a library loaded in that moment. Two binaries
-// built with different libraries that both call LoadMissing on one store
-// replace each other's library for as long as both run (tla/RedisFn.tla,
+// built with different libraries that both call Ensure on one store replace
+// each other's library for as long as both run (tla/RedisFn.tla,
 // MCRedisFnTwoDeployers). Call it from the one place that deploys; a tool on
-// its way to an FCALL calls Check.
+// its way to an FCALL calls LoadMissing, which never replaces, or Check.
 //
 // It returns within the Bound, the read and the load together, whatever the
 // client's own timeouts are, and a context that has ended already sends
 // nothing.
-func (l Library) LoadMissing(ctx context.Context, client redis.UniversalClient) (Receipt, error) {
+func (l Library) Ensure(ctx context.Context, client redis.UniversalClient) (Receipt, error) {
 	b, err := l.ready(client)
 	if err != nil {
 		return Receipt{Library: l.Name}, err
@@ -328,6 +346,83 @@ func (l Library) LoadMissing(ctx context.Context, client redis.UniversalClient) 
 	return receipt, nil
 }
 
+// LoadMissing puts the library on the store only when the store holds no
+// library of its name, and never replaces one, whatever its code. It is for
+// every caller that is not the deployer: a tool on its way to an FCALL runs
+// whatever binary its host has, and when an older binary's load replaced the
+// deployed library, every function added since vanished from the store
+// (nova-tools #3620). Putting a newer build over an older one is Ensure's
+// job, in the one place that deploys.
+//
+// It sends FUNCTION LIST for the name (without the code) and, only when no
+// library of exactly this name is there, FUNCTION LOAD, without REPLACE, so
+// a library another loader puts there between the two is refused by the
+// store and left as it is. The receipt says what happened:
+//
+//   - Unchanged: a library of this name was on the store, at the read or at
+//     the load; nothing was written and its code was not read;
+//   - Loaded: the name was free and this library is on the store now;
+//   - Skipped: the store refused the read with NOPERM (the caller is not the
+//     deployer), or refused the load because another library holds one of
+//     this library's function names; nothing was written, Why is the store's
+//     reply, and the caller's FCALL answers for the store.
+//
+// Each of those comes with a nil error. Any other failure is an error with
+// the outcome Failed: a store that could not be reached or read, or a load
+// the store refused for the library itself (a syntax error, a name
+// registered twice), after which the store holds what it held before.
+//
+// It returns within the Bound, the read and the load together, whatever the
+// client's own timeouts are, and a context that has ended already sends
+// nothing.
+func (l Library) LoadMissing(ctx context.Context, client redis.UniversalClient) (Receipt, error) {
+	b, err := l.ready(client)
+	if err != nil {
+		return Receipt{Library: l.Name}, err
+	}
+	receipt, err := within(ctx, l.Bound, func(ctx context.Context) (Receipt, error) {
+		r := Receipt{Library: b.name, Digest: b.digest}
+		reply, err := client.FunctionList(ctx, redis.FunctionListQuery{LibraryNamePattern: b.name}).Result()
+		if err != nil {
+			if isReply(err) && strings.Contains(err.Error(), "NOPERM") {
+				r.Outcome, r.Why = Skipped, err.Error()
+				return r, nil
+			}
+			return r, b.failed("check", err)
+		}
+		for _, lib := range reply {
+			if lib.Name == b.name {
+				r.Outcome = Unchanged
+				return r, nil
+			}
+		}
+		err = b.put(ctx, client, false)
+		switch {
+		case err == nil:
+			r.Outcome = Loaded
+			return r, nil
+		case isReply(err) && libraryExists.MatchString(err.Error()):
+			r.Outcome = Unchanged // another loader put a library of this name there after the read
+			return r, nil
+		case isReply(err) && named.MatchString(err.Error()):
+			r.Outcome, r.Why = Skipped, err.Error()
+			return r, nil
+		}
+		return r, b.failed("load", err)
+	})
+	if err != nil {
+		return Receipt{Library: b.name, Digest: b.digest}, b.failed("load", err)
+	}
+	return receipt, nil
+}
+
+// isReply is true when err is a reply of the store itself, not a failure to
+// reach it.
+func isReply(err error) bool {
+	var reply redis.Error
+	return errors.As(err, &reply)
+}
+
 // ready is the library assembled and a client to send it with, or the reason
 // there is neither; nothing has been sent.
 func (l Library) ready(client redis.UniversalClient) (*built, error) {
@@ -345,18 +440,38 @@ func (l Library) ready(client redis.UniversalClient) (*built, error) {
 // registers a name another library holds.
 var named = regexp.MustCompile(`Function (\S+) already exists$`)
 
-// load sends the library and reads the store's answer.
+// libraryExists is the store's refusal of a FUNCTION LOAD, without REPLACE,
+// of a library whose name it holds.
+var libraryExists = regexp.MustCompile(`Library '[^']*' already exists$`)
+
+// put sends the library, with FUNCTION LOAD REPLACE when replace is true and
+// FUNCTION LOAD when it is not, and reads the store's answer.
+func (b *built) put(ctx context.Context, client redis.UniversalClient, replace bool) error {
+	var answer string
+	var err error
+	if replace {
+		answer, err = client.FunctionLoadReplace(ctx, b.source).Result()
+	} else {
+		answer, err = client.FunctionLoad(ctx, b.source).Result()
+	}
+	if err != nil {
+		return err
+	}
+	if answer != b.name {
+		return &failure{line: fmt.Sprintf("redisfn: load %s: the store answered %s and not the library's name, so nothing says the library was loaded; Check says what the store holds",
+			b.name, oneline.Quote(answer))}
+	}
+	return nil
+}
+
+// load sends the library with FUNCTION LOAD REPLACE and names the holder of
+// a function the store refuses it for.
 func (b *built) load(ctx context.Context, client redis.UniversalClient) error {
-	answer, err := client.FunctionLoadReplace(ctx, b.source).Result()
+	err := b.put(ctx, client, true)
 	if err == nil {
-		if answer != b.name {
-			return &failure{line: fmt.Sprintf("redisfn: load %s: the store answered %s and not the library's name, so nothing says the library was loaded; Check says what the store holds",
-				b.name, oneline.Quote(answer))}
-		}
 		return nil
 	}
-	var reply redis.Error
-	if m := named.FindStringSubmatch(err.Error()); m != nil && errors.As(err, &reply) {
+	if m := named.FindStringSubmatch(err.Error()); m != nil && isReply(err) {
 		return b.collision(ctx, client, m[1])
 	}
 	return err
@@ -408,8 +523,12 @@ func (b *built) failed(doing string, err error) error {
 	if errors.As(err, &mine) || errors.As(err, &collision) {
 		return err
 	}
-	var reply redis.Error
-	refused := errors.As(err, &reply)
+	var early *unsent
+	if errors.As(err, &early) {
+		return &failure{fmt.Sprintf("redisfn: %s %s: the caller's wait had ended before anything was sent: %s; nothing was sent, so the store holds what it held",
+			doing, b.name, oneline.Err(early.err)), err}
+	}
+	refused := isReply(err)
 	what := "the store did not answer"
 	switch {
 	case errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled):
@@ -442,6 +561,14 @@ func (f *failure) Error() string { return f.line }
 
 func (f *failure) Unwrap() error { return f.err }
 
+// unsent is within's error when the caller's context had ended before the
+// call was made: nothing was sent. It wraps the context's error.
+type unsent struct{ err error }
+
+func (u *unsent) Error() string { return u.err.Error() }
+
+func (u *unsent) Unwrap() error { return u.err }
+
 // within runs one call against the store and returns when it answers or when
 // the bound passes (or ctx ends), whichever is first; when ctx has ended
 // already, the call is not made. The client's own timeouts do not decide the
@@ -452,7 +579,7 @@ func (f *failure) Unwrap() error { return f.err }
 func within[T any](ctx context.Context, bound time.Duration, call func(context.Context) (T, error)) (T, error) {
 	if err := ctx.Err(); err != nil {
 		var none T
-		return none, err // the caller's wait has ended already: nothing is sent
+		return none, &unsent{err} // the caller's wait has ended already: nothing is sent
 	}
 	if bound <= 0 {
 		bound = DefaultBound

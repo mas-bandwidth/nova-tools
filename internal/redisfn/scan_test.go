@@ -93,6 +93,45 @@ func TestTokensRefuseWhatDoesNotEndInsideTheFile(t *testing.T) {
 	}
 }
 
+// The locals a file holds at once in the main function, and how many are in
+// scope at its end, counted as Lua 5.1 counts them.
+func TestScanCountsTheLocalsAsLuaDoes(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name       string
+		src        string
+		peak, left int
+	}{
+		{"none", "x = 1", 0, 0},
+		{"one", "local a = 1", 1, 1},
+		{"a list", "local a, b, c = 1, 2, 3", 3, 3},
+		{"a list over lines", "local a,\n  b\n  , c", 3, 3},
+		{"a local function, whose own locals are its own", "local function f(p) local x, y = 1, 2 end", 1, 1},
+		{"a function held in a local", "local f = function() local a, b, c end", 1, 1},
+		{"a global function", "function g() local a end", 0, 0},
+		{"a block's leave at its end", "do local a, b end local c", 2, 1},
+		{"a numeric for: three hidden and its own", "for i = 1, 3 do local x end", 5, 0},
+		{"a generic for: three hidden and its names", "for k, v in pairs(t) do end", 5, 0},
+		{"an if's branches, one at a time", "if x then local a, b elseif y then local c else local d, e, f end", 3, 0},
+		{"an if inside a branch, whose else is its own", "if x then local a if y then local b else local c end local d, e else local f end", 3, 0},
+		{"a repeat, in scope to its until", "repeat local a until a", 1, 0},
+		{"a while", "while x do local a end local b", 1, 1},
+		{"nested blocks", "local a local b do local c for i = 1, 2 do local d end end", 8, 2},
+		{"a local in a string or a comment", "local s = 'local a, b' -- local c\n--[[ local d ]]", 1, 1},
+		{"a for inside a function", "local function f() for i = 1, 2 do local x end end", 1, 1},
+		{"a for whose limit calls a function", "for i = 1, f(function() local z end) do local x end", 5, 0},
+	} {
+		read, bad := scan("a.lua", c.src)
+		if bad != nil {
+			t.Errorf("%s: %q is refused: line %d: %s", c.name, c.src, bad.line, bad.why)
+			continue
+		}
+		if read.peak != c.peak || read.left != c.left {
+			t.Errorf("%s: %q holds %d at most and %d at its end, want %d and %d", c.name, c.src, read.peak, read.left, c.peak, c.left)
+		}
+	}
+}
+
 // The names a file registers, with the line each is written on, in the
 // file's order.
 func TestScanReadsTheNamesAFileRegisters(t *testing.T) {
@@ -123,13 +162,13 @@ func TestScanReadsTheNamesAFileRegisters(t *testing.T) {
 		{"a field called redis", "x.redis.register_function('fa', f)\nx:redis.register_function('fb', f)", ""},
 		{"a string, not a call", "redis.register_function 'fa'", ""},
 	} {
-		regs, bad := scan("a.lua", c.src)
+		read, bad := scan("a.lua", c.src)
 		if bad != nil {
 			t.Errorf("%s: %q is refused: line %d: %s", c.name, c.src, bad.line, bad.why)
 			continue
 		}
 		var got []string
-		for _, reg := range regs {
+		for _, reg := range read.regs {
 			if reg.file != "a.lua" {
 				t.Errorf("%s: %s is said to be registered in %q", c.name, reg.name, reg.file)
 			}

@@ -19,7 +19,8 @@ import (
 type fake struct {
 	redis.UniversalClient // nil: a call the package is not meant to make panics
 
-	load func(ctx context.Context, code string) (string, error)
+	load func(ctx context.Context, code string) (string, error) // FUNCTION LOAD REPLACE
+	add  func(ctx context.Context, code string) (string, error) // FUNCTION LOAD; nil: as load
 	list func(ctx context.Context, q redis.FunctionListQuery) ([]redis.Library, error)
 
 	mu   sync.Mutex
@@ -42,6 +43,22 @@ func (f *fake) FunctionLoadReplace(ctx context.Context, code string) *redis.Stri
 	f.note("FUNCTION LOAD REPLACE " + code)
 	cmd := redis.NewStringCmd(ctx, "function", "load", "replace", code)
 	name, err := f.load(ctx, code)
+	if err != nil {
+		cmd.SetErr(err)
+		return cmd
+	}
+	cmd.SetVal(name)
+	return cmd
+}
+
+func (f *fake) FunctionLoad(ctx context.Context, code string) *redis.StringCmd {
+	f.note("FUNCTION LOAD " + code)
+	cmd := redis.NewStringCmd(ctx, "function", "load", code)
+	add := f.add
+	if add == nil {
+		add = f.load
+	}
+	name, err := add(ctx, code)
 	if err != nil {
 		cmd.SetErr(err)
 		return cmd
@@ -80,12 +97,54 @@ func (refusal) RedisError() {}
 // takes any load.
 func holding(libs ...redis.Library) *fake {
 	return &fake{
-		load: func(_ context.Context, code string) (string, error) {
-			name, _, _ := strings.Cut(strings.TrimPrefix(code, "#!lua name="), "\n")
-			return name, nil
-		},
+		load: func(_ context.Context, code string) (string, error) { return nameOf(code), nil },
 		list: func(context.Context, redis.FunctionListQuery) ([]redis.Library, error) { return libs, nil },
 	}
+}
+
+// nameOf is the library name a code's first line gives.
+func nameOf(code string) string {
+	name, _, _ := strings.Cut(strings.TrimPrefix(code, "#!lua name="), "\n")
+	return name
+}
+
+// shelf is a fake that keeps the libraries it holds, by name, and loads as
+// Redis does: FUNCTION LOAD REPLACE takes the name whoever holds it, and
+// FUNCTION LOAD refuses a name it holds, with Redis's words. between, when it
+// is not nil, runs once, after the first FUNCTION LIST has been answered:
+// another loader acting between a read and a load.
+func shelf(held map[string]string, between func(map[string]string)) *fake {
+	f := &fake{}
+	f.list = func(_ context.Context, q redis.FunctionListQuery) ([]redis.Library, error) {
+		var libs []redis.Library
+		for name, code := range held {
+			if strings.EqualFold(name, q.LibraryNamePattern) {
+				lib := redis.Library{Name: name}
+				if q.WithCode {
+					lib.Code = code
+				}
+				libs = append(libs, lib)
+			}
+		}
+		if between != nil {
+			between(held)
+			between = nil
+		}
+		return libs, nil
+	}
+	f.load = func(_ context.Context, code string) (string, error) {
+		held[nameOf(code)] = code
+		return nameOf(code), nil
+	}
+	f.add = func(_ context.Context, code string) (string, error) {
+		name := nameOf(code)
+		if _, ok := held[name]; ok {
+			return "", refusal("ERR Library '" + name + "' already exists")
+		}
+		held[name] = code
+		return name, nil
+	}
+	return f
 }
 
 func oneLine(t *testing.T, what string, err error) string {
@@ -194,7 +253,7 @@ func TestStatesAndOutcomesHaveTheirWords(t *testing.T) {
 			t.Errorf("State %d reads %q, want %q", state, got, want)
 		}
 	}
-	for outcome, want := range map[Outcome]string{Failed: "FAILED", Unchanged: "UNCHANGED", Loaded: "LOADED", Replaced: "REPLACED", Outcome(9): "FAILED"} {
+	for outcome, want := range map[Outcome]string{Failed: "FAILED", Unchanged: "UNCHANGED", Loaded: "LOADED", Replaced: "REPLACED", Skipped: "SKIPPED", Outcome(9): "FAILED"} {
 		if got := outcome.String(); got != want {
 			t.Errorf("Outcome %d reads %q, want %q", outcome, got, want)
 		}
@@ -209,11 +268,12 @@ func TestStatesAndOutcomesHaveTheirWords(t *testing.T) {
 func TestAReceiptIsOneLineInTheLoadersShape(t *testing.T) {
 	t.Parallel()
 	for want, receipt := range map[string]Receipt{
-		"LOADED my_library sha=0123456789abcdef":                        {Library: "my_library", Outcome: Loaded, Digest: "0123456789abcdef"},
-		"UNCHANGED my_library sha=0123456789abcdef":                     {Library: "my_library", Outcome: Unchanged, Digest: "0123456789abcdef"},
-		"REPLACED my_library sha=0123456789abcdef was=fedcba9876543210": {Library: "my_library", Outcome: Replaced, Digest: "0123456789abcdef", Was: "fedcba9876543210"},
-		"FAILED my_library sha=0123456789abcdef":                        {Library: "my_library", Digest: "0123456789abcdef", Was: "fedcba9876543210"},
-		`FAILED not\x20a\x0aname sha=`:                                  {Library: "not a\nname"},
+		"LOADED my_library sha=0123456789abcdef":                         {Library: "my_library", Outcome: Loaded, Digest: "0123456789abcdef"},
+		"UNCHANGED my_library sha=0123456789abcdef":                      {Library: "my_library", Outcome: Unchanged, Digest: "0123456789abcdef"},
+		"REPLACED my_library sha=0123456789abcdef was=fedcba9876543210":  {Library: "my_library", Outcome: Replaced, Digest: "0123456789abcdef", Was: "fedcba9876543210"},
+		"FAILED my_library sha=0123456789abcdef":                         {Library: "my_library", Digest: "0123456789abcdef", Was: "fedcba9876543210"},
+		`SKIPPED my_library sha=0123456789abcdef why="NOPERM no\nperms"`: {Library: "my_library", Outcome: Skipped, Digest: "0123456789abcdef", Why: "NOPERM no\nperms"},
+		`FAILED not\x20a\x0aname sha=`:                                   {Library: "not a\nname"},
 	} {
 		if got := receipt.String(); got != want {
 			t.Errorf("%+v reads %q, want %q", receipt, got, want)
@@ -303,8 +363,8 @@ func TestLoadSaysWhatTheStoreHoldsAfterAnError(t *testing.T) {
 		cause error
 		want  []string
 	}{
-		{"a syntax error", refusal("ERR Error compiling function: user_function:9: unexpected symbol near '='"),
-			[]string{"redisfn: load lib_one: the store refused: ERR Error compiling function: user_function:9: unexpected symbol near '=' [user_function:9 = lua/b.lua:1]; the store holds what it held before"}},
+		{"a syntax error", refusal("ERR Error compiling function: user_function:10: unexpected symbol near '='"),
+			[]string{"redisfn: load lib_one: the store refused: ERR Error compiling function: user_function:10: unexpected symbol near '=' [user_function:10 = lua/b.lua:1]; the store holds what it held before"}},
 		{"a library that registers nothing", refusal("ERR No functions registered"),
 			[]string{"redisfn: load lib_one: the store refused: ERR No functions registered; the store holds what it held before"}},
 		{"a name twice in the library", refusal("ERR Error registering functions: ERR Function already exists in the library"),
@@ -425,7 +485,7 @@ func TestLoadNamesTheFunctionWhenTheHoldersCannotBeRead(t *testing.T) {
 	}
 }
 
-func TestLoadMissingLoadsOnlyWhenTheStoreDoesNotHoldTheLibrary(t *testing.T) {
+func TestEnsureLoadsOnlyWhenTheStoreDoesNotHoldThisCode(t *testing.T) {
 	t.Parallel()
 	lib := two()
 	for _, c := range []struct {
@@ -448,6 +508,47 @@ func TestLoadMissingLoadsOnlyWhenTheStoreDoesNotHoldTheLibrary(t *testing.T) {
 			[]string{"FUNCTION LIST LIBRARYNAME lib_one WITHCODE"}},
 	} {
 		store := holding(c.reply...)
+		receipt, err := lib.Ensure(context.Background(), store)
+		if err != nil || receipt != c.want {
+			t.Errorf("%s: Ensure = %+v %v, want %+v", c.name, receipt, err, c.want)
+		}
+		if sent := store.commands(); !slices.Equal(sent, c.sent) {
+			t.Errorf("%s: Ensure sent %q, want %q", c.name, sent, c.sent)
+		}
+	}
+}
+
+// LoadMissing loads only when no library of the name is there, with
+// FUNCTION LOAD and never REPLACE: a store that holds other code under the
+// name is left untouched, with a nil error.
+func TestLoadMissingLoadsOnlyWhenTheStoreHoldsNoLibraryOfTheName(t *testing.T) {
+	t.Parallel()
+	lib := two()
+	for _, c := range []struct {
+		name  string
+		reply []redis.Library
+		want  Receipt
+		sent  []string
+	}{
+		{"absent", nil,
+			Receipt{Library: "lib_one", Outcome: Loaded, Digest: twoDigest},
+			[]string{"FUNCTION LIST LIBRARYNAME lib_one", "FUNCTION LOAD " + twoSource}},
+		{"absent, with its code under another name", []redis.Library{{Name: "LIB_ONE", Code: twoSource}},
+			Receipt{Library: "lib_one", Outcome: Loaded, Digest: twoDigest},
+			[]string{"FUNCTION LIST LIBRARYNAME lib_one", "FUNCTION LOAD " + twoSource}},
+		{"different", []redis.Library{{Name: "lib_one", Code: "other"}},
+			Receipt{Library: "lib_one", Outcome: Unchanged, Digest: twoDigest},
+			[]string{"FUNCTION LIST LIBRARYNAME lib_one"}},
+		{"same", []redis.Library{{Name: "lib_one", Code: twoSource}},
+			Receipt{Library: "lib_one", Outcome: Unchanged, Digest: twoDigest},
+			[]string{"FUNCTION LIST LIBRARYNAME lib_one"}},
+	} {
+		store := holding(c.reply...)
+		store.load = func(context.Context, string) (string, error) {
+			t.Errorf("%s: LoadMissing sent FUNCTION LOAD REPLACE", c.name)
+			return "", errors.New("never")
+		}
+		store.add = func(_ context.Context, code string) (string, error) { return nameOf(code), nil }
 		receipt, err := lib.LoadMissing(context.Background(), store)
 		if err != nil || receipt != c.want {
 			t.Errorf("%s: LoadMissing = %+v %v, want %+v", c.name, receipt, err, c.want)
@@ -458,7 +559,105 @@ func TestLoadMissingLoadsOnlyWhenTheStoreDoesNotHoldTheLibrary(t *testing.T) {
 	}
 }
 
-func TestLoadMissingFailsWithTheErrorOfTheCommandThatFailed(t *testing.T) {
+// LoadMissing leaves a library the store holds as it is, whatever its code:
+// other code under the name, and a library another loader puts there between
+// LoadMissing's read and its load. The reversed witness: Ensure is a
+// LoadMissing that replaces, and it fails the same check in both cases, so
+// the check sees a LoadMissing that sent REPLACE (nova-tools #3620).
+func TestLoadMissingNeverReplacesALibraryTheStoreHolds(t *testing.T) {
+	t.Parallel()
+	const other = "#!lua name=lib_one\nredis.register_function('fa', function() return 'other' end)"
+	replaced := func(load func(Library, context.Context, redis.UniversalClient) (Receipt, error)) []string {
+		var found []string
+		for _, c := range []struct {
+			name    string
+			held    map[string]string
+			between func(map[string]string)
+		}{
+			{"other code under the name", map[string]string{"lib_one": other}, nil},
+			{"other code put there after the read", map[string]string{}, func(held map[string]string) { held["lib_one"] = other }},
+		} {
+			receipt, err := load(two(), context.Background(), shelf(c.held, c.between))
+			if err != nil {
+				t.Fatalf("%s: %v", c.name, err)
+			}
+			if c.held["lib_one"] != other {
+				found = append(found, c.name+": "+receipt.String())
+			} else if receipt.Outcome != Unchanged {
+				t.Errorf("%s: the store was left as it was and the receipt says %s", c.name, receipt)
+			}
+		}
+		return found
+	}
+	if found := replaced(Library.LoadMissing); len(found) != 0 {
+		t.Errorf("LoadMissing replaced a library the store held: %q", found)
+	}
+	if found := replaced(Library.Ensure); len(found) != 2 {
+		t.Errorf("the reversed witness: a load that replaces (Ensure) replaced in %d of the 2 cases (%q), so this test would not see a LoadMissing that sent REPLACE", len(found), found)
+	}
+}
+
+// The store's answers that say another loader is there, or that this
+// caller is not the deployer, are answers: LoadMissing returns them in its
+// receipt with a nil error. Every other failure is an error.
+func TestLoadMissingTakesTheStoresAnswersAndFailsOnTheRest(t *testing.T) {
+	t.Parallel()
+	lib := two()
+	for _, c := range []struct {
+		name    string
+		listErr error
+		addErr  error
+		answer  string
+		want    Receipt
+		sent    int
+		errText string // "" for no error
+	}{
+		{"a caller the store does not let read", refusal("NOPERM User seat has no permissions to run the 'function|list' command"), nil, "",
+			Receipt{Library: "lib_one", Outcome: Skipped, Digest: twoDigest, Why: "NOPERM User seat has no permissions to run the 'function|list' command"}, 1, ""},
+		{"a library another loader put there after the read", nil, refusal("ERR Library 'lib_one' already exists"), "",
+			Receipt{Library: "lib_one", Outcome: Unchanged, Digest: twoDigest}, 2, ""},
+		{"a function another library holds", nil, refusal("ERR Function fb already exists"), "",
+			Receipt{Library: "lib_one", Outcome: Skipped, Digest: twoDigest, Why: "ERR Function fb already exists"}, 2, ""},
+		{"a store that cannot be reached", errors.New("dial tcp: NOPERM is not in this text by chance"), nil, "",
+			Receipt{Library: "lib_one", Digest: twoDigest}, 1, "redisfn: check lib_one: the store did not answer: dial tcp: NOPERM is not in this text by chance; nothing was changed"},
+		{"a library the store refuses", nil, refusal("ERR No functions registered"), "",
+			Receipt{Library: "lib_one", Digest: twoDigest}, 2, "redisfn: load lib_one: the store refused: ERR No functions registered; the store holds what it held before"},
+		{"a library that registers one name twice", nil, refusal("ERR Error registering functions: ERR Function already exists in the library"), "",
+			Receipt{Library: "lib_one", Digest: twoDigest}, 2, "redisfn: load lib_one: the store refused: ERR Error registering functions: ERR Function already exists in the library; the store holds what it held before"},
+		{"an answer that is not the library's name", nil, nil, "other",
+			Receipt{Library: "lib_one", Digest: twoDigest}, 2, `redisfn: load lib_one: the store answered "other" and not the library's name`},
+	} {
+		store := holding()
+		store.list = func(context.Context, redis.FunctionListQuery) ([]redis.Library, error) { return nil, c.listErr }
+		store.load = func(context.Context, string) (string, error) {
+			t.Errorf("%s: LoadMissing sent FUNCTION LOAD REPLACE", c.name)
+			return "", errors.New("never")
+		}
+		store.add = func(_ context.Context, code string) (string, error) {
+			if c.answer != "" {
+				return c.answer, nil
+			}
+			return nameOf(code), c.addErr
+		}
+		receipt, err := lib.LoadMissing(context.Background(), store)
+		if receipt != c.want {
+			t.Errorf("%s: LoadMissing = %+v, want %+v", c.name, receipt, c.want)
+		}
+		switch {
+		case c.errText == "" && err != nil:
+			t.Errorf("%s: LoadMissing: %v, want no error", c.name, err)
+		case c.errText != "":
+			if line := oneLine(t, c.name, err); !strings.HasPrefix(line, c.errText) {
+				t.Errorf("%s: the error reads %q, want it to start %q", c.name, line, c.errText)
+			}
+		}
+		if sent := store.commands(); len(sent) != c.sent {
+			t.Errorf("%s: LoadMissing sent %q, want %d commands", c.name, sent, c.sent)
+		}
+	}
+}
+
+func TestEnsureFailsWithTheErrorOfTheCommandThatFailed(t *testing.T) {
 	t.Parallel()
 	lib := two()
 
@@ -466,10 +665,10 @@ func TestLoadMissingFailsWithTheErrorOfTheCommandThatFailed(t *testing.T) {
 	unread.list = func(context.Context, redis.FunctionListQuery) ([]redis.Library, error) {
 		return nil, refusal("NOPERM no permissions")
 	}
-	receipt, err := lib.LoadMissing(context.Background(), unread)
+	receipt, err := lib.Ensure(context.Background(), unread)
 	if line := oneLine(t, "a store that cannot be read", err); receipt != (Receipt{Library: "lib_one", Digest: twoDigest}) ||
 		!strings.Contains(line, "redisfn: check lib_one: the store refused: NOPERM no permissions; nothing was changed") {
-		t.Errorf("a store that cannot be read: LoadMissing = %+v %s", receipt, line)
+		t.Errorf("a store that cannot be read: Ensure = %+v %s", receipt, line)
 	}
 	if sent := unread.commands(); len(sent) != 1 {
 		t.Errorf("a store that cannot be read was sent %d commands, want the read alone", len(sent))
@@ -477,18 +676,18 @@ func TestLoadMissingFailsWithTheErrorOfTheCommandThatFailed(t *testing.T) {
 
 	refused := holding(redis.Library{Name: "lib_one", Code: "other"})
 	refused.load = func(context.Context, string) (string, error) { return "", refusal("ERR No functions registered") }
-	receipt, err = lib.LoadMissing(context.Background(), refused)
+	receipt, err = lib.Ensure(context.Background(), refused)
 	if line := oneLine(t, "a load the store refuses", err); receipt != (Receipt{Library: "lib_one", Digest: twoDigest, Was: DigestOf("other")}) ||
 		!strings.Contains(line, "redisfn: load lib_one: the store refused: ERR No functions registered; the store holds what it held before") {
-		t.Errorf("a load the store refuses: LoadMissing = %+v %s", receipt, line)
+		t.Errorf("a load the store refuses: Ensure = %+v %s", receipt, line)
 	}
 
 	taken := holding(redis.Library{Name: "lib_old", Functions: []redis.Function{{Name: "FB"}}})
 	taken.load = func(context.Context, string) (string, error) { return "", refusal("ERR Function fb already exists") }
-	receipt, err = lib.LoadMissing(context.Background(), taken)
+	receipt, err = lib.Ensure(context.Background(), taken)
 	var collision *CollisionError
 	if !errors.As(err, &collision) || !slices.Equal(collision.Held, []Held{{"fb", "lib_old"}}) || receipt.Outcome != Failed {
-		t.Errorf("a function another library holds: LoadMissing = %+v %v", receipt, err)
+		t.Errorf("a function another library holds: Ensure = %+v %v", receipt, err)
 	}
 }
 
@@ -506,9 +705,11 @@ func TestARefusedLibraryNeverReachesTheStore(t *testing.T) {
 		if state != Unknown || !errors.Is(err, ErrRefused) || err.Error() != refused.Error() {
 			t.Errorf("%s: Check = %v %v, want unknown and the refusal", c.name, state, err)
 		}
-		receipt, err := c.lib.LoadMissing(context.Background(), store)
-		if receipt != (Receipt{Library: c.lib.Name}) || !errors.Is(err, ErrRefused) || err.Error() != refused.Error() {
-			t.Errorf("%s: LoadMissing = %+v %v, want the refusal", c.name, receipt, err)
+		for name, call := range map[string]func(Library, context.Context, redis.UniversalClient) (Receipt, error){"Ensure": Library.Ensure, "LoadMissing": Library.LoadMissing} {
+			receipt, err := call(c.lib, context.Background(), store)
+			if receipt != (Receipt{Library: c.lib.Name}) || !errors.Is(err, ErrRefused) || err.Error() != refused.Error() {
+				t.Errorf("%s: %s = %+v %v, want the refusal", c.name, name, receipt, err)
+			}
 		}
 		state, err = c.lib.Judge([]redis.Library{{Name: c.lib.Name, Code: "any"}})
 		if state != Unknown || !errors.Is(err, ErrRefused) {
@@ -529,6 +730,9 @@ func TestWithoutAClientNothingIsSent(t *testing.T) {
 	}
 	if state, err := lib.Check(context.Background(), nil); state != Unknown || err == nil || err.Error() != want {
 		t.Errorf("Check = %v %v", state, err)
+	}
+	if receipt, err := lib.Ensure(context.Background(), nil); receipt != (Receipt{Library: "lib_one"}) || err == nil || err.Error() != want {
+		t.Errorf("Ensure = %+v %v", receipt, err)
 	}
 	if receipt, err := lib.LoadMissing(context.Background(), nil); receipt != (Receipt{Library: "lib_one"}) || err == nil || err.Error() != want {
 		t.Errorf("LoadMissing = %+v %v", receipt, err)
@@ -557,21 +761,37 @@ func stalled(t *testing.T) (*fake, context.Context) {
 	}, ctx
 }
 
-// A caller whose context has ended already has nothing sent for it.
+// A caller whose context has ended already has nothing sent for it, and
+// its error says so: the store holds what it held.
 func TestACallWhoseContextHasEndedSendsNothing(t *testing.T) {
 	t.Parallel()
 	lib := two()
 	ended, stop := context.WithCancel(context.Background())
 	stop()
 	store := holding()
-	if digest, err := lib.Load(ended, store); digest != "" || !errors.Is(err, context.Canceled) {
-		t.Errorf("Load = %q %v", digest, err)
+	const nothing = ": the caller's wait had ended before anything was sent: context canceled; nothing was sent, so the store holds what it held"
+	said := func(what string, err error, doing string) {
+		t.Helper()
+		if line := oneLine(t, what, err); !errors.Is(err, context.Canceled) || line != "redisfn: "+doing+" lib_one"+nothing {
+			t.Errorf("%s: %s", what, line)
+		}
 	}
-	if state, err := lib.Check(ended, store); state != Unknown || !errors.Is(err, context.Canceled) {
-		t.Errorf("Check = %v %v", state, err)
+	digest, err := lib.Load(ended, store)
+	said("Load", err, "load")
+	if digest != "" {
+		t.Errorf("Load = %q", digest)
 	}
-	if receipt, err := lib.LoadMissing(ended, store); receipt.Outcome != Failed || !errors.Is(err, context.Canceled) {
-		t.Errorf("LoadMissing = %+v %v", receipt, err)
+	state, err := lib.Check(ended, store)
+	said("Check", err, "check")
+	if state != Unknown {
+		t.Errorf("Check = %v", state)
+	}
+	for name, call := range map[string]func(Library, context.Context, redis.UniversalClient) (Receipt, error){"Ensure": Library.Ensure, "LoadMissing": Library.LoadMissing} {
+		receipt, err := call(lib, ended, store)
+		said(name, err, "load")
+		if receipt != (Receipt{Library: "lib_one", Digest: twoDigest}) {
+			t.Errorf("%s = %+v", name, receipt)
+		}
 	}
 	if sent := store.commands(); len(sent) != 0 {
 		t.Errorf("the store was sent %q", sent)
@@ -596,11 +816,13 @@ func TestEveryCallReturnsWhenItsWaitEndsThoughTheStoreNeverAnswers(t *testing.T)
 		t.Errorf("Check = %v %s", state, line)
 	}
 
-	store, ctx = stalled(t)
-	receipt, err := lib.LoadMissing(ctx, store)
-	if line := oneLine(t, "LoadMissing", err); receipt != (Receipt{Library: "lib_one", Digest: twoDigest}) || !errors.Is(err, context.Canceled) ||
-		!strings.Contains(line, "no answer from the store before the wait ended: context canceled") {
-		t.Errorf("LoadMissing = %+v %s", receipt, line)
+	for name, call := range map[string]func(Library, context.Context, redis.UniversalClient) (Receipt, error){"Ensure": Library.Ensure, "LoadMissing": Library.LoadMissing} {
+		store, ctx = stalled(t)
+		receipt, err := call(lib, ctx, store)
+		if line := oneLine(t, name, err); receipt != (Receipt{Library: "lib_one", Digest: twoDigest}) || !errors.Is(err, context.Canceled) ||
+			!strings.Contains(line, "no answer from the store before the wait ended: context canceled") {
+			t.Errorf("%s = %+v %s", name, receipt, line)
+		}
 	}
 }
 
@@ -641,11 +863,14 @@ func TestTheContextOfEveryCallEndsAtTheBound(t *testing.T) {
 		if _, err := lib.Load(c.ctx, store); err != nil {
 			t.Errorf("%s: Load: %v", c.name, err)
 		}
+		if _, err := lib.Ensure(c.ctx, store); err != nil {
+			t.Errorf("%s: Ensure: %v", c.name, err)
+		}
 		if _, err := lib.LoadMissing(c.ctx, store); err != nil {
 			t.Errorf("%s: LoadMissing: %v", c.name, err)
 		}
-		if reached != 4 {
-			t.Errorf("%s: %d calls reached the store, want 4", c.name, reached)
+		if reached != 6 {
+			t.Errorf("%s: %d calls reached the store, want 6", c.name, reached)
 		}
 	}
 }

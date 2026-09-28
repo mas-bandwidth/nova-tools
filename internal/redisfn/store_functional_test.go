@@ -263,15 +263,15 @@ func TestCheckReadsTheLibraryAndNoKey(t *testing.T) {
 	}
 }
 
-func TestLoadMissingLoadsWhenAbsentOrDifferentAndSaysWhich(t *testing.T) {
+func TestEnsureLoadsWhenAbsentOrDifferentAndSaysWhich(t *testing.T) {
 	t.Parallel()
 	c := store(t)
 	ctx := context.Background()
 	lib := two()
 
-	receipt, err := lib.LoadMissing(ctx, c)
+	receipt, err := lib.Ensure(ctx, c)
 	if err != nil || receipt != (Receipt{Library: "lib_one", Outcome: Loaded, Digest: twoDigest}) {
-		t.Fatalf("on an empty store LoadMissing = %+v %v", receipt, err)
+		t.Fatalf("on an empty store Ensure = %+v %v", receipt, err)
 	}
 	if line := receipt.String(); line != "LOADED lib_one sha="+twoDigest {
 		t.Fatalf("the receipt reads %q", line)
@@ -280,16 +280,16 @@ func TestLoadMissingLoadsWhenAbsentOrDifferentAndSaysWhich(t *testing.T) {
 		t.Fatalf("fa answers %q", fa)
 	}
 
-	receipt, err = lib.LoadMissing(ctx, c)
+	receipt, err = lib.Ensure(ctx, c)
 	if err != nil || receipt != (Receipt{Library: "lib_one", Outcome: Unchanged, Digest: twoDigest}) {
-		t.Fatalf("over itself LoadMissing = %+v %v", receipt, err)
+		t.Fatalf("over itself Ensure = %+v %v", receipt, err)
 	}
 
 	other := "#!lua name=lib_one\n" + answering("fa", "other")
 	put(t, c, other)
-	receipt, err = lib.LoadMissing(ctx, c)
+	receipt, err = lib.Ensure(ctx, c)
 	if err != nil || receipt != (Receipt{Library: "lib_one", Outcome: Replaced, Digest: twoDigest, Was: DigestOf(other)}) {
-		t.Fatalf("over other code LoadMissing = %+v %v", receipt, err)
+		t.Fatalf("over other code Ensure = %+v %v", receipt, err)
 	}
 	if line := receipt.String(); line != "REPLACED lib_one sha="+twoDigest+" was="+DigestOf(other) {
 		t.Fatalf("the receipt reads %q", line)
@@ -299,6 +299,69 @@ func TestLoadMissingLoadsWhenAbsentOrDifferentAndSaysWhich(t *testing.T) {
 	}
 	if state, err := lib.Check(ctx, c); state != Same || err != nil {
 		t.Fatalf("Check = %v %v", state, err)
+	}
+}
+
+// LoadMissing loads only when the store holds no library of the name, with
+// FUNCTION LOAD and never REPLACE: over other code under the name, over
+// itself, and when another loader is there first, the store is left as it
+// was and the call answers with a nil error (nova-tools #3620).
+func TestLoadMissingNeverReplacesALibraryOnTheStore(t *testing.T) {
+	t.Parallel()
+	c := store(t)
+	ctx := context.Background()
+	lib := two()
+
+	receipt, err := lib.LoadMissing(ctx, c)
+	if err != nil || receipt != (Receipt{Library: "lib_one", Outcome: Loaded, Digest: twoDigest}) {
+		t.Fatalf("on an empty store LoadMissing = %+v %v", receipt, err)
+	}
+	if fa := call(t, c, "fa"); fa != "fa" {
+		t.Fatalf("fa answers %q", fa)
+	}
+	receipt, err = lib.LoadMissing(ctx, c)
+	if err != nil || receipt != (Receipt{Library: "lib_one", Outcome: Unchanged, Digest: twoDigest}) {
+		t.Fatalf("over itself LoadMissing = %+v %v", receipt, err)
+	}
+
+	// Other code under the name: a deployed build this binary did not bring.
+	other := "#!lua name=lib_one\n" + answering("fa", "deployed") + answering("fnew", "deployed")
+	put(t, c, other)
+	receipt, err = lib.LoadMissing(ctx, c)
+	if err != nil || receipt != (Receipt{Library: "lib_one", Outcome: Unchanged, Digest: twoDigest}) {
+		t.Fatalf("over other code LoadMissing = %+v %v", receipt, err)
+	}
+	if fa, fnew := call(t, c, "fa"), call(t, c, "fnew"); fa != "deployed" || fnew != "deployed" {
+		t.Fatalf("after LoadMissing over the deployed build fa answers %q and fnew %q", fa, fnew)
+	}
+	if state, err := lib.Check(ctx, c); state != Different || !isMismatch(err) {
+		t.Fatalf("Check = %v %v, want the deployed build left as it was", state, err)
+	}
+
+	// The race, as the store answers it: a FUNCTION LOAD of a name the store
+	// holds (another loader's, put there after LoadMissing's read) is refused
+	// in the words LoadMissing takes for Unchanged, and writes nothing.
+	source, err := lib.Source()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = c.FunctionLoad(ctx, source).Err()
+	if err == nil || !isReply(err) || !libraryExists.MatchString(err.Error()) {
+		t.Fatalf("FUNCTION LOAD over a library of the name: %v, want the store's refusal that libraryExists reads", err)
+	}
+	if fa := call(t, c, "fa"); fa != "deployed" {
+		t.Fatalf("after the refused FUNCTION LOAD fa answers %q", fa)
+	}
+
+	// A function name another library holds: skipped, with the store's
+	// words, and nothing written.
+	fresh := Library{Name: "lib_new", Files: tree(map[string]string{"a.lua": answering("fnew", "new")}), Glob: "*.lua"}
+	receipt, err = fresh.LoadMissing(ctx, c)
+	if err != nil || receipt.Outcome != Skipped || receipt.Why != "ERR Function fnew already exists" {
+		t.Fatalf("a function another library holds: LoadMissing = %+v %v", receipt, err)
+	}
+	if now := held(t, c); now != "lib_one(fa,fnew)" {
+		t.Fatalf("after the skipped load the store holds %s", now)
 	}
 }
 
@@ -352,8 +415,11 @@ func TestALoadTheStoreRefusesLeavesTheLibraryItHeld(t *testing.T) {
 		if state, err := good.Check(ctx, c); state != Same || err != nil {
 			t.Errorf("%s: after the refusal Check of the library held = %v %v", bad.name, state, err)
 		}
-		if receipt, err := lib.LoadMissing(ctx, c); err == nil || receipt.Outcome != Failed || receipt.Was == "" {
-			t.Errorf("%s: LoadMissing = %+v %v, want the store's refusal", bad.name, receipt, err)
+		if receipt, err := lib.Ensure(ctx, c); err == nil || receipt.Outcome != Failed || receipt.Was == "" {
+			t.Errorf("%s: Ensure = %+v %v, want the store's refusal", bad.name, receipt, err)
+		}
+		if receipt, err := lib.LoadMissing(ctx, c); err != nil || receipt.Outcome != Unchanged {
+			t.Errorf("%s: LoadMissing = %+v %v, want the library held left as it is", bad.name, receipt, err)
 		}
 		if now := held(t, c); now != "lib_one(fa,fb)" {
 			t.Errorf("%s: after the refusal the store holds %s", bad.name, now)
@@ -480,6 +546,44 @@ func TestEachFilesLocalsLeaveScopeAtItsEnd(t *testing.T) {
 	}
 }
 
+// The loader's count of locals is Lua's: a text the count says holds 200 at
+// once is taken by the store, and one it says holds 201 is refused with
+// Lua's words. The texts mix every form the count knows, so a form counted
+// wrong moves the edge.
+func TestTheLocalsCountIsLuas(t *testing.T) {
+	t.Parallel()
+	c := store(t)
+	ctx := context.Background()
+	body := func(plain int) string {
+		var b strings.Builder
+		b.WriteString("local function helper() local inner = 1 return inner end\n") // 1
+		b.WriteString("local a, b2, c3 = 1, 2, 3\n")                                // 3
+		b.WriteString("if a then local x, y = 1, 2 else local z = 3 end\n")         // in scope only inside
+		b.WriteString(locals("p", plain))
+		b.WriteString("for i = 1, 2 do\n  for k, v in function() return nil end do local w, u = k, v end\nend\n") // 4 + 3 + 2 + 2
+		b.WriteString(answering("edge", "edge"))
+		return b.String()
+	}
+	for _, c2 := range []struct {
+		plain int
+		count int
+		taken bool
+	}{{200 - 4 - 11, 200, true}, {200 - 4 - 11 + 1, 201, false}} {
+		text := body(c2.plain)
+		read, bad := scan("edge.lua", text)
+		if bad != nil || read.peak != c2.count {
+			t.Fatalf("the loader counts %d (%v), want %d", read.peak, bad, c2.count)
+		}
+		err := c.FunctionLoadReplace(ctx, "#!lua name=lib_edge\n"+text).Err()
+		switch {
+		case c2.taken && err != nil:
+			t.Fatalf("a text the loader counts %d: %v, want it taken", c2.count, err)
+		case !c2.taken && (err == nil || !strings.Contains(err.Error(), "more than 200 local variables")):
+			t.Fatalf("a text the loader counts %d: %v, want Lua's refusal of over 200 locals", c2.count, err)
+		}
+	}
+}
+
 // The names the loader reads from the files are the names the store
 // registers, however a file spells them.
 func TestTheNamesTheLoaderReadsAreTheNamesTheStoreRegisters(t *testing.T) {
@@ -534,7 +638,7 @@ func TestAFunctionAnotherLibraryHoldsIsNamedWithItsHolder(t *testing.T) {
 
 	for _, load := range []func() error{
 		func() error { _, err := fresh.Load(ctx, c); return err },
-		func() error { _, err := fresh.LoadMissing(ctx, c); return err },
+		func() error { _, err := fresh.Ensure(ctx, c); return err },
 	} {
 		err := load()
 		var collision *CollisionError
@@ -561,6 +665,14 @@ func TestAFunctionAnotherLibraryHoldsIsNamedWithItsHolder(t *testing.T) {
 		if state, err := fresh.Check(ctx, c); state != Absent || !isMismatch(err) {
 			t.Fatalf("after the refusal Check of lib_new = %v %v", state, err)
 		}
+	}
+
+	// LoadMissing is not the deployer: the store's refusal is its answer.
+	if receipt, err := fresh.LoadMissing(ctx, c); err != nil || receipt.Outcome != Skipped || !named.MatchString(receipt.Why) {
+		t.Fatalf("LoadMissing of lib_new = %+v %v, want skipped with the store's words", receipt, err)
+	}
+	if now := held(t, c); now != "lib_old(MOVED_TWO,kept,moved_one)" {
+		t.Fatalf("after the skipped load the store holds %s", now)
 	}
 
 	// The migration: the old library lets the functions go, the new one takes them.
@@ -623,8 +735,13 @@ func TestASeatThatMayNotListIsToldSo(t *testing.T) {
 	if line := err.Error(); !strings.HasPrefix(line, "redisfn: check lib_one: the store refused: NOPERM ") || !strings.HasSuffix(line, "; nothing was changed") {
 		t.Fatalf("the error reads %q", line)
 	}
-	if receipt, err := two().LoadMissing(ctx, seat); receipt.Outcome != Failed || !redis.HasErrorPrefix(err, "NOPERM") {
-		t.Fatalf("LoadMissing = %+v %v, want the store's NOPERM", receipt, err)
+	if receipt, err := two().Ensure(ctx, seat); receipt.Outcome != Failed || !redis.HasErrorPrefix(err, "NOPERM") {
+		t.Fatalf("Ensure = %+v %v, want the store's NOPERM", receipt, err)
+	}
+	// A seat that may not list is not the deployer: LoadMissing loads
+	// nothing and says why, with a nil error.
+	if receipt, err := two().LoadMissing(ctx, seat); err != nil || receipt.Outcome != Skipped || !strings.HasPrefix(receipt.Why, "NOPERM ") {
+		t.Fatalf("LoadMissing = %+v %v, want skipped with the store's NOPERM", receipt, err)
 	}
 
 	_, err = two().Load(ctx, seat)
@@ -699,9 +816,11 @@ func TestAStoreThatDoesNotAnswerIsLeftAtTheBound(t *testing.T) {
 		err.Error() != "redisfn: check lib_one: no answer from the store before the wait ended: context deadline exceeded; nothing was changed" {
 		t.Fatalf("Check = %v %v", state, err)
 	}
-	receipt, err := lib.LoadMissing(ctx, never)
-	if receipt != (Receipt{Library: "lib_one", Digest: twoDigest}) || !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("LoadMissing = %+v %v", receipt, err)
+	for name, call := range map[string]func(Library, context.Context, redis.UniversalClient) (Receipt, error){"Ensure": Library.Ensure, "LoadMissing": Library.LoadMissing} {
+		receipt, err := call(lib, ctx, never)
+		if receipt != (Receipt{Library: "lib_one", Digest: twoDigest}) || !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("%s = %+v %v", name, receipt, err)
+		}
 	}
 
 	// No store at the address at all: the error is the dial's, well inside
@@ -716,6 +835,9 @@ func TestAStoreThatDoesNotAnswerIsLeftAtTheBound(t *testing.T) {
 	state, err = lib.Check(ctx, nobody)
 	if state != Unknown || err == nil || isMismatch(err) || !strings.HasPrefix(err.Error(), "redisfn: check lib_one: the store did not answer: dial tcp ") {
 		t.Fatalf("Check with no store = %v %v", state, err)
+	}
+	if receipt, err := lib.Ensure(ctx, nobody); receipt.Outcome != Failed || err == nil {
+		t.Fatalf("Ensure with no store = %+v %v", receipt, err)
 	}
 	if receipt, err := lib.LoadMissing(ctx, nobody); receipt.Outcome != Failed || err == nil {
 		t.Fatalf("LoadMissing with no store = %+v %v", receipt, err)

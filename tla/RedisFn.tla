@@ -1,16 +1,24 @@
 ------------------------------ MODULE RedisFn ------------------------------
 (* The function libraries of one Redis under several loaders: nova-tools    *)
-(* internal/redisfn (Check, Load, LoadMissing).                             *)
+(* internal/redisfn (Check, Load, Ensure, LoadMissing).                     *)
 (*                                                                          *)
 (* The store holds, under each library name, one build of the library or    *)
 (* none. A build registers a set of function names, and a function name     *)
 (* belongs to one library: the store refuses a library that registers a     *)
-(* name another library holds. A loader carries one build of one library    *)
-(* and runs LoadMissing: it reads the store (Check), and when the store     *)
-(* does not hold its build it loads it (Load). When the store refuses the   *)
-(* load for a name another library holds, the loader reads the store again  *)
-(* to name the holder. A deployer runs LoadMissing on every pass, for ever; *)
-(* any other loader runs it once.                                           *)
+(* name another library holds. A loader carries one build of one library.   *)
+(*                                                                          *)
+(* A loader outside Missers runs Ensure: it reads the store (Check), and    *)
+(* when the store does not hold its build it loads it (Load). When the      *)
+(* store refuses the load for a name another library holds, the loader      *)
+(* reads the store again to name the holder. A deployer runs Ensure on      *)
+(* every pass, for ever; any other Ensure loader runs it once.              *)
+(*                                                                          *)
+(* A loader in Missers runs LoadMissing, once: it reads the store, and only *)
+(* when the store holds no build of its library it sends FUNCTION LOAD,     *)
+(* without REPLACE, which the store refuses when a build of the library is  *)
+(* there by then; a refusal for a name another library holds is an answer, *)
+(* not a failure, and it looks for no holder. MissReplaces = TRUE is the    *)
+(* witness of nova-tools #3620: its load is FUNCTION LOAD REPLACE.          *)
 (*                                                                          *)
 (* Atomic = TRUE is the code: FUNCTION LOAD REPLACE, one command, after     *)
 (* which the store holds the new build whole or is as it was. Atomic =      *)
@@ -30,19 +38,22 @@ CONSTANTS
   Builds,      \* the builds a library can be at
   Funcs,       \* the function names
   Reg,         \* Reg[l][b]: the function names build b of library l registers
-  Loaders,     \* the processes that run LoadMissing
+  Loaders,     \* the processes that load
   Carries,     \* Carries[p] = [lib |-> l, build |-> b]: what loader p was built with
-  Deployers,   \* the loaders that run LoadMissing on every pass
+  Deployers,   \* the loaders that run Ensure on every pass
+  Missers,     \* the loaders that run LoadMissing, once
   InitStore,   \* the store at the start: InitStore[l] is a build, or NONE
   Atomic,      \* TRUE: FUNCTION LOAD REPLACE. FALSE: FUNCTION DELETE, then FUNCTION LOAD
+  MissReplaces, \* TRUE: the witness, a LoadMissing whose load is FUNCTION LOAD REPLACE
   NONE         \* a model value: no build, no function, no library, nothing read
 
 ASSUME Deployers \subseteq Loaders
-ASSUME Atomic \in BOOLEAN
+ASSUME Missers \subseteq Loaders /\ Missers \cap Deployers = {}
+ASSUME Atomic \in BOOLEAN /\ MissReplaces \in BOOLEAN
 
 VARIABLES
   store,    \* store[l]: the build of library l the store holds, or NONE
-  pc,       \* pc[p]: where loader p is in its LoadMissing
+  pc,       \* pc[p]: where loader p is in its Ensure or LoadMissing
   saw,      \* saw[p]: what p's read found ("same", "different", "absent"), NONE before it
   named,    \* named[p]: the function the store named when it refused p's load, or NONE
   holder,   \* holder[p]: the library p then found holding that function, or NONE
@@ -70,13 +81,17 @@ Init ==
   /\ holder = [p \in Loaders |-> NONE]
   /\ ever = [l \in Libs |-> InitStore[l] # NONE]
 
-(* Check, the first command of LoadMissing: FUNCTION LIST, one command. *)
+(* The first command of Ensure and of LoadMissing: FUNCTION LIST, one      *)
+(* command. Ensure goes on to load unless the store holds its build;       *)
+(* LoadMissing only when the store holds no build of its library.          *)
 Read(p) ==
   /\ pc[p] = "idle"
   /\ saw' = [saw EXCEPT ![p] = IF store[Lib(p)] = NONE THEN "absent"
                                ELSE IF store[Lib(p)] = Build(p) THEN "same"
                                ELSE "different"]
-  /\ pc' = [pc EXCEPT ![p] = IF store[Lib(p)] = Build(p) THEN "done" ELSE "load"]
+  /\ pc' = [pc EXCEPT ![p] = IF p \in Missers
+                               THEN (IF store[Lib(p)] = NONE THEN "load" ELSE "done")
+                               ELSE (IF store[Lib(p)] = Build(p) THEN "done" ELSE "load")]
   /\ named' = [named EXCEPT ![p] = NONE]
   /\ holder' = [holder EXCEPT ![p] = NONE]
   /\ UNCHANGED <<store, ever>>
@@ -97,12 +112,33 @@ Put(p) ==
 (* Load, the code: FUNCTION LOAD REPLACE. *)
 Load(p) ==
   /\ pc[p] = "load"
+  /\ p \notin Missers
   /\ Atomic
   /\ Put(p)
+
+(* LoadMissing's load: FUNCTION LOAD, which the store refuses, writing      *)
+(* nothing, when a build of the library is there by now (another loader    *)
+(* put it there after the read: LoadMissing's Unchanged). A refusal for a  *)
+(* name another library holds ends it as well (Skipped). The witness       *)
+(* (MissReplaces) sends FUNCTION LOAD REPLACE, which takes the name.       *)
+Miss(p) ==
+  /\ pc[p] = "load"
+  /\ p \in Missers
+  /\ IF store[Lib(p)] # NONE /\ ~MissReplaces
+       THEN /\ pc' = [pc EXCEPT ![p] = "done"]
+            /\ UNCHANGED <<store, ever>>
+       ELSE IF Taken(p) = {}
+         THEN /\ store' = [store EXCEPT ![Lib(p)] = Build(p)]
+              /\ ever' = [ever EXCEPT ![Lib(p)] = TRUE]
+              /\ pc' = [pc EXCEPT ![p] = "done"]
+         ELSE /\ pc' = [pc EXCEPT ![p] = "done"]
+              /\ UNCHANGED <<store, ever>>
+  /\ UNCHANGED <<saw, named, holder>>
 
 (* The witness: FUNCTION DELETE first, and FUNCTION LOAD as a second command. *)
 Delete(p) ==
   /\ pc[p] = "load"
+  /\ p \notin Missers
   /\ ~Atomic
   /\ store' = [store EXCEPT ![Lib(p)] = NONE]
   /\ pc' = [pc EXCEPT ![p] = "deleted"]
@@ -134,7 +170,7 @@ Rest ==
   /\ \A p \in Loaders : pc[p] \in {"done", "failed"} /\ p \notin Deployers
   /\ UNCHANGED vars
 
-Step(p) == Read(p) \/ Load(p) \/ Delete(p) \/ LoadAfterDelete(p) \/ Find(p) \/ Again(p)
+Step(p) == Read(p) \/ Load(p) \/ Miss(p) \/ Delete(p) \/ LoadAfterDelete(p) \/ Find(p) \/ Again(p)
 
 Next == (\E p \in Loaders : Step(p)) \/ Rest
 
@@ -181,6 +217,13 @@ RefusalWritesNothing ==
 HolderHeld ==
   [][\A p \in Loaders : (pc[p] = "refused" /\ pc'[p] = "failed" /\ holder'[p] # NONE)
         => named[p] \in Holds(store, holder'[p])]_vars
+
+(* LoadMissing never replaces: its load leaves a build of its library that  *)
+(* is on the store as it is (nova-tools #3620). The witness, MissReplaces,  *)
+(* violates it (MCRedisFnMissReplaces).                                      *)
+MissNeverReplaces ==
+  [][\A p \in Missers : (pc[p] = "load" /\ pc'[p] = "done" /\ store[Lib(p)] # NONE)
+        => store'[Lib(p)] = store[Lib(p)]]_vars
 
 ----------------------------------------------------------------------------
 (* Liveness *)

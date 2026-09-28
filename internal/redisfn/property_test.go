@@ -167,18 +167,31 @@ func TestPropertyEveryLineOfTheSourceMapsToItsFileAndLine(t *testing.T) {
 		for i, line := range p.lines[""] {
 			want = append(want, expected{origin: Origin{Line: i + 1, Prelude: true}, text: line})
 		}
+		// A block begins with an empty line, unless the text before it (the
+		// prelude) does not end in a line break, which the block's own first
+		// line break then ends.
+		after := p.prelude == "" || strings.HasSuffix(p.prelude, "\n")
 		for _, name := range names {
+			if after {
+				want = append(want, expected{origin: Origin{File: name}, text: ""})
+			}
+			after = true
 			header := len(want) + 1
 			want = append(want, expected{origin: Origin{File: name}, formed: true}, expected{origin: Origin{File: name}, text: "do"})
 			for i, line := range p.lines[name] {
 				want = append(want, expected{origin: Origin{File: name, Line: i + 1}, text: line})
 			}
+			// The line break after the file's text is the loader's: after a
+			// text that ends in one of its own, it makes an empty line.
+			if strings.HasSuffix(p.texts[strings.TrimPrefix(name, "lua/")], "\n") {
+				want = append(want, expected{origin: Origin{File: name}, text: ""})
+			}
 			want = append(want, expected{origin: Origin{File: name}, formed: true})
-			// The header is one line whatever the name holds, and says where
-			// the file's first line is; so is the end.
-			if header > len(got) || !strings.HasPrefix(got[header-1], "-- lua/") ||
-				!strings.HasSuffix(got[header-1], fmt.Sprintf(": its line 1 is line %d of this library", header+2)) {
-				t.Errorf("line %d is not the header of %q, which starts at line %d:\n%s", header, name, header+2, source)
+			// The header is one line whatever the name holds, and is the name
+			// alone after "-- ", as the loader this was lifted from wrote it;
+			// so is the end.
+			if header > len(got) || !strings.HasPrefix(got[header-1], "-- lua/") || strings.Contains(got[header-1], ": its line 1") {
+				t.Errorf("line %d is not the header of %q:\n%s", header, name, source)
 				return
 			}
 			if end := len(want); end > len(got) || !strings.HasPrefix(got[end-1], "end -- lua/") {

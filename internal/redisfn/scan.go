@@ -218,8 +218,18 @@ func opens(word string) bool {
 
 func closes(word string) bool { return word == "end" || word == "until" }
 
-// scan reads one file and returns the function names it registers, or the
-// reason the file cannot be one block of a library:
+// scanned is what scan reads of one file.
+type scanned struct {
+	regs []registration // the function names it registers, in its order
+	// peak is the most local variables the file holds at once in the
+	// function it is part of (the library's main function), and left how
+	// many of them are still in scope at its end. A local inside a function
+	// the file defines belongs to that function and is not counted.
+	peak, left int
+}
+
+// scan reads one file and returns what it registers and how many locals it
+// holds, or the reason the file cannot be one block of a library:
 //
 //   - a string or a long comment that does not end inside the file would
 //     swallow the loader's own lines after it;
@@ -228,49 +238,119 @@ func closes(word string) bool { return word == "end" || word == "until" }
 //   - a block left open would take the next file inside it;
 //   - a return outside every function ends the library's load at that line,
 //     so every later file registers nothing and the store says nothing.
-func scan(file, src string) ([]registration, *fault) {
+//
+// The locals are counted as Lua 5.1's parser counts them against its limit
+// of 200 active local variables to a function (lparser.c, new_localvar):
+// each name of a local statement, one for a local function, and the hidden
+// variables of a for (three and the loop's own names; a numeric for has one),
+// each in scope from its declaration to the end of its block. The locals of
+// an if's branch leave scope at the next elseif or else.
+func scan(file, src string) (scanned, *fault) {
 	toks, bad := tokens(src)
 	if bad != nil {
-		return nil, bad
+		return scanned{}, bad
 	}
-	var regs []registration
-	var open []token // the words of the blocks open at this token
+	var out scanned
+	type frame struct {
+		word   token
+		locals int // the main function's locals declared in this block
+	}
+	var open []frame // the blocks open at this token
 	functions := 0   // how many of them are functions
+	active := 0      // the main function's locals in scope, of this file
+	outside := 0     // how many of them were declared outside every block
+	forLocals := 0   // the locals of a for whose do has not opened yet
+	declare := func(n int) {
+		if n == 0 {
+			return
+		}
+		if len(open) == 0 {
+			outside += n
+		} else {
+			open[len(open)-1].locals += n
+		}
+		active += n
+		out.peak = max(out.peak, active)
+	}
 	for i, tok := range toks {
 		if tok.kind != tokenName {
 			continue
 		}
 		switch {
 		case opens(tok.text):
-			open = append(open, tok)
+			open = append(open, frame{word: tok})
 			if tok.text == "function" {
 				functions++
 			}
+			if tok.text == "do" && forLocals > 0 {
+				declare(forLocals)
+				forLocals = 0
+			}
 		case closes(tok.text):
 			if len(open) == 0 {
-				return nil, &fault{tok.line, fmt.Sprintf("this %s closes no block of the file, so it would close the block the loader wraps the file in", tok.text)}
+				return scanned{}, &fault{tok.line, fmt.Sprintf("this %s closes no block of the file, so it would close the block the loader wraps the file in", tok.text)}
 			}
 			top := open[len(open)-1]
 			open = open[:len(open)-1]
-			if (tok.text == "until") != (top.text == "repeat") {
-				return nil, &fault{tok.line, fmt.Sprintf("this %s closes the %s of line %d", tok.text, top.text, top.line)}
+			if (tok.text == "until") != (top.word.text == "repeat") {
+				return scanned{}, &fault{tok.line, fmt.Sprintf("this %s closes the %s of line %d", tok.text, top.word.text, top.word.line)}
 			}
-			if top.text == "function" {
+			if top.word.text == "function" {
 				functions--
 			}
+			active -= top.locals
+		case (tok.text == "elseif" || tok.text == "else") && len(open) > 0 && open[len(open)-1].word.text == "if":
+			active -= open[len(open)-1].locals
+			open[len(open)-1].locals = 0
+		case tok.text == "local" && functions == 0:
+			declare(localNames(toks[i+1:]))
+		case tok.text == "for" && functions == 0:
+			forLocals = forNames(toks[i+1:])
 		case tok.text == "return" && functions == 0:
-			return nil, &fault{tok.line, "this return is outside every function, so the library's load would end here and every later file would register nothing; return only inside a function"}
+			return scanned{}, &fault{tok.line, "this return is outside every function, so the library's load would end here and every later file would register nothing; return only inside a function"}
 		case tok.text == "redis" && !(i > 0 && toks[i-1].kind == tokenSymbol && (toks[i-1].text == "." || toks[i-1].text == ":")):
 			if name, at, ok := registered(toks[i:]); ok {
-				regs = append(regs, registration{name, file, at})
+				out.regs = append(out.regs, registration{name, file, at})
 			}
 		}
 	}
 	if len(open) > 0 {
 		top := open[len(open)-1]
-		return nil, &fault{top.line, fmt.Sprintf("the %s opened here never closes, so it would take the next file inside it", top.text)}
+		return scanned{}, &fault{top.word.line, fmt.Sprintf("the %s opened here never closes, so it would take the next file inside it", top.word.text)}
 	}
-	return regs, nil
+	out.left = outside
+	return out, nil
+}
+
+// localNames is how many locals the local statement after toks declares: one
+// for "local function f", and one for each name of "local a, b, c".
+func localNames(toks []token) int {
+	if len(toks) > 0 && toks[0].kind == tokenName && toks[0].text == "function" {
+		return 1
+	}
+	return names(toks)
+}
+
+// forNames is how many locals the for after toks declares: a numeric for
+// ("for i = 1, n do") has four, the three Lua hides and i, and a generic for
+// ("for k, v in pairs(t) do") has three and its names.
+func forNames(toks []token) int {
+	if len(toks) > 1 && toks[1].kind == tokenSymbol && toks[1].text == "=" {
+		return 4
+	}
+	return 3 + names(toks)
+}
+
+// names counts the names of a list "a, b, c" at the head of toks.
+func names(toks []token) int {
+	n := 0
+	for i := 0; i < len(toks) && toks[i].kind == tokenName; i += 2 {
+		n++
+		if i+1 >= len(toks) || toks[i+1].kind != tokenSymbol || toks[i+1].text != "," {
+			break
+		}
+	}
+	return n
 }
 
 // registered reads a call of redis.register_function at the head of toks and

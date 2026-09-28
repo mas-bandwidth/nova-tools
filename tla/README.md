@@ -10,7 +10,7 @@ The TLA+ modules here are the specifications of the state machines this repo imp
 | `MemberTable.tla`, `EpochMemberTable.tla` | `MCMember*`, `MCEpochMember*` | the corrected member placement and epoch protocol (Stella): one place per table inside the epoch, lossless shape, no owned alias, stale writers refused |
 | `TableEdit.tla`, `TableOrder.tla` | `MCTableEdit*`, `MCTableOrder*` | nova-table's edit verbs and the order of its rows and columns, with reversed witnesses |
 | `TableSession.tla` | `MCTableSession*` | `nova-table shell`: lines, one connection, the store coming and going, a stop signal, the exit code (the design #4458 is held to) |
-| `RedisFn.tla` | `MCRedisFn*` | the function libraries of one Redis under several loaders (internal/redisfn: Check, Load, LoadMissing): one holder to a function name, a refusal that writes nothing, no moment without the library |
+| `RedisFn.tla` | `MCRedisFn*` | the function libraries of one Redis under several loaders (internal/redisfn: Check, Load, Ensure, LoadMissing): one holder to a function name, a refusal that writes nothing, no moment without the library, a LoadMissing that never replaces |
 
 Runners. The table/member model checkers and the member execution replay each run their whole suite under one 120 s budget (a timeout is a failure, never a green); the bare java commands and the Lua replay carry no cap of their own, so wrap them (`timeout 120 ...`) when a bound matters. `-deadlock` on the java commands turns TLC's deadlock check OFF: these models end in a terminal stutter by design, and the safety and liveness properties are what they check.
 
@@ -192,29 +192,40 @@ process may end inside it. The model says only that no line starts afterwards.
 
 `RedisFn.tla` is the store of internal/redisfn: under each library name one
 build or none, a function name held by one library, and loaders that each
-carry one build and run LoadMissing (a read, then a load when the store does
-not hold the build, then a second read to name the holder when the store
-refuses the load for a function another library holds). `Atomic = TRUE` is
-the code, FUNCTION LOAD REPLACE; `Atomic = FALSE` is FUNCTION DELETE followed
-by FUNCTION LOAD. What it leaves out is listed in its header.
+carry one build. A loader outside `Missers` runs Ensure, the deployer's load
+(a read, then a load when the store does not hold its build, then a second
+read to name the holder when the store refuses the load for a function
+another library holds); a deployer runs it on every pass. A loader in
+`Missers` runs LoadMissing once: a read, and only when the store holds no
+build of its library, FUNCTION LOAD without REPLACE, which the store refuses
+when a build is there by then. `Atomic = TRUE` is the code, FUNCTION LOAD
+REPLACE; `Atomic = FALSE` is FUNCTION DELETE followed by FUNCTION LOAD.
+`MissReplaces = TRUE` is a LoadMissing that sends REPLACE, the load of
+nova-tools #3620. What it leaves out is listed in its header.
 
-NOT YET RUN WITH TLC. The modules were written on the Studio, which runs no
-models and carries no tla2tools.jar; the run is owed on a bench, and until it
-is made the modules are unparsed and the table below is what the run is
-expected to show, not what one showed. Each line of the table was checked by
-an enumeration of the same machine written for the purpose, which is not TLC
-and does not read the modules.
+Run on space, every config at once, each in its own temp directory under a
+60 s cap (no `-deadlock`: the terminal stutter is an action of the spec):
 
-    for c in MCRedisFn MCRedisFnDeleteThenLoad MCRedisFnHolderGone MCRedisFnTwoDeployers MCRedisFnOneDeployer; do
+    for c in MCRedisFn MCRedisFnDeleteThenLoad MCRedisFnHolderGone MCRedisFnTwoDeployers MCRedisFnOneDeployer MCRedisFnLoadMissing MCRedisFnMissReplaces; do
       mkdir -p /tmp/tlc-$c
       timeout 60 java -Djava.io.tmpdir=/tmp/tlc-$c -cp tla2tools.jar tlc2.TLC -workers 2 \
         -metadir /tmp/tlc-$c/meta -config $c.cfg MCRedisFn.tla > $c.log 2>&1 &
     done; wait
 
-| config | expected |
+Rowan ran it on space at 2026-09-28 00:22 UTC (tla2tools v1.7.4, TLC 2.19),
+the modules and configs matching these files by sha256, logs in
+`space:~/tla/redisfn-2/`. All seven ran in under a second. The distinct
+states of a run that stops at a violation are what the two workers had found
+by then, and vary from run to run; the length of the counterexample does not.
+The first five configs, before `Missers` was added, gave the same outcomes at
+2026-09-27 23:22 UTC (`space:~/tla/redisfn/`).
+
+| config | result |
 |---|---|
-| `MCRedisFn` | no error. The migration: `old` on the store registers f and g, loader a carries the `old` that registers g alone, loader b carries the `new` that registers f, both deploy on every pass. TypeOK, OneHolder, NoGap, RefusalWritesNothing, HolderHeld, Settles, MCMigrated |
-| `MCRedisFnDeleteThenLoad` | NoGap violated in 3 states: a reads, a deletes `old`, and the store holds no `old` until a's second command. The reason Load is one FUNCTION LOAD REPLACE |
-| `MCRedisFnHolderGone` | HolderFound violated in 6 states: b is refused for f, a loads the `old` that lets f go, b looks for the holder and there is none. The reason CollisionError has a line for a function with no holder |
-| `MCRedisFnTwoDeployers` | Settles violated: two deployers carry two builds of one library and each replaces the other's on every pass, for ever (nova-tools #3620: an older binary's load took the functions a newer one had deployed). The reason LoadMissing's comment says to call it from the one place that deploys |
-| `MCRedisFnOneDeployer` | no error: the same two builds, b loading once and a deploying; the library comes to rest at a's build. TypeOK, OneHolder, NoGap, RefusalWritesNothing, HolderHeld, Settles |
+| `MCRedisFn` | no error, 54 distinct states. The migration: `old` on the store registers f and g, loader a carries the `old` that registers g alone, loader b carries the `new` that registers f, both deploy on every pass. TypeOK, OneHolder, NoGap, RefusalWritesNothing, HolderHeld, Settles, MCMigrated |
+| `MCRedisFnDeleteThenLoad` | NoGap violated, a counterexample of 3 states (8 distinct found): a reads, a deletes `old`, and the store holds no `old` until a's second command. The reversed witness for Load being one FUNCTION LOAD REPLACE |
+| `MCRedisFnHolderGone` | HolderFound violated, a counterexample of 6 states (44 distinct found): b is refused for f, a loads the `old` that lets f go, b looks for the holder and there is none. The reversed witness for CollisionError's line for a function with no holder (store.go, `CollisionError.Error`) |
+| `MCRedisFnTwoDeployers` | Settles violated (48 distinct states), a counterexample of 10 states that goes back to its state 3 for ever: two deployers carry two builds of one library and each replaces the other's on every pass, `store.old` going 1, 2, 1 for ever. Not a witness of a misimplementation: the hazard of two deployers, which is why Ensure is for the one place that deploys and every other caller runs LoadMissing |
+| `MCRedisFnOneDeployer` | no error, 14 distinct states: the same two builds, b running Ensure once and a deploying; the library comes to rest at a's build. TypeOK, OneHolder, NoGap, RefusalWritesNothing, HolderHeld, Settles |
+| `MCRedisFnLoadMissing` | no error, 25 distinct states: the rivals on a store that starts empty, a deploying and b, the older binary, running LoadMissing once. TypeOK, OneHolder, NoGap, RefusalWritesNothing, HolderHeld, MissNeverReplaces, Settles, MCDeployed (the store comes to rest at the deployer's build) |
+| `MCRedisFnMissReplaces` | MissNeverReplaces violated, a counterexample of 5 states (23 distinct found): b reads the name free, a deploys build 1, b's load with REPLACE puts build 2 over it. The reversed witness for LoadMissing's FUNCTION LOAD without REPLACE (#3620); the unit test `TestLoadMissingNeverReplacesALibraryTheStoreHolds` holds the same two cases against the code, with Ensure as its own reversed witness |

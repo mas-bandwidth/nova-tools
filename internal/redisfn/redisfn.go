@@ -2,28 +2,40 @@
 Package redisfn builds, loads and checks a Redis function library from Lua
 source held in a file system, which for a tool is the Lua it embeds. It knows
 no library by name: a tool describes its own with a Library value and calls
-Source, Digest, Functions, Load, Check and LoadMissing on it.
+Source, Digest, Functions, Load, Check, Ensure and LoadMissing on it.
 
 # The source
 
-One library is one text, built the same way every time:
+One library is one text, built the same way every time. In bytes, it is
 
-	#!lua name=<name>
-	<the prelude, when there is one>
-	-- <file>: its line 1 is line <n> of this library
-	do
-	<the file's text>
-	end -- <file>
+	"#!lua name=" <name> "\n"
+	<the prelude, as it is; it may be empty>
 
-with one such block for every file the glob matches, in the order of their
-names sorted byte by byte. A file's block is what keeps a library loadable as it grows: Lua
-refuses a function that holds more than 200 local variables at once, the
-library's text is one function, and without the blocks every top-level local
-of every file counts towards the 200 (the library this was lifted from went
-from 199 to 206 in one merge and the store refused it). Inside its block a
-file's locals leave scope at the file's end, so the count is the prelude's
-locals and the largest file's, not the sum. What one file hands to a later one
-goes through a table the prelude declares.
+and then, for every file the glob matches in the order of their names
+sorted byte by byte, one block:
+
+	"\n-- " <file> "\ndo\n" <the file's text, as it is> "\nend -- " <file> "\n"
+
+where <file> is the name the glob matched, with any character that would
+break or reorder a line escaped (oneline.Escape; a name of printable
+characters is written as it is). So a block starts with an empty line (unless the text before it does not end
+in a line break, which that "\n" then ends), its header, "-- <file>", and a
+line "do"; and a file that ends in a line break is followed by an empty line
+before its "end -- <file>". These are the bytes of the loader this was lifted
+from (internal/nsprint/fn), so a library built by either loader from the
+same files and prelude has one digest: the digest of a deployed library is a
+contract, and so is the header, on which that loader's tests split the
+source ("\n-- lua/").
+
+A file's block is what keeps a library loadable as it grows: Lua refuses a
+function that holds more than 200 local variables at once, the library's
+text is one function, and without the blocks every top-level local of every
+file counts towards the 200 (the library this was lifted from went from 199
+to 206 in one merge and the store refused it). Inside its block a file's
+locals leave scope at the file's end, so the count is the prelude's locals
+and the largest file's, not the sum. What one file hands to a later one goes
+through a table the prelude declares. The loader counts them as Lua does and
+refuses a library over MaxLocals, which leaves room below Lua's 200.
 
 The block holds only when a file cannot reach outside it, so a file is
 refused when a string or a long comment of it does not close, when its block
@@ -35,10 +47,11 @@ every other refusal, come before the store is touched; each wraps ErrRefused.
 Redis names a failing line of the library as user_function:<n>, counted in
 the text above. Locate maps that line back to its file and the line there,
 and Explain does the same to an error's text. A file's header says where the
-file starts, so the same can be done by hand from the library's code as the
-store returns it (FUNCTION LIST WITHCODE). A carriage return is refused in a
-file: Lua counts "\r", "\r\n" and "\n\r" each as one line break and an editor
-may not, and a line number has to mean one thing.
+file starts: its line 1 is two lines below the header, after the do, so the
+same can be done by hand from the library's code as the store returns it
+(FUNCTION LIST WITHCODE). A carriage return is refused in a file: Lua counts
+"\r", "\r\n" and "\n\r" each as one line break and an editor may not, and a
+line number has to mean one thing.
 
 # The store
 
@@ -47,15 +60,31 @@ which the store holds the whole library it held before or the whole of the
 new one, never a part of either. Check reads the library's code back from
 the store and compares it with Source: the code is the library's identity,
 and no key, no counter and no answer of a function stands in for it.
-LoadMissing is Check, and then Load when the store does not hold the
-library. Each of the three returns within a bound, whatever the client's
-timeouts are.
+
+There are two ways to put a library on a store when it is not there, and
+they differ in what they do to a library that is:
+
+  - Ensure is the deployer's: Check, and then Load when the store does not
+    hold this code, so it replaces other code under the name. It is for the
+    one place that deploys.
+  - LoadMissing is everyone else's: it loads only when the store holds no
+    library of the name, with FUNCTION LOAD and never REPLACE, so it never
+    replaces a library, whatever its code (nova-tools #3620: a verb on its
+    way to an FCALL ran an older binary, whose load replaced the deployed
+    library and took the functions added since). A store that holds a
+    library of the name, a load that loses the race to another loader, a
+    function name another library holds and a caller the store does not
+    let read its libraries are each an answer, not an error.
+
+Each call returns within a bound, whatever the client's timeouts are.
 
 The store under several loaders is modelled in tla/RedisFn.tla: one holder
 to a function name, a refusal that writes nothing, no moment without the
-library, and what two deployers of two builds do to each other (the model is
-written and not yet run; tla/README.md says what is owed). What this package
-says of Redis is held against a redis-server by its functional tests.
+library, a LoadMissing that never replaces, and what two deployers of two
+builds do to each other. TLC ran every configuration on 2026-09-28 (UTC);
+tla/README.md has the configurations, what each shows and its state counts.
+What this package says of Redis is held against a redis-server by its
+functional tests.
 */
 package redisfn
 
@@ -83,8 +112,18 @@ const MaxSourceBytes = 4 << 20
 // DigestLength is the number of characters of a digest, all lower-case hex.
 const DigestLength = 16
 
-// DefaultBound is how long one call of Load, Check or LoadMissing waits on
-// the store when the Library names no Bound of its own.
+// MaxLocals is the most local variables the library's main function may
+// hold at once: the prelude's that are still in scope at its end, and the
+// most any one file holds. A library over it is refused. Lua (and so Redis)
+// refuses a function of more than 200; the 20 between are room for the next
+// merge, so the change that nears the limit is refused in the tests of the
+// tool that carries the library, which build it, and not at a deploy after
+// the change that passes it. The count is Lua 5.1's (scan.go says how), and
+// the functional tests hold it against a redis-server at Lua's limit.
+const MaxLocals = 180
+
+// DefaultBound is how long one call of Load, Check, Ensure or LoadMissing
+// waits on the store when the Library names no Bound of its own.
 const DefaultBound = 10 * time.Second
 
 // ErrRefused is wrapped by every error that refuses a library for what it is
@@ -121,8 +160,8 @@ type Library struct {
 	// error ends with it. When it is empty the error names Load.
 	Remedy string
 
-	// Bound is the longest one call of Load, Check or LoadMissing waits on
-	// the store. Zero or less is DefaultBound.
+	// Bound is the longest one call of Load, Check, Ensure or LoadMissing
+	// waits on the store. Zero or less is DefaultBound.
 	Bound time.Duration
 }
 
@@ -264,6 +303,7 @@ type built struct {
 	digest  string
 	lines   int               // the lines of source
 	prelude int               // how many of them are the prelude's, from line 2
+	locals  int               // the most locals the library's main function holds at once
 	files   []span            // the files, in the order of the source
 	names   map[string]string // every function name read from the files, by its lower-case spelling
 }
@@ -271,7 +311,7 @@ type built struct {
 // span is one file's place in the source.
 type span struct {
 	file  string
-	head  int // the line of its header
+	head  int // the line of its header; the line before it, when it is empty, is the block's too
 	lines int // how many lines the file has; its line 1 is line head+2
 }
 
@@ -281,22 +321,30 @@ func (l Library) refuse(format string, args ...any) error {
 	return fmt.Errorf("redisfn: library %s refused: %s: %w", oneline.Quote(l.Name), fmt.Sprintf(format, args...), ErrRefused)
 }
 
-// text holds one file, or the prelude, to the rules of a file and returns the
-// names it registers.
-func (l Library) text(file, src string) ([]registration, error) {
+// text holds one file, or the prelude, to the rules of a file and returns
+// what scan read of it.
+func (l Library) text(file, src string) (scanned, error) {
 	shown := oneline.Escape(file)
 	if at := strings.IndexByte(src, '\r'); at >= 0 {
-		return nil, l.refuse(`%s line %d holds a carriage return; write its line breaks as "\n" (Lua counts a carriage return as a line break and an editor may not, so a line number would mean two things)`,
+		return scanned{}, l.refuse(`%s line %d holds a carriage return; write its line breaks as "\n" (Lua counts a carriage return as a line break and an editor may not, so a line number would mean two things)`,
 			shown, 1+strings.Count(src[:at], "\n"))
 	}
-	regs, bad := scan(file, src)
+	read, bad := scan(file, src)
 	if bad != nil {
-		return nil, l.refuse("%s line %d: %s", shown, bad.line, bad.why)
+		return scanned{}, l.refuse("%s line %d: %s", shown, bad.line, bad.why)
 	}
-	return regs, nil
+	return read, nil
 }
 
 const preludeName = "the prelude"
+
+// The loader's own lines around a file: fileHeader and the file's name, then
+// blockOpen, and after the file blockClose and its name.
+const (
+	fileHeader = "-- "
+	blockOpen  = "do"
+	blockClose = "end -- "
+)
 
 func (l Library) build() (*built, error) {
 	if !libraryName.MatchString(l.Name) {
@@ -335,27 +383,31 @@ func (l Library) build() (*built, error) {
 	// add holds one text to the rules of a file, takes the names it
 	// registers, and writes what is to be written of it. The length is
 	// looked at first, so a text that is too long is not read through.
-	add := func(file, text, written string) error {
+	add := func(file, text, written string) (scanned, error) {
 		if out.Len()+len(written) > MaxSourceBytes {
-			return l.refuse("its source is over %d bytes (MaxSourceBytes); split the library", MaxSourceBytes)
+			return scanned{}, l.refuse("its source is over %d bytes (MaxSourceBytes); split the library", MaxSourceBytes)
 		}
-		regs, err := l.text(file, text)
+		read, err := l.text(file, text)
 		if err != nil {
-			return err
+			return scanned{}, err
 		}
-		if err := register(regs); err != nil {
-			return err
+		if err := register(read.regs); err != nil {
+			return scanned{}, err
 		}
 		out.WriteString(written)
 		line += strings.Count(written, "\n")
-		return nil
+		return read, nil
 	}
+	var prelude scanned
 	if l.Prelude != "" {
-		if err := add(preludeName, l.Prelude, ended(l.Prelude)); err != nil {
+		read, err := add(preludeName, l.Prelude, l.Prelude)
+		if err != nil {
 			return nil, err
 		}
-		b.prelude = line - 2
+		prelude = read
+		b.prelude = strings.Count(ended(l.Prelude), "\n")
 	}
+	largest, most := "", 0 // the file that holds the most locals, and how many
 	for _, file := range files {
 		raw, err := fs.ReadFile(l.Files, file)
 		if err != nil {
@@ -366,12 +418,25 @@ func (l Library) build() (*built, error) {
 			return nil, l.refuse("%s is empty", oneline.Escape(file))
 		}
 		shown := oneline.Escape(file)
-		body := ended(src)
-		b.files = append(b.files, span{file: file, head: line, lines: strings.Count(body, "\n")})
-		block := fmt.Sprintf("-- %s: its line 1 is line %d of this library\ndo\n%send -- %s\n", shown, line+2, body, shown)
-		if err := add(file, src, block); err != nil {
+		b.files = append(b.files, span{file: file, head: line + 1, lines: strings.Count(ended(src), "\n")})
+		block := "\n" + fileHeader + shown + "\n" + blockOpen + "\n" + src + "\n" + blockClose + shown + "\n"
+		read, err := add(file, src, block)
+		if err != nil {
 			return nil, err
 		}
+		if read.peak > most {
+			largest, most = file, read.peak
+		}
+	}
+	b.locals = max(prelude.peak, prelude.left+most)
+	if b.locals > MaxLocals {
+		where := fmt.Sprintf("%s holds %d", oneline.Escape(largest), most)
+		if prelude.peak > prelude.left+most {
+			where = fmt.Sprintf("the prelude holds %d", prelude.peak)
+		} else if prelude.left > 0 {
+			where = fmt.Sprintf("the prelude leaves %d in scope and %s", prelude.left, where)
+		}
+		return nil, l.refuse("its main function would hold %d local variables at once (%s), over %d (MaxLocals; Lua refuses over 200); move locals into a table the prelude declares, or split the file", b.locals, where, MaxLocals)
 	}
 	b.source = out.String()
 	b.digest = DigestOf(b.source)
@@ -397,8 +462,9 @@ func (b *built) locate(line int) (Origin, bool) {
 	case line < 2+b.prelude:
 		return Origin{Line: line - 1, Prelude: true}, true
 	}
-	// The file whose header is the last one at or before the line.
-	at := sort.Search(len(b.files), func(i int) bool { return b.files[i].head > line }) - 1
+	// The file whose block, from the empty line before its header, is the
+	// last one to start at or before the line.
+	at := sort.Search(len(b.files), func(i int) bool { return b.files[i].head-1 > line }) - 1
 	f := b.files[at]
 	if in := line - (f.head + 2) + 1; in >= 1 && in <= f.lines {
 		return Origin{File: f.file, Line: in}, true
