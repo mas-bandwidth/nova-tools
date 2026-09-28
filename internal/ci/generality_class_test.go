@@ -2,12 +2,17 @@ package ci
 
 import (
 	"fmt"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"testing"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 )
@@ -20,12 +25,9 @@ import (
 // knows; our fleet is one nova-config configuration; our names only in our config,
 // receipts and docs examples marked as examples." (see docs/SPEC-CI.md#generality).
 //
-// Token list derivation (derived from fleet inventory, not from memory):
+// Token list derivation (curated inventory derived from fleet configuration evidence):
 // 1. Machines / hosts / tailnet nodes:
-//    - fleet/machines.tsv & fleet/inventory.py:
-//        space, hetzner, hulk, vision, batman, superman, studio, mini, captainamerica
-//    - ~/.ssh/config Host lines:
-//        space, batman, superman, hulk, vision, captainamerica, antman, hetzner, macbook
+//    - space, hetzner, hulk, vision, batman, superman, studio, mini, captainamerica, antman, macbook
 // 2. Friends / persons (AGENTS.md, message-bus sender lanes):
 //    - alex, emma, freddy, glenn, johnny, rowan, stella
 // 3. GitHub accounts & organizations:
@@ -35,12 +37,17 @@ import (
 // - Word boundary checks: substring occurrences inside legitimate English words
 //   do not match (e.g. miniredis, deterministic, revision, minimum, studios, whitespace,
 //   namespace, workspace).
+// - Token matching scans without consuming delimiter/boundary characters so adjacent
+//   occurrences (e.g. "mas-bandwidth mas-bandwidth" or "mas-bandwidth/mas-bandwidth")
+//   and repeated names on one line are individually counted.
 // - Compound standard library names (e.g. TrimSpace, TrimLeadingSpace, IsSpace) are excluded.
 // - Go package import declarations (including "github.com/mas-bandwidth/nova-tools/...")
-//   are excluded as language-level imports.
-// - Explicitly marked documentation examples in comments (e.g. lines with "e.g.",
+//   are identified via real AST import specs and excluded as language-level imports.
+// - Explicitly marked documentation examples in real AST comments (e.g. lines with "e.g.",
 //   "example:", "for example", "example.com") are excluded; code contracts, defaults,
 //   and refusals are always scanned.
+// - Raw string literals (e.g. `...`) are executable code data and are ALWAYS scanned,
+//   even when their content contains example labels or import blocks.
 //
 // Existing occurrences are tracked in internal/ci/testdata/generality_allowlist.txt,
 // formatted as "<path/to/file.go>:<token> <count>".
@@ -53,8 +60,8 @@ import (
 
 const generalityAllowlistPath = "testdata/generality_allowlist.txt"
 
-// forbiddenTokens is the set of friend/person names, hostnames, tailnet nodes,
-// and GitHub accounts derived from the fleet inventory.
+// forbiddenTokens is the curated inventory of friend/person names, hostnames,
+// tailnet nodes, and GitHub accounts derived from fleet configuration evidence.
 var forbiddenTokens = map[string]bool{
 	"alex":           true,
 	"antman":         true,
@@ -86,8 +93,6 @@ var ignoredCompoundWords = map[string]bool{
 	"isspace":          true,
 }
 
-// reMasBandwidth matches mas-bandwidth when not preceded or followed by an alphanumeric character, hyphen, or underscore.
-var reMasBandwidth = regexp.MustCompile(`(?i)(?:^|[^a-zA-Z0-9_-])(mas-bandwidth)(?:$|[^a-zA-Z0-9_-])`)
 var reWord = regexp.MustCompile(`[a-zA-Z0-9]+`)
 
 // isMarkedDocExample reports whether a comment line is an explicit documentation example.
@@ -101,45 +106,125 @@ func isMarkedDocExample(comment string) bool {
 		strings.Contains(lower, "as an example")
 }
 
-// splitCodeAndComment splits a line into code and comment portions, respecting string literals.
-func splitCodeAndComment(line string) (string, string) {
-	inQuote := rune(0)
-	runes := []rune(line)
-	for i := 0; i < len(runes); i++ {
-		r := runes[i]
-		if inQuote != 0 {
-			if r == inQuote && (i == 0 || runes[i-1] != '\\') {
-				inQuote = 0
+func isBoundaryBefore(text string, start int) bool {
+	if start <= 0 {
+		return true
+	}
+	r, _ := utf8.DecodeLastRuneInString(text[:start])
+	if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '-' {
+		return false
+	}
+	return true
+}
+
+func isBoundaryAfter(text string, end int) bool {
+	if end >= len(text) {
+		return true
+	}
+	r, _ := utf8.DecodeRuneInString(text[end:])
+	if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '-' {
+		return false
+	}
+	return true
+}
+
+// cleanSourceForGenerality returns a copy of src where real AST import specs and
+// real AST comments with marked documentation examples have been replaced with spaces.
+// Newline characters are preserved to ensure 1-based line numbers remain exact.
+// Raw string literals and other executable code are never blanked out.
+func cleanSourceForGenerality(rel string, src []byte) []byte {
+	clean := make([]byte, len(src))
+	copy(clean, src)
+
+	parseSrc := src
+	offsetShift := 0
+	if !strings.Contains(string(src), "package ") {
+		parseSrc = append([]byte("package fixture\n"), src...)
+		offsetShift = len("package fixture\n")
+	}
+
+	fset := token.NewFileSet()
+	file, _ := parser.ParseFile(fset, rel, parseSrc, parser.ParseComments)
+	if file == nil {
+		return clean
+	}
+
+	// 1. Blank out real AST import specs
+	for _, imp := range file.Imports {
+		start := fset.Position(imp.Pos()).Offset - offsetShift
+		end := fset.Position(imp.End()).Offset - offsetShift
+		if start < 0 {
+			start = 0
+		}
+		if end > len(clean) {
+			end = len(clean)
+		}
+		if start < end {
+			for i := start; i < end; i++ {
+				if clean[i] != '\n' {
+					clean[i] = ' '
+				}
 			}
-			continue
-		}
-		if r == '"' || r == '`' || r == '\'' {
-			inQuote = r
-			continue
-		}
-		if r == '/' && i+1 < len(runes) && runes[i+1] == '/' {
-			return string(runes[:i]), string(runes[i+2:])
 		}
 	}
-	return line, ""
+
+	// 2. Blank out real AST comments containing marked documentation examples
+	for _, cg := range file.Comments {
+		for _, c := range cg.List {
+			if isMarkedDocExample(c.Text) {
+				start := fset.Position(c.Pos()).Offset - offsetShift
+				end := fset.Position(c.End()).Offset - offsetShift
+				if start < 0 {
+					start = 0
+				}
+				if end > len(clean) {
+					end = len(clean)
+				}
+				if start < end {
+					for i := start; i < end; i++ {
+						if clean[i] != '\n' {
+							clean[i] = ' '
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return clean
 }
 
 // extractTokensFromText returns all forbidden tokens found in a text fragment.
+// Boundaries are scanned without consuming boundary characters so adjacent occurrences
+// (e.g. "mas-bandwidth mas-bandwidth" or "mas-bandwidth/mas-bandwidth") and repeated
+// names on one line are individually counted.
 func extractTokensFromText(text string) []string {
 	var tokens []string
 
-	// 1. Check for hyphenated account name: mas-bandwidth
-	if strings.Contains(strings.ToLower(text), "mas-bandwidth") {
-		matches := reMasBandwidth.FindAllStringSubmatchIndex(text, -1)
-		for _, m := range matches {
-			if len(m) >= 4 && m[2] >= 0 && m[3] >= 0 {
-				tokens = append(tokens, "mas-bandwidth")
+	// 1. Check for hyphenated account name: mas-bandwidth without consuming boundary delimiters
+	target := "mas-bandwidth"
+	targetLen := len(target)
+	lower := strings.ToLower(text)
+	textBuf := []byte(text)
+
+	pos := 0
+	for pos < len(lower) {
+		idx := strings.Index(lower[pos:], target)
+		if idx < 0 {
+			break
+		}
+		start := pos + idx
+		end := start + targetLen
+
+		if isBoundaryBefore(text, start) && isBoundaryAfter(text, end) {
+			tokens = append(tokens, target)
+			for i := start; i < end; i++ {
+				textBuf[i] = ' '
 			}
 		}
-		text = reMasBandwidth.ReplaceAllStringFunc(text, func(s string) string {
-			return strings.Repeat(" ", len(s))
-		})
+		pos = end
 	}
+	text = string(textBuf)
 
 	// 2. Scan individual words and handle camelCase transitions
 	words := reWord.FindAllString(text, -1)
@@ -181,12 +266,8 @@ func extractTokensFromText(text string) []string {
 // extractGeneralityTokens returns all forbidden tokens found in line.
 // Marked documentation examples in comments are excluded.
 func extractGeneralityTokens(line string) []string {
-	code, comment := splitCodeAndComment(line)
-	var tokens []string
-	tokens = append(tokens, extractTokensFromText(code)...)
-	if comment != "" && !isMarkedDocExample(comment) {
-		tokens = append(tokens, extractTokensFromText(comment)...)
-	}
+	cleaned := cleanSourceForGenerality("", []byte(line))
+	tokens := extractTokensFromText(string(cleaned))
 	sort.Strings(tokens)
 	return tokens
 }
@@ -201,6 +282,29 @@ type allowlistDiscardReporter struct{}
 
 func (allowlistDiscardReporter) Helper()                           {}
 func (allowlistDiscardReporter) Errorf(format string, args ...any) {}
+
+// measureGeneralityCounts scans files and returns per-key occurrence counts and keys.
+func measureGeneralityCounts(files []GeneralitySourceFile) (map[string]int, map[string]bool, []string) {
+	measuredCounts := make(map[string]int)
+	measuredKeys := make(map[string]bool)
+	var rawViolations []string
+
+	for _, f := range files {
+		rel := f.Rel
+		cleanSrc := cleanSourceForGenerality(rel, f.Src)
+		lines := strings.Split(string(cleanSrc), "\n")
+		for lineNum, line := range lines {
+			tokens := extractTokensFromText(line)
+			for _, tok := range tokens {
+				key := rel + ":" + tok
+				measuredKeys[key] = true
+				measuredCounts[key]++
+				rawViolations = append(rawViolations, fmt.Sprintf("%s:%d:%s", rel, lineNum+1, tok))
+			}
+		}
+	}
+	return measuredCounts, measuredKeys, rawViolations
+}
 
 // checkGenerality scans the given source files against the allowlist and returns all violations.
 func checkGenerality(files []GeneralitySourceFile, allow *allowlist.List) []string {
@@ -233,25 +337,10 @@ func checkGenerality(files []GeneralitySourceFile, allow *allowlist.List) []stri
 
 	for _, f := range files {
 		rel := f.Rel
-		lines := strings.Split(string(f.Src), "\n")
-		inImport := false
+		cleanSrc := cleanSourceForGenerality(rel, f.Src)
+		lines := strings.Split(string(cleanSrc), "\n")
 		for lineNum, line := range lines {
-			trimmed := strings.TrimSpace(line)
-			if strings.HasPrefix(trimmed, "import (") {
-				inImport = true
-				continue
-			}
-			if inImport {
-				if trimmed == ")" || strings.HasPrefix(trimmed, ")") {
-					inImport = false
-				}
-				continue
-			}
-			if strings.HasPrefix(trimmed, "import ") {
-				continue
-			}
-
-			tokens := extractGeneralityTokens(line)
+			tokens := extractTokensFromText(line)
 			for _, tok := range tokens {
 				key := rel + ":" + tok
 				measuredKeys[key] = true
@@ -320,6 +409,40 @@ func checkGenerality(files []GeneralitySourceFile, allow *allowlist.List) []stri
 	return violations
 }
 
+func writeGeneralityAllowlist(path string, measuredCounts map[string]int) error {
+	var keys []string
+	for k := range measuredCounts {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var sb strings.Builder
+	sb.WriteString(`# generality_allowlist.txt -- existing occurrences of friend/person names,
+# hostnames, and fleet identifiers in living Go files (Rule 1: generality guardrail).
+#
+# "everything must be general. Not tied to the specifics of our fleet, or friends,
+# just the general concepts behind. No host, machine, tailnet name, friend or person
+# name in code, contracts, defaults or refusals; the concepts (machine, bench, coordinator,
+# friend, seat, store, route, pool, card, stream, repo, issue, entry) are what the code
+# knows; our fleet is one nova-config configuration; our names only in our config, receipts
+# and docs examples marked as examples."
+#
+# Format: path/to/file.go:token count
+#
+# The list only shrinks. Checked in both directions with per-key counts:
+# - An entry no longer present on the tree is stale and fails the test.
+# - Any new occurrence not listed fails the test.
+# - Adding a second occurrence to an already-allowed file exceeds the ceiling and fails.
+# - A count lower than the allowed count requires shrinking the allowlist entry.
+#
+`)
+	sb.WriteString(fmt.Sprintf("# ceiling: %d\n", len(keys)))
+	for _, k := range keys {
+		sb.WriteString(fmt.Sprintf("%s %d\n", k, measuredCounts[k]))
+	}
+	return os.WriteFile(path, []byte(sb.String()), 0644)
+}
+
 // TestGeneralityGuardrail holds living Go code in cmd/ and internal/ to Glenn's
 // generality instruction (Rule 1): no hostnames or friend/person names in code,
 // contracts, defaults or refusals.
@@ -327,7 +450,6 @@ func TestGeneralityGuardrail(t *testing.T) {
 	t.Parallel()
 
 	tree := repoTree(t)
-	allow := loadAllowlist(t, generalityAllowlistPath, shrinkOnly)
 
 	var files []GeneralitySourceFile
 	for _, f := range tree.GoFilesUnder(false, "cmd", "internal") {
@@ -337,6 +459,16 @@ func TestGeneralityGuardrail(t *testing.T) {
 		files = append(files, GeneralitySourceFile{Rel: f.Rel, Src: f.Src})
 	}
 
+	if allowlist.Updating() {
+		measuredCounts, _, _ := measureGeneralityCounts(files)
+		allowPath := filepath.Join(tree.Root, "internal/ci", generalityAllowlistPath)
+		if err := writeGeneralityAllowlist(allowPath, measuredCounts); err != nil {
+			t.Fatalf("failed to rewrite generality allowlist: %v", err)
+		}
+		t.Fatal(allowlist.UpdatedRerun)
+	}
+
+	allow := loadAllowlist(t, generalityAllowlistPath, shrinkOnly)
 	violations := checkGenerality(files, allow)
 	for _, v := range violations {
 		t.Error(v)
@@ -344,7 +476,8 @@ func TestGeneralityGuardrail(t *testing.T) {
 }
 
 // TestGeneralityTokenExtraction verifies that the extraction logic matches
-// forbidden tokens at boundaries and ignores unrelated words containing substrings.
+// forbidden tokens at boundaries, counts without consuming boundary delimiters,
+// and ignores unrelated words containing substrings.
 func TestGeneralityTokenExtraction(t *testing.T) {
 	t.Parallel()
 
@@ -373,6 +506,14 @@ func TestGeneralityTokenExtraction(t *testing.T) {
 		{"rowan@mas-bandwidth.com", []string{"mas-bandwidth", "rowan"}},
 		{"// bench name (e.g. \"hulk\", \"space\")", nil},
 		{"return fmt.Errorf(\"for example --seat studio\")", []string{"studio"}},
+		// Adjacent spaces and slashes, repeated occurrences on one line
+		{"const owner = \"mas-bandwidth mas-bandwidth\"", []string{"mas-bandwidth", "mas-bandwidth"}},
+		{"const owner = \"mas-bandwidth/mas-bandwidth\"", []string{"mas-bandwidth", "mas-bandwidth"}},
+		{"mas-bandwidth  mas-bandwidth", []string{"mas-bandwidth", "mas-bandwidth"}},
+		{"mas-bandwidth/mas-bandwidth/mas-bandwidth", []string{"mas-bandwidth", "mas-bandwidth", "mas-bandwidth"}},
+		{"batman/superman/hulk", []string{"batman", "hulk", "superman"}},
+		{"glenn  glenn", []string{"glenn", "glenn"}},
+		{"glenn/glenn", []string{"glenn", "glenn"}},
 	}
 
 	for _, tc := range cases {
@@ -386,41 +527,106 @@ func TestGeneralityTokenExtraction(t *testing.T) {
 }
 
 // TestGeneralityOccurrenceWitness proves the reversed witness: adding a second
-// occurrence of an allowed token to an already-allowed file fails the check.
+// occurrence of an allowed token to an already-allowed file fails the check,
+// adjacent occurrences sharing delimiters undercount without boundary preservation,
+// and raw string literals containing comments or imports are executable code data
+// and are never exempted.
 func TestGeneralityOccurrenceWitness(t *testing.T) {
 	t.Parallel()
 
-	allowContent := "# Format: path/to/file.go:token count\n# ceiling: 1\ntest/file.go:glenn 1\n"
-	allow, err := allowlist.Parse("testdata/generality_allowlist.txt", allowContent, allowlist.Options{Ceiling: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// 1 occurrence: must pass with zero violations.
-	oneOccurrence := []GeneralitySourceFile{
-		{Rel: "test/file.go", Src: []byte("func foo() {\n\tmsg := \"hello glenn\"\n}\n")},
-	}
-	violationsOne := checkGenerality(oneOccurrence, allow)
-	if len(violationsOne) != 0 {
-		t.Fatalf("expected 1 occurrence to pass, got violations: %v", violationsOne)
-	}
-
-	// 2 occurrences: adding a second occurrence to the allowed file must fail!
-	twoOccurrences := []GeneralitySourceFile{
-		{Rel: "test/file.go", Src: []byte("func foo() {\n\tmsg := \"hello glenn\"\n\tsecond := \"glenn\"\n}\n")},
-	}
-	violationsTwo := checkGenerality(twoOccurrences, allow)
-	if len(violationsTwo) == 0 {
-		t.Fatalf("expected adding a second occurrence of an allowed token to fail, but it passed!")
-	}
-	matched := false
-	for _, v := range violationsTwo {
-		if strings.Contains(v, "exceeds allowed count 1") {
-			matched = true
-			break
+	t.Run("second-occurrence-fails", func(t *testing.T) {
+		allowContent := "# Format: path/to/file.go:token count\n# ceiling: 1\ntest/file.go:glenn 1\n"
+		allow, err := allowlist.Parse("testdata/generality_allowlist.txt", allowContent, allowlist.Options{Ceiling: true})
+		if err != nil {
+			t.Fatal(err)
 		}
+
+		// 1 occurrence: must pass with zero violations.
+		oneOccurrence := []GeneralitySourceFile{
+			{Rel: "test/file.go", Src: []byte("package test\nfunc foo() {\n\tmsg := \"hello glenn\"\n}\n")},
+		}
+		violationsOne := checkGenerality(oneOccurrence, allow)
+		if len(violationsOne) != 0 {
+			t.Fatalf("expected 1 occurrence to pass, got violations: %v", violationsOne)
+		}
+
+		// 2 occurrences: adding a second occurrence to the allowed file must fail!
+		twoOccurrences := []GeneralitySourceFile{
+			{Rel: "test/file.go", Src: []byte("package test\nfunc foo() {\n\tmsg := \"hello glenn\"\n\tsecond := \"glenn\"\n}\n")},
+		}
+		violationsTwo := checkGenerality(twoOccurrences, allow)
+		if len(violationsTwo) == 0 {
+			t.Fatalf("expected adding a second occurrence of an allowed token to fail, but it passed!")
+		}
+		matched := false
+		for _, v := range violationsTwo {
+			if strings.Contains(v, "exceeds allowed count 1") {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			t.Fatalf("expected violation to mention 'exceeds allowed count 1', got: %v", violationsTwo)
+		}
+	})
+
+	t.Run("adjacent-account-count", func(t *testing.T) {
+		a, err := allowlist.Parse("fixture", "# ceiling: 1\nfixture.go:mas-bandwidth 1\n", allowlist.Options{Ceiling: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		one := []GeneralitySourceFile{{Rel: "fixture.go", Src: []byte("package fixture\nconst owner = \"mas-bandwidth\"\n")}}
+		if v := checkGenerality(one, a); len(v) != 0 {
+			t.Fatalf("control: %v", v)
+		}
+		two := []GeneralitySourceFile{{Rel: "fixture.go", Src: []byte("package fixture\nconst owner = \"mas-bandwidth mas-bandwidth\"\n")}}
+		v := checkGenerality(two, a)
+		t.Logf("two occurrences: %v", v)
+		if len(v) == 0 {
+			t.Error("second account occurrence escaped existing ceiling")
+		}
+	})
+
+	for _, tc := range []struct {
+		name, src string
+	}{
+		{"raw-string-comment", "package fixture\nconst refusal = `\n// example: hulk\n`\n"},
+		{"raw-string-import", "package fixture\nconst refusal = `\nimport (\nhulk\n)\n`\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, err := allowlist.Parse("fixture", "# ceiling: 0\n", allowlist.Options{Ceiling: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			v := checkGenerality([]GeneralitySourceFile{{Rel: "fixture.go", Src: []byte(tc.src)}}, a)
+			t.Logf("runtime string violations: %v", v)
+			if len(v) == 0 {
+				t.Error("runtime string mistaken for exempt comment or import")
+			}
+		})
 	}
-	if !matched {
-		t.Fatalf("expected violation to mention 'exceeds allowed count 1', got: %v", violationsTwo)
-	}
+
+	t.Run("legitimate-controls", func(t *testing.T) {
+		a, err := allowlist.Parse("fixture", "# ceiling: 0\n", allowlist.Options{Ceiling: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Real AST comment with marked example must be exempt
+		commentPass := []GeneralitySourceFile{{Rel: "fixture.go", Src: []byte("package fixture\n// bench name (e.g. \"hulk\", \"space\")\nfunc foo() {}\n")}}
+		if v := checkGenerality(commentPass, a); len(v) != 0 {
+			t.Errorf("legitimate marked comment failed: %v", v)
+		}
+
+		// Real AST import must be exempt
+		importPass := []GeneralitySourceFile{{Rel: "fixture.go", Src: []byte("package fixture\nimport (\n\t\"github.com/mas-bandwidth/nova-tools/internal/ci\"\n)\n")}}
+		if v := checkGenerality(importPass, a); len(v) != 0 {
+			t.Errorf("legitimate import failed: %v", v)
+		}
+
+		// Unmarked AST comment must NOT be exempt
+		commentFail := []GeneralitySourceFile{{Rel: "fixture.go", Src: []byte("package fixture\n// glenn was here\nfunc foo() {}\n")}}
+		if v := checkGenerality(commentFail, a); len(v) == 0 {
+			t.Error("unmarked AST comment with forbidden token was unexpectedly exempted")
+		}
+	})
 }
