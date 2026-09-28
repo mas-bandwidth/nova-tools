@@ -69,16 +69,27 @@ nova-bus draft --bus <dir> --as <name>
                [--max-body-bytes <n>] [--git-timeout <seconds>]
 ```
 
-The form is chosen by `--reply-to`. **Without it, `draft` is exactly the
-released verb**: the same flags, the same skeleton on stdout, the same `DRAFT
-REFUSED` lines on stderr, the same exit 2, and no git at all. A caller who never
-types `--reply-to` cannot tell this form exists.
+The form is chosen by `--reply-to`. **Without it, `draft` is the skeleton
+form**, which runs no git at all:
+
+```
+nova-bus draft --bus <dir> --as <name> --to <names> [--cc <names>]
+               [--subject <text>] [--re <id-or-path-or-subject>]
+               [--out <path> [--overwrite] | > <file>]
+```
+
+Without `--out` it prints the skeleton on stdout and writes no file, with any
+`DRAFT REFUSED` lines on stderr and exit 2. With `--out <path>` it writes the
+skeleton to that file and prints one `DRAFT OK path=<path>` line; an existing
+path is refused (`DRAFT REFUSED: <path> exists; pass --overwrite to replace
+it`) unless `--overwrite` is given, and `--overwrite` without `--out` is
+refused. A caller who never types `--reply-to` cannot tell the reply form
+exists.
 
 `--remote`, `--branch`, `--body-file`, `--draft-dir` and `--git-timeout` are
 accepted **only** in the reply form. Given without `--reply-to` they are exit 2
-naming the reason — `draft` without `--reply-to` runs no git and writes no
-file — which is the same exit code an undefined flag costs, with a sentence in
-place of `flag provided but not defined`.
+naming the reason, which is the same exit code an undefined flag costs, with a
+sentence in place of `flag provided but not defined`.
 
 `--to`, `--cc`, `--subject` and `--as` mean what they mean everywhere else and
 are resolved by the roster rules in the main specification. `--reply-to` is
@@ -321,9 +332,10 @@ DRAFT REFUSED: <reason>
 ```
 
 `DRAFT OK` is **exactly one line, and it is the only thing this form puts on
-stdout.** The skeleton form prints a skeleton and no `OK` line, because there
-its stdout is a file; here the draft is a file the tool wrote and stdout is a
-receipt, so the two forms print opposite things for the same reason.
+stdout.** The skeleton form without `--out` prints a skeleton and no `OK` line,
+because there its stdout is the file; here the draft is a file the tool wrote
+and stdout is a receipt — as it is for the skeleton form's `--out <path>`,
+whose one line is `DRAFT OK path=<path>`.
 
 The fields:
 
@@ -377,7 +389,7 @@ this table is the reply form only.
 |---|---|---|
 | `--reply-to` with `--re` | name the thread once; the two flags say different things | 2 |
 | `--reply-to` without `--body-file`, `--draft-dir`, `--remote` or `--branch` | the missing flag, and `refusing to guess` | 2 |
-| `--remote`, `--branch`, `--body-file`, `--draft-dir` or `--git-timeout` without `--reply-to` | this form runs no git and writes no file; the flag belongs to `--reply-to` | 2 |
+| `--remote`, `--branch`, `--body-file`, `--draft-dir` or `--git-timeout` without `--reply-to` | the flag belongs to `--reply-to`; the skeleton form runs no git | 2 |
 | `--draft-dir` inside the bus checkout | drafts go outside the bus, because `send` needs its tree clean; the refusal names the bus root it resolved | 2 |
 | `--draft-dir` that does not exist, or is not a directory | the path, and that this tool creates no directories | 2 |
 | the body file is unreadable, or is not a file | the path and the reason | 2 |

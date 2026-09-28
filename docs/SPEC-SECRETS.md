@@ -23,8 +23,13 @@ below: `place` and `placed` put one value on a fleet machine and list what was p
 paragraph: it reads one sealed yaml out
 of a git working copy by running `sops` at a path the caller named, keeps the plaintext in its
 own memory for the length of one call, and then execs, prints, proves or writes one key. It
-links no cryptography, opens no network socket, starts no shell, writes no state of its own,
-and reads no Keychain — about two hundred lines of Go over two binaries it did not write, and
+links no cryptography, starts no shell and reads no Keychain. **What touches the network is
+per verb, and the tool itself opens no socket:** `exec`, `names`, `check`, `gate`, `keygen`,
+`placed`, `seat add` and `version` run no network program (`gate` runs `git` against refs
+already in the working copy); `place` runs `ssh` to the machine it names and writes a receipt
+under `--receipts`; `seal` and `seat inject` run `git push`, `gh pr create`, `gh pr view`,
+`gh pr merge` and `git pull` against the store's remote, unless `--no-pr` stops them after the
+commit. About two hundred lines of Go over two binaries it did not write, and
 the day a better generic store exists it should be two hundred lines of Go over that one.
 
 This spec is normative, and a sibling of [SPEC.md](SPEC.md), whose **Conventions** govern
@@ -128,7 +133,7 @@ road. Every other store edit is `sops` and `git` in a person's hands. `keygen`
 writes exactly one file, outside it.
 
 **`--store <dir>` is the store's git working copy**, not a URL and not a repository name:
-this tool does no network. A working copy in the strong sense — invariant 8 reads `.git` as
+the store-reading verbs never fetch it. A working copy in the strong sense — invariant 8 reads `.git` as
 files — so a `--store` that is not a directory, holds no `.sops.yaml`, or has no `.git`, is a
 refusal naming the fact and the `git clone` line: **exit 2**, or **125** from `exec`, as every
 refusal of `exec`'s is.
@@ -294,7 +299,7 @@ file and the repair. In a fixed order, against the working copy at `--store`:
    compare by eye. **What it notices is a fetch nobody merged, never a fetch nobody ran**: a
    remote-tracking ref is only as fresh as the last fetch, so a clone nobody fetches satisfies
    invariant 8 forever, which is why every launcher line carries `git -C <store> pull --ff-only &&` —
-   the one network call on this page, the launcher's and never the tool's. The cost is that a bench
+   a network call that is the launcher's and never `exec`'s or `check`'s. The cost is that a bench
    which cannot reach GitHub cannot clear the refusal at seat start; accepted, the alternative being
    a seat running a revoked value with a green `check` beside it, the row this tool exists to close.
 
@@ -959,8 +964,8 @@ real git working copy with one commit and a remote-tracking ref, invariant 8 rea
    and would make invariant 4 pass vacuously.
 8. `TestTheVersionProbeMakesNoNetworkCall` — the probe answers with egress blocked; `sops
    3.9.0` is refused naming `brew upgrade`; `banana` is refused as unparseable, **not**
-   accepted; absent and non-executable are two different sentences. With egress blocked every
-   verb is green: no line of this tool opens a socket.
+   accepted; absent and non-executable are two different sentences. With egress blocked the
+   probe is green: it opens no socket.
 9. `TestARequireThatIsMissingRefusesBeforeTheCommandStarts` — the command writes a sentinel;
    after the refusal the sentinel does not exist; every missing `--require` is named in one
    run, sorted.
