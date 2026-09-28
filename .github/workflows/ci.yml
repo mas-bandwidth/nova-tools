@@ -831,7 +831,14 @@ jobs:
         # completes them.
         if: matrix.entry.packages != '' && github.ref_name == github.event.repository.default_branch
         shell: bash
-        run: git fetch --no-tags --filter=blob:none --unshallow origin +dev:refs/remotes/origin/dev
+        # A complete workspace (a repeat run on a persistent runner) takes a
+        # plain fetch: --unshallow on a complete repository is fatal.
+        run: |
+          if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+            git fetch --no-tags --filter=blob:none --unshallow origin +dev:refs/remotes/origin/dev
+          else
+            git fetch --no-tags --filter=blob:none origin +dev:refs/remotes/origin/dev
+          fi
 
       - name: use the installed Go toolchain
         if: matrix.entry.packages != ''
@@ -1295,7 +1302,14 @@ jobs:
         # completes them.
         if: github.ref_name == github.event.repository.default_branch
         shell: bash
-        run: git fetch --no-tags --filter=blob:none --unshallow origin +dev:refs/remotes/origin/dev
+        # A complete workspace (a repeat run on a persistent runner) takes a
+        # plain fetch: --unshallow on a complete repository is fatal.
+        run: |
+          if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+            git fetch --no-tags --filter=blob:none --unshallow origin +dev:refs/remotes/origin/dev
+          else
+            git fetch --no-tags --filter=blob:none origin +dev:refs/remotes/origin/dev
+          fi
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod

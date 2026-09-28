@@ -255,7 +255,14 @@ jobs:
         # completes them, after the depth-1 fetch above as well as instead of it.
         if: github.ref_name == github.event.repository.default_branch
         shell: bash
-        run: git fetch --no-tags --filter=blob:none --unshallow origin +dev:refs/remotes/origin/dev
+        # A complete workspace (a repeat run on a persistent runner) takes a
+        # plain fetch: --unshallow on a complete repository is fatal.
+        run: |
+          if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+            git fetch --no-tags --filter=blob:none --unshallow origin +dev:refs/remotes/origin/dev
+          else
+            git fetch --no-tags --filter=blob:none origin +dev:refs/remotes/origin/dev
+          fi
 
       - name: build the race-instrumented dependencies
         # Every external package the live tree's tests import, -race, whatever this shard

@@ -1,14 +1,18 @@
 package ci
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 )
@@ -53,9 +57,11 @@ type mergeDeletions struct {
 	// with no row added beyond dev, and a row added beyond dev naming no
 	// deletion.
 	Beyond []string
-	// Remedy, when set, ends every finding: a main run that could not read
-	// dev's history says so and names the fetch.
-	Remedy string
+	// Incomplete, on a main run at a merge commit whose second parent or its
+	// ancestry is not in the checkout, is a finding of its own, always: what
+	// dev's history deleted cannot be excused, and the line names the fetch.
+	// A main run never passes on an unreadable history.
+	Incomplete string
 }
 
 // devHistoryFetch completes the second parent's ancestry in a depth-2
@@ -78,8 +84,11 @@ func readMergeDeletions(root string) (*mergeDeletions, error) {
 // deleted the path and the second parent's tree lacks it, a row is excused
 // when that ancestry deleted its path, and the second parent's own
 // comparison is added (Beyond). The note says what was excused and why. When
-// the second parent's ancestry is cut by a shallow graft the ordinary
-// comparison stands and every finding names the fetch (fail closed).
+// the second parent's ancestry is cut by a shallow graft, or the second
+// parent is missing, nothing is excused, the readable comparisons run (the
+// first parent's; the second parent's tree whenever that commit is present,
+// as it is at fetch-depth 2), and the incomplete history is a finding of its
+// own naming the fetch (fail closed: never an empty result with a note).
 func readMergeDeletionsFor(root, event, ref string) (*mergeDeletions, string, error) {
 	branch := ""
 	if event == "" && ref == "" {
@@ -123,27 +132,44 @@ func readCommitDeletions(root, commit, event, ref, branch string) (*mergeDeletio
 	}
 	second := parents[1]
 	if err := parentInCheckout(root, second); err != nil {
-		m.Remedy = fmt.Sprintf(" (%s is a main run at a merge commit, but the second parent %s is not in this checkout, so what dev's history deleted cannot be excused: every workflow checks out with fetch-depth: 2, then `%s`)", where, second[:9], devHistoryFetch)
-		return m, "NOTE: " + where + " is a main run at a merge commit whose second parent is not in this checkout: the ordinary comparison ran, and every finding says how to fetch", nil
+		m.Incomplete = fmt.Sprintf("%s (%s): %s is a main run at a merge commit, but the second parent %s is not in this checkout, so what dev's history deleted cannot be excused and the merge's own change cannot be read: every workflow checks out with fetch-depth: 2, then `%s`", head, subject, where, second[:9], devHistoryFetch)
+		return m, "NOTE: " + where + " is a main run at a merge commit whose second parent is not in this checkout: the first-parent comparison ran, and the missing history is a finding", nil
 	}
-	graft, err := shallowCut(root, second)
-	if err != nil {
-		return nil, "", err
+	// Control 4: only dev's history excuses. The second parent must be in
+	// refs/remotes/origin/dev's ancestry, which dev's non-fast-forward rule
+	// keeps true for every promotion; a branch merged into main is not dev,
+	// and declares what it deletes like any change.
+	if _, err := gitOut(root, "rev-parse", "--verify", "-q", "refs/remotes/origin/dev^{commit}"); err != nil {
+		m.Incomplete = fmt.Sprintf("%s (%s): %s is a main run at a merge commit, but refs/remotes/origin/dev is not in this checkout, so the second parent %s cannot be confirmed as dev's history and nothing is excused: fetch dev for a main run, `%s`", head, subject, where, second[:9], devHistoryFetch)
+	} else if _, err := gitOut(root, "merge-base", "--is-ancestor", second, "refs/remotes/origin/dev"); err != nil {
+		m.Incomplete = fmt.Sprintf("%s (%s): %s is a main run at a merge commit, but the second parent %s is not in dev's history (refs/remotes/origin/dev), so nothing is excused: only a promotion of dev is excused on main, and a branch merged into main declares what it deletes like any change", head, subject, where, second[:9])
 	}
-	if graft != "" {
-		m.Remedy = fmt.Sprintf(" (%s is a main run at a merge commit, but the second parent %s's ancestry is cut by a shallow graft at %s in this checkout, so what dev's history deleted cannot be excused: fetch dev's full ancestry for a main run, `%s`)", where, second[:9], graft[:9], devHistoryFetch)
-		return m, "NOTE: " + where + " is a main run at a merge commit whose second parent's ancestry is shallow here: the ordinary comparison ran, and every finding says how to fetch", nil
-	}
-	history, err := deletedInAncestry(root, second)
-	if err != nil {
-		return nil, "", err
-	}
-	tree, err := treePaths(root, second)
-	if err != nil {
-		return nil, "", err
-	}
+	var history, tree map[string]bool
 	var excused, excusedRows int
-	m.Deleted, m.Declared, excused, excusedRows = excuseDevDeletions(m.Deleted, m.Declared, history, tree)
+	var since string
+	if m.Incomplete == "" {
+		graft, err := shallowCut(root, second)
+		if err != nil {
+			return nil, "", err
+		}
+		if graft != "" {
+			m.Incomplete = fmt.Sprintf("%s (%s): %s is a main run at a merge commit, but the second parent %s's ancestry is cut by a shallow graft at %s in this checkout, so what dev's history deleted cannot be excused: fetch dev's full ancestry for a main run, `%s`", head, subject, where, second[:9], graft[:9], devHistoryFetch)
+		} else if mb, err := gitOut(root, "merge-base", parents[0], second); err != nil {
+			m.Incomplete = fmt.Sprintf("%s (%s): %s is a main run at a merge commit, but the parents %s and %s have no merge base in this checkout, so dev's history since the last promotion cannot be read and nothing is excused: `%s`", head, subject, where, parents[0][:9], second[:9], devHistoryFetch)
+		} else {
+			// The excusing history is dev since the last promotion,
+			// merge-base..second: a path dev deleted before that and main
+			// holds again is main's, and its loss is the merge's own.
+			since = strings.TrimSpace(mb)
+			if history, err = deletedInAncestry(root, since+".."+second); err != nil {
+				return nil, "", err
+			}
+			if tree, err = treePaths(root, second); err != nil {
+				return nil, "", err
+			}
+			m.Deleted, m.Declared, excused, excusedRows = excuseDevDeletions(m.Deleted, m.Declared, history, tree)
+		}
+	}
 	beyond, err := readDeletionsAgainst(root, second, commit, head, subject)
 	if err != nil {
 		return nil, "", err
@@ -163,8 +189,11 @@ func readCommitDeletions(root, commit, event, ref, branch string) (*mergeDeletio
 	}
 	beyond.Deleted = rest
 	m.Beyond = beyond.findings()
-	note := fmt.Sprintf("NOTE: %s is a main run at a merge commit: HEAD is compared with its first parent %s as everywhere; dev's history (the second parent %s's ancestry, %d paths ever deleted) excused %d guarded deletions and %d declaration rows it made, each gated on dev's queue change by change, none of them a path dev's tip still has; and what HEAD lacks that dev's tip has is checked as the merge's own change (%d findings)",
-		where, parents[0][:9], second[:9], len(history), excused, excusedRows, len(m.Beyond))
+	if m.Incomplete != "" {
+		return m, fmt.Sprintf("NOTE: %s is a main run at a merge commit whose history could not be read here: nothing excused, the first-parent comparison and the second parent's tree comparison ran (%d findings beyond the second parent), and the unreadable history is a finding", where, len(m.Beyond)), nil
+	}
+	note := fmt.Sprintf("NOTE: %s is a main run at a merge commit: HEAD is compared with its first parent %s as everywhere; dev's history (the second parent %s's ancestry since the merge base %s, %d paths deleted) excused %d guarded deletions and %d declaration rows it made, each gated on dev's queue change by change, none of them a path dev's tip still has; and what HEAD lacks that dev's tip has is checked as the merge's own change (%d findings)",
+		where, parents[0][:9], second[:9], since[:9], len(history), excused, excusedRows, len(m.Beyond))
 	return m, note, nil
 }
 
@@ -248,12 +277,12 @@ func shallowCut(root, sha string) (string, error) {
 	return "", nil
 }
 
-// deletedInAncestry is every path a commit in sha's ancestry deleted, read
-// with renames off so a moved file counts as deleted at its old path (the
-// comparison it excuses reads renames with -M and never sees those). Trees
-// suffice: no blob is read.
-func deletedInAncestry(root, sha string) (map[string]bool, error) {
-	out, err := gitOut(root, "log", "--no-renames", "--diff-filter=D", "--name-only", "--format=", sha)
+// deletedInAncestry is every path a commit in the range deleted (a sha, or
+// since..sha), read with renames off so a moved file counts as deleted at
+// its old path (the comparison it excuses reads renames with -M and never
+// sees those). Trees suffice: no blob is read.
+func deletedInAncestry(root, revs string) (map[string]bool, error) {
+	out, err := gitOut(root, "log", "--no-renames", "--diff-filter=D", "--name-only", "--format=", revs)
 	if err != nil {
 		return nil, err
 	}
@@ -421,11 +450,11 @@ func declaredRowsAdded(diff string) map[string]string {
 // findings are the rule's red lines: a guarded file deleted with no row of
 // this change declaring it, and a row declaring a deletion this change does
 // not make; on a main run, the second-parent comparison's own (Beyond), and
-// every line ends with the Remedy when there is one.
+// an unreadable history as a finding of its own (Incomplete).
 func (m *mergeDeletions) findings() []string {
 	out := append(m.ordinaryFindings(), m.Beyond...)
-	for i := range out {
-		out[i] += m.Remedy
+	if m.Incomplete != "" {
+		out = append(out, m.Incomplete)
 	}
 	sort.Strings(out)
 	return out
@@ -666,19 +695,58 @@ func TestExcuseDevDeletionsReadsHistoryAndDevTree(t *testing.T) {
 	}
 }
 
-// promotionRepo is the main-run witness's repository, Stella's shape: a base
-// with the ledger; main adds main_only_test.go on its own; dev adds dev.txt,
-// deletes gone_test.go with a row, deletes x_test.go with a row and restores
-// it, trims both rows, and adds new_test.go. Every file has a body of its
-// own, so git's rename detection never pairs a deletion with an addition.
+// promotionRepo is the main-run witnesses' repository, Stella's shape: a
+// base with the ledger; main adds main_only_test.go on its own; dev adds
+// dev.txt, deletes gone_test.go with a row, deletes x_test.go with a row and
+// restores it, trims both rows, and adds new_test.go; refs/remotes/origin/dev
+// is dev's tip. Every file has a body of its own, so git's rename detection
+// never pairs a deletion with an addition. It is built once per package
+// (sharedPromotionRepo) and read by every witness through an index of its
+// own, adding commits by commit-tree and refs of its own name.
 type promotionRepo struct {
 	*scratchRepo
-	mainTip, devTip, mainOnly string
+	base, mainTip, devTip, mainOnly string
 }
 
-func buildPromotionRepo(t *testing.T) *promotionRepo {
+// promotionShared is the one promotionRepo per package; TestMain removes it.
+var promotionShared struct {
+	once sync.Once
+	dir  string
+	repo *promotionRepo
+}
+
+func sharedPromotionRepo(t *testing.T) *promotionRepo {
 	t.Helper()
-	r := &promotionRepo{scratchRepo: newScratchRepo(t, "main")}
+	promotionShared.once.Do(func() {
+		dir, err := os.MkdirTemp("", "classtests-promotion-")
+		if err != nil {
+			t.Fatal(err)
+		}
+		promotionShared.dir = dir
+		promotionShared.repo = buildPromotionRepo(t, dir)
+	})
+	base := promotionShared.repo
+	if base == nil {
+		t.Fatal("the shared promotion repository was not built")
+	}
+	return &promotionRepo{
+		scratchRepo: &scratchRepo{t: t, root: base.root, index: filepath.Join(t.TempDir(), "index")},
+		base:        base.base, mainTip: base.mainTip, devTip: base.devTip, mainOnly: base.mainOnly,
+	}
+}
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if promotionShared.dir != "" {
+		os.RemoveAll(promotionShared.dir)
+	}
+	os.Exit(code)
+}
+
+func buildPromotionRepo(t *testing.T, root string) *promotionRepo {
+	t.Helper()
+	r := &promotionRepo{scratchRepo: &scratchRepo{t: t, root: root}}
+	r.git("init", "-q", "-b", "main")
 	body := func(name string) string {
 		return "package a\n\n" + strings.Repeat("// "+name+": a line of its own so no other file resembles it\n", 4)
 	}
@@ -686,7 +754,8 @@ func buildPromotionRepo(t *testing.T) *promotionRepo {
 	r.write("keep_test.go", body("keep"))
 	r.write("x_test.go", body("x"))
 	r.write("gone_test.go", body("gone"))
-	base := r.commit("base")
+	r.base = r.commit("base")
+	base := r.base
 	r.write("main_only_test.go", body("main only"))
 	r.mainTip = r.commit("main adds main_only_test.go")
 	r.mainOnly = r.git("rev-parse", r.mainTip+":main_only_test.go")
@@ -702,6 +771,7 @@ func buildPromotionRepo(t *testing.T) *promotionRepo {
 	r.write("new_test.go", body("new"))
 	r.write(deletedTestsLogPath, "# the log\n")
 	r.devTip = r.commit("dev restores x_test.go, trims the log, adds new_test.go")
+	r.git("update-ref", "refs/remotes/origin/dev", r.devTip)
 	return r
 }
 
@@ -720,7 +790,7 @@ func (r *promotionRepo) promotion() {
 
 // run is the class test's reading of one commit under an event, ref and
 // checked-out branch, with nothing checked out.
-func (r *promotionRepo) run(commit, event, ref, branch string) ([]string, string) {
+func (r *scratchRepo) run(commit, event, ref, branch string) ([]string, string) {
 	r.t.Helper()
 	m, note, err := readCommitDeletions(r.root, commit, event, ref, branch)
 	if err != nil {
@@ -743,12 +813,12 @@ func exactlyOne(t *testing.T, name string, got []string, file string) {
 // gone_test.go, which dev deleted and lacks, is excused.
 func TestMainRunSeesWhatMainAloneHad(t *testing.T) {
 	t.Parallel()
-	r := buildPromotionRepo(t)
+	r := sharedPromotionRepo(t)
 	lostMainOnly := r.merge("promotion whose tree is dev's", func() {})
 
 	got, note := r.run(lostMainOnly, "push", "refs/heads/main", "")
 	exactlyOne(t, "dev's tree on main under push", got, "main_only_test.go")
-	if !strings.Contains(note, "2 paths ever deleted) excused 1 guarded deletions and 0 declaration rows") || !strings.Contains(note, "(0 findings)") {
+	if !strings.Contains(note, "since the merge base "+r.base[:9]+", 2 paths deleted) excused 1 guarded deletions and 0 declaration rows") || !strings.Contains(note, "(0 findings)") {
 		t.Errorf("note = %q; want gone_test.go excused, no rows, nothing beyond dev", note)
 	}
 	got, note = r.run(lostMainOnly, "", "", "main")
@@ -764,7 +834,7 @@ func TestMainRunSeesWhatMainAloneHad(t *testing.T) {
 // gone_test.go.
 func TestMainRunExcusesOnlyWhatDevDeleted(t *testing.T) {
 	t.Parallel()
-	r := buildPromotionRepo(t)
+	r := sharedPromotionRepo(t)
 	promotion := r.merge("promotion", r.promotion)
 
 	if got, note := r.run(promotion, "push", "refs/heads/main", ""); len(got) != 0 || !strings.Contains(note, "excused 1 guarded deletions") {
@@ -784,7 +854,7 @@ func TestMainRunExcusesOnlyWhatDevDeleted(t *testing.T) {
 // one-parent squash on main deleting keep_test.go is red as everywhere.
 func TestMainRunHoldsItsTreeControls(t *testing.T) {
 	t.Parallel()
-	r := buildPromotionRepo(t)
+	r := sharedPromotionRepo(t)
 	lostX := r.merge("promotion minus x_test.go", func() {
 		r.promotion()
 		r.git("update-index", "--force-remove", "x_test.go")
@@ -813,35 +883,99 @@ func TestMainRunHoldsItsTreeControls(t *testing.T) {
 	}
 }
 
+// TestMainRunExcusesOnlyDevsHistory pins control 4 over promotionRepo: a
+// feature branch off the base that deletes keep_test.go, merged into main,
+// is not dev, so nothing is excused: red for keep_test.go and for the second
+// parent being outside dev's history.
+func TestMainRunExcusesOnlyDevsHistory(t *testing.T) {
+	t.Parallel()
+	r := sharedPromotionRepo(t)
+	r.git("read-tree", r.base)
+	r.git("update-index", "--force-remove", "keep_test.go")
+	feature := r.git("commit-tree", r.git("write-tree"), "-p", r.base, "-m", "feature deletes keep_test.go")
+	r.git("read-tree", feature)
+	r.promotion()
+	featureMerge := r.git("commit-tree", r.git("write-tree"), "-p", r.mainTip, "-p", feature, "-m", "feature merged into main")
+	got, note := r.run(featureMerge, "push", "refs/heads/main", "")
+	all := strings.Join(got, "\n")
+	if len(got) != 2 || !strings.Contains(all, "deletes keep_test.go,") || !strings.Contains(all, "second parent "+feature[:9]+" is not in dev's history") || !strings.Contains(note, "could not be read") {
+		t.Errorf("control 4, a feature branch merged into main: findings = %q, note = %q; want keep_test.go red and the second parent outside dev's history", got, note)
+	}
+}
+
 // TestMainRunFailsClosedOnAShallowAncestry pins control 3: the merge in a
-// depth-2 clone, where the second parent's ancestry is cut, runs the
-// ordinary comparison and every finding names the graft and the fetch.
+// depth-2 clone, where the second parent's ancestry is cut, excuses nothing,
+// runs the first-parent comparison and the second parent's tree comparison,
+// and reports the shallow history as a finding of its own naming the graft
+// and the fetch.
 func TestMainRunFailsClosedOnAShallowAncestry(t *testing.T) {
 	t.Parallel()
-	r := buildPromotionRepo(t)
+	r := sharedPromotionRepo(t)
 	lostX := r.merge("promotion minus x_test.go", func() {
 		r.promotion()
 		r.git("update-index", "--force-remove", "x_test.go")
 	})
-	r.git("update-ref", "refs/heads/main", lostX)
+	r.git("update-ref", "refs/heads/witness-shallow", lostX)
 	shallow := filepath.Join(t.TempDir(), "shallow")
-	r.git("clone", "-q", "--depth", "2", "--branch", "main", "file://"+r.root, shallow)
+	r.git("clone", "-q", "--depth", "2", "--no-single-branch", "--branch", "witness-shallow", "file://"+r.root, shallow)
 	m, note, err := readMergeDeletionsFor(shallow, "push", "refs/heads/main")
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := m.findings()
-	if len(got) != 2 || !strings.Contains(got[0], "deletes gone_test.go,") || !strings.Contains(got[1], "deletes x_test.go,") ||
-		!strings.Contains(got[0], "shallow graft at "+r.devTip[:9]) || !strings.Contains(got[0], devHistoryFetch) || !strings.Contains(note, "shallow") {
-		t.Errorf("shallow ancestry: findings = %q, note = %q; want the ordinary two, each naming the graft and the fetch", got, note)
+	all := strings.Join(got, "\n")
+	if len(got) != 3 || !strings.Contains(all, "deletes gone_test.go,") || !strings.Contains(all, "deletes x_test.go,") ||
+		!strings.Contains(all, "ancestry is cut by a shallow graft at") || !strings.Contains(all, devHistoryFetch) || !strings.Contains(note, "could not be read") {
+		t.Errorf("shallow ancestry: findings = %q, note = %q; want the ordinary two and the shallow history, naming the graft and the fetch", got, note)
+	}
+}
+
+// TestMainRunNeverPassesOnAShallowAncestry is Stella's counterexample: a
+// base with only the ledger; main adds main.txt; dev adds new_test.go; a
+// two-parent merge whose tree is main's tip, losing dev's test. Against the
+// first parent the diff is empty, so a shallow clone that only decorated
+// first-parent findings would pass the bad merge. It is red twice: the
+// shallow history itself, and new_test.go against the second parent's tree,
+// which is present at depth 2 whatever its ancestry.
+func TestMainRunNeverPassesOnAShallowAncestry(t *testing.T) {
+	t.Parallel()
+	r := newScratchRepo(t, "main")
+	r.write(deletedTestsLogPath, "# the log\n")
+	base := r.commit("base")
+	r.write("main.txt", "main\n")
+	mainTip := r.commit("main adds main.txt")
+	r.git("checkout", "-q", "-b", "dev", base)
+	r.write("new_test.go", "package a\n\n// new: dev's test\n")
+	devTip := r.commit("dev adds new_test.go")
+	r.git("update-ref", "refs/remotes/origin/dev", devTip)
+	bad := r.git("commit-tree", mainTip+"^{tree}", "-p", mainTip, "-p", devTip, "-m", "merge whose tree is main's")
+	r.git("update-ref", "refs/heads/main", bad)
+
+	got, _ := r.run(bad, "push", "refs/heads/main", "")
+	exactlyOne(t, "full history", got, "new_test.go")
+
+	shallow := filepath.Join(t.TempDir(), "shallow")
+	r.git("clone", "-q", "--depth", "2", "--no-single-branch", "--branch", "main", "file://"+r.root, shallow)
+	m, note, err := readMergeDeletionsFor(shallow, "push", "refs/heads/main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = m.findings()
+	all := strings.Join(got, "\n")
+	if len(got) != 2 || !strings.Contains(all, "deletes new_test.go, which its parent "+devTip[:9]+" had") ||
+		!strings.Contains(all, "nothing is excused") || !strings.Contains(all, devHistoryFetch) || !strings.Contains(note, "could not be read") {
+		t.Errorf("shallow clone of the bad merge: findings = %q, note = %q; want new_test.go against the second parent and the unreadable history naming the fetch", got, note)
 	}
 }
 
 // scratchRepo is a git repository a test builds, with the identity and hooks
-// settled and every failure fatal.
+// settled and every failure fatal. With index set, every command runs on
+// that index file (GIT_INDEX_FILE), so parallel tests sharing one repository
+// never race on its index.
 type scratchRepo struct {
-	t    *testing.T
-	root string
+	t     *testing.T
+	root  string
+	index string
 }
 
 func newScratchRepo(t *testing.T, branch string) *scratchRepo {
@@ -853,13 +987,33 @@ func newScratchRepo(t *testing.T, branch string) *scratchRepo {
 
 func (r *scratchRepo) git(args ...string) string {
 	r.t.Helper()
-	out, err := gitOut(r.root, append([]string{
+	args = append([]string{
 		"-c", "user.name=ci", "-c", "user.email=ci@example.invalid",
-		"-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "-c", "protocol.file.allow=always"}, args...)...)
+		"-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "-c", "protocol.file.allow=always"}, args...)
+	var env []string
+	if r.index != "" {
+		env = []string{"GIT_INDEX_FILE=" + r.index}
+	}
+	out, err := gitEnvOut(r.root, env, args...)
 	if err != nil {
 		r.t.Fatal(err)
 	}
 	return strings.TrimSpace(out)
+}
+
+// gitEnvOut is gitOut (issue2218.go) with extra environment.
+func gitEnvOut(root string, env []string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
+	cmd.Env = append(os.Environ(), env...)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
+	}
+	return string(out), nil
 }
 
 func (r *scratchRepo) write(rel, text string) {
