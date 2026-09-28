@@ -568,6 +568,23 @@ func TestSpellingCommonMarkContainerBoundaries(t *testing.T) {
 			t.Errorf("updated = %q, want %q", updated, want)
 		}
 	})
+
+	t.Run("quoted-list-tab-fence", func(t *testing.T) {
+		t.Parallel()
+		for _, prefix := range []string{"> - ", "> -\t"} {
+			text := prefix + "~~~go\n>   func recieve() {}\n>   ~~~\n"
+			findings, updated, err := check.CheckSpellingText("note.md", text, check.SpellingOptions{Markdown: true})
+			if err != nil {
+				t.Fatalf("CheckSpellingText error: %v", err)
+			}
+			if len(findings) != 0 {
+				t.Errorf("prefix %q: expected 0 findings in quoted list fence, got: %+v", prefix, findings)
+			}
+			if updated != text {
+				t.Errorf("prefix %q: updated = %q, want %q", prefix, updated, text)
+			}
+		}
+	})
 }
 
 func TestSpellingRelativeDirGlobAndDirectoryExclusion(t *testing.T) {

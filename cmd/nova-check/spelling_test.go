@@ -532,3 +532,27 @@ func TestReviewSpellingLooseListContainers(t *testing.T) {
 		})
 	}
 }
+
+func TestStellaQuotedListTabFence(t *testing.T) {
+	t.Parallel()
+	for _, prefix := range []string{"> - ", "> -\t"} {
+		t.Run(prefix, func(t *testing.T) {
+			t.Parallel()
+			before := prefix + "~~~go\n>   func recieve() {}\n>   ~~~\n"
+			p := filepath.Join(t.TempDir(), "note.md")
+			if err := os.WriteFile(p, []byte(before), 0600); err != nil {
+				t.Fatal(err)
+			}
+			code, out, err := runSpelling(t, "--file", p, "--write")
+			after, e := os.ReadFile(p)
+			if e != nil {
+				t.Fatal(e)
+			}
+			t.Logf("exit=%d out=%q err=%q after=%q", code, out, err, after)
+			if code != 0 || string(after) != before {
+				t.Errorf("quoted list fence rewritten: want %q", before)
+			}
+		})
+	}
+}
+

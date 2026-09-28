@@ -264,6 +264,16 @@ func StripCode(text string) string {
 		lineStr := text[lr.start:lr.end]
 		lineStr = strings.TrimRight(lineStr, "\r")
 		pos := 0
+		col := 0
+		advanceCol := func(from, to int) {
+			for i := from; i < to; i++ {
+				if lineStr[i] == '\t' {
+					col += 4 - (col % 4)
+				} else {
+					col++
+				}
+			}
+		}
 
 		// Step 1: Match existing open containers against the current line.
 		matchedDepth := 0
@@ -275,10 +285,12 @@ func StripCode(text string) string {
 					sp++
 				}
 				if sp <= 3 && pos+sp < len(lineStr) && lineStr[pos+sp] == '>' {
+					oldPos := pos
 					pos += sp + 1
 					if pos < len(lineStr) && (lineStr[pos] == ' ' || lineStr[pos] == '\t') {
 						pos++
 					}
+					advanceCol(oldPos, pos)
 					matchedDepth++
 				} else {
 					break
@@ -289,25 +301,26 @@ func StripCode(text string) string {
 					matchedDepth++
 					continue
 				}
-				col := 0
+				curCol := col
 				adv := 0
 				for pos+adv < len(lineStr) {
 					ch := lineStr[pos+adv]
 					if ch == ' ' {
-						col++
+						curCol++
 						adv++
 					} else if ch == '\t' {
-						col += 4 - (col % 4)
+						curCol += 4 - (curCol % 4)
 						adv++
 					} else {
 						break
 					}
-					if col >= c.indent {
+					if curCol >= c.indent {
 						break
 					}
 				}
-				if col >= c.indent {
+				if curCol >= c.indent {
 					pos += adv
+					col = curCol
 					matchedDepth++
 				} else {
 					break
@@ -356,10 +369,12 @@ func StripCode(text string) string {
 					sp++
 				}
 				if sp <= 3 && pos+sp < len(lineStr) && lineStr[pos+sp] == '>' {
+					oldPos := pos
 					pos += sp + 1
 					if pos < len(lineStr) && (lineStr[pos] == ' ' || lineStr[pos] == '\t') {
 						pos++
 					}
+					advanceCol(oldPos, pos)
 					openContainers = append(openContainers, containerItem{kind: containerBlockquote})
 					continue
 				}
@@ -371,26 +386,28 @@ func StripCode(text string) string {
 				}
 				if sp <= 3 && pos+sp < len(lineStr) {
 					if markerLen, ok := matchListItemMarker(lineStr[pos+sp:]); ok {
+						advanceCol(pos, pos+sp+markerLen)
 						afterMarker := pos + sp + markerLen
-						col := sp + markerLen
+						curCol := col
 						postAdv := 0
 						for afterMarker+postAdv < len(lineStr) {
 							ch := lineStr[afterMarker+postAdv]
 							if ch == ' ' {
-								col++
+								curCol++
 								postAdv++
 							} else if ch == '\t' {
-								col += 4 - (col % 4)
+								curCol += 4 - (curCol % 4)
 								postAdv++
 							} else {
 								break
 							}
 						}
-						indent := col
+						indent := curCol
 						if afterMarker+postAdv == len(lineStr) {
-							indent = sp + markerLen + 1
+							indent = col + 1
 						}
 						pos = afterMarker + postAdv
+						col = curCol
 						openContainers = append(openContainers, containerItem{kind: containerList, indent: indent})
 						continue
 					}
