@@ -301,7 +301,7 @@ func WritePathsFile(path, rangeName string, files []string) error {
 	for _, f := range files {
 		b.WriteString(f + "\n")
 	}
-	return os.WriteFile(path, []byte(b.String()), 0o644)
+	return writeNoFollow("write paths", path, []byte(b.String()), 0o644)
 }
 
 // ReadPathsFile reads one back, and refuses anything this verb did not write.
@@ -421,7 +421,7 @@ func prependSection(path, section string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(head+section+rest), 0o644)
+	return writeNoFollow("write changelog", path, []byte(head+section+rest), 0o644)
 }
 
 func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
