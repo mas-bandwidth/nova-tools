@@ -56,7 +56,10 @@ record wins when a store holds both shapes for a session, which counts once. The
 named remedy would have written a second record and split one session in
 two. **A refusal names the remedy verb whole** — `open first: nova-cairn
 open --store <dir> --session <id> --publish <policy>` — rather than a verb
-the reader must reconstruct.
+the reader must reconstruct. The remedy quotes the caller's store and session
+for a POSIX shell. Control bytes use octal decoding inside a subshell with a
+sentinel to preserve trailing newlines, so the printed command stays one line
+and opens exactly the named record.
 
 **`append --store <dir> --session <id> --entry <id> (--text <words> |
 --file <path|->) [--source <ptr>] --publish <policy>` files the friend's
@@ -100,16 +103,11 @@ A missing store, session or entry refuses at exit 2, naming what is absent.
 
 ## Tests this spec demands
 
-One numbered line per Go test function: 30 lines, 30 tests. 19 exist in `internal/cairn` or
-`cmd/nova-cairn`; 11 (lines 5, 12, 13, 19 and 21–27) are named here and not yet written.
-Where one test holds several behaviours of the spec, they share its line; where two tests hold
-one rule of the spec (lines 9–10 and 15–16), each test has its own line.
-Every test that touches a store uses a throwaway `t.TempDir()` store named on the command line
-(or in the `cairn` package's `Open`/`Append` calls) — no network, no Redis, no secret.
-Not every test writes entries: lines 2, 14, 17 and 28 are refusal-only, as 19 and 22 will be,
-and assert an exit code or an error with nothing stored.
-Each of the 11 unwritten tests must be shown red before it is green when it lands; this section
-makes no red-first claim for the 19 that exist.
+The numbered cases name this contract's checks. A named case is a requirement,
+not a claim that it has been implemented. Store tests use a caller-named
+throwaway `t.TempDir()`; they use no live records, network, Redis or secrets.
+The open-remedy shell regression is in the functional tier on POSIX systems.
+New regression cases must demonstrate the defect before the repair.
 
 1. `TestOpenAppendIndexReceiptRoundTrip` — `open` starts one session record under a caller-named store; the record is written to and read back; `index` builds the bounded section/entry index and coverage ledger mechanically.
 2. `TestMissingFlagsAreRefusedNeverGuessed` — there is no default store, no environment variable and no discovery; a missing `--store` is a refusal.
@@ -124,7 +122,7 @@ makes no red-first claim for the 19 that exist.
 11. `TestCoverageCountsTheBenchSessionFiles` — the coverage ledger counts the bench file.
 12. `TestIndexAndReceiptReadFlatRecordsWithoutChangingThem` — index and receipt read the dated sections in a flat record, preserve its bytes, and create no sidecars. `TestFlatReadMetadataOrderingAndNestedPrecedence` checks ordering, metadata and the shared coverage count.
 13. `TestNestedRecordWinsWhenStoreHoldsBoth` — the nested record wins when a store somehow holds both shapes.
-14. `TestAppendWithNoRecordAnywhereNamesTheOpenVerb` — a refusal names the remedy verb whole (`nova-cairn open --store … --session … --publish …`).
+14. `TestAppendWithNoRecordAnywhereNamesTheOpenVerb` — a refusal names the remedy verb whole (`nova-cairn open --store … --session … --publish …`). `TestAppendOpenRemedyRoundTripsThroughShell` executes the printed command through a POSIX shell and verifies the exact store and session.
 15. `TestAppendKeepsExactProseAndReportsPersistenceSeparately` — `append` files the friend's chosen words byte-for-byte; success reports local persistence and remote publication separately (`persisted=true published=false`).
 16. `TestAppendViaFileAndStdinKeepsExactBytes` — words named by `--file <path|->`, from a file or from stdin, are filed byte-for-byte.
 17. `TestBadClockIsRefused` — the stamp is a real clock in UTC; `--now` names an RFC 3339 UTC replay and a non-RFC 3339 value is exit 2.
@@ -141,3 +139,7 @@ makes no red-first claim for the 19 that exist.
 28. `TestLifecycleVerbsStayRefused` — there is deliberately no seal/consume/delete/grade/consolidate/wake/rollup/retention verb; naming one on the command line is exit 2, unknown subcommand.
 29. `TestAnUnreadableLogRefusesTheAppendAndWritesNothing` — a `log.jsonl` that exists and cannot be read is not a store with no source: an append that would inherit the session's pointer refuses at exit 2 naming the log, and writes no entry and no pointer line (skipped on windows, as root, and wherever a 0200 file stays readable).
 30. `TestAMalformedOpenRecordRefusesTheAppendAndWritesNothing` — an open record for the session that does not decode is corrupt provenance and never reads as none: the append refuses at exit 2 naming the log and writes nothing; another session's malformed line does not block this one.
+
+31. `TestReadCommandsRefuseMissingStoreAndSession` — absent inputs refuse, while existing empty stores and sessions succeed.
+32. `TestFlatReadersRefuseCorruptAndAmbiguousHeadings` — invalid stamps, invalid identifiers and duplicate entry headings refuse.
+33. `TestFlatReadersKeepUnstructuredProseAndMissingEntriesDistinct` — ordinary prose is preserved without inventing entries.

@@ -197,8 +197,8 @@ func noRecord(store, session, publish string) error {
 		publish = PublishManual
 	}
 	return &NotFoundError{Msg: fmt.Sprintf(
-		"no such session %q under store %q; open first: nova-cairn open --store %s --session %s --publish %s",
-		session, store, store, session, publish)}
+		"no such session %q under store %q; open first: %s",
+		session, store, openRemedy(store, session, publish))}
 }
 
 // benchHeadingRe reads the one heading this tool writes into a bench file:
