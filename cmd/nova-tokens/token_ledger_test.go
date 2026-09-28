@@ -359,20 +359,17 @@ func TestLedgerMonthPipelinesWritesAndDropsSuperfluousPing(t *testing.T) {
 	seenCmds = nil
 	mu.Unlock()
 
-	sawMulti, sawExec := false, false
+	sawEval := false
 	for _, cmd := range cmds {
 		if cmd == "PING" {
 			t.Fatalf("ledger --month sent superfluous PING: saw %v", cmds)
 		}
-		if cmd == "MULTI" {
-			sawMulti = true
-		}
-		if cmd == "EXEC" {
-			sawExec = true
+		if cmd == "EVAL" {
+			sawEval = true
 		}
 	}
-	if !sawMulti || !sawExec {
-		t.Fatalf("ledger --month did not use transaction: saw %v", cmds)
+	if !sawEval {
+		t.Fatalf("ledger --month did not use EVAL: saw %v", cmds)
 	}
 
 	// 2. report --redis sends no PING.
@@ -401,19 +398,16 @@ func TestLedgerMonthPipelinesWritesAndDropsSuperfluousPing(t *testing.T) {
 	seenCmds = nil
 	mu.Unlock()
 
-	sawMulti, sawExec = false, false
+	sawEval = false
 	for _, cmd := range cmds {
 		if cmd == "PING" {
 			t.Fatalf("ledger --day sent superfluous PING: saw %v", cmds)
 		}
-		if cmd == "MULTI" {
-			sawMulti = true
-		}
-		if cmd == "EXEC" {
-			sawExec = true
+		if cmd == "EVAL" {
+			sawEval = true
 		}
 	}
-	if !sawMulti || !sawExec {
-		t.Fatalf("ledger --day did not use transaction: saw %v", cmds)
+	if !sawEval {
+		t.Fatalf("ledger --day did not use EVAL: saw %v", cmds)
 	}
 }

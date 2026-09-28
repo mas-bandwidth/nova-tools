@@ -155,7 +155,7 @@ func TestReplaceLedgerDaysTakesOneRoundTrip(t *testing.T) {
 	trips := redisconn.CountTrips(s.Client())
 	ctx := context.Background()
 
-	// 23 days fixture, matching Rowan's audit benchmark (3+24 trips -> 1 trip for the writes).
+	// 23 days fixture, matching Rowan's audit benchmark (rowan-7fbdefecf56e: 3+24 trips -> 1 trip for the writes).
 	days := make([]record.LedgerDay, 23)
 	for i := range 23 {
 		dayStr := fmt.Sprintf("2026-09-%02d", i+1)
@@ -191,9 +191,9 @@ func TestReplaceLedgerDaysTakesOneRoundTrip(t *testing.T) {
 }
 
 // TestReplaceLedgerDaysConflictingWritersAndReaderSnapshots pins the atomic transaction contract
-// (Stella note stella-ee1cb7f37a7e): ReplaceLedgerDays uses TxPipeline so DEL and HSET execute
-// atomically. Competing writers cannot merge partial replacements, and readers never see an absent
-// day between DEL and HSET or a torn mixture of rows from conflicting writers.
+// (Stella note stella-ee1cb7f37a7e, Johnny note johnny-a228317dbe3b): ReplaceLedgerDays uses an EVAL Lua script
+// so DEL and HSET execute atomically and revert on error. Competing writers cannot merge partial replacements,
+// and readers never see an absent day between DEL and HSET or a torn mixture of rows from conflicting writers.
 func TestReplaceLedgerDaysConflictingWritersAndReaderSnapshots(t *testing.T) {
 	t.Parallel()
 
@@ -309,3 +309,172 @@ func TestReplaceLedgerDaysConflictingWritersAndReaderSnapshots(t *testing.T) {
 		}
 	}
 }
+
+type injectEvalKeyHook struct {
+	fromKey string
+	toKey   string
+}
+
+func (h *injectEvalKeyHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+func (h *injectEvalKeyHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+func (h *injectEvalKeyHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		if cmd.Name() == "eval" {
+			args := cmd.Args()
+			for i, a := range args {
+				if s, ok := a.(string); ok && s == h.fromKey {
+					args[i] = h.toKey
+				}
+			}
+		}
+		return next(ctx, cmd)
+	}
+}
+
+// TestReplaceLedgerDaysInjectedCommandErrorLeavesPriorHashesUnchanged proves that an injected
+// command error during execution (such as writing to a key with WRONGTYPE) causes the entire
+// batch write to abort atomically, leaving pre-existing day hashes unchanged (Johnny note johnny-a228317dbe3b).
+func TestReplaceLedgerDaysInjectedCommandErrorLeavesPriorHashesUnchanged(t *testing.T) {
+	t.Parallel()
+
+	s, mr := redisLedger(t)
+	ctx := context.Background()
+
+	testDays := []string{"2026-09-01", "2026-09-02", "2026-09-03"}
+	makeBatch := func(card string, tokenVal int64) []record.LedgerDay {
+		batch := make([]record.LedgerDay, len(testDays))
+		for i, day := range testDays {
+			e := record.LedgerEntry{
+				Day:      day,
+				Card:     card,
+				Model:    "gpt-4",
+				Repo:     "nova-tools",
+				Provider: "openai",
+				Sources:  "openai:o",
+			}
+			e.Tokens, e.Known = [5]int64{tokenVal, 0, 0, 0, 0}, [5]bool{true, false, false, false, false}
+			batch[i] = record.LedgerDay{Day: day, Entries: []record.LedgerEntry{e}}
+		}
+		return batch
+	}
+
+	// 1. Seed all three days with initial rows (token count 100).
+	seedBatch := makeBatch("card-seed", 100)
+	if err := s.ReplaceLedgerDays(ctx, seedBatch); err != nil {
+		t.Fatalf("seed failed: %v", err)
+	}
+
+	// Verify all three days are seeded with token 100.
+	for _, day := range testDays {
+		key := record.LedgerKey(day)
+		fields, err := mr.HKeys(key)
+		if err != nil || len(fields) != 1 {
+			t.Fatalf("expected 1 field in %s; got fields=%v, err=%v", key, fields, err)
+		}
+		val := mr.HGet(key, fields[0])
+		if !strings.Contains(val, `"tokens":[100,null,null,null,null]`) {
+			t.Fatalf("pre-existing hash %s corrupt: %s", key, val)
+		}
+	}
+
+	// 2. Set up a non-hash string key in Redis.
+	mr.Set("not-a-hash", "plain-string-value")
+
+	// 3. Inject a command error: attach a client hook that retargets the second day key
+	// to "not-a-hash" (a string key), causing EVAL execution to encounter WRONGTYPE.
+	hook := &injectEvalKeyHook{
+		fromKey: record.LedgerKey("2026-09-02"),
+		toKey:   "not-a-hash",
+	}
+	s.Client().AddHook(hook)
+
+	// Attempt ReplaceLedgerDays with a new batch of token count 999.
+	newBatch := makeBatch("card-new", 999)
+	err := s.ReplaceLedgerDays(ctx, newBatch)
+	if err == nil {
+		t.Fatal("expected ReplaceLedgerDays to fail on injected WRONGTYPE error, got nil")
+	}
+	if !strings.Contains(err.Error(), "WRONGTYPE") {
+		t.Fatalf("expected error containing WRONGTYPE, got: %v", err)
+	}
+
+	// 4. Assert that every pre-existing day hash remains completely unchanged.
+	// Prior days (2026-09-01) and subsequent days (2026-09-02, 2026-09-03) must retain
+	// their original seeded rows with token 100, never partially replaced or deleted.
+	for _, day := range testDays {
+		key := record.LedgerKey(day)
+		fields, err := mr.HKeys(key)
+		if err != nil || len(fields) != 1 {
+			t.Fatalf("pre-existing key %s missing or corrupt after aborted batch: %v", key, err)
+		}
+		val := mr.HGet(key, fields[0])
+		if !strings.Contains(val, `"tokens":[100,null,null,null,null]`) {
+			t.Fatalf("day %s was modified despite aborted batch: %s (want token 100)", key, val)
+		}
+		if !strings.Contains(fields[0], `"card-seed"`) {
+			t.Fatalf("day %s card was modified: %s (want card-seed)", key, fields[0])
+		}
+	}
+
+	// 5. Also prove that an EXEC-time command error occurring mid-batch during mutation
+	// (after day 1 was already deleted and rewritten with new rows) catches the error,
+	// rolls back day 1, and leaves all pre-existing day hashes unchanged.
+	s2, mr2 := redisLedger(t)
+	if err := s2.ReplaceLedgerDays(ctx, seedBatch); err != nil {
+		t.Fatalf("seed s2 failed: %v", err)
+	}
+	mr2.Set("not-a-hash", "plain-string-value")
+
+	s2.Client().AddHook(&injectEvalMidScriptFailHook{})
+	err2 := s2.ReplaceLedgerDays(ctx, newBatch)
+	if err2 == nil {
+		t.Fatal("expected ReplaceLedgerDays to fail on mid-script mutation error, got nil")
+	}
+	if !strings.Contains(err2.Error(), "WRONGTYPE") {
+		t.Fatalf("expected error containing WRONGTYPE, got: %v", err2)
+	}
+
+	// Verify day 1 was restored to its pre-existing seeded values (token 100, card-seed).
+	for _, day := range testDays {
+		key := record.LedgerKey(day)
+		fields, err := mr2.HKeys(key)
+		if err != nil || len(fields) != 1 {
+			t.Fatalf("pre-existing key %s missing or corrupt after mid-script rollback: %v", key, err)
+		}
+		val := mr2.HGet(key, fields[0])
+		if !strings.Contains(val, `"tokens":[100,null,null,null,null]`) {
+			t.Fatalf("day %s was not rolled back: %s (want token 100)", key, val)
+		}
+		if !strings.Contains(fields[0], `"card-seed"`) {
+			t.Fatalf("day %s card was not rolled back: %s (want card-seed)", key, fields[0])
+		}
+	}
+}
+
+type injectEvalMidScriptFailHook struct{}
+
+func (h *injectEvalMidScriptFailHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+func (h *injectEvalMidScriptFailHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+func (h *injectEvalMidScriptFailHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		if cmd.Name() == "eval" {
+			args := cmd.Args()
+			if script, ok := args[1].(string); ok {
+				// Inject command error on day 2 inside pcall: day 1 writes normally,
+				// but day 2 calls HSET on "not-a-hash" (a string) to trigger WRONGTYPE mid-batch.
+				args[1] = strings.Replace(
+					script,
+					"redis.call('HSET', key, unpack(fields))",
+					"if i == 2 then redis.call('HSET', 'not-a-hash', 'f', 'v') else redis.call('HSET', key, unpack(fields)) end",
+					1,
+				)
+			}
+		}
+		return next(ctx, cmd)
+	}
+}
+

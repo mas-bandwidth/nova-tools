@@ -230,8 +230,9 @@ func (s *RedisLedger) ReplaceLedgerDay(ctx context.Context, day string, entries 
 	return s.ReplaceLedgerDays(ctx, []LedgerDay{{Day: day, Entries: entries}})
 }
 
-// ReplaceLedgerDays writes all given days in one transaction pipeline, DEL then HSET for each day,
-// so all days in the batch are written atomically in one round trip (#7fbdefecf56e).
+// ReplaceLedgerDays writes all given days in one EVAL Lua script, DEL then HSET for each day,
+// so all days in the batch are written atomically in one round trip and any runtime error
+// reverts all keys to their pre-existing state (#7fbdefecf56e, johnny-a228317dbe3b).
 func (s *RedisLedger) ReplaceLedgerDays(ctx context.Context, days []LedgerDay) error {
 	if len(days) == 0 {
 		return nil
@@ -271,14 +272,16 @@ func (s *RedisLedger) ReplaceLedgerDays(ctx context.Context, days []LedgerDay) e
 		}
 		prepared = append(prepared, preparedDay{key: LedgerKey(d.Day), fields: fields})
 	}
-	pipe := s.rdb.TxPipeline()
-	for _, d := range prepared {
-		pipe.Del(ctx, d.key)
-		if len(d.fields) > 0 {
-			pipe.HSet(ctx, d.key, d.fields...)
+	keys := make([]string, len(prepared))
+	args := make([]any, 0, len(prepared)*2)
+	for i, d := range prepared {
+		keys[i] = d.key
+		args = append(args, len(d.fields))
+		for _, f := range d.fields {
+			args = append(args, f)
 		}
 	}
-	if _, err := pipe.Exec(ctx); err != nil {
+	if err := s.rdb.Eval(ctx, replaceLedgerDaysScript, keys, args...).Err(); err != nil {
 		if len(prepared) == 1 {
 			return fmt.Errorf("%s: %w", prepared[0].key, err)
 		}
@@ -286,6 +289,55 @@ func (s *RedisLedger) ReplaceLedgerDays(ctx context.Context, days []LedgerDay) e
 	}
 	return nil
 }
+
+const replaceLedgerDaysScript = `
+local backups = {}
+for i = 1, #KEYS do
+	local key = KEYS[i]
+	local t = redis.call('TYPE', key)['ok'] or redis.call('TYPE', key)
+	if t == 'hash' then
+		backups[i] = { type = 'hash', data = redis.call('HGETALL', key) }
+	elseif t == 'none' then
+		backups[i] = { type = 'none' }
+	else
+		return redis.error_reply("WRONGTYPE Operation against a key holding the wrong kind of value")
+	end
+end
+
+local status, err = pcall(function()
+	local argIdx = 1
+	for i = 1, #KEYS do
+		local key = KEYS[i]
+		local count = tonumber(ARGV[argIdx])
+		argIdx = argIdx + 1
+		redis.call('DEL', key)
+		if count > 0 then
+			local fields = {}
+			for c = 1, count do
+				fields[c] = ARGV[argIdx]
+				argIdx = argIdx + 1
+			end
+			redis.call('HSET', key, unpack(fields))
+		end
+	end
+end)
+
+if not status then
+	for i = 1, #KEYS do
+		local key = KEYS[i]
+		local b = backups[i]
+		redis.call('DEL', key)
+		if b and b.type == 'hash' and #b.data > 0 then
+			for k = 1, #b.data, 2 do
+				redis.call('HSET', key, b.data[k], b.data[k+1])
+			end
+		end
+	end
+	error(err)
+end
+
+return "OK"
+`
 
 // LedgerReport reads every day hash of the month in one pipelined round trip and groups it.
 // A field or value that does not decode is an error naming its key, never a skipped row.
