@@ -18,10 +18,10 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 	"github.com/redis/go-redis/v9"
 )
@@ -34,10 +34,11 @@ A stale epoch is refused. drop keeps the saved column definition unless
 View configuration has no table epoch or receipt.
 Quote column specs containing parentheses, for example 'done,pct:pct(done)'.
 
-Store verbs take --redis <addr> (host:port or an absolute Unix socket path) (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR,
-then the seat's address) and dials as the seat nova-sprint dials as: --seat
-<name> or NOVA_SEAT, else NOVA_SPRINT_REDIS_USER with the password in the
-variable NOVA_SPRINT_REDIS_PASSWORD_ENV names. Flags may follow the words.
+Store verbs take --redis <addr> (host:port or an absolute Unix socket path)
+(else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address) and
+dial as the seat --seat <name> or NOVA_SEAT names, else as
+NOVA_SPRINT_REDIS_USER with the password in the variable
+NOVA_SPRINT_REDIS_PASSWORD_ENV names. Flags may follow the words.
 
 A column is name[:projection[:fold[:label]]]: the projection is what a body
 cell prints, count (the set's size, the default), members (the members in
@@ -85,13 +86,19 @@ var version string
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 
+// remedied reports a line that already names its next step: a "; run:" of
+// this tool's, or a "; next:" of redisconn's.
+func remedied(what string) bool {
+	return strings.Contains(what, "; run:") || strings.Contains(what, "; next:")
+}
+
 // refuse is the one-line usage refusal: exit 2.
 func refuse(stderr io.Writer, verb, what string) int {
 	where := ""
 	if verb != "" {
 		where = " " + verb
 	}
-	if !strings.Contains(what, "; run:") {
+	if !remedied(what) {
 		what += "; run: nova-table help"
 	}
 	fmt.Fprintf(stderr, "nova-table%s: %s\n", where, oneline.Escape(what))
@@ -100,7 +107,7 @@ func refuse(stderr io.Writer, verb, what string) int {
 
 // refused is the store's no, one line: exit 1.
 func refused(stderr io.Writer, verb, what string) int {
-	if !strings.Contains(what, "; run:") {
+	if !remedied(what) {
 		what += "; run: nova-table help"
 	}
 	fmt.Fprintf(stderr, "nova-table %s: %s\n", verb, oneline.Escape(what))
@@ -139,12 +146,12 @@ func (app *application) run(args []string, stdout, stderr io.Writer) (code int) 
 	return app.dispatch(args, stdout, stderr)
 }
 
-// selectSeat is nova-sprint's seat resolution (cmd/nova-sprint/seat.go,
-// nova-tools#4330), the same here so a session that names a seat for one
-// tool names it for the other: --seat <name> (or NOVA_SPRINT_SEAT, then
-// NOVA_SEAT) is taken off the line, its row in nova-sprint's seats.tsv
-// names its Redis address (the --redis default) and login, and a seat with
-// no row is the nova-secrets seat of that name.
+// selectSeat is the seat resolution nova-sprint defined
+// (deprecated/cmd/nova-sprint/seat.go, nova-tools#4330), carried here:
+// --seat <name> (or NOVA_SPRINT_SEAT, then NOVA_SEAT) is taken off the line,
+// its row in nova-sprint's seats.tsv names its Redis address (the --redis
+// default) and login, and a seat with no row is the nova-secrets seat of that
+// name.
 func selectSeat(sel *seatcred.Selection, args []string, getenv func(string) string, setenv func(k, v string) error) ([]string, error) {
 	rest, err := sel.FromArgs(args, func(k string) string {
 		if k == seatcred.SeatEnv {
@@ -253,27 +260,71 @@ func parseInterleaved(fs *flag.FlagSet, args []string) ([]string, error) {
 	return pos, nil
 }
 
-// open dials the store for a verb; a missing address is a usage refusal.
-func open(ctx context.Context, addr string) (*store.Store, error) {
+// open dials the store for a verb through redisconn, the one way a nova
+// tool opens Redis (#4492): the dial and the handshake (HELLO 3, with the
+// login) are done, or refused in one line, before the verb's first command,
+// which is still its first round trip. The client's first hook puts the
+// function library on a store that holds none (withLibrary, library.go).
+// A missing address is a usage refusal.
+func open(ctx context.Context, addr string, getenv func(string) string) (*redisconn.Conn, error) {
 	if strings.TrimSpace(addr) == "" {
 		return nil, fmt.Errorf("--redis <addr> is required (or NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR, or a seat)")
 	}
-	return store.Open(ctx, addr)
+	o, getenv, err := login(addr, seatcred.Process(), getenv)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := redisconn.Open(ctx, o, getenv)
+	if err != nil {
+		if text := seatWords(seatcred.Process(), err.Error()); text != err.Error() {
+			err = &reworded{text, err}
+		}
+		return nil, err
+	}
+	withLibrary(conn.Client())
+	return conn, nil
 }
 
-// quietRedis keeps go-redis's own pool log off the line: the verb's one
-// refusal is its redis line, never five library lines ahead of it
-// (nova-sprint doctor's rule); SetLogger writes a package variable, so once
-// per process.
-type quietRedis struct{}
+// login is who nova-table dials as, the login nova-sprint's store dialed as
+// (internal/nsprint/store authFromEnv), in redisconn's terms. A seat (--seat,
+// NOVA_SEAT) logs in as its user, with the password the seat's file holds
+// under its key: the key is named as the password's variable, and the getenv
+// handed to redisconn answers it from memory, so the password never enters
+// this process's environment. With no seat, NOVA_SPRINT_REDIS_USER names the
+// user and NOVA_SPRINT_REDIS_PASSWORD_ENV the variable that holds its
+// password, NOVA_REDIS_BENCH_PASSWORD when it names none (redisauth.Auth's
+// default, named here because redisconn reads no default of its own); no
+// user is the default user with no password, whatever
+// NOVA_SPRINT_REDIS_PASSWORD_ENV holds, as it was.
+func login(addr string, sel *seatcred.Selection, getenv func(string) string) (redisconn.Options, func(string) string, error) {
+	o := redisconn.Options{Addr: addr}
+	c, ok, err := sel.Active()
+	if ok {
+		if err != nil {
+			return o, nil, err
+		}
+		var password string
+		_ = c.Password.Use(func(pw string) error { password = pw; return nil })
+		o.User, o.PasswordEnv = c.User, c.Key
+		return o, func(k string) string {
+			if k == c.Key {
+				return password
+			}
+			return getenv(k)
+		}, nil
+	}
+	o.Env = redisconn.Env{User: redisauth.UserEnv}
+	if getenv(redisauth.UserEnv) != "" {
+		o.Env.PasswordEnv = redisauth.PasswordEnvEnv
+		if getenv(redisauth.PasswordEnvEnv) == "" {
+			o.PasswordEnv = redisauth.DefaultPasswordEnv
+		}
+	}
+	return o, getenv, nil
+}
 
-func (quietRedis) Printf(context.Context, string, ...interface{}) {}
-
-var quietRedisOnce sync.Once
-
-// client is open's client for a verb, or its refusal.
+// client is open's connection for a verb, or its refusal.
 func (app *application) client(ctx context.Context, verb, addr string, stderr io.Writer) (*connection, *redis.Client, int) {
-	quietRedisOnce.Do(func() { redis.SetLogger(quietRedis{}) })
 	if app.shared != nil {
 		if addr != app.addr {
 			return nil, nil, refuse(stderr, verb, "the shell connection is fixed; choose --redis when entering nova-table shell")
@@ -283,11 +334,11 @@ func (app *application) client(ctx context.Context, verb, addr string, stderr io
 		}
 		return app.shared, app.shared.Client(), 0
 	}
-	st, err := open(ctx, addr)
+	conn, err := open(ctx, addr, app.env())
 	if err != nil {
 		return nil, nil, refuse(stderr, verb, err.Error())
 	}
-	return &connection{Store: st}, st.Client(), 0
+	return &connection{Conn: conn}, conn.Client(), 0
 }
 
 // field is a value of a key=value field: quoted when it holds a space, a
@@ -299,12 +350,52 @@ func field(s string) string {
 	return oneline.Escape(s)
 }
 
-// storeRefusal maps a library error to the exit code the line carries: a
-// store that could not be reached is 2, the store's own no is 1.
-func storeRefusal(stderr io.Writer, verb string, err error) int {
-	msg := err.Error()
-	if store.Unreachable(err) {
-		return refuse(stderr, verb, msg)
-	}
-	return refused(stderr, verb, msg)
+// lost reports an error that says the store could not be reached or would
+// not let this client in (redisconn.Classify: Unreachable or AuthRefused),
+// or a client already closed: the connection is not to be used again.
+func lost(err error) bool {
+	return err != nil && (redisconn.Classify(err) != redisconn.Other || errors.Is(err, redis.ErrClosed))
 }
+
+// refusal maps a verb's error to the exit code its line carries: a store
+// that could not be reached or refused the login is 2, the store's own no
+// is 1. A lost-store error is put in redisconn's words (what was tried,
+// what came back, the next step) only when the cause names no next step of
+// its own: a write whose reply was lost says `run: nova-table show <table>`,
+// because the write may have committed, and "start the store" over it
+// would invite the duplicate AtMostOnce exists to prevent. One remedy a
+// line.
+func (c *connection) refusal(stderr io.Writer, verb string, err error) int {
+	if lost(err) {
+		text := err.Error()
+		if c != nil && c.Conn != nil && !remedied(text) {
+			text = seatWords(seatcred.Process(), c.Explain(err).Error())
+		}
+		return refuse(stderr, verb, text)
+	}
+	return refused(stderr, verb, err.Error())
+}
+
+// seatWords says a seat's password as the seat's: redisconn names the
+// password by the variable it read, and a seat's is the key of the seat's
+// file, answered from memory, not a variable of the environment.
+func seatWords(sel *seatcred.Selection, text string) string {
+	c, ok, err := sel.Active()
+	if !ok || err != nil || c.Key == "" {
+		return text
+	}
+	return strings.NewReplacer(
+		"(password from "+c.Key+")", "(password from seat "+c.Seat+", key "+c.Key+" of its file)",
+		"check that "+c.Key+" holds", "check that seat "+c.Seat+"'s file holds under "+c.Key,
+	).Replace(text)
+}
+
+// reworded is an error in other words, whose class is still its cause's
+// (errors.As and redisconn.Classify see through Unwrap).
+type reworded struct {
+	text string
+	err  error
+}
+
+func (r *reworded) Error() string { return r.text }
+func (r *reworded) Unwrap() error { return r.err }

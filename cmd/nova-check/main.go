@@ -19,6 +19,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/check"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -72,10 +73,11 @@ usage:
                                                      declares: who has run it, when, and
                                                      whether it did what they needed
   nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok)
-                            --notes <text> [--issue <n>] --receipts <dir>
+                            --notes <text> [--issue <n>] [--closes <id>] --receipts <dir>
+                            [--tools-timeout <s>] [--fail-max <n>]
                                                      append one receipt: I ran this verb,
                                                      on real work, and here is how it went
-  nova-check dogfood gate --cli <file> --receipts <dir> [--require-all] [--allow-empty]
+  nova-check dogfood gate --cli <file> --receipts <dir> [--shipped <cmd dir>] [--require-all] [--allow-empty]
                                                      exit 1 with the verbs no non-author has
                                                      run and the edges nobody has cleared;
                                                      the line the release lane calls
@@ -202,7 +204,10 @@ func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
-func run(args []string, stdout, stderr io.Writer) int {
+func run(args []string, stdout, stderr io.Writer) (code int) {
+	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
+	// before anything is read or written (the CLI style's rule (b), #4505).
+	defer verbflag.Recover(stdout, "nova-check", usage, &code)
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb given; quickstart is the first run")
 	}
@@ -230,6 +235,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "version", "--version":
 		return cmdVersion(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
+		if args[0] == "help" && len(args) > 1 && args[1] != "help" && !verbflag.IsHelp(args[1]) {
+			return run(append(args[1:], "--help"), stdout, stderr)
+		}
 		fmt.Fprint(stdout, usage)
 		return 0
 	default:
@@ -243,8 +251,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 // Package flag is given no stream: its error text quotes the argument it
 // could not parse, raw, and its usage dump follows -- so an argument holding
 // a newline authored a whole line of stderr before any code in this file ran.
-// The refusal is printed here instead, escaped, and -h after a verb is refused
-// at exit 2 like any other unusable invocation.
+// The refusal is printed here instead, escaped. -h after a verb is not refused:
+// verbflag.Parse raises that verb's help, which run prints on stdout at exit 0.
 func parse(fs *flag.FlagSet, args []string, stderr io.Writer, required map[string]*string) bool {
 	if !parseFlags(fs, args, stderr) {
 		return false
@@ -258,7 +266,7 @@ func parse(fs *flag.FlagSet, args []string, stderr io.Writer, required map[strin
 func parseFlags(fs *flag.FlagSet, args []string, stderr io.Writer) bool {
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
-	if err := fs.Parse(args); err != nil {
+	if err := verbflag.Parse(fs, args); err != nil {
 		refuse(stderr, " "+fs.Name(), oneline.Cap(err.Error(), oneline.TailBytes))
 		return false
 	}
@@ -547,7 +555,7 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 
 	fs.SetOutput(io.Discard) // see parse: the flag package is not allowed to print
 	fs.Usage = func() {}
-	if err := fs.Parse(args); err != nil {
+	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, " nocode", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {

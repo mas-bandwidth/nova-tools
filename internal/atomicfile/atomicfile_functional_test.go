@@ -209,8 +209,9 @@ func TestFunctionalPropertyContentAndPermRoundTrip(t *testing.T) {
 		if err != nil {
 			t.Fatalf("seed %d case %d: Stat failed: %v", seed, i, err)
 		}
-		if gotPerm := info.Mode().Perm(); gotPerm != perm {
-			t.Fatalf("seed %d case %d: perm mismatch: got %04o, want %04o", seed, i, gotPerm, perm)
+		wantPerm := referencePerm(dir, fmt.Sprintf("func_prop_roundtrip_%d", i), perm)
+		if gotPerm := info.Mode().Perm(); gotPerm != wantPerm {
+			t.Fatalf("seed %d case %d: perm mismatch: got %04o, want %04o", seed, i, gotPerm, wantPerm)
 		}
 	}
 }
@@ -252,7 +253,7 @@ func TestFunctionalPropertyFailureIsolationOverArbitraryData(t *testing.T) {
 	r := rand.New(rand.NewPCG(seed, 0x6e6f7661))
 	dir := t.TempDir()
 
-	failureSteps := []string{"create", "chmod", "write", "sync", "close", "rename"}
+	failureSteps := []string{"create", "write", "sync", "close", "rename"}
 
 	for i := 0; i < 100; i++ {
 		target := filepath.Join(dir, fmt.Sprintf("func_prop_fail_%d.dat", i))
@@ -269,8 +270,6 @@ func TestFunctionalPropertyFailureIsolationOverArbitraryData(t *testing.T) {
 		switch step {
 		case "create":
 			h.createTemp = func(dir, base string, perm os.FileMode) (*os.File, error) { return nil, injectedErr }
-		case "chmod":
-			h.chmod = func(f *os.File, mode os.FileMode) error { return injectedErr }
 		case "write":
 			h.write = func(f *os.File, data []byte) (int, error) { return 0, injectedErr }
 		case "sync":

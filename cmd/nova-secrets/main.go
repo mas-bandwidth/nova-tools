@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/secrets"
 )
@@ -208,18 +209,31 @@ func refusedWidthHandWrite(cmdArgs []string) error {
 	if !writes || name == "" {
 		return nil
 	}
-	return fmt.Errorf("redis-cli writing friend:%s:width is the sprint table's working column written by hand through nova-secrets exec; that count is the friend row's (friend:%s working), written only by the friend row loop (rowan-tools friend-row) from the friend's leased tasks, never a redis-cli line; take work through the queue: nova-sprint task take --as %s (nova-tools #3447)", name, name, name)
+	return fmt.Errorf("redis-cli writing friend:%s:width by hand through nova-secrets exec is refused; that count is the friend row's (friend:%s working), written only by the friend row loop (rowan-tools friend-row) from the friend's leased tasks, never a redis-cli line (nova-tools #3447)", name, name)
 }
 
 func main() {
-	if len(os.Args) < 2 {
+	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0, before
+	// any store, key or helper program is opened (the CLI style's rule (b), #4505). Every
+	// other path through secretsMain exits on its own; one that returns exits 0, as
+	// main did before.
+	code := 0
+	func() {
+		defer verbflag.Recover(os.Stdout, "nova-secrets", usage, &code)
+		secretsMain(os.Args)
+	}()
+	os.Exit(code)
+}
+
+func secretsMain(osArgs []string) {
+	if len(osArgs) < 2 {
 		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: no arguments is not an invocation; run: nova-secrets help\n")
 		os.Exit(2)
 	}
 
-	verb := os.Args[1]
+	verb := osArgs[1]
 	if verb == "version" || verb == "--version" {
-		os.Exit(cmdVersion(os.Args[2:], os.Stdout, os.Stderr))
+		os.Exit(cmdVersion(osArgs[2:], os.Stdout, os.Stderr))
 	}
 
 	// Check refusal table first
@@ -230,35 +244,39 @@ func main() {
 
 	switch verb {
 	case "help", "--help", "-h":
+		if verb == "help" && len(osArgs) > 2 && osArgs[2] != "help" && !verbflag.IsHelp(osArgs[2]) {
+			secretsMain(append(append([]string{osArgs[0]}, osArgs[2:]...), "--help"))
+			return
+		}
 		fmt.Print(usage)
 		os.Exit(0)
 
 	case "exec":
-		runExecCLI(os.Args[2:])
+		runExecCLI(osArgs[2:])
 
 	case "names":
-		runNamesCLI(os.Args[2:])
+		runNamesCLI(osArgs[2:])
 
 	case "check":
-		runCheckCLI(os.Args[2:])
+		runCheckCLI(osArgs[2:])
 
 	case "gate":
-		runGateCLI(os.Args[2:])
+		runGateCLI(osArgs[2:])
 
 	case "keygen":
-		runKeygenCLI(os.Args[2:])
+		runKeygenCLI(osArgs[2:])
 
 	case "place":
-		runPlaceCLI(os.Args[2:])
+		runPlaceCLI(osArgs[2:])
 
 	case "placed":
-		runPlacedCLI(os.Args[2:])
+		runPlacedCLI(osArgs[2:])
 
 	case "seal":
-		runSealCLI(os.Args[2:])
+		runSealCLI(osArgs[2:])
 
 	case "seat":
-		runSeatCLI(os.Args[2:])
+		runSeatCLI(osArgs[2:])
 
 	default:
 		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unknown verb %q; run: nova-secrets help\n", oneline.Field(verb))
@@ -269,6 +287,7 @@ func main() {
 // cmdVersion answers from the running binary alone. It deliberately opens no store, key,
 // or helper program, so an inventory can ask this before any credentials exist on a bench.
 func cmdVersion(args []string, stdout, stderr io.Writer) int {
+	verbflag.HelpIfAsked(args, "version")
 	if len(args) != 0 {
 		fmt.Fprintf(stderr, "nova-secrets version: takes no flags and no arguments, got %d\n", len(args))
 		return 2
@@ -282,6 +301,8 @@ func runExecCLI(args []string) {
 		fmt.Print(execUsage)
 		os.Exit(0)
 	}
+	// -h later among the flags, before the --, is the same question.
+	verbflag.HelpIfAsked(args, "exec")
 
 	// Find '--' delimiter
 	delimiterIdx := -1
@@ -324,7 +345,7 @@ func runExecCLI(args []string) {
 	var requireFlags stringSlice
 	fs.Var(&requireFlags, "require", "required key")
 
-	if err := fs.Parse(flagArgs); err != nil {
+	if err := verbflag.Parse(fs, flagArgs); err != nil {
 		fmt.Fprintf(os.Stderr, "SECRETS EXEC FAIL flags: %s\n", oneline.Err(err))
 		os.Exit(125)
 	}
@@ -369,7 +390,7 @@ func runNamesCLI(args []string) {
 	asFlag := fs.String("as", "", "seat name")
 	maxFlag := fs.Int("max", 20, "max items")
 
-	if err := fs.Parse(args); err != nil {
+	if err := verbflag.Parse(fs, args); err != nil {
 		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
 		os.Exit(2)
 	}
@@ -410,7 +431,7 @@ func runCheckCLI(args []string) {
 	sopsFlag := fs.String("sops", "", "sops path")
 	maxFlag := fs.Int("max", 20, "max items")
 
-	if err := fs.Parse(args); err != nil {
+	if err := verbflag.Parse(fs, args); err != nil {
 		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
 		os.Exit(2)
 	}
@@ -451,7 +472,15 @@ func runGateCLI(args []string) {
 	headFlag := fs.String("head", "", "head git ref")
 	machinesFlag := fs.String("machines", "", "fleet machines registry; its seat column vouches for a new recipient")
 
-	if err := fs.Parse(args); err != nil {
+	// Every gate flag takes one value. Package flag keeps the LAST of a repeated flag, so
+	// `--head <ref> --head <other>` judged a diff the caller did not name first. A flag
+	// named twice is refused before any ref is read.
+	repeated := ""
+	if err := parseOnce(fs, args, &repeated); err != nil {
+		if repeated != "" {
+			fmt.Fprintf(os.Stderr, "SECRETS REFUSED: --%s is given more than once; every gate flag takes one value\n", oneline.Field(repeated))
+			os.Exit(2)
+		}
 		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
 		os.Exit(2)
 	}
@@ -475,6 +504,38 @@ func runGateCLI(args []string) {
 	os.Exit(code)
 }
 
+// parseOnce is verbflag.Parse with every flag of fs taking one value. Each value is
+// wrapped in a onceValue for the parse and unwrapped when it returns, on every path --
+// the -h path included, which unwinds as verbflag's Help panic to the dispatcher's
+// Recover: the help it prints then reads the flags' own types, not the wrapper's.
+func parseOnce(fs *flag.FlagSet, args []string, repeated *string) error {
+	orig := map[string]flag.Value{}
+	fs.VisitAll(func(f *flag.Flag) {
+		orig[f.Name] = f.Value
+		f.Value = &onceValue{Value: f.Value, name: f.Name, repeated: repeated}
+	})
+	defer fs.VisitAll(func(f *flag.Flag) { f.Value = orig[f.Name] })
+	return verbflag.Parse(fs, args)
+}
+
+// onceValue is a flag's value that refuses a second Set and names the flag in *repeated,
+// so the refusal is this tool's own line rather than package flag's.
+type onceValue struct {
+	flag.Value
+	name     string
+	set      bool
+	repeated *string
+}
+
+func (o *onceValue) Set(v string) error {
+	if o.set {
+		*o.repeated = o.name
+		return fmt.Errorf("--%s is given more than once", o.name)
+	}
+	o.set = true
+	return o.Value.Set(v)
+}
+
 func runKeygenCLI(args []string) {
 	fs := flag.NewFlagSet("keygen", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -484,7 +545,7 @@ func runKeygenCLI(args []string) {
 	ageKeygenFlag := fs.String("age-keygen", "", "age-keygen path")
 	storeFlag := fs.String("store", "", "store dir")
 
-	if err := fs.Parse(args); err != nil {
+	if err := verbflag.Parse(fs, args); err != nil {
 		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
 		os.Exit(2)
 	}
@@ -532,10 +593,6 @@ func runSeatCLI(args []string) {
 }
 
 func runSeatInjectCLI(args []string) {
-	if len(args) > 0 && isHelpArg(args[0]) {
-		fmt.Print(usage)
-		os.Exit(0)
-	}
 
 	fs := flag.NewFlagSet("seat inject", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -550,7 +607,10 @@ func runSeatInjectCLI(args []string) {
 	gitFlag := fs.String("git", "git", "git path")
 	noPRFlag := fs.Bool("no-pr", false, "stop after commit; return the store to its starting branch")
 
-	if err := fs.Parse(args); err != nil {
+	if len(args) > 0 && args[0] == "help" {
+		panic(verbflag.Help{FS: fs})
+	}
+	if err := verbflag.Parse(fs, args); err != nil {
 		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
 		os.Exit(2)
 	}
@@ -580,10 +640,6 @@ func runSeatInjectCLI(args []string) {
 }
 
 func runSeatAddCLI(args []string) {
-	if len(args) > 0 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
-		fmt.Print(usage)
-		os.Exit(0)
-	}
 
 	fs := flag.NewFlagSet("seat add", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -596,7 +652,10 @@ func runSeatAddCLI(args []string) {
 	keyFlag := fs.String("key", "", "this machine's key path")
 	sopsFlag := fs.String("sops", "", "sops path")
 
-	if err := fs.Parse(args); err != nil {
+	if len(args) > 0 && args[0] == "help" {
+		panic(verbflag.Help{FS: fs})
+	}
+	if err := verbflag.Parse(fs, args); err != nil {
 		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
 		os.Exit(2)
 	}
@@ -640,7 +699,7 @@ func runPlaceCLI(args []string) {
 	receiptsFlag := fs.String("receipts", "", "receipts dir")
 	sshFlag := fs.String("ssh", "ssh", "ssh executable")
 
-	if err := fs.Parse(args); err != nil {
+	if err := verbflag.Parse(fs, args); err != nil {
 		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
 		os.Exit(2)
 	}
@@ -676,7 +735,7 @@ func runPlacedCLI(args []string) {
 	machineFlag := fs.String("machine", "", "fleet machine name")
 	receiptsFlag := fs.String("receipts", "", "receipts dir")
 
-	if err := fs.Parse(args); err != nil {
+	if err := verbflag.Parse(fs, args); err != nil {
 		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
 		os.Exit(2)
 	}
@@ -714,7 +773,7 @@ func runSealCLI(args []string) {
 	stdinFlag := fs.Bool("stdin", false, "read value from stdin")
 	noPRFlag := fs.Bool("no-pr", false, "stop after commit; return the store to its starting branch")
 
-	if err := fs.Parse(args); err != nil {
+	if err := verbflag.Parse(fs, args); err != nil {
 		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
 		os.Exit(2)
 	}

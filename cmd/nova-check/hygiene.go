@@ -2,7 +2,7 @@ package main
 
 // `nova-check hygiene` is the hand's door to the same function the gate runs.
 //
-// SPEC-TOOLWORK.md §3 rule 7 (PR #1637), issue #1647: one implementation and three
+// SPEC-TOOLWORK.md hygiene rule 1 (PR #1637), issue #1647: one implementation and three
 // callers -- `nova-pulse accept` at harvest, `nova-merge batch` on every member, and
 // this, for a person who wants to know before they ask a friend for a read. One
 // implementation, so the lane and the harvest cannot disagree about what clean means.
@@ -23,6 +23,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -37,7 +38,7 @@ func cmdHygiene(args []string, stdout, stderr io.Writer) int {
 	kind := fs.String("kind", "", "")
 	maxFlag := fs.Int("max", bounded.Default, "")
 	timeout := fs.Int("timeout", 120, "")
-	if fs.Parse(args) != nil || fs.NArg() != 0 {
+	if verbflag.Parse(fs, args) != nil || fs.NArg() != 0 {
 		return refuse(stderr, " hygiene", "bad flags")
 	}
 	if *repo == "" || *base == "" || *head == "" {
@@ -85,8 +86,8 @@ func cmdHygiene(args []string, stdout, stderr io.Writer) int {
 	}
 
 	// A kind is a shape of work the TOOL declares and a card cannot widen
-	// (SPEC-TOOLWORK §5 rule 6); §5 rule 3: "A kind the table does not hold is refused
-	// by `cut` and abstained by `accept`; there is no default kind."
+	// (SPEC-TOOLWORK.md hygiene rule 6): a kind the tool does not declare is refused,
+	// and there is no default kind.
 	//
 	// Here it was neither. `--kind` went straight through to hygiene.Check, where it
 	// unlocks an allowlisted stray exception and nothing else, so an undeclared kind

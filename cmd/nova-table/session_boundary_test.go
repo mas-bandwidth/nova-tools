@@ -37,7 +37,7 @@ func TestShellConnectionFailureIsUsage(t *testing.T) {
 	t.Parallel()
 	err := fmt.Errorf("table call: %w", &net.OpError{Op: "dial", Net: "unix", Err: os.ErrNotExist})
 	var out bytes.Buffer
-	if code := storeRefusal(&out, "list", err); code != 2 {
+	if code := (&connection{}).refusal(&out, "list", err); code != 2 {
 		t.Fatalf("missing socket: code=%d %s", code, &out)
 	}
 }

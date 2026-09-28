@@ -30,8 +30,8 @@ type Applier interface {
 	// *RefusedError.
 	Write(ctx context.Context, kind string, row Row, prev View, actor, idem string) error
 	// Remove removes one row's keys. A row the runtime still holds (a
-	// friend with working copies, a machine with consumers) is a
-	// *RefusedError naming them, and nothing is written.
+	// machine with consumers) is a *RefusedError naming them, and
+	// nothing is written.
 	Remove(ctx context.Context, kind, name, actor, idem string) error
 	// Stamp records rev as the kind's applied revision, compare-and-set
 	// against prev: a store whose stamp moved past prev is ErrConflict.

@@ -50,12 +50,16 @@ func TestRefusingToGuess(t *testing.T) {
 	}
 }
 
-// -h on a verb is an unusable invocation, not a success. A caller gating on exit 0 must
-// never see one from a flag it mistyped.
-func TestVerbHelpIsRefusedNotAnswered(t *testing.T) {
+// -h on a verb is help (the CLI style's rule (b), #4505): that verb's usage on stdout at exit
+// 0, and the bus is not checked. It used to be refused at exit 2, which an AI caller read
+// as a syntax error rather than as the answer it asked for.
+func TestVerbHelpIsAnsweredOnStdout(t *testing.T) {
 	t.Parallel()
 	checkout, _ := busDir(t)
-	invoke(t, "", "check", "--bus", checkout, "--full", "-h").mustCode(t, 2)
+	r := invoke(t, "", "check", "--bus", checkout, "--full", "-h").mustCode(t, 0).mustContain(t, "stdout", "usage: nova-bus check")
+	if r.stderr != "" {
+		t.Errorf("help wrote to stderr: %q", r.stderr)
+	}
 }
 
 func TestSendLandsANoteAndCheckPasses(t *testing.T) {

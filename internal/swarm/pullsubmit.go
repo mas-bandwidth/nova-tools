@@ -1,6 +1,6 @@
 package swarm
 
-// The per-bench puller of docs/SPEC-FLEET-KUBE.md Part 2 (`nova-swarm pull --submit`, one
+// The per-bench puller of deprecated/docs/SPEC-FLEET-KUBE.md Part 2 (`nova-swarm pull --submit`, one
 // replica): it lists queue/lanes/ in lane order, takes one card by rename(<name>.card,
 // taken/<worker>-<name>.card) -- two pullers cannot take one card because the rename
 // decides -- and creates its Job. The Job's requests are the capacity line's two memory

@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
 )
@@ -25,7 +26,7 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 	session := fs.String("claude-session", "", "")
 	out := fs.String("out", "", "")
 	day := fs.String("day", "", "")
-	if err := fs.Parse(args); err != nil {
+	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, " session", err.Error())
 	}
 	if n := fs.NArg(); n > 0 {

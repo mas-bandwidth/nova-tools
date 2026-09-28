@@ -15,7 +15,6 @@ func TestARefusalIsOneLineAndNamesTheDoor(t *testing.T) {
 		nil,
 		{"wibble"},
 		{"inbox", "--azz", "Ada"},
-		{"check", "-h"},
 	} {
 		r := invoke(t, "", args...)
 		if r.code != 2 {

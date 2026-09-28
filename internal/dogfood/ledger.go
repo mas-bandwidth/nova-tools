@@ -283,7 +283,21 @@ func Stranded(verbs []Verb, receipts []Receipt) []Strand {
 // nothing is close enough to be worth suggesting. A verb of the same tool wins
 // over a nearer one of another tool: a remedy that sent a reader to a different
 // binary would be further from the truth than saying nothing.
+//
+// A verb spelled as a NAME FOR THE BARE FORM -- `(default)`, `bare`, `none`,
+// `(no verb)` -- is answered with the bare form itself, written the way
+// `--verb` takes it: `<tool> --verb -`. Edit distance would send it to
+// whichever short verb happens to be nearest (`(default)` read as
+// `nova-sandbox reap`), and a reader who meant the verbless run would learn
+// nothing about how that run is spelled.
 func Nearest(verbs []Verb, tool, verb string) string {
+	if namesTheBareForm(verb) {
+		for _, v := range verbs {
+			if v.Tool == tool && v.Verb == "" {
+				return tool + " --verb " + BareVerb
+			}
+		}
+	}
 	want := NormalizeKey(tool, verb)
 	// A verb that is written down INSIDE a declared one is not a near miss, it
 	// is the sub-verb somebody dropped a word from: `--verb ledger` for
@@ -321,6 +335,21 @@ func Nearest(verbs []Verb, tool, verb string) string {
 		return ""
 	}
 	return best
+}
+
+// bareNames are the words people write for a tool's verbless run.
+var bareNames = map[string]bool{
+	"default": true, "bare": true, "bare form": true, "none": true, "no verb": true,
+	"no-verb": true, "noverb": true, "verbless": true, "empty": true, "root": true,
+}
+
+// namesTheBareForm reports whether a --verb value is a name for the bare form
+// rather than a verb: one of bareNames, in any case, with or without the
+// brackets people put around a placeholder.
+func namesTheBareForm(verb string) bool {
+	v := strings.ToLower(strings.Join(strings.Fields(verb), " "))
+	v = strings.TrimSpace(strings.Trim(v, "()[]<>{}"))
+	return bareNames[v]
 }
 
 // containsWords reports whether want appears in have as a run of whole words.
@@ -416,10 +445,22 @@ func Gate(verbs []Verb, receipts []Receipt, authors Authors, requireAll bool) ([
 		}
 	}
 
+	// A stranded finding is answered the way any finding is: by a receipt that
+	// names it. The answer is recorded against the verb as the list spells it
+	// (`record` refuses any other spelling), so the ids are gathered from every
+	// receipt, not from one verb's.
+	answered := map[string]bool{}
+	for _, r := range receipts {
+		if id := strings.TrimSpace(r.Closes); id != "" {
+			answered[id] = true
+		}
+	}
+
 	var findings []GateFinding
-	// What was thrown away is said first, and only a NOT-OK one is a failure.
+	// What was thrown away is said first, and only a NOT-OK one nobody has
+	// answered is a failure.
 	for _, s := range Stranded(verbs, receipts) {
-		if s.Receipt.OK {
+		if s.Receipt.OK || answered[s.Receipt.ID()] {
 			continue
 		}
 		where := s.File

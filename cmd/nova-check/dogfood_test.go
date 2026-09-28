@@ -339,6 +339,52 @@ func TestDogfoodGateSaysNoToAnOpenEdgeWithoutRequireAll(t *testing.T) {
 	}
 }
 
+// With --shipped the gate judges the tools under that cmd/ only: a parked
+// tool's not-ok receipt is set aside and counted, a shipped tool's edge still
+// says no.
+func TestDogfoodGateShippedJudgesOnlyTheToolsUnderCmd(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cli := writeCLI(t, dir)
+	cmd := filepath.Join(dir, "cmd", "nova-example")
+	if err := os.MkdirAll(cmd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cmd, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	receipts := filepath.Join(dir, "receipts")
+	writeReceipt(t, receipts, "a.json", map[string]any{
+		"tool": "nova-example", "verb": "links", "by": "Stella",
+		"at": "2026-09-18T09:00:00Z", "ok": true, "notes": "ran it on the corpus",
+	})
+	writeReceipt(t, receipts, "b.json", map[string]any{
+		"tool": "nova-parked", "verb": "fill", "by": "Stella",
+		"at": "2026-09-18T09:01:00Z", "ok": false, "notes": "parked under deprecated/",
+	})
+	shipped := filepath.Join(dir, "cmd")
+
+	if code, _, _ := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts); code != 1 {
+		t.Fatalf("without --shipped exit %d, want 1: the parked receipt is judged", code)
+	}
+	code, stdout, stderr := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts, "--shipped", shipped)
+	if code != 0 {
+		t.Fatalf("with --shipped exit %d, want 0\nstderr:%s", code, stderr)
+	}
+	if !strings.Contains(stderr, "DOGFOOD NOTE shipped=1 outside=1") || !strings.Contains(stdout, "DOGFOOD GATE OK") {
+		t.Fatalf("the scope is not said:\nstdout:%s\nstderr:%s", stdout, stderr)
+	}
+
+	writeReceipt(t, receipts, "c.json", map[string]any{
+		"tool": "nova-example", "verb": "corpus", "by": "Stella",
+		"at": "2026-09-18T09:02:00Z", "ok": false, "notes": "refused the corpus",
+	})
+	if code, _, _ := dogfoodRun(t, "dogfood", "gate", "--cli", cli, "--receipts", receipts, "--shipped", shipped); code != 1 {
+		t.Fatalf("exit %d, want 1: a shipped tool's open edge must still say no", code)
+	}
+}
+
 func TestDogfoodGateCapsItsFindingsAndSaysHowToSeeTheRest(t *testing.T) {
 	t.Parallel()
 

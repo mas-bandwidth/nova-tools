@@ -8,7 +8,7 @@ import (
 // A TEST: LINE NAMES NO GATE THAT RUNS IT (ideas #796).
 //
 // A v2 card names its reproducing test on `TEST: <package> <TestName>` and names the
-// gate that runs it on `RUN:` / the `## Run` region (docs/SPEC-CARD.md §5, §6). The
+// gate that runs it on `RUN:` / the `## Run` region (deprecated/docs/SPEC-CARD.md §5, §6). The
 // `test-named` token checks the SHAPE of the TEST: line; nothing checked that a card's
 // gate actually runs the package the TEST: line names. A card could carry
 // `TEST: ./internal/pulse TestX` beside `RUN: go test ./internal/swarm/` -- a shape the

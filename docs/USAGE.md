@@ -89,7 +89,7 @@ The release includes `SHA256SUMS`. Builds are provided for macOS and Linux on AR
 and AMD64, and Windows on AMD64. **Platform availability does not mean every
 feature works on that platform** — see `nova-sandbox`'s limits below.
 
-With **Go 1.26 or newer**, install only the tools you want, at version 1.0.0:
+With **Go 1.26.6 or newer**, install only the tools you want, at version 1.0.0:
 
 ```sh
 go install github.com/mas-bandwidth/nova-tools/cmd/nova-bus@v1.0.0

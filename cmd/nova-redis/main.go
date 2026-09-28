@@ -6,11 +6,19 @@
 // prefix with a required TTL, and `recall` reads it back and refuses a missing
 // or expired key. A write with no owner or no TTL is refused before the
 // instance is dialled, so an unbounded key never reaches Redis (rules 2 and
-// the spill/recall paragraph of the spec; nova-tools #2279).
+// the spill/recall paragraph of the spec; nova-tools #2279). The fn verbs
+// load and check the store's function library (fn.go, over internal/redisfn).
 //
 // Scratch is scratch: nothing spilled is a record, and recall is allowed to
-// miss. Auth comes from the environment (NOVA_REDIS_PASSWORD, which a bench
-// fills from nova-secrets at run time), never from an argument.
+// miss. The password comes from the environment (NOVA_REDIS_PASSWORD, or the
+// variable --password-env names, which a bench fills from nova-secrets at run
+// time), never from an argument.
+//
+// Every verb that dials a store (spill, recall, fn load, fn check) opens it
+// through internal/redisconn, the one way a nova tool opens its Redis
+// connection (connect): one dial, the handshake and the login bounded by
+// redisconn.OpenTimeout, no retry, and go-redis's own log kept off stderr. A
+// store that cannot be reached or a login it refuses exits 2.
 package main
 
 import (
@@ -22,20 +30,33 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/redis/go-redis/v9"
 )
 
 var version string
 
-// PasswordEnv names the variable auth is read from; never an argument.
+// PasswordEnv names the variable the password is read from when neither
+// --password-env nor PasswordEnvEnv names another; never an argument.
 const PasswordEnv = "NOVA_REDIS_PASSWORD"
+
+// PasswordEnvEnv names the variable that names the password's variable when
+// --password-env is not given, so a seat whose secret has its own name
+// (nova-secrets exec --only <NAME>) needs no copy of it.
+const PasswordEnvEnv = "NOVA_REDIS_PASSWORD_ENV"
+
+// UserEnv names the ACL user a verb logs in as when --user is not given.
+// With neither, the verb logs in as the store's default user.
+const UserEnv = "NOVA_REDIS_USER"
 
 // The hash fields a spilled key carries: the value, and the moment it lapses
 // by the spiller's clock, so recall can refuse an expired key even before the
@@ -49,17 +70,37 @@ const usage = `nova-redis — owns the local Redis instance and its scratch verb
 
 usage:
   nova-redis serve  --bind <addr>[,<addr>...] --port <port> --dir <store-dir>
-  nova-redis spill  --addr <host:port> --owner <owner> --name <name> --ttl <duration> --value <text>
-  nova-redis recall --addr <host:port> --owner <owner> --name <name>
+  nova-redis spill  --addr <host:port> [--user <name>] [--password-env <NAME>] --owner <owner> --name <name> --ttl <duration> --value <text>
+  nova-redis recall --addr <host:port> [--user <name>] [--password-env <NAME>] --owner <owner> --name <name>
+  nova-redis fn load  --addr <host:port> [--user <name>] [--password-env <NAME>]
+  nova-redis fn check --addr <host:port> [--user <name>] [--password-env <NAME>]
   nova-redis version
   nova-redis help
 
-The key is <owner>:<name>. Both verbs refuse a missing or empty --addr, or
-one without a host and a port (exit 2), before anything is dialled. spill
-refuses a missing owner or a missing, zero or negative TTL (exit 2) and
-writes nothing; an unbounded key is a bug.
+The key is <owner>:<name>. Every verb that dials a store (spill, recall, fn
+load, fn check) refuses a missing or empty --addr, or one without a host and
+a port (exit 2), before anything is dialled. spill refuses a missing owner or
+a missing, zero or negative TTL (exit 2) and writes nothing; an unbounded key
+is a bug.
 recall exits 1 on a missing or expired key: scratch is allowed to miss.
-Auth is read from NOVA_REDIS_PASSWORD, never from an argument.
+The password is read from the variable --password-env names (default
+NOVA_REDIS_PASSWORD_ENV, else NOVA_REDIS_PASSWORD), never from an argument.
+--user names the ACL user to log in as (default NOVA_REDIS_USER; with
+neither, the store's default user). A --password-env that is not a variable
+name (capital letters, digits and underscores), a user name with whitespace,
+and a user whose password variable is empty are refused (exit 2) before
+anything is dialled. A store that cannot be reached, or a login it refuses,
+is one FAIL line on stderr with the next step (exit 2). A spill whose reply
+is lost after the store took it is SPILL UNCONFIRMED (exit 1): the write may
+have committed, so read it back with recall before spilling again.
+fn load puts the nova_sprint function library this binary embeds on the store
+unless the store holds exactly its code (LOADED, UNCHANGED or REPLACED, with
+its digest). fn check changes nothing: OK (exit 0), STALE or MISSING (exit 1)
+with the store's digest and this binary's. A failure of either is one FAILED
+line on stderr with the remedy for its cause: exit 1 when the store answered
+with a refusal (NOPERM, a library it would not take), exit 2 when no answer
+came or the login was refused. fn load is for the one place that deploys: it
+replaces other code under the library's name.
 serve runs redis-server in the foreground, bound only to loopback and tailnet
 addresses (100.64.0.0/10, fd7a:115c:a1e0::/48); --bind has no default and a
 wildcard, public or LAN address is refused (exit 2). The password reaches
@@ -75,11 +116,11 @@ example:
   nova-redis recall --addr 127.0.0.1:6379 --owner rowan --name note
 `
 
-// deps are the seams run() reaches the world through: the instance, the
-// clock and the environment. main() passes the real ones; tests pass a fake
-// instance and a controlled clock.
+// deps are the seams run() reaches the world through: the clock and the
+// environment. main() passes the real ones; tests pass a controlled clock and
+// an environment of their own. The store is not a seam: spill and recall
+// open it through redisconn (connect) at the --addr they were given.
 type deps struct {
-	dial   func(addr, password string) redis.Cmdable
 	now    func() time.Time
 	getenv func(string) string
 
@@ -92,9 +133,6 @@ type deps struct {
 
 func realDeps() deps {
 	return deps{
-		dial: func(addr, password string) redis.Cmdable {
-			return redis.NewClient(&redis.Options{Addr: addr, Password: password})
-		},
 		now:      time.Now,
 		getenv:   os.Getenv,
 		environ:  os.Environ,
@@ -110,9 +148,12 @@ func refuse(stderr io.Writer, where, what string) int {
 	return 2
 }
 
-func run(args []string, stdout, stderr io.Writer, d deps) int {
+func run(args []string, stdout, stderr io.Writer, d deps) (code int) {
+	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
+	// before anything is dialed, launched or written (the CLI style's rule (b), #4505).
+	defer verbflag.Recover(stdout, "nova-redis", usage, &code)
 	if len(args) == 0 {
-		return refuse(stderr, "", "no verb given; serve runs the instance, spill writes scratch, recall reads it")
+		return refuse(stderr, "", "no verb given; serve runs the instance, spill writes scratch, recall reads it, fn loads or checks the function library")
 	}
 	switch args[0] {
 	case "spill":
@@ -121,13 +162,19 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 		return cmdRecall(args[1:], stdout, stderr, d)
 	case "serve":
 		return cmdServe(args[1:], stdout, stderr, d)
+	case "fn":
+		return cmdFn(args[1:], stdout, stderr, d)
 	case "version", "--version":
+		verbflag.HelpIfAsked(args[1:], "version")
 		if len(args) > 1 {
 			return refuse(stderr, " version", fmt.Sprintf("takes no arguments, got %d", len(args)-1))
 		}
 		fmt.Fprintln(stdout, buildinfo.Line("nova-redis", version))
 		return 0
 	case "help", "-h", "--help":
+		if args[0] == "help" && len(args) > 1 && args[1] != "help" && !verbflag.IsHelp(args[1]) {
+			return run(append(args[1:], "--help"), stdout, stderr, d)
+		}
 		fmt.Fprint(stdout, usage)
 		return 0
 	default:
@@ -140,7 +187,7 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 func parse(fs *flag.FlagSet, args []string, stderr io.Writer, required ...string) bool {
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
-	if err := fs.Parse(args); err != nil {
+	if err := verbflag.Parse(fs, args); err != nil {
 		refuse(stderr, " "+fs.Name(), err.Error())
 		return false
 	}
@@ -163,7 +210,7 @@ func parse(fs *flag.FlagSet, args []string, stderr io.Writer, required ...string
 
 func cmdSpill(args []string, stdout, stderr io.Writer, d deps) int {
 	fs := flag.NewFlagSet("spill", flag.ContinueOnError)
-	addr := fs.String("addr", "", "instance address")
+	store := loginFlags(fs)
 	owner := fs.String("owner", "", "owner prefix")
 	name := fs.String("name", "", "key name")
 	ttlText := fs.String("ttl", "", "time to live")
@@ -171,7 +218,7 @@ func cmdSpill(args []string, stdout, stderr io.Writer, d deps) int {
 	if !parse(fs, args, stderr, "addr", "owner", "name", "ttl", "value") {
 		return 2
 	}
-	if err := validAddr(*addr); err != nil {
+	if err := validAddr(*store.addr); err != nil {
 		return refuse(stderr, " spill", err.Error())
 	}
 	ttl, err := time.ParseDuration(*ttlText)
@@ -183,11 +230,26 @@ func cmdSpill(args []string, stdout, stderr io.Writer, d deps) int {
 	if err := validKey(*owner, *name, ttl); err != nil {
 		return refuse(stderr, " spill", err.Error())
 	}
-	s := &scratch{rdb: d.dial(*addr, d.getenv(PasswordEnv)), now: d.now}
-	key, err := s.spill(context.Background(), *owner, *name, *value, ttl)
+	if err := store.check(d); err != nil {
+		return refuse(stderr, " spill", err.Error())
+	}
+	ctx := context.Background()
+	conn, err := connect(ctx, store, d)
 	if err != nil {
-		fmt.Fprintf(stderr, "SPILL FAIL key=%s err=%s\n", oneline.Field(*owner+":"+*name), oneline.Err(err))
-		return 1
+		return failed(stderr, "SPILL", *owner+":"+*name, err, store, d)
+	}
+	defer func() { _ = conn.Close() }()
+	s := &scratch{rdb: conn.Client(), now: d.now}
+	key, err := s.spill(ctx, *owner, *name, *value, ttl)
+	if err != nil {
+		err = conn.Explain(err)
+		if redisconn.Classify(err) == redisconn.Unreachable {
+			// Open succeeded, so the transaction was handed to a store that was
+			// up: a connection that dropped or a reply that never came after
+			// that is not "could not run". The EXEC may have committed.
+			return unconfirmed(stderr, conn, store, *owner, *name, err)
+		}
+		return failed(stderr, "SPILL", *owner+":"+*name, err, store, d)
 	}
 	expires := d.now().Add(ttl).UTC().Format(time.RFC3339)
 	fmt.Fprintf(stdout, "SPILL OK key=%s ttl=%s expires=%s bytes=%d\n", oneline.Field(key), ttl, expires, len(*value))
@@ -196,21 +258,30 @@ func cmdSpill(args []string, stdout, stderr io.Writer, d deps) int {
 
 func cmdRecall(args []string, stdout, stderr io.Writer, d deps) int {
 	fs := flag.NewFlagSet("recall", flag.ContinueOnError)
-	addr := fs.String("addr", "", "instance address")
+	store := loginFlags(fs)
 	owner := fs.String("owner", "", "owner prefix")
 	name := fs.String("name", "", "key name")
 	if !parse(fs, args, stderr, "addr", "owner", "name") {
 		return 2
 	}
-	if err := validAddr(*addr); err != nil {
+	if err := validAddr(*store.addr); err != nil {
 		return refuse(stderr, " recall", err.Error())
 	}
 	if err := validKey(*owner, *name, time.Hour); err != nil {
 		return refuse(stderr, " recall", err.Error())
 	}
-	s := &scratch{rdb: d.dial(*addr, d.getenv(PasswordEnv)), now: d.now}
+	if err := store.check(d); err != nil {
+		return refuse(stderr, " recall", err.Error())
+	}
 	key := *owner + ":" + *name
-	v, err := s.recall(context.Background(), *owner, *name)
+	ctx := context.Background()
+	conn, err := connect(ctx, store, d)
+	if err != nil {
+		return failed(stderr, "RECALL", key, err, store, d)
+	}
+	defer func() { _ = conn.Close() }()
+	s := &scratch{rdb: conn.Client(), now: d.now}
+	v, err := s.recall(ctx, *owner, *name)
 	switch {
 	case errors.Is(err, errMissing):
 		fmt.Fprintf(stdout, "RECALL MISSING key=%s\n", oneline.Field(key))
@@ -222,8 +293,10 @@ func cmdRecall(args []string, stdout, stderr io.Writer, d deps) int {
 		fmt.Fprintf(stdout, "RECALL UNBOUNDED key=%s remedy=%q\n", oneline.Field(key), "an unbounded key is a bug; it was not written by nova-redis spill")
 		return 1
 	case err != nil:
-		fmt.Fprintf(stderr, "RECALL FAIL key=%s err=%s\n", oneline.Field(key), oneline.Err(err))
-		return 1
+		// A read has no side effect, so a reply that never came leaves the
+		// store as it was: unreachable exits 2 here, honestly, where spill's
+		// lost reply exits 1 (unconfirmed).
+		return failed(stderr, "RECALL", key, conn.Explain(err), store, d)
 	}
 	fmt.Fprintf(stdout, "RECALL OK key=%s bytes=%d value=%s\n", oneline.Field(key), len(v), oneline.Field(v))
 	return 0
@@ -237,6 +310,109 @@ var (
 	errExpired   = errors.New("expired")
 	errUnbounded = errors.New("unbounded")
 )
+
+// login is the store a verb dials: --addr, --user with UserEnv as its
+// default, and --password-env naming the variable that holds the password
+// (PasswordEnvEnv, else PasswordEnv). The password is never an argument.
+// Every verb that dials a store takes these flags and opens the store through
+// connect. The environment is read by check, after every refusal a verb makes
+// of its own flags, so a refused invocation reads no login.
+type login struct {
+	fs                      *flag.FlagSet
+	addr, user, passwordEnv *string
+}
+
+func loginFlags(fs *flag.FlagSet) login {
+	return login{
+		fs:          fs,
+		addr:        fs.String("addr", "", "store address"),
+		user:        fs.String("user", "", "ACL user (default "+UserEnv+")"),
+		passwordEnv: fs.String("password-env", "", "the variable that holds the password (default "+PasswordEnvEnv+", else "+PasswordEnv+")"),
+	}
+}
+
+// given reports whether the flag was on the line, even empty.
+func (l login) given(flagName string) bool {
+	given := false
+	l.fs.Visit(func(f *flag.Flag) { given = given || f.Name == flagName })
+	return given
+}
+
+// from names where a flag's value came from: the flag, or the variable that
+// is its default.
+func (l login) from(flagName, env string) string {
+	if l.given(flagName) {
+		return "--" + flagName
+	}
+	return env
+}
+
+// envName is the shape of a variable's name as redisconn takes it: capital
+// letters, digits and underscores, not starting with a digit.
+var envName = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
+
+// check fills in the login flags that were not given from the environment
+// (--user from UserEnv; --password-env from PasswordEnvEnv, else
+// PasswordEnv) and refuses, before anything is dialled, a login the verb
+// could not make. Each refusal names where the bad value came from. It is
+// the first read of the environment a verb makes.
+func (l login) check(d deps) error {
+	if err := validAddr(*l.addr); err != nil {
+		return err
+	}
+	if !l.given("user") {
+		*l.user = d.getenv(UserEnv)
+	}
+	if !l.given("password-env") {
+		*l.passwordEnv = d.getenv(PasswordEnvEnv)
+		if *l.passwordEnv == "" {
+			*l.passwordEnv = PasswordEnv
+		}
+	}
+	if !envName.MatchString(*l.passwordEnv) {
+		return fmt.Errorf("%s %q is not a variable name; name the variable that holds the password (default %s)", l.from("password-env", PasswordEnvEnv), *l.passwordEnv, PasswordEnv)
+	}
+	switch {
+	case *l.user == "":
+		return nil
+	case strings.ContainsAny(*l.user, " \t\r\n"):
+		return fmt.Errorf("%s %q holds whitespace; give the ACL user's name", l.from("user", UserEnv), *l.user)
+	case d.getenv(*l.passwordEnv) == "":
+		return fmt.Errorf("user %s (from %s) but %s is empty; run under nova-secrets exec --only %s, refusing to log in without a password", *l.user, l.from("user", UserEnv), *l.passwordEnv, *l.passwordEnv)
+	}
+	return nil
+}
+
+// options is the login check accepted in redisconn's terms. The password's
+// variable is named only when it holds something: the default user with no
+// password is a store that asks for none (redisconn refuses a password
+// variable that is named and empty, and check has refused a named user
+// without one). Env is left zero, so redisconn reads no variable of its own.
+func (l login) options(d deps) redisconn.Options {
+	o := redisconn.Options{Addr: *l.addr, User: *l.user}
+	if d.getenv(*l.passwordEnv) != "" {
+		o.PasswordEnv = *l.passwordEnv
+	}
+	return o
+}
+
+// flags is the login as a remedy's command line writes it, so that command
+// logs in as the verb did: --addr always; --user and --password-env when they
+// were given on the line, even empty or equal to the default (an explicit
+// flag overrides the environment, and a remedy that dropped it would log in
+// as the environment says), and when the environment set them to other than
+// the default. Every value is one POSIX shell word (shellWord). It is called
+// after check.
+func (l login) flags() string {
+	line := "--addr " + shellWord(*l.addr)
+	if *l.user != "" || l.given("user") {
+		line += " --user " + shellWord(*l.user)
+	}
+	if *l.passwordEnv != PasswordEnv || l.given("password-env") {
+		line += " --password-env " + shellWord(*l.passwordEnv)
+	}
+	return line
+}
 
 // validAddr refuses an address the tool would have to guess at. The Redis
 // client fills an empty address in as localhost:6379 and an empty host as the
@@ -257,6 +433,78 @@ func validAddr(addr string) error {
 		return fmt.Errorf("--addr %q needs a port from 1 to 65535; refusing to guess", addr)
 	}
 	return nil
+}
+
+// connect opens the store for the login check accepted through
+// redisconn.Open, the one way a nova tool opens its Redis connection, with
+// the environment d.getenv reads and nothing else.
+func connect(ctx context.Context, store login, d deps) (*redisconn.Conn, error) {
+	return redisconn.Open(ctx, store.options(d), d.getenv)
+}
+
+// failed prints a verb's one FAIL line for err, which is redisconn's (an
+// Open failure, or a command's error through Conn.Explain), so it names the
+// store, the login, what came back and the next step. A store that could not
+// be reached and a login it refused exit 2: the fix is the caller's. The
+// store may still have taken the write: redisconn classes a connection that
+// dropped, or a reply that never came, as unreachable too, and by then a
+// spill's EXEC may have landed. Anything else the store answered exits 1.
+//
+// A refused login with the password's variable unset gets one more field,
+// the variable this verb read: redisconn's next step names no variable when
+// the caller named none, and the operator needs to know which one to set.
+func failed(stderr io.Writer, verb, key string, err error, store login, d deps) int {
+	class := redisconn.Classify(err)
+	line := fmt.Sprintf("%s FAIL key=%s class=%s err=%s", verb, oneline.Field(key), class, oneline.Err(err))
+	if class == redisconn.AuthRefused && d.getenv(*store.passwordEnv) == "" {
+		line += fmt.Sprintf(" remedy=%q", "nova-redis reads the store's password from "+*store.passwordEnv+", which is not set: export it, holding the password of the default user")
+	}
+	fmt.Fprintln(stderr, line)
+	if class == redisconn.Unreachable || class == redisconn.AuthRefused {
+		return 2
+	}
+	return 1
+}
+
+// unconfirmed prints spill's one line for a transaction whose confirmation was
+// lost: the store was opened and the transaction handed to it, then the
+// connection dropped or the reply did not come. The write may have committed,
+// so the exit is 1 (it ran, the outcome is unknown) and the remedy is a
+// read-back with the same login, owner and name, never a blind re-spill.
+// redisconn's own next step ("start the store or correct the address") is
+// left out: the store was up.
+//
+// err is redisconn's (Conn.Explain); what it unwraps to is the cause, with the
+// password already taken out of any text that held it, and its words are
+// Conn.String's and this function's, so neither "unreachable" nor redisconn's
+// next step appears.
+func unconfirmed(stderr io.Writer, conn *redisconn.Conn, store login, owner, name string, err error) int {
+	cause := err
+	if inner := errors.Unwrap(err); inner != nil {
+		cause = inner
+	}
+	recall := "nova-redis recall " + store.flags() + " --owner " + shellWord(owner) + " --name " + shellWord(name)
+	fmt.Fprintf(stderr, "SPILL UNCONFIRMED key=%s err=%s remedy=%q\n", oneline.Field(owner+":"+name), oneline.Escape(conn.String()+": the transaction was sent and its reply was lost: "+cause.Error()),
+		"confirmation was lost after the transaction was sent, so the write may have committed; read it back with the same login before spilling again: "+recall)
+	return 1
+}
+
+// shellWord is s as one POSIX shell word: as it is when it holds only
+// characters no shell treats specially, and otherwise in single quotes, each
+// single quote in it closing the quotes, written as a backslash and a quote,
+// and opening them again. The empty string is two single quotes.
+func shellWord(s string) string {
+	plain := s != ""
+	for _, r := range s {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("_-.,:/@%+=", r)) {
+			plain = false
+			break
+		}
+	}
+	if plain {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // validKey is the one gate every write passes: an owner, a name and a TTL

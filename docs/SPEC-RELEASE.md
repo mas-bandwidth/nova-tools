@@ -83,7 +83,12 @@ and `adopt` had to be handed it by a person retyping it off the file.
 2. `POST repos/<repo>/git/refs` — the ref `refs/tags/<version>`, pointing at **that object**, never at the
    commit. A ref pointing at the commit is the lightweight tag again, with the annotation orphaned.
 
-The `sums=` line is written only when `cut --sums <file>` names the checksum file the build wrote. It is
+The `sums=` line is written only when `cut --sums <file>` names the checksum file the build wrote.
+`build` writes one `SHA256SUMS` per platform, under `<out>/<version>/<goos-goarch>/`, and `--sums` takes
+one file, so the tag carries **one platform's digest**: the platform whose `SHA256SUMS` `--sums` names.
+`adopt --repo` verifies that platform only. Every other platform the release built is adopted with
+`--expect-sums-from <out>/<version>/<goos-goarch>/SUMS.digest` on the host that built it, or
+`--expect-sums <sha256>` from the `sums=` field of its `RELEASE BUILT` line. It is
 read back by an **anchored** match on its own line: a sha mentioned in prose inside a release note is not
 the digest the release was cut with, and a reader that took the first 64 hex characters it found would
 sometimes be right, which is the worst way for a check like this to be wrong.
@@ -401,6 +406,22 @@ changelog and still reaches four benches through `adopt`. The gate asks the ques
 on, not the stronger `--require-all` one: a tag held hostage to the last unrun verb in a long reference
 is a tag nobody ever cuts.
 
+**The gate judges what ships.** The shipped set is the tools under the checkout's `cmd/` — the
+directory beside the reference and the changelog — and a receipt naming any other tool is set aside
+before the gate reads it: a tool parked under `deprecated/` is not built, not tested and not in the
+release, so its open edges and its not-ok runs are true about that tool and say nothing about this
+one. What was set aside is counted, never dropped in silence:
+
+```
+RELEASE CUT NOTE dogfood-gate shipped=<n> outside=<n> cmd=<checkout>/cmd
+```
+
+The set is every `cmd/nova-*` directory, the same list `build` compiles: one helper
+(`dogfood.CmdTools`) answers both, so what is judged is what is built. A shipped tool's open edge
+refuses, and so does a shipped tool's not-ok receipt on a verb the reference does not declare. A
+`cmd/` that holds no tool refuses rather than setting every receipt aside, and a tool directory that
+cannot be read refuses naming its path: an I/O error is not a parked tool. `nova-check dogfood gate --shipped <cmd dir>` is the same read.
+
 **The two inputs, and the one default in this package.** `--cli` names the command reference and
 defaults to `docs/CLI.md` beside the checkout the verb was already given (`--changelog` for `cut`,
 `--source` for `build`). `--receipts` names the receipts directory and defaults to
@@ -418,7 +439,10 @@ is a gate nobody has. Every release line now carries `dogfood=ok|waived|skipped`
 `TestBuildRefusesOnAnOpenEdgeBeforeItCompilesAnything`,
 `TestCutWaivesTheGateOnlyWithAReasonAndRecordsItEverywhere`, `TestCutNamesASkippedGate`,
 `TestCutFindsTheReferenceBesideTheChangelog`, `TestTheRefusalIsBounded`, `TestTheGateIsASeam`,
-`TestTheDogfoodGateIsInTheReleaseSpec`.*
+`TestTheDogfoodGateIsInTheReleaseSpec`, `TestCutJudgesOnlyTheToolsUnderCmd`,
+`TestAParkedToolsOpenItemDoesNotBlockAndAShippedToolsDoes`, `TestReadShippedIsEveryNovaDirectoryUnderCmd`,
+`TestReadShippedRefusesAToolDirectoryItCannotRead`, `TestTheGateRefusesAToolDirectoryItCannotRead`,
+`TestDogfoodGateShippedJudgesOnlyTheToolsUnderCmd`.*
 
 ## What this file does not cover
 

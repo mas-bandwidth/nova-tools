@@ -36,6 +36,7 @@ import (
 	"runtime/debug"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -64,6 +65,7 @@ func resolveVersion(stamped string, info *debug.BuildInfo, ok bool) string {
 // no --json and no --long, because a second output shape is a second thing to agree about
 // and this verb exists to end an argument rather than to start one.
 func cmdVersion(args []string, stdout, stderr io.Writer) int {
+	verbflag.HelpIfAsked(args, "version")
 	if len(args) > 0 {
 		fmt.Fprintf(stderr, "nova-tokens version: takes no flags and no arguments, got %d; run: nova-tokens help\n", len(args))
 		return 2

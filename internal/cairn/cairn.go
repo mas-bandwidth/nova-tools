@@ -24,10 +24,11 @@
 // directory, no log and no index appearing beside it. The tool adapts to the
 // store; the store is never converted to suit the tool.
 //
-// Each entry file is written atomically (fixed temp name per entry, fsync,
-// rename, dir fsync), so a retry after an interrupted append finishes the
-// pointer without duplicating the entry and without touching other writers'
-// files. A stale *.tmp is never indexed and is overwritten by the retry.
+// Each entry file is written atomically via internal/atomicfile (exclusive
+// temporary file beside target, explicit mode, fsync to media, atomic rename),
+// so a retry after an interrupted append finishes the pointer without
+// duplicating the entry and without touching other writers' files. Stale
+// temporary files are never indexed.
 package cairn
 
 import (
@@ -41,6 +42,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 )
 
 // Publish policies name who publishes a checkpoint and when. This slice
@@ -80,6 +83,9 @@ type AppendResult struct {
 	Persisted bool
 	Published bool
 	Policy    string
+	// Source is the pointer the entry carries: its own --source, or the
+	// session's when the append named none.
+	Source    string
 	Duplicate bool
 }
 
@@ -284,48 +290,6 @@ func entryPath(store, session, id string) string {
 	return filepath.Join(store, "entries", session, id+".json")
 }
 
-// writeAtomic lands content at final via a fixed per-entry temp name, so a
-// retry after a crash overwrites the partial instead of orphaning it, and
-// other writers' files are never touched. The file and its directory are
-// fsynced before success, which is what makes persisted=true honest.
-func writeAtomic(final string, content []byte) error {
-	if err := os.MkdirAll(filepath.Dir(final), 0o755); err != nil {
-		return err
-	}
-	tmp := final + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
-	if err != nil {
-		return err
-	}
-	if _, err := f.Write(content); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, final); err != nil {
-		return err
-	}
-	return fsyncDir(filepath.Dir(final))
-}
-
-// fsyncDir is best-effort: where the platform cannot sync a directory the
-// file sync above still holds the content, and the retry stays idempotent.
-func fsyncDir(dir string) error {
-	d, err := os.Open(dir)
-	if err != nil {
-		return nil
-	}
-	defer d.Close()
-	_ = d.Sync()
-	return nil
-}
-
 // appendLine adds one line to a file, creating it, and fsyncs before return.
 func appendLine(name, line string) error {
 	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
@@ -349,16 +313,73 @@ func appendLine(name, line string) error {
 	return fsyncDir(filepath.Dir(name))
 }
 
+func fsyncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return nil
+	}
+	defer d.Close()
+	_ = d.Sync()
+	return nil
+}
+
 // appendLog records one event on the store's append-only log.
-func appendLog(store, event, session, id, stamp, policy string) error {
+func appendLog(store, event, session, id, stamp, policy, source string) error {
 	rec, _ := json.Marshal(map[string]string{
 		"event":   event,
 		"session": session,
 		"entry":   id,
 		"stamp":   stamp,
 		"publish": policy,
+		"source":  source,
 	})
 	return appendLine(filepath.Join(store, "log.jsonl"), string(rec))
+}
+
+// SessionSource reads back the --source the session was opened with, from
+// the open record in log.jsonl. The session file's header is convention only
+// and is never parsed, so the log is where the pointer is read from.
+//
+// CORRUPT PROVENANCE NEVER READS AS NONE. An absent log is a store with no
+// open records in it (a bench store, or one opened before the log carried a
+// source) and answers "" with no error, as does an open record with no source
+// key. A log that exists and cannot be read is an error, and so is a line
+// that may be this session's open record and does not decode as one: a line
+// naming the session and the open event that is not valid JSON, or whose
+// fields are not strings. Answering "" for either would let an append file
+// source=- over a pointer that open recorded.
+func SessionSource(store, session string) (string, error) {
+	name := filepath.Join(store, "log.jsonl")
+	raw, err := os.ReadFile(name)
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	if err != nil {
+		var pe *os.PathError
+		if errors.As(err, &pe) {
+			err = pe.Err
+		}
+		return "", fmt.Errorf("cannot read the session's source from %s: %v", name, err)
+	}
+	quotedSession, _ := json.Marshal(session)
+	for i, line := range strings.Split(string(raw), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var rec map[string]string
+		if json.Unmarshal([]byte(line), &rec) != nil {
+			// Not a record this reader can decode. It is only this
+			// session's business if it could be this session's open.
+			if strings.Contains(line, string(quotedSession)) && strings.Contains(line, `"open"`) {
+				return "", fmt.Errorf("%s:%d may be the open record of session %q and does not decode as one; refusing to read its source as none", name, i+1, session)
+			}
+			continue
+		}
+		if rec["event"] == "open" && rec["session"] == session {
+			return rec["source"], nil
+		}
+	}
+	return "", nil
 }
 
 // Open starts (or re-starts, idempotently) one session record. Concurrent
@@ -373,6 +394,11 @@ func Open(store, session, source string, now time.Time, publish string) error {
 	if !validPublish(publish) {
 		return fmt.Errorf("bad publish policy %q: never|manual|deferred|immediate", publish)
 	}
+	// The source a session was opened with must be readable before anything
+	// is written or reported: open prints it, and append inherits it.
+	if _, err := SessionSource(store, session); err != nil {
+		return err
+	}
 	// Re-open is a no-op: the record already stands, in whichever shape the
 	// store keeps it. A bench file counts, or open would write a second
 	// record beside one already being appended to.
@@ -383,10 +409,16 @@ func Open(store, session, source string, now time.Time, publish string) error {
 	stamp := now.UTC().Format(time.RFC3339Nano)
 	header := fmt.Sprintf("# cairn %s\n\nOpened: %s\nSource: %s\nPublish: %s\n",
 		session, stamp, source, publish)
-	if err := writeAtomic(name, []byte(header)); err != nil {
+	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
 		return err
 	}
-	return appendLog(store, "open", session, "", stamp, publish)
+	// Atomic write per internal/atomicfile model: temporary file created
+	// exclusively in parent directory, explicit 0o644 mode, fsync to media,
+	// atomic rename over target path.
+	if err := atomicfile.WriteFile(name, []byte(header), 0o644); err != nil {
+		return err
+	}
+	return appendLog(store, "open", session, "", stamp, publish, source)
 }
 
 // pointerLine is the one machine-scannable line an append adds to the
@@ -445,6 +477,20 @@ func Append(store, session, id, text, source string, now time.Time, publish stri
 	if bench {
 		return appendBench(path, id, text, stamp, publish)
 	}
+	// AN ENTRY WITH NO --source CARRIES THE SESSION'S. open --source names
+	// where the record points back to; an append that names nothing else came
+	// from the same place, so the entry records that pointer and index and
+	// receipt read it back. The dogfood finding (2026-09-18): open carried
+	// --source session:x, and every entry line then printed source= empty.
+	// The read comes BEFORE any entry or pointer write, so a log that cannot
+	// be read refuses with nothing written.
+	if source == "" {
+		inherited, err := SessionSource(store, session)
+		if err != nil {
+			return res, err
+		}
+		source = inherited
+	}
 	final := entryPath(store, session, id)
 	if raw, err := os.ReadFile(final); err == nil {
 		var prev entryFile
@@ -458,7 +504,7 @@ func Append(store, session, id, text, source string, now time.Time, publish stri
 		if err := ensurePointer(store, session, id, prevStamp); err != nil {
 			return res, err
 		}
-		return AppendResult{Persisted: true, Published: false, Policy: prev.Publish, Duplicate: true}, nil
+		return AppendResult{Persisted: true, Published: false, Policy: prev.Publish, Source: prev.Source, Duplicate: true}, nil
 	}
 	rec, _ := json.Marshal(entryFile{
 		Session: session,
@@ -468,16 +514,22 @@ func Append(store, session, id, text, source string, now time.Time, publish stri
 		Publish: publish,
 		Text:    text,
 	})
-	if err := writeAtomic(final, rec); err != nil {
+	if err := os.MkdirAll(filepath.Dir(final), 0o755); err != nil {
+		return res, err
+	}
+	// Atomic write per internal/atomicfile model: temporary file created
+	// exclusively in parent directory, explicit 0o644 mode, fsync to media,
+	// atomic rename over target path.
+	if err := atomicfile.WriteFile(final, rec, 0o644); err != nil {
 		return res, err
 	}
 	if err := ensurePointer(store, session, id, stamp); err != nil {
 		return res, err
 	}
-	if err := appendLog(store, "append", session, id, stamp.Format(time.RFC3339Nano), publish); err != nil {
+	if err := appendLog(store, "append", session, id, stamp.Format(time.RFC3339Nano), publish, source); err != nil {
 		return res, err
 	}
-	return AppendResult{Persisted: true, Published: false, Policy: publish}, nil
+	return AppendResult{Persisted: true, Published: false, Policy: publish, Source: source}, nil
 }
 
 // readEntry loads one stored entry or explains its absence.

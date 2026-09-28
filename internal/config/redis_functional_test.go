@@ -6,12 +6,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -191,8 +192,9 @@ func TestApplySetsAndRemovesAFriend(t *testing.T) {
 		t.Errorf("rowan roles after the handover %q", got)
 	}
 
-	// A remove is refused while the friend holds a working copy, naming it,
-	// and nothing is written; the stamp stays behind.
+	// A remove takes what apply wrote, leaving her presence's own keys
+	// behind; removing a friend does not read sprint keys and succeeds
+	// even if working copies exist.
 	if _, _, err := st.Update(ctx, KindSprint, KindSprint, map[string]string{"coordinator": "rowan"}, "stella"); err != nil {
 		t.Fatal(err)
 	}
@@ -202,24 +204,8 @@ func TestApplySetsAndRemovesAFriend(t *testing.T) {
 	if _, err := st.Delete(ctx, KindFriend, "stella", "rowan"); err != nil {
 		t.Fatal(err)
 	}
-	c.ZAdd(ctx, ws.ConsumerKeyAt(0, "friend:stella", "working"), redis.Z{Score: 1, Member: "card:4410"}, redis.Z{Score: 2, Member: "card:4414"})
 	c.HSet(ctx, "friend:stella:wakepath", "kind", "human", "notify", "#stella")
-	_, err = Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {})
-	if err == nil || !errors.Is(err, ErrWorking) || !Refused(err) {
-		t.Fatalf("remove with working copies: %v", err)
-	}
-	if !strings.Contains(err.Error(), "friend stella holds 2 working copies (card:4410,card:4414)") {
-		t.Fatalf("refusal %q does not name the copies", err)
-	}
-	if !c.SIsMember(ctx, FriendsKey, "stella").Val() || c.Exists(ctx, "friend:stella:desired").Val() != 1 {
-		t.Fatal("a refused remove removed stella")
-	}
-	if got := c.HGet(ctx, DeclKey, "rev:friend").Val(); got != "7" {
-		t.Fatalf("stamp after a refused apply %s, want the previous 7 (the handover moved the sprint kind, not this one)", got)
-	}
-	// The copies gone, the remove goes through: the keys apply wrote go,
-	// her own presence's stay.
-	c.Del(ctx, ws.ConsumerKeyAt(0, "friend:stella", "working"))
+	c.ZAdd(ctx, "friend:stella:cards:working", redis.Z{Score: 1, Member: "card:4410"}, redis.Z{Score: 2, Member: "card:4414"})
 	res, err = Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {})
 	if err != nil || res.Remove != 1 {
 		t.Fatalf("remove: %+v %v", res, err)
@@ -237,6 +223,9 @@ func TestApplySetsAndRemovesAFriend(t *testing.T) {
 	}
 	if got := c.HGet(ctx, DeclKey, "rev:friend").Val(); got != "10" {
 		t.Fatalf("stamp after remove %s", got)
+	}
+	if got := c.ZCard(ctx, "friend:stella:cards:working").Val(); got != 2 {
+		t.Fatalf("working copies were modified: %d", got)
 	}
 }
 
@@ -408,5 +397,124 @@ func TestApplyNeedsTheCoordinatorRoleForRoles(t *testing.T) {
 	_, err := Apply(ctx, st, ap, KindFriend, "nobody", false, func(op Op) { reported.WriteString(op.Name + " ") })
 	if err == nil || !errors.Is(err, ErrActor) || !strings.Contains(err.Error(), "--as nobody is not a registered friend") {
 		t.Fatalf("roles as nobody: %v", err)
+	}
+}
+
+type testCmdHook struct {
+	onCmd func(redis.Cmder)
+}
+
+func (h *testCmdHook) DialHook(next redis.DialHook) redis.DialHook {
+	return next
+}
+
+func (h *testCmdHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		if h.onCmd != nil {
+			h.onCmd(cmd)
+		}
+		return next(ctx, cmd)
+	}
+}
+
+func (h *testCmdHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		for _, cmd := range cmds {
+			if h.onCmd != nil {
+				h.onCmd(cmd)
+			}
+		}
+		return next(ctx, cmds)
+	}
+}
+
+// TestRemoveFriendDoesNotTouchSprintKeys asserts that removing a friend
+// succeeds without reading or touching any sprint keys (sprint:epoch,
+// <consumer>:cards:working), even when sprint keys exist, working copies
+// are held, or sprint:epoch holds an invalid type that would fail an HGET.
+func TestRemoveFriendDoesNotTouchSprintKeys(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	ap, c := redisApplier(t)
+
+	type loggedCmd struct {
+		name string
+		args []string
+	}
+	var (
+		mu       sync.Mutex
+		recorded []loggedCmd
+		logging  bool
+	)
+	c.AddHook(&testCmdHook{
+		onCmd: func(cmd redis.Cmder) {
+			mu.Lock()
+			defer mu.Unlock()
+			if !logging {
+				return
+			}
+			var args []string
+			for _, a := range cmd.Args() {
+				args = append(args, fmt.Sprint(a))
+			}
+			recorded = append(recorded, loggedCmd{name: cmd.Name(), args: args})
+		},
+	})
+
+	// Populate friend keys.
+	c.SAdd(ctx, FriendsKey, "stella")
+	c.HSet(ctx, "friend:stella:desired", "slots", "30", "tiers", "flash")
+	c.HSet(ctx, "friend:stella:roles", "roles", "reader")
+
+	// Populate sprint keys:
+	// 1. Poison sprint:epoch as a string key (HGET would fail with WRONGTYPE).
+	c.Set(ctx, "sprint:epoch", "not-a-hash", 0)
+	// 2. Populate working copies for stella.
+	c.ZAdd(ctx, "friend:stella:cards:working", redis.Z{Score: 1, Member: "card:4410"})
+
+	mu.Lock()
+	logging = true
+	mu.Unlock()
+
+	if err := ap.Remove(ctx, KindFriend, "stella", "rowan", "idem-remove-1"); err != nil {
+		t.Fatalf("removeFriend failed: %v", err)
+	}
+
+	mu.Lock()
+	logging = false
+	cmds := make([]loggedCmd, len(recorded))
+	copy(cmds, recorded)
+	mu.Unlock()
+
+	// Friend keys apply wrote are removed.
+	if c.SIsMember(ctx, FriendsKey, "stella").Val() {
+		t.Error("stella still in friends set")
+	}
+	if c.Exists(ctx, "friend:stella:desired").Val() != 0 {
+		t.Error("friend:stella:desired still exists")
+	}
+	if c.Exists(ctx, "friend:stella:roles").Val() != 0 {
+		t.Error("friend:stella:roles still exists")
+	}
+
+	// Sprint keys were untouched.
+	if got := c.Get(ctx, "sprint:epoch").Val(); got != "not-a-hash" {
+		t.Errorf("sprint:epoch was modified: %q", got)
+	}
+	if got := c.ZCard(ctx, "friend:stella:cards:working").Val(); got != 1 {
+		t.Errorf("friend:stella:cards:working was modified: %d", got)
+	}
+
+	// Assert that no command executed during removeFriend touched sprint keys.
+	if len(cmds) == 0 {
+		t.Fatal("expected commands to be recorded during removeFriend")
+	}
+	for _, cmd := range cmds {
+		for _, arg := range cmd.args {
+			if strings.Contains(arg, "sprint") || strings.Contains(arg, "cards") {
+				t.Errorf("removeFriend touched sprint key in command %s %v", cmd.name, cmd.args)
+			}
+		}
 	}
 }

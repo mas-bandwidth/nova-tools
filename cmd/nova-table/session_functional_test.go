@@ -6,17 +6,15 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"net"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -273,82 +271,40 @@ func TestDocumentedShellSessionRuns(t *testing.T) {
 	}
 }
 
-// The first client's dial always refuses, reproducing a saturated pool even
-// if the library starts a background probe. A fresh client's first dial can
-// reach the same store. No sleep or race against the probe's timer is needed.
+// The first connection's store goes away (its sockets close and nothing
+// listens at its address), reproducing a client whose every dial now fails.
+// The failed create is not replayed; the next line that needs the store opens
+// one fresh connection, once, at an address where the store answers, and the
+// two later list calls reuse it. No sleep or race against a timer is needed.
 func TestShellFreshDialAfterConnectionFailureWithoutReplay(t *testing.T) {
 	t.Parallel()
 	addr := firstRunStore(t)
-	bad := redis.NewClient(&redis.Options{Addr: addr, PoolSize: 1, MaxRetries: -1, DialerRetries: 1,
-		Dialer: func(context.Context, string, string) (net.Conn, error) {
-			return nil, &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}
-		},
-	})
+	gone := startRelay(t, addr, nil)
+	first, err := openShellStore(gone.addr(), noEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gone.stop()
+	back := startRelay(t, addr, nil)
 	reopens := 0
-	var hellos atomic.Int64
-	shared := sharedConnection(store.New(bad), func() (*store.Store, error) {
+	shared := sharedConnection(first, func() (*redisconn.Conn, error) {
 		reopens++
-		return store.New(redis.NewClient(&redis.Options{Addr: addr, PoolSize: 1, DisableIdentity: true,
-			OnConnect: func(context.Context, *redis.Conn) error { hellos.Add(1); return nil },
-		})), nil
+		return openShellStore(back.addr(), noEnv)
 	})
-	defer func() { _ = shared.Store.Close() }()
+	defer func() { _ = shared.Conn.Close() }()
 	var out, errs bytes.Buffer
 	app := &application{shared: shared, addr: addr}
 	// A failed create must not be replayed after the store recovers. Help needs
 	// no connection; two later list calls must reuse the single fresh one.
 	code := app.readCommands(strings.NewReader("create failed --columns ready\nversion\nlist\nlist\n"), &out, &errs, true, false)
-	if code != 2 || reopens != 1 || hellos.Load() != 1 || strings.Count(out.String(), "TABLE LIST tables=0 trips=1") != 2 || !strings.Contains(errs.String(), "line 1") {
-		t.Fatalf("recovery: code=%d reopens=%d hellos=%d out=%s err=%s", code, reopens, hellos.Load(), &out, &errs)
+	if code != 2 || reopens != 1 || back.accepted.Load() != 1 || strings.Count(out.String(), "TABLE LIST tables=0 trips=1") != 2 || !strings.Contains(errs.String(), "line 1") {
+		t.Fatalf("recovery: code=%d reopens=%d connections=%d out=%s err=%s", code, reopens, back.accepted.Load(), &out, &errs)
 	}
 }
 
-// Drop one reply only after the server produced it. This is an uncertain
-// write outcome, not a dial failure: retrying would append a second receipt.
-type shellLostReplyConn struct {
-	net.Conn
-	lost *atomic.Bool
-	drop bool
-	eof  bool
-}
-
-func (c *shellLostReplyConn) Write(p []byte) (int, error) {
-	if bytes.Contains(p, []byte("\r\nfcall\r\n")) && c.lost.CompareAndSwap(false, true) {
-		c.drop = true
-	}
-	return c.Conn.Write(p)
-}
-func (c *shellLostReplyConn) Read(p []byte) (int, error) {
-	if c.eof {
-		return 0, io.EOF
-	}
-	n, err := c.Conn.Read(p)
-	if c.drop && n > 0 {
-		// Consume the real reply to prove the write reached the server, then
-		// keep this read side closed. A RESP3 push peek can consume one EOF;
-		// the subsequent command read must see EOF too, not a read timeout.
-		c.eof = true
-		return 0, io.EOF
-	}
-	return n, err
-}
-
-type shellLostReplyHook struct{ lost *atomic.Bool }
-
-func (h shellLostReplyHook) DialHook(next redis.DialHook) redis.DialHook {
-	return func(ctx context.Context, network, addr string) (net.Conn, error) {
-		c, err := next(ctx, network, addr)
-		if err != nil {
-			return nil, err
-		}
-		return &shellLostReplyConn{Conn: c, lost: h.lost}, nil
-	}
-}
-func (shellLostReplyHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook { return next }
-func (shellLostReplyHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
-	return next
-}
-
+// The relay drops one reply only after the store produced it. This is an
+// uncertain write outcome, not a dial failure: retrying would append a second
+// receipt.
 func TestShellLostWriteReplyIsNeverReplayed(t *testing.T) {
 	t.Parallel()
 	addr := firstRunStore(t)
@@ -356,21 +312,11 @@ func TestShellLostWriteReplyIsNeverReplayed(t *testing.T) {
 		t.Fatalf("setup %d %s %s", code, out, err)
 	}
 	var lost atomic.Bool
-	open := func() (*store.Store, error) {
-		st, err := openShellStore(addr)
-		if err == nil {
-			st.Client().AddHook(shellLostReplyHook{lost: &lost})
-		}
-		return st, err
-	}
-	st, err := open()
-	if err != nil {
-		t.Fatal(err)
-	}
-	shared := sharedConnection(st, open)
-	defer func() { _ = shared.Store.Close() }()
+	r := startRelay(t, addr, &lost)
+	shared := sharedConnection(nil, func() (*redisconn.Conn, error) { return openShellStore(r.addr(), noEnv) })
+	defer func() { _ = shared.Conn.Close() }()
 	var out, errs bytes.Buffer
-	code := (&application{shared: shared, addr: addr}).readCommands(strings.NewReader("row add jobs committed\nlist\n"), &out, &errs, true, false)
+	code := (&application{shared: shared, addr: r.addr()}).readCommands(strings.NewReader("row add jobs committed\nlist\n"), &out, &errs, true, false)
 	admin := redis.NewClient(&redis.Options{Addr: addr})
 	defer admin.Close()
 	tab, err := ntable.Read(context.Background(), admin, "jobs")
@@ -381,7 +327,10 @@ func TestShellLostWriteReplyIsNeverReplayed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if code != 2 || !lost.Load() || tab.Revision != 2 || events != 2 || len(tab.Rows) != 1 || !strings.Contains(out.String(), "TABLE LIST tables=1 trips=1") {
+	// One remedy, show: the write may have committed, so the line sends the
+	// reader to look, never to start the store and write again.
+	const wantErr = "nova-table row add: table \"jobs\" row \"committed\": ns_table_row_add: EOF; run: nova-table show 'jobs'\nnova-table shell: line 1 failed (exit 2)\n"
+	if code != 2 || !lost.Load() || tab.Revision != 2 || events != 2 || len(tab.Rows) != 1 || !strings.Contains(out.String(), "TABLE LIST tables=1 trips=1") || errs.String() != wantErr {
 		t.Fatalf("lost reply: code=%d lost=%v revision=%d events=%d rows=%d out=%s err=%s", code, lost.Load(), tab.Revision, events, len(tab.Rows), &out, &errs)
 	}
 }
