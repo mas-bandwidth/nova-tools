@@ -56,7 +56,7 @@ func TestWallTermsRefuseAPathOutsidePATHS(t *testing.T) {
 	for _, outsider := range []string{
 		"drop/out.go",
 		"cmd/nova-bus/main.go",
-		"docs/WORKER-CARDS.md",
+		"deprecated/docs/WORKER-CARDS.md",
 		"../etc/passwd",
 		"/etc/passwd",
 	} {

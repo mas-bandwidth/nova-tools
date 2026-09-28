@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 # bench-standard_test.sh: the class test for tools/bench-standard.sh,
-# nova-tools #2230 (SPEC-FLEET-KUBE.md "Make a new bench one apply, and narrow
-# bench-standard.sh to witness").
+# nova-tools #2230 (bench-standard.sh is a witness, never a provisioner).
 #
 # No bats, no harness: plain bash, run directly, the same shape as
-# tools/roadmap-parity_test.sh beside it (and deprecated/tools/asdf-carry-verify_test.sh).
+# tools/preflight_test.sh beside it.
 #
 # THE CLASS: can this script claim to be an admin entry, repair a bench, or
-# take any action other than `--apply` killing stray runner listeners? SPEC-
-# FLEET-KUBE.md narrows the script to a WITNESS: it checks a bench against
+# take any action other than `--apply` killing stray runner listeners? The
+# script is a WITNESS: it checks a bench against
 # the standard and reports DRIFT lines; it does not provision, does not
 # repair, and does not mutate the bench. A `DRIFT` line that this script
 # prints is the witness that the declaration and the host disagreed, and the
@@ -81,9 +80,9 @@ else
   ok "the script carries no provisioning primitives (apt, useradd, mount, systemctl enable, terraform apply, etc.)"
 fi
 
-# (2d) The witness checks are still present. SPEC-FLEET-KUBE.md says the
-# witness "still counts listeners, checks go and sbcl, checks the bins,
-# checks the seat and refuses plaintext keys". Removing any one of these is
+# (2d) The witness checks are still present: the witness counts listeners,
+# checks go and sbcl, checks the bins, checks the seat and refuses plaintext
+# keys. Removing any one of these is
 # regressing the witness half of the contract.
 checks=(
   "listeners"            # listener count check (1)
@@ -102,7 +101,7 @@ for needle in "${checks[@]}"; do
   if grep -q -- "$needle" "$SCRIPT"; then
     ok "witness check present: '$needle'"
   else
-    bad "witness check MISSING: '$needle' (SPEC-FLEET-KUBE.md requires the witness to do this)"
+    bad "witness check MISSING: '$needle' (the witness must do this)"
   fi
 done
 

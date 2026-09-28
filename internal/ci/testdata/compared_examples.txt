@@ -1,7 +1,7 @@
 # The pasted examples that ARE executed by a test through the comparator
-# (onboarding.CompareTranscript, the one comparator of SPEC-TOOLWORK §7 rule 2;
+# (onboarding.CompareTranscript, the one comparator of SPEC-TOOLWORK.md documents rule 2;
 # or the older onboarding.Compare, directly or via onboarding.Execute, where a
-# section is still on the transcripts allowlist), per SPEC-TOOLWORK §7 rule 7. One per line: `<test file>:<TestName> <the $ line, exactly as pasted>`
+# section is still on the transcripts allowlist), per SPEC-TOOLWORK.md documents rule 6. One per line: `<test file>:<TestName> <the $ line, exactly as pasted>`
 # or `<test file>:<TestName> example: <a help banner's example line>`.
 #
 # TestIssue2218 checks every entry: the example is a real pasted or help example;
@@ -33,3 +33,7 @@ cmd/nova-config/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: n
 cmd/nova-secrets/seat_inject_functional_test.go:TestTheHelpExampleIsWhatSeatInjectPrints example: nova-secrets seat inject --store ./secrets --as air --from rowan --only NOVA_REDIS_BENCH_PASSWORD --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops --no-pr
 cmd/nova-ci/receipt_test.go:TestTheCommandReferenceReceiptRefusalsAreWhatTheToolPrints $ nova-ci github receipt --from-runner --repo nova-tools --sha 9af23a05e0000000000000000000000000000000 --run-id 1 --workflow CI --conclusion success
 cmd/nova-ci/receipt_test.go:TestTheCommandReferenceReceiptRefusalsAreWhatTheToolPrints $ nova-ci github receipt --from-runner --repo mas-bandwidth/nova-tools --sha 9af23a05e0000000000000000000000000000000 --run-id 1 --workflow CI --conclusion skipped
+cmd/nova-sandbox/firstrun_test.go:TestTheCommandReferenceExamplesAreWhatTheToolPrints $ nova-sandbox check --bogus
+cmd/nova-sandbox/firstrun_test.go:TestTheCommandReferenceExamplesAreWhatTheToolPrints $ nova-sandbox bogus
+cmd/nova-sandbox/firstrun_test.go:TestTheCommandReferenceExamplesAreWhatTheToolPrints $ nova-sandbox worktree --repo /path/to/workdir --scratch /path/to/workdir/scratch --pr 123
+cmd/nova-sandbox/firstrun_test.go:TestTheCommandReferenceExamplesAreWhatTheToolPrints $ nova-sandbox worktree --repo /path/to/workdir --scratch /path/to/workdir/scratch --prune

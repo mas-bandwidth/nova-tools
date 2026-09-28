@@ -73,7 +73,8 @@ usage:
                                                      declares: who has run it, when, and
                                                      whether it did what they needed
   nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok)
-                            --notes <text> [--issue <n>] --receipts <dir>
+                            --notes <text> [--issue <n>] [--closes <id>] --receipts <dir>
+                            [--tools-timeout <s>] [--fail-max <n>]
                                                      append one receipt: I ran this verb,
                                                      on real work, and here is how it went
   nova-check dogfood gate --cli <file> --receipts <dir> [--shipped <cmd dir>] [--require-all] [--allow-empty]

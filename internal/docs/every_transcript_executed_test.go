@@ -14,14 +14,13 @@ import (
 
 const testsMDPath = "../../docs/TESTS.md"
 
-// notYetExecuted is the shrink-only allowlist docs/SPEC-TOOLWORK.md §7 rule 4
+// notYetExecuted is the shrink-only allowlist docs/SPEC-TOOLWORK.md documents rule 3
 // asks for: the docs/TESTS.md sections no firstrun_test.go executes yet, each
 // with the issue that owes it. It shrinks in both directions: a listed section
 // that gains a test, or that is no longer a section, fails until its line is
 // removed. Nothing may be added to it.
 var notYetExecuted = map[string]string{
 	"nova-bus":     "#1652 (T7): firstrun_test.go reads the section by hand, not through onboarding.Execute",
-	"nova-sandbox": "#1652 (T7): firstrun_test.go checks field names, not the transcript line for line",
 	"nova-secrets": "#1652 (T7): no firstrun_test.go",
 }
 
@@ -54,7 +53,7 @@ func TestEveryTranscriptIsExecutedLineForLine(t *testing.T) {
 	}
 	sort.Strings(missing)
 	for _, m := range missing {
-		t.Errorf("%s: section %q has no test in cmd/%s/firstrun_test.go calling onboarding.CompareTranscript, onboarding.Compare or onboarding.Execute; every transcript section must be executed by a test using the shared comparator (docs/SPEC-TOOLWORK.md §3), and notYetExecuted only shrinks",
+		t.Errorf("%s: section %q has no test in cmd/%s/firstrun_test.go calling onboarding.CompareTranscript, onboarding.Compare or onboarding.Execute; every transcript section must be executed by a test using the shared comparator (docs/SPEC-TOOLWORK.md documents rule 2), and notYetExecuted only shrinks",
 			testsMDPath, m, m)
 	}
 

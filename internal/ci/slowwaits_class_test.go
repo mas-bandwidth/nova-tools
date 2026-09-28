@@ -273,3 +273,14 @@ func readSlowWaitsAllowlist(t *testing.T) *allowlist.List {
 	}
 	return allow
 }
+
+// isSelector reports whether e is the selector pkg.name, for a package
+// referred to by its plain import name.
+func isSelector(e ast.Expr, pkg, name string) bool {
+	sel, ok := e.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	id, ok := sel.X.(*ast.Ident)
+	return ok && id.Name == pkg && sel.Sel.Name == name
+}

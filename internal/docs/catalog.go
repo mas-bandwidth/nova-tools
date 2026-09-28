@@ -51,7 +51,7 @@ var DefaultCatalog = []Entry{
 	E("internal/cardhdr", "card header vocabulary and one-invariant lint", "go test ./internal/cardhdr", "go test ./internal/cardhdr"),
 	E("internal/check", "hygiene rules and tree checkers", "go test ./internal/check", "go test ./internal/check"),
 	E("internal/ci", "class tests and CI budget invariants", "go test ./internal/ci", "go test ./internal/ci"),
-	E("internal/cireceipt", "ci-ok's run receipt: one ev:github row, the row nova-wake watch --store reads", "go test ./internal/cireceipt", "go test -tags functional ./internal/cireceipt"),
+	E("internal/cireceipt", "ci-ok's run receipt: one ev:github row of the workflow_run shape", "go test ./internal/cireceipt", "go test -tags functional ./internal/cireceipt"),
 	E("internal/civerdict", "reader of a commit's CI verdict record", "go test ./internal/civerdict", "go test ./internal/civerdict"),
 	E("internal/config", "nova-config library: kind descriptors, the Postgres store and history, apply into Redis", "go test ./internal/config", "go test ./internal/config"),
 	E("internal/converge", "convergence state and progress math", "go test ./internal/converge", "go test ./internal/converge"),
@@ -112,12 +112,9 @@ var DefaultCatalog = []Entry{
 	E("internal/yield", "CI over work: a copy or local test run steps itself to nice 15 before it execs (nova-tools#4293)", "go test ./internal/yield", "go test ./internal/yield"),
 
 	// docs/
-	E("docs/spec-pulse", "the card contract the pulse cut engine writes (10-the-card-as-cut-writes-it.md); the rest of the spec folder deleted 2026-09-24", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/fixtures", "doc examples and test fixtures", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/nova-config", "nova-config guide: the permanent configuration and its apply into Redis", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/nova-table", "nova-table guide: the design statement, the keys, the verbs, the render rules", "go test ./internal/docs", "go test ./internal/docs"),
-	E("docs/roadmaps", "sprint roadmaps and milestones", "go test ./internal/docs", "go test ./internal/docs"),
-	E("docs/schemas", "event and payload schema definitions", "go test ./internal/docs", "go test ./internal/docs"),
 
 	// tools/
 	E("tools/agentsmap", "AGENTS.md map generator CLI", "go test ./internal/docs", "make map"),

@@ -29,7 +29,7 @@ func TestAppendRetryReportsTheStoredStamp(t *testing.T) {
 				// Bench headings store whole seconds; the receipt must match that record.
 				wantStamp = "2026-09-28T01:02:03Z"
 			} else {
-				runOK(t, "", "open", "--store", store, "--session", "s", "--publish", "manual")
+				runOK(t, "", "open", "--store", store, "--session", "s", "--publish", "manual", "--source", "original-session-source")
 			}
 			args := []string{"append", "--store", store, "--session", "s", "--entry", "e", "--text", "the original words", "--publish", "manual", "--now"}
 			first, _ := runOK(t, "", append(append([]string{}, args...), "2026-09-28T01:02:03.456Z")...)
@@ -37,8 +37,15 @@ func TestAppendRetryReportsTheStoredStamp(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			retry, _ := runOK(t, "", append(append([]string{}, args...), "2026-09-29T04:05:06Z")...)
+			retryArgs := append(append([]string{}, args...), "2026-09-29T04:05:06Z")
+			if !bench {
+				retryArgs = append(retryArgs, "--source", "different-retry-source")
+			}
+			retry, _ := runOK(t, "", retryArgs...)
 			for _, output := range []string{first, retry} {
+				if !bench && !strings.Contains(output, "source=original-session-source ") {
+					t.Errorf("receipt lost the stored source: %s", output)
+				}
 				if !strings.Contains(output, "stamp="+wantStamp+"\n") {
 					t.Errorf("receipt does not report the stored stamp %s: %s", wantStamp, output)
 				}

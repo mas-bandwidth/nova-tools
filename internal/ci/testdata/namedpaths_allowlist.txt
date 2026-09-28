@@ -12,24 +12,12 @@
 
 # --- 1. A specification's plan: a file the spec says will exist, not yet written. ---
 
-cmd/nova-intake SPEC-WORK's plan: the `nova-intake github capture` adapter's command, not yet written
-cmd/nova-intake/ SPEC-WORK's plan table: the same command directory, spelled with its slash
-cmd/nova-pulse/testdata/accept/ SPEC-TOOLWORK §1's selftest fixture repository for `accept --selftest`, not yet shipped
-docs/roadmap.sexp SPEC-WORK's plan: the state input the roadmap projection will read
-docs/roadmaps/ingest-map.sexp SPEC-WORK's plan (3:58 PM ruling): the ingest map moves into the work repository's roadmaps, not this tree
 docs/templates SPEC-CI cardtemplates: one of CardTemplateDirs, skipped until a template is written there
-internal/intake/github SPEC-WORK's plan: the GitHub intake adapter's package, not yet written
-internal/intake/github/ SPEC-WORK's plan table: the same package directory, spelled with its slash
 internal/pkgvalid PROPOSAL-TOKENS-RECORDS-185's plan: the package the proposal would add
 internal/pulse/cardheader.go the typed-header grammar that lands with #1721; lintheader.go names it as the parser not yet in this tree
 internal/pulse/kinds.go SPEC-TOOLWORK §5's kinds-table file; the six kinds live in cutkind.go until the accept gate's table is one file of its own
-internal/sandbox/exec.go SPEC-SANDBOX's plan: the exec seam
-internal/sandbox/wrap_windows.go SPEC-SANDBOX's plan: the Windows wrapper
 internal/tokens/message.go SPEC-TOKENS' plan: the message record
 internal/tokens/publish.go SPEC-TOKENS' plan: the publish step
-internal/workindex/ SPEC-WORK's plan table: the work index package (#3174), not yet written
-testdata/accept/ SPEC-TOOLWORK §5's relative spelling of the nova-pulse accept fixture directory, not yet shipped
-tools/legs.tsv SPEC-TOOLWORK §2's "the repository declares its legs" manifest, not yet written
 tools/templates SPEC-CI cardtemplates: one of CardTemplateDirs, skipped until a template is written there
 
 # --- 2. An invented example: a name chosen to show the SHAPE of a path. ---
@@ -45,16 +33,8 @@ internal/swarm/pull SPEC-WORKLANG's example test subject `test:internal/swarm/pu
 
 # --- 3. A path in another tree: another repository, another branch, or a retired file. ---
 
-internal/fleetkube internal/fleetkube deleted 2026-09-26 (nothing imported it); SPEC-FLEET-KUBE.md carries its reference types
-internal/friendqueue/ internal/friendqueue deleted 2026-09-26 (nothing imported it); SPEC-WORK.md row (d) names it as where task push would go
-internal/outbound/ internal/outbound deleted 2026-09-26 (nothing imported it); SPEC-WORK.md row (h) names it as the cutover's dispatcher
 cmd/nova-merge/queue.go retired with the per-PR lander on 2026-09-24; internal/merge/queuegh.go names it as where its caller was
-docs/SPEC-DELEGATION.md the draft SPEC-WORK folded in on 2026-09-15; the draft itself is gone
-docs/SPEC-WORK-CLOSED.md SPEC-WORK cites it at a named commit on another branch, not in this tree
-docs/SPEC-WORK-PILOT.md the same: a named commit on codex/, not in this tree
-docs/SPEC-WORK-VALIDATION.md the same: a named commit on codex/, not in this tree
 docs/nova-lessons.md the lessons file lives in the self repository; internal/pulse/watch.go cites it as the source of its rules
-docs/roadmaps/sprint-x.sexp SPEC-WORK's example batch path on mas-bandwidth/work, another repository
 fleet/group_vars/all.yml rowan-tools' Ansible inventory, named by internal/nsprint/life/wakehealth.go as the friends: declaration; not this tree
 fleet/launchd/com.rowan.fleet-certify.plist the launchd plist lives in the self repository; there is no fleet/ here
 scripts/coordination/ a prefix in SPEC-RELEASE.md's sensitive-path list, kept in the list though the directory is retired
@@ -68,15 +48,11 @@ internal/pulse/queue.go deleted with the frozen nova-pulse (2026-09-24); the lin
 internal/pulse/queue_test.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
 internal/pulse/run.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
 internal/sprintci deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
-docs/spec-pulse/02-the-rules-numbered.md history 2026-09-24: nova-pulse spec folder deleted (#3625); the prose that names it stays as history
 docs/spec-pulse/03-fleet.md history 2026-09-24: nova-pulse spec folder deleted (#3625); the prose that names it stays as history
-docs/spec-pulse/10 history 2026-09-24: nova-pulse spec folder deleted (#3625); the prose that names it stays as history
 cmd/nova-pulse deleted by #3801 (card cut in nova-sprint, #3789); the line naming it is history
 cmd/nova-pulse/ deleted by #3801 (card cut in nova-sprint, #3789); the line naming it is history
-cmd/nova-pulse/cut_kind.go deleted by #3801 (card cut in nova-sprint, #3789); the line naming it is history
 cmd/nova-pulse/testdata/templates deleted by #3801 (card cut in nova-sprint, #3789); the line naming it is history
 cmd/nova-pulse/testdata deleted by #3801 (card cut in nova-sprint, #3789); the line naming it is history
-cmd/nova-pulse/testdata/templates/fix.md deleted by #3801 (card cut in nova-sprint, #3789); the line naming it is history
 
 # internal/pulse (nova-pulse's package, frozen 2026-09-23 #3439) was deleted on 2026-09-25 (#3969, Glenn: "Yes it's dead. remove."); the specs cite its files at named commits as history.
 internal/pulse internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
@@ -88,7 +64,6 @@ internal/pulse/cutkind.go internal/pulse deleted 2026-09-25 (#3969); cited as hi
 internal/pulse/fleetstandard.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/harvest.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/harvest_working.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
-internal/pulse/harvestbench.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/hygiene.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/kinds.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/ledger.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
@@ -98,9 +73,7 @@ internal/pulse/queue_test.go internal/pulse deleted 2026-09-25 (#3969); cited as
 internal/pulse/recut.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/run.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/statushtmlrows.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
-docs/HISTORY.md deprecated/docs/HISTORY.md holds it: nova-work's struck spec sentences, which SPEC-WORK points to
-docs/LESSONS-ARCHIVE.md deprecated/docs/LESSONS-ARCHIVE.md holds it: the archive nova-sprint's lesson supersede writes
-docs/SPEC-CARD.md deprecated/docs/SPEC-CARD.md holds it: the sprint card contract internal/swarm's lint comments cite
-docs/WORKER-CARDS.md deprecated/docs/WORKER-CARDS.md holds it: nova-swarm's card practices, cited by line in SPEC-TOOLWORK
-docs/jev deprecated/docs/jev holds it: the Jev prompts internal/nsprint/jev renders
-docs/roadmaps/sprint-fixes-2026-09-22.sexp deprecated/docs/roadmaps/ holds it: the sprint's fix roadmap SPEC-WORK names
+docs/SPEC-WORK.md SPEC-WORKLANG's example card input `(:spec "docs/SPEC-WORK.md:…")`; the page is under deprecated/docs/
+docs/nova-work-next.md SPEC-WORKLANG's example plan names it as a node's `:spec` input; the page is under deprecated/docs/
+docs/roadmaps/nova-work.sexp a path in the repository the parked nova-sprint lander classifies (internal/nsprint/land); this tree holds none
+docs/LESSONS-ARCHIVE.md the archive the parked nova-sprint lesson verb writes into the repository it is run on (internal/nsprint/lessons)

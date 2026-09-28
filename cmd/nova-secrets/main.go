@@ -209,7 +209,7 @@ func refusedWidthHandWrite(cmdArgs []string) error {
 	if !writes || name == "" {
 		return nil
 	}
-	return fmt.Errorf("redis-cli writing friend:%s:width is the sprint table's working column written by hand through nova-secrets exec; that count is the friend row's (friend:%s working), written only by the friend row loop (rowan-tools friend-row) from the friend's leased tasks, never a redis-cli line; take work through the queue: nova-sprint task take --as %s (nova-tools #3447)", name, name, name)
+	return fmt.Errorf("redis-cli writing friend:%s:width by hand through nova-secrets exec is refused; that count is the friend row's (friend:%s working), written only by the friend row loop (rowan-tools friend-row) from the friend's leased tasks, never a redis-cli line (nova-tools #3447)", name, name)
 }
 
 func main() {
@@ -472,7 +472,15 @@ func runGateCLI(args []string) {
 	headFlag := fs.String("head", "", "head git ref")
 	machinesFlag := fs.String("machines", "", "fleet machines registry; its seat column vouches for a new recipient")
 
-	if err := verbflag.Parse(fs, args); err != nil {
+	// Every gate flag takes one value. Package flag keeps the LAST of a repeated flag, so
+	// `--head <ref> --head <other>` judged a diff the caller did not name first. A flag
+	// named twice is refused before any ref is read.
+	repeated := ""
+	if err := parseOnce(fs, args, &repeated); err != nil {
+		if repeated != "" {
+			fmt.Fprintf(os.Stderr, "SECRETS REFUSED: --%s is given more than once; every gate flag takes one value\n", oneline.Field(repeated))
+			os.Exit(2)
+		}
 		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
 		os.Exit(2)
 	}
@@ -494,6 +502,38 @@ func runGateCLI(args []string) {
 		fmt.Println(line)
 	}
 	os.Exit(code)
+}
+
+// parseOnce is verbflag.Parse with every flag of fs taking one value. Each value is
+// wrapped in a onceValue for the parse and unwrapped when it returns, on every path --
+// the -h path included, which unwinds as verbflag's Help panic to the dispatcher's
+// Recover: the help it prints then reads the flags' own types, not the wrapper's.
+func parseOnce(fs *flag.FlagSet, args []string, repeated *string) error {
+	orig := map[string]flag.Value{}
+	fs.VisitAll(func(f *flag.Flag) {
+		orig[f.Name] = f.Value
+		f.Value = &onceValue{Value: f.Value, name: f.Name, repeated: repeated}
+	})
+	defer fs.VisitAll(func(f *flag.Flag) { f.Value = orig[f.Name] })
+	return verbflag.Parse(fs, args)
+}
+
+// onceValue is a flag's value that refuses a second Set and names the flag in *repeated,
+// so the refusal is this tool's own line rather than package flag's.
+type onceValue struct {
+	flag.Value
+	name     string
+	set      bool
+	repeated *string
+}
+
+func (o *onceValue) Set(v string) error {
+	if o.set {
+		*o.repeated = o.name
+		return fmt.Errorf("--%s is given more than once", o.name)
+	}
+	o.set = true
+	return o.Value.Set(v)
 }
 
 func runKeygenCLI(args []string) {

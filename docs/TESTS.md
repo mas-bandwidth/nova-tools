@@ -257,7 +257,7 @@ Fixture: `cmd/nova-check/testdata/example-self`.
 $ nova-check quickstart --dir ./self
 QUICKSTART OK dir=./self checks=2: links, then nocode
 LINKS OK files=4 links=3 excluded=0
-NOCODE OK files=5 clean deny-list=floor\x20list
+NOCODE OK files=5 clean deny-list=floor-list
 QUICKSTART OK done=2 worst-exit=0 next=kernel,attest,floors,corpus (each wants a budget, a manifest or a ledger of yours: nova-check help)
 
 $ nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
@@ -548,10 +548,10 @@ it and the real clock answers instead.
 
 ```text
 $ nova-cairn open --store ./cairns --session s1 --source bench-a/session-7 --publish manual --now 2026-09-17T12:00:00Z
-OPEN OK session=s1 store=./cairns publish=manual stamp=2026-09-17T12:00:00Z
+OPEN OK session=s1 store=./cairns source=bench-a/session-7 publish=manual stamp=2026-09-17T12:00:00Z
 
 $ nova-cairn append --store ./cairns --session s1 --entry e1 --text "the words to keep" --source bench-a/session-7#L3 --publish manual --now 2026-09-17T12:05:00Z
-APPEND OK session=s1 entry=e1 persisted=true published=false publish=manual duplicate=false stamp=2026-09-17T12:05:00Z
+APPEND OK session=s1 entry=e1 source=bench-a/session-7#L3 persisted=true published=false publish=manual duplicate=false stamp=2026-09-17T12:05:00Z
 
 $ nova-cairn index --store ./cairns
 INDEX ENTRY session=s1 entry=e1 stamp=2026-09-17T12:05:00Z bytes=17 source=bench-a/session-7#L3
