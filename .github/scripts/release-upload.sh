@@ -14,6 +14,12 @@
 set -euo pipefail
 : "${GITHUB_REPOSITORY:?}" "${TAG:?}" "${GH_TOKEN:?}"
 
+NOTES_FILE="docs/RELEASE-NOTES-${TAG}.md"
+if [ ! -f "$NOTES_FILE" ]; then
+  echo "refusing: $NOTES_FILE does not exist" >&2
+  exit 1
+fi
+
 # ONE ASKER, AND IT READS THE STATUS RATHER THAN THE EXIT CODE, for the same reason
 # release-certified.sh states: `gh api` exits 1 on a 404 and on no answer alike. 200 and
 # 404 are answers; anything else is not, and the whole response is pasted before exit.
@@ -34,18 +40,28 @@ ask() {
 }
 
 ask
-if [ "$CODE" = 404 ]; then
-  # --draft: the artifacts land on a draft that a separate step publishes, never directly
-  # on a published release a coordinator already controls.
-  gh release create "$TAG" --draft --verify-tag --title "$TAG" --generate-notes dist/*
-  exit 0
-fi
-
-draft=$(printf '%s' "$BODY" | jq -r '.draft // false')
-id=$(printf '%s' "$BODY" | jq -r '.id // "?"')
-if [ "$draft" = true ]; then
+if [ "$CODE" = 200 ]; then
+  draft=$(printf '%s' "$BODY" | jq -r '.draft // false')
+  id=$(printf '%s' "$BODY" | jq -r '.id // "?"')
+  if [ "$draft" != true ]; then
+    echo "refusing: $TAG already has a published release $id; upload to its draft, never a published release"
+    exit 1
+  fi
   gh release upload "$TAG" --clobber dist/*
   exit 0
 fi
-echo "refusing: $TAG already has a published release $id; upload to its draft, never a published release"
-exit 1
+
+# 404: list drafts from repos/${GITHUB_REPOSITORY}/releases
+releases=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases")
+matching_count=$(printf '%s' "$releases" | jq -s --arg tag "$TAG" '[.[][]? | select(.tag_name == $tag and .draft == true)] | length')
+
+if [ "$matching_count" -eq 1 ]; then
+  gh release upload "$TAG" --clobber dist/*
+  exit 0
+elif [ "$matching_count" -eq 0 ]; then
+  gh release create "$TAG" --draft --verify-tag --title "$TAG" --notes-file "$NOTES_FILE" dist/*
+  exit 0
+else
+  echo "refusing: ambiguous: $TAG has $matching_count matching drafts" >&2
+  exit 1
+fi

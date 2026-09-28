@@ -1154,28 +1154,48 @@ jobs:
           # published release -- the first sign of the draft/public mix-up would be a
           # published release silently extended with a second set of artifacts. So the script
           # is driven here, the way the certified gate above is driven, through a fake `gh`,
-          # against the four answers the release lookup can give: 200 whose body is a draft,
-          # 200 whose body is published, 404 (nothing yet), and a non-answer (403).
+          # against the answers the release lookup can give: published 200, 404 with drafts
+          # listed, 404 with no drafts, 404 with ambiguous drafts, absent release notes, and
+          # non-answers (403).
           #
           # A fake `gh` on PATH. The script asks `gh api -i releases/tags/<tag>` once and
-          # reads the STATUS LINE and the `draft` field rather than the exit code, so the
-          # fake reproduces `-i`: an HTTP status line, then the body after a blank line. The
-          # body is whatever fixture RELEASE_UPLOAD_RESPONSE names. A `release create` or
-          # `release upload` is ECHOED the way gh would print it, so the test can assert
-          # which command the script chose -- and never actually uploads anything.
+          # reads the STATUS LINE and the `draft` field rather than the exit code. If 404,
+          # it lists drafts from repos/<repo>/releases via `gh api --paginate`. The fake
+          # reproduces `-i` for tag lookups and JSON array responses for release listings.
+          # A `release create` or `release upload` is ECHOED the way gh would print it, so
+          # the test can assert which command the script chose -- and never actually uploads anything.
           mkdir -p "${RUNNER_TEMP}/fake-gh-release"
           cat > "${RUNNER_TEMP}/fake-gh-release/gh" <<'GH'
           #!/usr/bin/env bash
           set -euo pipefail
+          DIR="$(cd "$(dirname "$0")" && pwd)"
           case "${1:-}" in
             api)
-              case "${RELEASE_UPLOAD_STATUS:-200}" in
-                404) printf 'HTTP/2 404 Not Found\r\n\r\n' ;;
-                403) printf 'HTTP/2 403 Forbidden\r\n\r\n'; exit 1 ;;
-                *) printf 'HTTP/2 200 OK\r\ndate: fake\r\n\r\n'; cat "${RELEASE_UPLOAD_RESPONSE:?}" ;;
+              echo "api $*" >> "$DIR/api-calls.log"
+              case "$*" in
+                *"releases/tags/"*)
+                  case "${RELEASE_UPLOAD_STATUS:-200}" in
+                    404) printf 'HTTP/2 404 Not Found\r\n\r\n' ;;
+                    403) printf 'HTTP/2 403 Forbidden\r\n\r\n'; exit 1 ;;
+                    *) printf 'HTTP/2 200 OK\r\ndate: fake\r\n\r\n'; cat "${RELEASE_UPLOAD_RESPONSE:?}" ;;
+                  esac
+                  ;;
+                *)
+                  # repos/${GITHUB_REPOSITORY}/releases list
+                  if [ -n "${RELEASE_UPLOAD_LIST_RESPONSE:-}" ] && [ -f "${RELEASE_UPLOAD_LIST_RESPONSE}" ]; then
+                    cat "${RELEASE_UPLOAD_LIST_RESPONSE}"
+                  elif [ -n "${RELEASE_UPLOAD_LIST_RESPONSE:-}" ]; then
+                    printf '%s\n' "${RELEASE_UPLOAD_LIST_RESPONSE}"
+                  else
+                    printf '[]\n'
+                  fi
+                  ;;
               esac
               ;;
-            release) echo "gh $*" ;;
+            release)
+              echo "release $*" >> "$DIR/release-calls.log"
+              echo "gh $*"
+              ;;
             *) echo "unexpected fake gh invocation: $*" >&2; exit 1 ;;
           esac
           GH
@@ -1188,40 +1208,53 @@ jobs:
             export PATH="${RUNNER_TEMP}/fake-gh-release:$PATH"
           }
           mkdir -p dist && : > dist/nova-bus_v0.14.0_linux_amd64
+          mkdir -p docs
+          echo "# v0.14.0 release notes" > "docs/RELEASE-NOTES-v0.14.0.md"
+          cleanup_upload_test() {
+            rm -f "docs/RELEASE-NOTES-v0.14.0.md"
+            rm -rf dist
+            rm -rf "${RUNNER_TEMP}/fake-gh-release"
+          }
+          trap cleanup_upload_test EXIT
 
-          # ONE: a release that does not exist is CREATED AS A DRAFT, not published -- the
-          # artifact lands on a draft a later step publishes, and `--draft` is on the command.
+          # ONE: tag 404 + draft in list -> upload with --clobber
           upload_env
+          echo "# v0.14.0 release notes" > "docs/RELEASE-NOTES-v0.14.0.md"
           set +e
-          out=$(RELEASE_UPLOAD_STATUS=404 .github/scripts/release-upload.sh 2>&1)
-          rc=$?
-          set -e
-          printf '%s\n' "$out"
-          [ "$rc" -eq 0 ] || { echo "the upload REFUSED to create the missing release at all"; exit 1; }
-          case "$out" in
-            *"gh release create"*"--draft"*) echo "ok: a missing release is created as a draft" ;;
-            *) echo "the script did not create a draft for the missing release: $out"; exit 1 ;;
-          esac
-
-          # TWO: an existing DRAFT is uploaded to, with --clobber so a rerun replaces a
-          # partial upload -- the draft stays a draft, nothing is published.
-          upload_env
-          set +e
-          out=$(RELEASE_UPLOAD_STATUS=200 RELEASE_UPLOAD_RESPONSE=.github/testdata/release-upload/draft.json \
+          out=$(RELEASE_UPLOAD_STATUS=404 \
+            RELEASE_UPLOAD_LIST_RESPONSE=.github/testdata/release-upload/single-draft-list.json \
             .github/scripts/release-upload.sh 2>&1)
           rc=$?
           set -e
           printf '%s\n' "$out"
-          [ "$rc" -eq 0 ] || { echo "the upload REFUSED an existing draft it should have filled"; exit 1; }
+          [ "$rc" -eq 0 ] || { echo "the upload REFUSED an existing draft in the release list"; exit 1; }
           case "$out" in
-            *"gh release upload"*"--clobber"*) echo "ok: an existing draft receives the artifacts" ;;
+            *"gh release upload"*"--clobber"*) echo "ok: tag 404 with draft in list uploads with --clobber" ;;
             *) echo "the script did not upload to the draft: $out"; exit 1 ;;
           esac
 
-          # THREE: an existing PUBLISHED release is refused in one line, and no upload or
-          # create command runs -- the release already crossed the boundary and must not be
-          # extended, so the draft/publish sequence is not silently skipped.
+          # TWO: tag 404 + no draft -> create with --notes-file
           upload_env
+          echo "# v0.14.0 release notes" > "docs/RELEASE-NOTES-v0.14.0.md"
+          set +e
+          out=$(RELEASE_UPLOAD_STATUS=404 \
+            RELEASE_UPLOAD_LIST_RESPONSE=.github/testdata/release-upload/empty-list.json \
+            .github/scripts/release-upload.sh 2>&1)
+          rc=$?
+          set -e
+          printf '%s\n' "$out"
+          [ "$rc" -eq 0 ] || { echo "the upload REFUSED to create the missing release draft"; exit 1; }
+          case "$out" in
+            *"gh release create"*"--draft"*"--notes-file"*"docs/RELEASE-NOTES-v0.14.0.md"*) echo "ok: missing release is created as draft with --notes-file" ;;
+            *) echo "the script did not create a draft with --notes-file: $out"; exit 1 ;;
+          esac
+          case "$out" in
+            *"--generate-notes"*) echo "the script used --generate-notes instead of --notes-file"; exit 1 ;;
+          esac
+
+          # THREE: published release -> refuse
+          upload_env
+          echo "# v0.14.0 release notes" > "docs/RELEASE-NOTES-v0.14.0.md"
           set +e
           out=$(RELEASE_UPLOAD_STATUS=200 RELEASE_UPLOAD_RESPONSE=.github/testdata/release-upload/published.json \
             .github/scripts/release-upload.sh 2>&1)
@@ -1237,8 +1270,48 @@ jobs:
             *"gh release"*) echo "the script reached a gh release command after refusing a published release"; exit 1 ;;
           esac
 
-          # FOUR: a non-answer (403, permissions) is refused rather than read as absence --
+          # FOUR: two drafts -> refuse as ambiguous
+          upload_env
+          echo "# v0.14.0 release notes" > "docs/RELEASE-NOTES-v0.14.0.md"
+          set +e
+          out=$(RELEASE_UPLOAD_STATUS=404 \
+            RELEASE_UPLOAD_LIST_RESPONSE=.github/testdata/release-upload/two-drafts-list.json \
+            .github/scripts/release-upload.sh 2>&1)
+          rc=$?
+          set -e
+          printf '%s\n' "$out"
+          [ "$rc" -ne 0 ] || { echo "the upload ACCEPTED ambiguous drafts"; exit 1; }
+          case "$out" in
+            *"ambiguous"*) echo "ok: two drafts refused as ambiguous" ;;
+            *) echo "the script did not refuse ambiguous drafts: $out"; exit 1 ;;
+          esac
+          case "$out" in
+            *"gh release"*) echo "the script reached a gh release command on ambiguous drafts"; exit 1 ;;
+          esac
+
+          # FIVE: notes file absent -> refuse before any API call
+          upload_env
+          rm -f "docs/RELEASE-NOTES-v0.14.0.md"
+          rm -f "${RUNNER_TEMP}/fake-gh-release/api-calls.log"
+          set +e
+          out=$(RELEASE_UPLOAD_STATUS=404 .github/scripts/release-upload.sh 2>&1)
+          rc=$?
+          set -e
+          printf '%s\n' "$out"
+          [ "$rc" -ne 0 ] || { echo "the upload PROCEEDED with missing release notes"; exit 1; }
+          case "$out" in
+            *"docs/RELEASE-NOTES-v0.14.0.md"*) echo "ok: absent notes file refused naming exact path" ;;
+            *) echo "the refusal did not name the exact notes file path: $out"; exit 1 ;;
+          esac
+          if [ -f "${RUNNER_TEMP}/fake-gh-release/api-calls.log" ] && [ -s "${RUNNER_TEMP}/fake-gh-release/api-calls.log" ]; then
+            echo "an API call was made when notes file was absent: $(cat "${RUNNER_TEMP}/fake-gh-release/api-calls.log")"
+            exit 1
+          fi
+          echo "ok: no API call was made when notes file was absent"
+
+          # SIX: a non-answer (403, permissions) is refused rather than read as absence --
           # the same ask-guard release.yaml relied on, reproduced over the script.
+          echo "# v0.14.0 release notes" > "docs/RELEASE-NOTES-v0.14.0.md"
           upload_env
           set +e
           out=$(RELEASE_UPLOAD_STATUS=403 .github/scripts/release-upload.sh 2>&1)

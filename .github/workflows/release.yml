@@ -263,6 +263,13 @@ jobs:
             esac
           }
 
+          # THE RELEASE NOTES FILE MUST EXIST in this tree, before any API call.
+          notes="docs/RELEASE-NOTES-${TAG}.md"
+          if [ ! -f "$notes" ]; then
+            echo "refusing: $notes does not exist"
+            exit 1
+          fi
+
           # THE TAG IS VERIFIED ON BOTH PATHS, not only the create one. `--verify-tag`, now
           # inside release-upload.sh, is gh refusing to invent a tag that does not exist, and the upload path
           # takes no such flag -- so the guarantee has to come from somewhere else. It
