@@ -23,15 +23,15 @@ data, no bullshit around it. don't let extra stuff creep in."
 and an example, use `nova-table help row set` or `nova-table row set --help`.
 Requested help exits 0 on stdout and needs no store.
 
-Install `nova-table` and Redis. The store must hold the shared function library
-(`nova_sprint`, from `internal/nsprint/fn`) of the same revision as
-`nova-table`; an empty Redis alone is not enough. The verb that loads it,
-`nova-sprint fn load`, went with nova-sprint to `deprecated/cmd/nova-sprint`
-(deprecated, Glenn 2026-09-27) and is no longer built or shipped. No living
-tool loads or upgrades the library on a bare store yet: `nova-config apply`
-loads it only when the store has none. Until one does, the line below needs a
-`nova-sprint` binary from an earlier release on `PATH`. From a source checkout,
-build the client:
+Install `nova-table` and Redis 7 or later. Every table verb calls the
+`nova_sprint` function library (`internal/nsprint/fn`), which `nova-table`
+carries. On first contact with a store that holds no library, `nova-table`
+loads its own: the first verb the store answers `Function not found` loads the
+library once per process, never replacing one the store holds, and runs
+again; that verb's `trips=` counts the load. An empty Redis is enough.
+`nova-redis fn load` is the explicit load and upgrade, for the one place that
+deploys, and `nova-redis fn check` says whether a store holds this build's
+library. From a source checkout, build the client:
 
 ```sh
 go build -o ./nova-table ./cmd/nova-table
@@ -50,7 +50,6 @@ local_table_store() {
     -u NOVA_SPRINT_REDIS_PASSWORD_ENV -u NOVA_REDIS_BENCH_PASSWORD \
     "$@" --redis "$table_demo_dir/redis.sock"
 }
-local_table_store nova-sprint fn load
 local_table_store ./nova-table create work --columns 'todo,doing,done,note:text,progress:pct(done)' --footer total
 local_table_store ./nova-table row add work build docs
 local_table_store ./nova-table cell add work build todo check-a check-b
@@ -76,9 +75,10 @@ redis-cli -s "$table_demo_dir/redis.sock" shutdown nosave
 ```
 
 For an existing configured store, use `--seat <name>` or explicit `--redis
-<host:port>`. An absolute Unix socket path is also accepted. Load the matching
-function library through that store's deployment process; the local setup above
-is for a new disposable store. The commands below omit connection flags.
+<host:port>`. An absolute Unix socket path is also accepted. A store whose
+library is an older build than this `nova-table` refuses a verb whose function
+it lacks, naming `nova-redis fn load`, the deployer's upgrade; the local setup
+above is for a new disposable store. The commands below omit connection flags.
 
 ## What a table is
 
@@ -238,8 +238,7 @@ to the display. Connection setup is excluded from the application-trip count.
 ## The verbs
 
 Every store verb takes `--redis <addr>`, else `NOVA_SPRINT_REDIS`, then
-`NOVA_REDIS_ADDR`, then the seat's address, and dials as the seat nova-sprint
-dials as. Flags may follow the words; `--` ends flag parsing so a member such as
+`NOVA_REDIS_ADDR`, then the seat's address, and dials as the seat. Flags may follow the words; `--` ends flag parsing so a member such as
 `--pending` can be passed literally. Unknown flags name the command's available
 flags and its specific help page. One typed line per success on stdout;
 one line on stderr and exit 2 for a usage refusal, exit 1 when the store

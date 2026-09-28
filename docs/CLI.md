@@ -1615,8 +1615,10 @@ epoch and writes a change receipt. The guide and disposable local setup are in
 A table is columns, rows and a set per cell. Make one, put a row in it, put
 members in a cell, move one to the next cell, and look at it two ways: the
 typed lines a program reads, and the text a person reads. These commands assume
-a configured store with the matching function library loaded; for a fresh
-local Redis, follow [Start locally](nova-table/README.md#start-locally) first.
+a configured store that holds this build's function library. On a store that
+holds none, the first verb loads it (first contact, never replacing a library
+the store holds) and its `trips=` counts the load; for a fresh local Redis,
+follow [Start locally](nova-table/README.md#start-locally).
 
 ```text
 $ nova-table create demo --columns ready,working,done
