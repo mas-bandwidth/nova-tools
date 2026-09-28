@@ -1482,7 +1482,7 @@ it is shown is not a check.
 
 ```
 nova-check dogfood ledger (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--git-timeout <s>] [--tools-timeout <s>] [--fail-max <n>]
-nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] --receipts <dir>
+nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] [--closes <id>] --receipts <dir> [--tools-timeout <s>] [--fail-max <n>]
 nova-check dogfood gate   (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--shipped <cmd dir>] [--authors <file>] [--repo <dir>] [--require-all] [--fail-max <n>]
 ```
 
