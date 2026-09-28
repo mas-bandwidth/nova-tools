@@ -33,7 +33,6 @@ nova-secrets  # #1657 -- no firstrun_test.go at all
 # #1722; nova-card, nova-redis, nova-sprint and nova-test gained sections on dev after it).
 nova-memory   # #1722 -- its firstrun_test.go executes README.md, not this section
 nova-redis    # #1722 -- compares through onboarding.Execute, not the shared comparator
-nova-sprint   # #1722 -- compares through onboarding.Execute, not the shared comparator
 nova-tokens   # #1722 -- compares the event prefix and the field names, dropping every value
 nova-update   # #1722 -- compares the event prefix and the field names, dropping every value
 nova-version  # #1722 -- compares the event prefix and the field names, dropping every value

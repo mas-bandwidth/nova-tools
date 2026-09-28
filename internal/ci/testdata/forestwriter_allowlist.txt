@@ -5,7 +5,6 @@
 # parked under deprecated/ (2026-09-27); no living code writes the forest. None of the writes below is a work set, and
 # the ones whose target is a flag are refused on a forest path by their verb. The list
 # only shrinks: an entry whose write has left is a red run, as is a write not listed.
-cmd/nova-sprint/table_live.go:writeAtomic # the sprint table's --out render and table clear's --checkpoint, job storage
 internal/tokens/dayfile.go:DayFile.Save # the token usage day file
 internal/tokens/foldpool.go:WritePoolLedger # the token pool ledger TSV
 internal/tokens/lock.go:TakeFoldLock # the fold output directory's lock file

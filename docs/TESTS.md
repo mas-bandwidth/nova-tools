@@ -617,32 +617,6 @@ redirect: with an empty stdin the verb reads zero packages and prints
 the stream first (`.github/workflows/ci.yml`).
 
 
-## nova-sprint
-
-Run by `cmd/nova-sprint/firstrun_test.go` in an empty directory, which must
-still be empty afterwards: the wide table is read from Redis and written nowhere
-(#3326), so none of these lines needs a server and none writes a file.
-
-### First run
-
-```text
-$ nova-sprint table --once --fixture table.txt
-! nova-sprint table: flag provided but not defined: -fixture; the wide table is read from Redis and written nowhere: --redis <addr> [--sprint <name>] (--once | --loop), or --check --redis <addr>; the whole sprint table is --layout live [--loop 1] [--out <file>]; run: nova-sprint help
-
-$ nova-sprint table --once
-! nova-sprint table: --redis <addr> is required; the wide table is read from Redis and written nowhere: --redis <addr> [--sprint <name>] (--once | --loop), or --check --redis <addr>; the whole sprint table is --layout live [--loop 1] [--out <file>]; run: nova-sprint help
-
-$ nova-sprint table --check
-! nova-sprint table: --check needs --redis <addr>, a throwaway server for the fixture keyspace; run: nova-sprint help
-```
-
-The first is the deleted file cut: `--fixture` and `--refresh` are unknown
-flags, while `--out <file>` now publishes the wide table by atomic rename
-(#3343) and `--layout live [--out <file>]` publishes the whole sprint table
-(#3530). The second and third name the server the table is read
-from. `TestTableWritesNoFile` renders from a throwaway server twice (a second
-start) and checks the directory stays empty.
-
 ## nova-table
 
 Run by `cmd/nova-table/firstrun_test.go` on a throwaway redis-server holding
