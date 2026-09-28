@@ -12,6 +12,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
 	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 	"github.com/redis/go-redis/v9"
+	"github.com/redis/go-redis/v9/maintnotifications"
 )
 
 // Store owns a Redis connection. Mutating verbs use FCALL through Client;
@@ -167,8 +168,16 @@ func openWith(ctx context.Context, addr string, sel *seatcred.Selection, tune fu
 	// No CLIENT SETINFO either (2026-09-27, Glenn: "You always need to
 	// batch redis"): go-redis sends the library name and version in a
 	// round trip of its own after HELLO, and the store is 128 ms away, so
-	// every one-shot verb paid it for nothing. The connect is HELLO alone.
-	opts := &redis.Options{Addr: addr, Username: user, Password: password, DisableIdentity: true}
+	// every one-shot verb paid it for nothing. No CLIENT MAINT_NOTIFICATIONS
+	// either: go-redis v9.22.0 sends it after HELLO 3 unless told not to,
+	// and Redis 8.10.2 refuses it (errorstat_ERR), a second trip for
+	// nothing; the same setting as redisconn.Open. The connect is HELLO alone.
+	opts := &redis.Options{Addr: addr, Username: user, Password: password, DisableIdentity: true,
+		MaintNotificationsConfig: &maintnotifications.Config{
+			Mode:         maintnotifications.ModeDisabled,
+			EndpointType: maintnotifications.EndpointTypeNone,
+		},
+	}
 	tune(opts)
 	if noRetryWaits.Load() {
 		// The attempts are go-redis's own; only the waits between them go.

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"net"
 	"slices"
 	"strings"
 	"sync"
@@ -15,6 +16,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
+	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/redisfn"
 )
 
@@ -110,26 +112,37 @@ func (e storeReply) Error() string { return string(e) }
 
 func (storeReply) RedisError() {}
 
-// fnHarness runs nova-redis over one fnStore and counts the dials.
+// fnHarness runs the fn verbs over one fnStore and counts the opens. The
+// store it hands fnVerb stands where connect's redisconn connection stands;
+// the login it is asked to open with is checked against the one the case
+// wants, in redisconn's terms.
 type fnHarness struct {
+	t           *testing.T
 	store       *fnStore
 	dials       int
-	user        string // the user the dial must be handed
+	user        string // the user the login must name
 	passwordEnv string // the variable the password is read from; "" is PasswordEnv
 	d           deps
 }
 
+// open is fnVerb's opener over the harness's store.
+func (h *fnHarness) open(_ context.Context, store login) (redis.UniversalClient, func() error, error) {
+	h.dials++
+	o := store.options(h.d)
+	env := h.passwordEnv
+	if env == "" {
+		env = PasswordEnv
+	}
+	if o.Addr != *store.addr || o.User != h.user || o.PasswordEnv != env || h.d.getenv(o.PasswordEnv) != "pw" || o.Env != (redisconn.Env{}) {
+		h.t.Errorf("opened with %s; want user %q and the password in %s, and no variable of redisconn's own", o, h.user, env)
+	}
+	return h.store, h.store.Close, nil
+}
+
 func newFnHarness(t *testing.T) *fnHarness {
 	t.Helper()
-	h := &fnHarness{store: newFnStore()}
+	h := &fnHarness{t: t, store: newFnStore()}
 	h.d = deps{
-		dial: func(addr, user, password string) redis.UniversalClient {
-			h.dials++
-			if user != h.user || password != "pw" {
-				t.Errorf("dial got user %q password %q; want user %q and the password", user, password, h.user)
-			}
-			return h.store
-		},
 		getenv: func(k string) string {
 			env := h.passwordEnv
 			if env == "" {
@@ -144,9 +157,16 @@ func newFnHarness(t *testing.T) *fnHarness {
 	return h
 }
 
+// run is nova-redis over the harness: fn through fnVerb and the harness's
+// store, anything else through run().
 func (h *fnHarness) run(args ...string) (int, string, string) {
 	var out, errb bytes.Buffer
-	code := run(args, &out, &errb, h.d)
+	var code int
+	if len(args) > 0 && args[0] == "fn" {
+		code = fnVerb(args[1:], &out, &errb, h.d, h.open)
+	} else {
+		code = run(args, &out, &errb, h.d)
+	}
 	return code, out.String(), errb.String()
 }
 
@@ -241,7 +261,9 @@ func TestFnLoadAndCheckOnAStore(t *testing.T) {
 func TestFnFailuresNameTheStateAndTheRemedy(t *testing.T) {
 	t.Parallel()
 	const addr = "127.0.0.1:6399"
-	unreachable := func(s *fnStore) { s.listErr = errors.New("dial tcp 127.0.0.1:6399: connect: connection refused") }
+	unreachable := func(s *fnStore) {
+		s.listErr = &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connect: connection refused")}
+	}
 	noperm := func(s *fnStore) {
 		s.listErr = storeReply("NOPERM User nofn has no permissions to run the 'function|list' command")
 	}
@@ -353,7 +375,7 @@ func TestFnRefusesBeforeTheDial(t *testing.T) {
 }
 
 // TestEveryVerbLogsInAsTheUserItIsGiven: spill, recall, fn load and fn check
-// hand the one dial seam the user --user names, else NOVA_REDIS_USER, else
+// log in as the user --user names, else NOVA_REDIS_USER, else
 // none (the default user), with the password in the variable --password-env
 // names, else NOVA_REDIS_PASSWORD_ENV names, else NOVA_REDIS_PASSWORD. A
 // password variable that is not a name, a user name holding whitespace and a
@@ -371,8 +393,8 @@ func TestEveryVerbLogsInAsTheUserItIsGiven(t *testing.T) {
 		name    string
 		flag    []string
 		env     map[string]string
-		want    string // user/password the seam is handed
-		refusal string // "" when the verb dials
+		want    string // user/password the login is made with
+		refusal string // "" when the verb opens the store
 	}{
 		{"no user", nil, map[string]string{PasswordEnv: "pw"}, "/pw", ""},
 		{"the environment's user", nil, map[string]string{PasswordEnv: "pw", UserEnv: "coordinator"}, "coordinator/pw", ""},
@@ -396,37 +418,62 @@ func TestEveryVerbLogsInAsTheUserItIsGiven(t *testing.T) {
 	for _, c := range cases {
 		for _, verb := range verbs {
 			args := append(slices.Clone(verb), c.flag...)
+			user, password, _ := strings.Cut(c.want, "/")
 			var got []string
-			// fn talks to the function fake, spill and recall to a miniredis;
-			// the test reads only what the seam was handed.
-			var client redis.UniversalClient = newFnStore()
+			var mr *miniredis.Miniredis
 			if verb[0] != "fn" {
-				c := redis.NewClient(&redis.Options{Addr: miniredis.RunT(t).Addr()})
-				t.Cleanup(func() { _ = c.Close() })
-				client = c
+				// spill and recall open a miniredis through redisconn; it lets
+				// in only the login the case wants, so an exit 0 (spill) or a
+				// RECALL MISSING (recall) is that login made.
+				mr = miniredis.RunT(t)
+				switch {
+				case c.refusal != "":
+				case user != "":
+					mr.RequireUserAuth(user, password)
+				default:
+					mr.RequireAuth(password)
+				}
+				args[2] = mr.Addr()
 			}
 			d := deps{
 				now:    func() time.Time { return time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC) },
 				getenv: func(k string) string { return c.env[k] },
-				dial: func(addr, user, password string) redis.UniversalClient {
-					got = append(got, user+"/"+password)
-					return client
-				},
 			}
 			var out, errb bytes.Buffer
-			code := run(args, &out, &errb, d)
+			var code int
+			if verb[0] == "fn" {
+				code = fnVerb(args[1:], &out, &errb, d, func(_ context.Context, store login) (redis.UniversalClient, func() error, error) {
+					o := store.options(d)
+					got = append(got, o.User+"/"+d.getenv(o.PasswordEnv))
+					s := newFnStore()
+					return s, s.Close, nil
+				})
+			} else {
+				code = run(args, &out, &errb, d)
+			}
 			if c.refusal != "" {
 				verbName := verb[0]
 				if verb[0] == "fn" {
 					verbName = "fn " + verb[1]
 				}
-				if want := "nova-redis " + verbName + ": " + c.refusal; code != 2 || errb.String() != want || len(got) != 0 {
-					t.Errorf("%s, %q: exit %d stderr %q dials %q; want exit 2, %q and no dial", c.name, args, code, errb.String(), got, want)
+				if want := "nova-redis " + verbName + ": " + c.refusal; code != 2 || errb.String() != want || len(got) != 0 || (mr != nil && mr.TotalConnectionCount() != 0) {
+					t.Errorf("%s, %q: exit %d stderr %q opens %q; want exit 2, %q and no open", c.name, args, code, errb.String(), got, want)
 				}
 				continue
 			}
-			if want := []string{c.want}; !slices.Equal(got, want) {
-				t.Errorf("%s, %q: dialled as %q, want %q (stderr %q)", c.name, args, got, want, errb.String())
+			switch verb[0] {
+			case "fn":
+				if want := []string{c.want}; !slices.Equal(got, want) {
+					t.Errorf("%s, %q: opened as %q, want %q (stderr %q)", c.name, args, got, want, errb.String())
+				}
+			case "spill":
+				if code != 0 || !strings.HasPrefix(out.String(), "SPILL OK ") {
+					t.Errorf("%s, %q: exit %d stdout %q stderr %q; want SPILL OK as %s", c.name, args, code, out.String(), errb.String(), c.want)
+				}
+			case "recall":
+				if code != 1 || !strings.HasPrefix(out.String(), "RECALL MISSING ") {
+					t.Errorf("%s, %q: exit %d stdout %q stderr %q; want RECALL MISSING as %s", c.name, args, code, out.String(), errb.String(), c.want)
+				}
 			}
 		}
 	}
@@ -453,8 +500,16 @@ func TestLoginFlagsEchoWhatWasGiven(t *testing.T) {
 	}
 	for _, c := range cases {
 		fs := flag.NewFlagSet("fn check", flag.ContinueOnError)
-		l := loginFlags(fs, deps{getenv: func(k string) string { return c.env[k] }})
+		l := loginFlags(fs)
 		if err := fs.Parse(c.args); err != nil {
+			t.Fatal(err)
+		}
+		if err := l.check(deps{getenv: func(k string) string {
+			if k == "OTHER_PW" || k == "SEAT_PW" || k == PasswordEnv {
+				return "pw"
+			}
+			return c.env[k]
+		}}); err != nil {
 			t.Fatal(err)
 		}
 		if got := l.flags(); got != c.want {

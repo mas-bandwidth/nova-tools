@@ -4,9 +4,9 @@ package main
 
 import (
 	"context"
-	nsstore "github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/redis/go-redis/v9"
 	"strings"
 	"testing"
@@ -268,7 +268,7 @@ func TestStoredViewReadsChangesWithoutRestartOrSummaryReread(t *testing.T) {
 		}
 	}
 	read := viewReader(c, "v", ntable.RenderOpts{})
-	trips := nsstore.New(c).CountTrips()
+	trips := redisconn.CountTrips(c)
 	// Establish the connection before counting application exchanges.
 	if err := c.Ping(ctx).Err(); err != nil {
 		t.Fatal(err)

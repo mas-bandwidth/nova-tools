@@ -10,9 +10,9 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 	"github.com/redis/go-redis/v9"
 )
@@ -25,39 +25,56 @@ type application struct {
 	addr     string
 	defaults ntable.WriteOptions
 	receipts bool
+	// getenv is the environment the login is read from (login); nil is the
+	// process's. A test hands its own, so it runs in parallel.
+	getenv func(string) string
+}
+
+// env is the environment the login is read from.
+func (app *application) env() func(string) string {
+	if app.getenv != nil {
+		return app.getenv
+	}
+	return os.Getenv
 }
 
 type connection struct {
-	*store.Store
+	*redisconn.Conn
 	shared  bool
-	counter *store.Trips
-	reopen  func() (*store.Store, error)
+	counter *redisconn.Trips
+	reopen  func() (*redisconn.Conn, error)
 	broken  atomic.Bool
 }
 
-// A transport failure can saturate go-redis's one-connection dial circuit.
-// Retire that client before the next command uses it. Never replay the failed
-// command: the store may have committed a write before its reply was lost.
-func sharedConnection(st *store.Store, reopen func() (*store.Store, error)) *connection {
-	c := &connection{Store: st, shared: true, reopen: reopen}
-	st.Client().AddHook(c)
+// A shell's connection is opened by the first line that needs the store,
+// never on entering the shell (tla/TableSession.tla Init: conn = "none"), and
+// again by the first line after a transport failure: the failed client is
+// retired whole, so no dial error it kept can answer a later line (the model's
+// NoFalseAlarm). Never replay the failed command: the store may have committed
+// a write before its reply was lost (AtMostOnce; redisconn sends a command at
+// most once, MaxRetries -1). A nil conn is one not opened yet.
+func sharedConnection(conn *redisconn.Conn, reopen func() (*redisconn.Conn, error)) *connection {
+	c := &connection{Conn: conn, shared: true, reopen: reopen}
+	if conn != nil {
+		conn.Client().AddHook(c)
+	}
 	return c
 }
 
 func (c *connection) prepare() error {
-	if c.reopen == nil || !c.broken.Load() {
+	if c.reopen == nil || (c.Conn != nil && !c.broken.Load()) {
 		return nil
 	}
-	st, err := c.reopen()
+	next, err := c.reopen()
 	if err != nil {
 		return err
 	}
-	if err := c.Store.Close(); err != nil {
-		return errors.Join(err, st.Close())
+	if err := c.Conn.Close(); err != nil {
+		return errors.Join(err, next.Close())
 	}
-	c.Store, c.counter = st, nil
+	c.Conn, c.counter = next, nil
 	c.broken.Store(false)
-	st.Client().AddHook(c)
+	next.Client().AddHook(c)
 	return nil
 }
 
@@ -65,7 +82,7 @@ func (c *connection) DialHook(next redis.DialHook) redis.DialHook { return next 
 func (c *connection) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 	return func(ctx context.Context, cmd redis.Cmder) error {
 		err := next(ctx, cmd)
-		if store.Unreachable(err) {
+		if lost(err) {
 			c.broken.Store(true)
 		}
 		return err
@@ -74,13 +91,13 @@ func (c *connection) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 func (c *connection) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
 	return func(ctx context.Context, cmds []redis.Cmder) error {
 		err := next(ctx, cmds)
-		if store.Unreachable(err) {
+		if lost(err) {
 			c.broken.Store(true)
 		}
 		// A pipeline's first error may be a logical refusal while a later
 		// command lost the connection. Inspect every command before reusing it.
 		for _, cmd := range cmds {
-			if store.Unreachable(cmd.Err()) {
+			if lost(cmd.Err()) {
 				c.broken.Store(true)
 			}
 		}
@@ -92,19 +109,19 @@ func (c *connection) Close() error {
 	if c.shared {
 		return nil
 	}
-	return c.Store.Close()
+	return c.Conn.Close()
 }
 
 // Attach only one hook per connection. A long session must not accumulate a
 // hook per verb; each command reports a window of the shared counter instead.
 type tripWindow struct {
-	counter *store.Trips
+	counter *redisconn.Trips
 	before  int64
 }
 
 func (c *connection) CountTrips() *tripWindow {
 	if c.counter == nil {
-		c.counter = c.Store.CountTrips()
+		c.counter = redisconn.CountTrips(c.Client())
 	}
 	return &tripWindow{c.counter, c.counter.N()}
 }
@@ -140,24 +157,29 @@ func (app *application) cmdShell(args []string, stdout, stderr io.Writer) int {
 	if strings.TrimSpace(*addr) == "" {
 		return refuse(stderr, verb, "--redis <addr> is required (or a configured seat)")
 	}
-	quietRedisOnce.Do(func() { redis.SetLogger(quietRedis{}) })
-	st, err := openShellStore(*addr)
-	if err != nil {
+	getenv := app.env()
+	// The login is resolved on entering, as it always was (a seat that cannot
+	// be read, a password variable that is empty, refuse the shell here); the
+	// store is dialed by the first line that needs it.
+	if o, env, err := login(*addr, seatcred.Process(), getenv); err != nil {
+		return refuse(stderr, verb, err.Error())
+	} else if _, err := redisconn.Resolve(o, env); err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	child := &application{in: in, shared: sharedConnection(st, func() (*store.Store, error) {
-		return openShellStore(*addr)
-	}), addr: *addr, defaults: *defaults, receipts: *receipts}
-	// prepare may replace the store, so close the final owner, not the first.
-	defer func() { _ = child.shared.Store.Close() }()
+	child := &application{in: in, shared: sharedConnection(nil, func() (*redisconn.Conn, error) {
+		return openShellStore(*addr, getenv)
+	}), addr: *addr, defaults: *defaults, receipts: *receipts, getenv: getenv}
+	// prepare may replace the connection, so close the final owner, not the first.
+	defer func() { _ = child.shared.Conn.Close() }()
 	return child.readCommands(in, stdout, stderr, *keepGoing, interactive)
 }
 
-// Keep one connection, but do not automatically retry commands after a lost
-// reply: the write may already have committed. OpenProbe supplies one bounded
-// dial attempt and no command retries; the client remains reusable on success.
-func openShellStore(addr string) (*store.Store, error) {
-	return store.OpenProbe(context.Background(), addr, seatcred.Process())
+// openShellStore is the shell's one connection, opened the one way
+// (redisconn.Open): one dial attempt, the handshake inside OpenTimeout, and
+// no command retries (MaxRetries -1), so a lost reply is never replayed; the
+// client stays reusable while the store answers.
+func openShellStore(addr string, getenv func(string) string) (*redisconn.Conn, error) {
+	return open(context.Background(), addr, getenv)
 }
 
 const maxShellLine = 1024 * 1024

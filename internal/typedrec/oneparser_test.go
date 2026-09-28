@@ -58,7 +58,6 @@ var specAllowlist = []allowlistEntry{
 	{file: "internal/swarm/lintheader.go", fn: "cardKeyCheck", record: "SPEC-CARD"},
 	{file: "internal/swarm/lintheader.go", fn: "cardTypedKeys", record: "SPEC-CARD"},
 	{file: "internal/nsprint/card/lint.go", fn: "requiredKeys", record: "SPEC-CARD"},
-	{file: "internal/prereview/prereview.go", fn: "ParseCard", record: "SPEC-CARD"},
 
 	// Issue-body card keys
 	{file: "internal/nsprint/file/file.go", fn: "requiredKeys", record: "Issue-body"},
@@ -81,10 +80,6 @@ var specAllowlist = []allowlistEntry{
 // than RESULT, sits outside part A's PATHS, and carries the commit that added
 // it and the reason it stays. A new hit on dev lands here only with both.
 var driftAllowlist = []allowlistEntry{
-	{file: "cmd/nova-merge/batch.go", fn: "bodyPaths", record: "SPEC-CARD", since: "92251bcc",
-		reason: "the card's PATHS header line in a swarm member's PR body, not a RESULT field"},
-	{file: "cmd/nova-swarm/nativeevent.go", fn: "failWord", record: "verdict", since: "7644669f",
-		reason: "first word of a nova-swarm native verdict line (BLOCKED, RED), an event record, not RESULT line 2"},
 	{file: "internal/nsprint/taskcard/complete.go", fn: "specFields", record: "SPEC-CARD", since: "98b5b444",
 		reason: "the issue's card header keys (ROUTE, KIND, REPO, PATHS, ...) that task push --issue fills the record from (#3916), read before any RESULT exists"},
 	{file: "internal/swarm/sparse.go", fn: "cardPATHS", record: "SPEC-CARD", since: "dd08d6e3",
@@ -123,8 +118,6 @@ var driftAllowlist = []allowlistEntry{
 		reason: "the reap package's own Done verdict const (\"DONE\") in a switch (#3156), not a RESULT status word"},
 	{file: "internal/nsprint/table/check.go", fn: "tableCells", record: "sprint-table", since: "19c5dfb9",
 		reason: "the sprint table's own \"RED <n>\" error rows in a Render() body (#3253), not a RESULT RED field"},
-	{file: "internal/prereview/card.go", fn: "ParseTaskCard", record: "SPEC-CARD", since: "d76c1c4d",
-		reason: "the card's PATHS header in a Redis task hash title, like prereview.go ParseCard, read before any RESULT exists"},
 	{file: "internal/jev/jev.go", fn: "fields", record: "PR-body", since: "04c639c1",
 		reason: "the PR body's typed PATHS: line Jev's lint pass checks (#3631), like nsprint/file/file.go requiredKeys, not a RESULT parse"},
 	{file: "internal/nsprint/jev/plan.go", fn: "CutState", record: "SPEC-CARD", since: "b27e5029",
@@ -729,8 +722,8 @@ func TestOneTypedParser(t *testing.T) {
 				partB++
 			}
 		}
-		if len(specAllowlist) != 12 || partB != 0 {
-			t.Errorf("spec allowlist: %d entries, %d part=B; want 12 and 0", len(specAllowlist), partB)
+		if len(specAllowlist) != 11 || partB != 0 {
+			t.Errorf("spec allowlist: %d entries, %d part=B; want 11 and 0", len(specAllowlist), partB)
 		}
 		// Every drift entry names the commit that added it and why it stays.
 		for _, a := range driftAllowlist {

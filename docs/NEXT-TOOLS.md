@@ -43,7 +43,7 @@ cost.
   leases expired by their own default.
 - **Who asked.** Stella, 15:30Z, four candidates; Rowan, #177 and the bus note of 17:30Z.
 
-## nova-review, the review layer ([SPEC-REVIEW.md](SPEC-REVIEW.md) draft 2, #236 at 522bab88)
+## nova-review, the review layer ([SPEC-REVIEW.md](../deprecated/docs/SPEC-REVIEW.md) draft 2, #236 at 522bab88)
 
 - **Friction.** 25 duplicate findings across readers on one PR family (2026-09-11, swarm batch 1, SPEC-SWARM.md:982);
   an approve at 12:31Z counted for a head pushed at 12:47Z (2026-09-11); a HOLD unread 100 minutes and another 45,
@@ -87,7 +87,7 @@ cost.
   zero; the first field `verify` disagrees on.
 - **Who asked.** Rowan, 17:30Z, from #229 and that morning's v0.15.0 preparation.
 
-## nova-wake, wake on a change and never a poll ([SPEC-WAKE.md](SPEC-WAKE.md) amendment draft 2, #239 at 8e459652)
+## nova-wake, wake on a change and never a poll ([SPEC-WAKE.md](../deprecated/docs/SPEC-WAKE.md) amendment draft 2, #239 at 8e459652)
 
 - **Friction.** 2026-09-11: 1,204 turns in the coordinating window, 1.19M written against 652M cache-read, most of
   them polls; the tell was one status check run twice in a minute. 2026-09-12: two review HOLDs unread 100 and 45
@@ -137,7 +137,7 @@ cost.
 - **Who asked.** Emma, 15:29Z, for `hot` and `diff`, verbatim in the spec; Stella, 15:30Z, for the retained accounting
   joined to attempts; Rowan, 17:30Z, for `friction` and the adoption matrix.
 
-## nova-swarm, the finalize result contract ([SPEC-SWARM.md](SPEC-SWARM.md) amendment draft 2, #241 at fbfea5e6)
+## nova-swarm, the finalize result contract ([SPEC-SWARM.md](../deprecated/docs/SPEC-SWARM.md) amendment draft 2, #241 at fbfea5e6)
 
 - **Friction.** 2026-09-13: six spec-read cards produced four grounded HOLDs, all four marked FAILED by the launcher
   on a line-1 disagreement (`READ` in the card, `RESULT:` in the check), then rejected by a hand gate on a rule the

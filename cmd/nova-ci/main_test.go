@@ -247,7 +247,8 @@ func TestLoadFromAFailedReadIsUnknownWithItsReason(t *testing.T) {
 }
 
 // functional with no package is a refusal; with packages that hold no
-// functional test it prints nothing and exits 0, so make runs nothing.
+// functional test it prints one CI FUNCTIONAL OK packages=0 line and exits 0,
+// so make runs nothing and says so.
 func TestFunctionalSelectsNothingWithoutTheTag(t *testing.T) {
 	t.Parallel()
 
@@ -257,7 +258,46 @@ func TestFunctionalSelectsNothingWithoutTheTag(t *testing.T) {
 	}
 	dir := filepath.Join("..", "..", "internal", "ci", "slowtests")
 	code, stdout, stderr := runCI(t, []string{"functional", dir}, "")
-	if code != 0 || stdout != "" {
-		t.Errorf("functional %s: exit %d stdout %q stderr %q, want 0 and nothing", dir, code, stdout, stderr)
+	if code != 0 || stdout != "CI FUNCTIONAL OK packages=0 reason=no-functional-tag-in-1-dirs\n" || stderr != "" {
+		t.Errorf("functional %s: exit %d stdout %q stderr %q, want 0 and one CI FUNCTIONAL OK line", dir, code, stdout, stderr)
+	}
+}
+
+// The four silent exits the cold audit found (a typo, -h, --help, an unknown
+// flag) are each one refusal line at exit 2, and nothing on stdout: a typo in
+// CI's package list must never skip the functional tier in silence.
+func TestFunctionalRefusesWhatItCannotRun(t *testing.T) {
+	t.Parallel()
+
+	file := filepath.Join("..", "..", "internal", "ci", "functional", "functional.go")
+	empty := t.TempDir()
+	for _, tc := range []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{"missing dir", []string{"./nope"}, []string{`package pattern "./nope" matches no package (no such directory)`}},
+		{"missing tree", []string{"./nope/..."}, []string{`package pattern "./nope/..." matches no package (no such directory)`}},
+		{"not a dir", []string{file}, []string{"matches no package (not a directory)"}},
+		{"no go files", []string{empty}, []string{"matches no package (the directory holds no .go file)"}},
+		{"-h", []string{"-h"}, []string{functionalUsage}},
+		{"--help", []string{"--help"}, []string{functionalUsage}},
+		{"--help after a dir", []string{".", "--help"}, []string{functionalUsage}},
+		{"unknown flag", []string{"--bogus"}, []string{`unknown flag "--bogus" (functional takes no flags`}},
+		// Every independent problem in the one refusal.
+		{"all at once", []string{"--bogus", "./nope", ".", "./also-nope"}, []string{`unknown flag "--bogus"`, `"./nope" matches no package`, `"./also-nope" matches no package`}},
+	} {
+		code, stdout, stderr := runCI(t, append([]string{"functional"}, tc.args...), "")
+		if code != 2 || stdout != "" {
+			t.Errorf("%s: exit %d stdout %q, want 2 and nothing on stdout", tc.name, code, stdout)
+		}
+		if strings.Count(stderr, "\n") != 1 || !strings.HasPrefix(stderr, "nova-ci functional: ") || !strings.HasSuffix(stderr, "; run: nova-ci help\n") {
+			t.Errorf("%s: stderr %q, want one line `nova-ci functional: ...; run: nova-ci help`", tc.name, stderr)
+		}
+		for _, w := range tc.want {
+			if !strings.Contains(stderr, w) {
+				t.Errorf("%s: stderr %q lacks %q", tc.name, stderr, w)
+			}
+		}
 	}
 }

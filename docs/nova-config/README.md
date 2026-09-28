@@ -259,8 +259,6 @@ What Redis refuses, apply reports and stops at, stamping nothing:
 
 - `CEILING studio: friend stella makes the sum 65 over the machine ceiling 64`:
   raise the machine's `--slots` or lower a friend's;
-- `friend stella holds 2 working copies (card:4410,card:4414)`: a removed
-  friend still holding work stays in Redis until the copies finish or move;
 - `roles of rowan: --as stella does not hold the coordinator role in Redis`:
   roles are written by a coordinator (or by the first coordinator, when none
   is set yet). Apply as the coordinator; the coordinator's own row is applied

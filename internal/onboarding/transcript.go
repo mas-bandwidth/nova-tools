@@ -315,7 +315,7 @@ func splitList(value string) []string {
 //
 // NOTHING IS EXPANDED. `$PWD` reaches the Runner as the six characters the
 // document writes, because only the caller's package knows what its transcript
-// means by them -- cmd/nova-merge's test declares a Path norm for exactly that
+// means by them -- deprecated/cmd/nova-merge's test declares a Path norm for exactly that
 // spelling. A transcript that needs a value expanded says so to its Runner; it
 // does not get one from here.
 func SplitShell(cmd string) ([]string, error) {

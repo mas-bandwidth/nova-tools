@@ -3,7 +3,7 @@
 //
 // WHY IT EXISTS. `harvest` copies a card's RESULT.md verbatim into the body of the draft
 // PR it opens, and pushes the card's commits. A card's model that read the seat's provider
-// key out of its shell -- which it could, until the shell shim in cmd/nova-swarm closed
+// key out of its shell -- which it could, until the shell shim in deprecated/cmd/nova-swarm closed
 // that channel -- had in those two paths a way to put the key on the forge. The shim is
 // the lock; this package is the backstop behind it, and a backstop is worth having because
 // the shim is bypassable in ways this is not (an absolute /bin/bash, a harness that spawns
@@ -110,7 +110,7 @@ func field(s string) string {
 }
 
 // SecretName says whether an environment NAME carries a secret: the one predicate
-// cmd/nova-swarm redacts its argv log by and the shell shim unsets by. Uppercased, so
+// deprecated/cmd/nova-swarm redacts its argv log by and the shell shim unsets by. Uppercased, so
 // `deepseek_api_key` and `MiXeD_KeY` are both caught.
 func SecretName(name string) bool {
 	up := strings.ToUpper(name)

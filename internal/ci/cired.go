@@ -1,7 +1,7 @@
 package ci
 
 // cired.go is the rule table and the licence behind `nova-ci failed --decide`: the CI-red
-// reading of docs/SPEC-DECIDE.md, "6. The CI-red reading: one licensed rerun, or a
+// reading of deprecated/docs/SPEC-DECIDE.md, "6. The CI-red reading: one licensed rerun, or a
 // finding". It is PURE: it takes the report the verb already read and the caller's data --
 // a flake table, an infra-steps table and a clock -- and returns the class plus whether a
 // single rerun is licensed. The reading never reruns anything (rule 7): it prints the

@@ -7,7 +7,7 @@ package main
 // 22-24: it records the argv, environment and stdin config `serve` hands to
 // redis-server. The restart test (25, #3879) runs the real launch against a
 // throwaway redis-server on loopback in the test's temp dir, found through
-// internal/nsprint/testutil, which skips on a laptop without the binary and
+// internal/testredis, which skips on a laptop without the binary and
 // fails under NOVA_CI=1.
 
 import (
@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/secrets"
-	"github.com/redis/go-redis/v9"
 )
 
 const fakeRedisServer = "/opt/fake/bin/redis-server"
@@ -45,11 +44,6 @@ func newServeHarness(t *testing.T, password string) *serveHarness {
 	h.d = deps{
 		now:    func() time.Time { return time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC) },
 		getenv: func(k string) string { return h.env[k] },
-		dial: func(addr, user, pw string) redis.UniversalClient {
-			c := redis.NewClient(&redis.Options{Addr: addr, Password: pw})
-			t.Cleanup(func() { _ = c.Close() })
-			return c
-		},
 		environ: func() []string {
 			out := []string{"PATH=/usr/bin:/bin", "HOME=/home/bench"}
 			for k, v := range h.env {

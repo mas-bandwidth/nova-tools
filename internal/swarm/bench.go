@@ -1,5 +1,5 @@
 // Benches: a remote bench reached by ssh, named by one row of a TSV table
-// (docs/SPEC-SWARM.md "Benches"). This file holds the shared types and the two reads
+// (deprecated/docs/SPEC-SWARM.md "Benches"). This file holds the shared types and the two reads
 // every bench caller shares: the table, and the bus's friends list a bench name is
 // checked against. It also holds the remote-run slice the batch uses: the card copy
 // and the ssh command that runs native on a bench.
@@ -77,7 +77,7 @@ func CoresList(cores string) ([]int, error) {
 // validates every row: seven columns in order, an absolute root, harness and auth,
 // a cores column that is "-" or parses, a wall that is "sandbox" or "none", and a
 // name used once, with three optional trailing columns width, measured and
-// version (docs/SPEC-SWARM.md "Benches"): a row without them is unmeasured and
+// version (deprecated/docs/SPEC-SWARM.md "Benches"): a row without them is unmeasured and
 // fills by cores. A row that fails names itself in the error.
 func LoadBenchTable(path string) ([]Bench, error) {
 	f, err := os.Open(path)

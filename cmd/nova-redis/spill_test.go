@@ -10,12 +10,15 @@ package main
 import (
 	"bytes"
 	"context"
+	"net"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
-	"github.com/redis/go-redis/v9"
+	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 )
 
 // fakeClock is the controlled clock: it reads t and only moves when a test
@@ -24,12 +27,12 @@ type fakeClock struct{ t time.Time }
 
 func (c *fakeClock) now() time.Time { return c.t }
 
-// harness is one fake instance plus the deps run() is given.
+// harness is one fake instance plus the deps run() is given. run() opens the
+// fake through redisconn at the --addr it is given, as main() does.
 type harness struct {
 	mr    *miniredis.Miniredis
 	clock *fakeClock
 	d     deps
-	dials int // how many times run() reached the dial seam
 }
 
 func newHarness(t *testing.T) *harness {
@@ -38,13 +41,7 @@ func newHarness(t *testing.T) *harness {
 	clock := &fakeClock{t: time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)}
 	h := &harness{mr: mr, clock: clock}
 	h.d = deps{
-		now: clock.now,
-		dial: func(addr, user, password string) redis.UniversalClient {
-			h.dials++
-			c := redis.NewClient(&redis.Options{Addr: addr, Password: password})
-			t.Cleanup(func() { _ = c.Close() })
-			return c
-		},
+		now:    clock.now,
 		getenv: func(string) string { return "" },
 	}
 	return h
@@ -65,20 +62,19 @@ func (h *harness) runBare(args ...string) (int, string, string) {
 }
 
 // TestAddrRefusedWhenMissingOrEmpty: an address that is missing, empty, blank
-// or lacks a host or a port is refused (exit 2) BEFORE the dial seam is
-// reached, for spill and for recall. The Redis client would otherwise fill an
-// empty address in as localhost:6379, which is a guess the tool refuses to make.
+// or lacks a host or a port is refused (exit 2) BEFORE the store is opened,
+// for spill and for recall. The Redis client would otherwise fill an empty
+// address in as localhost:6379, which is a guess the tool refuses to make.
 func TestAddrRefusedWhenMissingOrEmpty(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
-	// A regression must fail here, never reach a real host: the seam counts
-	// the dial and hands back a client on the fake whatever address it got.
-	h.d.dial = func(addr, user, password string) redis.UniversalClient {
-		h.dials++
-		c := redis.NewClient(&redis.Options{Addr: h.mr.Addr()})
-		t.Cleanup(func() { _ = c.Close() })
-		return c
+	// A regression must fail here, never reach a real host: connect reads the
+	// environment before it opens anything, so the first read stops the test
+	// (t.Fatalf ends this goroutine) before redisconn.Open can dial.
+	h.d.getenv = func(k string) string {
+		t.Fatalf("a refused address reached connect (it read %s); the refusal comes before the store is opened", k)
+		return ""
 	}
 	verbs := map[string][]string{
 		"spill":  {"--owner", "rowan", "--name", "note", "--ttl", "1h", "--value", "hi"},
@@ -109,8 +105,8 @@ func TestAddrRefusedWhenMissingOrEmpty(t *testing.T) {
 			}
 		}
 	}
-	if h.dials != 0 {
-		t.Errorf("a refused address reached the dial seam %d times; the refusal comes before the dial", h.dials)
+	if n := h.mr.TotalConnectionCount(); n != 0 {
+		t.Errorf("a refused address opened %d connections to the fake; the refusal comes before the dial", n)
 	}
 	if keys := h.mr.Keys(); len(keys) != 0 {
 		t.Errorf("a refused address stored %v; a refusal writes nothing", keys)
@@ -230,8 +226,13 @@ func TestEveryEphemeralKeyCarriesOwnerAndTTL(t *testing.T) {
 
 	// The package seam, below the CLI: a caller that skips the flag parser
 	// still cannot write a key without an owner or a TTL.
-	s := &scratch{rdb: h.d.dial(h.mr.Addr(), "", ""), now: h.clock.now}
 	ctx := context.Background()
+	conn, err := redisconn.Open(ctx, redisconn.Options{Addr: h.mr.Addr()}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	s := &scratch{rdb: conn.Client(), now: h.clock.now}
 	if _, err := s.spill(ctx, "", "g", "7", time.Hour); err == nil {
 		t.Error("scratch.spill with no owner returned no error")
 	}
@@ -241,4 +242,99 @@ func TestEveryEphemeralKeyCarriesOwnerAndTTL(t *testing.T) {
 	if n := len(h.mr.Keys()); n != 2 {
 		t.Errorf("the package seam stored a key it should have refused: %v", h.mr.Keys())
 	}
+}
+
+// TestSpillAndRecallAreOneRoundTripEach: each verb, run whole through run(),
+// makes one round trip for its work (spill one transaction, recall one
+// pipeline) after the connect's one exchange (HELLO, which redisconn.Open
+// guarantees is the only one). The trips are counted on the wire by a proxy in
+// front of the fake, so a command added anywhere in the verb (a PING in
+// cmdSpill, a read before the pipeline) shows as a third trip.
+func TestSpillAndRecallAreOneRoundTripEach(t *testing.T) {
+	t.Parallel()
+
+	const handshake = 1
+	h := newHarness(t)
+	verbs := [][]string{
+		{"spill", "--owner", "rowan", "--name", "note", "--ttl", "1h", "--value", "hi"},
+		{"recall", "--owner", "rowan", "--name", "note"},
+	}
+	for _, v := range verbs {
+		addr, trips := tripProxy(t, h.mr.Addr())
+		args := append([]string{v[0], "--addr", addr}, v[1:]...)
+		if code, stdout, stderr := h.runBare(args...); code != 0 {
+			t.Fatalf("%s exits %d; stdout=%q stderr=%q", v[0], code, stdout, stderr)
+		}
+		if n := trips(); n != handshake+1 {
+			t.Errorf("%s made %d round trips, want %d: the handshake and one batch", v[0], n, handshake+1)
+		}
+	}
+}
+
+// tripProxy listens on loopback in front of target and counts the round trips
+// its clients make: bytes from a client that open the connection or follow a
+// reply begin one trip, however many writes carry them.
+func tripProxy(t *testing.T, target string) (addr string, trips func() int64) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var n atomic.Int64
+	var mu sync.Mutex
+	var open []net.Conn
+	var wg sync.WaitGroup
+	t.Cleanup(func() {
+		_ = ln.Close()
+		mu.Lock()
+		for _, c := range open {
+			_ = c.Close()
+		}
+		mu.Unlock()
+		wg.Wait()
+	})
+	pipe := func(from, to net.Conn, onData func()) {
+		defer wg.Done()
+		defer func() { _ = from.Close(); _ = to.Close() }()
+		buf := make([]byte, 32<<10)
+		for {
+			k, err := from.Read(buf)
+			if k > 0 {
+				onData()
+				if _, werr := to.Write(buf[:k]); werr != nil {
+					return
+				}
+			}
+			if err != nil {
+				return
+			}
+		}
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			up, err := net.Dial("tcp", target)
+			if err != nil {
+				_ = c.Close()
+				continue
+			}
+			mu.Lock()
+			open = append(open, c, up)
+			mu.Unlock()
+			var sending atomic.Bool
+			wg.Add(2)
+			go pipe(c, up, func() {
+				if sending.CompareAndSwap(false, true) {
+					n.Add(1)
+				}
+			})
+			go pipe(up, c, func() { sending.Store(false) })
+		}
+	}()
+	return ln.Addr().String(), n.Load
 }

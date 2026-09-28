@@ -1,6 +1,6 @@
 /*
 Package merge is nova-merge's engine: the lane's state file, its locks, its records, the
-one merge predicate and the one pass that applies it. docs/SPEC-MERGE.md is normative for
+one merge predicate and the one pass that applies it. deprecated/docs/SPEC-MERGE.md is normative for
 every rule here and each rule is named by number where it is met.
 
 The shape of the whole thing is one sentence: a lane is an ordered list of entries, a

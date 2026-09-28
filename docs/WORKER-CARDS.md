@@ -11,7 +11,7 @@ practical recovery, never a ranking; nothing here is a universal claim from one 
 recovery pair (Stella, stella-3acd28c19920). Stella disposes the exact revision of this page,
 Emma reads it, and Freddy is asked by name where a practice touches his swarm (2, 6, 8, 9,
 16). Templates read: cards 05 (edit), 08 and 09 (reads) of 2026-09-14, sec38 card-04. A
-promoted practice lands in `nova-swarm template` ([SPEC-SWARM.md](SPEC-SWARM.md)).
+promoted practice lands in `nova-swarm template` ([SPEC-SWARM.md](../deprecated/docs/SPEC-SWARM.md)).
 
 The card cutter links the matching reviewed pull request from [Card
 exemplars](EXEMPLARS.md) in every task body as `Example to follow:`. The example demonstrates

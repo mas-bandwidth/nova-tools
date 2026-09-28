@@ -13,11 +13,11 @@ import (
 
 // The four items of the #2910 HOLD at 76811872, one test each.
 
-// writeDocs writes the four docs PastedDocExamples scans under root, leaving
+// writeDocs writes the three docs PastedDocExamples scans under root, leaving
 // out any whose name is in skip.
 func writeDocs(t *testing.T, root string, body map[string]string, skip ...string) {
 	t.Helper()
-	for _, f := range []string{"README.md", "docs/USAGE.md", "docs/CLI.md", "docs/nova-swarm-quickstart.md"} {
+	for _, f := range []string{"README.md", "docs/USAGE.md", "docs/CLI.md"} {
 		if slices.Contains(skip, f) {
 			continue
 		}
@@ -37,10 +37,10 @@ func TestIssue2218MissingDocIsAnError(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	writeDocs(t, root, nil, "docs/nova-swarm-quickstart.md")
+	writeDocs(t, root, nil, "docs/CLI.md")
 	_, err := PastedDocExamples(root)
-	if err == nil || !strings.Contains(err.Error(), "nova-swarm-quickstart.md") {
-		t.Fatalf("PastedDocExamples with docs/nova-swarm-quickstart.md missing returned err=%v; want an error naming the missing doc", err)
+	if err == nil || !strings.Contains(err.Error(), "CLI.md") {
+		t.Fatalf("PastedDocExamples with docs/CLI.md missing returned err=%v; want an error naming the missing doc", err)
 	}
 }
 

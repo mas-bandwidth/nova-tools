@@ -412,7 +412,7 @@ $ nova-swarm run --pool $PWD/pool --workers 1 --hours 1 --worker $PWD/workers/ge
   `supervise.go:288` substitutes the bare `model` verbatim and OpenCode's `--model` is
   `<provider>/<model>`.
 - **Line 6** makes the pool and **starts nothing**: `cmdQuickstart`,
-  `cmd/nova-swarm/main.go:1005-1029`, is a flag parse, a `MkdirAll`, a pool open, a
+  `deprecated/cmd/nova-swarm/main.go:1005-1029`, is a flag parse, a `MkdirAll`, a pool open, a
   `List(Pending)` and four `Fprintf`s — no exec, no `LookPath`, no network.
 - **Line 7** is the one `quickstart` hands over, as a **template**: its `QUICKSTART
   NOTE` prints `--workers <n> --hours <h> --worker <file>` with three blanks, and the

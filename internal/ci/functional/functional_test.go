@@ -46,3 +46,34 @@ func TestExpandWalksTheTreeLikeGoList(t *testing.T) {
 		t.Errorf("Expand = %q, want %q", got, want)
 	}
 }
+
+// Unmatched names each pattern go list would list nothing for, in order: a
+// missing directory, a file, a directory with no .go file, a tree with none;
+// a package directory and a tree holding one match.
+func TestUnmatchedNamesEveryPatternWithNoPackage(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	for _, d := range []string{"empty/sub", "pkg"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, f := range []string{"pkg/a.go", "file.txt"} {
+		if err := os.WriteFile(filepath.Join(root, f), []byte("package a\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	j := func(p string) string { return filepath.Join(root, p) }
+	got := Unmatched([]string{j("pkg"), root + "/...", j("nope"), j("nope") + "/...", j("file.txt"), j("empty"), j("empty") + "/..."})
+	want := []string{
+		`package pattern "` + j("nope") + `" matches no package (no such directory)`,
+		`package pattern "` + j("nope") + `/..." matches no package (no such directory)`,
+		`package pattern "` + j("file.txt") + `" matches no package (not a directory)`,
+		`package pattern "` + j("empty") + `" matches no package (the directory holds no .go file)`,
+		`package pattern "` + j("empty") + `/..." matches no package (no directory under it holds a .go file)`,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Unmatched =\n%q\nwant\n%q", got, want)
+	}
+}

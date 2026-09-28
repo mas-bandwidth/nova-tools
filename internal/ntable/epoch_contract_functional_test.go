@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/redis/go-redis/v9"
 )
@@ -301,9 +300,10 @@ func TestTableReceiptPreflightPreventsPartialMoves(t *testing.T) {
 	}
 }
 
-// A task-backed record has one metadata owner for each field. Generic task
-// fields must not forge or erase the table writer's placement pointer.
-func TestTaskFieldsCannotForgeTablePlacement(t *testing.T) {
+// Generic table drift detection: external writes forging or tampering with a
+// member's placement pointer are detected by Check and refused by CellMove with
+// ErrDrift (reverting the forged write turns it red on ErrDrift).
+func TestGenericTableDriftDetection(t *testing.T) {
 	t.Parallel()
 	_, c := live(t)
 	ctx := context.Background()
@@ -322,13 +322,33 @@ func TestTaskFieldsCannotForgeTablePlacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := memberStoreImage(t, c)
-	if _, err := taskcard.Move(ctx, c, "existing", "waiting", taskcard.Opts{Fields: []string{"place:tasks", "elsewhere:ready"}}); err == nil || !strings.Contains(err.Error(), "FIELD place:tasks") {
-		t.Fatalf("task move forged table field: %v", err)
+
+	// An external write forging a different placement for the existing member is refused by CellMove and detected by Check.
+	if err := c.HSet(ctx, "task:existing", "place:tasks", "elsewhere:ready").Err(); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := taskcard.Push(ctx, c, taskcard.PushRequest{ID: "new", Title: "new task", Fields: []string{"place:tasks", "r:ready"}}); err == nil || !strings.Contains(err.Error(), "FIELD place:tasks") {
-		t.Fatalf("task create forged table field: %v", err)
+	if _, err := ntable.CellMove(ctx, c, tb.Name, "r", "ready", "ready", "existing"); !errors.Is(err, ntable.ErrDrift) {
+		t.Fatalf("forged placement move = %v, want ErrDrift", err)
 	}
+	if _, err := ntable.Check(ctx, c, tb.Name); !errors.Is(err, ntable.ErrDrift) {
+		t.Fatalf("forged placement check = %v, want ErrDrift", err)
+	}
+
+	// Restore and verify that an unplaced ghost record forging a placement is detected by Check.
+	if err := c.HSet(ctx, "task:existing", "place:tasks", "r:ready").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.HSet(ctx, "task:new", "place:tasks", "r:ready").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ntable.Check(ctx, c, tb.Name); !errors.Is(err, ntable.ErrDrift) {
+		t.Fatalf("ghost placement check = %v, want ErrDrift", err)
+	}
+	if err := c.Del(ctx, "task:new").Err(); err != nil {
+		t.Fatal(err)
+	}
+
 	if !reflect.DeepEqual(before, memberStoreImage(t, c)) {
-		t.Fatal("task field refusal changed store")
+		t.Fatal("store did not match expected image after cleanup")
 	}
 }

@@ -59,7 +59,7 @@ func (app *application) cmdCellAdd(args []string, stdout, stderr io.Writer) int 
 	trips := st.CountTrips()
 	n, err := ntable.CellsAdd(ctx, c, pos[0], pos[1], pos[2], sc, pos[3:], *write)
 	if err != nil {
-		return storeRefusal(stderr, verb, err)
+		return st.refusal(stderr, verb, err)
 	}
 	fmt.Fprintf(stdout, "TABLE CELL table=%s row=%s col=%s n=%d trips=%d\n", pos[0], field(pos[1]), pos[2], n, trips.N())
 	printReceipt(stdout, write, *receipt)
@@ -101,7 +101,7 @@ func (app *application) cmdCellRemove(args []string, stdout, stderr io.Writer) i
 	trips := st.CountTrips()
 	n, err := ntable.CellsRemove(ctx, c, pos[0], pos[1], pos[2], pos[3:], *write)
 	if err != nil {
-		return storeRefusal(stderr, verb, err)
+		return st.refusal(stderr, verb, err)
 	}
 	fmt.Fprintf(stdout, "TABLE CELL table=%s row=%s col=%s n=%d trips=%d\n", pos[0], field(pos[1]), pos[2], n, trips.N())
 	printReceipt(stdout, write, *receipt)
@@ -129,7 +129,7 @@ func (app *application) cmdCellMove(args []string, stdout, stderr io.Writer) int
 	trips := st.CountTrips()
 	n, err := ntable.CellsMove(ctx, c, pos[0], pos[1], pos[2], pos[3], pos[4:], *write)
 	if err != nil {
-		return storeRefusal(stderr, verb, err)
+		return st.refusal(stderr, verb, err)
 	}
 	if len(pos) == 5 {
 		fmt.Fprintf(stdout, "TABLE MOVE table=%s row=%s member=%s from=%s to=%s n=%d trips=%d\n", pos[0], field(pos[1]), field(pos[4]), pos[2], pos[3], n, trips.N())
@@ -160,7 +160,7 @@ func (app *application) cmdCellMembers(args []string, stdout, stderr io.Writer) 
 	trips := st.CountTrips()
 	ms, err := ntable.CellMembers(ctx, c, pos[0], pos[1], pos[2])
 	if err != nil {
-		return storeRefusal(stderr, verb, err)
+		return st.refusal(stderr, verb, err)
 	}
 	fmt.Fprintf(stdout, "TABLE CELL table=%s row=%s col=%s n=%d trips=%d\n", pos[0], field(pos[1]), pos[2], len(ms), trips.N())
 	for _, m := range ms {

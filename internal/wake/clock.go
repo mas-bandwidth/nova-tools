@@ -28,7 +28,7 @@ func (Real) Sleep(d time.Duration) {
 }
 
 // Fake is the injected clock. It is here rather than in a _test.go file because
-// two packages' tests need the same one -- cmd/nova-wake's and this package's --
+// two packages' tests need the same one -- deprecated/cmd/nova-wake's and this package's --
 // and two nearly-identical fake clocks is two chances to prove different things.
 type Fake struct {
 	at      time.Time

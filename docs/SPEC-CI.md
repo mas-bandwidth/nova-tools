@@ -473,7 +473,7 @@ measurement of the same packages.
 nothing noticed, because nothing summed the per-package elapsed time `go test
 -json` was already printing. A green that hides a doubling suite is the same
 mistake as a flaky wait, one layer up. The same mistake one layer out is a
-number RECORDED and enforced against nothing: `cmd/nova-wake` was recorded at
+number RECORDED and enforced against nothing: `deprecated/cmd/nova-wake` was recorded at
 62.9 s on the Air -- over a minute -- and nothing read it; a live run's
 CI-SLOW line is where such a number is read now.
 
@@ -1158,9 +1158,9 @@ whole verb down, in a loop nobody is watching, on the one input nobody had.
 `TestFieldsIndexAllowlistIsShrinkOnly`.
 **Its allowlist.** `internal/ci/testdata/fieldsindex_allowlist.txt`, one
 `file:function # reason` per row. The one offender the rule found on its first
-run was fixed rather than listed (`cmd/nova-wake/serve.go`, `server.spawn`, which
+run was fixed rather than listed (`deprecated/cmd/nova-wake/serve.go`, `server.spawn`, which
 indexed `strings.Fields(s.onNote)` with no length check of its own); two rows
-arrived with the rebase onto dev (`internal/friendread/count.go:Parse`,
+arrived with the rebase onto dev (`deprecated/internal/friendread/count.go:Parse`,
 `internal/pulse/cut_template.go:OperativeRegion`), each in range by construction and
 each carrying its reason. Shrink-only in both directions, and every row must carry a
 reason.
@@ -1296,7 +1296,7 @@ from `os.TempDir()` — no `filepath.Glob`, `os.ReadDir` or `ioutil.ReadDir` ove
 an expression naming it, directly or through a local assigned from it. It is the
 read side of `testoutpath`: that one holds the paths a tool WRITES inside
 `t.TempDir()`, this one holds the directories a test READS.
-**The hurt.** `internal/review.TestMutateRemovesItsWorktreeOnBothPaths` proved
+**The hurt.** `deprecated/internal/review.TestMutateRemovesItsWorktreeOnBothPaths` proved
 that `review.Mutate` removes its throwaway worktree by globbing
 `os.TempDir()/nova-review-mutate-*` before the run and again after it, refusing
 any entry that was not in the snapshot. On a laptop that is exact; on a
@@ -1554,8 +1554,7 @@ server by an absolute path is not caught by the shim.
 **The rule.** ci.yml's `test-hosted` keeps `timeout-minutes: 2` and meets it by
 shard count: ubuntu-latest runs shards 1..6 and macos-latest 1..8, every leg
 carrying its OS's `shards`. The `deal this shard's packages` step places the
-heavy packages (`cmd/nova-bus`, `cmd/nova-merge`, `cmd/nova-sprint`,
-`cmd/nova-swarm`) first, one per shard, then every other package round-robin in
+heavy package (`cmd/nova-bus`) first, then every other package round-robin in
 `go list` order; vet and test both read the deal's `HOSTED_PKGS`. The Go cache
 is restored at the path Go uses on each OS (`~/Library/Caches/go-build` on
 macOS, `~/.cache/go-build` on Linux, plus `~/go/pkg/mod`) by
@@ -1573,7 +1572,7 @@ test step at 00:04:52, and the 198 MB entry warmed the shards that started after
 **The hurt.** Dev push run 36269122367 at f7aa36530: at four shards per OS,
 ubuntu-latest's shard 3 was cancelled at 123 s and all four macos-latest shards
 at 125-173 s, turning `ci-ok` red. Shard 3 of 4 held `cmd/nova-bus` (46 s
-`-short` on the Studio) and `cmd/nova-merge` (28 s) together, and a count-only
+`-short` on the Studio) and `deprecated/cmd/nova-merge` (28 s) together, and a count-only
 deal kept them together at eight. Dev push run 36357749371 at 3a3f5be93: the
 cache step cached `~/.cache/go-build` on every OS, the macOS entry was 107 MB of
 module cache against Linux's 636 MB while the step logged "cache hit", macOS
@@ -1903,8 +1902,7 @@ nothing.
 **The test.** `TestNoCardTemplateCarriesAnOSSpecificCommand`
 (`internal/ci/ci_cardtemplates_test.go`), over the checker in
 `internal/ci/ci_cardtemplates.go`, which reads every `*.md` and `*.card` under
-`CardTemplateDirs` (`cmd/nova-pulse/testdata/templates`,
-`cmd/nova-swarm/testdata/templates`, `docs/templates`, `tools/templates`) as
+`CardTemplateDirs` (`cmd/nova-pulse/testdata/templates`, `docs/templates`, `tools/templates`) as
 text. A directory that is not there yet is skipped; a run that reads NO
 template at all is red, because that is how the directory list goes stale.
 **Its allowlist.** `internal/ci/testdata/cardtemplate_allowlist.txt`, one
@@ -1938,7 +1936,7 @@ about commands it does not run.
 by `.github/scripts/select-packages.sh` and by the merge gate's own inline
 selection in `ci.yml` — never only as a fallback when the diff selected nothing.
 **The hurt.** `internal/ci` scans the tree instead of importing what it guards,
-so nothing in a diff ever "touches" it: PR `#1073` edited `cmd/nova-swarm` and
+so nothing in a diff ever "touches" it: PR `#1073` edited `deprecated/cmd/nova-swarm` and
 selected no shard that would run the class tests. Every rule in this document is
 worth exactly as much as this line. The 2026-09-18 correction is the other edge:
 when the diff had ALREADY selected `internal/ci`, a bare append ran it twice in
@@ -1950,7 +1948,7 @@ TestMergeGateAlwaysAppendsInternalCI (deleted 2026-09-26 with the hosted merge l
 **Its allowlist.** None.
 **Its remedy line.** `select-packages.sh does not add ./internal/ci to want
 unconditionally; internal/ci scans the tree instead of importing what it guards,
-so a cmd/nova-swarm edit (PR #1073) selects no shard to run its class tests`.
+so a deprecated/cmd/nova-swarm edit (PR #1073) selects no shard to run its class tests`.
 **Its narrowings.** Two independent selections are pinned by two regular
 expressions over two files; a third path into the package set would need a third
 row here, and the test cannot know it exists.
@@ -1969,7 +1967,7 @@ Each OS's side of the agreement is that OS's provisioning standard:
 `NOVA_TOOLCHAIN_ROOTS` markers and drifts on a missing one, and
 `pulse.FleetStandardChecks`'s `toolchain-*` checks carry both OSes' — a linux
 root **demanded**, a darwin root **reported**, because a Mac's toolchains are
-installed rather than provisioned into a home. Both `docs/SPEC-SWARM.md` and
+installed rather than provisioned into a home. Both `deprecated/docs/SPEC-SWARM.md` and
 `docs/CLI.md` name every granted root.
 **The hurt.** Two contracts named the same paths in two places and disagreed: the
 provisioning standard put Go under `~/sdk`, the wall's implicit worker
@@ -2003,8 +2001,8 @@ read-without-execute kind`.
 kinds are ENFORCED is proved by the wall's own tests on both bodies
 (`TestLandlockReadNoExecReadsAndRefusesToExecute`,
 `TestReadNoExecReadsAndRefusesToExecuteOnDarwin`), that the argv carries each
-root under its own flag by `TestNativeArgvReadsTheBenchToolchainRoots` and, on a
-Mac, `TestNativeArgvReadsTheDarwinToolchainRoots`, and that the version under a
+root under its own flag was proved by nova-swarm's own argv tests, which moved to
+`deprecated/cmd/nova-swarm` with the tool and no longer run, and that the version under a
 Cellar prefix is read off the launcher rather than guessed by
 `TestToolchainVersionDirReadsTheVersionOffTheLauncher`.
 
@@ -2313,7 +2311,7 @@ injected clock seam is not a wall-clock wait and is not found: the seams the
 tree has are internal/wake.Clock, internal/bus's lockClock, internal/swarm's
 batchClock and pullClock, internal/nsprint/land.Clock, internal/log.Clock and
 the injected `Sleep func(time.Duration)` and `now func() time.Time` fields of
-internal/merge, internal/gh, internal/swarm, cmd/nova-merge and cmd/nova-sprint.
+internal/merge, internal/gh, internal/swarm, deprecated/cmd/nova-merge and cmd/nova-sprint.
 **The hurt.** A load gate made the wall-time verdict depend on the machine:
 PR #4413's own head was red at load 3 of 32 CPUs on
 TestJoinInterruptionNegativeControlWithoutKillFails (1.6 s, run 36264290984),
@@ -2481,7 +2479,7 @@ Every class test reads this repository's own text — `.go` files, `.github/work
 35. `TestSharedRepoTreeListsAndParsesTheRepository` — the shared tree is this repository, every `.go` file carries a usable syntax tree, and the loader runs exactly once.
 36. `TestSharedRepoTreeSkipsTheGitDirectory` — `.git` is never walked into.
 38. `TestSpecCIIndexesEveryClassTest` — every class test is named by the index and every indexed `Test…` name exists (the parked section exempted).
-39. `TestNoGhInAnyBrief` / `TestBriefRuleCatchesEachSpelling` — no brief this repository ships tells a child to call GitHub (#3600, umbrella #3594: GitHub is a git remote only). **The hurt:** one PR cost ~60 REST calls and the rowan token's 5,000/h was spent twice in a day, freezing every merge for an hour; a brief that says `gh api`, `gh pr`, GraphQL or a bare remote clone teaches the next child to spend the budget again. **The sweep:** every file under `internal/nsprint/brief/tmpl/*.tmpl`, `internal/nsprint/read/tmpl/*.tmpl`, `internal/swarm/templates.go` and `cmd/nova-swarm/testdata/cards/*.md` (an empty glob is a red run, so a template directory that moves must move in the list too); a line matching `gh ` as a command (line start or after a non-word, non-path character, so "through " does not match), `graphql` in any case, or a `git clone` of any remote (`https://`, `ssh://`, `git@`) without `--reference` on the same line is refused. **No allowlist:** the remedy is the verb, not an exception. **The remedy line:** `<file>:<line>: gh  in a brief: <line>` (or `GraphQL in a brief`, or `a remote clone without the bench mirror as --reference`), with the fix named once: `nova-sprint read brief`, `nova-sprint read post`, `nova-sprint card`, or a clone with `--reference ~/nova-bench/mirror/<repo>.git`. **The control:** `TestBriefRuleCatchesEachSpelling` feeds the scanner one brief per spelling and wants exactly one finding at that line, and a brief carrying the verbs, a mirror-referenced clone and the words "through" and "high" wants none.
+39. `TestNoGhInAnyBrief` / `TestBriefRuleCatchesEachSpelling` — no brief this repository ships tells a child to call GitHub (#3600, umbrella #3594: GitHub is a git remote only). **The hurt:** one PR cost ~60 REST calls and the rowan token's 5,000/h was spent twice in a day, freezing every merge for an hour; a brief that says `gh api`, `gh pr`, GraphQL or a bare remote clone teaches the next child to spend the budget again. **The sweep:** every file under `internal/nsprint/brief/tmpl/*.tmpl`, `internal/nsprint/read/tmpl/*.tmpl` and `internal/swarm/templates.go` (the card fixtures, now `deprecated/cmd/nova-swarm/testdata/cards`, left the list with the tool; an empty glob is a red run, so a template directory that moves must move in the list too); a line matching `gh ` as a command (line start or after a non-word, non-path character, so "through " does not match), `graphql` in any case, or a `git clone` of any remote (`https://`, `ssh://`, `git@`) without `--reference` on the same line is refused. **No allowlist:** the remedy is the verb, not an exception. **The remedy line:** `<file>:<line>: gh  in a brief: <line>` (or `GraphQL in a brief`, or `a remote clone without the bench mirror as --reference`), with the fix named once: `nova-sprint read brief`, `nova-sprint read post`, `nova-sprint card`, or a clone with `--reference ~/nova-bench/mirror/<repo>.git`. **The control:** `TestBriefRuleCatchesEachSpelling` feeds the scanner one brief per spelling and wants exactly one finding at that line, and a brief carrying the verbs, a mirror-referenced clone and the words "through" and "high" wants none.
 40. `TestTaskCardsHaveOneWriter` — no non-test Go file under `cmd/` or `internal/` writes a task card's sets or record (`ws:<stream>:<where>`, `friend:<f>:cards:<where>`, both also under the sprint epoch, `ws:<e>:<stream>:<where>` and `friend:<f>:<e>:cards:<where>`, #4238; the friend-queue idx sets, `task:<id>`) with a direct Redis call; every move is one FCALL of the one writer, `ns_tcard_move` in `internal/nsprint/fn/lua/02_card_move.lua` (#3778, Glenn 2026-09-25: "a card can only ever be in no set, or one of these sets"; the 07:46 table read 143/143 left after a night that landed 27 PRs because four writers kept the sets). Fixtures that seed a throwaway store (a `*fixture*.go` file, `internal/nsprint/ws/wstest`) are the only exceptions; the remedy is `internal/nsprint/taskcard`. Its Lua twin is `TestTaskCardOneWriter` in `internal/nsprint/fn`.
 41. `TestTableSetsHaveOneWriter` / `TestTableSetsRuleCatchesAnInjectedWriter` — nothing but the one move file, `internal/nsprint/fn/lua/02_card_move.lua`, writes a set behind the three tables: `ws:<stream>:<where>` (the stream table's primaries), `bench:<b>:cards:<col>` and `friend:<f>:cards:<col>` (the host and friend tables' copies), the dealer's lists `s:<S>:pool|waiting`, each also under the sprint epoch (`ws:<e>:...`, `<kind>:<name>:<e>:cards:...`, `s:<S>:<e>:...`, #4238: the scanner knows the literals and every epoch-keyed helper, `ws.KeyAt`, `ConsumerKeyAt`, `SprintListAt` and their package twins in Go, `NS.card.ckey|wskey|skey`, `CARD.*`, `cm_*`, `DF.*` and the lander's `wskey` in Lua), and the bench lease ledgers `bench:<b>:living|starting` being folded into `bench:<b>:cards:working` (#3929, the table moves; Glenn 2026-09-25: "it's YOUR JOB to make sure that these links are always valid"). **The hurt:** the table printed counts no card record could account for, because several files each kept their own copy of a set, so a move in one left a stale member in another. **The sweep:** every Lua file under `internal/nsprint/fn/lua` and the stream lander's standalone script (`internal/nsprint/land/stream/*.lua`) (a ZADD, ZREM, SADD, SREM, SMOVE, pop, range removal, store, DEL, UNLINK or RENAME of one of those keys, directly or through a local bound to one) and every non-test Go file under `cmd/` and `internal/` (the go-redis write methods and raw command lists on the same keys). **The allowlist:** fixtures (`*fixture*.go`) seed a throwaway store; `knownTableWriters` is a ratchet that only goes down, holding the lander script's two ws writes (its park) and `ns_card_resume`'s pool write in `card_pool.lua` until they fold into the one move; the legacy ledger writers were a ratchet (`legacyLedgerWriters` in `internal/ci/tablemoves_class_test.go`), now empty since the fold landed (#3998): any write of an old ledger fails. **The remedy line:** `a second writer of a table set (the one writer is 02_card_move.lua; verbs call it: nova-sprint card deal|work|end|land|cancel): <file>:<line>`, or the ratchet's `lower legacyLedgerWriters[...]`. **The control:** `TestTableSetsRuleCatchesAnInjectedWriter` feeds the scanner Lua and Go writers of the table sets and the ledgers and wants each found, and wants the move file, a fixture and a ZCARD read left alone.
 42. `TestNoOldLeaseLedgerLeft` — nothing reads or writes the old lease ledgers `bench:<b>:living|starting` and `friend:<f>:living|starting` any more, in the Lua library or in any non-test Go file: they fold into `<consumer>:cards:working`, the one lease ledger, and the width in use is its ZCARD (#3998, #3877's other half). **The hurt:** a bench or friend kept two ledgers beside its working set, so the width a table printed, the width a take was refused at and the width the dealer reserved against could each read a different set. **The sweep:** every Lua file under `internal/nsprint/fn/lua` (code before a `--` comment) and every non-test Go file under `cmd/` and `internal/`, for a string spelling of a bench or friend key ending `:living` or `:starting`. **No allowlist:** fixtures seed the consumer sets. **The remedy line:** `an old lease ledger key (folded into <consumer>:cards:working, #3998): <file>:<line>: <line>`; hold and drop a friend-queue lease with `NS.moves.hold` / `NS.moves.drop` (02_card_move.lua) and read width as ZCARD `<consumer>:cards:working`. **The control:** the test feeds the pattern a Lua ZCARD of a friend's `:starting`, a Go ZCard of a bench's `:living` and a fixture ZADD of a friend's `:living` and wants each found, and wants `bench:<b>:cards:working` left alone.
@@ -2557,41 +2555,62 @@ the Makefile's `test-full` and `test-slow` targets, which CI's whole-tree runs
 call.
 ### `ci-receipt` — ci-ok reports every run to Redis from the runner
 
-**The rule.** The `ci-ok` job of `.github/workflows/ci.yml` has exactly one
-step that runs `nova-sprint ci github --from-runner`, under `if: always()`,
-with `set -euo pipefail` and no `|| true` or `continue-on-error`, and that
-step passes every field of the record from the run's own context — `--repo`,
-`--sha` (the PR head, else `github.sha`), `--run-id`, `--event`,
-`--head-branch`, `--base-branch`, `--pr`, `--workflow`, `--conclusion`
-(`job.status`) — plus one `--job <name>=${{ needs.<name>.result }}` for every
-job in ci-ok's `needs` and none it does not need, as the bench seat
-(`nova-secrets exec … --require NOVA_REDIS_BENCH_PASSWORD`,
-`NOVA_SPRINT_REDIS_USER=bench`, `--redis "$NOVA_CARD_REDIS"`), never
-`curl`, `gh api` or `api.github.com`, and with the bench's installed
-nova-sprint as the writer (`$HOME/.local/bin/nova-sprint`); `go run` of the
-tree under test is the one bootstrap, taken only when the installed binary
-refuses the verb's flag, and announced as `BOOTSTRAP:`.
-**The hurt.** Measured 2026-09-26 12:38 PM ET: `ev:github` XLEN 0 and zero
-`ci:*:gh` keys, so `nova-sprint land pr` (#4326) could only print WAITING.
-The signed webhook receiver sits behind a tailscale funnel kept off by
-design, and no nova-sprint path may poll GitHub for a check state
-(`TestNoPollingPathsRemain`). The runners are ours and run as the bench
-seat, so the run reports itself; a receipt that silently did not happen
-would leave a landing waiting forever, which is why the step must fail the
-job. And never build the thing with itself: a PR that changes the writer
-must not write the check that lands it, which is why the installed binary
-writes and the tree only bootstraps.
+**The rule.** The `ci-ok` job of `.github/workflows/ci.yml`, whose own `if`
+is exactly `always() && github.event_name != 'schedule'`, has exactly one
+step that runs `nova-ci github receipt --from-runner`, under `if: always() &&
+(github.event_name != 'pull_request' ||
+github.event.pull_request.head.repo.full_name == github.repository)`,
+with `set -euo pipefail` and no `|| true` or `continue-on-error`, and its
+command is exactly this tree's writer, `go run ./cmd/nova-ci github receipt
+--from-runner`, under the bench seat (`"$HOME/.local/bin/nova-secrets" exec …
+--only NOVA_REDIS_BENCH_PASSWORD --require NOVA_REDIS_BENCH_PASSWORD`,
+`NOVA_SPRINT_REDIS_USER=bench`, `--redis "$NOVA_CARD_REDIS"`), passing every
+field of the row from the run's own context — `--repo`, `--sha` (the PR head,
+else `github.sha`), `--run-id`, `--pr`, `--workflow`, `--conclusion`
+(`job.status`) — and nothing the row does not carry (`--job`, `--event`,
+`--head-branch`, `--base-branch`). It never calls `curl`, `gh api` or
+`api.github.com`, never names `nova-sprint`, never runs an installed receipt
+writer (the nova-secrets wrapper is the one installed binary it runs), and
+never probes an installed binary's flags or version.
+**The hurt.** Measured 2026-09-26 12:38 PM ET: `ev:github` XLEN 0, because the
+signed webhook receiver sits behind a tailscale funnel kept off by design, and
+nothing may poll GitHub for a check state (`TestNoPollingPathsRemain`). The
+runners are ours and run as the bench seat, so the run reports itself: one
+`ev:github` row (internal/cireceipt), the row `nova-wake watch --store` blocks
+on. A receipt that silently did not happen must never read as one that did,
+which is why the step must fail the job. The writer was the installed
+nova-sprint until 2026-09-27; nova-sprint is deprecated and is not shipped
+once it moves under `deprecated/`, so a rebuilt runner would have had no
+writer. The writer is now this tree's, versioned with the commit under test,
+so no runner's installed build matters. The cost is stated, not hidden: a tree
+that does not compile writes no receipt and exits 1, so it never wakes a
+`nova-wake watch --store`, where the installed writer wrote a red receipt;
+this is accepted, because the red ci-ok is itself the signal, the store watch
+is for the green-or-red completion of runs that reached the step, and a tree
+that does not compile fails the other jobs first. The receipt STEP carries the
+head-repo guard every self-hosted job carries (`github.event_name !=
+'pull_request' || github.event.pull_request.head.repo.full_name ==
+github.repository`), because it runs this tree's code holding the bench
+seat's Redis password and a fork's pull request must not reach it. The ci-ok
+JOB does not carry it, on purpose: on a fork's pull request every self-hosted
+need is skipped and ci-ok reads those skips as red, which is what keeps the
+fork PR out of the merge queue; a guard on the job would skip ci-ok, and
+GitHub counts a skipped required check as passing, so the fork PR could be
+enqueued with no PR-stage CI (cold read of #4495, 2026-09-27). So a fork PR's
+ci-ok runs, is red, and writes no receipt; the `ci:<repo>:<sha>:gh` fold and the
+`pr:<repo>:<n>` claim nova-sprint also wrote had only nova-sprint readers and
+are not written.
 **The test.** `TestCIOKReportsEveryRunToRedisFromTheRunner`
-(`internal/ci/ciok_receipt_class_test.go`), reading the job as YAML.
-**Its allowlist.** None: one step, every field, no exceptions.
-**Its remedy line.** Each red names the flag, the expression or the guard
-the step is missing, e.g. `the receipt step does not pass --job
-"lisp=${{ needs.lisp.result }}"`; the fix is the step, never the test.
-**Its narrowings.** It reads the step's text: an expression that names the
-right context but is quoted differently passes as long as the flag and the
-expression are adjacent, and it does not run the step, so a bench with no
-`card.env` is found by the run itself (the step's own refusal names the
-rowan-tools bench play), not here.
+(`internal/ci/ciok_receipt_class_test.go`), reading the job as YAML,
+comparing the job's `if` exactly (no head-repo guard), the receipt step's
+`if` exactly (`always()` and the head-repo guard) and the step's whole run
+block line by line.
+**Its allowlist.** None: one step, one command, no exceptions.
+**Its remedy line.** Each red names what the step lacks or names, e.g. `the
+receipt step names "nova-sprint"`; the fix is the step, never the test.
+**Its narrowings.** It reads the step's text and does not run it, so a bench
+with no `card.env` is found by the run itself (the step's own refusal names
+the rowan-tools bench play), not here.
 
 ### `silent` — no silent failure on the copy model's live path
 
@@ -2995,18 +3014,18 @@ five-minute per-leg cap on superman, and a cancelled shard drops the whole group
 and restarts every PR behind it. The log does not say what the headline says:
 NO package came near the 100 s per-package ceiling. Shard 0 finished 27 packages
 summing 211.8 s of `go test` between 16:36:43 and 16:41:24 and was killed partway
-through the rest, its largest single invocation `cmd/nova-wake` at 50.7 s. What
+through the rest, its largest single invocation `deprecated/cmd/nova-wake` at 50.7 s. What
 ran out was the SHARD'S SUM, and the sum is decided by how many ways each package
 is dealt. Dealing came off the LINUX table, and FOUR of the five largest darwin
 packages sit under its 40 s budget, so each was dealt three ways instead of six:
-`cmd/nova-wake` 24.6 s on hulk against 120.3 s measured on superman,
-`cmd/nova-merge` 7.7 against 68.8, `internal/swarm` 17.4 against 64.4 and
+`deprecated/cmd/nova-wake` 24.6 s on hulk against 120.3 s measured on superman,
+`deprecated/cmd/nova-merge` 7.7 against 68.8, `internal/swarm` 17.4 against 64.4 and
 `cmd/nova-bus` 10.0 against 54.2. The second half of the hurt
 is the machine's STATE: superman was in its post-power-on condition, Spotlight
 settling and XprotectService scanning fresh test binaries with sixteen runners
 live, so the numbers of that moment were the state's and not the host's. That is
 why the rule names the conditions and not only the number — and why the margin is
-measured rather than assumed, on the same host both ways: `cmd/nova-merge` is
+measured rather than assumed, on the same host both ways: `deprecated/cmd/nova-merge` is
 68.8 s whole on a quiet superman against about 147 s on the loaded superman of
 that run, which is 2.1x.
 **The test.** `TestDarwinMergeShardPlanIsDerivedFromMeasurements`
@@ -3036,7 +3055,7 @@ EVERY slot the group opened; only linux still keeps the Linux table, which is it
 own measurement.
 **The hurt.** The same run, 35369433950, and the same shape as `windows-table`
 one platform later: a leg dealing from a table measured on another machine. Linux
-could not have said otherwise — `cmd/nova-merge` is 7.7 s on hulk and 68.8 s on a
+could not have said otherwise — `deprecated/cmd/nova-merge` is 7.7 s on hulk and 68.8 s on a
 quiet x64 Mac, `cmd/nova-bus` 10.0 s there and 54.2 s here — so four of the five
 packages that dominate this leg sat under the 40 s budget in the only table it
 read, and were dealt three ways instead of six. Three platforms are three
@@ -3116,7 +3135,7 @@ table, which is their measurement.
 table — `cmd/nova-bus` at 6.4 s bought three shards, and shard 0 was killed at
 the 100 s ceiling with three tests still running. Linux could not have said
 otherwise: `cmd/nova-bus` is 10.0 s on hulk and at least 100 s there,
-`cmd/nova-swarm` 51.0 s on hulk and 37 s there.
+`deprecated/cmd/nova-swarm` 51.0 s on hulk and 37 s there.
 **PARKED 2026-09-18.** Glenn: "drop the native windows CI runners. WSL only from now on." The merge gate's windows leg, its arm of the shard plan and `make windows-timeout` are all gone. **The rule itself is NOT parked**: it runs today as `darwin-table`.
 **Its allowlist.** None.
 **Its remedy lines.** `the merge gate's shard plan never reads <sizes file>; its

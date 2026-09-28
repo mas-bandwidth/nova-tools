@@ -131,9 +131,11 @@ func TestFnVerbsLogInAsTheACLUser(t *testing.T) {
 		t.Fatalf("fn check --user fnuser: exit %d %q %q; want OK", code, out, errOut)
 	}
 	// With no user the default user is used, and it is off: the store
-	// answers, with a refusal, so the exit is 1.
-	if code, _, errOut = fnRun("fn", "check", "--addr", addr); code != 1 || !strings.Contains(errOut, "NOAUTH") && !strings.Contains(errOut, "WRONGPASS") {
-		t.Fatalf("fn check with no user on a store whose default user is off: exit %d %q; want exit 1 naming the refused login", code, errOut)
+	// refuses the login, which exits 2 in every nova-redis verb, with the
+	// login remedy.
+	if code, _, errOut = fnRun("fn", "check", "--addr", addr); code != 2 || !strings.Contains(errOut, "NOAUTH") && !strings.Contains(errOut, "WRONGPASS") ||
+		!strings.Contains(errOut, `remedy="log in as a user that may run FUNCTION LIST`) || strings.Contains(errOut, "; next:") {
+		t.Fatalf("fn check with no user on a store whose default user is off: exit %d %q; want exit 2 naming the refused login and one remedy", code, errOut)
 	}
 }
 
@@ -277,7 +279,7 @@ func TestFnFailureIsOneLineFromTheBinary(t *testing.T) {
 	t.Cleanup(func() { _ = ln.Close(); <-accepted })
 
 	for _, c := range []struct{ name, addr, cause string }{
-		{"an owned endpoint that closes every connection", ln.Addr().String(), "the store did not answer"},
+		{"an owned endpoint that closes every connection", ln.Addr().String(), "unreachable: EOF"},
 		{"a host no resolver is asked about", "no..such:6379", "no such host"},
 	} {
 		cmd := exec.Command(os.Args[0], "-test.run=^TestNovaRedisMain$", "--", "fn", "check", "--addr", c.addr)

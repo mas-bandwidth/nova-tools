@@ -6,14 +6,6 @@
 # hang that a short bound kills. A test that WAITS a deadline out goes behind
 # //go:build slow instead (the 26 moved that day are in the slow_test.go files
 # beside them). The list only shrinks: an entry with no hit left is a red run.
-cmd/nova-swarm/fixture_guards_test.go:TestTheDeadlineACappedJobIsMeasuredAgainstIsTheOneItRunsUnder hands the code under test --deadline 9s; a ceiling the run never reaches: 0.00 s on hetzner at dev 64b9bec48
-cmd/nova-swarm/native_test.go:TestCmdNativeCLI hands the code under test --deadline 10s; a ceiling the run never reaches: 0.03 s on hetzner at dev 64b9bec48
-cmd/nova-swarm/native_test.go:TestNativeAuthCopyIsGoneAfterTheRun hands the code under test --deadline 10s; a ceiling the run never reaches: 0.03 s on hetzner at dev 64b9bec48
-cmd/nova-swarm/native_test.go:TestNativeAuthWithAWorkerNamesItsLegacyCopy hands the code under test --deadline 10s; a ceiling the run never reaches: 0.03 s on hetzner at dev 64b9bec48
-cmd/nova-swarm/native_test.go:TestNativeOKNamesTheWall hands the code under test --deadline 10s; a ceiling the run never reaches: 0.06 s on hetzner at dev 64b9bec48
-cmd/nova-swarm/native_test.go:TestNativeRefusesAModelThatDiffersFromTheWorkerDescription hands the code under test --deadline 10s; a ceiling the run never reaches: 0.00 s on hetzner at dev 64b9bec48
-cmd/nova-swarm/native_test.go:TestNativeSecretWorkerWritesNoAuthFileAndTheHarnessSeesName hands the code under test --deadline 10s; a ceiling the run never reaches: 0.03 s on hetzner at dev 64b9bec48
-cmd/nova-swarm/native_test.go:TestNativeWorkerModelGateComparesQualifiedName hands the code under test --deadline 10s; a ceiling the run never reaches: 0.03 s on hetzner at dev 64b9bec48
 internal/nsprint/deal/pass_test.go:fixture.remote sets RunTimeout to 20s; a helper, not a test: its callers are timed, and none reached five seconds at dev 64b9bec48
 internal/swarm/batch_native_636_functional_test.go:TestBatchUnknownAcceptanceDoesNotExitZero sets Deadline to 10s; a ceiling the run never reaches: 0.00 s on hetzner at dev 64b9bec48
 internal/swarm/batch_native_636_test.go:TestCard8909BatchRefusesWithNeitherRunnerNorHarness sets Deadline to 10s; a ceiling the run never reaches: 0.00 s on hetzner at dev 64b9bec48
