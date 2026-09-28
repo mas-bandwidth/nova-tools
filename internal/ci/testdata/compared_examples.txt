@@ -39,3 +39,4 @@ cmd/nova-sandbox/firstrun_test.go:TestTheCommandReferenceExamplesAreWhatTheToolP
 cmd/nova-sandbox/firstrun_test.go:TestTheCommandReferenceExamplesAreWhatTheToolPrints $ nova-sandbox worktree --repo /path/to/workdir --scratch /path/to/workdir/scratch --pr 123
 cmd/nova-sandbox/firstrun_test.go:TestTheCommandReferenceExamplesAreWhatTheToolPrints $ nova-sandbox worktree --repo /path/to/workdir --scratch /path/to/workdir/scratch --prune
 cmd/nova-memory/firstrun_test.go:TestVerifyHelpExampleMatchesWhatTheToolPrints example: nova-memory verify --root ./corpus --links info --coverage notes/lantern.md:notes/index-notes.md
+cmd/nova-cairn/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-cairn check --staged --text "+kept at Mon Aug 10 03:57:53 UTC 2026"

@@ -18,9 +18,10 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 		{Verb: "append", Flags: store},
 		{Verb: "index", Flags: store},
 		{Verb: "receipt", Flags: store},
+		{Verb: "check", Flags: []string{"--file", "{dir}/absent"}},
 		{Verb: "version"},
 	})
-	testverbhelp.HelpVerb(t, cairnRun, "nova-cairn", "open", "append", "version")
+	testverbhelp.HelpVerb(t, cairnRun, "nova-cairn", "open", "append", "check", "version")
 }
 
 func cairnRun(args []string, stdout, stderr io.Writer) int {

@@ -6,7 +6,8 @@
 // record, appends the friend's exact words with a real clock stamp, stable
 // identifiers and source pointers, and builds a bounded index and coverage
 // ledger over them — mechanically, with the caller choosing the publication
-// policy on every mutating verb.
+// policy on every mutating verb. check judges a retired clock mask on an
+// added diff line or in a commit message, and writes nothing.
 //
 // WHAT IT REFUSES TO BE. Not a lifecycle: no seal, no consume, no delete,
 // no grading, no consolidation, no liveness inference, no mandatory
@@ -17,7 +18,7 @@
 // Every path, every identity and every policy comes from a flag. There is no
 // default store, no environment variable and no discovery: a missing flag is
 // a refusal, never a guess. Exit 0 ran and passed, 1 ran and failed (a
-// conflict the caller must resolve), 2 could not run.
+// conflict the caller must resolve, or a clock mask), 2 could not run.
 package main
 
 import (
@@ -47,6 +48,7 @@ usage:
   nova-cairn append  --store <dir> --session <id> --entry <id> (--text <words> | --file <path|->) [--source <ptr>] --publish <never|manual|deferred|immediate> [--now <rfc3339-utc>]
   nova-cairn index   --store <dir> [--session <id>] [--max <n>]
   nova-cairn receipt --store <dir> --session <id> --entry <id>
+  nova-cairn check   (--staged | --message) (--text <words> | --file <path|->)
 
 flags:
   --store <dir>     the checkpoint store. Required, always: there is no
@@ -65,8 +67,19 @@ flags:
   --entry <id>      the stable entry identifier. Required on append and receipt:
                     retrying with the same id and the same words succeeds as a
                     duplicate; the same id with different words is refused.
-  --text <words>    the friend's exact words, stored byte-for-byte. Exactly one
+  --text <words>    the exact words. Append stores them byte-for-byte. Check
+                    reads them as the diff or the message. Exactly one
   --file <path|->   of --text or --file: --file - reads stdin.
+  --staged          check only. The words are a unified diff: an added line
+                    is judged, and a context line, a removed line and a +++
+                    header are not. Exactly one of --staged or
+  --message         --message. The words are a commit message: a line that
+                    begins with # is not judged, and a # line that contains
+                    >8 ends the message. check reads no store and runs no
+                    git. It refuses one token: an optional tilde, an hour, a
+                    colon, a digit 0-5, and x. A pasted clock has no x.
+                    MASK-SPECIMEN earlier on the same line marks that mask
+                    as an example.
   --source <ptr>    where the words came from (transcript path, line range,
                     bench/session pointer). Recorded, never opened. On open it
                     is the session's pointer; an append with no --source
@@ -86,16 +99,19 @@ flags:
 There is deliberately no seal, consume, delete, grade, consolidate or wake
 verb: the boundary in SPEC-CAIRN.md lists them, and naming one here is exit 2.
 
-exit codes: 0 ran and passed, 1 ran and failed (conflict), 2 could not run (bad invocation).
+exit codes: 0 ran and passed, 1 ran and failed (a conflict, or a clock mask), 2 could not run (bad invocation).
 
 example:
   nova-cairn open --store ./cairns --session s1 --publish manual
   nova-cairn append --store ./cairns --session s1 --entry e1 --text "the words to keep" --publish manual
   nova-cairn index --store ./cairns
   nova-cairn receipt --store ./cairns --session s1 --entry e1
+  nova-cairn check --staged --text "+kept at Mon Aug 10 03:57:53 UTC 2026"
 
 Those four are one sitting, in order: the open makes ./cairns, and the append,
 index and receipt read it back. A line run alone names a record it did not make.
+check reads no store, runs no git and writes nothing. It runs alone. The
+leading + is the diff's added-line marker.
 `
 
 // refuse is what an unusable invocation costs: one line naming what was
@@ -123,6 +139,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 		return cmdIndex(args[1:], stdout, stderr)
 	case "receipt":
 		return cmdReceipt(args[1:], stdout, stderr)
+	case "check":
+		return cmdCheck(args[1:], stdin, stdout, stderr)
 	case "version", "--version":
 		return cmdVersion(args[1:], stdout, stderr)
 	case "help", "-h", "--help":

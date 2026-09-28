@@ -99,11 +99,11 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 	t.Parallel()
 
 	examples := usageExamples(t)
-	if len(examples) != 4 {
-		t.Fatalf("want an open, an append, an index and a receipt example under `example:`, got %d: %q", len(examples), examples)
+	if len(examples) != 5 {
+		t.Fatalf("want an open, an append, an index, a receipt and a check example under `example:`, got %d: %q", len(examples), examples)
 	}
 	for i, want := range []string{
-		"nova-cairn open ", "nova-cairn append ", "nova-cairn index ", "nova-cairn receipt ",
+		"nova-cairn open ", "nova-cairn append ", "nova-cairn index ", "nova-cairn receipt ", "nova-cairn check ",
 	} {
 		if !strings.HasPrefix(examples[i], want) {
 			t.Errorf("example %d is not %q: %q", i, want, examples[i])
@@ -162,18 +162,22 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The sitting is the whole tool: a record opened, a line appended to it,
-	// the index that shows it and the receipt that proves it. A block that has
-	// quietly lost one of the four verbs is short of a first run, and no
-	// per-line comparison would say so -- the lines that remain would match.
+	// The sitting opens a record, appends a line, indexes it, receipts it, and
+	// checks a pasted clock on an added diff line. A block that has quietly
+	// lost one of those verbs is short of a first run, and no per-line
+	// comparison would say so -- the lines that remain would match.
 	verbs := map[string]bool{}
 	for _, s := range steps {
 		verbs[s.Args[0]] = true
 	}
-	for _, verb := range []string{"open", "append", "index", "receipt"} {
+	for _, verb := range []string{"open", "append", "index", "receipt", "check"} {
 		if !verbs[verb] {
-			t.Errorf("the `### First run` block never runs `nova-cairn %s`; the first sitting is all four verbs", verb)
+			t.Errorf("the `### First run` block never runs `nova-cairn %s`", verb)
 		}
+	}
+	wantCheck := `nova-cairn check --staged --text "+kept at Mon Aug 10 03:57:53 UTC 2026"`
+	if !strings.Contains(string(raw), "$ "+wantCheck) {
+		t.Errorf("the `### First run` block never runs %s", wantCheck)
 	}
 
 	// ONE store for the whole sitting: the transcript opens a record and then

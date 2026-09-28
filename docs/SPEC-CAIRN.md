@@ -103,6 +103,18 @@ reported for nested entries, so a reader never infers the remote from the local.
 Flat records report `publish=unknown` because the policy was not stored.
 A missing store, session or entry refuses at exit 2, naming what is absent.
 
+## The clock check
+
+`check (--staged | --message) (--text <words> | --file <path|->)` judges a clock claim in text a commit is about to keep. It writes nothing, reads no store and runs no git. The caller passes the text. `--staged` is a unified diff, and only an added line is judged: a line that begins with `+` and is not a `+++` file header. A context line and a removed line are not claims being added. `--message` is a commit message. A line that begins with `#` is not judged, and a `#` line that contains `>8` ends the message, because that is the scissors and what follows is not kept.
+
+The denied form is the retired mask `~?\b[0-2]?[0-9]:[0-5]x\b`: an optional tilde, a word boundary, an hour, a colon, one digit from 0 through 5, and `x`, then a word boundary. A pasted `date` never contains that `x`. A full time (`03:36:42`, `Mon Aug 10 03:57:53 UTC 2026`) and a duration (`98 minutes`, `11m47s`) pass. A full time is not a finding: it is what a pasted date looks like, and flagging it teaches people to ignore the check. A token glued to other letters is not the mask.
+
+`MASK-SPECIMEN` earlier on the same line skips that mask. The token marks an example of the retired form. The same token later on the line, in another case, or on another line does not skip a mask. Using the token on a real clock claim is a lie the check cannot catch.
+
+A mask is exit 1. Each refusal is one line on stderr and names the operation `CHECK`, the cause `unpastable-clock-mask`, the mask, the quoted line, where the line is headed, the state `unchanged`, and the next action: paste the date output or drop the clock claim. A clean scan prints `CHECK OK` on stdout with `masks=0` and the count of lines judged (`added=` for a diff, `lines=` for a message).
+
+A line the scanner cannot read is not a refusal. The check prints `CHECK WARN` on stderr, names the cause `cannot-scan`, the state `passed` and the next action `proceed`, and exits 0. It reports no mask from a scan it did not finish. A bad invocation is exit 2 and checks nothing. That is no mode or both modes, neither `--text` nor `--file` or both of them, an extra argument, or a path that cannot be read. The refusal names the operation, the cause, the state `nothing was checked`, and the next action.
+
 ## Tests this spec demands
 
 The numbered cases name this contract's checks. A named case is a requirement,
@@ -145,3 +157,8 @@ New regression cases must demonstrate the defect before the repair.
 31. `TestReadCommandsRefuseMissingStoreAndSession` — absent inputs refuse, while existing empty stores and sessions succeed.
 32. `TestFlatReadersRefuseCorruptAndAmbiguousHeadings` — invalid stamps, invalid identifiers and duplicate entry headings refuse.
 33. `TestFlatReadersKeepUnstructuredProseAndMissingEntriesDistinct` — ordinary prose is preserved without inventing entries.
+34. `TestCheckRefusesATypedClock` — `check --staged` refuses a retired mask on an added line, including the form inside `04:01:0x`, and `check --message` refuses one in a commit message. A full time on its own added line is not a hit.
+35. `TestCheckPassesAPastedClock` — a pasted `date`, a full time, a duration, a glued token and a hex constant pass. A mask on a context line, a removed line or a `+++` header is not a hit, and a `#` line or a line below the scissors is not a hit in a message.
+36. `TestCheckSkipsASpecimenOnlyWhenTheTokenIsEarlierOnTheSameLine` — `MASK-SPECIMEN` earlier on the same line skips that mask; later, another case, or the previous line does not.
+37. `TestCheckNamesEveryMissingInputAndWritesNothing` — exactly one of `--staged` or `--message`, and exactly one of `--text` or `--file`. A missing file and an extra argument are both named. The named file is not modified.
+38. `TestCheckWarnsAndPassesWhenTheScanCannotFinish` — a line the scanner cannot read warns and exits 0, and a mask earlier in that input is not refused.

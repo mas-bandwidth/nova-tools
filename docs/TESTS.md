@@ -542,7 +542,10 @@ No fixture: the store is created by the run itself. Every line below is local
 `cmd/nova-cairn/firstrun_test.go` runs each `$` line in `t.TempDir()`, so the
 `./cairns` below is a fresh directory per run. The stamps come from `--now`
 because a transcript must read the same twice; a stranger's first run omits
-it and the real clock answers instead.
+it and the real clock answers instead. `check` judges added lines of a
+unified diff, or a commit message, and writes nothing. The last line is a
+pasted clock on an added line, and it passes. The leading `+` is the diff's
+added-line marker.
 
 ### First run
 
@@ -559,6 +562,9 @@ INDEX COVERAGE sessions=1 entries=1 shown=1
 
 $ nova-cairn receipt --store ./cairns --session s1 --entry e1
 RECEIPT OK session=s1 entry=e1 stamp=2026-09-17T12:05:00Z bytes=17 source=bench-a/session-7#L3 persisted=true published=false publish=manual
+
+$ nova-cairn check --staged --text "+kept at Mon Aug 10 03:57:53 UTC 2026"
+CHECK OK added=1 masks=0
 ```
 
 ## nova-redis

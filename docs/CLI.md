@@ -1689,6 +1689,11 @@ the coverage ledger counts the file. An append addressing a session neither
 shape holds refuses with the whole remedy verb: `open first: nova-cairn open
 --store <dir> --session <id> --publish <policy>`.
 
+`check` judges a clock claim in staged text or in a commit message and writes nothing. `--staged` reads a unified diff and refuses the retired mask on an added line only. `--message` reads a commit message, skips a `#` line, and a `#` line that contains `>8` ends it. The mask is an optional tilde, an hour, a colon, a digit from 0 through 5, and the letter x, as its own token. A pasted clock and a duration pass. `MASK-SPECIMEN` earlier on the same line marks that mask as an example. A mask exits 1. The text is unchanged. The next action is to paste the date output or drop the clock claim. A line the scanner cannot read warns and passes.
+
+```sh
+nova-cairn check --staged --text "+kept at Mon Aug 10 03:57:53 UTC 2026"
+```
 
 ## nova-table
 
