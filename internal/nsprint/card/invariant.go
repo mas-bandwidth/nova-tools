@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 )
 
 // filesCache is FilesAt's reads, one per repo and sha: a batch of cards on

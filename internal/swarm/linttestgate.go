@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 )
 
 // A CARD'S TEST: LINE MUST NAME A GATE THAT RUNS IT (ideas #796).

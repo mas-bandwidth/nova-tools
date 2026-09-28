@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
 )
 
 // THE HARNESS WALL (S7, nova-tools#2498). Johnny owns the terms; Rowan owns the

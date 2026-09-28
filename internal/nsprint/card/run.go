@@ -41,7 +41,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/note"
 	"io/fs"
 	"os"
