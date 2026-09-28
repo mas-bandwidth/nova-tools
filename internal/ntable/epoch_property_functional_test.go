@@ -433,8 +433,45 @@ func (h *epochProperty) step(a epochAction) {
 			}
 		} else {
 			allowed := h.writeKeys(a, before, after)
-			if keys := unexpectedEpochWrites(image, memberStoreImage(h.t, c), allowed); len(keys) != 0 {
+			afterStore := memberStoreImage(h.t, c)
+			if image["tables"] != afterStore["tables"] {
+				if h.template[a.table] || (a.verb != "create" && a.verb != "bind") {
+					h.fail("store%d action %s unexpectedly modified tables registry", i, a.verb)
+				}
+				keyType, err := c.Type(h.ctx, "tables").Result()
+				if err != nil || keyType != "set" {
+					h.fail("store%d tables registry type = %s (%v), want set", i, keyType, err)
+				}
+				members, err := c.SMembers(h.ctx, "tables").Result()
+				if err != nil {
+					h.fail("store%d read tables registry: %v", i, err)
+				}
+				var wantMembers []string
+				for t, ok := range h.template {
+					if ok {
+						wantMembers = append(wantMembers, t)
+					}
+				}
+				if !slices.Contains(wantMembers, a.table) {
+					wantMembers = append(wantMembers, a.table)
+				}
+				slices.Sort(wantMembers)
+				slices.Sort(members)
+				if !slices.Equal(members, wantMembers) {
+					h.fail("store%d tables registry membership mismatch: got %v, want %v", i, members, wantMembers)
+				}
+				delete(image, "tables")
+				delete(afterStore, "tables")
+			}
+			if keys := unexpectedEpochWrites(image, afterStore, allowed); len(keys) != 0 {
 				h.fail("store%d accepted action changed keys outside model: %v", i, keys)
+			}
+			if !h.template[a.table] && (a.verb == "create" || a.verb == "bind") {
+				idKey := ntable.DefKey(a.table) + ":identity"
+				idHash, err := c.HGetAll(h.ctx, idKey).Result()
+				if err != nil || len(idHash) != 3 || idHash["epoch_key"] != epochPropertyKey || idHash["epoch_field"] != "n" || idHash["member_prefix"] != "table::member:" {
+					h.fail("store%d table %s identity invalid: %v (%v)", i, a.table, idHash, err)
+				}
 			}
 			event := h.event(c, a.table)
 			if i == 0 {
@@ -463,10 +500,7 @@ func (h *epochProperty) writeKeys(a epochAction, before, after *epochTableState)
 		ntable.RevisionKey(a.table):                           true,
 		ntable.ChangesKey(a.table):                            true,
 	}
-	if !h.template[a.table] {
-		// Registration is a permitted write, with its exact contents checked
-		// by verify against the model after this transition on both stores.
-		allowed["tables"] = true
+	if !h.template[a.table] && (a.verb == "create" || a.verb == "bind") {
 		allowed[ntable.DefKey(a.table)] = true
 		allowed[ntable.DefKey(a.table)+":identity"] = true
 	}
