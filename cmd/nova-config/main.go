@@ -79,17 +79,17 @@ usage:
 Postgres is the permanent store; Redis is a copy of it that apply rebuilds.
 --pg is postgres://user@host:port/db (env NOVA_PG_DSN) with NO password on the
 line: the password is read from the variable NOVA_PG_PASSWORD_ENV names
-(NOVA_PG_PASSWORD when unset). --redis is host:port (env NOVA_REDIS_ADDR,
-then the seat's address). --as is the friend making the change (env
-NOVA_FRIEND); every write is a row in config.history with it.
+(NOVA_PG_PASSWORD when unset). --redis is host:port (env NOVA_SPRINT_REDIS,
+then NOVA_REDIS_ADDR, then the seat's address). --as is the friend making
+the change (env NOVA_FRIEND); every write is a row in config.history with it.
 
 A machine's row is the declared facts something reads (user, seat, slots,
 runners); its name is the tailnet host ssh reaches. Measured facts (os, arch,
 cores, memory) are never typed: machine list and show print them live from
-the machine's beat when --redis (or NOVA_REDIS_ADDR) is given, beat=none
-when it has none. A friend's row is what someone decides for her (slots,
-tiers, roles); what she would just know is runtime data her own presence
-reports. Who coordinates is the sprint row's one field.
+the machine's beat when --redis (or NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR) is
+given, beat=none when it has none. A friend's row is what someone decides
+for her (slots, tiers, roles); what she would just know is runtime data her
+own presence reports. Who coordinates is the sprint row's one field.
 
 migrate creates or upgrades schema config from the migrations in this binary
 and applies nothing twice. apply reads Postgres and writes Redis, one kind at
@@ -262,7 +262,7 @@ func storeErr(stderr io.Writer, verb string, err error, next string) int {
 func connFlags(fs *stdflag.FlagSet, withRedis, withActor bool) (pg, redisAddr, actor *string) {
 	pg = fs.String("pg", "", "Postgres DSN postgres://user@host:port/db with no password (env NOVA_PG_DSN); the password comes from the variable NOVA_PG_PASSWORD_ENV names")
 	if withRedis {
-		redisAddr = fs.String("redis", "", "Redis address host:port (env NOVA_REDIS_ADDR, then the seat's address)")
+		redisAddr = fs.String("redis", "", "Redis address host:port (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address)")
 	}
 	if withActor {
 		actor = fs.String("as", "", "the friend making the change (env NOVA_FRIEND); every write records it in config.history")
@@ -339,7 +339,7 @@ func redisAddress(flagValue string, getenv func(string) string) (string, error) 
 			return v, nil
 		}
 	}
-	return "", fmt.Errorf("--redis is required: host:port (or %s, or a seat)", envRedisAddr)
+	return "", fmt.Errorf("--redis is required: host:port (or %s, %s, or a seat)", envSprintRedis, envRedisAddr)
 }
 
 // liveRedisAddress is the Redis machine list and show read beats from when
@@ -553,7 +553,7 @@ func liveFlag(fs *stdflag.FlagSet, k *config.Kind) *string {
 	if !live(k) {
 		return new(string)
 	}
-	return fs.String("redis", "", "Redis address host:port (env NOVA_REDIS_ADDR); when given, each line ends in the machine's live measured facts from its beat")
+	return fs.String("redis", "", "Redis address host:port (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR); when given, each line ends in the machine's live measured facts from its beat")
 }
 
 // beats reads the named machines' beats when a Redis is named, else nil
