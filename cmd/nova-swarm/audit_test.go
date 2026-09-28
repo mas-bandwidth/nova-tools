@@ -95,6 +95,10 @@ var swarmAudit = audit.Config{
 		"l.Line",
 	},
 	Imports: []string{
+		// the verb-help seam (the CLI style's rule (b), #4505): on -h it prints only flag names,
+		// their usage literals and lines of this package's own usage const, to the stdout run
+		// hands it; it never prints an argument, so nothing it writes can carry a newline in.
+		`"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"`,
 		// version.go, and the reason it cannot write past the escape: buildinfo reads
 		// debug.ReadBuildInfo and runtime's GOOS, GOARCH and Version, holds no writer of
 		// its own, and returns a STRING that this package prints -- rendered field by

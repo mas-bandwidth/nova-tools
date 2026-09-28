@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
@@ -20,6 +21,7 @@ func cmdSlots(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		return refuse(stderr, " slots", "wants a subcommand: init (make a store), take (grant leases), release (free them) or list (print them)")
 	}
+	verbflag.HelpIfAsked(args[:1], "slots")
 	switch args[0] {
 	case "init":
 		return cmdSlotsInit(args[1:], stdout, stderr)

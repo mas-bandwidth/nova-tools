@@ -35,6 +35,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -200,7 +201,8 @@ func doctorLaunchVerb(v string) bool { return v == "batch" || v == "native" }
 // stops the launch with exit 2 before run() is reached; every other verb, and an
 // unresolvable pair, proceeds untouched.
 func preflightDoctor(args []string, stderr io.Writer) (int, bool) {
-	if len(args) == 0 || !doctorLaunchVerb(args[0]) {
+	// -h is a question about the verb, not a launch: the preflight stands aside for it.
+	if len(args) == 0 || !doctorLaunchVerb(args[0]) || verbflag.Asked(args[1:]) {
 		return 0, false
 	}
 	r := compareDoctorBinaries(resolveDoctorBinaries("", ""))

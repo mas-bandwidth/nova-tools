@@ -1,7 +1,6 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
@@ -46,7 +46,7 @@ func workerHelpFlag(arg string) bool {
 // one WORKER OK line, exit 0; one with drifts prints them, exit 2, and starts nothing.
 func cmdWorker(args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 && workerHelpFlag(args[0]) {
-		return refuse(stderr, " worker", flag.ErrHelp.Error())
+		verbflag.HelpIfAsked(args[:1], "worker")
 	}
 	if len(args) == 0 || args[0] != "check" {
 		return refuse(stderr, " worker", "the only worker subcommand is `check <description.json> [--env] [--max <n>]`")
@@ -56,7 +56,7 @@ func cmdWorker(args []string, stdout, stderr io.Writer) int {
 	for i := 0; i < len(rest); i++ {
 		switch {
 		case workerHelpFlag(rest[i]):
-			return refuse(stderr, " worker", flag.ErrHelp.Error())
+			verbflag.HelpIfAsked(rest[i:i+1], "worker check", "env", "max")
 		case rest[i] == "--env":
 			requireEnv = true
 		case rest[i] == "--max":
