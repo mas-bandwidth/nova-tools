@@ -1944,6 +1944,18 @@ caller passes can lift anything, and the tool does not verify the path is the
 caller that names the wrong box gets that box's truth. Wire the path once, at
 build time, into each caller.
 
+**Every flag takes one value.** A flag named twice — `--box` on any verb,
+`--max` on `status` — is refused at exit 2 with one line naming the flag,
+before any box is read; the tool never answers from the last value, because
+`check --box <blown> --box=<elsewhere>` would then answer for a box the caller
+did not mean. A `--box` value that begins with `-` is refused the same way: it
+is the shape of a flag, and a box in such a file is named `./-name`. Flags
+come before positional arguments, and an argument beginning with `-` before
+`--` is refused; `--` ends the flags, and after it such an argument is a
+surface or a reason, never a flag. A caller passing an untrusted surface
+writes `check --box <path> -- <surface>`. Pinned by
+`cmd/nova-fuse/repeatflag_test.go`.
+
 **The read has three answers, never two.** An absent box is VERIFIED CLEAR —
 the read failed with the one error that means *nonexistent* rather than
 *unreadable*. That error does not say **which** part of the path is missing:
