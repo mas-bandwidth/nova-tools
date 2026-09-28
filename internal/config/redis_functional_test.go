@@ -635,3 +635,85 @@ func TestRefusedMachineCeilingLeavesMachineHashUntouched(t *testing.T) {
 		}
 	}
 }
+
+// TestApplyFriendRefusesWhenCoordinatorClearedAcrossApplies verifies that clearing
+// fleet:coordinator across applies on the same RedisApplier causes an unbeat friend
+// apply to refuse ErrCeiling, rather than retaining the old cached coordinator.
+func TestApplyFriendRefusesWhenCoordinatorClearedAcrossApplies(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	ap, c := redisApplier(t)
+	st := seed(t)
+	applyKinds(t, st, ap, "rowan")
+
+	if got := c.Get(ctx, FleetKey("coordinator")).Val(); got != "studio" {
+		t.Fatalf("fleet:coordinator = %q, want studio", got)
+	}
+
+	// Clear fleet:coordinator in Redis.
+	c.Del(ctx, FleetKey("coordinator"))
+
+	// Update friend rowan's slots so an apply has an OpSet for rowan (who has no beat).
+	if _, _, err := st.Update(ctx, KindFriend, "rowan", map[string]string{"slots": "20"}, "rowan"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Apply friend on the same applier. It must refuse ErrCeiling because fleet coordinator is now empty.
+	_, err := Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {})
+	if err == nil || !errors.Is(err, ErrCeiling) {
+		t.Fatalf("expected ErrCeiling when coordinator cleared, got %v", err)
+	}
+}
+
+// TestApplyFriendRechargesWhenBeatHostChangesAcrossApplies verifies that when a friend's
+// beat moves to a new host across applies on the same RedisApplier, the friend is recharged
+// to the new host rather than retaining the old cached host.
+func TestApplyFriendRechargesWhenBeatHostChangesAcrossApplies(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	ap, c := redisApplier(t)
+	st := seed(t)
+
+	// Initially stella's beat points to hulk.
+	c.HSet(ctx, FriendBeatKey("stella"), "host", "hulk", "at", "1790000000000")
+	applyKinds(t, st, ap, "rowan")
+
+	if got := c.HGet(ctx, "friend:stella:desired", "machine").Val(); got != "hulk" {
+		t.Fatalf("initial stella machine = %q, want hulk", got)
+	}
+
+	// Delete stella from the store and apply to remove stella from the registered friends.
+	if _, err := st.Delete(ctx, KindFriend, "stella", "rowan"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {}); err != nil {
+		t.Fatal(err)
+	}
+
+	// stella's beat moves to studio.
+	c.HSet(ctx, FriendBeatKey("stella"), "host", "studio", "at", "1790000001000")
+
+	// Re-add stella to the store with 16 slots and apply.
+	friendKind, ok := Lookup(KindFriend)
+	if !ok {
+		t.Fatal("KindFriend not found")
+	}
+	row, err := friendKind.NewRow("stella", map[string]string{"slots": "16", "roles": "reader", "tiers": "frontier,pro"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Insert(ctx, KindFriend, row, "rowan"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {}); err != nil {
+		t.Fatal(err)
+	}
+
+	// stella must now be charged to studio, not hulk.
+	if got := c.HGet(ctx, "friend:stella:desired", "machine").Val(); got != "studio" {
+		t.Fatalf("recharged stella machine = %q, want studio", got)
+	}
+}

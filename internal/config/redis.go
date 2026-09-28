@@ -210,15 +210,11 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return nil, 0, fmt.Errorf("redis: read friends: %w", err)
 	}
-	if a.friendHosts == nil {
-		a.friendHosts = make(map[string]string, len(names))
-	}
+	a.friendHosts = make(map[string]string, len(names))
 	for i, f := range names {
 		a.friendHosts[f] = beats[i].Val()
 	}
-	if coord := coordCmd.Val(); coord != "" {
-		a.coordinator = coord
-	}
+	a.coordinator = coordCmd.Val()
 	a.coordinatorRead = true
 	views := make(map[string]View, len(names))
 	for i, f := range names {
