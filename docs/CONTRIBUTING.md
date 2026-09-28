@@ -97,8 +97,8 @@ diff arguing for itself.
 
 **Passing CI is not passing review, and CI covers less than it looks like.** CI
 is two tiers, and the law both obey is the maintainer's: **CI checks per every
-CL, one minute ideal, two minutes maximum.** Since 2026-09-25 that law is a
-hard cap, permanent and platform-wide: **every job in every workflow declares
+CL, one minute ideal, two minutes maximum.** That law is a hard cap,
+permanent and platform-wide: **every job in every workflow declares
 `timeout-minutes: 2`**, linux, darwin, hosted or self-hosted, nightly and
 release included, and `internal/ci` refuses a workflow that declares anything
 else. Nothing is exempt. Work that needs longer is split into parallel
@@ -114,8 +114,7 @@ a property of the source, not of the platform — then `go build ./...`, `go vet
 ./...`, and the unit tests sharded by package group across parallel jobs, with
 `-count=1` and no race detector. `ci-ok` aggregates exactly the CL tier, so a
 matrix leg that is renamed, added or skipped cannot quietly leave branch
-protection. Its tests come in two tiers ([TESTING.md](TESTING.md),
-nova-tools#4328): the **unit** tier runs on every pull request over the
+protection. Its tests come in two tiers ([TESTING.md](TESTING.md)): the **unit** tier runs on every pull request over the
 packages the change touched, at most two cores a leg, with no redis-server on
 PATH and a 2 s package / 1 s test budget; the **functional** tier (`//go:build
 functional`) runs only in the merge queue, as a whole work stream merges into
@@ -150,13 +149,6 @@ windows-latest) run only on push to main and on the nightly schedule, with the
 full suite, and a new push to a pull request cancels the in-progress run.
 `ci-ok` aggregates the self-hosted matrix on a pull request and the hosted
 matrix on main too, so the ruleset check never changes shape.
-
-The merge queue's group commit is the exception that makes the gate honest: it
-runs the full hosted legs — no `-short` — for the packages the group changes, on
-`ubuntu-latest`, `macos-latest` and `windows-latest`, so a package with
-hosted-only tests cannot land on the `-short` PR leg's result alone (Rule T,
-pit stop 4, 2026-09-16). The package selection is what keeps it inside the
-two-minute budget; the whole-tree hosted suite still runs on push and nightly.
 
 The built binary is smoke-tested for `nova-check nocode` and for the specific
 properties that job names — not for all of `nocode`, and four of those steps are
@@ -278,13 +270,11 @@ with its sweep of the tree or it does not land.
 
 **The rest of the index, by name.** `cap` (every job two minutes, permanently, every platform),
 `templates`, `goenv`, `pathassert`, `busprogress`,
-`outputs`, `windows-pr`, `windows-sizes`, `windows-table`, `one-windows-leg`,
-`darwin-sizes`, `darwin-table`, `cache`, `pinned-actions`, `ci-ok`, `failed`,
-`benchname`, `nightly-tags`, `functional` (a test that starts a redis-server, execs a whole program or asserts a real-time bound is behind `//go:build functional`), `selection`, `toolchainroots`, `walltoolchain`, `hostseam`,
-`kernel-components`, `asd-closing-line`, `ciworkspace`, `lisptemppath`, `admitkind`, `namedpaths`, `lispduplicate`, `one section`, `testbins`, `fieldsindex`, `cardtemplates`, `transcripts`, `forestwriter`, `forestscript`, `parallel`, `slowwaits`, `unitwaits`, `allowlist`,
-`seatwrap`, `tiers`, `hosted-shards` (test-hosted meets the two-minute cap by shards, heavy packages one per shard), `seatredis` (every nova-sprint `--redis` defaults to the seat's address), `wholetree` (no doc or card spells a whole-tree `go test`; run `nova-ci local`), `silent` (no `_ = err` and no `|| true` literal on the copy model's live path), `classtests` (no merge deletes a `_test.go` or an `internal/ci/testdata` list that its first parent had unless the same change declares it in `deleted-tests.txt`), `ci-receipt` (ci-ok reports every run to Redis from the runner, every field, failing loudly). Every entry — the ten above too — is written out in
-[SPEC-CI.md](SPEC-CI.md) under **The class tests** with its rule, the hurt
-that bought it, its allowlist, its remedy line and its narrowings. Read the entry, not
+`outputs`, `cache`, `pinned-actions`, `ci-ok`, `nightly-tags`, `functional` (a test that starts a redis-server, execs a whole program or asserts a real-time bound is behind `//go:build functional`), `selection`, `toolchainroots`, `walltoolchain`, `hostseam`,
+`ciworkspace`, `admitkind`, `namedpaths`, `one section`, `testbins`, `fieldsindex`, `cardtemplates`, `transcripts`, `forestwriter`, `forestscript`, `parallel`, `slowwaits`, `unitwaits`, `allowlist`,
+`seatwrap`, `tiers`, `hosted-shards` (test-hosted meets the two-minute cap by shards, heavy packages one per shard), `seatredis` (no verb of a live tool that selects a seat refuses an empty `--redis`), `wholetree` (no doc or card spells a whole-tree `go test`; run `nova-ci local`), `silent` (no `_ = err` and no `|| true` literal on the copy model's live path), `classtests` (no merge deletes a `_test.go` or an `internal/ci/testdata` list that its first parent had unless the same change declares it in `deleted-tests.txt`), `ci-receipt` (ci-ok reports every run to Redis from the runner, every field, failing loudly). Every entry — the ten above too — is written out in
+[SPEC-CI.md](SPEC-CI.md) under **The class tests** with its rule, the mistake
+it prevents, its allowlist, its remedy line and its narrowings. Read the entry, not
 the test. An allowlist only ever shrinks: a new row is a refusal, not a parking place.
 After a removal, `NOVA_CI_UPDATE=1 go test -count=1 ./internal/ci/` drops the stale rows
 from every list and fails once with `updated, rerun` ([TESTING.md](TESTING.md)).
@@ -294,7 +284,7 @@ a lenient fake ships the real thing broken, so a fake refuses what the real one
 refuses. And **tests run on the benches**: build and test on the bench the card
 names before you call anything green.
 
-**Scaffolding verbs (nova-tools#2498 S5).** Lay down skeletons with files, makefile, harness,
+**Scaffolding verbs.** Lay down skeletons with files, makefile, harness,
 and a passing fixture under write confinement:
 - `nova-ci new-rule <name>` (or `make new-rule ARGS=<name>`): lays down a new class rule skeleton (`internal/ci/<name>_class_test.go`, fixture, `make/rule_<name>.mk`).
 - `nova-ci new-verb <tool> <verb>` (or `make new-verb ARGS='<tool> <verb>'`): lays down a new CLI verb skeleton (`cmd/<tool>/<verb>.go`, test, fixture, `make/verb_<tool>_<verb>.mk`) into a tool that already has a `func main` (it refuses otherwise), and prints the exact `case` line to add to the tool's dispatch switch; it never edits the switch itself.
@@ -305,19 +295,13 @@ and a passing fixture under write confinement:
    promoted `dev`.
 2. Open a pull request into `dev`. Link the issue, say what changed and report
    the checks you ran.
-3. A coordinator collects green pull requests into an **integration batch** on a
-   `rowan/integration-*` branch and runs `nova-merge batch`, which builds, vets,
-   tests and runs the lisp suite over the merged tree and prints a `BATCH OK`
-   receipt for that sha.
-4. **The one door** is `nova-merge land --repo <owner>/<name> --pr <n>
-   --receipt-file <path>`. It is the only thing that admits anything to the
-   queue, through `internal/merge.Enqueuer.Enqueue`, and it refuses a head that
-   is not a batch's.
+3. The coordinator reads green pull requests and lands them into `dev`; a
+   contributor never does.
 
 **You never merge your own pull request.** Not `gh pr merge`, not `--auto`, not
 the web button. `--auto` does not queue here — it leaves a standing instruction
-the forge executes later with no caller in the room, and that is how four red
-pull requests landed on `dev` in one morning.
+the forge executes later with no caller in the room, so a pull request that was
+red when it was set lands the moment its checks turn green, unread.
 
 ## Where the specs are
 
@@ -326,7 +310,7 @@ keeps — exit codes (0 pass, 1 the check said NO, 2 could not run), **no guesse
 paths** (`refusing to guess`, never a default directory), the one-line output
 grammar, and the cap-and-count rule (`--fail-max`/`--max`, default 20, `0` means
 all). Each tool then has its own normative spec: `SPEC-BUS.md`,
-`SPEC-MERGE.md`, `SPEC-SWARM.md`, `SPEC-WORK.md`, `SPEC-TOKENS.md` and the
+`SPEC-CI.md`, `SPEC-SECRETS.md`, `SPEC-TOKENS.md`, `SPEC-UPDATE.md` and the
 rest under [docs/](.). A spec is normative — where the code and the spec
 disagree, one of them has a bug and the tests decide which. **Read the spec
 before the code.**

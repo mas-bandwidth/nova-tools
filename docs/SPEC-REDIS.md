@@ -1,159 +1,105 @@
-# nova-redis — specification (draft 1, 2026-09-17)
+# nova-redis — specification
 
-`nova-redis` is a proposed local instance and an internal package at the
-**ephemeral layer** (name provisional, nova-tools #130). Glenn, 2026-09-12:
-*"What if we had a local redis instance here that you could all talk to."*
-*"Some place to spill to that isn't git."* Rowan's decision is **both**: the
-internal package first, for the ephemeral uses, and then the `nova-redis`
-binary that owns the instance. Redis is the family's nervous system and
-scratch — a low-latency place for signals, slots, locks and counters — and
-never the record. **Git stays the record; nothing in Redis is the only copy
-of anything.**
+`nova-redis` owns the local Redis instance and its scratch verbs. Redis is the
+fleet's low-latency store — a place for signals, slots, locks, counters and
+scratch — and never the record. **Git stays the record; nothing in Redis is the
+only copy of anything.**
 
 This spec is normative. If the code and this document disagree, one of them
 has a bug, and the tests decide which. It is a sibling of [SPEC.md](SPEC.md),
 whose **Conventions** section — exit codes, no guessed paths, the one-line
 output grammar, `internal/oneline` and `internal/bounded` — applies here
-unchanged and is not restated. Related: [SPEC-WAKE.md](../deprecated/docs/SPEC-WAKE.md) (the
-doorbell), [SPEC-SWARM.md](../deprecated/docs/SPEC-SWARM.md) (slots and locks, budgets),
-[SPEC-SECRETS.md](SPEC-SECRETS.md) (auth), the efficiency case
-[ideas#774](https://github.com/mas-bandwidth/ideas/issues/774).
+unchanged and is not restated. Related: [SPEC-SECRETS.md](SPEC-SECRETS.md)
+(auth).
 
-## Why
+## The verbs
 
-The efficiency case is ideas#774. A window that learns nothing still pays a
-model turn, and the attention layer already paid to make that turn cheap
-(SPEC-WAKE). What is left is the state a *set* of lines shares between turns:
-who is live, which slot is taken, whose lock is held, what a budget has spent,
-where a plan is. Read from a local instance, each of those is one subprocess
-with no model turn; read by polling a git worktree, each is a fetch, a diff
-and a turn. Redis is adopted for latency and for having one place to spill to
-that is not the record — not to hold anything the record does not.
-
-## Layer 1 — the internal package (owed first)
-
-The first delivery is an internal client contract, not a server. Every
-ephemeral use names a key, an owner and a **file fallback**; the same call
-adopts the local instance when it is reachable and degrades to the fallback
-when it is not. A fallback is not a second design: it is the same contract
-over a file, so an outage is a latency regression and never a lost queue or a
-changed answer. The named ephemeral uses are:
-
-- the **wake** doorbell — a change signal a blocking watcher can be woken by,
-  falling back to the report/entry files `nova-wake` already watches;
-- **swarm slots and locks** — which worker holds which slot and which lane
-  holds which lock, falling back to the lock files the swarm already takes;
-- **budgets** — the spend counters rule 13 already keeps (the former
-  `nova-go` budgets, now owned by `nova-swarm`), falling back to the usage
-  rows the record carries;
-- **plan state** — where a plan is and what it has done, falling back to the
-  plan file on disk.
-
-Each use is a rule in this spec and a test in the package: write through the
-instance, kill the instance, read the fallback, and assert the same value.
-Nothing in the package may make Redis the authority; the record is.
-
-## Layer 2 — the `nova-redis` binary (owns the instance)
-
-The second delivery is the binary that owns one local instance. Its verbs:
+```
+nova-redis serve  --bind <addr>[,<addr>...] --port <port> --dir <store-dir>
+nova-redis spill  --addr <host:port> --owner <owner> --name <name> --ttl <duration> --value <text>
+nova-redis recall --addr <host:port> --owner <owner> --name <name>
+nova-redis version
+nova-redis help
+```
 
 - `serve` launches the instance in the foreground under the rules of the next
   section: `--bind` names loopback and tailnet addresses only and has no
   default, the password comes from nova-secrets and reaches `redis-server` on
   stdin, and the store lives in `--dir` (no default) under the fleet store's
-  rules: AOF on, no eviction, no TTL policy (nova-tools #3879).
-- `status` reports whether the instance is reachable, what it is bound to, the
-  owner and key counts, and the two safety facts — auth is required and
-  **persistence** is on (the AOF).
+  rules: AOF on, no eviction, no TTL policy.
 - `spill` writes a scratch value under an **owner prefix** and a required
-  **TTL**; `recall` reads it back and refuses a missing or expired key. The
-  key form is `<owner>:<name>`, and a write with no owner or no TTL is
-  refused. Scratch is scratch: nothing spilled is a record, and recall is
-  allowed to miss.
-- `presence` lists the live lines seen by heartbeat keys that expire on their
-  own, so a crashed line ages out without anyone writing a tombstone.
-- `check` prints one line and earns its exit code, the Conventions' check:
-  instance reachable, bound where this spec allows, auth on.
+  **TTL**; `recall` reads it back. The key form is `<owner>:<name>`. A spill
+  with no owner, or with a missing, zero or negative TTL, is refused (exit 2)
+  and writes nothing; an unbounded key is a bug. Scratch is scratch: nothing
+  spilled is a record, and recall is allowed to miss — a missing or expired key
+  is exit 1.
+- Both scratch verbs refuse a missing or empty `--addr`, or one without a host
+  and a port (exit 2), before anything is dialled. Auth is read from
+  `NOVA_REDIS_PASSWORD`, never from an argument. A store that cannot be
+  reached, or a login it refuses, is one FAIL line on stderr with the next step
+  (exit 2). A spill whose reply is lost after the store took it is `SPILL
+  UNCONFIRMED` (exit 1): the write may have committed, so the remedy is a
+  `recall`, never a second spill. Each verb is one round trip.
 - `version` and `help`, the two every binary in this family carries.
 
 ## Bind, auth and persistence
 
-The first run is bound to **localhost** and the **tailnet** only, never a
+The instance is bound to **localhost** and the **tailnet** only, never a
 public interface, with auth taken from **nova-secrets** at run time (no
 plaintext on the bench and no secret in an argument). Persistence is on: the
-instance is the fleet's sprint store (cards, sets, leases), and a card is not
-allowed to disappear, so a restart on the same `--dir` replays every key.
+instance is the fleet's store, and a key in it is not allowed to disappear, so
+a restart on the same `--dir` replays every key.
 
-`serve` is where these are enforced (nova-tools #2281). The tailnet is the
-Tailscale ranges, `100.64.0.0/10` and `fd7a:115c:a1e0::/48`; a wildcard,
-public or LAN address, or a hostname, is refused before anything starts. The
-password is read from `NOVA_REDIS_PASSWORD`, which `nova-secrets exec` fills;
-it is written into the config `redis-server` reads on stdin (`redis-server -`),
-dropped from the child's environment, and never written to a file. The config
-is the fleet store's rules, one config owned by `nova-redis` (#3879; the
-rowan-tools `nova-redis.conf.j2` template carried them before): `dir` is `--dir`, absolute, created 0700 when missing and never
-defaulted; `appendonly yes` with `appendfsync everysec`, so a crash loses at
-most one second; `save 60 1`, an RDB snapshot as the second copy;
-`maxmemory-policy noeviction`, so a full instance refuses a write rather than
-drop a key; and no TTL policy, so store keys do not expire. A SIGTERM to
-`serve` is a clean stop: `redis-server` fsyncs the AOF, saves and exits 0.
+`serve` is where these are enforced. The tailnet is the Tailscale ranges,
+`100.64.0.0/10` and `fd7a:115c:a1e0::/48`; a wildcard, public or LAN address,
+or a hostname, is refused before anything starts. The password is read from
+`NOVA_REDIS_PASSWORD`, which `nova-secrets exec` fills; it is written into the
+config `redis-server` reads on stdin (`redis-server -`), dropped from the
+child's environment, and never written to a file. The config is the fleet
+store's rules, one config owned by `nova-redis`: `dir` is `--dir`, absolute,
+created 0700 when missing and never defaulted; `appendonly yes` with
+`appendfsync everysec`, so a crash loses at most one second; `save 60 1`, an
+RDB snapshot as the second copy; `maxmemory-policy noeviction`, so a full
+instance refuses a write rather than drop a key; and no TTL policy, so store
+keys do not expire. A SIGTERM to `serve` is a clean stop: `redis-server`
+fsyncs the AOF, saves and exits 0. A bench runs it as
+
+```
+nova-secrets exec --only NOVA_REDIS_PASSWORD -- nova-redis serve --bind 127.0.0.1,100.101.102.103 --port 6379 --dir /var/lib/nova-redis
+```
 
 ## Rules
 
 1. **Git stays the record; nothing in Redis is the only copy of anything.**
 2. Every ephemeral (scratch) key carries an owner prefix and a TTL; an
-   unbounded scratch key is a bug. Store keys (the sprint's cards and sets)
-   carry no TTL: the store has no TTL policy.
-3. Every Layer 1 use has a file fallback with the same contract, tested by
-   killing the instance and reading through it.
-4. Auth comes from nova-secrets; the instance is never bound beyond localhost
+   unbounded scratch key is a bug. Store keys carry no TTL: the store has no
+   TTL policy.
+3. Auth comes from nova-secrets; the instance is never bound beyond localhost
    and the tailnet.
-5. Persistence is on (AOF, no eviction); a restart on the same `--dir` keeps
+4. Persistence is on (AOF, no eviction); a restart on the same `--dir` keeps
    every key.
-6. No test in this tool opens a network socket to a provider or to a fleet
-   Redis; the tests use fakes, the file fallback, and, for the restart, a
-   throwaway `redis-server` on loopback in the test's temp dir.
-
-## Tests
-
-The spec slice is pinned by `TestNovaRedisSpecFirstSlice`, which reads this
-file and fails if a named term — the internal uses, the fallbacks, the verbs,
-the owner prefix and TTL, the bind and auth and persistence rules, and the
-record rule — is missing. Later slices add: the fallback round-trip per use
-(write through Redis, kill it, read the file); `spill`/`recall` with a TTL that
-expires; `presence` ageing out a heartbeat; and `check` refusing an instance
-bound beyond localhost and the tailnet or with persistence off.
+5. No unit test in this tool opens a network socket to a provider or to a
+   fleet Redis; the unit tests use fakes, and the functional tests (the
+   restart, the connection failures) run a throwaway `redis-server` on
+   loopback in the test's temp dir.
 
 ## Tests this spec demands
 
-These tests run against a miniredis fake standing in for the instance (already in the tree under `internal/redisq`, `internal/record`, `internal/ci`), with every fallback written into a `t.TempDir()`, no network socket anywhere, and each test proven able to fail by a mutation before it is trusted. The tree carries exactly one SPEC-REDIS test today — `TestNovaRedisSpecFirstSlice` in `internal/docs/redis_test.go:16` — and it asserts the *document* contains its contract terms (status, spill, recall, TTL, owner prefix, presence, check, localhost/tailnet, file fallback, the four uses), not that any software behaviour works; `internal/redisq` is the live-state half of `SPEC-STATE.md`, not this spec. There is no Layer 1 package, so behaviours 1–9 are ABSENT. The `nova-redis` binary's first slice (`cmd/nova-redis`, #2279) carries `spill`/`recall` with the owner and TTL gate and an injected clock, and `cmd/nova-redis/spill_test.go` proves 14, 16, 17 and 27 on its production path, and `serve` (#2281) with `cmd/nova-redis/serve_test.go` proves 22, 23, 24 and 25; the rest are ABSENT.
+`cmd/nova-redis/spill_test.go` proves 1 to 5 and 9 on the production path with
+an injected clock, `cmd/nova-redis/serve_test.go` proves 6, 7 and 8, and
+`cmd/nova-redis/serve_functional_test.go` and
+`cmd/nova-redis/connfail_functional_test.go` prove 10 to 12 against a real
+`redis-server` on loopback.
 
-1. `TestEphemeralCallNamesKeyOwnerAndFallback` — every ephemeral use names a key, an owner and a **file fallback** (L35–36).
-2. `TestEphemeralCallAdoptsInstanceWhenReachableElseFallback` — the same call adopts the local instance when reachable and degrades to the fallback when it is not (L36–38).
-3. `TestFallbackIsSameContractOverFile` — a fallback is the same contract over a file, so an outage is a latency regression and never a lost queue or a changed answer (L38–40).
-4. `TestWakeDoorbellFallsBackToReportAndEntryFiles` — the wake doorbell falls back to the report/entry files `nova-wake` already watches (L42–43).
-5. `TestSwarmSlotsAndLocksFallBackToLockFiles` — swarm slots and locks fall back to the lock files the swarm already takes (L44–45).
-6. `TestBudgetsFallBackToUsageRows` — budgets fall back to the usage rows the record carries (L46–48).
-7. `TestPlanStateFallsBackToPlanFile` — plan state falls back to the plan file on disk (L49–50).
-8. `TestFallbackRoundTripKillsInstanceAndReadsSameValue` — write through the instance, kill the instance, read the fallback, assert the same value (L52–53).
-9. `TestRegistryIsTheAuthorityRedisNeverIs` — nothing in the package may make Redis the authority; the record is (L54, L85).
-10. `TestStatusReportsReachableBoundCountsAuthAndPersistence` — `status` reports whether the instance is reachable, what it is bound to, the owner and key counts, auth required, and persistence off (L60–62).
-11. `TestSpillWritesUnderOwnerPrefixWithRequiredTTL` — `spill` writes a scratch value under an owner prefix and a required TTL (L63–64).
-12. `TestRecallReadsBackTheSpilledValue` — `recall` reads the spilled value back (L64).
-13. `TestRecallRefusesAMissingKey` — `recall` refuses a missing key (L64).
-14. `TestRecallRefusesAnExpiredKey` — `recall` refuses an expired key; a TTL that expires is unreachable (L64, L102–103).
-15. `TestKeyFormIsOwnerColonName` — the key form is `<owner>:<name>` (L65).
-16. `TestSpillRefusedWithoutOwner` — a write with no owner is refused (L65–66).
-17. `TestSpillRefusedWithoutTTL` — a write with no TTL is refused (L65–66).
-18. `TestRecallIsAllowedToMiss` — scratch is scratch: recall is allowed to miss (L66–67).
-19. `TestPresenceListsLiveLinesAndAgesOutHeartbeats` — `presence` lists the live lines seen by heartbeat keys that expire on their own, so a crashed line ages out without a tombstone (L68–69, L103–104).
-20. `TestCheckPrintsOneLineAndEarnsItsExitCode` — `check` prints one line and earns its exit code: reachable, bound where the spec allows, auth on (L70–71).
-21. `TestVersionAndHelpArePresent` — `version` and `help` are the two verbs every binary in this family carries (L72).
-22. `TestBoundToLocalhostAndTailnetOnly` — bound to localhost and the tailnet only, never a public interface (L76–77).
-23. `TestAuthFromNovaSecretsNeverAPlaintextArgument` — auth taken from nova-secrets at run time: no plaintext on the bench and no secret in an argument (L77–79).
-24. `TestPersistenceIsAOFWithNoEviction` — the config is the fleet store's rules: AOF on, fsync every second, RDB every 60 s, no eviction, `--dir` required and absolute.
-25. `TestRestartOnTheSameDirKeepsTheStore` — a key written through `serve --dir <d>` is intact after a stop and a restart on the same `--dir`, with no TTL, and preflight 7.1 reads GREEN against that instance.
-26. `TestNothingInRedisIsTheOnlyCopy` — Git stays the record; nothing in Redis is the only copy of anything (L85).
-27. `TestEveryEphemeralKeyCarriesOwnerAndTTL` — every ephemeral key carries an owner prefix and a TTL; an unbounded key is a bug (L86–87).
-28. `TestNoTestOpensANetworkSocket` — no test opens a network socket to a provider or to Redis; tests use fakes and the file fallback (L93–94).
-29. `TestCheckRefusesAnUnboundOrUnpersistedInstance` — `check` refuses an instance bound beyond localhost and the tailnet or with persistence off (L104).
+1. `TestAddrRefusedWhenMissingOrEmpty` — a missing, empty or blank `--addr`, or one without a host and a port, is refused at exit 2 before anything is dialled.
+2. `TestSpillRefusedWithoutOwner` — a spill with no owner is refused and writes nothing.
+3. `TestSpillRefusedWithoutTTL` — a spill with a missing, zero or negative TTL is refused and writes nothing.
+4. `TestRecallRefusesAnExpiredKey` — `recall` of a key whose TTL has expired is a miss, exit 1.
+5. `TestEveryEphemeralKeyCarriesOwnerAndTTL` — every key a spill writes is `<owner>:<name>` and carries a TTL; an unbounded key is a bug.
+6. `TestBoundToLocalhostAndTailnetOnly` — bound to localhost and the tailnet only, never a public interface.
+7. `TestAuthFromNovaSecretsNeverAPlaintextArgument` — auth taken from nova-secrets at run time: no plaintext on the bench and no secret in an argument.
+8. `TestPersistenceIsAOFWithNoEviction` — the config is the fleet store's rules: AOF on, fsync every second, RDB every 60 s, no eviction, `--dir` required and absolute.
+9. `TestSpillAndRecallAreOneRoundTripEach` — each scratch verb is one round trip after the handshake.
+10. `TestRestartOnTheSameDirKeepsTheStore` — a key written through `serve --dir <d>` is intact after a stop and a restart on the same `--dir`, with no TTL.
+11. `TestOpenFailureIsOneLineExitTwo` — a store that cannot be reached, or a login it refuses, is one FAIL line with the next step, exit 2.
+12. `TestSpillWhoseExecReplyIsLostIsUnconfirmed` — a spill whose reply is lost after the store took it is `SPILL UNCONFIRMED`, exit 1, with a read-back as its remedy.

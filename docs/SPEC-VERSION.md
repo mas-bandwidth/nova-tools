@@ -62,11 +62,11 @@ nova-version diff --from <a.tsv> --to <b.tsv>
 9. **The rest of the `apply --sha` refusals.** A missing `--sha`, `--repo` or `--bin` is
    *refusing to guess*, naming it; an unresolved revision names it and the fetch; a
    `cmd/*` that does not build names the package and the revision.
-10. **The mistake `moved` removes, in one sentence.** The ADOPT EVERYTHING note named four
-    `--decide` flags still on open PRs (#1141), and `moved` cannot, because every flag it
-    announces was read off the binary's own help.
-11. **The mistake `apply --sha` removes, in one sentence.** Friends' bins were mixed
-    across stamps, and one `apply --sha` builds the whole set under one stamp and refuses
+10. **The mistake `moved` prevents, in one sentence.** A hand-written adoption note can
+    announce flags no merged binary has, and `moved` cannot, because every flag it
+    announces is read off the binary's own help.
+11. **The mistake `apply --sha` prevents, in one sentence.** A friend's bin mixed
+    across stamps; one `apply --sha` builds the whole set under one stamp and refuses
     a directory that is already mixed.
 12. **Both are bounded and clockless.** Each prints one line, caps every child through
     `internal/bounded`, takes its clock from the injected seam, and touches the network
@@ -98,8 +98,8 @@ network or a clock; `git`, `go` and every built binary are fakes on `PATH`.
 2. **`snapshot` reads each binary's own `version`, never the file's name.** It lists every
    `nova-*` regular file in `--bin`, runs each one's `version`, and parses the Conventions
    line with `internal/buildinfo`'s `Parse` — the package that also WRITES that line — so
-   the four mandatory tokens are read and a tool's named `key=value` extras (`nova-merge`'s
-   `build=`, `nova-sandbox`'s `backend=`) are metadata rather than a broken binary (#1297);
+   the four mandatory tokens are read and a tool's named `key=value` extras (`nova-sandbox`'s
+   `backend=` and `platform=`) are metadata rather than a broken binary;
    `name` is the executable's name, and its `stamp`, `revision` and `platform` are read off
    that line, so a renamed stub cannot forge a row and a non-`nova-` file is never one.
 3. **`snapshot` writes one row per binary and prints one line.** The `--out` file is the
@@ -127,13 +127,12 @@ network or a clock; `git`, `go` and every built binary are fakes on `PATH`.
 7. **`diff` refuses what it cannot read.** A file that is not a snapshot — a missing or
    wrong header, or a row of the wrong arity — names the file and the `snapshot` that writes
    one, exit 2, and prints no changed line; the two files are read, never written.
-8. **`version` and `--version` are one spelling.** Every binary, `nova-wake` among them,
-   answers both with the identical `<tool> <stamp> <goos>/<goarch> <go version>` line, exit
+8. **`version` and `--version` are one spelling.** Every binary answers both with the identical `<tool> <stamp> <goos>/<goarch> <go version>` line, exit
    0; a second argument, or a spelling that differs between the two flags, is a refusal at
    exit 2.
-9. **The mistake this section removes, in one sentence.** A friend's bin held sixteen
-   binaries at four stamps — one of them a `nova-wake version` that answered in a syntax of
-   its own — and neither fact was visible in one command.
+9. **The mistake this section prevents, in one sentence.** A bin holding binaries at
+   several stamps, one of them answering `version` in a syntax of its own, shows neither
+   fact in one command.
 10. **Both are bounded and clockless.** Each prints one line beyond the changed-binary rows
     `diff` exists to print, caps every child through `internal/bounded`, takes its clock
     from the injected seam, and touches no network.
@@ -150,7 +149,7 @@ network or a clock; `git`, `go` and every built binary are fakes on `PATH`.
     Measured on the darwin/arm64 Studio over fresh executables: 164–571 ms cold against
     5 ms warm at load 121–151 on 32 cores, and a 7.03 s cold maximum against a 5.3 ms warm
     while the tree compiled beside it — the state `go install ./cmd/...` leaves the machine
-    in one command earlier (#890, and #1554 for the class). A warm-up exec outside the
+    in one command earlier. A warm-up exec outside the
     bound was measured and rejected: an exec killed at 40 ms leaves the assessment unpaid
     (the next exec of that same file still cost 101 ms against a 140 ms cold and a 7 ms
     warm), so a warm-up under the same `--timeout` buys nothing, and one under `--budget`
@@ -171,7 +170,7 @@ reaches a network.
 7. `TestDiffNamesOneLinePerChangedBinary`: two fake snapshots differing in one binary print one `DIFF CHANGED` line naming it and both stamps, and the unchanged binary prints none.
 8. `TestDiffNamesAddedAndRemoved`: a binary only in `--from` and one only in `--to` are each one line with `-` on the absent side, and `changed=` counts both.
 9. `TestDiffRefusesANonSnapshotFile`: a file with the wrong header, and a row of the wrong arity, are each exit 2 naming the file and the `snapshot` remedy.
-10. `TestVersionAndDoubleDashVersionAgree`: on every fake binary, `version` and `--version` print the identical `<tool> <stamp> <goos>/<goarch> <go version>` line, `nova-wake` among them.
+10. `TestVersionAndDoubleDashVersionAgree`: on every fake binary, `version` and `--version` print the identical `<tool> <stamp> <goos>/<goarch> <go version>` line.
 11. `TestSnapshotIsBoundedByTheClock`: an injected clock and a fake binary sleeping past its deadline is exit 2 with the deadline named and no partial `--out`.
 12. `TestSnapshotToleratesTheFirstExecOfANeverSeenBinary`: a fake binary that is slow on its FIRST invocation and immediate on every one after — the platform's assessment made deterministic — is read, not refused, under the default bound, so the verb's own normal case (a `--bin` one `go install` old) is not a refusal.
 13. `TestSnapshotTakesItsBoundsFromFlags`: a fake binary sleeping past a given `--timeout` is exit 2 naming that tool and that duration with no partial `--out`; four such binaries under a `--budget` shorter than one of them is exit 2 naming the budget rather than a tool's slowness; a non-positive `--timeout` is exit 2 naming the flags.
@@ -210,7 +209,7 @@ able to fail before it is trusted.
 22. `TestDiffNamesOneLinePerChangedBinary` — one `DIFF CHANGED` line for the one differing binary, the unchanged binary prints none.
 23. `TestDiffNamesAddedAndRemoved` — a binary only in `--from` and one only in `--to` are each one line with `-` on the absent side, `changed=` counts both.
 24. `TestDiffRefusesANonSnapshotFile` — a wrong header and a wrong-arity row are each exit 2 naming the file and the `snapshot` remedy.
-25. `TestVersionAndDoubleDashVersionAgree` — `version` and `--version` print the identical `<tool> <stamp> <goos>/<goarch> <go version>` line, `nova-wake` among them, and a second argument is a refusal at exit 2.
+25. `TestVersionAndDoubleDashVersionAgree` — `version` and `--version` print the identical `<tool> <stamp> <goos>/<goarch> <go version>` line, and a second argument is a refusal at exit 2.
 26. `TestSnapshotIsBoundedByTheClock` — an injected clock and a fake binary sleeping past its deadline is exit 2 with the deadline named and no partial `--out`.
 27. `TestSnapshotToleratesTheFirstExecOfANeverSeenBinary` — a fake binary slow on its FIRST invocation and immediate after is read, not refused, under the default bound.
 28. `TestSnapshotTakesItsBoundsFromFlags` — a `--timeout` past is exit 2 naming the tool and duration; four sleepers under a shorter `--budget` is exit 2 naming the budget; a non-positive `--timeout` is exit 2 naming the flags.
