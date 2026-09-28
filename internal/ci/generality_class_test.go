@@ -94,6 +94,7 @@ var ignoredCompoundWords = map[string]bool{
 }
 
 var reWord = regexp.MustCompile(`[a-zA-Z0-9]+`)
+var reAccount = regexp.MustCompile(`(?i)mas-bandwidth`)
 
 // isMarkedDocExample reports whether a comment line is an explicit documentation example.
 func isMarkedDocExample(comment string) bool {
@@ -201,28 +202,21 @@ func cleanSourceForGenerality(rel string, src []byte) []byte {
 func extractTokensFromText(text string) []string {
 	var tokens []string
 
-	// 1. Check for hyphenated account name: mas-bandwidth without consuming boundary delimiters
-	target := "mas-bandwidth"
-	targetLen := len(target)
-	lower := strings.ToLower(text)
+	// 1. Check for hyphenated account name: mas-bandwidth without consuming boundary delimiters.
+	// Matched on original bytes using case-insensitive regex to prevent UTF-8 byte-length drift
+	// when Unicode characters precede the token.
 	textBuf := []byte(text)
-
-	pos := 0
-	for pos < len(lower) {
-		idx := strings.Index(lower[pos:], target)
-		if idx < 0 {
-			break
-		}
-		start := pos + idx
-		end := start + targetLen
+	matches := reAccount.FindAllStringIndex(text, -1)
+	for _, m := range matches {
+		start := m[0]
+		end := m[1]
 
 		if isBoundaryBefore(text, start) && isBoundaryAfter(text, end) {
-			tokens = append(tokens, target)
+			tokens = append(tokens, "mas-bandwidth")
 			for i := start; i < end; i++ {
 				textBuf[i] = ' '
 			}
 		}
-		pos = end
 	}
 	text = string(textBuf)
 
@@ -410,37 +404,90 @@ func checkGenerality(files []GeneralitySourceFile, allow *allowlist.List) []stri
 }
 
 func writeGeneralityAllowlist(path string, measuredCounts map[string]int) error {
-	var keys []string
-	for k := range measuredCounts {
-		keys = append(keys, k)
+	existingList, err := allowlist.Load(path, allowlist.Options{Ceiling: true})
+	if err != nil {
+		return fmt.Errorf("failed to read existing allowlist at %s: %w", path, err)
 	}
-	sort.Strings(keys)
+
+	lines := strings.Split(existingList.Text(), "\n")
+	existingCounts := make(map[string]int)
+	var headerLines []string
+	hasCeiling := false
+
+	for lineNum, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "# ceiling:") {
+			hasCeiling = true
+			continue
+		}
+		if !hasCeiling {
+			if strings.HasPrefix(trimmed, "#") || trimmed == "" {
+				headerLines = append(headerLines, line)
+				continue
+			}
+		}
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		fields := strings.Fields(trimmed)
+		if len(fields) < 2 {
+			return fmt.Errorf("%s:%d: malformed allowlist row %q: expected <file:token> <count>", path, lineNum+1, trimmed)
+		}
+		count, err := strconv.Atoi(fields[1])
+		if err != nil || count <= 0 {
+			return fmt.Errorf("%s:%d: invalid count in allowlist row %q: expected positive integer", path, lineNum+1, trimmed)
+		}
+		existingCounts[fields[0]] = count
+	}
+
+	// Refuse new keys and increased counts: an allowlist only ever shrinks.
+	// (see CONTRIBUTING.md: "an allowlist only ever shrinks: a new row is a refusal, not a parking place").
+	var growthErrors []string
+	for k, count := range measuredCounts {
+		if count <= 0 {
+			continue
+		}
+		existingCount, ok := existingCounts[k]
+		if !ok {
+			growthErrors = append(growthErrors, fmt.Sprintf(
+				"%s is not listed, and the update adds no row for it (fix the finding; the list only shrinks: a new row is a refusal, not a parking place)",
+				k))
+		} else if count > existingCount {
+			growthErrors = append(growthErrors, fmt.Sprintf(
+				"%s count %d exceeds existing count %d (the list only shrinks)",
+				k, count, existingCount))
+		}
+	}
+
+	if len(growthErrors) > 0 {
+		sort.Strings(growthErrors)
+		return fmt.Errorf("%s refuses to grow under %s=1:\n%s", path, allowlist.UpdateEnv, strings.Join(growthErrors, "\n"))
+	}
+
+	// Only permit key removals (counts dropping to 0) or count decreases.
+	var keptKeys []string
+	for k, count := range measuredCounts {
+		if count > 0 {
+			keptKeys = append(keptKeys, k)
+		}
+	}
+	sort.Strings(keptKeys)
 
 	var sb strings.Builder
-	sb.WriteString(`# generality_allowlist.txt -- existing occurrences of friend/person names,
-# hostnames, and fleet identifiers in living Go files (Rule 1: generality guardrail).
-#
-# "everything must be general. Not tied to the specifics of our fleet, or friends,
-# just the general concepts behind. No host, machine, tailnet name, friend or person
-# name in code, contracts, defaults or refusals; the concepts (machine, bench, coordinator,
-# friend, seat, store, route, pool, card, stream, repo, issue, entry) are what the code
-# knows; our fleet is one nova-config configuration; our names only in our config, receipts
-# and docs examples marked as examples."
-#
-# Format: path/to/file.go:token count
-#
-# The list only shrinks. Checked in both directions with per-key counts:
-# - An entry no longer present on the tree is stale and fails the test.
-# - Any new occurrence not listed fails the test.
-# - Adding a second occurrence to an already-allowed file exceeds the ceiling and fails.
-# - A count lower than the allowed count requires shrinking the allowlist entry.
-#
-`)
-	sb.WriteString(fmt.Sprintf("# ceiling: %d\n", len(keys)))
-	for _, k := range keys {
+	if len(headerLines) > 0 {
+		sb.WriteString(strings.Join(headerLines, "\n"))
+		sb.WriteString("\n")
+	}
+	sb.WriteString(fmt.Sprintf("# ceiling: %d\n", len(keptKeys)))
+	for _, k := range keptKeys {
 		sb.WriteString(fmt.Sprintf("%s %d\n", k, measuredCounts[k]))
 	}
-	return os.WriteFile(path, []byte(sb.String()), 0644)
+
+	mode := os.FileMode(0644)
+	if fi, err := os.Stat(path); err == nil {
+		mode = fi.Mode().Perm()
+	}
+	return os.WriteFile(path, []byte(sb.String()), mode)
 }
 
 // TestGeneralityGuardrail holds living Go code in cmd/ and internal/ to Glenn's
@@ -514,6 +561,10 @@ func TestGeneralityTokenExtraction(t *testing.T) {
 		{"batman/superman/hulk", []string{"batman", "hulk", "superman"}},
 		{"glenn  glenn", []string{"glenn", "glenn"}},
 		{"glenn/glenn", []string{"glenn", "glenn"}},
+		// Unicode prefixes before account token
+		{"const label = \"K mas-bandwidth\"", []string{"mas-bandwidth"}},
+		{"const label = \"K mas-bandwidth\"", []string{"mas-bandwidth"}},
+		{"const label = \"İ mas-bandwidth\"", []string{"mas-bandwidth"}},
 	}
 
 	for _, tc := range cases {
@@ -627,6 +678,116 @@ func TestGeneralityOccurrenceWitness(t *testing.T) {
 		commentFail := []GeneralitySourceFile{{Rel: "fixture.go", Src: []byte("package fixture\n// glenn was here\nfunc foo() {}\n")}}
 		if v := checkGenerality(commentFail, a); len(v) == 0 {
 			t.Error("unmarked AST comment with forbidden token was unexpectedly exempted")
+		}
+	})
+
+	t.Run("unicode-before-account", func(t *testing.T) {
+		for _, prefix := range []string{"K ", "K ", "İ "} {
+			src := "package fixture\nconst label = \"" + prefix + "mas-bandwidth\"\n"
+			counts, _, _ := measureGeneralityCounts([]GeneralitySourceFile{{Rel: "fixture.go", Src: []byte(src)}})
+			t.Logf("prefix=%q counts=%v", prefix, counts)
+			if counts["fixture.go:mas-bandwidth"] != 1 {
+				t.Errorf("Unicode prefix %q hid account token", prefix)
+			}
+		}
+	})
+}
+
+// TestGeneralityAllowlistUpdate verifies that NOVA_CI_UPDATE=1 strictly adheres to
+// the shrink-only invariant: new keys and increased counts are refused with an error,
+// existing ledger files are unmodified upon refusal, and count decreases and row
+// removals are cleanly written.
+func TestGeneralityAllowlistUpdate(t *testing.T) {
+	t.Parallel()
+
+	t.Run("refuses-growth-new-key", func(t *testing.T) {
+		p := filepath.Join(t.TempDir(), "ledger.txt")
+		old := "# ceiling: 1\nfixture.go:glenn 1\n"
+		if err := os.WriteFile(p, []byte(old), 0600); err != nil {
+			t.Fatal(err)
+		}
+		measured := map[string]int{"fixture.go:glenn": 1, "fixture.go:hulk": 1}
+		err := writeGeneralityAllowlist(p, measured)
+		if err == nil {
+			t.Fatal("expected error on attempted growth with new key, got nil")
+		}
+		if !strings.Contains(err.Error(), "refuses to grow") || !strings.Contains(err.Error(), "fixture.go:hulk") {
+			t.Fatalf("expected error mentioning refusal to grow and unlisted key, got: %v", err)
+		}
+		// Ledger on disk must remain untouched
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(raw) != old {
+			t.Fatalf("ledger was modified despite refusal: got %q, want %q", string(raw), old)
+		}
+	})
+
+	t.Run("refuses-growth-increased-count", func(t *testing.T) {
+		p := filepath.Join(t.TempDir(), "ledger.txt")
+		old := "# ceiling: 1\nfixture.go:glenn 1\n"
+		if err := os.WriteFile(p, []byte(old), 0600); err != nil {
+			t.Fatal(err)
+		}
+		measured := map[string]int{"fixture.go:glenn": 2}
+		err := writeGeneralityAllowlist(p, measured)
+		if err == nil {
+			t.Fatal("expected error on attempted growth with increased count, got nil")
+		}
+		if !strings.Contains(err.Error(), "refuses to grow") || !strings.Contains(err.Error(), "exceeds existing count 1") {
+			t.Fatalf("expected error mentioning refusal to grow and count exceed, got: %v", err)
+		}
+		// Ledger on disk must remain untouched
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(raw) != old {
+			t.Fatalf("ledger was modified despite refusal: got %q, want %q", string(raw), old)
+		}
+	})
+
+	t.Run("clean-write-on-shrinking", func(t *testing.T) {
+		p := filepath.Join(t.TempDir(), "ledger.txt")
+		old := "# comment\n# ceiling: 3\nfixture.go:emma 2\nfixture.go:glenn 3\nfixture.go:rowan 1\n"
+		if err := os.WriteFile(p, []byte(old), 0600); err != nil {
+			t.Fatal(err)
+		}
+		// Shrink emma from 2 to 1, keep glenn at 3, drop rowan (absent / 0)
+		measured := map[string]int{
+			"fixture.go:emma":  1,
+			"fixture.go:glenn": 3,
+			"fixture.go:rowan": 0,
+		}
+		err := writeGeneralityAllowlist(p, measured)
+		if err != nil {
+			t.Fatalf("clean shrinking should succeed, got: %v", err)
+		}
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsed, err := allowlist.Parse(p, string(raw), allowlist.Options{Ceiling: true})
+		if err != nil {
+			t.Fatalf("failed to parse updated allowlist: %v", err)
+		}
+		ceil, ok := parsed.Ceiling()
+		if !ok || ceil != 2 {
+			t.Fatalf("expected ceiling 2, got %d (ok=%v)", ceil, ok)
+		}
+		if len(parsed.Rows()) != 2 {
+			t.Fatalf("expected 2 rows, got %d", len(parsed.Rows()))
+		}
+		if !parsed.Has("fixture.go:emma") || !parsed.Has("fixture.go:glenn") {
+			t.Fatalf("expected emma and glenn in rows, got: %v", parsed.Rows())
+		}
+		if parsed.Has("fixture.go:rowan") {
+			t.Fatalf("expected rowan to be dropped from rows, got: %v", parsed.Rows())
+		}
+		expected := "# comment\n# ceiling: 2\nfixture.go:emma 1\nfixture.go:glenn 3\n"
+		if string(raw) != expected {
+			t.Fatalf("unexpected content:\ngot:\n%s\nwant:\n%s", string(raw), expected)
 		}
 	})
 }
