@@ -68,6 +68,16 @@ func profileSwarmRoot(root string, stdout, stderr io.Writer, r *refusals) int {
 		r.add("--swarm-root is required; it wants the directory the swarm batches live under; refusing to guess")
 		return r.print(stderr)
 	}
+	if fi, err := os.Stat(root); err != nil || !fi.IsDir() {
+		if err != nil && os.IsNotExist(err) {
+			r.add("--swarm-root does not exist: " + root + "; it wants the directory the swarm batches live under")
+		} else if err != nil {
+			r.add("--swarm-root " + root + ": " + err.Error() + "; it wants the directory the swarm batches live under")
+		} else {
+			r.add("--swarm-root is not a directory: " + root + "; it wants the directory the swarm batches live under")
+		}
+		return r.print(stderr)
+	}
 	paths, err := filepath.Glob(filepath.Join(root, "*", "jobs", "*", "usage.tsv"))
 	if err != nil {
 		r.add("--swarm-root " + root + ": " + err.Error() + "; it wants the directory the swarm batches live under")

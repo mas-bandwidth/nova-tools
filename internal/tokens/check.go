@@ -52,6 +52,9 @@ type CheckOptions struct {
 	// claimed to know the whole range, so a gap the list does not name is a day nobody
 	// folded.
 	NoSpend map[string]bool
+	// Through is the day the ledger is expected to be current through, from --through.
+	// When set, a last folded day before it marks the result Stale.
+	Through string
 }
 
 // CheckResult is a whole output directory, checked.
@@ -69,6 +72,7 @@ type CheckResult struct {
 	// Strays is what is named; Notes is the non-day entries the allowlist stepped over.
 	Strays []string
 	Notes  []string
+	Stale  bool
 }
 
 // Check walks every file under out. A day file is parsed; the one fixed temp name and the
@@ -121,6 +125,9 @@ func Check(out string, opt CheckOptions) (*CheckResult, error) {
 	sort.Strings(r.Notes)
 	if len(days) > 0 {
 		r.First, r.Last = days[0], days[len(days)-1]
+	}
+	if opt.Through != "" && (r.Last == "" || r.Last < opt.Through) {
+		r.Stale = true
 	}
 	r.Gaps = MissingDays(days)
 	r.Missing = namedMissing(r.Gaps, opt)
