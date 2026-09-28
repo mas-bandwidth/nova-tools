@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"runtime"
 	"syscall"
 	"time"
 	"unsafe"
@@ -98,53 +97,10 @@ func TryLockWithOptions(path string, label string, opts Options) (*FileLock, err
 		return nil, err
 	}
 
-	ok, lockErr := tryLockFile(f)
-	if lockErr != nil {
+	// Refused is not yet held: see takeExclusive (tla/FileLock.tla, Blocked).
+	if err := takeExclusive(f, path); err != nil {
 		_ = f.Close()
-		return nil, fmt.Errorf("filelock %q: %w", path, lockErr)
-	}
-
-	if !ok {
-		// Re-ask algorithm (H1)
-		const probeRetries = 5
-		var sharedSeen bool
-		var acquiredOnRetry bool
-
-		for retry := 0; retry < probeRetries; retry++ {
-			shOk, shErr := trySharedLock(f)
-			if shErr != nil {
-				_ = f.Close()
-				return nil, fmt.Errorf("filelock %q shared check: %w", path, shErr)
-			}
-			if !shOk {
-				holder := readExistingStamp(f)
-				_ = f.Close()
-				return nil, &HeldError{Path: path, Holder: holder}
-			}
-
-			sharedSeen = true
-			unlockFile(f)
-
-			exOk, exErr := tryLockFile(f)
-			if exErr != nil {
-				_ = f.Close()
-				return nil, fmt.Errorf("filelock %q: %w", path, exErr)
-			}
-			if exOk {
-				acquiredOnRetry = true
-				break
-			}
-			runtime.Gosched()
-		}
-
-		if !acquiredOnRetry {
-			_ = f.Close()
-			if sharedSeen {
-				return nil, fmt.Errorf("filelock %q: %w", path, ErrBusy)
-			}
-			holder := readExistingStamp(f)
-			return nil, &HeldError{Path: path, Holder: holder}
-		}
+		return nil, err
 	}
 
 	existing := readExistingStamp(f)

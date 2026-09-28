@@ -51,22 +51,16 @@ type HeldError struct {
 }
 
 func (e *HeldError) Error() string {
-	var b strings.Builder
-	b.WriteString(fmt.Sprintf("filelock %q", oneline.Escape(e.Path)))
 	if !e.Holder.IsZero() {
-		b.WriteString(fmt.Sprintf(" is held by %s", e.Holder))
-	} else {
-		b.WriteString(" is held")
+		if e.Wait > 0 {
+			return fmt.Sprintf("filelock %q is held by %s; waited %s: %v", e.Path, e.Holder, e.Wait, ErrHeld)
+		}
+		return fmt.Sprintf("filelock %q is held by %s: %v", e.Path, e.Holder, ErrHeld)
 	}
 	if e.Wait > 0 {
-		b.WriteString(fmt.Sprintf("; waited %s", e.Wait))
+		return fmt.Sprintf("filelock %q is held; waited %s: %v", e.Path, e.Wait, ErrHeld)
 	}
-	if e.TimedOut {
-		b.WriteString(fmt.Sprintf(": %v", ErrTimeout))
-	} else {
-		b.WriteString(fmt.Sprintf(": %v", ErrHeld))
-	}
-	return b.String()
+	return fmt.Sprintf("filelock %q is held: %v", e.Path, ErrHeld)
 }
 
 // Unwrap returns []error so that errors.Is(err, ErrHeld) and
@@ -403,9 +397,7 @@ func (l *FileLock) Unlock() error {
 func lockLoop(path string, label string, timeout time.Duration, opts Options, tryLockFn func(string, string, Options) (*FileLock, error)) (*FileLock, error) {
 	clk := opts.clock()
 	poll := opts.pollInterval()
-	start := clk.Now()
-	deadline := start.Add(timeout)
-	var lastHeld *HeldError
+	deadline := clk.Now().Add(timeout)
 
 	for {
 		lock, err := tryLockFn(path, label, opts)
@@ -416,28 +408,15 @@ func lockLoop(path string, label string, timeout time.Duration, opts Options, tr
 			return nil, err
 		}
 
-		var h *HeldError
-		if errors.As(err, &h) {
-			lastHeld = h
-		}
-
 		now := clk.Now()
-		elapsed := now.Sub(start)
 		remaining := deadline.Sub(now)
 		if remaining <= 0 {
-			// Timeout reached. Return rich *HeldError wrapping ErrHeld and ErrTimeout.
-			var holder Stamp
-			if lastHeld != nil {
-				holder = lastHeld.Holder
-			} else {
-				holder, _ = ReadStamp(path)
+			// One final non-blocking attempt right at deadline before giving up
+			lock, lastErr := tryLockFn(path, label, opts)
+			if lastErr == nil {
+				return lock, nil
 			}
-			return nil, &HeldError{
-				Path:     path,
-				Holder:   holder,
-				Wait:     elapsed,
-				TimedOut: true,
-			}
+			return nil, ranOut(path, timeout, lastErr)
 		}
 
 		sleepDur := opts.jitter(poll)
@@ -446,6 +425,21 @@ func lockLoop(path string, label string, timeout time.Duration, opts Options, tr
 		}
 		clk.Sleep(sleepDur)
 	}
+}
+
+// ranOut is the answer when the bound ran out: the last refusal, carrying the
+// bound as the wait. A holder's refusal stays the *HeldError naming the note
+// read on that last refusal, and answers ErrTimeout as well as ErrHeld, because
+// the callers name the holder on a run-out (internal/merge AsHeldError for exit
+// 2, internal/bus ErrLockHeld printing the pid, internal/tokens HolderPID). A
+// refusal by askers alone (ErrBusy) names nobody and stays ErrBusy.
+func ranOut(path string, timeout time.Duration, last error) error {
+	if he, ok := AsHeldError(last); ok {
+		he.Wait = timeout
+		he.TimedOut = true
+		return he
+	}
+	return fmt.Errorf("filelock %q: timeout after %v: %w: %w", path, timeout, ErrTimeout, last)
 }
 
 // TryLock attempts to acquire the exclusive file lock on path without waiting.

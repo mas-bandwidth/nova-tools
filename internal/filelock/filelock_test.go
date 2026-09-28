@@ -730,3 +730,126 @@ func TestProbe_NotDir(t *testing.T) {
 		t.Errorf("TryLock with non-directory parent should error")
 	}
 }
+
+// H1 witness. An asker (a Probe, or another refused taker) holds the shared
+// lock for an instant, and the kernel refuses the exclusive lock while it does.
+// The asker here never leaves, so every take lands in that instant. Nobody
+// holds, so the taker must answer busy (ErrBusy) and never held (ErrHeld):
+// tla/FileLock.tla, HeldIsTrue, kept by the Blocked action's shared re-ask.
+func TestTryLock_AskerIsNotAHolder(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "asker.lock")
+	if err := os.WriteFile(path, nil, 0666); err != nil {
+		t.Fatal(err)
+	}
+	asker, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer asker.Close()
+	if ok, err := trySharedLock(asker); err != nil || !ok {
+		t.Fatalf("asker's shared lock = %v, %v, want granted", ok, err)
+	}
+
+	lock, err := TryLock(path, "taker")
+	if lock != nil {
+		lock.Unlock()
+		t.Fatal("TryLock succeeded while a shared lock was held")
+	}
+	if errors.Is(err, ErrHeld) {
+		t.Errorf("told held with nobody holding: %v", err)
+	}
+	if _, ok := AsHeldError(err); ok {
+		t.Errorf("a *HeldError with nobody holding: %v", err)
+	}
+	if !errors.Is(err, ErrBusy) {
+		t.Errorf("err = %v, want ErrBusy", err)
+	}
+
+	// A bounded Lock kept out by the asker alone runs out as busy, not held.
+	clk := NewLockStepClock(time.Time{})
+	lock, err = LockWithOptions(path, "waiter", 50*time.Millisecond, Options{Clock: clk})
+	if lock != nil {
+		lock.Unlock()
+		t.Fatal("Lock succeeded while a shared lock was held")
+	}
+	if errors.Is(err, ErrHeld) || !errors.Is(err, ErrBusy) || !errors.Is(err, ErrTimeout) {
+		t.Errorf("bounded Lock against an asker: err = %v, want ErrTimeout and ErrBusy, never ErrHeld", err)
+	}
+
+	// The asker leaves; the next take is granted.
+	unlockFile(asker)
+	lock, err = TryLock(path, "taker")
+	if err != nil {
+		t.Fatalf("TryLock after the asker left: %v", err)
+	}
+	lock.Unlock()
+}
+
+// H2 witness, the bound on the virtual clock. A bounded Lock against a holder
+// never waits past its bound, and when it runs out it names the holder: a
+// *HeldError carrying the note read on the last refusal and the bound as Wait,
+// answering both ErrHeld and ErrTimeout. internal/merge (AsHeldError, exit 2),
+// internal/bus (the pid in the refusal) and internal/tokens (HolderPID) all
+// name the holder on a run-out.
+func TestLock_RunOutNamesTheHolder(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "runout.lock")
+	holder, err := TryLock(path, "holder")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer holder.Unlock()
+
+	for _, bound := range []time.Duration{0, 1, time.Millisecond, 10 * time.Millisecond, 200 * time.Millisecond, time.Second} {
+		clk := NewLockStepClock(time.Time{})
+		lock, err := LockWithOptions(path, "waiter", bound, Options{Clock: clk})
+		if lock != nil {
+			lock.Unlock()
+			t.Fatalf("bound %s: acquired a held lock", bound)
+		}
+		if w := clk.Waited(); w > bound {
+			t.Errorf("bound %s exceeded: waited %s", bound, w)
+		}
+		he, ok := AsHeldError(err)
+		if !ok {
+			t.Errorf("bound %s: the run-out does not name the holder: %v", bound, err)
+			continue
+		}
+		if he.Holder.Label != "holder" || he.Holder.PID != os.Getpid() {
+			t.Errorf("bound %s: holder = %s, want pid=%d label=\"holder\"", bound, he.Holder, os.Getpid())
+		}
+		if he.Wait != bound {
+			t.Errorf("bound %s: Wait = %s, want the bound", bound, he.Wait)
+		}
+		if !errors.Is(err, ErrHeld) || !errors.Is(err, ErrTimeout) {
+			t.Errorf("bound %s: errors.Is held=%v timeout=%v, want both: %v", bound, errors.Is(err, ErrHeld), errors.Is(err, ErrTimeout), err)
+		}
+	}
+}
+
+// H2 witness: HeldError.Wait is set by the package on a run-out, and printed.
+func TestLock_RunOutSetsWait(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "wait.lock")
+	holder, err := TryLock(path, "holder")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer holder.Unlock()
+
+	_, err = LockWithOptions(path, "waiter", 50*time.Millisecond, Options{Clock: NewLockStepClock(time.Time{})})
+	he, ok := AsHeldError(err)
+	if !ok {
+		t.Fatalf("a bounded Lock that ran out against a holder is not a *HeldError: %v", err)
+	}
+	if he.Wait != 50*time.Millisecond {
+		t.Errorf("HeldError.Wait = %s after a 50ms bound ran out", he.Wait)
+	}
+	if !strings.Contains(err.Error(), "waited 50ms") {
+		t.Errorf("run-out text does not say the wait: %q", err.Error())
+	}
+}
