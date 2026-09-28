@@ -62,7 +62,7 @@ type LedgerDay struct {
 
 // LedgerStore is the durable side of the token ledger. ReplaceLedgerDay swaps one day's rows
 // for the given ones atomically, so indexing a day twice is the same ledger as once.
-// ReplaceLedgerDays swaps multiple days' rows atomically in one pipelined round trip (#7fbdefecf56e).
+// ReplaceLedgerDays swaps multiple days' rows in one isolated EVAL round trip.
 // LedgerReport is the monthly GROUP BY; indexed is how many calendar-day keys existed and
 // missing is how many did not.
 type LedgerStore interface {
@@ -230,9 +230,12 @@ func (s *RedisLedger) ReplaceLedgerDay(ctx context.Context, day string, entries 
 	return s.ReplaceLedgerDays(ctx, []LedgerDay{{Day: day, Entries: entries}})
 }
 
-// ReplaceLedgerDays writes all given days in one EVAL Lua script, DEL then HSET for each day,
-// so all days in the batch are written atomically in one round trip and any runtime error
-// reverts all keys to their pre-existing state (#7fbdefecf56e, johnny-a228317dbe3b).
+// ReplaceLedgerDays replaces a batch in one isolated EVAL round trip. It validates
+// key types and mutation/restore permissions before deleting any day, and bounds
+// each HSET's argument count. A recoverable mutation error restores prior hash
+// contents; restoration itself still needs a working server and available memory.
+// Redis does not automatically roll back scripts or provide crash recovery here.
+// A server without redis.acl_check_cmd is refused before any mutation.
 func (s *RedisLedger) ReplaceLedgerDays(ctx context.Context, days []LedgerDay) error {
 	if len(days) == 0 {
 		return nil
@@ -291,6 +294,29 @@ func (s *RedisLedger) ReplaceLedgerDays(ctx context.Context, days []LedgerDay) e
 }
 
 const replaceLedgerDaysScript = `
+if type(redis.acl_check_cmd) ~= 'function' then
+	return redis.error_reply('ERR ledger writes require redis.acl_check_cmd permission preflight')
+end
+
+local prepared = {}
+local argIdx = 1
+for i = 1, #KEYS do
+	local count = tonumber(ARGV[argIdx])
+	if not count or count < 0 or count % 2 ~= 0 or count > #ARGV - argIdx then
+		return redis.error_reply('ERR invalid ledger field count')
+	end
+	argIdx = argIdx + 1
+	local fields = {}
+	for c = 1, count do
+		fields[c] = ARGV[argIdx]
+		argIdx = argIdx + 1
+	end
+	prepared[i] = fields
+end
+if argIdx ~= #ARGV + 1 then
+	return redis.error_reply('ERR unused ledger arguments')
+end
+
 local backups = {}
 for i = 1, #KEYS do
 	local key = KEYS[i]
@@ -302,23 +328,29 @@ for i = 1, #KEYS do
 	else
 		return redis.error_reply("WRONGTYPE Operation against a key holding the wrong kind of value")
 	end
+	if not redis.acl_check_cmd('DEL', key) then
+		return redis.error_reply('NOPERM no permission for ledger DEL ' .. key)
+	end
+	-- A clear may need HSET too, to restore its old hash after a later error.
+	local fields = #prepared[i] > 0 and prepared[i] or backups[i].data
+	if fields and #fields > 0 and not redis.acl_check_cmd('HSET', key, fields[1], fields[2]) then
+		return redis.error_reply('NOPERM no permission for ledger HSET ' .. key)
+	end
+end
+
+local function set_fields(key, fields)
+	-- Keep unpack below Lua's stack limit, including for restoration.
+	for first = 1, #fields, 256 do
+		local last = math.min(first + 255, #fields)
+		redis.call('HSET', key, unpack(fields, first, last))
+	end
 end
 
 local status, err = pcall(function()
-	local argIdx = 1
 	for i = 1, #KEYS do
 		local key = KEYS[i]
-		local count = tonumber(ARGV[argIdx])
-		argIdx = argIdx + 1
 		redis.call('DEL', key)
-		if count > 0 then
-			local fields = {}
-			for c = 1, count do
-				fields[c] = ARGV[argIdx]
-				argIdx = argIdx + 1
-			end
-			redis.call('HSET', key, unpack(fields))
-		end
+		set_fields(key, prepared[i])
 	end
 end)
 
@@ -328,9 +360,7 @@ if not status then
 		local b = backups[i]
 		redis.call('DEL', key)
 		if b and b.type == 'hash' and #b.data > 0 then
-			for k = 1, #b.data, 2 do
-				redis.call('HSET', key, b.data[k], b.data[k+1])
-			end
+			set_fields(key, b.data)
 		end
 	end
 	error(err)

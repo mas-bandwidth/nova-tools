@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/alicebob/miniredis/v2/server"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/record"
@@ -20,9 +21,36 @@ import (
 func redisLedger(t *testing.T) (*record.RedisLedger, *miniredis.Miniredis) {
 	t.Helper()
 	mr := miniredis.RunT(t)
+	// This fixture has unrestricted access. Miniredis lacks acl_check_cmd;
+	// provide only the ledger write-command checks. Real ACL denial is tested
+	// separately against an owned Redis server, without this shim.
+	mr.Server().SetPreHook(func(_ *server.Peer, cmd string, args ...string) bool {
+		if cmd == "EVAL" && len(args) > 0 {
+			args[0] = "redis.acl_check_cmd = function(command) return command == 'DEL' or command == 'HSET' end\n" + args[0]
+		}
+		return false
+	})
 	s := record.NewRedisLedger(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
 	t.Cleanup(func() { _ = s.Close() })
 	return s, mr
+}
+
+func TestLedgerRequiresPermissionPreflightBeforeWriting(t *testing.T) {
+	t.Parallel()
+	// Deliberately use miniredis without the unrestricted-fixture shim: it
+	// represents a server that does not expose the required Lua primitive.
+	mr := miniredis.RunT(t)
+	key := record.LedgerKey("2026-09-01")
+	mr.HSet(key, "before", "unchanged")
+	store := record.NewRedisLedger(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
+	t.Cleanup(func() { _ = store.Close() })
+	err := store.ReplaceLedgerDay(context.Background(), "2026-09-01", nil)
+	if err == nil || !strings.Contains(err.Error(), "require redis.acl_check_cmd") {
+		t.Fatalf("want missing permission-preflight refusal, got %v", err)
+	}
+	if fields, err := mr.HKeys(key); err != nil || len(fields) != 1 || mr.HGet(key, "before") != "unchanged" || len(mr.Keys()) != 1 {
+		t.Fatalf("missing preflight support changed existing state: %v / %v", fields, err)
+	}
 }
 
 // TestTheRedisLedgerKeepsTheLedgerContract is the token ledger's promise (#2201, recut of
@@ -418,7 +446,7 @@ func TestReplaceLedgerDaysInjectedCommandErrorLeavesPriorHashesUnchanged(t *test
 		}
 	}
 
-	// 5. Also prove that an EXEC-time command error occurring mid-batch during mutation
+	// 5. Also prove that a recoverable script error occurring mid-batch during mutation
 	// (after day 1 was already deleted and rewritten with new rows) catches the error,
 	// rolls back day 1, and leaves all pre-existing day hashes unchanged.
 	s2, mr2 := redisLedger(t)
@@ -468,8 +496,8 @@ func (h *injectEvalMidScriptFailHook) ProcessHook(next redis.ProcessHook) redis.
 				// but day 2 calls HSET on "not-a-hash" (a string) to trigger WRONGTYPE mid-batch.
 				args[1] = strings.Replace(
 					script,
-					"redis.call('HSET', key, unpack(fields))",
-					"if i == 2 then redis.call('HSET', 'not-a-hash', 'f', 'v') else redis.call('HSET', key, unpack(fields)) end",
+					"set_fields(key, prepared[i])",
+					"if i == 2 then redis.call('HSET', 'not-a-hash', 'f', 'v') else set_fields(key, prepared[i]) end",
 					1,
 				)
 			}

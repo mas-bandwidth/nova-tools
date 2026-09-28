@@ -17,11 +17,22 @@ import (
 )
 
 // ledgerRedis is the Redis the ledger/report verbs are pointed at for the test: a miniredis
-// on loopback, reached through the real client and the real --redis flag, no seam.
+// on loopback, reached through the real client and the real --redis flag.
 func ledgerRedis(t *testing.T) (string, *miniredis.Miniredis) {
 	t.Helper()
 	mr := miniredis.RunT(t)
+	mr.Server().SetPreHook(ledgerFixtureACL)
 	return mr.Addr(), mr
+}
+
+// Miniredis lacks acl_check_cmd. These unrestricted fixtures permit the two
+// ledger write commands; denied permissions are covered by real-Redis functional
+// tests in internal/record. Production never substitutes this implementation.
+func ledgerFixtureACL(_ *server.Peer, cmd string, args ...string) bool {
+	if cmd == "EVAL" && len(args) > 0 {
+		args[0] = "redis.acl_check_cmd = function(command) return command == 'DEL' or command == 'HSET' end\n" + args[0]
+	}
+	return false
 }
 
 // foldedTuples is the monthly report computed from the day TSVs alone: every row of every
@@ -317,11 +328,11 @@ func TestLedgerMonthPipelinesWritesAndDropsSuperfluousPing(t *testing.T) {
 	addr, mr := ledgerRedis(t)
 	var mu sync.Mutex
 	var seenCmds []string
-	mr.Server().SetPreHook(func(_ *server.Peer, cmd string, _ ...string) bool {
+	mr.Server().SetPreHook(func(peer *server.Peer, cmd string, args ...string) bool {
 		mu.Lock()
 		seenCmds = append(seenCmds, strings.ToUpper(cmd))
 		mu.Unlock()
-		return false
+		return ledgerFixtureACL(peer, cmd, args...)
 	})
 
 	out := t.TempDir()
