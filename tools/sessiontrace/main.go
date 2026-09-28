@@ -50,23 +50,36 @@ type testEvent struct {
 }
 
 func main() {
-	jar := flag.String("jar", "", "existing TLC jar")
-	out := flag.String("out", "", "directory for capture, generated models and results")
-	flag.Parse()
-	if *jar == "" || *out == "" || flag.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "sessiontrace: want --jar /path/to/tla2tools.jar --out /path/to/results")
-		os.Exit(2)
+	os.Exit(command(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+func command(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("sessiontrace", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	jar := flags.String("jar", "", "existing TLC jar")
+	out := flags.String("out", "", "directory for capture, generated models and results")
+	if err := flags.Parse(args); errors.Is(err, flag.ErrHelp) {
+		fmt.Fprintln(stdout, "sessiontrace — capture shell sessions and check TableSession with TLC\n\nusage: sessiontrace --jar /path/to/tla2tools.jar --out /path/to/results\n\nRun from the nova-tools repository on a TLC bench with cached Go dependencies.\n\nexample:\n  go run ./tools/sessiontrace --jar /path/to/tla2tools.jar --out /path/to/results")
+		return 0
+	} else if err != nil {
+		fmt.Fprintf(stderr, "sessiontrace: invalid arguments: %v; state: no capture started; next: run sessiontrace -h for the supported flags\n", err)
+		return 2
 	}
-	if err := run(*jar, *out, os.Stdout); err != nil {
-		fmt.Fprintln(os.Stderr, "sessiontrace:", err)
-		os.Exit(1)
+	if *jar == "" || *out == "" || flags.NArg() != 0 {
+		fmt.Fprintln(stderr, "sessiontrace: want --jar /path/to/tla2tools.jar --out /path/to/results; state: no capture started; next: supply both paths without positional arguments")
+		return 2
 	}
+	if err := run(*jar, *out, stdout); err != nil {
+		fmt.Fprintln(stderr, "sessiontrace:", err)
+		return 1
+	}
+	return 0
 }
 
 func repoRoot() (string, error) {
 	dir, err := os.Getwd()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("cannot read working directory; state: repository unresolved; next: change into the nova-tools checkout and retry: %w", err)
 	}
 	for {
 		if _, err := os.Stat(filepath.Join(dir, "tla", "TableSession.tla")); err == nil {
@@ -74,7 +87,7 @@ func repoRoot() (string, error) {
 		}
 		next := filepath.Dir(dir)
 		if next == dir {
-			return "", errors.New("run from the nova-tools repository")
+			return "", errors.New("tla/TableSession.tla not found in working-directory ancestry; state: repository unresolved; next: run from the nova-tools checkout")
 		}
 		dir = next
 	}
@@ -92,10 +105,10 @@ func readTraces(r io.Reader) ([]trace, []json.RawMessage, error) {
 			break
 		}
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, fmt.Errorf("invalid test event at byte %d: %w", dec.InputOffset(), err)
 		}
 		if ev.Action == "fail" || ev.Action == "skip" {
-			return nil, nil, errors.New("execution test failed or skipped")
+			return nil, nil, errors.New("execution test failed or skipped; state: capture unverified; next: inspect the capture log, restore the test prerequisites and rerun")
 		}
 		if ev.Action == "pass" && ev.Test == "" {
 			passed = true
@@ -103,7 +116,7 @@ func readTraces(r io.Reader) ([]trace, []json.RawMessage, error) {
 		output.WriteString(ev.Output)
 	}
 	if !passed {
-		return nil, nil, errors.New("execution test did not pass")
+		return nil, nil, errors.New("execution test did not pass; state: capture incomplete; next: inspect the capture log and rerun the complete execution test")
 	}
 	var traces []trace
 	var raw []json.RawMessage
@@ -116,7 +129,7 @@ func readTraces(r io.Reader) ([]trace, []json.RawMessage, error) {
 		}
 		var tr trace
 		if err := json.Unmarshal([]byte(row), &tr); err != nil {
-			return nil, nil, err
+			return nil, nil, fmt.Errorf("invalid SESSION_TRACE record: %w", err)
 		}
 		traces = append(traces, tr)
 		raw = append(raw, json.RawMessage(row))
@@ -149,6 +162,8 @@ func readTraces(r io.Reader) ([]trace, []json.RawMessage, error) {
 	return traces, raw, nil
 }
 
+var errDuplicateReceipt = errors.New("duplicate durable receipt")
+
 func checkReceipts(traces []trace) error {
 	for _, tr := range traces {
 		revision := 0
@@ -175,7 +190,7 @@ func checkReceipts(traces []trace) error {
 			}
 			for _, r := range s.Receipts {
 				if ids[r.ID] {
-					return errors.New("duplicate durable receipt")
+					return errDuplicateReceipt
 				}
 				ids[r.ID] = true
 				if r.Values["rev_before"] != strconv.Itoa(revision) ||
@@ -362,13 +377,51 @@ func clone(traces []trace) []trace {
 	return copied
 }
 
+// Preserve counts, revisions and printed IDs so only cross-step uniqueness fails.
+func checkDuplicateControl(traces []trace) error {
+	bad := clone(traces)
+	for i := range bad {
+		first := ""
+		for j := range bad[i].Steps {
+			s := &bad[i].Steps[j]
+			if !s.Action.Write || len(s.Receipts) != 1 {
+				continue
+			}
+			if first == "" {
+				first = s.Receipts[0].ID
+				continue
+			}
+			old := s.Receipts[0].ID
+			s.Receipts[0].ID = first
+			s.Stdout = strings.ReplaceAll(s.Stdout, "event="+old+" ", "event="+first+" ")
+			if err := checkReceipts(bad); !errors.Is(err, errDuplicateReceipt) {
+				return fmt.Errorf("duplicate-ID control wanted %q, got %v; state: uniqueness check unproven; next: inspect receipt validation before accepting this run", errDuplicateReceipt, err)
+			}
+			return nil
+		}
+	}
+	return errors.New("no session contains two write receipts; state: duplicate-ID control untested; next: restore a trace with two writes and rerun")
+}
+
+func readCapture(path string) ([]trace, []json.RawMessage, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("cannot read capture %s; state: capture unverified; next: check the file and rerun capture: %w", path, err)
+	}
+	traces, raw, err := readTraces(bytes.NewReader(data))
+	if err != nil {
+		return nil, nil, fmt.Errorf("capture %s rejected; state: sessions unverified; next: inspect this log, fix the capture failure and rerun: %w", path, err)
+	}
+	return traces, raw, nil
+}
+
 func run(jar, out string, stdout io.Writer) error {
 	var err error
 	if jar, err = filepath.Abs(jar); err != nil {
 		return err
 	}
 	if info, err := os.Stat(jar); err != nil || !info.Mode().IsRegular() {
-		return errors.New("--jar must name an existing TLC jar")
+		return fmt.Errorf("--jar %q is not an existing regular file; state: no capture started; next: pass the path to an installed TLC jar", jar)
 	}
 	if out, err = filepath.Abs(out); err != nil {
 		return err
@@ -395,21 +448,17 @@ func run(jar, out string, stdout io.Writer) error {
 		"GOTOOLCHAIN=local", "GOPROXY=off", "GOSUMDB=off")
 	runErr, closeErr := cmd.Run(), log.Close()
 	if runErr != nil {
-		return fmt.Errorf("capture failed: %s: %w", capture, runErr)
+		return fmt.Errorf("capture failed: %s; state: sessions unverified; next: inspect this log, ensure Redis and cached Go dependencies are available, and rerun: %w", capture, runErr)
 	}
 	if closeErr != nil {
 		return closeErr
 	}
-	data, err := os.ReadFile(capture)
-	if err != nil {
-		return err
-	}
-	traces, raw, err := readTraces(bytes.NewReader(data))
+	traces, raw, err := readCapture(capture)
 	if err != nil {
 		return err
 	}
 	if err := checkReceipts(traces); err != nil {
-		return err
+		return fmt.Errorf("receipt check failed in %s; state: durable effects unverified; next: inspect the recorded receipts and repair the mismatch: %w", capture, err)
 	}
 	if err := writeJSON(filepath.Join(out, "trace.json"), raw); err != nil {
 		return err
@@ -423,7 +472,7 @@ func run(jar, out string, stdout io.Writer) error {
 		}
 		hashes[name] = fmt.Sprintf("%x", sha256.Sum256(data))
 	}
-	data, err = os.ReadFile(jar)
+	data, err := os.ReadFile(jar)
 	if err != nil {
 		return err
 	}
@@ -473,11 +522,8 @@ func run(jar, out string, stdout io.Writer) error {
 	if code != 12 || !strings.Contains(output, "Invariant TraceObserved is violated.") {
 		return errors.New("TLC failed to reject wrong per-line status")
 	}
-	badReceipt := clone(traces)
-	first := &badReceipt[0].Steps[0]
-	first.Receipts = append(first.Receipts, first.Receipts[0])
-	if checkReceipts(badReceipt) == nil {
-		return errors.New("receipt checker accepted duplicate effect")
+	if err := checkDuplicateControl(traces); err != nil {
+		return err
 	}
 	steps := 0
 	for _, tr := range traces {

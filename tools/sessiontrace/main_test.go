@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -97,5 +99,64 @@ func TestReceiptCorruptionAndCloneIndependence(t *testing.T) {
 				t.Fatalf("negative control changed original trace: %v", err)
 			}
 		})
+	}
+}
+
+func TestHelpAndArgumentRefusals(t *testing.T) {
+	t.Parallel()
+	for _, args := range [][]string{{"-h"}, {"--help"}, {}, {"--unknown"}} {
+		var stdout, stderr bytes.Buffer
+		code := command(args, &stdout, &stderr)
+		help := len(args) == 1 && (args[0] == "-h" || args[0] == "--help")
+		if help {
+			if code != 0 || stderr.Len() != 0 || !strings.Contains(stdout.String(), "usage: sessiontrace") {
+				t.Fatalf("%v: code=%d stdout=%q stderr=%q", args, code, stdout.String(), stderr.String())
+			}
+		} else if code != 2 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "state:") || !strings.Contains(stderr.String(), "next:") {
+			t.Fatalf("%v: code=%d stdout=%q stderr=%q", args, code, stdout.String(), stderr.String())
+		}
+	}
+}
+
+func TestTruncatedCaptureNamesEvidenceAndRecovery(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "capture.json")
+	if err := os.WriteFile(path, []byte(`{"Action":`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := readCapture(path)
+	for _, want := range []string{path, "state:", "next:", "invalid test event", "unexpected EOF"} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("error=%v; want %q", err, want)
+		}
+	}
+}
+
+func TestDuplicateControlPreservesCountsAndOriginalTrace(t *testing.T) {
+	t.Parallel()
+	traces, _, err := readTraces(strings.NewReader(captureFixture(t, "pass", false)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := checkDuplicateControl(traces); err == nil || !strings.Contains(err.Error(), "two write receipts") {
+		t.Fatalf("missing second write must refuse: %v", err)
+	}
+	tr := &traces[0]
+	a := action{Kind: "ok", Command: "put fixture", Write: true}
+	tr.Actions = append(tr.Actions, a)
+	tr.Steps = append(tr.Steps, step{Action: a,
+		Stdout: "TABLE RECEIPT event=2-0 epoch=0 before=1 after=2 outcome=changed\n",
+		Receipts: []receipt{{ID: "2-0", Values: map[string]any{
+			"rev_before": "1", "rev_after": "2", "actor": "trace",
+		}}},
+	})
+	if err := checkReceipts(traces); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkDuplicateControl(traces); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkReceipts(traces); err != nil {
+		t.Fatalf("control modified original trace: %v", err)
 	}
 }
