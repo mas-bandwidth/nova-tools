@@ -299,7 +299,7 @@ func pull(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 			field(o.version), field(o.changelog), oneErr(err))
 		return 1
 	}
-	if err := os.WriteFile(o.changelog, []byte(marked), 0o644); err != nil {
+	if err := writeNoFollow("pull", o.changelog, []byte(marked), 0o644); err != nil {
 		fmt.Fprintf(errs, "PULL FAIL version=%s changelog=%s: cannot write it: %s (the artifacts are deleted; mark the section by hand)\n",
 			field(o.version), field(o.changelog), oneErr(err))
 		return 1
