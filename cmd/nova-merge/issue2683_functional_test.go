@@ -1,6 +1,8 @@
+//go:build functional
+
 package main
 
-// issue2683_test.go is the red-first check of nova-tools #2683: the 1 s table's
+// issue2683_functional_test.go is the red-first check of nova-tools #2683: the 1 s table's
 // friend columns come from the store -- the sprint task hashes and the read events --
 // so there is no per-tick GitHub call. The done column is the half this tool feeds:
 // a typed line at the keyboard is the read (#2678), and `nova-merge read` is where

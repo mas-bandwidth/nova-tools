@@ -105,7 +105,6 @@ internal/typedrec	TestEveryConsumerRefusesMissingFieldByName	#4221 measured over
 internal/update	TestMovedIsBoundedByTheClock	#4221 waits on the wall clock, failed on a 2026-09-25 run
 internal/update	TestRemoveStaleGitTransactionLocksNamesOnly	#4221 calls time.Sleep
 internal/update	TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp	#4221 calls time.Sleep
-cmd/nova-merge	realLockClock	seed #4413: time.Sleep as a value at helpers_test.go:118
 cmd/nova-sandbox	TestTheAgentSocketIsUnreachable	seed #4413: time.After at main_test.go:332
 cmd/nova-sprint	waitFor	seed #4413: time.Sleep at table_loop_test.go:35
 cmd/nova-swarm	TestNativeDoesNotBlockOnAPlantedFIFOAtResult	seed #4413: time.After at planted_result_unix_test.go:68

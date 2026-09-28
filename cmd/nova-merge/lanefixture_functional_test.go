@@ -1,6 +1,8 @@
+//go:build functional
+
 package main
 
-// lanefixture_test.go is how the tests make a lane now that init, quickstart, add and
+// lanefixture_functional_test.go is how the tests make a lane now that init, quickstart, add and
 // add-branch left the binary with the per-PR lander role (stream-is-the-unit). gate and
 // read still write their records into a lane directory, so the tests that drive them
 // build one with the code those verbs used to run, called from the lab rather than from

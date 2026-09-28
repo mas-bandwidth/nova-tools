@@ -1,3 +1,5 @@
+//go:build functional
+
 // nova-tools#3016: the `classify` verb is the production caller of
 // merge.RecordGroupVerdict, so a classified merge-group run writes one
 // group_start line and one group_verdict line to merge.DefaultEvents (and a
