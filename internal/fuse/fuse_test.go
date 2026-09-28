@@ -271,8 +271,8 @@ func TestWrittenBoxIsWorldReadable(t *testing.T) {
 	}
 }
 
-// TestWriteBoxResolvesSymlink asserts that WriteBox resolves symlink targets before writing
-// so that the atomic write lands on the target file while leaving the symlink intact.
+// TestWriteBoxResolvesSymlink asserts that WriteBox refuses a symlink at the
+// cleaned path. The link stays a link and the target bytes do not change.
 func TestWriteBoxResolvesSymlink(t *testing.T) {
 	t.Parallel()
 
@@ -285,6 +285,10 @@ func TestWriteBoxResolvesSymlink(t *testing.T) {
 	if err := WriteBox(target, Box{}); err != nil {
 		t.Fatalf("WriteBox(target) failed: %v", err)
 	}
+	before, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("ReadFile(target) failed: %v", err)
+	}
 
 	link := filepath.Join(dir, "link.json")
 	if err := os.Symlink(target, link); err != nil {
@@ -293,14 +297,15 @@ func TestWriteBoxResolvesSymlink(t *testing.T) {
 
 	b := Box{
 		Quarantine: map[string]Fuse{
-			"discord": {At: "2026-09-28T00:00:00Z", Reason: "testing symlink resolution"},
+			"discord": {At: "2026-09-28T00:00:00Z", Reason: "must not be written"},
 		},
 	}
-	if err := WriteBox(link, b); err != nil {
-		t.Fatalf("WriteBox(link) failed: %v", err)
+	if err := WriteBox(link, b); err == nil {
+		t.Fatal("WriteBox(link) succeeded; want refusal")
+	} else if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("WriteBox(link) error %q does not refuse a symlink", err)
 	}
 
-	// Verify that the link is still a symlink
 	lst, err := os.Lstat(link)
 	if err != nil {
 		t.Fatalf("Lstat(%q) failed: %v", link, err)
@@ -309,13 +314,12 @@ func TestWriteBoxResolvesSymlink(t *testing.T) {
 		t.Fatalf("link %q is no longer a symlink", link)
 	}
 
-	// Verify that the target was updated with the new contents
-	readBox, err := ReadBox(target)
+	after, err := os.ReadFile(target)
 	if err != nil {
-		t.Fatalf("ReadBox(target) failed: %v", err)
+		t.Fatalf("ReadFile(target) failed: %v", err)
 	}
-	if _, ok := readBox.Quarantine["discord"]; !ok {
-		t.Fatalf("target was not updated through symlink write: %v", readBox)
+	if string(after) != string(before) {
+		t.Fatalf("target bytes changed:\nbefore: %s\nafter: %s", before, after)
 	}
 }
 
