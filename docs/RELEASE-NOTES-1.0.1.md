@@ -46,6 +46,8 @@ counts the workflow actually runs. Existing time budgets stay in force.
 
 The CI generality check refuses additions to its exception list and enforces the existing row ceiling.
 
+The table epoch test harness checks the store image after every accepted action and verifies receipt replay.
+
 ## Release publishing
 
 Release uploads find existing drafts correctly and use the authored release
