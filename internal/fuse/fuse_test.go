@@ -661,3 +661,76 @@ func TestSurfaceFoldsControlCharactersOutOfAName(t *testing.T) {
 		t.Errorf("Quarantined(%q) = %q, %v -- want the stored spelling", "dis cord", name, ok)
 	}
 }
+
+// TestFuseStateMachineTransitions tests the core state machine transitions
+// directly on the internal/fuse API (ReadBox, CreateBox, WriteBox, LiftQuarantine).
+func TestFuseStateMachineTransitions(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "fuses.json")
+
+	// State 0: Absent -> ReadBox returns ErrNoBox
+	_, err := ReadBox(path)
+	if !errors.Is(err, ErrNoBox) {
+		t.Fatalf("ReadBox absent: got %v, want ErrNoBox", err)
+	}
+
+	// S0 -> S1: CreateBox
+	if err := CreateBox(path); err != nil {
+		t.Fatalf("CreateBox: %v", err)
+	}
+	b, err := ReadBox(path)
+	if err != nil || b.Lockdown != nil || len(b.Quarantine) != 0 {
+		t.Fatalf("ReadBox after CreateBox: b=%+v, err=%v", b, err)
+	}
+
+	// S1 -> S2: Add Quarantine
+	b.Quarantine["email"] = Fuse{At: "2026-09-28T12:00:00Z", Reason: "spam wave"}
+	if err := WriteBox(path, b); err != nil {
+		t.Fatalf("WriteBox quarantine: %v", err)
+	}
+
+	b2, err := ReadBox(path)
+	if err != nil {
+		t.Fatalf("ReadBox after quarantine write: %v", err)
+	}
+	if name, f, ok := b2.Quarantined("EMAIL"); !ok || name != "email" || f.Reason != "spam wave" {
+		t.Errorf("Quarantined('EMAIL'): got (%q, %+v, %v), want ('email', ..., true)", name, f, ok)
+	}
+	if _, _, ok := b2.Quarantined("discord"); ok {
+		t.Errorf("Quarantined('discord') should be false")
+	}
+
+	// S2 -> S3: Add Lockdown
+	b2.Lockdown = &Fuse{At: "2026-09-28T12:05:00Z", Reason: "credential leak"}
+	if err := WriteBox(path, b2); err != nil {
+		t.Fatalf("WriteBox lockdown: %v", err)
+	}
+
+	b3, err := ReadBox(path)
+	if err != nil || b3.Lockdown == nil || b3.Lockdown.Reason != "credential leak" {
+		t.Fatalf("ReadBox after lockdown: b=%+v, err=%v", b3, err)
+	}
+	// Quarantine is preserved behind lockdown
+	if len(b3.Quarantine) != 1 {
+		t.Errorf("quarantine should still have 1 entry under lockdown, got %d", len(b3.Quarantine))
+	}
+
+	// Lift quarantine while lockdown remains
+	removed := b3.LiftQuarantine("email")
+	if len(removed) != 1 || removed["email"].Reason != "spam wave" {
+		t.Errorf("LiftQuarantine: got %v, want entry for 'email'", removed)
+	}
+	if err := WriteBox(path, b3); err != nil {
+		t.Fatalf("WriteBox after lift: %v", err)
+	}
+
+	b4, err := ReadBox(path)
+	if err != nil || b4.Lockdown == nil {
+		t.Fatalf("ReadBox after lift: b=%+v, err=%v", b4, err)
+	}
+	if len(b4.Quarantine) != 0 {
+		t.Errorf("quarantine should be empty, got %v", b4.Quarantine)
+	}
+}
+

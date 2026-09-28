@@ -741,3 +741,397 @@ func TestRowanParityOnelineForgingPrevention(t *testing.T) {
 		t.Errorf("status did not escape bidi override U+202E: %q", out)
 	}
 }
+
+// TestLockdownWithAQuarantineBehindItFollowsTheLockdownRule validates the key invariant
+// specified in NEED-ROWAN-FUSE-FOLDIN.md and rowan-fuse specs:
+// When a global lockdown is blown, it strictly halts all ingestion across all surfaces,
+// even when individual quarantines exist behind it. Lifting a quarantine while under
+// lockdown announces the lift and updates the quarantine map, but emits a warning note,
+// and subsequent checks STILL fail because lockdown dominates.
+func TestLockdownWithAQuarantineBehindItFollowsTheLockdownRule(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+
+	// 1. Establish quarantine on a surface
+	mustRun(t, []string{"quarantine", "--box", box, "github-issues", "toxic issue payload"}, nowish())
+
+	// Check: quarantined surface fails, other surfaces pass
+	code, _, errOut := capture(t, []string{"check", "--box", box, "github-issues"}, nowish())
+	if code != 1 || !strings.Contains(errOut, "FUSE FAIL quarantine=github-issues") {
+		t.Fatalf("check github-issues before lockdown: exit = %d, want 1; stderr: %s", code, errOut)
+	}
+	code, out, _ := capture(t, []string{"check", "--box", box, "rowan-email"}, nowish())
+	if code != 0 || !strings.Contains(out, "FUSE OK") {
+		t.Fatalf("check rowan-email before lockdown: exit = %d, want 0; stdout: %s", code, out)
+	}
+
+	// 2. Blow lockdown (emergency halt)
+	mustRun(t, []string{"lockdown", "--box", box, "credential compromise observed"}, nowish())
+
+	// Now ALL checks must fail with exit 1 and cite lockdown, regardless of quarantine state
+	surfacesToCheck := []string{"github-issues", "rowan-email", "rowan-discord", "unseen-surface"}
+	for _, surf := range surfacesToCheck {
+		code, _, errOut := capture(t, []string{"check", "--box", box, surf}, nowish())
+		if code != 1 {
+			t.Errorf("check %s under lockdown: exit = %d, want 1", surf, code)
+		}
+		if !strings.Contains(errOut, "FUSE FAIL lockdown") {
+			t.Errorf("check %s under lockdown: stderr missing lockdown failure: %q", surf, errOut)
+		}
+		if !strings.Contains(errOut, "credential compromise observed") {
+			t.Errorf("check %s under lockdown: stderr missing lockdown reason: %q", surf, errOut)
+		}
+	}
+
+	// Bare check also fails with lockdown
+	code, _, errOut = capture(t, []string{"check", "--box", box}, nowish())
+	if code != 1 || !strings.Contains(errOut, "FUSE FAIL lockdown") {
+		t.Errorf("bare check under lockdown: exit = %d, want 1; stderr: %s", code, errOut)
+	}
+
+	// 3. Status shows BOTH lockdown and quarantine
+	code, out, _ = capture(t, []string{"status", "--box", box}, nowish())
+	if code != 0 {
+		t.Fatalf("status under lockdown: exit = %d, want 0", code)
+	}
+	if !strings.Contains(out, "lockdown=blown") || !strings.Contains(out, "quarantines=1") {
+		t.Errorf("status header under lockdown: got %q", out)
+	}
+	if !strings.Contains(out, "STATUS OK quarantine=github-issues") {
+		t.Errorf("status quarantine list under lockdown: got %q", out)
+	}
+
+	// 4. Operator lifts the quarantine on github-issues while lockdown remains active
+	code, out, errOut = capture(t, []string{"lift", "quarantine", "--box", box, "github-issues"}, nowish())
+	if code != 0 {
+		t.Fatalf("lift quarantine under lockdown: exit = %d, want 0; stderr: %s", code, errOut)
+	}
+	if !strings.Contains(out, "LIFT OK verified: github-issues is no longer quarantined") {
+		t.Errorf("lift quarantine stdout: got %q", out)
+	}
+	// Stderr must warn that lockdown is still active
+	if !strings.Contains(errOut, "NOTE lockdown is still blown") {
+		t.Errorf("lift quarantine stderr must warn lockdown is still blown: got %q", errOut)
+	}
+
+	// 5. Subsequent check on github-issues STILL fails with exit 1 because lockdown is blown!
+	code, _, errOut = capture(t, []string{"check", "--box", box, "github-issues"}, nowish())
+	if code != 1 {
+		t.Fatalf("check github-issues after lifting quarantine under lockdown: exit = %d, want 1", code)
+	}
+	if !strings.Contains(errOut, "FUSE FAIL lockdown") {
+		t.Errorf("check github-issues after lift must fail on lockdown: %q", errOut)
+	}
+
+	// 6. Attempting to lift lockdown is REFUSED forever by design (exit 2)
+	code, _, errOut = capture(t, []string{"lift", "lockdown", "--box", box}, nowish())
+	if code != 2 {
+		t.Errorf("lift lockdown: exit = %d, want 2", code)
+	}
+	if !strings.Contains(errOut, "REFUSED, forever, by design") {
+		t.Errorf("lift lockdown refusal message: got %q", errOut)
+	}
+
+	// Box remains locked down on disk
+	b, err := fuse.ReadBox(box)
+	if err != nil || b.Lockdown == nil {
+		t.Fatalf("box state corrupted: err=%v, box=%+v", err, b)
+	}
+	if len(b.Quarantine) != 0 {
+		t.Errorf("quarantine map should be empty after lift, got %v", b.Quarantine)
+	}
+}
+
+// TestRowanParityStateMachine rigorously verifies all states and transitions in the
+// ingestion fuse state machine:
+//
+// States:
+//   S0: AbsentBox (ErrNoBox)
+//   S1: Clear (Empty box: lockdown=nil, quarantine={})
+//   S2: Quarantined (lockdown=nil, quarantine={S1,...})
+//   S3: Lockdown (lockdown!=nil, quarantine={...})
+//   S4: CorruptBox (invalid JSON / malformed structure)
+//
+// Verifying every permitted and forbidden transition between these states.
+func TestRowanParityStateMachine(t *testing.T) {
+	t.Parallel()
+
+	// --- S0: AbsentBox ---
+	absent := absentBoxIn(t)
+
+	// S0 reads fail-closed
+	for _, args := range [][]string{
+		{"check", "--box", absent},
+		{"check", "--box", absent, "web"},
+		{"status", "--box", absent},
+		{"quarantine", "--box", absent, "web", "phish"},
+		{"lift", "quarantine", "--box", absent, "web"},
+		{"lift", "lockdown"},
+	} {
+		code, _, errOut := capture(t, args, nowish())
+		if code != 2 {
+			t.Errorf("S0 %v: exit = %d, want 2 (fail-closed); stderr: %s", args, code, errOut)
+		}
+	}
+
+	// Transition S0 -> S1 via init
+	code, out, errOut := capture(t, []string{"init", "--box", absent}, nowish())
+	if code != 0 {
+		t.Fatalf("S0 -> S1 (init): exit = %d, want 0; stderr: %s", code, errOut)
+	}
+	if !strings.Contains(out, "INIT OK") {
+		t.Errorf("S0 -> S1 (init) stdout: got %q", out)
+	}
+
+	// --- S1: ClearBox ---
+	box := absent // now initialized
+	code, out, _ = capture(t, []string{"status", "--box", box}, nowish())
+	if code != 0 || !strings.Contains(out, "STATUS OK lockdown=clear quarantines=0") {
+		t.Fatalf("S1 status: exit = %d, stdout: %s", code, out)
+	}
+	code, _, _ = capture(t, []string{"check", "--box", box, "any-surface"}, nowish())
+	if code != 0 {
+		t.Errorf("S1 check: exit = %d, want 0", code)
+	}
+
+	// Forbidden transitions in S1:
+	// - init again exits 1 (cannot overwrite)
+	code, _, _ = capture(t, []string{"init", "--box", box}, nowish())
+	if code != 1 {
+		t.Errorf("S1 -> init: exit = %d, want 1", code)
+	}
+	// - lift quarantine on unquarantined surface exits 1
+	code, _, _ = capture(t, []string{"lift", "quarantine", "--box", box, "any-surface"}, nowish())
+	if code != 1 {
+		t.Errorf("S1 -> lift quarantine: exit = %d, want 1", code)
+	}
+	// - lift lockdown exits 2
+	code, _, _ = capture(t, []string{"lift", "lockdown"}, nowish())
+	if code != 2 {
+		t.Errorf("S1 -> lift lockdown: exit = %d, want 2", code)
+	}
+
+	// Transition S1 -> S2 via quarantine
+	code, out, _ = capture(t, []string{"quarantine", "--box", box, "discord", "spam attack"}, nowish())
+	if code != 0 || !strings.Contains(out, "QUARANTINE OK discord") {
+		t.Fatalf("S1 -> S2 (quarantine): exit = %d, stdout: %s", code, out)
+	}
+
+	// --- S2: QuarantinedBox ---
+	// discord fails (exit 1), other surfaces pass (exit 0), bare check passes (exit 0)
+	code, _, _ = capture(t, []string{"check", "--box", box, "discord"}, nowish())
+	if code != 1 {
+		t.Errorf("S2 check discord: exit = %d, want 1", code)
+	}
+	code, _, _ = capture(t, []string{"check", "--box", box, "email"}, nowish())
+	if code != 0 {
+		t.Errorf("S2 check email: exit = %d, want 0", code)
+	}
+	code, _, _ = capture(t, []string{"check", "--box", box}, nowish())
+	if code != 0 {
+		t.Errorf("S2 bare check: exit = %d, want 0", code)
+	}
+
+	// Add second quarantine: S2 -> S2
+	mustRun(t, []string{"quarantine", "--box", box, "bsky", "scraping bot"}, nowish())
+	code, out, _ = capture(t, []string{"status", "--box", box}, nowish())
+	if code != 0 || !strings.Contains(out, "quarantines=2") {
+		t.Errorf("S2 multiple quarantines status: exit = %d, stdout: %s", code, out)
+	}
+
+	// Rescind one quarantine: S2 -> S2 (still 1 quarantine left)
+	code, out, _ = capture(t, []string{"lift", "quarantine", "--box", box, "discord"}, nowish())
+	if code != 0 || !strings.Contains(out, "LIFT OK verified: discord is no longer quarantined") {
+		t.Fatalf("S2 lift discord: exit = %d, stdout: %s", code, out)
+	}
+	code, _, _ = capture(t, []string{"check", "--box", box, "discord"}, nowish())
+	if code != 0 {
+		t.Errorf("check discord after lift: exit = %d, want 0", code)
+	}
+	code, _, _ = capture(t, []string{"check", "--box", box, "bsky"}, nowish())
+	if code != 1 {
+		t.Errorf("check bsky after discord lift: exit = %d, want 1", code)
+	}
+
+	// Rescind final quarantine: S2 -> S1 (back to Clear)
+	code, out, _ = capture(t, []string{"lift", "quarantine", "--box", box, "bsky"}, nowish())
+	if code != 0 || !strings.Contains(out, "LIFT OK verified: bsky is no longer quarantined") {
+		t.Fatalf("S2 lift bsky: exit = %d, stdout: %s", code, out)
+	}
+	code, out, _ = capture(t, []string{"status", "--box", box}, nowish())
+	if code != 0 || !strings.Contains(out, "quarantines=0") {
+		t.Fatalf("status after all lifts: exit = %d, stdout: %s", code, out)
+	}
+
+	// Transition S1 -> S3 via lockdown
+	code, out, _ = capture(t, []string{"lockdown", "--box", box, "system compromise"}, nowish())
+	if code != 0 || !strings.Contains(out, "LOCKDOWN OK") {
+		t.Fatalf("S1 -> S3 (lockdown): exit = %d, stdout: %s", code, out)
+	}
+
+	// --- S3: LockdownBox ---
+	// In S3, all checks fail (bare and surface)
+	code, _, _ = capture(t, []string{"check", "--box", box}, nowish())
+	if code != 1 {
+		t.Errorf("S3 bare check: exit = %d, want 1", code)
+	}
+	code, _, _ = capture(t, []string{"check", "--box", box, "github"}, nowish())
+	if code != 1 {
+		t.Errorf("S3 surface check: exit = %d, want 1", code)
+	}
+
+	// Quarantining a surface in S3 succeeds (recording behind lockdown)
+	code, out, _ = capture(t, []string{"quarantine", "--box", box, "github", "token leak"}, nowish())
+	if code != 0 || !strings.Contains(out, "QUARANTINE OK github") {
+		t.Errorf("S3 quarantine: exit = %d, stdout: %s", code, out)
+	}
+
+	// Lifting quarantine in S3 succeeds with note warning lockdown is still blown
+	code, out, errOut = capture(t, []string{"lift", "quarantine", "--box", box, "github"}, nowish())
+	if code != 0 || !strings.Contains(out, "LIFT OK verified") {
+		t.Errorf("S3 lift quarantine stdout: exit = %d, stdout: %s", code, out)
+	}
+	if !strings.Contains(errOut, "NOTE lockdown is still blown") {
+		t.Errorf("S3 lift quarantine stderr: got %q, want 'NOTE lockdown is still blown'", errOut)
+	}
+
+	// S3 remains locked down
+	code, _, _ = capture(t, []string{"check", "--box", box, "github"}, nowish())
+	if code != 1 {
+		t.Errorf("S3 check github after lift: exit = %d, want 1", code)
+	}
+
+	// --- S0 -> S3 (direct lockdown on absent box) ---
+	directAbsent := absentBoxIn(t)
+	code, out, _ = capture(t, []string{"lockdown", "--box", directAbsent, "emergency auto-creation"}, nowish())
+	if code != 0 || !strings.Contains(out, "LOCKDOWN OK") {
+		t.Fatalf("S0 -> S3 (direct lockdown): exit = %d, stdout: %s", code, out)
+	}
+	code, _, _ = capture(t, []string{"check", "--box", directAbsent}, nowish())
+	if code != 1 {
+		t.Errorf("check directAbsent: exit = %d, want 1", code)
+	}
+
+	// --- S4: CorruptBox ---
+	corruptBox := absentBoxIn(t)
+	writeRaw(t, corruptBox, `{"lockdown": "not an object"}`)
+
+	// S4 reads fail-closed with exit 2
+	for _, args := range [][]string{
+		{"check", "--box", corruptBox},
+		{"check", "--box", corruptBox, "github"},
+		{"status", "--box", corruptBox},
+		{"quarantine", "--box", corruptBox, "github", "phish"},
+		{"lift", "quarantine", "--box", corruptBox, "github"},
+	} {
+		code, _, _ := capture(t, args, nowish())
+		if code != 2 {
+			t.Errorf("S4 %v: exit = %d, want 2; corrupt box must fail closed", args, code)
+		}
+	}
+
+	// Transition S4 -> S3 via lockdown recovery: preserves corrupt bytes and writes valid lockdown
+	code, out, errOut = capture(t, []string{"lockdown", "--box", corruptBox, "recovering corrupt box"}, nowish())
+	if code != 0 {
+		t.Fatalf("S4 -> S3 (lockdown recovery): exit = %d; stderr: %s", code, errOut)
+	}
+	if !strings.Contains(out, "LOCKDOWN OK") {
+		t.Errorf("S4 -> S3 stdout: got %q", out)
+	}
+	if !strings.Contains(errOut, ".unreadable") {
+		t.Errorf("S4 -> S3 stderr should mention backup file: %q", errOut)
+	}
+
+	// Verify unreadable backup file exists
+	unreadablePath := corruptBox + ".unreadable"
+	backupBytes, err := os.ReadFile(unreadablePath)
+	if err != nil {
+		t.Errorf("missing backup file %s: %v", unreadablePath, err)
+	}
+	if string(backupBytes) != `{"lockdown": "not an object"}` {
+		t.Errorf("backup file contents: got %q", string(backupBytes))
+	}
+
+	// Verify recovered box is now valid S3 (Lockdown)
+	code, _, _ = capture(t, []string{"check", "--box", corruptBox}, nowish())
+	if code != 1 {
+		t.Errorf("check recovered corruptBox: exit = %d, want 1", code)
+	}
+}
+
+// TestRowanParityPublicSurfacesIntegration validates the operational integration pattern
+// used across all 4 fused public-surface tools from rowan-tools:
+//   - rowan-github
+//   - rowan-email
+//   - rowan-discord
+//   - rowan-bsky
+//
+// Testing surface isolation, multi-word surface naming, case normalization, and lockdown dominance.
+func TestRowanParityPublicSurfacesIntegration(t *testing.T) {
+	t.Parallel()
+
+	box := boxIn(t)
+
+	surfaces := []string{
+		"rowan-github",
+		"rowan-email",
+		"rowan-discord",
+		"rowan-bsky",
+	}
+
+	// 1. Initial clean state: all surfaces pass
+	for _, s := range surfaces {
+		code, out, errOut := capture(t, []string{"check", "--box", box, s}, nowish())
+		if code != 0 {
+			t.Errorf("initial check %s: exit = %d, want 0; stderr: %s", s, code, errOut)
+		}
+		if !strings.Contains(out, "FUSE OK") {
+			t.Errorf("initial check %s stdout: got %q", s, out)
+		}
+	}
+
+	// 2. Quarantine single surface (e.g. rowan-email due to malicious attachment)
+	mustRun(t, []string{"quarantine", "--box", box, "rowan-email", "malicious attachment in inbox"}, nowish())
+
+	// Verified: rowan-email fails; other 3 public surfaces remain clear
+	code, _, errOut := capture(t, []string{"check", "--box", box, "rowan-email"}, nowish())
+	if code != 1 || !strings.Contains(errOut, "FUSE FAIL quarantine=rowan-email") {
+		t.Errorf("check rowan-email: exit = %d, want 1; stderr: %s", code, errOut)
+	}
+
+	for _, s := range []string{"rowan-github", "rowan-discord", "rowan-bsky"} {
+		code, out, _ := capture(t, []string{"check", "--box", box, s}, nowish())
+		if code != 0 || !strings.Contains(out, "FUSE OK") {
+			t.Errorf("check unaffected surface %s: exit = %d, want 0; stdout: %s", s, code, out)
+		}
+	}
+
+	// 3. Case-insensitive and whitespace-tolerant matching on public surfaces
+	// Quarantining with casing/whitespace:
+	mustRun(t, []string{"quarantine", "--box", box, "  Rowan-Discord  ", "suspicious bot interactions"}, nowish())
+
+	for _, query := range []string{"rowan-discord", "ROWAN-DISCORD", "  Rowan-Discord  "} {
+		code, _, errOut := capture(t, []string{"check", "--box", box, query}, nowish())
+		if code != 1 {
+			t.Errorf("check %q: exit = %d, want 1", query, code)
+		}
+		if !strings.Contains(errOut, "FUSE FAIL quarantine=rowan-discord") {
+			t.Errorf("check %q stderr: got %q", query, errOut)
+		}
+	}
+
+	// 4. Global lockdown halts ALL public surfaces regardless of whether they were quarantined
+	mustRun(t, []string{"lockdown", "--box", box, "fleet-wide credential rotation"}, nowish())
+
+	for _, s := range surfaces {
+		code, _, errOut := capture(t, []string{"check", "--box", box, s}, nowish())
+		if code != 1 {
+			t.Errorf("check %s under lockdown: exit = %d, want 1", s, code)
+		}
+		if !strings.Contains(errOut, "FUSE FAIL lockdown") {
+			t.Errorf("check %s stderr under lockdown: got %q", s, errOut)
+		}
+	}
+}
+
