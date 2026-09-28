@@ -1,3 +1,5 @@
+//go:build functional
+
 package main
 
 import (
@@ -69,7 +71,7 @@ func TestInboxLargeRemedyNamesReplyOrReceiptNotAdvance(t *testing.T) {
 // receipt in a run shares a subject, so every filename differed only by an id hashed over
 // fields two receipts also shared but for `re` -- and two notes sharing a target id
 // therefore produced one filename twice and `file exists` at the second Save. See
-// closecollision_test.go.
+// closecollision_functional_test.go.
 func TestCloseBeforeReceiptsOldNotesOnly(t *testing.T) {
 	t.Parallel()
 	hermetic(t)

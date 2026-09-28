@@ -24,12 +24,12 @@
 # from the serialTestsCeiling constant into this file at 876, the count that day.
 # ceiling: 825
 cmd/nova-bus/issue1451_test.go:TestIssue1451EveryBareVerbRefusalNamesTheDoor serial: t.Setenv
-cmd/nova-bus/main_test.go:TestReceiptMaxWordsDefaultsFromBusFileThenEnv serial: t.Setenv
-cmd/nova-bus/reply_test.go:TestAFilesystemWithNoCreateExclusivePublishIsRefused serial: swaps package var main.publishDraft
-cmd/nova-bus/reply_test.go:TestARelativeDraftDirInsideTheCheckoutIsRefused serial: t.Chdir
-cmd/nova-bus/reply_test.go:TestASecondReplyOnOneCheckoutWaitsAndThenRefuses serial: swaps package var main.checkoutLockWait
-cmd/nova-bus/reply_test.go:TestReplyRefreshesBeforeItResolves serial: swaps package var main.refreshCheckout
-cmd/nova-bus/robustness_test.go:TestASecondInvocationOnOneCheckoutRefuses serial: swaps package var main.checkoutLockWait
+cmd/nova-bus/main_functional_test.go:TestReceiptMaxWordsDefaultsFromBusFileThenEnv serial: t.Setenv
+cmd/nova-bus/reply_functional_test.go:TestAFilesystemWithNoCreateExclusivePublishIsRefused serial: swaps package var main.publishDraft
+cmd/nova-bus/reply_functional_test.go:TestARelativeDraftDirInsideTheCheckoutIsRefused serial: t.Chdir
+cmd/nova-bus/reply_functional_test.go:TestASecondReplyOnOneCheckoutWaitsAndThenRefuses serial: swaps package var main.checkoutLockWait
+cmd/nova-bus/reply_functional_test.go:TestReplyRefreshesBeforeItResolves serial: swaps package var main.refreshCheckout
+cmd/nova-bus/robustness_functional_test.go:TestASecondInvocationOnOneCheckoutRefuses serial: swaps package var main.checkoutLockWait
 cmd/nova-bus/version_test.go:TestVersionLineHoldsWhateverTheStampContains serial: swaps package var main.version
 cmd/nova-cairn/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
 cmd/nova-check/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir

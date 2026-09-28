@@ -2984,6 +2984,34 @@ type waitBlockedHook func(busDir string)
 
 var testWaitBlockedHook atomic.Pointer[waitBlockedHook]
 
+// waitClock is the clock waitLoop reads and sleeps on: the wall clock in production.
+type waitClock interface {
+	Now() time.Time
+	Sleep(time.Duration)
+}
+
+type wallClock struct{}
+
+func (wallClock) Now() time.Time        { return time.Now() }
+func (wallClock) Sleep(d time.Duration) { time.Sleep(d) }
+
+// testWaitClock is the test-only clock seam beside testWaitBlockedHook, and it is shaped
+// the same way for the same reason: one process-wide atomic, nil in production, which a
+// test points at a lookup from bus directory to clock, so a parallel test drives ITS wait
+// on a fake clock without touching a sibling's. A lookup that answers nil for a bus
+// directory leaves that wait on the wall clock.
+var testWaitClock atomic.Pointer[func(busDir string) waitClock]
+
+// waitClockFor is the clock one wait over busDir runs on.
+func waitClockFor(busDir string) waitClock {
+	if f := testWaitClock.Load(); f != nil {
+		if c := (*f)(busDir); c != nil {
+			return c
+		}
+	}
+	return wallClock{}
+}
+
 // waitLoop is the clock: poll, and either return what arrived or sleep and poll again
 // until the deadline. It is apart from the flags so that what it does is readable without
 // them.
@@ -2993,7 +3021,8 @@ var testWaitBlockedHook atomic.Pointer[waitBlockedHook]
 // and making them wait an interval for news the bus already had would be a tool inventing
 // latency.
 func waitLoop(o inboxOpts, timeout, interval time.Duration, idleExit int, next string, stdout, stderr io.Writer, now time.Time, repairs *repairLog) int {
-	start := time.Now()
+	clock := waitClockFor(o.busDir)
+	start := clock.Now()
 	deadline := start.Add(timeout)
 	// The moment this call cannot see past: a switch-day line drawn after it hides
 	// everything that could possibly arrive during this wait.
@@ -3010,7 +3039,7 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, idleExit int, next s
 	// by the friend's runtime (nova-friend); a wait leaves the checkout exactly as its polls left it.
 	for {
 		polls++
-		elapsed := time.Since(start).Round(time.Millisecond)
+		elapsed := clock.Now().Sub(start).Round(time.Millisecond)
 		pollNow := now.Add(elapsed)
 		// Issue #328, re-landed: a wait returns the moment it sees news, an unadvanced
 		// cursor's backlog included, printing exactly what inbox prints for that state;
@@ -3081,7 +3110,7 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, idleExit int, next s
 				(*h)(o.busDir)
 			}
 		}
-		left := time.Until(deadline)
+		left := deadline.Sub(clock.Now())
 		if left <= 0 {
 			break
 		}
@@ -3089,10 +3118,10 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, idleExit int, next s
 		// than before it: a note that arrives in the final interval is a note this call
 		// saw, and stopping early would hand it to the next call for no reason.
 		if left < interval {
-			time.Sleep(left)
+			clock.Sleep(left)
 			continue
 		}
-		time.Sleep(interval)
+		clock.Sleep(interval)
 	}
 	// A TIMEOUT IS NOT AN ERROR. Nothing arrived, and nothing was written -- no cursor
 	// moves on a wait that found nothing, because there is nothing to record having read --
@@ -3104,10 +3133,10 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, idleExit int, next s
 	// branching on 3 and a person reading the log see the same fact.
 	if idleExit == 0 {
 		fmt.Fprintf(stdout, "WAIT TIMEOUT after=%s polls=%d cursor=%s\n",
-			oneline.Field(time.Since(start).Round(time.Millisecond).String()), polls, oneline.Field(dash(cursor)))
+			oneline.Field(clock.Now().Sub(start).Round(time.Millisecond).String()), polls, oneline.Field(dash(cursor)))
 	} else {
 		fmt.Fprintf(stdout, "WAIT TIMEOUT after=%s polls=%d cursor=%s idle-exit=%d\n",
-			oneline.Field(time.Since(start).Round(time.Millisecond).String()), polls, oneline.Field(dash(cursor)), idleExit)
+			oneline.Field(clock.Now().Sub(start).Round(time.Millisecond).String()), polls, oneline.Field(dash(cursor)), idleExit)
 	}
 	fmt.Fprintf(stdout, "WAIT DONE reason=timeout rearm=required next=%s\n", next)
 	return idleExit

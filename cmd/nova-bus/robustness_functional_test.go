@@ -1,3 +1,5 @@
+//go:build functional
+
 package main
 
 import (
@@ -13,12 +15,6 @@ import (
 // The findings of one scenario run over a copy of a real bus, each closed and
 // each pinned here from both sides: the failure does not happen, and the behaviour it was
 // protecting still does.
-
-// draftFrom is one note's whole text, so that two benches sending in the same second get
-// two different ids -- the id is a hash over the note, and these differ in the body.
-func draftFrom(who, subject, body string) string {
-	return "From: " + who + "\nTo: Bo\nSubject: " + subject + "\n\n" + body + "\n"
-}
 
 // ---------------------------------------------------------------- 1. the wedged line
 
@@ -323,17 +319,6 @@ func TestASecondInvocationOnOneCheckoutRefuses(t *testing.T) {
 	// The other way: with nothing holding it, the same send runs.
 	invoke(t, draft, "send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main").
 		mustCode(t, 0).mustContain(t, "stdout", "SEND OK id=ada-")
-}
-
-// ---------------------------------------------------------------- helpers
-
-// cloneOf is a second checkout of one bus: the other bench, which cannot see this one.
-func cloneOf(t *testing.T, bare string) string {
-	t.Helper()
-	dir := filepath.Join(t.TempDir(), "bench")
-	gitIn(t, filepath.Dir(dir), "clone", "--quiet", bare, dir)
-	gitIn(t, dir, "checkout", "-q", "-B", "main")
-	return dir
 }
 
 // checkoutRemote is the bare repository a checkout pushes to, for a test that was handed

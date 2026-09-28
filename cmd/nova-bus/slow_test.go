@@ -38,7 +38,7 @@ import (
 // assertion over a fixture this size is a flake on a shared runner and proves nothing on a
 // fast enough machine; a count of work not done is the only honest proof there is.
 //
-// PARALLEL, for the reason the two tests in cursor_test.go are: both counts are read for
+// PARALLEL, for the reason the two tests in cursor_functional_test.go are: both counts are read for
 // THIS test's bus alone, with bus.CommitsWalkedIn and bus.NoteParsesIn, so a sibling
 // walking its own bus at the same time moves neither, and every assertion below is still
 // an exact number.
