@@ -33,6 +33,22 @@ whole work stream merging into dev), nightly and by hand, never on a pull
 request. Keep them few and cheap: one server per package (`TestMain`) rather
 than one per test, and the same two-minute cap as every job.
 
+### Table epoch actions and receipt replay
+
+`TestTableEpochActionsAndReceiptReplay` in `internal/ntable` runs eight fixed
+seeds against an owned source/replay Redis pair, reset between seeds. Each seed
+has three generations, 24 random actions per generation, and stale-writer probes
+for every modeled write at each advance. Every action checks placement, score
+order, immutable member epochs, unchanged history, and refusal without writes.
+Accepted receipt arguments and member deltas must match the independent state
+model; the replay store executes those receipts and must reach the same state.
+Failure output includes the seed and complete action trace. A `-run` selection
+ending in `/seed_1$` reproduces just that seed in the functional test.
+
+Action names correspond to `EpochMemberTable.tla`; this is bounded execution
+coverage, not exhaustive model checking or a concurrent-writer test. External
+bindings, batches, definition edits and row sorting have separate tests.
+
 ## `NOVA_CI_UPDATE=1`
 
 A change that removes offenders -- a sleep fixed, a serial test made parallel, a
