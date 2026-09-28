@@ -328,8 +328,10 @@ func TestShellLostWriteReplyIsNeverReplayed(t *testing.T) {
 		t.Fatal(err)
 	}
 	// One remedy, show: the write may have committed, so the line sends the
-	// reader to look, never to start the store and write again.
-	const wantErr = "nova-table row add: table \"jobs\" row \"committed\": ns_table_row_add: EOF; run: nova-table show 'jobs'\nnova-table shell: line 1 failed (exit 2)\n"
+	// reader to look, never to start the store and write again. The store and
+	// the lost reply are named in redisconn's words; its own next step is left
+	// out for this tool's.
+	wantErr := "nova-table row add: table \"jobs\" row \"committed\": ns_table_row_add: redis at " + r.addr() + " as the default user, no password: reply lost after the command was sent: EOF; run: nova-table show 'jobs'\nnova-table shell: line 1 failed (exit 2)\n"
 	if code != 2 || !lost.Load() || tab.Revision != 2 || events != 2 || len(tab.Rows) != 1 || !strings.Contains(out.String(), "TABLE LIST tables=1 trips=1") || errs.String() != wantErr {
 		t.Fatalf("lost reply: code=%d lost=%v revision=%d events=%d rows=%d out=%s err=%s", code, lost.Load(), tab.Revision, events, len(tab.Rows), &out, &errs)
 	}

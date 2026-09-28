@@ -40,6 +40,15 @@
 // tla/FirstConn.tla states this as the classification of the failure edge;
 // it adds no state to the connection.
 //
+// The exit code each class takes in a nova tool: Unreachable 2 and
+// AuthRefused 2 (the fix is the caller's: the address, the store or the
+// login), Unconfirmed 1 (the command ran and its outcome is unknown), Other
+// 1 (the store answered and refused, or the caller cancelled). A tool that
+// says more about a class (nova-redis spill's SPILL UNCONFIRMED) keeps the
+// class's code. A tool whose own model fixes another code keeps its model's:
+// nova-table's shell ends a line whose store was lost, Unconfirmed among
+// them, with 2 (tla/TableSession.tla).
+//
 // # The address of a chain
 //
 // A tool that finds its address along a chain of its own (a flag, then one

@@ -56,7 +56,9 @@ nova-redis help
   refuses, is one FAIL line on stderr with the next step (exit 2). A spill
   whose reply is lost after the store took it is `SPILL UNCONFIRMED` (exit 1):
   the write may have committed, so the remedy is a `recall`, never a second
-  spill. Each scratch verb is one round trip.
+  spill. A recall whose reply is lost is one `RECALL FAIL` line with
+  `class=unconfirmed` (exit 1): a read changes nothing, so read again. Each
+  scratch verb is one round trip.
 - `version` and `help`, the two every binary in this family carries.
 
 ## Bind, auth and persistence

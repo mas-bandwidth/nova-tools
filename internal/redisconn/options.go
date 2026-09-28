@@ -46,6 +46,17 @@ type Secret struct {
 	Read func() string
 }
 
+// secretShown is all any formatting verb shows of a Secret.
+const secretShown = "redisconn.Secret(redacted)"
+
+// String is a fixed redaction, redisconn.Secret(redacted), whatever the
+// Secret holds: its From may be words that hold the password, so neither
+// From nor Read is shown. %v, %+v and %s print it.
+func (Secret) String() string { return secretShown }
+
+// GoString is String, so %#v shows no more than %v.
+func (Secret) GoString() string { return secretShown }
+
 // GeneralEnv is the general set of names, for a tool that has none of its
 // own: NOVA_REDIS_ADDR, NOVA_REDIS_USER and NOVA_REDIS_PASSWORD_ENV.
 var GeneralEnv = Env{Addr: "NOVA_REDIS_ADDR", User: "NOVA_REDIS_USER", PasswordEnv: "NOVA_REDIS_PASSWORD_ENV"}
