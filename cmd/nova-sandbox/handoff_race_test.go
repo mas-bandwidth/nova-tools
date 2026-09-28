@@ -213,7 +213,7 @@ func TestHandoffRefusesARegularFileOnAnotherDevice(t *testing.T) {
 }
 
 // 6. The copy reads what it checked, and no more than the cap: a file that grew
-// after it was measured is refused rather than copied past --out-max-bytes.
+// after it was measured is refused, and its partial copy is removed.
 func TestHandoffRefusesAFileThatGrewPastTheCapAfterItWasMeasured(t *testing.T) {
 	t.Parallel()
 
@@ -227,6 +227,11 @@ func TestHandoffRefusesAFileThatGrewPastTheCapAfterItWasMeasured(t *testing.T) {
 	_, err := copyOut(handoffInput{Work: work, Out: out, Name: "card1", MaxBytes: 1024, hooks: hooks})
 	if err == nil || !strings.Contains(err.Error(), "--out-max-bytes") {
 		t.Fatalf("a file that grew past the cap after the measure was not refused by the cap: %v", err)
+	}
+	// The partial copy is removed: nothing past the cap, and no truncated
+	// artifact, is left in --out.
+	if _, statErr := os.Stat(filepath.Join(out, "card1", "RESULT.md")); statErr == nil {
+		t.Errorf("the refused file's partial copy was left in --out")
 	}
 }
 

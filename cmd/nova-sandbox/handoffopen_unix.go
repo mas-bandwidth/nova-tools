@@ -3,10 +3,7 @@
 // The handoff's descriptor layer on unix: every open is an openat from a
 // descriptor already checked, with O_NOFOLLOW so no component is a link and
 // O_NONBLOCK so a FIFO cannot hold the open, and every descriptor is fstat'd for
-// its type and its device before anything reads it. The two system calls
-// are hooks on the input, so a test drives the swap a surviving process would
-// make between the check and the open, and the device a different filesystem
-// would report, without a package-level seam.
+// its type and its device before anything reads it.
 package main
 
 import (

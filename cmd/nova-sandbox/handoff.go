@@ -320,11 +320,11 @@ func walkChecked(dir *os.File, vr volumeReader, comps []string, rel string, out 
 
 // copyChecked copies one source and returns the bytes written. The source is
 // reached again from the working directory's descriptor, checked at every
-// component, and the bytes are read from the descriptor that was checked. What
-// it reads is bounded by what is left of the cap, so a file that grew after it
-// was measured is refused rather than copied past the ceiling. The destination
-// is created fresh: a handoff never appends to whatever was in the out
-// directory before it.
+// component, and the bytes are read from the descriptor that was checked. At
+// most budget bytes (what is left of the cap) are written; a file that grew past
+// that after it was measured is refused, and the partial destination is removed,
+// so nothing past the cap is ever in --out. The destination is created fresh: a
+// handoff never appends to whatever was in the out directory before it.
 func copyChecked(root *os.File, vr volumeReader, s handoffSource, to string, budget int64) (int64, error) {
 	e, err := openComps(root, vr, s.comps)
 	if err != nil {
@@ -342,15 +342,43 @@ func copyChecked(root *os.File, vr volumeReader, s handoffSource, to string, bud
 	if err != nil {
 		return 0, err
 	}
-	n, copyErr := io.Copy(dst, io.LimitReader(e.f, budget+1))
+	n, over, copyErr := copyBounded(dst, e.f, budget)
 	closeErr := dst.Close()
-	if copyErr != nil {
-		return n, copyErr
+	switch {
+	case copyErr != nil:
+		err = copyErr
+	case over:
+		err = fmt.Errorf("it grew past --out-max-bytes after it was measured")
+	default:
+		err = closeErr
 	}
-	if n > budget {
-		return n, fmt.Errorf("it grew past --out-max-bytes after it was measured")
+	if err != nil {
+		_ = os.Remove(to)
+		return 0, err
 	}
-	return n, closeErr
+	return n, nil
+}
+
+// copyBounded writes at most budget bytes of src to dst, then reads one more
+// byte into a scratch buffer and never writes it: over is whether src held more
+// than budget.
+func copyBounded(dst io.Writer, src io.Reader, budget int64) (n int64, over bool, err error) {
+	if budget < 0 {
+		budget = 0
+	}
+	n, err = io.Copy(dst, io.LimitReader(src, budget))
+	if err != nil {
+		return n, false, err
+	}
+	var extra [1]byte
+	k, rerr := io.ReadFull(src, extra[:])
+	if k > 0 {
+		return n, true, nil
+	}
+	if rerr != nil && rerr != io.EOF && rerr != io.ErrUnexpectedEOF {
+		return n, false, rerr
+	}
+	return n, false, nil
 }
 
 // handoff is the run verb's own call: it does the copy, prints the receipt or
