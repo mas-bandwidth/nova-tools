@@ -1,3 +1,5 @@
+//go:build functional
+
 // Red tests for `nova-merge classify`, written before the verb. The decide provider is a
 // fake over httptest; the run comes from the package's FakeHost. Nothing here reaches the
 // network and no real key is read.

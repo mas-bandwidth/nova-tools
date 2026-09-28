@@ -92,12 +92,12 @@ cmd/nova-memory/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineFo
 cmd/nova-memory/main_test.go:TestRootIsNeverTakenFromTheEnvironment serial: t.Setenv
 cmd/nova-memory/version_test.go:TestVersionIdentityIsTheStampWhenThereIsOne serial: swaps package var main.version
 cmd/nova-memory/version_test.go:TestVersionLineHoldsWhateverTheStampContains serial: swaps package var main.version
-cmd/nova-merge/batch_test.go:TestTheFixtureStartsNoGitItDoesNotWaitFor serial: t.Setenv
-cmd/nova-merge/classify_test.go:TestClassifyBelowFloorLeavesToday serial: t.Setenv
-cmd/nova-merge/classify_test.go:TestClassifyFlakyUnderLoadReruns serial: t.Setenv
-cmd/nova-merge/classify_test.go:TestClassifyOwnChangeParks serial: t.Setenv
+cmd/nova-merge/batch_functional_test.go:TestTheFixtureStartsNoGitItDoesNotWaitFor serial: t.Setenv
+cmd/nova-merge/classify_functional_test.go:TestClassifyBelowFloorLeavesToday serial: t.Setenv
+cmd/nova-merge/classify_functional_test.go:TestClassifyFlakyUnderLoadReruns serial: t.Setenv
+cmd/nova-merge/classify_functional_test.go:TestClassifyOwnChangeParks serial: t.Setenv
 cmd/nova-merge/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
-cmd/nova-merge/issue3016_test.go:TestClassifyEmitsGroupStartAndVerdict serial: swaps package var merge.DefaultEvents, t.Setenv
+cmd/nova-merge/issue3016_functional_test.go:TestClassifyEmitsGroupStartAndVerdict serial: swaps package var merge.DefaultEvents, t.Setenv
 cmd/nova-merge/version_test.go:TestVersionIdentityIsTheStampWhenThereIsOne serial: swaps package var main.version
 cmd/nova-merge/version_test.go:TestVersionLineHoldsWhateverTheStampContains serial: swaps package var main.version
 cmd/nova-post/docsnippet_test.go:TestDocsCLISnippetRunsAsPrinted serial: t.Chdir

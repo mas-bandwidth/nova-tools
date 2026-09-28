@@ -37,7 +37,7 @@ var mergeAudit = audit.Config{
 		"verbs.go|nameAnUnheldObject|what":                              "the field's own name, the literals \"head\" and \"merge\" at its two call sites in this file",
 		"verbs.go|cmdRead|current":                                      "the literals \"true\", \"false\" and \"-\", returned by standingOf in this file",
 		// The two batch sites are the shape this walk cannot see: a value built above the
-		// print site. Each has a behavioral test of its own in batch_test.go.
+		// print site. Each has a behavioral test of its own in batch_functional_test.go.
 		"batch.go|runBatch|batchLine(in, baseSHA, headSHA, members, dropped, append(skipped, step.name))": "the same fields as `line` below, rendered through oneline.Field inside batchLine, built at the --require-lisp refusal with the step that could not run appended to the skipped list; TestBatchRequireLispFailsWhenTheStepCannotRun asserts the whole line",
 		"batch.go|runBatch|line":      "the fields shared by BATCH OK and BATCH FAIL, each rendered through oneline.Field inside batchLine including check= when checks=required; TestBatchOKNamesTheBaseTheHeadAndTheDroppedMember asserts that whole line byte for byte",
 		"batch.go|memberMessage|name": "the batch's own --name (mergeMembers and bisectBuild pass in.name), inside a COMMIT MESSAGE rather than a line of the grammar, and held to safepath.NameOK at the flag site: letters, digits, dot, dash and underscore, which TestBatchRefusesANameThatIsNotOnePathElement pins",
