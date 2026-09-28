@@ -6,9 +6,8 @@ history) and every registry of the fleet, and it applies that configuration
 into Redis so Redis is always a rebuildable copy. The contract is
 [SPEC-CONFIG.md](../SPEC-CONFIG.md); this page is how to use it.
 
-Glenn drew the boundary on 2026-09-26: "I don't think redis is an appropriate
-place to store non-ephemeral data. It is good as a hot store of data that can
-be rebuilt." So Postgres is the permanent store, Redis is a copy of it, and
+Redis is a hot store of data that can be rebuilt, not a place for
+non-ephemeral data. Postgres is the permanent store, Redis is a copy of it, and
 runtime tools read configuration and never write it. History is not
 configuration: scores, receipts and ledgers stay with the tools that write
 them.
@@ -49,7 +48,7 @@ The executable transcript is in [TESTS.md](../TESTS.md#nova-config).
 
 ```
 nova-config migrate --pg postgres://nova_config@space:5432/nova
-CONFIG MIGRATE pg=nova_config@space:5432/nova from=0 to=3 applied=3
+CONFIG MIGRATE pg=nova_config@space:5432/nova from=0 to=5 applied=5
 ```
 
 `migrate` creates or upgrades schema `config` from the numbered migrations in
@@ -62,7 +61,7 @@ the `nova_read` role, when it exists, is granted read on every table.
 
 ```
 nova-config status
-CONFIG STATUS pg=nova_config@space:5432/nova schema=3 machine=9 machine_rev=9 friend=4 friend_rev=13 redis=space:6380 machine_applied=9 friend_applied=13
+CONFIG STATUS pg=nova_config@space:5432/nova schema=5 machine=9 machine_rev=9 friend=4 friend_rev=13 redis=space:6380 machine_applied=9 friend_applied=13
 ```
 
 It exits 1 with the next step on stderr when the schema is not there yet
@@ -71,12 +70,11 @@ It exits 1 with the next step on stderr when the schema is not there yet
 
 ## The kinds
 
-The placement rule (Glenn, 2026-09-27): "Make sure that per-machine facts
-actually belong to machines, and global fleet facts belong to the fleet."
-So a machine's row holds what varies per machine, the fleet's one row holds
-what has one value for the whole fleet, a friend's row holds what someone
-decides for her, and the sprint's one row holds who coordinates. Anything
-else is invented and is not a field.
+The placement rule: per-machine facts belong to machines, and global fleet
+facts belong to the fleet. So a machine's row holds what varies per machine, the
+fleet's one row holds what has one value for the whole fleet, a friend's row
+holds what someone decides for her, and the sprint's one row holds who
+coordinates. Anything else is invented and is not a field.
 
 Every kind has the same six verbs, generated from its descriptor, so what is
 true of one is true of all:
