@@ -170,7 +170,7 @@ func TestAppendWithNoRecordAnywhereNamesTheOpenVerb(t *testing.T) {
 		t.Fatal("append into a store with no record must refuse")
 	}
 	msg := err.Error()
-	for _, want := range []string{"nova-cairn open", "--store", "--session nosuch", "--publish"} {
+	for _, want := range []string{"nova-cairn open", "--store", "--session 'nosuch'", "--publish"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("the refusal must name the remedy verb whole; %q is missing from %q", want, msg)
 		}

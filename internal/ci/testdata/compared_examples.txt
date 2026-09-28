@@ -37,6 +37,7 @@ cmd/nova-sandbox/firstrun_test.go:TestTheCommandReferenceExamplesAreWhatTheToolP
 cmd/nova-sandbox/firstrun_test.go:TestTheCommandReferenceExamplesAreWhatTheToolPrints $ nova-sandbox bogus
 cmd/nova-sandbox/firstrun_test.go:TestTheCommandReferenceExamplesAreWhatTheToolPrints $ nova-sandbox worktree --repo /path/to/workdir --scratch /path/to/workdir/scratch --pr 123
 cmd/nova-sandbox/firstrun_test.go:TestTheCommandReferenceExamplesAreWhatTheToolPrints $ nova-sandbox worktree --repo /path/to/workdir --scratch /path/to/workdir/scratch --prune
+cmd/nova-memory/firstrun_test.go:TestVerifyHelpExampleMatchesWhatTheToolPrints example: nova-memory verify --root ./corpus --links info --coverage notes/lantern.md:notes/index-notes.md
 cmd/nova-swarm/firstrun_test.go:TestTheCommandReferenceFirstRunIsWhatTheToolPrints $ nova-swarm quickstart --pool ./pool
 cmd/nova-swarm/firstrun_test.go:TestTheCommandReferenceFirstRunIsWhatTheToolPrints $ nova-swarm status --pool ./pool --max 20
 cmd/nova-swarm/firstrun_test.go:TestUsageBannerExamplesRunThroughTheComparator example: nova-swarm template --name read-pr

@@ -120,7 +120,7 @@ CORPUS FAIL ledger: <reason>
 CORPUS FAIL ledger:<line>: <reason>
 CORPUS FAIL anchors=<n> floor=<n> failed=<n> shown=<n> malformed=<n> ledger=<file>
 SELFTALK OK files=<n> claims=<n> standing=0 installations=0 dated=<n>
-SELFTALK FAIL <file>: STANDING: <claim>
+SELFTALK FAIL <file>:<line>: STANDING: <claim>
 SELFTALK FAIL <file>:<line>: INSTALLATION <SHAPE>: <sentence>
 SELFTALK FAIL files=<n> claims=<n> standing=<n> installations=<n> dated=<n> shown=<n>
 SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n> wakes=<n> body_bytes=<n>
@@ -1807,7 +1807,7 @@ default; one repo's filenames are not this tool's law**, and a test pins each
 of those common names as *unbannered* unless the caller says otherwise.
 
 **Says NO when** any scanned file contains a standing claim or an installation
-— one `SELFTALK FAIL <file>: STANDING: <claim>` or
+— one `SELFTALK FAIL <file>:<line>: STANDING: <claim>` or
 `SELFTALK FAIL <file>:<line>: INSTALLATION <SHAPE>: <sentence>` line per
 finding on stderr, and the final `SELFTALK FAIL files=…` summary count line on
 stdout, exit 1.
@@ -1817,11 +1817,16 @@ is empty or contains a path separator, a flag is unknown, or a named file
 cannot be read (every unreadable file is reported — a partial scan
 must not masquerade as a verdict).
 
-**The all-skipped green.** A run whose every named file was skipped is not a
-refusal: it completes and exits 0 with `SELFTALK OK files=0 claims=0
-standing=0 installations=0 dated=0` — every skip was the caller's own, stated this run.
-A caller gating on the exit code alone must therefore also require `files>0`
-from the OK line, or its green can mean nothing was scanned at all.
+**An explicit all-skipped run.** When every named file is excluded by `--skip`,
+the run exits 0 and reports `SELFTALK SKIP files=0 skipped=<n> reason=all-skipped`.
+It prints the individual skips, subject to the display cap, and never an OK
+scan summary. An exit-0 invocation can therefore mean an intentional no-op;
+a caller requiring a completed scan must also require `files>0`.
+
+STANDING findings name the first source line of the matched claim, including
+hard-wrapped claims; repeated sentences retain their separate locations.
+Flags must precede filenames. `--` introduces literal filenames, including
+names beginning with a dash. A late flag refuses before any file is read.
 
 **The permanent MISS, stated on every run.** The second class reaches most of
 what the first one misses; what remains is genuinely out of reach of grammar and is enumerated so it cannot be quietly forgotten:
@@ -1996,10 +2001,12 @@ prints as `STATUS OK quarantine=x\x20lockdown\x3dclear\x20quarantines\x3d0
 since=t: r`, and a grep for `lockdown=clear` matches only the lockdown field.
 A surface name holding a space, which is legal, prints the same way. The
 `<reason>` after `: ` is the free-text tail and keeps its spaces; so does the
-remedy inside a `FUSE FAIL quarantine=` parenthetical, which names the command
-including the box path and the stored name, is not shell-quoted, and will not
-paste back if the path carried a control character — it names the command; it
-is not a command to run blind.
+remedy inside a `FUSE FAIL quarantine=` parenthetical. That remedy is a
+POSIX-shell command: the box path and normalized surface are quoted, and `--` precedes
+the name so a leading dash remains data. For control characters it uses octal
+bytes decoded inside a subshell; a temporary sentinel preserves trailing
+newlines. The command stays one line and addresses the same box and surface.
+The decision to lift remains the caller's: the surface must be safe again.
 
 **`path` is the one exemption, and it is a plain one:** `path` echoes its
 argument unescaped, so a caller must never scan `path` output for grammar.
@@ -2577,6 +2584,16 @@ VERIFY FAIL gating=<n> shown=<n> info=<n> coverage=<n> frontmatter=<n> links=<ga
 VERIFY OK gating=0 info=<n> shown=<n> coverage=<n> frontmatter=<n> links=<gate|info>
 ```
 
+**One verified corpus.** `--exclude` narrows the index, the wikilink check,
+and every `--coverage` and `--frontmatter` selector. An excluded directory
+also hides its children when a selector names one directly. Excluded targets
+are outside the verified corpus; a retained file linking to one still reports
+an unresolved link. A selector left with no files refuses rather than claiming
+a successful check.
+The summary's `coverage=` counts coverage and backlink findings, and
+`frontmatter=` counts missing-name findings. These totals are uncapped; they do
+not count the flags supplied.
+
 **`--fail-max <n>`, default 20, `0` for all.** At most n finding lines PER
 KIND, then one `VERIFY MORE` line per kind that elided anything. Per kind
 because a corpus with 10,000 unresolved wikilinks and one missing frontmatter
@@ -2587,13 +2604,6 @@ output at 5,000 entries is about 197,000 tokens, N lines and never N.
 
 `<kind>` is one of `coverage`, `backlink`, `frontmatter`, `wikilink`. It
 **over-reports by design**: it finds, the author decides.
-
-**Two scoping mechanisms, deliberately independent, and the seam is named.**
-`--exclude` narrows the **index**, so it narrows the wikilink check (which
-reads the corpus) and does **not** narrow `--coverage` or `--frontmatter`
-(whose globs are the caller's own explicit statement of what to check). To
-drop files from a coverage or frontmatter check, write a narrower glob; do not
-expect `--exclude` to do it.
 
 **Says NO when** any gating finding exists — up to `--fail-max` `VERIFY FAIL`
 lines per kind on stderr, one `VERIFY MORE` line per elided kind, a
@@ -5213,7 +5223,7 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 143. `TestSkipBeatsRuleDoc` — `--skip` wins over `--rule-doc`: a skipped file is never read and can never be bannered (line 1777).
 144. `TestExitOneOnStandingClaim` / `TestInstallationExitsOneWithShapeAndLine` — a standing claim or installation prints one FAIL line per finding on stderr and a summary count on stdout, exit 1 (line 1782).
 145. `TestNoFilesRefused` / `TestSkipRefusesPaths` / `TestUnknownFlagRefused` / `TestExitTwoOnUnreadableFile` / `TestEveryUnreadableFileIsNamedInOneRun` — refuses (exit 2) on no files, an empty/path-separator `--skip`/`--rule-doc` value, an unknown flag, or an unreadable file, every unreadable file reported (line 1788).
-146. `TestSkipReportsAndDoesNotAffectExit` — the all-skipped green: every named file skipped completes and exits 0 with `SELFTALK OK files=0 …` (line 1793).
+146. `TestSkipReportsAndDoesNotAffectExit` — an explicitly all-skipped run exits 0 with `SELFTALK SKIP files=0 skipped=<n> reason=all-skipped`, never an OK scan summary (line 1793).
 147. `TestPermanentMissNeutralVocabularyTraitClaimsEscape` — the permanent-MISS items 3 and 4 ("My summaries drift toward the tidier story", "I flinch from cost") are pinned by a test that goes red if the tool reaches them (lines 1811-1828).
 148. — — the permanent-MISS item 5 sentence ("I never optimize how things look over what is true") is pinned by a test that goes red if the tool reaches it (lines 1819-1829).
 149. `TestNotePrintedOnEveryRun` — every completed run ends with a `SELFTALK NOTE` line saying a green clears only the known shapes (line 1831).
@@ -5338,7 +5348,7 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 268. `TestVerifyLinksRulingIsTheCallersBothWays` — `--links gate|info` has no default; the same findings exit 0 or 1 by caller choice.
 269. `TestVerifyCapsFindingsAndAlwaysPrintsTheCount` / `TestVerifyFailMaxWidensAndZeroPrintsAll` / `TestVerifyCapsEachKindSeparately` — `--fail-max` defaults to 20, `0` means all, and the cap is per kind.
 270. `TestVerifyCapsFindingsAndAlwaysPrintsTheCount` — the `gating=` count is never capped and prints on failure as well as success.
-271. `-` — `--exclude` narrows the index (and the wikilink check that reads it) but not `--coverage` or `--frontmatter`.
+271. `TestVerifyExcludesEveryCheck` / `TestVerifyLinksToExcludedTargetsRemainFindings` — `--exclude` narrows the whole verified corpus: the index, wikilinks, and every coverage and frontmatter selector; retained links to excluded targets remain findings.
 272. `TestVerifySaysNoOnPlantedFaults` / `TestVerifyDoesNotFlagLinksThatResolve` — verify says NO (exit 1, VERIFY FAIL lines, no OK) on any gating finding; informational findings don't touch the exit.
 273. `TestRefusesToGuess` / `TestVerifyRefusesAnEmptyCheck` — verify refuses a missing root/links, a non-gate/info `--links`, a coverage value not `A:B`, an empty glob side, `--exempt` without `--frontmatter`, or no gating check at all.
 274. `TestEvalOnTheShippedExampleGold` / `TestEvalRefusesABrokenGoldFile` — the gold file is `query<TAB>expected-substrings` per line; a row hits when any expected substring appears in a top-k path.

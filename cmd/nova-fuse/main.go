@@ -464,8 +464,8 @@ func cmdCheck(rest []string, stdout, stderr io.Writer) int {
 	}
 
 	if name, f, ok := b.Quarantined(surface); ok {
-		fmt.Fprintf(stderr, "FUSE FAIL quarantine=%s since=%s: %s (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box %s %s)\n",
-			oneline.Field(name), since(f), why(f), oneline.Escape(box), oneline.Escape(name))
+		fmt.Fprintf(stderr, "FUSE FAIL quarantine=%s since=%s: %s (soft: yours to lift when the surface is safe again: %s)\n",
+			oneline.Field(name), since(f), why(f), oneline.Escape(liftRemedy(box, fuse.Surface(name))))
 		return 1
 	}
 

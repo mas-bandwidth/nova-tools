@@ -80,6 +80,7 @@ func (e *NotFoundError) Error() string { return e.Msg }
 // Persisted is true once the note is fsync-durable on this machine;
 // Published names the remote, which this slice never touches.
 type AppendResult struct {
+	Stamp     time.Time // the timestamp actually stored, including on a duplicate retry
 	Persisted bool
 	Published bool
 	Policy    string
@@ -197,8 +198,8 @@ func noRecord(store, session, publish string) error {
 		publish = PublishManual
 	}
 	return &NotFoundError{Msg: fmt.Sprintf(
-		"no such session %q under store %q; open first: nova-cairn open --store %s --session %s --publish %s",
-		session, store, store, session, publish)}
+		"no such session %q under store %q; open first: %s",
+		session, store, openRemedy(store, session, publish))}
 }
 
 // benchHeadingRe reads the one heading this tool writes into a bench file:
@@ -214,9 +215,9 @@ func benchHeading(id string, stamp time.Time) string {
 }
 
 // benchSection returns the prose already filed under this entry id in a bench
-// file, and whether the entry is there at all. The body runs from the heading
-// to the next heading of the same machine form, or to the end of the file.
-func benchSection(raw []byte, id string) (string, bool) {
+// file, its stored timestamp, and whether it is there at all. The body runs
+// from the heading to the next heading of the same machine form, or EOF.
+func benchSection(raw []byte, id string) (body, stamp string, found bool) {
 	lines := strings.Split(string(raw), "\n")
 	for i, line := range lines {
 		m := benchHeadingRe.FindStringSubmatch(line)
@@ -230,9 +231,9 @@ func benchSection(raw []byte, id string) (string, bool) {
 				break
 			}
 		}
-		return strings.TrimSpace(strings.Join(lines[i+1:end], "\n")), true
+		return strings.TrimSpace(strings.Join(lines[i+1:end], "\n")), m[1], true
 	}
-	return "", false
+	return "", "", false
 }
 
 // appendBench files one entry into a bench record: a dated section at the end
@@ -247,11 +248,15 @@ func appendBench(path, id, text string, now time.Time, publish string) (AppendRe
 	if err != nil {
 		return res, err
 	}
-	if prev, found := benchSection(raw, id); found {
+	if prev, storedStamp, found := benchSection(raw, id); found {
 		if prev != strings.TrimSpace(text) {
 			return res, &ConflictError{Msg: fmt.Sprintf("entry %q already holds different prose; pick a new id", id)}
 		}
-		return AppendResult{Persisted: true, Published: false, Policy: publish, Duplicate: true}, nil
+		stamp, err := time.Parse(time.RFC3339Nano, storedStamp)
+		if err != nil {
+			return res, fmt.Errorf("stored entry %q has an invalid stamp: %w", id, err)
+		}
+		return AppendResult{Stamp: stamp, Persisted: true, Published: false, Policy: publish, Duplicate: true}, nil
 	}
 	var b strings.Builder
 	if len(raw) > 0 && !strings.HasSuffix(string(raw), "\n") {
@@ -265,7 +270,7 @@ func appendBench(path, id, text string, now time.Time, publish string) (AppendRe
 	if err := appendBytes(path, b.String()); err != nil {
 		return res, err
 	}
-	return AppendResult{Persisted: true, Published: false, Policy: publish}, nil
+	return AppendResult{Stamp: now.UTC().Truncate(time.Second), Persisted: true, Published: false, Policy: publish}, nil
 }
 
 // appendBytes adds content to an existing file and fsyncs before return, so a
@@ -500,11 +505,14 @@ func Append(store, session, id, text, source string, now time.Time, publish stri
 		if prev.Text != text {
 			return res, &ConflictError{Msg: fmt.Sprintf("entry %q already holds different prose; pick a new id", id)}
 		}
-		prevStamp, _ := time.Parse(time.RFC3339Nano, prev.Stamp)
+		prevStamp, err := time.Parse(time.RFC3339Nano, prev.Stamp)
+		if err != nil {
+			return res, fmt.Errorf("stored entry %q has an invalid stamp: %w", id, err)
+		}
 		if err := ensurePointer(store, session, id, prevStamp); err != nil {
 			return res, err
 		}
-		return AppendResult{Persisted: true, Published: false, Policy: prev.Publish, Source: prev.Source, Duplicate: true}, nil
+		return AppendResult{Stamp: prevStamp, Persisted: true, Published: false, Policy: prev.Publish, Source: prev.Source, Duplicate: true}, nil
 	}
 	rec, _ := json.Marshal(entryFile{
 		Session: session,
@@ -529,7 +537,7 @@ func Append(store, session, id, text, source string, now time.Time, publish stri
 	if err := appendLog(store, "append", session, id, stamp.Format(time.RFC3339Nano), publish, source); err != nil {
 		return res, err
 	}
-	return AppendResult{Persisted: true, Published: false, Policy: publish, Source: source}, nil
+	return AppendResult{Stamp: stamp, Persisted: true, Published: false, Policy: publish, Source: source}, nil
 }
 
 // readEntry loads one stored entry or explains its absence.
@@ -563,6 +571,28 @@ func EntryText(store, session, id string) (string, error) {
 // infer the remote from the local.
 func Receipt(store, session, id string) (ReceiptInfo, error) {
 	var rc ReceiptInfo
+	if err := existingStore(store); err != nil {
+		return rc, err
+	}
+	if !validID(id) {
+		return rc, fmt.Errorf("bad entry id %q: nonempty, no slashes, no whitespace", id)
+	}
+	path, bench, err := recordForRead(store, session)
+	if err != nil {
+		return rc, err
+	}
+	if bench {
+		rows, err := benchReceipts(path, session)
+		if err != nil {
+			return rc, err
+		}
+		for _, row := range rows {
+			if row.ID == id {
+				return row, nil
+			}
+		}
+		return rc, &NotFoundError{Msg: fmt.Sprintf("no such entry %q in session %q", id, session)}
+	}
 	ef, err := readEntry(store, session, id)
 	if err != nil {
 		return rc, err
@@ -586,20 +616,25 @@ func Receipt(store, session, id string) (ReceiptInfo, error) {
 // never a row. session "" indexes every record; max <= 0 lifts the ceiling
 // and returns everything with no MORE standing for the rest.
 func Index(store, session string, max int) ([]IndexRow, int, error) {
-	if store == "" {
-		return nil, 0, errors.New("no store given; refusing to guess")
+	if err := existingStore(store); err != nil {
+		return nil, 0, err
+	}
+	if session != "" {
+		if _, _, err := recordForRead(store, session); err != nil {
+			return nil, 0, err
+		}
+	}
+	rows, flat, err := flatIndexRows(store, session)
+	if err != nil {
+		return nil, 0, err
 	}
 	root := filepath.Join(store, "entries")
-	var rows []IndexRow
 	entries, err := os.ReadDir(root)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, 0, nil
-		}
+	if err != nil && !os.IsNotExist(err) {
 		return nil, 0, err
 	}
 	for _, sess := range entries {
-		if !sess.IsDir() || (session != "" && sess.Name() != session) {
+		if !sess.IsDir() || flat[sess.Name()] || (session != "" && sess.Name() != session) {
 			continue
 		}
 		files, err := os.ReadDir(filepath.Join(root, sess.Name()))
@@ -646,41 +681,22 @@ func Index(store, session string, max int) ([]IndexRow, int, error) {
 // tree it reports on.
 func Coverage(store string) Ledger {
 	var led Ledger
-	sessions, err := os.ReadDir(filepath.Join(store, "sessions"))
-	if err == nil {
-		for _, f := range sessions {
-			if !f.IsDir() && strings.HasSuffix(f.Name(), ".md") {
-				led.Sessions++
-			}
-		}
-	}
-	// A bench store keeps its records as <store>/<session>.md. They are
-	// records the append verb writes into, so the ledger counts them: a
-	// coverage line reading sessions=0 over a store this tool can append to
-	// is the same false answer the refusal gave.
-	if top, err := os.ReadDir(store); err == nil {
-		for _, f := range top {
-			if !f.IsDir() && strings.HasSuffix(f.Name(), ".md") {
-				led.Sessions++
-			}
-		}
-	}
-	entries, err := os.ReadDir(filepath.Join(store, "entries"))
-	if err == nil {
-		for _, sess := range entries {
-			if !sess.IsDir() {
-				continue
-			}
-			files, err := os.ReadDir(filepath.Join(store, "entries", sess.Name()))
-			if err != nil {
-				continue
-			}
+	names := map[string]bool{}
+	for _, dir := range []string{filepath.Join(store, "sessions"), store} {
+		if files, err := os.ReadDir(dir); err == nil {
 			for _, f := range files {
-				if !f.IsDir() && strings.HasSuffix(f.Name(), ".json") {
-					led.Entries++
+				if !f.IsDir() && strings.HasSuffix(f.Name(), ".md") {
+					id := strings.TrimSuffix(f.Name(), ".md")
+					if validID(id) {
+						names[id] = true
+					}
 				}
 			}
 		}
+	}
+	led.Sessions = len(names)
+	if _, total, err := Index(store, "", 0); err == nil {
+		led.Entries = total
 	}
 	return led
 }
