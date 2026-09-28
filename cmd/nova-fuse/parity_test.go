@@ -5,12 +5,12 @@
 Parity tests validating the complete matrix of behaviors that rowan-fuse
 delivered, tested against nova-fuse (Focus Item 3b / mas-bandwidth/ideas#821).
 
-Rowan-fuse was the original ingestion fuse in rowan-tools (2026-08-03 design).
-Nova-fuse delivers complete verb parity with hardened invariants:
+rowan-fuse is the ingestion guard in rowan-tools.
+nova-fuse delivers complete verb parity with hardened invariants:
   - All verbs: status, check, lockdown, quarantine, lift quarantine, lift lockdown, path, init, version
   - CLI-STYLE exit codes (0 = clear, 1 = blown/refused, 2 = cannot run / missing box / lift lockdown)
   - Bounded status output with --max
-  - Strict --box flag enforcement (no ambient guessing)
+  - Strict --box flag enforcement on box-scoped verbs (no ambient guessing)
   - Oneline escaping (forging prevention)
 */
 
@@ -516,7 +516,7 @@ func TestRowanParityExitCodes(t *testing.T) {
 	})
 }
 
-// TestRowanParityBoundedStatus verifies that status output conforms to Glenn's
+// TestRowanParityBoundedStatus verifies that status output conforms to the
 // bounded-tooling rule: the header count is always total and true, while entries
 // are capped by --max (default 20, 0 = all) followed by a STATUS MORE summary.
 func TestRowanParityBoundedStatus(t *testing.T) {
@@ -584,7 +584,7 @@ func TestRowanParityBoundedStatus(t *testing.T) {
 }
 
 // TestRowanParityStrictBoxEnforcement validates that nova-fuse strictly refuses
-// to guess the box path across all verbs, preventing ambient path hijacking.
+// to guess the box path across all box-scoped verbs, preventing ambient path hijacking.
 func TestRowanParityStrictBoxEnforcement(t *testing.T) {
 	t.Parallel()
 
