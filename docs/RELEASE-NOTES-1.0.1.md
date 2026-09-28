@@ -38,6 +38,12 @@ arguments intact.
 The CI class check validates hosted package assignments at the shard
 counts the workflow actually runs. Existing time budgets stay in force.
 
+## Release publishing
+
+Release uploads find existing drafts correctly and use the authored release
+notes. Missing or empty notes refuse before an upload, and published releases
+are refused rather than overwritten.
+
 ## Release history
 
 The repository includes a [changelog](../CHANGELOG.md) with the source
