@@ -472,6 +472,9 @@ func writeGeneralityAllowlist(path string, measuredCounts map[string]int) error 
 		}
 	}
 	sort.Strings(keptKeys)
+	if ceiling, ok := existingList.Ceiling(); ok && len(keptKeys) > ceiling {
+		return fmt.Errorf("%s retains %d rows, over its existing ceiling of %d; the update never raises a ceiling", path, len(keptKeys), ceiling)
+	}
 
 	var sb strings.Builder
 	if len(headerLines) > 0 {
@@ -699,6 +702,41 @@ func TestGeneralityOccurrenceWitness(t *testing.T) {
 // removals are cleanly written.
 func TestGeneralityAllowlistUpdate(t *testing.T) {
 	t.Parallel()
+
+	t.Run("original-row-ceiling", func(t *testing.T) {
+		for _, tc := range []struct {
+			name     string
+			measured map[string]int
+			want     string
+		}{
+			{name: "unchanged-overfull", measured: map[string]int{"fixture.go:glenn": 2, "fixture.go:hulk": 2}},
+			{name: "lower-counts-still-overfull", measured: map[string]int{"fixture.go:glenn": 1, "fixture.go:hulk": 1}},
+			{name: "remove-row-to-fit", measured: map[string]int{"fixture.go:glenn": 1}, want: "# ceiling: 1\nfixture.go:glenn 1\n"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				p := filepath.Join(t.TempDir(), "ledger.txt")
+				old := "# ceiling: 1\nfixture.go:glenn 2\nfixture.go:hulk 2\n"
+				if err := os.WriteFile(p, []byte(old), 0600); err != nil {
+					t.Fatal(err)
+				}
+				err := writeGeneralityAllowlist(p, tc.measured)
+				want := tc.want
+				if want == "" {
+					want = old
+					if err == nil || !strings.Contains(err.Error(), "ceiling") {
+						t.Errorf("want original ceiling refusal, got %v", err)
+					}
+				} else if err != nil {
+					t.Fatalf("removing enough rows should repair the list: %v", err)
+				}
+				raw, err := os.ReadFile(p)
+				if err != nil || string(raw) != want {
+					t.Fatalf("ledger=%q (%v), want %q", raw, err, want)
+				}
+			})
+		}
+	})
 
 	t.Run("refuses-growth-new-key", func(t *testing.T) {
 		p := filepath.Join(t.TempDir(), "ledger.txt")
