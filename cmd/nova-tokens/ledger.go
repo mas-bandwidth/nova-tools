@@ -22,23 +22,17 @@ import (
 // The fold is untouched and the day TSVs stay the record; the ledger is what a month query
 // reads instead of every file. The key layout is internal/record's package comment.
 
-// openLedger opens the fleet Redis at addr and pings it, so an unreachable or refusing
-// store is named before any file is read. The seat is the one every nova tool dials with
+// openLedger opens the fleet Redis at addr. The seat is the one every nova tool dials with
 // (redisauth.Auth, #3461): --user, else NOVA_SPRINT_REDIS_USER; the password is never a flag,
 // it is the variable --password-env names, else (for a user) NOVA_SPRINT_REDIS_PASSWORD_ENV's
 // or NOVA_REDIS_BENCH_PASSWORD. With no user, no variable is consulted unless --password-env
-// names one.
+// names one. Dialing does not ping (#7fbdefecf56e).
 func openLedger(addr, user, passwordEnv string) (record.LedgerStore, error) {
 	user, password, err := redisauth.Auth(user, passwordEnv)
 	if err != nil {
 		return nil, err
 	}
-	s := record.DialLedger(addr, user, password)
-	if err := s.Ping(context.Background()); err != nil {
-		_ = s.Close()
-		return nil, err
-	}
-	return s, nil
+	return record.DialLedger(addr, user, password), nil
 }
 
 const wantsRedis = "the fleet Redis host:port whose tokens:ledger:<day> hashes this reads or writes"
@@ -155,6 +149,14 @@ func cmdLedger(args []string, stdout, stderr io.Writer) int {
 	defer ls.Close()
 	ctx := context.Background()
 	days, rows, bad := 0, 0, 0
+	type dayResult struct {
+		day  string
+		rows int
+		bad  bool
+		why  string
+	}
+	results := make([]dayResult, 0, len(paths))
+	var batch []record.LedgerDay
 	for _, p := range paths {
 		name := strings.TrimSuffix(filepath.Base(p), tokens.FileSuffix)
 		d, findings, err := tokens.ReadDayFile(p)
@@ -164,22 +166,36 @@ func cmdLedger(args []string, stdout, stderr io.Writer) int {
 			if os.IsNotExist(err) {
 				why = "no day file; fold --day " + name + " first"
 			}
-			fmt.Fprintf(stdout, "LEDGER BAD day=%s why=%s\n", oneline.Field(name), oneline.Escape(why))
+			results = append(results, dayResult{day: name, bad: true, why: why})
 			continue
 		}
 		if len(findings) > 0 {
 			bad++
-			fmt.Fprintf(stdout, "LEDGER BAD day=%s why=%s\n", oneline.Field(name), oneline.Escape(findings[0].Reason))
+			results = append(results, dayResult{day: name, bad: true, why: findings[0].Reason})
 			continue
 		}
 		entries := ledgerEntries(d)
-		if err := ls.ReplaceLedgerDay(ctx, d.Day, entries); err != nil {
-			fmt.Fprintf(stderr, "LEDGER FAILED day=%s err=%s\n", oneline.Field(name), oneline.Err(err))
-			return 1
-		}
+		batch = append(batch, record.LedgerDay{Day: d.Day, Entries: entries})
+		results = append(results, dayResult{day: d.Day, rows: len(entries)})
 		days++
 		rows += len(entries)
-		fmt.Fprintf(stdout, "LEDGER day=%s rows=%d\n", oneline.Field(d.Day), len(entries))
+	}
+	if len(batch) > 0 {
+		if err := ls.ReplaceLedgerDays(ctx, batch); err != nil {
+			if *day != "" {
+				fmt.Fprintf(stderr, "LEDGER FAILED day=%s err=%s\n", oneline.Field(*day), oneline.Err(err))
+			} else {
+				fmt.Fprintf(stderr, "LEDGER FAILED store=redis err=%s\n", oneline.Err(err))
+			}
+			return 1
+		}
+	}
+	for _, res := range results {
+		if res.bad {
+			fmt.Fprintf(stdout, "LEDGER BAD day=%s why=%s\n", oneline.Field(res.day), oneline.Escape(res.why))
+		} else {
+			fmt.Fprintf(stdout, "LEDGER day=%s rows=%d\n", oneline.Field(res.day), res.rows)
+		}
 	}
 	verdict, code := "OK", 0
 	if bad > 0 || days == 0 {

@@ -1,14 +1,17 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/alicebob/miniredis/v2/server"
 
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
 )
@@ -302,5 +305,115 @@ func TestLedgerAndReportDialAsTheAclUser(t *testing.T) {
 	wantContains(t, r.stderr, "--user bench but LEDGER_EMPTY_PW is empty; run under nova-secrets exec --only LEDGER_EMPTY_PW")
 	if strings.Contains(r.stderr+r.stdout, "sesame") {
 		t.Fatal("a refusal printed the password")
+	}
+}
+
+// TestLedgerMonthPipelinesWritesAndDropsSuperfluousPing pins rowan-7fbdefecf56e:
+// `ledger --month` pipelines day hash writes in one round trip and openLedger drops
+// the superfluous PING that report --redis and ledger --day previously paid.
+func TestLedgerMonthPipelinesWritesAndDropsSuperfluousPing(t *testing.T) {
+	t.Parallel()
+
+	addr, mr := ledgerRedis(t)
+	var mu sync.Mutex
+	var seenCmds []string
+	mr.Server().SetPreHook(func(_ *server.Peer, cmd string, _ ...string) bool {
+		mu.Lock()
+		seenCmds = append(seenCmds, strings.ToUpper(cmd))
+		mu.Unlock()
+		return false
+	})
+
+	out := t.TempDir()
+	for i := 1; i <= 3; i++ {
+		dayStr := fmt.Sprintf("2026-09-%02d", i)
+		var c tokens.Counts
+		c.Set(tokens.Input, int64(10*i))
+		c.Set(tokens.Output, int64(20*i))
+		day := tokens.DayFile{
+			Day: dayStr, At: "2026-09-12T00:00:00Z", Build: "test", Turns: "1",
+			Sources: []string{"openai:o"},
+			Rows: []tokens.DayRow{
+				{Date: dayStr, Model: "gpt", Repo: "schema", Unit: "card-a", Counts: c, Basis: "utc", Sources: []string{"openai:o"}},
+			},
+		}
+		if err := day.Save(out); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// 1. Indexing month writes all 3 days in one pipeline and sends no PING.
+	// Before rowan-7fbdefecf56e, openLedger sent a superfluous PING
+	// and ran a transaction per day in a loop (24 trips for 23 days).
+	r := invoke(t, "ledger", "--out", out, "--month", "2026-09", "--redis", addr)
+	wantExit(t, r, 0)
+	wantContains(t, r.stdout, "LEDGER OK month=2026-09 days=3 rows=3 bad=0")
+
+	// Verify all 3 days are stored.
+	if keys := mr.Keys(); len(keys) != 3 {
+		t.Fatalf("expected 3 keys in ledger, got %v", keys)
+	}
+
+	mu.Lock()
+	cmds := append([]string(nil), seenCmds...)
+	seenCmds = nil
+	mu.Unlock()
+
+	sawMulti, sawExec := false, false
+	for _, cmd := range cmds {
+		if cmd == "PING" {
+			t.Fatalf("ledger --month sent superfluous PING: saw %v", cmds)
+		}
+		if cmd == "MULTI" {
+			sawMulti = true
+		}
+		if cmd == "EXEC" {
+			sawExec = true
+		}
+	}
+	if !sawMulti || !sawExec {
+		t.Fatalf("ledger --month did not use transaction: saw %v", cmds)
+	}
+
+	// 2. report --redis sends no PING.
+	rep := invoke(t, "report", "--redis", addr, "--month", "2026-09", "--by", "day")
+	wantExit(t, rep, 0)
+	wantContains(t, rep.stdout, "REPORT OK month=2026-09 source=redis groups=3 rows=3 indexed=3 missing=27")
+
+	mu.Lock()
+	cmds = append([]string(nil), seenCmds...)
+	seenCmds = nil
+	mu.Unlock()
+
+	for _, cmd := range cmds {
+		if cmd == "PING" {
+			t.Fatalf("report --redis sent superfluous PING: saw %v", cmds)
+		}
+	}
+
+	// 3. ledger --day sends no PING.
+	rDay := invoke(t, "ledger", "--out", out, "--day", "2026-09-01", "--redis", addr)
+	wantExit(t, rDay, 0)
+	wantContains(t, rDay.stdout, "LEDGER OK day=2026-09-01 days=1 rows=1 bad=0")
+
+	mu.Lock()
+	cmds = append([]string(nil), seenCmds...)
+	seenCmds = nil
+	mu.Unlock()
+
+	sawMulti, sawExec = false, false
+	for _, cmd := range cmds {
+		if cmd == "PING" {
+			t.Fatalf("ledger --day sent superfluous PING: saw %v", cmds)
+		}
+		if cmd == "MULTI" {
+			sawMulti = true
+		}
+		if cmd == "EXEC" {
+			sawExec = true
+		}
+	}
+	if !sawMulti || !sawExec {
+		t.Fatalf("ledger --day did not use transaction: saw %v", cmds)
 	}
 }
