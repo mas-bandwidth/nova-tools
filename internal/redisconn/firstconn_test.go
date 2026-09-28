@@ -11,9 +11,9 @@ import (
 )
 
 // The connection Open dials takes one write and answers it itself. These
-// tests hold it to its rules (the TLA+ model of them is owed) over every
-// order of events up to a depth, and over long orders drawn from fixed
-// seeds. The
+// tests hold it to its rules over every order of events up to a depth, and
+// over long orders drawn from fixed seeds; tla/FirstConn.tla holds the same
+// rules over the same events as invariants, with reversed witnesses. The
 // rules are stated on what went in and what came out, not on the states the
 // code keeps:
 //

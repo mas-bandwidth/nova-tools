@@ -140,19 +140,19 @@ func echoing(_ int, cmd []string) string {
 func everythingShown(t *testing.T, password string) []showing {
 	t.Helper()
 	env := environment(map[string]string{
-		EnvAddr: storeAddr, EnvUser: "bench", EnvPasswordEnv: "NOVA_TEST_PW", "NOVA_TEST_PW": password,
+		GeneralEnv.Addr: storeAddr, GeneralEnv.User: "bench", GeneralEnv.PasswordEnv: "NOVA_TEST_PW", "NOVA_TEST_PW": password,
 	})
 	ctx := context.Background()
 	var out []showing
 
-	options, err := Resolve(Options{}, env)
+	options, err := Resolve(Options{Env: GeneralEnv}, env)
 	out = append(out, failed("Resolve", err)...)
 	out = append(out, showing{what: "the options: String()", of: "the options", text: options.String()})
 	out = append(out, plain("the options", options)...)
 	out = append(out, plain("a pointer to the options", &options)...)
 
 	store := newFakeStore(t, accepting)
-	conn, err := open(ctx, Options{}, env, store.dial)
+	conn, err := open(ctx, Options{Env: GeneralEnv}, env, store.dial)
 	out = append(out, failed("Open", err)...)
 	if err != nil {
 		t.Fatalf("Open with the password %q: %v", password, err)
@@ -177,19 +177,19 @@ func everythingShown(t *testing.T, password string) []showing {
 	out = append(out, failed("Close", conn.Close())...)
 
 	store = newFakeStore(t, refusing("-WRONGPASS invalid username-password pair or user is disabled.\r\n"))
-	_, err = open(ctx, Options{}, env, store.dial)
+	_, err = open(ctx, Options{Env: GeneralEnv}, env, store.dial)
 	out = append(out, failed("Open, the login refused", err)...)
 
 	dials := 0
-	_, err = open(ctx, Options{}, env, refusedDial(&dials))
+	_, err = open(ctx, Options{Env: GeneralEnv}, env, refusedDial(&dials))
 	out = append(out, failed("Open, the store not there", err)...)
 
 	store = newFakeStore(t, func(int, []string) string { return hangUp })
-	_, err = open(ctx, Options{}, env, store.dial)
+	_, err = open(ctx, Options{Env: GeneralEnv}, env, store.dial)
 	out = append(out, failed("Open, the store hanging up", err)...)
 
 	store = newFakeStore(t, echoing)
-	_, err = open(ctx, Options{}, env, store.dial)
+	_, err = open(ctx, Options{Env: GeneralEnv}, env, store.dial)
 	if err == nil {
 		t.Fatalf("Open to a store that refuses every login, with the password %q: no error", password)
 	}
@@ -200,10 +200,10 @@ func everythingShown(t *testing.T, password string) []showing {
 
 	// The password put where the name of its variable belongs.
 	if !envName(password) {
-		misplaced := environment(map[string]string{EnvAddr: storeAddr, EnvUser: "bench", EnvPasswordEnv: password})
-		_, err = Resolve(Options{}, misplaced)
+		misplaced := environment(map[string]string{GeneralEnv.Addr: storeAddr, GeneralEnv.User: "bench", GeneralEnv.PasswordEnv: password})
+		_, err = Resolve(Options{Env: GeneralEnv}, misplaced)
 		out = append(out, failed("Resolve, the password where its variable's name belongs", err)...)
-		_, err = open(ctx, Options{PasswordEnv: password}, misplaced, refusedDial(&dials))
+		_, err = open(ctx, Options{PasswordEnv: password, Env: GeneralEnv}, misplaced, refusedDial(&dials))
 		out = append(out, failed("Open, the password given as its variable's name", err)...)
 	}
 	return out

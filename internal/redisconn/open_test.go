@@ -38,8 +38,8 @@ func TestOpenCostsTheHandshakeAlone(t *testing.T) {
 			"1: hello 3 auth bench s3cret", "redis at store.test:6379 as user bench (password from PW)"},
 		{"the default user with a password", Options{Addr: storeAddr, PasswordEnv: "PW"}, map[string]string{"PW": "s3cret"},
 			"1: hello 3 auth default s3cret", "redis at store.test:6379 as the default user (password from PW)"},
-		{"all of it from the environment", Options{},
-			map[string]string{EnvAddr: storeAddr, AliasUser: "bench", EnvPasswordEnv: "NOVA_TEST_PW", "NOVA_TEST_PW": "s3cret"},
+		{"all of it from the environment", Options{Env: GeneralEnv},
+			map[string]string{GeneralEnv.Addr: storeAddr, GeneralEnv.User: "bench", GeneralEnv.PasswordEnv: "NOVA_TEST_PW", "NOVA_TEST_PW": "s3cret"},
 			"1: hello 3 auth bench s3cret", "redis at store.test:6379 as user bench (password from NOVA_TEST_PW)"},
 	} {
 		store := newFakeStore(t, accepting)
@@ -104,7 +104,7 @@ func TestOpenReturnsWhatTheStoreSaid(t *testing.T) {
 		sent  []string
 	}{
 		{"a store that wants a login and was given none",
-			Options{Addr: storeAddr},
+			Options{Addr: storeAddr, Env: GeneralEnv},
 			func(_ int, cmd []string) string {
 				if cmd[0] == "hello" {
 					return noauthHello
@@ -121,7 +121,9 @@ func TestOpenReturnsWhatTheStoreSaid(t *testing.T) {
 			[]string{"1: hello 3 auth bench s3cret", "1: auth bench s3cret"}},
 		{"the default user whose password the store refuses",
 			Options{Addr: storeAddr, PasswordEnv: "PW"}, refusing(wrongpass), AuthRefused,
-			"redis at store.test:6379 as the default user (password from PW): login refused: WRONGPASS invalid username-password pair or user is disabled.; next: name the user (NOVA_REDIS_USER), or check that PW holds the password of the default user",
+			// No Env names a variable for the user, so the next step names
+			// none.
+			"redis at store.test:6379 as the default user (password from PW): login refused: WRONGPASS invalid username-password pair or user is disabled.; next: name the user, or check that PW holds the password of the default user",
 			[]string{"1: hello 3 auth default s3cret", "1: auth s3cret"}},
 		{"a thing that answers and is not a store",
 			login, func(int, []string) string { return "HTTP/1.1 400 Bad Request\r\n\r\n" }, Other,
@@ -207,11 +209,11 @@ func TestOpenReachesAStoreOlderThanHello(t *testing.T) {
 func TestOpenDialsOnce(t *testing.T) {
 	t.Parallel()
 	dials := 0
-	conn, err := open(context.Background(), Options{}, environment(map[string]string{AliasAddr: "127.0.0.1:1"}), refusedDial(&dials))
+	conn, err := open(context.Background(), Options{Env: Env{Addr: "TOOL_REDIS"}}, environment(map[string]string{"TOOL_REDIS": "127.0.0.1:1"}), refusedDial(&dials))
 	if err == nil || conn != nil {
 		t.Fatalf("Open = %v, %v; want unreachable", conn, err)
 	}
-	const want = "redis at 127.0.0.1:1 as the default user, no password: unreachable: dial tcp 127.0.0.1:1: connect: connection refused; next: start the store or correct the address, which was from NOVA_SPRINT_REDIS"
+	const want = "redis at 127.0.0.1:1 as the default user, no password: unreachable: dial tcp 127.0.0.1:1: connect: connection refused; next: start the store or correct the address, which was from TOOL_REDIS"
 	if got := err.Error(); got != want {
 		t.Errorf("\n got %s\nwant %s", got, want)
 	}

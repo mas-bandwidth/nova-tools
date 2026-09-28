@@ -224,9 +224,10 @@ func TestOpenAsAnACLUser(t *testing.T) {
 		t.Errorf("the connection reads %q", got)
 	}
 
-	// The same login from the environment alone, by the older names.
-	aliased, err := redisconn.Open(ctx, redisconn.Options{}, environment(map[string]string{
-		redisconn.AliasAddr: addr, redisconn.AliasUser: "bench", redisconn.AliasPasswordEnv: "NOVA_TEST_PW", "NOVA_TEST_PW": password,
+	// The same login from the environment alone, by a tool's own names.
+	tool := redisconn.Env{Addr: "TOOL_REDIS", User: "TOOL_REDIS_USER", PasswordEnv: "TOOL_REDIS_PASSWORD_ENV"}
+	aliased, err := redisconn.Open(ctx, redisconn.Options{Env: tool}, environment(map[string]string{
+		tool.Addr: addr, tool.User: "bench", tool.PasswordEnv: "NOVA_TEST_PW", "NOVA_TEST_PW": password,
 	}))
 	if err != nil {
 		t.Fatalf("Open from the environment: %v", err)
@@ -251,9 +252,9 @@ func TestOpenAsAnACLUser(t *testing.T) {
 			"redis at " + addr + tried + "WRONGPASS invalid username-password pair or user is disabled.; next: check that NOVA_TEST_PW holds the password of bench and that the store has that user switched on", true},
 		{"a user the store does not have", redisconn.Options{Addr: addr, User: "nobody", PasswordEnv: "NOVA_TEST_PW"}, map[string]string{"NOVA_TEST_PW": password},
 			"redis at " + addr + " as user nobody (password from NOVA_TEST_PW): login refused: WRONGPASS invalid username-password pair or user is disabled.; next: check that NOVA_TEST_PW holds the password of nobody and that the store has that user switched on", true},
-		{"the right password and no user", redisconn.Options{Addr: addr, PasswordEnv: "NOVA_TEST_PW"}, map[string]string{"NOVA_TEST_PW": password},
+		{"the right password and no user", redisconn.Options{Addr: addr, PasswordEnv: "NOVA_TEST_PW", Env: redisconn.GeneralEnv}, map[string]string{"NOVA_TEST_PW": password},
 			"redis at " + addr + " as the default user (password from NOVA_TEST_PW): login refused: WRONGPASS invalid username-password pair or user is disabled.; next: name the user (NOVA_REDIS_USER), or check that NOVA_TEST_PW holds the password of the default user", true},
-		{"no login at all", redisconn.Options{Addr: addr}, nil,
+		{"no login at all", redisconn.Options{Addr: addr, Env: redisconn.GeneralEnv}, nil,
 			"redis at " + addr + " as the default user, no password: login refused: NOAUTH Authentication required.; next: name the user (NOVA_REDIS_USER) and the variable that holds its password (NOVA_REDIS_PASSWORD_ENV)", true},
 		{"an empty password variable", login, map[string]string{"NOVA_TEST_PW": ""},
 			"redis at " + addr + tried + "NOVA_TEST_PW is empty; next: export NOVA_TEST_PW, holding the password, in the environment of this process", false},
@@ -312,7 +313,7 @@ func TestOpenToAClosedPort(t *testing.T) {
 	addr := net.JoinHostPort("127.0.0.1", testutil.FreePort(t))
 	ctx, cancel := context.WithTimeout(context.Background(), redisconn.OpenTimeout)
 	defer cancel()
-	conn, err := redisconn.Open(ctx, redisconn.Options{}, environment(map[string]string{redisconn.EnvAddr: addr}))
+	conn, err := redisconn.Open(ctx, redisconn.Options{Env: redisconn.GeneralEnv}, environment(map[string]string{redisconn.GeneralEnv.Addr: addr}))
 	if bound := ctx.Err(); bound != nil {
 		t.Errorf("Open returned after its bound of %v had passed: %v", redisconn.OpenTimeout, bound)
 	}

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"syscall"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -316,7 +317,7 @@ func refusedDial(dials *int) dialFunc {
 // silentStore is a store that never answers a dial. Its dialer returns when
 // the dial's own context ends, as the network's dialer does, which can be
 // after the caller has stopped waiting; settled waits for the dials that are
-// still under way.
+// still under way. It is for a synctest bubble.
 type silentStore struct {
 	mu      sync.Mutex
 	dials   int
@@ -339,7 +340,18 @@ func (s *silentStore) dialed() int {
 	return s.dials
 }
 
-func (s *silentStore) settled() { s.pending.Wait() }
+// settled returns when every dial under way has returned. go-redis dials on
+// a goroutine of its own (v9.22.0, its pool's pool.go:1078, queuedNewConn),
+// started before Open returns and not yet at dial's pending.Add(1) when Open
+// returns; a Wait on pending alone could return before the dial began, and
+// the dial would then run after the test had ended (a race the -race run
+// found). synctest.Wait first: every other goroutine of the bubble is then
+// durably blocked or done, so a dial that was coming has begun and is
+// counted before pending is waited on.
+func (s *silentStore) settled() {
+	synctest.Wait()
+	s.pending.Wait()
+}
 
 type fakeAddr string
 

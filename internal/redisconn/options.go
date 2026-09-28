@@ -10,31 +10,29 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// The environment variables Resolve reads, each through the getenv it is
-// handed and never from the process on its own. A value given to Resolve
-// explicitly wins over all of them.
-const (
-	// EnvAddr names the store's address: host:port, or the absolute path of a
-	// Unix socket.
-	EnvAddr = "NOVA_REDIS_ADDR"
-	// EnvUser names the ACL user that logs in; unset is the default user.
-	EnvUser = "NOVA_REDIS_USER"
-	// EnvPasswordEnv holds the NAME of the variable that holds the password,
-	// never the password.
-	EnvPasswordEnv = "NOVA_REDIS_PASSWORD_ENV"
-)
+// Env names the environment variables Resolve reads for the fields of an
+// Options that were left empty: one variable per field, each read through
+// the getenv Resolve is handed and never from the process on its own. A name
+// that is empty is not read, so the zero Env reads nothing: what was given is
+// all there is. The names are the caller's. This package has no name of its
+// own for any tool's variable and keeps no older name as an alias: a tool
+// that reads its own names passes them, and a tool with none passes
+// GeneralEnv.
+type Env struct {
+	// Addr names the variable that holds the store's address: host:port, or
+	// the absolute path of a Unix socket.
+	Addr string
+	// User names the variable that holds the ACL user; unset is the default
+	// user.
+	User string
+	// PasswordEnv names the variable that holds the NAME of the variable
+	// that holds the password, never the password.
+	PasswordEnv string
+}
 
-// The older names of the same three variables, accepted as aliases. Each is
-// read only when its general name above is unset or empty: when both are set
-// the general name wins, and the alias is not consulted at all.
-const (
-	// AliasAddr is the older name of EnvAddr.
-	AliasAddr = "NOVA_SPRINT_REDIS"
-	// AliasUser is the older name of EnvUser.
-	AliasUser = "NOVA_SPRINT_REDIS_USER"
-	// AliasPasswordEnv is the older name of EnvPasswordEnv.
-	AliasPasswordEnv = "NOVA_SPRINT_REDIS_PASSWORD_ENV"
-)
+// GeneralEnv is the general set of names, for a tool that has none of its
+// own: NOVA_REDIS_ADDR, NOVA_REDIS_USER and NOVA_REDIS_PASSWORD_ENV.
+var GeneralEnv = Env{Addr: "NOVA_REDIS_ADDR", User: "NOVA_REDIS_USER", PasswordEnv: "NOVA_REDIS_PASSWORD_ENV"}
 
 // Options says where the store is and who logs in. It holds no secret and
 // cannot: the password is named by the variable that holds it, so printing an
@@ -48,6 +46,9 @@ type Options struct {
 	// PasswordEnv is the NAME of the environment variable that holds the
 	// password; empty is a login with no password.
 	PasswordEnv string
+	// Env names the variables Resolve reads for whichever of the three above
+	// is empty. The zero Env reads nothing.
+	Env Env
 }
 
 // String renders the options as three key=value fields on one line, each
@@ -59,11 +60,10 @@ func (o Options) String() string {
 // Resolve fills the options a tool was given from the environment and
 // refuses the ones that cannot make a connection. It dials nothing.
 //
-// Each field is resolved on its own, in this order: the value in explicit
-// when it is not empty, else the general variable (EnvAddr, EnvUser,
-// EnvPasswordEnv), else its alias (AliasAddr, AliasUser, AliasPasswordEnv).
+// Each field is resolved on its own: the value in explicit when it is not
+// empty, else the variable explicit.Env names for it, when it names one.
 // getenv is the only environment Resolve reads; nil is an empty environment,
-// which is how a caller says "only what I gave you".
+// which is how a caller says "only what I gave you", as is the zero Env.
 //
 // What comes back is ready for Open, and resolving it again changes nothing.
 // The refusals, each an error of this package with its class (Classify), one
@@ -73,7 +73,8 @@ func (o Options) String() string {
 //     absolute path (Unreachable). An address that is a URL or carries a
 //     login is refused without being shown.
 //   - a user with no password variable named (AuthRefused): the login is
-//     never made as the default user instead.
+//     never made as the default user instead, and no default variable is
+//     read in its place.
 //   - a password variable whose name is not capital letters, digits and
 //     underscores (AuthRefused). The name is not shown, in case the password
 //     was put where its variable's name belongs.
@@ -105,20 +106,21 @@ func resolve(explicit Options, getenv func(string) string) (login, string, error
 		getenv = func(string) string { return "" }
 	}
 	var l login
-	l.Addr, l.addrFrom = firstSet(explicit.Addr, getenv, EnvAddr, AliasAddr)
-	l.User, l.userFrom = firstSet(explicit.User, getenv, EnvUser, AliasUser)
-	l.PasswordEnv, l.envFrom = firstSet(explicit.PasswordEnv, getenv, EnvPasswordEnv, AliasPasswordEnv)
+	l.Env = explicit.Env
+	l.Addr, l.addrFrom = pick(explicit.Addr, getenv, l.Env.Addr)
+	l.User, l.userFrom = pick(explicit.User, getenv, l.Env.User)
+	l.PasswordEnv, l.envFrom = pick(explicit.PasswordEnv, getenv, l.Env.PasswordEnv)
 
 	const shape = "host:port (a port from 1 to 65535) or the absolute path of a Unix socket"
 	switch {
 	case l.Addr == "":
 		return login{}, "", &failure{class: Unreachable, tried: "redis",
-			cause: errors.New("no address: none was given, and " + EnvAddr + " and " + AliasAddr + " are empty"),
-			next:  "pass the address or set " + EnvAddr + ": " + shape}
+			cause: errors.New("no address: none was given" + orEmpty(l.Env.Addr)),
+			next:  "pass the address" + orSet(l.Env.Addr) + ": " + shape}
 	case strings.Contains(l.Addr, "://") || strings.Contains(l.Addr, "@"):
 		return login{}, "", &failure{class: Unreachable, tried: "redis at the address " + where(l.addrFrom) + " (not shown)",
 			cause: errors.New("not an address: it is a URL or carries a login"),
-			next:  "give " + shape + ", the user as " + EnvUser + " and the name of the password's variable as " + EnvPasswordEnv}
+			next:  "give " + shape + ", the user" + inVar(l.Env.User) + " and the name of the password's variable" + inVar(l.Env.PasswordEnv) + " on their own"}
 	}
 	if fault := addrFault(l.Addr); fault != "" {
 		return login{}, "", &failure{class: Unreachable, tried: "redis at " + oneline.Quote(l.Addr) + " " + where(l.addrFrom),
@@ -130,9 +132,13 @@ func resolve(explicit Options, getenv func(string) string) (login, string, error
 		if l.User == "" {
 			return l, "", nil
 		}
+		next := "give the NAME of the variable that holds the password of " + l.User + ", never the password"
+		if l.Env.PasswordEnv != "" {
+			next = "set " + l.Env.PasswordEnv + " to the NAME of the variable that holds the password of " + l.User + ", never to the password"
+		}
 		return login{}, "", &failure{class: AuthRefused, tried: l.tried(),
-			cause: errors.New("no password variable is named: none was given, and " + EnvPasswordEnv + " and " + AliasPasswordEnv + " are empty"),
-			next:  "set " + EnvPasswordEnv + " to the NAME of the variable that holds the password of " + l.User + ", never to the password"}
+			cause: errors.New("no password variable is named: none was given" + orEmpty(l.Env.PasswordEnv)),
+			next:  next}
 	}
 	if !envName(l.PasswordEnv) {
 		return login{}, "", &failure{class: AuthRefused, tried: l.who() + " (the password's variable is not shown)",
@@ -148,18 +154,43 @@ func resolve(explicit Options, getenv func(string) string) (login, string, error
 	return l, password, nil
 }
 
-// firstSet is the given value, else the first of the named variables that is
-// not empty, with the name of the variable that supplied it ("" for given).
-func firstSet(given string, getenv func(string) string, names ...string) (value, from string) {
+// pick is the given value, else the value of the named variable when a name
+// is given and the variable is not empty, with the name of the variable that
+// supplied it ("" for given).
+func pick(given string, getenv func(string) string, name string) (value, from string) {
 	if given != "" {
 		return given, ""
 	}
-	for _, name := range names {
+	if name != "" {
 		if v := getenv(name); v != "" {
 			return v, name
 		}
 	}
 	return "", ""
+}
+
+// orEmpty says, when a variable was named, that it is empty.
+func orEmpty(name string) string {
+	if name == "" {
+		return ""
+	}
+	return ", and " + name + " is empty"
+}
+
+// orSet offers, when a variable was named, to set it.
+func orSet(name string) string {
+	if name == "" {
+		return ""
+	}
+	return " or set " + name
+}
+
+// inVar names, when a variable was named, the variable in parentheses.
+func inVar(name string) string {
+	if name == "" {
+		return ""
+	}
+	return " (" + name + ")"
 }
 
 // where says in words where a value came from.
