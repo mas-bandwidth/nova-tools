@@ -272,7 +272,14 @@ func open(ctx context.Context, addr string, getenv func(string) string) (*redisc
 	if err != nil {
 		return nil, err
 	}
-	return redisconn.Open(ctx, o, getenv)
+	conn, err := redisconn.Open(ctx, o, getenv)
+	if err != nil {
+		if text := seatWords(seatcred.Process(), err.Error()); text != err.Error() {
+			err = &reworded{text, err}
+		}
+		return nil, err
+	}
+	return conn, nil
 }
 
 // login is who nova-table dials as, the login nova-sprint's store dialed as
@@ -348,15 +355,44 @@ func lost(err error) bool {
 }
 
 // refusal maps a verb's error to the exit code its line carries: a store
-// that could not be reached or refused the login is 2, in redisconn's one
-// line (what was tried, what came back, the next step); the store's own no
-// is 1.
+// that could not be reached or refused the login is 2, the store's own no
+// is 1. A lost-store error is put in redisconn's words (what was tried,
+// what came back, the next step) only when the cause names no next step of
+// its own: a write whose reply was lost says `run: nova-table show <table>`,
+// because the write may have committed, and "start the store" over it
+// would invite the duplicate AtMostOnce exists to prevent. One remedy a
+// line.
 func (c *connection) refusal(stderr io.Writer, verb string, err error) int {
 	if lost(err) {
-		if c != nil && c.Conn != nil {
-			err = c.Explain(err)
+		text := err.Error()
+		if c != nil && c.Conn != nil && !remedied(text) {
+			text = seatWords(seatcred.Process(), c.Explain(err).Error())
 		}
-		return refuse(stderr, verb, err.Error())
+		return refuse(stderr, verb, text)
 	}
 	return refused(stderr, verb, err.Error())
 }
+
+// seatWords says a seat's password as the seat's: redisconn names the
+// password by the variable it read, and a seat's is the key of the seat's
+// file, answered from memory, not a variable of the environment.
+func seatWords(sel *seatcred.Selection, text string) string {
+	c, ok, err := sel.Active()
+	if !ok || err != nil || c.Key == "" {
+		return text
+	}
+	return strings.NewReplacer(
+		"(password from "+c.Key+")", "(password from seat "+c.Seat+", key "+c.Key+" of its file)",
+		"check that "+c.Key+" holds", "check that seat "+c.Seat+"'s file holds under "+c.Key,
+	).Replace(text)
+}
+
+// reworded is an error in other words, whose class is still its cause's
+// (errors.As and redisconn.Classify see through Unwrap).
+type reworded struct {
+	text string
+	err  error
+}
+
+func (r *reworded) Error() string { return r.text }
+func (r *reworded) Unwrap() error { return r.err }

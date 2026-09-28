@@ -91,3 +91,26 @@ func TestLoginIsTheStoresLogin(t *testing.T) {
 		t.Fatalf("seat refusal: %v", err)
 	}
 }
+
+// TestSeatWordsNameTheSeat: a seat's password is named as the seat's file's
+// key, never as a variable of the environment; without a seat the words are
+// redisconn's.
+func TestSeatWordsNameTheSeat(t *testing.T) {
+	t.Parallel()
+	line := "redis at h:1 as user coordinator (password from NOVA_REDIS_COORDINATOR_PASSWORD): login refused: WRONGPASS; next: check that NOVA_REDIS_COORDINATOR_PASSWORD holds the password of coordinator and that the store has that user switched on"
+	if got := seatWords(&seatcred.Selection{}, line); got != line {
+		t.Fatalf("no seat: %q", got)
+	}
+	var sel seatcred.Selection
+	sel.SelectWith("synthetic", "", func(string) (seatcred.Cred, error) {
+		return seatcred.Cred{Seat: "synthetic", User: "coordinator", Key: "NOVA_REDIS_COORDINATOR_PASSWORD", Password: secrets.NewSecret("synthetic-seat-pw")}, nil
+	})
+	want := "redis at h:1 as user coordinator (password from seat synthetic, key NOVA_REDIS_COORDINATOR_PASSWORD of its file): login refused: WRONGPASS; next: check that seat synthetic's file holds under NOVA_REDIS_COORDINATOR_PASSWORD the password of coordinator and that the store has that user switched on"
+	if got := seatWords(&sel, line); got != want {
+		t.Fatalf("seat:\n got %q\nwant %q", got, want)
+	}
+	err := &reworded{want, errors.New("cause")}
+	if !errors.Is(err, err.err) || err.Error() != want {
+		t.Fatalf("reworded: %v", err)
+	}
+}

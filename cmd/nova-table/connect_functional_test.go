@@ -300,7 +300,11 @@ func TestShellLineAfterRestart(t *testing.T) {
 	}
 	lines := strings.Split(strings.TrimSuffix(errs.String(), "\n"), "\n")
 	answered := code == 0 && errs.Len() == 0 && rows == 2 && strings.Contains(out.String(), "TABLE ROW ADD table=jobs row=after")
-	lost := code == 2 && rows == 1 && len(lines) == 2 && strings.Contains(lines[0], ": unreachable: ") && lines[1] == "nova-table shell: line 2 failed (exit 2)"
+	// Lost: one line, one remedy, show (the write may have committed).
+	lost := code == 2 && rows == 1 && len(lines) == 2 && strings.HasPrefix(lines[0], "nova-table row add: ") &&
+		strings.HasSuffix(lines[0], "; run: nova-table show 'jobs'") && !strings.Contains(lines[0], "; next: ") &&
+		lines[1] == "nova-table shell: line 2 failed (exit 2)"
+	t.Logf("after the restart the line took Answered=%v Lost=%v; stderr %q", answered, lost, &errs)
 	if !(answered || lost) || !strings.Contains(out.String(), "TABLE LIST tables=1 trips=1") || r.accepted.Load() != 2 {
 		t.Fatalf("restart: exit %d changes=%d connections=%d stdout %q stderr %q", code, rows, r.accepted.Load(), &out, &errs)
 	}
