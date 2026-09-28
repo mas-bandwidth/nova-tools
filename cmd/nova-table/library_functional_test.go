@@ -104,10 +104,14 @@ func TestFreshStoreFirstVerbLoadsTheLibrary(t *testing.T) {
 		t.Fatal(err)
 	}
 	code, out, errOut = novaTable(t, "create", "demo", "--columns", "ready,done", "--redis", older)
-	if code != 1 || out != "" || strings.Count(errOut, "\n") != 1 ||
+	if code != 1 || out != "" || strings.Count(errOut, "\n") != 1 || strings.Count(errOut, "; run: ") != 1 ||
 		!strings.Contains(errOut, "ERR Function not found: function ns_table_create") ||
 		!strings.Contains(errOut, "older than this nova-table") || !strings.Contains(errOut, "run: nova-redis fn load --addr <host:port>") {
 		t.Fatalf("create on a store with an older nova_sprint: exit %d stdout %q stderr %q; want one refusal naming the deployer's remedy", code, out, errOut)
+	}
+	code, out, errOut = novaTable(t, "list", "--redis", older)
+	if code != 1 || out != "" || strings.Count(errOut, "; run: ") != 1 || !strings.Contains(errOut, "function ns_table_list") {
+		t.Fatalf("list on a store with an older nova_sprint: exit %d stdout %q stderr %q; want one refusal with one remedy", code, out, errOut)
 	}
 	libs, err = oc.FunctionList(ctx, redis.FunctionListQuery{LibraryNamePattern: "nova_sprint", WithCode: true}).Result()
 	if err != nil || len(libs) != 1 || libs[0].Code != old {
