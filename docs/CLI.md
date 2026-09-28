@@ -4761,6 +4761,7 @@ first, connection flags next, epoch and receipt metadata last. For example,
 | `view list` | Lists view names |
 | `view del <name>` | Deletes the view configuration, preserving tables |
 | `watch --view <name>` | Reloads configuration each frame; edits appear without restarting |
+| `shell` | Reads commands on one resident connection; write receipts print by default |
 | `version` | Prints the build version |
 
 **Order.** Rows draw in the order they were added and columns in the
@@ -4784,6 +4785,30 @@ COL DEL table= col=` and is refused, exit 1, writing nothing, while the
 column holds a member (the refusal names all blocking rows and members, with a
 batch `cell remove` command for each occupied cell) or a text value, while a `pct(...)` column reads it, and when it is
 the last column. Quote a column that has parentheses, `'share:pct(busy)'`.
+
+### Resident shell
+
+`nova-table shell [--redis <addr> | --seat <name>] [--epoch <n>] [--keep-going]
+[--receipt=false]` reads commands from stdin on one connection. Enter verbs
+such as `row add demo build`, optionally prefixed with `nova-table`. Quotes,
+escapes, blank lines and `#` comments are supported; values are never expanded
+or executed by an OS shell. `help <verb>` works inside the session. `quit`,
+`exit` or EOF ends it. Lines execute in order and commit independently; use the
+existing member/row batch verbs for several changes in one exchange.
+
+Write receipts print by default. The session's `--epoch`, `--actor`, `--fence`
+and `--idem` become defaults; per-command overrides affect that command only.
+The store and seat stay fixed. File input stops on the first error unless
+`--keep-going`; a terminal prompts on stderr and defaults to continuing. The
+final status retains errors: 1 for a store refusal, 2 for a usage/input/connection
+error. Continuous `watch` returns to the prompt on Ctrl-C; scripts can use
+`watch --once`. On Unix, SIGTERM ends the whole shell (143), including during
+watch, and Ctrl-C at the prompt ends it (130). An in-flight write may already
+have committed. A failed connection is replaced before the next store command;
+the failed command is never replayed. Lines may contain exactly 1,048,576 bytes
+excluding LF/CRLF; `--keep-going` discards an overlong line and continues at the
+next newline. Failures name their input line. See the
+[resident shell example](nova-table/README.md#resident-shell).
 
 ### Columns, identity and output
 

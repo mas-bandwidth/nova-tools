@@ -12,36 +12,36 @@ import (
 
 // The row verbs: row add, set, hide, show, del here; move, order, sort in order.go.
 
-func cmdRow(args []string, stdout, stderr io.Writer) int {
+func (app *application) cmdRow(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		return refuse(stderr, "row", "wants add, set, hide, show, move, order, sort or del: row add <table> <row> ..., row set <table> <row> <col>=<value> ..., row hide|show <table> <row> ..., row move <table> <row> "+placeUsage+", row order <table> <row> ..., row sort <table> [--by name|label|<col>] [--desc] [--keep], row del <table> <row>")
 	}
 	switch args[0] {
 	case "add":
-		return cmdRowAdd(args[1:], stdout, stderr)
+		return app.cmdRowAdd(args[1:], stdout, stderr)
 	case "del":
-		return cmdRowDel(args[1:], stdout, stderr)
+		return app.cmdRowDel(args[1:], stdout, stderr)
 	case "set":
-		return cmdRowSet(args[1:], stdout, stderr)
+		return app.cmdRowSet(args[1:], stdout, stderr)
 	case "hide":
-		return cmdRowsHide(args[1:], stdout, stderr, true)
+		return app.cmdRowsHide(args[1:], stdout, stderr, true)
 	case "show":
-		return cmdRowsHide(args[1:], stdout, stderr, false)
+		return app.cmdRowsHide(args[1:], stdout, stderr, false)
 	case "move":
-		return cmdRowMove(args[1:], stdout, stderr)
+		return app.cmdRowMove(args[1:], stdout, stderr)
 	case "order":
-		return cmdRowOrder(args[1:], stdout, stderr)
+		return app.cmdRowOrder(args[1:], stdout, stderr)
 	case "sort":
-		return cmdRowSort(args[1:], stdout, stderr)
+		return app.cmdRowSort(args[1:], stdout, stderr)
 	}
 	return refuse(stderr, "row", "unknown subverb "+args[0]+"; wants add, set, hide, show, move, order, sort or del")
 }
 
-func cmdRowAdd(args []string, stdout, stderr io.Writer) int {
+func (app *application) cmdRowAdd(args []string, stdout, stderr io.Writer) int {
 	const verb = "row add"
 	fs := verbflag.New(verb)
-	addr := redisFlag(fs)
-	write, receipt := writeFlags(fs)
+	addr := app.redisFlag(fs)
+	write, receipt := app.writeFlags(fs)
 	label := fs.String("label", "", "the row's label, the row header cell (default the row key)")
 	exclude := fs.String("exclude", "", "one member the row's counts and members leave out")
 	owner := fs.String("owner", "", "the verb that writes the row's bound sets, named by the refusal of a write here")
@@ -63,7 +63,7 @@ func cmdRowAdd(args []string, stdout, stderr io.Writer) int {
 		}
 		if batch {
 			ctx := context.Background()
-			st, c, code := client(ctx, verb, *addr, stderr)
+			st, c, code := app.client(ctx, verb, *addr, stderr)
 			if code != 0 {
 				return code
 			}
@@ -92,7 +92,7 @@ func cmdRowAdd(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, verb, "a row that binds a set wants --owner <verb>, the verb that writes it, so a write here can name it")
 	}
 	ctx := context.Background()
-	st, c, code := client(ctx, verb, *addr, stderr)
+	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
 		return code
 	}
@@ -113,11 +113,11 @@ func cmdRowAdd(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func cmdRowDel(args []string, stdout, stderr io.Writer) int {
+func (app *application) cmdRowDel(args []string, stdout, stderr io.Writer) int {
 	const verb = "row del"
 	fs := verbflag.New(verb)
-	addr := redisFlag(fs)
-	write, receipt := writeFlags(fs)
+	addr := app.redisFlag(fs)
+	write, receipt := app.writeFlags(fs)
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
@@ -126,7 +126,7 @@ func cmdRowDel(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, verb, "wants a table and a row: row del <table> <row>")
 	}
 	ctx := context.Background()
-	st, c, code := client(ctx, verb, *addr, stderr)
+	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
 		return code
 	}
@@ -147,11 +147,11 @@ func cmdRowDel(args []string, stdout, stderr io.Writer) int {
 
 // cmdRowSet: row set <table> <row> <col>=<value> ...: a text column's value
 // for one row, several columns in one call.
-func cmdRowSet(args []string, stdout, stderr io.Writer) int {
+func (app *application) cmdRowSet(args []string, stdout, stderr io.Writer) int {
 	const verb = "row set"
 	fs := verbflag.New(verb)
-	addr := redisFlag(fs)
-	write, receipt := writeFlags(fs)
+	addr := app.redisFlag(fs)
+	write, receipt := app.writeFlags(fs)
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
@@ -168,7 +168,7 @@ func cmdRowSet(args []string, stdout, stderr io.Writer) int {
 		texts[col] = v
 	}
 	ctx := context.Background()
-	st, c, code := client(ctx, verb, *addr, stderr)
+	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
 		return code
 	}
@@ -185,14 +185,14 @@ func cmdRowSet(args []string, stdout, stderr io.Writer) int {
 
 // cmdRowsHide: row hide|show <table> <row> ...: rows hidden from the render
 // but kept (and counted in the folds), or shown again; one call.
-func cmdRowsHide(args []string, stdout, stderr io.Writer, hide bool) int {
+func (app *application) cmdRowsHide(args []string, stdout, stderr io.Writer, hide bool) int {
 	verb := "row show"
 	if hide {
 		verb = "row hide"
 	}
 	fs := verbflag.New(verb)
-	addr := redisFlag(fs)
-	write, receipt := writeFlags(fs)
+	addr := app.redisFlag(fs)
+	write, receipt := app.writeFlags(fs)
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
@@ -201,7 +201,7 @@ func cmdRowsHide(args []string, stdout, stderr io.Writer, hide bool) int {
 		return refuse(stderr, verb, "wants a table and at least one row: "+verb+" <table> <row> ...")
 	}
 	ctx := context.Background()
-	st, c, code := client(ctx, verb, *addr, stderr)
+	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
 		return code
 	}
