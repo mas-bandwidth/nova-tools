@@ -56,7 +56,7 @@ runner and its deliberately failing desired-contract gate remain unchanged.
 
 ## Shell execution traces
 
-`check_session_trace.py` captures 16 shell sessions (eight fixed random seeds,
+`tools/sessiontrace` captures 16 shell sessions (eight fixed random seeds,
 both keep-going settings) in an owned Redis. Each executed line records its
 output, refusal status and newly committed receipts. The relay loses selected
 write replies after the store answers; the receipt ledger must still contain
@@ -64,7 +64,7 @@ exactly one effect. The harness also covers successful reads/writes, logical
 refusals, usage errors, overlong lines, quit and EOF without timing assertions.
 
 ```sh
-python3 tla/check_session_trace.py --jar /path/to/tla2tools.jar --out /tmp/session-trace
+go run ./tools/sessiontrace --jar /path/to/tla2tools.jar --out /tmp/session-trace
 ```
 
 The runner has one 120-second budget for capture, TLC and negative controls.
