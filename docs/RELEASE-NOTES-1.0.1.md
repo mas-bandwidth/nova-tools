@@ -18,6 +18,8 @@ Retrying an identical append returns the original stored timestamp and
 
 ## Findings and commands you can act on
 
+The secrets first-run guide explains its fixture and uses replaceable paths.
+
 `nova-table watch --check` checks table invariants every tick and displays failed checks as stall rows.
 
 `nova-config apply` batches reads and reports failed pipeline commands even when an earlier key is absent.
