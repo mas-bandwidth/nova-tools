@@ -10,12 +10,4 @@
 # checks it in both directions: an unlisted edge is a red run, and a listed edge
 # whose import has been removed is also a red run.
 #
-# ceiling: 13
-
-internal/nsprint/fn -> internal/nsprint/life  # test fixtures in fn/probe_sets_functional_test.go
-internal/nsprint/fn -> internal/nsprint/taskcard  # test fixtures in fn/probe_sets_functional_test.go
-internal/nsprint/fn -> internal/nsprint/ws  # test fixtures in fn/probe_sets_functional_test.go
-internal/nsprint/fn -> internal/nsprint/ws/wstest  # test fixtures in fn/probe_sets_functional_test.go
-internal/nsprint/store -> internal/nsprint/card  # acl_cards_test.go and acl_epoch_test.go test card storage
-internal/nsprint/store -> internal/nsprint/taskcard  # acl_cards_test.go and acl_epoch_test.go test taskcard records
-internal/nsprint/store -> internal/nsprint/ws  # acl_cards_test.go and acl_epoch_test.go test workspace streams
+# ceiling: 0
