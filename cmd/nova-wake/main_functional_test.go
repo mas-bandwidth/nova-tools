@@ -237,6 +237,10 @@ func entryJSON(t *testing.T, ghDir, number, state string, checks ...[2]string) {
 		fmt.Sprintf(`{"state":%q,"statusCheckRollup":[%s]}`, state, strings.Join(parts, ",")))
 }
 
+// Rule numbers follow docs/SPEC-WAKE.md, "Tests this spec demands".
+//
+// 3. Poll cadence matches the watched thing's rate.
+
 func TestTheEntryIntervalIsTheRunLength(t *testing.T) {
 	busDir, ghDir := fakes(t)
 	write(t, filepath.Join(busDir, "out"), "INBOX OK as=Rowan carrying=0 open=0 notes=0 receipts=0\n")
@@ -286,6 +290,8 @@ func TestTheEntryIntervalIsTheRunLength(t *testing.T) {
 	})
 }
 
+// 6. What woke you is named.
+
 func TestWhatWokeYouIsNamed(t *testing.T) {
 	busDir, ghDir := fakes(t)
 	write(t, filepath.Join(busDir, "out"),
@@ -317,6 +323,8 @@ func TestWhatWokeYouIsNamed(t *testing.T) {
 		t.Errorf("the words `something changed` appear in this tool's output; a wake that says only that the world moved sends the window back to look at all three places")
 	}
 }
+
+// 7. Never filter the status line.
 
 func TestEveryBusLineIsClassifiedAndCounted(t *testing.T) {
 	busDir, _ := fakes(t)
@@ -432,6 +440,8 @@ func TestWatchSuppressesStandingReprintInSameCall(t *testing.T) {
 	}
 }
 
+// 8. The watcher's own failure is loud.
+
 func TestThreeFailedPollsEndTheWatchLoudly(t *testing.T) {
 	t.Run("three in a row in one call", func(t *testing.T) {
 		busDir, _ := fakes(t)
@@ -526,6 +536,8 @@ func TestAnUnreadableEntryWakesUnderFinalOnly(t *testing.T) {
 	}
 }
 
+// 9. The tool stamps; a typed time is never trusted.
+
 func TestTheToolStampsAndATypedTimeIsData(t *testing.T) {
 	busDir, _ := fakes(t)
 	// A note stamped two hours ahead of the clock, with a future date in its
@@ -548,6 +560,8 @@ func TestTheToolStampsAndATypedTimeIsData(t *testing.T) {
 		t.Errorf("a time that arrived inside text was used as this tool's own clock:\n%s", r.stdout)
 	}
 }
+
+// 11. Delivery is the printed line, not the state write.
 
 func TestDeliveryIsThePrintedLine(t *testing.T) {
 	_, ghDir := fakes(t)
@@ -593,6 +607,9 @@ func TestDeliveryIsThePrintedLine(t *testing.T) {
 		t.Errorf("a third call over an unchanged world must be quiet:\n%s", third.all())
 	}
 }
+
+// 12. New mail reaches the checkout through the advance -- and through nothing
+// else this tool does.
 
 func TestNewMailReachesTheCheckoutThroughTheAdvance(t *testing.T) {
 	t.Run("without --advance-cursor nothing fetches, and it says so", func(t *testing.T) {

@@ -9,6 +9,10 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/wake"
 )
 
+// Rule numbers follow docs/SPEC-WAKE.md, "Tests this spec demands".
+//
+// 18. A stop is a verdict.
+
 func TestAStopIsAVerdict(t *testing.T) {
 	dir := t.TempDir()
 	state := filepath.Join(dir, "wake.state")
