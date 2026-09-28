@@ -33,7 +33,7 @@ nova-check corpus --ledger <file> --root <dir> --min-anchors <n>   # the materia
 nova-check hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <email>" [--paths <glob>,...] [--kind <kind>] [--max <n>] [--timeout <s>]   # the accept gate's four mechanical checks on a branch before you ask for a read: identity, out-of-path, stray-file, secret (exit 0 clean, 1 findings, 2 could not run)
 nova-check dogfood ledger (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>]   # one row per verb: who has run it, when, and whether it did what they needed
 nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] --receipts <dir>   # append one receipt, refusing a verb the list does not declare
-nova-check dogfood gate (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--require-all] [--allow-empty]   # exit 1 with the verbs no non-author has run and the edges nobody has cleared: the line a release calls
+nova-check dogfood gate (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--shipped <cmd dir>] [--require-all] [--allow-empty]   # exit 1 with the verbs no non-author has run and the edges nobody has cleared: the line a release calls
 nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir> --retired <file> --since <RFC3339|24h> [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>] [--certs <tsv>] [--state <file>] [--by <name>] [--json] [--timeout <n>]   # are we converging: one line per stream, now against --since, with the ratio and the trend
 ```
 
@@ -95,6 +95,9 @@ a verb the list does not declare. Each row also carries `open=<n>`, the findings
 open on that verb, printed whether it is zero or not. `gate` is the same read
 with an exit code: 1 on an open edge always, 1 on any **unmatched not-ok
 receipt**, and with `--require-all` on every verb no non-author has passed.
+`--shipped <cmd dir>` scopes the gate to the tools a release ships: a receipt
+naming a tool that is not under that `cmd/` is set aside and counted on
+`DOGFOOD NOTE shipped=<n> outside=<n> cmd=<dir>`, and judges nothing.
 
 **An edge is answered, not outlived.** It used to be cleared by anybody running
 the verb again later and finding nothing — so where two people dogfood the same
@@ -1090,7 +1093,9 @@ that nobody has run since and said it did, is an **open edge**, and an open edge
 --reason <why>"`. `--cli` defaults to `docs/CLI.md` beside the checkout the verb was already given
 (`--changelog` for `cut`, `--source` for `build`); `--receipts` defaults to `~/rowan-working/dogfood`
 when that directory exists, and a run with neither says `dogfood-gate=skipped` rather than passing
-quietly. `--no-dogfood-gate` needs `--reason <why>`, and the reason is printed, put on the release
+quietly. The gate judges the **shipped set** only: the tools under the checkout's `cmd/`. A receipt
+naming any other tool is set aside and counted on `RELEASE CUT NOTE dogfood-gate shipped=<n>
+outside=<n> cmd=<dir>`. `--no-dogfood-gate` needs `--reason <why>`, and the reason is printed, put on the release
 line as `dogfood=waived`, and written into the CHANGELOG section as `Dogfood gate waived: <why>`.
 Every release line carries `dogfood=ok|waived|skipped`. Glenn, 2026-09-18: a tool is done when it is
 tested, dogfooded by a non-author on real work, and the feedback is applied — see

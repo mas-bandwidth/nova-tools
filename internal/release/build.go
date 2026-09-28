@@ -108,7 +108,7 @@ func build(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	// releases reached four benches as dev builds, and `adopt` never asks what
 	// a release was gated on. Twenty-one binaries compiled and then refused is
 	// also twenty-one compiles nobody needed.
-	gate, err := dogfoodCheck("BUILD", o, deps, filepath.Join(o.source, "docs", "CLI.md"), out, errs)
+	gate, err := dogfoodCheck("BUILD", o, deps, o.source, out, errs)
 	if err != nil {
 		if errors.Is(err, errDogfood) {
 			return 2

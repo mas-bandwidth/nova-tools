@@ -116,7 +116,7 @@ func TestReadDogfoodFindsTheOpenEdge(t *testing.T) {
 	t.Parallel()
 
 	cli, receipts := oneOpenEdge(t)
-	v, err := ReadDogfood(cli, receipts)
+	v, err := ReadDogfood(cli, receipts, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +140,7 @@ func TestReadDogfoodIsQuietWhenTheEdgeWasAnswered(t *testing.T) {
 	t.Parallel()
 
 	cli, receipts := noOpenEdge(t)
-	v, err := ReadDogfood(cli, receipts)
+	v, err := ReadDogfood(cli, receipts, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestReadDogfoodRefusesABrokenReceipt(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(receipts, "broken.json"), []byte("{not json\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ReadDogfood(cli, receipts); err == nil {
+	if _, err := ReadDogfood(cli, receipts, ""); err == nil {
 		t.Fatal("a receipt that will not parse was read past")
 	}
 }
@@ -168,7 +168,7 @@ func TestReadDogfoodRefusesAReceiptsDirectoryThatIsNotThere(t *testing.T) {
 	t.Parallel()
 
 	cli, _ := noOpenEdge(t)
-	if _, err := ReadDogfood(cli, filepath.Join(t.TempDir(), "nowhere")); err == nil {
+	if _, err := ReadDogfood(cli, filepath.Join(t.TempDir(), "nowhere"), ""); err == nil {
 		t.Fatal("an absent receipts directory read as an empty one")
 	}
 }
@@ -328,6 +328,15 @@ func TestBuildRefusesOnAnOpenEdgeBeforeItCompilesAnything(t *testing.T) {
 
 	cli, receipts := oneOpenEdge(t)
 	source, outDir := sourceTree(t), t.TempDir()
+	// The edge is on a tool this build ships: the gate judges the source's
+	// cmd/, and a tool outside it could not hold the build.
+	shipped := filepath.Join(source, "cmd", "nova-example")
+	if err := os.MkdirAll(shipped, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(shipped, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	tc := &fakeToolchain{}
 	var o, e bytes.Buffer
 	code := Run("nova-update", []string{"build", "--version", "v0.16.0", "--out", outDir, "--source", source,
@@ -374,7 +383,7 @@ func TestTheGateIsASeam(t *testing.T) {
 
 	called := 0
 	deps := cutDeps(t, cutForge())
-	deps.Dogfood = func(cli, receipts string) (DogfoodVerdict, error) {
+	deps.Dogfood = func(cli, receipts, cmd string) (DogfoodVerdict, error) {
 		called++
 		return DogfoodVerdict{Verbs: 9, Open: 2, Findings: []string{"DOGFOOD GATE FAIL tool=a verb=b: one", "DOGFOOD GATE FAIL tool=c verb=d: two"}}, nil
 	}
@@ -399,7 +408,7 @@ func TestTheRefusalIsBounded(t *testing.T) {
 		many = append(many, "DOGFOOD GATE FAIL tool=nova-example verb=v: an edge")
 	}
 	deps := cutDeps(t, cutForge())
-	deps.Dogfood = func(cli, receipts string) (DogfoodVerdict, error) {
+	deps.Dogfood = func(cli, receipts, cmd string) (DogfoodVerdict, error) {
 		return DogfoodVerdict{Verbs: 40, Open: len(many), Findings: many}, nil
 	}
 	cli, receipts := noOpenEdge(t)
@@ -438,5 +447,65 @@ func TestTheHelpSaysWhatTheGateIs(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("release help does not name %q", want)
 		}
+	}
+}
+
+// THE GATE JUDGES WHAT SHIPS. The checkout's cmd/ is the shipped set: a parked
+// tool's open edge, and its not-ok receipt on a verb nobody declares, do not
+// hold the tag; the same edge on a shipped tool does.
+func TestCutJudgesOnlyTheToolsUnderCmd(t *testing.T) {
+	t.Parallel()
+
+	checkout := func(t *testing.T) (changelog, receipts string) {
+		t.Helper()
+		root := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		dogfoodCLIFile(t, filepath.Join(root, "docs"))
+		for _, tool := range []string{"nova-example", "nova-shipped"} {
+			dir := filepath.Join(root, "cmd", tool)
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		receipts = filepath.Join(root, "receipts")
+		if err := os.MkdirAll(receipts, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeReceipts(t, receipts,
+			receipt{Tool: "nova-parked", Verb: "fill", By: "Stella", At: "2026-09-18T10:00:00Z", OK: false, Notes: "parked under deprecated/"},
+			receipt{Tool: "nova-parked", Verb: "land", By: "Stella", At: "2026-09-18T10:01:00Z", OK: true, Notes: "Edges: (1) parked"},
+		)
+		return changelogIn(t, root), receipts
+	}
+
+	// Only parked tools have open items: the gate passes and says what it set aside.
+	changelog, receipts := checkout(t)
+	var out, errs bytes.Buffer
+	code := Run("nova-update", cutArgs(changelog, "--receipts", receipts), &out, &errs, cutDeps(t, cutForge()))
+	if code != 0 {
+		t.Fatalf("code=%d, want 0: a parked tool's open items held the tag\nstderr:%s", code, errs.String())
+	}
+	if !strings.Contains(out.String(), "dogfood=ok") {
+		t.Fatalf("the cut line does not say the gate passed:\n%s", out.String())
+	}
+	if want := "RELEASE CUT NOTE dogfood-gate shipped=2 outside=2 cmd="; !strings.Contains(errs.String(), want) {
+		t.Fatalf("no %q in:\n%s", want, errs.String())
+	}
+
+	// A shipped tool's open edge still refuses.
+	changelog, receipts = checkout(t)
+	writeReceipts(t, receipts,
+		receipt{Tool: "nova-example", Verb: "links", By: "Stella", At: "2026-09-18T11:00:00Z", OK: false, Notes: "refused a relative path"},
+	)
+	out.Reset()
+	errs.Reset()
+	code = Run("nova-update", cutArgs(changelog, "--receipts", receipts), &out, &errs, cutDeps(t, cutForge()))
+	if code != 2 || !strings.Contains(errs.String(), "reason=dogfood-gate open=1") {
+		t.Fatalf("code=%d, want 2 with open=1 for the shipped tool's edge\nstderr:%s", code, errs.String())
 	}
 }
