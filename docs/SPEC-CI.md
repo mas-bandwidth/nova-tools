@@ -2075,7 +2075,13 @@ read by `promotionSkip`) the comparison does not run and the run logs a NOTE
 saying why: the first parent is main's tip, so the set would be every
 deletion dev accumulated since the last promotion, each declared in the
 change that made it on dev, where this rule ran; main takes pull requests
-only, so no other event carries a promotion.
+only, so no other event carries a promotion. Once the promotion has landed,
+the `push` run on main and a `workflow_dispatch` at that sha (`GITHUB_REF`
+`refs/heads/main`, HEAD a two-parent merge) compare HEAD with its SECOND
+parent, dev's tip (`comparisonParent`, with a NOTE naming it): the set is
+what the merge itself deleted beyond dev, nothing for a true promotion and a
+real deletion for anything smuggled into the merge commit; a squash on main
+has one parent and is compared with it as everywhere.
 **The mistake it prevents.** A branch rebased with a stale tree that lacks
 files dev gained an hour before — a class test, its allowlist and its controls —
 undoes the fixes they held when it merges. Every check on the merge is green,
@@ -2098,14 +2104,17 @@ row green, a row naming no deletion red, an old row declaring nothing.
 `TestDeclaredRowsAddedReadsOnlyTheAddedRows` pin the two readers;
 `TestPromotionSkipReadsTheEvent` pins the promotion shape against its
 reversed witnesses (the same event into dev, a feature branch into main, a
-push, a merge-queue group, no environment). Every
+push, a merge-queue group, no environment);
+`TestComparisonParentReadsTheEventAndTheRef` pins the second-parent shape
+against its own (a squash on main, a merge on dev, a pull request's merge
+ref, no environment). Every
 workflow checks out with `fetch-depth: 2` so the first parent is in every
 checkout;
 a checkout without it is a red run naming the fetch depth, never a pass.
 **Its allowlist.** `internal/ci/testdata/deleted-tests.txt`, a log: a row
 is a declaration, not an exception, and it counts only in the change that
 adds it, so old rows may be trimmed and trimming weakens nothing.
-**Its remedy lines.** `<sha> (<subject>) deletes <file>, which its first
+**Its remedy lines.** `<sha> (<subject>) deletes <file>, which its
 parent <sha> had, and no row of internal/ci/testdata/deleted-tests.txt added
 in the same change declares it: restore the file (git checkout <parent> --
 <file>), or, if the deletion is meant, add the row <file> <why> to

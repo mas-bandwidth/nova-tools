@@ -36,7 +36,9 @@ func guardedByMergeRule(rel string) bool {
 // main's tip, so Deleted is every deletion dev accumulated since the last
 // promotion, each already declared in the change that made it on dev; the
 // class test recognises that pull request (promotionSkip) and does not run
-// the comparison on it.
+// the comparison on it; once the promotion has landed, the push run on main
+// and a workflow_dispatch at that sha compare the merge with its second
+// parent instead, dev's tip (comparisonParent).
 type mergeDeletions struct {
 	Head, Parent, Subject string
 	// Deleted is every path gone from the tree, renames excluded (-M).
@@ -48,10 +50,30 @@ type mergeDeletions struct {
 // readMergeDeletions compares HEAD's tree with its first parent's, through
 // the package's gitOut (issue2218.go: a bounded git in root).
 func readMergeDeletions(root string) (*mergeDeletions, error) {
-	parent, err := firstParent(root)
+	m, _, err := readMergeDeletionsFor(root, "", "")
+	return m, err
+}
+
+// readMergeDeletionsFor is readMergeDeletions with the comparison parent
+// chosen by comparisonParent from GitHub's event and ref: the second parent
+// for a merge on main under push or workflow_dispatch, the first otherwise.
+// The note, when there is one, names the parent used.
+func readMergeDeletionsFor(root, event, ref string) (*mergeDeletions, string, error) {
+	parents, err := commitParents(root)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
+	parent, note := comparisonParent(event, ref, parents)
+	if err := parentInCheckout(root, parent); err != nil {
+		return nil, "", err
+	}
+	m, err := readDeletionsAgainst(root, parent)
+	return m, note, err
+}
+
+// readDeletionsAgainst reads what HEAD's tree lacks that parent's had, and the
+// rows HEAD's change adds to the log relative to parent.
+func readDeletionsAgainst(root, parent string) (*mergeDeletions, error) {
 	head, err := gitOut(root, "rev-parse", "--short", "HEAD")
 	if err != nil {
 		return nil, err
@@ -87,9 +109,22 @@ func readMergeDeletions(root string) (*mergeDeletions, error) {
 // parents away in traversal and keeps them in the object. The SLEEPS ledger
 // rule (unitwaits_class_test.go) compares against the same commit.
 func firstParent(root string) (string, error) {
-	raw, err := gitOut(root, "cat-file", "-p", "HEAD")
+	parents, err := commitParents(root)
 	if err != nil {
 		return "", err
+	}
+	if err := parentInCheckout(root, parents[0]); err != nil {
+		return "", err
+	}
+	return parents[0], nil
+}
+
+// commitParents is HEAD's parents in order, read from the raw commit object;
+// a root commit is an error, since there is no merge to compare.
+func commitParents(root string) ([]string, error) {
+	raw, err := gitOut(root, "cat-file", "-p", "HEAD")
+	if err != nil {
+		return nil, err
 	}
 	var parents []string
 	for _, line := range strings.Split(raw, "\n") {
@@ -101,13 +136,37 @@ func firstParent(root string) (string, error) {
 		}
 	}
 	if len(parents) == 0 {
-		return "", fmt.Errorf("HEAD has no parent: there is no merge to compare")
+		return nil, fmt.Errorf("HEAD has no parent: there is no merge to compare")
 	}
-	parent := parents[0]
+	return parents, nil
+}
+
+// parentInCheckout is nil when the parent's commit object is in the checkout,
+// else the error naming the fetch depth every workflow uses for this rule.
+func parentInCheckout(root, parent string) error {
 	if _, err := gitOut(root, "cat-file", "-e", parent+"^{commit}"); err != nil {
-		return "", fmt.Errorf("HEAD's first parent %s is not in this checkout (a depth-1 fetch), so what the merge changed cannot be read; every workflow checks out with fetch-depth: 2 for this rule", parent[:9])
+		return fmt.Errorf("HEAD's parent %s is not in this checkout (a depth-1 fetch), so what the merge changed cannot be read; every workflow checks out with fetch-depth: 2 for this rule", parent[:9])
 	}
-	return parent, nil
+	return nil
+}
+
+// comparisonParent chooses which parent HEAD is compared with, from GitHub's
+// event and ref (GITHUB_EVENT_NAME, GITHUB_REF) and HEAD's parents in order.
+// It is the second parent exactly when HEAD is a two-parent merge, the ref is
+// refs/heads/main and the event is push or workflow_dispatch: the run on main
+// after a promotion lands, and certification dispatched at that sha. There
+// the first parent is main's old tip, and comparing with it would see every
+// deletion dev accumulated since the last promotion; the second parent is
+// dev's tip, and what HEAD lacks that it had is what the merge itself took
+// away beyond dev: nothing for a true promotion, and a real deletion for
+// anything smuggled into the merge commit. Everywhere else it is the first
+// parent: a squash on main (one parent), a merge on dev, a pull request's
+// merge ref, a local run with no environment.
+func comparisonParent(event, ref string, parents []string) (parent, note string) {
+	if len(parents) == 2 && ref == "refs/heads/main" && (event == "push" || event == "workflow_dispatch") {
+		return parents[1], "NOTE: " + event + " on " + ref + " at a merge commit: HEAD is compared with its second parent " + parents[1][:9] + " (dev's tip), so the set is what the merge itself deleted beyond dev; what it brought from dev was checked on dev's queue, change by change"
+	}
+	return parents[0], ""
 }
 
 // promotionSkip recognises a promotion of dev to main from GitHub's own event
@@ -161,7 +220,7 @@ func (m *mergeDeletions) findings() []string {
 		if _, ok := m.Declared[rel]; ok {
 			continue
 		}
-		out = append(out, fmt.Sprintf("%s (%s) deletes %s, which its first parent %s had, and no row of %s added in the same change declares it: "+
+		out = append(out, fmt.Sprintf("%s (%s) deletes %s, which its parent %s had, and no row of %s added in the same change declares it: "+
 			"restore the file (`git checkout %s -- %s`), or, if the deletion is meant, add the row `%s <why>` to %s in this change",
 			m.Head, m.Subject, rel, m.Parent, deletedTestsLogPath, m.Parent, rel, rel, deletedTestsLogPath))
 	}
@@ -201,9 +260,12 @@ func TestNoMergeDeletesATestFileUndeclared(t *testing.T) {
 		t.Log(note)
 		return
 	}
-	m, err := readMergeDeletions(repoTree(t).Root)
+	m, note, err := readMergeDeletionsFor(repoTree(t).Root, os.Getenv("GITHUB_EVENT_NAME"), os.Getenv("GITHUB_REF"))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if note != "" {
+		t.Log(note)
 	}
 	for _, f := range m.findings() {
 		t.Error(f)
@@ -337,6 +399,46 @@ func TestPromotionSkipReadsTheEvent(t *testing.T) {
 		}
 		if !skip && note != "" {
 			t.Errorf("%s: note = %q; want none when the comparison runs", tc.name, note)
+		}
+	}
+}
+
+// TestComparisonParentReadsTheEventAndTheRef pins the one shape compared with
+// its second parent, a two-parent merge on refs/heads/main under push or
+// workflow_dispatch, against its reversed witnesses: one parent on main (a
+// squash, compared with its first parent as everywhere), a merge on dev, a
+// pull request's merge ref (that case is promotionSkip's), and no
+// environment.
+func TestComparisonParentReadsTheEventAndTheRef(t *testing.T) {
+	t.Parallel()
+	one := []string{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+	two := []string{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+	for _, tc := range []struct {
+		name, event, ref string
+		parents          []string
+		second           bool
+	}{
+		{"push on main at a merge", "push", "refs/heads/main", two, true},
+		{"workflow_dispatch on main at a merge", "workflow_dispatch", "refs/heads/main", two, true},
+		{"push on main at a squash", "push", "refs/heads/main", one, false},
+		{"push on dev at a merge", "push", "refs/heads/dev", two, false},
+		{"a pull request's merge ref", "pull_request", "refs/pull/4549/merge", two, false},
+		{"merge_group on main's queue ref", "merge_group", "refs/heads/gh-readonly-queue/main/pr-1-aaaa", two, false},
+		{"no environment", "", "", two, false},
+	} {
+		parent, note := comparisonParent(tc.event, tc.ref, tc.parents)
+		want := tc.parents[0]
+		if tc.second {
+			want = tc.parents[1]
+		}
+		if parent != want {
+			t.Errorf("%s: comparisonParent(%q, %q, %d parents) = %s, want %s", tc.name, tc.event, tc.ref, len(tc.parents), parent[:9], want[:9])
+		}
+		if tc.second && (!strings.HasPrefix(note, "NOTE: ") || !strings.Contains(note, "second parent "+want[:9])) {
+			t.Errorf("%s: note = %q; want a NOTE naming the second parent", tc.name, note)
+		}
+		if !tc.second && note != "" {
+			t.Errorf("%s: note = %q; want none for the first parent", tc.name, note)
 		}
 	}
 }
