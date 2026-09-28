@@ -426,8 +426,16 @@ func (h *epochProperty) step(a epochAction) {
 				h.fail("refusal wrote state or returned a receipt")
 			}
 		} else {
+			wrote := memberStoreImage(h.t, c)
 			allowed := h.writeKeys(a, before, after)
-			if keys := unexpectedEpochWrites(image, memberStoreImage(h.t, c), allowed); len(keys) != 0 {
+			// tables is not an allowed key. A matching registry is the only
+			// write there that this action may make.
+			if drift := h.registryDrift(c, a); drift != "" {
+				h.fail("store%d tables registry: %s", i, drift)
+			}
+			keys := unexpectedEpochWrites(image, wrote, allowed)
+			keys = slices.DeleteFunc(keys, func(key string) bool { return key == ntable.Registry })
+			if len(keys) != 0 {
 				h.fail("store%d accepted action changed keys outside model: %v", i, keys)
 			}
 			event := h.event(c, a.table)
@@ -457,8 +465,11 @@ func (h *epochProperty) writeKeys(a epochAction, before, after *epochTableState)
 		ntable.RevisionKey(a.table):                           true,
 		ntable.ChangesKey(a.table):                            true,
 	}
+	// First materialization writes the template definition. :identity is the
+	// epoch config (epoch_key, epoch_field, member_prefix), not that
+	// definition; this action writes it, and the run fails if the key is
+	// omitted from the footprint. The registry set is not an allowed key.
 	if !h.template[a.table] {
-		allowed["tables"] = true
 		allowed[ntable.DefKey(a.table)] = true
 		allowed[ntable.DefKey(a.table)+":identity"] = true
 	}
@@ -494,6 +505,44 @@ func (h *epochProperty) writeKeys(a epochAction, before, after *epochTableState)
 		}
 	}
 	return allowed
+}
+
+// registryDrift is empty when the tables set is exactly the names the model
+// has created, including the table this accepted action materializes.
+// Any other membership, or a key that is not that set, is drift.
+func (h *epochProperty) registryDrift(c *redis.Client, a epochAction) string {
+	got, err := c.SMembers(h.ctx, ntable.Registry).Result()
+	if err != nil {
+		return err.Error()
+	}
+	want := map[string]bool{}
+	for name, created := range h.template {
+		if created {
+			want[name] = true
+		}
+	}
+	if !h.template[a.table] {
+		want[a.table] = true
+	}
+	if len(got) == len(want) {
+		same := true
+		for _, name := range got {
+			if !want[name] {
+				same = false
+				break
+			}
+		}
+		if same {
+			return ""
+		}
+	}
+	slices.Sort(got)
+	expected := make([]string, 0, len(want))
+	for name := range want {
+		expected = append(expected, name)
+	}
+	slices.Sort(expected)
+	return fmt.Sprintf("members %v, model created %v", got, expected)
 }
 
 func unexpectedEpochWrites(before, after map[string]string, allowed map[string]bool) []string {
