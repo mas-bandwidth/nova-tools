@@ -71,7 +71,7 @@ func (app *application) cmdRowAdd(args []string, stdout, stderr io.Writer) int {
 			trips := st.CountTrips()
 			n, err := ntable.RowsAddWithSpec(ctx, c, pos[0], pos[1:], spec, *write)
 			if err != nil {
-				return storeRefusal(stderr, verb, err)
+				return st.refusal(stderr, verb, err)
 			}
 			fmt.Fprintf(stdout, "TABLE ROWS ADD table=%s rows=%d trips=%d\n", pos[0], n, trips.N())
 			printReceipt(stdout, write, *receipt)
@@ -100,7 +100,7 @@ func (app *application) cmdRowAdd(args []string, stdout, stderr io.Writer) int {
 	trips := st.CountTrips()
 	row, err := ntable.RowAdd(ctx, c, pos[0], pos[1], spec, *write)
 	if err != nil {
-		return storeRefusal(stderr, verb, err)
+		return st.refusal(stderr, verb, err)
 	}
 	bound := 0
 	for _, cell := range row.Cells {
@@ -134,7 +134,7 @@ func (app *application) cmdRowDel(args []string, stdout, stderr io.Writer) int {
 	trips := st.CountTrips()
 	existed, err := ntable.RowDel(ctx, c, pos[0], pos[1], *write)
 	if err != nil {
-		return storeRefusal(stderr, verb, err)
+		return st.refusal(stderr, verb, err)
 	}
 	was := 0
 	if existed {
@@ -176,7 +176,7 @@ func (app *application) cmdRowSet(args []string, stdout, stderr io.Writer) int {
 	trips := st.CountTrips()
 	n, err := ntable.RowSet(ctx, c, pos[0], pos[1], texts, *write)
 	if err != nil {
-		return storeRefusal(stderr, verb, err)
+		return st.refusal(stderr, verb, err)
 	}
 	fmt.Fprintf(stdout, "TABLE ROW SET table=%s row=%s cols=%d trips=%d\n", pos[0], pos[1], n, trips.N())
 	printReceipt(stdout, write, *receipt)
@@ -209,7 +209,7 @@ func (app *application) cmdRowsHide(args []string, stdout, stderr io.Writer, hid
 	trips := st.CountTrips()
 	n, err := ntable.RowsHide(ctx, c, pos[0], hide, pos[1:], *write)
 	if err != nil {
-		return storeRefusal(stderr, verb, err)
+		return st.refusal(stderr, verb, err)
 	}
 	word := "shown"
 	if hide {
