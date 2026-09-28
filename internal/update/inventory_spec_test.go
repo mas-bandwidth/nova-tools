@@ -138,7 +138,10 @@ func TestSnapshotRefusesAMixedSetNamingThePair(t *testing.T) {
 	if code != 2 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
-	need(t, stderr, "nova-a", "nova-b", "v1.0.0", "v2.0.0")
+	need(t, stderr, "nova-a", "nova-b", "v1.0.0", "v2.0.0", "nova-update release build --version", "nova-update release install --from")
+	if strings.Contains(stderr, "--sha") {
+		t.Fatalf("the remedy names a flag apply does not take: %s", stderr)
+	}
 	if _, err := os.Stat(out); err == nil {
 		t.Fatalf("a mixed set was written to --out")
 	}
