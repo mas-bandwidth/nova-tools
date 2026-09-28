@@ -9,7 +9,7 @@ import (
 )
 
 // windows_bench_standard_test.go holds docs/BENCH-STANDARD-WINDOWS.md against the
-// two facts in it that rot on their own, and against the README that points at it.
+// two facts in it that rot on their own. Fleet provisioning stays off the adopter README.
 //
 // The page is a provisioning standard for a machine nobody has yet: every word of
 // it will be read once, by somebody at a keyboard in front of a new box, with no
@@ -88,12 +88,12 @@ func TestWindowsBenchStandardCarriesEveryWindowsSandboxRule(t *testing.T) {
 	}
 }
 
-func TestReadmePointsAtTheWindowsBenchStandard(t *testing.T) {
+func TestReadmeKeepsFleetProvisioningOut(t *testing.T) {
 	t.Parallel()
 
 	readme := readWindowsFile(t, winReadmePath)
-	if !strings.Contains(readme, "docs/BENCH-STANDARD-WINDOWS.md") {
-		t.Error("README's `Where to go next` list must name the Windows bench standard; a provisioning page nobody can find is a page provisioned from memory")
+	if strings.Contains(readme, "docs/BENCH-STANDARD-WINDOWS.md") {
+		t.Error("README must focus on adopting tools; fleet provisioning belongs in the operator documentation")
 	}
 }
 
