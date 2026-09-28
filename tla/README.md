@@ -68,6 +68,8 @@ go run ./tools/sessiontrace --jar /path/to/tla2tools.jar --out /tmp/session-trac
 ```
 
 The runner has one 120-second budget for capture, TLC and negative controls.
+Go dependencies must already be cached; capture disables module downloads and
+automatic toolchain selection.
 It retains the trace, source/model/jar hashes, generated modules and TLC logs.
 The generated module invokes `TableSession` actions and checks observed line
 statuses, final exit, unread input and termination reason. Its input domain is

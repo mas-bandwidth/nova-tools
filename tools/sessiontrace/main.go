@@ -391,7 +391,8 @@ func run(jar, out string, stdout io.Writer) error {
 	cmd := exec.CommandContext(ctx, "go", "test", "-tags", "functional", "-p", "2", "-parallel", "2",
 		"-count=1", "-timeout", "50s", "-json", "./cmd/nova-table", "-run", "^TestShellRandomSequencesProduceSessionTrace$")
 	cmd.Dir, cmd.Stdout, cmd.Stderr = root, log, log
-	cmd.Env = append(os.Environ(), "GOMAXPROCS=2", "NOVA_CI=1")
+	cmd.Env = append(os.Environ(), "GOMAXPROCS=2", "NOVA_CI=1",
+		"GOTOOLCHAIN=local", "GOPROXY=off", "GOSUMDB=off")
 	runErr, closeErr := cmd.Run(), log.Close()
 	if runErr != nil {
 		return fmt.Errorf("capture failed: %s: %w", capture, runErr)
