@@ -43,6 +43,7 @@ type Conn struct {
 	login  login
 	hide   func(string) string
 	dialer *firstDial
+	trips  *Trips
 }
 
 // Open resolves the options (Resolve: what was given first, then getenv's
@@ -66,6 +67,14 @@ type Conn struct {
 // An error is one of this package's (Classify): Unreachable, AuthRefused
 // or Other, with one line that names what was tried and the next thing to
 // do, and it never holds the password. On an error nothing is left open.
+//
+// The connection Open returns explains its own failures: any command or
+// pipeline on its Client whose error Classify calls Unreachable or
+// AuthRefused comes back as Explain would make it, in the command's Err
+// and in what Exec returns. Every other error (redis.Nil, a refusal the
+// store wrote, a cancelled context, a closed client) comes back as go-redis
+// made it. So a tool reads Failed on what a command returned and needs no
+// wrapper of its own around the client.
 func Open(ctx context.Context, o Options, getenv func(string) string) (*Conn, error) {
 	return open(ctx, o, getenv, netDial)
 }
@@ -98,7 +107,8 @@ func open(ctx context.Context, o Options, getenv func(string) string, dial dialF
 		},
 		Protocol: 3,
 
-		DialTimeout:           DialTimeout,
+		DialTimeout:           dialBound(l.DialTimeout),
+		PoolSize:              max(l.PoolSize, 0),
 		ReadTimeout:           ReadTimeout,
 		WriteTimeout:          WriteTimeout,
 		PoolTimeout:           PoolTimeout,
@@ -121,10 +131,18 @@ func open(ctx context.Context, o Options, getenv func(string) string, dial dialF
 		},
 	})
 
+	// The connection's counter (Trips) is attached before the handshake, and
+	// the probe is sent marked as setup: the handshake's commands count in
+	// Setup, and so does the probe, unless it was taken and answered here,
+	// which cost no round trip.
+	c.trips = CountTrips(c.client)
 	ctx, cancel := context.WithTimeout(ctx, OpenTimeout)
 	defer cancel()
-	err = c.client.Do(ctx, probe).Err()
+	err = c.client.Do(context.WithValue(ctx, insideTripKey{c.trips}, true), probe).Err()
 	first.done()
+	if f := first.first.Load(); f != nil && f.took.Load() {
+		c.trips.setup.Add(-1)
+	}
 	if err != nil {
 		// Closing the client closes every connection it holds, and the one
 		// Open dialed is closed here as well: go-redis drops a connection
@@ -138,9 +156,22 @@ func open(ctx context.Context, o Options, getenv func(string) string, dial dialF
 		// a connection left open by a failed Open.
 		_ = c.client.Close()
 		first.hangUp()
-		return nil, explain(l, c.hide, err, true)
+		return nil, explain(l, c.hide, err, Classify(err), true)
 	}
+	// From here on the connection explains its own failures (explainer):
+	// installed after the probe, so Open's handshake is read as it came and
+	// Open's error is its own.
+	c.client.AddHook(explainer{c})
 	return c, nil
+}
+
+// dialBound is the bound of every dial: the caller's, when it is shorter
+// than the package's.
+func dialBound(d time.Duration) time.Duration {
+	if d <= 0 || d > DialTimeout {
+		return DialTimeout
+	}
+	return d
 }
 
 // quiet is go-redis's logger under this package: nothing. A failure comes
@@ -153,6 +184,13 @@ type quiet struct{}
 func (quiet) Printf(context.Context, string, ...interface{}) {}
 
 var quietOnce sync.Once
+
+// Trips is the connection's own counter of round trips (Trips), attached by
+// Open before its handshake: Setup holds Open's handshake, one round trip
+// (HELLO, carrying the login), and the handshake of every connection dialed
+// since; N holds every command and pipeline of the caller's. A tool that
+// opens a connection per verb prints it on its receipt as it is.
+func (c *Conn) Trips() *Trips { return c.trips }
 
 // Client is the go-redis client, for the caller's commands and pipelines.
 // It is the same client for the life of the connection.
@@ -186,12 +224,14 @@ func (c *Conn) String() string { return oneline.Escape(c.login.tried()) }
 // this package's error: its class (Classify), and one line that names the
 // store and the login that were tried, what came back and the next thing to
 // do, with the password taken out of any text that held it. nil stays nil,
-// and an error that is already this package's comes back as it is.
+// and an error that is already this package's, or wraps one, comes back as
+// it is, so explaining twice is one line: a caller that explains what the
+// connection's hook already explained (Open) changes nothing.
 func (c *Conn) Explain(err error) error {
 	if err == nil || isFailure(err) {
 		return err
 	}
-	return explain(c.login, c.hide, err, false)
+	return explain(c.login, c.hide, err, Classify(err), false)
 }
 
 // The probe: the command Open sends through go-redis to make it dial and
@@ -334,6 +374,10 @@ type firstConn struct {
 	net.Conn
 	state  atomic.Int32
 	answer atomic.Int32 // bytes of probeAnswer already read
+	// took records that the probe was taken, for Open's count of its round
+	// trips: the model's taken, a record of the transition armed to
+	// answering and not a state of its own.
+	took atomic.Bool
 }
 
 // Read reads from the store, except for the answer to a probe taken by
@@ -366,6 +410,7 @@ func (c *firstConn) Read(p []byte) (int, error) {
 func (c *firstConn) Write(p []byte) (int, error) {
 	if c.state.Load() == armed {
 		if bytes.Equal(p, []byte(probeWire)) && c.state.CompareAndSwap(armed, answering) {
+			c.took.Store(true)
 			return len(p), nil
 		}
 		c.state.CompareAndSwap(armed, inert)

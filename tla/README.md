@@ -342,6 +342,18 @@ the set because of the cap.
 | `MCFirstConnBrokenLate` | TakenOnlyWhenDue violated in 5 states: `%` read, Open returns, the probe written after it is taken (:293 missing) |
 | `MCFirstConnBrokenHang` | AnswerDelivered violated: the probe taken, no read is possible, the client waits for an answer that never comes (:257 reading the store) |
 
+The failure edge after Open is classified outside the model, and adds no
+state or transition to it: the hook `redisconn.Open` installs once the
+handshake is done (`internal/redisconn/explainer.go`) reads a command's failure
+by where it stands against the command, Unreachable before anything of it was
+written (a dial refused, a lost setup), AuthRefused for a refused login, and
+Unconfirmed after it was written (the reply lost; the write may have
+committed), and rewrites the error, sending and reading nothing. The pool's
+size, the dial's bound, a password handed over from memory and the count of
+the handshake's round trips (read from `firstConn`'s record that the probe
+was taken, the model's `taken`) change no action either; TLC was not rerun
+for a change of comments only.
+
 None of the seven was a defect of the code at f6ec9e2b8: `firstconn_test.go`
 holds the same rules over every order of the seven events up to six and over
 long orders. Each is a misimplementation the model is shown to catch. The

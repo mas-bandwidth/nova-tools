@@ -499,7 +499,9 @@ func TestTripsAgainstTheStore(t *testing.T) {
 		if err == nil {
 			break
 		}
-		if sent == 2 || redisconn.Classify(err) != redisconn.Unreachable {
+		// A command written on the connection the store hung up on lost
+		// its reply: Unconfirmed, never Unreachable.
+		if sent == 2 || redisconn.Classify(err) != redisconn.Unconfirmed {
 			t.Fatalf("command %d after the store hung up: %v", sent, err)
 		}
 	}
@@ -547,7 +549,7 @@ func TestADeadConnectionIsFoundBeforeItIsUsed(t *testing.T) {
 			t.Fatalf("round %d: the store hung up on %d connections, %v; want 1", i, n, err)
 		}
 		if err := conn.Client().Set(ctx, "k", "v", 0).Err(); err != nil {
-			if redisconn.Classify(err) != redisconn.Unreachable {
+			if redisconn.Classify(err) != redisconn.Unconfirmed {
 				t.Fatalf("round %d: %v", i, err)
 			}
 			failed++

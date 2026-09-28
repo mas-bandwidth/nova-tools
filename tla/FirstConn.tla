@@ -65,6 +65,19 @@
 \* first and comes alone, before any of the store's bytes still unread;
 \* AnswerStandsInPlace states that.
 \*
+\* The failure edge, classified (redisconn/explainer.go, installed by Open
+\* after OpenReturns; no state or transition of this module). A failure of a
+\* command after Open is one of three by where it stands against the command:
+\* before anything of it was written (a dial refused, or the setup of a
+\* connection dialed for it lost: Unreachable), the login refused
+\* (AuthRefused), or after it was written (a reply lost: Unconfirmed, the
+\* write may have committed). The hook reads the failure and rewrites the
+\* error; it sends nothing, reads nothing and keeps no state of the
+\* connection's (only, for one call, what failed inside it), so every
+\* action here is as it was. Nor do Options.PoolSize, Options.DialTimeout,
+\* Options.Password or Conn.Trips (a count of round trips, the probe taken
+\* read from the firstConn's record of this module's taken) add one.
+\*
 \* Not here: a Read racing a Write (they alternate in go-redis; the code
 \* uses compare-and-swap so a lost race is a travelled probe, never a wrong
 \* answer), a write that resembles the probe without being it byte for byte,

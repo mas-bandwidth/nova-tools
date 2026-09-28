@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -422,8 +423,10 @@ func TestCommandsAreBounded(t *testing.T) {
 			if took != c.after {
 				t.Errorf("%s: the command returned after %v; want %v", c.name, took, c.after)
 			}
-			if got := Classify(err); got != Unreachable {
-				t.Errorf("%s: %v is %v; want %v", c.name, err, got, Unreachable)
+			// The command was written and its reply never came: the store
+			// may have done it.
+			if got := Classify(err); got != Unconfirmed {
+				t.Errorf("%s: %v is %v; want %v", c.name, err, got, Unconfirmed)
 			}
 			if got := store.commands(); !reflect.DeepEqual(got, []string{"1: get key"}) {
 				t.Errorf("%s: the store received %q; want the command once", c.name, got)
@@ -520,8 +523,8 @@ func TestACommandIsSentOnceAndABrokenConnectionIsDialedOnce(t *testing.T) {
 	store.commands()
 	ctx := context.Background()
 	err = conn.Client().Incr(ctx, "n").Err()
-	if got := Classify(err); got != Unreachable {
-		t.Errorf("the command the drop met = %v, %v; want %v", err, got, Unreachable)
+	if got := Classify(err); got != Unconfirmed {
+		t.Errorf("the command the drop met = %v, %v; want %v: it was sent", err, got, Unconfirmed)
 	}
 	if got := store.commands(); !reflect.DeepEqual(got, []string{"1: incr n"}) {
 		t.Errorf("the store received %q; want the command once", got)
@@ -691,12 +694,14 @@ func TestExplain(t *testing.T) {
 	}{
 		{refused, Other,
 			tried + "failed: WRONGTYPE Operation against a key holding the wrong kind of value; next: the store answered, so the connection stands: read the refusal as the command's own"},
-		{fmt.Errorf("row add: %w", io.EOF), Unreachable,
-			tried + "unreachable: row add: EOF; next: start the store or correct the address, which was given to this tool"},
+		{fmt.Errorf("row add: %w", io.EOF), Unconfirmed,
+			tried + "reply lost after the command was sent: row add: EOF; next: the write may have committed, so read it back before retrying"},
+		{&net.OpError{Op: "dial", Net: "tcp", Err: os.NewSyscallError("connect", syscall.ECONNREFUSED)}, Unreachable,
+			tried + "unreachable: dial tcp: connect: connection refused; next: start the store or correct the address, which was given to this tool"},
 		{errors.New("NOAUTH Authentication required."), AuthRefused,
 			tried + "login refused: NOAUTH Authentication required.; next: check that PW holds the password of bench and that the store has that user switched on"},
 		{context.Canceled, Other,
-			tried + "failed: context canceled; next: run it again: it was cancelled before the store answered"},
+			tried + "failed: context canceled; next: it was cancelled before its reply was read, so a write may have committed: read it back before running it again"},
 		{errors.New("two\nlines\x1b[2J"), Other,
 			tried + `failed: two\x0alines\x1b[2J; next: the store answered, so the connection stands: read the refusal as the command's own`},
 		{errors.New("ERR unknown command `hello`, with args beginning with: `3`, `auth`, `bench`, `s3cret`"), Other,
