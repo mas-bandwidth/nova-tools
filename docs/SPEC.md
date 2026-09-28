@@ -1941,7 +1941,10 @@ replaces a box**: anything already at the path — a blown box, a clear one,
 bytes that are not a box — is left byte for byte, and the run prints `INIT
 FAIL box=<path>: …` at exit 1, because replacing a box is the lockdown reset
 this tool does not have. The create is the write below, linked into place
-rather than renamed, so it is atomic and exclusive at once.
+rather than renamed, so it is atomic and exclusive at once. Printed `init` and
+`status` remedies preserve the exact box path as one POSIX-shell argument,
+including quotes and trailing newlines; control bytes are encoded so the
+refusal stays one line.
 
 **The write is temp-file + fsync + rename** in the box's own directory, so a
 crash leaves the old box or the new one, never a fragment. The box is written
