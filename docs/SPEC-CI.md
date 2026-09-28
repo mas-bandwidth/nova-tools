@@ -242,8 +242,8 @@ nova-ci help`.
 
 **The budget is in one place.** The verb judges a LIVE run against the budgets
 it is handed; there is no second budget and no recorded table a change is judged
-against. The unit tier's budgets and where each is enforced are the next two
-paragraphs.
+against. The unit tier's budgets and where each is enforced are *The unit
+tier's budgets* and *A budget verdict is the same on any machine* below.
 
 **The mistake it prevents.** A package can sit at 120 seconds in the suite with
 nobody noticing when nothing sums the per-package elapsed time `go test -json`
@@ -1274,12 +1274,13 @@ that makes a test pass.
 in the grammar `<tool> <identity> <goos>/<goarch> <go version>` followed by any
 number of `key=value` extras — the grammar `internal/buildinfo` both writes and
 reads, and `docs/SPEC.md` states once.
-**The mistake it prevents.** `nova-version snapshot --bin ~/.local/bin` refuses
-an entire install, exit 2, when one tool prints five tokens where the reader
-wants four, or a line of a different shape (`SANDBOX VERSION tool=...
-version=...`). Two shapes mean every reader of a version line carries its own
-tolerant parser, and a tool that says one more true thing about itself breaks
-them one at a time.
+**The mistake it prevents.** A version line of a different shape (`SANDBOX
+VERSION tool=... version=...`) is refused by every reader, and
+`nova-version snapshot --bin ~/.local/bin` refuses the whole install over one
+such tool, exit 2. One grammar with `key=value` extras means a tool can say one
+more true thing about itself — `snapshot` reads the four tokens through
+`internal/buildinfo.Parse` and accepts the extras — while two shapes would mean
+every reader carries its own tolerant parser.
 **The test.** `TestEveryToolPrintsTheOneVersionLine` and
 `TestTheVersionGrammarIsSpelledOutOnceInTheSpec`
 (`internal/ci/version_class_test.go`). The first builds every `cmd/nova-*` in
@@ -1317,7 +1318,7 @@ which holds the other half against this package's own directory.
 `<name> <reason>` per line, in three groups: the files a specification has
 PLANNED and nobody has written yet, the invented names a document uses to show the SHAPE of a path
 (`.github/scripts/foo.sh`, `docs/history`), and the paths that live in another
-tree — another repository, another branch, or a file under `deprecated/`. Checked in BOTH
+tree — another repository, another branch, or a retired file. Checked in BOTH
 directions, and the second direction has two spellings: a listed name nothing
 writes any more is a stale row, and a listed name that is IN the tree now is the
 good red — the planned file was written, so the row goes on the same day.
@@ -1376,13 +1377,15 @@ everywhere else.
 **The mistake it prevents.** A build tag is how this tree takes a test off the
 per-change path, and a plain `go test` over the tree compiles the file away
 silently. So a tag no scheduled job passes to `go test -tags` is not a slower
-tier, it is a deleted test that still looks like a test in the tree — the one
-real end-to-end run of the sandbox, a real APFS volume made, used and destroyed,
-is exactly such a file (`//go:build darwin && novadisk`). Worse than uncovered:
-`internal/ci`'s net checker EXEMPTS a file carrying `//go:build nightly` or
-`//go:build soak` from the no-real-network rule (`ci_net.go`, `ci_net_test.go`
-cases 3 and 4), so with no workflow running either tag a real-network test could
-be written, waved through by the checker, and never execute once.
+tier, it is a deleted test that still looks like a test in the tree. The one
+real end-to-end run of the sandbox, a real APFS volume made, used and destroyed
+(`//go:build darwin && novadisk`), is held this way: `nightly-slow.yml` runs tag
+`novadisk` on `macos-latest` on its schedule. Worse than uncovered would be the
+net checker's exemption: `internal/ci` EXEMPTS a file carrying `//go:build
+nightly` or `//go:build soak` from the no-real-network rule (`ci_net.go`,
+`ci_net_test.go` cases 3 and 4), so with no workflow running either tag a
+real-network test could be written, waved through by the checker, and never
+execute once.
 **The test.** `TestEveryTestBuildTagIsRunBySomeScheduledJob`,
 `TestTheNetworkExemptTagsHaveAHomeInTheSchedule` and
 `TestSomeScheduledJobRunsTheRaceDetector`
@@ -1451,9 +1454,11 @@ portability — not at cut time, where it would have cost nothing.
 **The test.** `TestNoCardTemplateCarriesAnOSSpecificCommand`
 (`internal/ci/ci_cardtemplates_test.go`), over the checker in
 `internal/ci/ci_cardtemplates.go`, which reads every `*.md` and `*.card` under
-`CardTemplateDirs` (`docs/templates`, `tools/templates`) as
-text. A directory that is not there yet is skipped; a run that reads NO
-template at all is red, because that is how the directory list goes stale.
+`CardTemplateDirs` as text, and over every card template `swarm.TemplateNames()`
+names (read through `swarm.Template`). Neither directory in `CardTemplateDirs`
+exists in the tree, so the templates the rule reads are the `swarm.TemplateNames()`
+ones; a directory that is not there is skipped, and a run that reads NO template
+at all is red, because that is how the list goes stale.
 **Its allowlist.** `internal/ci/testdata/cardtemplate_allowlist.txt`, one
 `file spell date reason` per row — empty, matched by file and spelling and never by line; shrink-only in both
 directions, so a row whose spelling has left is as red as a spelling with no
@@ -1515,7 +1520,8 @@ The linux side of the agreement is the linux provisioning standard:
 `NOVA_TOOLCHAIN_ROOTS` markers and drifts on a missing one. A Mac bench has no
 script standard, because a Mac's toolchains are installed rather than
 provisioned into a home, so the darwin side is the wall's list alone.
-`docs/CLI.md` names every granted root.
+The granted roots are the one list in `internal/swarm/toolchain.go`
+(`toolchainRoots`, per GOOS, each with its kind).
 **The mistake it prevents.** Two contracts that name the same paths in two
 places disagree: a provisioning standard that puts Go under `~/sdk` beside a
 wall that names no toolchain root and pins `GOTOOLCHAIN=local` denies every Go
@@ -1632,14 +1638,17 @@ number, so a repair made in five of six copies is found rather than passing on
 the first.
 **Its allowlist.** None. Every copy of the step is held to the same shape; a
 copy that needs an exception is a copy that should not exist.
-**Its remedy lines.** `the cleanup step still refuses a workspace with no .git;
-it runs before checkout, so a runner whose workspace does not exist yet goes red
-before a line of the repository is read`; its two companions for a
-dropped `[ -n … ] || exit 1` refusal and a missing `[ -d … ] || exit 0` guard;
-and, for the belt, `the cleanup step runs `find … -exec rm -rf` with no
-`[ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0` belt in front of it; a workspace
-that exists but is not a checkout of this repository must be left alone rather
-than emptied`.
+**Its remedy lines.** Each is prefixed `occurrence <i> of <n> (ci.yml line <l>): `:
+``the cleanup step still refuses a workspace with no .git; it runs before
+checkout, so a runner whose workspace does not exist yet goes red before a line
+of the repository is read``; ``the cleanup step no longer refuses an empty
+GITHUB_WORKSPACE (`[ -n "${GITHUB_WORKSPACE}" ] || exit 1`); a missing workspace
+is still worth refusing``; ``the cleanup step has no `[ -d "${GITHUB_WORKSPACE}" ]
+|| exit 0` guard; a missing workspace directory is the normal first-run state
+and must continue``; and, for the belt, ``the cleanup step runs `find
+"${GITHUB_WORKSPACE}" … -exec rm -rf` with no `[ -d "${GITHUB_WORKSPACE}/.git" ]
+|| exit 0` belt in front of it; a workspace that exists but is not a checkout of
+this repository must be left alone rather than emptied``.
 **Its narrowings.** It matches the step by its `- name:` text, so a copy renamed
 or a cleanup inlined into another step would not be counted; and it reads the
 workflow as text, so a value built elsewhere and interpolated in is invisible to
@@ -1961,9 +1970,12 @@ field of the row from the run's own context — `--repo`, `--sha` (the PR head,
 else `github.sha`), `--run-id`, `--pr`, `--workflow`, `--conclusion`
 (`job.status`) — and nothing the row does not carry (`--job`, `--event`,
 `--head-branch`, `--base-branch`). It never calls `curl`, `gh api` or
-`api.github.com`, never runs an installed receipt writer (the nova-secrets
-wrapper is the one installed binary it runs), and never probes an installed
-binary's flags or version.
+`api.github.com`. Its run block carries exactly one installed tool path, the
+`"$HOME/.local/bin/nova-secrets" exec` wrapper, and none of: any other installed
+tool path (`~/.local/bin`, `.local/bin/nova-ci`), a parked tool's name, the
+words `installed`, `RECEIPT WRITER`, `probe` or `version`, `flag provided but
+not defined`, `command -v nova` or `which nova` — so it neither runs nor probes
+an installed build.
 **The mistake it prevents.** With the signed webhook receiver behind a tailscale
 funnel kept off by design, and nothing allowed to poll GitHub for a check state
 (`TestNoPollingPathsRemain`), `ev:github` stays empty unless the run reports
