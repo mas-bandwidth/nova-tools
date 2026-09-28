@@ -24,10 +24,8 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `filelock/` | process-exclusive file locks with holder stamps and state probing | `go test ./internal/filelock` | `go test ./internal/filelock` |
 | `fleet/` | runner fleet discovery and status | `go test ./internal/fleet` | `go test ./internal/fleet` |
 | `friendread/` | per-friend read done counts | `go test ./internal/friendread` | `go test ./internal/friendread` |
-| `friends/` | friend registry and signatures | `go test ./internal/friends` | `go test ./internal/friends` |
 | `fuse/` | workspace isolation boundaries | `go test ./internal/fuse` | `go test ./internal/fuse` |
 | `gh/` | the one GitHub client: every call counted per verb, one paced writer, events over polling (#4343) | `go test ./internal/gh` | `go test ./internal/gh` |
-| `ghcapture/` | read-only GitHub issue adapter for nova-work | `go test ./internal/ghcapture/...` | `go test ./internal/ghcapture/...` |
 | [ghevent/](ghevent/AGENTS.md) | GitHub webhook to Redis stream | `go test ./internal/ghevent` | `go test ./internal/ghevent` |
 | `goenv/` | Go environment scrubber for child processes | `go test ./internal/goenv` | `go test ./internal/goenv` |
 | `hygiene/` | clean checkout and leak assertions | `go test ./internal/hygiene` | `go test ./internal/hygiene` |
@@ -35,7 +33,6 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `jevcalib/` | Jev prompt files and the calibration rule | `go test ./internal/jevcalib` | `go test ./internal/jevcalib` |
 | `jobs/` | background job queues and state | `go test ./internal/jobs` | `go test ./internal/jobs` |
 | `keyshape/` | cryptographic key format verification | `go test ./internal/keyshape` | `go test ./internal/keyshape` |
-| `landed/` | did the work land in the base branch | `go test ./internal/landed` | `go test ./internal/landed` |
 | `lanes/` | lane cursor and dispatch isolation | `go test ./internal/lanes` | `go test ./internal/lanes` |
 | `log/` | structured logging helpers | `go test ./internal/log` | `go test ./internal/log` |
 | `memindex/` | memory vector and text index | `go test ./internal/memindex` | `go test ./internal/memindex` |
@@ -75,7 +72,5 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `typedrec/` | typed RESULT record contract, parser and legacy adapter | `go test ./internal/typedrec` | `go test ./internal/typedrec` |
 | `update/` | binary updater and checksum verifier | `go test ./internal/update` | `go test ./internal/update` |
 | `wake/` | slot leases and heartbeat monitors | `go test ./internal/wake` | `go test ./internal/wake` |
-| `workclient/` | client bindings for nova-work daemon | `go test ./internal/workclient` | `go test ./internal/workclient` |
 | `worklang/` | worklang s-expression evaluator | `go test ./internal/worklang` | `go test ./internal/worklang` |
-| `workreconcile/` | GitHub issue import and work reconcile | `go test ./internal/workreconcile` | `go test ./internal/workreconcile` |
 | `yield/` | CI over work: a copy or local test run steps itself to nice 15 before it execs (nova-tools#4293) | `go test ./internal/yield` | `go test ./internal/yield` |

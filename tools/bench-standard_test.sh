@@ -4,7 +4,7 @@
 # bench-standard.sh to witness").
 #
 # No bats, no harness: plain bash, run directly, the same shape as
-# tools/asdf-carry-verify_test.sh and tools/roadmap-parity_test.sh beside it.
+# tools/roadmap-parity_test.sh beside it (and deprecated/tools/asdf-carry-verify_test.sh).
 #
 # THE CLASS: can this script claim to be an admin entry, repair a bench, or
 # take any action other than `--apply` killing stray runner listeners? SPEC-

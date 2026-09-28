@@ -72,7 +72,7 @@ ALL of these, and the absence of any one of them is not mechanical:
   `:node` field. Exact lines; `internal/worklang` held by no open pull request; no test in the tree
   asserts the three refusal strings. Cut, landed as PR #1888.
 * **#1788** — `internal/jobs/jobs.go:77-78` append the forward and reverse edge with no set check,
-  and `cmd/nova-work/deps.json` carries the receipt `"needs":["b","b","b","b"]`. `internal/jobs`
+  and `deprecated/cmd/nova-work/deps.json` carries the receipt `"needs":["b","b","b","b"]`. `internal/jobs`
   held by no open pull request. Cut, landed as PR #1889.
 * **#1767** — `docs/TESTS.md` shows escaped double quotes where `board.Quote` single-quotes them,
   found by a comparator that already exists. One line, one expected string.

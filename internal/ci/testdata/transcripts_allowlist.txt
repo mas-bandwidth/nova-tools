@@ -33,7 +33,6 @@ nova-wake     # #1654 -- collects what was printed into a set
 nova-merge    # #1657 -- collects what was printed into a set
 nova-sandbox  # #1657 -- one line pinned by substring
 nova-secrets  # #1657 -- no firstrun_test.go at all
-nova-work     # #1657 -- collects what was printed into a set
 
 # #1722: the sections SPEC-TOOLWORK's work list names in no row (six filed with
 # #1722; nova-card, nova-redis, nova-sprint and nova-test gained sections on dev after it).

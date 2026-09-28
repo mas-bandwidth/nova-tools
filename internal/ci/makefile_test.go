@@ -25,11 +25,11 @@ import (
 // ci_budget_test.go takes for the job names and timeouts.
 
 // buildTestLintRe matches a build, test or lint COMMAND at the start of a shell
-// statement: `go build`, `go vet`, `go test`, `gofmt`, or the nova-work
-// acceptance script. `go version`, `go list` and `go env` are setup and are
+// statement: `go build`, `go vet`, `go test`, `gofmt`, or CI's lisp script
+// (tools/ci/lisp-test.sh). `go version`, `go list` and `go env` are setup and are
 // deliberately not matched. The command may follow a shell separator — `;`,
 // `&&`, `||`, `|` or `$(` — so a command substitution is caught too.
-var buildTestLintRe = regexp.MustCompile(`(^|[;&|($])\s*(go\s+(build|vet|test)\b|gofmt\b|\./lisp/nova-work/run-tests\.sh\b)`)
+var buildTestLintRe = regexp.MustCompile(`(^|[;&|($])\s*(go\s+(build|vet|test)\b|gofmt\b|(sh\s+)?tools/ci/lisp-test\.sh\b)`)
 
 // commandAllowlist names the setup and shard-loop lines that are allowed not to
 // be a make invocation. They run no test and check no formatting: they discover
@@ -140,17 +140,17 @@ func TestMakefileIsTheOneEntry(t *testing.T) {
 	for _, d := range mk.deps["check"] {
 		checkDeps[d] = true
 	}
-	// The lisp gate is verify-roadmap: cmd/nova-work's verification verb runs
-	// test-lisp's own suite and judges the roadmap's verified criteria against
-	// it (#3459), so check runs the suite once, not twice. test-lisp stays the
-	// bare suite, which CI's lisp job runs on runners that carry no Go.
-	for _, want := range []string{"build", "lint", "test", "test-e2e", "verify-roadmap"} {
+	// The lisp gate is test-lisp, CI's own lisp script. It was verify-roadmap
+	// (cmd/nova-work's verification verb over the suite, #3459) until nova-work
+	// was parked under deprecated/ on 2026-09-27; the script now prints "nothing
+	// to test" while lisp/ holds no system.
+	for _, want := range []string{"build", "lint", "test", "test-e2e", "test-lisp"} {
 		if !checkDeps[want] {
-			t.Errorf("Makefile check does not run %q; the contract is build, lint, test, test-e2e and verify-roadmap", want)
+			t.Errorf("Makefile check does not run %q; the contract is build, lint, test, test-e2e and test-lisp", want)
 		}
 	}
-	if got := strings.TrimSpace(strings.Join(mk.recipeFor("test-lisp"), "\n")); got != "./lisp/nova-work/run-tests.sh" {
-		t.Errorf("Makefile test-lisp is %q, want the bare suite ./lisp/nova-work/run-tests.sh (CI's lisp job and the verification verb both run it)", got)
+	if got := strings.TrimSpace(strings.Join(mk.recipeFor("test-lisp"), "\n")); got != "sh tools/ci/lisp-test.sh" {
+		t.Errorf("Makefile test-lisp is %q, want CI's lisp script sh tools/ci/lisp-test.sh (CI's lisp job and the merge gate's lisp step both run it)", got)
 	}
 
 	// And the gates themselves: every command `make check` would run, gathered
@@ -164,7 +164,7 @@ func TestMakefileIsTheOneEntry(t *testing.T) {
 		"go vet ./...",
 		"go test -count=1 ./cmd/... ./internal/...",
 		"go test -count=1 -run TestFriendSequence ./cmd/...",
-		"go run ./cmd/nova-work verification --sexp docs/roadmaps/nova-work.sexp --repo . --check",
+		"sh tools/ci/lisp-test.sh",
 	} {
 		if !strings.Contains(recipes, gate) {
 			t.Errorf("`make check` does not reach %q; the recipes it runs are:\n%s", gate, recipes)

@@ -77,8 +77,6 @@ the lists now match the tree.
 | `forestwriter_allowlist.txt` | `TestForestWrittenOnlyByTheKernel` |
 | `goenv-allowlist.txt` | `TestGoEnvClassRuleHoldsOverTheRepository` |
 | `hostseam_allowlist.txt` | `TestNoTestReachesAHostThroughAnUnfakedSeam` |
-| `lisptemppath_allowlist.txt` | `TestNoLispTestBuildsATempPathWithoutTheHelper` |
-| `lisprandom_allowlist.txt` | `TestNoLispTestNamesAPathWithRandom` |
 | `namedpaths_allowlist.txt` | `TestEveryNamedRepoPathExists` |
 | `net-allowlist.txt` | `TestNoRealNetworkHostsOnTheCIPath` |
 | `pathassert_allowlist.txt` | `TestNoTestComparesAPathAgainstASlashLiteral` |

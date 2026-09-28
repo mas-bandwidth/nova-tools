@@ -22,7 +22,7 @@
 # TestReadCopyDealtToBenchRendersALintedCard), then by nine more from the redis
 # stream (seat and #3277 tests on t.Setenv); each owes a per-test seam. Moved
 # from the serialTestsCeiling constant into this file at 876, the count that day.
-# ceiling: 825
+# ceiling: 726
 cmd/nova-bus/issue1451_test.go:TestIssue1451EveryBareVerbRefusalNamesTheDoor serial: t.Setenv
 cmd/nova-bus/main_functional_test.go:TestReceiptMaxWordsDefaultsFromBusFileThenEnv serial: t.Setenv
 cmd/nova-bus/reply_functional_test.go:TestAFilesystemWithNoCreateExclusivePublishIsRefused serial: swaps package var main.publishDraft
@@ -504,93 +504,6 @@ cmd/nova-wake/storewatch_functional_test.go:TestWatchStoreRefusesPollingSources 
 cmd/nova-wake/storewatch_functional_test.go:TestWatchStoreWakesOnEvGithubWithNoGhAndNoGit serial: swaps package var main.storeBlockSlice, t.Setenv
 cmd/nova-wake/watch_config_test.go:TestWatchReadsOnDeadlineFromConfig serial: t.Setenv
 cmd/nova-wake/watch_config_functional_test.go:TestWatchReadsReceiptMaxWordsFromConfig serial: t.Setenv
-cmd/nova-work/accept_test.go:TestIssue1796SocketAcceptIsNotTheGraphForm serial: t.Chdir
-cmd/nova-work/configverbs_test.go:TestConfigExport serial: t.Chdir
-cmd/nova-work/configverbs_test.go:TestFriendRegister serial: t.Chdir
-cmd/nova-work/configverbs_test.go:TestGoalSet serial: t.Chdir
-cmd/nova-work/configverbs_test.go:TestGoalShow serial: t.Chdir
-cmd/nova-work/configverbs_test.go:TestGoalUpdate serial: t.Chdir
-cmd/nova-work/configverbs_test.go:TestMachineRegister serial: t.Chdir
-cmd/nova-work/configverbs_test.go:TestModelRegister serial: t.Chdir
-cmd/nova-work/configverbs_test.go:TestObserveState serial: t.Chdir
-cmd/nova-work/dagverbs_test.go:TestAxis serial: t.Chdir
-cmd/nova-work/dagverbs_test.go:TestCell serial: t.Chdir
-cmd/nova-work/dagverbs_test.go:TestDep serial: t.Chdir
-cmd/nova-work/dagverbs_test.go:TestPrioritise serial: t.Chdir
-cmd/nova-work/dagverbs_test.go:TestRelease serial: t.Chdir
-cmd/nova-work/dagverbs_test.go:TestRoadmapConfigure serial: t.Chdir
-cmd/nova-work/dagverbs_test.go:TestRoadmapCreate serial: t.Chdir
-cmd/nova-work/dagverbs_test.go:TestRoadmapRow serial: t.Chdir
-cmd/nova-work/dagverbs_test.go:TestTake serial: t.Chdir
-cmd/nova-work/deadline_test.go:TestAFarFutureDeadlineStillGivesUpOnASilentSession serial: swaps package var main.askTimeout, t.Chdir
-cmd/nova-work/deadline_test.go:TestAMalformedDeadlineRefusesBeforeAnythingIsDialled serial: t.Chdir
-cmd/nova-work/deadline_test.go:TestAnAbsentDeadlineStillSendsAndKeepsTheOrdinaryDefault serial: t.Chdir
-cmd/nova-work/deadline_test.go:TestAnExpiredDeadlineRefusesBeforeAnythingIsDialled serial: t.Chdir
-cmd/nova-work/deadline_test.go:TestAnExplicitEmptyDeadlineRefusesBeforeAnythingIsDialled serial: t.Chdir
-cmd/nova-work/evidenceverbs_test.go:TestAttempt serial: t.Chdir
-cmd/nova-work/evidenceverbs_test.go:TestAttest serial: t.Chdir
-cmd/nova-work/evidenceverbs_test.go:TestEvent serial: t.Chdir
-cmd/nova-work/evidenceverbs_test.go:TestEvidence serial: t.Chdir
-cmd/nova-work/evidenceverbs_test.go:TestPercentNoDivision serial: t.Chdir
-cmd/nova-work/evidenceverbs_test.go:TestPercentOutputsFields serial: t.Chdir
-cmd/nova-work/evidenceverbs_test.go:TestRemainingOutputsFields serial: t.Chdir
-cmd/nova-work/evidenceverbs_test.go:TestStateToDone serial: t.Chdir
-cmd/nova-work/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine serial: t.Chdir
-cmd/nova-work/forestwrite_test.go:TestForestWrittenOnlyByTheKernel serial: swaps package var main.ghRunner, swaps package var main.router
-cmd/nova-work/issue1696_test.go:TestIssue1696 serial: t.Chdir
-cmd/nova-work/main_test.go:TestAReplyPastTheWiresBoundIsRefusedAtTwoAndNamedAsSuch serial: swaps package var main.askTimeout, t.Chdir
-cmd/nova-work/main_test.go:TestASessionThatNeverAnswersIsRefusedAtTwoAndNotCalledMissing serial: swaps package var main.askTimeout, t.Chdir
-cmd/nova-work/main_test.go:TestRefusalLinesExitOne serial: t.Chdir
-cmd/nova-work/main_test.go:TestSessionStartAndStopSpellTheirRequestLines serial: t.Chdir
-cmd/nova-work/main_test.go:TestSessionStatusPrintsTheSessionsLineByteForByte serial: t.Chdir
-cmd/nova-work/next_test.go:TestEveryAttemptVerbStopsReadingAtMaxBytes serial: swaps package var main.router
-cmd/nova-work/next_test.go:TestNextAnswersOneUnitForOneMind serial: swaps package var main.router
-cmd/nova-work/next_test.go:TestNextNeverDispatchesAUnitTheLadderIsWaitingOn serial: swaps package var main.router
-cmd/nova-work/next_test.go:TestNextNeverHandsAFriendsUnitToAnotherMind serial: swaps package var main.router
-cmd/nova-work/next_test.go:TestNextNoneNamesTheGateThatEmptiedTheSet serial: swaps package var main.router
-cmd/nova-work/next_test.go:TestNextRecordsEveryJevDecisionAndItsSpend serial: swaps package var main.router
-cmd/nova-work/next_test.go:TestNextRefusesBeforeACallItCannotRecord serial: swaps package var main.router
-cmd/nova-work/next_test.go:TestNextRefusesWhenAHeldReservationCannotBeRebuilt serial: swaps package var main.router
-cmd/nova-work/next_test.go:TestTakingAUnitHoldsItsLaneUntilTheAttemptIsRecorded serial: swaps package var main.router
-cmd/nova-work/routeverbs_test.go:TestAcknowledgeStage serial: t.Chdir
-cmd/nova-work/routeverbs_test.go:TestDecline serial: t.Chdir
-cmd/nova-work/routeverbs_test.go:TestExecutionPause serial: t.Chdir
-cmd/nova-work/routeverbs_test.go:TestExecutionResume serial: t.Chdir
-cmd/nova-work/routeverbs_test.go:TestExecutionStatus serial: t.Chdir
-cmd/nova-work/routeverbs_test.go:TestOfferSend serial: t.Chdir
-cmd/nova-work/routeverbs_test.go:TestProfileWrite serial: t.Chdir
-cmd/nova-work/routeverbs_test.go:TestRouteProbe serial: t.Chdir
-cmd/nova-work/routeverbs_test.go:TestRouteRegister serial: t.Chdir
-cmd/nova-work/s8_test.go:TestQueryAxisRefusedOnNonPercent serial: t.Chdir
-cmd/nova-work/s8_test.go:TestQueryEscalationsRefusesAsk serial: t.Chdir
-cmd/nova-work/s8_test.go:TestQueryFriendsOverSocket serial: t.Chdir
-cmd/nova-work/s8_test.go:TestQueryFriendsWithMax serial: t.Chdir
-cmd/nova-work/s8_test.go:TestQueryFriendsWithOwner serial: t.Chdir
-cmd/nova-work/s8_test.go:TestQueryFriendsWithRepo serial: t.Chdir
-cmd/nova-work/s8_test.go:TestQueryHandoffsBranchOpenOnly serial: t.Chdir
-cmd/nova-work/s8_test.go:TestQueryOrderPriorityOnReady serial: t.Chdir
-cmd/nova-work/s8_test.go:TestQueryRefusesBranchClosedWithoutFromTo serial: t.Chdir
-cmd/nova-work/s8_test.go:TestQueryRefusesBranchOpenWithFromTo serial: t.Chdir
-cmd/nova-work/s8_test.go:TestQueryRefusesInvalidAskKind serial: t.Chdir
-cmd/nova-work/s8_test.go:TestQueryRefusesInvalidBranch serial: t.Chdir
-cmd/nova-work/s8_test.go:TestQueryRefusesOrderPriorityOnNonReady serial: t.Chdir
-cmd/nova-work/s8_test.go:TestQueryRefusesStaleWithoutWindow serial: t.Chdir
-cmd/nova-work/s8_test.go:TestQueryRefusesWhoWithoutWindow serial: t.Chdir
-cmd/nova-work/s8_test.go:TestQueryRefusesWithoutAsk serial: t.Chdir
-cmd/nova-work/s8_test.go:TestQueryRefusesWithoutBranch serial: t.Chdir
-cmd/nova-work/s8_test.go:TestQueryWhoBranchOpenOnly serial: t.Chdir
-cmd/nova-work/setland_test.go:TestSetCheckEvaluateBase serial: swaps package var main.ghRunner
-cmd/nova-work/setland_test.go:TestSetCheckEvaluateClosedPRWhoseFileDiffersIsNotDone serial: swaps package var main.ghRunner, swaps package var main.landedGitURL
-cmd/nova-work/setland_test.go:TestSetCheckEvaluateDerivesDoneFromCriteria serial: swaps package var main.ghRunner, swaps package var main.landedGitURL
-cmd/nova-work/setland_test.go:TestSetCheckEvaluatePinnedHead serial: swaps package var main.ghRunner
-cmd/nova-work/setland_test.go:TestSetCheckEvaluateUnreachableForgeIsUnknown serial: swaps package var main.ghRunner
-cmd/nova-work/setland_test.go:TestSetCheckWriteStatusIsByteStable serial: swaps package var main.ghRunner, swaps package var main.landedGitURL
-cmd/nova-work/socketverbs_test.go:TestEverySocketVerbClassifiesTheReplyByTheSecondToken serial: t.Chdir
-cmd/nova-work/socketverbs_test.go:TestEverySocketVerbShapeSpellsItsRequestLine serial: t.Chdir
-cmd/nova-work/socketverbs_test.go:TestTheTwoAsksTheSpecAddedAreCarriedWithTheirConstraints serial: t.Chdir
-cmd/nova-work/writeflags_test.go:TestDryRunValidatesButWritesNothing serial: t.Chdir
-cmd/nova-work/writeflags_test.go:TestExpectStaleRefusal serial: t.Chdir
-cmd/nova-work/writeflags_test.go:TestReplayPerNodeStaleCheck serial: t.Chdir
 internal/bus/cursor_test.go:TestAReceiptInTheChangeSetSetsTheFlagInOpen serial: counts the process-wide NoteParses(), which every parallel test in the package adds to
 internal/bus/cursor_test.go:TestAnOpenNoteWhoseFileVanishedIsCarriedUntilAFullRead serial: counts the process-wide NoteParses(), which every parallel test in the package adds to
 internal/bus/cursor_test.go:TestAnUnreadableFileBehindTheLineIsCountedAndNotOpened serial: counts the process-wide NoteParses(), which every parallel test in the package adds to
@@ -813,18 +726,6 @@ internal/update/update_test.go:TestProcessesAreBoundedAndRawSurvivesFailure seri
 internal/update/update_test.go:TestReportLocalLocatorWithVersionStringInstalled serial: t.Setenv
 internal/update/update_test.go:TestReportNeverReadsLatestAndPartialIsVisible serial: t.Setenv
 internal/update/update_test.go:TestSnapshotObservationDoesNotSuppressDelivery serial: t.Setenv
-internal/workclient/frame_test.go:TestExchangeFramedCarriesAMultiRowListing serial: t.Chdir
-internal/workclient/workclient_test.go:TestABoundOfZeroOrLessIsNoDeadlineAtAll serial: t.Chdir
-internal/workclient/workclient_test.go:TestDialRefusesOnceTheBudgetIsAlreadySpent serial: t.Chdir
-internal/workclient/workclient_test.go:TestExchangeAdmitsAReplyExactlyAtTheCap serial: t.Chdir
-internal/workclient/workclient_test.go:TestExchangeAdmitsASlowButAnsweringSession serial: t.Chdir
-internal/workclient/workclient_test.go:TestExchangeCarriesTheRequestAndReturnsTheOneReplyLine serial: t.Chdir
-internal/workclient/workclient_test.go:TestExchangeCarriesTheStandingBound serial: t.Chdir
-internal/workclient/workclient_test.go:TestExchangeNamesACloseBeforeOneLineSeparately serial: t.Chdir
-internal/workclient/workclient_test.go:TestExchangeRefusesAReplyPastTheCapWhileItReads serial: t.Chdir
-internal/workclient/workclient_test.go:TestExchangeRefusesASocketThatIsNotThere serial: t.Chdir
-internal/workclient/workclient_test.go:TestExchangeStopsWaitingOnAHalfWrittenReply serial: t.Chdir
-internal/workclient/workclient_test.go:TestExchangeStopsWaitingWhenTheSessionAcceptsAndNeverAnswers serial: t.Chdir
 cmd/nova-sprint/card_moves_functional_test.go:TestCardSessionCLI serial: t.Setenv
 cmd/nova-sprint/card_moves_functional_test.go:TestCardMovesCLI serial: t.Setenv
 cmd/nova-sprint/fleet_build_test.go:TestFleetBuildCompileVerb serial: swaps package var fleetCompileExec

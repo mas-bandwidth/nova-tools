@@ -2,7 +2,7 @@
 
 Tools and modules that are no longer in use. They are kept here for
 reference while the living tools are tightened, and this folder is deleted
-when that cleanup ends.
+when that cleanup ends, except what is PARKED (below).
 
 Nothing deprecated is built, tested, shipped or maintained. A deprecated
 test never runs and never stops a build, a landing or a release. Nobody
@@ -23,10 +23,18 @@ Glenn, 2026-09-27: "Tests do not run for deprecated tools and modules."
 
 ## What is deprecated
 
-| tool | why | since |
-|---|---|---|
-| nova-bus `inbox --decide` | the bus carries messages over git and nothing else (Glenn, 2026-09-27); the classifier routes, their tests and their spec are under `nova-bus-decide/` | 2026-09-27 |
-| nova-board | superseded: who is doing what is the job of nova-sprint as it is rebuilt on nova-table (Glenn, 2026-09-27). Moved here: `cmd/nova-board`, `internal/board`, and its spec, command reference and transcript under `docs/` | 2026-09-27 |
-| nova-sprint | does not work; to be rewritten on nova-table. Still at `cmd/nova-sprint` and named in `PACKAGES` (never tested by ci.yml's selection; certification and nightly still reach it until it moves). The three reaches that built or ran it are cut: CI's receipt step (`.github/workflows/ci.yml`, "report this run to Redis from the runner") runs only the installed binary and never this tree, `internal/typedrec` no longer builds it, and the `internal/ci` cipriority and seatredis class tests read the live packages. The silent class test (`internal/ci/silent_class_test.go`'s live list still reads its source) and the docs and allowlist rows that name its paths still name it; those are the move PR's own edits | 2026-09-27 |
-| nova-card, nova-friend | the sprint's runtime, implemented inside it. Moved here: `cmd/nova-card`, `cmd/nova-friend`, and their command reference and transcripts under `docs/` | 2026-09-27 |
-| nova-play, nova-test | new tools with no use on record. Moved here: `cmd/nova-play`, `cmd/nova-test`, and their command reference, usage entry and transcripts under `docs/` | 2026-09-27 |
+Two kinds of row. RETIRED is reference only and is deleted when the cleanup
+ends. PARKED is work in progress kept whole until it can be done properly: it
+is not deleted at the end, it is sorted with Glenn (Glenn, 2026-09-27: "WIP
+tools (like nova work, sprint etc) in deprecated until we can do them
+properly"). Both are equally untested, unbuilt and unshipped while they are
+here.
+
+| tool | at the end | why | since |
+|---|---|---|---|
+| nova-bus `inbox --decide` | RETIRED: deleted | the bus carries messages over git and nothing else (Glenn, 2026-09-27); the classifier routes, their tests and their spec are under `nova-bus-decide/` | 2026-09-27 |
+| nova-board | RETIRED: deleted | superseded: who is doing what is the job of nova-sprint as it is rebuilt on nova-table (Glenn, 2026-09-27). Moved here: `cmd/nova-board`, `internal/board`, and its spec, command reference and transcript under `docs/` | 2026-09-27 |
+| nova-sprint | PARKED: kept whole, to be sorted with Glenn, not deleted | does not work; to be rewritten on nova-table. Still at `cmd/nova-sprint` and named in `PACKAGES` (never tested by ci.yml's selection; certification and nightly still reach it until it moves). The three reaches that built or ran it are cut: CI's receipt step (`.github/workflows/ci.yml`, "report this run to Redis from the runner") runs only the installed binary and never this tree, `internal/typedrec` no longer builds it, and the `internal/ci` cipriority and seatredis class tests read the live packages. The silent class test (`internal/ci/silent_class_test.go`'s live list still reads its source) and the docs and allowlist rows that name its paths still name it; those are the move PR's own edits | 2026-09-27 |
+| nova-card, nova-friend | RETIRED: deleted | the sprint's runtime, implemented inside it. Moved here: `cmd/nova-card`, `cmd/nova-friend`, and their command reference and transcripts under `docs/` | 2026-09-27 |
+| nova-play, nova-test | RETIRED: deleted | new tools with no use on record. Moved here: `cmd/nova-play`, `cmd/nova-test`, and their command reference, usage entry and transcripts under `docs/` | 2026-09-27 |
+| nova-work | PARKED: kept whole, to be sorted with Glenn, not deleted | work in progress, not done properly yet (Glenn, 2026-09-27); not part of the 1.0 release. Moved here whole: `cmd/nova-work`, its Lisp kernel `lisp/nova-work` (the tree's only Lisp system), `internal/workclient` and `internal/workreconcile` (imported by nothing else), the tool scripts whose only subject it was (`tools/asdf-carry-verify.sh` and `_test.sh`, `tools/asdf-carry-ci-ok.sh`, `tools/nova-work-parallel-suites.sh` and `_test.sh`), the four `internal/ci` class tests that read only the kernel with their two allowlists and fixtures, and its command reference and transcript under `docs/`. Moved with it because nothing living imported them once it left: `internal/friends`, `internal/landed`, `internal/ghcapture`, the `internal/ci` events bridge (`events*.go`, which only `nova-work events` ran) and `internal/docs/issue2080_test.go` (it held nova-work's roadmap row to `internal/ghcapture`'s tests). `docs/SPEC-WORK.md`, `docs/SPEC-WORKLANG.md`, `docs/nova-work-*.md`, `docs/roadmaps/nova-work.sexp`, `docs/schemas/nova-work-wire-v1.json` and `ROADMAP.md` stay under `docs/` and the root | 2026-09-27 |
