@@ -1,7 +1,7 @@
 # The pasted examples that ARE executed by a test through the comparator
-# (onboarding.CompareTranscript, the one comparator of SPEC-TOOLWORK §7 rule 2;
+# (onboarding.CompareTranscript, the one comparator of SPEC-TOOLWORK.md documents rule 2;
 # or the older onboarding.Compare, directly or via onboarding.Execute, where a
-# section is still on the transcripts allowlist), per SPEC-TOOLWORK §7 rule 7. One per line: `<test file>:<TestName> <the $ line, exactly as pasted>`
+# section is still on the transcripts allowlist), per SPEC-TOOLWORK.md documents rule 6. One per line: `<test file>:<TestName> <the $ line, exactly as pasted>`
 # or `<test file>:<TestName> example: <a help banner's example line>`.
 #
 # TestIssue2218 checks every entry: the example is a real pasted or help example;

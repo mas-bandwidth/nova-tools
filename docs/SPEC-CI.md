@@ -2109,127 +2109,6 @@ or a cleanup inlined into another step would not be counted; and it reads the
 workflow as text, so a value built elsewhere and interpolated in is invisible to
 it.
 
-### `admitkind` — every admitting kind has a negative fixture, so the coverage list cannot shrink
-
-**The rule.** Rule 3 (`docs/SPEC-WORK.md:4878`, nova-work #785): the one
-generated schema file names every verb's event kinds, and its coverage test
-holds a CLOSED list of admitting kinds — `:lease`, `:handoff`, `:reassign`,
-`:offer`, `:acknowledge`, the allocation, `:packet`, and a `:transition` that
-can carry `:to :doing` — and fails any verb able to write one, in its own
-envelope or one it derives, whose entry carries none of the three marks
-(`needs-gate: refuses`, `needs-gate: withholds`, `needs-gate: exempt` with its
-reason). The closed list only holds if every kind on it is actually exercised:
-a kind added to the rule's own map with no fixture behind it is a kind the
-coverage rule could silently stop checking, and nothing would go red.
-**The hurt.** The first cut of `admittingEventKinds` listed only the kinds the
-SHIPPED file happened to use, so a schema carrying an unmarked verb of a kind
-the shipped file does not use — `:reassign`, `:packet` — passed the coverage
-test though rule 3 names them by the spec's own closed list. A closed list
-that is closed on paper and open in practice is worse than an open one,
-because it reads like a guarantee.
-**The test.** `TestEveryCanonicalAdmittingKindIsCovered`
-(`internal/ci/work_schema_test.go`). For every kind in
-`canonicalAdmittingKinds` — the spec's closed list, held apart from the
-coverage map so the two sides can be checked against each other — it builds
-one hypothetical verb of that kind with no `needs_gate`, runs it through
-`checkNeedsGateCoverage`, and requires exactly one finding naming the verb;
-then marks the same verb `needs-gate: refuses` and requires zero findings. A
-kind present in the spec's closed list but absent from `admittingEventKinds`
-fails here before it can hide behind a passing shipped-file check.
-**Its allowlist.** None. `canonicalAdmittingKinds` is the closed list itself;
-every entry on it gets a fixture, so a kind added to the list with no matching
-case is the thing this test exists to catch.
-**Its remedy line.** `` `<verb>` can write the admitting kind `<kind>` and
-carries no needs-gate mark``, from `checkNeedsGateCoverage`
-(`internal/ci/work_schema_test.go`).
-**Its narrowings.** It only checks that the coverage RULE fires for each kind,
-over a one-verb fixture schema; it does not check the SHIPPED file for an
-injected unmarked verb (that is `TestShippedSchemaSurvivesAnInjectedUnmarkedVerb`,
-its neighbor in the same file) and it does not check that the shipped file uses
-only kinds this test knows (`TestShippedSchemaUsesOnlyKnownEventKinds`).
-
-### `forestwriter` — the forest has one writer, the nova-work kernel
-
-**The rule.** Every file write (`os.WriteFile`, `os.Create`, `os.CreateTemp`, a
-writable `os.OpenFile`, `os.Rename`, `os.Truncate`, `os.Link`, `os.Symlink` and
-their `ioutil` spellings) in a package that reads work sets — `internal/worklang`
-and every package with a non-test file importing it — is an entry on the
-shrink-only allowlist, checked both ways; no function anywhere under `cmd/` or
-`internal/` both writes a file and names `docs/roadmaps/` in a string; and (the
-sibling test below) no script or workflow edits, redirects, tees, copies or
-moves onto a `docs/roadmaps/` path. The one writer,
-`deprecated/cmd/nova-work/forestwrite.go:writeWorkSet`, was the one exception
-until 2026-09-27, when nova-work was parked under `deprecated/`; the rule no
-longer anchors on it, so no living code writes the forest and none is excepted.
-**The hurt.** The forest — every file under `docs/roadmaps/`: `nova-work.sexp`,
-`sprint-fixes-2026-09-22.sexp` and the storage split's `work/` and `blobs/`
-beside them — had two writers in the tree, setland's `replaceFile` and attempt's
-`writeInPlace`, each free to put a work set on disk beside the kernel's own
-journal-then-render path, plus the bash `rowan-tools bin/sprint-xy` outside this
-repository entirely; a mutation outside the kernel's command loop is a defect
-(SPEC-WORK rule 6), and a second writer is exactly that defect waiting to race
-the journal. #3340 (stage 1 of #3309) collapsed the two Go call sites onto
-`forestwrite.go:writeWorkSet`, which refuses a forest path before a byte moves,
-and moved every verb that used to write one (`set check --write-status`,
-`attempt record`, `next --take`, `ask --record`, `dependencies --graph`,
-`plan expand --out`) to refuse a forest target at exit 3, before any forge call,
-lock, send or byte.
-**The test.** `TestForestWrittenOnlyByTheKernel`
-(`internal/ci/forestwriter_class_test.go`).
-**Its allowlist.** `internal/ci/testdata/forestwriter_allowlist.txt`, one
-`file:function # target it writes` per row for every write inside worklang's
-scope that is not the kernel and not the forest — the sprint table's render and
-job storage, ask's
-record, the token package's day file, pool ledger and locks, and plan expand's
-job storage; shrink-only in both directions, and every row must carry the target
-it writes.
-**Its remedy lines.** `writes a file in a package that reads work sets and is
-not on the allowlist; list this call with the target it writes; no living code
-writes the forest (its one writer, nova-work's writeWorkSet, is parked under
-deprecated/cmd/nova-work)`; `writes a file and names docs/roadmaps/; the forest's
-one writer, the nova-work kernel (#3340), is parked under deprecated/cmd/nova-work,
-and no living code writes it`; and for a stale row, `delete the stale entry (the list only
-shrinks)`.
-**Its narrowings.** It follows `fileWriteCalls` within ONE function, so a write
-behind a helper one frame away is attributed to that helper, not its caller;
-scope is decided by a non-test file's own import of `internal/worklang`, so a
-package that reaches the forest only through another package's exported
-function is not itself swept into scope (its callee is, if that callee imports
-worklang); and it reads only Go source — the script and workflow sweep is the
-companion test below.
-
-### `forestscript` — the script rule sees a write, not just a read
-
-**The rule.** `scriptForestWrites`, the third read `TestForestWrittenOnlyByTheKernel`
-holds (no script or workflow edits, redirects, tees, copies or moves onto a
-`docs/roadmaps/` path), is pinned against the eight shapes it exists to catch —
-`sed -i`, `perl -pi -e`, a bare redirect, an append, `tee`, `cp` and `mv` onto a
-`docs/roadmaps/` path — and against two shapes it must stay quiet on: a
-`docs/roadmaps/` path only ever read, through a variable or piped to `grep`,
-never written. A run where any of the eight finds nothing is a regexp that has
-stopped matching, which would let a real forest write through unseen while rule
-3 keeps reporting green.
-**The hurt.** Rule 3 exists because the script that wrote the forest lived
-outside this repository — the bash `rowan-tools bin/sprint-xy`, deleted by
-#3340's rowan-tools half — so the check here is a regexp reading scripts as
-text, with no compiler to say when the pattern breaks. #3340 pinned it against
-fixtures in the same change that wrote it, rather than trusting a scan that had
-never been shown to see anything.
-**The test.** `TestForestScriptRuleSeesAWrite`
-(`internal/ci/forestwriter_class_test.go`).
-**Its allowlist.** None: it is a fixture table over `scriptForestWrites`, not a
-sweep of the tree, so there is nothing to except.
-**Its remedy lines.** None of its own; a red here means the regexp itself needs
-fixing, not a call site — the eight shapes it must keep catching and the two
-reads it must keep passing are listed in the test.
-**Its narrowings.** Same as rule 3 itself: a `#`-prefixed comment line is
-skipped; an in-place edit is flagged as soon as the script names
-`docs/roadmaps/` anywhere at all, not only on the matching line, since the path
-usually arrives through a variable; and a line is read as a write only when it
-matches a redirect, append, `tee`, `cp`, `mv`, `install` or `truncate` shape onto
-that path — a write performed some other way, such as a wrapped `dd` or a
-Python one-liner, is invisible to it.
-
 ### `parallel` — every test opens with `t.Parallel()`
 
 **The rule.** Every top-level `func TestX(t *testing.T)` in a `_test.go` under
@@ -2862,7 +2741,7 @@ would have landed a kernel that does not load — or dropped the colliding form 
 get green, with nobody able to say which of the 700 forms went.
 **The test.** `TestEveryKernelSourceIsACompiledComponent`
 (`deprecated/internal/ci/lispkernel_class_test.go`). It is a Go test rather than a lisp one
-on purpose: the lisp job runs only when `lisp/**` or `docs/SPEC-WORK.md` moved,
+on purpose: the lisp job runs only when `lisp/**` moved,
 and a file nothing compiles is exactly what a green lisp run cannot see. It
 reads the `.asd` as text and needs no SBCL, so it holds the *shape* of the tests
 half; the facts that need a running image are held beside the suite, in

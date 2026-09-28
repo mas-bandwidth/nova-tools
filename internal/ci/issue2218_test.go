@@ -76,7 +76,7 @@ func TestIssue2218(t *testing.T) {
 		}
 
 		// Shrink-only: every row the change adds to the list is a new
-		// unexecuted example, and fails here (SPEC-TOOLWORK §7 rule 7).
+		// unexecuted example, and fails here (SPEC-TOOLWORK.md documents rule 6).
 		base, err := ChangeBase(root, os.Getenv)
 		switch {
 		case err != nil && changeEventMustCompare(os.Getenv("GITHUB_EVENT_NAME")):

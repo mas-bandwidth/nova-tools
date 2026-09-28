@@ -148,7 +148,7 @@ func TestVolatileFieldOutsideTheTableIsRefused(t *testing.T) {
 	}
 }
 
-// The table holds the run-owned values SPEC-TOOLWORK §7 rule 2 names, and is the
+// The table holds the run-owned values SPEC-TOOLWORK.md documents rule 2 names, and is the
 // only place they are named. A field that leaves the table without a reading is
 // a widening nobody read.
 func TestTheVolatileTableHoldsTheNamedRunOwnedValues(t *testing.T) {
@@ -156,7 +156,7 @@ func TestTheVolatileTableHoldsTheNamedRunOwnedValues(t *testing.T) {
 
 	// `branch` joined on 2026-09-27 with `nova-secrets seat inject`, whose OK line
 	// names the seal branch it committed on, stamped with the run's instant
-	// (SPEC-TOOLWORK §7 rule 2 names it with the other five).
+	// (SPEC-TOOLWORK.md documents rule 2 names it with the other five).
 	want := []string{"at", "took", "created", "tmpdir", "sha", "branch"}
 	got := VolatileNames()
 	if len(got) != len(want) {

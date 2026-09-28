@@ -9,7 +9,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/lanes"
 )
 
-// fakeQueue lays out a bench the way docs/SPEC-FLEET-KUBE.md Part 2 names it: cards wait in
+// fakeQueue lays out a bench the way deprecated/docs/SPEC-FLEET-KUBE.md Part 2 names it: cards wait in
 // <bench>/queue/lanes/<lane>/<name>.card and a take lands in <bench>/taken/.
 func fakeQueue(t *testing.T, cards map[string][]string) string {
 	t.Helper()

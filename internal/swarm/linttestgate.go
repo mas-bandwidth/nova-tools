@@ -16,7 +16,7 @@ import (
 // then claims a reproducing test the card's own gate cannot execute.
 //
 // THE GATE IS THE CARD'S RUN, IN EITHER OF ITS TWO SPEC-CARD SPELLINGS. Clause 6
-// (docs/SPEC-CARD.md:202-212) makes the single `## Run` fenced region the "one operative
+// (deprecated/docs/SPEC-CARD.md:202-212) makes the single `## Run` fenced region the "one operative
 // authority"; the `RUN:` header key is an optional echo that must equal a one-line region.
 // A v2 card may carry either or both, so this check treats a package as run when EITHER
 // authority runs it -- lenient on purpose: the refusal is about a test NO gate runs, and
