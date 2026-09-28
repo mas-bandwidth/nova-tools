@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -142,7 +143,7 @@ func TestTripsDoNotCountTheSetupOfAConnectionDialedLater(t *testing.T) {
 	})
 	trips := CountTrips(conn.Client())
 	ctx := context.Background()
-	if err := conn.Client().Incr(ctx, "n").Err(); Classify(err) != Unreachable {
+	if err := conn.Client().Incr(ctx, "n").Err(); Classify(err) != Unconfirmed {
 		t.Fatalf("the command the drop met = %v", err)
 	}
 	if trips.N() != 1 {
@@ -160,6 +161,62 @@ func TestTripsDoNotCountTheSetupOfAConnectionDialedLater(t *testing.T) {
 	want := []string{"1: incr n", "2: hello 3", "2: get a", "2: get b"}
 	if got := store.commands(); !reflect.DeepEqual(got, want) {
 		t.Errorf("the store received %q; want %q", got, want)
+	}
+	if trips.Setup() != 1 || trips.Total() != 3 {
+		t.Errorf("the setup of the connection dialed again: setup %d, total %d; want 1 and 3", trips.Setup(), trips.Total())
+	}
+}
+
+// TestAVerbCostsItsHandshakeAndOneTrip: what a verb pays on the wire, on the
+// connection's own counter (Conn.Trips): Open's handshake is Setup, one
+// round trip when the store accepts HELLO, and the verb's one pipeline is
+// N, one, so the receipt says trips=2 setup=1. A store older than HELLO
+// makes the probe travel, and a login it takes by AUTH is one more; each
+// is a round trip of the handshake, and each is counted in Setup.
+func TestAVerbCostsItsHandshakeAndOneTrip(t *testing.T) {
+	t.Parallel()
+	older := func(conn int, cmd []string) string {
+		if cmd[0] == "hello" {
+			return "-ERR unknown command 'hello'\r\n"
+		}
+		return accepting(conn, cmd)
+	}
+	for _, c := range []struct {
+		name  string
+		reply func(int, []string) string
+		env   map[string]string
+		o     Options
+		setup int64
+		wire  int // what the store received during Open
+	}{
+		{"a store that accepts HELLO", accepting, nil, Options{Addr: storeAddr}, 1, 1},
+		{"a store that accepts HELLO, with a login", accepting, map[string]string{"PW": "s3cret"}, Options{Addr: storeAddr, User: "bench", PasswordEnv: "PW"}, 1, 1},
+		{"a store older than HELLO", older, nil, Options{Addr: storeAddr}, 2, 2},
+		{"a store older than HELLO, with a login", older, map[string]string{"PW": "s3cret"}, Options{Addr: storeAddr, User: "bench", PasswordEnv: "PW"}, 3, 3},
+	} {
+		store := newFakeStore(t, c.reply)
+		conn, err := open(context.Background(), c.o, environment(c.env), store.dial)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if got := store.commands(); len(got) != c.wire {
+			t.Errorf("%s: Open sent %q; want %d commands", c.name, got, c.wire)
+		}
+		trips := conn.Trips()
+		if trips.N() != 0 || trips.Setup() != c.setup {
+			t.Errorf("%s: after Open, %d trips and %d of setup; want 0 and %d", c.name, trips.N(), trips.Setup(), c.setup)
+		}
+		pipe := conn.Client().Pipeline()
+		pipe.Get(context.Background(), "a")
+		pipe.Get(context.Background(), "b")
+		if _, err := pipe.Exec(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		want := "trips=" + strconv.FormatInt(1+c.setup, 10) + " setup=" + strconv.FormatInt(c.setup, 10)
+		if trips.N() != 1 || trips.Total() != 1+c.setup || trips.String() != want || fmt.Sprint(trips) != want {
+			t.Errorf("%s: the verb reads %d, total %d, %q; want 1, %d, %q", c.name, trips.N(), trips.Total(), trips.String(), 1+c.setup, want)
+		}
+		_ = conn.Close()
 	}
 }
 
@@ -220,8 +277,8 @@ func TestTripLabels(t *testing.T) {
 func TestTripsOfNothing(t *testing.T) {
 	t.Parallel()
 	var trips *Trips
-	if trips.N() != 0 || trips.Of("read") != 0 {
-		t.Errorf("a nil counter reads %d and %d", trips.N(), trips.Of("read"))
+	if trips.N() != 0 || trips.Of("read") != 0 || trips.Setup() != 0 || trips.Total() != 0 || trips.String() != "trips=0 setup=0" {
+		t.Errorf("a nil counter reads %d, %d, %d, %d, %q", trips.N(), trips.Of("read"), trips.Setup(), trips.Total(), trips.String())
 	}
 	if got := trips.ByLabel(); got == nil || len(got) != 0 {
 		t.Errorf("a nil counter's labels are %#v; want an empty map", got)
