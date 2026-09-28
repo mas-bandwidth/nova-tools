@@ -69,7 +69,7 @@ func (app *application) cmdCreate(args []string, stdout, stderr io.Writer) int {
 	defer st.Close()
 	trips := st.CountTrips()
 	if err := ntable.Create(ctx, c, t, time.Now(), *write); err != nil {
-		return storeRefusal(stderr, verb, err)
+		return st.refusal(stderr, verb, err)
 	}
 	fmt.Fprintf(stdout, "TABLE CREATE table=%s columns=%d trips=%d\n", t.Name, len(t.Columns), trips.N())
 	printReceipt(stdout, write, *receipt)
@@ -124,7 +124,7 @@ func (app *application) cmdSet(args []string, stdout, stderr io.Writer) int {
 	}
 	n, err := ntable.Set(ctx, c, pos[0], o, *write)
 	if err != nil {
-		return storeRefusal(stderr, verb, err)
+		return st.refusal(stderr, verb, err)
 	}
 	line := "TABLE SET table=" + pos[0]
 	if o.Visible != nil {
@@ -179,7 +179,7 @@ func (app *application) cmdDrop(args []string, stdout, stderr io.Writer) int {
 	}
 	n, err := drop(ctx, c, pos[0], *write)
 	if err != nil {
-		return storeRefusal(stderr, verb, err)
+		return st.refusal(stderr, verb, err)
 	}
 	fmt.Fprintf(stdout, "TABLE DROP table=%s rows=%d trips=%d\n", pos[0], n, trips.N())
 	printReceipt(stdout, write, *receipt)
@@ -206,7 +206,7 @@ func (app *application) cmdList(args []string, stdout, stderr io.Writer) int {
 	trips := st.CountTrips()
 	summaries, err := ntable.Summaries(ctx, c)
 	if err != nil {
-		return storeRefusal(stderr, verb, err)
+		return st.refusal(stderr, verb, err)
 	}
 	fmt.Fprintf(stdout, "TABLE LIST tables=%d trips=%d\n", len(summaries), trips.N())
 	for _, row := range summaries {
@@ -237,7 +237,7 @@ func (app *application) cmdClear(args []string, stdout, stderr io.Writer) int {
 	start := time.Now()
 	n, err := ntable.Clear(ctx, c, pos[0], *write)
 	if err != nil {
-		return storeRefusal(stderr, verb, err)
+		return st.refusal(stderr, verb, err)
 	}
 	fmt.Fprintf(stdout, "TABLE CLEAR table=%s rows=%d ms=%d trips=%d\n", pos[0], n, time.Since(start).Milliseconds(), trips.N())
 	printReceipt(stdout, write, *receipt)
@@ -277,7 +277,7 @@ func (app *application) cmdShow(args []string, stdout, stderr io.Writer) int {
 		t, err = ntable.ReadAt(ctx, c, pos[0], epoch)
 	}
 	if err != nil {
-		return storeRefusal(stderr, verb, err)
+		return st.refusal(stderr, verb, err)
 	}
 	fmt.Fprintf(stdout, "TABLE table=%s columns=%d rows=%d trips=%d epoch=%d revision=%d", t.Name, len(t.Columns), len(t.Rows), trips.N(), t.Epoch, t.Revision)
 	if t.Sort != "" {
@@ -366,7 +366,7 @@ func (app *application) cmdRender(args []string, stdout, stderr io.Writer) int {
 	if *view != "" {
 		text, err := viewReader(c, *view, opts)(ctx)
 		if err != nil {
-			return storeRefusal(stderr, verb, err)
+			return st.refusal(stderr, verb, err)
 		}
 		return publish("", text, stdout, stderr, verb)
 	}
@@ -377,7 +377,7 @@ func (app *application) cmdRender(args []string, stdout, stderr io.Writer) int {
 		t, err = ntable.ReadAt(ctx, c, pos[0], epoch)
 	}
 	if err != nil {
-		return storeRefusal(stderr, verb, err)
+		return st.refusal(stderr, verb, err)
 	}
 	// the table and nothing else: an empty table prints nothing at all
 	opts.Title = t.Name
@@ -436,19 +436,19 @@ func (app *application) cmdView(args []string, stdout, stderr io.Writer) int {
 	switch sub {
 	case "set":
 		if err := ntable.ViewSet(ctx, c, ntable.View{Name: pos[0], Tables: list, Title: title, Summary: summary}); err != nil {
-			return storeRefusal(stderr, verb, err)
+			return st.refusal(stderr, verb, err)
 		}
 		fmt.Fprintf(stdout, "VIEW SET view=%s tables=%s title=%q summary=%s trips=%d\n", pos[0], strings.Join(list, ","), title, field(summary), trips.N())
 	case "show":
 		v, err := ntable.ViewGet(ctx, c, pos[0])
 		if err != nil {
-			return storeRefusal(stderr, verb, err)
+			return st.refusal(stderr, verb, err)
 		}
 		fmt.Fprintf(stdout, "VIEW view=%s tables=%s title=%q summary=%s trips=%d\n", v.Name, strings.Join(v.Tables, ","), v.Title, field(v.Summary), trips.N())
 	case "list":
 		names, err := ntable.ViewList(ctx, c)
 		if err != nil {
-			return storeRefusal(stderr, verb, err)
+			return st.refusal(stderr, verb, err)
 		}
 		fmt.Fprintf(stdout, "VIEW LIST views=%d trips=%d\n", len(names), trips.N())
 		for _, name := range names {
@@ -457,7 +457,7 @@ func (app *application) cmdView(args []string, stdout, stderr io.Writer) int {
 	case "del":
 		n, err := ntable.ViewDelete(ctx, c, pos[0])
 		if err != nil {
-			return storeRefusal(stderr, verb, err)
+			return st.refusal(stderr, verb, err)
 		}
 		fmt.Fprintf(stdout, "VIEW DEL view=%s existed=%d trips=%d\n", pos[0], n, trips.N())
 	}

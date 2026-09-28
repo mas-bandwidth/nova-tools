@@ -1443,7 +1443,7 @@ nova-config status [--pg <dsn>] [--redis <addr>]                         # the c
 nova-config apply [--pg <dsn>] [--redis <addr>] --as <friend> [--kind <kind>] [--check]   # write Postgres into Redis per kind through the runtime's own functions, compare-and-set on the revision; --check prints the plan and writes nothing
 nova-config <kind> add <name> --<field> <value> ... --as <friend>        # insert a row; a duplicate name is refused with the set to run
 nova-config <kind> set <name> --<field> <value> ... --as <friend>        # update the fields named
-nova-config <kind> remove <name> --as <friend>                           # delete the row (Redis keeps a friend with working copies until apply can remove it)
+nova-config <kind> remove <name> --as <friend>                           # delete the row
 nova-config <kind> list                                                  # one typed line per row
 nova-config <kind> show <name>                                           # one line with every field and the stamps
 nova-config <kind> history <name>                                        # every change to the row: who, when, what changed
@@ -1481,7 +1481,7 @@ nova-config apply --as rowan
 
 **Reading it.** Every write prints `CONFIG ADD|SET|REMOVE kind=<k> name=<n> rev=<id>`, the id of its history row. `list` prints `<KIND> name=<n> <field>=<v> ...` per row and a `CONFIG LIST` count; `history` prints `HISTORY id=<n> ... op=<add|set|remove> actor=<a> at=<t>` with each changed field as `<field>=<before>><after>`. `apply` prints `APPLY ADD|SET|REMOVE kind=<k> name=<n>` per row it writes and one `CONFIG APPLY kind=<k> add=<n> set=<n> remove=<n> rev=<r> ms=<n>` per kind; `--check` prints the same plan as `CHECK` lines and `CONFIG CHECK`. `status` exits 1 with the next step when the schema is missing (`run: nova-config migrate`) or Redis is behind (`run: nova-config apply`).
 
-**Refusals.** Exit 1 is the store or Redis saying no, one stderr line naming the next step: `machine studio exists; run: nova-config machine set studio ...`, `--store space names no machine row`, `machine studio is the --coordinator of the fleet`, `friend rowan is the --coordinator of the sprint`, `CONFLICT friend: Redis holds rev 9 and this Postgres is at rev 4`, `CEILING studio: friend stella makes the sum 65 over the machine ceiling 64`, `friend stella holds 2 working copies (card:4410,card:4414)`, `friend emma has no beat naming a machine and the fleet names no coordinator machine to charge her slots to`. Exit 2 is an invocation that could not run (a name on a singleton is one).
+**Refusals.** Exit 1 is the store or Redis saying no, one stderr line naming the next step: `machine studio exists; run: nova-config machine set studio ...`, `--store space names no machine row`, `machine studio is the --coordinator of the fleet`, `friend rowan is the --coordinator of the sprint`, `CONFLICT friend: Redis holds rev 9 and this Postgres is at rev 4`, `CEILING studio: friend stella makes the sum 65 over the machine ceiling 64`, `friend emma has no beat naming a machine and the fleet names no coordinator machine to charge her slots to`. Exit 2 is an invocation that could not run (a name on a singleton is one).
 
 ## nova-cairn
 
