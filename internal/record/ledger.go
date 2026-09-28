@@ -54,12 +54,20 @@ type LedgerTotal struct {
 	Known            [5]bool
 }
 
+// LedgerDay is one calendar day's batch of rows for ReplaceLedgerDays.
+type LedgerDay struct {
+	Day     string
+	Entries []LedgerEntry
+}
+
 // LedgerStore is the durable side of the token ledger. ReplaceLedgerDay swaps one day's rows
 // for the given ones atomically, so indexing a day twice is the same ledger as once.
+// ReplaceLedgerDays swaps multiple days' rows in one isolated EVAL round trip.
 // LedgerReport is the monthly GROUP BY; indexed is how many calendar-day keys existed and
 // missing is how many did not.
 type LedgerStore interface {
 	ReplaceLedgerDay(ctx context.Context, day string, entries []LedgerEntry) error
+	ReplaceLedgerDays(ctx context.Context, days []LedgerDay) error
 	LedgerReport(ctx context.Context, month, by string) ([]LedgerTotal, int, int, error)
 	Close() error
 }
@@ -184,13 +192,16 @@ type RedisLedger struct {
 // NewRedisLedger wraps a client the caller opened.
 func NewRedisLedger(rdb *redis.Client) *RedisLedger { return &RedisLedger{rdb: rdb} }
 
+// Client returns the underlying redis.Client.
+func (s *RedisLedger) Client() *redis.Client { return s.rdb }
+
 // DialLedger opens a client on addr (host:port) as the ACL user with its password ("" for
 // the default user, "" for no password). The fleet Redis has its default user off, so a
 // seat's password without its user is WRONGPASS (#3461).
 // It silences go-redis's own logger first (#3463): a dial failure otherwise prints the
 // library's untyped, local-time "connection pool: failed to dial after 5 attempts" lines
 // to the process's stderr ahead of the verb's one typed FAILED line. The
-// error they carry is not lost: it is the error Ping returns, which the verb prints.
+// error they carry is not lost: it is the error the first command returns, which the verb prints.
 func DialLedger(addr, user, password string) *RedisLedger {
 	silenceRedisLogger()
 	return NewRedisLedger(redis.NewClient(&redis.Options{Addr: addr, Username: user, Password: password}))
@@ -214,44 +225,149 @@ func (s *RedisLedger) Ping(ctx context.Context) error { return s.rdb.Ping(ctx).E
 // Close closes the client.
 func (s *RedisLedger) Close() error { return s.rdb.Close() }
 
-// ReplaceLedgerDay is DEL then HSET of the day's hash in one MULTI/EXEC, so a re-fold's
-// re-index replaces the day rather than merging into it, and no reader sees half a day.
+// ReplaceLedgerDay swaps one day's rows by delegating to ReplaceLedgerDays.
 func (s *RedisLedger) ReplaceLedgerDay(ctx context.Context, day string, entries []LedgerEntry) error {
-	if err := CheckLedgerDay(day, entries); err != nil {
-		return err
-	}
-	fields := make([]any, 0, 2*len(entries))
-	for _, e := range entries {
-		f, err := json.Marshal([3]string{e.Card, e.Model, e.Repo})
-		if err != nil {
-			return err
-		}
-		v := ledgerValue{Provider: e.Provider, Rough: e.Rough, Sources: e.Sources}
-		for i := range e.Tokens {
-			if e.Known[i] {
-				n := e.Tokens[i]
-				v.Tokens[i] = &n
-			}
-		}
-		b, err := json.Marshal(v)
-		if err != nil {
-			return err
-		}
-		fields = append(fields, string(f), string(b))
-	}
-	key := LedgerKey(day)
-	_, err := s.rdb.TxPipelined(ctx, func(p redis.Pipeliner) error {
-		p.Del(ctx, key)
-		if len(fields) > 0 {
-			p.HSet(ctx, key, fields...)
-		}
+	return s.ReplaceLedgerDays(ctx, []LedgerDay{{Day: day, Entries: entries}})
+}
+
+// ReplaceLedgerDays replaces a batch in one isolated EVAL round trip. It validates
+// key types and mutation/restore permissions before deleting any day, and bounds
+// each HSET's argument count. A recoverable mutation error restores prior hash
+// contents; restoration itself still needs a working server and available memory.
+// Redis does not automatically roll back scripts or provide crash recovery here.
+// A server without redis.acl_check_cmd is refused before any mutation.
+func (s *RedisLedger) ReplaceLedgerDays(ctx context.Context, days []LedgerDay) error {
+	if len(days) == 0 {
 		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("%s: %w", key, err)
+	}
+	seenDays := make(map[string]bool, len(days))
+	type preparedDay struct {
+		key    string
+		fields []any
+	}
+	prepared := make([]preparedDay, 0, len(days))
+	for _, d := range days {
+		if seenDays[d.Day] {
+			return fmt.Errorf("the day %s appears twice in the batch", d.Day)
+		}
+		seenDays[d.Day] = true
+		if err := CheckLedgerDay(d.Day, d.Entries); err != nil {
+			return err
+		}
+		fields := make([]any, 0, 2*len(d.Entries))
+		for _, e := range d.Entries {
+			f, err := json.Marshal([3]string{e.Card, e.Model, e.Repo})
+			if err != nil {
+				return err
+			}
+			v := ledgerValue{Provider: e.Provider, Rough: e.Rough, Sources: e.Sources}
+			for i := range e.Tokens {
+				if e.Known[i] {
+					n := e.Tokens[i]
+					v.Tokens[i] = &n
+				}
+			}
+			b, err := json.Marshal(v)
+			if err != nil {
+				return err
+			}
+			fields = append(fields, string(f), string(b))
+		}
+		prepared = append(prepared, preparedDay{key: LedgerKey(d.Day), fields: fields})
+	}
+	keys := make([]string, len(prepared))
+	args := make([]any, 0, len(prepared)*2)
+	for i, d := range prepared {
+		keys[i] = d.key
+		args = append(args, len(d.fields))
+		for _, f := range d.fields {
+			args = append(args, f)
+		}
+	}
+	if err := s.rdb.Eval(ctx, replaceLedgerDaysScript, keys, args...).Err(); err != nil {
+		if len(prepared) == 1 {
+			return fmt.Errorf("%s: %w", prepared[0].key, err)
+		}
+		return err
 	}
 	return nil
 }
+
+const replaceLedgerDaysScript = `
+if type(redis.acl_check_cmd) ~= 'function' then
+	return redis.error_reply('ERR ledger writes require redis.acl_check_cmd permission preflight')
+end
+
+local prepared = {}
+local argIdx = 1
+for i = 1, #KEYS do
+	local count = tonumber(ARGV[argIdx])
+	if not count or count < 0 or count % 2 ~= 0 or count > #ARGV - argIdx then
+		return redis.error_reply('ERR invalid ledger field count')
+	end
+	argIdx = argIdx + 1
+	local fields = {}
+	for c = 1, count do
+		fields[c] = ARGV[argIdx]
+		argIdx = argIdx + 1
+	end
+	prepared[i] = fields
+end
+if argIdx ~= #ARGV + 1 then
+	return redis.error_reply('ERR unused ledger arguments')
+end
+
+local backups = {}
+for i = 1, #KEYS do
+	local key = KEYS[i]
+	local t = redis.call('TYPE', key)['ok'] or redis.call('TYPE', key)
+	if t == 'hash' then
+		backups[i] = { type = 'hash', data = redis.call('HGETALL', key) }
+	elseif t == 'none' then
+		backups[i] = { type = 'none' }
+	else
+		return redis.error_reply("WRONGTYPE Operation against a key holding the wrong kind of value")
+	end
+	if not redis.acl_check_cmd('DEL', key) then
+		return redis.error_reply('NOPERM no permission for ledger DEL ' .. key)
+	end
+	-- A clear may need HSET too, to restore its old hash after a later error.
+	local fields = #prepared[i] > 0 and prepared[i] or backups[i].data
+	if fields and #fields > 0 and not redis.acl_check_cmd('HSET', key, fields[1], fields[2]) then
+		return redis.error_reply('NOPERM no permission for ledger HSET ' .. key)
+	end
+end
+
+local function set_fields(key, fields)
+	-- Keep unpack below Lua's stack limit, including for restoration.
+	for first = 1, #fields, 256 do
+		local last = math.min(first + 255, #fields)
+		redis.call('HSET', key, unpack(fields, first, last))
+	end
+end
+
+local status, err = pcall(function()
+	for i = 1, #KEYS do
+		local key = KEYS[i]
+		redis.call('DEL', key)
+		set_fields(key, prepared[i])
+	end
+end)
+
+if not status then
+	for i = 1, #KEYS do
+		local key = KEYS[i]
+		local b = backups[i]
+		redis.call('DEL', key)
+		if b and b.type == 'hash' and #b.data > 0 then
+			set_fields(key, b.data)
+		end
+	end
+	error(err)
+end
+
+return "OK"
+`
 
 // LedgerReport reads every day hash of the month in one pipelined round trip and groups it.
 // A field or value that does not decode is an error naming its key, never a skipped row.
@@ -270,9 +386,16 @@ func (s *RedisLedger) LedgerReport(ctx context.Context, month, by string) ([]Led
 	for i, d := range days {
 		cmds[i] = pipe.HGetAll(ctx, LedgerKey(d))
 	}
-	// One round trip. A failed command's error is on its own cmd and is reported below
-	// under its key, so Exec's first-error summary is not the one returned.
-	_, _ = pipe.Exec(ctx)
+	// One round trip. If a specific command failed, report it under its key;
+	// otherwise report the pipeline's execution error (e.g. auth or dial failure).
+	if _, err := pipe.Exec(ctx); err != nil {
+		for i, d := range days {
+			if cmdErr := cmds[i].Err(); cmdErr != nil {
+				return nil, 0, 0, fmt.Errorf("%s: %w", LedgerKey(d), cmdErr)
+			}
+		}
+		return nil, 0, 0, err
+	}
 	var entries []LedgerEntry
 	indexed, missing := 0, 0
 	for i, d := range days {
