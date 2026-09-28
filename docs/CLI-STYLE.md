@@ -46,9 +46,11 @@ A resource limit keeps its unit or scope in its name; these spellings stand: nov
 ## Refusals and silence
 
 **(f) Refusals.**
-- A refusal is one line, plus at most one hint line for what the input WANTS (SPEC.md): `<tool> <verb>: <what is wrong>; run: <tool> <verb> -h`.
+- A MALFORMED INVOCATION (a missing or unknown flag, a bad value shape, an unknown verb) is refused in one line, plus at most one hint line for what the input WANTS (SPEC.md): `<tool> <verb>: <what is wrong>; run: <tool> <verb> -h`.
 - It names every missing required flag at once, never in rounds.
-- An unknown verb or flag is named; an unknown verb lists the verbs.
+- An unknown flag is named. An unknown verb is named, lists the verbs, and points at the root `<tool> help`, since it has no verb help.
+- A RUNTIME failure (an unreachable store, a refused login, a missing input file, a lost reply) keeps the one-line shape, and its remedy is the concrete next command for that failure, not `-h`.
+- nova-check's hints stand: each missing required flag gets its own refusal line and one hint line from a fixed set the binary ships, saying what the flag is and what a first run puts there. Its refusals point at the root `nova-check help` (an open decision below).
 
 **(g) No silent success.** Three cases:
 - A missing INPUT (a required path, root, store, session, machine, friend or seat that must exist and be readable) is a refusal, exit 2, never `count=0 OK`.
@@ -90,6 +92,7 @@ These are open. Every other rule holds whichever way each goes.
    Either change costs every parser and class test that reads lines, in one cut.
 3. **The seat's Redis:** whether a tool may default to the seat's Redis, as the class test requires, or refuses without `--addr`.
 4. **`--idle-exit`:** whether nova-bus wait keeps its caller-selected code, or its callers move off it.
+5. **Help pointer:** whether a malformed invocation's remedy is `<tool> <verb> -h`, or the root `<tool> help`, as nova-check prints.
 
 ## Enforce in this order
 
@@ -98,4 +101,4 @@ These are open. Every other rule holds whichever way each goes.
 3. Missing-input and ignored-flag refusal.
 4. Runnable, login-preserving remedies, and quiet library failures.
 5. Executable First runs and bounded listings.
-6. The flag and token migration, one separate coherent change, before the docs rewrite.
+6. The flag and token migration, one coherent change that updates every affected doc with it. The agreed docs proceed now.
