@@ -394,3 +394,24 @@ func TestIssue2218HelpBannerLineLedByAnotherToolIsCounted(t *testing.T) {
 		}
 	}
 }
+
+func TestComparedShellSetupRequiresTheWholeCommand(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeGo(t, root, "cmd/nova-foo/foo_test.go", `package main
+func TestSetup(t *testing.T) {
+ os.ReadFile("CLI.md")
+ onboarding.Compare(onboarding.Step{Line: "$ mkdir -p /path/to/home"}, nil, nil)
+ onboarding.Compare(onboarding.Step{Line: "$ HOME=/path/to/home \\"}, nil, nil)
+}`)
+	for _, ex := range []string{"$ mkdir -p /path/to/home", "$ HOME=/path/to/home \\"} {
+		entry := ComparedEntry{File: "cmd/nova-foo/foo_test.go", Test: "TestSetup", Ex: ex}
+		if p := ComparedEntryProblem(root, entry, []string{"docs/CLI.md"}); p != "" {
+			t.Error(p)
+		}
+		entry.Ex += " different"
+		if p := ComparedEntryProblem(root, entry, []string{"docs/CLI.md"}); p == "" {
+			t.Error("partial shell command accepted")
+		}
+	}
+}

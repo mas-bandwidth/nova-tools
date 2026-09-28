@@ -916,16 +916,16 @@ SANDBOX REFUSED reason=unknown_verb: unknown verb "bogus"; available: check, egr
 Prove the wall before the first job:
 
 ```
-$ mkdir -p /Users/me/pool/jobs/j1/home
-$ HOME=/Users/me/pool/jobs/j1/home \
-  nova-sandbox probe --write /Users/me/pool/jobs/j1 \
-               --secret /Users/me/.config/anthropic/env
-PROBE STEP name=write_outside_control expect=allow got=allow path=/Users/me/pool/jobs/.nova-sandbox-probe-31622
-PROBE STEP name=write_outside expect=deny got=deny path=/Users/me/pool/jobs/.nova-sandbox-probe-31622
-PROBE STEP name=read_secret expect=deny got=deny path=/Users/me/.config/anthropic/env
-PROBE STEP name=write_inside expect=allow got=allow path=/Users/me/pool/jobs/j1/.nova-sandbox-probe-inside
-PROBE STEP name=read_root expect=allow got=allow path=/Users/me/.local/bin/nova-sandbox
-PROBE OK backend=sandbox-exec abi=- steps=5 passed=5 net=nopromise
+$ mkdir -p /path/to/pool/jobs/j1/home
+$ HOME=/path/to/pool/jobs/j1/home \
+  nova-sandbox probe --write /path/to/pool/jobs/j1 \
+               --secret /path/to/.config/anthropic/env
+PROBE STEP name=write_outside_control expect=allow got=allow path=/path/to/pool/jobs/.nova-sandbox-probe-31622
+PROBE STEP name=write_outside expect=deny got=deny path=/path/to/pool/jobs/.nova-sandbox-probe-31622
+PROBE STEP name=read_secret expect=deny got=deny path=/path/to/.config/anthropic/env
+PROBE STEP name=write_inside expect=allow got=allow path=/path/to/pool/jobs/j1/.nova-sandbox-probe-inside
+PROBE STEP name=read_root expect=allow got=allow path=/path/to/.local/bin/nova-sandbox
+PROBE OK backend=sandbox-exec abi=- steps=5 passed=5 net=nopromise gpu=none
 ```
 
 `probe` runs **five** checks under the real policy for this platform, not two: a
@@ -937,12 +937,19 @@ misconfiguration rather than a failed check. The `HOME=` prefix is not
 decoration: rule 9's check runs before the policy is built, so a probe run with
 the dispatcher's own `HOME` is refused before it starts.
 
-Then wrap the command:
+Then wrap the command. This example uses an empty repository initialized on
+branch `main` at `/path/to/pool/jobs/j1/repo`; `! ` marks standard error:
 
 ```
-$ HOME=/Users/me/pool/jobs/j1/home \
-  nova-sandbox --read /opt/homebrew --write /Users/me/pool/jobs/j1 \
-               -- /opt/homebrew/bin/git -C /Users/me/pool/jobs/j1/repo status
+$ HOME=/path/to/pool/jobs/j1/home \
+  nova-sandbox --read /opt/homebrew --write /path/to/pool/jobs/j1 \
+               -- /opt/homebrew/bin/git -C /path/to/pool/jobs/j1/repo status
+! SANDBOX OK backend=sandbox-exec abi=- read=1 read-noexec=0 write=1 net=nopromise cwd=/path/to/pool/jobs/j1 cwdb64=L3BhdGgvdG8vcG9vbC9qb2JzL2ox ancestors=11 cmd=git gpu=none
+On branch main
+
+No commits yet
+
+nothing to commit (create/copy files and use "git add" to track)
 ```
 
 What a first run gets wrong, and what each one wants:
