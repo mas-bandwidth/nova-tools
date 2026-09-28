@@ -155,10 +155,13 @@ Lost ==
       /\ conn' = "dead"
       /\ UNCHANGED twice
 
-\* The verb in hand runs. With a live connection it is sent. Without one the
-\* session dials for this line: the store up, the verb is sent on the new
-\* connection; the store down, the line fails with what the dial said, and
-\* the pool keeps that error.
+\* The verb in hand runs. A connection recorded as live may be replaced by
+\* the pool's health check before sending (including after a store restart).
+\* Answered includes that successful reconnect; Lost covers a write whose
+\* reply is lost. Platforms without the socket peek can take the Lost path.
+\* Without a live connection the session dials for this line. With the store
+\* up, the verb is sent on the new connection; with it down, the line fails
+\* with what the dial said, and the pool keeps that error.
 RunVerb ==
  /\ pc = "verb"
  /\ \/ /\ conn = "live"
