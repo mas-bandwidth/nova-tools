@@ -714,7 +714,6 @@ func TestGeneralityAllowlistUpdate(t *testing.T) {
 			{name: "remove-row-to-fit", measured: map[string]int{"fixture.go:glenn": 1}, want: "# ceiling: 1\nfixture.go:glenn 1\n"},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
-				t.Parallel()
 				p := filepath.Join(t.TempDir(), "ledger.txt")
 				old := "# ceiling: 1\nfixture.go:glenn 2\nfixture.go:hulk 2\n"
 				if err := os.WriteFile(p, []byte(old), 0600); err != nil {
