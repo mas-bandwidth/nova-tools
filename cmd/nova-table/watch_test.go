@@ -369,4 +369,3 @@ func TestAppendStalls(t *testing.T) {
 		t.Fatalf("empty text: got %q", got)
 	}
 }
-
