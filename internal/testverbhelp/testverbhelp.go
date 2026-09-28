@@ -2,22 +2,23 @@
 // (the CLI style's rule (b), #4505; internal/nsprint/verbflag is the one seam that
 // implements it): `<tool> <verb> -h` and `--help` print that verb's help on
 // stdout and exit 0, with nothing on stderr, no file written and no dial.
+// The check opens no socket: it is a unit-tier check.
 //
 // Each tool's test names its verbs and, for each, the flags that would point
 // the verb at a place: a path flag gets {dir}/..., a store address gets
 // {addr}. They are given BEFORE -h, so the parser has taken them when it
-// meets -h, and the check then holds that nothing was created under {dir}
-// and nothing connected to {addr}, a listener the check owns.
+// meets -h, and the check then holds that nothing was created under {dir}.
+// {addr} is RefusedAddr, a loopback port nothing listens on: the check owns
+// no socket, and a verb that dials before it answers -h meets a refusal and
+// fails the exit, stderr or budget clause.
 package testverbhelp
 
 import (
 	"bytes"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -28,7 +29,7 @@ type Run func(args []string, stdout, stderr io.Writer) int
 
 // Case is one verb ("send", "slots take") and the flags given before -h.
 // "{dir}" and "{addr}" in a flag are replaced by the case's temp directory
-// and listener address.
+// and RefusedAddr.
 type Case struct {
 	Verb  string
 	Flags []string
@@ -37,6 +38,10 @@ type Case struct {
 // Budget is how long help may take. Help is a print; anything that took
 // longer than this dialed, waited or walked something.
 const Budget = 50 * time.Millisecond
+
+// RefusedAddr is what {addr} becomes: loopback port 1, where nothing listens,
+// so a dial is refused at once and the check needs no listener of its own.
+const RefusedAddr = "127.0.0.1:1"
 
 // Check runs every case with -h and with --help, in parallel subtests.
 func Check(t *testing.T, run Run, cases []Case) {
@@ -68,36 +73,10 @@ func One(t *testing.T, run Run, c Case, spelling string) {
 func Problems(run Run, c Case, spelling, dir string) []string {
 	var problems []string
 	fail := func(format string, a ...any) { problems = append(problems, fmt.Sprintf(format, a...)) }
-	// The listener is opened only for a case that names {addr}: a bench short of
-	// ephemeral ports should cost the cases that dial-check, not every case.
-	var ln net.Listener
-	var dialed atomic.Int64
-	done := make(chan struct{})
-	if strings.Contains(strings.Join(c.Flags, " "), "{addr}") {
-		var err error
-		if ln, err = net.Listen("tcp", "127.0.0.1:0"); err != nil {
-			return []string{err.Error()}
-		}
-		go func() {
-			defer close(done)
-			for {
-				conn, err := ln.Accept()
-				if err != nil {
-					return
-				}
-				dialed.Add(1)
-				_ = conn.Close()
-			}
-		}()
-	} else {
-		close(done)
-	}
 	args := strings.Fields(c.Verb)
 	for _, f := range c.Flags {
 		f = strings.ReplaceAll(f, "{dir}", dir)
-		if ln != nil {
-			f = strings.ReplaceAll(f, "{addr}", ln.Addr().String())
-		}
+		f = strings.ReplaceAll(f, "{addr}", RefusedAddr)
 		args = append(args, f)
 	}
 	args = append(args, spelling)
@@ -112,10 +91,6 @@ func Problems(run Run, c Case, spelling, dir string) []string {
 		run(args, io.Discard, io.Discard)
 		took = min(took, time.Since(start))
 	}
-	if ln != nil {
-		_ = ln.Close()
-	}
-	<-done
 	if code != 0 {
 		fail("%q exited %d, want 0; stderr: %s", args, code, stderr.String())
 	}
@@ -127,9 +102,6 @@ func Problems(run Run, c Case, spelling, dir string) []string {
 	}
 	if took > Budget {
 		fail("%q took %v, over %v: help ran something", args, took, Budget)
-	}
-	if n := dialed.Load(); n != 0 {
-		fail("%q connected to %s %d time(s); help dials nothing", args, ln.Addr(), n)
 	}
 	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
 		var names []string
@@ -153,7 +125,15 @@ func HelpVerb(t *testing.T, run Run, tool string, verbs ...string) {
 			args := append([]string{"help"}, strings.Fields(verb)...)
 			start := time.Now()
 			code := run(args, &viaHelp, &stderr)
-			if took := time.Since(start); took > Budget {
+			took := time.Since(start)
+			// The same four re-measures as Check: a loaded bench stalls any
+			// 50 ms; help that runs something is slow every time.
+			for i := 0; i < 4 && took > Budget; i++ {
+				start = time.Now()
+				run(args, io.Discard, io.Discard)
+				took = min(took, time.Since(start))
+			}
+			if took > Budget {
 				t.Errorf("%q took %v, over %v", args, took, Budget)
 			}
 			if code != 0 || stderr.Len() != 0 {

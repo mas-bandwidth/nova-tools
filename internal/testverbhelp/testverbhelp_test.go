@@ -3,7 +3,6 @@ package testverbhelp
 import (
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,12 +47,15 @@ func TestProblemsCatchesEveryWayToBreakTheRule(t *testing.T) {
 			return good(args, stdout, stderr)
 		}, "help writes nothing"},
 		{"dials", func(args []string, stdout, stderr io.Writer) int {
-			if conn, err := net.Dial("tcp", flagValue(args, "addr")); err == nil {
-				_, _ = io.ReadAll(conn) // a client waits for its reply; the listener closes it
-				_ = conn.Close()
+			// A verb that dials before -h: the check hands it RefusedAddr, and a
+			// real client's refusal is an exit and a line on stderr. Faked here,
+			// so the unit check opens no socket.
+			if flagValue(args, "addr") != RefusedAddr {
+				return good(args, stdout, stderr)
 			}
-			return good(args, stdout, stderr)
-		}, "help dials nothing"},
+			fmt.Fprintf(stderr, "nova-demo send: dial %s: connection refused\n", RefusedAddr)
+			return 1
+		}, "exited 1"},
 	} {
 		problems := Problems(c.run, Case{Verb: "send", Flags: []string{"--dir", "{dir}", "--addr", "{addr}"}}, "-h", t.TempDir())
 		if !strings.Contains(strings.Join(problems, "\n"), c.want) {

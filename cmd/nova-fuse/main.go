@@ -50,6 +50,10 @@ exit codes: 0 clear, or done and verified by re-reading the box; 1 blown
 flag, unreadable box (treated as BLOWN, never as clear), bad invocation, or
 a lift this tool refuses by design.
 
+-h or --help after a verb is refused at exit 2, never answered with help:
+exit 0 is this tool's CLEAR, so a surface or a reason spelled -h cannot reach
+it. The help is nova-fuse help.
+
 status lists at most --max quarantines (default 20, and 0 means all) after its
 count line, then one STATUS MORE kind=quarantine shown=<n> total=<t> line
 standing for the rest. THE COUNT IS NEVER CAPPED: quarantines=<t> on the first
