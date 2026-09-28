@@ -199,7 +199,21 @@ def main():
     if code != 12 or "Invariant TraceEnd is violated." not in log:
         raise RuntimeError("TLC failed to reject wrong final exit")
     bad_status = copy.deepcopy(traces)
-    bad_status[0]["Steps"][0]["Code"] = 1
+    # Corrupt a success AFTER exit status has already reached 2. Checking
+    # only the accumulated exit would miss this per-line corruption.
+    corrupted = False
+    for tr in bad_status:
+        high = 0
+        for step in tr["Steps"]:
+            if high == 2 and step["Code"] == 0 and step["Action"]["Kind"] == "ok":
+                step["Code"] = 1
+                corrupted = True
+                break
+            high = max(high, step["Code"])
+        if corrupted:
+            break
+    if not corrupted:
+        raise RuntimeError("no high-exit trace for line-status negative control")
     code, log = run_tlc(root, jar, out / "wrong-line-status", bad_status, deadline)
     if code != 12 or "Invariant TraceObserved is violated." not in log:
         raise RuntimeError("TLC failed to reject wrong per-line status")

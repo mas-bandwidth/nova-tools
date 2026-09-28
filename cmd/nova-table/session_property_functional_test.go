@@ -205,12 +205,12 @@ func checkSessionExecution(tr sessionExecutionTrace) error {
 		if len(step.Receipts) != want {
 			return fmt.Errorf("step %d: durable receipts=%d want=%d", i, len(step.Receipts), want)
 		}
-		printed := strings.Count(step.Stdout, "TABLE RECEIPT ")
+		printedCount := strings.Count(step.Stdout, "TABLE RECEIPT ")
 		if a.Lost {
 			want = 0
 		}
-		if printed != want {
-			return fmt.Errorf("step %d: printed receipts=%d want=%d", i, printed, want)
+		if printedCount != want {
+			return fmt.Errorf("step %d: printed receipts=%d want=%d", i, printedCount, want)
 		}
 		for _, receipt := range step.Receipts {
 			words := strings.Fields(a.Command)
