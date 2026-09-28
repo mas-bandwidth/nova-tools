@@ -50,6 +50,7 @@ func IsForbiddenSwarmVerb(arg string) bool {
 
 // ValidateDaemonArgv enforces Johnny's argv-only path boundary:
 // - Direct argv execution only (no shells allowed as binary or arguments)
+// - Recognize one- and two-dash flag spellings, as Go flag parsing does
 // - Reject -c flag
 // - Reject --bodies (must not dump bodies)
 // - Reject --decide (provider invocation, still supported by nova-review)
@@ -83,6 +84,10 @@ func ValidateDaemonArgv(argv []string, targetAs string) error {
 	for i := 0; i < len(argv); i++ {
 		arg := argv[i]
 		argLower := strings.ToLower(arg)
+		flagArg := ""
+		if strings.HasPrefix(arg, "-") {
+			flagArg = strings.TrimLeft(arg, "-")
+		}
 
 		// Check if any argument is a shell executable
 		if i > 0 && IsForbiddenShell(argLower) {
@@ -90,17 +95,17 @@ func ValidateDaemonArgv(argv []string, targetAs string) error {
 		}
 
 		// Reject -c
-		if arg == "-c" || strings.HasPrefix(arg, "-c=") {
+		if flagArg == "c" || strings.HasPrefix(flagArg, "c=") {
 			return errors.New("wake daemon boundary: -c flag is forbidden")
 		}
 
 		// Reject --bodies
-		if arg == "--bodies" || strings.HasPrefix(arg, "--bodies=") {
+		if flagArg == "bodies" || strings.HasPrefix(flagArg, "bodies=") {
 			return errors.New("wake daemon boundary: --bodies flag is forbidden (must not dump bodies)")
 		}
 
 		// Reject active decision flags, including nova-review packet --decide.
-		if arg == "--decide" || strings.HasPrefix(arg, "--decide=") {
+		if flagArg == "decide" || strings.HasPrefix(flagArg, "decide=") {
 			return errors.New("wake daemon boundary: --decide is forbidden")
 		}
 
@@ -110,7 +115,7 @@ func ValidateDaemonArgv(argv []string, targetAs string) error {
 		}
 
 		// Track and reject secondary --as
-		if arg == "--as" {
+		if flagArg == "as" {
 			asCount++
 			if asCount > 1 {
 				return errors.New("wake daemon boundary: secondary --as is forbidden")
@@ -121,12 +126,12 @@ func ValidateDaemonArgv(argv []string, targetAs string) error {
 					return fmt.Errorf("wake daemon boundary: secondary --as %q does not match identity %q", asVal, targetAs)
 				}
 			}
-		} else if strings.HasPrefix(arg, "--as=") {
+		} else if strings.HasPrefix(flagArg, "as=") {
 			asCount++
 			if asCount > 1 {
 				return errors.New("wake daemon boundary: secondary --as is forbidden")
 			}
-			asVal := strings.TrimPrefix(arg, "--as=")
+			asVal := strings.TrimPrefix(flagArg, "as=")
 			if targetAs != "" && !strings.EqualFold(asVal, targetAs) {
 				return fmt.Errorf("wake daemon boundary: secondary --as %q does not match identity %q", asVal, targetAs)
 			}

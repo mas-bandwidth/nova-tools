@@ -248,3 +248,50 @@ func TestDaemonDirectArgvExecution(t *testing.T) {
 		t.Fatalf("expected WAKE BROKEN error, got %v", err)
 	}
 }
+
+// Go's flag parser accepts one dash and two, with a separate value or '='.
+// Every spelling must enforce the same daemon boundary before execution.
+func TestDaemonBoundaryFlagSpellings(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"c", "bodies", "decide"} {
+		for _, prefix := range []string{"-", "--"} {
+			for _, suffix := range []string{"", "=true"} {
+				arg := prefix + name + suffix
+				t.Run(arg, func(t *testing.T) {
+					if err := ValidateDaemonArgv([]string{"nova-review", "packet", arg}, "johnny"); err == nil {
+						t.Errorf("accepted forbidden flag %q", arg)
+					}
+				})
+			}
+		}
+	}
+
+	forms := []func(string) []string{
+		func(v string) []string { return []string{"-as", v} },
+		func(v string) []string { return []string{"--as", v} },
+		func(v string) []string { return []string{"-as=" + v} },
+		func(v string) []string { return []string{"--as=" + v} },
+	}
+	for _, first := range forms {
+		argv := append([]string{"nova-bus", "inbox"}, first("JoHnNy")...)
+		if err := ValidateDaemonArgv(argv, "johnny"); err != nil {
+			t.Errorf("matching identity %v: %v", argv, err)
+		}
+		other := append([]string{"nova-bus", "inbox"}, first("mallory")...)
+		if err := ValidateDaemonArgv(other, "johnny"); err == nil {
+			t.Errorf("accepted identity change %v", other)
+		}
+		for _, second := range forms {
+			both := append(append([]string{}, argv...), second("johnny")...)
+			if err := ValidateDaemonArgv(both, "johnny"); err == nil {
+				t.Errorf("accepted duplicate identity flags %v", both)
+			}
+		}
+	}
+	for _, arg := range []string{"c", "bodies", "decide", "as", "as=mallory", "--bodies-file=note", "-decision=manual"} {
+		if err := ValidateDaemonArgv([]string{"runner", arg}, "johnny"); err != nil {
+			t.Errorf("ordinary argument %q was mistaken for a restricted flag: %v", arg, err)
+		}
+	}
+}
