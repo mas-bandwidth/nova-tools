@@ -8,7 +8,10 @@ tokens and tests, and know which build is on which machine.
 Choose the tools that fit your work; each has its own command-line entry point.
 Commands report results and refusals in text you can read or parse. Help names
 the inputs, output format and exit codes, including the exceptions for
-wrappers and policy decisions. Start with `<tool> help`.
+wrappers and policy decisions. Start with `<tool> help`. For verb help,
+`<tool> <verb> --help` exits 0 before reading or changing your data.
+`nova-fuse` keeps its deliberate exception: exit 0 means CLEAR, so use
+`nova-fuse help` rather than a verb’s `--help`.
 
 The examples below use disposable data. Paths under `cmd/` are fixtures in a
 nova-tools checkout; run those examples from its root with the chosen binary
@@ -25,7 +28,9 @@ A placed member has one place in a table, so the same task cannot occupy
 two cells at once. Each edit is one exchange with Redis, checked whole before
 it writes, and can hand back a receipt. `render` prints a table once; `watch`
 redraws it in place every second; stored views put several tables on one
-screen. `shell` keeps one connection open for a run of commands.
+screen. `shell` keeps one connection open for a run of commands. On first
+contact, the tool loads the Redis functions it needs; no manual library
+installation is required.
 
 - **What you get:** `create`, `row add|set|move|order|sort`, `col add|move`,
   `cell add|remove|move`, `member find`, `render`, `watch`, `view set`, `shell`.
@@ -67,7 +72,8 @@ key names and check the store without requesting plaintext values.
   `check`, `keygen`, `seal` (store a new value), `seat add` and `seat inject`
   (give a seat its values), `place` and `placed` (put one secret on one
   machine, with a receipt), `gate` (review a change to the store before it
-  merges).
+  merges). The gate requires `--base` and `--head` to resolve to commits;
+  option-shaped refs and repeated flags are refused.
 - **First command** (an encrypted store with a trial seat):
   `nova-secrets names --store ./secrets --as trial`
 
@@ -76,7 +82,9 @@ key names and check the store without requesting plaintext values.
 Keep session notes as plain files: open a session, append your exact words
 with a pointer to where they came from, and read back a bounded index. Each
 note is on disk before success is reported. Retrying the same entry with the
-same words is safe; the same entry with different words is refused.
+same words is safe; the same entry with different words is refused. An
+append without `--source` carries the session’s source pointer, and receipts
+show the stored pointer.
 
 - **What you get:** `open`, `append`, `index`, `receipt`.
 - **First command:**
@@ -94,7 +102,7 @@ before you push.
 - **First command:**
   `nova-ci slowtests --budget 60 < ./cmd/nova-ci/testdata/example-events.jsonl`
 
-## New verbs in the tools you know
+## New capabilities in the tools you know
 
 ### nova-bus
 
@@ -121,7 +129,9 @@ before you push.
   before you ask anyone to read it.
 - `dogfood record`, `dogfood ledger` and `dogfood gate` keep a receipt each
   time someone other than the author uses a verb on real work, show who has
-  used what, and check that evidence before a release.
+  used what, and check that evidence before a release. The gate counts
+  evidence for the tools the release ships and reports receipts outside that
+  set separately.
 - `convergence` prints one line per tracked stream (landings, open pull
   requests, open edges and others) against a point in the past, with the trend.
 - **Try:** `nova-check quickstart --dir ./cmd/nova-check/testdata/example-self`
@@ -141,6 +151,10 @@ before you push.
 
 - `run` (macOS) gives one command a disposable volume of its own, with a size
   cap and a timeout. It cleans up when the command exits or times out.
+  `--out` copies selected artifacts before cleanup, checking each opened file
+  stays on the volume and enforcing the byte cap while copying. A growing
+  file that exceeds the cap is refused and its partial copy is removed;
+  earlier completed copies remain.
 - `reap` (macOS) clears the volumes a killed run left behind, and leaves a
   live run's volume alone.
 - `worktree` puts a pull request's exact head in a scratch tree of its own,
@@ -172,11 +186,16 @@ before you push.
 
 ### nova-version
 
-- `snapshot --bin <dir>` records every `nova-*` binary in a directory with its
-  version; `diff` compares two snapshots.
+- `snapshot --bin <dir> --out <file>` records every `nova-*` binary in a
+  directory with its version; `diff` compares two snapshots.
 - `moved` writes the note that says which tools changed between two
   revisions.
 - **Try:** `nova-version report --file ./cmd/nova-version/testdata/example.tsv`
+
+### nova-fuse
+
+- Repeated flags are refused, so a second `--box` or other flag cannot silently
+  replace the first value. Every flag takes one value.
 
 ## All fifteen tools
 
@@ -201,7 +220,7 @@ before you push.
 ## Install
 
 Download a binary for your platform from this release, and check it against
-`SHA256SUMS`. Or build one tool with Go 1.26 or newer:
+`SHA256SUMS`. Or build one tool with Go 1.26.6 or newer:
 
 ```sh
 go install github.com/mas-bandwidth/nova-tools/cmd/nova-bus@v1.0.0
