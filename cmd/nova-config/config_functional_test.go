@@ -21,6 +21,11 @@ import (
 var server *pg.Server
 
 func TestMain(m *testing.M) {
+	// The test binary is also the tool, for the tests that must see the
+	// process's own standard error (redis_failure_functional_test.go).
+	if os.Getenv(asToolEnv) == "1" {
+		os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, realDeps()))
+	}
 	dir, err := os.MkdirTemp("", "nova-config-pg-")
 	if err != nil {
 		panic(err)

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/config"
+	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 )
 
 // memStore is config.Mem with the schema verbs a pgStore has: a fresh Mem
@@ -117,8 +118,11 @@ func (h *harness) deps() deps {
 			}
 			return h.store, nil
 		},
-		openRedis: func(_ context.Context, addr string) (redisSide, error) { h.redis.opens++; return h.redis, nil },
-		now:       func() time.Time { return time.Unix(1700000000, 0) },
+		openRedis: func(_ context.Context, addr string, _ func(string) string) (redisSide, error) {
+			h.redis.opens++
+			return h.redis, nil
+		},
+		now: func() time.Time { return time.Unix(1700000000, 0) },
 	}
 }
 
@@ -538,5 +542,37 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 	_, errs = step(1, "apply", "--kind", "friend")
 	if !strings.HasPrefix(errs, "nova-config apply: CONFLICT friend: Redis holds rev 9 and this Postgres is at rev 3; a newer Postgres applied it; run: nova-config status") {
 		t.Fatalf("conflict: %q", errs)
+	}
+}
+
+// TestRedisLoginKeepsTheFleetNames: the login is the one store.Open made
+// through internal/nsprint/redisauth. No user is the default user with no
+// password, whatever else is set; a user takes its password from the
+// variable NOVA_SPRINT_REDIS_PASSWORD_ENV names, else NOVA_REDIS_BENCH_PASSWORD.
+func TestRedisLoginKeepsTheFleetNames(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		env               map[string]string
+		user, passwordEnv string
+	}{
+		{env: map[string]string{}},
+		{env: map[string]string{"NOVA_SPRINT_REDIS_PASSWORD_ENV": "PW", "NOVA_REDIS_BENCH_PASSWORD": "x"}},
+		{env: map[string]string{"NOVA_SPRINT_REDIS_USER": "bench"}, user: "bench", passwordEnv: "NOVA_REDIS_BENCH_PASSWORD"},
+		{env: map[string]string{"NOVA_SPRINT_REDIS_USER": "bench", "NOVA_SPRINT_REDIS_PASSWORD_ENV": "PW"}, user: "bench", passwordEnv: "PW"},
+	} {
+		env := tc.env
+		getenv := func(k string) string { return env[k] }
+		r, err := redisconn.Resolve(redisLogin("127.0.0.1:1", getenv), func(k string) string {
+			if k == tc.passwordEnv {
+				return "synthetic"
+			}
+			return getenv(k)
+		})
+		if err != nil {
+			t.Fatalf("%v: %v", env, err)
+		}
+		if r.User != tc.user || r.PasswordEnv != tc.passwordEnv {
+			t.Fatalf("%v: user %q password-env %q, want %q %q", env, r.User, r.PasswordEnv, tc.user, tc.passwordEnv)
+		}
 	}
 }
