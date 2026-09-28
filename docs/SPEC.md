@@ -1878,8 +1878,8 @@ every surface-driven act stops, and outbound authored life continues. A blown
 lockdown is not reset — it is REPLACED, and only in a live conversation with
 your person.
 
-Verbs: `check`, `status`, `lockdown`, `quarantine`, `lift`, `path`, plus
-`version` and `help`. `nova-fuse version` is the Conventions' build line,
+Verbs: `init`, `check`, `status`, `lockdown`, `quarantine`, `lift`, `path`,
+plus `version` and `help`. `nova-fuse version` is the Conventions' build line,
 exit 0 — it reads no box, blows nothing and is refused by nothing, because the
 question *which build refused me* has to be answerable from a locked-down
 tool.
@@ -1919,19 +1919,29 @@ surface or a reason, never a flag. A caller passing an untrusted surface
 writes `check --box <path> -- <surface>`. Pinned by
 `cmd/nova-fuse/repeatflag_test.go`.
 
-**The read has three answers, never two.** An absent box is VERIFIED CLEAR —
-the read failed with the one error that means *nonexistent* rather than
-*unreadable*. That error does not say **which** part of the path is missing:
-a `--box` naming a file absent from an existing directory and a `--box` whose
-parent directory does not exist at all answer the same, VERIFIED CLEAR. The
-collapse is accepted, deliberately — the flag is a locator (above), and a
-caller that names the wrong box gets that box's truth, here an empty one —
-and it is pinned by test so that changing the answer is a decision, never a
-drive-by. A readable box says whatever it says. An **unreadable box —
-permissions, a torn write, malformed JSON, a wrong-shaped value — is CANNOT
-TELL, treated as BLOWN, never as clear** (exit 2: the check could not run,
-and could not be proven clear). Collapsing absent and unreadable is the
-fail-open this package exists to prevent.
+**The read has one yes and two noes.** A readable box says whatever it says.
+An **unreadable box — permissions, a torn write, malformed JSON, a
+wrong-shaped value — is CANNOT TELL, treated as BLOWN, never as clear** (exit
+2: the check could not run, and could not be proven clear). **No box at the
+path is CANNOT TELL too**, whether the file or a directory above it is
+missing: a box that is not where `--box` says proves nothing, and answering it
+as an empty box would turn a mistyped path, a moved or deleted box, or a
+second `--box` pointing somewhere empty into CLEAR. `check`, `status`,
+`quarantine` and `lift quarantine` refuse it at exit 2 with one line naming
+`nova-fuse init --box <path>`; none of them makes a box. `quarantine` refuses
+for the same reason it refuses an unreadable box: with no box every surface is
+refused, and a new box holding only one quarantine would clear the rest.
+`lockdown` proceeds and makes the box, because a fuse you cannot blow is not a
+fuse and nothing is less blocked than before.
+
+**`init` is how a box comes into being clear.** `nova-fuse init --box <path>`
+makes an empty box (`{"lockdown": null, "quarantine": {}}`), verified by
+re-reading it, and prints `INIT OK box=<path>: …` at exit 0. It **never
+replaces a box**: anything already at the path — a blown box, a clear one,
+bytes that are not a box — is left byte for byte, and the run prints `INIT
+FAIL box=<path>: …` at exit 1, because replacing a box is the lockdown reset
+this tool does not have. The create is the write below, linked into place
+rather than renamed, so it is atomic and exclusive at once.
 
 **The write is temp-file + fsync + rename** in the box's own directory, so a
 crash leaves the old box or the new one, never a fragment. The box is written
@@ -1949,7 +1959,7 @@ lockdown-replacement mechanism there is), so a missing key prints an honest
 |------|---------|
 | 0    | clear, or done **and verified by re-reading the box** |
 | 1    | blown (`check` — the fuse working), or could not do it / could not verify it |
-| 2    | could not run: missing flag, **unreadable box (treated as BLOWN)**, bad invocation, or a lift refused by design |
+| 2    | could not run: missing flag, **no box at the path or an unreadable one (both treated as BLOWN)**, bad invocation, or a lift refused by design |
 
 **Only exit 0 is permission.** A caller's gate treats 1 and 2 identically —
 do not act — and they remain distinct because they are different facts with
@@ -1970,6 +1980,7 @@ QUARANTINE OK <name> since=<t>: <reason> (…)   QUARANTINE FAIL <name>: <reason
 LIFT OK quarantine=<name> was since=<t>: <reason>
 LIFT OK verified: <surface> is no longer quarantined (…)
 LIFT FAIL quarantine=<surface>: <reason>
+INIT OK box=<path>: <what> (…)          INIT FAIL box=<path>: <reason>
 ```
 
 `OK` lines go to stdout; `FAIL` lines, refusals, and notes go to stderr, and
@@ -5231,8 +5242,8 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 151. `TestVersionRefusesFlagsAndArguments` — `version` refuses flags and arguments at exit 2.
 152. `TestNoDefaultBoxRefusesToGuess` — the box path comes from `--box` on every verb; there is no default and no environment variable (`NOVA_FUSE_BOX` is not consulted).
 153. `TestNoDefaultBoxRefusesToGuess` — a missing `--box` is a refusal, exit 2, `refusing to guess`.
-154. `TestAbsentBoxIsClear` / `TestAbsentBoxIsVerifiedClearNotAnError` — an absent box is VERIFIED CLEAR (the read failed with the error meaning *nonexistent*, not *unreadable*).
-155. `TestCheckIntoANonexistentDirectoryIsAlsoClear` — a `--box` whose parent directory does not exist answers VERIFIED CLEAR too.
+154. `TestAnAbsentBoxIsNeverClear` / `TestAnAbsentBoxIsErrNoBoxNeverClear` — no box at the path, the file or a directory above it, is CANNOT TELL: `check`, `status`, `quarantine` and `lift quarantine` refuse at exit 2 naming `init`, and make no box; `TestLockdownMakesAnAbsentBox` — `lockdown` makes it.
+155. `TestInitMakesAnEmptyBoxOnceAndNeverReplacesOne` / `TestCreateBoxIsEmptyExclusiveAndNeverReplaces` — `init` makes an empty box once and never replaces whatever is at the path (exit 1); `TestASecondBoxCannotAnswerForABlownOne` / `TestEveryFlagOfEveryVerbTakesOneValue` / `TestABoxValueShapedLikeAFlagIsRefused` — a flag named twice, or a `--box` value beginning with `-`, is refused at exit 2.
 156. `TestUnreadableBoxIsTreatedAsBlownNeverClear` / `TestAnUnreadableFileTypeIsNotClear` — an unreadable box (permissions, torn write, malformed JSON, wrong-shaped value) is CANNOT TELL, treated as BLOWN, exit 2.
 157. `TestWriteLeavesNoLitter` / `TestWriteLeavesNoTempLitter` — the write is temp-file + fsync + rename in the box's own directory; a crash leaves the old box or the new, never a fragment.
 158. `TestWrittenBoxIsWorldReadable` — the box is written world-readable (0644).
