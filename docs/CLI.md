@@ -292,7 +292,7 @@ nova-fuse path --box <path>                              echo the box path this 
 
 ### First run
 
-One sitting: look, ask, blow the soft fuse, watch the answer change, rescind it. `./fuse-box.json` is a box of yours, made once with `nova-fuse init --box ./fuse-box.json`; a path with no box at it is refused by every verb but `init` and `lockdown`, never read as CLEAR. The box below starts with one surface already quarantined (`cmd/nova-fuse/testdata/example-box.json`, which the tests run these lines against).
+One sitting: look, ask, blow the soft fuse, watch the answer change, rescind it. `./fuse-box.json` is a box of yours, made once with `nova-fuse init --box ./fuse-box.json`; every verb except init, lockdown, and path refuses a path with no box, never read as CLEAR. The box below starts with one surface already quarantined (`cmd/nova-fuse/testdata/example-box.json`, which the tests run these lines against).
 
 ```
 $ nova-fuse status --box ./fuse-box.json
