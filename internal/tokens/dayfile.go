@@ -124,8 +124,21 @@ func orDashStr(s string) string {
 
 // Save writes the file whole atomically via internal/atomicfile (exclusive
 // temporary file beside target, explicit mode, fsync to media, atomic rename).
-// Nothing is appended and nothing is edited in place.
+// Nothing is appended and nothing is edited in place. out that is a symlink,
+// with or without a trailing separator, is refused and nothing is written.
 func (d *DayFile) Save(out string) error {
+	// atomicfile Stats the parent of Path(out, day), and Stat follows a
+	// directory symlink into the referent. filepath.Join strips a trailing
+	// separator before that Stat. On macOS, Lstat of "link/" reports the
+	// directory, not the symlink, so a trailing separator is cleaned for this
+	// Lstat only and is not removed by joining first.
+	probed := out
+	if len(out) > 0 && os.IsPathSeparator(out[len(out)-1]) {
+		probed = filepath.Clean(out)
+	}
+	if fi, err := os.Lstat(probed); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("save: %q is a symlink; next: pass the directory the day files are written to, not the symlink", out)
+	}
 	// Atomic write per internal/atomicfile model: temporary file created
 	// exclusively in parent directory, explicit 0o644 mode, fsync to media,
 	// atomic rename over target path.
