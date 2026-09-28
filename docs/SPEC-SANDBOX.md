@@ -858,11 +858,26 @@ a refusal, the same way rule 5 refuses a `--read` the caller named that is not
 there; a default that is absent is skipped. A directory is taken whole, one row
 per regular file, with its shape kept.
 
-**Nothing escapes the volume.** Every source resolves through
-`safepath.ResolvedUnder` against the card's working directory: an absolute path,
-a `..` element, a symlink and anything that is not a file or a directory are all
+**Nothing escapes the volume.** A process the card started can outlive the
+command: `supervise` kills the command's process group, and a `setsid()` child
+is outside it. So the copy runs beside something that can rewrite any path on
+the volume, and it reads the volume by descriptor, never by a path it checked
+earlier. The volume's device is the mount point's own, read with `lstat`. The
+mount is opened, then `work/` from it, then each component of each artifact
+from its parent's descriptor with `openat` and `O_NOFOLLOW | O_NONBLOCK`, and
+every descriptor is `fstat`'d before it is used: it is kept only when it is a
+regular file or a directory **and** its device is the volume's. The bytes are
+read from the descriptor that passed that check. So a file or a parent
+directory swapped for a symlink fails its open, a FIFO swapped in is opened
+without waiting and refused by its type, and a file on any other device is
+refused however it was reached. An absolute path, a `..` element, a symlink
+named as the artifact and anything that is not a file or a directory are all
 refused, and the shape checks run as text before any filesystem call so the
-refusal names the flag rather than an errno.
+refusal names the flag rather than an errno. Inside a directory artifact a
+symlink, a device or a socket is skipped; an entry that changes type while the
+handoff reads it is a refusal. The copy of each file is bounded by what is left
+of `--out-max-bytes`, so a file that grew after it was measured is refused, not
+copied past the cap.
 
 **`--out-max-bytes`**, default `64m`. The whole set is **measured before a byte
 is written** and refused over the cap. A handoff is a door, not a backup: a
