@@ -6,8 +6,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -165,25 +167,133 @@ func TestFnLoadNamesTheLibraryThatHoldsAFunction(t *testing.T) {
 	}
 }
 
+// TestFnRemedyRoundTripsTheLogin is Stella's probe of 47e862ac8, promoted to
+// the regression: fn check on an empty store prints MISSING with a remedy
+// command; that command, split into argv by /bin/sh exactly as a person
+// pasting it would, runs through run() and the production dial with the
+// same environment and loads the library. Each case is a login the remedy
+// once lost: an explicit --password-env equal to the default beside
+// NOVA_REDIS_PASSWORD_ENV naming a wrong one, an explicit empty --user beside
+// NOVA_REDIS_USER naming a wrong user, and a user name holding a quote. All
+// credentials are synthetic.
+func TestFnRemedyRoundTripsTheLogin(t *testing.T) {
+	t.Parallel()
+	const pw = "synthetic-password"
+	cases := []struct {
+		name  string
+		user  string // the ACL user the store has; "" is the default user, on
+		env   map[string]string
+		flags []string
+	}{
+		{"a named user", "fnuser", map[string]string{PasswordEnv: pw}, []string{"--user", "fnuser"}},
+		{"an explicit --password-env equal to the default, beside NOVA_REDIS_PASSWORD_ENV", "fnuser",
+			map[string]string{PasswordEnv: pw, PasswordEnvEnv: "OTHER_PW", "OTHER_PW": "wrong"}, []string{"--user", "fnuser", "--password-env", PasswordEnv}},
+		{"an explicit empty --user, beside NOVA_REDIS_USER", "",
+			map[string]string{PasswordEnv: pw, UserEnv: "wronguser"}, []string{"--user", ""}},
+		{"a user name holding a quote", "fn'user", map[string]string{PasswordEnv: pw}, []string{"--user", "fn'user"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			users := []string{"--user", "default", "on", ">" + pw, "~*", "&*", "+@all"}
+			if c.user != "" {
+				users = []string{"--user", "default", "off", "--user", c.user, "on", ">" + pw, "~*", "&*", "+@all"}
+			}
+			addr := testredis.Start(t, users...)
+			d := realDeps()
+			d.getenv = func(k string) string { return c.env[k] }
+			fnRun := func(args []string) (int, string, string) {
+				var out, errb bytes.Buffer
+				code := run(args, &out, &errb, d)
+				return code, out.String(), errb.String()
+			}
+			check := append([]string{"fn", "check", "--addr", addr}, c.flags...)
+			code, out, errOut := fnRun(check)
+			if code != 1 || !strings.HasPrefix(out, "MISSING ") || errOut != "" {
+				t.Fatalf("fn check %q: exit %d %q %q; want MISSING", check, code, out, errOut)
+			}
+			_, quoted, ok := strings.Cut(strings.TrimSpace(out), " remedy=")
+			if !ok {
+				t.Fatalf("MISSING line has no remedy: %q", out)
+			}
+			remedy, err := strconv.Unquote(quoted)
+			if err != nil {
+				t.Fatalf("remedy %s: %v", quoted, err)
+			}
+			command, ok := strings.CutSuffix(remedy, " puts this binary's library on the store")
+			if !ok || !strings.HasPrefix(command, "nova-redis fn load ") {
+				t.Fatalf("remedy %q is not a nova-redis fn load command", remedy)
+			}
+			// The shell splits the printed words; the names in it are this
+			// test's own synthetic ones.
+			words, err := exec.Command("/bin/sh", "-c", `printf '%s\000' `+strings.TrimPrefix(command, "nova-redis ")).Output()
+			if err != nil {
+				t.Fatalf("the shell cannot read the remedy %q: %v", command, err)
+			}
+			argv := strings.Split(strings.TrimSuffix(string(words), "\x00"), "\x00")
+			if code, out, errOut = fnRun(argv); code != 0 || !strings.HasPrefix(out, "LOADED nova_sprint ") || errOut != "" {
+				t.Fatalf("the remedy %q as argv %q: exit %d %q %q; want LOADED, logged in as the check was", command, argv, code, out, errOut)
+			}
+			if code, out, _ = fnRun(check); code != 0 || !strings.HasPrefix(out, "OK nova_sprint ") {
+				t.Fatalf("fn check after the remedy: exit %d %q; want OK", code, out)
+			}
+			t.Logf("remedy %s -> LOADED", command)
+		})
+	}
+}
+
 // TestFnFailureIsOneLineFromTheBinary runs nova-redis's main() in a child
-// process (this test binary, re-entered through TestNovaRedisMain) against a
-// port nothing listens on. What the process writes to its own stderr is one
-// FAILED line, exit 2: go-redis's pool log, which goes to the process's
-// stderr and not to run()'s writer, is silenced by the production dial.
+// process (this test binary, re-entered through TestNovaRedisMain), with an
+// environment scrubbed to mainEnv alone so no login from the parent reaches
+// it, and asserts what the process writes to its own stderr: one FAILED line,
+// exit 2, nothing on stdout. go-redis's pool log goes to the process's
+// stderr and not to run()'s writer; the production dial silences it. Two
+// stores that never answer, neither a port another process could take:
+//
+//   - an endpoint the test owns for its whole life, a listener that accepts
+//     every connection and closes it at once;
+//   - a host name with an empty label, which Go's resolver refuses without
+//     asking anyone, so the dial itself fails. That is the path go-redis
+//     writes its pool log on (a dial that succeeds and then reads nothing,
+//     as above, writes none), so this case is the one that turns red when
+//     the silencer goes.
 func TestFnFailureIsOneLineFromTheBinary(t *testing.T) {
 	t.Parallel()
-	addr := "127.0.0.1:" + testredis.FreePort(t) // taken and closed: nothing listens
-	cmd := exec.Command(os.Args[0], "-test.run=^TestNovaRedisMain$", "--", "fn", "check", "--addr", addr)
-	cmd.Env = append(os.Environ(), mainEnv+"=1")
-	var out, errb bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errb
-	err := cmd.Run()
-	var exit *exec.ExitError
-	if !errors.As(err, &exit) || exit.ExitCode() != 2 {
-		t.Fatalf("the child ended with %v; want exit 2 (stderr %q)", err, errb.String())
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if out.Len() != 0 || strings.Count(errb.String(), "\n") != 1 || !strings.HasPrefix(errb.String(), "FAILED nova_sprint sha=") {
-		t.Fatalf("stdout %q stderr %q; want no stdout and exactly one FAILED line on stderr", out.String(), errb.String())
+	accepted := make(chan struct{})
+	go func() {
+		defer close(accepted)
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return // the listener is closed at the test's end
+			}
+			_ = c.Close()
+		}
+	}()
+	t.Cleanup(func() { _ = ln.Close(); <-accepted })
+
+	for _, c := range []struct{ name, addr, cause string }{
+		{"an owned endpoint that closes every connection", ln.Addr().String(), "the store did not answer"},
+		{"a host no resolver is asked about", "no..such:6379", "no such host"},
+	} {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestNovaRedisMain$", "--", "fn", "check", "--addr", c.addr)
+		cmd.Env = []string{mainEnv + "=1"}
+		var out, errb bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &out, &errb
+		err := cmd.Run()
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) || exit.ExitCode() != 2 {
+			t.Errorf("%s: the child ended with %v; want exit 2 (stderr %q)", c.name, err, errb.String())
+			continue
+		}
+		if out.Len() != 0 || strings.Count(errb.String(), "\n") != 1 || !strings.HasPrefix(errb.String(), "FAILED nova_sprint sha=") ||
+			!strings.Contains(errb.String(), c.cause) {
+			t.Errorf("%s: stdout %q stderr %q; want no stdout and exactly one FAILED line on stderr naming %q", c.name, out.String(), errb.String(), c.cause)
+		}
 	}
 }
 

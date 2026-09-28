@@ -341,18 +341,37 @@ func (l login) dial(d deps) redis.UniversalClient {
 	return d.dial(*l.addr, *l.user, d.getenv(*l.passwordEnv))
 }
 
-// flags is the login as a remedy's command line writes it: --addr, and
-// --user and --password-env when they are not the defaults, so the command a
-// remedy prints logs in as the verb did.
+// flags is the login as a remedy's command line writes it, so that command
+// logs in as the verb did: --addr always; --user and --password-env when they
+// were given on the line, even empty or equal to the default (an explicit
+// flag overrides the environment, and a remedy that dropped it would log in
+// as the environment says), and when the environment set them to other than
+// the default. Every value is quoted for a POSIX shell. Stella's read of
+// 47e862ac8 found the three cases this closes: an explicit --password-env
+// NOVA_REDIS_PASSWORD beside NOVA_REDIS_PASSWORD_ENV, an explicit empty
+// --user beside NOVA_REDIS_USER, and a user name holding a quote.
 func (l login) flags() string {
-	line := "--addr " + *l.addr
-	if *l.user != "" {
-		line += " --user " + *l.user
+	given := map[string]bool{}
+	l.fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
+	line := "--addr " + shellQuote(*l.addr)
+	if *l.user != "" || given["user"] {
+		line += " --user " + shellQuote(*l.user)
 	}
-	if *l.passwordEnv != PasswordEnv {
-		line += " --password-env " + *l.passwordEnv
+	if *l.passwordEnv != PasswordEnv || given["password-env"] {
+		line += " --password-env " + shellQuote(*l.passwordEnv)
 	}
 	return line
+}
+
+// shellQuote is s as one POSIX shell word: as it is when it holds only
+// characters no shell treats specially, and otherwise in single quotes, each
+// single quote in it closing the quotes, written as a backslash and a quote,
+// and opening them again. The empty string is two single quotes.
+func shellQuote(s string) string {
+	if s != "" && strings.Trim(s, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./:@%+=,-") == "" {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // validAddr refuses an address the tool would have to guess at. The Redis

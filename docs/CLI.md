@@ -3098,7 +3098,7 @@ Each of these is refused (exit 2) before the dial, and the refusal names where t
   - `STALE`: the store holds other code, exit 1.
   - `MISSING`: the store holds no library of the name, exit 1.
   
-  `STALE` and `MISSING` end in the remedy, `nova-redis fn load <login>`, with the `--user` and `--password-env` the check was run with.
+  `STALE` and `MISSING` end in the remedy, `nova-redis fn load <login>`, which logs in as the check did. It keeps every login flag given on the line, even an empty one or one equal to the default, and adds what the environment set to other than the default. Each value is quoted as one POSIX shell word, so the printed command can be pasted as it is.
 
 **Failures.** A failure of either verb is one `FAILED nova_sprint sha=<d> store=<a> err=<...> remedy="..."` line on stderr, and nothing on stdout. `err` says what was being done, why it failed, and what the store holds after it. `remedy` is the one next step for that cause, and its command carries the verb's login:
 - A function name another library holds: `remedy` names that library and the function.

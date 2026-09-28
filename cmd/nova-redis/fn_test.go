@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"flag"
 	"slices"
 	"strings"
 	"sync"
@@ -427,6 +428,37 @@ func TestEveryVerbLogsInAsTheUserItIsGiven(t *testing.T) {
 			if want := []string{c.want}; !slices.Equal(got, want) {
 				t.Errorf("%s, %q: dialled as %q, want %q (stderr %q)", c.name, args, got, want, errb.String())
 			}
+		}
+	}
+}
+
+// TestLoginFlagsEchoWhatWasGiven: the login a remedy prints keeps every login
+// flag given on the line, even empty or equal to the default, adds what the
+// environment set to other than the default, and quotes each value as one
+// POSIX shell word (the functional TestFnRemedyRoundTripsTheLogin runs the
+// printed command through /bin/sh and a store).
+func TestLoginFlagsEchoWhatWasGiven(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		args []string
+		env  map[string]string
+		want string
+	}{
+		{[]string{"--addr", "127.0.0.1:6379"}, nil, "--addr 127.0.0.1:6379"},
+		{[]string{"--addr", "127.0.0.1:6379", "--user", ""}, map[string]string{UserEnv: "wronguser"}, "--addr 127.0.0.1:6379 --user ''"},
+		{[]string{"--addr", "127.0.0.1:6379", "--password-env", PasswordEnv}, map[string]string{PasswordEnvEnv: "OTHER_PW"}, "--addr 127.0.0.1:6379 --password-env NOVA_REDIS_PASSWORD"},
+		{[]string{"--addr", "127.0.0.1:6379", "--user", "fn'user"}, nil, `--addr 127.0.0.1:6379 --user 'fn'\''user'`},
+		{[]string{"--addr", "127.0.0.1:6379"}, map[string]string{UserEnv: "coordinator", PasswordEnvEnv: "SEAT_PW"}, "--addr 127.0.0.1:6379 --user coordinator --password-env SEAT_PW"},
+		{[]string{"--addr", "[::1]:6379"}, nil, "--addr '[::1]:6379'"},
+	}
+	for _, c := range cases {
+		fs := flag.NewFlagSet("fn check", flag.ContinueOnError)
+		l := loginFlags(fs, deps{getenv: func(k string) string { return c.env[k] }})
+		if err := fs.Parse(c.args); err != nil {
+			t.Fatal(err)
+		}
+		if got := l.flags(); got != c.want {
+			t.Errorf("%q with %v: flags() = %q, want %q", c.args, c.env, got, c.want)
 		}
 	}
 }
