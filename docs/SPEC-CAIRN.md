@@ -43,9 +43,14 @@ file in the file's own shape, one blank line between sections, the words
 byte-for-byte beneath the heading. Nothing appears beside the file — no
 `entries/`, no `log.jsonl`, no index — because the file IS the record; the
 duplicate and conflict rules below read that section instead of an entry
-file, and `index`/`receipt`, which report on stored entries, cover the
-first shape only while the coverage ledger counts the file. The nested
-record wins when a store somehow holds both. The hurt this is written from
+file. `index` and `receipt` read those same dated sections. Their byte counts
+measure the whitespace-trimmed section body, matching duplicate detection;
+they do not reconstruct the original append's trailing newlines. The flat
+format stores no source or publication policy: receipts print `source=-`
+and `publish=unknown`. Ordinary prose without machine-form entry headings
+is not an indexed entry. Invalid stamps, invalid entry identifiers and duplicate
+entry headings refuse rather than produce an ambiguous receipt. The nested
+record wins when a store holds both shapes for a session, which counts once. The hurt this is written from
 (2026-09-18): an append into a bench store refused `no such session
 "b9395d11"; open first` with `cairns/b9395d11.md` in place, and running the
 named remedy would have written a second record and split one session in
@@ -79,7 +84,9 @@ required) travels with the entry for a later explicit act to carry.
 section/entry index and coverage ledger mechanically.** Rows are derived
 from the stored entries — session/entry pointers, stamps, sources, sizes —
 never recopied narratives, so work events are linked instead of restated
-across records. Every listing takes `--max` (default 20, 0 prints all) and
+across records. A missing store or a missing explicitly named session refuses
+at exit 2; an existing empty store or session is a successful empty index.
+Every listing takes `--max` (default 20, 0 prints all) and
 prints one `MORE` line with its remedy; the count is never capped and the
 `INDEX COVERAGE sessions=<n> entries=<n>` line carries the total whether
 the run passed or failed.
@@ -87,7 +94,9 @@ the run passed or failed.
 **`receipt --store <dir> --session <id> --entry <id>` names what was
 preserved for one entry**: its stamp, source pointers, size and the same
 `persisted=true published=false publish=<policy>` split the append
-reported, so a reader never infers the remote from the local.
+reported for nested entries, so a reader never infers the remote from the local.
+Flat records report `publish=unknown` because the policy was not stored.
+A missing store, session or entry refuses at exit 2, naming what is absent.
 
 ## Tests this spec demands
 
@@ -113,7 +122,7 @@ makes no red-first claim for the 19 that exist.
 9. `TestAppendToTheBenchFileRetriesAsADuplicate` — the duplicate rule reads the bench section instead of an entry file: a retry of the same request is `duplicate=true` and adds no second section.
 10. `TestAppendToTheBenchFileRefusesDifferentProseUnderTheSameID` — the conflict rule reads the bench section instead of an entry file: the same entry id carrying different prose is a conflict.
 11. `TestCoverageCountsTheBenchSessionFiles` — the coverage ledger counts the bench file.
-12. `TestIndexAndReceiptCoverTheFirstShapeOnly` — `index`/`receipt`, which report on stored entries, cover the first shape only.
+12. `TestIndexAndReceiptReadFlatRecordsWithoutChangingThem` — index and receipt read the dated sections in a flat record, preserve its bytes, and create no sidecars. `TestFlatReadMetadataOrderingAndNestedPrecedence` checks ordering, metadata and the shared coverage count.
 13. `TestNestedRecordWinsWhenStoreHoldsBoth` — the nested record wins when a store somehow holds both shapes.
 14. `TestAppendWithNoRecordAnywhereNamesTheOpenVerb` — a refusal names the remedy verb whole (`nova-cairn open --store … --session … --publish …`).
 15. `TestAppendKeepsExactProseAndReportsPersistenceSeparately` — `append` files the friend's chosen words byte-for-byte; success reports local persistence and remote publication separately (`persisted=true published=false`).
