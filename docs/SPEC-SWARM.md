@@ -1,8 +1,5 @@
 # nova-swarm — specification
 
-> **Retired 2026-09-24 (verb survey, del-swarm-ci-leftovers).** `add`, `run`, `supervise`, `requeue`, `verdict`, `cost`, `note`, `reclaim`, `bench`, `reap`, `publish`, `pull`, `pull-lanes` and `result-lint` are deleted: nothing called them, and card work runs through `nova-sprint card launch` and `nova-card`. The live surface is `slots`, `native`, `lint` and `batch`. Prose below that describes a deleted verb is historical until this section is rewritten.
-
-
 `nova-swarm` is one binary at the **worker layer**. It runs a pool of **one-task
 workers** — any provider, any model, through one harness — each with its own
 working directory, its own data home, its own job directory and its own deadline
@@ -1000,23 +997,30 @@ H4. **`MODE: script` is `--net-deny`.** MODE is read from the typed header
 ## The verbs
 
 ```
-nova-swarm batch    --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--profiles <file> --profile <id>] [--model <id>] [--deadline <duration>] [--max-input <bytes>]
-nova-swarm batch    --id <id> --cards <file> --deadline <seconds> --root <dir> --tokens <n>|unmetered (--runner <cmd> | --harness <path> --slots-store <dir> --owner <name> [--auth <file>]) [--slots <lo>-<hi>] [--idle <seconds>] [--max-inflight <n>] [--stall-after <seconds>] [--benches <file>] [--bench <name>[,<name>...]] [--no-wall]
-nova-swarm native   --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--usage-interval <s>] [--label <text>] [--auth <file>] [--worker <file>]
-nova-swarm status   --pool <dir> [--max <n>]
-nova-swarm stop     --pool <dir>
-nova-swarm triage   --pool <dir> (--batch <id> | [--dir <dir>]...) [--since <stamp>] [--all] [--no-state] [--max <n>]
-nova-swarm result   --pool <dir> --id <job>
-nova-swarm template --name <read-pr|probe-row|fix-card|result|worker|profiles|setup|capacity|read|fix|text|replay|drift|tone|models.tsv>
-nova-swarm finalize --pool <dir> --task <id>
 nova-swarm version
+nova-swarm doctor    [--path <file>] [--local <file>]
+nova-swarm batch     --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
+nova-swarm batch     --id <id> --cards <file> --deadline <seconds> --root <dir> --tokens <n>|unmetered (--runner <cmd> | --harness <path> --slots-store <dir> --owner <name>) [--idle <seconds>] [--slots <lo>-<hi>] [--then <command>] [--benches <file> --bench <name>[,<name>...]]
+nova-swarm status    --pool <dir> [--slots-store <dir> --owner <name>] [--max <n>]
+nova-swarm stop      --pool <dir>
+nova-swarm triage    --pool <dir> [--batch <id>] [--since <stamp>] [--all] [--no-state] [--max <n>] [--owed <file>] [--usage <file>] [--decide [--floor <f>] [--key-env <var>] [--base-url <url>]]
+nova-swarm result    --pool <dir> --id <job>
 nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
-nova-swarm lint      --card <file> [--max <n>] | --rules
+nova-swarm lint      --card <file> [--typed] [--trust <file>] [--lineup <file>] [--max <n>] | --fleet <file> [--max <n>] | --rules
+nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|read|fix|text|replay|drift|tone|models.tsv
+nova-swarm finalize  --pool <dir> --task <id>
 nova-swarm quickstart --pool <dir>
-nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--usage-interval <s>] [--label <text>] [--auth <file>] [--config <file>] [--worker <file>]
+nova-swarm profile   --jobs <glob>
+nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--events-store <host:port>]
 nova-swarm route     --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]
-nova-swarm help
+nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
+nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>] [--kind <kind>]
+nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]
+nova-swarm slots list --store <dir>
+nova-swarm worker check <description.json> [--env] [--max <n>]
 ```
+
+The pool verbs (`status`, `stop`, `triage`, `result`, `finalize`, `quickstart`) read a pool directory. Nothing fills the pool since the dispatcher was removed; they operate on whatever tasks and reports sit in the pool directory as they behave today.
 
 `route` picks the worker by a typed decision behind a floor. It sends the
 card's first 1500 characters as the state with four questions — `kind` a
@@ -1055,14 +1059,8 @@ a harness that exits without its own report is scored `harness-silent`, never
 `OK`.
 
 `--tokens <n>` is the token budget (rule 13). It has no default and `0` is
-refused, on `add` and on `batch` alike, for the reason `--files` has none. `native`
+refused, on `batch` and `native` alike, for the reason `--files` has none. `native`
 and `batch --cards` require the same word for the same reason (rule 13d).
-
-`--no-auto-retry` belongs only to `run`. It finalizes deadline and true-429
-outcomes without an automatic same-text descendant, while preserving the
-attempt's report, usage, failure reason and manual `requeue`. It is an
-invocation policy, not task metadata: a later `run` that recovers an ended job
-needs the flag again. Absent it, the default automatic behavior below applies.
 
 `batch --tasks <dir>` queues one task per regular file directly under `<dir>`,
 in name order, each with the same `--files`, `--tokens`, `--template` and
@@ -1083,34 +1081,15 @@ finalized job or `<job>/RESULT.md` for a running one; it is the one path by
 which a malformed report reaches a person (rule 15), it never goes through
 `internal/oneline` for the body because the body is the thing asked for, and
 it is `RESULT REFUSED` at exit 1 for an id not in the pool or a job with no
-published report (`NO-RESULT`). It is never called by `run` or `triage`.
+published report (`NO-RESULT`). It is never called by `triage`.
 
 `finalize` writes the usage file for one ended job whose runner died before
 doing it (rules 12 and 17); it is refused while the job's process group is
-alive, and it is a no-op with `FINALIZE OK` if the file already exists. `run`
-does the same thing for every ended job it adopts or reclaims, so the verb is
-for a person and never for a loop.
-
-(2026-09-12: a slot file that cannot be READ, and a slot file that is GONE,
-never authenticate worker-written evidence. `finalize` reads the slot file
-first; a read ERROR is a refusal that names the slot path, and an ABSENT slot
-file is accepted only when a record the tool itself wrote outside the worker's
-write set — the usage file — proves the job was already finalized; otherwise
-the worker-written `exit.json` is refused and the outcome stays `unknown`.
-Likewise the supervisor publishes the per-launch attestation only after it has
-confirmed the job's process group is dead, using the identity it retained at
-launch — the pgid and start stamp it recorded when it started the harness,
-never the worker-writable pid file — and if the group cannot be confirmed dead
-by the deadline it writes `exit.json` without the attestation and with
-`end=unknown`.)
+alive, and it is a no-op with `FINALIZE OK` if the file already exists.
 
 `--files <n>` is the file budget (rule 4). It has no default: a budget this
 tool supplied would be a guess about somebody else's task. Zero is refused,
 because a worker that may open no file is a worker asked for a plan.
-
-`verdict` records a reader's counts for one task: how many of its findings
-were accurate and how many wrong, by name, into the task's sidecar. It is the
-only way `accurate` and `wrong` reach a batch line, and it is a person's act.
 
 `lint --card <file>` checks one card's mechanical shape **before any spend**,
 with no model and no probe: it reads the one file it was handed and names every
@@ -1181,10 +1160,8 @@ is exit 2 and `refusing to guess`. `--workers` is capped at **64** (Glenn,
 prototype prints a note and clamps, and a caller who asked for 200 workers has a
 belief about throughput that a note at the top of a log does not correct.
 
-**The task text is never an argument.** `add` takes `--task <file>` or
-`--stdin`. The prototype takes it as `$1`, which puts a multi-paragraph task
-into the process table and into every `ps` a bench user runs, and a task carrying
-a quoted rule carries quotes into a shell. A file or a stream, always.
+**The task text is never an argument.** A task is supplied via a file or directory,
+never as a CLI argument. The prompt is a file or a stream, always.
 
 **`--worker <file>`** names the legacy/default worker description: which provider,
 which model, which env var the provider reads, which base URL, and where the key
@@ -1200,35 +1177,29 @@ implicit opinion about whose model runs.
 "DEEPSEEK_API_KEY"` — delivered into the runner's own environment by `nova-secrets
 exec` around the run (docs/SPEC-SECRETS.md, the second caller): the key is sealed
 once and delivered at use, and it is **never a file on disk**. When `secret` is
-set, `run` and `supervise` require that variable to be present and non-empty in
-their own environment and pass it to the harness under the description's
-`env_var`; a description with neither, or with `secret` set and the variable
-absent, is refused naming the variable and the remedy — run the binary under
-`nova-secrets exec --only <NAME> -- <this command>`. The value is never written
-to any file, never printed, and never in a RUN or SUPERVISE line; the harness
- config still carries the variable's NAME, never the value (the key section
- below). The wall's probe has no key file to prove it cannot read, and runs its
- other checks without one (SPEC-SANDBOX rule 10).
+set, `native` requires that variable to be present and non-empty in its own
+environment and passes it to the harness under the description's `env_var`; a
+description with neither, or with `secret` set and the variable absent, is refused
+naming the variable and the remedy — run the binary under `nova-secrets exec
+--only <NAME> -- <this command>`. The value is never written to any file, never
+printed, and never in a log line; the harness config still carries the variable's
+NAME, never the value (the key section below). The wall's probe has no key file to
+prove it cannot read, and runs its other checks without one (SPEC-SANDBOX rule 10).
 
- **A description carries `class`, and a `public` worker never sees private
- source (CARD-8390).** `class` is `"public"` or `"paid"`, default `"paid"`;
- anything else is refused where the description is loaded. `add`, `batch`,
- `run` and `native` enforce it the same way: when the worker's class is
- `public`, the card is scanned for clone URLs (`git clone ... <url>` and
- `github.com/<owner>/<repo>`), and the card is refused unless every URL's
- `owner/repo` is listed in `<root>/public-repos.txt` — one `owner/repo` per
- line, where `<root>` is the pool directory for `add`/`batch`/`run` and the
- configured root for `batch --cards`/`native`; a missing file refuses every
- card for a `public`-class worker. The refusal is one line, `CARD REFUSED
- reason=private-source repo=<owner/repo> class=public worker=<name>`, and the
- card is not admitted: never queued by `add`/`batch`, never started by `run`
- or `batch --cards`, never run by `native`. A `paid`-class worker admits every
- card, as before. (Glenn, 2026-09-17: Muse, contributor-free, is for public
- repos only; assume every provider trains, so the confinement is machinery,
- not a promise.)
+**A description carries `class`, and a `public` worker never sees private
+source (CARD-8390).** `class` is `"public"` or `"paid"`, default `"paid"`;
+anything else is refused where the description is loaded. `batch` and `native`
+enforce it the same way: when the worker's class is `public`, the card is scanned
+for clone URLs (`git clone ... <url>` and `github.com/<owner>/<repo>`), and the
+card is refused unless every URL's `owner/repo` is listed in `<root>/public-repos.txt`
+— one `owner/repo` per line, where `<root>` is the configured root for `batch
+--cards`/`native`; a missing file refuses every card for a `public`-class worker.
+The refusal is one line, `CARD REFUSED reason=private-source repo=<owner/repo>
+class=public worker=<name>`, and the card is not admitted: never queued by `batch`,
+never run by `native`. A `paid`-class worker admits every card, as before.
 
 **`worker check <description.json>`** validates a description before any launch and
-starts nothing. It loads the file with the same strict loader `run` and `native` use,
+starts nothing. It loads the file with the same strict loader `native` uses,
 then asks what the loader does not: the harness is a name on `PATH` or a path that
 exists and this machine will execute; `harness_args` carries both `{model}` and
 `{prompt}`; with `--env`, a description's `secret` is present and non-empty in this
@@ -1369,9 +1340,8 @@ the granted root runs, and the stub works too once a Java card sets `JAVA_HOME`.
 
 The list is written ONCE, in `internal/swarm/toolchain.go`, the kind is part of it, and each
 OS's entries are that OS's provisioning standard read back: `tools/bench-standard.sh` carries
-the linux names between its `NOVA_TOOLCHAIN_ROOTS` markers and drifts on a missing one, and
-`nova-pulse fleet standard`'s check table carries both OSes' — demanding a linux root,
-reporting a darwin one. A class test in `internal/ci` fails, per OS and in both directions,
+the linux names between its `NOVA_TOOLCHAIN_ROOTS` markers and drifts on a missing one.
+A class test in `internal/ci` fails, per OS and in both directions,
 when the lists disagree. Nothing else under `HOME` is named: not `~/.config/nova-secrets`,
 not `~/.ssh`, not the home itself. The card's WRITABLE Go caches are still the bench-shared
 pair under `<root>/cache`; `~/go/pkg/mod` is the bench's own copy and is read-only inside the
@@ -1631,10 +1601,8 @@ prints the FSEvents line, writes `RESULT.md` and exits 255: exactly one
 a card that ran and published is still `NATIVE OK` at exit 0; a silent harness
 is still `NATIVE INCOMPLETE`; neither process exits 255.
 
-`status`, `triage`, `result`, `template` and `cost` **report** and exit 0
-(their refusals are exit 1 as the table says). `run`, `add`, `batch`,
-`requeue`, `note`, `finalize` and `reclaim` are the verbs that act; `supervise`
-is `run`'s child and nobody's verb.
+`status`, `triage`, `result`, `template`, `verify`, `lint`, `doctor` and `profile` **report** and exit 0
+(their refusals are exit 1 as the table says). `batch`, `native`, `stop`, `finalize`, `quickstart` and `slots` are the verbs that act.
 
 ## Batch: scatter, wait, gather
 
@@ -1646,7 +1614,7 @@ The admission half is `batch --tasks <dir>` and the two proposals it cites —
 `deprecated/docs/PROPOSAL-SWARM-BATCH-RECEIPTS.md` and
 `deprecated/docs/PROPOSAL-SWARM-BATCH-ADMISSION-CONTRACT.md`. **This section adds no
 dispatcher extension beyond those two proposals**: no new admission boundary,
-no new `run` verb, and the receipts stay exactly as the proposals define them.
+and the receipts stay exactly as the proposals define them.
 
 ### scatter — one admission of n cards, one id, one deadline
 
@@ -1972,7 +1940,7 @@ profile (card 8964), `TestNativeRunWritesTimeline` and `TestProfilePrintsPhases`
 ### read — one agent, one packet, once
 
 **One agent reads the one packet once** and carries the dispositions to the
-pull requests — or `nova-review`'s outbox carries them. The packet is the
+pull requests. The packet is the
 whole read; a reader never walks the reports behind it, because the reports
 are the thing the packet replaced.
 
@@ -2041,8 +2009,8 @@ quotes a report body.
 **A batch that abstains uniformly is one PIT-STOP signal** (issue #618). When
 every card in the batch abstains with the same reason token and none ran, the
 `BATCH` line carries `uniform-abstain=<reason>`. It is one lost batch, not n
-independent faults: `nova-pulse status` counts it as a pit stop, and the manager
-policy escalates it at once and never requeues it. The fault that wrote the rule
+independent faults: it counts as a pit stop, and an escalation
+policy handles it at once without requeueing. The fault that wrote the rule
 left five read batches to the same mistake, and a coordinator who had to be
 asked; the token is the thing nobody has to read a log to see.
 
@@ -2070,10 +2038,7 @@ what a card is, what a slot is, or what `gather` reads.
 **The benches table** is `--benches <file>`, one header line and one row per
 bench, tab-separated, these columns in this order. There is no default path,
 and nova-tools keeps no host name in source or in a committed file: without
-`--benches` the row `local` is the only row that exists. The coordinator's
-bench writes the file, or nova-work's fleet registry emits it — the fleet
-registry is nova-work's; when it exists, `nova-work fleet --benches-out
-<file>` writes this file and swarm reads it; until then a person writes it.
+`--benches` the row `local` is the only row that exists. A person writes the file.
 
 | column | what it holds |
 |---|---|
@@ -2237,8 +2202,7 @@ BENCH WIDTH bench=<name> width=<W> cores=<n> rows=<n>
 ```
 
 **Presence of a bench is not presence of a friend.** A bench answering ssh
-says a machine is up; nothing here writes a presence line, and `nova-wake` is
-untouched.
+says a machine is up; nothing here writes a presence line.
 
 **`bench probe --benches <file> --bench <name>`** proves one bench before a
 batch is pointed at it: one line per check, each bounded, every check run, in
@@ -2271,8 +2235,8 @@ BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
 
 ### What this draft does not do
 
-- **No bench discovery, no registry.** Every bench is a row a person wrote or
-  nova-work's fleet registry emitted; swarm keeps no hosts of its own.
+- **No bench discovery, no registry.** Every bench is a row a person wrote;
+  swarm keeps no hosts of its own.
 - **No bus traffic.** `batch --bench <name>` wakes nobody: a friend's name is
   refused at admission, and no line is written to the bus.
 - **No scheduling by load beyond headroom.** Slots go by width, core count and
@@ -2329,20 +2293,14 @@ and answers from a fixture, inside `t.TempDir()`, red before green.
 
 | code | meaning |
 |------|---------|
-| 0 | the verb ran and passed: a task queued, a batch queued, a pool drained, a page written, a report printed |
-| 1 | the verb ran and said **NO**: a dispatcher that exited with tasks still pending and nothing running, a `requeue` of an id that is not in the pool, a `triage` over a directory that holds no reports when one was named, a `reclaim` of a job with no usage file or no report copy, a `finalize` of a job whose process group is alive, a `run` that ended with a quarantined slot or a `LAUNCH-FAILED` job, a `batch` over a directory with no task file, a `triage --batch` of an id no sidecar carries, a `result --id` of an id not in the pool or with no published report, a `run` that refused a task whose prompt is over its `max_input`, a `native` whose card was ended by its token budget or by a budget it could no longer verify (rule 13d), a `native` whose harness exited 255 (the child's code is `rc=255` on the verdict line; the process is 1, never 255: #2058) |
-| 2 | could not run: missing flag (`--files`, `--tokens` included, on `requeue` as on `add`, and `--tokens` on `native` and on `batch --cards`), a numeric `--tokens` on a pending task under a worker description whose `usage` is `none`, a numeric `--tokens` on a `native` whose usage source is `none` or whose bench has no `sqlite3` on `PATH`, unreadable pool, unreadable worker description, a key file that is absent or empty, a description whose `secret` variable is absent or empty in the runner's own environment (naming the variable and `nova-secrets exec --only <NAME>`), `--workers` above the cap, a `batch` with an unreadable task file, a `supervise` typed by hand, bad invocation |
+| 0 | the verb ran and passed: a batch queued, a page written, a report printed |
+| 1 | the verb ran and said **NO**: a `finalize` of a job whose process group is alive, a `batch` over a directory with no task file, a `batch` that refused a task whose prompt is over its `max_input`, a `triage --batch` of an id no sidecar carries, a `result --id` of an id not in the pool or with no published report, a `native` whose card was ended by its token budget or by a budget it could no longer verify (rule 13d), a `native` whose harness exited 255 (the child's code is `rc=255` on the verdict line; the process is 1, never 255: #2058) |
+| 2 | could not run: missing flag (`--tokens` on `native` and on `batch --cards`), a numeric `--tokens` on a `native` whose usage source is `none` or whose bench has no `sqlite3` on `PATH`, unreadable pool, unreadable worker description, a key file that is absent or empty, a description whose `secret` variable is absent or empty in the runner's own environment (naming the variable and `nova-secrets exec --only <NAME>`), a `batch` with an unreadable task file, bad invocation |
 
 **`native` never exits 255.** Local `ssh(1)` exits 255 for any error; that is
 not proof the remote command never started, so the outcome is potentially
 UNKNOWN and a retry waits on reconciliation. A harness that exited 255 is
 `rc=255 why=rc` on the `NATIVE INCOMPLETE` line and process exit 1 (#2058).
-
-**A failed task is not a failed `run`.** A worker that exits non-zero moves its
-files to `failed/` and the pass continues; `RUN OK` carries `failed=<n>` and
-exits 0. A dispatcher that cannot start anything at all — no key, no harness on
-`PATH` — is exit 2, before it starts the first worker, which is the point at
-which the caller can still fix it.
 
 A missing or empty key file is **exit 2 with the command that creates it** in the
 refusal, and the refusal never prints the path's contents. The prototype does
@@ -2449,11 +2407,9 @@ the terminal summary. **Neither line prints the key, the key file's contents,
 or the env var's value** — only the variable's name, where a name is needed at
 all.
 
-**Every listing is a cap and a count**, per SPEC.md. `run`, `status`, `triage`,
-`cost` and `reclaim` take `--max <n>`, default 20, `0` for all, one MORE line naming the
-remedy. On `run`, `--max` limits only displayed `RUN` task lines; it never
-limits admissions, workers, attempts or retries. The counts are the truth about
-the **pool**, never about the output.
+**Every listing is a cap and a count**, per SPEC.md. `status`, `triage`,
+`lint` and `verify` take `--max <n>`, default 20, `0` for all, one MORE line naming the
+remedy. The counts are the truth about the **pool**, never about the output.
 A `status` over a 67-task pool printed 67 lines in the prototype; the finding a
 reader wanted was one of them.
 
@@ -2562,7 +2518,7 @@ backstop behind the wrapper. On **windows** no wrapper is written and the
 child's environment is exactly what it was; the gap is named, not papered over.
 
 **The harvest publishes no key.** Before any push and before any PR,
-`nova-pulse harvest` reads the card's `RESULT.md` — which is what `openPR` copies
+the harvest step reads the card's `RESULT.md` — which is what is copied
 into the PR body — and the diff the push would carry, against a list of key
 SHAPES held as one data file (`internal/keyshape/keyshapes.txt`: PEM armour,
 `AGE-SECRET-KEY-1`, the forge's token prefixes, the provider prefixes, a JWT) and
@@ -2736,12 +2692,12 @@ self, and the next worker would load it without anybody reading the change.
 (Glenn and Stella, 2026-09-17.) A bench is bigger than its owners: one bench,
 many owners, and the slots on it are one shared pool, not one pool per owner.
 A bench carries ONE slot store shared by every owner, at <bench store>/slots,
-and every launcher — `nova-swarm run`, `nova-pulse launch`, a hand launch —
+and every launcher — `nova-swarm native`, a hand launch —
 takes a lease per card before it runs and releases it after. The seven rules:
 
 1. A bench carries ONE slot store shared by every owner, at <bench store>/slots,
    a directory of atomic mkdir leases each holding owner, pid, card label, until=.
-2. Every launcher (`nova-swarm run`, `nova-pulse launch`, a hand launch)
+2. Every launcher (`nova-swarm native`, a hand launch)
    takes a lease per card before it runs and releases it after; a launch
    without a lease is refused by the launcher.
 3. The broker verbs are the only way to hold a slot:
@@ -2785,7 +2741,7 @@ takes a lease per card before it runs and releases it after. The seven rules:
 
 A bench holds **slot leases**: the store is `<store>/slots` with one directory per lease made by `os.Mkdir` (atomic), each holding a file `lease` with lines `owner=`, `pid=`, `label=`, `until=<RFC3339>`, beside `<store>/shares.tsv` rows `capacity\t<n>`, `reserve\t<n>`, `<owner>\t<n>`. `slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>]` first reaps every lease whose `until=` is past AND whose pid is not alive (`Alive`, signal 0) — a lease past `until=` with a live pid is `DRIFT`, stays, and counts as held — then grants `k` leases iff the owner's held+demand stays within its share and the total held+demand stays within `capacity` minus `reserve`, demand being `k` times the card kind's admission weight, printing `SLOTS OK owner=<o> granted=<k> held=<h> share=<s> free=<f>` (exit 0) or `SLOTS REFUSED owner=<o> want=<k> held=<h> share=<s> free=<f> holders=<owner:count,...>` (exit 2); `slots release --store <dir> --owner <o> [--label <text>|--all] [--force]` frees the matching leases EXCEPT a lease whose `pid=` is alive and is not this process: that one is KEPT, counted in the `live=` field of `SLOTS RELEASED owner=<o> released=<r> held=<h> live=<n>`, named on stderr as `SLOTS KEPT owner=<o> live=<n>`, and the verb exits 2 — deleting a lease does not stop the process holding it, it only hands that process's seat to the next taker, so a release that freed it would put two cards on a one-seat bench. Only `--force` frees a live lease, and `--force` oversubscribes the bench on purpose: it is an operator's act at a prompt, for someone who knows what the store cannot (a holder on another host, a pid the kernel has since handed to somebody else), never a card's and never a manager's default. And `slots list --store <dir>` prints one `SLOT <id> owner=<o> pid=<p> label=<l> until=<t> state=live|expired|DRIFT` line per lease, with `stranded=1` and the label when a live-until lease whose pid is gone is stranded with its label.
 
-**The launcher holds a lease per task.** `nova-swarm run --pool <dir> … --slots-store <dir> --owner <name>` takes one lease before each task starts, with `label=` the task id and `for=` the task's own deadline plus 2 minutes, and releases it the moment the task ends — `done`, `failed`, budget, or the supervisor's death, which frees it by the same live-pid fence. When the take is refused the dispatcher waits, polling every 10 s up to the task's deadline, and prints exactly one `RUN WAIT slots owner=<o> holders=<...>` line naming the holders; it never launches past the share. A dispatcher that dies leaves leases whose pid is gone, and the next take reaps them. Without `--slots-store` the launcher is unchanged. `nova-swarm status --pool <dir> --slots-store <dir> --owner <name>` prints one `STATUS SLOTS owner=<o> held=<h> share=<s>` line.
+**The launcher holds a lease per task.** `nova-swarm batch … --slots-store <dir> --owner <name>` takes one lease before each task starts, with `label=` the task id and `for=` the task's own deadline plus 2 minutes, and releases it the moment the task ends — `done`, `failed`, budget, or the supervisor's death, which frees it by the same live-pid fence. When the take is refused the dispatcher waits, polling every 10 s up to the task's deadline, and prints exactly one `RUN WAIT slots owner=<o> holders=<...>` line naming the holders; it never launches past the share. A dispatcher that dies leaves leases whose pid is gone, and the next take reaps them. Without `--slots-store` the launcher is unchanged. `nova-swarm status --pool <dir> --slots-store <dir> --owner <name>` prints one `STATUS SLOTS owner=<o> held=<h> share=<s>` line.
 
 **`native` takes no lease** (nova-tools#3877, superseding #1546 for this verb). A
 bench's capacity is `bench:<b>:desired` in Redis, and the dealer is the one place a card
@@ -2795,7 +2751,7 @@ the bench. `native` reads no slot store and writes none. Two ledgers gave two an
 `SLOTS REFUSED owner=swarm-batman want=4 held=16 share=16` while Redis said the bench had
 room. `--slots-store` and `--owner` are still accepted so an older caller is not refused on
 an unknown flag, and they are read by nothing. The store and the `slots` verbs below remain
-for `run`'s dispatcher until that path is retired too.
+for `batch`'s dispatcher until that path is retired too.
 
 **A holder releases BY IDENTITY, never by owner and label.** `TakeSlotLeases` returns the
 ids it granted — not a count — and a holder hands exactly those back to
@@ -3149,12 +3105,11 @@ file instead — the tool has no list of blessed task shapes.
 card's `KIND:` line and by nothing a worker writes; and the eligibility rule there says when a
 card of a kind may be handed to a swarm at all: a readiness row in force, and the route's yes.
 
-### The pulse card templates
+### Card templates
 
-`nova-pulse cut` reads a templates directory holding `read.md`, `fix.md`,
-`text.md`, `replay.md`, `drift.md`, `tone.md` and `models.tsv` (SPEC-PULSE rule 4).
-The same files are shipped in this binary, so the directory is built from the tool
-rather than copied out of `cmd/nova-pulse/testdata`:
+A card launcher reads a templates directory holding `read.md`, `fix.md`,
+`text.md`, `replay.md`, `drift.md`, `tone.md` and `models.tsv`.
+The same files are shipped in this binary, so the directory is built directly from the tool:
 
 ```
 nova-swarm template --name read       > read.md
@@ -3168,7 +3123,7 @@ nova-swarm template --name models.tsv > models.tsv
 
 `read`, `text` and `tone` are text-only cards and carry rule 6's no-build line;
 `fix`, `replay` and `drift` carry the red-then-green row. These are cards, not task
-templates: `add --template` and `batch --template` refuse them, as they refuse `result`.
+templates: `batch --template` refuses them, as it refuses `result`.
 
 ## The `RESULT.md` template
 
@@ -3557,47 +3512,16 @@ does **not** write to the board. It does two things:
 **Filing and closing cards is a person's or a coordinator's act, through the
 board tool, never a worker's.** A swarm that could file would file 67 cards, 25
 of them duplicates, which is exactly what batch 1 produced when nothing checked
-first. The separation is the same one `nova-merge` keeps from the bus: a tool
-that also announced would be two tools in a bug report.
+first. A tool that also announced would be two tools in a bug report.
 
-## Cost per task, and rate limits
-
-`cost` reports, per task and per window: **the five token types and
-dollars**, with the model, the attempt and the way the job ended named. The
-numbers come from the harness's own accounting, recorded into the job's usage
-file `<pool>/usage/<job>.tsv` by `finalize` when the job ends (rule 12); a
-task whose harness reported nothing prints `in=- out=- usd=-` rather than a
-zero, because a zero is a measurement and a dash is an absence. `COST OK`
-carries token `dashes=` plus `known_usd=` and `usd_missing=`: a mixed USD
-subtotal remains visible, while an all-unknown USD total is `usd=-` and is
-never read as measured zero.
-`cost` reads `<pool>/usage/` and nothing under `done/`, `failed/` or
-`running/`, which is why it answers after `reclaim`.
-
-**`--by model|day|repo` folds the same rows into one summed line per group**, printed
-after the per-task lines and before `COST OK`, one
-`COST BY <group>=<value> tasks=<n> in=<sum> out=<sum> cache_write=<sum> cache_read=<sum>
-reasoning=<sum> usd=<sum or ->` per group, sorted by `cache_read` descending. A group
-whose rows carry a `-` in `usd` prints `usd=-`: the summed dollar figure is an absence
-when any row in it is an absence, and a partial subtotal is never read as the group's
-price. `--summary-only` prints the `COST BY` lines and `COST OK` and no `COST TASK`
-lines, which is the page a coordinator reads to answer *which model, which day, which
-repo*. A `--by` value that is not `model`, `day` or `repo` is refused rather than read
-as a fourth grouping.
-
-This exists because **a fleet can burn a session**: one fleet ran about 9M
-tokens, and three parallel workflows hit the limit in 20 minutes (Glenn,
-2026-09-10). A pool whose cost is invisible is a pool that is discovered to be
-expensive by being cut off.
+## Rate limits and input limits
 
 **Rate limits are the dispatcher's business.** A provider's 429 is not a failed
 task by default: the dispatcher holds the slot, waits the interval the provider
 names (or its own `--backoff`, default 30 seconds, doubling to a cap of 5
-minutes), and retries the **same** task once. With `run --no-auto-retry`, it
-records and finalizes the true-429 attempt without waiting or launching a
-descendant. A second 429 on the same task fails it with `rc=429` in its
-sidecar, so `triage` can see that a batch's silence was a limit rather than a
-set of bad tasks. Three of seven workers in batch 2 came back
+minutes), and retries the **same** task once. A second 429 on the same task fails
+it with `rc=429` in its sidecar, so `triage` can see that a batch's silence was
+a limit rather than a set of bad tasks. Three of seven workers in batch 2 came back
 with a plan and no findings and nothing in the pool said why; the cause turned
 out to be a refusal, not a limit (rule 5), but a 429 is a second road to the
 same silence and the sidecar closes both.
@@ -3631,7 +3555,7 @@ marks at all, being this repository's words and no provider's. **That the gramma
 event line whose second word is a mark is asserted by a test over the sources**, not by a list
 anybody keeps: a claim about every printed line is one only machinery may make. A phrase a description names is a sentence — twelve characters and a space or a
 digit — refused when it is read, because a job classed this way is never retried. A task may also name `max_input <bytes>`, the ceiling on the prompt this
-tool hands the harness, which `run` checks **before** the launch and refuses with the same
+tool hands the harness, which `batch` checks **before** the launch and refuses with the same
 class and the measured size: it bounds what the dispatcher can measure, and the files the
 worker then opens are still `--files`.
 
@@ -3648,8 +3572,7 @@ files it with `end=provider` and the provider's `ref=` on its `RUN PROVIDER` lin
 sidecar and in the usage row. The retry keeps the task: each attempt is `from=` the attempt
 before, the usage rows carry `attempt=1`, `attempt=2`, `attempt=3`, and a field the provider
 never reported stays a dash and never becomes a zero. A slow failure — one that takes longer
-than the grace — is a real run that failed and is **not** retried, and `run --no-auto-retry`
-files the first fast failure without launching a descendant. A native run applies the same
+than the grace — is a real failure and is **not** retried. A native run applies the same
 rule to its launch and appends one usage row per launch, so a retried card's `usage.tsv`
 carries its attempts for the one job.
 
@@ -3660,26 +3583,6 @@ rule 17's recovery pass all read that field and name the class from it: no mark,
 bound, list marker or event-prefix rule is asked to decide it. The prose heuristic above is
 the fallback for a harness with no adapter, and the class is decided from the field before a
 word of it is read.
-
-## `requeue` — the same task, changed
-
-```
-```
-
-`requeue` takes a finished task and queues a **new** task with **new text**,
-recording `from=<old-id>` in the new task's sidecar. `--files` and `--tokens`
-are required on it exactly as on `add`: the remedy that worked in batch 3 was
-a smaller file budget, and a requeue that inherited the old budget would
-repeat the failure it was typed to fix. The text must be supplied;
-a requeue with the same text is a retry, and a retry of a task that failed for
-what it said will fail the same way. The remedy that worked in batch 3 was a
-**file budget added to the text**, not a second attempt at the same sentence.
-
-The old task's files stay where they are. `requeue` deletes nothing; the one
-verb that removes anything is `reclaim`, and it removes a job directory only
-after the job's usage file and its report copy under `<pool>/reports/<job>/`
-both exist (rule 12). Reports in `reports/` and usage
-files in `usage/` are never deleted by any verb: a pool is a record.
 
 ## The numbers from today
 

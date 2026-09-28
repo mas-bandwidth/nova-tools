@@ -704,17 +704,28 @@ MIT, see [LICENSE](../LICENSE).
 
 ## nova-swarm
 
-> **Retired 2026-09-24 (verb survey, del-swarm-ci-leftovers).** `add`, `run`, `supervise`, `requeue`, `verdict`, `cost`, `note`, `reclaim`, `bench`, `reap`, `publish`, `pull`, `pull-lanes` and `result-lint` are deleted: nothing called them, and card work runs through `nova-sprint card launch` and `nova-card`. The live surface is `slots`, `native`, `lint` and `batch`. Prose below that describes a deleted verb is historical until this section is rewritten.
-
-
 ```
-nova-swarm batch    --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--max-input <bytes>]           # queue a directory of them under one batch id
-nova-swarm status   --pool <dir> [--max <n>]                                                # what is pending, running, done, failed, and how many slots are quarantined
-nova-swarm triage   --pool <dir> [--batch <id>] [--max <n>]                                 # one page, and one TRIAGE BATCH line to read a batch down by
-nova-swarm result   --pool <dir> --id <job>                                                 # one report, verbatim: the only path a malformed one takes to a person
-nova-swarm template --name read-pr|probe-row|fix-card|result|worker|setup|capacity|read|fix|text|replay|drift|tone|models.tsv   # the conditions, the forms, and the pulse card templates, baked in, so they are not retyped and not forgotten; setup is #184's agreement form and capacity is #176's offer-and-routing form, neither is a task template
-nova-swarm stop     --pool <dir>                                                            # stop new admissions; drain workers already running — never kill them
-nova-swarm lint     --card <file> [--typed] [--trust <file>] [--lineup <file>] [--base-check [--repo <dir>] [--legs <file>] [--p95 <file>]] [--max <n>] | --fleet <script> | --rules          # one card's mechanical shape, before any spend: no model, no probe, one file
+nova-swarm version                                                                                                              # print build identity
+nova-swarm doctor    [--path <file>] [--local <file>]                                                                           # refuse launch under a shadowed binary
+nova-swarm batch     --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
+nova-swarm batch     --id <id> --cards <file> --deadline <seconds> --root <dir> --tokens <n>|unmetered (--runner <cmd> | --harness <path> --slots-store <dir> --owner <name>) [--idle <seconds>] [--slots <lo>-<hi>] [--then <command>] [--benches <file> --bench <name>[,<name>...]]
+nova-swarm status    --pool <dir> [--slots-store <dir> --owner <name>] [--max <n>]                                             # report pool counts
+nova-swarm stop      --pool <dir>                                                                                               # stop new admissions; drain running workers
+nova-swarm triage    --pool <dir> [--batch <id>] [--since <stamp>] [--all] [--no-state] [--max <n>] [--owed <file>] [--usage <file>] [--decide [--floor <f>] [--key-env <var>] [--base-url <url>]]
+nova-swarm result    --pool <dir> --id <job>                                                                                    # one report verbatim
+nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
+nova-swarm lint      --card <file> [--typed] [--trust <file>] [--lineup <file>] [--max <n>] | --fleet <file> [--max <n>] | --rules # card or launcher mechanical lint
+nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|read|fix|text|replay|drift|tone|models.tsv
+nova-swarm finalize  --pool <dir> --task <id>                                                                                   # record usage and finalize ended task
+nova-swarm quickstart --pool <dir>                                                                                              # initialize pool directory structure
+nova-swarm profile   --jobs <glob>                                                                                             # one PROFILE line per job timeline and mean summary
+nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--events-store <host:port>]
+nova-swarm route     --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]
+nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
+nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>] [--kind <kind>]
+nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]
+nova-swarm slots list --store <dir>
+nova-swarm worker check <description.json> [--env] [--max <n>]
 ```
 
 ### The card lint
@@ -830,12 +841,11 @@ not refused on an unknown flag, and they are read by nothing.
 `batch` without a `--runner` of its own still asks for the two flags and refuses the
 whole batch without them; the store is no longer leased from by the `native` it launches.
 
-**The release is by identity.** `native` and `run` keep the lease ids `TakeSlotLeases`
-granted them and give back exactly those, pid-fenced. Releasing by owner and label would
-mean that two runs sharing a bench and a card name — or two dispatchers sharing an owner
-and a task id — each give away the other's live seat, and that a run refusing before it
-started — a missing harness, say — deletes a lease it never took (Stella, on #1562;
-dispatcher, #1582). `nova-swarm slots release --owner … --label …` keeps the
+**The release is by identity.** `native` keeps the lease ids `TakeSlotLeases`
+granted it and gives back exactly those, pid-fenced. Releasing by owner and label would
+mean that two launches sharing a bench and a card name each give away the other's live seat,
+and that a launch refusing before it started — a missing harness, say — deletes a lease it
+never took. `nova-swarm slots release --owner … --label …` keeps the
 by-owner-and-label behaviour, because that is what a person at a prompt means by it.
 
 **A release never frees a seat whose holder is still running (issue #1902).** Deleting a
@@ -843,7 +853,7 @@ lease does not stop the process holding it: the holder keeps running and the sea
 sitting in is handed to the next taker, so two cards end up on a one-seat bench. A lease
 whose pid is alive and is not this process is kept, counted in the `live=` field of the
 `SLOTS RELEASED` line, and named on stderr as `SLOTS KEPT`, and the verb exits 2. Giving
-back your OWN seat is always allowed — that is how `run` and `native` end. `--force` is
+back your OWN seat is always allowed — that is how `native` ends. `--force` is
 the loud override for a person who knows something the store cannot.
 
 `nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]`
@@ -887,8 +897,8 @@ same source; so `--tokens unmetered` beside a `max_turns` on a `usage: none` ben
 refused too. `--tokens unmetered` with no such description runs under both, as it does
 today.
 
-**`--usage-interval <s>`** is how often a live sample reads that source, default 5, the
-same flag `run` takes. On `native` an interval **under one second**, or one **not shorter
+**`--usage-interval <s>`** is how often a live sample reads that source, default 5.
+On `native` an interval **under one second**, or one **not shorter
 than `--deadline`**, is exit 2: under the first, three quick failed reads would end an
 honest card `budget-unverifiable`; under the second no sample would ever run.
 
@@ -998,9 +1008,10 @@ potentially UNKNOWN and a retry waits on reconciliation. The process exits 1.
 
 ### First run
 
-`quickstart` needs nothing but a directory: it makes the pool's structure and names the
-three commands that follow. `./pool` is a directory of yours; the tests run every line below
-against one they make in `t.TempDir()`.
+`quickstart` needs nothing but a directory: it initializes the pool's structure. The pool
+verbs (`status`, `stop`, `triage`, `result`, `finalize`, `quickstart`) read a pool directory;
+nothing fills the pool since the dispatcher was removed, so a pool directory reflects whatever
+tasks and results were placed there.
 
 ```
 $ nova-swarm quickstart --pool ./pool
@@ -1016,28 +1027,20 @@ STATUS OK pending=0 running=0 done=0 failed=0 slots=0/0 quarantined=0
 ### stop, the wall and the worker description
 
 **`stop` holds the pool still without killing anyone.** It writes a `stop` file that
-stops new admissions while workers already running finish under their own deadline. A
-`run` that ends over a stopped pool names the stop in its `RUN NOTE` remedy rather than
-guessing a second run would help — `the pool is stopped; <n> task(s) stay pending until the
-stop file is removed` when work remains, or `the pool is stopped and drained; remove the
-stop file to resume` when it does not. Remove `stop` to admit again; the stop survives a
-dispatcher's death and the next `run`'s recovery (issue #180).
+stops new admissions while workers already running finish under their own deadline.
+Remove `stop` to admit again.
 
-**`run` needs `nova-sandbox` before it needs anything else.** Every job runs inside it
-(docs/SPEC-SANDBOX.md): the job directory and its data home are the only writable paths, the
+**Every job runs inside `nova-sandbox` (docs/SPEC-SANDBOX.md).** `native` proves the wall
+before launching: the job directory and its data home are the only writable paths, the
 worker home and whatever `read_roots` names are readable, and the key file, `~/.ssh` and the
-`gh` configuration are outside both lists and unreadable to the worker. `run` proves the
-wall ONCE, before the first worker, and refuses the pass if it cannot. A machine with no
-backend, or a wall that fails a check, starts no worker at all: `RUN REFUSED
+`gh` configuration are outside both lists and unreadable to the worker. A machine with no
+backend, or a wall that fails a check, starts no worker at all: `NATIVE REFUSED
 reason=no_sandbox` names the missing backend and the one workaround.
 
 `--no-sandbox` is that workaround and nothing else is: no environment variable and no file
-turns the wall off, and a pass that takes it says so once per job, on stderr, before the job
-starts — `RUN UNSANDBOXED id=<id> slot=<n>: no OS containment; every read and write this job
-makes is yours`.
+turns the wall off.
 
-**The one input `run` cannot proceed without** is the worker description, and every field
-below is required. This one ran two real DeepSeek workers end to end on 2026-09-11:
+**The worker description**, and every field below is required:
 
 ```json
 {
@@ -1071,14 +1074,14 @@ ADDS to. A phrase counts only on the provider's own error line — a line whose 
 `error`, `fatal` or `exception` mark (the mark begins a word, at most two tokens before it and
 at most one of those a bare word, no list marker at the head of the line, no quote character
 before it), or the line directly under one, so a report that merely quotes the sentence beside
-the word is not one, and a line these tools wrote themselves — `RUN REFUSED …`, `SANDBOX OK …`
+the word is not one, and a line these tools wrote themselves — `NATIVE REFUSED …`, `SANDBOX OK …`
 — is skipped whole, since a job that runs them logs them, unless its second word is itself a
 mark, which no line of theirs has (a test over the sources keeps that true) and a shouting
 proxy does (`HTTP ERROR: 400 …`) — and a phrase you name must be a sentence, twelve characters
 with a space or a digit in it, refused when the description is read: a job classed this way is
 never retried, so a bare word here would take the retry away from every failed job whose log
-happens to carry it. A task may name the other half, `--max-input <bytes>`, and `run` refuses
-a prompt over it before the launch.
+happens to carry it. A task may name `--max-input <bytes>`, and `batch` refuses a prompt
+over it before launch.
 
 `key_file` lives **outside `worker_dir` and outside every `read_roots` entry**, which is why
 the example keeps it in `~/.keys`. `worker_dir` is copied into the slot directory before
@@ -1098,11 +1101,8 @@ task text is never an argument. `usage` names the token source for what it IS: `
 is OpenCode's own `opencode/opencode.db`, in the job's own data home, read through
 `sqlite3 -readonly` at every sample and once more when the job ends — so `sqlite3` is on
 PATH or the source is one that cannot be read — and `none` is a harness that reports
-nothing, under which only `--tokens unmetered` tasks may run. The name was not always true:
-on 2026-09-11 `opencode` read a tab-separated file no OpenCode writes, and two real jobs
-burned 61,875 and 85,308 tokens against `--tokens 20000` while both reported
-`budget=-/20000`. A source that cannot be read is never a source reporting nothing: three
-failed samples end the job `RUN BUDGET-UNVERIFIABLE`.
+nothing, under which only `--tokens unmetered` tasks may run. A source that cannot be read
+is never a source reporting nothing: three failed samples end the launch `NATIVE OK ... stopped=unverifiable`.
 
 `nova-swarm template --name worker` prints this description with every field in it, so the
 one file a first run cannot start without is the one file you do not have to invent.
@@ -1113,10 +1113,9 @@ propose an alternative, decline, or stay silent, and missing feedback is pending
 assent — a guarantee table whose rows say who enforces each guarantee (the OS wall, a
 cooperating harness, or the launcher outside the wall), and generic wall, fence, seat and
 launcher examples with placeholder values only. It is a form, not a task's conditions:
-`add --template setup` is refused the way `add --template result` is, no secret, key,
-token or private path is ever printed by it, and an agreed form supplies no account
-access — implementation, credential migration and deployment are separate staged work
-with their own authorization.
+no secret, key, token or private path is ever printed by it, and an agreed form supplies
+no account access — implementation, credential migration and deployment are separate
+staged work with their own authorization.
 
 `nova-swarm template --name capacity` prints the per-friend offered-capacity and routing-log
 form (issue #176): the offer half with every field the issue names (expiry, friend, instance,
@@ -1130,19 +1129,14 @@ offer excluded). Capacity kinds are kept apart — coordinator, direct worker, o
 swarm and local — because model slots are not interchangeable throughput units and two
 offers sharing a quota must be counted once. missing contact is unknown; stale capacity is
 not proof of failure and not proof of consent, so an offer nobody answered since the
-silent-ping window is excluded. It is a form, not a task's conditions: `add --template
-capacity` is refused the way `add --template result` and `add --template setup` are, no
-key, no token, and no private host detail is ever printed by it, and a filled form
-supplies no account access — an automatic scheduler is separate staged work with its own
-authorization.
+silent-ping window is excluded. It is a form, not a task's conditions: no key, no token,
+and no private host detail is ever printed by it, and a filled form supplies no account access.
 
 `nova-swarm template --name read` (and `fix`, `text`, `replay`, `drift`, `tone` and
-`models.tsv`) prints the six typed card templates SPEC-PULSE rule 4 names and the cost
-table rule 7 reads, so a templates directory is built from the tool rather than copied out
-of testdata. `read`, `text` and
-`tone` are text-only cards and carry rule 6's no-build line; `fix`, `replay` and `drift`
-carry the red-then-green row. They are cards, not task templates: `add --template read`
-is refused the way `add --template result` is.
+`models.tsv`) prints the six typed card templates and the cost table, so a templates
+directory is built from the tool rather than copied out of testdata. `read`, `text` and
+`tone` are text-only cards and carry the no-build line; `fix`, `replay` and `drift`
+carry the red-then-green row.
 
 ### The harness contract
 
@@ -1178,31 +1172,27 @@ is everything `nova-swarm` promises it, and everything it asks back:
   `PATH` is passed through; nothing else is inherited, and the key is in the child's
   environment under the name `env_var` gives and nowhere else.
 - **It publishes `RESULT.md` in the job directory**, whole, by writing `RESULT.md.tmp` and
-  renaming it: a report is a revision, and a half-written one is never read. `note` is a
-  file in the same directory the worker may read between steps.
-- **Its stdout and stderr are `<job>/harness.log`**, and what it said last is on the
-  `RUN DONE` line of a job that published nothing or exited non-zero.
+  renaming it: a report is a revision, and a half-written one is never read.
+- **Its stdout and stderr are `<job>/harness-output.log`**, capturing all harness output.
 
 `cmd/nova-swarm/testdata/fakeharness` is a harness that does exactly this in about two
 hundred lines of Go, and the whole test suite runs against it with no provider, no network
 and no key worth anything. It is the shortest way to see the contract, and to test a pool
 of your own before a real model touches it.
 
-**Reading it.** Every line is `<VERB> OK`, `<VERB> REFUSED` or one of `run`'s own `RUN`
-events; refusals and FAIL lines go to stderr. A job reports EXACTLY ONCE — one `RUN DONE`,
-`RUN KILLED`, `RUN MALFORMED`, `RUN BUDGET` or `RUN VIOLATION` — and `RUN OK` closes the
-pass with `started=`, `done=`, `failed=`, `killed=` and `pending=`. Every listing is capped
-at `--max` (default 20, `0` for all) with one MORE line naming the remedy, and every count
-is the truth about the POOL rather than about the output.
+**Reading it.** Every line is `<VERB> OK`, `<VERB> REFUSED` or one of `native`'s own events;
+refusals and FAIL lines go to stderr. Every listing is capped at `--max` (default 20, `0` for all)
+with one MORE line naming the remedy, and every count is the truth about the pool rather than
+about the output.
 
 **What the flags want.** `--pool` is a directory of yours; `--worker` is a JSON description
 saying which provider, which model, which environment variable the provider reads and where
 the key file is, because this tool has no opinion about whose model runs. `--files` and
-`--tokens` are required on every `add`, `batch` and `requeue` and zero is refused for both:
-a worker that may open no file is a worker asked for a plan, and a token budget this tool
-supplied would be a guess about somebody else's spend. `--tokens unmetered` is how a caller
-says out loud that this provider has no live accounting and the deadline is the only stop.
-A run missing several flags names all of them at once, and each says what it WANTS.
+`--tokens` are required on `batch` and zero is refused for both: a worker that may open no
+file is a worker asked for a plan, and a token budget this tool supplied would be a guess
+about somebody else's spend. `--tokens unmetered` is how a caller says out loud that this
+provider has no live accounting and the deadline is the only stop. An invocation missing
+several flags names all of them at once, and each says what it wants.
 
 **The key is read as data and never sourced.** It lives in one file the worker description
 names — one line, the bare key or `NAME=<key>`, mode 0600 — and it is never an argument,
@@ -1216,7 +1206,7 @@ That rule is in [docs/SPEC-SWARM.md](SPEC-SWARM.md), where you can read it, and 
 deliberately nowhere in the code: a tool cannot enforce it, and a tool that pretended to
 would be the most dangerous thing in the pool.
 
-### Shared build caches and exact-tip prewarm
+### Shared build caches
 
 `nova-swarm native` creates `<root>/cache/go-mod` and `<root>/cache/go-build`
 and sets the child's `GOMODCACHE` and `GOCACHE` to those paths. It points ASDF
@@ -1226,24 +1216,6 @@ also sets `GOTOOLCHAIN=local`, so the bench
 must already have the Go toolchain the task requires. `--no-shared-caches`
 omits these settings and restores per-slot defaults. Retain shared caches when
 retiring an individual slot; they are separate from its job evidence.
-
-After the bench mirror has fetched a new tip, run this command locally on each
-bench, using that mirror checkout as `--source`:
-
-```text
-```
-
-It resolves the exact commit locally, prepares the reference checkout under
-`<root>/ref/mas-bandwidth/nova-tools@<tip>`, runs module download, `make build`,
-a compile-only Go test pass and `make test-lisp`, then writes a receipt under
-`<root>/prewarm/`. A failed phase publishes no reference checkout or receipt.
-The command does not install the binary, fetch the mirror, change permissions,
-start a service or run on another host.
-
-Fleet adoption needs one further measurement: start a fresh job pinned to the
-same tip on each intended bench, run `make test`, and retain its elapsed-time
-receipt. S3's threshold is under 60 seconds on every bench. The local PREWARM
-line proves the preparation completed; it does not claim the fleet ran it.
 
 ### The bench toolchain inside the wall
 
