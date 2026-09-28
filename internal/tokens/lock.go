@@ -34,8 +34,26 @@ const LockWait = 10 * time.Second
 const lockPoll = 50 * time.Millisecond
 
 // TakeFoldLock takes the output directory's lock, waiting up to wait, and returns the
-// release. The release is safe to call more than once.
+// release. The release is safe to call more than once. out that is a symlink, or whose
+// parent is a symlink, is refused and the lock file is not created.
 func TakeFoldLock(out string, wait time.Duration) (func(), error) {
+	// OpenFile follows a directory symlink and creates fold.lock in the referent.
+	// The release does not remove it. On macOS, Lstat of "link/" reports the
+	// directory, and Dir of "parent-link/child/" is "parent-link/child", so a
+	// trailing separator is cleaned for these Lstats only. The lock is still
+	// opened on out as given.
+	probed := out
+	if len(out) > 0 && os.IsPathSeparator(out[len(out)-1]) {
+		probed = filepath.Clean(out)
+	}
+	if fi, err := os.Lstat(probed); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return nil, symlinkedFoldOut(probed, out)
+	}
+	if parent := filepath.Dir(probed); parent != probed {
+		if fi, err := os.Lstat(parent); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+			return nil, symlinkedFoldOut(parent, out)
+		}
+	}
 	path := filepath.Join(out, LockName)
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {
@@ -69,6 +87,13 @@ func TakeFoldLock(out string, wait time.Duration) (func(), error) {
 		}
 		time.Sleep(lockPoll + jitter)
 	}
+}
+
+// symlinkedFoldOut names the lock, the symlink, the path that was passed, and
+// the next action. symlink is the link itself; path is out as given, which may
+// be that link or a child reached through it, with a trailing separator kept.
+func symlinkedFoldOut(symlink, path string) error {
+	return fmt.Errorf("the lock %s: %q is a symlink; path %q; next: pass the real directory", LockName, symlink, path)
 }
 
 // HolderPID is the pid inside the lock file, or a dash when it holds none. It is read

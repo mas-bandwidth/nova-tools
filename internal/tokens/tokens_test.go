@@ -321,6 +321,151 @@ func TestTheFoldLockIsExclusiveAndNamesItsHolder(t *testing.T) {
 	again()
 }
 
+// TakeFoldLock must refuse a directory symlink for both spellings, and a parent
+// that is a symlink. A trailing separator is not a different directory: on
+// macOS Lstat of link/ reports the directory, and Dir of parent-link/child/
+// is parent-link/child. Neither spelling may create fold.lock in the referent;
+// the release does not remove it.
+func TestTakeFoldLockRefusesDirectorySymlink(t *testing.T) {
+	t.Parallel()
+
+	spellings := []struct {
+		name string
+		out  func(link string) string
+	}{
+		{name: "symlink", out: func(link string) string { return link }},
+		{name: "trailing separator", out: func(link string) string {
+			return link + string(filepath.Separator)
+		}},
+	}
+	for _, spelling := range spellings {
+		t.Run(spelling.name, func(t *testing.T) {
+			t.Parallel()
+
+			root := t.TempDir()
+			real := filepath.Join(root, "real")
+			if err := os.Mkdir(real, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			link := filepath.Join(root, "link")
+			if err := os.Symlink(real, link); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadDir(real)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			out := spelling.out(link)
+			release, err := TakeFoldLock(out, LockWait)
+			if release != nil {
+				release()
+			}
+			if err == nil {
+				t.Fatal("TakeFoldLock created a lock through a directory symlink")
+			}
+			assertSymlinkLockError(t, err, link, out)
+			assertNoFoldLock(t, real, before)
+			assertStillSymlink(t, link)
+		})
+	}
+
+	parentSpellings := []struct {
+		name string
+		out  func(link string) string
+	}{
+		{name: "parent symlink", out: func(link string) string {
+			return filepath.Join(link, "child")
+		}},
+		{name: "parent trailing separator", out: func(link string) string {
+			return filepath.Join(link, "child") + string(filepath.Separator)
+		}},
+	}
+	for _, spelling := range parentSpellings {
+		t.Run(spelling.name, func(t *testing.T) {
+			t.Parallel()
+
+			root := t.TempDir()
+			real := filepath.Join(root, "real")
+			child := filepath.Join(real, "child")
+			if err := os.Mkdir(real, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(child, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			link := filepath.Join(root, "link")
+			if err := os.Symlink(real, link); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadDir(child)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			out := spelling.out(link)
+			release, err := TakeFoldLock(out, LockWait)
+			if release != nil {
+				release()
+			}
+			if err == nil {
+				t.Fatal("TakeFoldLock created a lock through a parent symlink")
+			}
+			assertSymlinkLockError(t, err, link, out)
+			assertNoFoldLock(t, child, before)
+			if _, statErr := os.Lstat(filepath.Join(real, LockName)); !os.IsNotExist(statErr) {
+				t.Fatalf("referent has %s: %v", LockName, statErr)
+			}
+			assertStillSymlink(t, link)
+		})
+	}
+}
+
+func assertSymlinkLockError(t *testing.T, err error, symlink, path string) {
+	t.Helper()
+	msg := err.Error()
+	if !strings.Contains(msg, LockName) {
+		t.Errorf("error %q does not name the lock", msg)
+	}
+	if !strings.Contains(msg, "symlink") {
+		t.Errorf("error %q does not name the symlink", msg)
+	}
+	if !strings.Contains(msg, symlink) {
+		t.Errorf("error %q does not name the symlink %q", msg, symlink)
+	}
+	if !strings.Contains(msg, path) {
+		t.Errorf("error %q does not name the path %q", msg, path)
+	}
+	if !strings.Contains(msg, "next: pass the real directory") {
+		t.Errorf("error %q does not name the next action", msg)
+	}
+}
+
+func assertNoFoldLock(t *testing.T, referent string, before []os.DirEntry) {
+	t.Helper()
+	if _, err := os.Lstat(filepath.Join(referent, LockName)); !os.IsNotExist(err) {
+		t.Fatalf("referent has %s: %v", LockName, err)
+	}
+	after, err := os.ReadDir(referent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("referent directory changed: before %d entries, after %d", len(before), len(after))
+	}
+}
+
+func assertStillSymlink(t *testing.T, link string) {
+	t.Helper()
+	linkInfo, err := os.Lstat(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if linkInfo.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("the symlink was replaced")
+	}
+}
+
 func TestTheBusGrammarIsOneGrammar(t *testing.T) {
 	t.Parallel()
 
