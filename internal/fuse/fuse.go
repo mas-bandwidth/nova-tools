@@ -247,21 +247,32 @@ func WriteBox(path string, b Box) error {
 	}
 	data = append(data, '\n')
 
-	dir := filepath.Dir(path)
+	target := path
+	if target != "" {
+		target = filepath.Clean(target)
+	}
+	if fi, err := os.Lstat(target); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		if resolved, err := filepath.EvalSymlinks(target); err == nil {
+			target = resolved
+		} else if dest, err := os.Readlink(target); err == nil {
+			if !filepath.IsAbs(dest) {
+				dest = filepath.Join(filepath.Dir(target), dest)
+			}
+			target = filepath.Clean(dest)
+		}
+	}
+
+	dir := filepath.Dir(target)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
 
 	// Atomic write per internal/atomicfile model: temporary file created
-	// exclusively in parent directory, requested 0o644 mode (honoring process
-	// umask), fsync to media, and atomic rename over target path. The box is not
+	// exclusively in parent directory, exact 0o644 mode via ExactMode(),
+	// fsync to media, and atomic rename over target path. The box is not
 	// a secret and other tools must be able to read it; a fuse nobody else can
 	// see is a fuse that stops nothing.
-	cleanPath := path
-	if cleanPath != "" {
-		cleanPath = filepath.Clean(cleanPath)
-	}
-	return atomicfile.WriteFile(cleanPath, data, 0o644)
+	return atomicfile.WriteFile(target, data, 0o644, atomicfile.ExactMode())
 }
 
 // PreserveUnreadable copies an unreadable box aside before it is replaced. It returns the
