@@ -5,6 +5,7 @@ package filelock
 import (
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 )
 
@@ -53,5 +54,27 @@ func TestVerifyInode_EdgeCases(t *testing.T) {
 	_, errDir := verifyInode(dirF, dir)
 	if errDir == nil {
 		t.Errorf("verifyInode on directory should error")
+	}
+}
+
+func TestOpenFileSafe_FIFO(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	fifoPath := filepath.Join(dir, "test.fifo")
+	if err := syscall.Mkfifo(fifoPath, 0666); err != nil {
+		t.Skipf("mkfifo not supported: %v", err)
+	}
+
+	// openFileSafe with O_RDONLY must not block on FIFO and must refuse it as not a regular file
+	_, err := openFileSafe(fifoPath, os.O_RDONLY, 0)
+	if err == nil {
+		t.Fatalf("openFileSafe on FIFO succeeded, want error")
+	}
+
+	// ReadStamp on FIFO must also not block and return error
+	_, err = ReadStamp(fifoPath)
+	if err == nil {
+		t.Fatalf("ReadStamp on FIFO succeeded, want error")
 	}
 }

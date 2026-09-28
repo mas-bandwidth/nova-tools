@@ -124,10 +124,116 @@ func TestLock_TimeoutBound(t *testing.T) {
 	if !errors.Is(err, ErrTimeout) {
 		t.Fatalf("err = %v, want ErrTimeout", err)
 	}
+	// H2: Lock timeout must also match ErrHeld and report Holder and Wait
+	if !errors.Is(err, ErrHeld) {
+		t.Errorf("err = %v, want errors.Is(err, ErrHeld) to be true on timeout", err)
+	}
+	heldErr, ok := AsHeldError(err)
+	if !ok {
+		t.Fatalf("expected *HeldError, got %T: %v", err, err)
+	}
+	if !heldErr.TimedOut {
+		t.Errorf("heldErr.TimedOut = false, want true")
+	}
+	if heldErr.Holder.Label != "first" {
+		t.Errorf("heldErr.Holder.Label = %q, want first", heldErr.Holder.Label)
+	}
+	if heldErr.Wait < timeout {
+		t.Errorf("heldErr.Wait = %v, want >= %v", heldErr.Wait, timeout)
+	}
 
 	waited := clk.Waited()
 	if waited < timeout {
 		t.Errorf("virtual clock waited %v, want >= %v", waited, timeout)
+	}
+}
+
+func TestH1_ContendedTakerVsSharedProbe_ReturnsErrBusy(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "probe_busy.lock")
+
+	// Create the file first so a prober can open it
+	initLock, err := TryLock(path, "init")
+	if err != nil {
+		t.Fatalf("init TryLock failed: %v", err)
+	}
+	if err := initLock.Unlock(); err != nil {
+		t.Fatalf("init Unlock failed: %v", err)
+	}
+
+	// Open file and take SHARED lock (simulating a long-running prober or reader)
+	f, err := openFileSafe(path, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("openFileSafe failed: %v", err)
+	}
+	defer f.Close()
+
+	shOk, shErr := trySharedLock(f)
+	if !shOk || shErr != nil {
+		t.Fatalf("trySharedLock failed: ok=%v, err=%v", shOk, shErr)
+	}
+	defer unlockFile(f)
+
+	// An exclusive taker tries to take the lock
+	_, tryErr := TryLock(path, "taker")
+	if tryErr == nil {
+		t.Fatalf("TryLock succeeded unexpectedly while shared lock held")
+	}
+
+	// H1: Must return ErrBusy, and must NOT wrap ErrHeld
+	if !errors.Is(tryErr, ErrBusy) {
+		t.Errorf("tryErr = %v, want ErrBusy", tryErr)
+	}
+	if errors.Is(tryErr, ErrHeld) {
+		t.Errorf("tryErr wraps ErrHeld, want only ErrBusy when prober in the way")
+	}
+
+	// Unlock shared lock
+	unlockFile(f)
+
+	// Now TryLock succeeds
+	takerLock, err := TryLock(path, "taker")
+	if err != nil {
+		t.Fatalf("TryLock failed after shared lock released: %v", err)
+	}
+	defer takerLock.Unlock()
+}
+
+func TestMutant_LastSleepCappedAtRemaining(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cap_mutant.lock")
+
+	lock1, err := TryLock(path, "holder")
+	if err != nil {
+		t.Fatalf("TryLock failed: %v", err)
+	}
+	defer lock1.Unlock()
+
+	clk := NewLockStepClock(time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC))
+	timeout := 50 * time.Millisecond
+	opts := Options{
+		Clock:        clk,
+		PollInterval: 30 * time.Millisecond,
+		Jitter: func(d time.Duration) time.Duration {
+			return 30 * time.Millisecond // constant 30ms sleep request
+		},
+	}
+
+	// Step 1: remaining = 50ms, sleep = 30ms.
+	// Step 2: remaining = 20ms. If uncapped, sleeps 30ms (waited = 60ms).
+	// With cap, sleeps 20ms (waited = 50ms).
+	_, err2 := LockWithOptions(path, "waiter", timeout, opts)
+	if !errors.Is(err2, ErrTimeout) {
+		t.Fatalf("err2 = %v, want ErrTimeout", err2)
+	}
+
+	waited := clk.Waited()
+	if waited != 50*time.Millisecond {
+		t.Errorf("clk.Waited() = %v, want exactly 50ms (last sleep must be capped at remaining)", waited)
 	}
 }
 

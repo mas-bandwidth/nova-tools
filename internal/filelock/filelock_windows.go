@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
 	"syscall"
 	"time"
 	"unsafe"
@@ -26,6 +27,29 @@ const (
 
 func lockRange() *syscall.Overlapped {
 	return &syscall.Overlapped{OffsetHigh: lockOffsetHigh}
+}
+
+func openFileSafe(path string, flag int, perm os.FileMode) (*os.File, error) {
+	fi, err := os.Lstat(path)
+	if err == nil {
+		if fi.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("filelock %q: symlink not permitted", path)
+		}
+		if fi.IsDir() {
+			return nil, fmt.Errorf("filelock %q: is a directory", path)
+		}
+		if !fi.Mode().IsRegular() {
+			return nil, fmt.Errorf("filelock %q: not a regular file", path)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("filelock %q: %w", path, err)
+	}
+
+	f, err := os.OpenFile(path, flag, perm)
+	if err != nil {
+		return nil, fmt.Errorf("filelock %q: %w", path, err)
+	}
+	return f, nil
 }
 
 func tryLockFile(f *os.File) (bool, error) {
@@ -69,21 +93,9 @@ func unlockFile(f *os.File) {
 
 // TryLockWithOptions attempts to acquire the exclusive file lock on path without waiting.
 func TryLockWithOptions(path string, label string, opts Options) (*FileLock, error) {
-	fi, err := os.Lstat(path)
-	if err == nil {
-		if fi.Mode()&os.ModeSymlink != 0 {
-			return nil, fmt.Errorf("filelock %q: symlink not permitted", path)
-		}
-		if fi.IsDir() {
-			return nil, fmt.Errorf("filelock %q: is a directory", path)
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("filelock %q: %w", path, err)
-	}
-
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0666)
+	f, err := openFileSafe(path, os.O_RDWR|os.O_CREATE, 0666)
 	if err != nil {
-		return nil, fmt.Errorf("filelock %q: %w", path, err)
+		return nil, err
 	}
 
 	ok, lockErr := tryLockFile(f)
@@ -91,10 +103,48 @@ func TryLockWithOptions(path string, label string, opts Options) (*FileLock, err
 		_ = f.Close()
 		return nil, fmt.Errorf("filelock %q: %w", path, lockErr)
 	}
+
 	if !ok {
-		holder := readExistingStamp(f)
-		_ = f.Close()
-		return nil, &HeldError{Path: path, Holder: holder}
+		// Re-ask algorithm (H1)
+		const probeRetries = 5
+		var sharedSeen bool
+		var acquiredOnRetry bool
+
+		for retry := 0; retry < probeRetries; retry++ {
+			shOk, shErr := trySharedLock(f)
+			if shErr != nil {
+				_ = f.Close()
+				return nil, fmt.Errorf("filelock %q shared check: %w", path, shErr)
+			}
+			if !shOk {
+				holder := readExistingStamp(f)
+				_ = f.Close()
+				return nil, &HeldError{Path: path, Holder: holder}
+			}
+
+			sharedSeen = true
+			unlockFile(f)
+
+			exOk, exErr := tryLockFile(f)
+			if exErr != nil {
+				_ = f.Close()
+				return nil, fmt.Errorf("filelock %q: %w", path, exErr)
+			}
+			if exOk {
+				acquiredOnRetry = true
+				break
+			}
+			runtime.Gosched()
+		}
+
+		if !acquiredOnRetry {
+			_ = f.Close()
+			if sharedSeen {
+				return nil, fmt.Errorf("filelock %q: %w", path, ErrBusy)
+			}
+			holder := readExistingStamp(f)
+			return nil, &HeldError{Path: path, Holder: holder}
+		}
 	}
 
 	existing := readExistingStamp(f)
@@ -146,31 +196,17 @@ func LockWithOptions(path string, label string, timeout time.Duration, opts Opti
 
 // ProbeWithOptions inspects path without taking an exclusive lock and without creating the file if absent.
 func ProbeWithOptions(path string, opts Options) (State, Stamp, error) {
-	fi, err := os.Lstat(path)
+	f, err := openFileSafe(path, os.O_RDWR, 0)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return StateAbsent, Stamp{}, nil
 		}
-		return "", Stamp{}, fmt.Errorf("filelock %q probe: %w", path, err)
-	}
-	if fi.Mode()&os.ModeSymlink != 0 {
-		return "", Stamp{}, fmt.Errorf("filelock %q: symlink not permitted", path)
-	}
-	if fi.IsDir() {
-		return "", Stamp{}, fmt.Errorf("filelock %q: is a directory", path)
-	}
-
-	f, err := os.OpenFile(path, os.O_RDWR, 0)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return StateAbsent, Stamp{}, nil
-		}
-		f, err = os.OpenFile(path, os.O_RDONLY, 0)
+		f, err = openFileSafe(path, os.O_RDONLY, 0)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				return StateAbsent, Stamp{}, nil
 			}
-			return "", Stamp{}, fmt.Errorf("filelock %q probe: %w", path, err)
+			return "", Stamp{}, err
 		}
 	}
 	defer f.Close()

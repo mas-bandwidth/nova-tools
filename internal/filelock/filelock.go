@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // State is the observation of a lock file path.
@@ -19,7 +21,7 @@ const (
 	StateAbsent State = "absent"
 	// StateFree means the lock file exists and is not held by any process.
 	StateFree State = "free"
-	// StateHeld means the lock file exists and is held by a live process.
+	// StateHeld means the lock file exists and is held by an exclusive holder.
 	StateHeld State = "held"
 )
 
@@ -28,36 +30,52 @@ func (s State) String() string {
 }
 
 var (
-	// ErrHeld indicates the lock is currently held by another process.
+	// ErrHeld indicates the lock is currently held by an exclusive holder.
 	ErrHeld = errors.New("lock held")
+	// ErrBusy indicates the lock could not be acquired because only shared askers were present.
+	// It is distinct from ErrHeld and does not wrap it.
+	ErrBusy = errors.New("lock busy")
 	// ErrTimeout indicates waiting for the lock timed out.
 	ErrTimeout = errors.New("lock timeout")
 	// ErrNotSupported indicates that filelock is not supported on the current platform.
 	ErrNotSupported = errors.New("filelock: locking is not supported on this platform")
 )
 
-// HeldError describes a refusal because another process holds the lock.
+// HeldError describes a refusal because another process holds the lock,
+// or a timeout occurred while waiting for the lock.
 type HeldError struct {
-	Path   string
-	Holder Stamp
-	Wait   time.Duration
+	Path     string
+	Holder   Stamp
+	Wait     time.Duration
+	TimedOut bool
 }
 
 func (e *HeldError) Error() string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("filelock %q", oneline.Escape(e.Path)))
 	if !e.Holder.IsZero() {
-		if e.Wait > 0 {
-			return fmt.Sprintf("filelock %q is held by %s; waited %s: %v", e.Path, e.Holder, e.Wait, ErrHeld)
-		}
-		return fmt.Sprintf("filelock %q is held by %s: %v", e.Path, e.Holder, ErrHeld)
+		b.WriteString(fmt.Sprintf(" is held by %s", e.Holder))
+	} else {
+		b.WriteString(" is held")
 	}
 	if e.Wait > 0 {
-		return fmt.Sprintf("filelock %q is held; waited %s: %v", e.Path, e.Wait, ErrHeld)
+		b.WriteString(fmt.Sprintf("; waited %s", e.Wait))
 	}
-	return fmt.Sprintf("filelock %q is held: %v", e.Path, ErrHeld)
+	if e.TimedOut {
+		b.WriteString(fmt.Sprintf(": %v", ErrTimeout))
+	} else {
+		b.WriteString(fmt.Sprintf(": %v", ErrHeld))
+	}
+	return b.String()
 }
 
-func (e *HeldError) Unwrap() error {
-	return ErrHeld
+// Unwrap returns []error so that errors.Is(err, ErrHeld) and
+// errors.Is(err, ErrTimeout) (if TimedOut) both match.
+func (e *HeldError) Unwrap() []error {
+	if e.TimedOut {
+		return []error{ErrHeld, ErrTimeout}
+	}
+	return []error{ErrHeld}
 }
 
 // AsHeldError reports whether err is a *HeldError.
@@ -87,14 +105,14 @@ func (s Stamp) Format() string {
 		fmt.Fprintf(&b, "pid=%d\n", s.PID)
 	}
 	if s.Host != "" {
-		fmt.Fprintf(&b, "host=%s\n", s.Host)
+		fmt.Fprintf(&b, "host=%s\n", oneline.Field(s.Host))
 	}
 	if !s.Started.IsZero() {
 		fmt.Fprintf(&b, "started=%s\n", s.Started.UTC().Format(time.RFC3339Nano))
 	}
 	if s.Label != "" {
 		clean := strings.ReplaceAll(strings.ReplaceAll(s.Label, "\r", " "), "\n", " ")
-		fmt.Fprintf(&b, "label=%s\n", clean)
+		fmt.Fprintf(&b, "label=%s\n", oneline.Escape(clean))
 	}
 	return b.String()
 }
@@ -109,13 +127,13 @@ func (s Stamp) String() string {
 		parts = append(parts, fmt.Sprintf("pid=%d", s.PID))
 	}
 	if s.Host != "" {
-		parts = append(parts, fmt.Sprintf("host=%s", s.Host))
+		parts = append(parts, fmt.Sprintf("host=%s", oneline.Field(s.Host)))
 	}
 	if !s.Started.IsZero() {
 		parts = append(parts, fmt.Sprintf("started=%s", s.Started.UTC().Format(time.RFC3339)))
 	}
 	if s.Label != "" {
-		parts = append(parts, fmt.Sprintf("label=%q", s.Label))
+		parts = append(parts, fmt.Sprintf("label=%q", oneline.Escape(s.Label)))
 	}
 	return strings.Join(parts, " ")
 }
@@ -193,8 +211,9 @@ func ParseStamp(s string) (Stamp, error) {
 }
 
 // ReadStamp reads and parses the Stamp from path without acquiring the lock.
+// It opens with O_RDONLY and does not block on FIFOs.
 func ReadStamp(path string) (Stamp, error) {
-	f, err := os.Open(path)
+	f, err := openFileSafe(path, os.O_RDONLY, 0)
 	if err != nil {
 		return Stamp{}, err
 	}
@@ -347,7 +366,7 @@ func (l *FileLock) Previous() *Stamp {
 
 // String returns a description of the held lock.
 func (l *FileLock) String() string {
-	return fmt.Sprintf("filelock %q held by %s", l.path, l.stamp)
+	return fmt.Sprintf("filelock %q held by %s", oneline.Escape(l.path), l.stamp)
 }
 
 // Unlock releases the file lock by truncating the file to zero bytes, syncing,
@@ -384,26 +403,41 @@ func (l *FileLock) Unlock() error {
 func lockLoop(path string, label string, timeout time.Duration, opts Options, tryLockFn func(string, string, Options) (*FileLock, error)) (*FileLock, error) {
 	clk := opts.clock()
 	poll := opts.pollInterval()
-	deadline := clk.Now().Add(timeout)
+	start := clk.Now()
+	deadline := start.Add(timeout)
+	var lastHeld *HeldError
 
 	for {
 		lock, err := tryLockFn(path, label, opts)
 		if err == nil {
 			return lock, nil
 		}
-		if !errors.Is(err, ErrHeld) {
+		if !errors.Is(err, ErrHeld) && !errors.Is(err, ErrBusy) {
 			return nil, err
 		}
 
+		var h *HeldError
+		if errors.As(err, &h) {
+			lastHeld = h
+		}
+
 		now := clk.Now()
+		elapsed := now.Sub(start)
 		remaining := deadline.Sub(now)
 		if remaining <= 0 {
-			// One final non-blocking attempt right at deadline before giving up
-			lock, lastErr := tryLockFn(path, label, opts)
-			if lastErr == nil {
-				return lock, nil
+			// Timeout reached. Return rich *HeldError wrapping ErrHeld and ErrTimeout.
+			var holder Stamp
+			if lastHeld != nil {
+				holder = lastHeld.Holder
+			} else {
+				holder, _ = ReadStamp(path)
 			}
-			return nil, fmt.Errorf("filelock %q: timeout after %v: %w", path, timeout, ErrTimeout)
+			return nil, &HeldError{
+				Path:     path,
+				Holder:   holder,
+				Wait:     elapsed,
+				TimedOut: true,
+			}
 		}
 
 		sleepDur := opts.jitter(poll)
