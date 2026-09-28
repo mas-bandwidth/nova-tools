@@ -165,6 +165,15 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+      - name: start installing redis-server in the background
+        # The install is 3-45 s of apt or brew on a hosted runner (45 s on ubuntu-latest shard 3
+        # of run 36377703562, the leg's longest step). Started here, it overlaps the cache
+        # restore, the toolchain and the deal; the `install redis-server` step below runs the
+        # same script, which waits on the first one's lock, finds the binary and publishes its
+        # directory to PATH for the steps after it. The runner reaps the process at job end.
+        shell: bash
+        run: nohup bash .github/scripts/install-redis-server.sh > "${RUNNER_TEMP}/redis-install.log" 2>&1 &
+
       - name: name the Go toolchain's tool-cache directory
         # The toolchain rides in the race cache entry below. setup-go downloads, extracts and
         # then copies it into the runner's tool cache: 26-27 s on macos-latest, 16 s of it the
@@ -263,7 +272,10 @@ jobs:
       - name: install redis-server
         # #3113. This job is the hosted full suite, ubuntu-latest and
         # macos-latest. The controls spawn redis-server; they do not dial a bench.
-        run: bash .github/scripts/install-redis-server.sh
+        # Finishes (or waits on) the background install started at the top of the job.
+        shell: bash
+        run: |
+          bash .github/scripts/install-redis-server.sh || { cat "${RUNNER_TEMP}/redis-install.log"; exit 1; }
 
       - name: test (shard ${{ matrix.shard }} of ${{ matrix.shards }})
         # -count=1: the restored cache must never answer for a test. -timeout 75s: this step
