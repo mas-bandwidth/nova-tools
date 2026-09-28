@@ -113,9 +113,6 @@ cmd/nova-swarm	waitStopped	seed #4413: time.Sleep at recovery_test.go:132
 cmd/nova-tokens	fakeSqlite3Main	seed #4413: time.Sleep at helpers_test.go:236
 internal/bus	TestFriendSequencePlantedIndexIsRefused	seed #4413: time.After at planted_index_sequence_unix_test.go:58
 internal/bus	TestReadLaneIndexDoesNotBlockOnAPlantedFIFO	seed #4413: time.After at fifo_test.go:41
-internal/ci	TestReactorRunReturnsAtItsDeadline	seed #4413: time.After at events_test.go:470 and 1 more
-internal/ci	noMessage	seed #4413: time.After at events_test.go:93
-internal/ci	recvBy	seed #4413: time.After at events_test.go:61
 internal/fleet	TestRunBenchesConcurrentlyOverlapsCallbacks	seed #4413: time.NewTimer at parallel_test.go:101
 internal/merge	TestWithFetchedReportTipKeepsConcurrentPinsThroughGC	seed #4413: time.After at fetchedreporttip_test.go:174
 internal/nsprint/card	fakeHarness	seed #4413: time.Sleep at wrapper_test.go:82

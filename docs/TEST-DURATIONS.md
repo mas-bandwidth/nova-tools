@@ -80,7 +80,6 @@ times come from.
 | internal/fuse | 0.0 | - |
 | internal/fleet | 0.0 | - |
 | internal/cairn | 0.0 | - |
-| internal/friends | 0.0 | - |
 | cmd/nova-ci | 0.0 | - |
 | internal/bounded | 0.0 | - |
 | internal/safepath | 0.0 | - |
@@ -171,7 +170,6 @@ five of its tests are over 5 s and every one of them is a real `exec`.
 | internal/sandbox | 0.3 | - |
 | internal/memindex | 0.3 | - |
 | internal/safepath | 0.3 | - |
-| internal/friends | 0.3 | - |
 | internal/oneline/audit | 0.3 | - |
 | internal/fleet | 0.2 | - |
 | internal/ci/slowtests | 0.2 | - |

@@ -235,25 +235,26 @@ func TestExpandNamesEveryMissingField(t *testing.T) {
 		t.Errorf("refusal does not name node n1: %s", msg)
 	}
 
-	// The docs/CLI.md must document both :output and :budget fields
-	// Try to find the docs file, starting from the current directory
-	cliPath := "docs/CLI.md"
-	if _, err := os.Stat(cliPath); err != nil {
+	// The language spec, docs/SPEC-WORKLANG.md, must document both :output and
+	// :budget. (It read docs/CLI.md's nova-work `plan expand` section until
+	// nova-work was parked under deprecated/ on 2026-09-27; that section moved to
+	// deprecated/docs/CLI.md with it.)
+	specPath := "docs/SPEC-WORKLANG.md"
+	if _, err := os.Stat(specPath); err != nil {
 		// Try relative to the test's package directory
 		wd, _ := os.Getwd()
-		cliPath = filepath.Join(filepath.Dir(filepath.Dir(wd)), "docs", "CLI.md")
+		specPath = filepath.Join(filepath.Dir(filepath.Dir(wd)), "docs", "SPEC-WORKLANG.md")
 	}
 
-	cliContent, err := ioutil.ReadFile(cliPath)
+	specContent, err := ioutil.ReadFile(specPath)
 	if err != nil {
-		t.Fatalf("could not read docs/CLI.md: %v", err)
+		t.Fatalf("could not read docs/SPEC-WORKLANG.md: %v", err)
 	}
 
-	cliText := string(cliContent)
-	// Both :output and :budget must be documented in the CLI docs
+	specText := string(specContent)
 	for _, want := range []string{":output", ":budget"} {
-		if !strings.Contains(cliText, want) {
-			t.Errorf("docs/CLI.md does not document %q", want)
+		if !strings.Contains(specText, want) {
+			t.Errorf("docs/SPEC-WORKLANG.md does not document %q", want)
 		}
 	}
 }

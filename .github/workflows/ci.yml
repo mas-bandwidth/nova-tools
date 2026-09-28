@@ -1623,6 +1623,10 @@ jobs:
         run: make test-e2e
 
   lisp-changes:
+    # 2026-09-27: docs/SPEC-WORK.md left the filter. It fixes nova-work's
+    # language, and nova-work is parked under deprecated/, so an edit to it moves
+    # nothing living; the filter now fires only on a lisp/ path, which no tree
+    # holds today. The history below is the job's.
     # THE PATH FILTER for the lisp tier, and it exists because the lisp job must
     # not occupy a self-hosted runner — let alone one on each platform — for a
     # change that cannot move nova-work. Only lisp/ and docs/SPEC-WORK.md
@@ -1719,15 +1723,15 @@ jobs:
           filters: |
             changed:
               - 'lisp/**'
-              - 'docs/SPEC-WORK.md'
 
   lisp:
     # PARKED SUBJECT (2026-09-27). nova-work, the one Lisp system, moved to
     # deprecated/lisp/nova-work (Glenn: deprecated code is not tested, not built
-    # and never blocks CI), and lisp/ holds no system. The job stays: when the
-    # filter above fires (a lisp/ path or docs/SPEC-WORK.md), `make test-lisp`
-    # runs tools/ci/lisp-test.sh, which prints "nothing to test" and exits 0, and
-    # refuses a lisp/ tree it does not know. The history below is the job's.
+    # and never blocks CI), and lisp/ holds no system. The job stays, because
+    # internal/merge's step parity test pins this step to the merge gate's lisp
+    # step. The filter above fires only on a lisp/ path, so today it never runs;
+    # if it does, `make test-lisp` runs tools/ci/lisp-test.sh, which refuses a
+    # lisp/ tree it does not know. The history below is the job's.
     # THE LISP TIER, and it is one job because it is one system. `lisp/nova-work`
     # is the engine's own tree (docs/SPEC-WORK.md:290 fixes the language); its
     # acceptance suite runs under SBCL non-interactively and exits non-zero on

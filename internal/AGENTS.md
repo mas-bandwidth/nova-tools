@@ -21,10 +21,8 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `events/` | card event stream and SQLite fold | `go test ./internal/events` | `go test ./internal/events` |
 | `fleet/` | runner fleet discovery and status | `go test ./internal/fleet` | `go test ./internal/fleet` |
 | `friendread/` | per-friend read done counts | `go test ./internal/friendread` | `go test ./internal/friendread` |
-| `friends/` | friend registry and signatures | `go test ./internal/friends` | `go test ./internal/friends` |
 | `fuse/` | workspace isolation boundaries | `go test ./internal/fuse` | `go test ./internal/fuse` |
 | `gh/` | the one GitHub client: every call counted per verb, one paced writer, events over polling (#4343) | `go test ./internal/gh` | `go test ./internal/gh` |
-| `ghcapture/` | read-only GitHub issue adapter for nova-work | `go test ./internal/ghcapture/...` | `go test ./internal/ghcapture/...` |
 | [ghevent/](ghevent/AGENTS.md) | GitHub webhook to Redis stream | `go test ./internal/ghevent` | `go test ./internal/ghevent` |
 | `goenv/` | Go environment scrubber for child processes | `go test ./internal/goenv` | `go test ./internal/goenv` |
 | `hygiene/` | clean checkout and leak assertions | `go test ./internal/hygiene` | `go test ./internal/hygiene` |
@@ -32,7 +30,6 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `jevcalib/` | Jev prompt files and the calibration rule | `go test ./internal/jevcalib` | `go test ./internal/jevcalib` |
 | `jobs/` | background job queues and state | `go test ./internal/jobs` | `go test ./internal/jobs` |
 | `keyshape/` | cryptographic key format verification | `go test ./internal/keyshape` | `go test ./internal/keyshape` |
-| `landed/` | did the work land in the base branch | `go test ./internal/landed` | `go test ./internal/landed` |
 | `lanes/` | lane cursor and dispatch isolation | `go test ./internal/lanes` | `go test ./internal/lanes` |
 | `log/` | structured logging helpers | `go test ./internal/log` | `go test ./internal/log` |
 | `memindex/` | memory vector and text index | `go test ./internal/memindex` | `go test ./internal/memindex` |
