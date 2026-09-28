@@ -18,6 +18,10 @@ Retrying an identical append returns the original stored timestamp and
 
 ## Findings and commands you can act on
 
+`nova-check spelling` checks Markdown prose and applies corrections only with `--write`.
+
+`nova-tokens ledger --month` batches validated day files into one Redis call.
+
 `nova-memory verify --exclude` applies to the whole verified corpus,
 including coverage and frontmatter selectors. An excluded directory also
 excludes its children. A retained note that links to an excluded target still
