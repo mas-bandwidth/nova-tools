@@ -1886,18 +1886,30 @@ func TestTheProbeExampleInTheBannerSetsHome(t *testing.T) {
 	for _, line := range exampleCommands(t, probe, j.base) {
 		switch {
 		case strings.HasPrefix(line, "mkdir -p "):
-			if err := os.MkdirAll(strings.TrimPrefix(line, "mkdir -p "), 0o755); err != nil {
+			target := strings.Trim(strings.TrimPrefix(line, "mkdir -p "), `"'`)
+			if err := os.MkdirAll(target, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		case strings.HasPrefix(line, "touch "):
+			target := strings.Trim(strings.TrimPrefix(line, "touch "), `"'`)
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(target, nil, 0o600); err != nil {
 				t.Fatal(err)
 			}
 		case strings.Contains(line, "nova-sandbox probe "):
 			fields := strings.Fields(line)
 			for i, f := range fields {
 				if strings.HasPrefix(f, "HOME=") {
-					home = strings.TrimPrefix(f, "HOME=")
+					home = strings.Trim(strings.TrimPrefix(f, "HOME="), `"'`)
 				}
 				if f == "nova-sandbox" {
 					argv = fields[i+1:]
 				}
+			}
+			for i, a := range argv {
+				argv[i] = strings.Trim(a, `"'`)
 			}
 		default:
 			t.Fatalf("the probe example has a line this test cannot run: %q", line)
@@ -1944,7 +1956,12 @@ func exampleCommands(t *testing.T, block, base string) []string {
 			joined += strings.TrimSpace(strings.TrimSuffix(line, "\\")) + " "
 			continue
 		}
-		lines = append(lines, strings.ReplaceAll(joined+line, "/Users/me", base))
+		cmdLine := joined + line
+		cmdLine = strings.ReplaceAll(cmdLine, `"$PWD/scratch`, filepath.Join(base, "scratch"))
+		cmdLine = strings.ReplaceAll(cmdLine, `"$PWD"`, base)
+		cmdLine = strings.ReplaceAll(cmdLine, `$PWD`, base)
+		cmdLine = strings.ReplaceAll(cmdLine, "/Users/me", base)
+		lines = append(lines, cmdLine)
 		joined = ""
 	}
 	if joined != "" {
@@ -2069,5 +2086,122 @@ func TestReadNoExecReadsAndRefusesToExecuteOnDarwin(t *testing.T) {
 	ctl := []string{"--read", cache, "--write", j.write, "--", "/bin/sh", "-c", script}
 	if code, _, errOut := j.tool(t, j.env(), ctl...); code != 0 {
 		t.Fatalf("the control failed: the same script under --read did not run: exit %d, %s", code, errOut)
+	}
+}
+
+// An unknown verb exits 2 and names the unknown verb explicitly, rather than
+// falling into bare wrap and treating the verb as a flag or command.
+func TestUnknownVerbRefused(t *testing.T) {
+	t.Parallel()
+
+	j := newJob(t)
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "bogus verb",
+			args: []string{"bogus"},
+			want: "SANDBOX REFUSED reason=unknown_verb: unknown verb \"bogus\"; available: check, egress, policy, probe, reap, run, version, worktree; run: nova-sandbox help\n",
+		},
+		{
+			name: "unknown verb with args",
+			args: []string{"some-other-verb", "--flag"},
+			want: "SANDBOX REFUSED reason=unknown_verb: unknown verb \"some-other-verb\"; available: check, egress, policy, probe, reap, run, version, worktree; run: nova-sandbox help\n",
+		},
+		{
+			name: "positional command not treated as bare wrap",
+			args: []string{"echo", "hello"},
+			want: "SANDBOX REFUSED reason=unknown_verb: unknown verb \"echo\"; available: check, egress, policy, probe, reap, run, version, worktree; run: nova-sandbox help\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, out, errOut := j.tool(t, j.env(), tc.args...)
+			if code != sandbox.ExitCannotRun {
+				t.Fatalf("exit %d, want %d (ExitCannotRun)", code, sandbox.ExitCannotRun)
+			}
+			if out != "" {
+				t.Fatalf("stdout %q, want empty", out)
+			}
+			if errOut != tc.want {
+				t.Fatalf("stderr %q, want %q", errOut, tc.want)
+			}
+		})
+	}
+}
+
+// check parses its arguments: rejects unrecognized flags with exit 2, validates
+// --max as a whole number, rejects unexpected positional arguments, and responds
+// to -h/--help.
+func TestCheckFlagParsing(t *testing.T) {
+	t.Parallel()
+
+	j := newJob(t)
+	for _, tc := range []struct {
+		name     string
+		args     []string
+		wantCode int
+		wantOut  string
+		wantErr  string
+	}{
+		{
+			name:     "bare check",
+			args:     []string{"check"},
+			wantCode: 0,
+			wantOut:  "CHECK OK",
+		},
+		{
+			name:     "check with max flag refused",
+			args:     []string{"check", "--max", "10"},
+			wantCode: sandbox.ExitCannotRun,
+			wantErr:  "CHECK REFUSED reason=bad_flag: flag \"--max\"; run: nova-sandbox check -h",
+		},
+		{
+			name:     "unrecognized double-dash flag",
+			args:     []string{"check", "--bogus"},
+			wantCode: sandbox.ExitCannotRun,
+			wantErr:  "CHECK REFUSED reason=bad_flag: flag \"--bogus\"; run: nova-sandbox check -h",
+		},
+		{
+			name:     "unrecognized single-dash flag",
+			args:     []string{"check", "-bogus"},
+			wantCode: sandbox.ExitCannotRun,
+			wantErr:  "CHECK REFUSED reason=bad_flag: flag \"-bogus\"; run: nova-sandbox check -h",
+		},
+		{
+			name:     "unexpected positional argument",
+			args:     []string{"check", "extra"},
+			wantCode: sandbox.ExitCannotRun,
+			wantErr:  "CHECK REFUSED reason=bad_flag: unexpected argument \"extra\"; run: nova-sandbox check -h",
+		},
+		{
+			name:     "check -h",
+			args:     []string{"check", "-h"},
+			wantCode: 0,
+			wantOut:  "usage: nova-sandbox check",
+		},
+		{
+			name:     "check --help",
+			args:     []string{"check", "--help"},
+			wantCode: 0,
+			wantOut:  "usage: nova-sandbox check",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, out, errOut := j.tool(t, j.env(), tc.args...)
+			if code != tc.wantCode {
+				t.Fatalf("exit %d, want %d; stderr: %q", code, tc.wantCode, errOut)
+			}
+			if tc.wantOut != "" && !strings.Contains(out, tc.wantOut) {
+				t.Errorf("stdout %q does not contain %q", out, tc.wantOut)
+			}
+			if tc.wantErr != "" && !strings.Contains(errOut, tc.wantErr) {
+				t.Errorf("stderr %q does not contain %q", errOut, tc.wantErr)
+			}
+			if tc.wantCode == sandbox.ExitCannotRun && !strings.Contains(errOut, "run: nova-sandbox check -h") {
+				t.Errorf("stderr %q does not contain door 'run: nova-sandbox check -h'", errOut)
+			}
+		})
 	}
 }

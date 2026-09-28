@@ -40,7 +40,7 @@ import (
 // internal/bus lockClock, internal/swarm batchClock and pullClock,
 // internal/nsprint/land.Clock, internal/log.Clock, and the injected
 // `Sleep func(time.Duration)` / `now func() time.Time` fields of internal/merge,
-// internal/gh, internal/swarm, cmd/nova-merge and cmd/nova-sprint.
+// internal/gh, internal/swarm and cmd/nova-merge.
 //
 // THE LEDGER. A wait is keyed by its package directory and the top-level
 // function it is written in (a Test, a helper, a method `Type.Method`), and it

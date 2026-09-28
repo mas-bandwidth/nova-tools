@@ -122,7 +122,7 @@ func noCodeStagedClassifiesTheIndex(t *testing.T) {
 	if want := "NOCODE FAIL runner: executable script (shebang)"; !strings.Contains(stderr, want) {
 		t.Errorf("stderr = %q,\nwant the staged shebang named: %q", stderr, want)
 	}
-	if got, want := stLine(t, stderr, "NOCODE FAIL staged="), "NOCODE FAIL staged=1 findings=1 shown=1 deny-list=floor\\x20list"; got != want {
+	if got, want := stLine(t, stderr, "NOCODE FAIL staged="), "NOCODE FAIL staged=1 findings=1 shown=1 deny-list=floor-list"; got != want {
 		t.Errorf("FAIL summary = %q, want %q", got, want)
 	}
 	if strings.Contains(stdout, "NOCODE OK") {
@@ -174,7 +174,7 @@ func noCodeStagedNothingToSay(t *testing.T) {
 		if exit != 0 {
 			t.Fatalf("%s: exit = %d, want 0; stderr:\n%s", why, exit, stderr)
 		}
-		if got, want := stLine(t, stdout, "NOCODE OK"), "NOCODE OK staged=0 clean deny-list=floor\\x20list"; got != want {
+		if got, want := stLine(t, stdout, "NOCODE OK"), "NOCODE OK staged=0 clean deny-list=floor-list"; got != want {
 			t.Errorf("%s: OK line = %q, want %q", why, got, want)
 		}
 	}
@@ -221,7 +221,7 @@ func noCodeStagedSaysNo(t *testing.T) {
 		t.Fatalf("exit = %d, want 1; stdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
 	}
 	for _, want := range []string{
-		"NOCODE FAIL run.sh: code extension .sh (floor list)",
+		"NOCODE FAIL run.sh: code extension .sh (floor-list)",
 		"NOCODE FAIL runner: executable script (shebang)",
 		"NOCODE FAIL notes.txt: executable (index mode 100755)",
 	} {
@@ -229,7 +229,7 @@ func noCodeStagedSaysNo(t *testing.T) {
 			t.Errorf("stderr = %q,\nwant the per-path line: %q", stderr, want)
 		}
 	}
-	if got, want := stLine(t, stderr, "NOCODE FAIL staged="), "NOCODE FAIL staged=3 findings=3 shown=3 deny-list=floor\\x20list"; got != want {
+	if got, want := stLine(t, stderr, "NOCODE FAIL staged="), "NOCODE FAIL staged=3 findings=3 shown=3 deny-list=floor-list"; got != want {
 		t.Errorf("FAIL summary = %q, want %q", got, want)
 	}
 	if stdout != "" {
@@ -245,7 +245,7 @@ func noCodeStagedSaysNo(t *testing.T) {
 	if cexit != 0 {
 		t.Fatalf("a clean index exited %d, want 0; stderr:\n%s", cexit, cstderr)
 	}
-	if got, want := stLine(t, cstdout, "NOCODE OK"), "NOCODE OK staged=1 clean deny-list=floor\\x20list"; got != want {
+	if got, want := stLine(t, cstdout, "NOCODE OK"), "NOCODE OK staged=1 clean deny-list=floor-list"; got != want {
 		t.Errorf("OK line = %q, want %q", got, want)
 	}
 }
@@ -405,7 +405,7 @@ func noCodeStagedRootAndBase(t *testing.T) {
 	if exit != 0 {
 		t.Fatalf("a linked worktree was refused at the root test:\n%s", stderr)
 	}
-	if got, want := stLine(t, stdout, "NOCODE OK"), "NOCODE OK staged=1 clean deny-list=floor\\x20list"; got != want {
+	if got, want := stLine(t, stdout, "NOCODE OK"), "NOCODE OK staged=1 clean deny-list=floor-list"; got != want {
 		t.Errorf("worktree OK line = %q, want %q", got, want)
 	}
 
@@ -422,7 +422,7 @@ func noCodeStagedRootAndBase(t *testing.T) {
 	if exit != 0 {
 		t.Fatalf("a submodule was refused at the root test:\n%s", stderr)
 	}
-	if got, want := stLine(t, stdout, "NOCODE OK"), "NOCODE OK staged=0 clean deny-list=floor\\x20list"; got != want {
+	if got, want := stLine(t, stdout, "NOCODE OK"), "NOCODE OK staged=0 clean deny-list=floor-list"; got != want {
 		t.Errorf("submodule OK line = %q, want %q", got, want)
 	}
 	// And the gitlink the add staged in the outer repository is machinery
@@ -517,7 +517,7 @@ func TestFriendSequenceStagedAdvisoryCommit(t *testing.T) {
 	if exit != 0 {
 		t.Fatalf("the advisory over the corrected index exited %d, want 0; stderr:\n%s", exit, stderr)
 	}
-	if got, want := stLine(t, stdout, "NOCODE OK"), "NOCODE OK staged=1 clean deny-list=floor\\x20list"; got != want {
+	if got, want := stLine(t, stdout, "NOCODE OK"), "NOCODE OK staged=1 clean deny-list=floor-list"; got != want {
 		t.Errorf("OK line = %q, want %q", got, want)
 	}
 

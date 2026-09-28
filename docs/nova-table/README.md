@@ -23,13 +23,18 @@ data, no bullshit around it. don't let extra stuff creep in."
 and an example, use `nova-table help row set` or `nova-table row set --help`.
 Requested help exits 0 on stdout and needs no store.
 
-Install `nova-table`, `nova-sprint` and Redis. The matching `nova-sprint` binary
-loads the shared function library; an empty Redis alone is not enough. From a
-source checkout, build both clients from the same revision:
+Install `nova-table` and Redis 7 or later. Every table verb calls the
+`nova_sprint` function library (`internal/nsprint/fn`), which `nova-table`
+carries. On first contact with a store that holds no library, `nova-table`
+loads its own: the first verb the store answers `Function not found` loads the
+library once per process, never replacing one the store holds, and runs
+again; that verb's `trips=` counts the load. An empty Redis is enough.
+`nova-redis fn load` is the explicit load and upgrade, for the one place that
+deploys, and `nova-redis fn check` says whether a store holds this build's
+library. From a source checkout, build the client:
 
 ```sh
 go build -o ./nova-table ./cmd/nova-table
-go build -o ./nova-sprint ./cmd/nova-sprint
 ```
 
 This creates an isolated local store with no TCP listener or saved data. The
@@ -40,12 +45,12 @@ table_demo_dir=$(mktemp -d "${TMPDIR:-/tmp}/nova-table.XXXXXX")
 redis-server --port 0 --unixsocket "$table_demo_dir/redis.sock" \
   --unixsocketperm 700 --save '' --appendonly no --daemonize yes \
   --pidfile "$table_demo_dir/redis.pid" --logfile "$table_demo_dir/redis.log"
+for _ in $(seq 50); do redis-cli -s "$table_demo_dir/redis.sock" ping >/dev/null 2>&1 && break; sleep 0.1; done
 local_table_store() {
   env -u NOVA_SEAT -u NOVA_SPRINT_SEAT -u NOVA_SPRINT_REDIS_USER \
     -u NOVA_SPRINT_REDIS_PASSWORD_ENV -u NOVA_REDIS_BENCH_PASSWORD \
     "$@" --redis "$table_demo_dir/redis.sock"
 }
-local_table_store ./nova-sprint fn load
 local_table_store ./nova-table create work --columns 'todo,doing,done,note:text,progress:pct(done)' --footer total
 local_table_store ./nova-table row add work build docs
 local_table_store ./nova-table cell add work build todo check-a check-b
@@ -71,9 +76,10 @@ redis-cli -s "$table_demo_dir/redis.sock" shutdown nosave
 ```
 
 For an existing configured store, use `--seat <name>` or explicit `--redis
-<host:port>`. An absolute Unix socket path is also accepted. Load the matching
-function library through that store's deployment process; the local setup above
-is for a new disposable store. The commands below omit connection flags.
+<host:port>`. An absolute Unix socket path is also accepted. A store whose
+library is an older build than this `nova-table` refuses a verb whose function
+it lacks, naming `nova-redis fn load`, the deployer's upgrade; the local setup
+above is for a new disposable store. The commands below omit connection flags.
 
 ## What a table is
 
@@ -233,8 +239,7 @@ to the display. Connection setup is excluded from the application-trip count.
 ## The verbs
 
 Every store verb takes `--redis <addr>`, else `NOVA_SPRINT_REDIS`, then
-`NOVA_REDIS_ADDR`, then the seat's address, and dials as the seat nova-sprint
-dials as. Flags may follow the words; `--` ends flag parsing so a member such as
+`NOVA_REDIS_ADDR`, then the seat's address, and dials as the seat. Flags may follow the words; `--` ends flag parsing so a member such as
 `--pending` can be passed literally. Unknown flags name the command's available
 flags and its specific help page. One typed line per success on stdout;
 one line on stderr and exit 2 for a usage refusal, exit 1 when the store
@@ -496,8 +501,7 @@ row whose count cells are all zero and all read; the fold is still the
 column's, hidden rows included.
 
 **The empty rule.** An empty table, and a table with no visible row, renders
-as the empty string, including its title: no placeholder and no gap. The sprint table hides its
-stream block that way with no extra blank line.
+as the empty string, including its title: no placeholder and no gap.
 
 ## Watching
 
@@ -506,42 +510,19 @@ between two that print, `--title` first. With no `--out` it draws in place
 on the terminal: the ANSI home-and-clear sequence, then the text, so a
 console tab shows the live table with no shell loop. `--out <file>`
 publishes each tick by writing a temp file beside it and renaming it over,
-the sprint table's way, so a reader sees one whole table. `--once` renders
+so a reader sees one whole table. `--once` renders
 once and exits, with no clear. With explicit table names, every tick is exactly one Redis pipeline of read-only snapshots, including cold and changed shapes. A stored view adds one exchange to reload its configuration. An explicit table watch holds the tables; a stored view also has its timestamp,
 title and optional summary. In either mode, a tick whose read fails leaves the last good text standing with one
 `stale: <n>s` line under it, and stderr says why once. A signal ends it,
 exit 0.
 
-## The first table: the sprint's stream block
-
-The sprint table's stream block (`nova-sprint table --layout live`) is the
-table `streams`: one row per stream of `ws:order`, its labels (the stream
-names) headed `stream` and 25 wide, and one `count:sum` column per state of the stream line (waiting,
-ready, working, review, merging, landed), footer `total`. Every cell is
-bound to the set the card model already keeps, `ws:<s>:<state>` under the
-sprint epoch, with the stream's sentinel excluded; nothing is copied. The
-sprint tick reads every cell through `ntable` in its one pipeline (the
-headline and the block stay one count), renders the block through
-`ntable.Render`, byte for byte what it printed before, and the sprint loop
-binds the table in the store whenever its shape moves (a stream added or
-gone, a `sprint clear`'s new epoch), so
-
-```
-nova-table render streams --hide-zero-rows
-```
-
-prints the same block from the same sets, and a write through nova-table is
-refused naming `nova-sprint task move`. `sprint clear` needs no table
-call: the epoch moves, the tick binds the new epoch's sets, they are empty,
-and the block hides.
-
 ## Module integration and deployment
 
-The module retains `QueueCells` and `QueueCount` for nova-sprint callers that
-already hold a shape and batch other reads in the same pipeline. `Reader.Queue`
+The module exposes `QueueCells` and `QueueCount` for callers that hold a
+shape and batch other reads in the same pipeline. `Reader.Queue`
 returns an atomic snapshot; its compatibility `changed` result is always false.
 `Shape`, `Bind`, and `Summaries` are also single-call APIs, so synchronizing a
-changed sprint table does not introduce a chain of dependent network reads.
+changed table does not introduce a chain of dependent network reads.
 Bound cells retain their owner and exclude metadata; deleting a row or dropping
 a table never deletes a bound set. A refused write includes the table, row,
 column and member where applicable, plus the relevant inspection or repair verb.
@@ -558,7 +539,8 @@ use the existing `HGET`/`HSET` grants. Rename additionally needs `SCAN` and `REN
 `FCALL_RO ns_table_check` and `SCAN`; these are not added to the display-only
 reader role. Custom epoch/record namespaces require their own key grants. The standalone ordered-set move retains
 `ns_oset_move`. `SCARD` and `SISMEMBER` preflight the registry type before
-multi-key writes. No command silently loads a library or changes live grants.
+multi-key writes. No command changes live grants. Function-library setup is described in
+[Start locally](#start-locally).
 
 Redis functions run with the caller's ACL permissions. A writer's underlying
 command grants also allow those same commands directly; Redis ACLs cannot make

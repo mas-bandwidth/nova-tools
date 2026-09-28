@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -252,7 +253,7 @@ func watchMain(name string, args []string, out, errs io.Writer, env Environment)
 	f.StringVar(&o.host, "host", "", "bench label")
 	f.DurationVar(&o.timeout, "timeout", o.timeout, "one check deadline")
 	f.DurationVar(&o.budget, "budget", o.budget, "whole pass deadline")
-	if err := f.Parse(interspersed(f, args)); err != nil {
+	if err := verbflag.Parse(f, interspersed(f, args)); err != nil {
 		return refusal(errs, "ADOPT", fmt.Errorf("%s (run %s help)", err, name))
 	}
 	if o.adopt == "" {

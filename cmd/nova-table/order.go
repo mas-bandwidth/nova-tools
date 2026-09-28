@@ -60,7 +60,7 @@ func (app *application) setVerb(verb, table, addr string, o ntable.SetOpts, writ
 	defer st.Close()
 	trips := st.CountTrips()
 	if _, err := ntable.Set(ctx, c, table, o, *write); err != nil {
-		return storeRefusal(stderr, verb, err)
+		return st.refusal(stderr, verb, err)
 	}
 	fmt.Fprintf(stdout, "%s trips=%d\n", line, trips.N())
 	printReceipt(stdout, write, receipt)

@@ -131,7 +131,7 @@ func authorNeedsQuote(author string) bool {
 // parseAuthor decodes one author field. In version 2 a value starting with a
 // double quote is a Go-quoted string and is unquoted; anything else is a bare
 // token. Version-1 sidecars never quoted authors, so their values are taken
-// literally (see the legacy notes in docs/SPEC-PLAY.md).
+// literally (see the legacy notes in deprecated/docs/SPEC-PLAY.md).
 func parseAuthor(val string, version int) string {
 	if version >= 2 && strings.HasPrefix(val, `"`) {
 		if unquoted, err := strconv.Unquote(val); err == nil {

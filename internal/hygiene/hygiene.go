@@ -1,7 +1,7 @@
 // Package hygiene is the one place that answers "is this diff clean", for the accept
 // gate, for the merge lane and for a hand.
 //
-// SPEC-TOOLWORK.md §3 (PR #1637), issue #1647. Four mechanical questions, none of
+// SPEC-TOOLWORK.md, Hygiene (PR #1637), issue #1647. Four mechanical questions, none of
 // which reads prose and none of which needs a model:
 //
 //	identity     every commit in the range is the pool's own, and none is a merge

@@ -54,6 +54,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -291,13 +292,19 @@ func main() {
 }
 
 // run is the whole tool, with its streams and clock injected so the tests can drive it.
-func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time) int {
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time) (code int) {
+	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
+	// before anything is read, dialed or written (the CLI style's rule (b), #4505).
+	defer verbflag.Recover(stdout, "nova-bus", usage, &code)
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb given; `inbox --as <name>` is the one that only looks")
 	}
 	cmd, rest := args[0], args[1:]
 	switch cmd {
 	case "help", "-h", "--help":
+		if cmd == "help" && len(rest) > 0 && rest[0] != "help" && !verbflag.IsHelp(rest[0]) {
+			return run(append(rest, "--help"), stdin, stdout, stderr, now)
+		}
 		fmt.Fprint(stdout, usage)
 		return 0
 	case "draft":
@@ -356,9 +363,9 @@ func newFlags(verb string) *flags {
 // parse runs the flag set and enforces the no-guessing rule for every flag named in
 // required. It prints its own refusal, escaped; exit 2 belongs to the caller.
 func (f *flags) parse(args []string, stderr io.Writer, required map[string]*string) bool {
-	if err := f.fs.Parse(args); err != nil {
-		// -h and -help land here as flag.ErrHelp and are refused like any other unusable
-		// invocation: exit 2, never 0.
+	// -h, -help and --help never land here: verbflag.Parse raises the verb's help, which
+	// run prints on stdout at exit 0.
+	if err := verbflag.Parse(f.fs, args); err != nil {
 		refuse(stderr, " "+f.verb, oneline.Cap(err.Error(), oneline.TailBytes))
 		return false
 	}
@@ -2545,7 +2552,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	until := f.fs.String("until", "", "an absolute deadline as an RFC 3339 UTC instant (e.g. 2026-09-18T18:00:00Z); the wait ends at that moment or at --timeout, whichever comes first")
 	idleExit := f.fs.Int("idle-exit", 0, "exit with this code instead of 0 when the wait times out, so a harness that cannot loop can branch on the code without parsing anything; 1 and 2 are refused, they are this tool's own")
 	interval := f.fs.Duration("interval", defaultWaitInterval, "how long between polls")
-	beat := f.fs.Duration("beat", defaultBeatInterval, "retired (#3144) and ignored with one WAIT NOTE: the bus carries notes, never beats; presence is friend:<name> in Redis, written by the friend's own runtime (nova-friend)")
+	beat := f.fs.Duration("beat", defaultBeatInterval, "retired (#3144) and ignored with one WAIT NOTE: the bus carries notes, never beats; presence is friend:<name> in Redis, written by the friend's own runtime")
 	beatLease := f.fs.Duration("beat-lease", defaultBeatLease, "retired (#3144) and ignored with one WAIT NOTE, as --beat")
 	noBeat := f.fs.Bool("no-beat", false, "this wait does not own the lane's BEAT, so it never discards one an older wait left: a read-only poll for a process that runs beside a line rather than as it; no wait writes a BEAT since #3144; cannot be given with --beat or --beat-lease")
 	openList := f.fs.Bool("open", false, "list every open note when this wait returns, not only what is new")
@@ -2732,7 +2739,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// `nova-wake beat` is gone too). --beat and
 	// --beat-lease stay parseable so a caller's argv does not break, and say so once.
 	if f.set("beat") || f.set("beat-lease") {
-		fmt.Fprint(stderr, "WAIT NOTE --beat and --beat-lease are retired and ignored: the bus carries notes, never beats; presence is friend:<name> in Redis, written by the friend's own runtime, nova-friend (nova-tools #3144)\n")
+		fmt.Fprint(stderr, "WAIT NOTE --beat and --beat-lease are retired and ignored: the bus carries notes, never beats; presence is friend:<name> in Redis, written by the friend's own runtime (nova-tools #3144)\n")
 	}
 	// A wait always runs git, so the root check is unconditional -- see the same check, and
 	// the same reason for the order it is in, in cmdInbox.

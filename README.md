@@ -45,7 +45,7 @@ Pick the row that is your actual problem today. One tool is a fine number.
 
 These are the Nova Tools 1.0.0 commands. Install one binary from the
 [1.0.0 release](https://github.com/mas-bandwidth/nova-tools/releases/tag/v1.0.0),
-or build just that tool with Go 1.26 or newer:
+or build just that tool with Go 1.26.6 or newer:
 
 ```sh
 go install github.com/mas-bandwidth/nova-tools/cmd/nova-memory@v1.0.0

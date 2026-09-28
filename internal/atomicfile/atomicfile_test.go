@@ -86,8 +86,9 @@ func TestWriteSuccessAndFileModes(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Stat(%q) failed: %v", target, err)
 			}
-			if perm := info.Mode().Perm(); perm != tc.mode {
-				t.Fatalf("file perm = %04o, want %04o", perm, tc.mode)
+			wantPerm := referencePerm(dir, tc.filename, tc.mode)
+			if perm := info.Mode().Perm(); perm != wantPerm {
+				t.Fatalf("file perm = %04o, want %04o", perm, wantPerm)
 			}
 
 			if tc.updated != nil {
@@ -105,12 +106,28 @@ func TestWriteSuccessAndFileModes(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Stat(%q) after update failed: %v", target, err)
 				}
-				if perm := infoUpdated.Mode().Perm(); perm != tc.mode {
-					t.Fatalf("file perm after update = %04o, want %04o", perm, tc.mode)
+				wantPermUpdated := referencePerm(dir, tc.filename+".updated", tc.mode)
+				if perm := infoUpdated.Mode().Perm(); perm != wantPermUpdated {
+					t.Fatalf("file perm after update = %04o, want %04o", perm, wantPermUpdated)
 				}
 			}
 		})
 	}
+}
+
+func referencePerm(dir, name string, perm os.FileMode) os.FileMode {
+	ref := filepath.Join(dir, "."+name+".ref")
+	f, err := os.OpenFile(ref, os.O_CREATE|os.O_EXCL, perm)
+	if err != nil {
+		return perm
+	}
+	_ = f.Close()
+	defer os.Remove(ref)
+	st, err := os.Stat(ref)
+	if err != nil {
+		return perm
+	}
+	return st.Mode().Perm()
 }
 
 func TestRefusals(t *testing.T) {
@@ -413,6 +430,64 @@ func TestFsyncExecuted(t *testing.T) {
 	}
 }
 
+func TestDefaultSyncDir(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := defaultSyncDir(dir); err != nil {
+		t.Fatalf("defaultSyncDir on valid dir failed: %v", err)
+	}
+
+	// defaultSyncDir must ignore errors on non-existent or inaccessible dirs (best effort)
+	nonExistent := filepath.Join(dir, "does_not_exist")
+	if err := defaultSyncDir(nonExistent); err != nil {
+		t.Fatalf("defaultSyncDir on non-existent dir returned error: %v", err)
+	}
+}
+
+func TestSyncDirExecuted(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	target := filepath.Join(dir, "synced_dir_file.txt")
+
+	var syncedDir string
+	h := defaultHooks()
+	h.syncDir = func(d string) error {
+		syncedDir = d
+		return nil
+	}
+
+	if err := writeWithHooks(target, []byte("dir sync test\n"), 0o644, h); err != nil {
+		t.Fatalf("writeWithHooks failed: %v", err)
+	}
+
+	if syncedDir != dir {
+		t.Fatalf("syncDir called with %q, want %q", syncedDir, dir)
+	}
+}
+
+func TestSyncDirFailureIgnored(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	target := filepath.Join(dir, "synced_dir_ignore_err.txt")
+
+	h := defaultHooks()
+	h.syncDir = func(d string) error {
+		return errors.New("simulated dir sync error")
+	}
+
+	if err := writeWithHooks(target, []byte("dir sync ignore err test\n"), 0o644, h); err != nil {
+		t.Fatalf("writeWithHooks failed despite syncDir error being best-effort: %v", err)
+	}
+
+	got, err := os.ReadFile(target)
+	if err != nil || string(got) != "dir sync ignore err test\n" {
+		t.Fatalf("file content invalid: %s (%v)", string(got), err)
+	}
+}
+
 func TestCleanupFailureJoined(t *testing.T) {
 	t.Parallel()
 
@@ -521,7 +596,7 @@ func TestCreateTempCollisionAndExhaustion(t *testing.T) {
 func TestStepFailureInjection(t *testing.T) {
 	t.Parallel()
 
-	steps := []string{"create", "chmod", "write", "sync", "close", "rename"}
+	steps := []string{"create", "write", "sync", "close", "rename"}
 
 	for _, step := range steps {
 		step := step
@@ -556,10 +631,6 @@ func testStepFailure(t *testing.T, failStep string, preexisting bool) {
 	case "create":
 		h.createTemp = func(dir, base string, perm os.FileMode) (*os.File, error) {
 			return nil, injectedErr
-		}
-	case "chmod":
-		h.chmod = func(f *os.File, mode os.FileMode) error {
-			return injectedErr
 		}
 	case "write":
 		h.write = func(f *os.File, data []byte) (int, error) {

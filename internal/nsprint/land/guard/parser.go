@@ -19,7 +19,6 @@ import (
 // parsers, two answers for one line). The list only shrinks: a listed file
 // that no longer carries the keys is dropped at the next measure.
 var ParserAllow = []string{
-	"cmd/nova-sprint/result.go",
 	"internal/merge/status.go",
 	// The sprint fold (#2618) reads the disposition hash by field, never the
 	// wire line; its own refinement lines print who= and verdict= keys.

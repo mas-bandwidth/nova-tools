@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -173,5 +174,20 @@ func TestSumSwarmMixedKnownUnknownDailyAggregate(t *testing.T) {
 	// 1,1,1 — not a zero in any kept field that would make the model look free.
 	if !strings.Contains(lines[1], "\tdeepseek-v4\tunattributed\t1000\t200\t0.0100\t2\t2\t0.005000\t1,1,1,0") {
 		t.Errorf("day row does not carry the known numbers plus an explicit unknown count: %q", lines[1])
+	}
+}
+
+func TestSumSwarmRootRefusesNonexistentRoot(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	ledger := filepath.Join(dir, "ledger.tsv")
+	r := invoke(t, "sum", "--swarm-root", filepath.Join(dir, "nope"), "--day", "2026-09-11", "--out", ledger)
+	wantExit(t, r, 2)
+	wantContains(t, r.stderr, "SUM REFUSED:")
+	wantContains(t, r.stderr, "does not exist")
+	wantContains(t, r.stderr, "nope")
+	if _, err := os.Stat(ledger); err == nil {
+		t.Fatalf("sum wrote ledger file on nonexistent swarm-root: %s", ledger)
 	}
 }

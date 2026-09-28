@@ -14,13 +14,13 @@ import (
 )
 
 // TestPromptFilesAreTheBuiltInPrompts: every built-in prompt is
-// docs/jev/<type>.<version>.txt byte for byte, so a prompt change is a
+// deprecated/docs/jev/<type>.<version>.txt byte for byte, so a prompt change is a
 // versioned file in review before it is a measured line in the report.
 // JEV_PROMPTS_WRITE=1 rewrites the files from the code.
 func TestPromptFilesAreTheBuiltInPrompts(t *testing.T) {
 	t.Parallel()
 
-	dir := filepath.Join("..", "..", "..", "docs", "jev")
+	dir := filepath.Join("..", "..", "..", "deprecated", "docs", "jev")
 	for _, typ := range Types {
 		p, ok := PromptFor(typ)
 		if !ok {

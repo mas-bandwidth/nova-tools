@@ -12,6 +12,7 @@ The TLA+ modules here are the specifications of the state machines this repo imp
 | `TableSession.tla` | `MCTableSession*` | `nova-table shell`: lines, one connection, the store coming and going, a stop signal, the exit code (the design #4458 is held to) |
 | `RedisFn.tla` | `MCRedisFn*` | the function libraries of one Redis under several loaders (internal/redisfn: Check, Load, Ensure, LoadMissing): one holder to a function name, a refusal that writes nothing, no moment without the library, a LoadMissing that never replaces |
 | `FirstConn.tla` | `MCFirstConn*` | `internal/redisconn`'s first connection: the probe Open sends, taken and answered in the store's place only after HELLO was accepted, with seven reversed witnesses |
+| `TableFirstContact.tla` | `MCTableFirstContact*` | nova-table's first contact with a store (cmd/nova-table/library.go): a verb that meets "Function not found" loads the library with LoadMissing at most once per process and is sent again once, only when its first send ran nothing, with three reversed witnesses |
 
 Runners. The table/member model checkers and the member execution replay each run their whole suite under one 120 s budget (a timeout is a failure, never a green); the bare java commands and the Lua replay carry no cap of their own, so wrap them (`timeout 120 ...`) when a bound matters. `-deadlock` on the java commands turns TLC's deadlock check OFF: these models end in a terminal stutter by design, and the safety and liveness properties are what they check.
 
@@ -289,6 +290,39 @@ The first five configs, before `Missers` was added, gave the same outcomes at
 | `MCRedisFnOneDeployer` | no error, 14 distinct states: the same two builds, b running Ensure once and a deploying; the library comes to rest at a's build. TypeOK, OneHolder, NoGap, RefusalWritesNothing, HolderHeld, Settles |
 | `MCRedisFnLoadMissing` | no error, 25 distinct states: the rivals on a store that starts empty, a deploying and b, the older binary, running LoadMissing once. TypeOK, OneHolder, NoGap, RefusalWritesNothing, HolderHeld, MissNeverReplaces, Settles, MCDeployed (the store comes to rest at the deployer's build) |
 | `MCRedisFnMissReplaces` | MissNeverReplaces violated, a counterexample of 5 states (23 distinct found): b reads the name free, a deploys build 1, b's load with REPLACE puts build 2 over it. The reversed witness for LoadMissing's FUNCTION LOAD without REPLACE (#3620); the unit test `TestLoadMissingNeverReplacesALibraryTheStoreHolds` holds the same two cases against the code, with Ensure as its own reversed witness |
+
+## nova-table's first contact (TableFirstContact)
+
+`TableFirstContact.tla`: every nova-table verb is an FCALL into the
+nova_sprint library, and a store that holds none answers "Function not
+found". The model is the store's library (none, an older build that lacks the
+verb's function, this build's) and, per process, whether a load reached an
+outcome and where each verb is. The outside events are the deployer's load, an
+older binary's LoadMissing, a load that fails and a reply lost after the store
+ran the command. `Broken` turns on a misimplementation: `resend-lost` sends a
+verb whose reply was lost again, `replace` loads with REPLACE, `every-miss`
+loads on every miss. What it leaves out is listed in its header; RedisFn.tla
+holds LoadMissing's read and load under racing loaders.
+
+Run on space, every config at once, each under a 60 s cap:
+
+    for c in MCTableFirstContactFresh MCTableFirstContact MCTableFirstContactBrokenResendLost MCTableFirstContactBrokenReplace MCTableFirstContactBrokenEveryMiss; do
+      mkdir -p /tmp/tlc-$c
+      timeout 60 java -Djava.io.tmpdir=/tmp/tlc-$c -cp tla2tools.jar tlc2.TLC -workers 2 \
+        -metadir /tmp/tlc-$c/meta -config $c.cfg MCTableFirstContact.tla > $c.log 2>&1 &
+    done; wait
+
+Logs in `space:~/tla/firstcontact/`, the modules and configs matching these
+files by sha256. Each ran in under a second. The distinct states of a run that
+stops at a violation vary from run to run; the counterexample does not.
+
+| config | result |
+|---|---|
+| `MCTableFirstContactFresh` | no error, 37 distinct states: a fresh store, no outside event, two processes of two verbs. TypeOK, AtMostOnce, SentTwiceOnlyAfterAMiss, NeverReplaced, LoadOnce, FreshStoreWorks (every verb ends ok) |
+| `MCTableFirstContact` | no error, 771 distinct states: every outside event. TypeOK, AtMostOnce, SentTwiceOnlyAfterAMiss, NeverReplaced, LoadOnce |
+| `MCTableFirstContactBrokenResendLost` | AtMostOnce violated, a counterexample of 5 states: a miss, the load, the verb run with its reply lost, sent again and run twice. The reversed witness for sending again only on "Function not found", which a verb that ran never answers |
+| `MCTableFirstContactBrokenReplace` | NeverReplaced violated, a counterexample of 4 states: a miss, the deployer loads this build, the miss's load replaces it. The reversed witness for LoadMissing's FUNCTION LOAD without REPLACE |
+| `MCTableFirstContactBrokenEveryMiss` | LoadOnce violated, a counterexample of 7 states: a miss on a store an older binary loads first, the load leaves it (UNCHANGED), the verb is refused; the next verb's miss loads again. The reversed witness for firstContact.ensure's once per process |
 
 ## The first connection (FirstConn)
 

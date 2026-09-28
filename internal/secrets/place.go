@@ -166,7 +166,7 @@ func RunPlace(in PlaceInput) (string, error) {
 	// exactly the case the remedy names.
 	machines, err := ReadFleetMachines(in.Machines)
 	if err != nil {
-		return "", fmt.Errorf("fleet registry %s: %w; run: nova-pulse fleet survey --benches %s", in.Machines, err, in.Machines)
+		return "", fmt.Errorf("fleet registry %s: %w", in.Machines, err)
 	}
 	machine, ok := machines[in.Machine]
 	if !ok {

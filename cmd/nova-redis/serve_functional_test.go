@@ -10,18 +10,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/preflight"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
+	"github.com/mas-bandwidth/nova-tools/internal/testredis"
 	"github.com/redis/go-redis/v9"
 )
 
 // TestRestartOnTheSameDirKeepsTheStore is #3879's DONE-WHEN on the production
 // path: run() starts a real, throwaway redis-server on loopback through the
-// real launch with --dir <d>, a card key and the nova_sprint library are
-// written, serve is stopped the way a signal stops it (SIGTERM to the child)
-// and started again on the same --dir, and the key is back intact with no TTL,
-// and preflight 7.1 reads GREEN against that instance.
+// real launch with --dir <d>, a card key is written, serve is stopped the way
+// a signal stops it (SIGTERM to the child) and started again on the same --dir,
+// and the key is back intact with no TTL.
 func TestRestartOnTheSameDirKeepsTheStore(t *testing.T) {
 	t.Parallel()
 	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
@@ -30,10 +27,10 @@ func TestRestartOnTheSameDirKeepsTheStore(t *testing.T) {
 	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 
 	const pw = "pw-from-nova-secrets"
-	program := testutil.Program(t)
+	program := testredis.Program(t)
 	h := newServeHarness(t, pw)
 	h.d.lookPath = func(string) (string, error) { return program, nil }
-	port := testutil.FreePort(t)
+	port := testredis.FreePort(t)
 	addr := "127.0.0.1:" + port
 	const key = "s:T:card:x"
 	want := map[string]string{"origin": "nova-tools#3879", "where": "waiting", "stream": "redis"}
@@ -99,9 +96,6 @@ func TestRestartOnTheSameDirKeepsTheStore(t *testing.T) {
 	if err := c.HSet(ctx, key, want).Err(); err != nil {
 		t.Fatal(err)
 	}
-	if err := fn.Load(ctx, c); err != nil {
-		t.Fatalf("load %s: %v", fn.Library, err)
-	}
 	stop()
 
 	c, stop = serve("restart")
@@ -120,15 +114,5 @@ func TestRestartOnTheSameDirKeepsTheStore(t *testing.T) {
 	}
 	if ttl, err := c.TTL(ctx, key).Result(); err != nil || ttl != -1 {
 		t.Errorf("TTL %s = %v (err %v), want -1: the store sets no TTL", key, ttl, err)
-	}
-	var line *preflight.Line
-	lines := preflight.StoreChecks(ctx, c, preflight.Options{Sprint: "T"})
-	for i := range lines {
-		if lines[i].N == "7.1" {
-			line = &lines[i]
-		}
-	}
-	if line == nil || line.Red {
-		t.Fatalf("preflight 7.1 against the restarted instance: %v, want GREEN", line)
 	}
 }

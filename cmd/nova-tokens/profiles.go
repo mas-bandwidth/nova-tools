@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -66,6 +67,16 @@ func parseCardBudget(promptPath string) (int64, bool) {
 func profileSwarmRoot(root string, stdout, stderr io.Writer, r *refusals) int {
 	if root == "" {
 		r.add("--swarm-root is required; it wants the directory the swarm batches live under; refusing to guess")
+		return r.print(stderr)
+	}
+	if fi, err := os.Stat(root); err != nil || !fi.IsDir() {
+		if err != nil && os.IsNotExist(err) {
+			r.add("--swarm-root does not exist: " + root + "; it wants the directory the swarm batches live under")
+		} else if err != nil {
+			r.add("--swarm-root " + root + ": " + err.Error() + "; it wants the directory the swarm batches live under")
+		} else {
+			r.add("--swarm-root is not a directory: " + root + "; it wants the directory the swarm batches live under")
+		}
 		return r.print(stderr)
 	}
 	paths, err := filepath.Glob(filepath.Join(root, "*", "jobs", "*", "usage.tsv"))
@@ -133,7 +144,7 @@ func medianOut(outs []int64) string {
 func cmdProfiles(args []string, stdout, stderr io.Writer, now time.Time) int {
 	fs := newFlagSet("profiles")
 	swarmRoot := fs.String("swarm-root", "", "")
-	if err := fs.Parse(args); err != nil {
+	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, " profiles", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if code, refused := noPositional(fs, stderr, "profiles"); refused {

@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
-	"github.com/mas-bandwidth/nova-tools/internal/post"
+	"github.com/mas-bandwidth/nova-tools/deprecated/internal/post"
 )
 
 // The red list docs/SPEC-OUTBOUND.md carries, one test per numbered item. Each

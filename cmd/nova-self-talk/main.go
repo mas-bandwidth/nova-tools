@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/selftalk"
 )
@@ -157,7 +158,13 @@ func set(l baseList) map[string]bool {
 	return m
 }
 
-func run(args []string, stdout, stderr io.Writer) int {
+func run(args []string, stdout, stderr io.Writer) (code int) {
+	// `version -h` is the version verb's help on stdout at exit 0, never two file
+	// names (the CLI style's rule (b), #4505); -h on the scan itself is answered below.
+	defer verbflag.Recover(stdout, "nova-self-talk", usage, &code)
+	if len(args) == 2 && args[0] == "version" {
+		verbflag.HelpIfAsked(args[1:], "version")
+	}
 	// `help` is a word rather than a flag because the refusals now name it: a one-line
 	// refusal that ends in `run: nova-self-talk help` has to be telling the truth.
 	if len(args) == 1 && args[0] == "help" {

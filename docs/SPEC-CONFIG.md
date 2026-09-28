@@ -267,8 +267,8 @@ its coordinator machine), friends, the sprint row:
 7. write every op in order through the runtime's own functions, each write
    carrying `--as` and the idempotency marker `config:<kind>:<rev>` into
    `cap:log`. A refusal from a function (`CEILING`, an actor without the
-   coordinator role, a friend with working copies) stops the apply there, is
-   printed with its remedy, and the stamp is not moved;
+   coordinator role) stops the apply there, is printed with its remedy, and the
+   stamp is not moved;
 8. **stamp** `config:decl rev:<kind> = <rev>, at:<kind> = <server ms>`,
    compare-and-set: inside `WATCH config:decl`, the stamp is written only
    while it still reads the value step 2 read; a stamp that moved is

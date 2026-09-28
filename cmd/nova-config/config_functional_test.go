@@ -13,7 +13,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil/pg"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -297,18 +296,8 @@ func TestApplyEndToEnd(t *testing.T) {
 	r.run(t, 0, "sprint", "set", "--coordinator", "rowan")
 	r.run(t, 0, "apply")
 
-	// Removing a friend is refused by apply while it holds working copies,
-	// and goes through once they are gone.
+	// Removing a friend goes through and takes what apply wrote.
 	r.run(t, 0, "friend", "remove", "stella")
-	r.client.ZAdd(ctx, ws.ConsumerKeyAt(0, "friend:stella", "working"), redis.Z{Score: 1, Member: "card:4410"})
-	out, errs := r.run(t, 1, "apply", "--kind", "friend")
-	if !strings.Contains(errs, "friend stella holds 1 working copies (card:4410)") || out != "APPLY REMOVE kind=friend name=stella\n" {
-		t.Fatalf("remove with a working copy: %q %q", out, errs)
-	}
-	if !r.client.SIsMember(ctx, "friends", "stella").Val() {
-		t.Fatal("a refused remove unregistered stella")
-	}
-	r.client.Del(ctx, ws.ConsumerKeyAt(0, "friend:stella", "working"))
 	out, _ = r.run(t, 0, "apply", "--kind", "friend")
 	if !strings.HasPrefix(out, "APPLY REMOVE kind=friend name=stella\nCONFIG APPLY kind=friend add=0 set=0 remove=1 rev=9 ms=") {
 		t.Fatalf("remove: %q", out)
@@ -319,7 +308,7 @@ func TestApplyEndToEnd(t *testing.T) {
 
 	// CONFLICT when Redis's stamp is ahead of Postgres.
 	r.client.HSet(ctx, config.DeclKey, "rev:friend", "50")
-	_, errs = r.run(t, 1, "apply", "--kind", "friend")
+	_, errs := r.run(t, 1, "apply", "--kind", "friend")
 	if !strings.HasPrefix(errs, "nova-config apply: CONFLICT friend: Redis holds rev 50 and this Postgres is at rev 9") {
 		t.Fatalf("conflict: %q", errs)
 	}
