@@ -64,7 +64,8 @@ writer's, and this tool never makes it.
                           and they print as one count.
 
 Flags come before files. Exit codes: 0 no findings, 1 findings, 2 could not
-run (bad invocation, unreadable file).
+run (bad invocation, unreadable file). Use -- before a dash-prefixed filename.
+An explicitly all-skipped run exits 0 with SELFTALK SKIP files=0, never OK.
 
 First run, from the root of this checkout: copy the example pages the lines
 below read, so ./pages is a directory you have made, then paste them as they
@@ -196,14 +197,43 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 			fmt.Fprint(stdout, usage)
 			return 0
 		}
-		return refuse(stderr, oneline.Cap(err.Error(), oneline.TailBytes), "basename")
+		hint := ""
+		for _, flagName := range []string{"skip", "rule-doc"} {
+			if strings.Contains(err.Error(), " for flag -"+flagName+":") || err.Error() == "flag needs an argument: -"+flagName {
+				hint = "basename"
+			}
+		}
+		return refuse(stderr, oneline.Cap(err.Error(), oneline.TailBytes), hint)
 	}
 	if *max < 0 {
 		// Zero already means "all", so a negative ceiling is a typo with two readings
 		// and gets neither.
 		return refuse(stderr, fmt.Sprintf("--max must be a line ceiling of zero or more (got %d); 0 means print them all", *max), "")
 	}
-	files := fs.Args()
+	parsed := len(args) - fs.NArg()
+	literal := false
+	// Every scan flag takes a value. A value spelled "--" is not the
+	// terminator; walk the parsed prefix so only the separator protects files.
+	for i := 0; i < parsed; i++ {
+		if args[i] == "--" {
+			literal = true
+			break
+		}
+		if !strings.Contains(args[i], "=") {
+			i++
+		}
+	}
+	var files []string
+	for _, arg := range fs.Args() {
+		if !literal && arg == "--" {
+			literal = true
+			continue
+		}
+		if !literal && len(arg) > 1 && strings.HasPrefix(arg, "-") {
+			return refuse(stderr, fmt.Sprintf("flags come before files (got %q); use -- before a filename beginning with a dash", arg), "")
+		}
+		files = append(files, arg)
+	}
 	if len(files) == 0 {
 		return refuse(stderr, "no files named; refusing to guess", "files")
 	}
@@ -252,8 +282,8 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 			claims++
 			if c.Verdict == selftalk.Standing {
 				standing++
-				fails.Line("standing", fmt.Sprintf("SELFTALK FAIL %s: %s: %s",
-					oneline.Escape(f), c.Verdict, oneline.Escape(oneline.Cap(c.Text, oneline.TailBytes))))
+				fails.Line("standing", fmt.Sprintf("SELFTALK FAIL %s:%d: %s: %s",
+					oneline.Escape(f), c.Line, c.Verdict, oneline.Escape(oneline.Cap(c.Text, oneline.TailBytes))))
 				continue
 			}
 			// A DATED CLAIM IS THE WELCOME CASE, and it was half the output: six hundred
@@ -275,8 +305,8 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 			claims++
 			if c.Verdict == selftalk.Standing {
 				standing++
-				fails.Line("standing", fmt.Sprintf("SELFTALK FAIL %s: %s: %s",
-					oneline.Escape(f), c.Verdict, oneline.Escape(oneline.Cap(c.Text, oneline.TailBytes))))
+				fails.Line("standing", fmt.Sprintf("SELFTALK FAIL %s:%d: %s: %s",
+					oneline.Escape(f), c.Line, c.Verdict, oneline.Escape(oneline.Cap(c.Text, oneline.TailBytes))))
 				continue
 			}
 			dated++
@@ -296,6 +326,10 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 		}
 	}
 	skipLines.More()
+	if scanned == 0 {
+		fmt.Fprintf(stdout, "SELFTALK SKIP files=0 skipped=%d reason=all-skipped\n", len(files))
+		return 0
+	}
 	banners.More()
 	fails.More()
 

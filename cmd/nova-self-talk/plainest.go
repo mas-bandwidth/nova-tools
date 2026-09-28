@@ -142,7 +142,7 @@ func plainestScan(text string) ([]selftalk.Claim, []selftalk.Installation) {
 		if !dated {
 			for _, m := range plainestStanding.FindAllString(flat, -1) {
 				s := strings.TrimSpace(m)
-				claims = append(claims, selftalk.Claim{Verdict: selftalk.Standing, Text: s})
+				claims = append(claims, selftalk.Claim{Line: n, Verdict: selftalk.Standing, Text: s})
 			}
 		}
 
