@@ -769,6 +769,7 @@ func runDisposable(f runFlags, deadline time.Duration, stdin io.Reader, stdout, 
 	if f.out != "" {
 		max, _ := parseBytes(f.outMax)
 		code = handoff(stderr, handoffInput{
+			Mount:     vol.Mount,
 			Work:      filepath.Join(vol.Mount, "work"),
 			Out:       f.out,
 			Name:      f.name,
