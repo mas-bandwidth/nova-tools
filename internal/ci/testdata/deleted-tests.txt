@@ -41,3 +41,4 @@ internal/docs/issue1624_test.go held docs/SPEC-DECIDE.md's housekeeping section;
 internal/docs/issue1625_test.go held docs/SPEC-DECIDE.md's routing-is-a-launcher-step rule; the spec moved to deprecated/docs/ with nova-decide
 internal/docs/cli_spec_slots_release_force_test.go held docs/SPEC-SWARM.md's slots release --force text; the spec moved to deprecated/docs/ with nova-swarm
 internal/docs/specwake_awake_door_test.go held cmd/nova-wake/main.go's awake refusals against docs/SPEC-WAKE.md; both moved to deprecated/ with nova-wake (Glenn 2026-09-27: not proven)
+internal/nsprint/webhook/webhook_test.go a functional test of deprecated nsprint code that drove internal/post/hook's handler as its fixture; internal/post moved to deprecated/ with nova-post, and deprecated code is not tested
