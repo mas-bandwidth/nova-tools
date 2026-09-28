@@ -2070,19 +2070,37 @@ row that names no deletion of the change is red too. On a pull request the
 checkout is the merge ref and the first parent is dev's tip, so the set is
 exactly what merging the change deletes from dev; in the merge queue the
 same; on dev, a squash's own effect. On the promotion of dev to main (the
-`pull_request` event with `GITHUB_BASE_REF` main and `GITHUB_HEAD_REF` dev,
-read by `promotionSkip`) the comparison does not run and the run logs a NOTE
-saying why: the first parent is main's tip, so the set would be every
-deletion dev accumulated since the last promotion, each declared in the
-change that made it on dev, where this rule ran; main takes pull requests
-only, so no other event carries a promotion. Once the promotion has landed,
-the `push` run on main, a `workflow_dispatch` at that sha and a scheduled
-run there (`GITHUB_REF` `refs/heads/main`, HEAD a two-parent merge; main is
-the default branch, where schedules run) compare HEAD with its SECOND
-parent, dev's tip (`comparisonParent`, with a NOTE naming it): the set is
-what the merge itself deleted beyond dev, nothing for a true promotion and a
-real deletion for anything smuggled into the merge commit; a squash on main
-has one parent and is compared with it as everywhere.
+`pull_request` event with `GITHUB_BASE_REF` main and `GITHUB_HEAD_REF` dev
+whose payload's head repository is this repository, read by `promotionSkip`)
+the comparison does not run and the run logs a NOTE saying why: the first
+parent is main's tip, so the set would be every deletion dev accumulated
+since the last promotion, each declared in the change that made it on dev,
+where this rule ran; main takes pull requests only, so no other event carries
+a promotion, and a fork's branch named dev is refused by the head
+repository. Once the promotion has landed, a main run (`mainRun`: `push`,
+`workflow_dispatch` or `schedule` on `refs/heads/main`, main being the
+default branch where schedules run; or no GitHub environment with main
+checked out, so a local audit agrees with CI) at a two-parent merge keeps
+the first-parent comparison and excuses what dev itself did
+(`excuseDevDeletions`): a deletion is excused only when the second parent's
+ancestry (`git log <second-parent> --diff-filter=D --name-only`, never a
+moving `origin/dev`) deleted the path AND the second parent's tree lacks it,
+so a file dev deleted once and restored is still dev's; a row added in the
+change is excused when that ancestry deleted its path. What is not excused
+is a finding as everywhere: a file main alone had and the merge lost, since
+dev never deleted it. And the merge's own change is checked against the
+second parent: every guarded path dev's tip has and HEAD lacks is a finding
+unless a row added beyond dev declares it, which first-parent comparison
+alone never sees. The NOTE names how many deletions and rows the history
+excused. A one-parent commit on main is compared with its parent as
+everywhere. The ancestry must be complete: the main-run steps of ci.yml
+(`test`, `test-hosted`) and certification.yml (`test`), on the default
+branch, run `git fetch --no-tags --filter=blob:none --unshallow origin
++dev:refs/remotes/origin/dev` after checkout (commits and trees, the whole
+history); when the second parent's ancestry is cut by a shallow
+graft the ordinary comparison stands and every finding names that fetch
+(fail closed), so the verdict for one main sha never depends on what dev
+did later.
 **The mistake it prevents.** A branch rebased with a stale tree that lacks
 files dev gained an hour before — a class test, its allowlist and its controls —
 undoes the fixes they held when it merges. Every check on the merge is green,
@@ -2105,10 +2123,21 @@ row green, a row naming no deletion red, an old row declaring nothing.
 `TestDeclaredRowsAddedReadsOnlyTheAddedRows` pin the two readers;
 `TestPromotionSkipReadsTheEvent` pins the promotion shape against its
 reversed witnesses (the same event into dev, a feature branch into main, a
-push, a merge-queue group, no environment);
-`TestComparisonParentReadsTheEventAndTheRef` pins the second-parent shape
-against its own (a squash on main, a merge on dev, a pull request's merge
-ref, no environment). Every
+fork's branch named dev, an absent payload, a push, a merge-queue group, no
+environment); `TestMainRunReadsTheEventRefAndBranch` pins the main-run shape
+against its own (the same events on dev, a pull request's merge ref, a
+merge-queue group, a local run off main or detached);
+`TestExcuseDevDeletionsReadsHistoryAndDevTree` pins the filter; and
+`TestMainRunSeesWhatMainAloneHad`, `TestMainRunExcusesOnlyWhatDevDeleted`,
+`TestMainRunHoldsItsTreeControls` and `TestMainRunFailsClosedOnAShallowAncestry`
+are the witnesses over a repository they build (a base with the ledger; main
+adds a file of its own; dev deletes one file with a row, deletes another and
+restores it, trims the rows, adds a file): the merge whose tree is dev's is
+red for main's own file only, under push and under no environment on main;
+the true promotion is green on main and red on a feature branch; a merge
+missing the restored file is red for it (control 1); a merge missing dev's
+new file is red for it (control 2); a squash on main is red as everywhere; a
+depth-2 clone is red with the fetch in every finding (control 3). Every
 workflow checks out with `fetch-depth: 2` so the first parent is in every
 checkout;
 a checkout without it is a red run naming the fetch depth, never a pass.
@@ -2134,7 +2163,12 @@ deletion and wants a row; a list under a subdirectory of `testdata`, or a
 fixture that is not `_test.go`; and one merge only — HEAD against its first
 parent, never the merges before it, so a deletion that landed before this
 rule is not found by it. A local run reads the last commit on the branch,
-which is the developer's own; a root commit is a red run, not a pass.
+which is the developer's own; a root commit is a red run, not a pass. A
+squash-merged promotion has one parent and is compared with main's tip as
+everywhere, red for all dev deleted since the last promotion, so the
+promotion lands as a merge commit. A push to dev by a bypass actor is never
+gated by a required check, so what it deletes enters dev's history without
+this rule having run on it, and a main run excuses it all the same.
 
 ## How the class tests read the tree: one walk, one parse, in parallel
 
