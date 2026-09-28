@@ -1935,7 +1935,7 @@ fail-open this package exists to prevent.
 
 **The write is temp-file + fsync + rename** in the box's own directory, so a
 crash leaves the old box or the new one, never a fragment. The box is written
-world-readable (0644): a fuse nobody else can see is a fuse that stops
+world-readable (0644 subject to umask): a fuse nobody else can see is a fuse that stops
 nothing. Surface names are matched case- and whitespace-insensitively, which
 makes equivalent spellings ONE surface in both directions — see the folding
 paragraph below. `at` and `reason` are read
@@ -5235,7 +5235,7 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 155. `TestCheckIntoANonexistentDirectoryIsAlsoClear` — a `--box` whose parent directory does not exist answers VERIFIED CLEAR too.
 156. `TestUnreadableBoxIsTreatedAsBlownNeverClear` / `TestAnUnreadableFileTypeIsNotClear` — an unreadable box (permissions, torn write, malformed JSON, wrong-shaped value) is CANNOT TELL, treated as BLOWN, exit 2.
 157. `TestWriteLeavesNoLitter` / `TestWriteLeavesNoTempLitter` — the write is temp-file + fsync + rename in the box's own directory; a crash leaves the old box or the new, never a fragment.
-158. `TestWrittenBoxIsWorldReadable` — the box is written world-readable (0644).
+158. `TestWrittenBoxIsWorldReadable` — the box is written world-readable (0644 subject to umask).
 159. `TestSurfaceMatchingIgnoresCaseAndSpace` — surface names are matched case- and whitespace-insensitively; equivalent spellings are ONE surface.
 160. `TestStatusSurvivesAHandEditedBox` — `at`/`reason` are read back defensively; a missing key prints `since=unrecorded` / `NO REASON RECORDED`, never a crash or an invented value.
 161. `TestExitCodes` — exit 0 = clear or done and verified; 1 = blown or could not do/verify; 2 = could not run.
@@ -5269,7 +5269,7 @@ These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md)
 189. `TestStatusCountsAllAndListsAtMostMax` / `TestStatusMaxWidensAndZeroListsAll` — `--max` defaults to 20, `0` means all; the `quarantines=<n>` count is never capped and at most n lines are listed before one `STATUS MORE` line.
 190. `TestLockdownIsWrittenVerifiedAndAnnounced` — `lockdown` records a global lockdown verified by re-reading the box (exit 0 means verified, never attempted).
 191. `TestLockdownReasonIsJoinedNotTruncated` — the reason is all remaining arguments joined, not silently truncated.
-192. `TestLockdownWorksOnAnUnreadableBox` / `TestPreserveUnreadableKeepsTheBytes` — `lockdown` works even on an unreadable box, first preserving the corrupt bytes to `<box>.unreadable`.
+192. `TestLockdownWorksOnAnUnreadableBox` / `TestPreserveUnreadableKeepsTheBytes` / `TestPreserveUnreadablePreservesExistingPermissions` — `lockdown` works even on an unreadable box, first preserving the corrupt bytes to `<box>.unreadable` (preserving existing permissions).
 193. `TestBlowingFailsLoudlyWhenItCannotWrite` — `lockdown` says NO (exit 1) when the write fails, loudly, naming the by-hand remedy.
 194. (A) `lockdown` says NO (exit 1) when the re-read verification fails (distinct from the write failure).
 195. `TestUsageErrorsExitTwo` — `lockdown` refuses (exit 2) when `--box` is missing or the reason is empty.

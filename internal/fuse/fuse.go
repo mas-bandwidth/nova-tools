@@ -253,10 +253,10 @@ func WriteBox(path string, b Box) error {
 	}
 
 	// Atomic write per internal/atomicfile model: temporary file created
-	// exclusively in parent directory, explicit 0o644 mode, fsync to media,
-	// and atomic rename over target path. The box is not a secret and other
-	// tools must be able to read it; a fuse nobody else can see is a fuse that
-	// stops nothing.
+	// exclusively in parent directory, requested 0o644 mode (honoring process
+	// umask), fsync to media, and atomic rename over target path. The box is not
+	// a secret and other tools must be able to read it; a fuse nobody else can
+	// see is a fuse that stops nothing.
 	cleanPath := path
 	if cleanPath != "" {
 		cleanPath = filepath.Clean(cleanPath)
@@ -273,12 +273,17 @@ func PreserveUnreadable(path string) (string, error) {
 	if err != nil {
 		return dst, err
 	}
-	// Atomic write per internal/atomicfile model: writes dst atomically with 0o644
-	// permissions via temporary file and rename so preserved unreadable box evidence
-	// is never left torn.
 	cleanDst := dst
 	if cleanDst != "" {
 		cleanDst = filepath.Clean(cleanDst)
 	}
-	return dst, atomicfile.WriteFile(cleanDst, data, 0o644)
+	mode := os.FileMode(0o644)
+	if fi, err := os.Lstat(cleanDst); err == nil && fi.Mode().IsRegular() {
+		mode = fi.Mode().Perm()
+	}
+	// Atomic write per internal/atomicfile model: writes dst atomically, preserving
+	// any existing destination permissions (or defaulting to 0o644 subject to umask)
+	// via temporary file and rename so preserved unreadable box evidence is never
+	// left torn or mode-widened.
+	return dst, atomicfile.WriteFile(cleanDst, data, mode)
 }
