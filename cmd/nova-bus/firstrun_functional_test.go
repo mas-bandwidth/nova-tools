@@ -28,10 +28,10 @@ import (
 // transcript did not, so the one tool a newcomer is told to start with was the one
 // tool excused from the standard. These two tests are what replaced the exemption.
 //
-// NOTHING HERE REACHES A NETWORK. The bus is the example bus copied out of
-// testdata and given a repository of its own, with a bare repository beside it as
-// `origin`, both under t.TempDir(): every --remote origin below pushes to a
-// directory on this disk.
+// NOTHING HERE REACHES A NETWORK. The bus is the one docs/CLI.md's setup block
+// builds: the example bus copied out of testdata and given a repository of its own,
+// with a bare repository beside it as `origin`, all under t.TempDir(): every
+// --remote origin below pushes to a directory on this disk.
 
 // firstRunClock is the transcript's clock. It stands AFTER the example bus's own
 // notes (2026-09-09) on purpose: --legacy-now draws its line at this instant, so the
@@ -46,25 +46,45 @@ func firstRunClock() time.Time {
 	return at.UTC()
 }
 
-// firstTrialBus is the fixture the first run is documented against: the example bus,
-// copied out, `git init -b main`, committed, and pushed to a bare repository that is
-// its origin -- which is exactly what cmd/nova-bus/testdata/example-bus/README.md
-// tells a reader to do, and what every git-reading verb requires (a --bus that is not
-// its repository's root is refused). It returns the working directory the transcript
-// runs in and the bus inside it.
+// firstTrialBus is the fixture the first run is documented against, and it is built by
+// RUNNING the setup block docs/CLI.md's nova-bus `### First run` writes, with sh, as a
+// reader runs it: from the root of a source checkout, into the scratch directory the
+// block itself names and cds into. Nothing is added here that the page does not say.
+// The two things a reader has before that block are stood in for, and only those: the
+// checkout (here the one path the block reads from it, the example bus, copied to the
+// same relative place), and a configured git identity (the page says git needs one;
+// here it is the four GIT_AUTHOR/GIT_COMMITTER variables on the one sh process). It
+// returns the directory the block leaves the shell in, which is where the transcript
+// runs, and the bus inside it.
 func firstTrialBus(t *testing.T) (dir, busPath string) {
 	t.Helper()
 	hermetic(t)
-	dir = t.TempDir()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "CLI.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	setup, err := documentedSetup(string(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkout := filepath.Join(t.TempDir(), "checkout")
+	copyTree(t, filepath.Join("testdata", "example-bus"), filepath.Join(checkout, "cmd", "nova-bus", "testdata", "example-bus"))
+	sh := exec.Command("sh", "-ec", setup+"\npwd")
+	sh.Dir = checkout
+	sh.Env = append(sh.Environ(),
+		"GIT_AUTHOR_NAME=Ada", "GIT_AUTHOR_EMAIL=ada@example.com",
+		"GIT_COMMITTER_NAME=Ada", "GIT_COMMITTER_EMAIL=ada@example.com")
+	var out, errOut bytes.Buffer
+	sh.Stdout, sh.Stderr = &out, &errOut
+	if err := sh.Run(); err != nil {
+		t.Fatalf("docs/CLI.md's nova-bus setup block, run as written from a checkout: %v\nstdout: %s\nstderr: %s\nthe block:\n%s", err, out.String(), errOut.String(), setup)
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	dir = lines[len(lines)-1]
 	busPath = filepath.Join(dir, "bus")
-	remote := filepath.Join(dir, "bus.git")
-	gitIn(t, dir, "init", "--bare", "--quiet", "--initial-branch=main", remote)
-	copyTree(t, filepath.Join("testdata", "example-bus"), busPath)
-	gitIn(t, busPath, "init", "--quiet", "-b", "main")
-	gitIn(t, busPath, "add", "-A")
-	gitIn(t, busPath, "-c", "user.name=Ada", "-c", "user.email=ada@example.com", "commit", "-q", "-m", "the bus")
-	gitIn(t, busPath, "remote", "add", "origin", remote)
-	gitIn(t, busPath, "push", "-q", "-u", "origin", "main")
+	if _, err := os.Stat(filepath.Join(busPath, "participants.json")); err != nil {
+		t.Fatalf("docs/CLI.md's nova-bus setup block leaves the shell in %s, and there is no bus at ./bus there: %v", dir, err)
+	}
 	return dir, busPath
 }
 
@@ -165,7 +185,7 @@ func TestTheFirstRunTranscriptIsWhatTheToolPrints(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "drafts"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	seen, commands := runFirstRunShapes(t, "docs/TESTS.md", lines, dir, busPath, func(stdout string) string {
+	seen, commands, _ := runFirstRunShapes(t, "docs/TESTS.md", lines, dir, busPath, func(stdout string) string {
 		// What the WRITER does with the file: a body over the placeholder. The send
 		// line after this one is documented as reading a draft somebody finished;
 		// docs/TESTS.md says so in its prose, and this is that sentence done.
@@ -199,10 +219,11 @@ func TestTheFirstRunTranscriptIsWhatTheToolPrints(t *testing.T) {
 // it printed. finish is what the writer does to a redirected draft between `draft` and
 // `send`: it gets what the shell wrote to the file and returns what the file holds
 // when `send` reads it. It returns the documented lines' two-token prefixes, counted,
-// and the number of commands run.
-func runFirstRunShapes(t *testing.T, doc string, lines []string, dir, busPath string, finish func(stdout string) string) (map[string]int, int) {
+// the number of commands run, and every line the commands printed, in order.
+func runFirstRunShapes(t *testing.T, doc string, lines []string, dir, busPath string, finish func(stdout string) string) (map[string]int, int, []string) {
 	t.Helper()
 	var printed map[string]bool
+	var got []string
 	seen := map[string]int{}
 	commands := 0
 	for _, line := range lines {
@@ -239,10 +260,11 @@ func runFirstRunShapes(t *testing.T, doc string, lines []string, dir, busPath st
 		for _, out := range strings.Split(r.stdout+"\n"+r.stderr, "\n") {
 			if shape := onboarding.Shape(out); shape != "" {
 				printed[shape] = true
+				got = append(got, out)
 			}
 		}
 	}
-	return seen, commands
+	return seen, commands, got
 }
 
 // docs/CLI.md's `### First run` is the page a stranger copies from, and until this test
@@ -270,7 +292,7 @@ func TestTheCommandReferenceFirstRunRunsAsWritten(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir, busPath := firstTrialBus(t)
-	seen, commands := runFirstRunShapes(t, "docs/CLI.md", lines, dir, busPath, func(stdout string) string {
+	seen, commands, got := runFirstRunShapes(t, "docs/CLI.md", lines, dir, busPath, func(stdout string) string {
 		path := filepath.Join(dir, "draft.md")
 		if err := os.WriteFile(path, []byte(stdout), 0o644); err != nil {
 			t.Fatal(err)
@@ -300,5 +322,74 @@ func TestTheCommandReferenceFirstRunRunsAsWritten(t *testing.T) {
 		if seen[prefix] != want {
 			t.Errorf("docs/CLI.md's nova-bus `### First run` shows %d %s lines, want %d", seen[prefix], prefix, want)
 		}
+	}
+
+	runTheDocumentedReply(t, string(raw), lines, got, dir, busPath)
+}
+
+// runTheDocumentedReply runs docs/CLI.md's `reply` paragraph as its continuation of the
+// first run: the body step with sh in the sitting's directory, then the fenced block's
+// lines in order, with the id after `--re` replaced by the id THIS sitting's `send`
+// printed -- the substitution the page tells its reader to make, because an id is drawn
+// fresh for every note and the page's sample names no note on a new bus. The page's
+// claim is then held to the run: the reply is written and pushed, and the read after it
+// carries one open note fewer (open=2 before, open=1 after, notes=0).
+func runTheDocumentedReply(t *testing.T, md string, firstRun, got []string, dir, busPath string) {
+	t.Helper()
+	body, block, docID, err := documentedReply(md)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sentID string
+	for _, line := range got {
+		if rest, ok := strings.CutPrefix(line, "SEND OK id="); ok {
+			sentID, _, _ = strings.Cut(rest, " ")
+		}
+	}
+	if sentID == "" {
+		t.Fatal("the first run printed no SEND OK id= for the reply to answer")
+	}
+	documentedSend := false
+	for _, line := range firstRun {
+		if strings.HasPrefix(line, "SEND OK id="+docID+" ") {
+			documentedSend = true
+		}
+	}
+	if !documentedSend {
+		t.Errorf("docs/CLI.md's reply line answers --re %s, which is not the id on the page's own SEND OK line; the sample has to be the note the page's sitting sent", docID)
+	}
+	sh := exec.Command("sh", "-c", body)
+	sh.Dir = dir
+	if out, err := sh.CombinedOutput(); err != nil {
+		t.Fatalf("docs/CLI.md's reply body step %q: %v\n%s", body, err, out)
+	}
+	var steps []string
+	for _, line := range block {
+		if strings.HasPrefix(line, "nova-bus ") {
+			line = "$ " + strings.ReplaceAll(line, " --re "+docID+" ", " --re "+sentID+" ")
+		}
+		steps = append(steps, line)
+	}
+	seen, commands, printed := runFirstRunShapes(t, "docs/CLI.md reply", steps, dir, busPath, nil)
+	if commands != 2 {
+		t.Errorf("docs/CLI.md's reply block runs %d commands, want 2: the reply and Ada's next read", commands)
+	}
+	if seen["REPLY OK"] != 1 || seen["INBOX OK"] != 1 {
+		t.Errorf("docs/CLI.md's reply block shows %d REPLY OK and %d INBOX OK lines, want 1 each", seen["REPLY OK"], seen["INBOX OK"])
+	}
+	var replied, after string
+	for _, line := range printed {
+		if strings.HasPrefix(line, "REPLY OK ") {
+			replied = line
+		}
+		if strings.HasPrefix(line, "INBOX OK ") {
+			after = line
+		}
+	}
+	if !strings.Contains(replied, " re="+sentID+" ") || !strings.Contains(replied, " pushed=true ") {
+		t.Errorf("the documented reply, run with this sitting's id, printed %q; want re=%s and pushed=true", replied, sentID)
+	}
+	if !strings.Contains(after, " open=1 ") || !strings.Contains(after, " notes=0 ") {
+		t.Errorf("after the documented reply Ada's read printed %q; the page says the reply closed Bo's note (open=1, notes=0)", after)
 	}
 }

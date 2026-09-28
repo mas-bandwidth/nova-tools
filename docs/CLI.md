@@ -428,7 +428,19 @@ A bus is an ordinary git repository where several lines, people and minds alike,
 
 ### First run
 
-Copy `cmd/nova-bus/testdata/example-bus` out and give it a repository of its own — its README is the recipe, and it is the bus the tests run these lines against. A first sitting proves three things: the roster is where identity lives, and `names` says who may speak; a note is sent from a draft carrying the `To` and `Subject` headers and a body you wrote; and the example bus ships a `CURSOR` naming a commit from the history it was written in, so a copied-out bus refuses it and the first read is `--full` once. A line marked `! ` is one the tool writes to standard error.
+The sitting runs in a scratch directory, on the example bus: `cmd/nova-bus/testdata/example-bus` copied out of a nova-tools source checkout, given a repository of its own, and given a remote — a bare repository beside it on the same disk — so every `--remote origin` below pushes to a directory and nothing leaves the machine. Git needs your configured commit identity. From the root of the checkout, the whole setup:
+
+```sh
+mkdir ../bus-trial && cp -R cmd/nova-bus/testdata/example-bus ../bus-trial/bus && cd ../bus-trial
+git init -q --bare -b main bus.git
+git -C bus init -q -b main
+git -C bus add -A
+git -C bus commit -q -m 'the bus'
+git -C bus remote add origin "$PWD/bus.git"
+git -C bus push -q -u origin main
+```
+
+The copy and its own repository are enough to read the bus, and they are what the example's README gives; the bare repository, `remote add` and `push` are what `send` needs, and without them it stops at `SEND REFUSED` with git's `'origin' does not appear to be a git repository`. This is the bus the tests run these lines against: they execute that block as written. A first sitting proves three things: the roster is where identity lives, and `names` says who may speak; a note is sent from a draft carrying the `To` and `Subject` headers and a body you wrote; and the example bus ships a `CURSOR` naming a commit from the history it was written in, so a copied-out bus refuses it and the first read is `--full` once. A line marked `! ` is one the tool writes to standard error.
 
 ```
 $ nova-bus names --bus ./bus
@@ -536,7 +548,9 @@ A host is one word — lower-case letters, digits, `-`, `.` and `_`, at most 40 
 
 Four things a first draft gets wrong, and what `send` does about each, one `SEND NOTE` line per fix so nothing is rewritten silently: a markdown heading at the top becomes the `Subject:` when the draft has none; a pasted `Date:` is replaced from the clock; a missing `From:` is written from `--as`; bold asterisks around a key come off and blank lines above the header are skipped. The refusals that remain are the ones that would be a guess about what you meant.
 
-**`reply`** is how you answer a note: one line, from a file holding the body and nothing else, and the tool writes `From:`, `To:`, `Re:` and `Subject:` from the note it answers, so the `Re:` that closes it cannot be misspelled. It fetches first and resolves `--re` against the bus as it stands on the remote; `--advance` moves your cursor in the same commit as the reply, and `--dry-run` shapes the reply and writes nothing. A body file carrying one of the four header lines it fills is refused, and a `--re` naming no note is refused with the command that lists the ones you can name. Continuing the first run above, Ada answers Bo's note with `Bo, green here too; merging.` in `reply.md`, and her next read carries one note fewer:
+**`reply`** is how you answer a note: one line, from a file holding the body and nothing else, and the tool writes `From:`, `To:`, `Re:` and `Subject:` from the note it answers, so the `Re:` that closes it cannot be misspelled. It fetches first and resolves `--re` against the bus as it stands on the remote; `--advance` moves your cursor in the same commit as the reply, and `--dry-run` shapes the reply and writes nothing. A body file carrying one of the four header lines it fills is refused, and a `--re` naming no note is refused with the command that lists the ones you can name.
+
+Continuing the first run above, in the same directory, Ada answers Bo's note. The body goes in a file: `echo 'Bo, green here too; merging.' > reply.md`. The id after `--re` is the one YOUR sitting printed, on its `SEND OK` line and again on Ada's `INBOX NOTE` line; ids are drawn fresh for every note, so `bo-d95f4cc80be2` below names the note this page's sitting sent and no note on your bus. With your id in its place, her reply closes Bo's note and her next read carries one note fewer:
 
 ```
 nova-bus reply --bus ./bus --as Ada --re bo-d95f4cc80be2 --file reply.md --advance --remote origin --branch main
