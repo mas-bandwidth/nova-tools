@@ -156,9 +156,9 @@ Ada's first line above is the refusal worth meeting here rather than on a live b
 
 ## nova-sandbox
 
-Fixture: a job directory of yours. Every path below is one you name — this tool has no defaults and guesses nothing — so the transcript is a worked example with `/Users/me/pool` standing in for yours, and the lines are what this Mac printed on 2026-09-12 with the paths shortened.
+Fixture: a job directory of yours. Every path below is one you name — this tool has no defaults and guesses nothing — so the transcript is a worked example with `/path/to/pool` standing in for yours, and the lines are what this Mac printed on 2026-09-12 with the paths shortened.
 
-Platform: recorded on macOS (darwin) — the `backend=sandbox-exec` and `abi=-` fields and the `/Users/me/pool` fixture below are that Mac's; a Linux bench prints `backend=landlock`, an `abi=` value, and, where the wall is built below the ABI the kernel reports, a `used=` field this transcript has no slot for.
+Platform: recorded on macOS (darwin) — the `backend=sandbox-exec` and `abi=-` fields and the `/path/to/pool` fixture below are that Mac's; a Linux bench prints `backend=landlock`, an `abi=` value, and, where the wall is built below the ABI the kernel reports, a `used=` field this transcript has no slot for.
 
 `read_root` reads the probe's own executable, `os.Executable()`, because the root it
 exercises is "the directory of the resolved command" and the probe's child is this
@@ -173,18 +173,18 @@ the dispatcher's own `HOME` does not.
 $ nova-sandbox check
 CHECK OK backend=sandbox-exec abi=- net=enforceable hosts=none note=sandbox-exec is deprecated by Apple and works on macOS 26; the wall is the profile it applies; backend at /usr/bin/sandbox-exec
 
-$ HOME=/Users/me/pool/jobs/j1/home nova-sandbox probe --read /Users/me/pool/ref --write /Users/me/pool/jobs/j1 --secret /Users/me/.config/anthropic/env
-PROBE STEP name=write_outside_control expect=allow got=allow path=/Users/me/pool/jobs/.nova-sandbox-probe-46261
-PROBE STEP name=write_outside expect=deny got=deny path=/Users/me/pool/jobs/.nova-sandbox-probe-46261
-PROBE STEP name=read_secret expect=deny got=deny path=/Users/me/.config/anthropic/env
-PROBE STEP name=write_inside expect=allow got=allow path=/Users/me/pool/jobs/j1/.nova-sandbox-probe-inside
-PROBE STEP name=read_root expect=allow got=allow path=/Users/me/bin/nova-sandbox
+$ HOME=/path/to/pool/jobs/j1/home nova-sandbox probe --read /path/to/pool/ref --write /path/to/pool/jobs/j1 --secret /path/to/.config/anthropic/env
+PROBE STEP name=write_outside_control expect=allow got=allow path=/path/to/pool/jobs/.nova-sandbox-probe-46261
+PROBE STEP name=write_outside expect=deny got=deny path=/path/to/pool/jobs/.nova-sandbox-probe-46261
+PROBE STEP name=read_secret expect=deny got=deny path=/path/to/.config/anthropic/env
+PROBE STEP name=write_inside expect=allow got=allow path=/path/to/pool/jobs/j1/.nova-sandbox-probe-inside
+PROBE STEP name=read_root expect=allow got=allow path=/path/to/bin/nova-sandbox
 PROBE OK backend=sandbox-exec abi=- steps=5 passed=5 net=nopromise gpu=none
 
-$ HOME=/Users/me/pool/jobs/j1/home nova-sandbox --read /Users/me/pool/ref --write /Users/me/pool/jobs/j1 -- /bin/sh -c 'echo hello > report.md; cat /Users/me/.config/anthropic/env'
+$ HOME=/path/to/pool/jobs/j1/home nova-sandbox --read /path/to/pool/ref --write /path/to/pool/jobs/j1 -- /bin/sh -c 'echo hello > report.md; cat /path/to/.config/anthropic/env'
 SANDBOX NOTE dropped from the child's environment: GPG_AGENT_INFO SSH_AGENT_PID SSH_AUTH_SOCK; an agent socket speaks for a key the wall denies
-SANDBOX OK backend=sandbox-exec abi=- read=1 read-noexec=0 write=1 net=nopromise cwd=/Users/me/pool/jobs/j1 cwdb64=L1VzZXJzL21lL3Bvb2wvam9icy9qMQ ancestors=11 cmd=sh gpu=none
-cat: /Users/me/.config/anthropic/env: Operation not permitted
+SANDBOX OK backend=sandbox-exec abi=- read=1 read-noexec=0 write=1 net=nopromise cwd=/path/to/pool/jobs/j1 cwdb64=L3BhdGgvdG8vcG9vbC9qb2JzL2ox ancestors=11 cmd=sh gpu=none
+cat: /path/to/.config/anthropic/env: Operation not permitted
 ```
 
 The last run is the whole tool in three lines: the job's own write landed, and the same command could not read the key that was in neither list. Its exit status is the wrapped command's, which is 1 here because `cat` failed.
@@ -206,24 +206,24 @@ Fixture: a throwaway secrets store git working copy and age private key, as in [
 ### First run
 
 ```
-$ nova-secrets keygen --as rowan --key /Users/me/.config/nova-secrets/rowan.key --age-keygen /opt/homebrew/bin/age-keygen --store ./secrets
+$ nova-secrets keygen --as rowan --key /path/to/.config/nova-secrets/rowan.key --age-keygen /opt/homebrew/bin/age-keygen --store ./secrets
 SECRETS RULE   creation_rules:
 SECRETS RULE     - path_regex: ^rowan\.yaml$
 SECRETS RULE       age: age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5zhspjqwh35pk,age1s6kpww894xpuylmck9f2g5kz2007a8nuy6guqrjj39s0gaqf6pkqydlata
 SECRETS RULE NEXT: add these two lines to .sops.yaml (or run `nova-secrets seat add`)
-SECRETS KEYGEN OK as=rowan key=/Users/me/.config/nova-secrets/rowan.key mode=0600 pub=age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5zhspjqwh35pk
-Done. Your new key is at /Users/me/.config/nova-secrets/rowan.key. Nothing failed.
+SECRETS KEYGEN OK as=rowan key=/path/to/.config/nova-secrets/rowan.key mode=0600 pub=age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5zhspjqwh35pk
+Done. Your new key is at /path/to/.config/nova-secrets/rowan.key. Nothing failed.
 Next: send this public key to whoever seals your seat: age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5zhspjqwh35pk
 
-$ nova-secrets check --store ./secrets --as other --key /Users/me/.config/nova-secrets/other.key --sops /opt/homebrew/bin/sops
+$ nova-secrets check --store ./secrets --as other --key /path/to/.config/nova-secrets/other.key --sops /opt/homebrew/bin/sops
 SECRETS CHECK OK  as=other recipients=2 files=1 sealed=1 mine=1 foreign=0 clear=0 head=9750ba9
 
 $ nova-secrets names --store ./secrets --as other
 SECRETS NAME key=GH_TOKEN clear=false
 SECRETS NAMES OK as=other keys=1 shown=1 sealed=1 clear=0
 
-$ nova-secrets exec --store ./secrets --as other --key /Users/me/.config/nova-secrets/other.key --sops /opt/homebrew/bin/sops --only GH_TOKEN --require GH_TOKEN -- gh api user --jq .login
-! SECRETS EXEC OK as=other keys=1 only=1 required=1 file=/Users/me/secrets/other.yaml head=9750ba9 cmd=gh
+$ nova-secrets exec --store ./secrets --as other --key /path/to/.config/nova-secrets/other.key --sops /opt/homebrew/bin/sops --only GH_TOKEN --require GH_TOKEN -- gh api user --jq .login
+! SECRETS EXEC OK as=other keys=1 only=1 required=1 file=/path/to/secrets/other.yaml head=9750ba9 cmd=gh
 fake-gh
 ```
 
