@@ -193,7 +193,7 @@ func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okL
 	// bottom as well as a top, and a number outside it must be said rather than assumed.
 	if abi < minKnownABI {
 		return ExitRefused, refuse("landlock_abi_unknown",
-			"this kernel reports landlock abi %d and the lowest row of this tool's table is %d: there is no ruleset this build can describe for it. Update the abi table in internal/sandbox/landlock_linux.go and docs/SPEC-SANDBOX.md, or run the job with nova-swarm run --no-sandbox",
+			"this kernel reports landlock abi %d and the lowest row of this tool's table is %d: there is no ruleset this build can describe for it. Update the abi table in internal/sandbox/landlock_linux.go and docs/SPEC-SANDBOX.md",
 			abi, minKnownABI)
 	}
 	// ABOVE it is a CLAMP, not a refusal: a newer kernel accepts a ruleset built for an

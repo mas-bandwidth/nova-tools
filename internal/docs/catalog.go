@@ -51,7 +51,7 @@ var DefaultCatalog = []Entry{
 	E("internal/cardhdr", "card header vocabulary and one-invariant lint", "go test ./internal/cardhdr", "go test ./internal/cardhdr"),
 	E("internal/check", "hygiene rules and tree checkers", "go test ./internal/check", "go test ./internal/check"),
 	E("internal/ci", "class tests and CI budget invariants", "go test ./internal/ci", "go test ./internal/ci"),
-	E("internal/cireceipt", "ci-ok's run receipt: one ev:github row, the row nova-wake watch --store reads", "go test ./internal/cireceipt", "go test -tags functional ./internal/cireceipt"),
+	E("internal/cireceipt", "ci-ok's run receipt: one ev:github row of the workflow_run shape", "go test ./internal/cireceipt", "go test -tags functional ./internal/cireceipt"),
 	E("internal/civerdict", "reader of a commit's CI verdict record", "go test ./internal/civerdict", "go test ./internal/civerdict"),
 	E("internal/config", "nova-config library: kind descriptors, the Postgres store and history, apply into Redis", "go test ./internal/config", "go test ./internal/config"),
 	E("internal/converge", "convergence state and progress math", "go test ./internal/converge", "go test ./internal/converge"),
