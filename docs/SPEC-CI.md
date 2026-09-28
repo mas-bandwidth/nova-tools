@@ -1607,8 +1607,9 @@ restores the `<os>-gorace-` cache (the race build cache, the module cache and th
 Go toolchain's tool-cache directory, so setup-go finds the toolchain rather than
 installing it), builds every external package the live tree's tests import under
 `-race`, SAVES the cache, and only then runs `go test -race -count=1` over its
-packages. A run whose cache misses outright (a new Go version) is cold and can
-exceed the cap; it saves the entry before its tests, so the next run is warm.
+packages. The legs need `race-cache`, one leg per OS, which looks the exact entry
+up without downloading it and, only on a miss, builds and saves it, so the test
+legs of a cold run start warm.
 **The hurt.** Unsharded, the job built, vetted and race-tested the whole tree on
 one runner and was cancelled by the two-minute cap on
 every dev push since the cap landed (27c9ffc66): runs 36355661583, 36356115183,
