@@ -13,6 +13,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
+	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -515,6 +516,122 @@ func TestRemoveFriendDoesNotTouchSprintKeys(t *testing.T) {
 			if strings.Contains(arg, "sprint") || strings.Contains(arg, "cards") {
 				t.Errorf("removeFriend touched sprint key in command %s %v", cmd.name, cmd.args)
 			}
+		}
+	}
+}
+
+// TestApplyRedisTripsReducedFromAuditBaseline measures round trips against the
+// REDIS-TRIPS.md baseline from Rowan's audit (rowan-7fbdefecf56e):
+// - first run: 28 trips (down from 42 before Cuts 2, 3, 4)
+// - steady apply: 6 trips (down from 18 before Cut 1)
+// - two changes: 11 trips (down from 25 before Cut 2)
+func TestApplyRedisTripsReducedFromAuditBaseline(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	ap, c := redisApplier(t)
+	st := seed(t)
+
+	trips := redisconn.CountTrips(c)
+
+	// 1. First run: applies machine (2 adds), fleet (1 set), friend (2 adds), sprint (1 set)
+	before := trips.N()
+	applyKinds(t, st, ap, "rowan")
+	firstRunTrips := trips.N() - before
+	t.Logf("first run trips = %d (baseline was 42)", firstRunTrips)
+	if firstRunTrips > 30 {
+		t.Fatalf("first run took %d trips, want <= 30 (was 42 before batching cuts)", firstRunTrips)
+	}
+
+	// 2. Steady apply: nothing changed; Cut 1 skips the stamps (18 -> 6)
+	before = trips.N()
+	applyKinds(t, st, ap, "rowan")
+	steadyTrips := trips.N() - before
+	t.Logf("steady apply trips = %d (baseline was 18)", steadyTrips)
+	if steadyTrips != 6 {
+		t.Fatalf("steady apply took %d trips, want 6 (was 18 before Cut 1)", steadyTrips)
+	}
+
+	// 3. Two changes: update two friends (slots on stella, slots on rowan) (25 -> 11)
+	if _, _, err := st.Update(ctx, KindFriend, "stella", map[string]string{"slots": "24"}, "rowan"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.Update(ctx, KindFriend, "rowan", map[string]string{"slots": "24"}, "rowan"); err != nil {
+		t.Fatal(err)
+	}
+	before = trips.N()
+	applyKinds(t, st, ap, "rowan")
+	twoChangesTrips := trips.N() - before
+	t.Logf("two changes trips = %d (baseline was 25)", twoChangesTrips)
+	if twoChangesTrips > 11 {
+		t.Fatalf("two changes took %d trips, want <= 11 (was 25 before Cut 2)", twoChangesTrips)
+	}
+
+	// 4. Machine removal: add third machine "air" to store and apply, then delete "air" and measure apply trips.
+	machine, _ := Lookup(KindMachine)
+	airRow, err := machine.NewRow("air", map[string]string{"user": "glenn", "seat": "air", "slots": "16"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Insert(ctx, KindMachine, airRow, "rowan"); err != nil {
+		t.Fatal(err)
+	}
+	applyKinds(t, st, ap, "rowan")
+
+	if _, err := st.Delete(ctx, KindMachine, "air", "rowan"); err != nil {
+		t.Fatal(err)
+	}
+	before = trips.N()
+	applyKinds(t, st, ap, "rowan")
+	machineRemovalTrips := trips.N() - before
+	t.Logf("machine removal trips = %d", machineRemovalTrips)
+	if machineRemovalTrips > 15 {
+		t.Fatalf("machine removal took %d trips, want <= 15 (was 25 before Cut 5)", machineRemovalTrips)
+	}
+}
+
+// TestRefusedMachineCeilingLeavesMachineHashUntouched proves that when
+// ns_capacity_machine refuses a lower ceiling, the writeMachine execution stops
+// immediately and leaves machine:<m> completely byte-identical / untouched.
+func TestRefusedMachineCeilingLeavesMachineHashUntouched(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	ap, c := redisApplier(t)
+	st := seed(t)
+	applyKinds(t, st, ap, "rowan")
+
+	// Capture the exact machine:studio hash fields before the refused apply.
+	beforeFields, err := c.HGetAll(ctx, MachineKey("studio")).Result()
+	if err != nil {
+		t.Fatalf("read machine:studio before: %v", err)
+	}
+	if len(beforeFields) == 0 {
+		t.Fatal("expected machine:studio to exist before update")
+	}
+
+	// Try to lower studio's slots to 10 when its friends desire 64 slots.
+	if _, _, err := st.Update(ctx, KindMachine, "studio", map[string]string{"slots": "10"}, "rowan"); err != nil {
+		t.Fatal(err)
+	}
+	_, err = Apply(ctx, st, ap, KindMachine, "rowan", false, func(Op) {})
+	if err == nil || !errors.Is(err, ErrCeiling) {
+		t.Fatalf("expected ErrCeiling, got %v", err)
+	}
+
+	// Capture the machine:studio hash fields after the refused apply.
+	afterFields, err := c.HGetAll(ctx, MachineKey("studio")).Result()
+	if err != nil {
+		t.Fatalf("read machine:studio after: %v", err)
+	}
+
+	// Assert byte-identical / untouched.
+	if len(beforeFields) != len(afterFields) {
+		t.Fatalf("field count changed: before %d, after %d", len(beforeFields), len(afterFields))
+	}
+	for k, v := range beforeFields {
+		if afterFields[k] != v {
+			t.Errorf("machine:studio field %q was modified: before=%q, after=%q", k, v, afterFields[k])
 		}
 	}
 }

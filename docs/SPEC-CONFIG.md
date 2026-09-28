@@ -275,7 +275,9 @@ its coordinator machine), friends, the sprint row:
    `CONFLICT`.
 
 A second apply of the same Postgres is a no-op: no `APPLY` line, the counts
-zero, the stamp rewritten to the same revision.
+zero, the revision unchanged (steady apply is 6 Redis round trips down from 18;
+first run across the seed kinds takes 30 trips down from the 42 baseline, with
+each machine running its ceiling check before its write transaction).
 
 ### What apply writes, per kind
 
