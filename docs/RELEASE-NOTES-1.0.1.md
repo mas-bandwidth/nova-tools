@@ -18,6 +18,8 @@ Retrying an identical append returns the original stored timestamp and
 
 ## Findings and commands you can act on
 
+`nova-table watch --check` checks table invariants every tick and displays failed checks as stall rows.
+
 `nova-config apply` batches reads and reports failed pipeline commands even when an earlier key is absent.
 
 `nova-fuse init` creates a missing box without replacing an existing box; status and lift refuse a missing box.
@@ -44,6 +46,8 @@ paths and reasons containing shell punctuation. Copying a remedy keeps the
 arguments intact.
 
 ## Checks for contributors
+
+`nova-ci cost` prints a COST receipt from a complete job listing and can record it in Redis.
 
 The CI class check validates hosted package assignments at the shard
 counts the workflow actually runs. Existing time budgets stay in force.
