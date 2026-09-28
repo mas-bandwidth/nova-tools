@@ -9,9 +9,9 @@ into Redis so Redis is always a rebuildable copy. The contract is
 Glenn drew the boundary on 2026-09-26: "I don't think redis is an appropriate
 place to store non-ephemeral data. It is good as a hot store of data that can
 be rebuilt." So Postgres is the permanent store, Redis is a copy of it, and
-the runtime tools (`nova-friend`, `nova-sprint`) read configuration and never
-write it. History is not configuration: scores, receipts and ledgers stay
-with the tools that write them.
+runtime tools read configuration and never write it. History is not
+configuration: scores, receipts and ledgers stay with the tools that write
+them.
 
 ## Connecting
 
@@ -232,14 +232,12 @@ CONFIG APPLY kind=sprint add=0 set=1 remove=0 rev=6 ms=1
 ```
 
 `apply` reads Postgres and writes Redis, one kind at a time: machines, the
-fleet row, friends, the sprint row. For a machine it writes what `capacity
-machine` would (`ns_capacity_machine`, the ceiling from `--slots`; cores and
-memory are never declared, so none are passed) and its registry hash
-`machine:<m>`. For the fleet row, `fleet:store` and `fleet:coordinator`,
-plain keys. For a friend it writes what the retired `nova-sprint capacity
-friend --tiers` and `friend roles` did (`ns_capacity_desired`,
-`ns_friend_roles`; the verbs are gone since 2026-09-27), charging
-her slots to the machine her own beat reports, else to the fleet's
+fleet row, friends, the sprint row. For a machine it writes its machine ceiling
+(`ns_capacity_machine`, the ceiling from `--slots`; cores and memory are never
+declared, so none are passed) and its registry hash `machine:<m>`. For the
+fleet row, `fleet:store` and `fleet:coordinator`, plain keys. For a friend it
+writes her desired capacity and roles (`ns_capacity_desired`, `ns_friend_roles`),
+charging her slots to the machine her own beat reports, else to the fleet's
 coordinator machine; the friend the sprint row names gets the `coordinator`
 role in Redis on top of her row's roles, so a handover (`sprint set
 --coordinator stella`, then `apply`) is two `SET ... changed=roles`, hers
