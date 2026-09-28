@@ -10,11 +10,8 @@
 # checks it in both directions: an unlisted edge is a red run, and a listed edge
 # whose import has been removed is also a red run.
 #
-# ceiling: 13
+# ceiling: 7
 
-cmd/nova-config -> internal/nsprint/ws  # config_functional_test.go exercises workspace configuration
-cmd/nova-redis -> internal/nsprint/preflight  # serve_functional_test.go runs preflight store checks
-internal/config -> internal/nsprint/ws  # redis.go and redis_functional_test.go manage workspace friends
 internal/nsprint/fn -> internal/nsprint/life  # test fixtures in fn/probe_sets_functional_test.go
 internal/nsprint/fn -> internal/nsprint/taskcard  # test fixtures in fn/probe_sets_functional_test.go
 internal/nsprint/fn -> internal/nsprint/ws  # test fixtures in fn/probe_sets_functional_test.go
@@ -22,6 +19,4 @@ internal/nsprint/fn -> internal/nsprint/ws/wstest  # test fixtures in fn/probe_s
 internal/nsprint/store -> internal/nsprint/card  # acl_cards_test.go and acl_epoch_test.go test card storage
 internal/nsprint/store -> internal/nsprint/taskcard  # acl_cards_test.go and acl_epoch_test.go test taskcard records
 internal/nsprint/store -> internal/nsprint/ws  # acl_cards_test.go and acl_epoch_test.go test workspace streams
-internal/ntable -> internal/nsprint/taskcard  # epoch_contract_functional_test.go verifies table epoch placement
-internal/typedrec -> internal/nsprint/card  # consumers_test.go verifies card parser outcomes
-internal/typedrec -> internal/nsprint/consume  # consumers_test.go verifies consume parser outcomes
+
