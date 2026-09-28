@@ -1,3 +1,5 @@
+//go:build functional
+
 package gh
 
 import (
@@ -6,13 +8,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ghevent"
 	"github.com/redis/go-redis/v9"
 )
 
 func add(t *testing.T, rdb *redis.Client, kind, repo, number, head string) string {
 	t.Helper()
-	id, err := rdb.XAdd(context.Background(), &redis.XAddArgs{Stream: ghevent.Stream, Values: map[string]any{
+	// Write the public key independently: producer and reader sharing the
+	// same mistaken constant must not make this compatibility check pass.
+	id, err := rdb.XAdd(context.Background(), &redis.XAddArgs{Stream: "ev:github", Values: map[string]any{
 		"repo": repo, "kind": kind, "number": number, "head": head, "action": "completed",
 	}}).Result()
 	if err != nil {
@@ -87,8 +90,10 @@ func TestAwaitReturnsUnderAMillisecond(t *testing.T) {
 	if err != nil || hit || tip != "0-0" {
 		t.Fatalf("past the deadline: tip %q hit=%v err=%v", tip, hit, err)
 	}
-	// With time left and no block needed for the read, the entry matches.
-	tip, hit, err = AwaitAt(ctx, rdb, "0-0", time.Hour, HeadEvent(head), func() time.Time { return t0 })
+	// The entry is already present, so no blocking is needed. A split stream
+	// key must fail promptly too: this is the Redis BLOCK input, not an
+	// assertion on machine timing, and the injected clock cannot run it down.
+	tip, hit, err = AwaitAt(ctx, rdb, "0-0", time.Millisecond, HeadEvent(head), func() time.Time { return t0 })
 	if err != nil || !hit || tip == "0-0" {
 		t.Fatalf("with time left: tip %q hit=%v err=%v", tip, hit, err)
 	}

@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
-	"github.com/mas-bandwidth/nova-tools/internal/ghevent"
 	"github.com/mas-bandwidth/nova-tools/internal/presence"
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 	"github.com/mas-bandwidth/nova-tools/internal/wake"
@@ -70,7 +69,8 @@ func storeFixture(t *testing.T) (*miniredis.Miniredis, *redis.Client, string) {
 
 func xaddEvent(t *testing.T, rdb *redis.Client, repo, number, kind, action string) {
 	t.Helper()
-	err := rdb.XAdd(context.Background(), &redis.XAddArgs{Stream: ghevent.Stream, Values: []string{
+	// The fixture pins the public key independently of every reader constant.
+	err := rdb.XAdd(context.Background(), &redis.XAddArgs{Stream: "ev:github", Values: []string{
 		"repo", repo, "kind", kind, "number", number, "head", "abc123", "action", action,
 		"at", "2026-09-25T13:00:00Z", "sender", "rowan-claude", "comment_id", "",
 	}}).Err()

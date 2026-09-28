@@ -52,8 +52,7 @@ func IsForbiddenSwarmVerb(arg string) bool {
 // - Direct argv execution only (no shells allowed as binary or arguments)
 // - Reject -c flag
 // - Reject --bodies (must not dump bodies)
-// - Reject --allow-private (must not bypass private bus boundaries)
-// - Reject --decide (decider invocation is forbidden)
+// - Reject --decide (provider invocation, still supported by nova-review)
 // - Reject secondary --as (must not start a second --as or switch identity)
 // - Reject swarm verbs (harvest, fill, native, merge)
 func ValidateDaemonArgv(argv []string, targetAs string) error {
@@ -100,12 +99,7 @@ func ValidateDaemonArgv(argv []string, targetAs string) error {
 			return errors.New("wake daemon boundary: --bodies flag is forbidden (must not dump bodies)")
 		}
 
-		// Reject --allow-private
-		if arg == "--allow-private" || strings.HasPrefix(arg, "--allow-private=") {
-			return errors.New("wake daemon boundary: --allow-private flag is forbidden")
-		}
-
-		// Reject --decide
+		// Reject active decision flags, including nova-review packet --decide.
 		if arg == "--decide" || strings.HasPrefix(arg, "--decide=") {
 			return errors.New("wake daemon boundary: --decide is forbidden")
 		}

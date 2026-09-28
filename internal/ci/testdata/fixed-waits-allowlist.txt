@@ -37,4 +37,3 @@ internal/update/update_test.go:217 elapsed 2026-09-17 a wall-clock measurement t
 internal/update/update_test.go:377 bound 2026-09-17 a short bound used with a fake clock or a subprocess; predates the checker
 internal/update/update_test.go:381 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker
 internal/update/update_test.go:411 bound 2026-09-17 a short bound used with a fake clock or a subprocess; predates the checker
-internal/wake/laneread_test.go:202 elapsed 2026-09-17 a wall-clock measurement the test asserts on; predates the checker

@@ -1,7 +1,9 @@
 package ci
 
 import (
+	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -12,7 +14,21 @@ import (
 // transitive edges, so another intermediary cannot reintroduce the dependency.
 func TestWebhookTextDoesNotPullInMergePolicy(t *testing.T) {
 	t.Parallel()
-	const module = "github.com/mas-bandwidth/nova-tools/"
+	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	module := ""
+	for _, line := range strings.Split(string(raw), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == "module" {
+			module = strings.Trim(fields[1], "\"") + "/"
+			break
+		}
+	}
+	if module == "" {
+		t.Fatal("go.mod has no module directive")
+	}
 	imports := map[string][]string{}
 	for _, f := range repoTree(t).GoFilesUnder(false, "cmd", "internal") {
 		if f.HasDirNamed("testdata") {
@@ -33,7 +49,7 @@ func TestWebhookTextDoesNotPullInMergePolicy(t *testing.T) {
 			imports[pkg] = append(imports[pkg], dep)
 		}
 	}
-	for _, root := range []string{"internal/ghevent", "internal/textbody"} {
+	for _, root := range []string{"cmd/nova-post", "internal/ghevent", "internal/textbody"} {
 		if _, ok := imports[module+root]; !ok {
 			t.Fatalf("missing root %s", root)
 		}

@@ -40,13 +40,14 @@ import (
 	"strconv"
 	"strings"
 
+	gheventwire "github.com/mas-bandwidth/nova-tools/internal/ghevent/wire"
 	"github.com/mas-bandwidth/nova-tools/internal/textbody"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 	"github.com/redis/go-redis/v9"
 )
 
 // Stream is the Redis stream every carried delivery is appended to.
-const Stream = "ev:github"
+const Stream = gheventwire.Stream
 
 // ErrNotCarried is a delivery this stream does not record.
 var ErrNotCarried = errors.New("ev:github: event is not carried")

@@ -12,52 +12,67 @@ import (
 
 type command struct {
 	name, syntax, example string
-	run                   func([]string, io.Writer, io.Writer) int
+	run                   func(*application, []string, io.Writer, io.Writer) int
 }
 
 // The dispatcher and all help entry points share this list. Leaf flags come
 // from each handler's real FlagSet, so help cannot advertise imaginary flags.
-var commands = []command{
-	{"create", "<table> --columns <name[:projection[:fold[:label]]],...> [--footer <label>] [--width <col=n,...>]", "create demo --columns 'ready,working,done,note:text,progress:pct(done)'", cmdCreate},
-	{"set", "<table> [--footer <label>] [--rename <name>] [--columns <spec>] [--hide <cols>] [--show <cols>] [--hidden | --visible]", "set demo --hide ready", cmdSet},
-	{"drop", "<table> [--definition]", "drop demo", cmdDrop},
-	{"list", "", "list", cmdList},
-	{"row add", "<table> <row>... [--label <text>] [--exclude <member>] [--owner <verb>] [<col>=<key> ...]", "row add demo build review", cmdRowAdd},
-	{"row set", "<table> <row> <col>=<value>...", "row set demo build 'note=Checks passed'", cmdRowSet},
-	{"row hide", "<table> <row>...", "row hide demo build", func(a []string, o, e io.Writer) int { return cmdRowsHide(a, o, e, true) }},
-	{"row show", "<table> <row>...", "row show demo build", func(a []string, o, e io.Writer) int { return cmdRowsHide(a, o, e, false) }},
-	{"row del", "<table> <row>", "row del demo build", cmdRowDel},
-	{"row move", "<table> <row> --first | --last | --before <row> | --after <row>", "row move demo review --before build", cmdRowMove},
-	{"row order", "<table> <row>...", "row order demo review build", cmdRowOrder},
-	{"row sort", "<table> [--by name|label|<col>] [--desc] [--keep] | --manual", "row sort demo --by name --keep", cmdRowSort},
-	{"col add", "<table> <name[:projection[:fold[:label]]]> [--first | --last | --before <col> | --after <col>]", "col add demo note:text --after done", cmdColAdd},
-	{"col del", "<table> <col>", "col del demo note", cmdColDel},
-	{"col move", "<table> <col> --first | --last | --before <col> | --after <col>", "col move demo done --after working", cmdColMove},
-	{"cell add", "<table> <row> <col> <member>... [--score <n>]", "cell add demo build ready b1 b2", cmdCellAdd},
-	{"cell remove", "<table> <row> <col> <member>...", "cell remove demo build ready b1 b2", cmdCellRemove},
-	{"cell move", "<table> <row> <from-col> <to-col> <member>...", "cell move demo build ready working b1 b2", cmdCellMove},
-	{"cell members", "<table> <row> <col>", "cell members demo build ready", cmdCellMembers},
-	{"member create", "<table> <id>", "member create demo b3", func(a []string, o, e io.Writer) int { return cmdMember(append([]string{"create"}, a...), o, e) }},
-	{"member find", "<table> <id>", "member find demo b1", cmdMemberFind},
-	{"check", "<table>", "check demo", cmdCheck},
-	{"clear", "<table>", "clear demo", cmdClear},
-	{"show", "<table> [--at-epoch <n>]", "show demo", cmdShow},
-	{"render", "<table> | --view <name> [--at-epoch <n>] [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>]", "render --view work", cmdRender},
-	{"watch", "<table>[,<table>...] | --view <name> [--every <duration>] [--out <file>] [--title <text>] [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>] [--once]", "watch --view work --once", cmdWatch},
-	{"view set", "<name> --tables <a,b,...> [--title <text>] [--summary <count-column>]", "view set work --tables demo --title Work --summary done", func(a []string, o, e io.Writer) int { return cmdView(append([]string{"set"}, a...), o, e) }},
-	{"view show", "<name>", "view show work", func(a []string, o, e io.Writer) int { return cmdView(append([]string{"show"}, a...), o, e) }},
-	{"view list", "", "view list", func(a []string, o, e io.Writer) int { return cmdView(append([]string{"list"}, a...), o, e) }},
-	{"view del", "<name>", "view del work", func(a []string, o, e io.Writer) int { return cmdView(append([]string{"del"}, a...), o, e) }},
-	{"version", "", "version", func(a []string, o, e io.Writer) int {
-		if len(a) == 1 && isHelp(a[0]) {
-			panic(verbflag.Help{FS: verbflag.New("version")})
-		}
-		if len(a) > 0 {
-			return refuse(e, "version", "takes no arguments")
-		}
-		fmt.Fprintln(o, buildinfo.Line("nova-table", version))
-		return 0
-	}},
+var commands []command
+
+func init() {
+	commands = []command{
+		{"create", "<table> --columns <name[:projection[:fold[:label]]],...> [--footer <label>] [--width <col=n,...>]", "create demo --columns 'ready,working,done,note:text,progress:pct(done)'", (*application).cmdCreate},
+		{"set", "<table> [--footer <label>] [--rename <name>] [--columns <spec>] [--hide <cols>] [--show <cols>] [--hidden | --visible]", "set demo --hide ready", (*application).cmdSet},
+		{"drop", "<table> [--definition]", "drop demo", (*application).cmdDrop},
+		{"list", "", "list", (*application).cmdList},
+		{"row add", "<table> <row>... [--label <text>] [--exclude <member>] [--owner <verb>] [<col>=<key> ...]", "row add demo build review", (*application).cmdRowAdd},
+		{"row set", "<table> <row> <col>=<value>...", "row set demo build 'note=Checks passed'", (*application).cmdRowSet},
+		{"row hide", "<table> <row>...", "row hide demo build", func(app *application, a []string, o, e io.Writer) int { return app.cmdRowsHide(a, o, e, true) }},
+		{"row show", "<table> <row>...", "row show demo build", func(app *application, a []string, o, e io.Writer) int { return app.cmdRowsHide(a, o, e, false) }},
+		{"row del", "<table> <row>", "row del demo build", (*application).cmdRowDel},
+		{"row move", "<table> <row> --first | --last | --before <row> | --after <row>", "row move demo review --before build", (*application).cmdRowMove},
+		{"row order", "<table> <row>...", "row order demo review build", (*application).cmdRowOrder},
+		{"row sort", "<table> [--by name|label|<col>] [--desc] [--keep] | --manual", "row sort demo --by name --keep", (*application).cmdRowSort},
+		{"col add", "<table> <name[:projection[:fold[:label]]]> [--first | --last | --before <col> | --after <col>]", "col add demo note:text --after done", (*application).cmdColAdd},
+		{"col del", "<table> <col>", "col del demo note", (*application).cmdColDel},
+		{"col move", "<table> <col> --first | --last | --before <col> | --after <col>", "col move demo done --after working", (*application).cmdColMove},
+		{"cell add", "<table> <row> <col> <member>... [--score <n>]", "cell add demo build ready b1 b2", (*application).cmdCellAdd},
+		{"cell remove", "<table> <row> <col> <member>...", "cell remove demo build ready b1 b2", (*application).cmdCellRemove},
+		{"cell move", "<table> <row> <from-col> <to-col> <member>...", "cell move demo build ready working b1 b2", (*application).cmdCellMove},
+		{"cell members", "<table> <row> <col>", "cell members demo build ready", (*application).cmdCellMembers},
+		{"member create", "<table> <id>", "member create demo b3", func(app *application, a []string, o, e io.Writer) int {
+			return app.cmdMember(append([]string{"create"}, a...), o, e)
+		}},
+		{"member find", "<table> <id>", "member find demo b1", (*application).cmdMemberFind},
+		{"check", "<table>", "check demo", (*application).cmdCheck},
+		{"clear", "<table>", "clear demo", (*application).cmdClear},
+		{"show", "<table> [--at-epoch <n>]", "show demo", (*application).cmdShow},
+		{"render", "<table> | --view <name> [--at-epoch <n>] [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>]", "render --view work", (*application).cmdRender},
+		{"watch", "<table>[,<table>...] | --view <name> [--every <duration>] [--out <file>] [--title <text>] [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>] [--once]", "watch --view work --once", (*application).cmdWatch},
+		{"view set", "<name> --tables <a,b,...> [--title <text>] [--summary <count-column>]", "view set work --tables demo --title Work --summary done", func(app *application, a []string, o, e io.Writer) int {
+			return app.cmdView(append([]string{"set"}, a...), o, e)
+		}},
+		{"view show", "<name>", "view show work", func(app *application, a []string, o, e io.Writer) int {
+			return app.cmdView(append([]string{"show"}, a...), o, e)
+		}},
+		{"view list", "", "view list", func(app *application, a []string, o, e io.Writer) int {
+			return app.cmdView(append([]string{"list"}, a...), o, e)
+		}},
+		{"view del", "<name>", "view del work", func(app *application, a []string, o, e io.Writer) int {
+			return app.cmdView(append([]string{"del"}, a...), o, e)
+		}},
+		{"shell", "[--redis <addr> | --seat <name>] [--keep-going] [--epoch <n>] [--receipt=false]", "shell --redis localhost:6379", (*application).cmdShell},
+		{"version", "", "version", func(app *application, a []string, o, e io.Writer) int {
+			if len(a) == 1 && isHelp(a[0]) {
+				panic(verbflag.Help{FS: verbflag.New("version")})
+			}
+			if len(a) > 0 {
+				return refuse(e, "version", "takes no arguments")
+			}
+			fmt.Fprintln(o, buildinfo.Line("nova-table", version))
+			return 0
+		}},
+	}
 }
 
 func rootNames() string {
@@ -81,14 +96,14 @@ func isGroup(name string) bool {
 	return false
 }
 func isHelp(s string) bool { return s == "-h" || s == "--help" || s == "-help" || s == "--h" }
-func dispatch(args []string, out, errout io.Writer) int {
+func (app *application) dispatch(args []string, out, errout io.Writer) int {
 	if len(args) == 1 && args[0] == "--version" {
 		args = []string{"version"}
 	}
 	for _, c := range commands {
 		words := strings.Fields(c.name)
 		if len(args) >= len(words) && strings.Join(args[:len(words)], " ") == c.name {
-			return c.run(args[len(words):], out, errout)
+			return c.run(app, args[len(words):], out, errout)
 		}
 	}
 	if len(args) > 0 && isGroup(args[0]) {
@@ -128,7 +143,7 @@ func helpCommand(path []string, out, errout io.Writer) int {
 				printCommandHelp(out, c, nil)
 				return 0
 			}
-			return c.run([]string{"--help"}, out, errout)
+			return c.run(&application{}, []string{"--help"}, out, errout)
 		}
 	}
 	return refuse(errout, "help", "unknown command "+name+"; available: "+rootNames())
@@ -186,6 +201,9 @@ func printCommandHelp(out io.Writer, c command, fs *flag.FlagSet) {
 				fmt.Fprintln(out, "  --seat <name>  use a configured nova-sprint seat")
 			}
 		}
+	}
+	if c.name == "shell" {
+		fmt.Fprintln(out, "\n"+shellUsageDetails)
 	}
 	if c.name == "row del" {
 		fmt.Fprintln(out, "\nA missing row succeeds with existed=0 and leaves a no-op receipt.")

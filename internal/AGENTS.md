@@ -25,7 +25,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `fuse/` | workspace isolation boundaries | `go test ./internal/fuse` | `go test ./internal/fuse` |
 | `gh/` | the one GitHub client: every call counted per verb, one paced writer, events over polling (#4343) | `go test ./internal/gh` | `go test ./internal/gh` |
 | `ghcapture/` | read-only GitHub issue adapter for nova-work | `go test ./internal/ghcapture/...` | `go test ./internal/ghcapture/...` |
-| `ghevent/` | GitHub webhook to Redis stream | `go test ./internal/ghevent` | `go test ./internal/ghevent` |
+| [ghevent/](ghevent/AGENTS.md) | GitHub webhook to Redis stream | `go test ./internal/ghevent` | `go test ./internal/ghevent` |
 | `goenv/` | Go environment scrubber for child processes | `go test ./internal/goenv` | `go test ./internal/goenv` |
 | `hygiene/` | clean checkout and leak assertions | `go test ./internal/hygiene` | `go test ./internal/hygiene` |
 | `jev/` | Jev's mechanical passes (lint, scope, base) as one JEV gate line | `go test ./internal/jev` | `go test ./internal/jev` |

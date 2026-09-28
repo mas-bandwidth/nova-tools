@@ -9,13 +9,13 @@ import (
 )
 
 // A caller supplies the epoch it observed. No retry silently enters a newer one.
-func writeFlags(fs *flag.FlagSet) (*ntable.WriteOptions, *bool) {
+func (app *application) writeFlags(fs *flag.FlagSet) (*ntable.WriteOptions, *bool) {
 	opts := &ntable.WriteOptions{Receipt: &ntable.Receipt{}}
-	fs.Uint64Var(&opts.Epoch, "epoch", 0, "the epoch this write observed (default 0)")
-	fs.StringVar(&opts.Actor, "actor", "", "actor recorded with the change")
-	fs.StringVar(&opts.Fence, "fence", "", "coordinator fence recorded with the change")
-	fs.StringVar(&opts.Idem, "idem", "", "attempt identifier recorded with the change; does not deduplicate")
-	return opts, fs.Bool("receipt", false, "print the committed event ID, epoch and revision")
+	fs.Uint64Var(&opts.Epoch, "epoch", app.defaults.Epoch, "the epoch this write observed (default 0)")
+	fs.StringVar(&opts.Actor, "actor", app.defaults.Actor, "actor recorded with the change")
+	fs.StringVar(&opts.Fence, "fence", app.defaults.Fence, "coordinator fence recorded with the change")
+	fs.StringVar(&opts.Idem, "idem", app.defaults.Idem, "attempt identifier recorded with the change; does not deduplicate")
+	return opts, fs.Bool("receipt", app.receipts, "print the committed event ID, epoch and revision")
 }
 
 func printReceipt(out io.Writer, opts *ntable.WriteOptions, enabled bool) {
