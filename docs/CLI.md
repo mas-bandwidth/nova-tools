@@ -1384,9 +1384,10 @@ measured, not a verdict` line follows (`--load` and `--cpus` give the figures by
 hand). A CI-SLOW line exits 0 (a measurement) unless `--enforce` is given, which
 only the nightly space legs pass (`make test SLOWTESTS_ENFORCE=1`). A test skipped
 with `t.Skip("SLEEPS: ...")` that `--sleeps` does not name is a `CI-SLEEPS` line
-and exits 2 on every leg. A package `go test` served from its test cache reports an
-elapsed near zero (`ok ... (cached)`, `"Elapsed":0`), so a cached run can never trip
-either budget: only a run that executed is measured. CI's unit legs run with the
+and exits 2 on every leg. A package `go test` served from its test cache reports a
+package elapsed near zero (`ok ... (cached)`, `"Elapsed":0`), so a cached run can
+never trip `--package-budget` (or `--budget`); its tests replay the times of the run
+that was cached, which `--test-budget` still reads. CI's unit legs run with the
 cache on (`GOTEST_COUNT_FLAG=` in `.github/workflows/ci.yml`); its `--enforce` leg
 runs `-count=1`, and so does a measurement by hand. `nova-ci
 functional <package-dir>...` prints, for `make test-functional`, the packages
