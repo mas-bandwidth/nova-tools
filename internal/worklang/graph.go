@@ -5,8 +5,7 @@ import (
 	"strings"
 )
 
-// A plan's needs/blocks graph (docs/SPEC-WORKLANG.md, "Nodes, with needs and
-// blocks"). `:needs` is the reference edge the work spec calls `:deps`;
+// A plan's needs/blocks graph. `:needs` is the reference edge the work spec calls `:deps`;
 // `:blocks` is its inverse, and the kernel derives whichever of the two a node
 // did not give. A `:needs` cycle is refused at load by validator rule 3, an
 // absent need is refused naming the field and the id, never silently dropped.

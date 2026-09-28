@@ -7,7 +7,7 @@ import (
 )
 
 // PullQueue takes up to admit cards from a bench's queue/ by renaming each into taken/ as
-// <worker>-<name>.card, the ownership record (docs/SPEC-JOBS.md sections 2 and 7). The
+// <worker>-<name>.card, the ownership record (deprecated/docs/SPEC-JOBS.md sections 2 and 7). The
 // rename is atomic within the directory, so two workers cannot take one card. A full bench
 // (admit 0) reads nothing and leaves every card in queue/.
 //

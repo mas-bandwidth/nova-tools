@@ -67,7 +67,7 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 		refused := false
 		for _, name := range replyOnlyFlags {
 			if given[name] {
-				fmt.Fprintf(stderr, "DRAFT REFUSED: --%s belongs to --reply-to; without it draft runs no git and writes no file\n", name)
+				fmt.Fprintf(stderr, "DRAFT REFUSED: --%s belongs to --reply-to; without it draft runs no git, and without --out it writes no file\n", name)
 				refused = true
 			}
 		}

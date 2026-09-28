@@ -1,4 +1,4 @@
-// Package lanes is docs/SPEC-JOBS.md section 5: the four priority lanes a cut
+// Package lanes is deprecated/docs/SPEC-JOBS.md section 5: the four priority lanes a cut
 // writes and a pull drains.
 //
 // nova-pulse cut writes queue/lanes/{red,green,small,next}/; nova-swarm pull

@@ -1,5 +1,5 @@
 /*
-Receipt — the compact failure receipt for one nova-test run. SPEC-TEST.md:46-69
+Receipt — the compact failure receipt for one nova-test run. deprecated/docs/SPEC-TEST.md
 names four outcomes — a generic failure, a timeout, a missing-job, and a
 superseded cancellation — but each is the same shape: identity, equivalence
 key, bounded failing steps and excerpts, latency, and at most one MORE line
@@ -30,7 +30,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// Receipt kinds. SPEC-TEST.md:68-69 names the three non-fail outcomes:
+// Receipt kinds. deprecated/docs/SPEC-TEST.md names the three non-fail outcomes:
 // a timeout, a missing job and a superseded cancellation each read as
 // their own receipt rather than as one shared "fail". These strings are
 // what appears after kind= in the receipt header, and they are what the

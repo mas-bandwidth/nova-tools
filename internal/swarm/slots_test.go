@@ -145,7 +145,7 @@ func TestSlotCapacityReserveRefused(t *testing.T) {
 }
 
 // TestIssue2238 asserts that a Batch with no SlotsStore/SlotOwner refuses before
-// any worker starts, citing the missing lease (docs/SPEC-JOBS.md:76).
+// any worker starts, citing the missing lease (deprecated/docs/SPEC-JOBS.md:76).
 func TestIssue2238(t *testing.T) {
 	t.Parallel()
 

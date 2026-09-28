@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// an-expired-lease-with-a-dead-pid-returns-the-card (docs/SPEC-JOBS.md section 3):
+// an-expired-lease-with-a-dead-pid-returns-the-card (deprecated/docs/SPEC-JOBS.md section 3):
 // a worker that dies holding a card leaves its lease past until= with a dead pid;
 // the next take reaps that lease and its card goes back to queue/.
 func TestAnExpiredLeaseWithADeadPidReturnsTheCard(t *testing.T) {

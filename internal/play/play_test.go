@@ -633,7 +633,7 @@ func copyFixture(t *testing.T, src, dir, name string) string {
 
 // A version-1 sidecar (no VERSION header) is read with the legacy rules, and
 // the next write upgrades it in place to version 2 without changing a single
-// stored value. This is the behaviour documented in docs/SPEC-PLAY.md under
+// stored value. This is the behaviour documented in deprecated/docs/SPEC-PLAY.md under
 // "Reading a legacy sidecar".
 func TestLegacySidecarReadThenUpgradeOnNextWrite(t *testing.T) {
 	t.Parallel()
