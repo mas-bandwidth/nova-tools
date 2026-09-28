@@ -11,6 +11,8 @@ import (
 // summing every model. A model whose tokens sum to zero still prints one line, with
 // usd_per_mtok=-, never a division.
 func TestAvgLinesPerModelAndAll(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	repos := reposFile(t, dir)
 	pool := mkdir(t, filepath.Join(dir, "pool"))

@@ -1,0 +1,17 @@
+# loops.yml renders one unit per loop. The darwin plist is
+# templates/nova-loop.plist.j2, and that template sets AbandonProcessGroup
+# so launchctl kickstart -k signals the unit's pid and not its process group.
+# A refresh that has called setsid is outside that group either way; both are
+# the restart (nova-tools #2681). The bench inventory that fills host_loops
+# is applied with this play.
+---
+- name: loop units
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: loop unit plists (darwin)
+      ansible.builtin.template:
+        src: templates/nova-loop.plist.j2
+        dest: "{{ launchd_dir }}/com.nova.loop.{{ item.name }}.plist"
+        mode: "0644"
+      loop: "{{ host_loops | default([]) }}"

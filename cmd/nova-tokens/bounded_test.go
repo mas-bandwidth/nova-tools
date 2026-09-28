@@ -136,6 +136,8 @@ func largestFoldState(t *testing.T) (tmp, out string, args []string) {
 }
 
 func TestFoldIsBoundedAtTheLargestPlausibleState(t *testing.T) {
+	t.Parallel()
+
 	tmp, _, args := largestFoldState(t)
 	r := invoke(t, append([]string{"fold"}, args...)...)
 	wantExit(t, r, 1) // unreadable files, unparsed lines, mixed rows and conflicts, all at once
@@ -187,6 +189,8 @@ func TestFoldIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 }
 
 func TestSourcesIsBoundedAtTheLargestPlausibleState(t *testing.T) {
+	t.Parallel()
+
 	tmp, _, args := largestFoldState(t)
 	var sourceArgs []string
 	for i := 0; i < len(args); i++ {
@@ -216,6 +220,8 @@ func TestSourcesIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 }
 
 func TestCheckIsBoundedAtTheLargestPlausibleState(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	const hdr = "date\tmodel\trepo\tinput\toutput\tcache_write\tcache_read\treasoning\trough\tday_basis\tsources\n"
@@ -231,7 +237,9 @@ func TestCheckIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 	write(t, filepath.Join(out, "2026-11-30.tsv"),
 		"nova-tokens v1 day=2026-11-30 at=2026-09-11T23:55:02Z build=b turns=1 sources=x\n"+hdr+
 			"2026-11-30\ta\tschema\t1\t2\t3\t4\t5\t0\tutc\tx\n")
-	r := invoke(t, "check", "--out", out)
+	// --strict is the reading that names every calendar gap and every non-day entry, and
+	// it is the one this measurement is about: the longest listing check can print.
+	r := invoke(t, "check", "--out", out, "--strict")
 	wantExit(t, r, 1)
 	all := r.stdout + r.stderr
 	more, byToken := countKinds(all)
@@ -257,6 +265,8 @@ func TestCheckIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 }
 
 func TestSumIsBoundedAtTheLargestPlausibleState(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	const hdr = "date\tmodel\trepo\tinput\toutput\tcache_write\tcache_read\treasoning\trough\tday_basis\tsources\n"
@@ -303,6 +313,8 @@ func TestSumIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 // report is UNCAPPED on purpose: the body is the artifact, and a capped report would be a
 // count sent as a total.
 func TestReportIsUncappedBecauseTheBodyIsTheArtifact(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	tr := mkdir(t, filepath.Join(dir, "tr"))
 	var body []string

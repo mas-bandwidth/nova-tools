@@ -12,6 +12,8 @@ import (
 )
 
 func TestStoreParsers(t *testing.T) {
+	t.Parallel()
+
 	tmp := t.TempDir()
 
 	// 1. recovery.pub tests
@@ -137,6 +139,8 @@ MULTILINE: |
 }
 
 func TestGitIndexParser(t *testing.T) {
+	t.Parallel()
+
 	tmp := t.TempDir()
 	// Run git init, create a file, git add
 	run := func(args ...string) {
@@ -198,6 +202,8 @@ func TestGitIndexParser(t *testing.T) {
 }
 
 func TestUnquoteYAMLPreservesTrailingQuotes(t *testing.T) {
+	t.Parallel()
+
 	data := []byte(`
 V_TRAILQ: p@ss"
 V_PAD: "  padded  "
@@ -238,6 +244,8 @@ V_NORMAL: hello
 }
 
 func TestPostSopsKeysDetected(t *testing.T) {
+	t.Parallel()
+
 	tmp := t.TempDir()
 	content := `
 sops:
@@ -274,6 +282,8 @@ LEAKED_TOKEN: cleartext_after_sops
 }
 
 func TestIsValidAsName(t *testing.T) {
+	t.Parallel()
+
 	valid := []string{"rowan", "emma-1", "seat_2", "A", "0"}
 	for _, v := range valid {
 		if !IsValidAsName(v) {
@@ -289,6 +299,8 @@ func TestIsValidAsName(t *testing.T) {
 }
 
 func TestUnquoteYAMLDecodesAllValidYAMLEscapesAndRejectsUnknown(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		input   string
 		want    string
@@ -333,6 +345,8 @@ func TestUnquoteYAMLDecodesAllValidYAMLEscapesAndRejectsUnknown(t *testing.T) {
 }
 
 func TestParseDecryptedSecretsLargeLineBuffer(t *testing.T) {
+	t.Parallel()
+
 	largeVal := strings.Repeat("A", 128*1024)
 	input := fmt.Sprintf("LARGE_KEY: %s\n", largeVal)
 	sec, keys, err := ParseDecryptedSecrets([]byte(input))
@@ -351,6 +365,8 @@ func TestParseDecryptedSecretsLargeLineBuffer(t *testing.T) {
 }
 
 func TestReadGitIndexExtendedFlags(t *testing.T) {
+	t.Parallel()
+
 	td := t.TempDir()
 	gitDir := filepath.Join(td, ".git")
 	_ = os.MkdirAll(gitDir, 0755)

@@ -6,66 +6,41 @@ import (
 	"testing"
 )
 
-// TestNovaBoardRetainedAsInputAdapter596 pins the first bounded part of
-// nova-tools #596. nova-board derives the owed list by folding GitHub and bus
-// events; nova-work holds the same state as truth with leases, attempts and
-// evidence, and `who` and `check` are its views, so a second inferred source
-// can disagree with the first. The issue's own order is that the tool and
-// SPEC-BOARD are retired only AFTER nova-work's views and event adapter replace
-// them and are dogfooded, and that the fold is kept until then as the input
-// adapter. This test holds that condition in the two pages a reader meets
-// first: docs/SPEC-BOARD.md must carry the status and the pointer, and
-// docs/TERMINOLOGY.md must give the board its own entry saying the same. The
-// tool itself, cmd/nova-board and internal/board, must still exist, because a
-// retirement that removes the fold before the replacement is dogfooded is the
-// bug the issue exists to prevent.
-func TestNovaBoardRetainedAsInputAdapter596(t *testing.T) {
+// TestNovaBoardIsDeprecated pins where nova-board stands since Glenn's ruling
+// of 2026-09-27: "Move nova-board into the deprecated folder pls." and "I think
+// that nova-sprint directly replaces nova-board". It replaces the pin of
+// nova-tools #596, which held the tool in place as the input adapter until
+// nova-work's views were dogfooded; the ruling supersedes that order.
+//
+// Three things are held, and no more: deprecated/README.md exists and names
+// the tool, the top-level README no longer lists it, and the tool is gone from
+// its old paths. Nothing under deprecated/ is built or tested, so this test
+// reads the folder's README and nothing else in it.
+func TestNovaBoardIsDeprecated(t *testing.T) {
 	t.Parallel()
 
-	spec, err := os.ReadFile("../../docs/SPEC-BOARD.md")
+	readme, err := os.ReadFile("../../deprecated/README.md")
 	if err != nil {
-		t.Fatalf("docs/SPEC-BOARD.md: %v", err)
+		t.Fatalf("deprecated/README.md: %v", err)
 	}
-	content := string(spec)
-	for _, want := range []string{
-		"## Status: the input adapter, not yet retired",
-		"retired only after",
-		"`who`",
-		"`check`",
-		"dogfooded",
-		"input adapter",
-		"SPEC-WORK.md",
-	} {
-		if !strings.Contains(content, want) {
-			t.Errorf("docs/SPEC-BOARD.md missing %q (nova-tools #596)", want)
-		}
+	if !strings.Contains(string(readme), "nova-board") {
+		t.Error("deprecated/README.md does not name nova-board; the folder's README lists every tool moved into it")
 	}
 
-	term, err := os.ReadFile("../../docs/TERMINOLOGY.md")
+	top, err := os.ReadFile("../../README.md")
 	if err != nil {
-		t.Fatalf("docs/TERMINOLOGY.md: %v", err)
+		t.Fatalf("README.md: %v", err)
 	}
-	terms := string(term)
-	for _, want := range []string{
-		"- **board** —",
-		"input adapter",
-		"SPEC-WORK.md",
-		"SPEC-BOARD.md",
-	} {
-		if !strings.Contains(terms, want) {
-			t.Errorf("docs/TERMINOLOGY.md missing %q (nova-tools #596)", want)
-		}
+	if strings.Contains(string(top), "nova-board") {
+		t.Error("README.md still names nova-board; the top-level README lists live tools only")
 	}
 
-	// The fold is kept: the binary and the package that fold the events are
-	// still here, because the issue retires them only after the replacement is
-	// dogfooded.
 	for _, path := range []string{
-		"../../cmd/nova-board/main.go",
-		"../../internal/board/derive.go",
+		"../../cmd/nova-board",
+		"../../internal/board",
 	} {
-		if _, err := os.Stat(path); err != nil {
-			t.Errorf("%s must remain until the replacement is dogfooded: %v (nova-tools #596)", path, err)
+		if _, err := os.Stat(path); err == nil {
+			t.Errorf("%s exists; nova-board is deprecated and was moved under deprecated/ (Glenn, 2026-09-27)", path)
 		}
 	}
 }

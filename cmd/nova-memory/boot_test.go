@@ -14,6 +14,8 @@ import (
 // byte total is exactly the three named files' and never the walk's.
 
 func TestBootLoadsExactlyThePinnedFiles(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	write := func(name, content string) {
 		t.Helper()

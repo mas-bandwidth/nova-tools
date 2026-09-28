@@ -1,0 +1,15 @@
+roles: services
+expect: ^REDIS OK
+
+set -eu
+PORT="${NOVA_REDIS_PORT:-6379}"
+CLI=$(command -v redis-cli 2>/dev/null || true)
+if [ -z "$CLI" ]; then
+  echo "REDIS FAIL no redis-cli on the services host"
+  exit 1
+fi
+OUT=$("$CLI" -p "$PORT" ping 2>&1 || true)
+case "$OUT" in
+  *PONG*) echo "REDIS OK localhost:$PORT $OUT" ;;
+  *) echo "REDIS FAIL localhost:$PORT $OUT"; exit 1 ;;
+esac

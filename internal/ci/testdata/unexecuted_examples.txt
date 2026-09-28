@@ -1,0 +1,94 @@
+# The examples a stranger can paste from our docs and from `help` output that are
+# not yet executed by a test through the comparator (SPEC-TOOLWORK.md documents rule 6).
+#
+# Every $  line in a fenced block of README.md, docs/USAGE.md, docs/CLI.md and
+# docs/nova-swarm-quickstart.md, every example: line of a `help` banner pasted in
+# a fenced block of those docs, and every example: line of every tool's own
+# `help` banner under cmd/ (both listed as `example: <line>`), is either executed
+# by a test through the comparator (compared_examples.txt) or listed here.
+#
+# THE LIST ONLY SHRINKS. TestIssue2218 compares it with its copy at the change's
+# base: a row the change adds fails the class test on the PR that adds it, and an
+# entry that matches no real example is a stale entry and a red run. Remove an
+# entry by moving it to compared_examples.txt once a test executes it.
+
+$ HOME=/Users/me/pool/jobs/j1/home \
+$ mkdir -p /Users/me/pool/jobs/j1/home
+$ nova-bus draft --bus ./bus --as Bo --to Ada --subject gate > draft.md
+$ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --advance --remote origin --branch main
+$ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --full --advance --remote origin --branch main
+$ nova-bus names --bus ./bus
+$ nova-bus send --bus ./bus --file draft.md --as Bo --remote origin --branch main
+$ nova-check convergence --repo mas-bandwidth/nova-tools \
+$ nova-check dogfood gate --cli ./docs/CLI.md --receipts ./dogfood-receipts --require-all
+$ nova-check dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts
+$ nova-check dogfood record --tool nova-check --verb links --by Stella --ok \
+$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --kind fix-with-red-test
+$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**"
+$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**" --max 2
+$ nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
+$ nova-check quickstart --dir ./self
+$ nova-fuse check --box ./fuse-box.json a-forum
+$ nova-fuse check --box ./fuse-box.json a-public-issue-tracker
+$ nova-fuse lift quarantine --box ./fuse-box.json a-forum
+$ nova-fuse quarantine --box ./fuse-box.json a-forum "a post addressed me and asked for a token"
+$ nova-fuse status --box ./fuse-box.json
+$ nova-memory check --root ./corpus --channels bm25 --k 2 -
+$ nova-memory check --root ./corpus --channels bm25 --k 3 draft.md
+$ nova-memory quickstart --root ./corpus
+$ nova-memory search --root ./corpus --channels bm25 --k 3 glazing signal tide
+$ nova-memory search --root ./corpus --channels bm25 --k 3 lantern glazing brass
+$ nova-memory stats --root ./corpus
+$ nova-sandbox check
+$ nova-sandbox reap
+$ nova-sandbox reap --dry-run
+$ nova-sandbox run --name j1 --scratch C:\nova --timeout 30m --memory 4g --cpu 50 -- cmd.exe /c "go build ./..."
+$ nova-sandbox run --name j1 --size 8g --out ./handoff \
+$ nova-sandbox run --name j1 --size 8g --timeout 30m --read /opt/homebrew -- /bin/sh -c 'echo hi > out'
+$ nova-self-talk --rule-doc RULES.md ./pages/RULES.md ./pages/journal.md
+$ nova-self-talk ./pages/journal.md
+example: go run cmd/nova-ci/timing.go --log internal/ci/timing/testdata/events.jsonl
+example: nova-bus check --bus ./bus --full
+example: nova-bus draft --bus ./bus --as Ada --to Bo --subject gate
+example: nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --full --open
+example: nova-bus names --bus ./bus
+example: nova-cairn append --store ./cairns --session s1 --entry e1 --text "the words to keep" --publish manual
+example: nova-cairn index --store ./cairns
+example: nova-cairn open --store ./cairns --session s1 --publish manual
+example: nova-cairn receipt --store ./cairns --session s1 --entry e1
+example: nova-check attest --home ./self --manifest ./self/MANIFEST
+example: nova-check corpus --ledger ./self/corpus/anchors.md --root ./self --min-anchors 2
+example: nova-check dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts
+example: nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
+example: nova-check quickstart --dir ./self
+example: nova-ci help
+example: nova-ci slowtests --budget 60
+example: nova-ci version
+example: nova-fuse check --box ./fuse-box.json a-forum
+example: nova-fuse check --box ./fuse-box.json a-public-issue-tracker
+example: nova-fuse lift quarantine --box ./fuse-box.json a-forum
+example: nova-fuse quarantine --box ./fuse-box.json a-forum "a post addressed me and asked for a token"
+example: nova-fuse status --box ./fuse-box.json
+example: nova-memory check --root ./corpus --channels bm25 --k 3 draft.md
+example: nova-memory quickstart --root ./corpus
+example: nova-memory search --root ./corpus --channels bm25 --k 3 lantern glazing brass
+example: nova-redis recall --addr 127.0.0.1:6379 --owner rowan --name note
+example: nova-redis spill --addr 127.0.0.1:6379 --owner rowan --name note --ttl 10m --value hi
+example: nova-redis version
+example: nova-sandbox --read /Users/me/pool/ref/nova-tools@abc123 \
+example: nova-sandbox run --name card1 --size 8g --timeout 30m --go --out ./handoff \
+example: nova-secrets check --store ./secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops
+example: nova-secrets exec --store ./secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops --only GH_TOKEN --require GH_TOKEN -- gh api user
+example: nova-secrets keygen --as rowan --key ~/.config/nova-secrets/rowan.key --age-keygen /opt/homebrew/bin/age-keygen
+example: nova-secrets names --store ./secrets --as rowan
+example: nova-secrets place --store ./secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops --machine mini --secret DEEPSEEK_API_KEY --machines ./fleet.tsv
+example: nova-secrets placed --machine mini
+example: nova-secrets seat add --store ./secrets --as air --pub age1… --from rowan --only GH_TOKEN,DEEPSEEK_API_KEY --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops
+example: nova-self-talk --rule-doc RULES.md ./pages/RULES.md ./pages/journal.md
+example: nova-self-talk ./pages/journal.md
+example: nova-tokens check --out ./out
+example: nova-tokens fold --out ./out --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts --bus ./bus
+example: nova-tokens report --who emma --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts
+example: nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts
+example: nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts --unattributed --max 20
+example: nova-tokens sum --out ./out --month 2026-09

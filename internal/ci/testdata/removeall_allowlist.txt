@@ -5,7 +5,6 @@
 # goes through safepath.RemoveUnder. This list only shrinks: the class test
 # (removeall_class_test.go) fails on an entry whose call has left as well as on a call
 # that is not listed.
-internal/pulse/run.go:busNotifier.Note
 internal/secrets/seal.go:sealDecrypt
 internal/secrets/seal.go:sealEncrypt
 internal/secrets/sops.go:DecryptFile

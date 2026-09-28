@@ -33,7 +33,6 @@
 package main
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -44,7 +43,7 @@ import (
 // crudest test in the repo.
 //
 // The complexity property is proved properly elsewhere, by COUNTING PARSES (see
-// cursor_test.go): a count is exact, it is the same on every machine, and it measures work
+// cursor_functional_test.go): a count is exact, it is the same on every machine, and it measures work
 // not done, which is what O(new) is a claim about. Nothing here replaces that. What a parse
 // count cannot see is a regression that is not a parse -- a walk of every lane's INDEX per
 // note, a git call per open entry, a quadratic string build -- and those show up as one
@@ -71,6 +70,8 @@ const timingBound = time.Second
 const pushBound = 3 * time.Second
 
 func TestEveryVerbIsUnderASecondOnTenThousandNotes(t *testing.T) {
+	t.Parallel()
+
 	if raceEnabled {
 		t.Skip("a wall-clock bound under the race detector measures the instrumentation")
 	}
@@ -80,23 +81,12 @@ func TestEveryVerbIsUnderASecondOnTenThousandNotes(t *testing.T) {
 	hermetic(t)
 	checkout, _ := busDir(t)
 
+	// The same fixture the parse-count test builds, from the same helper: what is timed
+	// below is this tool over ten thousand notes, and the bus it reads must be the bus
+	// those counts are taken over or the two nets guard different things.
 	const history = 10000
 	const carried = 500
-	var index strings.Builder
-	for i := range history {
-		id := fmt.Sprintf("bo-%012x", i+0x100000)
-		path := fmt.Sprintf("from-bo/2026-08-%02dT%02d%02dZ-bulk-%s.md", i%28+1, i/60%24, i%60, id[len(id)-12:])
-		to := "Bo"
-		if i < carried {
-			to = "Ada"
-		}
-		writeFile(t, checkout, path, fmt.Sprintf(
-			"From: Bo\nTo: %s\nDate: Sat Aug %2d 00:00:00 UTC 2026\nId: %s\nSubject: bulk %d\n\nA note in the history.\n",
-			to, i%28+1, id, i))
-		fmt.Fprintf(&index, "%s\t%s\t2026-08-%02dT00:00:00Z\t%s\t-\n", id, path, i%28+1, to)
-	}
-	appendFile(t, checkout, "from-bo/INDEX", index.String())
-	commitAs(t, checkout, "Bo", "ten thousand notes")
+	bulkHistory(t, checkout, history, carried)
 
 	// The one full read a reader ever pays for, which gives Ada a cursor and an open list
 	// of five hundred. It is NOT timed: a full walk is the size of the bus by definition
@@ -120,7 +110,7 @@ func TestEveryVerbIsUnderASecondOnTenThousandNotes(t *testing.T) {
 			t.Fatalf("%s: exit %d\nstdout: %s\nstderr: %s", name, r.code, r.stdout, r.stderr)
 		}
 		if took > bound {
-			t.Fatalf("%s took %s over a bus of %d notes with %d open, past the %s bound; this verb should be the size of the CHANGE, so something now walks the record -- the parse counts in cursor_test.go are where to look",
+			t.Fatalf("%s took %s over a bus of %d notes with %d open, past the %s bound; this verb should be the size of the CHANGE, so something now walks the record -- the parse counts in cursor_functional_test.go are where to look",
 				name, took, history, carried, bound)
 		}
 		t.Logf("%s: %s", name, took)
@@ -146,11 +136,13 @@ func TestEveryVerbIsUnderASecondOnTenThousandNotes(t *testing.T) {
 //
 // It is a real property: a verb that returns "nothing yet" after a single look is a check
 // and not a wait, and polls= is the only place that difference is visible. So it is kept,
-// here, on a quiet machine at night, and what stays per-commit in wait_test.go is that the
+// here, on a quiet machine at night, and what stays in wait_functional_test.go is that the
 // run polled at least once, reported the count, did not return before its deadline, printed
 // no listing and wrote nothing -- every part of the promise that does not depend on the
 // runner.
 func TestAWaitPollsMoreThanOnceBeforeItsDeadline(t *testing.T) {
+	t.Parallel()
+
 	hermetic(t)
 	checkout, _ := busDir(t)
 	settled(t, checkout)

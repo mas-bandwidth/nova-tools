@@ -1,0 +1,8 @@
+ANCHOR story.txt eb649eed8ce11a5a6df896f75c3d736833505cdaab85e9e1f8a6a74bf9308e44
+NOTE id=aaaaaaaaaaaa author=Test Reader created=2026-09-16T08:19:33Z
+PASSAGE The lantern room held a brass fitting.
+BODY First line
+Second line with a literal backslash C:\ships\brass
+REPLY id=bbbbbbbbbbbb author=Second Reviewer created=2026-09-16T08:20:00Z
+REPLY_BODY A legacy reply
+with its own continuation line

@@ -1,0 +1,23 @@
+# One Redis command per line, arguments separated by tabs; \n in an argument is a newline.
+# since = 2026-09-23T00:00:00Z = 1790121600000 ms, until = 2026-09-23T04:20:00Z = 1790137200000 ms.
+# ws:log: one receipt at since (listed), one at until (not listed), decoys before since and of other kinds.
+XADD	ws:log	1790121599000-0	id	read-3700-aaaaaaaa	stream	digest: x	from	working	to	merging	by	emma	why	read: SCORE by emma at aaaaaaaa	at	1790121599000
+XADD	ws:log	1790121600000-0	id	land:mas-bandwidth/nova-tools:landing-x	stream	landing: x	from	merging	to	landed	by	rowan	why	LANDED mas-bandwidth/nova-tools#3901 stream/landing-x at 1234abcd merge=b0b0b0b0 members=2	at	1790121600000
+XADD	ws:log	1790121601000-0	id	t-1	stream	landing: x	from	merging	to	landed	by	rowan	why	landed with nova-tools#3901 (b0b0b0b0)	at	1790121601000
+XADD	ws:log	1790121602000-0	id	t-2	stream	landing: x	from	merging	to	landed	by	rowan	why	landed with nova-tools#3901 (b0b0b0b0)	at	1790121602000
+XADD	ws:log	1790121603000-0	id	fix-3850-cccccccc	stream	digest: x	from		to	ready	by	reconciler	why	route pr fix	at	1790121603000
+XADD	ws:log	1790121604000-0	id	read-3850-dddddddd	stream	digest: x	from	working	to	merging	by	stella	why	read: SCORE by stella at dddddddd	at	1790121604000
+XADD	ws:log	1790121605000-0	id	t-3	stream	digest: x	from	working	to	landed	by	glenn	why	landed: CLOSE by glenn on rowan-tools#410	at	1790121605000
+XADD	ws:log	1790121606000-0	id	close-411-eeeeeeee-rowan-tools	stream	digest: x	from		to	ready	by	reconciler	why	route pr close	at	1790121606000
+XADD	ws:log	1790121606500-0	id	t-4	stream	digest: x	from	ready	to	working	by	ada	why	take	at	1790121606500
+XADD	ws:log	1790121608000-0	id	read-3851-ffffffff	stream	digest: x	from		to	ready	by	reconciler	why	route pr read	at	1790121608000
+XADD	ws:log	1790137200000-0	id	read-3852-12345678	stream	digest: x	from	working	to	merging	by	emma	why	read: SCORE by emma at 12345678	at	1790137200000
+# land:<repo>:events: a LANDED before since, one in the window, a GATE decoy, one at until.
+XADD	land:mas-bandwidth/nova-tools:events	1790121595000-0	event	LANDED	repo	mas-bandwidth/nova-tools	base	dev	batch	b6	train_head	6666666666666666666666666666666666666666	L	0	at	1790121595000
+XADD	land:mas-bandwidth/nova-tools:events	1790121607000-0	event	LANDED	repo	mas-bandwidth/nova-tools	base	dev	batch	b7	train_head	7777777777777777777777777777777777777777	L	0	at	1790121607000
+XADD	land:mas-bandwidth/nova-tools:events	1790121607500-0	event	GATE	repo	mas-bandwidth/nova-tools	base	dev	batch	b8	attempt	1	at	1790121607500
+XADD	land:mas-bandwidth/nova-tools:events	1790137200000-0	event	LANDED	repo	mas-bandwidth/nova-tools	base	dev	batch	b9	train_head	9999999999999999999999999999999999999999	L	0	at	1790137200000
+# pr records (internal/nsprint/prkey): the stream PR's merge_sha, and the typed lines holds and reads resolve against.
+HSET	pr:nova-tools:3901	repo	mas-bandwidth/nova-tools	n	3901	kind	stream	state	merged	merge_sha	b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0
+HSET	pr:nova-tools:3850	repo	mas-bandwidth/nova-tools	n	3850	state	open	head	dddddddd00000000000000000000000000000000	reads	HOLD who=emma head=cccccccc12: items 1-3\nSCORE who=stella head=dddddddd score=9/10 gates=test:ok\nSCORE who=emma head=dddddddd score=10/10
+HSET	pr:rowan-tools:411	repo	mas-bandwidth/rowan-tools	n	411	state	open	head	eeeeeeee00000000000000000000000000000000	reads	HOLD who=johnny head=eeeeeeee: the test is red\nHOLD who=jev head=eeeeeeee: jev never counts

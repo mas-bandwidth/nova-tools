@@ -61,7 +61,7 @@ func (p *Pass) adminRefusal(e *Entry, pr PR) string {
 	if !isRevert(pr.Subject, pr.Body) {
 		return fmt.Sprintf("--admin is refused: pull request %d is not a revert (its title and body name no revert); an admin merge onto %s is allowed only for a revert", e.PR, p.State.Base)
 	}
-	if EvaluateReads(e, pr.Author).Held {
+	if EvaluateReads(e, ReaderAuthor(pr, nil)).Held {
 		return fmt.Sprintf("--admin is refused: an open HOLD stands on pull request %d's own head %s; the line that recorded the hold removes it by recording an approve for the same head", e.PR, Short(e.OID))
 	}
 	for _, n := range CarriedPRs(pr.Body) {

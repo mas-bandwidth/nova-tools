@@ -12,6 +12,8 @@ import (
 // The adoption matrix records each friend's own choice with provenance;
 // declined, equivalent and unknown are answers, never failures.
 func TestVoluntaryAdoptionMatrix(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "adoption.tsv")
 	body := "tool\tfriend\tstate\tversion\tdetail\n" +

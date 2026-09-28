@@ -25,6 +25,8 @@ func writeSession(t *testing.T) string {
 // TestSessionPrintsOneLineAndFoldsNothingWithoutOut: reading is not writing. With no --out
 // the verb measures and says so, and the ledger is untouched.
 func TestSessionPrintsOneLineAndFoldsNothingWithoutOut(t *testing.T) {
+	t.Parallel()
+
 	r := invoke(t, "session", "--claude-session", writeSession(t))
 	wantExit(t, r, 0)
 	// By hand: 16 + 1.25 x 2500 + 0.1 x 20000 + 5 x 420 = 16 + 3125 + 2000 + 2100 = 7241,
@@ -39,6 +41,8 @@ func TestSessionPrintsOneLineAndFoldsNothingWithoutOut(t *testing.T) {
 // model line, and the row another source wrote is still there, cell for cell. The mutation
 // that matters: a fold that recomputes the file whole and erases what it did not read.
 func TestSessionFoldsIntoTheDayFileAndKeepsTheOtherRows(t *testing.T) {
+	t.Parallel()
+
 	out := t.TempDir()
 	existing := "nova-tokens v1 day=2026-09-11 at=2026-09-11T00:00:00Z build=test turns=- sources=emma\n" +
 		"date\tmodel\trepo\tinput\toutput\tcache_write\tcache_read\treasoning\trough\tday_basis\tsources\n" +
@@ -77,6 +81,8 @@ func TestSessionFoldsIntoTheDayFileAndKeepsTheOtherRows(t *testing.T) {
 // TestSessionRefusesWithoutTheSessionAndOnABadDay: no path is guessed, and a day this tool
 // cannot read is a refusal and not a guess.
 func TestSessionRefusesWithoutTheSessionAndOnABadDay(t *testing.T) {
+	t.Parallel()
+
 	r := invoke(t, "session")
 	wantExit(t, r, 2)
 	wantContains(t, r.stderr, "--claude-session is required")
@@ -93,6 +99,8 @@ func TestSessionRefusesWithoutTheSessionAndOnABadDay(t *testing.T) {
 
 // TestHelpNamesTheSessionVerb: a verb a reader cannot find is a verb behind the source.
 func TestHelpNamesTheSessionVerb(t *testing.T) {
+	t.Parallel()
+
 	r := invoke(t, "help")
 	wantExit(t, r, 0)
 	wantContains(t, r.stdout, "nova-tokens session --claude-session <jsonl>")

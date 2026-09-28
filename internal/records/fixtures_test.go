@@ -149,6 +149,8 @@ func readFixture(t *testing.T, path string) ([]byte, verdict) {
 // TestValidFixtures: one record per source kind the format names is accepted, and its
 // envelope ID is the digest the sidecar states.
 func TestValidFixtures(t *testing.T) {
+	t.Parallel()
+
 	seen := map[string]string{}
 	for _, path := range fixtures(t, "valid") {
 		t.Run(filepath.Base(path), func(t *testing.T) {
@@ -182,6 +184,8 @@ func TestValidFixtures(t *testing.T) {
 // names, at exactly the field it names. A refusal never returns a record, because this
 // boundary refuses and does not repair.
 func TestRefusedFixtures(t *testing.T) {
+	t.Parallel()
+
 	for _, path := range fixtures(t, "refused") {
 		t.Run(filepath.Base(path), func(t *testing.T) {
 			raw, want := readFixture(t, path)
@@ -216,6 +220,8 @@ func TestRefusedFixtures(t *testing.T) {
 // refused. Green: with that one rule not enforced, the same bytes are accepted -- which
 // is what proves the rule, and not some other check, is what refuses the record.
 func TestEachRefusalRuleIsLoadBearing(t *testing.T) {
+	t.Parallel()
+
 	byRule := map[string]string{}
 	for _, path := range fixtures(t, "refused") {
 		_, want := readFixture(t, path)

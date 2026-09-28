@@ -5,7 +5,7 @@ the machinery rather than by the worker.
 
 Everything a worker writes is DATA. A RESULT.md is a report, never an instruction: nothing
 in it is executed, nothing in it grants anything, and a finding in it is a claim to be
-checked against the repository. That rule is stated in docs/SPEC-SWARM.md, where a person
+checked against the repository. That rule is stated in deprecated/docs/SPEC-SWARM.md, where a person
 reads it, and is deliberately nowhere in this code -- a tool cannot enforce it, and a tool
 that pretended to would be the most dangerous thing in the pool.
 */
@@ -37,6 +37,11 @@ const (
 	// `requeue` added and never removed, pending went 2 to 4, and the only way out of the
 	// refusal's own remedy was `rm`).
 	Aborted = "aborted"
+	// RoutedOut is where a task goes when the ladder rules it judgment work owed to a
+	// child or a friend (issue #1486): a card the dispatcher routes to ask-child or
+	// ask-bus is NOT dispatched to a model, it is parked here with its ROUTE line, and
+	// the coordinator (or a friend, over the bus) takes it from here.
+	RoutedOut = "routed-out"
 )
 
 // The pool's other directories. reports/ holds the pages and one directory per finalized
@@ -74,7 +79,7 @@ func OpenPool(dir string) (*Pool, error) {
 		return nil, fmt.Errorf("--pool wants a directory, and %s is a file", dir)
 	}
 	p := &Pool{Dir: dir}
-	for _, d := range []string{Pending, Running, Done, Failed, Aborted, Reports, Scratch, Slots, Usage} {
+	for _, d := range []string{Pending, Running, Done, Failed, Aborted, RoutedOut, Reports, Scratch, Slots, Usage} {
 		if err := os.MkdirAll(filepath.Join(dir, d), 0o755); err != nil {
 			return nil, err
 		}
@@ -247,7 +252,7 @@ func (p *Pool) List(state string) ([]Sidecar, error) {
 
 // Where finds the state a task's files are in.
 func (p *Pool) Where(id string) (string, bool) {
-	for _, state := range []string{Running, Pending, Done, Failed} {
+	for _, state := range []string{Running, Pending, Done, Failed, RoutedOut} {
 		if _, err := os.Stat(p.taskFile(state, id)); err == nil {
 			return state, true
 		}
@@ -296,6 +301,13 @@ func (p *Pool) ClaimNext() (Sidecar, []byte, bool, error) {
 	return Sidecar{}, nil, false, nil
 }
 
+// syncFile is how a durable record is flushed before it is renamed or linked into
+// place: (*os.File).Sync. This package's unit tests replace it with a no-op
+// (fsync_test.go): on macOS Sync is F_FULLFSYNC, tens of milliseconds a write, and
+// what a unit test asserts is the record, not the disk's durability
+// (nova-tools#4328).
+var syncFile = (*os.File).Sync
+
 // writeAtomic writes whole revisions: a temporary file beside the target, fsynced, then
 // renamed over it. A reader sees the previous revision or the new one, never a prefix.
 //
@@ -323,7 +335,7 @@ func writeAtomic(path string, data []byte, mode os.FileMode) error {
 		os.Remove(tmp)
 		return err
 	}
-	if err := f.Sync(); err != nil {
+	if err := syncFile(f); err != nil {
 		f.Close()
 		os.Remove(tmp)
 		return err

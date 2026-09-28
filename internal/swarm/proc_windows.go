@@ -55,22 +55,72 @@ func GroupAlive(pgid int, started string) bool {
 	return livePid(pgid) && stillTheSame(pgid, started)
 }
 
-// TerminateGroup asks the process to stop.
-func TerminateGroup(pgid int, started string) { killPid(pgid, started) }
+// DefaultKillStrategy is the kill strategy used by TerminateGroup and KillGroup on Windows.
+// By default, it uses taskkill /T (/F) to reach the entire process tree.
+var DefaultKillStrategy = StrategyTaskkill
 
-// KillGroup ends the process.
-func KillGroup(pgid int, started string) { killPid(pgid, started) }
+// TerminateGroup asks the process to stop. On Windows, this sends a graceful termination
+// request to the process tree using taskkill /PID <pgid> /T, with fallback to direct syscall.
+func TerminateGroup(pgid int, started string) {
+	TerminateGroupWithStrategy(pgid, started, DefaultKillStrategy)
+}
 
-// killPid ends a pid ONLY while it still names the process the caller meant. A pid with no
-// identity beside it is left alone: on this platform the number outlives the process by no
-// time at all, and the wrong process is somebody else's still-running job.
-func killPid(pid int, started string) {
+// KillGroup ends the process. On Windows, this forcefully terminates the process tree
+// using taskkill /PID <pgid> /T /F, with fallback to direct syscall.
+func KillGroup(pgid int, started string) {
+	KillGroupWithStrategy(pgid, started, DefaultKillStrategy)
+}
+
+// TerminateGroupWithStrategy terminates a process group using the specified strategy.
+func TerminateGroupWithStrategy(pgid int, started string, strat WindowsKillStrategy) {
+	killPidWithStrategy(pgid, started, false, strat)
+}
+
+// KillGroupWithStrategy forcefully kills a process group using the specified strategy.
+func KillGroupWithStrategy(pgid int, started string, strat WindowsKillStrategy) {
+	killPidWithStrategy(pgid, started, true, strat)
+}
+
+// killPidSyscall terminates only the direct process via Win32 syscall (os.Process.Kill / TerminateProcess).
+func killPidSyscall(pid int) error {
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	return p.Kill()
+}
+
+// killPidTaskkill terminates the process tree using taskkill.exe.
+// Force=false invokes taskkill /PID <pid> /T (graceful close).
+// Force=true invokes taskkill /PID <pid> /T /F (forceful tree kill).
+func killPidTaskkill(pid int, force bool) error {
+	args := TaskkillArgs(pid, force)
+	cmd := exec.Command("taskkill", args...)
+	return cmd.Run()
+}
+
+// killPidWithStrategy ends a pid using the selected Windows kill strategy.
+// A pid with no identity beside it is left alone.
+func killPidWithStrategy(pid int, started string, force bool, strat WindowsKillStrategy) {
 	if pid <= 0 || !known(started) || !stillTheSame(pid, started) {
 		return
 	}
-	if p, err := os.FindProcess(pid); err == nil {
-		_ = p.Kill()
+	switch strat {
+	case StrategyTaskkill:
+		if err := killPidTaskkill(pid, force); err != nil {
+			// Fallback to direct syscall if taskkill executable fails or is unavailable
+			_ = killPidSyscall(pid)
+		}
+	case StrategySyscall:
+		_ = killPidSyscall(pid)
+	default:
+		_ = killPidSyscall(pid)
 	}
+}
+
+// killPid preserves the legacy direct syscall signature.
+func killPid(pid int, started string) {
+	killPidWithStrategy(pid, started, true, StrategySyscall)
 }
 
 func known(started string) bool { return started != "" && started != Dash }

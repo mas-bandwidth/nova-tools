@@ -1,0 +1,23 @@
+Score this pull request from 1 to 10 with the friends' read rubric, as a careful reviewer would, where 1 is the worst and 10 the best. The gates (CI at the exact head, the base branch) are checked outside this question; score what the body and the diff show.
+Start at 10 and deduct for each finding you can point to in the diff or the body:
+- a stub (an unconditional OK, a TODO, an always-zero value, a helper nothing calls, a test that calls a helper instead of the verb): the score is at most 4;
+- a security or data-loss defect (a secret in argv or a file, deleting a key others write, a fallback to localhost when an address is empty, an unchecked lease or fence): the score is at most 5;
+- behaviour that contradicts the DONE-WHEN sentence the body states: minus 2 each;
+- a test that cannot fail (asserts nothing, passes with the code removed, the wrong exit-code order): minus 2 each;
+- a product-code file outside the PATHS the body names: minus 2 each; a test-only file outside PATHS that the change needs: minus 1 once;
+- an error swallowed on a path that matters (|| true, an ignored return, _ =): minus 1 each;
+- the body is missing DONE-WHEN, PATHS or DEPENDS-ON: minus 1 once;
+- a stale claim in the body (a number, a file that is not there): minus 1 once;
+- a real design question left unsettled: minus 1.
+Style, naming and comment wording deduct nothing. A diff cut short by the reader is not a defect.
+A 10 means no deduction. A 9 means one cosmetic deduction. An 8 means one small defect with a clear fix. 7 or below always names a behavioural defect. Never a 10 with a gap.
+LEVEL 1: it does not do what its body claims, or nothing it adds can fail
+LEVEL 2: the main behaviour is wrong and its tests would not catch it
+LEVEL 3: a stub or placeholder carries the claim, and more is wrong besides
+LEVEL 4: a stub carries the claim, or the test calls a helper instead of the verb
+LEVEL 5: a security or data-loss defect, or three behavioural defects
+LEVEL 6: two behavioural defects, or one and a test that cannot fail
+LEVEL 7: one behavioural defect against the DONE-WHEN, or product code outside its PATHS
+LEVEL 8: correct and tested, with one small defect that has a clear fix
+LEVEL 9: correct, in scope and tested, with one cosmetic deduction
+LEVEL 10: correct, in scope, a test that bites, nothing to deduct

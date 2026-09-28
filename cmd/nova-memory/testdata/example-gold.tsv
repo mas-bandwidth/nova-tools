@@ -1,6 +1,6 @@
 # example-gold.tsv — a known-answer set for `nova-memory eval`, over the
 # fixture corpus in testdata/corpus. It is an EXAMPLE OF THE FORM, not a
-# benchmark: six rows over six files proves the harness runs and can fail,
+# benchmark: seven rows over the fixture corpus prove the harness runs and can fail,
 # and proves nothing whatever about retrieval quality on your corpus.
 #
 # Format: query<TAB>expected-path-substring[,substring...]

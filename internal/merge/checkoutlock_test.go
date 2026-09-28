@@ -46,6 +46,8 @@ var underTheCallersLock = map[string]string{
 }
 
 func TestEveryCheckoutOperationIsUnderTheCheckoutLock(t *testing.T) {
+	t.Parallel()
+
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "records.go", nil, parser.ParseComments)
 	if err != nil {
@@ -96,6 +98,8 @@ func TestEveryCheckoutOperationIsUnderTheCheckoutLock(t *testing.T) {
 // And the lock is a real one: a fold while another holder has the checkout refuses inside
 // the wait, and the refusal says who holds it.
 func TestAFoldWaitsForTheCheckoutLockAndNamesTheHolder(t *testing.T) {
+	t.Parallel()
+
 	lane := t.TempDir()
 	for _, d := range []string{ReadsDir, GatesDir} {
 		if err := os.MkdirAll(filepath.Join(lane, d), 0o755); err != nil {
@@ -108,6 +112,10 @@ func TestAFoldWaitsForTheCheckoutLockAndNamesTheHolder(t *testing.T) {
 	}
 	defer release()
 	r := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, reportTestGitTimeout, nil), 200*time.Millisecond)
+	// The contended lock runs on an injected clock, so the bounded wait reaches the held
+	// lock's refusal with no wall time.
+	nowFn, sleepFn, _ := waitClock(time.Date(2026, 9, 18, 2, 45, 0, 0, time.UTC))
+	r.Now, r.Sleep = nowFn, sleepFn
 	if _, err := r.Fold(); err == nil {
 		t.Fatal("a fold ran while another holder had the checkout; the reset of a concurrent flush is exactly what it would have read")
 	} else if !strings.Contains(err.Error(), "pid=") {

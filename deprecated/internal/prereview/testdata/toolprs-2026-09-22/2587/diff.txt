@@ -1,0 +1,3069 @@
+diff --git a/cmd/nova-pulse/event.go b/cmd/nova-pulse/event.go
+new file mode 100644
+index 000000000..ffc320e19
+--- /dev/null
++++ b/cmd/nova-pulse/event.go
+@@ -0,0 +1,106 @@
++package main
++
++// The event verb's flags: one XADD to cards:done per card transition (nova-tools #2563).
++// --tokens-in, --tokens-out and --usd that are not given are ABSENT from the entry, never 0:
++// a writer that does not know the cost has not reported a zero cost.
++// The card path is still bash in places -- the launcher, harvest, the lander -- so this verb
++// is the one line each of them writes until it is Go, and the Go writers call
++// internal/events directly.
++//
++// THE PASSWORD IS NEVER A FLAG. It is read from the environment `nova-secrets exec --only`
++// put it in, named by --password-env, so it never reaches an argv a `ps` can read and
++// nothing here ever prints it.
++
++import (
++	"flag"
++	"fmt"
++	"io"
++	"os"
++	"time"
++
++	"github.com/mas-bandwidth/nova-tools/internal/events"
++)
++
++// defaultPasswordEnv is the variable `nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD`
++// leaves the fleet store's password in.
++const defaultPasswordEnv = "NOVA_REDIS_BENCH_PASSWORD"
++
++func cmdEvent(args []string, stdout, stderr io.Writer, now time.Time) int {
++	f := newFlags("event")
++	store := f.fs.String("store", "", "")
++	user := f.fs.String("user", "", "")
++	passwordEnv := f.fs.String("password-env", defaultPasswordEnv, "")
++	stream := f.fs.String("stream", events.Stream, "")
++	label := f.fs.String("label", "", "")
++	kind := f.fs.String("event", "", "")
++	attempt := f.fs.Int("attempt", 0, "")
++	bench := f.fs.String("bench", "", "")
++	model := f.fs.String("model", "", "")
++	route := f.fs.String("route", "", "")
++	tokensIn := f.fs.Int64("tokens-in", 0, "")
++	tokensOut := f.fs.Int64("tokens-out", 0, "")
++	usd := f.fs.Float64("usd", 0, "")
++	pr := f.fs.String("pr", "", "")
++	head := f.fs.String("head", "", "")
++	at := f.fs.String("at", "", "")
++	timeout := f.fs.Int("timeout", 10, "")
++	print := f.fs.Bool("print", false, "")
++	if !f.parse(args, stderr) {
++		return 2
++	}
++	f.want(*label, "label", "the card label this transition belongs to, the id the stream joins on")
++	f.want(*kind, "event", "one of "+events.KindList())
++	if *timeout < 1 {
++		f.add(fmt.Sprintf("--timeout wants a whole number of seconds, got %d", *timeout))
++	}
++	stamp := now.UTC()
++	if *at != "" {
++		parsed, err := time.Parse(time.RFC3339, *at)
++		if err != nil {
++			f.add(fmt.Sprintf("--at wants an RFC3339 stamp such as 2026-09-22T14:05:00Z, got %q", *at))
++		} else {
++			stamp = parsed.UTC()
++		}
++	}
++	if f.refused(stderr) {
++		return 2
++	}
++	given := map[string]bool{}
++	f.fs.Visit(func(fl *flag.Flag) { given[fl.Name] = true })
++	var inPtr, outPtr *int64
++	var usdPtr *float64
++	if given["tokens-in"] {
++		inPtr = events.Int64(*tokensIn)
++	}
++	if given["tokens-out"] {
++		outPtr = events.Int64(*tokensOut)
++	}
++	if given["usd"] {
++		usdPtr = events.Float64(*usd)
++	}
++	return events.EmitOne(events.EmitInput{
++		Addr:     *store,
++		Username: *user,
++		Password: os.Getenv(*passwordEnv),
++		Stream:   *stream,
++		Event: events.Event{
++			Label:     *label,
++			Attempt:   *attempt,
++			Bench:     *bench,
++			Model:     *model,
++			Route:     *route,
++			Kind:      events.Kind(*kind),
++			TokensIn:  inPtr,
++			TokensOut: outPtr,
++			USD:       usdPtr,
++			PR:        *pr,
++			Head:      *head,
++			At:        stamp,
++		},
++		Print:   *print,
++		Now:     stamp,
++		Timeout: time.Duration(*timeout) * time.Second,
++		Stdout:  stdout,
++		Stderr:  stderr,
++	})
++}
+diff --git a/cmd/nova-pulse/event_fold_test.go b/cmd/nova-pulse/event_fold_test.go
+new file mode 100644
+index 000000000..bfe429798
+--- /dev/null
++++ b/cmd/nova-pulse/event_fold_test.go
+@@ -0,0 +1,155 @@
++package main
++
++// event_fold_test.go covers the two verbs of nova-tools #2563 at the door: what they refuse
++// and what they answer with no store at all. The stream and the fold themselves are tested
++// in internal/events against a fake; here the question is only whether a person pasting the
++// line gets a sentence that says what the input WANTS (docs/ONBOARDING.md point 2).
++
++import (
++	"bytes"
++	"path/filepath"
++	"strings"
++	"testing"
++	"time"
++)
++
++func pulseRun(t *testing.T, args ...string) (int, string, string) {
++	t.Helper()
++	var out, errb bytes.Buffer
++	code := run(args, &out, &errb, time.Date(2026, 9, 22, 14, 5, 0, 0, time.UTC))
++	return code, out.String(), errb.String()
++}
++
++func TestEventRefusesWhatItCannotGuess(t *testing.T) {
++	for _, tc := range []struct {
++		name string
++		args []string
++		want string
++	}{
++		{"no label", []string{"event", "--event", "ok", "--print"}, "--label is required"},
++		{"no event", []string{"event", "--label", "card-1", "--print"}, "--event is required"},
++		{"an unknown event", []string{"event", "--label", "card-1", "--event", "done", "--print"}, "queued|leased"},
++		{"no store and no --print", []string{"event", "--label", "card-1", "--event", "ok"}, "--store is required"},
++		{"a stamp that is not RFC3339", []string{"event", "--label", "card-1", "--event", "ok", "--at", "yesterday", "--print"}, "RFC3339"},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			code, _, errb := pulseRun(t, tc.args...)
++			if code != 2 {
++				t.Fatalf("exit = %d, want 2 (could not run); stderr=%s", code, errb)
++			}
++			if !strings.Contains(errb, tc.want) {
++				t.Fatalf("stderr = %q, want it to name %q", errb, tc.want)
++			}
++		})
++	}
++}
++
++// --print is the offline first run: the entry a writer would XADD, with nothing written.
++func TestEventPrintShowsTheEntryAndWritesNothing(t *testing.T) {
++	code, out, errb := pulseRun(t, "event", "--label", "card-42", "--event", "ok",
++		"--bench", "studio", "--model", "fable", "--route", "studio", "--usd", "0.11", "--print")
++	if code != 0 {
++		t.Fatalf("exit = %d, want 0; stderr=%s", code, errb)
++	}
++	for _, want := range []string{"label\tcard-42", "event\tok", "usd\t0.11", "at\t2026-09-22T14:05:00Z", "EVENT cards:done"} {
++		if !strings.Contains(out, want) {
++			t.Errorf("stdout does not carry %q:\n%s", want, out)
++		}
++	}
++}
++
++func TestFoldRefusesWhatItCannotGuess(t *testing.T) {
++	db := filepath.Join(t.TempDir(), "ev.sqlite")
++	for _, tc := range []struct {
++		name string
++		args []string
++		want string
++	}{
++		{"no db", []string{"fold", "--store", "store.invalid:6380"}, "--db is required"},
++		{"no store", []string{"fold", "--db", db}, "--store is required"},
++		{"two runs at once", []string{"fold", "--db", db, "--init", "--report"}, "name one"},
++		{"a count of none", []string{"fold", "--db", db, "--count", "0", "--init"}, "--count wants"},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			code, _, errb := pulseRun(t, tc.args...)
++			if code != 2 {
++				t.Fatalf("exit = %d, want 2 (could not run); stderr=%s", code, errb)
++			}
++			if !strings.Contains(errb, tc.want) {
++				t.Fatalf("stderr = %q, want it to name %q", errb, tc.want)
++			}
++		})
++	}
++}
++
++// --init, --report and --dump are the three runs that read the file alone, which is what
++// makes the help's example block runnable with no fleet store in the room.
++func TestFoldInitReportAndDumpNeedNoStore(t *testing.T) {
++	db := filepath.Join(t.TempDir(), "ev.sqlite")
++
++	code, out, errb := pulseRun(t, "fold", "--db", db, "--init")
++	if code != 0 {
++		t.Fatalf("--init exit = %d, want 0; stderr=%s", code, errb)
++	}
++	if !strings.Contains(out, "tables=attempts,reads,landings") {
++		t.Fatalf("--init printed %q, want the three tables named", out)
++	}
++
++	code, out, errb = pulseRun(t, "fold", "--db", db, "--report")
++	if code != 0 {
++		t.Fatalf("--report exit = %d, want 0; stderr=%s", code, errb)
++	}
++	for _, want := range []string{"# totals", "# by_model_route", "usd_per_landed"} {
++		if !strings.Contains(out, want) {
++			t.Errorf("--report does not carry %q:\n%s", want, out)
++		}
++	}
++
++	code, out, errb = pulseRun(t, "fold", "--db", db, "--dump")
++	if code != 0 {
++		t.Fatalf("--dump exit = %d, want 0; stderr=%s", code, errb)
++	}
++	if !strings.HasPrefix(out, "table\tevent_id\tlabel") {
++		t.Fatalf("--dump printed %q, want the TSV header first", out)
++	}
++}
++
++// --rebuild replays into a FRESH file; pointed at one that exists it says so and names the
++// remedy, rather than folding a second copy of the stream into someone's record.
++func TestFoldRebuildRefusesAFileThatExists(t *testing.T) {
++	db := filepath.Join(t.TempDir(), "ev.sqlite")
++	if code, _, errb := pulseRun(t, "fold", "--db", db, "--init"); code != 0 {
++		t.Fatalf("--init exit = %d; stderr=%s", code, errb)
++	}
++	code, _, errb := pulseRun(t, "fold", "--db", db, "--rebuild", "--store", "store.invalid:6380")
++	if code != 2 {
++		t.Fatalf("exit = %d, want 2; stderr=%s", code, errb)
++	}
++	if !strings.Contains(errb, "already exists") || !strings.Contains(errb, "name a path that does not exist") {
++		t.Fatalf("stderr = %q, want it to name the file and the remedy", errb)
++	}
++}
++
++// A cost the writer did not give is absent from the entry, never a 0: no usd, tokens_in or
++// tokens_out line is printed, and the receipt's usd is a dash. A given zero is a zero.
++func TestEventWithoutACostWritesNoCostField(t *testing.T) {
++	code, out, errb := pulseRun(t, "event", "--label", "card-42", "--event", "queued", "--print")
++	if code != 0 {
++		t.Fatalf("exit = %d, want 0; stderr=%s", code, errb)
++	}
++	for _, absent := range []string{"usd\t", "tokens_in\t", "tokens_out\t"} {
++		if strings.Contains(out, absent) {
++			t.Errorf("an event with no cost printed a %q field:\n%s", absent, out)
++		}
++	}
++	if !strings.Contains(out, "usd=-") {
++		t.Errorf("the receipt does not print the absent usd as a dash:\n%s", out)
++	}
++	code, out, errb = pulseRun(t, "event", "--label", "card-42", "--event", "ok", "--usd", "0", "--print")
++	if code != 0 {
++		t.Fatalf("exit = %d, want 0; stderr=%s", code, errb)
++	}
++	if !strings.Contains(out, "usd\t0\n") {
++		t.Errorf("--usd 0 is a reported zero and must be written:\n%s", out)
++	}
++}
+diff --git a/cmd/nova-pulse/fold.go b/cmd/nova-pulse/fold.go
+new file mode 100644
+index 000000000..258c9d783
+--- /dev/null
++++ b/cmd/nova-pulse/fold.go
+@@ -0,0 +1,86 @@
++package main
++
++// The fold verb's flags: the one consumer that turns cards:done into the SQLite record
++// (nova-tools #2563). The queries live here and never in Redis (Johnny, section 8 of
++// reports/redis-for-nova-tools-2026-09-21.md), so the hot store stays a queue.
++
++import (
++	"fmt"
++	"io"
++	"os"
++	"time"
++
++	"github.com/mas-bandwidth/nova-tools/internal/events"
++)
++
++func cmdFold(args []string, stdout, stderr io.Writer) int {
++	f := newFlags("fold")
++	store := f.fs.String("store", "", "")
++	user := f.fs.String("user", "", "")
++	passwordEnv := f.fs.String("password-env", defaultPasswordEnv, "")
++	stream := f.fs.String("stream", events.Stream, "")
++	group := f.fs.String("group", events.Group, "")
++	consumer := f.fs.String("consumer", "", "")
++	db := f.fs.String("db", "", "")
++	interval := f.fs.Duration("interval", time.Second, "")
++	count := f.fs.Int("count", 100, "")
++	timeout := f.fs.Int("timeout", 10, "")
++	max := f.fs.Int("max", 20, "")
++	once := f.fs.Bool("once", false, "")
++	rebuild := f.fs.Bool("rebuild", false, "")
++	initOnly := f.fs.Bool("init", false, "")
++	report := f.fs.Bool("report", false, "")
++	dump := f.fs.Bool("dump", false, "")
++	if !f.parse(args, stderr) {
++		return 2
++	}
++	f.want(*db, "db", "the SQLite file the stream folds into, the record the views are read from")
++	if *interval < time.Millisecond {
++		f.add(fmt.Sprintf("--interval wants a duration such as 1s, got %s", *interval))
++	}
++	if *count < 1 {
++		f.add(fmt.Sprintf("--count wants a whole number of entries per read, got %d", *count))
++	}
++	if *timeout < 1 {
++		f.add(fmt.Sprintf("--timeout wants a whole number of seconds, got %d", *timeout))
++	}
++	if *max < 0 {
++		f.add(fmt.Sprintf("--max wants a whole number of rows per block or 0 for no bound, got %d", *max))
++	}
++	if n := countTrue(*rebuild, *initOnly, *report, *dump); n > 1 {
++		f.add("--rebuild, --init, --report and --dump are four different runs; name one")
++	}
++	if f.refused(stderr) {
++		return 2
++	}
++	return events.FoldRun(events.FoldInput{
++		Addr:     *store,
++		Username: *user,
++		Password: os.Getenv(*passwordEnv),
++		Stream:   *stream,
++		Group:    *group,
++		Consumer: *consumer,
++		DB:       *db,
++		Interval: *interval,
++		Count:    *count,
++		Timeout:  time.Duration(*timeout) * time.Second,
++		Max:      *max,
++		Once:     *once,
++		Rebuild:  *rebuild,
++		Init:     *initOnly,
++		Report:   *report,
++		Dump:     *dump,
++		Stdout:   stdout,
++		Stderr:   stderr,
++	})
++}
++
++func countTrue(flags ...bool) int {
++	n := 0
++	for _, b := range flags {
++		if b {
++			n++
++		}
++	}
++	return n
++}
+diff --git a/cmd/nova-pulse/main.go b/cmd/nova-pulse/main.go
+index 3441941b0..d2b8be58e 100644
+--- a/cmd/nova-pulse/main.go
++++ b/cmd/nova-pulse/main.go
+@@ -45,6 +45,8 @@ nova-pulse run     --queue <dir> --roots <dirs> --repo <o/n> --branch <b> --hour
+ nova-pulse triage  --case <kind> --queue <dir> --out <card> [--ref <r>] [--evidence <file>] [--decide] [--dedupe --issues <file>] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
+ nova-pulse sweep   --repo <o/n> --queue <dir> [--source <file>] [--timeout <s>]
+ nova-pulse reap    --roots <dirs> --queue <dir> --deadline <s> [--dry-run] [--timeout <s>]
++nova-pulse event   --label <card> --event <queued|leased|started|turn|ok|fail|asked|harvested|pr|read|landed|jev> [--store <host:port>] [--user <name>] [--password-env <NAME>] [--stream <name>] [--attempt <n>] [--bench <name>] [--model <name>] [--route <name>] [--tokens-in <n>] [--tokens-out <n>] [--usd <f>] [--pr <n>] [--head <sha>] [--at <RFC3339>] [--timeout <s>] [--print]
++nova-pulse fold    --db <file> [--store <host:port>] [--user <name>] [--password-env <NAME>] [--stream <name>] [--group <name>] [--consumer <name>] [--interval <d>] [--count <n>] [--timeout <s>] [--max <n>] [--once] [--rebuild] [--init] [--report] [--dump]
+ nova-pulse fleet registry --machines <file> [--role bench|runner|coordination|services] [--max <n>]
+ nova-pulse fleet add <bench> --queue <dir> --roots <dirs> [--probe <file>]
+ nova-pulse hygiene run --home <dir> [--dry-run] [--hostname <name>] [--diag-days <n>] [--diag-max-bytes <n>]
+@@ -208,6 +210,33 @@ deadline, slot locks whose pid is dead, launched cards whose job directory is go
+ example:
+   nova-pulse reap --roots ./swarm-root,./swarm-root-space --queue ./queue --deadline 1800 --dry-run
+ 
++event and fold are the card event stream and its record (nova-tools #2563). event
++XADDs one entry to cards:done -- label, attempt, bench, model, route, event,
++tokens_in, tokens_out, usd, pr, head, at, and nothing else, because Redis holds
++ids and counts while the diff, the test and the prompt stay in git. A cost not
++given (--tokens-in, --tokens-out, --usd) is absent from the entry, never 0. There
++is one stream: the fold is a view of cards:done, rebuildable from it, not a
++second record. fold reads it under its own --group (record and events keep
++theirs): XREADGROUP, a SQLite row keyed on the event
++id, XACK only after the row is committed, so a fold that is killed and restarted
++loses nothing and folds nothing twice. --once is one pass, --rebuild replays the
++whole stream into a file that does not exist yet, and --init, --report and --dump
++read the file with no store at all. The views are per model x route (rows, ok,
++usd, usd per ok, usd per landed), per bench, per day, per label, and totals.
++
++The store's password is never a flag: --password-env names the variable it is
++already in, which on the fleet is what nova-secrets exec leaves behind --
++
++  nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD -- \
++    nova-pulse event --store <host:port> --user bench --label card-42 --event ok
++  nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD -- \
++    nova-pulse fold --store <host:port> --user bench --db ~/nova-fold/ev.sqlite --interval 1s
++
++example:
++  nova-pulse event --label card-42 --event ok --bench studio --model fable --route studio --tokens-in 12000 --tokens-out 900 --usd 0.11 --print
++  nova-pulse fold --db ./ev-fold.sqlite --init
++  nova-pulse fold --db ./ev-fold.sqlite --report
++
+ hygiene is the bench's clean-as-we-work pass, the Go half of bin/bench-hygiene.sh:
+ run reaps dead slots, deletes read jobs and drops the build cache when the disk is
+ low, and prints one HYGIENE line; reap <slot>, delete-job <slot> <job>,
+@@ -315,6 +344,10 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
+ 		return cmdSweep(rest, stdout, stderr)
+ 	case "reap":
+ 		return cmdReap(rest, stdout, stderr)
++	case "event":
++		return cmdEvent(rest, stdout, stderr, now)
++	case "fold":
++		return cmdFold(rest, stdout, stderr)
+ 	case "hygiene":
+ 		return cmdHygiene(rest, stdout, stderr, now)
+ 	case "fleet":
+diff --git a/docs/CLI.md b/docs/CLI.md
+index 6d1741ce1..948bed363 100644
+--- a/docs/CLI.md
++++ b/docs/CLI.md
+@@ -2677,6 +2677,76 @@ and failing that the origin of the clone the queue sits in, named on a
+ with a repo that did not answer it says that instead — they are different
+ facts, and the page used to print the first for both.
+ 
++### event and fold
++
++The card event stream and its record (nova-tools #2563). Every card transition
++XADDs one entry to `cards:done` on the fleet Redis; one consumer folds the stream
++into a SQLite file, and that file — not a `find` over job directories — is where
++`done`, `ok`, `fail` and the money come from.
++
++```
++nova-pulse event   --label <card> --event <queued|leased|started|turn|ok|fail|asked|harvested|pr|read|landed|jev> [--store <host:port>] [--user <name>] [--password-env <NAME>] [--stream <name>] [--attempt <n>] [--bench <name>] [--model <name>] [--route <name>] [--tokens-in <n>] [--tokens-out <n>] [--usd <f>] [--pr <n>] [--head <sha>] [--at <RFC3339>] [--timeout <s>] [--print]
++nova-pulse fold    --db <file> [--store <host:port>] [--user <name>] [--password-env <NAME>] [--stream <name>] [--group <name>] [--consumer <name>] [--interval <d>] [--count <n>] [--timeout <s>] [--max <n>] [--once] [--rebuild] [--init] [--report] [--dump]
++```
++
++**What rides the stream.** `label`, `attempt`, `bench`, `model`, `route`,
++`event`, `tokens_in`, `tokens_out`, `usd`, `pr`, `head`, `at` — ids and counts,
++nothing else. **There is one stream.** These are fields added to `cards:done`,
++the stream `nova-work record` and `nova-work events` already read under their own
++groups; the fold reads it under `fold`, and its SQLite file is a view of that
++stream that `--rebuild` recomputes, never a second record. **An absent cost stays
++absent**: a `--tokens-in`, `--tokens-out` or `--usd` that is not given is not
++written, the fold stores NULL, and the report prints a dash, because a writer
++that did not know the cost has not reported a zero. An entry written before the
++fields were added carries no `event`; the fold counts it as skipped rather than
++guessing it into `ok` or `fail`. The diff, the test, the prompt, the transcript and the disposition
++stay in git, and a field over 200 bytes or carrying a control character is
++**refused at the door** rather than trusted to the writer. That is Johnny's rule
++in `reports/redis-for-nova-tools-2026-09-21.md` section 8, made mechanical: core
++Redis types only (XADD, XREADGROUP, XAUTOCLAIM, XACK, XRANGE), every query in the
++fold, so the hot store never becomes the database and Valkey stays a drop-in.
++
++**The password is never a flag.** `--password-env` names the variable it is
++already in, which on the fleet is what `nova-secrets exec --only` leaves behind.
++Nothing prints it, and it never reaches an argv a `ps` can read.
++
++```
++nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD -- \
++  nova-pulse event --store <host:port> --user bench --label card-42 --event ok \
++    --bench studio --model fable --route studio --tokens-in 12000 --tokens-out 900 --usd 0.11
++nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD -- \
++  nova-pulse fold --store <host:port> --user bench --db ~/nova-fold/ev.sqlite --interval 1s
++```
++
++`event` is the line today's bash writers each emit until they are Go: the
++launcher writes `queued`, `leased` and `started`; `nova-swarm` writes `ok`,
++`fail` and `asked` with `usage.tsv`'s row; harvest writes `harvested` and `pr`;
++the lander writes `landed`. `--print` renders the entry and writes nothing,
++which is how a writer is debugged with no store in the room.
++
++`fold` holds the loop: `--interval 1s` between passes, `--once` for a single
++one. Each pass reclaims what the group holds unacked (XAUTOCLAIM, so a fold that
++was killed and restarted under a new consumer name takes its predecessor's work
++back), then takes new entries, writes them in ONE transaction, and XACKs **only
++after the transaction commits**. The event id is the primary key of every table,
++so a redelivery is a no-op: kill the fold half way through a hundred DONEs,
++restart it, and the count is a hundred.
++
++`--rebuild` replays the whole stream from its first entry into a file that does
++not exist yet, reading the stream itself and never the group, so a rebuild never
++consumes what the running fold has not folded. No row carries a fold timestamp,
++which is why a rebuild's rows are the incremental fold's rows byte for byte.
++
++`--init`, `--report` and `--dump` read the file with no store at all: the schema,
++the views as TSV blocks, and every row deterministically ordered.
++
++The tables are `attempts` (the card's own life), `reads` (a friend's read of a
++PR) and `landings` (the lander's merge). The views are `by_model_route` (rows,
++ok, fail, done, usd, **usd_per_ok**, landed, **usd_per_landed**), `by_bench`,
++`by_day`, `by_label` and `totals`. `usd_per_landed` is the score that matters:
++cost per USEFUL card, so a dearer model that lands beats a cheap one that does
++not.
++
+ ## nova-review
+ 
+ One bounded, exact-revision **review packet** at the review layer, specified in
+diff --git a/go.mod b/go.mod
+index dd6470dcb..f052d39f4 100644
+--- a/go.mod
++++ b/go.mod
+@@ -6,16 +6,25 @@ require (
+ 	github.com/alicebob/miniredis/v2 v2.39.0
+ 	github.com/jackc/pgx/v5 v5.11.0
+ 	github.com/redis/go-redis/v9 v9.22.0
++	modernc.org/sqlite v1.59.0
+ )
+ 
+ require (
+ 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
++	github.com/dustin/go-humanize v1.0.1 // indirect
++	github.com/google/uuid v1.6.0 // indirect
+ 	github.com/jackc/pgpassfile v1.0.0 // indirect
+ 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
+ 	github.com/jackc/puddle/v2 v2.2.2 // indirect
++	github.com/mattn/go-isatty v0.0.24 // indirect
++	github.com/ncruces/go-strftime v1.0.0 // indirect
++	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
+ 	github.com/yuin/gopher-lua v1.1.1 // indirect
+ 	go.uber.org/atomic v1.11.0 // indirect
+-	golang.org/x/sync v0.17.0 // indirect
+-	golang.org/x/sys v0.30.0 // indirect
++	golang.org/x/sync v0.22.0 // indirect
++	golang.org/x/sys v0.47.0 // indirect
+ 	golang.org/x/text v0.29.0 // indirect
++	modernc.org/libc v1.75.7 // indirect
++	modernc.org/mathutil v1.7.1 // indirect
++	modernc.org/memory v1.12.1 // indirect
+ )
+diff --git a/go.sum b/go.sum
+index 53ccbb0c5..6008c959c 100644
+--- a/go.sum
++++ b/go.sum
+@@ -9,6 +9,14 @@ github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XL
+ github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
+ github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
+ github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
++github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=
++github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=
++github.com/google/pprof v0.0.0-20260802141513-ef3492d7dac3 h1:LMLX+LgTNWpfvCBdFebv6EsYotImrt/Ppc5cXIriCSo=
++github.com/google/pprof v0.0.0-20260802141513-ef3492d7dac3/go.mod h1:jl5iWTm0/hd5PjEYEOuwAJ57L/CibdZfrqZ5XA5GrCk=
++github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
++github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
++github.com/hashicorp/golang-lru/v2 v2.0.7 h1:a+bsQ5rvGLjzHuww6tVxozPZFVghXaHOwFs4luLUK2k=
++github.com/hashicorp/golang-lru/v2 v2.0.7/go.mod h1:QeFd9opnmA6QUJc5vARoKUSoFhyfM2/ZepoAG6RGpeM=
+ github.com/jackc/pgpassfile v1.0.0 h1:/6Hmqy13Ss2zCq62VdNG8tM1wchn8zjSGOBJ6icpsIM=
+ github.com/jackc/pgpassfile v1.0.0/go.mod h1:CEx0iS5ambNFdcRtxPj5JhEz+xB6uRky5eyVu/W2HEg=
+ github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 h1:iCEnooe7UlwOQYpKFhBabPMi4aNAfoODPEFNiAnClxo=
+@@ -19,10 +27,16 @@ github.com/jackc/puddle/v2 v2.2.2 h1:PR8nw+E/1w0GLuRFSmiioY6UooMp6KJv0/61nB7icHo
+ github.com/jackc/puddle/v2 v2.2.2/go.mod h1:vriiEXHvEE654aYKXXjOvZM39qJ0q+azkZFrfEOc3H4=
+ github.com/klauspost/cpuid/v2 v2.2.10 h1:tBs3QSyvjDyFTq3uoc/9xFpCuOsJQFNPiAhYdw2skhE=
+ github.com/klauspost/cpuid/v2 v2.2.10/go.mod h1:hqwkgyIinND0mEev00jJYCxPNVRVXFQeu1XKlok6oO0=
++github.com/mattn/go-isatty v0.0.24 h1:tGZZoVgT/KiqK1c8ocVLeDS8BSWMRd47J3Lbz7vsReI=
++github.com/mattn/go-isatty v0.0.24/go.mod h1:nMCL3Zebbrt45jsMDgnfIwz6ydEQApk5oEI3HqDio6A=
++github.com/ncruces/go-strftime v1.0.0 h1:HMFp8mLCTPp341M/ZnA4qaf7ZlsbTc+miZjCLOFAw7w=
++github.com/ncruces/go-strftime v1.0.0/go.mod h1:Fwc5htZGVVkseilnfgOVb9mKy6w1naJmn9CehxcKcls=
+ github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
+ github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
+ github.com/redis/go-redis/v9 v9.22.0 h1:laDvpYXTJtZLloinw1fA5Kqd6HAEH2XKxOkG/PDq2F0=
+ github.com/redis/go-redis/v9 v9.22.0/go.mod h1:y2g0Wj8rQvuK0ELM+oxSudcLtC09JScs98I/X9gRWY4=
++github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec h1:W09IVJc94icq4NjY3clb7Lk8O1qJ8BdBEF8z0ibU0rE=
++github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec/go.mod h1:qqbHyh8v60DhA7CoWK5oRCqLrMHRGoxYCSS9EjAz6Eo=
+ github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
+ github.com/stretchr/testify v1.3.0/go.mod h1:M5WIy9Dh21IEIfnGCwXGc5bZfKNJtfHm1UVUgZn+9EI=
+ github.com/stretchr/testify v1.7.0/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=
+@@ -34,13 +48,45 @@ github.com/zeebo/xxh3 v1.1.0 h1:s7DLGDK45Dyfg7++yxI0khrfwq9661w9EN78eP/UZVs=
+ github.com/zeebo/xxh3 v1.1.0/go.mod h1:IisAie1LELR4xhVinxWS5+zf1lA4p0MW4T+w+W07F5s=
+ go.uber.org/atomic v1.11.0 h1:ZvwS0R+56ePWxUNi+Atn9dWONBPp/AUETXlHW0DxSjE=
+ go.uber.org/atomic v1.11.0/go.mod h1:LUxbIzbOniOlMKjJjyPfpl4v+PKK2cNJn91OQbhoJI0=
+-golang.org/x/sync v0.17.0 h1:l60nONMj9l5drqw6jlhIELNv9I0A4OFgRsG9k2oT9Ug=
+-golang.org/x/sync v0.17.0/go.mod h1:9KTHXmSnoGruLpwFjVSX0lNNA75CykiMECbovNTZqGI=
+-golang.org/x/sys v0.30.0 h1:QjkSwP/36a20jFYWkSue1YwXzLmsV5Gfq7Eiy72C1uc=
+-golang.org/x/sys v0.30.0/go.mod h1:/VUhepiaJMQUp4+oa/7Zr1D23ma6VTLIYjOOTFZPUcA=
++golang.org/x/mod v0.38.0 h1:MECBjubtXD7yj4HrhIUcywNaGeNVUdfVnxmPajOk4yk=
++golang.org/x/mod v0.38.0/go.mod h1:V6Xz0pq8TQ3dGqVQ1FVHuelZpAL0uNhSkk9ogYP3c40=
++golang.org/x/sync v0.22.0 h1:SZjpbeLmrCk4xhRSZFNZW5gFUeCeFgjekvI/+gfScek=
++golang.org/x/sync v0.22.0/go.mod h1:9xrNwdLfx4jkKbNva9FpL6vEN7evnE43NNNJQ2LF3+0=
++golang.org/x/sys v0.47.0 h1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=
++golang.org/x/sys v0.47.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
+ golang.org/x/text v0.29.0 h1:1neNs90w9YzJ9BocxfsQNHKuAT4pkghyXc4nhZ6sJvk=
+ golang.org/x/text v0.29.0/go.mod h1:7MhJOA9CD2qZyOKYazxdYMF85OwPdEr9jTtBpO7ydH4=
++golang.org/x/tools v0.48.0 h1:3+hClM1aLL5mjMKm5ovokw9epgRXPuu2tILgismM6RE=
++golang.org/x/tools v0.48.0/go.mod h1:08xX0orndb/F7jJxGDicx061tyd5pcMto75YMAXr6lk=
+ gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
+ gopkg.in/yaml.v3 v3.0.0-20200313102051-9f266ea9e77c/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
+ gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
+ gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
++modernc.org/cc/v4 v4.29.2 h1:h6+9ciCnPKutf4I03CvheAvDLX7+IHlqR6Iy6J+cgd8=
++modernc.org/cc/v4 v4.29.2/go.mod h1:OnovgIhbbMXMu1aISnJ0wvVD1KnW+cAUJkIrAWh+kVI=
++modernc.org/ccgo/v4 v4.35.0 h1:F+TUsmw09QxLzmi3aeYYGxjAXarmZaKgj3mKQHNaA8w=
++modernc.org/ccgo/v4 v4.35.0/go.mod h1:qrVGs9S3Sr2Ztcg9ve+kTAYMp5a3YvWjo+SoN06kJ5I=
++modernc.org/fileutil v1.4.0 h1:j6ZzNTftVS054gi281TyLjHPp6CPHr2KCxEXjEbD6SM=
++modernc.org/fileutil v1.4.0/go.mod h1:EqdKFDxiByqxLk8ozOxObDSfcVOv/54xDs/DUHdvCUU=
++modernc.org/gc/v2 v2.6.5 h1:nyqdV8q46KvTpZlsw66kWqwXRHdjIlJOhG6kxiV/9xI=
++modernc.org/gc/v2 v2.6.5/go.mod h1:YgIahr1ypgfe7chRuJi2gD7DBQiKSLMPgBQe9oIiito=
++modernc.org/gc/v3 v3.1.5 h1:21ldfPfRYE31Tb7B3mwAK8gy1AxP4+dKjrOQPfqakoc=
++modernc.org/gc/v3 v3.1.5/go.mod h1:HFK/6AGESC7Ex+EZJhJ2Gni6cTaYpSMmU/cT9RmlfYY=
++modernc.org/goabi0 v0.2.0 h1:HvEowk7LxcPd0eq6mVOAEMai46V+i7Jrj13t4AzuNks=
++modernc.org/goabi0 v0.2.0/go.mod h1:CEFRnnJhKvWT1c1JTI3Avm+tgOWbkOu5oPA8eH8LnMI=
++modernc.org/libc v1.75.7 h1:o3DTP9/0p9pKmY2WCKQaySW6wIiZhNM7wc2lUoyhfew=
++modernc.org/libc v1.75.7/go.mod h1:bO5o2ztHxBb2rjz0PgdHN0sSMw57CgxGFLZ3Qd/QpVQ=
++modernc.org/mathutil v1.7.1 h1:GCZVGXdaN8gTqB1Mf/usp1Y/hSqgI2vAGGP4jZMCxOU=
++modernc.org/mathutil v1.7.1/go.mod h1:4p5IwJITfppl0G4sUEDtCr4DthTaT47/N3aT6MhfgJg=
++modernc.org/memory v1.12.1 h1:nFMiWrpStgZczNl6XI9GnIk/rWhYIyHGUaR04pGbp9g=
++modernc.org/memory v1.12.1/go.mod h1:/JP4VbVC+K5sU2wZi9bHoq2MAkCnrt2r98UGeSK7Mjw=
++modernc.org/opt v0.2.0 h1:tGyef5ApycA7FSEOMraay9SaTk5zmbx7Tu+cJs4QKZg=
++modernc.org/opt v0.2.0/go.mod h1:03fq9lsNfvkYSfxrfUhZCWPk1lm4cq4N+Bh//bEtgns=
++modernc.org/sortutil v1.2.1 h1:+xyoGf15mM3NMlPDnFqrteY07klSFxLElE2PVuWIJ7w=
++modernc.org/sortutil v1.2.1/go.mod h1:7ZI3a3REbai7gzCLcotuw9AC4VZVpYMjDzETGsSMqJE=
++modernc.org/sqlite v1.59.0 h1:X1es1GpqBlS/5T+vbM4HLUdaa8OtQx468DF2vrx+38A=
++modernc.org/sqlite v1.59.0/go.mod h1:+paeT2A3iPRHkQDwG7oA6Tk0zQd5woMEI8q7orfry8k=
++modernc.org/strutil v1.2.1 h1:UneZBkQA+DX2Rp35KcM69cSsNES9ly8mQWD71HKlOA0=
++modernc.org/strutil v1.2.1/go.mod h1:EHkiggD70koQxjVdSBM3JKM7k6L0FbGE5eymy9i3B9A=
++modernc.org/token v1.1.0 h1:Xl7Ap9dKaEs5kLoOQeQmPWevfnk/DM5qcLcYlA8ys6Y=
++modernc.org/token v1.1.0/go.mod h1:UGzOrNV1mAFSEB63lOFHIpNRUVMvYTc6yu1SMY/XTDM=
+diff --git a/internal/events/cli.go b/internal/events/cli.go
+new file mode 100644
+index 000000000..15e77b91a
+--- /dev/null
++++ b/internal/events/cli.go
+@@ -0,0 +1,198 @@
++package events
++
++import (
++	"context"
++	"fmt"
++	"io"
++	"os"
++	"os/signal"
++	"strings"
++	"syscall"
++	"time"
++
++	"github.com/mas-bandwidth/nova-tools/internal/oneline"
++)
++
++// EmitInput is `nova-pulse event`: one XADD, one line, for the bash writers -- the
++// launcher, harvest and the lander -- until they are Go.
++type EmitInput struct {
++	Addr     string
++	Username string
++	Password string // read from the environment by the caller; never a flag, never printed
++	Stream   string
++	Event    Event
++	Print    bool // render the entry and write nothing, so a writer can be watched offline
++	Now      time.Time
++	Timeout  time.Duration
++	Stdout   io.Writer
++	Stderr   io.Writer
++}
++
++// EmitOne validates the event, writes it and prints the receipt. Exit 0 wrote one entry,
++// exit 2 could not run.
++func EmitOne(in EmitInput) int {
++	e := in.Event.Stamp(in.Now)
++	if err := e.Validate(); err != nil {
++		return fail(in.Stderr, "event", err)
++	}
++	if in.Print {
++		fields := e.Fields()
++		for _, name := range fieldNames {
++			if v, ok := fields[name]; ok {
++				fmt.Fprintf(in.Stdout, "%s\t%s\n", name, v)
++			}
++		}
++		fmt.Fprintln(in.Stdout, e.Line(streamOr(in.Stream), "(not written: --print)"))
++		return 0
++	}
++	if strings.TrimSpace(in.Addr) == "" {
++		return fail(in.Stderr, "event", fmt.Errorf("--store is required; it wants the fleet Redis as host:port; refusing to guess"))
++	}
++	ctx, cancel := context.WithTimeout(context.Background(), timeoutOr(in.Timeout))
++	defer cancel()
++	store, err := Open(ctx, Dial{Addr: in.Addr, Username: in.Username, Password: in.Password, Stream: in.Stream})
++	if err != nil {
++		return fail(in.Stderr, "event", err)
++	}
++	defer func() { _ = store.Close() }()
++	store.SetClock(func() time.Time { return e.At })
++	id, err := store.Emit(ctx, e)
++	if err != nil {
++		return fail(in.Stderr, "event", err)
++	}
++	fmt.Fprintln(in.Stdout, e.Line(store.StreamName(), id))
++	return 0
++}
++
++// FoldInput is `nova-pulse fold`: the stream's one consumer, its replay and its two offline
++// readers (--init and --report).
++type FoldInput struct {
++	Addr     string
++	Username string
++	Password string
++	Stream   string
++	Group    string
++	Consumer string
++	DB       string
++	Interval time.Duration
++	Count    int
++	Timeout  time.Duration
++	Max      int
++
++	Once    bool // one pass, then exit; the CI-shaped form
++	Rebuild bool // replay the whole stream into a file that does not exist yet
++	Init    bool // apply the schema and exit, with no store
++	Report  bool // print the views of an existing file, with no store
++	Dump    bool // print every row, deterministically, with no store
++
++	Stdout io.Writer
++	Stderr io.Writer
++}
++
++// FoldRun is the verb. Exit 0 is a pass that ran, exit 2 is could not run.
++func FoldRun(in FoldInput) int {
++	if strings.TrimSpace(in.DB) == "" {
++		return fail(in.Stderr, "fold", fmt.Errorf("--db is required; it wants the SQLite file the stream folds into; refusing to guess"))
++	}
++	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
++	defer cancel()
++
++	if in.Rebuild {
++		if _, err := os.Stat(in.DB); err == nil {
++			return fail(in.Stderr, "fold", fmt.Errorf("--rebuild replays the whole stream into a FRESH file and %s already exists; name a path that does not exist, or move the old file aside", in.DB))
++		} else if !os.IsNotExist(err) {
++			return fail(in.Stderr, "fold", err)
++		}
++	}
++
++	db, err := OpenDB(ctx, in.DB)
++	if err != nil {
++		return fail(in.Stderr, "fold", err)
++	}
++	defer func() { _ = db.Close() }()
++
++	switch {
++	case in.Init:
++		fmt.Fprintf(in.Stdout, "FOLD %s schema=%d tables=attempts,reads,landings\n", db.Path(), SchemaVersion)
++		return 0
++	case in.Dump:
++		if err := db.Dump(ctx, in.Stdout); err != nil {
++			return fail(in.Stderr, "fold", err)
++		}
++		return 0
++	case in.Report:
++		if err := db.Report(ctx, in.Stdout, in.Max); err != nil {
++			return fail(in.Stderr, "fold", err)
++		}
++		return 0
++	}
++
++	if strings.TrimSpace(in.Addr) == "" {
++		return fail(in.Stderr, "fold", fmt.Errorf("--store is required; it wants the fleet Redis as host:port; refusing to guess (--init, --report and --dump read the file alone)"))
++	}
++	dialCtx, dialCancel := context.WithTimeout(ctx, timeoutOr(in.Timeout))
++	store, err := Open(dialCtx, Dial{Addr: in.Addr, Username: in.Username, Password: in.Password, Stream: in.Stream})
++	dialCancel()
++	if err != nil {
++		return fail(in.Stderr, "fold", err)
++	}
++	defer func() { _ = store.Close() }()
++
++	if in.Rebuild {
++		stats, err := Rebuild(ctx, store, db, in.Count)
++		if err != nil {
++			return fail(in.Stderr, "fold", err)
++		}
++		fmt.Fprintf(in.Stdout, "FOLD REBUILT %s stream=%s read=%d new=%d skipped=%d\n",
++			db.Path(), store.StreamName(), stats.Read, stats.Inserted, stats.Skipped)
++		return 0
++	}
++
++	folder := &Folder{
++		Reader:   store,
++		DB:       db,
++		Group:    in.Group,
++		Consumer: in.Consumer,
++		Count:    in.Count,
++		Block:    in.Interval,
++	}
++	if err := folder.Start(ctx); err != nil {
++		return fail(in.Stderr, "fold", err)
++	}
++	if in.Once {
++		stats, err := folder.Once(ctx)
++		if err != nil {
++			return fail(in.Stderr, "fold", err)
++		}
++		fmt.Fprintln(in.Stdout, stats.Line(db.Path(), store.StreamName(), folder.group()))
++		return 0
++	}
++	stats, err := folder.Run(ctx, in.Interval, in.Stdout, store.StreamName())
++	if err != nil {
++		return fail(in.Stderr, "fold", err)
++	}
++	fmt.Fprintf(in.Stdout, "FOLD END %s stream=%s group=%s read=%d new=%d acked=%d skipped=%d\n",
++		db.Path(), store.StreamName(), folder.group(), stats.Read, stats.Inserted, stats.Acked, stats.Skipped)
++	return 0
++}
++
++func streamOr(s string) string {
++	if strings.TrimSpace(s) == "" {
++		return Stream
++	}
++	return s
++}
++
++func timeoutOr(d time.Duration) time.Duration {
++	if d <= 0 {
++		return 10 * time.Second
++	}
++	return d
++}
++
++// fail is the one refusal shape: one line naming what was wrong and the door to the usage,
++// exit 2 (docs/SPEC.md Conventions).
++func fail(stderr io.Writer, verb string, err error) int {
++	fmt.Fprintf(stderr, "nova-pulse %s: %s; run: nova-pulse help\n", verb, oneline.Escape(err.Error()))
++	return 2
++}
+diff --git a/internal/events/events.go b/internal/events/events.go
+new file mode 100644
+index 000000000..58839493c
+--- /dev/null
++++ b/internal/events/events.go
+@@ -0,0 +1,321 @@
++// Package events is the card event stream of nova-tools #2563 and the SQLite fold that is
++// its record: every card transition XADDs one entry to `cards:done`, and one consumer folds
++// the stream into a SQLite file whose views answer "how many, how much, per model, per
++// route, per bench, per day".
++//
++// THERE IS ONE STREAM (Rowan's ruling on the bus 2026-09-22, accepted by Johnny 17:16Z).
++// `cards:done` is the stream internal/record and internal/ci already read; this package does
++// not mint a second one beside it, it adds the event fields to the entries of that stream.
++// The SQLite file is a fold of `cards:done` and nothing else: a view that `fold --rebuild`
++// can recompute from the stream at any moment, never a second source of truth. An entry
++// written before the fields were added carries no `event` field; the fold counts it as
++// skipped rather than guessing it into `ok` or `fail`.
++//
++// The division of labour is Johnny's (reports/redis-for-nova-tools-2026-09-21.md section 8,
++// adopted): Redis holds ids, counts and event ids and NOTHING else -- never a diff, a test,
++// a prompt, a transcript or a disposition -- and every query lives in the fold, over core
++// Redis types only, so Valkey stays a drop-in and the hot store never becomes the database.
++// Validate enforces that literally: a field over maxFieldBytes or carrying a control
++// character is refused at the door rather than trusted to the caller's good manners.
++//
++// Streams deliver at least once, so the event id is the primary key of every fold table and
++// a redelivery is a no-op. That is what makes Johnny's bar 3 -- a hundred DONEs, kill the
++// fold, restart, the count is a hundred -- a property of the schema rather than of luck.
++package events
++
++import (
++	"fmt"
++	"math"
++	"strconv"
++	"strings"
++	"time"
++)
++
++// Stream is the one stream every card transition writes to, Group the consumer group the
++// fold reads under, and MaxLen the approximate cap XADD trims to (MAXLEN ~ 1e6): a stream
++// that grows without a bound is a store that fills a disk no one is watching.
++const (
++	Stream = "cards:done"
++	Group  = "fold"
++	MaxLen = 1_000_000
++)
++
++// maxFieldBytes is how long any one id-shaped field may be. It is the mechanical half of
++// "nothing but ids and counts in Redis": a diff, a prompt or a transcript does not fit, and
++// a caller that tries is refused by name instead of quietly filling the stream.
++const maxFieldBytes = 200
++
++// Kind is the transition one entry records.
++type Kind string
++
++// The kinds, in the order a card walks them. `read` is a friend's read of a pull request,
++// `landed` the lander's merge, `jev` a Jev decision; the rest are the card's own life.
++const (
++	Queued    Kind = "queued"
++	Leased    Kind = "leased"
++	Started   Kind = "started"
++	Turn      Kind = "turn"
++	OK        Kind = "ok"
++	Fail      Kind = "fail"
++	Asked     Kind = "asked"
++	Harvested Kind = "harvested"
++	PullReq   Kind = "pr"
++	Read      Kind = "read"
++	Landed    Kind = "landed"
++	Jev       Kind = "jev"
++)
++
++// Kinds is every kind the stream accepts, in banner order.
++var Kinds = []Kind{Queued, Leased, Started, Turn, OK, Fail, Asked, Harvested, PullReq, Read, Landed, Jev}
++
++// KindList is the kinds as the refusal and the usage banner spell them.
++func KindList() string {
++	names := make([]string, 0, len(Kinds))
++	for _, k := range Kinds {
++		names = append(names, string(k))
++	}
++	return strings.Join(names, "|")
++}
++
++// Known reports whether k is a kind the stream accepts.
++func (k Kind) Known() bool {
++	for _, want := range Kinds {
++		if k == want {
++			return true
++		}
++	}
++	return false
++}
++
++// Event is one card transition. Every string field is an id or a name; every number is a
++// count or a price. There is no field for prose and that is the point.
++//
++// TokensIn, TokensOut and USD are pointers because an absent cost is not a zero cost (no
++// evidence is not negative evidence): nil means nobody reported the number, the entry then
++// carries no such field at all, and the fold stores NULL. A zero is a writer saying zero.
++type Event struct {
++	Label     string
++	Attempt   int
++	Bench     string
++	Model     string
++	Route     string
++	Kind      Kind
++	TokensIn  *int64
++	TokensOut *int64
++	USD       *float64
++	PR        string
++	Head      string
++	At        time.Time
++}
++
++// Int64 and Float64 are the one-line way to fill a reported number: Event{USD: Float64(0.11)}.
++func Int64(n int64) *int64       { return &n }
++func Float64(f float64) *float64 { return &f }
++
++// fieldNames are the stream's field names, in the order XADD writes them. They are the
++// names nova-tools #2563 spells, so a bash writer and this package agree on the wire.
++var fieldNames = []string{
++	"label", "attempt", "bench", "model", "route", "event",
++	"tokens_in", "tokens_out", "usd", "pr", "head", "at",
++}
++
++// Validate is the door. It refuses what must never reach Redis rather than trusting the
++// caller: an unknown kind, a negative count, a field long enough to be a payload, and any
++// control character, which would also break the one-line output grammar on the way back.
++func (e Event) Validate() error {
++	if strings.TrimSpace(e.Label) == "" {
++		return fmt.Errorf("label is required; it wants the card label, the id the whole stream joins on")
++	}
++	if !e.Kind.Known() {
++		return fmt.Errorf("event %q is not one of %s", string(e.Kind), KindList())
++	}
++	for _, f := range []struct{ name, value string }{
++		{"label", e.Label},
++		{"bench", e.Bench},
++		{"model", e.Model},
++		{"route", e.Route},
++		{"pr", e.PR},
++		{"head", e.Head},
++	} {
++		if err := idShaped(f.name, f.value); err != nil {
++			return err
++		}
++	}
++	if e.Attempt < 0 {
++		return fmt.Errorf("attempt is a count, got %d", e.Attempt)
++	}
++	if e.TokensIn != nil && *e.TokensIn < 0 {
++		return fmt.Errorf("tokens_in and tokens_out are counts, got tokens_in %d", *e.TokensIn)
++	}
++	if e.TokensOut != nil && *e.TokensOut < 0 {
++		return fmt.Errorf("tokens_in and tokens_out are counts, got tokens_out %d", *e.TokensOut)
++	}
++	if e.USD != nil && (math.IsNaN(*e.USD) || math.IsInf(*e.USD, 0) || *e.USD < 0) {
++		return fmt.Errorf("usd is a price in dollars, got %v", *e.USD)
++	}
++	return nil
++}
++
++// idShaped holds one string field to the id rule: short, printable, one line.
++func idShaped(name, value string) error {
++	if len(value) > maxFieldBytes {
++		return fmt.Errorf("%s is %d bytes; the stream carries ids and counts only, and a field is at most %d bytes (the diff, the test, the prompt and the transcript live in git)", name, len(value), maxFieldBytes)
++	}
++	for _, r := range value {
++		if r < 0x20 || r == 0x7f {
++			return fmt.Errorf("%s carries a control character; the stream carries ids and counts only, one line each", name)
++		}
++	}
++	return nil
++}
++
++// Stamp returns the event with At filled from now when the caller left it zero, so the
++// emitter stamps exactly once and a replay never restamps.
++func (e Event) Stamp(now time.Time) Event {
++	if e.At.IsZero() {
++		e.At = now.UTC()
++	} else {
++		e.At = e.At.UTC()
++	}
++	return e
++}
++
++// Values is the flat field/value list XADD writes, in fieldNames order. A number nobody
++// reported is left out, so the entry has no such field rather than a zero.
++func (e Event) Values() []any {
++	f := e.Fields()
++	out := make([]any, 0, 2*len(fieldNames))
++	for _, name := range fieldNames {
++		if v, ok := f[name]; ok {
++			out = append(out, name, v)
++		}
++	}
++	return out
++}
++
++// Fields is the entry as Redis stores it: every value a string, every name the one #2563
++// spells. tokens_in, tokens_out and usd are present only when the event carries them.
++func (e Event) Fields() map[string]string {
++	at := ""
++	if !e.At.IsZero() {
++		at = e.At.UTC().Format(time.RFC3339)
++	}
++	f := map[string]string{
++		"label":   e.Label,
++		"attempt": strconv.Itoa(e.Attempt),
++		"bench":   e.Bench,
++		"model":   e.Model,
++		"route":   e.Route,
++		"event":   string(e.Kind),
++		"pr":      e.PR,
++		"head":    e.Head,
++		"at":      at,
++	}
++	if e.TokensIn != nil {
++		f["tokens_in"] = strconv.FormatInt(*e.TokensIn, 10)
++	}
++	if e.TokensOut != nil {
++		f["tokens_out"] = strconv.FormatInt(*e.TokensOut, 10)
++	}
++	if e.USD != nil {
++		f["usd"] = strconv.FormatFloat(*e.USD, 'f', -1, 64)
++	}
++	return f
++}
++
++// FromFields reads one stream entry back. A missing tokens_in, tokens_out or usd stays
++// ABSENT (nil), because a writer that did not know the cost has not reported a zero cost; a
++// number that is present and unreadable is an error, because that is a writer with a bug.
++func FromFields(f map[string]string) (Event, error) {
++	e := Event{
++		Label: f["label"],
++		Bench: f["bench"],
++		Model: f["model"],
++		Route: f["route"],
++		Kind:  Kind(f["event"]),
++		PR:    f["pr"],
++		Head:  f["head"],
++	}
++	var err error
++	if e.Attempt, err = atoiField(f, "attempt"); err != nil {
++		return Event{}, err
++	}
++	if e.TokensIn, err = optInt64Field(f, "tokens_in"); err != nil {
++		return Event{}, err
++	}
++	if e.TokensOut, err = optInt64Field(f, "tokens_out"); err != nil {
++		return Event{}, err
++	}
++	if raw := strings.TrimSpace(f["usd"]); raw != "" {
++		usd, perr := strconv.ParseFloat(raw, 64)
++		if perr != nil {
++			return Event{}, fmt.Errorf("usd %q is not a number", raw)
++		}
++		e.USD = &usd
++	}
++	if raw := strings.TrimSpace(f["at"]); raw != "" {
++		when, perr := time.Parse(time.RFC3339, raw)
++		if perr != nil {
++			return Event{}, fmt.Errorf("at %q is not an RFC3339 stamp", raw)
++		}
++		e.At = when.UTC()
++	}
++	if err := e.Validate(); err != nil {
++		return Event{}, err
++	}
++	return e, nil
++}
++
++// atoiField reads attempt, the one count whose absence is its zero: an entry that names no
++// attempt is the card's first.
++func atoiField(f map[string]string, name string) (int, error) {
++	n, err := optInt64Field(f, name)
++	if n == nil {
++		return 0, err
++	}
++	return int(*n), err
++}
++
++// optInt64Field is nil for an absent (or empty) field and an error for an unreadable one.
++func optInt64Field(f map[string]string, name string) (*int64, error) {
++	raw := strings.TrimSpace(f[name])
++	if raw == "" {
++		return nil, nil
++	}
++	n, err := strconv.ParseInt(raw, 10, 64)
++	if err != nil {
++		return nil, fmt.Errorf("%s %q is not a whole number", name, raw)
++	}
++	return &n, nil
++}
++
++// Day is the UTC date the event belongs to, or "" when it carries no stamp. It is computed
++// once at fold time so the per-day view is a column and not a string function in a query.
++func (e Event) Day() string {
++	if e.At.IsZero() {
++		return ""
++	}
++	return e.At.UTC().Format("2006-01-02")
++}
++
++// Line is the one-line receipt `nova-pulse event` prints.
++func (e Event) Line(stream, id string) string {
++	return fmt.Sprintf("EVENT %s %s label=%s event=%s attempt=%d bench=%s model=%s route=%s usd=%s",
++		stream, id, e.Label, string(e.Kind), e.Attempt, dash(e.Bench), dash(e.Model), dash(e.Route),
++		usdText(e.USD))
++}
++
++// usdText is the price as the receipt prints it: a dash when nobody reported one.
++func usdText(usd *float64) string {
++	if usd == nil {
++		return "-"
++	}
++	return strconv.FormatFloat(*usd, 'f', -1, 64)
++}
++
++func dash(s string) string {
++	if s == "" {
++		return "-"
++	}
++	return s
++}
+diff --git a/internal/events/events_test.go b/internal/events/events_test.go
+new file mode 100644
+index 000000000..d746e8cd9
+--- /dev/null
++++ b/internal/events/events_test.go
+@@ -0,0 +1,190 @@
++package events
++
++import (
++	"context"
++	"reflect"
++	"strings"
++	"testing"
++	"time"
++)
++
++// at is the one stamp these tests use; a fixed clock, because a test that reads the wall
++// clock is a test that asserts the machine (AGENTS.md rule 3).
++var at = time.Date(2026, 9, 22, 14, 5, 0, 0, time.UTC)
++
++func okEvent() Event {
++	return Event{
++		Label: "card-42", Attempt: 1, Bench: "studio", Model: "fable", Route: "studio",
++		Kind: OK, TokensIn: Int64(12000), TokensOut: Int64(900), USD: Float64(0.11), PR: "2563",
++		Head: "5f544272a1b0", At: at,
++	}
++}
++
++// The stream carries ids and counts and NOTHING else (Johnny, section 8: the diff, the
++// test, the prompt and the transcript stay in git). That is a door this package closes, not
++// a convention a writer is trusted to keep, so each shape below is refused BY NAME.
++func TestValidateRefusesWhatMustNeverReachRedis(t *testing.T) {
++	t.Parallel()
++
++	for _, tc := range []struct {
++		name  string
++		event Event
++		want  string
++	}{
++		{"no label", func() Event { e := okEvent(); e.Label = ""; return e }(), "label is required"},
++		{"unknown kind", func() Event { e := okEvent(); e.Kind = "done"; return e }(), "not one of"},
++		{"a payload in a field", func() Event { e := okEvent(); e.Head = strings.Repeat("d", maxFieldBytes+1); return e }(), "ids and counts only"},
++		{"a diff in a field", func() Event { e := okEvent(); e.Model = "--- a/x\n+++ b/x"; return e }(), "control character"},
++		{"a negative count", func() Event { e := okEvent(); e.TokensIn = Int64(-1); return e }(), "are counts"},
++		{"a negative price", func() Event { e := okEvent(); e.USD = Float64(-0.5); return e }(), "usd is a price"},
++		{"a negative attempt", func() Event { e := okEvent(); e.Attempt = -2; return e }(), "attempt is a count"},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			err := tc.event.Validate()
++			if err == nil {
++				t.Fatalf("%s was accepted; the stream must refuse it at the door", tc.name)
++			}
++			if !strings.Contains(err.Error(), tc.want) {
++				t.Fatalf("refusal = %q, want it to name %q", err.Error(), tc.want)
++			}
++		})
++	}
++}
++
++// The wire names are #2563's names, so a bash writer and this package agree, and a round
++// trip through the field map is the identity.
++func TestFieldsAreTheIssuesNamesAndRoundTrip(t *testing.T) {
++	t.Parallel()
++
++	fields := okEvent().Fields()
++	for _, name := range []string{"label", "attempt", "bench", "model", "route", "event",
++		"tokens_in", "tokens_out", "usd", "pr", "head", "at"} {
++		if _, ok := fields[name]; !ok {
++			t.Errorf("the entry has no %q field; #2563 names it", name)
++		}
++	}
++	if got := fields["event"]; got != "ok" {
++		t.Errorf("the kind is written to the %q field as %q, want %q", "event", got, "ok")
++	}
++	back, err := FromFields(fields)
++	if err != nil {
++		t.Fatalf("reading the entry back: %v", err)
++	}
++	if !reflect.DeepEqual(back, okEvent()) {
++		t.Fatalf("round trip = %+v, want %+v", back, okEvent())
++	}
++	if got := back.Day(); got != "2026-09-22" {
++		t.Errorf("day = %q, want the UTC date of `at`", got)
++	}
++}
++
++// The one stream is cards:done (Rowan's ruling, accepted by Johnny 2026-09-22 17:16Z): the
++// event fields are added to that stream, not written to a second one beside it.
++func TestTheStreamIsCardsDone(t *testing.T) {
++	t.Parallel()
++
++	if Stream != "cards:done" {
++		t.Fatalf("events.Stream = %q, want cards:done: there is one stream, and it is the one record and ci already read", Stream)
++	}
++	if got := NewFakeStream().StreamName(); got != "cards:done" {
++		t.Fatalf("the fake stands for %q, want cards:done", got)
++	}
++}
++
++// An absent cost is not a zero cost. A writer that omits tokens or usd has not reported a
++// zero, so the entry read back carries NO number (nil), an event with no cost writes no such
++// field, and a number that is present and unreadable is a writer with a bug.
++func TestMissingCostStaysAbsentAndBadNumbersAreRefused(t *testing.T) {
++	t.Parallel()
++
++	e, err := FromFields(map[string]string{"label": "card-1", "event": "queued"})
++	if err != nil {
++		t.Fatalf("a queued entry with no numbers: %v", err)
++	}
++	if e.USD != nil || e.TokensIn != nil || e.TokensOut != nil {
++		t.Fatalf("missing cost read back as usd=%v tokens_in=%v tokens_out=%v, want all absent (nil), never 0", e.USD, e.TokensIn, e.TokensOut)
++	}
++	if !e.At.IsZero() {
++		t.Fatalf("missing at = %s, want zero", e.At)
++	}
++	fields := Event{Label: "card-1", Kind: Queued}.Fields()
++	for _, name := range []string{"usd", "tokens_in", "tokens_out"} {
++		if v, ok := fields[name]; ok {
++			t.Errorf("an event with no %s writes %s=%q; an absent cost is no field at all", name, name, v)
++		}
++	}
++	values := Event{Label: "card-1", Kind: Queued}.Values()
++	for i := 0; i < len(values); i += 2 {
++		if name := values[i].(string); name == "usd" || name == "tokens_in" || name == "tokens_out" {
++			t.Errorf("XADD would write %s=%v for an event with no cost", name, values[i+1])
++		}
++	}
++	zero, err := FromFields(map[string]string{"label": "card-1", "event": "ok", "usd": "0"})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if zero.USD == nil || *zero.USD != 0 {
++		t.Fatalf("usd=0 read back as %v, want a reported zero: a zero a writer wrote is a zero", zero.USD)
++	}
++	if _, err := FromFields(map[string]string{"label": "card-1", "event": "ok", "usd": "eleven"}); err == nil {
++		t.Fatal("usd=eleven was accepted; an unreadable number is a writer with a bug")
++	}
++	if _, err := FromFields(map[string]string{"label": "card-1", "event": "ok", "at": "yesterday"}); err == nil {
++		t.Fatal("at=yesterday was accepted; the stamp is RFC3339 or nothing")
++	}
++}
++
++// AGENTS.md: a fake is STRICT LIKE THE REAL TOOL. The fake refuses an event the real store
++// refuses, and refuses a read under a group nobody created, with Redis's own NOGROUP word.
++func TestFakeIsStrictLikeTheRealStore(t *testing.T) {
++	t.Parallel()
++
++	ctx := context.Background()
++	f := NewFakeStream()
++	f.Now = func() time.Time { return at }
++
++	if _, err := f.Emit(ctx, Event{Label: "card-1", Kind: "done"}); err == nil {
++		t.Fatal("the fake accepted an unknown kind; a lenient fake ships the real thing broken")
++	}
++	if _, err := f.Next(ctx, "fold", "c1", 10, 0); err == nil || !strings.Contains(err.Error(), "NOGROUP") {
++		t.Fatalf("reading an uncreated group = %v, want a NOGROUP refusal", err)
++	}
++	if err := f.EnsureGroup(ctx, "fold"); err != nil {
++		t.Fatal(err)
++	}
++	if err := f.EnsureGroup(ctx, "fold"); err != nil {
++		t.Fatalf("a second EnsureGroup = %v, want nil: every fold start runs it", err)
++	}
++	if _, err := f.Emit(ctx, okEvent()); err != nil {
++		t.Fatal(err)
++	}
++	got, err := f.Next(ctx, "fold", "c1", 10, 0)
++	if err != nil || len(got) != 1 {
++		t.Fatalf("Next = %d entries, %v; want 1, nil", len(got), err)
++	}
++	if f.PendingCount("fold") != 1 {
++		t.Fatalf("pending = %d, want 1: a delivered entry is owed an ack", f.PendingCount("fold"))
++	}
++	if err := f.Ack(ctx, "fold", got[0].ID); err != nil {
++		t.Fatal(err)
++	}
++	if f.PendingCount("fold") != 0 {
++		t.Fatalf("pending after ack = %d, want 0", f.PendingCount("fold"))
++	}
++}
++
++// An unstamped event is stamped once, by the emitter, and a stamped one is never restamped:
++// otherwise a replay would rewrite the day column and the per-day view would drift.
++func TestStampHappensOnceAtTheDoor(t *testing.T) {
++	t.Parallel()
++
++	stamped := Event{Label: "card-1", Kind: Queued}.Stamp(at)
++	if !stamped.At.Equal(at) {
++		t.Fatalf("at = %s, want the emitter's clock %s", stamped.At, at)
++	}
++	later := at.Add(time.Hour)
++	again := stamped.Stamp(later)
++	if !again.At.Equal(at) {
++		t.Fatalf("a second stamp moved `at` to %s; a replay must not restamp", again.At)
++	}
++}
+diff --git a/internal/events/fake.go b/internal/events/fake.go
+new file mode 100644
+index 000000000..451bf9718
+--- /dev/null
++++ b/internal/events/fake.go
+@@ -0,0 +1,228 @@
++package events
++
++import (
++	"context"
++	"fmt"
++	"strconv"
++	"sync"
++	"time"
++)
++
++// FakeStream is the in-memory stream the unit tests run against: the same Store the Redis
++// path implements, with the same group semantics -- at-least-once delivery, a pending list
++// that survives a "crash", and an ack that is the only thing that retires an entry.
++//
++// It is STRICT LIKE THE REAL TOOL (AGENTS.md): Emit validates exactly as RedisStore.Emit
++// does, and a read under a group nobody created fails with NOGROUP, the way Redis does. A
++// lenient fake here would ship the fold broken on the one store that matters.
++type FakeStream struct {
++	mu      sync.Mutex
++	stream  string
++	entries []Entry
++	groups  map[string]*fakeGroup
++	seq     int64
++
++	// Now is the clock Emit stamps an unstamped event with; a test may pin it.
++	Now func() time.Time
++}
++
++type fakeGroup struct {
++	delivered int             // how far ">" has walked
++	pending   map[string]bool // delivered and not yet acked
++}
++
++// NewFakeStream returns an empty stream named for the real one.
++func NewFakeStream() *FakeStream {
++	return &FakeStream{
++		stream: Stream,
++		groups: map[string]*fakeGroup{},
++		Now:    func() time.Time { return time.Now().UTC() },
++	}
++}
++
++// StreamName is the stream this fake stands for.
++func (f *FakeStream) StreamName() string { return f.stream }
++
++// Close is the Store contract; the fake holds nothing to release.
++func (f *FakeStream) Close() error { return nil }
++
++// Len is how many entries the stream holds.
++func (f *FakeStream) Len() int {
++	f.mu.Lock()
++	defer f.mu.Unlock()
++	return len(f.entries)
++}
++
++// Emit appends one entry and returns its id, in Redis's `<ms>-<seq>` shape.
++func (f *FakeStream) Emit(ctx context.Context, e Event) (string, error) {
++	if err := ctx.Err(); err != nil {
++		return "", err
++	}
++	now := time.Now().UTC()
++	if f.Now != nil {
++		now = f.Now()
++	}
++	e = e.Stamp(now)
++	if err := e.Validate(); err != nil {
++		return "", err
++	}
++	f.mu.Lock()
++	defer f.mu.Unlock()
++	f.seq++
++	id := fmt.Sprintf("%d-0", f.seq)
++	f.entries = append(f.entries, Entry{ID: id, Fields: e.Fields()})
++	return id, nil
++}
++
++// EnsureGroup creates the group at entry 0. A second call is not an error.
++func (f *FakeStream) EnsureGroup(ctx context.Context, group string) error {
++	if err := ctx.Err(); err != nil {
++		return err
++	}
++	f.mu.Lock()
++	defer f.mu.Unlock()
++	if _, ok := f.groups[group]; !ok {
++		f.groups[group] = &fakeGroup{pending: map[string]bool{}}
++	}
++	return nil
++}
++
++func (f *FakeStream) group(name string) (*fakeGroup, error) {
++	g, ok := f.groups[name]
++	if !ok {
++		return nil, fmt.Errorf("NOGROUP No such consumer group '%s' for key name '%s'", name, f.stream)
++	}
++	return g, nil
++}
++
++// Pending returns the group's unacked entries, oldest first: XAUTOCLAIM with MinIdle 0, so
++// a restarted fold under any consumer name takes them back.
++func (f *FakeStream) Pending(ctx context.Context, group, consumer string, count int) ([]Entry, error) {
++	if err := ctx.Err(); err != nil {
++		return nil, err
++	}
++	f.mu.Lock()
++	defer f.mu.Unlock()
++	g, err := f.group(group)
++	if err != nil {
++		return nil, err
++	}
++	if count <= 0 {
++		count = 100
++	}
++	var out []Entry
++	for _, e := range f.entries {
++		if len(out) >= count {
++			break
++		}
++		if g.pending[e.ID] {
++			out = append(out, e)
++		}
++	}
++	return out, nil
++}
++
++// Next takes up to count entries the group has never been delivered. block is accepted and
++// ignored: the fake never waits, because a test that waits on a clock is a test that fails
++// on a loaded bench (AGENTS.md rule 3).
++func (f *FakeStream) Next(ctx context.Context, group, consumer string, count int, block time.Duration) ([]Entry, error) {
++	if err := ctx.Err(); err != nil {
++		return nil, err
++	}
++	f.mu.Lock()
++	defer f.mu.Unlock()
++	g, err := f.group(group)
++	if err != nil {
++		return nil, err
++	}
++	if count <= 0 {
++		count = 100
++	}
++	var out []Entry
++	for g.delivered < len(f.entries) && len(out) < count {
++		e := f.entries[g.delivered]
++		g.delivered++
++		g.pending[e.ID] = true
++		out = append(out, e)
++	}
++	return out, nil
++}
++
++// Ack retires the ids from the pending list.
++func (f *FakeStream) Ack(ctx context.Context, group string, ids ...string) error {
++	if err := ctx.Err(); err != nil {
++		return err
++	}
++	f.mu.Lock()
++	defer f.mu.Unlock()
++	g, err := f.group(group)
++	if err != nil {
++		return err
++	}
++	for _, id := range ids {
++		delete(g.pending, id)
++	}
++	return nil
++}
++
++// PendingCount is how many entries the group still owes an ack for.
++func (f *FakeStream) PendingCount(group string) int {
++	f.mu.Lock()
++	defer f.mu.Unlock()
++	g, ok := f.groups[group]
++	if !ok {
++		return 0
++	}
++	return len(g.pending)
++}
++
++// Range walks the stream itself from start, inclusive, touching no group.
++func (f *FakeStream) Range(ctx context.Context, start string, count int) ([]Entry, error) {
++	if err := ctx.Err(); err != nil {
++		return nil, err
++	}
++	f.mu.Lock()
++	defer f.mu.Unlock()
++	if count <= 0 {
++		count = 100
++	}
++	from := int64(0)
++	if start != "" && start != "-" {
++		n, err := fakeSeq(start)
++		if err != nil {
++			return nil, err
++		}
++		from = n
++	}
++	var out []Entry
++	for _, e := range f.entries {
++		if len(out) >= count {
++			break
++		}
++		n, err := fakeSeq(e.ID)
++		if err != nil {
++			return nil, err
++		}
++		if n >= from {
++			out = append(out, e)
++		}
++	}
++	return out, nil
++}
++
++// fakeSeq reads the `<n>-0` id this fake mints. An id of any other shape is refused rather
++// than guessed at, which is what Redis does with a malformed range bound.
++func fakeSeq(id string) (int64, error) {
++	base := id
++	for i := 0; i < len(id); i++ {
++		if id[i] == '-' {
++			base = id[:i]
++			break
++		}
++	}
++	n, err := strconv.ParseInt(base, 10, 64)
++	if err != nil {
++		return 0, fmt.Errorf("ERR Invalid stream ID specified as stream command argument: %q", id)
++	}
++	return n, nil
++}
+diff --git a/internal/events/fold.go b/internal/events/fold.go
+new file mode 100644
+index 000000000..6a77050f9
+--- /dev/null
++++ b/internal/events/fold.go
+@@ -0,0 +1,475 @@
++package events
++
++import (
++	"context"
++	"database/sql"
++	_ "embed"
++	"fmt"
++	"io"
++	"sort"
++	"strconv"
++	"strings"
++	"time"
++
++	// modernc.org/sqlite is the pure-Go SQLite driver: no cgo, so `go test ./...` and every
++	// cross build this repository already makes (linux/amd64, linux/arm64, linux/s390x,
++	// darwin/arm64, windows/amd64, windows/arm64) keep working unchanged, and no bench needs
++	// an `sqlite3` binary on PATH for the fold's own tests to run.
++	_ "modernc.org/sqlite"
++)
++
++//go:embed schema.sql
++var schemaSQL string
++
++// SchemaVersion is the migration version schema.sql installs.
++const SchemaVersion = 1
++
++// DB is the fold's SQLite file: three tables keyed on the event id and the views over them.
++type DB struct {
++	db   *sql.DB
++	path string
++}
++
++// OpenDB opens (creating if absent) the file at path and applies the schema. The schema is
++// idempotent, so this runs on every start.
++func OpenDB(ctx context.Context, path string) (*DB, error) {
++	if strings.TrimSpace(path) == "" {
++		return nil, fmt.Errorf("the fold wants a database path; refusing to guess")
++	}
++	db, err := sql.Open("sqlite", path)
++	if err != nil {
++		return nil, fmt.Errorf("sqlite %s: %w", path, err)
++	}
++	// One writer, one connection: the fold is a single consumer and a second connection
++	// would only buy SQLITE_BUSY.
++	db.SetMaxOpenConns(1)
++	for _, pragma := range []string{
++		"PRAGMA journal_mode = WAL",
++		"PRAGMA synchronous = NORMAL",
++		"PRAGMA busy_timeout = 5000",
++	} {
++		if _, err := db.ExecContext(ctx, pragma); err != nil {
++			_ = db.Close()
++			return nil, fmt.Errorf("sqlite %s: %s: %w", path, pragma, err)
++		}
++	}
++	if _, err := db.ExecContext(ctx, schemaSQL); err != nil {
++		_ = db.Close()
++		return nil, fmt.Errorf("sqlite %s: schema: %w", path, err)
++	}
++	return &DB{db: db, path: path}, nil
++}
++
++// Path is the file this fold writes.
++func (d *DB) Path() string { return d.path }
++
++// Close closes the file.
++func (d *DB) Close() error {
++	if d == nil || d.db == nil {
++		return nil
++	}
++	return d.db.Close()
++}
++
++// table is where one kind lands. Keeping the three tables of #2563 apart makes the read
++// queue's numbers and the landed count separable from the card's own life.
++func table(k Kind) string {
++	switch k {
++	case Read:
++		return "reads"
++	case Landed:
++		return "landings"
++	default:
++		return "attempts"
++	}
++}
++
++// Apply folds one batch of entries in ONE transaction and reports how many rows were new.
++// The insert is ON CONFLICT DO NOTHING on the event id, so a redelivery adds nothing; a
++// batch either lands whole or not at all, and the caller acks only after it lands.
++//
++// An entry the stream holds that this package cannot read is a skip, not a failure: a
++// writer with a bug must not stop the fold for every other writer. It is counted and named.
++func (d *DB) Apply(ctx context.Context, entries []Entry) (inserted, skipped int, _ error) {
++	if len(entries) == 0 {
++		return 0, 0, nil
++	}
++	tx, err := d.db.BeginTx(ctx, nil)
++	if err != nil {
++		return 0, 0, err
++	}
++	defer func() { _ = tx.Rollback() }()
++
++	stmts := map[string]*sql.Stmt{}
++	defer func() {
++		for _, s := range stmts {
++			_ = s.Close()
++		}
++	}()
++	for _, name := range []string{"attempts", "reads", "landings"} {
++		s, err := tx.PrepareContext(ctx, fmt.Sprintf(
++			`INSERT INTO %s (event_id, label, attempt, bench, model, route, kind, tokens_in, tokens_out, usd, pr, head, at, day)
++			 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(event_id) DO NOTHING`, name))
++		if err != nil {
++			return 0, 0, err
++		}
++		stmts[name] = s
++	}
++
++	for _, entry := range entries {
++		e, err := FromFields(entry.Fields)
++		if err != nil {
++			skipped++
++			continue
++		}
++		at := ""
++		if !e.At.IsZero() {
++			at = e.At.UTC().Format(time.RFC3339)
++		}
++		// A nil pointer is a nil argument, which is SQL NULL: an absent cost stays absent.
++		res, err := stmts[table(e.Kind)].ExecContext(ctx,
++			entry.ID, e.Label, e.Attempt, e.Bench, e.Model, e.Route, string(e.Kind),
++			nullable(e.TokensIn), nullable(e.TokensOut), nullable(e.USD), e.PR, e.Head, at, e.Day())
++		if err != nil {
++			return 0, 0, fmt.Errorf("fold %s: %w", entry.ID, err)
++		}
++		if n, err := res.RowsAffected(); err == nil && n > 0 {
++			inserted++
++		}
++	}
++	if err := tx.Commit(); err != nil {
++		return 0, 0, err
++	}
++	return inserted, skipped, nil
++}
++
++// nullable turns an absent number into a nil driver argument (SQL NULL) and a reported one
++// into its value.
++func nullable[T int64 | float64](p *T) any {
++	if p == nil {
++		return nil
++	}
++	return *p
++}
++
++// Count is how many rows the three tables hold together: the number Johnny's bar 3 asks for.
++func (d *DB) Count(ctx context.Context) (int, error) {
++	var n int
++	err := d.db.QueryRowContext(ctx,
++		`SELECT (SELECT count(*) FROM attempts) + (SELECT count(*) FROM reads) + (SELECT count(*) FROM landings)`).Scan(&n)
++	return n, err
++}
++
++// CountKind is how many rows of one kind the fold holds.
++func (d *DB) CountKind(ctx context.Context, k Kind) (int, error) {
++	var n int
++	err := d.db.QueryRowContext(ctx, fmt.Sprintf(`SELECT count(*) FROM %s WHERE kind = ?`, table(k)), string(k)).Scan(&n)
++	return n, err
++}
++
++// dumpColumns is the row shape Dump writes, the same for all three tables.
++const dumpColumns = "event_id, label, attempt, bench, model, route, kind, tokens_in, tokens_out, usd, pr, head, at, day"
++
++// Dump writes every row of the three tables as TSV, table by table and ordered inside each
++// table by event id. It is deterministic by construction -- no fold timestamp, no insertion
++// order -- which is what lets a rebuild be compared with an incremental fold byte for byte.
++func (d *DB) Dump(ctx context.Context, w io.Writer) error {
++	if _, err := fmt.Fprintf(w, "table\t%s\n", strings.ReplaceAll(dumpColumns, ", ", "\t")); err != nil {
++		return err
++	}
++	for _, name := range []string{"attempts", "landings", "reads"} {
++		rows, err := d.db.QueryContext(ctx, fmt.Sprintf(`SELECT %s FROM %s ORDER BY event_id`, dumpColumns, name))
++		if err != nil {
++			return err
++		}
++		if err := dumpRows(w, name, rows); err != nil {
++			return err
++		}
++	}
++	return nil
++}
++
++func dumpRows(w io.Writer, name string, rows *sql.Rows) error {
++	defer func() { _ = rows.Close() }()
++	for rows.Next() {
++		var (
++			id, label, bench, model, route, kind, pr, head, at, day string
++			attempt                                                 int
++			tokensIn, tokensOut                                     sql.NullInt64
++			usd                                                     sql.NullFloat64
++		)
++		if err := rows.Scan(&id, &label, &attempt, &bench, &model, &route, &kind,
++			&tokensIn, &tokensOut, &usd, &pr, &head, &at, &day); err != nil {
++			return err
++		}
++		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
++			name, id, label, attempt, bench, model, route, kind, nullInt(tokensIn), nullInt(tokensOut),
++			nullFloat(usd), pr, head, at, day); err != nil {
++			return err
++		}
++	}
++	return rows.Err()
++}
++
++// nullInt and nullFloat render a NULL as a dash, the way cell does, so a dump tells "nobody
++// reported it" from "zero".
++func nullInt(n sql.NullInt64) string {
++	if !n.Valid {
++		return "-"
++	}
++	return strconv.FormatInt(n.Int64, 10)
++}
++
++func nullFloat(f sql.NullFloat64) string {
++	if !f.Valid {
++		return "-"
++	}
++	return strconv.FormatFloat(f.Float64, 'f', -1, 64)
++}
++
++// Report writes the views as TSV blocks: the numbers a coordinator reads and the numbers
++// `nova-pulse status` will read. max caps the rows of each block; 0 means all.
++func (d *DB) Report(ctx context.Context, w io.Writer, max int) error {
++	for _, v := range []struct{ name, query string }{
++		{"totals", `SELECT cards, "rows", done, ok, fail, reads, landed, usd FROM totals`},
++		{"by_model_route", `SELECT model, route, "rows", ok, fail, done, usd, usd_per_ok, landed, usd_per_landed FROM by_model_route ORDER BY model, route`},
++		{"by_bench", `SELECT bench, "rows", cards, ok, fail, done, usd FROM by_bench ORDER BY bench`},
++		{"by_day", `SELECT day, "rows", cards, ok, fail, done, usd FROM by_day ORDER BY day`},
++	} {
++		if err := reportBlock(ctx, d.db, w, v.name, v.query, max); err != nil {
++			return err
++		}
++	}
++	return nil
++}
++
++func reportBlock(ctx context.Context, db *sql.DB, w io.Writer, name, query string, max int) error {
++	rows, err := db.QueryContext(ctx, query)
++	if err != nil {
++		return err
++	}
++	defer func() { _ = rows.Close() }()
++	cols, err := rows.Columns()
++	if err != nil {
++		return err
++	}
++	if _, err := fmt.Fprintf(w, "# %s\n%s\n", name, strings.Join(cols, "\t")); err != nil {
++		return err
++	}
++	shown := 0
++	for rows.Next() {
++		if max > 0 && shown >= max {
++			break
++		}
++		cells := make([]any, len(cols))
++		for i := range cells {
++			cells[i] = new(any)
++		}
++		if err := rows.Scan(cells...); err != nil {
++			return err
++		}
++		out := make([]string, len(cols))
++		for i, c := range cells {
++			out[i] = cell(*(c.(*any)))
++		}
++		if _, err := fmt.Fprintln(w, strings.Join(out, "\t")); err != nil {
++			return err
++		}
++		shown++
++	}
++	return rows.Err()
++}
++
++// cell renders one view value. A NULL is a dash, never an empty column, so a reader can
++// tell "no answer" from "zero" (no evidence is not negative evidence).
++func cell(v any) string {
++	switch t := v.(type) {
++	case nil:
++		return "-"
++	case []byte:
++		return string(t)
++	case string:
++		return t
++	case int64:
++		return strconv.FormatInt(t, 10)
++	case float64:
++		return strconv.FormatFloat(t, 'f', -1, 64)
++	default:
++		return fmt.Sprint(t)
++	}
++}
++
++// Stats is what one fold pass did.
++type Stats struct {
++	Read     int // entries taken from the stream
++	Inserted int // rows the fold did not already hold
++	Acked    int // deliveries committed back to the group
++	Skipped  int // entries this package could not read
++}
++
++// Add folds one pass's numbers into a running total.
++func (s *Stats) Add(o Stats) {
++	s.Read += o.Read
++	s.Inserted += o.Inserted
++	s.Acked += o.Acked
++	s.Skipped += o.Skipped
++}
++
++// Line is the one-line receipt a fold pass prints.
++func (s Stats) Line(db, stream, group string) string {
++	return fmt.Sprintf("FOLD %s stream=%s group=%s read=%d new=%d acked=%d skipped=%d",
++		db, stream, group, s.Read, s.Inserted, s.Acked, s.Skipped)
++}
++
++// Folder is one consumer of the stream into one file.
++type Folder struct {
++	Reader   Reader
++	DB       *DB
++	Group    string
++	Consumer string
++	Count    int           // entries per read
++	Block    time.Duration // how long one read may wait for a new entry
++}
++
++// Start creates the group, so a fold that starts before any writer still reads entry 0.
++func (f *Folder) Start(ctx context.Context) error {
++	return f.Reader.EnsureGroup(ctx, f.group())
++}
++
++func (f *Folder) group() string {
++	if strings.TrimSpace(f.Group) == "" {
++		return Group
++	}
++	return f.Group
++}
++
++func (f *Folder) consumer() string {
++	if strings.TrimSpace(f.Consumer) == "" {
++		return "fold-1"
++	}
++	return f.Consumer
++}
++
++func (f *Folder) count() int {
++	if f.Count <= 0 {
++		return 100
++	}
++	return f.Count
++}
++
++// Once is one pass: reclaim what a dead predecessor left unacked, then take new entries.
++// The order matters -- pending first -- because otherwise a fold that is killed and
++// restarted walks past its own unfinished work and the count is short.
++func (f *Folder) Once(ctx context.Context) (Stats, error) {
++	var total Stats
++	pending, err := f.Reader.Pending(ctx, f.group(), f.consumer(), f.count())
++	if err != nil {
++		return total, err
++	}
++	s, err := f.apply(ctx, pending)
++	total.Add(s)
++	if err != nil {
++		return total, err
++	}
++	next, err := f.Reader.Next(ctx, f.group(), f.consumer(), f.count(), f.Block)
++	if err != nil {
++		return total, err
++	}
++	s, err = f.apply(ctx, next)
++	total.Add(s)
++	return total, err
++}
++
++// apply is the commit-then-ack order that makes a kill safe in both directions: a kill
++// before the commit leaves the entry pending and it is folded again; a kill after the
++// commit and before the ack leaves it pending and the re-fold is a no-op on the primary key.
++func (f *Folder) apply(ctx context.Context, entries []Entry) (Stats, error) {
++	if len(entries) == 0 {
++		return Stats{}, nil
++	}
++	inserted, skipped, err := f.DB.Apply(ctx, entries)
++	if err != nil {
++		return Stats{Read: len(entries)}, err
++	}
++	ids := make([]string, 0, len(entries))
++	for _, e := range entries {
++		ids = append(ids, e.ID)
++	}
++	if err := f.Reader.Ack(ctx, f.group(), ids...); err != nil {
++		return Stats{Read: len(entries), Inserted: inserted, Skipped: skipped}, err
++	}
++	return Stats{Read: len(entries), Inserted: inserted, Acked: len(ids), Skipped: skipped}, nil
++}
++
++// Run holds the loop: one pass per interval until the context is cancelled. A cancelled
++// context is the shutdown, not a failure, so it returns the running total and no error --
++// which is what makes "kill it half way and restart" an ordinary thing to do.
++func (f *Folder) Run(ctx context.Context, interval time.Duration, out io.Writer, stream string) (Stats, error) {
++	if interval <= 0 {
++		interval = time.Second
++	}
++	var total Stats
++	ticker := time.NewTicker(interval)
++	defer ticker.Stop()
++	for {
++		s, err := f.Once(ctx)
++		total.Add(s)
++		if err != nil {
++			if ctx.Err() != nil {
++				return total, nil
++			}
++			return total, err
++		}
++		if s.Read > 0 && out != nil {
++			fmt.Fprintln(out, s.Line(f.DB.Path(), stream, f.group()))
++		}
++		select {
++		case <-ctx.Done():
++			return total, nil
++		case <-ticker.C:
++		}
++	}
++}
++
++// Rebuild replays the stream from its first entry into this file, reading the stream itself
++// and never the group: a rebuild must not consume what the running fold has not yet folded.
++func Rebuild(ctx context.Context, r Reader, db *DB, batch int) (Stats, error) {
++	if batch < 2 {
++		batch = 100
++	}
++	var total Stats
++	start := "-"
++	last := ""
++	for {
++		// The range bound is INCLUSIVE, so one extra entry is asked for and the entry the
++		// last page ended on is dropped. That costs one row per page and needs no Redis 6.2
++		// exclusive range, which the fake would then have to grow too.
++		entries, err := r.Range(ctx, start, batch+1)
++		if err != nil {
++			return total, err
++		}
++		if last != "" && len(entries) > 0 && entries[0].ID == last {
++			entries = entries[1:]
++		}
++		if len(entries) == 0 {
++			return total, nil
++		}
++		inserted, skipped, err := db.Apply(ctx, entries)
++		total.Add(Stats{Read: len(entries), Inserted: inserted, Skipped: skipped})
++		if err != nil {
++			return total, err
++		}
++		last = entries[len(entries)-1].ID
++		start = last
++	}
++}
++
++// SortedIDs is the entries' ids in stream order; a helper the tests read.
++func SortedIDs(entries []Entry) []string {
++	ids := make([]string, 0, len(entries))
++	for _, e := range entries {
++		ids = append(ids, e.ID)
++	}
++	sort.Strings(ids)
++	return ids
++}
+diff --git a/internal/events/fold_test.go b/internal/events/fold_test.go
+new file mode 100644
+index 000000000..59f630cbd
+--- /dev/null
++++ b/internal/events/fold_test.go
+@@ -0,0 +1,368 @@
++package events
++
++import (
++	"bytes"
++	"context"
++	"fmt"
++	"path/filepath"
++	"strings"
++	"testing"
++	"time"
++)
++
++// openFold opens a fold file inside the test's own temp directory. Every path this package's
++// tests write is named here (AGENTS.md rule 10).
++func openFold(t *testing.T, name string) *DB {
++	t.Helper()
++	db, err := OpenDB(context.Background(), filepath.Join(t.TempDir(), name))
++	if err != nil {
++		t.Fatalf("opening the fold: %v", err)
++	}
++	t.Cleanup(func() { _ = db.Close() })
++	return db
++}
++
++// emitOK writes n `ok` events for n cards, round-robin over two models and two benches so
++// the per-model-x-route and per-bench views have something to separate.
++func emitOK(t *testing.T, f *FakeStream, n int) {
++	t.Helper()
++	ctx := context.Background()
++	models := []string{"fable", "sonnet"}
++	benches := []string{"studio", "hulk"}
++	for i := 0; i < n; i++ {
++		_, err := f.Emit(ctx, Event{
++			Label:   fmt.Sprintf("card-%03d", i),
++			Attempt: 1,
++			Bench:   benches[i%len(benches)],
++			Model:   models[i%len(models)],
++			Route:   benches[i%len(benches)],
++			Kind:    OK,
++			USD:     Float64(0.10),
++			At:      at.Add(time.Duration(i) * time.Second),
++		})
++		if err != nil {
++			t.Fatalf("emitting event %d: %v", i, err)
++		}
++	}
++}
++
++// Johnny's bar 3, on the fake: a hundred DONEs are produced, the fold is killed half way
++// and restarted, and the count is a hundred. The restart runs under a DIFFERENT consumer
++// name, which is what a restarted process really is, so the reclaim has to be XAUTOCLAIM's
++// and not "my own pending list".
++func TestAHundredDonesSurviveAKillAndARestart(t *testing.T) {
++	t.Parallel()
++
++	ctx := context.Background()
++	stream := NewFakeStream()
++	stream.Now = func() time.Time { return at }
++	emitOK(t, stream, 100)
++
++	db := openFold(t, "ev.sqlite")
++	first := &Folder{Reader: stream, DB: db, Group: "fold", Consumer: "fold-a", Count: 10}
++	if err := first.Start(ctx); err != nil {
++		t.Fatal(err)
++	}
++	var folded Stats
++	for folded.Inserted < 50 {
++		s, err := first.Once(ctx)
++		if err != nil {
++			t.Fatalf("the first fold: %v", err)
++		}
++		folded.Add(s)
++	}
++	if folded.Inserted != 50 {
++		t.Fatalf("the first fold stopped at %d rows, want 50 (the kill is half way)", folded.Inserted)
++	}
++
++	// The kill. Nothing is closed, nothing is drained: the next process just starts.
++	second := &Folder{Reader: stream, DB: db, Group: "fold", Consumer: "fold-b", Count: 10}
++	if err := second.Start(ctx); err != nil {
++		t.Fatal(err)
++	}
++	for {
++		s, err := second.Once(ctx)
++		if err != nil {
++			t.Fatalf("the restarted fold: %v", err)
++		}
++		if s.Read == 0 {
++			break
++		}
++		folded.Add(s)
++	}
++
++	count, err := db.Count(ctx)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if count != 100 {
++		t.Fatalf("the fold holds %d rows after a kill and a restart, want 100 (Johnny's bar 3)", count)
++	}
++	if got := stream.PendingCount("fold"); got != 0 {
++		t.Fatalf("%d entries are still unacked; the fold acks what it has committed", got)
++	}
++	if folded.Skipped != 0 {
++		t.Fatalf("the fold skipped %d entries it could not read, want 0", folded.Skipped)
++	}
++}
++
++// killAck is the process that dies in the one-instruction window between the commit and the
++// XACK. Redis has the entry as delivered-and-unacked, SQLite already has the row, and the
++// restart must therefore fold it a second time and end with one row, not two.
++type killAck struct {
++	Reader
++	after int
++	seen  int
++}
++
++func (k *killAck) Ack(ctx context.Context, group string, ids ...string) error {
++	k.seen += len(ids)
++	if k.seen > k.after {
++		return fmt.Errorf("killed before the ack")
++	}
++	return k.Reader.Ack(ctx, group, ids...)
++}
++
++func TestARedeliveryAfterACommitIsANoOp(t *testing.T) {
++	t.Parallel()
++
++	ctx := context.Background()
++	stream := NewFakeStream()
++	stream.Now = func() time.Time { return at }
++	emitOK(t, stream, 100)
++
++	db := openFold(t, "ev.sqlite")
++	dying := &killAck{Reader: stream, after: 50}
++	first := &Folder{Reader: dying, DB: db, Group: "fold", Consumer: "fold-a", Count: 10}
++	if err := first.Start(ctx); err != nil {
++		t.Fatal(err)
++	}
++	for {
++		if _, err := first.Once(ctx); err != nil {
++			break // the ack that never happened: this is the kill
++		}
++	}
++	if got := stream.PendingCount("fold"); got == 0 {
++		t.Fatal("nothing is pending; the test did not reproduce a death between the commit and the ack")
++	}
++
++	second := &Folder{Reader: stream, DB: db, Group: "fold", Consumer: "fold-b", Count: 10}
++	if err := second.Start(ctx); err != nil {
++		t.Fatal(err)
++	}
++	for {
++		s, err := second.Once(ctx)
++		if err != nil {
++			t.Fatalf("the restarted fold: %v", err)
++		}
++		if s.Read == 0 {
++			break
++		}
++	}
++	count, err := db.Count(ctx)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if count != 100 {
++		t.Fatalf("the fold holds %d rows, want 100: the event id is the primary key and a redelivery adds nothing", count)
++	}
++}
++
++// A rebuild replays the whole stream into a fresh file, and the rows it writes are the rows
++// the incremental fold wrote -- byte for byte, because no row carries a fold timestamp.
++func TestRebuildProducesTheSameRowsAsTheIncrementalFold(t *testing.T) {
++	t.Parallel()
++
++	ctx := context.Background()
++	stream := NewFakeStream()
++	stream.Now = func() time.Time { return at }
++	emitOK(t, stream, 100)
++	// A read and a landing too, so all three tables are compared and not only attempts.
++	for i := 0; i < 5; i++ {
++		if _, err := stream.Emit(ctx, Event{Label: fmt.Sprintf("card-%03d", i), Kind: Read, Bench: "stella", PR: "2563", At: at}); err != nil {
++			t.Fatal(err)
++		}
++		if _, err := stream.Emit(ctx, Event{Label: fmt.Sprintf("card-%03d", i), Kind: Landed, PR: "2563", Head: "5f544272a1b0", At: at}); err != nil {
++			t.Fatal(err)
++		}
++	}
++
++	incremental := openFold(t, "incremental.sqlite")
++	folder := &Folder{Reader: stream, DB: incremental, Group: "fold", Consumer: "fold-a", Count: 7}
++	if err := folder.Start(ctx); err != nil {
++		t.Fatal(err)
++	}
++	for {
++		s, err := folder.Once(ctx)
++		if err != nil {
++			t.Fatal(err)
++		}
++		if s.Read == 0 {
++			break
++		}
++	}
++
++	rebuilt := openFold(t, "rebuilt.sqlite")
++	stats, err := Rebuild(ctx, stream, rebuilt, 7)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if stats.Inserted != 110 {
++		t.Fatalf("the rebuild wrote %d rows, want 110", stats.Inserted)
++	}
++
++	var a, b bytes.Buffer
++	if err := incremental.Dump(ctx, &a); err != nil {
++		t.Fatal(err)
++	}
++	if err := rebuilt.Dump(ctx, &b); err != nil {
++		t.Fatal(err)
++	}
++	if a.String() != b.String() {
++		t.Fatalf("the rebuild's rows differ from the fold's:\nfold:\n%s\nrebuild:\n%s", firstLines(a.String()), firstLines(b.String()))
++	}
++	if strings.Count(a.String(), "\n") != 111 { // the header and 110 rows
++		t.Fatalf("the dump holds %d lines, want a header and 110 rows", strings.Count(a.String(), "\n"))
++	}
++
++	// A rebuild over a file that already holds the rows is a second no-op, not a doubling.
++	again, err := Rebuild(ctx, stream, rebuilt, 7)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if again.Inserted != 0 {
++		t.Fatalf("a second rebuild wrote %d new rows, want 0", again.Inserted)
++	}
++}
++
++// The views are the point of the fold: the numbers a coordinator reads and the numbers the
++// sprint table will read instead of counting files.
++func TestViewsCountPerModelRoutePerBenchAndPerDay(t *testing.T) {
++	t.Parallel()
++
++	ctx := context.Background()
++	stream := NewFakeStream()
++	stream.Now = func() time.Time { return at }
++	emitOK(t, stream, 10) // 5 fable/studio and 5 sonnet/hulk, ten cents each
++	if _, err := stream.Emit(ctx, Event{Label: "card-000", Kind: Fail, Bench: "studio", Model: "fable", Route: "studio", USD: Float64(0.05), At: at}); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := stream.Emit(ctx, Event{Label: "card-000", Kind: Landed, PR: "2563", At: at}); err != nil {
++		t.Fatal(err)
++	}
++
++	db := openFold(t, "ev.sqlite")
++	folder := &Folder{Reader: stream, DB: db, Group: "fold", Consumer: "fold-a", Count: 100}
++	if err := folder.Start(ctx); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := folder.Once(ctx); err != nil {
++		t.Fatal(err)
++	}
++
++	var report bytes.Buffer
++	if err := db.Report(ctx, &report, 0); err != nil {
++		t.Fatal(err)
++	}
++	got := report.String()
++	for _, want := range []string{
++		"# totals",
++		"# by_model_route",
++		"# by_bench",
++		"# by_day",
++		"usd_per_ok",
++		"usd_per_landed",
++		"2026-09-22",
++	} {
++		if !strings.Contains(got, want) {
++			t.Errorf("the report does not carry %q:\n%s", want, got)
++		}
++	}
++	// fable/studio: five ok, one fail, $0.55 over one landed card.
++	if !strings.Contains(got, "fable\tstudio\t6\t5\t1\t6\t0.55\t0.11\t1\t0.55") {
++		t.Errorf("the fable/studio row is not the arithmetic this fold holds:\n%s", got)
++	}
++	// The row the sprint table reads: eleven done, ten ok, one fail, one landed.
++	if !strings.Contains(got, "10\t11\t11\t10\t1\t0\t1\t") {
++		t.Errorf("the totals row is not cards=10 rows=11 done=11 ok=10 fail=1 reads=0 landed=1:\n%s", got)
++	}
++}
++
++// An entry a writer got wrong is a skip with a count, never a stop: one bad writer must not
++// stop the fold for every other writer, and the number says how many were lost.
++func TestABadEntryIsSkippedAndCounted(t *testing.T) {
++	t.Parallel()
++
++	ctx := context.Background()
++	db := openFold(t, "ev.sqlite")
++	inserted, skipped, err := db.Apply(ctx, []Entry{
++		{ID: "1-0", Fields: okEvent().Fields()},
++		{ID: "2-0", Fields: map[string]string{"label": "card-2", "event": "eaten-by-a-bear"}},
++		{ID: "3-0", Fields: map[string]string{"label": "", "event": "ok"}},
++		// A cards:done entry written before the event fields were added: no `event`, so it is
++		// counted as skipped, never guessed into ok or fail.
++		{ID: "4-0", Fields: map[string]string{"label": "card-4", "bench": "studio", "exit": "0", "result": "OK"}},
++	})
++	if err != nil {
++		t.Fatalf("a batch holding a bad entry: %v", err)
++	}
++	if inserted != 1 || skipped != 3 {
++		t.Fatalf("inserted=%d skipped=%d, want 1 and 3", inserted, skipped)
++	}
++}
++
++// An absent cost folds to NULL, not 0: the dump prints a dash for it, a reported zero stays
++// 0, and a totals row over nothing priced is a dash rather than $0.
++func TestAMissingCostFoldsToNullNotZero(t *testing.T) {
++	t.Parallel()
++
++	ctx := context.Background()
++	db := openFold(t, "ev.sqlite")
++	if _, _, err := db.Apply(ctx, []Entry{
++		{ID: "1-0", Fields: map[string]string{"label": "card-1", "event": "queued"}},
++		{ID: "2-0", Fields: map[string]string{"label": "card-2", "event": "ok", "usd": "0", "tokens_in": "0", "tokens_out": "0"}},
++	}); err != nil {
++		t.Fatal(err)
++	}
++	var nulls, zeros int
++	if err := db.db.QueryRowContext(ctx, `SELECT count(*) FROM attempts WHERE usd IS NULL AND tokens_in IS NULL AND tokens_out IS NULL`).Scan(&nulls); err != nil {
++		t.Fatal(err)
++	}
++	if err := db.db.QueryRowContext(ctx, `SELECT count(*) FROM attempts WHERE usd = 0 AND tokens_in = 0 AND tokens_out = 0`).Scan(&zeros); err != nil {
++		t.Fatal(err)
++	}
++	if nulls != 1 || zeros != 1 {
++		t.Fatalf("NULL-cost rows=%d zero-cost rows=%d, want 1 and 1: the queued entry reported no cost, the ok entry reported zero", nulls, zeros)
++	}
++	var dump bytes.Buffer
++	if err := db.Dump(ctx, &dump); err != nil {
++		t.Fatal(err)
++	}
++	if !strings.Contains(dump.String(), "attempts\t1-0\tcard-1\t0\t\t\t\tqueued\t-\t-\t-\t") {
++		t.Errorf("the dump does not print the absent cost as dashes:\n%s", dump.String())
++	}
++	if !strings.Contains(dump.String(), "attempts\t2-0\tcard-2\t0\t\t\t\tok\t0\t0\t0\t") {
++		t.Errorf("the dump does not keep the reported zero:\n%s", dump.String())
++	}
++
++	unpriced := openFold(t, "unpriced.sqlite")
++	if _, _, err := unpriced.Apply(ctx, []Entry{{ID: "1-0", Fields: map[string]string{"label": "card-1", "event": "ok"}}}); err != nil {
++		t.Fatal(err)
++	}
++	var report bytes.Buffer
++	if err := unpriced.Report(ctx, &report, 0); err != nil {
++		t.Fatal(err)
++	}
++	// cards rows done ok fail reads landed usd: the usd of a fold that holds no price is a dash.
++	if !strings.Contains(report.String(), "1\t1\t1\t1\t0\t0\t0\t-\n") {
++		t.Errorf("the totals row prices an unpriced fold; want usd as a dash:\n%s", report.String())
++	}
++}
++
++func firstLines(s string) string {
++	lines := strings.SplitN(s, "\n", 6)
++	if len(lines) > 5 {
++		lines = lines[:5]
++	}
++	return strings.Join(lines, "\n")
++}
+diff --git a/internal/events/redis.go b/internal/events/redis.go
+new file mode 100644
+index 000000000..713c515cf
+--- /dev/null
++++ b/internal/events/redis.go
+@@ -0,0 +1,189 @@
++package events
++
++import (
++	"context"
++	"errors"
++	"fmt"
++	"strings"
++	"time"
++
++	"github.com/redis/go-redis/v9"
++)
++
++// RedisStore is the live stream on the fleet Redis. go-redis is already this repository's
++// Redis client (internal/redisq, internal/record, internal/ci), so this adds no dependency;
++// the five calls below are XADD, XREADGROUP, XAUTOCLAIM, XACK and XRANGE, which is the whole
++// of what "core types only" allows.
++type RedisStore struct {
++	rdb    *redis.Client
++	stream string
++	now    func() time.Time
++}
++
++// Dial options. The password never arrives as a flag or an argument: the caller reads it
++// from the environment `nova-secrets exec` put it in, and nothing here ever prints it.
++type Dial struct {
++	Addr     string
++	Username string
++	Password string
++	Stream   string
++}
++
++// Open dials the store and proves the connection once, so a bad address is a refusal at
++// start rather than a silent loop that folds nothing.
++func Open(ctx context.Context, d Dial) (*RedisStore, error) {
++	stream := strings.TrimSpace(d.Stream)
++	if stream == "" {
++		stream = Stream
++	}
++	rdb := redis.NewClient(&redis.Options{
++		Addr:     d.Addr,
++		Username: d.Username,
++		Password: d.Password,
++	})
++	if err := rdb.Ping(ctx).Err(); err != nil {
++		_ = rdb.Close()
++		// The error is go-redis's and names the address, never the password.
++		return nil, fmt.Errorf("redis at %s: %w", d.Addr, err)
++	}
++	return &RedisStore{rdb: rdb, stream: stream, now: func() time.Time { return time.Now().UTC() }}, nil
++}
++
++// StreamName is the stream this store reads and writes.
++func (s *RedisStore) StreamName() string { return s.stream }
++
++// SetClock installs the clock Emit stamps an unstamped event with.
++func (s *RedisStore) SetClock(now func() time.Time) {
++	if now != nil {
++		s.now = now
++	}
++}
++
++// Close releases the pool.
++func (s *RedisStore) Close() error {
++	if s == nil || s.rdb == nil {
++		return nil
++	}
++	return s.rdb.Close()
++}
++
++// Emit is the one XADD: `XADD <stream> MAXLEN ~ 1000000 * <fields>`. The event is validated
++// first, so nothing but ids and counts can ever reach the store.
++func (s *RedisStore) Emit(ctx context.Context, e Event) (string, error) {
++	e = e.Stamp(s.now())
++	if err := e.Validate(); err != nil {
++		return "", err
++	}
++	return s.rdb.XAdd(ctx, &redis.XAddArgs{
++		Stream: s.stream,
++		MaxLen: MaxLen,
++		Approx: true,
++		Values: e.Values(),
++	}).Result()
++}
++
++// EnsureGroup creates the group at entry 0, making the stream if it is absent. A group that
++// already exists is not an error: every fold start runs this.
++func (s *RedisStore) EnsureGroup(ctx context.Context, group string) error {
++	err := s.rdb.XGroupCreateMkStream(ctx, s.stream, group, "0").Err()
++	if err != nil && !strings.Contains(err.Error(), "BUSYGROUP") {
++		return fmt.Errorf("consumer group %s on %s: %w", group, s.stream, err)
++	}
++	return nil
++}
++
++// Pending claims every entry this group holds unacked, from any consumer, oldest first.
++// MinIdle is zero on purpose: the fold is a single consumer and a restart must take its own
++// dead predecessor's work back at once, not after an idle timeout.
++func (s *RedisStore) Pending(ctx context.Context, group, consumer string, count int) ([]Entry, error) {
++	if count <= 0 {
++		count = 100
++	}
++	msgs, _, err := s.rdb.XAutoClaim(ctx, &redis.XAutoClaimArgs{
++		Stream:   s.stream,
++		Group:    group,
++		Consumer: consumer,
++		MinIdle:  0,
++		Start:    "0-0",
++		Count:    int64(count),
++	}).Result()
++	if errors.Is(err, redis.Nil) {
++		return nil, nil
++	}
++	if err != nil {
++		return nil, err
++	}
++	return entries(msgs), nil
++}
++
++// Next takes up to count new entries, blocking for at most block. Zero block is never
++// passed to Redis, which reads BLOCK 0 as "forever".
++func (s *RedisStore) Next(ctx context.Context, group, consumer string, count int, block time.Duration) ([]Entry, error) {
++	if count <= 0 {
++		count = 100
++	}
++	if block <= 0 {
++		block = -1
++	}
++	res, err := s.rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
++		Group:    group,
++		Consumer: consumer,
++		Streams:  []string{s.stream, ">"},
++		Count:    int64(count),
++		Block:    block,
++	}).Result()
++	if errors.Is(err, redis.Nil) {
++		return nil, nil
++	}
++	if err != nil {
++		return nil, err
++	}
++	var out []Entry
++	for _, st := range res {
++		out = append(out, entries(st.Messages)...)
++	}
++	return out, nil
++}
++
++// Ack commits the delivery. It runs after the fold's own transaction, never before.
++func (s *RedisStore) Ack(ctx context.Context, group string, ids ...string) error {
++	if len(ids) == 0 {
++		return nil
++	}
++	return s.rdb.XAck(ctx, s.stream, group, ids...).Err()
++}
++
++// Range reads the stream itself from start, forwards, touching no group. It is the replay
++// `fold --rebuild` walks.
++func (s *RedisStore) Range(ctx context.Context, start string, count int) ([]Entry, error) {
++	if count <= 0 {
++		count = 100
++	}
++	if strings.TrimSpace(start) == "" {
++		start = "-"
++	}
++	msgs, err := s.rdb.XRangeN(ctx, s.stream, start, "+", int64(count)).Result()
++	if errors.Is(err, redis.Nil) {
++		return nil, nil
++	}
++	if err != nil {
++		return nil, err
++	}
++	return entries(msgs), nil
++}
++
++func entries(msgs []redis.XMessage) []Entry {
++	out := make([]Entry, 0, len(msgs))
++	for _, m := range msgs {
++		fields := make(map[string]string, len(m.Values))
++		for k, v := range m.Values {
++			if s, ok := v.(string); ok {
++				fields[k] = s
++			} else {
++				fields[k] = fmt.Sprint(v)
++			}
++		}
++		out = append(out, Entry{ID: m.ID, Fields: fields})
++	}
++	return out
++}
+diff --git a/internal/events/redis_integration_test.go b/internal/events/redis_integration_test.go
+new file mode 100644
+index 000000000..031a7e761
+--- /dev/null
++++ b/internal/events/redis_integration_test.go
+@@ -0,0 +1,195 @@
++package events
++
++import (
++	"bytes"
++	"context"
++	"fmt"
++	"os"
++	"path/filepath"
++	"testing"
++	"time"
++
++	"github.com/redis/go-redis/v9"
++)
++
++// redis_integration_test.go is Johnny's bar 3 against the real store, and it is the only
++// file here that reaches a network. It is OFF unless NOVA_REDIS_TEST=1, and it names no
++// host: the address, the ACL user and the password come from the environment the caller
++// built with `nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD`, so no credential is ever
++// in this tree and no unit test ever dials anything (AGENTS.md rule 2).
++//
++// Every key it writes is under `ev:test-<stamp>`, never `cards:done`, so a live sprint's
++// stream cannot be touched by a test run, and the stream is deleted at the end.
++const (
++	testEnable   = "NOVA_REDIS_TEST"
++	testAddrEnv  = "NOVA_REDIS_ADDR"
++	testUserEnv  = "NOVA_REDIS_USER"
++	testPassEnv  = "NOVA_REDIS_BENCH_PASSWORD"
++	testPrefix   = "ev:test-"
++	testDoneBar  = 100
++	testKillAt   = 50
++	testReadSize = 10
++)
++
++// liveStore dials the fleet store, or skips. It returns the store and the stream name it
++// minted for this run.
++func liveStore(t *testing.T) (*RedisStore, string, Dial) {
++	t.Helper()
++	if os.Getenv(testEnable) != "1" {
++		t.Skipf("set %s=1 (and %s, %s) to run the fold against the fleet store", testEnable, testAddrEnv, testPassEnv)
++	}
++	addr := os.Getenv(testAddrEnv)
++	if addr == "" {
++		t.Fatalf("%s=1 but %s is empty; it wants the fleet store as host:port", testEnable, testAddrEnv)
++	}
++	user := os.Getenv(testUserEnv)
++	if user == "" {
++		user = "bench"
++	}
++	stream := fmt.Sprintf("%s%s", testPrefix, time.Now().UTC().Format("20060102T150405Z"))
++	dial := Dial{Addr: addr, Username: user, Password: os.Getenv(testPassEnv), Stream: stream}
++	store, err := Open(context.Background(), dial)
++	if err != nil {
++		t.Fatalf("dialing the fleet store: %v", err)
++	}
++	t.Cleanup(func() {
++		// The stream goes when the run does: a test that leaves keys behind is a test that
++		// fills someone else's store.
++		rdb := redis.NewClient(&redis.Options{Addr: dial.Addr, Username: dial.Username, Password: dial.Password})
++		defer func() { _ = rdb.Close() }()
++		if err := rdb.Del(context.Background(), stream).Err(); err != nil {
++			t.Logf("could not delete %s: %v (the bench user may not hold DEL)", stream, err)
++		}
++		_ = store.Close()
++	})
++	return store, stream, dial
++}
++
++// cancelAfter is the kill: it cancels the fold's context once n entries have been read, in
++// the middle of a batch, with rows committed, rows in flight and an ack not yet sent.
++type cancelAfter struct {
++	Reader
++	n      int
++	seen   int
++	cancel context.CancelFunc
++}
++
++func (c *cancelAfter) Next(ctx context.Context, group, consumer string, count int, block time.Duration) ([]Entry, error) {
++	entries, err := c.Reader.Next(ctx, group, consumer, count, block)
++	c.seen += len(entries)
++	if c.seen >= c.n && c.cancel != nil {
++		c.cancel()
++		c.cancel = nil
++	}
++	return entries, err
++}
++
++// TestAHundredDonesAgainstTheFleetStore is bar 3 verbatim: a hundred DONEs are produced,
++// the fold is killed half way through and restarted, and the count is a hundred. Then the
++// same stream is rebuilt into a fresh file and the two row sets are compared byte for byte.
++func TestAHundredDonesAgainstTheFleetStore(t *testing.T) {
++	store, stream, dial := liveStore(t)
++	ctx := context.Background()
++	group := "fold-test"
++	dir := t.TempDir()
++
++	for i := 0; i < testDoneBar; i++ {
++		if _, err := store.Emit(ctx, Event{
++			Label:     fmt.Sprintf("bench:test-card-%03d", i),
++			Attempt:   1,
++			Bench:     "studio",
++			Model:     []string{"fable", "sonnet"}[i%2],
++			Route:     []string{"studio", "hulk"}[i%2],
++			Kind:      OK,
++			TokensIn:  Int64(1000),
++			TokensOut: Int64(100),
++			USD:       Float64(0.01),
++		}); err != nil {
++			t.Fatalf("emitting DONE %d: %v", i, err)
++		}
++	}
++	t.Logf("BAR3 emitted %d ok events to %s", testDoneBar, stream)
++
++	db, err := OpenDB(ctx, filepath.Join(dir, "fold.sqlite"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer func() { _ = db.Close() }()
++
++	// The first fold, killed by a context cancel once fifty entries have been read.
++	runCtx, cancel := context.WithCancel(ctx)
++	killer := &cancelAfter{Reader: store, n: testKillAt, cancel: cancel}
++	first := &Folder{Reader: killer, DB: db, Group: group, Consumer: "fold-a", Count: testReadSize}
++	if err := first.Start(runCtx); err != nil {
++		t.Fatal(err)
++	}
++	firstStats, err := first.Run(runCtx, 10*time.Millisecond, nil, stream)
++	cancel()
++	if err != nil {
++		t.Fatalf("the first fold: %v", err)
++	}
++	killed, err := db.Count(ctx)
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Logf("BAR3 killed after read=%d new=%d acked=%d; the file holds %d rows", firstStats.Read, firstStats.Inserted, firstStats.Acked, killed)
++	if killed >= testDoneBar {
++		t.Fatalf("the kill left %d rows of %d folded; nothing was left for the restart to prove", killed, testDoneBar)
++	}
++
++	// The restart: a new process is a new consumer name, so the reclaim has to be the
++	// group's pending list and not this consumer's memory.
++	second, err := Open(ctx, dial)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer func() { _ = second.Close() }()
++	restarted := &Folder{Reader: second, DB: db, Group: group, Consumer: "fold-b", Count: testReadSize}
++	if err := restarted.Start(ctx); err != nil {
++		t.Fatal(err)
++	}
++	var after Stats
++	for {
++		s, err := restarted.Once(ctx)
++		if err != nil {
++			t.Fatalf("the restarted fold: %v", err)
++		}
++		if s.Read == 0 {
++			break
++		}
++		after.Add(s)
++	}
++
++	count, err := db.CountKind(ctx, OK)
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Logf("BAR3 restarted read=%d new=%d acked=%d; the fold holds ok=%d", after.Read, after.Inserted, after.Acked, count)
++	if count != testDoneBar {
++		t.Fatalf("BAR3 FAIL the fold holds %d DONEs after a kill and a restart, want %d", count, testDoneBar)
++	}
++	t.Logf("BAR3 OK a hundred DONEs, the fold killed and restarted, the count is %d", count)
++
++	// The rebuild: the whole stream replayed into a file that did not exist, compared with
++	// the incremental fold's rows.
++	rebuilt, err := OpenDB(ctx, filepath.Join(dir, "rebuild.sqlite"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer func() { _ = rebuilt.Close() }()
++	stats, err := Rebuild(ctx, second, rebuilt, testReadSize)
++	if err != nil {
++		t.Fatalf("the rebuild: %v", err)
++	}
++	var a, b bytes.Buffer
++	if err := db.Dump(ctx, &a); err != nil {
++		t.Fatal(err)
++	}
++	if err := rebuilt.Dump(ctx, &b); err != nil {
++		t.Fatal(err)
++	}
++	if a.String() != b.String() {
++		t.Fatalf("BAR3 FAIL the rebuild's rows differ from the fold's:\nfold:\n%s\nrebuild:\n%s", firstLines(a.String()), firstLines(b.String()))
++	}
++	t.Logf("BAR3 OK the rebuild read=%d new=%d and its %d bytes of rows are the fold's, byte for byte", stats.Read, stats.Inserted, a.Len())
++}
+diff --git a/internal/events/schema.sql b/internal/events/schema.sql
+new file mode 100644
+index 000000000..41003ffb1
+--- /dev/null
++++ b/internal/events/schema.sql
+@@ -0,0 +1,178 @@
++-- schema.sql is the fold: what `cards:done` becomes once it is a record rather than a queue.
++-- It is a FOLD of that one stream, not a second source of truth beside it: the stream is the
++-- record, and `nova-pulse fold --rebuild` recomputes this file from it at any moment.
++-- It is applied on every open, statement by statement in one transaction, and is idempotent:
++-- every table, index and view is IF NOT EXISTS and the version row is ON CONFLICT DO NOTHING.
++--
++-- THE EVENT ID IS THE PRIMARY KEY of all three tables. Streams deliver at least once, so a
++-- redelivered entry must be a no-op rather than a second row: that single fact is what makes
++-- "a hundred DONEs, kill the fold, restart, the count is a hundred" (Johnny's bar 3) a
++-- property of the schema. It is also why a replay of the whole stream into a fresh file
++-- produces the same rows as an incremental fold.
++--
++-- NO ROW CARRIES A FOLD TIMESTAMP, on purpose. `at` is the writer's stamp and travels with
++-- the entry; a `folded_at` would make two folds of the same stream differ and there would be
++-- nothing left to compare a rebuild against.
++
++-- tokens_in, tokens_out and usd are NULLABLE with no default, on purpose: an entry that
++-- carries no cost has not reported a zero cost (no evidence is not negative evidence). SUM
++-- skips a NULL, and a sum over nothing but NULLs is NULL, which the report prints as a dash.
++
++CREATE TABLE IF NOT EXISTS schema_version (
++    version INTEGER PRIMARY KEY
++);
++
++-- attempts is the card's own life: queued, leased, started, turn, ok, fail, asked,
++-- harvested, pr, jev. One row per event, not per card: the card is the `label` column and
++-- the views do the counting.
++CREATE TABLE IF NOT EXISTS attempts (
++    event_id   TEXT PRIMARY KEY,
++    label      TEXT    NOT NULL,
++    attempt    INTEGER NOT NULL DEFAULT 0,
++    bench      TEXT    NOT NULL DEFAULT '',
++    model      TEXT    NOT NULL DEFAULT '',
++    route      TEXT    NOT NULL DEFAULT '',
++    kind       TEXT    NOT NULL,
++    tokens_in  INTEGER,
++    tokens_out INTEGER,
++    usd        REAL,
++    pr         TEXT    NOT NULL DEFAULT '',
++    head       TEXT    NOT NULL DEFAULT '',
++    at         TEXT    NOT NULL DEFAULT '',
++    day        TEXT    NOT NULL DEFAULT ''
++);
++
++-- reads is a friend's read of a pull request: the `read` kind, kept apart because the read
++-- queue's numbers are not the card's and a join on label is how they meet.
++CREATE TABLE IF NOT EXISTS reads (
++    event_id   TEXT PRIMARY KEY,
++    label      TEXT    NOT NULL,
++    attempt    INTEGER NOT NULL DEFAULT 0,
++    bench      TEXT    NOT NULL DEFAULT '',
++    model      TEXT    NOT NULL DEFAULT '',
++    route      TEXT    NOT NULL DEFAULT '',
++    kind       TEXT    NOT NULL,
++    tokens_in  INTEGER,
++    tokens_out INTEGER,
++    usd        REAL,
++    pr         TEXT    NOT NULL DEFAULT '',
++    head       TEXT    NOT NULL DEFAULT '',
++    at         TEXT    NOT NULL DEFAULT '',
++    day        TEXT    NOT NULL DEFAULT ''
++);
++
++-- landings is the lander's merge, the only kind that proves a card was USEFUL. GitHub is
++-- still the proof of DONE (Johnny); this table is the count beside it.
++CREATE TABLE IF NOT EXISTS landings (
++    event_id   TEXT PRIMARY KEY,
++    label      TEXT    NOT NULL,
++    attempt    INTEGER NOT NULL DEFAULT 0,
++    bench      TEXT    NOT NULL DEFAULT '',
++    model      TEXT    NOT NULL DEFAULT '',
++    route      TEXT    NOT NULL DEFAULT '',
++    kind       TEXT    NOT NULL,
++    tokens_in  INTEGER,
++    tokens_out INTEGER,
++    usd        REAL,
++    pr         TEXT    NOT NULL DEFAULT '',
++    head       TEXT    NOT NULL DEFAULT '',
++    at         TEXT    NOT NULL DEFAULT '',
++    day        TEXT    NOT NULL DEFAULT ''
++);
++
++CREATE INDEX IF NOT EXISTS attempts_label_idx ON attempts (label);
++CREATE INDEX IF NOT EXISTS attempts_kind_idx  ON attempts (kind);
++CREATE INDEX IF NOT EXISTS attempts_day_idx   ON attempts (day);
++CREATE INDEX IF NOT EXISTS attempts_route_idx ON attempts (model, route);
++CREATE INDEX IF NOT EXISTS attempts_bench_idx ON attempts (bench);
++CREATE INDEX IF NOT EXISTS reads_label_idx    ON reads (label);
++CREATE INDEX IF NOT EXISTS landings_label_idx ON landings (label);
++
++-- card_model_route is which model on which route ran a card: the first non-empty pair the
++-- card's own events carry, by event id, so it is one deterministic answer per label. The
++-- lander does not know the model, so a landing finds its model through this view.
++CREATE VIEW IF NOT EXISTS card_model_route AS
++SELECT a.label AS label,
++       (SELECT m.model FROM attempts m WHERE m.label = a.label AND m.model <> '' ORDER BY m.event_id LIMIT 1) AS model,
++       (SELECT r.route FROM attempts r WHERE r.label = a.label AND r.route <> '' ORDER BY r.event_id LIMIT 1) AS route
++  FROM attempts a
++ GROUP BY a.label;
++
++CREATE VIEW IF NOT EXISTS landed_by_model_route AS
++SELECT COALESCE(c.model, '') AS model,
++       COALESCE(c.route, '') AS route,
++       count(*)              AS landed
++  FROM landings l
++  LEFT JOIN card_model_route c ON c.label = l.label
++ GROUP BY COALESCE(c.model, ''), COALESCE(c.route, '');
++
++-- by_model_route is the row Glenn asked for: cost per USEFUL card, per route, beside cost
++-- per OK card, so a dearer model that lands beats a cheap one that does not.
++CREATE VIEW IF NOT EXISTS by_model_route AS
++SELECT a.model                                                AS model,
++       a.route                                                AS route,
++       count(*)                                               AS "rows",
++       sum(CASE WHEN a.kind = 'ok' THEN 1 ELSE 0 END)         AS ok,
++       sum(CASE WHEN a.kind = 'fail' THEN 1 ELSE 0 END)       AS fail,
++       sum(CASE WHEN a.kind IN ('ok','fail') THEN 1 ELSE 0 END) AS done,
++       sum(a.tokens_in)                                       AS tokens_in,
++       sum(a.tokens_out)                                      AS tokens_out,
++       round(sum(a.usd), 6)                                   AS usd,
++       CASE WHEN sum(CASE WHEN a.kind = 'ok' THEN 1 ELSE 0 END) > 0
++            THEN round(sum(a.usd) / sum(CASE WHEN a.kind = 'ok' THEN 1 ELSE 0 END), 6) END AS usd_per_ok,
++       COALESCE(l.landed, 0)                                  AS landed,
++       CASE WHEN COALESCE(l.landed, 0) > 0
++            THEN round(sum(a.usd) / l.landed, 6) END          AS usd_per_landed
++  FROM attempts a
++  LEFT JOIN landed_by_model_route l ON l.model = a.model AND l.route = a.route
++ GROUP BY a.model, a.route;
++
++CREATE VIEW IF NOT EXISTS by_bench AS
++SELECT bench                                                  AS bench,
++       count(*)                                               AS "rows",
++       count(DISTINCT label)                                  AS cards,
++       sum(CASE WHEN kind = 'ok' THEN 1 ELSE 0 END)           AS ok,
++       sum(CASE WHEN kind = 'fail' THEN 1 ELSE 0 END)         AS fail,
++       sum(CASE WHEN kind IN ('ok','fail') THEN 1 ELSE 0 END) AS done,
++       round(sum(usd), 6)                                     AS usd
++  FROM attempts
++ GROUP BY bench;
++
++CREATE VIEW IF NOT EXISTS by_day AS
++SELECT day                                                    AS day,
++       count(*)                                               AS "rows",
++       count(DISTINCT label)                                  AS cards,
++       sum(CASE WHEN kind = 'ok' THEN 1 ELSE 0 END)           AS ok,
++       sum(CASE WHEN kind = 'fail' THEN 1 ELSE 0 END)         AS fail,
++       sum(CASE WHEN kind IN ('ok','fail') THEN 1 ELSE 0 END) AS done,
++       round(sum(usd), 6)                                     AS usd
++  FROM attempts
++ GROUP BY day;
++
++-- by_label is one row per card: what `nova-pulse status` and the sprint table read instead
++-- of counting files with `find`.
++CREATE VIEW IF NOT EXISTS by_label AS
++SELECT a.label                                                  AS label,
++       count(*)                                                 AS "rows",
++       max(a.attempt)                                           AS attempts,
++       sum(CASE WHEN a.kind = 'ok' THEN 1 ELSE 0 END)           AS ok,
++       sum(CASE WHEN a.kind = 'fail' THEN 1 ELSE 0 END)         AS fail,
++       sum(CASE WHEN a.kind IN ('ok','fail') THEN 1 ELSE 0 END) AS done,
++       round(sum(a.usd), 6)                                     AS usd,
++       (SELECT count(*) FROM reads r WHERE r.label = a.label)    AS reads,
++       (SELECT count(*) FROM landings l WHERE l.label = a.label) AS landed
++  FROM attempts a
++ GROUP BY a.label;
++
++-- totals is the sprint table's own row: done, ok and fail from the fold, not from mtimes.
++CREATE VIEW IF NOT EXISTS totals AS
++SELECT (SELECT count(DISTINCT label) FROM attempts)                                  AS cards,
++       (SELECT count(*) FROM attempts)                                               AS "rows",
++       (SELECT count(*) FROM attempts WHERE kind IN ('ok','fail'))                   AS done,
++       (SELECT count(*) FROM attempts WHERE kind = 'ok')                             AS ok,
++       (SELECT count(*) FROM attempts WHERE kind = 'fail')                           AS fail,
++       (SELECT count(*) FROM reads)                                                  AS reads,
++       (SELECT count(*) FROM landings)                                               AS landed,
++       (SELECT round(sum(usd), 6) FROM attempts)                                     AS usd;
++
++INSERT INTO schema_version (version) VALUES (1) ON CONFLICT (version) DO NOTHING;
+diff --git a/internal/events/stream.go b/internal/events/stream.go
+new file mode 100644
+index 000000000..f41e44cd6
+--- /dev/null
++++ b/internal/events/stream.go
+@@ -0,0 +1,45 @@
++package events
++
++import (
++	"context"
++	"time"
++)
++
++// Entry is one delivered stream entry: the id Redis minted and the fields the writer wrote.
++// The id is the fold's primary key, so it is the whole of the idempotency story.
++type Entry struct {
++	ID     string
++	Fields map[string]string
++}
++
++// Emitter is the write half: one XADD per card transition. It is an interface so the unit
++// tests run against the in-memory FakeStream and the integration test against the fleet
++// store, over the same code.
++type Emitter interface {
++	Emit(ctx context.Context, e Event) (id string, err error)
++}
++
++// Reader is the read half the fold uses. It is XREADGROUP, XAUTOCLAIM, XACK and XRANGE and
++// nothing else: core types only, no server-side logic (Johnny, section 8).
++//
++//   - EnsureGroup makes the stream and the group at entry 0, so a fold started after the
++//     first writer still reads the whole stream.
++//   - Pending claims what this group was delivered and never acked, from any consumer, so a
++//     fold that is killed and restarted under a new consumer name loses nothing.
++//   - Next takes new entries.
++//   - Ack is the commit, and it happens only after the fold's transaction has committed.
++//   - Range is the replay --rebuild reads, and it touches no group state.
++type Reader interface {
++	EnsureGroup(ctx context.Context, group string) error
++	Pending(ctx context.Context, group, consumer string, count int) ([]Entry, error)
++	Next(ctx context.Context, group, consumer string, count int, block time.Duration) ([]Entry, error)
++	Ack(ctx context.Context, group string, ids ...string) error
++	Range(ctx context.Context, start string, count int) ([]Entry, error)
++}
++
++// Store is a stream that is both halves. The Redis store and the fake both are one.
++type Store interface {
++	Emitter
++	Reader
++	Close() error
++}

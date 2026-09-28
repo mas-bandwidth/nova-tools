@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/selftalk"
 )
@@ -64,6 +65,12 @@ writer's, and this tool never makes it.
 
 Flags come before files. Exit codes: 0 no findings, 1 findings, 2 could not
 run (bad invocation, unreadable file).
+
+First run, from the root of this checkout: copy the example pages the lines
+below read, so ./pages is a directory you have made, then paste them as they
+are.
+
+  cp -R cmd/nova-self-talk/testdata/example-pages ./pages
 
 example:
   nova-self-talk ./pages/journal.md
@@ -151,7 +158,13 @@ func set(l baseList) map[string]bool {
 	return m
 }
 
-func run(args []string, stdout, stderr io.Writer) int {
+func run(args []string, stdout, stderr io.Writer) (code int) {
+	// `version -h` is the version verb's help on stdout at exit 0, never two file
+	// names (the CLI style's rule (b), #4505); -h on the scan itself is answered below.
+	defer verbflag.Recover(stdout, "nova-self-talk", usage, &code)
+	if len(args) == 2 && args[0] == "version" {
+		verbflag.HelpIfAsked(args[1:], "version")
+	}
 	// `help` is a word rather than a flag because the refusals now name it: a one-line
 	// refusal that ends in `run: nova-self-talk help` has to be telling the truth.
 	if len(args) == 1 && args[0] == "help" {
@@ -250,7 +263,26 @@ func run(args []string, stdout, stderr io.Writer) int {
 			// everything went from 78K tokens to one line.
 			dated++
 		}
+		// THE THIRD DETECTOR (nova-tools #1468, third fix attempt) runs alongside
+		// selftalk.Scan for the same reason the second detector does: the three
+		// plainest first-person absolutes ("I cannot ever get this right." and
+		// its two siblings) are missed by both of the existing detectors by
+		// design. plainest.go carries the narrow addition; here we merge its
+		// STANDING claims into the count and the FAIL stream, so the run loop's
+		// one-line grammar is unchanged.
+		plainestClaims, plainestFound := plainestScan(text)
+		for _, c := range plainestClaims {
+			claims++
+			if c.Verdict == selftalk.Standing {
+				standing++
+				fails.Line("standing", fmt.Sprintf("SELFTALK FAIL %s: %s: %s",
+					oneline.Escape(f), c.Verdict, oneline.Escape(oneline.Cap(c.Text, oneline.TailBytes))))
+				continue
+			}
+			dated++
+		}
 		found := selftalk.ScanInstallation(text)
+		found = append(found, plainestFound...)
 		// The banner prints ONCE per file that has findings, before them, so a
 		// reader cannot meet a finding in a rule document without meeting the
 		// sentence that says what it is for.

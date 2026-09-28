@@ -13,6 +13,8 @@ import (
 // darwin's and a Mac cannot walk a windows path. This one runs on the real thing, so that
 // the model cannot drift away from filepath's own answer without a windows CI job saying so.
 func TestWinDirAgreesWithFilepathDir(t *testing.T) {
+	t.Parallel()
+
 	for _, p := range []string{
 		`C:\Users\runneradmin\AppData\Local\Temp\job\w`,
 		`C:\Users`,
@@ -29,6 +31,8 @@ func TestWinDirAgreesWithFilepathDir(t *testing.T) {
 // The 600s timeout of run 34663812025, on the platform it happened on and with a deadline of
 // its own: a test must never wait without one.
 func TestAncestorsTerminatesOnThisWindowsMachine(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	done := make(chan []string, 1)
 	go func() { done <- Ancestors(filepath.Join(dir, "w", "sub")) }()

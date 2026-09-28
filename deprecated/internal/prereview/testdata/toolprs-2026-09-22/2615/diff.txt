@@ -1,0 +1,647 @@
+diff --git a/cmd/nova-merge/carriedhold2550_test.go b/cmd/nova-merge/carriedhold2550_test.go
+new file mode 100644
+index 000000000..ab6096254
+--- /dev/null
++++ b/cmd/nova-merge/carriedhold2550_test.go
+@@ -0,0 +1,107 @@
++package main
++
++import (
++	"encoding/json"
++	"fmt"
++	"path/filepath"
++	"testing"
++
++	"github.com/mas-bandwidth/nova-tools/internal/merge"
++)
++
++// nova-tools #2550, the gate's own control.
++//
++// The live break, from tmp/session-0919b/land-schema-5/gate-cells-1338.log:
++//
++//	BATCH DROP #1551 reason="head 5adf9cb212a8 carries an unreleased HOLD" who=emma
++//	hold=comment:5767845547 source=comment-rule held_at=67712d4eb59a carried=yes
++//	at=2026-09-21T21:35:02Z conf=-
++//
++// held_at is a head the branch moved past; the current head carries four typed APPROVE
++// comments from the same friend. 57 consecutive ticks took the same 16 cell pull requests
++// and dropped every one of them, members=none, for 11.5 h.
++//
++// This drives the whole verb -- forge comment JSON, ParseComment, the hold fold, the DROP
++// line -- rather than the fold alone, because what cost the 11.5 h was the DROP line the
++// gate printed, not a function's return value.
++
++const carriedHoldReviewers2550 = "who\tlogins\tmay-hold\nemma\temma-claude\tyes\n"
++
++// supersededHead2550 is the held_at prefix from the log, padded: the log prints
++// merge.Short and never the whole object name.
++const supersededHead2550 = "67712d4eb59a" + "0f1e2d3c4b5a69788796a5b4c3d2"
++
++func commentJSON2550(t *testing.T, bodies []struct{ Body, At string }) string {
++	t.Helper()
++	type user struct {
++		Login string `json:"login"`
++	}
++	type wire struct {
++		ID        int64  `json:"id"`
++		User      user   `json:"user"`
++		Body      string `json:"body"`
++		CreatedAt string `json:"created_at"`
++	}
++	out := make([]wire, 0, len(bodies))
++	for i, b := range bodies {
++		out = append(out, wire{ID: int64(5767845547 + i), User: user{Login: "emma-claude"}, Body: b.Body, CreatedAt: b.At})
++	}
++	raw, err := json.Marshal(out)
++	if err != nil {
++		t.Fatalf("marshal comments: %v", err)
++	}
++	return string(raw)
++}
++
++func TestTheGateTakesAMemberWhoseCarriedHoldTheSameFriendApprovedAtHead(t *testing.T) {
++	t.Parallel()
++	l := batchRepo(t)
++	revFile := testReviewerFile(t, l.dir, carriedHoldReviewers2550)
++	head := l.heads[1]
++
++	comments := commentJSON2550(t, []struct{ Body, At string }{
++		{Body: "DISPOSITION who=emma head=" + supersededHead2550 + " verdict=HOLD\nnotes.txt is untracked in the cell.",
++			At: "2026-09-21T21:35:02Z"},
++		{Body: "DISPOSITION who=emma head=" + head + " verdict=APPROVE score=10/10", At: "2026-09-22T01:48:00Z"},
++		{Body: "DISPOSITION who=emma head=" + head + " verdict=APPROVE score=10/10", At: "2026-09-22T02:45:00Z"},
++	})
++	l.host.SetRawVerdicts(1, comments, "[]")
++
++	exit, stdout, stderr := l.run("batch", "--name", "integration-2550", "--pr", "1",
++		"--repo", "o/n", "--root", filepath.Join(l.dir, "b2550"), "--base", "dev", "--timeout", "5m",
++		"--reviewers", revFile)
++
++	if exit != 0 {
++		t.Fatalf("the gate went red over a member whose hold its author released at head: exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
++	}
++	absent(t, stderr, "BATCH DROP #1 ")
++	absent(t, stderr, "carried=yes")
++	contains(t, stdout, "members=1")
++	contains(t, stdout, "dropped=none")
++}
++
++// The same fixture with the APPROVE taken away: the hold is still the last word its
++// author left, and the gate must still drop the member and still say carried=yes. The
++// fix releases a hold a friend answered, never a hold nobody answered.
++func TestTheGateStillDropsACarriedHoldNobodyAnsweredAtHead(t *testing.T) {
++	t.Parallel()
++	l := batchRepo(t)
++	revFile := testReviewerFile(t, l.dir, carriedHoldReviewers2550)
++
++	comments := commentJSON2550(t, []struct{ Body, At string }{
++		{Body: "DISPOSITION who=emma head=" + supersededHead2550 + " verdict=HOLD\nnotes.txt is untracked in the cell.",
++			At: "2026-09-21T21:35:02Z"},
++	})
++	l.host.SetRawVerdicts(1, comments, "[]")
++
++	exit, stdout, stderr := l.run("batch", "--name", "integration-2550b", "--pr", "1",
++		"--repo", "o/n", "--root", filepath.Join(l.dir, "b2550b"), "--base", "dev", "--timeout", "5m",
++		"--reviewers", revFile)
++
++	if exit != 0 {
++		t.Fatalf("batch exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
++	}
++	contains(t, stderr, fmt.Sprintf("BATCH DROP #1 reason=\"head %s carries an unreleased HOLD\" who=emma hold=comment:5767845547 source=comment-rule held_at=%s carried=yes",
++		merge.Short(l.heads[1]), merge.Short(supersededHead2550)))
++	contains(t, stdout, "dropped=1")
++}
+diff --git a/docs/SPEC-DECIDE.md b/docs/SPEC-DECIDE.md
+index 34e5fb35d..9ab1e2076 100644
+--- a/docs/SPEC-DECIDE.md
++++ b/docs/SPEC-DECIDE.md
+@@ -1311,6 +1311,27 @@ is not the author for the current head; a scoped record is a release of the hold
+ nothing more, and the member waits for the unscoped one. `--scope` and `--releases` are grammar
+ this reading adds to `nova-merge read` (SPEC-MERGE.md:449), rewritten by #1572 with the code.
+ 
++**A hold at a head the branch has moved past is released by its holder's later typed verdict at
++the current head** (#2550). Everything above is about a hold that binds to the **current** head,
++and there it stands: a comment releases nothing, only the holder's record does. A hold whose
++`held_at` is a **superseded** head is a different object — it is the last word its author left
++about a commit that is gone — and it is released by a later **typed** verdict from the **same**
++`who` at the current head, in any source. An APPROVE releases it. A new HOLD at the current head
++**replaces** it: the member is still dropped, but by the hold at head, so `held_at` names a commit
++a reader can go and look at instead of a `carried=yes` pointing at nothing. A hold stays carried
++exactly while its author has said nothing at the current head. Four rows fix it: HOLD at A and an
++APPROVE at the current head B — **taken**; HOLD at A and nothing at B — **dropped**, `carried=yes`;
++HOLD at A and a HOLD at B — **dropped** at B, `carried=no`; HOLD at A and an APPROVE at A only
++with the head now B — **dropped**, `carried=yes`, because release keys on the head and never on
++"somebody approved at some point". The `head=` on a typed APPROVE is matched by the same prefix
++rule a typed HOLD's `head=` gets, so an abbreviation releases; and a releasing APPROVE must be the
++**whole line** — a `DISPOSITION` smuggled into a sentence inside a long body is not a verdict —
++while a HOLD keeps the lenient parse, because a rule about smuggling must not fail open on the
++side that stops a merge. An untyped hold-shaped line binds to the current head and has no author
++to match, so it is never carried and this releases none of them. The hurt: on 2026-09-22, 57
++consecutive ticks took the same 16 approved cell pull requests and dropped every one of them on a
++`held_at` the branch had moved past, `members=none`, for 11.5 h with read debt at 0.
++
+ **No flag ignores a hold.** There is no `--ignore-hold`, for one hold or for one comment: a hold
+ is a no, and stepping over one named member while the gate still claims to read holds is the
+ 02:43Z hole with a flag. The one waiver is `--no-require-holds --reason <text>`, and it waives the
+diff --git a/internal/merge/carriedhold_test.go b/internal/merge/carriedhold_test.go
+new file mode 100644
+index 000000000..481498fbc
+--- /dev/null
++++ b/internal/merge/carriedhold_test.go
+@@ -0,0 +1,256 @@
++package merge
++
++import (
++	"encoding/json"
++	"strings"
++	"testing"
++)
++
++// nova-tools #2550: a HOLD at a SUPERSEDED head was carried forever.
++//
++// Measured 2026-09-22 02:25Z-13:50Z on schema fixed-table-form: 57 consecutive ticks of
++// `nova-merge batch` took 16 cell pull requests and the gate dropped every one of them:
++//
++//	BATCH DROP #1551 reason="head 5adf9cb212a8 carries an unreleased HOLD" who=emma
++//	hold=comment:5767845547 source=comment-rule held_at=67712d4eb59a carried=yes
++//	at=2026-09-21T21:35:02Z conf=-
++//
++// held_at 67712d4eb59a is a head the branch has moved past; the current head 5adf9cb212a8
++// carries four typed `DISPOSITION who=Emma head=5adf9cb2... verdict=APPROVE score=10/10`
++// comments from the same friend. members=none, so the integration branch was empty and
++// GitHub refused the pull request; 0 of 16 landed in 11.5 h though read debt was 0.
++//
++// The rule this table holds (issue #2550):
++//
++//	A HOLD whose held_at is not the current head is RELEASED by a LATER TYPED verdict
++//	from the SAME friend at the CURRENT head. APPROVE releases it; a new HOLD at the
++//	current head replaces it and holds. A hold is carried only while no typed verdict
++//	from its author exists at the current head.
++//
++// It is deliberately narrow. A hold AT the current head is untouched: a comment still
++// never releases one (SPEC-DECIDE reading 3, TestACommentNeverReleasesAnything), and
++// rows "hold at head released by nothing" and "abstain is not a verdict" hold that line.
++
++// The 12-character prefixes are the real ones from gate-cells-1338.log; the tails are
++// padding, because the log prints `merge.Short` and never the whole object name.
++const (
++	headA2550 = "67712d4eb59a" + "0f1e2d3c4b5a69788796a5b4c3d2" // the superseded head
++	headB2550 = "5adf9cb212a8" + "1b3c5d7e9f02468ace13579bdf02" // the current head
++)
++
++const reviewers2550 = "who\tlogins\tmay-hold\n" +
++	"emma\temma-claude\tyes\n" +
++	"johnny\tjohnny-grok\tyes\n" +
++	"rowan\trowan-claude\tyes\n"
++
++type fixtureComment struct {
++	ID    int64
++	Login string
++	Body  string
++	At    string
++}
++
++// commentsJSON renders the fixture the way the forge answers it, so the table runs the
++// whole pipe -- decode, ParseComment, UnliftedHolds -- and not just the fold.
++func commentsJSON(t *testing.T, cs []fixtureComment) string {
++	t.Helper()
++	type user struct {
++		Login string `json:"login"`
++	}
++	type wire struct {
++		ID        int64  `json:"id"`
++		User      user   `json:"user"`
++		Body      string `json:"body"`
++		CreatedAt string `json:"created_at"`
++	}
++	out := make([]wire, 0, len(cs))
++	for _, c := range cs {
++		out = append(out, wire{ID: c.ID, User: user{Login: c.Login}, Body: c.Body, CreatedAt: c.At})
++	}
++	b, err := json.Marshal(out)
++	if err != nil {
++		t.Fatalf("marshal fixture comments: %v", err)
++	}
++	return string(b)
++}
++
++func hold2550(head string) string {
++	return "DISPOSITION who=emma head=" + head + " verdict=HOLD\nnotes.txt is untracked in the cell."
++}
++
++func approve2550(head string) string {
++	return "DISPOSITION who=emma head=" + head + " verdict=APPROVE score=10/10"
++}
++
++func TestACarriedHoldIsReleasedByTheSameFriendsVerdictAtHead(t *testing.T) {
++	t.Parallel()
++
++	type want struct {
++		held    bool   // the gate drops the pull request
++		holdID  string // the hold the DROP line names, when held
++		heldAt  string // held_at on the DROP line, when held
++		carried bool   // carried= on the DROP line, when held
++	}
++
++	cases := []struct {
++		name     string
++		comments []fixtureComment
++		want     want
++	}{
++		{
++			// Row 1 of the issue. This is the 16 cell pull requests' shape.
++			name: "hold at A, typed APPROVE at B which is current: taken",
++			comments: []fixtureComment{
++				{ID: 101, Login: "emma-claude", Body: hold2550(headA2550), At: "2026-09-21T21:35:02Z"},
++				{ID: 102, Login: "emma-claude", Body: approve2550(headB2550), At: "2026-09-22T01:48:00Z"},
++			},
++			want: want{held: false},
++		},
++		{
++			// Row 2 of the issue: nothing has been said at the current head, so the
++			// hold is still the last word its author left and it is carried.
++			name: "hold at A, nothing at B: dropped, carried",
++			comments: []fixtureComment{
++				{ID: 201, Login: "emma-claude", Body: hold2550(headA2550), At: "2026-09-21T21:35:02Z"},
++			},
++			want: want{held: true, holdID: "comment:201", heldAt: headA2550, carried: true},
++		},
++		{
++			// Row 3 of the issue: a new HOLD at the current head REPLACES the carried
++			// one. The pull request is still dropped, but the DROP line must name the
++			// hold at head with carried=no -- pointing a reader at a head the branch
++			// moved past is what cost 11.5 h.
++			name: "hold at A, hold at B: dropped at head, not carried",
++			comments: []fixtureComment{
++				{ID: 301, Login: "emma-claude", Body: hold2550(headA2550), At: "2026-09-21T21:35:02Z"},
++				{ID: 302, Login: "emma-claude", Body: hold2550(headB2550), At: "2026-09-22T01:48:00Z"},
++			},
++			want: want{held: true, holdID: "comment:302", heldAt: headB2550, carried: false},
++		},
++		{
++			// Row 4, the negative control the fix must not trample: the APPROVE is at
++			// the SUPERSEDED head too. There is no read at the current head, so the
++			// hold stands and stays carried. Release keys on the head, never on
++			// "somebody approved at some point".
++			name: "hold at A, APPROVE at A only, head moved to B: dropped, no read at head",
++			comments: []fixtureComment{
++				{ID: 401, Login: "emma-claude", Body: hold2550(headA2550), At: "2026-09-21T21:35:02Z"},
++				{ID: 402, Login: "emma-claude", Body: approve2550(headA2550), At: "2026-09-22T01:48:00Z"},
++			},
++			want: want{held: true, holdID: "comment:401", heldAt: headA2550, carried: true},
++		},
++		{
++			// The live #1551 shape, comment ids and stamps as the log and the issue
++			// carry them: one hold at the superseded head, four typed APPROVE 10/10 at
++			// the current head from the same friend.
++			name: "live #1551: hold at 67712d4eb59a, four APPROVE at 5adf9cb212a8: taken",
++			comments: []fixtureComment{
++				{ID: 5767845547, Login: "emma-claude", Body: hold2550(headA2550), At: "2026-09-21T21:35:02Z"},
++				{ID: 5768100001, Login: "emma-claude", Body: approve2550(headB2550), At: "2026-09-22T01:48:00Z"},
++				{ID: 5768100002, Login: "emma-claude", Body: approve2550(headB2550), At: "2026-09-22T02:45:00Z"},
++				{ID: 5768100003, Login: "emma-claude", Body: approve2550(headB2550), At: "2026-09-22T03:34:00Z"},
++				{ID: 5768100004, Login: "emma-claude", Body: approve2550(headB2550), At: "2026-09-22T04:10:00Z"},
++			},
++			want: want{held: false},
++		},
++		{
++			// The second ask on the issue: an APPROVE's head= is matched against the
++			// whole 40-character head by the same prefix rule HOLD's head= gets, so the
++			// abbreviation a friend actually types releases.
++			name: "APPROVE at B typed as a 12-character prefix: taken",
++			comments: []fixtureComment{
++				{ID: 601, Login: "emma-claude", Body: hold2550(headA2550), At: "2026-09-21T21:35:02Z"},
++				{ID: 602, Login: "emma-claude", Body: approve2550(headB2550[:12]), At: "2026-09-22T01:48:00Z"},
++			},
++			want: want{held: false},
++		},
++		{
++			// The second ask, other half: a DISPOSITION that is not the WHOLE line is
++			// not a verdict. A release smuggled into a sentence inside a long body
++			// releases nothing.
++			name: "APPROVE smuggled mid-line in a multi-line body: dropped, carried",
++			comments: []fixtureComment{
++				{ID: 701, Login: "emma-claude", Body: hold2550(headA2550), At: "2026-09-21T21:35:02Z"},
++				{ID: 702, Login: "emma-claude", Body: "Ran the cells again.\nI would write DISPOSITION who=emma head=" +
++					headB2550 + " verdict=APPROVE if the rebase were clean.\nIt is not.", At: "2026-09-22T01:48:00Z"},
++			},
++			want: want{held: true, holdID: "comment:701", heldAt: headA2550, carried: true},
++		},
++		{
++			// Only the holder releases: a second friend's APPROVE at head is not the
++			// author of the carried hold and lifts nothing.
++			name: "hold at A by emma, APPROVE at B by johnny: dropped, carried",
++			comments: []fixtureComment{
++				{ID: 801, Login: "emma-claude", Body: hold2550(headA2550), At: "2026-09-21T21:35:02Z"},
++				{ID: 802, Login: "johnny-grok", Body: "DISPOSITION who=johnny head=" + headB2550 +
++					" verdict=APPROVE score=9/10", At: "2026-09-22T01:48:00Z"},
++			},
++			want: want{held: true, holdID: "comment:801", heldAt: headA2550, carried: true},
++		},
++		{
++			// The line this fix must NOT cross (SPEC-DECIDE reading 3): a hold AT the
++			// current head is not carried, and a comment never releases it.
++			name: "hold at B and APPROVE at B, both current: dropped, a comment releases nothing at head",
++			comments: []fixtureComment{
++				{ID: 901, Login: "emma-claude", Body: hold2550(headB2550), At: "2026-09-22T01:00:00Z"},
++				{ID: 902, Login: "emma-claude", Body: approve2550(headB2550), At: "2026-09-22T01:48:00Z"},
++			},
++			want: want{held: true, holdID: "comment:901", heldAt: headB2550, carried: false},
++		},
++		{
++			// An untyped hold-shaped line binds to the current head, is who=unknown,
++			// and the same friend's later typed APPROVE at that head does not name it:
++			// it fails closed, exactly as it did before #2550.
++			name: "untyped bold HOLD at head, typed APPROVE at head: dropped",
++			comments: []fixtureComment{
++				{ID: 1001, Login: "emma-claude", Body: "**HOLD** the schema leg is red.", At: "2026-09-22T01:00:00Z"},
++				{ID: 1002, Login: "emma-claude", Body: approve2550(headB2550), At: "2026-09-22T01:48:00Z"},
++			},
++			want: want{held: true, holdID: "comment:1001", heldAt: headB2550, carried: false},
++		},
++	}
++
++	rs := mustReviewers2550(t)
++	for _, tc := range cases {
++		tc := tc
++		t.Run(tc.name, func(t *testing.T) {
++			t.Parallel()
++			vs, err := ParseForgeVerdicts(commentsJSON(t, tc.comments), "[]", 1551, rs, "rowan", headB2550, false)
++			if err != nil {
++				t.Fatalf("the fixture did not decode: %v", err)
++			}
++			holds := UnliftedHolds(vs, headB2550, "rowan", rs)
++
++			if !tc.want.held {
++				if len(holds) != 0 {
++					t.Fatalf("the gate dropped a pull request whose current head %s carries a released hold; this is the #2550 break, held by %+v",
++						Short(headB2550), holds)
++				}
++				return
++			}
++			if len(holds) == 0 {
++				t.Fatalf("the gate took a held pull request: want a hold at %s, got none", Short(tc.want.heldAt))
++			}
++			got := holds[0]
++			if got.ID != tc.want.holdID {
++				t.Errorf("the DROP line would name hold=%s, want %s (all: %+v)", got.ID, tc.want.holdID, holds)
++			}
++			if !headMatch(got.Head, tc.want.heldAt) {
++				t.Errorf("the DROP line would say held_at=%s, want %s", Short(got.Head), Short(tc.want.heldAt))
++			}
++			if got.Carried != tc.want.carried {
++				t.Errorf("the DROP line would say carried=%v, want %v (held_at=%s head=%s)",
++					got.Carried, tc.want.carried, Short(got.Head), Short(headB2550))
++			}
++		})
++	}
++}
++
++func mustReviewers2550(t *testing.T) *ReviewerSet {
++	t.Helper()
++	rs, err := ParseReviewers(strings.NewReader(reviewers2550))
++	if err != nil {
++		t.Fatalf("reviewer fixture: %v", err)
++	}
++	return rs
++}
+diff --git a/internal/merge/verdict.go b/internal/merge/verdict.go
+index eedc2cf58..1b3852f0c 100644
+--- a/internal/merge/verdict.go
++++ b/internal/merge/verdict.go
+@@ -71,6 +71,93 @@ func ParseDispositionLine(line string) (who, head, verdict, scope string, ok boo
+ 	return "", "", "", "", false
+ }
+ 
++// dispositionWholeLine parses a line that is a DISPOSITION line WHOLE and nothing else:
++// the first token is exactly DISPOSITION, and everything after it is key=value fields with
++// no stray prose and no repeated key.
++//
++// nova-tools #2550, second ask: "the DISPOSITION line must be the whole line (no smuggled
++// verdict inside a multi-line body)". This strict form gates the RELEASING verdict only --
++// a typed APPROVE. A HOLD keeps the lenient ParseDispositionLine, on purpose: tightening
++// the parser on the holding side would turn a sloppily typed HOLD into a non-hold, and a
++// rule about smuggling must never fail open on the side that stops a merge.
++func dispositionWholeLine(line string) (map[string]string, bool) {
++	line = strings.TrimSpace(line)
++	const word = "DISPOSITION"
++	if !strings.HasPrefix(line, word) {
++		return nil, false
++	}
++	rest := line[len(word):]
++	if rest != "" && !isSpaceByte(rest[0]) {
++		// DISPOSITIONS, DISPOSITION: and friends are not the typed line.
++		return nil, false
++	}
++	return parseKeyValueFieldsStrict(rest)
++}
++
++func isSpaceByte(b byte) bool {
++	return b == ' ' || b == '\t' || b == '\r' || b == '\n' || b == '\v' || b == '\f'
++}
++
++// parseKeyValueFieldsStrict is parseKeyValueFields with the tolerance taken out: every
++// token must belong to a key=value field, keys must be bare words, a quoted value must
++// close, and no key may be given twice. Anything else and the line is not a typed line.
++func parseKeyValueFieldsStrict(s string) (map[string]string, bool) {
++	res := make(map[string]string)
++	for {
++		s = strings.TrimLeft(s, " \t\r\n\v\f")
++		if s == "" {
++			return res, true
++		}
++		eq := strings.IndexByte(s, '=')
++		if eq <= 0 {
++			return nil, false
++		}
++		key := s[:eq]
++		if !isBareKey(key) {
++			return nil, false
++		}
++		s = s[eq+1:]
++		var val string
++		if len(s) > 0 && s[0] == '"' {
++			s = s[1:]
++			closeQuote := strings.IndexByte(s, '"')
++			if closeQuote < 0 {
++				return nil, false
++			}
++			val = s[:closeQuote]
++			s = s[closeQuote+1:]
++			if s != "" && !isSpaceByte(s[0]) {
++				return nil, false
++			}
++		} else {
++			sp := strings.IndexFunc(s, unicode.IsSpace)
++			if sp >= 0 {
++				val, s = s[:sp], s[sp:]
++			} else {
++				val, s = s, ""
++			}
++		}
++		if _, dup := res[key]; dup {
++			return nil, false
++		}
++		res[key] = val
++	}
++}
++
++func isBareKey(k string) bool {
++	if k == "" {
++		return false
++	}
++	for _, r := range k {
++		switch {
++		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
++		default:
++			return false
++		}
++	}
++	return true
++}
++
+ func parseKeyValueFields(s string) map[string]string {
+ 	res := make(map[string]string)
+ 	for len(s) > 0 {
+@@ -197,6 +284,19 @@ func ParseComment(id int64, login, rawBody, at string, rs *ReviewerSet, author,
+ 		return v, true
+ 	}
+ 
++	// A typed APPROVE (nova-tools #2550). Before this, a comment carrying
++	// `DISPOSITION who=<name> head=<sha> verdict=APPROVE` fell through to the untyped
++	// branch below and came back as a PENDING comment -- a typed verdict read as
++	// evidence of nothing, and then as a second reason to drop the pull request. It is
++	// read here so that UnreleasedHolds can see it.
++	//
++	// It is still true that a comment releases nothing at the current head: an approve
++	// with Source "comment-rule" is not a lane record, so UnreleasedHolds never folds it
++	// against a hold that binds to the head. Its one job is the carried case.
++	if v, ok := approveVerdict(id, login, lines, at, rs, currentHead); ok {
++		return v, true
++	}
++
+ 	// Untyped comment without hold
+ 	if rs != nil && rs.LoginMayHold(login) {
+ 		if ignoreUntyped {
+@@ -219,6 +319,53 @@ func ParseComment(id int64, login, rawBody, at string, rs *ReviewerSet, author,
+ 	return Verdict{}, false
+ }
+ 
++// approveVerdict reads a typed APPROVE off a comment body's lines.
++//
++// Two guards, both from nova-tools #2550:
++//
++//   - the DISPOSITION must be the WHOLE line (dispositionWholeLine), so a release cannot
++//     be smuggled into a sentence in a long body;
++//   - its head= is kept as typed and compared later by headMatch, which is the same
++//     prefix rule a typed HOLD's head= gets. `head=5adf9cb2` and the whole 40-character
++//     object name are the same head to this tool, on both verdicts, or a friend who
++//     abbreviates holds a pull request forever without meaning to.
++//
++// A who the reviewer file does not map to this login resolves to "unknown", and ambiguity
++// approves nothing (S6), so no verdict is returned at all: the comment falls through to
++// the pending branch and fails closed.
++func approveVerdict(id int64, login string, lines []string, at string, rs *ReviewerSet, currentHead string) (Verdict, bool) {
++	for _, l := range lines {
++		fields, ok := dispositionWholeLine(l)
++		if !ok {
++			continue
++		}
++		if !strings.EqualFold(fields["verdict"], "APPROVE") {
++			continue
++		}
++		resolvedWho, _ := rs.ResolveWho(login, fields["who"])
++		if resolvedWho == "" || resolvedWho == "unknown" {
++			continue
++		}
++		head := strings.ToLower(strings.TrimSpace(fields["head"]))
++		if head == "" {
++			head = currentHead
++		}
++		return Verdict{
++			ID:     fmt.Sprintf("comment:%d", id),
++			Who:    resolvedWho,
++			Word:   "approve",
++			Head:   head,
++			At:     at,
++			Source: "comment-rule",
++			Scope:  fields["scope"],
++			RawID:  id,
++			Conf:   "-",
++			Kind:   "line",
++		}, true
++	}
++	return Verdict{}, false
++}
++
+ // ParseReview converts a GitHub pull request review into a Verdict.
+ func ParseReview(id int64, login, rawBody, state, commitID, submittedAt string, rs *ReviewerSet, author, currentHead string) (Verdict, bool) {
+ 	if rs != nil && !rs.IsScanned(login) {
+@@ -298,7 +445,66 @@ func UnliftedHolds(vs []Verdict, currentHead, author string, rs *ReviewerSet) []
+ 			holds = append(holds, v)
+ 		}
+ 	}
+-	return UnreleasedHolds(holds, reads, currentHead, author, rs)
++	return releaseCarriedHolds(UnreleasedHolds(holds, reads, currentHead, author, rs), vs, currentHead)
++}
++
++// releaseCarriedHolds is nova-tools #2550's rule, and it touches CARRIED holds only.
++//
++// A hold whose held_at is not the current head is the last word its author left about a
++// commit the branch has moved past. It is released by a LATER TYPED verdict from the SAME
++// friend at the CURRENT head: an APPROVE releases it, and a new HOLD at the current head
++// REPLACES it -- the pull request is still dropped, but by the hold at head, so the DROP
++// line names a commit a reader can go and look at instead of held_at=<gone> carried=yes.
++// A hold stays carried exactly while its author has said nothing at the current head.
++//
++// What this does NOT do, and must not:
++//
++//   - A hold AT the current head is left alone. A comment still releases nothing there
++//     (SPEC-DECIDE reading 3); only the holder's lane record does.
++//   - An APPROVE at some OTHER superseded head releases nothing. Release keys on the
++//     head, never on "somebody approved at some point".
++//   - A hold with who=unknown is left alone. An untyped hold-shaped line has no author
++//     to match, and it binds to the current head anyway, so it is never carried.
++func releaseCarriedHolds(unreleased []Verdict, vs []Verdict, currentHead string) []Verdict {
++	var kept []Verdict
++	for _, h := range unreleased {
++		if headMatch(h.Head, currentHead) || h.Who == "unknown" || h.Who == "" {
++			kept = append(kept, h)
++			continue
++		}
++		if !supersededByVerdictAtHead(h, vs, currentHead) {
++			kept = append(kept, h)
++		}
++	}
++	return kept
++}
++
++func supersededByVerdictAtHead(h Verdict, vs []Verdict, currentHead string) bool {
++	for _, v := range vs {
++		if v.Kind != "" && v.Kind != "line" {
++			continue
++		}
++		if v.Word != "approve" && v.Word != "hold" {
++			continue
++		}
++		if !sameLine(v.Who, h.Who) {
++			continue
++		}
++		if !headMatch(v.Head, currentHead) {
++			continue
++		}
++		// The tie rule of UnreleasedHolds: a verdict stamped at or before the hold is
++		// not later than it, and a verdict with no stamp is not evidence of order.
++		if v.At == "" || v.At <= h.At {
++			continue
++		}
++		// A scoped APPROVE releases only what it names, the same way it does at head.
++		if v.Word == "approve" && v.Scope != "" && !releasesContains(v.Releases, h.ID) {
++			continue
++		}
++		return true
++	}
++	return false
+ }
+ 
+ // UnreleasedHolds folds active holds against lane read records.

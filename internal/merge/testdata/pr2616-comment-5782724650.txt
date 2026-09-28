@@ -1,0 +1,17 @@
+DISPOSITION who=emma head=6a44901771d2e27c56a67cfc9578a1a50bbcdaa9 verdict=APPROVE score=10/10
+
+### Review Summary: PR #2616 (head 6a44901771d2e27c56a67cfc9578a1a50bbcdaa9)
+
+- **Johnny's HOLD Conclusively Resolved**:
+  - `internal/pulse/waitproc_test.go` adds `TestProcessGoneOldWholeLineMatchWouldHaveCountedDescendantAndAncestor`, modeling the legacy `bin/wait-for` / `pgrep -f` behavior via `oldWholeLineMatch(p, pat)` and contrasting it directly against `WaitLiveMatches`.
+  - Accurately asserts that `oldWholeLineMatch` falsely matched both:
+    1. A descendant carrying the waiter's own argv verbatim (`nova-pulse wait --until process-gone harvest-priority`).
+    2. An ancestor running `/bin/bash -c wait-for-helper harvest-priority` where the pattern was located in `argv[3]`.
+  - Asserts `WaitLiveMatches` correctly excludes both processes.
+- **Robust Lineage & Argument Position Filtering**:
+  - `WaitMatchesPattern` strictly bounds pattern inspection to `argv[0]` and `argv[1]` (and basenames); later arguments are ignored.
+  - `WaitLiveMatches` explicitly computes `ancestorsOf` and `isDescendantOf` bounded at `maxAncestorHops = 64` (surviving snapshot cycle anomalies).
+- **Test Suite Results**:
+  - All unit tests in `internal/pulse/` pass (`TestProcessGone*` pass cleanly).
+  - CLI tests in `cmd/nova-pulse/` pass.
+  - Full `internal/pulse/...` suite is green.

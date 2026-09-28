@@ -1,0 +1,233 @@
+package main
+
+import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+)
+
+// Work list 10 puts the no-/tmp, no-process-scan tripwire in cmd/nova-merge/*_test.go and
+// it existed only for internal/merge -- so THIS package, which writes `stop`, `.gitignore`
+// and every lane path a flag names, was unscanned. The subject of this test is the source,
+// which is the one reason anything here reaches outside t.TempDir(), and it is stated.
+
+func mainPackageSource(t *testing.T) map[string]string {
+	t.Helper()
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]string{}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(".", e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		out[e.Name()] = string(raw)
+	}
+	if len(out) == 0 {
+		t.Fatal("no source files found; this test was looking in the wrong place and would have passed by checking nothing")
+	}
+	return out
+}
+
+// tempEnvAllowance is the ONE line in this package allowed to name a temp-directory
+// variable, and it is a SET rather than a read: `batch` hands every check it runs a temp
+// directory inside the batch's own working directory under --root, which is rule 13
+// carried into the subprocesses rather than an exception to it. A `go test` or an sbcl
+// suite that keys off the ambient one writes into /tmp instead, and two gates on one host
+// wrecked each other's state that way on 2026-09-18 (tools/ci/lisp-test.sh).
+//
+// The allowance is ONE EXACT LINE and it must match exactly once, so it cannot quietly
+// cover a second site written beside it; and nothing in this package may READ such a
+// variable, which is what the os.Getenv clause below holds.
+var tempEnvAllowance = struct{ file, line string }{
+	file: "batch.go",
+	line: `var batchTempVars = []string{"TMPDIR", "GOTMPDIR", "LISP_TEST_TMPROOT", "TMP", "TEMP"}`,
+}
+
+// Rule 13: nothing under /tmp, and the tool never matches a process by its own command
+// line. Every path this binary writes is under --lane or --root, which a person gave it.
+func TestTheBinaryReachesNoTmpAndNoProcessTable(t *testing.T) {
+	t.Parallel()
+	allowed := 0
+	for name, src := range mainPackageSource(t) {
+		for _, line := range strings.Split(src, "\n") {
+			if !strings.Contains(line, "os.Getenv") {
+				continue
+			}
+			t.Errorf("%s reads the environment; every path this tool writes comes from a flag a person gave it, never from a variable the shell happened to carry", name)
+		}
+		for i, line := range strings.Split(src, "\n") {
+			if name == tempEnvAllowance.file && strings.TrimSpace(line) == tempEnvAllowance.line {
+				allowed++
+				continue
+			}
+			for _, forbidden := range []string{`"/tmp`, "os.TempDir", "pgrep", `"ps"`, "/proc/", "TMPDIR"} {
+				if strings.Contains(line, forbidden) {
+					t.Errorf("%s:%d carries %q; every path this tool writes is under --lane or --root, and a loop that matches a process by its own command line matches itself (19 orphaned shells, 2026-09-09)", name, i+1, forbidden)
+				}
+			}
+		}
+	}
+	if allowed != 1 {
+		t.Errorf("the temp-variable allowance matched %d lines of %s, want exactly one; a stale allowance is a claim nothing checks and it would cover the next site written in its place", allowed, tempEnvAllowance.file)
+	}
+}
+
+// writeSite is one allowed open-for-writing: the expression, and the thing it writes.
+type writeSite struct{ expr, what string }
+
+// Rule 7, from this side: the binary writes the lane's own files and nothing in a clone's
+// work tree. A new writing site here is a decision rather than a drive-by.
+//
+// THE ALLOWANCE IS PER SITE, NOT PER FILE. It used to be a file name with a sentence, so
+// every write in verbs.go and pass.go was allowed by the entry that covers the first one
+// -- a second open of a record's path in either of them would have passed unread (read 4b,
+// finding 6). Each site is named, and each allowance must match exactly one line, so an
+// allowance that stops being true is as loud as a site that is not allowed.
+func TestTheBinaryWritesOnlyTheLanesOwnFiles(t *testing.T) {
+	t.Parallel()
+	allowed := map[string][]writeSite{
+		"batch.go": {{`os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)`, "the test step's go test -json stream, created exclusively as test-<round>.jsonl under --root, beside the clone and not inside it (#2626)"}},
+		// The fold (#1142) resolves a conflict in a TEST file keep-both and one in a
+		// SOURCE file to the incoming side, and that resolved byte has to land in the
+		// fold's OWN scratch clone under --lane before it is tested. The lane proper
+		// still never edits an entry's content; this is the one write the spec names,
+		// and it writes only both sides of a conflict git itself produced. Since the
+		// keep-both became a hunk union (git merge-file --union) it takes two sites: an
+		// empty ancestor for an add/add conflict, a temp file in the scratch clone that
+		// is removed after the merge, and the resolved bytes, written by foldWriteUnder
+		// only after safepath.ResolvedUnder and a regular-file check, by an exclusive
+		// create that refuses a link planted after the check.
+		"fold.go": {
+			{`os.CreateTemp(g.Dir, ".fold-base-")`, "the keep-both's empty ancestor for an add/add conflict, a temp file in the fold's own scratch clone under --lane, removed after git merge-file (docs/SPEC-MERGE.md \"The fold (#1142)\")"},
+			{`os.OpenFile(resolved, os.O_WRONLY|os.O_CREATE|os.O_EXCL, info.Mode().Perm())`, "the fold's keep-both resolution in its own scratch clone under --lane, created exclusively at a path safepath.ResolvedUnder resolved (docs/SPEC-MERGE.md \"The fold (#1142)\")"},
+		},
+	}
+	used := map[string]int{}
+	for name, src := range mainPackageSource(t) {
+		for i, line := range strings.Split(src, "\n") {
+			if !strings.Contains(line, "os.WriteFile") && !strings.Contains(line, "os.OpenFile") && !strings.Contains(line, "os.Create") {
+				continue
+			}
+			if strings.HasPrefix(strings.TrimSpace(line), "//") {
+				continue
+			}
+			site := ""
+			for _, s := range allowed[name] {
+				if strings.Contains(line, s.expr) {
+					site = s.expr
+					break
+				}
+			}
+			if site == "" {
+				t.Errorf("%s:%d writes a file: %s\nthe lane never edits an entry's content, and a new writing site is a decision", name, i+1, strings.TrimSpace(line))
+				continue
+			}
+			used[name+" "+site]++
+		}
+	}
+	for name, sites := range allowed {
+		for _, s := range sites {
+			if n := used[name+" "+s.expr]; n != 1 {
+				t.Errorf("the allowance for %q in %s matched %d writing sites, want exactly one (%s)", s.expr, name, n, s.what)
+			}
+		}
+	}
+}
+
+// THE IDENTITY TRIPWIRE FOR THIS PACKAGE. gitops.go's own comment says "every call site
+// that can write a commit object goes through here" and names the source test that holds
+// it -- and that test read only internal/merge/*.go, so the package the Ubuntu red was
+// actually about was unscanned. verbs.go's `commit` does carry merge.Identity today; a
+// second one added here would not have been caught by anything.
+func TestEveryCommitWritingCommandInThisPackageCarriesTheIdentity(t *testing.T) {
+	t.Parallel()
+
+	fset := token.NewFileSet()
+	checked := 0
+	for name := range mainPackageSource(t) {
+		f, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok || (sel.Sel.Name != "Run" && sel.Sel.Name != "Out") {
+				return true
+			}
+			args := call.Args
+			identity := false
+			// The wrapper here is merge.Identity(...), a selector rather than a bare
+			// name: this package reaches it across the package boundary.
+			if len(args) == 1 {
+				if inner, ok := args[0].(*ast.CallExpr); ok {
+					if wrap, ok := inner.Fun.(*ast.SelectorExpr); ok && wrap.Sel.Name == "Identity" {
+						identity, args = true, inner.Args
+					}
+				}
+			}
+			words := commandWords(args)
+			if len(words) == 0 || !commandWritesACommit(words) {
+				return true
+			}
+			checked++
+			if !identity {
+				t.Errorf("%s:%d runs `git %s` without merge.Identity; a machine with no git identity -- every CI runner -- answers \"Committer identity unknown\", and this package is the one the Ubuntu leg of #57 went red in",
+					name, fset.Position(call.Pos()).Line, strings.Join(words, " "))
+			}
+			return true
+		})
+	}
+	if checked == 0 {
+		t.Fatal("no commit-writing git command found in this package; this test was looking for the wrong shape and would have passed by checking nothing")
+	}
+}
+
+// commandWords returns the leading string literals of an argument list, which is how every
+// git command in this package starts.
+func commandWords(args []ast.Expr) []string {
+	out := []string(nil)
+	for _, a := range args {
+		lit, ok := a.(*ast.BasicLit)
+		if !ok || lit.Kind != token.STRING {
+			break
+		}
+		value, err := strconv.Unquote(lit.Value)
+		if err != nil {
+			break
+		}
+		out = append(out, value)
+	}
+	return out
+}
+
+// commandWritesACommit reports whether the command makes a commit object. `merge --abort`
+// and `merge --ff-only` move a ref and write none.
+func commandWritesACommit(words []string) bool {
+	switch words[0] {
+	case "commit":
+		return true
+	case "merge":
+		for _, w := range words[1:] {
+			if w == "--abort" || w == "--ff-only" {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}

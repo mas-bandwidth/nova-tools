@@ -41,6 +41,8 @@ const fixtureAttest = "the-fixture-supervisor-secret"
 // the slot file (a file in neither the read set nor the write set), and which reaches the
 // job directory only in the record itself, after the job's whole process group is dead.
 func TestAForgedExitRecordCannotUpgradeAnUnknownOutcome(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	p, w := recoveryPool(t, dir)
 	id := NewID(time.Now().UTC(), "forged")
@@ -116,6 +118,8 @@ func TestAForgedExitRecordCannotUpgradeAnUnknownOutcome(t *testing.T) {
 // and read back by nothing. The record keeps the pids and the start stamps, which are what
 // its readers want (`readJobProc`, `FinalizeByHand`), and carries no launch nonce.
 func TestTheIdentityRecordBesideTheJobCarriesNoLaunchNonce(t *testing.T) {
+	t.Parallel()
+
 	raw, err := json.Marshal(PidRecord{Job: "job", Slot: 1, State: SlotLaunched, Pid: 2, Pgid: 3})
 	if err != nil {
 		t.Fatal(err)
@@ -132,6 +136,8 @@ func TestTheIdentityRecordBesideTheJobCarriesNoLaunchNonce(t *testing.T) {
 // a nonce-matching exit.json are decided apart: an absent or wrong attestation is quarantine,
 // and only a true attestation is the supervisor's own word and reclaims.
 func TestAnExitRecordIsReclaimedOnlyWithTheLaunchAttestation(t *testing.T) {
+	t.Parallel()
+
 	for _, c := range []struct {
 		name   string
 		attest string

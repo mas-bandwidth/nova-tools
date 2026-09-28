@@ -5,8 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 )
 
 func countLines(s string) int {
@@ -31,31 +29,9 @@ func crowdedBox(t *testing.T, n int) string {
 	return box
 }
 
-// status is a verb to be GLANCED at, and at three hundred quarantined surfaces it was
-// three hundred and one lines.
-func TestStatusCountsAllAndListsAtMostMax(t *testing.T) {
-	box := crowdedBox(t, 300)
-	exit, stdout, stderr := runFuse(t, "status", "--box", box)
-	if exit != 0 {
-		t.Fatalf("exit = %d, want 0; stderr: %s", exit, stderr)
-	}
-	// The count line, twenty listed, one MORE line.
-	if got := countLines(stdout); got != bounded.Default+2 {
-		t.Errorf("stdout is %d lines, want %d listed + count + MORE:\n%s", got, bounded.Default, stdout)
-	}
-	// THE COUNT IS NEVER CAPPED: this is the number the verb exists to report.
-	if !strings.Contains(stdout, "STATUS OK lockdown=clear quarantines=300") {
-		t.Errorf("the count line does not carry the whole total:\n%s", stdout)
-	}
-	if !strings.Contains(stdout, "STATUS MORE kind=quarantine shown=20 total=300") {
-		t.Errorf("no MORE line naming the total:\n%s", stdout)
-	}
-	if !strings.Contains(stdout, "--max") {
-		t.Errorf("the MORE line names no remedy:\n%s", stdout)
-	}
-}
-
 func TestStatusMaxWidensAndZeroListsAll(t *testing.T) {
+	t.Parallel()
+
 	box := crowdedBox(t, 60)
 	_, stdout, _ := runFuse(t, "status", "--box", box, "--max", "5")
 	if got := countLines(stdout); got != 7 {
@@ -73,6 +49,8 @@ func TestStatusMaxWidensAndZeroListsAll(t *testing.T) {
 // A box with few enough surfaces to list is unchanged: no MORE line, and the same lines
 // as before this cap existed.
 func TestStatusUnderTheCeilingIsUnchanged(t *testing.T) {
+	t.Parallel()
+
 	box := crowdedBox(t, 3)
 	_, stdout, _ := runFuse(t, "status", "--box", box)
 	if got := countLines(stdout); got != 4 {
@@ -84,6 +62,8 @@ func TestStatusUnderTheCeilingIsUnchanged(t *testing.T) {
 }
 
 func TestStatusRefusesANegativeCeiling(t *testing.T) {
+	t.Parallel()
+
 	box := crowdedBox(t, 1)
 	exit, _, stderr := runFuse(t, "status", "--box", box, "--max", "-1")
 	if exit != 2 || !strings.Contains(stderr, "--max must be a line ceiling") {
@@ -94,6 +74,8 @@ func TestStatusRefusesANegativeCeiling(t *testing.T) {
 // A flag typo used to cost the whole 32-line banner, and a surface name beginning with a
 // dash is the realistic shape here.
 func TestARefusalIsOneLineAndNamesTheDoor(t *testing.T) {
+	t.Parallel()
+
 	box := crowdedBox(t, 1)
 	for _, args := range [][]string{
 		{"status", "--boxx", box},

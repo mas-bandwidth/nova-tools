@@ -18,6 +18,8 @@ import (
 // nothing ever looking at it again. The whole point of rule 17 is the recovery, and the
 // recovery leaked.
 func TestARecoveredJobMovesOutOfRunning(t *testing.T) {
+	t.Parallel()
+
 	for _, c := range []struct {
 		name, end, dest string
 		exit            *ExitRecord
@@ -128,6 +130,8 @@ func recoveryPool(t *testing.T, dir string) (*Pool, Worker) {
 // failed/ with a stale `reaped` and never ran the one retry. The rule is about the JOB, not
 // about which dispatcher was alive to see it.
 func TestARecoveredKilledJobRunsOnceMore(t *testing.T) {
+	t.Parallel()
+
 	for _, c := range []struct {
 		name         string
 		wasReaped    int
@@ -248,6 +252,8 @@ func boolWord(b bool) string {
 // supervisors' pids are learned in each other's window cannot interfere if there is nothing
 // between them to interfere through.
 func TestNoProcessLayerFileKeepsIdentityOfItsOwn(t *testing.T) {
+	t.Parallel()
+
 	for _, name := range []string{"proc_windows.go", "proc_unix.go", "proc_other.go", "proc_linux.go",
 		"proc_darwin.go", "proc_bsd.go", "deadline.go"} {
 		raw, err := os.ReadFile(name)
@@ -286,6 +292,8 @@ func TestNoProcessLayerFileKeepsIdentityOfItsOwn(t *testing.T) {
 // `launch` and `rc`, so a retry that SUCCEEDED was skipped forever and its findings were
 // never folded (read 5, finding 2).
 func TestARetryStartsWithoutTheLastAttemptsVerdict(t *testing.T) {
+	t.Parallel()
+
 	dirty := Sidecar{
 		ID: "20260101T000000Z-old-000001", Label: "a label", Template: "read-pr", Batch: "b1",
 		Files: 5, Tokens: 1000, Deadline: "30s", Unmetered: false,
@@ -327,6 +335,8 @@ func TestARetryStartsWithoutTheLastAttemptsVerdict(t *testing.T) {
 // and a process that outlived the kill is a fact about the kill -- `RUN KILLED …
 // survived=true` (SPEC-SWARM.md:1055), never `violation=background`.
 func TestAReapedJobIsNotABackgroundViolation(t *testing.T) {
+	t.Parallel()
+
 	for _, c := range []struct {
 		name, end string
 		survivors int

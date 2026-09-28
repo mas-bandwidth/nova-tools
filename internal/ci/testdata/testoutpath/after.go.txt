@@ -1,0 +1,25 @@
+// The fixed shape of the same two tests: every path a tool WRITES is named
+// inside t.TempDir(), so the run leaves nothing in the tree. The scanner reads
+// this file and finds nothing, which is the other half of the contract -- a
+// rule that only ever says yes is not a rule.
+package fixture
+
+import (
+	"path/filepath"
+	"testing"
+)
+
+func TestFirstRunExampleRuns(t *testing.T) {
+	graph := filepath.Join(t.TempDir(), "deps.json")
+	if code, _, stderr := runCLI(t, "dependencies", "--graph", graph, "--node", "b"); code != 0 {
+		t.Fatalf("the usage example does not run: exit %d, stderr: %s", code, stderr)
+	}
+}
+
+func TestPacketIsWrittenWhereItIsAsked(t *testing.T) {
+	var out, errb bytes.Buffer
+	packet := filepath.Join(t.TempDir(), "packet.md")
+	if code := run([]string{"packet", "--who", "emma", "--out", packet}, &out, &errb); code != 0 {
+		t.Fatalf("packet exit=%d stderr=%s", code, errb.String())
+	}
+}

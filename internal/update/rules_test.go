@@ -87,6 +87,8 @@ func TestRule9CheckWritesNothingAndNeverRunsAnApply(t *testing.T) {
 // have, --max 0 is the explicit way to ask for all of it, and a negative cap is a
 // refusal rather than a silent interpretation.
 func TestRule16OutputIsBoundedAtTheLargestPlausibleState(t *testing.T) {
+	t.Parallel()
+
 	const many = 500
 	rows := make([]string, 0, many)
 	for i := 0; i < many; i++ {
@@ -349,6 +351,8 @@ func TestSnapshotRenameBarrierHelper(t *testing.T) {
 // byte for byte: one string in the binary, so the spec and the help cannot drift
 // apart." Nothing made that true until this test read the spec and compared.
 func TestHelpIsTheSpecsVerbsBlock(t *testing.T) {
+	t.Parallel()
+
 	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-UPDATE.md"))
 	if err != nil {
 		t.Fatal(err)
@@ -398,6 +402,8 @@ func TestHelpIsTheSpecsVerbsBlock(t *testing.T) {
 // distinguishable from report's unrelated --snapshot <path> option by the verb
 // spelling and its --bin/--out flags (docs/SPEC-VERSION.md).
 func TestHelpNamesTheSnapshotVerb(t *testing.T) {
+	t.Parallel()
+
 	var printed bytes.Buffer
 	help("nova-version", &printed)
 	if !strings.Contains(printed.String(), "nova-version snapshot --bin <dir> --out <file.tsv>") {
@@ -412,6 +418,8 @@ func TestHelpNamesTheSnapshotVerb(t *testing.T) {
 // the help is told the file is a manifest (one line per tool, six tab-separated
 // fields) before a run, and the missing-file refusal says the same sentence.
 func TestUsageAndRefusalSayWhatTheFileIs(t *testing.T) {
+	t.Parallel()
+
 	var printed bytes.Buffer
 	help("nova-version", &printed)
 	if !strings.Contains(printed.String(), manifestShape) {
@@ -433,6 +441,8 @@ func TestUsageAndRefusalSayWhatTheFileIs(t *testing.T) {
 // does, so a fixture the spec points a stranger at cannot rot unnoticed. It
 // executes nothing: no version command runs, no installer runs, no GET is made.
 func TestTheSpecsNamedFixturesLoad(t *testing.T) {
+	t.Parallel()
+
 	for _, dir := range []string{"nova-update", "nova-version"} {
 		for _, name := range []string{"versions.tsv", "apply.tsv", "example.tsv", "nova.tsv"} {
 			path := filepath.Join("..", "..", "cmd", dir, "testdata", name)
@@ -456,7 +466,7 @@ func TestTheSpecsNamedFixturesLoad(t *testing.T) {
 			}
 		}
 	}
-	// The versions fixture is the spec's own five entries, in its order.
+	// The versions fixture is the spec's own four entries, in its order, then one pin entry.
 	entries, err := Load(strings.NewReader(readFixture(t, "versions.tsv")))
 	if err != nil {
 		t.Fatal(err)
@@ -469,7 +479,7 @@ func TestTheSpecsNamedFixturesLoad(t *testing.T) {
 		{"nova-wake-pin-nova-bus", "pin", "rowan"},
 	}
 	if len(entries) != len(want) {
-		t.Fatalf("the spec prints %d entries, the fixture carries %d", len(want), len(entries))
+		t.Fatalf("the fixture should carry %d entries, it carries %d", len(want), len(entries))
 	}
 	for i, w := range want {
 		if entries[i].Name != w.name || entries[i].Kind != w.kind || entries[i].Owner != w.owner {
@@ -492,6 +502,8 @@ func readFixture(t *testing.T, name string) string {
 // A tripwire measured by a person is a tripwire that goes quiet the first busy
 // week; this one fails a build.
 func TestTripwiresStayOutOfShippingCode(t *testing.T) {
+	t.Parallel()
+
 	shipping := map[string]string{}
 	entries, err := os.ReadDir(".")
 	if err != nil {
@@ -552,4 +564,28 @@ func valuesOf(m map[string]string) []string {
 		out = append(out, v)
 	}
 	return out
+}
+
+// `nova-update check --help` answered `flag: help requested` -- the flag
+// package's own sentinel, shown to somebody who asked for help (darwin dogfood,
+// 2026-09-18). Asking is not an error: the usage is printed and the exit is 0.
+func TestVerbHelpPrintsUsageRatherThanTheFlagSentinel(t *testing.T) {
+	t.Parallel()
+
+	for _, verb := range []string{"check", "apply", "report"} {
+		for _, spelling := range []string{"--help", "-h"} {
+			var out, errs bytes.Buffer
+			code := Main("nova-update", []string{verb, spelling}, "test", &out, &errs)
+			if code != 0 {
+				t.Errorf("%s %s: code=%d errs=%s", verb, spelling, code, errs.String())
+				continue
+			}
+			if strings.Contains(out.String()+errs.String(), "help requested") {
+				t.Errorf("%s %s leaked the flag sentinel: %s%s", verb, spelling, out.String(), errs.String())
+			}
+			if !strings.Contains(out.String(), "nova-update "+verb+" ") {
+				t.Errorf("%s %s did not print the usage:\n%s", verb, spelling, out.String())
+			}
+		}
+	}
 }

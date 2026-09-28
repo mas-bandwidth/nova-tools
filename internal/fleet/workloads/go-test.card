@@ -1,0 +1,56 @@
+roles: bench
+expect: ^GO OK
+wall: yes
+reads: $HOME/sdk, $HOME/go, $HOME/.local, /usr, /bin, /lib, /lib64, /etc, /opt/homebrew, /Library/Developer/CommandLineTools
+
+# THE CARD THAT DIED ON HULK, as a check. A Go card builds and tests a module inside the
+# wall; hulk could not, because $HOME/sdk was not a readable root and /usr/bin/go is 1.22.
+set -eu
+JOBDIR="$PWD"
+GO=""
+for candidate in "$NOVA_HOME/sdk/$NOVA_GO/bin/go" "$NOVA_HOME/go/bin/go" "$NOVA_HOME/.local/go/bin/go"; do
+  if [ -x "$candidate" ]; then GO="$candidate"; break; fi
+done
+if [ -z "$GO" ]; then GO=$(command -v go 2>/dev/null || true); fi
+if [ -z "$GO" ]; then
+  echo "GO FAIL no go toolchain is reachable inside the wall (name the SDK root in the workload's reads)"
+  exit 1
+fi
+mkdir -p module
+cd module
+cat > go.mod <<'NOVA_GO_MOD'
+module novacertify
+
+go 1.26.5
+NOVA_GO_MOD
+cat > probe.go <<'NOVA_GO_SRC'
+package novacertify
+
+// Answer is the whole module: the check is that a bench can COMPILE and RUN a test, not
+// that it can compute anything.
+func Answer() int { return 42 }
+NOVA_GO_SRC
+cat > probe_test.go <<'NOVA_GO_TEST'
+package novacertify
+
+import "testing"
+
+func TestAnswer(t *testing.T) {
+	if got := Answer(); got != 42 {
+		t.Fatalf("Answer() = %d", got)
+	}
+}
+NOVA_GO_TEST
+GOFLAGS=""
+GOTOOLCHAIN="local"
+GOPATH="$JOBDIR/gopath"
+GOMODCACHE="$JOBDIR/gopath/pkg/mod"
+GOCACHE="$JOBDIR/gocache"
+export GOFLAGS GOTOOLCHAIN GOPATH GOMODCACHE GOCACHE
+VERSION=$("$GO" version 2>&1)
+if ! "$GO" test ./... > test.out 2>&1; then
+  echo "GO FAIL $VERSION"
+  head -n 3 test.out
+  exit 1
+fi
+echo "GO OK $VERSION $(tail -n 1 test.out)"

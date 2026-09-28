@@ -84,3 +84,22 @@ func cardPipelineFailure(raw string) string {
 	}
 	return ""
 }
+
+// issue2035Remedy is the refusal for an explore card that lacks TURNS:.
+// This is admission only: a card must DECLARE a turn budget to be admitted, for every
+// model. Enforcing that budget while the card runs is not done here; #2035's runtime
+// half (the manager loop) stays open.
+const issue2035Remedy = "`MODE: explore` requires `TURNS: <n>`; an explore card without a declared turn budget is refused at admission (SPEC-SWARM issue #2035)"
+
+// cardExploreMissingTurns reports whether an explore card carries no valid TURNS:
+// line and returns the remedy, or "" when the card is acceptable. It checks presence
+// at admission only; it does not enforce the budget at run time.
+func cardExploreMissingTurns(raw string) string {
+	if !cardExploreMode(raw) {
+		return ""
+	}
+	if _, ok := exploreTurnBudget(raw); ok {
+		return ""
+	}
+	return issue2035Remedy
+}

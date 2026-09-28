@@ -8,6 +8,8 @@ import (
 // The reason usage values are strings: a lexeme no float64 can hold survives byte for
 // byte, and the loss it avoids is shown rather than asserted.
 func TestExactNumericStringsSurvive(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct{ lexeme, kind string }{
 		{"9007199254740993", "integer"},               // 2^53 + 1
 		{"18446744073709551615", "integer"},           // 2^64 - 1
@@ -32,6 +34,8 @@ func TestExactNumericStringsSurvive(t *testing.T) {
 }
 
 func TestLexemeRefusals(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct{ value, kind, rule string }{
 		{"007", "integer", RuleIntegerLexeme},
 		{"1.0", "integer", RuleIntegerLexeme},
@@ -61,6 +65,8 @@ func TestLexemeRefusals(t *testing.T) {
 // Absent, null and zero are three different states, and zero_semantics decides what a
 // present zero means WITHOUT changing what the source said.
 func TestZeroSemantics(t *testing.T) {
+	t.Parallel()
+
 	zero, ten := "0", "10"
 	reason := "not_supported_by_source"
 	present0 := RawField{Presence: "present", Value: &zero, NumberKind: "integer", Unit: "tokens"}
@@ -129,6 +135,8 @@ func TestZeroSemantics(t *testing.T) {
 // The accepted record keeps every dimension the format names, so a reader can group by
 // them later without the observation having chosen a grouping.
 func TestAcceptedRecordKeepsItsDimensions(t *testing.T) {
+	t.Parallel()
+
 	raw := mustReadFile(t, "testdata/valid/grok_request_present_zero.json")
 	v := validatorFor(t, raw)
 	env, err := v.ValidateEnvelope(raw)

@@ -1,0 +1,27 @@
+{
+  "number": 2614,
+  "title": "native: a card whose last turn is a question ends as ASKED, not as a plain no-result (#2548)",
+  "body": "The issue's title named a mechanism that is not real, and this does not fix it.\nThe runtime dogfood of 2026-09-22 ran the shape on both benches -- a card whose\nSTEP 2 forbids writing RESULT.md until an operator approves and tells the model\nto ask and wait -- and measured 5.22 s on hulk and 5.49 s on the Studio:\n`opencode run` is non-interactive, it finishes the turn and exits 0, and the slot\nis freed at once. There is no slot to free and nothing to interrupt.\n\nWhat is real is the verdict. Both runs ended `NATIVE INCOMPLETE ... why=no-result`\n-- the token reserved for a MODEL THAT CHOSE TO PUBLISH NOTHING -- with nothing\nanywhere recording that the card ended by asking. A card that asked and a card\nthat crashed into silence are then one row to every reader: the requeue cannot\nretry the asker on another route, and the ledger cannot count which models ask.\n\nSo the run writes the report the card never wrote, at the job root:\n\n    RESULT: ASKED <the question, one line, bounded and escaped>\n    asked: <label> ended its last turn with a question, published no report ...\n    written-by: nova-swarm native (the card published no report of its own)\n\nFour conditions, all necessary, each one a different card this must not claim:\nthe last line the CHILD wrote in harness-output.log is a question (ends `?` once\nits decoration is trimmed, or opens `would you like|should i|do you want|shall\ni|can you confirm`; the wall's own SANDBOX lines are skipped there exactly as\nharness=silent skips them); the child exited 0, because a non-zero exit is\nalready rc=<n>; no RESULT.md anywhere gather looks, because a card that published\nowns its report; and ./repo holds no commit past its base, because a model that\nasked rhetorically and went on and committed the work answered itself. The\nmachinery's own ends come first: idle, terminated, wall and fence are that end\nwhatever the last line was.\n\nThe verdict line does not move. A report the machinery wrote is not the card's\nown, so nativeLeftAResult does not count it and a card that did nothing but ask\nstill reads INCOMPLETE why=no-result -- counting it would hand `OK` to a run that\nproduced nothing, the fault that made the word earn itself (#1844). The report\ncarries no findings head, so it classes plan-only and can never be counted as\nwork done, and it never overwrites a report a card published.\n\nNot built here, deliberately: Glenn's bounded steer channel (post the question to\nthe bus, wait for one typed answer, feed it back as a turn) is a later card, and\nthe never-ask sentence in the card preamble is #2588/METHODS.\n\nTests: a table over the four endings driven by the dogfood's own transcript tails\n(hulk's two lines and the Studio's one, byte for byte) -- the question, a normal\nDONE run, a crash, and a question followed by a commit -- plus the report's shape,\nthe refusal to overwrite, AskedEnd against a job on disk with a real ./repo, and\nthree cmd-level runs through the fake harness. Red without the change: a card that\nended by asking left no report at all.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+  "headRefOid": "6d8156138aabc687e5242130b4a6e7c498dd6dee",
+  "baseRefName": "dev",
+  "files": [
+    {
+      "path": "cmd/nova-swarm/main.go"
+    },
+    {
+      "path": "cmd/nova-swarm/native.go"
+    },
+    {
+      "path": "cmd/nova-swarm/native_asked_test.go"
+    },
+    {
+      "path": "docs/SPEC-SWARM.md"
+    },
+    {
+      "path": "internal/swarm/nativeasked.go"
+    },
+    {
+      "path": "internal/swarm/nativeasked_test.go"
+    }
+  ]
+}

@@ -1,0 +1,63 @@
+roles: runner
+expect: ^RUNNER PATH OK
+
+# A CI runner reads its PATH from the `.path` file beside it, NOT from any shell, so every
+# fault there is invisible to every other check. On 2026-09-18 space's sixteen .path files
+# carried the bare distro PATH -- no go at all -- so every Go shard scheduled there ran with
+# no toolchain; batman's six led with /usr/local/bin, where go is 1.25.5, shadowing the
+# 1.27.1 later in the same line.
+#
+# BOTH SCOPES AND BOTH NAMINGS. The first version of this check probed `systemctl --user`
+# only and reported space's sixteen runners as unmanaged. They were already sixteen SYSTEM
+# units, nova-runner-1..16.service, enabled with Restart=always -- and acting on that wrong
+# finding installed svc.sh beside them and produced THIRTY-TWO listeners for sixteen units
+# for ten minutes. So: both scopes, both namings (`nova-runner-*` and `actions.runner.*`),
+# and the listener count held against the unit count, because a double registration is a
+# worse fault than an unmanaged runner and the first check could not see it at all.
+set -eu
+DIRS=0
+BAD=""
+for d in "$NOVA_HOME"/runner-nova-tools-* "$NOVA_HOME"/actions-runner-*; do
+  [ -d "$d" ] || continue
+  DIRS=$((DIRS + 1))
+  p="$d/.path"
+  if [ ! -f "$p" ]; then BAD="$BAD $(basename "$d"):no-.path"; continue; fi
+  g=$(PATH="$(head -n 1 "$p")" command -v go 2>/dev/null || true)
+  if [ -z "$g" ]; then BAD="$BAD $(basename "$d"):no-go"; continue; fi
+  have=$("$g" version 2>&1 | sed -n 's/.*go\([0-9][0-9.]*\).*/\1/p' | head -n 1)
+  want=$(echo "$NOVA_GO" | sed -n 's/go\([0-9][0-9.]*\)/\1/p')
+  lowest=$(printf '%s\n%s\n' "$want" "$have" | sort -V 2>/dev/null | head -n 1)
+  if [ "$lowest" != "$want" ] && [ "$have" != "$want" ]; then
+    BAD="$BAD $(basename "$d"):go$have"
+  fi
+done
+if [ "$DIRS" = "0" ]; then
+  echo "RUNNER PATH FAIL no runner directory under $NOVA_HOME"
+  exit 1
+fi
+if [ -n "$BAD" ]; then
+  echo "RUNNER PATH FAIL want >= $NOVA_GO, these .path files do not resolve one:$BAD"
+  exit 1
+fi
+# Units, in BOTH scopes and BOTH namings. launchd is asked the same question its own way.
+UNITS=0
+if command -v systemctl >/dev/null 2>&1; then
+  for scope in "--system" "--user"; do
+    for pattern in 'nova-runner-*' 'actions.runner.*'; do
+      n=$(systemctl $scope list-units --type=service --all --no-legend --no-pager "$pattern" 2>/dev/null | grep -c . || true)
+      UNITS=$((UNITS + n))
+    done
+  done
+elif command -v launchctl >/dev/null 2>&1; then
+  UNITS=$(launchctl list 2>/dev/null | grep -c -e 'actions\.runner\.' -e 'nova-runner-' || true)
+fi
+LISTENERS=$(pgrep -f 'Runner.Listener' 2>/dev/null | grep -c . || true)
+if [ "$UNITS" = "0" ]; then
+  echo "RUNNER PATH FAIL $DIRS runner directories and no unit in either systemd scope or launchd; these runners do not survive a reboot"
+  exit 1
+fi
+if [ "$LISTENERS" -gt "$UNITS" ]; then
+  echo "RUNNER PATH FAIL $LISTENERS Runner.Listener processes for $UNITS unit(s): a double registration, and both halves take shards"
+  exit 1
+fi
+echo "RUNNER PATH OK runners=$DIRS units=$UNITS listeners=$LISTENERS go>=$NOVA_GO"

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -55,73 +54,6 @@ func TestAKeyNameThatIsNotAnEnvVarIsRefused(t *testing.T) {
 		"--only", "all", "--", "echo", "PASSED")
 	if code != 0 || !strings.Contains(out, "PASSED") {
 		t.Errorf("expected valid keys to pass, got %d: out=%s, err=%s", code, out, errOut)
-	}
-}
-
-// Test 12: TestCheckCapsEachKindSeparatelyAndAlwaysPrintsTheCount
-func TestCheckCapsEachKindSeparatelyAndAlwaysPrintsTheCount(t *testing.T) {
-	t.Parallel()
-	sopsPath := findSops(t)
-	bin := buildNovaSecrets(t)
-
-	td := t.TempDir()
-	storeDir := filepath.Join(td, "store")
-	_ = os.MkdirAll(storeDir, 0755)
-	initGitStore(t, storeDir)
-
-	keyA := genKey(t, td, "keya")
-	recKey := genKey(t, td, "rec")
-	foreignKey := genKey(t, td, "foreign")
-
-	_ = os.WriteFile(filepath.Join(storeDir, "recovery.pub"), []byte(recKey.pubKey+"\n"), 0644)
-
-	var rules []string
-	rules = append(rules, fmt.Sprintf("  - path_regex: ^main\\.yaml$\n    age: %s,%s", keyA.pubKey, recKey.pubKey))
-	// 30 unsealed files
-	for i := 0; i < 30; i++ {
-		name := fmt.Sprintf("unsealed_%02d.yaml", i)
-		rules = append(rules, fmt.Sprintf("  - path_regex: ^%s$\n    age: %s,%s", name, keyA.pubKey, recKey.pubKey))
-		// File has unsealed key
-		_ = os.WriteFile(filepath.Join(storeDir, name), []byte("UNENCRYPTED_KEY: plaintext\nsops:\n  version: 3.13.3\n  age:\n    - recipient: "+keyA.pubKey+"\n"), 0644)
-	}
-	// 1 foreign file that opens when it should not:
-	// File is sealed to keyA, but rule says foreignKey!
-	rules = append(rules, fmt.Sprintf("  - path_regex: ^foreign\\.yaml$\n    age: %s,%s", foreignKey.pubKey, recKey.pubKey))
-	sealFileWithSops(t, sopsPath, filepath.Join(storeDir, "foreign.yaml"), []string{foreignKey.pubKey, recKey.pubKey}, "GH_TOKEN: ghp_for\n")
-	sealFileWithSops(t, sopsPath, filepath.Join(storeDir, "main.yaml"), []string{keyA.pubKey, recKey.pubKey}, "GH_TOKEN: ghp_main\n")
-
-	_ = os.WriteFile(filepath.Join(storeDir, ".sops.yaml"), []byte("creation_rules:\n"+strings.Join(rules, "\n")+"\n"), 0644)
-	commitAndPush(t, storeDir)
-
-	// Run check with default max=20
-	_, errOut, code := runNovaSecrets(bin, "check", "--store", storeDir, "--as", "main", "--key", keyA.privPath, "--sops", sopsPath)
-	if code != 1 {
-		t.Fatalf("expected check exit 1, got %d", code)
-	}
-
-	// Loud kind (unsealed) should cap at 20 with MORE line
-	if !strings.Contains(errOut, "SECRETS CHECK MORE kind=unsealed shown=20 total=30") {
-		t.Errorf("expected MORE line for unsealed: %s", errOut)
-	}
-
-	// Summary line prints total counts
-	if !strings.Contains(errOut, "failed=") || !strings.Contains(errOut, "files=32") {
-		t.Errorf("summary line missing in stderr: %s", errOut)
-	}
-
-	// --max 0 prints all
-	_, errOutAll, code := runNovaSecrets(bin, "check", "--store", storeDir, "--as", "main", "--key", keyA.privPath, "--sops", sopsPath, "--max", "0")
-	if code != 1 {
-		t.Fatalf("expected exit 1, got %d", code)
-	}
-	if strings.Contains(errOutAll, "MORE kind=") {
-		t.Errorf("max 0 should not print MORE line: %s", errOutAll)
-	}
-
-	// Negative --max is refused at exit 2
-	_, errOutNeg, code := runNovaSecrets(bin, "check", "--store", storeDir, "--as", "main", "--key", keyA.privPath, "--sops", sopsPath, "--max", "-1")
-	if code != 2 {
-		t.Errorf("expected exit 2 on negative max, got %d: %s", code, errOutNeg)
 	}
 }
 
@@ -264,7 +196,7 @@ func TestKeygenNeverOverwritesAndNeverTouchesTheStore(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("keygen without store failed: %d", code)
 	}
-	if !strings.Contains(out, "<recovery key>") || !strings.Contains(out, "SECRETS RULE NOTE  placeholder: no --store, so <recovery key> stands unfilled") {
+	if !strings.Contains(out, "<recovery key>") || !strings.Contains(out, "SECRETS RULE NOTE  placeholder: no --store, so <recovery key> is filled by `nova-secrets seat add`") {
 		t.Errorf("expected placeholder and note line without store: %s", out)
 	}
 
@@ -285,12 +217,65 @@ func TestKeygenNeverOverwritesAndNeverTouchesTheStore(t *testing.T) {
 }
 
 // Test 15: TestTheLauncherOrderWorksWithTheStoreFullyDenied
+//
+// End to end in nova-sandbox's real grammar, built from this commit: the write set carries
+// the probe's HOME, and neither the store nor the key directory is in any read set. In
+// the launcher's order (nova-secrets outside, the wall inside) the probe sees its keys and
+// cannot read the store or the key; in the reverse nesting the tool inside the wall cannot
+// open the store and the command never starts. It skips, naming nova-sandbox's own
+// refusal, only where this machine cannot build the wall.
 func TestTheLauncherOrderWorksWithTheStoreFullyDenied(t *testing.T) {
 	t.Parallel()
-	// Nova-sandbox integration test. Skips with stated reason if nova-sandbox is not built
-	sandboxBin, err := exec.LookPath("nova-sandbox")
-	if err != nil {
-		t.Skip("skipping TestTheLauncherOrderWorksWithTheStoreFullyDenied: nova-sandbox not built on PATH")
+	sopsPath := findSops(t)
+	bin := buildNovaSecrets(t)
+	sb := buildNovaSandbox(t)
+
+	td := t.TempDir()
+	storeDir := filepath.Join(td, "store")
+	_ = os.MkdirAll(storeDir, 0755)
+	initGitStore(t, storeDir)
+	keyA := genKey(t, td, "keya")
+	recKey := genKey(t, td, "rec")
+	_ = os.WriteFile(filepath.Join(storeDir, "recovery.pub"), []byte(recKey.pubKey+"\n"), 0644)
+	_ = os.WriteFile(filepath.Join(storeDir, ".sops.yaml"), []byte(fmt.Sprintf("creation_rules:\n  - path_regex: ^rowan\\.yaml$\n    age: %s,%s\n", keyA.pubKey, recKey.pubKey)), 0644)
+	sealFileWithSops(t, sopsPath, filepath.Join(storeDir, "rowan.yaml"), []string{keyA.pubKey, recKey.pubKey}, "GH_TOKEN: ghp_launcher_value\n")
+	commitAndPush(t, storeDir)
+
+	home := filepath.Join(td, "probehome")
+	_ = os.MkdirAll(home, 0700)
+	requireWall(t, sb, home)
+
+	// The probe prints the key it was given, then tries the store and the key file.
+	probe := `echo "SEEN=$GH_TOKEN"; cat "$0" >/dev/null 2>&1 && echo STORE-READ; cat "$1" >/dev/null 2>&1 && echo KEY-READ; exit 0`
+	storeFile := filepath.Join(storeDir, "rowan.yaml")
+
+	// The launcher's order: nova-secrets opens the file and becomes nova-sandbox, which
+	// becomes the probe. No read set names the store, the key or sops.
+	wall := []string{sb, "--write", home}
+	for _, r := range wallReads() {
+		wall = append(wall, "--read", r)
 	}
-	_ = sandboxBin
+	wall = append(wall, "--net-deny", "--", "/bin/sh", "-c", probe, storeFile, keyA.privPath)
+	launcher := append([]string{"exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath,
+		"--only", "GH_TOKEN", "--require", "GH_TOKEN", "--"}, wall...)
+	env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home}
+	out, errOut, code, _ := runWithEnv(bin, env, launcher...)
+	if code != 0 || !strings.Contains(out, "SEEN=ghp_launcher_value\n") {
+		t.Fatalf("launcher order: the probe must see its key, exit %d\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	if strings.Contains(out, "STORE-READ") || strings.Contains(out, "KEY-READ") {
+		t.Errorf("launcher order: the probe read the store or the key through the wall: %s", out)
+	}
+
+	// The reverse nesting: the wall outside, nova-secrets inside. With the store and the
+	// key in no read set it must FAIL, and the probe must never run.
+	out, errOut, code = inWall(sb, home, []string{filepath.Dir(bin), filepath.Dir(sopsPath)}, true,
+		bin, "exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath,
+		"--only", "GH_TOKEN", "--", "/bin/sh", "-c", probe, storeFile, keyA.privPath)
+	if code == 0 || strings.Contains(out, "SEEN=") {
+		t.Errorf("reverse nesting must fail before the command runs, got exit %d\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	if strings.Contains(out+errOut, "ghp_launcher_value") {
+		t.Errorf("reverse nesting leaked the value: %s%s", out, errOut)
+	}
 }

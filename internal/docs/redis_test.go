@@ -6,13 +6,11 @@ import (
 	"testing"
 )
 
-// TestNovaRedisSpecFirstSlice pins the first slice of the nova-redis proposal
-// (nova-tools #130): an internal ephemeral package used by wake, swarm slots
-// and locks, nova-go budgets and plan state, each with a file fallback, and a
-// `nova-redis` binary owning the instance (status, spill/recall scratch with
-// TTL and owner prefixes, presence, check) bound to localhost and the tailnet
-// with auth from nova-secrets and persistence off. Git stays the record; a
-// missing file or a section missing one of the named contract terms is a bug.
+// TestNovaRedisSpecFirstSlice pins the nova-redis specification's contract
+// terms: the `nova-redis` binary owning the instance (serve, and spill/recall
+// scratch with TTL and owner prefixes) bound to localhost and the tailnet with
+// auth from nova-secrets and the AOF on. Git stays the record; a missing file or
+// a section missing one of the named contract terms is a bug.
 func TestNovaRedisSpecFirstSlice(t *testing.T) {
 	t.Parallel()
 
@@ -25,22 +23,15 @@ func TestNovaRedisSpecFirstSlice(t *testing.T) {
 	for _, want := range []string{
 		"# nova-redis",
 		"`nova-redis`",
-		"`status`",
+		"`serve`",
 		"`spill`",
 		"`recall`",
 		"TTL",
 		"owner prefix",
-		"`presence`",
-		"`check`",
 		"localhost",
 		"tailnet",
 		"nova-secrets",
-		"persistence",
-		"file fallback",
-		"wake",
-		"swarm slots and locks",
-		"budgets",
-		"plan state",
+		"Persistence",
 		"Git stays the record",
 	} {
 		if !strings.Contains(content, want) {

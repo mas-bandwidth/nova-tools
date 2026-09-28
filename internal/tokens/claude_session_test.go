@@ -65,6 +65,8 @@ func writeFixtureSession(t *testing.T, dir string) string {
 
 // TestReadClaudeSessionMatchesTheHandCount is the whole claim of G5.
 func TestReadClaudeSessionMatchesTheHandCount(t *testing.T) {
+	t.Parallel()
+
 	sum, err := ReadClaudeSession(writeFixtureSession(t, t.TempDir()))
 	if err != nil {
 		t.Fatal(err)
@@ -99,6 +101,8 @@ func TestReadClaudeSessionMatchesTheHandCount(t *testing.T) {
 // own, per day, with the four counts and a reasoning cell that is a dash -- a transcript
 // carries no reasoning count, and a zero there would sum into a month claiming to be whole.
 func TestSessionRowIsTheCoordinatorsOwnLine(t *testing.T) {
+	t.Parallel()
+
 	sum, err := ReadClaudeSession(writeFixtureSession(t, t.TempDir()))
 	if err != nil {
 		t.Fatal(err)
@@ -130,6 +134,8 @@ func TestSessionRowIsTheCoordinatorsOwnLine(t *testing.T) {
 // TestSessionSplitsAcrossMidnight: a window that runs past midnight is two rows on two days,
 // never one row dated by the file it lives in.
 func TestSessionSplitsAcrossMidnight(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "s.jsonl")
 	body := `{"timestamp":"2026-09-16T23:59:00Z","message":{"id":"a","model":"m","usage":{"input_tokens":10,"output_tokens":1}}}

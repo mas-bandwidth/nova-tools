@@ -78,6 +78,13 @@ type ModelSum struct {
 	Agg   *Agg
 }
 
+// UnitSum is one work-set unit's grouping: what one PIECE OF WORK cost, which is the
+// question the repo column cannot answer.
+type UnitSum struct {
+	Unit string
+	Agg  *Agg
+}
+
 // Sum is a whole month.
 type Sum struct {
 	Month    string
@@ -88,7 +95,10 @@ type Sum struct {
 	HaveTurn bool
 	Pairs    []Pair
 	Models   []ModelSum
-	Total    *Agg
+	// Units is every unit a day file's rows named, `-` among them: the rows nobody
+	// attributed are a share of the month a reader has to see, not a group to hide.
+	Units []UnitSum
+	Total *Agg
 }
 
 // SumMonth walks <out>/<month>-??.tsv in name order. A file whose stamp line is not
@@ -102,6 +112,7 @@ func SumMonth(out, month string) (*Sum, error) {
 	s := &Sum{Month: month, Total: newAgg()}
 	pairs := map[string]*Pair{}
 	models := map[string]*ModelSum{}
+	units := map[string]*UnitSum{}
 	var names []string
 	for _, e := range ents {
 		if e.IsDir() {
@@ -150,6 +161,16 @@ func SumMonth(out, month string) (*Sum, error) {
 				models[r.Model] = m
 			}
 			m.Agg.add(r, r.Repo)
+			key := r.Unit
+			if key == "" {
+				key = Dash
+			}
+			u, ok := units[key]
+			if !ok {
+				u = &UnitSum{Unit: key, Agg: newAgg()}
+				units[key] = u
+			}
+			u.Agg.add(r, r.Model+"\t"+r.Repo)
 		}
 	}
 	s.Missing = MissingDays(s.Days)
@@ -158,6 +179,9 @@ func SumMonth(out, month string) (*Sum, error) {
 	}
 	for _, m := range models {
 		s.Models = append(s.Models, *m)
+	}
+	for _, u := range units {
+		s.Units = append(s.Units, *u)
 	}
 	// Descending by total, ties by name: the biggest spend first is what a reader of a
 	// capped listing came for.
@@ -177,6 +201,13 @@ func SumMonth(out, month string) (*Sum, error) {
 			return a > b
 		}
 		return s.Models[i].Model < s.Models[j].Model
+	})
+	sort.Slice(s.Units, func(i, j int) bool {
+		a, b := total(s.Units[i].Agg), total(s.Units[j].Agg)
+		if a != b {
+			return a > b
+		}
+		return s.Units[i].Unit < s.Units[j].Unit
 	})
 	return s, nil
 }

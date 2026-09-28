@@ -10,6 +10,8 @@ import (
 )
 
 func TestAttest(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name      string
 		files     map[string]string // relative path -> content, under home
@@ -104,6 +106,8 @@ func TestAttest(t *testing.T) {
 // The attestation must be deterministic, and must move when contents,
 // paths, or manifest order move — that is the whole point of the hash.
 func TestAttestHashBindsContentPathAndOrder(t *testing.T) {
+	t.Parallel()
+
 	manifestFile := func(t *testing.T, content string) string {
 		p := filepath.Join(t.TempDir(), "m.txt")
 		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
@@ -166,6 +170,8 @@ func TestAttestHashBindsContentPathAndOrder(t *testing.T) {
 // inside --home let a manifest attest files outside the home — a hash oracle
 // once the OK line is pasted publicly. Symlinks must never be followed.
 func TestAttestRefusesSymlinkedDirEscape(t *testing.T) {
+	t.Parallel()
+
 	home := t.TempDir()
 	outside := t.TempDir()
 	writeTree(t, outside, map[string]string{"secret.md": "the secret\n"})
@@ -189,6 +195,8 @@ func TestAttestRefusesSymlinkedDirEscape(t *testing.T) {
 // Symlinks are never followed even when they resolve inside --home, and a
 // leaf that is a symlink is refused as not a regular file.
 func TestAttestRefusesSymlinksInsideHome(t *testing.T) {
+	t.Parallel()
+
 	home := t.TempDir()
 	writeTree(t, home, map[string]string{"real/a.md": "content"})
 	if err := os.Symlink(filepath.Join(home, "real"), filepath.Join(home, "alias")); err != nil {
@@ -218,6 +226,8 @@ func TestAttestRefusesSymlinksInsideHome(t *testing.T) {
 // "a.md" and "./a.md" both attested and double-counted bytes over one file.
 // Entries must already be canonical; anything else is a named failure.
 func TestAttestRejectsNonCanonicalEntries(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		manifest string
@@ -253,6 +263,8 @@ func TestAttestRejectsNonCanonicalEntries(t *testing.T) {
 // contained NUL: one file holding "x\x00y.md\x00z" hashed identically to the
 // two files a.md="x", y.md="z". Length-prefixed framing must separate them.
 func TestAttestHashInjectiveWithNULContents(t *testing.T) {
+	t.Parallel()
+
 	attest := func(files map[string]string, manifest string) Attestation {
 		t.Helper()
 		home := t.TempDir()
@@ -279,6 +291,8 @@ func TestAttestHashInjectiveWithNULContents(t *testing.T) {
 
 // An unreadable manifested file is a named failure (exit 1), not a refusal.
 func TestAttestUnreadableFileIsNamedFailure(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("windows: chmod 0 does not refuse reads, so this property cannot be observed here")
 	}
@@ -305,6 +319,8 @@ func TestAttestUnreadableFileIsNamedFailure(t *testing.T) {
 }
 
 func TestAttestRefusals(t *testing.T) {
+	t.Parallel()
+
 	home := t.TempDir()
 	m := filepath.Join(t.TempDir(), "m.txt")
 	if err := os.WriteFile(m, []byte("a.md\n"), 0o644); err != nil {
@@ -340,6 +356,8 @@ func TestAttestRefusals(t *testing.T) {
 var dispatchRE = regexp.MustCompile(`(?m)^\s*case "([a-z-]+)":\s*\n\s*return cmd`)
 
 func TestRecordLayerCheckCountMatchesSPEC(t *testing.T) {
+	t.Parallel()
+
 	const specPath = "../../docs/SPEC.md"
 	spec, err := os.ReadFile(specPath)
 	if err != nil {

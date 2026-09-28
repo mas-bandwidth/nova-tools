@@ -381,6 +381,8 @@ func readCodexSource(t *testing.T, path string) []codexRecord {
 }
 
 func TestCodexRetainedMappingFixtures(t *testing.T) {
+	t.Parallel()
+
 	dir := filepath.Join("..", "..", "testdata", "tokens", "codex")
 	m, mappingID, allow := loadMapping(t, dir)
 	v := NewValidator(allow)
@@ -631,6 +633,8 @@ func readGrokSource(t *testing.T, path string) grokExport {
 }
 
 func TestGrokRetainedMappingFixtures(t *testing.T) {
+	t.Parallel()
+
 	dir := filepath.Join("..", "..", "testdata", "tokens", "grok")
 	m, mappingID, allow := loadMapping(t, dir)
 	v := NewValidator(allow)

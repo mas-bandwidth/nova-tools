@@ -33,6 +33,8 @@ func outsideFile(t *testing.T, dir string) string {
 
 // Finding 2: a report that is a symlink is not this job's report.
 func TestReadFileSteadyRefusesASymlink(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	job := filepath.Join(dir, "job")
 	if err := os.MkdirAll(job, 0o755); err != nil {
@@ -50,6 +52,8 @@ func TestReadFileSteadyRefusesASymlink(t *testing.T) {
 }
 
 func TestHarnessTailRefusesASymlink(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	job := filepath.Join(dir, "job")
 	if err := os.MkdirAll(job, 0o755); err != nil {
@@ -64,6 +68,8 @@ func TestHarnessTailRefusesASymlink(t *testing.T) {
 
 // Finding 3: the atomic write's temporary is the dispatcher's, never the worker's.
 func TestWriteAtomicDoesNotWriteThroughAPlantedTemp(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	job := filepath.Join(dir, "job")
 	if err := os.MkdirAll(job, 0o755); err != nil {
@@ -92,6 +98,8 @@ func TestWriteAtomicDoesNotWriteThroughAPlantedTemp(t *testing.T) {
 }
 
 func TestAppendNoteRefusesASymlinkedNoteFile(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	job := filepath.Join(dir, "job")
 	if err := os.MkdirAll(job, 0o755); err != nil {
@@ -113,6 +121,8 @@ func TestAppendNoteRefusesASymlinkedNoteFile(t *testing.T) {
 
 // Finding 4: a FIFO is not a record, and it must never park the dispatcher.
 func TestReadFileSteadyDoesNotBlockOnAFIFO(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	job := filepath.Join(dir, "job")
 	if err := os.MkdirAll(job, 0o755); err != nil {
@@ -138,6 +148,8 @@ func TestReadFileSteadyDoesNotBlockOnAFIFO(t *testing.T) {
 }
 
 func TestReadJSONDoesNotBlockOnAFIFO(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	job := filepath.Join(dir, "job")
 	if err := os.MkdirAll(job, 0o755); err != nil {
@@ -165,6 +177,8 @@ func TestReadJSONDoesNotBlockOnAFIFO(t *testing.T) {
 // reads, so a FIFO there parked the dispatcher at the same place the guarded reads had just
 // been taught to refuse.
 func TestCountRefusalsDoesNotBlockOnAFIFO(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	job := filepath.Join(dir, "job")
 	if err := os.MkdirAll(job, 0o755); err != nil {
@@ -184,6 +198,8 @@ func TestCountRefusalsDoesNotBlockOnAFIFO(t *testing.T) {
 }
 
 func TestCountRefusalsRefusesASymlink(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	job := filepath.Join(dir, "job")
 	if err := os.MkdirAll(job, 0o755); err != nil {

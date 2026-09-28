@@ -33,6 +33,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/cairn"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -52,7 +53,13 @@ flags:
                     environment variable and no discovery from the working
                     directory. The store is plain files; a note is fsync-durable
                     before success is reported, independently of Redis and of
-                    any remote.
+                    any remote. Two shapes are read: this tool's own
+                    (sessions/<id>.md, entries/, log.jsonl) and a bench store of
+                    one markdown file per session directly under the store
+                    (<id>.md), appended by hand. On the second, open is a no-op
+                    and append lands a dated "## <stamp> - <entry>" section at
+                    the end of the file; no index and no directory appear
+                    beside it.
   --session <id>    the stable session identifier. Required: retries and
                     recoveries address the same record by this name.
   --entry <id>      the stable entry identifier. Required on append and receipt:
@@ -61,7 +68,10 @@ flags:
   --text <words>    the friend's exact words, stored byte-for-byte. Exactly one
   --file <path|->   of --text or --file: --file - reads stdin.
   --source <ptr>    where the words came from (transcript path, line range,
-                    bench/session pointer). Recorded, never opened.
+                    bench/session pointer). Recorded, never opened. On open it
+                    is the session's pointer; an append with no --source
+                    carries it. Every line prints source=, and source=- is an
+                    entry with no pointer.
   --publish <pol>   caller-chosen publication policy, one of never, manual,
                     deferred, immediate. Required on open and append. This slice
                     implements no transport: every success reports
@@ -83,6 +93,9 @@ example:
   nova-cairn append --store ./cairns --session s1 --entry e1 --text "the words to keep" --publish manual
   nova-cairn index --store ./cairns
   nova-cairn receipt --store ./cairns --session s1 --entry e1
+
+Those four are one sitting, in order: the open makes ./cairns, and the append,
+index and receipt read it back. A line run alone names a record it did not make.
 `
 
 // refuse is what an unusable invocation costs: one line naming what was
@@ -94,7 +107,10 @@ func refuse(stderr io.Writer, where, what string) int {
 
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
 
-func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
+	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
+	// before anything is read or written (the CLI style's rule (b), #4505).
+	defer verbflag.Recover(stdout, "nova-cairn", usage, &code)
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb given; open starts a record")
 	}
@@ -110,6 +126,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "version", "--version":
 		return cmdVersion(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
+		if args[0] == "help" && len(args) > 1 && args[1] != "help" && !verbflag.IsHelp(args[1]) {
+			return run(append(args[1:], "--help"), stdin, stdout, stderr)
+		}
 		fmt.Fprint(stdout, usage)
 		return 0
 	default:
@@ -123,7 +142,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 func parse(fs *flag.FlagSet, args []string, stderr io.Writer, required ...string) (given map[string]bool, ok bool) {
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
-	if err := fs.Parse(args); err != nil {
+	if err := verbflag.Parse(fs, args); err != nil {
 		refuse(stderr, " "+fs.Name(), oneline.Cap(err.Error(), oneline.TailBytes))
 		return nil, false
 	}
@@ -134,7 +153,7 @@ func parse(fs *flag.FlagSet, args []string, stderr io.Writer, required ...string
 	ok = true
 	for _, name := range sorted {
 		if !given[name] {
-			fmt.Fprintf(stderr, "nova-cairn %s: --%s is required; refusing to guess\n", fs.Name(), name)
+			refuse(stderr, " "+fs.Name(), fmt.Sprintf("--%s is required; refusing to guess", name))
 			ok = false
 		}
 	}
@@ -151,16 +170,16 @@ func clock(given map[string]bool, now string, verb string, stderr io.Writer) (ti
 	}
 	t, err := time.Parse(time.RFC3339, strings.TrimSpace(now))
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-cairn %s: --now must parse as RFC 3339 UTC (got %q); refusing to guess\n", verb, now)
+		refuse(stderr, " "+verb, fmt.Sprintf("--now must parse as RFC 3339 UTC (got %q); refusing to guess", now))
 		return time.Time{}, false
 	}
 	return t.UTC(), true
 }
 
 func cmdVersion(args []string, stdout, stderr io.Writer) int {
+	verbflag.HelpIfAsked(args, "version")
 	if len(args) > 0 {
-		fmt.Fprintf(stderr, "nova-cairn version: takes no flags and no arguments, got %d\n", len(args))
-		return 2
+		return refuse(stderr, " version", fmt.Sprintf("takes no flags and no arguments, got %d", len(args)))
 	}
 	fmt.Fprintln(stdout, buildinfo.Line("nova-cairn", version))
 	return 0
@@ -190,11 +209,14 @@ func cmdOpen(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if err := cairn.Open(*store, *session, *source, stamp, *publish); err != nil {
-		fmt.Fprintf(stderr, "nova-cairn open: %s\n", oneline.Err(err))
-		return 2
+		return refuse(stderr, " open", oneline.Err(err))
 	}
-	fmt.Fprintf(stdout, "OPEN OK session=%s store=%s publish=%s stamp=%s\n",
-		oneline.Field(*session), oneline.Escape(*store), oneline.Field(*publish), stamp.Format(time.RFC3339Nano))
+	stored, err := cairn.SessionSource(*store, *session)
+	if err != nil {
+		return refuse(stderr, " open", oneline.Err(err))
+	}
+	fmt.Fprintf(stdout, "OPEN OK session=%s store=%s source=%s publish=%s stamp=%s\n",
+		oneline.Field(*session), oneline.Escape(*store), sourceField(stored), oneline.Field(*publish), stamp.Format(time.RFC3339Nano))
 	return 0
 }
 
@@ -222,20 +244,20 @@ func cmdAppend(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	words := ""
 	switch {
 	case given["text"] && given["file"]:
-		fmt.Fprintln(stderr, "nova-cairn append: --text and --file both name the words; give exactly one")
+		refuse(stderr, " append", "--text and --file both name the words; give exactly one")
 		bad = true
 	case given["text"]:
 		words = *text
 	case given["file"]:
 		raw, err := readWords(*file, stdin)
 		if err != nil {
-			fmt.Fprintf(stderr, "nova-cairn append: %s\n", oneline.Err(err))
+			refuse(stderr, " append", oneline.Err(err))
 			bad = true
 		} else {
 			words = string(raw)
 		}
 	default:
-		fmt.Fprintln(stderr, "nova-cairn append: the words come from --text or --file; refusing to guess")
+		refuse(stderr, " append", "the words come from --text or --file; refusing to guess")
 		bad = true
 	}
 	stamp, ok := clock(given, *now, "append", stderr)
@@ -253,15 +275,14 @@ func cmdAppend(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 				oneline.Field(*session), oneline.Field(*entry), oneline.Escape(err.Error()))
 			return 1
 		}
-		fmt.Fprintf(stderr, "nova-cairn append: %s\n", oneline.Err(err))
-		return 2
+		return refuse(stderr, " append", oneline.Err(err))
 	}
 	dup := "false"
 	if res.Duplicate {
 		dup = "true"
 	}
-	fmt.Fprintf(stdout, "APPEND OK session=%s entry=%s persisted=true published=false publish=%s duplicate=%s stamp=%s\n",
-		oneline.Field(*session), oneline.Field(*entry), oneline.Field(res.Policy), dup, stamp.Format(time.RFC3339Nano))
+	fmt.Fprintf(stdout, "APPEND OK session=%s entry=%s source=%s persisted=true published=false publish=%s duplicate=%s stamp=%s\n",
+		oneline.Field(*session), oneline.Field(*entry), sourceField(res.Source), oneline.Field(res.Policy), dup, stamp.Format(time.RFC3339Nano))
 	return 0
 }
 
@@ -299,7 +320,7 @@ func cmdIndex(args []string, stdout, stderr io.Writer) int {
 		bad = true
 	}
 	if given["max"] && *max < 0 {
-		fmt.Fprintf(stderr, "nova-cairn index: --max must be zero or more (got %d); 0 means print them all\n", *max)
+		refuse(stderr, " index", fmt.Sprintf("--max must be zero or more (got %d); 0 means print them all", *max))
 		bad = true
 	}
 	if bad {
@@ -307,15 +328,14 @@ func cmdIndex(args []string, stdout, stderr io.Writer) int {
 	}
 	all, total, err := cairn.Index(*store, *session, *max)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-cairn index: %s\n", oneline.Err(err))
-		return 2
+		return refuse(stderr, " index", oneline.Err(err))
 	}
 	led := cairn.Coverage(*store)
 	list := bounded.Capped(stdout, *max, "INDEX", "entry", indexRemedy)
 	for _, r := range all {
 		list.Line(fmt.Sprintf("INDEX ENTRY session=%s entry=%s stamp=%s bytes=%d source=%s",
 			oneline.Field(r.Session), oneline.Field(r.ID),
-			r.Stamp.Format(time.RFC3339Nano), r.Bytes, oneline.Escape(r.Source)))
+			r.Stamp.Format(time.RFC3339Nano), r.Bytes, sourceField(r.Source)))
 	}
 	list.More()
 	fmt.Fprintf(stdout, "INDEX COVERAGE sessions=%d entries=%d shown=%d\n", led.Sessions, total, list.Shown())
@@ -341,11 +361,20 @@ func cmdReceipt(args []string, stdout, stderr io.Writer) int {
 	}
 	rc, err := cairn.Receipt(*store, *session, *entry)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-cairn receipt: %s\n", oneline.Err(err))
-		return 2
+		return refuse(stderr, " receipt", oneline.Err(err))
 	}
 	fmt.Fprintf(stdout, "RECEIPT OK session=%s entry=%s stamp=%s bytes=%d source=%s persisted=true published=false publish=%s\n",
 		oneline.Field(rc.Session), oneline.Field(rc.ID),
-		rc.Stamp.Format(time.RFC3339Nano), rc.Bytes, oneline.Escape(rc.Source), oneline.Field(rc.Policy))
+		rc.Stamp.Format(time.RFC3339Nano), rc.Bytes, sourceField(rc.Source), oneline.Field(rc.Policy))
 	return 0
+}
+
+// sourceField renders a source pointer as one key=value token: Field, so a
+// pointer holding a space stays one field, and "-" for an entry that carries
+// none, so an empty pointer reads as absent rather than as a lost value.
+func sourceField(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return oneline.Field(s)
 }

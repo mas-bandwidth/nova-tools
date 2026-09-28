@@ -9,6 +9,8 @@ import (
 
 // Synthetic evidence only: no provider, credentials or live worker is used.
 func TestAMalformedSlotCannotAuthenticateAForgedExit(t *testing.T) {
+	t.Parallel()
+
 	for _, malformed := range []bool{false, true} {
 		name := "intact-slot-control"
 		if malformed {

@@ -1,0 +1,61 @@
+# The names that LOOK like a path into this repository and are not one.
+#
+# One `<name> <reason>` per line. TestEveryNamedRepoPathExists checks this list in BOTH
+# directions: a name that is missing from the tree and not listed here is a red run, and a
+# listed name that nothing writes any more -- or that is IN the tree now -- is also a red
+# run. So the list only ever gets shorter, and a row parks nothing.
+#
+# There are three honest reasons to be here, and they are the three sections below. The
+# first is by far the largest, and it is the one worth reading as a list: it is every file
+# a specification has PLANNED and nobody has written yet. Shrink-only means the row is
+# deleted on the day the file appears, by the test, out loud.
+
+# --- 1. A specification's plan: a file the spec says will exist, not yet written. ---
+
+docs/templates SPEC-CI cardtemplates: one of CardTemplateDirs, skipped until a template is written there
+internal/pkgvalid PROPOSAL-TOKENS-RECORDS-185's plan: the package the proposal would add
+internal/pulse/cardheader.go the typed-header grammar that lands with #1721; lintheader.go names it as the parser not yet in this tree
+internal/pulse/kinds.go SPEC-TOOLWORK §5's kinds-table file; the six kinds live in cutkind.go until the accept gate's table is one file of its own
+internal/tokens/message.go SPEC-TOKENS' plan: the message record
+tools/templates SPEC-CI cardtemplates: one of CardTemplateDirs, skipped until a template is written there
+
+# --- 2. An invented example: a name chosen to show the SHAPE of a path. ---
+
+.github/scripts/foo.sh SPEC-CI.md's invented script in `x=$(bash ...)`, shown as something that is not a producer
+.github/seat-rule-gate.sh SPEC-SECRETS.md names the workflow script that is deliberately NOT here: the rule lives in the tool instead
+docs/bus internal/bus/git.go's failure narrative: a bus directory pointed inside a larger repository
+docs/bus/from-bo/x.md the path that same narrative says git reports from the repository root
+docs/history SPEC.md's `--allow docs/history` example for subdirectory enumeration
+internal/decide/entry.go internal/swarm/lintbase.go's class-9 story: the PATHS entry card-nx-f19 named that did not exist at its base
+internal/secretsanta/ SPEC-RELEASE.md's example of what prefix matching on `internal/secrets` would also catch
+
+# --- 3. A path in another tree: another repository, another branch, or a retired file. ---
+
+cmd/nova-merge/queue.go retired with the per-PR lander on 2026-09-24; internal/merge/queuegh.go names it as where its caller was
+docs/nova-lessons.md the lessons file lives in the self repository; internal/pulse/watch.go cites it as the source of its rules
+fleet/group_vars/all.yml rowan-tools' Ansible inventory, named by internal/nsprint/life/wakehealth.go as the friends: declaration; not this tree
+scripts/coordination/ a prefix in SPEC-RELEASE.md's sensitive-path list, kept in the list though the directory is retired
+docs/SPEC-PULSE.md deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
+internal/pulse/fleetstandard.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
+internal/pulse/queue.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
+internal/pulse/queue_test.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
+internal/sprintci deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
+cmd/nova-pulse/testdata deleted by #3801 (card cut in nova-sprint, #3789); the line naming it is history
+
+# internal/pulse (nova-pulse's package, frozen 2026-09-23 #3439) was deleted on 2026-09-25 (#3969, Glenn: "Yes it's dead. remove."); the specs cite its files at named commits as history.
+internal/pulse internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/cardheader.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/cut.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/cut_test.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/cutkind.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/fleetstandard.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/harvest.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/harvest_working.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/kinds.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/manager.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/queue.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/queue_test.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/recut.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+internal/pulse/statushtmlrows.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
+docs/roadmaps/nova-work.sexp a path in the repository the parked nova-sprint lander classifies (internal/nsprint/land); this tree holds none
+docs/LESSONS-ARCHIVE.md the archive the parked nova-sprint lesson verb writes into the repository it is run on (internal/nsprint/lessons)

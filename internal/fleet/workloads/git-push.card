@@ -1,0 +1,32 @@
+roles: bench
+expect: ^GIT PUSH OK
+wall: yes
+reads: $HOME/sdk, $HOME/.local, /usr, /bin, /lib, /lib64, /etc, /opt/homebrew
+
+# Every card ends in a push, and a push from inside the wall is the step that fails on a
+# bench whose git is the Xcode shim or whose config the wall cannot read. The remote is a
+# BARE REPOSITORY MADE FOR THIS RUN and deleted after it: certification never touches a
+# real remote, and nothing it makes outlives it.
+set -eu
+GIT=$(command -v git 2>/dev/null || true)
+if [ -z "$GIT" ]; then
+  echo "GIT PUSH FAIL no git is reachable inside the wall"
+  exit 1
+fi
+GIT_CONFIG_GLOBAL="$PWD/gitconfig"
+GIT_CONFIG_NOSYSTEM=1
+GIT_TERMINAL_PROMPT=0
+export GIT_CONFIG_GLOBAL GIT_CONFIG_NOSYSTEM GIT_TERMINAL_PROMPT
+printf '[user]\n\tname = nova-certify\n\temail = certify@localhost\n[init]\n\tdefaultBranch = main\n' > "$GIT_CONFIG_GLOBAL"
+git init --bare -q scratch.git
+git init -q work
+cd work
+echo "nova-certify" > file.txt
+git add file.txt
+git commit -q -m "nova-certify: a representative commit"
+git branch -M nova-certify-throwaway
+git push -q ../scratch.git nova-certify-throwaway
+HEAD=$(git --git-dir=../scratch.git rev-parse nova-certify-throwaway)
+cd ..
+rm -rf scratch.git work
+echo "GIT PUSH OK head=$HEAD git=$(git --version)"

@@ -1,0 +1,15 @@
+{
+  "id": "certify:fix-loop",
+  "kind": "fleet-chore",
+  "files": 0,
+  "packages": 1,
+  "lanes": 1,
+  "lane_owner": "pulse",
+  "guard": false,
+  "secrets": false,
+  "touches": [
+    "sudo"
+  ],
+  "attempts": [],
+  "fresh_take": false
+}

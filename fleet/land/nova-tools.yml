@@ -1,0 +1,31 @@
+repo: nova-tools
+bases:
+  dev:
+    required_steps:
+      - gofmt
+      - build
+      - vet
+      - test
+      - test-race-queue
+      - vet-windows
+    land_bar: 10
+    readers: 0
+    security_paths:
+      - .github/
+      - fleet/
+      - secrets/
+    alone_paths:
+      - go.mod
+      - go.sum
+      - .github/
+      - vendor/
+      - Makefile
+    sel_goos:
+      - linux
+      - darwin
+      - windows
+    build_tags: []
+    merge_style: merge
+    deadlines:
+      step: 10m
+      gate: 20m

@@ -42,6 +42,8 @@ const hostileRef = "--upload-pack=touch /tmp/nova-merge-finding-5"
 // a host that names its head branch a flag. Both of the unvalidated fetches of the audit
 // are reached from here: the CONFLICTING arm's re-merge fetch, and the build's fetch.
 func TestAForgeHeadRefIsCheckedBeforeItReachesGitArgv(t *testing.T) {
+	t.Parallel()
+
 	for _, mergeable := range []string{"CONFLICTING", "MERGEABLE"} {
 		t.Run(mergeable, func(t *testing.T) {
 			oid := strings.Repeat("a", 40)
@@ -89,6 +91,8 @@ func TestAForgeHeadRefIsCheckedBeforeItReachesGitArgv(t *testing.T) {
 // TestTheForgeDecodeRefusesAFlagShapedHeadRef checks the arrival point itself: the JSON
 // gh answers. A head branch that is a flag never becomes a PR this tool hands on.
 func TestTheForgeDecodeRefusesAFlagShapedHeadRef(t *testing.T) {
+	t.Parallel()
+
 	good := `{"number":7,"author":{"login":"a"},"baseRefName":"main","headRefName":"feature-x",` +
 		`"headRepositoryOwner":{"login":"o"},"headRefOid":"` + strings.Repeat("a", 40) + `",` +
 		`"mergeable":"MERGEABLE","isDraft":false,"url":"u","title":"t"}`

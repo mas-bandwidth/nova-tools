@@ -22,6 +22,7 @@ func reportTipLab(t *testing.T) (lane, tip, fetchHeadPath, trackingRef string) {
 	seed := filepath.Join(root, "seed")
 	lane = filepath.Join(root, "lane")
 	tipGit(t, root, "init", "-q", "--bare", remote)
+	quietRepo(t, remote)
 	if err := os.MkdirAll(seed, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -77,6 +78,8 @@ func reportRefNames(t *testing.T, lane string) []string {
 }
 
 func TestWithFetchedReportTipPinsTheCallbackWithoutCheckoutOrFetchHead(t *testing.T) {
+	t.Parallel()
+
 	lane, wantTip, fetchHeadPath, trackingRef := reportTipLab(t)
 	statePath := filepath.Join(lane, StateName)
 	if err := os.WriteFile(statePath, []byte("state remains report-external\n"), 0o644); err != nil {
@@ -142,6 +145,8 @@ func TestWithFetchedReportTipPinsTheCallbackWithoutCheckoutOrFetchHead(t *testin
 }
 
 func TestWithFetchedReportTipKeepsConcurrentPinsThroughGC(t *testing.T) {
+	t.Parallel()
+
 	lane, wantTip, _, _ := reportTipLab(t)
 	records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, reportTestGitTimeout, nil), time.Second)
 	start := make(chan struct{})
@@ -260,6 +265,8 @@ func reportDeleteTarget(args []string) (ref, expected string, ok bool) {
 }
 
 func TestWithFetchedReportTipCleansKnownFailureAndPreservesAmbiguousRef(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name       string
 		mode       string
@@ -298,6 +305,8 @@ func TestWithFetchedReportTipCleansKnownFailureAndPreservesAmbiguousRef(t *testi
 }
 
 func TestWithFetchedReportTipCleansAfterCallbackFailure(t *testing.T) {
+	t.Parallel()
+
 	lane, _, _, _ := reportTipLab(t)
 	records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, reportTestGitTimeout, nil), time.Second)
 	want := errors.New("callback refused")
@@ -311,6 +320,8 @@ func TestWithFetchedReportTipCleansAfterCallbackFailure(t *testing.T) {
 }
 
 func TestWithFetchedReportTipCleanupCASPreservesReplacement(t *testing.T) {
+	t.Parallel()
+
 	lane, wantTip, _, _ := reportTipLab(t)
 	replacement := tipGit(t, lane, "commit-tree", "HEAD^{tree}", "-m", "replacement")
 	runner := &reportRunner{mode: "replace-before-delete", replacement: replacement}
@@ -369,6 +380,8 @@ func TestWithFetchedReportTipRefusesInvalidBranchAndReservationCollision(t *test
 }
 
 func TestWithFetchedReportTipUsesOnlyThePrivateFetchRefspec(t *testing.T) {
+	t.Parallel()
+
 	lane, _, _, _ := reportTipLab(t)
 	runner := &reportRunner{}
 	records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, reportTestGitTimeout, runner), time.Second)
@@ -442,6 +455,8 @@ func (r *timedOutFetchRunner) Run(ctx context.Context, dir, name string, args ..
 }
 
 func TestWithFetchedReportTipTimesOutFetchAndCleansOwnedMarker(t *testing.T) {
+	t.Parallel()
+
 	lane, _, _, _ := reportTipLab(t)
 	runner := &timedOutFetchRunner{fetchBlocked: make(chan struct{}), release: make(chan struct{})}
 	records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, reportTestGitTimeout, runner), time.Second)

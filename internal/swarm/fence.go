@@ -37,13 +37,19 @@ import (
 // spelling a person reads as "everything under here", and a matcher that ever tightened `*`
 // to one segment would leave the rule meaning what it says.
 const (
-	// FenceAllow and FenceAsk are the harness's own permission actions. `ask` in a
-	// non-interactive `run` is a rejection, which is the whole of this issue.
+	// FenceAllow, FenceAsk and FenceDeny are the harness's own permission actions. `ask` in
+	// a non-interactive `run` is auto-rejected and the model STOPS -- the whole run ends and
+	// the card's commits are stranded. `deny` is a TOOL ERROR returned to the model, which
+	// notes it, works inside the job instead, and continues (issue #918). So the fence's
+	// fallback is deny, and `ask` is never written: there is no terminal to answer it.
 	FenceAllow = "allow"
 	FenceAsk   = "ask"
+	FenceDeny  = "deny"
 
-	// FenceExternalDirectory is the permission key the harness asks under.
+	// FenceExternalDirectory is the permission key the harness asks under for a path
+	// outside the cwd; FenceWebfetch is the network tool. Neither is left to prompt.
 	FenceExternalDirectory = "external_directory"
+	FenceWebfetch          = "webfetch"
 )
 
 // FenceJobPatterns is every pattern that makes ONE JOB internal to the harness's fence: the
@@ -80,15 +86,17 @@ func FenceReadPatterns(reads []string) []string {
 }
 
 // FencePermission is the harness `permission` block one job runs under: everything external
-// is still ASKED about -- which in a `run` is a rejection, and is now a REPORTED one -- and
-// the job's own paths, plus the read-only paths the card named, are allowed. The set is
-// deduped and ordered so the file this writes is byte-stable for one job.
+// is DENIED WITHOUT PROMPTING -- a tool error the model routes around, never the auto-reject
+// that ends the run (issue #918) -- and the job's own paths, plus the read-only paths the card
+// named, are allowed. webfetch is denied as well, for the same reason: a run with no terminal
+// has nobody to answer a prompt, and a prompt here is a dead card. The set is deduped so the
+// file this writes is byte-stable for one job.
 func FencePermission(jobDir string, reads []string) map[string]any {
-	external := map[string]any{"*": FenceAsk}
+	external := map[string]any{"*": FenceDeny}
 	for _, p := range append(FenceJobPatterns(jobDir), FenceReadPatterns(reads)...) {
 		external[p] = FenceAllow
 	}
-	return map[string]any{FenceExternalDirectory: external}
+	return map[string]any{FenceExternalDirectory: external, FenceWebfetch: FenceDeny}
 }
 
 // MergeFencePermission returns the config bytes the job's harness reads: the provider config
@@ -127,10 +135,15 @@ func MergeFencePermission(raw []byte, jobDir string, reads []string) ([]byte, bo
 		} else {
 			existing[FenceExternalDirectory] = mine[FenceExternalDirectory]
 		}
+		// webfetch is denied unless the person named their own choice: a prompt here is a
+		// dead card, and this run has no terminal to answer one.
+		if _, named := existing[FenceWebfetch]; !named {
+			existing[FenceWebfetch] = FenceDeny
+		}
 		cfg["permission"] = existing
 	case string:
 		// A whole-config `"permission": "ask"` keeps its meaning for every other key.
-		cfg["permission"] = map[string]any{"*": existing, FenceExternalDirectory: mine[FenceExternalDirectory]}
+		cfg["permission"] = map[string]any{"*": existing, FenceExternalDirectory: mine[FenceExternalDirectory], FenceWebfetch: FenceDeny}
 	default:
 		cfg["permission"] = mine
 	}

@@ -13,6 +13,8 @@ import (
 // comparison with a dash on either side, the attribution ladder, and the lock.
 
 func TestTheDayFileRoundTripsByteIdentically(t *testing.T) {
+	t.Parallel()
+
 	var c Counts
 	c.Set(Input, 100)
 	c.Set(CacheRead, 0)
@@ -38,6 +40,8 @@ func TestTheDayFileRoundTripsByteIdentically(t *testing.T) {
 }
 
 func TestAnUnversionedFileRefuses(t *testing.T) {
+	t.Parallel()
+
 	_, findings := ParseDayFile("2026-09-11", "date\tmodel\trepo\n")
 	if len(findings) != 1 || !strings.Contains(findings[0].Reason, Version) {
 		t.Errorf("an unversioned file gives %v; it wants one finding naming the version line", findings)
@@ -45,6 +49,8 @@ func TestAnUnversionedFileRefuses(t *testing.T) {
 }
 
 func TestTheShrinkComparisonWithADashOnEitherSide(t *testing.T) {
+	t.Parallel()
+
 	var was, now Counts
 	was.Set(Input, 100)
 	was.Set(Reasoning, 40)
@@ -71,6 +77,8 @@ func TestTheShrinkComparisonWithADashOnEitherSide(t *testing.T) {
 // row comes back byte for byte, because the fold that wrote it is the only run that could
 // compute it and this one must not touch it.
 func TestMergeDayRetainsReplacesAndRefuses(t *testing.T) {
+	t.Parallel()
+
 	row := func(model, repo string, in int64, sources ...string) DayRow {
 		var c Counts
 		c.Set(Input, in)
@@ -143,6 +151,8 @@ func TestMergeDayRetainsReplacesAndRefuses(t *testing.T) {
 }
 
 func TestTheAttributionLadder(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "repos.tsv")
 	os.WriteFile(path, []byte("# a comment\n\nschema\t(^|/)schema($|/)\n"), 0o644)
@@ -166,7 +176,100 @@ func TestTheAttributionLadder(t *testing.T) {
 	}
 }
 
+// The tally behind `sources --unattributed`: only the `other` arm feeds it, only when a
+// caller asked for it, and the key is the tree rather than the file.
+func TestTheUnattributedTallyCountsOnlyWhatFellToOther(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "repos.tsv")
+	if err := os.WriteFile(path, []byte("schema\t(^|/)schema($|/)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rules, err := LoadRules(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Off by default: an ordinary fold pays nothing for the tally and keeps none of it.
+	rules.AttributeInputs([]string{"/w/elsewhere/a.go"}, "")
+	if n := rules.TotalUnattributed(); n != 0 || len(rules.Unattributed()) != 0 {
+		t.Fatalf("the tally ran without being asked for: total=%d stems=%v", n, rules.Unattributed())
+	}
+	rules.WatchUnattributed()
+	rules.AttributeInputs([]string{"/w/schema/a.go"}, "")               // named: not tallied
+	rules.AttributeInputs([]string{"nothing path-like here"}, "schema") // no token: not tallied
+	rules.AttributeInputs([]string{"/home/nova/tree/a.go"}, "")         // other
+	rules.AttributeInputs([]string{"/home/nova/tree/deeper/b.go"}, "")  // other, same tree
+	rules.AttributeInputs([]string{"/home/nova/other-tree/c.go"}, "")   // other
+	rules.AttributeInputs([]string{Unattributed}, "")                   // a bucket name passes through
+	if n := rules.TotalUnattributed(); n != 3 {
+		t.Errorf("unattributed total = %d, want 3", n)
+	}
+	got := rules.Unattributed()
+	if len(got) != 2 || got[0].Stem != "/home/nova/tree" || got[0].Count != 2 || got[1].Stem != "/home/nova/other-tree" {
+		t.Errorf("the tally is %v; it wants the heaviest tree first, keyed by the tree", got)
+	}
+}
+
+// The tally is bounded, and past the ceiling it still counts every token: a listing whose
+// memory grows with the tree is the unbounded read this repo's caps exist to end, and a
+// total that stopped at the ceiling would be a number nobody could use.
+func TestTheUnattributedTallyIsBoundedAndKeepsItsTotal(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "repos.tsv")
+	if err := os.WriteFile(path, []byte("schema\t(^|/)schema($|/)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rules, err := LoadRules(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules.WatchUnattributed()
+	const n = stemLimit + 1000
+	for i := 0; i < n; i++ {
+		rules.AttributeInputs([]string{fmt.Sprintf("/home/nova/t%06d/a.go", i)}, "")
+	}
+	// The one stem admitted first keeps counting after the ceiling is reached.
+	for i := 0; i < 5; i++ {
+		rules.AttributeInputs([]string{"/home/nova/t000000/b.go"}, "")
+	}
+	if got := len(rules.Unattributed()); got != stemLimit {
+		t.Errorf("%d stems held, want the ceiling of %d", got, stemLimit)
+	}
+	if got := rules.TotalUnattributed(); got != n+5 {
+		t.Errorf("total = %d, want every token counted (%d)", got, n+5)
+	}
+	if top := rules.Unattributed()[0]; top.Stem != "/home/nova/t000000" || top.Count != 6 {
+		t.Errorf("the heaviest stem is %v; a stem already held keeps counting past the ceiling", top)
+	}
+}
+
+// PathStem is the key, and it is one function so that the listing and the rule a person
+// writes from it are cut from the same string.
+func TestPathStemKeepsTheTree(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct{ in, want string }{
+		{"/Users/glenn/deepseek-working-3/cmd/a.go", "/Users/glenn/deepseek-working-3"},
+		{"/Users/glenn/deepseek-working-3", "/Users/glenn/deepseek-working-3"},
+		{"/x/y", "/x/y"},
+		{"/x", "/x"},
+		{"~/rowan-working/nova-tools/cmd/a.go", "~/rowan-working/nova-tools"},
+		{"~", "~"},
+		{"//double//slash//and//more", "/double/slash/and"},
+		{"github.com:mas-bandwidth/nova-tools", "github.com:mas-bandwidth/nova-tools"},
+	} {
+		if got := PathStem(tc.in); got != tc.want {
+			t.Errorf("PathStem(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
 func TestAMalformedRulesLineIsNamed(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "repos.tsv")
 	os.WriteFile(path, []byte("schema\t(^|/)schema($|/)\nthis line has no tab\n"), 0o644)
@@ -177,6 +280,8 @@ func TestAMalformedRulesLineIsNamed(t *testing.T) {
 }
 
 func TestMissingDaysAreNamedAndNeverFilled(t *testing.T) {
+	t.Parallel()
+
 	got := MissingDays([]string{"2026-09-07", "2026-09-08", "2026-09-10"})
 	if len(got) != 1 || got[0] != "2026-09-09" {
 		t.Errorf("missing days are %v, want [2026-09-09]", got)
@@ -190,6 +295,8 @@ func TestMissingDaysAreNamedAndNeverFilled(t *testing.T) {
 }
 
 func TestTheFoldLockIsExclusiveAndNamesItsHolder(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	release, err := TakeFoldLock(dir, LockWait)
 	if err != nil {
@@ -215,6 +322,8 @@ func TestTheFoldLockIsExclusiveAndNamesItsHolder(t *testing.T) {
 }
 
 func TestTheBusGrammarIsOneGrammar(t *testing.T) {
+	t.Parallel()
+
 	// The parser is the serializer's inverse, which is the only way the two stay one
 	// grammar: report writes this and fold --bus reads it.
 	line := BodyLine("2026-09-11", "emma", "gemini", "schema", Input, 1234, UTC)
@@ -256,6 +365,8 @@ func TestTheBusGrammarIsOneGrammar(t *testing.T) {
 // 2026-13-40` was accepted, wrote a day file, passed check, and left MissingDays walking
 // from a day that does not exist.
 func TestValidDayIsACalendarCheck(t *testing.T) {
+	t.Parallel()
+
 	for _, good := range []string{"2026-09-11", "2024-02-29", "2026-01-01", "2026-12-31"} {
 		if !ValidDay(good) {
 			t.Errorf("%s is a day", good)
@@ -269,6 +380,8 @@ func TestValidDayIsACalendarCheck(t *testing.T) {
 }
 
 func TestASourceLineFieldIsADashWhereItIsNotAMeasurement(t *testing.T) {
+	t.Parallel()
+
 	s := &Source{Kind: KindClaude}
 	if s.StatField("nousage") != Dash {
 		t.Error("a transcript has no job directories, so nousage is a dash and not a zero")
@@ -295,6 +408,8 @@ func TestASourceLineFieldIsADashWhereItIsNotAMeasurement(t *testing.T) {
 // ledger or bus file took the process's memory. A file over the cap must be refused by
 // name rather than read.
 func TestReadSourceRefusesAnOversizedFile(t *testing.T) {
+	t.Parallel()
+
 	const capInTest = 64 << 20
 	path := filepath.Join(t.TempDir(), "huge.csv")
 	f, err := os.Create(path)
@@ -324,6 +439,8 @@ func TestReadSourceRefusesAnOversizedFile(t *testing.T) {
 // out, so a diamond was re-walked once per path. A node already proven acyclic must stay
 // memoized, which the walk's own seen map must show; the answer is unchanged.
 func TestOnCycleDoesNotRewalkAProvenAcyclicDiamond(t *testing.T) {
+	t.Parallel()
+
 	bottom := &note{id: "d"}
 	left := &note{id: "b", subject: parsedSubject{supersedes: []string{"d"}}}
 	right := &note{id: "c", subject: parsedSubject{supersedes: []string{"d"}}}
@@ -340,6 +457,8 @@ func TestOnCycleDoesNotRewalkAProvenAcyclicDiamond(t *testing.T) {
 
 // L10b: the memo must not hide a cycle. A diamond with a back edge still reports true.
 func TestOnCycleStillSeesARealCycle(t *testing.T) {
+	t.Parallel()
+
 	bottom := &note{id: "d"}
 	left := &note{id: "b", subject: parsedSubject{supersedes: []string{"d"}}}
 	right := &note{id: "c", subject: parsedSubject{supersedes: []string{"d", "a"}}}
@@ -347,5 +466,41 @@ func TestOnCycleStillSeesARealCycle(t *testing.T) {
 	all := map[string]*note{"a": top, "b": left, "c": right, "d": bottom}
 	if !onCycle(top, all, map[string]bool{}) {
 		t.Fatal("onCycle missed a cycle through a supersedes back edge")
+	}
+}
+
+func TestCheckThroughStale(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	hdr := "date\tmodel\trepo\tinput\toutput\tcache_write\tcache_read\treasoning\trough\tday_basis\tsources\n"
+	row := "2026-09-18\tm\tr\t10\t10\t-\t-\t-\t0\tUTC\tx\n"
+	content := "nova-tokens v1 day=2026-09-18 at=2026-09-18T23:55:00Z build=b turns=1 sources=x\n" + hdr + row
+	if err := os.WriteFile(filepath.Join(dir, "2026-09-18.tsv"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Check(dir, CheckOptions{Through: "2026-09-20"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Stale {
+		t.Errorf("Check with Through=2026-09-20 when last=2026-09-18 want Stale=true, got false")
+	}
+
+	res, err = Check(dir, CheckOptions{Through: "2026-09-18"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Stale {
+		t.Errorf("Check with Through=2026-09-18 when last=2026-09-18 want Stale=false, got true")
+	}
+
+	res, err = Check(dir, CheckOptions{Through: "2026-09-15"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Stale {
+		t.Errorf("Check with Through=2026-09-15 when last=2026-09-18 want Stale=false, got true")
 	}
 }

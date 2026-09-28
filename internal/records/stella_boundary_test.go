@@ -24,6 +24,8 @@ func stellaFixture(t *testing.T) (*Object, Allowlists) {
 }
 
 func TestStellaMissingSupportedUsageEntryIsRefused(t *testing.T) {
+	t.Parallel()
+
 	body, allow := stellaFixture(t)
 	validator := NewValidator(allow)
 	raw, _, err := Seal(body)
@@ -53,6 +55,8 @@ func TestStellaMissingSupportedUsageEntryIsRefused(t *testing.T) {
 }
 
 func TestStellaUnsupportedKeyCannotEnterDiagnostic(t *testing.T) {
+	t.Parallel()
+
 	body, allow := stellaFixture(t)
 	sentinel := "SYNTHETIC_PRIVATE_PATH_SENTINEL\nFORGED_REPORT"
 	body.set(sentinel, "synthetic")
@@ -70,6 +74,8 @@ func TestStellaUnsupportedKeyCannotEnterDiagnostic(t *testing.T) {
 }
 
 func TestStellaCanonicalAPICannotEmitInvalidUTF8(t *testing.T) {
+	t.Parallel()
+
 	got, err := Canonicalize(string([]byte{0xff}))
 	if err == nil && !utf8.Valid(got) {
 		t.Fatal("canonical API emitted invalid UTF-8 instead of refusing")
@@ -77,6 +83,8 @@ func TestStellaCanonicalAPICannotEmitInvalidUTF8(t *testing.T) {
 }
 
 func TestStellaDiagnosticSourceNamesStayPrivate(t *testing.T) {
+	t.Parallel()
+
 	const sentinel = "synthetic_private_sentinel"
 	t.Run("structural", func(t *testing.T) {
 		body, allow := stellaFixture(t)
@@ -111,6 +119,8 @@ func TestStellaDiagnosticSourceNamesStayPrivate(t *testing.T) {
 }
 
 func TestStellaCanonicalRejectsInvalidUTF8MemberName(t *testing.T) {
+	t.Parallel()
+
 	o := &Object{}
 	o.set(string([]byte{0xff}), "synthetic")
 	if _, err := Canonicalize(o); err == nil {
@@ -119,6 +129,8 @@ func TestStellaCanonicalRejectsInvalidUTF8MemberName(t *testing.T) {
 }
 
 func TestAntigravity129Join134Validator(t *testing.T) {
+	t.Parallel()
+
 	// 1. Explicit per-source mapping allowlist for Antigravity synthetic source
 	allow := Allowlists{
 		RawUsageFields: []string{

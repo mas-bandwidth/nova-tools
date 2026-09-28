@@ -215,6 +215,8 @@ func checkRefusal(t *testing.T, err error, wantRules ...string) *PackageRefusal 
 
 // TC-VAL-01: candidate_validation_success
 func TestTC_VAL_01_CandidateValidationSuccess(t *testing.T) {
+	t.Parallel()
+
 	b := newTestBatch(t)
 	if err := ValidateCandidateDirectory(b.Dir, "", b.CoverageBytes); err != nil {
 		t.Fatalf("ValidateCandidateDirectory failed: %v", err)
@@ -223,6 +225,8 @@ func TestTC_VAL_01_CandidateValidationSuccess(t *testing.T) {
 
 // TC-VAL-02: candidate_validation_refuses_marker
 func TestTC_VAL_02_CandidateValidationRefusesMarker(t *testing.T) {
+	t.Parallel()
+
 	b := newTestBatch(t)
 	installBatch(t, b)
 	err := ValidateCandidateDirectory(b.Dir, "", b.CoverageBytes)
@@ -231,6 +235,8 @@ func TestTC_VAL_02_CandidateValidationRefusesMarker(t *testing.T) {
 
 // TC-VAL-03: candidate_validation_owned_marker_temp_checked
 func TestTC_VAL_03_CandidateValidationOwnedMarkerTempChecked(t *testing.T) {
+	t.Parallel()
+
 	b := newTestBatch(t)
 	tmpPath := filepath.Join(b.Dir, "batch.json.tmp")
 	if err := os.WriteFile(tmpPath, b.CoverageBytes, 0644); err != nil {
@@ -243,6 +249,8 @@ func TestTC_VAL_03_CandidateValidationOwnedMarkerTempChecked(t *testing.T) {
 
 // TC-VAL-04: candidate_validation_stray_temp_rejected
 func TestTC_VAL_04_CandidateValidationStrayTempRejected(t *testing.T) {
+	t.Parallel()
+
 	// Subcase 1: stray.tmp present alongside owned marker
 	b := newTestBatch(t)
 	if err := os.WriteFile(filepath.Join(b.Dir, "batch.json.tmp"), b.CoverageBytes, 0644); err != nil {
@@ -265,6 +273,8 @@ func TestTC_VAL_04_CandidateValidationStrayTempRejected(t *testing.T) {
 
 // TC-VAL-05: installed_validation_success
 func TestTC_VAL_05_InstalledValidationSuccess(t *testing.T) {
+	t.Parallel()
+
 	b := newTestBatch(t)
 	installBatch(t, b)
 	if err := ValidateInstalledDirectory(b.Dir); err != nil {
@@ -274,6 +284,8 @@ func TestTC_VAL_05_InstalledValidationSuccess(t *testing.T) {
 
 // TC-VAL-06: installed_validation_forbids_tmp_and_extra_files
 func TestTC_VAL_06_InstalledValidationForbidsTmpAndExtraFiles(t *testing.T) {
+	t.Parallel()
+
 	// (a) lingering batch.json.tmp
 	b := newTestBatch(t)
 	installBatch(t, b)
@@ -295,6 +307,8 @@ func TestTC_VAL_06_InstalledValidationForbidsTmpAndExtraFiles(t *testing.T) {
 
 // TC-VAL-07: no_clobber_destination_exists
 func TestTC_VAL_07_NoClobberDestinationExists(t *testing.T) {
+	t.Parallel()
+
 	b := newTestBatch(t)
 	// Verify EnsureDestinationFresh refuses existing destination directory
 	errFresh := EnsureDestinationFresh(b.Dir)
@@ -309,6 +323,8 @@ func TestTC_VAL_07_NoClobberDestinationExists(t *testing.T) {
 
 // TC-VAL-08: strict_symlink_rejection
 func TestTC_VAL_08_StrictSymlinkRejection(t *testing.T) {
+	t.Parallel()
+
 	b := newTestBatch(t)
 	symPath := filepath.Join(b.Dir, "records", "rowan", "studio", "2026-09-12", "link.jsonl")
 	if err := os.Symlink(b.ShardFile, symPath); err != nil {
@@ -320,6 +336,8 @@ func TestTC_VAL_08_StrictSymlinkRejection(t *testing.T) {
 
 // TestOrphanShardRejected: orphan shard file not referenced in coverage is rejected
 func TestOrphanShardRejected(t *testing.T) {
+	t.Parallel()
+
 	b := newTestBatch(t)
 	installBatch(t, b)
 
@@ -335,6 +353,8 @@ func TestOrphanShardRejected(t *testing.T) {
 
 // TC-VAL-09: crash_recovery_incomplete_batch
 func TestTC_VAL_09_CrashRecoveryIncompleteBatch(t *testing.T) {
+	t.Parallel()
+
 	b := newTestBatch(t)
 	// Crash during staging: leaves batch.json.tmp on disk without batch.json
 	if err := os.WriteFile(filepath.Join(b.Dir, "batch.json.tmp"), b.CoverageBytes, 0644); err != nil {
@@ -346,6 +366,8 @@ func TestTC_VAL_09_CrashRecoveryIncompleteBatch(t *testing.T) {
 
 // TC-VAL-10: atomic_rename_competing_marker_race
 func TestTC_VAL_10_AtomicRenameCompetingMarkerRace(t *testing.T) {
+	t.Parallel()
+
 	b := newTestBatch(t)
 	markerTemp := "batch.json.tmp"
 	if err := StageMarker(b.Dir, markerTemp, b.CoverageBytes); err != nil {
@@ -480,6 +502,8 @@ func TestTC_VAL_11_DurabilityFsyncAncestorDirectoriesTrace(t *testing.T) {
 
 // TC-VAL-12: shard_observation_malformed_envelope
 func TestTC_VAL_12_ShardObservationMalformedEnvelope(t *testing.T) {
+	t.Parallel()
+
 	// (a) Shard line contains invalid JSON
 	b := newTestBatch(t)
 	badJSON := []byte("{not valid json\n")
@@ -533,6 +557,8 @@ func TestTC_VAL_12_ShardObservationMalformedEnvelope(t *testing.T) {
 
 // TC-VAL-13: shard_record_wrong_origin_path
 func TestTC_VAL_13_ShardRecordWrongOriginPath(t *testing.T) {
+	t.Parallel()
+
 	b := newTestBatch(t)
 
 	// Move the shard directory to mismatched friend "alice"
@@ -548,6 +574,8 @@ func TestTC_VAL_13_ShardRecordWrongOriginPath(t *testing.T) {
 
 // TC-VAL-15: sorted_id_set_inventory_comparison
 func TestTC_VAL_15_SortedIDSetInventoryComparison(t *testing.T) {
+	t.Parallel()
+
 	b, invFile := newTestBatchWithInventory(t)
 
 	// Reverse ID order in inventory JSON
@@ -584,6 +612,8 @@ func TestTC_VAL_15_SortedIDSetInventoryComparison(t *testing.T) {
 
 // TC-VAL-16: link_unlink_fallback_crash_unpublishable
 func TestTC_VAL_16_LinkUnlinkFallbackCrashUnpublishable(t *testing.T) {
+	t.Parallel()
+
 	b := newTestBatch(t)
 	installBatch(t, b)
 
@@ -599,6 +629,8 @@ func TestTC_VAL_16_LinkUnlinkFallbackCrashUnpublishable(t *testing.T) {
 
 // TC-VAL-17: retained_unreadable_turn_id_observation_valid (TC-VAL-20b)
 func TestTC_VAL_17_RetainedUnsupportedSubfieldAccepted(t *testing.T) {
+	t.Parallel()
+
 	m := codexMapping(t)
 	// Decode an observation where turn_id is an invalid shape {"x":1}, triggering codexShapeNoTurnIDLexeme.
 	lines := `{"type":"token_usage_record","response_id":"resp-t2","session_id":"t1","turn_id":{"x":1},"timestamp":"2026-09-12T00:00:00Z","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`
@@ -697,6 +729,8 @@ func TestTC_VAL_17_RetainedUnsupportedSubfieldAccepted(t *testing.T) {
 
 // TC-PKG-01: package_inventory_file_valid
 func TestTC_PKG_01_PackageInventoryFileValid(t *testing.T) {
+	t.Parallel()
+
 	b, _ := newTestBatchWithInventory(t)
 	installBatch(t, b)
 	if err := ValidateInstalledDirectory(b.Dir); err != nil {
@@ -706,6 +740,8 @@ func TestTC_PKG_01_PackageInventoryFileValid(t *testing.T) {
 
 // TC-PKG-02: package_unreferenced_inventory_file
 func TestTC_PKG_02_PackageUnreferencedInventoryFile(t *testing.T) {
+	t.Parallel()
+
 	b, _ := newTestBatchWithInventory(t)
 	installBatch(t, b)
 
@@ -721,6 +757,8 @@ func TestTC_PKG_02_PackageUnreferencedInventoryFile(t *testing.T) {
 
 // TC-PKG-03: package_missing_referenced_inventory
 func TestTC_PKG_03_PackageMissingReferencedInventory(t *testing.T) {
+	t.Parallel()
+
 	b, invFile := newTestBatchWithInventory(t)
 	installBatch(t, b)
 
@@ -734,6 +772,8 @@ func TestTC_PKG_03_PackageMissingReferencedInventory(t *testing.T) {
 
 // TC-PKG-04: package_inventory_missing_trailing_lf
 func TestTC_PKG_04_PackageInventoryMissingTrailingLF(t *testing.T) {
+	t.Parallel()
+
 	b, invFile := newTestBatchWithInventory(t)
 
 	raw, err := os.ReadFile(invFile)
@@ -752,6 +792,8 @@ func TestTC_PKG_04_PackageInventoryMissingTrailingLF(t *testing.T) {
 
 // TC-PKG-05: mapping_closure_exact_3way
 func TestTC_PKG_05_MappingClosureExact3Way(t *testing.T) {
+	t.Parallel()
+
 	b := newTestBatch(t)
 	installBatch(t, b)
 	if err := ValidateInstalledDirectory(b.Dir); err != nil {
@@ -761,6 +803,8 @@ func TestTC_PKG_05_MappingClosureExact3Way(t *testing.T) {
 
 // TC-PKG-06: mapping_closure_orphan_package_file
 func TestTC_PKG_06_MappingClosureOrphanPackageFile(t *testing.T) {
+	t.Parallel()
+
 	b := newTestBatch(t)
 	installBatch(t, b)
 
@@ -784,6 +828,8 @@ func TestTC_PKG_06_MappingClosureOrphanPackageFile(t *testing.T) {
 
 // TC-PKG-07: mapping_closure_missing_package_file
 func TestTC_PKG_07_MappingClosureMissingPackageFile(t *testing.T) {
+	t.Parallel()
+
 	b := newTestBatch(t)
 
 	missingID := "sha256:" + strings.Repeat("d", 64)
@@ -801,6 +847,8 @@ func TestTC_PKG_07_MappingClosureMissingPackageFile(t *testing.T) {
 
 // TC-PKG-08: mapping_closure_observation_undeclared
 func TestTC_PKG_08_MappingClosureObservationUndeclared(t *testing.T) {
+	t.Parallel()
+
 	b := newTestBatch(t)
 
 	// Synthesize an observation referencing an undeclared mapping M3
@@ -852,6 +900,8 @@ func TestTC_PKG_08_MappingClosureObservationUndeclared(t *testing.T) {
 
 // TC-PKG-09: mapping_closure_coverage_unused
 func TestTC_PKG_09_MappingClosureCoverageUnused(t *testing.T) {
+	t.Parallel()
+
 	b := newTestBatch(t)
 
 	// Add second valid mapping to mappings/ AND to coverage.mapping_ids, but shard does not use it
@@ -888,6 +938,8 @@ func TestTC_PKG_09_MappingClosureCoverageUnused(t *testing.T) {
 
 // TC-PKG-10: package_input_coverage_dir_forbidden
 func TestTC_PKG_10_PackageInputCoverageDirForbidden(t *testing.T) {
+	t.Parallel()
+
 	b := newTestBatch(t)
 	covDir := filepath.Join(b.Dir, "coverage")
 	if err := os.MkdirAll(covDir, 0755); err != nil {
@@ -900,6 +952,8 @@ func TestTC_PKG_10_PackageInputCoverageDirForbidden(t *testing.T) {
 
 // TC-PKG-11: mapping_already_in_destination_ledger_packaged
 func TestTC_PKG_11_MappingAlreadyInDestinationLedgerPackaged(t *testing.T) {
+	t.Parallel()
+
 	b := newTestBatch(t)
 	// Batch packages mapping even if destination already has an identical copy
 	if err := ValidateCandidateDirectory(b.Dir, "", b.CoverageBytes); err != nil {
@@ -909,6 +963,8 @@ func TestTC_PKG_11_MappingAlreadyInDestinationLedgerPackaged(t *testing.T) {
 
 // TC-VAL-14: shard_record_unallocated_and_underscore_paths
 func TestTC_VAL_14_ShardRecordUnallocatedAndUnderscorePaths(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	if err := os.Chmod(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -1057,6 +1113,8 @@ func TestTC_VAL_14_ShardRecordUnallocatedAndUnderscorePaths(t *testing.T) {
 
 // TestUndeclaredDirectoryUnderRecordsRejected: empty, undeclared, or hidden directories under records/ are rejected
 func TestUndeclaredDirectoryUnderRecordsRejected(t *testing.T) {
+	t.Parallel()
+
 	// (a) Empty records/bogus/ directory rejected
 	b := newTestBatch(t)
 	bogusDir := filepath.Join(b.Dir, "records", "bogus")
@@ -1087,6 +1145,8 @@ func TestUndeclaredDirectoryUnderRecordsRejected(t *testing.T) {
 
 // TestPermissionsEnforcement: files must be 0644, directories 0755
 func TestPermissionsEnforcement(t *testing.T) {
+	t.Parallel()
+
 	// The rule is a POSIX one and so is its NEGATIVE case: a chmod on windows moves the
 	// read-only attribute and nothing else, so neither 0777 nor 0700 can be put on disk
 	// there to be refused. The validator skips the check where the bits are not carried
@@ -1117,6 +1177,8 @@ func TestPermissionsEnforcement(t *testing.T) {
 
 // TestCountEquations: records_emitted, observations, gaps, and conflicts equations
 func TestCountEquations(t *testing.T) {
+	t.Parallel()
+
 	// 1. records_emitted mismatch
 	b := newTestBatch(t)
 	b.Coverage.Counts.RecordsEmitted = "99"
@@ -1151,6 +1213,8 @@ func TestCountEquations(t *testing.T) {
 // TestEnvelopeMalformedRefused asserts RuleEnvelopeMalformed when envelope json is malformed
 // or envelope schema is incorrect for batch.json / candidate coverage or mappings.
 func TestEnvelopeMalformedRefused(t *testing.T) {
+	t.Parallel()
+
 	b := newTestBatch(t)
 
 	// 1. Candidate coverage bytes: malformed JSON
@@ -1186,6 +1250,8 @@ func TestEnvelopeMalformedRefused(t *testing.T) {
 // TestAtomicNoReplaceRenameLinkFailurePermissionsInvalid asserts that non-EEXIST link failures
 // map to RulePermissionsInvalid.
 func TestAtomicNoReplaceRenameLinkFailurePermissionsInvalid(t *testing.T) {
+	t.Parallel()
+
 	tmpDir := t.TempDir()
 	src := filepath.Join(tmpDir, "test.tmp")
 	if err := os.WriteFile(src, []byte("data"), 0644); err != nil {

@@ -1,0 +1,14 @@
+roles: bench
+expect: ^GIT IDENTITY OK
+
+# Empty on all four Linux machines on 2026-09-18. A card that commits in a clone with no
+# repo-local config fails at the commit -- after the work is done, which is the most
+# expensive moment to find out.
+set -eu
+NAME=$(git config --global --get user.name 2>/dev/null || true)
+EMAIL=$(git config --global --get user.email 2>/dev/null || true)
+if [ -z "$NAME" ] || [ -z "$EMAIL" ]; then
+  echo "GIT IDENTITY FAIL user.name='$NAME' user.email='$EMAIL'; both must be set globally"
+  exit 1
+fi
+echo "GIT IDENTITY OK $NAME <$EMAIL>"

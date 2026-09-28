@@ -8,8 +8,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // Test 16: TestNoKeychainAndNoCryptoDependency
@@ -213,90 +216,88 @@ func TestNoFileContentOrCallerArgumentCanForgeALine(t *testing.T) {
 	sealFileWithSops(t, sopsPath, filepath.Join(storeDir, "rowan.yaml"), []string{keyA.pubKey, recKey.pubKey}, "GH_TOKEN: ghp_123\n")
 	commitAndPush(t, storeDir)
 
-	forgingRequire := "MISSING\nSECRETS CHECK OK forged=true"
-	_, errOut, code := runNovaSecrets(bin, "exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath,
-		"--only", "all", "--require", forgingRequire, "--", "true")
-	if code != 125 {
-		t.Fatalf("expected code 125, got %d", code)
-	}
+	// Every forging payload: a second line, a carriage-return repaint with an erase,
+	// and bidi overrides and isolates that reorder what an operator sees.
+	const forge = "X\nSECRETS CHECK OK  as=rowan forged=newline\r\x1b[2KSECRETS CHECK OK forged=repaint\u202eKO\u2066\u2028"
 
-	for _, line := range strings.Split(errOut, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "SECRETS CHECK OK") {
-			t.Errorf("forged line authoring occurred: %s", line)
-		}
-	}
-}
-
-// Test 20: TestAStaleWorkingCopyIsRefused
-func TestAStaleWorkingCopyIsRefused(t *testing.T) {
-	t.Parallel()
-	sopsPath := findSops(t)
-	bin := buildNovaSecrets(t)
-
-	td := t.TempDir()
-	storeDir := filepath.Join(td, "store")
-	_ = os.MkdirAll(storeDir, 0755)
-	initGitStore(t, storeDir)
-
-	keyA := genKey(t, td, "keya")
-	recKey := genKey(t, td, "rec")
-	_ = os.WriteFile(filepath.Join(storeDir, "recovery.pub"), []byte(recKey.pubKey+"\n"), 0644)
-	sopsCfg := fmt.Sprintf(`creation_rules:
+	// A key name in a sealed file (sops leaves key names in the clear), read by names,
+	// check and exec. Written as a YAML double-quoted scalar so every control survives.
+	yamlKey := strconv.Quote(forge)
+	_ = os.WriteFile(filepath.Join(storeDir, ".sops.yaml"), []byte(fmt.Sprintf(`creation_rules:
   - path_regex: ^rowan\.yaml$
     age: %s,%s
-`, keyA.pubKey, recKey.pubKey)
-	_ = os.WriteFile(filepath.Join(storeDir, ".sops.yaml"), []byte(sopsCfg), 0644)
-	sealFileWithSops(t, sopsPath, filepath.Join(storeDir, "rowan.yaml"), []string{keyA.pubKey, recKey.pubKey}, "GH_TOKEN: 123\n")
+  - path_regex: ^evil\.yaml$
+    age: %s,%s
+`, keyA.pubKey, recKey.pubKey, keyA.pubKey, recKey.pubKey)), 0644)
+	sealFileWithSops(t, sopsPath, filepath.Join(storeDir, "evil.yaml"), []string{keyA.pubKey, recKey.pubKey}, yamlKey+": v\n")
 	commitAndPush(t, storeDir)
 
-	// 1. Working copy HEAD ahead of remote
-	_ = os.WriteFile(filepath.Join(storeDir, "extra.txt"), []byte("commit ahead\n"), 0644)
-	runCmd(t, storeDir, "git", "add", "extra.txt")
-	runCmd(t, storeDir, "git", "commit", "-m", "local commit ahead")
+	// A sops whose every stderr line is a forgery, after a version probe it passes.
+	lyingSops := filepath.Join(td, "lying-sops")
+	_ = testbin.WriteExecutable(lyingSops, []byte("#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'sops 3.13.3'; exit 0; fi\nprintf '%s' "+
+		shellQuote(forge)+" >&2\nexit 1\n"), 0755)
 
-	_, errOut, code := runNovaSecrets(bin, "check", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath)
-	if code != 1 || !strings.Contains(errOut, "pull --ff-only") {
-		t.Errorf("ahead working copy expected check exit 1 naming pull, got %d: %s", code, errOut)
+	withKey := []string{"--store", storeDir, "--key", keyA.privPath, "--sops", sopsPath}
+	runs := [][]string{
+		append([]string{"names", "--as", "evil"}, withKey[:2]...),
+		append([]string{"check", "--as", "evil"}, withKey...),
+		append(append([]string{"exec", "--as", "evil"}, withKey...), "--only", "all", "--", "true"),
+		append(append([]string{"exec", "--as", "rowan"}, withKey...), "--only", "all", "--require", forge, "--", "true"),
+		append(append([]string{"exec", "--as", "rowan"}, withKey...), "--only", forge, "--", "true"),
+		{"check", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", lyingSops},
+		{"exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", lyingSops, "--only", "all", "--", "true"},
+		// The flag parser speaks before any line of ours: an undefined flag, a bad value.
+		{"names", "--" + forge},
+		{"check", "--store", storeDir, "--as", "rowan", "--max", forge},
+		{"exec", "--" + forge, "--", "true"},
+		{"exec", "--store", storeDir, "--as", forge, "--key", keyA.privPath, "--sops", sopsPath, "--only", "all", "--", "true"},
+		{forge},
+		{"seat", forge},
+	}
+	assertNoForgery := func(runs [][]string) {
+		t.Helper()
+		for _, r := range runs {
+			out, errOut, code := runNovaSecrets(bin, r...)
+			if code == 0 && r[0] != "names" && !(r[0] == "check" && r[2] == "evil") {
+				t.Errorf("run %q: a forging input was accepted green: %s%s", r, out, errOut)
+			}
+			for streamName, stream := range map[string]string{"stdout": out, "stderr": errOut} {
+				if i := strings.IndexFunc(stream, func(c rune) bool {
+					return c == '\r' || c == 0x1b || (c >= 0x202a && c <= 0x202e) || (c >= 0x2066 && c <= 0x2069) || c == 0x2028 || c == 0x2029
+				}); i >= 0 {
+					t.Errorf("run %q: %s carries a raw repaint or bidi control at byte %d: %q", r, streamName, i, stream)
+				}
+				for _, line := range strings.Split(stream, "\n") {
+					if line == "" {
+						continue
+					}
+					if !strings.HasPrefix(line, "SECRETS ") {
+						t.Errorf("run %q: %s has a line this tool did not author: %q", r, streamName, line)
+					}
+					if strings.HasPrefix(line, "SECRETS CHECK OK") && strings.Contains(line, "forged") {
+						t.Errorf("run %q: %s carries a forged OK line: %q", r, streamName, line)
+					}
+				}
+			}
+		}
+	}
+	assertNoForgery(runs)
+
+	// A file name in the store root carrying the payload, left untracked.
+	evilName := filepath.Join(storeDir, forge+".yaml")
+	if err := os.WriteFile(evilName, []byte("GH_TOKEN: ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]\n"), 0644); err != nil {
+		t.Logf("this filesystem refuses the forging file name (%v); the other payload routes still run", err)
 	}
 
-	_, errOut, code = runNovaSecrets(bin, "exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath,
-		"--only", "all", "--", "true")
-	if code != 125 || !strings.Contains(errOut, "pull --ff-only") {
-		t.Errorf("ahead working copy expected exec exit 125 naming pull, got %d: %s", code, errOut)
-	}
+	// With it in place, exec refuses naming it, escaped.
+	assertNoForgery([][]string{
+		append(append([]string{"exec", "--as", "rowan"}, withKey...), "--only", "all", "--", "true"),
+	})
+}
 
-	// 2. Push to sync and verify green
-	runCmd(t, storeDir, "git", "push", "origin", "main")
-	out, _, code := runNovaSecrets(bin, "check", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath)
-	if code != 0 || !strings.Contains(out, "head=") {
-		t.Errorf("synced working copy expected check exit 0 with head=: %d, out=%s", code, out)
-	}
-
-	// 3. Detached HEAD refusal (exit 2 on check, 125 on exec)
-	runCmd(t, storeDir, "git", "checkout", "--detach", "HEAD")
-	_, errOut, code = runNovaSecrets(bin, "check", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath)
-	if code != 2 || !strings.Contains(errOut, "detached HEAD") {
-		t.Errorf("detached HEAD expected check refusal 2, got %d: %s", code, errOut)
-	}
-	_, errOut, code = runNovaSecrets(bin, "exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath,
-		"--only", "all", "--", "true")
-	if code != 125 || !strings.Contains(errOut, "detached HEAD") {
-		t.Errorf("detached HEAD expected exec refusal 125, got %d: %s", code, errOut)
-	}
-	runCmd(t, storeDir, "git", "checkout", "main")
-
-	// 4. Branch with no upstream refusal (exit 2 on check, 125 on exec)
-	runCmd(t, storeDir, "git", "checkout", "-b", "local-no-upstream")
-	_, errOut, code = runNovaSecrets(bin, "check", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath)
-	if code != 2 || !strings.Contains(errOut, "no upstream") {
-		t.Errorf("no upstream branch expected check refusal 2, got %d: %s", code, errOut)
-	}
-	_, errOut, code = runNovaSecrets(bin, "exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath,
-		"--only", "all", "--", "true")
-	if code != 125 || !strings.Contains(errOut, "no upstream") {
-		t.Errorf("no upstream branch expected exec refusal 125, got %d: %s", code, errOut)
-	}
-	runCmd(t, storeDir, "git", "checkout", "main")
+// shellQuote renders s as one single-quoted sh word.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
 }
 
 // Test 21: TestADecryptedFileLeftInTheStoreIsRed

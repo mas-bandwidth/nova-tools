@@ -1,0 +1,60 @@
+{
+  "number": 2587,
+  "title": "events: the stream is cards:done, and an absent cost stays absent (#2563, Johnny HOLD 4/10)",
+  "body": "events.Stream is cards:done, the stream record and ci already read; the event\nfields are added to its entries, and the SQLite file is a fold of that one\nstream, rebuildable from it, not a second record. An entry written before the\nfields were added (no `event`) is counted as skipped, never guessed into ok/fail.\n\ntokens_in, tokens_out and usd are *int64/*float64 on Event: nil writes no field,\nFromFields leaves an absent field nil, the fold stores NULL (columns nullable, no\ndefault), dump/report print a dash, and totals no longer COALESCEs usd to 0.\n`nova-pulse event` writes a cost only when its flag was given. The test that\nasserted zero is replaced by TestMissingCostStaysAbsentAndBadNumbersAreRefused,\nplus TestTheStreamIsCardsDone, TestAMissingCostFoldsToNullNotZero and\nTestEventWithoutACostWritesNoCostField.\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>",
+  "headRefOid": "40785e2ccb0439a6d466612d8c4485ecefc94ac6",
+  "baseRefName": "dev",
+  "files": [
+    {
+      "path": "cmd/nova-pulse/event.go"
+    },
+    {
+      "path": "cmd/nova-pulse/event_fold_test.go"
+    },
+    {
+      "path": "cmd/nova-pulse/fold.go"
+    },
+    {
+      "path": "cmd/nova-pulse/main.go"
+    },
+    {
+      "path": "docs/CLI.md"
+    },
+    {
+      "path": "go.mod"
+    },
+    {
+      "path": "go.sum"
+    },
+    {
+      "path": "internal/events/cli.go"
+    },
+    {
+      "path": "internal/events/events.go"
+    },
+    {
+      "path": "internal/events/events_test.go"
+    },
+    {
+      "path": "internal/events/fake.go"
+    },
+    {
+      "path": "internal/events/fold.go"
+    },
+    {
+      "path": "internal/events/fold_test.go"
+    },
+    {
+      "path": "internal/events/redis.go"
+    },
+    {
+      "path": "internal/events/redis_integration_test.go"
+    },
+    {
+      "path": "internal/events/schema.sql"
+    },
+    {
+      "path": "internal/events/stream.go"
+    }
+  ]
+}

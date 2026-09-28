@@ -12,6 +12,8 @@ import (
 // the bytes where they were. Glenn, 2026-09-17: "It is just one mistake away from deleting
 // the whole disk."
 func TestRemoveUnderRefusesUnsafePaths(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	inside := filepath.Join(root, "inside")
 	if err := os.MkdirAll(inside, 0o755); err != nil {
@@ -67,6 +69,8 @@ func TestRemoveUnderRefusesUnsafePaths(t *testing.T) {
 
 // The one path it removes: a plain directory strictly below a root the caller named.
 func TestRemoveUnderRemovesBelowRoot(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	sub := filepath.Join(root, "sub")
 	if err := os.MkdirAll(filepath.Join(sub, "deep", "deeper"), 0o755); err != nil {

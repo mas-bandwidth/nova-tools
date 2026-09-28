@@ -1,0 +1,9 @@
+roles: runner
+expect: ^RUNNER OK
+forge: runners
+
+# The forge decides this one. A runner host's own answer about its runners is what it
+# BELIEVES; the merge group is served by what the forge SEES, and on 2026-09-16 the two
+# disagreed for forty minutes. The verdict is computed in Go from the runner list and this
+# body is never run on a machine; it is here so the class reads like every other workload.
+echo "RUNNER OK is decided by the forge: every runner named <machine>-nova-* is online"

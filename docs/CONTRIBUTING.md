@@ -97,7 +97,16 @@ diff arguing for itself.
 
 **Passing CI is not passing review, and CI covers less than it looks like.** CI
 is two tiers, and the law both obey is the maintainer's: **CI checks per every
-CL, one minute ideal, two minutes maximum.**
+CL, one minute ideal, two minutes maximum.** That law is a hard cap,
+permanent and platform-wide: **every job in every workflow declares
+`timeout-minutes: 2`**, linux, darwin, hosted or self-hosted, nightly and
+release included, and `internal/ci` refuses a workflow that declares anything
+else. Nothing is exempt. Work that needs longer is split into parallel
+functional test programs, each its own job under the cap (a nightly matrix of
+functionals is fine; a thirty-minute job is not). A run that crosses two minutes
+fails, and the test that crossed it moves (a mock, a func program, the slow
+tag) before anything lands: the cap exists because fixes iterate at the speed
+of one run, and because tests only ever accrete.
 
 The **CL tier** (`.github/workflows/ci.yml`) is what a change is required to
 pass in two minutes, ideally one. It runs `gofmt` on one runner — formatting is
@@ -105,13 +114,19 @@ a property of the source, not of the platform — then `go build ./...`, `go vet
 ./...`, and the unit tests sharded by package group across parallel jobs, with
 `-count=1` and no race detector. `ci-ok` aggregates exactly the CL tier, so a
 matrix leg that is renamed, added or skipped cannot quietly leave branch
-protection.
+protection. Its tests come in two tiers ([TESTING.md](TESTING.md)): the **unit** tier runs on every pull request over the
+packages the change touched, at most two cores a leg, with no redis-server on
+PATH and a 2 s package / 1 s test budget; the **functional** tier (`//go:build
+functional`) runs only in the merge queue, as a whole work stream merges into
+dev, and nightly.
 
 The **certification tier** (`.github/workflows/certification.yml`) holds
 everything that cannot fit that budget, under the same job names it always had:
-the whole-tree `go test -race` on Linux and macOS, `go build` and `go vet` on
-Windows, the per-package Windows tests, the three-OS smoke of the shipped
-binary, the release dry-run, and the nightly `-tags perf` wall clock. It runs on
+the whole-tree `go test -race` on Linux and macOS, sharded by package, the
+three-OS smoke of the shipped binary, the release dry-run (one build leg per
+shipped platform, the sums over the whole set, and the negative controls of the
+release scripts), and the `-tags perf` wall clock. Every job is under the
+two-minute cap. It runs on
 a daily schedule and on demand — from the repository's Actions page, pick the
 "certification" workflow and Run workflow. Nothing here skips: the race detector
 and the platform coverage a change's fast tier does not carry live here. A red
@@ -120,11 +135,12 @@ certification is a blocker for the next release, never for a CL, whose gate is
 newest completed certification run on the tagged commit is green, so cutting a
 release begins with `gh workflow run certification.yml --ref <ref>` and waits for
 `certification-ok` before the tag is pushed. The `perf` job runs every wall-clock
-test behind `-tags perf`, over
-`./...` one test at a time rather than over a list — a list of test names or
-packages in a workflow goes stale silently — and a bound in seconds is evidence
-about the machine as much as about the tool, which is why it gates a release and
-not a change.
+test behind `-tags perf`, one test at a time. It finds them rather than naming
+them — a list of test names or packages in a workflow goes stale silently: the
+live packages holding a file whose build constraint names `perf`, and in each
+the tests `go test -tags perf -list` names and `go test -list` does not. A bound
+in seconds is evidence about the machine as much as about the tool, which is why
+it gates a release and not a change.
 
 Where CI runs follows the cost of the machine, not the shape of the change.
 Pull requests run on the self-hosted runners only: one job per `./cmd/<tool>`
@@ -136,13 +152,6 @@ windows-latest) run only on push to main and on the nightly schedule, with the
 full suite, and a new push to a pull request cancels the in-progress run.
 `ci-ok` aggregates the self-hosted matrix on a pull request and the hosted
 matrix on main too, so the ruleset check never changes shape.
-
-The merge queue's group commit is the exception that makes the gate honest: it
-runs the full hosted legs — no `-short` — for the packages the group changes, on
-`ubuntu-latest`, `macos-latest` and `windows-latest`, so a package with
-hosted-only tests cannot land on the `-short` PR leg's result alone (Rule T,
-pit stop 4, 2026-09-16). The package selection is what keeps it inside the
-two-minute budget; the whole-tree hosted suite still runs on push and nightly.
 
 The built binary is smoke-tested for `nova-check nocode` and for the specific
 properties that job names — not for all of `nocode`, and four of those steps are
@@ -211,7 +220,7 @@ how a commons acquires a reputation for being a clique.
   lines run, refusals that say what the flag wants and that report every
   independent problem in one go, a `### First run` in `docs/CLI.md`, a `quickstart`
   verb where there is a natural first run, and tests that pin all three by
-  executing them. `internal/ci/onboarding_test.go` walks `cmd/`, so a new
+  executing them. `internal/ci/onboarding_functional_test.go` walks `cmd/`, so a new
   binary is held to it without anyone adding it to a list.
 - **Expect the review to be slow and specific.** That is the bar working, not a
   judgment about you.
@@ -231,3 +240,112 @@ how a commons acquires a reputation for being a clique.
 - **There is one source for these tools:** `github.com/mas-bandwidth/nova-tools`.
   Build from a checkout you verified. Anything else offering a `nova-check` is
   not this.
+
+## The ten rules never to break
+
+Each line names the class test that enforces it. A class test reads this
+repository's own text and refuses a SHAPE wherever it stands, so a rule lands
+with its sweep of the tree or it does not land.
+
+1. **Never `gh pr merge`, in any spelling, and never `--auto`** — nothing
+   reaches the dev merge queue but a batch (`prmerge`).
+2. **No test names a real network host** — unit tests test logic; mock with
+   `httptest` or a local fake, and name `example.com`, `*.invalid` or `*.test`
+   in fixtures (`net`).
+3. **No fixed wall-clock wait on the CI path** — poll for the event up to
+   `NOVA_TEST_WAIT`, or inject a fake clock (`waits`).
+4. **No test asserts a bound under ten seconds** — a short bound asserts the
+   machine's load, not the code (`wall clock`).
+5. **No unit package over 2 s, no unit test over 1 s** — per-change CI answers in
+   one minute ideally, two at most. Every leg prints the CI-SLOW lines; the nightly
+   whole-tree run on the space legs fails on them; the allowlist only shrinks
+   (`slowtests`, `tiers`).
+6. **The Makefile is the one entry for build, test and lint** — a workflow or a
+   script calls a target, never its own `go test` line (`make`).
+7. **Every command meets the onboarding standard** — `<tool> help` with runnable
+   examples, a refusal that says what the input WANTS, a `### First run` section
+   in [CLI.md](CLI.md) (`onboarding`).
+8. **Every tool prints the one version line** — one shape, every binary
+   (`version`).
+9. **No `os.RemoveAll` of a computed path** — deletion is a verb over a
+   validated path below a root (`removeall`).
+10. **A test writes and lists only inside its own `t.TempDir()`** — never
+    `os.TempDir()`, and every path a tool writes is named there
+    (`testoutpath`, `sharedtemp`).
+
+**The rest of the index, by name.** `cap` (every job two minutes, permanently, every platform),
+`templates`, `goenv`, `pathassert`, `busprogress`,
+`outputs`, `cache`, `pinned-actions`, `ci-ok`, `nightly-tags`, `functional` (a test that starts a redis-server, execs a whole program or asserts a real-time bound is behind `//go:build functional`), `selection`, `toolchainroots`, `walltoolchain`, `hostseam`,
+`ciworkspace`, `namedpaths`, `one section`, `testbins`, `fieldsindex`, `cardtemplates`, `transcripts`, `parallel`, `slowwaits`, `unitwaits`, `allowlist`,
+`seatwrap`, `tiers`, `hosted-shards` (test-hosted meets the two-minute cap by shards, heavy packages one per shard), `cert-race-shards` (certification's whole-tree race run meets the cap by shards, its race build cache saved before the tests), `release-legs` (the release and its dry run build one leg per platform and sum the whole set on one machine), `seatredis` (no verb of a live tool that selects a seat refuses an empty `--redis`), `wholetree` (no doc or card spells a whole-tree `go test`; run `nova-ci local`), `silent` (no `_ = err` and no `|| true` literal on the copy model's live path), `classtests` (no merge deletes a `_test.go` or an `internal/ci/testdata` list that its first parent had unless the same change declares it in `deleted-tests.txt`), `ci-receipt` (ci-ok reports every run to Redis from the runner, every field, failing loudly). Every entry — the ten above too — is written out in
+[SPEC-CI.md](SPEC-CI.md) under **The class tests** with its rule, the mistake
+it prevents, its allowlist, its remedy line and its narrowings. Read the entry, not
+the test. An allowlist only ever shrinks: a new row is a refusal, not a parking place.
+After a removal, `NOVA_CI_UPDATE=1 go test -count=1 ./internal/ci/` drops the stale rows
+from every list and fails once with `updated, rerun` ([TESTING.md](TESTING.md)).
+
+**Two more that are not class tests.** A fake is **strict like the real tool** —
+a lenient fake ships the real thing broken, so a fake refuses what the real one
+refuses. And **tests run on the benches**: build and test on the bench the card
+names before you call anything green.
+
+**Scaffolding verbs.** Lay down skeletons with files, makefile, harness,
+and a passing fixture under write confinement:
+- `nova-ci new-rule <name>` (or `make new-rule ARGS=<name>`): lays down a new class rule skeleton (`internal/ci/<name>_class_test.go`, fixture, `make/rule_<name>.mk`).
+- `nova-ci new-verb <tool> <verb>` (or `make new-verb ARGS='<tool> <verb>'`): lays down a new CLI verb skeleton (`cmd/<tool>/<verb>.go`, test, fixture, `make/verb_<tool>_<verb>.mk`) into a tool that already has a `func main` (it refuses otherwise), and prints the exact `case` line to add to the tool's dispatch switch; it never edits the switch itself.
+
+## How work lands
+
+1. Branch from `dev`. All merges go into `dev`; `main` is fast-forwarded from
+   promoted `dev`.
+2. Open a pull request into `dev`. Link the issue, say what changed and report
+   the checks you ran.
+3. The coordinator reads green pull requests and lands them into `dev`; a
+   contributor never does.
+
+**You never merge your own pull request.** Not `gh pr merge`, not `--auto`, not
+the web button. `--auto` does not queue here — it leaves a standing instruction
+the forge executes later with no caller in the room, so a pull request that was
+red when it was set lands the moment its checks turn green, unread.
+
+## Where the specs are
+
+[SPEC.md](SPEC.md) is the umbrella: the **Conventions** every binary
+keeps — exit codes (0 pass, 1 the check said NO, 2 could not run), **no guessed
+paths** (`refusing to guess`, never a default directory), the one-line output
+grammar, and the cap-and-count rule (`--fail-max`/`--max`, default 20, `0` means
+all). Each tool then has its own normative spec: `SPEC-BUS.md`,
+`SPEC-CI.md`, `SPEC-SECRETS.md`, `SPEC-TOKENS.md`, `SPEC-UPDATE.md` and the
+rest under [docs/](.). A spec is normative — where the code and the spec
+disagree, one of them has a bug and the tests decide which. **Read the spec
+before the code.**
+
+Also: [ONBOARDING.md](ONBOARDING.md) (the five-point standard every
+command meets), [CLI.md](CLI.md) (the command reference and every
+first run), [TESTS.md](TESTS.md) (the transcripts the tests execute),
+[TERMINOLOGY.md](TERMINOLOGY.md).
+
+## When a tool refuses
+
+**The remedy on the line is the contract.** An unusable invocation costs one
+line — `<tool>[ <verb>]: <what was wrong>; run: <tool> help` — and exits 2, and
+where the guidance is a sentence of its own it follows on one further indented
+line. Do that, rather than guessing. A class test's refusal names its
+`remedy="…"`; do what it says instead of adding an allowlist row. A `FAIL` line
+at exit 1 means the check ran and said NO — that is the check working.
+
+**Help is never a refusal.** `<tool> <verb> -h` (or `--help`, or `<tool> help
+<verb>` where the tool has a help verb) prints that verb's help on stdout and
+exits 0: its usage lines from `<tool> help`, then every flag it takes, before
+anything is read, dialled or written. Every verb parses its flags through the one
+seam, `internal/nsprint/verbflag` (`verbflag.Parse`, or `verbflag.HelpIfAsked`
+for a verb that reads its arguments by hand), with `verbflag.Recover` deferred in
+the dispatcher; `internal/testverbhelp` is the per-tool check, and
+`internal/ci`'s functional walk holds every verb of every living tool to it.
+`flag: help requested` at exit 2 reads to an AI as a syntax error, not as the
+answer it asked for. nova-fuse is the one exception, on purpose: its exit 0
+means CLEAR, so its verbs still refuse `-h`.
+
+**When the refusal is wrong, that is a gift.** Say three things, in this order:
+what works, where it caught you with the exact sentence it printed, and the fix
+you would make. Open an issue; do not work around it quietly.

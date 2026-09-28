@@ -21,6 +21,8 @@ import (
 // against it: the field names, in order, and every literal value against the enumeration
 // the grammar gives that field.
 func TestEveryRunLineParsesAgainstTheGrammar(t *testing.T) {
+	t.Parallel()
+
 	grammar := readGrammar(t)
 	for _, format := range runFormats(t) {
 		key, fields, values := grammarFields(format)
@@ -48,9 +50,11 @@ func TestEveryRunLineParsesAgainstTheGrammar(t *testing.T) {
 // every end the supervisor writes to exit.json, the one rule 11 writes over a done job, the
 // absence of any record at all, and the reservation that never launched.
 func TestTheReclaimLineNamesEveryEndAJobCanHave(t *testing.T) {
+	t.Parallel()
+
 	want := readGrammar(t)["RUN RECLAIM"].enums["end"]
 	for _, end := range []string{
-		EndDone, EndKilled, EndFailed, EndBudget, EndUnverifiable, EndViolation, EndUnknown, EndInputLimit, "unlaunched",
+		EndDone, EndKilled, EndFailed, EndBudget, EndUnverifiable, EndViolation, EndUnknown, EndInputLimit, EndWall, "unlaunched",
 	} {
 		if !want[end] {
 			t.Errorf("a job can end %q and RUN RECLAIM prints it; the grammar admits %v", end, keysOf(want))
@@ -74,7 +78,7 @@ var (
 // the contract is written.
 func readGrammar(t *testing.T) map[string]grammarLine {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-SWARM.md"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "deprecated", "docs", "SPEC-SWARM.md"))
 	if err != nil {
 		t.Fatalf("the grammar is the spec's: %s", err)
 	}
@@ -111,12 +115,13 @@ func readGrammar(t *testing.T) map[string]grammarLine {
 	return nil
 }
 
-// runFormats is every RUN line the tool can print: the format strings of the packages that
-// print them, tests excluded -- a line only a test prints is not a line the tool prints.
+// runFormats is every RUN line the package can print: its format strings, tests excluded --
+// a line only a test prints is not a line the tool prints. cmd/nova-swarm, which printed the
+// rest, moved to deprecated/ and is not read.
 func runFormats(t *testing.T) []string {
 	t.Helper()
 	var out []string
-	for _, dir := range []string{filepath.Join("..", "..", "internal", "swarm"), filepath.Join("..", "..", "cmd", "nova-swarm")} {
+	for _, dir := range []string{filepath.Join("..", "..", "internal", "swarm")} {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			t.Fatal(err)

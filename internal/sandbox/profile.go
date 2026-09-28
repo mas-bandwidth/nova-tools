@@ -2,12 +2,13 @@ package sandbox
 
 import (
 	"fmt"
+	"net"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/profiles"
 )
 
-// The five markers of profiles/darwin.sb.tmpl. A line whose WHOLE content is one of
+// The six markers of profiles/darwin.sb.tmpl. A line whose WHOLE content is one of
 // these is replaced; the template's own header says what each becomes, and this file is
 // the only thing that fills them. Rule 15: the policy is generated, never hand-edited,
 // and the tool never accepts a caller-supplied profile file.
@@ -15,6 +16,7 @@ const (
 	markerOptRoots  = "@@OPTROOTS@@"
 	markerAncestors = "@@ANCESTORS@@"
 	markerReads     = "@@READS@@"
+	markerNoExec    = "@@READSNOEXEC@@"
 	markerWrites    = "@@WRITES@@"
 	markerNet       = "@@NET@@"
 )
@@ -50,11 +52,29 @@ func DarwinProfile(p *Policy) (text string, params []string, err error) {
 	for _, d := range Ancestors(p.ancestorPaths()...) {
 		ancestors = append(ancestors, fmt.Sprintf("(allow file-read-metadata (literal %q))", d))
 	}
+	for _, d := range p.PathDirs {
+		if bad := badPathText(d); bad != "" {
+			return "", nil, fmt.Errorf("path dir %s %s", d, bad)
+		}
+		ancestors = append(ancestors, fmt.Sprintf("(allow file-read-metadata (subpath %q))", d))
+	}
 
-	var reads, writes []string
+	var reads, noExec, writes []string
 	for i, r := range p.Reads {
 		name := fmt.Sprintf("READ%d", i)
 		reads = append(reads, fmt.Sprintf("(allow file-read* (subpath (param %q)))", name))
+		params = append(params, name+"="+r)
+	}
+	// --read-noexec: READABLE AND NOT EXECUTABLE. This profile grants
+	// (allow process-exec* process-fork) once and globally, so on darwin readable IS
+	// executable unless the exec is taken back -- and SBPL's last matching rule wins, so
+	// the deny has to be emitted, and has to be emitted after the global grant and after
+	// the @@READS@@ block. The template puts the marker there and says why.
+	for i, r := range p.ReadsNoExec {
+		name := fmt.Sprintf("NOEXEC%d", i)
+		noExec = append(noExec,
+			fmt.Sprintf("(allow file-read* (subpath (param %q)))", name),
+			fmt.Sprintf("(deny process-exec* (subpath (param %q)))", name))
 		params = append(params, name+"="+r)
 	}
 	for i, w := range p.Writes {
@@ -75,24 +95,48 @@ func DarwinProfile(p *Policy) (text string, params []string, err error) {
 	// Rule 7: IP only, never (allow network*), which grants every unix-domain socket on
 	// the machine as well — including an inherited SSH agent's. Inbound is not granted
 	// at all unless the caller asks with --net-listen: a job that does not listen cannot
-	// be listened to. Under --net-deny the marker is emitted empty.
-	var net string
+	// be listened to. Under --net-deny the marker is emitted empty, apart from any
+	// --net-allow grants, which the caller named on purpose (issue #591).
+	var lines []string
 	if !p.NetDeny {
 		// The mDNSResponder socket is the DNS grant (rule 7): macOS resolves names over
 		// that unix socket, so IP-only outbound without it is a wall with a network and
 		// no name resolution — measured rc=6/000 without, 200 with. It sits inside this
 		// branch so that --net-deny takes the resolver away with the network.
-		lines := []string{`(allow network-outbound (remote ip) (literal "/private/var/run/mDNSResponder"))`}
+		lines = append(lines, `(allow network-outbound (remote ip) (literal "/private/var/run/mDNSResponder"))`)
 		if p.NetListen {
 			lines = append(lines, `(allow network-inbound (local ip))`)
 		}
-		net = strings.Join(lines, "\n")
 	}
+	// --net-allow opens one loopback port back up by name — the local-model provider
+	// (ollama on 127.0.0.1) that bare (remote ip) does not reach (issue #591). It is an
+	// explicit exception the caller named, so it is emitted even under --net-deny.
+	//
+	// THE FORM IS (remote ip "localhost:PORT"), NEVER (local ip (host ..) (port ..))
+	// (measured on darwin 27.2, sandbox-exec -f): the nested form Build's own comment used
+	// to cite is not one sandbox-exec's SBPL compiler accepts at all -- it aborts the whole
+	// profile with `unbound variable: host`, exit 65, before the child ever runs, which is
+	// the wall failing SHUT in the wrong way: not a denial but a refusal to compile. The
+	// `remote ip` form's own host slot additionally accepts only the literal "localhost" or
+	// "*", never a numeric address, which is why Build (policy.go) confirms the caller's
+	// host is loopback and this always emits the literal "localhost" for it: measured,
+	// "localhost:PORT" admits both a 127.0.0.1 and a ::1 listener on that port, and a
+	// numeric host here (`(remote ip "127.0.0.1:PORT")`) is the same compile abort under a
+	// different message (`host must be * or localhost in network address`).
+	for _, hp := range p.NetAllow {
+		_, port, err := net.SplitHostPort(hp)
+		if err != nil {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf(`(allow network-outbound (remote ip "localhost:%s"))`, port))
+	}
+	net := strings.Join(lines, "\n")
 
 	filled := map[string]string{
 		markerOptRoots:  strings.Join(optRoots, "\n"),
 		markerAncestors: strings.Join(ancestors, "\n"),
 		markerReads:     strings.Join(reads, "\n"),
+		markerNoExec:    strings.Join(noExec, "\n"),
 		markerWrites:    strings.Join(writes, "\n"),
 		markerNet:       net,
 	}

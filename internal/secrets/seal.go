@@ -84,7 +84,7 @@ var prNumberRegex = regexp.MustCompile(`/pull/(\d+)`)
 
 // RunSeal reads one value, folds it into the seat file under --name, and carries the
 // change through a branch, a commit and, unless --no-pr, a pull request to its merge.
-func RunSeal(opts SealOptions) (string, error) {
+func RunSeal(opts SealOptions) (line string, err error) {
 	if opts.StoreDir == "" {
 		return "", fmt.Errorf("missing --store <dir>")
 	}
@@ -156,56 +156,172 @@ func RunSeal(opts SealOptions) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := atomicWriteFile(targetFile, ciphertext, 0600); err != nil {
-		return "", err
-	}
 
 	branch := fmt.Sprintf("seal/%s-%s-%s", opts.AsName, opts.Name, opts.Now().UTC().Format("20060102-150405"))
-	opts.say("committing on branch %s", branch)
-	if err := sealGit(run, opts.StoreDir, opts.GitPath, "checkout", "-b", branch); err != nil {
-		return "", err
-	}
-	if err := sealGit(run, opts.StoreDir, opts.GitPath, "add", seatFile); err != nil {
-		return "", err
-	}
 	commitMsg := fmt.Sprintf("seal %s into %s", opts.Name, seatFile)
-	if err := sealGit(run, opts.StoreDir, opts.GitPath, "commit", "-m", commitMsg); err != nil {
-		return "", err
-	}
-
-	if opts.NoPR {
-		return fmt.Sprintf("SECRETS SEAL OK name=%s seat=%s committed",
-			oneline.Field(opts.Name), oneline.Field(opts.AsName)), nil
-	}
-
-	opts.say("pushing the branch")
-	if err := sealGit(run, opts.StoreDir, opts.GitPath, "push", "-u", "origin", branch); err != nil {
-		return "", err
-	}
-	title := fmt.Sprintf("seal %s into %s", opts.Name, seatFile)
-	body := "Sealed with nova-secrets seal. The value was never written to a file in the clear, to argv, or to output."
-	opts.say("opening the pull request")
-	createOut, err := sealGH(run, opts.GHPath, opts.StoreDir, "pr", "create", "--head", branch, "--title", title, "--body", body)
+	prNum, merged, err := sealCarry{
+		run:      run,
+		storeDir: opts.StoreDir,
+		gitPath:  opts.GitPath,
+		ghPath:   opts.GHPath,
+		seatFile: seatFile,
+		branch:   branch,
+		message:  commitMsg,
+		title:    commitMsg,
+		body:     "Sealed with nova-secrets seal. The value was never written to a file in the clear, to argv, or to output.",
+		noPR:     opts.NoPR,
+		say:      opts.say,
+		check: func() error {
+			checkFn := opts.Check
+			if checkFn == nil {
+				checkFn = checkSeatDecrypts
+			}
+			return checkFn(opts.StoreDir, opts.AsName, opts.KeyPath, opts.SopsPath)
+		},
+	}.carry(ciphertext)
 	if err != nil {
 		return "", err
 	}
-	prNum := ""
+	switch {
+	case opts.NoPR:
+		return fmt.Sprintf("SECRETS SEAL OK name=%s seat=%s committed branch=%s",
+			oneline.Field(opts.Name), oneline.Field(opts.AsName), oneline.Field(branch)), nil
+	case !merged:
+		return fmt.Sprintf("SECRETS SEAL OK name=%s seat=%s pr=#%s open (gate not yet approved)",
+			oneline.Field(opts.Name), oneline.Field(opts.AsName), prNum), nil
+	}
+	return fmt.Sprintf("SECRETS SEAL OK name=%s seat=%s pr=#%s merged",
+		oneline.Field(opts.Name), oneline.Field(opts.AsName), prNum), nil
+}
+
+// checkSeatDecrypts is the check a merged seal ends on: the seat's file, at the
+// store's new head, through the full `check`.
+func checkSeatDecrypts(storeDir, asName, keyPath, sopsPath string) error {
+	_, _, _, _, code, err := RunCheck(storeDir, asName, keyPath, sopsPath, 20)
+	if err != nil {
+		return err
+	}
+	if code != 0 {
+		return fmt.Errorf("check failed on %s after seal", asName)
+	}
+	return nil
+}
+
+// sealCarry is the road a ciphertext takes from a verb to the store: a branch,
+// a commit, and -- unless noPR -- a push, a pull request, the gate's approval,
+// a squash merge, a pull and a check. `seal` and `seat inject` walk the same
+// road, so the gate sees one shape of pull request from both.
+type sealCarry struct {
+	run      execCommand
+	storeDir string
+	gitPath  string
+	ghPath   string
+	seatFile string // the one file the commit touches
+	branch   string // seal/<seat>-<NAMES>-<stamp>
+	message  string // the commit message
+	title    string // the pull request title
+	body     string // the pull request body
+	noPR     bool
+	say      func(format string, a ...interface{})
+	check    func() error // runs after the merge and the pull
+}
+
+// carry writes the ciphertext into place on a fresh branch and carries it to
+// the store. It returns the pull request number ("" under noPR) and whether the
+// request merged. On every path out the store is back on the branch it was on
+// (#2016); the commit stays on c.branch.
+func (c sealCarry) carry(ciphertext []byte) (prNum string, merged bool, err error) {
+	say := c.say
+	if say == nil {
+		say = func(string, ...interface{}) {}
+	}
+	home, err := sealGitOutput(c.run, c.storeDir, c.gitPath, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return "", false, err
+	}
+	if home == "" || home == "HEAD" {
+		return "", false, fmt.Errorf("store %s is not on a branch; seal needs a named branch to return to", c.storeDir)
+	}
+	// checkout -f of home would discard these. Refuse before checkout -b.
+	status, err := sealGitOutput(c.run, c.storeDir, c.gitPath, "status", "--porcelain", "-uno")
+	if err != nil {
+		return "", false, err
+	}
+	if status != "" {
+		return "", false, fmt.Errorf("store %s is not clean; commit, stash, or restore tracked changes before seal (git status). seal will not discard them", c.storeDir)
+	}
+
+	say("committing on branch %s", c.branch)
+	if err := sealGit(c.run, c.storeDir, c.gitPath, "checkout", "-b", c.branch); err != nil {
+		return "", false, err
+	}
+	// #2016: restore the starting branch on every path; the commit stays on c.branch.
+	restored := false
+	restore := func() error {
+		if restored {
+			return nil
+		}
+		if rerr := sealGit(c.run, c.storeDir, c.gitPath, "checkout", "-f", home); rerr != nil {
+			return rerr
+		}
+		restored = true
+		return nil
+	}
+	defer func() {
+		if rerr := restore(); rerr != nil {
+			if err != nil {
+				err = fmt.Errorf("%s; also failed to return the store to %s: %s", oneline.Err(err), oneline.Field(home), oneline.Err(rerr))
+			} else {
+				err = rerr
+				prNum, merged = "", false
+			}
+		}
+	}()
+
+	targetFile := filepath.Join(c.storeDir, c.seatFile)
+	if err := atomicWriteFile(targetFile, ciphertext, 0600); err != nil {
+		return "", false, err
+	}
+	if err := sealGit(c.run, c.storeDir, c.gitPath, "add", c.seatFile); err != nil {
+		return "", false, err
+	}
+	if err := sealGit(c.run, c.storeDir, c.gitPath, "commit", "-m", c.message); err != nil {
+		return "", false, err
+	}
+
+	if c.noPR {
+		say("returning the store to its branch")
+		if err := restore(); err != nil {
+			return "", false, err
+		}
+		return "", false, nil
+	}
+
+	say("pushing the branch")
+	if err := sealGit(c.run, c.storeDir, c.gitPath, "push", "-u", "origin", c.branch); err != nil {
+		return "", false, err
+	}
+	say("opening the pull request")
+	createOut, err := sealGH(c.run, c.ghPath, c.storeDir, "pr", "create", "--head", c.branch, "--title", c.title, "--body", c.body)
+	if err != nil {
+		return "", false, err
+	}
 	if m := prNumberRegex.FindStringSubmatch(createOut); len(m) > 1 {
 		prNum = m[1]
 	}
 	if prNum == "" {
-		return "", fmt.Errorf("gh pr create did not return a pull request number")
+		return "", false, fmt.Errorf("gh pr create did not return a pull request number")
 	}
 
 	approved := false
 	started := time.Now()
 	deadline := started.Add(2 * time.Minute)
 	lastSaid := started
-	opts.say("pull request #%s is open; waiting for the gate's approval (up to 2 min)", prNum)
+	say("pull request #%s is open; waiting for the gate's approval (up to 2 min)", prNum)
 	for {
-		view, err := sealGH(run, opts.GHPath, opts.StoreDir, "pr", "view", prNum, "--json", "reviewDecision", "--jq", ".reviewDecision")
+		view, err := sealGH(c.run, c.ghPath, c.storeDir, "pr", "view", prNum, "--json", "reviewDecision", "--jq", ".reviewDecision")
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
 		if strings.TrimSpace(view) == "APPROVED" {
 			approved = true
@@ -215,50 +331,36 @@ func RunSeal(opts SealOptions) (string, error) {
 			break
 		}
 		if time.Since(lastSaid) >= 15*time.Second {
-			opts.say("still waiting for approval (%ds)", int(time.Since(started).Seconds()))
+			say("still waiting for approval (%ds)", int(time.Since(started).Seconds()))
 			lastSaid = time.Now()
 		}
 		time.Sleep(5 * time.Second)
 	}
 	if !approved {
-		return fmt.Sprintf("SECRETS SEAL OK name=%s seat=%s pr=#%s open (gate not yet approved)",
-			oneline.Field(opts.Name), oneline.Field(opts.AsName), prNum), nil
+		return prNum, false, nil
 	}
 
-	opts.say("approved; merging #%s", prNum)
-	if _, err := sealGH(run, opts.GHPath, opts.StoreDir, "pr", "merge", prNum, "--squash"); err != nil {
-		return "", err
+	say("approved; merging #%s", prNum)
+	if _, err := sealGH(c.run, c.ghPath, c.storeDir, "pr", "merge", prNum, "--squash"); err != nil {
+		return "", false, err
 	}
 	// Back to the branch the store was on: the squash leaves the seal branch stale, and a
 	// store parked on it would serve the next exec from a branch nobody merges again.
-	opts.say("returning the store to its branch and pulling")
-	if err := sealGit(run, opts.StoreDir, opts.GitPath, "checkout", "-"); err != nil {
-		return "", err
+	say("returning the store to its branch and pulling")
+	if err := restore(); err != nil {
+		return "", false, err
 	}
-	if err := sealGit(run, opts.StoreDir, opts.GitPath, "pull"); err != nil {
-		return "", err
+	if err := sealGit(c.run, c.storeDir, c.gitPath, "pull"); err != nil {
+		return "", false, err
 	}
 
-	opts.say("checking the seat decrypts")
-	checkFn := opts.Check
-	if checkFn == nil {
-		checkFn = func(storeDir, asName, keyPath, sopsPath string) error {
-			_, _, _, _, code, err := RunCheck(storeDir, asName, keyPath, sopsPath, 20)
-			if err != nil {
-				return err
-			}
-			if code != 0 {
-				return fmt.Errorf("check failed on %s after seal", asName)
-			}
-			return nil
+	say("checking the seat decrypts")
+	if c.check != nil {
+		if err := c.check(); err != nil {
+			return "", false, err
 		}
 	}
-	if err := checkFn(opts.StoreDir, opts.AsName, opts.KeyPath, opts.SopsPath); err != nil {
-		return "", err
-	}
-
-	return fmt.Sprintf("SECRETS SEAL OK name=%s seat=%s pr=#%s merged",
-		oneline.Field(opts.Name), oneline.Field(opts.AsName), prNum), nil
+	return prNum, true, nil
 }
 
 // readSealValue takes the value from stdin when asked or when stdin is not a terminal,
@@ -427,11 +529,16 @@ func sealSopsEnv(keyPath, tmpDir string) []string {
 }
 
 func sealGit(run execCommand, dir, gitPath string, args ...string) error {
-	_, err := run(nil, append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), dir, gitPath, args...)
+	_, err := sealGitOutput(run, dir, gitPath, args...)
+	return err
+}
+
+func sealGitOutput(run execCommand, dir, gitPath string, args ...string) (string, error) {
+	out, err := run(nil, append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), dir, gitPath, args...)
 	if err != nil {
-		return fmt.Errorf("git %s failed: %s (transcript withheld)", args[0], oneline.Err(err))
+		return "", fmt.Errorf("git %s failed: %s (transcript withheld)", args[0], oneline.Err(err))
 	}
-	return nil
+	return strings.TrimSpace(string(out)), nil
 }
 
 func sealGH(run execCommand, ghPath, dir string, args ...string) (string, error) {

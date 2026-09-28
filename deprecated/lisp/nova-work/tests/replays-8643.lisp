@@ -1,0 +1,333 @@
+;;;; replays-8643.lisp --- five acceptance replays for the dry run, the cost
+;;;; lineage, savepoint compaction and copied journals of docs/SPEC-WORK.md.
+;;;;
+;;;; The names are the spec's own; each deftest sets up the state its paragraph
+;;;; describes, drives the pure model the paragraph promises and asserts the
+;;;; promised outcome. The live session, journal I/O and CLI wiring those
+;;;; paragraphs sit on is out of this slice; where a name's paragraph fixes the
+;;;; reading, the reading is stated in RESULT.md as `read: <name>: ...`.
+
+(in-package #:nova-work/tests)
+
+;;; ------------------------------------------------------------------
+;;; dry-run-writes-nothing                       SPEC-WORK.md:5678
+;;; ------------------------------------------------------------------
+
+(deftest "dry-run-writes-nothing" "docs/SPEC-WORK.md:5678"
+    "expected=green-preview-mutates-nothing;request-still-new-to-dedup;counters-unchanged;accepted-mutation-moves-rev;stale-expect-refused-by-name;apply-at-current-rev-succeeds"
+  (let* ((s (make-replay-session :revision 7 :events 4 :pending 1 :pushed 3))
+         (before s))
+    ;; a green preview at revision R validates and projects without mutating.
+    (multiple-value-bind (line after) (preview-mutation s '(:id "req-preview" :expect 7))
+      (ok (search "SESSION OK" line) "the preview answers OK: ~A" line)
+      (ok (search "dry-run=true" line) "the preview is marked dry-run: ~A" line)
+      (check-equal before after "the preview leaves the session state unchanged")
+      (check-equal nil (member "req-preview" (getf after :dedup) :test #'equal)
+                   "the preview leaves its request id new to the dedup index")
+      (check-equal 4 (getf after :events) "events= is unchanged by the preview")
+      (check-equal 1 (getf after :pending) "pending= is unchanged by the preview")
+      (check-equal 3 (getf after :pushed) "pushed= is unchanged by the preview"))
+    ;; an accepted mutation at R moves the revision to R+1.
+    (multiple-value-bind (ok1 line1 s1) (apply-mutation s '(:id "req-real" :expect 7))
+      (ok ok1 "a real apply at the current revision is admitted: ~A" line1)
+      (check-equal 8 (getf s1 :revision) "the accepted mutation moves the revision to R+1")
+      (check-equal 5 (getf s1 :events) "the accepted mutation appends one event")
+      (ok (member "req-real" (getf s1 :dedup) :test #'equal)
+          "the accepted mutation records its request id")
+      ;; then a real apply --expect R is refused `stale` by name.
+      (multiple-value-bind (ok2 line2 s2) (apply-mutation s1 '(:id "req-late" :expect 7))
+        (check-equal nil ok2 "an apply at the stale revision is refused")
+        (ok (search "stale" line2) "the stale refusal names stale: ~A" line2)
+        (check-equal s1 s2 "the stale refusal writes nothing")
+        ;; but an apply at the current R+1 is newly validated and may succeed.
+        (multiple-value-bind (ok3 line3 s3) (apply-mutation s1 '(:id "req-next" :expect 8))
+          (ok ok3 "an apply at the current revision is newly validated: ~A" line3)
+          (check-equal 9 (getf s3 :revision) "the apply at R+1 moves the revision again"))))))
+
+;;; ------------------------------------------------------------------
+;;; complete-cost-lineage                         SPEC-WORK.md:4852
+;;; ------------------------------------------------------------------
+
+(deftest "complete-cost-lineage" "docs/SPEC-WORK.md:4852"
+    "expected=parent-child-retry-join-once;failed-attempts-count;cache-subsets-do-not-double-count;implementation-separate;gaps-unknown"
+  (let ((joined (join-cost-lineage
+                 '((:id "p1" :role :parent :cost 10)
+                   (:id "c1" :role :child :of "p1" :cost 5)
+                   (:id "r1" :role :retry :of "c1" :attempt :failed :cost 3)
+                   (:id "cache1" :role :cache-subset :of "c1" :cost 4)
+                   (:id "impl1" :role :implementation :cost 7)
+                   (:id "c1" :role :child :of "p1" :cost 5)))))
+    (check-equal 18 (getf joined :operational)
+                 "parent, child and a failed retry join once into the operational cost")
+    (check-equal 1 (getf joined :failed) "a failed attempt is counted")
+    (check-equal 1 (getf joined :cache-merged)
+                 "a cache subset is joined but never added a second time")
+    (check-equal 7 (getf joined :implementation)
+                 "implementation cost stays separate from operational cost")
+    (check-equal 5 (getf joined :joined)
+                 "a repeated receipt id joins exactly once"))
+  ;; a gap remains unknown rather than reading as zero or a partial sum.
+  (let ((joined (join-cost-lineage
+                 '((:id "p1" :role :parent :cost 10)
+                   (:id "x1" :role :child :cost :unknown)))))
+    (check-equal :unknown (getf joined :operational)
+                 "a gap leaves the joined cost unknown, never zero")
+    (check-equal 1 (getf joined :gaps) "the gap is counted, not hidden")))
+
+;;; ------------------------------------------------------------------
+;;; compaction-keeps-the-last-copy                SPEC-WORK.md:5791
+;;; ------------------------------------------------------------------
+
+(deftest "compaction-keeps-the-last-copy" "docs/SPEC-WORK.md:5791"
+    "expected=newest-verified-kept;only-copy-never-removed;unverified-pruned;nothing-verified-prunes-nothing;last-copy-per-retained-cut;newest-by-revision-not-list-order"
+  ;; with two verified copies, compaction keeps the newest and may drop the older.
+  (let ((plan (compact-copies '((:id "sp-old" :verified t :revision 10)
+                                (:id "sp-new" :verified t :revision 20)))))
+    (check-equal '("sp-new") (getf plan :keep) "the newest verified copy is kept")
+    (check-equal '("sp-old") (getf plan :pruned) "the older verified copy may be dropped"))
+  ;; the newest is chosen by revision, not by the order the copies are listed in.
+  (let ((plan (compact-copies '((:id "sp-new" :verified t :revision 20)
+                                (:id "sp-old" :verified t :revision 10)))))
+    (check-equal '("sp-new") (getf plan :keep)
+                 "the newest verified copy is kept regardless of list order"))
+  ;; the only recoverable copy is never removed.
+  (let ((plan (compact-copies '((:id "sp-only" :verified t :revision 5)))))
+    (check-equal '("sp-only") (getf plan :keep) "the only recoverable copy is kept")
+    (check-equal '() (getf plan :pruned) "the only recoverable copy is never removed"))
+  ;; an unverified copy is not recoverable and is pruned; the verified copy stays.
+  (let ((plan (compact-copies '((:id "sp-bad" :verified nil :revision 99)
+                                (:id "sp-good" :verified t :revision 1)))))
+    (check-equal '("sp-good") (getf plan :keep) "the verified copy is kept")
+    (ok (member "sp-bad" (getf plan :pruned) :test #'equal)
+        "the unverified copy is pruned even when it is newer"))
+  ;; with nothing verified, no recoverable copy exists and compaction removes nothing.
+  (let ((plan (compact-copies '((:id "a" :verified nil :revision 1)))))
+    (check-equal '() (getf plan :pruned)
+                 "compaction removes nothing when nothing is recoverable"))
+  ;; a retained savepoint cut that only an older verified copy still covers is
+  ;; the only recoverable copy for that cut: it is kept beside the newest.
+  (let ((plan (compact-copies
+               (list (list :id "sp-new" :verified t :revision 20 :covers '("cut-9"))
+                     (list :id "sp-old" :verified t :revision 10 :covers '("cut-1"))))))
+    (check-equal '("sp-new" "sp-old") (sort (getf plan :keep) #'string<)
+                 "the last copy covering a retained cut is kept")
+    (check-equal '() (getf plan :pruned)
+                 "the retained cut makes the older copy recoverable"))
+  ;; once the newest copy also covers that cut, the older copy is redundant.
+  (let ((plan (compact-copies
+               (list (list :id "sp-new" :verified t :revision 20
+                           :covers '("cut-1" "cut-9"))
+                     (list :id "sp-old" :verified t :revision 10 :covers '("cut-1"))))))
+    (check-equal '("sp-new") (getf plan :keep)
+                 "a covered cut leaves no unique recoverable copy")
+    (check-equal '("sp-old") (getf plan :pruned)
+                 "the redundant older copy may be dropped")))
+
+;;; ------------------------------------------------------------------
+;;; copied-journal-grants-nothing                 SPEC-WORK.md:6017
+;;; ------------------------------------------------------------------
+
+(deftest "copied-journal-grants-nothing" "docs/SPEC-WORK.md:6017"
+    "expected=restore-inspects-in-isolation;no-ownership-no-dispatch;start-over-copy-fenced;journal-id-notwithstanding;image-and-replies-loaded"
+  (let* ((records (list (list :seq 1 :request "r1" :reply '("OK r1") :payload-sha256 "p1" :events '(1))
+                        (list :seq 2 :request "r2" :reply '("OK r2") :payload-sha256 "p2" :events '(2))))
+         (journal (make-journal-chain
+                   :id "j-abc"
+                   :segments (list (make-journal-segment :path "journal.1"
+                                                         :header '() :records '()))))
+         (sp (savepoint-store-verified
+              (savepoint-write (make-savepoint-store) "sp-1" 2 1 records :journal journal)))
+         (copy (list :journal-id "j-abc" :savepoint sp :bench "bench-a"
+                     :journal journal :image (savepoint-image-events 1 records)
+                     :replies (savepoint-retained-replies records)
+                     :records records))
+         (restored (restore-copy copy)))
+    (check-equal "j-abc" (getf restored :journal-id) "the copy's journal id is read")
+    (check-equal :read-only (getf restored :isolation)
+                 "a copied restore inspects in isolation")
+    (check-equal nil (getf restored :ownership) "a copied restore takes no ownership")
+    (check-equal 0 (getf restored :dispatches) "a copied restore dispatches nothing")
+    (check-equal 0 (getf restored :side-effects)
+                 "a copied restore duplicates no external side effect")
+    ;; the very same isolated read-only session a local restore opens, with the
+    ;; image and its retained replies loaded and nothing dispatched.
+    (let ((session (getf restored :session)))
+      (ok session "the copied restore opened a session")
+      (ok (restore-session-read-only-p session) "the copied session is read-only")
+      (check-equal (savepoint-image-events 1 records) (restore-session-image session)
+                   "the copied session loaded the image")
+      (check-equal '(2) (mapcar (lambda (r) (getf r :seq))
+                                (restore-session-replayed-records session))
+                   "the copied session replayed the records after the cut"))
+    ;; a session start over the copy is refused by the fencing rules.
+    (multiple-value-bind (ok line code) (start-over-copy copy)
+      (check-equal nil ok "a session start over a copy is refused")
+      (check-equal 1 code "the fencing refusal is exit 1")
+      (ok (search "fence" line) "the refusal names the fencing rules: ~A" line))
+    ;; the journal id notwithstanding: an exact id match is still refused.
+    (multiple-value-bind (ok line) (start-over-copy (list :journal-id "j-abc"))
+      (check-equal nil ok "a matching journal id grants no start")
+      (ok (search "fence" line) "the refusal still names the fencing rules: ~A" line))))
+
+;;; ------------------------------------------------------------------
+;;; cost-joins-include-the-coordinator           SPEC-WORK.md:6379
+;;; ------------------------------------------------------------------
+
+(deftest "cost-joins-include-the-coordinator" "docs/SPEC-WORK.md:6379"
+    "expected=coordinator-overhead-and-rework-join;elapsed-attributed-by-phase;unobservable-stays-unknown;implementation-sunk;comparable-only-after-adoption"
+  (let ((joined (join-experiment-cost
+                 '(:id "exp-1" :after-adoption t
+                   :coordinator-overhead 4 :rework 3
+                   :execution 10 :queueing 2 :review 5 :ci-waiting 1
+                   :implementation-cost 100))))
+    (check-equal 25 (getf joined :operational)
+                 "coordinator overhead and rework join the operational cost")
+    (check-equal 4 (getf joined :coordinator-overhead)
+                 "the coordinator overhead is joined, not omitted")
+    (check-equal 3 (getf joined :rework) "the rework is joined, not omitted")
+    (check-equal '((:execution . 10) (:queueing . 2) (:review . 5) (:ci-waiting . 1))
+                 (getf joined :phases)
+                 "elapsed time is attributed to each observable phase")
+    (check-equal 100 (getf joined :implementation)
+                 "implementation cost is recorded")
+    (check-equal t (getf joined :implementation-sunk)
+                 "implementation cost is sunk and kept apart")
+    (ok (not (member 100 (mapcar #'cdr (getf joined :phases))))
+        "implementation cost is not attributed to an operational phase")
+    (check-equal t (getf joined :comparable)
+                 "an after-adoption experiment is comparable work"))
+  ;; unobservable elapsed time stays unknown rather than reading as zero.
+  (let ((joined (join-experiment-cost
+                 '(:id "exp-2" :after-adoption t
+                   :coordinator-overhead 0 :rework 0
+                   :execution :unknown :queueing 2 :review :unknown :ci-waiting 0
+                   :implementation-cost 5))))
+    (check-equal 2 (getf joined :operational)
+                 "only observable cost joins the operational total")
+    (check-equal 2 (getf joined :unknown-phases)
+                 "each unobservable phase stays unknown, not zero")
+    (check-equal '((:queueing . 2) (:ci-waiting . 0)) (getf joined :phases)
+                 "unknown phases are absent from the attributed phases"))
+  ;; the hypothesis run before adoption is not comparable work.
+  (let ((joined (join-experiment-cost
+                 '(:id "exp-3" :after-adoption nil :execution 1
+                   :implementation-cost 50))))
+    (check-equal nil (getf joined :comparable)
+                 "the token-saving hypothesis is comparable only after adoption")))
+
+;;; ------------------------------------------------------------------
+;;; TestE10F04RunTheAuthorizedReadOnly   SPEC-WORK.md:7228-7229
+;;; E10-F04 — run the authorized read-only real-repository pilot and
+;;; disposable import, then publish a reconciliation disposition.
+;;; ------------------------------------------------------------------
+
+(deftest "TestE10F04RunTheAuthorizedReadOnly" "docs/SPEC-WORK.md:7228-7229"
+    "expected=read-only-pilot-mutates-nothing;disposable-import-leaves-originals-untouched;reconciliation-disposition-published"
+  (let* ((source (make-recording-adapter :inventory '(:issues 3 :comments 7)))
+         (before (adapter-inventory source)))
+    ;; The authorized real-repository pilot is read-only: a dry-run capture and
+    ;; a normal initial import call no mutation endpoint and leave the source
+    ;; inventory byte-identical.
+    (dry-run-capture source)
+    (initial-import source)
+    (check-equal 0 (length (adapter-mutation-calls source))
+                 "the read-only pilot called a source mutation endpoint")
+    (check-equal before (adapter-inventory source)
+                 "the read-only pilot changed the real repository")
+    (ok (plusp (length (adapter-read-calls source)))
+        "the read-only pilot made no reads at all")
+    ;; The disposable import writes only the throwaway destination, never the
+    ;; originals: applying a plan changes the destination and leaves the source
+    ;; untouched.
+    (let ((plan (dry-run-capture source))
+          (destination (list :applied 0)))
+      (apply-plan source destination plan)
+      (check-equal 0 (length (adapter-mutation-calls source))
+                   "the disposable import called a source mutation endpoint")
+      (check-equal before (adapter-inventory source)
+                   "the disposable import changed the originals")
+      (check-equal 3 (getf destination :applied)
+                   "the disposable import did not write the destination"))
+    ;; The reconciliation disposition is published: the pilot's capture
+    ;; reconciles against the authoritative repository, and a divergent capture
+    ;; is refused by name rather than accepted.
+    (let* ((authoritative (list (inventory-record "issues" :issues
+                                                  :original 3 :mapping "acme/issues")
+                                (inventory-record "comments" :comments
+                                                  :original 7 :mapping "acme/comments")))
+           (matching (copy-tree authoritative))
+           (divergent (list (inventory-record "issues" :issues
+                                              :original 4 :mapping "acme/issues")
+                            (inventory-record "comments" :comments
+                                              :original 7 :mapping "acme/comments"))))
+      (multiple-value-bind (okp line) (reconcile-inventory authoritative matching)
+        (ok okp "the pilot's capture failed to reconcile against the repository: ~A" line)
+        (ok (search "INVENTORY OK" line) "the reconciliation disposition is not published: ~A" line))
+      (multiple-value-bind (okp line) (reconcile-inventory authoritative divergent)
+        (check-equal nil okp "a divergent capture reconciled against the repository")
+        (ok (search "content" line) "a content mismatch is not named: ~A" line)))))
+
+;;; ------------------------------------------------------------------
+;;; TestE01F03AllowOmittedRepeatedAndRecursively   SPEC-WORK.md:1555-1556
+;;; ------------------------------------------------------------------
+;;; E01-F03-04 (ROADMAP.md:224) — allow omitted, repeated and recursively
+;;; nested work-set grouping layers without a prescribed depth.
+;;; docs/SPEC-WORK.md:1555-1556: "A team may omit, repeat or nest grouping
+;;; layers as its work requires; validation must not enforce a
+;;; repository/epic/feature depth sequence."
+
+(deftest "TestE01F03AllowOmittedRepeatedAndRecursively" "docs/SPEC-WORK.md:1555-1556"
+    "expected=deeper-witness-admitted;repeated-layers-read-by-id-not-position;omitted-layers-admitted;depth-not-prescribed"
+  ;; A grouping layer is a container whose kind is declared and read by its
+  ;; stable id, never inferred from its depth, its title or its position.
+  ;; Omitted: the shallow repository -> feature -> task witness skips project,
+  ;; stream and epic and is admitted whole.
+  (let ((state (make-seed-state
+                '((:id "r" :type :work-set :parent nil :state :unknown)
+                  (:id "r/f" :type :feature :parent "r" :state :unknown)
+                  (:id "r/f/t" :type :task :parent "r/f" :state :doing)))))
+    (check-equal 3 (state-open-count state)
+                 "the shallow witness with omitted layers was not admitted whole")
+    (check-equal :task (node-type state "r/f/t")
+                 "the admitted task is read by its id, not by a fixed depth"))
+  ;; Repeated and recursively nested: repository -> project -> project ->
+  ;; stream -> work-set -> stream -> epic -> feature -> feature -> feature ->
+  ;; task. Project and stream are work-sets distinguished by :category, never
+  ;; by a distinct mandatory kind or by their position.
+  (let ((state (make-seed-state
+                '((:id "n/repo" :type :work-set :parent nil :state :unknown)
+                  (:id "n/repo/p1" :type :work-set :category "project" :parent "n/repo" :state :unknown)
+                  (:id "n/repo/p2" :type :work-set :category "project" :parent "n/repo/p1" :state :unknown)
+                  (:id "n/repo/s1" :type :work-set :category "stream" :parent "n/repo/p2" :state :unknown)
+                  (:id "n/repo/ws" :type :work-set :parent "n/repo/s1" :state :unknown)
+                  (:id "n/repo/s2" :type :work-set :category "stream" :parent "n/repo/ws" :state :unknown)
+                  (:id "n/repo/e" :type :epic :parent "n/repo/s2" :state :unknown)
+                  (:id "n/repo/f" :type :feature :parent "n/repo/e" :state :unknown)
+                  (:id "n/repo/sf1" :type :feature :parent "n/repo/f" :state :unknown)
+                  (:id "n/repo/sf2" :type :feature :parent "n/repo/sf1" :state :unknown)
+                  (:id "n/repo/t" :type :task :parent "n/repo/sf2" :state :doing)))))
+    (check-equal 11 (state-open-count state)
+                 "the deeper witness with repeated and nested layers was not admitted whole")
+    (check-equal :task (node-type state "n/repo/t")
+                 "the leaf task is a task, read by id not by depth")
+    (check-equal "project" (node-category state "n/repo/p2")
+                 "a repeated project layer keeps its category, not inferred from position")
+    (check-equal "stream" (node-category state "n/repo/s2")
+                 "a repeated stream layer keeps its category, not inferred from position")
+    (check-equal :work-set (node-type state "n/repo/s2")
+                 "a stream is a work-set, not a distinct mandatory layer kind")
+    (check-equal :feature (node-type state "n/repo/sf2")
+                 "a sub-feature is a :feature repeated one below another"))
+  ;; No prescribed depth: a chain of 24 nested sub-features under one task is
+  ;; admitted exactly like a shallow one; depth is not a rank restriction.
+  (let* ((ids (loop for i from 0 to 24 collect (format nil "deep/~D" i)))
+         (state (make-seed-state
+                 (loop for i from 0 to 24 for id in ids
+                       collect (list :id id
+                                     :type (if (= i 24) :task :feature)
+                                     :parent (and (plusp i) (nth (1- i) ids))
+                                     :state (if (= i 24) :doing :unknown))))))
+    (check-equal 25 (state-open-count state)
+                 "the 25-level nested chain was not admitted; depth refused a grouping")
+    (check-equal :task (node-type state "deep/24")
+                 "the deep chain's task is a task at depth 25, read by id, not refused")))

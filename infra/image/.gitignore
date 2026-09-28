@@ -1,0 +1,4 @@
+# The opencode harness binary is staged here from the bench before a build
+# (see README.md). It is a 176 MB vendor executable with no provenance a reader
+# of this repo could check; it belongs on the bench, not in git history.
+/opencode

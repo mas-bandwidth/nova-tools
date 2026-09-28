@@ -1,0 +1,366 @@
+package life_test
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/life"
+	"github.com/mas-bandwidth/nova-tools/internal/testguard"
+)
+
+// fakeWakeHost is the seam wakehealth.go takes: the units a supervisor has
+// loaded, the unit files on disk, how many loads of a unit fail before one
+// works, and each clone's commits behind. Every mutating call is recorded, so
+// a control can say "one bootstrap happened", not just "the row looks right".
+type fakeWakeHost struct {
+	loaded    map[string]bool
+	files     map[string]bool
+	loadFails map[string]int // -1: every load fails
+	behind    map[string]int
+	calls     []string
+}
+
+func newFakeWakeHost() *fakeWakeHost {
+	return &fakeWakeHost{loaded: map[string]bool{}, files: map[string]bool{},
+		loadFails: map[string]int{}, behind: map[string]int{}}
+}
+
+func (f *fakeWakeHost) UnitLoaded(_ context.Context, unit string) (bool, error) {
+	return f.loaded[unit], nil
+}
+
+func (f *fakeWakeHost) UnitFileExists(_ context.Context, file string) (bool, error) {
+	return f.files[file], nil
+}
+
+func (f *fakeWakeHost) LoadUnit(_ context.Context, unit, file string) error {
+	f.calls = append(f.calls, "load "+unit+" "+file)
+	switch n := f.loadFails[unit]; {
+	case n < 0:
+		return errors.New("Bootstrap failed: 5: Input/output error")
+	case n > 0:
+		f.loadFails[unit] = n - 1
+		return errors.New("Bootstrap failed: 5: Input/output error")
+	}
+	f.loaded[unit] = true
+	return nil
+}
+
+// FetchFF is #3134's Pull renamed (#3048 rev 3): a clone that is behind is
+// fast-forwarded and recorded; a current one makes no call.
+func (f *fakeWakeHost) FetchFF(_ context.Context, dir, _, _ string, _ time.Duration) (life.FetchFF, error) {
+	n := f.behind[dir]
+	if n == 0 {
+		return life.FetchFF{Fetched: "c0ffee00c0ffee00"}, nil
+	}
+	f.calls = append(f.calls, "pull "+dir)
+	f.behind[dir] = 0
+	return life.FetchFF{Fetched: "c0ffee00c0ffee00", Before: n}, nil
+}
+
+func beatsLive(live bool) life.BeatReader {
+	return func(context.Context, string) (bool, error) { return live, nil }
+}
+
+const walterUnit = "com.nova.loop.wake-serve-walter"
+
+func walterDecl() life.WakeDecl {
+	return life.WakeDecl{
+		Friend:   "walter",
+		Mode:     life.WakeUnit,
+		Unit:     walterUnit,
+		UnitFile: "/fixture/LaunchAgents/" + walterUnit + ".plist",
+		Bus:      "/fixture/wake/walter/bus",
+	}
+}
+
+// TestWakeHealthRepairsUnloadedUnit is the #3048 control: the fixture friend's
+// wake unit file exists but the supervisor does not have it (booted out, as
+// com.nova.loop.wake-serve-johnny sat for six hours on 2026-09-23). One tick
+// finds wake:unit-missing, bootstraps the unit exactly once, and the row says
+// `wake: repaired <unit>` with the finding beside it.
+func TestWakeHealthRepairsUnloadedUnit(t *testing.T) {
+	t.Parallel()
+
+	host := newFakeWakeHost()
+	d := walterDecl()
+	host.files[d.UnitFile] = true
+
+	got := life.WakeTick(context.Background(), host, beatsLive(true), []life.WakeDecl{d})
+	if len(got) != 1 {
+		t.Fatalf("one friend in, %d health rows out", len(got))
+	}
+	h := got[0]
+	row := h.Row()
+	if !strings.Contains(row, "wake:unit-missing") {
+		t.Errorf("row %q does not carry the finding wake:unit-missing", row)
+	}
+	if !strings.Contains(row, "wake: repaired "+walterUnit) {
+		t.Errorf("row %q does not say wake: repaired %s", row, walterUnit)
+	}
+	if h.State != life.WakeRepaired {
+		t.Errorf("state %q, want %q", h.State, life.WakeRepaired)
+	}
+	want := []string{"load " + walterUnit + " " + d.UnitFile}
+	if strings.Join(host.calls, "|") != strings.Join(want, "|") {
+		t.Errorf("repair calls %q, want exactly %q", host.calls, want)
+	}
+	if len(h.Repairs) != 1 || h.Repairs[0].Action != "bootstrap" || h.Repairs[0].Target != walterUnit || h.Repairs[0].Err != "" {
+		t.Errorf("recorded repairs %+v, want one clean bootstrap of %s", h.Repairs, walterUnit)
+	}
+	if !host.loaded[walterUnit] {
+		t.Errorf("after the tick the unit is still not loaded")
+	}
+}
+
+// TestWakeHealthLoadedUnitIsOK is the positive half: a loaded unit, a current
+// clone and a live beat print `wake: ok` and make no repair call at all.
+func TestWakeHealthLoadedUnitIsOK(t *testing.T) {
+	t.Parallel()
+
+	host := newFakeWakeHost()
+	d := walterDecl()
+	host.files[d.UnitFile] = true
+	host.loaded[walterUnit] = true
+
+	h := life.CheckWake(context.Background(), host, beatsLive(true), d)
+	if h.State != life.WakeOK || len(h.Findings) != 0 || len(host.calls) != 0 {
+		t.Fatalf("healthy friend: state %q findings %v calls %v; want ok, none, none", h.State, h.Findings, host.calls)
+	}
+	if row := h.Row(); !strings.HasPrefix(row, "wake: ok "+walterUnit) || !strings.Contains(row, "behind=0") || !strings.Contains(row, "beat=live") {
+		t.Errorf("healthy row %q", row)
+	}
+}
+
+// TestWakeHealthStaleBeatIsDown (#3134 hold, Stella): a loaded unit and a
+// current clone with a beat older than its TTL is not a live wake path. The
+// state is down and the row is red; before the fix it was `wake: ok`.
+func TestWakeHealthStaleBeatIsDown(t *testing.T) {
+	t.Parallel()
+
+	host := newFakeWakeHost()
+	d := walterDecl()
+	host.files[d.UnitFile] = true
+	host.loaded[walterUnit] = true
+
+	h := life.CheckWake(context.Background(), host, beatsLive(false), d)
+	if h.State != life.WakeDown {
+		t.Fatalf("loaded unit, behind=0, stale beat: state %q, want %q", h.State, life.WakeDown)
+	}
+	row := h.Row()
+	if !strings.HasPrefix(row, "\x1b[31mwake: down\x1b[0m "+walterUnit) || !strings.Contains(row, "beat=stale") {
+		t.Errorf("stale-beat row %q, want a red wake: down with beat=stale", row)
+	}
+	if len(host.calls) != 0 {
+		t.Errorf("stale beat on a loaded unit made repair calls %v", host.calls)
+	}
+}
+
+// TestWakeHealthJustBootstrappedUnitIsNotDownOnBeat: the unit this tick
+// bootstrapped cannot have beaten yet, so its stale beat leaves it repaired.
+func TestWakeHealthJustBootstrappedUnitIsNotDownOnBeat(t *testing.T) {
+	t.Parallel()
+
+	host := newFakeWakeHost()
+	d := walterDecl()
+	host.files[d.UnitFile] = true
+
+	if h := life.CheckWake(context.Background(), host, beatsLive(false), d); h.State != life.WakeRepaired {
+		t.Fatalf("freshly bootstrapped unit with no beat yet: state %q, want %q", h.State, life.WakeRepaired)
+	}
+	if h := life.CheckWake(context.Background(), host, beatsLive(false), d); h.State != life.WakeDown {
+		t.Fatalf("next tick, unit loaded and still no beat: state %q, want %q", h.State, life.WakeDown)
+	}
+}
+
+// TestWakeHealthPullsBehindBus: the wake server's bus clone is 3 commits
+// behind; one tick pulls it and the row prints behind=0 with the finding.
+func TestWakeHealthPullsBehindBus(t *testing.T) {
+	t.Parallel()
+
+	host := newFakeWakeHost()
+	d := walterDecl()
+	host.files[d.UnitFile] = true
+	host.loaded[walterUnit] = true
+	host.behind[d.Bus] = 3
+
+	h := life.CheckWake(context.Background(), host, beatsLive(true), d)
+	if h.BehindBefore != 3 || h.Behind != 0 {
+		t.Fatalf("behind before %d after %d, want 3 then 0", h.BehindBefore, h.Behind)
+	}
+	if got := strings.Join(host.calls, "|"); got != "pull "+d.Bus {
+		t.Errorf("calls %q, want one pull of %s", got, d.Bus)
+	}
+	row := h.Row()
+	// rev 3 prints the fast-forward as behind=<before>-><after>.
+	if !strings.Contains(row, "wake:bus-behind") || !strings.Contains(row, "behind=3->0") || h.State != life.WakeRepaired {
+		t.Errorf("row %q state %q; want wake:bus-behind, behind=3->0, repaired", row, h.State)
+	}
+}
+
+// TestWakeHealthDownAfterTwoFailedLoads: a unit that fails to load twice is
+// tried exactly twice in the tick and the row prints `wake: down` in red.
+func TestWakeHealthDownAfterTwoFailedLoads(t *testing.T) {
+	t.Parallel()
+
+	host := newFakeWakeHost()
+	d := walterDecl()
+	host.files[d.UnitFile] = true
+	host.loadFails[walterUnit] = -1
+
+	h := life.CheckWake(context.Background(), host, beatsLive(false), d)
+	if h.State != life.WakeDown {
+		t.Fatalf("state %q, want down", h.State)
+	}
+	if n := len(host.calls); n != 2 {
+		t.Errorf("%d load attempts (%v), want exactly 2", n, host.calls)
+	}
+	row := h.Row()
+	if !strings.HasPrefix(row, "\x1b[31mwake: down\x1b[0m") {
+		t.Errorf("row %q does not start with a red `wake: down`", row)
+	}
+	if !strings.Contains(row, "wake:unit-missing") || !strings.Contains(row, "beat=stale") {
+		t.Errorf("down row %q lacks its finding or the stale beat", row)
+	}
+
+	// One failure then success is a repair, not a down: the second attempt is the retry.
+	host = newFakeWakeHost()
+	host.files[d.UnitFile] = true
+	host.loadFails[walterUnit] = 1
+	if h := life.CheckWake(context.Background(), host, beatsLive(true), d); h.State != life.WakeRepaired || len(host.calls) != 2 {
+		t.Errorf("fail-once unit: state %q after %d attempts, want repaired after 2", h.State, len(host.calls))
+	}
+}
+
+// TestWakeHealthNoUnitFileIsDown: with no unit file there is nothing to
+// bootstrap; the tick says so and does not pretend to repair.
+func TestWakeHealthNoUnitFileIsDown(t *testing.T) {
+	t.Parallel()
+
+	host := newFakeWakeHost()
+	h := life.CheckWake(context.Background(), host, beatsLive(true), walterDecl())
+	if h.State != life.WakeDown || len(host.calls) != 0 || !strings.Contains(h.Row(), "wake:no-unit-file") {
+		t.Fatalf("no unit file: state %q calls %v row %q", h.State, host.calls, h.Row())
+	}
+}
+
+// TestWakeHealthHumanAndUndeclared is the #3048 addendum: `wake: human` with
+// the owner's notify channel is a declared path; without a channel, or with
+// neither mode, the friend is down in red.
+func TestWakeHealthHumanAndUndeclared(t *testing.T) {
+	t.Parallel()
+
+	host := newFakeWakeHost()
+	ctx := context.Background()
+	h := life.CheckWake(ctx, host, beatsLive(false), life.WakeDecl{Friend: "stella", Mode: life.WakeHuman, Notify: "bus To: Glenn"})
+	if h.State != life.WakeHumanState || !strings.HasPrefix(h.Row(), "wake: human notify=bus To: Glenn") {
+		t.Errorf("human with notify: state %q row %q", h.State, h.Row())
+	}
+	for _, d := range []life.WakeDecl{
+		{Friend: "stella", Mode: life.WakeHuman},
+		{Friend: "nobody"},
+	} {
+		h := life.CheckWake(ctx, host, beatsLive(false), d)
+		if h.State != life.WakeDown || !strings.HasPrefix(h.Row(), "\x1b[31mwake: down\x1b[0m") || !strings.Contains(h.Row(), "wake:undeclared") {
+			t.Errorf("%+v: state %q row %q, want red down with wake:undeclared", d, h.State, h.Row())
+		}
+	}
+	if len(host.calls) != 0 {
+		t.Errorf("human/undeclared friends must not touch the host: %v", host.calls)
+	}
+}
+
+// realGit is a throwaway repo helper: local paths only, no network, no
+// system or global config.
+func realGit(t *testing.T, home string) func(args ...string) string {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("git unavailable: %v", err)
+	}
+	return func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-c", "user.name=t", "-c", "user.email=t@t", "-c", "init.defaultBranch=main"}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "HOME="+home)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+}
+
+// TestExecWakeHostBehindAndPullOnRealGit runs the production FetchFF on a
+// real local clone three commits behind its file:// remote.
+func TestExecWakeHostBehindAndPullOnRealGit(t *testing.T) {
+	t.Parallel()
+
+	defer testguard.AllowHosts()()
+	dir := t.TempDir()
+	git := realGit(t, dir)
+	up, clone := filepath.Join(dir, "up"), filepath.Join(dir, "clone")
+	git("init", "-q", up)
+	git("-C", up, "commit", "-q", "--allow-empty", "-m", "0")
+	git("clone", "-q", up, clone)
+	for i := 1; i <= 3; i++ {
+		git("-C", up, "commit", "-q", "--allow-empty", "-m", fmt.Sprint(i))
+	}
+	tip := git("-C", up, "rev-parse", "HEAD")
+
+	host := life.ExecWakeHost{}
+	ctx := context.Background()
+	r, err := host.FetchFF(ctx, clone, "file://"+up, "main", life.FetchBound)
+	if err != nil || r.Before != 3 || r.After != 0 || r.Fetched != tip {
+		t.Fatalf("fetch-ff = %+v, %v; want before 3, after 0, fetched %s", r, err, tip)
+	}
+	if r, err := host.FetchFF(ctx, clone, "file://"+up, "main", life.FetchBound); err != nil || r.Before != 0 {
+		t.Fatalf("second fetch-ff = %+v, %v; want behind 0", r, err)
+	}
+}
+
+// TestWakeFetchRealGitStaleUpstream is the rev 3 control: the clone's @{u} is
+// stale (HEAD..@{u} is 0) while the remote has 3 more commits pushed by a
+// second clone. FetchFF measures against the fetched id, finds behind=3, and
+// leaves HEAD at exactly the remote tip. A fetch of an unreachable remote
+// wraps ErrFetchFailed.
+func TestWakeFetchRealGitStaleUpstream(t *testing.T) {
+	t.Parallel()
+
+	defer testguard.AllowHosts()()
+	dir := t.TempDir()
+	git := realGit(t, dir)
+	bare, a, b := filepath.Join(dir, "remote.git"), filepath.Join(dir, "a"), filepath.Join(dir, "b")
+	git("init", "-q", "--bare", bare)
+	git("clone", "-q", "file://"+bare, a)
+	git("-C", a, "commit", "-q", "--allow-empty", "-m", "0")
+	git("-C", a, "push", "-q", "origin", "HEAD:main")
+	git("-C", a, "branch", "-q", "--set-upstream-to=origin/main")
+	git("clone", "-q", "file://"+bare, b)
+	for i := 1; i <= 3; i++ {
+		git("-C", b, "commit", "-q", "--allow-empty", "-m", fmt.Sprint(i))
+	}
+	git("-C", b, "push", "-q", "origin", "HEAD:main")
+	tip := git("-C", b, "rev-parse", "HEAD")
+	if n := git("-C", a, "rev-list", "--count", "HEAD..@{u}"); n != "0" {
+		t.Fatalf("fixture: a's @{u} should be stale at behind 0, got %s", n)
+	}
+
+	ctx := context.Background()
+	r, err := life.ExecWakeHost{}.FetchFF(ctx, a, "file://"+bare, "main", life.FetchBound)
+	if err != nil || r.Before != 3 || r.After != 0 || r.Fetched != tip {
+		t.Fatalf("fetch-ff = %+v, %v; want before 3 after 0 fetched %s", r, err, tip)
+	}
+	if head := git("-C", a, "rev-parse", "HEAD"); head != tip {
+		t.Fatalf("HEAD %s, want the remote tip %s", head, tip)
+	}
+	_, err = life.ExecWakeHost{}.FetchFF(ctx, a, "file://"+filepath.Join(dir, "missing.git"), "main", life.FetchBound)
+	if !errors.Is(err, life.ErrFetchFailed) {
+		t.Fatalf("unreachable remote: %v, want ErrFetchFailed", err)
+	}
+}

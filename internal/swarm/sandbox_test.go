@@ -32,6 +32,8 @@ func absFixture(parts ...string) string {
 // the description named; the cwd is the job directory; and --net-deny is nowhere, because
 // the provider's API is the work.
 func TestTheWrapArgvIsTheTwoListsAndNothingElse(t *testing.T) {
+	t.Parallel()
+
 	slotDir := absFixture("w", "home-1")
 	jobDir := filepath.Join(slotDir, "jobs", "j1")
 	dataHome := filepath.Join(jobDir, "data")
@@ -83,6 +85,8 @@ func TestTheWrapArgvIsTheTwoListsAndNothingElse(t *testing.T) {
 // refused the pass and started no worker (DeepSeek's read of #88 at d0c1841, HIGH 1). This
 // says NO on the tool before the fix: the probe directory is relative, and so is the argv.
 func TestEveryPathTheSeamHandsTheWallIsAbsolute(t *testing.T) {
+	t.Parallel()
+
 	if got := SandboxProbeDir("pool"); !filepath.IsAbs(got) {
 		t.Errorf("a relative --pool makes a relative probe directory %q, and rule 5 refuses a relative path", got)
 	}
@@ -118,6 +122,8 @@ func TestEveryPathTheSeamHandsTheWallIsAbsolute(t *testing.T) {
 // is refused at LOAD -- once, where a person can fix it -- rather than by the wall at every
 // launch. Every independent problem is reported in one run.
 func TestReadRootsAreRefusedBeforeTheyReachTheWall(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	good := filepath.Join(dir, "toolchains")
 	if err := os.MkdirAll(good, 0o755); err != nil {
@@ -184,6 +190,8 @@ func TestReadRootsAreRefusedBeforeTheyReachTheWall(t *testing.T) {
 // Fable read of #88 at d0c1841, M1). A key under a `read_roots` entry is the same hole
 // without the copy. Both are refused at LOAD, where a person can still move the file.
 func TestAKeyFileInsideTheReadSetIsRefusedAtLoad(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	home := filepath.Join(dir, "worker")
 	tools := filepath.Join(dir, "toolchains")
@@ -342,6 +350,8 @@ func TestAKeyFileInsideTheReadSetIsRefusedAtLoad(t *testing.T) {
 // in another case. Where the answer is no, the placement this test is about cannot exist on
 // this machine and the test skips with that reason named.
 func TestAKeyFileSpelledInAnotherCaseIsRefusedWhereTheFilesystemFolds(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "CaseProbe"), []byte("x\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -415,6 +425,8 @@ func TestAKeyFileSpelledInAnotherCaseIsRefusedWhereTheFilesystemFolds(t *testing
 // check, so the refusal is not last, and the tool used to quote a PASSING step as the reason
 // no worker started (DeepSeek's read of #88 at d0c1841, MEDIUM 2).
 func TestTheRefusalQuotesTheLineThatSaidNo(t *testing.T) {
+	t.Parallel()
+
 	for _, c := range []struct{ name, body, want string }{
 		{"the refusal is followed by checks that passed",
 			"PROBE STEP name=write_outside expect=deny got=allow path=-\n" +
@@ -440,6 +452,8 @@ func TestTheRefusalQuotesTheLineThatSaidNo(t *testing.T) {
 // DEMANDED (SPEC-SANDBOX.md rule 11). The one loud line names the job and says what is
 // missing, in the words the rule gives it.
 func TestTheLoudLineSaysWhatIsMissing(t *testing.T) {
+	t.Parallel()
+
 	line := UnsandboxedLine("20260912T0000Z-task-1", 3)
 	for _, want := range []string{"RUN UNSANDBOXED ", "id=20260912T0000Z-task-1", "slot=3", "no OS containment"} {
 		if !strings.Contains(line, want) {

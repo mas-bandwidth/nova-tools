@@ -16,6 +16,8 @@ import (
 )
 
 func TestAppendKeepsExactProseAndReportsPersistenceSeparately(t *testing.T) {
+	t.Parallel()
+
 	store := t.TempDir()
 	now := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
 	if err := Open(store, "sess-1", "bench-a/session-7", now, "manual"); err != nil {
@@ -52,6 +54,8 @@ func TestAppendKeepsExactProseAndReportsPersistenceSeparately(t *testing.T) {
 }
 
 func TestDuplicateAppendIsIdempotentAndConflictingEntryRefused(t *testing.T) {
+	t.Parallel()
+
 	store := t.TempDir()
 	now := time.Now().UTC()
 	if err := Open(store, "s", "src", now, "never"); err != nil {
@@ -80,6 +84,8 @@ func TestDuplicateAppendIsIdempotentAndConflictingEntryRefused(t *testing.T) {
 }
 
 func TestInterruptedAppendRecoversAndPreservesOtherWriters(t *testing.T) {
+	t.Parallel()
+
 	store := t.TempDir()
 	now := time.Now().UTC()
 	if err := Open(store, "s", "src", now, "never"); err != nil {
@@ -93,7 +99,7 @@ func TestInterruptedAppendRecoversAndPreservesOtherWriters(t *testing.T) {
 	if err := os.MkdirAll(edir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(edir, "mine.json.tmp"), []byte("{partial"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(edir, ".mine.json.tmp-deadbeef"), []byte("{partial"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	res, err := Append(store, "s", "mine", "my note after the crash", "src", now, "never")
@@ -116,6 +122,8 @@ func TestInterruptedAppendRecoversAndPreservesOtherWriters(t *testing.T) {
 }
 
 func TestOfflineAppendSucceedsWithPublicationPending(t *testing.T) {
+	t.Parallel()
+
 	store := t.TempDir()
 	now := time.Now().UTC()
 	if err := Open(store, "s", "src", now, "deferred"); err != nil {
@@ -131,6 +139,8 @@ func TestOfflineAppendSucceedsWithPublicationPending(t *testing.T) {
 }
 
 func TestOpenConcurrentRecordsAndAlternateHeaders(t *testing.T) {
+	t.Parallel()
+
 	store := t.TempDir()
 	now := time.Now().UTC()
 	for _, s := range []string{"alpha", "beta"} {

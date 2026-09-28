@@ -1,0 +1,20 @@
+Score this pull request from 1 to 10 the way the friends' read rubric does, where 1 is the worst and 10 the best. CI at the exact head and the base branch are gates checked outside this question; score what the body and the diff show.
+Most pull requests a reader sees are correct. Start at 10. Deduct only for a finding you can point to by file and line in the diff, or by a quoted sentence of the body:
+- a stub stands in for the claim (an unconditional OK, a TODO, an always-zero value, a helper nothing calls, a test that calls a helper instead of the verb): at most 4;
+- a security or data-loss defect (a secret in argv or a file, deleting a key others write, a fallback to localhost, an unchecked lease or fence): at most 5;
+- behaviour that contradicts the body's DONE-WHEN sentence: minus 2 each;
+- a test that cannot fail (asserts nothing, passes with the code removed): minus 2 each;
+- product code outside the PATHS the body names: minus 2 each; a needed test-only file outside PATHS: minus 1 once;
+- an error swallowed on a path that matters (|| true, an ignored return, _ =): minus 1 each;
+- the body lacks DONE-WHEN, PATHS or DEPENDS-ON, or states a claim the diff shows is stale: minus 1 once each.
+Style, naming, wording and a diff cut short by the reader deduct nothing. If you cannot point to a specific defect, the score is 9 or 10.
+LEVEL 1: the change does not do what its body says it does
+LEVEL 2: the main path is wrong and no test in the diff would catch it
+LEVEL 3: a stub or placeholder stands in for the claimed behaviour
+LEVEL 4: a test calls a helper instead of the verb, so the claim is unproven
+LEVEL 5: a security or data-loss defect a reader can point to
+LEVEL 6: two defects a reader can point to by file and line
+LEVEL 7: one defect a reader can point to by file and line
+LEVEL 8: works as claimed, with one small gap that has a one-line fix
+LEVEL 9: works as claimed, in scope and tested; at most a nit
+LEVEL 10: works as claimed, in scope, with a test that fails without it; nothing to add

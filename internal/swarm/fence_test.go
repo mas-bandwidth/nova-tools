@@ -16,6 +16,8 @@ import (
 // is the remedy the line carries. RED WITHOUT THE CLASSIFIER: the same job scored
 // `no-result`, which sends a reader to the model.
 func TestAFenceRejectionIsNeverNoResult(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	job := filepath.Join(root, "1", "jobs", "a")
 	if err := os.MkdirAll(job, 0o755); err != nil {
@@ -27,7 +29,7 @@ func TestAFenceRejectionIsNeverNoResult(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	state, reason, tail, _ := scoreCard(root, batchCard{label: "a", slot: 1, contract: "a card line 1"}, false, false, 0, 0, filepath.Join(root, "1", "native.log"), "")
+	state, reason, tail, _ := scoreCard(root, batchCard{label: "a", slot: 1, contract: "a card line 1"}, false, false, false, 0, 0, filepath.Join(root, "1", "native.log"), "")
 	if state != "abstain" || reason != "fence" {
 		t.Fatalf("a card the fence stopped scores ABSTAIN reason=fence, got %s reason=%s", state, reason)
 	}
@@ -42,6 +44,8 @@ func TestAFenceRejectionIsNeverNoResult(t *testing.T) {
 // and `fence` names the path this tool's own machinery shut. RED WITHOUT THE ORDERING: the
 // silent check ran first and the card was read as a harness that never spoke.
 func TestFenceComesBeforeHarnessSilent(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	job := filepath.Join(root, "1", "jobs", "a")
 	if err := os.MkdirAll(job, 0o755); err != nil {
@@ -52,7 +56,7 @@ func TestFenceComesBeforeHarnessSilent(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(job, "harness.log"), []byte(line), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	state, reason, tail, _ := scoreCard(root, batchCard{label: "a", slot: 1, contract: "a card line 1"}, false, false, 0, 0, filepath.Join(root, "1", "native.log"), "")
+	state, reason, tail, _ := scoreCard(root, batchCard{label: "a", slot: 1, contract: "a card line 1"}, false, false, false, 0, 0, filepath.Join(root, "1", "native.log"), "")
 	if state != "abstain" || reason != "fence" {
 		t.Fatalf("a fenced card scores reason=fence even when the harness also left no words, got %s reason=%s", state, reason)
 	}
@@ -64,6 +68,8 @@ func TestFenceComesBeforeHarnessSilent(t *testing.T) {
 // TestFenceRejectionReadsTheHarnesssOwnWords: the line OpenCode 1.18.20 prints, colours and
 // all, is the one this parses; a capture with no rejection in it says so.
 func TestFenceRejectionReadsTheHarnesssOwnWords(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name string
 		in   string
@@ -102,6 +108,8 @@ func TestFenceRejectionReadsTheHarnesssOwnWords(t *testing.T) {
 // asks about everything else, and NAMES NOTHING ABOVE THE JOB -- a sibling job in the same
 // slot is another card's work, and a fence rule is no place to hand it over.
 func TestFencePermissionNamesTheWholeJobAndNothingAboveIt(t *testing.T) {
+	t.Parallel()
+
 	block := FencePermission("/root/1/jobs/a", []string{"/sys/kernel/security/lsm"})
 	external, ok := block[FenceExternalDirectory].(map[string]any)
 	if !ok {
@@ -120,8 +128,28 @@ func TestFencePermissionNamesTheWholeJobAndNothingAboveIt(t *testing.T) {
 			t.Errorf("%s is ABOVE the job and is never named: %v", never, external)
 		}
 	}
-	if external["*"] != FenceAsk {
-		t.Errorf("every other path is still asked about: %v", external)
+	if external["*"] != FenceDeny {
+		t.Errorf("every other path is denied without prompting (a deny is a tool error the model routes around; an ask auto-rejects and ends the run): %v", external)
+	}
+}
+
+// TestFencePermissionDeniesExternalDirectory: the harness's own fence is DENY, never ASK. An
+// `ask` in a non-interactive `run` is auto-rejected and the model stops -- the whole run ends
+// and the card's commits are stranded. A `deny` is a tool error returned to the model, which
+// notes it, works inside the job instead, and continues (issue #918).
+func TestFencePermissionDeniesExternalDirectory(t *testing.T) {
+	t.Parallel()
+
+	block := FencePermission("/root/1/jobs/a", nil)
+	external, ok := block[FenceExternalDirectory].(map[string]any)
+	if !ok {
+		t.Fatalf("the block is keyed by the permission the harness asks under: %v", block)
+	}
+	if external["*"] != FenceDeny {
+		t.Fatalf("a path outside the job is denied, never asked about: %v", external)
+	}
+	if block[FenceWebfetch] != FenceDeny {
+		t.Errorf("webfetch is denied too, so no permission is left to prompt: %v", block)
 	}
 }
 
@@ -129,6 +157,8 @@ func TestFencePermissionNamesTheWholeJobAndNothingAboveIt(t *testing.T) {
 // its providers and its own rules, and the job's fence rules are added to them. A config
 // this side cannot parse is returned unchanged, and says so.
 func TestMergeFencePermissionKeepsTheCarriedConfig(t *testing.T) {
+	t.Parallel()
+
 	carried := []byte(`{"provider":{"ollama":{"options":{"baseURL":"http://localhost:11434/v1"}}},"permission":{"read":{"*":"allow"},"external_directory":{"/opt/toolchains/*":"allow"}}}`)
 	out, ok := MergeFencePermission(carried, "/root/1/jobs/a", nil)
 	if !ok {
@@ -160,6 +190,8 @@ func TestMergeFencePermissionKeepsTheCarriedConfig(t *testing.T) {
 
 // TestCardReadPathsReadsTheCardsOwnLine: the `READ:` line, and nothing inferred from prose.
 func TestCardReadPathsReadsTheCardsOwnLine(t *testing.T) {
+	t.Parallel()
+
 	card := []byte("do the thing\n" +
 		"READ: /sys/kernel/security/lsm /proc/self/status\n" +
 		"- READ: `/etc/os-release`\n" +

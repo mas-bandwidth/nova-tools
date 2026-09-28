@@ -1,0 +1,17 @@
+roles: coordination
+expect: ^RELEASE OK
+
+# The coordination host runs the release verbs, so nova-update must be ON PATH and must be
+# able to say what it is. A tool that is installed and not on PATH is a tool nobody runs.
+set -eu
+TOOL=$(command -v nova-update 2>/dev/null || true)
+if [ -z "$TOOL" ]; then
+  echo "RELEASE FAIL nova-update is not on PATH"
+  exit 1
+fi
+OUT=$("$TOOL" version 2>&1 | head -n 1 || true)
+if [ -z "$OUT" ]; then
+  echo "RELEASE FAIL $TOOL said nothing for version"
+  exit 1
+fi
+echo "RELEASE OK $TOOL $OUT"

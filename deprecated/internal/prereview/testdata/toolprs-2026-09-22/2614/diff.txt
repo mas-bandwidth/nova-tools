@@ -1,0 +1,715 @@
+diff --git a/cmd/nova-swarm/main.go b/cmd/nova-swarm/main.go
+index a66fbb1f9..6e2e136f0 100644
+--- a/cmd/nova-swarm/main.go
++++ b/cmd/nova-swarm/main.go
+@@ -1979,6 +1979,14 @@ func readTask(path string, useStdin bool, stdin io.Reader) ([]byte, error) {
+ // nativeLeftAResult reports whether the run left the one artefact a card exists to produce:
+ // RESULT.md in its job directory, or in the clone the card worked in. A card that abstains
+ // still writes one (it says ABSTAIN on line 2); a run that produced nothing writes none.
++//
++// A REPORT THE MACHINERY WROTE IS NOT THE CARD'S (issue #2548). A card that ended its last
++// turn with a question publishes nothing, and the run now writes `RESULT: ASKED <question>`
++// for it so the question is not lost. That file is evidence of an ABSENCE, and counting it
++// here would turn the verdict this run already prints -- `INCOMPLETE why=no-result` -- into
++// `NATIVE OK` for a card that did nothing but ask, which is the very fault #1844 made this
++// word earn itself. The verdict is therefore unchanged by the report, and the report is
++// where the question goes.
+ func nativeLeftAResult(job string) bool {
+ 	if strings.TrimSpace(job) == "" {
+ 		return false
+@@ -1987,7 +1995,7 @@ func nativeLeftAResult(job string) bool {
+ 		filepath.Join(job, "RESULT.md"),
+ 		filepath.Join(job, "repo", "RESULT.md"),
+ 	} {
+-		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
++		if fi, err := os.Stat(p); err == nil && !fi.IsDir() && !swarm.AskedReport(p) {
+ 			return true
+ 		}
+ 	}
+diff --git a/cmd/nova-swarm/native.go b/cmd/nova-swarm/native.go
+index 8fd90cf9f..9d9d44772 100644
+--- a/cmd/nova-swarm/native.go
++++ b/cmd/nova-swarm/native.go
+@@ -744,6 +744,27 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
+ 			res.blockedPath = path
+ 		}
+ 	}
++	// A CARD THAT ENDED BY ASKING OWES THE SAME REPORT (issue #2548). `opencode run` is
++	// non-interactive: a final turn that is a question finishes the turn and exits 0 in
++	// seconds -- 5.22 s on hulk, 5.49 s on the Studio, measured 2026-09-22 -- so the run
++	// never holds its slot, and the end it gets today is a plain `no-result`, the token
++	// for a model that chose to publish nothing. The question is read out of the card's
++	// own capture and written into a report that SAYS it was a question, so a requeue can
++	// retry the card once on another route and the ledger can count the models that ask.
++	//
++	// THE MACHINERY'S OWN ENDS COME FIRST, and this is last of them: a card the watch
++	// ended, a card a manager terminated, a card the wall or the harness's own fence
++	// stopped is THAT end, whatever its last line happened to be. What is left is a child
++	// that ran to its own finish, exited clean, published nothing and committed nothing.
++	if !res.idled && !res.terminated && res.rc == 0 && res.wallReport == "" && (res.wallRefusal == swarm.WallRefusal{}) {
++		if question, asked := swarm.AskedEnd(jobDir, res.rc); asked {
++			if path, wrote, err := swarm.WriteAskedResult(jobDir, cfg.label, question); err != nil {
++				fmt.Fprintf(errOut, "NATIVE NOTE: the asked report could not be written: %s\n", oneline.Escape(err.Error()))
++			} else if wrote {
++				fmt.Fprintf(errOut, "NATIVE NOTE: the card ended its last turn with a question and published no report of its own; one naming the question was written to %s\n", oneline.Field(path))
++			}
++		}
++	}
+ 
+ 	if wall != "" {
+ 		backend, cwd, reason := wallNamed(wallOut.String())
+diff --git a/cmd/nova-swarm/native_asked_test.go b/cmd/nova-swarm/native_asked_test.go
+new file mode 100644
+index 000000000..89b60c5f8
+--- /dev/null
++++ b/cmd/nova-swarm/native_asked_test.go
+@@ -0,0 +1,115 @@
++package main
++
++// A CARD WHOSE LAST TURN IS A QUESTION ENDS AS ASKED (nova-tools #2548).
++//
++// THE RECEIPT, canary run 3, 2026-09-22 02:05Z, route openrouter/openai/gpt-5-nano: the
++// worker wrote its test file into a phantom nested path, committed nothing, published no
++// `RESULT.md`, and ended its last turn with `Would you like me to proceed with moving
++// RESULT.md into the nested repo and finalize the commit?`.
++//
++// THE RUNTIME DOGFOOD OF THE SAME DAY REFUTED THE MECHANISM the issue's title named: the
++// run does NOT hold its slot. `opencode run` finishes the turn and exits 0, measured at
++// 5.22 s on hulk and 5.49 s on the Studio against a card whose STEP 2 tells the model to
++// ask and wait. What it leaves behind is the fault: `NATIVE INCOMPLETE ... why=no-result`,
++// the token for a model that chose to publish nothing, with the question recorded nowhere.
++// These tests are about what the run now writes down, and about the verdict NOT moving
++// because it wrote it.
++
++import (
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++	"time"
++)
++
++// nativeAsked runs one card through `native` with the fake harness and returns the job
++// directory beside stdout and stderr, because the report this card is about is a FILE.
++func nativeAsked(t *testing.T, label, card string) (job, stdout, stderr string) {
++	t.Helper()
++	windowsIsNotABench(t)
++	bin := nativeHarness(t)
++	root, slot := aSlot(t)
++	cardPath := filepath.Join(root, label+".md")
++	if err := os.WriteFile(cardPath, []byte(card), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	var out, errBuf strings.Builder
++	run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1",
++		"--harness", bin, "--model", "fake/fake-model", "--label", label,
++		"--card", cardPath, "--slot", slot, "--root", root,
++		"--deadline", "30s", "--no-wall"},
++		strings.NewReader(""), &out, &errBuf, time.Now())
++	return filepath.Join(slot, "jobs", label), out.String(), errBuf.String()
++}
++
++// THE SHAPE ITSELF: the harness says its last word, it is a question, and the process
++// exits 0 having published nothing. RED WITHOUT THE FIX: the job holds no RESULT.md at
++// all and the question is in a transcript nobody reads.
++func TestNativeWritesAnAskedResultForACardThatEndedWithAQuestion(t *testing.T) {
++	question := "Would you like me to proceed with moving RESULT.md into the nested repo and finalize the commit?"
++	job, stdout, stderr := nativeAsked(t, "asked", "FAKE-SAY "+question+"\nFAKE-NORESULT\n")
++
++	raw, err := os.ReadFile(filepath.Join(job, "RESULT.md"))
++	if err != nil {
++		t.Fatalf("a card that ended by asking left no report: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
++	}
++	line1 := strings.SplitN(string(raw), "\n", 2)[0]
++	if !strings.HasPrefix(line1, "RESULT: ASKED ") {
++		t.Fatalf("line 1 must carry the verdict word, got %q", line1)
++	}
++	if !strings.Contains(line1, question) {
++		t.Fatalf("line 1 must carry the question itself, got %q", line1)
++	}
++	if !strings.Contains(string(raw), "written-by: nova-swarm native") {
++		t.Fatalf("the report does not say the machinery wrote it:\n%s", raw)
++	}
++	if !strings.Contains(stderr, "NATIVE NOTE: the card ended its last turn with a question") {
++		t.Fatalf("the run did not say it had written the report:\n%s", stderr)
++	}
++	// AND THE VERDICT DOES NOT MOVE. A report the machinery wrote is not the card's own,
++	// and counting it would print `NATIVE OK` for a card that did nothing but ask.
++	if strings.Contains(stdout, "NATIVE OK") {
++		t.Fatalf("a card that only asked a question was called OK:\n%s", stdout)
++	}
++	if !strings.Contains(stdout, "why=no-result") {
++		t.Fatalf("the verdict line must still name the card as incomplete:\n%s", stdout)
++	}
++}
++
++// A CARD THAT PUBLISHED IS DONE, whatever its prose said. The fake harness publishes by
++// default, so this is the ordinary ending: the report is the card's own, the verdict is
++// OK, and nothing is overwritten.
++func TestNativeLeavesAFinishedCardsReportAlone(t *testing.T) {
++	job, stdout, stderr := nativeAsked(t, "done", "FAKE-SAY Want me to open the PR as well?\nFAKE-FINDINGS 0\n")
++
++	raw, err := os.ReadFile(filepath.Join(job, "RESULT.md"))
++	if err != nil {
++		t.Fatalf("the card's own report is missing: %v\nstderr:\n%s", err, stderr)
++	}
++	if strings.Contains(string(raw), "RESULT: ASKED") {
++		t.Fatalf("a finished card's report was overwritten with an asked verdict:\n%s", raw)
++	}
++	if !strings.Contains(stdout, "NATIVE OK") {
++		t.Fatalf("a card that published its own report is OK:\n%s", stdout)
++	}
++}
++
++// A CRASH IS A CRASH. The harness asks, then exits non-zero: that is `rc=<n>`, an end this
++// tool already names, and a model that fell over is not waiting for an answer. The exit
++// code is read before the capture is, which is why this card gets no report even though it
++// asked; the question-is-the-last-line half of the same shape is a row of the table in
++// internal/swarm/nativeasked_test.go, where it costs no provider retry to arrange.
++func TestNativeDoesNotCallACrashAnAskedCard(t *testing.T) {
++	job, stdout, _ := nativeAsked(t, "crash", "FAKE-SAY Should I retry the build?\nFAKE-429\n")
++
++	if raw, err := os.ReadFile(filepath.Join(job, "RESULT.md")); err == nil {
++		t.Fatalf("a crashed card was given an asked report:\n%s", raw)
++	}
++	if !strings.Contains(stdout, "NATIVE INCOMPLETE") {
++		t.Fatalf("a crash is still incomplete:\n%s", stdout)
++	}
++	if strings.Contains(stdout, "RESULT: ASKED") {
++		t.Fatalf("a crash was reported as a question:\n%s", stdout)
++	}
++}
+diff --git a/docs/SPEC-SWARM.md b/docs/SPEC-SWARM.md
+index 215b4bf37..b44dc220c 100644
+--- a/docs/SPEC-SWARM.md
++++ b/docs/SPEC-SWARM.md
+@@ -1463,6 +1463,50 @@ model whose tool calls the harness never parsed (issue #591): no tool ran, nothi
+ was written, the child exited 0 and the line said OK. `gather` scores such a card
+ `ABSTAIN reason=harness-silent`, before `no-result` and before `rc=<n>`.
+ 
++**A card that ended by asking says so in a report, and `RESULT: ASKED` is that
++report's line 1** (issue #2548). A model whose final turn is a question to the
++operator — `Would you like me to proceed with moving RESULT.md into the nested
++repo and finalize the commit?`, canary run 3, 2026-09-22 — publishes nothing and
++is waiting for an answer nobody will type, because the card is unattended. **It
++does not hold its slot**: `opencode run` is non-interactive, it finishes the turn
++and exits 0, and the runtime dogfood of 2026-09-22 measured the whole run at
++5.22 s on hulk and 5.49 s on the Studio. What it leaves behind is a plain
++`no-result` — the token for a model that CHOSE to publish nothing — so a card
++that asked and a card that crashed into silence are one row to every reader.
++So `native` writes the report the card never wrote, at the job root:
++
++```
++RESULT: ASKED <the question, one line, bounded and escaped>
++asked: <label> ended its last turn with a question, published no report and committed nothing; ...
++written-by: nova-swarm native (the card published no report of its own)
++```
++
++**Four conditions, all of them necessary**, each one a different card this must
++not claim: the last line the CHILD wrote in `<job>/harness-output.log` ends with
++`?` once its decoration is trimmed, or opens `(?i)^(would you like|should i|do
++you want|shall i|can you confirm)` — the wall's own `SANDBOX ` lines are skipped
++there exactly as `harness=silent` skips them; the child **exited 0**, because a
++non-zero exit is already `rc=<n>` and a model that asked and then fell over is
++not waiting; **no `RESULT.md`** was found anywhere `gather` looks, because a card
++that published owns its report and a question in its last turn is then prose; and
++**`./repo` holds no commit past its base**, because a model that asked
++rhetorically and went on and committed the work answered its own question. The
++machinery's own ends come first: a card the idle watch ended, a manager
++terminated, or the wall or the harness's own fence stopped is THAT end, whatever
++its last line was.
++
++**The report is evidence of an absence, and never counted as work.** It carries
++no findings head, so it classes `plan-only` and never `ok` or `clean`; it never
++overwrites a report a card published; and the `NATIVE` line is **unchanged** by
++its existence — a card that did nothing but ask still reads `INCOMPLETE
++why=no-result`, because counting a report the machinery wrote would hand the word
++`OK` to a run that produced nothing, which is the fault that made the word earn
++itself (issue #1844). What the report buys is the two readings the absence could
++not carry: a requeue may treat `ASKED` like an idle kill and retry the card once
++on another route, and the ledger can count the questions per model. A bounded
++wait for an ANSWER — the question posted to the bus, one typed reply fed back as
++the next turn — is a separate card and is deliberately not this.
++
+ **The wall's `SANDBOX OK` line is a producer's one-line record and `native` reads
+ it as one** (issue #572). The wall renders `cwd=<dir>` through the same
+ `internal/oneline` field encoding every path slot uses, so a job directory whose
+diff --git a/internal/swarm/nativeasked.go b/internal/swarm/nativeasked.go
+new file mode 100644
+index 000000000..be87500dd
+--- /dev/null
++++ b/internal/swarm/nativeasked.go
+@@ -0,0 +1,201 @@
++package swarm
++
++import (
++	"os"
++	"path/filepath"
++	"strings"
++
++	"github.com/mas-bandwidth/nova-tools/internal/oneline"
++)
++
++// A CARD THAT ENDED BY ASKING (nova-tools #2548).
++//
++// THE RECEIPT. Canary run 3, 2026-09-22 02:05Z, route openrouter/openai/gpt-5-nano: the
++// worker wrote its test file into a phantom nested path, committed nothing, and ended its
++// last turn with `Would you like me to proceed with moving RESULT.md into the nested repo
++// and finalize the commit?`. Nobody answers a headless card.
++//
++// THE MECHANISM THE ISSUE TITLE NAMED IS NOT REAL, and this is not a fix for it. The
++// runtime dogfood of 2026-09-22 (rowan-new reports/dogfood-runtime-2026-09-22.md, (b))
++// ran that shape on both benches -- a card whose STEP 2 forbids writing `RESULT.md` until
++// an operator approves and tells the model to ask and wait -- and measured 5.22 s on hulk
++// and 5.49 s on the Studio: `opencode run` is non-interactive, it finishes the turn and
++// exits 0, and the slot is freed at once. The 1200 s wait the issue measured belongs to
++// the canary's own poll for a terminal RESULT line, not to `native`. So there is no slot
++// to free here and nothing to interrupt.
++//
++// WHAT IS REAL IS THE VERDICT. Both dogfood runs ended `NATIVE INCOMPLETE ... why=no-result`
++// -- the token reserved for a MODEL THAT CHOSE TO PUBLISH NOTHING -- with nothing anywhere
++// recording that the card ended by asking a question. A card that asked and a card that
++// crashed into silence are then the same row to every reader: the requeue cannot retry the
++// asker once on another route, and the ledger cannot count which models ask. The two are
++// different faults with different remedies, exactly as `harness-silent` and `no-result` are
++// (issue #591), and the report the card never wrote is where the difference goes.
++//
++// THIS FILE IS THE DETECTION AND THE VERDICT, AND NOTHING ELSE. Glenn's steer channel --
++// post the question to the bus, wait a bounded time for a typed answer, feed it back as one
++// more user turn -- is a later card (tools-06b) and is deliberately not built here. Neither
++// is the never-ask sentence in the card preamble, which is Emma's #2588/METHODS.
++
++// AskedResultName is the report a run writes FOR a card that ended by asking. It is
++// `RESULT.md` for the same reason the blocked report is: that is the one file every gather
++// already looks for, and a card that ended by asking published nothing there.
++const AskedResultName = BlockedResultName
++
++// AskedTailBytes bounds what the question test reads of a capture. A card's capture is a
++// whole transcript and can be megabytes; the question is the LAST thing in it, and no
++// reader needs a megabyte read to answer a yes/no.
++const AskedTailBytes = 64 << 10
++
++// askedOpeners are the openings that are a question to the operator whether or not the
++// model ended the line with a mark -- `(?i)^(would you like|should i|do you want|shall i|
++// can you confirm)`, compared in lower case rather than by a regexp so the test is one
++// pass over a line this package already has in hand.
++var askedOpeners = []string{
++	"would you like",
++	"should i",
++	"do you want",
++	"shall i",
++	"can you confirm",
++}
++
++// askedTrailers are the decorations a model wraps its last sentence in -- bold, a quote, a
++// parenthesis -- which are trimmed off the end before the question mark is looked for, so
++// `**Would you like me to proceed?**` is the question it plainly is.
++const askedTrailers = "*_`\"')]} \t"
++
++// AskedRun is what one finished native run offers the question test: the tail of the card's
++// own capture, the child's exit code, whether a report was found where the gather looks for
++// one, and whether ./repo holds commits past its base. Every field is something the run
++// already knows when the child is gone.
++type AskedRun struct {
++	Capture   string // the tail of <job>/harness-output.log
++	RC        int    // the child's exit code
++	Published bool   // a RESULT.md was found where the gather looks for one
++	Committed bool   // ./repo holds commits past its base
++}
++
++// Asked reports the question a run ended on, and false when it ended any other way.
++//
++// FOUR CONDITIONS, ALL OF THEM NECESSARY, and each one is a different card this must not
++// claim:
++//
++//   - the last thing the card said is a question. A card that ended on a sentence did not
++//     ask, whatever else it did.
++//   - the child exited 0. A crash is a crash: a non-zero exit is already its own end
++//     (`rc=<n>`), and a model that asked and then fell over is not waiting for an answer.
++//   - no `RESULT.md` was found where the gather looks for one. A card that published owns
++//     its report, and a question in its last turn is prose in a finished card.
++//   - `./repo` holds no commit past its base. A model that asked rhetorically and then went
++//     on and committed the work did the work; the question was narration, not a stop.
++func Asked(run AskedRun) (string, bool) {
++	if run.RC != 0 || run.Published || run.Committed {
++		return "", false
++	}
++	line := lastSpokenLine(run.Capture)
++	if line == "" || !isQuestion(line) {
++		return "", false
++	}
++	return line, true
++}
++
++// AskedEnd asks Asked's question of a finished job on disk: the capture's own tail, the
++// gather's own result lookup, and ./repo's own commit count. The rc is the caller's,
++// because the run holds it and the job directory does not.
++func AskedEnd(jobDir string, rc int) (string, bool) {
++	capture, _ := tailBytes(filepath.Join(jobDir, "harness-output.log"), AskedTailBytes)
++	_, published := FindCardResult(jobDir)
++	_, _, committed := repoCommits(jobDir)
++	return Asked(AskedRun{Capture: capture, RC: rc, Published: published, Committed: committed})
++}
++
++// WriteAskedResult writes the card's report when it ended by asking and published none. Like
++// the blocked report it REFUSES to overwrite a result that exists -- a card that published
++// owns its report -- and it says who wrote it on its own line, because a reader must never
++// have to guess whether a worker or the machinery wrote what they are reading.
++//
++// Line 1 is `RESULT: ASKED <the question, one line>`: the word is the verdict a requeue
++// reads and the ledger counts, and the question itself is on it, bounded and escaped, so
++// the one line a coordinator reads already holds the thing the card is waiting for. The
++// report carries NO findings head, so it can be scored `plan-only` and never `ok` or
++// `clean`: a report the machinery wrote can never be counted as work a worker did.
++func WriteAskedResult(jobDir, task, question string) (string, bool, error) {
++	if _, found := FindCardResult(jobDir); found {
++		return "", false, nil
++	}
++	dest := filepath.Join(jobDir, AskedResultName)
++	body := strings.Join([]string{
++		AskedResultPrefix + oneline.Escape(oneline.Cap(question, oneline.TailBytes)),
++		"asked: " + oneline.Field(task) + " ended its last turn with a question, published no report and committed nothing; the card is unattended and nobody answers it, so the run records the question rather than leaving an empty job behind",
++		AskedWrittenBy,
++		"",
++	}, "\n")
++	if err := os.WriteFile(dest, []byte(body), 0o644); err != nil {
++		return "", false, err
++	}
++	return dest, true, nil
++}
++
++// AskedResultPrefix opens line 1 of that report, and AskedWrittenBy is the line that says
++// the machinery wrote it. Both are constants because two readers already depend on them:
++// the one that writes the report and the one that refuses to count it as the card's own.
++const (
++	AskedResultPrefix = "RESULT: ASKED "
++	AskedWrittenBy    = "written-by: nova-swarm native (the card published no report of its own)"
++)
++
++// AskedReport reports whether the `RESULT.md` at path is the one this file wrote for a card
++// that ended by asking, rather than a report a card published.
++//
++// IT ASKS FOR BOTH MARKS -- the `RESULT: ASKED ` opening and the `written-by:` line -- so
++// the answer rests on the whole shape this file writes and not on an opening a card could
++// type. It exists so that writing this report does not silently promote a card's verdict:
++// the absence of a result is what `no-result` is, and a report the machinery wrote for a
++// card that asked is still an absence of the card's own.
++func AskedReport(path string) bool {
++	raw, err := readRegularBounded(path, AskedTailBytes)
++	if err != nil {
++		return false
++	}
++	lines := strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n")
++	if len(lines) == 0 || !strings.HasPrefix(lines[0], AskedResultPrefix) {
++		return false
++	}
++	for _, line := range lines {
++		if strings.TrimSpace(line) == AskedWrittenBy {
++			return true
++		}
++	}
++	return false
++}
++
++// lastSpokenLine is the last thing the CHILD said in a capture: the last non-blank line
++// that is not one of the wall's own `SANDBOX ` lines, with the terminal's paint stripped.
++// The wall's lines are skipped for the same reason `harness=silent` skips them -- they are
++// the machinery's words in the child's file, not the child's.
++func lastSpokenLine(capture string) string {
++	lines := strings.Split(strings.ReplaceAll(capture, "\r\n", "\n"), "\n")
++	for i := len(lines) - 1; i >= 0; i-- {
++		line := strings.TrimSpace(stripPaint(lines[i]))
++		if line == "" || strings.HasPrefix(line, "SANDBOX ") {
++			continue
++		}
++		return line
++	}
++	return ""
++}
++
++// isQuestion is the one test: a line that ends with `?` once its decoration is trimmed, or
++// one that opens with a phrase that is a question to the operator however it ends.
++func isQuestion(line string) bool {
++	if strings.HasSuffix(strings.TrimRight(line, askedTrailers), "?") {
++		return true
++	}
++	lower := strings.ToLower(line)
++	for _, opener := range askedOpeners {
++		if strings.HasPrefix(lower, opener) {
++			return true
++		}
++	}
++	return false
++}
+diff --git a/internal/swarm/nativeasked_test.go b/internal/swarm/nativeasked_test.go
+new file mode 100644
+index 000000000..d04a80f40
+--- /dev/null
++++ b/internal/swarm/nativeasked_test.go
+@@ -0,0 +1,266 @@
++package swarm
++
++import (
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++)
++
++// THE DOGFOOD'S OWN TRANSCRIPT TAIL, 2026-09-22 (rowan-new reports/dogfood-runtime-2026-09-22.md,
++// (b)). The fixture card runs `echo` at STEP 1 and at STEP 2 forbids writing `RESULT.md`
++// until an operator approves, telling the model to ask and wait. What the two benches
++// captured, byte for byte: hulk ended on two lines, the Studio on one.
++const (
++	dogfoodHulkTail   = "Step 1 output: dogfood-question\nStep 2: May I write RESULT.md?\n"
++	dogfoodStudioTail = "May I write RESULT.md?\n"
++)
++
++// THE FOUR ENDINGS. The question test has to separate the card that asked from the three
++// cards it would otherwise be mistaken for, and each row here is one of them.
++func TestAskedSeparatesTheCardThatAskedFromTheThreeItIsNot(t *testing.T) {
++	for _, tc := range []struct {
++		name string
++		run  AskedRun
++		want string // the question, or "" for a run that did not end by asking
++	}{
++		{
++			// 1. The dogfood's own ending, from hulk. Exit 0, no report, no commit,
++			// and the last thing the card said is a question.
++			name: "the dogfood question, hulk",
++			run:  AskedRun{Capture: dogfoodHulkTail},
++			want: "Step 2: May I write RESULT.md?",
++		},
++		{
++			// The Studio's capture of the same card ended on the question alone.
++			name: "the dogfood question, studio",
++			run:  AskedRun{Capture: dogfoodStudioTail},
++			want: "May I write RESULT.md?",
++		},
++		{
++			// The canary's own ending (#2548's body), which ends with the mark and
++			// opens with one of the phrases as well.
++			name: "the canary question",
++			run: AskedRun{Capture: "wrote jobs/card-cell-canary/test/x_test.go\n" +
++				"Would you like me to proceed with moving RESULT.md into the nested repo and finalize the commit?\n"},
++			want: "Would you like me to proceed with moving RESULT.md into the nested repo and finalize the commit?",
++		},
++		{
++			// A question with no mark at all is still a question to the operator.
++			name: "an opener with no question mark",
++			run:  AskedRun{Capture: "Should I open the pull request now\n"},
++			want: "Should I open the pull request now",
++		},
++		{
++			// 2. A NORMAL DONE RUN: the card worked and published. Its last line is
++			// prose, and the run found its report.
++			name: "a normal DONE run",
++			run: AskedRun{
++				Capture:   "STEP 4: wrote RESULT.md\nDone: 3 tests green, nothing left owed.\n",
++				Published: true,
++			},
++			want: "",
++		},
++		{
++			// A published card whose last line IS a question is done, not asking: the
++			// report it owns is the answer to everything it said.
++			name: "a DONE run whose last line is a question",
++			run: AskedRun{
++				Capture:   "Wrote RESULT.md. Want me to open the PR as well?\n",
++				Published: true,
++			},
++			want: "",
++		},
++		{
++			// 3. A CRASH. A non-zero exit is already its own end (`rc=<n>`), and a
++			// model that asked and then fell over is not waiting for an answer.
++			name: "a crash after a question",
++			run: AskedRun{
++				Capture: "Should I retry the build?\nError: Cannot connect to API\n",
++				RC:      1,
++			},
++			want: "",
++		},
++		{
++			name: "a crash whose very last line is the question",
++			run:  AskedRun{Capture: dogfoodStudioTail, RC: 2},
++			want: "",
++		},
++		{
++			// 4. A QUESTION FOLLOWED BY A COMMIT: the model asked rhetorically and
++			// went on and did the work. The commits are the answer.
++			name: "a question and then a commit",
++			run: AskedRun{
++				Capture:   "Should I also update the docs?\n",
++				Committed: true,
++			},
++			want: "",
++		},
++		{
++			// A silent harness said nothing at all. That is `harness-silent`, a
++			// different fault with a different remedy, and never a question.
++			name: "a silent harness",
++			run:  AskedRun{Capture: ""},
++			want: "",
++		},
++		{
++			// The wall's own lines are the machinery's words in the child's file.
++			// They are skipped here exactly as `harness=silent` skips them.
++			name: "the wall's lines are not the child speaking",
++			run: AskedRun{Capture: "Shall i push the branch?\n" +
++				"SANDBOX OK backend=landlock cwd=/tmp/job\n"},
++			want: "Shall i push the branch?",
++		},
++		{
++			// The terminal's paint and a model's bold are decoration, not an answer.
++			name: "a painted and bolded question",
++			run:  AskedRun{Capture: "\x1b[33;1m**Would you like me to proceed?**\x1b[0m\n"},
++			want: "**Would you like me to proceed?**",
++		},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			got, asked := Asked(tc.run)
++			if tc.want == "" {
++				if asked {
++					t.Fatalf("this run did not end by asking, and the test claimed the question %q", got)
++				}
++				return
++			}
++			if !asked {
++				t.Fatalf("a card that ended on %q was not read as asking", tc.want)
++			}
++			if got != tc.want {
++				t.Fatalf("the question carried is %q, want %q", got, tc.want)
++			}
++		})
++	}
++}
++
++// THE REPORT ITSELF. Line 1 carries the verdict word and the question; the written-by line
++// says the machinery wrote it; and there is no findings head, so no fold can ever count it
++// as work a worker did.
++func TestWriteAskedResultNamesTheQuestionAndItsAuthor(t *testing.T) {
++	job := t.TempDir()
++	question := "Step 2: May I write RESULT.md?"
++
++	path, wrote, err := WriteAskedResult(job, "dogfood-question", question)
++	if err != nil || !wrote {
++		t.Fatalf("the asked report was not written: wrote=%v err=%v", wrote, err)
++	}
++	raw, err := os.ReadFile(path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
++	if want := "RESULT: ASKED " + question; lines[0] != want {
++		t.Fatalf("line 1 is %q, want %q", lines[0], want)
++	}
++	if !strings.Contains(string(raw), AskedWrittenBy) {
++		t.Fatalf("the report does not say who wrote it:\n%s", raw)
++	}
++	if !strings.Contains(string(raw), "dogfood-question") {
++		t.Fatalf("the report does not name the card:\n%s", raw)
++	}
++	if r := ParseReport(raw); r.Class != ClassPlanOnly {
++		t.Fatalf("a report the machinery wrote classed %q; it must be %q, never counted as work done", r.Class, ClassPlanOnly)
++	}
++	if !AskedReport(path) {
++		t.Fatal("the report this file wrote is not recognised as one the machinery wrote")
++	}
++}
++
++// A CARD THAT PUBLISHED OWNS ITS REPORT. The write refuses rather than overwriting it, on
++// the same terms as the blocked report.
++func TestWriteAskedResultNeverOverwritesACardsOwnReport(t *testing.T) {
++	job := t.TempDir()
++	own := []byte("RESULT: dogfood-question sha=abc123def456\n\n## Head\nfindings: 0\n")
++	if err := os.WriteFile(filepath.Join(job, "RESULT.md"), own, 0o644); err != nil {
++		t.Fatal(err)
++	}
++
++	path, wrote, err := WriteAskedResult(job, "dogfood-question", "May I write RESULT.md?")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if wrote || path != "" {
++		t.Fatalf("a card's own report was overwritten (path=%q)", path)
++	}
++	raw, err := os.ReadFile(filepath.Join(job, "RESULT.md"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if string(raw) != string(own) {
++		t.Fatalf("the card's own report was changed:\n%s", raw)
++	}
++	if AskedReport(filepath.Join(job, "RESULT.md")) {
++		t.Fatal("a card's own report was read as one the machinery wrote")
++	}
++}
++
++// AskedEnd asks the question of a job on disk: the capture's tail, the gather's own result
++// lookup, and ./repo's own commit count -- the last of these through git, which is the one
++// half the table test cannot reach.
++func TestAskedEndReadsTheJobTheRunLeftBehind(t *testing.T) {
++	t.Run("a question, no result, no commit", func(t *testing.T) {
++		job := t.TempDir()
++		writeCapture(t, job, dogfoodHulkTail)
++
++		got, asked := AskedEnd(job, 0)
++		if !asked {
++			t.Fatal("a job whose capture ends with a question was not read as asking")
++		}
++		if want := "Step 2: May I write RESULT.md?"; got != want {
++			t.Fatalf("the question read off the job is %q, want %q", got, want)
++		}
++	})
++
++	t.Run("a question the card then committed past", func(t *testing.T) {
++		job := t.TempDir()
++		writeCapture(t, job, "Should I also update the docs?\n")
++		aRepoWithACommitPastItsBase(t, filepath.Join(job, "repo"))
++
++		if got, asked := AskedEnd(job, 0); asked {
++			t.Fatalf("a card that asked and then committed the work was read as asking: %q", got)
++		}
++	})
++
++	t.Run("a question beside a result the card published under repo/", func(t *testing.T) {
++		job := t.TempDir()
++		writeCapture(t, job, dogfoodStudioTail)
++		if err := os.MkdirAll(filepath.Join(job, "repo"), 0o755); err != nil {
++			t.Fatal(err)
++		}
++		if err := os.WriteFile(filepath.Join(job, "repo", "RESULT.md"), []byte("RESULT: x sha=1\n"), 0o644); err != nil {
++			t.Fatal(err)
++		}
++
++		if got, asked := AskedEnd(job, 0); asked {
++			t.Fatalf("a card that published under repo/ was read as asking: %q", got)
++		}
++	})
++
++	t.Run("a job with no capture at all", func(t *testing.T) {
++		if got, asked := AskedEnd(t.TempDir(), 0); asked {
++			t.Fatalf("a job whose harness said nothing was read as asking: %q", got)
++		}
++	})
++}
++
++func writeCapture(t *testing.T, job, body string) {
++	t.Helper()
++	if err := os.WriteFile(filepath.Join(job, "harness-output.log"), []byte(body), 0o644); err != nil {
++		t.Fatal(err)
++	}
++}
++
++// aRepoWithACommitPastItsBase builds what repoCommits counts, the way wall_test.go already
++// builds it: a repository on a branch, a base its remote ref names, and one commit past it.
++func aRepoWithACommitPastItsBase(t *testing.T, dir string) {
++	t.Helper()
++	git(t, dir, "init", "-q", "-b", "work")
++	git(t, dir, "config", "user.email", "card@example.invalid")
++	git(t, dir, "config", "user.name", "card")
++	base := commit(t, dir, "base")
++	git(t, dir, "update-ref", "refs/remotes/origin/main", base)
++	commit(t, dir, "the-work-the-card-did-after-it-asked")
++}

@@ -16,6 +16,8 @@ import (
 )
 
 func TestNovaTokensEfficiencyCardNamesItsRules(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-TOKENS.md"))
 	if err != nil {
 		t.Fatalf("the efficiency card's contract is the spec's: %s", err)

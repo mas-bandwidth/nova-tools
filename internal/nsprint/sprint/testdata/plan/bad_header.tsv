@@ -1,0 +1,7 @@
+#nova-sprint-plan v2
+# control 1: another version
+policy	backpressure_missing	closed
+policy	ci_reruns	1
+policy	readers	1
+policy	absent_after	60m
+bench	a	m1	6

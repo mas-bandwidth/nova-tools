@@ -5,8 +5,7 @@ import (
 	"strings"
 )
 
-// A plan's needs/blocks graph (docs/SPEC-WORKLANG.md, "Nodes, with needs and
-// blocks"). `:needs` is the reference edge the work spec calls `:deps`;
+// A plan's needs/blocks graph. `:needs` is the reference edge the work spec calls `:deps`;
 // `:blocks` is its inverse, and the kernel derives whichever of the two a node
 // did not give. A `:needs` cycle is refused at load by validator rule 3, an
 // absent need is refused naming the field and the id, never silently dropped.
@@ -27,7 +26,7 @@ type Status struct {
 func (s Status) accepted() bool { return s.Merged && s.Green && !s.Reverted }
 
 // State names a status for a row: open, merged, reverted, or accepted. A merged
-// node that is not yet green is the blocker nova-pulse harvest settles.
+// node that is not yet green is the blocker nova-sprint card harvest settles.
 func (s Status) State() string {
 	switch {
 	case s.Reverted:
@@ -166,47 +165,19 @@ func edgeIDs(file, field string, f Form) ([]string, error) {
 	return out, nil
 }
 
-// refuseCycle is validator rule 3: a depth-first walk that names the exact cycle
-// it finds, so the refusal says which nodes deadlock rather than only that one
-// exists.
+// refuseCycle is validator rule 3: it names the exact cycle it finds, so the
+// refusal says which nodes deadlock rather than only that one exists. The walk is
+// FindCycles, the same one `set check` reports with: a plan is refused at its FIRST
+// cycle because a refused plan is never published, and a work set prints all of
+// them because a checker that stopped at the first would cost the caller one round
+// trip per defect. Two callers, one walk, so the two can never disagree about what
+// a cycle is.
 func (g *Graph) refuseCycle() error {
-	const (
-		white = 0
-		grey  = 1
-		black = 2
-	)
-	color := make(map[string]int, len(g.order))
-	var path []string
-	var visit func(id string) error
-	visit = func(id string) error {
-		switch color[id] {
-		case grey:
-			start := 0
-			for start < len(path) && path[start] != id {
-				start++
-			}
-			cycle := append(append([]string(nil), path[start:]...), id)
-			return refuse(g.file, fmt.Sprintf("rule 3: :needs edges contain a cycle: %s", strings.Join(cycle, " -> ")))
-		case black:
-			return nil
-		}
-		color[id] = grey
-		path = append(path, id)
-		for _, need := range g.needs[id] {
-			if err := visit(need); err != nil {
-				return err
-			}
-		}
-		path = path[:len(path)-1]
-		color[id] = black
+	cycles := FindCycles(g.order, g.needs)
+	if len(cycles) == 0 {
 		return nil
 	}
-	for _, id := range g.order {
-		if err := visit(id); err != nil {
-			return err
-		}
-	}
-	return nil
+	return refuse(g.file, fmt.Sprintf("rule 3: :needs edges contain a cycle: %s", strings.Join(cycles[0], " -> ")))
 }
 
 // Order returns every node id in seed order: admission, not readiness.
@@ -298,11 +269,11 @@ func (g *Graph) ReadySet() []string {
 }
 
 // resolver names the join that settles a need. nova-merge queue lands an open
-// PR; once it has merged, nova-pulse harvest settles the green and re-evaluates
+// PR; once it has merged, nova-sprint card harvest settles the green and re-evaluates
 // dependents.
 func resolver(s Status) string {
 	if !s.Merged {
 		return "nova-merge queue"
 	}
-	return "nova-pulse harvest"
+	return "nova-sprint card harvest"
 }

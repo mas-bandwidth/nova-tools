@@ -148,6 +148,7 @@ func (p *ParseError) Error() string { return p.Err.Error() }
 
 func (t *Bus) readLane(lane string) error {
 	dir := filepath.Join(t.Root, lane)
+	counts := countersFor(t.Root)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return err
@@ -191,6 +192,7 @@ func (t *Bus) readLane(lane string) error {
 		}
 		path := lane + "/" + name
 		n, perr := ParseNote(path, string(raw))
+		counts.noteParses.Add(1)
 		if perr != nil {
 			n = Note{Path: path, Lane: lane, Parse: &ParseError{perr}}
 		}

@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // This fake checks the caller's persisted state machine only. Actual bare-Git
@@ -82,11 +84,11 @@ func fakeBusPath(t *testing.T) string {
 	if runtime.GOOS == "windows" {
 		name += ".exe"
 	}
-	raw, e := os.ReadFile(os.Args[0])
+	raw, e := os.Executable()
 	if e != nil {
 		t.Fatal(e)
 	}
-	if e = os.WriteFile(filepath.Join(dir, name), raw, 0700); e != nil {
+	if e = testbin.Place(raw, filepath.Join(dir, name)); e != nil {
 		t.Fatal(e)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -148,6 +150,8 @@ func TestNewObservationCannotReplaceUnresolvedPending(t *testing.T) {
 	}
 }
 func TestDeliveryScopeAndPreparedArtifactChecks(t *testing.T) {
+	t.Parallel()
+
 	o := options{as: "a", to: "c,b", bus: ".", remote: "origin", branch: "main", host: "studio"}
 	same := o
 	same.to = "b,c"
@@ -177,6 +181,8 @@ func TestDeliveryScopeAndPreparedArtifactChecks(t *testing.T) {
 // ambiguous identity. Both readers must refuse it, and must do so without
 // quoting the offending key or any of the note back into the diagnostic.
 func TestStrictDecodingRefusesAmbiguousAndWrongInput(t *testing.T) {
+	t.Parallel()
+
 	note := "a note\n"
 	sum := shaText(note)
 	good := fmt.Sprintf(`{"schema":"nova.bus.prepared/1","id":"fixture-1","path":"from-fixture/f.md","note":%q,"sha256":%q}`, note, sum)
@@ -274,6 +280,8 @@ func TestTheBusOwnWordsReachTheCallerBoundedToOneLine(t *testing.T) {
 // keys that fold to one field still carried two values, and the LAST won. The
 // witness the cold read measured is the first case below.
 func TestStrictDecodingRefusesKeysThatFoldTogether(t *testing.T) {
+	t.Parallel()
+
 	note := "a note\n"
 	sum := shaText(note)
 	artifact := func(pairs string) string {

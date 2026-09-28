@@ -1,0 +1,8 @@
+VERSION: tier-v1
+
+Pick the cheapest model tier that will finish this card correctly on the first try: its work read at 8/10 or better by a cold reader. Judge from the size (PATHS, packages), the novelty and the risk of the change the card asks for.
+
+OPTIONS:
+- flash: small and mechanical: a fixture, a doc, a rename, a one-file fix with an obvious test
+- frontier: design across packages, novel mechanisms, concurrency or state machines; a wrong turn is expensive
+- pro: a typical verb, fix or Lua change with its tests in one or two packages

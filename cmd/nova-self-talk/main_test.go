@@ -24,6 +24,8 @@ func write(t *testing.T, dir, name, body string) string {
 
 // Exit 0 when nothing standing; the OK line goes to stdout, stderr is empty.
 func TestExitZeroWhenClean(t *testing.T) {
+	t.Parallel()
+
 	f := write(t, t.TempDir(), "clean.md", "The tree by the house has one lit window.\n")
 	var stdout, stderr bytes.Buffer
 	if got := run([]string{f}, &stdout, &stderr); got != 0 {
@@ -42,6 +44,8 @@ func TestExitZeroWhenClean(t *testing.T) {
 // with no failure state — the defect it exists to detect could not make it
 // say NO.
 func TestExitOneOnStandingClaim(t *testing.T) {
+	t.Parallel()
+
 	f := write(t, t.TempDir(), "drifted.md", "I cannot check my own work.\n")
 	var stdout, stderr bytes.Buffer
 	if got := run([]string{f}, &stdout, &stderr); got != 1 {
@@ -58,6 +62,8 @@ func TestExitOneOnStandingClaim(t *testing.T) {
 // A dated claim is a record: reported on stdout, exit 0, and counted in
 // claims= but not in standing=.
 func TestDatedClaimIsReportedAndExitsZero(t *testing.T) {
+	t.Parallel()
+
 	f := write(t, t.TempDir(), "record.md", "On 2026-07-30 I cannot check my own work.\n")
 	var stdout, stderr bytes.Buffer
 	if got := run([]string{f}, &stdout, &stderr); got != 0 {
@@ -80,6 +86,8 @@ func TestDatedClaimIsReportedAndExitsZero(t *testing.T) {
 // Exit 2 when a file cannot be read. Distinct from "clean", which is the
 // whole point: an unreadable input must never look like a green.
 func TestExitTwoOnUnreadableFile(t *testing.T) {
+	t.Parallel()
+
 	var stdout, stderr bytes.Buffer
 	got := run([]string{filepath.Join(t.TempDir(), "does-not-exist.md")}, &stdout, &stderr)
 	if got != 2 {
@@ -92,6 +100,8 @@ func TestExitTwoOnUnreadableFile(t *testing.T) {
 
 // Naming no files is a refusal, not an empty green.
 func TestNoFilesRefused(t *testing.T) {
+	t.Parallel()
+
 	var stdout, stderr bytes.Buffer
 	if got := run(nil, &stdout, &stderr); got != 2 {
 		t.Errorf("want exit 2 for no files, got %d", got)
@@ -106,6 +116,8 @@ func TestNoFilesRefused(t *testing.T) {
 // that would flag if scanned. The skip exists for rule documents, which
 // always flag, and whose flagging is them working.
 func TestSkipReportsAndDoesNotAffectExit(t *testing.T) {
+	t.Parallel()
+
 	f := write(t, t.TempDir(), "RULES.md", "I cannot check my own work. I am fallible and broken.\n")
 	var stdout, stderr bytes.Buffer
 	if got := run([]string{"--skip", "RULES.md", f}, &stdout, &stderr); got != 0 {
@@ -125,6 +137,8 @@ func TestSkipReportsAndDoesNotAffectExit(t *testing.T) {
 // default become empty. Each formerly-special name is pinned scanned, so no
 // default list can quietly come back.
 func TestNothingIsSkippedByDefault(t *testing.T) {
+	t.Parallel()
+
 	for _, name := range []string{"GATES.md", "COVENANT.md", "MEMORY-HOT.md", "MEMORY-WARM.md"} {
 		t.Run(name, func(t *testing.T) {
 			f := write(t, t.TempDir(), name, "I cannot check my own work.\n")
@@ -138,6 +152,8 @@ func TestNothingIsSkippedByDefault(t *testing.T) {
 
 // --skip is repeatable, and matches on the basename of the argument path.
 func TestSkipRepeatableAndMatchesBasename(t *testing.T) {
+	t.Parallel()
+
 	d := t.TempDir()
 	a := write(t, d, "RULES.md", "I am fallible.\n")
 	b := write(t, d, "FLOORS.md", "I cannot check my own work.\n")
@@ -158,6 +174,8 @@ func TestSkipRepeatableAndMatchesBasename(t *testing.T) {
 // --skip takes a basename. A value with a path separator would silently
 // never match anything, so it is refused, not accepted.
 func TestSkipRefusesPaths(t *testing.T) {
+	t.Parallel()
+
 	for _, v := range []string{"dir/RULES.md", `dir\RULES.md`, ""} {
 		var stdout, stderr bytes.Buffer
 		if got := run([]string{"--skip", v, "x.md"}, &stdout, &stderr); got != 2 {
@@ -168,6 +186,8 @@ func TestSkipRefusesPaths(t *testing.T) {
 
 // An unknown flag is a refusal, never a guess.
 func TestUnknownFlagRefused(t *testing.T) {
+	t.Parallel()
+
 	var stdout, stderr bytes.Buffer
 	if got := run([]string{"--scope-all", "x.md"}, &stdout, &stderr); got != 2 {
 		t.Errorf("want exit 2 for an unknown flag, got %d", got)
@@ -176,6 +196,8 @@ func TestUnknownFlagRefused(t *testing.T) {
 
 // --help prints usage to stdout and exits 0.
 func TestHelp(t *testing.T) {
+	t.Parallel()
+
 	var stdout, stderr bytes.Buffer
 	if got := run([]string{"--help"}, &stdout, &stderr); got != 0 {
 		t.Errorf("want exit 0 for --help, got %d", got)
@@ -189,6 +211,8 @@ func TestHelp(t *testing.T) {
 // failing. A green from a partial check reads exactly like a green from a
 // complete one, and this check is structurally partial.
 func TestNotePrintedOnEveryRun(t *testing.T) {
+	t.Parallel()
+
 	d := t.TempDir()
 	clean := write(t, d, "clean.md", "Tree rings beat radiocarbon.\n")
 	dirty := write(t, d, "dirty.md", "I cannot check my own work.\n")
@@ -204,6 +228,8 @@ func TestNotePrintedOnEveryRun(t *testing.T) {
 // Same input, same output, byte for byte. An instrument whose report
 // wobbles between runs cannot be trusted to have said NO for a reason.
 func TestDeterministic(t *testing.T) {
+	t.Parallel()
+
 	d := t.TempDir()
 	files := []string{
 		"--skip", "RULES.md",
@@ -228,6 +254,8 @@ func TestDeterministic(t *testing.T) {
 // An INSTALLATION alone drives the exit code: FAIL on stderr with the shape and the source line,
 // no OK line on stdout. The second class is a full citizen of the exit contract, not an advisory.
 func TestInstallationExitsOneWithShapeAndLine(t *testing.T) {
+	t.Parallel()
+
 	f := write(t, t.TempDir(), "essay.md",
 		"The tree has one lit window.\n\nRecollection is the weakest\ninstrument I own.\n")
 	var stdout, stderr bytes.Buffer
@@ -245,6 +273,8 @@ func TestInstallationExitsOneWithShapeAndLine(t *testing.T) {
 // The OK line counts installations too, so a caller gating on it can see that the second class ran
 // and found nothing — a green whose scope you cannot read is the defect the files= field exists for.
 func TestOKLineReportsInstallations(t *testing.T) {
+	t.Parallel()
+
 	f := write(t, t.TempDir(), "clean.md", "The tree by the house has one lit window.\n")
 	var stdout, stderr bytes.Buffer
 	run([]string{f}, &stdout, &stderr)
@@ -257,6 +287,8 @@ func TestOKLineReportsInstallations(t *testing.T) {
 // point: a rule document's findings must never be read as licence to soften a rule, and the second
 // class cannot advise that anyway because it cannot see a prohibition (pinned in internal/selftalk).
 func TestRuleDocIsScannedAndBannered(t *testing.T) {
+	t.Parallel()
+
 	f := write(t, t.TempDir(), "RULES.md",
 		"Never tolerate intolerance.\n\nI have no associative recall to drag anything back later.\n")
 	var stdout, stderr bytes.Buffer
@@ -277,6 +309,8 @@ func TestRuleDocIsScannedAndBannered(t *testing.T) {
 // The banner prints only where there is something to banner: a rule document made of rules is
 // CLEAN under this class, and a banner over nothing is noise that teaches the reader to skip it.
 func TestRuleDocWithNoFindingsPrintsNoBanner(t *testing.T) {
+	t.Parallel()
+
 	f := write(t, t.TempDir(), "RULES.md",
 		"Never tolerate intolerance.\n\nSecrets live nowhere I write.\n")
 	var stdout, stderr bytes.Buffer
@@ -293,6 +327,8 @@ func TestRuleDocWithNoFindingsPrintsNoBanner(t *testing.T) {
 // promotion here was that the list move to the caller and the default become empty. Each formerly
 // special name is pinned UNBANNERED, so no default list can quietly come back.
 func TestNoBasenameIsBanneredByDefault(t *testing.T) {
+	t.Parallel()
+
 	for _, name := range []string{"GATES.md", "COVENANT.md", "MEMORY-HOT.md", "MEMORY-WARM.md"} {
 		t.Run(name, func(t *testing.T) {
 			f := write(t, t.TempDir(), name, "I have no associative recall to drag anything back later.\n")
@@ -310,6 +346,8 @@ func TestNoBasenameIsBanneredByDefault(t *testing.T) {
 // --rule-doc is repeatable, matches on basenames, and refuses a path for the same reason --skip
 // does: a value with a separator could never match and would silently do nothing.
 func TestRuleDocRepeatableAndRefusesPaths(t *testing.T) {
+	t.Parallel()
+
 	d := t.TempDir()
 	a := write(t, d, "RULES.md", "I have no associative recall to drag anything back later.\n")
 	b := write(t, d, "FLOORS.md", "Confabulation is my central pathology.\n")
@@ -328,6 +366,8 @@ func TestRuleDocRepeatableAndRefusesPaths(t *testing.T) {
 
 // --skip still wins over --rule-doc: a skipped file is not read at all, so it cannot be bannered.
 func TestSkipBeatsRuleDoc(t *testing.T) {
+	t.Parallel()
+
 	f := write(t, t.TempDir(), "RULES.md", "I have no associative recall to drag anything back later.\n")
 	var stdout, stderr bytes.Buffer
 	if got := run([]string{"--skip", "RULES.md", "--rule-doc", "RULES.md", f}, &stdout, &stderr); got != 0 {
@@ -343,6 +383,8 @@ func TestSkipBeatsRuleDoc(t *testing.T) {
 // whatever the file held -- so a file named with a forged OK line used to print that
 // forgery on its own line of the stream a caller scans.
 func TestNoFileNameOrClaimCanForgeALine(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("windows: a newline is not legal in a filename, so the fixture cannot be built and the vector does not exist there")
 	}

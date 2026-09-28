@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -20,6 +21,8 @@ func cardUsageFile(t *testing.T, path, provider, model, started, in, out, usd st
 }
 
 func TestSumSwarmRootIsIdempotent(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := mkdir(t, filepath.Join(dir, "root"))
 	ledger := filepath.Join(dir, "ledger.tsv")
@@ -62,6 +65,8 @@ func TestSumSwarmRootIsIdempotent(t *testing.T) {
 // FILE, so an existing directory at --out is refused by name (file vs directory),
 // not by the raw OS rename error. Before #496 the tmp-rename leaked "file exists".
 func TestSumRefusesOutDirectory(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := mkdir(t, filepath.Join(dir, "root"))
 	out := mkdir(t, filepath.Join(dir, "swarm-sum-out"))
@@ -81,6 +86,8 @@ func TestSumRefusesOutDirectory(t *testing.T) {
 // its card (rc=0) and carries a dashes count of 0,0,0,0. The header is pinned byte for byte
 // to the ten columns the binary writes and refuses a ledger for, `dashes` last.
 func TestSumSwarmAllUnknownModelIsDashNeverZero(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := mkdir(t, filepath.Join(dir, "root"))
 	ledger := filepath.Join(dir, "ledger.tsv")
@@ -114,6 +121,8 @@ func TestSumSwarmAllUnknownModelIsDashNeverZero(t *testing.T) {
 // the day and a used one is counted. The fixture writes the 14-column receipt the swarm
 // would write once it carries the tool, and the reader folds counts, never a sum of tokens.
 func TestSumSwarmRootCarriesToolInvocations(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := mkdir(t, filepath.Join(dir, "root"))
 	ledger := filepath.Join(dir, "ledger.tsv")
@@ -133,6 +142,8 @@ func TestSumSwarmRootCarriesToolInvocations(t *testing.T) {
 }
 
 func TestSumSwarmMixedKnownUnknownDailyAggregate(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := mkdir(t, filepath.Join(dir, "root"))
 	ledger := filepath.Join(dir, "ledger.tsv")
@@ -163,5 +174,20 @@ func TestSumSwarmMixedKnownUnknownDailyAggregate(t *testing.T) {
 	// 1,1,1 — not a zero in any kept field that would make the model look free.
 	if !strings.Contains(lines[1], "\tdeepseek-v4\tunattributed\t1000\t200\t0.0100\t2\t2\t0.005000\t1,1,1,0") {
 		t.Errorf("day row does not carry the known numbers plus an explicit unknown count: %q", lines[1])
+	}
+}
+
+func TestSumSwarmRootRefusesNonexistentRoot(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	ledger := filepath.Join(dir, "ledger.tsv")
+	r := invoke(t, "sum", "--swarm-root", filepath.Join(dir, "nope"), "--day", "2026-09-11", "--out", ledger)
+	wantExit(t, r, 2)
+	wantContains(t, r.stderr, "SUM REFUSED:")
+	wantContains(t, r.stderr, "does not exist")
+	wantContains(t, r.stderr, "nope")
+	if _, err := os.Stat(ledger); err == nil {
+		t.Fatalf("sum wrote ledger file on nonexistent swarm-root: %s", ledger)
 	}
 }

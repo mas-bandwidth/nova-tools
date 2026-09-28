@@ -23,6 +23,8 @@ func (w *watcher) Run(ctx context.Context, dir, name string, args ...string) (st
 }
 
 func TestTheMutationGuardRefusesBeforeTheCommandIsBuilt(t *testing.T) {
+	t.Parallel()
+
 	lease := "--force-with-lease=refs/heads/main:" + strings.Repeat("a", 40)
 	cases := []struct {
 		name string
@@ -59,6 +61,8 @@ func TestTheMutationGuardRefusesBeforeTheCommandIsBuilt(t *testing.T) {
 }
 
 func TestTheOneAllowedLeaseIsBuiltByPublishAndNowhereElse(t *testing.T) {
+	t.Parallel()
+
 	w := &watcher{}
 	g := NewGit(t.TempDir(), 0, w)
 	sha := strings.Repeat("a", 40)
@@ -85,6 +89,8 @@ func TestTheOneAllowedLeaseIsBuiltByPublishAndNowhereElse(t *testing.T) {
 // A SOURCE TEST, because "one call site" is a property of the code and not of any output:
 // the lease spelling is built in exactly one place, and it is Publish.
 func TestTheLeaseSpellingHasOneCallSite(t *testing.T) {
+	t.Parallel()
+
 	sites := 0
 	entries, err := os.ReadDir(".")
 	if err != nil {

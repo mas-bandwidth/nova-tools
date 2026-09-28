@@ -1,0 +1,37 @@
+roles: bench
+expect: ^CPP OK
+wall: yes
+reads: /usr, /bin, /lib, /lib64, /etc, /opt/homebrew, /Library/Developer/CommandLineTools
+
+# The C++ half: a standard library that is present to the compiler and absent to the linker
+# is the specimen, and only building AND running finds it.
+set -eu
+CXX=""
+for candidate in c++ g++ clang++; do
+  found=$(command -v "$candidate" 2>/dev/null || true)
+  if [ -n "$found" ]; then CXX="$found"; break; fi
+done
+if [ -z "$CXX" ]; then
+  echo "CPP FAIL no C++ compiler is reachable inside the wall"
+  exit 1
+fi
+cat > probe.cpp <<'NOVA_CPP_SRC'
+#include <iostream>
+#include <string>
+
+int main() {
+    std::string answer = "42";
+    std::cout << answer << std::endl;
+    return 0;
+}
+NOVA_CPP_SRC
+if ! "$CXX" -O2 -std=c++17 -o probe probe.cpp > build.out 2>&1; then
+  echo "CPP FAIL $CXX could not build"
+  head -n 3 build.out
+  exit 1
+fi
+if [ "$(./probe)" != "42" ]; then
+  echo "CPP FAIL the built program did not run"
+  exit 1
+fi
+echo "CPP OK $("$CXX" --version 2>&1 | head -n 1)"

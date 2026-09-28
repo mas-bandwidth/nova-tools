@@ -37,6 +37,8 @@ func largePage(t *testing.T, standing, dated int) string {
 }
 
 func TestScanCapsFindingsAndCountsTheDated(t *testing.T) {
+	t.Parallel()
+
 	page := largePage(t, 600, 600)
 	exit, stdout, stderr := runSelfTalk(t, page)
 	if exit != 1 {
@@ -68,6 +70,8 @@ func TestScanCapsFindingsAndCountsTheDated(t *testing.T) {
 // INSTALLATION finding is the one the first class cannot see, and a flat cap over six
 // hundred STANDING claims would eat it.
 func TestScanCapsEachClassSeparately(t *testing.T) {
+	t.Parallel()
+
 	var b strings.Builder
 	for i := 0; i < 600; i++ {
 		fmt.Fprintf(&b, "I cannot check my own work on the %dth pass, so the second read went to someone else.\n\n", i)
@@ -90,6 +94,8 @@ func TestScanCapsEachClassSeparately(t *testing.T) {
 }
 
 func TestMaxWidensAndZeroPrintsAll(t *testing.T) {
+	t.Parallel()
+
 	page := largePage(t, 600, 0)
 	_, _, stderr := runSelfTalk(t, "--max", "5", page)
 	if got := countLines(stderr); got != 6 {
@@ -105,6 +111,8 @@ func TestMaxWidensAndZeroPrintsAll(t *testing.T) {
 }
 
 func TestRefusesANegativeCeiling(t *testing.T) {
+	t.Parallel()
+
 	page := largePage(t, 2, 0)
 	exit, _, stderr := runSelfTalk(t, "--max", "-1", page)
 	if exit != 2 || !strings.Contains(stderr, "--max must be a line ceiling") {
@@ -115,6 +123,8 @@ func TestRefusesANegativeCeiling(t *testing.T) {
 // A flag typo used to cost the whole 40-line banner. It costs one line, plus the one
 // hint line this repo's guidance law requires, and it names the door.
 func TestARefusalIsAtMostTwoLinesAndNamesTheDoor(t *testing.T) {
+	t.Parallel()
+
 	for _, args := range [][]string{
 		{"--skipp", "x", "a.md"},
 		nil,

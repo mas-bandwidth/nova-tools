@@ -55,10 +55,11 @@ type TriageInput struct {
 	// line. KeyEnv names the environment variable holding the key
 	// (JEV_API_KEY when empty); BaseURL overrides the endpoint, for the
 	// httptest fake in tests.
-	Decide  bool
-	Floor   float64
-	KeyEnv  string
-	BaseURL string
+	Decide    bool
+	Floor     float64
+	KeyEnv    string
+	BaseURL   string
+	UsagePath string
 
 	// decideDo is the test seam: the httptest fake behind it in tests, the
 	// Jev client in production. Unexported and set by nothing but this
@@ -131,6 +132,12 @@ func Triage(in TriageInput) int {
 	var dd *taskDecider
 	finished := map[string]bool{}
 	if in.Decide {
+		if in.UsagePath != "" {
+			if err := ValidateUsageDestination(in.UsagePath); err != nil {
+				fmt.Fprintf(in.Stderr, "TRIAGE REFUSED: %s\n", oneline.Escape(err.Error()))
+				return 2
+			}
+		}
 		floor := in.Floor
 		if floor == 0 {
 			floor = DefaultDecideFloor
@@ -144,7 +151,7 @@ func Triage(in TriageInput) int {
 			}
 			do = client.Decide
 		}
-		dd = newTaskDecider(p, do, floor, in.Now)
+		dd = newTaskDecider(p, do, floor, in.Now, in.UsagePath)
 		for _, state := range []string{Done, Failed} {
 			if list, err := p.List(state); err == nil {
 				for _, sc := range list {
@@ -210,6 +217,10 @@ func Triage(in TriageInput) int {
 			}
 		}
 		reports.Line(line)
+	}
+	if dd != nil && dd.lastErr != nil {
+		fmt.Fprintf(in.Stderr, "TRIAGE REFUSED: %s\n", oneline.Escape(dd.lastErr.Error()))
+		return 2
 	}
 	reports.More()
 

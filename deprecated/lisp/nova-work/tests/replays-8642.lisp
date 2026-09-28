@@ -1,0 +1,545 @@
+;;;; replays-8642.lisp --- the five named acceptance replays of nova-tools #362.
+;;;;
+;;;; Each deftest is named exactly as docs/SPEC-WORK.md names it and asserts the
+;;;; Required outcome its paragraph promises. The pure functions the tests call
+;;;; live in src/replays-8642.lisp; this file is red before that file exists.
+;;;;
+;;;; The rows are the "Required enforcement replays" table
+;;;; (docs/SPEC-WORK.md:4843-4856) for bounds-are-not-prompts,
+;;;; batch-with-bounds-and-urgency and cache-aware-context-choice, and the
+;;;; "Required suites" table (docs/SPEC-WORK.md:6226-6248) for
+;;;; async-operations and batches-and-pipelines. The live session, CLI,
+;;;; transport and provider wiring those rows also name is owed outside this
+;;;; internal C/O kernel and is listed in RESULT.md.
+
+(in-package #:nova-work/tests)
+
+;;; ------------------------------------------------------------------
+;;; bounds-are-not-prompts                      SPEC-WORK.md:4849
+;;; ------------------------------------------------------------------
+
+(deftest "bounds-are-not-prompts" "docs/SPEC-WORK.md:4849"
+    "expected=missing-required-limit=refused,deadline=terminal|unresolved,duplicates=0"
+  ;; A launcher lacking a required hard limit refuses automatic dispatch.
+  (let ((short (make-launcher :input-bound t :output-bound nil
+                              :deadline nil :attempt-limit t)))
+    (ok (not (auto-dispatch-allowed-p short
+              '(:input-bound :output-bound :deadline :attempt-limit)))
+        "a launcher missing a required hard limit refuses auto dispatch")
+    (check-equal '(:output-bound :deadline)
+                 (missing-hard-limits short
+                   '(:input-bound :output-bound :deadline :attempt-limit))
+                 "the missing hard limits are named, not guessed")
+    (ok (auto-dispatch-allowed-p
+         (make-launcher :input-bound t :output-bound t
+                        :deadline t :attempt-limit t)
+         '(:input-bound :output-bound :deadline :attempt-limit))
+        "a launcher with every required limit may auto dispatch"))
+  ;; A supported deadline returns a terminal or unresolved handle.
+  (check-equal :terminal (deadline-handle t t)
+               "supported, passed deadline is terminal")
+  (check-equal :unresolved (deadline-handle t nil)
+               "supported, future deadline is an unresolved handle")
+  (check-equal :unresolved (deadline-handle nil nil)
+               "unsupported deadline stays unresolved, never a guessed terminal")
+  ;; No duplicate execution around an unresolved handle.
+  (multiple-value-bind (h1 started1) (admit-execution "req-1" '())
+    (ok started1 "first dispatch starts")
+    (let ((active (list (cons "req-1" :unresolved))))
+      (multiple-value-bind (h2 started2) (admit-execution "req-1" active)
+        (ok (equal h1 h2) "the same request rejoins the same handle")
+        (ok (not started2) "an unresolved handle is joined, never re-executed"))))
+  (multiple-value-bind (h3 started3) (admit-execution "req-2" '())
+    (declare (ignore h3))
+    (ok started3 "a distinct request still starts exactly once")))
+
+;;; ------------------------------------------------------------------
+;;; batch-with-bounds-and-urgency                SPEC-WORK.md:4853
+;;; ------------------------------------------------------------------
+
+(deftest "batch-with-bounds-and-urgency" "docs/SPEC-WORK.md:4853"
+    "expected=coalesce=within-bounds,unchanged=no-call,padding=refused,urgent=bypasses-delay,deps-retry=survive"
+  ;; Independent results coalesce within byte/record bounds.
+  (let ((cfg (make-batch-config :max-bytes 10 :max-records 2 :max-delay-ms 500)))
+    (ok (within-bounds-p (list (make-packet-fragment :id "a" :bytes 4)) cfg)
+        "inside the byte and record bounds is admitted")
+    (ok (not (within-bounds-p
+              (list (make-packet-fragment :id "a" :bytes 6)
+                    (make-packet-fragment :id "b" :bytes 6)) cfg))
+        "over the byte bound is refused")
+    (check-equal '(:bytes)
+                 (exhausted-bound
+                  (list (make-packet-fragment :id "a" :bytes 6)
+                        (make-packet-fragment :id "b" :bytes 6)) cfg)
+                 "the byte bound is the one named")
+    (check-equal '(:records)
+                 (exhausted-bound
+                  (list (make-packet-fragment :id "a" :bytes 1)
+                        (make-packet-fragment :id "b" :bytes 1)
+                        (make-packet-fragment :id "c" :bytes 1)) cfg)
+                 "the record bound is the one named"))
+  ;; Unchanged batches cause no call.
+  (ok (batch-unchanged-p
+       (list (make-packet-fragment :id "a" :bytes 1 :kind :normal))
+       (list (make-packet-fragment :id "a" :bytes 1 :kind :normal)))
+      "an unchanged batch is detected with no model call")
+  ;; Unreferenced padding refuses.
+  (let ((pkt (make-packet
+              :manifest '(("a" (4 "d1")))
+              :fragments (list (make-packet-fragment :id "a" :bytes 4)
+                               (make-packet-fragment :id "pad" :bytes 3)))))
+    (let ((problems (validate-packet pkt
+                                     (make-batch-config :max-bytes 100 :max-records 10))))
+      (ok problems "unreferenced padding is refused")
+      (ok (assoc :unreferenced problems) "the refusal names the padding")))
+  ;; Urgent corrections bypass the delay bound.
+  (let ((urgent (make-packet-fragment :id "u" :bytes 1 :kind :urgent-correction))
+        (normal (make-packet-fragment :id "n" :bytes 1 :kind :normal)))
+    (ok (not (delay-applies-p urgent)) "an urgent correction bypasses the delay bound")
+    (ok (delay-applies-p normal) "a normal fragment stays inside the delay bound"))
+  ;; Dependencies survive coalescing.
+  (check-equal '(("a" ("b")) ("c" ("d" "e")))
+               (dependencies-of
+                (list (make-packet-fragment :id "a" :dependencies '("b"))
+                      (make-packet-fragment :id "c" :dependencies '("d" "e"))))
+               "dependent work still waits for its prerequisite")
+  ;; Partial retry identities survive.
+  (check-equal '(("a" "parent-1") ("b" nil))
+               (retry-identity-of
+                (list (make-packet-fragment :id "a" :retry-of "parent-1")
+                      (make-packet-fragment :id "b")))
+               "a partial retry keeps its parent identity"))
+
+;;; ------------------------------------------------------------------
+;;; async-operations                            SPEC-WORK.md:6239
+;;; ------------------------------------------------------------------
+
+(deftest "async-operations" "docs/SPEC-WORK.md:6239"
+    "expected=no-double-launch;no-false-cancellation-success"
+  (let ((op '(:id "op-1" :kind :import :state :pending :attempts 0)))
+    ;; A launch moves pending -> running and counts one attempt.
+    (let ((running (operation-launch op)))
+      (check-equal :running (getf running :state) "a pending op did not enter running")
+      (check-equal 1 (getf running :attempts) "the launch was not counted"))
+    ;; Launching an already-running op is no double launch: attempts unchanged.
+    (let* ((running '(:id "op-1" :kind :import :state :running :attempts 1))
+           (relaunched (operation-launch running)))
+      (check-equal :running (getf relaunched :state) "state changed on a second launch")
+      (check-equal 1 (getf relaunched :attempts) "a running op was launched twice"))
+    ;; Cancelling a pending op is a real cancellation.
+    (check-equal :cancelled
+                 (getf (async-operation-cancel '(:id "o1" :kind :import :state :pending :attempts 0)) :state)
+                 "cancel did not cancel a pending op")
+    ;; Cancelling a finished op is never a false success: it reports already
+    ;; complete and never claims a cancellation happened.
+    (let ((done-cancel (async-operation-cancel '(:id "op-2" :kind :export :state :done :attempts 1))))
+      (check-equal :already-complete (getf done-cancel :disposition)
+                   "cancelling a finished op claimed a cancellation success")
+      (check-equal :done (getf done-cancel :state)
+                   "a finished op's state was falsified by cancellation")))
+  ;; A busy import stages its inputs outside the mutation loop, bounded by
+  ;; explicit limits, and only the owning engine admits a validated result at the
+  ;; expected revision: a stale stage writes nothing, so a concurrent capture is
+  ;; never a second writer (SPEC-WORK.md:2748-2750, :2753).
+  (let ((area (make-capture-stage)))
+    (multiple-value-bind (id line code)
+        (begin-import area :id "op-import-1" :request "req-import")
+      (check-equal 0 code "the import was not acknowledged")
+      (check-equal "import.stage" (capture-wire-op :import)
+                   "the import wire op is not named")
+      (ok (search "OPERATION OK" line) "the import ack is not an OPERATION OK: ~A" line)
+      (check-equal :running (registry-operation-state (capture-stage-registry area) id)
+                   "the import is not accepted as running"))
+    (multiple-value-bind (ok line) (capture-stage-input area :id "in-1" :kind :issue
+                                                       :expected-revision 7 :bytes 128)
+      (ok ok "a source input did not stage: ~A" line))
+    (multiple-value-bind (ok line) (capture-admit-result area 7 :id "in-1" :result :mapped)
+      (ok ok "a fresh staged result was not admitted: ~A" line))
+    (multiple-value-bind (ok line) (capture-admit-result area 8 :id "in-1" :result :mapped)
+      (ok (null ok) "a stale staged result was admitted: ~A" line)
+      (ok (search "stale" line) "the refusal does not name staleness: ~A" line))
+    (check-equal 1 (length (capture-stage-results area))
+                 "a stale stage wrote a second result")
+    ;; Staged bytes and inputs are bounded by explicit limits.
+    (let* ((limits (capture-stage-limits area))
+           (attempts (loop repeat (1+ (getf limits :staged-inputs)) collect
+                       (multiple-value-bind (ok line)
+                           (capture-stage-input area
+                                                :id (format nil "bulk-~D" (random 100000))
+                                                :kind :comment :expected-revision 7
+                                                :bytes 1)
+                         (declare (ignore line)) ok))))
+      (ok (some #'null attempts) "the staged inputs were not bounded by the declared limit"))))
+
+;;; ------------------------------------------------------------------
+;;; batches-and-pipelines                       SPEC-WORK.md:6240
+;;; ------------------------------------------------------------------
+
+(deftest "batches-and-pipelines" "docs/SPEC-WORK.md:2762-2814"
+    "expected=read-bundle=one-revision-and-watermark,expired-page-refused,atomic=all-or-none-with-entry-id,long-op-refused-in-atomic,prefix=exact,unattempted=marked,continuation=explicit,long-op-returns-operation-id"
+  ;; B2 -- a read bundle is one revision and one lease-time watermark. Every
+  ;; ask is answered from the captured revision, never the work set, and a
+  ;; later page keeps that snapshot identity or refuses `page expired`.
+  (let* ((kernel (fresh))
+         (bundle (make-read-bundle kernel :watermark 300)))
+    (check-equal '(:open 5 :closed 0) (read-bundle-ask bundle :size)
+                 "the read bundle answers the ask it names from one revision")
+    (check-equal 300 (read-bundle-ask bundle :watermark)
+                 "the bundle carries one lease-time watermark")
+    (multiple-value-bind (fields line) (read-bundle-page bundle 0)
+      (ok fields "a page inside the snapshot answers")
+      (ok (search (format nil "rev=~D" (read-bundle-revision bundle)) line)
+          "the page names its snapshot revision: ~A" line))
+    ;; A mutation after the capture does not move the bundle's revision, so a
+    ;; later page still reads the captured one.
+    (multiple-value-bind (okp line) (submit kernel (close-request :request "bundle-m-1"))
+      (declare (ignore line))
+      (ok okp "the mutation after the capture is accepted"))
+    (check-equal '(:open 5 :closed 0) (read-bundle-ask bundle :size)
+                 "the bundle still reads its captured revision")
+    ;; Asked below the bundle's own revision the snapshot has expired.
+    (multiple-value-bind (fields line)
+        (read-bundle-page bundle (1+ (read-bundle-revision bundle)))
+      (ok (null fields) "an expired page answers no fields")
+      (ok (search "page expired" line) "the refusal names the expiry: ~A" line)))
+
+  ;; B4 -- an atomic mutation batch is one envelope, all or none. Every entry
+  ;; is validated against the expected revision before anything is published;
+  ;; one bad entry writes nothing and is named by its own entry id.
+  (let* ((kernel (fresh))
+         (good-1 (edit-request "acme/work/f1/t1" :request "atom-1" :title (list :set "t1")))
+         (good-2 (edit-request "acme/work/f1/t2" :request "atom-2" :title (list :set "t2")))
+         (bad (list :verb :state-to-done :node "acme/work/nope" :by "rowan"
+                    :reason "x" :evidence '("ev-1") :request "atom-bad"
+                    :stamp "2026-09-14T12:00:00Z" :clock :tool
+                    :generation-owner "gen-4"))
+         (entries (list (list :id "a-1" :request good-1)
+                        (list :id "a-2" :request bad)
+                        (list :id "a-3" :request good-2))))
+    (multiple-value-bind (okp failing applied rev) (atomic-batch-run kernel entries)
+      (ok (null okp) "an atomic batch with one bad entry is refused whole")
+      (check-string= "a-2" failing "the failing entry is named")
+      (check-equal 0 applied "an atomic batch applied a partial prefix")
+      (check-equal 0 (length (state-history (kernel-state kernel)))
+                   "a refused atomic batch wrote an event")
+      (check-equal 0 rev "a refused atomic batch moved the revision"))
+    ;; An all-valid atomic batch applies every entry.
+    (let ((entries (list (list :id "b-1" :request good-1)
+                         (list :id "b-2" :request good-2))))
+      (multiple-value-bind (okp failing applied rev) (atomic-batch-run kernel entries)
+        (ok okp "an all-valid atomic batch refused")
+        (ok (null failing) "with no failing entry")
+        (check-equal 2 applied "the atomic batch did not apply every entry")
+        (check-equal 2 (length (state-history (kernel-state kernel)))
+                     "the atomic batch did not write both events")
+        (check-equal 2 rev "the revision did not move for both entries")))
+    ;; An entry that would accept a long operation is refused by its own entry
+    ;; id before anything is staged: no external I/O inside an atomic batch.
+    (let ((entries (list (list :id "c-1" :request good-1)
+                         (list :id "c-2" :op :capture
+                               :request (edit-request "acme/work/f1/t2"
+                                                      :request "atom-cap")))))
+      (multiple-value-bind (okp failing applied rev) (atomic-batch-run kernel entries)
+        (ok (null okp) "a long-operation entry did not refuse the atomic batch")
+        (check-string= "c-2" failing "the long-operation entry is not refused by its own id")
+        (check-equal 0 applied "a long-operation entry staged something")
+        (check-equal 2 rev "a long-operation entry moved the revision"))))
+
+  ;; B3 -- an independent batch is ordered entries with outcomes of their own.
+  ;; The default stops at the first refusal and marks every remaining entry
+  ;; `not attempted`; a continuation is an explicit flag, never the default.
+  (let* ((good-1 (close-request :request "ind-1"))
+         (bad (list :verb :state-to-done :node "acme/work/nope" :by "rowan"
+                    :reason "x" :evidence '("ev-1") :request "ind-bad"
+                    :stamp "2026-09-14T12:00:00Z" :clock :tool
+                    :generation-owner "gen-4"))
+         (good-3 (reopen-request :request "ind-3"))
+         (entries (list (list :id "i-1" :request good-1)
+                        (list :id "i-2" :request bad)
+                        (list :id "i-3" :request good-3))))
+    (let ((kernel (fresh)))
+      (multiple-value-bind (results applied refused not-attempted)
+          (independent-batch-run kernel entries)
+        (check-equal '(:applied :refused :not-attempted)
+                     (mapcar (lambda (r) (getf r :state)) results)
+                     "the default did not stop at the first refusal")
+        (check-equal 1 applied "the exact accepted prefix was not applied")
+        (check-equal 1 refused "the refusal is not counted")
+        (check-equal 1 not-attempted "the remainder is not marked not-attempted")
+        (check-equal 1 (length (state-history (kernel-state kernel)))
+                     "an entry after the refusal was applied")
+        (check-string= "i-2" (getf (second results) :id)
+                       "the refusal does not carry its entry id")))
+    ;; An explicit continuation attempts past the refusal and replays nothing.
+    (let ((kernel (fresh)))
+      (multiple-value-bind (results applied refused not-attempted)
+          (independent-batch-run kernel entries :continue t)
+        (check-equal '(:applied :refused :applied)
+                     (mapcar (lambda (r) (getf r :state)) results)
+                     "the explicit continuation did not attempt past the refusal")
+        (check-equal 2 applied "the entries after the refusal did not apply")
+        (check-equal 1 refused "the refusal is not still counted")
+        (check-equal 0 not-attempted "the continuation left an entry unattempted")
+        (check-equal 2 (length (state-history (kernel-state kernel)))
+                     "the accepted prefix was replayed as new work")))
+    ;; An entry that accepts a long operation returns an operation id, which a
+    ;; later entry may not read as a completed result.
+    (multiple-value-bind (results applied refused not-attempted)
+        (independent-batch-run
+         (fresh)
+         (list (list :id "l-1" :op :capture
+                     :request (list :request "cap-1" :by "rowan"
+                                    :stamp "2026-09-14T12:00:00Z"))
+               (list :id "l-2" :request (close-request :request "cap-2"))))
+      (declare (ignore refused not-attempted))
+      (check-equal 2 applied "the long-operation entry was not accepted")
+      (let ((long (first results)))
+        (check-equal :operation (getf long :state)
+                     "the long-operation entry did not answer with an operation")
+        (ok (getf long :operation-id)
+            "the operation id was not returned")
+        (ok (null (getf long :result))
+            "a later entry read the operation as a completed result")))))
+
+;;; ------------------------------------------------------------------
+;;; cache-aware-context-choice                   SPEC-WORK.md:4854
+;;; ------------------------------------------------------------------
+
+(deftest "cache-aware-context-choice" "docs/SPEC-WORK.md:4854"
+    "expected=cache-read-write-tier-threshold-priced-separately;reset-costs-refused-when-separate;lower-hit-can-win-on-cost"
+  (let ((price (make-cache-price :input-rate 3 :cache-read-rate 1 :cache-write-rate 5)))
+    ;; Cache reads and writes are never one charge.
+    (check-equal 10 (cache-cost price 10 0) "cache reads priced at the read rate")
+    (check-equal 50 (cache-cost price 0 10) "cache writes priced at the write rate")
+    (check-equal 60 (cache-cost price 10 10) "a read and a write priced as one charge"))
+  ;; A long-context tier threshold prices separately.
+  (check-equal 600 (tiered-input-cost 150 100 1 10)
+               "tokens over the threshold did not price at the long rate")
+  (check-equal 400 (tiered-input-cost 100 100 4 8)
+               "tokens under the threshold did not price at the base rate")
+  ;; A reset includes its rebuild cost, which is charged, not assumed away.
+  (let ((price (make-cache-price :input-rate 3 :cache-read-rate 1 :cache-write-rate 5))
+        (without (make-context-plan :hit-rate 0.5 :retention-tokens 100
+                                    :new-prefix-tokens 100 :rebuild-tokens 0))
+        (with (make-context-plan :hit-rate 0.5 :retention-tokens 100
+                                 :new-prefix-tokens 100 :rebuild-tokens 200)))
+    (check-equal 1000 (- (plan-cost with price) (plan-cost without price))
+                 "the reset did not include its rebuild cost"))
+  ;; A lower hit rate can still win when total matched-work cost falls.
+  (let ((price (make-cache-price :input-rate 3 :cache-read-rate 1 :cache-write-rate 5))
+        (retained (make-context-plan :hit-rate 0.9 :retention-tokens 5000
+                                     :new-prefix-tokens 0 :rebuild-tokens 0))
+        (refreshed (make-context-plan :hit-rate 0.5 :retention-tokens 100
+                                      :new-prefix-tokens 100 :rebuild-tokens 200)))
+    (ok (< (context-plan-hit-rate refreshed) (context-plan-hit-rate retained))
+        "the chosen plan did not have the lower hit rate")
+    (check-equal refreshed (choose-context-plan retained refreshed price)
+                 "the lower total cost did not win over the higher hit rate"))
+  ;; A missing decision, adapter or evidence refuses the automatic refresh.
+  (check-equal '(:adapter :evidence)
+               (refresh-refusal (make-refresh-admission :decision t
+                                                        :adapter nil :evidence nil))
+               "the missing refresh inputs were not named")
+  (ok (refresh-allowed-p (make-refresh-admission :decision t :adapter t :evidence t))
+      "a fully evidenced automatic refresh was refused")
+  (ok (not (refresh-allowed-p (make-refresh-admission :decision t :adapter t :evidence nil)))
+      "a refresh with no evidence was allowed"))
+
+;;; ------------------------------------------------------------------
+;;; E07-F05-02 -- Record failures, repairs, denominator
+;;; movement and changed scope              docs/SPEC-WORK.md:7867
+;;; ------------------------------------------------------------------
+;;; docs/SPEC-WORK.md:7867 : "focus. Record failures and repairs as they occur.
+;;; At the retrospective, compare the same questions and acceptance scope
+;;; against the previous manual workflow, then change the spec."
+;;; The roadmap criterion E07-F05-02 asks that the kernel records the four
+;;; kinds of movement a retrospective must be able to read back: a failure it
+;;; names and refuses with no partial write, a repair (a row re-opened after its
+;;; removal) recorded with its own reason, a denominator move recorded against
+;;; the open rows, and a changed scope recorded as a scope event with its reason.
+
+(deftest "TestE07F05RecordFailuresRepairsDenominatorMovement" "docs/SPEC-WORK.md:7867"
+    "expected=failure-named-no-partial-write;repair-reopened-with-reason;denominator-move-recorded;scope-change-recorded-with-reason"
+  (let* ((seed '((:id "root"      :type :work-set :parent nil      :state :unknown)
+                  (:id "root/f0"   :type :feature  :parent "root"   :state :doing)
+                  (:id "root/f1"   :type :feature  :parent "root"   :state :doing)
+                  (:id "root/f2"   :type :feature  :parent "root"   :state :doing)))
+         (k (make-kernel :state (make-seed-state seed)
+                         :journal (make-ordering-journal) :rev-base 1)))
+    ;; An axisless roadmap with three rows is the scope under test.
+    (multiple-value-bind (okp line code)
+        (roadmap-create k :id "rm" :parent "root" :title "R" :row-kind :feature
+                        :aggregation :required-members
+                        :completion-policy :all-required-features
+                        :axes '() :permitted-roots '() :reason "new"
+                        :request "rm-1")
+      (ok okp "the roadmap was not created: ~A" line)
+      (check-equal 0 code "roadmap create exit"))
+    (dolist (m '("root/f0" "root/f1" "root/f2"))
+      (multiple-value-bind (okp line code)
+          (roadmap-row k :roadmap "rm" :member m :op :add :reason "row"
+                       :request (format nil "add-~A" m))
+        (ok okp "the row ~A was refused: ~A" m line)
+        (check-equal 0 code "row add exit")))
+    (check-equal 3 (roadmap-open-member-count (kernel-state k) "rm")
+                 "the denominator did not start at three open rows")
+
+    ;; failure recorded: a row add naming a missing member is refused by name and
+    ;; writes nothing -- the failure says what went wrong, no partial row.
+    (let ((log-before (length (roadmap-view-log (kernel-state k) "rm")))
+          (rev-before (roadmap-view-revision (kernel-state k) "rm")))
+      (multiple-value-bind (okp line code)
+          (roadmap-row k :roadmap "rm" :member "root/nope" :op :add
+                       :reason "x" :request "bad-1")
+        (ok (null okp) "the failed add was accepted")
+        (ok (search "no such member" line) "the failure does not name itself: ~A" line)
+        (check-equal 2 code "the failed add did not refuse at exit 2"))
+      (check-equal 3 (roadmap-open-member-count (kernel-state k) "rm")
+                   "the failed add moved the denominator")
+      (check-equal log-before (length (roadmap-view-log (kernel-state k) "rm"))
+                   "the failed add wrote a scope event")
+      (check-equal rev-before (roadmap-view-revision (kernel-state k) "rm")
+                   "the failed add moved the scope revision"))
+
+    ;; changed scope recorded: removing a row moves the revision and writes a
+    ;; scope event carrying the reason the scope changed.
+    (let ((rev-before (roadmap-view-revision (kernel-state k) "rm")))
+      (multiple-value-bind (okp line code)
+          (roadmap-row k :roadmap "rm" :member "root/f1" :op :remove
+                       :reason "superseded-by-f3" :request "rm-1")
+        (ok okp "the scope removal was refused: ~A" line)
+        (check-equal 0 code "scope removal exit"))
+      (ok (> (roadmap-view-revision (kernel-state k) "rm") rev-before)
+          "removing a row did not move the scope revision")
+      (check-equal 2 (roadmap-open-member-count (kernel-state k) "rm")
+                   "removing a row did not move the denominator")
+      (let ((head (first (roadmap-view-log (kernel-state k) "rm"))))
+        (check-equal :row-remove (getf head :change) "the removal is not recorded")
+        (check-equal "root/f1" (getf head :member) "the removal does not name its row")
+        (check-string= "superseded-by-f3" (getf head :reason)
+                       "the removal did not record its reason"))
+      (ok (member "root/f1" (roadmap-view-retired (kernel-state k) "rm") :test #'string=)
+          "the removed row was not recorded as retired"))
+
+    ;; repair recorded: re-adding the removed row is a repair that restores the
+    ;; denominator and is recorded with its own reason.
+    (let ((rev-before (roadmap-view-revision (kernel-state k) "rm")))
+      (multiple-value-bind (okp line code)
+          (roadmap-row k :roadmap "rm" :member "root/f1" :op :add
+                       :reason "reinstated-after-fix" :request "rm-fix")
+        (ok okp "the repair re-add was refused: ~A" line)
+        (check-equal 0 code "repair re-add exit"))
+      (check-equal 3 (roadmap-open-member-count (kernel-state k) "rm")
+                   "the repair did not restore the denominator")
+      (ok (> (roadmap-view-revision (kernel-state k) "rm") rev-before)
+          "the repair did not record a scope movement")
+      (let ((head (first (roadmap-view-log (kernel-state k) "rm"))))
+        (check-equal :row-add (getf head :change) "the repair is not recorded")
+        (check-equal "root/f1" (getf head :member) "the repair does not name its row")
+        (check-string= "reinstated-after-fix" (getf head :reason)
+                       "the repair did not record its reason")))))
+
+;;; ------------------------------------------------------------------
+;;; TestE01F03AllowOmittedRepeatedAndRecursively   SPEC-WORK.md:1555
+;;; ------------------------------------------------------------------
+;;; E01-F03 (ROADMAP.md:224) — allow omitted, repeated and recursively
+;;; nested work-set grouping layers without a prescribed depth.
+;;; docs/SPEC-WORK.md:1555: "These are examples, not grammars. A team may
+;;; omit, repeat or nest grouping layers as its work requires; validation
+;;; must not enforce a repository/epic/feature depth sequence."
+
+;; A grouping layer is named by its node kind, never by its depth, and the
+;; kernel's validation admits omitted, repeated and recursively nested layers.
+(defun %e01-f03-grouping-layer (state id)
+  "The node kind of ID under STATE, read by stable id rather than by a fixed
+number of parent hops (SPEC-WORK.md:1564-1566)."
+  (node-type state id))
+
+(deftest "TestE01F03AllowOmittedRepeatedAndRecursively" "docs/SPEC-WORK.md:1555"
+    "expected=deeper-witness-admitted;repeated-layers-by-kind-not-position;omitted-layers-admitted;depth-not-prescribed"
+  ;; The deeper witness repeats project, stream and feature layers and nests
+  ;; sub-features recursively: repository -> project -> project -> stream ->
+  ;; work-set -> stream -> epic -> feature -> feature -> feature -> task.
+  (let* ((deep '((:id "acme/repo" :type :work-set :parent nil :state :unknown)
+                 (:id "acme/repo/p1" :type :project :parent "acme/repo" :state :unknown)
+                 (:id "acme/repo/p1/p2" :type :project :parent "acme/repo/p1" :state :unknown)
+                 (:id "acme/repo/p1/p2/s1" :type :stream :parent "acme/repo/p1/p2" :state :unknown)
+                 (:id "acme/repo/p1/p2/s1/ws" :type :work-set :parent "acme/repo/p1/p2/s1" :state :unknown)
+                 (:id "acme/repo/p1/p2/s1/ws/s2" :type :stream :parent "acme/repo/p1/p2/s1/ws" :state :unknown)
+                 (:id "acme/repo/p1/p2/s1/ws/s2/e" :type :epic :parent "acme/repo/p1/p2/s1/ws/s2" :state :unknown)
+                 (:id "acme/repo/p1/p2/s1/ws/s2/e/f" :type :feature :parent "acme/repo/p1/p2/s1/ws/s2/e" :state :unknown)
+                 (:id "acme/repo/p1/p2/s1/ws/s2/e/f/sf1" :type :feature :parent "acme/repo/p1/p2/s1/ws/s2/e/f" :state :unknown)
+                 (:id "acme/repo/p1/p2/s1/ws/s2/e/f/sf1/sf2" :type :feature :parent "acme/repo/p1/p2/s1/ws/s2/e/f/sf1" :state :unknown)
+                 (:id "acme/repo/p1/p2/s1/ws/s2/e/f/sf1/sf2/t" :type :task
+                      :parent "acme/repo/p1/p2/s1/ws/s2/e/f/sf1/sf2" :state :doing)))
+         (state (make-seed-state deep)))
+    (check-equal 11 (state-open-count state)
+                 "the deeper witness was not admitted whole")
+    (check-equal :task
+                 (%e01-f03-grouping-layer state "acme/repo/p1/p2/s1/ws/s2/e/f/sf1/sf2/t")
+                 "the leaf task is a task, read by id not by depth")
+    (check-equal :feature
+                 (%e01-f03-grouping-layer state "acme/repo/p1/p2/s1/ws/s2/e/f/sf1")
+                 "a sub-feature is :feature, not a distinct mandatory layer")
+    (check-equal :project
+                 (%e01-f03-grouping-layer state "acme/repo/p1/p2")
+                 "a repeated project layer is admitted one below another"))
+  ;; Omitted layers: the shallow repository -> feature -> task witness skips
+  ;; project/stream/epic and is admitted, so no layer is mandatory.
+  (let* ((shallow '((:id "acme/sh" :type :work-set :parent nil :state :unknown)
+                    (:id "acme/sh/f" :type :feature :parent "acme/sh" :state :unknown)
+                    (:id "acme/sh/f/t" :type :task :parent "acme/sh/f" :state :doing)))
+         (state (make-seed-state shallow)))
+    (check-equal 3 (state-open-count state)
+                 "the shallow witness with omitted layers was not admitted")
+    (check-equal :task (%e01-f03-grouping-layer state "acme/sh/f/t")
+                 "the shallow task is a task with the intermediate layers omitted"))
+  ;; No prescribed depth: a chain of 24 nested sub-features under one task is
+  ;; admitted exactly like a shallow one; depth is not a rank restriction.
+  (let* ((ids (loop for i from 0 to 24 collect (format nil "deep/~D" i)))
+         (seed (loop for i from 0 to 24
+                     for id in ids
+                     collect (list :id id
+                                   :type (if (= i 24) :task :feature)
+                                   :parent (and (plusp i) (nth (1- i) ids))
+                                   :state (if (= i 24) :doing :unknown)))))
+    (let ((state (make-seed-state seed)))
+      (check-equal 25 (state-open-count state)
+                   "the 25-level nested chain was not admitted")
+      (check-equal :task (%e01-f03-grouping-layer state "deep/24")
+                   "the deep chain's task is a task at depth 25, not refused"))))
+
+;;; ------------------------------------------------------------------
+;;; TestE11F06EscalationIsAPacketA                   SPEC-WORK.md:4654
+;;; ------------------------------------------------------------------
+;;; E11-F06-04 (ROADMAP.md:1149) — escalation-is-a-packet.
+;;; docs/SPEC-WORK.md:4654: "A hold, question or exception the child cannot
+;;; decide rises as a packet with its reason and revision; the stale pass prints
+;;; `escalated-age=` and `reread=` as information and reassigns nothing; an
+;;; `:effort` widening or an expensive-route exception carries the coordinator's
+;;; recorded reason."
+;;;
+;;; This replay asserts the second clause: the coordinator's stale pass reads a
+;;; persisted escalation and reassigns nothing, surfacing the escalation's age
+;;; and reread count as strictly informational fields on its receipt line.
+
+(deftest "TestE11F06EscalationIsAPacketA" "docs/SPEC-WORK.md:4654"
+    "expected=stale-pass-prints-escalated-age-and-reread-as-information-and-reassigns-nothing"
+  (let* ((row (make-escalation-row :rule "r7" :default :close-on-silence
+                                   :age 3600 :reread 2))
+         (rows (list row)))
+    (multiple-value-bind (read line) (stale-pass rows)
+      (ok (eq read rows)
+          "the stale pass reassigns nothing; it answers the same rows")
+      (ok (search "escalated-age=3600" line)
+          "the stale pass does not print escalated-age= with the persisted age: ~A" line)
+      (ok (search "reread=2" line)
+          "the stale pass does not print reread= with the persisted reread count: ~A" line)
+      (ok (search "reassigned=0" line)
+          "the stale pass did not say it reassigned nothing: ~A" line)
+      (check-equal "r7" (escalation-row-rule (first read))
+                   "the read changed the rule")
+      (check-equal :close-on-silence (escalation-row-default (first read))
+                   "the read changed the default")
+      (check-equal 3600 (escalation-row-age (first read))
+                   "the read changed the age"))))

@@ -24,6 +24,8 @@ const bs = "\x5c" // one backslash
 // the fuse package keeps its own copy of the table against its delegating OneLine, so a
 // drift between the two would fail there.
 func TestEscapeEveryControlCharacter(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name string
 		in   string
@@ -82,6 +84,8 @@ func TestEscapeEveryControlCharacter(t *testing.T) {
 // by range rather than by example: the nine code points the issue names, and none of
 // their neighbors, so a future widening or narrowing is a decision here.
 func TestEveryBidiControlIsEscapedAndNoOtherFormatCharacterIs(t *testing.T) {
+	t.Parallel()
+
 	escaped := map[rune]bool{}
 	for r := rune(0x202a); r <= 0x202e; r++ {
 		escaped[r] = true
@@ -107,6 +111,8 @@ func TestEveryBidiControlIsEscapedAndNoOtherFormatCharacterIs(t *testing.T) {
 // key of `x lockdown=clear quarantines=0` printed raw inside `quarantine=` let a grep for
 // lockdown=clear match a line about a blown lockdown. A field value is one token now.
 func TestFieldIsOneTokenHoldingNoEquals(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name string
 		in   string
@@ -153,6 +159,8 @@ func TestFieldIsOneTokenHoldingNoEquals(t *testing.T) {
 // Escape and then less. Every code point Escape rewrites, Field rewrites to the same
 // spelling, so an operator reads one escape form across a whole line.
 func TestFieldAgreesWithEscapeOnEverythingEscapeTouches(t *testing.T) {
+	t.Parallel()
+
 	for r := rune(0); r <= 0x2100; r++ {
 		if r == 0xfffd {
 			continue
@@ -165,6 +173,8 @@ func TestFieldAgreesWithEscapeOnEverythingEscapeTouches(t *testing.T) {
 }
 
 func TestErrRendersTheTextAndSpellsNilLikeFmt(t *testing.T) {
+	t.Parallel()
+
 	if got := Err(nil); got != "<nil>" {
 		t.Errorf("Err(nil) = %q, want <nil>", got)
 	}
@@ -181,6 +191,8 @@ func TestErrRendersTheTextAndSpellsNilLikeFmt(t *testing.T) {
 // The line separators and bidi controls come through u, like everywhere else in this file:
 // an invisible control in a source file is exactly the thing a reader could not see.
 func TestQuoteIsPasteableAndStillOneLine(t *testing.T) {
+	t.Parallel()
+
 	// The specimen: a roster name with a space in it, which Field renders \x20 and nobody
 	// can paste back into a To line.
 	if got, want := Quote("Ada Vale"), `"Ada Vale"`; got != want {
@@ -223,6 +235,8 @@ func TestQuoteIsPasteableAndStillOneLine(t *testing.T) {
 // Under the ceiling nothing happens at all: the overwhelming majority of tails are short,
 // and a mark on one that was never cut would be a lie about the record.
 func TestCapLeavesAnythingUnderTheCeilingAlone(t *testing.T) {
+	t.Parallel()
+
 	for _, s := range []string{"", "a", strings.Repeat("x", TailBytes-1), strings.Repeat("x", TailBytes)} {
 		if got := Cap(s, TailBytes); got != s {
 			t.Errorf("Cap(%d bytes) changed it to %d bytes", len(s), len(got))
@@ -233,6 +247,8 @@ func TestCapLeavesAnythingUnderTheCeilingAlone(t *testing.T) {
 // The mark is the point: a reader who meets a cut tail must be able to tell that it was
 // cut, and by how much, from the line alone.
 func TestCapMarksWhatItDropped(t *testing.T) {
+	t.Parallel()
+
 	s := strings.Repeat("x", 1000)
 	got := Cap(s, 100)
 	if len(got) > 100 {
@@ -257,6 +273,8 @@ func TestCapMarksWhatItDropped(t *testing.T) {
 // The mark holds no whitespace and no "=", so a capped value is still ONE token when it
 // goes on to Field. A mark that broke that would turn a capped subject into two fields.
 func TestCapMarkSurvivesFieldAsOneToken(t *testing.T) {
+	t.Parallel()
+
 	got := Field(Cap(strings.Repeat("y", 2000), 40))
 	if strings.ContainsAny(got, " \t=") {
 		t.Errorf("a capped value is not one token through Field: %q", got)
@@ -270,6 +288,8 @@ func TestCapMarkSurvivesFieldAsOneToken(t *testing.T) {
 // wherever the input was: a cut inside a rune would print as \xNN and read as corruption
 // rather than as a ceiling.
 func TestCapCutsOnARuneBoundary(t *testing.T) {
+	t.Parallel()
+
 	// Three-byte runes, so most byte offsets are mid-rune.
 	s := strings.Repeat("一", 400)
 	for n := 8; n < 120; n++ {
@@ -287,6 +307,8 @@ func TestCapCutsOnARuneBoundary(t *testing.T) {
 // This package does not shorten a record out of existence, and a ceiling below the mark's
 // own width is the one case where honouring the number exactly would.
 func TestCapNeverReturnsNothingFromSomething(t *testing.T) {
+	t.Parallel()
+
 	for _, n := range []int{-100, -1, 0, 1, 2, 5} {
 		if got := Cap("一 a long tail that will certainly be cut", n); got == "" {
 			t.Errorf("Cap(_, %d) returned nothing", n)
@@ -297,6 +319,8 @@ func TestCapNeverReturnsNothingFromSomething(t *testing.T) {
 // A tail that is invalid UTF-8 arrives here from an error's text, which passed through no
 // decoder. Cap must still cut somewhere Escape can render, and must not loop.
 func TestCapOnInvalidUTF8(t *testing.T) {
+	t.Parallel()
+
 	s := strings.Repeat("\xff\xfe", 500)
 	got := Cap(s, 60)
 	if len(got) > 60 {

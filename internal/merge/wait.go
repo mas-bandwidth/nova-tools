@@ -16,7 +16,7 @@ import (
 // instead of watching GitHub by hand.
 //
 // Exactly one line goes to stdout, and nothing is printed between polls. The
-// exit codes are the ones the verb promises: 0 merged, 2 red (a failing check
+// exit codes are the ones the verb promises: 0 merged, 1 red (a failing check
 // or a closed-unmerged PR), 3 the timeout. Host errors are not an ending: a
 // read that fails is retried on the next poll until the timeout says otherwise.
 func Wait(host Host, prNum int, timeout, interval time.Duration, now func() time.Time, sleep func(time.Duration), stdout io.Writer) int {
@@ -68,12 +68,12 @@ func Wait(host Host, prNum int, timeout, interval time.Duration, now func() time
 					name := names[0]
 					fmt.Fprintf(stdout, "MERGE WAIT RED pr=%d check=%s conclusion=%s wall=%d\n",
 						prNum, name, checks.ConclusionFor(name), wall())
-					return 2
+					return 1
 				}
 			}
 			if pr.Closed {
 				fmt.Fprintf(stdout, "MERGE WAIT RED pr=%d check=- conclusion=closed wall=%d\n", prNum, wall())
-				return 2
+				return 1
 			}
 			state = "open"
 		}

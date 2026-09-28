@@ -18,17 +18,20 @@
 # refusal says exactly that. Until v0.15.0 this file ran its own copy of those tests, serially,
 # and the Windows leg outgrew its cap; the certified job below says why it stopped.
 #
-# ONE RUNNER BUILDS EVERYTHING, rather than a matrix of five. Go cross-compiles from any
-# host with no toolchain to install, so the only thing a matrix would buy is parallelism,
-# and it would cost the property that matters here: SHA256SUMS is computed on the one
-# machine that holds every artifact, over the whole shipped set, in the same step that
-# uploads it. Assembling that file from five uploads would mean five artifact round-trips
-# and a merge step, each of which is a place for the checksum file and the binaries to
-# disagree about what shipped.
+# ONE LEG PER PLATFORM BUILDS, AND ONE MACHINE SUMS THE WHOLE SET. The `build` matrix runs
+# .github/scripts/release-build.sh once per shipped platform (.github/scripts/release-targets),
+# in parallel, each leg under the two-minute cap, and uploads that platform's binaries as an
+# artifact. The `release` job downloads every artifact into one directory, asserts the stamp,
+# and in the step that attaches the set to the release checks it is exactly the shipped set and
+# computes SHA256SUMS over the whole of it (.github/scripts/release-sums.sh). So the checksum
+# file is computed on the one machine that holds every artifact, over the bytes it attaches,
+# never assembled from per-platform pieces. One runner cross-building all five platforms does
+# not fit the cap: certification's dry run of it was cancelled inside the build.
 #
-# The dry run of this same cross-build is a job in certification.yml (it left the two-minute
-# CL tier), so a target that stops compiling is a red certification rather than a red tag -- a
-# tag being the one thing here that cannot be quietly amended and pushed again.
+# The dry run of this same build is certification.yml's release-build, release-dry-run and
+# release-checks, running the same scripts, so a target that stops compiling is a red
+# certification rather than a red tag -- a tag being the one thing here that cannot be quietly
+# amended and pushed again.
 
 name: release
 
@@ -62,7 +65,7 @@ jobs:
     # gets no release, and the refusal names the remedy.
     # It is the tag-only-a-certified-commit practice made into something that can say no.
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 2
     permissions:
       # Listing workflow runs is an Actions read; the file-level grant is contents only, and a
       # job that asks the API with a token that cannot read Actions would refuse every
@@ -73,6 +76,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
       - name: certification.yml vouches for this commit
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -82,10 +87,80 @@ jobs:
         # The whole ask lives in the script, so certification.yml's release dry-run can drive
         # it with a fake `gh` (nova-tools#253) and so the release job below can ask it again.
         run: .github/scripts/release-certified.sh
-  release:
+  build:
+    # One leg per shipped platform, the matrix of certification.yml's release-build: the list
+    # in .github/scripts/release-targets, written out because a matrix cannot read a file
+    # (internal/ci's TestReleaseMatricesAreTheTargetsFile holds the three equal). The only
+    # compile in this workflow is release-build.sh, the script the dry run runs.
+    #
+    # THE BUILD CACHE IS RESTORED, NEVER SAVED, here: the entry is the one certification's
+    # release-build saved for this platform (the standard library and module packages; the
+    # tree's own packages compile in the leg), and a release writes nothing but its own
+    # release.
     needs: certified
+    name: build (${{ matrix.goos }}, ${{ matrix.goarch }})
+    strategy:
+      # Any leg failing means no release, so the rest stop.
+      fail-fast: true
+      matrix:
+        include:
+          - {goos: linux, goarch: amd64}
+          - {goos: linux, goarch: arm64}
+          - {goos: darwin, goarch: arm64}
+          - {goos: darwin, goarch: amd64}
+          - {goos: windows, goarch: amd64}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 2
+    env:
+      # Read once, from the ref that triggered the run, and passed to every step as an
+      # environment variable rather than interpolated into a shell line (see the release job).
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: the tag has the shape the version stamp assumes
+        shell: bash
+        run: |
+          case "$TAG" in
+            v*) ;;
+            *) echo "refusing: $TAG is not a v-prefixed tag"; exit 1 ;;
+          esac
+
+      - name: restore the release build cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: release-${{ matrix.goos }}-${{ matrix.goarch }}-${{ hashFiles('go.mod', 'go.sum') }}
+          restore-keys: |
+            release-${{ matrix.goos }}-${{ matrix.goarch }}-
+
+      - name: every shipped tool for ${{ matrix.goos }}/${{ matrix.goarch }}
+        # release-build.sh composes the ldflags through release-ldflags.sh, which refuses an
+        # empty or malformed stamp before anything compiles (#118), and names every artifact
+        # <tool>_<tag>_<goos>_<goarch>[.exe].
+        shell: bash
+        run: .github/scripts/release-build.sh "$TAG" "${{ matrix.goos }}" "${{ matrix.goarch }}" dist
+
+      - name: upload this platform's binaries
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/
+          retention-days: 1
+          if-no-files-found: error
+
+  release:
+    needs: [certified, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
     permissions:
       # The only job in this repository that writes anything. It is scoped to this job
       # rather than the file, so the certified job above, which asks the API and runs none
@@ -101,14 +176,13 @@ jobs:
       TAG: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          go-version-file: go.mod
-
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
       - name: certification.yml still vouches for this commit
-        # ASKED AGAIN HERE, after the certified job and the queue wait between the two jobs:
-        # one snapshot cannot see a run created after it was taken, and a red that starts after
-        # the first ask and finishes before the binaries are built must still stop the release.
+        # ASKED AGAIN HERE, after the certified job, the build and the queue waits between
+        # them: one snapshot cannot see a run created after it was taken, and a red that starts
+        # after the first ask and finishes before the binaries are attached must still stop the
+        # release.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SHA: ${{ github.sha }}
@@ -124,56 +198,24 @@ jobs:
             *) echo "refusing: $TAG is not a v-prefixed tag"; exit 1 ;;
           esac
 
-      - name: build every shipped tool for every shipped platform
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          # cmd/*/ rather than a list, so a tool added to this repository ships without
-          # anyone remembering this file, and a tool that must NOT ship is excluded here
-          # in one visible place rather than by omission from a list nobody rereads.
-          # THE LDFLAGS ARE COMPOSED BY A SCRIPT THAT CAN REFUSE, and composed ONCE, before
-          # the first target is built. `-X main.version=` with an empty value is a legal
-          # linker flag: it stamps the empty string, every binary falls back to `devel`,
-          # and nothing in this job noticed -- release.yml:119 in #118. Since #107 that
-          # release's nova-wake would refuse every nova-bus the same release shipped.
-          # A failed substitution here aborts the step under `set -e` rather than building
-          # 55 unstamped artifacts. ci.yml's release-dry-run asserts the refusal.
-          LDFLAGS=$(.github/scripts/release-ldflags.sh "$TAG")
-          echo "ldflags: $LDFLAGS"
-          built=0
-          for target in "linux amd64" "linux arm64" "darwin arm64" "darwin amd64" "windows amd64"; do
-            set -- $target
-            goos=$1; goarch=$2; ext=""
-            [ "$goos" = windows ] && ext=".exe"
-            for dir in cmd/*/; do
-              name=$(basename "$dir")
-              # -trimpath so the binary holds no path from this runner; -s -w because a
-              # symbol table nobody has the source layout for is only size. -X stamps the
-              # tag into main.version, which the version verbs read; the linker ignores it
-              # silently for a tool that has no such var, which is why the assertion below
-              # runs the binaries rather than trusting the flag.
-              GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 go build \
-                -trimpath -ldflags "$LDFLAGS" \
-                -o "dist/${name}_${TAG}_${goos}_${goarch}${ext}" "./${dir%/}"
-              built=$((built + 1))
-            done
-          done
-          [ "$built" -gt 0 ] || { echo "cmd/ matched nothing: this release would ship an empty set"; exit 1; }
-          [ -f "dist/nova-bus_${TAG}_linux_amd64" ] || { echo "nova-bus is not in the shipped set"; exit 1; }
-          ls -l dist
+      - name: download every platform's binaries into one directory
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
 
       - name: every shipped binary reports the tag it was built from
         shell: bash
         run: |
           set -euo pipefail
-          # The runner is linux/amd64, so one artifact per tool is directly runnable here.
+          # This runner is linux/amd64, so one artifact per tool is directly runnable here.
           # This is the whole check on the -X stamp: the flag is silently ignored when the
           # symbol is missing or renamed, so a release could otherwise carry binaries that
           # answer `devel` while the release page says v1.2.3 -- and the one question this
           # verb exists to answer is which build somebody is running.
           #
-          # EVERY tool in the build loop above, not the two this step used to name. A stamp
+          # EVERY tool the build legs shipped, not the two this step used to name. A stamp
           # read by two binaries says nothing about the other nine, and since #107 it is
           # nova-wake's stamp that decides which nova-bus it accepts: an unstamped nova-wake
           # in a release refuses every nova-bus in that same release (#118).
@@ -187,21 +229,11 @@ jobs:
           # failure this step exists to catch, so it cannot also be what excuses a tool
           # from the check. It is exercised by ci.yml's release-dry-run, which proves both
           # outcomes and the rename on every pull request.
+          # An artifact does not keep the executable bit.
+          chmod +x dist/*_"${TAG}"_linux_amd64
           .github/scripts/assert-version-stamp.sh "$TAG" "dist/%s_${TAG}_linux_amd64"
 
-      - name: SHA256SUMS over the whole shipped set
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Written outside dist/ and moved in, so the file cannot list itself, and
-          # verified immediately: a checksum file nobody has ever checked is a file whose
-          # first reader is the person it was supposed to reassure.
-          (cd dist && sha256sum -- *) > SHA256SUMS
-          mv SHA256SUMS dist/
-          (cd dist && sha256sum -c SHA256SUMS)
-          cat dist/SHA256SUMS
-
-      - name: attach every artifact to the release draft, never to a published release
+      - name: SHA256SUMS over the whole shipped set, attached to the release draft, never to a published release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
@@ -270,4 +302,11 @@ jobs:
           # already established that $TAG is this tree's tag; the script's only question is
           # whether to upload to an existing draft, create a draft, or refuse a published
           # release in one line.
+          #
+          # THE SUMS ARE COMPUTED HERE, in the step that attaches them, over the bytes on this
+          # disk: release-sums.sh refuses a dist/ that is not exactly the shipped set (every
+          # cmd/*/ tool for every platform in release-targets, nothing else), writes
+          # SHA256SUMS outside dist/ and moves it in so it cannot list itself, and verifies it
+          # at once. What release-upload.sh attaches is that directory and nothing else.
+          .github/scripts/release-sums.sh "$TAG" dist
           .github/scripts/release-upload.sh

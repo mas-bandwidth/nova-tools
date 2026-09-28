@@ -1,0 +1,7 @@
+#nova-sprint-plan v1
+# control 1: a typo never registers a name
+policy	backpressure_missing	closed
+policy	ci_reruns	1
+policy	readers	1
+policy	absent_after	60m
+bench	zz	m1	2

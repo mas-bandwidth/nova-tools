@@ -226,8 +226,12 @@ func TestTheSkeletonIsADraftThisToolSends(t *testing.T) {
 		t.Fatalf("body = %q, want the placeholder", n.Body)
 	}
 	tab := loadBus(t, writeBus(t, fixture()))
-	if _, err := Prepare(tab, s, at("2026-09-09T12:34:56Z"), ""); err != nil {
-		t.Fatalf("the skeleton was refused by send: %v", err)
+	if _, err := Prepare(tab, s, at("2026-09-09T12:34:56Z"), ""); err == nil {
+		t.Fatal("the skeleton with unedited placeholder was accepted by Prepare")
+	}
+	withBody := strings.Replace(s, PlaceholderBody, "Here is the body of the note.", 1)
+	if _, err := Prepare(tab, withBody, at("2026-09-09T12:34:56Z"), ""); err != nil {
+		t.Fatalf("the skeleton with body was refused by send: %v", err)
 	}
 	// With no subject given, the placeholder is what stands there, and it is visibly a
 	// placeholder rather than a plausible subject somebody would send by accident.

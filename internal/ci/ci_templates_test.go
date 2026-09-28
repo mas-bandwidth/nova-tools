@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 )
 
 // ci_templates_test.go is the red-test contract of the templates checker in
@@ -60,6 +62,8 @@ func lineAt(t *testing.T, root, rel string, line int) string {
 // 1. A test carrying filepath.Join raw into a JSON literal is refused with its
 // file and line, and the remedy names the quote.
 func TestTemplatesRefusesRawFilepathJoin(t *testing.T) {
+	t.Parallel()
+
 	root := fixtureTree(t, "join.go.txt")
 	res, err := CheckTemplates(root, "")
 	if err != nil {
@@ -83,6 +87,8 @@ func TestTemplatesRefusesRawFilepathJoin(t *testing.T) {
 // 2. A C:\ path placed unquoted inside a JSON literal is refused, with the
 // worker description faked rather than read from disk.
 func TestTemplatesRefusesUnquotedOSPathLiteral(t *testing.T) {
+	t.Parallel()
+
 	root := fixtureTree(t, "literal.go.txt")
 	res, err := CheckTemplates(root, "")
 	if err != nil {
@@ -106,6 +112,8 @@ func TestTemplatesRefusesUnquotedOSPathLiteral(t *testing.T) {
 // 3. A path unquoted inside a text/template string is refused, with the
 // template rendered into a fake writer and no subprocess started.
 func TestTemplatesRefusesUnquotedPathInTemplate(t *testing.T) {
+	t.Parallel()
+
 	root := fixtureTree(t, "template.go.txt")
 	res, err := CheckTemplates(root, "")
 	if err != nil {
@@ -129,6 +137,8 @@ func TestTemplatesRefusesUnquotedPathInTemplate(t *testing.T) {
 // 4. A path wrapped in strconv.Quote is allowed, with the bench it guards
 // faked.
 func TestTemplatesAllowsStrconvQuote(t *testing.T) {
+	t.Parallel()
+
 	root := fixtureTree(t, "quoted.go.txt")
 	res, err := CheckTemplates(root, "")
 	if err != nil {
@@ -145,6 +155,8 @@ func TestTemplatesAllowsStrconvQuote(t *testing.T) {
 // 5. A path wrapped in oneline.Quote is allowed, with the network it reports
 // on faked.
 func TestTemplatesAllowsOnelineQuote(t *testing.T) {
+	t.Parallel()
+
 	root := fixtureTree(t, "oneline_quoted.go.txt")
 	res, err := CheckTemplates(root, "")
 	if err != nil {
@@ -159,6 +171,8 @@ func TestTemplatesAllowsOnelineQuote(t *testing.T) {
 // entry that names no offender on the tree is a place to park a path, and the
 // remedy says the file only shrinks.
 func TestTemplatesAllowlistGrowsRefused(t *testing.T) {
+	t.Parallel()
+
 	root := emptyTree(t)
 	allow := filepath.Join(t.TempDir(), "template-paths-allowlist.txt")
 
@@ -203,6 +217,8 @@ func TestTemplatesAllowlistGrowsRefused(t *testing.T) {
 // the OK line, the refusal line and the closing FAIL line, and the exit 2 a
 // refusal costs.
 func TestTemplatesOutputMatchesTheSpec(t *testing.T) {
+	t.Parallel()
+
 	root := fixtureTree(t, "join.go.txt")
 	res, err := CheckTemplates(root, "")
 	if err != nil {
@@ -234,6 +250,8 @@ func TestTemplatesOutputMatchesTheSpec(t *testing.T) {
 // TestTemplatesVerbLineMatchesTheSpec pins the help line the class test is
 // entered under, word for word, to the section that prints it.
 func TestTemplatesVerbLineMatchesTheSpec(t *testing.T) {
+	t.Parallel()
+
 	spec := readFile(t, filepath.Join(repoRoot(t), "docs", "SPEC-CI.md"))
 	if !strings.Contains(spec, TemplatesVerbLine) {
 		t.Errorf("the templates verb line is not in docs/SPEC-CI.md:\n%s", TemplatesVerbLine)
@@ -245,6 +263,8 @@ func TestTemplatesVerbLineMatchesTheSpec(t *testing.T) {
 // pass are the ones the allowlist already names. The count is the truth about
 // the tree whether or not the lines printed.
 func TestNoUnquotedPathsInTemplateLiterals(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	allow := filepath.Join(root, "internal", "ci", "testdata", "template-paths-allowlist.txt")
 	res, err := CheckTemplates(root, allow)
@@ -255,7 +275,10 @@ func TestNoUnquotedPathsInTemplateLiterals(t *testing.T) {
 	for _, f := range res.Findings {
 		t.Error(f.Render())
 	}
-	for _, f := range res.Stale {
-		t.Error(f.Render())
+	// The stale rows come from the one helper, which under NOVA_CI_UPDATE=1
+	// drops them from the file instead (nova-tools#4339).
+	list := loadAllowlist(t, allow, FileLineListOptions)
+	for _, row := range allowlist.Check(t, list, res.Measured).Stale {
+		t.Errorf("%s:%d: %q names no offender on the tree; %s", allow, row.Line, row.Text, TemplateRemedyAllow)
 	}
 }

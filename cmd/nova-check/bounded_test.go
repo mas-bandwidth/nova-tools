@@ -36,6 +36,8 @@ func countLines(s string) int {
 }
 
 func TestLinksCapsFindingsAndAlwaysPrintsTheCount(t *testing.T) {
+	t.Parallel()
+
 	dir := largeSelf(t, 500)
 	exit, stdout, stderr := runCheck(t, "links", "--dir", dir)
 	if exit != 1 {
@@ -58,6 +60,8 @@ func TestLinksCapsFindingsAndAlwaysPrintsTheCount(t *testing.T) {
 }
 
 func TestNoCodeCapsFindingsAndAlwaysPrintsTheCount(t *testing.T) {
+	t.Parallel()
+
 	dir := largeSelf(t, 500)
 	exit, _, stderr := runCheck(t, "nocode", "--dir", dir)
 	if exit != 1 {
@@ -77,6 +81,8 @@ func TestNoCodeCapsFindingsAndAlwaysPrintsTheCount(t *testing.T) {
 // THE FIRST-RUN VERB. Uncapped it was 1,400 lines for two lines of verdict — the most
 // expensive thing a stranger could type, on the run where they know the least.
 func TestQuickstartInheritsTheCaps(t *testing.T) {
+	t.Parallel()
+
 	dir := largeSelf(t, 500)
 	exit, stdout, stderr := runCheck(t, "quickstart", "--dir", dir)
 	if exit != 1 {
@@ -96,6 +102,8 @@ func TestQuickstartInheritsTheCaps(t *testing.T) {
 
 // The remedy has to be true, which means running it.
 func TestFailMaxWidensAndZeroPrintsAll(t *testing.T) {
+	t.Parallel()
+
 	dir := largeSelf(t, 500)
 	_, _, stderr := runCheck(t, "links", "--dir", dir, "--fail-max", "5")
 	if got := countLines(stderr); got != 7 {
@@ -116,6 +124,8 @@ func TestFailMaxWidensAndZeroPrintsAll(t *testing.T) {
 }
 
 func TestRefusesANegativeCeiling(t *testing.T) {
+	t.Parallel()
+
 	dir := largeSelf(t, 2)
 	for _, verb := range []string{"links", "nocode", "quickstart"} {
 		exit, _, stderr := runCheck(t, verb, "--dir", dir, "--fail-max", "-1")
@@ -127,6 +137,8 @@ func TestRefusesANegativeCeiling(t *testing.T) {
 
 // A flag typo used to cost the whole 38-line banner.
 func TestAFlagTypoIsOneLine(t *testing.T) {
+	t.Parallel()
+
 	for _, args := range [][]string{
 		{"links", "--diir", "x"},
 		{"nocode", "--diir", "x"},

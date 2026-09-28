@@ -37,6 +37,13 @@ const LockWait = 10 * time.Second
 // wait is BOUNDED and the refusal is the point.
 const lockPoll = 25 * time.Millisecond
 
+// Now is the lock wait's clock, named here so a test can hold the clock still: a verb
+// that must exercise its own --timeout then advances this clock instead of holding wall
+// time, which is what keeps a lock refusal test fast under load (a fixed wall-clock wait
+// asserts the machine, not the code). The default is the real clock; production never
+// changes it. The wait between polls is the package's Sleep seam in records.go.
+var Now = time.Now
+
 // Lock takes the kernel lock on path, waiting up to wait, and returns the release. The
 // release is safe to call more than once.
 //
@@ -45,11 +52,19 @@ const lockPoll = 25 * time.Millisecond
 // file holding a pid whose process is gone is a file, and the kernel is what says whether
 // anybody holds this.
 func Lock(path string, wait time.Duration) (func(), error) {
+	return lockWait(path, wait, Now, Sleep)
+}
+
+// lockWait is Lock with its clock injected: now says when the bounded wait has run out and
+// sleep is the wait between takes. A test that must run the wait to its end advances the
+// injected clock through sleep instead of holding the machine's clock, so the bound is
+// exercised in full with no wall time and no assertion against elapsed seconds.
+func lockWait(path string, wait time.Duration, now func() time.Time, sleep func(time.Duration)) (func(), error) {
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("the lock at %s could not be opened: %w", path, err)
 	}
-	deadline := time.Now().Add(wait)
+	deadline := now().Add(wait)
 	for {
 		ok, lockErr := tryLockFile(f)
 		if lockErr != nil {
@@ -68,12 +83,12 @@ func Lock(path string, wait time.Duration) (func(), error) {
 				f.Close()
 			}, nil
 		}
-		if !time.Now().Before(deadline) {
+		if !now().Before(deadline) {
 			held := holder(path)
 			f.Close()
 			return nil, &HeldError{Path: path, Holder: held, Wait: wait}
 		}
-		time.Sleep(jitter(lockPoll))
+		sleep(jitter(lockPoll))
 	}
 }
 

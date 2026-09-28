@@ -8,6 +8,8 @@ import (
 )
 
 func TestVersionStampAndUsage(t *testing.T) {
+	t.Parallel()
+
 	for _, verb := range []string{"version", "--version"} {
 		var out, err bytes.Buffer
 		if code := update.Main("nova-update", []string{verb}, "v91.2.3", &out, &err); code != 0 || !strings.HasPrefix(out.String(), "nova-update v91.2.3 ") {

@@ -1,0 +1,15 @@
+{
+  "id": "sandbox:lock-reap",
+  "kind": "new-verb",
+  "files": 3,
+  "packages": 1,
+  "lanes": 1,
+  "lane_owner": "sandbox",
+  "guard": false,
+  "secrets": false,
+  "touches": [
+    "sandbox"
+  ],
+  "attempts": [],
+  "fresh_take": false
+}

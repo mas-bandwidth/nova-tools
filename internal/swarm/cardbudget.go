@@ -40,7 +40,20 @@ func CardCacheRead(u ProviderUsage) (int, bool) {
 // rows/lines), or the usage row count where the log has fewer. A missing log
 // answers the usage row count; both missing is zero turns.
 func CountCardTurns(jobDir string, u ProviderUsage) int {
-	n := countAssistantLines(filepath.Join(jobDir, "harness.log"))
+	return CountCardTurnsIn(filepath.Join(jobDir, "harness.log"), u)
+}
+
+// CountCardTurnsIn is the same count against a NAMED log, because the two routes keep the
+// harness's words in two different files and rule 13d says which is which: "Turns are
+// counted as rule 13b counts them, with `<job>/harness-output.log` as the log, since
+// `native` never writes `harness.log`."
+//
+// THE NAMES ARE NOT INTERCHANGEABLE. `harness.log` has two owners on the native route
+// already -- a batch pins its runner's stdout to it, which is where the NATIVE OK line
+// lands -- so counting "assistant" in it would count the machinery's own lines and not the
+// model's turns. `harness-output.log` is the capture with one writer (issue #608).
+func CountCardTurnsIn(logPath string, u ProviderUsage) int {
+	n := countAssistantLines(logPath)
 	if u.Turns > n {
 		n = u.Turns
 	}

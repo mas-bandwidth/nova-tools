@@ -12,6 +12,8 @@ import (
 // out of field two without knowing which tool wrote it -- and asserting only that the
 // output "contains" the version would pass over a line broken in two.
 func TestVersionLineShape(t *testing.T) {
+	t.Parallel()
+
 	var stdout, stderr bytes.Buffer
 	if code := cmdVersion(nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit %d, want 0\nstderr: %s", code, stderr.String())
@@ -67,6 +69,8 @@ func TestVersionLineHoldsWhateverTheStampContains(t *testing.T) {
 
 // Both spellings reach the verb through the dispatch, from the day the verb lands.
 func TestVersionVerbIsReachableFromTheDispatch(t *testing.T) {
+	t.Parallel()
+
 	for _, verb := range []string{"version", "--version"} {
 		t.Run(verb, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
@@ -84,6 +88,8 @@ func TestVersionVerbIsReachableFromTheDispatch(t *testing.T) {
 }
 
 func TestVersionRefusesFlagsAndArguments(t *testing.T) {
+	t.Parallel()
+
 	for _, args := range [][]string{{"--budget", "60"}, {"extra"}} {
 		var stdout, stderr bytes.Buffer
 		if code := cmdVersion(args, &stdout, &stderr); code != 2 {
@@ -100,6 +106,8 @@ func TestVersionRefusesFlagsAndArguments(t *testing.T) {
 
 // The banner names it, because a verb a reader cannot find is a verb that answers nobody.
 func TestVersionIsInTheBanner(t *testing.T) {
+	t.Parallel()
+
 	if !strings.Contains(usage, "nova-ci version") {
 		t.Error("the usage block does not list the version verb")
 	}

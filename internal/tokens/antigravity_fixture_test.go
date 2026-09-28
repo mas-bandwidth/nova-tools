@@ -68,6 +68,8 @@ type ObservationEnvelopeFixture struct {
 }
 
 func TestAntigravitySyntheticFixturesAndJoin(t *testing.T) {
+	t.Parallel()
+
 	fixtureDir := filepath.Join("..", "..", "testdata", "tokens", "antigravity")
 
 	// 1. Read SQLite rows fixture
@@ -229,6 +231,8 @@ func TestAntigravitySyntheticFixturesAndJoin(t *testing.T) {
 
 // TestOneToOneJoinRefusesDuplicates explicitly witnesses that duplicate keys are rejected.
 func TestOneToOneJoinRefusesDuplicates(t *testing.T) {
+	t.Parallel()
+
 	lines := []string{
 		`{"step_index": 1, "created_at": "1999-01-01T00:00:00Z"}`,
 		`{"step_index": 1, "created_at": "2026-09-12T12:00:01Z"}`,
@@ -256,6 +260,8 @@ func TestOneToOneJoinRefusesDuplicates(t *testing.T) {
 
 // TestMalformedProtobufBlobsAreRefused validates robustness on invalid wire bytes.
 func TestMalformedProtobufBlobsAreRefused(t *testing.T) {
+	t.Parallel()
+
 	fixtureDir := filepath.Join("..", "..", "testdata", "tokens", "antigravity")
 	data, err := os.ReadFile(filepath.Join(fixtureDir, "malformed_blobs.json"))
 	if err != nil {
@@ -288,6 +294,8 @@ func TestMalformedProtobufBlobsAreRefused(t *testing.T) {
 // TestDecodeAntigravityMatchesExpectedRecords tests that DecodeAntigravityFromJSON
 // reproduces the expected records with identical content IDs and observations.
 func TestDecodeAntigravityMatchesExpectedRecords(t *testing.T) {
+	t.Parallel()
+
 	fixtureDir := filepath.Join("..", "..", "testdata", "tokens", "antigravity")
 
 	sqliteJSON, err := os.ReadFile(filepath.Join(fixtureDir, "sqlite_rows.json"))
@@ -383,6 +391,8 @@ func TestDecodeAntigravityMatchesExpectedRecords(t *testing.T) {
 
 // TestDecodeAntigravityWithSealedMapping validates decoding under the sealed mapping manifest.
 func TestDecodeAntigravityWithSealedMapping(t *testing.T) {
+	t.Parallel()
+
 	fixtureDir := filepath.Join("..", "..", "testdata", "tokens", "antigravity")
 
 	sqliteJSON, err := os.ReadFile(filepath.Join(fixtureDir, "sqlite_rows.json"))
@@ -433,6 +443,8 @@ func TestDecodeAntigravityWithSealedMapping(t *testing.T) {
 
 // TestDecodeAntigravityRefusals tests defensive refusal conditions.
 func TestDecodeAntigravityRefusals(t *testing.T) {
+	t.Parallel()
+
 	opts := AntigravityOptions{
 		MappingID: "sha256:1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b",
 	}

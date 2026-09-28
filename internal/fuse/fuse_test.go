@@ -41,6 +41,8 @@ func write(t *testing.T, path, content string) {
 // was the file or its parent directory; the collapse is accepted -- see note 1 in the
 // package comment -- and pinned separately in cmd/nova-fuse's tests.)
 func TestAbsentBoxIsVerifiedClearNotAnError(t *testing.T) {
+	t.Parallel()
+
 	b, err := ReadBox(boxIn(t))
 	if err != nil {
 		t.Fatalf("absent box must be VERIFIED CLEAR, got error: %v", err)
@@ -57,6 +59,8 @@ func TestAbsentBoxIsVerifiedClearNotAnError(t *testing.T) {
 // matters: an exists-style probe answers false both when the file is absent AND when it
 // cannot be read, so a permissions change would read as "nothing blown".
 func TestUnreadableBoxIsAnErrorNotClear(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("windows: chmod 0 does not refuse reads, so this property cannot be observed here")
 	}
@@ -80,6 +84,8 @@ func TestUnreadableBoxIsAnErrorNotClear(t *testing.T) {
 // which callers treat as BLOWN. Reaching the safe answer by a crash deep inside a caller
 // is not a design; refusing at the read is.
 func TestMalformedIsUnreadable(t *testing.T) {
+	t.Parallel()
+
 	for name, content := range map[string]string{
 		"a JSON array":              `[]`,
 		"a bare string":             `"lockdown"`,
@@ -103,6 +109,8 @@ func TestMalformedIsUnreadable(t *testing.T) {
 // your person could plausibly hand-edit into existence, and it is READABLE -- so it must
 // not hand back a nil map that panics the first caller to write to it.
 func TestNullQuarantineStillYieldsAUsableMap(t *testing.T) {
+	t.Parallel()
+
 	path := boxIn(t)
 	write(t, path, `{"lockdown":null,"quarantine":null}`)
 	b, err := ReadBox(path)
@@ -120,6 +128,8 @@ func TestNullQuarantineStillYieldsAUsableMap(t *testing.T) {
 // TestSurfaceMatchingIgnoresCaseAndSpace pins the fail-OPEN reached by a capital letter:
 // quarantine "Discord" then check "discord" must not answer CLEAR.
 func TestSurfaceMatchingIgnoresCaseAndSpace(t *testing.T) {
+	t.Parallel()
+
 	b := Box{Quarantine: map[string]Fuse{"discord": {At: "t", Reason: "many the same way"}}}
 	for _, probe := range []string{"discord", "Discord", "DISCORD", "  discord  ", "\tDiscord\n"} {
 		if _, _, ok := b.Quarantined(probe); !ok {
@@ -131,6 +141,8 @@ func TestSurfaceMatchingIgnoresCaseAndSpace(t *testing.T) {
 // TestQuarantinedReturnsTheStoredSpelling so a refusal can quote the file rather than the
 // caller's spelling of it. Quoting the caller back at themselves hides a mismatch.
 func TestQuarantinedReturnsTheStoredSpelling(t *testing.T) {
+	t.Parallel()
+
 	b := Box{Quarantine: map[string]Fuse{"Discord": {Reason: "r"}}}
 	name, _, ok := b.Quarantined("discord")
 	if !ok {
@@ -145,6 +157,8 @@ func TestQuarantinedReturnsTheStoredSpelling(t *testing.T) {
 // no lockdown. If an empty string matched anything, a bare check would report a quarantine
 // it never looked for -- a claim outrunning the measurement.
 func TestEmptySurfaceMatchesNothing(t *testing.T) {
+	t.Parallel()
+
 	b := Box{Quarantine: map[string]Fuse{"discord": {Reason: "r"}, "": {Reason: "r"}}}
 	for _, probe := range []string{"", "   ", "\t"} {
 		if _, _, ok := b.Quarantined(probe); ok {
@@ -156,6 +170,8 @@ func TestEmptySurfaceMatchesNothing(t *testing.T) {
 // TestQuarantinedIsDeterministicAcrossFoldEquivalentKeys: two stored spellings of one
 // surface must always yield the SAME one, or every caller's refusal text is a coin flip.
 func TestQuarantinedIsDeterministicAcrossFoldEquivalentKeys(t *testing.T) {
+	t.Parallel()
+
 	b := Box{Quarantine: map[string]Fuse{
 		"dis cord":  {At: "t", Reason: "one"},
 		"dis\tcord": {At: "t", Reason: "two"},
@@ -175,6 +191,8 @@ func TestQuarantinedIsDeterministicAcrossFoldEquivalentKeys(t *testing.T) {
 // different order every run, and a status output that reorders itself between runs is one
 // a reader stops diffing.
 func TestSurfacesAreSorted(t *testing.T) {
+	t.Parallel()
+
 	b := Box{Quarantine: map[string]Fuse{"zulip": {}, "discord": {}, "matrix": {}}}
 	got := strings.Join(b.Surfaces(), ",")
 	if got != "discord,matrix,zulip" {
@@ -187,6 +205,8 @@ func TestSurfacesAreSorted(t *testing.T) {
 // TestWriteThenReadRoundTrips is the control. A store that cannot round-trip its own data
 // is broken in a way no adversarial test would report.
 func TestWriteThenReadRoundTrips(t *testing.T) {
+	t.Parallel()
+
 	path := boxIn(t)
 	in := Box{
 		Lockdown:   &Fuse{At: "2026-08-03T00:00:00Z", Reason: "suspected compromise"},
@@ -211,6 +231,8 @@ func TestWriteThenReadRoundTrips(t *testing.T) {
 // box. A litter of .fuses-*.tmp is the only trace a failed write leaves, so it must be
 // absent on the success path or it means nothing on the failure path.
 func TestWriteLeavesNoTempLitter(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "fuses.json")
 	if err := WriteBox(path, Box{}); err != nil {
@@ -230,6 +252,8 @@ func TestWriteLeavesNoTempLitter(t *testing.T) {
 // TestWrittenBoxIsWorldReadable. CreateTemp makes 0600; the box is not a secret and other
 // tools must be able to read it. A fuse nobody else can see is a fuse that stops nothing.
 func TestWrittenBoxIsWorldReadable(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("windows: unix permission bits are not faithfully reported here")
 	}
@@ -249,6 +273,8 @@ func TestWrittenBoxIsWorldReadable(t *testing.T) {
 // TestWriteNormalisesNilQuarantine so a box written from a zero value reads back as an
 // empty map rather than a JSON null that the next reader has to special-case.
 func TestWriteNormalisesNilQuarantine(t *testing.T) {
+	t.Parallel()
+
 	path := boxIn(t)
 	if err := WriteBox(path, Box{}); err != nil {
 		t.Fatalf("write: %v", err)
@@ -274,6 +300,8 @@ func TestWriteNormalisesNilQuarantine(t *testing.T) {
 // its own failure -- so a lift removes every entry the surface matches, and returns them
 // for announcing.
 func TestLiftQuarantineRemovesEveryNormalizedMatch(t *testing.T) {
+	t.Parallel()
+
 	b := Box{Quarantine: map[string]Fuse{
 		"Discord":   {At: "t1", Reason: "r1"},
 		" discord ": {At: "t2", Reason: "r2"},
@@ -300,6 +328,8 @@ func TestLiftQuarantineRemovesEveryNormalizedMatch(t *testing.T) {
 // TestLiftQuarantineRemovesNothingWhenNothingMatches: a miss is reported as a miss, and
 // the box is untouched -- the caller decides what to say about it.
 func TestLiftQuarantineRemovesNothingWhenNothingMatches(t *testing.T) {
+	t.Parallel()
+
 	b := Box{Quarantine: map[string]Fuse{"bsky": {Reason: "r"}}}
 	if removed := b.LiftQuarantine("discord"); len(removed) != 0 {
 		t.Errorf("nothing matches, so nothing may be removed: %v", removed)
@@ -313,6 +343,8 @@ func TestLiftQuarantineRemovesNothingWhenNothingMatches(t *testing.T) {
 // matches nothing, so it must also LIFT nothing -- an accidental bare lift that emptied
 // the box would be a fail-open reached by a missing argument.
 func TestLiftQuarantineEmptySurfaceRemovesNothing(t *testing.T) {
+	t.Parallel()
+
 	b := Box{Quarantine: map[string]Fuse{"": {Reason: "r"}, "discord": {Reason: "r"}}}
 	for _, probe := range []string{"", "   ", "\t"} {
 		if removed := b.LiftQuarantine(probe); len(removed) != 0 {
@@ -330,6 +362,8 @@ func TestLiftQuarantineEmptySurfaceRemovesNothing(t *testing.T) {
 // a bad hand-edit, or something worse -- and blowing an emergency power must not destroy
 // it.
 func TestPreserveUnreadableKeepsTheBytes(t *testing.T) {
+	t.Parallel()
+
 	path := boxIn(t)
 	write(t, path, `{"lockdown":{"at":`)
 	dst, err := PreserveUnreadable(path)
@@ -352,6 +386,8 @@ func TestPreserveUnreadableKeepsTheBytes(t *testing.T) {
 // and reporting that they could not be saved are both better than silence, so the caller
 // must get a name to print either way.
 func TestPreserveUnreadableNamesTheDestinationEvenWhenItFails(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "does-not-exist.json")
 	dst, err := PreserveUnreadable(path)
 	if err == nil {
@@ -370,6 +406,8 @@ func TestPreserveUnreadableNamesTheDestinationEvenWhenItFails(t *testing.T) {
 // character in a reason is what breaks it -- a newline forges a second event, an ESC
 // repaints an operator's terminal. Escaping is done at PRINT time and covers both.
 func TestOneLineEscapesEveryControlCharacter(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name string
 		in   string
@@ -421,6 +459,8 @@ func TestOneLineEscapesEveryControlCharacter(t *testing.T) {
 // not a fuse. Folding is not the defense (a box written by another hand still arrives with
 // anything in it); OneLine is.
 func TestFoldCollapsesControlCharactersToSpaces(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct{ in, want string }{
 		{"line one\nline two", "line one line two"},
 		{"  spaced   out  ", "spaced out"},
@@ -441,6 +481,8 @@ func TestFoldCollapsesControlCharactersToSpaces(t *testing.T) {
 // refuse on more spellings and makes `lift quarantine` remove more of them. Both
 // directions, deliberately; see note 4.
 func TestSurfaceFoldsControlCharactersOutOfAName(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct{ in, want string }{
 		{"\x1bDiscord\n", "discord"},
 		{"dis\ncord", "dis cord"},

@@ -9,6 +9,8 @@ import (
 // TestProviderLaunchFailureReadsTheProviderTail: the one classifier both paths ask, over
 // the tails a provider prints for a server error, and the ref it carries (issue #900).
 func TestProviderLaunchFailureReadsTheProviderTail(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		tail    string
 		wantRef string
@@ -32,6 +34,8 @@ func TestProviderLaunchFailureReadsTheProviderTail(t *testing.T) {
 // TestLaunchGraceDefaultAndOverride: the worker description's launch_grace wins, and a
 // description naming none takes the fifteen-second default.
 func TestLaunchGraceDefaultAndOverride(t *testing.T) {
+	t.Parallel()
+
 	if got := LaunchGrace(Worker{}); got != DefaultLaunchGrace {
 		t.Errorf("a description naming no grace takes the default %s, got %s", DefaultLaunchGrace, got)
 	}

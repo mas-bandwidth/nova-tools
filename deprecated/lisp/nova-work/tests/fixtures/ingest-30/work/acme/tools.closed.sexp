@@ -1,0 +1,5 @@
+(:key "6:gh/acme/tools/3" :kind :settle :node "gh/acme/tools/3" :rev 6 :disposition :done :reason "intake: closed, completed" :already-closed (:absent) :stamp "2026-09-22T06:00:00Z" :revived "-" :settles 1)
+(:key "7:gh/acme/tools/4" :kind :settle :node "gh/acme/tools/4" :rev 7 :disposition :cancelled :reason "intake: closed, not_planned" :already-closed (:absent) :stamp "2026-09-22T07:00:00Z" :revived "-" :settles 1)
+(:key "8:gh/acme/tools/5" :kind :settle :node "gh/acme/tools/5" :rev 8 :disposition :done :reason "intake: closed, completed" :already-closed (:absent) :stamp "2026-09-22T08:00:00Z" :revived "-" :settles 1)
+(:key "9:gh/acme/tools/5" :kind :revive :node "gh/acme/tools/5" :rev 9 :disposition (:absent) :stamp "2026-09-22T09:00:00Z" :revived 9 :settles 1)
+(:key "10:gh/acme/tools/7" :kind :settle :node "gh/acme/tools/7" :rev 10 :disposition :done :reason "intake: closed, completed" :already-closed (:absent) :stamp "2026-09-22T10:00:00Z" :revived "-" :settles 1)

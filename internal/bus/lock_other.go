@@ -5,7 +5,6 @@ package bus
 import (
 	"errors"
 	"os"
-	"path/filepath"
 )
 
 // The lock, where there is no flock and not Windows: generic exclusive create of a sibling file.
@@ -20,12 +19,21 @@ func tryLockFile(f *os.File) (bool, bool, error) {
 	return false, false, err
 }
 
+// platformTransientLockCollision is false on platforms whose filesystem does not
+// put a just-released file into a delete-pending state.
+func platformTransientLockCollision(error) bool { return false }
+
+// processAlive cannot be answered where there is no process signal, and this
+// build would rather leave a stale sentinel for an operator than clear a lock
+// whose holder it cannot prove is gone.
+func processAlive(pid int) bool { return true }
+
 func unlockFile(f *os.File) {
-	_ = os.Remove(sentinel(f))
+	_ = removeLockFile(sentinel(f))
 }
 
 // sentinel is the file whose existence means the lock is held, beside the lock file the
 // caller opened.
 func sentinel(f *os.File) string {
-	return filepath.Clean(f.Name()) + ".held"
+	return sentinelPath(f.Name())
 }

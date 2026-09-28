@@ -1,6 +1,8 @@
 package update
 
 import (
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
+
 	"bufio"
 	"flag"
 	"fmt"
@@ -33,7 +35,7 @@ func readSnapshotFile(path string) (map[string]snapRow, error) {
 		if len(f) != 4 {
 			return nil, fmt.Errorf("a row has %d fields, not 4", len(f))
 		}
-		rows[f[0]] = snapRow{f[0], f[1], f[2], f[3]}
+		rows[f[0]] = snapRow{name: f[0], stamp: f[1], revision: f[2], platform: f[3]}
 	}
 	if err := sc.Err(); err != nil {
 		return nil, fmt.Errorf("cannot read")
@@ -50,7 +52,7 @@ func diffVerb(name string, args []string, out, errs io.Writer) int {
 	var from, to string
 	fs.StringVar(&from, "from", "", "snapshot to compare from")
 	fs.StringVar(&to, "to", "", "snapshot to compare to")
-	if err := fs.Parse(interspersed(fs, args)); err != nil {
+	if err := verbflag.Parse(fs, interspersed(fs, args)); err != nil {
 		return refusal(errs, "DIFF", fmt.Errorf("%s (run %s help)", err, name))
 	}
 	var missing []string

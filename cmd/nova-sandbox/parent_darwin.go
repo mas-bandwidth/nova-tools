@@ -29,9 +29,17 @@ func parentExecutable(pid int) (string, error) {
 		pathInfoMaxLen = 4 * 1024
 	)
 	buf := make([]byte, pathInfoMaxLen)
-	_, _, errno := syscall.Syscall6(sysProcInfo, callPidInfo, uintptr(pid), flavorPidPath, 0,
+	r1, _, errno := syscall.Syscall6(sysProcInfo, callPidInfo, uintptr(pid), flavorPidPath, 0,
 		uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
-	if errno != 0 {
+	// BOTH halves of the answer are checked. Measured on darwin: the call returns 0 and
+	// fills the buffer on success, and -1 with an errno for a pid that is not there (a dead
+	// child, a reaped one, pid 0, a negative number: ESRCH every time). Reading only the
+	// errno trusts a caller of a raw syscall to have set one, and a guard that trusts an
+	// unchecked return has already passed.
+	if r1 == ^uintptr(0) || errno != 0 {
+		if errno == 0 {
+			return "", fmt.Errorf("proc_pidpath(%d) failed", pid)
+		}
 		return "", fmt.Errorf("proc_pidpath(%d): %w", pid, errno)
 	}
 	n := bytes.IndexByte(buf, 0)

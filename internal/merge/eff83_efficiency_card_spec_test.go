@@ -14,7 +14,9 @@ import (
 // the way TestCrossToolEfficiencyCardNamesItsRules reads its section: the spec
 // is the one place the contract is written.
 func TestNovaMergeEfficiencyCardNamesItsRules(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-MERGE.md"))
+	t.Parallel()
+
+	raw, err := os.ReadFile(filepath.Join("..", "..", "deprecated", "docs", "SPEC-MERGE.md"))
 	if err != nil {
 		t.Fatalf("the efficiency card's contract is the spec's: %s", err)
 	}

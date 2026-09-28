@@ -43,8 +43,11 @@ func (p *Pass) classify(e *Entry, baseSHA string, res *Result) Classification {
 		}
 	}
 
+	// the pull request the reader rule names its author from (ReaderAuthor); zero for a branch
+	var hostPR PR
 	if e.IsPR() {
 		pr, err := p.Host.PR(e.PR)
+		hostPR = pr
 		if err != nil {
 			c.State, c.Detail = StateUnknown, oneline.Cap(err.Error(), oneline.TailBytes)
 			fmt.Fprintf(p.Stderr, "RUN STOPPED entry=%s: %s\n", oneline.Field(e.ID()), oneline.Escape(c.Detail))
@@ -101,7 +104,7 @@ func (p *Pass) classify(e *Entry, baseSHA string, res *Result) Classification {
 	}
 	c.Checks = checks
 	e.Green, e.Pending, e.Red = checks.Green, checks.Pending, checks.Red
-	c.Reads = EvaluateReads(e, c.Author)
+	c.Reads = EvaluateReads(e, ReaderAuthor(hostPR, nil))
 	c.Gate = StandOfGates(p.State.Gates, e.ID(), e.OID, baseSHA)
 
 	// ONE STATEMENT of the decision, shared with dry-run and status (lesson 113: a

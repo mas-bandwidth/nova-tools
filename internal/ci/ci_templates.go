@@ -1,10 +1,8 @@
 package ci
 
 import (
-	"bufio"
 	"fmt"
 	"go/ast"
-	"go/parser"
 	"go/token"
 	"os"
 	"path/filepath"
@@ -61,6 +59,9 @@ type TemplatesResult struct {
 	Allowlisted int
 	Findings    []TemplateFinding
 	Stale       []TemplateFinding
+	// Measured is the set the allowlist must hold (allowlist.Check): the key of
+	// every row a finding used and of every finding no row allows.
+	Measured map[string]bool
 }
 
 // Refused is the number of lines the run would print: offenders plus stale
@@ -94,13 +95,13 @@ func (r TemplatesResult) ExitCode() int {
 // as offenders.
 func CheckTemplates(root, allowlistPath string) (TemplatesResult, error) {
 	var res TemplatesResult
-	entries, err := readTemplateAllowlist(allowlistPath)
+	entries, err := readWaitAllowlist(allowlistPath)
 	if err != nil {
 		return res, err
 	}
 	matched := make([]bool, len(entries))
 
-	err = filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+	err = walkSourceDir(root, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -109,12 +110,16 @@ func CheckTemplates(root, allowlistPath string) (TemplatesResult, error) {
 			case "testdata", ".git", "vendor":
 				return filepath.SkipDir
 			}
+			// deprecated/ is out of scope of the testing drive (Glenn 2026-09-27); see deprecated/README.md
+			if isDeprecatedDir(root, path) {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if !strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
-		raw, readErr := os.ReadFile(path)
+		raw, readErr := readSourceFile(path)
 		if readErr != nil {
 			return readErr
 		}
@@ -145,64 +150,21 @@ func CheckTemplates(root, allowlistPath string) (TemplatesResult, error) {
 		remaining = append(remaining, f)
 	}
 	res.Findings = remaining
+	res.Measured = usedRowKeys(entries, matched)
 	for i, e := range entries {
 		if matched[i] {
 			continue
 		}
 		res.Stale = append(res.Stale, TemplateFinding{File: e.file, Line: e.line, Kind: "allowlist", Remedy: TemplateRemedyAllow})
 	}
+	for _, f := range res.Findings {
+		res.Measured[FileLineKey(f.File, f.Line, f.Kind)] = true
+	}
 	return res, nil
 }
 
-// templateAllow is one allowlist row: the offender it names. The reason and the
-// date that follow are for a reader and are not matched on.
-type templateAllow struct {
-	file string
-	line int
-	kind string
-}
-
-// readTemplateAllowlist parses `file:line kind date reason` rows, ignoring
-// blank lines and # comments. A missing file is an empty allowlist, never an
-// error: a tree with nothing parked in it is the goal.
-func readTemplateAllowlist(path string) ([]templateAllow, error) {
-	if path == "" {
-		return nil, nil
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	defer f.Close()
-	var out []templateAllow
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-		colon := strings.LastIndex(fields[0], ":")
-		if colon < 0 {
-			continue
-		}
-		n, convErr := strconv.Atoi(fields[0][colon+1:])
-		if convErr != nil {
-			continue
-		}
-		out = append(out, templateAllow{file: fields[0][:colon], line: n, kind: fields[1]})
-	}
-	return out, sc.Err()
-}
-
 // matchTemplateAllow returns the index of the entry naming this finding, or -1.
-func matchTemplateAllow(entries []templateAllow, f TemplateFinding) int {
+func matchTemplateAllow(entries []waitAllow, f TemplateFinding) int {
 	for i, e := range entries {
 		if e.file == f.File && e.line == f.Line && e.kind == f.Kind {
 			return i
@@ -216,8 +178,7 @@ func matchTemplateAllow(entries []templateAllow, f TemplateFinding) int {
 // Go cannot carry the shape this check reads, and a fixture deliberately
 // holding a broken literal is not the offender itself.
 func scanTemplateFile(rel string, src []byte) ([]TemplateFinding, bool) {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, rel, src, 0)
+	fset, file, err := parseSource(rel, src, 0)
 	if err != nil {
 		return nil, false
 	}

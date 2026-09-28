@@ -25,7 +25,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 var (
@@ -47,7 +49,9 @@ func walledTool(t *testing.T) string {
 			return
 		}
 		builtTool = filepath.Join(dir, "nova-sandbox")
-		out, err := exec.Command("go", "build", "-o", builtTool, ".").CombinedOutput()
+		build := exec.Command("go", "build", "-o", builtTool, ".")
+		build.Env = goenv.Clean(os.Environ())
+		out, err := build.CombinedOutput()
 		if err != nil {
 			buildErr = fmt.Errorf("go build: %v: %s", err, out)
 		}
@@ -97,6 +101,8 @@ func needLandlock(t *testing.T) {
 // The wall's whole reason: a worker that reads untrusted input all day cannot write
 // outside the job it was given.
 func TestLandlockWallRefusesWriteOutsideJob(t *testing.T) {
+	t.Parallel()
+
 	needLandlock(t)
 	j := newJob(t)
 	outside := filepath.Join(j.outside, "escaped")
@@ -136,6 +142,8 @@ func TestLandlockWallRefusesWriteOutsideJob(t *testing.T) {
 // test is that same red; on a kernel at abi 4 (the fleet's linux bench) it takes the other
 // branch and asserts the line is unchanged.
 func TestLandlockWallClampsAnABIAboveTheTable(t *testing.T) {
+	t.Parallel()
+
 	needLandlock(t)
 	j := newJob(t)
 	code, _, errOut := j.wall(t, "echo ran > "+filepath.Join(j.write, "output"))
@@ -172,6 +180,8 @@ func abiOf(t *testing.T, j job) string {
 
 // A wall that denies the work is broken: what --read names must be readable.
 func TestLandlockWallAllowsReadPaths(t *testing.T) {
+	t.Parallel()
+
 	needLandlock(t)
 	j := newJob(t)
 	const want = "the-read-set-is-readable"
@@ -209,6 +219,8 @@ func TestLandlockWallAllowsReadPaths(t *testing.T) {
 // spec's limits list says so. What is asserted here is what both backends promise: the
 // CONTENTS do not come out.
 func TestLandlockWallHidesSecret(t *testing.T) {
+	t.Parallel()
+
 	needLandlock(t)
 	j := newJob(t)
 	secret, err := os.ReadFile(j.secret)
@@ -227,6 +239,8 @@ func TestLandlockWallHidesSecret(t *testing.T) {
 // Rule 7: --net-deny is an ENFORCED denial on this platform or it is a refusal, and at
 // abi 4 and up it is enforced for TCP.
 func TestLandlockWallBlocksNetworkWhenNotAllowed(t *testing.T) {
+	t.Parallel()
+
 	needLandlock(t)
 	j := newJob(t)
 	bash, err := exec.LookPath("bash")
@@ -275,6 +289,8 @@ func TestLandlockWallBlocksNetworkWhenNotAllowed(t *testing.T) {
 // check is a question, not an attempt, and on a linux machine with Landlock it names the
 // backend and the discovered abi.
 func TestCheckReportsLandlock(t *testing.T) {
+	t.Parallel()
+
 	j := newJob(t)
 	code, out, _ := j.runTool(t, j.env(), "check")
 	if code != 0 {
@@ -320,4 +336,37 @@ func fieldOf(line, key string) string {
 		rest = rest[:j]
 	}
 	return rest
+}
+
+// THE NO-EXEC READ SET ON A REAL KERNEL. landlock's read subset is
+// EXECUTE|READ_FILE|READ_DIR, so `--read` grants execution of everything under a root and
+// a module cache granted that way is a place a card can run code from. `--read-noexec`
+// drops fsExecute, and this is the measurement: the same script is readable and is NOT
+// executable, with a control proving it runs under `--read` on this same machine.
+func TestLandlockReadNoExecReadsAndRefusesToExecute(t *testing.T) {
+	t.Parallel()
+
+	needLandlock(t)
+	j := newJob(t)
+	cache := filepath.Join(j.base, "cache")
+	if err := os.MkdirAll(cache, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(cache, "x.sh")
+	if err := testbin.WriteExecutable(script, []byte("#!/bin/sh\necho ran\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut := j.wall(t, "cat "+script, "--read-noexec", cache)
+	if code != 0 || !strings.Contains(out, "echo ran") {
+		t.Fatalf("the --read-noexec tree is not readable inside the wall: exit %d, stdout %q, stderr %s", code, out, errOut)
+	}
+	if !strings.Contains(errOut, "read-noexec=1") {
+		t.Errorf("the SANDBOX OK line does not count the no-exec reads: %q", errOut)
+	}
+	if code, _, _ := j.wall(t, script, "--read-noexec", cache); code == 0 {
+		t.Fatal("the script under --read-noexec EXECUTED inside the wall; readable is not executable")
+	}
+	if code, _, errOut := j.wall(t, script, "--read", cache); code != 0 {
+		t.Fatalf("the control failed: the same script under --read did not run: exit %d, %s", code, errOut)
+	}
 }

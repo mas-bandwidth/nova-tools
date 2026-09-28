@@ -1,0 +1,8 @@
+#nova-sprint-plan v1
+# control 1: a policy key no reader has
+policy	backpressure_missing	closed
+policy	ci_reruns	1
+policy	readers	1
+policy	absent_after	60m
+policy	max_load_per_core	3
+bench	a	m1	6

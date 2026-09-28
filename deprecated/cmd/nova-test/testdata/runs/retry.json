@@ -1,0 +1,1 @@
+{"id":"retry","state":"completed","queued_at":"2026-09-23T10:10:00Z","started_at":"2026-09-23T10:10:20Z","finished_at":"2026-09-23T10:14:20Z","attempts":[{"id":"retry.a1","state":"failed","failure":"lint"},{"id":"retry.a2","state":"completed"}]}

@@ -4,10 +4,13 @@ package update
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // The red tests docs/SPEC-VERSION.md's snapshot/diff section demands. Every
@@ -17,7 +20,7 @@ import (
 func specStub(t *testing.T, dir, name, line string) string {
 	t.Helper()
 	p := filepath.Join(dir, name)
-	if err := os.WriteFile(p, []byte("#!/bin/sh\nprintf '%s\\n' '"+line+"'\n"), 0o755); err != nil {
+	if err := testbin.WriteExecutable(p, []byte("#!/bin/sh\nprintf '%s\\n' '"+line+"'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return p
@@ -26,10 +29,37 @@ func specStub(t *testing.T, dir, name, line string) string {
 func specScript(t *testing.T, dir, name, body string) string {
 	t.Helper()
 	p := filepath.Join(dir, name)
-	if err := os.WriteFile(p, []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
+	if err := testbin.WriteExecutable(p, []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return p
+}
+
+// seen runs each fixture once and throws the result away, so that the run under test is
+// not the first this machine has ever seen of that file.
+//
+// THE FIRST EXEC OF A NEVER-SEEN EXECUTABLE IS ASSESSED BY THE OS, AND THAT COST IS NOT
+// THE TOOL'S. Measured on the darwin/arm64 Studio, idle, over fifteen freshly written
+// `#!/bin/sh` fixtures of exactly the shape below: the first exec cost 139-403ms and every
+// exec after it cost ~5ms -- thirty to eighty times cheaper. (It is not a Mach-O fact:
+// these fixtures are scripts, and they are assessed too.) The assessment goes through one
+// serialized system service, so four CI shards first-exec'ing their fixtures at once queue
+// behind each other and the hundreds of milliseconds become seconds.
+//
+// `nova-version report` gives ONE `--timeout` to reading one tool, five seconds by
+// default. A test that writes a fixture and immediately probes it spends that bound on the
+// OS's one-time toll instead of on the tool, and a fixture that answers instantly is
+// reported UNKNOWN reason=timeout. No person running these tools pays this: their binaries
+// have been run before. So the toll is paid HERE, outside the section the bound covers,
+// rather than by making the bound a bigger number that hides it.
+func seen(t *testing.T, paths ...string) {
+	t.Helper()
+	for _, p := range paths {
+		// Bare, which every fixture here answers cheaply -- with its version or with the
+		// usage refusal it is written to give. The answer is deliberately not read: this
+		// is the OS's toll being paid, not an assertion.
+		_ = exec.Command(p).Run()
+	}
 }
 
 func specRun(t *testing.T, env Environment, args ...string) (int, string, string) {
@@ -41,6 +71,8 @@ func specRun(t *testing.T, env Environment, args ...string) (int, string, string
 
 // 1. TestSnapshotWritesOneRowPerBinary.
 func TestSnapshotWritesOneRowPerBinary(t *testing.T) {
+	t.Parallel()
+
 	bin := t.TempDir()
 	specStub(t, bin, "nova-bus", "nova-bus 20260909112233-0123456789ab linux/amd64 go1.26.0")
 	specStub(t, bin, "nova-check", "nova-check 20260909112233-0123456789ab darwin/arm64 go1.26.0")
@@ -76,6 +108,8 @@ func TestSnapshotWritesOneRowPerBinary(t *testing.T) {
 
 // 2. TestSnapshotReadsVersionNotTheFileName.
 func TestSnapshotReadsVersionNotTheFileName(t *testing.T) {
+	t.Parallel()
+
 	bin := t.TempDir()
 	specStub(t, bin, "nova-renamed", "nova-bus v9.9.9 linux/amd64 go1.0")
 	out := filepath.Join(t.TempDir(), "snapshot.tsv")
@@ -94,6 +128,8 @@ func TestSnapshotReadsVersionNotTheFileName(t *testing.T) {
 
 // 3. TestSnapshotRefusesAMixedSetNamingThePair.
 func TestSnapshotRefusesAMixedSetNamingThePair(t *testing.T) {
+	t.Parallel()
+
 	bin := t.TempDir()
 	specStub(t, bin, "nova-a", "nova-a v1.0.0 linux/amd64 go1.0")
 	specStub(t, bin, "nova-b", "nova-b v2.0.0 linux/amd64 go1.0")
@@ -102,7 +138,10 @@ func TestSnapshotRefusesAMixedSetNamingThePair(t *testing.T) {
 	if code != 2 {
 		t.Fatalf("exit %d stderr=%s", code, stderr)
 	}
-	need(t, stderr, "nova-a", "nova-b", "v1.0.0", "v2.0.0")
+	need(t, stderr, "nova-a", "nova-b", "v1.0.0", "v2.0.0", "nova-update release build --version", "nova-update release install --from")
+	if strings.Contains(stderr, "--sha") {
+		t.Fatalf("the remedy names a flag apply does not take: %s", stderr)
+	}
 	if _, err := os.Stat(out); err == nil {
 		t.Fatalf("a mixed set was written to --out")
 	}
@@ -110,6 +149,8 @@ func TestSnapshotRefusesAMixedSetNamingThePair(t *testing.T) {
 
 // 4. TestSnapshotRefusesAMissingFlag.
 func TestSnapshotRefusesAMissingFlag(t *testing.T) {
+	t.Parallel()
+
 	bin := t.TempDir()
 	specStub(t, bin, "nova-a", "nova-a v1.0.0 linux/amd64 go1.0")
 	out := filepath.Join(t.TempDir(), "snapshot.tsv")
@@ -133,6 +174,8 @@ func TestSnapshotRefusesAMissingFlag(t *testing.T) {
 
 // 5. TestSnapshotRefusesABinaryWithNoVersion.
 func TestSnapshotRefusesABinaryWithNoVersion(t *testing.T) {
+	t.Parallel()
+
 	t.Run("non-zero exit", func(t *testing.T) {
 		bin := t.TempDir()
 		specScript(t, bin, "nova-nope", "exit 3")
@@ -155,6 +198,8 @@ func TestSnapshotRefusesABinaryWithNoVersion(t *testing.T) {
 
 // 6. TestSnapshotRefusesAnUnreadableBin.
 func TestSnapshotRefusesAnUnreadableBin(t *testing.T) {
+	t.Parallel()
+
 	t.Run("bin is a file", func(t *testing.T) {
 		file := filepath.Join(t.TempDir(), "not-a-dir")
 		if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
@@ -191,6 +236,8 @@ func specSnapshot(t *testing.T, rows ...string) string {
 
 // 7. TestDiffNamesOneLinePerChangedBinary.
 func TestDiffNamesOneLinePerChangedBinary(t *testing.T) {
+	t.Parallel()
+
 	a := specSnapshot(t, "alpha\tv1.0.0\t-\tlinux/amd64", "beta\tv1.0.0\t-\tlinux/amd64")
 	b := specSnapshot(t, "alpha\tv2.0.0\t-\tlinux/amd64", "beta\tv1.0.0\t-\tlinux/amd64")
 	code, stdout, stderr := specRun(t, Environment{}, "diff", "--from", a, "--to", b)
@@ -206,6 +253,8 @@ func TestDiffNamesOneLinePerChangedBinary(t *testing.T) {
 
 // 8. TestDiffNamesAddedAndRemoved.
 func TestDiffNamesAddedAndRemoved(t *testing.T) {
+	t.Parallel()
+
 	a := specSnapshot(t, "gone\tv1.0.0\t-\tlinux/amd64", "same\tv1.0.0\t-\tlinux/amd64")
 	b := specSnapshot(t, "new\tv2.0.0\t-\tlinux/amd64", "same\tv1.0.0\t-\tlinux/amd64")
 	code, stdout, stderr := specRun(t, Environment{}, "diff", "--from", a, "--to", b)
@@ -217,6 +266,8 @@ func TestDiffNamesAddedAndRemoved(t *testing.T) {
 
 // 9. TestDiffRefusesANonSnapshotFile.
 func TestDiffRefusesANonSnapshotFile(t *testing.T) {
+	t.Parallel()
+
 	t.Run("wrong header", func(t *testing.T) {
 		bad := filepath.Join(t.TempDir(), "bad.tsv")
 		if err := os.WriteFile(bad, []byte("tool\tversion\nx\t1\n"), 0o644); err != nil {
@@ -260,4 +311,50 @@ func TestSnapshotIsBoundedByTheClock(t *testing.T) {
 	if _, err := os.Stat(out); err == nil {
 		t.Fatalf("a partial --out was written")
 	}
+}
+
+// 13. TestSnapshotTakesItsBoundsFromFlags.
+//
+// The bound a caller cannot reach is a bound they cannot repair. Every other
+// verb in this package that runs children takes `--timeout` per child and
+// `--budget` for the run; `snapshot` took neither, so the only remedy the
+// refusal could offer was to repair a build that was not broken.
+func TestSnapshotTakesItsBoundsFromFlags(t *testing.T) {
+	t.Parallel()
+
+	t.Run("timeout bounds one binary", func(t *testing.T) {
+		bin := t.TempDir()
+		specScript(t, bin, "nova-slow", "sleep 30\nprintf 'nova-slow v1.0.0 linux/amd64 go1.0\\n'")
+		out := filepath.Join(t.TempDir(), "s.tsv")
+		code, _, stderr := specRun(t, Environment{}, "snapshot", "--bin", bin, "--out", out, "--timeout", "200ms")
+		if code != 2 {
+			t.Fatalf("exit %d stderr=%s", code, stderr)
+		}
+		need(t, stderr, "nova-slow", "200ms")
+		if _, err := os.Stat(out); err == nil {
+			t.Fatal("a partial --out was written")
+		}
+	})
+	t.Run("budget bounds the run", func(t *testing.T) {
+		bin := t.TempDir()
+		for _, n := range []string{"nova-a", "nova-b", "nova-c", "nova-d"} {
+			specScript(t, bin, n, "sleep 30\nprintf '"+n+" v1.0.0 linux/amd64 go1.0\\n'")
+		}
+		out := filepath.Join(t.TempDir(), "s.tsv")
+		code, _, stderr := specRun(t, Environment{}, "snapshot", "--bin", bin, "--out", out, "--timeout", "10s", "--budget", "300ms")
+		if code != 2 {
+			t.Fatalf("exit %d stderr=%s", code, stderr)
+		}
+		need(t, stderr, "budget", "300ms")
+	})
+	t.Run("a bound must be positive", func(t *testing.T) {
+		bin := t.TempDir()
+		specStub(t, bin, "nova-bus", "nova-bus v1.0.0 linux/amd64 go1.0")
+		out := filepath.Join(t.TempDir(), "s.tsv")
+		code, _, stderr := specRun(t, Environment{}, "snapshot", "--bin", bin, "--out", out, "--timeout", "0")
+		if code != 2 {
+			t.Fatalf("exit %d stderr=%s", code, stderr)
+		}
+		need(t, stderr, "--timeout")
+	})
 }

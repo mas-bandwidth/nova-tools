@@ -22,6 +22,8 @@ func cardPrompt(t *testing.T, jobDir, budget string) string {
 // accounting budget, so the verb counts, per model, the cards, the median output tokens and
 // the overshoot (cards whose output exceeded the card's own budget line when one is present).
 func TestSwarmProfilesMeasureExplicitReasoningEffortAndBudgetOvershootOnRealWork(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := mkdir(t, filepath.Join(dir, "root"))
 
@@ -52,6 +54,8 @@ func TestSwarmProfilesMeasureExplicitReasoningEffortAndBudgetOvershootOnRealWork
 // same lines every time, and a budget the card does not carry (or a usage row with no output)
 // is an absent line that never invents an overshoot.
 func TestSwarmProfilesRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := mkdir(t, filepath.Join(dir, "root"))
 
@@ -71,4 +75,14 @@ func TestSwarmProfilesRoundTrip(t *testing.T) {
 	if first.stdout != second.stdout {
 		t.Errorf("a second run printed different lines; the verb is a pure fold:\nfirst:\n%s\nsecond:\n%s", first.stdout, second.stdout)
 	}
+}
+
+func TestSwarmProfilesRefusesNonexistentRoot(t *testing.T) {
+	t.Parallel()
+
+	r := invoke(t, "profiles", "--swarm-root", filepath.Join(t.TempDir(), "nope"))
+	wantExit(t, r, 2)
+	wantContains(t, r.stderr, "PROFILES REFUSED:")
+	wantContains(t, r.stderr, "does not exist")
+	wantContains(t, r.stderr, "nope")
 }

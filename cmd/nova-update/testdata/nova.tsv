@@ -1,5 +1,4 @@
 name	kind	installed	latest	apply	owner
-nova-board	tool	nova-board version	github:mas-bandwidth/nova-tools	none	caller
 nova-bus	tool	nova-bus version	github:mas-bandwidth/nova-tools	none	caller
 nova-check	tool	nova-check version	github:mas-bandwidth/nova-tools	none	caller
 nova-fuse	tool	nova-fuse version	github:mas-bandwidth/nova-tools	none	caller

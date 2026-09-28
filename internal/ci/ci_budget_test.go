@@ -1,12 +1,13 @@
 package ci
 
 import (
-	"os"
+	"bytes"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // ci_budget_test.go is the two-minute law, read off the workflow files as text
@@ -39,14 +40,6 @@ var jobKeyRe = regexp.MustCompile(`^  ([a-zA-Z0-9_-]+):$`)
 // timeoutRe matches a timeout-minutes line at four spaces.
 var timeoutRe = regexp.MustCompile(`^    timeout-minutes:\s*(\d+)$`)
 
-// offCLPathRe matches the `if:` guard that runs a job ONLY on push to main and
-// on the nightly schedule. Such a job cannot run on a pull_request, so nothing
-// waits on it to merge and the two-minute CL budget does not apply: it is the
-// expensive tier — the GitHub-hosted full suite — deliberately off the fast
-// path. Every other job in ci.yml is on the CL path by default; the exemption
-// has to be written into the workflow as that guard, not assumed here.
-var offCLPathRe = regexp.MustCompile(`github\.event_name == 'push' \|\| github\.event_name == 'schedule'`)
-
 // usesRe matches an action reference pinned by its 40-hex commit SHA.
 var usesRe = regexp.MustCompile(`uses:\s*([^/\s]+/[^@\s]+)@([0-9a-fA-F]{40})`)
 
@@ -57,65 +50,106 @@ var usesRe = regexp.MustCompile(`uses:\s*([^/\s]+/[^@\s]+)@([0-9a-fA-F]{40})`)
 // "refuses:" is not an action reference).
 var usesDirectiveRe = regexp.MustCompile(`^\s*(-\s*)?uses:\s*\S`)
 
-func TestCLTierJobsStayWithinTheBudget(t *testing.T) {
+func TestEveryCIJobIsCappedAtTwoMinutes(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
-	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
-	names := jobNames(src)
-	if len(names) == 0 {
-		t.Fatal("no jobs parsed from ci.yml; the parser is looking in the wrong place")
+	files, err := filepath.Glob(filepath.Join(root, ".github", "workflows", "*.yml"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no workflow files under .github/workflows: %v", err)
 	}
-	timeouts := jobTimeouts(src)
-	offPath := jobsOffTheCLPath(src)
-	for _, name := range names {
-		mins, ok := timeouts[name]
-		if !ok {
-			t.Errorf("job %q has no timeout-minutes; the per-job cap cannot be guarded on a job that does not declare one", name)
+	for _, file := range files {
+		src := readFile(t, file)
+		names := jobNames(src)
+		if len(names) == 0 {
+			t.Errorf("%s: no jobs parsed; the parser is looking in the wrong place", filepath.Base(file))
 			continue
 		}
-		if offPath[name] {
-			// Guarded to push-to-main and the nightly schedule, so no pull
-			// request waits on it and it is not in the CL budget. It did
-			// declare a ceiling, which is the part checked just above.
-			continue
+		timeouts := jobTimeouts(src)
+		for _, name := range names {
+			mins, ok := timeouts[name]
+			if !ok {
+				t.Errorf("%s: job %q declares no literal timeout-minutes; every job is `timeout-minutes: %d`, no expression, no per-leg ceiling", filepath.Base(file), name, twoMinuteCap)
+				continue
+			}
+			if mins > twoMinuteCap {
+				t.Errorf("%s: job %q has timeout-minutes %d, want %d: the cap is permanent and platform-wide; split the work into parallel functional programs instead of raising it", filepath.Base(file), name, mins, twoMinuteCap)
+			}
 		}
-		// This pins the per-job CAP only. timeout-minutes is a ceiling on one
-		// job, not a proof that the whole required path fits two minutes: the
-		// path is the CI run, and no per-job ceiling can see that sum.
-		want, ok := clTierCeilings[name]
-		if !ok {
-			want = defaultCLCeiling
-		}
-		if mins > want {
-			t.Errorf("CL-tier job %q has timeout-minutes %d, want a cap <= %d", name, mins, want)
+		if strings.Contains(src, "timeout-minutes: ${{") {
+			t.Errorf("%s: a timeout-minutes is an expression; the cap is the literal %d on every job", filepath.Base(file), twoMinuteCap)
 		}
 	}
 }
 
-// TestMergeGateAllowanceCarriesItsReason pins the one exception: test-hosted-merge
-// declares exactly mergeGateCeiling minutes (five), and the reason it may is
-// recorded in the test as mergeGateReason. Every other job on the critical path
-// stays at defaultCLCeiling, which TestCLTierJobsStayWithinTheBudget enforces by
-// the map lookup above. If the job drifts back to two the fleet drops groups
-// again; if it drifts past five the exception has grown without a record.
-func TestMergeGateAllowanceCarriesItsReason(t *testing.T) {
-	root := repoRoot(t)
-	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
-	mins, ok := jobTimeouts(src)["test-hosted-merge"]
-	if !ok {
-		t.Fatal("test-hosted-merge declares no timeout-minutes; the allowance has nothing to hold")
+// goTestTimeoutRe reads the sharded test job's `go test -timeout`, which must
+// end the run with a Go stack before the job cap kills it without one.
+var goTestTimeoutRe = regexp.MustCompile(`GOTEST_TIMEOUT="([0-9]+)s"`)
+
+func TestShardGoTestTimeoutIsUnderTheJobCap(t *testing.T) {
+	t.Parallel()
+
+	job := jobBody(readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml")), "test")
+	m := goTestTimeoutRe.FindStringSubmatch(job)
+	if m == nil {
+		t.Fatal("the test job passes no literal GOTEST_TIMEOUT=\"<n>s\" to make test")
 	}
-	if mins != mergeGateCeiling {
-		t.Errorf("test-hosted-merge timeout-minutes = %d, want %d: the merge gate is the one allowed exception to the two-minute law, at the recorded five minutes", mins, mergeGateCeiling)
+	secs, _ := strconv.Atoi(m[1])
+	if secs >= twoMinuteCap*60 {
+		t.Errorf("go test -timeout %ds is not under the %d-minute job cap", secs, twoMinuteCap)
 	}
-	if strings.TrimSpace(mergeGateReason) == "" {
-		t.Error("the merge gate allowance carries no reason; the exception must say why it exists")
+	mk := parseMakefile(t, filepath.Join(repoRoot(t), "Makefile"))
+	for _, v := range []string{"GOTEST_TIMEOUT", "MERGE_TIMEOUT", "DARWIN_TIMEOUT"} {
+		raw, ok := mk.vars[v]
+		if !ok {
+			t.Errorf("the Makefile declares no %s", v)
+			continue
+		}
+		d, err := time.ParseDuration(strings.TrimSpace(raw))
+		if err != nil {
+			t.Errorf("%s = %q is not a Go duration: %v", v, raw, err)
+			continue
+		}
+		if d >= time.Duration(twoMinuteCap)*time.Minute {
+			t.Errorf("Makefile %s = %s is not under the %d-minute job cap", v, d, twoMinuteCap)
+		}
 	}
-	if !strings.Contains(src, "the one allowed exception") && !strings.Contains(src, "the one exception") {
-		t.Error("the test-hosted-merge comment does not name the gate as the exception to the two-minute law")
+}
+
+// macOSEntryRe reads a macOS shard entry's arch and group from test-packages.
+var macOSEntryRe = regexp.MustCompile(`entries\+=\(.*\\"os\\":\\"macOS\\",\\"arch\\":\\"([^"\\]+)\\",\\"group\\":\\"([^"\\]+)\\"`)
+
+// TestMacOSShardsRunOnTheStudioForNow pins the 2026-09-25 decision (Glenn: "let's
+// have the darwin tests run on studio, so we can move forward"; "running tests
+// in under 2 minutes will require modern machines"): the darwin legs select the
+// Studio's ARM64 runners until the Mac minis (~2026-10-10) take them. #3634's
+// rule (no CI on the Studio) is suspended for the darwin legs only.
+func TestMacOSShardsRunOnTheStudioForNow(t *testing.T) {
+	t.Parallel()
+
+	src := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
+	found := 0
+	for _, line := range strings.Split(jobBody(src, "test-packages"), "\n") {
+		m := macOSEntryRe.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		found++
+		if m[1] != "ARM64" || m[2] != "studio" {
+			t.Errorf("a macOS test shard selects arch %q group %q, want ARM64 on studio (2026-09-25, until the Mac minis): %s", m[1], m[2], strings.TrimSpace(line))
+		}
+	}
+	if found == 0 {
+		t.Error("test-packages emits no macOS shard entry this test can read")
+	}
+	if jobBody(src, "test-hosted-merge") != "" || jobBody(src, "plan-merge") != "" {
+		t.Error("the merge group carries a hosted leg again; since 2026-09-26 its gate is the sharded test legs on our own benches (Glenn: \"Less dependency on github is my bet\")")
 	}
 }
 
 func TestJobsThatLeftCIAreStillInCertification(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	cert := readFile(t, filepath.Join(root, ".github", "workflows", "certification.yml"))
 
@@ -123,7 +157,19 @@ func TestJobsThatLeftCIAreStillInCertification(t *testing.T) {
 	if len(certNames) == 0 {
 		t.Fatal("no jobs parsed from certification.yml; the parser is looking in the wrong place")
 	}
+	inventory := toSet(splitMovedJobs)
+	for name, reason := range droppedByRuling {
+		if !inventory[name] {
+			t.Errorf("droppedByRuling names %q, which is not in splitMovedJobs; an exception to a list must be an entry of that list", name)
+		}
+		if strings.TrimSpace(reason) == "" {
+			t.Errorf("the exception for %q carries no reason; an exception must say why it exists", name)
+		}
+	}
 	for _, name := range splitMovedJobs {
+		if _, byRuling := droppedByRuling[name]; byRuling {
+			continue
+		}
 		if !certNames[name] {
 			t.Errorf("job %q left ci.yml in the split but is not present in certification.yml; the split must delete nothing", name)
 		}
@@ -131,6 +177,9 @@ func TestJobsThatLeftCIAreStillInCertification(t *testing.T) {
 
 	needs := certificationOKNeeds(cert)
 	for _, name := range splitMovedJobs {
+		if _, byRuling := droppedByRuling[name]; byRuling {
+			continue
+		}
 		if !needs[name] {
 			t.Errorf("certification-ok does not list %q in its needs; every certification job must be aggregated", name)
 		}
@@ -138,6 +187,8 @@ func TestJobsThatLeftCIAreStillInCertification(t *testing.T) {
 }
 
 func TestEveryActionIsPinnedBySHA(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	for _, file := range []string{".github/workflows/ci.yml", ".github/workflows/certification.yml"} {
 		src := readFile(t, filepath.Join(root, file))
@@ -162,6 +213,8 @@ func TestEveryActionIsPinnedBySHA(t *testing.T) {
 // this file: the step's shape is the contract, so the assertion is on the words
 // a reviewer would look for.
 func TestFleetProbeRunsTheNetworkProbeInsideNovaSandbox(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
 	job := jobBody(src, "fleet-probe")
@@ -177,8 +230,8 @@ func TestFleetProbeRunsTheNetworkProbeInsideNovaSandbox(t *testing.T) {
 	if !strings.Contains(job, "runner.os == 'Linux'") {
 		t.Errorf("the sandboxed network probe is not guarded to Linux runners only")
 	}
-	if mins, ok := jobTimeouts(src)["fleet-probe"]; !ok || mins > defaultCLCeiling {
-		t.Errorf("fleet-probe timeout-minutes = %d (declared=%v), want a cap <= %d; the probe must fit the two-minute CL budget", mins, ok, defaultCLCeiling)
+	if mins, ok := jobTimeouts(src)["fleet-probe"]; !ok || mins > twoMinuteCap {
+		t.Errorf("fleet-probe timeout-minutes = %d (declared=%v), want a cap <= %d; the probe must fit the two-minute CL budget", mins, ok, twoMinuteCap)
 	}
 }
 
@@ -219,7 +272,9 @@ func jobBody(src, name string) string {
 // holding a reason, and the check reads the code before any comment on the
 // line, so prose about the rule cannot trip it.
 func TestNoTestAssertsAWallClockBoundUnderTenSeconds(t *testing.T) {
-	root := repoRoot(t)
+	t.Parallel()
+
+	tree := repoTree(t)
 	sub10Re := regexp.MustCompile(`(^|[^0-9])([1-9])\s*[\*]\s*time[.]Second\b`)
 	anySecRe := regexp.MustCompile(`time[.]Second\b`)
 	bigSecRe := regexp.MustCompile(`[0-9]{2,}\s*[\*]\s*time[.]Second\b`)
@@ -237,24 +292,18 @@ func TestNoTestAssertsAWallClockBoundUnderTenSeconds(t *testing.T) {
 	// reason (issue #916).
 	secLitRe := regexp.MustCompile(`(?:([0-9]+)\s*[*]\s*)?time[.]Second\b`)
 	for _, dir := range []string{"internal", "cmd"} {
-		base := filepath.Join(root, dir)
-		err := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if d.IsDir() || !strings.HasSuffix(path, "_test.go") {
-				return nil
-			}
-			raw, err := os.ReadFile(path)
-			if err != nil {
-				t.Errorf("cannot read %s: %v", path, err)
-				return nil
-			}
-			rel, _ := filepath.Rel(root, path)
+		for _, f := range tree.GoFilesUnder(true, dir) {
+			raw := f.Src
+			rel := f.Rel
 			// The batch-deadline shape is scoped to the files that drive the batch:
 			// only there does a short deadline/idle literal reach a real process.
 			// A file drives the batch when it builds a BatchInput -- through the
 			// runBatch/runBatchIdle helpers or a direct BatchInput literal.
+			// Both shapes below need a time.Second on the line; a file without
+			// one is not split into lines at all (nova-tools#4328).
+			if !bytes.Contains(raw, []byte(wallSecondToken)) {
+				continue
+			}
 			batchFile := strings.Contains(string(raw), "runBatch") || strings.Contains(string(raw), "BatchInput{")
 			for i, line := range strings.Split(string(raw), "\n") {
 				if strings.Contains(line, "// wall-ok:") {
@@ -263,6 +312,9 @@ func TestNoTestAssertsAWallClockBoundUnderTenSeconds(t *testing.T) {
 				code := line
 				if j := strings.Index(code, "//"); j >= 0 && (j == 0 || code[j-1] == ' ' || code[j-1] == '\t') {
 					code = code[:j]
+				}
+				if !strings.Contains(code, wallSecondToken) {
+					continue
 				}
 				if batchFile && wallSecondsUnderTen(secLitRe, code) {
 					t.Errorf("%s:%d: batch-driving test carries a wall-clock literal under ten seconds (use thirty seconds or more, or an injected clock with // wall-ok: <reason>): %q", rel, i+1, strings.TrimSpace(line))
@@ -280,13 +332,13 @@ func TestNoTestAssertsAWallClockBoundUnderTenSeconds(t *testing.T) {
 				// A bare duration with no multiplier on the line is one second.
 				t.Errorf("%s:%d: wall-clock bound under ten seconds in a test assertion or context deadline (use thirty seconds or more, or a fake with // wall-ok: <reason>): %q", rel, i+1, strings.TrimSpace(line))
 			}
-			return nil
-		})
-		if err != nil {
-			t.Fatal(err)
 		}
 	}
 }
+
+// wallSecondToken is the text both wall-clock shapes need on a line, spelled so
+// that this file's own prefilter is not a match for the rule it speeds up.
+const wallSecondToken = "time" + ".Second"
 
 // wallSecondsUnderTen reports whether code carries a time.Second literal of
 // fewer than ten seconds: a bare time.Second is one, and `n * time.Second` is n.
@@ -305,60 +357,19 @@ func wallSecondsUnderTen(re *regexp.Regexp, code string) bool {
 	return false
 }
 
-// defaultCLCeiling is the two-minute law: a CL-tier job caps at 2 minutes.
-const defaultCLCeiling = 2
-
-// mergeGateCeiling is the one allowed exception to the two-minute law.
-// test-hosted-merge is on the CL path — the merge queue's group commit waits on
-// it — but it is not a small check: it runs the FULL hosted suite (no -short) of
-// the packages a group changes, on three platforms, sharded by size. Under load
-// (the Studio running sixteen self-hosted legs plus three friends, windows-latest
-// cold) its darwin shards were cancelled at 2:44 and its windows shards at 2:40
-// on 2026-09-17; a cancelled shard drops the whole group and restarts every group
-// behind it, so the two-minute cap on this one job was the throughput limit of
-// the whole fleet. Five minutes is the allowance; every other CL-path job stays
-// at the default two.
-const mergeGateCeiling = 5
-
-// mergeGateReason is the record beside that allowance: why the merge gate is
-// allowed five minutes. It is asserted in TestMergeGateAllowanceCarriesItsReason,
-// so the number and the why cannot drift apart silently.
-const mergeGateReason = "the merge gate runs the full suite of the packages a group changes on three platforms; sharded by size; cancelled under load at 2:40 on 2026-09-17"
-
-// clTierCeilings is where a job that does NOT cap at two minutes says so, and
-// says why. A number here is a claim about the machine the job runs on, so it
-// belongs in the repository beside the law rather than in a commit message.
-var clTierCeilings = map[string]int{
-	// The aggregate reads results and checks nothing out.
-	"ci-ok": 1,
-
-	// The one allowed exception. The merge gate runs the full suite of the
-	// packages a group changes, on three platforms, sharded by size; it was
-	// cancelled under load at 2:40 (2026-09-17), and a cancelled shard drops the
-	// group. mergeGateReason carries the record the budget test asserts.
-	"test-hosted-merge": mergeGateCeiling,
-
-	// The platform legs a PR runs only when it touches platform-specific paths
-	// (internal/sandbox on ubuntu-latest, the bus on windows-latest). A hosted
-	// runner starts cold (checkout, setup-go, cache restore) and cmd/nova-bus
-	// measured 439 s on windows-latest before its -short gate (#682); the leg
-	// runs -short, and 6 is the same cap the sharded matrix carries. A PR that
-	// does not touch those paths pays a checkout and skips. (2026-09-16)
-	"test-hosted-pr": 6,
-
-	// The sharded test matrix, and the one number the move to self-hosted
-	// runners actually changed. The two minutes are the CL FEEDBACK PATH: how
-	// long a change waits. On GitHub-hosted runners every leg starts at once,
-	// so a leg's ceiling and the run's wall clock are one number. On 4+4 fixed
-	// machines they are not: the legs queue, the run is the sum over the waves,
-	// and a per-job ceiling cannot see it. Measured in run 35019905236: every
-	// studio leg and three of eight space legs were CANCELLED at 2:00 having
-	// done nothing wrong, while five space legs passed at 80-118 s. Six is a
-	// hang detector for a leg measured, once the legs stopped oversubscribing
-	// their machines, at 12 to 126 s over a 233 s run (35025207396). The budget
-	// is the run's wall clock; hold the law there.
-	"test": 6,
-}
+// twoMinuteCap is THE CI law, permanent and platform-wide (Glenn 2026-09-25
+// 9:40 PM ET: "i want this 2 minute cap to be permanent, and for all new CI
+// stuff created, all platforms to have this same 2m cap"): every job in every
+// workflow declares timeout-minutes: 2, literally. No expression, no matrix
+// leg with its own ceiling, no tier that is exempt, nightly and release
+// included. The exceptions this file used to carry (the merge gate at five and
+// ten, the lisp job at fifteen, the push studio shards at twenty, the hosted
+// tree at fifteen) were "hang detectors with room"; a nine-minute darwin leg
+// ran to completion under them on 2026-09-25 and was treated as normal.
+// Glenn: "we fix or it doesn't land. that's the right posture. nothing else
+// will stop the test creep." Work that needs longer is split into parallel
+// functional test programs, each its own job under the cap.
+const twoMinuteCap = 2
 
 func jobNames(src string) []string {
 	var names []string
@@ -385,6 +396,11 @@ func jobNames(src string) []string {
 	return names
 }
 
+// jobTimeouts returns each job's declared timeout-minutes. A job whose ceiling
+// differs per matrix leg declares `timeout-minutes: ${{ matrix.leg.timeout }}`
+// and carries the numbers in its matrix; for those the LARGEST leg value is
+// returned, because the budget question this answers is "how long can this job
+// run", and legTimeouts below is what reads them apart.
 func jobTimeouts(src string) map[string]int {
 	out := make(map[string]int)
 	cur := ""
@@ -401,29 +417,7 @@ func jobTimeouts(src string) map[string]int {
 			if err == nil {
 				out[cur] = n
 			}
-		}
-	}
-	return out
-}
-
-// jobsOffTheCLPath returns the jobs whose `if:` guard runs them only on push to
-// main and on the nightly schedule. It reads the workflow as text, like the rest
-// of this file: the guard is matched by its exact shape, so a job that wants out
-// of the two-minute budget has to carry that guard verbatim and mention no
-// pull_request of its own.
-func jobsOffTheCLPath(src string) map[string]bool {
-	out := make(map[string]bool)
-	cur := ""
-	for _, line := range strings.Split(src, "\n") {
-		if m := jobKeyRe.FindStringSubmatch(line); m != nil {
-			cur = m[1]
 			continue
-		}
-		if cur == "" || !strings.HasPrefix(line, "    if:") {
-			continue
-		}
-		if offCLPathRe.MatchString(line) && !strings.Contains(line, "pull_request") {
-			out[cur] = true
 		}
 	}
 	return out
@@ -446,12 +440,37 @@ func toSet(names []string) map[string]bool {
 // so the comparison must not need one.
 var splitMovedJobs = []string{
 	"test",
+	"test-hosted-merge",
+	"plan-merge",
 	"build-windows",
 	"windows-packages",
 	"test-windows",
 	"smoke",
 	"release-dry-run",
 	"perf",
+}
+
+// droppedByRuling is the dated, quoted exception to "the split must delete
+// nothing": the jobs that DID leave ci.yml in the 2026-09-12 split but that
+// certification.yml no longer has to carry, because a later ruling retired them
+// outright rather than moving them. The class rule is untouched — every other
+// job in splitMovedJobs must still be present and still be aggregated by
+// certification-ok. Only the names listed here are skipped, and each one carries
+// the ruling that struck it.
+//
+// Glenn, 2026-09-18: "We will not support windows without WSL2. It is not worth
+// it." / "let's drop the native windows CI runners. WSL only from now on."
+// #1449 removed these three from ci.yml on that ruling but left them in
+// certification.yml, so certification-ok was red on every dev sha and
+// `nova-update release cut` refused every tip (CUT REFUSED
+// certification-ok=failure). The Windows guard that remains is the cross-vet,
+// `GOOS=windows go vet`, which needs no Windows machine.
+var droppedByRuling = map[string]string{
+	"test-hosted-merge": `Glenn 2026-09-26: "We have to speed this shit up. Less dependency on github is my bet." The hosted merge leg crossed the two-minute cap on four of five queue runs; the merge group's gate is the sharded test legs on our own benches (#4219 carries the clean-image run to certification).`,
+	"plan-merge":        `Glenn 2026-09-26: with test-hosted-merge (above).`,
+	"build-windows":     `Glenn 2026-09-18: "let's drop the native windows CI runners. WSL only from now on." (#1449)`,
+	"windows-packages":  `Glenn 2026-09-18: "let's drop the native windows CI runners. WSL only from now on." (#1449)`,
+	"test-windows":      `Glenn 2026-09-18: "let's drop the native windows CI runners. WSL only from now on." (#1449)`,
 }
 
 // certificationOKNeeds returns the set of job names listed in certification-ok's
@@ -490,6 +509,8 @@ func certificationOKNeeds(src string) map[string]bool {
 // verdict) that no ci-ok step names would let ci-ok run zero steps and report
 // success over red needs (found on #766 before the queue was turned on).
 func TestEveryTriggeringEventReachesACIOKVerdict(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
 	i := strings.Index(src, "\n  ci-ok:")
@@ -502,5 +523,91 @@ func TestEveryTriggeringEventReachesACIOKVerdict(t *testing.T) {
 		if !strings.Contains(ciok, want) {
 			t.Errorf("ci-ok has no verdict step guarded for %s: the workflow triggers on it, so a run on that event would report success with no step run", ev)
 		}
+	}
+}
+
+// TestMakefileHasNoTargetSpecificConditionalPKGS: under GNU make 3.81 (the
+// macOS runners' /usr/bin/make) one `<target>: PKGS ?= ...` line made
+// `test: PKGS := $(CL_PKGS)` override `make test PKGS=<shard>`, so every studio
+// shard of dev push run 35999520176 ran the whole tree.
+func TestMakefileHasNoTargetSpecificConditionalPKGS(t *testing.T) {
+	t.Parallel()
+
+	src := readFile(t, filepath.Join(repoRoot(t), "Makefile"))
+	re := regexp.MustCompile(`(?m)^[A-Za-z0-9_.-]+:\s*PKGS\s*\?=`)
+	if m := re.FindString(src); m != "" {
+		t.Errorf("Makefile carries %q; under make 3.81 it lets `test: PKGS :=` beat the shard's PKGS", m)
+	}
+}
+
+// TestShardsUseTheGoTestCache (Glenn 2026-09-26 9:42 AM ET, the Studio at
+// 100% CPU on its own PR: "We aren't doing anything that should be this
+// heavy in CPU use"): every `make test` shard step in ci.yml passes
+// GOTEST_COUNT_FLAG= so Go's test cache serves unchanged packages; a
+// -count=1 in CI would make every one of a landing's three runs recompile
+// and re-execute every shard. By hand `make test` keeps -count=1 (the
+// Makefile default). The one exception is the nightly space legs' line
+// (SLOWTESTS_ENFORCE=1, #4413): it runs once a night to MEASURE, and a cached
+// pass is an earlier run's time, not that night's, so it passes -count=1.
+func TestShardsUseTheGoTestCache(t *testing.T) {
+	t.Parallel()
+	ci := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
+	steps := 0
+	for _, line := range strings.Split(ci, "\n") {
+		if !strings.Contains(line, "make test ") {
+			continue
+		}
+		steps++
+		nightly := strings.Contains(line, "SLOWTESTS_ENFORCE=1") && strings.Contains(line, "GOTEST_COUNT_FLAG=-count=1 ")
+		if !nightly && (!strings.Contains(line, "GOTEST_COUNT_FLAG=") || strings.Contains(line, "GOTEST_COUNT_FLAG=-")) {
+			t.Errorf("a shard step runs the suite with the cache off: %s", strings.TrimSpace(line))
+		}
+		if !strings.Contains(line, "GOTEST_LDFLAGS=-ldflags=-w") {
+			t.Errorf("a shard step links test binaries with DWARF (dsymutil per binary on darwin): %s", strings.TrimSpace(line))
+		}
+	}
+	if steps == 0 {
+		t.Fatal("no `make test` shard step in ci.yml")
+	}
+	mk := readFile(t, filepath.Join(repoRoot(t), "Makefile"))
+	if !strings.Contains(mk, "GOTEST_COUNT_FLAG ?= -count=1") || !strings.Contains(mk, "$(GOTEST_COUNT_FLAG)") {
+		t.Fatal("the Makefile's test target does not take GOTEST_COUNT_FLAG (-count=1 by hand, empty in CI)")
+	}
+}
+
+// TestPushOfAProvedShaSkipsTheShards (Glenn 2026-09-26 9:42 AM ET): a push
+// to dev that is the merge queue's own merge commit was already proved by
+// the merge_group run of that sha; the test job asks the API for that run
+// and skips vet and test when it exists. The step never skips on API
+// trouble (a missing count reads as 0).
+func TestPushOfAProvedShaSkipsTheShards(t *testing.T) {
+	t.Parallel()
+	job := jobBody(readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml")), "test")
+	for _, want := range []string{
+		"id: proved",
+		"github.event_name == 'push'",
+		"event=merge_group&head_sha=${{ github.sha }}&status=success",
+		"|| echo 0",
+		"- name: vet\n        if: matrix.entry.packages != '' && steps.proved.outputs.proved != 'true'",
+		"- name: test\n        if: matrix.entry.packages != '' && steps.proved.outputs.proved != 'true'",
+	} {
+		if !strings.Contains(job, want) {
+			t.Errorf("the test job lacks %q", want)
+		}
+	}
+}
+
+// TestRunnerWorkspacesAreCleanedInPlace (Glenn 2026-09-26 10:20 AM ET, fs_usage
+// on the Studio: the four per-job `rm -rf` sweeps and the re-seeds behind
+// them were the file-event storm; "lots of tiny files is a really slow way
+// to work"): every sweep step in ci.yml resets the checkout in place and
+// empties the tree only when git cannot.
+func TestRunnerWorkspacesAreCleanedInPlace(t *testing.T) {
+	t.Parallel()
+	ci := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
+	sweeps := strings.Count(ci, `find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf`)
+	inPlace := strings.Count(ci, `clean -ffdxq; then`)
+	if sweeps == 0 || sweeps != inPlace {
+		t.Fatalf("%d workspace sweeps, %d of them clean in place first; every sweep resets and cleans the checkout before it may empty the tree", sweeps, inPlace)
 	}
 }

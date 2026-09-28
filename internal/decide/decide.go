@@ -23,6 +23,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -69,20 +70,50 @@ type Answer struct {
 	Confidence    float64
 }
 
-// Usage counts the tokens one call spent.
+// Usage counts the tokens one call spent, and says PER COUNTER whether the
+// provider reported it at all. A 200 carrying a valid answer is not evidence of
+// reported usage: a response with no usage object, or one naming only some of
+// the counters, has said nothing about the rest -- and nothing is not zero. An
+// explicitly reported 0 is a measurement and is kept as one (SPEC-TOKENS rule
+// 14).
 type Usage struct {
 	InputTokens  int
 	OutputTokens int
+	HasInput     bool
+	HasOutput    bool
 }
 
+// Known reports whether the provider measured anything at all.
+func (u Usage) Known() bool { return u.HasInput || u.HasOutput }
+
 // Client talks to one Jev endpoint with one key the caller named.
+//
+// One client's Decide is handed around as a decideFunc and called from several
+// goroutines at once (internal/swarm's task decider does exactly that), so the
+// per-call bookkeeping the receipt needs -- the row source and what the
+// decisions table did with the row -- is guarded. The fields set once before
+// any call, and read-only during them, are not.
 type Client struct {
 	baseURL   string
 	key       string
 	http      *http.Client
 	decisions DecisionDriver
 	floor     float64
+	constrain func(map[string]Answer) (map[string]Answer, error)
+
+	mu               sync.Mutex
+	rowSource        string
+	rowHasConfidence bool
+	recorded         int
+	recordErr        error
 }
+
+// Constrain installs the machinery that stands over a provider's answers. It
+// runs after the answers are validated against their own questions and BEFORE
+// anything records or prints them, so a rule the evidence settles is never
+// something a confident answer can be read past. A nil function leaves the
+// client forwarding the provider's answer, which is every ordinary question.
+func (c *Client) Constrain(fn func(map[string]Answer) (map[string]Answer, error)) { c.constrain = fn }
 
 // New reads the key from the environment variable keyEnv (DefaultKeyEnv when
 // empty, with FallbackKeyEnv also accepted) and refuses with an error naming
@@ -166,12 +197,15 @@ func (w answerWire) answer() (Answer, error) {
 	}
 }
 
-// responseWire is the documented response shape.
+// responseWire is the documented response shape. The usage counters are
+// POINTERS on purpose: a missing field decodes as nil, which is an absence, and
+// a present 0 decodes as a pointer to zero, which is a measurement. Decoding
+// them as plain ints made every silent response look like a free one.
 type responseWire struct {
 	Answers map[string]answerWire `json:"answers"`
 	Usage   struct {
-		InputTokens  int `json:"input_tokens"`
-		OutputTokens int `json:"output_tokens"`
+		InputTokens  *int `json:"input_tokens"`
+		OutputTokens *int `json:"output_tokens"`
 	} `json:"usage"`
 }
 
@@ -200,6 +234,26 @@ func (c *Client) Decide(ctx context.Context, state string, qs map[string]Questio
 	answers, usage, err := decodeResponse(raw)
 	if err != nil {
 		return nil, Usage{}, err
+	}
+	// A typed decision is typed at BOTH ends: an answer that is not one of the
+	// question's own criteria is the provider failing to answer, and not a
+	// decision with a confidence on it. It is refused HERE, before anything
+	// records it as a decision or a floor is applied to it (edges 22 and 23).
+	// The usage travels with the refusal: the call was made and it cost what it
+	// cost, and a refusal cannot unspend it.
+	if err := ValidateAnswers(qs, answers); err != nil {
+		return nil, usage, err
+	}
+	// Machinery the caller installed stands OVER the answer, and it stands
+	// here: before the row is recorded and before the caller can print it, so
+	// what is persisted and what is read are the constrained decision and not
+	// the provider's advice (Stella, 2026-09-19, r2 of the #1925 hold).
+	if c.constrain != nil {
+		constrained, err := c.constrain(answers)
+		if err != nil {
+			return nil, usage, err
+		}
+		answers = constrained
 	}
 	c.record(state, qs, answers)
 	return answers, usage, nil
@@ -255,7 +309,14 @@ func decodeResponse(raw []byte) (map[string]Answer, Usage, error) {
 		}
 		out[name] = a
 	}
-	return out, Usage{InputTokens: rw.Usage.InputTokens, OutputTokens: rw.Usage.OutputTokens}, nil
+	usage := Usage{}
+	if rw.Usage.InputTokens != nil {
+		usage.InputTokens, usage.HasInput = *rw.Usage.InputTokens, true
+	}
+	if rw.Usage.OutputTokens != nil {
+		usage.OutputTokens, usage.HasOutput = *rw.Usage.OutputTokens, true
+	}
+	return out, usage, nil
 }
 
 // ParseQuestions parses a questions file: either a bare map of name to
@@ -268,7 +329,18 @@ func ParseQuestions(data []byte) (map[string]Question, error) {
 		return nil, fmt.Errorf("decide: bad questions: not a JSON object: %w", err)
 	}
 	raw := top
-	if inner, ok := top["questions"]; ok && len(top) == 1 {
+	if inner, ok := top["questions"]; ok {
+		// The envelope may carry the criteria the question is answered
+		// against -- their version, their file, and the state fields the
+		// asker computes first -- so that a question and its criteria are
+		// ONE versioned pair. Anything else beside it is a refusal that
+		// names the key: a misspelled metadata key that fell through to
+		// the bare form used to be read as a question.
+		for key := range top {
+			if key != "questions" && !questionEnvelopeKeys[key] {
+				return nil, fmt.Errorf("decide: bad questions: %q stands beside \"questions\" and is not one of comment, criteria_version, criteria_file, state_fields, machinery", key)
+			}
+		}
 		var m map[string]json.RawMessage
 		if err := json.Unmarshal(inner, &m); err != nil {
 			return nil, fmt.Errorf("decide: bad questions: \"questions\" is not an object")
@@ -378,4 +450,19 @@ func Line(prefix string, answers map[string]Answer, floor float64) string {
 		b.WriteString(strings.Join(below, ","))
 	}
 	return b.String()
+}
+
+// questionEnvelopeKeys are the keys a question file may carry BESIDE its
+// questions: the criteria those questions are answered against, so the pair is
+// versioned together (Glenn, 2026-09-19 -- the criteria go in as input tokens),
+// and a comment. Anything else is a refusal that names it.
+var questionEnvelopeKeys = map[string]bool{
+	"comment":          true,
+	"criteria_version": true,
+	"criteria_file":    true,
+	"state_fields":     true,
+	// The rules the question is answered UNDER, so the binding between a
+	// question and its machinery lives in the versioned pair rather than in a
+	// name match inside a verb.
+	"machinery": true,
 }

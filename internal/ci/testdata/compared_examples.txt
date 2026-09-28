@@ -1,0 +1,39 @@
+# The pasted examples that ARE executed by a test through the comparator
+# (onboarding.CompareTranscript, the one comparator of SPEC-TOOLWORK.md documents rule 2;
+# or the older onboarding.Compare, directly or via onboarding.Execute, where a
+# section is still on the transcripts allowlist), per SPEC-TOOLWORK.md documents rule 6. One per line: `<test file>:<TestName> <the $ line, exactly as pasted>`
+# or `<test file>:<TestName> example: <a help banner's example line>`.
+#
+# TestIssue2218 checks every entry: the example is a real pasted or help example;
+# the named test is declared in a _test.go file of the example's tool's package;
+# the test, or a test helper it calls, reaches the comparator; it carries the
+# example's own command text (a string literal the example is, or begins with,
+# naming at least the tool and its verb) or executes the tool's transcript of a
+# doc it reads that holds the exact line; and it reads a doc the example is
+# pasted in. An example is in this file or in unexecuted_examples.txt, never
+# both. Moving a line from unexecuted_examples.txt to here is how that list
+# shrinks.
+
+cmd/nova-table/firstrun_test.go:TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints $ nova-table create demo --columns ready,working,done
+cmd/nova-table/firstrun_test.go:TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints $ nova-table row add demo build
+cmd/nova-table/firstrun_test.go:TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints $ nova-table cell add demo build ready b1
+cmd/nova-table/firstrun_test.go:TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints $ nova-table cell add demo build ready b2
+cmd/nova-table/firstrun_test.go:TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints $ nova-table cell move demo build ready working b1
+cmd/nova-table/firstrun_test.go:TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints $ nova-table show demo
+cmd/nova-table/firstrun_test.go:TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints $ nova-table render demo
+cmd/nova-table/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-table create demo --columns ready,working,done
+cmd/nova-table/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-table row add demo build
+cmd/nova-table/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-table cell add demo build ready b1
+cmd/nova-table/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-table cell add demo build ready b2
+cmd/nova-table/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-table cell move demo build ready working b1
+cmd/nova-table/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-table show demo
+cmd/nova-table/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-table render demo
+cmd/nova-config/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-config kinds
+cmd/nova-config/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-config migrate --print
+cmd/nova-secrets/seat_inject_functional_test.go:TestTheHelpExampleIsWhatSeatInjectPrints example: nova-secrets seat inject --store ./secrets --as air --from rowan --only NOVA_REDIS_BENCH_PASSWORD --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops --no-pr
+cmd/nova-ci/receipt_test.go:TestTheCommandReferenceReceiptRefusalsAreWhatTheToolPrints $ nova-ci github receipt --from-runner --repo nova-tools --sha 9af23a05e0000000000000000000000000000000 --run-id 1 --workflow CI --conclusion success
+cmd/nova-ci/receipt_test.go:TestTheCommandReferenceReceiptRefusalsAreWhatTheToolPrints $ nova-ci github receipt --from-runner --repo mas-bandwidth/nova-tools --sha 9af23a05e0000000000000000000000000000000 --run-id 1 --workflow CI --conclusion skipped
+cmd/nova-sandbox/firstrun_test.go:TestTheCommandReferenceExamplesAreWhatTheToolPrints $ nova-sandbox check --bogus
+cmd/nova-sandbox/firstrun_test.go:TestTheCommandReferenceExamplesAreWhatTheToolPrints $ nova-sandbox bogus
+cmd/nova-sandbox/firstrun_test.go:TestTheCommandReferenceExamplesAreWhatTheToolPrints $ nova-sandbox worktree --repo /path/to/workdir --scratch /path/to/workdir/scratch --pr 123
+cmd/nova-sandbox/firstrun_test.go:TestTheCommandReferenceExamplesAreWhatTheToolPrints $ nova-sandbox worktree --repo /path/to/workdir --scratch /path/to/workdir/scratch --prune

@@ -63,6 +63,9 @@ type NetResult struct {
 	Allowlisted int
 	Findings    []NetFinding
 	Stale       []NetFinding
+	// Measured is the set the allowlist must hold (allowlist.Check): the key of
+	// every row a finding used and of every finding no row allows.
+	Measured map[string]bool
 }
 
 // Refused is the number of lines the run would print: offenders plus stale
@@ -125,11 +128,15 @@ func CheckNet(root, allowlistPath string) (NetResult, error) {
 		remaining = append(remaining, f)
 	}
 	res.Findings = remaining
+	res.Measured = usedRowKeys(entries, matched)
 	for i, e := range entries {
 		if matched[i] {
 			continue
 		}
 		res.Stale = append(res.Stale, NetFinding{File: e.file, Line: e.line, Kind: "allowlist", Remedy: NetRemedyAllow})
+	}
+	for _, f := range res.Findings {
+		res.Measured[FileLineKey(f.File, f.Line, f.Kind)] = true
 	}
 	return res, nil
 }
@@ -140,7 +147,7 @@ func CheckNet(root, allowlistPath string) (NetResult, error) {
 // A row allows ONE offender of its kind in its file. The line in the row is
 // where the offender stood when the row was written, for a reader; it is not
 // matched on. Matching on the line turned dev red the moment any merge shifted
-// lines in a listed file (2026-09-17: #1073 moved cmd/nova-swarm/native_test.go
+// lines in a listed file (2026-09-17: #1073 moved deprecated/cmd/nova-swarm/native_test.go
 // and every group after it failed). The count per file and kind is what the
 // list holds still: a new real host in a listed file exceeds its rows and is
 // refused, a fixed one leaves a row unused and the stale rule makes the list
@@ -167,8 +174,7 @@ func matchNetAllow(entries []waitAllow, used []bool, f NetFinding) int {
 // cannot carry the shapes this check reads. A file whose header carries a
 // nightly or soak build constraint is skipped whole.
 func scanNetFile(rel string, src []byte) ([]NetFinding, bool) {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, rel, src, parser.ParseComments)
+	fset, file, err := parseSource(rel, src, parser.ParseComments)
 	if err != nil {
 		return nil, false
 	}

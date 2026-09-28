@@ -12,6 +12,8 @@ import (
 // verb and a correctly-indexed format was reported as a raw print that needed
 // escaping -- the wrong defect.
 func TestVerbsOfModelsIndexedArguments(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		format string
 		want   []byte

@@ -20,6 +20,8 @@ import "testing"
 // template names, and a row whose state word is still not one of three is malformed as
 // before.
 func TestAPipeInsideAQuoteIsNotACellBoundary(t *testing.T) {
+	t.Parallel()
+
 	head := "# t\n\n## Head\nfindings: 1\nrepo: o/n\nrev: abc\na paragraph.\n\n## Per item\n| item | state | evidence |\n| --- | --- | --- |\n"
 
 	got := ParseReport([]byte(head +

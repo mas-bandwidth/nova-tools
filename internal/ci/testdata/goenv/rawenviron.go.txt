@@ -1,0 +1,23 @@
+package fixture
+
+// The near miss: an environment IS set, but it is the caller's own, so GOFLAGS
+// travels into the child exactly as before. Only goenv.Clean counts, and a
+// command that is not a go command (git here) is nobody's business of this
+// rule.
+
+import (
+	"os"
+	"os/exec"
+)
+
+func buildTool(dir, out string) error {
+	cmd := exec.Command("go", "build", "-o", out, dir)
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
+	return cmd.Run()
+}
+
+func describe(dir string) ([]byte, error) {
+	cmd := exec.Command("git", "-C", dir, "describe", "--tags")
+	cmd.Env = os.Environ()
+	return cmd.Output()
+}

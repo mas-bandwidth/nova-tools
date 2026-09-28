@@ -1,0 +1,196 @@
+//go:build functional
+
+package main
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/bus"
+)
+
+// TestInboxSinceWalkReportsProgressAndHonoursMaxCommits is card 9376.
+//
+// Glenn's hard rule: a program that takes longer than 0.1 s says what it is doing, on
+// stderr. The failure this test is written against ran four minutes with no output on a
+// bus whose cursor was 285 commits stale, then printed nothing new. So the since-walk
+// says where it is while it runs -- `INBOX WALK commits=<n>/<total> notes=<n> elapsed=<s>`
+// -- and a stale cursor is bounded by --max-commits (default 500), with one line naming
+// the way out when the bound is hit and exit 0.
+func TestInboxSinceWalkReportsProgressAndHonoursMaxCommits(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	checkout := longBus(t, 1000)
+
+	// A walk the bound allows finishes and reports progress at its end. The line is the
+	// shape the rule asks for: commits walked over the total, notes parsed, elapsed.
+	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--max-commits", "2000").
+		mustCode(t, 0).
+		mustContain(t, "stderr", "INBOX WALK commits=1000/1000 notes=0 elapsed=")
+
+	// The default bound stops the same walk at 500 commits: no listing, one remedy, exit 0.
+	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40").
+		mustCode(t, 0).
+		mustContain(t, "stderr", `INBOX WALK bounded commits=500 remedy="raise --max-commits or close --before <instant>"`)
+
+	// A tighter bound stops at the number the caller gave, with the same remedy.
+	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--max-commits", "100").
+		mustCode(t, 0).
+		mustContain(t, "stderr", `INBOX WALK bounded commits=100 remedy="raise --max-commits or close --before <instant>"`)
+}
+
+// longBus hands a test a checkout whose cursor stands `commits` empty commits behind
+// HEAD. The fixture's HEAD is the stale cursor's commit and the commits above it carry
+// no changes, so the notes and the working tree the fixture built are untouched.
+func longBus(t *testing.T, commits int) string {
+	t.Helper()
+	checkout, _ := busDir(t)
+	base := strings.TrimSpace(gitIn(t, checkout, "rev-parse", "HEAD"))
+	fastImport(t, checkout, base, commits)
+	writeFile(t, checkout, "from-ada/CURSOR", base+" 2026-09-09T12:00:00Z open=0\n")
+	return checkout
+}
+
+// fastImport writes n empty commits onto refs/heads/main with one git process. A loop of
+// `git commit` over a thousand commits is a thousand subprocesses; fast-import is one, and
+// the fixture stays hermetic and inside the package's time budget.
+func fastImport(t *testing.T, dir, from string, n int) {
+	t.Helper()
+	var b strings.Builder
+	prev := from
+	for i := 0; i < n; i++ {
+		msg := fmt.Sprintf("empty commit %d", i)
+		fmt.Fprintf(&b, "commit refs/heads/main\n")
+		fmt.Fprintf(&b, "mark :%d\n", i+1)
+		fmt.Fprintf(&b, "author Bus <bus@example.com> %d +0000\n", 1700000000+i)
+		fmt.Fprintf(&b, "committer Bus <bus@example.com> %d +0000\n", 1700000000+i)
+		fmt.Fprintf(&b, "data %d\n%s\n", len(msg), msg)
+		fmt.Fprintf(&b, "from %s\n", prev)
+		b.WriteString("\n")
+		prev = fmt.Sprintf(":%d", i+1)
+	}
+	b.WriteString("done\n")
+	cmd := exec.Command("git", "-C", dir, "fast-import", "--quiet")
+	cmd.Stdin = strings.NewReader(b.String())
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git fast-import %d commits: %v\n%s", n, err, out)
+	}
+}
+
+// TestABoundedWalkDoesNotAdvanceAndWritesNothingAtTheRoot is the live break measured on
+// 2026-09-19 against the message bus, on a reader whose cursor stood 500+ commits behind.
+//
+// THE FAILURE, in one line of output:
+//
+//	INBOX WALK bounded commits=500 remedy="raise --max-commits or close --before <instant>"
+//	INBOX FAIL /CURSOR: git -C <bus> ls-files -- /OPEN: exit status 128: fatal: '/OPEN' is outside repository
+//
+// The bounded since-walk stops the listing and returns exit 0 with a ZERO inboxReading --
+// the reader has not been resolved onto it yet, because that happens at the end of a
+// listing that ran. The caller reads exit 0 plus --advance as "the listing is done, move
+// the cursor", so the advance ran with an EMPTY LANE: CursorPath("") is "/CURSOR" and
+// OpenPath("") is "/OPEN", the cursor was written at the CHECKOUT ROOT, and git refused
+// the staging of a path outside the repository. Worse than the failure is what it left:
+// an untracked CURSOR at the root, after which every later run on that bus refuses with
+// "the bus's checkout holds changes that are not this note: CURSOR" until a human removes
+// it. A reader whose cursor was too stale to read was thereby locked out of their bus.
+//
+// Two properties, and the second is the one that stops a repeat of the lock-out:
+//
+//  1. A bounded walk READ NOTHING, so it moves no cursor. Advancing there would take
+//     hundreds of unread notes as read, which is the opposite of what the bound is for.
+//  2. Whatever an advance writes, it writes UNDER THE READER'S LANE. Nothing at the root,
+//     ever -- and an advance that cannot name a lane writes nothing at all.
+func TestABoundedWalkDoesNotAdvanceAndWritesNothingAtTheRoot(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	checkout := longBus(t, 1000)
+	// The stale cursor is COMMITTED and pushed, as a real one is: longBus leaves it in the
+	// working tree, and a dirty checkout is refused by a different door than the one this
+	// test is about. On the live bus the reader's cursor was committed, the checkout was
+	// clean, and the run got all the way to writing a file at the root.
+	gitIn(t, checkout, "add", "-A")
+	gitIn(t, checkout, "-c", "user.name=Ada", "-c", "user.email=ada@example.com", "commit", "-q", "-m", "ada: a stale cursor")
+	gitIn(t, checkout, "push", "-q", "origin", "HEAD:refs/heads/main")
+	before := read(t, checkout, "from-ada/CURSOR")
+
+	// The break, run exactly as the live line ran it: the bound is hit, and --advance is on.
+	r := invoke(t, "", advance(checkout, "Ada")...).
+		mustCode(t, 0).
+		mustContain(t, "stderr", `INBOX WALK bounded commits=500`)
+	if strings.Contains(r.stderr, "/CURSOR") || strings.Contains(r.stderr, "/OPEN") {
+		t.Fatalf("a bounded --advance named a root path; the lane is empty on this path:\n%s", r.stderr)
+	}
+	if strings.Contains(r.stdout, "INBOX CURSOR") {
+		t.Fatalf("a bounded walk read nothing and still moved the cursor:\n%s", r.stdout)
+	}
+	// Nothing at the root, and the stale cursor is exactly where it was: the run that
+	// could not read is the run that must not claim to have read.
+	mustNoRootState(t, checkout)
+	if got := read(t, checkout, "from-ada/CURSOR"); got != before {
+		t.Fatalf("the bounded run moved the cursor to %q, want it left at %q", got, before)
+	}
+
+	// AND THE ADVANCE THAT DOES RUN STILL LANDS IN THE LANE. Raise the bound, the walk
+	// finishes, and the cursor and its commit are under from-ada/ with nothing at the root.
+	invoke(t, "", advance(checkout, "Ada", "--max-commits", "2000")...).
+		mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX CURSOR commit=")
+	mustNoRootState(t, checkout)
+	if got := read(t, checkout, "from-ada/CURSOR"); got == before {
+		t.Fatalf("an allowed walk with --advance left the cursor at %q", got)
+	}
+	if named := gitIn(t, checkout, "show", "--name-only", "--format=", "HEAD"); !strings.Contains(named, "from-ada/CURSOR") {
+		t.Fatalf("the cursor commit names %q, want a path under from-ada/", strings.TrimSpace(named))
+	}
+}
+
+// TestAnAdvanceWithNoLaneWritesNothing is the second half of the same break: the guard at
+// the one place every advance passes through.
+//
+// The bounded walk is how an empty lane REACHED the advance this time. It is not the only
+// way one could: every caller of advanceCursorTo hands it a Participant from somewhere, and
+// a lane-less reader is a shape the roster can hold (see the fixture's Dana). So the
+// refusal lives where the writing does, and it comes BEFORE the checkout is touched: the
+// cost of the old order was not the exit code, it was the stray CURSOR at the root that
+// then refused every later run on that bus.
+func TestAnAdvanceWithNoLaneWritesNothing(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	checkout, _ := busDir(t)
+	var out, errOut bytes.Buffer
+	code := advanceCursorTo(checkout, bus.Participant{Name: "Dana"}, nil, "", strings.Repeat("a", 40),
+		"origin", "main", 3, true, false, now(), &out, &errOut)
+	if code != 1 {
+		t.Fatalf("an advance with no lane exited %d, want 1\nstdout: %s\nstderr: %s", code, out.String(), errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "has no lane on this bus") {
+		t.Fatalf("the refusal does not say what is wrong:\n%s", errOut.String())
+	}
+	// THE PROPERTY THAT MATTERS: the checkout is as clean as it was found. A failed advance
+	// that leaves a file behind is a bus nobody can read until somebody deletes it by hand.
+	mustNoRootState(t, checkout)
+	if got := strings.TrimSpace(gitIn(t, checkout, "status", "--porcelain")); got != "" {
+		t.Fatalf("a refused advance left the checkout dirty:\n%s", got)
+	}
+}
+
+// mustNoRootState fails if a run left CURSOR, OPEN or INDEX at the checkout ROOT, on disk
+// or in git's status. They belong in a lane and nowhere else; at the root they are what
+// locks a reader out of their own bus.
+func mustNoRootState(t *testing.T, checkout string) {
+	t.Helper()
+	for _, name := range []string{bus.CursorName, bus.OpenName, bus.IndexName} {
+		if _, err := os.Stat(filepath.Join(checkout, name)); err == nil {
+			t.Fatalf("%s is at the checkout root; state files live in the reader's lane", name)
+		}
+	}
+	if got := gitIn(t, checkout, "status", "--porcelain"); strings.Contains(got, "?? "+bus.CursorName+"\n") {
+		t.Fatalf("git sees an untracked root state file:\n%s", got)
+	}
+}

@@ -2,7 +2,7 @@
 Package wake is nova-wake's machinery: the state file that makes a change a
 change, the three sources it polls, the view over a bus checkout's commits that
 says whether a line has gone silent, and the serve loop that wakes a harness
-from outside a session. docs/SPEC-WAKE.md is normative for all of it.
+from outside a session. deprecated/docs/SPEC-WAKE.md is normative for all of it.
 
 The whole design is one sentence: poll, compute a state value, compare it to the
 stored one BYTE FOR BYTE, and a difference is a change. Nothing here decides
@@ -246,7 +246,7 @@ func (s *State) PrintedID(key string) string {
 // any other field, so nothing outside this package can read a state file and
 // say what the window was shown -- and a guard that greps the file for
 // `printed=` over rows written without it can never go red, which is exactly
-// what cmd/nova-wake's failed-write guard had quietly become.
+// what deprecated/cmd/nova-wake's failed-write guard had quietly become.
 const printedLabel = "printed="
 
 // printedField renders the printed half. The empty id and the missing one are

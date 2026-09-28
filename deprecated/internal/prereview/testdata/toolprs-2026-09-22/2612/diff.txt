@@ -1,0 +1,1822 @@
+diff --git a/cmd/nova-wake/audit_test.go b/cmd/nova-wake/audit_test.go
+index 550398bfb..9f46b3838 100644
+--- a/cmd/nova-wake/audit_test.go
++++ b/cmd/nova-wake/audit_test.go
+@@ -27,6 +27,14 @@ var wakeAudit = audit.Config{
+ 		// is nothing here for an escape to do that the line's own construction
+ 		// has not already done.
+ 		`main.go|cmdProbe|wake.HereLine(clock.Now(), wake.ReadBench(), *quietLoad)`: "the line is composed through oneline.Field inside internal/wake and carries only numbers the kernel gave",
++		// Line composes the whole friends: line inside internal/presence from
++		// three kinds of field and no other: a friend's name normalized to
++		// lower case, a duration this tool formatted itself, and a UTC clock
++		// time it formatted itself. Nothing a store holds reaches the line --
++		// a value that is not the stamp this tool wrote is not printed at all,
++		// it only makes the friend read as `up` with no age -- so there is
++		// nothing here for an escape to do.
++		`presence.go|cmdPresence|presence.Line(sts, now)`: "the line is composed inside internal/presence from a normalized name, a duration and a clock time, none of them a store's text",
+ 	},
+ 	Imports: []string{
+ 		`"context"`, `"flag"`, `"fmt"`, `"io"`, `"os"`, `"os/exec"`, `"sort"`, `"strconv"`, `"strings"`, `"time"`,
+@@ -67,6 +75,12 @@ var wakeAudit = audit.Config{
+ 		`"github.com/mas-bandwidth/nova-tools/internal/dispatch"`,
+ 		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
+ 		`"github.com/mas-bandwidth/nova-tools/internal/wake"`,
++		// internal/presence is the friend heartbeat of #2610: two Redis keys
++		// per friend and the line read back from them. It writes to the store,
++		// never to a writer, and every field of the line it composes is a
++		// normalized name, a duration or a clock time -- see the exemption
++		// above for presence.Line.
++		`"github.com/mas-bandwidth/nova-tools/internal/presence"`,
+ 	},
+ 	MinClassified: 40,
+ }
+diff --git a/cmd/nova-wake/main.go b/cmd/nova-wake/main.go
+index eaa20fb9d..0d677f248 100644
+--- a/cmd/nova-wake/main.go
++++ b/cmd/nova-wake/main.go
+@@ -78,6 +78,13 @@ usage:
+   nova-wake serve --bus <dir> --as <name> --state <file> --redeliver <id> --on-note <command>
+         [--on-note-idempotent]
+   nova-wake awake --bus <dir> [--window <seconds>] [--max <n>]
++  nova-wake beat --as <name> --store <host:port>
++        [--every <duration>] [--ttl <duration>]   default 30s and 90s
++        [--once]            write one beat and return, for a check or a test
++        [--user <name>]     the store's ACL user; default bench
++  nova-wake presence --store <host:port>
++        (--bus <dir> | --participants <file> | --friends <a,b,c>)   the roster
++        [--user <name>]
+   nova-wake version
+   nova-wake quickstart --state <file> [--max <duration>] [--on-deadline <word>]
+         [--reports <dir> ...] [--bus <dir> --as <name> --receipt-max-words <n>]
+@@ -89,6 +96,14 @@ landed. There is no third shape: a harness /loop, a scheduler prompt or a
+ heartbeat that runs a model on an interval is not a wake, and this tool offers
+ no verb for it.
+ 
++beat and presence are the one heartbeat that is NOT a wake and spends nothing:
++beat is a process a friend's window starts once and forgets, writing
++friend:<name> = <utc> with a TTL every --every and reading nothing, and
++presence prints one line saying who is here. No model runs on either side, and
++a window that exits, runs out of credit or is killed simply stops writing until
++the key lapses. The password is never a flag: it reaches beat as
++NOVA_REDIS_BENCH_PASSWORD, through nova-secrets exec --only and no other way.
++
+ serve FETCHES every --interval, which is why --remote and --branch are its own
+ flags and not --receipt's, and its --on-note command is started as
+ <command> <id> [<id>...]: note ids and nothing else, no stdin, no environment,
+@@ -332,6 +347,10 @@ func runWith(args []string, stdout, stderr io.Writer, clock wake.Clock) int {
+ 		return cmdServe(args[1:], stdout, stderr, clock)
+ 	case "awake":
+ 		return cmdAwake(cfg, args[1:], stdout, stderr, clock)
++	case "beat":
++		return cmdBeat(args[1:], stdout, stderr, clock, dialStore)
++	case "presence":
++		return cmdPresence(args[1:], stdout, stderr, clock, dialStore)
+ 	case "version", "--version":
+ 		// The first question after a table misbehaves is which build each line
+ 		// is running, and a tool that cannot answer it costs a person the
+diff --git a/cmd/nova-wake/presence.go b/cmd/nova-wake/presence.go
+new file mode 100644
+index 000000000..3c509906b
+--- /dev/null
++++ b/cmd/nova-wake/presence.go
+@@ -0,0 +1,235 @@
++package main
++
++// The friend heartbeat of #2610. `beat` is the process a friend's window
++// starts and forgets: it writes one key with a TTL every 30 seconds and spends
++// nothing else, so presence costs no tokens and is never the thing dropped
++// under load. `presence` is the read: one line, from those keys, for the swarm
++// table and for anyone about to hand a friend work.
++//
++// The two failures this replaces both happened on 2026-09-22: four tasks were
++// handed to a friend who had been gone ten hours, and a friend who had never
++// had a window up was given three. Both facts existed; nothing surfaced them.
++
++import (
++	"context"
++	"flag"
++	"fmt"
++	"io"
++	"os"
++	"path/filepath"
++	"strings"
++	"time"
++
++	"github.com/mas-bandwidth/nova-tools/internal/oneline"
++	"github.com/mas-bandwidth/nova-tools/internal/presence"
++	"github.com/mas-bandwidth/nova-tools/internal/wake"
++)
++
++// The hints for the new flags, in the shape every other refusal here keeps:
++// what the input WANTS, not just what was wrong with it.
++const (
++	storeHint  = `--store <host:port> is the fleet Redis the heartbeat lives on, the same address the other verbs spell --redis; the password is never a flag -- it reaches this process as NOVA_REDIS_BENCH_PASSWORD through nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD`
++	beatAsHint = `--as <name> is the friend whose window this is, spelled as the bus roster spells it; the key it writes is friend:<name> and there is no flag that beats for somebody else`
++	rosterHint = `name the friends: --friends <a,b,c>, --participants <file> (the bus participants.json) or --bus <dir> (its checkout, whose participants.json is read). The roster is the bus's, so a friend who joins is on the line without an edit here`
++	ttlHint    = `--ttl <duration> is how long one beat keeps the friend up, and it must be longer than --every or the key lapses between beats and a friend who is here reads as AWAY; the default is three beats, 90s for a 30s cadence`
++)
++
++// storeOpener is the seam the tests enter through: the live verbs dial Redis,
++// a test hands in a fake with a clock it moves.
++type storeOpener func(ctx context.Context, addr, user string) (presence.Store, func() error, error)
++
++// dialStore is the live opener.
++func dialStore(ctx context.Context, addr, user string) (presence.Store, func() error, error) {
++	r, err := presence.Open(ctx, addr, user)
++	if err != nil {
++		return nil, nil, err
++	}
++	return r, r.Close, nil
++}
++
++// cmdBeat is the friend's own process: SET friend:<name> <utc> EX <ttl> every
++// --every, for as long as the window lives. It ends when the window does, and
++// that ending IS the signal: no shutdown hook, no goodbye note, nothing to
++// forget to run.
++func cmdBeat(args []string, stdout, stderr io.Writer, clock wake.Clock, open storeOpener) int {
++	fs := flag.NewFlagSet("beat", flag.ContinueOnError)
++	var (
++		as    = fs.String("as", "", "")
++		store = fs.String("store", "", "")
++		user  = fs.String("user", presence.DefaultUser, "")
++		every = fs.String("every", "", "")
++		ttl   = fs.String("ttl", "", "")
++		once  = fs.Bool("once", false, "")
++	)
++	if !parseFlags(fs, args, stderr) {
++		return 2
++	}
++
++	var p problems
++	if strings.TrimSpace(*as) == "" {
++		p.add("--as is required; refusing to guess", "  "+beatAsHint+"\n")
++	}
++	if strings.TrimSpace(*store) == "" {
++		p.add("--store is required; refusing to guess", "  "+storeHint+"\n")
++	}
++	period := presence.DefaultEvery
++	if *every != "" {
++		period = parseDur(&p, "every", *every)
++	}
++	lifetime := presence.DefaultTTL
++	if *ttl != "" {
++		lifetime = parseDur(&p, "ttl", *ttl)
++	}
++	if !p.any() && lifetime <= period {
++		p.add(fmt.Sprintf("--ttl %s is not longer than --every %s", oneline.Field(lifetime.String()), oneline.Field(period.String())), "  "+ttlHint+"\n")
++	}
++	if !p.any() {
++		if _, err := presence.Addr(*store); err != nil {
++			p.add(err.Error(), "  "+storeHint+"\n")
++		}
++	}
++	if p.any() {
++		return p.print(stderr, "beat")
++	}
++
++	ctx := context.Background()
++	st, closeStore, err := open(ctx, *store, *user)
++	if err != nil {
++		return refuse(stderr, " beat", oneline.Cap(err.Error(), oneline.TailBytes))
++	}
++	defer func() { _ = closeStore() }()
++
++	name := presence.Normalize(*as)
++	addr, _ := presence.Addr(*store)
++	fmt.Fprintf(stdout, "beat %s key=%s every=%s ttl=%s store=%s\n",
++		oneline.Field(name), oneline.Field(presence.Key(name)),
++		oneline.Field(period.String()), oneline.Field(lifetime.String()), oneline.Field(addr))
++
++	if *once {
++		if err := presence.Beat(ctx, st, name, clock.Now(), lifetime); err != nil {
++			return refuse(stderr, " beat", oneline.Cap(err.Error(), oneline.TailBytes))
++		}
++		return 0
++	}
++
++	beatLoop(ctx, st, name, period, lifetime, clock, stderr, 0)
++	return 0
++}
++
++// beatLoop is the beat itself, forever when rounds is 0. It never dies of a
++// store that blinked: a beat that exited on the first timeout would report its
++// friend as gone for the rest of the day, which is the failure this whole verb
++// exists to end. It says what went wrong once on stderr, keeps beating, and
++// says so again only when the answer changes -- a line every 30 seconds in a
++// friend's window would be the next thing anybody turned off.
++//
++// rounds is the tests' door and no flag's: a caller's "stop after n" is --once.
++func beatLoop(ctx context.Context, st presence.Store, name string, period, ttl time.Duration, clock wake.Clock, stderr io.Writer, rounds int) {
++	var failing string
++	for i := 0; rounds <= 0 || i < rounds; i++ {
++		err := presence.Beat(ctx, st, name, clock.Now(), ttl)
++		switch {
++		case err != nil && err.Error() != failing:
++			failing = err.Error()
++			fmt.Fprintf(stderr, "nova-wake beat: %s; still beating every %s\n",
++				oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)), oneline.Field(period.String()))
++		case err == nil && failing != "":
++			failing = ""
++			fmt.Fprintf(stderr, "nova-wake beat: store answering again\n")
++		}
++		clock.Sleep(period)
++	}
++}
++
++// cmdPresence is the read: one line naming every friend on the bus roster and
++// whether they are here. It reports what the keys say and nothing else -- never
++// what the reader expects, which is the report that was wrong twice in one day.
++func cmdPresence(args []string, stdout, stderr io.Writer, clock wake.Clock, open storeOpener) int {
++	fs := flag.NewFlagSet("presence", flag.ContinueOnError)
++	var (
++		store        = fs.String("store", "", "")
++		user         = fs.String("user", presence.DefaultUser, "")
++		friends      = fs.String("friends", "", "")
++		participants = fs.String("participants", "", "")
++		busDir       = fs.String("bus", "", "")
++	)
++	if !parseFlags(fs, args, stderr) {
++		return 2
++	}
++
++	var p problems
++	if strings.TrimSpace(*store) == "" {
++		p.add("--store is required; refusing to guess", "  "+storeHint+"\n")
++	} else if _, err := presence.Addr(*store); err != nil {
++		p.add(err.Error(), "  "+storeHint+"\n")
++	}
++	names := rosterFrom(&p, *friends, *participants, *busDir)
++	if p.any() {
++		return p.print(stderr, "presence")
++	}
++
++	ctx := context.Background()
++	st, closeStore, err := open(ctx, *store, *user)
++	if err != nil {
++		return refuse(stderr, " presence", oneline.Cap(err.Error(), oneline.TailBytes))
++	}
++	defer func() { _ = closeStore() }()
++
++	now := clock.Now()
++	sts, err := presence.Read(ctx, st, names, now)
++	if err != nil {
++		return refuse(stderr, " presence", oneline.Cap(err.Error(), oneline.TailBytes))
++	}
++	fmt.Fprintln(stdout, presence.Line(sts, now))
++	return 0
++}
++
++// rosterFrom resolves the friends to report on: the names a caller listed, the
++// participants file they named, or the participants.json of the bus checkout
++// they named. Exactly one source, and no built-in list: a roster hard-coded
++// here would be a second copy of the bus's, and the copy is what goes stale.
++func rosterFrom(p *problems, friends, participants, busDir string) []string {
++	given := 0
++	for _, s := range []string{friends, participants, busDir} {
++		if strings.TrimSpace(s) != "" {
++			given++
++		}
++	}
++	if given == 0 {
++		p.add("name the friends to report on; refusing to guess", "  "+rosterHint+"\n")
++		return nil
++	}
++	if given > 1 {
++		p.add("--friends, --participants and --bus are three spellings of one roster; give one", "  "+rosterHint+"\n")
++		return nil
++	}
++
++	if strings.TrimSpace(friends) != "" {
++		var out []string
++		for _, n := range strings.Split(friends, ",") {
++			if n = presence.Normalize(n); n != "" {
++				out = append(out, n)
++			}
++		}
++		if len(out) == 0 {
++			p.add("--friends "+friends+" names nobody", "  "+rosterHint+"\n")
++		}
++		return out
++	}
++
++	path := participants
++	if strings.TrimSpace(path) == "" {
++		path = filepath.Join(busDir, "participants.json")
++	}
++	data, err := os.ReadFile(path)
++	if err != nil {
++		p.add("cannot read "+path, "  "+rosterHint+"\n")
++		return nil
++	}
++	names, err := presence.ParticipantNames(data)
++	if err != nil {
++		p.add(path+": "+err.Error(), "  "+rosterHint+"\n")
++		return nil
++	}
++	return names
++}
+diff --git a/cmd/nova-wake/presence_test.go b/cmd/nova-wake/presence_test.go
+new file mode 100644
+index 000000000..1368ab0cc
+--- /dev/null
++++ b/cmd/nova-wake/presence_test.go
+@@ -0,0 +1,341 @@
++package main
++
++import (
++	"bytes"
++	"context"
++	"errors"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/mas-bandwidth/nova-tools/internal/presence"
++)
++
++// The heartbeat's tests reach no store: the verbs take their opener as an
++// argument, so a test hands in a fake whose clock it moves and the loop's
++// sleeps move it too. Nothing here waits for a wall-clock second.
++
++var beatAt = time.Date(2026, 9, 22, 9, 41, 0, 0, time.UTC)
++
++// fakeStoreClock is one clock for the verb and the store: the verb's sleeps
++// move the store's expiry, so `--every 30s` past a 90s TTL is three function
++// calls and not ninety seconds of test.
++type fakeStoreClock struct{ st *presence.FakeStore }
++
++func (c fakeStoreClock) Now() time.Time        { return c.st.Now() }
++func (c fakeStoreClock) Sleep(d time.Duration) { c.st.Advance(d) }
++
++func fakeOpener(st presence.Store) storeOpener {
++	return func(ctx context.Context, addr, user string) (presence.Store, func() error, error) {
++		return st, func() error { return nil }, nil
++	}
++}
++
++// countingOpener wraps an opener and counts how many times it dials. A
++// refused --store must never reach it: cmdBeat and cmdPresence both check
++// presence.Addr and print their refusal before they ever call open, so the
++// count is the test's proof that a bad address never causes a network
++// operation, not just that the CLI printed the right words.
++func countingOpener(st presence.Store, dials *int) storeOpener {
++	inner := fakeOpener(st)
++	return func(ctx context.Context, addr, user string) (presence.Store, func() error, error) {
++		*dials++
++		return inner(ctx, addr, user)
++	}
++}
++
++func TestBeatOnceWritesTheFriendsKey(t *testing.T) {
++	st := presence.NewFakeStore(beatAt)
++	var out, errb bytes.Buffer
++	code := cmdBeat([]string{"--as", "Johnny", "--store", "store.invalid:6380", "--once"},
++		&out, &errb, fakeStoreClock{st}, fakeOpener(st))
++	if code != 0 {
++		t.Fatalf("beat --once exited %d: %s", code, errb.String())
++	}
++	if got := out.String(); !strings.HasPrefix(got, "beat johnny key=friend:johnny every=30s ttl=1m30s") {
++		t.Fatalf("startup line = %q", got)
++	}
++	vals, err := st.MGet(context.Background(), "friend:johnny", "friend:johnny:last")
++	if err != nil {
++		t.Fatalf("mget: %v", err)
++	}
++	if vals[0] != "2026-09-22T09:41:00Z" || vals[1] != vals[0] {
++		t.Fatalf("keys = %q, %q; want the beat and its memory", vals[0], vals[1])
++	}
++}
++
++func TestBeatRefusesWhatItCannotGuess(t *testing.T) {
++	st := presence.NewFakeStore(beatAt)
++	for _, c := range []struct {
++		name string
++		args []string
++		want string
++	}{
++		{"no name", []string{"--store", "store.invalid:6380", "--once"}, "--as is required"},
++		{"no store", []string{"--as", "johnny", "--once"}, "--store is required"},
++		{"a bare host", []string{"--as", "johnny", "--store", "store.invalid", "--once"}, "store address refused"},
++		{"a ttl inside the cadence", []string{"--as", "johnny", "--store", "store.invalid:6380", "--every", "30s", "--ttl", "20s", "--once"}, "is not longer than"},
++		{"a cadence that is not a duration", []string{"--as", "johnny", "--store", "store.invalid:6380", "--every", "soon", "--once"}, "is not a duration"},
++	} {
++		t.Run(c.name, func(t *testing.T) {
++			var out, errb bytes.Buffer
++			if code := cmdBeat(c.args, &out, &errb, fakeStoreClock{st}, fakeOpener(st)); code != 2 {
++				t.Fatalf("exit %d; want 2", code)
++			}
++			if !strings.Contains(errb.String(), c.want) {
++				t.Fatalf("refusal = %q; want it to name %q", errb.String(), c.want)
++			}
++			if !strings.Contains(errb.String(), "run: nova-wake help") {
++				t.Fatalf("refusal = %q; every refusal ends in the door to the usage", errb.String())
++			}
++		})
++	}
++}
++
++// TestBeatStoreURLParsingRejectsTLSAndUserinfoWithoutLeakingTheSecret is the
++// synthetic control for comment 5782441213 on #2612: a rediss:// --store used
++// to be silently stripped to a plaintext host:port and dialled anyway, and a
++// user:pass@ URL was never parsed at all -- the password rode along inside
++// the address the beat then printed on its startup line. This drives the
++// verb's own flag parsing (cmdBeat, --once, no network: the fake opener never
++// dials) with all three shapes the comment named, and checks not just that
++// the two bad ones are refused, but that the refusal -- and every other byte
++// on stdout or stderr -- never contains the password, while the third,
++// ordinary shape still works.
++func TestBeatStoreURLParsingRejectsTLSAndUserinfoWithoutLeakingTheSecret(t *testing.T) {
++	const secret = "hunter2"
++	for _, c := range []struct {
++		name       string
++		store      string
++		wantExit   int
++		wantErr    string // substring the refusal must name; "" when it should succeed
++		hasNetwork bool
++	}{
++		{"tls is refused", "rediss://store.invalid:6380", 2, "store address refused", false},
++		{"userinfo is refused", "redis://johnny:" + secret + "@store.invalid:6380", 2, "store address refused", false},
++		{"a plain URL still works", "redis://store.invalid:6380", 0, "", false},
++	} {
++		t.Run(c.name, func(t *testing.T) {
++			st := presence.NewFakeStore(beatAt)
++			var out, errb bytes.Buffer
++			code := cmdBeat([]string{"--as", "johnny", "--store", c.store, "--once"},
++				&out, &errb, fakeStoreClock{st}, fakeOpener(st))
++			if code != c.wantExit {
++				t.Fatalf("exit %d; want %d (stdout=%q stderr=%q)", code, c.wantExit, out.String(), errb.String())
++			}
++			if c.wantErr != "" && !strings.Contains(errb.String(), c.wantErr) {
++				t.Fatalf("refusal = %q; want it to name %q", errb.String(), c.wantErr)
++			}
++			if strings.Contains(out.String(), secret) || strings.Contains(errb.String(), secret) {
++				t.Fatalf("stdout=%q stderr=%q; the password leaked", out.String(), errb.String())
++			}
++		})
++	}
++}
++
++// TestBeatStoreURLQueryParametersAreRefusedWithoutDialing is the CLI-level
++// control for comment 5783425783 on #2612, and the two comments before it on
++// the same issue. The latest hole: a query VALUE containing "@" --
++// redis://store.invalid:6380?password=prefix@SYNTHETIC_SECRET, the exact
++// string from the comment -- still became a printed host, because the prior
++// repair's addrProblems took strings.LastIndex(s, "@") before it had found
++// the query boundary, mistook the query value's own "@" for the userinfo
++// delimiter, and printed everything after it as the host. This drives the
++// verb's own flag parsing (cmdBeat, --once) for that exact shape plus every
++// other shape comment 5783425783 asked for, through a counting opener that
++// must stay at zero: the refusal has to happen before cmdBeat ever calls
++// open, or the "no network operation occurs on a refused address" half of
++// the control is not proven. It also checks the refusal is refusedAddr byte
++// for byte, and that the two accepted forms in the same list -- a bare
++// host:port and an [ipv6]:port -- still parse and reach the opener.
++func TestBeatStoreURLQueryParametersAreRefusedWithoutDialing(t *testing.T) {
++	const secret = "SYNTHETIC_SECRET"
++	// Mirrors presence.refusedAddr, unexported on purpose: the CLI proves
++	// the refusal it prints against the same literal the package's own test
++	// checks Addr's error against byte for byte.
++	const wantRefusal = "store address refused: only host:port or redis://host:port is supported"
++	for _, c := range []struct {
++		name     string
++		store    string
++		accepted bool
++	}{
++		// The exact synthetic URL from comment 5783425783.
++		{"query value containing @", "redis://store.invalid:6380?password=prefix@" + secret, false},
++		{"query value containing @, short host", "redis://h:6380?x=a@b", false},
++		{"userinfo before the host", "redis://a@b:6380", false},
++		{"port zero", "redis://h:0", false},
++		{"port above 65535", "redis://h:70000", false},
++		{"no port at all", "redis://h", false},
++		{"bare host:port", "h:6380", true},
++		{"redis:// host:port", "redis://h:6380", true},
++		{"bracketed ipv6 host:port", "[::1]:6380", true},
++	} {
++		t.Run(c.name, func(t *testing.T) {
++			st := presence.NewFakeStore(beatAt)
++			var dials int
++			var out, errb bytes.Buffer
++			code := cmdBeat([]string{"--as", "johnny", "--store", c.store, "--once"},
++				&out, &errb, fakeStoreClock{st}, countingOpener(st, &dials))
++			if c.accepted {
++				if code != 0 {
++					t.Fatalf("exit %d; want 0 -- %q is a valid store address (stdout=%q stderr=%q)", code, c.store, out.String(), errb.String())
++				}
++				if dials != 1 {
++					t.Fatalf("dials = %d; want 1 -- an accepted --store must reach the opener", dials)
++				}
++				return
++			}
++			if code != 2 {
++				t.Fatalf("exit %d; want 2 (stdout=%q stderr=%q)", code, out.String(), errb.String())
++			}
++			if !strings.Contains(errb.String(), wantRefusal) {
++				t.Fatalf("refusal = %q; want the constant refusal %q", errb.String(), wantRefusal)
++			}
++			if strings.Contains(out.String(), secret) || strings.Contains(errb.String(), secret) {
++				t.Fatalf("stdout=%q stderr=%q; the secret leaked", out.String(), errb.String())
++			}
++			if strings.Contains(out.String(), "store.invalid") || strings.Contains(errb.String(), "store.invalid") {
++				t.Fatalf("stdout=%q stderr=%q; the synthetic host leaked", out.String(), errb.String())
++			}
++			if dials != 0 {
++				t.Fatalf("dials = %d; want 0 -- a refused --store must never reach the opener", dials)
++			}
++		})
++	}
++}
++
++func TestTheLoopKeepsBeatingThroughAStoreThatBlinked(t *testing.T) {
++	st := presence.NewFakeStore(beatAt)
++	// One good beat (calls 1 and 2), then a store that refuses four calls
++	// -- four beats, each giving up on its first write -- and then a store
++	// that answers again. A beat that exited on the first error would have
++	// reported its friend as gone for the rest of the day.
++	st.Hook = func(call int) error {
++		if call >= 3 && call <= 6 {
++			return errStoreDown
++		}
++		return nil
++	}
++	var errb bytes.Buffer
++	beatLoop(context.Background(), st, "johnny", presence.DefaultEvery, presence.DefaultTTL, fakeStoreClock{st}, &errb, 6)
++
++	if got := st.Sets; got != 4 {
++		t.Fatalf("writes = %d; want 4 (two keys each for the two beats the store took)", got)
++	}
++	lines := strings.Count(strings.TrimSpace(errb.String()), "\n") + 1
++	if lines != 2 {
++		t.Fatalf("stderr =\n%s\nwant two lines: the failure once and the recovery once, never one a beat", errb.String())
++	}
++	if !strings.Contains(errb.String(), "still beating every 30s") || !strings.Contains(errb.String(), "answering again") {
++		t.Fatalf("stderr = %q; want the failure and the recovery named", errb.String())
++	}
++
++	// The friend is up at the end, from the beat that landed after the
++	// store came back.
++	sts, err := presence.Read(context.Background(), st, []string{"johnny"}, st.Now())
++	if err != nil {
++		t.Fatalf("read: %v", err)
++	}
++	if sts[0].State != presence.Up {
++		t.Fatalf("after the store came back: %v; want Up", sts[0].State)
++	}
++}
++
++func TestPresencePrintsTheOneLine(t *testing.T) {
++	st := presence.NewFakeStore(beatAt)
++	ctx := context.Background()
++	if err := presence.Beat(ctx, st, "emma", st.Now(), presence.DefaultTTL); err != nil {
++		t.Fatalf("beat emma: %v", err)
++	}
++	st.Advance(72 * time.Minute) // emma's window is long gone
++	if err := presence.Beat(ctx, st, "johnny", st.Now().Add(-12*time.Second), presence.DefaultTTL); err != nil {
++		t.Fatalf("beat johnny: %v", err)
++	}
++
++	var out, errb bytes.Buffer
++	code := cmdPresence([]string{"--store", "store.invalid:6380", "--friends", "johnny,emma,freddy"},
++		&out, &errb, fakeStoreClock{st}, fakeOpener(st))
++	if code != 0 {
++		t.Fatalf("presence exited %d: %s", code, errb.String())
++	}
++	want := "friends: johnny up 12s · emma AWAY 1h12m (last 09:41Z) · freddy none\n"
++	if out.String() != want {
++		t.Fatalf("line =\n\t%q\nwant\n\t%q", out.String(), want)
++	}
++}
++
++func TestPresenceReadsTheRosterFromTheBusCheckout(t *testing.T) {
++	dir := t.TempDir()
++	if err := os.WriteFile(filepath.Join(dir, "participants.json"), []byte(
++		`{"participants":[{"name":"Rowan"},{"name":"Stella"},{"name":"Glenn"}]}`), 0o600); err != nil {
++		t.Fatalf("write: %v", err)
++	}
++	st := presence.NewFakeStore(beatAt)
++	var out, errb bytes.Buffer
++	code := cmdPresence([]string{"--store", "store.invalid:6380", "--bus", dir},
++		&out, &errb, fakeStoreClock{st}, fakeOpener(st))
++	if code != 0 {
++		t.Fatalf("presence exited %d: %s", code, errb.String())
++	}
++	if out.String() != "friends: stella none\n" {
++		t.Fatalf("line = %q; want the roster minus Glenn and Rowan", out.String())
++	}
++}
++
++func TestPresenceRefusesARosterItWouldHaveToInvent(t *testing.T) {
++	st := presence.NewFakeStore(beatAt)
++	for _, c := range []struct {
++		name string
++		args []string
++		want string
++	}{
++		{"no roster at all", []string{"--store", "store.invalid:6380"}, "name the friends"},
++		{"two rosters", []string{"--store", "store.invalid:6380", "--friends", "a", "--bus", "."}, "three spellings of one roster"},
++		{"no store", []string{"--friends", "a"}, "--store is required"},
++		{"a bus with no participants file", []string{"--store", "store.invalid:6380", "--bus", t.TempDir()}, "cannot read"},
++	} {
++		t.Run(c.name, func(t *testing.T) {
++			var out, errb bytes.Buffer
++			if code := cmdPresence(c.args, &out, &errb, fakeStoreClock{st}, fakeOpener(st)); code != 2 {
++				t.Fatalf("exit %d; want 2", code)
++			}
++			if !strings.Contains(errb.String(), c.want) {
++				t.Fatalf("refusal = %q; want it to name %q", errb.String(), c.want)
++			}
++			if out.Len() != 0 {
++				t.Fatalf("a refusal printed a line on stdout: %q; an empty friends line reads as good news", out.String())
++			}
++		})
++	}
++}
++
++func TestPresenceSaysNothingRatherThanAnEmptyRoomWhenTheStoreIsDown(t *testing.T) {
++	st := presence.NewFakeStore(beatAt)
++	st.Err = errStoreDown
++	var out, errb bytes.Buffer
++	code := cmdPresence([]string{"--store", "store.invalid:6380", "--friends", "johnny"},
++		&out, &errb, fakeStoreClock{st}, fakeOpener(st))
++	if code != 2 {
++		t.Fatalf("exit %d; want 2", code)
++	}
++	if out.Len() != 0 {
++		t.Fatalf("stdout = %q; a store that cannot be read is not four friends who are away", out.String())
++	}
++}
++
++func TestTheUsageNamesBothVerbs(t *testing.T) {
++	var out, errb bytes.Buffer
++	if code := run([]string{"help"}, &out, &errb); code != 0 {
++		t.Fatalf("help exited %d", code)
++	}
++	for _, want := range []string{"nova-wake beat --as <name> --store <host:port>", "nova-wake presence --store <host:port>"} {
++		if !strings.Contains(out.String(), want) {
++			t.Fatalf("the usage banner does not name %q", want)
++		}
++	}
++}
++
++// errStoreDown is what a store that is not answering looks like to the verb.
++var errStoreDown = errors.New("dial tcp: connection refused")
+diff --git a/docs/CLI.md b/docs/CLI.md
+index 6d1741ce1..94377c6d7 100644
+--- a/docs/CLI.md
++++ b/docs/CLI.md
+@@ -1112,6 +1112,48 @@ FRIEND rowan awake age=500 source=bus-beat
+ AWAKE OK friends=4 awake=2 asleep=1 unknown=1 window=300
+ ```
+ 
++And two that cost nothing at all. `nova-wake beat --as <name> --store <host:port>`
++is the process a friend's window starts once at startup and forgets: every
++`--every` (default 30s) it writes `friend:<name> = <RFC3339 utc>` with a
++`--ttl` (default 90s) on the fleet store, and `friend:<name>:last` with no TTL
++beside it. It reads nothing, prints one line and then nothing, and **no model
++runs on either side** — the cost of presence has to be zero or the heartbeat is
++the first thing dropped under load. A window that exits, runs out of credit or
++is killed simply stops writing, and the key lapses within the TTL: there is no
++shutdown hook to forget to run, which is the whole point.
++
++`nova-wake presence --store <host:port> --bus <dir>` reads those keys back and
++prints one line for the swarm table:
++
++```
++$ nova-wake presence --store 100.115.99.19:6380 --bus ./bus
++friends: johnny up 12s · stella up 4s · emma AWAY 1h12m (last 09:41Z) · freddy none
++```
++
++`up` is a beat inside the TTL, with the age of it; `AWAY` is the key lapsed,
++with the age of the last beat and its clock time, both from the untimed key;
++`none` is a friend who has never beaten. `AWAY` is the only word in capitals
++because it is the only one that changes what the reader does next. The roster is the bus's —
++`--bus <dir>` reads its `participants.json`, `--participants <file>` names that
++file directly and `--friends <a,b,c>` names them by hand — minus Glenn and
++Rowan, and there is no built-in list, because a copy of a roster is the thing
++that goes stale. A store that cannot be read is a refusal and exit 2, never an
++empty line: four friends reported away is a fact, and four friends not reported
++at all reads as good news.
++
++The password is never a flag, a file this tool opens or a word in its output.
++It reaches `beat` as `NOVA_REDIS_BENCH_PASSWORD` through
++`nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD`, exactly the way
++`bench-row` hands it to `redis-cli`, and the ACL user it authenticates as
++(`--user`, default `bench`) holds `~friend:*` and nothing wider. The startup
++line each friend adds to their own window is in
++[docs/FRIEND-PRESENCE.md](FRIEND-PRESENCE.md).
++
++This is the measured half of `awake`: `awake` reads presence out of the bus
++checkout, which is a git commit per beat and lags by a fetch, and `presence`
++reads it out of the store, which is a `SET` per beat and lags by nothing. Both
++report; neither decides. Issue #2610.
++
+ ### First run
+ 
+ Point it at a directory holding `RESULT.md` files and give it a state file of
+diff --git a/docs/FRIEND-PRESENCE.md b/docs/FRIEND-PRESENCE.md
+new file mode 100644
+index 000000000..ae0e0685f
+--- /dev/null
++++ b/docs/FRIEND-PRESENCE.md
+@@ -0,0 +1,87 @@
++# The one line each friend adds to their window's startup
++
++This is the operational half of `nova-wake beat` and `nova-wake presence`
++([docs/SPEC-WAKE.md](SPEC-WAKE.md), **beat and presence**; nova-tools #2610).
++One command, started once when a window opens, so that everybody else can tell
++whether you are here without asking you and without spending a turn.
++
++**It costs nothing.** The beat is a process, not a prompt: one `SET` every 30
++seconds, no model, no tokens, no turn started. It reads nothing and says
++nothing. Starting it is the only thing you ever do about it — a window that
++exits, runs out of credit or is killed simply stops writing, and the key lapses
++within 90 seconds. There is no shutdown step to remember.
++
++## The line
++
++On the Studio, where every friend's window runs as `glenn`:
++
++```bash
++nohup ~/.local/bin/nova-secrets exec \
++  --store ~/nova-bench/secrets --as swarm-studio \
++  --key ~/.config/nova-secrets/swarm-studio.key --sops /opt/homebrew/bin/sops \
++  --only NOVA_REDIS_BENCH_PASSWORD --require NOVA_REDIS_BENCH_PASSWORD -- \
++  ~/.local/bin/nova-wake beat --as <YOUR NAME> --store 100.115.99.19:6380 \
++  >> ~/<your>-working/.beat.log 2>&1 &
++```
++
++Per friend, the two things that change are `--as` and the log path:
++
++| friend  | `--as`    | log                              |
++| ------- | --------- | -------------------------------- |
++| Johnny  | `johnny`  | `~/johnny-working/.beat.log`     |
++| Stella  | `stella`  | `~/stella-working/.beat.log`     |
++| Emma    | `emma`    | `~/emma-working/.beat.log`       |
++| Freddy  | `freddy`  | `~/freddy-working/.beat.log`     |
++| Alex    | `alex`    | `~/alex-working/.beat.log`       |
++
++The name is yours as the bus roster spells it, in any case — the key is
++`friend:<name>` in lower case either way. Two windows of your own beating the
++same name is harmless: they write the same key.
++
++## The seat, and why it is the same one for everybody
++
++The password is never a flag, a file you open, or a word you paste. It reaches
++`nova-wake beat` as `NOVA_REDIS_BENCH_PASSWORD` through `nova-secrets exec
++--only`, exactly the way `bench-row` hands it to `redis-cli`, and the ACL user
++it authenticates as holds `~friend:*` on the store and nothing wider.
++
++`NOVA_REDIS_BENCH_PASSWORD` lives in the **bench seat of the machine the window
++is on**, not in your own seat: on the Studio that is `swarm-studio`
++(`~/.config/nova-secrets/swarm-studio.key`), and a window on another bench uses
++that bench's `swarm-<host>` seat — the key file is whichever
++`~/.config/nova-secrets/swarm-*.key` is there, which is how `bench-row` finds
++it:
++
++```bash
++seat=$(ls ~/.config/nova-secrets/ | grep -E '^(swarm-.*|air)\.key$' | head -1 | sed 's/\.key$//')
++```
++
++A friend's own seat (Stella's `~/.config/nova-secrets/stella/identity.age`, and
++the `stella-*.yaml` files beside it) opens that friend's model keys and does
++**not** hold the store password. It is not the seat to use here. On Linux
++benches `sops` is at `~/.local/bin/sops` rather than `/opt/homebrew/bin/sops`.
++
++## Checking it
++
++```
++$ nova-wake presence --store 100.115.99.19:6380 --participants ~/rowan-working/adopt-scratch/bus-send2/participants.json
++friends: stella up 4s · johnny up 12s · emma AWAY 1h12m (last 09:41Z) · freddy none
++```
++
++`up` is a beat inside the TTL and its age; `AWAY` is a window that stopped, with
++how long ago and when; `none` is a name that has never beaten. Your own line
++should read `up <n>s` within 30 seconds of starting the command above. If it
++reads `none`, the beat did not start: `~/<your>-working/.beat.log` holds its
++one startup line and any complaint it has about the store.
++
++A beat that cannot reach the store does not exit — it says so once in that log
++and keeps trying, because a beat that gave up would report you as gone for the
++rest of the day.
++
++## What it is not
++
++It is not a claim that you are reading. A beat is a process; a window whose
++model has stopped while its loop runs still reads `up`. Output is what says you
++are reading, and the swarm table's bus line is the one that sees it. The
++heartbeat answers one question only — is this friend's window here — and that
++is the question that was being guessed.
+diff --git a/docs/SPEC-WAKE.md b/docs/SPEC-WAKE.md
+index 4e7beb309..2c5fe5c37 100644
+--- a/docs/SPEC-WAKE.md
++++ b/docs/SPEC-WAKE.md
+@@ -3191,6 +3191,84 @@ cannot take is 2 and says which. The receipt a window sends with these numbers
+ is *"a promise about the next ten minutes, not a report about the last one"*
+ — so the tool's line carries `at=` and the window quotes it, and a READY formed
+ from a plan has nothing to quote.
++
++## beat and presence — the friend heartbeat, at zero tokens (added 2026-09-22, nova-tools #2610)
++
++Everything above measures a line from what it WROTE: a cursor moved, a note
++landed, a report file appeared. All of it lags by a git fetch, and all of it
++goes quiet for the same two reasons — a friend who is working with nothing to
++say, and a friend who is not there. On 2026-09-22 that cost a day: four tasks
++were handed to a friend gone ten hours (last bus beat 05:28Z, noticed at
++15:40Z), three to a friend who had never had a window up at all, and a fourth
++friend's silence was diagnosed an hour after Glenn had seen it. Every fact
++existed; nothing surfaced them, and presence was reported from expectation.
++
++**The mechanism is two keys and no model.** A friend's harness startup runs
++
++```
++nova-wake beat --as <name> --store <host:port> [--every 30s] [--ttl 90s]
++```
++
++which every `--every` writes `friend:<name>` = the current time in RFC3339 UTC
++with `EX <ttl>`, and `friend:<name>:last` = the same stamp with no expiry. It
++reads nothing, watches nothing, and starts no turn: **a heartbeat that spends a
++token is a heartbeat somebody turns off**, which is why this is not a source of
++`watch` and never wakes anybody. `--once` writes one beat and returns, for a
++check or a test.
++
++**The ending is the signal.** A window that exits, runs out of credit, is
++killed or loses its machine stops writing, and the key lapses inside the TTL.
++There is no shutdown hook, no goodbye note and nothing to forget to run — the
++three ways a friend actually goes away all look the same to the store, which is
++the property the bus beats never had. The TTL is three beats rather than two so
++one missed write is not a friend who left.
++
++**The untimed key is the memory of the beat.** An absent key says a friend is
++away but not since when, and AWAY with no duration is the report that cost the
++hour. `friend:<name>:last` carries no TTL and survives the expiry, so the line
++can date the silence.
++
++```
++nova-wake presence --store <host:port> (--bus <dir> | --participants <file> | --friends <a,b,c>)
++friends: johnny up 12s · stella up 4s · emma AWAY 1h12m (last 09:41Z) · freddy none
++```
++
++One MGET over both keys of every friend, whatever the roster's length. `up` is
++a beat inside the TTL with its age; `AWAY` is the key lapsed, with the age and
++clock time of the last beat; `none` is a friend who has never beaten. **The key's
++existence is the presence and its value only dates it**: a value this build
++cannot parse reads `up` with no age rather than away, because a friend running
++an older beat is still here.
++
++**The roster is the bus's, never a copy.** `--bus <dir>` reads its
++`participants.json`, minus Glenn and Rowan; `--participants` names that file and
++`--friends` names them by hand. There is no built-in list, because the copy is
++what goes stale.
++
++**A store that cannot be read is a refusal, not an empty room.** `presence`
++exits 2 with one line on stderr and prints no `friends:` line at all: four
++friends reported away is a fact and four friends not reported is good news, and
++this verb exists because good news was assumed once already. The beat is the
++mirror of it — `beat`'s loop never dies of a store that blinked, because a beat
++that exited on the first timeout would report its own friend as gone for the
++rest of the day. It says so once on stderr, keeps beating, and says so again
++only when the answer changes.
++
++**The password is never a flag.** It reaches `beat` as
++`NOVA_REDIS_BENCH_PASSWORD` through `nova-secrets exec --only
++NOVA_REDIS_BENCH_PASSWORD` and no other way, and the ACL user it authenticates
++as (`--user`, default `bench`) holds `~friend:*` and nothing wider. The startup
++line each friend adds to their own window is
++[docs/FRIEND-PRESENCE.md](FRIEND-PRESENCE.md).
++
++**What this does not do.** It does not say a friend is READING — a beat is a
++process, and a window whose model has stopped while its loop runs reads `up`.
++Output is what says a friend is reading, and the bus line is the one that sees
++it. It routes nothing: `#2593`'s router refuses to queue to an away friend and
++`#2592` sorts by who is here, and both of them READ this line. And it decides
++nothing about why: the tool has measured an absence, exactly as `probe` has
++measured a silence, and writes no cause.
++
+ ## Tests this spec demands
+ 
+ One test per rule above, named for the rule, beside the tests the work list names.
+diff --git a/internal/presence/fake.go b/internal/presence/fake.go
+new file mode 100644
+index 000000000..2481135ff
+--- /dev/null
++++ b/internal/presence/fake.go
+@@ -0,0 +1,108 @@
++package presence
++
++import (
++	"context"
++	"fmt"
++	"sync"
++	"time"
++)
++
++// FakeStore is the store the tests beat against: a map with real expiry, driven
++// by a clock the test moves. It is strict where the real one is -- a key whose
++// TTL has passed is gone, an MGet over a key nobody wrote answers "", and a
++// store told to fail fails -- because a lenient fake would let a heartbeat that
++// never expires look correct here and report a friend who left as up.
++type FakeStore struct {
++	mu   sync.Mutex
++	now  time.Time
++	vals map[string]fakeVal
++	// Err, when set, is what every call answers. It is how a test sees
++	// what a beat does when the store is unreachable.
++	Err error
++	// Hook, when set, is asked before every call what that call should
++	// answer, by 1-based call number; a nil answer lets the call through.
++	// It is how a test makes a store blink for a few seconds and then come
++	// back, inside one beat loop, without waiting for one.
++	Hook func(call int) error
++	// Calls counts every call, failed ones too; Sets counts the writes that
++	// landed, so a test can say how many beats the store actually took.
++	Calls int
++	Sets  int
++}
++
++// fail is the answer this call should give, Hook first and the blanket Err
++// after it.
++func (f *FakeStore) fail() error {
++	f.Calls++
++	if f.Hook != nil {
++		if err := f.Hook(f.Calls); err != nil {
++			return err
++		}
++	}
++	return f.Err
++}
++
++type fakeVal struct {
++	val   string
++	until time.Time // zero: no expiry
++}
++
++// NewFakeStore starts a fake at the given moment.
++func NewFakeStore(now time.Time) *FakeStore {
++	return &FakeStore{now: now.UTC(), vals: map[string]fakeVal{}}
++}
++
++// Now is the fake's clock, and Advance moves it. Keys expire against it, so
++// `Advance(91 * time.Second)` is a friend's window that went away.
++func (f *FakeStore) Now() time.Time {
++	f.mu.Lock()
++	defer f.mu.Unlock()
++	return f.now
++}
++
++func (f *FakeStore) Advance(d time.Duration) {
++	f.mu.Lock()
++	defer f.mu.Unlock()
++	f.now = f.now.Add(d)
++}
++
++// Set writes value at key, with an expiry when ttl is positive.
++func (f *FakeStore) Set(ctx context.Context, key, value string, ttl time.Duration) error {
++	f.mu.Lock()
++	defer f.mu.Unlock()
++	if err := f.fail(); err != nil {
++		return err
++	}
++	if ttl < 0 {
++		return fmt.Errorf("negative ttl")
++	}
++	v := fakeVal{val: value}
++	if ttl > 0 {
++		v.until = f.now.Add(ttl)
++	}
++	f.vals[key] = v
++	f.Sets++
++	return nil
++}
++
++// MGet answers one value per key, "" for a key that is absent or has expired.
++func (f *FakeStore) MGet(ctx context.Context, keys ...string) ([]string, error) {
++	f.mu.Lock()
++	defer f.mu.Unlock()
++	if err := f.fail(); err != nil {
++		return nil, err
++	}
++	out := make([]string, len(keys))
++	for i, k := range keys {
++		v, ok := f.vals[k]
++		if !ok {
++			continue
++		}
++		if !v.until.IsZero() && !f.now.Before(v.until) {
++			delete(f.vals, k)
++			continue
++		}
++		out[i] = v.val
++	}
++	return out, nil
++}
+diff --git a/internal/presence/presence.go b/internal/presence/presence.go
+new file mode 100644
+index 000000000..d8d1044e5
+--- /dev/null
++++ b/internal/presence/presence.go
+@@ -0,0 +1,256 @@
++// Package presence is the friend heartbeat of nova-tools #2610: one key per
++// friend, written by that friend's window with a TTL and by nothing else, and
++// read by everyone who is about to hand that friend work.
++//
++// The whole mechanism is two Redis commands and no model anywhere. A friend's
++// harness startup runs `nova-wake beat --as <name>`, which writes
++// `friend:<name> = <RFC3339 utc>` with a 90s TTL every 30s; a window that
++// exits, runs out of credit or is killed simply stops writing, and the key
++// lapses. `nova-wake presence` reads those keys and prints one line. Nothing
++// here spends a token, because the cost of presence has to be zero or the
++// heartbeat is the first thing dropped under load (Glenn, 2026-09-22: "As long
++// as this can be done with zero tokens, that's fine. It's a heartbeat for a
++// timeout.").
++//
++// The second key, `friend:<name>:last`, carries no TTL and exists for one
++// reason: an absent key says a friend is away but not since when, and "AWAY"
++// with no duration is the report that cost an hour on 2026-09-22. The TTL'd key
++// is the presence; the untimed one is the memory of it.
++package presence
++
++import (
++	"context"
++	"encoding/json"
++	"fmt"
++	"strings"
++	"time"
++)
++
++// Prefix is the one namespace these keys live under; the bench ACL user gains
++// `~friend:*` and nothing wider.
++const Prefix = "friend:"
++
++// LastSuffix is the untimed companion key's suffix: `friend:<name>:last`.
++const LastSuffix = ":last"
++
++// DefaultEvery and DefaultTTL are the cadence and the timeout of #2610: beat
++// every 30s, lapse after 90s. The TTL is three beats rather than two so one
++// missed write -- a network hiccup, a laptop asleep for a moment -- is not
++// reported as a friend who left.
++const (
++	DefaultEvery = 30 * time.Second
++	DefaultTTL   = 90 * time.Second
++)
++
++// Stamp is the layout every heartbeat value is written in: RFC3339 in UTC, to
++// the second. It is parsed back to say how long ago the beat was, and a value
++// that will not parse is still a beat -- the key's existence is the presence.
++const Stamp = time.RFC3339
++
++// Key is the TTL'd presence key for a friend, and LastKey its untimed
++// companion. Both normalize the name, so `Emma` and `emma` are one friend.
++func Key(name string) string     { return Prefix + Normalize(name) }
++func LastKey(name string) string { return Prefix + Normalize(name) + LastSuffix }
++
++// Normalize is the one spelling of a friend's name in a key: lower case,
++// trimmed. The bus roster spells names with a capital and the keys do not.
++func Normalize(name string) string { return strings.ToLower(strings.TrimSpace(name)) }
++
++// Store is the small half of Redis this package uses: SET with an optional TTL
++// and a multi-key GET. It is an interface so the tests run against a fake with
++// a clock they control, and so nothing here can reach for a command the bench
++// ACL does not grant.
++type Store interface {
++	// Set writes value at key. A ttl of 0 means no expiry.
++	Set(ctx context.Context, key, value string, ttl time.Duration) error
++	// MGet returns one string per key, in order, with "" for a key that is
++	// absent or expired. A heartbeat value is never empty, so "" is absence.
++	MGet(ctx context.Context, keys ...string) ([]string, error)
++}
++
++// Beat writes one heartbeat: the TTL'd key that IS the presence, then the
++// untimed key that remembers it. The TTL'd write goes first so a store that
++// fails between the two leaves a stale `:last` rather than a presence nobody
++// can date.
++func Beat(ctx context.Context, st Store, name string, now time.Time, ttl time.Duration) error {
++	if strings.TrimSpace(name) == "" {
++		return fmt.Errorf("beat needs a name")
++	}
++	if ttl <= 0 {
++		return fmt.Errorf("beat needs a positive ttl")
++	}
++	stamp := now.UTC().Format(Stamp)
++	if err := st.Set(ctx, Key(name), stamp, ttl); err != nil {
++		return err
++	}
++	return st.Set(ctx, LastKey(name), stamp, 0)
++}
++
++// State is what one friend's two keys say.
++type State int
++
++const (
++	// Away: the presence key has lapsed. Last says when the last beat was,
++	// when the untimed key survives to say it.
++	Away State = iota
++	// Up: the presence key is there, so a beat landed inside the TTL.
++	Up
++	// Never: neither key exists. Freddy, all of 2026-09-22.
++	Never
++)
++
++// Status is one friend's reading: the state, the age of the beat it was read
++// from, and the moment of the last beat when one is known.
++type Status struct {
++	Name  string
++	State State
++	// Age is how long ago the beat behind this reading was written: the
++	// presence beat when Up, the last beat when Away. Valid only when
++	// Dated is true.
++	Age   time.Duration
++	Last  time.Time
++	Dated bool
++}
++
++// Read returns one Status per name, in the order given, from one MGet over both
++// keys of every friend. One round trip, whatever the roster's length: the line
++// is refreshed every 30 seconds on a table and must cost the store nothing.
++func Read(ctx context.Context, st Store, names []string, now time.Time) ([]Status, error) {
++	if len(names) == 0 {
++		return nil, fmt.Errorf("presence needs at least one friend name")
++	}
++	keys := make([]string, 0, 2*len(names))
++	for _, n := range names {
++		keys = append(keys, Key(n), LastKey(n))
++	}
++	vals, err := st.MGet(ctx, keys...)
++	if err != nil {
++		return nil, err
++	}
++	if len(vals) != len(keys) {
++		return nil, fmt.Errorf("store answered %d values for %d keys", len(vals), len(keys))
++	}
++	out := make([]Status, 0, len(names))
++	for i, n := range names {
++		beat, last := vals[2*i], vals[2*i+1]
++		s := Status{Name: Normalize(n)}
++		switch {
++		case beat != "":
++			s.State = Up
++			if t, err := time.Parse(Stamp, beat); err == nil {
++				s.Last, s.Dated = t, true
++				s.Age = now.Sub(t)
++			}
++		case last != "":
++			s.State = Away
++			if t, err := time.Parse(Stamp, last); err == nil {
++				s.Last, s.Dated = t, true
++				s.Age = now.Sub(t)
++			}
++		default:
++			s.State = Never
++		}
++		out = append(out, s)
++	}
++	return out, nil
++}
++
++// Line is the one line #2610 asks for:
++//
++//	friends: johnny up 12s · stella up 4s · emma AWAY 1h12m (last 09:41Z) · freddy none
++//
++// AWAY is the only word in capitals because it is the only one that changes
++// what the reader does next.
++func Line(sts []Status, now time.Time) string {
++	parts := make([]string, 0, len(sts))
++	for _, s := range sts {
++		parts = append(parts, s.Phrase(now))
++	}
++	return "friends: " + strings.Join(parts, " · ")
++}
++
++// Phrase is one friend's word on the line.
++func (s Status) Phrase(now time.Time) string {
++	switch s.State {
++	case Up:
++		if !s.Dated {
++			// The key is there, so the friend is here; the value was
++			// not a stamp this build knows how to read.
++			return s.Name + " up"
++		}
++		return s.Name + " up " + Short(s.Age)
++	case Away:
++		if !s.Dated {
++			return s.Name + " AWAY"
++		}
++		return fmt.Sprintf("%s AWAY %s (last %s)", s.Name, Short(s.Age), Clock(s.Last, now))
++	default:
++		return s.Name + " none"
++	}
++}
++
++// Short is a duration in the fewest characters that still say it: seconds
++// under a minute, minutes under an hour, then h+m, then d+h. A table line is
++// read at a glance or it is not read.
++func Short(d time.Duration) string {
++	if d < 0 {
++		// A friend's clock is ahead of the reader's. Zero, not a
++		// negative age: the reading is "just now" either way.
++		d = 0
++	}
++	switch {
++	case d < time.Minute:
++		return fmt.Sprintf("%ds", int(d/time.Second))
++	case d < time.Hour:
++		return fmt.Sprintf("%dm", int(d/time.Minute))
++	case d < 24*time.Hour:
++		h := d / time.Hour
++		return fmt.Sprintf("%dh%02dm", h, (d-h*time.Hour)/time.Minute)
++	default:
++		days := d / (24 * time.Hour)
++		return fmt.Sprintf("%dd%02dh", days, (d-days*24*time.Hour)/time.Hour)
++	}
++}
++
++// Clock is the wall time of a beat, in UTC because every other time on the
++// table is: `09:41Z` inside the day, the date as well beyond it, so "last
++// 09:41Z" can never mean yesterday without saying so.
++func Clock(t, now time.Time) string {
++	t = t.UTC()
++	if now.Sub(t) < 24*time.Hour {
++		return t.Format("15:04") + "Z"
++	}
++	return t.Format("2006-01-02T15:04") + "Z"
++}
++
++// notFriends are the two names on the bus roster that never beat: Glenn is a
++// person and Rowan is the coordinator doing the reading. A line that reported
++// on them would be asking whether the reader is here.
++var notFriends = map[string]bool{"glenn": true, "rowan": true}
++
++// ParticipantNames reads the bus participants file and returns the friends in
++// its order, minus Glenn and Rowan. The roster is the bus's, so a friend who
++// joins is on the line the moment the bus knows them and no list in this repo
++// has to be edited to match.
++func ParticipantNames(data []byte) ([]string, error) {
++	var doc struct {
++		Participants []struct {
++			Name string `json:"name"`
++		} `json:"participants"`
++	}
++	if err := json.Unmarshal(data, &doc); err != nil {
++		return nil, fmt.Errorf("participants file: %w", err)
++	}
++	var out []string
++	for _, p := range doc.Participants {
++		n := Normalize(p.Name)
++		if n == "" || notFriends[n] {
++			continue
++		}
++		out = append(out, n)
++	}
++	if len(out) == 0 {
++		return nil, fmt.Errorf("participants file names no friends besides Glenn and Rowan")
++	}
++	return out, nil
++}
+diff --git a/internal/presence/presence_test.go b/internal/presence/presence_test.go
+new file mode 100644
+index 000000000..bd90d9c89
+--- /dev/null
++++ b/internal/presence/presence_test.go
+@@ -0,0 +1,185 @@
++package presence
++
++import (
++	"context"
++	"errors"
++	"strings"
++	"testing"
++	"time"
++)
++
++// at is the moment every test in this file starts from; nothing here waits, so
++// the clock is the fake store's and a day passes in a function call.
++var at = time.Date(2026, 9, 22, 9, 41, 0, 0, time.UTC)
++
++func TestBeatWritesThePresenceKeyAndItsUntimedMemory(t *testing.T) {
++	st := NewFakeStore(at)
++	if err := Beat(context.Background(), st, "Johnny", at, DefaultTTL); err != nil {
++		t.Fatalf("beat: %v", err)
++	}
++	vals, err := st.MGet(context.Background(), "friend:johnny", "friend:johnny:last")
++	if err != nil {
++		t.Fatalf("mget: %v", err)
++	}
++	want := "2026-09-22T09:41:00Z"
++	if vals[0] != want || vals[1] != want {
++		t.Fatalf("keys = %q, %q; want both %q (the name is normalized and the value is RFC3339 utc)", vals[0], vals[1], want)
++	}
++}
++
++func TestTheTTLIsWhatMakesAFriendAway(t *testing.T) {
++	st := NewFakeStore(at)
++	if err := Beat(context.Background(), st, "emma", at, DefaultTTL); err != nil {
++		t.Fatalf("beat: %v", err)
++	}
++
++	// One beat old, inside the TTL: up.
++	st.Advance(12 * time.Second)
++	sts := mustRead(t, st, []string{"emma"})
++	if sts[0].State != Up {
++		t.Fatalf("12s after a beat: state = %v; want Up", sts[0].State)
++	}
++	if got := sts[0].Phrase(st.Now()); got != "emma up 12s" {
++		t.Fatalf("phrase = %q; want %q", got, "emma up 12s")
++	}
++
++	// Past the TTL with nothing written since: the key is gone and the
++	// untimed one says when the window was last here. This is the whole
++	// mechanism -- no shutdown hook wrote anything.
++	st.Advance(DefaultTTL)
++	sts = mustRead(t, st, []string{"emma"})
++	if sts[0].State != Away {
++		t.Fatalf("past the ttl: state = %v; want Away", sts[0].State)
++	}
++	if got := sts[0].Phrase(st.Now()); got != "emma AWAY 1m (last 09:41Z)" {
++		t.Fatalf("phrase = %q; want %q", got, "emma AWAY 1m (last 09:41Z)")
++	}
++}
++
++func TestTheLineSaysUpAwayAndNone(t *testing.T) {
++	st := NewFakeStore(at)
++	ctx := context.Background()
++	// Emma's window died an hour and twelve minutes ago; johnny and stella
++	// are beating; freddy has never had a window up.
++	if err := Beat(ctx, st, "emma", at, DefaultTTL); err != nil {
++		t.Fatalf("beat emma: %v", err)
++	}
++	st.Advance(72 * time.Minute)
++	if err := Beat(ctx, st, "johnny", st.Now().Add(-12*time.Second), DefaultTTL); err != nil {
++		t.Fatalf("beat johnny: %v", err)
++	}
++	if err := Beat(ctx, st, "stella", st.Now().Add(-4*time.Second), DefaultTTL); err != nil {
++		t.Fatalf("beat stella: %v", err)
++	}
++
++	sts := mustRead(t, st, []string{"johnny", "stella", "emma", "freddy"})
++	got := Line(sts, st.Now())
++	want := "friends: johnny up 12s · stella up 4s · emma AWAY 1h12m (last 09:41Z) · freddy none"
++	if got != want {
++		t.Fatalf("line =\n\t%q\nwant\n\t%q", got, want)
++	}
++}
++
++func TestAStoreThatWillNotAnswerIsAnErrorAndNotAnEmptyRoom(t *testing.T) {
++	// The one reading this verb must never invent: a store that cannot be
++	// read is not four friends who are away.
++	st := NewFakeStore(at)
++	st.Err = errors.New("dial tcp: connection refused")
++	if _, err := Read(context.Background(), st, []string{"johnny"}, at); err == nil {
++		t.Fatal("Read returned no error from a store that refused the connection")
++	}
++	if err := Beat(context.Background(), st, "johnny", at, DefaultTTL); err == nil {
++		t.Fatal("Beat returned no error from a store that refused the connection")
++	}
++}
++
++func TestAKeyWhoseValueIsNotAStampIsStillPresence(t *testing.T) {
++	// The key's EXISTENCE is the presence; its value only dates it. A
++	// friend running an older beat must not read as away.
++	st := NewFakeStore(at)
++	if err := st.Set(context.Background(), Key("alex"), "here", DefaultTTL); err != nil {
++		t.Fatalf("set: %v", err)
++	}
++	sts := mustRead(t, st, []string{"alex"})
++	if got := sts[0].Phrase(at); got != "alex up" {
++		t.Fatalf("phrase = %q; want %q", got, "alex up")
++	}
++}
++
++func TestBeatRefusesAnEmptyNameOrAnEmptyTTL(t *testing.T) {
++	st := NewFakeStore(at)
++	if err := Beat(context.Background(), st, "  ", at, DefaultTTL); err == nil {
++		t.Fatal("beat accepted an empty name")
++	}
++	if err := Beat(context.Background(), st, "johnny", at, 0); err == nil {
++		t.Fatal("beat accepted a ttl of zero; a key with no expiry is a friend who is never away")
++	}
++}
++
++func TestShortSaysTheAgeInTheFewestCharacters(t *testing.T) {
++	for _, c := range []struct {
++		d    time.Duration
++		want string
++	}{
++		{0, "0s"},
++		{-3 * time.Second, "0s"}, // a friend's clock ahead of the reader's
++		{12 * time.Second, "12s"},
++		{59*time.Second + 999*time.Millisecond, "59s"},
++		{time.Minute, "1m"},
++		{59 * time.Minute, "59m"},
++		{time.Hour + 12*time.Minute, "1h12m"},
++		{time.Hour + 2*time.Minute, "1h02m"},
++		{25 * time.Hour, "1d01h"},
++	} {
++		if got := Short(c.d); got != c.want {
++			t.Errorf("Short(%s) = %q; want %q", c.d, got, c.want)
++		}
++	}
++}
++
++func TestClockNamesTheDayOnceTheBeatIsOlderThanOne(t *testing.T) {
++	last := at
++	if got := Clock(last, at.Add(3*time.Hour)); got != "09:41Z" {
++		t.Errorf("same day: %q; want %q", got, "09:41Z")
++	}
++	if got := Clock(last, at.Add(30*time.Hour)); got != "2026-09-22T09:41Z" {
++		t.Errorf("a day later: %q; want %q", got, "2026-09-22T09:41Z")
++	}
++}
++
++func TestTheRosterIsTheBusesMinusGlennAndRowan(t *testing.T) {
++	names, err := ParticipantNames([]byte(`{"participants":[
++	  {"name":"Rowan"},{"name":"Stella"},{"name":"Johnny"},
++	  {"name":"Emma"},{"name":"Freddy"},{"name":"Alex"},{"name":"Glenn"}]}`))
++	if err != nil {
++		t.Fatalf("participants: %v", err)
++	}
++	want := "stella johnny emma freddy alex"
++	if got := strings.Join(names, " "); got != want {
++		t.Fatalf("roster = %q; want %q (file order, lower case, no Glenn and no Rowan)", got, want)
++	}
++}
++
++func TestARosterOfNobodyIsARefusalAndNotAnEmptyLine(t *testing.T) {
++	if _, err := ParticipantNames([]byte(`{"participants":[{"name":"Glenn"},{"name":"Rowan"}]}`)); err == nil {
++		t.Fatal("a participants file with no friends returned a roster")
++	}
++	if _, err := ParticipantNames([]byte(`not json`)); err == nil {
++		t.Fatal("a participants file that is not json returned a roster")
++	}
++}
++
++func TestReadRefusesAnEmptyRoster(t *testing.T) {
++	if _, err := Read(context.Background(), NewFakeStore(at), nil, at); err == nil {
++		t.Fatal("Read with no names returned no error; an empty line reports nothing and looks like good news")
++	}
++}
++
++func mustRead(t *testing.T, st Store, names []string) []Status {
++	t.Helper()
++	sts, err := Read(context.Background(), st, names, st.(*FakeStore).Now())
++	if err != nil {
++		t.Fatalf("read: %v", err)
++	}
++	return sts
++}
+diff --git a/internal/presence/redis.go b/internal/presence/redis.go
+new file mode 100644
+index 000000000..724517b41
+--- /dev/null
++++ b/internal/presence/redis.go
+@@ -0,0 +1,194 @@
++package presence
++
++import (
++	"context"
++	"errors"
++	"fmt"
++	"net"
++	"os"
++	"strconv"
++	"strings"
++	"time"
++
++	"github.com/redis/go-redis/v9"
++)
++
++// PasswordEnv is the one environment variable the heartbeat reads its password
++// from, and it is the same one `bench-row` hands redis-cli: the password is
++// never a flag, never a file this tool opens and never a word in a log. It
++// reaches this process through `nova-secrets exec --only
++// NOVA_REDIS_BENCH_PASSWORD` and no other way.
++const PasswordEnv = "NOVA_REDIS_BENCH_PASSWORD"
++
++// DefaultUser is the ACL user the beat and the line authenticate as. `~friend:*`
++// was added to its rules for #2610; it can touch nothing else on the store.
++const DefaultUser = "bench"
++
++// Redis is the live store: a Store over one go-redis client.
++type Redis struct{ rdb *redis.Client }
++
++// Open dials addr as user, with the password from the environment when there is
++// one. A store with no ACL -- a test's miniredis, a local Redis -- is dialled
++// with no credentials at all rather than with an empty password, because an
++// empty AUTH is a failed login and not an anonymous one.
++//
++// The address is host:port, the spelling every other verb uses; a `redis://`
++// prefix is accepted because people paste one. A bare host is refused rather
++// than completed, because the fleet store's port is 6380 and the default is
++// 6379, and a tool that guesses that wrong reports a friend as away.
++func Open(ctx context.Context, addr, user string) (*Redis, error) {
++	a, err := Addr(addr)
++	if err != nil {
++		return nil, err
++	}
++	opts := &redis.Options{Addr: a}
++	if pw := os.Getenv(PasswordEnv); pw != "" {
++		if strings.TrimSpace(user) == "" {
++			user = DefaultUser
++		}
++		opts.Username, opts.Password = user, pw
++	}
++	rdb := redis.NewClient(opts)
++	if err := rdb.Ping(ctx).Err(); err != nil {
++		_ = rdb.Close()
++		// The error carries the address and the diagnosis, never the
++		// credential: redis returns "NOAUTH"/"WRONGPASS" and go-redis
++		// does not echo the password back.
++		if os.Getenv(PasswordEnv) == "" && isAuthError(err) {
++			return nil, fmt.Errorf("store %s: %w; no %s in this environment -- run this under `nova-secrets exec --only %s`", a, err, PasswordEnv, PasswordEnv)
++		}
++		return nil, fmt.Errorf("store %s: %w", a, err)
++	}
++	return &Redis{rdb: rdb}, nil
++}
++
++// refusedAddr is the one refusal every bad --store gets, verbatim and with no
++// input folded in: not the scheme, not the host, not a name for what was
++// wrong. Comment 5783425783 (#2612) found the last hole in a message that
++// still built itself from the input: addrProblems took the LAST "@" in the
++// raw string before it ever found the query boundary, so a query VALUE that
++// happened to contain "@" -- redis://store.invalid:6380?password=prefix@SECRET
++// -- was cut at that "@" and everything after it, SECRET included, came back
++// as the "host" the refusal printed. Any parser that first looks for a
++// delimiter byte anywhere in the raw string and only then decides what
++// region it was in can be fooled the same way by that byte appearing inside
++// a region it hasn't found yet. A constant string has no such hole: it is
++// built from nothing, so there is nothing in it left to extract.
++const refusedAddr = "store address refused: only host:port or redis://host:port is supported"
++
++// Addr normalizes what a caller spelled into host:port, or refuses it with
++// refusedAddr, under a grammar strict enough that no shape of --store can
++// carry a secret past this function: the only two spellings accepted are
++// host:port and redis://host:port, structurally -- a host with none of
++// "@/?#" in it (a bracketed [ipv6] host may of course contain ":"), a colon,
++// and a port that is one to five ASCII digits naming 1-65535. A single bare
++// trailing "/" is tolerated as the empty path a URL library would normalize
++// away; anything else, at any position, is refused. The refusal never
++// contains any byte of addr: it is the same constant for a bad scheme, a
++// bad host, a bad port and a value with no port at all, because a message
++// built from the input -- even just its host, even just its scheme -- is a
++// message a crafted input can aim.
++//
++// This replaced two narrower repairs on the same bug (#2612): first an Addr
++// that refused rediss:// and user:pass@ by name but let a query string
++// straight through as part of a "clean" host:port; then one that named each
++// bad shape (scheme/userinfo/path/query/fragment) by scanning the raw string
++// for delimiter bytes with strings.LastIndex/Index -- which is exactly the
++// class of bug that let a query value's own "@" be mistaken for the
++// userinfo delimiter and its tail print as the host. Structural parsing --
++// split on the redis:// prefix, then require the remainder to fully match
++// host:port with nothing left over -- never asks "does this byte occur
++// somewhere", so no byte inside an otherwise-refused value can be
++// misattributed to a region that hasn't been located yet.
++func Addr(addr string) (string, error) {
++	a := strings.TrimSpace(addr)
++	if a == "" {
++		return "", fmt.Errorf("--store is empty")
++	}
++
++	rest := a
++	if i := strings.Index(a, "://"); i >= 0 {
++		scheme := a[:i]
++		if scheme != "redis" {
++			return "", errors.New(refusedAddr)
++		}
++		rest = a[i+len("://"):]
++	}
++	rest = strings.TrimSuffix(rest, "/") // a bare trailing "/" is an empty path, not a path
++
++	if !validHostPort(rest) {
++		return "", errors.New(refusedAddr)
++	}
++	return rest, nil
++}
++
++// validHostPort reports whether s is structurally exactly host:port: a host
++// with none of "@/?#" (net.SplitHostPort itself handles the [ipv6]:port
++// bracket form, whose host may contain ":") and a port that is all ASCII
++// digits naming 1-65535. It never inspects s for a delimiter byte without
++// first knowing, from the split, which region that byte would be in.
++func validHostPort(s string) bool {
++	host, port, err := net.SplitHostPort(s)
++	if err != nil {
++		return false
++	}
++	if host == "" || strings.ContainsAny(host, "@/?#") {
++		return false
++	}
++	return validPort(port)
++}
++
++// validPort reports whether s is one to five ASCII digits naming a port
++// from 1 to 65535 -- never a sign, never a decimal point, never anything a
++// query string or a fragment could still smuggle through as "numeric".
++func validPort(s string) bool {
++	if s == "" || len(s) > 5 {
++		return false
++	}
++	for _, c := range s {
++		if c < '0' || c > '9' {
++			return false
++		}
++	}
++	n, err := strconv.Atoi(s)
++	if err != nil {
++		return false
++	}
++	return n >= 1 && n <= 65535
++}
++
++func isAuthError(err error) bool {
++	s := err.Error()
++	return strings.Contains(s, "NOAUTH") || strings.Contains(s, "WRONGPASS") || strings.Contains(s, "NOPERM")
++}
++
++// Close releases the connection pool.
++func (r *Redis) Close() error {
++	if r == nil || r.rdb == nil {
++		return nil
++	}
++	return r.rdb.Close()
++}
++
++// Set is SET key value [EX ttl]; a ttl of 0 writes no expiry.
++func (r *Redis) Set(ctx context.Context, key, value string, ttl time.Duration) error {
++	return r.rdb.Set(ctx, key, value, ttl).Err()
++}
++
++// MGet is one MGET over every key, absent keys coming back as "".
++func (r *Redis) MGet(ctx context.Context, keys ...string) ([]string, error) {
++	if len(keys) == 0 {
++		return nil, nil
++	}
++	vals, err := r.rdb.MGet(ctx, keys...).Result()
++	if err != nil {
++		return nil, err
++	}
++	out := make([]string, len(vals))
++	for i, v := range vals {
++		if s, ok := v.(string); ok {
++			out[i] = s
++		}
++	}
++	return out, nil
++}
+diff --git a/internal/presence/redis_test.go b/internal/presence/redis_test.go
+new file mode 100644
+index 000000000..dfb7f1003
+--- /dev/null
++++ b/internal/presence/redis_test.go
+@@ -0,0 +1,150 @@
++package presence
++
++import (
++	"context"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/alicebob/miniredis/v2"
++)
++
++// The fake store proves the logic; this file proves the two commands the logic
++// is made of are the ones a Redis actually honours -- SET with EX, and an MGET
++// whose absent keys come back empty -- against miniredis, whose clock the test
++// moves instead of waiting.
++
++func TestAgainstRedisTheKeyExpiresAndTheMemoryDoesNot(t *testing.T) {
++	mr := miniredis.RunT(t)
++	ctx := context.Background()
++	st, err := Open(ctx, mr.Addr(), DefaultUser)
++	if err != nil {
++		t.Fatalf("open: %v", err)
++	}
++	t.Cleanup(func() { _ = st.Close() })
++
++	now := time.Date(2026, 9, 22, 9, 41, 0, 0, time.UTC)
++	if err := Beat(ctx, st, "emma", now, DefaultTTL); err != nil {
++		t.Fatalf("beat: %v", err)
++	}
++	sts, err := Read(ctx, st, []string{"emma"}, now.Add(12*time.Second))
++	if err != nil {
++		t.Fatalf("read: %v", err)
++	}
++	if sts[0].State != Up {
++		t.Fatalf("inside the ttl: %v; want Up", sts[0].State)
++	}
++
++	mr.FastForward(DefaultTTL + time.Second)
++	sts, err = Read(ctx, st, []string{"emma"}, now.Add(DefaultTTL+time.Second))
++	if err != nil {
++		t.Fatalf("read after the ttl: %v", err)
++	}
++	if sts[0].State != Away {
++		t.Fatalf("past the ttl: %v; want Away", sts[0].State)
++	}
++	if !sts[0].Dated || !sts[0].Last.Equal(now) {
++		t.Fatalf("the untimed key did not survive the expiry: dated=%v last=%v", sts[0].Dated, sts[0].Last)
++	}
++	if got := mr.TTL(LastKey("emma")); got != 0 {
++		t.Fatalf("friend:emma:last carries a ttl of %s; it is the memory of a beat and never expires", got)
++	}
++}
++
++func TestAddrTakesHostPortAndRefusesAGuess(t *testing.T) {
++	for _, c := range []struct{ in, want string }{
++		{"store.invalid:6380", "store.invalid:6380"},
++		{"redis://store.invalid:6380", "store.invalid:6380"},
++		{" store.invalid:6380/ ", "store.invalid:6380"},
++	} {
++		got, err := Addr(c.in)
++		if err != nil || got != c.want {
++			t.Errorf("Addr(%q) = %q, %v; want %q", c.in, got, err, c.want)
++		}
++	}
++	for _, in := range []string{"", "   ", "store.invalid"} {
++		if got, err := Addr(in); err == nil {
++			t.Errorf("Addr(%q) = %q; want a refusal, because the fleet store is on 6380 and the default is 6379", in, got)
++		}
++	}
++}
++
++// TestAddrGrammarRefusesEverythingButHostPortWithoutLeakingASecret is the
++// synthetic control for comment 5783425783 on #2612, and the two comments
++// before it on the same issue: a query VALUE containing "@" --
++// redis://store.invalid:6380?password=prefix@SYNTHETIC_SECRET, the exact
++// string from the comment -- still became a printed host, because the prior
++// repair's addrProblems took strings.LastIndex(s, "@") over the raw
++// remainder before it had located the query boundary, so the "@" inside the
++// query value was mistaken for the userinfo delimiter and SYNTHETIC_SECRET
++// (everything after it) came back as the "host" the refusal named. Before
++// that, a plain query string went straight through unrefused, and before
++// that, maskAddr echoed a query secret through a rejected rediss:// URL. All
++// three were one class of bug: a message assembled from pieces of the input.
++// The repair drops assembly entirely -- refusedAddr is a constant, and
++// Addr's parse is structural (net.SplitHostPort plus a character-class and
++// range check), never a LastIndex/Index scan for a delimiter byte in the raw
++// string. This is pure string parsing: no network is dialled, and Stella's
++// synthetic secret and synthetic host never named a real credential.
++func TestAddrGrammarRefusesEverythingButHostPortWithoutLeakingASecret(t *testing.T) {
++	const secret = "SYNTHETIC_SECRET"
++	refusals := []string{
++		// The exact synthetic URL from comment 5783425783: a query value
++		// containing "@".
++		"redis://store.invalid:6380?password=prefix@" + secret,
++		"redis://h:6380?x=a@b",
++		"redis://a@b:6380",
++		"redis://h:0",     // port below the 1-65535 range
++		"redis://h:70000", // port above the 1-65535 range
++		"redis://h",       // no port at all -- the same constant as every other refusal
++		"rediss://h:6380", // a scheme other than redis
++		"redis://u:pass@h:6380",
++		"redis://h:6380/0",
++		"redis://h:6380#frag",
++	}
++	for _, in := range refusals {
++		t.Run(in, func(t *testing.T) {
++			got, err := Addr(in)
++			if err == nil {
++				t.Fatalf("Addr(%q) = %q, <nil>; want a refusal", in, got)
++			}
++			if got != "" {
++				t.Errorf("Addr(%q) returned a usable address %q alongside the error; want none", in, got)
++			}
++			// Byte-for-byte equality to the constant is the real proof:
++			// refusedAddr is fixed at compile time from no part of addr, so
++			// equality alone means nothing of any input, sensitive or not,
++			// reached the message. This also checks explicitly for the
++			// tokens these particular inputs carry that a per-shape or
++			// LastIndex-built message (the two prior repairs) would have
++			// echoed -- the synthetic secret and synthetic host chief among
++			// them -- skipping only "redis", which the constant's own
++			// "redis://host:port" example legitimately contains.
++			if err.Error() != refusedAddr {
++				t.Errorf("Addr(%q) error = %q; want the constant refusal %q byte-for-byte, nothing else", in, err.Error(), refusedAddr)
++			}
++			for _, sensitive := range []string{secret, "store.invalid", "prefix", "password", "70000", "frag", "u:pass"} {
++				if strings.Contains(in, sensitive) && strings.Contains(err.Error(), sensitive) {
++					t.Errorf("Addr(%q) error = %q; contains input fragment %q", in, err.Error(), sensitive)
++				}
++			}
++		})
++	}
++
++	accepted := []struct{ in, want string }{
++		{"h:6380", "h:6380"},
++		{"redis://h:6380", "h:6380"},
++		{"[::1]:6380", "[::1]:6380"},
++	}
++	for _, c := range accepted {
++		t.Run(c.in, func(t *testing.T) {
++			got, err := Addr(c.in)
++			if err != nil {
++				t.Fatalf("Addr(%q) = %v; want it to parse to %q", c.in, err, c.want)
++			}
++			if got != c.want {
++				t.Errorf("Addr(%q) = %q; want %q", c.in, got, c.want)
++			}
++		})
++	}
++}

@@ -55,6 +55,8 @@ func runFloors(t *testing.T, coreDoc, sourceDoc string) []Failure {
 // drift in the live floor 4 leaves them stale without reddening the title
 // match, so this test pins the snapshot, never claims it is current.
 func TestFloorsParityHoldsOnRealText(t *testing.T) {
+	t.Parallel()
+
 	failures := runFloors(t, loadFixture(t, "seed-core-floors.md"), loadFixture(t, "seed-floors.md"))
 	wantFailures(t, failures, nil)
 }
@@ -62,6 +64,8 @@ func TestFloorsParityHoldsOnRealText(t *testing.T) {
 // Every planted divergence must be a named NO. A check never seen failing
 // is not a check.
 func TestFloorsSaysNo(t *testing.T) {
+	t.Parallel()
+
 	core := loadFixture(t, "seed-core-floors.md")
 	source := loadFixture(t, "seed-floors.md")
 
@@ -195,6 +199,8 @@ func TestFloorsSaysNo(t *testing.T) {
 // A record that is missing, empty, or not a regular file is a named failure
 // — the check ran and the answer is NO — never a refusal. Kernel's posture.
 func TestFloorsRecordProblemsAreFindings(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeMode(t, dir, "SEED-CORE.md", loadFixture(t, "seed-core-floors.md"), 0o644)
 	writeMode(t, dir, "SEED.md", loadFixture(t, "seed-floors.md"), 0o644)

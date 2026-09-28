@@ -34,6 +34,8 @@ func caseFoldingDir(t *testing.T) (string, bool) {
 // `filepath.EvalSymlinks` does not fold case on darwin, so resolving the path does not close
 // it; the answer has to come from the filesystem, `os.SameFile` over the ancestors.
 func TestInsideAsksTheFilesystemNotAStringPrefix(t *testing.T) {
+	t.Parallel()
+
 	dir, folds := caseFoldingDir(t)
 	if !folds {
 		t.Skipf("the filesystem under %s is case-SENSITIVE: caseprobe is not CaseProbe, so %s/Read and %s/read are two directories here and the fold this test is about cannot happen", dir, dir, dir)
@@ -89,6 +91,8 @@ func TestInsideAsksTheFilesystemNotAStringPrefix(t *testing.T) {
 // fold. Every caller path of this package exists by rule 5, so this is defence in depth, and it
 // is asserted here rather than assumed.
 func TestInsideFallsBackToTheFoldedPrefixForADirectoryThatIsNotThere(t *testing.T) {
+	t.Parallel()
+
 	dir, folds := caseFoldingDir(t)
 	absent := filepath.Join(dir, "gone")
 	if got := Inside(filepath.Join(dir, "Gone", "env"), absent); got != folds {
@@ -119,6 +123,8 @@ func TestInsideFallsBackToTheFoldedPrefixForADirectoryThatIsNotThere(t *testing.
 // `HOME` inside the write set under a spelling the filesystem folds was `home_outside`, and a
 // wall that refuses the run a person configured correctly is the other half of rule 1.
 func TestRulesNineAndThirteenAskTheFilesystemToo(t *testing.T) {
+	t.Parallel()
+
 	dir, folds := caseFoldingDir(t)
 	if !folds {
 		t.Skipf("the filesystem under %s is case-SENSITIVE: a HOME spelled in another case is a different directory here", dir)
@@ -247,6 +253,8 @@ func caseBoundaryDir(t *testing.T) (dir string, folds bool, found bool) {
 // It needs a boundary on the path it can reach, so run it with `TMPDIR` inside a case-sensitive
 // image mounted under a folding parent; where none is reachable it skips by name.
 func TestTheFoldIsMeasuredInsideTheDirectoryNotInItsParent(t *testing.T) {
+	t.Parallel()
+
 	boundary, folds, found := caseBoundaryDir(t)
 	if !found {
 		t.Skip("no case-sensitivity boundary is reachable from this machine's temp directory: every directory on that path answers the same inside as its own name does in its parent, so the inference this test is about cannot be observed here. Run with TMPDIR inside a case-sensitive image mounted under a folding parent")

@@ -1,0 +1,4 @@
+created_at,api_key_name,model_permaslug,total_cost
+2026-09-23T03:14:15Z,swarm,qwen/qwen3.8-flash,0.400000
+2026-09-23T09:00:00Z,swarm,z-ai/glm-5.3-flash,0.600000
+total,,,2.000000

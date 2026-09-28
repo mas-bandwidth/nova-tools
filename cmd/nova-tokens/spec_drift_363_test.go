@@ -28,6 +28,8 @@ func specTokensText(t *testing.T) string {
 }
 
 func TestSpec363PromisesEveryVerbAndTokenItPrints(t *testing.T) {
+	t.Parallel()
+
 	spec := specTokensText(t)
 	for _, verb := range []string{"nova-tokens profiles", "nova-tokens session", "nova-tokens fold-pool"} {
 		if !strings.Contains(spec, verb) {

@@ -50,6 +50,10 @@ exit codes: 0 clear, or done and verified by re-reading the box; 1 blown
 flag, unreadable box (treated as BLOWN, never as clear), bad invocation, or
 a lift this tool refuses by design.
 
+-h or --help after a verb is refused at exit 2, never answered with help:
+exit 0 is this tool's CLEAR, so a surface or a reason spelled -h cannot reach
+it. The help is nova-fuse help.
+
 status lists at most --max quarantines (default 20, and 0 means all) after its
 count line, then one STATUS MORE kind=quarantine shown=<n> total=<t> line
 standing for the rest. THE COUNT IS NEVER CAPPED: quarantines=<t> on the first
@@ -57,7 +61,10 @@ line is the truth about the box however few surfaces are listed under it.
 
 The box path always comes from --box. There is no default and no environment
 variable; a missing --box is a refusal: refusing to guess. Flags come before
-positional arguments.
+positional arguments, and every flag takes one value: a flag named twice, or a
+--box value beginning with -, is refused at exit 2. -- ends the flags; after
+it an argument beginning with - is a surface or a reason, never a flag, so a
+caller passing an untrusted surface puts -- before it.
 
 example:
   nova-fuse status --box ./fuse-box.json
@@ -197,7 +204,17 @@ func parseBoxWith(name string, args []string, stderr io.Writer, extra func(*flag
 	if extra != nil {
 		extra(fs)
 	}
+	// EVERY FLAG TAKES ONE VALUE. Package flag keeps the LAST value of a repeated
+	// flag, so `check --box ./blown.json --box=./elsewhere.json` asked a second box
+	// and answered for the first: FUSE OK at exit 0 over a blown lockdown. A flag
+	// named twice is refused before any box is read, whichever flag and verb.
+	repeated := ""
+	fs.VisitAll(func(f *flag.Flag) { f.Value = &onceValue{Value: f.Value, name: f.Name, repeated: &repeated} })
 	if err := fs.Parse(flagArgs); err != nil {
+		if repeated != "" {
+			refuse(stderr, " "+name, fmt.Sprintf("--%s is given more than once; every flag takes one value, and a second is never taken over the first", oneline.Escape(repeated)))
+			return "", nil, false, false
+		}
 		// -h and -help land here as flag.ErrHelp and are refused like any other unusable
 		// invocation: exit 2, never 0. `check` answers PERMISSION with 0, and a surface
 		// named "-h" must not be able to reach that answer.
@@ -211,11 +228,41 @@ func parseBoxWith(name string, args []string, stderr io.Writer, extra func(*flag
 		}
 	}
 	positional = append(fs.Args(), postArgs...)
+	if strings.HasPrefix(*boxFlag, "-") {
+		// `--box --box=./x` hands package flag "--box=./x" as the first --box's
+		// value. A box path never begins with "-"; a box in such a file is ./-name.
+		refuse(stderr, " "+name, fmt.Sprintf("--box %q begins with \"-\", the shape of a flag, not a path; name a file that begins with - as ./-name", *boxFlag))
+		return "", nil, false, false
+	}
 	if *boxFlag == "" {
-		fmt.Fprintf(stderr, "nova-fuse %s: --box is required; refusing to guess\n%s", name, hintFor("box"))
+		fmt.Fprintf(stderr, "nova-fuse %s: --box is required; refusing to guess; run: nova-fuse help\n%s", name, hintFor("box"))
 		return "", positional, false, true
 	}
 	return *boxFlag, positional, true, true
+}
+
+// onceValue is a flag's value that refuses a second Set, and names the flag in
+// *repeated so the refusal is this file's own line rather than package flag's.
+type onceValue struct {
+	flag.Value
+	name     string
+	set      bool
+	repeated *string
+}
+
+func (o *onceValue) Set(v string) error {
+	if o.set {
+		*o.repeated = o.name
+		return fmt.Errorf("--%s is given more than once", o.name)
+	}
+	o.set = true
+	return o.Value.Set(v)
+}
+
+// IsBoolFlag keeps a boolean flag boolean through the wrapper.
+func (o *onceValue) IsBoolFlag() bool {
+	b, ok := o.Value.(interface{ IsBoolFlag() bool })
+	return ok && b.IsBoolFlag()
 }
 
 // ---------------------------------------------------------------------------- the verbs
@@ -270,7 +317,7 @@ func liftQuarantine(box, surface string, stdout, stderr io.Writer) int {
 		// REFUSE, the mirror of quarantine's refusal to narrow: while the box is
 		// unreadable every fuse is treated as BLOWN, and nothing provable can be lifted
 		// from a box that cannot be read. The corrupt bytes stay put -- they are evidence.
-		fmt.Fprintf(stderr, "nova-fuse lift quarantine: %s -- while the box is unreadable every fuse is treated as BLOWN; nothing provable can be lifted from a box that cannot be read\n", oneline.Err(readErr))
+		fmt.Fprintf(stderr, "nova-fuse lift quarantine: %s -- while the box is unreadable every fuse is treated as BLOWN; nothing provable can be lifted from a box that cannot be read; run: nova-fuse help\n", oneline.Err(readErr))
 		return 2
 	}
 
@@ -346,7 +393,7 @@ func cmdStatus(rest []string, stdout, stderr io.Writer) int {
 	}
 	if max < 0 {
 		// Zero already means "all", so a negative ceiling is a typo with two readings.
-		fmt.Fprintf(stderr, "nova-fuse status: --max must be a line ceiling of zero or more (got %d); 0 lists them all\n", max)
+		fmt.Fprintf(stderr, "nova-fuse status: --max must be a line ceiling of zero or more (got %d); 0 lists them all; run: nova-fuse help\n", max)
 		ok = false
 	}
 	if !ok {
@@ -355,7 +402,7 @@ func cmdStatus(rest []string, stdout, stderr io.Writer) int {
 
 	b, err := fuse.ReadBox(box)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-fuse status: %s -- an unreadable box is treated as BLOWN, never as clear; repair or replace it with your person, live\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "nova-fuse status: %s -- an unreadable box is treated as BLOWN, never as clear; repair or replace it with your person, live; run: nova-fuse help\n", oneline.Err(err))
 		return 2
 	}
 
@@ -406,7 +453,7 @@ func cmdCheck(rest []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		// FAIL CLOSED, and say WHICH fact this is: "could not be read" is deliberately not
 		// "a fuse is blown" -- a claim must never outrun the measurement. Both refuse.
-		fmt.Fprintf(stderr, "nova-fuse check: %s -- cannot prove no fuse is blown, so treating every fuse as BLOWN, never as clear; repair the box with your person, live\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "nova-fuse check: %s -- cannot prove no fuse is blown, so treating every fuse as BLOWN, never as clear; repair the box with your person, live; run: nova-fuse help\n", oneline.Err(err))
 		return 2
 	}
 
@@ -520,7 +567,7 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time) int {
 		// An unreadable box blocks EVERY surface. Replacing it with a fresh box holding
 		// only this one quarantine would UNBLOCK everything else, so the safety-shaped
 		// action would be a fail-OPEN. Under doubt, no.
-		fmt.Fprintf(stderr, "nova-fuse quarantine: %s -- refusing to narrow an unreadable box: while unreadable it already blocks EVERY surface, and a fresh box holding only this one quarantine would UNBLOCK the rest; blow lockdown instead (`lockdown --box %s \"<reason>\"`), or repair the box with your person\n", oneline.Err(readErr), oneline.Escape(box))
+		fmt.Fprintf(stderr, "nova-fuse quarantine: %s -- refusing to narrow an unreadable box: while unreadable it already blocks EVERY surface, and a fresh box holding only this one quarantine would UNBLOCK the rest; blow lockdown instead (`lockdown --box %s \"<reason>\"`), or repair the box with your person; run: nova-fuse help\n", oneline.Err(readErr), oneline.Escape(box))
 		return 2
 	}
 

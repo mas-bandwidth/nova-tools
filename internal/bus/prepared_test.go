@@ -3,6 +3,7 @@ package bus
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -408,6 +409,8 @@ func stellaPrepared(t *testing.T) (string, string, Prepared, PreparedArtifact) {
 }
 
 func TestStellaPreparedRequiresCompleteRemoteIndex(t *testing.T) {
+	t.Parallel()
+
 	_, clone, p, a := stellaPrepared(t)
 	if _, e := SendPreparedArtifact(clone, "origin", "main", p, a, 1); e != nil {
 		t.Fatal(e)
@@ -438,6 +441,8 @@ func TestStellaPreparedRequiresCompleteRemoteIndex(t *testing.T) {
 }
 
 func TestStellaPreparedCannotConfirmCommitWithoutIndex(t *testing.T) {
+	t.Parallel()
+
 	bare, clone, p, a := stellaPrepared(t)
 	if e := p.Save(clone); e != nil {
 		t.Fatal(e)
@@ -457,6 +462,8 @@ func TestStellaPreparedCannotConfirmCommitWithoutIndex(t *testing.T) {
 }
 
 func TestStellaPreparedPreservesUnrelatedAttributeEdit(t *testing.T) {
+	t.Parallel()
+
 	bare, clone, p, a := stellaPrepared(t)
 	path := filepath.Join(clone, AttributesName)
 	old, _ := os.ReadFile(path)
@@ -477,6 +484,8 @@ func TestStellaPreparedPreservesUnrelatedAttributeEdit(t *testing.T) {
 }
 
 func TestStellaPreparedRefusesUnknownArtifactField(t *testing.T) {
+	t.Parallel()
+
 	_, clone, p, a := stellaPrepared(t)
 	b, _ := json.Marshal(a)
 	b = append(b[:len(b)-1], []byte(`,"unsupported":"synthetic"}`)...)
@@ -486,6 +495,8 @@ func TestStellaPreparedRefusesUnknownArtifactField(t *testing.T) {
 }
 
 func TestPreparedRefusesDuplicateKeys(t *testing.T) {
+	t.Parallel()
+
 	_, clone, p, a := stellaPrepared(t)
 	dupJSON := fmt.Sprintf(`{"schema":%q,"id":%q,"id":"duplicate-id","path":%q,"note":%q,"sha256":%q}`,
 		a.Schema, a.ID, a.Path, a.Note, a.SHA256)
@@ -495,6 +506,8 @@ func TestPreparedRefusesDuplicateKeys(t *testing.T) {
 }
 
 func TestStellaPreparedPreservesUnrelatedAheadAttributeEdit(t *testing.T) {
+	t.Parallel()
+
 	bare, clone, p, a := stellaPrepared(t)
 	if e := p.Save(clone); e != nil {
 		t.Fatal(e)
@@ -521,7 +534,42 @@ func TestStellaPreparedPreservesUnrelatedAheadAttributeEdit(t *testing.T) {
 	}
 }
 
+// testWaitBound is how long an event poll waits for an observable before it reports rather
+// than waits forever. It is read from NOVA_TEST_WAIT (default 30s), the allowed shape the
+// waits class test names: every use returns the MOMENT the observable appears, so a slower
+// runner pays only when the event never comes.
+func testWaitBound() time.Duration {
+	if v := os.Getenv("NOVA_TEST_WAIT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 30 * time.Second
+}
+
+// helperStdin keeps a helper process parked until its parent kills it, with no timer in the
+// helper: the parent holds the write end of a pipe open for the life of the test, and the
+// helper blocks in blockUntilKilled on the read end. When the parent SIGKILLs the helper the
+// pipe closes with it; when the test ends, cleanup closes the write end.
+func helperStdin(t *testing.T, cmd *exec.Cmd) {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = w.Close(); _ = r.Close() })
+	cmd.Stdin = r
+}
+
+// blockUntilKilled is the helper's half of helperStdin: a read that returns only on EOF,
+// which never arrives before the parent kills the process.
+func blockUntilKilled() {
+	_, _ = io.Copy(io.Discard, os.Stdin)
+}
+
 func TestSendPreparedProcessDeathHelper(t *testing.T) {
+	t.Parallel()
+
 	if os.Getenv("GO_WANT_PREPARED_DEATH_HELPER") != "1" {
 		return
 	}
@@ -598,11 +646,13 @@ func TestSendPreparedProcessDeathHelper(t *testing.T) {
 		os.Exit(5)
 	}
 
-	// Block indefinitely until killed by parent via SIGKILL
-	time.Sleep(10 * time.Minute)
+	// Block until killed by parent via SIGKILL, with no timer.
+	blockUntilKilled()
 }
 
 func TestPreparedIndexStagedPartialHelper(t *testing.T) {
+	t.Parallel()
+
 	if os.Getenv("GO_WANT_PREPARED_INDEX_DEATH_HELPER") != "1" {
 		return
 	}
@@ -648,10 +698,12 @@ func TestPreparedIndexStagedPartialHelper(t *testing.T) {
 	if err := os.WriteFile(barrierFile, []byte("ready\n"), 0644); err != nil {
 		os.Exit(5)
 	}
-	time.Sleep(10 * time.Minute)
+	blockUntilKilled()
 }
 
 func TestSendPreparedRecoveryHelper(t *testing.T) {
+	t.Parallel()
+
 	if os.Getenv("GO_WANT_PREPARED_RECOVERY_HELPER") != "1" {
 		return
 	}
@@ -683,6 +735,12 @@ func TestSendPreparedRecoveryHelper(t *testing.T) {
 }
 
 func TestSendPreparedProcessDeathRecovery(t *testing.T) {
+	t.Parallel()
+	// SLEEPS: this test waits on the wall clock (calls time.Sleep; measured over 5 s on the 2026-09-25 PR run). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
+
 	modes := []string{"before-note-write", "after-note-write", "after-index-write", "after-note-commit", "after-commit"}
 
 	for _, mode := range modes {
@@ -702,13 +760,15 @@ func TestSendPreparedProcessDeathRecovery(t *testing.T) {
 				"PREPARED_HELPER_MODE="+mode,
 				"PREPARED_HELPER_ART="+artFile,
 			)
+			helperStdin(t, cmd)
 
 			if err := cmd.Start(); err != nil {
 				t.Fatalf("failed to start helper process: %v", err)
 			}
 
-			// Wait for observable barrier
-			deadline := time.Now().Add(5 * time.Second)
+			// Wait for the observable barrier, up to a generous bound the environment
+			// can move.
+			deadline := time.Now().Add(testWaitBound())
 			for {
 				if _, err := os.Stat(barrierFile); err == nil {
 					break
@@ -770,6 +830,12 @@ func TestSendPreparedProcessDeathRecovery(t *testing.T) {
 // actual production-interruption gate (a kill inside SendPreparedArtifact's own INDEX append)
 // remains owed and is named in the PR.
 func TestPreparedIndexRecoveryFromStagedPartialIndexRetainsEarlierEntries(t *testing.T) {
+	t.Parallel()
+	// SLEEPS: this test waits on the wall clock (calls time.Sleep). Skipped 2026-09-25
+	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
+	// mocked-clock unit test or a functional program (nova-tools #4221).
+	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
+
 	hermetic(t)
 	bare := bareBus(t)
 	clone := cloneBus(t, bare)
@@ -818,10 +884,11 @@ func TestPreparedIndexRecoveryFromStagedPartialIndexRetainsEarlierEntries(t *tes
 		"PREPARED_HELPER_BARRIER="+barrierFile,
 		"PREPARED_HELPER_ART="+artFile,
 	)
+	helperStdin(t, cmd)
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("failed to start helper process: %v", err)
 	}
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(testWaitBound())
 	for {
 		if _, err := os.Stat(barrierFile); err == nil {
 			break
@@ -864,6 +931,8 @@ func TestPreparedIndexRecoveryFromStagedPartialIndexRetainsEarlierEntries(t *tes
 }
 
 func TestSendPreparedChildExecutionAndRecovery(t *testing.T) {
+	t.Parallel()
+
 	bare, clone, p, a := stellaPrepared(t)
 	scratch := t.TempDir()
 	artFile := filepath.Join(scratch, "prepared.json")
@@ -904,6 +973,8 @@ func TestSendPreparedChildExecutionAndRecovery(t *testing.T) {
 }
 
 func TestRowanProbeAheadMergeCommitPublishesUnrelatedTree(t *testing.T) {
+	t.Parallel()
+
 	bare, clone, p, a := stellaIndependentPrepared(t)
 	id := Identity{Name: p.Sender.GitName, Email: p.Sender.GitEmail}
 	msg := WithTrailer(p.Message, TrailerSend+" "+a.ID)
@@ -948,6 +1019,8 @@ func TestRowanProbeAheadMergeCommitPublishesUnrelatedTree(t *testing.T) {
 }
 
 func TestRowanProbeStaleIndexLock(t *testing.T) {
+	t.Parallel()
+
 	_, clone, p, a := stellaIndependentPrepared(t)
 	lockFile := filepath.Join(clone, ".git", "index.lock")
 	if err := os.WriteFile(lockFile, []byte("stale lock\n"), 0644); err != nil {
@@ -964,6 +1037,8 @@ func TestRowanProbeStaleIndexLock(t *testing.T) {
 }
 
 func TestPreparedDeliveryRecoversEmptyOrPartialGitattributes(t *testing.T) {
+	t.Parallel()
+
 	bare, clone, p, a := stellaIndependentPrepared(t)
 	// Write empty .gitattributes (simulating crash right after open/create before EnsureMergeAttributes wrote content)
 	attrsPath := filepath.Join(clone, AttributesName)
@@ -991,6 +1066,8 @@ func TestPreparedDeliveryRecoversEmptyOrPartialGitattributes(t *testing.T) {
 }
 
 func TestPreparedDeliveryRecoversPartialNoteOnDisk(t *testing.T) {
+	t.Parallel()
+
 	bare, clone, p, a := stellaIndependentPrepared(t)
 	fullNote := filepath.Join(clone, filepath.FromSlash(p.Path))
 	if err := os.MkdirAll(filepath.Dir(fullNote), 0755); err != nil {
@@ -1017,6 +1094,8 @@ func TestPreparedDeliveryRecoversPartialNoteOnDisk(t *testing.T) {
 }
 
 func TestPreparedDeliveryRecoversPartialIndexOnDisk(t *testing.T) {
+	t.Parallel()
+
 	bare, clone, p, a := stellaIndependentPrepared(t)
 	fullIndex := filepath.Join(clone, filepath.FromSlash(IndexPath(p.Sender.Lane)))
 	if err := os.MkdirAll(filepath.Dir(fullIndex), 0755); err != nil {
@@ -1044,6 +1123,8 @@ func TestPreparedDeliveryRecoversPartialIndexOnDisk(t *testing.T) {
 }
 
 func TestPreparedDeliveryRefusesUnrelatedForeignGitattributes(t *testing.T) {
+	t.Parallel()
+
 	_, clone, p, a := stellaIndependentPrepared(t)
 	attrsPath := filepath.Join(clone, AttributesName)
 	if err := os.WriteFile(attrsPath, []byte("*.iso filter=lfs\n"), 0644); err != nil {
@@ -1060,6 +1141,8 @@ func TestPreparedDeliveryRefusesUnrelatedForeignGitattributes(t *testing.T) {
 }
 
 func TestPreparedDeliveryRefusesConflictingNoteOnDisk(t *testing.T) {
+	t.Parallel()
+
 	_, clone, p, a := stellaIndependentPrepared(t)
 	fullNote := filepath.Join(clone, filepath.FromSlash(p.Path))
 	if err := os.MkdirAll(filepath.Dir(fullNote), 0755); err != nil {

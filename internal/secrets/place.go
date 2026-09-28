@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
 // place.go implements issue #764: `nova-secrets place` copies one named secret from the
@@ -165,7 +166,7 @@ func RunPlace(in PlaceInput) (string, error) {
 	// exactly the case the remedy names.
 	machines, err := ReadFleetMachines(in.Machines)
 	if err != nil {
-		return "", fmt.Errorf("fleet registry %s: %w; run: nova-pulse fleet survey --benches %s", in.Machines, err, in.Machines)
+		return "", fmt.Errorf("fleet registry %s: %w", in.Machines, err)
 	}
 	machine, ok := machines[in.Machine]
 	if !ok {
@@ -249,6 +250,7 @@ func RunPlaced(in PlacedInput) (string, []string, error) {
 func sshPlaceSecret(sshPath, target, remotePath, value string) error {
 	remoteCmd := fmt.Sprintf("umask 077 && set -e && mkdir -p \"$(dirname %s)\" && cat > %s && chmod 600 %s",
 		shSingleQuote(remotePath), shSingleQuote(remotePath), shSingleQuote(remotePath))
+	testguard.RefuseHosts(sshPath, target, remoteCmd)
 	cmd := exec.Command(sshPath, target, remoteCmd)
 	cmd.Stdin = bytes.NewReader([]byte(value))
 	var stderrBuf bytes.Buffer

@@ -7,17 +7,18 @@ import (
 	"testing"
 )
 
-// The ten rules the 2026-09-16/17 dogfooding added to SPEC-SECRETS.md, each
-// carrying the hurt that made it and the red test that guards it. This test
-// reads the spec the way internal/decide/doc_test.go reads SPEC-DECIDE.md, so a
-// rule renamed out of the document is red in a build.
+// The ten rules from dogfooding in SPEC-SECRETS.md, each carrying the mistake it
+// prevents and what holds it. This test reads the spec's text, so a rule renamed
+// out of the document is red in a build.
 func TestSpecSecretsNamesDogfoodingAdditions(t *testing.T) {
+	t.Parallel()
+
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-SECRETS.md"))
 	if err != nil {
 		t.Fatalf("the secrets spec is missing: %s", err)
 	}
 	doc := string(raw)
-	if !strings.Contains(doc, "Additions from dogfooding (2026-09-16/17)") {
+	if !strings.Contains(doc, "## Rules from dogfooding") {
 		t.Errorf("SPEC-SECRETS.md does not name the dogfooding section")
 	}
 	for _, phrase := range []string{
@@ -27,10 +28,11 @@ func TestSpecSecretsNamesDogfoodingAdditions(t *testing.T) {
 		"only by `exec --only NAME`, never a file, argv, log or transcript",
 		"harness configs reference `{env:NAME}`",
 		"exactly one seat key per owner prefix",
-		"bench-owned read-only deploy key, never a person's credential",
+		"the bench's own SSH key, generated on that bench",
+		"`TestStorePullUsesBenchOwnedKey`",
 		"private half lives in the owner's password manager",
 		"seal is one step",
-		"fail loudly on any plaintext key file",
+		"fails loudly on a plaintext key file",
 	} {
 		if !strings.Contains(doc, phrase) {
 			t.Errorf("SPEC-SECRETS.md does not name the rule keyed by %q", phrase)

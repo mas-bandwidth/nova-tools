@@ -25,6 +25,8 @@ func writePoolFile(t *testing.T, path string, rows ...string) {
 }
 
 func TestFoldPoolFourRows(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	pool := mkdir(t, filepath.Join(dir, "pool", "usage"))
 	ledger := filepath.Join(dir, "ledger.tsv")
@@ -67,6 +69,8 @@ func TestFoldPoolFourRows(t *testing.T) {
 }
 
 func TestFoldPoolIdempotent(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	pool := mkdir(t, filepath.Join(dir, "pool", "usage"))
 	ledger := filepath.Join(dir, "ledger.tsv")
@@ -93,6 +97,8 @@ func TestFoldPoolIdempotent(t *testing.T) {
 }
 
 func TestFoldPoolDashUsd(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	pool := mkdir(t, filepath.Join(dir, "pool", "usage"))
 	ledger := filepath.Join(dir, "ledger.tsv")
@@ -128,6 +134,8 @@ func TestFoldPoolDashUsd(t *testing.T) {
 // An unreadable pool is refused by name. The refusal must not blame --since: a VALID
 // stamp supplied alongside it is not the reason the run could not proceed.
 func TestFoldPoolUnreadablePoolRefusal(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("mode 000 does not make a directory unreadable on windows")
 	}

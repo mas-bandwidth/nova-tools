@@ -12,6 +12,8 @@ import (
 // This checks whether the proposed wire can carry the independently specified
 // snapshots. It does not decode a source, resolve ancestry, or certify coverage.
 func TestCodexSnapshotProposalWire(t *testing.T) {
+	t.Parallel()
+
 	dir := filepath.Join("..", "..", "testdata", "tokens", "codex-snapshots")
 	allow := Allowlists{RawUsageFields: []string{"input_tokens", "cached_input_tokens", "cache_write_input_tokens", "output_tokens", "reasoning_output_tokens", "total_tokens", "model_context_window"}, ReceiptFields: []string{"ordinal"}}
 	v := NewValidator(allow)

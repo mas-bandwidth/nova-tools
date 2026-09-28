@@ -18,8 +18,11 @@ func (p *Pass) plan(e *Entry, baseSHA string) Classification {
 			return c
 		}
 	}
+	// the pull request the reader rule names its author from (ReaderAuthor); zero for a branch
+	var hostPR PR
 	if e.IsPR() {
 		pr, err := p.Host.PR(e.PR)
+		hostPR = pr
 		if err != nil {
 			return c
 		}
@@ -48,7 +51,7 @@ func (p *Pass) plan(e *Entry, baseSHA string) Classification {
 		return c
 	}
 	c.Checks = checks
-	c.Reads = EvaluateReads(e, c.Author)
+	c.Reads = EvaluateReads(e, ReaderAuthor(hostPR, nil))
 	c.Gate = StandOfGates(p.State.Gates, e.ID(), e.OID, baseSHA)
 	c.State, c.Admitted = standing(p.State.HostedRedBlocks(p.DefaultBranch), checks, c.Reads, c.Gate, p.basePending)
 	return c

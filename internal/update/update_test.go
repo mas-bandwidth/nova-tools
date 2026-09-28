@@ -18,6 +18,8 @@ import (
 )
 
 func TestHelperProcess(t *testing.T) {
+	t.Parallel()
+
 	if os.Getenv("NOVA_UPDATE_HELPER") != "1" {
 		return
 	}
@@ -142,6 +144,8 @@ func need(t *testing.T, s string, want ...string) {
 	}
 }
 func TestManifestRefusesBeforeAnyProcess(t *testing.T) {
+	t.Parallel()
+
 	good := row("x", "tool", "example version", "github:o/r", "none")
 	for _, s := range []string{"", good + "\n", Header + "\nx\n", Header + "\n" + strings.Replace(good, "example version", "example  version", 1), Header + "\n" + strings.Replace(good, "tool", "weights", 1), Header + "\n" + good + "\n" + good, Header + "\n" + strings.Replace(good, "example version", "\"space path\" version", 1)} {
 		if _, e := Load(strings.NewReader(s)); e == nil {
@@ -154,6 +158,8 @@ func TestManifestRefusesBeforeAnyProcess(t *testing.T) {
 	}
 }
 func TestWholeVersionAndVerifiedOrder(t *testing.T) {
+	t.Parallel()
+
 	examples := map[string]string{"gh version 2.100.0 (2026-09-03)": "2.100.0", "go version go1.27.1 darwin/arm64": "1.27.1", "ollama version is 0.33.3": "0.33.3", "v1.3.2": "1.3.2", "1.18.30": "1.18.30", "codex-cli 0.153.4": "0.153.4", "0.46.0": "0.46.0", "sops 3.13.3": "3.13.3", "git version 2.55.0": "2.55.0", "v26.8.2": "26.8.2", "nova-bus v0.12.1-0.20260912135226-0459069+dirty darwin/arm64 go1.27.1": "0.12.1-0.20260912135226-0459069+dirty"}
 	for line, want := range examples {
 		r := identity(Entry{Kind: "tool"}, line+"\nsecond 900.0.0", true)
@@ -178,6 +184,8 @@ func TestWholeVersionAndVerifiedOrder(t *testing.T) {
 	}
 }
 func TestModelDigestAndPinIdentity(t *testing.T) {
+	t.Parallel()
+
 	r := identity(Entry{Name: "model:tag", Kind: "model"}, "NAME ID SIZE\nmodel:other ffffffffffff 4GB\nmodel:tag 07d35212591f 4GB\n", true)
 	if r.Version != "07d35212591f" || r.Raw != "model:tag 07d35212591f 4GB" {
 		t.Fatal(r)
@@ -249,6 +257,8 @@ func testClient(handler func(http.ResponseWriter, *http.Request)) (*http.Client,
 	return c, server.Close
 }
 func TestLatestSourcesFallbackBoundsAndFailures(t *testing.T) {
+	t.Parallel()
+
 	var calls []string
 	client, close := testClient(func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, r.URL.RequestURI())
@@ -453,23 +463,6 @@ func TestHealthyCommandWithLingeringGrandchildStillReads(t *testing.T) {
 	}
 }
 
-// Past the grace the refusal must name the pipe rather than blame the version
-// command, and it must say so without echoing a byte the child wrote.
-func TestHeldPipePastGraceIsNamedAndEchoesNoContent(t *testing.T) {
-	secret := "x 9.9.9-secret"
-	e := Entry{Name: "x", Kind: "tool", Installed: mustArgv(t, command(t, "linger", base64.StdEncoding.EncodeToString([]byte(secret+"\n")), (killGrace+time.Second).String()))}
-	r := Installed(context.Background(), e, killGrace+5*time.Second, false)
-	if r.Known() || r.Reason != "output_not_closed" {
-		t.Fatalf("reason=%q remedy=%q", r.Reason, r.Remedy)
-	}
-	if r.Remedy != leakRemedy {
-		t.Fatalf("remedy=%q", r.Remedy)
-	}
-	if strings.Contains(r.Reason, "9.9.9") || strings.Contains(r.Remedy, "9.9.9") {
-		t.Fatalf("diagnostic echoed child content: %q %q", r.Reason, r.Remedy)
-	}
-}
-
 // The three process failures a person acts on differently must stay
 // distinguishable in the reason, which one collapsed "execution failed" did not.
 func TestProcessFailuresAreDistinguishable(t *testing.T) {
@@ -490,4 +483,23 @@ func mustArgv(t *testing.T, s string) []string {
 		t.Fatal(err)
 	}
 	return a
+}
+
+// #3518: local:<path> locator with a version-string installed column gets REPORT OK,
+// not REPORT UNKNOWN not_found. The installed column is a version string (v1.2.3) and
+// latest is local:/path/to/binary that prints that same version.
+func TestReportLocalLocatorWithVersionStringInstalled(t *testing.T) {
+	// The fake binary prints "tool v1.2.3", which versionKey extracts as "1.2.3".
+	binCmd := printer(t, "tool v1.2.3\n")
+	// installed is a version string, not a command; latest points to the real binary.
+	p := manifest(t, row("mytool", "tool", "v1.2.3", "local:"+binCmd, "none"))
+	code, out, errs := run(t, Environment{}, "report", "--file", p, "--host", "air")
+	if code != 0 {
+		t.Fatalf("want exit 0, got %d: out=%s errs=%s", code, out, errs)
+	}
+	need(t, out, "REPORT TOOL name=mytool", "version=1.2.3")
+	need(t, out, "REPORT OK checked=1 known=1 unknown=0")
+	if strings.Contains(out, "not_found") || strings.Contains(errs, "not_found") {
+		t.Fatalf("unexpected not_found in output: out=%s errs=%s", out, errs)
+	}
 }

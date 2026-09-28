@@ -1,0 +1,750 @@
+package review
+
+// The mutation test, and why a reader is the wrong place for it.
+//
+// On 2026-09-17 this house ran 504 read cards in a day, and a large part of what each
+// one did was mechanical: clone the repo, revert the change, run the tests, and see
+// whether the new test is red without it. Glenn, 2026-09-16: a read that checks "red
+// without the change" is doing a mutation test's job. A model is an expensive and
+// unreliable way to run a command whose answer is an exit code, and a reader who spends
+// their context on it has less left for the judgment only a reader can make: does this
+// change fit the spec.
+//
+// So the check moves here. Mutate takes a repo, a base and a head, builds a throwaway
+// worktree at the head, reverts every hunk that is NOT in a test file back to the base,
+// and runs the tests the change touched. The tests MUST fail: a test that is green
+// without the change it claims to cover proves nothing, and the verdict names it.
+//
+// What it does not do: it never judges the code, it never writes to the repo it is
+// pointed at (the worktree is temporary and removed on every path, including a panic
+// in the caller's process is the one case it cannot cover), and it never reads a
+// diff for meaning. It runs one command and reports one line.
+
+import (
+	"bufio"
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+)
+
+// ErrNoTestsChanged is the refusal for a range that changes no test file: a fix without
+// its red test is not admitted, so there is nothing to mutate and nothing to prove.
+var ErrNoTestsChanged = errors.New("no test file changed between the base and the head")
+
+// ErrNoChangeToRevert is the refusal for a range that changes ONLY test files. Reverting
+// nothing runs the tests exactly as the head runs them, and "the tests fail" would then
+// be a statement about the head's own suite, not about the change. A green run and a red
+// run would both be meaningless, so the verb refuses rather than answer either way.
+var ErrNoChangeToRevert = errors.New("no change to revert: every changed file is a test file")
+
+// MutateOptions is one invocation. The caller bounds the whole run with the context's
+// deadline; the listing's cap is the caller's too (internal/bounded), so nothing here
+// decides how much a reader is shown.
+type MutateOptions struct {
+	Repo string
+	Base string
+	Head string
+	// TempRoot is the directory the throwaway worktree is made in, and the root its
+	// removal is bounded by. Empty means os.TempDir(), which is what every caller in
+	// production wants. A test names its own t.TempDir() instead, so that "nothing was
+	// left behind" is a statement about a directory only that test writes: the shared
+	// temp directory is shared with every other job on the same self-hosted runner, and
+	// a sibling's `nova-review-mutate-*` appearing between a snapshot and its check made
+	// the assertion red four times (#1341 twice, #1345, #1360).
+	TempRoot string
+	// Test selects ONE unit and asks rule 4(d)'s question of it alone: does THAT test
+	// detect the reverted change. Empty is the default and the per-file rule below is
+	// unchanged by this field's existence (#1849, Stella's ruling).
+	//
+	// A name may be qualified `<changed test file>:<name>` where two changed files
+	// declare the same one. It is resolved among the units discovered from the CHANGED
+	// test files and nowhere else, and a name that resolves to none of them, to more
+	// than one, or to a unit that did not actually run is an error: the caller asked a
+	// question about a specific test, and answering about a different one, or inferring
+	// an answer from a test that never ran, is the failure this whole verb exists to
+	// stop.
+	Test string
+}
+
+// ErrTestNotRun is the class of refusal for a `--test` that could not be answered:
+// resolved to nothing, resolved to more than one, or resolved to a unit whose file
+// could not be run. Never a vacuous PASS and never an inferred FAIL.
+var ErrTestNotRun = errors.New("the named test was not run")
+
+// TestUnit is one test named on the report: the function, and the changed test file
+// that declares it.
+type TestUnit struct {
+	Name string
+	File string
+}
+
+// GreenTest is a test that stayed green with the change reverted: the one thing that
+// makes the per-file MUTATE verdict FAIL, named so the author can see which test
+// proves nothing. It is an alias rather than its own type because the selected form
+// (#1849) reports the RED units by exactly the same two fields, and two structs with
+// the same shape and different names would be two things a caller has to learn.
+type GreenTest = TestUnit
+
+// Skip is a changed test file whose suite could not be run, with the reason named. A skip
+// never makes a verdict PASS: a file that was not run has no failing test, so it counts
+// against the verdict exactly as a green file does.
+type Skip struct {
+	File   string
+	Reason string
+}
+
+// MutateResult is the whole answer. Red and Green count TEST UNITS (a Go test function,
+// or one Lisp suite), not files; Pass is the per-file rule: every changed test file has at
+// least one failing unit with the change reverted.
+type MutateResult struct {
+	Head  string
+	Red   int
+	Green int
+	// Reverted is the number of non-test HUNKS put back: SPEC-REVIEW says the
+	// revert covers "every non-test hunk", and a caller that gates on that sentence
+	// needs it as a number. A verdict over an empty revert is a verdict about the
+	// head's own suite, so the count is what tells a gate the control ran at all.
+	Reverted int
+	Pass     bool
+	Greens   []GreenTest
+	Skips    []Skip
+	// Selected is the unit --test resolved to, empty in the default form. When it is
+	// set, Pass is ITS result and not the per-file rule's: the co-touched units are
+	// still counted and still listed, because the evidence a caller cannot see is
+	// evidence they cannot check, but another test's green no longer answers the
+	// question that was asked (#1849).
+	Selected string
+	// Reds are the units that failed with the change reverted, in file then name
+	// order. The per-file rule only ever needed the COUNT; the selected form needs
+	// to know which.
+	Reds []TestUnit
+}
+
+// Verdict is the word that ends the MUTATE line.
+func (r *MutateResult) Verdict() string {
+	if r.Pass {
+		return "PASS"
+	}
+	return "FAIL"
+}
+
+// Short is the head's eight-character prefix, the MUTATE line's first field.
+func Short(sha string) string {
+	if len(sha) > 8 {
+		return sha[:8]
+	}
+	return sha
+}
+
+// unit is one runnable test: a Go test function in a package, or a Lisp suite script.
+type unit struct {
+	name string // Go test function name, or the run-tests.sh path for a Lisp suite
+	file string // the changed test file that declares it
+	pkg  string // the Go package dir relative to the repo root, or the Lisp project dir
+	lisp bool
+}
+
+// Mutate reverts the non-test hunks of base..head in a throwaway worktree at head and runs
+// the tests of every changed test file there. The worktree is removed before it returns,
+// on every path.
+func Mutate(ctx context.Context, opts MutateOptions) (*MutateResult, error) {
+	repo, err := filepath.Abs(opts.Repo)
+	if err != nil {
+		return nil, fmt.Errorf("--repo %s: %v", opts.Repo, err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".git")); err != nil {
+		return nil, fmt.Errorf("--repo %s is not a git working copy", opts.Repo)
+	}
+	head, err := revParse(ctx, repo, opts.Head)
+	if err != nil {
+		return nil, fmt.Errorf("--head %s names no commit in this repo", opts.Head)
+	}
+	base, err := revParse(ctx, repo, opts.Base)
+	if err != nil {
+		return nil, fmt.Errorf("--base %s names no commit in this repo", opts.Base)
+	}
+	// The change is what the head added since the two diverged, never what the base
+	// gained meanwhile: a merge-base left side is the same range a reviewer reads, and
+	// it keeps an unrelated commit on the base out of the revert.
+	if mb, err := gitLine(ctx, repo, "merge-base", base, head); err == nil && mb != "" {
+		base = mb
+	}
+
+	changed, err := changedFiles(ctx, repo, base, head)
+	if err != nil {
+		return nil, err
+	}
+	var tests, others []change
+	for _, c := range changed {
+		if isTestFile(c.path) {
+			tests = append(tests, c)
+		} else {
+			others = append(others, c)
+		}
+	}
+	// Both refusals still carry the resolved head, because the line that reports them
+	// names the head the caller asked about: a refusal nobody can tie to a commit is a
+	// refusal nobody can act on.
+	if len(tests) == 0 {
+		return &MutateResult{Head: head}, ErrNoTestsChanged
+	}
+	if len(others) == 0 {
+		return &MutateResult{Head: head}, ErrNoChangeToRevert
+	}
+
+	tempRoot := opts.TempRoot
+	if tempRoot == "" {
+		tempRoot = os.TempDir()
+	}
+	wt, err := os.MkdirTemp(tempRoot, "nova-review-mutate-")
+	if err != nil {
+		return nil, fmt.Errorf("could not make the worktree directory under %s: %v", tempRoot, err)
+	}
+	// One removal, on every path out of this function: a worktree left behind is a
+	// checkout of somebody's head sitting in the temp directory, and a `git worktree
+	// list` that grows by one per run is the repo's own record going wrong.
+	defer func() {
+		_, _ = gitLine(context.WithoutCancel(ctx), repo, "worktree", "remove", "--force", wt)
+		_ = safepath.RemoveUnder(tempRoot, wt)
+		_, _ = gitLine(context.WithoutCancel(ctx), repo, "worktree", "prune")
+	}()
+	if _, err := gitLine(ctx, repo, "worktree", "add", "--detach", wt, head); err != nil {
+		return nil, fmt.Errorf("could not add a worktree at %s: %v", Short(head), err)
+	}
+	if err := revert(ctx, repo, wt, base, others); err != nil {
+		return nil, err
+	}
+	reverted, err := countHunks(ctx, repo, base, head, others)
+	if err != nil {
+		return nil, err
+	}
+
+	units, skips := plan(wt, tests)
+	res := &MutateResult{Head: head, Skips: skips, Reverted: reverted}
+	redFiles := map[string]bool{}
+	skipped := map[string]bool{}
+	for _, s := range skips {
+		skipped[s.File] = true
+	}
+	for _, u := range groupByPkg(units) {
+		failed, reason := runUnits(ctx, wt, u)
+		if reason != "" {
+			for _, one := range u {
+				if !skipped[one.file] {
+					skipped[one.file] = true
+					res.Skips = append(res.Skips, Skip{File: one.file, Reason: reason})
+				}
+			}
+			continue
+		}
+		for _, one := range u {
+			if failed[one.name] {
+				res.Red++
+				redFiles[one.file] = true
+				res.Reds = append(res.Reds, TestUnit{Name: one.name, File: one.file})
+				continue
+			}
+			// A unit with no FAIL line is green, and so is a unit with no result
+			// line at all: a unit that did not run is not evidence that it fails,
+			// and counting it red would let a filter typo read as a proof.
+			res.Green++
+			res.Greens = append(res.Greens, GreenTest{Name: one.name, File: one.file})
+		}
+	}
+	byFileThenName(res.Greens)
+	byFileThenName(res.Reds)
+	// The verdict is per FILE: every changed test file that could be run has at least
+	// one test that fails with the change reverted. A file that could not be run at all
+	// is named on its own SKIP line and judged by nobody here -- the verdict says what
+	// was run, and a skip with no reason beside it is the one thing this must not be.
+	res.Pass = res.Red > 0
+	for _, t := range tests {
+		if !redFiles[t.path] && !skipped[t.path] {
+			res.Pass = false
+		}
+	}
+	if opts.Test == "" {
+		return res, nil
+	}
+	// THE SELECTED FORM, and it replaces the verdict rather than adding to it.
+	//
+	// The per-file rule answers "does every changed test file detect this change",
+	// which is a stricter question than §1 rule 4(d)'s and a different one. A card
+	// that touched a second test file whose tests are CORRECTLY insensitive -- one
+	// that compares line prefixes and never prose -- came back FAIL though its named
+	// TEST: was red (the readers' receipt, PR #1828, #1849). So a caller may name the
+	// unit and get that unit's answer.
+	//
+	// It is resolved here, after the run, and only among units that were planned from
+	// the CHANGED test files: the question is about this range, and a test outside it
+	// cannot be asked. Resolution failing is an error and never a verdict -- "do not
+	// guess which test the caller meant" (Stella, stella-e72bbf88a3f7).
+	sel, err := resolve(opts.Test, units, skipped)
+	if err != nil {
+		return res, err
+	}
+	res.Selected = sel.name
+	res.Pass = false
+	for _, r := range res.Reds {
+		if r.Name == sel.name && r.File == sel.file {
+			res.Pass = true
+		}
+	}
+	return res, nil
+}
+
+func byFileThenName(us []TestUnit) {
+	sort.Slice(us, func(i, j int) bool {
+		if us[i].File != us[j].File {
+			return us[i].File < us[j].File
+		}
+		return us[i].Name < us[j].Name
+	})
+}
+
+// resolve turns --test into exactly one planned unit, or says why it cannot.
+//
+// The name is matched against the units discovered from the changed test files. A
+// bare name that two of those files declare is AMBIGUOUS and refused, and the refusal
+// lists the files so the caller can qualify it `<file>:<name>` rather than be told to
+// guess again. A unit whose file was skipped never ran, so it has neither failed nor
+// passed and neither answer may be printed for it.
+func resolve(want string, units []unit, skipped map[string]bool) (unit, error) {
+	file, name := "", want
+	if i := strings.LastIndex(want, ":"); i > 0 {
+		file, name = want[:i], want[i+1:]
+	}
+	var found []unit
+	for _, u := range units {
+		if u.name != name {
+			continue
+		}
+		if file != "" && u.file != file {
+			continue
+		}
+		found = append(found, u)
+	}
+	switch {
+	case len(found) == 0:
+		return unit{}, fmt.Errorf("%w: --test %s names no test declared by a test file this range changed", ErrTestNotRun, want)
+	case len(found) > 1:
+		var where []string
+		for _, u := range found {
+			where = append(where, u.file+":"+u.name)
+		}
+		sort.Strings(where)
+		return unit{}, fmt.Errorf("%w: --test %s is ambiguous, declared by %s; name one of those", ErrTestNotRun, want, strings.Join(where, " and "))
+	case skipped[found[0].file]:
+		return unit{}, fmt.Errorf("%w: --test %s is declared by %s, whose suite could not be run, so it neither failed nor passed", ErrTestNotRun, want, found[0].file)
+	}
+	return found[0], nil
+}
+
+type change struct {
+	status string // A, D, M (renames are off, so a rename is a D and an A)
+	path   string
+}
+
+func changedFiles(ctx context.Context, repo, base, head string) ([]change, error) {
+	out, err := gitOut(ctx, repo, "diff", "--no-ext-diff", "--no-renames", "--name-status", base, head)
+	if err != nil {
+		return nil, fmt.Errorf("could not read the change between %s and %s: %v", Short(base), Short(head), err)
+	}
+	var cs []change
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if line == "" {
+			continue
+		}
+		fields := strings.SplitN(line, "\t", 2)
+		if len(fields) != 2 {
+			continue
+		}
+		cs = append(cs, change{status: strings.TrimSpace(fields[0]), path: fields[1]})
+	}
+	return cs, nil
+}
+
+// isTestFile is the whole definition of "a test hunk", and it is deliberately narrow: a Go
+// file ending _test.go, or a Lisp file under a tests/ directory (the Lisp legs keep their
+// cases there). Everything else is the change, and the change is what gets reverted --
+// a fixture under testdata/ included, because a fixture a fix had to change is part of
+// the fix and a test that only passes with the new fixture has proved nothing about the
+// code.
+func isTestFile(p string) bool {
+	return strings.HasSuffix(p, "_test.go") || isLispTest(p)
+}
+
+// revert puts every non-test path back the way the base had it, inside the worktree only:
+// a path the head added is removed, a path the head changed or deleted is checked out from
+// the base. `git checkout <base> -- <paths>` is run from the worktree, so the index and the
+// tree it writes are the worktree's own and the caller's repo is never touched.
+func revert(ctx context.Context, repo, wt, base string, others []change) error {
+	var restore []string
+	for _, c := range others {
+		switch c.status {
+		case "A":
+			if err := os.Remove(filepath.Join(wt, filepath.FromSlash(c.path))); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("could not remove %s from the worktree: %v", c.path, err)
+			}
+		default:
+			restore = append(restore, c.path)
+		}
+	}
+	for len(restore) > 0 {
+		n := len(restore)
+		if n > 100 {
+			n = 100
+		}
+		args := append([]string{"checkout", base, "--"}, restore[:n]...)
+		if _, err := gitOut(ctx, wt, args...); err != nil {
+			return fmt.Errorf("could not revert the non-test change to %s: %v", Short(base), err)
+		}
+		restore = restore[n:]
+	}
+	return nil
+}
+
+var goTestFunc = regexp.MustCompile(`(?m)^func (Test[A-Z_0-9][A-Za-z_0-9]*)\(`)
+
+// plan turns changed test files into runnable units, reading them in the WORKTREE and never
+// in the caller's working copy: the worktree is the head, and the caller may sit on any
+// commit at all -- on the base, a test file the head adds is not there to read. A Go test
+// file contributes every test function it declares there (the revert leaves the test hunks
+// alone, so that is the head's text); a Lisp test file contributes its project's
+// run-tests.sh. A file that is neither is skipped with its reason named.
+func plan(wt string, tests []change) ([]unit, []Skip) {
+	var units []unit
+	var skips []Skip
+	for _, t := range tests {
+		if t.status == "D" {
+			skips = append(skips, Skip{File: t.path, Reason: "the head deletes this test file; there is nothing to run"})
+			continue
+		}
+		switch {
+		case strings.HasSuffix(t.path, "_test.go"):
+			src, err := os.ReadFile(filepath.Join(wt, filepath.FromSlash(t.path)))
+			if err != nil {
+				skips = append(skips, Skip{File: t.path, Reason: "could not read the test file at the head"})
+				continue
+			}
+			names := goTestFunc.FindAllStringSubmatch(string(src), -1)
+			if len(names) == 0 {
+				skips = append(skips, Skip{File: t.path, Reason: "the file declares no Test function"})
+				continue
+			}
+			pkg := path.Dir(t.path)
+			for _, m := range names {
+				units = append(units, unit{name: m[1], file: t.path, pkg: pkg})
+			}
+		case isLispTest(t.path):
+			proj := lispProject(t.path)
+			if proj == "" {
+				skips = append(skips, Skip{File: t.path, Reason: "no lisp project directory above this tests/ directory"})
+				continue
+			}
+			script := path.Join(proj, "run-tests.sh")
+			if _, err := os.Stat(filepath.Join(wt, filepath.FromSlash(script))); err != nil {
+				skips = append(skips, Skip{File: t.path, Reason: "the lisp project has no run-tests.sh"})
+				continue
+			}
+			units = append(units, unit{name: script, file: t.path, pkg: proj, lisp: true})
+		default:
+			skips = append(skips, Skip{File: t.path, Reason: "no runner for this kind of test file"})
+		}
+	}
+	return units, skips
+}
+
+func isLispTest(p string) bool {
+	if !strings.HasPrefix(p, "lisp/") {
+		return false
+	}
+	for _, seg := range strings.Split(p, "/") {
+		if seg == "tests" {
+			return true
+		}
+	}
+	return false
+}
+
+// lispProject is the directory holding the tests/ directory this file is under.
+func lispProject(p string) string {
+	segs := strings.Split(p, "/")
+	for i, seg := range segs {
+		if seg == "tests" && i > 0 {
+			return strings.Join(segs[:i], "/")
+		}
+	}
+	return ""
+}
+
+// groupByPkg gathers the units into one run per package, in a deterministic order, so a
+// package's tests are one `go test` and not one per function.
+func groupByPkg(units []unit) [][]unit {
+	order := []string{}
+	by := map[string][]unit{}
+	for _, u := range units {
+		key := u.pkg
+		if u.lisp {
+			key = "lisp:" + u.name
+		}
+		if _, seen := by[key]; !seen {
+			order = append(order, key)
+		}
+		by[key] = append(by[key], u)
+	}
+	sort.Strings(order)
+	out := make([][]unit, 0, len(order))
+	for _, k := range order {
+		out = append(out, by[k])
+	}
+	return out
+}
+
+var goResult = regexp.MustCompile(`^\s*--- (PASS|FAIL|SKIP): ([A-Za-z_0-9]+)`)
+
+// runUnits runs one package's units in the worktree and reports which of them FAILED. A
+// package that does not build is not a kill: a test that merely CALLS the fix's new
+// symbol breaks the build when the symbol goes away while asserting nothing about it
+// (#1807). So the units are judged by nobody and a named skip reason comes back, exactly
+// as when the suite could not be run at all.
+func runUnits(ctx context.Context, wt string, units []unit) (failed map[string]bool, skip string) {
+	failed = map[string]bool{}
+	if units[0].lisp {
+		script := units[0].name
+		if _, err := os.Stat(filepath.Join(wt, filepath.FromSlash(script))); err != nil {
+			return nil, "the lisp project has no run-tests.sh in the worktree"
+		}
+		cmd := exec.CommandContext(ctx, "sh", script)
+		cmd.Dir = wt
+		err := cmd.Run()
+		if reason := budgetEnded(ctx.Err()); reason != "" {
+			return nil, reason
+		}
+		var ee *exec.ExitError
+		if err != nil && !errors.As(err, &ee) {
+			return nil, fmt.Sprintf("the lisp suite could not be run: %v", err)
+		}
+		if err != nil {
+			failed[script] = true
+		}
+		return failed, ""
+	}
+
+	names := make([]string, 0, len(units))
+	for _, u := range units {
+		names = append(names, regexp.QuoteMeta(u.name))
+	}
+	sort.Strings(names)
+	args := []string{"test", "-count=1", "-v", "-run", "^(" + strings.Join(names, "|") + ")$", "./" + units[0].pkg + "/"}
+	if units[0].pkg == "." {
+		args[len(args)-1] = "./"
+	}
+	cmd := exec.CommandContext(ctx, "go", args...)
+	cmd.Dir = wt
+	// The verdict is a property of the range, never of the environment mutate was
+	// started in. A caller's GOFLAGS=-json -- which is what CI's `make test`
+	// exports -- would make this run answer in JSON, no `--- PASS:` line would
+	// match below, and the unit that stayed green would be counted red.
+	cmd.Env = goenv.Clean(os.Environ())
+	out, err := cmd.CombinedOutput()
+	return runVerdict(ctx.Err(), string(out), err, units)
+}
+
+// runVerdict is what ONE FINISHED RUN MEANS, and it is a pure function of the four things
+// a run leaves behind: whether the caller's context was still live, what the run printed,
+// how it ended, and which units it was asked about. It is separated from the running so
+// that the rule can be pinned without a subprocess and without a clock -- the shapes below
+// are the ones that were seen in CI, and each one is an argument here.
+func runVerdict(ctxErr error, text string, ran error, units []unit) (failed map[string]bool, skip string) {
+	// THE BUDGET IS ASKED ABOUT BEFORE THE OUTPUT IS. A run the caller's deadline killed
+	// printed no verdict about anything, and the inference at the bottom -- exited
+	// non-zero, named no failing test, so every unit is red -- would turn that into one.
+	if reason := budgetEnded(ctxErr); reason != "" {
+		return nil, reason
+	}
+	failed = map[string]bool{}
+	if ran != nil {
+		var ee *exec.ExitError
+		if !errors.As(ran, &ee) {
+			return nil, fmt.Sprintf("go test could not be run: %v", ran)
+		}
+	}
+	// A package that fails to compile prints no per-test result at all, and that is not
+	// a kill: a test that merely CALLS the fix's new symbol breaks the build when the
+	// symbol goes away while asserting nothing about it (#1807). Compilation coupling is
+	// not an assertion, so the units are judged by nobody and the file is skipped with
+	// the reason that says why.
+	if strings.Contains(text, "[build failed]") || strings.Contains(text, "[setup failed]") {
+		return nil, SkipRevertNoCompile + ": the package did not compile with the change reverted, so the tests in it assert nothing that the revert could disprove"
+	}
+	sc := bufio.NewScanner(strings.NewReader(text))
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for sc.Scan() {
+		m := goResult.FindStringSubmatch(sc.Text())
+		if m == nil {
+			continue
+		}
+		if m[1] == "FAIL" {
+			failed[m[2]] = true
+		}
+	}
+	// A run that exited non-zero with no FAIL line at all (a panic before any result,
+	// a timeout inside the binary) is evidence the package's tests do not pass, and
+	// every unit it was asked for counts red rather than silently green. A run the
+	// CALLER'S budget killed never reaches here -- budgetEnded above returned a skip --
+	// because that one is evidence about the bench and not about the tests.
+	if ran != nil && len(failed) == 0 {
+		for _, u := range units {
+			failed[u.name] = true
+		}
+	}
+	return failed, ""
+}
+
+// budgetEnded names the one thing a finished run can never be asked about: a run the
+// CALLER'S BUDGET ended. The verdict is a property of the range, never of the bench --
+// the same rule goenv.Clean holds for the environment -- and a killed run is evidence
+// about the machine and about nothing else.
+//
+// Measured on hulk, 2026-09-18, against the fixture cmd/nova-review's mutate tests build:
+// the same range answers `MUTATE 06b87135 red=1 green=1 PASS` with the default budget and
+// `MUTATE 06b87135 red=2 green=0 PASS` with a cold GOCACHE and `--timeout 1`, because the
+// inner `go test` was killed mid-compile, printed no `--- PASS:` line, and every unit it
+// was asked for was counted red. That is the same wrong answer GOFLAGS=-json produced on
+// three legs of integration-4, arriving by the other road: a loaded shard's share of the
+// wall clock. A named skip is the honest answer, and a skip never makes a verdict PASS.
+func budgetEnded(ctxErr error) string {
+	switch {
+	case errors.Is(ctxErr, context.DeadlineExceeded):
+		return "the budget ended the run before it reported a result; nothing it printed is a verdict. Give --timeout more seconds, or run it on a quieter bench"
+	case ctxErr != nil:
+		return fmt.Sprintf("the run was cancelled before it reported a result (%v); nothing it printed is a verdict", ctxErr)
+	}
+	return ""
+}
+
+func revParse(ctx context.Context, repo, ref string) (string, error) {
+	return gitLine(ctx, repo, "rev-parse", ref+"^{commit}")
+}
+
+func gitLine(ctx context.Context, dir string, args ...string) (string, error) {
+	out, err := gitOut(ctx, dir, args...)
+	return strings.TrimSpace(out), err
+}
+
+// gitOut runs git with object replacement switched off. A worker who can write the
+// job clone's `.git` can `git replace <head> <base>` and every later read of the
+// range -- rev-parse, merge-base, the diff this package reverts -- would then be
+// reading the base's objects, not the head's. The ref lives under `refs/replace/`
+// and is never in the diff, so nothing else in the range can see it.
+//
+// The child also drops GIT_DIR / GIT_WORK_TREE / GIT_CONFIG_* and secret-named
+// variables. cmd.Dir is the repo this command is about; a parent GIT_DIR still
+// pointed at the job clone would make every call operate there, run the
+// worker's clean filters, and write the seed into the copy the gate was
+// pointed at (#1897).
+func gitOut(ctx context.Context, dir string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", append([]string{"--no-replace-objects"}, args...)...)
+	cmd.Dir = dir
+	cmd.Env = dropGitIdentity(goenv.WithoutSecrets(goenv.Clean(os.Environ())))
+	out, err := cmd.Output()
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && len(ee.Stderr) > 0 {
+			return "", fmt.Errorf("git %s: %v: %s", args[0], err, strings.TrimSpace(string(ee.Stderr)))
+		}
+		return "", err
+	}
+	return string(out), nil
+}
+
+// dropGitIdentity removes the variables that would make a child git or go test
+// operate on the gate's repository instead of cmd.Dir. The names are the
+// overrides; GIT_EXEC_PATH is not one, and git still has to find its own
+// binaries.
+func dropGitIdentity(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, entry := range env {
+		name, _, _ := strings.Cut(entry, "=")
+		if gitIdentityVar(name) {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+func gitIdentityVar(name string) bool {
+	up := strings.ToUpper(strings.TrimSpace(name))
+	switch up {
+	case "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR",
+		"GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+		"GIT_INDEX_FILE", "GIT_NAMESPACE", "GIT_TEMPLATE_DIR",
+		"GIT_PREFIX", "GIT_ATTR_SOURCE", "GIT_CONFIG":
+		return true
+	}
+	return strings.HasPrefix(up, "GIT_CONFIG_")
+}
+
+// countHunks is how much was put back: the number of `@@` hunks in the base..head diff
+// restricted to the non-test files the revert touched. A file the head ADDED and the
+// revert removed whole counts as its own hunks, because that is what the diff says was
+// undone.
+//
+// It is read from the range, not from the checkout: `git checkout <base> -- <paths>`
+// says nothing about how many hunks it wrote, and a count that came from the same
+// command whose work it is measuring would agree with itself whatever happened.
+func countHunks(ctx context.Context, repo, base, head string, others []change) (int, error) {
+	if len(others) == 0 {
+		return 0, nil
+	}
+	n := 0
+	paths := make([]string, 0, len(others))
+	for _, c := range others {
+		paths = append(paths, c.path)
+	}
+	for len(paths) > 0 {
+		k := len(paths)
+		if k > 100 {
+			k = 100
+		}
+		args := append([]string{"diff", "--no-ext-diff", "--no-renames", "--unified=0", base, head, "--"}, paths[:k]...)
+		out, err := gitOut(ctx, repo, args...)
+		if err != nil {
+			return 0, fmt.Errorf("could not count the hunks between %s and %s: %v", Short(base), Short(head), err)
+		}
+		for _, line := range strings.Split(out, "\n") {
+			if strings.HasPrefix(line, "@@ ") {
+				n++
+			}
+		}
+		paths = paths[k:]
+	}
+	return n, nil
+}
+
+// SkipRevertNoCompile is the reason token on a Skip whose package would not COMPILE with
+// the change reverted (#1807, the red team of T03 at 98e3f3a9).
+//
+// It used to be the strongest red there was: "the tests cannot even compile without the
+// change". It is not evidence at all. A test that only CALLS the fix's new symbol --
+// `_ = Mul(2, 3)`, asserting nothing -- breaks the build when the symbol goes away, and
+// that build failure was read as the kill the control was looking for, so the most common
+// vacuous shape there is walked straight through the negative control.
+//
+// A build failure on the reverted side is never a kill. It is named here so the caller
+// can say what it means for the card: compilation coupling is not an assertion, and the
+// accept gate rejects such a file as `vacuous-test`.
+const SkipRevertNoCompile = "revert-did-not-compile"

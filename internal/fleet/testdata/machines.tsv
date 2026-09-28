@@ -1,0 +1,37 @@
+# The fleet's machines: what each one IS, and therefore what may be placed on it.
+#
+# name<TAB>ssh<TAB>os/arch<TAB>roles<TAB>seat<TAB>cores<TAB>notes
+#
+# roles is a SET from {bench, runner, coordination, services}, comma separated:
+#   bench         cards, probes and load may be placed here
+#   runner        the machine serves the merge group's CI shards
+#   coordination  a friend's own window lives here
+#   services      Loki, Grafana, Redis and the rest of the stack live here
+# seat is the nova-secrets seat on the machine, or `-` when it carries none.
+# notes is free text, or `-`.
+#
+# THE LOCK (Glenn, 2026-09-18): runner hosts are CI-only. No card, no probe and no load may
+# be placed on a machine that serves the merge group's shards -- a card and a shard on one
+# host make the shard slow, the gate red and the queue stop. `nova-pulse fill` and every
+# fleet verb that acts on a machine refuse a name whose roles lack `bench`.
+#
+# A machine that is BOTH runner and bench is the exception, not the shape, so it must say so
+# in its notes: `allow-shared=<YYYY-MM-DD> <why>`. hulk, vision and threadripper-wsl are
+# shared today because the pull worker still runs a card in the bench's own home; when it
+# runs cards in containers the runner role comes off those lines and this exception goes
+# with it.
+#
+# THERE IS NO WINDOWS MACHINE IN THIS FILE, and there is not meant to be (Glenn, 2026-09-18:
+# "drop the native windows CI runners. WSL only from now on."). The Threadripper is a
+# WINDOWS BOX and it joins the fleet as `threadripper-wsl`, a LINUX machine: WSL2 is the
+# operating system the cards and the CI runners see, so `os/arch` is linux/x64, the bench
+# standard is the Linux one, and its runners carry the ordinary Linux labels. The native
+# half of that box is not a bench and not a runner, so it has no line here.
+studio	studio	darwin/arm64	coordination,runner	studio	32	Glenn's Mac Studio: my window and the lisp CI leg. Never a card bench.
+hulk	hulk	linux/x64	bench,runner	swarm-hulk	64	allow-shared=2026-09-18 eight CI runners beside the cards; drop the runner role when the pull worker runs cards in containers
+vision	vision	linux/x64	bench,runner	swarm-vision	64	allow-shared=2026-09-18 four CI runners beside the cards; drop the runner role when the pull worker runs cards in containers
+threadripper-wsl	threadripper-wsl	linux/x64	bench,runner	swarm-threadripper	32	allow-shared=2026-09-18 the Threadripper Pro under WSL2, a Linux bench; runner labels linux,X64,threadripper; native Windows is parked, WSL2 is the way
+space	space	linux/x64	bench,services	swarm-space	32	the stack lives here (Loki, Grafana, Redis) beside the cards; no CI runner
+mini	mini	linux/x64	runner	-	4	one CI runner; 4 cores and 7 GB, too small for a card bench
+batman	batman	darwin/amd64	runner	-	8	2019 iMac Pro, six darwin-x64 runners; CI-only
+superman	superman	darwin/amd64	runner	-	18	2019 iMac Pro, ten darwin-x64 runners; CI-only

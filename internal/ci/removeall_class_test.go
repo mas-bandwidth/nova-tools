@@ -3,13 +3,11 @@ package ci
 import (
 	"fmt"
 	"go/ast"
-	"go/parser"
-	"go/token"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 )
 
 // removeAllAllowlistPath is the shrink-only list of the os.RemoveAll calls this
@@ -36,38 +34,24 @@ const safepathPkgDir = "internal/safepath"
 // removed through safepath.RemoveUnder instead, which refuses an empty path, the
 // root itself, a path outside its root, and a symlink.
 func TestRemoveAllOnlyOnTempOrThroughSafepath(t *testing.T) {
-	root := repoRoot(t)
-	allow := readRemoveAllAllowlist(t)
+	t.Parallel()
+
+	tree := repoTree(t)
+	allow := loadAllowlist(t, removeAllAllowlistPath, shrinkOnly)
 	seen := map[string]bool{}
 	var violations []string
 
 	for _, dir := range []string{"cmd", "internal"} {
-		base := filepath.Join(root, dir)
-		err := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-				return nil
-			}
-			rel, err := filepath.Rel(root, path)
-			if err != nil {
-				return err
-			}
-			rel = filepath.ToSlash(rel)
+		for _, src := range tree.GoFilesUnder(false, dir) {
+			rel := src.Rel
 			if strings.HasPrefix(rel, safepathPkgDir+"/") {
-				return nil
+				continue
 			}
-			raw, err := os.ReadFile(path)
-			if err != nil {
-				return err
+			if src.ParseErr != nil {
+				t.Fatal(src.ParseErr)
 			}
-			fset := token.NewFileSet()
-			file, err := parser.ParseFile(fset, path, raw, 0)
-			if err != nil {
-				return err
-			}
-			for _, decl := range file.Decls {
+			fset := tree.FSet
+			for _, decl := range src.AST.Decls {
 				fn, ok := decl.(*ast.FuncDecl)
 				if !ok || fn.Body == nil {
 					continue
@@ -87,7 +71,7 @@ func TestRemoveAllOnlyOnTempOrThroughSafepath(t *testing.T) {
 					id, ok := call.Args[0].(*ast.Ident)
 					if ok && tempVars[id.Name] {
 						seen[key] = true
-						if !allow[key] {
+						if !allow.Has(key) {
 							violations = append(violations, fmt.Sprintf(
 								"%s:%d: os.RemoveAll on the temp dir %s is not in %s; a new raw removal needs the safepath.RemoveUnder route or an allowlist entry with a reason",
 								rel, fset.Position(call.Pos()).Line, id.Name, removeAllAllowlistPath))
@@ -100,20 +84,15 @@ func TestRemoveAllOnlyOnTempOrThroughSafepath(t *testing.T) {
 					return true
 				})
 			}
-			return nil
-		})
-		if err != nil {
-			t.Fatal(err)
 		}
 	}
 	// The list only shrinks: an entry whose call has left is a red run, so nobody
 	// can quietly widen the exception set and leave it there.
-	for key := range allow {
-		if !seen[key] {
-			violations = append(violations, fmt.Sprintf(
-				"%s lists %s, but no os.RemoveAll of a MkdirTemp dir is there any more; delete the stale entry (the list only shrinks)",
-				removeAllAllowlistPath, key))
-		}
+	for _, row := range allowlist.Check(t, allow, seen).Stale {
+		key := row.Key
+		violations = append(violations, fmt.Sprintf(
+			"%s lists %s, but no os.RemoveAll of a MkdirTemp dir is there any more; delete the stale entry (the list only shrinks)",
+			removeAllAllowlistPath, key))
 	}
 	sort.Strings(violations)
 	for _, v := range violations {
@@ -139,18 +118,6 @@ func removeAllFuncName(fn *ast.FuncDecl) string {
 		return receiverName(fn.Recv.List[0].Type) + "." + fn.Name.Name
 	}
 	return fn.Name.Name
-}
-
-func receiverName(expr ast.Expr) string {
-	switch t := expr.(type) {
-	case *ast.StarExpr:
-		return receiverName(t.X)
-	case *ast.Ident:
-		return t.Name
-	case *ast.IndexExpr:
-		return receiverName(t.X)
-	}
-	return "?"
 }
 
 // mkdirTempVars is the set of identifiers in fn assigned from os.MkdirTemp. The
@@ -189,24 +156,4 @@ func isOSMkdirTemp(call *ast.CallExpr) bool {
 	}
 	id, ok := sel.X.(*ast.Ident)
 	return ok && id.Name == "os" && sel.Sel.Name == "MkdirTemp"
-}
-
-func readRemoveAllAllowlist(t *testing.T) map[string]bool {
-	t.Helper()
-	raw, err := os.ReadFile(removeAllAllowlistPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	allow := map[string]bool{}
-	for _, line := range strings.Split(string(raw), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		if i := strings.Index(line, " #"); i >= 0 {
-			line = strings.TrimSpace(line[:i])
-		}
-		allow[line] = true
-	}
-	return allow
 }

@@ -1,0 +1,29 @@
+{
+  "criteria_version": "2026-09-19.2",
+  "criteria_file": "criteria-escalate.md",
+  "state_fields": [
+    {"name": "help_answer", "type": "string"},
+    {"name": "help_reason", "type": "string"},
+    {"name": "what_is_stuck", "type": "string"},
+    {"name": "security_shaped_package", "type": "bool"},
+    {"name": "spec_is_silent_or_contradictory", "type": "bool"},
+    {"name": "is_a_landing_order_question", "type": "bool"},
+    {"name": "holder_of_the_area", "type": "string"},
+    {"name": "hours_on_it", "type": "int"},
+    {"name": "rung_attempts", "type": "string", "optional": true}
+  ],
+  "questions": {
+    "escalate": {
+      "type": "choice",
+      "instructions": "A line has decided it cannot go on alone. `nova-decide help --state` has already answered continue, ask-all-friends or ask-glenn from the line's own counters, and that answer is in the state as help_answer; this question is the second half -- to WHICH ROLE. The answer is a role and never a person. The human is reached only after the friends: an answer naming human while help_answer is ask-all-friends is overruled by the machinery, so do not spend the answer on it. criteria-escalate.md is the long form and is carried above.",
+      "criteria": {
+        "security-designate": "security_shaped_package is true, or what is stuck is a guard, a secret, the sandbox, sudo, deploy keys, the network, the reaper, the launcher or the merge machinery. Before any other answer.",
+        "design-authority": "spec_is_silent_or_contradictory is true, or the stuck thing is a design default no ruling covers, kernel semantics, or scope.",
+        "lane-owner": "Ordinary correctness, tests, or a document checked against what a binary prints, inside a lane that role owns.",
+        "all-friends": "help_answer is ask-all-friends and no single role owns the question: it crosses lanes, or two rulings would have to agree.",
+        "coordinator": "is_a_landing_order_question is true: sequencing, which branch goes first, whether to keep a card in flight.",
+        "human": "ONLY where help_answer is ask-glenn -- the friends have been asked and it is still open -- and the question is one no role may rule: a rule of the fleet, a spend, a licence, or a contradiction between two of the person's own instructions."
+      }
+    }
+  }
+}

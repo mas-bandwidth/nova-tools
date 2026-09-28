@@ -1,16 +1,16 @@
 package ci
 
 import (
-	"bufio"
 	"fmt"
 	"go/ast"
-	"go/parser"
 	"go/token"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 )
 
 // ci_waits.go is the machine behind the `waits` class test in
@@ -66,6 +66,9 @@ type WaitsResult struct {
 	Allowlisted int
 	Findings    []WaitFinding
 	Stale       []WaitFinding
+	// Measured is the set the allowlist must hold (allowlist.Check): the key of
+	// every row a finding used and of every finding no row allows.
+	Measured map[string]bool
 }
 
 // Refused is the number of lines the run would print: offenders plus stale
@@ -111,7 +114,7 @@ func walkCITestFiles(root string, fn func(rel string, src []byte) error) error {
 			}
 			return statErr
 		}
-		err := filepath.WalkDir(base, func(path string, d os.DirEntry, walkErr error) error {
+		err := walkSourceDir(base, func(path string, d os.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				return walkErr
 			}
@@ -125,7 +128,7 @@ func walkCITestFiles(root string, fn func(rel string, src []byte) error) error {
 			if !strings.HasSuffix(path, "_test.go") {
 				return nil
 			}
-			raw, readErr := os.ReadFile(path)
+			raw, readErr := readSourceFile(path)
 			if readErr != nil {
 				return readErr
 			}
@@ -177,11 +180,15 @@ func CheckWaits(root, allowlistPath string) (WaitsResult, error) {
 		remaining = append(remaining, f)
 	}
 	res.Findings = remaining
+	res.Measured = usedRowKeys(entries, matched)
 	for i, e := range entries {
 		if matched[i] {
 			continue
 		}
 		res.Stale = append(res.Stale, WaitFinding{File: e.file, Line: e.line, Kind: "allowlist", Remedy: WaitRemedyAllow})
+	}
+	for _, f := range res.Findings {
+		res.Measured[FileLineKey(f.File, f.Line, f.Kind)] = true
 	}
 	return res, nil
 }
@@ -192,31 +199,48 @@ type waitAllow struct {
 	file string
 	line int
 	kind string
+	key  string // the row's key in its list: `file:line kind`
 }
 
-// readWaitAllowlist parses `file:line kind date reason` rows, ignoring blank
-// lines and # comments. A missing file is an empty allowlist, never an error:
-// a tree with nothing parked in it is the goal.
+// FileLineListOptions are the options of the `file:line kind date reason` lists
+// (waits, net, goenv, testbins, templates) and of the `file spell date reason`
+// card template list: a row is keyed by its first two fields, every list only
+// shrinks, and a missing file is an empty list -- a tree with nothing parked in
+// it is the goal (nova-tools#4339).
+var FileLineListOptions = allowlist.Options{Key: allowlist.Fields(2), Ceiling: true, MissingIsEmpty: true}
+
+// FileLineKey is a finding's key in those lists, the first two fields of the row
+// that would name it.
+func FileLineKey(file string, line int, kind string) string {
+	return fmt.Sprintf("%s:%d %s", file, line, kind)
+}
+
+// usedRowKeys is the keys of the rows a finding used.
+func usedRowKeys(entries []waitAllow, used []bool) map[string]bool {
+	out := map[string]bool{}
+	for i, e := range entries {
+		if used[i] {
+			out[e.key] = true
+		}
+	}
+	return out
+}
+
+// readWaitAllowlist parses `file:line kind date reason` rows through the one
+// allowlist reader. A missing file is an empty allowlist, never an error: a
+// tree with nothing parked in it is the goal. A row that does not parse names
+// no offender, so it is never used and allowlist.Check calls it stale.
 func readWaitAllowlist(path string) ([]waitAllow, error) {
 	if path == "" {
 		return nil, nil
 	}
-	f, err := os.Open(path)
+	list, err := allowlist.Load(path, FileLineListOptions)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
 		return nil, err
 	}
-	defer f.Close()
 	var out []waitAllow
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		fields := strings.Fields(line)
+	for _, row := range list.Rows() {
+		fields := strings.Fields(row.Text)
 		if len(fields) < 2 {
 			continue
 		}
@@ -228,9 +252,9 @@ func readWaitAllowlist(path string) ([]waitAllow, error) {
 		if convErr != nil {
 			continue
 		}
-		out = append(out, waitAllow{file: fields[0][:colon], line: n, kind: fields[1]})
+		out = append(out, waitAllow{file: fields[0][:colon], line: n, kind: fields[1], key: row.Key})
 	}
-	return out, sc.Err()
+	return out, nil
 }
 
 // matchWaitAllow returns the index of an unused entry that allows this finding, or -1.
@@ -238,7 +262,7 @@ func readWaitAllowlist(path string) ([]waitAllow, error) {
 // A row allows ONE offender of its kind in its file. The line in the row is where the
 // offender stood when the row was written, for a reader; it is not matched on. Matching
 // on the line turned dev red the moment any merge shifted lines in a listed file
-// (2026-09-17: #1073 moved cmd/nova-swarm/native_test.go and every group after it
+// (2026-09-17: #1073 moved deprecated/cmd/nova-swarm/native_test.go and every group after it
 // failed). The count per file and kind is what the list holds still: a new fixed wait
 // in a listed file exceeds its rows and is refused, a fixed one leaves a row unused
 // and the stale rule makes the list shrink. An exact line match is preferred so the
@@ -264,8 +288,7 @@ func matchWaitAllow(entries []waitAllow, used []bool, f WaitFinding) int {
 // cannot carry the shapes this check reads, and a fixture deliberately holding
 // a broken literal is not the offender itself.
 func scanWaitFile(rel string, src []byte) ([]WaitFinding, bool) {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, rel, src, 0)
+	fset, file, err := parseSource(rel, src, 0)
 	if err != nil {
 		return nil, false
 	}

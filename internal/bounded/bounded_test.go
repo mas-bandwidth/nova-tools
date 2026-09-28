@@ -20,6 +20,8 @@ func lines(b *bytes.Buffer) []string {
 // The whole point, at the state that caused the incident: five hundred findings cost a
 // reader twenty-one lines, and the twenty-first says how many there were.
 func TestCapPrintsMaxLinesThenOneMoreLine(t *testing.T) {
+	t.Parallel()
+
 	var out bytes.Buffer
 	l := Capped(&out, Default, "VERIFY", "wikilink", "--fail-max <n> (0 = all)")
 	for i := 0; i < 500; i++ {
@@ -49,6 +51,8 @@ func TestCapPrintsMaxLinesThenOneMoreLine(t *testing.T) {
 
 // A cap that cannot be turned off is a tool deciding what its user may see.
 func TestMaxZeroPrintsEverythingAndNoMoreLine(t *testing.T) {
+	t.Parallel()
+
 	var out bytes.Buffer
 	l := Capped(&out, 0, "LINKS", "broken", "--fail-max <n>")
 	for i := 0; i < 300; i++ {
@@ -66,6 +70,8 @@ func TestMaxZeroPrintsEverythingAndNoMoreLine(t *testing.T) {
 // Below the ceiling nothing is added: a MORE line saying total equals shown carries no
 // information, and this package is about not printing those.
 func TestNoMoreLineWhenNothingWasElided(t *testing.T) {
+	t.Parallel()
+
 	var out bytes.Buffer
 	l := Capped(&out, 20, "SCAN", "dated", "--max <n>")
 	for i := 0; i < 20; i++ {
@@ -80,6 +86,8 @@ func TestNoMoreLineWhenNothingWasElided(t *testing.T) {
 // An empty listing prints nothing at all, so a caller can build the list unconditionally
 // and let its own summary line speak for a clean run.
 func TestEmptyListPrintsNothing(t *testing.T) {
+	t.Parallel()
+
 	var out bytes.Buffer
 	l := Capped(&out, 20, "NOCODE", "file", "--fail-max <n>")
 	l.More()
@@ -91,6 +99,8 @@ func TestEmptyListPrintsNothing(t *testing.T) {
 // The cap must not be able to break its own line count. A finding's text is corpus text,
 // and corpus text holds newlines.
 func TestAnItemLineCannotAddASecondLine(t *testing.T) {
+	t.Parallel()
+
 	var out bytes.Buffer
 	l := Capped(&out, 20, "VERIFY", "wikilink", "--fail-max <n>")
 	l.Line("VERIFY FAIL a\nVERIFY OK gating=0")
@@ -108,6 +118,8 @@ func TestAnItemLineCannotAddASecondLine(t *testing.T) {
 // Tolerating that is robustness, not politeness: the alternative is a visible \x0a at the
 // end of every line in the repo the day someone forgets.
 func TestOneTrailingNewlineIsToleratedNotEscaped(t *testing.T) {
+	t.Parallel()
+
 	var out bytes.Buffer
 	l := Capped(&out, 20, "LINKS", "broken", "--fail-max <n>")
 	l.Line("LINKS FAIL a.md:1\n")
@@ -118,6 +130,8 @@ func TestOneTrailingNewlineIsToleratedNotEscaped(t *testing.T) {
 
 // The remedy and the kind reach the MORE line through the escape like everything else.
 func TestMoreLineEscapesItsFields(t *testing.T) {
+	t.Parallel()
+
 	var out bytes.Buffer
 	l := Capped(&out, 1, "VERIFY", "a kind\nwith a break", "see from-rowan/OPEN\nand also")
 	l.Line("one")
@@ -139,6 +153,8 @@ func TestMoreLineEscapesItsFields(t *testing.T) {
 // of the first kind eat the single finding of the second, which is the one line the
 // reader did not already know.
 func TestGroupCapsEachKindSoOneCannotBuryAnother(t *testing.T) {
+	t.Parallel()
+
 	var out bytes.Buffer
 	g := Grouped(&out, 20, "VERIFY", "--fail-max <n> (0 = all)")
 	for i := 0; i < 500; i++ {
@@ -170,6 +186,8 @@ func TestGroupCapsEachKindSoOneCannotBuryAnother(t *testing.T) {
 // A map iteration leaking into the MORE lines would pass a length assertion and fail a
 // diff, which is how this class of bug survives.
 func TestGroupOutputIsDeterministic(t *testing.T) {
+	t.Parallel()
+
 	render := func() string {
 		var out bytes.Buffer
 		g := Grouped(&out, 2, "VERIFY", "--fail-max <n>")
@@ -192,6 +210,8 @@ func TestGroupOutputIsDeterministic(t *testing.T) {
 // A verb whose MORE line carries a field this package does not print still gets
 // the per-kind capping from here rather than hand-rolling a second map.
 func TestAGroupHandsBackEachKindsList(t *testing.T) {
+	t.Parallel()
+
 	var out strings.Builder
 	g := Grouped(&out, 1, "WAKE", "--max-lines 0 prints them all")
 	g.Line("bus", "WAKE BUS id=a")
@@ -212,6 +232,8 @@ func TestAGroupHandsBackEachKindsList(t *testing.T) {
 // whose delivery record follows Shown() must not mark a line delivered that
 // never reached the stream.
 func TestAFailedWriteIsNotShown(t *testing.T) {
+	t.Parallel()
+
 	l := Capped(brokenWriter{}, 0, "WAKE", "report", "--max-lines 0 prints them all")
 	l.Line("WAKE REPORT path=a")
 	l.Line("WAKE REPORT path=b")

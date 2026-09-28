@@ -1,0 +1,21 @@
+{
+  "number": 2615,
+  "title": "merge: a HOLD at a superseded head is released by the same friend's typed verdict at head (#2550)",
+  "body": "`nova-merge batch` carried a HOLD forever once the branch moved past the head it\nbound to. Measured 2026-09-22 02:25Z-13:50Z on schema fixed-table-form: 57\nconsecutive ticks took the same 16 approved cell pull requests and dropped every\none of them --\n\n    BATCH DROP #1551 reason=\"head 5adf9cb212a8 carries an unreleased HOLD\"\n    who=emma hold=comment:5767845547 source=comment-rule held_at=67712d4eb59a\n    carried=yes at=2026-09-21T21:35:02Z conf=-\n\n-- where held_at is a head the branch had moved past and the current head carried\nfour typed `DISPOSITION who=Emma head=5adf9cb2... verdict=APPROVE score=10/10`\ncomments from that same friend. members=none, so the integration branch was empty\nand GitHub refused the pull request. 0 of 16 landed in 11.5 h with read debt at 0.\n\nTwo causes, both here:\n\n1. ParseComment never read a typed APPROVE at all. A comment carrying\n   `DISPOSITION ... verdict=APPROVE` fell through to the untyped branch and came\n   back as a PENDING comment -- a typed verdict read as evidence of nothing, and\n   then as a second reason to drop the member.\n2. UnreleasedHolds only ever asked whether a hold was released, never whether it\n   had been superseded. A hold at a head that is gone is the last word its author\n   left about a commit nobody can look at.\n\nreleaseCarriedHolds is deliberately narrow and touches CARRIED holds only: a hold\nAT the current head is untouched, and a comment still releases nothing there. An\nAPPROVE at some other superseded head releases nothing -- release keys on the\nhead. A who=unknown hold is untouched: an untyped hold-shaped line has no author\nto match and binds to the current head anyway.\n\nThe second ask on the issue, both halves, in the same file:\n\n- a typed APPROVE's head= is kept as typed and compared by headMatch, the same\n  prefix rule a typed HOLD's head= gets, so `head=5adf9cb2` and the whole\n  40-character object name are the same head on both verdicts;\n- a releasing APPROVE must be the WHOLE line (dispositionWholeLine): first token\n  exactly DISPOSITION, every token after it a key=value field, no stray prose, no\n  repeated key. A HOLD keeps the lenient parse on purpose -- tightening the\n  parser on the holding side would turn a sloppily typed HOLD into a non-hold,\n  and a rule about smuggling must never fail open on the side that stops a merge.\n\nThe controls. internal/merge/carriedhold_test.go is a ten-row table over the\nwhole pipe (forge JSON, ParseComment, the fold): the issue's four rows, the live\n#1551 shape, the 12-character prefix, the smuggled mid-line APPROVE, another\nfriend's APPROVE, and two rows that hold the line this must not cross -- a\ncomment releases nothing at head, and an untyped bold HOLD fails closed. Four\nrows were red on dev. cmd/nova-merge/carriedhold2550_test.go drives the verb and\nreproduces the break exactly on dev (`members=none dropped=1`), with its negative\ntwin: take the APPROVE away and the gate still drops the member, still carried=yes.\n\nSPEC-DECIDE.md's release section said \"a comment releases nothing, typed or not\"\nwithout qualification, so the amendment is written there beside it.\n\nCo-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>",
+  "headRefOid": "efcfdc98a850da9283f8733df65e1d1278b8750e",
+  "baseRefName": "dev",
+  "files": [
+    {
+      "path": "cmd/nova-merge/carriedhold2550_test.go"
+    },
+    {
+      "path": "docs/SPEC-DECIDE.md"
+    },
+    {
+      "path": "internal/merge/carriedhold_test.go"
+    },
+    {
+      "path": "internal/merge/verdict.go"
+    }
+  ]
+}

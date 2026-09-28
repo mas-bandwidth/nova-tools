@@ -1,0 +1,7 @@
+VERSION: readsane-v1
+
+A cold reader scored this pull request. Judge whether the score can be trusted: does it follow from the gates and the finding, judged against the DONE-WHEN? A pass (8 or more) with a failing gate or a blocking finding, or a low score whose finding names nothing to fix, is suspect.
+
+OPTIONS:
+- suspect: the score does not follow from the reader's own evidence
+- trust: the score follows from the evidence the reader gives

@@ -91,7 +91,10 @@ var usageKeys = map[string]Type{
 const syntheticModel = "<synthetic>"
 
 // ReadClaude walks a transcript directory and returns its stream and its accounting.
-func ReadClaude(label, dir string, rules *Rules) *Source {
+//
+// units may be nil, and is nil on every fold that was not given --units: every message
+// then carries no unit, which the fold writes as `-`.
+func ReadClaude(label, dir string, rules *Rules, units *Units) *Source {
 	s := &Source{Label: Label(KindClaude, label), Kind: KindClaude, Path: dir, Reports: ClaudeTypes, Basis: UTC}
 
 	var files []string
@@ -127,6 +130,13 @@ func ReadClaude(label, dir string, rules *Rules) *Source {
 			s.unreadable(path, err.Error())
 			continue
 		}
+		// A unit is attributed per TRANSCRIPT and not per message (units.go): the id is
+		// decided by the first tool input in the file that names one, and every message in
+		// the file carries it. The messages are written before that is known, so the file's
+		// own slice of the source is marked at the end -- which also means a file whose
+		// unit is never named costs nothing but the walk.
+		unitFirst := len(s.order)
+		unit := ""
 		prev := ""
 		bad := 0
 		n := 0
@@ -149,7 +159,13 @@ func ReadClaude(label, dir string, rules *Rules) *Source {
 			if line.Message.Model == syntheticModel {
 				continue
 			}
-			repo := rules.AttributeInputs(toolInputs(line.Message.Content), prev)
+			inputs := toolInputs(line.Message.Content)
+			if unit == "" && units.Len() > 0 {
+				if u := units.Match(inputs); u != NoUnit {
+					unit = u
+				}
+			}
+			repo := rules.AttributeInputs(inputs, prev)
 			if repo == Unknown && line.Cwd != "" {
 				repo = rules.Attribute(PathTokens([]string{line.Cwd}), "")
 			}
@@ -168,6 +184,9 @@ func ReadClaude(label, dir string, rules *Rules) *Source {
 				}
 			}
 			s.AddMessage(line.Message.ID, m)
+		}
+		if unit != "" {
+			s.markUnit(unitFirst, unit)
 		}
 		scanErr := sc.Err()
 		f.Close()

@@ -14,15 +14,18 @@ import (
 // and made every test on the machine crawl. A persistent runner already has its cache
 // on disk; an actions/cache or a setup-go cache there is pure cost.
 //
-// Rule: every actions/cache step in ci.yml carries the github-hosted condition, and
-// every setup-go step there says cache: false (the workflow manages caching itself).
+// Rule: every actions/cache step in ci.yml (actions/cache, actions/cache/restore and
+// actions/cache/save alike) carries the github-hosted condition, and every setup-go
+// step there says cache: false (the workflow manages caching itself).
 func TestNoCacheStepRunsOnASelfHostedRunner(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
 	steps := strings.Split(src, "\n      - ")
 	caches, setups := 0, 0
 	for _, step := range steps {
-		if strings.Contains(step, "uses: actions/cache@") {
+		if strings.Contains(step, "uses: actions/cache@") || strings.Contains(step, "uses: actions/cache/") {
 			caches++
 			if !strings.Contains(step, "if: runner.environment == 'github-hosted'") {
 				t.Errorf("an actions/cache step can run on a self-hosted runner; add `if: runner.environment == 'github-hosted'`:\n%s", firstLines(step, 4))

@@ -1,0 +1,31 @@
+package fixture
+
+// The pre-fix shape of internal/review/mutate.go's runUnits, word for word in
+// the part that matters: an inner `go test` started with no environment of its
+// own, whose output is then parsed for `--- PASS:` and `--- FAIL:` lines. With
+// GOFLAGS=-json in the caller -- which is what CI's `make test` exports -- the
+// child answers in JSON, no result line matches, and the green run is counted
+// red. This fixture is what the class test must refuse.
+
+import (
+	"context"
+	"os/exec"
+	"strings"
+)
+
+func runUnits(ctx context.Context, wt string, names []string) map[string]bool {
+	failed := map[string]bool{}
+	args := []string{"test", "-count=1", "-v", "-run", "^(" + strings.Join(names, "|") + ")$", "./pkg/"}
+	cmd := exec.CommandContext(ctx, "go", args...)
+	cmd.Dir = wt
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return failed
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "--- FAIL: ") {
+			failed[line] = true
+		}
+	}
+	return failed
+}

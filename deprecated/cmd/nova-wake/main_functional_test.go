@@ -1,0 +1,1127 @@
+//go:build functional
+
+package main
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"sort"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/mas-bandwidth/nova-tools/internal/wake"
+)
+
+// The fakes are Go programs rather than shell scripts because this repo's CI
+// runs on Windows too. Only functional tests build or run them; ALL of them are built ONCE for the package, in
+// TestMain, before any test runs. A `go build` per test was most of this
+// package's wall clock once (163 s, #516) and is long gone; what this removes
+// is the last of it -- three separate `go build` invocations, each behind its
+// own sync.Once, each starting the toolchain again, and each CHARGED TO
+// WHICHEVER TEST HAPPENED TO ASK FIRST. That last part is why the record in
+// docs/TEST-DURATIONS.md showed a 6.8 s test in this package that is a 2 s
+// test: it was the one that woke the builder. A measurement that names the
+// wrong test sends the next person to the wrong place.
+//
+// What survives the build is the PATHS: the programs stay under TestMain's own
+// directory and each test gets them placed by link (a copy only where a link is
+// impossible, internal/testbin), never a copy of the bytes. Nothing here keeps
+// a directory alive beyond TestMain's own.
+var fakePaths map[string]string
+
+// fakePrograms are the test programs built together: the four fakes on PATH and
+// the recording wrapper advance_functional_test.go puts in front of the real nova-bus. The
+// map key is the name the tool will start the program by.
+var fakePrograms = map[string]string{
+	"nova-bus":  "fakebus",
+	"gh":        "fakegh",
+	"on-note":   "fakenote",
+	"git":       "fakegit",
+	"recordbus": "recordbus",
+}
+
+// buildFakes builds every program in fakePrograms with ONE `go build` into
+// TestMain's directory and records their paths in fakePaths. It returns an
+// error rather than taking a *testing.T because it runs in TestMain, where
+// there is no test to fail yet.
+func buildFakes() error {
+	dir := filepath.Join(fakeRoot, "build")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+
+	args := []string{"build", "-o", dir}
+	names := make([]string, 0, len(fakePrograms))
+	for name := range fakePrograms {
+		names = append(names, name)
+	}
+	sort.Strings(names) // one build, one stable command line
+	for _, name := range names {
+		args = append(args, "./testdata/"+fakePrograms[name])
+	}
+	cmd := exec.Command("go", args...)
+	cmd.Env = goenv.Clean(os.Environ())
+	if raw, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("building the fakes: %v\n%s", err, raw)
+	}
+
+	paths := map[string]string{}
+	for _, name := range names {
+		built := filepath.Join(dir, fakePrograms[name])
+		if runtime.GOOS == "windows" {
+			built += ".exe"
+		}
+		if _, err := os.Stat(built); err != nil {
+			return err
+		}
+		paths[name] = built
+	}
+	fakePaths = paths
+	return nil
+}
+
+// install places one of the built fakes into dir under the name the tool will
+// start it by, and returns the path.
+func install(t *testing.T, dir, name string) string {
+	t.Helper()
+	out := filepath.Join(dir, name)
+	if runtime.GOOS == "windows" {
+		out += ".exe"
+	}
+	if err := testbin.Place(fakePaths[name], out); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// TestMain owns the one directory in this package outside t.TempDir(): the shared
+// PATH directory the fakes are written into. It has to outlive the first test that
+// asks for it and be gone when the process is, so it is made here and removed on
+// every path out, including a failing run.
+//
+// It also BUILDS, before a single test runs, so that no test is charged for the
+// toolchain and the recorded per-test seconds are the tests.
+func TestMain(m *testing.M) {
+	os.Exit(func() int {
+		dir, err := os.MkdirTemp("", "nova-wake-fakes-")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "the fake PATH directory: %v\n", err)
+			return 2
+		}
+		defer os.RemoveAll(dir)
+		fakeRoot = dir
+		if err := buildFakes(); err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			return 2
+		}
+		return m.Run()
+	}())
+}
+
+// The shared PATH directory: the two fakes every test puts in front of PATH, written
+// ONCE for the process. They used to be written into each test's own directory, which
+// is ten megabytes of copying per test across 69 callers and a large part of this
+// package's 163 s (#516, Glenn's two-minute rule). Sharing the BINARIES shares no
+// state: what a test records is recorded in its own NOVA_WAKE_FAKE_BUS and
+// NOVA_WAKE_FAKE_GH directories, which stay per-test, and no test writes over these
+// two names.
+var (
+	fakeRoot      string // TestMain's directory, the parent of the shared bin dir
+	sharedBinOnce sync.Once
+	sharedBinDir  string
+	sharedBinErr  error
+)
+
+func fakeBinDir(t *testing.T) string {
+	t.Helper()
+	sharedBinOnce.Do(func() {
+		dir := filepath.Join(fakeRoot, "bin")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			sharedBinErr = err
+			return
+		}
+		for _, name := range []string{"nova-bus", "gh"} {
+			out := filepath.Join(dir, name)
+			if runtime.GOOS == "windows" {
+				out += ".exe"
+			}
+			if err := testbin.Place(fakePaths[name], out); err != nil {
+				sharedBinErr = err
+				return
+			}
+		}
+		sharedBinDir = dir
+	})
+	if sharedBinErr != nil {
+		t.Fatal(sharedBinErr)
+	}
+	return sharedBinDir
+}
+
+// TestMainBuildsAllFakesEagerly asserts that every test program -- the four
+// fakes on PATH AND the recording wrapper advance_functional_test.go puts in front of the
+// real nova-bus -- is built before any test runs, so that no test is charged
+// for the toolchain. A test that wakes the builder makes docs/TEST-DURATIONS.md
+// name the wrong test, and the next person looks in the wrong place.
+func TestMainBuildsAllFakesEagerly(t *testing.T) {
+	t.Parallel()
+
+	if fakePaths == nil {
+		t.Fatal("fakePaths is nil: the fakes were not built in TestMain; the first test to call buildFakes will be charged for the toolchain")
+	}
+	for _, name := range []string{"nova-bus", "gh", "on-note", "git", "recordbus"} {
+		if _, ok := fakePaths[name]; !ok {
+			t.Errorf("fakePaths[%q] is missing: the recording wrapper is still built lazily in advance_functional_test.go", name)
+		}
+	}
+}
+
+// fakes puts the fake nova-bus and gh at the front of PATH and hands back the
+// directories they record into.
+func fakes(t *testing.T) (busDir, ghDir string) {
+	t.Helper()
+	bin := fakeBinDir(t)
+	busDir, ghDir = t.TempDir(), t.TempDir()
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("NOVA_WAKE_FAKE_BUS", busDir)
+	// The fake answers the version this build of nova-wake is written against,
+	// which since 2026-09-12 is this build's OWN version rather than a literal:
+	// one tag ships nova-wake and nova-bus together. A test that wants the
+	// refusal writes its own version file over this one.
+	write(t, filepath.Join(busDir, "version"), "nova-bus "+buildVersion()+" darwin/arm64 go1.27.1\n")
+	t.Setenv("NOVA_WAKE_FAKE_GH", ghDir)
+	return busDir, ghDir
+}
+
+// calls returns the fake's argument log, one line per invocation.
+func calls(t *testing.T, dir string) []string {
+	t.Helper()
+	var out []string
+	for _, line := range strings.Split(read(t, filepath.Join(dir, "calls")), "\n") {
+		if strings.TrimSpace(line) != "" {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// advanced reports whether an invocation carried --advance as an ARGUMENT.
+// A substring search is wrong here and was: t.TempDir() names its directory
+// after the test, so a subtest called "without --advance-cursor" puts those
+// nine characters into every path the fake was handed.
+func advanced(call string) bool {
+	for _, tok := range strings.Fields(call) {
+		if tok == "--advance" {
+			return true
+		}
+	}
+	return false
+}
+
+// entryJSON writes one fake gh answer.
+func entryJSON(t *testing.T, ghDir, number, state string, checks ...[2]string) {
+	t.Helper()
+	var parts []string
+	for _, c := range checks {
+		parts = append(parts, fmt.Sprintf(`{"__typename":"CheckRun","name":%q,"status":"COMPLETED","conclusion":%q}`, c[0], c[1]))
+	}
+	write(t, filepath.Join(ghDir, number+".json"),
+		fmt.Sprintf(`{"state":%q,"statusCheckRollup":[%s]}`, state, strings.Join(parts, ",")))
+}
+
+// Rule numbers follow docs/SPEC-WAKE.md, "Tests this spec demands".
+//
+// 3. Poll cadence matches the watched thing's rate.
+
+func TestTheEntryIntervalIsTheRunLength(t *testing.T) {
+	busDir, ghDir := fakes(t)
+	write(t, filepath.Join(busDir, "out"), "INBOX OK as=Rowan carrying=0 open=0 notes=0 receipts=0\n")
+	entryJSON(t, ghDir, "942", "OPEN", [2]string{"build", "SUCCESS"})
+	state := filepath.Join(t.TempDir(), "wake.state")
+	bus := t.TempDir()
+
+	r := wakeRun(t, "watch", "--state", state, "--max", "16m", "--on-deadline", "report",
+		"--interval", "5s", "--entry-interval", "8m",
+		"--bus", bus, "--as", "Rowan", "--receipt-max-words", "40",
+		"--entry", "mas-bandwidth/schema#942")
+	if r.exit != 0 {
+		t.Fatalf("exit = %d; %s", r.exit, r.all())
+	}
+	polls := 0
+	for _, c := range calls(t, busDir) {
+		if strings.HasPrefix(c, "inbox ") {
+			polls++
+		}
+	}
+	if polls != 192 {
+		t.Errorf("the bus was polled %d times over sixteen minutes at --interval 5s, want 192", polls)
+	}
+	if n := len(calls(t, ghDir)); n != 2 {
+		t.Errorf("the entry was polled %d times over sixteen minutes at --entry-interval 8m, want 2 -- an 8-minute run deserves one check at 8 minutes, not eight at one", n)
+	}
+
+	t.Run("--interval missing", func(t *testing.T) {
+		r := wakeRun(t, "watch", "--state", state, "--max", "5s", "--on-deadline", "x", "--reports", exampleReports)
+		if r.exit != 2 || !strings.Contains(r.stderr, "--interval is required") {
+			t.Errorf("exit %d; the refusal does not name --interval:\n%s", r.exit, r.stderr)
+		}
+	})
+	t.Run("--entry without --entry-interval", func(t *testing.T) {
+		r := wakeRun(t, "watch", "--state", state, "--max", "5s", "--on-deadline", "x",
+			"--interval", "5s", "--entry", "mas-bandwidth/schema#942")
+		if r.exit != 2 || !strings.Contains(r.stderr, "--entry-interval is required") {
+			t.Errorf("exit %d; the refusal does not name --entry-interval:\n%s", r.exit, r.stderr)
+		}
+	})
+	t.Run("--interval below the floor", func(t *testing.T) {
+		r := wakeRun(t, "watch", "--state", state, "--max", "5s", "--on-deadline", "x",
+			"--interval", "1s", "--reports", exampleReports)
+		if r.exit != 2 || !strings.Contains(r.stderr, "floor") {
+			t.Errorf("exit %d; a poll is a git fetch, and 5s is the floor:\n%s", r.exit, r.stderr)
+		}
+	})
+}
+
+// 6. What woke you is named.
+
+func TestWhatWokeYouIsNamed(t *testing.T) {
+	busDir, ghDir := fakes(t)
+	write(t, filepath.Join(busDir, "out"),
+		"INBOX NOTE id=abc123def456 from=Stella addr=to at=2026-09-11T11:00:00Z path=from-stella/note.md: the spec read is done\n"+
+			"INBOX OK as=Rowan carrying=1 open=1 notes=1 receipts=0\n")
+	entryJSON(t, ghDir, "942", "OPEN", [2]string{"race", "FAILURE"})
+	reports := t.TempDir()
+	write(t, filepath.Join(reports, "job", "RESULT.md"), "# a finding\n")
+	state := filepath.Join(t.TempDir(), "wake.state")
+
+	r := wakeRun(t, "watch", "--state", state, "--max", "5s", "--on-deadline", "report",
+		"--interval", "5s", "--entry-interval", "5s", "--baseline",
+		"--bus", t.TempDir(), "--as", "Rowan", "--receipt-max-words", "40",
+		"--entry", "mas-bandwidth/schema#942", "--reports", reports)
+	if r.exit != 0 {
+		t.Fatalf("exit = %d; %s", r.exit, r.all())
+	}
+	for _, want := range []string{
+		"WAKE BUS id=abc123def456",
+		"WAKE ENTRY mas-bandwidth/schema#942 state=OPEN fail=1",
+		"failing=race",
+		"WAKE REPORT path=",
+	} {
+		if !strings.Contains(r.stdout, want) {
+			t.Errorf("no change line carries %q:\n%s", want, r.stdout)
+		}
+	}
+	if strings.Contains(strings.ToLower(r.all()), "something changed") {
+		t.Errorf("the words `something changed` appear in this tool's output; a wake that says only that the world moved sends the window back to look at all three places")
+	}
+}
+
+// 7. Never filter the status line.
+
+func TestEveryBusLineIsClassifiedAndCounted(t *testing.T) {
+	busDir, _ := fakes(t)
+	transcript := []string{
+		"INBOX SCOPE mode=since cursor=abc changed=2 carrying=1",
+		"INBOX NOTE id=n1 from=Ada addr=to at=2026-09-11T10:00:00Z path=from-ada/one.md: the first",
+		"INBOX NOTE id=n2 from=Bo addr=cc at=2026-09-11T10:01:00Z path=from-bo/two.md: the second",
+		"INBOX HEARD id=n3 from=Ada addr=to at=2026-09-11T10:02:00Z path=from-ada/three.md: heard",
+		"INBOX REFUSED the bus is not a git checkout",
+		"INBOX LEGACY before=2026-09-01 notes=4 unreadable=0",
+		"INBOX OPEN carrying=1 heard=0",
+		"INBOX CURSOR commit=abc carrying=1 pushed=false attempts=0",
+		"INBOX OK as=Rowan carrying=1 open=1 notes=2 receipts=0",
+		"INBOX FUTURE-TOKEN something a later nova-bus prints",
+		"INBOX UNADDRESSED path=from-nobody/x.md: no reader",
+		"fatal: not a git repository",
+	}
+	write(t, filepath.Join(busDir, "out"), strings.Join(transcript, "\n")+"\n")
+	state := filepath.Join(t.TempDir(), "wake.state")
+
+	r := wakeRun(t, "watch", "--state", state, "--max", "5s", "--on-deadline", "report",
+		"--interval", "5s", "--bus", t.TempDir(), "--as", "Rowan", "--receipt-max-words", "40")
+	if r.exit != 0 {
+		t.Fatalf("exit = %d; %s", r.exit, r.all())
+	}
+	var source string
+	for _, line := range strings.Split(r.stdout, "\n") {
+		if strings.HasPrefix(line, "WAKE SOURCE bus ") {
+			source = line
+		}
+	}
+	if source == "" {
+		t.Fatalf("no WAKE SOURCE bus line:\n%s", r.stdout)
+	}
+	read, suppressed, relayed, standing := 0, 0, 0, 0
+	for _, tok := range strings.Fields(source) {
+		k, v, _ := strings.Cut(tok, "=")
+		n := 0
+		fmt.Sscanf(v, "%d", &n)
+		switch k {
+		case "read":
+			read = n
+		case "suppressed":
+			suppressed = n
+		case "relayed":
+			relayed = n
+		case "standing":
+			standing = n
+		}
+	}
+	if read != len(transcript) {
+		t.Errorf("read=%d, want %d: a bus that printed nothing and a bus that printed twelve bookkeeping lines must not look the same", read, len(transcript))
+	}
+	if suppressed+relayed+standing != read {
+		t.Errorf("the counts do not add up: %d + %d + %d != %d", suppressed, relayed, standing, read)
+	}
+	if !strings.Contains(r.stdout, "WAKE BUS LINE INBOX REFUSED the bus is not a git checkout") {
+		t.Errorf("the INBOX REFUSED line was not relayed verbatim; an allow-list decides what is SUPPRESSED, never what is shown:\n%s", r.stdout)
+	}
+	for _, want := range []string{"INBOX FUTURE-TOKEN", "fatal: not a git repository", "INBOX UNADDRESSED"} {
+		if !strings.Contains(r.stdout, want) {
+			t.Errorf("a line this tool cannot classify must be printed; %q is missing:\n%s", want, r.stdout)
+		}
+	}
+}
+
+// The other half of rule 7: shown every time, woken on once.
+func TestAStandingBusLineIsShownEveryTimeAndWokenOnOnce(t *testing.T) {
+	busDir, _ := fakes(t)
+	write(t, filepath.Join(busDir, "out"), "INBOX REFUSED the bus is not a git checkout\nINBOX OK as=Rowan carrying=0 open=0 notes=0 receipts=0\n")
+	state := filepath.Join(t.TempDir(), "wake.state")
+	args := []string{"watch", "--state", state, "--max", "5s", "--on-deadline", "report",
+		"--interval", "5s", "--bus", t.TempDir(), "--as", "Rowan", "--receipt-max-words", "40"}
+
+	first := wakeRun(t, args...)
+	if !strings.Contains(first.stdout, "WAKE BUS LINE INBOX REFUSED") {
+		t.Fatalf("the first sighting is a change and is relayed:\n%s", first.stdout)
+	}
+	if !strings.Contains(first.stdout, "WAKE CHANGE") {
+		t.Fatalf("the first sighting must wake the window:\n%s", first.stdout)
+	}
+	second := wakeRun(t, args...)
+	if !strings.Contains(second.stdout, "WAKE BUS STANDING INBOX REFUSED") {
+		t.Errorf("a line that stands must be SHOWN on every poll -- dropping it is the false-quiet failure:\n%s", second.stdout)
+	}
+	if !strings.Contains(second.stdout, "WAKE QUIET") {
+		t.Errorf("a line already woken on must not wake again: a bus refusing for an hour would otherwise wake the window every interval with one sentence it has already acted on:\n%s", second.stdout)
+	}
+}
+
+// A line already relayed as WAKE BUS LINE in this same watch call must not be
+// reprinted as WAKE BUS STANDING on subsequent polls within the same call.
+func TestWatchSuppressesStandingReprintInSameCall(t *testing.T) {
+	busDir, _ := fakes(t)
+	write(t, filepath.Join(busDir, "out"), "INBOX REFUSED the bus is not a git checkout\nINBOX OK as=Rowan carrying=0 open=0 notes=0 receipts=0\n")
+	write(t, filepath.Join(busDir, "exit.1"), "2")
+	write(t, filepath.Join(busDir, "exit.2"), "0")
+	state := filepath.Join(t.TempDir(), "wake.state")
+	args := []string{"watch", "--state", state, "--max", "10s", "--on-deadline", "report",
+		"--interval", "5s", "--bus", t.TempDir(), "--as", "Rowan", "--receipt-max-words", "40"}
+
+	r := wakeRun(t, args...)
+	if countLines(r.stdout, "WAKE BUS LINE INBOX REFUSED") != 1 {
+		t.Errorf("expected 1 WAKE BUS LINE, got:\n%s", r.stdout)
+	}
+	if countLines(r.stdout, "WAKE BUS STANDING INBOX REFUSED") != 0 {
+		t.Errorf("standing line should be suppressed when already relayed in same call, got:\n%s", r.stdout)
+	}
+
+	second := wakeRun(t, args...)
+	if !strings.Contains(second.stdout, "WAKE BUS STANDING INBOX REFUSED") {
+		t.Errorf("standing line should be printed on subsequent call, got:\n%s", second.stdout)
+	}
+}
+
+// 8. The watcher's own failure is loud.
+
+func TestThreeFailedPollsEndTheWatchLoudly(t *testing.T) {
+	t.Run("three in a row in one call", func(t *testing.T) {
+		busDir, _ := fakes(t)
+		// A REFUSING bus, not a silent one. A fake that printed nothing
+		// defended a path production cannot take: a real nova-bus that refuses
+		// prints a line, the line relays, and a build that returned the call on
+		// it never reached the streak at all.
+		write(t, filepath.Join(busDir, "out"), "INBOX REFUSED the bus is not a git checkout\n")
+		write(t, filepath.Join(busDir, "exit"), "1")
+		state := filepath.Join(t.TempDir(), "wake.state")
+		r := wakeRun(t, "watch", "--state", state, "--max", "1m", "--on-deadline", "report",
+			"--interval", "5s", "--bus", t.TempDir(), "--as", "Rowan", "--receipt-max-words", "40")
+		if r.exit != 2 {
+			t.Fatalf("exit = %d, want 2: a watcher that cannot see its source is not watching, and a WAKE QUIET from it would be a lie\n%s", r.exit, r.all())
+		}
+		if !strings.Contains(r.stdout, "WAKE BROKEN source=bus failures=3") {
+			t.Errorf("the verdict is not WAKE BROKEN failures=3:\n%s", r.stdout)
+		}
+		if n := countLines(r.stderr, "WAKE POLL"); n != 3 {
+			t.Errorf("%d WAKE POLL lines on stderr, want 3 (one per failed poll)", n)
+		}
+	})
+
+	t.Run("two failures then a success", func(t *testing.T) {
+		busDir, _ := fakes(t)
+		write(t, filepath.Join(busDir, "exit.1"), "1")
+		write(t, filepath.Join(busDir, "exit.2"), "1")
+		write(t, filepath.Join(busDir, "out"), "INBOX OK as=Rowan carrying=0 open=0 notes=0 receipts=0\n")
+		state := filepath.Join(t.TempDir(), "wake.state")
+		r := wakeRun(t, "watch", "--state", state, "--max", "20s", "--on-deadline", "report",
+			"--interval", "5s", "--bus", t.TempDir(), "--as", "Rowan", "--receipt-max-words", "40")
+		if r.exit != 0 || !strings.Contains(r.stdout, "WAKE QUIET") {
+			t.Fatalf("exit = %d; two failures then a success must run on to the deadline:\n%s", r.exit, r.all())
+		}
+		if n := countLines(r.stderr, "WAKE POLL"); n != 2 {
+			t.Errorf("%d WAKE POLL lines, want 2", n)
+		}
+		if strings.Contains(read(t, state), "fail:bus") {
+			t.Errorf("a success must clear the streak; fail:bus is still in the state:\n%s", read(t, state))
+		}
+	})
+
+	t.Run("three failures over three calls, each with its own reason", func(t *testing.T) {
+		busDir, _ := fakes(t)
+		state := filepath.Join(t.TempDir(), "wake.state")
+		args := []string{"watch", "--state", state, "--max", "5s", "--on-deadline", "report",
+			"--interval", "5s", "--bus", t.TempDir(), "--as", "Rowan", "--receipt-max-words", "40"}
+		write(t, filepath.Join(busDir, "exit"), "1")
+		var last result
+		for i, reason := range []string{"one", "two", "three"} {
+			write(t, filepath.Join(busDir, "out"), "INBOX REFUSED reason "+reason+"\n")
+			// The clock moves BETWEEN calls, which is the gap a window spends
+			// thinking; the streak has to survive it.
+			last = wakeRunAt(t, at.Add(time.Duration(i)*time.Minute), args...)
+		}
+		if last.exit != 2 {
+			t.Fatalf("the third call's exit = %d, want 2:\n%s", last.exit, last.all())
+		}
+		if !strings.Contains(last.stdout, "WAKE BROKEN source=bus failures=3") {
+			t.Errorf("the streak did not span the three calls:\n%s", last.stdout)
+		}
+		if !strings.Contains(last.stdout, "since="+wake.Stamp(at)) {
+			t.Errorf("since= is not the FIRST call's stamp, which may be a call or more ago:\n%s", last.stdout)
+		}
+	})
+}
+
+// An unreadable entry wakes under --final-only exactly as without it: a flag
+// that asks for fewer wakes about arithmetic is not a flag that asks to sleep
+// through a source that cannot be read.
+func TestAnUnreadableEntryWakesUnderFinalOnly(t *testing.T) {
+	_, ghDir := fakes(t)
+	entryJSON(t, ghDir, "942", "OPEN", [2]string{"build", "SUCCESS"}, [2]string{"race", "SUCCESS"})
+	write(t, filepath.Join(ghDir, "951.exit"), "1")
+	write(t, filepath.Join(ghDir, "951.stderr"), "GraphQL: Could not resolve to a PullRequest")
+	state := filepath.Join(t.TempDir(), "wake.state")
+	args := []string{"watch", "--state", state, "--max", "5s", "--on-deadline", "report",
+		"--interval", "5s", "--entry-interval", "5s", "--final-only",
+		"--entry", "mas-bandwidth/schema#942", "--entry", "mas-bandwidth/schema#951"}
+
+	// Establish the world, then change nothing: the churn is recorded and the
+	// unreadable entry is the news.
+	wakeRun(t, args...)
+	r := wakeRun(t, args...)
+	if !strings.Contains(r.stdout, "WAKE QUIET") {
+		t.Fatalf("a second poll of an unchanged world must be quiet:\n%s", r.all())
+	}
+	write(t, filepath.Join(ghDir, "951.stderr"), "GraphQL: a different failure entirely")
+	r = wakeRun(t, args...)
+	if !strings.Contains(r.stdout, "WAKE ENTRY mas-bandwidth/schema#951 unreadable:") {
+		t.Errorf("one unreadable entry beside a readable one must wake the call under --final-only:\n%s", r.all())
+	}
+}
+
+// 9. The tool stamps; a typed time is never trusted.
+
+func TestTheToolStampsAndATypedTimeIsData(t *testing.T) {
+	busDir, _ := fakes(t)
+	// A note stamped two hours ahead of the clock, with a future date in its
+	// subject as well. Both are data.
+	write(t, filepath.Join(busDir, "out"),
+		"INBOX NOTE id=future1 from=Stella addr=to at=2026-09-11T14:00:00Z path=from-stella/n.md: due 2027-01-01, please read\n")
+	state := filepath.Join(t.TempDir(), "wake.state")
+	r := wakeRun(t, "watch", "--state", state, "--max", "5s", "--on-deadline", "report",
+		"--interval", "5s", "--bus", t.TempDir(), "--as", "Rowan", "--receipt-max-words", "40")
+	if r.exit != 0 {
+		t.Fatalf("exit = %d; %s", r.exit, r.all())
+	}
+	if !strings.Contains(r.stdout, "WAKE at="+wake.Stamp(at)) {
+		t.Errorf("the opening line's at= is not the injected clock's:\n%s", r.stdout)
+	}
+	if !strings.Contains(r.stdout, "at=2026-09-11T14:00:00Z") {
+		t.Errorf("the note's own stamp is relayed as DATA, verbatim:\n%s", r.stdout)
+	}
+	if strings.Contains(r.stdout, "WAKE at=2026-09-11T14:00") {
+		t.Errorf("a time that arrived inside text was used as this tool's own clock:\n%s", r.stdout)
+	}
+}
+
+// 11. Delivery is the printed line, not the state write.
+
+func TestDeliveryIsThePrintedLine(t *testing.T) {
+	_, ghDir := fakes(t)
+	var entries []string
+	for i := 0; i < 60; i++ {
+		number := fmt.Sprint(900 + i)
+		entryJSON(t, ghDir, number, "OPEN", [2]string{"build", "SUCCESS"})
+		entries = append(entries, "--entry", "mas-bandwidth/schema#"+number)
+	}
+	state := filepath.Join(t.TempDir(), "wake.state")
+	base := []string{"watch", "--state", state, "--max", "5s", "--on-deadline", "report",
+		"--interval", "5s", "--entry-interval", "5s"}
+
+	// The cold first poll records the world and reports nothing.
+	if r := wakeRun(t, append(append([]string{}, base...), entries...)...); !strings.Contains(r.stdout, "WAKE QUIET") {
+		t.Fatalf("a cold first poll must record rather than report:\n%s", r.all())
+	}
+	// Now every one of them moves.
+	for i := 0; i < 60; i++ {
+		entryJSON(t, ghDir, fmt.Sprint(900+i), "OPEN", [2]string{"build", "FAILURE"})
+	}
+	r := wakeRun(t, append(append([]string{}, base...), entries...)...)
+	if n := countLines(r.stdout, "WAKE ENTRY"); n != 40 {
+		t.Errorf("%d WAKE ENTRY lines under the default --max-lines 40, want 40:\n%s", n, r.stdout)
+	}
+	if !strings.Contains(r.stdout, "WAKE MORE kind=entry shown=40 total=60 n=20") {
+		t.Errorf("the MORE line does not stand for the rest:\n%s", r.stdout)
+	}
+	if !strings.Contains(r.stdout, "pending=20") {
+		t.Errorf("the verdict does not carry pending=20:\n%s", r.stdout)
+	}
+
+	// The next call prints exactly those twenty, first, and nothing newer.
+	next := wakeRun(t, append(append([]string{}, base...), append(entries, "--max-lines", "0")...)...)
+	if n := countLines(next.stdout, "WAKE ENTRY"); n != 20 {
+		t.Errorf("the next call printed %d WAKE ENTRY lines, want exactly the 20 the cap elided:\n%s", n, next.stdout)
+	}
+	if !strings.Contains(next.stdout, "pending=0") {
+		t.Errorf("the queue did not drain:\n%s", next.stdout)
+	}
+	third := wakeRun(t, append(append([]string{}, base...), entries...)...)
+	if !strings.Contains(third.stdout, "WAKE QUIET") {
+		t.Errorf("a third call over an unchanged world must be quiet:\n%s", third.all())
+	}
+}
+
+// 12. New mail reaches the checkout through the advance -- and through nothing
+// else this tool does.
+
+func TestNewMailReachesTheCheckoutThroughTheAdvance(t *testing.T) {
+	t.Run("without --advance-cursor nothing fetches, and it says so", func(t *testing.T) {
+		busDir, _ := fakes(t)
+		write(t, filepath.Join(busDir, "out"), "INBOX OK as=Rowan carrying=0 open=0 notes=0 receipts=0\n")
+		state := filepath.Join(t.TempDir(), "wake.state")
+		r := wakeRun(t, "watch", "--state", state, "--max", "10s", "--on-deadline", "report",
+			"--interval", "5s", "--bus", t.TempDir(), "--as", "Rowan", "--receipt-max-words", "40")
+		for _, c := range calls(t, busDir) {
+			if advanced(c) {
+				t.Errorf("a run without --advance-cursor consumed something: %q", c)
+			}
+		}
+		if n := countLines(r.stdout, "WAKE NOTE bus checkout is read as it stands"); n != 1 {
+			t.Errorf("the note about not fetching is printed %d times, want once:\n%s", n, r.stdout)
+		}
+		if !strings.Contains(r.stdout, "head=") || !strings.Contains(r.stdout, "head-at=") {
+			t.Errorf("the WAKE SOURCE bus line must carry head= and head-at=, so a reader can see the checkout stand still:\n%s", r.stdout)
+		}
+	})
+
+	t.Run("--refresh fetches through wait and moves no cursor", func(t *testing.T) {
+		busDir, _ := fakes(t)
+		write(t, filepath.Join(busDir, "out"), "INBOX OPEN carrying=3 heard=0\nINBOX OK as=Rowan carrying=3 open=3 notes=0 receipts=0\n")
+		state := filepath.Join(t.TempDir(), "wake.state")
+		wakeRun(t, "watch", "--state", state, "--max", "5s", "--on-deadline", "report",
+			"--interval", "5s", "--bus", t.TempDir(), "--as", "Rowan", "--receipt-max-words", "40",
+			"--refresh", "--remote", "origin", "--branch", "main")
+		var sawWait, sawOpen bool
+		for _, c := range calls(t, busDir) {
+			if advanced(c) {
+				t.Errorf("--refresh moved a cursor: %q", c)
+			}
+			if strings.HasPrefix(c, "wait ") && strings.Contains(c, "--timeout") {
+				sawWait = true
+			}
+			if strings.Contains(c, "--open --open-max 3") {
+				sawOpen = true
+			}
+		}
+		if !sawWait {
+			t.Errorf("--refresh must poll with `nova-bus wait --timeout`, which fetches and fast-forwards:\n%s", strings.Join(calls(t, busDir), "\n"))
+		}
+		if !sawOpen {
+			t.Errorf("the first poll must read the carried list WHOLE, with --open-max equal to carrying= and never a constant:\n%s", strings.Join(calls(t, busDir), "\n"))
+		}
+		// "--timeout <t> ... where <t> is the TIME TO THE EARLIEST DUE SOURCE,
+		// AT MOST --interval." A wait that blocked for --gh-timeout would spend
+		// nine intervals in one poll, and the deadline would arrive inside a
+		// call that was still waiting.
+		for _, c := range calls(t, busDir) {
+			if !strings.HasPrefix(c, "wait ") {
+				continue
+			}
+			if !strings.Contains(c, "--timeout 5s") {
+				t.Errorf("the wait budget is not the interval; --gh-timeout is the budget for a forge call, not for a poll: %q", c)
+			}
+		}
+		// Rule 7 covers every line the bus source reads, and the enumerated
+		// program shapes (docs/SPEC-WAKE.md:111-114) have no plain `inbox`
+		// under --refresh: the carried count comes from the wait's own INBOX
+		// OPEN line, so the extra read is neither run, nor unclassified.
+		for _, c := range calls(t, busDir) {
+			if strings.HasPrefix(c, "inbox ") && !strings.Contains(c, "--open") {
+				t.Errorf("--refresh ran a plain inbox beside its wait: an extra process against the bus, and a read whose lines reached no count: %q", c)
+			}
+		}
+	})
+
+	t.Run("--refresh and --advance-cursor together", func(t *testing.T) {
+		state := filepath.Join(t.TempDir(), "wake.state")
+		r := wakeRun(t, "watch", "--state", state, "--max", "5s", "--on-deadline", "report",
+			"--interval", "5s", "--bus", t.TempDir(), "--as", "Rowan", "--receipt-max-words", "40",
+			"--refresh", "--advance-cursor", "--remote", "origin", "--branch", "main")
+		if r.exit != 2 {
+			t.Errorf("exit = %d, want 2: one fetch per poll, never two\n%s", r.exit, r.all())
+		}
+	})
+
+	// The flag IS in this build: item 3a's own tests are in advance_functional_test.go,
+	// against the real nova-bus, which is the gate the spec sets for admitting
+	// it. What stays here is the half that is about the flags themselves.
+
+	t.Run("--advance-cursor without --as", func(t *testing.T) {
+		state := filepath.Join(t.TempDir(), "wake.state")
+		r := wakeRun(t, "watch", "--state", state, "--max", "5s", "--on-deadline", "report",
+			"--interval", "5s", "--bus", t.TempDir(), "--receipt-max-words", "40",
+			"--advance-cursor", "--remote", "origin", "--branch", "main")
+		if r.exit != 2 {
+			t.Errorf("exit = %d, want 2: the --as name IS the claim\n%s", r.exit, r.all())
+		}
+	})
+
+	t.Run("a nova-bus of the wrong version", func(t *testing.T) {
+		busDir, _ := fakes(t)
+		write(t, filepath.Join(busDir, "version"), "nova-bus v0.10.4 darwin/arm64 go1.27.1\n")
+		state := filepath.Join(t.TempDir(), "wake.state")
+		r := wakeRun(t, "watch", "--state", state, "--max", "5s", "--on-deadline", "report",
+			"--interval", "5s", "--bus", t.TempDir(), "--as", "Rowan", "--receipt-max-words", "40")
+		if r.exit != 2 {
+			t.Fatalf("exit = %d, want 2:\n%s", r.exit, r.all())
+		}
+		for _, want := range []string{"v0.10.4", buildVersion()} {
+			if !strings.Contains(r.stderr, want) {
+				t.Errorf("the refusal must name both versions; %q is missing:\n%s", want, r.stderr)
+			}
+		}
+		if strings.Contains(r.stdout, "WAKE at=") {
+			t.Errorf("the version is checked BEFORE the opening line:\n%s", r.stdout)
+		}
+	})
+}
+
+// A bus that REFUSES every read printed its refusal (rule 7, rightly) and the
+// call returned `WAKE CHANGE after=0s polls=1 bus=1`, exit 0 -- so a window
+// looping on the second token of the last line spins with zero delay over a bus
+// it cannot read, and the rule-8 streak can never reach three because the
+// relayed line returns the call first. A run that LOOKED AT NOTHING must not
+// print the same thing as a run that FOUND something.
+func TestARefusingBusIsBrokenAndNotAChange(t *testing.T) {
+	busDir, _ := fakes(t)
+	write(t, filepath.Join(busDir, "out"), "INBOX REFUSED Nobody is not on this bus's roster\n")
+	write(t, filepath.Join(busDir, "exit"), "2\n")
+	state := filepath.Join(t.TempDir(), "wake.state")
+	r := wakeRun(t, "watch", "--state", state, "--max", "60s", "--on-deadline", "report",
+		"--interval", "5s", "--bus", t.TempDir(), "--as", "Nobody", "--receipt-max-words", "40")
+	last := lastLine(r.stdout)
+	if !strings.HasPrefix(last, "WAKE BROKEN source=bus failures=3") {
+		t.Errorf("the verdict over a bus that refused every read is %q; a watcher that cannot see its source is not watching, and CHANGE is what a caller reads as news", last)
+	}
+	if r.exit != 2 {
+		t.Errorf("exit = %d, want 2: a watch whose source went away did not run to its deadline", r.exit)
+	}
+	// Rule 7 still holds: the sentence the bus said is on stdout.
+	if !strings.Contains(r.stdout, "INBOX REFUSED Nobody is not on this bus's roster") {
+		t.Errorf("the refusal was not relayed:\n%s", r.all())
+	}
+	if strings.Contains(r.stdout, "bus=1") {
+		t.Errorf("a refusal was counted as a note that changed:\n%s", r.stdout)
+	}
+}
+
+// Test 12's --refresh halves, which the first build left to the shape of the
+// call and never asserted: "the first poll runs `inbox --open --open-max
+// <carrying>` once and LISTS THE CARRIED NOTES BEFORE THE NEW ONE ... a `wait`
+// that exits non-zero on one poll (the remote unreachable) is one `WAKE POLL`
+// line, every queue record is intact afterwards, and the next successful poll
+// relays the note".
+func TestRefreshListsWhatIsOwedBeforeWhatIsNewAndSurvivesAFailedPoll(t *testing.T) {
+	busDir, _ := fakes(t)
+	// Poll 1 is the wait: it fails, the remote unreachable.
+	write(t, filepath.Join(busDir, "out.1"), "INBOX FAIL could not reach origin\n")
+	write(t, filepath.Join(busDir, "exit.1"), "1\n")
+	// Poll 2 is the wait that works: one new note, and two notes carried.
+	write(t, filepath.Join(busDir, "out.2"), strings.Join([]string{
+		"INBOX NOTE id=new001 from=Stella addr=to at=2026-09-11T11:09:00Z path=from-stella/new.md: the new one",
+		"INBOX OPEN carrying=2 heard=0",
+	}, "\n")+"\n")
+	// Poll 3 is the carried list, read whole with --open-max <carrying>.
+	write(t, filepath.Join(busDir, "out.3"), strings.Join([]string{
+		"INBOX NOTE id=old001 from=Johnny addr=to at=2026-09-11T10:00:00Z path=from-johnny/a.md: owed one",
+		"INBOX NOTE id=old002 from=Emma addr=to at=2026-09-11T10:01:00Z path=from-emma/b.md: owed two",
+	}, "\n")+"\n")
+	state := filepath.Join(t.TempDir(), "wake.state")
+	r := wakeRun(t, "watch", "--state", state, "--max", "20s", "--on-deadline", "report",
+		"--interval", "5s", "--bus", t.TempDir(), "--as", "Rowan", "--receipt-max-words", "40",
+		"--refresh", "--remote", "origin", "--branch", "main")
+
+	if n := countLines(r.stderr, "WAKE POLL bus"); n != 1 {
+		t.Errorf("%d WAKE POLL lines for one unreachable remote, want 1; a failed poll is one line and the watch goes on:\n%s", n, r.stderr)
+	}
+	if r.exit != 0 {
+		t.Fatalf("exit = %d; one failed poll is not BROKEN:\n%s", r.exit, r.all())
+	}
+	var order []string
+	for _, line := range strings.Split(r.stdout, "\n") {
+		if id, ok := strings.CutPrefix(line, "WAKE BUS id="); ok {
+			order = append(order, strings.Fields(id)[0])
+		}
+	}
+	if len(order) != 3 {
+		t.Fatalf("relayed %v, want the two carried notes and the new one", order)
+	}
+	if order[0] != "old001" || order[1] != "old002" || order[2] != "new001" {
+		t.Errorf("relayed in the order %v; a cold watcher lists what it is OWED before what is new", order)
+	}
+	var openCalls int
+	for _, c := range calls(t, busDir) {
+		if strings.Contains(c, "--open --open-max 2") {
+			openCalls++
+		}
+		if advanced(c) {
+			t.Errorf("--refresh moved a cursor: %q", c)
+		}
+	}
+	if openCalls != 1 {
+		t.Errorf("the carried list was read %d times with --open-max 2, want once per run, and the count is carrying= and never a constant:\n%s", openCalls, strings.Join(calls(t, busDir), "\n"))
+	}
+}
+
+// Rule 11, step 3, verbatim: "delete each printed record and write
+// `printed=<id>` FOR EACH LINE THAT REACHED STDOUT". A line counted as shown
+// when its write failed is a delivery this tool never made, marked delivered
+// permanently -- the silent loss rule 11 and The races exist to prevent.
+//
+// Test 11 demands it by name: "with an injected stdout that fails mid-write, no
+// `printed=` mark is written for the failed line".
+func TestAFailedWriteIsNotADelivery(t *testing.T) {
+	t.Parallel()
+
+	reports := t.TempDir()
+	for _, name := range []string{"a", "b", "c"} {
+		write(t, filepath.Join(reports, name, "RESULT.md"), "# a finding in "+name+"\n")
+	}
+	state := filepath.Join(t.TempDir(), "wake.state")
+	args := []string{"watch", "--state", state, "--max", "5s", "--on-deadline", "report",
+		"--interval", "5s", "--reports", reports, "--baseline", "--max-lines", "0"}
+
+	// A stdout that takes the opening line and then fails, the way a closed
+	// pipe does when the reader has gone.
+	var errb bytes.Buffer
+	out := &failingWriter{after: 1}
+	exit := runWith(args, out, &errb, wake.NewFake(at))
+	if exit != 0 && exit != 2 {
+		t.Fatalf("exit = %d", exit)
+	}
+	// Read per ROW rather than grepping the file: a `printed=` anywhere and a
+	// `printed=-` anywhere are both true while one row carries a real id, and
+	// before the label existed at all the grep matched nothing and could never
+	// go red. TestTheStateFileSaysWhatReachedStdout pins the other direction.
+	for key, half := range watchedRows(t, state) {
+		if half != "printed=-" {
+			t.Errorf("%s was marked %q for a line that never reached stdout:\n%s", key, half, read(t, state))
+		}
+	}
+	if n := wakeQueueRecords(t, state); n != 3 {
+		t.Errorf("%d queue records after a failed write, want all 3 still pending: a record leaves the queue only by being printed", n)
+	}
+
+	// And the next call, over a stdout that works, prints every one of them.
+	r := wakeRun(t, args...)
+	if n := countLines(r.stdout, "WAKE REPORT"); n != 3 {
+		t.Errorf("the next call printed %d of the 3 reports the failed write lost:\n%s", n, r.stdout)
+	}
+}
+
+// failingWriter takes `after` writes and then fails every one, so a test can
+// put a broken stdout under the loop without a pipe or a subprocess.
+type failingWriter struct {
+	after int
+	n     int
+}
+
+func (w *failingWriter) Write(p []byte) (int, error) {
+	w.n++
+	if w.n > w.after {
+		return 0, fmt.Errorf("the reader has gone")
+	}
+	return len(p), nil
+}
+
+// The refusal set is what a poll that could not be read produced, and it is
+// about THAT POLL. A source that failed once and then answered must have its
+// real change counted: a later poll's news is news.
+func TestASourceThatRecoversHasItsChangeCounted(t *testing.T) {
+	_, ghDir := fakes(t)
+	// Unreadable on the first poll -- every entry, so the source itself fails.
+	write(t, filepath.Join(ghDir, "1.exit"), "1\n")
+	write(t, filepath.Join(ghDir, "1.stderr"), "gh: could not reach the forge\n")
+	write(t, filepath.Join(ghDir, "1.json"), `{"state":"MERGED","statusCheckRollup":[]}`)
+	state := filepath.Join(t.TempDir(), "wake.state")
+	args := []string{"watch", "--state", state, "--max", "30s", "--on-deadline", "report",
+		"--interval", "5s", "--entry", "mas-bandwidth/nova-tools#1", "--entry-interval", "5s"}
+
+	clock := wake.NewFake(at)
+	clock.OnSleep = func(time.Time) {
+		// The forge comes back between the first poll and the second.
+		os.Remove(filepath.Join(ghDir, "1.exit"))
+	}
+	var out, errb bytes.Buffer
+	exit := runWith(args, &out, &errb, clock)
+	if exit != 0 {
+		t.Fatalf("exit = %d:\n%s%s", exit, out.String(), errb.String())
+	}
+	if !strings.Contains(out.String(), "WAKE ENTRY mas-bandwidth/nova-tools#1 state=MERGED") {
+		t.Fatalf("the entry's real state never printed:\n%s", out.String())
+	}
+	last := lastLine(out.String())
+	if !strings.HasPrefix(last, "WAKE CHANGE") || !strings.Contains(last, "entries=1") {
+		t.Errorf("the verdict is %q; a source that failed once and then answered has its change counted -- the refusal is about the poll that failed, not about the key forever", last)
+	}
+}
+
+// "--timeout <t> ... where <t> is the TIME TO THE EARLIEST DUE SOURCE, at most
+// --interval", and rule 1: "The tool never waits past --max". A wait that
+// blocked the whole interval while a shorter-cadence source was already due
+// starves that source, and one that blocks past --max makes the deadline a
+// thing the harness has to enforce.
+func TestTheRefreshWaitEndsAtTheEarliestDueSourceAndNeverPastTheDeadline(t *testing.T) {
+	t.Run("a co-due source with a shorter cadence", func(t *testing.T) {
+		busDir, ghDir := fakes(t)
+		write(t, filepath.Join(busDir, "out"), "INBOX OK as=Rowan carrying=0 open=0 notes=0 receipts=0\n")
+		write(t, filepath.Join(ghDir, "1.json"), `{"state":"OPEN","statusCheckRollup":[]}`)
+		state := filepath.Join(t.TempDir(), "wake.state")
+		wakeRun(t, "watch", "--state", state, "--max", "60s", "--on-deadline", "report",
+			"--interval", "30s", "--bus", t.TempDir(), "--as", "Rowan", "--receipt-max-words", "40",
+			"--entry", "mas-bandwidth/nova-tools#1", "--entry-interval", "5s",
+			"--refresh", "--remote", "origin", "--branch", "main")
+		for _, c := range calls(t, busDir) {
+			if !strings.HasPrefix(c, "wait ") {
+				continue
+			}
+			if !strings.Contains(c, "--timeout 5s") {
+				t.Errorf("the wait blocks past the entry's 5s cadence, so the shorter-cadence source starves: %q", c)
+			}
+		}
+	})
+
+	t.Run("a deadline inside the interval", func(t *testing.T) {
+		busDir, _ := fakes(t)
+		write(t, filepath.Join(busDir, "out"), "INBOX OK as=Rowan carrying=0 open=0 notes=0 receipts=0\n")
+		state := filepath.Join(t.TempDir(), "wake.state")
+		wakeRun(t, "watch", "--state", state, "--max", "10s", "--on-deadline", "report",
+			"--interval", "30s", "--bus", t.TempDir(), "--as", "Rowan", "--receipt-max-words", "40",
+			"--refresh", "--remote", "origin", "--branch", "main")
+		for _, c := range calls(t, busDir) {
+			if strings.HasPrefix(c, "wait ") && !strings.Contains(c, "--timeout 10s") {
+				t.Errorf("the wait blocks past --max: %q", c)
+			}
+		}
+	})
+}
+
+// "A line with no commit on the branch is `last=- commit=-` and is OFFLINE at
+// the first poll after the watch has run for --offline-after", and "The tool
+// never repeats an OFFLINE line while nothing changes". A line that never
+// signed must not flip between BACK and OFFLINE as calls start and end.
+func TestALineThatNeverSignedDoesNotFlip(t *testing.T) {
+	bus := t.TempDir()
+	gitRun(t, bus, "init", "--quiet", "-b", "main")
+	write(t, filepath.Join(bus, "participants.json"), "{}\n")
+	gitRun(t, bus, "add", "-A")
+	gitRun(t, bus, "-c", "user.name=Stella", "-c", "user.email=s@example.com", "commit", "-q", "-m", "the bus")
+	state := filepath.Join(t.TempDir(), "wake.state")
+	args := []string{"watch", "--state", state, "--max", "5s", "--on-deadline", "report",
+		"--interval", "5s", "--bus", bus, "--as", "Rowan", "--receipt-max-words", "40",
+		"--line", "Ghost", "--offline-after", "10m"}
+	fakes(t)
+
+	for call := 1; call <= 3; call++ {
+		r := wakeRun(t, args...)
+		if strings.Contains(r.stdout, "WAKE LINE") {
+			t.Fatalf("call %d reported a line that has never signed, inside --offline-after:\n%s", call, r.stdout)
+		}
+		if !strings.Contains(r.stdout, "WAKE QUIET") {
+			t.Fatalf("call %d is not quiet:\n%s", call, r.all())
+		}
+	}
+
+	// A call that runs past --offline-after says OFFLINE, once -- and the call
+	// after it, which starts its own clock again, says nothing.
+	long := []string{"watch", "--state", state, "--max", "20m", "--on-deadline", "report",
+		"--interval", "5s", "--bus", bus, "--as", "Rowan", "--receipt-max-words", "40",
+		"--line", "Ghost", "--offline-after", "10m"}
+	r := wakeRun(t, long...)
+	if n := countLines(r.stdout, "WAKE LINE name=Ghost state=OFFLINE"); n != 1 {
+		t.Fatalf("%d OFFLINE lines for a line with no commit at all, want 1:\n%s", n, r.stdout)
+	}
+	r = wakeRun(t, args...)
+	if strings.Contains(r.stdout, "WAKE LINE") {
+		t.Errorf("the line flipped back on the next call; a line that never signed has not come back:\n%s", r.stdout)
+	}
+}
+
+func gitRun(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	raw, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, raw)
+	}
+	return string(raw)
+}
+
+// The State section, verbatim: "The stored form of a watched key is
+// `<value>|printed=<id|->`", and rule 11's step 3: "delete each printed record
+// and write `printed=<id>` for each line that reached stdout". End to end, over
+// the file the tool actually wrote: the row for a key whose line reached stdout
+// carries its delivery id behind the label, and the row for a key that was
+// recorded and never printed carries `-`.
+//
+// The unit half is internal/wake's TestTheStoredFormOfAWatchedKeyCarriesThe
+// PrintedLabel. This half exists because the label is what makes the failed-
+// write guard above able to fail at all.
+func TestTheStateFileSaysWhatReachedStdout(t *testing.T) {
+	t.Parallel()
+
+	reports := t.TempDir()
+	printed := filepath.Join(reports, "printed", "RESULT.md")
+	write(t, printed, "# a finding worth a line\n")
+	state := filepath.Join(t.TempDir(), "wake.state")
+	args := []string{"watch", "--state", state, "--max", "5s", "--on-deadline", "report",
+		"--interval", "5s", "--reports", reports, "--baseline", "--max-lines", "0"}
+
+	r := wakeRun(t, args...)
+	if n := countLines(r.stdout, "WAKE REPORT"); n != 1 {
+		t.Fatalf("printed %d report lines, want 1:\n%s", n, r.all())
+	}
+	rows := watchedRows(t, state)
+	half, ok := rows["report:"+printed]
+	if !ok {
+		t.Fatalf("no watched row for the report that was printed:\n%s", read(t, state))
+	}
+	id, labelled := strings.CutPrefix(half, "printed=")
+	if !labelled || !isDeliveryID(id) {
+		t.Errorf("the row for the printed report says %q, want printed=<the twelve hex of its delivery id>:\n%s", half, read(t, state))
+	}
+
+	// A second run over an unmoved file is quiet, and the mark is unchanged:
+	// the label is stored beside the value, never inside it.
+	r = wakeRun(t, args...)
+	if n := countLines(r.stdout, "WAKE REPORT"); n != 0 {
+		t.Errorf("the second call printed %d report lines over a file that had not moved:\n%s", n, r.all())
+	}
+	if got := watchedRows(t, state)["report:"+printed]; got != half {
+		t.Errorf("the printed mark moved from %q to %q over a quiet poll", half, got)
+	}
+}
+
+// watchedRows reads the state file the way a reader outside internal/wake
+// would, and returns the printed half of every watched row EXACTLY as the
+// bytes hold it, label and all. A watched row is four fields when its key is
+// evictable (the fourth is the recency) and two otherwise, the second field
+// then holding the composed pair itself.
+func watchedRows(t *testing.T, state string) map[string]string {
+	t.Helper()
+	rows := map[string]string{}
+	for _, line := range strings.Split(read(t, state), "\n") {
+		if line == "" {
+			continue
+		}
+		p := wake.Decompose(line)
+		if !watchedKey(p[0]) {
+			continue
+		}
+		switch len(p) {
+		case 4:
+			rows[p[0]] = p[2]
+		case 2:
+			inner := wake.Decompose(p[1])
+			if len(inner) != 2 {
+				t.Fatalf("the row for %q holds %d fields inside its value, want <value>|printed=<id|->: %q", p[0], len(inner), line)
+			}
+			rows[p[0]] = inner[1]
+		default:
+			t.Fatalf("the row for %q holds %d fields: %q", p[0], len(p), line)
+		}
+	}
+	return rows
+}
+
+// watchedKey names the five namespaces the State section calls watched, as
+// against the plain entries beside them (bus:advance, fail:, serve:, queue:).
+func watchedKey(key string) bool {
+	for _, prefix := range []string{"bus:line:", "bus:note:", "entry:", "report:", "line:"} {
+		if strings.HasPrefix(key, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// isDeliveryID is the State section's "first twelve hex characters of SHA-256".
+func isDeliveryID(s string) bool {
+	if len(s) != 12 {
+		return false
+	}
+	for _, c := range s {
+		if !strings.ContainsRune("0123456789abcdef", c) {
+			return false
+		}
+	}
+	return true
+}
+
+// Rule 8, verbatim: "A source fails when the bus's `nova-bus` exits other than
+// 0 or times out". Under --refresh the first poll makes TWO calls -- the wait,
+// and then `inbox --open --open-max <carrying>` for the list the window is
+// owed -- and the second one's exit is an exit like any other. A poll that
+// asked for the carried list, was told NO, and then counted the call as read
+// is a first-poll false quiet: the window is owed a list it was never shown and
+// the verdict says nothing could not be read.
+func TestARefreshWhoseCarriedListWasRefusedIsAFailedPoll(t *testing.T) {
+	busDir, _ := fakes(t)
+	// Poll 1 is the wait: it works, and says two notes are carried.
+	write(t, filepath.Join(busDir, "out.1"), "INBOX OPEN carrying=2 heard=0\n")
+	// Poll 2 is the carried list, and nova-bus says NO.
+	write(t, filepath.Join(busDir, "out.2"), "INBOX REFUSED the bus is locked by another line\n")
+	write(t, filepath.Join(busDir, "exit.2"), "3\n")
+	state := filepath.Join(t.TempDir(), "wake.state")
+	r := wakeRun(t, "watch", "--state", state, "--max", "5s", "--on-deadline", "report",
+		"--interval", "5s", "--bus", t.TempDir(), "--as", "Rowan", "--receipt-max-words", "40",
+		"--refresh", "--remote", "origin", "--branch", "main")
+
+	if n := countLines(r.stderr, "WAKE POLL bus"); n != 1 {
+		t.Errorf("%d WAKE POLL lines for a carried-list read that exited 3, want 1:\n%s", n, r.all())
+	}
+	if !strings.Contains(r.stderr, "exit=3") {
+		t.Errorf("the failed poll does not name the exit nova-bus gave it:\n%s", r.stderr)
+	}
+	last := lastLine(r.stdout)
+	if !strings.Contains(last, "sources-failing=1") {
+		t.Errorf("the verdict reads as calm over a bus whose carried list was refused: %q", last)
+	}
+}

@@ -9,6 +9,8 @@ import (
 )
 
 func TestKernel(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name     string
 		content  string
@@ -47,6 +49,8 @@ func TestKernel(t *testing.T) {
 // Reviewer suggestion: kernel used Stat while attest used Lstat. Unified on
 // Lstat-and-refuse: a symlinked kernel is not a regular file, never followed.
 func TestKernelRefusesSymlink(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeMode(t, dir, "real.md", "the kernel", 0o644)
 	link := filepath.Join(dir, "KERNEL.md")
@@ -64,6 +68,8 @@ func TestKernelRefusesSymlink(t *testing.T) {
 }
 
 func TestKernelRefusesNonPositiveBudget(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeMode(t, dir, "KERNEL.md", "k", 0o644)
 	for _, budget := range []int64{0, -1} {
@@ -77,6 +83,8 @@ func TestKernelRefusesNonPositiveBudget(t *testing.T) {
 // caller's own measurement, and the derivation rounds up so a kernel one token
 // over can never read as exactly at budget.
 func TestKernelTokens(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name       string
 		content    string
@@ -130,6 +138,8 @@ func TestKernelTokens(t *testing.T) {
 // like an instrument, so every unusable ratio is refused rather than
 // substituted.
 func TestKernelTokensRefusesUnusableInputs(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeMode(t, dir, "KERNEL.md", "kernel", 0o644)
 	file := filepath.Join(dir, "KERNEL.md")
@@ -146,6 +156,8 @@ func TestKernelTokensRefusesUnusableInputs(t *testing.T) {
 }
 
 func TestKernelTokensRefusesSymlink(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeMode(t, dir, "real.md", "the kernel", 0o644)
 	link := filepath.Join(dir, "KERNEL.md")
@@ -170,6 +182,8 @@ func TestKernelTokensRefusesSymlink(t *testing.T) {
 // token count that is not negative) rather than either platform's rounding, and
 // is therefore the same test on amd64, arm64 and any future GOARCH.
 func TestKernelTokensNeverReportsFewerTokensThanItsEstimate(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeMode(t, dir, "KERNEL.md", strings.Repeat("a", 241), 0o644)
 	file := filepath.Join(dir, "KERNEL.md")
@@ -204,6 +218,8 @@ func TestKernelTokensNeverReportsFewerTokensThanItsEstimate(t *testing.T) {
 // float-to-int conversion. The assertions are exact int64 values, so the test
 // is the same on amd64, arm64 and any future GOARCH.
 func TestTheTokenEstimateBoundaryIsExact(t *testing.T) {
+	t.Parallel()
+
 	two63 := math.Ldexp(1, 63)            // == float64(math.MaxInt64): rounds UP to one past MaxInt64
 	justBelow := math.Nextafter(two63, 0) // 2^63 - 1024 == 9223372036854774784, the largest float64 below 2^63
 

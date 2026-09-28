@@ -1,0 +1,16 @@
+{
+  "id": "wall:toolchain-roots",
+  "kind": "guard",
+  "files": 5,
+  "packages": 2,
+  "lanes": 1,
+  "lane_owner": "swarm",
+  "guard": true,
+  "secrets": false,
+  "touches": [
+    "guard",
+    "sandbox"
+  ],
+  "attempts": [],
+  "fresh_take": false
+}

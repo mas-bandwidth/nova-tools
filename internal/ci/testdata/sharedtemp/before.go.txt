@@ -1,0 +1,74 @@
+// before.go.txt is the pre-fix text of internal/review/mutate_test.go's leftover
+// check, plus the two other spellings the same mistake takes. It is a .txt so the
+// package it sits in does not compile it; the scanner reads it as source.
+package fixture
+
+import (
+	"io/ioutil"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+// The shape that cost #1341 twice, #1345 and #1360: snapshot the SHARED temp
+// directory, run, and refuse anything that was not there before. A sibling job on
+// the same runner making its own nova-review-mutate-* between the two listings
+// reddens this for something it never did.
+func TestRemovesItsWorktree(t *testing.T) {
+	prior := map[string]bool{}
+	was, err := filepath.Glob(filepath.Join(os.TempDir(), "nova-review-mutate-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range was {
+		prior[p] = true
+	}
+	mutate(t)
+	entries, err := filepath.Glob(filepath.Join(os.TempDir(), "nova-review-mutate-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range entries {
+		if !prior[p] {
+			t.Fatalf("a temp worktree directory was left behind: %s", p)
+		}
+	}
+}
+
+// The same read one hop away: the shared directory arrives through a local.
+func TestReadsTheTempDirThroughAVariable(t *testing.T) {
+	root := os.TempDir()
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("something is in %s", root)
+	}
+}
+
+// And the pre-1.16 spelling, which is the same listing under another name.
+func TestReadsTheTempDirThroughIoutil(t *testing.T) {
+	entries, err := ioutil.ReadDir(filepath.Join(os.TempDir(), "nova"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatal("left behind")
+	}
+}
+
+// The narrowings, all silent here on purpose: a stat of ONE named path in the
+// shared directory is a question about that path, and no sibling can answer it
+// wrongly; and a listing of a directory this test made itself is its own.
+func TestTheNarrowings(t *testing.T) {
+	if _, err := os.Stat(filepath.Join(os.TempDir(), "nova-review-mutate-1")); err == nil {
+		t.Fatal("still there")
+	}
+	mine := t.TempDir()
+	if _, err := filepath.Glob(filepath.Join(mine, "*")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func mutate(t *testing.T) { t.Helper() }

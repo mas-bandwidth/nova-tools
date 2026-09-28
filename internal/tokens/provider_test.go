@@ -11,6 +11,8 @@ import (
 // `grok usage` export is JSON, not CSV, and the parser folds its turns into the same rows
 // the CSV shape produces. The fixture is the sanitized turn from docs/MAPPING-TOKENS-GROK.md.
 func TestXaiUsageJSONShapeParses(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "grok-usage.json")
 	raw := `{
   "sessionId": "fixture-grok-session",
@@ -90,6 +92,8 @@ func TestXaiUsageJSONShapeParses(t *testing.T) {
 // Without this guard a future change could re-introduce the failure mode
 // nova-tools #450 was filed about.
 func TestXaiUsageJSONShapeParsesMissingKeysNotZero(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), "grok-usage-sparse.json")
 	raw := `{
   "sessionId": "fixture-grok-sparse",

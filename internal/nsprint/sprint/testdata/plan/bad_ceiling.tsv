@@ -1,0 +1,7 @@
+#nova-sprint-plan v1
+# control 1: 40 slots on a machine whose ceiling is 32
+policy	backpressure_missing	closed
+policy	ci_reruns	1
+policy	readers	1
+policy	absent_after	60m
+bench	a	m1	40

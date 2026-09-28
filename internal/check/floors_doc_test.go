@@ -16,6 +16,8 @@ import (
 // the other doc tests here read theirs, so a carve-out justified by a removed
 // seed sentence is red.
 func TestFloorsSpecCarveOutDescribesTheSeedAsItIs(t *testing.T) {
+	t.Parallel()
+
 	const specPath = "../../docs/SPEC.md"
 	raw, err := os.ReadFile(specPath)
 	if err != nil {

@@ -1,0 +1,14 @@
+# Attempt tails from the 2026-09-22 sprint, one per line, for route-health's classifier.
+# Columns: want class, wall in seconds, model tokens, tail. The first two rows and the
+# run-tool and DEADLINE rows are quoted from rowan-new reports/failed-cards-2026-09-22.md;
+# the err_ id, the gateway and the silent rows are the shapes that report names.
+provider-error	75	0	attempt=1 wall=75s NATIVE INCOMPLETE | "name": "UnknownError" "message": "Unexpected server error. Check server logs for details."
+provider-error	3	0	"name": "UnknownError" "message": "Unexpected server error. Check server logs for details."
+provider-error	58	1210	opencode: UnknownError err_4f1c09ab
+provider-error	1502	48211	attempt=1 wall=1502s NATIVE INCOMPLETE | error err_0a9e77c1: Unexpected server error
+provider-error	12	0	HTTP 502 Bad Gateway from the provider
+provider-error	40	0	upstream status=503 Service Unavailable
+no-token-no-error	41	0	attempt=1 wall=41s NATIVE INCOMPLETE
+fail	5	380	I cannot fulfill this request. The run tool is not available.
+fail	1526	91022	attempt=1 wall=1526s NATIVE INCOMPLETE (DEADLINE 1500)
+fail	502	20331	attempt=1 wall=502s NATIVE INCOMPLETE | the card asked for err_ codes in the parser

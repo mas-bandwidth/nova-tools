@@ -3,7 +3,9 @@ package tokens
 import (
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"io"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -101,7 +103,7 @@ func ReadProvider(kind, name, path string, _ *Rules) *Source {
 		return s
 	}
 
-	raw, err := readSource(path)
+	raw, err := readProviderSource(kind, path)
 	if err != nil {
 		s.unreadable(path, err.Error())
 		return s
@@ -255,10 +257,66 @@ func ReadProvider(kind, name, path string, _ *Rules) *Source {
 	return s
 }
 
+// XaiUsageMissingError is the refusal when --provider xai names a path that is
+// not there. The path is the one the flag gave. No other path is opened.
+type XaiUsageMissingError struct {
+	Path string
+}
+
+func (e *XaiUsageMissingError) Error() string {
+	return "the file is not there; --provider xai wants one usage.json path and does not scan a session store"
+}
+
+func (e *XaiUsageMissingError) Unwrap() error { return os.ErrNotExist }
+
+// XaiUsageNotFileError is the refusal when --provider xai names something other
+// than one regular file. A directory is not walked for usage.json files.
+type XaiUsageNotFileError struct {
+	Path string
+}
+
+func (e *XaiUsageNotFileError) Error() string {
+	return "the path is not one file; --provider xai wants one usage.json path and does not scan a directory"
+}
+
+// ReadXaiUsageFile reads the one path --provider xai was given. A missing path
+// is *XaiUsageMissingError. A directory is *XaiUsageNotFileError.
+func ReadXaiUsageFile(path string) ([]byte, error) {
+	return readXaiUsageFile(path)
+}
+
+func readProviderSource(kind, path string) ([]byte, error) {
+	if kind == "xai" {
+		return readXaiUsageFile(path)
+	}
+	return readSource(path)
+}
+
+// readXaiUsageFile opens one path. It does not walk that path, and it does not
+// look under a session store for another usage.json.
+func readXaiUsageFile(path string) ([]byte, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, &XaiUsageMissingError{Path: path}
+		}
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, &XaiUsageNotFileError{Path: path}
+	}
+	raw, err := readSource(path)
+	if err != nil && errors.Is(err, os.ErrNotExist) {
+		return nil, &XaiUsageMissingError{Path: path}
+	}
+	return raw, err
+}
+
 // xaiJSONColumns maps the grok usage JSON's camelCase turn fields to the five token types
 // the xAI parser already reports from the CSV shape. totalTokens is a derived sum, and
-// modelCalls/costUsdTicks/turnCount are not token spend, so none of them is a column: an
-// unknown field is ignored rather than admitted as a seventh type.
+// modelCalls/turnCount are not token spend, so neither is a column: an unknown field is
+// ignored rather than admitted as a seventh type. costUsdTicks is not token spend either
+// -- it is the turn's COST, and it folds into the message's Usd below, never into a type.
 var xaiJSONColumns = map[string]Type{
 	"inputTokens":         Input,
 	"outputTokens":        Output,
@@ -325,6 +383,16 @@ func readXaiJSON(kind, path, text string, s *Source) *Source {
 			}
 			if n, err := strconv.ParseInt(v.String(), 10, 64); err == nil {
 				m.Counts.Set(t, n)
+			}
+		}
+		// The turn's cost is its costUsdTicks: an integer count of micro-dollar
+		// ticks, the unit the fold's usd= holds (rule 20: the cost is "from the
+		// usage `usd` column or a cost tick the source reported"). A lexeme that
+		// is not a non-negative integer is an absence rather than a guess, and
+		// usd= is 0 where no source reported one.
+		if v, ok := turn["costUsdTicks"].(json.Number); ok {
+			if n, err := strconv.ParseInt(v.String(), 10, 64); err == nil && n >= 0 {
+				m.Usd = n
 			}
 		}
 		s.Stream = append(s.Stream, m)

@@ -1,6 +1,7 @@
 package merge
 
 import (
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,8 @@ import (
 // Work list 2 and demanded test 2.
 
 func TestASecondHolderWaitsTheBoundedTimeAndNamesTheFirst(t *testing.T) {
+	t.Parallel()
+
 	path := filepath.Join(t.TempDir(), StateLock)
 	release, err := Lock(path, LockWait)
 	if err != nil {
@@ -22,12 +25,16 @@ func TestASecondHolderWaitsTheBoundedTimeAndNamesTheFirst(t *testing.T) {
 	if pid := HolderPID(path); pid != os.Getpid() {
 		t.Errorf("the holder writes its pid into the lock file, got %d want %d", pid, os.Getpid())
 	}
-	start := time.Now()
-	_, err = Lock(path, 150*time.Millisecond)
+	// The bounded wait runs on an injected clock: Now stands still until Sleep moves it, so
+	// the second holder reaches its deadline in as many polls as it would in real time and
+	// not one wall-clock millisecond. The assertion is against that clock, never time.Since.
+	start := time.Date(2026, 9, 18, 2, 45, 0, 0, time.UTC)
+	nowFn, sleepFn, at := waitClock(start)
+	_, err = lockWait(path, 150*time.Millisecond, nowFn, sleepFn)
 	if err == nil {
 		t.Fatal("a second holder against a live one must be refused")
 	}
-	if waited := time.Since(start); waited < 100*time.Millisecond {
+	if waited := at.Sub(start); waited < 100*time.Millisecond {
 		t.Errorf("the second holder waited %s; it waits the bounded time before refusing", waited)
 	}
 	if !strings.Contains(err.Error(), "pid="+strconv.Itoa(os.Getpid())) {
@@ -36,6 +43,8 @@ func TestASecondHolderWaitsTheBoundedTimeAndNamesTheFirst(t *testing.T) {
 }
 
 func TestTheLockIsFreeTheInstantItsHolderIsKilled(t *testing.T) {
+	t.Parallel()
+
 	// SIGKILL is the case rule 2 is written for: the kernel releases the lock, so there
 	// is no age to compute and nothing to break. The holder is a child process, because
 	// a lock released by a goroutine would prove something else entirely.
@@ -47,6 +56,12 @@ func TestTheLockIsFreeTheInstantItsHolderIsKilled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The child blocks on this pipe until the kill below; the wait is that pipe, never a
+	// wall-clock sleep in the helper process.
+	held, err := helper.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := helper.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -54,12 +69,14 @@ func TestTheLockIsFreeTheInstantItsHolderIsKilled(t *testing.T) {
 	if _, err := ready.Read(buf); err != nil {
 		t.Fatalf("the helper never said it had the lock: %v", err)
 	}
-	if _, err := Lock(path, 150*time.Millisecond); err == nil {
+	nowFn, sleepFn, _ := waitClock(time.Date(2026, 9, 18, 2, 45, 0, 0, time.UTC))
+	if _, err := lockWait(path, 150*time.Millisecond, nowFn, sleepFn); err == nil {
 		t.Fatal("the helper holds the lock; this take must be refused")
 	}
 	if err := helper.Process.Kill(); err != nil {
 		t.Fatal(err)
 	}
+	held.Close()
 	_, _ = helper.Process.Wait()
 	release, err := Lock(path, 2*time.Second)
 	if err != nil {
@@ -72,6 +89,8 @@ func TestTheLockIsFreeTheInstantItsHolderIsKilled(t *testing.T) {
 // waits to be killed. It is a test function because that is how a Go test spawns a child
 // of itself without a second binary, and it does nothing at all unless the parent asked.
 func TestHelperHoldsTheLock(t *testing.T) {
+	t.Parallel()
+
 	path := os.Getenv("NOVA_MERGE_LOCK_HELPER")
 	if path == "" {
 		t.Skip("not the helper: this runs only as the child of TestTheLockIsFreeTheInstantItsHolderIsKilled")
@@ -80,10 +99,14 @@ func TestHelperHoldsTheLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	os.Stdout.WriteString("held\n")
-	time.Sleep(30 * time.Second)
+	// Hold until the parent kills us: the parent keeps this pipe's write end open, so the
+	// read blocks with no wall-clock sleep and no bound of its own.
+	_, _ = io.Copy(io.Discard, os.Stdin)
 }
 
 func TestAKillMidWriteLeavesTheOldStateEntireAndTheTempNameIsSteppedOver(t *testing.T) {
+	t.Parallel()
+
 	lane := t.TempDir()
 	if err := Init(lane, LaneConfig{Repo: "o/n", Base: "main", LaneBranch: "nova-merge/l"}); err != nil {
 		t.Fatal(err)

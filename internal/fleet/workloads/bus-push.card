@@ -1,0 +1,33 @@
+roles: coordination
+expect: ^BUS OK
+
+# A coordination host's one representative piece of work is talking on the bus, and the
+# thing that stops it is a bus repository with a dirty tree or a branch behind its remote.
+set -eu
+BUS="${NOVA_BUS:-$NOVA_HOME/nova-bus}"
+if [ ! -d "$BUS/.git" ]; then
+  echo "BUS FAIL no bus repository at $BUS (set NOVA_BUS)"
+  exit 1
+fi
+GIT=$(command -v git 2>/dev/null || true)
+if [ -z "$GIT" ]; then
+  echo "BUS FAIL no git on the coordination host"
+  exit 1
+fi
+DIRTY=$("$GIT" -C "$BUS" status --porcelain 2>&1 | head -n 3)
+if [ -n "$DIRTY" ]; then
+  echo "BUS FAIL $BUS has uncommitted changes: $DIRTY"
+  exit 1
+fi
+BRANCH=$("$GIT" -C "$BUS" rev-parse --abbrev-ref HEAD 2>&1)
+LOCAL=$("$GIT" -C "$BUS" rev-parse HEAD 2>&1)
+REMOTE=$("$GIT" -C "$BUS" rev-parse "@{upstream}" 2>/dev/null || echo "-")
+if [ "$REMOTE" = "-" ]; then
+  echo "BUS FAIL $BUS branch $BRANCH tracks no upstream"
+  exit 1
+fi
+if [ "$LOCAL" != "$REMOTE" ]; then
+  echo "BUS FAIL $BUS branch $BRANCH is not in sync: local $LOCAL upstream $REMOTE"
+  exit 1
+fi
+echo "BUS OK $BUS branch=$BRANCH head=$LOCAL"

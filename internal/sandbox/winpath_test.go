@@ -32,6 +32,8 @@ func winDir(p string) string {
 }
 
 func TestWinDirModelsTheVolumeRoot(t *testing.T) {
+	t.Parallel()
+
 	for path, want := range map[string]string{
 		`C:\Users\runneradmin\AppData`: `C:\Users\runneradmin`,
 		`C:\Users`:                     `C:\`,
@@ -50,6 +52,8 @@ func TestWinDirModelsTheVolumeRoot(t *testing.T) {
 // never reaches one, so it spun on the volume root forever. A test must never wait without
 // a deadline, and this one has five seconds.
 func TestAncestorsTerminatesOnAWindowsPath(t *testing.T) {
+	t.Parallel()
+
 	done := make(chan []string, 1)
 	go func() { done <- ancestors(winDir, `C:\Users\runneradmin\AppData\Local\Temp\job\w`) }()
 	select {
@@ -82,6 +86,8 @@ func TestAncestorsTerminatesOnAWindowsPath(t *testing.T) {
 // text; windows has no such text, and `C:\Program Files (x86)` is an ordinary directory
 // there. A control character is refused on every platform.
 func TestPathMetacharactersAreRefusedPerPlatform(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		goos, path string
 		refused    bool

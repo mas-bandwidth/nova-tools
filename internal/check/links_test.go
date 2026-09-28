@@ -10,6 +10,8 @@ import (
 )
 
 func TestLinks(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name        string
 		files       map[string]string
@@ -114,6 +116,8 @@ func TestLinks(t *testing.T) {
 // checked the inner image and never extracted the outer target, a false PASS
 // when the target was missing. Both must be checked.
 func TestLinksBadgeOuterTargetChecked(t *testing.T) {
+	t.Parallel()
+
 	t.Run("broken outer target caught", func(t *testing.T) {
 		dir := t.TempDir()
 		writeTree(t, dir, map[string]string{
@@ -153,6 +157,8 @@ func TestLinksBadgeOuterTargetChecked(t *testing.T) {
 // Reviewer B3b: angle-bracket destinations [a](<my notes.md>) were invisible
 // to the old regex — a false PASS whether or not the target existed.
 func TestLinksAngleBracketDestination(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{
 		"a.md":        "[good](<my notes.md>) and [bad](<no such.md>)",
@@ -175,6 +181,8 @@ func TestLinksAngleBracketDestination(t *testing.T) {
 // Reviewer B3c: only double-quoted titles were recognized; single-quoted and
 // parenthesized titles made the whole link invisible — a false PASS.
 func TestLinksTitleQuoteForms(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name string
 		md   string
@@ -205,6 +213,8 @@ func TestLinksTitleQuoteForms(t *testing.T) {
 // fence. A ``` block containing ~~~ lines used to toggle the fence off and
 // report the quoted example as a broken link — a false FAIL.
 func TestLinksFenceRemembersOpeningMarker(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{
 		"a.md": "```\n~~~\n[fake](missing.md)\n~~~\n```\n[real](b.md)\n",
@@ -227,6 +237,8 @@ func TestLinksFenceRemembersOpeningMarker(t *testing.T) {
 // quoting. The quoted example's link then leaked out and was reported — a
 // false FAIL. A fence closes only on a run at least as long as its opener.
 func TestLinksNestedFourBacktickFenceHidesInnerThree(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{
 		"a.md": "````\n```\n[fake](missing.md)\n```\n````\n",
@@ -248,6 +260,8 @@ func TestLinksNestedFourBacktickFenceHidesInnerThree(t *testing.T) {
 // broken link into LINKS OK with zero links. Recording the opener's length
 // keeps the four-fence closed, so the link below it is checked.
 func TestLinksUnclosedFenceDoesNotSwallowRealBrokenLink(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{
 		"a.md": "````\n```\n````\n[real](missing.md)\n",
@@ -273,6 +287,8 @@ func TestLinksUnclosedFenceDoesNotSwallowRealBrokenLink(t *testing.T) {
 // closes it." These two pin the halves that were unpinned: a LONGER run does
 // close, and a same-length run carrying text does not.
 func TestLinksLongerRunClosesShorterFence(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{
 		"a.md": "```\n[fake](inside.md)\n````\n[real](missing.md)\n",
@@ -290,6 +306,8 @@ func TestLinksLongerRunClosesShorterFence(t *testing.T) {
 }
 
 func TestLinksSameLengthRunWithTrailingTextDoesNotClose(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{
 		"a.md": "```\n[fake](inside.md)\n``` not a closer\n[alsofake](missing.md)\n",
@@ -307,6 +325,8 @@ func TestLinksSameLengthRunWithTrailingTextDoesNotClose(t *testing.T) {
 }
 
 func TestLinksReportsLineNumbers(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{"a.md": "fine\n\n[gone](missing.md)\n"})
 	_, _, broken, err := Links(dir)
@@ -331,6 +351,8 @@ func TestLinksReportsLineNumbers(t *testing.T) {
 // discarded every broken link already accumulated: one chmod-000 file
 // silenced every real finding in the tree. Seen red against that code.
 func TestLinksUnreadableFileIsNamedFailureNotRefusal(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("windows: chmod 0 does not refuse reads, so this property cannot be observed here")
 	}
@@ -379,6 +401,8 @@ func TestLinksUnreadableFileIsNamedFailureNotRefusal(t *testing.T) {
 // directory is named in the error, and the finding found before it is NOT
 // reported. Whether the spec should change is left open on #30.
 func TestLinksUnlistableDirIsARefusalNotAPartialReport(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("windows: chmod 0 does not refuse reads, so this property cannot be observed here")
 	}
@@ -411,6 +435,8 @@ func TestLinksUnlistableDirIsARefusalNotAPartialReport(t *testing.T) {
 // A dangling .md symlink is the second face of the same case: the walk sees a
 // file, the read fails. Named failure, walk continues, findings kept, exit 1.
 func TestLinksDanglingSymlinkMdIsNamedFailure(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{"a.md": "[ok](b.md)", "b.md": "x"})
 	if err := os.Symlink(filepath.Join(dir, "nowhere.md"), filepath.Join(dir, "dangling.md")); err != nil {
@@ -440,6 +466,8 @@ func TestLinksDanglingSymlinkMdIsNamedFailure(t *testing.T) {
 // contrast: a relative link that resolves THROUGH a .md symlink is LINKS OK,
 // and a change that Lstat's the target here is a change of posture, not a fix.
 func TestLinksTargetResolvingThroughSymlinkIsOK(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{"a.md": "[via](alias.md)", "real.md": "x"})
 	if err := os.Symlink(filepath.Join(dir, "real.md"), filepath.Join(dir, "alias.md")); err != nil {
@@ -461,6 +489,8 @@ func TestLinksTargetResolvingThroughSymlinkIsOK(t *testing.T) {
 }
 
 func TestLinksRefusesBadDir(t *testing.T) {
+	t.Parallel()
+
 	if _, _, _, err := Links(t.TempDir() + "/nope"); err == nil {
 		t.Error("nonexistent dir should be an error, not a guess")
 	}
@@ -472,6 +502,8 @@ func TestLinksRefusesBadDir(t *testing.T) {
 // stop checking links into them, and the run must report how many files it
 // left unscanned as Excluded.
 func TestLinksExcludeSubtreeCounted(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{
 		"main.md":                 "see [fixture](testdata/fixture.md) and [real](real.md)\n",
@@ -516,6 +548,8 @@ func TestLinksExcludeSubtreeCounted(t *testing.T) {
 // walked, while the same tree by its real path reported the broken link and
 // exited 1. On macOS /var is such a link. Fixed the way nocode fixes it.
 func TestLinksDirIsASymlinkToTheTree(t *testing.T) {
+	t.Parallel()
+
 	base := t.TempDir()
 	real := filepath.Join(base, "real")
 	if err := os.MkdirAll(real, 0o755); err != nil {
@@ -566,6 +600,8 @@ func TestLinksDirIsASymlinkToTheTree(t *testing.T) {
 // plain text so a fixture carries no link target at all, which is what lets
 // the repository run links over itself; floors_test still matches the prose.
 func TestLinksSeedFixturesCarryNoTargets(t *testing.T) {
+	t.Parallel()
+
 	res, err := LinksExcluding("testdata", nil)
 	if err != nil {
 		t.Fatal(err)

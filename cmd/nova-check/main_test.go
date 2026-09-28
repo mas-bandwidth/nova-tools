@@ -15,6 +15,8 @@ import (
 // The no-guessing rule at the CLI: a missing flag is a refusal (exit 2)
 // that names the flag, never a fallback to a default path.
 func TestRunRefusesToGuess(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name       string
 		args       []string
@@ -60,6 +62,8 @@ func TestRunRefusesToGuess(t *testing.T) {
 // Reviewer suggestion: with two required flags missing, the error order came
 // from map iteration and differed run to run. It must be sorted, every time.
 func TestRequiredFlagErrorOrderDeterministic(t *testing.T) {
+	t.Parallel()
+
 	for i := 0; i < 20; i++ {
 		var stdout, stderr bytes.Buffer
 		if got := run([]string{"attest"}, &stdout, &stderr); got != 2 {
@@ -80,6 +84,8 @@ func TestRequiredFlagErrorOrderDeterministic(t *testing.T) {
 // End to end through run(): each subcommand passing on good input and
 // failing (exit 1, FAIL on stderr) on bad input.
 func TestRunEndToEnd(t *testing.T) {
+	t.Parallel()
+
 	home := t.TempDir()
 	mustWrite(t, home, "KERNEL.md", "the kernel\n")
 	mustWrite(t, home, "pattern/p.md", "[k](../KERNEL.md)\n")
@@ -152,6 +158,8 @@ func TestRunEndToEnd(t *testing.T) {
 // chmod-000 file converted the run into a refusal and discarded the real
 // broken link. That discard is the defect this test pins shut.
 func TestLinksUnreadableFileIsNamedFailureAtTheCLI(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("windows: chmod 0 does not refuse reads, so this property cannot be observed here")
 	}
@@ -186,6 +194,8 @@ func TestLinksUnreadableFileIsNamedFailureAtTheCLI(t *testing.T) {
 // links run over --file with one broken link in one of two files reports
 // files=2 and that link only, never expanding to the whole tree.
 func TestLinksFileNarrowsTheWalk(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	mustWrite(t, dir, "one.md", "[ok](two.md)\n")
 	mustWrite(t, dir, "two.md", "[gone](missing.md)\n")
@@ -221,6 +231,8 @@ func brief(s string) string { return oneline.Escape(oneline.Cap(s, 200)) }
 // directory named on stderr, and NO FAIL line -- the broken link beside it is
 // deliberately not reported. Whether that is the right trade is open on #30.
 func TestLinksUnlistableDirRefusesAtTheCLI(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("windows: chmod 0 does not refuse reads, so this property cannot be observed here")
 	}
@@ -253,6 +265,8 @@ func TestLinksUnlistableDirRefusesAtTheCLI(t *testing.T) {
 
 // The same seam for nocode.
 func TestNoCodeUnlistableDirRefusesAtTheCLI(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("windows: chmod 0 does not refuse reads, so this property cannot be observed here")
 	}
@@ -292,6 +306,8 @@ func TestNoCodeUnlistableDirRefusesAtTheCLI(t *testing.T) {
 // in the line it prints, so the number can be re-derived by anyone reading
 // it. The byte form keeps working unchanged beside it.
 func TestRunKernelTokenMode(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	mustWrite(t, dir, "KERNEL.md", strings.Repeat("a", 240))
 	kernel := filepath.Join(dir, "KERNEL.md")
@@ -406,6 +422,8 @@ Elided.
 // planted drop in either record is a FLOORS FAIL and exit 1, and a failing
 // run prints no OK line.
 func TestRunFloorsEndToEnd(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	mustWrite(t, dir, "SEED-CORE.md", floorsCoreDoc)
 	mustWrite(t, dir, "SEED.md", floorsSourceDoc)
@@ -452,6 +470,8 @@ func TestRunFloorsEndToEnd(t *testing.T) {
 // protection check that prints a pass when it checked nothing is the one
 // failure this whole subcommand exists to be the opposite of.
 func TestRunCorpusEndToEnd(t *testing.T) {
+	t.Parallel()
+
 	const ledger = `# what this line protects
 
 | fragment | home | given | by |
@@ -562,6 +582,8 @@ func mustWrite(t *testing.T, dir, rel, content string) {
 // The nocode gate's own CLI seam: the deny-list flags, the commit-gate path,
 // and every refusal proven able to fire.
 func TestNoCodeCLI(t *testing.T) {
+	t.Parallel()
+
 	newTree := func(t *testing.T, files map[string]string) string {
 		t.Helper()
 		dir := t.TempDir()
@@ -585,7 +607,7 @@ func TestNoCodeCLI(t *testing.T) {
 		out := stdout.String()
 		// source= is a field, so the floor's label reads as one token: see
 		// TestTheDenyListFieldIsOneToken for the rule and the other three sites.
-		for _, want := range []string{"source=floor\\x20list", ".go", ".py", ".zsh"} {
+		for _, want := range []string{"source=floor-list", ".go", ".py", ".zsh"} {
 			if !strings.Contains(out, want) {
 				t.Errorf("output missing %q\n%s", want, out)
 			}
@@ -612,7 +634,7 @@ func TestNoCodeCLI(t *testing.T) {
 		if got := run([]string{"nocode", "--dir", dir}, &stdout, &stderr); got != 0 {
 			t.Fatalf("exit = %d, want 0 (stderr: %s)", got, stderr.String())
 		}
-		if !strings.Contains(stdout.String(), "deny-list=floor\\x20list") {
+		if !strings.Contains(stdout.String(), "deny-list=floor-list") {
 			t.Errorf("OK line does not name the list: %s", stdout.String())
 		}
 	})
@@ -673,6 +695,8 @@ func TestNoCodeCLI(t *testing.T) {
 // would have shipped green — silently dropping all 43 floor extensions from a
 // gate whose whole purpose is refusing.
 func TestEffectiveDenyList(t *testing.T) {
+	t.Parallel()
+
 	floor, err := check.FloorDenyExts()
 	if err != nil {
 		t.Fatal(err)
@@ -748,6 +772,8 @@ func TestEffectiveDenyList(t *testing.T) {
 // resolves to a tree the walk never opens. Exit 0 is correct: an empty tree
 // genuinely holds no machinery. What must not vanish is the sentence.
 func TestNoCodeWarnsWhenItClassifiedNothing(t *testing.T) {
+	t.Parallel()
+
 	var stdout, stderr bytes.Buffer
 	rc := run([]string{"nocode", "--dir", t.TempDir()}, &stdout, &stderr)
 	if rc != 0 {
@@ -762,6 +788,8 @@ func TestNoCodeWarnsWhenItClassifiedNothing(t *testing.T) {
 // --print-deny-list is a hidden default, which is the one thing the deny-list's
 // whole design argument is against.
 func TestPrintDenyListShowsTheNameFloor(t *testing.T) {
+	t.Parallel()
+
 	var stdout, stderr bytes.Buffer
 	if rc := run([]string{"nocode", "--print-deny-list"}, &stdout, &stderr); rc != 0 {
 		t.Fatalf("rc=%d stderr=%s", rc, stderr.String())
@@ -781,6 +809,8 @@ func TestPrintDenyListShowsTheNameFloor(t *testing.T) {
 // Nothing here gates ingestion, which is why the threat is smaller than the fuse's, but
 // the grammar is published as scannable, and that is an invitation to parse it.
 func TestNoCallerPathCanForgeALine(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("windows: a newline is not legal in a filename, so the fixture cannot be built and the vector does not exist there")
 	}
@@ -888,6 +918,8 @@ func TestNoCallerPathCanForgeALine(t *testing.T) {
 // so `nova-check links --dir . extra` told a reader what was wrong and nothing about
 // where to look. The door is what makes the one line enough.
 func TestAnUnusableInvocationCarriesTheDoor(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	mustWrite(t, dir, "README.md", "prose\n")
 	cases := []struct {
@@ -919,16 +951,17 @@ func TestAnUnusableInvocationCarriesTheDoor(t *testing.T) {
 	}
 }
 
-// TestTheDenyListFieldIsOneToken is SPEC.md's "A field is one token" at the one field
-// that was not: `deny-list=` and `source=` hold one of three provenance labels, two of
-// which carry spaces, so `deny-list=floor list` read as `deny-list=floor` to a
-// whitespace-splitting scanner and `list` read as a further field. The labels are the
-// tool's own literals, not caller text -- which is why the escape was not applied and why
-// the field-counting half of the rule was missed. The spelling is preserved and rendered:
-// `floor list` prints as `floor\x20list`, one token that still says what it said.
+// TestTheDenyListFieldIsOneToken is SPEC.md's "A field is one token" at the
+// `deny-list=` and `source=` fields: each holds one of three provenance labels, and each
+// label is one token with no space and no "=" -- `floor-list`, `--deny-ext`,
+// `floor-list+--deny-ext-add` -- so a whitespace-splitting scanner reads the field the
+// tool wrote, with no escape for a reader to decode, and the finding's reason spells the
+// label the same way.
 func TestTheDenyListFieldIsOneToken(t *testing.T) {
+	t.Parallel()
+
 	// The rendered spellings of the three provenance labels, as oneline.Field writes them.
-	floor := "floor\\x20list"
+	floor := "floor-list"
 
 	lineWith := func(t *testing.T, stream, token string) string {
 		t.Helper()
@@ -990,7 +1023,7 @@ func TestTheDenyListFieldIsOneToken(t *testing.T) {
 		if rc := run([]string{"nocode", "--dir", dir, "--deny-ext-add", ".xyz"}, &stdout, &stderr); rc != 0 {
 			t.Fatalf("exit = %d, want 0; stderr: %s", rc, stderr.String())
 		}
-		want := "NOCODE OK files=1 clean deny-list=floor\\x20list\\x20+\\x20--deny-ext-add"
+		want := "NOCODE OK files=1 clean deny-list=floor-list+--deny-ext-add"
 		if got := lineWith(t, stdout.String(), "NOCODE OK"); got != want {
 			t.Errorf("OK line = %q, want %q", got, want)
 		}

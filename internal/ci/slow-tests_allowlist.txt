@@ -1,0 +1,24 @@
+# The unit tier's slow-test allowlist: pkg<TAB>test<TAB>budget<TAB><measured>s@<where>,
+# - in the test column for a package's own row. make test runs `nova-ci slowtests
+# --package-budget 2 --test-budget 1 --allowlist` with this file: a top-level test
+# over 1 s, or a package over 2 s, is a CI-SLOW line unless its row here names a
+# higher budget (Glenn 2026-09-26 11:20 AM ET: "unit tests be < 2s (ideally <1)").
+#
+# A CI-SLOW LINE IS A MEASUREMENT ON EVERY LEG BUT ONE (Rowan's ruling on
+# nova-tools#4413, 2026-09-26: a budget verdict is the same on any machine). A pull
+# request, merge-group or push leg prints it and exits 0; only the nightly
+# whole-tree run on the space legs (ci.yml, the test step's schedule branch,
+# `make test SLOWTESTS_ENFORCE=1`) fails on it.
+#
+# EVERY ROW NAMES ITS MEASUREMENT: the fourth column is the time the row was cut
+# from and where: `run<id>` (a CI run) or a bench (slowtests.Benches), never free
+# text; the budget sits between that time and three times it (slowtests.MaxHeadroom).
+# The reader refuses any other row (internal/ci: TestSlowAllowlistRowsNameTheirMeasurement).
+#
+# The 33 rows #4413 first carried at @run36255893861 were the budget divided by 1.5,
+# not measured, and are dropped; the first enforcing nightly run's raw times re-add
+# the ones still over, measured (a follow-up PR).
+# @studio: internal/update at 9.4 s on the Studio (load 12 to 15 of 32 CPUs, nice -n
+# 15, go test -p 2 -parallel 2, GOMAXPROCS=2, -count=1, 2026-09-26) after its
+# staged-kill tests moved to process_functional_test.go. Budget 1.5x.
+internal/update	-	14.1	9.4s@studio

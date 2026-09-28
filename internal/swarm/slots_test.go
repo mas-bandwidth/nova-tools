@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 func writeSlotStore(t *testing.T, shares string) string {
@@ -19,16 +21,17 @@ func writeSlotStore(t *testing.T, shares string) string {
 
 func mustSlotTake(t *testing.T, store, owner string, k int, d time.Duration, label string, now time.Time, pid int) (bool, int, int, int, int, string) {
 	t.Helper()
-	granted, held, share, free, holders, ok, err := TakeSlotLeases(store, owner, k, d, label, now, pid)
+	ids, held, share, free, holders, ok, err := TakeSlotLeases(store, owner, k, d, label, now, pid)
 	if err != nil {
 		t.Fatalf("TakeSlotLeases: %v", err)
 	}
-	_ = granted
-	return ok, granted, held, share, free, holders
+	return ok, len(ids), held, share, free, holders
 }
 
 // Two owners at share 2 each with capacity 4 reserve 0 cannot take a fifth.
 func TestSlotSharesRefuseFifth(t *testing.T) {
+	t.Parallel()
+
 	store := writeSlotStore(t, "capacity\t4\nreserve\t0\nalice\t2\nbob\t2\n")
 	now := time.Now().UTC()
 	pid := os.Getpid()
@@ -52,6 +55,8 @@ func TestSlotSharesRefuseFifth(t *testing.T) {
 
 // An expired lease with a dead pid is reaped and its slot granted.
 func TestSlotExpiredDeadPidReaped(t *testing.T) {
+	t.Parallel()
+
 	const deadPid = 2147483647
 	if Alive(deadPid, "") {
 		t.Skip("dead pid probe is alive here")
@@ -80,6 +85,8 @@ func TestSlotExpiredDeadPidReaped(t *testing.T) {
 
 // An expired lease with the test's live pid stays and is printed DRIFT.
 func TestSlotExpiredLivePidDrift(t *testing.T) {
+	t.Parallel()
+
 	store := writeSlotStore(t, "capacity\t2\nreserve\t0\nalice\t1\n")
 	past := time.Now().UTC().Add(-time.Hour)
 	if err := MakeSlotLease(store, "drift-1", "alice", os.Getpid(), "", past); err != nil {
@@ -114,6 +121,8 @@ func TestSlotExpiredLivePidDrift(t *testing.T) {
 
 // Take past capacity-reserve is refused naming holders.
 func TestSlotCapacityReserveRefused(t *testing.T) {
+	t.Parallel()
+
 	store := writeSlotStore(t, "capacity\t4\nreserve\t1\nalice\t10\nbob\t10\n")
 	now := time.Now().UTC()
 	pid := os.Getpid()
@@ -133,4 +142,46 @@ func TestSlotCapacityReserveRefused(t *testing.T) {
 	if holders != "alice:2,bob:1" {
 		t.Fatalf("refusal must name holders, got %q", holders)
 	}
+}
+
+// TestIssue2238 asserts that a Batch with no SlotsStore/SlotOwner refuses before
+// any worker starts, citing the missing lease (deprecated/docs/SPEC-JOBS.md:76).
+func TestIssue2238(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	// Create a fake harness so we get past the harness check
+	harness := filepath.Join(root, "harness")
+	if err := testbin.WriteExecutable(harness, []byte("#!/bin/sh\necho OK\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cards := writeCards(t, root, [][2]string{{"c1", "RESULT: test\nDONE"}})
+	var errb strings.Builder
+	code := Batch(BatchInput{
+		ID: "B1", Deadline: time.Minute, Cards: cards, Root: root,
+		Runner: "", Harness: harness, SlotsStore: "", SlotOwner: "",
+		Stdout: &strings.Builder{}, Stderr: &errb,
+	})
+	if code != 2 {
+		t.Fatalf("Batch without SlotsStore/SlotOwner must refuse with exit 2, got %d", code)
+	}
+	got := errb.String()
+	if !strings.Contains(got, NoSlotsStoreRefusal) {
+		t.Fatalf("refusal must cite %q, got %q", NoSlotsStoreRefusal, got)
+	}
+}
+
+// aBenchSlotStore is a store with room, for a test whose batch launches `nova-swarm
+// native`. Since nova-tools#1546 a launch without a lease is REFUSED, so a Batch with no
+// --runner of its own needs SlotsStore and SlotOwner or it never reaches the card.
+func aBenchSlotStore(t *testing.T) string {
+	t.Helper()
+	store := filepath.Join(t.TempDir(), "slots-store")
+	if err := os.MkdirAll(store, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(store, "shares.tsv"), []byte("capacity\t8\nreserve\t0\nfake-1\t8\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return store
 }

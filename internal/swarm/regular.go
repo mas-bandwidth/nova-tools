@@ -44,7 +44,21 @@ const MaxRegularRecord = 16 * 1024 * 1024
 var errRecordTooLarge = fs.ErrInvalid
 
 func notRegular(path string, mode os.FileMode) error {
-	return &fs.PathError{Op: "read", Path: path, Err: fmt.Errorf("not a regular file (%s); a job's records are regular files and this tool follows no link and opens no pipe: %w", mode.Type(), errNotRegular)}
+	return &fs.PathError{Op: "read", Path: path, Err: fmt.Errorf("not a regular file (%s); a job's records are regular files and this tool follows no link and opens no pipe: %w", kindOf(mode), errNotRegular)}
+}
+
+// kindOf names the kind a non-regular path is, in the one word the refusal line carries.
+func kindOf(mode os.FileMode) string {
+	switch {
+	case mode&os.ModeSymlink != 0:
+		return "symlink"
+	case mode&os.ModeNamedPipe != 0:
+		return "fifo"
+	case mode&os.ModeDir != 0:
+		return "directory"
+	default:
+		return mode.Type().String()
+	}
 }
 
 func recordTooLarge(path string, size, limit int64) error {
@@ -91,6 +105,19 @@ func readBounded(r io.Reader, maxBytes int64) ([]byte, error) {
 		return nil, fmt.Errorf("record size passes ceiling %d; a job's records have a bounded size: %w", maxBytes, errRecordTooLarge)
 	}
 	return raw, nil
+}
+
+// isRegularFile is whether path is a regular file, by Lstat: a symlink is not
+// followed and a FIFO is not a record (issue #233).
+func isRegularFile(path string) bool {
+	return statRegular(path) == nil
+}
+
+// ReadRegular is os.ReadFile for a worker-writable path: the whole file when it is a
+// regular file within MaxRegularRecord, and a refusal when it is anything else or oversized.
+// A symlink is not followed and a FIFO is not opened (security#30, issue #233).
+func ReadRegular(path string) ([]byte, error) {
+	return readRegular(path)
 }
 
 // readRegular is os.ReadFile for a worker-writable path: the whole file when it is a

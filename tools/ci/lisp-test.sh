@@ -14,9 +14,33 @@ here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
 lisp="$root/lisp/nova-work"
 
-[ -d "$lisp" ] || { echo "lisp-test.sh: lisp/nova-work not found in the checkout" >&2; exit 1; }
+# nova-work, the one Lisp system, is PARKED under deprecated/lisp/nova-work
+# (Glenn 2026-09-27: deprecated code is not tested, not built and never blocks
+# CI). With no lisp/ tree there is nothing to test: say so and pass, the way
+# ci.yml passes an empty Go selection. A lisp/ tree this script does not know is
+# refused, so a new system cannot land untested behind a green "nothing".
+if [ ! -d "$lisp" ]; then
+  if [ -e "$root/lisp" ]; then
+    echo "lisp-test.sh: lisp/ exists and holds no nova-work; this script does not know how to test it" >&2
+    exit 1
+  fi
+  echo "lisp-test.sh: nothing to test (lisp/ holds no system; nova-work is parked under deprecated/lisp/nova-work)"
+  exit 0
+fi
 
-exec sbcl --non-interactive \
+# Each run gets its own short TMPDIR. The suite keys its journals, exports and
+# socket bases off the ambient TMPDIR and clears stale directories first, so two
+# runs on one host (concurrent merge groups, 2026-09-18) wrecked each other's
+# state: "held by another process", "destination exists", MKDIR ENOENT. Short,
+# because an AF_UNIX path is bounded and the suite only uses TMPDIR directly
+# when it is under 80 bytes. Removed on exit, whatever the verdict.
+TMPDIR="${LISP_TEST_TMPROOT:-/tmp}/nw-$$"
+mkdir -p "$TMPDIR" || { echo "lisp-test.sh: cannot create $TMPDIR" >&2; exit 1; }
+export TMPDIR
+trap 'rm -rf "$TMPDIR"' EXIT
+echo "lisp-test.sh: TMPDIR=$TMPDIR" >&2
+
+sbcl --non-interactive \
   --eval "(require :asdf)" \
   --eval "(push #p\"${lisp}/\" asdf:*central-registry*)" \
   --eval "(handler-bind ((warning #'muffle-warning)) (asdf:load-system :nova-work/tests))" \

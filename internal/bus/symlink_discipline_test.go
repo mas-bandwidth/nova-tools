@@ -62,6 +62,8 @@ func stillLink(t *testing.T, link string) {
 }
 
 func TestAppendIndexLineRefusesASymlinkedIndex(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "bus")
 	v := victim(t, dir)
@@ -75,6 +77,8 @@ func TestAppendIndexLineRefusesASymlinkedIndex(t *testing.T) {
 }
 
 func TestReceiptAppendRefusesASymlinkedReceipts(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "bus")
 	v := victim(t, dir)
@@ -87,7 +91,29 @@ func TestReceiptAppendRefusesASymlinkedReceipts(t *testing.T) {
 	stillLink(t, filepath.Join(root, "from-x", ReceiptsName))
 }
 
+// The lane reader (ReadLaneIndex) used to os.ReadFile its INDEX, which followed a planted
+// symlink and blocked on a planted FIFO (issue #233). It now refuses both, never following
+// and never waiting.
+func TestReadLaneIndexRefusesASymlinkedIndex(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	root := filepath.Join(dir, "bus")
+	v := victimHolding(t, dir, "deadbeef\tfrom-x/2026-note.md\t2026-09-13T00:00:00Z\t-\t-\n")
+	plant(t, v, filepath.Join(root, "from-x", IndexName))
+	_, err := ReadLaneIndex(root, "from-x")
+	if err == nil {
+		t.Fatal("ReadLaneIndex read through a symlinked INDEX and raised nothing")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("the read refusal does not name the kind symlink: %v", err)
+	}
+	unchangedHolding(t, v, "deadbeef\tfrom-x/2026-note.md\t2026-09-13T00:00:00Z\t-\t-\n")
+}
+
 func TestEnsureMergeAttributesRefusesASymlinkedAttributes(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "bus")
 	v := victim(t, dir)
@@ -100,6 +126,8 @@ func TestEnsureMergeAttributesRefusesASymlinkedAttributes(t *testing.T) {
 }
 
 func TestEnsureMergeAttributesFromRefusesASymlinkedAttributes(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "bus")
 	prefix := attributeLines[0] + "\n"
@@ -113,6 +141,8 @@ func TestEnsureMergeAttributesFromRefusesASymlinkedAttributes(t *testing.T) {
 }
 
 func TestWriteResolvedRefusesASymlinkedConflictPath(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "bus")
 	v := victim(t, dir)
@@ -125,6 +155,8 @@ func TestWriteResolvedRefusesASymlinkedConflictPath(t *testing.T) {
 }
 
 func TestAppendIndexSuffixRefusesASymlinkedIndex(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "bus")
 	v := victim(t, dir)
@@ -138,6 +170,8 @@ func TestAppendIndexSuffixRefusesASymlinkedIndex(t *testing.T) {
 }
 
 func TestReplaceLaneFileDoesNotWriteThroughAPlantedTemp(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "bus")
 	v := victim(t, dir)
@@ -158,6 +192,8 @@ func TestReplaceLaneFileDoesNotWriteThroughAPlantedTemp(t *testing.T) {
 // A stranded temporary is still a lane state file's temporary, whatever unique name it was
 // written under: the lane walk must step over it rather than report a stray.
 func TestAStrandedUniqueTempIsStillALaneStateTemp(t *testing.T) {
+	t.Parallel()
+
 	if !isLaneStateTemp(IndexName + TempSuffix) {
 		t.Fatal("the fixed temp name stopped being recognised")
 	}
@@ -179,6 +215,8 @@ func TestAStrandedUniqueTempIsStillALaneStateTemp(t *testing.T) {
 // lane's state files outside the bus with nothing raised. Every component from the bus root
 // down is a component of the path.
 func TestAppendIndexLineRefusesASymlinkedLaneDirectory(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "bus")
 	outside := filepath.Join(dir, "outside")
@@ -200,6 +238,8 @@ func TestAppendIndexLineRefusesASymlinkedLaneDirectory(t *testing.T) {
 }
 
 func TestWriteLaneFileRefusesASymlinkedLaneDirectory(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	root := filepath.Join(dir, "bus")
 	outside := filepath.Join(dir, "outside")

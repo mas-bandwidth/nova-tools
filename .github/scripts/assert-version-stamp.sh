@@ -76,8 +76,9 @@ case "$before$after" in
 esac
 
 # A tag this check could never match is a check that would only ever fail. The match below
-# is whole-token with `=` counted as a separator (nova-sandbox prints version=<tag>), so a
-# tag containing `=` or whitespace can never be that token however the binary prints it.
+# is whole-token with `=` counted as a separator (a version line may carry key=value
+# extras), so a tag containing `=` or whitespace can never be that token however the binary
+# prints it.
 # release-ldflags.sh refuses both before the build; this is the same refusal at the other
 # end of the workflow, where it names itself rather than failing every tool in turn.
 case "$tag" in
@@ -163,8 +164,9 @@ for dir in "$cmddir"/*/; do
 	fi
 
 	# The tag as a WHOLE token, so v0.1 does not pass for v0.11 and a tag appearing inside
-	# a path or a go version does not count. `=` is a separator too: nova-sandbox prints
-	# version=<tag> rather than a bare field.
+	# a path or a go version does not count. `=` is a separator too, so no tag is ever
+	# matched out of the value half of a `key=value` extra (nova-merge's `build=`,
+	# nova-sandbox's `backend=`): every binary now puts the stamp in field two, alone.
 	case " $(printf '%s' "$out" | tr '=' ' ') " in
 	*" $tag "*) ;;
 	*)

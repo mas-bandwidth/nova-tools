@@ -67,6 +67,8 @@ func sortSnapshotBytes(ls [][]byte) {
 // its own namespace, raw and never counted as spend. The decoder's sealed envelopes match
 // the proposal's independently stated envelopes byte for byte.
 func TestCodexCumulativeTokenCountMappingOwedNeverCovered(t *testing.T) {
+	t.Parallel()
+
 	total, last := codexSnapshotMappings(t)
 	d := codexSnapshotA(t, total, last)
 
@@ -95,6 +97,8 @@ func TestCodexCumulativeTokenCountMappingOwedNeverCovered(t *testing.T) {
 // with the ID it derives. Both groups are raw-only: no model is invented, there is no
 // per-model split, and every field of the closed seven-field allowlist is present.
 func TestCodexCumulativeTokenCountMappingRoundTrips(t *testing.T) {
+	t.Parallel()
+
 	total, last := codexSnapshotMappings(t)
 	d := codexSnapshotA(t, total, last)
 	vTotal := records.NewValidator(total.Allowlists())
