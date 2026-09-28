@@ -102,6 +102,8 @@ func Check(out string, opt CheckOptions) (*CheckResult, error) {
 			continue
 		case strings.HasSuffix(name, TempSuffix) && ValidDay(strings.TrimSuffix(name, TempSuffix)):
 			continue
+		case isAtomicTemp(name):
+			continue
 		case strings.HasSuffix(name, FileSuffix) && ValidDay(strings.TrimSuffix(name, FileSuffix)):
 			r.Files++
 			day, findings, err := ReadDayFile(path)
@@ -199,4 +201,26 @@ func ReadNoSpendFile(path string) (map[string]bool, error) {
 		return nil, err
 	}
 	return days, nil
+}
+
+// isAtomicTemp reports whether name is an atomicfile temporary file left behind
+// by an interrupted atomic write: a dotfile with a ".tmp-%08x" suffix.
+func isAtomicTemp(name string) bool {
+	if !strings.HasPrefix(name, ".") {
+		return false
+	}
+	idx := strings.LastIndex(name, ".tmp-")
+	if idx < 0 {
+		return false
+	}
+	hexPart := name[idx+len(".tmp-"):]
+	if len(hexPart) != 8 {
+		return false
+	}
+	for _, c := range hexPart {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
 }

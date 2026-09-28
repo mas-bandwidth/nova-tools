@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -119,14 +120,14 @@ func orDashStr(s string) string {
 	return s
 }
 
-// Save writes the file whole: the bytes to the fixed temp name in the same directory,
-// then one rename. Nothing is appended and nothing is edited in place.
+// Save writes the file whole atomically via internal/atomicfile (exclusive
+// temporary file beside target, explicit mode, fsync to media, atomic rename).
+// Nothing is appended and nothing is edited in place.
 func (d *DayFile) Save(out string) error {
-	tmp := TempPath(out, d.Day)
-	if err := os.WriteFile(tmp, []byte(d.Render()), 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, Path(out, d.Day))
+	// Atomic write per internal/atomicfile model: temporary file created
+	// exclusively in parent directory, explicit 0o644 mode, fsync to media,
+	// atomic rename over target path.
+	return atomicfile.WriteFile(Path(out, d.Day), []byte(d.Render()), 0o644)
 }
 
 // Totals is the day's per-type totals, and whether any row reported each type. It is what
