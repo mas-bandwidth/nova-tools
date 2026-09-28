@@ -431,6 +431,14 @@ func (h *epochProperty) step(a epochAction) {
 			} else if !reflect.DeepEqual(event.Values, sourceEvent.Values) {
 				h.fail("replayed receipt payload differs: %v / %v", event.Values, sourceEvent.Values)
 			}
+			afterImage := memberStoreImage(h.t, c)
+			for key, val := range afterImage {
+				if oldVal, existed := image[key]; !existed || oldVal != val {
+					if !isAllowedEpochPropertyKey(key) {
+						h.fail("store%d action %s wrote unmodeled key %q", i, a.verb, key)
+					}
+				}
+			}
 		}
 	}
 	h.coverage[a.verb+":"+want]++
@@ -442,10 +450,59 @@ func (h *epochProperty) step(a epochAction) {
 	h.verify()
 }
 
+func isAllowedEpochPropertyKey(key string) bool {
+	if key == epochPropertyKey || key == "tables" {
+		return true
+	}
+	for epoch := 1; epoch <= 3; epoch++ {
+		for n := 1; n <= 3; n++ {
+			if key == ntable.MemberKey(epochMember(uint64(epoch), n)) {
+				return true
+			}
+		}
+	}
+	for _, table := range propTables {
+		if key == ntable.DefKey(table) || key == ntable.ChangesKey(table) || key == ntable.RevisionKey(table) || key == ntable.DefKey(table)+":identity" {
+			return true
+		}
+		for epoch := uint64(1); epoch <= 3; epoch++ {
+			p := ntable.EpochPrefix(table, epoch)
+			if key == p+":definition" || key == p+":rows" {
+				return true
+			}
+			for _, row := range []string{"r1", "r2"} {
+				if key == p+":row:"+row {
+					return true
+				}
+				for _, col := range []string{"a", "b"} {
+					if key == p+":cell:"+row+":"+col {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
 func (h *epochProperty) verify() {
 	h.t.Helper()
+	var store0Keys []string
 	for i, c := range h.stores {
 		image := memberStoreImage(h.t, c)
+		storeKeys := make([]string, 0, len(image))
+		for key := range image {
+			if !isAllowedEpochPropertyKey(key) {
+				h.fail("store%d contains unmodeled key %q", i, key)
+			}
+			storeKeys = append(storeKeys, key)
+		}
+		slices.Sort(storeKeys)
+		if i == 0 {
+			store0Keys = storeKeys
+		} else if !slices.Equal(store0Keys, storeKeys) {
+			h.fail("replay keys differ from source: source=%v replay=%v", store0Keys, storeKeys)
+		}
 		historical := map[string]string{}
 		for key, value := range image {
 			for epoch := uint64(1); epoch < h.active; epoch++ {
