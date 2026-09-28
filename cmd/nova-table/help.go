@@ -198,7 +198,7 @@ func printCommandHelp(out io.Writer, c command, fs *flag.FlagSet) {
 				fmt.Fprintln(out, "  "+text)
 			}
 			if i == 1 {
-				fmt.Fprintln(out, "  --seat <name>  use a configured nova-sprint seat")
+				fmt.Fprintln(out, "  --seat <name>  dial as this seat: its seats.tsv row, else the nova-secrets seat of that name")
 			}
 		}
 	}
