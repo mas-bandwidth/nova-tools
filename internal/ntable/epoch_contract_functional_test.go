@@ -300,10 +300,10 @@ func TestTableReceiptPreflightPreventsPartialMoves(t *testing.T) {
 	}
 }
 
-// A task-backed record has one metadata owner for each field. Generic task
-// fields must not forge or erase the table writer's placement pointer: the
-// table detects any forged placement as drift and refuses to move it.
-func TestTaskFieldsCannotForgeTablePlacement(t *testing.T) {
+// Generic table drift detection: external writes forging or tampering with a
+// member's placement pointer are detected by Check and refused by CellMove with
+// ErrDrift (reverting the forged write turns it red on ErrDrift).
+func TestGenericTableDriftDetection(t *testing.T) {
 	t.Parallel()
 	_, c := live(t)
 	ctx := context.Background()
