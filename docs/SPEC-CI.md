@@ -2069,7 +2069,13 @@ was ADDED to `internal/ci/testdata/deleted-tests.txt` in the same change; a
 row that names no deletion of the change is red too. On a pull request the
 checkout is the merge ref and the first parent is dev's tip, so the set is
 exactly what merging the change deletes from dev; in the merge queue the
-same; on dev, a squash's own effect.
+same; on dev, a squash's own effect. On the promotion of dev to main (the
+`pull_request` event with `GITHUB_BASE_REF` main and `GITHUB_HEAD_REF` dev,
+read by `promotionSkip`) the comparison does not run and the run logs a NOTE
+saying why: the first parent is main's tip, so the set would be every
+deletion dev accumulated since the last promotion, each declared in the
+change that made it on dev, where this rule ran; main takes pull requests
+only, so no other event carries a promotion.
 **The mistake it prevents.** A branch rebased with a stale tree that lacks
 files dev gained an hour before — a class test, its allowlist and its controls —
 undoes the fixes they held when it merges. Every check on the merge is green,
@@ -2089,7 +2095,10 @@ a repository it builds: the stale-base squash shape red for the test file and
 the list and silent for a source file, a rename not a deletion, a same-change
 row green, a row naming no deletion red, an old row declaring nothing.
 `TestGuardedByMergeRuleReadsThePath` and
-`TestDeclaredRowsAddedReadsOnlyTheAddedRows` pin the two readers. Every
+`TestDeclaredRowsAddedReadsOnlyTheAddedRows` pin the two readers;
+`TestPromotionSkipReadsTheEvent` pins the promotion shape against its
+reversed witnesses (the same event into dev, a feature branch into main, a
+push, a merge-queue group, no environment). Every
 workflow checks out with `fetch-depth: 2` so the first parent is in every
 checkout;
 a checkout without it is a red run naming the fetch depth, never a pass.

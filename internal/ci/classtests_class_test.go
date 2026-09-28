@@ -31,7 +31,12 @@ func guardedByMergeRule(rel string) bool {
 // and what it declared. For a pull request's merge ref and a merge-queue
 // commit the first parent is the base branch's tip, so Deleted is exactly
 // what merging the change takes away from dev; for a squash on dev it is
-// the squash's effect; for a plain commit, that commit's.
+// the squash's effect; for a plain commit, that commit's. A promotion of dev
+// to main is the one change the comparison does not fit: its first parent is
+// main's tip, so Deleted is every deletion dev accumulated since the last
+// promotion, each already declared in the change that made it on dev; the
+// class test recognises that pull request (promotionSkip) and does not run
+// the comparison on it.
 type mergeDeletions struct {
 	Head, Parent, Subject string
 	// Deleted is every path gone from the tree, renames excluded (-M).
@@ -105,6 +110,23 @@ func firstParent(root string) (string, error) {
 	return parent, nil
 }
 
+// promotionSkip recognises a promotion of dev to main from GitHub's own event
+// environment: GITHUB_EVENT_NAME, GITHUB_BASE_REF and GITHUB_HEAD_REF, as the
+// `test` jobs receive them. It is true exactly for the pull_request event
+// whose base is main and whose head is dev, and the note says why the
+// comparison does not run there: every commit such a merge brings landed
+// through dev's queue, where this rule ran on each change against dev's tip.
+// main takes pull requests only (its ruleset has no merge queue), so no other
+// event carries a promotion. Anything else, an empty environment included, is
+// the ordinary comparison: a pull request into dev, a merge-queue group, a
+// push, a local run.
+func promotionSkip(event, base, head string) (bool, string) {
+	if event != "pull_request" || base != "main" || head != "dev" {
+		return false, ""
+	}
+	return true, "NOTE: pull_request " + head + " -> " + base + " is a promotion: its first parent is main's tip, so the comparison would see every deletion dev accumulated since the last promotion; each of those landed through dev's queue, where this rule ran on the change that made it, so the comparison does not run here"
+}
+
 // declaredRowsAdded reads the `<path> <why>` rows a unified diff of the log
 // adds: the declarations this change makes and no other.
 func declaredRowsAdded(diff string) map[string]string {
@@ -159,7 +181,8 @@ func (m *mergeDeletions) findings() []string {
 // is read from git and compared with what the same change declared, so a
 // squash from a stale base — a tree that lacks files dev had, with nothing
 // in the change saying so — is red on the pull request, in the merge queue
-// and on dev. 2026-09-26: #4346 (rowan/functional-tag) was rebased onto
+// and on dev. On the promotion of dev to main (promotionSkip) the
+// comparison does not run and the run says so. 2026-09-26: #4346 (rowan/functional-tag) was rebased onto
 // #4344 with a tree that lacked the four files #4344 had added (the silent
 // class test, its allowlist, two of its controls) and undid #4344's
 // live-path fixes with them; every check was green, because a rule that is
@@ -173,6 +196,10 @@ func TestNoMergeDeletesATestFileUndeclared(t *testing.T) {
 		if _, why, _ := strings.Cut(row.Text, " "); strings.TrimSpace(why) == "" {
 			t.Errorf("%s: %q carries no why", deletedTestsLogPath, row.Text)
 		}
+	}
+	if skip, note := promotionSkip(os.Getenv("GITHUB_EVENT_NAME"), os.Getenv("GITHUB_BASE_REF"), os.Getenv("GITHUB_HEAD_REF")); skip {
+		t.Log(note)
+		return
 	}
 	m, err := readMergeDeletions(repoTree(t).Root)
 	if err != nil {
@@ -279,6 +306,38 @@ func TestMergeRuleReadsTheDeletionOutOfGit(t *testing.T) {
 	git("commit", "-q", "-m", "gone again")
 	if got := findings(); len(got) != 1 || !strings.Contains(got[0], "deletes b/keep_functional_test.go") {
 		t.Fatalf("an old row: findings = %q; want the deletion red", got)
+	}
+}
+
+// TestPromotionSkipReadsTheEvent pins the one shape that skips the
+// comparison, the promotion pull request from dev to main, against its
+// reversed witnesses: the same event into dev, a feature branch into main, a
+// push carrying the same refs, a merge-queue group (main has none; dev's
+// carries no promotion), and no environment at all.
+func TestPromotionSkipReadsTheEvent(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, event, base, head string
+		skip                    bool
+	}{
+		{"the promotion", "pull_request", "main", "dev", true},
+		{"a pull request into dev from dev", "pull_request", "dev", "dev", false},
+		{"a feature branch into main", "pull_request", "main", "feature", false},
+		{"a push with the promotion's refs", "push", "main", "dev", false},
+		{"a merge-queue group", "merge_group", "", "", false},
+		{"pull_request_target, which no workflow here runs", "pull_request_target", "main", "dev", false},
+		{"no environment", "", "", "", false},
+	} {
+		skip, note := promotionSkip(tc.event, tc.base, tc.head)
+		if skip != tc.skip {
+			t.Errorf("%s: promotionSkip(%q, %q, %q) = %v, want %v", tc.name, tc.event, tc.base, tc.head, skip, tc.skip)
+		}
+		if skip && (!strings.HasPrefix(note, "NOTE: ") || !strings.Contains(note, "dev's queue")) {
+			t.Errorf("%s: note = %q; want a NOTE naming dev's queue as where the rule ran", tc.name, note)
+		}
+		if !skip && note != "" {
+			t.Errorf("%s: note = %q; want none when the comparison runs", tc.name, note)
+		}
 	}
 }
 
