@@ -56,6 +56,7 @@ func TestMain(m *testing.M) {
 		// The seeded bare bus bareBus copies is made under this directory too, so it
 		// is removed with it.
 		barebusRoot = dir
+		sleepBetweenAttempts = func(time.Duration) {}
 		return m.Run()
 	}())
 }
@@ -151,9 +152,6 @@ func cloneBus(t *testing.T, bare string) string {
 	dir := filepath.Join(t.TempDir(), "clone")
 	if out, err := git(filepath.Dir(dir), "clone", "--quiet", bare, dir); err != nil {
 		t.Fatalf("clone: %v %s", err, out)
-	}
-	if out, err := git(dir, "checkout", "-q", "-B", "main"); err != nil {
-		t.Fatalf("checkout main: %v %s", err, out)
 	}
 	return dir
 }

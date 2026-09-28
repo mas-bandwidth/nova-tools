@@ -25,7 +25,7 @@ func TestAGitThatHangsIsKilledAndNamed(t *testing.T) {
 		t.Skip("the fake git is a shell script")
 	}
 	fake := t.TempDir()
-	script := "#!/bin/sh\nsleep 30\n"
+	script := "#!/bin/sh\nexec sleep 30\n"
 	if err := testbin.WriteExecutable(filepath.Join(fake, "git"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
