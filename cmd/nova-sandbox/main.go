@@ -161,15 +161,14 @@ a path from it and an inherited HOME is denied by the wall.
 a toolchain in a user directory is exactly a caller-supplied read-only root.
 
 example:
-  nova-sandbox --read "$PWD/pool/ref/nova-tools@abc123" \
-               --write "$PWD/scratch/jobs/j1" \
-               -- /opt/homebrew/bin/git -C "$PWD/scratch/jobs/j1/repo" status
+  nova-sandbox --read /Users/me/pool/ref/nova-tools@abc123 \
+               --write /Users/me/pool/jobs/j1 \
+               -- /opt/homebrew/bin/git -C /Users/me/pool/jobs/j1/repo status
 
-  mkdir -p "$PWD/scratch/jobs/j1/home"
-  touch "$PWD/scratch/secret.env"
-  HOME="$PWD/scratch/jobs/j1/home" \
-  nova-sandbox probe --write "$PWD/scratch/jobs/j1" \
-               --secret "$PWD/scratch/secret.env"
+  mkdir -p /Users/me/pool/jobs/j1/home
+  HOME=/Users/me/pool/jobs/j1/home \
+  nova-sandbox probe --write /Users/me/pool/jobs/j1 \
+               --secret /Users/me/.config/anthropic/env
 `
 
 // version is empty in every ordinary build and is the one override: a release
