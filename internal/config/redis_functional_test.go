@@ -635,3 +635,83 @@ func TestRefusedMachineCeilingLeavesMachineHashUntouched(t *testing.T) {
 		}
 	}
 }
+
+// TestApplyClearedCoordinatorRefusesCharge: a second apply on the same
+// RedisApplier, after the fleet coordinator key is removed, must refuse a
+// friend with no beat and must not write friend:<f>:desired.
+func TestApplyClearedCoordinatorRefusesCharge(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	ap, c := redisApplier(t)
+	st := seed(t)
+	applyKinds(t, st, ap, "rowan")
+
+	if _, _, err := st.Update(ctx, KindFleet, KindFleet, map[string]string{"coordinator": ""}, "rowan"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Apply(ctx, st, ap, KindFleet, "rowan", false, func(Op) {}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := c.Get(ctx, FleetKey("coordinator")).Result(); err == nil || !errors.Is(err, redis.Nil) || got != "" {
+		t.Fatalf("fleet:coordinator after clear: %q %v", got, err)
+	}
+	before, err := c.HGetAll(ctx, "friend:rowan:desired").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.Update(ctx, KindFriend, "rowan", map[string]string{"slots": "8"}, "rowan"); err != nil {
+		t.Fatal(err)
+	}
+	_, err = Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {})
+	after, aerr := c.HGetAll(ctx, "friend:rowan:desired").Result()
+	if aerr != nil {
+		t.Fatal(aerr)
+	}
+	if err == nil || !errors.Is(err, ErrCeiling) {
+		t.Fatalf("cleared coordinator: got %v, want the no-coordinator refusal", err)
+	}
+	if after["slots"] != before["slots"] || after["machine"] != before["machine"] {
+		t.Fatalf("friend:rowan:desired changed on a refused charge: before %v after %v", before, after)
+	}
+}
+
+// TestApplyReaddedFriendChargesCurrentBeatHost: a friend removed and added
+// again must be charged to the beat host now, not the host cached from the
+// earlier apply.
+func TestApplyReaddedFriendChargesCurrentBeatHost(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	ap, c := redisApplier(t)
+	st := seed(t)
+	if err := c.HSet(ctx, FriendBeatKey("stella"), "host", "hulk", "at", "1790000000000").Err(); err != nil {
+		t.Fatal(err)
+	}
+	applyKinds(t, st, ap, "rowan")
+	if _, err := st.Delete(ctx, KindFriend, "stella", "rowan"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.HSet(ctx, FriendBeatKey("stella"), "host", "studio").Err(); err != nil {
+		t.Fatal(err)
+	}
+	friend, _ := Lookup(KindFriend)
+	row, err := friend.NewRow("stella", map[string]string{"slots": "32", "tiers": "frontier,pro", "roles": "builder,reader"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Insert(ctx, KindFriend, row, "rowan"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := c.HGet(ctx, "friend:stella:desired", "machine").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "studio" {
+		t.Fatalf("re-added stella charged to %q, beat host is studio", got)
+	}
+}

@@ -210,15 +210,14 @@ func (a *RedisApplier) readFriends(ctx context.Context) (map[string]View, int64,
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return nil, 0, fmt.Errorf("redis: read friends: %w", err)
 	}
-	if a.friendHosts == nil {
-		a.friendHosts = make(map[string]string, len(names))
-	}
+	// This read is the whole cache. A name it did not return is no longer a
+	// friend, and a cleared coordinator is empty, not the machine last seen.
+	hosts := make(map[string]string, len(names))
 	for i, f := range names {
-		a.friendHosts[f] = beats[i].Val()
+		hosts[f] = beats[i].Val()
 	}
-	if coord := coordCmd.Val(); coord != "" {
-		a.coordinator = coord
-	}
+	a.friendHosts = hosts
+	a.coordinator = coordCmd.Val()
 	a.coordinatorRead = true
 	views := make(map[string]View, len(names))
 	for i, f := range names {
