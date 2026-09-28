@@ -6,12 +6,11 @@ history) and every registry of the fleet, and it applies that configuration
 into Redis so Redis is always a rebuildable copy. The contract is
 [SPEC-CONFIG.md](../SPEC-CONFIG.md); this page is how to use it.
 
-Glenn drew the boundary on 2026-09-26: "I don't think redis is an appropriate
-place to store non-ephemeral data. It is good as a hot store of data that can
-be rebuilt." So Postgres is the permanent store, Redis is a copy of it, and
-the runtime tools (`nova-friend`, `nova-sprint`) read configuration and never
-write it. History is not configuration: scores, receipts and ledgers stay
-with the tools that write them.
+Redis is a hot store of data that can be rebuilt, not a place for
+non-ephemeral data. Postgres is the permanent store, Redis is a copy of it, and
+runtime tools read configuration and never write it. History is not
+configuration: scores, receipts and ledgers stay with the tools that write
+them.
 
 ## Connecting
 
@@ -49,7 +48,7 @@ The executable transcript is in [TESTS.md](../TESTS.md#nova-config).
 
 ```
 nova-config migrate --pg postgres://nova_config@space:5432/nova
-CONFIG MIGRATE pg=nova_config@space:5432/nova from=0 to=3 applied=3
+CONFIG MIGRATE pg=nova_config@space:5432/nova from=0 to=5 applied=5
 ```
 
 `migrate` creates or upgrades schema `config` from the numbered migrations in
@@ -62,7 +61,7 @@ the `nova_read` role, when it exists, is granted read on every table.
 
 ```
 nova-config status
-CONFIG STATUS pg=nova_config@space:5432/nova schema=3 machine=9 machine_rev=9 friend=4 friend_rev=13 redis=space:6380 machine_applied=9 friend_applied=13
+CONFIG STATUS pg=nova_config@space:5432/nova schema=5 machine=9 machine_rev=9 friend=4 friend_rev=13 redis=space:6380 machine_applied=9 friend_applied=13
 ```
 
 It exits 1 with the next step on stderr when the schema is not there yet
@@ -71,12 +70,11 @@ It exits 1 with the next step on stderr when the schema is not there yet
 
 ## The kinds
 
-The placement rule (Glenn, 2026-09-27): "Make sure that per-machine facts
-actually belong to machines, and global fleet facts belong to the fleet."
-So a machine's row holds what varies per machine, the fleet's one row holds
-what has one value for the whole fleet, a friend's row holds what someone
-decides for her, and the sprint's one row holds who coordinates. Anything
-else is invented and is not a field.
+The placement rule: per-machine facts belong to machines, and global fleet
+facts belong to the fleet. So a machine's row holds what varies per machine, the
+fleet's one row holds what has one value for the whole fleet, a friend's row
+holds what someone decides for her, and the sprint's one row holds who
+coordinates. Anything else is invented and is not a field.
 
 Every kind has the same six verbs, generated from its descriptor, so what is
 true of one is true of all:
@@ -209,7 +207,7 @@ ends `run: nova-config help`.
 ## Apply: Redis as a copy
 
 ```
-nova-config apply --check --as rowan
+nova-config apply --check
 CHECK ADD kind=machine name=hulk
 CHECK ADD kind=machine name=studio
 CONFIG CHECK kind=machine add=2 set=0 remove=0 rev=2 applied=0
@@ -232,14 +230,12 @@ CONFIG APPLY kind=sprint add=0 set=1 remove=0 rev=6 ms=1
 ```
 
 `apply` reads Postgres and writes Redis, one kind at a time: machines, the
-fleet row, friends, the sprint row. For a machine it writes what `capacity
-machine` would (`ns_capacity_machine`, the ceiling from `--slots`; cores and
-memory are never declared, so none are passed) and its registry hash
-`machine:<m>`. For the fleet row, `fleet:store` and `fleet:coordinator`,
-plain keys. For a friend it writes what the retired `nova-sprint capacity
-friend --tiers` and `friend roles` did (`ns_capacity_desired`,
-`ns_friend_roles`; the verbs are gone since 2026-09-27), charging
-her slots to the machine her own beat reports, else to the fleet's
+fleet row, friends, the sprint row. For a machine it writes its machine ceiling
+(`ns_capacity_machine`, the ceiling from `--slots`; cores and memory are never
+declared, so none are passed) and its registry hash `machine:<m>`. For the
+fleet row, `fleet:store` and `fleet:coordinator`, plain keys. For a friend it
+writes her desired capacity and roles (`ns_capacity_desired`, `ns_friend_roles`),
+charging her slots to the machine her own beat reports, else to the fleet's
 coordinator machine; the friend the sprint row names gets the `coordinator`
 role in Redis on top of her row's roles, so a handover (`sprint set
 --coordinator stella`, then `apply`) is two `SET ... changed=roles`, hers

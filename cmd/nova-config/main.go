@@ -62,7 +62,7 @@ usage:
   nova-config kinds
   nova-config migrate [--pg <dsn>] [--print]
   nova-config status [--pg <dsn>] [--redis <addr>]
-  nova-config apply [--pg <dsn>] [--redis <addr>] --as <friend> [--kind <kind>] [--check]
+  nova-config apply [--pg <dsn>] [--redis <addr>] [--as <friend>] [--kind <kind>] [--check]
   nova-config <kind> add <name> --<field> <value> ... --as <friend>
   nova-config <kind> set <name> --<field> <value> ... --as <friend>
   nova-config <kind> remove <name> --as <friend>
@@ -77,11 +77,12 @@ usage:
   nova-config fleet|sprint history
 
 Postgres is the permanent store; Redis is a copy of it that apply rebuilds.
---pg is postgres://user@host:port/db (env NOVA_PG_DSN) with NO password on the
-line: the password is read from the variable NOVA_PG_PASSWORD_ENV names
-(NOVA_PG_PASSWORD when unset). --redis is host:port (env NOVA_SPRINT_REDIS,
-then NOVA_REDIS_ADDR, then the seat's address). --as is the friend making
-the change (env NOVA_FRIEND); every write is a row in config.history with it.
+Connect with export NOVA_PG_DSN=postgres://user@host:5432/db (or --pg) with NO
+password on the line: the password is read from the variable
+NOVA_PG_PASSWORD_ENV names (NOVA_PG_PASSWORD when unset). --redis is host:port
+(env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address). --as is
+the friend making the change (env NOVA_FRIEND); every write is a row in
+config.history with it (omitted on apply --check).
 
 A machine's row is the declared facts something reads (user, seat, slots,
 runners); its name is the tailnet host ssh reaches. Measured facts (os, arch,
@@ -825,9 +826,17 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 		}
 		kinds = []string{*kind}
 	}
-	actor, err := actorName(*as, d.getenv)
-	if err != nil {
-		problems = append(problems, err.Error())
+	var actor string
+	if !*check {
+		var err error
+		actor, err = actorName(*as, d.getenv)
+		if err != nil {
+			problems = append(problems, err.Error())
+		}
+	} else if *as != "" {
+		actor = *as
+	} else if v := d.getenv(envActor); v != "" {
+		actor = v
 	}
 	dsn, err := pgDSN(*pg, d.getenv)
 	if err != nil {
