@@ -2039,10 +2039,12 @@ prints as `STATUS OK quarantine=x\x20lockdown\x3dclear\x20quarantines\x3d0
 since=t: r`, and a grep for `lockdown=clear` matches only the lockdown field.
 A surface name holding a space, which is legal, prints the same way. The
 `<reason>` after `: ` is the free-text tail and keeps its spaces; so does the
-remedy inside a `FUSE FAIL quarantine=` parenthetical, which names the command
-including the box path and the stored name, is not shell-quoted, and will not
-paste back if the path carried a control character — it names the command; it
-is not a command to run blind.
+remedy inside a `FUSE FAIL quarantine=` parenthetical. That remedy is a
+POSIX-shell command: the box path and normalized surface are quoted, and `--` precedes
+the name so a leading dash remains data. For control characters it uses octal
+bytes decoded inside a subshell; a temporary sentinel preserves trailing
+newlines. The command stays one line and addresses the same box and surface.
+The decision to lift remains the caller's: the surface must be safe again.
 
 **`path` is the one exemption, and it is a plain one:** `path` echoes its
 argument unescaped, so a caller must never scan `path` output for grammar.
