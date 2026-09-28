@@ -95,8 +95,8 @@ func TestWorkerHelpMatchesOtherVerbs(t *testing.T) {
 	t.Parallel()
 
 	var otherOut, otherErr bytes.Buffer
-	if code := run([]string{"status", "--help"}, strings.NewReader(""), &otherOut, &otherErr, time.Now().UTC()); code != 2 {
-		t.Fatalf("status --help: exit %d, want 2", code)
+	if code := run([]string{"template", "--help"}, strings.NewReader(""), &otherOut, &otherErr, time.Now().UTC()); code != 2 {
+		t.Fatalf("template --help: exit %d, want 2", code)
 	}
 	var out, errb bytes.Buffer
 	code := run([]string{"worker", "check", "--help"}, strings.NewReader(""), &out, &errb, time.Now().UTC())
@@ -106,7 +106,7 @@ func TestWorkerHelpMatchesOtherVerbs(t *testing.T) {
 	if out.Len() != 0 {
 		t.Errorf("worker check --help: a refusal belongs on stderr, got stdout %q", out.String())
 	}
-	want := strings.Replace(otherErr.String(), "nova-swarm status:", "nova-swarm worker:", 1)
+	want := strings.Replace(otherErr.String(), "nova-swarm template:", "nova-swarm worker:", 1)
 	if got := errb.String(); got != want {
 		t.Errorf("worker check --help: got %q, want the shape every other verb gives, %q", got, want)
 	}

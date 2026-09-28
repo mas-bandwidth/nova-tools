@@ -17,7 +17,6 @@ func TestSuperviseTypedByHandIsRefused(t *testing.T) {
 	t.Parallel()
 
 	pool := filepath.Join(t.TempDir(), "pool")
-	runSwarm(t, "quickstart", "--pool", pool)
 	exit, _, stderr := runSwarm(t, "supervise", "--pool", pool, "--task", "whatever", "--slot", "1", "--nonce", "abc123abc123", "--worker", "w.json")
 	if exit != 2 {
 		t.Errorf("a hand-typed supervise exits %d, want 2", exit)
@@ -31,7 +30,7 @@ func TestSuperviseTypedByHandIsRefused(t *testing.T) {
 func TestAnUnusableInvocationCostsOneLine(t *testing.T) {
 	t.Parallel()
 
-	for _, args := range [][]string{{"tirage"}, {"status", "--pooll", "x"}} {
+	for _, args := range [][]string{{"tirage"}, {"template", "--naame", "x"}} {
 		exit, stdout, stderr := runSwarm(t, args...)
 		if exit != 2 {
 			t.Errorf("`%s` exits %d, want 2", strings.Join(args, " "), exit)

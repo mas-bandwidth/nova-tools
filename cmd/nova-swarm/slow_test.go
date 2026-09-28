@@ -214,37 +214,6 @@ func TestAKilledJobsUsageSaysKilledAndItsRetrySumsOnce(t *testing.T) {
 	mustContain(t, "cost", stdout, "COST OK tasks=2 in=1400 out=600")
 }
 
-// Demanded test 12, the last sentence: `finalize --task` on a job whose group is ALIVE is
-// FINALIZE REFUSED. Finalizing under a live worker would copy a report that is still being
-// written and write a usage row the job has not finished earning.
-func TestFinalizeIsRefusedWhileTheGroupIsAlive(t *testing.T) {
-	t.Parallel()
-	b := newBench(t)
-	id := b.add("a worker that is still working\nFAKE-SLEEP 5\nFAKE-FINDINGS 1\n")
-	refused := make(chan string, 1)
-	go func() {
-		for i := 0; i < 200; i++ {
-			exit, _, stderr := b.swarm("finalize", "--pool", b.pool, "--task", id)
-			if exit == 1 && strings.Contains(stderr, "still alive") {
-				refused <- stderr
-				return
-			}
-			time.Sleep(25 * time.Millisecond)
-		}
-		refused <- ""
-	}()
-	exit, stdout, stderr := b.run()
-	if exit != 0 {
-		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
-	}
-	got := <-refused
-	if got == "" {
-		t.Fatal("`finalize --task` under a live process group is FINALIZE REFUSED, and it never was")
-	}
-	mustContain(t, "the refusal", got, "FINALIZE REFUSED id="+id)
-	mustContain(t, "the refusal", got, "process group is still alive")
-}
-
 // DEMANDED TEST 16 (SPEC-SWARM.md:1350), the dispatcher's half: a worker KILLED with a
 // RESULT.md.tmp on disk ends `RUN KILLED … unpublished=true`, and the tmp file is still
 // there afterwards, UNREAD. A half-written revision is not a report: the machinery says it
@@ -274,31 +243,6 @@ func TestAKilledWorkerLeavesItsUnpublishedRevisionAlone(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(b.pool, "reports", id, "NO-RESULT")); err != nil {
 		t.Errorf("a job that published nothing wants its NO-RESULT marker: %v", err)
 	}
-
-	// THE TRIPWIRE: nothing this tool does opens RESULT.md.tmp. A mode that refuses its
-	// own owner turns any open of it into an error, and triage and `result` go on
-	// working -- which they could not do if either of them read it.
-	if runtime.GOOS != "windows" {
-		if err := os.Chmod(tmp, 0o000); err != nil {
-			t.Fatal(err)
-		}
-		defer func() { _ = os.Chmod(tmp, 0o644) }()
-	}
-	if exit, stdout, stderr = b.swarm("triage", "--pool", b.pool); exit != 0 {
-		t.Fatalf("triage opened something it must not: exit %d\n%s%s", exit, stdout, stderr)
-	}
-	// Two: this job, and the ONE automatic re-queue of it (rule 7), which published nothing
-	// either. A tmp file is not a report for either of them.
-	mustContain(t, "triage", stdout, "reports=0 findings=0")
-	mustContain(t, "triage", stdout, "no_result=2")
-	if strings.Contains(stdout, "TRIAGE FINDING") {
-		t.Errorf("a revision that was never published holds no findings for a page:\n%s", stdout)
-	}
-	exit, stdout, stderr = b.swarm("result", "--pool", b.pool, "--id", id)
-	if exit != 1 {
-		t.Errorf("`result --id` on a job that published nothing is REFUSED, got exit %d:\n%s%s", exit, stdout, stderr)
-	}
-	mustContain(t, "the refusal", stderr, "NO-RESULT")
 }
 
 // SLOW: 1.0 s on hetzner at dev 64b9bec48, a deadline/wedge/wall bound proved by waiting it out.

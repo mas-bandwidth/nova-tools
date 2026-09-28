@@ -159,7 +159,7 @@ func TestDoctorOKWhenTheLocalBinaryIsAbsent(t *testing.T) {
 	}
 }
 
-// THE LAUNCH SEAM. `run` and `native` are the verbs that start a card, and the preflight is
+// THE LAUNCH SEAM. `batch` and `native` are the verbs that start a card, and the preflight is
 // what main calls before the dispatcher: a shadowed pair stops the launch with exit 2
 // before anything is spent. A verb that starts nothing is untouched.
 func TestPreflightRefusesALaunchUnderAShadowedBinary(t *testing.T) {
@@ -171,7 +171,7 @@ func TestPreflightRefusesALaunchUnderAShadowedBinary(t *testing.T) {
 		func(string) (string, error) { return "/opt/go/bin/nova-swarm", nil }, "/home/me")
 
 	var errOut bytes.Buffer
-	code, stop := preflightDoctor([]string{"run", "--pool", "p", "--workers", "1"}, &errOut)
+	code, stop := preflightDoctor([]string{"native", "--dir", "d"}, &errOut)
 	if !stop || code != 2 {
 		t.Fatalf("preflight(exit=%d, stop=%v), want (2, true)", code, stop)
 	}
@@ -190,8 +190,8 @@ func TestPreflightLeavesNonLaunchVerbsAlone(t *testing.T) {
 		func(string) (string, error) { return "/opt/go/bin/nova-swarm", nil }, "/home/me")
 
 	var errOut bytes.Buffer
-	if code, stop := preflightDoctor([]string{"status", "--pool", "p"}, &errOut); stop || code != 0 {
-		t.Fatalf("status: preflight(exit=%d, stop=%v), want (0, false)", code, stop)
+	if code, stop := preflightDoctor([]string{"template", "--name", "read-pr"}, &errOut); stop || code != 0 {
+		t.Fatalf("template: preflight(exit=%d, stop=%v), want (0, false)", code, stop)
 	}
 	if errOut.Len() != 0 {
 		t.Errorf("a verb that starts nothing was refused: %q", errOut.String())

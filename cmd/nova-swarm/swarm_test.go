@@ -628,16 +628,3 @@ func (b *bench) usageRow(id string) map[string]string {
 	}
 	return row
 }
-
-// triage accepts --usage and exits 0.
-func TestTriageAcceptsUsageFlag(t *testing.T) {
-	t.Parallel()
-
-	b := newBench(t)
-	usageFile := filepath.Join(t.TempDir(), "usage.tsv")
-	exit, stdout, stderr := b.swarm("triage", "--pool", b.pool, "--usage", usageFile)
-	if exit != 0 {
-		t.Fatalf("triage with --usage exited %d: %s%s", exit, stdout, stderr)
-	}
-	mustContain(t, "triage", stdout, "TRIAGE BATCH ")
-}

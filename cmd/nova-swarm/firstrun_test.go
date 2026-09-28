@@ -196,8 +196,8 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 	// Both commands are the point of the section: quickstart makes the pool and
 	// names the next moves, status reports it empty. A transcript that has lost
 	// one of them still matches line for line and is still short of a first run.
-	if len(steps) != 2 {
-		t.Errorf("the `### First run` block runs %d commands, want 2: quickstart and status", len(steps))
+	if len(steps) != 1 {
+		t.Errorf("the `### First run` block runs %d commands, want 1: template", len(steps))
 	}
 	t.Chdir(t.TempDir())
 	for _, p := range onboarding.Execute(steps, runDocumentedSwarm(t)) {
@@ -229,8 +229,7 @@ func runDocumentedSwarm(t *testing.T) onboarding.Runner {
 
 // TestTheCommandReferenceFirstRunIsWhatTheToolPrints executes docs/CLI.md's
 // `### First run` block the same way: the reference is a document a stranger
-// pastes from, and its two commands (quickstart, then status) are run against a
-// pool this test makes; the documented `./pool` is that directory's spelling.
+// pastes from, and its one command (template) is run.
 func TestTheCommandReferenceFirstRunIsWhatTheToolPrints(t *testing.T) {
 	t.Parallel()
 
@@ -246,8 +245,8 @@ func TestTheCommandReferenceFirstRunIsWhatTheToolPrints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(steps) != 2 {
-		t.Fatalf("the `### First run` block of docs/CLI.md runs %d commands, want 2: quickstart and status", len(steps))
+	if len(steps) != 1 {
+		t.Fatalf("the `### First run` block of docs/CLI.md runs %d commands, want 1: template", len(steps))
 	}
 	pool := filepath.Join(t.TempDir(), "pool")
 	for i := range steps {
@@ -260,8 +259,7 @@ func TestTheCommandReferenceFirstRunIsWhatTheToolPrints(t *testing.T) {
 
 // TestUsageBannerExamplesRunThroughTheComparator: the banner's `example:` block
 // is pasted top to bottom by a stranger, so each line is run, in order, through
-// the one comparator. quickstart and status are docs/CLI.md's `### First run`
-// sitting and are compared against it; template --name read-pr prints a
+// the one comparator. template --name read-pr prints a
 // document, and is compared against the template package swarm holds.
 func TestUsageBannerExamplesRunThroughTheComparator(t *testing.T) {
 	t.Parallel()
@@ -286,8 +284,6 @@ func TestUsageBannerExamplesRunThroughTheComparator(t *testing.T) {
 	// otherwise leave this test running less than the stranger pastes.
 	linesOfTheBanner := []string{
 		"nova-swarm template --name read-pr",
-		"nova-swarm quickstart --pool ./pool",
-		"nova-swarm status --pool ./pool --max 20",
 	}
 	got := examples(t)
 	if strings.Join(got, "\n") != strings.Join(linesOfTheBanner, "\n") {

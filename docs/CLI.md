@@ -713,30 +713,23 @@ usage:
   nova-swarm batch     --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
   nova-swarm batch     --id <id> --cards <file> --deadline <seconds> --root <dir> --tokens <n>|unmetered (--runner <cmd> | --harness <path> --slots-store <dir> --owner <name>) [--idle <seconds>] [--slots <lo>-<hi>] [--then <command>] [--benches <file> --bench <name>[,<name>...]]
                        (without --runner, each card runs through nova-swarm native, and --slots-store <dir> --owner <name> are required)
-  nova-swarm status    --pool <dir> [--slots-store <dir> --owner <name>] [--max <n>]
-  nova-swarm stop      --pool <dir>
-   nova-swarm triage    --pool <dir> [--batch <id>] [--since <stamp>] [--all] [--no-state] [--max <n>] [--owed <file>] [--usage <file>] [--decide [--floor <f>] [--key-env <var>] [--base-url <url>]]
-  nova-swarm result    --pool <dir> --id <job>
   nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
   nova-swarm lint      --card <file> [--typed] [--trust <file>] [--lineup <file>] [--max <n>] | --fleet <file> [--max <n>] | --rules
                        (--fleet lints a launcher script against the coordinator's /bin/bash 3.2: shebang, bash-4 builtins, unquoted expansions)
   nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|read|fix|text|replay|drift|tone|models.tsv
-  nova-swarm finalize  --pool <dir> --task <id>
-  nova-swarm quickstart --pool <dir>
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
-   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--events-store <host:port>]
-   nova-swarm route     --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]
-   nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
-   nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>] [--kind <kind>]
-   nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]
+  nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--events-store <host:port>]
+  nova-swarm route     --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]
+  nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
+  nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>] [--kind <kind>]
+  nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]
                        (a lease whose holder is still RUNNING is KEPT: SLOTS KEPT, live=<n>, exit 2.
                         --force frees it anyway and can oversubscribe the bench: an operator's act,
                         never a card's and never a manager's default)
-   nova-swarm slots list --store <dir>
-   nova-swarm worker    check <description.json> [--env] [--max <n>]
+  nova-swarm slots list --store <dir>
+  nova-swarm worker    check <description.json> [--env] [--max <n>]
 
-exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a finalize of a job whose group is alive, a triage --batch of
-an id no sidecar carries, a result --id that is not in the pool; 2 could not run:
+exit codes: 0 the verb ran and passed; 1 the verb ran and said NO; 2 could not run:
 a missing flag, an unreadable pool or worker description, a key file that is
 absent or empty, a bad invocation.
 
@@ -763,52 +756,61 @@ Every listing is a cap and a count: --max, default 20, 0 for all, one MORE line
 naming the remedy. The counts are the truth about the POOL,
 never about the output.
 
-stop stops new admissions and drains workers already running; it does not kill or
-cancel them, including a retry that already started.
-
 example:
   nova-swarm template --name read-pr
-  nova-swarm quickstart --pool ./pool
-  nova-swarm status --pool ./pool --max 20
 ```
 
 ### First run
 
-`quickstart` initializes the pool directory structure, and `status` reports the pool counts:
+`template` prints a card template:
 
 ```
-$ nova-swarm quickstart --pool ./pool
-QUICKSTART OK pool=./pool pending=0 next=add,run,triage
-QUICKSTART NOTE a task is a file: nova-swarm add --pool ./pool --task <file> --files <n> --tokens <n>
-QUICKSTART NOTE a worker description says whose model runs: nova-swarm run --pool ./pool --workers <n> --hours <h> --worker <file>
-QUICKSTART NOTE the conditions are worth more than the model: nova-swarm template --name read-pr
+$ nova-swarm template --name read-pr
+read-pr — read one pull request against the rules
 
-$ nova-swarm status --pool ./pool --max 20
-STATUS OK pending=0 running=0 done=0 failed=0 slots=0/0 quarantined=0
-```
+1. READ THE PR BODY'S OWED LIST FIRST, before reading any code, and for every
+   finding you report, say whether it is already on that list. A finding that
+   is already owed is marked `dup:` and is not a new finding.
+   [batch 1: 25 of 67 findings were duplicates of the owed list]
+2. QUOTE EVERY RULE VERBATIM, with `file:line`. Never paraphrase a rule from
+   memory, and never assert a rule you did not open.
+   [batch 1: 5 of 67 findings were wrong, each a paraphrase]
+3. APPEND EACH FINDING TO RESULT.md THE MOMENT IT EXISTS. Not at the end.
+   You may be killed at your deadline; what is on disk is what you found.
+4. A FILE BUDGET: read at most <n> files (the task's --files). When the budget
+   is spent, write what you have and stop. Say in RESULT.md which files you
+   did not open.
+   [batch 3: with a budget, 2 of 3 tasks complete; without, 0 of 3]
+5. A RESULT.md CONTAINING ONLY A PLAN IS A FAILED TASK. The plan belongs at
+   the top, before the work; the findings are the work. A finished read that
+   found nothing is NOT a failed task: write the `## Head` with `findings: 0`.
+   Never report a finding to have something to report.
+6. If a board was supplied, check it before reporting: a card that already names
+   this is a `dup:`. Do not search for an unspecified board.
+7. A SEVERITY FLOOR: emit only findings at or above `HIGH`. A finding below the
+   floor is not emitted at all. State the floor in RESULT.md's `## Head`
+   paragraph as `floor: HIGH`, and mark each emitted finding with its
+   severity. The floor decides which findings are emitted, not how they are
+   written: every emitted finding still quotes its rule verbatim with `file:line`.
 
-### Living verbs run cold
+Keep RESULT.md concise: omit progress narration, praise, repeated task text, and a
+separate summary. Each finding keeps its proof in compact form: severity, `file:line`,
+the exact quoted rule, the fix, and `dup:` status when applicable. Retain every valid
+finding, its context and evidence, and any coverage limitation; do not drop context or
+evidence by default. Brevity is a soft target: never hard-truncate findings or proof; if
+the report overflows, preserve the proof and say so. Preserve the complete RESULT.md
+shape and its mandatory `## Head`, `## Findings`, `## Per item`, `## Gates`,
+`## Left owed`, and `## One line` sections.
+In Gates, distinguish source checks from tests and report-writing commands.
+Mark only checks actually performed as pass; no tests run does not mean no commands run.
 
-One example per living verb run cold:
-
-```
-nova-swarm version
-nova-swarm doctor
-nova-swarm batch --pool ./pool --tasks ./tasks --files 5 --tokens unmetered
-nova-swarm status --pool ./pool
-nova-swarm stop --pool ./pool
-nova-swarm triage --pool ./pool
-nova-swarm result --pool ./pool --id job-1
-nova-swarm verify --result ./RESULT.md --contract "RESULT: ./RESULT.md" --label card-1
-nova-swarm lint --rules
-nova-swarm template --name read-pr
-nova-swarm finalize --pool ./pool --task job-1
-nova-swarm quickstart --pool ./pool
-nova-swarm profile --jobs "jobs/*"
-nova-swarm native --harness ./fakeharness --model mock/model --card ./card.md --slot ./slot --root ./root --deadline 30s --tokens unmetered
-nova-swarm route --card ./card.md --routes ./routes.tsv
-nova-swarm slots list --store ./slots
-nova-swarm worker check ./worker.json
+BOUND THE REPORT (issue #74): findings only. No narration of the clone, no
+restated task, no praise, no summary. One line per finding: `file:line`, the
+rule in twelve words, the severity, and the fix in one clause. Keep RESULT.md
+under 40 lines and every line under 300 characters, and no pipe inside backticks:
+a `|` in a quote broke the table grammar twice (D12), so quote the rule without
+it. Put the verdict line last. When there is nothing to report, write
+`findings: 0`.
 ```
 
 ### The harness contract
@@ -830,7 +832,7 @@ hundred lines of Go, and the whole test suite runs against it with no provider, 
 and no key worth anything. It is the shortest way to see the contract, and to test a pool
 of your own before a real model touches it.
 
-**`native` takes no bench slot lease (#3877).** A bench's capacity is one number,
+**`native` takes directory leases (`.lease`, `.slot-lease`), but no bench slot lease (#3877).** A bench's capacity is one number,
 `bench:<b>:desired` in Redis, and the one place a card is admitted or refused against it
 is the dealer: a card beyond it stays queued and nothing is written on the bench. `native`
 reads no slot store and writes none, so a bench with no `~/nova-bench/slots` runs a dealt
@@ -851,15 +853,6 @@ toolchain roots on the wall's argv, read-only and skipped when one is not there:
 **Deadline and process group.** The harness runs as the leader of its own process group. At
 `--deadline` or on `SIGTERM`, the machinery reaps the entire process group, writes usage,
 and records the outcome.
-
-The six pool verbs (`status`, `stop`, `triage`, `result`, `finalize`, `quickstart`) read a pool directory
-nothing fills since the dispatcher was removed. On an empty pool, each operates deterministically:
-`status` prints `STATUS OK pending=0 running=0 done=0 failed=0 slots=0/0 quarantined=0` (exit 0);
-`stop` writes `<pool>/stop` and prints `STOP OK pool=<dir> running=0` (exit 0);
-`triage` writes an empty page and prints `TRIAGE OK folded=0 template=0 malformed=0 skipped=0 items=0 red=0 green=0 notdone=0 page=<path>` (exit 0; or exit 1 under `--batch <id>`);
-`result` reports `RESULT REFUSED: no task <job> in <dir>` (exit 1);
-`finalize` reports `FINALIZE REFUSED id=<id>: no such task in <dir>` (exit 1);
-`quickstart` initializes the directory structure and prints `QUICKSTART OK pool=<dir> pending=0 next=add,run,triage` (exit 0).
 
 ## nova-sandbox
 

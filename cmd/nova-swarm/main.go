@@ -49,31 +49,24 @@ usage:
   nova-swarm batch     --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
   nova-swarm batch     --id <id> --cards <file> --deadline <seconds> --root <dir> --tokens <n>|unmetered (--runner <cmd> | --harness <path> --slots-store <dir> --owner <name>) [--idle <seconds>] [--slots <lo>-<hi>] [--then <command>] [--benches <file> --bench <name>[,<name>...]]
                        (without --runner, each card runs through nova-swarm native, and --slots-store <dir> --owner <name> are required)
-  nova-swarm status    --pool <dir> [--slots-store <dir> --owner <name>] [--max <n>]
-  nova-swarm stop      --pool <dir>
-   nova-swarm triage    --pool <dir> [--batch <id>] [--since <stamp>] [--all] [--no-state] [--max <n>] [--owed <file>] [--usage <file>] [--decide [--floor <f>] [--key-env <var>] [--base-url <url>]]
-  nova-swarm result    --pool <dir> --id <job>
   nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
   nova-swarm lint      --card <file> [--typed] [--trust <file>] [--lineup <file>] [--max <n>] | --fleet <file> [--max <n>] | --rules
                        (--fleet lints a launcher script against the coordinator's /bin/bash 3.2: shebang, bash-4 builtins, unquoted expansions)
   nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|read|fix|text|replay|drift|tone|models.tsv
-  nova-swarm finalize  --pool <dir> --task <id>
-  nova-swarm quickstart --pool <dir>
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
-   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--events-store <host:port>]
-   nova-swarm route     --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]
-   nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
-   nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>] [--kind <kind>]
-   nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]
+  nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--events-store <host:port>]
+  nova-swarm route     --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]
+  nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
+  nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>] [--kind <kind>]
+  nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]
                        (a lease whose holder is still RUNNING is KEPT: SLOTS KEPT, live=<n>, exit 2.
                         --force frees it anyway and can oversubscribe the bench: an operator's act,
                         never a card's and never a manager's default)
-   nova-swarm slots list --store <dir>
-   nova-swarm worker    check <description.json> [--env] [--max <n>]
+  nova-swarm slots list --store <dir>
+  nova-swarm worker    check <description.json> [--env] [--max <n>]
 
-exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a finalize of a job whose group is alive, a triage --batch of
-an id no sidecar carries, a result --id that is not in the pool; 2 could not run:
-a missing flag, an unreadable pool or worker description, a key file that is
+exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a verification that failed, a lint that found a defect; 2 could not run:
+a missing flag, an unreadable worker description, a key file that is
 absent or empty, a bad invocation.
 
 NO GUESSED ANYTHING. There is no default pool, no default worker description, no
@@ -95,17 +88,8 @@ the gh configuration are in neither list and the kernel denies them.
 A command that runs outside the wall and dies
 inside it is missing a read_roots entry.
 
-Every listing is a cap and a count: --max, default 20, 0 for all, one MORE line
-naming the remedy. The counts are the truth about the POOL,
-never about the output.
-
-stop stops new admissions and drains workers already running; it does not kill or
-cancel them, including a retry that already started.
-
 example:
   nova-swarm template --name read-pr
-  nova-swarm quickstart --pool ./pool
-  nova-swarm status --pool ./pool --max 20
 `
 
 // refuse is what an unusable invocation costs: ONE line naming what was wrong and the door
@@ -134,7 +118,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return refuse(stderr, "", err.Error())
 	}
 	if len(args) == 0 {
-		return refuse(stderr, "", "no verb given; `status --pool <dir>` is the one that only looks")
+		return refuse(stderr, "", "no verb given; `template --name read-pr` is the one that only looks")
 	}
 	cmd, rest := args[0], args[1:]
 	switch cmd {
@@ -147,24 +131,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return cmdDoctor(rest, stdout, stderr)
 	case "batch":
 		return cmdBatch(rest, stdout, stderr, now)
-	case "status":
-		return cmdStatus(rest, stdout, stderr, now)
-	case "stop":
-		return cmdStop(rest, stdout, stderr)
-	case "triage":
-		return cmdTriage(rest, stdout, stderr, now)
-	case "result":
-		return cmdResult(rest, stdout, stderr)
 	case "verify":
 		return cmdVerify(rest, stdout, stderr)
 	case "lint":
 		return cmdLint(rest, stdout, stderr)
 	case "template":
 		return cmdTemplate(rest, stdout, stderr)
-	case "finalize":
-		return cmdFinalize(rest, stdout, stderr, now)
-	case "quickstart":
-		return cmdQuickstart(rest, stdout, stderr)
 	case "native":
 		return cmdNative(rest, stdout, stderr)
 	case "route":
@@ -322,10 +294,7 @@ func parseInt(s string) (int, error) {
 func openPool(verb, dir string, stderr io.Writer) (*swarm.Pool, bool) {
 	p, err := swarm.OpenPool(dir)
 	if err != nil {
-		// A refusal that offers a recovery offers one that WORKS: `quickstart` is the verb
-		// that makes a pool, and the audit's first stumble was a missing pool that named no
-		// remedy at all (2026-09-11).
-		fmt.Fprintf(stderr, "nova-swarm %s: %s; the verb that makes one: nova-swarm quickstart --pool %s\n",
+		fmt.Fprintf(stderr, "nova-swarm %s: %s; mkdir -p %s\n",
 			verb, oneline.Err(err), oneline.Escape(dir))
 		return nil, false
 	}
@@ -652,173 +621,6 @@ func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle, ma
 	})
 }
 
-func cmdStatus(args []string, stdout, stderr io.Writer, now time.Time) int {
-	f := newFlags("status")
-	pool := f.fs.String("pool", "", "")
-	max := maxFlag(f.fs)
-	slotsStore := f.fs.String("slots-store", "", "")
-	owner := f.fs.String("owner", "", "")
-	if !f.parse(args, stderr) {
-		return 2
-	}
-	f.wantMax(*max)
-	f.want(*pool, "pool", "the directory that holds this pool's tasks")
-	if *slotsStore != "" {
-		f.want(*owner, "owner", "whose bench slot share to report; it is required with --slots-store")
-	} else if *owner != "" {
-		f.add("--owner wants --slots-store: without a store there is no bench share to report")
-	}
-	if f.refused(stderr) {
-		return 2
-	}
-	p, ok := openPool("status", *pool, stderr)
-	if !ok {
-		return 2
-	}
-	counts := map[string]int{}
-	list := bounded.Capped(stdout, *max, "STATUS", "task", "nova-swarm status --pool "+*pool+" --max 0")
-	for _, state := range []string{swarm.Running, swarm.Pending, swarm.Done, swarm.Failed} {
-		tasks, err := p.List(state)
-		if err != nil {
-			fmt.Fprintf(stderr, "nova-swarm status: %s could not be read: %s\n", oneline.Field(state), oneline.Err(err))
-			return 2
-		}
-		counts[state] = len(tasks)
-		for _, sc := range tasks {
-			list.Line(fmt.Sprintf("STATUS TASK id=%s state=%s slot=%s for=%s tail=%s",
-				oneline.Field(sc.ID), oneline.Field(state), oneline.Field(slotWord(sc)),
-				oneline.Field(forWord(sc, now)), oneline.Escape(oneline.Cap(tail(p, sc), oneline.TailBytes))))
-		}
-	}
-	list.More()
-	numbers, bad, _ := p.SlotNumbers()
-	quarantined := 0
-	for _, n := range numbers {
-		if d := p.Decide(n); d.Kind == swarm.DecideQuarantine {
-			quarantined++
-		}
-	}
-	quarantined += len(bad)
-	if *slotsStore != "" {
-		held, share, serr := swarm.SlotHoldings(*slotsStore, *owner, now)
-		if serr != nil {
-			fmt.Fprintf(stderr, "nova-swarm status: the slot store could not be read: %s\n", oneline.Err(serr))
-			return 2
-		}
-		fmt.Fprintf(stdout, "STATUS SLOTS owner=%s held=%d share=%d\n", oneline.Field(*owner), held, share)
-	}
-	fmt.Fprintf(stdout, "STATUS OK pending=%d running=%d done=%d failed=%d slots=%d/%d quarantined=%d\n",
-		counts[swarm.Pending], counts[swarm.Running], counts[swarm.Done], counts[swarm.Failed],
-		len(numbers), len(numbers), quarantined)
-	return 0
-}
-
-// tail is the ONE line a status entry carries about what a worker is doing. The prototype
-// tailed a log file, which means a log line's content reached a report unescaped and
-// unbounded; here it is the report's own heading, one line, capped.
-func tail(p *swarm.Pool, sc swarm.Sidecar) string {
-	raw, _, err := p.ReportBytes(sc)
-	if err != nil {
-		return "-"
-	}
-	report := swarm.ParseReport(raw)
-	if report.Heading != "" {
-		return report.Heading
-	}
-	return report.Class
-}
-
-func slotWord(sc swarm.Sidecar) string {
-	if sc.Slot == 0 {
-		return "-"
-	}
-	return fmt.Sprint(sc.Slot)
-}
-
-func forWord(sc swarm.Sidecar, now time.Time) string {
-	if sc.Started == "" {
-		return "-"
-	}
-	started, err := time.Parse(time.RFC3339, sc.Started)
-	if err != nil {
-		return "-"
-	}
-	return now.Sub(started).Round(time.Second).String()
-}
-
-func cmdStop(args []string, stdout, stderr io.Writer) int {
-	f := newFlags("stop")
-	pool := f.fs.String("pool", "", "")
-	if !f.parse(args, stderr) {
-		return 2
-	}
-	f.want(*pool, "pool", "the directory that holds this pool's tasks")
-	if f.refused(stderr) {
-		return 2
-	}
-	p, ok := openPool("stop", *pool, stderr)
-	if !ok {
-		return 2
-	}
-	if err := os.WriteFile(p.Path("stop"), []byte("stop\n"), 0o644); err != nil {
-		fmt.Fprintf(stderr, "nova-swarm stop: the stop file could not be written: %s\n", oneline.Err(err))
-		return 2
-	}
-	running, _ := p.List(swarm.Running)
-	fmt.Fprintf(stdout, "STOP OK pool=%s running=%d\n", oneline.Field(p.Dir), len(running))
-	return 0
-}
-
-func cmdTriage(args []string, stdout, stderr io.Writer, now time.Time) int {
-	f := newFlags("triage")
-	pool := f.fs.String("pool", "", "")
-	batch := f.fs.String("batch", "", "")
-	since := f.fs.String("since", "", "")
-	all := f.fs.Bool("all", false, "")
-	noState := f.fs.Bool("no-state", false, "")
-	owed := f.fs.String("owed", "", "")
-	decide := f.fs.Bool("decide", false, "")
-	floor := f.fs.Float64("floor", swarm.DefaultDecideFloor, "")
-	keyEnv := f.fs.String("key-env", "", "")
-	baseURL := f.fs.String("base-url", "", "")
-	usage := f.fs.String("usage", "", "")
-	max := maxFlag(f.fs)
-	if !f.parse(args, stderr) {
-		return 2
-	}
-	f.wantMax(*max)
-	f.want(*pool, "pool", "the directory that holds this pool's tasks")
-	if *decide && (*floor < 0 || *floor > 1) {
-		f.add(fmt.Sprintf("--floor is a confidence between 0 and 1, got %s; 0.9 is how a caller says a suggestion must be sure before it is printed as a decision", oneline.Field(strconv.FormatFloat(*floor, 'g', -1, 64))))
-	}
-	if f.refused(stderr) {
-		return 2
-	}
-	p, ok := openPool("triage", *pool, stderr)
-	if !ok {
-		return 2
-	}
-	// RULE 1's SECOND HALF (SPEC-SWARM.md:80): triage "counts a finding that matches an
-	// owed item and is not marked `dup:` as `duplicate`". Without this flag the match was
-	// dead code -- the field was read and nothing ever assigned it.
-	var owedList []string
-	if *owed != "" {
-		items, err := swarm.ReadOwed(*owed)
-		if err != nil {
-			fmt.Fprintf(stderr, "nova-swarm triage: --owed wants a readable file of the items this pull request already owes, one per line or as `- ` bullets: %s\n", oneline.Err(err))
-			return 2
-		}
-		owedList = items
-	}
-	return swarm.Triage(swarm.TriageInput{
-		Pool: p, Batch: *batch, Since: *since, All: *all, NoState: *noState, Max: *max,
-		Owed:   owedList,
-		Decide: *decide, Floor: *floor, KeyEnv: *keyEnv, BaseURL: *baseURL,
-		UsagePath: *usage,
-		Stdout:    stdout, Stderr: stderr, Now: func() time.Time { return now },
-	})
-}
-
 func cmdVerify(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("verify")
 	result := f.fs.String("result", "", "")
@@ -902,25 +704,6 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func cmdResult(args []string, stdout, stderr io.Writer) int {
-	f := newFlags("result")
-	pool := f.fs.String("pool", "", "")
-	id := f.fs.String("id", "", "")
-	if !f.parse(args, stderr) {
-		return 2
-	}
-	f.want(*pool, "pool", "the directory that holds this pool's tasks")
-	f.want(*id, "id", "the job id whose report you want printed verbatim")
-	if f.refused(stderr) {
-		return 2
-	}
-	p, ok := openPool("result", *pool, stderr)
-	if !ok {
-		return 2
-	}
-	return swarm.ResultByID(p, *id, stdout, stderr)
-}
-
 func cmdTemplate(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("template")
 	name := f.fs.String("name", "", "")
@@ -958,61 +741,6 @@ func cmdProfile(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	return swarm.ProfileJobs(*jobs, stdout, stderr)
-}
-
-func cmdFinalize(args []string, stdout, stderr io.Writer, now time.Time) int {
-	f := newFlags("finalize")
-	pool := f.fs.String("pool", "", "")
-	task := f.fs.String("task", "", "")
-	if !f.parse(args, stderr) {
-		return 2
-	}
-	f.want(*pool, "pool", "the directory that holds this pool's tasks")
-	f.want(*task, "task", "the id of the ended job whose runner died before finalizing it")
-	if f.refused(stderr) {
-		return 2
-	}
-	p, ok := openPool("finalize", *pool, stderr)
-	if !ok {
-		return 2
-	}
-	code, line := swarm.FinalizeByHand(p, *task, now)
-	if code == 0 {
-		fmt.Fprintln(stdout, line)
-	} else {
-		fmt.Fprintln(stderr, line)
-	}
-	return code
-}
-
-// cmdQuickstart is ONBOARDING point 4: one line needing nothing the caller has to invent.
-// It makes the pool's structure under a directory the caller named and says what the three
-// next commands are -- and it writes no task, because a verb that queued work nobody asked
-// for would be a first run with a side effect.
-func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
-	f := newFlags("quickstart")
-	pool := f.fs.String("pool", "", "")
-	if !f.parse(args, stderr) {
-		return 2
-	}
-	f.want(*pool, "pool", "the directory this pool lives in; it is made if it is missing")
-	if f.refused(stderr) {
-		return 2
-	}
-	if err := os.MkdirAll(*pool, 0o755); err != nil {
-		fmt.Fprintf(stderr, "nova-swarm quickstart: --pool wants a directory that can be made: %s\n", oneline.Err(err))
-		return 2
-	}
-	p, ok := openPool("quickstart", *pool, stderr)
-	if !ok {
-		return 2
-	}
-	pending, _ := p.List(swarm.Pending)
-	fmt.Fprintf(stdout, "QUICKSTART OK pool=%s pending=%d next=add,run,triage\n", oneline.Field(p.Dir), len(pending))
-	fmt.Fprintf(stdout, "QUICKSTART NOTE a task is a file: nova-swarm add --pool %s --task <file> --files <n> --tokens <n>\n", oneline.Escape(p.Dir))
-	fmt.Fprintf(stdout, "QUICKSTART NOTE a worker description says whose model runs: nova-swarm run --pool %s --workers <n> --hours <h> --worker <file>\n", oneline.Escape(p.Dir))
-	fmt.Fprintf(stdout, "QUICKSTART NOTE the conditions are worth more than the model: nova-swarm template --name read-pr\n")
-	return 0
 }
 
 func cmdNative(args []string, stdout, stderr io.Writer) int {

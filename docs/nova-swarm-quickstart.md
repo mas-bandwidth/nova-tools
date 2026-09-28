@@ -1,7 +1,7 @@
 # nova-swarm Quickstart
 
 `nova-swarm` coordinates bounded, isolated worker execution across multiple LLM harnesses and models. Slices 1–4 provide:
-1. **Per-job profiles and preimages** (`nova-swarm supervise`, `SPEC-SWARM-PROFILES.md`)
+1. **Per-job profiles and preimages** (`nova-swarm profile`, `SPEC-SWARM-PROFILES.md`)
 2. **Native execution** bound to a frozen configuration (`nova-swarm native`, issue #296)
 3. **Result contract and receipts** (`nova-swarm verify`, issue #241)
 4. **Batch scatter, wait, gather** (`nova-swarm batch --cards`, issue #353)
@@ -11,13 +11,6 @@
 ## 1. Native Run (`nova-swarm native`)
 
 `nova-swarm native` executes one frozen run configuration against a native harness binary (e.g. `opencode`). The configuration is verified before anything is started: the harness binary must exist and be executable, the model must have a valid `provider/model` prefix, the slot directory must reside strictly under the configured root, and any auth entries are copied mode `0600` into an isolated `$XDG_DATA_HOME`.
-
-Before the first run on a bench, its slot store is made once, by hand -- `native` refuses to
-launch without one and never creates one:
-
-```bash
-nova-swarm slots init --store /path/to/root/slots-store --owner stella --capacity 1 --share 1
-```
 
 ### Invocation
 
@@ -29,8 +22,6 @@ nova-swarm native \
   --slot /path/to/root/slot-ds/jobs/card-smoke-ds \
   --root /path/to/root \
   --deadline 120s \
-  --slots-store /path/to/root/slots-store \
-  --owner stella \
   --tokens 200000 \
   --auth ~/.local/share/opencode/auth.json \
   --label card-smoke-ds
@@ -201,12 +192,3 @@ line2=PASS: pwd verified and model is opencode/deepseek-v4-flash
 lines=4
 ```
 
----
-
-## 4. Reading Job Results (`nova-swarm result`)
-
-To print a completed job's report verbatim from a queue pool:
-
-```bash
-nova-swarm result --pool /path/to/pool --id <job-id>
-```

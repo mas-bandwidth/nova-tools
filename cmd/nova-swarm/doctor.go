@@ -190,9 +190,9 @@ func writeDoctorRefusal(stderr io.Writer, r doctorReport) {
 }
 
 // doctorLaunchVerb reports whether v is a verb that starts a card, which is where the
-// preflight belongs: `run` starts workers and `native` starts one child, and neither may
+// preflight belongs: `batch` starts workers and `native` starts one child, and neither may
 // spend anything under a shadowed binary.
-func doctorLaunchVerb(v string) bool { return v == "run" || v == "native" }
+func doctorLaunchVerb(v string) bool { return v == "batch" || v == "native" }
 
 // preflightDoctor is what main calls before the dispatcher. It is at the process boundary
 // rather than inside cmdRun/cmdNative on purpose: the question is about the real PATH and

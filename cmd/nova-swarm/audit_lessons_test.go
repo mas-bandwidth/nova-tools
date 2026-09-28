@@ -13,17 +13,20 @@ import (
 // meeting this tool for the first time actually hit, written as the assertion that would
 // have stopped it.
 
-// S5: `--pool` on a missing directory named no remedy, and `quickstart` is exactly the
-// verb that makes one.
+// S5: `--pool` on a missing directory named no remedy, and `mkdir -p` is the remedy.
 func TestAMissingPoolNamesTheVerbThatMakesOne(t *testing.T) {
 	t.Parallel()
 	b := newBench(t)
 	missing := filepath.Join(b.dir, "nopool")
-	exit, stdout, stderr := b.swarm("status", "--pool", missing)
-	if exit != 2 {
-		t.Fatalf("status on a missing pool exits %d, want 2:\n%s%s", exit, stdout, stderr)
+	tasks := filepath.Join(b.dir, "tasks")
+	if err := os.MkdirAll(tasks, 0o755); err != nil {
+		t.Fatal(err)
 	}
-	mustContain(t, "the refusal", stderr, "nova-swarm quickstart --pool "+missing)
+	exit, stdout, stderr := b.swarm("batch", "--pool", missing, "--tasks", tasks, "--files", "1", "--tokens", "100")
+	if exit != 2 {
+		t.Fatalf("batch on a missing pool exits %d, want 2:\n%s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "the refusal", stderr, "mkdir -p "+missing)
 }
 
 // #632: `template` must print the six typed card templates nova-pulse `cut` reads from a

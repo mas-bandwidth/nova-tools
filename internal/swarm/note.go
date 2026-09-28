@@ -57,7 +57,7 @@ func FinalizeByHand(p *Pool, id string, now time.Time) (int, string) {
 	var pr PidRecord
 	if err := ReadJSON(PidPath(sc.Job), &pr); err == nil {
 		if Alive(pr.Pid, pr.PidStarted) || GroupAlive(pr.JobPgid, pr.JobStarted) {
-			return 1, fmt.Sprintf("FINALIZE REFUSED id=%s: this job's process group is still alive; end it first, or let `nova-swarm run` adopt it", oneline.Field(id))
+			return 1, fmt.Sprintf("FINALIZE REFUSED id=%s: this job's process group is still alive; end it first", oneline.Field(id))
 		}
 	}
 	rec := ExitRecord{RC: -1}
