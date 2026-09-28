@@ -1,3 +1,5 @@
+//go:build functional
+
 package wake
 
 import (
@@ -75,11 +77,6 @@ func noteText(from, to, subject string, body int) string {
 // function of how deep the lane is.
 func TestTheBoundedReadSpendsWhatItSaysItSpends(t *testing.T) {
 	t.Parallel()
-	// SLEEPS: this test waits on the wall clock (measured over 5 s on the 2026-09-25 PR run). Skipped 2026-09-25
-	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
-	// mocked-clock unit test or a functional program (nova-tools #4221).
-	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
-
 	dir, anchor := laneRepo(t)
 	// 900 notes IN ONE COMMIT, which is the spec's own separately named
 	// fixture: nine hundred notes added in one commit are one commit and three
@@ -149,11 +146,6 @@ func TestTheBoundedReadSpendsWhatItSaysItSpends(t *testing.T) {
 // TestTheAnswerIsFoundOnThePollThatReachesIt walks the same lane to the answer.
 func TestTheAnswerIsFoundOnThePollThatReachesIt(t *testing.T) {
 	t.Parallel()
-	// SLEEPS: this test waits on the wall clock (measured over 5 s on the 2026-09-25 PR run). Skipped 2026-09-25
-	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
-	// mocked-clock unit test or a functional program (nova-tools #4221).
-	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
-
 	dir, anchor := laneRepo(t)
 	for i := 1; i <= 900; i++ {
 		to := "Somebody-Else"
@@ -211,10 +203,17 @@ func TestAWedgedProcessIsKilledByTheWholeReadBound(t *testing.T) {
 	r := &LaneRead{Dir: dir, Ref: "HEAD", Lane: "from-peer", Anchor: anchor,
 		Caller: "Rowan", PingID: "rowan-00000000000a",
 		MaxItems: 300, MaxBytes: 1 << 20, Wall: time.Millisecond, Whole: 5 * time.Millisecond}
-	started := time.Now()
-	res := r.Run(context.Background(), "-")
-	if d := time.Since(started); d > 30*time.Second {
-		t.Errorf("the read ran %s past a 5ms whole-read bound", d)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan LaneResult, 1)
+	go func() { done <- r.Run(ctx, "-") }()
+	// Wait for the bounded read's completion event. The outer timeout is a
+	// hang detector; the product's 5 ms deadline must leave the read partial.
+	var res LaneResult
+	select {
+	case res = <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the whole-read deadline did not release the reader")
 	}
 	if res.Complete {
 		t.Errorf("a read the clock ended is never complete")

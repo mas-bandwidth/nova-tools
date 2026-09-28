@@ -1,12 +1,7 @@
-//go:build slow
+//go:build functional || slow
 
-// The tests of this package that cost more than the per-commit run can pay:
-// over five seconds each on the Linux bench, or a deadline, wedge or wall-clock
-// bound proved by waiting it out. They are behind the `slow` build tag, so
-// go-test-cmd and go-test-internal do not build them, and
-// .github/workflows/nightly-slow.yml (and `make test-slow`) runs them whole,
-// every night. Each carries the measurement that moved it. Nothing here is
-// skipped or weakened.
+// Real RESP3 connection and cancellation coverage, also retained under slow
+// for the existing nightly invocation.
 
 package wake
 
