@@ -1,16 +1,11 @@
-// Package nogh is the one refusing `gh` both child wrappers put first on a
-// child's PATH (nova-tools #3600, umbrella #3594): the friend seat's `friend
-// serve` and the swarm card's `nova-swarm native` shell shim. GitHub is a git
-// remote only; a friend or card child reaches the PR record, the typed lines
-// and CI through nova-sprint verbs and pushes its branch with git. The briefs
-// already say so (internal/ci TestNoGhInAnyBrief); this makes it structure,
-// not a sentence the model has to obey: `gh` by name resolves to a script
-// that prints Refusal and exits 2, and no GitHub call is made.
+// Package nogh installs a refusing gh command first on a child shell's PATH.
+// The child returns requested forge actions to its coordinator and uses git
+// for branch transport where permitted. This shim makes that routing visible
+// when the child invokes gh by name.
 //
-// It is not a wall: a child that runs the real binary by its absolute path
-// skips it. What stands behind that is the card's scrubbed environment (no
-// token reaches the model's shell) and, for a friend, the seat's own token
-// budget.
+// This is a command-routing aid, not a security boundary: an absolute path
+// bypasses PATH lookup. Callers remain responsible for the child's permissions
+// and credentials.
 package nogh
 
 import (
@@ -26,8 +21,8 @@ const Name = "gh"
 
 // Refusal is the one line the refusing gh prints on stderr. It carries no
 // single quote, so Script can quote it for sh as written.
-const Refusal = "gh: REFUSED GitHub is a git remote only (nova-tools #3594): no GitHub CLI in a friend or card child; " +
-	"read the PR record, lines and CI with nova-sprint read brief, post with nova-sprint read post, and push the branch with git"
+const Refusal = "gh: REFUSED GitHub CLI is unavailable in this child shell; " +
+	"return the requested forge action in your report to the coordinator; use git for branch transport where permitted"
 
 // Script is the refusing gh's whole text.
 func Script() string {
