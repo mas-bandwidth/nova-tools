@@ -123,6 +123,10 @@ func TestBlocksRatherThanTicks(t *testing.T) {
 	}
 }
 
+// Rule numbers follow docs/SPEC-WAKE.md, "Tests this spec demands".
+//
+// 2. Ten minutes silent is offline.
+
 func TestTenMinutesSilentIsOfflineOnce(t *testing.T) {
 	fakes(t)
 	bus := newBusCheckout(t)
@@ -215,6 +219,8 @@ func git(t *testing.T, dir string, args ...string) {
 		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
 	}
 }
+
+// 5. Wake output is bounded and never carries a body.
 
 func TestWakeOutputIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 	busDir, ghDir := fakes(t)

@@ -71,6 +71,10 @@ func countLines(s, prefix string) int {
 	return n
 }
 
+// Rule numbers follow docs/SPEC-WAKE.md, "Tests this spec demands".
+//
+// 1. Every wait has a written deadline and a default action.
+
 func TestAWatchNamesItsDeadlineAndItsDefault(t *testing.T) {
 	t.Parallel()
 
@@ -137,6 +141,8 @@ func TestAWatchNamesItsDeadlineAndItsDefault(t *testing.T) {
 		}
 	})
 }
+
+// 4. It finds itself by a file, never by pgrep.
 
 func TestASecondWatcherOnOneStateFileRefusesOnOneLine(t *testing.T) {
 	t.Parallel()

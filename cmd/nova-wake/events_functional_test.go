@@ -30,6 +30,10 @@ func prJSON(t *testing.T, ghDir, owner, repo, number string, updated, head strin
 			updated, head, owner, repo, number, comments, newest, reviews, `[]`, threads))
 }
 
+// Rule numbers follow docs/SPEC-WAKE.md, "Tests this spec demands".
+//
+// 13. Every wait the window has is a source here, so no wait is a poll.
+
 func TestEveryWaitIsASource(t *testing.T) {
 	t.Run("one source is enough", func(t *testing.T) {
 		_, ghDir := fakes(t)
@@ -244,6 +248,8 @@ func countField(line, key string) int {
 	return -1
 }
 
+// 15. A run is an entry without a state.
+
 func TestARunIsAnEntryWithoutAState(t *testing.T) {
 	_, ghDir := fakes(t)
 	write(t, filepath.Join(ghDir, "runs-h1.json"),
@@ -295,6 +301,8 @@ func TestARunIsAnEntryWithoutAState(t *testing.T) {
 	})
 }
 
+// 16. A branch moving is its two shas.
+
 func TestABranchMovingIsItsTwoShas(t *testing.T) {
 	_, ghDir := fakes(t)
 	state := filepath.Join(t.TempDir(), "wake.state")
@@ -345,6 +353,8 @@ func TestABranchMovingIsItsTwoShas(t *testing.T) {
 		}
 	})
 }
+
+// 17. The lock source probes and never holds.
 
 func TestALockReleasedIsAChangeAndTheProbeNeverHolds(t *testing.T) {
 	t.Parallel()

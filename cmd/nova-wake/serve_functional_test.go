@@ -14,6 +14,11 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
+// Rule numbers follow docs/SPEC-WAKE.md, "Tests this spec demands".
+//
+// 10. serve wakes a harness from outside it, once per note, and spends nothing
+// while idle.
+
 // fakeNote builds the fake receiver and returns the command line to hand
 // --on-note and the directory it records into.
 func fakeNote(t *testing.T) (command, dir string) {

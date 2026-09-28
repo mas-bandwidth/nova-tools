@@ -24,11 +24,12 @@ func TestAWedgedGitCannotHoldThePollOpen(t *testing.T) {
 	t.Setenv("NOVA_WAKE_FAKE_GIT_PIDFILE", pidfile)
 
 	// Assert completion and the child's exit, with a generous hang guard. The
-	// product still uses the two-second interval as its whole-read deadline.
+	// product uses this interval as its whole-read deadline; the independent
+	// ten-second Git timeout must not stand in for it.
 	done := make(chan result, 1)
 	go func() {
 		done <- probeAt(t, at.Add(time.Minute), "--bus", busDir, "--line", peer, "--state", state,
-			"--as", caller, "--interval", "2s")
+			"--as", caller, "--interval", "250ms")
 	}()
 	var r result
 	select {
@@ -39,6 +40,9 @@ func TestAWedgedGitCannotHoldThePollOpen(t *testing.T) {
 	line := probeLine(t, r.stdout)
 	if strings.Contains(line, "correlation=complete") {
 		t.Errorf("a read that could not open an object is never complete:\n%s", line)
+	}
+	if !strings.Contains(r.stdout, "stopped short of the lane's tip") {
+		t.Errorf("the whole-read deadline must stop the poll before the per-process Git timeout:\n%s", r.all())
 	}
 	raw := read(t, pidfile)
 	if raw == "" {
