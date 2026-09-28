@@ -33,7 +33,7 @@ exactly as written, and §6 makes the lane hold them harder, not softer.
 |---|---|
 | `harvest` pushes and opens a PR for every card whose `RESULT.md` line 1 matches, on the worker's own line-2 word; nothing executes anything (`docs/SPEC-PULSE.md:194-218`) | §1: the accept gate runs before any push |
 | card-13 pasted a red row and thirteen green rows; an independent reproduction still failed both families (`docs/WORKER-CARDS.md:87-101`) | §1 rules 3-4: the red is reproduced by the gate, never read from the report |
-| `nova-review mutate` is specified as *"the harvest runs it before any reader is spawned"* (`docs/SPEC-REVIEW.md:659`) and no file under `internal/pulse`, `cmd/nova-pulse`, `internal/swarm` or `cmd/nova-swarm` calls it | §1 rule 4 and work item T3 |
+| `nova-review mutate` is specified as *"the harvest runs it before any reader is spawned"* (`docs/SPEC-REVIEW.md:659`) and no file under `internal/pulse`, `cmd/nova-pulse`, `internal/swarm` or `deprecated/cmd/nova-swarm` calls it | §1 rule 4 and work item T3 |
 | a suite that was green with a rule's guard removed: 335 cases, one red, and that one incidental (nova-work mutation M01, 2026-09-19) | §1 rules 6-8: the gate's own negative control; §5 kind `mutation-kill` |
 | `NATIVE OK rc=0 harness=ok` printed over cards whose gates never compiled anything (#1465, #1463, #912) | §2: a result is trusted only from a certified bench |
 | every C and C++ invocation, and every `make` target, fails inside the wall on macOS (#1557); dotnet cannot run inside the wall on any Linux bench (#1495) | §2 rules 1-3 |
@@ -830,7 +830,7 @@ the worker never sees and cannot edit.
    with `RESULT: `"*); `internal/pulse/cutkind.go:189-201` (`cut --kind`, wired at
    `cmd/nova-pulse/cut_kind.go:48` and `wire.go:502`) and `internal/pulse/manager.go:739`,
    which write `RESULT: CARD-<n> …`; `nova-swarm lint --card`'s `result-first`
-   (`cmd/nova-swarm/lint.go:55,140`); `internal/worklang/expand.go:227`. **No colon**: the
+   (`deprecated/cmd/nova-swarm/lint.go:55,140`); `internal/worklang/expand.go:227`. **No colon**: the
    plain `cut` templates (`internal/pulse/cut.go:472` writes, `:433` checks,
    `cut_test.go:110` asserts) and, before this draft, `docs/spec-pulse/10:4` and
    `docs/WORKER-CARDS.md:312`. **Both accepted**: `internal/pulse/harvestbench.go:349`,

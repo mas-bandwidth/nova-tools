@@ -22,7 +22,7 @@
 # TestReadCopyDealtToBenchRendersALintedCard), then by nine more from the redis
 # stream (seat and #3277 tests on t.Setenv); each owes a per-test seam. Moved
 # from the serialTestsCeiling constant into this file at 876, the count that day.
-# ceiling: 726
+# ceiling: 615
 cmd/nova-bus/issue1451_test.go:TestIssue1451EveryBareVerbRefusalNamesTheDoor serial: t.Setenv
 cmd/nova-bus/main_functional_test.go:TestReceiptMaxWordsDefaultsFromBusFileThenEnv serial: t.Setenv
 cmd/nova-bus/reply_functional_test.go:TestAFilesystemWithNoCreateExclusivePublishIsRefused serial: swaps package var main.publishDraft
@@ -40,49 +40,6 @@ cmd/nova-check/version_test.go:TestVersionIdentityIsTheStampWhenThereIsOne seria
 cmd/nova-check/version_test.go:TestVersionLineHoldsWhateverTheStampContains serial: swaps package var main.version
 cmd/nova-ci/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
 cmd/nova-ci/version_test.go:TestVersionLineHoldsWhateverTheStampContains serial: swaps package var main.version
-cmd/nova-decide/accounting_test.go:TestJevRequiresAccounting serial: swaps package var main.deciderOpener
-cmd/nova-decide/accounting_test.go:TestJevWithAccountingRuns serial: swaps package var main.deciderOpener
-cmd/nova-decide/classify_test.go:TestClassifyJevAnswersQuestion serial: t.Setenv
-cmd/nova-decide/classify_test.go:TestClassifyJevMissingKeyRefuses serial: t.Setenv
-cmd/nova-decide/classify_test.go:TestClassifyJevRecordThenReplay serial: t.Setenv
-cmd/nova-decide/classify_test.go:TestClassifyJevRequiresAccounting serial: t.Setenv
-cmd/nova-decide/decisions_test.go:TestNovaDecideTuneRefusesAFloorWithNoRows serial: swaps package var main.decisionsOpener
-cmd/nova-decide/down_friends_test.go:TestRouteDefaultPresenceStoreFailureIsFailClosed serial: swaps package var main.downFriendsOpener, t.Setenv
-cmd/nova-decide/down_friends_test.go:TestRouteReadsSeatPresenceWithoutWritingEvent serial: t.Setenv
-cmd/nova-decide/down_friends_test.go:TestRouteStoreExcludesDownFriendFromJevCriteria serial: swaps package var main.deciderOpener
-cmd/nova-decide/down_friends_test.go:TestRouteWithoutPresenceStoreNotesAndLogsUncheckedBusRung serial: t.Setenv
-cmd/nova-decide/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir, t.Setenv
-cmd/nova-decide/flagdocs_test.go:TestEveryVerbFlagIsInHelpAndCLIDoc serial: swaps package var main.observeVerbFlags
-cmd/nova-decide/floorkinds_test.go:TestUsageRowIsPricedFromTheRateTable serial: swaps package var main.deciderOpener
-cmd/nova-decide/hold_test.go:TestRouteRefusesANaNFloor serial: t.Setenv
-cmd/nova-decide/issue2034_test.go:TestIssue2034VoidTiesToOneRowInTheSameSecond serial: swaps package var main.now
-cmd/nova-decide/jevstream_test.go:TestReviewRedisLedgerWantsAStore serial: swaps package var main.dialJevStream, t.Setenv
-cmd/nova-decide/jevstream_test.go:TestReviewWritesEveryJevLineToTheStream serial: swaps package var main.dialJevStream, t.Setenv
-cmd/nova-decide/logsink_test.go:TestLogSummaryReadsTheLog serial: swaps package var main.logSinkOpener
-cmd/nova-decide/logsink_test.go:TestRouteLogsToTheLog serial: swaps package var main.deciderOpener, swaps package var main.logSinkOpener
-cmd/nova-decide/logsink_test.go:TestRouteRefusesBeforeTheCallWhenTheLogWillNotOpen serial: swaps package var main.deciderOpener, swaps package var main.logSinkOpener
-cmd/nova-decide/logsink_test.go:TestRouteRefusesBeforeTheCallWhenTheStoreWillNotAnswer serial: swaps package var main.deciderOpener, swaps package var main.eventSinkOpener, swaps package var main.logSinkOpener, t.Setenv
-cmd/nova-decide/logsink_test.go:TestTheRetiredTableFlagsAreRefused serial: swaps package var main.deciderOpener
-cmd/nova-decide/main_test.go:TestVerbExits2On500 serial: t.Setenv
-cmd/nova-decide/main_test.go:TestVerbExits2OnBadQuestions serial: t.Setenv
-cmd/nova-decide/main_test.go:TestVerbExits2WithoutKey serial: t.Setenv
-cmd/nova-decide/main_test.go:TestVerbExits2WithoutQuestions serial: t.Setenv
-cmd/nova-decide/main_test.go:TestVerbExits3BelowFloor serial: t.Setenv
-cmd/nova-decide/mandatory_reader_cli_test.go:TestTheRealCLIConstrainsTheProviderAnswerWithTheMandatoryReaderMachinery serial: t.Setenv
-cmd/nova-decide/mandatory_reader_cli_test.go:TestTheRealCLIRefusesAnUnconfiguredHolderBeforeCallingTheProvider serial: t.Setenv
-cmd/nova-decide/questionpair_test.go:TestTheVerbRefusesAMissingTypedFieldWithoutCallingTheProvider serial: t.Setenv
-cmd/nova-decide/questionpair_test.go:TestTheVerbSendsTheCriteriaItNamed serial: t.Setenv
-cmd/nova-decide/review_prompt_test.go:TestReviewPromptFromConf serial: t.Setenv
-cmd/nova-decide/review_test.go:TestReviewNoJevSpendsNothing serial: t.Setenv
-cmd/nova-decide/review_test.go:TestReviewTaskHash serial: swaps package var prereview.TaskCardReader
-cmd/nova-decide/settled_receipt_test.go:TestTheSettledCLIPathWritesItsDecisionRowAndFabricatesNoConfidence serial: t.Setenv
-cmd/nova-decide/stepup_test.go:TestRouteStepUpLogsEveryStep serial: swaps package var main.deciderOpener
-cmd/nova-decide/usage_witness_test.go:TestRouteRefusalStillPersistsTheCall serial: swaps package var main.deciderOpener
-cmd/nova-decide/usage_witness_test.go:TestRouteWritesADashForUnreportedUsage serial: swaps package var main.deciderOpener
-cmd/nova-decide/usage_witness_test.go:TestRouteWritesAReportedZero serial: swaps package var main.deciderOpener
-cmd/nova-decide/verb_help_test.go:TestJSONStateRefusesAsBadStateFormat serial: swaps package var main.stdin
-cmd/nova-decide/wait_usage_test.go:TestRouteWritesTheUsageRecord serial: swaps package var main.deciderOpener
-cmd/nova-decide/wait_usage_test.go:TestRouteWritesUsageForAFailedCall serial: swaps package var main.deciderOpener
 cmd/nova-fuse/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
 cmd/nova-fuse/main_test.go:TestEnvironmentCannotRedirectOrLiftAnything serial: t.Setenv
 cmd/nova-fuse/main_test.go:TestNoDefaultBoxRefusesToGuess serial: t.Setenv
@@ -343,73 +300,6 @@ cmd/nova-sprint/task_seat_test.go:TestControl2929PushTakeFromSeat serial: os.Uns
 cmd/nova-sprint/ws_functional_test.go:TestWSVerbRefusals serial: t.Setenv
 cmd/nova-sprint/ws_functional_test.go:TestWSVerbsOnAThousandTasks serial: t.Setenv
 cmd/nova-sprint/ws_test.go:TestWSVerbsRefuseHelpAndUsage serial: t.Setenv
-cmd/nova-swarm/boundary_identity_test.go:TestNativeDrainDeliversPoolIdentityToChild serial: os.Setenv, os.Unsetenv
-cmd/nova-swarm/boundary_identity_test.go:TestNativeRefusesMalformedPoolIdentityBeforeHarness serial: os.Setenv, os.Unsetenv
-cmd/nova-swarm/boundary_identity_test.go:TestNativeRefusesMissingPoolIdentityBeforeHarness serial: os.Setenv, os.Unsetenv
-cmd/nova-swarm/doctor_test.go:TestDoctorOKWhenBothStampsMatch serial: swaps package var main.doctorHomeDir, swaps package var main.doctorLookPath, swaps package var main.doctorReadVersion
-cmd/nova-swarm/doctor_test.go:TestDoctorOKWhenPATHResolvesToTheLocalBinary serial: swaps package var main.doctorHomeDir, swaps package var main.doctorLookPath, swaps package var main.doctorReadVersion
-cmd/nova-swarm/doctor_test.go:TestDoctorOKWhenTheLocalBinaryIsAbsent serial: swaps package var main.doctorHomeDir, swaps package var main.doctorLookPath, swaps package var main.doctorReadVersion
-cmd/nova-swarm/doctor_test.go:TestDoctorRefusesWhenThePATHBinaryIsShadowed serial: swaps package var main.doctorHomeDir, swaps package var main.doctorLookPath, swaps package var main.doctorReadVersion
-cmd/nova-swarm/doctor_test.go:TestDoctorResolvesNovaSwarmOnPATH serial: swaps package var main.doctorHomeDir, swaps package var main.doctorLookPath, swaps package var main.doctorReadVersion
-cmd/nova-swarm/doctor_test.go:TestDoctorSurvivesAnUnreadablePATHBinary serial: swaps package var main.doctorHomeDir, swaps package var main.doctorLookPath, swaps package var main.doctorReadVersion
-cmd/nova-swarm/doctor_test.go:TestDoctorVerbIsReachableFromTheDispatch serial: swaps package var main.doctorHomeDir, swaps package var main.doctorLookPath, swaps package var main.doctorReadVersion
-cmd/nova-swarm/doctor_test.go:TestPreflightLeavesNonLaunchVerbsAlone serial: swaps package var main.doctorHomeDir, swaps package var main.doctorLookPath, swaps package var main.doctorReadVersion
-cmd/nova-swarm/doctor_test.go:TestPreflightRefusesALaunchUnderAShadowedBinary serial: swaps package var main.doctorHomeDir, swaps package var main.doctorLookPath, swaps package var main.doctorReadVersion
-cmd/nova-swarm/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine serial: t.Chdir
-cmd/nova-swarm/gate_hold_test.go:TestWalledRefusalOffersTheReadRootsAsOnePossibility serial: t.Setenv
-cmd/nova-swarm/gate_test.go:TestNativeGateThatCouldNotRunIsNeverOK serial: t.Setenv
-cmd/nova-swarm/gate_test.go:TestNativeWalledRunOpensTheWorkersReadRoots serial: t.Setenv
-cmd/nova-swarm/issue2328_test.go:TestIssue2328 serial: t.Setenv
-cmd/nova-swarm/native_budget_sample_test.go:TestLiveSamplerCountsAFailedReadAndAnAnswerResetsIt serial: t.Setenv
-cmd/nova-swarm/native_budget_sample_test.go:TestLiveSamplerNeverRunsTwoReadsAtOnce serial: t.Setenv
-cmd/nova-swarm/native_budget_source_test.go:TestNativeRefusesABudgetNothingCanObserve serial: t.Setenv
-cmd/nova-swarm/native_budget_stop_test.go:TestNativeAFastLaunchAtTheBudgetIsNotRelaunchedBeforeAnySample serial: t.Setenv
-cmd/nova-swarm/native_budget_stop_test.go:TestNativeALaunchThatReachedTheBudgetAloneIsNeverLaunchedAgain serial: t.Setenv
-cmd/nova-swarm/native_budget_stop_test.go:TestNativeCardBudgetStopsAndPrintsThePromptDefect serial: t.Setenv
-cmd/nova-swarm/native_budget_stop_test.go:TestNativeTwoLaunchAccounting serial: t.Setenv
-cmd/nova-swarm/native_cardout_test.go:TestNativeHandsCardRepoToCardOut serial: t.Setenv
-cmd/nova-swarm/native_deadline_test.go:TestNativeDeadlineControlALeaderOnlyKillLeavesTheGrandchild serial: swaps package var main.nativeDeadline, swaps package var main.nativeKillGroup
-cmd/nova-swarm/native_deadline_test.go:TestNativeDeadlineKillsTheWholeTree serial: swaps package var main.nativeDeadline
-cmd/nova-swarm/native_idle_test.go:TestNativeIdleIsDecidedByTheWatchsEventNotByAClock serial: swaps package var main.nativeKillGroup, swaps package var main.nativeReap, swaps package var main.nativeWatchIdle
-cmd/nova-swarm/native_idle_test.go:TestNativeIdleReapsTheCardInsteadOfShootingIt serial: swaps package var main.nativeKillGroup, swaps package var main.nativeReap, swaps package var main.nativeWatchIdle
-cmd/nova-swarm/native_idle_test.go:TestNativeIdleSaysACardThatSimplyWentStillWentStill serial: swaps package var main.nativeKillGroup, swaps package var main.nativeReap, swaps package var main.nativeWatchIdle
-cmd/nova-swarm/native_launcher_test.go:TestNativeLaunchGoesThroughTheOneLauncher serial: swaps package var main.launchArgvFor
-cmd/nova-swarm/native_slot_lease_test.go:TestNativeRunsWithNoSlotsStore serial: t.Setenv
-cmd/nova-swarm/native_stage_test.go:TestStageFailLinePrintsOnStagingFailure serial: swaps package var os.Stdout
-cmd/nova-swarm/native_stage_test.go:TestStageNamedRepoNotStagedIsRefused serial: swaps package var os.Stdout
-cmd/nova-swarm/native_stage_test.go:TestStageOKLinePrintsOnSuccessfulStage serial: swaps package var os.Stdout
-cmd/nova-swarm/native_stage_test.go:TestStagePushedHeaderStagesRepoBeforeTheModel serial: swaps package var os.Stdout
-cmd/nova-swarm/native_test.go:TestFriendSequenceLocalModelCard serial: t.Setenv
-cmd/nova-swarm/native_test.go:TestNativeAllowsProviderLoopback serial: t.Setenv
-cmd/nova-swarm/native_test.go:TestNativeChildCwdIsJobDirFromForeignCwd serial: os.Chdir, t.Setenv
-cmd/nova-swarm/native_test.go:TestNativeChildCwdIsJobDirUnwalled serial: os.Chdir, t.Setenv
-cmd/nova-swarm/native_test.go:TestNativeEnvIsCleanAndInsideTheWall serial: os.Chdir, t.Setenv
-cmd/nova-swarm/native_test.go:TestNativeNoSharedCachesRestoresHomeCaches serial: t.Setenv
-cmd/nova-swarm/native_test.go:TestNativeNoWallWritesHarnessLog serial: t.Setenv
-cmd/nova-swarm/native_test.go:TestNativeOKNamesTheWall serial: t.Setenv
-cmd/nova-swarm/native_test.go:TestNativeRefusesWhenWallCannotExpressRule serial: t.Setenv
-cmd/nova-swarm/native_test.go:TestNativeRefusesWithoutWallUnlessFlagged serial: t.Setenv
-cmd/nova-swarm/native_test.go:TestNativeRelativeSlotIsAbsolutized serial: os.Chdir, t.Setenv
-cmd/nova-swarm/native_test.go:TestNativeRunDeniesBusInsideWall serial: t.Setenv
-cmd/nova-swarm/native_test.go:TestNativeRunPassesRepoAllowRule serial: t.Setenv
-cmd/nova-swarm/native_test.go:TestNativeRunsWalledWithoutHostRulesWhenNoRepos serial: t.Setenv
-cmd/nova-swarm/native_test.go:TestNativeSecretWorkerWritesNoAuthFileAndTheHarnessSeesName serial: t.Setenv
-cmd/nova-swarm/native_test.go:TestNativeSharedGoCaches serial: t.Setenv
-cmd/nova-swarm/native_test.go:TestNativeSilentHarnessIsNotOK serial: t.Setenv
-cmd/nova-swarm/native_test.go:TestNativeWalledJobPathWithSpace serial: t.Setenv
-cmd/nova-swarm/native_test.go:TestNativeWalledJobPathWithSpacesCompletes serial: t.Setenv
-cmd/nova-swarm/native_test.go:TestNativeWorkerModelGateComparesQualifiedName serial: t.Setenv
-cmd/nova-swarm/provider_retry_test.go:TestUnrecordedUnknownIsStillAHarvestHold serial: swaps package var main.persistUnknownFn
-cmd/nova-swarm/route_test.go:TestRouteBelowFloorExits3 serial: t.Setenv
-cmd/nova-swarm/route_test.go:TestRouteFallsToLowerComplexity serial: t.Setenv
-cmd/nova-swarm/route_test.go:TestRouteFixComplexity1PicksMuse serial: t.Setenv
-cmd/nova-swarm/route_test.go:TestRoutePrivateSkipsPublic serial: t.Setenv
-cmd/nova-swarm/shellshim_test.go:TestTheChildEnvIsUnchangedWithoutAShim serial: t.Setenv
-cmd/nova-swarm/slow_test.go:TestNativeSamplerNeverOverlapsAndNeverDelaysTheDeadline serial: t.Setenv
-cmd/nova-swarm/slow_test.go:TestNativeThreeFailedReadsEndTheCardUnverifiable serial: t.Setenv
-cmd/nova-swarm/version_test.go:TestVersionIdentityIsTheStampWhenThereIsOne serial: swaps package var main.version
-cmd/nova-swarm/version_test.go:TestVersionLineHoldsWhateverTheStampContains serial: swaps package var main.version
-cmd/nova-swarm/workercheck_test.go:TestWorkerCheckAnAbsentSecretWithEnvNamesTheVariableNotTheValue serial: t.Setenv
 cmd/nova-tokens/boundary_test.go:TestNoVerbTouchesACheckoutOrItsRemote serial: t.Setenv
 cmd/nova-tokens/contract_test.go:TestEachDeclaredFileIsOpenedOncePerRun serial: counts the process-wide tokens.Opens(), which every parallel fold adds to
 cmd/nova-tokens/demanded_test.go:TestRule16And19TheDatabaseIsCopiedAndQueriedReadOnlyUnderATimeout serial: t.Setenv
@@ -737,7 +627,6 @@ cmd/nova-sprint/task_card_functional_test.go:TestTaskMoveRefusesAPrimaryUnread s
 internal/nsprint/card/copy_functional_test.go:TestReadCopyDealtToBenchRendersALintedCard serial: t.Setenv
 cmd/nova-sprint/seat_test.go:TestRedisCLIRunsOneCommandUnderTheSeat serial: t.Setenv
 cmd/nova-sprint/seat_test.go:TestTableRendersUnderSeatWithNoWrapper serial: t.Setenv
-cmd/nova-swarm/seat_event_test.go:TestSeatGivesTheCardEndWriterItsLogin serial: t.Setenv
 cmd/nova-tokens/token_ledger_test.go:TestLedgerAndReportDialAsTheAclUser serial: t.Setenv
 internal/nsprint/store/issue3277_test.go:TestOpenSendsNoCommand3277 serial: t.Setenv
 internal/nsprint/store/reach_test.go:TestUnreachable3277 serial: t.Setenv

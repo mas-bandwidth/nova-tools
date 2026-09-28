@@ -105,7 +105,7 @@ type Disposition struct {
 	Conf     float64 `json:"conf"`
 	Rubric   string  `json:"rubric"`
 	// Prompt is the sha8 of the prompt file the score question was asked
-	// with (internal/jevcalib), so a ledger row says which prompt scored it.
+	// with (deprecated/internal/jevcalib), so a ledger row says which prompt scored it.
 	Prompt string `json:"prompt8,omitempty"`
 	Base   string `json:"base"`
 	Checks string `json:"checks"`

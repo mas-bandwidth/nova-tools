@@ -1339,7 +1339,7 @@ jobs:
         # internal/ci: TestHostedDealSplitsTheHeavyPackages (hostedHeavy).
         shell: bash
         run: |
-          heavy="cmd/nova-bus cmd/nova-merge cmd/nova-swarm"
+          heavy="cmd/nova-bus cmd/nova-merge"
           deal='
             BEGIN { h = split(heavy, hv, " ") }
             {

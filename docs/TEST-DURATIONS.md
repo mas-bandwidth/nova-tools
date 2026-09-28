@@ -42,7 +42,7 @@ times come from.
 | --- | --- | --- |
 | cmd/nova-bus | 30.4 | - |
 | internal/ci | 17.9 | TestEveryToolPrintsTheOneVersionLine 5.3 |
-| cmd/nova-swarm | 16.8 | - |
+| deprecated/cmd/nova-swarm | 16.8 | - |
 | cmd/nova-merge | 16.7 | - |
 | internal/swarm | 12.7 | - |
 | cmd/nova-wake | 12.4 | - |
@@ -68,7 +68,7 @@ times come from.
 | internal/dogfood | 0.0 | - |
 | internal/memindex | 0.0 | - |
 | internal/release | 0.0 | - |
-| cmd/nova-decide | 0.0 | - |
+| deprecated/cmd/nova-decide | 0.0 | - |
 | cmd/nova-version | 0.0 | - |
 | cmd/nova-post | 0.0 | - |
 | internal/sandbox | 0.0 | - |
@@ -133,7 +133,7 @@ five of its tests are over 5 s and every one of them is a real `exec`.
 | cmd/nova-wake | 62.9 | TestTheRecoveryReadsTheCountAndNeverAConstant 7.5 |
 | cmd/nova-merge | 51.4 | TestTwoReadsAndAGateFromOneStartingBranchReachTheCoordinator 6.5 |
 | cmd/nova-bus | 47.2 | TestRetryAfterAPartialResumesAtNext 11.4 |
-| cmd/nova-swarm | 34.8 | - |
+| deprecated/cmd/nova-swarm | 34.8 | - |
 | internal/swarm | 22.0 | - |
 | cmd/nova-pulse | 20.0 | TestBenchStandardDriftNamesBinary 7.6 |
 | internal/bus | 18.9 | - |
@@ -160,7 +160,7 @@ five of its tests are over 5 s and every one of them is a real `exec`.
 | internal/check | 0.4 | - |
 | internal/docs | 0.4 | - |
 | internal/records | 0.4 | - |
-| cmd/nova-decide | 0.3 | - |
+| deprecated/cmd/nova-decide | 0.3 | - |
 | cmd/nova-update | 0.3 | - |
 | internal/buildinfo | 0.3 | - |
 | internal/bounded | 0.3 | - |
@@ -193,7 +193,7 @@ to its Linux cost is compute, and one several times over is paying for process s
 | cmd/nova-wake | 62.9 | 12.4 | 5.1x |
 | cmd/nova-merge | 51.4 | 16.7 | 3.1x |
 | cmd/nova-bus | 47.2 | 30.4 | 1.6x |
-| cmd/nova-swarm | 34.8 | 16.8 | 2.1x |
+| deprecated/cmd/nova-swarm | 34.8 | 16.8 | 2.1x |
 | internal/swarm | 22.0 | 12.7 | 1.7x |
 
 `cmd/nova-pulse` is the outlier worth naming separately: 20.0 s here against 0.5 s on
@@ -232,7 +232,7 @@ property of the TEST, and none of these is over the line on the budget bench -- 
 
 ### One package does not pass on darwin
 
-`cmd/nova-swarm`'s `TestBenchProbeNeverReadsAuth` FAILS on this bench, and it is a
+`deprecated/cmd/nova-swarm`'s `TestBenchProbeNeverReadsAuth` FAILS on this bench, and it is a
 defect in the test rather than in the tool. The test asserts that the probe stats the
 auth file and never reads it, by scanning each logged remote command for `cat`, `head`
 or `cp` anywhere in the LINE -- and on darwin `$TMPDIR` is `/var/folders/<two>/<random>`,

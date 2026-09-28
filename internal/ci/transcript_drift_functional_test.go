@@ -9,44 +9,24 @@ import (
 	"testing"
 )
 
-// transcript_drift_functional_test.go builds three tools and runs their
-// transcript lines: builds are the functional tier's (Glenn 2026-09-26,
+// transcript_drift_functional_test.go builds one tool and runs its
+// transcript line (nova-decide's and nova-work's moved to deprecated/ with the
+// tools): builds are the functional tier's (Glenn 2026-09-26,
 // nova-tools#4328). The shape helpers and their negative controls stay in
 // transcript_drift_test.go.
 
 // TestFirstRunTranscriptsMatchInstalledBuild re-runs the first-run
 // transcript lines that drifted from the installed build and slipped past the
-// per-binary shape tests, which is nova-tools#1506 (nova-pulse pool went with the frozen verbs): the three
-// nova-decide route lines and nova-review's version line (nova-work's no-verb
-// refusal was the fourth; its subtest left when nova-work was parked under
-// deprecated/ on 2026-09-27, with its transcript). Each subtest builds the tool, runs the transcript's command,
+// per-binary shape tests, which is nova-tools#1506 (nova-pulse pool went with the frozen verbs): nova-review's
+// version line. The three nova-decide route lines and nova-work's no-verb
+// refusal left with their tools when they moved under deprecated/ on
+// 2026-09-27, with their transcripts. Each subtest builds the tool, runs the transcript's command,
 // and compares what the transcript line promises against what the tool printed.
 func TestFirstRunTranscriptsMatchInstalledBuild(t *testing.T) {
 	t.Parallel()
 
 	root := repoRoot(t)
 	md := readFile(t, filepath.Join(root, "docs", "TESTS.md"))
-
-	t.Run("nova-decide-route", func(t *testing.T) {
-		bin := buildTool(t, root, "nova-decide")
-		commands := []string{
-			"nova-decide route --unit-id card-41 --kind rebase --files 2 --packages 1 --no-jev",
-			"nova-decide route --unit-id card-9 --kind fleet-chore --files 1 --guard --no-jev",
-			"nova-decide route --unit-id s-1 --kind guard --files 1 --attempt johnny:timeout --no-jev",
-		}
-		for _, cmd := range commands {
-			transcript, found := outputAfterCommand(md, cmd)
-			if !found {
-				t.Fatalf("TESTS.md missing command %q", cmd)
-			}
-			if len(transcript) == 0 {
-				t.Fatalf("TESTS.md has empty transcript for %q", cmd)
-			}
-			args := strings.Fields(strings.TrimPrefix(cmd, "nova-decide "))
-			_, stdout, stderr := runBare(t, root, "nova-decide", bin, args)
-			assertShape(t, cmd, transcript, stdout, stderr)
-		}
-	})
 
 	t.Run("nova-review-version", func(t *testing.T) {
 		bin := buildTool(t, root, "nova-review")

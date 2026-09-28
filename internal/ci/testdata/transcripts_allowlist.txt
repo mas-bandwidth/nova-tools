@@ -16,7 +16,6 @@
 # change.
 
 # T8 (#1653): the sections no test executes at all.
-nova-decide   # #1653 -- executed by no test
 nova-post     # #1653 -- asserts only that the section is non-empty; its block waits on the #1631 re-cut (SPEC-TOOLWORK Q5)
 nova-review   # #1653 -- executed by no test
 
@@ -39,7 +38,6 @@ nova-secrets  # #1657 -- no firstrun_test.go at all
 nova-memory   # #1722 -- its firstrun_test.go executes README.md, not this section
 nova-redis    # #1722 -- compares through onboarding.Execute, not the shared comparator
 nova-sprint   # #1722 -- compares through onboarding.Execute, not the shared comparator
-nova-swarm    # #1722 -- compares the event prefix and the field names, dropping every value
 nova-tokens   # #1722 -- compares the event prefix and the field names, dropping every value
 nova-update   # #1722 -- compares the event prefix and the field names, dropping every value
 nova-version  # #1722 -- compares the event prefix and the field names, dropping every value

@@ -546,7 +546,7 @@ Nothing in the "before" is wrong; everything the scheduler needs is simply absen
   :needs ("promote:main") :deadline "2026-09-18T18:00Z"
   :owner "Emma"
   :resources ((:lane "swarm") (:cpu 4) (:memory-gb 8) (:class "darwin-runner" :n 0))
-  :writes ("cmd/nova-swarm/" "internal/swarm/pull.go")
+  :writes ("deprecated/cmd/nova-swarm/" "internal/swarm/pull.go")
   :tools ((:nova-swarm :at "0.9.2") (:go :at "1.26"))
   :warm (:retained ((:worktree "mas-bandwidth/nova-tools") (:image "toolchain@sha")) :active ((:cpu 4)))
   :acceptance ((:id "a1" :kind :test :subject "test:internal/swarm/pull@HEAD" :predicate :passes)

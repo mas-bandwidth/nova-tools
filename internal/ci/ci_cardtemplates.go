@@ -40,7 +40,6 @@ const CardTemplatesVerbLine = "cardtemplates  read every shipped card template; 
 // error: the list names where a template MAY live, and the estate grows its
 // directories before it grows its templates.
 var CardTemplateDirs = []string{
-	"cmd/nova-swarm/testdata/templates",
 	"docs/templates",
 	"tools/templates",
 }

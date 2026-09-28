@@ -278,7 +278,7 @@ line, not a key, and says its lint "does not enforce PATHS-only staging"; a key 
 value would echo nothing harvest reads and add a missing-key failure that guards nothing, while
 PATHS is already required and is what the enforcement reads. On the 59: 0 change (each carries
 the sentence as the line after the block; nothing follows it).
-*Why:* `card-tools-20` is refused today by `no-sandbox` (`cmd/nova-swarm/lint.go:274-277`, a
+*Why:* `card-tools-20` is refused today by `no-sandbox` (`deprecated/cmd/nova-swarm/lint.go:274-277`, a
 bare `strings.Contains(l, "nova-sandbox")` over every line) for naming `.nova-sandbox-tmp/` in
 its own task description. The measured case for "A4 text lint is not actual PATHS enforcement":
 `matchDeclared` (`internal/pulse/harveststale.go:292-305`) admits every file under a bare
@@ -300,7 +300,7 @@ where appropriate. No separate regex repair in each producer/consumer.
 | # | reader | where (dev `1e1e5fb9` unless named) | what it reads today |
 |---|---|---|---|
 | 1 | cutter: `pulse.ValidateCardV2` + `OperativeRegion` | #2522 at `9ee8155`, `internal/pulse/cut_template.go:428` | SCHEMA/SYMBOL/RED-WHEN on any line; the `## Run` region |
-| 2 | lint: `swarm.LintCardHeader` + `lintCard` | `internal/swarm/lintheader.go:203`, `cmd/nova-swarm/lint.go` | the header block (`headerKeyRE`, `lintheader.go:95`; #2607 widens it) and 12 prose rules |
+| 2 | lint: `swarm.LintCardHeader` + `lintCard` | `internal/swarm/lintheader.go:203`, `deprecated/cmd/nova-swarm/lint.go` | the header block (`headerKeyRE`, `lintheader.go:95`; #2607 widens it) and 12 prose rules |
 | 3 | harvest: `pulse.parsePATHS` | `internal/pulse/harveststale.go:207-230` | the first `PATHS:` **or `PATHS `** line anywhere in the text, at any indentation |
 | 4 | admission: `swarm.cardShapeFailure` | `internal/swarm/batch.go:2116` | for `opencode/` and `deepseek/` models: a line beginning `STEP 1` in the **first 15 lines** (`hasStep1`, `:2173`), no all-capitals first line, no "launcher" in lines 1-3 |
 | 5 | launchers | `rowan-tools/bin/launchers/*-native-{darwin,bench}.sh:30-31` (70 scripts carry the read at `ff32176`) | lowercase `base-repo:` / `base-sha:` in the **first 40 lines** |

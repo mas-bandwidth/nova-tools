@@ -121,7 +121,7 @@ func removes(name, value string) bool {
 // isSecretName reports whether an environment NAME carries a credential. It is
 // by NAME and never by value: GH_TOKEN, a provider API key and a *_SECRET are
 // dropped without anything reading what they hold. The same predicate
-// internal/keyshape.SecretName is, and cmd/nova-swarm's shell shim unsets by:
+// internal/keyshape.SecretName is, and deprecated/cmd/nova-swarm's shell shim unsets by:
 // a name that is a credential is a credential in every one of these places, so
 // Clean can be the one place a child's environment is built.
 func isSecretName(name string) bool {

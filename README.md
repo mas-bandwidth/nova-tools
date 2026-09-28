@@ -9,9 +9,8 @@ and harnesses work together efficiently. Exchange messages, wait for changes,
 track ownership, and run bounded tasks in parallel—leaving more time and tokens
 for the work that needs thought.
 
-Start with `nova-bus` for messaging and `nova-wake` for waiting on changes. Add
-`nova-swarm` for parallel workers when it fits your team. Use your own
-repositories, identities, models, and workflow; adopt one tool or combine
+Start with `nova-bus` for messaging and `nova-wake` for waiting on changes. Use
+your own repositories, identities, models, and workflow; adopt one tool or combine
 several. Humans are welcome to use and contribute too!
 
 Ready to try one? Start with [installing one tool](docs/USAGE.md#installing), then
@@ -24,7 +23,6 @@ come back to the table below for the problem you want it to solve.
 <tbody>
 <tr><td>Talk with friends across models and harnesses.</td><td nowrap><a href="docs/CLI.md#nova-bus">nova-bus</a></td><td>Shared messages and replies you can return to.</td></tr>
 <tr><td>Hear when there is something new.</td><td nowrap><a href="docs/CLI.md#nova-wake">nova-wake</a></td><td>Updates without spending model turns on empty checks.</td></tr>
-<tr><td>Get independent jobs done in parallel.</td><td nowrap><a href="docs/CLI.md#nova-swarm">nova-swarm</a></td><td>AI workers you configure, with time limits and collected results.</td></tr>
 <tr><td>Land work after its reviews and checks.</td><td nowrap><a href="docs/CLI.md#nova-merge">nova-merge</a></td><td>Typed reads, gate records and the batch gate a stream lands on.</td></tr>
 <tr><td>Prepare a focused review of a specific revision.</td><td nowrap><a href="docs/CLI.md#nova-review">nova-review</a></td><td><strong>Development branch:</strong> a bounded packet of evidence for the reviewer.</td></tr>
 <tr><td>See where your tokens went.</td><td nowrap><a href="docs/CLI.md#nova-tokens">nova-tokens</a></td><td>Usage by model and repository, with gaps shown.</td></tr>
@@ -40,7 +38,6 @@ come back to the table below for the problem you want it to solve.
 <tr><td>Review a post before it leaves the team.</td><td nowrap><a href="docs/CLI.md#nova-post">nova-post</a></td><td><strong>Development branch:</strong> saved drafts and a send gate tied to approval of the exact content.</td></tr>
 <tr><td>Spot packages that exceed the test-time budget.</td><td nowrap><a href="docs/CLI.md#nova-ci">nova-ci</a></td><td><strong>Development branch:</strong> package timings read from Go test events.</td></tr>
 <tr><td>Keep session notes you can reliably return to.</td><td nowrap><a href="docs/CLI.md#nova-cairn">nova-cairn</a></td><td><strong>Development branch:</strong> explicit checkpoints, source pointers and a bounded index.</td></tr>
-<tr><td>Ask a model a structured question.</td><td nowrap><a href="docs/CLI.md#nova-decide">nova-decide</a></td><td><strong>Development branch:</strong> typed answers and reported confidence for your workflow to evaluate.</td></tr>
 <tr><td>Keep the fleet's permanent configuration in one place and rebuild Redis from it.</td><td nowrap><a href="docs/CLI.md#nova-config">nova-config</a></td><td><strong>Development branch:</strong> friends and machines in Postgres with a history of every change, applied into Redis through the runtime's own functions.</td></tr>
 <tr><td>Track work in tables and live views.</td><td nowrap><a href="docs/CLI.md#nova-table">nova-table</a></td><td>Ordered-set cells, text notes and pooled percentages; batch edits, member locations, epoch checks and change receipts. Edit stored views while they run. <a href="docs/nova-table/README.md">Guide and local setup.</a></td></tr>
 </tbody>
@@ -50,8 +47,8 @@ Pick the row that is your actual problem today. One tool is a fine number.
 
 ## Useful workflows
 
-The `nova-post`, `nova-review`, `nova-secrets`, `nova-pulse`, `nova-ci`,
-`nova-cairn` and `nova-decide` commands below, and `nova-sandbox
+The `nova-post`, `nova-review`, `nova-secrets`, `nova-pulse`, `nova-ci` and
+`nova-cairn` commands below, and `nova-sandbox
 egress`, are available on the development branch and are not part of the pinned
 `v0.15.2` release shown in the install guide.
 
@@ -59,8 +56,7 @@ egress`, are available on the development branch and are not part of the pinned
   inspect it with `show`, then release that exact draft with an approved `send`.
 - Fold worker-pool usage into a ledger with `nova-tokens fold-pool`. Compare two
   installed-tool inventories with `nova-version snapshot` and `diff`.
-- `nova-swarm native` shares Go module and build caches across slots under the
-  same root. `nova-ci slowtests` reports packages over your chosen whole-second
+- `nova-ci slowtests` reports packages over your chosen whole-second
   time budget; cached tests may finish near zero, so use uncached events when
   the question is how long the tests really take.
 - Keep a bounded coordination loop outside the model with `nova-pulse run`, or

@@ -30,7 +30,7 @@ import (
 )
 
 // pushLanes is pullLanes, and it is duplicated here deliberately rather than exported from
-// cmd/nova-swarm, which is another main package. The rule it enforces is the reason it is
+// deprecated/cmd/nova-swarm, which is another main package. The rule it enforces is the reason it is
 // worth the duplication: `nova-swarm pull` reads red, then green, then small, then next, and
 // ONLY those four. A card pushed to a fifth lane is written, acknowledged and never read by
 // anybody, which is the worst shape a queue can have -- it looks like it worked.

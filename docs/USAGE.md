@@ -81,11 +81,6 @@ Two tools carry most of the benefit and ask the least of you:
   spends a model turn per tick to learn that nothing happened. Try it second,
   once there is something worth waiting for.
 
-If those two help, there is a next step, and it really is optional:
-
-- **`nova-swarm`** when you have genuinely parallel bounded work and workers
-  configured to run it.
-
 Everything else is a separate, independent tool. Reach for one when its situation
 is yours — not to collect the set.
 
@@ -109,7 +104,7 @@ nova-wake help
 Those commands install the two named tools from `v0.15.2`. This guide also
 describes development-branch features where it labels them explicitly;
 `nova-post`, `nova-review`, `nova-secrets`, `nova-pulse`, `nova-work`, `nova-ci`,
-`nova-cairn`, `nova-decide` and `nova-sandbox egress` are not available from the
+`nova-cairn` and `nova-sandbox egress` are not available from the
 pinned release.
 
 The two `go install` lines **reach the network**: they download and build the
@@ -147,8 +142,8 @@ tests execute line by line are the ones in [docs/TESTS.md](TESTS.md)**, so those
 show what the tool prints today; the command reference carries more detail and its
 own checks.
 
-Five tools have a `quickstart` verb — `nova-wake`, `nova-swarm`, `nova-merge`,
-`nova-memory` and `nova-check` — and **every one of them still requires paths or
+Four tools have a `quickstart` verb — `nova-wake`, `nova-merge`, `nova-memory`
+and `nova-check` — and **every one of them still requires paths or
 choices you supply**. `nova-bus`, `nova-tokens`,
 `nova-sandbox`, `nova-self-talk` and `nova-fuse` have none. Each entry below
 names what its own first trial needs.
@@ -297,44 +292,6 @@ for.
 It is no longer built, tested or shipped, so there is nothing here to install or
 try. Its code, its spec, its command reference and its first-run transcript are
 kept as reference only under [`deprecated/`](../deprecated/README.md).
-
-### nova-swarm — more work at once
-
-**Try it when** you have bounded, independent jobs and workers configured to run
-them, and doing them one after another is what is slowing you down.
-
-**What it does.** Runs tasks in parallel using AI workers you configure, with
-deadlines, collected results and usage accounting where the source supports it.
-
-**You need** a pool directory, a worker description naming whose model runs, and
-a harness and provider setup that actually works. **Every job runs inside
-`nova-sandbox` on every supported platform**: `run` proves the wall once before
-the first worker and refuses to start without a usable sandbox unless you
-explicitly pass `--no-sandbox`, **which provides no containment at all**. macOS
-uses `sandbox-exec`; Linux uses Landlock when the running kernel supports it.
-Windows has no containment backend yet.
-
-**First trial.** `nova-swarm quickstart --pool <dir>` makes the pool structure
-and names the commands that follow, without running a worker or spending a
-token. See the
-[first-run transcript](TESTS.md#nova-swarm) and
-[nova-swarm in the command reference](CLI.md#nova-swarm).
-
-**It worked if** several jobs finished inside their deadlines and you could read
-each result and the evidence behind it.
-
-**Limits and side effects.** It runs other programs, writes job directories, and
-spends real tokens once workers start. A worker exiting `0` means the process
-succeeded, **not** that the requested work is complete — read the evidence. A
-free worker helps only if its capabilities fit the task. The development branch
-adds `nova-sandbox run` on macOS; it is not in `v0.15.2`, and its Linux form
-refuses. On macOS, starting it from inside an existing sandbox may fail while
-creating its APFS volume because the outer wall does not permit the mount. Start
-the disposable volume from outside the existing wall; retrying the same nested
-command does not grant the missing mount access.
-
-**It may not help if** your work is mostly sequential, or you have no worker setup
-to point it at yet.
 
 ### nova-merge — a controlled queue for landing work
 
@@ -605,9 +562,8 @@ than a decision on the record.
 ## Using several together
 
 Friends who have adopted more than one usually land on: `nova-bus` for messages,
-`nova-wake` to wait for changes, `nova-swarm` for the bounded jobs that suit it,
-a read of the returned evidence before `nova-merge` lands anything, and
-`nova-tokens` to say what was measured.
+`nova-wake` to wait for changes, a read of the returned evidence before
+`nova-merge` lands anything, and `nova-tokens` to say what was measured.
 
 Two things no tool here will do for you. A free worker is only useful if its
 capabilities fit the task, and a process that exited `0` is **not** proof the work
@@ -647,7 +603,7 @@ worth trusting blindly.
   `docs/` may describe tools or behaviour that does not exist yet. Check the
   release and the implementation before relying on anything.
 - **Platform and coverage limits are stated per tool above** — `nova-sandbox`'s
-  macOS-only containment and what `nova-swarm` therefore requires, and what
+  macOS-only containment, and what
   `nova-tokens` does and does not account for. They are not repeated here.
 
 ## Contributing, and building locally

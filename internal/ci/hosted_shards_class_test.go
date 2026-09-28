@@ -32,9 +32,9 @@ const hostedDealStep = "deal this shard's packages"
 // hostedHeavy are the packages the deal places first, one per shard, before the
 // round-robin: cmd/nova-bus (46.4 s -short on the Studio) and cmd/nova-merge
 // (28.6 s) held shard 3 of 4 together, the ubuntu leg cancelled at 123 s
-// (reader measurement, #4421 round 2); cmd/nova-sprint and cmd/nova-swarm are
-// the reader's named heavy commands. ci.yml's deal step spells the same list.
-var hostedHeavy = []string{"cmd/nova-bus", "cmd/nova-merge", "cmd/nova-swarm"}
+// (reader measurement, #4421 round 2). cmd/nova-swarm, the reader's other named heavy
+// command, moved to deprecated/ and is in no deal. ci.yml's deal step spells the same list.
+var hostedHeavy = []string{"cmd/nova-bus", "cmd/nova-merge"}
 
 type hostedMatrix struct {
 	OS      []string         `yaml:"os"`

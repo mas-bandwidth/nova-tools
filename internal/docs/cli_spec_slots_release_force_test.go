@@ -13,13 +13,14 @@ import (
 // named the flag. A spec that describes the behaviour the code was fixed out of is worse
 // than no spec: it is the version a reader trusts.
 //
-// This holds both documents to the keep, to `--force`, and to the two things about
+// docs/CLI.md's nova-swarm section moved to deprecated/docs/ with the tool, so this reads
+// the spec alone. It holds the spec to the keep, to `--force`, and to the two things about
 // `--force` that make it safe to document at all — that it oversubscribes the bench, and
 // that it is a person's act rather than anything a card or a manager passes by default.
 func TestTheReferencesNameTheLiveKeepAndForceOnSlotsRelease(t *testing.T) {
 	t.Parallel()
 
-	for _, doc := range []string{"../../docs/SPEC-SWARM.md", "../../docs/CLI.md"} {
+	for _, doc := range []string{"../../docs/SPEC-SWARM.md"} {
 		raw, err := os.ReadFile(doc)
 		if err != nil {
 			t.Fatalf("%s: %v; it is where a person reads what `slots release` does", doc, err)

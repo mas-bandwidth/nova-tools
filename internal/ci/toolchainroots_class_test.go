@@ -105,7 +105,8 @@ func TestBenchStandardAndTheWallNameTheSameToolchainRoots(t *testing.T) {
 		}
 		// And the roots are documented where a reader of the wall looks for them, under the
 		// spelling the doc uses: `~/name` for a home root, the path itself for a system one.
-		for _, doc := range []string{"docs/SPEC-SWARM.md", "docs/CLI.md"} {
+		// docs/CLI.md is not read: its nova-swarm section moved to deprecated/docs/ with the tool.
+		for _, doc := range []string{"docs/SPEC-SWARM.md"} {
 			body, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(doc)))
 			if err != nil {
 				t.Fatalf("reading %s: %v", doc, err)

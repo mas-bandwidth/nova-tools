@@ -13,10 +13,6 @@
 cmd/nova-review/main_test.go:867 url 2026-09-17 a github.com insteadOf rewrite in a fake git config, not a live call; predates the checker
 cmd/nova-review/main_test.go:931 url 2026-09-17 a github.com insteadOf rewrite in a fake git config, not a live call; predates the checker
 cmd/nova-review/main_test.go:1126 url 2026-09-17 a github.com insteadOf rewrite in a fake git config, not a live call; predates the checker
-cmd/nova-swarm/lint_test.go:21 url 2026-09-17 a github.com clone line in a card template fixture, not a live call; predates the checker
-cmd/nova-swarm/lint_test.go:61 url 2026-09-17 a github.com clone line in a card template fixture, not a live call; predates the checker
-cmd/nova-swarm/lint_test.go:86 url 2026-09-17 a github.com clone line in a card template fixture, not a live call; predates the checker
-cmd/nova-swarm/profile_test.go:93 url 2026-09-17 a github.com clone line in a log fixture, not a live call; predates the checker
 cmd/nova-wake/events_functional_test.go:204 url 2026-09-17 a forge URL in a JSON event fixture, not a live call; predates the checker
 internal/merge/blocked_test.go:37 url 2026-09-17 a github.com clone URL in a fake git remote fixture, not a live call; predates the checker
 internal/merge/blocked_test.go:38 url 2026-09-17 a github.com clone URL in a fake git remote fixture, not a live call; predates the checker

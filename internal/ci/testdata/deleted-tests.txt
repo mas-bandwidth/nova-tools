@@ -30,3 +30,5 @@ cmd/nova-sprint/okfriend_bound_test.go ok-to-friend left the reconciler pass 202
 cmd/nova-wake/slow_test.go TestAWedgedGitCannotHoldThePollOpen moved to deadline_functional_test.go; completion and child-exit checks replace its elapsed-time assertion, with the same real wedged Git fixture
 internal/nsprint/launch/realwrapper_slow_test.go TestLaunchRealWrapper and TestLaunchRealWrapperReportsNotDealtAsRefused built nova-card, which moved to deprecated/cmd/nova-card (#4481); a test of deprecated code launching a deprecated tool, and deprecated code is never tested (Glenn 2026-09-27)
 internal/nsprint/launch/realwrapper_functional_test.go buildRealWrapper, startLaunchRedis and waitJobsEmpty, the helpers only realwrapper_slow_test.go called, went with it (#4481)
+internal/docs/cli_swarm_lint_test.go held docs/CLI.md's nova-swarm lint entry; that section moved to deprecated/docs/CLI.md with cmd/nova-swarm (Glenn 2026-09-27: deprecated, rewritten with the sprint), and deprecated docs are not tested
+internal/docs/cli_swarm_lint_flags_test.go read cmd/nova-swarm/lint.go's flags against docs/CLI.md; both moved to deprecated/ with the tool

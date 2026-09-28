@@ -13,7 +13,6 @@
 # entry by moving it to compared_examples.txt once a test executes it.
 
 $ HOME=/Users/me/pool/jobs/j1/home \
-$ go build -o ~/bin/nova-sandbox ./cmd/nova-sandbox      # or name it with --sandbox <path>
 $ mkdir -p /Users/me/pool/jobs/j1/home
 $ nova-bus draft --bus ./bus --as Bo --to Ada --subject gate > draft.md
 $ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --advance --remote origin --branch main
@@ -29,23 +28,6 @@ $ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@m
 $ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**" --max 2
 $ nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
 $ nova-check quickstart --dir ./self
-$ nova-decide --questions ./questions.json --state ./state.md --floor 0.9
-$ nova-decide classify --question harvest --evidence ./result.txt --pointer card-9
-$ nova-decide help --hours 3 --retries-on-rung 2 --landing-moved
-$ nova-decide help --state ; echo "exit=$?"
-$ nova-decide log --log ./decide.jsonl --summary
-$ nova-decide outcome --log ~/rowan-working/queue/decide/route.jsonl --unit-id row-card-9 --result green
-$ nova-decide review --repo mas-bandwidth/schema --pr 1488 --dry-run
-$ nova-decide route --unit-id <id> --kind <kind> --files <n> --packages <n> \
-$ nova-decide route --unit-id card-41 --kind fix-with-red-test --files 3 --packages 1 --attempt "opus:failed:missed the cause" --no-jev
-$ nova-decide route --unit-id card-41 --kind rebase --files 2 --packages 1 --no-jev
-$ nova-decide route --unit-id sec --kind fleet-chore --files 1 --secrets --touches secrets --touches network --no-jev
-$ nova-decide route --unit-id t-1 --kind fix-with-red-test --files 3 --packages 1 --attempt opus:timeout --no-jev ; echo "exit=$?"
-$ nova-decide route --unit-id thin --kind new-verb --no-jev --step-up --log ./decide.jsonl ; echo "exit=$?"
-$ nova-decide route --unit-id thin --kind new-verb --no-jev ; echo "exit=$?"
-$ nova-decide route --unit-id u --kind rebase --files 2 --packages 1
-$ nova-decide tune --decisions internal/decide/testdata/reader-observations-2026-09-19.jsonl \
-$ nova-decide tune --propose-floors --log ./decide.jsonl --write ./registry.json
 $ nova-fuse check --box ./fuse-box.json a-forum
 $ nova-fuse check --box ./fuse-box.json a-public-issue-tracker
 $ nova-fuse lift quarantine --box ./fuse-box.json a-forum
@@ -57,19 +39,14 @@ $ nova-memory quickstart --root ./corpus
 $ nova-memory search --root ./corpus --channels bm25 --k 3 glazing signal tide
 $ nova-memory search --root ./corpus --channels bm25 --k 3 lantern glazing brass
 $ nova-memory stats --root ./corpus
-$ nova-pulse fold --db ./ev.sqlite --report
 $ nova-sandbox check
 $ nova-sandbox reap
 $ nova-sandbox reap --dry-run
 $ nova-sandbox run --name j1 --scratch C:\nova --timeout 30m --memory 4g --cpu 50 -- cmd.exe /c "go build ./..."
 $ nova-sandbox run --name j1 --size 8g --out ./handoff \
 $ nova-sandbox run --name j1 --size 8g --timeout 30m --read /opt/homebrew -- /bin/sh -c 'echo hi > out'
-$ nova-secrets exec --store ~/nova-bench/secrets --as swarm-hulk --only NOVA_REDIS_BENCH_PASSWORD -- \
 $ nova-self-talk --rule-doc RULES.md ./pages/RULES.md ./pages/journal.md
 $ nova-self-talk ./pages/journal.md
-$ nova-swarm quickstart --pool ./pool
-$ nova-swarm run --pool ./pool --workers 4 --hours 2 --worker ./worker.json
-$ nova-swarm status --pool ./pool --max 20
 $ nova-wake awake --bus ./bus
 $ nova-wake probe --here
 $ nova-wake quickstart --state ./wake.state --reports ./reports
@@ -92,13 +69,6 @@ example: nova-check quickstart --dir ./self
 example: nova-ci help
 example: nova-ci slowtests --budget 60
 example: nova-ci version
-example: nova-decide --questions ./questions.json --state ./state.md --floor 0.9
-example: nova-decide help --hours 3 --retries-on-rung 2 --landing-moved
-example: nova-decide log --log ./decide.jsonl --summary
-example: nova-decide route --unit '{"id":"card-41","kind":"rebase","files":2,"packages":1}' --usage ./usage.tsv --log ./decide.jsonl --no-jev
-example: nova-decide route --unit-id card-41 --kind rebase --files 2 --packages 1 --no-jev
-example: nova-decide route --unit-id thin --kind new-verb --no-jev --step-up --log ./decide.jsonl
-example: nova-decide tune --decisions ./decisions.jsonl
 example: nova-fuse check --box ./fuse-box.json a-forum
 example: nova-fuse check --box ./fuse-box.json a-public-issue-tracker
 example: nova-fuse lift quarantine --box ./fuse-box.json a-forum
@@ -116,7 +86,6 @@ example: nova-review --version
 example: nova-sandbox --read /Users/me/pool/ref/nova-tools@abc123 \
 example: nova-sandbox run --name card1 --size 8g --timeout 30m --go --out ./handoff \
 example: nova-secrets check --store ./secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops
-example: nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD -- nova-decide route --unit-id card-41 --kind rebase --no-jev --log ./decide.jsonl --store 127.0.0.1:6379
 example: nova-secrets exec --store ./secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops --only GH_TOKEN --require GH_TOKEN -- gh api user
 example: nova-secrets keygen --as rowan --key ~/.config/nova-secrets/rowan.key --age-keygen /opt/homebrew/bin/age-keygen
 example: nova-secrets names --store ./secrets --as rowan
@@ -128,9 +97,6 @@ example: nova-self-talk ./pages/journal.md
 example: nova-sprint table --check --redis 127.0.0.1:6379
 example: nova-sprint table --redis 127.0.0.1:6379 --once
 example: nova-sprint table --redis 127.0.0.1:6379 --sprint control-a --once
-example: nova-swarm quickstart --pool ./pool
-example: nova-swarm status --pool ./pool --max 20
-example: nova-swarm template --name read-pr
 example: nova-tokens check --out ./out
 example: nova-tokens fold --out ./out --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts --bus ./bus
 example: nova-tokens report --who emma --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts

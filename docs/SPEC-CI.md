@@ -1554,8 +1554,8 @@ server by an absolute path is not caught by the shim.
 **The rule.** ci.yml's `test-hosted` keeps `timeout-minutes: 2` and meets it by
 shard count: ubuntu-latest runs shards 1..6 and macos-latest 1..8, every leg
 carrying its OS's `shards`. The `deal this shard's packages` step places the
-heavy packages (`cmd/nova-bus`, `cmd/nova-merge`, `cmd/nova-sprint`,
-`cmd/nova-swarm`) first, one per shard, then every other package round-robin in
+heavy packages (`cmd/nova-bus`, `cmd/nova-merge`) first, one per shard, then every other
+package round-robin in
 `go list` order; vet and test both read the deal's `HOSTED_PKGS`. The Go cache
 is restored at the path Go uses on each OS (`~/Library/Caches/go-build` on
 macOS, `~/.cache/go-build` on Linux, plus `~/go/pkg/mod`) by
@@ -1903,8 +1903,7 @@ nothing.
 **The test.** `TestNoCardTemplateCarriesAnOSSpecificCommand`
 (`internal/ci/ci_cardtemplates_test.go`), over the checker in
 `internal/ci/ci_cardtemplates.go`, which reads every `*.md` and `*.card` under
-`CardTemplateDirs` (`cmd/nova-pulse/testdata/templates`,
-`cmd/nova-swarm/testdata/templates`, `docs/templates`, `tools/templates`) as
+`CardTemplateDirs` (`cmd/nova-pulse/testdata/templates`, `docs/templates`, `tools/templates`) as
 text. A directory that is not there yet is skipped; a run that reads NO
 template at all is red, because that is how the directory list goes stale.
 **Its allowlist.** `internal/ci/testdata/cardtemplate_allowlist.txt`, one
@@ -1938,7 +1937,7 @@ about commands it does not run.
 by `.github/scripts/select-packages.sh` and by the merge gate's own inline
 selection in `ci.yml` — never only as a fallback when the diff selected nothing.
 **The hurt.** `internal/ci` scans the tree instead of importing what it guards,
-so nothing in a diff ever "touches" it: PR `#1073` edited `cmd/nova-swarm` and
+so nothing in a diff ever "touches" it: PR `#1073` edited `deprecated/cmd/nova-swarm` and
 selected no shard that would run the class tests. Every rule in this document is
 worth exactly as much as this line. The 2026-09-18 correction is the other edge:
 when the diff had ALREADY selected `internal/ci`, a bare append ran it twice in
@@ -1950,7 +1949,7 @@ TestMergeGateAlwaysAppendsInternalCI (deleted 2026-09-26 with the hosted merge l
 **Its allowlist.** None.
 **Its remedy line.** `select-packages.sh does not add ./internal/ci to want
 unconditionally; internal/ci scans the tree instead of importing what it guards,
-so a cmd/nova-swarm edit (PR #1073) selects no shard to run its class tests`.
+so a deprecated/cmd/nova-swarm edit (PR #1073) selects no shard to run its class tests`.
 **Its narrowings.** Two independent selections are pinned by two regular
 expressions over two files; a third path into the package set would need a third
 row here, and the test cannot know it exists.
@@ -2003,8 +2002,8 @@ read-without-execute kind`.
 kinds are ENFORCED is proved by the wall's own tests on both bodies
 (`TestLandlockReadNoExecReadsAndRefusesToExecute`,
 `TestReadNoExecReadsAndRefusesToExecuteOnDarwin`), that the argv carries each
-root under its own flag by `TestNativeArgvReadsTheBenchToolchainRoots` and, on a
-Mac, `TestNativeArgvReadsTheDarwinToolchainRoots`, and that the version under a
+root under its own flag was proved by nova-swarm's own argv tests, which moved to
+`deprecated/cmd/nova-swarm` with the tool and no longer run, and that the version under a
 Cellar prefix is read off the launcher rather than guessed by
 `TestToolchainVersionDirReadsTheVersionOffTheLauncher`.
 
@@ -2481,7 +2480,7 @@ Every class test reads this repository's own text — `.go` files, `.github/work
 35. `TestSharedRepoTreeListsAndParsesTheRepository` — the shared tree is this repository, every `.go` file carries a usable syntax tree, and the loader runs exactly once.
 36. `TestSharedRepoTreeSkipsTheGitDirectory` — `.git` is never walked into.
 38. `TestSpecCIIndexesEveryClassTest` — every class test is named by the index and every indexed `Test…` name exists (the parked section exempted).
-39. `TestNoGhInAnyBrief` / `TestBriefRuleCatchesEachSpelling` — no brief this repository ships tells a child to call GitHub (#3600, umbrella #3594: GitHub is a git remote only). **The hurt:** one PR cost ~60 REST calls and the rowan token's 5,000/h was spent twice in a day, freezing every merge for an hour; a brief that says `gh api`, `gh pr`, GraphQL or a bare remote clone teaches the next child to spend the budget again. **The sweep:** every file under `internal/nsprint/brief/tmpl/*.tmpl`, `internal/nsprint/read/tmpl/*.tmpl`, `internal/swarm/templates.go` and `cmd/nova-swarm/testdata/cards/*.md` (an empty glob is a red run, so a template directory that moves must move in the list too); a line matching `gh ` as a command (line start or after a non-word, non-path character, so "through " does not match), `graphql` in any case, or a `git clone` of any remote (`https://`, `ssh://`, `git@`) without `--reference` on the same line is refused. **No allowlist:** the remedy is the verb, not an exception. **The remedy line:** `<file>:<line>: gh  in a brief: <line>` (or `GraphQL in a brief`, or `a remote clone without the bench mirror as --reference`), with the fix named once: `nova-sprint read brief`, `nova-sprint read post`, `nova-sprint card`, or a clone with `--reference ~/nova-bench/mirror/<repo>.git`. **The control:** `TestBriefRuleCatchesEachSpelling` feeds the scanner one brief per spelling and wants exactly one finding at that line, and a brief carrying the verbs, a mirror-referenced clone and the words "through" and "high" wants none.
+39. `TestNoGhInAnyBrief` / `TestBriefRuleCatchesEachSpelling` — no brief this repository ships tells a child to call GitHub (#3600, umbrella #3594: GitHub is a git remote only). **The hurt:** one PR cost ~60 REST calls and the rowan token's 5,000/h was spent twice in a day, freezing every merge for an hour; a brief that says `gh api`, `gh pr`, GraphQL or a bare remote clone teaches the next child to spend the budget again. **The sweep:** every file under `internal/nsprint/brief/tmpl/*.tmpl`, `internal/nsprint/read/tmpl/*.tmpl` and `internal/swarm/templates.go` (the card fixtures, now `deprecated/cmd/nova-swarm/testdata/cards`, left the list with the tool; an empty glob is a red run, so a template directory that moves must move in the list too); a line matching `gh ` as a command (line start or after a non-word, non-path character, so "through " does not match), `graphql` in any case, or a `git clone` of any remote (`https://`, `ssh://`, `git@`) without `--reference` on the same line is refused. **No allowlist:** the remedy is the verb, not an exception. **The remedy line:** `<file>:<line>: gh  in a brief: <line>` (or `GraphQL in a brief`, or `a remote clone without the bench mirror as --reference`), with the fix named once: `nova-sprint read brief`, `nova-sprint read post`, `nova-sprint card`, or a clone with `--reference ~/nova-bench/mirror/<repo>.git`. **The control:** `TestBriefRuleCatchesEachSpelling` feeds the scanner one brief per spelling and wants exactly one finding at that line, and a brief carrying the verbs, a mirror-referenced clone and the words "through" and "high" wants none.
 40. `TestTaskCardsHaveOneWriter` — no non-test Go file under `cmd/` or `internal/` writes a task card's sets or record (`ws:<stream>:<where>`, `friend:<f>:cards:<where>`, both also under the sprint epoch, `ws:<e>:<stream>:<where>` and `friend:<f>:<e>:cards:<where>`, #4238; the friend-queue idx sets, `task:<id>`) with a direct Redis call; every move is one FCALL of the one writer, `ns_tcard_move` in `internal/nsprint/fn/lua/02_card_move.lua` (#3778, Glenn 2026-09-25: "a card can only ever be in no set, or one of these sets"; the 07:46 table read 143/143 left after a night that landed 27 PRs because four writers kept the sets). Fixtures that seed a throwaway store (a `*fixture*.go` file, `internal/nsprint/ws/wstest`) are the only exceptions; the remedy is `internal/nsprint/taskcard`. Its Lua twin is `TestTaskCardOneWriter` in `internal/nsprint/fn`.
 41. `TestTableSetsHaveOneWriter` / `TestTableSetsRuleCatchesAnInjectedWriter` — nothing but the one move file, `internal/nsprint/fn/lua/02_card_move.lua`, writes a set behind the three tables: `ws:<stream>:<where>` (the stream table's primaries), `bench:<b>:cards:<col>` and `friend:<f>:cards:<col>` (the host and friend tables' copies), the dealer's lists `s:<S>:pool|waiting`, each also under the sprint epoch (`ws:<e>:...`, `<kind>:<name>:<e>:cards:...`, `s:<S>:<e>:...`, #4238: the scanner knows the literals and every epoch-keyed helper, `ws.KeyAt`, `ConsumerKeyAt`, `SprintListAt` and their package twins in Go, `NS.card.ckey|wskey|skey`, `CARD.*`, `cm_*`, `DF.*` and the lander's `wskey` in Lua), and the bench lease ledgers `bench:<b>:living|starting` being folded into `bench:<b>:cards:working` (#3929, the table moves; Glenn 2026-09-25: "it's YOUR JOB to make sure that these links are always valid"). **The hurt:** the table printed counts no card record could account for, because several files each kept their own copy of a set, so a move in one left a stale member in another. **The sweep:** every Lua file under `internal/nsprint/fn/lua` and the stream lander's standalone script (`internal/nsprint/land/stream/*.lua`) (a ZADD, ZREM, SADD, SREM, SMOVE, pop, range removal, store, DEL, UNLINK or RENAME of one of those keys, directly or through a local bound to one) and every non-test Go file under `cmd/` and `internal/` (the go-redis write methods and raw command lists on the same keys). **The allowlist:** fixtures (`*fixture*.go`) seed a throwaway store; `knownTableWriters` is a ratchet that only goes down, holding the lander script's two ws writes (its park) and `ns_card_resume`'s pool write in `card_pool.lua` until they fold into the one move; the legacy ledger writers were a ratchet (`legacyLedgerWriters` in `internal/ci/tablemoves_class_test.go`), now empty since the fold landed (#3998): any write of an old ledger fails. **The remedy line:** `a second writer of a table set (the one writer is 02_card_move.lua; verbs call it: nova-sprint card deal|work|end|land|cancel): <file>:<line>`, or the ratchet's `lower legacyLedgerWriters[...]`. **The control:** `TestTableSetsRuleCatchesAnInjectedWriter` feeds the scanner Lua and Go writers of the table sets and the ledgers and wants each found, and wants the move file, a fixture and a ZCARD read left alone.
 42. `TestNoOldLeaseLedgerLeft` — nothing reads or writes the old lease ledgers `bench:<b>:living|starting` and `friend:<f>:living|starting` any more, in the Lua library or in any non-test Go file: they fold into `<consumer>:cards:working`, the one lease ledger, and the width in use is its ZCARD (#3998, #3877's other half). **The hurt:** a bench or friend kept two ledgers beside its working set, so the width a table printed, the width a take was refused at and the width the dealer reserved against could each read a different set. **The sweep:** every Lua file under `internal/nsprint/fn/lua` (code before a `--` comment) and every non-test Go file under `cmd/` and `internal/`, for a string spelling of a bench or friend key ending `:living` or `:starting`. **No allowlist:** fixtures seed the consumer sets. **The remedy line:** `an old lease ledger key (folded into <consumer>:cards:working, #3998): <file>:<line>: <line>`; hold and drop a friend-queue lease with `NS.moves.hold` / `NS.moves.drop` (02_card_move.lua) and read width as ZCARD `<consumer>:cards:working`. **The control:** the test feeds the pattern a Lua ZCARD of a friend's `:starting`, a Go ZCard of a bench's `:living` and a fixture ZADD of a friend's `:living` and wants each found, and wants `bench:<b>:cards:working` left alone.
@@ -3137,7 +3136,7 @@ table, which is their measurement.
 table — `cmd/nova-bus` at 6.4 s bought three shards, and shard 0 was killed at
 the 100 s ceiling with three tests still running. Linux could not have said
 otherwise: `cmd/nova-bus` is 10.0 s on hulk and at least 100 s there,
-`cmd/nova-swarm` 51.0 s on hulk and 37 s there.
+`deprecated/cmd/nova-swarm` 51.0 s on hulk and 37 s there.
 **PARKED 2026-09-18.** Glenn: "drop the native windows CI runners. WSL only from now on." The merge gate's windows leg, its arm of the shard plan and `make windows-timeout` are all gone. **The rule itself is NOT parked**: it runs today as `darwin-table`.
 **Its allowlist.** None.
 **Its remedy lines.** `the merge gate's shard plan never reads <sizes file>; its

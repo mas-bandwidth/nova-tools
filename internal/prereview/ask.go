@@ -55,7 +55,7 @@ func RubricVersion() string {
 
 // SeedInstructions is the score question's instructions as the first posted
 // run asked them. It is the seed prompt of the calibration harness
-// (internal/jevcalib/prompts/fd94795e.txt is this string plus one newline), so
+// (deprecated/internal/jevcalib/prompts/fd94795e.txt is this string plus one newline), so
 // it never changes: a new prompt is a new file, not an edit here.
 const SeedInstructions = "Score this pull request from 1 to 10 as a reviewer would, where 1 is the worst and 10 the best. " +
 	"The change is one cell of a conformance matrix: a single added test that must exercise the generated code " +

@@ -135,7 +135,6 @@ func TestParseCLIReadsThisRepositorysOwnReference(t *testing.T) {
 	want := map[string]bool{
 		"nova-check links":          false,
 		"nova-check corpus":         false,
-		"nova-swarm batch":          false,
 		"nova-bus send":             false,
 		"nova-fuse lift quarantine": false,
 		"nova-review packet":        false,
@@ -239,7 +238,9 @@ func TestParseCLIReadsTheVerbPerHeadingShape(t *testing.T) {
 
 // The class test the dogfood pass asked for: every tool the reference gives a
 // section to yields at least one verb. A tool with a section and no rows is
-// exactly the failure that hid nova-sandbox and nova-work.
+// exactly the failure that hid nova-sandbox and nova-work. The tools asked are the ones
+// whose cmd/ directory is in the tree: a section for a deleted binary (nova-pulse's,
+// which says where its verbs went) has nothing to dogfood.
 func TestEveryToolSectionOfTheRealReferenceYieldsAVerb(t *testing.T) {
 	t.Parallel()
 
@@ -261,6 +262,9 @@ func TestEveryToolSectionOfTheRealReferenceYieldsAVerb(t *testing.T) {
 			continue
 		}
 		tool := strings.Fields(strings.TrimPrefix(line, "## "))[0]
+		if _, err := os.Stat(filepath.Join("..", "..", "cmd", tool)); err != nil {
+			continue
+		}
 		if !withVerbs[tool] {
 			t.Errorf("docs/CLI.md gives %s a section and the ledger reads no verb out of it; that tool can never be dogfooded", tool)
 		}

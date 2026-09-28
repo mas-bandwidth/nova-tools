@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/jevcalib"
+	"github.com/mas-bandwidth/nova-tools/deprecated/internal/jevcalib"
 	"github.com/mas-bandwidth/nova-tools/internal/prereview"
 )
 
