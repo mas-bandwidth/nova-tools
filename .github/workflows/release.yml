@@ -264,9 +264,19 @@ jobs:
           }
 
           # THE RELEASE NOTES FILE MUST EXIST in this tree, before any API call.
-          notes="docs/RELEASE-NOTES-${TAG}.md"
-          if [ ! -f "$notes" ]; then
-            echo "refusing: $notes does not exist"
+          # Support both docs/RELEASE-NOTES-${TAG}.md and docs/RELEASE-NOTES-${TAG#v}.md.
+          notes_tag="docs/RELEASE-NOTES-${TAG}.md"
+          notes_ver="docs/RELEASE-NOTES-${TAG#v}.md"
+          if [ -f "$notes_tag" ]; then
+            notes="$notes_tag"
+          elif [ -f "$notes_ver" ]; then
+            notes="$notes_ver"
+          else
+            if [ "$notes_tag" = "$notes_ver" ]; then
+              echo "refusing: $notes_tag does not exist"
+            else
+              echo "refusing: neither $notes_tag nor $notes_ver exists"
+            fi
             exit 1
           fi
 
