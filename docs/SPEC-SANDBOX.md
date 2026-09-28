@@ -665,19 +665,17 @@ The disposable-volume implementation serializes creation and verifies cleanup.
    that cannot tell a working card from an orphan is a reaper nobody dares run,
    and a reaper nobody runs is the same as no reaper at all.
 
-3. **A reaper is tested against the real listing, never an assumed one.** Found by
-   dogfooding lesson 2 rather than by any test: `reap` answered
-   `SANDBOX REAP OK volumes=0` at a machine that was holding `/Volumes/nova-kill2`
-   with three processes on it. `diskutil apfs list` draws a tree, and the cutset
-   the existing field reader trims it with — `|`, `+`, `-`, `<` and a space — has
-   no `>`, so the line that OPENS each record,
+3. **A reaper is tested against the real listing, never an assumed one.**
+   `diskutil apfs list` draws a tree. A trim set containing only `|`, `+`, `-`,
+   `<` and a space misses the `>` that opens each volume record and can report
+   `SANDBOX REAP OK volumes=0` while a volume remains. The record begins:
 
    ```
    |   +-> Volume disk3s7 6CD8025B-76B4-4336-918B-04FEE498F9BD
    ```
 
-   trimmed to `> Volume disk3s7 …` and nothing ever matched. The field reader had
-   never met a `>`, because the lines IT reads carry only `|` and spaces. **A
+   Without trimming `>`, this becomes `> Volume disk3s7 …` and does not match
+   a reader expecting `Volume`. **A
    reaper that reports a dirty machine clean is worse than no reaper**, so the
    listing is parsed against a fixture copied off the Studio verbatim — the tree
    characters are the whole point — and that fixture holds `Macintosh HD` one
@@ -1380,8 +1378,7 @@ a caller variable beside them survives. One line per check,
 the script's own** and no number is stated here: a document that named one would
 be wrong the first time a check was added. The recorded macOS 26.6.2 arm64
 measurement has every check `OK`. A platform claim requires the script to run
-on that platform and
-its output pasted into the commit.
+on that platform, with its output included in the commit.
 
 The script's child-environment filter is the **script's**, so it can only agree
 with itself: what it measures is the profile, not the tool's scrub. The scrub is
