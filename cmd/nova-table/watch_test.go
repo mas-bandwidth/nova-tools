@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/redis/go-redis/v9"
 )
 
 // screen is the writer the in-place tests hand the loop: it keeps what was
@@ -216,3 +218,155 @@ func TestViewSummaryUsesAllKnownCounts(t *testing.T) {
 		t.Fatalf("missing column: %s", got)
 	}
 }
+
+func TestWatchCheckTableFailureProducesStallRow(t *testing.T) {
+	t.Parallel()
+	tb := demoTable(1)
+	snapshots := func(context.Context) ([]ntable.Table, error) {
+		return []ntable.Table{tb}, nil
+	}
+	checker := func(ctx context.Context, c redis.Cmdable, name string) (ntable.CheckReport, error) {
+		return ntable.CheckReport{}, fmt.Errorf("table %s: %w: [build ready job duplicate place]; run: nova-table show '%s'", name, ntable.ErrDrift, name)
+	}
+
+	read := tablesReaderWith(nil, []string{"demo"}, "", ntable.RenderOpts{}, true, snapshots, checker)
+	got, err := read(context.Background())
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	wantTable := ntable.Render(tb, ntable.RenderOpts{Title: tb.Name})
+	wantStall := "stall: demo: member record and owned set disagree: [build ready job duplicate place]\n"
+	if !strings.HasPrefix(got, wantTable) {
+		t.Fatalf("expected table prefix:\n%s\ngot:\n%s", wantTable, got)
+	}
+	if !strings.HasSuffix(got, wantStall) {
+		t.Fatalf("expected stall row suffix:\n%s\ngot:\n%s", wantStall, got)
+	}
+}
+
+func TestWatchCheckViewFailureProducesStallRow(t *testing.T) {
+	t.Parallel()
+	tb := demoTable(1)
+	viewGet := func(ctx context.Context, c redis.Cmdable, name string) (ntable.View, error) {
+		return ntable.View{Name: name, Title: "Work View", Tables: []string{"demo"}}, nil
+	}
+	snapshotter := func(c redis.Cmdable, names []string) func(context.Context) ([]ntable.Table, error) {
+		return func(context.Context) ([]ntable.Table, error) {
+			return []ntable.Table{tb}, nil
+		}
+	}
+	checker := func(ctx context.Context, c redis.Cmdable, name string) (ntable.CheckReport, error) {
+		return ntable.CheckReport{}, fmt.Errorf("table %s: %w: observed 1, active 2; run: nova-table show '%s'", name, ntable.ErrStale, name)
+	}
+
+	read := viewReaderWith(nil, "myview", ntable.RenderOpts{}, true, viewGet, snapshotter, checker)
+	got, err := read(context.Background())
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	wantStall := "stall: demo: observed epoch is stale: observed 1, active 2\n"
+	if !strings.Contains(got, "Work View") {
+		t.Fatalf("expected view title in output:\n%s", got)
+	}
+	if !strings.HasSuffix(got, wantStall) {
+		t.Fatalf("expected stall row suffix:\n%s\ngot:\n%s", wantStall, got)
+	}
+}
+
+func TestWatchCheckSuccessProducesNoStallRow(t *testing.T) {
+	t.Parallel()
+	tb := demoTable(1)
+	snapshots := func(context.Context) ([]ntable.Table, error) {
+		return []ntable.Table{tb}, nil
+	}
+	checkCalled := false
+	checker := func(ctx context.Context, c redis.Cmdable, name string) (ntable.CheckReport, error) {
+		checkCalled = true
+		return ntable.CheckReport{Epoch: 1, Revision: 1, Members: 1, Cells: 1}, nil
+	}
+
+	read := tablesReaderWith(nil, []string{"demo"}, "", ntable.RenderOpts{}, true, snapshots, checker)
+	got, err := read(context.Background())
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if !checkCalled {
+		t.Fatal("expected check to be called")
+	}
+	if strings.Contains(got, "stall:") {
+		t.Fatalf("expected no stall row on successful check, got:\n%s", got)
+	}
+	wantTable := ntable.Render(tb, ntable.RenderOpts{Title: tb.Name})
+	if got != wantTable {
+		t.Fatalf("got %q, want %q", got, wantTable)
+	}
+}
+
+func TestWatchCheckDisabledDoesNotRunCheck(t *testing.T) {
+	t.Parallel()
+	tb := demoTable(1)
+	snapshots := func(context.Context) ([]ntable.Table, error) {
+		return []ntable.Table{tb}, nil
+	}
+	checkCalled := false
+	checker := func(ctx context.Context, c redis.Cmdable, name string) (ntable.CheckReport, error) {
+		checkCalled = true
+		return ntable.CheckReport{}, errors.New("should not be called")
+	}
+
+	read := tablesReaderWith(nil, []string{"demo"}, "", ntable.RenderOpts{}, false, snapshots, checker)
+	got, err := read(context.Background())
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if checkCalled {
+		t.Fatal("expected ntable.Check NOT to be called when check is false")
+	}
+	if strings.Contains(got, "stall:") {
+		t.Fatalf("expected no stall row, got:\n%s", got)
+	}
+}
+
+func TestWatchCheckFlagWired(t *testing.T) {
+	t.Parallel()
+	code, stdout, errout := runTable("watch", "--help")
+	if code != 0 || errout != "" {
+		t.Fatalf("watch --help: code %d errout %q", code, errout)
+	}
+	if !strings.Contains(stdout, "-check") || !strings.Contains(stdout, "run table check every tick") {
+		t.Fatalf("expected --check flag in watch help, got:\n%s", stdout)
+	}
+}
+
+func TestFormatStall(t *testing.T) {
+	t.Parallel()
+	err1 := fmt.Errorf("table demo: %w: [row col id duplicate place]; run: nova-table show 'demo'", ntable.ErrDrift)
+	if got := formatStall("demo", err1); got != "stall: demo: member record and owned set disagree: [row col id duplicate place]" {
+		t.Fatalf("unexpected format: %q", got)
+	}
+	err2 := fmt.Errorf("table demo: %w: observed 1, active 2; run: nova-table show 'demo'", ntable.ErrStale)
+	if got := formatStall("demo", err2); got != "stall: demo: observed epoch is stale: observed 1, active 2" {
+		t.Fatalf("unexpected format: %q", got)
+	}
+	err3 := errors.New("connection failed")
+	if got := formatStall("demo", err3); got != "stall: demo: connection failed" {
+		t.Fatalf("unexpected format: %q", got)
+	}
+}
+
+func TestAppendStalls(t *testing.T) {
+	t.Parallel()
+	if got := appendStalls("table\n", nil); got != "table\n" {
+		t.Fatalf("empty stalls: got %q", got)
+	}
+	if got := appendStalls("table\n", []string{"stall: a: b"}); got != "table\nstall: a: b\n" {
+		t.Fatalf("with trailing newline: got %q", got)
+	}
+	if got := appendStalls("table", []string{"stall: a: b"}); got != "table\nstall: a: b\n" {
+		t.Fatalf("without trailing newline: got %q", got)
+	}
+	if got := appendStalls("", []string{"stall: a: b"}); got != "stall: a: b\n" {
+		t.Fatalf("empty text: got %q", got)
+	}
+}
+
