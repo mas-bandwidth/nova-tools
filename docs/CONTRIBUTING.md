@@ -224,6 +224,11 @@ how a commons acquires a reputation for being a clique.
   binary is held to it without anyone adding it to a list.
 - **Expect the review to be slow and specific.** That is the bar working, not a
   judgment about you.
+- **Parked tools and verbs have no active documentation.** Remove their entries,
+  examples, links and retirement notices from README and `docs/`. The documentation
+  tests reject parked tool names across these pages, using directory inventories
+  without building archived code. Review verb descriptions against the current
+  dispatcher as well: the name check does not prove a documented verb is reachable.
 - **A "maybe yes, IF" is a real answer, not a soft no.** It names what would
   change the verdict.
 - **A suspected security vulnerability in a shipped tool does not go in a public
