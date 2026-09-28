@@ -1296,15 +1296,20 @@ jobs:
           cache: false
 
       - name: cache go build and module cache
+        id: gocache
         if: runner.environment == 'github-hosted'
         # Only on GitHub-hosted runners. A self-hosted runner is PERSISTENT: its Go build cache is
         # already on disk, and this step's save phase tars the whole multi-GB cache on every job,
         # outlives the job's timeout, and is orphaned still compressing (82 of them put the Studio
         # at load 147 on 2026-09-17). internal/ci holds the class test.
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        #
+        # The build cache path is per OS and the save is its own step before the tests:
+        # docs/SPEC-CI.md, `hosted-shards`, says why (run 36357749371), and internal/ci's
+        # TestHostedCacheIsWhereGoKeepsIt holds both.
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
-            ~/.cache/go-build
+            ${{ runner.os == 'macOS' && '~/Library/Caches/go-build' || '~/.cache/go-build' }}
             ~/go/pkg/mod
           key: ${{ runner.os }}-go-${{ hashFiles('go.mod') }}
           restore-keys: |
@@ -1312,6 +1317,17 @@ jobs:
 
       - name: build
         run: make build
+
+      - name: save go build and module cache
+        # On a miss or a restore-keys fallback only: an exact hit is already the entry. Shards
+        # race for the key; the first reserves it and the rest log a warning and go on.
+        if: runner.environment == 'github-hosted' && steps.gocache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ${{ runner.os == 'macOS' && '~/Library/Caches/go-build' || '~/.cache/go-build' }}
+            ~/go/pkg/mod
+          key: ${{ steps.gocache.outputs.cache-primary-key }}
 
       - name: deal this shard's packages
         # The heavy packages first, one per shard: cmd/nova-bus (46 s -short on

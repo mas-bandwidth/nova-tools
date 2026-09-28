@@ -309,6 +309,7 @@ type shellLostReplyConn struct {
 	net.Conn
 	lost *atomic.Bool
 	drop bool
+	eof  bool
 }
 
 func (c *shellLostReplyConn) Write(p []byte) (int, error) {
@@ -318,9 +319,15 @@ func (c *shellLostReplyConn) Write(p []byte) (int, error) {
 	return c.Conn.Write(p)
 }
 func (c *shellLostReplyConn) Read(p []byte) (int, error) {
+	if c.eof {
+		return 0, io.EOF
+	}
 	n, err := c.Conn.Read(p)
 	if c.drop && n > 0 {
-		c.drop = false
+		// Consume the real reply to prove the write reached the server, then
+		// keep this read side closed. A RESP3 push peek can consume one EOF;
+		// the subsequent command read must see EOF too, not a read timeout.
+		c.eof = true
 		return 0, io.EOF
 	}
 	return n, err
