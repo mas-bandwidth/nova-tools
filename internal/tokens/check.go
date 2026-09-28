@@ -75,9 +75,9 @@ type CheckResult struct {
 	Stale  bool
 }
 
-// Check walks every file under out. A day file is parsed; the one fixed temp name and the
-// lock are stepped over, because the wreckage of a killed fold is not a stray; a non-day
-// entry the allowlist admits is counted as a note; anything else is named and LEFT ALONE
+// Check walks every file under out. A day file is parsed; recognized day-file temporaries
+// and the lock are stepped over, because the wreckage of a killed fold is not a stray;
+// a non-day entry the allowlist admits is counted as a note; anything else is named and LEFT ALONE
 // — this tool removes nothing, and a person removes a stray.
 func Check(out string, opt CheckOptions) (*CheckResult, error) {
 	ents, err := os.ReadDir(out)

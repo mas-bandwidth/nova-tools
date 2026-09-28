@@ -126,10 +126,30 @@ func orDashStr(s string) string {
 // temporary file beside target, explicit mode, fsync to media, atomic rename).
 // Nothing is appended and nothing is edited in place.
 func (d *DayFile) Save(out string) error {
+	if err := checkOutputDirectory(out); err != nil {
+		return err
+	}
 	// Atomic write per internal/atomicfile model: temporary file created
 	// exclusively in parent directory, explicit 0o644 mode, fsync to media,
 	// atomic rename over target path.
 	return atomicfile.WriteFile(Path(out, d.Day), []byte(d.Render()), 0o644)
+}
+
+// checkOutputDirectory inspects the named directory itself before a writer
+// opens anything below it. Clean first so a trailing separator or /. cannot
+// turn Lstat into a lookup through a directory symlink.
+func checkOutputDirectory(out string) error {
+	info, err := os.Lstat(filepath.Clean(out))
+	if err != nil {
+		return fmt.Errorf("output directory %q: %w", out, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("output directory %q is a symlink; use a real directory", out)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("output directory %q is not a directory", out)
+	}
+	return nil
 }
 
 // Totals is the day's per-type totals, and whether any row reported each type. It is what

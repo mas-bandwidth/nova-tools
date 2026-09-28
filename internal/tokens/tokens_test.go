@@ -39,6 +39,81 @@ func TestTheDayFileRoundTripsByteIdentically(t *testing.T) {
 	}
 }
 
+func TestDayWritersRefuseSymlinkedOutputDirectory(t *testing.T) {
+	t.Parallel()
+	day := &DayFile{Day: "2026-09-11", Build: "fixture"}
+	operations := map[string]func(string) error{
+		"save": day.Save,
+		"lock": func(out string) error {
+			release, err := TakeFoldLock(out, 0)
+			if release != nil {
+				release()
+			}
+			return err
+		},
+	}
+	for name, write := range operations {
+		for _, suffix := range []string{"", string(os.PathSeparator), string(os.PathSeparator) + "."} {
+			t.Run(name+"/"+fmt.Sprintf("suffix=%q", suffix), func(t *testing.T) {
+				t.Parallel()
+				root := t.TempDir()
+				target, link := filepath.Join(root, "target"), filepath.Join(root, "out")
+				if err := os.Mkdir(target, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				for _, file := range []string{day.Day + FileSuffix, LockName} {
+					if err := os.WriteFile(filepath.Join(target, file), []byte("unchanged:"+file), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := os.Symlink(target, link); err != nil {
+					t.Fatal(err)
+				}
+				if err := write(link + suffix); err == nil || !strings.Contains(err.Error(), "symlink") {
+					t.Errorf("write through symlink error=%v, want symlink refusal", err)
+				}
+				info, err := os.Lstat(link)
+				if err != nil || info.Mode()&os.ModeSymlink == 0 {
+					t.Fatalf("output link changed: %v / %v", info, err)
+				}
+				entries, err := os.ReadDir(target)
+				if err != nil || len(entries) != 2 {
+					t.Fatalf("target directory changed: %v / %v", entries, err)
+				}
+				for _, file := range []string{day.Day + FileSuffix, LockName} {
+					got, err := os.ReadFile(filepath.Join(target, file))
+					if err != nil || string(got) != "unchanged:"+file {
+						t.Errorf("target %s changed: %q / %v", file, got, err)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestDayWritersAcceptRealOutputDirectorySpellings(t *testing.T) {
+	t.Parallel()
+	for _, suffix := range []string{"", string(os.PathSeparator), string(os.PathSeparator) + "."} {
+		t.Run(fmt.Sprintf("suffix=%q", suffix), func(t *testing.T) {
+			t.Parallel()
+			out := t.TempDir() + suffix
+			release, err := TakeFoldLock(out, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer release()
+			day := &DayFile{Day: "2026-09-11", Build: "fixture"}
+			if err := day.Save(out); err != nil {
+				t.Fatal(err)
+			}
+			got, err := os.ReadFile(Path(out, day.Day))
+			if err != nil || string(got) != day.Render() {
+				t.Fatalf("saved day=%q (%v), want %q", got, err, day.Render())
+			}
+		})
+	}
+}
+
 func TestAnUnversionedFileRefuses(t *testing.T) {
 	t.Parallel()
 
