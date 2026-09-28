@@ -46,7 +46,7 @@ usage:
   nova-sandbox probe --write <dir>... [--read <dir>...] [--secret <path>] [--net-deny]
   nova-sandbox policy --read <dir>... --write <dir>... [--net-deny] [--net-listen]
                [-- <command> <args...>]
-  nova-sandbox check [--max <n>]
+  nova-sandbox check
   nova-sandbox run --name <n> --size <8g> [--timeout <30m>] [--go] [--read <dir>]...
                [--container <disk>] -- <command> <args...>          (darwin)
   nova-sandbox run --help
@@ -102,8 +102,6 @@ usage:
                   WITHOUT one -- a caller whose key is delivered by nova-secrets
                   exec into the environment has no key file, and the probe then
                   proves the wall's other checks (issue #881).
-  --max <n>       how many lines a listing prints before one MORE line stands for
-                  the rest. Default 20, and 0 means all.
 
 run gives one command a DISPOSABLE place to work and then takes it away: on darwin
 an APFS volume of its own in the boot container, quota'd by --size and mounted at
@@ -213,7 +211,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 		return 0
 	case "check":
 		verbflag.HelpIfAsked(args[1:], "check")
-		return checkVerb(stdout)
+		return checkVerb(args[1:], stdout, stderr)
 	case "run":
 		return runVerb(args[1:], stdin, stdout, stderr, env)
 	case "reap":
@@ -237,6 +235,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 		return probeVerb(args[1:], stdout, stderr, env)
 	case probeStepVerbName:
 		return probeStepVerb(args[1:], stderr, env)
+	}
+	if !strings.HasPrefix(args[0], "-") {
+		fmt.Fprintf(stderr, "SANDBOX REFUSED reason=unknown_verb: unknown verb %q; available: check, egress, policy, probe, reap, run, version, worktree; run: nova-sandbox help\n", args[0])
+		return sandbox.ExitCannotRun
 	}
 	return execVerb(args, stdin, stdout, stderr, env)
 }
@@ -464,7 +466,21 @@ func asRefusal(err error, out *sandbox.Refusal) bool {
 
 // checkVerb reports what this machine can enforce and exits 0 either way, because it is
 // a question, not an attempt.
-func checkVerb(stdout io.Writer) int {
+func checkVerb(args []string, stdout, stderr io.Writer) int {
+	for _, a := range args {
+		if a == "-h" || a == "--help" || a == "help" {
+			fmt.Fprint(stdout, usage)
+			return 0
+		}
+	}
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			fmt.Fprintf(stderr, "CHECK REFUSED reason=bad_flag: flag %q; run: nova-sandbox check -h\n", a)
+			return sandbox.ExitCannotRun
+		}
+		fmt.Fprintf(stderr, "CHECK REFUSED reason=bad_flag: unexpected argument %q; run: nova-sandbox check -h\n", a)
+		return sandbox.ExitCannotRun
+	}
 	backend, ok := sandbox.Available()
 	name, note := sandbox.Backend, sandbox.Note()
 	net := "unenforceable"

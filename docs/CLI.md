@@ -746,7 +746,25 @@ Ask the machine what it can enforce, then prove the wall before the first job:
 ```
 $ nova-sandbox check
 CHECK OK backend=sandbox-exec abi=- net=enforceable note=sandbox-exec is deprecated by Apple and works on macOS 26; the wall is the profile it applies; backend at /usr/bin/sandbox-exec
+```
 
+Invalid flags or unexpected arguments refuse with exit 2 naming the flag as typed:
+
+```
+$ nova-sandbox check --bogus
+CHECK REFUSED reason=bad_flag: flag "--bogus"; run: nova-sandbox check -h
+```
+
+Unknown verbs refuse explicitly with exit 2 rather than falling into the bare wrap:
+
+```
+$ nova-sandbox bogus
+SANDBOX REFUSED reason=unknown_verb: unknown verb "bogus"; available: check, egress, policy, probe, reap, run, version, worktree; run: nova-sandbox help
+```
+
+Prove the wall before the first job:
+
+```
 $ mkdir -p /Users/me/pool/jobs/j1/home
 $ HOME=/Users/me/pool/jobs/j1/home \
   nova-sandbox probe --write /Users/me/pool/jobs/j1 \
@@ -958,6 +976,29 @@ log at all (measured; `(with report)` and `(trace ...)` are both unavailable), s
 on this OS the line is usually silent and a `SANDBOX NOTE` naming the size of the
 allowed set is printed instead. [SPEC-SANDBOX.md](SPEC-SANDBOX.md) has the whole
 measurement.
+
+### worktree
+
+Materialises one pull request's exact head in an isolated scratch tree of its own. It is not a wrapper and builds no wall: it uses SPEC.md's 0/1/2 grammar (0 the verb ran, 2 could not run), reads the repository through git on `PATH`, and reads the pull request through the forge client (`gh`).
+
+```
+$ nova-sandbox worktree --repo /path/to/workdir --scratch /path/to/workdir/scratch --pr 123
+WORKTREE OK path=/path/to/workdir/scratch/1f450ab70c635e66f675ff8a4e395760 head=0123456789abcdef0123456789abcdef01234567
+```
+
+A subsequent invocation on the same clean head reuses the existing tree rather than rebuilding it:
+
+```
+$ nova-sandbox worktree --repo /path/to/workdir --scratch /path/to/workdir/scratch --pr 123
+WORKTREE OK path=/path/to/workdir/scratch/1f450ab70c635e66f675ff8a4e395760 head=0123456789abcdef0123456789abcdef01234567
+```
+
+`--prune` walks `<scratch>/*.pr`, inspects process usage, and deletes idle trees older than 24 hours:
+
+```
+$ nova-sandbox worktree --repo /path/to/workdir --scratch /path/to/workdir/scratch --prune
+WORKTREE OK removed=0 kept=1
+```
 
 ## nova-tokens
 

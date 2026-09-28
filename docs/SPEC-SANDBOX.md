@@ -1196,7 +1196,7 @@ compares it with the same command run without the wrap.
 The `probe`, `policy`, `fence`, `check` and `egress` verbs are not wrappers and
 use SPEC.md's grammar unchanged: **0** the verb ran and passed, **1** the verb ran
 and said NO, **2** could not run (a missing flag, an unreadable path,
-`--secret` inside a named path, bad invocation). For the egress verbs the split
+`--secret` inside a named path, bad invocation, unknown verb: `SANDBOX REFUSED reason=unknown_verb: unknown verb "<v>"; available: check, egress, policy, probe, reap, run, version, worktree; run: nova-sandbox help`). For the egress verbs the split
 is: a plan whose invariants fail, and an `nft` that refused the ruleset, are
 **1** — the verb ran and the answer is no; a flag that cannot be read, a policy
 file that is not there, a plan that belongs to another run, a bench with no `nft`
@@ -1210,7 +1210,7 @@ which is the thing asked for and goes to stdout.
 ```
 SANDBOX OK backend=<sandbox-exec|landlock|appcontainer> abi=<n|-> [used=<n>] read=<n> read-noexec=<n> write=<n> net=<denied|nopromise> cwd=<dir> cwdb64=<base64url> ancestors=<n> cmd=<name> gpu=<none|metal>
 SANDBOX NOTE <the one remedy or gap line>   (always before the command starts)
-SANDBOX REFUSED reason=<no_sandbox|sandbox_failed|net_unenforceable|landlock_abi_unknown|bad_read|bad_write|bad_cwd|bad_net|bad_gpu|bad_size|bad_timeout|home_outside|acl_missing|no_name|no_container|no_command|not_found|not_executable|volume_exists|volume_failed>: <text>
+SANDBOX REFUSED reason=<no_sandbox|sandbox_failed|net_unenforceable|landlock_abi_unknown|bad_read|bad_write|bad_cwd|bad_net|bad_gpu|bad_size|bad_timeout|home_outside|acl_missing|no_name|no_container|no_command|not_found|not_executable|volume_exists|volume_failed|unknown_verb>: <text>
 SANDBOX STEP name=<container|look|create|delete|denials|list> state=<start|done> [ms=<n>]
 SANDBOX DENIED path=<p> op=<read|write> remedy="--read <dir>"
 SANDBOX TIMEOUT after=<d> name=<n>
@@ -1224,6 +1224,7 @@ PROBE REFUSED reason=<check|secret_inside_allow|probe_outside_inside|probe_outsi
 POLICY OK backend=<name> read=<n> read-noexec=<n> write=<n> bytes=<n> gpu=<none|metal>
 POLICY REFUSED reason=<any reason of the SANDBOX REFUSED set above>: <text>
 CHECK OK backend=<name|none> abi=<n|-> net=<enforceable|unenforceable> hosts=none note=<one clause|->
+CHECK REFUSED reason=<bad_flag>: <text>
 nova-sandbox <build identity> <goos>/<goarch> <go version> backend=<name> platform=<os>
 EGRESS PLAN run=<id> allow=<n> deny=<n> names=<name,name,...>
 EGRESS CHECK table=<nova_egress_<run>> chains=<n> rules=<n> allow=<n> deny=<n>
