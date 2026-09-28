@@ -231,6 +231,7 @@ func PoolDays(groups map[PoolKey]*PoolAgg) int {
 // temporary file beside target, explicit mode, fsync to media, atomic rename).
 // The header must match FoldPoolColumns.
 func WritePoolLedger(path string, groups map[PoolKey]*PoolAgg) error {
+	path = filepath.Clean(path)
 	if fi, err := os.Stat(path); err == nil && fi.IsDir() {
 		return &os.PathError{Op: "open", Path: path, Err: os.ErrInvalid}
 	}

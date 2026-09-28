@@ -15,18 +15,19 @@ import (
 // The day file: one file per day, twelve columns, every one written on every row.
 //
 // It is WRITTEN WHOLE every time and never appended to, never edited in place: the write
-// goes to one fixed temp name in the same directory and lands by one atomic rename. Whole
-// is not the same as recomputed -- a fold recomputes the rows ITS OWN declared sources
-// wrote and carries the rest of the file's rows over unchanged (MergeDay, #268). The fixed name is safe because one fold runs per output directory (the
-// lock in lock.go), and a stranded temp is then a name a person can see rather than a
-// scatter of `.tmp.<pid>` files nobody can tell apart. `check` steps over exactly that
-// name, so the wreckage of a killed fold is not reported as a stray.
+// goes through internal/atomicfile to a unique temporary sibling in the same directory
+// and lands by one atomic rename. Whole is not the same as recomputed -- a fold
+// recomputes the rows ITS OWN declared sources wrote and carries the rest of the file's
+// rows over unchanged (MergeDay, #268). The exclusive temporary file guarantees that
+// concurrent writers never collide; a stranded temporary left by an interrupted fold is
+// preserved, and `check` steps over valid day-file temporaries so wreckage of a killed
+// fold is not reported as a stray.
 
 // Version is the first token of every day file's first line. A file whose first line is
 // not this is refused by `sum` and named by `check`, and the repair is `fold --day <d>`.
 const Version = "nova-tokens v1"
 
-// TempSuffix is the one fixed temp name, per rule 8.
+// TempSuffix is the legacy fixed temp name, recognized by check for earlier files.
 const TempSuffix = ".tsv.tmp"
 
 // FileSuffix is a day file's extension.

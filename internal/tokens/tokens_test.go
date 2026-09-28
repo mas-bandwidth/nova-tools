@@ -504,3 +504,120 @@ func TestCheckThroughStale(t *testing.T) {
 		t.Errorf("Check with Through=2026-09-15 when last=2026-09-18 want Stale=false, got true")
 	}
 }
+
+// WritePoolLedger cleans non-canonical paths (such as ./ledger.tsv or with /./ segments)
+// and writes the ledger atomically without failing atomicfile path cleanliness checks.
+func TestWritePoolLedgerNonCanonicalPath(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	ledgerPath := filepath.Join(dir, ".", "ledger.tsv")
+	groups := map[PoolKey]*PoolAgg{
+		{Day: "2026-09-11", Provider: "deepseek", Model: "m1", Repo: "r1"}: {
+			Tasks: 2, In: 300, HasIn: true, Out: 150, HasOut: true,
+			Cw: 30, HasCw: true, Cr: 60, HasCr: true, Rsn: 15, HasRsn: true,
+			UsdMicro: 30000,
+		},
+	}
+
+	if err := WritePoolLedger(ledgerPath, groups); err != nil {
+		t.Fatalf("WritePoolLedger failed on non-canonical path %q: %v", ledgerPath, err)
+	}
+
+	// ReadPoolLedger should also succeed on non-canonical path
+	rows, err := ReadPoolLedger(ledgerPath)
+	if err != nil {
+		t.Fatalf("ReadPoolLedger failed on non-canonical path %q: %v", ledgerPath, err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("ReadPoolLedger got %d rows, want 1", len(rows))
+	}
+	if rows[0].Day != "2026-09-11" || rows[0].Model != "m1" {
+		t.Errorf("ReadPoolLedger row mismatch: %+v", rows[0])
+	}
+}
+
+// isAtomicTemp grammar: only .<YYYY-MM-DD>.tsv.tmp-<8hex> with a valid calendar day
+// is recognized; unrelated dotfiles or malformed names are rejected.
+func TestIsAtomicTempGrammar(t *testing.T) {
+	t.Parallel()
+
+	valid := []string{
+		".2026-09-11.tsv.tmp-1a2b3c4d",
+		".2026-01-01.tsv.tmp-00000000",
+		".2026-12-31.tsv.tmp-DEADBEEF",
+		".2026-02-28.tsv.tmp-abcdef12",
+	}
+	for _, name := range valid {
+		if !isAtomicTemp(name) {
+			t.Errorf("isAtomicTemp(%q) = false, want true", name)
+		}
+	}
+
+	invalid := []string{
+		".unrelated.txt.tmp-12345678",
+		".2026-09-11.txt.tmp-12345678",
+		"2026-09-11.tsv.tmp-1a2b3c4d",
+		".2026-02-31.tsv.tmp-1a2b3c4d", // invalid day
+		".2026-99-99.tsv.tmp-12345678",
+		".2026-09-11.tsv.tmp-1234",
+		".2026-09-11.tsv.tmp-123456789",
+		".2026-09-11.tsv.tmp-1234567g", // non-hex
+		".2026-09-11.tsv.tmp-",
+		".2026-09-11.tsv",
+		"2026-09-11.tsv.tmp",
+	}
+	for _, name := range invalid {
+		if isAtomicTemp(name) {
+			t.Errorf("isAtomicTemp(%q) = true, want false", name)
+		}
+	}
+}
+
+// Check must report unrelated temporary files as strays, while recognizing
+// valid dayfile atomic temporary files.
+func TestCheckReportsUnrelatedTempAsStray(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	out := filepath.Join(dir, "out")
+	if err := os.MkdirAll(out, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Valid day file
+	df := &DayFile{
+		Day: "2026-09-11", At: "2026-09-11T23:55:02Z", Build: "abc",
+		Rows: []DayRow{{Date: "2026-09-11", Model: "m1", Repo: "r1", Basis: UTC}},
+	}
+	if err := df.Save(out); err != nil {
+		t.Fatal(err)
+	}
+
+	// Valid atomic temp: not a stray
+	if err := os.WriteFile(filepath.Join(out, ".2026-09-11.tsv.tmp-1a2b3c4d"), []byte("partial\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Check(out, CheckOptions{})
+	if err != nil {
+		t.Fatalf("Check failed: %v", err)
+	}
+	if len(res.Strays) != 0 {
+		t.Errorf("valid atomic temp was reported as stray: %v", res.Strays)
+	}
+
+	// Unrelated dotfile temp: MUST be reported as a stray
+	unrelatedPath := filepath.Join(out, ".unrelated.txt.tmp-12345678")
+	if err := os.WriteFile(unrelatedPath, []byte("foreign\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res2, err := Check(out, CheckOptions{})
+	if err != nil {
+		t.Fatalf("Check failed: %v", err)
+	}
+	if len(res2.Strays) != 1 || res2.Strays[0] != unrelatedPath {
+		t.Errorf("Check strays = %v, want [%s]", res2.Strays, unrelatedPath)
+	}
+}

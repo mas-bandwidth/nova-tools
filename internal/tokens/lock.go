@@ -11,10 +11,10 @@ import (
 
 // One fold per output directory.
 //
-// The day file is written to ONE fixed temp name (rule 8), which is only safe if two folds
-// cannot be writing the same directory at once. So a fold takes a kernel lock on
-// <out>/fold.lock and holds it to the end; the second waits a bounded, jittered time and
-// then refuses, naming the holder's pid so a person can see what to wait for or kill.
+// The day file is written atomically via internal/atomicfile (rule 8). A fold
+// takes a kernel lock on <out>/fold.lock and holds it to the end; the second waits
+// a bounded, jittered time and then refuses, naming the holder's pid so a person
+// can see what to wait for or kill.
 //
 // It is an flock rather than a file whose existence means "held", for the reason
 // internal/bus gives: the kernel drops it when the process dies, so a fold killed mid-run
@@ -22,7 +22,7 @@ import (
 // the name in the refusal is the holder's own, never a stale sentinel's.
 
 // LockName is the lock file, inside the output directory: the thing being protected is
-// that directory's fixed temp names, so the lock belongs beside them.
+// that directory's day files, so the lock belongs beside them.
 const LockName = "fold.lock"
 
 // LockWait is how long a second fold waits before refusing. It is bounded on purpose: a
