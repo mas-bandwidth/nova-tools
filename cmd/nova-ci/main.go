@@ -61,6 +61,13 @@ usage:
                       with --enforce. A test skipped with the SLEEPS marker and
                       not on --sleeps (pkg<TAB>test<TAB>where) is a CI-SLEEPS
                       line and fails the run on every leg.
+                      A package go test served from its test cache reports a
+                      package elapsed near zero, so a cached run can never
+                      trip --package-budget (or --budget); its tests replay
+                      the times of the run that was cached, which
+                      --test-budget still reads. CI's unit legs run with the
+                      cache on (GOTEST_COUNT_FLAG=); its --enforce leg runs
+                      -count=1, and so does a measurement by hand.
   nova-ci functional <package-dir>...
                       print the packages among these that hold functional tests
                       (a _test.go built only under the functional build tag) on

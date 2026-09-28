@@ -345,15 +345,13 @@ named no build.
 `<reason>` on the lines above, and every path an error's text carries into a
 refusal or a note, renders through `internal/oneline`; `ledger=` on
 `CORPUS OK` is a field and prints as one token; `deny-list=` names one of
-three constants from the deny-list machinery, so it is not caller text — **and
-it is a field, which is the half that was missed**: two of the three labels
-carry a space, so `deny-list=floor list` read as `deny-list=floor` to a
-whitespace-splitting scanner and `list` read as a further field. The escape is
-not only for text a caller wrote; a field is one token whoever wrote it, so
-these three go through `oneline.Field` like every other field and print as
-`floor\x20list`, `--deny-ext` and `floor\x20list\x20+\x20--deny-ext-add`.
-The label is rendered rather than renamed: a reader who has seen `floor list`
-in a finding reads the same words on the summary line. The flag
+three constants from the deny-list machinery, so it is not caller text — and
+it is a field, so it is one token whoever wrote it. Each label is spelled as
+one token, with no space and no `=`: `floor-list`, `--deny-ext` and
+`floor-list+--deny-ext-add`. They go through `oneline.Field` like every other
+field, which leaves them unchanged, and a finding's reason spells them the same
+way, so a reader who has seen `floor-list` in a finding reads the same token on
+the summary line with nothing to decode. The flag
 parser is given no stream, so an unknown flag after a verb is this tool's own
 one-line refusal — `nova-check <verb>: <what was wrong>; run: nova-check help`,
 and nothing else — at exit 2. `-h` after a verb is not a refusal: it prints that
@@ -721,13 +719,12 @@ one truth, drifting apart, and drifting fail-open, since the copy missing
 Tunability is preserved rather than assumed: **`--deny-ext` replaces the floor
 wholesale** — for the line that legitimately keeps a language inside its own
 self — **`--deny-ext-add` extends it**, and the two are mutually exclusive.
-Every finding **names the list that produced it** (`floor list`, `--deny-ext`,
-or `floor list + --deny-ext-add`), and the `NOCODE OK` line names it too, so
-neither a red nor a green hides the basis it was reached on. In a finding's
-reason the label is prose and keeps its spaces; on the `deny-list=` field of
-the OK and FAIL summary lines, and on `--print-deny-list`'s two `source=`
-fields, it is a field and prints as one token (`floor\x20list`) — the same
-words, rendered so a scanner counts the fields the tool wrote.
+Every finding **names the list that produced it** (`floor-list`, `--deny-ext`,
+or `floor-list+--deny-ext-add`), and the `NOCODE OK` line names it too, so
+neither a red nor a green hides the basis it was reached on. Each label is one
+token, so the finding's reason, the `deny-list=` field of the OK and FAIL
+summary lines and `--print-deny-list`'s two `source=` fields all spell it the
+same way, and a scanner counts the fields the tool wrote.
 `--print-deny-list` prints what is actually in force and exits 0 — **both
 lists**, the extensions under `NOCODE DENY-LIST` and the name floor under
 `NOCODE NAME-LIST`, each entry spelled as `name:` or `path:` so the output can
@@ -1485,7 +1482,7 @@ it is shown is not a check.
 
 ```
 nova-check dogfood ledger (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--git-timeout <s>] [--tools-timeout <s>] [--fail-max <n>]
-nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] --receipts <dir>
+nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] [--closes <id>] --receipts <dir> [--tools-timeout <s>] [--fail-max <n>]
 nova-check dogfood gate   (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--shipped <cmd dir>] [--authors <file>] [--repo <dir>] [--require-all] [--fail-max <n>]
 ```
 
@@ -5273,7 +5270,7 @@ These are the umbrella **Conventions** (docs/SPEC.md lines 1-321), promised once
 37. `repo-a-37` `TestStatusReportsAndNeverGates` — `nova-fuse status` exits 0 even when a fuse is blown, because answering is `status`'s whole job and `check` is the gate.
 38. `repo-a-38` `TestSkipReportsAndDoesNotAffectExit` / `TestRuleDocIsScannedAndBannered` / `TestNotePrintedOnEveryRun` — `nova-self-talk`'s four informational second tokens (`DATED`, `SKIP`, `RULEDOC`, `NOTE`) all print on stdout.
 39. `repo-a-39` — the soft hyphen (U+00AD) and the byte order mark (U+FEFF) pass through unescaped, because they do not reorder what an operator sees.
-40. `TestNoCallerPathCanForgeALine` — every `<path>/<file>/<target>/<reason>` a line carries renders through `internal/oneline`; a field is one token even when it holds a space (`floor\x20list`), and no caller path can forge a line.
+40. `TestNoCallerPathCanForgeALine` — every `<path>/<file>/<target>/<reason>` a line carries renders through `internal/oneline`; a field is one token even when it holds a space (`\x20`), and no caller path can forge a line.
 41. `TestFailMaxWidensAndZeroPrintsAll` — every listing takes `--fail-max` (default 20, `0` = all) and prints its count line on both success and failure.
 42. `TestAFlagTypoIsOneLine` — an unknown flag after a verb is the one-line refusal `nova-check <verb>: …; run: nova-check help`, exit 2.
 43. `TestVersionLineShape` — `nova-check version` prints the Conventions build line, exit 0.
