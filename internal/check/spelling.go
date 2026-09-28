@@ -199,8 +199,8 @@ const (
 )
 
 type containerItem struct {
-	kind   containerKind
-	indent int // required indent for list item continuation
+	kind     containerKind
+	reqWidth int // required indentation width relative to enclosing container
 }
 
 func matchListItemMarker(s string) (markerLen int, ok bool) {
@@ -277,6 +277,7 @@ func StripCode(text string) string {
 
 		// Step 1: Match existing open containers against the current line.
 		matchedDepth := 0
+		parentCol := 0
 		for _, c := range openContainers {
 			if c.kind == containerBlockquote {
 				// Blockquote requires 0-3 leading spaces, then '>'.
@@ -291,6 +292,7 @@ func StripCode(text string) string {
 						pos++
 					}
 					advanceCol(oldPos, pos)
+					parentCol = col
 					matchedDepth++
 				} else {
 					break
@@ -298,29 +300,48 @@ func StripCode(text string) string {
 			} else if c.kind == containerList {
 				// Blank line inside a list item matches the container.
 				if strings.TrimSpace(lineStr[pos:]) == "" {
+					parentCol = col
 					matchedDepth++
 					continue
 				}
 				curCol := col
 				adv := 0
+				matched := false
 				for pos+adv < len(lineStr) {
 					ch := lineStr[pos+adv]
 					if ch == ' ' {
 						curCol++
 						adv++
+						if curCol-parentCol >= c.reqWidth {
+							pos += adv
+							col = curCol
+							matched = true
+							break
+						}
 					} else if ch == '\t' {
-						curCol += 4 - (curCol % 4)
+						tabStop := curCol + (4 - (curCol % 4))
+						if tabStop-parentCol >= c.reqWidth {
+							needed := (parentCol + c.reqWidth) - curCol
+							tabWidth := tabStop - curCol
+							remaining := tabWidth - needed
+							pos += adv
+							col = parentCol + c.reqWidth
+							if remaining > 0 {
+								lineStr = lineStr[:pos] + strings.Repeat(" ", remaining) + lineStr[pos+1:]
+							} else {
+								pos++
+							}
+							matched = true
+							break
+						}
+						curCol = tabStop
 						adv++
 					} else {
 						break
 					}
-					if curCol >= c.indent {
-						break
-					}
 				}
-				if curCol >= c.indent {
-					pos += adv
-					col = curCol
+				if matched {
+					parentCol = col
 					matchedDepth++
 				} else {
 					break
@@ -386,7 +407,9 @@ func StripCode(text string) string {
 				}
 				if sp <= 3 && pos+sp < len(lineStr) {
 					if markerLen, ok := matchListItemMarker(lineStr[pos+sp:]); ok {
+						parentCol := col
 						advanceCol(pos, pos+sp+markerLen)
+						colAfterMarker := col
 						afterMarker := pos + sp + markerLen
 						curCol := col
 						postAdv := 0
@@ -402,13 +425,13 @@ func StripCode(text string) string {
 								break
 							}
 						}
-						indent := curCol
+						reqWidth := curCol - parentCol
 						if afterMarker+postAdv == len(lineStr) {
-							indent = col + 1
+							reqWidth = (colAfterMarker + 1) - parentCol
 						}
 						pos = afterMarker + postAdv
 						col = curCol
-						openContainers = append(openContainers, containerItem{kind: containerList, indent: indent})
+						openContainers = append(openContainers, containerItem{kind: containerList, reqWidth: reqWidth})
 						continue
 					}
 				}

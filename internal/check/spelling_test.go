@@ -585,6 +585,40 @@ func TestSpellingCommonMarkContainerBoundaries(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("quoted-list-varying-indent-preserve-code", func(t *testing.T) {
+		t.Parallel()
+		text := "   > - ~~~go\n>   func recieve() {}\n>   ~~~\n"
+		findings, updated, err := check.CheckSpellingText("note.md", text, check.SpellingOptions{Markdown: true})
+		if err != nil {
+			t.Fatalf("CheckSpellingText error: %v", err)
+		}
+		if len(findings) != 0 {
+			t.Errorf("expected 0 findings in quoted list fence with shorter quote prefix, got: %+v", findings)
+		}
+		if updated != text {
+			t.Errorf("updated = %q, want %q", updated, text)
+		}
+	})
+
+	t.Run("quoted-list-varying-indent-correct-prose", func(t *testing.T) {
+		t.Parallel()
+		text := "> - ~~~go\n   > recieve in prose.\n"
+		findings, updated, err := check.CheckSpellingText("note.md", text, check.SpellingOptions{Markdown: true})
+		if err != nil {
+			t.Fatalf("CheckSpellingText error: %v", err)
+		}
+		if len(findings) != 1 {
+			t.Fatalf("expected 1 finding for prose outside list item with longer quote prefix, got: %+v", findings)
+		}
+		if findings[0].Original != "recieve" || findings[0].Line != 2 {
+			t.Errorf("unexpected finding: %+v", findings[0])
+		}
+		want := "> - ~~~go\n   > receive in prose.\n"
+		if updated != want {
+			t.Errorf("updated = %q, want %q", updated, want)
+		}
+	})
 }
 
 func TestSpellingRelativeDirGlobAndDirectoryExclusion(t *testing.T) {

@@ -554,4 +554,40 @@ func TestStellaQuotedListTabFence(t *testing.T) {
 			}
 		})
 	}
+	t.Run("varying-indent-preserve-code", func(t *testing.T) {
+		t.Parallel()
+		before := "   > - ~~~go\n>   func recieve() {}\n>   ~~~\n"
+		p := filepath.Join(t.TempDir(), "note.md")
+		if err := os.WriteFile(p, []byte(before), 0600); err != nil {
+			t.Fatal(err)
+		}
+		code, out, err := runSpelling(t, "--file", p, "--write")
+		after, e := os.ReadFile(p)
+		if e != nil {
+			t.Fatal(e)
+		}
+		t.Logf("exit=%d out=%q err=%q after=%q", code, out, err, after)
+		if code != 0 || string(after) != before {
+			t.Errorf("quoted list fence with shorter quote prefix rewritten: want %q, got %q", before, after)
+		}
+	})
+
+	t.Run("varying-indent-correct-prose", func(t *testing.T) {
+		t.Parallel()
+		before := "> - ~~~go\n   > recieve in prose.\n"
+		want := "> - ~~~go\n   > receive in prose.\n"
+		p := filepath.Join(t.TempDir(), "note.md")
+		if err := os.WriteFile(p, []byte(before), 0600); err != nil {
+			t.Fatal(err)
+		}
+		code, out, err := runSpelling(t, "--file", p, "--write")
+		after, e := os.ReadFile(p)
+		if e != nil {
+			t.Fatal(e)
+		}
+		t.Logf("exit=%d out=%q err=%q after=%q", code, out, err, after)
+		if code != 0 || string(after) != want {
+			t.Errorf("quoted list prose typo with longer quote prefix not corrected: want %q, got %q", want, after)
+		}
+	})
 }
