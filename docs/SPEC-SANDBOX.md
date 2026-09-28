@@ -1179,7 +1179,7 @@ compares it with the same command run without the wrap.
 The `probe`, `policy`, `fence`, `check` and `egress` verbs are not wrappers and
 use SPEC.md's grammar unchanged: **0** the verb ran and passed, **1** the verb ran
 and said NO, **2** could not run (a missing flag, an unreadable path,
-`--secret` inside a named path, bad invocation). For the egress verbs the split
+`--secret` inside a named path, bad invocation, unknown verb: `SANDBOX REFUSED reason=unknown_verb: unknown verb "<v>"; available: check, list, policy, probe, reap, run, version, worktree; run: nova-sandbox help`). For the egress verbs the split
 is: a plan whose invariants fail, and an `nft` that refused the ruleset, are
 **1** — the verb ran and the answer is no; a flag that cannot be read, a policy
 file that is not there, a plan that belongs to another run, a bench with no `nft`

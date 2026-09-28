@@ -2103,17 +2103,17 @@ func TestUnknownVerbRefused(t *testing.T) {
 		{
 			name: "bogus verb",
 			args: []string{"bogus"},
-			want: "SANDBOX REFUSED reason=unknown_verb: unknown verb \"bogus\"; available: probe, check, policy, version; run: nova-sandbox help\n",
+			want: "SANDBOX REFUSED reason=unknown_verb: unknown verb \"bogus\"; available: check, list, policy, probe, reap, run, version, worktree; run: nova-sandbox help\n",
 		},
 		{
 			name: "unknown verb with args",
 			args: []string{"some-other-verb", "--flag"},
-			want: "SANDBOX REFUSED reason=unknown_verb: unknown verb \"some-other-verb\"; available: probe, check, policy, version; run: nova-sandbox help\n",
+			want: "SANDBOX REFUSED reason=unknown_verb: unknown verb \"some-other-verb\"; available: check, list, policy, probe, reap, run, version, worktree; run: nova-sandbox help\n",
 		},
 		{
 			name: "positional command not treated as bare wrap",
 			args: []string{"echo", "hello"},
-			want: "SANDBOX REFUSED reason=unknown_verb: unknown verb \"echo\"; available: probe, check, policy, version; run: nova-sandbox help\n",
+			want: "SANDBOX REFUSED reason=unknown_verb: unknown verb \"echo\"; available: check, list, policy, probe, reap, run, version, worktree; run: nova-sandbox help\n",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

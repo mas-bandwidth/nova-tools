@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -196,6 +197,43 @@ func diffFieldNames(want, have []string) []string {
 	return missing
 }
 
+// documentedStep extracts a single command and its expected output from a fenced
+// code block in docs/CLI.md's ## nova-sandbox section.
+func documentedStep(md, cmdPrefix string) (onboarding.Step, error) {
+	section, ok := onboarding.Section(md, "nova-sandbox")
+	if !ok {
+		return onboarding.Step{}, fmt.Errorf("docs/CLI.md has no `## nova-sandbox` section")
+	}
+	fenced := false
+	var blockLines []string
+	for _, line := range strings.Split(section, "\n") {
+		if strings.HasPrefix(line, "```") {
+			if fenced {
+				for len(blockLines) > 0 && strings.TrimSpace(blockLines[0]) == "" {
+					blockLines = blockLines[1:]
+				}
+				if len(blockLines) > 0 && strings.HasPrefix(blockLines[0], cmdPrefix) {
+					steps, err := onboarding.Steps("nova-sandbox", blockLines)
+					if err != nil {
+						return onboarding.Step{}, err
+					}
+					if len(steps) != 1 {
+						return onboarding.Step{}, fmt.Errorf("block starting with %q has %d steps, want 1", cmdPrefix, len(steps))
+					}
+					return steps[0], nil
+				}
+			}
+			fenced = !fenced
+			blockLines = nil
+			continue
+		}
+		if fenced {
+			blockLines = append(blockLines, line)
+		}
+	}
+	return onboarding.Step{}, fmt.Errorf("docs/CLI.md has no block starting with %q", cmdPrefix)
+}
+
 // TestTheCommandReferenceExamplesAreWhatTheToolPrints executes the documented
 // examples from docs/CLI.md and compares their output through onboarding.Compare.
 func TestTheCommandReferenceExamplesAreWhatTheToolPrints(t *testing.T) {
@@ -205,17 +243,15 @@ func TestTheCommandReferenceExamplesAreWhatTheToolPrints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = raw
 
 	// Step 1: $ nova-sandbox check --bogus
 	{
-		var out, errb bytes.Buffer
-		code := run([]string{"check", "--bogus"}, strings.NewReader(""), &out, &errb, os.Environ())
-		step := onboarding.Step{
-			Line: "$ nova-sandbox check --bogus",
-			Args: []string{"check", "--bogus"},
-			Want: []string{`CHECK REFUSED reason=bad_flag: flag "--bogus"; run: nova-sandbox check -h`},
+		step, err := documentedStep(string(raw), "$ nova-sandbox check --bogus")
+		if err != nil {
+			t.Fatalf("documented step check --bogus: %v", err)
 		}
+		var out, errb bytes.Buffer
+		code := run(step.Args, strings.NewReader(""), &out, &errb, os.Environ())
 		res := onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}
 		for _, p := range onboarding.Compare(step, res, nil) {
 			t.Errorf("check --bogus: %s", p)
@@ -224,20 +260,31 @@ func TestTheCommandReferenceExamplesAreWhatTheToolPrints(t *testing.T) {
 
 	// Step 2: $ nova-sandbox bogus
 	{
-		var out, errb bytes.Buffer
-		code := run([]string{"bogus"}, strings.NewReader(""), &out, &errb, os.Environ())
-		step := onboarding.Step{
-			Line: "$ nova-sandbox bogus",
-			Args: []string{"bogus"},
-			Want: []string{`SANDBOX REFUSED reason=unknown_verb: unknown verb "bogus"; available: probe, check, policy, version; run: nova-sandbox help`},
+		step, err := documentedStep(string(raw), "$ nova-sandbox bogus")
+		if err != nil {
+			t.Fatalf("documented step bogus: %v", err)
 		}
+		var out, errb bytes.Buffer
+		code := run(step.Args, strings.NewReader(""), &out, &errb, os.Environ())
 		res := onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}
 		for _, p := range onboarding.Compare(step, res, nil) {
 			t.Errorf("bogus verb: %s", p)
 		}
 	}
 
-	// Step 3 & 4 (create and reuse): $ nova-sandbox worktree --repo /path/to/workdir --scratch /path/to/workdir/scratch --pr 123
+	// Steps 3, 4, 5: $ nova-sandbox worktree ...
+	wtLines, err := onboarding.Transcript(string(raw), "nova-sandbox", "worktree")
+	if err != nil {
+		t.Fatalf("onboarding.Transcript worktree: %v", err)
+	}
+	wtSteps, err := onboarding.Steps("nova-sandbox", wtLines)
+	if err != nil {
+		t.Fatalf("onboarding.Steps worktree: %v", err)
+	}
+	if len(wtSteps) != 3 {
+		t.Fatalf("worktree section has %d steps, want 3", len(wtSteps))
+	}
+
 	j := newWJob(t)
 	g := newFakeGit(j.repo)
 	useFakeGit(t, g)
@@ -249,16 +296,28 @@ func TestTheCommandReferenceExamplesAreWhatTheToolPrints(t *testing.T) {
 	t.Cleanup(func() { worktreeGUID = oldGUID })
 
 	docScratch := "/path/to/workdir/scratch"
-	guid := "1f450ab70c635e66f675ff8a4e395760"
+	docRepo := "/path/to/workdir"
 
-	{
-		var out, errb bytes.Buffer
-		code := run([]string{"worktree", "--repo", j.repo, "--scratch", j.scratch, "--pr", "123"}, strings.NewReader(""), &out, &errb, nil)
-		step := onboarding.Step{
-			Line: "$ nova-sandbox worktree --repo /path/to/workdir --scratch /path/to/workdir/scratch --pr 123",
-			Args: []string{"worktree", "--repo", j.repo, "--scratch", j.scratch, "--pr", "123"},
-			Want: []string{"WORKTREE OK path=" + filepath.Join(docScratch, guid) + " head=" + sha},
+	localizeArgs := func(args []string) []string {
+		runArgs := make([]string, len(args))
+		for i, a := range args {
+			switch a {
+			case docRepo:
+				runArgs[i] = j.repo
+			case docScratch:
+				runArgs[i] = j.scratch
+			default:
+				runArgs[i] = a
+			}
 		}
+		return runArgs
+	}
+
+	// Step 3 (create): $ nova-sandbox worktree --repo /path/to/workdir --scratch /path/to/workdir/scratch --pr 123
+	{
+		step := wtSteps[0]
+		var out, errb bytes.Buffer
+		code := run(localizeArgs(step.Args), strings.NewReader(""), &out, &errb, nil)
 		res := onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}
 		norms := []onboarding.Norm{onboarding.Path(docScratch, j.scratch)}
 		for _, p := range onboarding.Compare(step, res, norms) {
@@ -266,14 +325,11 @@ func TestTheCommandReferenceExamplesAreWhatTheToolPrints(t *testing.T) {
 		}
 	}
 
+	// Step 4 (reuse): $ nova-sandbox worktree --repo /path/to/workdir --scratch /path/to/workdir/scratch --pr 123
 	{
+		step := wtSteps[1]
 		var out, errb bytes.Buffer
-		code := run([]string{"worktree", "--repo", j.repo, "--scratch", j.scratch, "--pr", "123"}, strings.NewReader(""), &out, &errb, nil)
-		step := onboarding.Step{
-			Line: "$ nova-sandbox worktree --repo /path/to/workdir --scratch /path/to/workdir/scratch --pr 123",
-			Args: []string{"worktree", "--repo", j.repo, "--scratch", j.scratch, "--pr", "123"},
-			Want: []string{"WORKTREE OK path=" + filepath.Join(docScratch, guid) + " head=" + sha},
-		}
+		code := run(localizeArgs(step.Args), strings.NewReader(""), &out, &errb, nil)
 		res := onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}
 		norms := []onboarding.Norm{onboarding.Path(docScratch, j.scratch)}
 		for _, p := range onboarding.Compare(step, res, norms) {
@@ -281,15 +337,11 @@ func TestTheCommandReferenceExamplesAreWhatTheToolPrints(t *testing.T) {
 		}
 	}
 
-	// Step 5: $ nova-sandbox worktree --repo /path/to/workdir --scratch /path/to/workdir/scratch --prune
+	// Step 5 (prune): $ nova-sandbox worktree --repo /path/to/workdir --scratch /path/to/workdir/scratch --prune
 	{
+		step := wtSteps[2]
 		var out, errb bytes.Buffer
-		code := run([]string{"worktree", "--repo", j.repo, "--scratch", j.scratch, "--prune"}, strings.NewReader(""), &out, &errb, nil)
-		step := onboarding.Step{
-			Line: "$ nova-sandbox worktree --repo /path/to/workdir --scratch /path/to/workdir/scratch --prune",
-			Args: []string{"worktree", "--repo", j.repo, "--scratch", j.scratch, "--prune"},
-			Want: []string{"WORKTREE OK removed=0 kept=1"},
-		}
+		code := run(localizeArgs(step.Args), strings.NewReader(""), &out, &errb, nil)
 		res := onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}
 		for _, p := range onboarding.Compare(step, res, nil) {
 			t.Errorf("worktree prune: %s", p)
