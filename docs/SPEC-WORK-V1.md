@@ -7,7 +7,9 @@ current CLI, README or command catalogue.
 
 ## 1. Workflows the tree must carry
 
-The inventory was read on 2026-09-28. These are workflows to preserve, not a claim
+This inventory is a deployment example, read on 2026-09-28. Names here identify
+source evidence, not product concepts, defaults or required actors. These are
+workflows to preserve, not a claim
 that every source package is selected by today's build. No historical command is
 revived merely because its source supplied a requirement.
 
@@ -34,15 +36,17 @@ separate implementation.
 
 ## 2. Source of truth and scope
 
-One restricted Lisp data tree, one file in `mas-bandwidth/work`, is the working
-store. Each invocation supplies `--tree <file>`; no home-directory or repository
+One restricted Lisp data tree, one file in an explicitly selected Git repository,
+is the working store. The deployment example uses `mas-bandwidth/work`; this is
+configuration, not a product default. Each invocation supplies `--tree <file>`; no home-directory or repository
 path is guessed. The tree is authoritative for internal work. New internal work
 is created in the tree and is never implicitly filed on GitHub.
 
 GitHub retains externally filed issues for the filer's visibility. Import runs
 repeatedly to discover new issues and changes. An external issue stays open after
 import. When its entry is fixed, an explicit mirror operation posts a comment
-naming the fix and closes that same issue. A migration closure of an internal
+naming a fix verified on the source repository's current default branch and closes
+that same issue. A fix URL on a feature branch does not qualify. A migration closure of an internal
 issue is distinct from completion of its tree entry.
 
 The repository scope is explicit, with a seeded fixture repository first and all
@@ -70,9 +74,16 @@ path and the path resolves to the same source identity. Repository renames and
 issue transfers retain the original stable path plus explicit aliases to current
 locations; a collision refuses instead of silently moving or merging entries.
 
-An internal entry uses `repos/<owner>/<repo>/issues/local-<uuid>` so allocating it
+An internal entry uses `repos/<owner>/<repo>/issues/local-<ulid>` so allocating it
 cannot collide with a GitHub issue number. It has no invented GitHub URL or issue
 number. IDs are allocated once under the tree writer and remain stable on edit.
+Use canonical uppercase 26-character ULIDs. Within one store, the writer
+persists the last allocated ID and uses monotonic allocation across same-time
+calls and restarts; if the clock goes backward, retain the prior timestamp and
+increment its randomness component, recording the clock discrepancy. Overflow
+refuses. Lexical ID order therefore gives local allocation order without another
+sort field; it is not a claim of global wall-clock ordering across independent
+stores. The binary encoding follows the [ULID specification](https://github.com/ulid/spec).
 Paths are structural addresses inside the data, never paths to execute or write
 outside the supplied tree file.
 
@@ -102,7 +113,7 @@ A minimal empty store uses the same generic form as every nested value:
 ```
 
 For a populated tree, `repos` contains an owner object, then a repository object,
-then its `issues` object. The number or `local-<uuid>` is a string key. The entry
+then its `issues` object. The number or `local-<ulid>` is a string key. The entry
 envelope above is an object whose values follow the same rule below. Source JSON
 keys live inside `captures`, so an upstream `mirror` key cannot collide with the
 entry's own mirror state.
@@ -193,13 +204,13 @@ repository/source scope and bounded timeout. Help reads no tree or network.
 | `assign <path> --add <id>\|--remove <id>` | Change the working assignee set. |
 | `milestone <path> --set <id>\|--clear` | Set or clear the working milestone. |
 | `link <path> --kind issue\|pr\|message --target <path-or-url>` | Add a typed reference, retaining the source spelling. |
-| `close <path> --reason fixed\|superseded\|abandoned [--fix <reference>] [--comment-file <file>]` | Close working state; fixed requires a fix reference. For an external issue, enqueue the explanatory comment and closure for mirror push. |
-| `reopen <path> [--comment-file <file>]` | Reopen working state, with an explicit mirror intent for a source-linked entry. |
+| `close <path> --reason fixed\|superseded\|abandoned [--fix <reference>] [--comment-file <file>]` | Close working state; fixed requires a fix reference. External closure is eligible only after the fix is verified on the source repository's default branch; enqueue only its fixed-by comment and state closure. |
+| `reopen <path> [--comment-file <file>]` | Reopen working state locally. Remote reopening in v1 occurs only through restore-import for a verified prior migration closure. |
 | `import --repo <owner/name> --dry-run\|--non-destructive\|--destructive [--origin-policy <file>]` | Plan, import only, or import and request the guarded internal migration closure described below. Exactly one mode is required. |
 | `close --after-import <receipt-id>` | Execute only the proven internal migration closures named by that receipt; never marks their tree entries fixed. |
 | `export <path-or-scope> --capture <id> --out <dir>` | Write the retained capture's original JSON response bodies and manifest; no GitHub write. |
 | `export <path-or-scope> --working --out <file>` | Write the current working JSON view and a field capability receipt. |
-| `push <path-or-scope> [--restore-import <receipt-id>]` | Apply explicit mirror intents to existing issues; restore-import reopens only issues closed by that import, in place. Never creates internal GitHub issues. |
+| `push <path-or-scope> [--restore-import <receipt-id>]` | Apply only verified internal migration closure, in-place restore-import reopening, or the fixed-by comment plus external closure. Never creates internal GitHub issues or mirrors general edits. |
 | `verify <path-or-scope> --capture <id>\|--mirror` | Check exact capture round-trip, or compare working mirrorable fields with a fresh GitHub capture; print all differences by path. |
 
 Read verbs are offline, except explicit `verify --mirror`. Sorting is stable by
@@ -243,8 +254,10 @@ uncertain operation. Never claim exactly-once HTTP delivery.
 Exit 0 means the requested operation completed and its required verification
 passed; 1 means a comparison failed or a recorded conflict/partial effect needs
 attention; 2 means the invocation could not run. A receipt always distinguishes
-no effect, applied, pending and uncertain. A successful local edit may leave a
-clearly reported pending mirror; a `push` never calls pending success.
+no effect, applied, pending and uncertain. A successful local edit reports whether it has an eligible lifecycle mirror
+intent or is tree-only. Changes outside the v1 mirror surface stay tree-only,
+with their GitHub difference visible; they are not queued as an unsupported
+write. A `push` never calls pending success.
 
 ## 7. Import, second import and migration closure
 
@@ -300,8 +313,12 @@ There are two different proofs:
   write. The receipt lists mirrorable fields, preserved-only fields and every
   mismatch. Raw source metadata is never silently discarded from the export.
 
-A push can change supported issue fields and add the authenticated actor's new
-comments. It cannot recreate another person's authorship, server IDs or original
+V1 push writes only three declared lifecycle operations: internal migration
+closure, restore of that closure by reopening, and an authenticated fixed-by
+comment followed by external issue closure. General title/body/label/assignee/
+milestone edits and arbitrary comments remain local to the working tree. They
+are not mirrored in v1. The capability receipt distinguishes API-writable fields
+from the smaller set this version is permitted to write. It cannot recreate another person's authorship, server IDs or original
 creation timestamps. Original comments and reactions are retained on the same
 issue. Restore-import reopens that original issue; it does not reconstruct a new
 issue/thread or replay old reactions as someone else.
@@ -311,9 +328,13 @@ issue/thread or replay old reactions as someone else.
 
 Server-maintained update times and timeline entries can change when closing or
 reopening. The mirror receipt names these expected metadata changes separately
-from user-content differences. Unknown writable fields are preserved but not
-pushed until their API mapping is explicit. Readback verifies labels, assignees
-and milestones as well as bodies; a successful HTTP response alone is insufficient.
+from user-content differences. Readback checks that the pre-read content, including labels, assignees,
+milestone and body, plus only the declared lifecycle change matches the observed
+result. Every field difference is a CONFLICT refusal. The receipt retains the
+pre-read, request and readback separately; an HTTP success alone is insufficient.
+`verify --mirror` lists local-only differences separately from mismatches in the
+permitted mirror surface, so their deliberate presence is visible without
+pretending the complete tree and GitHub object are identical.
 
 GitHub documents conditional reads but does not generally support conditional
 unsafe writes. Its issue update contract does not provide a compare-and-swap
@@ -324,13 +345,17 @@ The implementation must show the read/write race in its model and receipts.
 It writes only explicitly selected fields, reads back the affected issue and
 child collections, and records conflict/uncertain on divergence. If another
 actor changes the same writable field inside that interval, the API cannot prove
-that no intermediate update was overwritten. This limitation is an explicit
-review decision before destructive migration or general edit mirroring is enabled;
-it is not solved by an invented If-Match header or a local writer lock. State-only
-closure and in-place reopen minimize the affected fields but have the same race.
+that no intermediate update was overwritten. V1 accepts this documented limitation only for its three lifecycle operations;
+it is not solved by an invented If-Match header or a local writer lock. General
+edit mirroring is outside v1. State-only closure and in-place reopen minimize the
+affected fields but have the same race. The pre-read has a bounded freshness
+window; expiration refuses and re-captures rather than using an old observation.
 An external issue remains discoverable on GitHub even if capture fails.
 
-For an external fixed entry, push its fix comment first and record its returned
+For an external fixed entry, resolve the source repository's current default
+branch and prove the referenced fix commit is reachable there; store the branch
+and observed head in the receipt. Missing, inaccessible or unmerged evidence
+refuses before a comment or closure. Then push its fix comment first and record its returned
 ID/readback before closure. If closure fails, the entry remains fixed locally with
 mirror pending/conflict and the issue still visible. Resume reconciles that comment
 before posting again. Nothing silently rolls the local completion back.
@@ -396,7 +421,8 @@ functional tests and per-verb documentation in the same change. All existing
 inventory workflows must have an exercised replacement before GitHub ceases to be
 their working store. Audit counts use complete enumerations and capture freshness.
 
-This draft is discussed with Rowan before a summary goes to Glenn. Implementation
+The coordinator and reviewers discuss this draft before its acceptance summary
+is sent to the requesting maintainer. Implementation
 runs in parallel with the sprint work; it does not claim that the future card
 integration exists. No active help, CLI page or catalogue advertises a verb before
 that verb is implemented and tested.
