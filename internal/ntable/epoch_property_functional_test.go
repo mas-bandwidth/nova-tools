@@ -35,6 +35,10 @@ import (
 // writer, revision and membership delta. A second owned Redis replays accepted
 // commands FROM those receipts, as tla/check_member_replay.py does; refused
 // commands have no receipt and are checked against complete-store snapshots.
+// Accepted commands also compare complete-store snapshots, permitting changes
+// only to keys named by the model transition, on both source and replay stores.
+// Catalog membership, templates and immutable identity hashes must exactly match
+// the model, including their first registration; allowed keys are not free-form.
 // External bindings, batches, definition edits and row sorting retain their
 // separate randomized/functional gates; no claim of concurrent server writers
 // or exhaustive TLC exploration is made by this bounded execution test.
@@ -131,12 +135,16 @@ func epochJSON(v any) string {
 	return string(b)
 }
 
+func epochDefinitionFields() map[string]string {
+	return map[string]string{"order": "a,b", "footer": "total", "col:a": "count:sum:0:", "col:b": "count:sum:0:",
+		"epoch_key": epochPropertyKey, "epoch_field": "n", "created_at": "2026-01-01T00:00:00Z"}
+}
+
 // wire is independently specified input for receipt comparison, not the input
 // used by the Go API call. JSON payloads are compared as values, not map order.
 func (a epochAction) wire() []string {
 	args := []string{a.table}
-	fields := map[string]string{"order": "a,b", "footer": "total", "col:a": "count:sum:0:", "col:b": "count:sum:0:",
-		"epoch_key": epochPropertyKey, "epoch_field": "n", "created_at": "2026-01-01T00:00:00Z"}
+	fields := epochDefinitionFields()
 	switch a.verb {
 	case "create":
 		return append(args, epochJSON(fields))
@@ -424,6 +432,47 @@ func (h *epochProperty) step(a epochAction) {
 				h.fail("refusal wrote state or returned a receipt")
 			}
 		} else {
+			allowed := h.writeKeys(a, before, after)
+			afterStore := memberStoreImage(h.t, c)
+			if image["tables"] != afterStore["tables"] {
+				if h.template[a.table] || (a.verb != "create" && a.verb != "bind") {
+					h.fail("store%d action %s unexpectedly modified tables registry", i, a.verb)
+				}
+				keyType, err := c.Type(h.ctx, "tables").Result()
+				if err != nil || keyType != "set" {
+					h.fail("store%d tables registry type = %s (%v), want set", i, keyType, err)
+				}
+				members, err := c.SMembers(h.ctx, "tables").Result()
+				if err != nil {
+					h.fail("store%d read tables registry: %v", i, err)
+				}
+				var wantMembers []string
+				for t, ok := range h.template {
+					if ok {
+						wantMembers = append(wantMembers, t)
+					}
+				}
+				if !slices.Contains(wantMembers, a.table) {
+					wantMembers = append(wantMembers, a.table)
+				}
+				slices.Sort(wantMembers)
+				slices.Sort(members)
+				if !slices.Equal(members, wantMembers) {
+					h.fail("store%d tables registry membership mismatch: got %v, want %v", i, members, wantMembers)
+				}
+				delete(image, "tables")
+				delete(afterStore, "tables")
+			}
+			if keys := unexpectedEpochWrites(image, afterStore, allowed); len(keys) != 0 {
+				h.fail("store%d accepted action changed keys outside model: %v", i, keys)
+			}
+			if !h.template[a.table] && (a.verb == "create" || a.verb == "bind") {
+				idKey := ntable.DefKey(a.table) + ":identity"
+				idHash, err := c.HGetAll(h.ctx, idKey).Result()
+				if err != nil || len(idHash) != 3 || idHash["epoch_key"] != epochPropertyKey || idHash["epoch_field"] != "n" || idHash["member_prefix"] != "table::member:" {
+					h.fail("store%d table %s identity invalid: %v (%v)", i, a.table, idHash, err)
+				}
+			}
 			event := h.event(c, a.table)
 			if i == 0 {
 				h.receipt(a, opts, receipt, event, before, after)
@@ -442,10 +491,91 @@ func (h *epochProperty) step(a epochAction) {
 	h.verify()
 }
 
+// writeKeys describes the model's possible write footprint. It does not read
+// receipts, Redis contents or Lua staging commands. In particular, a table
+// prefix is never permission to introduce arbitrary keys beneath that prefix.
+func (h *epochProperty) writeKeys(a epochAction, before, after *epochTableState) map[string]bool {
+	allowed := map[string]bool{
+		ntable.EpochPrefix(a.table, h.active) + ":definition": true,
+		ntable.RevisionKey(a.table):                           true,
+		ntable.ChangesKey(a.table):                            true,
+	}
+	if !h.template[a.table] && (a.verb == "create" || a.verb == "bind") {
+		allowed[ntable.DefKey(a.table)] = true
+		allowed[ntable.DefKey(a.table)+":identity"] = true
+	}
+	var rows []string
+	switch a.verb {
+	case "row_add", "row_del":
+		rows = []string{a.row}
+	case "bind":
+		rows = append(slices.Clone(before.rows), after.rows...)
+	case "clear", "drop":
+		rows = before.rows
+	}
+	if len(rows) > 0 {
+		allowed[ntable.RowsKeyAt(a.table, h.active)] = true
+		for _, row := range rows {
+			allowed[ntable.RowKeyAt(a.table, row, h.active)] = true
+		}
+	}
+	for _, row := range []string{"r1", "r2"} {
+		for _, col := range []string{"a", "b"} {
+			at := row + ":" + col
+			if !reflect.DeepEqual(before.cells[at], after.cells[at]) {
+				allowed[ntable.CellKeyAt(a.table, row, col, h.active)] = true
+			}
+		}
+	}
+	for n := 1; n <= 3; n++ {
+		id := epochMember(h.active, n)
+		from, _ := before.location(id)
+		to, _ := after.location(id)
+		if from != to {
+			allowed[ntable.MemberKey(id)] = true
+		}
+	}
+	return allowed
+}
+
+func unexpectedEpochWrites(before, after map[string]string, allowed map[string]bool) []string {
+	keys := map[string]bool{}
+	for key, value := range before {
+		if next, exists := after[key]; !exists || next != value {
+			keys[key] = true
+		}
+	}
+	for key := range after {
+		if _, exists := before[key]; !exists {
+			keys[key] = true
+		}
+	}
+	var unexpected []string
+	for key := range keys {
+		if !allowed[key] {
+			unexpected = append(unexpected, key)
+		}
+	}
+	slices.Sort(unexpected)
+	return unexpected
+}
+
 func (h *epochProperty) verify() {
 	h.t.Helper()
 	for i, c := range h.stores {
 		image := memberStoreImage(h.t, c)
+		var wantCatalog []string
+		for _, table := range propTables {
+			if h.template[table] {
+				wantCatalog = append(wantCatalog, table)
+			}
+		}
+		slices.Sort(wantCatalog)
+		catalog, err := c.SMembers(h.ctx, "tables").Result()
+		slices.Sort(catalog)
+		if err != nil || !slices.Equal(catalog, wantCatalog) {
+			h.fail("store%d catalog=%v (%v), model=%v", i, catalog, err, wantCatalog)
+		}
 		historical := map[string]string{}
 		for key, value := range image {
 			for epoch := uint64(1); epoch < h.active; epoch++ {
@@ -462,6 +592,20 @@ func (h *epochProperty) verify() {
 			h.fail("store%d historical namespace changed", i)
 		}
 		for _, table := range propTables {
+			wantTemplate, wantIdentity := map[string]string{}, map[string]string{}
+			if h.template[table] {
+				wantTemplate = epochDefinitionFields()
+				wantIdentity = map[string]string{"epoch_key": epochPropertyKey, "epoch_field": "n", "member_prefix": "table::member:"}
+			}
+			for _, metadata := range []struct {
+				key  string
+				want map[string]string
+			}{{ntable.DefKey(table), wantTemplate}, {ntable.DefKey(table) + ":identity", wantIdentity}} {
+				got, err := c.HGetAll(h.ctx, metadata.key).Result()
+				if err != nil || !reflect.DeepEqual(got, metadata.want) {
+					h.fail("store%d registration %s=%v (%v), model=%v", i, metadata.key, got, err, metadata.want)
+				}
+			}
 			s := h.state[table]
 			tb, err := ntable.Read(h.ctx, c, table)
 			if !s.present {
@@ -554,6 +698,9 @@ func TestTableEpochActionsAndReceiptReplay(t *testing.T) {
 				frozen: [2]map[string]string{{}, {}}}
 			for _, c := range h.stores {
 				if err := c.FlushAll(h.ctx).Err(); err != nil {
+					t.Fatal(err)
+				}
+				if err := c.HSet(h.ctx, "fixture:unrelated", "n", "unchanged").Err(); err != nil {
 					t.Fatal(err)
 				}
 				if err := c.HSet(h.ctx, epochPropertyKey, "n", 1).Err(); err != nil {
