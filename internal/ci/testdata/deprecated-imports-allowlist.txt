@@ -10,14 +10,11 @@
 # checks it in both directions: an unlisted edge is a red run, and a listed edge
 # whose import has been removed is also a red run.
 #
-# ceiling: 16
+# ceiling: 13
 
 cmd/nova-config -> internal/nsprint/ws  # config_functional_test.go exercises workspace configuration
 cmd/nova-redis -> internal/nsprint/preflight  # serve_functional_test.go runs preflight store checks
-cmd/nova-swarm -> internal/nsprint/card  # native_cardout_test.go renders card fixtures
 internal/config -> internal/nsprint/ws  # redis.go and redis_functional_test.go manage workspace friends
-internal/jev -> internal/nsprint/land/stream  # jev_test.go verifies land stream score boundaries
-internal/jev -> internal/nsprint/pr  # jev.go parses and canonicalizes PR path lines
 internal/nsprint/fn -> internal/nsprint/life  # test fixtures in fn/probe_sets_functional_test.go
 internal/nsprint/fn -> internal/nsprint/taskcard  # test fixtures in fn/probe_sets_functional_test.go
 internal/nsprint/fn -> internal/nsprint/ws  # test fixtures in fn/probe_sets_functional_test.go
