@@ -1969,7 +1969,10 @@ jobs:
     # certification-ok; a red certification is a blocker for the next release, never for a
     # CL. The nightly schedule fires test-hosted only, so ci-ok does not run on schedule:
     # the nightly run is evidence to read, not a gate to merge against.
-    if: always() && github.event_name != 'schedule'
+    # The head-repo guard every self-hosted job carries: a pull_request from a
+    # fork skips ci-ok too, because its receipt step runs this tree's code
+    # (`go run ./cmd/nova-ci`) holding the bench seat's Redis password.
+    if: always() && github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     # A STATIC needs list. GitHub does not evaluate expressions in `needs`, so the
     # conditional array the previous revision used was refused as an invalid job
     # reference and the run was never created. test-hosted is skipped on a pull
@@ -2172,7 +2175,9 @@ jobs:
       # the bench seat (card.env names it).
       # THE WRITER IS THIS TREE'S nova-ci (internal/cireceipt), run from the
       # checkout above, so the writer is versioned with the commit under test
-      # and no runner's installed build matters. nova-sprint wrote this before
+      # and no runner's installed build matters. A tree that does not compile
+      # writes no receipt and exits 1: the red ci-ok is itself the signal.
+      # nova-sprint wrote this before
       # (Rowan 2026-09-27: it is deprecated; the ci:*:gh fold and pr:* claim it
       # also wrote had only nova-sprint readers and are not written).
       - name: report this run to Redis from the runner

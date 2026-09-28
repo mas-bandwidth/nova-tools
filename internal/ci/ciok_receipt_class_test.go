@@ -24,9 +24,23 @@ import (
 
 const runnerReceiptVerb = "github receipt --from-runner"
 
-// receiptCommand is the step's command, exactly: the bench seat's
-// nova-secrets wrapper around this tree's writer.
-const receiptCommand = `exec "$HOME/.local/bin/nova-secrets" exec --store "$HOME/nova-bench/secrets" --as "$NOVA_BENCH_SEAT" \
+// ciokIf is the ci-ok job's condition, exactly: every event but the nightly
+// schedule, and the head-repo guard every self-hosted job carries, because the
+// receipt step runs this tree's code holding the bench seat's password and a
+// pull_request from a fork must not reach it.
+const ciokIf = `always() && github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)`
+
+// receiptRun is the step's whole run block, exactly: the prelude that reads
+// the bench's card.env, then the bench seat's nova-secrets wrapper around this
+// tree's writer. Nothing may stand before the exec (a cd, an export PATH) or
+// after it.
+const receiptRun = `set -euo pipefail
+env_file="$HOME/nova-bench/launch/card.env"
+[ -f "$env_file" ] || { echo "no $env_file on this runner: run the rowan-tools bench play on $(hostname) (it writes the bench seat and store address)"; exit 1; }
+# shellcheck disable=SC1090
+. "$env_file"
+: "${NOVA_BENCH_SEAT:?card.env names no NOVA_BENCH_SEAT}" "${NOVA_BENCH_SOPS:?card.env names no NOVA_BENCH_SOPS}" "${NOVA_CARD_REDIS:?card.env names no NOVA_CARD_REDIS}"
+exec "$HOME/.local/bin/nova-secrets" exec --store "$HOME/nova-bench/secrets" --as "$NOVA_BENCH_SEAT" \
   --key "$HOME/.config/nova-secrets/$NOVA_BENCH_SEAT.key" --sops "$NOVA_BENCH_SOPS" \
   --only NOVA_REDIS_BENCH_PASSWORD --require NOVA_REDIS_BENCH_PASSWORD -- \
   /usr/bin/env NOVA_SPRINT_REDIS_USER=bench NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_BENCH_PASSWORD \
@@ -38,8 +52,20 @@ const receiptCommand = `exec "$HOME/.local/bin/nova-secrets" exec --store "$HOME
   --workflow "${{ github.workflow }}" \
   --conclusion "${{ job.status }}"`
 
+// runLines is a run block's non-blank lines with their indentation taken off.
+func runLines(run string) []string {
+	var out []string
+	for _, l := range strings.Split(run, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
 type ciokWorkflow struct {
 	Jobs map[string]struct {
+		If    string `yaml:"if"`
 		Steps []struct {
 			Name            string `yaml:"name"`
 			If              string `yaml:"if"`
@@ -60,6 +86,9 @@ func TestCIOKReportsEveryRunToRedisFromTheRunner(t *testing.T) {
 	job, ok := wf.Jobs["ci-ok"]
 	if !ok {
 		t.Fatal("ci.yml has no ci-ok job")
+	}
+	if strings.TrimSpace(job.If) != ciokIf {
+		t.Errorf("the ci-ok job's if is\n  %s\nwant\n  %s\n(the head-repo guard: a fork's pull_request must not run this tree's receipt writer with the bench password)", job.If, ciokIf)
 	}
 	var run, cond string
 	found := 0
@@ -83,25 +112,9 @@ func TestCIOKReportsEveryRunToRedisFromTheRunner(t *testing.T) {
 		t.Errorf("the receipt step must fail loudly (set -euo pipefail, no `|| true`):\n%s", run)
 	}
 
-	// The command, exactly, with each line's indentation taken off.
-	var got []string
-	in := false
-	for _, l := range strings.Split(run, "\n") {
-		l = strings.TrimSpace(l)
-		if strings.HasPrefix(l, "exec ") {
-			in = true
-		}
-		if in && l != "" {
-			got = append(got, l)
-		}
-	}
-	var want []string
-	for _, l := range strings.Split(receiptCommand, "\n") {
-		want = append(want, strings.TrimSpace(l))
-	}
-	if strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Errorf("the receipt step's command is not the tree's nova-ci under the bench seat:\n got:\n%s\nwant:\n%s",
-			strings.Join(got, "\n"), strings.Join(want, "\n"))
+	// The whole run block, exactly, with each line's indentation taken off.
+	if got, want := strings.Join(runLines(run), "\n"), strings.Join(runLines(receiptRun), "\n"); got != want {
+		t.Errorf("the receipt step's run block is not the card.env prelude and this tree's nova-ci under the bench seat:\n got:\n%s\nwant:\n%s", got, want)
 	}
 	if strings.Count(run, "--job") != 0 || strings.Contains(run, "--event") || strings.Contains(run, "-branch") {
 		t.Errorf("the receipt step passes a flag the row does not carry (--job, --event, --head-branch, --base-branch):\n%s", run)

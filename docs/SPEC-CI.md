@@ -2581,12 +2581,21 @@ which is why the step must fail the job. The writer was the installed
 nova-sprint until 2026-09-27; nova-sprint is deprecated and is not shipped
 once it moves under `deprecated/`, so a rebuilt runner would have had no
 writer. The writer is now this tree's, versioned with the commit under test,
-so no runner's installed build matters; the `ci:<repo>:<sha>:gh` fold and the
+so no runner's installed build matters. The cost is stated, not hidden: a tree
+that does not compile writes no receipt and exits 1, so it never wakes a
+`nova-wake watch --store`, where the installed writer wrote a red receipt;
+this is accepted, because the red ci-ok is itself the signal, the store watch
+is for the green-or-red completion of runs that reached the step, and a tree
+that does not compile fails the other jobs first. The ci-ok job carries the
+head-repo guard every self-hosted job carries (`github.event_name !=
+'pull_request' || github.event.pull_request.head.repo.full_name ==
+github.repository`), because the step runs this tree's code holding the bench
+seat's Redis password and a fork's pull request must not reach it; the `ci:<repo>:<sha>:gh` fold and the
 `pr:<repo>:<n>` claim nova-sprint also wrote had only nova-sprint readers and
 are not written.
 **The test.** `TestCIOKReportsEveryRunToRedisFromTheRunner`
-(`internal/ci/ciok_receipt_class_test.go`), reading the job as YAML and
-comparing the command line by line.
+(`internal/ci/ciok_receipt_class_test.go`), reading the job as YAML,
+comparing the job's `if` exactly and the step's whole run block line by line.
 **Its allowlist.** None: one step, one command, no exceptions.
 **Its remedy line.** Each red names what the step lacks or names, e.g. `the
 receipt step names "nova-sprint"`; the fix is the step, never the test.
