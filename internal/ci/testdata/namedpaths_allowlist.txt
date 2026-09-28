@@ -35,7 +35,6 @@ internal/secretsanta/ SPEC-RELEASE.md's example of what prefix matching on `inte
 
 cmd/nova-merge/queue.go retired with the per-PR lander on 2026-09-24; internal/merge/queuegh.go names it as where its caller was
 docs/nova-lessons.md the lessons file lives in the self repository; internal/pulse/watch.go cites it as the source of its rules
-fleet/authorized_keys tools/bench-wsl2.ps1 reads the fleet's public keys from this path in the checkout it runs from; the keys are not carried in this tree
 fleet/group_vars/all.yml rowan-tools' Ansible inventory, named by internal/nsprint/life/wakehealth.go as the friends: declaration; not this tree
 scripts/coordination/ a prefix in SPEC-RELEASE.md's sensitive-path list, kept in the list though the directory is retired
 docs/SPEC-PULSE.md deleted with the frozen nova-pulse (2026-09-24); the line naming it is history

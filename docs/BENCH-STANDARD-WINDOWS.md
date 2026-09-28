@@ -23,8 +23,8 @@ Run it once from an **elevated** PowerShell in a checkout of this repository:
 The run is the one approval: a UAC prompt to open it, and a Tailscale auth key
 minted once in the admin console. The key reaches no printed line. The script
 refuses at exit 2, with one line naming what was wrong, when it is not elevated,
-when `fleet/authorized_keys` (the fleet's public keys, read and never written) is
-missing, or when its Go version does not match `go.mod`'s `go` line.
+when the fleet's public keys (the `authorized_keys` file it reads from the checkout it
+runs in, never writes and never generates) are missing, or when its Go version does not match `go.mod`'s `go` line.
 
 On the host it:
 
@@ -47,7 +47,7 @@ In the distro (`Ubuntu-24.04` by default) it:
   `~/go/bin` on the system PATH (`/etc/environment`);
 - installs `openssh-server`, `build-essential`, `sbcl`, `gh`, `redis-tools`;
 - installs Go under `~/sdk/<go version>` and links it into `~/go/bin`;
-- installs `fleet/authorized_keys` as `nova`'s `authorized_keys`, mode 0600;
+- installs those public keys as `nova`'s `authorized_keys`, mode 0600;
 - sets the git identity and enables sshd;
 - makes the distro the default (`wsl --set-default`).
 
