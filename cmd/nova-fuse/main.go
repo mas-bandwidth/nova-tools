@@ -273,10 +273,10 @@ func (o *onceValue) IsBoolFlag() bool {
 
 // remedy names the next step after a read that proved nothing: a box that is not
 // there is made by init; a box that cannot be read is repaired by your person. It
-// carries the caller's --box raw, so every call site prints it through oneline.Escape.
+// preserves the caller's --box as a shell argument; call sites keep the full line escaped.
 func remedy(err error, box string) string {
 	if errors.Is(err, fuse.ErrNoBox) {
-		return "if this is where your box belongs, make it: nova-fuse init --box " + box
+		return "if this is where your box belongs, make it: " + boxRemedy("init", box)
 	}
 	return "repair the box with your person, live"
 }
@@ -586,7 +586,7 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time) int {
 		// REFUSE, for the same reason as an unreadable box: with no box there every
 		// surface is refused, and a new box holding only this quarantine would clear
 		// the rest.
-		fmt.Fprintf(stderr, "nova-fuse quarantine: %s -- refusing to make a box holding only this quarantine: with no box every surface is refused, and that box would clear the rest; make the box first (nova-fuse init --box %s), or blow lockdown; run: nova-fuse help\n", oneline.Err(readErr), oneline.Escape(box))
+		fmt.Fprintf(stderr, "nova-fuse quarantine: %s -- refusing to make a box holding only this quarantine: with no box every surface is refused, and that box would clear the rest; make the box first (%s), or blow lockdown; run: nova-fuse help\n", oneline.Err(readErr), oneline.Escape(boxRemedy("init", box)))
 		return 2
 	}
 	if readErr != nil {
@@ -646,7 +646,7 @@ func cmdInit(rest []string, stdout, stderr io.Writer) int {
 	}
 	if err := fuse.CreateBox(box); err != nil {
 		if errors.Is(err, fs.ErrExist) {
-			fmt.Fprintf(stderr, "INIT FAIL box=%s: something is already there, and init never replaces a box (a blown lockdown is replaced only in a live conversation with your person); read it with nova-fuse status --box %s\n", oneline.Field(box), oneline.Escape(box))
+			fmt.Fprintf(stderr, "INIT FAIL box=%s: something is already there, and init never replaces a box (a blown lockdown is replaced only in a live conversation with your person); read it with %s\n", oneline.Field(box), oneline.Escape(boxRemedy("status", box)))
 			return 1
 		}
 		fmt.Fprintf(stderr, "INIT FAIL box=%s: could not make the box: %s\n", oneline.Field(box), oneline.Err(err))

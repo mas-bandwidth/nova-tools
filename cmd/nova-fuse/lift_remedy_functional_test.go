@@ -65,3 +65,89 @@ func TestCheckLiftRemedyRoundTripsThroughShell(t *testing.T) {
 		})
 	}
 }
+
+// The missing-box init and existing-box status remedies must preserve the
+// caller's exact path through a real shell, just like the lift remedy above.
+func TestInitAndStatusRemediesRoundTripThroughShell(t *testing.T) {
+	t.Parallel()
+	for _, spelling := range []struct{ name, path string }{
+		{"plain", "box.json"},
+		{"quotes", "a box's $HOME `printf expanded`.json"},
+		{"operators", "box;$(printf expanded).json"},
+		{"controls", "box\t\n\u2028.json\n"},
+	} {
+		for _, verb := range []string{"check", "status", "quarantine", "lift", "init"} {
+			t.Run(spelling.name+"/"+verb, func(t *testing.T) {
+				t.Parallel()
+				dir := t.TempDir()
+				box := filepath.Join(dir, spelling.path)
+				args := []string{verb, "--box", box}
+				prefix, suffix := "make it: ", "; run: nova-fuse help\n"
+				wantVerb := "init"
+				wantCode := 2
+				if verb == "quarantine" {
+					args = append(args, "surface", "reason")
+					prefix, suffix = "make the box first (", "), or blow lockdown; run: nova-fuse help\n"
+				}
+				if verb == "lift" {
+					args = []string{"lift", "quarantine", "--box", box, "surface"}
+				}
+				var before []byte
+				if verb == "init" {
+					if err := fuse.WriteBox(box, fuse.Box{Lockdown: &fuse.Fuse{At: "t", Reason: "r"}}); err != nil {
+						t.Fatal(err)
+					}
+					var err error
+					before, err = os.ReadFile(box)
+					if err != nil {
+						t.Fatal(err)
+					}
+					prefix, suffix = "read it with ", "\n"
+					wantVerb, wantCode = "status", 1
+				}
+				code, out, refusal := capture(t, args, nowish())
+				if code != wantCode || out != "" || strings.Count(refusal, "\n") != 1 {
+					t.Fatalf("refusal exit=%d out=%q err=%q", code, out, refusal)
+				}
+				_, remedy, ok := strings.Cut(refusal, prefix)
+				if !ok || !strings.HasSuffix(remedy, suffix) {
+					t.Fatalf("no remedy: %q", refusal)
+				}
+				remedy = strings.TrimSuffix(remedy, suffix)
+				stub := filepath.Join(dir, "nova-fuse")
+				if err := os.WriteFile(stub, []byte("#!/bin/sh\nprintf '%s\\000' \"$@\"\n"), 0700); err != nil {
+					t.Fatal(err)
+				}
+				cmd := exec.Command("/bin/sh", "-c", remedy)
+				cmd.Dir = dir
+				cmd.Env = []string{"PATH=" + dir}
+				raw, err := cmd.CombinedOutput()
+				if err != nil {
+					t.Fatalf("remedy %q: %v: %s", remedy, err, raw)
+				}
+				actual := strings.Split(strings.TrimSuffix(string(raw), "\x00"), "\x00")
+				want := []string{wantVerb, "--box", box}
+				if !reflect.DeepEqual(actual, want) {
+					t.Fatalf("argv=%q want=%q", actual, want)
+				}
+				if code, out, errOut := capture(t, actual, nowish()); code != 0 {
+					t.Fatalf("remedy exit=%d out=%q err=%q", code, out, errOut)
+				}
+				if verb == "init" {
+					after, err := os.ReadFile(box)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if string(after) != string(before) {
+						t.Fatal("status remedy changed blown box")
+					}
+					if code, _, _ := capture(t, []string{"check", "--box", box}, nowish()); code != 1 {
+						t.Fatalf("status remedy cleared lockdown, check exit=%d", code)
+					}
+				} else if code, _, errOut := capture(t, []string{"check", "--box", box}, nowish()); code != 0 {
+					t.Fatalf("init remedy did not initialize exact path: exit=%d err=%q", code, errOut)
+				}
+			})
+		}
+	}
+}
