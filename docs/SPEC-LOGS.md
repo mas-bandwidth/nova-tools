@@ -1,7 +1,9 @@
 # SPEC-LOGS — the structured event line
 
-A part that changes state writes one structured event line **beside** the one human line it
-already writes, never instead of it. The primitive is `internal/log`: Go's own `log/slog`
+`internal/log` writes one structured event line **beside** the one human line a part
+already writes, never instead of it, to whatever writer its caller points it at. No living
+production path points it at a stream today: `internal/fleet`'s certify pass takes a `Log`
+writer, and its one caller leaves it nil, so nothing is written. The primitive is `internal/log`: Go's own `log/slog`
 with `slog.NewJSONHandler`, the fixed field list below, the one-line escape of
 `internal/oneline`, and a redaction pass that keeps secret values out of every line. Nothing
 here is a second logging system. Related: [SPEC.md](SPEC.md) (an event is exactly one
@@ -14,23 +16,24 @@ line), [SPEC-SECRETS.md](SPEC-SECRETS.md) (the secrets a line must never carry).
 - **`Line`** — one event as a value. `New(clock, guid, source)` fills `ts` from the injected
   clock, `guid` from the injected source, `source` from the caller, and `level` as `INFO`;
   the caller fills the rest and `Write(w)` renders it.
-- **`LongVerb`** — the sink a long-running verb holds for its whole run: the writer, the
-  tool (`source`), the host (the `bench` field) and the verb's own name, fixed from the
-  first event to the last. `Event(label, msg)` writes one line through `Line.Write`. A nil
+- **`LongVerb`** — the sink a long-running verb holds for its whole run. Its fields are
+  `W` (the writer), `Clock`, `GUID`, `Source` (the tool), `Host` (the `bench` field) and
+  `Verb`, fixed from the first event to the last. A nil `Clock` falls back to `time.Now`
+  and a nil `GUID` to `ProcessGUID`, which reads `/proc`. `Event(label, msg)` writes one line through `Line.Write`. A nil
   writer writes nothing, so a caller that names no sink keeps its exact stdout and stderr,
   and a line that cannot be written never stops the work.
 - **`Redact`** — the redaction pass `Write` runs on every field whose content comes from
   outside the program (Part 2).
 
-The clock and the guid are always injected: a test passes fixed ones and never reads
-`time.Now` or `/proc`. The production guid is `ProcessGUID`: the kernel's boot id, the pid
+The clock and the guid are injected: `New` takes both, a test passes fixed ones and never
+reads `time.Now` or `/proc`, and only a `LongVerb` built with a nil `Clock` or `GUID` falls
+back to the real clock and `ProcessGUID`. The production guid is `ProcessGUID`: the kernel's boot id, the pid
 and the process start time, joined as `<boot>-<pid>-<start>`. **The guid is a run's identity**:
 a run's lines share it, and with both halves read from `/proc` two runs that share a pid after a
 reboot still differ. Where `/proc` is absent, `noboot` and `nostart` stand in and the guid is
 only the pid between them, so on such a host it names no run uniquely and nothing here claims it
-does. The writer is
-injected too: stderr in production (a unit's stderr is the systemd journal), a buffer or a
-file in a test.
+does. The writer is injected too: the caller's choice (a buffer or a file in a test), and
+nil writes nothing.
 
 ## Part 2 — the line
 

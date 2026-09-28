@@ -33,12 +33,17 @@ tool cannot enforce it.
 Every rule here is normative. Each has one line in **tests this spec demands**
 near the end, and the sections below say how each is met.
 
-1. **Every path is a flag. No environment is consulted.** There is no default
-   output directory, no default transcript directory, no default database, no
-   default bus and no default rules file. A missing one is exit 2 and
-   `refusing to guess`. `$HOME`, `$TMPDIR`, `$XDG_DATA_HOME` and every other
-   variable are ignored, and a test sets them and proves it (SPEC.md, no
-   guessing; lessons 34, 35).
+1. **Every path is a flag. No environment is consulted, except by the two Redis
+   verbs.** There is no default output directory, no default transcript
+   directory, no default database, no default bus and no default rules file. A
+   missing one is exit 2 and `refusing to guess`. `$HOME`, `$TMPDIR`,
+   `$XDG_DATA_HOME` and every other variable are ignored, and a test sets them
+   and proves it (SPEC.md, no guessing; lessons 34, 35). The exception is
+   `ledger` and `report --redis`: they dial the Redis `--redis` names and read
+   the login variables their flags name (`NOVA_SPRINT_REDIS_USER`, the variable
+   `--password-env` or `NOVA_SPRINT_REDIS_PASSWORD_ENV` names, else
+   `NOVA_REDIS_BENCH_PASSWORD`; [SPEC-STATE.md](SPEC-STATE.md)). Every other
+   verb reads no environment and touches no network.
 2. **Sources are declared by flag, and every row names its sources.** A source
    is one of `--claude <label>=<dir>`, `--opencode <label>=<file>`,
    `--swarm <label>=<dir>` or `--bus <dir>`, each repeatable. The `sources`
@@ -375,8 +380,13 @@ nova-tokens fold    --out <dir> (--day <YYYY-MM-DD> | --all) --repos <file>
 nova-tokens report  --who <name> --day <YYYY-MM-DD> --repos <file>
                     [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <kind>:<label>=<file>]...
                     [--supersedes <note-id>]... [--note <path>] [--scratch <dir>] [--timeout <seconds>]
+nova-tokens report  --ledger <file.tsv> --month <YYYY-MM> [--by model|repo|day] [--max <n>]
+nova-tokens report  --redis <host:port> --month <YYYY-MM> [--by model|repo|day|tuple] [--max <n>]
+                    [--user <name>] [--password-env <NAME>]
+nova-tokens ledger  --out <dir> (--day <YYYY-MM-DD> | --month <YYYY-MM>) --redis <host:port>
+                    [--user <name>] [--password-env <NAME>]
 nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
-                    --swarm-root <dir> --day <YYYY-MM-DD> --out <ledger.tsv>
+nova-tokens sum     --swarm-root <dir> --day <YYYY-MM-DD> --out <ledger.tsv>
 nova-tokens check   --out <dir> [--strict | --no-spend <file>] [--through <YYYY-MM-DD>] [--max <n>]
 nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all)
                     [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<dir>]... [--bus <dir>]
@@ -546,6 +556,17 @@ with `--out`, folds the coordinator's turns into the day file as model
 --ledger <file>` folds a pool's `usage/*.tsv` into the monthly ledger and
 prints one `FOLD OK` line. Their lines are in the output grammar; a scanner
 that reads the grammar parses them.
+
+`report --ledger <file.tsv> --month <YYYY-MM> [--by model|repo|day] [--max <n>]`
+sums one month of the pool ledger `fold-pool` writes (header `day, provider,
+model, repo, tasks, tokens_in, tokens_out, cache_write, cache_read, reasoning,
+usd, source`) by the `--by` group, default `model`: one `REPORT model=|repo=|day=<g>
+tasks=<n> in=<n> out=<n> cache_read=<n> usd=<usd>` line per group, capped at
+`--max`, then `REPORT OK month=<month> groups=<n> rows=<n> usd=<usd>`, exit 0. A
+missing `--ledger` or `--month`, a malformed month, a `--by` outside the three,
+a ledger that is a directory or does not read, and `--ledger` given with
+`--redis` are refusals, exit 2. `report --redis` and `ledger` are the Redis
+token ledger's verbs, specified in [SPEC-STATE.md](SPEC-STATE.md).
 
 `fold-pool` folds a pool's `usage/*.tsv` rows into the monthly ledger, summed by (day of `started`, `provider`, `model`, `repo`) and upserted into rows `day, provider, model, repo, tasks, tokens_in, tokens_out, cache_write, cache_read, reasoning, usd, source=pool`, replacing any existing row for the same key so a second run leaves the ledger byte-identical; a token cell with no reported input stays `-`, a `usd` of `-` on any input makes the row's `usd` `-`, and an optional `--since <RFC 3339 stamp>` folds only rows at or after it. A pool that cannot be read is `FOLD REFUSED` naming `--pool`, and a malformed `--since` is `FOLD REFUSED` naming the stamp: a valid stamp is never blamed for an unreadable pool.
 
@@ -931,8 +952,9 @@ note for a day needs no order and no trailer. The trailer names a set
 because with one id per trailer, two roots or two successors would leave two
 tips whatever is sent next, and no correction could resolve the conflict.
 
-The tool never pulls, fetches, pushes, runs `git`, or talks to a network. It
-reads the checkout it is given as files (rule 16). A caller who wants today's
+Reading the bus, the tool never pulls, fetches, pushes, runs `git`, or talks to a
+network (only `ledger` and `report --redis` dial a network, and only the Redis
+they are named). It reads the checkout it is given as files (rule 16). A caller who wants today's
 notes runs `nova-bus inbox` first. A fold that fetched would be a fold whose
 numbers depend on a network call, and the `TOKENS SOURCE` line for the bus
 prints the newest note's mtime so a reader can see how fresh the checkout
@@ -1097,8 +1119,8 @@ trusted.
 - **It does not claim coverage.** Every total is the sum of what the declared
   sources reported; `dashes=`, `missing=`, `unknown=` and `unreadable=` say
   what it does not cover, and no line calls a sum complete.
-- **It does not pull the bus, fetch, push, run `git`, or talk to a network.**
-  It reads a checkout as files; competing notes are ordered by what they say
+- **It does not pull the bus, fetch, push or run `git`, and no verb but `ledger`
+  and `report --redis` talks to a network.** It reads a checkout as files; competing notes are ordered by what they say
   (`supersedes=`), never by the checkout's history.
 - **It does not fill a missing day.** A day nobody folded is named by
   `check` and stays missing until somebody folds it.
@@ -1357,7 +1379,7 @@ seen red before it is trusted.
 ## The work list
 
 The tool is Go under `cmd/nova-tokens` and `internal/tokens`, built the way
-`cmd/nova-bus` is: standard library only, no hardcoded paths, no default paths, the exit grammar
+`cmd/nova-bus` is: no hardcoded paths, no default paths, the exit grammar
 above, `internal/oneline` for every printed value, `internal/bounded` for every
 listing, and `ONBOARDING.md`'s first-day standard: a usage banner ending in a
 runnable `example:` block, refusals that say what the flag wants and report

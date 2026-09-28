@@ -36,10 +36,10 @@ func renderAll(t *testing.T, cards []worklang.Card) map[string][]byte {
 	return out
 }
 
-// The expansion contract of docs/SPEC-WORKLANG.md, seen red first:
-// worklang-expansion-is-deterministic-and-replayable,
-// worklang-card-carries-its-budget-and-floor, and
-// worklang-duplicate-branch-name-refuses.
+// The expansion contract of internal/worklang's plan code, which no living verb
+// calls and docs/SPEC-WORKLANG.md does not specify: expansion is deterministic
+// and replayable, a card carries its budget and floor, and a duplicate branch
+// name is refused.
 func TestWorklangExpand(t *testing.T) {
 	t.Parallel()
 

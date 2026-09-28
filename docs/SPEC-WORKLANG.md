@@ -28,8 +28,11 @@ kinds of form and nothing else:
 | symbol | any other bare token, such as `go-fix` or `false` | `Symbol`, verbatim |
 
 A `;` starts a comment that runs to the end of its line. Comments and whitespace are text,
-never syntax. A keyword that is empty or holds a second `:`, and an integer followed directly
-by a non-boundary byte (`12abc`), are refused as a forbidden token at their byte.
+never syntax. A keyword that is empty or holds a second `:` is refused as a forbidden token
+at its byte. **Every token that starts with a digit, `+` or `-` goes to the integer reader**, so
+it must be an integer: a sign with no digits after it (`-x`, a bare `+`) or digits followed
+directly by a non-boundary byte (`12abc`) is refused as a forbidden token at its byte, never read
+as a symbol.
 
 **Nothing is evaluated.** Before parsing, a lexical pass refuses every token that would
 evaluate or escape, each at its own byte offset: `#` (a dispatch macro such as `#.`), `|`,
@@ -111,7 +114,7 @@ name the package's code comments and test names use for that rule.
 | `:tools` | A10 | a list of entries, each a list headed by a keyword naming the verb and carrying `:at "<version>"`; `:key "<key>"` is optional |
 | `:collects` | A11 | a list of entries, each carrying `:name "<name>"` and `:under "<path>"`; `:members :unknown-before-run` is optional |
 | `:warm` | A12 | a list carrying both `:retained (...)` and `:active (...)` |
-| `:owner` | A13 | a non-empty string naming one mind: a friend (`"Emma"`), a child rung (`"child:opus"`), a swarm (`"swarm:flash"`) or `"all"` |
+| `:owner` | A13 | a non-empty string; the reader checks nothing else about it. Its refusal text suggests the conventional forms (a friend `"Emma"`, a child rung `"child:opus"`, a swarm `"swarm:flash"`, `"all"`), which are not enforced |
 | `:acceptance` | A14 | a non-empty list of criteria; each is a non-empty sentence string, or a list with `:id "<id>"`, `:subject "<subject>"`, `:kind` from `test job merged attested landed` and `:predicate` from `passes succeeds merged-at attested-by merged-or-closed-in-base landed-in` |
 
 Rule A1 is the work-set form itself (section 2) and A2 is the unit id rule (section 2).
