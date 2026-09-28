@@ -80,7 +80,6 @@ internal/swarm	TestBodyThatResumesInsideTheDeadlineIsNotUnknown	#4221 calls time
 internal/swarm	TestDelayedHeadersInsideTheWaitPassThrough	#4221 calls time.Sleep
 internal/swarm	TestNoSlotIsEverHeldTwice	#4221 calls time.Sleep
 internal/swarm	TestConcurrentTakesKeepEveryTake	#4221 measured over 5 s on the 2026-09-25 PR run
-internal/typedrec	TestEveryConsumerRefusesMissingFieldByName	#4221 measured over 5 s on the 2026-09-25 PR run
 internal/update	TestMovedIsBoundedByTheClock	#4221 waits on the wall clock, failed on a 2026-09-25 run
 internal/update	TestRemoveStaleGitTransactionLocksNamesOnly	#4221 calls time.Sleep
 internal/update	TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp	#4221 calls time.Sleep
