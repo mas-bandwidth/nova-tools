@@ -2,12 +2,14 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
@@ -42,14 +44,29 @@ func findAgeKeygen(t *testing.T) string {
 	return ""
 }
 
+var cachedKeyCounter uint64
+
 func genKey(t *testing.T, dir, name string) keyPair {
 	t.Helper()
-	ageKeygen := findAgeKeygen(t)
 	keyDir := filepath.Join(dir, "keys")
 	if err := os.MkdirAll(keyDir, 0700); err != nil {
 		t.Fatal(err)
 	}
 	privPath := filepath.Join(keyDir, name+".key")
+
+	if len(cachedAgeKeys) > 0 {
+		idx := atomic.AddUint64(&cachedKeyCounter, 1) % uint64(len(cachedAgeKeys))
+		k := cachedAgeKeys[idx]
+		if err := os.WriteFile(privPath, []byte(k.data), 0600); err != nil {
+			t.Fatal(err)
+		}
+		return keyPair{
+			privPath: privPath,
+			pubKey:   k.pubKey,
+		}
+	}
+
+	ageKeygen := findAgeKeygen(t)
 	cmd := exec.Command(ageKeygen, "-o", privPath)
 	cmd.Env = []string{"PATH=/usr/bin:/bin"}
 	out, err := cmd.CombinedOutput()
@@ -75,14 +92,71 @@ func genKey(t *testing.T, dir, name string) keyPair {
 	return keyPair{}
 }
 
+var (
+	gitTemplateOnce sync.Once
+	gitTemplateDir  string
+	gitTemplateErr  error
+)
+
+func getGitTemplate(t *testing.T) string {
+	t.Helper()
+	gitTemplateOnce.Do(func() {
+		td, err := os.MkdirTemp("", "nova-secrets-git-template-*")
+		if err != nil {
+			gitTemplateErr = err
+			return
+		}
+		gitTemplateDir = td
+		cmd := exec.Command("git", "init", "-b", "main", gitTemplateDir)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			gitTemplateErr = fmt.Errorf("git init template failed: %v, out: %s", err, out)
+			return
+		}
+		cfgPath := filepath.Join(gitTemplateDir, ".git", "config")
+		cfg, err := os.ReadFile(cfgPath)
+		if err != nil {
+			gitTemplateErr = err
+			return
+		}
+		extra := "\n[user]\n\tname = Test\n\temail = test@example.com\n[remote \"origin\"]\n\turl = /dev/null\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n[branch \"main\"]\n\tremote = origin\n\tmerge = refs/heads/main\n"
+		gitTemplateErr = os.WriteFile(cfgPath, append(cfg, []byte(extra)...), 0644)
+	})
+	if gitTemplateErr != nil {
+		t.Fatal(gitTemplateErr)
+	}
+	return gitTemplateDir
+}
+
+func copyDir(src, dst string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, info.Mode())
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, info.Mode())
+	})
+}
+
 func initGitStore(t *testing.T, storeDir string) {
 	t.Helper()
-	remoteDir := t.TempDir()
-	runCmd(t, "", "git", "init", "--bare", "-b", "main", remoteDir)
-	runCmd(t, storeDir, "git", "init", "-b", "main")
-	runCmd(t, storeDir, "git", "config", "user.name", "Test")
-	runCmd(t, storeDir, "git", "config", "user.email", "test@example.com")
-	runCmd(t, storeDir, "git", "remote", "add", "origin", remoteDir)
+	if err := os.MkdirAll(storeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	tpl := getGitTemplate(t)
+	if err := copyDir(filepath.Join(tpl, ".git"), filepath.Join(storeDir, ".git")); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func commitAndPush(t *testing.T, storeDir string) {
@@ -93,7 +167,19 @@ func commitAndPush(t *testing.T, storeDir string) {
 		return
 	}
 	runCmd(t, storeDir, "git", "commit", "-m", "sync")
-	runCmd(t, storeDir, "git", "push", "-u", "origin", "main")
+	headBytes, err := os.ReadFile(filepath.Join(storeDir, ".git", "HEAD"))
+	if err == nil {
+		headContent := strings.TrimSpace(string(headBytes))
+		if strings.HasPrefix(headContent, "ref: refs/heads/") {
+			branch := strings.TrimPrefix(headContent, "ref: refs/heads/")
+			branchBytes, err := os.ReadFile(filepath.Join(storeDir, ".git", "refs", "heads", branch))
+			if err == nil {
+				remDir := filepath.Join(storeDir, ".git", "refs", "remotes", "origin")
+				_ = os.MkdirAll(remDir, 0755)
+				_ = os.WriteFile(filepath.Join(remDir, branch), branchBytes, 0644)
+			}
+		}
+	}
 }
 
 func runCmd(t *testing.T, dir string, name string, args ...string) string {
@@ -142,6 +228,9 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	if builtDir != "" {
 		os.RemoveAll(builtDir)
+	}
+	if gitTemplateDir != "" {
+		os.RemoveAll(gitTemplateDir)
 	}
 	os.Exit(code)
 }
