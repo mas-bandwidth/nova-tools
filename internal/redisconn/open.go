@@ -42,6 +42,7 @@ type Conn struct {
 	client *redis.Client
 	login  login
 	hide   func(string) string
+	dialer *firstDial
 }
 
 // Open resolves the options (Resolve: what was given first, then getenv's
@@ -85,7 +86,7 @@ func open(ctx context.Context, o Options, getenv func(string) string, dial dialF
 
 	first := &firstDial{dial: dial}
 	first.opening.Store(true)
-	c := &Conn{login: l, hide: hider(password)}
+	c := &Conn{login: l, hide: hider(password), dialer: first}
 	c.client = redis.NewClient(&redis.Options{
 		Network: network(l.Addr),
 		Addr:    l.Addr,
@@ -163,7 +164,14 @@ func (c *Conn) Close() error {
 	if c == nil {
 		return nil
 	}
-	if err := c.client.Close(); !errors.Is(err, redis.ErrClosed) {
+	var err error
+	if c.client != nil {
+		err = c.client.Close()
+	}
+	if c.dialer != nil {
+		c.dialer.hangUp()
+	}
+	if err != nil && !errors.Is(err, redis.ErrClosed) {
 		return err
 	}
 	return nil
@@ -195,25 +203,57 @@ const (
 	probeAnswer = "+PONG\r\n"
 )
 
-// firstDial is the dialer of one client. While Open runs, the connection it
-// dials is a firstConn.
+// firstDial is the dialer of one client. It tracks every connection dialed
+// for the client, so a socket abandoned by a failed connect or reconnect
+// handshake (which upstream go-redis leaves open) is closed on hangUp.
+// While Open runs, the first connection dialed is a firstConn.
 type firstDial struct {
 	dial    dialFunc
 	opening atomic.Bool
 	first   atomic.Pointer[firstConn]
+
+	mu     sync.Mutex
+	conns  map[net.Conn]struct{}
+	closed bool
 }
 
 func (d *firstDial) dialer(ctx context.Context, network, addr string) (net.Conn, error) {
 	nc, err := d.dial(ctx, network, addr)
-	if err != nil || !d.opening.Load() {
-		return nc, err
+	if err != nil {
+		return nil, err
 	}
-	first := &firstConn{Conn: nc}
-	d.first.Store(first)
+
+	d.mu.Lock()
+	if d.closed {
+		d.mu.Unlock()
+		_ = nc.Close()
+		return nil, net.ErrClosed
+	}
+	if d.conns == nil {
+		d.conns = make(map[net.Conn]struct{})
+	}
+	d.conns[nc] = struct{}{}
+	d.mu.Unlock()
+
+	tc := &trackedConn{Conn: nc, dialer: d}
+	if d.opening.Load() {
+		first := &firstConn{Conn: tc}
+		d.first.Store(first)
+		if sys, ok := nc.(syscall.Conn); ok {
+			return firstSysConn{firstConn: first, sys: sys}, nil
+		}
+		return first, nil
+	}
 	if sys, ok := nc.(syscall.Conn); ok {
-		return firstSysConn{firstConn: first, sys: sys}, nil
+		return trackedSysConn{trackedConn: tc, sys: sys}, nil
 	}
-	return first, nil
+	return tc, nil
+}
+
+func (d *firstDial) remove(c net.Conn) {
+	d.mu.Lock()
+	delete(d.conns, c)
+	d.mu.Unlock()
 }
 
 // done ends Open's part: from here on every connection this dialer made or
@@ -225,12 +265,45 @@ func (d *firstDial) done() {
 	}
 }
 
-// hangUp closes the connection Open dialed, if it dialed one.
+// hangUp closes all connections dialed for this client that remain open.
 func (d *firstDial) hangUp() {
-	if first := d.first.Load(); first != nil {
-		_ = first.Close()
+	d.mu.Lock()
+	d.closed = true
+	var toClose []net.Conn
+	for c := range d.conns {
+		toClose = append(toClose, c)
+	}
+	clear(d.conns)
+	d.mu.Unlock()
+
+	for _, c := range toClose {
+		_ = c.Close()
 	}
 }
+
+type trackedConn struct {
+	net.Conn
+	dialer    *firstDial
+	closeOnce sync.Once
+	closeErr  error
+}
+
+func (c *trackedConn) Close() error {
+	c.closeOnce.Do(func() {
+		if c.dialer != nil {
+			c.dialer.remove(c.Conn)
+		}
+		c.closeErr = c.Conn.Close()
+	})
+	return c.closeErr
+}
+
+type trackedSysConn struct {
+	*trackedConn
+	sys syscall.Conn
+}
+
+func (c trackedSysConn) SyscallConn() (syscall.RawConn, error) { return c.sys.SyscallConn() }
 
 // The states of a firstConn. Its TLA+ model is tla/FirstConn.tla (checked
 // with TLC, tla/README.md); firstconn_test.go holds the same rules over every

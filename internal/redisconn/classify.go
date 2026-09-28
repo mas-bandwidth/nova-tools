@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -185,7 +186,7 @@ const withheld = "withheld: it held the password"
 // no secret is both. An empty secret hides nothing.
 func hider(secret string) func(string) string {
 	return func(text string) string {
-		if secret == "" || !strings.Contains(text, secret) {
+		if secret == "" || !holdsSecret(text, secret) {
 			return text
 		}
 		if strings.Contains(withheld, secret) {
@@ -193,4 +194,126 @@ func hider(secret string) func(string) string {
 		}
 		return withheld
 	}
+}
+
+// holdsSecret reports whether text holds secret as an exact substring, as a
+// Go-escaped or quoted sequence (such as %.100q from go-redis's wire reader),
+// or as a truncated diagnostic.
+func holdsSecret(text, secret string) bool {
+	if secret == "" {
+		return false
+	}
+	if strings.Contains(text, secret) {
+		return true
+	}
+
+	// Go's %q and strconv.Quote escapes quotes, backslashes and control characters.
+	q := strconv.Quote(secret)
+	escaped := q[1 : len(q)-1]
+	if escaped != secret && strings.Contains(text, escaped) {
+		return true
+	}
+	qa := strconv.QuoteToASCII(secret)
+	escapedASCII := qa[1 : len(qa)-1]
+	if escapedASCII != secret && escapedASCII != escaped && strings.Contains(text, escapedASCII) {
+		return true
+	}
+	esc := oneline.Escape(secret)
+	if esc != secret && strings.Contains(text, esc) {
+		return true
+	}
+
+	// go-redis wire parse diagnostics quote wire replies with %.100q (e.g.
+	// "redis: can't parse map reply: %.100q"). An unquoted wire line holds
+	// the store's exact reply without Go escaping, bounded to 100 bytes.
+	for _, quoted := range findQuotedStrings(text) {
+		unquoted, err := strconv.Unquote(quoted)
+		if err != nil {
+			continue
+		}
+		if strings.Contains(unquoted, secret) {
+			return true
+		}
+		if escaped != secret && strings.Contains(unquoted, escaped) {
+			return true
+		}
+		// A line truncated at the 100-character bound of %.100q ends with a prefix of secret.
+		if len(unquoted) == 100 {
+			for k := min(len(secret), 100); k >= 3; k-- {
+				if strings.HasSuffix(unquoted, secret[:k]) {
+					return true
+				}
+			}
+			if escaped != secret {
+				for k := min(len(escaped), 100); k >= 3; k-- {
+					if strings.HasSuffix(unquoted, escaped[:k]) {
+						return true
+					}
+				}
+			}
+		}
+		// A long secret whose beginning appears in the wire diagnostic.
+		if len(secret) >= 16 {
+			checkLen := min(len(secret), 32)
+			if strings.Contains(unquoted, secret[:checkLen]) {
+				return true
+			}
+			if len(escaped) >= 16 {
+				checkEsc := min(len(escaped), 32)
+				if strings.Contains(unquoted, escaped[:checkEsc]) {
+					return true
+				}
+			}
+		}
+	}
+
+	// A long plain or escaped secret truncated in a diagnostic outside quotes.
+	if len(secret) >= 16 {
+		checkLen := min(len(secret), 32)
+		if strings.Contains(text, secret[:checkLen]) {
+			return true
+		}
+		if len(escaped) >= 16 {
+			checkEsc := min(len(escaped), 32)
+			if strings.Contains(text, escaped[:checkEsc]) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// findQuotedStrings finds all double-quoted Go string literals within s.
+func findQuotedStrings(s string) []string {
+	var out []string
+	for i := 0; i < len(s); {
+		start := strings.IndexByte(s[i:], '"')
+		if start < 0 {
+			break
+		}
+		start += i
+		escaped := false
+		end := -1
+		for j := start + 1; j < len(s); j++ {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if s[j] == '\\' {
+				escaped = true
+				continue
+			}
+			if s[j] == '"' {
+				end = j
+				break
+			}
+		}
+		if end < 0 {
+			break
+		}
+		out = append(out, s[start:end+1])
+		i = end + 1
+	}
+	return out
 }
