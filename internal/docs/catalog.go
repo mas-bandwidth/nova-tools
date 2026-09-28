@@ -33,7 +33,7 @@ var DefaultCatalog = []Entry{
 	E("cmd/nova-ci", "CI slowtests budget and check CLI, and ci-ok's run receipt", "go test ./cmd/nova-ci", "go test ./cmd/nova-ci"),
 	E("cmd/nova-fuse", "workspace isolation and boundary CLI", "go test ./cmd/nova-fuse", "go test ./cmd/nova-fuse"),
 	E("cmd/nova-memory", "memory indexing and search CLI", "go test ./cmd/nova-memory", "go test ./cmd/nova-memory"),
-	E("cmd/nova-redis", "Redis scratch spill/recall CLI", "go test ./cmd/nova-redis", "go test ./cmd/nova-redis"),
+	E("cmd/nova-redis", "Redis instance owner: serve, scratch spill/recall, and fn load/check of the function library", "go test ./cmd/nova-redis", "go test ./cmd/nova-redis"),
 	E("cmd/nova-sandbox", "OS-level process sandbox CLI", "go test ./cmd/nova-sandbox", "go test ./cmd/nova-sandbox"),
 	E("cmd/nova-secrets", "zero-leak secrets store CLI", "go test ./cmd/nova-secrets", "go test ./cmd/nova-secrets"),
 	E("cmd/nova-self-talk", "internal dialogue recording CLI", "go test ./cmd/nova-self-talk", "go test ./cmd/nova-self-talk"),

@@ -1472,6 +1472,60 @@ nova-config apply --as rowan
 
 **Refusals.** Exit 1 is the store or Redis saying no, one stderr line naming the next step: `machine studio exists; run: nova-config machine set studio ...`, `--store space names no machine row`, `machine studio is the --coordinator of the fleet`, `friend rowan is the --coordinator of the sprint`, `CONFLICT friend: Redis holds rev 9 and this Postgres is at rev 4`, `CEILING studio: friend stella makes the sum 65 over the machine ceiling 64`, `friend emma has no beat naming a machine and the fleet names no coordinator machine to charge her slots to`. Exit 2 is an invocation that could not run (a name on a singleton is one).
 
+## nova-redis
+
+```
+nova-redis serve  --bind <addr>[,<addr>...] --port <port> --dir <store-dir>  # run redis-server in the foreground, loopback and tailnet only, AOF on
+nova-redis spill  <login> --owner <o> --name <n> --ttl <d> --value <v>        # write scratch under <o>:<n> with a required TTL
+nova-redis recall <login> --owner <o> --name <n>                              # read it back; exit 1 on a missing or expired key
+nova-redis fn load  <login>                                                   # put this binary's function library on the store unless it holds exactly that code
+nova-redis fn check <login>                                                   # compare the store's library with this binary's; changes nothing
+# <login> is --addr <host:port> [--user <name>] [--password-env <NAME>]
+```
+
+`nova-redis` owns a Redis instance ([SPEC-REDIS.md](SPEC-REDIS.md)). Every verb that talks to a store opens it one way, through `internal/redisconn`: one dial, the handshake and the login bounded, no retry.
+- `--addr` is the store's `host:port`.
+- `--user` is the ACL user to log in as. Its default is `NOVA_REDIS_USER`, and with neither set the verb logs in as the store's default user.
+- `--password-env` names the variable that holds the password. Its default is the variable `NOVA_REDIS_PASSWORD_ENV` names, else `NOVA_REDIS_PASSWORD`. A seat whose secret has its own name (`nova-secrets exec --only <NAME>`) passes `--password-env <NAME>` and needs no copy. The password itself is never an argument.
+
+Each of these is refused (exit 2) before the dial, and the refusal names where the bad value came from, the flag or the variable. A store that cannot be reached, or a login it refuses, exits 2 in every verb.
+- a missing or malformed `--addr`;
+- a `--password-env` that is not a variable name (capital letters, digits and underscores);
+- a user name holding whitespace;
+- a user whose password variable is empty.
+
+**The function library.** The `fn` verbs handle the `nova_sprint` Redis function library, the Lua that nova-table and nova-config call with `FCALL`. The library is the one this binary embeds (`internal/nsprint/fn`'s `lua/`), and the machinery is `internal/redisfn`. A library's identity is its code as the store holds it, and its digest is the first 16 hex digits of the code's SHA-256.
+
+- `fn load` is the deployer's load (`redisfn.Ensure`). It writes nothing when the store holds exactly this code. Otherwise it sends one `FUNCTION LOAD REPLACE`, so the store holds the whole old library or the whole new one. It prints one line:
+  - `LOADED nova_sprint sha=<d> store=<a>`: the name was free.
+  - `UNCHANGED nova_sprint sha=<d> store=<a>`: nothing was sent after the read.
+  - `REPLACED nova_sprint sha=<d> was=<old> store=<a>`: other code was under the name.
+  
+- `fn check` changes nothing (`redisfn.Check`). Its line is `OK|STALE|MISSING nova_sprint sha=<want> loaded=<d|none> want=<d> store=<a>`, so every line of both verbs holds one `sha=`, this binary's digest:
+  - `OK`: the store holds this binary's code, exit 0.
+  - `STALE`: the store holds other code, exit 1.
+  - `MISSING`: the store holds no library of the name, exit 1.
+  
+  `STALE` and `MISSING` end in the remedy, `nova-redis fn load <login>`, which logs in as the check did. It keeps every login flag given on the line, even an empty one or one equal to the default, and adds what the environment set to other than the default. Each value is quoted as one POSIX shell word, so the printed command can be pasted as it is.
+
+**Failures.** A failure of either verb is one `FAILED nova_sprint sha=<d> store=<a> err=<...> remedy="..."` line on stderr, and nothing on stdout. `err` says what was being done, why it failed, and what the store holds after it. `remedy` is the one next step for that cause, and its command carries the verb's login:
+- A function name another library holds: `remedy` names that library and the function.
+- `NOPERM`, or a login the store refused (`WRONGPASS`, `NOAUTH`): log in as a user that may run the commands.
+- A library the store would not compile: fix the Lua that `err` names.
+- No answer: check that the store is up and `--addr` is right, then `fn check`.
+
+**Exit codes.** This is the convention for both verbs:
+
+| exit | meaning |
+|---|---|
+| 0 | OK, LOADED, UNCHANGED or REPLACED |
+| 1 | STALE or MISSING, or the store answered with a refusal (`NOPERM`, a library it would not take, a function name another library holds) |
+| 2 | refused before the dial, no answer from the store (unreachable, or the wait ended), or a login the store refused |
+
+The user needs `FUNCTION LIST` for `fn check`, and `FUNCTION LIST` and `FUNCTION LOAD` for `fn load`. A user with `~* &* +@all -@dangerous` has both. `-h` and `--help` after a verb are refused like any unknown flag (exit 2), as for every nova-redis verb. `nova-redis help` prints the usage.
+
+`fn load` replaces, so it belongs to the one place that deploys. Two deployers with different builds replace each other's library for as long as both run (`tla/RedisFn.tla`, `MCRedisFnTwoDeployers`). A tool on its way to an `FCALL` calls `redisfn.LoadMissing`, which never replaces a library (nova-tools #3620): nova-table does so on its first `Function not found` (see [nova-table](#nova-table)). The first run's refusals are in [TESTS.md](TESTS.md#nova-redis).
+
 ## nova-cairn
 
 Keeps explicit session checkpoints, their source pointers and a bounded index.
@@ -1528,8 +1582,10 @@ epoch and writes a change receipt. The guide and disposable local setup are in
 A table is columns, rows and a set per cell. Make one, put a row in it, put
 members in a cell, move one to the next cell, and look at it two ways: the
 typed lines a program reads, and the text a person reads. These commands assume
-a configured store with the matching function library loaded; for a fresh
-local Redis, follow [Start locally](nova-table/README.md#start-locally) first.
+a configured store that holds this build's function library. On a store that
+holds none, the first verb loads it (first contact, never replacing a library
+the store holds) and its `trips=` counts the load; for a fresh local Redis,
+follow [Start locally](nova-table/README.md#start-locally).
 
 ```text
 $ nova-table create demo --columns ready,working,done
