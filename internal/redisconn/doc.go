@@ -22,34 +22,12 @@
 // This package names no tool's environment variable and no deployment's. A
 // tool passes its own names in Options.Env, or GeneralEnv (NOVA_REDIS_ADDR,
 // NOVA_REDIS_USER, NOVA_REDIS_PASSWORD_ENV) when it has none; the zero Env
-// reads nothing. The names of the deprecated sprint (NOVA_SPRINT_REDIS,
-// NOVA_SPRINT_REDIS_USER, NOVA_SPRINT_REDIS_PASSWORD_ENV) are not aliases
-// here: a tool that still reads them passes them.
-//
-// # Adopting it in place of internal/nsprint/store
-//
-// Three things the old store did are not here, each on purpose:
-//
-//   - The default password variable. The old store (through
-//     internal/nsprint/redisauth) read the password from
-//     NOVA_REDIS_BENCH_PASSWORD whenever a user was named and no password
-//     variable was, and docs/CLI.md and docs/nova-sprint/README.md document
-//     the pair NOVA_SPRINT_REDIS_USER=bench plus NOVA_REDIS_BENCH_PASSWORD on
-//     that strength. Here a user with no password variable is refused before
-//     the dial ("no password variable is named"), and no default is read in
-//     its place. A caller that had the default names the variable itself: it
-//     sets Options.PasswordEnv (NOVA_REDIS_BENCH_PASSWORD, for the fleet
-//     store), or has the variable its Env.PasswordEnv names hold that name.
-//   - Seat selection (--seat, NOVA_SEAT, internal/seatcred). It stays the
-//     caller's: nova-table does it in cmd/nova-table/main.go (selectSeat)
-//     and hands the seat's address, user and password variable to Options.
-//   - The no-user hint (#3520). The old store wrapped a NOAUTH refusal with
-//     "NOVA_SPRINT_REDIS_USER is unset but NOVA_REDIS_BENCH_PASSWORD is set;
-//     set the pair NOVA_SPRINT_REDIS_USER=bench and NOVA_REDIS_BENCH_PASSWORD
-//     (password from nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD,
-//     never a flag)". Its general form is this package's own next step on a
-//     login the store refused with no user named: "name the user (<Env.User>)
-//     and the variable that holds its password (<Env.PasswordEnv>)", in the
-//     caller's names. The deployment's words (bench, nova-secrets exec) are
-//     the caller's to add to its own message.
+// reads nothing, and no older name of any tool is an alias here. A user with
+// no password variable named is refused before the dial, and no default
+// variable is read in its place: a caller that relied on a deployment's
+// default password variable names that variable itself, in Options.PasswordEnv
+// or through the variable its Env.PasswordEnv names. How a caller chooses its
+// login (a seat, a profile, flags) is the caller's, and so are the words of
+// its deployment in the message it prints; this package's next step on a
+// login the store refused names the caller's variables and nothing else.
 package redisconn

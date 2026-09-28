@@ -234,7 +234,7 @@ The first five configs, before `Missers` was added, gave the same outcomes at
 ## The first connection (FirstConn)
 
 `FirstConn.tla`: the connection `redisconn.Open` dials (internal/redisconn/open.go
-at c4c6dfa19, `firstConn`), as a state machine over the seven events of
+at f6ec9e2b8, `firstConn`), as a state machine over the seven events of
 `firstconn_test.go`: the store sends a reply that begins `%` (HELLO accepted)
 or `-` (refused); the client reads with room to spare, or a few bytes at a
 time; the client writes the probe, or another command; Open returns. go-redis
@@ -283,7 +283,7 @@ the set because of the cap.
 | `MCFirstConnBrokenLate` | TakenOnlyWhenDue violated in 5 states: `%` read, Open returns, the probe written after it is taken (:293 missing) |
 | `MCFirstConnBrokenHang` | AnswerDelivered violated: the probe taken, no read is possible, the client waits for an answer that never comes (:257 reading the store) |
 
-None of the seven was a defect of the code at c4c6dfa19: `firstconn_test.go`
+None of the seven was a defect of the code at f6ec9e2b8: `firstconn_test.go`
 holds the same rules over every order of the seven events up to six and over
 long orders. Each is a misimplementation the model is shown to catch. The
 Misaligned trace was read against the code by hand: state 3, `%` read,

@@ -3,20 +3,22 @@
 package redisconn_test
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
-	// until the testredis package lands under internal; then this import moves
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
+	"github.com/mas-bandwidth/nova-tools/internal/testredis"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -101,7 +103,7 @@ func connections(t *testing.T, admin *redisconn.Conn) string {
 // the first round trip.
 func TestOpenOverTCP(t *testing.T) {
 	t.Parallel()
-	addr := testutil.Start(t)
+	addr := testredis.Start(t)
 	admin := open(t, addr)
 	before := connections(t, admin)
 	resetCalls(t, admin)
@@ -163,12 +165,76 @@ func socketDir(t *testing.T) string {
 	return dir
 }
 
+// startOnSocket runs a throwaway redis-server that listens on the socket and
+// on one loopback port, and returns the port's address. testredis.Start
+// promises a server on one TCP port and nowhere else, and refuses
+// --unixsocket, so this one test launches the server itself with the program
+// and the port testredis hands out, and is ready the way testredis is: when
+// the server's own output says so. The test's cleanup kills it and waits for
+// it.
+const (
+	socketWait = 30 * time.Second
+	readyLine  = "Ready to accept connections"
+)
+
+func startOnSocket(t *testing.T, socket string) string {
+	t.Helper()
+	bin, port := testredis.Program(t), testredis.FreePort(t)
+	cmd := exec.Command(bin, "--bind", "127.0.0.1", "--port", port, "--unixsocket", socket, "--unixsocketperm", "700",
+		"--save", "", "--appendonly", "no", "--dir", t.TempDir())
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd.Stdout, cmd.Stderr = pw, pw
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("%s: %v", bin, err)
+	}
+	_ = pw.Close()
+	var (
+		out   strings.Builder
+		ready = make(chan struct{})
+		ended = make(chan error, 1)
+	)
+	go func() {
+		sc := bufio.NewScanner(pr)
+		seen := false
+		for sc.Scan() {
+			out.WriteString(sc.Text() + "\n")
+			if !seen && strings.Contains(sc.Text(), readyLine) {
+				seen = true
+				close(ready)
+			}
+		}
+		ended <- cmd.Wait()
+	}()
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		<-ended
+		_ = pr.Close()
+	})
+	select {
+	case <-ready:
+	case err := <-ended:
+		ended <- err
+		t.Fatalf("redis-server exited before it was ready: %v\n%s", err, out.String())
+	case <-time.After(socketWait):
+		t.Fatalf("redis-server was not ready within %v\n%s", socketWait, out.String())
+	}
+	c, err := net.Dial("unix", socket)
+	if err != nil {
+		t.Fatalf("the ready server's socket %s: %v", socket, err)
+	}
+	_ = c.Close()
+	return net.JoinHostPort("127.0.0.1", port)
+}
+
 // TestOpenOverAUnixSocket: Open reaches a store by the absolute path of its
 // socket, with the same one HELLO, and the connection is the socket's.
 func TestOpenOverAUnixSocket(t *testing.T) {
 	t.Parallel()
 	socket := filepath.Join(socketDir(t), "store.sock")
-	addr := testutil.Start(t, "--unixsocket", socket, "--unixsocketperm", "700")
+	addr := startOnSocket(t, socket)
 	admin := open(t, addr)
 	resetCalls(t, admin)
 
@@ -208,7 +274,7 @@ func TestOpenOverAUnixSocket(t *testing.T) {
 func TestOpenAsAnACLUser(t *testing.T) {
 	t.Parallel()
 	const password, wrong = "bench-secret-K7", "bench-secret-K8"
-	addr := testutil.Start(t, "--user", "default", "off", "--user", "bench", "on", ">"+password, "~*", "&*", "+@all")
+	addr := testredis.Start(t, testredis.User("bench", password)...)
 	ctx := context.Background()
 	login := redisconn.Options{Addr: addr, User: "bench", PasswordEnv: "NOVA_TEST_PW"}
 
@@ -286,7 +352,7 @@ func TestOpenAsAnACLUser(t *testing.T) {
 	}
 
 	// A command's own refusal, on a connection that stands.
-	limited := testutil.Start(t, "--user", "default", "off", "--user", "reader", "on", ">"+password, "~*", "+get", "+hello", "+ping")
+	limited := testredis.Start(t, "--user", "default", "off", "--user", "reader", "on", ">"+password, "~*", "+get", "+hello", "+ping")
 	reader, err := redisconn.Open(ctx, redisconn.Options{Addr: limited, User: "reader", PasswordEnv: "NOVA_TEST_PW"}, environment(map[string]string{"NOVA_TEST_PW": password}))
 	if err != nil {
 		t.Fatal(err)
@@ -310,7 +376,7 @@ func TestOpenAsAnACLUser(t *testing.T) {
 // passed, having met a refusal, and says the store is unreachable.
 func TestOpenToAClosedPort(t *testing.T) {
 	t.Parallel()
-	addr := net.JoinHostPort("127.0.0.1", testutil.FreePort(t))
+	addr := net.JoinHostPort("127.0.0.1", testredis.FreePort(t))
 	ctx, cancel := context.WithTimeout(context.Background(), redisconn.OpenTimeout)
 	defer cancel()
 	conn, err := redisconn.Open(ctx, redisconn.Options{Env: redisconn.GeneralEnv}, environment(map[string]string{redisconn.GeneralEnv.Addr: addr}))
@@ -338,7 +404,7 @@ func TestOpenToAClosedPort(t *testing.T) {
 // second HELLO and the counter did not move for it.
 func TestTripsAgainstTheStore(t *testing.T) {
 	t.Parallel()
-	addr := testutil.Start(t)
+	addr := testredis.Start(t)
 	admin := open(t, addr)
 	conn := open(t, addr)
 	client := conn.Client()
@@ -451,7 +517,7 @@ func itoa(n int64) string {
 // dial and not a failure.
 func TestADeadConnectionIsFoundBeforeItIsUsed(t *testing.T) {
 	t.Parallel()
-	addr := testutil.Start(t)
+	addr := testredis.Start(t)
 	admin := open(t, addr)
 	ctx := context.Background()
 	const rounds = 20
@@ -493,7 +559,7 @@ func TestADeadConnectionIsFoundBeforeItIsUsed(t *testing.T) {
 // absence; FirstError and Exec of this package answer the refusal.
 func TestPipelineFirstErrorAgainstTheStore(t *testing.T) {
 	t.Parallel()
-	conn := open(t, testutil.Start(t))
+	conn := open(t, testredis.Start(t))
 	client := conn.Client()
 	ctx := context.Background()
 	if err := client.Set(ctx, "text", "v", 0).Err(); err != nil {
