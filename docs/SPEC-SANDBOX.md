@@ -875,9 +875,11 @@ named as the artifact and anything that is not a file or a directory are all
 refused, and the shape checks run as text before any filesystem call so the
 refusal names the flag rather than an errno. Inside a directory artifact a
 symlink, a device or a socket is skipped; an entry that changes type while the
-handoff reads it is a refusal. The copy of each file is bounded by what is left
-of `--out-max-bytes`, so a file that grew after it was measured is refused, not
-copied past the cap.
+handoff reads it is a refusal. The copy of each file writes at most what is left
+of `--out-max-bytes`; a file that grew past that after it was measured is
+refused, its partial copy is removed, and nothing past the cap is left in
+`--out`. Files copied before the refusal stay in `<out>/<name>/`, and the
+handoff prints `SANDBOX REFUSED reason=out_failed`.
 
 **`--out-max-bytes`**, default `64m`. The whole set is **measured before a byte
 is written** and refused over the cap. A handoff is a door, not a backup: a
