@@ -249,7 +249,7 @@ is multiline, its header `RUN:` is removed.
 
 Preserve immutable input identity, expected attempt binding, owned RESULT schema, DONE versus check
 outcome, Returned/Verified/Landed distinction, retained evidence, STOP/HOLD/UNKNOWN, and contextual
-read scope. See the [Typed records](SPEC-SWARM.md#typed-records) section in `docs/SPEC-SWARM.md` for the
+read scope. See the [Typed records](../deprecated/docs/SPEC-SWARM.md#typed-records) section in `deprecated/docs/SPEC-SWARM.md` for the
 canonical versioned contract of RESULT v2 and DISPOSITION v1. SYMBOL/RED-WHEN are declarations, not
 proof of runtime coverage. A4 text lint is not actual PATHS enforcement.
 

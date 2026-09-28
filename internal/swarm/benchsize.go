@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// Bench width: a measured power of two (docs/SPEC-SWARM.md "Benches").
+// Bench width: a measured power of two (deprecated/docs/SPEC-SWARM.md "Benches").
 //
 // `bench size` runs the known-answer card W times concurrently for
 // W = 1, 2, 4, ... and keeps doubling while three rules hold at the end of

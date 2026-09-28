@@ -360,7 +360,7 @@ func decodePR(out string, n int, repo string) (PR, error) {
 	}, nil
 }
 
-// CreatePR opens the one pull request a fold lands (docs/SPEC-MERGE.md "The fold
+// CreatePR opens the one pull request a fold lands (deprecated/docs/SPEC-MERGE.md "The fold
 // (#1142)"). It is not part of the Host interface the lane's pass uses: the fold reaches
 // it through a narrower interface of its own, so the merge path has no way to open one.
 func (h *GH) CreatePR(head, base, title, body string) (int, error) {

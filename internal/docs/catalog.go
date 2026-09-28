@@ -19,7 +19,7 @@ var DefaultCatalog = []Entry{
 	E("infra", "runner images and scripts", "none", "none"),
 	Page("internal", "packages and libraries", "nova-ci local", "make test"),
 	E("tla", "the TLA+ models of the state machines and their runners", "tla/check_table.py, tla/check_member.py (each under a 120 s budget)", "none"),
-	E("profiles", "swarm worker profiles", "go test ./internal/swarm", "nova-swarm lint"),
+	E("profiles", "the darwin sandbox profile template internal/sandbox embeds, and its check script", "go test ./internal/sandbox", "go test ./internal/sandbox"),
 	E("deprecated", "tools and modules no longer in use, kept for reference only; never built, tested or maintained", "none", "none"),
 	E("scripts", "maintenance and operational scripts", "none", "none"),
 	E("testdata", "shared test fixtures and data", "go test ./internal/ci", "make test"),
@@ -33,6 +33,7 @@ var DefaultCatalog = []Entry{
 	E("cmd/nova-ci", "CI slowtests budget and check CLI, and ci-ok's run receipt", "go test ./cmd/nova-ci", "go test ./cmd/nova-ci"),
 	E("cmd/nova-fuse", "workspace isolation and boundary CLI", "go test ./cmd/nova-fuse", "go test ./cmd/nova-fuse"),
 	E("cmd/nova-memory", "memory indexing and search CLI", "go test ./cmd/nova-memory", "go test ./cmd/nova-memory"),
+	E("cmd/nova-post", "PR and issue posting CLI", "go test ./cmd/nova-post", "go test ./cmd/nova-post"),
 	E("cmd/nova-redis", "Redis scratch spill/recall CLI", "go test ./cmd/nova-redis", "go test ./cmd/nova-redis"),
 	E("cmd/nova-sandbox", "OS-level process sandbox CLI", "go test ./cmd/nova-sandbox", "go test ./cmd/nova-sandbox"),
 	E("cmd/nova-secrets", "zero-leak secrets store CLI", "go test ./cmd/nova-secrets", "go test ./cmd/nova-secrets"),
@@ -85,6 +86,7 @@ var DefaultCatalog = []Entry{
 	E("internal/onboarding", "onboarding banner and doc verifier", "go test ./internal/onboarding", "go test ./internal/onboarding"),
 	E("internal/oneline", "single-line log and output grammar", "go test ./internal/oneline", "go test ./internal/oneline"),
 	E("internal/play", "sandboxed code experiment runner", "go test ./internal/play", "go test ./internal/play"),
+	E("internal/post", "GitHub PR and issue client", "go test ./internal/post", "go test ./internal/post"),
 	E("internal/presence", "friend heartbeat keys with a TTL", "go test ./internal/presence", "go test ./internal/presence"),
 	E("internal/record", "decision and execution records", "go test ./internal/record", "go test ./internal/record"),
 	E("internal/records", "database models and record formats", "go test ./internal/records", "go test ./internal/records"),
@@ -115,7 +117,6 @@ var DefaultCatalog = []Entry{
 
 	// docs/
 	E("docs/spec-pulse", "the card contract the pulse cut engine writes (10-the-card-as-cut-writes-it.md); the rest of the spec folder deleted 2026-09-24", "go test ./internal/docs", "go test ./internal/docs"),
-	E("docs/decide", "decision criteria and evaluation records", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/drafts", "in-flight design drafts and proposals", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/fixtures", "doc examples and test fixtures", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/jev", "Jev's versioned decision prompts, one file per type and version (#4316)", "go test ./internal/nsprint/jev", "go test ./internal/nsprint/jev"),

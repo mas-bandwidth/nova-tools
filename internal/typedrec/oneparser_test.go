@@ -86,6 +86,8 @@ var driftAllowlist = []allowlistEntry{
 		reason: "the card's PATHS header for the sparse checkout, read before any RESULT exists"},
 	{file: "internal/nsprint/ready/ready.go", fn: "entryBlocker", record: "Redis-outcome", since: "26a5ddb0",
 		reason: "the Redis card hash outcome field, the same typed value as nsprint/deal/ready.go entryWhy"},
+	{file: "internal/post/issue/issue.go", fn: "RequiredFields", record: "card-schema-section", since: "1e58a3b0",
+		reason: "the key names a v2 card-schema section must carry when filed as an issue, not a RESULT parse"},
 	{file: "internal/sprintline/line.go", fn: "ParseSuggest", record: "calibration", since: "0c89f897",
 		reason: "the KIND report lines of nova-pulse sprint calibration stdout"},
 	{file: "internal/sprintline/line.go", fn: "suggestOf", record: "calibration", since: "0c89f897",

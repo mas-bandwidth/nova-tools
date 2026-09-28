@@ -11,10 +11,10 @@ import (
 	"os"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/deprecated/internal/post"
-	"github.com/mas-bandwidth/nova-tools/deprecated/internal/post/issue"
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/post"
+	"github.com/mas-bandwidth/nova-tools/internal/post/issue"
 )
 
 const usage = `nova-post: draft, show and send outward posts behind Glenn's approval (see docs/SPEC-OUTBOUND.md)

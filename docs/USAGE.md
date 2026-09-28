@@ -103,8 +103,8 @@ nova-wake help
 
 Those commands install the two named tools from `v0.15.2`. This guide also
 describes development-branch features where it labels them explicitly;
-`nova-secrets`, `nova-pulse`, `nova-work`, `nova-ci`, `nova-cairn` and
-`nova-sandbox egress` are not available from the
+`nova-post`, `nova-secrets`, `nova-pulse`, `nova-work`, `nova-ci`,
+`nova-cairn` and `nova-sandbox egress` are not available from the
 pinned release.
 
 The two `go install` lines **reach the network**: they download and build the

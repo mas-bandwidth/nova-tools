@@ -15,7 +15,7 @@ has a bug, and the tests decide which. It is a sibling of [SPEC.md](SPEC.md),
 whose **Conventions** section — exit codes, no guessed paths, the one-line
 output grammar, `internal/oneline` and `internal/bounded` — applies here
 unchanged and is not restated. Related: [SPEC-WAKE.md](SPEC-WAKE.md) (the
-doorbell), [SPEC-SWARM.md](SPEC-SWARM.md) (slots and locks, budgets),
+doorbell), [SPEC-SWARM.md](../deprecated/docs/SPEC-SWARM.md) (slots and locks, budgets),
 [SPEC-SECRETS.md](SPEC-SECRETS.md) (auth), the efficiency case
 [ideas#774](https://github.com/mas-bandwidth/ideas/issues/774).
 

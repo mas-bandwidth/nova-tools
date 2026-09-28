@@ -287,7 +287,7 @@ near the end.
    knows which name is the credential. `nova-swarm native` does it: a `bash` and
    an `sh` wrapper in `<slot>/shim`, first on the child's `PATH` and pinned as
    `SHELL`, unsetting every `KEY`/`TOKEN`/`SECRET` name before exec'ing the real
-   shell. The rule and its tests are in **docs/SPEC-SWARM.md, "The card's shell
+   shell. The rule and its tests are in **deprecated/docs/SPEC-SWARM.md, "The card's shell
    never sees a secret"**; the wall's own contribution is that `<slot>` is a
    `--read` and never a `--write`, so the card can run a wrapper and cannot
    replace one.
@@ -308,7 +308,7 @@ near the end.
    card runs. **Landlock cannot path-restrict procfs by pid**, so this is not
    a wall defect and no wall change closes it; the closures are `hidepid=2` on
    the bench or a harness that takes its credential by something other than
-   the environment, both named in docs/SPEC-SWARM.md. But an inherited `HOME` names a directory that is in no list and
+   the environment, both named in deprecated/docs/SPEC-SWARM.md. But an inherited `HOME` names a directory that is in no list and
    is therefore denied, and almost every tool a worker runs derives a path
    from it. Measured on this Mac under the profile below: with the caller's
    `HOME` inherited, `git -C <jobdir>/repo status` is `fatal: unable to
@@ -369,7 +369,7 @@ near the end.
     ship the switch that turns containment off. **The one loud workaround in
     this repository belongs to the CALLER**, `nova-swarm run --no-sandbox`, and
     it is announced by `RUN UNSANDBOXED id=<id> slot=<n>` once per job — see
-    [docs/SPEC-SWARM.md](SPEC-SWARM.md), which is the one place an unsandboxed
+    [deprecated/docs/SPEC-SWARM.md](../deprecated/docs/SPEC-SWARM.md), which is the one place an unsandboxed
     run is announced. (2026-09-13: this rule used to document a `--no-sandbox`
     on *this* tool, printing a `SANDBOX UNSANDBOXED` line, and the binary has
     had neither since it was written. By this document's own law the spec was

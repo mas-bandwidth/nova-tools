@@ -454,8 +454,8 @@ every verb that runs git or gh also takes [--timeout <seconds>], default 120
 ```
 
 The binary is `nova-merge`, and that is its only name. `batch`'s whole flag list
-is in `deprecated/docs/CLI.md`; the test that checked it against the source was
-deleted when the tool moved to `deprecated/`.
+is in `docs/CLI.md` and is checked against the source by
+`internal/docs/cli_merge_batch_flags_test.go`.
 
 **No guessed anything.** There is no default lane directory, no default
 repository, no default base. A missing one is exit 2 and `refusing to guess`.
@@ -1281,7 +1281,7 @@ check never seen failing is not a check).
 
 ## The work list
 
-To build it in Go under `deprecated/cmd/nova-merge`, the way `cmd/nova-bus` is built:
+To build it in Go under `cmd/nova-merge`, the way `cmd/nova-bus` is built:
 standard library only, no hardcoded paths, no default paths, the exit grammar
 above, `internal/oneline` for every printed value, `internal/bounded` for every
 listing, and `ONBOARDING.md`'s first-day standard — a usage banner ending in a
@@ -1360,7 +1360,7 @@ verb, and tests that pin all three by executing them.
    is a refusal before the write; one merge per pass; a source test finds
    exactly one call site of the publication helper and it is inside the
    predicate's function; demanded tests 5, 6, 10, 15, 18 and 21.
-9. **`deprecated/cmd/nova-merge/main.go`** — the verbs, `init` first and creation-only
+9. **`cmd/nova-merge/main.go`** — the verbs, `init` first and creation-only
    with `--lane-branch`, `read --head`, `gate --base-sha` and `gate --merge`
    required, `--base` refused off `init` and `--base-sha` refused off `gate`,
    the flag parsing with this
@@ -1368,7 +1368,7 @@ verb, and tests that pin all three by executing them.
    every listing, `--loop` refusing without `--hours`, `dry-run` as a verb
    with no path to the mutation guard, every verb but `init` refusing a
    directory that is not a lane.
-10. **`deprecated/cmd/nova-merge/*_test.go`** — the contract tests: every exit code, every
+10. **`cmd/nova-merge/*_test.go`** — the contract tests: every exit code, every
     refusal sentence, the structural refusals, `dry-run` writes nothing
     (asserted by running it against a lane whose clone is read-only), a capped
     listing is a prefix with a MORE line, `RUN NOTE` is exactly one line, the

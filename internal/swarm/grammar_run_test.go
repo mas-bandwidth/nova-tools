@@ -78,7 +78,7 @@ var (
 // the contract is written.
 func readGrammar(t *testing.T) map[string]grammarLine {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-SWARM.md"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "deprecated", "docs", "SPEC-SWARM.md"))
 	if err != nil {
 		t.Fatalf("the grammar is the spec's: %s", err)
 	}

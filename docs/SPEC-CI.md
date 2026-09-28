@@ -1967,7 +1967,7 @@ Each OS's side of the agreement is that OS's provisioning standard:
 `NOVA_TOOLCHAIN_ROOTS` markers and drifts on a missing one, and
 `pulse.FleetStandardChecks`'s `toolchain-*` checks carry both OSes' — a linux
 root **demanded**, a darwin root **reported**, because a Mac's toolchains are
-installed rather than provisioned into a home. Both `docs/SPEC-SWARM.md` and
+installed rather than provisioned into a home. Both `deprecated/docs/SPEC-SWARM.md` and
 `docs/CLI.md` name every granted root.
 **The hurt.** Two contracts named the same paths in two places and disagreed: the
 provisioning standard put Go under `~/sdk`, the wall's implicit worker

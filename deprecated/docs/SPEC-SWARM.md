@@ -2671,7 +2671,7 @@ resets `dumpable`, so no caller can set it *for* the harness — only the harnes
 can set it for itself. A dedicated uid is not one either: the shell is the
 harness's own child and shares whatever uid it runs as.
 
-**Tests this rule demands** (`deprecated/cmd/nova-swarm`, `internal/keyshape`,
+**Tests this rule demands** (`cmd/nova-swarm`, `internal/keyshape`,
 `internal/pulse`): `TestTheCardsShellNeverSeesASecret`,
 `TestTheShimNeverPrintsAValue`,
 `TestTheShimIsInTheWallsReadSetAndNotItsWriteSet`,
@@ -4292,7 +4292,7 @@ be seen red before it is trusted.
 
 ## The work list
 
-To build it in Go under `deprecated/cmd/nova-swarm`, the way `cmd/nova-bus` is built:
+To build it in Go under `cmd/nova-swarm`, the way `cmd/nova-bus` is built:
 standard library only, no hardcoded paths, no default paths, the exit grammar
 above, `internal/oneline` for every printed value, `internal/bounded` for every
 listing, and `ONBOARDING.md`'s first-day standard — a usage banner ending in a
@@ -4401,12 +4401,12 @@ verb, and tests that pin all three by executing them.
    `dashes=` tuple, one row per attempt, and the 429 backoff. Tests: a task
    with no accounting prints dashes; a 429 is retried once and then failed
    with its code; two attempts sum once each; demanded test 12.
-10. **`deprecated/cmd/nova-swarm/main.go`** — the verbs, including `verdict`, `batch`,
+10. **`cmd/nova-swarm/main.go`** — the verbs, including `verdict`, `batch`,
     `result` and the `supervise` entry, the flag parsing with this repo's
     one-line refusals, `--files` and `--tokens` required and zero refused on
     `add` and `batch`, the output grammar exactly as above, `--max` on every
     listing.
-11. **`deprecated/cmd/nova-swarm/*_test.go`** — the contract tests: every exit code, every
+11. **`cmd/nova-swarm/*_test.go`** — the contract tests: every exit code, every
     refusal sentence, a fake harness binary on `PATH` so the dispatcher is
     tested end to end with no provider, `--workers 65` refused, a capped listing
     is a prefix with a MORE line, `RUN NOTE` is exactly one line, and **no test

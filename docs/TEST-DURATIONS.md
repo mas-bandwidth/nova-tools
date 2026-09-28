@@ -70,7 +70,7 @@ times come from.
 | internal/release | 0.0 | - |
 | deprecated/cmd/nova-decide | 0.0 | - |
 | cmd/nova-version | 0.0 | - |
-| deprecated/cmd/nova-post | 0.0 | - |
+| cmd/nova-post | 0.0 | - |
 | internal/sandbox | 0.0 | - |
 | cmd/nova-update | 0.0 | - |
 | internal/decide | 0.0 | - |
@@ -165,7 +165,7 @@ five of its tests are over 5 s and every one of them is a real `exec`.
 | internal/buildinfo | 0.3 | - |
 | internal/bounded | 0.3 | - |
 | internal/decide | 0.3 | - |
-| deprecated/cmd/nova-post | 0.3 | - |
+| cmd/nova-post | 0.3 | - |
 | internal/fuse | 0.3 | - |
 | internal/sandbox | 0.3 | - |
 | internal/memindex | 0.3 | - |

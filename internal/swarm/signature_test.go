@@ -74,7 +74,7 @@ func TestVerifyScoresSignature(t *testing.T) {
 // signature, class and remedy, which is the same shape as the slice.
 func readSpecSignatureTable(t *testing.T) []failureSignature {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-SWARM.md"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "deprecated", "docs", "SPEC-SWARM.md"))
 	if err != nil {
 		t.Fatalf("the table is the spec's: %v", err)
 	}

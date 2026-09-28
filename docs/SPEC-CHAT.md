@@ -35,7 +35,7 @@ the field escape, the cap-and-count law, and the rule that **every stamp is the
 tool's own clock and a typed time orders nothing** — governs here unchanged except
 where this document says otherwise, and it says so by name in one place only
 (**Exit codes**). It depends on [SPEC-SANDBOX.md](SPEC-SANDBOX.md) for the wall,
-on [SPEC-SWARM.md](SPEC-SWARM.md) for the harness contract, on `nova-fuse` for the
+on [SPEC-SWARM.md](../deprecated/docs/SPEC-SWARM.md) for the harness contract, on `nova-fuse` for the
 fuse, and on `nova-secrets` for the token — the last two unmerged, and the landing
 order is in #90's body. If the code and this document disagree, one of them has a
 bug, and the tests decide which.

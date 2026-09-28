@@ -10,7 +10,7 @@ import (
 func TestSpecNamesSparseCheckoutOfPATHSPackages(t *testing.T) {
 	t.Parallel()
 
-	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "SPEC-SWARM.md"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "deprecated", "docs", "SPEC-SWARM.md"))
 	if err != nil {
 		t.Fatalf("SPEC-SWARM.md is missing: %s", err)
 	}

@@ -4944,7 +4944,7 @@ merely waiting on its checks is not a failure.
 Verbs: `init`, `add`, `add-branch`, `read`, `gate`, `run`, `status`, `dry-run`,
 `packet`, `quickstart`, `stop`, `version`.
 
-Its governing text is **[docs/SPEC-MERGE.md](SPEC-MERGE.md)**, which is
+Its governing text is **[docs/SPEC-MERGE.md](../deprecated/docs/SPEC-MERGE.md)**, which is
 normative; the Conventions above apply to it unchanged and are not restated
 there, and nothing it says is restated here.
 
@@ -4993,7 +4993,7 @@ Verbs: `add`, `batch`, `run`, `supervise`, `status`, `stop`, `requeue`,
 `verdict`, `triage`, `result`, `template`, `cost`, `note`, `finalize`,
 `reclaim`, `quickstart`, `version`.
 
-Its governing text is **[docs/SPEC-SWARM.md](SPEC-SWARM.md)**, which is
+Its governing text is **[docs/SPEC-SWARM.md](../deprecated/docs/SPEC-SWARM.md)**, which is
 normative; the Conventions above apply to it unchanged and are not restated
 there, and nothing it says is restated here.
 
@@ -5071,7 +5071,7 @@ refusal. All data fields use internal/oneline.
 The card is a measurement, taken on the bench on **2026-09-12**, of the work
 `nova-check` pays for twice. This section is the part of the efficiency-card
 set that binds `nova-check`; the cross-tool half lives in
-[SPEC-SWARM.md](SPEC-SWARM.md), and nothing here restates it.
+[SPEC-SWARM.md](../deprecated/docs/SPEC-SWARM.md), and nothing here restates it.
 
 ### REPEATS: two full walks of one tree in one quickstart
 
@@ -5135,7 +5135,7 @@ The card is a measurement, taken read-only against the live checkout
 `/Users/glenn/rowan-working/rowan-stella` as Rowan on **2026-09-12**. That bus
 held **3,401 notes** on disk, **65 MB** of `.git`, and one reader carrying
 `carrying=986`. This section is the part of the efficiency-card set that binds
-`nova-bus`; the cross-tool half lives in [SPEC-SWARM.md](SPEC-SWARM.md), and
+`nova-bus`; the cross-tool half lives in [SPEC-SWARM.md](../deprecated/docs/SPEC-SWARM.md), and
 nothing here restates it.
 
 ### REPEATS: a git fetch per poll, and a whole-history walk on `check --full`

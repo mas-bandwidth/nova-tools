@@ -1,6 +1,6 @@
 // Package webhook is the GitHub leg of CI results in Redis (nova-tools
 // #3597): the check_run and workflow_run deliveries the signed receiver
-// (`nova-post hook`, deprecated/internal/post/hook, #2657) appends to ev:github become
+// (`nova-post hook`, internal/post/hook, #2657) appends to ev:github become
 // ci:<repo>:<sha>:gh, and every reader of a GitHub check state reads that
 // hash. Nothing here, and nothing that reads the hash, calls the check-runs
 // or workflow-runs REST endpoints or asks GitHub to rerun anything: a rerun is

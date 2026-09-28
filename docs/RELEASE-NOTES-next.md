@@ -3,11 +3,10 @@
 A cheerful workshop keeps growing, and this release is two new benches and a
 handful of verbs friends kept reaching for. `nova-pulse` runs a whole card
 cycle with no model tokens of its own, `nova-secrets` holds credentials nothing
-else can read, and `nova-wake`, `nova-bus` and `nova-swarm` each got the one
-word they were missing — presence, replies and the native worker. Reading stays
-bounded, refusals name their remedy, and every new line is one a transcript can
-rely on. Pick the row that is your actual problem today; one new verb is a fine
-number.
+else can read, and `nova-wake` and `nova-bus` each got the one word they were
+missing — presence and replies. Reading stays bounded, refusals name their
+remedy, and every new line is one a transcript can rely on. Pick the row that
+is your actual problem today; one new verb is a fine number.
 
 ## nova-table
 
@@ -37,14 +36,6 @@ New: tables of ordered sets, text and percentages over Redis, with stored views 
 - **Changed output lines:** the `WAKE CHANGE` verdict gained `prs=0 runs=0 branches=0 locks=0`; `probe --here` prints `WAKE HERE at=… load=… cpus=… procs=…`.
 - **Changed behaviour:** `awake` honours the beat lease — a wait's `until=` on the `BEAT` file keeps a working duty cycle reading `awake` between waits.
 
-## nova-review
-
-New: one bounded, exact-revision **review packet**, no opinion and no merge.
-
-- **Verbs:** `packet`, `version`, `help`. **Flags:** `packet --lane <dir> (--pr <n>|--branch <name>) --who <name> --out <file> [--head <sha>] [--spec <path>]... [--rule <spec>:<n>]... [--max <n>] [--max-bytes <n>] [--reuse <file>] [--timeout <seconds>]`.
-- **Output lines:** `PACKET OK`, `PACKET STALE` (exit 1, the head moved), `PACKET REUSE`, `PACKET REFUSED`.
-- **Changed behaviour:** base and PR heads come from the `--repo` remote, fetched before the range; `--out` must be relative under the cwd or absolute under the cwd or the lane; packets are immutable, so an existing `--out` is a refusal; a missing-entry refusal names the remedy.
-
 ## nova-pulse
 
 New: bounded open work, cut into cards and folded back, no model call — every token is a card's.
@@ -59,13 +50,6 @@ New: credentials for seats, pools and services, sealed with age and sops and dec
 
 - **Verbs:** `exec`, `names`, `check`, `keygen`. **Flags:** `--store`, `--as`, `--key`, `--sops`, `--age-keygen`, `--only`, `--require`, `--max`.
 - **Changed behaviour:** no verb prints a secret value and no flag makes one — `get`, `print`, `show` and `cat` are refused forever; `exec` injects the named keys into one child command and nothing else.
-
-## nova-swarm
-
-- **New verbs:** `native` (one frozen OpenCode run, `--harness --model --card --slot --root --deadline`, plus `--config` and `--auth`), `bench` (the SPEC-SWARM benches, `table-and-probe` and `remote-run`), `publish` (push by refspec and a draft PR by the tool), `verify` (`--result --contract --label`, with `--card`, `--run-record`, `--usage`).
-- **New flags:** `run --no-auto-retry`; the card-form batch gained `--id --cards --deadline --runner --root [--idle <s>] [--then <command>] [--benches <file> --bench <name>]`; `add`/`batch`/`requeue` gained `--label`, `--template`, `--deadline`.
-- **Changed output lines:** `RUN POOL workers=… hours=… worker=… model=… pool=…` now carries `auto_retry=true`; the native capture is `harness-output.log` and a job log is appended to, never truncated — `--no-wall` captures `harness.log` like the walled path.
-- **Changed behaviour:** a silent harness is never OK — `reason=harness-silent`; batch holds a slot lock, refuses a live slot and takes over a stale one, abstain names its reason, and `--then` runs the follow-on only on `done=n`; native `--config` admits a keyless provider (a `baseURL` with no `apiKey`) so local models run walled; relative `--root`/`--slot` are absolutized at admission; private repositories are refused at admission; `TMPDIR` is exported outside any git repo (`slot/tmp/<label>`); nothing runs unwalled without a flag.
 
 ## nova-tokens
 
@@ -88,15 +72,9 @@ New: credentials for seats, pools and services, sealed with age and sops and dec
 - **Changed behaviour:** a Linux (Landlock) backend now runs, so remote benches run walled; `--tmp` confines zsh's `TMPPREFIX` as well as `TMPDIR`/`TMP`.
 - **Changed output lines:** `SANDBOX OK` gains `ancestors=<n>`; `CHECK OK` gains `hosts=none`.
 
-## nova-merge, nova-update, nova-board
+## nova-update
 
-- **`nova-board` is deprecated:** it is deprecated (Glenn, 2026-09-27); who is doing what becomes the job of `nova-sprint` as it is rebuilt on `nova-table` and is no longer built, tested or shipped. Its code and documents are kept as reference only under `deprecated/`.
-- **`nova-card`, `nova-friend`, `nova-play` and `nova-test` are deprecated:** (Glenn, 2026-09-27) `nova-card` and `nova-friend` are the sprint's runtime, implemented inside it, and `nova-play` and `nova-test` are new tools with no use on record. They are no longer built, tested or shipped; their code and command references are kept as reference only under `deprecated/`.
-- **`nova-swarm` and `nova-decide` are deprecated:** (Glenn, 2026-09-27) `nova-swarm` is retired for now; its pool dispatcher is to be rewritten on `nova-table` with the sprint. `nova-decide`, the Jev client, is parked because it is not proven yet, and returns when its value is measured. Neither is built, tested or shipped; their code and command references are kept as reference only under `deprecated/`.
-- **`nova-merge`, `nova-review` and `nova-post` are deprecated:** (Glenn, 2026-09-27) none is proven. `nova-merge`: landing goes through the GitHub merge queue, and a dev-to-main promotion verb returns when it is measured. `nova-review`: the packet/verdict flow was the sprint's review path, and the mutate verb may be lifted alone later. `nova-post`: PRs and comments go through gh. None is built, tested or shipped; their code and command references are kept as reference only under `deprecated/`.
-- **New flag:** `nova-merge batch --sibling <name>=<url>@<ref>` (repeatable) clones that repository beside the rebuilt job checkout (`repo/`) at the named branch or tag, so a tree whose tests look next door — schema's `../serialize.go` — finds it after `--root` is rebuilt (#2499 item 2). `repo` and `tmp` are reserved; a clone that cannot be made is `BATCH REFUSED`.
-- **`nova-merge simulate` now leaves no worktree behind and keeps the exit table docs/CLI.md documents:** the scratch worktree's directory *and* git's entry for it under `.git/worktrees/` both go (the old removal used `git worktree remove --force`, which the lane's git seam refuses in any argument, so it never ran and its error was discarded), and an invalid invocation — an unreadable or non-numeric `--entries`, a `--repo` that is not a repository, a `--base` or a `pull/<n>/head` the origin does not have — is exit 2 as the docs say, not 1. `nova-merge`'s fetched-tip fold is lock-free and retries only the failed records; `nova-update`'s reporter-death cases are staged and tested; the spec-versus-code drift that kept their docs honest was closed.
-- **`nova-merge batch` keeps a red build step's stderr on the verdict:** `go build` prints `# package` then the compiler lines, and `BATCH FAIL reason=` used to quote only that header. The reason is now the captured stderr after `go: downloading` notices, capped at `oneline.TailBytes` (500 bytes), so `undefined: Foo` is recoverable (#2499 item 3 / #2508).
+- `nova-update`'s reporter-death cases are staged and tested.
 
 ## Upgrading
 

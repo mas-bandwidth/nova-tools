@@ -28,9 +28,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/deprecated/internal/post/hook"
 	"github.com/mas-bandwidth/nova-tools/internal/ghevent"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/post/hook"
 	"github.com/redis/go-redis/v9"
 )
 

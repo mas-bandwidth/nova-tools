@@ -77,6 +77,8 @@ example: nova-fuse status --box ./fuse-box.json
 example: nova-memory check --root ./corpus --channels bm25 --k 3 draft.md
 example: nova-memory quickstart --root ./corpus
 example: nova-memory search --root ./corpus --channels bm25 --k 3 lantern glazing brass
+example: nova-post help
+example: nova-post version
 example: nova-redis recall --addr 127.0.0.1:6379 --owner rowan --name note
 example: nova-redis spill --addr 127.0.0.1:6379 --owner rowan --name note --ttl 10m --value hi
 example: nova-redis version

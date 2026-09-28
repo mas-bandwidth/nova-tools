@@ -1556,6 +1556,28 @@ any line.
 saying what to do with it, then `SECRETS KEYGEN OK` **last**. A run that ends on the
 OK line succeeded; a `NEXT:` line above it is the next step, not a failure.
 
+## nova-post
+
+Prepares outward messages for Ghost, Bluesky, email or Discord. `draft` saves the
+payload, `show` displays those saved bytes, and `send` checks the approval receipt
+before contacting the provider. See [SPEC-OUTBOUND.md](SPEC-OUTBOUND.md).
+
+```sh
+mkdir -p ./drafts && printf 'email\tteam\n' > ./targets.tsv && printf 'a first post for the first run.\n' > ./message.md
+nova-post draft --channel email --target team --file ./message.md --drafts ./drafts --allowlist ./targets.tsv
+nova-post show --draft <hash-from-draft> --drafts ./drafts
+```
+
+Create the draft directory first. The allowlist contains one `channel<TAB>target`
+per line; `team` above must be an explicitly allowed target. Optional `--title`
+sets the title or subject. The draft's hash identifies the exact content.
+
+`send` requires `--draft`, `--drafts`, `--allowlist`, `--bus` and `--approval`.
+The shipped approval gate requires a bus note from Glenn carrying
+`APPROVE nova-post sha256=<hash>`, received less than 24 hours ago. It does not
+expose a flag for choosing another approver. Provider credentials are supplied
+through the child environment. Drafting and showing do not authorize a send.
+
 ## nova-ci
 
 Reads Go test events and reports packages whose accumulated elapsed time exceeds

@@ -25,7 +25,7 @@ import (
 // ways something reaches it that nobody meant to. A test drives FakeIntegrateForge and
 // reaches no network.
 //
-// Issue #1845 (L6 of #1725). Law: docs/SPEC-MERGE.md:808-837 and docs/SPEC-DECIDE.md
+// Issue #1845 (L6 of #1725). Law: deprecated/docs/SPEC-MERGE.md:808-837 and deprecated/docs/SPEC-DECIDE.md
 // reading 3 -- this file writes, it never decides; the hold fold is verdict.go's and
 // nothing here re-reads a DISPOSITION line.
 
@@ -89,7 +89,7 @@ func (g *GHIntegrate) gh(args ...string) (string, error) {
 // THE BODY IS AN ARGUMENT AND NEVER A FILE THIS PACKAGE WROTE.
 //
 // `--body-file` would be the natural spelling and it is the one the hand loop typed, but
-// rule 7 of docs/SPEC-MERGE.md holds this package to four writing sites, each named in
+// rule 7 of deprecated/docs/SPEC-MERGE.md holds this package to four writing sites, each named in
 // internal/merge/source_test.go: the lane's state, its log, its lock and the rebase
 // marker. A temp file for a pull request body is a fifth, and a rule whose exemption list
 // grows whenever somebody needs one is not a rule. `--body <text>` costs nothing here: it

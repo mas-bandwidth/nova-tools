@@ -1,7 +1,7 @@
 // Package questions is the one place a typed question lives: its closed answer
 // set, its stopping members, its tamper answer, its evidence bound and
 // truncation rule, its instructions and its criteria, keyed by name and
-// version (docs/SPEC-DECIDE.md D3, :757-789).
+// version (deprecated/docs/SPEC-DECIDE.md D3, :757-789).
 //
 // Two things are true of everything here, and they are why it is a package and
 // not a map inside one tool.

@@ -7,18 +7,18 @@ is available today.
 - **abstain** — a card that produced no accepted answer, scored on the packet as
   `<label>: ABSTAIN reason=<token>`. The token names why: `line1-mismatch`,
   `no-result`, `rc=<n>`, `idle=<s>`, `deadline`, `result-after-deadline`, `card-abstain`,
-  `bench-unreachable`, or a provider's `input-limit`. ([SPEC-SWARM.md, gather](SPEC-SWARM.md#gather-one-bounded-packet-mechanically))
+  `bench-unreachable`, or a provider's `input-limit`. ([SPEC-SWARM.md, gather](../deprecated/docs/SPEC-SWARM.md#gather-one-bounded-packet-mechanically))
 - **ADMIT** — the printed token of the pulse's per-card admission gate: `ADMIT
   REFUSED card=<label> gate=<spend|attempts|scope> <value>`. It is an event line,
   never a verdict, and leaves the exit code alone. (SPEC-PULSE.md rule 9)
 - **adoption** — choosing to take a tool into your workflow; nothing in this repo
   asks you to adopt everything at once. ([USAGE.md](USAGE.md#usage-and-adoption-guide))
 - **attempt** — one run at a job. A job's retry is a second attempt with its own
-  id, summed once; a node's attempts are bounded. ([SPEC-SWARM.md rule 12](SPEC-SWARM.md#the-rules-numbered) · [SPEC-WORK.md, The data](SPEC-WORK.md#the-data-rowan))
+  id, summed once; a node's attempts are bounded. ([SPEC-SWARM.md rule 12](../deprecated/docs/SPEC-SWARM.md#the-rules-numbered) · [SPEC-WORK.md, The data](SPEC-WORK.md#the-data-rowan))
 - **batch** — one admission of many cards under one id and one deadline: scatter,
-  wait, gather. The gather is a single bounded packet. ([SPEC-SWARM.md rule 14](SPEC-SWARM.md#the-rules-numbered))
+  wait, gather. The gather is a single bounded packet. ([SPEC-SWARM.md rule 14](../deprecated/docs/SPEC-SWARM.md#the-rules-numbered))
 - **BATCH** — the swarm packet's first line: id, n, done, abstain, in, out, usd,
-  idle, stalled, benches. ([SPEC-SWARM.md, output grammar](SPEC-SWARM.md#output-grammar))
+  idle, stalled, benches. ([SPEC-SWARM.md, output grammar](../deprecated/docs/SPEC-SWARM.md#output-grammar))
 - **beat** — the `BEAT` heartbeat record a line writes to stay readable as awake,
   separate from the read cursor; `awake` reads it from `from-<name>/BEAT` by
   content and freshness, extended by a live lease. ([SPEC-WAKE.md, The verb](SPEC-WAKE.md#the-verb))
@@ -26,10 +26,10 @@ is available today.
   when its beat and cursor are older than the freshness window. It is bounded
   presence evidence, not proof a parent model woke. ([SPEC-WAKE.md, The verb](SPEC-WAKE.md#the-verb))
 - **bench** — a place work runs, usually a remote machine reached by ssh with
-  pinned cores; a local machine that runs slots is a bench too. ([SPEC-SWARM.md, Benches](SPEC-SWARM.md#benches-a-remote-bench-reached-by-ssh-with-pinned-cores))
+  pinned cores; a local machine that runs slots is a bench too. ([SPEC-SWARM.md, Benches](../deprecated/docs/SPEC-SWARM.md#benches-a-remote-bench-reached-by-ssh-with-pinned-cores))
 - **BLOCKED** — a worker's verdict, `RESULT.md` line 2 `BLOCKED <why>`; in
   nova-merge, an entry stopped with its reason while the lane moves on. Two
-  senses. ([SPEC-SWARM.md, The RESULT.md template](SPEC-SWARM.md#the-resultmd-template) · [SPEC-MERGE.md, output grammar](SPEC-MERGE.md#output-grammar))
+  senses. ([SPEC-SWARM.md, The RESULT.md template](../deprecated/docs/SPEC-SWARM.md#the-resultmd-template) · [SPEC-MERGE.md, output grammar](../deprecated/docs/SPEC-MERGE.md#output-grammar))
 - **board** — nova-board's owed-work layer: an append-only log of events from
   which the open list is derived. nova-board is **deprecated**: it is superseded
   by nova-sprint (Glenn, 2026-09-27), and its code and spec are kept for
@@ -44,7 +44,7 @@ is available today.
   deterministic snapshot carrying the retained history. Clips are periodic;
   shutdown and handoff request one. ([SPEC-WORK.md, Accept locally, then clip into Git](SPEC-WORK.md#accept-locally-then-clip-into-git))
 - **contract line** — a card's `RESULT.md` line 1, the line by which the card was
-  admitted. A report whose line 1 does not match is refused. (SPEC-PULSE.md rule 5 · [SPEC-SWARM.md, gather](SPEC-SWARM.md#gather-one-bounded-packet-mechanically))
+  admitted. A report whose line 1 does not match is refused. (SPEC-PULSE.md rule 5 · [SPEC-SWARM.md, gather](../deprecated/docs/SPEC-SWARM.md#gather-one-bounded-packet-mechanically))
 - **CONTRACTION** — the status line that names the health metric. Its verdict is
   `CONVERGING`, or `EXPANDING` when any one stream ratio has been above 1 for two
   consecutive hours; a contraction phase cards bugs only. (SPEC-PULSE.md, Status)
@@ -58,7 +58,7 @@ is available today.
   tool, command, verbatim output, expected, smallest fix. The shape is the
   contract; the label is optional. (SPEC-PULSE.md rule 1)
 - **DONE** — the `RESULT.md` line 2 verdict the worker writes when the work
-  completed. ([SPEC-SWARM.md, The RESULT.md template](SPEC-SWARM.md#the-resultmd-template))
+  completed. ([SPEC-SWARM.md, The RESULT.md template](../deprecated/docs/SPEC-SWARM.md#the-resultmd-template))
 - **epic** — a semantic container, not a prescribed depth or mandatory layer. It
   is a work-set by every rule, queryable as its own kind. ([SPEC-WORK.md, The data](SPEC-WORK.md#the-data-rowan))
 - **escalation** — a decision not in the policy, carried as one line so a person
@@ -89,7 +89,7 @@ is available today.
   twice. ([SPEC-WORK.md, The resident session](SPEC-WORK.md#the-resident-session-stella-from-her-amendment-at-60b9027-governs-the-execution-model-where-it-says-more-than-the-section-above))
 - **lane** — nova-merge's ordered queue, a directory holding one state file, one
   clone, and the records of reads and gates. One lane, one merge per pass.
-  ([SPEC-MERGE.md, Retired: the per-PR lander role](SPEC-MERGE.md#retired-the-per-pr-lander-role-2026-09-24) · [SPEC-MERGE.md rule 20](SPEC-MERGE.md#the-rules-numbered))
+  ([SPEC-MERGE.md, Retired: the per-PR lander role](../deprecated/docs/SPEC-MERGE.md#retired-the-per-pr-lander-role-2026-09-24) · [SPEC-MERGE.md rule 20](../deprecated/docs/SPEC-MERGE.md#the-rules-numbered))
 - **lease** — the ownership-of-execution record. One live lease per node; a
   second `take` is refused and names the holder. ([SPEC-WORK.md, The data](SPEC-WORK.md#the-data-rowan))
 - **NATIVE** — the printed token of a native card run: `NATIVE OK` when the card
@@ -98,7 +98,7 @@ is available today.
   never exits 255 (#2058). Local ssh(1) exits 255 for any error; that is not
   proof the remote command never started, so the outcome is potentially
   UNKNOWN and a retry waits on reconciliation.
-  ([SPEC-SWARM.md, output grammar](SPEC-SWARM.md#output-grammar))
+  ([SPEC-SWARM.md, output grammar](../deprecated/docs/SPEC-SWARM.md#output-grammar))
 - **next-push** — the label for expansionary work during a contraction phase:
   anything the policy's `scope-regex` does not admit is labelled `next-push` and
   never carded. Its scope-and-convergence rules are **definition pending**.
@@ -131,7 +131,7 @@ is available today.
   note. (SPEC-PULSE.md, The manager tier)
 - **read (APPROVE and HOLD)** — a reader's recorded verdict for an exact
   revision; a current independent APPROVE satisfies the read condition, a current
-  HOLD blocks it, and the other gates still apply. ([SPEC-MERGE.md, The read condition](SPEC-MERGE.md#the-read-condition))
+  HOLD blocks it, and the other gates still apply. ([SPEC-MERGE.md, The read condition](../deprecated/docs/SPEC-MERGE.md#the-read-condition))
 - **receipt** — one line appended to `from-<me>/RECEIPTS` recording that a note
   arrived. It is not an approval, a reply, or proof anybody read the body.
   ([SPEC.md, The receipt rule](SPEC.md#the-receipt-rule))
@@ -143,7 +143,7 @@ is available today.
   fresh engine. ([SPEC-WORK.md, The resident session](SPEC-WORK.md#the-resident-session-stella-from-her-amendment-at-60b9027-governs-the-execution-model-where-it-says-more-than-the-section-above))
 - **RESULT** — the report file: line 1 the contract line, line 2 the verdict
   (`DONE`, `ABSTAIN <why>`, `BLOCKED <why>`), then `BRANCH` and `REPO`. The same
-  token is the card's line 1. Two senses. ([SPEC-SWARM.md, The RESULT.md template](SPEC-SWARM.md#the-resultmd-template))
+  token is the card's line 1. Two senses. ([SPEC-SWARM.md, The RESULT.md template](../deprecated/docs/SPEC-SWARM.md#the-resultmd-template))
 - **shift** — the manager's turn on a queue. It ends by handoff and begins again
   by takeover. (SPEC-PULSE.md, Handoff)
 - **single-writer kernel** — the rule that one coordinator at a time is the one
@@ -151,10 +151,10 @@ is available today.
   old processes cannot mutate under an obsolete generation.
   ([SPEC-WORK.md, One coordinator, one live reader/writer](SPEC-WORK.md#one-coordinator-one-live-readerwriter))
 - **slot** — the unit of parallelism. A running worker holds a slot; a slot is
-  free when no job holds it and its log is quiet. ([SPEC-SWARM.md rule 17](SPEC-SWARM.md#the-rules-numbered) · SPEC-PULSE.md rule 8)
+  free when no job holds it and its log is quiet. ([SPEC-SWARM.md rule 17](../deprecated/docs/SPEC-SWARM.md#the-rules-numbered) · SPEC-PULSE.md rule 8)
 - **stale** — in nova-merge, a read or gate for an older revision, kept but not
   counted; on nova-board, an open card with no event for longer than `--stale`.
-  Two senses. ([SPEC-MERGE.md, The read condition](SPEC-MERGE.md#the-read-condition) · [SPEC-BOARD.md rule 6](../deprecated/docs/SPEC-BOARD.md#the-rules-of-the-last-two-days))
+  Two senses. ([SPEC-MERGE.md, The read condition](../deprecated/docs/SPEC-MERGE.md#the-read-condition) · [SPEC-BOARD.md rule 6](../deprecated/docs/SPEC-BOARD.md#the-rules-of-the-last-two-days))
 - **takeover** — the verb that begins a manager shift. It refuses when `OWNER`
   names a live process on a reachable host; a stale lock is taken with one note.
   (SPEC-PULSE.md, Handoff)
@@ -164,14 +164,14 @@ is available today.
   surfacing `tripped=` as a status reading. Taking a lease on a tripped node
   requires an explicit `--reason`. ([SPEC-WORK.md, The absorbed contract rules](SPEC-WORK.md#the-absorbed-contract-rules))
 - **two-minute rule** — anything you call out to that costs real time answers in
-  one minute ideally, two at most. ([SPEC-MERGE.md, The two laws](SPEC-MERGE.md#the-two-laws))
+  one minute ideally, two at most. ([SPEC-MERGE.md, The two laws](../deprecated/docs/SPEC-MERGE.md#the-two-laws))
 - **verify** — `nova-swarm verify` checks the report's first line against the
   card's contract line; `nova-work verify` checks evidence against acceptance
   criteria and records verdicts, closing being separate. Two senses.
-  ([SPEC-SWARM.md, The verbs](SPEC-SWARM.md#the-verbs) · [SPEC-WORK.md, The verbs](SPEC-WORK.md#the-verbs-rowan-a-draft-shape-to-be-cut-by-the-pilot))
+  ([SPEC-SWARM.md, The verbs](../deprecated/docs/SPEC-SWARM.md#the-verbs) · [SPEC-WORK.md, The verbs](SPEC-WORK.md#the-verbs-rowan-a-draft-shape-to-be-cut-by-the-pilot))
 - **VIOLATION** — the printed token of a runaway worker: `RUN VIOLATION id=<id>
   background=<n>`; the survivors are killed and the result is quarantined.
-  ([SPEC-SWARM.md rule 11](SPEC-SWARM.md#the-rules-numbered))
+  ([SPEC-SWARM.md rule 11](../deprecated/docs/SPEC-SWARM.md#the-rules-numbered))
 - **wake drill** — the test of waking: a note sent after the parent's turn ended
   must produce a wake within the window. ([SPEC-WAKE.md, output grammar](SPEC-WAKE.md#output-grammar))
 - **wall** — the kernel-enforced filesystem boundary a job runs inside, with
