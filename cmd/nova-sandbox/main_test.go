@@ -1886,18 +1886,30 @@ func TestTheProbeExampleInTheBannerSetsHome(t *testing.T) {
 	for _, line := range exampleCommands(t, probe, j.base) {
 		switch {
 		case strings.HasPrefix(line, "mkdir -p "):
-			if err := os.MkdirAll(strings.TrimPrefix(line, "mkdir -p "), 0o755); err != nil {
+			target := strings.Trim(strings.TrimPrefix(line, "mkdir -p "), `"'`)
+			if err := os.MkdirAll(target, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		case strings.HasPrefix(line, "touch "):
+			target := strings.Trim(strings.TrimPrefix(line, "touch "), `"'`)
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(target, nil, 0o600); err != nil {
 				t.Fatal(err)
 			}
 		case strings.Contains(line, "nova-sandbox probe "):
 			fields := strings.Fields(line)
 			for i, f := range fields {
 				if strings.HasPrefix(f, "HOME=") {
-					home = strings.TrimPrefix(f, "HOME=")
+					home = strings.Trim(strings.TrimPrefix(f, "HOME="), `"'`)
 				}
 				if f == "nova-sandbox" {
 					argv = fields[i+1:]
 				}
+			}
+			for i, a := range argv {
+				argv[i] = strings.Trim(a, `"'`)
 			}
 		default:
 			t.Fatalf("the probe example has a line this test cannot run: %q", line)
@@ -1944,7 +1956,12 @@ func exampleCommands(t *testing.T, block, base string) []string {
 			joined += strings.TrimSpace(strings.TrimSuffix(line, "\\")) + " "
 			continue
 		}
-		lines = append(lines, strings.ReplaceAll(joined+line, "/Users/me", base))
+		cmdLine := joined + line
+		cmdLine = strings.ReplaceAll(cmdLine, `"$PWD/scratch`, filepath.Join(base, "scratch"))
+		cmdLine = strings.ReplaceAll(cmdLine, `"$PWD"`, base)
+		cmdLine = strings.ReplaceAll(cmdLine, `$PWD`, base)
+		cmdLine = strings.ReplaceAll(cmdLine, "/Users/me", base)
+		lines = append(lines, cmdLine)
 		joined = ""
 	}
 	if joined != "" {
@@ -2086,17 +2103,17 @@ func TestUnknownVerbRefused(t *testing.T) {
 		{
 			name: "bogus verb",
 			args: []string{"bogus"},
-			want: "SANDBOX REFUSED unknown verb \"bogus\"; run: nova-sandbox help\n",
+			want: "SANDBOX REFUSED reason=no_command unknown verb \"bogus\"; run: nova-sandbox help\n",
 		},
 		{
 			name: "unknown verb with args",
 			args: []string{"some-other-verb", "--flag"},
-			want: "SANDBOX REFUSED unknown verb \"some-other-verb\"; run: nova-sandbox help\n",
+			want: "SANDBOX REFUSED reason=no_command unknown verb \"some-other-verb\"; run: nova-sandbox help\n",
 		},
 		{
 			name: "positional command not treated as bare wrap",
 			args: []string{"echo", "hello"},
-			want: "SANDBOX REFUSED unknown verb \"echo\"; run: nova-sandbox help\n",
+			want: "SANDBOX REFUSED reason=no_command unknown verb \"echo\"; run: nova-sandbox help\n",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2150,37 +2167,37 @@ func TestCheckFlagParsing(t *testing.T) {
 			name:     "unrecognized double-dash flag",
 			args:     []string{"check", "--bogus"},
 			wantCode: sandbox.ExitCannotRun,
-			wantErr:  "flag provided but not defined: -bogus; run: nova-sandbox help",
+			wantErr:  "CHECK REFUSED reason=bad_flag flag \"--bogus\"; run: nova-sandbox check -h",
 		},
 		{
 			name:     "unrecognized single-dash flag",
 			args:     []string{"check", "-bogus"},
 			wantCode: sandbox.ExitCannotRun,
-			wantErr:  "flag provided but not defined: -bogus; run: nova-sandbox help",
+			wantErr:  "CHECK REFUSED reason=bad_flag flag \"-bogus\"; run: nova-sandbox check -h",
 		},
 		{
 			name:     "invalid integer for max",
 			args:     []string{"check", "--max", "notanint"},
 			wantCode: sandbox.ExitCannotRun,
-			wantErr:  "invalid value \"notanint\" for flag -max",
+			wantErr:  "CHECK REFUSED reason=bad_flag flag \"--max\"; run: nova-sandbox check -h",
 		},
 		{
 			name:     "missing value for max",
 			args:     []string{"check", "--max"},
 			wantCode: sandbox.ExitCannotRun,
-			wantErr:  "flag needs an argument: -max",
+			wantErr:  "CHECK REFUSED reason=bad_flag flag \"--max\"; run: nova-sandbox check -h",
 		},
 		{
 			name:     "negative max",
 			args:     []string{"check", "--max", "-1"},
 			wantCode: sandbox.ExitCannotRun,
-			wantErr:  "--max wants a whole number, 0 for all: --max <n>; run: nova-sandbox help",
+			wantErr:  "CHECK REFUSED reason=bad_flag flag \"--max\"; run: nova-sandbox check -h",
 		},
 		{
 			name:     "unexpected positional argument",
 			args:     []string{"check", "extra"},
 			wantCode: sandbox.ExitCannotRun,
-			wantErr:  "unexpected argument \"extra\"; run: nova-sandbox help",
+			wantErr:  "CHECK REFUSED reason=bad_flag flag \"extra\"; run: nova-sandbox check -h",
 		},
 		{
 			name:     "check -h",
@@ -2206,8 +2223,8 @@ func TestCheckFlagParsing(t *testing.T) {
 			if tc.wantErr != "" && !strings.Contains(errOut, tc.wantErr) {
 				t.Errorf("stderr %q does not contain %q", errOut, tc.wantErr)
 			}
-			if tc.wantCode == sandbox.ExitCannotRun && !strings.Contains(errOut, "run: nova-sandbox help") {
-				t.Errorf("stderr %q does not contain door 'run: nova-sandbox help'", errOut)
+			if tc.wantCode == sandbox.ExitCannotRun && !strings.Contains(errOut, "run: nova-sandbox check -h") {
+				t.Errorf("stderr %q does not contain door 'run: nova-sandbox check -h'", errOut)
 			}
 		})
 	}

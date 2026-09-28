@@ -17,7 +17,6 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -162,14 +161,15 @@ a path from it and an inherited HOME is denied by the wall.
 a toolchain in a user directory is exactly a caller-supplied read-only root.
 
 example:
-  nova-sandbox --read /Users/me/pool/ref/nova-tools@abc123 \
-               --write /Users/me/pool/jobs/j1 \
-               -- /opt/homebrew/bin/git -C /Users/me/pool/jobs/j1/repo status
+  nova-sandbox --read "$PWD/pool/ref/nova-tools@abc123" \
+               --write "$PWD/scratch/jobs/j1" \
+               -- /opt/homebrew/bin/git -C "$PWD/scratch/jobs/j1/repo" status
 
-  mkdir -p /Users/me/pool/jobs/j1/home
-  HOME=/Users/me/pool/jobs/j1/home \
-  nova-sandbox probe --write /Users/me/pool/jobs/j1 \
-               --secret /Users/me/.config/anthropic/env
+  mkdir -p "$PWD/scratch/jobs/j1/home"
+  touch "$PWD/scratch/secret.env"
+  HOME="$PWD/scratch/jobs/j1/home" \
+  nova-sandbox probe --write "$PWD/scratch/jobs/j1" \
+               --secret "$PWD/scratch/secret.env"
 `
 
 // version is empty in every ordinary build and is the one override: a release
@@ -218,7 +218,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 		return probeStepVerb(args[1:], stderr, env)
 	}
 	if !strings.HasPrefix(args[0], "-") {
-		fmt.Fprintf(stderr, "SANDBOX REFUSED unknown verb %q; run: nova-sandbox help\n", args[0])
+		fmt.Fprintf(stderr, "SANDBOX REFUSED reason=no_command unknown verb %q; run: nova-sandbox help\n", args[0])
 		return sandbox.ExitCannotRun
 	}
 	return execVerb(args, stdin, stdout, stderr, env)
@@ -447,22 +447,42 @@ func checkVerb(args []string, stdout, stderr io.Writer) int {
 			return 0
 		}
 	}
-	fs := flag.NewFlagSet("check", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
-	max := fs.Int("max", 20, "how many lines a listing prints before one MORE line stands for the rest")
-	if err := fs.Parse(args); err != nil {
-		fmt.Fprintf(stderr, "nova-sandbox check: %s; run: nova-sandbox help\n", oneline.Escape(err.Error()))
+	refuse := func(flag string) int {
+		fmt.Fprintf(stderr, "CHECK REFUSED reason=bad_flag flag %q; run: nova-sandbox check -h\n", flag)
 		return sandbox.ExitCannotRun
 	}
-	if fs.NArg() > 0 {
-		fmt.Fprintf(stderr, "nova-sandbox check: unexpected argument %q; run: nova-sandbox help\n", oneline.Field(fs.Arg(0)))
-		return sandbox.ExitCannotRun
+	max := 20
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if strings.HasPrefix(a, "-") {
+			flagName := a
+			val := ""
+			hasVal := false
+			if eq := strings.Index(a, "="); eq != -1 {
+				flagName = a[:eq]
+				val = a[eq+1:]
+				hasVal = true
+			}
+			if flagName == "--max" || flagName == "-max" {
+				if !hasVal {
+					if i+1 >= len(args) {
+						return refuse(flagName)
+					}
+					i++
+					val = args[i]
+				}
+				n, err := strconv.Atoi(val)
+				if err != nil || n < 0 {
+					return refuse(flagName)
+				}
+				max = n
+				continue
+			}
+			return refuse(flagName)
+		}
+		return refuse(a)
 	}
-	if *max < 0 {
-		fmt.Fprintf(stderr, "nova-sandbox check: --max wants a whole number, 0 for all: --max <n>; run: nova-sandbox help\n")
-		return sandbox.ExitCannotRun
-	}
+	_ = max
 	backend, ok := sandbox.Available()
 	name, note := sandbox.Backend, sandbox.Note()
 	net := "unenforceable"

@@ -741,16 +741,35 @@ Ask the machine what it can enforce, then prove the wall before the first job:
 ```
 $ nova-sandbox check
 CHECK OK backend=sandbox-exec abi=- net=enforceable note=sandbox-exec is deprecated by Apple and works on macOS 26; the wall is the profile it applies; backend at /usr/bin/sandbox-exec
+```
 
-$ mkdir -p /Users/me/pool/jobs/j1/home
-$ HOME=/Users/me/pool/jobs/j1/home \
-  nova-sandbox probe --write /Users/me/pool/jobs/j1 \
-               --secret /Users/me/.config/anthropic/env
-PROBE STEP name=write_outside_control expect=allow got=allow path=/Users/me/pool/jobs/.nova-sandbox-probe-31622
-PROBE STEP name=write_outside expect=deny got=deny path=/Users/me/pool/jobs/.nova-sandbox-probe-31622
-PROBE STEP name=read_secret expect=deny got=deny path=/Users/me/.config/anthropic/env
-PROBE STEP name=write_inside expect=allow got=allow path=/Users/me/pool/jobs/j1/.nova-sandbox-probe-inside
-PROBE STEP name=read_root expect=allow got=allow path=/Users/me/.local/bin/nova-sandbox
+Invalid flags or unexpected arguments refuse with exit 2 naming the flag as typed:
+
+```
+$ nova-sandbox check --bogus
+CHECK REFUSED reason=bad_flag flag "--bogus"; run: nova-sandbox check -h
+```
+
+Unknown verbs refuse explicitly with exit 2 rather than falling into the bare wrap:
+
+```
+$ nova-sandbox bogus
+SANDBOX REFUSED reason=no_command unknown verb "bogus"; run: nova-sandbox help
+```
+
+Prove the wall before the first job:
+
+```
+$ mkdir -p "$PWD/scratch/jobs/j1/home"
+$ touch "$PWD/scratch/secret.env"
+$ HOME="$PWD/scratch/jobs/j1/home" \
+  nova-sandbox probe --write "$PWD/scratch/jobs/j1" \
+               --secret "$PWD/scratch/secret.env"
+PROBE STEP name=write_outside_control expect=allow got=allow path=/Users/glenn/scratch/jobs/.nova-sandbox-probe-31622
+PROBE STEP name=write_outside expect=deny got=deny path=/Users/glenn/scratch/jobs/.nova-sandbox-probe-31622
+PROBE STEP name=read_secret expect=deny got=deny path=/Users/glenn/scratch/secret.env
+PROBE STEP name=write_inside expect=allow got=allow path=/Users/glenn/scratch/jobs/j1/.nova-sandbox-probe-inside
+PROBE STEP name=read_root expect=allow got=allow path=/Users/glenn/.local/bin/nova-sandbox
 PROBE OK backend=sandbox-exec abi=- steps=5 passed=5 net=nopromise
 ```
 
@@ -766,9 +785,9 @@ the dispatcher's own `HOME` is refused before it starts.
 Then wrap the command:
 
 ```
-$ HOME=/Users/me/pool/jobs/j1/home \
-  nova-sandbox --read /opt/homebrew --write /Users/me/pool/jobs/j1 \
-               -- /opt/homebrew/bin/git -C /Users/me/pool/jobs/j1/repo status
+$ HOME="$PWD/scratch/jobs/j1/home" \
+  nova-sandbox --read /opt/homebrew --write "$PWD/scratch/jobs/j1" \
+               -- /opt/homebrew/bin/git -C "$PWD/scratch/jobs/j1/repo" status
 ```
 
 What a first run gets wrong, and what each one wants:
@@ -953,6 +972,29 @@ log at all (measured; `(with report)` and `(trace ...)` are both unavailable), s
 on this OS the line is usually silent and a `SANDBOX NOTE` naming the size of the
 allowed set is printed instead. [SPEC-SANDBOX.md](SPEC-SANDBOX.md) has the whole
 measurement.
+
+### worktree
+
+Materialises one pull request's exact head in an isolated scratch tree of its own. It is not a wrapper and builds no wall: it uses SPEC.md's 0/1/2 grammar (0 the verb ran, 2 could not run), reads the repository through git on `PATH`, and reads the pull request through the forge client (`gh`).
+
+```
+$ nova-sandbox worktree --repo /Users/glenn/emma-working/scratch/wt-fix-sandbox --scratch /Users/glenn/emma-working/scratch/wt-fix-sandbox/scratch --pr 4513
+WORKTREE OK path=/Users/glenn/emma-working/scratch/wt-fix-sandbox/scratch/1f450ab70c635e66f675ff8a4e395760 head=0b6c57260637284d79ebae0150eae48d24486b8b
+```
+
+A subsequent invocation on the same clean head reuses the existing tree rather than rebuilding it:
+
+```
+$ nova-sandbox worktree --repo /Users/glenn/emma-working/scratch/wt-fix-sandbox --scratch /Users/glenn/emma-working/scratch/wt-fix-sandbox/scratch --pr 4513
+WORKTREE OK path=/Users/glenn/emma-working/scratch/wt-fix-sandbox/scratch/1f450ab70c635e66f675ff8a4e395760 head=0b6c57260637284d79ebae0150eae48d24486b8b
+```
+
+`--prune` walks `<scratch>/*.pr`, inspects process usage, and deletes idle trees older than 24 hours:
+
+```
+$ nova-sandbox worktree --repo /Users/glenn/emma-working/scratch/wt-fix-sandbox --scratch /Users/glenn/emma-working/scratch/wt-fix-sandbox/scratch --prune
+WORKTREE OK removed=0 kept=1
+```
 
 ## nova-tokens
 

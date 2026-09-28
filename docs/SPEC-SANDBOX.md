@@ -1207,6 +1207,7 @@ PROBE REFUSED reason=<check|secret_inside_allow|probe_outside_inside|probe_outsi
 POLICY OK backend=<name> read=<n> read-noexec=<n> write=<n> bytes=<n> gpu=<none|metal>
 POLICY REFUSED reason=<any reason of the SANDBOX REFUSED set above>: <text>
 CHECK OK backend=<name|none> abi=<n|-> net=<enforceable|unenforceable> hosts=none note=<one clause|->
+CHECK REFUSED reason=<bad_flag>: <text>
 nova-sandbox <build identity> <goos>/<goarch> <go version> backend=<name> platform=<os>
 EGRESS PLAN run=<id> allow=<n> deny=<n> names=<name,name,...>
 EGRESS CHECK table=<nova_egress_<run>> chains=<n> rules=<n> allow=<n> deny=<n>
