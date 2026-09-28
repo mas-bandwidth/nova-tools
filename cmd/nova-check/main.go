@@ -95,8 +95,15 @@ usage:
                                                      when a stream has widened on two
                                                      consecutive ticks, which is why the
                                                      streak lives in --state.
+  nova-check spelling (--dir <dir> | --file <path> | --path <pattern>)
+                      [--ignore <word|@file>] [--write] [--exclude <prefix>]
+                      [--fail-max <n>]
+                                                     check markdown or prose for misspellings;
+                                                     fenced code blocks and inline code spans
+                                                     are blanked so code is not prose;
+                                                     --write fixes misspellings in place
 
-  --fail-max <n>   on quickstart, attest, links, nocode and corpus: how many
+  --fail-max <n>   on quickstart, attest, links, nocode, corpus and spelling: how many
                    FAIL lines to print before one MORE line stands for the
                    rest. Default 20, and 0 means all. The count line prints
                    whether the check passed or failed, so a run that found 800
@@ -232,6 +239,8 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 		return cmdDogfood(args[1:], stdout, stderr)
 	case "convergence":
 		return cmdConvergence(args[1:], stdout, stderr)
+	case "spelling":
+		return cmdSpelling(args[1:], stdout, stderr)
 	case "version", "--version":
 		return cmdVersion(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
