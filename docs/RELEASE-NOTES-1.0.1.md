@@ -22,6 +22,8 @@ Retrying an identical append returns the original stored timestamp and
 
 `nova-tokens ledger --month` batches validated day files into one Redis call.
 
+`nova-tokens` writes day and fold-pool files atomically and refuses symlinked or non-regular fold lock files.
+
 `nova-memory verify --exclude` applies to the whole verified corpus,
 including coverage and frontmatter selectors. An excluded directory also
 excludes its children. A retained note that links to an excluded target still
@@ -41,6 +43,8 @@ arguments intact.
 
 The CI class check validates hosted package assignments at the shard
 counts the workflow actually runs. Existing time budgets stay in force.
+
+The CI generality check refuses additions to its exception list and enforces the existing row ceiling.
 
 ## Release publishing
 
