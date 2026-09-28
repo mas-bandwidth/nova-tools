@@ -24,10 +24,11 @@
 // directory, no log and no index appearing beside it. The tool adapts to the
 // store; the store is never converted to suit the tool.
 //
-// Each entry file is written atomically (fixed temp name per entry, fsync,
-// rename, dir fsync), so a retry after an interrupted append finishes the
-// pointer without duplicating the entry and without touching other writers'
-// files. A stale *.tmp is never indexed and is overwritten by the retry.
+// Each entry file is written atomically via internal/atomicfile (exclusive
+// temporary file beside target, explicit mode, fsync to media, atomic rename),
+// so a retry after an interrupted append finishes the pointer without
+// duplicating the entry and without touching other writers' files. Stale
+// temporary files are never indexed.
 package cairn
 
 import (
@@ -41,6 +42,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 )
 
 // Publish policies name who publishes a checkpoint and when. This slice
@@ -284,48 +287,6 @@ func entryPath(store, session, id string) string {
 	return filepath.Join(store, "entries", session, id+".json")
 }
 
-// writeAtomic lands content at final via a fixed per-entry temp name, so a
-// retry after a crash overwrites the partial instead of orphaning it, and
-// other writers' files are never touched. The file and its directory are
-// fsynced before success, which is what makes persisted=true honest.
-func writeAtomic(final string, content []byte) error {
-	if err := os.MkdirAll(filepath.Dir(final), 0o755); err != nil {
-		return err
-	}
-	tmp := final + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
-	if err != nil {
-		return err
-	}
-	if _, err := f.Write(content); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, final); err != nil {
-		return err
-	}
-	return fsyncDir(filepath.Dir(final))
-}
-
-// fsyncDir is best-effort: where the platform cannot sync a directory the
-// file sync above still holds the content, and the retry stays idempotent.
-func fsyncDir(dir string) error {
-	d, err := os.Open(dir)
-	if err != nil {
-		return nil
-	}
-	defer d.Close()
-	_ = d.Sync()
-	return nil
-}
-
 // appendLine adds one line to a file, creating it, and fsyncs before return.
 func appendLine(name, line string) error {
 	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
@@ -347,6 +308,16 @@ func appendLine(name, line string) error {
 		return err
 	}
 	return fsyncDir(filepath.Dir(name))
+}
+
+func fsyncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return nil
+	}
+	defer d.Close()
+	_ = d.Sync()
+	return nil
 }
 
 // appendLog records one event on the store's append-only log.
@@ -383,7 +354,13 @@ func Open(store, session, source string, now time.Time, publish string) error {
 	stamp := now.UTC().Format(time.RFC3339Nano)
 	header := fmt.Sprintf("# cairn %s\n\nOpened: %s\nSource: %s\nPublish: %s\n",
 		session, stamp, source, publish)
-	if err := writeAtomic(name, []byte(header)); err != nil {
+	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
+		return err
+	}
+	// Atomic write per internal/atomicfile model: temporary file created
+	// exclusively in parent directory, explicit 0o644 mode, fsync to media,
+	// atomic rename over target path.
+	if err := atomicfile.WriteFile(name, []byte(header), 0o644); err != nil {
 		return err
 	}
 	return appendLog(store, "open", session, "", stamp, publish)
@@ -468,7 +445,13 @@ func Append(store, session, id, text, source string, now time.Time, publish stri
 		Publish: publish,
 		Text:    text,
 	})
-	if err := writeAtomic(final, rec); err != nil {
+	if err := os.MkdirAll(filepath.Dir(final), 0o755); err != nil {
+		return res, err
+	}
+	// Atomic write per internal/atomicfile model: temporary file created
+	// exclusively in parent directory, explicit 0o644 mode, fsync to media,
+	// atomic rename over target path.
+	if err := atomicfile.WriteFile(final, rec, 0o644); err != nil {
 		return res, err
 	}
 	if err := ensurePointer(store, session, id, stamp); err != nil {
