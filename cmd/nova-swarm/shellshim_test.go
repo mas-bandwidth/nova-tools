@@ -197,7 +197,7 @@ func itoa(n int) string {
 }
 
 // TestTheCardsShellReachesNoGh is #3600's card half: a shell the harness starts with the
-// shim first on PATH resolves `gh` to the refusing one, exit 2 naming #3594, and a
+// shim first on PATH resolves `gh` to the refusing one, exit 2 naming REFUSED, and a
 // counting fake gh later on PATH (the token's call counter, standing in) is never run.
 // The control is one edit: drop the gh from writeNativeShellShims and the fake answers.
 func TestTheCardsShellReachesNoGh(t *testing.T) {
@@ -224,8 +224,8 @@ func TestTheCardsShellReachesNoGh(t *testing.T) {
 	cmd.Env = env
 	out, err := cmd.CombinedOutput()
 	var ee *exec.ExitError
-	if !errors.As(err, &ee) || ee.ExitCode() != 2 || !strings.Contains(string(out), "#3594") {
-		t.Fatalf("gh through the card's PATH: err=%v out=%q, want exit 2 naming #3594", err, out)
+	if !errors.As(err, &ee) || ee.ExitCode() != 2 || !strings.Contains(string(out), "REFUSED") {
+		t.Fatalf("gh through the card's PATH: err=%v out=%q, want exit 2 naming REFUSED", err, out)
 	}
 	if _, err := os.Stat(counter); err == nil {
 		t.Fatalf("the fake gh was called: the card's shell reached a real gh")
