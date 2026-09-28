@@ -7,7 +7,7 @@ package main
 // 22-24: it records the argv, environment and stdin config `serve` hands to
 // redis-server. The restart test (25, #3879) runs the real launch against a
 // throwaway redis-server on loopback in the test's temp dir, found through
-// internal/nsprint/testutil, which skips on a laptop without the binary and
+// internal/testredis, which skips on a laptop without the binary and
 // fails under NOVA_CI=1.
 
 import (

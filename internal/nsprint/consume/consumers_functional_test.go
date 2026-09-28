@@ -1,6 +1,6 @@
 //go:build functional
 
-package typedrec_test
+package consume_test
 
 import (
 	"context"
@@ -20,10 +20,7 @@ import (
 )
 
 func TestEveryConsumerRefusesMissingFieldByName(t *testing.T) {
-	// SLEEPS: this test waits on the wall clock (measured over 5 s on the 2026-09-25 PR run). Skipped 2026-09-25
-	// by Glenn's rule ("unit tests must not have real sleeps or waits"): it becomes a
-	// mocked-clock unit test or a functional program (nova-tools #4221).
-	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
+	t.Parallel()
 	t.Run("cut", func(t *testing.T) {
 		kinds := []string{"fix", "recut", "port", "docs-guard", "report", "read"}
 		for _, kind := range kinds {

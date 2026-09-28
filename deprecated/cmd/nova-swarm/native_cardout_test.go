@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,33 +10,35 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
+
+func gitRun(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v in %s: %v\n%s", args, dir, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
 
 // cardOrigin is a bare origin whose dev holds one committed base.txt: the base a card
 // clones and changes.
 func cardOrigin(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	git := func(in string, args ...string) {
-		t.Helper()
-		cmd := exec.Command("git", args...)
-		cmd.Dir = in
-		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v %s", args, err, out)
-		}
-	}
 	origin := filepath.Join(dir, "origin.git")
 	seed := filepath.Join(dir, "seed")
-	git(dir, "init", "-q", "--bare", origin)
-	git(dir, "init", "-q", seed)
+	gitRun(t, dir, "init", "-q", "--bare", origin)
+	gitRun(t, dir, "init", "-q", seed)
 	write(t, filepath.Join(seed, "base.txt"), "base\n")
-	git(seed, "add", "base.txt")
-	git(seed, "commit", "-q", "-m", "base")
-	git(seed, "push", "-q", origin, "HEAD:refs/heads/dev")
-	git(dir, "--git-dir", origin, "symbolic-ref", "HEAD", "refs/heads/dev")
+	gitRun(t, seed, "add", "base.txt")
+	gitRun(t, seed, "commit", "-q", "-m", "base")
+	gitRun(t, seed, "push", "-q", origin, "HEAD:refs/heads/dev")
+	gitRun(t, dir, "--git-dir", origin, "symbolic-ref", "HEAD", "refs/heads/dev")
 	return origin
 }
 
@@ -83,9 +86,14 @@ func TestNativeHandsCardRepoToCardOut(t *testing.T) {
 	if err != nil || !bytes.Equal(handed, published) {
 		t.Fatalf("out/RESULT.md = %q, %v; want the card's own RESULT.md %q", handed, err, published)
 	}
-	res, err := card.CommitOutput(filepath.Join(out, "repo"), card.WrapperBranch("quack-0924", label, 1), "RESULT: quack fixed", "space")
-	if err != nil || res.Note != "COMMITTED" || len(res.SHA) != 40 {
-		t.Fatalf("the wrapper's commit step on the handed repo = %+v, %v; want COMMITTED", res, err)
+	repo := filepath.Join(out, "repo")
+	branch := fmt.Sprintf("nova/%s/%s-a%d", "quack-0924", label, 1)
+	gitRun(t, repo, "checkout", "-q", "-B", branch)
+	gitRun(t, repo, "add", "-A", "--", ".")
+	gitRun(t, repo, "commit", "-q", "--no-verify", "-m", "RESULT: quack fixed")
+	sha := gitRun(t, repo, "rev-parse", "HEAD")
+	if len(sha) != 40 {
+		t.Fatalf("the commit step on the handed repo sha = %q; want 40 chars", sha)
 	}
 }
 
