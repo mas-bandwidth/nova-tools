@@ -1964,8 +1964,8 @@ path is CANNOT TELL too**, whether the file or a directory above it is
 missing: a box that is not where `--box` says proves nothing, and answering it
 as an empty box would turn a mistyped path, a moved or deleted box, or a
 second `--box` pointing somewhere empty into CLEAR. `check`, `status`,
-`quarantine` and `lift quarantine` refuse it at exit 2 with one line naming
-`nova-fuse init --box <path>`; none of them makes a box. `quarantine` refuses
+`quarantine`, `lift quarantine` and `path` refuse it at exit 2 with one line
+naming `nova-fuse init --box <path>`; none of them makes a box. `quarantine` refuses
 for the same reason it refuses an unreadable box: with no box every surface is
 refused, and a new box holding only one quarantine would clear the rest.
 `lockdown` proceeds and makes the box, because a fuse you cannot blow is not a
@@ -2054,10 +2054,11 @@ including the box path and the stored name, is not shell-quoted, and will not
 paste back if the path carried a control character — it names the command; it
 is not a command to run blind.
 
-**`path` is the one exemption, and it is a plain one:** `path` echoes its
-argument unescaped, so a caller must never scan `path` output for grammar.
-`path --box "FUSE OK lockdown=clear"` prints exactly that, at exit 0. It is the
-caller's own value, handed back.
+**`path` is the one exemption, and it is a plain one:** when `path` prints, it
+echoes its argument unescaped, so a caller must never scan `path` output for
+grammar. A box whose path is the text `FUSE OK lockdown=clear` is handed back
+exactly that text, at exit 0. A path with no box is refused (exit 2) and prints
+no CLEAR. The echo, when there is one, is the caller's own value, handed back.
 
 (A byte that is not valid UTF-8 is escaped in the same `\xNN` form, but box
 content cannot reach that case: JSON decoding substitutes U+FFFD for it first,
@@ -2220,12 +2221,14 @@ nova-fuse path --box <path>
 
 Prints the box path this invocation would use — the bare path, **a value, not
 an event**, so the line carries no `OK`/`FAIL` token and asserts nothing
-about the box: the file is not read, and the path is not checked for
-existence. Exit 0 after printing; refuses (exit 2) when `--box` is missing
-(`refusing to guess`) or an unexpected positional argument is given. It
-exists because there are no default paths anywhere: with every caller wiring
-`--box` at build time, `path` is how that plumbing is verified — what one
-caller passes is what another sees — without ever touching the box itself.
+about what the box holds. Exit 0 after printing when the path is not absent.
+**Nothing at the path is refused the same way `check` refuses it:** exit 2,
+`ErrNoBox`, one line naming `nova-fuse init --box <path>`, and `path` does
+not make a box. It also refuses (exit 2) when `--box` is missing (`refusing
+to guess`) or an unexpected positional argument is given. It exists because
+there are no default paths anywhere: with every caller wiring `--box` at
+build time, `path` is how that plumbing is verified — what one caller passes
+is what another sees.
 
 ### The semantics that hold this together (pinned by tests where this repo's tests can reach; the outbound-life half of item 5 is caller doctrine)
 
@@ -5394,7 +5397,7 @@ These are the umbrella **Conventions** (docs/SPEC.md lines 1-321), promised once
 151. `TestVersionRefusesFlagsAndArguments` — `version` refuses flags and arguments at exit 2.
 152. `TestNoDefaultBoxRefusesToGuess` — the box path comes from `--box` on every verb; there is no default and no environment variable (`NOVA_FUSE_BOX` is not consulted).
 153. `TestNoDefaultBoxRefusesToGuess` — a missing `--box` is a refusal, exit 2, `refusing to guess`.
-154. `TestAnAbsentBoxIsNeverClear` / `TestAnAbsentBoxIsErrNoBoxNeverClear` — no box at the path, the file or a directory above it, is CANNOT TELL: `check`, `status`, `quarantine` and `lift quarantine` refuse at exit 2 naming `init`, and make no box; `TestLockdownMakesAnAbsentBox` — `lockdown` makes it.
+154. `TestAnAbsentBoxIsNeverClear` / `TestAnAbsentBoxIsErrNoBoxNeverClear` — no box at the path, the file or a directory above it, is CANNOT TELL: `check`, `status`, `quarantine`, `lift quarantine` and `path` refuse at exit 2 naming `init`, and make no box (`path` prints no CLEAR); `TestLockdownMakesAnAbsentBox` — `lockdown` makes it.
 155. `TestInitMakesAnEmptyBoxOnceAndNeverReplacesOne` / `TestCreateBoxIsEmptyExclusiveAndNeverReplaces` — `init` makes an empty box once and never replaces whatever is at the path (exit 1); `TestASecondBoxCannotAnswerForABlownOne` / `TestEveryFlagOfEveryVerbTakesOneValue` / `TestABoxValueShapedLikeAFlagIsRefused` — a flag named twice, or a `--box` value beginning with `-`, is refused at exit 2.
 156. `TestUnreadableBoxIsTreatedAsBlownNeverClear` / `TestAnUnreadableFileTypeIsNotClear` — an unreadable box (permissions, torn write, malformed JSON, wrong-shaped value) is CANNOT TELL, treated as BLOWN, exit 2.
 157. `TestWriteLeavesNoLitter` / `TestWriteLeavesNoTempLitter` — the write is temp-file + fsync + rename in the box's own directory; a crash leaves the old box or the new, never a fragment.
@@ -5412,7 +5415,7 @@ These are the umbrella **Conventions** (docs/SPEC.md lines 1-321), promised once
 169. `TestEveryPrintedArgumentIsLiteralQuotedOrEscaped` — six refusals print their offending argument with Go quoting (`%q`).
 170. `TestAStoredKeyCannotPoseAsAField` / `TestASurfaceWithASpaceIsOneTokenInEveryField` — `quarantine=`, `surface=`, `since=` and the `<name>` after `QUARANTINE OK`/`FAIL` are one token; whitespace and `=` print as `\x20`/`\x3d`.
 171. `TestLockdownReasonIsJoinedNotTruncated` — the `<reason>` after `: ` is the free-text tail and keeps its spaces.
-172. (A) `path` echoes its argument unescaped: `path --box "FUSE OK lockdown=clear"` prints exactly that at exit 0 (the exemption, pinned positively).
+172. (A) `path` echoes its argument unescaped when it prints: a box at a path whose text is `FUSE OK lockdown=clear` is handed back exactly, at exit 0 (the exemption). A path with no box exits 2 and prints no CLEAR.
 173. `TestOneLineEscapesEveryControlCharacter` — a byte that is not valid UTF-8 is escaped in the same `\xNN` form.
 174. `TestFoldCollapsesControlCharactersToSpaces` / `TestLockdownTakesANewlineInItsReasonAndStoresItFolded` — this tool's own writes are folded first, and folding is never a refusal.
 175. (A) folding collapses Unicode whitespace so a non-breaking space becomes an ordinary one, and a reason of only newlines/tabs/CR/VT/FF/U+0085 trims to empty.
@@ -5450,7 +5453,7 @@ These are the umbrella **Conventions** (docs/SPEC.md lines 1-321), promised once
 207. `TestLiftQuarantineUnderLockdownLeavesLockdownBlown` — lifting a quarantine under a blown lockdown succeeds and says out loud that lockdown still blocks everything.
 208. `TestLiftLockdownIsRefusedForever` / `TestLiftLockdownRefusesBeforeReadingAnything` — `lift lockdown` refuses, forever, BEFORE reading anything (before flag parsing, the box, any argument).
 209. `TestLiftLockdownIsRefusedForever` — the `lift lockdown` refusal names only the live conversation and mentions no mechanical bypass (not the box, the file, or hand-editing).
-210. `TestPathEchoesTheBoxFlag` — `path` asserts nothing about the box: the file is not read and existence is not checked; exit 0 after printing.
+210. `TestPathEchoesTheBoxFlag` / `TestAnAbsentBoxIsNeverClear` — when a box is at the path, `path` prints that path bare and exits 0, asserting nothing about what the box holds; a missing box exits 2, names `init`, prints no CLEAR, and makes no box.
 211. `TestUsageErrorsExitTwo` — `path` refuses (exit 2) when `--box` is missing or an unexpected positional argument is given.
 212. `TestLockdownDoesNotExpire` — lockdown does not expire: no timer, no auto-lift; a decade-old lockdown still blocks.
 213. `TestEnvironmentCannotRedirectOrLiftAnything` — nothing in content or environment can LIFT anything; no environment variable is read and `--box` is a locator, not an override.

@@ -660,6 +660,8 @@ func cmdInit(rest []string, stdout, stderr io.Writer) int {
 
 // cmdPath echoes the box path this invocation would use. With no default paths anywhere,
 // this verb exists to verify plumbing: what one caller passes is what another sees.
+// A path with no box is refused the same way check refuses it: ErrNoBox, exit 2, one
+// line naming nova-fuse init --box, and this verb does not make a box.
 func cmdPath(rest []string, stdout, stderr io.Writer) int {
 	box, positional, ok, parsed := parseBox("path", rest, stderr)
 	if !parsed {
@@ -670,6 +672,11 @@ func cmdPath(rest []string, stdout, stderr io.Writer) int {
 		ok = false
 	}
 	if !ok {
+		return 2
+	}
+	_, err := fuse.ReadBox(box)
+	if errors.Is(err, fuse.ErrNoBox) {
+		fmt.Fprintf(stderr, "nova-fuse path: %s -- cannot prove no fuse is blown, so treating every fuse as BLOWN, never as clear; %s; run: nova-fuse help\n", oneline.Err(err), oneline.Escape(remedy(err, box)))
 		return 2
 	}
 	fmt.Fprintln(stdout, box)

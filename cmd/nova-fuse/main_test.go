@@ -761,8 +761,9 @@ func TestHelpIsNotAnError(t *testing.T) {
 
 // TestAnAbsentBoxIsNeverClear: a box that is not where --box says proves nothing, so
 // every verb that reads it refuses at exit 2 and names init, and none of them makes
-// a box. A mistyped path, a moved or deleted box and a second --box pointing at an
-// empty place (TestASecondBoxCannotAnswerForABlownOne) all land here.
+// a box. path is one of them: a missing box exits 2 and prints no CLEAR. A mistyped
+// path, a moved or deleted box and a second --box pointing at an empty place
+// (TestASecondBoxCannotAnswerForABlownOne) all land here.
 func TestAnAbsentBoxIsNeverClear(t *testing.T) {
 	t.Parallel()
 
@@ -776,10 +777,14 @@ func TestAnAbsentBoxIsNeverClear(t *testing.T) {
 			{"status", "--box", box},
 			{"quarantine", "--box", box, "discord", "many the same way"},
 			{"lift", "quarantine", "--box", box, "discord"},
+			{"path", "--box", box},
 		} {
 			code, out, errOut := capture(t, args, nowish())
 			if code != 2 || out != "" {
 				t.Errorf("%q: exit %d stdout %q, want exit 2 and no OK line", args, code, out)
+			}
+			if strings.Contains(out, "CLEAR") || strings.Contains(errOut, "CLEAR") {
+				t.Errorf("%q: printed CLEAR, stdout %q stderr %q", args, out, errOut)
 			}
 			if !strings.Contains(errOut, "no box at") || !strings.Contains(errOut, "nova-fuse init --box") || strings.Count(errOut, "\n") != 1 {
 				t.Errorf("%q: stderr %q, want one line naming the absent box and init", args, errOut)
