@@ -2,6 +2,7 @@ package redisconn
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -94,6 +95,67 @@ func TestTripsCountWhatTheCallerSends(t *testing.T) {
 	}
 	if got := trips.ByLabel(); len(got) != 0 {
 		t.Errorf("trips made under no label were counted under %v", got)
+	}
+}
+
+// TestTripsDoNotCountUnsentCommands: a command counts when it was written,
+// which is what the fleet pays. One the caller cancelled, and one on a
+// client that is already closed, return before any byte is written: the
+// store sees nothing and Total does not move, on the caller's counter or
+// on the connection's own. A command the store receives still counts, and
+// so does one the store refuses, because that one was sent.
+func TestTripsDoNotCountUnsentCommands(t *testing.T) {
+	t.Parallel()
+	conn, store := opened(t, accepting)
+	client := conn.Client()
+	trips := CountTrips(client)
+	own := conn.Trips()
+	ctx := context.Background()
+
+	if err := client.Set(ctx, "k", "v", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.LPush(ctx, "k", "v").Err(); err == nil {
+		t.Fatal("the store took a push onto a string")
+	}
+	if trips.Total() != 2 || trips.N() != 2 || own.N() != 2 {
+		t.Fatalf("commands the store received: counter %s (N %d), the connection's N %d; want 2", trips, trips.N(), own.N())
+	}
+	if got := store.commands(); !reflect.DeepEqual(got, []string{"1: set k v", "1: lpush k v"}) {
+		t.Fatalf("the store received %q; want the set and the push", got)
+	}
+
+	base, ownBase := trips.Total(), own.Total()
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if err := client.Set(cancelled, "k", "v", 0).Err(); !errors.Is(err, context.Canceled) {
+		t.Fatalf("a cancelled command: %v", err)
+	}
+	pipe := client.Pipeline()
+	pipe.Get(cancelled, "a")
+	if _, err := pipe.Exec(cancelled); !errors.Is(err, context.Canceled) {
+		t.Fatalf("a cancelled pipeline: %v", err)
+	}
+	if got := store.commands(); len(got) != 0 {
+		t.Fatalf("the store received %q from a call that was cancelled", got)
+	}
+	if trips.Total() != base || own.Total() != ownBase || trips.Setup() != 0 {
+		t.Fatalf("cancelled calls counted: %s, connection %s; want totals %d and %d", trips, own, base, ownBase)
+	}
+
+	if err := client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Set(ctx, "k", "v", 0).Err(); !errors.Is(err, redis.ErrClosed) {
+		t.Fatalf("a command on a closed client: %v", err)
+	}
+	pipe = client.Pipeline()
+	pipe.Get(ctx, "a")
+	if _, err := pipe.Exec(ctx); !errors.Is(err, redis.ErrClosed) {
+		t.Fatalf("a pipeline on a closed client: %v", err)
+	}
+	if trips.Total() != base || own.Total() != ownBase {
+		t.Fatalf("closed-client calls counted: %s, connection %s; want totals %d and %d", trips, own, base, ownBase)
 	}
 }
 
