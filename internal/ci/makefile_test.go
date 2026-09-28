@@ -162,7 +162,7 @@ func TestMakefileIsTheOneEntry(t *testing.T) {
 		"go build ./...",
 		"gofmt -l .",
 		"go vet ./...",
-		"go test -count=1 ./cmd/... ./internal/...",
+		"go test -count=1 $(shell bash .github/scripts/select-packages.sh --all)",
 		"go test -count=1 -run TestFriendSequence ./cmd/...",
 		"sh tools/ci/lisp-test.sh",
 	} {
