@@ -8,7 +8,7 @@ themselves** with no person and no model standing between a card's result and th
 decision to keep it. It is an **amendment document**: every section names the existing
 rule it builds on by `file:line` at `dev@31e35195` (the cited files are byte-identical at `11aa07a7`, where the triage this builds on was cut), says what that rule does not yet
 hold, and adds the rules that close the gap. It is one new file on purpose
-([WORKER-CARDS.md](WORKER-CARDS.md) practice 26, `docs/WORKER-CARDS.md:370`: parallel
+(parallel
 amendments that touch one file all conflict; 54 of 114 open pull requests conflicted with
 `dev` on the day this was written). Each amended spec carries a short pointer here at
 the amended rule; the implementation card for a section moves the normative text home
@@ -1159,8 +1159,7 @@ would come back `BLOCKED` — and, until T19, §2 rule 5 held by hand: T8-T11 ca
   that re-cut.
 - **Q6. Certification lifetime.** Default stands: 24 hours, and void on any tool or
   toolchain change.
-- **Q7. The name. — MOOT.** The "pit-stop rule" is withdrawn with the list it named, and
-  [PIT-STOP.md](PIT-STOP.md) keeps its word to itself.
+- **Q7. The name. — MOOT.** The "pit-stop rule" is withdrawn with the list it named.
 - **Q8. `mutation-kill` needs a mutant source.** Default stands: hand-written one-edit
   seeds by a builder, as the nova-work hardening lane did on 2026-09-19; no generator is
   specified here.

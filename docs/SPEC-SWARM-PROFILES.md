@@ -7,14 +7,6 @@ proposal only: it records the contract to review and the gates to implement;
 it does not claim that the feature or a provider account exists, and it does
 not claim friend consensus.
 
-The [native model companion](drafts/SWARM-NATIVE-MODEL.md) proposes the
-per-model `route.native` and `resolved.native` additions referenced below,
-alongside the [execution-binding amendment](drafts/SWARM-EXECUTION-BINDING.md).
-Its synthetic encoding vectors do not activate a native reader. Incorporate
-the strict readers, full parent fixture changes and native launch contract
-together before admitting those profiles; earlier parent fixtures still pin
-the earlier draft shapes.
-
 ## Compatibility and vocabulary
 
 An invocation with `--worker <file>` and no profile catalog keeps its current
@@ -144,8 +136,7 @@ schema example, not live configuration: provider policy/capacity attestations
 and a supported protected launcher are still required before launch.
 The example assumes a wrapper that consumes a prompt **filename**; it is not a
 stock OpenCode command. The proposed native adapter instead requires the exact
-prompt on stdin, as specified in
-[the native launch proposal](drafts/SWARM-OPENCODE-NATIVE.md).
+prompt on stdin.
 
 ```json
 {
@@ -481,11 +472,6 @@ retry may not silently switch worker instructions, executable or generator.
 Hashing a path immediately before use is not proof against replacement races.
 These are remaining compatibility gates, not claims that this command record
 alone solves executable or artifact integrity.
-
-The [execution-binding discussion draft](drafts/SWARM-EXECUTION-BINDING.md)
-proposes protected harness/instruction/control copies and deterministic
-configuration. Its unresolved decisions, encoding fixtures and friend review
-remain gates; it does not yet replace the member tables above.
 
 The [synthetic launch record](fixtures/swarm-launch-record.json) pins this
 encoding and argv boundary. Runtime tests must cover stale nonce, wrong slot,
