@@ -364,3 +364,145 @@ func TestSpellingCLIContainerFencesAndEscapes(t *testing.T) {
 		t.Errorf("code in container fence was rewritten: got %q, want %q", string(after), before)
 	}
 }
+
+func TestSpellingReviewWitnesses(t *testing.T) {
+	t.Parallel()
+	t.Run("symlink-write", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		scan := filepath.Join(root, "scan")
+		if e := os.Mkdir(scan, 0700); e != nil {
+			t.Fatal(e)
+		}
+		outside := filepath.Join(root, "outside.md")
+		before := "recieve\n"
+		if e := os.WriteFile(outside, []byte(before), 0600); e != nil {
+			t.Fatal(e)
+		}
+		if e := os.Symlink(outside, filepath.Join(scan, "link.md")); e != nil {
+			t.Fatal(e)
+		}
+		code, out, err := runSpelling(t, "--dir", scan, "--write")
+		after, e := os.ReadFile(outside)
+		if e != nil {
+			t.Fatal(e)
+		}
+		t.Logf("exit=%d stdout=%q stderr=%q outside=%q", code, out, err, after)
+		if string(after) != before {
+			t.Error("write crossed selected tree through symlink despite atomic writer refusal")
+		}
+	})
+	t.Run("multiline-code", func(t *testing.T) {
+		t.Parallel()
+		path := filepath.Join(t.TempDir(), "code.md")
+		before := "Code `recieve\nseperate` remains code.\n"
+		if e := os.WriteFile(path, []byte(before), 0600); e != nil {
+			t.Fatal(e)
+		}
+		code, out, err := runSpelling(t, "--file", path, "--write")
+		after, e := os.ReadFile(path)
+		if e != nil {
+			t.Fatal(e)
+		}
+		t.Logf("exit=%d stdout=%q stderr=%q after=%q", code, out, err, after)
+		if string(after) != before {
+			t.Error("valid multiline inline code was rewritten")
+		}
+	})
+	t.Run("excluded-glob", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		if e := os.Mkdir(filepath.Join(root, "vendor"), 0700); e != nil {
+			t.Fatal(e)
+		}
+		path := filepath.Join(root, "vendor", "doc.md")
+		before := "recieve\n"
+		if e := os.WriteFile(path, []byte(before), 0600); e != nil {
+			t.Fatal(e)
+		}
+		code, out, err := runSpelling(t, "--dir", root, "--path", "vendor/*.md", "--exclude", "vendor", "--write")
+		after, e := os.ReadFile(path)
+		if e != nil {
+			t.Fatal(e)
+		}
+		t.Logf("exit=%d stdout=%q stderr=%q after=%q", code, out, err, after)
+		if string(after) != before {
+			t.Error("excluded file was rewritten through --path")
+		}
+	})
+}
+
+func TestSpellingRevisedWitnesses(t *testing.T) {
+	t.Parallel()
+	t.Run("relative-root-glob", func(t *testing.T) {
+		t.Parallel()
+		cwd, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		tmp := t.TempDir()
+		docsDir := filepath.Join(tmp, "docs")
+		if e := os.Mkdir(docsDir, 0700); e != nil {
+			t.Fatal(e)
+		}
+		if e := os.WriteFile(filepath.Join(docsDir, "note.md"), []byte("recieve\n"), 0600); e != nil {
+			t.Fatal(e)
+		}
+		relDocs, err := filepath.Rel(cwd, docsDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		code, out, errStr := runSpelling(t, "--dir", relDocs, "--path", "*.md", "--write")
+		after, e := os.ReadFile(filepath.Join(docsDir, "note.md"))
+		if e != nil {
+			t.Fatal(e)
+		}
+		t.Logf("exit=%d out=%q err=%q after=%q", code, out, errStr, after)
+		if code != 0 || string(after) != "receive\n" {
+			t.Error("relative root joined twice or valid target not corrected")
+		}
+	})
+	t.Run("excluded-directory-target", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		vendor := filepath.Join(root, "vendor")
+		if e := os.Mkdir(vendor, 0700); e != nil {
+			t.Fatal(e)
+		}
+		path := filepath.Join(vendor, "note.md")
+		before := "recieve\n"
+		if e := os.WriteFile(path, []byte(before), 0600); e != nil {
+			t.Fatal(e)
+		}
+		code, out, err := runSpelling(t, "--dir", root, "--path", "vendor", "--exclude", "vendor", "--write")
+		after, e := os.ReadFile(path)
+		if e != nil {
+			t.Fatal(e)
+		}
+		t.Logf("exit=%d out=%q err=%q after=%q", code, out, err, after)
+		if string(after) != before {
+			t.Error("directory selection bypasses root-relative exclusion")
+		}
+	})
+	for _, tc := range []struct{ name, before, want string }{
+		{"list-fence", "- ```go\n  func recieve() {}\n  ```\n", "- ```go\n  func recieve() {}\n  ```\n"},
+		{"blockquote-ends-fence", "> ```go\n> recieve\n\nrecieve in prose.\n", "> ```go\n> recieve\n\nreceive in prose.\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "note.md")
+			if e := os.WriteFile(path, []byte(tc.before), 0600); e != nil {
+				t.Fatal(e)
+			}
+			code, out, err := runSpelling(t, "--file", path, "--write")
+			after, e := os.ReadFile(path)
+			if e != nil {
+				t.Fatal(e)
+			}
+			t.Logf("exit=%d out=%q err=%q after=%q", code, out, err, after)
+			if code != 0 || string(after) != tc.want {
+				t.Errorf("code/prose boundary changed: want %q", tc.want)
+			}
+		})
+	}
+}

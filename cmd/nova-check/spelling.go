@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
@@ -42,11 +43,30 @@ func cmdSpelling(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, " spelling", oneline.Err(err))
 	}
 
+	root := *dir
+	if root != "" {
+		if abs, err := filepath.Abs(root); err == nil {
+			root = filepath.Clean(abs)
+		}
+		if resolved, err := filepath.EvalSymlinks(root); err == nil {
+			root = resolved
+		}
+	} else if cwd, err := os.Getwd(); err == nil {
+		if abs, err := filepath.Abs(cwd); err == nil {
+			cwd = filepath.Clean(abs)
+		}
+		if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
+			root = resolved
+		} else {
+			root = cwd
+		}
+	}
+
 	opts := check.SpellingOptions{
 		Ignore:  ignore,
 		Write:   *write,
 		Exclude: exclude,
-		Dir:     *dir,
+		Dir:     root,
 	}
 
 	var (
@@ -54,20 +74,29 @@ func cmdSpelling(args []string, stdout, stderr io.Writer) int {
 		err error
 	)
 	if len(files) > 0 && len(paths) == 0 {
-		res, err = check.CheckSpellingFiles(*dir, files, opts)
+		absFiles := make([]string, len(files))
+		for i, f := range files {
+			if !filepath.IsAbs(f) {
+				absFiles[i] = filepath.Join(root, f)
+			} else {
+				absFiles[i] = filepath.Clean(f)
+			}
+		}
+		res, err = check.CheckSpellingFiles(root, absFiles, opts)
 	} else if len(paths) > 0 || (len(files) > 0 && len(paths) > 0) {
 		allTargets := append([]string(nil), files...)
 		allTargets = append(allTargets, paths...)
-		if *dir != "" {
-			for i, p := range allTargets {
-				if !filepath.IsAbs(p) {
-					allTargets[i] = filepath.Join(*dir, p)
-				}
+		absTargets := make([]string, len(allTargets))
+		for i, p := range allTargets {
+			if !filepath.IsAbs(p) {
+				absTargets[i] = filepath.Join(root, p)
+			} else {
+				absTargets[i] = filepath.Clean(p)
 			}
 		}
-		res, err = check.CheckSpelling(allTargets, opts)
+		res, err = check.CheckSpelling(absTargets, opts)
 	} else {
-		res, err = check.CheckSpellingDir(*dir, opts)
+		res, err = check.CheckSpellingDir(root, opts)
 	}
 	if err != nil {
 		return refuse(stderr, " spelling", oneline.Err(err))

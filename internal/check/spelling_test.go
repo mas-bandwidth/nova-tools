@@ -463,3 +463,132 @@ func TestSpellingRootRelativeExcludeAllModes(t *testing.T) {
 		t.Errorf("excluded file was rewritten: got %q, want %q", string(after), before)
 	}
 }
+
+func TestSpellingCommonMarkContainerBoundaries(t *testing.T) {
+	t.Parallel()
+
+	t.Run("list-item-code-fence", func(t *testing.T) {
+		t.Parallel()
+		text := "- ```go\n  func recieve() {}\n  ```\n"
+		findings, updated, err := check.CheckSpellingText("note.md", text, check.SpellingOptions{Markdown: true})
+		if err != nil {
+			t.Fatalf("CheckSpellingText error: %v", err)
+		}
+		if len(findings) != 0 {
+			t.Errorf("expected 0 findings in list fence, got: %+v", findings)
+		}
+		if updated != text {
+			t.Errorf("updated = %q, want %q", updated, text)
+		}
+	})
+
+	t.Run("blockquote-ends-fence", func(t *testing.T) {
+		t.Parallel()
+		text := "> ```go\n> recieve\n\nrecieve in prose.\n"
+		findings, updated, err := check.CheckSpellingText("note.md", text, check.SpellingOptions{Markdown: true})
+		if err != nil {
+			t.Fatalf("CheckSpellingText error: %v", err)
+		}
+		if len(findings) != 1 {
+			t.Fatalf("expected 1 finding for prose after blockquote fence, got: %+v", findings)
+		}
+		if findings[0].Original != "recieve" || findings[0].Line != 4 {
+			t.Errorf("unexpected finding: %+v", findings[0])
+		}
+		want := "> ```go\n> recieve\n\nreceive in prose.\n"
+		if updated != want {
+			t.Errorf("updated = %q, want %q", updated, want)
+		}
+	})
+
+	t.Run("blank-line-inside-list-fence", func(t *testing.T) {
+		t.Parallel()
+		text := "- ```go\n  func recieve() {}\n\n  var seperate = 1\n  ```\n"
+		findings, updated, err := check.CheckSpellingText("note.md", text, check.SpellingOptions{Markdown: true})
+		if err != nil {
+			t.Fatalf("CheckSpellingText error: %v", err)
+		}
+		if len(findings) != 0 {
+			t.Errorf("expected 0 findings in list fence with blank line, got: %+v", findings)
+		}
+		if updated != text {
+			t.Errorf("updated = %q, want %q", updated, text)
+		}
+	})
+}
+
+func TestSpellingRelativeDirGlobAndDirectoryExclusion(t *testing.T) {
+	t.Parallel()
+
+	t.Run("relative-dir-glob", func(t *testing.T) {
+		t.Parallel()
+		cwd, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		tmp := t.TempDir()
+		docsDir := filepath.Join(tmp, "docs")
+		if err := os.Mkdir(docsDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		target := filepath.Join(docsDir, "note.md")
+		if err := os.WriteFile(target, []byte("recieve\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		relDocs, err := filepath.Rel(cwd, docsDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		res, err := check.CheckSpelling([]string{filepath.Join(relDocs, "*.md")}, check.SpellingOptions{
+			Dir:   relDocs,
+			Write: true,
+		})
+		if err != nil {
+			t.Fatalf("CheckSpelling: %v", err)
+		}
+		if res.FilesScanned != 1 || res.Corrected != 1 {
+			t.Errorf("res = %+v", res)
+		}
+		after, err := os.ReadFile(target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(after) != "receive\n" {
+			t.Errorf("after = %q, want %q", string(after), "receive\n")
+		}
+	})
+
+	t.Run("directory-exclusion-with-target", func(t *testing.T) {
+		t.Parallel()
+		root := t.TempDir()
+		vendor := filepath.Join(root, "vendor")
+		if err := os.Mkdir(vendor, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(vendor, "note.md")
+		before := "recieve\n"
+		if err := os.WriteFile(path, []byte(before), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		res, err := check.CheckSpelling([]string{vendor}, check.SpellingOptions{
+			Dir:     root,
+			Exclude: []string{"vendor"},
+			Write:   true,
+		})
+		if err != nil {
+			t.Fatalf("CheckSpelling: %v", err)
+		}
+		if res.Excluded != 1 || res.FilesScanned != 0 {
+			t.Errorf("res = %+v, want Excluded=1, FilesScanned=0", res)
+		}
+		after, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(after) != before {
+			t.Errorf("excluded directory target rewritten: got %q, want %q", string(after), before)
+		}
+	})
+}
