@@ -78,6 +78,7 @@ var DefaultCatalog = []Entry{
 	E("internal/merge", "batch merge queue and land operations", "go test ./internal/merge", "go test ./internal/merge"),
 	E("internal/metrics", "Prometheus surface shared by the queue verbs", "go test ./internal/metrics/...", "go test ./internal/metrics/..."),
 	E("internal/nsprint", "the shared Redis store and login, its Functions, and the verb flags the living tools use", "go test ./internal/nsprint/...", "go test ./internal/nsprint/..."),
+	E("internal/nogh", "the refusing gh command installed first on child shell PATHs", "go test ./internal/nogh", "go test ./internal/nogh"),
 	E("internal/ntable", "a general Redis-backed table: ordered sets per cell, projections, folds, the render", "go test ./internal/ntable", "go test ./internal/ntable"),
 	E("internal/onboarding", "onboarding banner and doc verifier", "go test ./internal/onboarding", "go test ./internal/onboarding"),
 	E("internal/oneline", "single-line log and output grammar", "go test ./internal/oneline", "go test ./internal/oneline"),

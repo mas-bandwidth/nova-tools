@@ -36,6 +36,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `memindex/` | memory vector and text index | `go test ./internal/memindex` | `go test ./internal/memindex` |
 | `merge/` | batch merge queue and land operations | `go test ./internal/merge` | `go test ./internal/merge` |
 | `metrics/` | Prometheus surface shared by the queue verbs | `go test ./internal/metrics/...` | `go test ./internal/metrics/...` |
+| `nogh/` | the refusing gh command installed first on child shell PATHs | `go test ./internal/nogh` | `go test ./internal/nogh` |
 | `nsprint/` | the shared Redis store and login, its Functions, and the verb flags the living tools use | `go test ./internal/nsprint/...` | `go test ./internal/nsprint/...` |
 | `ntable/` | a general Redis-backed table: ordered sets per cell, projections, folds, the render | `go test ./internal/ntable` | `go test ./internal/ntable` |
 | `onboarding/` | onboarding banner and doc verifier | `go test ./internal/onboarding` | `go test ./internal/onboarding` |

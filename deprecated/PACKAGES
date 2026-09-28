@@ -48,7 +48,7 @@ keep internal/decide/questions
 internal/jev
 
 # nova-merge and nova-review (Glenn 2026-09-27: not proven) moved to
-# deprecated/cmd/, with internal/review, internal/prereview, internal/nogh,
+# deprecated/cmd/, with internal/review, internal/prereview,
 # internal/friendread and internal/merge/bench, which nothing living imports.
 # internal/merge stays and stays tested: internal/typedrec's functional
 # consumers_test reads merge.ParseComment and merge.ParseReviewers (and deprecated
