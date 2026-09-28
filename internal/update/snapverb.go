@@ -232,7 +232,7 @@ func snapshotVerb(name string, args []string, out, errs io.Writer, env Environme
 	sort.Slice(rows, func(i, j int) bool { return rows[i].name < rows[j].name })
 	for i := 1; i < len(rows); i++ {
 		if rows[i].stamp != rows[0].stamp {
-			return refusal(errs, "SNAPSHOT", fmt.Errorf("mixed stamps: %s=%s %s=%s (rebuild the set under one stamp with nova-update apply --sha, or use a --bin per set)", rows[0].name, rows[0].stamp, rows[i].name, rows[i].stamp))
+			return refusal(errs, "SNAPSHOT", fmt.Errorf("mixed stamps: %s=%s %s=%s (rebuild the set under one stamp with nova-update release build --version <v> --out <dir> --source <checkout>, then nova-update release install --from <dir> --version <v> --bin <dir>; or use a --bin per set)", rows[0].name, rows[0].stamp, rows[i].name, rows[i].stamp))
 		}
 	}
 	// SOURCE METADATA GATE (#2291, SPEC-VERSION item 6). The version stamp
@@ -260,7 +260,7 @@ func snapshotVerb(name string, args []string, out, errs io.Writer, env Environme
 			continue
 		}
 		if r.src != firstSrc {
-			return refusal(errs, "SNAPSHOT", fmt.Errorf("mixed source: %s=%s %s=%s (rebuild the set under one source with nova-update apply --sha, or use a --bin per set)", firstSrcName, sourceString(firstSrc), r.name, sourceString(r.src)))
+			return refusal(errs, "SNAPSHOT", fmt.Errorf("mixed source: %s=%s %s=%s (rebuild the set under one source with nova-update release build --version <v> --out <dir> --source <checkout>, then nova-update release install --from <dir> --version <v> --bin <dir>; or use a --bin per set)", firstSrcName, sourceString(firstSrc), r.name, sourceString(r.src)))
 		}
 	}
 	var b strings.Builder

@@ -1,6 +1,6 @@
 package swarm
 
-// Backpressure: the capacity line and the pull that never crosses it (docs/SPEC-JOBS.md
+// Backpressure: the capacity line and the pull that never crosses it (deprecated/docs/SPEC-JOBS.md
 // section 7).
 //
 // Game engines bound a queue and refuse producers when it is full rather than let a hunch

@@ -1,6 +1,6 @@
 package worklang
 
-// The WRITER for A3 and A4 (docs/SPEC-WORKLANG.md, Amendment 1). Every other
+// The WRITER for A3 and A4 (docs/SPEC-WORKLANG.md, section 3). Every other
 // file in this package reads; this one edits, and it edits ONE unit.
 //
 // A3 says an attempt is a record with a termination proof and A4 says

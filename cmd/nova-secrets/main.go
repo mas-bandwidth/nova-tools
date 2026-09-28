@@ -209,7 +209,7 @@ func refusedWidthHandWrite(cmdArgs []string) error {
 	if !writes || name == "" {
 		return nil
 	}
-	return fmt.Errorf("redis-cli writing friend:%s:width by hand through nova-secrets exec is refused; that count is the friend row's (friend:%s working), written only by the friend row loop (rowan-tools friend-row) from the friend's leased tasks, never a redis-cli line (nova-tools #3447)", name, name)
+	return fmt.Errorf("redis-cli writing friend:%s:width by hand through nova-secrets exec is refused; that count is the friend row's (friend:%s working), written only by the friend row loop from the friend's leased tasks, never a redis-cli line (nova-tools #3447)", name, name)
 }
 
 func main() {

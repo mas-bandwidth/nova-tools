@@ -1,6 +1,6 @@
 package jobs_test
 
-// Three boundary contracts of docs/SPEC-JOBS.md section 9's executor seam:
+// Three boundary contracts of deprecated/docs/SPEC-JOBS.md section 9's executor seam:
 // the grant drawn from the parent, the result bound to the unit's revision and
 // :acceptance criteria, and the uncertain state kept (not released) when an
 // engine disconnects without termination proof. The seam stays a proposal -- no

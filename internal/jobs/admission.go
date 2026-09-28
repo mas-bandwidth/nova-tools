@@ -1,7 +1,7 @@
 package jobs
 
-// Admission is the scheduling side of docs/SPEC-WORKLANG.md's Amendment 1 and
-// docs/SPEC-JOBS.md section 9. The graph above answers "whose needs are closed";
+// Admission is the scheduling side of the unit keys of docs/SPEC-WORKLANG.md
+// section 3 and of deprecated/docs/SPEC-JOBS.md section 9. The graph above answers "whose needs are closed";
 // this answers the other half: "and are its resources free". Nothing else in the
 // package decides whether a unit may run.
 //
@@ -119,7 +119,7 @@ type Grant struct {
 
 // Executor is a proposal for an external execution engine. It names a parent
 // unit grant and the sub-budget it draws from it; no concrete engine is grown
-// here, only the typed seam (docs/SPEC-JOBS.md section 9).
+// here, only the typed seam (deprecated/docs/SPEC-JOBS.md section 9).
 type Executor struct {
 	ID     string
 	Parent string
@@ -136,7 +136,7 @@ type ExecutorGrant struct {
 // Outcome is what arrives back across the executor seam: either a completed
 // result carrying its termination proof and bound to the unit's revision and
 // :acceptance criteria, or uncertain when termination is not proved
-// (docs/SPEC-JOBS.md section 9: "an outcome (with its termination proof, or
+// (deprecated/docs/SPEC-JOBS.md section 9: "an outcome (with its termination proof, or
 // uncertain)"). A completion without Proof is refused, never read as done.
 type Outcome struct {
 	UnitID     string
@@ -306,7 +306,7 @@ func (a *Admission) AdmitExecutor(e Executor) (ExecutorGrant, error) {
 // ReleaseExecutor returns an executor's sub-budget to its parent reservation.
 // An executor that reported uncertain is refused: its engine may still be
 // running, so the reservation stays until termination is proved or a fence is
-// written (docs/SPEC-JOBS.md section 9, jobs-uncertain-keeps-its-resources).
+// written (deprecated/docs/SPEC-JOBS.md section 9, jobs-uncertain-keeps-its-resources).
 func (a *Admission) ReleaseExecutor(id string) error {
 	var err error
 	a.do(func(st *state) { err = st.releaseExecutor(id) })
@@ -342,7 +342,7 @@ func (a *Admission) IsUncertain(id string) bool {
 
 // SetUncertain marks a live grant uncertain: its lease is past expiry (or its
 // attempt ended) without a termination proof, so the unit may still be
-// running (docs/SPEC-JOBS.md A4). The grant keeps its reservation and is never
+// running (deprecated/docs/SPEC-JOBS.md A4). The grant keeps its reservation and is never
 // re-granted on expiry: Release refuses it and a second Grant under the same
 // id is refused, until termination is proved (Report with Proof, for an
 // executor) or a fence is written (Fence). There is deliberately no way to

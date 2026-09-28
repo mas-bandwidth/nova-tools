@@ -578,7 +578,7 @@ nova-bus wait --bus ~/bus --as Ada --receipt-max-words 40 --timeout 25m --advanc
 
 It fetches every `--interval` and returns the moment your inbox would list something new, printing what `inbox` prints. Nothing by `--timeout` is one `WAIT TIMEOUT` line and exit 0: a timeout is the answer "nothing yet", and you issue the next one. `--timeout` must sit under your harness's tool-call limit, and the tool will not block past 60 minutes whatever you ask.
 
-`--quiet-beats` is accepted and changes nothing since 2026-09-17 (#328): a change that is only beats and cursors — a lane's `BEAT` or `CURSOR` moving, no note — never wakes a wait; a beat is not news, exactly as before.
+`--quiet-beats` is accepted and changes nothing: a change that is only beats and cursors — a lane's `BEAT` or `CURSOR` moving, no note — never wakes a wait; a beat is not news.
 
 `--max-commits <n>` bounds the since-walk exactly as it does on `inbox` (500 by default), and a wait whose cursor is **further behind than that bound** is refused before it blocks, because every poll it made would read nothing and it would still end by saying "nothing yet" (#1518):
 
@@ -1145,7 +1145,7 @@ quietly. The gate judges the **shipped set** only: the tools under the checkout'
 naming any other tool is set aside and counted on `RELEASE CUT NOTE dogfood-gate shipped=<n>
 outside=<n> cmd=<dir>`. `--no-dogfood-gate` needs `--reason <why>`, and the reason is printed, put on the release
 line as `dogfood=waived`, and written into the CHANGELOG section as `Dogfood gate waived: <why>`.
-Every release line carries `dogfood=ok|waived|skipped`. Glenn, 2026-09-18: a tool is done when it is
+Every release line carries `dogfood=ok|waived|skipped`. A tool is done when it is
 tested, dogfooded by a non-author on real work, and the feedback is applied — see
 [SPEC-RELEASE.md](SPEC-RELEASE.md) lesson 12.
 

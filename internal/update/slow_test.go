@@ -212,7 +212,7 @@ func TestJoinLostConfirmationRecoversWithoutASecondNote(t *testing.T) {
 //
 // EVERY BINARY `snapshot` READS IS, BY CONSTRUCTION, ONE THIS MACHINE HAS NEVER
 // EXECUTED. The documented sequence is `go install ./cmd/...` and then
-// `nova-version snapshot` (docs/RELEASE-NOTES-next.md, "Upgrading"), so the
+// `nova-version snapshot` (docs/RELEASE-NOTES-1.0.0.md, "Install"), so the
 // per-binary bound is charged for the platform's one-time assessment of a
 // never-seen executable on every row of every run -- not as an edge case but as
 // the verb's normal case. That is why `seen()` above, which pays the toll

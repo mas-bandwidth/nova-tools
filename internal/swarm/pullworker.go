@@ -1,6 +1,6 @@
 package swarm
 
-// Pull workers under leases and heartbeats (docs/SPEC-JOBS.md section 3).
+// Pull workers under leases and heartbeats (deprecated/docs/SPEC-JOBS.md section 3).
 //
 // A worker process takes one card at a time under a slot lease from the bench
 // store (<store>/queue/), runs each card inside a container from the toolchain
