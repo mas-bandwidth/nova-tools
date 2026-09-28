@@ -19,8 +19,8 @@ revived merely because its source supplied a requirement.
 | `.github/scripts/revert-on-red.sh`: comment on a PR through the issue-comments endpoint | Distinguish issue and PR identities. Retain a PR reference without importing a PR as an issue. PR mutation is outside this v1. |
 | rowan-tools `prompts/nova-sweep.md` and `prompts/estate-check.md` | Enumerate every open entry across selected repositories, triage each, identify aging entries, close superseded work with evidence. A default display limit must not masquerade as a complete inventory. |
 | rowan-tools `prompts/ideas.md` | Create an internal idea, attach author labels and receipt links, search existing ideas before filing another. |
-| rowan-tools `cmd/rowan-github/{voice,pair,loud}.go` | Create/edit/comment/close/reopen with deliberate prose input; pair an explanatory comment with closure and report either partial result. |
-| rowan-tools `cmd/rowan-pulse/issues.go` | Export an open count with measurement time, repository scope and source query. Incomplete or stale evidence is unknown, never zero. |
+| `rowan-tools/cmd/rowan-github/{voice,pair,loud}.go` | Create/edit/comment/close/reopen with deliberate prose input; pair an explanatory comment with closure and report either partial result. |
+| `rowan-tools/cmd/rowan-pulse/issues.go` | Export an open count with measurement time, repository scope and source query. Incomplete or stale evidence is unknown, never zero. |
 | The `needs-glenn` labeled queue in the work repository, and the ideas repository | Label filters, owner/assignee filters, state, title/body text, chronological ordering and references. Preserve labels exactly; importing work does not grant authority to perform its requested action. |
 | Rowan's **fleet-runbook.md** (read-only inventory input) | Keep machine-operating instructions separate from work records. Preserve links from work to runbooks, execution receipts and fixes; importing an entry executes none of them. |
 | Existing coordination messages: stable message IDs, replies, paths and dispositions | Preserve issue-to-issue, issue-to-PR and message references as typed data. A reference is not a send operation. |
@@ -376,7 +376,7 @@ second adds import/export/verify against a seeded repository. Fixtures include
 more than one issue/comment page, Unicode and multiline bodies, quotes and
 backslashes, missing/null/empty, large numeric lexemes, unknown nested fields,
 labels/assignees/milestone, reaction authors, available/unavailable edit history,
-PR rows, internal/external classification and overrides.
+PR rows, internal and external classification and overrides.
 
 A strict fake API proves every refusal and interleaving without network access:
 partial pagination, permission/rate failure, source changes between pages,
