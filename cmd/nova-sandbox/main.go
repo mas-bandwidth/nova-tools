@@ -45,7 +45,7 @@ usage:
   nova-sandbox probe --write <dir>... [--read <dir>...] [--secret <path>] [--net-deny]
   nova-sandbox policy --read <dir>... --write <dir>... [--net-deny] [--net-listen]
                [-- <command> <args...>]
-  nova-sandbox check [--max <n>]
+  nova-sandbox check
   nova-sandbox run --name <n> --size <8g> [--timeout <30m>] [--go] [--read <dir>]...
                [--container <disk>] -- <command> <args...>          (darwin)
   nova-sandbox run --help
@@ -101,8 +101,6 @@ usage:
                   WITHOUT one -- a caller whose key is delivered by nova-secrets
                   exec into the environment has no key file, and the probe then
                   proves the wall's other checks (issue #881).
-  --max <n>       how many lines a listing prints before one MORE line stands for
-                  the rest. Default 20, and 0 means all.
 
 run gives one command a DISPOSABLE place to work and then takes it away: on darwin
 an APFS volume of its own in the boot container, quota'd by --size and mounted at
@@ -217,7 +215,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 		return probeStepVerb(args[1:], stderr, env)
 	}
 	if !strings.HasPrefix(args[0], "-") {
-		fmt.Fprintf(stderr, "SANDBOX REFUSED reason=no_command unknown verb %q; run: nova-sandbox help\n", args[0])
+		fmt.Fprintf(stderr, "SANDBOX REFUSED reason=unknown_verb: unknown verb %q; available: probe, check, policy, version; run: nova-sandbox help\n", args[0])
 		return sandbox.ExitCannotRun
 	}
 	return execVerb(args, stdin, stdout, stderr, env)
@@ -446,42 +444,14 @@ func checkVerb(args []string, stdout, stderr io.Writer) int {
 			return 0
 		}
 	}
-	refuse := func(flag string) int {
-		fmt.Fprintf(stderr, "CHECK REFUSED reason=bad_flag flag %q; run: nova-sandbox check -h\n", flag)
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			fmt.Fprintf(stderr, "CHECK REFUSED reason=bad_flag: flag %q; run: nova-sandbox check -h\n", a)
+			return sandbox.ExitCannotRun
+		}
+		fmt.Fprintf(stderr, "CHECK REFUSED reason=bad_flag: unexpected argument %q; run: nova-sandbox check -h\n", a)
 		return sandbox.ExitCannotRun
 	}
-	max := 20
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		if strings.HasPrefix(a, "-") {
-			flagName := a
-			val := ""
-			hasVal := false
-			if eq := strings.Index(a, "="); eq != -1 {
-				flagName = a[:eq]
-				val = a[eq+1:]
-				hasVal = true
-			}
-			if flagName == "--max" || flagName == "-max" {
-				if !hasVal {
-					if i+1 >= len(args) {
-						return refuse(flagName)
-					}
-					i++
-					val = args[i]
-				}
-				n, err := strconv.Atoi(val)
-				if err != nil || n < 0 {
-					return refuse(flagName)
-				}
-				max = n
-				continue
-			}
-			return refuse(flagName)
-		}
-		return refuse(a)
-	}
-	_ = max
 	backend, ok := sandbox.Available()
 	name, note := sandbox.Backend, sandbox.Note()
 	net := "unenforceable"

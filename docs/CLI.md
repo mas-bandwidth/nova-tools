@@ -746,15 +746,15 @@ CHECK OK backend=sandbox-exec abi=- net=enforceable note=sandbox-exec is depreca
 Invalid flags or unexpected arguments refuse with exit 2 naming the flag as typed:
 
 ```
-nova-sandbox check --bogus
-CHECK REFUSED reason=bad_flag flag "--bogus"; run: nova-sandbox check -h
+$ nova-sandbox check --bogus
+CHECK REFUSED reason=bad_flag: flag "--bogus"; run: nova-sandbox check -h
 ```
 
 Unknown verbs refuse explicitly with exit 2 rather than falling into the bare wrap:
 
 ```
-nova-sandbox bogus
-SANDBOX REFUSED reason=no_command unknown verb "bogus"; run: nova-sandbox help
+$ nova-sandbox bogus
+SANDBOX REFUSED reason=unknown_verb: unknown verb "bogus"; available: probe, check, policy, version; run: nova-sandbox help
 ```
 
 Prove the wall before the first job:
@@ -977,21 +977,21 @@ measurement.
 Materialises one pull request's exact head in an isolated scratch tree of its own. It is not a wrapper and builds no wall: it uses SPEC.md's 0/1/2 grammar (0 the verb ran, 2 could not run), reads the repository through git on `PATH`, and reads the pull request through the forge client (`gh`).
 
 ```
-nova-sandbox worktree --repo /Users/glenn/emma-working/scratch/wt-fix-sandbox --scratch /Users/glenn/emma-working/scratch/wt-fix-sandbox/scratch --pr 4513
-WORKTREE OK path=/Users/glenn/emma-working/scratch/wt-fix-sandbox/scratch/1f450ab70c635e66f675ff8a4e395760 head=0b6c57260637284d79ebae0150eae48d24486b8b
+$ nova-sandbox worktree --repo /path/to/workdir --scratch /path/to/workdir/scratch --pr 123
+WORKTREE OK path=/path/to/workdir/scratch/1f450ab70c635e66f675ff8a4e395760 head=0123456789abcdef0123456789abcdef01234567
 ```
 
 A subsequent invocation on the same clean head reuses the existing tree rather than rebuilding it:
 
 ```
-nova-sandbox worktree --repo /Users/glenn/emma-working/scratch/wt-fix-sandbox --scratch /Users/glenn/emma-working/scratch/wt-fix-sandbox/scratch --pr 4513
-WORKTREE OK path=/Users/glenn/emma-working/scratch/wt-fix-sandbox/scratch/1f450ab70c635e66f675ff8a4e395760 head=0b6c57260637284d79ebae0150eae48d24486b8b
+$ nova-sandbox worktree --repo /path/to/workdir --scratch /path/to/workdir/scratch --pr 123
+WORKTREE OK path=/path/to/workdir/scratch/1f450ab70c635e66f675ff8a4e395760 head=0123456789abcdef0123456789abcdef01234567
 ```
 
 `--prune` walks `<scratch>/*.pr`, inspects process usage, and deletes idle trees older than 24 hours:
 
 ```
-nova-sandbox worktree --repo /Users/glenn/emma-working/scratch/wt-fix-sandbox --scratch /Users/glenn/emma-working/scratch/wt-fix-sandbox/scratch --prune
+$ nova-sandbox worktree --repo /path/to/workdir --scratch /path/to/workdir/scratch --prune
 WORKTREE OK removed=0 kept=1
 ```
 

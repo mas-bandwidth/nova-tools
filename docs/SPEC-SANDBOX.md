@@ -1193,7 +1193,7 @@ which is the thing asked for and goes to stdout.
 ```
 SANDBOX OK backend=<sandbox-exec|landlock|appcontainer> abi=<n|-> [used=<n>] read=<n> read-noexec=<n> write=<n> net=<denied|nopromise> cwd=<dir> cwdb64=<base64url> ancestors=<n> cmd=<name> gpu=<none|metal>
 SANDBOX NOTE <the one remedy or gap line>   (always before the command starts)
-SANDBOX REFUSED reason=<no_sandbox|sandbox_failed|net_unenforceable|landlock_abi_unknown|bad_read|bad_write|bad_cwd|bad_net|bad_gpu|bad_size|bad_timeout|home_outside|acl_missing|no_name|no_container|no_command|not_found|not_executable|volume_exists|volume_failed>: <text>
+SANDBOX REFUSED reason=<no_sandbox|sandbox_failed|net_unenforceable|landlock_abi_unknown|bad_read|bad_write|bad_cwd|bad_net|bad_gpu|bad_size|bad_timeout|home_outside|acl_missing|no_name|no_container|no_command|not_found|not_executable|volume_exists|volume_failed|unknown_verb>: <text>
 SANDBOX STEP name=<container|look|create|delete|denials|list> state=<start|done> [ms=<n>]
 SANDBOX DENIED path=<p> op=<read|write> remedy="--read <dir>"
 SANDBOX TIMEOUT after=<d> name=<n>

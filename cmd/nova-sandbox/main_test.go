@@ -2103,17 +2103,17 @@ func TestUnknownVerbRefused(t *testing.T) {
 		{
 			name: "bogus verb",
 			args: []string{"bogus"},
-			want: "SANDBOX REFUSED reason=no_command unknown verb \"bogus\"; run: nova-sandbox help\n",
+			want: "SANDBOX REFUSED reason=unknown_verb: unknown verb \"bogus\"; available: probe, check, policy, version; run: nova-sandbox help\n",
 		},
 		{
 			name: "unknown verb with args",
 			args: []string{"some-other-verb", "--flag"},
-			want: "SANDBOX REFUSED reason=no_command unknown verb \"some-other-verb\"; run: nova-sandbox help\n",
+			want: "SANDBOX REFUSED reason=unknown_verb: unknown verb \"some-other-verb\"; available: probe, check, policy, version; run: nova-sandbox help\n",
 		},
 		{
 			name: "positional command not treated as bare wrap",
 			args: []string{"echo", "hello"},
-			want: "SANDBOX REFUSED reason=no_command unknown verb \"echo\"; run: nova-sandbox help\n",
+			want: "SANDBOX REFUSED reason=unknown_verb: unknown verb \"echo\"; available: probe, check, policy, version; run: nova-sandbox help\n",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2152,52 +2152,28 @@ func TestCheckFlagParsing(t *testing.T) {
 			wantOut:  "CHECK OK",
 		},
 		{
-			name:     "check with valid max",
+			name:     "check with max flag refused",
 			args:     []string{"check", "--max", "10"},
-			wantCode: 0,
-			wantOut:  "CHECK OK",
-		},
-		{
-			name:     "check with max 0",
-			args:     []string{"check", "--max", "0"},
-			wantCode: 0,
-			wantOut:  "CHECK OK",
+			wantCode: sandbox.ExitCannotRun,
+			wantErr:  "CHECK REFUSED reason=bad_flag: flag \"--max\"; run: nova-sandbox check -h",
 		},
 		{
 			name:     "unrecognized double-dash flag",
 			args:     []string{"check", "--bogus"},
 			wantCode: sandbox.ExitCannotRun,
-			wantErr:  "CHECK REFUSED reason=bad_flag flag \"--bogus\"; run: nova-sandbox check -h",
+			wantErr:  "CHECK REFUSED reason=bad_flag: flag \"--bogus\"; run: nova-sandbox check -h",
 		},
 		{
 			name:     "unrecognized single-dash flag",
 			args:     []string{"check", "-bogus"},
 			wantCode: sandbox.ExitCannotRun,
-			wantErr:  "CHECK REFUSED reason=bad_flag flag \"-bogus\"; run: nova-sandbox check -h",
-		},
-		{
-			name:     "invalid integer for max",
-			args:     []string{"check", "--max", "notanint"},
-			wantCode: sandbox.ExitCannotRun,
-			wantErr:  "CHECK REFUSED reason=bad_flag flag \"--max\"; run: nova-sandbox check -h",
-		},
-		{
-			name:     "missing value for max",
-			args:     []string{"check", "--max"},
-			wantCode: sandbox.ExitCannotRun,
-			wantErr:  "CHECK REFUSED reason=bad_flag flag \"--max\"; run: nova-sandbox check -h",
-		},
-		{
-			name:     "negative max",
-			args:     []string{"check", "--max", "-1"},
-			wantCode: sandbox.ExitCannotRun,
-			wantErr:  "CHECK REFUSED reason=bad_flag flag \"--max\"; run: nova-sandbox check -h",
+			wantErr:  "CHECK REFUSED reason=bad_flag: flag \"-bogus\"; run: nova-sandbox check -h",
 		},
 		{
 			name:     "unexpected positional argument",
 			args:     []string{"check", "extra"},
 			wantCode: sandbox.ExitCannotRun,
-			wantErr:  "CHECK REFUSED reason=bad_flag flag \"extra\"; run: nova-sandbox check -h",
+			wantErr:  "CHECK REFUSED reason=bad_flag: unexpected argument \"extra\"; run: nova-sandbox check -h",
 		},
 		{
 			name:     "check -h",
