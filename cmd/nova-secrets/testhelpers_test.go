@@ -9,7 +9,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
@@ -44,7 +43,10 @@ func findAgeKeygen(t *testing.T) string {
 	return ""
 }
 
-var cachedKeyCounter uint64
+var (
+	fixtureKeyMu sync.Mutex
+	fixtureKeys  = make(map[string]map[string]int)
+)
 
 func genKey(t *testing.T, dir, name string) keyPair {
 	t.Helper()
@@ -55,7 +57,19 @@ func genKey(t *testing.T, dir, name string) keyPair {
 	privPath := filepath.Join(keyDir, name+".key")
 
 	if len(cachedAgeKeys) > 0 {
-		idx := atomic.AddUint64(&cachedKeyCounter, 1) % uint64(len(cachedAgeKeys))
+		fixtureKeyMu.Lock()
+		actors, ok := fixtureKeys[dir]
+		if !ok {
+			actors = make(map[string]int)
+			fixtureKeys[dir] = actors
+		}
+		idx, ok := actors[name]
+		if !ok {
+			idx = len(actors) % len(cachedAgeKeys)
+			actors[name] = idx
+		}
+		fixtureKeyMu.Unlock()
+
 		k := cachedAgeKeys[idx]
 		if err := os.WriteFile(privPath, []byte(k.data), 0600); err != nil {
 			t.Fatal(err)
@@ -93,38 +107,63 @@ func genKey(t *testing.T, dir, name string) keyPair {
 }
 
 var (
-	gitTemplateOnce sync.Once
-	gitTemplateDir  string
-	gitTemplateErr  error
+	bareTemplateOnce sync.Once
+	bareTemplateDir  string
+	bareTemplateErr  error
+
+	storeTemplateOnce sync.Once
+	storeTemplateDir  string
+	storeTemplateErr  error
 )
 
-func getGitTemplate(t *testing.T) string {
+func getBareTemplate(t *testing.T) string {
 	t.Helper()
-	gitTemplateOnce.Do(func() {
-		td, err := os.MkdirTemp("", "nova-secrets-git-template-*")
+	bareTemplateOnce.Do(func() {
+		td, err := os.MkdirTemp("", "nova-secrets-bare-template-*")
 		if err != nil {
-			gitTemplateErr = err
+			bareTemplateErr = err
 			return
 		}
-		gitTemplateDir = td
-		cmd := exec.Command("git", "init", "-b", "main", gitTemplateDir)
+		bareTemplateDir = td
+		cmd := exec.Command("git", "init", "--bare", "-b", "main", bareTemplateDir)
 		if out, err := cmd.CombinedOutput(); err != nil {
-			gitTemplateErr = fmt.Errorf("git init template failed: %v, out: %s", err, out)
+			bareTemplateErr = fmt.Errorf("git init bare template failed: %v, out: %s", err, out)
 			return
 		}
-		cfgPath := filepath.Join(gitTemplateDir, ".git", "config")
+	})
+	if bareTemplateErr != nil {
+		t.Fatal(bareTemplateErr)
+	}
+	return bareTemplateDir
+}
+
+func getStoreTemplate(t *testing.T) string {
+	t.Helper()
+	storeTemplateOnce.Do(func() {
+		td, err := os.MkdirTemp("", "nova-secrets-store-template-*")
+		if err != nil {
+			storeTemplateErr = err
+			return
+		}
+		storeTemplateDir = td
+		cmd := exec.Command("git", "init", "-b", "main", storeTemplateDir)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			storeTemplateErr = fmt.Errorf("git init store template failed: %v, out: %s", err, out)
+			return
+		}
+		cfgPath := filepath.Join(storeTemplateDir, ".git", "config")
 		cfg, err := os.ReadFile(cfgPath)
 		if err != nil {
-			gitTemplateErr = err
+			storeTemplateErr = err
 			return
 		}
-		extra := "\n[user]\n\tname = Test\n\temail = test@example.com\n[remote \"origin\"]\n\turl = /dev/null\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n[branch \"main\"]\n\tremote = origin\n\tmerge = refs/heads/main\n"
-		gitTemplateErr = os.WriteFile(cfgPath, append(cfg, []byte(extra)...), 0644)
+		extra := "\n[user]\n\tname = Test\n\temail = test@example.com\n"
+		storeTemplateErr = os.WriteFile(cfgPath, append(cfg, []byte(extra)...), 0644)
 	})
-	if gitTemplateErr != nil {
-		t.Fatal(gitTemplateErr)
+	if storeTemplateErr != nil {
+		t.Fatal(storeTemplateErr)
 	}
-	return gitTemplateDir
+	return storeTemplateDir
 }
 
 func copyDir(src, dst string) error {
@@ -138,7 +177,7 @@ func copyDir(src, dst string) error {
 		}
 		target := filepath.Join(dst, rel)
 		if info.IsDir() {
-			return os.MkdirAll(target, info.Mode())
+			return os.MkdirAll(target, 0755)
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -153,10 +192,26 @@ func initGitStore(t *testing.T, storeDir string) {
 	if err := os.MkdirAll(storeDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	tpl := getGitTemplate(t)
-	if err := copyDir(filepath.Join(tpl, ".git"), filepath.Join(storeDir, ".git")); err != nil {
+	remoteDir := filepath.Join(t.TempDir(), "origin.git")
+	bareTpl := getBareTemplate(t)
+	if err := copyDir(bareTpl, remoteDir); err != nil {
 		t.Fatal(err)
 	}
+	storeTpl := getStoreTemplate(t)
+	if err := copyDir(filepath.Join(storeTpl, ".git"), filepath.Join(storeDir, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(storeDir, ".git", "config")
+	remoteCfg := fmt.Sprintf("\n[remote \"origin\"]\n\turl = %s\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n[branch \"main\"]\n\tremote = origin\n\tmerge = refs/heads/main\n", remoteDir)
+	f, err := os.OpenFile(cfgPath, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(remoteCfg); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	f.Close()
 }
 
 func commitAndPush(t *testing.T, storeDir string) {
@@ -167,19 +222,7 @@ func commitAndPush(t *testing.T, storeDir string) {
 		return
 	}
 	runCmd(t, storeDir, "git", "commit", "-m", "sync")
-	headBytes, err := os.ReadFile(filepath.Join(storeDir, ".git", "HEAD"))
-	if err == nil {
-		headContent := strings.TrimSpace(string(headBytes))
-		if strings.HasPrefix(headContent, "ref: refs/heads/") {
-			branch := strings.TrimPrefix(headContent, "ref: refs/heads/")
-			branchBytes, err := os.ReadFile(filepath.Join(storeDir, ".git", "refs", "heads", branch))
-			if err == nil {
-				remDir := filepath.Join(storeDir, ".git", "refs", "remotes", "origin")
-				_ = os.MkdirAll(remDir, 0755)
-				_ = os.WriteFile(filepath.Join(remDir, branch), branchBytes, 0644)
-			}
-		}
-	}
+	runCmd(t, storeDir, "git", "push", "-u", "origin", "main")
 }
 
 func runCmd(t *testing.T, dir string, name string, args ...string) string {
@@ -229,8 +272,11 @@ func TestMain(m *testing.M) {
 	if builtDir != "" {
 		os.RemoveAll(builtDir)
 	}
-	if gitTemplateDir != "" {
-		os.RemoveAll(gitTemplateDir)
+	if bareTemplateDir != "" {
+		os.RemoveAll(bareTemplateDir)
+	}
+	if storeTemplateDir != "" {
+		os.RemoveAll(storeTemplateDir)
 	}
 	os.Exit(code)
 }
