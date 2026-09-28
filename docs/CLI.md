@@ -1493,7 +1493,7 @@ nova-ci github receipt: --conclusion wants success, failure or cancelled (job.st
 nova-config kinds                                                        # every kind: its table, its fields, the fields add requires
 nova-config migrate [--pg <dsn>] [--print]                               # create or upgrade schema config from the migrations in the binary; --print lists them and connects to nothing
 nova-config status [--pg <dsn>] [--redis <addr>]                         # the connection, the schema version, rows and revision per kind, and what Redis has applied
-nova-config apply [--pg <dsn>] [--redis <addr>] --as <friend> [--kind <kind>] [--check]   # write Postgres into Redis per kind through the runtime's own functions, compare-and-set on the revision; --check prints the plan and writes nothing
+nova-config apply [--pg <dsn>] [--redis <addr>] [--as <friend>] [--kind <kind>] [--check]   # write Postgres into Redis per kind through the runtime's own functions, compare-and-set on the revision; --check prints the plan and writes nothing
 nova-config <kind> add <name> --<field> <value> ... --as <friend>        # insert a row; a duplicate name is refused with the set to run
 nova-config <kind> set <name> --<field> <value> ... --as <friend>        # update the fields named
 nova-config <kind> remove <name> --as <friend>                           # delete the row
@@ -1518,19 +1518,20 @@ nova-config migrate --print
 
 Neither needs a store. `kinds` prints one `CONFIG KIND` line per kind with its table, its fields in the order every line prints them, and the fields `add` requires; `migrate --print` lists the migrations this binary carries. The executable transcript is in [TESTS.md](TESTS.md#nova-config).
 
-The real first run needs a Postgres and a Redis, so there is no `quickstart`: a verb that made a store nobody asked for would write state on the way to a demonstration. With a database in hand:
+The real first run needs a Postgres and a Redis — local prerequisites: a throwaway local Postgres on `127.0.0.1:5432` and a local Redis on `127.0.0.1:6379` — so there is no `quickstart`: a verb that made a store nobody asked for would write state on the way to a demonstration. With them running:
 
 ```sh
-nova-config migrate --pg postgres://nova_config@space:5432/nova
+export NOVA_PG_DSN=postgres://nova_config@127.0.0.1:5432/nova
+nova-config migrate
 nova-config machine add studio --user glenn --seat studio --slots 64 --as rowan
 nova-config fleet set --store studio --coordinator studio --as rowan
 nova-config friend add rowan --slots 32 --tiers frontier,pro --roles builder --as rowan
 nova-config sprint set --coordinator rowan --as rowan
-nova-config apply --check --as rowan
-nova-config apply --as rowan
+nova-config apply --check --redis 127.0.0.1:6379
+nova-config apply --redis 127.0.0.1:6379 --as rowan
 ```
 
-**What the flags want.** `--pg` is `postgres://user@host:port/db` with no password in it (env `NOVA_PG_DSN`); the password is read from the variable `NOVA_PG_PASSWORD_ENV` names (`NOVA_PG_PASSWORD` when unset), never from the line, and a `--pg` carrying one is refused. `--redis` is `host:port` (env `NOVA_SPRINT_REDIS`, then `NOVA_REDIS_ADDR`, then the seat's address). `--as` is the friend making the change (env `NOVA_FRIEND`), required on every write and recorded in `config.history`. A name is lower-case letters, digits and dashes. `add` needs every required field (`kinds` names them) and refuses a value outside its type, every problem in one line; `set` changes only the fields named. A run missing several flags names all of them at once; a typo is one line naming the door (`run: nova-config help`).
+**What the flags want.** `--pg` is `postgres://user@host:port/db` with no password in it (env `NOVA_PG_DSN`); the password is read from the variable `NOVA_PG_PASSWORD_ENV` names (`NOVA_PG_PASSWORD` when unset), never from the line, and a `--pg` carrying one is refused. `--redis` is `host:port` (env `NOVA_SPRINT_REDIS`, then `NOVA_REDIS_ADDR`, then the seat's address). `--as` is the friend making the change (env `NOVA_FRIEND`), required on every write (omitted on `apply --check`) and recorded in `config.history`. A name is lower-case letters, digits and dashes. `add` needs every required field (`kinds` names them) and refuses a value outside its type, every problem in one line; `set` changes only the fields named. A run missing several flags names all of them at once; a typo is one line naming the door (`run: nova-config help`).
 
 **Reading it.** Every write prints `CONFIG ADD|SET|REMOVE kind=<k> name=<n> rev=<id>`, the id of its history row. `list` prints `<KIND> name=<n> <field>=<v> ...` per row and a `CONFIG LIST` count; `history` prints `HISTORY id=<n> ... op=<add|set|remove> actor=<a> at=<t>` with each changed field as `<field>=<before>><after>`. `apply` prints `APPLY ADD|SET|REMOVE kind=<k> name=<n>` per row it writes and one `CONFIG APPLY kind=<k> add=<n> set=<n> remove=<n> rev=<r> ms=<n>` per kind; `--check` prints the same plan as `CHECK` lines and `CONFIG CHECK`. `status` exits 1 with the next step when the schema is missing (`run: nova-config migrate`) or Redis is behind (`run: nova-config apply`).
 

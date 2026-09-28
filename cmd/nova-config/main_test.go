@@ -501,14 +501,25 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 	if out != "CONFIG STATUS pg=nova_config@127.0.0.1:5432/nova schema=5 machine=1 machine_rev=1 fleet_rev=4 friend=2 friend_rev=3 sprint_rev=5 redis=127.0.0.1:6379 machine_applied=0 fleet_applied=0 friend_applied=0 sprint_applied=0\n" || !strings.Contains(errs, "Redis is not at Postgres's revision for 4 kind(s); run: nova-config apply") {
 		t.Fatalf("status behind: %q %q", out, errs)
 	}
+	delete(h.env, "NOVA_FRIEND")
 	out, _ = step(0, "apply", "--check")
 	want := "CHECK ADD kind=machine name=studio\nCONFIG CHECK kind=machine add=1 set=0 remove=0 rev=1 applied=0\nCHECK SET kind=fleet name=fleet changed=coordinator\nCONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=4 applied=0\nCHECK ADD kind=friend name=rowan\nCHECK ADD kind=friend name=stella\nCONFIG CHECK kind=friend add=2 set=0 remove=0 rev=3 applied=0\nCHECK SET kind=sprint name=sprint changed=coordinator\nCONFIG CHECK kind=sprint add=0 set=1 remove=0 rev=5 applied=0\n"
 	if out != want {
-		t.Fatalf("apply --check:\n%s\nwant:\n%s", out, want)
+		t.Fatalf("apply --check without --as:\n%s\nwant:\n%s", out, want)
 	}
 	if len(h.redis.log) != 0 || len(h.redis.revs) != 0 {
 		t.Fatalf("--check wrote: %v %v", h.redis.log, h.redis.revs)
 	}
+	out, _ = step(0, "apply", "--check", "--as", "rowan")
+	if out != want {
+		t.Fatalf("apply --check with --as:\n%s\nwant:\n%s", out, want)
+	}
+	// Real apply without --as or NOVA_FRIEND refuses.
+	_, errs = step(2, "apply")
+	if !strings.Contains(errs, "--as is required: the friend making the change (or NOVA_FRIEND); run: nova-config help") {
+		t.Fatalf("apply without --as refusal: %q", errs)
+	}
+	h.env["NOVA_FRIEND"] = "rowan"
 	out, _ = step(0, "apply")
 	want = "APPLY ADD kind=machine name=studio\nCONFIG APPLY kind=machine add=1 set=0 remove=0 rev=1 ms=0\nAPPLY SET kind=fleet name=fleet changed=coordinator\nCONFIG APPLY kind=fleet add=0 set=1 remove=0 rev=4 ms=0\nAPPLY ADD kind=friend name=rowan\nAPPLY ADD kind=friend name=stella\nCONFIG APPLY kind=friend add=2 set=0 remove=0 rev=3 ms=0\nAPPLY SET kind=sprint name=sprint changed=coordinator\nCONFIG APPLY kind=sprint add=0 set=1 remove=0 rev=5 ms=0\n"
 	if out != want {
