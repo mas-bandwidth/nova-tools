@@ -16,8 +16,10 @@ unchanged and is not restated. Related: [SPEC-SECRETS.md](SPEC-SECRETS.md)
 
 ```
 nova-redis serve  --bind <addr>[,<addr>...] --port <port> --dir <store-dir>
-nova-redis spill  --addr <host:port> --owner <owner> --name <name> --ttl <duration> --value <text>
-nova-redis recall --addr <host:port> --owner <owner> --name <name>
+nova-redis spill  --addr <host:port> [--user <name>] [--password-env <NAME>] --owner <owner> --name <name> --ttl <duration> --value <text>
+nova-redis recall --addr <host:port> [--user <name>] [--password-env <NAME>] --owner <owner> --name <name>
+nova-redis fn load  --addr <host:port> [--user <name>] [--password-env <NAME>]
+nova-redis fn check --addr <host:port> [--user <name>] [--password-env <NAME>]
 nova-redis version
 nova-redis help
 ```
@@ -33,13 +35,28 @@ nova-redis help
   and writes nothing; an unbounded key is a bug. Scratch is scratch: nothing
   spilled is a record, and recall is allowed to miss — a missing or expired key
   is exit 1.
-- Both scratch verbs refuse a missing or empty `--addr`, or one without a host
-  and a port (exit 2), before anything is dialled. Auth is read from
-  `NOVA_REDIS_PASSWORD`, never from an argument. A store that cannot be
-  reached, or a login it refuses, is one FAIL line on stderr with the next step
-  (exit 2). A spill whose reply is lost after the store took it is `SPILL
-  UNCONFIRMED` (exit 1): the write may have committed, so the remedy is a
-  `recall`, never a second spill. Each verb is one round trip.
+- `fn load` puts the `nova_sprint` function library this binary embeds on the
+  store unless the store holds exactly its code (`LOADED`, `UNCHANGED` or
+  `REPLACED`, with its digest); it is for the one place that deploys, and it
+  replaces other code under the library's name. `fn check` changes nothing:
+  `OK` (exit 0), `STALE` or `MISSING` (exit 1) with the store's digest and this
+  binary's. A failure of either is one `FAILED` line on stderr with the remedy
+  for its cause: exit 1 when the store answered with a refusal (`NOPERM`, a
+  library it would not take), exit 2 when no answer came or the login was
+  refused.
+- Every verb that dials a store (`spill`, `recall`, `fn load`, `fn check`)
+  refuses a missing or empty `--addr`, or one without a host and a port (exit
+  2), before anything is dialled. The password is read from the variable
+  `--password-env` names (default `NOVA_REDIS_PASSWORD_ENV`, else
+  `NOVA_REDIS_PASSWORD`), never from an argument; `--user` names the ACL user
+  to log in as (default `NOVA_REDIS_USER`; with neither, the store's default
+  user). A `--password-env` that is not a variable name, a user name with
+  whitespace, and a user whose password variable is empty are refused (exit 2)
+  before anything is dialled. A store that cannot be reached, or a login it
+  refuses, is one FAIL line on stderr with the next step (exit 2). A spill
+  whose reply is lost after the store took it is `SPILL UNCONFIRMED` (exit 1):
+  the write may have committed, so the remedy is a `recall`, never a second
+  spill. Each scratch verb is one round trip.
 - `version` and `help`, the two every binary in this family carries.
 
 ## Bind, auth and persistence
@@ -89,7 +106,8 @@ nova-secrets exec --only NOVA_REDIS_PASSWORD -- nova-redis serve --bind 127.0.0.
 an injected clock, `cmd/nova-redis/serve_test.go` proves 6, 7 and 8, and
 `cmd/nova-redis/serve_functional_test.go` and
 `cmd/nova-redis/connfail_functional_test.go` prove 10 to 12 against a real
-`redis-server` on loopback.
+`redis-server` on loopback; `cmd/nova-redis/fn_test.go` proves 13 to 16, and
+`cmd/nova-redis/fn_functional_test.go` proves 17 on a real `redis-server`.
 
 1. `TestAddrRefusedWhenMissingOrEmpty` — a missing, empty or blank `--addr`, or one without a host and a port, is refused at exit 2 before anything is dialled.
 2. `TestSpillRefusedWithoutOwner` — a spill with no owner is refused and writes nothing.
@@ -103,3 +121,8 @@ an injected clock, `cmd/nova-redis/serve_test.go` proves 6, 7 and 8, and
 10. `TestRestartOnTheSameDirKeepsTheStore` — a key written through `serve --dir <d>` is intact after a stop and a restart on the same `--dir`, with no TTL.
 11. `TestOpenFailureIsOneLineExitTwo` — a store that cannot be reached, or a login it refuses, is one FAIL line with the next step, exit 2.
 12. `TestSpillWhoseExecReplyIsLostIsUnconfirmed` — a spill whose reply is lost after the store took it is `SPILL UNCONFIRMED`, exit 1, with a read-back as its remedy.
+13. `TestFnLoadAndCheckOnAStore` — `fn load` loads the embedded library and `fn check` reads it back as current, changing nothing.
+14. `TestFnRefusesBeforeTheDial` — `fn load` and `fn check` refuse a bad address or login flag before anything is dialled.
+15. `TestFnFailuresNameTheStateAndTheRemedy` — a failure of either `fn` verb is one `FAILED` line naming the store's state and the remedy for its cause.
+16. `TestEveryVerbLogsInAsTheUserItIsGiven` — every verb that dials a store logs in as the `--user` it is given.
+17. `TestFnVerbsOnARedisServer` — `fn load` and `fn check` against a real `redis-server`.

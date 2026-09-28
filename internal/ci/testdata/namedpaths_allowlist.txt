@@ -19,10 +19,6 @@ internal/pulse/kinds.go SPEC-TOOLWORK §5's kinds-table file; the six kinds live
 internal/sandbox/exec.go SPEC-SANDBOX's plan: the exec seam
 internal/sandbox/wrap_windows.go SPEC-SANDBOX's plan: the Windows wrapper
 internal/tokens/message.go SPEC-TOKENS' plan: the message record
-internal/workindex/ SPEC-WORK's plan table: the work index package (#3174), not yet written
-testdata/accept/ SPEC-TOOLWORK §5's relative spelling of the nova-pulse accept fixture directory, not yet shipped
-tools/legs.tsv SPEC-TOOLWORK §2's "the repository declares its legs" manifest, not yet written
-internal/tokens/publish.go SPEC-TOKENS' plan: the publish step
 tools/templates SPEC-CI cardtemplates: one of CardTemplateDirs, skipped until a template is written there
 
 # --- 2. An invented example: a name chosen to show the SHAPE of a path. ---
@@ -43,24 +39,14 @@ docs/nova-lessons.md the lessons file lives in the self repository; internal/pul
 fleet/group_vars/all.yml rowan-tools' Ansible inventory, named by internal/nsprint/life/wakehealth.go as the friends: declaration; not this tree
 fleet/launchd/com.rowan.fleet-certify.plist the launchd plist lives in the self repository; there is no fleet/ here
 scripts/coordination/ a prefix in SPEC-RELEASE.md's sensitive-path list, kept in the list though the directory is retired
-cmd/nova-pulse/sprint.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
-testdata/ci/package-sizes-windows.tsv retired with the native Windows legs on 2026-09-18; the measurements are in git at dev 65e86175
-cmd/nova-pulse/fleet_verbs.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
 docs/SPEC-PULSE.md deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
 internal/pulse/fleetstandard.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
 internal/pulse/hygiene.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
 internal/pulse/queue.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
 internal/pulse/queue_test.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
-internal/sprint/redis.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
-internal/sprint/refill.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
-internal/pulse/run.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
 internal/sprintci deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
 docs/spec-pulse/03-fleet.md history 2026-09-24: nova-pulse spec folder deleted (#3625); the prose that names it stays as history
-cmd/nova-pulse deleted by #3801 (card cut in nova-sprint, #3789); the line naming it is history
 cmd/nova-pulse/ deleted by #3801 (card cut in nova-sprint, #3789); the line naming it is history
-cmd/nova-pulse/cut_kind.go deleted by #3801 (card cut in nova-sprint, #3789); the line naming it is history
-cmd/nova-pulse/testdata/card-contract-2608/ deleted by #3801 (card cut in nova-sprint, #3789); the line naming it is history
-cmd/nova-pulse/testdata/templates deleted by #3801 (card cut in nova-sprint, #3789); the line naming it is history
 cmd/nova-pulse/testdata deleted by #3801 (card cut in nova-sprint, #3789); the line naming it is history
 cmd/nova-pulse/testdata/templates/fix.md deleted by #3801 (card cut in nova-sprint, #3789); the line naming it is history
 
@@ -68,7 +54,6 @@ cmd/nova-pulse/testdata/templates/fix.md deleted by #3801 (card cut in nova-spri
 internal/pulse internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/cardheader.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/cut.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
-internal/pulse/cut_template.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/cut_test.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/cutkind.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/fleetstandard.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
@@ -76,8 +61,6 @@ internal/pulse/harvest.go internal/pulse deleted 2026-09-25 (#3969); cited as hi
 internal/pulse/harvest_working.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/hygiene.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/kinds.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
-internal/pulse/layout560_test.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
-internal/pulse/ledger.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/manager.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/queue.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/queue_test.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
