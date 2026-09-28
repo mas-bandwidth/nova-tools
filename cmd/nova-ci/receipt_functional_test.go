@@ -46,7 +46,7 @@ func TestReceiptVerbWritesTheRowAndARefusedWriteIsExitOne(t *testing.T) {
 	out.Reset()
 	errOut.Reset()
 	if code := cmdGitHub(args, &out, &errOut, noEnv); code != 1 || out.Len() != 0 ||
-		!strings.Contains(errOut.String(), "WRONGTYPE") || !strings.Contains(errOut.String(), "no receipt is on ev:github") {
+		!strings.Contains(errOut.String(), "WRONGTYPE") || !strings.Contains(errOut.String(), "receipt write could not be confirmed") {
 		t.Fatalf("refused write: code %d out %q err %q", code, out.String(), errOut.String())
 	}
 }

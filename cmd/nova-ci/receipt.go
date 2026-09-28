@@ -33,7 +33,9 @@ func cmdGitHub(args []string, stdout, stderr io.Writer, getenv func(string) stri
 // environment's seat through the keep package internal/nsprint/store, the dial
 // nova-sprint used for this step, so the step's nova-secrets wrapper and its
 // NOVA_SPRINT_REDIS_USER / NOVA_SPRINT_REDIS_PASSWORD_ENV pair are unchanged.
-// One CI RECEIPT line; exit 0 written, 1 the store refused the write, 2 usage.
+// One CI RECEIPT line; exit 0 written, 1 the store refused or could not confirm
+// the write, 2 usage. Repeat receipts from retries or reruns are acceptable wake
+// hints for stream consumers.
 func cmdReceipt(ctx context.Context, args []string, stdout, stderr io.Writer, getenv func(string) string) int {
 	const where = " github receipt"
 	fs := flag.NewFlagSet("github receipt", flag.ContinueOnError)
@@ -80,7 +82,7 @@ func cmdReceipt(ctx context.Context, args []string, stdout, stderr io.Writer, ge
 	defer st.Close()
 	id, err := cireceipt.Write(ctx, st.Client(), r)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-ci github receipt: %s; no receipt is on ev:github: fix the store or the bench seat and rerun ci-ok\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "nova-ci github receipt: %s; receipt write could not be confirmed: fix the store or the bench seat and rerun ci-ok\n", oneline.Err(err))
 		return 1
 	}
 	fmt.Fprintln(stdout, cireceipt.Line(r, id))

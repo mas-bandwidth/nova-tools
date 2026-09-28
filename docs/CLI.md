@@ -3028,10 +3028,12 @@ names, and it writes no other key (internal/cireceipt). The store is dialled as 
 environment's seat (`NOVA_SPRINT_REDIS_USER`, `NOVA_SPRINT_REDIS_PASSWORD_ENV`);
 `--redis` falls back to `NOVA_REDIS_ADDR`. A written receipt is one line,
 `CI RECEIPT <owner/name> sha=<sha> run=<id> workflow=<name> conclusion=<word>
-pr=<n|-> ev=<stream id>`, exit 0; a write the store refuses (`XADD ev:github:
-WRONGTYPE ...`, a NOPERM seat, a store that is down) is one line on stderr ending
-`no receipt is on ev:github: fix the store or the bench seat and rerun ci-ok`, exit
-1, which reddens ci-ok; a refused field is exit 2 before any dial:
+pr=<n|-> ev=<stream id>`, exit 0; a write the store refuses or cannot confirm
+(`XADD ev:github: WRONGTYPE ...`, a NOPERM seat, reply loss, or a store that is
+down) is one line on stderr ending `receipt write could not be confirmed: fix
+the store or the bench seat and rerun ci-ok`, exit 1, which reddens ci-ok (repeat
+receipts from retries or reruns are acceptable wake hints for consumers); a
+refused field is exit 2 before any dial:
 
 ```
 $ nova-ci github receipt --from-runner --repo nova-tools --sha 9af23a05e0000000000000000000000000000000 --run-id 1 --workflow CI --conclusion success

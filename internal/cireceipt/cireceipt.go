@@ -16,7 +16,8 @@
 //
 // A refused receipt names the field and the remedy in one error; a failed
 // write is an error the verb turns into a red ci-ok, because a receipt that
-// silently did not happen must never read as one that did.
+// silently did not happen must never read as one that did. Repeat receipts
+// from retries or reruns are acceptable wake hints for stream consumers.
 package cireceipt
 
 import (
