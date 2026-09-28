@@ -577,6 +577,86 @@ func TestIsAtomicTempGrammar(t *testing.T) {
 	}
 }
 
+// A symlinked output directory is not a place Save may write. Following it
+// would replace the day file in the referent. The refusal names the save, the
+// path, and the retry, and the referent's day file stays the bytes it had.
+func TestDayFileSaveRefusesSymlinkedOutputDirectory(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	real := filepath.Join(root, "real")
+	if err := os.Mkdir(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const day = "2026-09-11"
+	original := &DayFile{
+		Day: day, At: "2026-09-11T00:00:00Z", Build: "old", Turns: "1",
+		Rows: []DayRow{{Date: day, Model: "m", Repo: "r", Basis: UTC, Sources: []string{"src"}}},
+	}
+	if err := original.Save(real); err != nil {
+		t.Fatal(err)
+	}
+	dayPath := Path(real, day)
+	before, err := os.ReadFile(dayPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeNames := dirNames(t, real)
+
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	replacement := &DayFile{
+		Day: day, At: "2026-09-11T23:00:00Z", Build: "new", Turns: "9",
+		Rows: []DayRow{{Date: day, Model: "m", Repo: "r", Basis: UTC, Sources: []string{"other"}}},
+	}
+	// A trailing separator is the same symlink. Lstat follows that spelling
+	// unless the path is cleaned first, and the referent's bytes stay put.
+	for _, out := range []string{link, link + string(os.PathSeparator)} {
+		err = replacement.Save(out)
+		if err == nil {
+			t.Fatalf("Save(%q) through a symlinked output directory succeeded; want refusal", out)
+		}
+		msg := err.Error()
+		for _, want := range []string{"save", "symlink", out, "pass the real directory and retry"} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("Save(%q) error %q does not contain %q", out, msg, want)
+			}
+		}
+		after, err := os.ReadFile(dayPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(after) != string(before) {
+			t.Fatalf("Save(%q) changed the referent day file:\n%s", out, after)
+		}
+	}
+	if got := dirNames(t, real); got != beforeNames {
+		t.Fatalf("referent directory entries = %q, want %q", got, beforeNames)
+	}
+	lst, err := os.Lstat(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lst.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("output path %q is no longer a symlink", link)
+	}
+}
+
+func dirNames(t *testing.T, dir string) string {
+	t.Helper()
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := make([]string, len(ents))
+	for i, e := range ents {
+		names[i] = e.Name()
+	}
+	return strings.Join(names, "\n")
+}
+
 // Check must report unrelated temporary files as strays, while recognizing
 // valid dayfile atomic temporary files.
 func TestCheckReportsUnrelatedTempAsStray(t *testing.T) {

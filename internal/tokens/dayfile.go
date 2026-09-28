@@ -125,7 +125,16 @@ func orDashStr(s string) string {
 // Save writes the file whole atomically via internal/atomicfile (exclusive
 // temporary file beside target, explicit mode, fsync to media, atomic rename).
 // Nothing is appended and nothing is edited in place.
+//
+// out is cleaned, then lstat'd, and not followed. Clean drops a trailing
+// separator, which would otherwise make Lstat report the directory and let
+// the write replace the day file in the referent. A symlink is refused and
+// nothing is written. The caller passes the real directory and retries. A
+// missing out is not created; the write reports it as it did before.
 func (d *DayFile) Save(out string) error {
+	if fi, err := os.Lstat(filepath.Clean(out)); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("save: out %q is a symlink; pass the real directory and retry", out)
+	}
 	// Atomic write per internal/atomicfile model: temporary file created
 	// exclusively in parent directory, explicit 0o644 mode, fsync to media,
 	// atomic rename over target path.
