@@ -80,6 +80,7 @@ func (e *NotFoundError) Error() string { return e.Msg }
 // Persisted is true once the note is fsync-durable on this machine;
 // Published names the remote, which this slice never touches.
 type AppendResult struct {
+	Stamp     time.Time // the timestamp actually stored, including on a duplicate retry
 	Persisted bool
 	Published bool
 	Policy    string
@@ -214,9 +215,9 @@ func benchHeading(id string, stamp time.Time) string {
 }
 
 // benchSection returns the prose already filed under this entry id in a bench
-// file, and whether the entry is there at all. The body runs from the heading
-// to the next heading of the same machine form, or to the end of the file.
-func benchSection(raw []byte, id string) (string, bool) {
+// file, its stored timestamp, and whether it is there at all. The body runs
+// from the heading to the next heading of the same machine form, or EOF.
+func benchSection(raw []byte, id string) (body, stamp string, found bool) {
 	lines := strings.Split(string(raw), "\n")
 	for i, line := range lines {
 		m := benchHeadingRe.FindStringSubmatch(line)
@@ -230,9 +231,9 @@ func benchSection(raw []byte, id string) (string, bool) {
 				break
 			}
 		}
-		return strings.TrimSpace(strings.Join(lines[i+1:end], "\n")), true
+		return strings.TrimSpace(strings.Join(lines[i+1:end], "\n")), m[1], true
 	}
-	return "", false
+	return "", "", false
 }
 
 // appendBench files one entry into a bench record: a dated section at the end
@@ -247,11 +248,15 @@ func appendBench(path, id, text string, now time.Time, publish string) (AppendRe
 	if err != nil {
 		return res, err
 	}
-	if prev, found := benchSection(raw, id); found {
+	if prev, storedStamp, found := benchSection(raw, id); found {
 		if prev != strings.TrimSpace(text) {
 			return res, &ConflictError{Msg: fmt.Sprintf("entry %q already holds different prose; pick a new id", id)}
 		}
-		return AppendResult{Persisted: true, Published: false, Policy: publish, Duplicate: true}, nil
+		stamp, err := time.Parse(time.RFC3339Nano, storedStamp)
+		if err != nil {
+			return res, fmt.Errorf("stored entry %q has an invalid stamp: %w", id, err)
+		}
+		return AppendResult{Stamp: stamp, Persisted: true, Published: false, Policy: publish, Duplicate: true}, nil
 	}
 	var b strings.Builder
 	if len(raw) > 0 && !strings.HasSuffix(string(raw), "\n") {
@@ -265,7 +270,7 @@ func appendBench(path, id, text string, now time.Time, publish string) (AppendRe
 	if err := appendBytes(path, b.String()); err != nil {
 		return res, err
 	}
-	return AppendResult{Persisted: true, Published: false, Policy: publish}, nil
+	return AppendResult{Stamp: now.UTC().Truncate(time.Second), Persisted: true, Published: false, Policy: publish}, nil
 }
 
 // appendBytes adds content to an existing file and fsyncs before return, so a
@@ -500,11 +505,14 @@ func Append(store, session, id, text, source string, now time.Time, publish stri
 		if prev.Text != text {
 			return res, &ConflictError{Msg: fmt.Sprintf("entry %q already holds different prose; pick a new id", id)}
 		}
-		prevStamp, _ := time.Parse(time.RFC3339Nano, prev.Stamp)
+		prevStamp, err := time.Parse(time.RFC3339Nano, prev.Stamp)
+		if err != nil {
+			return res, fmt.Errorf("stored entry %q has an invalid stamp: %w", id, err)
+		}
 		if err := ensurePointer(store, session, id, prevStamp); err != nil {
 			return res, err
 		}
-		return AppendResult{Persisted: true, Published: false, Policy: prev.Publish, Source: prev.Source, Duplicate: true}, nil
+		return AppendResult{Stamp: prevStamp, Persisted: true, Published: false, Policy: prev.Publish, Source: prev.Source, Duplicate: true}, nil
 	}
 	rec, _ := json.Marshal(entryFile{
 		Session: session,
@@ -529,7 +537,7 @@ func Append(store, session, id, text, source string, now time.Time, publish stri
 	if err := appendLog(store, "append", session, id, stamp.Format(time.RFC3339Nano), publish, source); err != nil {
 		return res, err
 	}
-	return AppendResult{Persisted: true, Published: false, Policy: publish, Source: source}, nil
+	return AppendResult{Stamp: stamp, Persisted: true, Published: false, Policy: publish, Source: source}, nil
 }
 
 // readEntry loads one stored entry or explains its absence.
