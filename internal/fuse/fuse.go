@@ -238,9 +238,9 @@ func ReadBox(path string) (Box, error) {
 
 // CreateBox makes an empty box at path, only where nothing is: it NEVER replaces a
 // box, because replacing one is the lockdown reset this package does not have. The
-// write is note 3's temp file, linked into place, so the create is atomic and
-// exclusive at once: a box that appears between the check and the write is kept, and
-// the error is fs.ErrExist.
+// write uses atomicfile.NoReplace for atomic, exclusive creation. A box that
+// appears between the check and publication is kept, and the error is fs.ErrExist.
+// See atomicfile.NoReplace for its publication mechanism and filesystem requirements.
 func CreateBox(path string) error {
 	return writeBox(path, Box{Quarantine: map[string]Fuse{}}, atomicfile.NoReplace())
 }
