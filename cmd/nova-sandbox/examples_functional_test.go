@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/base64"
 	"os"
 	"os/exec"
@@ -66,11 +67,12 @@ func TestSandboxCLISetupAndCommandsMatchOutput(t *testing.T) {
 	cwd := owned("/path/to/pool/jobs/j1")
 	norms := []onboarding.Norm{onboarding.Path("/path/to/.local/bin/nova-sandbox", exe), onboarding.Path("/path/to", j.base), pid, ancestors, onboarding.Path(base64.RawURLEncoding.EncodeToString([]byte("/path/to/pool/jobs/j1")), base64.RawURLEncoding.EncodeToString([]byte(cwd)))}
 	// Compare the complete help invocation with the command executed below.
-	bannerStart := strings.Index(usage, "example:\n")
+	const jobExamples = "macOS job examples (replace /path/to with your own paths):\n"
+	bannerStart := strings.Index(usage, jobExamples)
 	if bannerStart < 0 {
 		t.Fatal("missing help example")
 	}
-	bannerBlock := strings.SplitN(usage[bannerStart+len("example:\n"):], "\n\n", 2)[0]
+	bannerBlock := strings.SplitN(usage[bannerStart+len(jobExamples):], "\n\n", 2)[0]
 	bannerCommands := exampleCommands(t, bannerBlock, j.base)
 	if len(bannerCommands) != 1 {
 		t.Fatal("expected one help wrap command")
@@ -144,5 +146,50 @@ func TestSandboxCLISetupAndCommandsMatchOutput(t *testing.T) {
 	}
 	if count != 3 {
 		t.Fatalf("compared %d commands, want setup, probe and git", count)
+	}
+}
+
+// The portable first help command uses the recorded macOS transcript here;
+// the built-binary onboarding gate checks its invocation on every platform.
+func TestHelpCheckExampleMatchesTranscript(t *testing.T) {
+	t.Parallel()
+	needDarwin(t)
+	examples, err := onboarding.ExampleLines(usage, "nova-sandbox")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(examples) != 1 || examples[0] != "nova-sandbox check" {
+		t.Fatalf("help examples = %v, want one check command", examples)
+	}
+	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines, err := onboarding.FirstRun(string(doc), "nova-sandbox")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lines) == 0 || lines[0] != "$ "+examples[0] {
+		t.Fatalf("first transcript command does not match help example %q", examples[0])
+	}
+	for i := 1; i < len(lines); i++ {
+		if strings.HasPrefix(lines[i], "$ ") {
+			lines = lines[:i]
+			break
+		}
+	}
+	steps, err := onboarding.Steps("nova-sandbox", lines)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) != 1 {
+		t.Fatalf("check transcript has %d steps, want one", len(steps))
+	}
+	step := steps[0]
+	step.StderrWhole = true
+	var out, errb bytes.Buffer
+	code := run(step.Args, strings.NewReader(""), &out, &errb, os.Environ())
+	for _, problem := range onboarding.Compare(step, onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, nil) {
+		t.Error(problem)
 	}
 }
