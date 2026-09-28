@@ -1145,7 +1145,7 @@ quietly. The gate judges the **shipped set** only: the tools under the checkout'
 naming any other tool is set aside and counted on `RELEASE CUT NOTE dogfood-gate shipped=<n>
 outside=<n> cmd=<dir>`. `--no-dogfood-gate` needs `--reason <why>`, and the reason is printed, put on the release
 line as `dogfood=waived`, and written into the CHANGELOG section as `Dogfood gate waived: <why>`.
-Every release line carries `dogfood=ok|waived|skipped`. Glenn, 2026-09-18: a tool is done when it is
+Every release line carries `dogfood=ok|waived|skipped`. A tool is done when it is
 tested, dogfooded by a non-author on real work, and the feedback is applied — see
 [SPEC-RELEASE.md](SPEC-RELEASE.md) lesson 12.
 
