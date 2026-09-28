@@ -254,3 +254,62 @@ func TestFunctional_RealClock(t *testing.T) {
 	}
 	rc.Sleep(0)
 }
+
+// H1 witness in its concurrent form: a Probe holds the shared lock for an
+// instant, and a taker landing in that instant must not be told held, because
+// nobody holds (tla/FileLock.tla, HeldIsTrue). Busy is a true answer and is
+// counted, not failed. Functional tier: a take and release cost about 10 ms on
+// macOS (two full fsyncs), so 300 of them are 3 s; the unit-tier witness is
+// TestTryLock_AskerIsNotAHolder. At ff635f74f this refused 45 and 19 of 2,000
+// takes as held on macOS and 108 of 2,000 on Linux.
+func TestFunctional_ProbeDoesNotDisturbTaker(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "probed.lock")
+	if err := os.WriteFile(path, nil, 0666); err != nil {
+		t.Fatal(err)
+	}
+	stop := make(chan struct{})
+	done := make(chan int)
+	go func() {
+		probes := 0
+		for {
+			select {
+			case <-stop:
+				done <- probes
+				return
+			default:
+			}
+			if _, _, err := filelock.Probe(path); err != nil {
+				t.Errorf("Probe: %v", err)
+			}
+			probes++
+		}
+	}()
+
+	const takes = 300
+	held, busy := 0, 0
+	var firstHeld error
+	for i := 0; i < takes; i++ {
+		lock, err := filelock.TryLock(path, "taker")
+		switch {
+		case err == nil:
+			lock.Unlock()
+		case errors.Is(err, filelock.ErrBusy):
+			busy++
+		case errors.Is(err, filelock.ErrHeld):
+			held++
+			if firstHeld == nil {
+				firstHeld = err
+			}
+		default:
+			t.Fatalf("TryLock: %v", err)
+		}
+	}
+	close(stop)
+	probes := <-done
+	t.Logf("%d takes beside %d probes: %d told held, %d told busy", takes, probes, held, busy)
+	if held > 0 {
+		t.Errorf("told held %d times of %d with nobody holding, only a prober; first: %v", held, takes, firstHeld)
+	}
+}

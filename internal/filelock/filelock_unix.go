@@ -88,15 +88,10 @@ func TryLockWithOptions(path string, label string, opts Options) (*FileLock, err
 			return nil, fmt.Errorf("filelock %q: %w", path, err)
 		}
 
-		ok, lockErr := tryLockFile(f)
-		if lockErr != nil {
+		// Refused is not yet held: see takeExclusive (tla/FileLock.tla, Blocked).
+		if err := takeExclusive(f, path); err != nil {
 			_ = f.Close()
-			return nil, fmt.Errorf("filelock %q: %w", path, lockErr)
-		}
-		if !ok {
-			holder := readExistingStamp(f)
-			_ = f.Close()
-			return nil, &HeldError{Path: path, Holder: holder}
+			return nil, err
 		}
 
 		// Inode race defense: verify fstat(fd) == lstat(path)
