@@ -254,7 +254,9 @@ with its sweep of the tree or it does not land.
 4. **No test asserts a bound under ten seconds** — a short bound asserts the
    machine's load, not the code (`wall clock`).
 5. **No unit package over 2 s, no unit test over 1 s** — per-change CI answers in
-   one minute ideally, two at most; the allowlist only shrinks (`slowtests`).
+   one minute ideally, two at most. Every leg prints the CI-SLOW lines; the nightly
+   whole-tree run on the space legs fails on them; the allowlist only shrinks
+   (`slowtests`, `tiers`).
 6. **The Makefile is the one entry for build, test and lint** — a workflow or a
    script calls a target, never its own `go test` line (`make`).
 7. **Every command meets the onboarding standard** — `<tool> help` with runnable

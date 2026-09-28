@@ -123,6 +123,5 @@ var DefaultCatalog = []Entry{
 	E("tools/ci", "CI helper and build scripts", "go test ./internal/ci", "make test"),
 	E("tools/newrule", "class rule scaffolding CLI", "go test ./tools/newrule", "go test ./tools/newrule"),
 	E("tools/newverb", "CLI verb scaffolding CLI", "go test ./tools/newverb", "go test ./tools/newverb"),
-	E("tools/testdur", "test duration analyzer and budget checker", "go test ./tools/testdur", "go test ./tools/testdur"),
 	E("tools/testmanifest", "exact named Go test manifest checker", "go test ./tools/testmanifest", "go test ./tools/testmanifest"),
 }

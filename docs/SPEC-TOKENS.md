@@ -114,22 +114,23 @@ near the end, and the sections below say how each is met.
 9. **One file per day. A month is a sum of day files. The tool removes
    nothing.** There is no month file. `sum` reads day files and writes
    nothing. No verb deletes, truncates or trims any file, including any log.
-   The exception is a file THIS RUN makes, named here and nowhere else: the
-   fold's own `fold.lock`, the copy under `--scratch`, the fixed
-   `<day>.tsv.tmp` a day is written through, and, on a platform with no
-   flock, the lock sentinel the release removes. A file the tool was given is
+   The exception is a file THIS RUN makes: the fold's own `fold.lock`, the copy under `--scratch`, the fixed
+   `<day>.tsv.tmp` a day is written through, the report's and the ledgers' own
+   `.tmp` files, and, on a platform with no flock, the lock sentinel the release
+   removes. A file the tool was given is
    never one of them, and the tripwire that enforces this searches for every
    call that can empty a file -- `os.Remove`, `os.RemoveAll`, `os.Truncate`,
    `.Truncate(`, `os.Create(`, `os.WriteFile(`, `os.O_TRUNC` (the flag that
    empties the file an `os.OpenFile` opens), `syscall.Unlink(` (the syscall
-   that unlinks a directory entry) -- carving out those four by
-   file, with the reason, and failing when a carve-out has gone stale.
+   that unlinks a directory entry) -- in every package compiled into the
+   binary, carving out by file and by call, with the reason, each site that
+   empties only a file its own run made (the list is the tripwire's own, in
+   `cmd/nova-tokens/contract_test.go`), and failing when a carve-out has gone
+   stale. Because it scans every compiled package, the list also holds sites in
+   code no verb of this binary reaches; a carve-out is a statement about a
+   file, never a verb.
    A file under `--out` that is not a day file and not the temp name is
    named by `check` and left alone.
-   The package-staging code in `internal/tokens/package.go`, which no verb
-   calls, is carved out for `syscall.Unlink` alone: it unlinks its own-run
-   temporary marker `batch.json.tmp` after the atomic no-replace link to
-   `batch.json` lands, and never any other file.
 10. **A day that would shrink is refused.** Before writing a day file that
     already exists, the fold compares the new per-type day totals with the
     file's. If any type is lower, or was a number in the file and is a dash
@@ -1200,10 +1201,9 @@ seen red before it is trusted.
    the package.
    This tripwire is rule 9's: it reads rule 9's list of calls that can empty a
    file and fails on any call it cannot match to a carved-out file. The
-   removals in the list are the lock sentinel a release removes on a platform
-   with no flock (rule 8) and the package-staging marker `batch.json.tmp`; a
-   removal of anything else, including any file the tool was given, is the
-   failure this test exists for.
+   carve-outs are the tripwire's own list (rule 9); a removal of anything
+   else, including any file the tool was given, is the failure this test
+   exists for.
 9. A fold over sources that name three days writes three files and no
    other; a pre-existing `daily-2026-09.tsv` and a `notes.txt` under
    `--out` are untouched after `fold`, `sum` and `check`; `check` names both

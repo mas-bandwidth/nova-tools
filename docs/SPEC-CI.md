@@ -242,12 +242,9 @@ missing or unreadable invocation is the tool’s own one-line refusal ending `ru
 nova-ci help`.
 
 **The budget is in one place.** The verb judges a LIVE run against the budgets
-it is handed; there is no second budget. `docs/TEST-DURATIONS.md` is a record of
-what each bench measured, evidence and not a verdict. `tools/testdur` heads each
-table it prints with the platform it measured, so a regenerated table cannot be
-pasted under another bench's heading, and a bench's package table is the one
-directly under its heading -- a table under a `###` inside the section is prose,
-not a second measurement of the same packages.
+it is handed; there is no second budget and no recorded table a change is judged
+against. The unit tier's budgets and where each is enforced are the next two
+paragraphs.
 
 **The mistake it prevents.** A package can sit at 120 seconds in the suite with
 nobody noticing when nothing sums the per-package elapsed time `go test -json`
@@ -647,9 +644,8 @@ measured time and where, its budget at most three times that
 **Its narrowings.** It judges on the PACKAGE total only; the test-level rows are
 kept, sorted worst first and capped at three, purely so a finding can say where
 the time went. It sees one run on one machine, so a package that is fast on one
-bench and slow on another is two measurements — which is why the RECORD holds
-one `## Bench:` section per machine, checked by `tools/testdur`'s own tests
-against `docs/TEST-DURATIONS.md`. Full section: *The per-package test time budget*.
+bench and slow on another is two measurements, and an allowlist row names where
+its time was measured. Full section: *The per-package test time budget*.
 
 ### `removeall` — no `os.RemoveAll` of a computed path
 

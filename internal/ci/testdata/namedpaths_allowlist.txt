@@ -39,6 +39,7 @@ docs/nova-lessons.md the lessons file lives in the self repository; internal/pul
 fleet/group_vars/all.yml rowan-tools' Ansible inventory, named by internal/nsprint/life/wakehealth.go as the friends: declaration; not this tree
 fleet/launchd/com.rowan.fleet-certify.plist the launchd plist lives in the self repository; there is no fleet/ here
 scripts/coordination/ a prefix in SPEC-RELEASE.md's sensitive-path list, kept in the list though the directory is retired
+docs/TEST-DURATIONS.md SPEC-TEST's record of fast's timings; the page is under deprecated/docs/
 docs/SPEC-PULSE.md deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
 internal/pulse/fleetstandard.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
 internal/pulse/hygiene.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history

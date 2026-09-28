@@ -24,12 +24,14 @@ paragraph: it reads one sealed yaml out
 of a git working copy by running `sops` at a path the caller named, keeps the plaintext in its
 own memory for the length of one call, and then execs, prints, proves or writes one key. It
 links no cryptography, starts no shell and reads no Keychain. **What touches the network is
-per verb, and the tool itself opens no socket:** `exec`, `names`, `check`, `gate`, `keygen`,
-`placed`, `seat add` and `version` run no network program (`gate` runs `git` against refs
-already in the working copy); `place` runs `ssh` to the machine it names and writes a receipt
-under `--receipts`; `seal` and `seat inject` run `git push`, `gh pr create`, `gh pr view`,
-`gh pr merge` and `git pull` against the store's remote, unless `--no-pr` stops them after the
-commit. About two hundred lines of Go over two binaries it did not write, and
+per verb, and the tool's own process opens no socket:** its store operations — reading the
+working copy and running `sops` — make no network call, and `names`, `check`, `gate`,
+`keygen`, `placed`, `seat add` and `version` start no network program (`gate` runs `git`
+against refs already in the working copy). `exec` makes no network call of its own and then
+becomes the caller's command, which may use the network as it likes. `place` runs `ssh` to
+the machine it names and writes a receipt under `--receipts`. `seal` and `seat inject` run
+`git push`, `gh pr create`, `gh pr view`, `gh pr merge` and `git pull` against the store's
+remote, unless `--no-pr` stops them after the commit. About two hundred lines of Go over two binaries it did not write, and
 the day a better generic store exists it should be two hundred lines of Go over that one.
 
 This spec is normative, and a sibling of [SPEC.md](SPEC.md), whose **Conventions** govern
