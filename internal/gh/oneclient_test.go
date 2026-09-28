@@ -17,6 +17,17 @@ import (
 var ghUse = regexp.MustCompile(`Command(Context)?\(\s*(ctx,\s*)?"gh"|\{"gh",|(?i:(program|bin|path)\w*) = "gh"\s*$|google/go-github|https://` + `api\.github\.com|api\.github\.com/` +
 	`|(\.(gh|run|api)|\bgh)\([^)]*"api"`)
 
+// isGHUse is ghUse behind a substring prefilter: every alternative of ghUse
+// contains "gh" in quotes, "github" or "api" in quotes, so a line holding none
+// of them cannot match. The regexp costs ~20 s over the tree under -race and
+// the prefilter skips it on almost every line.
+func isGHUse(line string) bool {
+	if !strings.Contains(line, `"gh"`) && !strings.Contains(line, "github") && !strings.Contains(line, `"api"`) {
+		return false
+	}
+	return ghUse.MatchString(line)
+}
+
 // ghAllowed are the files outside nova-sprint (internal/nsprint; its
 // command moved to deprecated/cmd/nova-sprint) that still talk to GitHub on
 // their own, each with its reason. They are not nova-sprint verbs and are
@@ -57,7 +68,7 @@ func TestOneGitHubClient(t *testing.T) {
 		`	out, err := g.gh(false, "api", fmt.Sprintf("repos/%s/actions/runs", g.Repo))`,
 		`	rawRuns, err := gh(ctx, r.Timeout, &r.calls, "api",`,
 	} {
-		if !ghUse.MatchString(sample) {
+		if !isGHUse(sample) {
 			t.Fatalf("the pattern misses %q; the test would pass on nothing", sample)
 		}
 	}
@@ -89,7 +100,7 @@ func TestOneGitHubClient(t *testing.T) {
 				return err
 			}
 			for i, line := range strings.Split(string(b), "\n") {
-				if ghUse.MatchString(line) {
+				if isGHUse(line) {
 					hits[rel] = append(hits[rel], rel+":"+strconv.Itoa(i+1)+": "+strings.TrimSpace(line))
 				}
 			}
@@ -201,13 +212,22 @@ var (
 	storeSet      = regexp.MustCompile(`\.Redis = `)
 )
 
+// isClientLiteral is clientLiteral behind a substring prefilter: every
+// alternative ends in "{" or is "gh.New(", so a line with neither cannot match.
+func isClientLiteral(line string) bool {
+	if !strings.Contains(line, "{") && !strings.Contains(line, "gh.New(") {
+		return false
+	}
+	return clientLiteral.MatchString(line)
+}
+
 // TestEveryProductionClientHasAStore (#4343 BUILD 1, the read of #4371):
 // every client built in production code names its Redis where it is built,
 // or the file sets it once the store is open; a client without a store
 // counts nothing and paces alone, and that is a test's shape only.
 func TestEveryProductionClientHasAStore(t *testing.T) {
 	t.Parallel()
-	if !clientLiteral.MatchString(`c := &gh.Client{API: f.BaseURL, Token: f.Token}`) || !storeSet.MatchString(`	gh.Redis = st.Client()`) {
+	if !isClientLiteral(`c := &gh.Client{API: f.BaseURL, Token: f.Token}`) || !storeSet.MatchString(`	gh.Redis = st.Client()`) {
 		t.Fatal("the pattern misses a known construction; the test would pass on nothing")
 	}
 	root := moduleRoot(t)
@@ -228,7 +248,7 @@ func TestEveryProductionClientHasAStore(t *testing.T) {
 			}
 			body := string(b)
 			for i, line := range strings.Split(body, "\n") {
-				if !clientLiteral.MatchString(line) {
+				if !isClientLiteral(line) {
 					continue
 				}
 				n++

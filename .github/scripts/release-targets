@@ -1,0 +1,11 @@
+# The shipped platforms, one "<goos> <goarch>" per line. release-build.sh builds only a
+# target named here and release-sums.sh requires every tool for every target named here,
+# so this file is the one list of what a release ships. The build matrices in
+# .github/workflows/release.yml and certification.yml cannot read a file, so each carries
+# the same list as a literal matrix; internal/ci's TestReleaseMatricesAreTheTargetsFile
+# holds all three equal.
+linux amd64
+linux arm64
+darwin arm64
+darwin amd64
+windows amd64
