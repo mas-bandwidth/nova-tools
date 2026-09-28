@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 )
 
 // FoldPoolColumns are the monthly ledger columns fold-pool writes, in order.
@@ -225,8 +227,11 @@ func PoolDays(groups map[PoolKey]*PoolAgg) int {
 
 // WritePoolLedger upserts the groups into the ledger, replacing any existing
 // row for the same (day, provider, model, repo) key so a second run changes
-// nothing. The header must match FoldPoolColumns.
+// nothing. The ledger is written atomically via internal/atomicfile (exclusive
+// temporary file beside target, explicit mode, fsync to media, atomic rename).
+// The header must match FoldPoolColumns.
 func WritePoolLedger(path string, groups map[PoolKey]*PoolAgg) error {
+	path = filepath.Clean(path)
 	if fi, err := os.Stat(path); err == nil && fi.IsDir() {
 		return &os.PathError{Op: "open", Path: path, Err: os.ErrInvalid}
 	}
@@ -275,11 +280,10 @@ func WritePoolLedger(path string, groups map[PoolKey]*PoolAgg) error {
 	sort.Strings(merged)
 	out := []string{strings.Join(FoldPoolColumns, "\t")}
 	out = append(out, merged...)
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, []byte(strings.Join(out, "\n")+"\n"), 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	// Atomic write per internal/atomicfile model: temporary file created
+	// exclusively in parent directory, explicit 0o644 mode, fsync to media,
+	// atomic rename over target path.
+	return atomicfile.WriteFile(path, []byte(strings.Join(out, "\n")+"\n"), 0o644)
 }
 
 type poolHeaderError struct{ got string }

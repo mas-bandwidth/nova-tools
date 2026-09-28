@@ -3,6 +3,7 @@ package tokens
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -24,6 +25,7 @@ type LedgerRow struct {
 
 // ReadPoolLedger reads the fold-pool ledger at path, checking its header.
 func ReadPoolLedger(path string) ([]LedgerRow, error) {
+	path = filepath.Clean(path)
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err

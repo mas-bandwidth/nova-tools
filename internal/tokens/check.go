@@ -75,9 +75,9 @@ type CheckResult struct {
 	Stale  bool
 }
 
-// Check walks every file under out. A day file is parsed; the one fixed temp name and the
-// lock are stepped over, because the wreckage of a killed fold is not a stray; a non-day
-// entry the allowlist admits is counted as a note; anything else is named and LEFT ALONE
+// Check walks every file under out. A day file is parsed; recognized day-file temporaries
+// and the lock are stepped over, because the wreckage of a killed fold is not a stray;
+// a non-day entry the allowlist admits is counted as a note; anything else is named and LEFT ALONE
 // — this tool removes nothing, and a person removes a stray.
 func Check(out string, opt CheckOptions) (*CheckResult, error) {
 	ents, err := os.ReadDir(out)
@@ -101,6 +101,8 @@ func Check(out string, opt CheckOptions) (*CheckResult, error) {
 		case name == LockName, name == LockName+".held":
 			continue
 		case strings.HasSuffix(name, TempSuffix) && ValidDay(strings.TrimSuffix(name, TempSuffix)):
+			continue
+		case isAtomicTemp(name):
 			continue
 		case strings.HasSuffix(name, FileSuffix) && ValidDay(strings.TrimSuffix(name, FileSuffix)):
 			r.Files++
@@ -199,4 +201,34 @@ func ReadNoSpendFile(path string) (map[string]bool, error) {
 		return nil, err
 	}
 	return days, nil
+}
+
+// isAtomicTemp reports whether name is an atomicfile temporary file left behind
+// by an interrupted atomic write of a day file: a dotfile matching
+// .<YYYY-MM-DD>.tsv.tmp-%08x where YYYY-MM-DD is a valid day and the suffix
+// is exactly 8 hexadecimal characters.
+func isAtomicTemp(name string) bool {
+	if !strings.HasPrefix(name, ".") {
+		return false
+	}
+	rest := strings.TrimPrefix(name, ".")
+	idx := strings.LastIndex(rest, ".tmp-")
+	if idx < 0 {
+		return false
+	}
+	hexPart := rest[idx+len(".tmp-"):]
+	if len(hexPart) != 8 {
+		return false
+	}
+	for _, c := range hexPart {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	target := rest[:idx]
+	if !strings.HasSuffix(target, FileSuffix) {
+		return false
+	}
+	day := strings.TrimSuffix(target, FileSuffix)
+	return ValidDay(day)
 }
