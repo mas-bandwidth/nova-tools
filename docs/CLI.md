@@ -31,7 +31,7 @@ nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir> --reti
 $ nova-check quickstart --dir ./self
 QUICKSTART OK dir=./self checks=2: links, then nocode
 LINKS OK files=4 links=3 excluded=0
-NOCODE OK files=5 clean deny-list=floor\x20list
+NOCODE OK files=5 clean deny-list=floor-list
 QUICKSTART OK done=2 worst-exit=0 next=kernel,attest,floors,corpus (each wants a budget, a manifest or a ledger of yours: nova-check help)
 
 $ nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
@@ -117,7 +117,9 @@ and supplies the list for tools absent from that directory. At least one flag
 is required. The reader accepts fenced command lines, indented `usage:`
 blocks, `$` transcripts and `### verb` headings within a tool's section. A
 synopsis with no verb declares a bare invocation, represented as `verb=-` and
-selected with `--verb -`.
+selected with `--verb -`. A `--verb` that names the bare form instead of
+spelling it — `(default)`, `bare`, `none`, `no verb` — is refused with
+`did you mean: <tool> --verb -` when the tool declares a bare invocation.
 
 **An edge is what the run found, not only what it failed at.** A receipt records
 an edge when the verb did not do what the run needed (`--not-ok`) **or** when
@@ -1069,7 +1071,12 @@ nova-update release cut --repo mas-bandwidth/nova-tools --from main --version v0
 ```
 
 `cut` refuses a commit whose checks are not green, refuses a version that is already a tag, writes the
-changelog section and creates the **annotated** tag carrying `sums=<sha256 of SHA256SUMS>`. It also
+changelog section and creates the **annotated** tag carrying `sums=<sha256 of SHA256SUMS>`. `build`
+writes one `SHA256SUMS` per platform, under `<out>/<version>/<goos-goarch>/`, and `--sums` takes one
+of them: the tag and the changelog section carry that platform's digest, and `adopt --repo` verifies
+that platform only. Every other platform the release built is adopted with `--expect-sums-from
+<out>/<version>/<goos-goarch>/SUMS.digest` on the host that built it, or `--expect-sums <sha256>`
+from the `sums=` field of its `RELEASE BUILT` line. It also
 classifies the range since the previous tag against the sensitive path list and refuses until
 `--security-read <note id|url>` names Johnny's read. A compare the forge could only answer in part —
 300 files, its ceiling — is a different refusal, `reason=compare-truncated`, and a read does not get
@@ -1344,7 +1351,6 @@ OK line succeeded; a `NEXT:` line above it is the next step, not a failure.
 ## nova-ci
 
 Reads Go test events and reports packages whose accumulated elapsed time exceeds
-Reads Go test events and reports packages whose accumulated elapsed time exceeds
 a budget. It also reports its own build with `nova-ci version`.
 
 ```sh
@@ -1378,7 +1384,11 @@ measured, not a verdict` line follows (`--load` and `--cpus` give the figures by
 hand). A CI-SLOW line exits 0 (a measurement) unless `--enforce` is given, which
 only the nightly space legs pass (`make test SLOWTESTS_ENFORCE=1`). A test skipped
 with `t.Skip("SLEEPS: ...")` that `--sleeps` does not name is a `CI-SLEEPS` line
-and exits 2 on every leg. `nova-ci
+and exits 2 on every leg. A package `go test` served from its test cache reports an
+elapsed near zero (`ok ... (cached)`, `"Elapsed":0`), so a cached run can never trip
+either budget: only a run that executed is measured. CI's unit legs run with the
+cache on (`GOTEST_COUNT_FLAG=` in `.github/workflows/ci.yml`); its `--enforce` leg
+runs `-count=1`, and so does a measurement by hand. `nova-ci
 functional <package-dir>...` prints, for `make test-functional`, the packages
 that hold `//go:build functional` tests and a `-run` pattern naming exactly
 those tests; when there are none it prints one line, `CI FUNCTIONAL OK packages=0
@@ -1490,6 +1500,11 @@ duplicate; different bytes under an existing ID refuse. Each write requires an
 explicit publication policy. These examples choose local-only `never`. The current
 slice implements no transport: successful writes report `persisted=true` and
 `published=false`, even when another publication policy is recorded.
+
+Every line names the entry's `source=`. `open --source <ptr>` records the
+session's pointer; an `append` with no `--source` carries that pointer, and an
+`append --source` names the entry's own. `index` and `receipt` print what the
+entry holds, and `source=-` is an entry with no pointer at all.
 
 Two store shapes are read. The tool's own is `sessions/<id>.md` with `entries/`
 and `log.jsonl` beside it. A **bench store** keeps one markdown file per session

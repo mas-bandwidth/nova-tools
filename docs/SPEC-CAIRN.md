@@ -57,7 +57,11 @@ the reader must reconstruct.
 --file <path|->) [--source <ptr>] --publish <policy>` files the friend's
 chosen words byte-for-byte** with a real clock stamp (UTC; `--now` names an
 RFC 3339 UTC replay for tests), the stable entry/session identifiers and
-the source pointers, which are recorded and never opened. Exactly one of
+the source pointers, which are recorded and never opened. An append with no
+`--source` carries the session's `open --source`, read back from the open
+record in `log.jsonl`, so the entry, its index row and its receipt name where
+it came from; every line prints `source=<ptr>`, and `source=-` is an entry with
+no pointer. Exactly one of
 `--text` or `--file` names the words, so the tool never picks between two
 candidates for what was chosen. A retry of the same request succeeds with
 `duplicate=true` and no second entry; the same entry id carrying different
@@ -85,16 +89,16 @@ reported, so a reader never infers the remote from the local.
 
 ## Tests this spec demands
 
-One numbered line per Go test function: 28 lines, 28 tests. 16 exist in `internal/cairn` or
-`cmd/nova-cairn`; 12 (lines 5, 12, 13, 18, 19 and 21–27) are named here and not yet written.
+One numbered line per Go test function: 28 lines, 28 tests. 17 exist in `internal/cairn` or
+`cmd/nova-cairn`; 11 (lines 5, 12, 13, 19 and 21–27) are named here and not yet written.
 Where one test holds several behaviours of the spec, they share its line; where two tests hold
 one rule of the spec (lines 9–10 and 15–16), each test has its own line.
 Every test that touches a store uses a throwaway `t.TempDir()` store named on the command line
 (or in the `cairn` package's `Open`/`Append` calls) — no network, no Redis, no secret.
 Not every test writes entries: lines 2, 14, 17 and 28 are refusal-only, as 19 and 22 will be,
 and assert an exit code or an error with nothing stored.
-Each of the 12 unwritten tests must be shown red before it is green when it lands; this section
-makes no red-first claim for the 16 that exist.
+Each of the 11 unwritten tests must be shown red before it is green when it lands; this section
+makes no red-first claim for the 17 that exist.
 
 1. `TestOpenAppendIndexReceiptRoundTrip` — `open` starts one session record under a caller-named store; the record is written to and read back; `index` builds the bounded section/entry index and coverage ledger mechanically.
 2. `TestMissingFlagsAreRefusedNeverGuessed` — there is no default store, no environment variable and no discovery; a missing `--store` is a refusal.
@@ -113,7 +117,7 @@ makes no red-first claim for the 16 that exist.
 15. `TestAppendKeepsExactProseAndReportsPersistenceSeparately` — `append` files the friend's chosen words byte-for-byte; success reports local persistence and remote publication separately (`persisted=true published=false`).
 16. `TestAppendViaFileAndStdinKeepsExactBytes` — words named by `--file <path|->`, from a file or from stdin, are filed byte-for-byte.
 17. `TestBadClockIsRefused` — the stamp is a real clock in UTC; `--now` names an RFC 3339 UTC replay and a non-RFC 3339 value is exit 2.
-18. `TestSourcePointerIsRecordedNeverOpened` — the source pointers are recorded and never opened.
+18. `TestSourcePointerIsRecordedNeverOpened` — the source pointers are recorded and never opened; an append with no `--source` carries the session's, and every verb prints `source=` (`-` for none).
 19. `TestBothTextAndFileAreRefused` — exactly one of `--text` or `--file` names the words; giving both is refused.
 20. `TestInterruptedAppendRecoversAndPreservesOtherWriters` — each entry lands atomically through internal/atomicfile (unique temp file, fsync, rename, parent dir fsync); a stale random-sibling `.*.tmp*` is never indexed and the retry writes the entry atomically; the retry preserves other writers' entries.
 21. `TestRetryHealsTheMissingPointerLine` — the retry heals the missing pointer line.

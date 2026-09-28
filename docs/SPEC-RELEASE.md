@@ -83,7 +83,12 @@ and `adopt` had to be handed it by a person retyping it off the file.
 2. `POST repos/<repo>/git/refs` — the ref `refs/tags/<version>`, pointing at **that object**, never at the
    commit. A ref pointing at the commit is the lightweight tag again, with the annotation orphaned.
 
-The `sums=` line is written only when `cut --sums <file>` names the checksum file the build wrote. It is
+The `sums=` line is written only when `cut --sums <file>` names the checksum file the build wrote.
+`build` writes one `SHA256SUMS` per platform, under `<out>/<version>/<goos-goarch>/`, and `--sums` takes
+one file, so the tag carries **one platform's digest**: the platform whose `SHA256SUMS` `--sums` names.
+`adopt --repo` verifies that platform only. Every other platform the release built is adopted with
+`--expect-sums-from <out>/<version>/<goos-goarch>/SUMS.digest` on the host that built it, or
+`--expect-sums <sha256>` from the `sums=` field of its `RELEASE BUILT` line. It is
 read back by an **anchored** match on its own line: a sha mentioned in prose inside a release note is not
 the digest the release was cut with, and a reader that took the first 64 hex characters it found would
 sometimes be right, which is the worst way for a check like this to be wrong.

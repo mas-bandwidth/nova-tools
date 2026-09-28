@@ -359,6 +359,29 @@ func TestNearestPrefersTheSameTool(t *testing.T) {
 	}
 }
 
+// TestANameForTheBareFormSuggestsTheDash is edge 7225d4da: a receipt for
+// nova-sandbox's verbless run, spelled `(default)`, was told `did you mean:
+// nova-sandbox reap`, and the reader learned the dash only from a later
+// refusal. A name for the bare form is answered with the bare form, spelled
+// the way --verb takes it; a tool that declares no bare form keeps the
+// ordinary answer, and a real near miss is still a near miss.
+func TestANameForTheBareFormSuggestsTheDash(t *testing.T) {
+	t.Parallel()
+
+	declared := verbs("nova-sandbox", "nova-sandbox reap", "nova-check nocode")
+	for _, spelled := range []string{"(default)", "default", "bare", "(none)", "no verb", "[bare form]", " Default "} {
+		if got := Nearest(declared, "nova-sandbox", spelled); got != "nova-sandbox --verb -" {
+			t.Errorf("nearest for %q = %q, want nova-sandbox --verb -", spelled, got)
+		}
+	}
+	if got := Nearest(declared, "nova-sandbox", "raep"); got != "nova-sandbox reap" {
+		t.Errorf("nearest for a typo = %q, want nova-sandbox reap", got)
+	}
+	if got := Nearest(declared, "nova-check", "(default)"); got == "nova-check --verb -" {
+		t.Errorf("a tool with no bare form was offered one: %q", got)
+	}
+}
+
 func TestTheBareInvocationPrintsAsADash(t *testing.T) {
 	t.Parallel()
 

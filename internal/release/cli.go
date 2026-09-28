@@ -33,7 +33,9 @@ var CutNote = "cut classifies the range since the previous tag against the sensi
 	"and the cut then prints `RELEASE CUT SENSITIVE paths=<n> read=<id>` above its receipt. " +
 	"A range TOO BIG FOR THE FORGE TO LIST is a different refusal and --security-read does not get past it: a read of a list that may be short is a read of a prefix of the truth. " +
 	"Classify such a range from a complete local list instead -- `--local-diff <checkout>` runs `git diff --name-only <previous tag>...<head>` in that checkout, and `--paths-from <file>` writes the answer there for a later cut to read back. " +
-	"The tag is annotated, and the annotation carries `sums=<sha256 of SHA256SUMS>` when --sums names the built checksum file, which is the digest `adopt --repo` reads back."
+	"The tag is annotated, and the annotation carries `sums=<sha256 of SHA256SUMS>` when --sums names the built checksum file, which is the digest `adopt --repo` reads back. " +
+	"`build` writes one SHA256SUMS per platform, under <out>/<version>/<goos-goarch>/, and --sums takes one of them: the tag and the CHANGELOG section carry THAT platform's digest, and `adopt --repo` verifies that platform only. " +
+	"Every other platform the release built is adopted with --expect-sums-from <out>/<version>/<goos-goarch>/" + DigestFile + " on the host that built it, or --expect-sums <sha256> from the sums= field of its `RELEASE BUILT` line."
 
 // AdoptNote is what a person needs before their first adopt, and every sentence
 // of it is something the first dogfood pass had to find out by failing.
@@ -198,7 +200,7 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		f.StringVar(&o.from, "from", "", "branch")
 		f.StringVar(&o.changelog, "changelog", "", "CHANGELOG.md path")
 		f.BoolVar(&o.dryRun, "dry-run", false, "decide and print, write nothing")
-		f.StringVar(&o.sums, "sums", "", "a built SHA256SUMS whose digest the section and the tag record")
+		f.StringVar(&o.sums, "sums", "", "one platform's built SHA256SUMS, <out>/<version>/<goos-goarch>/SHA256SUMS; the section and the tag record its digest, and adopt --repo verifies that platform")
 		f.StringVar(&o.securityRead, "security-read", "", "the note id or comment url of Johnny's read, required when the range touches a sensitive path")
 		f.StringVar(&o.localDiff, "local-diff", "", "a checkout to run `git diff --name-only <previous>...<head>` in, when the forge's compare is at its ceiling")
 		f.StringVar(&o.pathsFrom, "paths-from", "", "the path list to classify: written by --local-diff, read back without it")

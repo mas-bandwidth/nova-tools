@@ -83,6 +83,9 @@ type AppendResult struct {
 	Persisted bool
 	Published bool
 	Policy    string
+	// Source is the pointer the entry carries: its own --source, or the
+	// session's when the append named none.
+	Source    string
 	Duplicate bool
 }
 
@@ -321,15 +324,37 @@ func fsyncDir(dir string) error {
 }
 
 // appendLog records one event on the store's append-only log.
-func appendLog(store, event, session, id, stamp, policy string) error {
+func appendLog(store, event, session, id, stamp, policy, source string) error {
 	rec, _ := json.Marshal(map[string]string{
 		"event":   event,
 		"session": session,
 		"entry":   id,
 		"stamp":   stamp,
 		"publish": policy,
+		"source":  source,
 	})
 	return appendLine(filepath.Join(store, "log.jsonl"), string(rec))
+}
+
+// SessionSource reads back the --source the session was opened with, from
+// the open record in log.jsonl. The session file's header is convention only
+// and is never parsed, so the log is where the pointer is read from. A store
+// whose open record carries no source (or has no log) answers "".
+func SessionSource(store, session string) string {
+	raw, err := os.ReadFile(filepath.Join(store, "log.jsonl"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		var rec map[string]string
+		if json.Unmarshal([]byte(line), &rec) != nil {
+			continue
+		}
+		if rec["event"] == "open" && rec["session"] == session {
+			return rec["source"]
+		}
+	}
+	return ""
 }
 
 // Open starts (or re-starts, idempotently) one session record. Concurrent
@@ -363,7 +388,7 @@ func Open(store, session, source string, now time.Time, publish string) error {
 	if err := atomicfile.WriteFile(name, []byte(header), 0o644); err != nil {
 		return err
 	}
-	return appendLog(store, "open", session, "", stamp, publish)
+	return appendLog(store, "open", session, "", stamp, publish, source)
 }
 
 // pointerLine is the one machine-scannable line an append adds to the
@@ -422,6 +447,14 @@ func Append(store, session, id, text, source string, now time.Time, publish stri
 	if bench {
 		return appendBench(path, id, text, stamp, publish)
 	}
+	// AN ENTRY WITH NO --source CARRIES THE SESSION'S. open --source names
+	// where the record points back to; an append that names nothing else came
+	// from the same place, so the entry records that pointer and index and
+	// receipt read it back. The dogfood finding (2026-09-18): open carried
+	// --source session:x, and every entry line then printed source= empty.
+	if source == "" {
+		source = SessionSource(store, session)
+	}
 	final := entryPath(store, session, id)
 	if raw, err := os.ReadFile(final); err == nil {
 		var prev entryFile
@@ -435,7 +468,7 @@ func Append(store, session, id, text, source string, now time.Time, publish stri
 		if err := ensurePointer(store, session, id, prevStamp); err != nil {
 			return res, err
 		}
-		return AppendResult{Persisted: true, Published: false, Policy: prev.Publish, Duplicate: true}, nil
+		return AppendResult{Persisted: true, Published: false, Policy: prev.Publish, Source: prev.Source, Duplicate: true}, nil
 	}
 	rec, _ := json.Marshal(entryFile{
 		Session: session,
@@ -457,10 +490,10 @@ func Append(store, session, id, text, source string, now time.Time, publish stri
 	if err := ensurePointer(store, session, id, stamp); err != nil {
 		return res, err
 	}
-	if err := appendLog(store, "append", session, id, stamp.Format(time.RFC3339Nano), publish); err != nil {
+	if err := appendLog(store, "append", session, id, stamp.Format(time.RFC3339Nano), publish, source); err != nil {
 		return res, err
 	}
-	return AppendResult{Persisted: true, Published: false, Policy: publish}, nil
+	return AppendResult{Persisted: true, Published: false, Policy: publish, Source: source}, nil
 }
 
 // readEntry loads one stored entry or explains its absence.

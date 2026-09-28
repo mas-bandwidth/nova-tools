@@ -245,3 +245,69 @@ func TestBadClockIsRefused(t *testing.T) {
 		t.Fatalf("open with bad --now exited %d, want 2", code)
 	}
 }
+
+// TestSourcePointerIsRecordedNeverOpened is SPEC-CAIRN line 18, and the
+// dogfood finding of 2026-09-18 behind it: open carried --source and every
+// entry line then printed source= empty. The pointer names a path that does
+// not exist, so a verb that opened it would fail; an append with no --source
+// carries the session's pointer; an append with its own keeps its own; every
+// verb prints source=, one field even when the pointer holds a space; and an
+// entry with no pointer anywhere prints source=-.
+func TestSourcePointerIsRecordedNeverOpened(t *testing.T) {
+	t.Parallel()
+
+	store := t.TempDir()
+	ptr := filepath.Join(store, "no such transcript", "session.jsonl")
+	field := strings.ReplaceAll(ptr, " ", `\x20`)
+	out, _ := runOK(t, "", "open", "--store", store, "--session", "s1", "--source", ptr, "--publish", "manual")
+	if !strings.Contains(out, " source="+field+" ") {
+		t.Fatalf("open printed %q, want source=%s", out, field)
+	}
+	out, _ = runOK(t, "", "append", "--store", store, "--session", "s1", "--entry", "inherits",
+		"--text", "words with no pointer of their own", "--publish", "manual")
+	if !strings.Contains(out, " source="+field+" ") {
+		t.Fatalf("append with no --source printed %q, want the session's source=%s", out, field)
+	}
+	out, _ = runOK(t, "", "append", "--store", store, "--session", "s1", "--entry", "own",
+		"--text", "words with a pointer", "--source", "bench-a/session-7#L3", "--publish", "manual")
+	if !strings.Contains(out, " source=bench-a/session-7#L3 ") {
+		t.Fatalf("append --source printed %q, want its own source", out)
+	}
+	out, _ = runOK(t, "", "index", "--store", store)
+	for _, want := range []string{"entry=inherits stamp=", "entry=own stamp="} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("index printed %q, missing %q", out, want)
+		}
+	}
+	for _, line := range strings.Split(out, "\n") {
+		switch {
+		case strings.Contains(line, "entry=inherits "):
+			if !strings.HasSuffix(line, " source="+field) {
+				t.Fatalf("index row %q, want the session's source", line)
+			}
+		case strings.Contains(line, "entry=own "):
+			if !strings.HasSuffix(line, " source=bench-a/session-7#L3") {
+				t.Fatalf("index row %q, want the entry's own source", line)
+			}
+		}
+	}
+	out, _ = runOK(t, "", "receipt", "--store", store, "--session", "s1", "--entry", "inherits")
+	if !strings.Contains(out, " source="+field+" ") {
+		t.Fatalf("receipt printed %q, want source=%s", out, field)
+	}
+	if _, err := os.Stat(ptr); !os.IsNotExist(err) {
+		t.Fatalf("the source pointer was created or opened: %v", err)
+	}
+
+	// A session opened with no pointer: the entry has none, and says so.
+	runOK(t, "", "open", "--store", store, "--session", "s2", "--publish", "manual")
+	out, _ = runOK(t, "", "append", "--store", store, "--session", "s2", "--entry", "bare",
+		"--text", "words from nowhere named", "--publish", "manual")
+	if !strings.Contains(out, " source=- ") {
+		t.Fatalf("append with no pointer anywhere printed %q, want source=-", out)
+	}
+	out, _ = runOK(t, "", "receipt", "--store", store, "--session", "s2", "--entry", "bare")
+	if !strings.Contains(out, " source=- ") {
+		t.Fatalf("receipt with no pointer printed %q, want source=-", out)
+	}
+}
