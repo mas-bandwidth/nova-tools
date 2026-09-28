@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -55,16 +56,6 @@ func kill(pid int) {
 	}
 }
 
-// refused reports whether nothing listens at addr.
-func refused(addr string) bool {
-	conn, err := net.DialTimeout("tcp", addr, 30*time.Second)
-	if err == nil {
-		_ = conn.Close()
-		return false
-	}
-	return errors.Is(err, syscall.ECONNREFUSED)
-}
-
 // postmaster is the pid of the server of that directory, from the file the
 // server itself wrote.
 func postmaster(t *testing.T, dir string) int {
@@ -97,6 +88,32 @@ func running(t *testing.T, dir string) bool {
 	return status.Run() == nil
 }
 
+// hangsUp is a loopback port this test holds until its cleanup, where every
+// client is hung up on at once.
+func hangsUp(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	t.Cleanup(func() {
+		_ = ln.Close()
+		<-done
+	})
+	go func() {
+		defer close(done)
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+	return strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
+}
+
 func bounded(t *testing.T) context.Context {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -125,8 +142,7 @@ func show(t *testing.T, db *sql.DB, setting string) string {
 }
 
 // TestThrowawayPostgresStartsAndAnswers is the helper's own proof: a server
-// under the test's directory, a fresh database per call, a query answered,
-// and the stop leaving nothing running on the port.
+// under the test's directory, a fresh database per call, a query answered.
 func TestThrowawayPostgresStartsAndAnswers(t *testing.T) {
 	t.Parallel()
 
@@ -265,9 +281,8 @@ func TestCleanupStopsTheServerAndRemovesItsDirectory(t *testing.T) {
 	if _, err := os.Stat(s.Dir); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("the test has ended and its server's directory %s is there: %v", s.Dir, err)
 	}
-	if !refused(net.JoinHostPort("127.0.0.1", s.Port)) {
-		t.Fatalf("the test has ended and port %s still takes clients", s.Port)
-	}
+	// The port is not asked: the process that held it is gone, so the port
+	// is anyone's, and a parallel test may take it and answer there.
 }
 
 // StartServer is the TestMain form: the caller names the directory and stops
@@ -298,7 +313,15 @@ func TestStopMakesTheNextQueryFailAtOnce(t *testing.T) {
 	}
 	db := open(t, s.Database(t))
 	ctx := bounded(t)
-	if err := db.PingContext(ctx); err != nil {
+	// One connection, held: asked again after Stop it answers for itself.
+	// The pool would not: on a bad connection database/sql dials a new one,
+	// to a port that is anyone's once the server is gone.
+	held, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Close()
+	if err := held.PingContext(ctx); err != nil {
 		t.Fatal(err)
 	}
 
@@ -308,26 +331,26 @@ func TestStopMakesTheNextQueryFailAtOnce(t *testing.T) {
 	if !gone(pid) || running(t, dir) {
 		t.Fatalf("Stop returned and the server, pid %d, is alive", pid)
 	}
-	// The failure is the kernel's answer, not a deadline that ran out.
-	if err := db.PingContext(ctx); err == nil || errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("a query after Stop = %v; want a connection that ended", err)
-	}
-	if !refused(net.JoinHostPort("127.0.0.1", s.Port)) {
-		t.Fatalf("after Stop port %s still takes clients", s.Port)
-	}
-	if err := open(t, s.DSN("postgres")).PingContext(ctx); !errors.Is(err, syscall.ECONNREFUSED) {
-		t.Fatalf("a query from a new client after Stop = %v; want connection refused", err)
+	// The held connection was hung up on: the failure is the kernel's
+	// answer on this test's own socket, not a deadline that ran out. Nothing
+	// here dials the port again: it was freed with the process, and a
+	// parallel test may take it and answer there.
+	if err := held.PingContext(ctx); !errors.Is(err, driver.ErrBadConn) {
+		t.Fatalf("a query on the held connection after Stop = %v; want a connection that ended", err)
 	}
 	// A server that is stopped stays stopped: a second Stop does nothing.
 	if err := s.Stop(); err != nil {
 		t.Fatalf("a second Stop = %v", err)
 	}
-	if r := provoke(t, func(tb testing.TB) { s.Database(tb) }); !strings.Contains(r.fatal, "create database t") {
-		t.Fatalf("Database on a server that is stopped failed with %q; want the test failed", r.fatal)
+	// A server that does not answer is asked on a port this test holds and
+	// hangs up on every client: the stopped server's port is anyone's.
+	unanswered := &Server{User: s.User, Port: hangsUp(t), log: s.log}
+	if r := provoke(t, func(tb testing.TB) { unanswered.Database(tb) }); !strings.Contains(r.fatal, "create database t") {
+		t.Fatalf("Database on a server that does not answer failed with %q; want the test failed", r.fatal)
 	}
-	// It does not answer, and ready says so at its bound, with the log.
-	if err := s.ready(100 * time.Millisecond); err == nil || !strings.Contains(err.Error(), "did not answer in 100ms") || !strings.Contains(err.Error(), "database system is ready") {
-		t.Fatalf("ready on a server that is stopped = %v; want its bound and the server's log", err)
+	// ready says so at its bound, with the log.
+	if err := unanswered.ready(100 * time.Millisecond); err == nil || !strings.Contains(err.Error(), "did not answer in 100ms") || !strings.Contains(err.Error(), "database system is ready") {
+		t.Fatalf("ready on a server that does not answer = %v; want its bound and the server's log", err)
 	}
 	// A Stop that fails says what pg_ctl said.
 	never := &Server{Dir: t.TempDir(), Bin: s.Bin}

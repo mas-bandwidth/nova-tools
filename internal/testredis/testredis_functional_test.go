@@ -315,10 +315,26 @@ func TestStopMakesTheNextCommandFailAtOnce(t *testing.T) {
 	t.Parallel()
 
 	s := StartServer(t)
-	ctx := bounded(t)
-	c := dial(t, s.Addr())
-	if err := c.Ping(ctx).Err(); err != nil {
+	// One connection, held: asked again after Stop it answers for itself.
+	// A go-redis client would not: its pool drops a connection the server
+	// hung up on and dials a new one, to a port that is anyone's once the
+	// server is gone.
+	held, err := net.Dial("tcp", s.Addr())
+	if err != nil {
 		t.Fatal(err)
+	}
+	defer held.Close()
+	if deadline, ok := bounded(t).Deadline(); ok {
+		if err := held.SetDeadline(deadline); err != nil {
+			t.Fatal(err)
+		}
+	}
+	answers := bufio.NewReader(held)
+	if _, err := io.WriteString(held, "*1\r\n$4\r\nPING\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := answers.ReadString('\n'); err != nil || got != "+PONG\r\n" {
+		t.Fatalf("PING before Stop was answered %q, %v; want PONG", got, err)
 	}
 	pid, addr := s.PID(), s.Addr()
 	s.Stop()
@@ -329,12 +345,14 @@ func TestStopMakesTheNextCommandFailAtOnce(t *testing.T) {
 	if s.Addr() != addr || s.PID() != pid {
 		t.Fatalf("after Stop the server is %s, pid %d; it was %s, pid %d", s.Addr(), s.PID(), addr, pid)
 	}
-	// The client that was connected is hung up on: the failure is the
-	// kernel's answer, not a deadline that ran out. A new client is not
-	// tried: the port was freed with the process, and a parallel test may
-	// take it and answer there.
-	if err := c.Ping(ctx).Err(); err == nil || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, os.ErrDeadlineExceeded) {
-		t.Fatalf("PING on the old connection after Stop = %v; want a connection that ended", err)
+	// The held connection was hung up on: the failure is the kernel's
+	// answer on this test's own socket, not a deadline that ran out. Nothing
+	// here dials the port again: it was freed with the process, and a
+	// parallel test may take it and answer there. The write may yet be
+	// taken by the kernel; the read is the answer.
+	_, _ = io.WriteString(held, "*1\r\n$4\r\nPING\r\n")
+	if got, err := answers.ReadString('\n'); err == nil || errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("PING on the held connection after Stop was answered %q, %v; want a connection that ended", got, err)
 	}
 	// A second Stop, and the cleanup's after it, only wait.
 	s.Stop()
