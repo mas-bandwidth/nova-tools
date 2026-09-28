@@ -1,4 +1,4 @@
-# Retained token records: format and command decision packet
+# Retained token records: format decision packet
 
 Proposed companion to [the record contract](PROPOSAL-TOKENS-RECORDS.md), not shipped behavior. This packet makes the next implementation decisions reviewable. Existing v1 verbs and files keep their meanings. Different harnesses may produce this format with their own extraction tools.
 
@@ -53,32 +53,12 @@ Inventory files live at `inventories/<inventory-sha256-hex>.json`: a RFC8785 can
 
 Shard placement is `records/<friend>/<bench>/<day>/<shard-sha256-hex>.jsonl`. Each shard has exactly one origin partition. Null friend or bench uses reserved `_`; a valid point timestamp with its stated day basis supplies the UTC day; interval-only or unknown allocation uses `unallocated`. Never put a multi-day interval under its starting day and imply day allocation. Batches may reference several partitions. A changed origin is a new observation/correction, never a file move.
 
-Mappings live at `mappings/<mapping-sha256-hex>.json`. Coverage is published at `coverage/<collector-friend>/<collection-bench>/<UTC-collection-day>/<coverage-sha256-hex>.json`, with the original inspected interval retained in its body; the directory date is collection provenance, not the spend day. Unknown collector labels use `_`. Content digests exclude filenames. Coverage references shard digests, so no shard filename depends on the coverage hash that references it. This closes a possible circular hash dependency. The ledger README must be reconciled to these exact paths before the first publication.
+Mappings live at `mappings/<mapping-sha256-hex>.json`. Coverage is stored at `coverage/<collector-friend>/<collection-bench>/<UTC-collection-day>/<coverage-sha256-hex>.json`, with the original inspected interval retained in its body; the directory date is collection provenance, not the spend day. Unknown collector labels use `_`. Content digests exclude filenames. Coverage references shard digests, so no shard filename depends on the coverage hash that references it. This closes a possible circular hash dependency.
 
-Publisher validation is structural and referential: known envelope schemas, canonical hashes, allowed paths/fields, exact shard inventories and count/digest checks. It does not need to normalize a newly retained mapping to preserve it. A view requires an installed reviewed implementation for its selected mapping; unknown mapping code is never loaded or executed from the ledger.
-
-## Commands and publication boundary
-
-Keep the v1 read-only verbs untouched. Add `records` for local operations and a
-separate top-level `publish` verb for Git/network writes:
-
-```text
-nova-tokens records collect --sources <local-manifest> --ledger <dir> --out <new-batch-dir> --from <UTC-instant> --until <UTC-instant>
-nova-tokens records check --batch <dir> --ledger <dir>
-nova-tokens records view --ledger <dir> --selection <manifest> --group-by day,friend,bench,repo,model --format json
-nova-tokens publish --batch <dir> --ledger <git-checkout> --remote <name> --branch <name> --repo <host>/<owner>/<name>
-```
-
-`collect` reads only explicit authorized source paths, reads the local ledger to avoid emitting already retained observations, and writes only the new named batch directory and an explicitly configured local receipt index. It has no network, Git or bus action. New observations are placed in immutable JSONL shards capped at 4 MiB, sorted by ID; oversize individual records fail with a named coverage gap. Existing ledger objects are referenced, not recopied on every daily run. A repeated identical collection emits no duplicate observations. Changed coverage cutoff is useful evidence, not new spend.
-
-`check` and `view` write nothing; stdout is their result. A selection manifest pins coverage IDs, compatible mapping IDs, date basis and repository policy. Unknown values, conflicts, unavailable scopes and interval-only allocation appear beside known totals. Exit 0 means valid and complete for that explicit selection, exit 1 means a usable partial result with named gaps/conflicts, exit 2 means the invocation/schema cannot be evaluated. None may present partial spend as a complete scalar. Empty selections are refused. Mechanical reporting requires no model turn.
-
-`publish` alone performs Git/network writes. It validates the batch, uses an isolated temporary index and an atomic commit containing only its named immutable files, and updates the chosen remote branch without force. At most 3 race retries within 60s; preserve both writers. Dirty unrelated work and the caller's index remain unchanged. After an ambiguous push response, fetch/query the exact contribution ID before retrying; do not generate a fresh contribution. No delete/reset/clean, remote configuration change or credential acquisition. Failure leaves the batch available for explicit retry. This publisher targets the agreed private ledger; it neither generates nor publishes an OSS subset.
-
-The flags above are the required contract, not permission to scan an unspecified home, install a schedule or run another friend's collector. Scheduling and notification remain each friend's chosen shell/harness integration. A wrapper can send one actionable failure through the existing bus; unchanged success requires no model wake.
+Record validation is structural and referential: known envelope schemas, canonical hashes, allowed paths/fields, exact shard inventories and count/digest checks. It does not need to normalize a newly retained mapping to preserve it. Normalization requires an installed reviewed implementation for its selected mapping; unknown mapping code is never loaded or executed from the ledger.
 
 ## Tests that decide this packet
 
-Before implementation is called adopted, demonstrate exact digest fixtures with reordered keys, non-ASCII labels, invalid Unicode and duplicate keys; integer values above 2^53 surviving unchanged; missing versus present-zero fields; two equal-valued distinct events; copied sources and an origin correction counting once; a forked or resumed session replaying an earlier response ID counting once, with a session-scoped turn counter keyed by the original session ID rather than the containing session; mapping revisions and conflicts; two report groupings from one retained input set; defaulted-zero and mixed-model cases; refusal of a mapping missing `zero_semantics` for any numeric field; coverage gaps and midnight/month intervals; unchanged collection emitting no duplicate shard; and two Git writers plus a lost acknowledgment preserving both contributions, the caller's index and unrelated dirty files. Prompt/private-path sentinel values in unsupported source fields must never appear in shared files or diagnostics.
+Before implementation is called adopted, demonstrate exact digest fixtures with reordered keys, non-ASCII labels, invalid Unicode and duplicate keys; integer values above 2^53 surviving unchanged; missing versus present-zero fields; two equal-valued distinct events; copied sources and an origin correction counting once; a forked or resumed session replaying an earlier response ID counting once, with a session-scoped turn counter keyed by the original session ID rather than the containing session; mapping revisions and conflicts; two report groupings from one retained input set; defaulted-zero and mixed-model cases; refusal of a mapping missing `zero_semantics` for any numeric field; coverage gaps and midnight/month intervals; and unchanged collection emitting no duplicate shard. Prompt/private-path sentinel values in unsupported source fields must never appear in shared files or diagnostics.
 
-Open for the group's implementation read: this concrete encoding and command boundary. The agreed need for retained detail, voluntary diverse integrations, execution bench and private publication is not being reopened. No adapter should wait for proof of every other harness's counters: retain supported raw evidence, normalize only supported semantics, and report the remainder explicitly.
+No adapter should wait for proof of every other harness's counters: retain supported raw evidence, normalize only supported semantics, and report the remainder explicitly.
