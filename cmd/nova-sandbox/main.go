@@ -215,7 +215,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 		return probeStepVerb(args[1:], stderr, env)
 	}
 	if !strings.HasPrefix(args[0], "-") {
-		fmt.Fprintf(stderr, "SANDBOX REFUSED reason=unknown_verb: unknown verb %q; available: check, list, policy, probe, reap, run, version, worktree; run: nova-sandbox help\n", args[0])
+		fmt.Fprintf(stderr, "SANDBOX REFUSED reason=unknown_verb: unknown verb %q; available: check, egress, policy, probe, reap, run, version, worktree; run: nova-sandbox help\n", args[0])
 		return sandbox.ExitCannotRun
 	}
 	return execVerb(args, stdin, stdout, stderr, env)

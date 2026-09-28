@@ -754,7 +754,7 @@ Unknown verbs refuse explicitly with exit 2 rather than falling into the bare wr
 
 ```
 $ nova-sandbox bogus
-SANDBOX REFUSED reason=unknown_verb: unknown verb "bogus"; available: check, list, policy, probe, reap, run, version, worktree; run: nova-sandbox help
+SANDBOX REFUSED reason=unknown_verb: unknown verb "bogus"; available: check, egress, policy, probe, reap, run, version, worktree; run: nova-sandbox help
 ```
 
 Prove the wall before the first job:
