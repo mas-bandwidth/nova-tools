@@ -121,7 +121,7 @@ var tableGrants = []string{
 	"+sadd", "+srem", "+smembers", "+scard", "+sismember",
 	"+zadd", "+zrem", "+zrange", "+zcard", "+zscore",
 	"+fcall|" + ntable.FnMove, "+fcall|" + ntable.FnClear,
-	"+fcall|ns_table_create", "+fcall|ns_table_drop", "+fcall|ns_table_row_add", "+fcall|ns_table_row_del", "+fcall|ns_table_cell_add", "+fcall|ns_table_cell_remove", "+fcall|ns_table_cell_move", "+fcall|ns_table_bind", "+fcall_ro|ns_table_read", "+fcall_ro|ns_table_list", "+fcall_ro|ns_table_members",
+	"+fcall|ns_table_create", "+fcall|ns_table_drop", "+fcall|ns_table_row_add", "+fcall|ns_table_row_del", "+fcall|ns_table_cell_add", "+fcall|ns_table_cell_remove", "+fcall|ns_table_cell_move", "+fcall|ns_table_bind", "+fcall|ns_table_apply", "+fcall_ro|ns_table_read", "+fcall_ro|ns_table_read_set", "+fcall_ro|ns_table_list", "+fcall_ro|ns_table_members",
 }
 
 // TestTableGrantsAreExactlyWhatTheWriterNeeds runs every write and read of

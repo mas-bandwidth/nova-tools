@@ -28,7 +28,7 @@ func TestEveryTableOperationCountsOneTrip(t *testing.T) {
 		if n := trips.N() - before; n != 1 {
 			t.Fatalf("%s took %d trips; want 1", name, n)
 		}
-		writes := map[string]bool{"create": true, "same create": true, "row add": true, "cell add": true, "cell move": true, "cell remove": true, "bound row add": true, "row del": true, "clear": true, "bind": true, "drop": true, "drop definition": true, "member create": true}
+		writes := map[string]bool{"create": true, "same create": true, "row add": true, "cell add": true, "cell move": true, "cell remove": true, "bound row add": true, "row del": true, "clear": true, "bind": true, "drop": true, "drop definition": true, "member create": true, "apply batch": true}
 		want := events
 		if writes[name] {
 			want++
@@ -42,6 +42,32 @@ func TestEveryTableOperationCountsOneTrip(t *testing.T) {
 	one("row add", func() error { _, err := ntable.RowAdd(ctx, c, "demo", "r", ntable.RowSpec{}); return err })
 	one("cell add", func() error { _, err := ntable.CellAdd(ctx, c, "demo", "r", "ready", "job", 7); return err })
 	one("cell members", func() error { _, err := ntable.CellMembers(ctx, c, "demo", "r", "ready"); return err })
+	one("read set", func() error {
+		_, err := ntable.ReadSet(ctx, c, "demo", ntable.ReadSetScope{Members: []string{"job"}})
+		return err
+	})
+	rev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
+	one("apply batch", func() error {
+		_, err := ntable.ApplyBatch(ctx, c, ntable.BatchManifest{
+			Schema:                1,
+			Table:                 "demo",
+			Epoch:                 "0",
+			ExpectedTableRevision: rev,
+			OperationID:           "trip-op-1",
+			Actor:                 "trip-test",
+			Members: []ntable.BatchMemberEntry{
+				{
+					ID: "batch-trip-job",
+					Create: &ntable.MemberCreateOp{
+						Row:   "r",
+						Col:   "ready",
+						Score: 100,
+					},
+				},
+			},
+		})
+		return err
+	})
 	one("cell move", func() error { _, err := ntable.CellMove(ctx, c, "demo", "r", "ready", "working", "job"); return err })
 	one("cell remove", func() error { _, err := ntable.CellRemove(ctx, c, "demo", "r", "working", "job"); return err })
 	one("member create", func() error { return ntable.MemberCreate(ctx, c, "demo", "unplaced") })

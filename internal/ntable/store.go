@@ -33,17 +33,29 @@ const (
 	FnCheck          = "ns_table_check"
 	FnList           = "ns_table_list"
 	FnMembers        = "ns_table_members"
+	FnApply          = "ns_table_apply"
+	FnReadSet        = "ns_table_read_set"
 )
 
 var (
-	ErrExists       = errors.New("exists with another definition")
-	ErrOccupied     = errors.New("shape would delete or hide placed members")
-	ErrOwnedAlias   = errors.New("binding target is table-owned storage")
-	ErrStale        = errors.New("observed epoch is stale")
-	ErrMemberEpoch  = errors.New("member belongs to another epoch")
-	ErrPlaced       = errors.New("member already has a place in this table")
-	ErrDrift        = errors.New("member record and owned set disagree")
-	ErrMemberExists = errors.New("member identity already exists")
+	ErrExists           = errors.New("exists with another definition")
+	ErrOccupied         = errors.New("shape would delete or hide placed members")
+	ErrOwnedAlias       = errors.New("binding target is table-owned storage")
+	ErrStale            = errors.New("observed epoch is stale")
+	ErrMemberEpoch      = errors.New("member belongs to another epoch")
+	ErrPlaced           = errors.New("member already has a place in this table")
+	ErrDrift            = errors.New("member record and owned set disagree")
+	ErrMemberExists     = errors.New("member identity already exists")
+	ErrRevisionMismatch = errors.New("table revision mismatch")
+	ErrMemberRevision   = errors.New("member revision mismatch")
+	ErrFieldGuard       = errors.New("failed field guard")
+	ErrOpConflict       = errors.New("operation ID conflict")
+	ErrLimit            = errors.New("limit exceeded")
+	ErrReservedField    = errors.New("reserved field write")
+	ErrDuplicateMember  = errors.New("duplicate manifest member")
+	ErrInvalidScore     = errors.New("invalid score")
+	ErrCounterOverflow  = errors.New("counter overflow")
+	ErrMutation         = errors.New("incompatible mutation")
 )
 
 // BoundError names the other writer. The table may read the binding but
@@ -77,11 +89,14 @@ type Receipt struct {
 	ID                   string
 	Epoch, Before, After uint64
 	Outcome              string
+	BatchDelta           *BatchDelta
 }
 
 type operation struct {
 	table, row, col, member string
+	opID                    string
 	view                    bool
+	batch                   bool
 }
 
 func (o operation) location() string {
@@ -93,6 +108,13 @@ func (o operation) location() string {
 		kind = "view"
 	}
 	s := fmt.Sprintf("%s %q", kind, o.table)
+	if o.batch {
+		if o.opID != "" {
+			s += fmt.Sprintf(" batch %q", o.opID)
+		} else {
+			s += " batch"
+		}
+	}
 	if o.row != "" {
 		s += fmt.Sprintf(" row %q", o.row)
 	}
@@ -278,7 +300,79 @@ func (o operation) refused(reply []any) error {
 		if len(reply) < 6 {
 			return fmt.Errorf("%s: malformed bound-cell refusal", o.location())
 		}
-		return fmt.Errorf("%s: %w", o.location(), &BoundError{Table: o.table, Row: fmt.Sprint(reply[2]), Col: fmt.Sprint(reply[3]), Key: fmt.Sprint(reply[4]), Owner: fmt.Sprint(reply[5])})
+		boundErr := &BoundError{Table: o.table, Row: fmt.Sprint(reply[2]), Col: fmt.Sprint(reply[3]), Key: fmt.Sprint(reply[4]), Owner: fmt.Sprint(reply[5])}
+		if o.batch {
+			return fmt.Errorf("%s: %w; changed=no", o.location(), boundErr)
+		}
+		return fmt.Errorf("%s: %w", o.location(), boundErr)
+	case "REVISION":
+		if len(reply) >= 4 {
+			cause = fmt.Errorf("%w: expected %v, observed %v", ErrRevisionMismatch, reply[2], reply[3])
+		} else {
+			cause = fmt.Errorf("%w: %v", ErrRevisionMismatch, reply[2:])
+		}
+	case "MEMBERREVISION":
+		if len(reply) >= 5 {
+			o.member = fmt.Sprint(reply[2])
+			cause = fmt.Errorf("%w: expected %v, observed %v", ErrMemberRevision, reply[3], reply[4])
+		} else {
+			cause = fmt.Errorf("%w: %v", ErrMemberRevision, reply[2:])
+		}
+	case "FIELDGUARD":
+		if len(reply) >= 3 {
+			o.member = fmt.Sprint(reply[2])
+		}
+		if len(reply) >= 7 && fmt.Sprint(reply[4]) == "equals" {
+			cause = fmt.Errorf("%w: member %q field %q: expected equals %q, observed %q", ErrFieldGuard, reply[2], reply[3], reply[5], reply[6])
+		} else if len(reply) >= 6 && fmt.Sprint(reply[4]) == "absent" {
+			cause = fmt.Errorf("%w: member %q field %q: expected absent, observed %q", ErrFieldGuard, reply[2], reply[3], reply[5])
+		} else if len(reply) >= 7 && fmt.Sprint(reply[4]) == "one_of" {
+			cause = fmt.Errorf("%w: member %q field %q: expected one_of %s, observed %q", ErrFieldGuard, reply[2], reply[3], reply[5], reply[6])
+		} else {
+			cause = fmt.Errorf("%w: %v", ErrFieldGuard, reply[2:])
+		}
+	case "OPCONFLICT":
+		cause = fmt.Errorf("%w: %v", ErrOpConflict, reply[2:])
+	case "LIMIT":
+		cause = fmt.Errorf("%w: %v", ErrLimit, reply[2:])
+	case "RESERVEDFIELD":
+		if len(reply) >= 4 {
+			o.member = fmt.Sprint(reply[2])
+			cause = fmt.Errorf("%w: member %q field %q", ErrReservedField, reply[2], reply[3])
+		} else {
+			cause = fmt.Errorf("%w: %v", ErrReservedField, reply[2:])
+		}
+	case "TWICE":
+		if len(reply) >= 3 {
+			o.member = fmt.Sprint(reply[2])
+		}
+		cause = fmt.Errorf("%w (TWICE): %v", ErrDuplicateMember, reply[2:])
+	case "SCORE":
+		if len(reply) >= 3 {
+			o.member = fmt.Sprint(reply[2])
+		}
+		cause = fmt.Errorf("%w: %v", ErrInvalidScore, reply[2:])
+	case "OVERFLOW":
+		if len(reply) >= 3 {
+			o.member = fmt.Sprint(reply[2])
+		}
+		cause = fmt.Errorf("%w: %v", ErrCounterOverflow, reply[2:])
+	case "MUTATION":
+		if len(reply) >= 3 {
+			o.member = fmt.Sprint(reply[2])
+		}
+		cause = fmt.Errorf("%w: %v", ErrMutation, reply[2:])
+	case "MANIFEST":
+		cause = fmt.Errorf("manifest: %v", reply[2:])
+	case "SCHEMA":
+		cause = fmt.Errorf("schema: %v", reply[2:])
+	case "OPERATION":
+		cause = fmt.Errorf("operation: %v", reply[2:])
+	case "MEMBER":
+		if len(reply) >= 3 {
+			o.member = fmt.Sprint(reply[2])
+		}
+		cause = fmt.Errorf("member: %v", reply[2:])
 	default:
 		cause = fmt.Errorf("%s %v", reason, reply[2:])
 	}
@@ -290,6 +384,9 @@ func (o operation) refused(reply []any) error {
 	if reason == "NOROW" && len(reply) >= 3 {
 		o.row = fmt.Sprint(reply[2])
 		remedy = "nova-table row add " + shellWord(o.table) + " " + shellWord(o.row)
+	}
+	if o.batch {
+		return fmt.Errorf("%s: %w; changed=no; run: %s", o.location(), cause, remedy)
 	}
 	return fmt.Errorf("%s: %w; run: %s", o.location(), cause, remedy)
 }
@@ -343,7 +440,7 @@ func (o operation) write(ctx context.Context, c redis.Cmdable, fn string, option
 		return nil, fmt.Errorf("%s: missing committed receipt", o.location())
 	}
 	wire, ok := reply[len(reply)-1].([]any)
-	if !ok || len(wire) != 6 || fmt.Sprint(wire[0]) != "RECEIPT" {
+	if !ok || (len(wire) != 6 && len(wire) != 7) || fmt.Sprint(wire[0]) != "RECEIPT" {
 		return nil, fmt.Errorf("%s: malformed committed receipt", o.location())
 	}
 	var r Receipt
@@ -352,6 +449,12 @@ func (o operation) write(ctx context.Context, c redis.Cmdable, fn string, option
 		*target, err = strconv.ParseUint(fmt.Sprint(wire[i+2]), 10, 64)
 		if err != nil {
 			return nil, err
+		}
+	}
+	if len(wire) >= 7 {
+		var delta BatchDelta
+		if err := json.Unmarshal([]byte(fmt.Sprint(wire[6])), &delta); err == nil {
+			r.BatchDelta = &delta
 		}
 	}
 	if opts.Receipt != nil {
@@ -879,4 +982,338 @@ func ViewDelete(ctx context.Context, c redis.Cmdable, name string) (int64, error
 		return 0, err
 	}
 	return replyCount(reply)
+}
+
+// BatchManifest specifies an atomic set of preconditions and mutations across
+// members in a table.
+type BatchManifest struct {
+	Schema                int                `json:"schema"`
+	Table                 string             `json:"table"`
+	Epoch                 string             `json:"epoch"`
+	ExpectedTableRevision string             `json:"expected_table_revision"`
+	OperationID           string             `json:"operation_id"`
+	Actor                 string             `json:"actor,omitempty"`
+	Members               []BatchMemberEntry `json:"members"`
+}
+
+// BatchMemberEntry defines expectations and mutations for one member.
+type BatchMemberEntry struct {
+	ID     string            `json:"id"`
+	Expect *MemberExpect     `json:"expect,omitempty"`
+	Create *MemberCreateOp   `json:"create,omitempty"`
+	Move   *MemberMoveOp     `json:"move,omitempty"`
+	Remove bool              `json:"remove,omitempty"`
+	Set    map[string]string `json:"set,omitempty"`
+	Unset  []string          `json:"unset,omitempty"`
+}
+
+// MemberExpect guards an existing or absent member record before mutation.
+type MemberExpect struct {
+	Absent   bool                  `json:"absent,omitempty"`
+	Revision string                `json:"revision,omitempty"`
+	Place    *PlaceExpect          `json:"place,omitempty"`
+	Fields   map[string]FieldGuard `json:"fields,omitempty"`
+}
+
+// PlaceExpect checks the expected row and column of a placed member.
+type PlaceExpect struct {
+	Row string `json:"row"`
+	Col string `json:"col"`
+}
+
+// FieldGuard checks a member application field's exact value, absence, or inclusion.
+type FieldGuard struct {
+	Equals *string  `json:"equals,omitempty"`
+	Absent *bool    `json:"absent,omitempty"`
+	OneOf  []string `json:"one_of,omitempty"`
+}
+
+// MemberCreateOp places a new member at row, column, and score.
+type MemberCreateOp struct {
+	Row   string  `json:"row"`
+	Col   string  `json:"col"`
+	Score float64 `json:"score"`
+}
+
+// MemberMoveOp moves an existing member to row, column, with optional new score.
+type MemberMoveOp struct {
+	Row   string   `json:"row"`
+	Col   string   `json:"col"`
+	Score *float64 `json:"score,omitempty"`
+}
+
+// BatchDelta records the applied batch outcome for change stream and receipts.
+type BatchDelta struct {
+	OperationID  string             `json:"operation_id"`
+	Digest       string             `json:"digest"`
+	Actor        string             `json:"actor"`
+	GuardCount   int                `json:"guard_count"`
+	ChangedCount int                `json:"changed_count"`
+	Members      []BatchMemberDelta `json:"members"`
+}
+
+func (b *BatchDelta) UnmarshalJSON(data []byte) error {
+	type rawBatchDelta struct {
+		OperationID  string          `json:"operation_id"`
+		Digest       string          `json:"digest"`
+		Actor        string          `json:"actor"`
+		GuardCount   int             `json:"guard_count"`
+		ChangedCount int             `json:"changed_count"`
+		Members      json.RawMessage `json:"members"`
+	}
+	var raw rawBatchDelta
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	b.OperationID = raw.OperationID
+	b.Digest = raw.Digest
+	b.Actor = raw.Actor
+	b.GuardCount = raw.GuardCount
+	b.ChangedCount = raw.ChangedCount
+	if len(raw.Members) > 0 && string(raw.Members) != "{}" && string(raw.Members) != "null" {
+		var m []BatchMemberDelta
+		if err := json.Unmarshal(raw.Members, &m); err != nil {
+			return err
+		}
+		b.Members = m
+	} else {
+		b.Members = []BatchMemberDelta{}
+	}
+	return nil
+}
+
+// BatchMemberDelta records before and after state for a member affected by a batch.
+type BatchMemberDelta struct {
+	ID          string            `json:"id"`
+	BeforePlace string            `json:"before_place"`
+	AfterPlace  string            `json:"after_place"`
+	BeforeRev   string            `json:"before_rev"`
+	AfterRev    string            `json:"after_rev"`
+	FieldsSet   map[string]string `json:"fields_set"`
+	FieldsUnset []string          `json:"fields_unset"`
+}
+
+func (b *BatchMemberDelta) UnmarshalJSON(data []byte) error {
+	type rawMemberDelta struct {
+		ID          string          `json:"id"`
+		BeforePlace string          `json:"before_place"`
+		AfterPlace  string          `json:"after_place"`
+		BeforeRev   string          `json:"before_rev"`
+		AfterRev    string          `json:"after_rev"`
+		FieldsSet   json.RawMessage `json:"fields_set"`
+		FieldsUnset json.RawMessage `json:"fields_unset"`
+	}
+	var raw rawMemberDelta
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	b.ID = raw.ID
+	b.BeforePlace = raw.BeforePlace
+	b.AfterPlace = raw.AfterPlace
+	b.BeforeRev = raw.BeforeRev
+	b.AfterRev = raw.AfterRev
+
+	if len(raw.FieldsSet) > 0 && string(raw.FieldsSet) != "[]" && string(raw.FieldsSet) != "null" {
+		var fs map[string]string
+		if err := json.Unmarshal(raw.FieldsSet, &fs); err != nil {
+			return err
+		}
+		b.FieldsSet = fs
+	} else {
+		b.FieldsSet = map[string]string{}
+	}
+
+	if len(raw.FieldsUnset) > 0 && string(raw.FieldsUnset) != "{}" && string(raw.FieldsUnset) != "null" {
+		var fu []string
+		if err := json.Unmarshal(raw.FieldsUnset, &fu); err != nil {
+			return err
+		}
+		b.FieldsUnset = fu
+	} else {
+		b.FieldsUnset = []string{}
+	}
+	return nil
+}
+
+// ApplyBatch validates and commits an atomic batch of member mutations and preconditions.
+func ApplyBatch(ctx context.Context, c redis.Cmdable, manifest BatchManifest) (Receipt, error) {
+	if manifest.Schema == 0 {
+		manifest.Schema = 1
+	}
+	if !ValidName(manifest.Table) {
+		return Receipt{}, fmt.Errorf("table %q: invalid name; run: nova-table help", manifest.Table)
+	}
+	if manifest.Epoch == "" {
+		manifest.Epoch = "0"
+	}
+	if manifest.ExpectedTableRevision == "" {
+		manifest.ExpectedTableRevision = "0"
+	}
+	if manifest.Members == nil {
+		manifest.Members = []BatchMemberEntry{}
+	}
+	body, err := payload(manifest)
+	if err != nil {
+		return Receipt{}, err
+	}
+	o := operation{table: manifest.Table, opID: manifest.OperationID, batch: true}
+	key := DefKey(manifest.Table)
+	cmd := c.FCall(ctx, FnApply, []string{key}, manifest.Table, body)
+	reply, err := cmd.Slice()
+	if err != nil {
+		return Receipt{}, fmt.Errorf("%s: %s: %w (changed=unknown); reconcile operation %q; run: %s", o.location(), FnApply, err, manifest.OperationID, o.remedy())
+	}
+	if err := o.refused(reply); err != nil {
+		return Receipt{}, err
+	}
+	if len(reply) < 2 {
+		return Receipt{}, fmt.Errorf("%s: missing committed receipt", o.location())
+	}
+	wire, ok := reply[1].([]any)
+	if !ok || (len(wire) != 6 && len(wire) != 7) || fmt.Sprint(wire[0]) != "RECEIPT" {
+		return Receipt{}, fmt.Errorf("%s: malformed committed receipt", o.location())
+	}
+	var r Receipt
+	r.ID = fmt.Sprint(wire[1])
+	r.Outcome = fmt.Sprint(wire[5])
+	for i, target := range []*uint64{&r.Epoch, &r.Before, &r.After} {
+		*target, err = strconv.ParseUint(fmt.Sprint(wire[i+2]), 10, 64)
+		if err != nil {
+			return Receipt{}, err
+		}
+	}
+	if len(wire) >= 7 {
+		var delta BatchDelta
+		if err := json.Unmarshal([]byte(fmt.Sprint(wire[6])), &delta); err != nil {
+			return Receipt{}, fmt.Errorf("unmarshal batch delta: %w (raw: %s)", err, fmt.Sprint(wire[6]))
+		}
+		r.BatchDelta = &delta
+	}
+	return r, nil
+}
+
+// ReadSetScope specifies members or row/col selections to read atomically.
+type ReadSetScope struct {
+	Members   []string        `json:"members,omitempty"`
+	Selection []CellSelection `json:"selection,omitempty"`
+}
+
+// CellSelection specifies a row and column for ReadSet.
+type CellSelection struct {
+	Row string `json:"row"`
+	Col string `json:"col"`
+}
+
+// ReadSetResult contains the verified atomic snapshot of members and table revision.
+type ReadSetResult struct {
+	Table    string
+	Epoch    uint64
+	Revision uint64
+	Members  []ReadSetMember
+	Missing  []string
+}
+
+// ReadSetMember represents one member returned by ReadSet.
+type ReadSetMember struct {
+	ID       string
+	Revision uint64
+	Placed   bool
+	Row      string
+	Col      string
+	Score    float64
+	Fields   map[string]string
+}
+
+func (r ReadSetResult) Member(id string) (ReadSetMember, bool) {
+	for _, m := range r.Members {
+		if m.ID == id {
+			return m, true
+		}
+	}
+	return ReadSetMember{}, false
+}
+
+func (r ReadSetResult) IsMissing(id string) bool {
+	for _, m := range r.Missing {
+		if m == id {
+			return true
+		}
+	}
+	return false
+}
+
+// ReadSet returns an atomic snapshot of members and table revision for a scope.
+func ReadSet(ctx context.Context, c redis.Cmdable, table string, scope ReadSetScope, epoch ...uint64) (ReadSetResult, error) {
+	if !ValidName(table) {
+		return ReadSetResult{}, fmt.Errorf("table %q: invalid name; run: nova-table help", table)
+	}
+	scopeBody, err := payload(scope)
+	if err != nil {
+		return ReadSetResult{}, err
+	}
+	args := []any{table, scopeBody}
+	if len(epoch) > 0 {
+		args = append(args, strconv.FormatUint(epoch[0], 10))
+	}
+	o := operation{table: table}
+	key := DefKey(table)
+	cmd := c.FCallRO(ctx, FnReadSet, []string{key}, args...)
+	reply, err := cmd.Slice()
+	if err != nil {
+		return ReadSetResult{}, fmt.Errorf("%s: %s: %w; run: %s", o.location(), FnReadSet, err, o.remedy())
+	}
+	if err := o.refused(reply); err != nil {
+		return ReadSetResult{}, err
+	}
+	if len(reply) != 6 || fmt.Sprint(reply[0]) != "SET" {
+		return ReadSetResult{}, fmt.Errorf("table %q: malformed read set reply", table)
+	}
+	res := ReadSetResult{
+		Table: fmt.Sprint(reply[1]),
+	}
+	res.Epoch, err = strconv.ParseUint(fmt.Sprint(reply[2]), 10, 64)
+	if err != nil {
+		return ReadSetResult{}, err
+	}
+	res.Revision, err = strconv.ParseUint(fmt.Sprint(reply[3]), 10, 64)
+	if err != nil {
+		return ReadSetResult{}, err
+	}
+	if rawMembers, ok := reply[4].([]any); ok {
+		res.Members = make([]ReadSetMember, 0, len(rawMembers))
+		for _, rm := range rawMembers {
+			item, ok := rm.([]any)
+			if !ok || len(item) < 7 {
+				return ReadSetResult{}, fmt.Errorf("table %q: malformed member in read set", table)
+			}
+			mRev, _ := strconv.ParseUint(fmt.Sprint(item[1]), 10, 64)
+			mScore, _ := strconv.ParseFloat(fmt.Sprint(item[5]), 64)
+			fieldsRaw, _ := item[6].([]any)
+			fields := make(map[string]string, len(fieldsRaw)/2)
+			for i := 0; i+1 < len(fieldsRaw); i += 2 {
+				fields[fmt.Sprint(fieldsRaw[i])] = fmt.Sprint(fieldsRaw[i+1])
+			}
+			res.Members = append(res.Members, ReadSetMember{
+				ID:       fmt.Sprint(item[0]),
+				Revision: mRev,
+				Placed:   fmt.Sprint(item[2]) == "1",
+				Row:      fmt.Sprint(item[3]),
+				Col:      fmt.Sprint(item[4]),
+				Score:    mScore,
+				Fields:   fields,
+			})
+		}
+	}
+	if rawMissing, ok := reply[5].([]any); ok {
+		res.Missing = make([]string, len(rawMissing))
+		for i, m := range rawMissing {
+			res.Missing[i] = fmt.Sprint(m)
+		}
+	}
+	return res, nil
+}
+
+// ReadSetMembers reads the specified member IDs in one atomic snapshot.
+func ReadSetMembers(ctx context.Context, c redis.Cmdable, table string, members []string, epoch ...uint64) (ReadSetResult, error) {
+	return ReadSet(ctx, c, table, ReadSetScope{Members: members}, epoch...)
 }

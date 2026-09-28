@@ -266,12 +266,21 @@ do
     if exists and epoch ~= d.epoch then return nil, nil, T.refuse('MEMBEREPOCH', id, epoch, d.epoch) end
     return h, exists
   end
+  function T.advance_member_rev(record, exists)
+    if not exists then return '1' end
+    return T.next(record.revision or '0')
+  end
   function T.record(d, id, place, record, exists)
     -- Legacy epoch-zero records acquire an explicit immutable epoch on first
     -- placement. Other record fields belong to their existing owner.
     if not record.epoch then T.stage(d, 'HSET', T.memberkey(d, id), 'epoch', d.epoch) end
-    if place then T.stage(d, 'HSET', T.memberkey(d, id), 'place:' .. d.name, place)
-    else T.stage(d, 'HDEL', T.memberkey(d, id), 'place:' .. d.name) end
+    local next_rev = T.advance_member_rev(record, exists)
+    if not next_rev then return T.refuse('OVERFLOW', id) end
+    if place then T.stage(d, 'HSET', T.memberkey(d, id), 'place:' .. d.name, place, 'revision', next_rev)
+    else
+      T.stage(d, 'HDEL', T.memberkey(d, id), 'place:' .. d.name)
+      T.stage(d, 'HSET', T.memberkey(d, id), 'revision', next_rev)
+    end
   end
   function T.change(d, id, from, to, score)
     d.members[#d.members + 1] = {id=id, from=from or '', to=to or '', score=score or ''}
@@ -351,7 +360,8 @@ do
           local record, exists, err = T.member(d, id)
           if err then return err end
           if not exists or record['place:' .. d.name] ~= T.place(row, col.name) then return T.refuse('DRIFT', row, col.name, id) end
-          T.record(d, id, nil, record, exists)
+          local rerr = T.record(d, id, nil, record, exists)
+          if rerr then return rerr end
           T.change(d, id, T.place(row, col.name), nil, score)
         end
         T.stage(d, 'DEL', T.cellkey(d, row, col.name))
@@ -924,7 +934,8 @@ do
         local drift = T.unindexed(d, id)
         if drift then return nil, drift end
         T.stage(d, 'ZADD', src.key, args[4], id)
-        T.record(d, id, here, record, exists)
+        local rerr = T.record(d, id, here, record, exists)
+        if rerr then return nil, rerr end
         T.change(d, id, nil, here, args[4])
         count = count + 1
       elseif op == 'remove' then
@@ -934,7 +945,8 @@ do
         else
           if not score then return nil, T.refuse('DRIFT', row, col, id) end
           T.stage(d, 'ZREM', src.key, id)
-          T.record(d, id, nil, record, exists)
+          local rerr = T.record(d, id, nil, record, exists)
+          if rerr then return nil, rerr end
           T.change(d, id, here, nil, score)
           count = count - 1
         end
@@ -946,7 +958,8 @@ do
         if dst.key ~= src.key then
           T.stage(d, 'ZREM', src.key, id)
           T.stage(d, 'ZADD', dst.key, score, id)
-          T.record(d, id, T.place(row, args[4]), record, exists)
+          local rerr = T.record(d, id, T.place(row, args[4]), record, exists)
+          if rerr then return nil, rerr end
           T.change(d, id, here, T.place(row, args[4]), score)
           count = count + 1
         end
@@ -1028,7 +1041,7 @@ do
     local record, exists, err = T.member(d, args[2])
     if err then return nil, err end
     if exists then return nil, T.refuse('MEMBEREXISTS', args[2]) end
-    T.stage(d, 'HSET', T.memberkey(d, args[2]), 'epoch', d.epoch)
+    T.stage(d, 'HSET', T.memberkey(d, args[2]), 'epoch', d.epoch, 'revision', '1')
     T.change(d, args[2], nil, nil, nil)
     return {'OK'}
   end))
@@ -1179,4 +1192,519 @@ do
     end
     return out
   end}
+
+  function T.read_set(keys, args)
+    if #args < 2 then return T.refuse('ARGS', 'read_set') end
+    local table_name = args[1]
+    local d, err = T.def(table_name, args[3])
+    if not d then return err end
+    local scope = T.decode(args[2])
+    if not scope or type(scope) ~= 'table' then return T.refuse('ARGS', 'read_set scope') end
+    local target_ids = {}
+    local seen_ids = {}
+    if scope.members and type(scope.members) == 'table' then
+      for _, id in ipairs(scope.members) do
+        if type(id) == 'string' and not seen_ids[id] then
+          seen_ids[id] = true
+          target_ids[#target_ids + 1] = id
+        end
+      end
+    elseif scope.selection and type(scope.selection) == 'table' then
+      for _, sel in ipairs(scope.selection) do
+        if type(sel) == 'table' and sel.row and sel.col then
+          local cell, why = T.cell(d, sel.row, sel.col, false)
+          if not cell then return why end
+          local ms = T.members(cell.key, cell.exclude or '')
+          for i = 1, #ms, 2 do
+            local id = ms[i]
+            if not seen_ids[id] then
+              seen_ids[id] = true
+              target_ids[#target_ids + 1] = id
+            end
+          end
+        end
+      end
+    else
+      for _, id in ipairs(scope) do
+        if type(id) == 'string' and not seen_ids[id] then
+          seen_ids[id] = true
+          target_ids[#target_ids + 1] = id
+        end
+      end
+    end
+    if #target_ids > 1024 then
+      return T.refuse('LIMIT', 'read set scope exceeds 1024 members')
+    end
+    local members_out = {}
+    local missing = {}
+    for _, id in ipairs(target_ids) do
+      local h, exists, why = T.member(d, id)
+      if why then return why end
+      if not exists then
+        missing[#missing + 1] = id
+      else
+        local rev = h.revision or '0'
+        local place = h['place:' .. d.name]
+        local placed = '0'
+        local row, col, score = '', '', '0'
+        if place then
+          local r, c = string.match(place, '^(.*):([^:]+)$')
+          if r and c then
+            local cell = T.cell(d, r, c, false)
+            if cell then
+              local s = redis.call('ZSCORE', cell.key, id)
+              if s then
+                placed = '1'
+                row, col = r, c
+                score = tostring(s)
+              end
+            end
+          end
+        end
+        local fields = {}
+        for k, v in pairs(h) do
+          if k ~= 'epoch' and k ~= 'revision' and string.sub(k, 1, 6) ~= 'place:' then
+            fields[#fields + 1] = k
+            fields[#fields + 1] = v
+          end
+        end
+        members_out[#members_out + 1] = {id, rev, placed, row, col, score, fields}
+      end
+    end
+    return {'SET', d.name, d.epoch, d.revision, members_out, missing}
+  end
+
+  function T.apply(keys, args)
+    if #args ~= 2 then return T.refuse('ARGS', 'apply') end
+    local table_name = args[1]
+    local raw_json = args[2]
+    if type(raw_json) ~= 'string' then return T.refuse('ARGS', 'apply payload') end
+    if #raw_json > 1048576 then return T.refuse('LIMIT', 'manifest exceeds 1 MiB') end
+    local digest = redis.sha1hex(raw_json)
+    local manifest = T.decode(raw_json)
+    if not manifest or type(manifest) ~= 'table' then return T.refuse('MANIFEST', 'invalid json') end
+    if manifest.schema ~= 1 then return T.refuse('SCHEMA', tostring(manifest.schema)) end
+    if manifest.table ~= table_name then return T.refuse('ARGS', 'table mismatch') end
+    if not T.word(manifest.operation_id) then return T.refuse('OPERATION', 'invalid operation_id') end
+    if not T.uint(manifest.epoch) then return T.refuse('EPOCH', tostring(manifest.epoch)) end
+    if not T.uint(manifest.expected_table_revision) then return T.refuse('REVISION', tostring(manifest.expected_table_revision)) end
+    if type(manifest.members) ~= 'table' then return T.refuse('ARGS', 'members array required') end
+    if not T.arrayfield(raw_json, 'members') then return T.refuse('MANIFEST', 'members must be json array') end
+
+    -- Check operation replay first:
+    local op_key = T.prefix(table_name, manifest.epoch) .. ':op:' .. manifest.operation_id
+    local op_record = T.hash(op_key)
+    if next(op_record) then
+      if op_record.request ~= raw_json then
+        return T.refuse('OPCONFLICT', manifest.operation_id)
+      end
+      return cjson.decode(op_record.result)
+    end
+
+    -- Open table definition:
+    local d, err = T.open(table_name, nil, manifest.epoch)
+    if not d then return err end
+    if not d.present then return T.refuse('NOTABLE') end
+
+    -- Unrecorded operation at stale epoch refuses:
+    if manifest.epoch ~= d.active then
+      return T.refuse('STALE', manifest.epoch, d.active)
+    end
+
+    -- Expected table revision:
+    if manifest.expected_table_revision ~= d.revision then
+      return T.refuse('REVISION', manifest.expected_table_revision, d.revision)
+    end
+
+    -- Validate bounds on members:
+    local members_list = manifest.members
+    local seen_ids = {}
+    local changed_entries = {}
+    local guard_entries = {}
+
+    for _, entry in ipairs(members_list) do
+      if type(entry) ~= 'table' or not T.word(entry.id) then
+        return T.refuse('MEMBER', 'invalid member entry or id')
+      end
+      if #entry.id > 256 then return T.refuse('LIMIT', 'member id exceeds 256 bytes') end
+      if seen_ids[entry.id] then return T.refuse('TWICE', entry.id) end
+      seen_ids[entry.id] = true
+
+      local is_change = entry.create ~= nil or entry.move ~= nil or entry.remove ~= nil or
+                        (entry.set ~= nil and next(entry.set) ~= nil) or
+                        (entry.unset ~= nil and #entry.unset > 0)
+      if is_change then
+        changed_entries[#changed_entries + 1] = entry
+      else
+        guard_entries[#guard_entries + 1] = entry
+      end
+    end
+
+    if #changed_entries > 128 then
+      return T.refuse('LIMIT', 'changed entries exceed 128')
+    end
+    if #guard_entries > 1024 then
+      return T.refuse('LIMIT', 'guard-only entries exceed 1024')
+    end
+
+    -- Pre-state evaluation & expectation checking:
+    local member_records = {}
+    local member_places = {}
+    local member_scores = {}
+
+    for _, entry in ipairs(members_list) do
+      local id = entry.id
+      local record, exists, why = T.member(d, id)
+      if why then return why end
+      member_records[id] = record or {}
+
+      local current_place = record and record['place:' .. d.name]
+      if current_place then
+        local r, c = string.match(current_place, '^(.*):([^:]+)$')
+        if not r or not c then return T.refuse('DRIFT', id, current_place) end
+        local cell, cell_err = T.cell(d, r, c, true)
+        if not cell then return cell_err end
+        local score = redis.call('ZSCORE', cell.key, id)
+        if not score then return T.refuse('DRIFT', r, c, id) end
+        member_places[id] = current_place
+        member_scores[id] = tonumber(score)
+      else
+        local drift = T.unindexed(d, id)
+        if drift then return drift end
+      end
+
+      -- Check expectations:
+      if entry.expect then
+        local exp = entry.expect
+        if exp.absent then
+          if exists or current_place then return T.refuse('MEMBEREXISTS', id) end
+        else
+          if not exists then return T.refuse('NOTMEMBER', id) end
+          local obs_rev = record.revision or '0'
+          if exp.revision and exp.revision ~= obs_rev then
+            return T.refuse('MEMBERREVISION', id, exp.revision, obs_rev)
+          end
+          if exp.place then
+            if not exp.place.row or not exp.place.col then
+              return T.refuse('ARGS', 'expect place wants row and col')
+            end
+            local exp_place = T.place(exp.place.row, exp.place.col)
+            if current_place ~= exp_place then
+              return T.refuse('DRIFT', id, exp_place, current_place or 'unplaced')
+            end
+          end
+          if exp.fields and type(exp.fields) == 'table' then
+            for f, guard in pairs(exp.fields) do
+              if type(guard) ~= 'table' then return T.refuse('FIELDGUARD', id, f, 'guard must be object') end
+              local num_conds = 0
+              if guard.equals ~= nil then num_conds = num_conds + 1 end
+              if guard.absent ~= nil then num_conds = num_conds + 1 end
+              if guard.one_of ~= nil then num_conds = num_conds + 1 end
+              if num_conds ~= 1 then return T.refuse('FIELDGUARD', id, f, 'exact one condition required') end
+              local actual = record[f]
+              if guard.equals ~= nil then
+                if type(guard.equals) ~= 'string' then return T.refuse('FIELDGUARD', id, f, 'equals must be string') end
+                if actual == nil or actual ~= guard.equals then
+                  return T.refuse('FIELDGUARD', id, f, 'equals', guard.equals, actual or '<absent>')
+                end
+              elseif guard.absent ~= nil then
+                if guard.absent ~= true then return T.refuse('FIELDGUARD', id, f, 'absent must be true') end
+                if actual ~= nil then
+                  return T.refuse('FIELDGUARD', id, f, 'absent', actual)
+                end
+              elseif guard.one_of ~= nil then
+                if type(guard.one_of) ~= 'table' or #guard.one_of == 0 then
+                  return T.refuse('FIELDGUARD', id, f, 'one_of must be nonempty array')
+                end
+                local matched = false
+                if actual ~= nil then
+                  for _, opt in ipairs(guard.one_of) do
+                    if type(opt) ~= 'string' then return T.refuse('FIELDGUARD', id, f, 'one_of items must be strings') end
+                    if actual == opt then matched = true; break end
+                  end
+                end
+                if not matched then
+                  return T.refuse('FIELDGUARD', id, f, 'one_of', cjson.encode(guard.one_of), actual or '<absent>')
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+
+    -- Validate mutation constraints before staging:
+    local plan = {}
+    for _, entry in ipairs(members_list) do
+      local id = entry.id
+      local record = member_records[id]
+      local current_place = member_places[id]
+      local item = {id=id, entry=entry, record=record, current_place=current_place}
+
+      if entry.create then
+        if entry.move or entry.remove then
+          return T.refuse('MUTATION', id, 'create cannot combine with move or remove')
+        end
+        if entry.expect and (entry.expect.revision or entry.expect.place or entry.expect.fields) then
+          return T.refuse('MUTATION', id, 'create cannot expect existing record')
+        end
+        if next(record) or current_place then
+          return T.refuse('MEMBEREXISTS', id)
+        end
+        local crow, ccol = entry.create.row, entry.create.col
+        local dst_cell, err = T.cell(d, crow, ccol, true)
+        if not dst_cell then return err end
+        local score = tonumber(entry.create.score)
+        if not score or score ~= score or score == math.huge or score == -math.huge then
+          return T.refuse('SCORE', id)
+        end
+        item.action = 'create'
+        item.dst_row = crow
+        item.dst_col = ccol
+        item.dst_place = T.place(crow, ccol)
+        item.dst_cell = dst_cell
+        item.score = score
+        item.before_place = ''
+        item.after_place = item.dst_place
+        item.before_rev = '0'
+        item.after_rev = '1'
+      elseif entry.move then
+        if entry.remove then return T.refuse('MUTATION', id, 'move cannot combine with remove') end
+        if not current_place then return T.refuse('NOTMEMBER', id) end
+        local mrow, mcol = entry.move.row, entry.move.col
+        local dst_cell, err = T.cell(d, mrow, mcol, true)
+        if not dst_cell then return err end
+        local score = entry.move.score ~= nil and tonumber(entry.move.score) or member_scores[id]
+        if not score or score ~= score or score == math.huge or score == -math.huge then
+          return T.refuse('SCORE', id)
+        end
+        local src_row, src_col = string.match(current_place, '^(.*):([^:]+)$')
+        local src_cell, err2 = T.cell(d, src_row, src_col, true)
+        if not src_cell then return err2 end
+        item.action = 'move'
+        item.src_row = src_row
+        item.src_col = src_col
+        item.src_place = current_place
+        item.src_cell = src_cell
+        item.dst_row = mrow
+        item.dst_col = mcol
+        item.dst_place = T.place(mrow, mcol)
+        item.dst_cell = dst_cell
+        item.score = score
+        item.before_place = current_place
+        item.after_place = item.dst_place
+        item.before_rev = record.revision or '0'
+        item.after_rev = T.next(item.before_rev)
+        if not item.after_rev then return T.refuse('OVERFLOW', id) end
+      elseif entry.remove then
+        if not current_place then return T.refuse('NOTMEMBER', id) end
+        local src_row, src_col = string.match(current_place, '^(.*):([^:]+)$')
+        local src_cell, err = T.cell(d, src_row, src_col, true)
+        if not src_cell then return err end
+        item.action = 'remove'
+        item.src_row = src_row
+        item.src_col = src_col
+        item.src_place = current_place
+        item.src_cell = src_cell
+        item.before_place = current_place
+        item.after_place = ''
+        item.before_rev = record.revision or '0'
+        item.after_rev = T.next(item.before_rev)
+        if not item.after_rev then return T.refuse('OVERFLOW', id) end
+      else
+        item.before_place = current_place or ''
+        item.after_place = current_place or ''
+        item.before_rev = record.revision or '0'
+        local has_fields = (entry.set ~= nil and next(entry.set) ~= nil) or
+                           (entry.unset ~= nil and #entry.unset > 0)
+        if has_fields then
+          if not next(record) then return T.refuse('NOTMEMBER', id) end
+          item.action = 'fields'
+          item.after_rev = T.next(item.before_rev)
+          if not item.after_rev then return T.refuse('OVERFLOW', id) end
+        else
+          item.action = 'guard'
+          item.after_rev = item.before_rev
+        end
+      end
+
+      if entry.set then
+        if type(entry.set) ~= 'table' then return T.refuse('ARGS', 'set must be object') end
+        local count = 0
+        for f, val in pairs(entry.set) do
+          count = count + 1
+          if count > 128 then return T.refuse('LIMIT', 'fields count exceeds 128') end
+          if f == 'epoch' or f == 'revision' or string.sub(f, 1, 6) == 'place:' then
+            return T.refuse('RESERVEDFIELD', id, f)
+          end
+          if not T.word(f) or type(val) ~= 'string' then
+            return T.refuse('ARGS', 'field name and value must be valid strings')
+          end
+          if #val > 65536 then return T.refuse('LIMIT', 'field value exceeds 64 KiB') end
+        end
+      end
+      if entry.unset then
+        if type(entry.unset) ~= 'table' then return T.refuse('ARGS', 'unset must be array') end
+        for _, f in ipairs(entry.unset) do
+          if f == 'epoch' or f == 'revision' or string.sub(f, 1, 6) == 'place:' then
+            return T.refuse('RESERVEDFIELD', id, f)
+          end
+          if not T.word(f) then return T.refuse('ARGS', 'invalid unset field name') end
+        end
+      end
+
+      plan[#plan + 1] = item
+    end
+
+    local after_table_rev = T.next(d.revision)
+    if not after_table_rev then return T.refuse('REVISION', d.revision) end
+
+    -- Stage mutations:
+    local delta_members = {}
+    local real_changes = 0
+
+    for _, item in ipairs(plan) do
+      local id = item.id
+      local entry = item.entry
+      local mkey = T.memberkey(d, id)
+      local delta_item = {
+        id = id,
+        before_place = item.before_place,
+        after_place = item.after_place,
+        before_rev = item.before_rev,
+        after_rev = item.after_rev,
+        fields_set = entry.set or {},
+        fields_unset = entry.unset or {},
+      }
+      delta_members[#delta_members + 1] = delta_item
+
+      if item.action == 'create' then
+        real_changes = real_changes + 1
+        T.stage(d, 'ZADD', item.dst_cell.key, item.score, id)
+        T.stage(d, 'HSET', mkey, 'epoch', d.epoch, 'place:' .. d.name, item.dst_place, 'revision', '1')
+        T.change(d, id, nil, item.dst_place, item.score)
+      elseif item.action == 'move' then
+        real_changes = real_changes + 1
+        if item.src_cell.key ~= item.dst_cell.key then
+          T.stage(d, 'ZREM', item.src_cell.key, id)
+          T.stage(d, 'ZADD', item.dst_cell.key, item.score, id)
+          T.stage(d, 'HSET', mkey, 'place:' .. d.name, item.dst_place, 'revision', item.after_rev)
+          T.change(d, id, item.src_place, item.dst_place, item.score)
+        else
+          T.stage(d, 'ZADD', item.dst_cell.key, item.score, id)
+          T.stage(d, 'HSET', mkey, 'revision', item.after_rev)
+          T.change(d, id, item.src_place, item.dst_place, item.score)
+        end
+      elseif item.action == 'remove' then
+        real_changes = real_changes + 1
+        T.stage(d, 'ZREM', item.src_cell.key, id)
+        T.stage(d, 'HDEL', mkey, 'place:' .. d.name)
+        T.stage(d, 'HSET', mkey, 'revision', item.after_rev)
+        T.change(d, id, item.src_place, nil, member_scores[id])
+      elseif item.action == 'fields' then
+        real_changes = real_changes + 1
+        T.stage(d, 'HSET', mkey, 'revision', item.after_rev)
+      end
+
+      if entry.set and next(entry.set) then
+        local hcmd = {'HSET', mkey}
+        for f, val in pairs(entry.set) do
+          hcmd[#hcmd + 1] = f
+          hcmd[#hcmd + 1] = val
+        end
+        T.stage(d, unpack(hcmd))
+      end
+      if entry.unset and #entry.unset > 0 then
+        local dcmd = {'HDEL', mkey}
+        for _, f in ipairs(entry.unset) do
+          dcmd[#dcmd + 1] = f
+        end
+        T.stage(d, unpack(dcmd))
+      end
+    end
+
+    local outcome = real_changes == 0 and 'noop' or 'changed'
+
+    -- Stage table revision increment:
+    T.stage(d, 'HSET', d.key .. ':revision', 'n', after_table_rev)
+    T.stage(d, 'HSET', d.prefix .. ':definition', '_present', '1', '_revision', after_table_rev)
+
+    -- Stage change stream entry (XADD):
+    local stream = d.key .. ':changes'
+    local cells_list = {}
+    for c in pairs(d.cells) do cells_list[#cells_list + 1] = c end
+    table.sort(cells_list)
+
+    local delta = {
+      operation_id = manifest.operation_id,
+      digest = digest,
+      actor = manifest.actor or '',
+      guard_count = #guard_entries,
+      changed_count = #changed_entries,
+      members = delta_members,
+    }
+
+    local event = {
+      'XADD', stream, '*',
+      'verb', 'apply',
+      'args', cjson.encode({table_name, manifest.operation_id, digest}),
+      'epoch', d.epoch,
+      'rev_before', d.revision,
+      'rev_after', after_table_rev,
+      'actor', manifest.actor or '',
+      'fence', '',
+      'idem', '',
+      'cells', #cells_list == 0 and '[]' or cjson.encode(cells_list),
+      'members', #d.members == 0 and '[]' or cjson.encode(d.members),
+      'outcome', outcome,
+      'batch_delta', cjson.encode(delta)
+    }
+    T.stage(d, unpack(event))
+
+    -- Check ACLs on all staged commands:
+    for _, cmd in ipairs(d.commands) do
+      if not redis.acl_check_cmd(unpack(cmd)) then
+        return T.refuse('NOPERM', cmd[1], cmd[2])
+      end
+    end
+
+    if not redis.acl_check_cmd('HSET', op_key, 'operation_id', manifest.operation_id) then
+      return T.refuse('NOPERM', 'HSET', op_key)
+    end
+
+    -- Execute all staged commands:
+    local stream_id = ''
+    for _, cmd in ipairs(d.commands) do
+      local res = redis.call(unpack(cmd))
+      if cmd[1] == 'XADD' then stream_id = res end
+    end
+
+    local reply = {
+      'OK',
+      {'RECEIPT', stream_id, d.epoch, d.revision, after_table_rev, outcome, cjson.encode(delta)}
+    }
+
+    -- Persist operation record:
+    redis.call('HSET', op_key,
+      'operation_id', manifest.operation_id,
+      'digest', digest,
+      'request', raw_json,
+      'stream_id', stream_id,
+      'epoch', d.epoch,
+      'rev_before', d.revision,
+      'rev_after', after_table_rev,
+      'outcome', outcome,
+      'result', cjson.encode(reply)
+    )
+
+    return reply
+  end
+
+  redis.register_function('ns_table_apply', function(keys, args)
+    return T.apply(keys, args)
+  end)
+  redis.register_function{function_name = 'ns_table_read_set', flags = {'no-writes'}, callback = function(keys, args)
+    return T.read_set(keys, args)
+  end}
 end
+
