@@ -237,6 +237,7 @@ func ReadBox(path string) (Box, error) {
 }
 
 // WriteBox replaces the fuse box atomically. See note 3.
+// A symlink at the cleaned path is refused and is not followed.
 func WriteBox(path string, b Box) error {
 	if b.Quarantine == nil {
 		b.Quarantine = map[string]Fuse{}
@@ -250,16 +251,6 @@ func WriteBox(path string, b Box) error {
 	target := path
 	if target != "" {
 		target = filepath.Clean(target)
-	}
-	if fi, err := os.Lstat(target); err == nil && fi.Mode()&os.ModeSymlink != 0 {
-		if resolved, err := filepath.EvalSymlinks(target); err == nil {
-			target = resolved
-		} else if dest, err := os.Readlink(target); err == nil {
-			if !filepath.IsAbs(dest) {
-				dest = filepath.Join(filepath.Dir(target), dest)
-			}
-			target = filepath.Clean(dest)
-		}
 	}
 
 	dir := filepath.Dir(target)

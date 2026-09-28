@@ -1855,7 +1855,10 @@ func TestLateFlagRefusalNamesDoor(t *testing.T) {
 	}
 }
 
-func TestLockdownOnSymlinkedBoxLandsAndCheckFails(t *testing.T) {
+// TestLockdownOnSymlinkedBoxRefuses asserts that lockdown on a symlinked box
+// path is refused because WriteBox does not follow symlinks. The symlink
+// remains intact and the target file is unchanged.
+func TestLockdownOnSymlinkedBoxRefuses(t *testing.T) {
 	t.Parallel()
 
 	if runtime.GOOS == "windows" {
@@ -1867,6 +1870,10 @@ func TestLockdownOnSymlinkedBoxLandsAndCheckFails(t *testing.T) {
 	if err := fuse.WriteBox(realBox, fuse.Box{}); err != nil {
 		t.Fatalf("WriteBox failed: %v", err)
 	}
+	before, err := os.ReadFile(realBox)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
 
 	symlinkedBox := filepath.Join(dir, "symlink-fuses.json")
 	if err := os.Symlink(realBox, symlinkedBox); err != nil {
@@ -1875,11 +1882,11 @@ func TestLockdownOnSymlinkedBoxLandsAndCheckFails(t *testing.T) {
 
 	now := nowish()
 	code, out, errOut := capture(t, []string{"lockdown", "--box", symlinkedBox, "symlink lockdown test"}, now)
-	if code != 0 {
-		t.Fatalf("lockdown on symlinked box failed: exit %d\nstdout: %q\nstderr: %q", code, out, errOut)
+	if code != 1 {
+		t.Fatalf("lockdown on symlinked box exit = %d, want 1\nstdout: %q\nstderr: %q", code, out, errOut)
 	}
-	if !strings.Contains(out, "LOCKDOWN OK") {
-		t.Errorf("stdout = %q, want LOCKDOWN OK", out)
+	if !strings.Contains(errOut, "LOCKDOWN FAIL") || !strings.Contains(errOut, "symlink") {
+		t.Errorf("stderr = %q, want LOCKDOWN FAIL naming symlink", errOut)
 	}
 
 	// Symlink must still be intact as a symlink
@@ -1891,21 +1898,13 @@ func TestLockdownOnSymlinkedBoxLandsAndCheckFails(t *testing.T) {
 		t.Fatalf("symlinked box %q is no longer a symlink", symlinkedBox)
 	}
 
-	// Check on the symlink must fail because lockdown was recorded on the real box
-	code, _, errOut = capture(t, []string{"check", "--box", symlinkedBox}, now)
-	if code != 1 {
-		t.Fatalf("check on symlinked box: exit = %d, want 1", code)
+	// Target bytes must not change
+	after, err := os.ReadFile(realBox)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
 	}
-	if !strings.Contains(errOut, "FUSE FAIL lockdown") {
-		t.Errorf("stderr = %q, want FUSE FAIL lockdown", errOut)
-	}
-
-	// Check on the real box must also fail
-	code, _, errOut = capture(t, []string{"check", "--box", realBox}, now)
-	if code != 1 {
-		t.Fatalf("check on real box: exit = %d, want 1", code)
-	}
-	if !strings.Contains(errOut, "FUSE FAIL lockdown") {
-		t.Errorf("stderr = %q, want FUSE FAIL lockdown", errOut)
+	if string(after) != string(before) {
+		t.Fatalf("target bytes changed:\nbefore: %s\nafter: %s", before, after)
 	}
 }
+
