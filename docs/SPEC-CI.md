@@ -1276,7 +1276,7 @@ number of `key=value` extras — the grammar `internal/buildinfo` both writes an
 reads, and `docs/SPEC.md` states once.
 **The mistake it prevents.** A version line of a different shape (`SANDBOX
 VERSION tool=... version=...`) is refused by every reader, and
-`nova-version snapshot --bin ~/.local/bin` refuses the whole install over one
+`nova-version snapshot --bin ~/.local/bin --out ./tools.tsv` refuses the whole install over one
 such tool, exit 2. One grammar with `key=value` extras means a tool can say one
 more true thing about itself — `snapshot` reads the four tokens through
 `internal/buildinfo.Parse` and accepts the extras — while two shapes would mean
@@ -1454,10 +1454,11 @@ portability — not at cut time, where it would have cost nothing.
 **The test.** `TestNoCardTemplateCarriesAnOSSpecificCommand`
 (`internal/ci/ci_cardtemplates_test.go`), over the checker in
 `internal/ci/ci_cardtemplates.go`, which reads every `*.md` and `*.card` under
-`CardTemplateDirs` as text, and over every card template `swarm.TemplateNames()`
-names (read through `swarm.Template`). Neither directory in `CardTemplateDirs`
-exists in the tree, so the templates the rule reads are the `swarm.TemplateNames()`
-ones; a directory that is not there is skipped, and a run that reads NO template
+`CardTemplateDirs` as text, and over the card and pulse templates selected from
+`swarm.TemplateNames()` (a name that is `models.tsv`, or that is neither
+`swarm.IsCardTemplate` nor `swarm.IsPulseTemplate`, is skipped), each read through
+`swarm.Template`. Neither directory in `CardTemplateDirs` exists in the tree, so
+the templates the rule reads are those selected ones; a directory that is not there is skipped, and a run that reads NO template
 at all is red, because that is how the list goes stale.
 **Its allowlist.** `internal/ci/testdata/cardtemplate_allowlist.txt`, one
 `file spell date reason` per row — empty, matched by file and spelling and never by line; shrink-only in both
