@@ -49,11 +49,11 @@ KERNEL OK bytes=771 budget=4000
 *Draft, for Stella, who owns the docs.*
 
 A tool is not finished until it is tested, dogfooded by a non-author on real
-work with the edges filed, the feedback applied, documented and released
-(Glenn, 2026-09-18). Nothing tracked the middle of that sentence, so the claim
-was whatever the last person to speak said it was. `dogfood` makes it a record:
-the verbs come from the binaries or from this file, the runs come from
-receipts, and the gate is one exit code a release lane can call.
+work with the edges filed, the feedback applied, documented and released.
+The middle of that sentence needs a record, or the claim is whatever the last
+person to speak says it is. `dogfood` is that record: the verbs come from the
+binaries or from this file, the runs come from receipts, and the gate is one
+exit code a release lane can call.
 
 ```
 $ nova-check dogfood record --tool nova-check --verb links --by Stella --ok \
@@ -197,8 +197,8 @@ HYGIENE NO base=main head=card paths=sign/** findings=4
 
 ### Are we converging
 
-Glenn, 2026-09-15: *convergence is the health metric* — the contraction ratio
-per stream, every tick. `convergence` is that reading, mechanised: seven streams,
+*Convergence is the health metric*: the contraction ratio per stream, every
+tick. `convergence` is that reading, mechanised: seven streams,
 each read from a real source, each printed as a number now, the same number at
 `--since`, the ratio between them and a trend in that stream's own direction of
 travel.
