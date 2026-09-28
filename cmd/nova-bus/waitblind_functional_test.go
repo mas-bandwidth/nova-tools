@@ -1,6 +1,10 @@
+//go:build functional
+
 package main
 
-import "testing"
+import (
+	"testing"
+)
 
 // Issue #1518: a line whose CURSOR is further behind than the walk's bound never sees new
 // mail, and says nothing about it.

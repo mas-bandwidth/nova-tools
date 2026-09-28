@@ -1,3 +1,5 @@
+//go:build functional
+
 package main
 
 import (
@@ -1390,7 +1392,7 @@ func TestTheRefusalTableIsAccountedForBelow(t *testing.T) {
 		"TestAFilesystemWithNoCreateExclusivePublishIsRefused",
 		"TestASecondReplyOnOneCheckoutWaitsAndThenRefuses",
 	} {
-		raw, err := os.ReadFile("reply_test.go")
+		raw, err := os.ReadFile("reply_functional_test.go")
 		if err != nil {
 			t.Fatal(err)
 		}

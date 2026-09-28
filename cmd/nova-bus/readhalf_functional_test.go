@@ -1,14 +1,6 @@
-package main
+//go:build functional
 
-// The read half of docs/SPEC-BUS-REPLY.md, draft 8: one opt-in flag, two limits, one
-// counted frame, one receipt line, one continuation input and one cursor rule.
-//
-// Every test here is named by that document's `The tests, by name` section and asserts the
-// `expected=` observable it carries, verbatim. The fixtures are built to the byte counts
-// those strings quote -- a body is 204 bytes where the document says `bytes=612` for three
-// of them -- so the assertion is the document's sentence and not a number this file chose.
-//
-// The continuation half of the same section is in continuation_test.go.
+package main
 
 import (
 	"encoding/base64"

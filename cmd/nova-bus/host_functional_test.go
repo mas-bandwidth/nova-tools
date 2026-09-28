@@ -1,3 +1,5 @@
+//go:build functional
+
 package main
 
 import (
@@ -118,7 +120,7 @@ func TestASendWithNoHostIsTheLineItAlwaysWas(t *testing.T) {
 }
 
 // laneNoteText is the bytes of the one note in a lane, read back off the checkout.
-// laneNote (preflight_reply_test.go) answers the path; this answers what is in it.
+// laneNote (preflight_reply_functional_test.go) answers the path; this answers what is in it.
 func laneNoteText(t *testing.T, checkout, lane string) string {
 	t.Helper()
 	dir := filepath.Join(checkout, lane)
