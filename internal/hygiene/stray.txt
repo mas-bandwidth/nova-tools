@@ -14,12 +14,12 @@
 #
 # The second column is the allowlisted exception, and it names the CARD KIND it is for
 # -- never a path and never a card. A kind is a shape of work the tool declares and a
-# card cannot widen (SPEC-TOOLWORK §5 rule 6), so an exception written here is an
+# card cannot widen (SPEC-TOOLWORK.md hygiene rule 6), so an exception written here is an
 # exception the tool grants to a shape of work, not one a worker can claim.
 
 # The worker's own paperwork. The card ends at the commit; the report is the launcher's
-# and belongs in the job directory, never in the repository (SPEC-TOOLWORK §4 rule 1:
-# a job that ships its own OUTCOME is a stray-file, and the same for what it says).
+# and belongs in the job directory, never in the repository (SPEC-TOOLWORK.md
+# hygiene rule 4).
 RESULT.md
 PROMPT.md
 OUTCOME

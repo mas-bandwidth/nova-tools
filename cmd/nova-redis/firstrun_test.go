@@ -13,7 +13,7 @@ import (
 // TestFirstRunTranscriptIsWhatTheToolPrints runs every `$` line of the
 // `### First run` under `## nova-redis` in docs/TESTS.md through run() and
 // compares what it prints with the shared comparator (onboarding.Execute ->
-// onboarding.Compare, docs/SPEC-TOOLWORK.md §3), line for line. Reaching the
+// onboarding.Compare, docs/SPEC-TOOLWORK.md documents rule 2), line for line. Reaching the
 // store fails the test: connect reads the environment before it opens
 // anything, and that first read stops the test before any dial. Both lines are
 // refusals made before the instance is dialled, which is the promise the

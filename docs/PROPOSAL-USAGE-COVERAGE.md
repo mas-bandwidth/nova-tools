@@ -61,8 +61,7 @@ Cost has an explicit basis, currency and rate/source revision where relevant:
 
 A route must be explicitly configured as local and verified by the local adapter;
 missing credentials, a model name containing `local`, or a loopback proxy address
-alone does not establish free inference. Go/Zen routing and reservations follow
-[the swarm amendment](SPEC-SWARM-PROFILES.md).
+alone does not establish free inference.
 
 All incurred work counts, including failures, timeouts, retries, discarded answers,
 review and correction. Reservations and estimated liabilities are admission state,

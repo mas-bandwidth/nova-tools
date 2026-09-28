@@ -58,8 +58,7 @@ const (
 	IndexName = "INDEX"
 	// BeatName is a line's liveness beat: one line, an RFC 3339 UTC stamp and the
 	// cursor sha, rewritten on every `wait` poll tick so a waiting line's cursor that
-	// does not move still records that the line is alive. See docs/SPEC-WORK.md,
-	// Presence, source bus-beat.
+	// does not move still records that the line is alive.
 	BeatName = "BEAT"
 )
 

@@ -114,14 +114,14 @@ func IsTier(t string) bool {
 
 // Prompt is one decision type's question to Jev, versioned: the report is per
 // version, so a change is measured before it stays. The built-in prompts are
-// docs/jev/<type>.<version>.txt (Render; a unit test holds them equal).
+// deprecated/docs/jev/<type>.<version>.txt (Render; a unit test holds them equal).
 type Prompt struct {
 	Version      string
 	Instructions string
 	Options      map[string]string
 }
 
-// Render is the prompt as its docs/jev file holds it.
+// Render is the prompt as its deprecated/docs/jev file holds it.
 func (p Prompt) Render() string {
 	var b strings.Builder
 	b.WriteString("VERSION: " + p.Version + "\n\n" + strings.TrimSpace(p.Instructions) + "\n\nOPTIONS:\n")

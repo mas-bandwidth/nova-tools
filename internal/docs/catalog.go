@@ -112,12 +112,9 @@ var DefaultCatalog = []Entry{
 	E("internal/yield", "CI over work: a copy or local test run steps itself to nice 15 before it execs (nova-tools#4293)", "go test ./internal/yield", "go test ./internal/yield"),
 
 	// docs/
-	E("docs/spec-pulse", "the card contract the pulse cut engine writes (10-the-card-as-cut-writes-it.md); the rest of the spec folder deleted 2026-09-24", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/fixtures", "doc examples and test fixtures", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/nova-config", "nova-config guide: the permanent configuration and its apply into Redis", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/nova-table", "nova-table guide: the design statement, the keys, the verbs, the render rules", "go test ./internal/docs", "go test ./internal/docs"),
-	E("docs/roadmaps", "sprint roadmaps and milestones", "go test ./internal/docs", "go test ./internal/docs"),
-	E("docs/schemas", "event and payload schema definitions", "go test ./internal/docs", "go test ./internal/docs"),
 
 	// tools/
 	E("tools/agentsmap", "AGENTS.md map generator CLI", "go test ./internal/docs", "make map"),

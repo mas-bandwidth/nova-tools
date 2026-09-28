@@ -12,7 +12,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 )
 
-// THE CLASS RULE BEHIND THE DOCUMENTS (SPEC-TOOLWORK §7 rules 2-3).
+// THE CLASS RULE BEHIND THE DOCUMENTS (SPEC-TOOLWORK.md documents rules 2-3).
 //
 // docs/TESTS.md is what a stranger is pointed at first, and every block in it is
 // real output pasted whole. The class test this repository carried asserted that
@@ -107,7 +107,7 @@ func TestEveryTranscriptIsExecutedLineForLine(t *testing.T) {
 		}
 		for _, other := range others {
 			violations = append(violations, fmt.Sprintf(
-				"cmd/%s compares its transcript with %s, which %s; %s is the one comparison a firstrun_test.go may make (SPEC-TOOLWORK §7 rule 2)",
+				"cmd/%s compares its transcript with %s, which %s; %s is the one comparison a firstrun_test.go may make (SPEC-TOOLWORK.md documents rule 2)",
 				tool, other.spelling, other.lets, theComparator))
 		}
 	}
@@ -154,10 +154,8 @@ func TestEveryTranscriptIsExecutedLineForLine(t *testing.T) {
 //
 // It is still a proxy and this test says so rather than pretending otherwise:
 // the narrowing is written out in docs/SPEC-CI.md. What it cannot see is a file
-// that opens the document and compares something else it built; what closes THAT
-// is the `transcript-test` kind's own control (SPEC-TOOLWORK §7 rule 4), which
-// seeds the tool's real section three ways and demands red -- a control that
-// runs per card, where this class test runs per tree.
+// that opens the document and compares something else it built; a reader of that
+// test's change is what closes it.
 func readsTheSection(tree *repoTreeIndex, tool string) (bool, []struct{ spelling, lets string }) {
 	dir := "cmd/" + tool + "/"
 	calls := false

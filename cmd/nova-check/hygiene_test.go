@@ -16,7 +16,7 @@ import (
 
 // The verb's own surface: the one HYGIENE line, the cap-and-count listing, and the
 // exit codes SPEC.md's Conventions give -- 0 clean, 1 findings, 2 could not run.
-// SPEC-TOOLWORK.md §3 rule 7 (PR #1637), issue #1647.
+// SPEC-TOOLWORK.md hygiene rule 1 (PR #1637), issue #1647.
 
 func hygGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
@@ -496,8 +496,8 @@ func hygFields(cmd string) ([]string, error) {
 // The Opus readers' dogfood over seventeen PRs, 2026-09-19 (issue #1848). `--kind` went
 // straight through to hygiene.Check, where it unlocks an allowlisted stray exception and
 // nothing else, so a kind the tool does not declare unlocked nothing and the run printed
-// `HYGIENE OK`. SPEC-TOOLWORK §5 rule 3: "A kind the table does not hold is refused by
-// `cut` and abstained by `accept`; there is no default kind." A clean answer about a
+// `HYGIENE OK`. SPEC-TOOLWORK.md hygiene rule 6: a kind the tool does not
+// declare is refused, and there is no default kind. A clean answer about a
 // shape of work that does not exist is the #1805 failure again, one flag along.
 func TestHygieneRefusesAKindTheToolDoesNotDeclare(t *testing.T) {
 	t.Parallel()
