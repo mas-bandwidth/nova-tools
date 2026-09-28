@@ -17,7 +17,7 @@ func writePullCard(t *testing.T, queue, name, body string) {
 	}
 }
 
-// a-batch-clips-between-cards (docs/SPEC-JOBS.md section 6): every card on the shared
+// a-batch-clips-between-cards (deprecated/docs/SPEC-JOBS.md section 6): every card on the shared
 // clone is clipped before the next card runs, so card n+1 never sees card n's uncommitted
 // diff and every card keeps its own RESULT.md.
 func TestABatchClipsBetweenCards(t *testing.T) {
@@ -72,7 +72,7 @@ func TestABatchClipsBetweenCards(t *testing.T) {
 	}
 }
 
-// a-card-over-effort-returns-the-remainder (docs/SPEC-JOBS.md section 6): a card past its
+// a-card-over-effort-returns-the-remainder (deprecated/docs/SPEC-JOBS.md section 6): a card past its
 // :effort stops the batch, and every card not done -- that card and the ones behind it --
 // goes back to queue/.
 func TestACardOverEffortReturnsTheRemainder(t *testing.T) {

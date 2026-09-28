@@ -7,9 +7,10 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/worklang"
 )
 
-// The needs/blocks graph and readiness contract of docs/SPEC-WORKLANG.md, seen
-// red first: four tests, no network and no model call, every refusal named by
-// the field it refuses and the id it names.
+// The needs/blocks graph and readiness contract of internal/worklang's plan code
+// (docs/SPEC-WORKLANG.md specifies the :needs and :blocks keys the reader
+// accepts, not the graph): four tests, no network and no model call, every
+// refusal named by the field it refuses and the id it names.
 func TestWorklangNeedsGraph(t *testing.T) {
 	t.Parallel()
 

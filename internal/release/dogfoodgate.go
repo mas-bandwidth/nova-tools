@@ -68,7 +68,7 @@ const DogfoodWaiverPrefix = "Dogfood gate waived: "
 // and on `--help` for the two verbs that run it.
 var DogfoodNote = "cut and build run the dogfood gate FIRST -- `nova-check dogfood gate --cli <reference> --receipts <dir>`, in process -- and refuse on an OPEN EDGE: " +
 	"a verb somebody ran, that did not do what they needed, and that nobody has run since and said it did. " +
-	"Glenn, 2026-09-18: a tool is done when it is tested, dogfooded by a non-author on real work, and the feedback is APPLIED; feedback filed is not feedback applied. " +
+	"A tool is done when it is tested, dogfooded by a non-author on real work, and the feedback is APPLIED; feedback filed is not feedback applied. " +
 	"--cli names the command reference and defaults to docs/CLI.md beside the checkout the verb was already given (--changelog for cut, --source for build). " +
 	"--receipts names the receipts and defaults to ~/" + DefaultReceiptsDir + " when that directory exists. " +
 	"A run with neither is NOT a run that passed: it prints `dogfood-gate=skipped` and names what was missing. " +

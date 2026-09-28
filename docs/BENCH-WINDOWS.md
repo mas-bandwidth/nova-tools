@@ -1,102 +1,73 @@
-# BENCH-WINDOWS — Provisioning and Standard for Windows Fleet Benches
+# BENCH-WINDOWS — a native Windows machine as a release target
 
-*The operational contract, provisioning checklist, and verification standard for Windows bench machines (e.g. AMD Ryzen Threadripper workstations) in the Nova fleet.*
+*What `nova-update release adopt --platform windows-amd64` assumes of the native Windows
+machine it installs to: its account, its ssh shell, its paths and the checks that say it is
+ready.*
 
-## 1. Role and Principles
+**Scope.** This page is the contract of a **native** Windows install target. No fleet bench
+runs native Windows: Windows hardware that does fleet work is a Linux bench under WSL2, and
+its standard is [BENCH-STANDARD-WINDOWS.md](BENCH-STANDARD-WINDOWS.md). The release verbs
+that read this page are specified in [SPEC-RELEASE.md](SPEC-RELEASE.md), section 11.
 
-Windows bench machines run native Windows workloads, cross-platform verification, and swarm worker execution under hardware-accelerated virtualization.
+## 1. Principles
 
-1. **Native Win32, Never WSL for the Bench**:
-   The bench environment is strictly native Windows. WSL (`Microsoft-Windows-Subsystem-Linux`) is neither the bench environment nor the build toolchain. A tool running on a Windows bench executes as a native Win32/x64 process.
-2. **Containment Below the Model**:
-   Pull workers execute cards inside containerized or sandbox boundaries (Hyper-V / Windows Containers / Windows Sandbox), preventing unsandboxed host mutation.
-3. **Dedicated Service Account**:
-   Work and runner daemons run under the unprivileged service user `nova`, never under a desktop interactive user or `SYSTEM`.
-4. **Autonomous Power & Remote Management**:
-   OpenSSH Server (`sshd`) provides headless remote orchestration. Wake-on-LAN (Magic Packet) allows power-saving sleep and instant wake by `nova-pulse fleet wake`.
+1. **Native Win32.** The tools run as native Win32/x64 processes; WSL is not this
+   machine's environment.
+2. **Dedicated service account.** Everything runs as the unprivileged user `nova`, never as
+   a desktop interactive user or `SYSTEM`.
+3. **A POSIX shell on the far side of ssh.** OpenSSH Server (`sshd`) is the one remote
+   door, and its shell is Git Bash, so the command lines `adopt` composes parse the same way
+   they do on every other platform.
 
----
+## 2. Baseline
 
-## 2. Hardware and OS Baseline
-
-| Attribute | Standard Value |
+| Attribute | Standard value |
 |---|---|
-| Workstation | AMD Ryzen Threadripper (x64 / AMD64) |
-| Operating System | Windows 11 Pro / Enterprise (Build 22631+) |
-| Service User | `nova` (Member of `Users`; dedicated non-admin profile) |
-| Shell for SSH | Git Bash (`C:\Program Files\Git\bin\bash.exe`) or native Windows OpenSSH with Bash in `sshd_config` |
-| Virtualization Flags | Hyper-V, Containers, Windows Sandbox enabled |
-| Network / Management | Tailscale interface + OpenSSH Server (`sshd`) on port 22 |
-| Power Management | Wake-on-LAN (Magic Packet) enabled on primary NIC; S3/Modern Standby sleep supported |
+| Operating system | Windows 11 Pro / Enterprise (build 22631+), x64 |
+| Service user | `nova` (member of `Users`; dedicated non-admin profile) |
+| Shell for SSH | Git Bash (`C:\Program Files\Git\bin\bash.exe`), set as sshd's shell |
+| Network | Tailscale interface + OpenSSH Server (`sshd`) on port 22 |
 
----
+## 3. Toolchain and paths
 
-## 3. Toolchain & Environment
+- **Git:** native Git for Windows (`git version ...windows...`), at
+  `C:\Program Files\Git\cmd\git.exe` and `C:\Program Files\Git\bin\git.exe`; not a WSL shim.
+- **Go** (only where a release is built on this machine): the version `go.mod`'s `go` line
+  names, at `C:\sdk\go\bin`, on the **system** PATH so a non-interactive OpenSSH session
+  inherits it without a user shell profile.
+- **Nova tools:** installed in `C:\Users\nova\.local\bin`, the directory `adopt --bin`
+  names on this target; `adopt` takes it in the drive form and folds it to
+  `C:/Users/nova/.local/bin` before any command is composed. The service account's PATH
+  carries `C:\sdk\go\bin`, `C:\Program Files\Git\cmd` and `C:\Users\nova\.local\bin`.
+- **Seat key:** exactly one key under `C:\Users\nova\.config\nova-secrets\<seat>.key`.
 
-### Go SDK
-- Version matches repository `go.mod` (default `go1.26.5`).
-- Installed at `C:\sdk\go\bin` (or `C:\Program Files\Go\bin`).
-- Placed on the System `PATH` so non-interactive OpenSSH sessions inherit it automatically without invoking a user shell profile.
+## 4. The checklist
 
-### Git
-- Native Windows Git (Git for Windows, `git version ...windows...`).
-- Installed at `C:\Program Files\Git\cmd\git.exe` and `C:\Program Files\Git\bin\git.exe`.
-- Not a WSL shim or MSYS standalone package.
+The machine is ready when every row holds, checked over ssh:
 
-### GitHub Actions Runner
-- Installed as a Windows Service under the `nova` service account.
-- Service Name pattern: `actions.runner.*`.
-- Startup Type: `Automatic`.
-- Runner directory: `C:\Users\nova\runner-nova-tools-1\` (and subsequent instances per core tier).
-- Environment file (`.path`) carries `C:\sdk\go\bin`, `C:\Program Files\Git\cmd`, and `C:\Users\nova\.local\bin`.
-
-### Nova Tools & Seat Secrets
-- Bounded binaries (`nova-swarm`, `nova-pulse`, `nova-secrets`, etc.) installed in `C:\Users\nova\.local\bin` or `C:\nova\bin`.
-- Bench Seat Key: Exactly one secret key under `C:\Users\nova\.config\nova-secrets\<seat>.key`.
-- Disk Floor: Free space under `C:\Users\nova` must stay strictly above 25 GB (`launch` and `fleet standard` refuse below this floor).
-
----
-
-## 4. The Checklist: `nova-pulse fleet standard --platform windows`
-
-When `nova-pulse fleet standard --bench <name> --platform windows` probes the bench over SSH, it verifies the following checklist:
-
-| Check Name | Target / Match | Requirement |
+| Check | Target / match | Requirement |
 |---|---|---|
-| `go` | `contains:go1.26.5` | `go version` reports the required toolchain; executable in `C:\sdk\go\bin` or system PATH. |
-| `git` | `contains:windows` | Native Git for Windows (`git version ...windows...`), not WSL. |
-| `no-wsl` | `equals:ok` | Session is not inside WSL (`WSL_DISTRO_NAME` and `WSL_INTEROP` unset). |
-| `features` | `contains:Containers` | Hyper-V and Containers virtualization features enabled for sandboxing. |
-| `runner-service`| `contains:Running (nova)` | GitHub Actions runner Windows Service is active and running under `nova`. |
-| `wol` | `equals:enabled` | Network adapter has Wake-on-Magic-Packet enabled in driver properties. |
-| `nova-stamp` | `nonempty` | `nova-swarm version` answers cleanly. |
+| `go` | `contains:` the `go.mod` version | `go version` reports the required toolchain (where a release is built here). |
+| `git` | `contains:windows` | Native Git for Windows, not WSL. |
+| `no-wsl` | `equals:ok` | The session is not inside WSL (`WSL_DISTRO_NAME` and `WSL_INTEROP` unset). |
+| `nova-stamp` | `nonempty` | `nova-secrets version` answers cleanly. |
 | `seat` | `equals:1` | Exactly one `*.key` present in `.config/nova-secrets/`. |
-| `disk-free` | `at-least:25` | At least 25 GB free disk space on the primary volume. |
 
----
-
-## 5. Provisioning Script (Reference)
+## 5. Provisioning (reference)
 
 ```powershell
-# Run in elevated PowerShell on fresh Windows Threadripper bench
-# 1. Enable Virtualization Features
-Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All, Containers -NoRestart
-Enable-WindowsOptionalFeature -Online -FeatureName "Containers-DisposableClientVM" -NoRestart
-
-# 2. Create nova service account
+# Run in an elevated PowerShell on the Windows machine
+# 1. The nova account
 net user nova /add /active:yes /passwordreq:yes
-net localgroup "Remote Desktop Users" nova /add
 
-# 3. Setup Go SDK
-New-Item -ItemType Directory -Force -Path "C:\sdk"
-Expand-Archive -Path "go1.26.5.windows-amd64.zip" -DestinationPath "C:\sdk"
-[Environment]::SetEnvironmentVariable("PATH", $env:PATH + ";C:\sdk\go\bin", [EnvironmentVariableTarget]::Machine)
-
-# 4. Enable OpenSSH Server
+# 2. OpenSSH Server
 Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
 Start-Service sshd
 Set-Service -Name sshd -StartupType 'Automatic'
+New-ItemProperty -Path "HKLM:\SOFTWARE\OpenSSH" -Name DefaultShell -Value "C:\Program Files\Git\bin\bash.exe" -PropertyType String -Force
 
-# 5. Configure Wake-on-LAN
-Get-NetAdapter | Enable-NetAdapterPowerManagement -WakeOnMagicPacket
+# 3. Go, where releases are built here (the zip for the version go.mod names)
+New-Item -ItemType Directory -Force -Path "C:\sdk"
+Expand-Archive -Path "go<version>.windows-amd64.zip" -DestinationPath "C:\sdk"
+[Environment]::SetEnvironmentVariable("PATH", $env:PATH + ";C:\sdk\go\bin", [EnvironmentVariableTarget]::Machine)
 ```

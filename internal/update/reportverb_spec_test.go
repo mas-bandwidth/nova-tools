@@ -29,7 +29,7 @@ func TestSpecUpdateReportVerbSectionIsIntact(t *testing.T) {
 		"nova-version report …",
 		"nova-version send …",
 		"prints the inventory and composes nothing (rule 26)",
-		"Emma's ready-to-send draft (#121) is `nova-version report --draft …`, the flag typed.",
+		"the ready-to-send draft is `nova-version report --draft …`, the flag typed.",
 	} {
 		if !strings.Contains(doc, phrase) {
 			t.Errorf("SPEC-UPDATE.md does not name the report-verb contract keyed by %q", phrase)
