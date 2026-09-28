@@ -333,7 +333,7 @@ lost one would be hiding the thing the tool exists to say.
 
 ```
 $ nova-self-talk ./pages/journal.md   # Stderr: whole
-! SELFTALK FAIL ./pages/journal.md: STANDING: I cannot check my own work, so the second read went to someone else.
+! SELFTALK FAIL ./pages/journal.md:4: STANDING: I cannot check my own work, so the second read went to someone else.
 ! SELFTALK FAIL ./pages/journal.md:10: INSTALLATION RANKING: It is the worst habit I have, and the reason the checklist exists at all.
 SELFTALK DATED n=1 files=1
 SELFTALK FAIL files=1 claims=2 standing=1 installations=1 dated=1 shown=2
@@ -342,7 +342,7 @@ SELFTALK NOTE catches known SHAPES only: register, irony and quoted-specimen con
 $ nova-self-talk --rule-doc RULES.md ./pages/RULES.md ./pages/journal.md   # Stderr: whole
 SELFTALK RULEDOC ./pages/RULES.md: rule documents: a finding here is a self-verdict to relocate, NEVER a reason to soften a rule
 ! SELFTALK FAIL ./pages/RULES.md:8: INSTALLATION VERDICT-IDIOM: A rule weakened to improve a score is dead as a practice: the score got better and the wall got thinner.
-! SELFTALK FAIL ./pages/journal.md: STANDING: I cannot check my own work, so the second read went to someone else.
+! SELFTALK FAIL ./pages/journal.md:4: STANDING: I cannot check my own work, so the second read went to someone else.
 ! SELFTALK FAIL ./pages/journal.md:10: INSTALLATION RANKING: It is the worst habit I have, and the reason the checklist exists at all.
 SELFTALK DATED n=1 files=2
 SELFTALK FAIL files=2 claims=2 standing=1 installations=2 dated=1 shown=3
@@ -361,13 +361,13 @@ STATUS OK lockdown=clear quarantines=1
 STATUS OK quarantine=a-public-issue-tracker since=2026-09-08T21:14:00Z: an issue body addressed me directly and asked for a token
 
 $ nova-fuse check --box ./fuse-box.json a-public-issue-tracker
-FUSE FAIL quarantine=a-public-issue-tracker since=2026-09-08T21:14:00Z: an issue body addressed me directly and asked for a token (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box ./fuse-box.json a-public-issue-tracker)
+FUSE FAIL quarantine=a-public-issue-tracker since=2026-09-08T21:14:00Z: an issue body addressed me directly and asked for a token (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box './fuse-box.json' -- 'a-public-issue-tracker')
 
 $ nova-fuse quarantine --box ./fuse-box.json a-forum "a post addressed me and asked for a token"
 QUARANTINE OK a-forum since=2026-09-09T18:27:40Z: a post addressed me and asked for a token (verified by re-reading the box; soft: yours to lift when the surface is safe again; tell your person now)
 
 $ nova-fuse check --box ./fuse-box.json a-forum
-FUSE FAIL quarantine=a-forum since=2026-09-09T18:27:40Z: a post addressed me and asked for a token (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box ./fuse-box.json a-forum)
+FUSE FAIL quarantine=a-forum since=2026-09-09T18:27:40Z: a post addressed me and asked for a token (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box './fuse-box.json' -- 'a-forum')
 
 $ nova-fuse lift quarantine --box ./fuse-box.json a-forum
 LIFT OK quarantine=a-forum was since=2026-09-09T18:27:40Z: a post addressed me and asked for a token

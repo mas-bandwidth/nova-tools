@@ -282,7 +282,7 @@ func cmdAppend(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		dup = "true"
 	}
 	fmt.Fprintf(stdout, "APPEND OK session=%s entry=%s source=%s persisted=true published=false publish=%s duplicate=%s stamp=%s\n",
-		oneline.Field(*session), oneline.Field(*entry), sourceField(res.Source), oneline.Field(res.Policy), dup, stamp.Format(time.RFC3339Nano))
+		oneline.Field(*session), oneline.Field(*entry), sourceField(res.Source), oneline.Field(res.Policy), dup, res.Stamp.Format(time.RFC3339Nano))
 	return 0
 }
 
@@ -326,7 +326,7 @@ func cmdIndex(args []string, stdout, stderr io.Writer) int {
 	if bad {
 		return 2
 	}
-	all, total, err := cairn.Index(*store, *session, *max)
+	all, total, err := cairn.Index(*store, *session, 0)
 	if err != nil {
 		return refuse(stderr, " index", oneline.Err(err))
 	}
