@@ -24,14 +24,20 @@ script, and the script only reads the file.
 Then run it once from an **elevated** PowerShell in that checkout:
 
 ```
-.\tools\bench-wsl2.ps1 -AuthKey <tailscale auth key>
+.\tools\bench-wsl2.ps1 -AuthKey <tailscale auth key> -GoVersion go1.26.6
 ```
+
+`-GoVersion` names the toolchain the distro gets. Choose one that meets `go.mod`'s `go`
+line (`go 1.26.6` in this tree): the script's default, `go1.26.5`, is below it.
 
 The run is the one approval: a UAC prompt to open it, and a Tailscale auth key
 minted once in the admin console. The key reaches no printed line. The script
 refuses at exit 2, with one line naming what was wrong, when it is not elevated,
 when that public-key file is missing (it reads it, never writes it and never generates a
-key), or when its Go version does not match `go.mod`'s `go` line.
+key), or when `-GoVersion` is not of `go.mod`'s major.minor. That check is exactly what the
+script's regex reads: it takes only the major.minor of `go.mod`'s `go` line (`1.26`) and
+requires `-GoVersion` to match `go1.26.*`, so it does not compare the patch, and a version
+below `go.mod`'s patch (the default `go1.26.5`) passes it.
 
 On the host it:
 
