@@ -218,7 +218,9 @@ its coordinator machine), friends, the sprint row:
    the roles of the friend the sprint row names, so Redis holds it and the
    stored row does not);
 2. read the kind's rows from Redis (`Applier.Read`, plain commands, no
-   write) and Redis's stamp `config:decl rev:<kind>`;
+   write) and Redis's stamp `config:decl rev:<kind>`. Every batched read is
+   checked: an absent value never hides another command's error. A failed
+   read stops before its results are used or cached;
 3. **refuse `CONFLICT`** when the stamp is greater than the Postgres
    revision: a newer Postgres applied it, and this process would roll it
    back. Nothing is written;
@@ -243,7 +245,9 @@ its coordinator machine), friends, the sprint row:
    `CONFLICT`.
 
 A second apply of the same Postgres is a no-op: no `APPLY` line, the counts
-zero, the stamp rewritten to the same revision.
+zero, the revision unchanged (steady apply is 6 Redis round trips down from 18;
+first run across the seed kinds takes 30 trips down from the 42 baseline, with
+each machine running its ceiling check before its write transaction).
 
 ### What apply writes, per kind
 

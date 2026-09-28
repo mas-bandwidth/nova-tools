@@ -1,4 +1,4 @@
-// Package check implements six of the nine record-layer checks behind
+// Package check implements seven of the ten record-layer checks behind
 // nova-check; the other three live elsewhere because none is about one self
 // repo. dogfood is internal/dogfood, because its records are receipts about
 // the family's tools; hygiene is internal/hygiene, because its subject is a

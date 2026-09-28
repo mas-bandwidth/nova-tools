@@ -16,7 +16,7 @@ package main
 // provider's store into one usage.tsv row and the event carries that row's own cells, so the
 // stream and the file can never disagree about one card's spend. A cell the provider never
 // reported is a dash in the row and ABSENT in the entry -- no tokens_in, tokens_out or usd
-// field at all -- because an absent cost is not a zero cost (Johnny, #2587).
+// field at all -- because an absent cost is not a zero cost (issue #2587).
 
 import (
 	"context"

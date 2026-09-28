@@ -184,7 +184,7 @@ type nativeRunResult struct {
 // then. That is a wall-clock assertion wearing an event's clothes, and under the gate's
 // whole-suite load (GOMAXPROCS=8 -p 2 -parallel 4 across the repo) the arrangement stopped
 // holding: `TestNativeIdleEndsAStillCardLongBeforeItsDeadline` went red in landing batch
-// 16an on hulk while its own ci-ok was green, because ci.yml's CL tier shards only the
+// 16an while its own ci-ok was green, because ci.yml's CL tier shards only the
 // touched packages and never puts the machine under that load.
 //
 // These vars are the whole fix on the production side. They are the real functions,
@@ -201,7 +201,7 @@ var (
 	// nativeDeadline is the fourth event the wait can be told about (issue #2993). The
 	// deadline test arranged it with real time -- `--deadline 3s` and a 5 s bound on the
 	// WHOLE run, setup and teardown included -- and on hosted macOS that run took 6.08 s
-	// and 6.13 s at 2a43d771 (3.04 s on the Studio) with the kill unchanged. The binary
+	// and 6.13 s at 2a43d771 (3.04 s on a local macOS bench) with the kill unchanged. The binary
 	// gets the real timer, byte for byte; a test hands the wait a deadline that fires when
 	// the tree it means to kill is actually there.
 	nativeDeadline = func(d time.Duration) (fire <-chan time.Time, stop func() bool) {
@@ -405,7 +405,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 				oneline.Field(held.Label), oneline.Field(held.Started)))
 			return nativeRunResult{}, 2
 		}
-		// RULE 3 (#1585, Stella's second P1): a take that establishes nothing used to hand
+		// RULE 3 (review finding on #1585): a take that establishes nothing used to hand
 		// back a do-nothing release and the launch went on -- with `.lease` an owned
 		// directory, BOTH of two runs were told they held the place. A run that cannot
 		// prove it owns its job directory does not start.
@@ -458,7 +458,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	}
 	// THE SHARED PER-BENCH CACHE (issue #1048). The Go toolchain and every module are the
 	// same for every card under one root, but each card downloaded them into its own data
-	// home -- up to 5 GB per slot, and 120 cards filled hulk and vision to 100%. The cache
+	// home -- up to 5 GB per slot, and 120 cards filled two benches to 100%. The cache
 	// lives once under <root>/cache (a permitted write root beside the job directory) and
 	// the child is pointed at it by GOMODCACHE, GOCACHE and NPM_CONFIG_CACHE.
 	if !cfg.noSharedCaches && cfg.root != "" {
@@ -643,7 +643,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 				}
 			}
 			swarm.WriteStageTimeoutResult(jobDir, bench, secs)
-			// STAGE FAIL (issue #3050): the rowan-tools #187 launcher watches stdout for a
+			// STAGE FAIL (issue #3050): the batch launcher watches stdout for a
 			// STAGE OK/FAIL line and detaches 2s after seeing it; without one on every
 			// failure path (this one included) it waits out the full 135s and prints
 			// STAGE UNSEEN even though staging already ended.
@@ -673,7 +673,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// NO-REPO-STAGED (nova-tools#3711): a card that NAMES a repo (base-repo:, REPO:, or a clone
 	// URL) and ends with nothing staged is a staging failure. quack-0925b launched all 12 of
 	// its `REPO: owner/name` cards into job dirs with no repo after `STAGE OK repo= base=`;
-	// the models cloned it themselves (75 s on batman), were refused by the wall (hulk), or
+	// the models cloned it themselves (75 s on one bench), were refused by the wall on another bench, or
 	// ran out of wall. The wrapper hands the model the repo, or the card does not start.
 	if !stageRes.Staged && swarm.CardNamesRepo(cfg.card) {
 		named := swarm.ReadCardBase(cfg.card)
@@ -683,7 +683,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			oneline.Field(cfg.label), oneline.Field(named.Named), oneline.Field(stageOpts.TargetDir)))
 		return nativeRunResult{}, 2
 	}
-	// STAGE OK (issue #3050): staging returned silently, so the rowan-tools #187 launcher
+	// STAGE OK (issue #3050): staging returned silently, so the batch launcher
 	// -- which detaches 2s after seeing a STAGE OK/FAIL line on stdout instead of waiting
 	// the full 135s -- printed STAGE UNSEEN on every #3050 launch. One line, on success.
 	fmt.Fprintf(os.Stdout, "STAGE OK bench=%s repo=%s base=%s secs=%.0f\n",
@@ -764,7 +764,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// ONE CAPTURE PATH, WALLED OR NOT (issue #608). The child's output also lands under the
 	// JOB, in `harness-output.log`, so the evidence sits with the card's own work rather
 	// than one directory up with the slot's. Before this the native path wrote only
-	// <slot>/native.log, so an UNWALLED card -- every Space card -- that produced no RESULT
+	// <slot>/native.log, so an UNWALLED card that produced no RESULT
 	// left no evidence of what the harness said: the whole no-result class of 2026-09-16
 	// could not be diagnosed, and a silent harness and a lost log read the same.
 	//
@@ -803,7 +803,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// anything. It decides nothing on its own: a card that takes a refusal and goes on to
 	// publish is done, and this line having been printed takes nothing away from it.
 	reader := swarm.NewWallReader(cfg.label, func(line string) { fmt.Fprintln(errOut, line) })
-	// THE SHELL-DENIAL VERDICT IS TAKEN FROM THE PARENT'S OWN COPY (Johnny's hold on #1478,
+	// THE SHELL-DENIAL VERDICT IS TAKEN FROM THE PARENT'S OWN COPY (review finding on #1478,
 	// the #1892 class). `<job>/harness-output.log` is in the card's --write directory and is
 	// its cwd: a card can replace that name after it prints the denial, and a file read after
 	// Wait would then find nothing. This reader sees the bytes as they arrive, so no later
@@ -944,7 +944,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			// The card is still and its tree is spending nothing. It is ended HERE, with
 			// what the watch saw, instead of at the deadline with nothing at all.
 			//
-			// AND IT IS REAPED, NOT SHOT (johnny-b9716b436e56, HOLD #1831: "Idle kill is
+			// AND IT IS REAPED, NOT SHOT (review finding on #1831: "Idle kill is
 			// `KillGroup`, not `swarm.Reap` (TERM-wait-KILL) ... Batch idle already Reaps
 			// so native can fold usage"). A bare KillGroup is a SIGKILL no process can
 			// handle: the harness never flushes the turn it was in and never writes the
@@ -1000,7 +1000,6 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		// the harness printed its own timeout words or the proxy closed the
 		// body. The usage row says so before anything else can call the
 		// attempt done or failed, and the run does not launch again.
-		// (stella-6b51d37c8d7d, stella-9eb933ee0205)
 		lost := swarm.LostResponse(tail) || res.lost
 		if proxy != nil && proxy.Lost() {
 			lost = true
@@ -1080,7 +1079,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			// launch after it. The two are different facts about different things, which
 			// is the whole of rule 13d's "the row is the launch's and the line is the
 			// job's".
-			// AND THE FINAL READS COUNT (stella's hold 6 on #1635): the job's spend just
+			// AND THE FINAL READS COUNT (review finding 6 on #1635): the job's spend just
 			// folded from this launch's final read is tested too, so a launch that died
 			// before its first sample cannot buy a relaunch past the budget.
 			if word := sampler.StopWordAtFinal(jobSpent, jobObserved); word != "" {
@@ -1161,8 +1160,8 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			}
 		}
 	}
-	// AND WHETHER THE CARD'S SHELL WAS DENIED SOMETHING NOBODY READ (issue #1465; Stella's
-	// HOLD on #1478). The two blocks above ask for the result FIRST, because a card that
+	// AND WHETHER THE CARD'S SHELL WAS DENIED SOMETHING NOBODY READ (issue #1465;
+	// review finding on #1478). The two blocks above ask for the result FIRST, because a card that
 	// published despite a refusal routed around it and finished. This one does not, and that
 	// is the whole point: the card of #1465 published an honest RESULT.md saying its
 	// `go test` could not be built or run, the child exited 0, and the run said
@@ -1219,7 +1218,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	}
 	// A CARD THAT ENDED BY ASKING OWES THE SAME REPORT (issue #2548). `opencode run` is
 	// non-interactive: a final turn that is a question finishes the turn and exits 0 in
-	// seconds -- 5.22 s on hulk, 5.49 s on the Studio, measured 2026-09-22 -- so the run
+	// seconds -- 5.22 s and 5.49 s on two benches, measured 2026-09-22 -- so the run
 	// never holds its slot, and the end it gets today is a plain `no-result`, the token
 	// for a model that chose to publish nothing. The question is read out of the card's
 	// own capture and written into a report that SAYS it was a question, so a requeue can
@@ -1504,7 +1503,7 @@ func nativeSandboxArgv(launch []string, cfg nativeRunConfig, dataHome, jobDir, t
 	// for the sdk tree, whose `go` the card must RUN, and `--read-noexec` for the module
 	// cache, which the card only reads. A `--read` root carries EXECUTE on both wall bodies,
 	// so the cache under that flag would put every dependency's own files one exec away from
-	// running inside the wall (Johnny's security read of #1364).
+	// running inside the wall (security review of #1364).
 	//
 	// AND THE LIST IS PER GOOS, because a Mac bench's toolchains are INSTALLED rather than
 	// unpacked into a home and each one resolves its runtime from the directory of the
@@ -1725,11 +1724,11 @@ func keepNativeSecretName(name string) bool {
 // wallNamed reads the SANDBOX OK line out of the wall's captured stderr and returns the
 // backend it named and the cwd it applied. The cwd is read from the cwdb64=<base64url>
 // field WHEN THE WALL PRINTS IT -- the machine-readable receipt, a strict base64url encoding
-// of the raw path bytes the wall applied, so a path holding a space, a literal backslash, or
+// of the raw path bytes the wall applied, so a path holding U+0020, a literal backslash, or
 // a non-ASCII name survives the line exactly. When no receipt is present the readable
 // cwd=<dir> field beside it is decoded instead (decodeField, issue #572): THE cwd TOKEN IS A
-// PRODUCER'S ONE-LINE FIELD, and a job directory whose path holds a space -- the configured
-// root under `stella 2` -- reaches this side as `stella\x202`, one token with the space
+// PRODUCER'S ONE-LINE FIELD, and a job directory whose path holds U+0020 -- a configured
+// root under `work 2` -- reaches this side as `work\x202`, one token with the whitespace
 // escaped. Taking that token literally made sameDir compare the escaped spelling with the
 // real path: the two differed, the refusal formatter escaped both spellings again so they
 // DISPLAYED identically, and a job that had already completed and written its RESULT and its

@@ -67,7 +67,7 @@ const cardLintChecks = 22
 // AND THE RULE TOKENS WERE WRITTEN DOWN NOWHERE THE BENCH COULD READ. deprecated/docs/WORKER-CARDS.md
 // carries the practices in prose and names none of these tokens, and a bench's clone of this
 // repository is months behind the binary installed on it -- `grep -rn result-first` over the
-// clone on vision found nothing at all. So the remedies live HERE, in the tool, beside the
+// stale clone found nothing at all. So the remedies live HERE, in the tool, beside the
 // checks they belong to: `nova-swarm lint --rules` prints every one of them, which a bench
 // with a stale clone can still run, and the doc names the tokens beside their practices.
 //
@@ -143,7 +143,7 @@ var (
 	// The four-line whitelist (`go test`/`go vet`/`pytest`/`cargo test`/`npm test`) was
 	// written when every gate in ci-fast.yml was `go test ./...`. Then ci-fast.yml moved
 	// to `make <leg>` (the Makefile is the one entry per AGENTS.md rule 6), and 155 of 176
-	// polyglot cards in the `mas-bandwidth/schema` lane tripped on a verbatim `make`
+	// polyglot cards in one repository lane tripped on a verbatim `make`
 	// gate that the repository would actually run. The accepted set widens to the verbs a
 	// card writer might honestly name -- the four it already took, the rest of the common
 	// runners, the script-and-runner shapes, and the words `no tests` -- so a card that

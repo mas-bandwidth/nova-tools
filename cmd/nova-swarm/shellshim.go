@@ -21,7 +21,7 @@ import (
 // spawns its bash tool with its own environment, so a card whose STEP ran a shell could
 // print the key into its tool output, its RESULT.md, the job's harness-output.log and --
 // through harvest's openPR, which copies RESULT.md into a PR body -- onto the forge.
-// Measured inside the real wall on space, 2026-09-19, seat swarm-space: a card printing
+// Measured inside the real wall on a bench, 2026-09-19: a card printing
 // only `${#DEEPSEEK_API_KEY}` and a name count got back `envlen=35 envnames=1`.
 //
 // THE SEAM, MEASURED. The same probe reported `shpath=/usr/bin/sh`,
@@ -45,7 +45,7 @@ import (
 // WHAT IT IS NOT. It is not the whole fix. A card that calls `/usr/bin/bash` by its
 // absolute path skips the wrapper, and a harness that spawns a shell some third way skips
 // it too. The layer that closes those is handing the key to the harness by file descriptor
-// instead of by environment, which is a design question for Stella (issue #1814 layer 2),
+// instead of by environment, which is a design question in issue #1814 layer 2,
 // not this file. This is the cheap layer that closes the channel a card actually has, and
 // the harvest's key-shape scan (internal/keyshape) is the backstop behind it.
 //

@@ -64,9 +64,9 @@ func cmdSlotsInit(args []string, stdout, stderr io.Writer) int {
 	}
 	// The owner is written into shares.tsv and printed back on the OK line, so it must
 	// survive both unchanged: a tab would split its own row, a newline would end it, an
-	// `=` or a space would come back escaped and no longer be the name that was asked for.
+	// `=` or a blank would come back escaped and no longer be the name that was asked for.
 	if *owner != "" && oneline.Field(*owner) != *owner {
-		f.add("--owner wants a plain one-word name: shares.tsv is a two-column tab-separated file, and a space, a tab, a newline or an `=` in an owner would split its row or be read back as something else")
+		f.add("--owner wants a plain one-word name: shares.tsv is a two-column tab-separated file, and whitespace or an `=` in an owner would split its row or be read back as something else")
 	}
 	// A share above the capacity can never be met, and the store would refuse every
 	// take with numbers that look like a bug in the tool rather than in the store.

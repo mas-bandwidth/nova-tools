@@ -146,7 +146,7 @@ func (s *liveSampler) StopWord() string {
 // job's FINAL reads as well as the samples: "The stop is rule 13's `spent >= n`, tested at
 // every sample and once more before any relaunch." A launch that dies fast, before any
 // interval has elapsed, leaves no sample behind, so StopWord alone would be "" and a first
-// launch that reached the budget alone would buy a second one (stella's hold 6 on #1635).
+// launch that reached the budget alone would buy a second one (review finding 6 on #1635).
 // spent is the job's sum of every launch's final read, and observed says whether any of
 // those reads answered; a word already reached by a sample is kept, so a card budget that
 // fired first still names itself.

@@ -539,7 +539,7 @@ func readTar(r io.Reader, dest string) error {
 		if mode == 0 {
 			mode = 0o755
 		}
-		if err := os.WriteFile(filepath.Join(dest, name), body, mode); err != nil {
+		if err := writeNoFollow("unpack", filepath.Join(dest, name), body, mode); err != nil {
 			return err
 		}
 	}

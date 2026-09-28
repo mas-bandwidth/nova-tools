@@ -8,6 +8,12 @@ import (
 	"syscall"
 )
 
+// Nonblocking open lets the regular-file check refuse a replaced FIFO without
+// waiting for a writer. O_NOFOLLOW refuses a final symlink at the open itself.
+func openFoldLockFile(path string, flags int) (*os.File, error) {
+	return os.OpenFile(path, flags|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0o644)
+}
+
 // tryLockFile takes an exclusive advisory lock without blocking. EWOULDBLOCK is the answer
 // NO rather than a failure: somebody else holds it. The kernel releases it when this
 // process exits however it exits, which is why a fold killed with the lock taken leaves

@@ -260,7 +260,7 @@ func (f *flags) tokens(value string) (int, bool) {
 		return 0, true
 	}
 	// THE WHOLE WORD. fmt.Sscanf("%d") accepts a numeric prefix, so --tokens 50oops
-	// used to launch as 50 (Stella HOLD on PR #2131). strconv.Atoi reads the full
+	// used to launch as 50 (review finding on PR #2131). strconv.Atoi reads the full
 	// string and refuses overflow, so a trailing junk, a decimal, and a number that
 	// does not fit in int are all the same refusal.
 	n, err := strconv.Atoi(strings.TrimSpace(value))
@@ -324,7 +324,7 @@ func cmdBatch(args []string, stdout, stderr io.Writer) int {
 	// Native itself uses job and slot directory leases, not a capacity-store lease.
 	slotsStore := f.fs.String("slots-store", "", "")
 	slotOwner := f.fs.String("owner", "", "")
-	// THE ROUTE (Glenn 2026-09-19). With --route the model a card is dispatched
+	// THE ROUTE. With --route the model a card is dispatched
 	// with is the ladder's answer rather than the string the fill script wrote
 	// in the TSV, and the TSV's model is the fallback. --route-log and
 	// --route-usage are REQUIRED with it: accounting is not optional, and a
@@ -643,8 +643,8 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// ONE SLOT LEDGER (nova-tools#3877). native takes NO bench slot lease: a bench's
 	// capacity is bench:<b>:desired in Redis, and the dealer is the one place a card is
 	// admitted or refused against it. The file ledger this verb used to lease from
-	// (~/nova-bench/slots) refused seven dealt cards on batman on 2026-09-25 with
-	// `SLOTS REFUSED owner=swarm-batman want=4 held=16 share=16` while Redis said the
+	// (~/nova-bench/slots) refused dealt cards with
+	// `SLOTS REFUSED owner=swarm-bench want=4 held=16 share=16` while Redis said the
 	// bench had room: two ledgers, two answers. --slots-store and --owner are still
 	// ACCEPTED so a caller built before this change is not refused on an unknown flag,
 	// and they are read by nothing.
@@ -823,7 +823,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	if code != 0 && !res.lost && !res.unrecorded {
 		return code
 	}
-	// AN UNREAD DENIAL IS NEVER AN OK (issue #1465; Stella's HOLD on #1478). This is the ONE
+	// AN UNREAD DENIAL IS NEVER AN OK (issue #1465; review finding on #1478). This is the ONE
 	// refusal that lands AFTER the spend, and it is a refusal rather than a token on the OK
 	// line on purpose: the run of #1465 carried `rc=0 sandbox=landlock harness=ok` over a
 	// card whose shell had been denied the toolchain, and a coordinator reading dispositions
@@ -839,9 +839,9 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	}
 	// OK IS A VERDICT, NOT A PUNCTUATION MARK (nova-tools #1844). This line said
 	// `NATIVE OK` for every run that reached it, including a run that produced NOTHING:
-	// card tools12c18 on vision came back rc=1 on both attempts, zero tokens, zero
+	// a card came back rc=1 on both attempts, zero tokens, zero
 	// dollars, no RESULT.md and no repo -- and the launcher's one log line read
-	// `vision tools12c18 attempt=1 wall=159s NATIVE OK label=tools12c18 job=...`. A fill
+	// `bench card attempt=1 wall=159s NATIVE OK label=card job=...`. A fill
 	// loop or a manager counting in-flight cards by that line counts a card that never
 	// ran as delivered. So the word is earned: the harness has to have answered and the
 	// run has to have left the one artefact a card exists to produce. When it has not,

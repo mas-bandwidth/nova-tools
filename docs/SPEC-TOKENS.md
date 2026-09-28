@@ -105,23 +105,33 @@ near the end, and the sections below say how each is met.
    `~123` folds as 123. The row's `rough` column counts the rough lines that
    fed it. `TOKENS DAY` prints `rough=<n>` for the day. A sum carries
    `rough=<n>` through, so a month that rests on rough numbers says so.
-8. **The day file is written whole, to a fixed temp name and
+8. **The day file is written whole atomically through internal/atomicfile and
    renamed.** `<out>/<day>.tsv` is written whole every time and never
    appended to, never edited in place. Whole is not the same as recomputed --
    a fold recomputes the rows its own declared sources wrote and carries the
-   rest of the file's rows over unchanged (rule 10). The write goes to
-   `<out>/<day>.tsv.tmp` in the same directory and lands by one atomic rename.
-   The fixed name is safe because one fold runs per output directory (a kernel
-   lock on `<out>/fold.lock`, released on death, a second fold waits a
-   bounded, jittered time and exits 2 naming the holder), and a stranded temp
-   is a name a person can see; `check` steps over exactly that name (lessons
-   53, 54, 67).
+   rest of the file's rows over unchanged (rule 10, #268). The write goes
+   through `internal/atomicfile`: a unique temporary sibling
+   `.<day>.tsv.tmp-%08x` in the same directory, fsynced to media, and landed
+   by one atomic rename, with best-effort parent-directory fsync. Unique
+   temporary names guarantee that temporary files never collide and never
+   escape their parent directory, but fold locking (`<out>/fold.lock`, released
+   on death; a second fold waits a bounded, jittered time and exits 2 naming the
+   holder) serializes concurrent final updates; a stranded random-sibling
+   temporary left by an interrupted fold is preserved (never overwritten or
+   removed on retry), and `check` steps over valid day-file temporaries while
+   flagging unrelated temporaries as strays (lessons 53, 54, 67).
+   Before opening the fold lock or writing a day file, the writer refuses an
+   output directory that is itself a symlink or a child of a symlink directory,
+   including a spelling with a trailing separator or `/.`. It leaves the link
+   and its target unchanged. The `fold.lock` file itself must be regular:
+   a symlink (including a dangling one) or other file type is refused before
+   the lock writes a PID.
 9. **One file per day. A month is a sum of day files. The tool removes
    nothing.** There is no month file. `sum` reads day files and writes
    nothing. No verb deletes, truncates or trims any file, including any log.
-   The exception is a file THIS RUN makes: the fold's own `fold.lock`, the copy under `--scratch`, the fixed
-   `<day>.tsv.tmp` a day is written through, the report's and the ledgers' own
-   `.tmp` files, and, on a platform with no flock, the lock sentinel the release
+   The exception is a file THIS RUN makes: the fold's own `fold.lock`, the copy under `--scratch`, the temporary file
+   `internal/atomicfile` writes through before rename (removed on failure or
+   cleanup), the report's and the ledgers' own `.tmp` files, and, on a platform with no flock, the lock sentinel the release
    removes. A file the tool was given is
    never one of them, and the tripwire that enforces this searches for every
    call that can empty a file -- `os.Remove`, `os.RemoveAll`, `os.Truncate`,
@@ -762,7 +772,7 @@ as `turns=`. A file
 whose first line is not `nova-tokens v1 …` is refused by `sum` and named by
 `check`, and the repair is `fold --day <d>`. Rows are sorted by
 `(model, repo, unit)` and are unique by it: a row that summed two units'
-spend under one `(model, repo)` could be split back only by guessing. The temp name is `<day>.tsv.tmp`, fixed (rule 8).
+spend under one `(model, repo)` could be split back only by guessing. The write lands atomically through internal/atomicfile via a unique random-sibling temporary file `.<day>.tsv.tmp-%08x` and rename (rule 8).
 
 **Absent and empty are one state.** A day with no rows has no file. A fold
 never writes an empty day file and `check` names one as malformed.
@@ -1216,11 +1226,12 @@ seen red before it is trusted.
    second rough line on the same row makes `rough=2`, `TOKENS DAY rough=2`,
    and `sum` carries `rough=2` on the pair, the model and the total.
 8. A fold killed with SIGKILL between the temp write and the rename leaves
-   the old day file entire and `<day>.tsv.tmp` beside it; the next fold
-   writes over the temp and renames; `check` does not name the temp as a
-   stray; a second concurrent fold on one `--out` waits and exits 2 naming
+   the old day file entire and a temporary file beside it; the next fold
+   writes the day file atomically through internal/atomicfile and preserves
+   the stranded temporary; `check` does not name a valid day-file temporary
+   as a stray; a second concurrent fold on one `--out` waits and exits 2 naming
    the holder's pid; a source test finds no `os.Remove` and no `os.RemoveAll` anywhere in
-   the package.
+   the package (except internal/atomicfile's own-run temporary cleanup).
    This tripwire is rule 9's: it reads rule 9's list of calls that can empty a
    file and fails on any call it cannot match to a carved-out file. The
    carve-outs are the tripwire's own list (rule 9); a removal of anything
@@ -1391,8 +1402,8 @@ pin all three by executing them.
    line with `turns=`, the twelve columns (an eleven-column file is read
    too), strict parse (a row with ten columns is an
    error naming the line; a type cell is an integer or `-` and an empty
-   cell is an error), sorted rows, the write through `<day>.tsv.tmp` and
-   rename under the output lock, the shrink comparison with `-` on either
+   cell is an error), sorted rows, the atomic write through `internal/atomicfile`
+   and rename under the output lock, the shrink comparison with `-` on either
    side. Tests: round trip is byte-identical; an unversioned file refuses;
    demanded tests 8, 10, 12, 13, 18.
 2. **`internal/tokens/lock.go`**: `flock` on `<out>/fold.lock` (LockFileEx

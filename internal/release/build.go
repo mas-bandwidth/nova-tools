@@ -220,7 +220,7 @@ func build(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 			return refusal(errs, "BUILD", fmt.Errorf("cannot hash the %s just written: %w", SumsFile, err))
 		}
 		digestPath := filepath.Join(dir, DigestFile)
-		if err := os.WriteFile(digestPath, []byte(digest+"\n"), 0o644); err != nil {
+		if err := writeNoFollow("write digest", digestPath, []byte(digest+"\n"), 0o644); err != nil {
 			return refusal(errs, "BUILD", fmt.Errorf("cannot write %s: %w (name a writable --out)", digestPath, err))
 		}
 		names = append(names, goos+"-"+goarch)
@@ -262,7 +262,7 @@ func writeSums(dir string) (string, error) {
 	}
 	sort.Strings(lines)
 	path := filepath.Join(dir, SumsFile)
-	return path, os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644)
+	return path, writeNoFollow("write sums", path, []byte(strings.Join(lines, "\n")+"\n"), 0o644)
 }
 
 func fileSum(path string) (string, error) {
