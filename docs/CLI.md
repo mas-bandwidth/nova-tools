@@ -2,7 +2,7 @@
 
 [Back to Nova Tools](../README.md)
 
-Command reference and worked examples. Run shell examples from the repository root unless a section says otherwise. The first-run transcripts also live in [TESTS.md](TESTS.md), where the tests execute them line by line, so what is shown here is what the tool does today.
+Command reference and worked examples. Run shell examples from the repository root unless a section says otherwise. `-h` or `--help` after any verb prints that verb's help (its usage lines and every flag it takes) on stdout at exit 0 and runs nothing, so `<tool> <verb> -h` is always a safe first question; `<tool> help` is the whole banner. nova-fuse alone refuses `-h` after a verb, because its exit 0 means CLEAR. The first-run transcripts also live in [TESTS.md](TESTS.md), where the tests execute them line by line, so what is shown here is what the tool does today.
 
 ## The scripts these verbs retire
 
@@ -1422,10 +1422,9 @@ refused at exit 2, every problem in the one line:
 ```
 nova-ci functional: package pattern "./nope" matches no package (no such directory); run: nova-ci help
 nova-ci functional: unknown flag "--bogus" (functional takes no flags, only package directories such as ./cmd/nova-sprint or ./internal/...); run: nova-ci help
-nova-ci functional: usage: nova-ci functional <package-dir>... (package directories or dir/... patterns, no flags); run: nova-ci help
 ```
 
-The last is what `-h` and `--help` after the verb print, to stderr at exit 2.
+`-h` and `--help` after the verb are not refused: they print the verb's help on stdout at exit 0, which is not silence either.
 
 See [SPEC-CI.md](SPEC-CI.md).
 
@@ -1553,7 +1552,7 @@ shape holds refuses with the whole remedy verb: `open first: nova-cairn open
 **Help** (#3254). `-h`, `-help` or `--help` on any verb or subverb prints
 `usage: nova-sprint <verb> [<subverb>] [flags]`, every flag that verb takes
 (one `--name <type>` per line, no defaults, since a default can come from the
-environment) and the exit codes on standard output, and exits 2 without
+environment) and the exit codes on standard output, and exits 0 without
 dialling Redis. A mistyped flag stays the verb's one-line refusal on standard
 error. `file -h` prints its own usage text (exit 2); the batch `task` verbs
 (`cancel`, `move`, `front`, `block`, `unblock`, `sweep`) print theirs and exit 0.

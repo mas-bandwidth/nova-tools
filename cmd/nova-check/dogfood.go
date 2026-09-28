@@ -10,6 +10,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/dogfood"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -65,6 +66,9 @@ var (
 )
 
 func cmdDogfood(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 {
+		verbflag.HelpIfAsked(args[:1], "dogfood")
+	}
 	if len(args) == 0 {
 		return refuse(stderr, " dogfood", "no sub-verb given; ledger reads it, record writes one receipt, gate is the one with an exit code")
 	}

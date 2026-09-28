@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ghevent"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/post/hook"
 	"github.com/redis/go-redis/v9"
@@ -50,7 +51,7 @@ func runHook(args []string, stdout, stderr io.Writer) int {
 	path := fs.String("path", "/webhook", "the URL path GitHub posts to")
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
-	if err := fs.Parse(args); err != nil {
+	if err := verbflag.Parse(fs, args); err != nil {
 		return refuseLine(stderr, "bad-flags", oneline.Cap(err.Error(), oneline.TailBytes), 2)
 	}
 	if fs.NArg() > 0 {

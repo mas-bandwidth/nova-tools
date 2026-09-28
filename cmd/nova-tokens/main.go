@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
 )
@@ -160,13 +161,19 @@ func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, time.Now().UTC())) 
 // run is the whole tool, with its streams and clock injected so the tests can drive it.
 // The clock is an argument and NOT a flag: the stamp on a day file is when the tool
 // computed it, and a stamp a caller could set would be a stamp nobody could trust.
-func run(args []string, stdout, stderr io.Writer, now time.Time) int {
+func run(args []string, stdout, stderr io.Writer, now time.Time) (code int) {
+	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
+	// before anything is read or written (the CLI style's rule (b), #4505).
+	defer verbflag.Recover(stdout, "nova-tokens", usage, &code)
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb given; `sources` is the one that only looks")
 	}
 	verb, rest := args[0], args[1:]
 	switch verb {
 	case "help", "-h", "--help":
+		if verb == "help" && len(rest) > 0 && rest[0] != "help" && !verbflag.IsHelp(rest[0]) {
+			return run(append(rest, "--help"), stdout, stderr, now)
+		}
 		fmt.Fprint(stdout, usage)
 		return 0
 	case "fold":
@@ -512,7 +519,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	max := fs.Int("max", bounded.Default, "")
 	var sf sourceFlags
 	sf.declare(fs, true)
-	if err := fs.Parse(args); err != nil {
+	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, " fold", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if code, refused := noPositional(fs, stderr, "fold"); refused {
@@ -949,7 +956,7 @@ func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
 	unattributed := fs.Bool("unattributed", false, "")
 	var sf sourceFlags
 	sf.declare(fs, true)
-	if err := fs.Parse(args); err != nil {
+	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, " sources", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if code, refused := noPositional(fs, stderr, "sources"); refused {
@@ -1042,7 +1049,7 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	passwordEnv := fs.String("password-env", "", "")
 	var sf sourceFlags
 	sf.declare(fs, true)
-	if err := fs.Parse(args); err != nil {
+	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, " report", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if code, refused := noPositional(fs, stderr, "report"); refused {
@@ -1252,7 +1259,7 @@ func cmdSum(args []string, stdout, stderr io.Writer, now time.Time) int {
 	day := fs.String("day", "", "")
 	byFlag := fs.String("by", "pair", "")
 	max := fs.Int("max", bounded.Default, "")
-	if err := fs.Parse(args); err != nil {
+	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, " sum", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if code, refused := noPositional(fs, stderr, "sum"); refused {
@@ -1379,7 +1386,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	max := fs.Int("max", bounded.Default, "")
 	strict := fs.Bool("strict", false, "")
 	noSpend := fs.String("no-spend", "", "")
-	if err := fs.Parse(args); err != nil {
+	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, " check", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if code, refused := noPositional(fs, stderr, "check"); refused {

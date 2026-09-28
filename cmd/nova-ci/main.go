@@ -19,6 +19,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/functional"
 	"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -104,7 +105,10 @@ func main() {
 	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
 
-func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
+	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
+	// before anything is read, run or written (the CLI style's rule (b), #4505).
+	defer verbflag.Recover(stdout, "nova-ci", usage, &code)
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb given; the verb is slowtests (a package over its time budget)")
 	}
@@ -124,6 +128,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "github":
 		return cmdGitHub(args[1:], stdout, stderr, os.Getenv)
 	case "help", "-h", "--help":
+		if args[0] == "help" && len(args) > 1 && args[1] != "help" && !verbflag.IsHelp(args[1]) {
+			return run(append(args[1:], "--help"), stdin, stdout, stderr)
+		}
 		fmt.Fprint(stdout, usage)
 		return 0
 	default:
@@ -148,7 +155,7 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	enforce := fs.Bool("enforce", false, "fail the run on a CI-SLOW line (the nightly reference leg only); without it the times are printed and only a CI-SLEEPS line fails")
 	loadFlag := fs.Float64("load", -1, "the host's load average, instead of reading it")
 	cpusFlag := fs.Int("cpus", 0, "the host's logical CPUs, instead of runtime.NumCPU")
-	if err := fs.Parse(args); err != nil {
+	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, " slowtests", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {
@@ -218,10 +225,6 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	return code
 }
 
-// functionalUsage is the verb's usage line; -h and --help after the verb
-// print it as a refusal (exit 2), never as silence.
-const functionalUsage = "usage: nova-ci functional <package-dir>... (package directories or dir/... patterns, no flags)"
-
 // cmdFunctional prints the functional tier's selection for `make
 // test-functional`: the package directories among args that hold functional
 // tests, space-separated, then one -run pattern naming exactly those tests.
@@ -230,14 +233,16 @@ const functionalUsage = "usage: nova-ci functional <package-dir>... (package dir
 // and a pattern that matches no package are refused, every one in one line: a
 // typo in CI's package list must never skip the functional tier in silence.
 func cmdFunctional(args []string, stdout, stderr io.Writer) int {
+	// -h and --help are the verb's help on stdout at exit 0, never silence and never a
+	// package list: make test-functional would hand the help text to go test, which
+	// fails on it out loud.
+	verbflag.HelpIfAsked(args, "functional")
 	if len(args) == 0 {
 		return refuse(stderr, " functional", "no package directory given; pass the packages the change touched (./cmd/nova-sprint ...)")
 	}
 	var problems, patterns []string
 	for _, arg := range args {
 		switch {
-		case arg == "-h" || arg == "--help" || arg == "-help":
-			return refuse(stderr, " functional", functionalUsage)
 		case strings.HasPrefix(arg, "-"):
 			problems = append(problems, fmt.Sprintf("unknown flag %q (functional takes no flags, only package directories such as ./cmd/nova-sprint or ./internal/...)", arg))
 		default:
