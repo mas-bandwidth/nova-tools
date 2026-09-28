@@ -485,7 +485,7 @@ func run(jar, out string, stdout io.Writer) error {
 		return err
 	}
 	if code != 0 || !strings.Contains(output, "Model checking completed. No error has been found.") {
-		return fmt.Errorf("positive TLC failed: %s", filepath.Join(out, "positive", "tlc.log"))
+		return fmt.Errorf("positive TLC failed: %s; state: captured sessions unverified; next: inspect this log, repair the trace or model mismatch, and rerun", filepath.Join(out, "positive", "tlc.log"))
 	}
 	badExit := clone(traces)
 	badExit[0].Exit = (badExit[0].Exit + 1) % 3
@@ -494,7 +494,7 @@ func run(jar, out string, stdout io.Writer) error {
 		return err
 	}
 	if code != 12 || !strings.Contains(output, "Invariant TraceEnd is violated.") {
-		return errors.New("TLC failed to reject wrong final exit")
+		return fmt.Errorf("TLC failed to reject wrong final exit: %s; state: final-exit negative control unverified; next: inspect this log, repair the TraceEnd control, and rerun", filepath.Join(out, "wrong-exit", "tlc.log"))
 	}
 	badStatus := clone(traces)
 	corrupted := false
@@ -513,14 +513,14 @@ func run(jar, out string, stdout io.Writer) error {
 		}
 	}
 	if !corrupted {
-		return errors.New("no high-exit trace for line-status negative control")
+		return fmt.Errorf("no high-exit trace for line-status negative control: %s; state: per-line-status negative control not run; next: capture a successful command after an exit-2 command, then rerun", capture)
 	}
 	code, output, err = runTLC(ctx, root, jar, filepath.Join(out, "wrong-line-status"), badStatus)
 	if err != nil {
 		return err
 	}
 	if code != 12 || !strings.Contains(output, "Invariant TraceObserved is violated.") {
-		return errors.New("TLC failed to reject wrong per-line status")
+		return fmt.Errorf("TLC failed to reject wrong per-line status: %s; state: per-line-status negative control unverified; next: inspect this log, repair the TraceObserved control, and rerun", filepath.Join(out, "wrong-line-status", "tlc.log"))
 	}
 	if err := checkDuplicateControl(traces); err != nil {
 		return err
