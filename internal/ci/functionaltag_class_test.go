@@ -143,6 +143,6 @@ func TestRedisBackedTestsCarryTheFunctionalTag(t *testing.T) {
 	for _, rel := range bad {
 		t.Errorf("%s starts a redis-server but builds without `-tags functional`: put `//go:build functional` "+
 			"(joined with && to any constraint it has) on its first line, or move its redis-backed tests to "+
-			"<name>_functional_test.go and keep the pure ones here (nova-tools #4328)", rel)
+			"<name>_functional_test.go and keep the pure ones here", rel)
 	}
 }

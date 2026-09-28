@@ -72,7 +72,7 @@ func TestSelectPackagesAlwaysAddsInternalCI(t *testing.T) {
 	root := repoRoot(t)
 	src := readFile(t, filepath.Join(root, ".github", "scripts", "select-packages.sh"))
 	if !selectAppendRe.MatchString(src) {
-		t.Errorf("select-packages.sh does not add ./internal/ci to want unconditionally; internal/ci scans the tree instead of importing what it guards, so a cmd/nova-swarm edit (PR #1073) selects no shard to run its class tests")
+		t.Errorf("select-packages.sh does not add ./internal/ci to want unconditionally; internal/ci scans the tree instead of importing what it guards, so an edit elsewhere selects no shard to run its class tests")
 	}
 }
 
