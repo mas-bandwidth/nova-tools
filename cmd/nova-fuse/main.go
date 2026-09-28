@@ -74,8 +74,8 @@ example:
 
 Those five are one sitting, in order: look, ask, blow the soft fuse, watch the
 answer change, rescind it. ./fuse-box.json is a box of yours, made once with
-nova-fuse init --box ./fuse-box.json. A path with no box at it is refused by
-every verb but init and lockdown, never read as CLEAR; init makes an empty box
+nova-fuse init --box ./fuse-box.json. Every verb except init, lockdown, and path
+refuses a path with no box, never read as CLEAR; init makes an empty box
 there and refuses if anything is already there.
 `
 
