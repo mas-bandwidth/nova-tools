@@ -9,23 +9,20 @@
 # line rather than extended, so no run can overwrite another release's notes or publish
 # assets into a release that already crossed the boundary.
 #
-# Driven by certification.yml's release dry-run through a fake `gh` (nova-tools#199): the
-# fixture answers 200/404 and the `draft` field on the release body decides the branch.
+# Driven by certification.yml's release dry-run through a fake `gh` (nova-tools#199):
+# releases/tags answers only published releases, and drafts are discovered from the
+# paginated /releases list.
 set -euo pipefail
 : "${GITHUB_REPOSITORY:?}" "${TAG:?}" "${GH_TOKEN:?}"
 
 NOTES_TAG="docs/RELEASE-NOTES-${TAG}.md"
 NOTES_VER="docs/RELEASE-NOTES-${TAG#v}.md"
-if [ -f "$NOTES_TAG" ]; then
-  NOTES_FILE="$NOTES_TAG"
-elif [ -f "$NOTES_VER" ]; then
+if [ -s "$NOTES_VER" ]; then
   NOTES_FILE="$NOTES_VER"
+elif [ -s "$NOTES_TAG" ]; then
+  NOTES_FILE="$NOTES_TAG"
 else
-  if [ "$NOTES_TAG" = "$NOTES_VER" ]; then
-    echo "refusing: $NOTES_TAG does not exist" >&2
-  else
-    echo "refusing: neither $NOTES_TAG nor $NOTES_VER exists" >&2
-  fi
+  echo "refusing: $NOTES_VER does not exist in the tagged tree; write it, land it, and tag the commit that carries it" >&2
   exit 1
 fi
 
@@ -113,6 +110,6 @@ elif [ "$draft_count" -eq 0 ]; then
   gh release create "$TAG" --draft --verify-tag --title "$TAG" --notes-file "$NOTES_FILE" dist/*
   exit 0
 else
-  echo "refusing: ambiguous: $TAG has $draft_count matching drafts" >&2
+  echo "refusing: $TAG has $draft_count drafts, so there is no one draft to upload to; delete all but one draft for $TAG, then re-run this workflow" >&2
   exit 1
 fi

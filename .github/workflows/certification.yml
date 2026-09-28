@@ -1347,14 +1347,14 @@ jobs:
           printf '%s\n' "$out"
           [ "$rc" -ne 0 ] || { echo "the upload ACCEPTED ambiguous drafts"; exit 1; }
           case "$out" in
-            *"ambiguous"*) echo "ok: two drafts refused as ambiguous" ;;
+            *"refusing: v0.14.0 has 2 drafts, so there is no one draft to upload to; delete all but one draft for v0.14.0, then re-run this workflow"*) echo "ok: two drafts refused as ambiguous" ;;
             *) echo "the script did not refuse ambiguous drafts: $out"; exit 1 ;;
           esac
           case "$out" in
             *"gh release"*) echo "the script reached a gh release command on ambiguous drafts"; exit 1 ;;
           esac
 
-          # SEVEN: notes file absent -> refuse before any API call, naming both missing paths
+          # SEVEN: notes file absent -> refuse before any API call, naming the missing notes file
           upload_env
           rm -f "docs/RELEASE-NOTES-v0.14.0.md" "docs/RELEASE-NOTES-0.14.0.md"
           rm -f "${RUNNER_TEMP}/fake-gh-release/api-calls.log"
@@ -1365,8 +1365,8 @@ jobs:
           printf '%s\n' "$out"
           [ "$rc" -ne 0 ] || { echo "the upload PROCEEDED with missing release notes"; exit 1; }
           case "$out" in
-            *"docs/RELEASE-NOTES-v0.14.0.md"*"docs/RELEASE-NOTES-0.14.0.md"*) echo "ok: absent notes file refused naming both expected paths" ;;
-            *) echo "the refusal did not name both expected notes file paths: $out"; exit 1 ;;
+            *"refusing: docs/RELEASE-NOTES-0.14.0.md does not exist in the tagged tree; write it, land it, and tag the commit that carries it"*) echo "ok: absent notes file refused naming expected path" ;;
+            *) echo "the refusal did not name expected notes file path: $out"; exit 1 ;;
           esac
           if [ -f "${RUNNER_TEMP}/fake-gh-release/api-calls.log" ] && [ -s "${RUNNER_TEMP}/fake-gh-release/api-calls.log" ]; then
             echo "an API call was made when notes file was absent: $(cat "${RUNNER_TEMP}/fake-gh-release/api-calls.log")"
