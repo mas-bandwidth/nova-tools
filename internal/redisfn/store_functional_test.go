@@ -15,8 +15,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	// until internal/testredis lands; then this import moves
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
+	"github.com/mas-bandwidth/nova-tools/internal/testredis"
 )
 
 // What the package says of a store, held against a redis-server: every test
@@ -26,7 +25,7 @@ import (
 // store is a client of a redis-server only this test uses.
 func store(t *testing.T) *redis.Client {
 	t.Helper()
-	return client(t, &redis.Options{Addr: testutil.Start(t)})
+	return client(t, &redis.Options{Addr: testredis.Start(t)})
 }
 
 func client(t *testing.T, options *redis.Options) *redis.Client {
@@ -581,6 +580,83 @@ func TestTheLocalsCountIsLuas(t *testing.T) {
 		case !c2.taken && (err == nil || !strings.Contains(err.Error(), "more than 200 local variables")):
 			t.Fatalf("a text the loader counts %d: %v, want Lua's refusal of over 200 locals", c2.count, err)
 		}
+	}
+}
+
+// A for's locals held against Lua where a do inside a function of the for's
+// expressions once took them (Stella, #4486): the loader counts what Lua
+// counts, the store takes 199 and refuses 204, and Source refuses both as
+// over MaxLocals.
+func TestAForsLocalsAreLuasWhenItsExpressionsHoldADo(t *testing.T) {
+	t.Parallel()
+	c := store(t)
+	ctx := context.Background()
+	for _, edge := range []struct {
+		depth, count int
+		taken        bool
+	}{{5, 199, true}, {6, 204, false}} {
+		text := forInFunction(174, edge.depth)
+		if read, bad := scan("scope.lua", text); bad != nil || read.peak != edge.count {
+			t.Fatalf("depth %d: the loader counts %d (%v), want %d", edge.depth, read.peak, bad, edge.count)
+		}
+		lib := Library{Name: "scope_probe", Files: tree(map[string]string{"scope.lua": text}), Glob: "*.lua"}
+		if _, err := lib.Source(); !errors.Is(err, ErrRefused) {
+			t.Fatalf("depth %d: Source = %v, want the refusal over MaxLocals", edge.depth, err)
+		}
+		err := c.FunctionLoadReplace(ctx, "#!lua name=scope_probe\ndo\n"+text+"\nend\n").Err()
+		switch {
+		case edge.taken && err != nil:
+			t.Fatalf("depth %d, %d locals: %v, want the store to take it", edge.depth, edge.count, err)
+		case !edge.taken && (err == nil || !strings.Contains(err.Error(), "more than 200 local variables")):
+			t.Fatalf("depth %d, %d locals: %v, want Lua's refusal of over 200 locals", edge.depth, edge.count, err)
+		}
+	}
+}
+
+// racing is a client that, once, runs between after a FUNCTION LIST has
+// been answered and before its caller sees the answer: another loader acting
+// between LoadMissing's read and its load, on the real store.
+type racing struct {
+	redis.UniversalClient
+	between func() error
+}
+
+func (r *racing) FunctionList(ctx context.Context, q redis.FunctionListQuery) *redis.FunctionListCmd {
+	cmd := r.UniversalClient.FunctionList(ctx, q)
+	if cmd.Err() == nil && r.between != nil {
+		between := r.between
+		r.between = nil
+		if err := between(); err != nil {
+			cmd.SetErr(err)
+		}
+	}
+	return cmd
+}
+
+// A deployer puts newer code on the store after LoadMissing read the name
+// free (Stella, #4486): LoadMissing's FUNCTION LOAD is refused by the store,
+// it answers Unchanged, and the newer code is what the store holds. A
+// LoadMissing that sent REPLACE would answer LOADED over it.
+func TestLoadMissingLeavesWhatADeployerPutsThereAfterItsRead(t *testing.T) {
+	t.Parallel()
+	c := store(t)
+	ctx := context.Background()
+	peer := client(t, &redis.Options{Addr: c.Options().Addr})
+	deployed := "#!lua name=lib_one\n" + answering("fa", "deployed") + answering("newer", "newer")
+	raced := &racing{UniversalClient: c, between: func() error { return peer.FunctionLoadReplace(ctx, deployed).Err() }}
+	receipt, err := two().LoadMissing(ctx, raced)
+	if err != nil || receipt != (Receipt{Library: "lib_one", Outcome: Unchanged, Digest: twoDigest}) {
+		t.Fatalf("LoadMissing = %s %v, want UNCHANGED", receipt, err)
+	}
+	if raced.between != nil {
+		t.Fatalf("the deployer never ran: the race was not made")
+	}
+	libs, err := peer.FunctionList(ctx, redis.FunctionListQuery{LibraryNamePattern: "lib_one", WithCode: true}).Result()
+	if err != nil || len(libs) != 1 || libs[0].Code != deployed {
+		t.Fatalf("after LoadMissing the store holds %+v (%v), want the deployer's code", libs, err)
+	}
+	if fa, newer := call(t, c, "fa"), call(t, c, "newer"); fa != "deployed" || newer != "newer" {
+		t.Fatalf("fa answers %q and newer %q", fa, newer)
 	}
 }
 

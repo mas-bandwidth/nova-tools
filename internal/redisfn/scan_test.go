@@ -1,6 +1,7 @@
 package redisfn
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -120,6 +121,7 @@ func TestScanCountsTheLocalsAsLuaDoes(t *testing.T) {
 		{"a local in a string or a comment", "local s = 'local a, b' -- local c\n--[[ local d ]]", 1, 1},
 		{"a for inside a function", "local function f() for i = 1, 2 do local x end end", 1, 1},
 		{"a for whose limit calls a function", "for i = 1, f(function() local z end) do local x end", 5, 0},
+		{"a for whose iterator is a function with a do of its own", "for k, v in (function() do end return function() return nil end end)() do local x end", 6, 0},
 	} {
 		read, bad := scan("a.lua", c.src)
 		if bad != nil {
@@ -128,6 +130,34 @@ func TestScanCountsTheLocalsAsLuaDoes(t *testing.T) {
 		}
 		if read.peak != c.peak || read.left != c.left {
 			t.Errorf("%s: %q holds %d at most and %d at its end, want %d and %d", c.name, c.src, read.peak, read.left, c.peak, c.left)
+		}
+	}
+}
+
+// forInFunction is a file of that many plain locals and then depth fors
+// nested in one another, each iterating over a function whose own body holds
+// a do (Stella, #4486): a for's loop locals are taken by its own do, never
+// by a do inside a function of its expressions. Each for holds five: three
+// hidden, k and v.
+func forInFunction(plain, depth int) string {
+	text := locals("p", plain)
+	for n := 0; n < depth; n++ {
+		text += fmt.Sprintf("for k%d, v%d in (function() do end return function() return nil end end)() do\n", n, n)
+	}
+	return text + strings.Repeat("end\n", depth) + fn("scope_probe")
+}
+
+func TestAForsLocalsAreNotTakenByADoInsideItsExpressions(t *testing.T) {
+	t.Parallel()
+	for depth, want := range map[int]int{5: 199, 6: 204} {
+		text := forInFunction(174, depth)
+		read, bad := scan("scope.lua", text)
+		if bad != nil || read.peak != want {
+			t.Errorf("depth %d: the count is %d (%v), want %d", depth, read.peak, bad, want)
+		}
+		lib := Library{Name: "scope_probe", Files: tree(map[string]string{"scope.lua": text}), Glob: "*.lua"}
+		if _, err := lib.Source(); !errors.Is(err, ErrRefused) || !strings.Contains(err.Error(), fmt.Sprintf("would hold %d local variables", want)) {
+			t.Errorf("depth %d: Source = %v, want the refusal of %d locals over MaxLocals", depth, err, want)
 		}
 	}
 }

@@ -259,7 +259,7 @@ func scan(file, src string) (scanned, *fault) {
 	functions := 0   // how many of them are functions
 	active := 0      // the main function's locals in scope, of this file
 	outside := 0     // how many of them were declared outside every block
-	forLocals := 0   // the locals of a for whose do has not opened yet
+	forLocals := 0   // the locals of a main-function for whose do has not opened yet
 	declare := func(n int) {
 		if n == 0 {
 			return
@@ -282,7 +282,9 @@ func scan(file, src string) (scanned, *fault) {
 			if tok.text == "function" {
 				functions++
 			}
-			if tok.text == "do" && forLocals > 0 {
+			// Only the for's own do takes its locals: a do inside a
+			// function in the for's expressions is that function's.
+			if tok.text == "do" && functions == 0 && forLocals > 0 {
 				declare(forLocals)
 				forLocals = 0
 			}
