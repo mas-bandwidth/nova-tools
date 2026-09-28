@@ -32,7 +32,6 @@ come back to the table below for the problem you want it to solve.
 <tr><td>Mark a source you have decided to stop reading.</td><td nowrap><a href="docs/CLI.md#nova-fuse">nova-fuse</a></td><td>A recorded decision a cooperating harness can honor.</td></tr>
 <tr><td>Give a command the credentials it needs.</td><td nowrap><a href="docs/CLI.md#nova-secrets">nova-secrets</a></td><td><strong>Development branch:</strong> encrypted storage and selected credentials delivered to a child command.</td></tr>
 <tr><td>Keep AI workers supplied with ready tasks.</td><td nowrap><a href="docs/SPEC-PULSE.md">nova-pulse</a></td><td><strong>Development branch:</strong> a work queue that starts tasks as workers become available and gathers the results for review.</td></tr>
-<tr><td>Review a post before it leaves the team.</td><td nowrap><a href="docs/CLI.md#nova-post">nova-post</a></td><td><strong>Development branch:</strong> saved drafts and a send gate tied to approval of the exact content.</td></tr>
 <tr><td>Spot packages that exceed the test-time budget.</td><td nowrap><a href="docs/CLI.md#nova-ci">nova-ci</a></td><td><strong>Development branch:</strong> package timings read from Go test events.</td></tr>
 <tr><td>Keep session notes you can reliably return to.</td><td nowrap><a href="docs/CLI.md#nova-cairn">nova-cairn</a></td><td><strong>Development branch:</strong> explicit checkpoints, source pointers and a bounded index.</td></tr>
 <tr><td>Keep the fleet's permanent configuration in one place and rebuild Redis from it.</td><td nowrap><a href="docs/CLI.md#nova-config">nova-config</a></td><td><strong>Development branch:</strong> friends and machines in Postgres with a history of every change, applied into Redis through the runtime's own functions.</td></tr>
@@ -44,13 +43,10 @@ Pick the row that is your actual problem today. One tool is a fine number.
 
 ## Useful workflows
 
-The `nova-post`, `nova-secrets`, `nova-pulse`, `nova-ci` and `nova-cairn`
-commands below, and `nova-sandbox egress`, are available on the development
-branch and are not part of the pinned `v0.15.2` release shown in the install
-guide.
+The `nova-secrets`, `nova-pulse`, `nova-ci` and `nova-cairn` commands below,
+and `nova-sandbox egress`, are available on the development branch and are not
+part of the pinned `v0.15.2` release shown in the install guide.
 
-- On the development branch, prepare an outward message with `nova-post draft`,
-  inspect it with `show`, then release that exact draft with an approved `send`.
 - Fold worker-pool usage into a ledger with `nova-tokens fold-pool`. Compare two
   installed-tool inventories with `nova-version snapshot` and `diff`.
 - `nova-ci slowtests` reports packages over your chosen whole-second

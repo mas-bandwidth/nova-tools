@@ -56,7 +56,6 @@ internal/nsprint/reconcile	TestLandDutyOneWorkerPerRepoAndNextTickMerges	#4221 m
 internal/nsprint/reconcile	TestControl10StaleInstanceCannotDeal	#4221 calls time.Sleep
 internal/nsprint/reconcile	TestRouteConsumerSweepBoundsRestarts	#4221 calls time.Sleep
 internal/nsprint/verbs	TestVerbsUnused	#4221 measured over 5 s on the 2026-09-25 PR run
-internal/nsprint/webhook	TestWorkflowRunEventWritesCI	#4221 calls time.Sleep
 internal/secrets	TestSealNoPRMakesNoGHCalls	#4221 measured over 5 s on the 2026-09-25 PR run
 internal/sprinttable	TestRefreshInTheUnitGroupDiesWithTheUnit	#4221 calls time.Sleep
 internal/swarm	TestOSProcessTreeCPUAccrual	#4221 calls time.Sleep

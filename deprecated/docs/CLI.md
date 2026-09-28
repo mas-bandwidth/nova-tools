@@ -3262,3 +3262,25 @@ nova-sprint digest: wants --redis <host:port>; run: nova-sprint help
 ```
 
 The other refusals name their remedy the same way: `wants --since <RFC3339 UTC>`, `wants --until <RFC3339 UTC>`, `since must be before until`, `takes flags, not positional arguments`, a `--repo` that is not `<owner>/<name>` (the parser's `invalid value` line), and `redis <addr>: <error>` when the store cannot be reached. A read that fails after that exits 1.
+
+## nova-post
+
+Prepares outward messages for Ghost, Bluesky, email or Discord. `draft` saves the
+payload, `show` displays those saved bytes, and `send` checks the approval receipt
+before contacting the provider. See [SPEC-OUTBOUND.md](SPEC-OUTBOUND.md).
+
+```sh
+mkdir -p ./drafts && printf 'email\tteam\n' > ./targets.tsv && printf 'a first post for the first run.\n' > ./message.md
+nova-post draft --channel email --target team --file ./message.md --drafts ./drafts --allowlist ./targets.tsv
+nova-post show --draft <hash-from-draft> --drafts ./drafts
+```
+
+Create the draft directory first. The allowlist contains one `channel<TAB>target`
+per line; `team` above must be an explicitly allowed target. Optional `--title`
+sets the title or subject. The draft's hash identifies the exact content.
+
+`send` requires `--draft`, `--drafts`, `--allowlist`, `--bus` and `--approval`.
+The shipped approval gate requires a bus note from Glenn carrying
+`APPROVE nova-post sha256=<hash>`, received less than 24 hours ago. It does not
+expose a flag for choosing another approver. Provider credentials are supplied
+through the child environment. Drafting and showing do not authorize a send.
