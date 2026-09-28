@@ -1658,8 +1658,8 @@ per-package timing.
 it by shard count: ubuntu-latest and macos-latest each run shards 1..8, every leg
 carrying its OS's `shards`. Its `deal this shard's packages` step is test-hosted's
 deal over the live packages (`live-packages.sh`), with the measured heavy list
-(`cmd/nova-bus`, `cmd/nova-merge`, `cmd/nova-wake`, `internal/gh`, `internal/ci`,
-`cmd/nova-review`, `cmd/nova-swarm`) dealt first, one per shard. Every shard
+(`cmd/nova-bus`, `internal/ci`, `internal/gh`, `cmd/nova-review`, `internal/bus`,
+`cmd/nova-swarm`) dealt first, one per shard. Every shard
 restores the `<os>-gorace-` cache, builds every external package the live tree's
 tests import under `-race`, SAVES the cache, and only then runs
 `go test -race -count=1` over its packages.

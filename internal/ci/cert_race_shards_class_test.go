@@ -20,8 +20,8 @@ import (
 // push since the cap landed in 27c9ffc66: runs 36355661583, 36356115183,
 // 36357522017, 36357749379 and 36360296846 (2026-09-27).
 
-// certRaceMinShards is the shard count per hosted OS: one shard for each
-// certRaceHeavy package and one more.
+// certRaceMinShards is the shard count floor per hosted OS: at least one shard
+// for each certRaceHeavy package, and eight from the 2026-09-27 measurement.
 var certRaceMinShards = map[string]int{
 	"ubuntu-latest": 8,
 	"macos-latest":  8,
@@ -29,13 +29,13 @@ var certRaceMinShards = map[string]int{
 
 // certRaceHeavy are the packages the race deal places first, one per shard:
 // every live package over 15 s in `go test -race -count=1 -p 1 -json` at
-// 82429246b, GOMAXPROCS=3 on the Studio (cmd/nova-bus 56.8 s, cmd/nova-merge
-// 42.6, cmd/nova-wake 35.0, internal/gh 31.1, internal/ci 27.0,
-// cmd/nova-review 23.4, cmd/nova-swarm 18.8; the next is internal/bus at
-// 14.1). certification.yml's deal step spells the same list.
+// c4298c7b6 (after #4489), GOMAXPROCS=3 on the Studio (cmd/nova-bus 51.2 s,
+// internal/ci 37.6, internal/gh 30.7, cmd/nova-review 28.3, internal/bus 24.9,
+// cmd/nova-swarm 18.4; the next is cmd/nova-sandbox at 11.5).
+// certification.yml's deal step spells the same list.
 var certRaceHeavy = []string{
-	"cmd/nova-bus", "cmd/nova-merge", "cmd/nova-wake", "internal/gh",
-	"internal/ci", "cmd/nova-review", "cmd/nova-swarm",
+	"cmd/nova-bus", "internal/ci", "internal/gh", "cmd/nova-review",
+	"internal/bus", "cmd/nova-swarm",
 }
 
 const certRaceDealStep = "deal this shard's packages"
