@@ -242,17 +242,19 @@ func ReadBox(path string) (Box, error) {
 // exclusive at once: a box that appears between the check and the write is kept, and
 // the error is fs.ErrExist.
 func CreateBox(path string) error {
-	name, err := writeTemp(path, Box{Quarantine: map[string]Fuse{}})
-	if err != nil {
-		return err
-	}
-	defer func() { _ = os.Remove(name) }()
-	return os.Link(name, path)
+	return writeBox(path, Box{Quarantine: map[string]Fuse{}}, atomicfile.NoReplace())
 }
 
 // WriteBox replaces the fuse box atomically. See note 3.
 // A symlink at the cleaned path is refused and is not followed.
 func WriteBox(path string, b Box) error {
+	return writeBox(path, b)
+}
+
+// writeBox shares validation, exact mode and sync ordering between creation and
+// replacement. NoReplace makes creation exclusive even if another caller wins
+// after validation.
+func writeBox(path string, b Box, opts ...atomicfile.Option) error {
 	if b.Quarantine == nil {
 		b.Quarantine = map[string]Fuse{}
 	}
@@ -261,74 +263,14 @@ func WriteBox(path string, b Box) error {
 		return err
 	}
 	data = append(data, '\n')
-
 	target := path
 	if target != "" {
 		target = filepath.Clean(target)
 	}
-
-	dir := filepath.Dir(target)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return err
 	}
-
-	// Atomic write per internal/atomicfile model: temporary file created
-	// exclusively in parent directory, exact 0o644 mode via ExactMode(),
-	// fsync to media, and atomic rename over target path. The box is not
-	// a secret and other tools must be able to read it; a fuse nobody else can
-	// see is a fuse that stops nothing.
-	return atomicfile.WriteFile(target, data, 0o644, atomicfile.ExactMode())
-}
-
-// writeTemp writes b, synced and world-readable, to a temp file beside path and returns
-// its name; the caller renames or links it into place and removes it.
-func writeTemp(path string, b Box) (string, error) {
-	if b.Quarantine == nil {
-		b.Quarantine = map[string]Fuse{}
-	}
-	data, err := json.MarshalIndent(b, "", "  ")
-	if err != nil {
-		return "", err
-	}
-	data = append(data, '\n')
-
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
-	}
-
-	// The temp file is created in the SAME directory, because rename is only atomic within
-	// one filesystem and the system temp dir is not guaranteed to be on this one.
-	tmp, err := os.CreateTemp(dir, ".fuses-*.json.tmp")
-	if err != nil {
-		return "", err
-	}
-	name := tmp.Name()
-	fail := func(err error) (string, error) {
-		_ = os.Remove(name)
-		return "", err
-	}
-
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return fail(err)
-	}
-	// Sync before rename: a rename that lands while the CONTENT is still in the page cache
-	// gives a crash the chance to leave an empty file under the real name, which is the
-	// torn write this whole dance exists to prevent.
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return fail(err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fail(err)
-	}
-	// CreateTemp makes 0600. The box is not a secret and other tools must be able to read
-	// it; a fuse nobody else can see is a fuse that stops nothing.
-	if err := os.Chmod(name, 0o644); err != nil {
-		return fail(err)
-	}
-	return name, nil
+	return atomicfile.WriteFile(target, data, 0o644, append(opts, atomicfile.ExactMode())...)
 }
 
 // PreserveUnreadable copies an unreadable box aside before it is replaced. It returns the

@@ -1955,6 +1955,12 @@ paragraph below. `at` and `reason` are read
 back defensively — the box is hand-editable (that is the only
 lockdown-replacement mechanism there is), so a missing key prints an honest
 `since=unrecorded` / `NO REASON RECORDED`, never a crash or an invented value.
+Creation and replacement share the same path checks and permission ordering:
+an immediate symlink parent is refused before a temporary file is written,
+and the exact mode is set before the file sync. Creation publishes by an
+exclusive hard link, so a concurrent creator cannot replace a box. A failed
+temporary-link cleanup after publication reports both names; the complete box
+already exists, and retrying `init` cannot replace it.
 
 ### Exit codes and output grammar
 

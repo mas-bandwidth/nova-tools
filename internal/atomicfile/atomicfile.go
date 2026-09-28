@@ -33,20 +33,26 @@ Every write follows a strict, bounded sequence:
  5. Media flush (fsync): The file contents and inode metadata are flushed to durable
     storage media using fsync (f.Sync()).
  6. Clean closure: The temporary file descriptor is closed.
- 7. Atomic rename: The temporary file is renamed over the target path (os.Rename).
+ 7. Atomic publication: The temporary file is renamed over the target path
+    (os.Rename). With NoReplace, an exclusive hard link installs it only where
+    the target is absent, and the temporary name is removed.
  8. Parent directory fsync: The parent directory is fsynced (best-effort) after the
-    rename so that the directory entry is durable on filesystems requiring directory
+    publication so that the directory entry is durable on filesystems requiring directory
     flushes. Errors from directory fsync are ignored on platforms or filesystems where
     directory fsync is unsupported.
 
 # Failure and Cleanup Guarantees
 
-On any failure during creation, write, chmod, sync, close, or rename, atomicfile
+On any failure before publication (creation, write, chmod, sync, close, rename
+or exclusive link), atomicfile
 attempts to remove the temporary file immediately (os.Remove), leaving the target
 file completely untouched. If removing the temporary file fails (for example due
 to sudden permission loss or filesystem error), the cleanup error is joined to the
 returned error via errors.Join, explicitly naming the leftover temporary path so
-callers can detect and inspect any uncollected file.
+callers can detect and inspect any uncollected file. If NoReplace publishes
+successfully but removal of its temporary name fails, the returned error names
+both the created target and the leftover name. The complete target remains
+published; the parent-directory sync is still attempted.
 
 Temporary files left behind by abrupt process termination outside runtime control
 (such as SIGKILL, power loss, or kernel panic) cannot be swept by defer and are
@@ -135,6 +141,7 @@ type hooks struct {
 	chmod        func(f *os.File, mode os.FileMode) error
 	close        func(f *os.File) error
 	rename       func(oldpath, newpath string) error
+	link         func(oldpath, newpath string) error
 	remove       func(name string) error
 	syncDir      func(dir string) error
 }
@@ -149,6 +156,7 @@ func defaultHooks() *hooks {
 		chmod:        func(f *os.File, mode os.FileMode) error { return f.Chmod(mode) },
 		close:        func(f *os.File) error { return f.Close() },
 		rename:       os.Rename,
+		link:         os.Link,
 		remove:       os.Remove,
 		syncDir:      defaultSyncDir,
 	}
@@ -225,6 +233,7 @@ type Option func(*options)
 
 type options struct {
 	exactMode bool
+	noReplace bool
 }
 
 // ExactMode configures atomicfile to explicitly chmod the temporary file to
@@ -236,9 +245,19 @@ func ExactMode() Option {
 	}
 }
 
+// NoReplace installs the complete, synced file only if path is absent, using
+// an exclusive hard link instead of rename. An existing entry, including one
+// created concurrently, is preserved and the error matches os.ErrExist.
+// The filesystem must support hard links. If removing the temporary link after
+// publication fails, the error names it; path already holds the complete data.
+func NoReplace() Option {
+	return func(o *options) { o.noReplace = true }
+}
+
 // Write writes data to path atomically with the specified file mode permissions,
 // subject to the process umask unless ExactMode is selected. If path does not
-// exist, Write creates it; otherwise, Write replaces it atomically.
+// exist, Write creates it; otherwise, Write replaces it atomically. NoReplace
+// instead refuses an existing path and publishes by exclusive hard link.
 //
 // The write is performed by creating a temporary file in the same directory with
 // mode perm (perm & ^umask), writing the data payload, flushing data and metadata
@@ -319,6 +338,9 @@ func writeWithHooks(path string, data []byte, perm os.FileMode, h *hooks, opts .
 
 	targetInfo, err := h.lstat(path)
 	if err == nil {
+		if opt.noReplace {
+			return wrapErr(fmt.Sprintf("atomicfile: create %q", path), os.ErrExist)
+		}
 		if targetInfo.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("atomicfile: target %q is a symlink", path)
 		}
@@ -369,10 +391,19 @@ func writeWithHooks(path string, data []byte, perm os.FileMode, h *hooks, opts .
 		return wrapErr(fmt.Sprintf("atomicfile: close %q", path), err)
 	}
 
-	if err := h.rename(tmpName, path); err != nil {
+	var publishedErr error
+	if opt.noReplace {
+		if err := h.link(tmpName, path); err != nil {
+			return wrapErr(fmt.Sprintf("atomicfile: create %q", path), err)
+		}
+		// Publication succeeded. Remove the temporary name before syncing the
+		// directory; report a failed cleanup without pretending publication failed.
+		if err := h.remove(tmpName); err != nil {
+			publishedErr = wrapErr(fmt.Sprintf("atomicfile: created %q but cleanup failed for %q", path, tmpName), err)
+		}
+	} else if err := h.rename(tmpName, path); err != nil {
 		return wrapErr(fmt.Sprintf("atomicfile: rename %q", path), err)
 	}
-
 	cleaned = true
 
 	// Parent directory fsync (best-effort): flush directory entry to media so that
@@ -380,5 +411,5 @@ func writeWithHooks(path string, data []byte, perm os.FileMode, h *hooks, opts .
 	// Ignore errors on platforms or filesystems where directory fsync is unsupported.
 	_ = h.syncDir(dir)
 
-	return nil
+	return publishedErr
 }
