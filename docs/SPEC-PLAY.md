@@ -95,7 +95,7 @@ REPLY FAIL <reason>
 
 ## Tests this spec demands
 
-All existing tests run against a throwaway source written in each test's own `t.TempDir()`; the package tests in `internal/play` exercise `Annotate`, `ReadNotes`, `ReplyTo`, `Export`, `LoadStore` and `SaveStore` directly, and the CLI tests in `cmd/nova-play` drive the actual `run` surface with `bytes.Buffer` stdout/stderr, so nothing touches a real file outside the temp dir and nothing reaches a network or a key. Tests are proven able to fail before trusted.
+All existing tests run against a throwaway source written in each test's own `t.TempDir()`; the package tests in `internal/play` exercise `Annotate`, `ReadNotes`, `ReplyTo`, `Export`, `LoadStore` and `SaveStore` directly, and the CLI tests in `deprecated/cmd/nova-play` drive the actual `run` surface with `bytes.Buffer` stdout/stderr, so nothing touches a real file outside the temp dir and nothing reaches a network or a key. Tests are proven able to fail before trusted.
 
 1. `TestTwoParticipantsAnnotateReplyResumeExport` — `annotate` anchors a note to an exact passage and stores author, passage and note; `reply` answers an existing note; `read` lists the notes; `Export` returns a string naming authors and ids.
 2. `TestAnnotatePassageNotFoundRefuses` (absent) — `annotate` whose passage is not present verbatim in the source refuses ("passage not found").
@@ -127,8 +127,8 @@ All existing tests run against a throwaway source written in each test's own `t.
 28. `TestFullAuthorNamesRoundTrip`, `TestTwoParticipantsAnnotateReplyResumeExport` — the bare-token and quoted author shapes never collide; the reader tells them apart by the leading byte.
 29. `TestQuotedAuthorAndTextRoundTrip` — field splitting inside a quoted value is escape-aware; an escaped quote does not end the value.
 30. `TestPathWithSpaces`, `TestCLIPathWithSpaces` — a source path containing spaces is split at the LAST space on the `ANCHOR` line.
-31. `cmd/nova-play/firstrun_test.go` (byte-for-byte ids) — the note id is the first 12 hex chars of SHA-256 of `author + passage + note`.
-32. `cmd/nova-play/firstrun_test.go` — the reply id is the first 12 hex chars of SHA-256 of `author + body`.
+31. `deprecated/cmd/nova-play/firstrun_test.go` (byte-for-byte ids) — the note id is the first 12 hex chars of SHA-256 of `author + passage + note`.
+32. `deprecated/cmd/nova-play/firstrun_test.go` — the reply id is the first 12 hex chars of SHA-256 of `author + body`.
 33. `TestLegacySidecarReadThenUpgradeOnNextWrite` — a sidecar whose second line is not `VERSION` is version 1 and is read by the version-1 rules, with a backslash taken literally.
 34. `TestLegacySidecarReadThenUpgradeOnNextWrite` — a version-1 line not beginning with a keyword is a continuation joined to the value above it with a line feed.
 35. `TestLegacySidecarReadThenUpgradeOnNextWrite` — in version 1 the author is never unquoted; an unquoted multi-word author runs on to the next `key=value` token.
@@ -142,7 +142,7 @@ All existing tests run against a throwaway source written in each test's own `t.
 43. `TestAnnotateAndRead` — a successful annotate prints `ANNOTATE OK id= author= created=`.
 44. `TestAnnotateFailureLine` (absent) — a failed annotate prints `ANNOTATE FAIL <reason>` and exits 1.
 45. `TestReadEmptySource`, `TestAnnotateAndRead` — a successful read prints `READ OK source= notes=`.
-46. `cmd/nova-play/firstrun_test.go`, `TestAnnotateAndRead` — read lists `NOTE / PASSAGE / BODY / REPLY / BODY` blocks.
+46. `deprecated/cmd/nova-play/firstrun_test.go`, `TestAnnotateAndRead` — read lists `NOTE / PASSAGE / BODY / REPLY / BODY` blocks.
 47. `TestCLIPathWithSpaces` — a successful reply prints `REPLY OK id= author= created=`.
 48. `TestCLIStaleSourceReplyRefusal` — a failed reply prints `REPLY FAIL <reason>` and exits 1.
 49. `TestTwoParticipantsAnnotateReplyResumeExport`, `TestMultilineNotePassageReplyRoundTrip` — `play.Export` returns a portable markdown string naming authors, ids and replies.

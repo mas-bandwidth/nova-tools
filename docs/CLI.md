@@ -2628,53 +2628,6 @@ variable `--password-env` names, else for a user `NOVA_SPRINT_REDIS_PASSWORD_ENV
 `NOVA_REDIS_BENCH_PASSWORD`; a user whose variable is empty is refused before any dial. With
 no user, no variable is read unless `--password-env` names it.
 
-## nova-play
-
-Shared reading annotations at the **margin layer**. Participants anchor notes to exact passages in a source text, reply to each other's notes, and resume across sessions. A changed source produces an explicit anchor conflict rather than silently moving notes. The contract is [docs/SPEC-PLAY.md](SPEC-PLAY.md).
-
-### First run
-
-Three lines: annotate a passage, read the notes back, reply to a friend. Every path is a flag — there is no default source, no default author, and no default annotation file.
-
-```
-$ printf 'The keeper climbed the last stair before dawn.\nThe lantern room held a brass fitting.\nBelow, the harbour was still asleep.\n' > story.txt
-
-$ nova-play annotate --source story.txt --author Emma --passage "The lantern room held a brass fitting." --note "I wonder what alloy this is."
-ANNOTATE OK id=f24beb35f0df author=Emma created=2026-09-16T08:22:37Z
-
-$ nova-play read --source story.txt
-READ OK source=story.txt notes=1
-NOTE id=f24beb35f0df author=Emma created=2026-09-16T08:22:37Z
-  PASSAGE The lantern room held a brass fitting.
-  BODY I wonder what alloy this is.
-
-$ nova-play reply --source story.txt --id f24beb35f0df --author Stella --body "Ship's brass, probably 70/30."
-REPLY OK id=03ad5e57d795 author=Stella created=2026-09-16T08:22:38Z
-```
-
-**What the flags want.** `--source` is the text being annotated; `--author` is who is speaking; `--passage` is the exact passage text to anchor to (must appear verbatim in the source); `--note` is the annotation text; `--id` is the note to reply to; `--body` is the reply text.
-
-**When the source changes.** Edit the source file between sessions and the next `read` says `ANCHOR STALE`, naming both the stored hash and the current hash. A new annotation is refused until the operator decides whether to migrate notes, discard them, or revert the source.
-
-### Companion view
-
-`view` renders an explicitly selected sample of Markdown records into a static timeline, one card per record linked back to its source. It is read-only: viewing never edits, seals, rolls up or deletes a record, and an excluded record is never even opened.
-
-```sh
-nova-play view --max 20 moment-one.md moment-two.md
-nova-play view --exclude draft* --max 0 ./moments/*.md
-```
-
-Every record is named on the command line — there is no default file and no directory walk. `--exclude` takes a glob matched against each path as given and its base name, repeatable; `--max` caps the cards printed (default 20, `0` prints every card), and the summary line always carries the totals. A card shows the record's date, author, kind (human, ai, summary, or whatever word the record carries — echoed, never inferred) and source; a missing or unparseable date or author prints as `unknown` rather than a guess. Two layouts are read: a leading `---` fence holding lowercase `author:`, `date:`, `kind:` and `supersedes:` lines, and `Author:`, `Date:`, `Kind:` and `Supersedes:` lines anywhere else in the file. Cards sort chronologically with undated records last; a `supersedes:` value stays on the card so corrections remain discoverable, and a summary is listed beside the record, never in place of it.
-
-### The sidecar file, and older ones
-
-Notes for `story.txt` live in `story.txt.notes` beside it. It is a plain text file you can read, and it is **versioned**: this build writes version 2, which puts `VERSION 2` on the second line, stores each `PASSAGE`, `BODY` and `REPLY_BODY` as one physical line escaped with `\\`, `\n` and `\r`, and frames an author that is empty or contains a space, a quote, a backslash or an unprintable rune as a Go-quoted string (`author="Ada \"The Reader\" Lovelace"`). That is what lets a note keep a trailing space, a `"`, a `\`, or a line of prose beginning with `NOTE` without the reader mistaking it for the next record.
-
-A sidecar written before version 2 has no `VERSION` line. It is still read, under the older rules: no escaping (a backslash is literal), an unprefixed line continues the value above it, and an unquoted multi-word author runs on to the next `key=value` token. `read` leaves such a file exactly as it found it. **The first `annotate` or `reply` that succeeds on that source rewrites the whole sidecar as version 2** — in place, one way, no backup — carrying the `ANCHOR` line over unchanged and storing every value it just read without reinterpreting it. A refused operation (stale anchor, missing source, unknown note ID) writes nothing and leaves the old file alone. If you want the old bytes, copy the file before the next write. The format is specified in [docs/SPEC-PLAY.md](SPEC-PLAY.md#the-sidecar-file).
-
-**What this deliberately is not.** Not a reader or viewer — the source stays where it is, opened in whatever reader the participants choose. Not a publishing platform — notes are local to the machine that creates them. Not a notification system — participants check for new notes by running `read`.
-
 ## nova-update
 
 `nova-update` checks declared versions and applies one chosen update: bounded reads, explicit UNKNOWN results, no automatic installation. The contract is [docs/SPEC-UPDATE.md](SPEC-UPDATE.md).
@@ -3110,42 +3063,6 @@ nova-config apply --as rowan
 **Reading it.** Every write prints `CONFIG ADD|SET|REMOVE kind=<k> name=<n> rev=<id>`, the id of its history row. `list` prints `<KIND> name=<n> <field>=<v> ...` per row and a `CONFIG LIST` count; `history` prints `HISTORY id=<n> ... op=<add|set|remove> actor=<a> at=<t>` with each changed field as `<field>=<before>><after>`. `apply` prints `APPLY ADD|SET|REMOVE kind=<k> name=<n>` per row it writes and one `CONFIG APPLY kind=<k> add=<n> set=<n> remove=<n> rev=<r> ms=<n>` per kind; `--check` prints the same plan as `CHECK` lines and `CONFIG CHECK`. `status` exits 1 with the next step when the schema is missing (`run: nova-config migrate`) or Redis is behind (`run: nova-config apply`).
 
 **Refusals.** Exit 1 is the store or Redis saying no, one stderr line naming the next step: `machine studio exists; run: nova-config machine set studio ...`, `--store space names no machine row`, `machine studio is the --coordinator of the fleet`, `friend rowan is the --coordinator of the sprint`, `CONFLICT friend: Redis holds rev 9 and this Postgres is at rev 4`, `CEILING studio: friend stella makes the sum 65 over the machine ceiling 64`, `friend stella holds 2 working copies (card:4410,card:4414)`, `friend emma has no beat naming a machine and the fleet names no coordinator machine to charge her slots to`. Exit 2 is an invocation that could not run (a name on a singleton is one).
-
-## nova-friend
-
-```
-nova-friend here --as <you> [--harness <h>] [--host <h>] [--login <alias>]... [--pid <harness-pid>] [--session <id>] [--sprint <S>] [--once]   # the one presence process: register, then once a second the beat, the leases, the take; --once ticks once and returns
-nova-friend bye --as <you>                                               # DEL your beat: down at once; registration and dealt work stay
-nova-friend pull --as <you> [--n <k>] [--dir <d>] [--model <m>] [--harness <h>] [--child <id>]   # ready -> working for your copies, one brief per copy under --dir
-nova-friend done --as <you> --id <copy> --ok --pr <repo>#<n> --head <sha> --repo <checkout> [--test <t>] [--branch <b>]   # the spec gate in your checkout, the PR recorded, the copy ended ok
-nova-friend done --as <you> --id <copy> --fail <why>                     # the copy ended failed, the why on the record
-nova-friend done --as <you> --id <copy> --score <N>/10 [--gates <g>] [--finding <text>]   # a read copy's score
-nova-friend list                                                         # one line per registered friend: state, slots, tiers, roles, host, working copies, the applied revision
-nova-friend show <name>                                                  # one friend, with the session's facts: session, harness, load, models, the beat's age, away
-nova-friend away <name> --reason <r> --as <actor>                        # set friend:<name>:down: no push, take or copy until back
-nova-friend back <name> --as <actor>                                     # clear it
-nova-friend <verb> -h                                                    # the verb's usage line and every flag it takes
-```
-
-`nova-friend` is the one tool for what a friend, or a coordinator, does about a friend: the person, who exists whether or not a sprint is running. The roster (who exists, with slots, tiers and roles) is configuration and lives in [nova-config](#nova-config); `nova-friend` reads it and never writes it. What it owns is the runtime a friend reports herself: the beat, the away flag, and her own copies. The guide is [nova-friend/README.md](nova-friend/README.md).
-
-### First run
-
-```sh
-nova-friend here --as rowan --once --host studio --session s1
-nova-friend list
-nova-friend bye --as rowan
-```
-
-The three lines need a store that holds the roster (`nova-config apply` writes it): `here --once` registers the session and ticks once, `list` reads every friend with the revision the configuration was applied at, and `bye` deletes the beat. The executable transcript, on a throwaway store, is in [TESTS.md](TESTS.md#nova-friend). The line each harness runs when its session opens is `nova-friend here --as <you> --harness <h> --pid <harness-pid>`, left running.
-
-There is no `quickstart`: a verb that registered a friend nobody asked for would write configuration, which is nova-config's, and `here --once` is the first run.
-
-**What the flags want.** `--redis` is `host:port` (env `NOVA_SPRINT_REDIS`, then `NOVA_REDIS_ADDR`, then the seat's address). `--as` is you, a lower-case friend name (env `NOVA_FRIEND`, which it must equal when set). `here` takes `--harness` and `--host` for the beat (default `nova-friend` and the hostname), `--login <alias>` repeatable for your forge accounts, `--pid` for the harness process your copies are bound to (their leases renew only while it is seen alive, nova-tools#4415), `--session` for the identity (default a fresh one) and `--sprint` for the take. `done` wants exactly one of `--ok`, `--score <N>/10` and `--fail <why>`; `--pr` wants `--head` and `--repo`, the checkout the spec gate runs in. `away` wants `--reason`.
-
-**Reading it.** Every success is one typed line: `FRIEND HERE as= host= session= slots= taken=`, `FRIEND BYE as= was=`, `FRIEND PULLED id= leg= token= card=` then `FRIEND PULL as= n= free= dir= ms=`, `FRIEND ENDED id= primary= from= to= next=` then `FRIEND DONE as= n= ms=`, `FRIEND name= state= slots= tiers= roles= host= working= rev=` per friend, `FRIEND AWAY name= reason= changed=`, `FRIEND BACK name= changed=`. `state` is `up` (a beat at most a minute old and no away flag), `away` (the flag) or `down`; `rev` is the friend revision `nova-config apply` last stamped in `config:decl`, `-` when none.
-
-**Refusals.** Exit 1 is the store saying no, one stderr line naming the next step: `UNREGISTERED emma: not in the roster; run: nova-config friend add emma --slots <n> --as <you>, then nova-config apply`, `BUSY rowan: a live session is here already on studio (session s1, beat 3s ago); stop it, or wait a minute and it is taken over`, `LOGIN-TAKEN rowan: --login x is stella's login already`, `NOTMINE task:q2~1 is friend:stella's copy, not friend:rowan's`. A stale `--token` on `done` is `FENCED`, exit 3, as `nova-sprint card end` spells it. Exit 2 is an invocation that could not run: a missing flag says what it wants (`--reason wants why stella is away`), a store that does not answer is one line. `here` exits 3 when five beats in a row fail (after bye) or another session took its beat (no bye).
 
 ## nova-work
 
@@ -4761,6 +4678,7 @@ first, connection flags next, epoch and receipt metadata last. For example,
 | `view list` | Lists view names |
 | `view del <name>` | Deletes the view configuration, preserving tables |
 | `watch --view <name>` | Reloads configuration each frame; edits appear without restarting |
+| `shell` | Reads commands on one resident connection; write receipts print by default |
 | `version` | Prints the build version |
 
 **Order.** Rows draw in the order they were added and columns in the
@@ -4784,6 +4702,30 @@ COL DEL table= col=` and is refused, exit 1, writing nothing, while the
 column holds a member (the refusal names all blocking rows and members, with a
 batch `cell remove` command for each occupied cell) or a text value, while a `pct(...)` column reads it, and when it is
 the last column. Quote a column that has parentheses, `'share:pct(busy)'`.
+
+### Resident shell
+
+`nova-table shell [--redis <addr> | --seat <name>] [--epoch <n>] [--keep-going]
+[--receipt=false]` reads commands from stdin on one connection. Enter verbs
+such as `row add demo build`, optionally prefixed with `nova-table`. Quotes,
+escapes, blank lines and `#` comments are supported; values are never expanded
+or executed by an OS shell. `help <verb>` works inside the session. `quit`,
+`exit` or EOF ends it. Lines execute in order and commit independently; use the
+existing member/row batch verbs for several changes in one exchange.
+
+Write receipts print by default. The session's `--epoch`, `--actor`, `--fence`
+and `--idem` become defaults; per-command overrides affect that command only.
+The store and seat stay fixed. File input stops on the first error unless
+`--keep-going`; a terminal prompts on stderr and defaults to continuing. The
+final status retains errors: 1 for a store refusal, 2 for a usage/input/connection
+error. Continuous `watch` returns to the prompt on Ctrl-C; scripts can use
+`watch --once`. On Unix, SIGTERM ends the whole shell (143), including during
+watch, and Ctrl-C at the prompt ends it (130). An in-flight write may already
+have committed. A failed connection is replaced before the next store command;
+the failed command is never replayed. Lines may contain exactly 1,048,576 bytes
+excluding LF/CRLF; `--keep-going` discards an overlong line and continues at the
+next newline. Failures name their input line. See the
+[resident shell example](nova-table/README.md#resident-shell).
 
 ### Columns, identity and output
 

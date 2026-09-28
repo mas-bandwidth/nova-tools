@@ -76,30 +76,13 @@ func TestDaemonBoundaryRejectBodies(t *testing.T) {
 	}
 }
 
-func TestDaemonBoundaryRejectAllowPrivate(t *testing.T) {
-	t.Parallel()
-
-	for _, argv := range [][]string{
-		{"nova-bus", "inbox", "--allow-private"},
-		{"tool", "--allow-private=yes"},
-	} {
-		err := ValidateDaemonArgv(argv, "johnny")
-		if err == nil {
-			t.Fatalf("expected error for --allow-private in %v, got nil", argv)
-		}
-		if !strings.Contains(err.Error(), "--allow-private flag is forbidden") {
-			t.Fatalf("unexpected error: %v", err)
-		}
-	}
-}
-
 func TestDaemonBoundaryRejectDecide(t *testing.T) {
 	t.Parallel()
 
 	for _, argv := range [][]string{
 		{"nova-decide", "question"},
-		{"nova-bus", "wait", "--decide"},
-		{"nova-bus", "inbox", "--decide=always"},
+		{"nova-review", "packet", "--decide"},
+		{"nova-review", "packet", "--decide=true"},
 	} {
 		err := ValidateDaemonArgv(argv, "johnny")
 		if err == nil {

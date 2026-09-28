@@ -8,6 +8,8 @@ The TLA+ modules here are the specifications of the state machines this repo imp
 | `LandWatch.tla` | `MCLandWatch` | the land watch's watcher (land_watch.lua): stamps, slow and wall, one note per stay (findings L1 to L3) |
 | `TableMachine.tla` | `MCTable*` | nova-table as table.lua is today at f7745885, with its actual gaps (Stella; the strict gate fails on purpose) |
 | `MemberTable.tla`, `EpochMemberTable.tla` | `MCMember*`, `MCEpochMember*` | the corrected member placement and epoch protocol (Stella): one place per table inside the epoch, lossless shape, no owned alias, stale writers refused |
+| `TableEdit.tla`, `TableOrder.tla` | `MCTableEdit*`, `MCTableOrder*` | nova-table's edit verbs and the order of its rows and columns, with reversed witnesses |
+| `TableSession.tla` | `MCTableSession*` | `nova-table shell`: lines, one connection, the store coming and going, a stop signal, the exit code (the design #4458 is held to) |
 
 Runners. The table/member model checkers and the member execution replay each run their whole suite under one 120 s budget (a timeout is a failure, never a green); the bare java commands and the Lua replay carry no cap of their own, so wrap them (`timeout 120 ...`) when a bound matters. `-deadlock` on the java commands turns TLC's deadlock check OFF: these models end in a terminal stutter by design, and the safety and liveness properties are what they check.
 
@@ -103,7 +105,6 @@ kernel was changed to refuse, the model was not. Bounds of the instance: a
 combined sort-and-move places at `--first` or `--last`, a combined
 sort-and-order names one row. A depth-5 run of the edit model with one member (1,652,467
 distinct states, no error) took 92 s on the same bench and is not in the set.
-
 ## The file lock (FileLock)
 
 `FileLock.tla`: a lock on a file across processes, the design of the shared
@@ -163,3 +164,84 @@ survive that check (it counted as a holder a process the code makes give up),
 so the invariant was tightened to locks handed to a caller, and the trace above
 is the one that holds. PidLive, Unlink and KeepStamp are misimplementations the
 invariants are shown to catch.
+
+## The shell (TableSession)
+
+`TableSession.tla`: `nova-table shell` as a state machine, the design that
+nova-tools#4458 is held to. The session owns its input, where its reader is
+(at a line, in a verb, in a watch, ended), one connection (none, live, or dead
+and not yet used again), the dial error its pool keeps, and its exit code. The
+outside is the store (up; refusing; gone from its socket path) and two
+signals. A bounded design model with reversed witnesses, not a refinement
+proof of session.go. What it leaves out is listed in its header.
+
+The signals (Stella, stella-ba91222b58ce): SIGTERM is a stop wherever it
+arrives. SIGINT inside a watch is how a watch is left, and the reader goes on
+to the next line; at the prompt or inside a verb it is a stop. A session ended
+by a stop reports the signal (143, 130), not the codes of its lines.
+
+What it holds the shell to:
+
+- after a stop no new line starts (an in-flight write may complete)
+  (`NothingStartsAfterStop`); SIGTERM ends the session (`TermEnds`); only a
+  stop ends the session as one (`StopOnlyWhenStopped`), and SIGINT leaves a
+  watch (`IntLeavesWatch`);
+- a line fails for the connection only when a dial made for that line failed
+  (`NoFalseAlarm`);
+- a store that could not be reached is code 2, whatever the dial said
+  (`ConnectionFailureIsTwo`);
+- a write is sent once: when its reply is lost the line ends with code 2 and
+  the write is not sent again, because it may have been done (`AtMostOnce`);
+- without `--keep-going` nothing is read after the first failed line
+  (`StopsAtFirstFailure`, `EndOfInputMeansNoFailure`); with it every line is
+  read unless the session was told to end (`KeepGoingReadsEveryLine`);
+- the exit code is the highest code of any line, unless a stop ended the
+  session (`ExitIsHighest`);
+- a verb ends: the session is never stuck inside a line (`VerbEnds`).
+
+The reader waits for input as long as the outside likes, so nothing here says
+a session must end: a shell left open at its prompt is not stuck, and a watch
+draws until it is told to stop. Fairness is on what the session owes (a verb
+in hand, a signal received), never on the arrival of a line.
+
+Run as the edit and order models are, every config at once, each in its own
+temp directory under a 60 s cap:
+
+    for cfg in MCTableSession*.cfg; do c=${cfg%.cfg}
+      mkdir -p /tmp/tlc-$c
+      timeout 60 java -Djava.io.tmpdir=/tmp/tlc-$c -cp tla2tools.jar tlc2.TLC -workers 2 \
+        -deadlock -metadir /tmp/tlc-$c/meta -config $cfg MCTableSession.tla > $c.log 2>&1 &
+    done; wait
+
+Rowan reported the exact-head run on space on 2026-09-27. At `a03a52655`,
+all nine configurations passed their expected outcomes in 8 s: the positive
+model retained 87,925 states and the stronger cached-error witness failed in
+5 states. The strengthened `NoFalseAlarm` rejects a cached error even while
+the store remains down, matching the fresh-dial requirement.
+
+At model commit `b0107f910`, the added lost-reply transition and `AtMostOnce`
+invariant bring the positive run to 92,331 distinct states, thirteen invariants
+and three liveness properties. All ten configurations ran in 9 s; all eight
+negative witnesses were caught. These are Rowan's bench measurements, not a
+new run on the reader's machine. Inputs have up to four lines over six kinds
+of line, with and without `--keep-going`, from each state of the store.
+
+| config | result |
+|---|---|
+| `MCTableSession` | no error, 92,331 distinct states: TypeOK, NothingStartsAfterStop, StopOnlyWhenStopped, NoFalseAlarm, ConnectionFailureIsTwo, AtMostOnce, StopsAtFirstFailure, ExitIsHighest, KeepGoingReadsEveryLine, EndOfInputMeansNoFailure, EndsForAReason, LineInHand, LiveMeansUp; TermEnds, IntLeavesWatch and VerbEnds under weak fairness of what the session owes |
+| `MCTableSessionBrokenTerm` | NothingStartsAfterStop violated in 5 states: `watch`, SIGTERM, the watch returns 0, the next line `ok` is run (ed959e1a3: watch.go:75, watchLoop, session.go:126) |
+| `MCTableSessionBrokenTermLive` | TermEnds violated: `watch`, SIGTERM, the watch returns 0 and the session is still there |
+| `MCTableSessionBrokenStale` | NoFalseAlarm violated in 5 states: a line answers the cached error without making a fresh dial, whether or not the store recovered (ed959e1a3: session.go:88, a pool of one; go-redis v9.22.0 pool.go:692) |
+| `MCTableSessionBrokenClass` | ConnectionFailureIsTwo violated in 3 states: the store gone from its socket path, the line ends with code 1 (ed959e1a3: main.go:303) |
+| `MCTableSessionBrokenLong` | KeepGoingReadsEveryLine violated in 2 states: a line too long ends a `--keep-going` session with a line unread (ed959e1a3: session.go:135) |
+| `MCTableSessionBrokenReplay` | AtMostOnce violated in 3 states: a write's reply is lost and the write is sent again (ed959e1a3: session.go:88 opens with go-redis's command retries; v9.22.0 error.go shouldRetry answers true for io.EOF; found by Stella: code 0 and a second receipt) |
+| `MCTableSessionBrokenOn` | StopsAtFirstFailure violated: a line is read after a failed one without `--keep-going` |
+| `MCTableSessionBrokenLast` | ExitIsHighest violated: `usage` then `ok` exits 0 |
+| `MCTableSessionBrokenInt` | StopOnlyWhenStopped violated: SIGINT inside a watch ends the session |
+
+Term, Stale, Class, Long and Replay are defects of the shell at ed959e1a3,
+reproduced on a store by the second reader or Stella and checked against
+the lines named. On, Last and Int are misimplementations the
+invariants are shown to catch; the code at ed959e1a3 has none of them. What a
+stop does to a verb in flight is left open: the verb may finish, or the
+process may end inside it. The model says only that no line starts afterwards.

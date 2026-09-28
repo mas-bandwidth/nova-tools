@@ -51,9 +51,9 @@ func placeFlags(fs interface {
 }
 
 // setVerb runs one set change and prints the verb's line.
-func setVerb(verb, table, addr string, o ntable.SetOpts, write *ntable.WriteOptions, receipt bool, line string, stdout, stderr io.Writer) int {
+func (app *application) setVerb(verb, table, addr string, o ntable.SetOpts, write *ntable.WriteOptions, receipt bool, line string, stdout, stderr io.Writer) int {
 	ctx := context.Background()
-	st, c, code := client(ctx, verb, addr, stderr)
+	st, c, code := app.client(ctx, verb, addr, stderr)
 	if code != 0 {
 		return code
 	}
@@ -69,26 +69,26 @@ func setVerb(verb, table, addr string, o ntable.SetOpts, write *ntable.WriteOpti
 
 const colUsage = "wants add, del or move: col add <table> <column spec> [" + placeUsage + "], col del <table> <col>, col move <table> <col> " + placeUsage
 
-func cmdCol(args []string, stdout, stderr io.Writer) int {
+func (app *application) cmdCol(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		return refuse(stderr, "col", colUsage)
 	}
 	switch args[0] {
 	case "add":
-		return cmdColAdd(args[1:], stdout, stderr)
+		return app.cmdColAdd(args[1:], stdout, stderr)
 	case "del":
-		return cmdColDel(args[1:], stdout, stderr)
+		return app.cmdColDel(args[1:], stdout, stderr)
 	case "move":
-		return cmdColMove(args[1:], stdout, stderr)
+		return app.cmdColMove(args[1:], stdout, stderr)
 	}
 	return refuse(stderr, "col", "unknown subverb "+args[0]+"; "+colUsage)
 }
 
-func cmdColAdd(args []string, stdout, stderr io.Writer) int {
+func (app *application) cmdColAdd(args []string, stdout, stderr io.Writer) int {
 	const verb = "col add"
 	fs := verbflag.New(verb)
-	addr := redisFlag(fs)
-	write, receipt := writeFlags(fs)
+	addr := app.redisFlag(fs)
+	write, receipt := app.writeFlags(fs)
 	place := placeFlags(fs, "column")
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
@@ -105,15 +105,15 @@ func cmdColAdd(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
-	return setVerb(verb, pos[0], *addr, ntable.SetOpts{ColAdd: &col, ColAt: at}, write, *receipt,
+	return app.setVerb(verb, pos[0], *addr, ntable.SetOpts{ColAdd: &col, ColAt: at}, write, *receipt,
 		fmt.Sprintf("TABLE COL ADD table=%s col=%s%s", pos[0], col.Name, placeWord(at)), stdout, stderr)
 }
 
-func cmdColDel(args []string, stdout, stderr io.Writer) int {
+func (app *application) cmdColDel(args []string, stdout, stderr io.Writer) int {
 	const verb = "col del"
 	fs := verbflag.New(verb)
-	addr := redisFlag(fs)
-	write, receipt := writeFlags(fs)
+	addr := app.redisFlag(fs)
+	write, receipt := app.writeFlags(fs)
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
@@ -121,15 +121,15 @@ func cmdColDel(args []string, stdout, stderr io.Writer) int {
 	if len(pos) != 2 {
 		return refuse(stderr, verb, "wants a table and a column: col del <table> <col>")
 	}
-	return setVerb(verb, pos[0], *addr, ntable.SetOpts{ColDel: pos[1]}, write, *receipt,
+	return app.setVerb(verb, pos[0], *addr, ntable.SetOpts{ColDel: pos[1]}, write, *receipt,
 		fmt.Sprintf("TABLE COL DEL table=%s col=%s", pos[0], pos[1]), stdout, stderr)
 }
 
-func cmdColMove(args []string, stdout, stderr io.Writer) int {
+func (app *application) cmdColMove(args []string, stdout, stderr io.Writer) int {
 	const verb = "col move"
 	fs := verbflag.New(verb)
-	addr := redisFlag(fs)
-	write, receipt := writeFlags(fs)
+	addr := app.redisFlag(fs)
+	write, receipt := app.writeFlags(fs)
 	place := placeFlags(fs, "column")
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
@@ -142,7 +142,7 @@ func cmdColMove(args []string, stdout, stderr io.Writer) int {
 	if len(pos) != 2 || at == nil {
 		return refuse(stderr, verb, "wants a table, a column and a place: col move <table> <col> "+placeUsage)
 	}
-	return setVerb(verb, pos[0], *addr, ntable.SetOpts{ColMove: &ntable.Reorder{Item: pos[1], Place: *at}}, write, *receipt,
+	return app.setVerb(verb, pos[0], *addr, ntable.SetOpts{ColMove: &ntable.Reorder{Item: pos[1], Place: *at}}, write, *receipt,
 		fmt.Sprintf("TABLE COL MOVE table=%s col=%s%s", pos[0], pos[1], placeWord(at)), stdout, stderr)
 }
 
@@ -156,11 +156,11 @@ func placeWord(p *ntable.Place) string {
 	return " place=" + p.Where + " of=" + field(p.Ref)
 }
 
-func cmdRowMove(args []string, stdout, stderr io.Writer) int {
+func (app *application) cmdRowMove(args []string, stdout, stderr io.Writer) int {
 	const verb = "row move"
 	fs := verbflag.New(verb)
-	addr := redisFlag(fs)
-	write, receipt := writeFlags(fs)
+	addr := app.redisFlag(fs)
+	write, receipt := app.writeFlags(fs)
 	place := placeFlags(fs, "row")
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
@@ -173,15 +173,15 @@ func cmdRowMove(args []string, stdout, stderr io.Writer) int {
 	if len(pos) != 2 || at == nil {
 		return refuse(stderr, verb, "wants a table, a row and a place: row move <table> <row> "+placeUsage)
 	}
-	return setVerb(verb, pos[0], *addr, ntable.SetOpts{RowMove: &ntable.Reorder{Item: pos[1], Place: *at}}, write, *receipt,
+	return app.setVerb(verb, pos[0], *addr, ntable.SetOpts{RowMove: &ntable.Reorder{Item: pos[1], Place: *at}}, write, *receipt,
 		fmt.Sprintf("TABLE ROW MOVE table=%s row=%s%s", pos[0], field(pos[1]), placeWord(at)), stdout, stderr)
 }
 
-func cmdRowOrder(args []string, stdout, stderr io.Writer) int {
+func (app *application) cmdRowOrder(args []string, stdout, stderr io.Writer) int {
 	const verb = "row order"
 	fs := verbflag.New(verb)
-	addr := redisFlag(fs)
-	write, receipt := writeFlags(fs)
+	addr := app.redisFlag(fs)
+	write, receipt := app.writeFlags(fs)
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
@@ -189,15 +189,15 @@ func cmdRowOrder(args []string, stdout, stderr io.Writer) int {
 	if len(pos) < 2 {
 		return refuse(stderr, verb, "wants a table and the rows that go first, in order; the rest keep their order: row order <table> <row> <row> ...")
 	}
-	return setVerb(verb, pos[0], *addr, ntable.SetOpts{RowOrder: pos[1:]}, write, *receipt,
+	return app.setVerb(verb, pos[0], *addr, ntable.SetOpts{RowOrder: pos[1:]}, write, *receipt,
 		fmt.Sprintf("TABLE ROW ORDER table=%s first=%s", pos[0], field(strings.Join(pos[1:], ","))), stdout, stderr)
 }
 
-func cmdRowSort(args []string, stdout, stderr io.Writer) int {
+func (app *application) cmdRowSort(args []string, stdout, stderr io.Writer) int {
 	const verb = "row sort"
 	fs := verbflag.New(verb)
-	addr := redisFlag(fs)
-	write, receipt := writeFlags(fs)
+	addr := app.redisFlag(fs)
+	write, receipt := app.writeFlags(fs)
 	by := fs.String("by", "name", "name (the row key), label, a count column or a text column")
 	desc := fs.Bool("desc", false, "largest or last first")
 	keep := fs.Bool("keep", false, "a standing sort (by name or label): rows added later take their place")
@@ -217,5 +217,5 @@ func cmdRowSort(args []string, stdout, stderr io.Writer) int {
 	if *manual {
 		line = fmt.Sprintf("TABLE ROW SORT table=%s manual=true", pos[0])
 	}
-	return setVerb(verb, pos[0], *addr, o, write, *receipt, line, stdout, stderr)
+	return app.setVerb(verb, pos[0], *addr, o, write, *receipt, line, stdout, stderr)
 }

@@ -64,6 +64,9 @@ until row sort --manual. row del of a missing row succeeds with existed=0.
 col del refuses a column that holds members or text, naming all blocking
 members and batch removal commands, or the text to clear first.
 
+shell reads one command per line on a shared connection. It prints write
+receipts by default; --receipt=false disables them. Enter help, quit or exit.
+
 exit codes: 0 done, 1 refused, 2 usage
 
 example:
@@ -104,7 +107,11 @@ func refused(stderr io.Writer, verb, what string) int {
 	return 1
 }
 
-func run(args []string, stdout, stderr io.Writer) (code int) {
+func run(args []string, stdout, stderr io.Writer) int {
+	return (&application{in: os.Stdin}).run(args, stdout, stderr)
+}
+
+func (app *application) run(args []string, stdout, stderr io.Writer) (code int) {
 	defer recoverHelp(stdout, &code)
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb; available: "+rootNames())
@@ -123,11 +130,13 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 		}
 	}
 	var err error
-	args, err = selectSeat(seatcred.Process(), args, os.Getenv, os.Setenv)
-	if err != nil {
-		return refuse(stderr, "", err.Error())
+	if app.shared == nil {
+		args, err = selectSeat(seatcred.Process(), args, os.Getenv, os.Setenv)
+		if err != nil {
+			return refuse(stderr, "", err.Error())
+		}
 	}
-	return dispatch(args, stdout, stderr)
+	return app.dispatch(args, stdout, stderr)
 }
 
 // selectSeat is nova-sprint's seat resolution (cmd/nova-sprint/seat.go,
@@ -183,10 +192,14 @@ func selectSeat(sel *seatcred.Selection, args []string, getenv func(string) stri
 }
 
 // redisFlag declares --redis on fs with the seat-aware default.
-func redisFlag(fs interface {
+func (app *application) redisFlag(fs interface {
 	String(name, value, usage string) *string
 }) *string {
-	return fs.String("redis", redisDefault(os.Getenv), "the Redis address (else NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR, then the seat's)")
+	addr := redisDefault(os.Getenv)
+	if app.shared != nil {
+		addr = app.addr
+	}
+	return fs.String("redis", addr, "the Redis address (else NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR, then the seat's)")
 }
 
 // redisDefault is NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's
@@ -259,13 +272,22 @@ func (quietRedis) Printf(context.Context, string, ...interface{}) {}
 var quietRedisOnce sync.Once
 
 // client is open's client for a verb, or its refusal.
-func client(ctx context.Context, verb, addr string, stderr io.Writer) (*store.Store, *redis.Client, int) {
+func (app *application) client(ctx context.Context, verb, addr string, stderr io.Writer) (*connection, *redis.Client, int) {
 	quietRedisOnce.Do(func() { redis.SetLogger(quietRedis{}) })
+	if app.shared != nil {
+		if addr != app.addr {
+			return nil, nil, refuse(stderr, verb, "the shell connection is fixed; choose --redis when entering nova-table shell")
+		}
+		if err := app.shared.prepare(); err != nil {
+			return nil, nil, refuse(stderr, verb, err.Error())
+		}
+		return app.shared, app.shared.Client(), 0
+	}
 	st, err := open(ctx, addr)
 	if err != nil {
 		return nil, nil, refuse(stderr, verb, err.Error())
 	}
-	return st, st.Client(), 0
+	return &connection{Store: st}, st.Client(), 0
 }
 
 // field is a value of a key=value field: quoted when it holds a space, a
@@ -281,7 +303,7 @@ func field(s string) string {
 // store that could not be reached is 2, the store's own no is 1.
 func storeRefusal(stderr io.Writer, verb string, err error) int {
 	msg := err.Error()
-	if strings.Contains(msg, "connection refused") || strings.Contains(msg, "NOAUTH") || strings.Contains(msg, "WRONGPASS") || strings.Contains(msg, "i/o timeout") || strings.Contains(msg, "no such host") {
+	if store.Unreachable(err) {
 		return refuse(stderr, verb, msg)
 	}
 	return refused(stderr, verb, msg)

@@ -9,14 +9,14 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 )
 
-func cmdMember(args []string, stdout, stderr io.Writer) int {
+func (app *application) cmdMember(args []string, stdout, stderr io.Writer) int {
 	const verb = "member create"
 	if len(args) == 0 || args[0] != "create" {
 		return refuse(stderr, "member", "wants create <table> <id>")
 	}
 	fs := verbflag.New(verb)
-	addr := redisFlag(fs)
-	write, receipt := writeFlags(fs)
+	addr := app.redisFlag(fs)
+	write, receipt := app.writeFlags(fs)
 	pos, err := parseInterleaved(fs, args[1:])
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
@@ -25,7 +25,7 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, verb, "wants a table and a new member ID: member create <table> <id>")
 	}
 	ctx := context.Background()
-	st, c, code := client(ctx, verb, *addr, stderr)
+	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
 		return code
 	}
@@ -39,10 +39,10 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func cmdCheck(args []string, stdout, stderr io.Writer) int {
+func (app *application) cmdCheck(args []string, stdout, stderr io.Writer) int {
 	const verb = "check"
 	fs := verbflag.New(verb)
-	addr := redisFlag(fs)
+	addr := app.redisFlag(fs)
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
@@ -51,7 +51,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, verb, "wants one table name: check <table>")
 	}
 	ctx := context.Background()
-	st, c, code := client(ctx, verb, *addr, stderr)
+	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
 		return code
 	}
@@ -65,10 +65,10 @@ func cmdCheck(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func cmdMemberFind(args []string, stdout, stderr io.Writer) int {
+func (app *application) cmdMemberFind(args []string, stdout, stderr io.Writer) int {
 	const verb = "member find"
 	fs := verbflag.New(verb)
-	addr := redisFlag(fs)
+	addr := app.redisFlag(fs)
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
@@ -77,7 +77,7 @@ func cmdMemberFind(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, verb, "wants a table and a member ID: member find <table> <id>")
 	}
 	ctx := context.Background()
-	st, c, code := client(ctx, verb, *addr, stderr)
+	st, c, code := app.client(ctx, verb, *addr, stderr)
 	if code != 0 {
 		return code
 	}
