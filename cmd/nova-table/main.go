@@ -355,22 +355,39 @@ func lost(err error) bool {
 }
 
 // refusal maps a verb's error to the exit code its line carries: a store
-// that could not be reached or refused the login is 2, the store's own no
-// is 1. A lost-store error is put in redisconn's words (what was tried,
-// what came back, the next step) only when the cause names no next step of
-// its own: a write whose reply was lost says `run: nova-table show <table>`,
-// because the write may have committed, and "start the store" over it
-// would invite the duplicate AtMostOnce exists to prevent. One remedy a
-// line.
+// that could not be reached or refused the login, or a reply that was lost,
+// is 2 (tla/TableSession.tla), the store's own no is 1. A lost-store error
+// is in redisconn's words (what was tried, what came back, the next step);
+// when the cause names a next step of this tool's, that step is the line's
+// one remedy and redisconn's is left out (oneRemedy): a write whose reply
+// was lost says `run: nova-table show <table>`, because the write may have
+// committed, and "start the store" over it would invite the duplicate
+// AtMostOnce exists to prevent. One remedy a line.
 func (c *connection) refusal(stderr io.Writer, verb string, err error) int {
 	if lost(err) {
-		text := err.Error()
+		text := oneRemedy(err.Error())
 		if c != nil && c.Conn != nil && !remedied(text) {
-			text = seatWords(seatcred.Process(), c.Explain(err).Error())
+			text = c.Explain(err).Error()
 		}
-		return refuse(stderr, verb, text)
+		return refuse(stderr, verb, seatWords(seatcred.Process(), text))
 	}
 	return refused(stderr, verb, err.Error())
+}
+
+// oneRemedy is text with redisconn's next step taken out when this tool's
+// own "; run:" follows it: the connection's hook (redisconn.Open) explains a
+// lost store inside the verb's error, and the verb then names its own step.
+// A text with only one of the two comes back as it is.
+func oneRemedy(text string) string {
+	i := strings.Index(text, "; next: ")
+	if i < 0 {
+		return text
+	}
+	j := strings.Index(text[i:], "; run:")
+	if j < 0 {
+		return text
+	}
+	return text[:i] + text[i+j:]
 }
 
 // seatWords says a seat's password as the seat's: redisconn names the

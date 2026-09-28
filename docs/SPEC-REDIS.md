@@ -69,7 +69,11 @@ The second delivery is the binary that owns one local instance. Its verbs:
   **TTL**; `recall` reads it back and refuses a missing or expired key. The
   key form is `<owner>:<name>`, and a write with no owner or no TTL is
   refused. Scratch is scratch: nothing spilled is a record, and recall is
-  allowed to miss.
+  allowed to miss. A spill whose reply is lost after the transaction was
+  sent is `SPILL UNCONFIRMED`, exit 1: the write may have committed, so it is
+  read back with recall before it is spilled again. A recall whose reply is
+  lost is one `RECALL FAIL` line with `class=unconfirmed`, exit 1: a read
+  changes nothing, so it is read again.
 - `presence` lists the live lines seen by heartbeat keys that expire on their
   own, so a crashed line ages out without anyone writing a tombstone.
 - `check` prints one line and earns its exit code, the Conventions' check:

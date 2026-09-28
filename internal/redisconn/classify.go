@@ -14,28 +14,32 @@ import (
 )
 
 // Class is what a failure to work with the store comes down to, for a tool
-// that answers each with its own exit code and its own next step.
+// that answers each with its own exit code and its own next step. The exit
+// code each class takes in a nova tool is named on the class: Other 1,
+// Unreachable 2, AuthRefused 2, Unconfirmed 1.
 type Class int
 
 const (
 	// Other is everything that is none of the three below: the store
 	// answered and refused the command, the caller cancelled, the client was
-	// closed. It is the zero value, and the class of a nil error.
+	// closed. It is the zero value, and the class of a nil error. Exit 1.
 	Other Class = iota
 	// Unreachable is a store nothing was sent to: no address, a refused or
 	// timed out dial, a name that does not resolve, no free connection in
 	// time, a connection that dropped while it was being set up. The
-	// command did not reach the store.
+	// command did not reach the store. Exit 2: the address or the store is
+	// the caller's to fix.
 	Unreachable
 	// AuthRefused is a login that was not accepted: refused by the store
 	// (NOAUTH, WRONGPASS), or refused by Resolve before any dial because the
-	// password could not be had.
+	// password could not be had. Exit 2: the login is the caller's to fix.
 	AuthRefused
 	// Unconfirmed is a command that was sent and whose reply did not come:
 	// the connection dropped, or the reply did not come in time, after the
 	// command was written. The store may have done it, so a write may have
 	// committed, and is read back before it is sent again. It is never said
 	// to be Unreachable, which is a command that did not reach the store.
+	// Exit 1: the command ran and its outcome is unknown.
 	Unconfirmed
 )
 

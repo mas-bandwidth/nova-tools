@@ -292,8 +292,8 @@ The first five configs, before `Missers` was added, gave the same outcomes at
 
 ## The first connection (FirstConn)
 
-`FirstConn.tla`: the connection `redisconn.Open` dials (internal/redisconn/open.go
-at f6ec9e2b8, `firstConn`), as a state machine over the seven events of
+`FirstConn.tla`: the connection `redisconn.Open` dials (internal/redisconn/open.go,
+`firstConn`), as a state machine over the seven events of
 `firstconn_test.go`: the store sends a reply that begins `%` (HELLO accepted)
 or `-` (refused); the client reads with room to spare, or a few bytes at a
 time; the client writes the probe, or another command; Open returns. go-redis
@@ -334,13 +334,13 @@ the set because of the cap.
 | config | result |
 |---|---|
 | `MCFirstConn` | no error, 30,832 distinct states, depth 14: TypeOK, TakenOnlyWhenDue, TakenWhenDue, TheRestTravels, StoreBytesInOrder, AnswerStandsInPlace, InertStays; AnswerDelivered under weak fairness of the reads |
-| `MCFirstConnBrokenRefused` | TakenOnlyWhenDue violated in 4 states: `-` read, the connection armed, the probe taken (open.go:268 without the `%` test) |
-| `MCFirstConnBrokenAny` | TakenOnlyWhenDue violated in 4 states: `%` read, a write that is not the probe taken (:282 without bytes.Equal) |
-| `MCFirstConnBrokenMisaligned` | TakenOnlyWhenDue violated in 5 states: `%` read, another write travels and leaves the connection armed, the probe after it is taken (:285 missing) |
-| `MCFirstConnBrokenTwice` | TakenOnlyWhenDue violated in 6 states: the answer read whole, the connection armed again, a second probe taken (:261 storing armed) |
-| `MCFirstConnBrokenShort` | AnswerStandsInPlace violated in 6 states: two of the answer's three bytes read, the connection inert, the store's next bytes read where the third should be (:260 without the count) |
-| `MCFirstConnBrokenLate` | TakenOnlyWhenDue violated in 5 states: `%` read, Open returns, the probe written after it is taken (:293 missing) |
-| `MCFirstConnBrokenHang` | AnswerDelivered violated: the probe taken, no read is possible, the client waits for an answer that never comes (:257 reading the store) |
+| `MCFirstConnBrokenRefused` | TakenOnlyWhenDue violated in 4 states: `-` read, the connection armed, the probe taken (open.go:398 without the `%` test) |
+| `MCFirstConnBrokenAny` | TakenOnlyWhenDue violated in 4 states: `%` read, a write that is not the probe taken (:412 without bytes.Equal) |
+| `MCFirstConnBrokenMisaligned` | TakenOnlyWhenDue violated in 5 states: `%` read, another write travels and leaves the connection armed, the probe after it is taken (:416 missing) |
+| `MCFirstConnBrokenTwice` | TakenOnlyWhenDue violated in 6 states: the answer read whole, the connection armed again, a second probe taken (:391 storing armed) |
+| `MCFirstConnBrokenShort` | AnswerStandsInPlace violated in 6 states: two of the answer's three bytes read, the connection inert, the store's next bytes read where the third should be (:390 without the count) |
+| `MCFirstConnBrokenLate` | TakenOnlyWhenDue violated in 5 states: `%` read, Open returns, the probe written after it is taken (:424 missing) |
+| `MCFirstConnBrokenHang` | AnswerDelivered violated: the probe taken, no read is possible, the client waits for an answer that never comes (:387 reading the store) |
 
 The failure edge after Open is classified outside the model, and adds no
 state or transition to it: the hook `redisconn.Open` installs once the
@@ -354,16 +354,16 @@ the handshake's round trips (read from `firstConn`'s record that the probe
 was taken, the model's `taken`) change no action either; TLC was not rerun
 for a change of comments only.
 
-None of the seven was a defect of the code at f6ec9e2b8: `firstconn_test.go`
+None of the seven is a defect of the code: `firstconn_test.go`
 holds the same rules over every order of the seven events up to six and over
 long orders. Each is a misimplementation the model is shown to catch. The
 Misaligned trace was read against the code by hand: state 3, `%` read,
-`Read` at :267-271 swaps watching for armed; state 4, a write that is not
-the probe, `Write` at :281-285 finds armed, `bytes.Equal` false, and swaps
+`Read` at :397-401 swaps watching for armed; state 4, a write that is not
+the probe, `Write` at :411-416 finds armed, `bytes.Equal` false, and swaps
 armed for inert, which the witness omits; state 5, the probe, the code at
-:287 passes it to the store because the connection is inert, and the test's
+:418 passes it to the store because the connection is inert, and the test's
 named order `writeOther, sendAccepted, readAll, writeOther, writeProbe`
 (firstconn_test.go:223) says the same: not taken. The Hang trace: states 7
 and 8, `%` read and the probe taken, then no read is enabled because the
-witness reads the store, which sent nothing; the code at :257-263 reads the
+witness reads the store, which sent nothing; the code at :387-393 reads the
 answer from `probeAnswer` and never touches the store while answering.

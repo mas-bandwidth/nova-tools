@@ -301,6 +301,38 @@ func TestOptionsString(t *testing.T) {
 	}
 }
 
+// TestSecretNeverPrintsItsValue: a Secret, by value or by pointer, alone or
+// inside a struct, shows the fixed redaction under every verb, and neither
+// its words (which may hold the password) nor what Read returns.
+func TestSecretNeverPrintsItsValue(t *testing.T) {
+	t.Parallel()
+	const password = "hunter2-Secret-Value"
+	s := Secret{From: "seat " + password, Read: func() string { return password }}
+	if got := s.String(); got != "redisconn.Secret(redacted)" {
+		t.Fatalf("String() = %q; want redisconn.Secret(redacted)", got)
+	}
+	holder := struct{ S *Secret }{&s}
+	for _, c := range []struct {
+		verb string
+		v    any
+	}{
+		{"%v", s}, {"%s", s}, {"%+v", s}, {"%#v", s}, {"%q", s},
+		{"%v", &s}, {"%s", &s}, {"%+v", &s}, {"%#v", &s},
+		{"%v", holder}, {"%+v", holder},
+	} {
+		got := fmt.Sprintf(c.verb, c.v)
+		if strings.Contains(got, password) || strings.Contains(got, "seat") {
+			t.Errorf("%s of %T shows what the Secret holds: %q", c.verb, c.v, got)
+		}
+		if !strings.Contains(got, "redisconn.Secret(redacted)") {
+			t.Errorf("%s of %T is %q; want the redaction", c.verb, c.v, got)
+		}
+	}
+	if got := fmt.Sprint(s); got != "redisconn.Secret(redacted)" {
+		t.Errorf("fmt.Sprint = %q; want redisconn.Secret(redacted)", got)
+	}
+}
+
 // TestRefusalsAreThisPackagesErrors: a refusal unwraps to its cause and is
 // found by errors.As under a wrap.
 func TestRefusalsAreThisPackagesErrors(t *testing.T) {

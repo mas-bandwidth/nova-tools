@@ -1,7 +1,7 @@
 ----------------------------- MODULE FirstConn -----------------------------
 \* The connection redisconn.Open dials, as state. nova-tools
-\* internal/redisconn/open.go at f6ec9e2b8: firstConn (Read :255, Write
-\* :280, disarm :291), firstDial (dialer :194, done :209), the probe :180;
+\* internal/redisconn/open.go: firstConn (Read :385, Write
+\* :410, disarm :422), firstDial (dialer :260, done :301), the probe :240;
 \* firstconn_test.go, whose seven events and three rules are this module's.
 \*
 \* Why it exists. go-redis shakes hands inside the first command on a
@@ -32,28 +32,28 @@
 \* Broken = "none" is the design. Every other value is a reversed witness, a
 \* misimplementation one invariant or property must catch:
 \*   "refused"    the store's first byte arms the connection whatever it is
-\*                (:268 without the '%' test): the probe after a refused
+\*                (:398 without the '%' test): the probe after a refused
 \*                HELLO is answered here, and the refusal is never read as
 \*                the probe's own answer
 \*   "any"        an armed connection takes any write, not only the probe
-\*                (:282 without bytes.Equal): a command of the caller's is
+\*                (:412 without bytes.Equal): a command of the caller's is
 \*                answered PONG and never reaches the store
 \*   "misaligned" a write that is not the probe leaves the connection armed
-\*                (:285 missing): the probe after it is taken while the
+\*                (:416 missing): the probe after it is taken while the
 \*                store's reply to that write is still to come, so every
 \*                reply from then on is read for the wrong command
 \*   "twice"      the connection goes back to armed once the answer is read
-\*                (:261 storing armed, not inert): the caller's own PING
+\*                (:391 storing armed, not inert): the caller's own PING
 \*                after Open is answered here and never reaches the store
-\*   "short"      a read of part of the answer ends it (:260 without the
+\*   "short"      a read of part of the answer ends it (:390 without the
 \*                count): the rest of the answer is never read, and the
 \*                store's next bytes are read in its place
-\*   "late"       disarm leaves an armed connection armed (:293 missing): a
+\*   "late"       disarm leaves an armed connection armed (:424 missing): a
 \*                probe written after Open returned is taken
-\*   "hang"       the probe is taken and never answered (:257 reading the
+\*   "hang"       the probe is taken and never answered (:387 reading the
 \*                store instead): the client waits for a reply that never
 \*                comes
-\* None of the seven was in the code at f6ec9e2b8, whose tests hold the rules
+\* None of the seven is in the code, whose tests hold the rules
 \* over every order of the seven events up to six and over long orders. Each
 \* is a misimplementation the model is shown to catch; each trace was read
 \* against the lines named.
@@ -61,7 +61,7 @@
 \* Requests and replies alternate on a go-redis connection, so in Open the
 \* client has read the whole of the store's reply before it writes the probe,
 \* and the answer stands exactly where the store's would have (open.go
-\* :244). Over arbitrary orders, as here and in the test, the answer comes
+\* :370). Over arbitrary orders, as here and in the test, the answer comes
 \* first and comes alone, before any of the store's bytes still unread;
 \* AnswerStandsInPlace states that.
 \*
@@ -139,7 +139,7 @@ Send(first) ==
 SendAccepted == Send("%")
 SendRefused == Send("-")
 
-\* The code's Read (:255) with room bytes of room: from the store, except
+\* The code's Read (:385) with room bytes of room: from the store, except
 \* for the answer to a probe taken by Write, which is read from here.
 FromStore(room) ==
  /\ sent # <<>>
@@ -177,7 +177,7 @@ ReadSome == Read(Room)
 Due(kind) ==
  /\ kind = "probe" /\ FirstRead = "%"
  /\ ~wroteAfter /\ ~taken /\ ~returned
-\* The code's Write (:280): the probe of an armed connection is taken.
+\* The code's Write (:410): the probe of an armed connection is taken.
 Takes(kind) == state = "armed" /\ (kind = "probe" \/ Broken = "any")
 Write(kind) ==
  /\ Event
@@ -200,7 +200,7 @@ Write(kind) ==
 WriteProbe == Write("probe")
 WriteOther == Write("other")
 
-\* Open returns: disarm (:291) makes the connection inert unless an answer
+\* Open returns: disarm (:422) makes the connection inert unless an answer
 \* is still to be read.
 OpenReturns ==
  /\ Event
