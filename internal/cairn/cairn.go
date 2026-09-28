@@ -198,8 +198,8 @@ func noRecord(store, session, publish string) error {
 		publish = PublishManual
 	}
 	return &NotFoundError{Msg: fmt.Sprintf(
-		"no such session %q under store %q; open first: nova-cairn open --store %s --session %s --publish %s",
-		session, store, store, session, publish)}
+		"no such session %q under store %q; open first: %s",
+		session, store, openRemedy(store, session, publish))}
 }
 
 // benchHeadingRe reads the one heading this tool writes into a bench file:
@@ -571,6 +571,28 @@ func EntryText(store, session, id string) (string, error) {
 // infer the remote from the local.
 func Receipt(store, session, id string) (ReceiptInfo, error) {
 	var rc ReceiptInfo
+	if err := existingStore(store); err != nil {
+		return rc, err
+	}
+	if !validID(id) {
+		return rc, fmt.Errorf("bad entry id %q: nonempty, no slashes, no whitespace", id)
+	}
+	path, bench, err := recordForRead(store, session)
+	if err != nil {
+		return rc, err
+	}
+	if bench {
+		rows, err := benchReceipts(path, session)
+		if err != nil {
+			return rc, err
+		}
+		for _, row := range rows {
+			if row.ID == id {
+				return row, nil
+			}
+		}
+		return rc, &NotFoundError{Msg: fmt.Sprintf("no such entry %q in session %q", id, session)}
+	}
 	ef, err := readEntry(store, session, id)
 	if err != nil {
 		return rc, err
@@ -594,20 +616,25 @@ func Receipt(store, session, id string) (ReceiptInfo, error) {
 // never a row. session "" indexes every record; max <= 0 lifts the ceiling
 // and returns everything with no MORE standing for the rest.
 func Index(store, session string, max int) ([]IndexRow, int, error) {
-	if store == "" {
-		return nil, 0, errors.New("no store given; refusing to guess")
+	if err := existingStore(store); err != nil {
+		return nil, 0, err
+	}
+	if session != "" {
+		if _, _, err := recordForRead(store, session); err != nil {
+			return nil, 0, err
+		}
+	}
+	rows, flat, err := flatIndexRows(store, session)
+	if err != nil {
+		return nil, 0, err
 	}
 	root := filepath.Join(store, "entries")
-	var rows []IndexRow
 	entries, err := os.ReadDir(root)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, 0, nil
-		}
+	if err != nil && !os.IsNotExist(err) {
 		return nil, 0, err
 	}
 	for _, sess := range entries {
-		if !sess.IsDir() || (session != "" && sess.Name() != session) {
+		if !sess.IsDir() || flat[sess.Name()] || (session != "" && sess.Name() != session) {
 			continue
 		}
 		files, err := os.ReadDir(filepath.Join(root, sess.Name()))
@@ -654,41 +681,22 @@ func Index(store, session string, max int) ([]IndexRow, int, error) {
 // tree it reports on.
 func Coverage(store string) Ledger {
 	var led Ledger
-	sessions, err := os.ReadDir(filepath.Join(store, "sessions"))
-	if err == nil {
-		for _, f := range sessions {
-			if !f.IsDir() && strings.HasSuffix(f.Name(), ".md") {
-				led.Sessions++
-			}
-		}
-	}
-	// A bench store keeps its records as <store>/<session>.md. They are
-	// records the append verb writes into, so the ledger counts them: a
-	// coverage line reading sessions=0 over a store this tool can append to
-	// is the same false answer the refusal gave.
-	if top, err := os.ReadDir(store); err == nil {
-		for _, f := range top {
-			if !f.IsDir() && strings.HasSuffix(f.Name(), ".md") {
-				led.Sessions++
-			}
-		}
-	}
-	entries, err := os.ReadDir(filepath.Join(store, "entries"))
-	if err == nil {
-		for _, sess := range entries {
-			if !sess.IsDir() {
-				continue
-			}
-			files, err := os.ReadDir(filepath.Join(store, "entries", sess.Name()))
-			if err != nil {
-				continue
-			}
+	names := map[string]bool{}
+	for _, dir := range []string{filepath.Join(store, "sessions"), store} {
+		if files, err := os.ReadDir(dir); err == nil {
 			for _, f := range files {
-				if !f.IsDir() && strings.HasSuffix(f.Name(), ".json") {
-					led.Entries++
+				if !f.IsDir() && strings.HasSuffix(f.Name(), ".md") {
+					id := strings.TrimSuffix(f.Name(), ".md")
+					if validID(id) {
+						names[id] = true
+					}
 				}
 			}
 		}
+	}
+	led.Sessions = len(names)
+	if _, total, err := Index(store, "", 0); err == nil {
+		led.Entries = total
 	}
 	return led
 }
