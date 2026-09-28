@@ -33,6 +33,7 @@ cmd/nova-config/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: n
 cmd/nova-secrets/seat_inject_functional_test.go:TestTheHelpExampleIsWhatSeatInjectPrints example: nova-secrets seat inject --store ./secrets --as air --from rowan --only NOVA_REDIS_BENCH_PASSWORD --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops --no-pr
 cmd/nova-ci/receipt_test.go:TestTheCommandReferenceReceiptRefusalsAreWhatTheToolPrints $ nova-ci github receipt --from-runner --repo nova-tools --sha 9af23a05e0000000000000000000000000000000 --run-id 1 --workflow CI --conclusion success
 cmd/nova-ci/receipt_test.go:TestTheCommandReferenceReceiptRefusalsAreWhatTheToolPrints $ nova-ci github receipt --from-runner --repo mas-bandwidth/nova-tools --sha 9af23a05e0000000000000000000000000000000 --run-id 1 --workflow CI --conclusion skipped
+cmd/nova-ci/cost_test.go:TestTheCommandReferenceCostIsWhatTheToolPrints $ nova-ci cost --repo mas-bandwidth/nova-tools --sha 0123456789abcdef0123456789abcdef01234567 --run-id 777 --workflow ci --conclusion failure --pr 4328 < internal/cicost/testdata/jobs.json
 cmd/nova-sandbox/firstrun_test.go:TestTheCommandReferenceExamplesAreWhatTheToolPrints $ nova-sandbox check --bogus
 cmd/nova-sandbox/firstrun_test.go:TestTheCommandReferenceExamplesAreWhatTheToolPrints $ nova-sandbox bogus
 cmd/nova-sandbox/firstrun_test.go:TestTheCommandReferenceExamplesAreWhatTheToolPrints $ nova-sandbox worktree --repo /path/to/workdir --scratch /path/to/workdir/scratch --pr 123

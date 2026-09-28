@@ -1487,6 +1487,57 @@ $ nova-ci github receipt --from-runner --repo mas-bandwidth/nova-tools --sha 9af
 nova-ci github receipt: --conclusion wants success, failure or cancelled (job.status), got "skipped"; run: nova-ci help
 ```
 
+### cost
+
+`nova-ci cost --repo owner/name --sha <40hex> --run-id <n> --workflow <name>
+--conclusion success|failure|cancelled [--pr <n>] [--at <rfc3339>] [--redis <addr>]
+< jobs.json` is the one COST line of a CI run: where the run's job-seconds went.
+It reads the forge's job listing for the run on stdin (the body of
+`repos/<owner>/<name>/actions/runs/<id>/jobs`: one JSON object whose `jobs`
+array holds exactly `total_count` jobs, whether a single complete page or pages
+combined into one object; raw concatenated pages are refused), prices it, and
+prints one line: the receipt's identity (the flags are `github receipt`'s, spelt
+the same, so the `ci-ok` step writes both from the same context), then
+`jobs=<n> total=<s> spin=<s> unknown=<n>` and one
+`job=<name>:<seconds>:<conclusion>:<attempt>:<why>` field per job in the
+listing's order. A job's seconds are its `completed_at` minus its `started_at`
+as the forge stamped them; `spin` is the seconds that bought no verdict, the
+jobs whose `why` is `failed`, `cancelled`, `rerun` (attempt above one) or
+`superseded` (an earlier attempt the listing also holds a later one of); a job
+with no `completed_at` yet has unknown seconds, printed `-` and counted in
+`unknown=`, never summed as zero. The verb makes no call of its own: what
+fetched the listing is the caller's business (internal/cicost).
+
+A complete listing is required: if `total_count` exceeds the jobs read, or if
+the counts mismatch, the command refuses before any dial (exit 2) naming the
+jobs read, expected count, and pagination guidance (`listing is partial (<n>
+jobs read, <m> expected); page through the forge's listing, or pass every page`).
+
+`--redis <addr>` appends the same entry to the `ci:cost` stream first (one
+entry per run: the receipt's fields, the totals, one `job:<name>:<attempt>`
+field per job; a reader joins it to the run's `ev:github` row by `repo`, `sha`
+and `run_id`) and the line ends in the entry's id; without it the line ends in
+`ev=-`. The store is dialled as the environment's seat, the receipt's way. Exit
+0 with the line; 1 when the store would not take the entry, one line on stderr
+ending `the COST entry was not written: fix the store or the bench seat and
+rerun ci-ok`. If an XADD write succeeds but closing the connection subsequently
+fails, the COST line with its event id is printed on stdout, the close failure
+is reported on stderr (`nova-ci cost: close: <err>`), and the command exits 1
+without instructing the caller to rerun the write (preventing duplicate entries);
+2 a refusal before any dial, for a flag the receipt refuses, an empty stdin, a
+listing that is not the forge's JSON, a listing holding no jobs, or a partial or
+count-mismatched listing.
+
+```
+$ nova-ci cost --repo mas-bandwidth/nova-tools --sha 0123456789abcdef0123456789abcdef01234567 --run-id 777 --workflow ci --conclusion failure --pr 4328 < internal/cicost/testdata/jobs.json
+COST repo=mas-bandwidth/nova-tools sha=0123456789abcdef0123456789abcdef01234567 run=777 workflow=ci conclusion=failure pr=4328 jobs=5 total=150 spin=75 unknown=0 job=lint:15:success:1:ok job=test\x20(linux):42:failure:1:failed job=functional:33:success:2:rerun job=docs:0:skipped:1:ok job=test-hosted:60:success:1:ok ev=-
+```
+
+The fixture is five jobs of one run: `lint` 15 s green, `test (linux)` 42 s
+red, `functional` 33 s green in its second attempt, `docs` skipped, `test-hosted`
+60 s green; so `total=150` and `spin=75`, the red job's 42 s and the rerun's
+33 s. A job name is one token: the space in `test (linux)` prints as `\x20`.
+
 ## nova-config
 
 ```
