@@ -34,6 +34,12 @@ const (
 	hostedModCache     = "~/go/pkg/mod"
 )
 
+// hostedGoCacheID is the id of test-hosted's Go build and module cache restore;
+// its save is the save step whose key reads that step. The toolchain has a
+// restore and save of its own (hosted_setup_class_test.go), so the steps are
+// found by id, never by kind alone.
+const hostedGoCacheID = "gocache"
+
 type cacheStep struct {
 	ID   string            `yaml:"id"`
 	Name string            `yaml:"name"`
@@ -76,9 +82,9 @@ func TestHostedCacheIsWhereGoKeepsIt(t *testing.T) {
 		switch {
 		case strings.HasPrefix(s.Uses, "actions/cache@"):
 			t.Errorf("test-hosted step %q uses the combined actions/cache: its save is a post step with post-if success(), so a shard the cap cancels never saves; use actions/cache/restore and actions/cache/save", s.Name)
-		case strings.HasPrefix(s.Uses, "actions/cache/restore@"):
+		case strings.HasPrefix(s.Uses, "actions/cache/restore@") && s.ID == hostedGoCacheID:
 			restore = i
-		case strings.HasPrefix(s.Uses, "actions/cache/save@"):
+		case strings.HasPrefix(s.Uses, "actions/cache/save@") && strings.Contains(s.With["key"], "steps."+hostedGoCacheID+"."):
 			save = i
 		case s.Name == "build":
 			build = i
@@ -87,7 +93,7 @@ func TestHostedCacheIsWhereGoKeepsIt(t *testing.T) {
 		}
 	}
 	if restore < 0 || save < 0 || build < 0 || test < 0 {
-		t.Fatalf("test-hosted: restore step %d, save step %d, build %d, test %d; want all four", restore, save, build, test)
+		t.Fatalf("test-hosted: go cache restore step (id %s) %d, its save step %d, build %d, test %d; want all four", hostedGoCacheID, restore, save, build, test)
 	}
 	if !(restore < build && build < save && save < test) {
 		t.Errorf("test-hosted order: restore %d, build %d, save %d, test %d; want restore < build < save < test, so the entry is written before the tests the cap may cancel", restore, build, save, test)

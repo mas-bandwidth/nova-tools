@@ -1560,7 +1560,8 @@ heavy packages (`cmd/nova-bus`, `cmd/nova-merge`, `cmd/nova-sprint`,
 is restored at the path Go uses on each OS (`~/Library/Caches/go-build` on
 macOS, `~/.cache/go-build` on Linux, plus `~/go/pkg/mod`) by
 `actions/cache/restore` before `build`, and written by `actions/cache/save`
-after `build` and before the test step, only when the key was not an exact hit.
+after `build` and before the test step, only when the key was not an exact hit,
+and only by the writing shard (`hosted-setup`).
 **Why the per-OS path.** GOCACHE is `os.UserCacheDir()/go-build`, which is
 `~/Library/Caches/go-build` on macos-latest (the job's own `go env`), so the one
 Linux path cached no macOS build at all.
@@ -1594,6 +1595,56 @@ package in `hostedHeavy` and in the step's `heavy=`; never raise the timeout.
 are lower bounds; the class tests do not time a hosted leg, dev's push run does.
 The heavy list is named from one reader measurement, not from a hosted
 per-package timing.
+
+### `hosted-setup` — a hosted leg's setup is warm: the key moves, one shard writes, nothing downloads twice
+
+**The rule.** In ci.yml's `test-hosted`, before the test step: the Go build and
+module cache key is `<os>-gohosted-<hash of go.mod, go.sum>-<hash of every .go
+file>`, with restore-keys falling back to the newest entry under the same
+modules, then any `gohosted` entry, then the old `<os>-go-` entry; one shard per
+OS, the last (`matrix.shard == matrix.shards`, which the deal gives no heavy
+package), runs `make build`, prunes the build cache to what that build used, and
+saves; the other shards only restore. The Go toolchain directory in the runner's
+tool cache (`<tool_cache>/go/<version>`, the version setup-go reads from go.mod)
+is restored before setup-go and saved after it by the writing shard on a miss.
+The redis-server install starts in the background right after checkout; the
+`install redis-server` step before the tests waits on the installer's lock and
+publishes the binary.
+**Why the key moves.** A key naming go.mod alone is hit on every run until a
+dependency changes, and a hit never saves, so the entry stayed the tree of the
+last go.mod change while `dev` moved on: every "hit" recompiled most of the
+tree.
+**Why one writer.** `go build ./...` over several packages writes no file; it
+only fills the build cache, which matters only to the shard that saves it. Each
+save tars the whole cache, and when every shard saved, all but one lost the race
+for the key after paying the tar. The whole-tree compile check stays, once per OS.
+**Why prune.** Go stamps an entry's mtime when it uses one over an hour old
+(the Go toolchain's build cache, `mtimeInterval`), so after the build a file older than
+70 minutes is one this tree did not use; without the prune the entry grows by
+every tree since the key began, and every shard pays for it in the restore.
+**Why the redis install runs in the background.** It shares nothing with the
+toolchain and cache steps, so it overlaps them instead of adding to them. The
+installer's lock makes the foreground step a wait, and a retry if the
+background one failed.
+**The hurt.** Dev push run 36367639661 (warm, six ubuntu and eight macOS shards),
+per hosted leg: ubuntu setup 50-62 s (setup-go 8-10, cache restore 9-14 at
+636 MB, build 16-20, redis 11-23), test 5-25 s, wall 66-87 s; macOS setup 49-78 s
+(setup-go 12-23, restore 5-15, build 17-28), test 9-35 s, wall 64-115 s. No shard
+count brings a leg under the one-minute target when setup alone is 50-78 s
+(Glenn 2026-09-27: "Aim to get everything under 1m. This gives safety for 2m
+cutoff.").
+**The test.** `TestHostedSetupIsWarm` (`internal/ci/hosted_setup_class_test.go`):
+the key carries go.mod, go.sum and every .go file and falls back by prefix; every
+save, the build and the prune carry the writing-shard condition, in the order
+build, prune, save; the heavy packages cannot reach the writing shard; the
+toolchain restore precedes setup-go and its save follows it at the same path; the
+background redis install precedes setup-go and the wait precedes the test step.
+**Its remedy line.** Restore it; never raise the timeout or drop a shard to pay
+for setup.
+**Its narrowings.** The class test reads the workflow; it does not time a leg.
+Whether the runner honours the restored tool cache ("Found in cache" in the
+setup-go log), the pruned entry's size and the per-step times are read off a
+dispatched run.
 
 ### `onboarding` — every command meets the onboarding standard
 

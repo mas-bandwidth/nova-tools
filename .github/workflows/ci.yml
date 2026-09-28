@@ -1289,11 +1289,68 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+      # SETUP UNDER 25 s (dev push run 36367639661, warm: setup was 50-62 s on
+      # ubuntu-latest and 49-78 s on macos-latest, the test step 5-35 s, so no
+      # shard count got a leg under the one-minute target; Glenn 2026-09-27: "Aim
+      # to get everything under 1m. This gives safety for 2m cutoff."). Three
+      # costs, three repairs, each held by internal/ci's TestHostedSetupIsWarm and
+      # reasoned in docs/SPEC-CI.md `hosted-setup`:
+      #   redis-server  the apt install (11-23 s) runs in the background from here
+      #                 and the `install redis-server` step below only waits for it;
+      #   toolchain     setup-go downloaded Go on every job (8-23 s); the tool
+      #                 cache directory is restored first, so it finds it there;
+      #   build cache   the key named go.mod only and a hit never saved, so the
+      #                 entry froze and `make build` recompiled 16-28 s of tree
+      #                 every job; the key now moves with the tree, one shard per
+      #                 OS builds and writes it, and the rest only read it.
+      - name: start installing redis-server in the background
+        # The installer takes a lock (a mkdir), so the foreground step below waits
+        # on it rather than racing it, and installs itself if this one failed.
+        # GITHUB_PATH is emptied: this step's file is gone by the time the install
+        # ends; the foreground step publishes the binary's directory.
+        shell: bash
+        run: |
+          GITHUB_PATH= nohup bash .github/scripts/install-redis-server.sh >"$RUNNER_TEMP/install-redis-server.log" 2>&1 </dev/null &
+          echo "redis-server installer started in the background, pid $!"
+
+      - name: read the Go version go.mod names
+        # The same choice setup-go makes with go-version-file: the toolchain line,
+        # else the go line. It names the tool cache directory below.
+        id: gover
+        shell: bash
+        run: |
+          v=$(sed -n 's/^toolchain go\([0-9][0-9a-z.]*\)$/\1/p' go.mod | head -1)
+          [ -n "$v" ] || v=$(sed -n 's/^go \([0-9][0-9a-z.]*\)$/\1/p' go.mod | head -1)
+          [ -n "$v" ] || { echo "go.mod names no Go version"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "go.mod names Go $v"
+
+      - name: restore the Go toolchain
+        # setup-go looks in the runner's tool cache (<tool_cache>/go/<version>/<arch>
+        # and its .complete marker) before it downloads, so restoring that
+        # directory turns the download into "Found in cache".
+        id: gotool
+        if: runner.environment == 'github-hosted'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.tool_cache }}/go/${{ steps.gover.outputs.version }}
+          key: ${{ runner.os }}-${{ runner.arch }}-gotoolchain-${{ steps.gover.outputs.version }}
+
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           # This workflow manages caching explicitly; do not probe for a missing go.sum.
           cache: false
+
+      - name: save the Go toolchain
+        # On a miss only, and by the one shard per OS that writes caches (the last:
+        # it holds no heavy package), so the other shards never tar a copy only to
+        # lose the race for the key.
+        if: runner.environment == 'github-hosted' && steps.gotool.outputs.cache-hit != 'true' && matrix.shard == matrix.shards
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.tool_cache }}/go/${{ steps.gover.outputs.version }}
+          key: ${{ steps.gotool.outputs.cache-primary-key }}
 
       - name: cache go build and module cache
         id: gocache
@@ -1306,22 +1363,53 @@ jobs:
         # The build cache path is per OS and the save is its own step before the tests:
         # docs/SPEC-CI.md, `hosted-shards`, says why (run 36357749371), and internal/ci's
         # TestHostedCacheIsWhereGoKeepsIt holds both.
+        #
+        # THE KEY MOVES WITH THE TREE (docs/SPEC-CI.md `hosted-setup`). It names
+        # go.mod and go.sum, then every .go file, so a push that changes Go code
+        # misses exactly and restores the newest entry under the same modules
+        # (restore-keys, newest first), and a docs-only push hits exactly and
+        # writes nothing. The last restore key is the old go.mod-only entry, so the
+        # first run after this change starts warm.
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ${{ runner.os == 'macOS' && '~/Library/Caches/go-build' || '~/.cache/go-build' }}
             ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('go.mod') }}
+          key: ${{ runner.os }}-gohosted-${{ hashFiles('go.mod', 'go.sum') }}-${{ hashFiles('**/*.go') }}
           restore-keys: |
+            ${{ runner.os }}-gohosted-${{ hashFiles('go.mod', 'go.sum') }}-
+            ${{ runner.os }}-gohosted-
             ${{ runner.os }}-go-
 
       - name: build
+        # The writing shard only. `make build` is `go build ./...`, which writes
+        # no file (several packages: compile and discard), so the tests need
+        # nothing from it; what it does is fill the build cache with the whole
+        # tree, which only matters to the entry this shard saves next. The other
+        # shards compile their own packages in vet and test from the restored
+        # entry. The whole-tree compile check stays, once per OS per run.
+        if: matrix.shard == matrix.shards
         run: make build
 
+      - name: prune the go build cache to this tree
+        # Go stamps an entry's mtime when it uses one more than an hour old
+        # (the toolchain's mtimeInterval), so after the build every file
+        # older than 70 minutes is one this tree did not use. Dropping them keeps
+        # the entry this tree's build and not every tree since the key began,
+        # which is what the restore pays for on every shard.
+        if: runner.environment == 'github-hosted' && steps.gocache.outputs.cache-hit != 'true' && matrix.shard == matrix.shards
+        shell: bash
+        run: |
+          d=$(go env GOCACHE)
+          before=$(du -sm "$d" | cut -f1)
+          find "$d" -mindepth 2 -type f -mmin +70 -delete
+          echo "GOCACHE $d: ${before} MB -> $(du -sm "$d" | cut -f1) MB"
+
       - name: save go build and module cache
-        # On a miss or a restore-keys fallback only: an exact hit is already the entry. Shards
-        # race for the key; the first reserves it and the rest log a warning and go on.
-        if: runner.environment == 'github-hosted' && steps.gocache.outputs.cache-hit != 'true'
+        # On a miss or a restore-keys fallback only (an exact hit is already the
+        # entry), and by the writing shard only: one tar per OS per run, where every
+        # shard used to tar the cache and all but one lost the race for the key.
+        if: runner.environment == 'github-hosted' && steps.gocache.outputs.cache-hit != 'true' && matrix.shard == matrix.shards
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
@@ -1361,7 +1449,16 @@ jobs:
         # #3113, the hosted row. ubuntu-latest has no redis-server until apt
         # installs it; macos-latest uses Homebrew. A service container would
         # not put the binary on PATH, and the controls spawn their own server.
-        run: bash .github/scripts/install-redis-server.sh
+        # The install began in the background after checkout; this run waits on
+        # the installer's lock (bounded by its own 40 x 3 s), publishes the
+        # binary's directory, and installs in the foreground if that one failed.
+        shell: bash
+        run: |
+          rc=0
+          bash .github/scripts/install-redis-server.sh || rc=$?
+          echo "--- background install log"
+          cat "$RUNNER_TEMP/install-redis-server.log" 2>/dev/null || true
+          exit "$rc"
 
       - name: test (shard ${{ matrix.shard }} of ${{ matrix.shards }})
         # Six shards on ubuntu-latest and eight on macos-latest (above), dealt by
