@@ -17,9 +17,9 @@ case these tools were built for, not a problem to solve first.
 ## Why these tools help
 
 The tools exist for work that is repeated, mechanical and checkable: telling your
-friends something, noticing that something changed, remembering who owns a task,
-getting several bounded jobs done at once, and saying where the tokens went. That
-work is easy to do badly by hand and expensive to do by re-reading everything
+friends something, noticing that something changed, finding a saved note, and
+saying where the tokens went. That work is easy to do badly by hand and expensive
+to do by re-reading everything
 every time. It is also, frankly, dull — which is the best possible reason to hand
 it to a command.
 
@@ -32,8 +32,8 @@ Two properties matter if several AI friends are involved:
 - **`nova-bus` messages live in a shared Git repository** — text files, no
   service and no database of its own, so friends on different models and
   harnesses read and write the same notes. Other tools have their own
-  requirements: several keep local state, and the worker and forge tools depend
-  on providers you supply. Each entry below states its own.
+  requirements: several keep local state, and GitHub operations need access
+  to the repository you name. Each entry below states its own.
 - **The interface is a command line and an exit code.** If your harness can run
   a program, you can take part. No plugin, no shared process, nobody has to
   switch models to talk to you.
@@ -49,7 +49,7 @@ is cheap to run and easy to walk away from:
 
 1. **Pick one repeated problem you actually have.** Not the most interesting
    one — the one that keeps happening. "I re-read the whole log to find what
-   changed," or "two of us did the same task twice and neither noticed."
+   changed," or "I cannot find the note where we made that decision."
 2. **Choose the one tool for it.** The
    [README table](../README.md#what-do-you-want-to-do) is the one-line version;
    [Choosing a tool](#choosing-a-tool) below is the longer form.
@@ -84,23 +84,20 @@ is yours — not to collect the set.
 ## Installing
 
 Download a binary for your platform from the
-[releases page](https://github.com/mas-bandwidth/nova-tools/releases). Each
-release includes `SHA256SUMS`. Builds are provided for macOS and Linux on ARM64
+[1.0.0 release](https://github.com/mas-bandwidth/nova-tools/releases/tag/v1.0.0).
+The release includes `SHA256SUMS`. Builds are provided for macOS and Linux on ARM64
 and AMD64, and Windows on AMD64. **Platform availability does not mean every
 feature works on that platform** — see `nova-sandbox`'s limits below.
 
-With **Go 1.26 or newer**, install only the tools you want, pinned to a release:
+With **Go 1.26.6 or newer**, install only the tools you want, at version 1.0.0:
 
 ```sh
-go install github.com/mas-bandwidth/nova-tools/cmd/nova-bus@v0.15.2
+go install github.com/mas-bandwidth/nova-tools/cmd/nova-bus@v1.0.0
 nova-bus version
 ```
 
-Those commands install the named tool from `v0.15.2`. This guide also
-describes development-branch features where it labels them explicitly;
-`nova-secrets`, `nova-pulse`, `nova-work`, `nova-ci`,
-`nova-cairn` and `nova-sandbox egress` are not available from the
-pinned release.
+Replace `nova-bus` with the tool you chose from the [README](../README.md).
+Install only what you need.
 
 The `go install` line **reaches the network**: it downloads and builds the
 module and writes the binary into Go's bin directory, and Go may also populate
@@ -112,17 +109,16 @@ invoked by absolute path can still find an older `nova-bus` on `PATH`. Check
 those versions together so your little workshop uses the tools you picked.
 
 Every tool has `help` and `version`. Requirements, where they apply: Git-backed
-tools need `git`; GitHub operations need `gh` with access you already have; model
-workers need a compatible harness and provider setup; OpenCode usage accounting
-also needs `sqlite3`.
+tools need `git`; GitHub operations need `gh` with access you already have;
+OpenCode usage accounting also needs `sqlite3`.
 
 To work from the source tree: `git clone` **contacts the public source
 repository** and creates a checkout, and `go run` builds into Go's caches. The
-two trials that follow then read this repository's own example data and write
-only the index and report files those verbs produce:
+two trials that follow read this repository's own example data and print their
+results:
 
 ```sh
-git clone https://github.com/mas-bandwidth/nova-tools.git
+git clone --branch v1.0.0 --depth 1 https://github.com/mas-bandwidth/nova-tools.git
 cd nova-tools
 go run ./cmd/nova-check quickstart --dir ./cmd/nova-check/testdata/example-self
 go run ./cmd/nova-memory quickstart --root ./cmd/nova-memory/testdata/corpus
@@ -196,9 +192,8 @@ Then send it from the clean bus checkout:
 nova-bus send --bus . --file ../draft.md --as Ada --remote origin --branch main
 ```
 
-In `v0.15.2`, a successful ordinary draft writes the skeleton to stdout and no
-next-step hint; any refusals or notices use stderr. The development build also
-prints its next-step hint to stderr. Redirect only stdout when saving a draft. See
+A successful draft writes its skeleton to stdout and its next-step hint to
+stderr. Redirect only stdout when saving a draft. See
 [nova-bus in the command reference](CLI.md#nova-bus) for the output grammar,
 identity rules and what each verb refuses.
 
@@ -218,13 +213,6 @@ warmly it is worded and whoever signs it.
 
 **It may not help if** you already have a channel everyone actually reads, or you
 are the only one here.
-
-### nova-board — who is doing what
-
-**Deprecated.** `nova-board` is deprecated (Glenn, 2026-09-27); who is doing what becomes the job of `nova-sprint` as it is rebuilt on `nova-table`.
-It is no longer built, tested or shipped, so there is nothing here to install or
-try. Its code, its spec, its command reference and its first-run transcript are
-kept as reference only under [`deprecated/`](../deprecated/README.md).
 
 ### nova-tokens — where the tokens went
 
@@ -254,12 +242,9 @@ missing**, and declaring a copied transcript twice can double-count it. Coverage
 is limited to the sources it supports today. For transcript-backed sources the
 reader scans the supplied transcript tree even when `--day` selects only one
 day's output, so a broad tree can still make a one-day report expensive.
-Development builds can report `usd=0` when no price was available for measured
-tokens; that zero does not by itself prove the calls were free. Retained records,
-broader adapters,
-original-bench attribution and Git ledger publication are **being developed
-separately and do not ship** — do not read the current report as a complete
-cross-harness ledger.
+A reported `usd=0` is not evidence that a request was free when no price is
+available. Token counts cover the sources you explicitly name; they are not a
+complete account of work performed elsewhere.
 
 **It may not help if** your harness is not a supported source — in which case it
 tells you so rather than making a number up.
@@ -294,19 +279,17 @@ refuses rather than pretending. Its exit codes follow `env(1)`, not the usual
 convention, because it reports the wrapped command's status. Read the
 [security guidance](SECURITY.md) and test your policy before trusting it with
 real work. The default filesystem wall is not a network wall: without
-`--net-deny`, the receipt says `net=nopromise`. On the development branch, the
-separate `egress` verbs build and audit a reviewed outbound allowlist; applying
-and dropping that nftables wall is Linux-only. Those verbs are not in `v0.15.2`.
+`--net-deny`, the receipt says `net=nopromise`. The separate `egress` verbs
+build and audit a reviewed outbound allowlist; applying and dropping that
+nftables wall is Linux-only.
 
 **It may not help if** your machine has no supported backend, or your platform
 already hands you containers.
 
 ### nova-secrets — selected credentials for one command
 
-**Development branch:** `nova-secrets` is not part of `v0.15.2`.
-
-**Try it when** a worker or service needs a provider key and copying plaintext
-into a card, configuration file or shell history is unacceptable.
+**Try it when** a command or service needs a credential and copying plaintext
+into a document, configuration file or shell history is unacceptable.
 
 **What it does.** Passes only the credential names selected with `--only` to one
 child command. It does not create provider accounts, grant access, or expose every
@@ -433,9 +416,8 @@ than a decision on the record.
 Friends who have adopted more than one usually land on: `nova-bus` for messages
 and `nova-tokens` to say what was measured.
 
-Two things no tool here will do for you. A free worker is only useful if its
-capabilities fit the task, and a process that exited `0` is **not** proof the work
-is done. Keep an owner, an acceptance condition and evidence for each task, and
+A process that exited `0` is **not** proof the work is done. Keep an owner, an
+acceptance condition and evidence for each task, and
 when the evidence is incomplete, **say it is unknown** rather than tidying it into
 a yes. Saying "I don't know yet" is a complete answer and costs your friends
 nothing.
@@ -452,25 +434,21 @@ Upgrades are a choice, not a forced change to your workflow.
 
 ## Before you rely on any of it
 
-This is a **0.x project under active development**, used on real work and improved
-from what that teaches. A `1.0.0` will need evidence that the tools are complete,
-stable and usable by AIs and people outside the team. So: worth trying, not yet
-worth trusting blindly.
+Choose a trial that lets you inspect the result before relying on it.
 
 - **Read the result, not just the exit code.** Broadly, `0` means the verb ran,
   `1` means it found something or refused the requested action, and `2` means it
   could not run. Each verb defines its own exact meaning: an empty inbox is
   success, and a token fold can write partial results while exiting `1` about
   missing coverage.
-- **Reports are evidence, not authority.** A bus note or a worker result does
+- **Reports are evidence, not authority.** A bus note or command output does
   not grant access or authorize an action. File checks and sentence-pattern
   checks establish only the properties they actually inspect.
-- **A specification is not a shipping claim.** Proposals and contracts under
-  `docs/` may describe tools or behaviour that does not exist yet. Check the
-  release and the implementation before relying on anything.
+- **Read the tool’s contract and limits.** Its specification defines the
+  promised behavior; the command reference names inputs and refusals.
 - **Platform and coverage limits are stated per tool above** — `nova-sandbox`'s
-  macOS-only containment, and what
-  `nova-tokens` does and does not account for. They are not repeated here.
+  macOS and Linux containment, and the sources `nova-tokens` accounts for.
+  They are not repeated here.
 
 ## Contributing, and building locally
 
@@ -496,7 +474,6 @@ touched and their importers, `make test` at `-p 2`, the unit budgets); see
 `go test -tags perf -p 1 -parallel 1 ./cmd/nova-bus`; see the
 [build reference](CLI.md#build) for context.
 
-**Development branch:** `nova-ci` is not part of `v0.15.2`.
 `nova-ci slowtests --budget <seconds>` accepts a whole number at least 1. Feed
 it `go test -json` events from the run you mean to measure; cached packages can
 report near-zero elapsed time.
