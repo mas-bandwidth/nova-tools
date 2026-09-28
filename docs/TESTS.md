@@ -197,33 +197,42 @@ The last run is the whole tool in three lines: the job's own write landed, and t
 
 `nova-sandbox run --go` is what a card that builds Go uses; a plain `go build` inside a disposable volume was measured working with no flags at all once the optional roots' ancestors were granted (`internal/sandbox`, `TestAnOptionalRootsAncestorsAreGranted`).
 
-Measured on the Studio, macOS 26 arm64, 2026-09-18: a 64m volume made, `sh -c 'echo hi > out; sleep 1'` run inside the wall with the volume as its only writable directory, and the volume gone from `/Volumes` and from `diskutil apfs list` afterwards — `SANDBOX DONE name=e2e63562 exit=0 wall=9.500 freed=32768`.
+Measured on macOS 26 arm64, 2026-09-18: a 64m volume made, `sh -c 'echo hi > out; sleep 1'` run inside the wall with the volume as its only writable directory, and the volume gone from `/Volumes` and from `diskutil apfs list` afterwards — `SANDBOX DONE name=e2e63562 exit=0 wall=9.500 freed=32768`.
 
 ## nova-secrets
 
-Fixture: a throwaway secrets store git working copy and age private key, as in [SPEC-SECRETS.md](SPEC-SECRETS.md).
+Fixture: a throwaway secrets store git working copy and age private keys, as in
+[SPEC-SECRETS.md](SPEC-SECRETS.md). The seat names `example` and `reader` are
+fixture identities. Replace `/path/to/home` with your fixture home and
+`/path/to/bin` with the directory holding your `age-keygen` and `sops` binaries.
+Run the commands from that fixture home. The key directory already exists with
+mode 0700. The store at `./secrets` lives
+under that home, holds the reader seat and its recovery recipient, and is on a
+clean branch equal to its upstream ref. Its sealed `GH_TOKEN` is synthetic;
+`gh` on the fixture's PATH is a stand-in that prints `fake-gh` without making a
+network call. Public keys and the commit id below belong to the recorded run.
 
 ### First run
 
 ```
-$ nova-secrets keygen --as rowan --key /Users/me/.config/nova-secrets/rowan.key --age-keygen /opt/homebrew/bin/age-keygen --store ./secrets
+$ nova-secrets keygen --as example --key /path/to/home/.config/nova-secrets/example.key --age-keygen /path/to/bin/age-keygen --store ./secrets
 SECRETS RULE   creation_rules:
-SECRETS RULE     - path_regex: ^rowan\.yaml$
+SECRETS RULE     - path_regex: ^example\.yaml$
 SECRETS RULE       age: age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5zhspjqwh35pk,age1s6kpww894xpuylmck9f2g5kz2007a8nuy6guqrjj39s0gaqf6pkqydlata
 SECRETS RULE NEXT: add these two lines to .sops.yaml (or run `nova-secrets seat add`)
-SECRETS KEYGEN OK as=rowan key=/Users/me/.config/nova-secrets/rowan.key mode=0600 pub=age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5zhspjqwh35pk
-Done. Your new key is at /Users/me/.config/nova-secrets/rowan.key. Nothing failed.
+SECRETS KEYGEN OK as=example key=/path/to/home/.config/nova-secrets/example.key mode=0600 pub=age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5zhspjqwh35pk
+Done. Your new key is at /path/to/home/.config/nova-secrets/example.key. Nothing failed.
 Next: send this public key to whoever seals your seat: age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5zhspjqwh35pk
 
-$ nova-secrets check --store ./secrets --as other --key /Users/me/.config/nova-secrets/other.key --sops /opt/homebrew/bin/sops
-SECRETS CHECK OK  as=other recipients=2 files=1 sealed=1 mine=1 foreign=0 clear=0 head=9750ba9
+$ nova-secrets check --store ./secrets --as reader --key /path/to/home/.config/nova-secrets/reader.key --sops /path/to/bin/sops
+SECRETS CHECK OK  as=reader recipients=2 files=1 sealed=1 mine=1 foreign=0 clear=0 head=9750ba9
 
-$ nova-secrets names --store ./secrets --as other
+$ nova-secrets names --store ./secrets --as reader
 SECRETS NAME key=GH_TOKEN clear=false
-SECRETS NAMES OK as=other keys=1 shown=1 sealed=1 clear=0
+SECRETS NAMES OK as=reader keys=1 shown=1 sealed=1 clear=0
 
-$ nova-secrets exec --store ./secrets --as other --key /Users/me/.config/nova-secrets/other.key --sops /opt/homebrew/bin/sops --only GH_TOKEN --require GH_TOKEN -- gh api user --jq .login
-! SECRETS EXEC OK as=other keys=1 only=1 required=1 file=/Users/me/secrets/other.yaml head=9750ba9 cmd=gh
+$ nova-secrets exec --store ./secrets --as reader --key /path/to/home/.config/nova-secrets/reader.key --sops /path/to/bin/sops --only GH_TOKEN --require GH_TOKEN -- gh api user --jq .login
+! SECRETS EXEC OK as=reader keys=1 only=1 required=1 file=secrets/reader.yaml head=9750ba9 cmd=gh
 fake-gh
 ```
 
@@ -234,18 +243,11 @@ one; the verb run with the coordinator's key and `--no-pr`; then the seal branch
 file opens with the bench's key alone and holds the new value beside the names it
 had, the store is back on `main`, and `nova-secrets gate` approves the branch. The
 help banner's own `seat inject` example is run through the one comparator in the
-same package, its transcript held beside the test, ending
-`SECRETS SEAT INJECT OK seat=air from=rowan names=1 committed branch=seal/air-NOVA_REDIS_BENCH_PASSWORD-20260927-013000`
-with the branch's stamp the one declared run-owned value.
+same package, including its committed-branch receipt. The transcript is held
+beside that test, with the branch's timestamp the one declared run-owned value.
 
-**The Studio's store file is `studio.yaml`, not `swarm-studio.yaml`.** Every Linux
-bench's store follows the `swarm-<name>.yaml` convention (`swarm-hulk.yaml`,
-`swarm-space.yaml`, `swarm-vision.yaml`, …). The Studio is the only bench whose
-store file omits the `swarm-` prefix, and the darwin launcher used to ask for
-the prefixed name — `swarm-studio.yaml` — and lost every card it took (80 of 80,
-nova-tools #2000). The launcher's seat name must resolve to `studio.yaml` on the
-Studio; a seat called `studio` that resolves to `swarm-studio.yaml` is a silent
-empty wave.
+A bench whose store file omits the `swarm-` prefix must be asked for under that
+file's name, or the launcher reads an empty store.
 
 ## nova-check
 
@@ -276,13 +278,13 @@ file, `card` with the fix on it and then a commit by somebody outside the pool
 that also strays outside the card's paths.
 
 ```
-$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**"
+$ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --paths "sign/**"
 HYGIENE OK base=main head=card paths=sign/** findings=0
 
-$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**" --max 2
+$ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --paths "sign/**" --max 2
 HYGIENE FINDING reason=identity at=0a19082d2973: author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity
 HYGIENE FINDING reason=out-of-path at=elsewhere.go: this path matches none of the card's declared PATHS:
-HYGIENE MORE kind=finding shown=2 total=4 nova-check hygiene --repo "." --base "main" --head "card" --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**" --max 0
+HYGIENE MORE kind=finding shown=2 total=4 nova-check hygiene --repo "." --base "main" --head "card" --identity "Ada <ada@example.com>" --paths "sign/**" --max 0
 HYGIENE NO base=main head=card paths=sign/** findings=4
 ```
 
@@ -291,7 +293,7 @@ back (#1804) — it is the command that prints the rest, and it carries the
 `--identity`, `--paths` and `--kind` without which it would not run at all:
 
 ```
-$ nova-check hygiene --repo "." --base "main" --head "card" --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**" --max 0
+$ nova-check hygiene --repo "." --base "main" --head "card" --identity "Ada <ada@example.com>" --paths "sign/**" --max 0
 HYGIENE FINDING reason=identity at=0a19082d2973: author someone@elsewhere.example and committer someone@elsewhere.example are not the pool's identity
 HYGIENE FINDING reason=out-of-path at=elsewhere.go: this path matches none of the card's declared PATHS:
 HYGIENE FINDING reason=out-of-path at=elsewhere/x.go: this path matches none of the card's declared PATHS:
@@ -299,19 +301,19 @@ HYGIENE FINDING reason=stray-file at=sign/RESULT.md: an added file matching the 
 HYGIENE NO base=main head=card paths=sign/** findings=4
 ```
 
-`--identity` takes ONE pair of angle brackets. The second pair the help used to
-show is refused rather than matched against nobody (#1805):
+`--identity` takes one pair of angle brackets. A second pair is refused rather
+than matched against nobody:
 
 ```
-$ nova-check hygiene --repo . --base main --head card --identity "Rowan <<rowan@mas-bandwidth.com>>"
-nova-check hygiene: --identity "Rowan <<rowan@mas-bandwidth.com>>": the email carries an angle bracket; want `Name <email>`, one pair; run: nova-check help
+$ nova-check hygiene --repo . --base main --head card --identity "Ada <<ada@example.com>>"
+nova-check hygiene: --identity "Ada <<ada@example.com>>": the email carries an angle bracket; want `Name <email>`, one pair; run: nova-check help
 ```
 
 `--kind` is a card kind the toolchain declares, and there is no default one. One
 it does not hold is refused by name rather than left to unlock nothing (#1848):
 
 ```
-$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --kind fix-with-red-test
+$ nova-check hygiene --repo . --base main --head card --identity "Ada <ada@example.com>" --kind fix-with-red-test
 nova-check hygiene: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, guard, read, probe, text, tone, report; run: nova-check help
 ```
 
@@ -609,7 +611,7 @@ produces. Each package's total is its package-level `Elapsed`, and the
 `slowest=` list names the few test-level rows that spent it, so the first run
 tells the reader whether one test or the whole package is the cost. `--budget`
 is whole seconds and defaults to 60. Both runs exit 0: a CI-SLOW line is a
-measurement, and only `--enforce` (the nightly space legs) makes it exit 2. The
+measurement, and only `--enforce` makes it exit 2. The
 CI-LOAD line is the host's load average, printed and never judged; `--load` and
 `--cpus` hand it in here so the transcript is the same on every machine. The common mistake is forgetting the
 redirect: with an empty stdin the verb reads zero packages and prints
