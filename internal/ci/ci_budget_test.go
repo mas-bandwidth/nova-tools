@@ -2,6 +2,7 @@ package ci
 
 import (
 	"bytes"
+	"fmt"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -93,20 +94,57 @@ func TestEveryCIJobIsCappedAtTwoMinutes(t *testing.T) {
 
 // goTestTimeoutRe reads the sharded test job's `go test -timeout`, which must
 // end the run with a Go stack before the job cap kills it without one.
-var goTestTimeoutRe = regexp.MustCompile(`GOTEST_TIMEOUT="([0-9]+)s"`)
+var goTestTimeoutRe = regexp.MustCompile(`GOTEST_TIMEOUT="(-?[0-9]+)s"`)
+
+// checkPositiveTimeoutUnderCap validates that a timeout duration d is strictly
+// positive and strictly under the job cap (0 < d < cap).
+//
+// A zero or negative timeout disables the timeout mechanism in `go test`
+// (per `go help testflag`: "The default is 10 minutes (10m). A value of 0 disables
+// the timeout."), which leads to the exact missing-stack failure the cap guard
+// exists to prevent: a hung test is killed by the CI runner without printing a
+// Go goroutine stack trace. A duration at or above the cap risks the runner
+// terminating the job before Go can capture and report the stack.
+func checkPositiveTimeoutUnderCap(d, cap time.Duration) error {
+	if d <= 0 {
+		return fmt.Errorf("is not positive; zero disables the timeout (go help testflag)")
+	}
+	if d >= cap {
+		if cap%time.Minute == 0 {
+			return fmt.Errorf("is not under the %d-minute job cap", int(cap.Minutes()))
+		}
+		return fmt.Errorf("is not under the %s job cap", cap)
+	}
+	return nil
+}
+
+// requirePositiveTimeoutUnderCap asserts that d is strictly positive and under
+// the cap, reporting a test error on where if not.
+func requirePositiveTimeoutUnderCap(t *testing.T, where string, d, cap time.Duration) {
+	t.Helper()
+	if err := checkPositiveTimeoutUnderCap(d, cap); err != nil {
+		t.Errorf("%s %v", where, err)
+	}
+}
 
 func TestShardGoTestTimeoutIsUnderTheJobCap(t *testing.T) {
 	t.Parallel()
 
+	jobCap := time.Duration(twoMinuteCap) * time.Minute
 	job := jobBody(readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml")), "test")
-	m := goTestTimeoutRe.FindStringSubmatch(job)
-	if m == nil {
+	matches := goTestTimeoutRe.FindAllStringSubmatch(job, -1)
+	if len(matches) == 0 {
 		t.Fatal("the test job passes no literal GOTEST_TIMEOUT=\"<n>s\" to make test")
 	}
-	secs, _ := strconv.Atoi(m[1])
-	if secs >= twoMinuteCap*60 {
-		t.Errorf("go test -timeout %ds is not under the %d-minute job cap", secs, twoMinuteCap)
+	for _, m := range matches {
+		d, err := time.ParseDuration(m[1] + "s")
+		if err != nil {
+			t.Errorf("workflow GOTEST_TIMEOUT %q is not a duration: %v", m[1]+"s", err)
+			continue
+		}
+		requirePositiveTimeoutUnderCap(t, fmt.Sprintf("go test -timeout %s", m[1]+"s"), d, jobCap)
 	}
+
 	mk := parseMakefile(t, filepath.Join(repoRoot(t), "Makefile"))
 	for _, v := range []string{"GOTEST_TIMEOUT", "MERGE_TIMEOUT", "DARWIN_TIMEOUT", "SHORT_TIMEOUT"} {
 		raw, ok := mk.vars[v]
@@ -119,9 +157,7 @@ func TestShardGoTestTimeoutIsUnderTheJobCap(t *testing.T) {
 			t.Errorf("%s = %q is not a Go duration: %v", v, raw, err)
 			continue
 		}
-		if d >= time.Duration(twoMinuteCap)*time.Minute {
-			t.Errorf("Makefile %s = %s is not under the %d-minute job cap", v, d, twoMinuteCap)
-		}
+		requirePositiveTimeoutUnderCap(t, fmt.Sprintf("Makefile %s = %s", v, d), d, jobCap)
 	}
 }
 
@@ -136,6 +172,7 @@ var recipeTimeoutRe = regexp.MustCompile(`-timeout[ =](\S+)`)
 func TestEveryMakeTimeoutIsUnderTheJobCap(t *testing.T) {
 	t.Parallel()
 
+	jobCap := time.Duration(twoMinuteCap) * time.Minute
 	mk := parseMakefile(t, filepath.Join(repoRoot(t), "Makefile"))
 	seen := 0
 	for target, lines := range mk.recipes {
@@ -151,14 +188,78 @@ func TestEveryMakeTimeoutIsUnderTheJobCap(t *testing.T) {
 					continue
 				}
 				seen++
-				if d >= time.Duration(twoMinuteCap)*time.Minute {
-					t.Errorf("make %s: -timeout %s is not under the %d-minute job cap", target, d, twoMinuteCap)
-				}
+				requirePositiveTimeoutUnderCap(t, fmt.Sprintf("make %s: -timeout %s", target, d), d, jobCap)
 			}
 		}
 	}
 	if seen == 0 {
 		t.Fatal("no -timeout read from any Makefile recipe; the parser is looking in the wrong place")
+	}
+}
+
+// TestPositiveTimeoutUnderJobCapWitnesses exercises checkPositiveTimeoutUnderCap
+// across the exact witness cases required by review (stella-30687d2af333,
+// rowan-0355d2660990): 0s and -1s must fail (zero/negative disables go test
+// timeout per `go help testflag`), 50s passes, 120s fails (at cap, not strictly
+// under), and 12m fails as the over-cap control.
+func TestPositiveTimeoutUnderJobCapWitnesses(t *testing.T) {
+	t.Parallel()
+
+	jobCap := time.Duration(twoMinuteCap) * time.Minute // 2m0s = 120s
+	cases := []struct {
+		raw     string
+		valid   bool
+		wantErr string
+	}{
+		{
+			raw:     "0s",
+			valid:   false,
+			wantErr: "is not positive; zero disables the timeout (go help testflag)",
+		},
+		{
+			raw:     "-1s",
+			valid:   false,
+			wantErr: "is not positive; zero disables the timeout (go help testflag)",
+		},
+		{
+			raw:   "50s",
+			valid: true,
+		},
+		{
+			raw:     "120s",
+			valid:   false,
+			wantErr: "is not under the 2-minute job cap",
+		},
+		{
+			raw:     "12m",
+			valid:   false,
+			wantErr: "is not under the 2-minute job cap",
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.raw, func(t *testing.T) {
+			t.Parallel()
+
+			d, err := time.ParseDuration(tc.raw)
+			if err != nil {
+				t.Fatalf("time.ParseDuration(%q): %v", tc.raw, err)
+			}
+
+			err = checkPositiveTimeoutUnderCap(d, jobCap)
+			if tc.valid {
+				if err != nil {
+					t.Errorf("checkPositiveTimeoutUnderCap(%s, %s) = %v, want nil", tc.raw, jobCap, err)
+				}
+			} else {
+				if err == nil {
+					t.Errorf("checkPositiveTimeoutUnderCap(%s, %s) unexpectedly succeeded, want error", tc.raw, jobCap)
+				} else if !strings.Contains(err.Error(), tc.wantErr) {
+					t.Errorf("checkPositiveTimeoutUnderCap(%s, %s) error = %q, want substring %q", tc.raw, jobCap, err.Error(), tc.wantErr)
+				}
+			}
+		})
 	}
 }
 
