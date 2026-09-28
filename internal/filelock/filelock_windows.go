@@ -9,6 +9,8 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 var (
@@ -29,25 +31,53 @@ func lockRange() *syscall.Overlapped {
 }
 
 func openFileSafe(path string, flag int, perm os.FileMode) (*os.File, error) {
+	cleanPath := oneline.Escape(oneline.Cap(path, 1024))
 	fi, err := os.Lstat(path)
 	if err == nil {
 		if fi.Mode()&os.ModeSymlink != 0 {
-			return nil, fmt.Errorf("filelock %q: symlink not permitted", path)
+			return nil, fmt.Errorf("filelock %q: symlink not permitted", cleanPath)
 		}
 		if fi.IsDir() {
-			return nil, fmt.Errorf("filelock %q: is a directory", path)
+			return nil, fmt.Errorf("filelock %q: is a directory", cleanPath)
 		}
 		if !fi.Mode().IsRegular() {
-			return nil, fmt.Errorf("filelock %q: not a regular file", path)
+			return nil, fmt.Errorf("filelock %q: not a regular file", cleanPath)
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("filelock %q: %w", path, err)
+		return nil, fmt.Errorf("filelock %q: %w", cleanPath, wrapPathError(err))
 	}
 
 	f, err := os.OpenFile(path, flag, perm)
 	if err != nil {
-		return nil, fmt.Errorf("filelock %q: %w", path, err)
+		return nil, fmt.Errorf("filelock %q: %w", cleanPath, wrapPathError(err))
 	}
+
+	// Post-open verification: check f.Stat on open handle
+	fiAfter, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("filelock %q stat: %w", cleanPath, wrapPathError(err))
+	}
+	if !fiAfter.Mode().IsRegular() {
+		_ = f.Close()
+		if fiAfter.IsDir() {
+			return nil, fmt.Errorf("filelock %q: is a directory", cleanPath)
+		}
+		if fiAfter.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("filelock %q: symlink not permitted", cleanPath)
+		}
+		return nil, fmt.Errorf("filelock %q: not a regular file", cleanPath)
+	}
+
+	// Post-open path check: verify path did not become a symlink/reparse point under open
+	fiPost, err := os.Lstat(path)
+	if err == nil {
+		if fiPost.Mode()&os.ModeSymlink != 0 {
+			_ = f.Close()
+			return nil, fmt.Errorf("filelock %q: symlink not permitted", cleanPath)
+		}
+	}
+
 	return f, nil
 }
 
@@ -90,8 +120,10 @@ func unlockFile(f *os.File) {
 	}
 }
 
-// TryLockWithOptions attempts to acquire the exclusive file lock on path without waiting.
-func TryLockWithOptions(path string, label string, opts Options) (*FileLock, error) {
+func tryLockWithOptions(path string, label string, opts options) (*FileLock, error) {
+	cleanPath := oneline.Escape(oneline.Cap(path, 1024))
+	syncFn := opts.getSync()
+
 	f, err := openFileSafe(path, os.O_RDWR|os.O_CREATE, 0666)
 	if err != nil {
 		return nil, err
@@ -112,29 +144,29 @@ func TryLockWithOptions(path string, label string, opts Options) (*FileLock, err
 	if err := f.Truncate(0); err != nil {
 		unlockFile(f)
 		_ = f.Close()
-		return nil, fmt.Errorf("filelock %q truncate: %w", path, err)
+		return nil, fmt.Errorf("filelock %q truncate: %w", cleanPath, wrapPathError(err))
 	}
 	if _, err := f.Seek(0, 0); err != nil {
 		unlockFile(f)
 		_ = f.Close()
-		return nil, fmt.Errorf("filelock %q seek: %w", path, err)
+		return nil, fmt.Errorf("filelock %q seek: %w", cleanPath, wrapPathError(err))
 	}
 
 	stamp := Stamp{
-		PID:     opts.pid(),
-		Host:    opts.host(),
-		Started: opts.clock().Now().UTC(),
-		Label:   label,
+		PID:     opts.getPID(),
+		Host:    opts.getHost(),
+		Started: opts.getClock().Now().UTC(),
+		Label:   oneline.Cap(label, 1024),
 	}
 	if _, err := f.WriteString(stamp.Format() + "\n"); err != nil {
 		unlockFile(f)
 		_ = f.Close()
-		return nil, fmt.Errorf("filelock %q write stamp: %w", path, err)
+		return nil, fmt.Errorf("filelock %q write stamp: %w", cleanPath, wrapPathError(err))
 	}
-	if err := f.Sync(); err != nil {
+	if err := syncFn(f); err != nil {
 		unlockFile(f)
 		_ = f.Close()
-		return nil, fmt.Errorf("filelock %q sync: %w", path, err)
+		return nil, fmt.Errorf("filelock %q sync: %w", cleanPath, wrapPathError(err))
 	}
 
 	return &FileLock{
@@ -145,13 +177,11 @@ func TryLockWithOptions(path string, label string, opts Options) (*FileLock, err
 	}, nil
 }
 
-// LockWithOptions acquires the exclusive file lock on path, waiting up to timeout.
-func LockWithOptions(path string, label string, timeout time.Duration, opts Options) (*FileLock, error) {
-	return lockLoop(path, label, timeout, opts, TryLockWithOptions)
+func lockWithOptions(path string, label string, timeout time.Duration, opts options) (*FileLock, error) {
+	return lockLoop(path, label, timeout, opts, tryLockWithOptions)
 }
 
-// ProbeWithOptions inspects path without taking an exclusive lock and without creating the file if absent.
-func ProbeWithOptions(path string, opts Options) (State, Stamp, error) {
+func probeWithOptions(path string, opts options) (State, Stamp, error) {
 	f, err := openFileSafe(path, os.O_RDWR, 0)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -169,7 +199,8 @@ func ProbeWithOptions(path string, opts Options) (State, Stamp, error) {
 
 	ok, lockErr := trySharedLock(f)
 	if lockErr != nil {
-		return "", Stamp{}, fmt.Errorf("filelock %q probe: %w", path, lockErr)
+		cleanPath := oneline.Escape(oneline.Cap(path, 1024))
+		return "", Stamp{}, fmt.Errorf("filelock %q probe: %w", cleanPath, wrapPathError(lockErr))
 	}
 	if ok {
 		unlockFile(f)

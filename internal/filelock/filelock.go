@@ -51,16 +51,17 @@ type HeldError struct {
 }
 
 func (e *HeldError) Error() string {
+	cleanPath := oneline.Escape(oneline.Cap(e.Path, 1024))
 	if !e.Holder.IsZero() {
 		if e.Wait > 0 {
-			return fmt.Sprintf("filelock %q is held by %s; waited %s: %v", e.Path, e.Holder, e.Wait, ErrHeld)
+			return fmt.Sprintf("filelock %q is held by %s; waited %s: %v", cleanPath, e.Holder, e.Wait, ErrHeld)
 		}
-		return fmt.Sprintf("filelock %q is held by %s: %v", e.Path, e.Holder, ErrHeld)
+		return fmt.Sprintf("filelock %q is held by %s: %v", cleanPath, e.Holder, ErrHeld)
 	}
 	if e.Wait > 0 {
-		return fmt.Sprintf("filelock %q is held; waited %s: %v", e.Path, e.Wait, ErrHeld)
+		return fmt.Sprintf("filelock %q is held; waited %s: %v", cleanPath, e.Wait, ErrHeld)
 	}
-	return fmt.Sprintf("filelock %q is held: %v", e.Path, ErrHeld)
+	return fmt.Sprintf("filelock %q is held: %v", cleanPath, ErrHeld)
 }
 
 // Unwrap returns []error so that errors.Is(err, ErrHeld) and
@@ -99,13 +100,13 @@ func (s Stamp) Format() string {
 		fmt.Fprintf(&b, "pid=%d\n", s.PID)
 	}
 	if s.Host != "" {
-		fmt.Fprintf(&b, "host=%s\n", oneline.Field(s.Host))
+		fmt.Fprintf(&b, "host=%s\n", oneline.Field(oneline.Cap(s.Host, 256)))
 	}
 	if !s.Started.IsZero() {
 		fmt.Fprintf(&b, "started=%s\n", s.Started.UTC().Format(time.RFC3339Nano))
 	}
 	if s.Label != "" {
-		clean := strings.ReplaceAll(strings.ReplaceAll(s.Label, "\r", " "), "\n", " ")
+		clean := strings.ReplaceAll(strings.ReplaceAll(oneline.Cap(s.Label, 1024), "\r", " "), "\n", " ")
 		fmt.Fprintf(&b, "label=%s\n", oneline.Escape(clean))
 	}
 	return b.String()
@@ -121,13 +122,13 @@ func (s Stamp) String() string {
 		parts = append(parts, fmt.Sprintf("pid=%d", s.PID))
 	}
 	if s.Host != "" {
-		parts = append(parts, fmt.Sprintf("host=%s", oneline.Field(s.Host)))
+		parts = append(parts, fmt.Sprintf("host=%s", oneline.Field(oneline.Cap(s.Host, 256))))
 	}
 	if !s.Started.IsZero() {
 		parts = append(parts, fmt.Sprintf("started=%s", s.Started.UTC().Format(time.RFC3339)))
 	}
 	if s.Label != "" {
-		parts = append(parts, fmt.Sprintf("label=%q", oneline.Escape(s.Label)))
+		parts = append(parts, fmt.Sprintf("label=%q", oneline.Escape(oneline.Cap(s.Label, 1024))))
 	}
 	return strings.Join(parts, " ")
 }
@@ -161,7 +162,7 @@ func ParseStamp(s string) (Stamp, error) {
 					stamp.PID = n
 				}
 			case "host":
-				stamp.Host = strings.TrimSpace(v)
+				stamp.Host = oneline.Cap(strings.TrimSpace(v), 256)
 			case "started", "start", "at":
 				val := strings.TrimSpace(v)
 				if t, err := time.Parse(time.RFC3339Nano, val); err == nil {
@@ -170,7 +171,7 @@ func ParseStamp(s string) (Stamp, error) {
 					stamp.Started = t.UTC()
 				}
 			case "label":
-				stamp.Label = v
+				stamp.Label = oneline.Cap(v, 1024)
 			}
 		}
 		if !stamp.IsZero() {
@@ -189,7 +190,7 @@ func ParseStamp(s string) (Stamp, error) {
 				stamp.PID = n
 			}
 		case "host":
-			stamp.Host = v
+			stamp.Host = oneline.Cap(v, 256)
 		case "started", "start", "at":
 			if t, err := time.Parse(time.RFC3339Nano, v); err == nil {
 				stamp.Started = t.UTC()
@@ -197,7 +198,7 @@ func ParseStamp(s string) (Stamp, error) {
 				stamp.Started = t.UTC()
 			}
 		case "label":
-			stamp.Label = strings.Trim(v, `"`)
+			stamp.Label = oneline.Cap(strings.Trim(v, `"`), 1024)
 		}
 	}
 
@@ -231,59 +232,90 @@ func readExistingStamp(f *os.File) Stamp {
 	return st
 }
 
-// Clock abstracts time measurement and sleeping for fast, deterministic unit tests.
-type Clock interface {
+type safePathError struct {
+	err *os.PathError
+}
+
+func (e *safePathError) Error() string {
+	if e.err == nil {
+		return ""
+	}
+	return fmt.Sprintf("%s %s: %v", e.err.Op, oneline.Escape(oneline.Cap(e.err.Path, 1024)), e.err.Err)
+}
+
+func (e *safePathError) Unwrap() error {
+	if e.err == nil {
+		return nil
+	}
+	return e.err
+}
+
+func wrapPathError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var pe *os.PathError
+	if errors.As(err, &pe) {
+		return &safePathError{err: pe}
+	}
+	return err
+}
+
+// clock abstracts time measurement and sleeping for fast, deterministic unit tests.
+type clock interface {
 	Now() time.Time
 	Sleep(time.Duration)
 }
 
-// RealClock uses the host operating system clock and time.Sleep.
-type RealClock struct{}
+// realClock uses the host operating system clock and time.Sleep.
+type realClock struct{}
 
-func (RealClock) Now() time.Time        { return time.Now() }
-func (RealClock) Sleep(d time.Duration) { time.Sleep(d) }
+func (realClock) Now() time.Time        { return time.Now() }
+func (realClock) Sleep(d time.Duration) { time.Sleep(d) }
 
-// LockStepClock is an in-memory virtual clock for testing bounded waits without sleeping.
-type LockStepClock struct {
+// lockStepClock is an in-memory virtual clock for testing bounded waits without sleeping.
+type lockStepClock struct {
 	mu    sync.Mutex
 	start time.Time
 	now   time.Time
 }
 
-// NewLockStepClock returns a LockStepClock initialized to start (or a default fixed time if zero).
-func NewLockStepClock(start time.Time) *LockStepClock {
+// newLockStepClock returns a lockStepClock initialized to start (or a default fixed time if zero).
+func newLockStepClock(start time.Time) *lockStepClock {
 	if start.IsZero() {
 		start = time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
 	}
-	return &LockStepClock{start: start, now: start}
+	return &lockStepClock{start: start, now: start}
 }
 
-func (c *LockStepClock) Now() time.Time {
+func (c *lockStepClock) Now() time.Time {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.now
 }
 
-func (c *LockStepClock) Sleep(d time.Duration) {
+func (c *lockStepClock) Sleep(d time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.now = c.now.Add(d)
 }
 
 // Waited returns the elapsed virtual duration since clock creation.
-func (c *LockStepClock) Waited() time.Duration {
+func (c *lockStepClock) Waited() time.Duration {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.now.Sub(c.start)
 }
 
-// Options configures Lock, TryLock, and Probe behavior.
-type Options struct {
-	Clock        Clock
-	PollInterval time.Duration
-	Jitter       func(time.Duration) time.Duration
-	Host         string
-	PID          int
+// options configures internal lock, tryLock, and probe behavior.
+type options struct {
+	clock        clock
+	pollInterval time.Duration
+	jitter       func(time.Duration) time.Duration
+	host         string
+	pid          int
+	sync         func(*os.File) error
+	verifyInode  func(*os.File, string) (bool, error)
 }
 
 const defaultPollInterval = 25 * time.Millisecond
@@ -295,30 +327,30 @@ func defaultJitter(d time.Duration) time.Duration {
 	return d + time.Duration(rand.Int63n(int64(d/2)+1))
 }
 
-func (o Options) clock() Clock {
-	if o.Clock != nil {
-		return o.Clock
+func (o options) getClock() clock {
+	if o.clock != nil {
+		return o.clock
 	}
-	return RealClock{}
+	return realClock{}
 }
 
-func (o Options) pollInterval() time.Duration {
-	if o.PollInterval > 0 {
-		return o.PollInterval
+func (o options) getPollInterval() time.Duration {
+	if o.pollInterval > 0 {
+		return o.pollInterval
 	}
 	return defaultPollInterval
 }
 
-func (o Options) jitter(d time.Duration) time.Duration {
-	if o.Jitter != nil {
-		return o.Jitter(d)
+func (o options) getJitter(d time.Duration) time.Duration {
+	if o.jitter != nil {
+		return o.jitter(d)
 	}
 	return defaultJitter(d)
 }
 
-func (o Options) host() string {
-	if o.Host != "" {
-		return o.Host
+func (o options) getHost() string {
+	if o.host != "" {
+		return o.host
 	}
 	h, err := os.Hostname()
 	if err != nil {
@@ -327,11 +359,25 @@ func (o Options) host() string {
 	return h
 }
 
-func (o Options) pid() int {
-	if o.PID > 0 {
-		return o.PID
+func (o options) getPID() int {
+	if o.pid > 0 {
+		return o.pid
 	}
 	return os.Getpid()
+}
+
+func defaultSync(f *os.File) error {
+	if f == nil {
+		return errors.New("nil file")
+	}
+	return f.Sync()
+}
+
+func (o options) getSync() func(*os.File) error {
+	if o.sync != nil {
+		return o.sync
+	}
+	return defaultSync
 }
 
 // FileLock represents an acquired, open file lock.
@@ -360,7 +406,8 @@ func (l *FileLock) Previous() *Stamp {
 
 // String returns a description of the held lock.
 func (l *FileLock) String() string {
-	return fmt.Sprintf("filelock %q held by %s", oneline.Escape(l.path), l.stamp)
+	cleanPath := oneline.Escape(oneline.Cap(l.path, 1024))
+	return fmt.Sprintf("filelock %q held by %s", cleanPath, l.stamp)
 }
 
 // Unlock releases the file lock by truncating the file to zero bytes, syncing,
@@ -378,25 +425,25 @@ func (l *FileLock) Unlock() error {
 
 	var errs []error
 	if err := l.file.Truncate(0); err != nil {
-		errs = append(errs, err)
+		errs = append(errs, wrapPathError(err))
 	}
 	if _, err := l.file.Seek(0, 0); err != nil {
-		errs = append(errs, err)
+		errs = append(errs, wrapPathError(err))
 	}
 	if err := l.file.Sync(); err != nil {
-		errs = append(errs, err)
+		errs = append(errs, wrapPathError(err))
 	}
 	unlockFile(l.file)
 	if err := l.file.Close(); err != nil {
-		errs = append(errs, err)
+		errs = append(errs, wrapPathError(err))
 	}
 	l.file = nil
 	return errors.Join(errs...)
 }
 
-func lockLoop(path string, label string, timeout time.Duration, opts Options, tryLockFn func(string, string, Options) (*FileLock, error)) (*FileLock, error) {
-	clk := opts.clock()
-	poll := opts.pollInterval()
+func lockLoop(path string, label string, timeout time.Duration, opts options, tryLockFn func(string, string, options) (*FileLock, error)) (*FileLock, error) {
+	clk := opts.getClock()
+	poll := opts.getPollInterval()
 	deadline := clk.Now().Add(timeout)
 
 	for {
@@ -419,7 +466,7 @@ func lockLoop(path string, label string, timeout time.Duration, opts Options, tr
 			return nil, ranOut(path, timeout, lastErr)
 		}
 
-		sleepDur := opts.jitter(poll)
+		sleepDur := opts.getJitter(poll)
 		if sleepDur > remaining {
 			sleepDur = remaining
 		}
@@ -439,20 +486,29 @@ func ranOut(path string, timeout time.Duration, last error) error {
 		he.TimedOut = true
 		return he
 	}
-	return fmt.Errorf("filelock %q: timeout after %v: %w: %w", path, timeout, ErrTimeout, last)
+	cleanPath := oneline.Escape(oneline.Cap(path, 1024))
+	return fmt.Errorf("filelock %q: timeout after %v: %w: %w", cleanPath, timeout, ErrTimeout, wrapPathError(last))
 }
 
 // TryLock attempts to acquire the exclusive file lock on path without waiting.
+//
+// The lockfile path must be dedicated to filelock: taking an exclusive lock on an existing
+// regular file truncates it when writing the holder stamp. The file is created if absent
+// and is never removed.
 func TryLock(path string, label string) (*FileLock, error) {
-	return TryLockWithOptions(path, label, Options{})
+	return tryLockWithOptions(path, label, options{})
 }
 
 // Lock acquires the exclusive file lock on path, waiting up to timeout with jittered backoff.
+//
+// The lockfile path must be dedicated to filelock: taking an exclusive lock on an existing
+// regular file truncates it when writing the holder stamp. The file is created if absent
+// and is never removed.
 func Lock(path string, label string, timeout time.Duration) (*FileLock, error) {
-	return LockWithOptions(path, label, timeout, Options{})
+	return lockWithOptions(path, label, timeout, options{})
 }
 
 // Probe inspects path without taking an exclusive lock and without creating the file if absent.
 func Probe(path string) (State, Stamp, error) {
-	return ProbeWithOptions(path, Options{})
+	return probeWithOptions(path, options{})
 }

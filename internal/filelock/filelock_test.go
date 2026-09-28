@@ -109,17 +109,17 @@ func TestLock_TimeoutBound(t *testing.T) {
 	}
 	defer lock1.Unlock()
 
-	clk := NewLockStepClock(time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC))
+	clk := newLockStepClock(time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC))
 	timeout := 100 * time.Millisecond
-	opts := Options{
-		Clock:        clk,
-		PollInterval: 10 * time.Millisecond,
+	opts := options{
+		clock:        clk,
+		pollInterval: 10 * time.Millisecond,
 	}
 
-	lock2, err := LockWithOptions(path, "second", timeout, opts)
+	lock2, err := lockWithOptions(path, "second", timeout, opts)
 	if lock2 != nil {
 		lock2.Unlock()
-		t.Fatalf("LockWithOptions succeeded unexpectedly while held")
+		t.Fatalf("lockWithOptions succeeded unexpectedly while held")
 	}
 	if !errors.Is(err, ErrTimeout) {
 		t.Fatalf("err = %v, want ErrTimeout", err)
@@ -213,12 +213,12 @@ func TestMutant_LastSleepCappedAtRemaining(t *testing.T) {
 	}
 	defer lock1.Unlock()
 
-	clk := NewLockStepClock(time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC))
+	clk := newLockStepClock(time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC))
 	timeout := 50 * time.Millisecond
-	opts := Options{
-		Clock:        clk,
-		PollInterval: 30 * time.Millisecond,
-		Jitter: func(d time.Duration) time.Duration {
+	opts := options{
+		clock:        clk,
+		pollInterval: 30 * time.Millisecond,
+		jitter: func(d time.Duration) time.Duration {
 			return 30 * time.Millisecond // constant 30ms sleep request
 		},
 	}
@@ -226,7 +226,7 @@ func TestMutant_LastSleepCappedAtRemaining(t *testing.T) {
 	// Step 1: remaining = 50ms, sleep = 30ms.
 	// Step 2: remaining = 20ms. If uncapped, sleeps 30ms (waited = 60ms).
 	// With cap, sleeps 20ms (waited = 50ms).
-	_, err2 := LockWithOptions(path, "waiter", timeout, opts)
+	_, err2 := lockWithOptions(path, "waiter", timeout, opts)
 	if !errors.Is(err2, ErrTimeout) {
 		t.Fatalf("err2 = %v, want ErrTimeout", err2)
 	}
@@ -568,37 +568,37 @@ func TestReadStamp(t *testing.T) {
 func TestOptionsDefaults(t *testing.T) {
 	t.Parallel()
 
-	opts := Options{}
-	if opts.pollInterval() != defaultPollInterval {
-		t.Errorf("pollInterval = %v, want %v", opts.pollInterval(), defaultPollInterval)
+	opts := options{}
+	if opts.getPollInterval() != defaultPollInterval {
+		t.Errorf("pollInterval = %v, want %v", opts.getPollInterval(), defaultPollInterval)
 	}
-	if opts.pid() != os.Getpid() {
-		t.Errorf("pid = %d, want %d", opts.pid(), os.Getpid())
+	if opts.getPID() != os.Getpid() {
+		t.Errorf("pid = %d, want %d", opts.getPID(), os.Getpid())
 	}
-	if opts.jitter(100*time.Millisecond) < 100*time.Millisecond {
+	if opts.getJitter(100*time.Millisecond) < 100*time.Millisecond {
 		t.Errorf("jitter < base")
 	}
-	if opts.jitter(0) != 0 {
+	if opts.getJitter(0) != 0 {
 		t.Errorf("jitter(0) != 0")
 	}
-	if opts.clock() == nil {
+	if opts.getClock() == nil {
 		t.Errorf("clock is nil")
 	}
 
-	customOpts := Options{
-		Host: "custom-host",
-		PID:  777,
-		Jitter: func(d time.Duration) time.Duration {
+	customOpts := options{
+		host: "custom-host",
+		pid:  777,
+		jitter: func(d time.Duration) time.Duration {
 			return d * 2
 		},
 	}
-	if customOpts.host() != "custom-host" {
-		t.Errorf("host() = %q, want custom-host", customOpts.host())
+	if customOpts.getHost() != "custom-host" {
+		t.Errorf("host() = %q, want custom-host", customOpts.getHost())
 	}
-	if customOpts.pid() != 777 {
-		t.Errorf("pid() = %d, want 777", customOpts.pid())
+	if customOpts.getPID() != 777 {
+		t.Errorf("pid() = %d, want 777", customOpts.getPID())
 	}
-	if customOpts.jitter(10*time.Millisecond) != 20*time.Millisecond {
+	if customOpts.getJitter(10*time.Millisecond) != 20*time.Millisecond {
 		t.Errorf("custom jitter failed")
 	}
 }
@@ -707,10 +707,21 @@ func TestHelpers_NilAndErrors(t *testing.T) {
 		t.Errorf("ReadStamp nonexistent should error")
 	}
 
-	clk := NewLockStepClock(time.Time{})
+	clk := newLockStepClock(time.Time{})
 	if clk.Now().IsZero() {
-		t.Errorf("NewLockStepClock(zero) returned zero time")
+		t.Errorf("newLockStepClock(zero) returned zero time")
 	}
+}
+
+func TestRealClock(t *testing.T) {
+	t.Parallel()
+
+	rc := realClock{}
+	now := rc.Now()
+	if now.IsZero() {
+		t.Fatal("realClock.Now() is zero")
+	}
+	rc.Sleep(0)
 }
 
 func TestProbe_NotDir(t *testing.T) {
@@ -768,8 +779,8 @@ func TestTryLock_AskerIsNotAHolder(t *testing.T) {
 	}
 
 	// A bounded Lock kept out by the asker alone runs out as busy, not held.
-	clk := NewLockStepClock(time.Time{})
-	lock, err = LockWithOptions(path, "waiter", 50*time.Millisecond, Options{Clock: clk})
+	clk := newLockStepClock(time.Time{})
+	lock, err = lockWithOptions(path, "waiter", 50*time.Millisecond, options{clock: clk})
 	if lock != nil {
 		lock.Unlock()
 		t.Fatal("Lock succeeded while a shared lock was held")
@@ -804,8 +815,8 @@ func TestLock_RunOutNamesTheHolder(t *testing.T) {
 	defer holder.Unlock()
 
 	for _, bound := range []time.Duration{0, 1, time.Millisecond, 10 * time.Millisecond, 200 * time.Millisecond, time.Second} {
-		clk := NewLockStepClock(time.Time{})
-		lock, err := LockWithOptions(path, "waiter", bound, Options{Clock: clk})
+		clk := newLockStepClock(time.Time{})
+		lock, err := lockWithOptions(path, "waiter", bound, options{clock: clk})
 		if lock != nil {
 			lock.Unlock()
 			t.Fatalf("bound %s: acquired a held lock", bound)
@@ -841,7 +852,7 @@ func TestLock_RunOutSetsWait(t *testing.T) {
 	}
 	defer holder.Unlock()
 
-	_, err = LockWithOptions(path, "waiter", 50*time.Millisecond, Options{Clock: NewLockStepClock(time.Time{})})
+	_, err = lockWithOptions(path, "waiter", 50*time.Millisecond, options{clock: newLockStepClock(time.Time{})})
 	he, ok := AsHeldError(err)
 	if !ok {
 		t.Fatalf("a bounded Lock that ran out against a holder is not a *HeldError: %v", err)
@@ -851,5 +862,192 @@ func TestLock_RunOutSetsWait(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "waited 50ms") {
 		t.Errorf("run-out text does not say the wait: %q", err.Error())
+	}
+}
+
+func TestMutant_Fsync(t *testing.T) {
+	t.Parallel()
+
+	// 1. defaultSync on a closed file descriptor MUST return an error.
+	// If defaultSync was mutated to a dummy `return nil`, this fails!
+	f, err := os.CreateTemp(t.TempDir(), "fsync-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+	if err := defaultSync(f); err == nil {
+		t.Fatal("defaultSync on closed file descriptor returned nil, want error")
+	}
+
+	// 2. Injected sync error in tryLockWithOptions must abort, cleanup, and return error.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sync_err.lock")
+	syncErr := errors.New("simulated disk sync error")
+	opts := options{
+		sync: func(f *os.File) error {
+			return syncErr
+		},
+	}
+	lock, err := tryLockWithOptions(path, "fsync-fail", opts)
+	if lock != nil {
+		lock.Unlock()
+		t.Fatal("tryLockWithOptions succeeded despite sync error")
+	}
+	if !errors.Is(err, syncErr) {
+		t.Fatalf("err = %v, want syncErr", err)
+	}
+
+	// Lock file must not be held now
+	state, _, probeErr := Probe(path)
+	if probeErr != nil {
+		t.Fatalf("Probe failed: %v", probeErr)
+	}
+	if state == StateHeld {
+		t.Fatalf("lock still held after sync failure")
+	}
+
+	// 3. Verify sync is called on successful lock
+	syncCalled := false
+	optsSuccess := options{
+		sync: func(f *os.File) error {
+			syncCalled = true
+			return f.Sync()
+		},
+	}
+	successLock, err := tryLockWithOptions(path, "fsync-ok", optsSuccess)
+	if err != nil {
+		t.Fatalf("tryLockWithOptions failed: %v", err)
+	}
+	if !syncCalled {
+		t.Fatal("sync was not called during successful tryLockWithOptions")
+	}
+	_ = successLock.Unlock()
+}
+
+func TestMutant_Jitter(t *testing.T) {
+	t.Parallel()
+
+	// 1. defaultJitter must have spread and produce values > base duration
+	d := 100 * time.Millisecond
+	seen := make(map[time.Duration]bool)
+	hasGreater := false
+	for i := 0; i < 200; i++ {
+		j := defaultJitter(d)
+		seen[j] = true
+		if j > d {
+			hasGreater = true
+		}
+	}
+	if !hasGreater {
+		t.Fatal("defaultJitter never produced a duration > d (mutant: return d)")
+	}
+	if len(seen) < 5 {
+		t.Fatalf("defaultJitter produced only %d distinct values across 200 iterations (want >= 5)", len(seen))
+	}
+
+	// 2. lockLoop backoff must invoke opts.jitter
+	dir := t.TempDir()
+	path := filepath.Join(dir, "jitter_hook.lock")
+	held, err := TryLock(path, "holder")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Unlock()
+
+	jitterInvoked := false
+	clk := newLockStepClock(time.Time{})
+	opts := options{
+		clock: clk,
+		jitter: func(base time.Duration) time.Duration {
+			jitterInvoked = true
+			return base
+		},
+	}
+	_, _ = lockWithOptions(path, "waiter", 50*time.Millisecond, opts)
+	if !jitterInvoked {
+		t.Fatal("opts.jitter was never invoked during lockLoop backoff (mutant: jitter removed)")
+	}
+}
+
+func TestTryLock_DedicatedPathTruncates(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "data_file.lock")
+
+	precious := []byte("critical initial data that should be truncated when taking lock\n")
+	if err := os.WriteFile(path, precious, 0666); err != nil {
+		t.Fatal(err)
+	}
+
+	lock, err := TryLock(path, "dedicated-taker")
+	if err != nil {
+		t.Fatalf("TryLock on existing file failed: %v", err)
+	}
+	defer lock.Unlock()
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+	if string(data) == string(precious) {
+		t.Fatal("TryLock did not truncate existing file contents")
+	}
+	if !strings.Contains(string(data), "label=dedicated-taker") {
+		t.Fatalf("file content does not contain new stamp: %s", string(data))
+	}
+}
+
+func TestCappedHostileLabelAndPathSanitization(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "huge_label.lock")
+
+	bigLabel := strings.Repeat("X", 1024*1024) // 1 MB label
+	lock, err := TryLock(path, bigLabel)
+	if err != nil {
+		t.Fatalf("TryLock with 1MB label failed: %v", err)
+	}
+	defer lock.Unlock()
+
+	if len(lock.Stamp().Label) > 1024 {
+		t.Fatalf("lock.Stamp().Label length = %d, want <= 1024", len(lock.Stamp().Label))
+	}
+	if len(lock.String()) > 4096 {
+		t.Fatalf("lock.String() length = %d, want <= 4096", len(lock.String()))
+	}
+
+	// Second taker fails with HeldError
+	_, herr := TryLock(path, "second")
+	if herr == nil {
+		t.Fatal("second TryLock succeeded, want HeldError")
+	}
+	if len(herr.Error()) > 4096 {
+		t.Fatalf("HeldError.Error() length = %d, want <= 4096", len(herr.Error()))
+	}
+	// Error string must not contain control characters
+	for i := 0; i < len(herr.Error()); i++ {
+		if c := herr.Error()[i]; c < 0x20 || c == 0x7f {
+			t.Fatalf("HeldError.Error() contains control char 0x%02x: %q", c, herr.Error())
+		}
+	}
+
+	// Safe path error wrapping check
+	badDir := filepath.Join(dir, "newline\nin\npath")
+	if err := os.Mkdir(badDir, 0755); err == nil {
+		badLock := filepath.Join(badDir, "l.lock")
+		l, err := TryLock(badLock, "test")
+		if err == nil {
+			defer l.Unlock()
+			_, err2 := TryLock(badLock, "test2")
+			if err2 != nil {
+				for i := 0; i < len(err2.Error()); i++ {
+					if c := err2.Error()[i]; c < 0x20 || c == 0x7f {
+						t.Fatalf("error text contains unescaped control char 0x%02x: %q", c, err2.Error())
+					}
+				}
+			}
+		}
 	}
 }

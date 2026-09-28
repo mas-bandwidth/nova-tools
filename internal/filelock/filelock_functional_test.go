@@ -244,17 +244,6 @@ func TestFunctional_HelperProcess(t *testing.T) {
 	}
 }
 
-func TestFunctional_RealClock(t *testing.T) {
-	t.Parallel()
-
-	rc := filelock.RealClock{}
-	now := rc.Now()
-	if now.IsZero() {
-		t.Fatal("RealClock.Now() is zero")
-	}
-	rc.Sleep(0)
-}
-
 // H1 witness in its concurrent form: a Probe holds the shared lock for an
 // instant, and a taker landing in that instant must not be told held, because
 // nobody holds (tla/FileLock.tla, HeldIsTrue). Busy is a true answer and is

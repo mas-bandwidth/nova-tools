@@ -8,32 +8,35 @@ import (
 	"os"
 	"syscall"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 func openFileSafe(path string, flag int, perm os.FileMode) (*os.File, error) {
+	cleanPath := oneline.Escape(oneline.Cap(path, 1024))
 	fullFlag := flag | syscall.O_NOFOLLOW | syscall.O_NONBLOCK
 	f, err := os.OpenFile(path, fullFlag, perm)
 	if err != nil {
 		if errors.Is(err, syscall.ELOOP) {
-			return nil, fmt.Errorf("filelock %q: symlink not permitted", path)
+			return nil, fmt.Errorf("filelock %q: symlink not permitted", cleanPath)
 		}
-		return nil, fmt.Errorf("filelock %q: %w", path, err)
+		return nil, fmt.Errorf("filelock %q: %w", cleanPath, wrapPathError(err))
 	}
 
 	fi, err := f.Stat()
 	if err != nil {
 		_ = f.Close()
-		return nil, fmt.Errorf("filelock %q stat: %w", path, err)
+		return nil, fmt.Errorf("filelock %q stat: %w", cleanPath, wrapPathError(err))
 	}
 	if !fi.Mode().IsRegular() {
 		_ = f.Close()
 		if fi.IsDir() {
-			return nil, fmt.Errorf("filelock %q: is a directory", path)
+			return nil, fmt.Errorf("filelock %q: is a directory", cleanPath)
 		}
 		if fi.Mode()&os.ModeSymlink != 0 {
-			return nil, fmt.Errorf("filelock %q: symlink not permitted", path)
+			return nil, fmt.Errorf("filelock %q: symlink not permitted", cleanPath)
 		}
-		return nil, fmt.Errorf("filelock %q: not a regular file", path)
+		return nil, fmt.Errorf("filelock %q: not a regular file", cleanPath)
 	}
 
 	return f, nil
@@ -74,21 +77,22 @@ func unlockFile(f *os.File) {
 }
 
 func verifyInode(f *os.File, path string) (bool, error) {
+	cleanPath := oneline.Escape(oneline.Cap(path, 1024))
 	var statFd, statPath syscall.Stat_t
 	if err := syscall.Fstat(int(f.Fd()), &statFd); err != nil {
-		return false, err
+		return false, wrapPathError(err)
 	}
 	if statFd.Mode&syscall.S_IFMT != syscall.S_IFREG {
-		return false, fmt.Errorf("filelock %q: not a regular file", path)
+		return false, fmt.Errorf("filelock %q: not a regular file", cleanPath)
 	}
 	if err := syscall.Lstat(path, &statPath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return false, nil // unlinked between open and lock
 		}
-		return false, err
+		return false, wrapPathError(err)
 	}
 	if statPath.Mode&syscall.S_IFMT == syscall.S_IFLNK {
-		return false, fmt.Errorf("filelock %q: symlink not permitted", path)
+		return false, fmt.Errorf("filelock %q: symlink not permitted", cleanPath)
 	}
 	if statFd.Dev != statPath.Dev || statFd.Ino != statPath.Ino {
 		return false, nil // replaced under open
@@ -96,9 +100,19 @@ func verifyInode(f *os.File, path string) (bool, error) {
 	return true, nil
 }
 
-// TryLockWithOptions attempts to acquire the exclusive file lock on path without waiting.
-func TryLockWithOptions(path string, label string, opts Options) (*FileLock, error) {
+func (o options) getVerifyInode() func(*os.File, string) (bool, error) {
+	if o.verifyInode != nil {
+		return o.verifyInode
+	}
+	return verifyInode
+}
+
+func tryLockWithOptions(path string, label string, opts options) (*FileLock, error) {
+	cleanPath := oneline.Escape(oneline.Cap(path, 1024))
 	const maxInodeRetries = 5
+	verifyFn := opts.getVerifyInode()
+	syncFn := opts.getSync()
+
 	for inodeAttempt := 0; inodeAttempt < maxInodeRetries; inodeAttempt++ {
 		f, err := openFileSafe(path, os.O_RDWR|os.O_CREATE, 0666)
 		if err != nil {
@@ -113,7 +127,7 @@ func TryLockWithOptions(path string, label string, opts Options) (*FileLock, err
 
 		// Acquired exclusive lock!
 		// Inode race defense: verify fstat(fd) == lstat(path)
-		match, err := verifyInode(f, path)
+		match, err := verifyFn(f, path)
 		if err != nil {
 			unlockFile(f)
 			_ = f.Close()
@@ -137,29 +151,29 @@ func TryLockWithOptions(path string, label string, opts Options) (*FileLock, err
 		if err := f.Truncate(0); err != nil {
 			unlockFile(f)
 			_ = f.Close()
-			return nil, fmt.Errorf("filelock %q truncate: %w", path, err)
+			return nil, fmt.Errorf("filelock %q truncate: %w", cleanPath, wrapPathError(err))
 		}
 		if _, err := f.Seek(0, 0); err != nil {
 			unlockFile(f)
 			_ = f.Close()
-			return nil, fmt.Errorf("filelock %q seek: %w", path, err)
+			return nil, fmt.Errorf("filelock %q seek: %w", cleanPath, wrapPathError(err))
 		}
 
 		stamp := Stamp{
-			PID:     opts.pid(),
-			Host:    opts.host(),
-			Started: opts.clock().Now().UTC(),
-			Label:   label,
+			PID:     opts.getPID(),
+			Host:    opts.getHost(),
+			Started: opts.getClock().Now().UTC(),
+			Label:   oneline.Cap(label, 1024),
 		}
 		if _, err := f.WriteString(stamp.Format() + "\n"); err != nil {
 			unlockFile(f)
 			_ = f.Close()
-			return nil, fmt.Errorf("filelock %q write stamp: %w", path, err)
+			return nil, fmt.Errorf("filelock %q write stamp: %w", cleanPath, wrapPathError(err))
 		}
-		if err := f.Sync(); err != nil {
+		if err := syncFn(f); err != nil {
 			unlockFile(f)
 			_ = f.Close()
-			return nil, fmt.Errorf("filelock %q sync: %w", path, err)
+			return nil, fmt.Errorf("filelock %q sync: %w", cleanPath, wrapPathError(err))
 		}
 
 		return &FileLock{
@@ -170,16 +184,14 @@ func TryLockWithOptions(path string, label string, opts Options) (*FileLock, err
 		}, nil
 	}
 
-	return nil, fmt.Errorf("filelock %q: failed after %d inode collision retries", path, maxInodeRetries)
+	return nil, fmt.Errorf("filelock %q: failed after %d inode collision retries", cleanPath, maxInodeRetries)
 }
 
-// LockWithOptions acquires the exclusive file lock on path, waiting up to timeout.
-func LockWithOptions(path string, label string, timeout time.Duration, opts Options) (*FileLock, error) {
-	return lockLoop(path, label, timeout, opts, TryLockWithOptions)
+func lockWithOptions(path string, label string, timeout time.Duration, opts options) (*FileLock, error) {
+	return lockLoop(path, label, timeout, opts, tryLockWithOptions)
 }
 
-// ProbeWithOptions inspects path without taking an exclusive lock and without creating the file if absent.
-func ProbeWithOptions(path string, opts Options) (State, Stamp, error) {
+func probeWithOptions(path string, opts options) (State, Stamp, error) {
 	f, err := openFileSafe(path, os.O_RDWR, 0)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -200,7 +212,8 @@ func ProbeWithOptions(path string, opts Options) (State, Stamp, error) {
 	// Probe NEVER takes an exclusive lock!
 	ok, lockErr := trySharedLock(f)
 	if lockErr != nil {
-		return "", Stamp{}, fmt.Errorf("filelock %q probe: %w", path, lockErr)
+		cleanPath := oneline.Escape(oneline.Cap(path, 1024))
+		return "", Stamp{}, fmt.Errorf("filelock %q probe: %w", cleanPath, wrapPathError(lockErr))
 	}
 	if ok {
 		// Granted shared lock: nobody holds exclusive lock.

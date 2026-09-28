@@ -9,17 +9,18 @@ import (
 
 func unlockFile(f *os.File) {}
 
-// TryLockWithOptions returns ErrNotSupported on platforms without OS lock support.
-func TryLockWithOptions(path string, label string, opts Options) (*FileLock, error) {
+func openFileSafe(path string, flag int, perm os.FileMode) (*os.File, error) {
 	return nil, ErrNotSupported
 }
 
-// LockWithOptions returns ErrNotSupported on platforms without OS lock support.
-func LockWithOptions(path string, label string, timeout time.Duration, opts Options) (*FileLock, error) {
+func tryLockWithOptions(path string, label string, opts options) (*FileLock, error) {
 	return nil, ErrNotSupported
 }
 
-// ProbeWithOptions returns ErrNotSupported on platforms without OS lock support.
-func ProbeWithOptions(path string, opts Options) (State, Stamp, error) {
+func lockWithOptions(path string, label string, timeout time.Duration, opts options) (*FileLock, error) {
+	return nil, ErrNotSupported
+}
+
+func probeWithOptions(path string, opts options) (State, Stamp, error) {
 	return "", Stamp{}, ErrNotSupported
 }

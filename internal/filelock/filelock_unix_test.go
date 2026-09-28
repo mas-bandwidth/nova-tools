@@ -5,6 +5,7 @@ package filelock
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 )
@@ -76,5 +77,32 @@ func TestOpenFileSafe_FIFO(t *testing.T) {
 	_, err = ReadStamp(fifoPath)
 	if err == nil {
 		t.Fatalf("ReadStamp on FIFO succeeded, want error")
+	}
+}
+
+func TestMutant_VerifyInode(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "verify_mutant.lock")
+
+	calls := 0
+	opts := options{
+		verifyInode: func(f *os.File, path string) (bool, error) {
+			calls++
+			return false, nil // always mismatch
+		},
+	}
+
+	lock, err := tryLockWithOptions(path, "mismatch", opts)
+	if lock != nil {
+		lock.Unlock()
+		t.Fatal("tryLockWithOptions succeeded despite inode mismatch (mutant: verifyInode check bypassed)")
+	}
+	if err == nil || !strings.Contains(err.Error(), "failed after 5 inode collision retries") {
+		t.Fatalf("err = %v, want 'failed after 5 inode collision retries'", err)
+	}
+	if calls != 5 {
+		t.Fatalf("verifyInode called %d times, want 5 retries", calls)
 	}
 }
