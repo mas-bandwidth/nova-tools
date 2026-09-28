@@ -356,6 +356,72 @@ func TestRefusals(t *testing.T) {
 	})
 }
 
+// TestParentSymlink is the witness layout: intended/linkdir points at outside/,
+// and a write of intended/linkdir/note.txt must not change outside/note.txt.
+func TestParentSymlink(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	outside := filepath.Join(root, "outside")
+	intended := filepath.Join(root, "intended")
+	if err := os.Mkdir(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(intended, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	note := filepath.Join(outside, "note.txt")
+	const original = "original-outside\n"
+	if err := os.WriteFile(note, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	linkdir := filepath.Join(intended, "linkdir")
+	if err := os.Symlink(outside, linkdir); err != nil {
+		t.Fatal(err)
+	}
+
+	target := filepath.Join(linkdir, "note.txt")
+	err := WriteFile(target, []byte("replaced\n"), 0o644)
+	if err == nil {
+		t.Fatal("WriteFile through a symlink parent succeeded; want refusal")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "atomicfile") {
+		t.Fatalf("error %q does not name atomicfile", msg)
+	}
+	if !strings.Contains(msg, "symlink") {
+		t.Fatalf("error %q does not say the parent is a symlink", msg)
+	}
+	if !strings.Contains(msg, target) {
+		t.Fatalf("error %q does not name path %q", msg, target)
+	}
+	if !strings.Contains(msg, "pass the real directory") {
+		t.Fatalf("error %q does not name the next action", msg)
+	}
+
+	got, rerr := os.ReadFile(note)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if string(got) != original {
+		t.Fatalf("outside/note.txt = %q, want unchanged %q", got, original)
+	}
+	entries, rerr := os.ReadDir(outside)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if len(entries) != 1 || entries[0].Name() != "note.txt" {
+		t.Fatalf("outside/ has %d entries, want only note.txt", len(entries))
+	}
+	lst, rerr := os.Lstat(linkdir)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if lst.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("linkdir %q is no longer a symlink", linkdir)
+	}
+}
+
 func TestSanitizedError(t *testing.T) {
 	t.Parallel()
 

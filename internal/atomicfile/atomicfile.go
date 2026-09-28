@@ -14,9 +14,10 @@ Every write follows a strict, bounded sequence:
     not exceed the filesystem NAME_MAX (255 bytes). Only standard file permissions
     0000-0777 are supported; mode bits outside this mask (such as setuid 04755,
     setgid, sticky, or file-type bits) are refused. If the target is an existing
-    directory or symlink, or if the parent directory is read-only, does not exist,
-    or fails to resolve via EvalSymlinks, the operation is refused immediately with
-    an error naming the path.
+    directory or symlink, or if the parent directory is a symlink, is read-only,
+    does not exist, or fails to resolve via EvalSymlinks, the operation is refused
+    immediately with an error naming the path. A symlink parent is refused before
+    anything is written; the error tells the caller to pass the real directory.
  2. Exclusive temporary file creation: A temporary file is created exclusively in the
     SAME physical directory as the target file, using a fixed-length name of the form
     ".<base>.tmp-%08x" where the suffix is drawn from crypto/rand. This guarantees
@@ -52,9 +53,10 @@ not automatically removed on subsequent invocations.
 # Directory Boundary and Concurrency Note
 
 The initial symlink and directory check is a safeguard against accidental caller
-mistakes (e.g. attempting to overwrite a symlink or directory path). It is designed
-for caller-owned directories; it is not an adversarial race-free lock against
-malicious actors concurrently swapping directory contents on untrusted trees.
+mistakes (e.g. attempting to overwrite a symlink or directory path, or writing
+through a symlink parent). It is designed for caller-owned directories; it is not
+an adversarial race-free lock against malicious actors concurrently swapping
+directory contents on untrusted trees.
 
 # Differences from os.WriteFile
 
@@ -122,7 +124,6 @@ const (
 
 // hooks provides injection seams for step failure testing.
 type hooks struct {
-	stat         func(name string) (os.FileInfo, error)
 	lstat        func(name string) (os.FileInfo, error)
 	evalSymlinks func(path string) (string, error)
 	createTemp   func(dir, base string, perm os.FileMode) (*os.File, error)
@@ -137,7 +138,6 @@ type hooks struct {
 
 func defaultHooks() *hooks {
 	return &hooks{
-		stat:         os.Stat,
 		lstat:        os.Lstat,
 		evalSymlinks: filepath.EvalSymlinks,
 		createTemp:   defaultCreateTemp,
@@ -256,7 +256,8 @@ func ExactMode() Option {
 // Write refuses paths that are not clean (filepath.Clean(path) != path), refuses
 // base names longer than 241 bytes, refuses mode bits outside 0000-0777, refuses
 // to replace directories or symlinks, and returns an error naming path if the
-// parent directory does not exist, is read-only, or fails to resolve.
+// parent directory does not exist, is a symlink, is read-only, or fails to resolve.
+// A symlink parent is refused before anything is written; pass the real directory.
 func Write(path string, data []byte, perm os.FileMode, opts ...Option) error {
 	return writeWithHooks(path, data, perm, nil, opts...)
 }
@@ -296,9 +297,15 @@ func writeWithHooks(path string, data []byte, perm os.FileMode, h *hooks, opts .
 	}
 
 	dir := filepath.Dir(path)
-	dirInfo, err := h.stat(dir)
+	// Lstat, not Stat. Stat follows a symlink parent, so the directory looks real
+	// and the temporary file is created in the link target. Do not compare
+	// EvalSymlinks to the lexical path: on macOS /tmp is /private/tmp.
+	dirInfo, err := h.lstat(dir)
 	if err != nil {
 		return wrapErr(fmt.Sprintf("atomicfile: parent directory for %q", path), err)
+	}
+	if dirInfo.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("atomicfile: parent directory %q for %q is a symlink: pass the real directory", dir, path)
 	}
 	if !dirInfo.IsDir() {
 		return fmt.Errorf("atomicfile: parent directory %q for %q is not a directory", dir, path)

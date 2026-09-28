@@ -323,6 +323,59 @@ func TestWriteBoxResolvesSymlink(t *testing.T) {
 	}
 }
 
+// TestWriteBoxRefusesParentSymlink asserts that WriteBox refuses writing when
+// the parent directory is a symlink. The real target bytes remain unchanged.
+func TestWriteBoxRefusesParentSymlink(t *testing.T) {
+	t.Parallel()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: symlink creation requires special privileges")
+	}
+
+	root := t.TempDir()
+	outside := filepath.Join(root, "outside")
+	intended := filepath.Join(root, "intended")
+	if err := os.Mkdir(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(intended, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(outside, "fuses.json")
+	if err := WriteBox(target, Box{}); err != nil {
+		t.Fatalf("WriteBox(target) failed: %v", err)
+	}
+	before, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	linkdir := filepath.Join(intended, "linkdir")
+	if err := os.Symlink(outside, linkdir); err != nil {
+		t.Fatal(err)
+	}
+
+	b := Box{
+		Quarantine: map[string]Fuse{
+			"discord": {At: "2026-09-28T00:00:00Z", Reason: "must not be written"},
+		},
+	}
+	linkBox := filepath.Join(linkdir, "fuses.json")
+	if err := WriteBox(linkBox, b); err == nil {
+		t.Fatal("WriteBox through parent symlink succeeded; want refusal")
+	} else if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("WriteBox error %q does not mention symlink", err)
+	}
+
+	after, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("target bytes changed:\nbefore: %s\nafter: %s", before, after)
+	}
+}
+
 // TestWriteNormalisesNilQuarantine so a box written from a zero value reads back as an
 // empty map rather than a JSON null that the next reader has to special-case.
 func TestWriteNormalisesNilQuarantine(t *testing.T) {
