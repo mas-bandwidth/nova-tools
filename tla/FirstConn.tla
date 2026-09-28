@@ -1,6 +1,6 @@
 ----------------------------- MODULE FirstConn -----------------------------
 \* The connection redisconn.Open dials, as state. nova-tools
-\* internal/redisconn/open.go at c4c6dfa19: firstConn (Read :255, Write
+\* internal/redisconn/open.go at f6ec9e2b8: firstConn (Read :255, Write
 \* :280, disarm :291), firstDial (dialer :194, done :209), the probe :180;
 \* firstconn_test.go, whose seven events and three rules are this module's.
 \*
@@ -53,7 +53,7 @@
 \*   "hang"       the probe is taken and never answered (:257 reading the
 \*                store instead): the client waits for a reply that never
 \*                comes
-\* None of the seven was in the code at c4c6dfa19, whose tests hold the rules
+\* None of the seven was in the code at f6ec9e2b8, whose tests hold the rules
 \* over every order of the seven events up to six and over long orders. Each
 \* is a misimplementation the model is shown to catch; each trace was read
 \* against the lines named.
