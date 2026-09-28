@@ -7,8 +7,8 @@ import (
 	"testing"
 )
 
-// The ten rules the 2026-09-16/17 dogfooding added to SPEC-SECRETS.md, each
-// carrying the hurt that made it and the red test that guards it. This test
+// The ten rules from dogfooding in SPEC-SECRETS.md, each carrying the hurt it
+// closes and the red test that guards it. This test
 // reads the spec the way internal/decide/doc_test.go reads SPEC-DECIDE.md, so a
 // rule renamed out of the document is red in a build.
 func TestSpecSecretsNamesDogfoodingAdditions(t *testing.T) {
@@ -19,7 +19,7 @@ func TestSpecSecretsNamesDogfoodingAdditions(t *testing.T) {
 		t.Fatalf("the secrets spec is missing: %s", err)
 	}
 	doc := string(raw)
-	if !strings.Contains(doc, "Additions from dogfooding (2026-09-16/17)") {
+	if !strings.Contains(doc, "## Rules from dogfooding") {
 		t.Errorf("SPEC-SECRETS.md does not name the dogfooding section")
 	}
 	for _, phrase := range []string{

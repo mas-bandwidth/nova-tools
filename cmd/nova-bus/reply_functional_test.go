@@ -130,7 +130,7 @@ func TestTheReplyFlagsAreRefusedWithoutReplyTo(t *testing.T) {
 		{"--git-timeout", "30"},
 	} {
 		t.Run(tc.flag, func(t *testing.T) {
-			expected := "DRAFT REFUSED: " + tc.flag + " belongs to --reply-to; without it draft runs no git and writes no file"
+			expected := "DRAFT REFUSED: " + tc.flag + " belongs to --reply-to; without it draft runs no git, and without --out it writes no file"
 			invoke(t, "", "draft", "--bus", checkout, "--as", "Ada", "--to", "Bo", tc.flag, tc.value).
 				mustCode(t, 2).mustContain(t, "stderr", expected)
 		})
@@ -1138,7 +1138,7 @@ func refusalTable(t *testing.T, checkout string) []refusalRow {
 		add("without "+missing, 2, "DRAFT REFUSED: "+missing+" is required with --reply-to; refusing to guess", "", out...)
 	}
 	d2 := dir()
-	add("--remote without --reply-to", 2, "DRAFT REFUSED: --remote belongs to --reply-to; without it draft runs no git and writes no file", d2,
+	add("--remote without --reply-to", 2, "DRAFT REFUSED: --remote belongs to --reply-to; without it draft runs no git, and without --out it writes no file", d2,
 		"draft", "--bus", checkout, "--as", "Ada", "--to", "Bo", "--remote", "origin")
 	add("--draft-dir inside the checkout", 2, "drafts go outside the bus, because send needs its tree clean", "",
 		replyArgs(checkout, checkout, "bo-abcdef012345", body)...)

@@ -1,177 +1,51 @@
 # Nova Tools terminology
 
 Welcome — this guide is a plain-language map of the words you will meet in the
-specs, each linked to the exact rule that defines it so you can jump straight to
-the source. It covers planned features too; check the command reference for what
-is available today.
-- **abstain** — a card that produced no accepted answer, scored on the packet as
-  `<label>: ABSTAIN reason=<token>`. The token names why: `line1-mismatch`,
-  `no-result`, `rc=<n>`, `idle=<s>`, `deadline`, `result-after-deadline`, `card-abstain`,
-  `bench-unreachable`, or a provider's `input-limit`. ([SPEC-SWARM.md, gather](../deprecated/docs/SPEC-SWARM.md#gather-one-bounded-packet-mechanically))
-- **ADMIT** — the printed token of the pulse's per-card admission gate: `ADMIT
-  REFUSED card=<label> gate=<spend|attempts|scope> <value>`. It is an event line,
-  never a verdict, and leaves the exit code alone. (SPEC-PULSE.md rule 9)
+specs, each linked to the page that defines it so you can jump straight to the
+source.
+
 - **adoption** — choosing to take a tool into your workflow; nothing in this repo
-  asks you to adopt everything at once. ([USAGE.md](USAGE.md#usage-and-adoption-guide))
-- **attempt** — one run at a job. A job's retry is a second attempt with its own
-  id, summed once; a node's attempts are bounded. ([SPEC-SWARM.md rule 12](../deprecated/docs/SPEC-SWARM.md#the-rules-numbered))
-- **batch** — one admission of many cards under one id and one deadline: scatter,
-  wait, gather. The gather is a single bounded packet. ([SPEC-SWARM.md rule 14](../deprecated/docs/SPEC-SWARM.md#the-rules-numbered))
-- **BATCH** — the swarm packet's first line: id, n, done, abstain, in, out, usd,
-  idle, stalled, benches. ([SPEC-SWARM.md, output grammar](../deprecated/docs/SPEC-SWARM.md#output-grammar))
-- **beat** — the `BEAT` heartbeat record a line writes to stay readable as awake,
-  separate from the read cursor; `awake` reads it from `from-<name>/BEAT` by
-  content and freshness, extended by a live lease. ([SPEC-WAKE.md, The verb](../deprecated/docs/SPEC-WAKE.md#the-verb))
-- **beat lease** — an `until=` time that keeps a friend readable as awake even
-  when its beat and cursor are older than the freshness window. It is bounded
-  presence evidence, not proof a parent model woke. ([SPEC-WAKE.md, The verb](../deprecated/docs/SPEC-WAKE.md#the-verb))
-- **bench** — a place work runs, usually a remote machine reached by ssh with
-  pinned cores; a local machine that runs slots is a bench too. ([SPEC-SWARM.md, Benches](../deprecated/docs/SPEC-SWARM.md#benches-a-remote-bench-reached-by-ssh-with-pinned-cores))
-- **BLOCKED** — a worker's verdict, `RESULT.md` line 2 `BLOCKED <why>`; in
-  nova-merge, an entry stopped with its reason while the lane moves on. Two
-  senses. ([SPEC-SWARM.md, The RESULT.md template](../deprecated/docs/SPEC-SWARM.md#the-resultmd-template) · [SPEC-MERGE.md, output grammar](../deprecated/docs/SPEC-MERGE.md#output-grammar))
-- **board** — nova-board's owed-work layer: an append-only log of events from
-  which the open list is derived. nova-board is **deprecated**: it is superseded
-  by nova-sprint (Glenn, 2026-09-27), and its code and spec are kept for
-  reference under `deprecated/`, out of scope of the testing drive.
-  ([deprecated/README.md](../deprecated/README.md) · [SPEC-BOARD.md](../deprecated/docs/SPEC-BOARD.md))
-- **bug node** — a nova-work node that stands for a bug, pooled by pulse when it
-  is open, unleased and unblocked. (SPEC-PULSE.md rule 1)
-- **card** — a unit of work: in nova-pulse and nova-swarm, a file whose line 1
-  binds it to its contract line; on nova-board, an obligation a group of lines
-  owes. Two senses. (SPEC-PULSE.md rule 5 · [SPEC-BOARD.md, The card](../deprecated/docs/SPEC-BOARD.md#the-card-and-the-events))
-- **clip** — the act of writing the resident state to the repository as one
-  deterministic snapshot carrying the retained history. Clips are periodic;
-  shutdown and handoff request one.
-- **contract line** — a card's `RESULT.md` line 1, the line by which the card was
-  admitted. A report whose line 1 does not match is refused. (SPEC-PULSE.md rule 5 · [SPEC-SWARM.md, gather](../deprecated/docs/SPEC-SWARM.md#gather-one-bounded-packet-mechanically))
-- **CONTRACTION** — the status line that names the health metric. Its verdict is
-  `CONVERGING`, or `EXPANDING` when any one stream ratio has been above 1 for two
-  consecutive hours; a contraction phase cards bugs only. (SPEC-PULSE.md, Status)
-- **coordinator** — the planning role that makes decisions and sets the work's
-  direction, producing cards, specifications and policy for the manager; the
-  coordinator is a friend. (SPEC-PULSE.md, The manager tier)
-- **decompose** — the verb that splits a feature into children, recursively. It
-  is proposed work with depth, work and cost bounds; it never expands on its own.
+  asks you to adopt everything at once. `nova-update adoption` prints each
+  friend's own choice, and a tool with no row is absent, never adopted.
+  ([USAGE.md](USAGE.md#usage-and-adoption-guide) · [SPEC-UPDATE.md](SPEC-UPDATE.md))
+- **beat** — a machine's heartbeat in Redis, `bench:<name>:beat`, carrying its
+  measured facts. `nova-config machine list` prints them live beside the declared
+  fields, and `nova-update report --store` reads each bench's build from it.
+  ([SPEC-CONFIG.md](SPEC-CONFIG.md) · [SPEC-UPDATE.md](SPEC-UPDATE.md))
+- **bench** — a machine of the fleet that runs work or CI, named by its tailnet
+  host; its declared facts are a `nova-config` machine row and its measured facts
+  come from its beat. ([SPEC-CONFIG.md](SPEC-CONFIG.md))
+- **class test** — a test that reads this repository's own text and refuses a
+  shape wherever it stands, so a lesson is a rule and not a story; each is
+  indexed with its rule, its allowlist, its remedy line and its narrowings.
+  ([SPEC-CI.md, The class tests](SPEC-CI.md#the-class-tests))
+- **coordinator** — the friend who holds the coordinator role, the one field of
+  `nova-config`'s sprint row; the coordinator machine, where the coordinator's
+  loops run, is the fleet row's. ([SPEC-CONFIG.md](SPEC-CONFIG.md))
 - **dogfood shape** — the issue shape the family files against its own tools:
   tool, command, verbatim output, expected, smallest fix. The shape is the
-  contract; the label is optional. (SPEC-PULSE.md rule 1)
-- **DONE** — the `RESULT.md` line 2 verdict the worker writes when the work
-  completed. ([SPEC-SWARM.md, The RESULT.md template](../deprecated/docs/SPEC-SWARM.md#the-resultmd-template))
-- **epic** — a semantic container, not a prescribed depth or mandatory layer. It
-  is a work-set by every rule, queryable as its own kind.
-- **escalation** — a decision not in the policy, carried as one line so a person
-  answers it. It carries a kind, a reference, and one line of reason.
-  (SPEC-PULSE.md, The manager tier)
-- **evidence** — the recorded pointer that qualifies a task's acceptance
-  criteria: a test, a job, a merge, or a signed attestation. It qualifies a
-  criterion only when its kind and subject match.
-- **feature** — a work-set whose completion is what a roadmap row counts. It
-  decomposes into sub-features recursively.
-- **friend** — a named line or participant you exchange notes with, the
-  coordinator included, tracked by the same indexes as everyone else; the role is
-  ownership, never an exemption.
-- **gate / gated card** — a condition that must pass before an action proceeds; a
-  card with `AFTER: PR<n> merged` stays gated until the dependency merges, then
-  launches itself. (SPEC-PULSE.md, Rate and convergence rule 4)
-- **handoff** — the verb that ends a manager shift, releases ownership and leaves
-  a record and bus note for the successor. It refuses mid-harvest or when the
-  successor is asleep. (SPEC-PULSE.md, Handoff)
-- **headroom** — the per-tick launch cap `cores x 1.5 - load` per bench, never
-  more than `cores` in one tick. Its field in each bench's status reading is
-  **definition pending**. (SPEC-PULSE.md, Rate and convergence rule 3)
-- **item** — a unit of work in the set; a settle moves an item from open to
-  closed. Pulse pools open, unleased, unblocked nodes as candidates.
-  (SPEC-PULSE.md rule 1)
-- **journal** — the durable append-only log of accepted mutations. Acceptance is
-  acknowledged only after the journal is durable; the same event cannot apply
-  twice.
-- **lane** — nova-merge's ordered queue, a directory holding one state file, one
-  clone, and the records of reads and gates. One lane, one merge per pass.
-  ([SPEC-MERGE.md, Retired: the per-PR lander role](../deprecated/docs/SPEC-MERGE.md#retired-the-per-pr-lander-role-2026-09-24) · [SPEC-MERGE.md rule 20](../deprecated/docs/SPEC-MERGE.md#the-rules-numbered))
-- **lease** — the ownership-of-execution record. One live lease per node; a
-  second `take` is refused and names the holder.
-- **NATIVE** — the printed token of a native card run: `NATIVE OK` when the card
-  ran with its harness, `NATIVE INCOMPLETE` when a launch started and did not
-  earn OK, `NATIVE REFUSED` when a native invocation is refused. The process
-  never exits 255 (#2058). Local ssh(1) exits 255 for any error; that is not
-  proof the remote command never started, so the outcome is potentially
-  UNKNOWN and a retry waits on reconciliation.
-  ([SPEC-SWARM.md, output grammar](../deprecated/docs/SPEC-SWARM.md#output-grammar))
-- **next-push** — the label for expansionary work during a contraction phase:
-  anything the policy's `scope-regex` does not admit is labelled `next-push` and
-  never carded. Its scope-and-convergence rules are **definition pending**.
-  (SPEC-PULSE.md, Rate and convergence rule 7)
-- **node** — one thing in the work set, typed and counted once under one
-  containment parent. Children are containment; dependencies are references.
-- **O and C** — **O** the open work, **C** the closed work. The working view **W**
-  is a predicate within O, never a third branch, so `|W| ≤ |O|` always.
+  contract; the label is optional. ([SPEC-UPDATE.md](SPEC-UPDATE.md))
+- **friend** — a named participant you exchange notes with, the coordinator
+  included; the role is ownership, never an exemption. Her configuration is a
+  `nova-config` friend row (slots, tiers, roles); what she would just know is
+  runtime data she reports herself. ([SPEC-CONFIG.md](SPEC-CONFIG.md))
 - **OK** — the verdict a successful verb line carries as its second token:
   `<TOKEN> OK`, on stdout. A count stands where a list would be.
-  (SPEC-PULSE.md, output grammar · [SPEC.md, output grammar](SPEC.md#conventions))
-- **one tree** — the same parent–child contract across work nodes: work is offered
-  downward, while refusals, results, evidence, usage and learning travel upward;
-  each parent verifies the child's completion claim.
-- **pit stop** — a cascading worker failure is not fixed by more workers; the
-  coordinator's deliberate slow-down to spend the machine on the faults that
-  make every card slower, doing bugs only until one trust batch proves them
-  gone.
-- **policy** — the approved, finite rule set the manager executes without
-  expanding it. (SPEC-PULSE.md, The manager tier)
-- **pool** — the enumeration of bounded open work a pulse can draw from, written
-  as `pool.tsv`. Sources declare it; one candidate is one card.
-  (SPEC-PULSE.md rule 2)
-- **presence and its four facts** — whether a friend is awake is four separate
-  facts, each proven or unproven on its own: process alive, beat written,
-  delivery handled, wake fired. ([SPEC-WAKE.md, output grammar](../deprecated/docs/SPEC-WAKE.md#output-grammar))
-- **quiet time** — manager time that makes no model call and sends no status
-  note. (SPEC-PULSE.md, The manager tier)
-- **read (APPROVE and HOLD)** — a reader's recorded verdict for an exact
-  revision; a current independent APPROVE satisfies the read condition, a current
-  HOLD blocks it, and the other gates still apply. ([SPEC-MERGE.md, The read condition](../deprecated/docs/SPEC-MERGE.md#the-read-condition))
+  ([SPEC.md, Conventions](SPEC.md#conventions))
 - **receipt** — one line appended to `from-<me>/RECEIPTS` recording that a note
   arrived. It is not an approval, a reply, or proof anybody read the body.
   ([SPEC.md, The receipt rule](SPEC.md#the-receipt-rule))
 - **REFUSED** — the verdict a tool prints when it could not run or says NO:
   `<TOKEN> REFUSED: <reason> (<remedy>)`, on stderr, exit 2 (exit 1 where the
-  state is a NO). (SPEC-PULSE.md, output grammar · [SPEC.md, exit codes](SPEC.md#conventions))
-- **resident session** — nova-work's supervised, long-lived process that owns the
-  parsed work set in memory. A fresh CLI process is a thin client and never a
-  fresh engine.
-- **RESULT** — the report file: line 1 the contract line, line 2 the verdict
-  (`DONE`, `ABSTAIN <why>`, `BLOCKED <why>`), then `BRANCH` and `REPO`. The same
-  token is the card's line 1. Two senses. ([SPEC-SWARM.md, The RESULT.md template](../deprecated/docs/SPEC-SWARM.md#the-resultmd-template))
-- **shift** — the manager's turn on a queue. It ends by handoff and begins again
-  by takeover. (SPEC-PULSE.md, Handoff)
-- **single-writer kernel** — the rule that one coordinator at a time is the one
-  reader/writer of the live work set. Ownership transfers by fencing generation;
-  old processes cannot mutate under an obsolete generation.
-- **slot** — the unit of parallelism. A running worker holds a slot; a slot is
-  free when no job holds it and its log is quiet. ([SPEC-SWARM.md rule 17](../deprecated/docs/SPEC-SWARM.md#the-rules-numbered) · SPEC-PULSE.md rule 8)
-- **stale** — in nova-merge, a read or gate for an older revision, kept but not
-  counted; on nova-board, an open card with no event for longer than `--stale`.
-  Two senses. ([SPEC-MERGE.md, The read condition](../deprecated/docs/SPEC-MERGE.md#the-read-condition) · [SPEC-BOARD.md rule 6](../deprecated/docs/SPEC-BOARD.md#the-rules-of-the-last-two-days))
-- **takeover** — the verb that begins a manager shift. It refuses when `OWNER`
-  names a live process on a reachable host; a stale lock is taken with one note.
-  (SPEC-PULSE.md, Handoff)
-- **TOOLS MOVED** — the adoption-notification token, **definition pending**; the
-  adoption work is tracked in [#525](https://github.com/mas-bandwidth/nova-tools/issues/525). (SPEC-PULSE.md, Status)
-- **tripped** — a node whose attempt count reached `:max-attempts` (default 3),
-  surfacing `tripped=` as a status reading. Taking a lease on a tripped node
-  requires an explicit `--reason`.
-- **two-minute rule** — anything you call out to that costs real time answers in
-  one minute ideally, two at most. ([SPEC-MERGE.md, The two laws](../deprecated/docs/SPEC-MERGE.md#the-two-laws))
-- **verify** — `nova-swarm verify` checks the report's first line against the
-  card's contract line; `nova-work verify` checks evidence against acceptance
-  criteria and records verdicts, closing being separate. Two senses.
-  ([SPEC-SWARM.md, The verbs](../deprecated/docs/SPEC-SWARM.md#the-verbs))
-- **VIOLATION** — the printed token of a runaway worker: `RUN VIOLATION id=<id>
-  background=<n>`; the survivors are killed and the result is quarantined.
-  ([SPEC-SWARM.md rule 11](../deprecated/docs/SPEC-SWARM.md#the-rules-numbered))
-- **wake drill** — the test of waking: a note sent after the parent's turn ended
-  must produce a wake within the window. ([SPEC-WAKE.md, output grammar](../deprecated/docs/SPEC-WAKE.md#output-grammar))
+  state is a NO). ([SPEC.md, Conventions](SPEC.md#conventions))
+- **slot** — the unit of parallelism: a machine's `slots` is how many cards it
+  may run at once, its ceiling, and a friend's `slots` is how wide she wants to
+  run under that ceiling. ([SPEC-CONFIG.md](SPEC-CONFIG.md))
+- **STALE** — `nova-update check`'s verdict for an installed version older than
+  the latest its source publishes; a version ahead of the latest is NEWER, and a
+  pair with no order between them is DIFFERENT, never STALE.
+  ([SPEC-UPDATE.md](SPEC-UPDATE.md))
+- **two-minute rule** — every CI job is capped at two minutes, on every
+  platform, and the target is under one. ([SPEC-CI.md, The class tests](SPEC-CI.md#the-class-tests))
 - **wall** — the kernel-enforced filesystem boundary a job runs inside, with
-  separate read and write permissions. A pulse card names its job directory and
-  scratch space within that boundary. ([SPEC-SANDBOX.md, The rules, numbered](SPEC-SANDBOX.md#the-rules-numbered) · SPEC-PULSE.md rule 5)
-- **width** — a worker's slots, working and deficit, as `nova-sprint width` reads
-  them; it launches nothing.
+  separate read and write permissions. ([SPEC-SANDBOX.md, The rules, numbered](SPEC-SANDBOX.md#the-rules-numbered))

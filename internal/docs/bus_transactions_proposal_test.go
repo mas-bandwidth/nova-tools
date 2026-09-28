@@ -10,9 +10,9 @@ import (
 // refresh/read/reply transaction of nova-tools #246 where it lives, in the
 // "Bounded transactions" section of docs/SPEC.md. The section already composes
 // the read half, the reply half and the delivery identity; this test holds the
-// two things the issue names and the composed section must not lose: the
-// ownership boundary (bus carries and receipts, wake owns subscriptions, work
-// owns assignments, and no permission is inferred from content or Git author)
+// two things the composed section must not lose: the ownership boundary (the
+// bus carries and receipts, owns no subscription and no assignment, and infers
+// no permission from content or Git author)
 // and the seven deciding cases (stale checkout, concurrent sends, a lost push
 // response, quoted text, an invalid recipient, a CC-only update and interrupted
 // draft handling). A missing file or a dropped term is a bug.
@@ -44,11 +44,10 @@ func TestBusTransactionsProposalBoundaries(t *testing.T) {
 		}
 	}
 
-	// The ownership boundary the issue draws, in the issue's own terms.
+	// The ownership boundary, in the section's own terms.
 	for _, want := range []string{
 		"bus owns message transport and receipts",
-		"`nova-wake` owns subscriptions",
-		"`nova-work` owns assignments",
+		"owns no subscription and no assignment",
 		"does not infer permission from message content or Git author",
 	} {
 		if !strings.Contains(content, want) {

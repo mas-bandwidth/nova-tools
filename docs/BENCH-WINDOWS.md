@@ -4,7 +4,7 @@
 
 ## 1. Role and Principles
 
-Windows bench machines run native Windows workloads, cross-platform verification, and swarm worker execution under hardware-accelerated virtualization.
+Windows bench machines run native Windows workloads and cross-platform verification under hardware-accelerated virtualization.
 
 1. **Native Win32, Never WSL for the Bench**:
    The bench environment is strictly native Windows. WSL (`Microsoft-Windows-Subsystem-Linux`) is neither the bench environment nor the build toolchain. A tool running on a Windows bench executes as a native Win32/x64 process.
@@ -13,7 +13,7 @@ Windows bench machines run native Windows workloads, cross-platform verification
 3. **Dedicated Service Account**:
    Work and runner daemons run under the unprivileged service user `nova`, never under a desktop interactive user or `SYSTEM`.
 4. **Autonomous Power & Remote Management**:
-   OpenSSH Server (`sshd`) provides headless remote orchestration. Wake-on-LAN (Magic Packet) allows power-saving sleep and instant wake by `nova-pulse fleet wake`.
+   OpenSSH Server (`sshd`) provides headless remote orchestration. Wake-on-LAN (Magic Packet) allows power-saving sleep and instant wake over the network.
 
 ---
 
@@ -51,15 +51,15 @@ Windows bench machines run native Windows workloads, cross-platform verification
 - Environment file (`.path`) carries `C:\sdk\go\bin`, `C:\Program Files\Git\cmd`, and `C:\Users\nova\.local\bin`.
 
 ### Nova Tools & Seat Secrets
-- Bounded binaries (`nova-swarm`, `nova-pulse`, `nova-secrets`, etc.) installed in `C:\Users\nova\.local\bin` or `C:\nova\bin`.
+- Bounded binaries (`nova-secrets`, `nova-bus`, etc.) installed in `C:\Users\nova\.local\bin` or `C:\nova\bin`.
 - Bench Seat Key: Exactly one secret key under `C:\Users\nova\.config\nova-secrets\<seat>.key`.
-- Disk Floor: Free space under `C:\Users\nova` must stay strictly above 25 GB (`launch` and `fleet standard` refuse below this floor).
+- Disk Floor: Free space under `C:\Users\nova` must stay strictly above 25 GB (the `disk-free` check below).
 
 ---
 
-## 4. The Checklist: `nova-pulse fleet standard --platform windows`
+## 4. The Checklist
 
-When `nova-pulse fleet standard --bench <name> --platform windows` probes the bench over SSH, it verifies the following checklist:
+A Windows bench meets the standard when every check below holds over SSH:
 
 | Check Name | Target / Match | Requirement |
 |---|---|---|
@@ -69,7 +69,7 @@ When `nova-pulse fleet standard --bench <name> --platform windows` probes the be
 | `features` | `contains:Containers` | Hyper-V and Containers virtualization features enabled for sandboxing. |
 | `runner-service`| `contains:Running (nova)` | GitHub Actions runner Windows Service is active and running under `nova`. |
 | `wol` | `equals:enabled` | Network adapter has Wake-on-Magic-Packet enabled in driver properties. |
-| `nova-stamp` | `nonempty` | `nova-swarm version` answers cleanly. |
+| `nova-stamp` | `nonempty` | `nova-secrets version` answers cleanly. |
 | `seat` | `equals:1` | Exactly one `*.key` present in `.config/nova-secrets/`. |
 | `disk-free` | `at-least:25` | At least 25 GB free disk space on the primary volume. |
 

@@ -79,12 +79,12 @@ func TestNovaBusEfficiencyCardNamesItsRules(t *testing.T) {
 	}
 }
 
-// novaBusEfficiencySection returns the body of the `## The efficiency card
-// (#81), nova-bus` section: the contract lives under that header and ends at
+// novaBusEfficiencySection returns the body of the `## The efficiency card,
+// nova-bus` section: the contract lives under that header and ends at
 // the next top-level `## ` header.
 func novaBusEfficiencySection(t *testing.T, spec string) string {
 	t.Helper()
-	const header = "## The efficiency card (#81), nova-bus"
+	const header = "## The efficiency card, nova-bus"
 	start := strings.Index(spec, header)
 	if start < 0 {
 		t.Fatalf("the spec has no %q section", header)
