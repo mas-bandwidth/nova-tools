@@ -477,4 +477,3 @@ func (h *injectEvalMidScriptFailHook) ProcessHook(next redis.ProcessHook) redis.
 		return next(ctx, cmd)
 	}
 }
-
