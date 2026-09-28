@@ -7,7 +7,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/jobs"
 )
 
-// TestIssue2239 covers docs/SPEC-JOBS.md A4 for a plain unit grant: a unit
+// TestIssue2239 covers deprecated/docs/SPEC-JOBS.md A4 for a plain unit grant: a unit
 // whose lease is past expiry without a termination proof is uncertain, keeps
 // its reservation, and is never re-granted until a fence is written.
 func TestIssue2239(t *testing.T) {

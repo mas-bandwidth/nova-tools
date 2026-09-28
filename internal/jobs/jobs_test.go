@@ -20,7 +20,7 @@ func seedOpenNeed(t *testing.T) *Graph {
 	return g
 }
 
-// launch-reads-the-ready-set-not-the-queue (docs/SPEC-JOBS.md section 1, line 34):
+// launch-reads-the-ready-set-not-the-queue (deprecated/docs/SPEC-JOBS.md section 1, line 34):
 // launch reads the ready set and nothing else; a card whose need is an open PR is
 // never on a slot.
 func TestLaunchReadsTheReadySetNotTheQueue(t *testing.T) {
@@ -59,7 +59,7 @@ func TestLaunchReadsTheReadySetNotTheQueue(t *testing.T) {
 	}
 }
 
-// a-needs-cycle-refuses-at-seed (docs/SPEC-JOBS.md section 1, line 35): a :deps cycle
+// a-needs-cycle-refuses-at-seed (deprecated/docs/SPEC-JOBS.md section 1, line 35): a :deps cycle
 // is refused before publication, so the graph can never deadlock.
 func TestANeedsCycleRefusesAtSeed(t *testing.T) {
 	t.Parallel()

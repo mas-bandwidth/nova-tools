@@ -1,6 +1,6 @@
 package swarm
 
-// Backpressure and idle: an idle slot asks on an event, never a poll (docs/SPEC-JOBS.md
+// Backpressure and idle: an idle slot asks on an event, never a poll (deprecated/docs/SPEC-JOBS.md
 // section 7).
 //
 // An idle slot whose queue is empty does not spin on its queue. It reads its own queue once

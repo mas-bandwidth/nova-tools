@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// Red test: an-idle-slot-asks-on-an-event-not-a-poll (docs/SPEC-JOBS.md section 7).
+// Red test: an-idle-slot-asks-on-an-event-not-a-poll (deprecated/docs/SPEC-JOBS.md section 7).
 //
 // An idle slot whose queue is empty does not poll; it asks the coordinator for work by an
 // event (nova-pulse watch). The slot reads its own queue once to find it empty, blocks in

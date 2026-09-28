@@ -5,11 +5,9 @@ them has a bug and the tests decide which.*
 
 ## The boundary
 
-Glenn, 2026-09-26: "I don't think redis is an appropriate place to store
-non-ephemeral data. It is good as a hot store of data that can be rebuilt."
-And: "a new nova-config tool that manages this permanent (non-ephemeral)
-configuration. Thus it is kept cleanly separate from runtime, ephemeral
-state verbs."
+Redis is a hot store of data that can be rebuilt, never the place for
+permanent data. `nova-config` manages the permanent (non-ephemeral)
+configuration, kept cleanly separate from runtime, ephemeral state verbs.
 
 So there are two stores with two jobs:
 
@@ -18,9 +16,8 @@ So there are two stores with two jobs:
   every change to it. `nova-config` is its one writer.
 - **Redis is a copy.** `nova-config apply` writes the configuration into the
   keys the runtime tools read, through the runtime's own Redis Functions, and
-  removes what Postgres no longer has. Lose Redis: run `nova-config apply`.
-  The runtime tools (`nova-friend`, `nova-sprint`) read configuration from
-  Redis and never write it.
+  removes what Postgres does not have. Lose Redis: run `nova-config apply`.
+  The runtime tools read configuration from Redis and never write it.
 
 **History is not configuration.** Scores, receipts, ledgers, beats, copies,
 leases and every other thing a tool writes as it runs stay with the tool that
@@ -29,14 +26,13 @@ nothing else.
 
 ## Kinds
 
-**The placement rule.** Glenn, 2026-09-27: "Make sure that per-machine facts
-actually belong to machines, and global fleet facts belong to the fleet."
-The test for every field of every kind: does its value vary from machine to
+**The placement rule.** Per-machine facts belong to machines, and global
+fleet facts belong to the fleet. The test for every field of every kind: does its value vary from machine to
 machine? Then it is a machine field. Is there one value for the whole fleet?
 Then it is a fleet field. Neither: it is invented and is not a field. The
 same test decides a friend's row: what someone decides for her is
 configuration; what she would just know is runtime data in Redis. And the
-person coordinating is sprint-global configuration (Glenn, 2026-09-26): the
+person coordinating is sprint-global configuration: the
 fleet row holds machines only (the store, the coordinator machine); the
 sprint row holds who coordinates; a friend's roles are what the deal reads.
 
@@ -72,8 +68,7 @@ kind has identical verbs and a new kind adds no verb code.
 ### Singleton kinds
 
 A kind descriptor may declare `Singleton: true`: a kind of exactly one row,
-named as the kind is. Glenn, 2026-09-27: "why is coordinator set
-per-machine, in the fleet there is only one coordinator at a time." Its
+named as the kind is: there is one fleet and one coordinator at a time. Its
 migration creates the row (`INSERT ... ON CONFLICT DO NOTHING`), so the
 grammar has no `add`, `remove` or `list`, and its `set`, `show` and `history`
 take no name:
@@ -114,12 +109,10 @@ key), the tool names it.
 ### The kinds of this cut
 
 **`machine`** (`config.machines`): a machine of the fleet, named by its
-tailnet host. Glenn, 2026-09-27: "All fleet machines *must* be on the
-tailnet. This is a hard requirement." and "All machines can be ssh'd to via
-tailscale." So `ssh <name>` reaches the machine and there is no address
-field. "I only want the fleet to have actual defined useful things
-associated with each machine, not invented rando stuff": the row holds
-exactly the fields something reads, one reader each.
+tailnet host. Every fleet machine is on the tailnet and reachable by ssh
+over it, so `ssh <name>` reaches the machine and there is no address field.
+The row holds exactly the fields something reads, one reader each, and
+nothing invented.
 
 | field | type | required | who reads it | Redis |
 | --- | --- | --- | --- | --- |
@@ -129,30 +122,27 @@ exactly the fields something reads, one reader each.
 | `runners` | int | (0) | the CI play: how many runners it hosts; 0 hosts none | `machine:<m>` |
 
 **Declared and measured.** Measured facts (os, arch, cores, memory) are
-never typed and never columns. Glenn, 2026-09-27: "OK I like measured facts
-coming live, and that's fine. keep it that way. It's more robust." They come
-live from the machine's own heartbeat, `bench:<name>:beat` (today: `host`,
-`at`, `load1`, `ncpu`, `cpu`). `machine list` and `machine show` print them
+never typed and never columns: they come live from the machine's own
+heartbeat, `bench:<name>:beat` (`host`, `at`, `load1`, `ncpu`, `cpu`). `machine list` and `machine show` print them
 after the declared fields when a Redis is named (`--redis`, else
 `NOVA_SPRINT_REDIS`, else `NOVA_REDIS_ADDR`; never the seat: a list that
 dials a store nobody named would be a surprise): `os`, `arch`, `cores`
 (the beat's `ncpu`), `memory_gb`, and `beat=<rfc3339>`; each `-` when the
-beat does not carry it yet, and `beat=none` alone for a machine with no
-beat. Nothing is stored, nothing is typed. The beat carrying os, arch and
-memory_gb is a follow-on to `nova-sprint bench beat`, not this tool's.
+beat does not carry it, and `beat=none` alone for a machine with no
+beat. Nothing is stored, nothing is typed; what the beat carries is the
+beat writer's, not this tool's.
 
 **`fleet`** (`config.fleet`, singleton): the one row of fleet-wide facts.
-Glenn, 2026-09-27: "the studio is the coordinator. coordinator can be driven
-by rowan (you) or stella."
+The coordinator machine is one machine; which friend drives it is the sprint
+row's.
 
 | field | type | required | who reads it | Redis |
 | --- | --- | --- | --- | --- |
 | `store` | ref machine | | the plays: the machine that runs Redis and Postgres | `fleet:store` |
 | `coordinator` | ref machine | | the plays: where the coordinator's loops run; apply: the machine a friend with no beat is charged to | `fleet:coordinator` |
 
-**`friend`** (`config.friends`): what someone decides for a friend. Glenn,
-2026-09-27: "anything that a friend would just know, is runtime redis data."
-Where she runs, her harness, her logins and her wake path are hers: her own
+**`friend`** (`config.friends`): what someone decides for a friend. Anything
+a friend would just know is runtime Redis data. Where she runs, her harness, her logins and her wake path are hers: her own
 presence reports them (`friend:<f>:beat`, `friends:login`,
 `friend:<f>:wakepath`), and this tool never writes or reads them as
 configuration. Who coordinates is not her field either: it is the sprint's.
@@ -169,28 +159,6 @@ facts.
 | field | type | required | who reads it | Redis |
 | --- | --- | --- | --- | --- |
 | `coordinator` | ref friend | | the deal and the routing: who holds the coordinator role; `sprint set --coordinator <friend>` is the handover | `sprint:coordinator`, and the `coordinator` word in that friend's `friend:<f>:roles` |
-
-### Planned, not built
-
-Glenn, 2026-09-27: "I would very much like for us to move ALL of this
-configuration data into postgres with nova-config." Each is a later pull
-request: one descriptor, one migration, one Redis writer, no new verb code.
-
-Fields joining the **fleet** row (one value for the whole fleet, now in
-ansible group_vars): the Redis port, the Postgres port and database name,
-the exporter version, the loops on hold.
-
-Fields joining the **sprint** row (now Redis `cfg:*` keys): the review max
-age, the lease length.
-
-A friend's **wake** path: later, when we know what we are doing (Glenn:
-"i think the wake config can be added LATER when we know what we are doing,
-OK? right now we don't so let's not rush ahead.").
-
-| kind | what it holds today | fields |
-| --- | --- | --- |
-| `loop` | the supervised loops table | name, where (coordinator or every-bench), argv, user, description |
-| `route` | model routes and provider lists per tier and per bench | tier, bench, providers |
 
 ## The schema
 
@@ -362,7 +330,7 @@ anywhere connects with none (a throwaway database trusts).
 
 `--redis <addr>` is the flag, else `NOVA_SPRINT_REDIS`, else
 `NOVA_REDIS_ADDR`, else the selected seat's address; the Redis login is the
-one every nova-sprint verb uses (`internal/nsprint/store.Open`). `machine
+one `internal/nsprint/store.Open` makes. `machine
 list` and `machine show` take the same flag for the live facts but stop at
 the environment: with none named they print the declared fields alone and
 open no store. `--as` is the flag, else `NOVA_FRIEND`, required on every

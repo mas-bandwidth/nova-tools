@@ -2,7 +2,7 @@
 ;;; file). That set names the epic -- shell sketches becoming Go verbs with tests -- and it is where the units below belong;
 ;;; they are written here rather than appended to it so that today's twenty units can be checked, cut and pulled on their own.
 ;;;
-;;; Grammar: SPEC-WORKLANG Part 4, the amendment A1-A14 (nova-tools#1350). A1: this (work-set ...) form IS a plan. A6: :lane
+;;; Grammar: docs/SPEC-WORKLANG.md sections 2 and 3, rules A1-A14. A1: this (work-set ...) form IS a plan. A6: :lane
 ;;; names a resource of capacity 1 over an area of the tree, and every lane here is a row of queue/control/lanes.tsv -- units
 ;;; in one lane are serial, unrelated lanes scatter and gather. A7: :writes is the closed list of repo-relative paths a unit
 ;;; edits, and two units whose :writes intersect serialize EVEN ACROSS LANES. A13: :owner is a mind -- a friend by name, or

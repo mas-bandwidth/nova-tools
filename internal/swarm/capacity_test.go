@@ -99,7 +99,7 @@ func TestTheCapacityTemplateIsTheCensusAndRoutingLogNotAScheduler(t *testing.T) 
 	}
 }
 
-// Red test: pull-never-exceeds-the-capacity-line (docs/SPEC-JOBS.md section 7).
+// Red test: pull-never-exceeds-the-capacity-line (deprecated/docs/SPEC-JOBS.md section 7).
 //
 // The capacity line min(cores*1.5 - load1, (free_gb-25)/2, memfree_gb/2) bounds how many
 // workers nova-swarm pull may start on a bench. A full bench stops pulling and leaves every

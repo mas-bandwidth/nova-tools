@@ -4,15 +4,16 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
 
-// TestIssue2281BehavioursAreProvedInNovaRedis ties behaviours 22-25 of
+// TestIssue2281BehavioursAreProvedInNovaRedis ties the serve behaviours of
 // docs/SPEC-REDIS.md "Tests this spec demands" (bind, auth, persistence,
-// restart; nova-tools #2281, the store's rules #3879) to the tests that prove them: each name the spec
-// lists must be declared as a test in cmd/nova-redis, where `serve` lives, so
-// the spec cannot claim a proof the tree does not carry.
+// restart) to the tests that prove them: each name the spec lists must be
+// declared as a test in cmd/nova-redis, where `serve` lives, so the spec cannot
+// claim a proof the tree does not carry.
 func TestIssue2281BehavioursAreProvedInNovaRedis(t *testing.T) {
 	t.Parallel()
 
@@ -33,12 +34,12 @@ func TestIssue2281BehavioursAreProvedInNovaRedis(t *testing.T) {
 		tests.Write(b)
 	}
 	for n, name := range map[int]string{
-		22: "TestBoundToLocalhostAndTailnetOnly",
-		23: "TestAuthFromNovaSecretsNeverAPlaintextArgument",
-		24: "TestPersistenceIsAOFWithNoEviction",
-		25: "TestRestartOnTheSameDirKeepsTheStore",
+		6:  "TestBoundToLocalhostAndTailnetOnly",
+		7:  "TestAuthFromNovaSecretsNeverAPlaintextArgument",
+		8:  "TestPersistenceIsAOFWithNoEviction",
+		10: "TestRestartOnTheSameDirKeepsTheStore",
 	} {
-		item := regexp.MustCompile(`(?m)^\d+\. ` + "`" + name + "`")
+		item := regexp.MustCompile(`(?m)^` + strconv.Itoa(n) + `\. ` + "`" + name + "`")
 		if !item.Match(spec) {
 			t.Errorf("docs/SPEC-REDIS.md does not list behaviour %d as `%s`", n, name)
 		}
@@ -47,7 +48,7 @@ func TestIssue2281BehavioursAreProvedInNovaRedis(t *testing.T) {
 			t.Errorf("behaviour %d: cmd/nova-redis declares no %s; the spec claims a proof the tree does not carry", n, name)
 		}
 	}
-	if !strings.Contains(string(spec), "`cmd/nova-redis/serve_test.go` proves 22, 23, 24 and 25") {
-		t.Error("docs/SPEC-REDIS.md does not say serve_test.go proves 22-25")
+	if !strings.Contains(string(spec), "`cmd/nova-redis/serve_test.go` proves 6, 7 and 8") {
+		t.Error("docs/SPEC-REDIS.md does not say serve_test.go proves 6-8")
 	}
 }

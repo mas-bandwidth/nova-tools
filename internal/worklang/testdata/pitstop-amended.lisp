@@ -1,6 +1,6 @@
-;;; The same excerpt of the real work set, with the amendment's keys added: :resources (a lane as a resource of capacity 1, and the
-;;; rest of the vector), :writes, :tools, :collects, :warm, :attempts, :state and :acceptance. This fixture is the proof of rule A1:
-;;; the file a coordinator writes today still reads after the amendment, because every new key is additive and nothing moved.
+;;; The same excerpt of a real work set, with the unit keys of docs/SPEC-WORKLANG.md section 3 added: :resources (a lane as a
+;;; resource of capacity 1, and the rest of the vector), :writes, :tools, :collects, :warm, :attempts, :state and :acceptance. This
+;;; fixture proves rule A1: a work set carrying every key still reads, because every key is additive.
 
 (work-set "pitstop-2026-09-17"
   :title "Coordination tools: from shell sketches to Go verbs with tests and review"
