@@ -108,6 +108,11 @@ func open(ctx context.Context, o Options, getenv func(string) string, dial dialF
 		// The connect is HELLO alone: no CLIENT SETINFO, no CLIENT
 		// MAINT_NOTIFICATIONS, and no lookup of the host's name when the
 		// client is made (go-redis does one to choose an endpoint type).
+		// go-redis v9.22.0 sends CLIENT MAINT_NOTIFICATIONS on every connect
+		// unless told not to: maintnotifications/config.go:138 makes ModeAuto
+		// the default, and with Protocol 3 the command goes out; the old
+		// store's options left it on, which was errorstat_ERR:count=1 on a
+		// Redis 8.10.2 that does not know the command.
 		DisableIdentity: true,
 		MaintNotificationsConfig: &maintnotifications.Config{
 			Mode:         maintnotifications.ModeDisabled,
@@ -122,7 +127,14 @@ func open(ctx context.Context, o Options, getenv func(string) string, dial dialF
 	if err != nil {
 		// Closing the client closes every connection it holds, and the one
 		// Open dialed is closed here as well: go-redis drops a connection
-		// whose handshake failed without closing its socket.
+		// whose handshake failed without closing its socket. In v9.22.0 a
+		// HELLO or AUTH the store refused marks the conn closed first
+		// (redis.go:804, :816, Transition(pool.StateClosed)), then
+		// initPooledConn's p.Remove (redis.go:536) reaches cn.Close, which
+		// returns nil at once for a conn already closed
+		// (its pool's conn.go:1114), so the socket is never closed. hangUp
+		// closes it; without hangUp TestOpenReturnsWhatTheStoreSaid fails with
+		// a connection left open by a failed Open.
 		_ = c.client.Close()
 		first.hangUp()
 		return nil, explain(l, c.hide, err, true)
@@ -220,8 +232,9 @@ func (d *firstDial) hangUp() {
 	}
 }
 
-// The states of a firstConn. Its TLA+ model is owed; firstconn_test.go holds
-// the rules over every order of events up to six.
+// The states of a firstConn. Its TLA+ model is tla/FirstConn.tla (checked
+// with TLC, tla/README.md); firstconn_test.go holds the same rules over every
+// order of events up to six and over long orders.
 const (
 	watching  int32 = iota // nothing has come back from the store yet
 	armed                  // the store accepted the handshake

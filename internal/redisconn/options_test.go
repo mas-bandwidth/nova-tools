@@ -7,15 +7,17 @@ import (
 	"testing"
 )
 
-// TestResolvePrecedence is every order a field can be resolved in: what was
-// given, then the general variable, then its alias, each field on its own.
+// TestResolvePrecedence is every way a field can be resolved: what was
+// given, else the variable the caller's Env names for it, else nothing, each
+// field on its own.
 func TestResolvePrecedence(t *testing.T) {
 	t.Parallel()
 	const (
-		given   = "given.test:1"
-		general = "general.test:2"
-		alias   = "alias.test:3"
+		given = "given.test:1"
+		named = "named.test:2"
 	)
+	// A tool's own names, unlike the general ones.
+	tool := Env{Addr: "TOOL_REDIS", User: "TOOL_REDIS_USER", PasswordEnv: "TOOL_REDIS_PASSWORD_ENV"}
 	for _, c := range []struct {
 		name     string
 		explicit Options
@@ -26,59 +28,60 @@ func TestResolvePrecedence(t *testing.T) {
 			Options{Addr: given}, nil,
 			Options{Addr: given}},
 
-		{"address: given wins over both variables",
-			Options{Addr: given}, map[string]string{EnvAddr: general, AliasAddr: alias},
-			Options{Addr: given}},
-		{"address: the general variable wins over the alias",
-			Options{}, map[string]string{EnvAddr: general, AliasAddr: alias},
-			Options{Addr: general}},
-		{"address: the alias when the general variable is unset",
-			Options{}, map[string]string{AliasAddr: alias},
-			Options{Addr: alias}},
-		{"address: the alias when the general variable is empty",
-			Options{}, map[string]string{EnvAddr: "", AliasAddr: alias},
-			Options{Addr: alias}},
+		{"address: given wins over the variable",
+			Options{Addr: given, Env: GeneralEnv}, map[string]string{GeneralEnv.Addr: named},
+			Options{Addr: given, Env: GeneralEnv}},
+		{"address: the variable when nothing is given",
+			Options{Env: GeneralEnv}, map[string]string{GeneralEnv.Addr: named},
+			Options{Addr: named, Env: GeneralEnv}},
+		{"address: the tool's own variable",
+			Options{Env: tool}, map[string]string{tool.Addr: named, GeneralEnv.Addr: "not-this.test:9"},
+			Options{Addr: named, Env: tool}},
 		{"address: a Unix socket by its absolute path",
-			Options{}, map[string]string{EnvAddr: "/var/run/store.sock"},
-			Options{Addr: "/var/run/store.sock"}},
+			Options{Env: GeneralEnv}, map[string]string{GeneralEnv.Addr: "/var/run/store.sock"},
+			Options{Addr: "/var/run/store.sock", Env: GeneralEnv}},
 
-		{"user: given wins over both variables",
-			Options{Addr: given, User: "given-user", PasswordEnv: "PW"},
-			map[string]string{EnvUser: "general-user", AliasUser: "alias-user", "PW": "x"},
-			Options{Addr: given, User: "given-user", PasswordEnv: "PW"}},
-		{"user: the general variable wins over the alias",
-			Options{Addr: given, PasswordEnv: "PW"},
-			map[string]string{EnvUser: "general-user", AliasUser: "alias-user", "PW": "x"},
-			Options{Addr: given, User: "general-user", PasswordEnv: "PW"}},
-		{"user: the alias when the general variable is unset",
-			Options{Addr: given, PasswordEnv: "PW"},
-			map[string]string{AliasUser: "alias-user", "PW": "x"},
-			Options{Addr: given, User: "alias-user", PasswordEnv: "PW"}},
+		{"user: given wins over the variable",
+			Options{Addr: given, User: "given-user", PasswordEnv: "PW", Env: GeneralEnv},
+			map[string]string{GeneralEnv.User: "named-user", "PW": "x"},
+			Options{Addr: given, User: "given-user", PasswordEnv: "PW", Env: GeneralEnv}},
+		{"user: the variable when nothing is given",
+			Options{Addr: given, PasswordEnv: "PW", Env: GeneralEnv},
+			map[string]string{GeneralEnv.User: "named-user", "PW": "x"},
+			Options{Addr: given, User: "named-user", PasswordEnv: "PW", Env: GeneralEnv}},
+		{"user: the tool's own variable",
+			Options{Addr: given, PasswordEnv: "PW", Env: tool},
+			map[string]string{tool.User: "named-user", GeneralEnv.User: "not-this-user", "PW": "x"},
+			Options{Addr: given, User: "named-user", PasswordEnv: "PW", Env: tool}},
 
-		{"password variable: given wins over both variables",
-			Options{Addr: given, User: "u", PasswordEnv: "GIVEN_PW"},
-			map[string]string{EnvPasswordEnv: "GENERAL_PW", AliasPasswordEnv: "ALIAS_PW", "GIVEN_PW": "x"},
-			Options{Addr: given, User: "u", PasswordEnv: "GIVEN_PW"}},
-		{"password variable: the general variable wins over the alias",
-			Options{Addr: given, User: "u"},
-			map[string]string{EnvPasswordEnv: "GENERAL_PW", AliasPasswordEnv: "ALIAS_PW", "GENERAL_PW": "x"},
-			Options{Addr: given, User: "u", PasswordEnv: "GENERAL_PW"}},
-		{"password variable: the alias when the general variable is unset",
-			Options{Addr: given, User: "u"},
-			map[string]string{AliasPasswordEnv: "ALIAS_PW", "ALIAS_PW": "x"},
-			Options{Addr: given, User: "u", PasswordEnv: "ALIAS_PW"}},
+		{"password variable: given wins over the variable",
+			Options{Addr: given, User: "u", PasswordEnv: "GIVEN_PW", Env: GeneralEnv},
+			map[string]string{GeneralEnv.PasswordEnv: "NAMED_PW", "GIVEN_PW": "x"},
+			Options{Addr: given, User: "u", PasswordEnv: "GIVEN_PW", Env: GeneralEnv}},
+		{"password variable: the variable when nothing is given",
+			Options{Addr: given, User: "u", Env: GeneralEnv},
+			map[string]string{GeneralEnv.PasswordEnv: "NAMED_PW", "NAMED_PW": "x"},
+			Options{Addr: given, User: "u", PasswordEnv: "NAMED_PW", Env: GeneralEnv}},
+		{"password variable: the tool's own variable",
+			Options{Addr: given, User: "u", Env: tool},
+			map[string]string{tool.PasswordEnv: "NAMED_PW", GeneralEnv.PasswordEnv: "NOT_THIS_PW", "NAMED_PW": "x"},
+			Options{Addr: given, User: "u", PasswordEnv: "NAMED_PW", Env: tool}},
 
-		{"each field on its own: address from the alias, user given, password variable general",
-			Options{User: "given-user"},
-			map[string]string{AliasAddr: alias, EnvUser: "general-user", EnvPasswordEnv: "_PW2", "_PW2": "x"},
-			Options{Addr: alias, User: "given-user", PasswordEnv: "_PW2"}},
+		{"each field on its own: address from the variable, user given, password variable from the variable",
+			Options{User: "given-user", Env: GeneralEnv},
+			map[string]string{GeneralEnv.Addr: named, GeneralEnv.User: "named-user", GeneralEnv.PasswordEnv: "_PW2", "_PW2": "x"},
+			Options{Addr: named, User: "given-user", PasswordEnv: "_PW2", Env: GeneralEnv}},
+		{"an Env that names only the address: the other two are read from nowhere",
+			Options{Env: Env{Addr: "TOOL_REDIS"}},
+			map[string]string{"TOOL_REDIS": named, GeneralEnv.User: "not-this-user", GeneralEnv.PasswordEnv: "NOT_THIS_PW", "NOT_THIS_PW": "x"},
+			Options{Addr: named, Env: Env{Addr: "TOOL_REDIS"}}},
 		{"the default user with a password: no user, a password variable that holds one",
 			Options{Addr: given, PasswordEnv: "PW"}, map[string]string{"PW": "x"},
 			Options{Addr: given, PasswordEnv: "PW"}},
-		{"all three from the older names",
-			Options{},
-			map[string]string{AliasAddr: alias, AliasUser: "alias-user", AliasPasswordEnv: "ALIAS_PW", "ALIAS_PW": "x"},
-			Options{Addr: alias, User: "alias-user", PasswordEnv: "ALIAS_PW"}},
+		{"all three from the tool's own names",
+			Options{Env: tool},
+			map[string]string{tool.Addr: named, tool.User: "named-user", tool.PasswordEnv: "NAMED_PW", "NAMED_PW": "x"},
+			Options{Addr: named, User: "named-user", PasswordEnv: "NAMED_PW", Env: tool}},
 	} {
 		got, err := Resolve(c.explicit, environment(c.env))
 		if err != nil || got != c.want {
@@ -94,6 +97,26 @@ func TestResolvePrecedence(t *testing.T) {
 	}
 }
 
+// TestTheZeroEnvReadsNothing: with no names, the environment is not
+// consulted, whatever it holds.
+func TestTheZeroEnvReadsNothing(t *testing.T) {
+	t.Parallel()
+	var asked []string
+	full := func(name string) string {
+		asked = append(asked, name)
+		return "store.test:6379"
+	}
+	if _, err := Resolve(Options{}, full); err == nil || !strings.Contains(err.Error(), "no address: none was given;") {
+		t.Errorf("Resolve with nothing given and no names = %v; want the refusal for no address, naming no variable", err)
+	}
+	if got, err := Resolve(Options{Addr: "given.test:1"}, full); err != nil || got != (Options{Addr: "given.test:1"}) {
+		t.Errorf("Resolve with an address and no names = %+v, %v", got, err)
+	}
+	if len(asked) != 0 {
+		t.Errorf("the environment was asked for %q; want nothing", asked)
+	}
+}
+
 // TestResolveRefusals is every refusal: its class, the words that name what
 // was tried and the next thing to do, and that nothing resolved comes back
 // with it.
@@ -106,14 +129,16 @@ func TestResolveRefusals(t *testing.T) {
 		class    Class
 		want     string
 	}{
-		{"no address anywhere", Options{User: "u"}, map[string]string{EnvUser: "x"}, Unreachable,
-			"redis: unreachable: no address: none was given, and NOVA_REDIS_ADDR and NOVA_SPRINT_REDIS are empty; next: pass the address or set NOVA_REDIS_ADDR: host:port (a port from 1 to 65535) or the absolute path of a Unix socket"},
+		{"no address anywhere", Options{User: "u", Env: GeneralEnv}, map[string]string{GeneralEnv.User: "x"}, Unreachable,
+			"redis: unreachable: no address: none was given, and NOVA_REDIS_ADDR is empty; next: pass the address or set NOVA_REDIS_ADDR: host:port (a port from 1 to 65535) or the absolute path of a Unix socket"},
+		{"no address and no variable named for one", Options{User: "u"}, nil, Unreachable,
+			"redis: unreachable: no address: none was given; next: pass the address: host:port (a port from 1 to 65535) or the absolute path of a Unix socket"},
 		{"no port", Options{Addr: "store.test"}, nil, Unreachable,
 			`redis at "store.test" given to this tool: unreachable: not an address: missing port in address; next: give host:port (a port from 1 to 65535) or the absolute path of a Unix socket`},
-		{"no host", Options{}, map[string]string{EnvAddr: ":6379"}, Unreachable,
+		{"no host", Options{Env: GeneralEnv}, map[string]string{GeneralEnv.Addr: ":6379"}, Unreachable,
 			`redis at ":6379" from NOVA_REDIS_ADDR: unreachable: not an address: it names no host; next: give host:port (a port from 1 to 65535) or the absolute path of a Unix socket`},
-		{"port zero", Options{}, map[string]string{AliasAddr: "store.test:0"}, Unreachable,
-			`redis at "store.test:0" from NOVA_SPRINT_REDIS: unreachable: not an address: its port is not a number from 1 to 65535; next: give host:port (a port from 1 to 65535) or the absolute path of a Unix socket`},
+		{"port zero", Options{Env: Env{Addr: "TOOL_REDIS"}}, map[string]string{"TOOL_REDIS": "store.test:0"}, Unreachable,
+			`redis at "store.test:0" from TOOL_REDIS: unreachable: not an address: its port is not a number from 1 to 65535; next: give host:port (a port from 1 to 65535) or the absolute path of a Unix socket`},
 		{"port too large", Options{Addr: "store.test:65536"}, nil, Unreachable, "its port is not a number from 1 to 65535"},
 		{"port with a sign", Options{Addr: "store.test:+6379"}, nil, Unreachable, "its port is not a number from 1 to 65535"},
 		{"port by name", Options{Addr: "store.test:redis"}, nil, Unreachable, "its port is not a number from 1 to 65535"},
@@ -126,23 +151,25 @@ func TestResolveRefusals(t *testing.T) {
 			`redis at "store.test:6379\nNOAUTH" given to this tool: unreachable: not an address: it holds a space or a control character`},
 		{"a control character in a path", Options{Addr: "/var/run/store\x1b.sock"}, nil, Unreachable,
 			`redis at "/var/run/store\x1b.sock" given to this tool: unreachable: not an address: it holds a space or a control character`},
-		{"a URL, which is not shown", Options{}, map[string]string{EnvAddr: "redis://bench:hunter2@store.test:6379/0"}, Unreachable,
-			"redis at the address from NOVA_REDIS_ADDR (not shown): unreachable: not an address: it is a URL or carries a login; next: give host:port (a port from 1 to 65535) or the absolute path of a Unix socket, the user as NOVA_REDIS_USER and the name of the password's variable as NOVA_REDIS_PASSWORD_ENV"},
+		{"a URL, which is not shown", Options{Env: GeneralEnv}, map[string]string{GeneralEnv.Addr: "redis://bench:hunter2@store.test:6379/0"}, Unreachable,
+			"redis at the address from NOVA_REDIS_ADDR (not shown): unreachable: not an address: it is a URL or carries a login; next: give host:port (a port from 1 to 65535) or the absolute path of a Unix socket, the user (NOVA_REDIS_USER) and the name of the password's variable (NOVA_REDIS_PASSWORD_ENV) on their own"},
 		{"a login before the host, which is not shown", Options{Addr: "bench:hunter2@store.test:6379"}, nil, Unreachable,
 			"redis at the address given to this tool (not shown): unreachable: not an address: it is a URL or carries a login"},
 
-		{"a user and no password variable", Options{Addr: "store.test:6379", User: "bench"}, nil, AuthRefused,
-			"redis at store.test:6379 as user bench, no password: login refused: no password variable is named: none was given, and NOVA_REDIS_PASSWORD_ENV and NOVA_SPRINT_REDIS_PASSWORD_ENV are empty; next: set NOVA_REDIS_PASSWORD_ENV to the NAME of the variable that holds the password of bench, never to the password"},
-		{"a user from the environment and no password variable", Options{Addr: "store.test:6379"}, map[string]string{AliasUser: "bench"}, AuthRefused,
+		{"a user and no password variable", Options{Addr: "store.test:6379", User: "bench", Env: GeneralEnv}, nil, AuthRefused,
+			"redis at store.test:6379 as user bench, no password: login refused: no password variable is named: none was given, and NOVA_REDIS_PASSWORD_ENV is empty; next: set NOVA_REDIS_PASSWORD_ENV to the NAME of the variable that holds the password of bench, never to the password"},
+		{"a user and no password variable, with no variable named for one", Options{Addr: "store.test:6379", User: "bench"}, nil, AuthRefused,
+			"redis at store.test:6379 as user bench, no password: login refused: no password variable is named: none was given; next: give the NAME of the variable that holds the password of bench, never the password"},
+		{"a user from the environment and no password variable", Options{Addr: "store.test:6379", Env: Env{User: "TOOL_REDIS_USER"}}, map[string]string{"TOOL_REDIS_USER": "bench"}, AuthRefused,
 			"redis at store.test:6379 as user bench, no password: login refused: no password variable is named"},
 		{"a user whose password variable is empty", Options{Addr: "store.test:6379", User: "bench", PasswordEnv: "PW"}, map[string]string{"PW": ""}, AuthRefused,
 			"redis at store.test:6379 as user bench (password from PW): login refused: PW is empty; next: export PW, holding the password, in the environment of this process"},
-		{"a user whose password variable is unset", Options{Addr: "store.test:6379"}, map[string]string{EnvUser: "bench", EnvPasswordEnv: "NOVA_TEST_PW"}, AuthRefused,
+		{"a user whose password variable is unset", Options{Addr: "store.test:6379", Env: GeneralEnv}, map[string]string{GeneralEnv.User: "bench", GeneralEnv.PasswordEnv: "NOVA_TEST_PW"}, AuthRefused,
 			"redis at store.test:6379 as user bench (password from NOVA_TEST_PW): login refused: NOVA_TEST_PW is empty"},
 		{"the default user whose password variable is empty", Options{Addr: "store.test:6379", PasswordEnv: "PW"}, nil, AuthRefused,
 			"redis at store.test:6379 as the default user (password from PW): login refused: PW is empty"},
-		{"the password where its variable's name belongs, which is not shown", Options{Addr: "store.test:6379", User: "bench"},
-			map[string]string{EnvPasswordEnv: "hunter2"}, AuthRefused,
+		{"the password where its variable's name belongs, which is not shown", Options{Addr: "store.test:6379", User: "bench", Env: GeneralEnv},
+			map[string]string{GeneralEnv.PasswordEnv: "hunter2"}, AuthRefused,
 			"redis at store.test:6379 as user bench (the password's variable is not shown): login refused: the name of the password's variable, from NOVA_REDIS_PASSWORD_ENV, is not a name, and is not shown in case it is the password itself; next: give the NAME of the variable that holds the password (capital letters, digits and underscores), never the password"},
 		{"a given password variable that is not a name, which is not shown", Options{Addr: "store.test:6379", PasswordEnv: "Tr0ub4dor&3"}, nil, AuthRefused,
 			"redis at store.test:6379 as the default user (the password's variable is not shown): login refused: the name of the password's variable, given to this tool, is not a name"},
@@ -176,35 +203,35 @@ func TestResolveRefusals(t *testing.T) {
 }
 
 // TestResolveReadsOnlyTheEnvironmentItIsHanded: nil is the empty
-// environment, and the variables asked for are the six of this package and
+// environment, and the variables asked for are the ones the Env names and
 // the one the password's variable names, nothing else.
 func TestResolveReadsOnlyTheEnvironmentItIsHanded(t *testing.T) {
 	t.Parallel()
-	if _, err := Resolve(Options{}, nil); err == nil || !strings.Contains(err.Error(), "no address") {
+	if _, err := Resolve(Options{Env: GeneralEnv}, nil); err == nil || !strings.Contains(err.Error(), "no address") {
 		t.Errorf("Resolve with nothing given and a nil environment = %v; want the refusal for no address", err)
 	}
-	if got, err := Resolve(Options{Addr: "store.test:6379"}, nil); err != nil || got != (Options{Addr: "store.test:6379"}) {
+	if got, err := Resolve(Options{Addr: "store.test:6379", Env: GeneralEnv}, nil); err != nil || got != (Options{Addr: "store.test:6379", Env: GeneralEnv}) {
 		t.Errorf("Resolve with an address and a nil environment = %+v, %v", got, err)
 	}
 	var asked []string
-	env := map[string]string{EnvPasswordEnv: "NOVA_TEST_PW", "NOVA_TEST_PW": "x", EnvUser: "bench", EnvAddr: "store.test:6379"}
-	if _, err := Resolve(Options{}, func(name string) string {
+	env := map[string]string{GeneralEnv.PasswordEnv: "NOVA_TEST_PW", "NOVA_TEST_PW": "x", GeneralEnv.User: "bench", GeneralEnv.Addr: "store.test:6379"}
+	if _, err := Resolve(Options{Env: GeneralEnv}, func(name string) string {
 		asked = append(asked, name)
 		return env[name]
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := fmt.Sprint(asked), fmt.Sprint([]string{EnvAddr, EnvUser, EnvPasswordEnv, "NOVA_TEST_PW"}); got != want {
+	if got, want := fmt.Sprint(asked), fmt.Sprint([]string{GeneralEnv.Addr, GeneralEnv.User, GeneralEnv.PasswordEnv, "NOVA_TEST_PW"}); got != want {
 		t.Errorf("variables read: %s; want %s", got, want)
 	}
 	asked = nil
-	if _, err := Resolve(Options{Addr: "store.test:6379"}, func(name string) string {
+	if _, err := Resolve(Options{Addr: "store.test:6379", Env: GeneralEnv}, func(name string) string {
 		asked = append(asked, name)
 		return ""
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := fmt.Sprint(asked), fmt.Sprint([]string{EnvUser, AliasUser, EnvPasswordEnv, AliasPasswordEnv}); got != want {
+	if got, want := fmt.Sprint(asked), fmt.Sprint([]string{GeneralEnv.User, GeneralEnv.PasswordEnv}); got != want {
 		t.Errorf("variables read with only an address given: %s; want %s", got, want)
 	}
 }
