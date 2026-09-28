@@ -79,9 +79,11 @@ func cleanPkgPath(p string) string {
 	return p
 }
 
-func collectLivePackages(t *testing.T, root string, lt *liveTree) []string {
+func collectLivePackages(t *testing.T, root string, lt *liveTree, tags []string) []string {
 	t.Helper()
-	cmd := exec.Command("go", "list", "./cmd/...", "./internal/...", "./tools/...")
+	args := append([]string{"list"}, tags...)
+	args = append(args, "./cmd/...", "./internal/...", "./tools/...")
+	cmd := exec.Command("go", args...)
 	cmd.Dir = root
 	cmd.Env = goenv.Clean(os.Environ())
 	var stdout, stderr bytes.Buffer
@@ -124,7 +126,6 @@ func TestLivingPackagesDoNotImportDroppedDeprecatedPackages(t *testing.T) {
 
 	root := repoRoot(t)
 	lt := loadLiveTree(t, root)
-	livePkgs := collectLivePackages(t, root, lt)
 
 	allow := loadAllowlist(t, deprecatedImportsAllowlistPath, allowlist.Options{
 		Ceiling: true,
@@ -139,6 +140,7 @@ func TestLivingPackagesDoNotImportDroppedDeprecatedPackages(t *testing.T) {
 	measured := map[string]bool{}
 
 	for _, tags := range tagSets {
+		livePkgs := collectLivePackages(t, root, lt, tags)
 		args := append([]string{"list"}, tags...)
 		args = append(args, "-test", "-deps", "-json")
 		args = append(args, livePkgs...)
@@ -198,13 +200,32 @@ func TestLivingPackagesDoNotImportDroppedDeprecatedPackages(t *testing.T) {
 	}
 }
 
-func deprecatedImportsAllowlistBase(root string) (string, error) {
-	if _, err := gitOut(root, "rev-parse", "--verify", "-q", "refs/remotes/origin/dev^{commit}"); err == nil {
-		mb, mbErr := gitOut(root, "merge-base", "HEAD", "refs/remotes/origin/dev")
-		head, headErr := gitOut(root, "rev-parse", "HEAD")
-		if mbErr == nil && headErr == nil && strings.TrimSpace(mb) != strings.TrimSpace(head) {
-			return strings.TrimSpace(mb), nil
+func commitParents(root, rev string) ([]string, error) {
+	raw, err := gitOut(root, "cat-file", "-p", rev)
+	if err != nil {
+		return nil, err
+	}
+	var parents []string
+	for _, line := range strings.Split(raw, "\n") {
+		if strings.HasPrefix(line, "parent ") {
+			parents = append(parents, strings.TrimPrefix(line, "parent "))
 		}
+	}
+	return parents, nil
+}
+
+func deprecatedImportsAllowlistBase(root string) (string, error) {
+	if _, err := gitOut(root, "rev-parse", "--verify", "-q", "refs/remotes/origin/dev^{commit}"); err != nil {
+		parents, pErr := commitParents(root, "HEAD")
+		if pErr != nil || len(parents) < 2 {
+			return "", fmt.Errorf("cannot verify allowlist growth: refs/remotes/origin/dev is missing; fetch origin/dev")
+		}
+		return parents[0], nil
+	}
+	mb, mbErr := gitOut(root, "merge-base", "HEAD", "refs/remotes/origin/dev")
+	head, headErr := gitOut(root, "rev-parse", "HEAD")
+	if mbErr == nil && headErr == nil && strings.TrimSpace(mb) != strings.TrimSpace(head) {
+		return strings.TrimSpace(mb), nil
 	}
 	return firstParent(root)
 }
@@ -216,6 +237,22 @@ func deprecatedImportsAllowlistGrowth(root string) (added []string, parent strin
 	}
 	const relPath = "internal/ci/" + deprecatedImportsAllowlistPath
 	if _, err := gitOut(root, "cat-file", "-e", parent+":"+relPath); err != nil {
+		seedCommit, scErr := gitOut(root, "log", "--diff-filter=A", "--format=%H", "-n", "1", parent+"..HEAD", "--", relPath)
+		seedCommit = strings.TrimSpace(seedCommit)
+		if scErr != nil || seedCommit == "" {
+			return nil, parent, false, fmt.Errorf("merge base %s lacks allowlist, but HEAD is not the seed commit: base ref is stale; rebase onto dev", parent[:9])
+		}
+		headCommit, hErr := gitOut(root, "rev-parse", "HEAD")
+		if hErr != nil {
+			return nil, parent, false, hErr
+		}
+		if strings.TrimSpace(headCommit) != seedCommit {
+			seedText, sErr := gitOut(root, "show", seedCommit+":"+relPath)
+			headText, hErr := gitOut(root, "show", "HEAD:"+relPath)
+			if sErr != nil || hErr != nil || strings.TrimSpace(seedText) != strings.TrimSpace(headText) {
+				return nil, parent, false, fmt.Errorf("merge base %s lacks allowlist, but HEAD is not the seed commit: base ref is stale; rebase onto dev", parent[:9])
+			}
+		}
 		return nil, parent, true, nil
 	}
 	baseText, err := gitOut(root, "show", parent+":"+relPath)
@@ -304,6 +341,8 @@ func TestDeprecatedImportsAllowlistGrowthIsReadOutOfGit(t *testing.T) {
 	write("README", "base\n")
 	git("add", "-A")
 	git("commit", "-q", "-m", "base")
+	baseCommit, _ := gitOut(root, "rev-parse", "HEAD")
+	git("update-ref", "refs/remotes/origin/dev", strings.TrimSpace(baseCommit))
 	write(relPath, "cmd/a -> internal/nsprint/ws  # seed\n")
 	git("add", "-A")
 	git("commit", "-q", "-m", "seed")
@@ -315,6 +354,8 @@ func TestDeprecatedImportsAllowlistGrowthIsReadOutOfGit(t *testing.T) {
 	write("README", "touched\n")
 	git("add", "-A")
 	git("commit", "-q", "-m", "touch")
+	seedCommit, _ := gitOut(root, "rev-parse", "HEAD~1")
+	git("update-ref", "refs/remotes/origin/dev", strings.TrimSpace(seedCommit))
 	if added, seed := growth(); seed || len(added) != 0 {
 		t.Fatalf("the row at the parent: added %v seed %v; want nothing added", added, seed)
 	}
@@ -328,10 +369,79 @@ func TestDeprecatedImportsAllowlistGrowthIsReadOutOfGit(t *testing.T) {
 	}
 
 	// PROBE 3: deleting a row is shrinking, so added is empty.
+	addedCommit, _ := gitOut(root, "rev-parse", "HEAD")
+	git("update-ref", "refs/remotes/origin/dev", strings.TrimSpace(addedCommit))
 	write(relPath, "cmd/b -> internal/nsprint/card  # new\n")
 	git("add", "-A")
 	git("commit", "-q", "-m", "cmd/a fixed")
 	if added, _ := growth(); len(added) != 0 {
 		t.Fatalf("a deleted row: added %q; want none", added)
+	}
+}
+
+// TestDeprecatedImportsAllowlistGrowthRefusesStaleOrMissingBase incorporates Stella's
+// 3-case growth probe: current remote base rejects an added row, missing remote
+// base fails closed with err != nil, and stale remote before seed fails closed
+// with err != nil.
+func TestDeprecatedImportsAllowlistGrowthRefusesStaleOrMissingBase(t *testing.T) {
+	t.Parallel()
+
+	for _, mode := range []string{"current remote base", "missing remote base", "stale remote before seed"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+
+			root := t.TempDir()
+			git := func(args ...string) string {
+				t.Helper()
+				out, err := gitOut(root, append([]string{
+					"-c", "user.name=review", "-c", "user.email=review@example.invalid",
+					"-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"}, args...)...)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return strings.TrimSpace(out)
+			}
+			write := func(p, s string) {
+				t.Helper()
+				p = filepath.Join(root, p)
+				if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(p, []byte(s), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			commit := func(msg string) {
+				git("add", "-A")
+				git("commit", "-qm", msg)
+			}
+			git("init", "-q")
+			write("README", "base\n")
+			commit("before seed")
+			beforeSeed := git("rev-parse", "HEAD")
+			const p = "internal/ci/testdata/deprecated-imports-allowlist.txt"
+			write(p, "cmd/a -> internal/nsprint/ws # existing\n")
+			commit("landed baseline")
+			base := git("rev-parse", "HEAD")
+			git("checkout", "-qb", "review")
+			write(p, "cmd/a -> internal/nsprint/ws # existing\ncmd/b -> internal/nsprint/card # introduced by this branch\n")
+			commit("add forbidden exception")
+			write("README", "later unrelated edit\n")
+			commit("touch README")
+			if mode == "current remote base" {
+				git("update-ref", "refs/remotes/origin/dev", base)
+			}
+			if mode == "stale remote before seed" {
+				git("update-ref", "refs/remotes/origin/dev", beforeSeed)
+			}
+			added, parent, seed, err := deprecatedImportsAllowlistGrowth(root)
+			t.Logf("mode=%s added=%v parent=%s seed=%v err=%v", mode, added, parent, seed, err)
+			if err != nil {
+				return // Failing closed when no trustworthy baseline exists is acceptable.
+			}
+			if seed || len(added) != 1 || added[0] != "cmd/b -> internal/nsprint/card" {
+				t.Fatalf("branch introduced an exception but comparison did not reject it")
+			}
+		})
 	}
 }
