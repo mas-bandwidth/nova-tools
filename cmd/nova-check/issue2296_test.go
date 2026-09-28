@@ -147,7 +147,6 @@ func stLine(t *testing.T, stream, prefix string) string {
 // every behaviour the issue names. The six bodies also stand as the six
 // top-level tests below, under the issue's own names.
 func TestIssue2296(t *testing.T) {
-	t.Parallel()
 	t.Run("TestNoCodeStagedClassifiesTheIndex", noCodeStagedClassifiesTheIndex)
 	t.Run("TestNoCodeStagedRequiresDir", noCodeStagedRequiresDir)
 	t.Run("TestNoCodeStagedNothingToSay", noCodeStagedNothingToSay)
