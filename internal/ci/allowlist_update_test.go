@@ -424,4 +424,3 @@ func TestTreeHelperReadsExaminesNestedDeprecatedDirectories(t *testing.T) {
 		t.Errorf("raw reads = %v; want raw read in cmd/live/deprecated/nested.go to be examined", raw)
 	}
 }
-

@@ -398,4 +398,3 @@ func TestDeprecatedImportsRatchetExaminesNestedDeprecatedDirectories(t *testing.
 		t.Errorf("measured = %v, want edge %q; nested deprecated directories must be examined", measured, wantEdge)
 	}
 }
-
