@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ghevent"
+	gheventwire "github.com/mas-bandwidth/nova-tools/internal/ghevent/wire"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -22,9 +22,9 @@ type Match func(fields map[string]any) bool
 // Tip is the stream's last id, or 0-0 for an empty stream: the cursor a
 // wait starts from so nothing already there is missed by a $ read.
 func Tip(ctx context.Context, rdb redis.Cmdable) (string, error) {
-	msgs, err := rdb.XRevRangeN(ctx, ghevent.Stream, "+", "-", 1).Result()
+	msgs, err := rdb.XRevRangeN(ctx, gheventwire.Stream, "+", "-", 1).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
-		return "", fmt.Errorf("XREVRANGE %s: %w", ghevent.Stream, err)
+		return "", fmt.Errorf("XREVRANGE %s: %w", gheventwire.Stream, err)
 	}
 	if len(msgs) == 0 {
 		return "0-0", nil
@@ -59,12 +59,12 @@ func AwaitAt(ctx context.Context, rdb redis.Cmdable, tip string, block time.Dura
 				return tip, false, nil
 			}
 		}
-		res, err := rdb.XRead(ctx, &redis.XReadArgs{Streams: []string{ghevent.Stream, tip}, Count: 100, Block: left}).Result()
+		res, err := rdb.XRead(ctx, &redis.XReadArgs{Streams: []string{gheventwire.Stream, tip}, Count: 100, Block: left}).Result()
 		if err != nil {
 			if errors.Is(err, redis.Nil) {
 				return tip, false, nil
 			}
-			return tip, false, fmt.Errorf("XREAD %s: %w", ghevent.Stream, err)
+			return tip, false, fmt.Errorf("XREAD %s: %w", gheventwire.Stream, err)
 		}
 		n := 0
 		for _, s := range res {
