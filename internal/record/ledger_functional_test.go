@@ -5,11 +5,14 @@ package record_test
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/alicebob/miniredis/v2/server"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/record"
@@ -145,9 +148,9 @@ func TestTheLedgerReportRefusesAValueItCannotRead(t *testing.T) {
 	}
 }
 
-// TestReplaceLedgerDaysTakesOneRoundTrip pins the batching contract from rowan-7fbdefecf56e:
-// writing 23 days takes 1 round trip in a single pipeline, where previously each day
-// was a separate transaction in a loop (23 round trips for 23 days).
+// TestReplaceLedgerDaysTakesOneRoundTrip pins the batching contract from note #7fbdefecf56e:
+// writing 23 days takes 1 round trip, where previously each day was a separate
+// transaction in a loop (23 round trips for 23 days).
 func TestReplaceLedgerDaysTakesOneRoundTrip(t *testing.T) {
 	t.Parallel()
 
@@ -155,7 +158,7 @@ func TestReplaceLedgerDaysTakesOneRoundTrip(t *testing.T) {
 	trips := redisconn.CountTrips(s.Client())
 	ctx := context.Background()
 
-	// 23 days fixture, matching Rowan's audit benchmark (3+24 trips -> 1 trip for the writes).
+	// 23 days, the count from note #7fbdefecf56e (3+24 trips -> 1 trip for the writes).
 	days := make([]record.LedgerDay, 23)
 	for i := range 23 {
 		dayStr := fmt.Sprintf("2026-09-%02d", i+1)
@@ -172,7 +175,7 @@ func TestReplaceLedgerDaysTakesOneRoundTrip(t *testing.T) {
 		t.Fatalf("replace days: %s", err)
 	}
 	if got := trips.N() - before; got != 1 {
-		t.Fatalf("ReplaceLedgerDays for 23 days took %d round trips; want 1 (rowan-7fbdefecf56e: was 23 transactions in a loop)", got)
+		t.Fatalf("ReplaceLedgerDays for 23 days took %d round trips; want 1 (note #7fbdefecf56e: was 23 transactions in a loop)", got)
 	}
 
 	gotTotals, indexed, missing, err := s.LedgerReport(ctx, "2026-09", "day")
@@ -190,10 +193,10 @@ func TestReplaceLedgerDaysTakesOneRoundTrip(t *testing.T) {
 	}
 }
 
-// TestReplaceLedgerDaysConflictingWritersAndReaderSnapshots pins the atomic transaction contract
-// (Stella note stella-ee1cb7f37a7e): ReplaceLedgerDays uses TxPipeline so DEL and HSET execute
-// atomically. Competing writers cannot merge partial replacements, and readers never see an absent
-// day between DEL and HSET or a torn mixture of rows from conflicting writers.
+// TestReplaceLedgerDaysConflictingWritersAndReaderSnapshots pins the atomic write
+// (note #ee1cb7f37a7e): one script applies every day, so competing writers cannot
+// merge partial replacements, and a reader never sees an absent day or a torn
+// mixture of rows from conflicting writers.
 func TestReplaceLedgerDaysConflictingWritersAndReaderSnapshots(t *testing.T) {
 	t.Parallel()
 
@@ -307,5 +310,81 @@ func TestReplaceLedgerDaysConflictingWritersAndReaderSnapshots(t *testing.T) {
 		if tot.Rows != 1 {
 			t.Fatalf("competing writers merged in day %s: rows = %d; want 1", tot.Day, tot.Rows)
 		}
+	}
+}
+
+// TestReplaceLedgerDaysErrorLeavesPriorDaysUnchanged: a command error while the
+// month is being written must leave every prior day hash as it was. The first
+// HSET of the second day fails once; the script's later restore of that key is
+// allowed through, and that is what this checks.
+func TestReplaceLedgerDaysErrorLeavesPriorDaysUnchanged(t *testing.T) {
+	t.Parallel()
+
+	s, mr := redisLedger(t)
+	ctx := context.Background()
+	days := []string{"2026-09-01", "2026-09-02", "2026-09-03"}
+	batch := func(token int64) []record.LedgerDay {
+		out := make([]record.LedgerDay, len(days))
+		for i, day := range days {
+			e := record.LedgerEntry{
+				Day: day, Card: "card-a", Model: "gpt", Repo: "schema",
+				Provider: "openai", Sources: "openai:o",
+			}
+			e.Tokens, e.Known = [5]int64{token, 0, 0, 0, 0}, [5]bool{true, false, false, false, false}
+			out[i] = record.LedgerDay{Day: day, Entries: []record.LedgerEntry{e}}
+		}
+		return out
+	}
+	if err := s.ReplaceLedgerDays(ctx, batch(1)); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	snap := func() map[string]map[string]string {
+		t.Helper()
+		out := make(map[string]map[string]string, len(days))
+		for _, day := range days {
+			key := record.LedgerKey(day)
+			typ, err := s.Client().Type(ctx, key).Result()
+			if err != nil {
+				t.Fatalf("type %s: %v", key, err)
+			}
+			if typ != "hash" {
+				t.Fatalf("%s type=%s; want hash", key, typ)
+			}
+			m, err := s.Client().HGetAll(ctx, key).Result()
+			if err != nil {
+				t.Fatalf("hgetall %s: %v", key, err)
+			}
+			if len(m) == 0 {
+				t.Fatalf("%s is an empty hash", key)
+			}
+			out[key] = m
+		}
+		return out
+	}
+	before := snap()
+
+	key2 := record.LedgerKey("2026-09-02")
+	var armed atomic.Bool
+	armed.Store(true)
+	mr.Server().SetPreHook(func(c *server.Peer, cmd string, args ...string) bool {
+		if cmd == "HSET" && len(args) > 0 && args[0] == key2 && armed.CompareAndSwap(true, false) {
+			c.WriteError("WRONGTYPE Operation against a key holding the wrong kind of value")
+			return true
+		}
+		return false
+	})
+	t.Cleanup(func() { mr.Server().SetPreHook(nil) })
+
+	err := s.ReplaceLedgerDays(ctx, batch(9))
+	mr.Server().SetPreHook(nil)
+	if err == nil || !strings.Contains(err.Error(), "WRONGTYPE") {
+		t.Fatalf("ReplaceLedgerDays err = %v; want WRONGTYPE", err)
+	}
+	if armed.Load() {
+		t.Fatal("the write never reached the second day's HSET")
+	}
+	after := snap()
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("prior day hashes changed\nbefore=%v\nafter=%v", before, after)
 	}
 }

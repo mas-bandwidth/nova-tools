@@ -62,7 +62,7 @@ type LedgerDay struct {
 
 // LedgerStore is the durable side of the token ledger. ReplaceLedgerDay swaps one day's rows
 // for the given ones atomically, so indexing a day twice is the same ledger as once.
-// ReplaceLedgerDays swaps multiple days' rows atomically in one pipelined round trip (#7fbdefecf56e).
+// ReplaceLedgerDays swaps multiple days' rows in one round trip, all of them or none (#7fbdefecf56e).
 // LedgerReport is the monthly GROUP BY; indexed is how many calendar-day keys existed and
 // missing is how many did not.
 type LedgerStore interface {
@@ -230,8 +230,146 @@ func (s *RedisLedger) ReplaceLedgerDay(ctx context.Context, day string, entries 
 	return s.ReplaceLedgerDays(ctx, []LedgerDay{{Day: day, Entries: entries}})
 }
 
-// ReplaceLedgerDays writes all given days in one transaction pipeline, DEL then HSET for each day,
-// so all days in the batch are written atomically in one round trip (#7fbdefecf56e).
+// replaceLedgerDaysScript swaps every KEYS entry for the field pairs in ARGV.
+// ARGV is, per key, a pair count and then that many field, value pairs.
+//
+// A redis.call error does not undo earlier writes in the same script (Redis 8;
+// MULTI/EXEC does not either), so this script snapshots each key first, applies
+// the swap with pcall, and writes the snapshot back before returning the error.
+// One EVAL is one round trip.
+const replaceLedgerDaysScript = `
+local function reply_err(r)
+  if type(r) == 'table' and r.err ~= nil then
+    return r.err
+  end
+  return nil
+end
+
+local function apply_pairs(key, fields)
+  if fields == nil then
+    return nil
+  end
+  local j = 1
+  while fields[j] ~= nil do
+    local wrote = redis.pcall('HSET', key, fields[j], fields[j + 1])
+    local e = reply_err(wrote)
+    if e ~= nil then
+      return e
+    end
+    j = j + 2
+  end
+  return nil
+end
+
+local snaps = {}
+for i = 1, #KEYS do
+  local key = KEYS[i]
+  local t = redis.pcall('TYPE', key)
+  local e = reply_err(t)
+  if e ~= nil then
+    return {err = e}
+  end
+  local typ = t
+  if type(t) == 'table' and t.ok ~= nil then
+    typ = t.ok
+  end
+  local snap = {typ = typ}
+  if typ == 'hash' then
+    local fields = redis.pcall('HGETALL', key)
+    e = reply_err(fields)
+    if e ~= nil then
+      return {err = e}
+    end
+    if type(fields) ~= 'table' then
+      fields = {}
+    end
+    snap.fields = fields
+  elseif typ == 'string' then
+    local v = redis.pcall('GET', key)
+    e = reply_err(v)
+    if e ~= nil then
+      return {err = e}
+    end
+    snap.val = v
+  elseif typ ~= 'none' then
+    return {err = 'WRONGTYPE ' .. key .. ' is ' .. tostring(typ) .. '; the ledger write did not start'}
+  end
+  snaps[i] = snap
+end
+
+local function restore_upto(n)
+  for i = 1, n do
+    local key = KEYS[i]
+    local snap = snaps[i]
+    local deleted = redis.pcall('DEL', key)
+    local e = reply_err(deleted)
+    if e ~= nil then
+      return e
+    end
+    if snap.typ == 'hash' then
+      e = apply_pairs(key, snap.fields)
+      if e ~= nil then
+        return e
+      end
+    elseif snap.typ == 'string' then
+      local wrote = redis.pcall('SET', key, snap.val)
+      e = reply_err(wrote)
+      if e ~= nil then
+        return e
+      end
+    end
+  end
+  return nil
+end
+
+local argi = 1
+local plans = {}
+for i = 1, #KEYS do
+  local n = tonumber(ARGV[argi])
+  if n == nil or n < 0 or n % 1 ~= 0 then
+    return {err = 'ERR ledger script argv'}
+  end
+  argi = argi + 1
+  local fields = {}
+  for _ = 1, n do
+    local f = ARGV[argi]
+    local v = ARGV[argi + 1]
+    if f == nil or v == nil then
+      return {err = 'ERR ledger script argv'}
+    end
+    fields[#fields + 1] = f
+    fields[#fields + 1] = v
+    argi = argi + 2
+  end
+  plans[i] = fields
+end
+
+for i = 1, #KEYS do
+  local key = KEYS[i]
+  local deleted = redis.pcall('DEL', key)
+  local e = reply_err(deleted)
+  if e ~= nil then
+    local re = restore_upto(i - 1)
+    if re ~= nil then
+      return {err = re}
+    end
+    return {err = e}
+  end
+  e = apply_pairs(key, plans[i])
+  if e ~= nil then
+    local re = restore_upto(i)
+    if re ~= nil then
+      return {err = re}
+    end
+    return {err = e}
+  end
+end
+return 1
+`
+
+// ReplaceLedgerDays writes every given day in one EVAL script: snapshot, then
+// DEL and HSET, and on a command error the snapshot is written back before the
+// error is returned. One script is one round trip (#7fbdefecf56e).
 func (s *RedisLedger) ReplaceLedgerDays(ctx context.Context, days []LedgerDay) error {
 	if len(days) == 0 {
 		return nil
@@ -271,14 +409,14 @@ func (s *RedisLedger) ReplaceLedgerDays(ctx context.Context, days []LedgerDay) e
 		}
 		prepared = append(prepared, preparedDay{key: LedgerKey(d.Day), fields: fields})
 	}
-	pipe := s.rdb.TxPipeline()
-	for _, d := range prepared {
-		pipe.Del(ctx, d.key)
-		if len(d.fields) > 0 {
-			pipe.HSet(ctx, d.key, d.fields...)
-		}
+	keys := make([]string, len(prepared))
+	args := make([]any, 0, len(prepared)*3)
+	for i, d := range prepared {
+		keys[i] = d.key
+		args = append(args, len(d.fields)/2)
+		args = append(args, d.fields...)
 	}
-	if _, err := pipe.Exec(ctx); err != nil {
+	if err := s.rdb.Eval(ctx, replaceLedgerDaysScript, keys, args...).Err(); err != nil {
 		if len(prepared) == 1 {
 			return fmt.Errorf("%s: %w", prepared[0].key, err)
 		}
