@@ -28,14 +28,15 @@ var certRaceMinShards = map[string]int{
 }
 
 // certRaceHeavy are the packages the race deal places first, one per shard:
-// every live package over 15 s in `go test -race -count=1 -p 1 -json` at
-// c4298c7b6 (after #4489), GOMAXPROCS=3 on the Studio (cmd/nova-bus 51.2 s,
-// internal/ci 37.6, internal/gh 30.7, cmd/nova-review 28.3, internal/bus 24.9,
-// cmd/nova-swarm 18.4; the next is cmd/nova-sandbox at 11.5).
+// every live package over 15 s in this job's own hosted legs (the larger of
+// ubuntu-latest and macos-latest, run 36375296705 at 3314df055 plus this
+// change): internal/ci 49.3 s, internal/gh 47.3, cmd/nova-tokens 46.4,
+// cmd/nova-sandbox 34.2, cmd/nova-self-talk 21.3, internal/update 19.1,
+// cmd/nova-secrets 16.7, internal/bus 16.6; the next is internal/merge at 12.4.
 // certification.yml's deal step spells the same list.
 var certRaceHeavy = []string{
-	"cmd/nova-bus", "internal/ci", "internal/gh", "cmd/nova-review",
-	"internal/bus", "cmd/nova-swarm",
+	"internal/ci", "internal/gh", "cmd/nova-tokens", "cmd/nova-sandbox",
+	"cmd/nova-self-talk", "internal/update", "cmd/nova-secrets", "internal/bus",
 }
 
 const certRaceDealStep = "deal this shard's packages"
