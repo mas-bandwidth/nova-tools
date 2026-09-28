@@ -1,0 +1,57 @@
+# Model checking is a bounded Linux bench job. It never runs on a desktop.
+name: tlc
+on:
+  schedule:
+    - cron: '41 6 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: tlc-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  groups:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 2
+    outputs:
+      groups: ${{ steps.plan.outputs.groups }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Check runner controls without starting Java
+        run: make tlc-test
+      - id: plan
+        shell: bash
+        run: echo "groups=$(make tlc-groups)" >> "$GITHUB_OUTPUT"
+  models:
+    needs: groups
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 2
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        group: ${{ fromJSON(needs.groups.outputs.groups) }}
+    env:
+      NOVA_CI: '1'
+      TLC_JAR: ${{ vars.TLC_JAR }}
+      TLC_GROUP: ${{ matrix.group }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Check the required model group
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$TLC_JAR" && test -f "$TLC_JAR" || {
+            echo 'TLC_JAR must name an installed TLC jar on the Linux runner; configure the repository variable' >&2
+            exit 2
+          }
+          make tlc TLC_JAR="$TLC_JAR" TLC_GROUP="$TLC_GROUP" TLC_OUT="$RUNNER_TEMP/tlc-$TLC_GROUP" TLC_BUDGET=110
+      - name: Retain measured records and logs, including failures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: tlc-${{ matrix.group }}
+          path: ${{ runner.temp }}/tlc-${{ matrix.group }}
+          if-no-files-found: error
+          retention-days: 14

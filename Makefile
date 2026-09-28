@@ -79,6 +79,10 @@ MERGE_TIMEOUT ?= 100s
 .PHONY: help build fmt vet vet-functional vet-laws vet-windows lint preflight test test-full test-short test-slow test-functional test-merge test-race test-e2e test-prewarm-done compile-lisp test-lisp check clean darwin-timeout map new-rule new-verb
 
 help:
+	@echo "make tlc         bounded Linux TLC group (TLC_JAR, TLC_OUT, TLC_GROUP)"
+	@echo "make tlc-full    manual Linux TLC experiment (also explicit TLC_BUDGET; forbidden in CI)"
+	@echo "make tlc-groups  JSON list of required model groups"
+	@echo "make tlc-test    pure runner controls without Java or network"
 	@echo "make help        this list"
 	@echo "make build       go build ./..."
 	@echo "make fmt         report files that are not gofmt-clean"
@@ -97,7 +101,7 @@ help:
 	@echo "make test-race   go test -race ./... (the certification tier)"
 	@echo "make test-e2e    go test -count=1 -run TestFriendSequence ./cmd/..."
 	@echo "make test-prewarm-done run the exact #2498 S3 test manifest"
-	@echo "make test-lisp   sh tools/ci/lisp-test.sh (nothing to test: nova-work, the one Lisp system, is parked under deprecated/)"
+	@echo "make test-lisp   sh tools/ci/lisp-test.sh (nothing to test while the live tree has no Lisp system)"
 	@echo "make compile-lisp nothing to compile while lisp/ holds no system; refuses if one appears"
 	@echo "make check       build, lint, test, test-e2e and test-lisp (CI's gates; the stream lander's batch test)"
 	@echo "make clean       remove ./bin and ./scratch"
@@ -107,6 +111,28 @@ help:
 
 map:
 	$(GO) run ./tools/agentsmap
+
+# TLC runs on Linux benches with an explicit installed jar and owned output path.
+TLC_JAR ?=
+TLC_OUT ?=
+TLC_GROUP ?=
+TLC_BUDGET ?= 110
+.PHONY: tlc tlc-full tlc-groups tlc-test
+tlc:
+	@test -n "$(TLC_JAR)" && test -n "$(TLC_OUT)" && test -n "$(TLC_GROUP)" || { echo 'make tlc: set TLC_JAR, TLC_OUT and TLC_GROUP' >&2; exit 2; }
+	python3 tools/tlc.py --jar "$(TLC_JAR)" --out "$(TLC_OUT)" --group "$(TLC_GROUP)" --budget "$(TLC_BUDGET)"
+
+tlc-full:
+	@test "$(origin TLC_BUDGET)" != "file" || { echo 'make tlc-full: supply TLC_BUDGET explicitly' >&2; exit 2; }
+	@test -n "$(TLC_JAR)" && test -n "$(TLC_OUT)" && test -n "$(TLC_GROUP)" || { echo 'make tlc-full: set TLC_JAR, TLC_OUT, TLC_GROUP and an explicit TLC_BUDGET' >&2; exit 2; }
+	python3 tools/tlc.py --jar "$(TLC_JAR)" --out "$(TLC_OUT)" --group "$(TLC_GROUP)" --budget "$(TLC_BUDGET)" --manual
+
+tlc-test:
+	PYTHONDONTWRITEBYTECODE=1 python3 tools/test_tlc.py
+
+tlc-groups:
+	@python3 tools/tlc.py --list-groups
+
 
 new-rule:
 	$(GO) run ./tools/newrule $(ARGS)
