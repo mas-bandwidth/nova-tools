@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -335,6 +336,9 @@ func appendWroteNothing(t *testing.T, store, session, entry string) {
 // rather than filing APPEND OK source=- over the pointer open recorded.
 func TestAnUnreadableLogRefusesTheAppendAndWritesNothing(t *testing.T) {
 	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: os.Chmod(0200) leaves the file readable, so an unreadable log cannot be made")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("root reads a 0200 file; the permission case cannot be made")
 	}
@@ -346,6 +350,11 @@ func TestAnUnreadableLogRefusesTheAppendAndWritesNothing(t *testing.T) {
 		t.Fatalf("chmod: %v", err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(log, 0o644) })
+	// The fixture is only a fixture if the read really fails: some
+	// filesystems and privileged runs read a 0200 file anyway.
+	if _, err := os.ReadFile(log); err == nil {
+		t.Skip("the 0200 log is still readable here (filesystem or privilege); the permission case cannot be made")
+	}
 
 	code, out, errOut := runCode("", "append", "--store", store, "--session", "s1", "--entry", "e1",
 		"--text", "words that would inherit the pointer", "--publish", "manual")
