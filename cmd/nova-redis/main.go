@@ -68,7 +68,9 @@ writes nothing; an unbounded key is a bug.
 recall exits 1 on a missing or expired key: scratch is allowed to miss.
 Auth is read from NOVA_REDIS_PASSWORD, never from an argument. A store that
 cannot be reached, or a login it refuses, is one FAIL line on stderr with
-the next step (exit 2).
+the next step (exit 2). A spill whose reply is lost after the store took it
+is SPILL UNCONFIRMED (exit 1): the write may have committed, so read it back
+with recall before spilling again.
 serve runs redis-server in the foreground, bound only to loopback and tailnet
 addresses (100.64.0.0/10, fd7a:115c:a1e0::/48); --bind has no default and a
 wildcard, public or LAN address is refused (exit 2). The password reaches
@@ -198,7 +200,14 @@ func cmdSpill(args []string, stdout, stderr io.Writer, d deps) int {
 	s := &scratch{rdb: conn.Client(), now: d.now}
 	key, err := s.spill(ctx, *owner, *name, *value, ttl)
 	if err != nil {
-		return failed(stderr, "SPILL", *owner+":"+*name, conn.Explain(err), d)
+		err = conn.Explain(err)
+		if redisconn.Classify(err) == redisconn.Unreachable {
+			// Open succeeded, so the transaction was handed to a store that was
+			// up: a connection that dropped or a reply that never came after
+			// that is not "could not run". The EXEC may have committed.
+			return unconfirmed(stderr, conn, *addr, *owner, *name, err)
+		}
+		return failed(stderr, "SPILL", *owner+":"+*name, err, d)
 	}
 	expires := d.now().Add(ttl).UTC().Format(time.RFC3339)
 	fmt.Fprintf(stdout, "SPILL OK key=%s ttl=%s expires=%s bytes=%d\n", oneline.Field(key), ttl, expires, len(*value))
@@ -239,6 +248,9 @@ func cmdRecall(args []string, stdout, stderr io.Writer, d deps) int {
 		fmt.Fprintf(stdout, "RECALL UNBOUNDED key=%s remedy=%q\n", oneline.Field(key), "an unbounded key is a bug; it was not written by nova-redis spill")
 		return 1
 	case err != nil:
+		// A read has no side effect, so a reply that never came leaves the
+		// store as it was: unreachable exits 2 here, honestly, where spill's
+		// lost reply exits 1 (unconfirmed).
 		return failed(stderr, "RECALL", key, conn.Explain(err), d)
 	}
 	fmt.Fprintf(stdout, "RECALL OK key=%s bytes=%d value=%s\n", oneline.Field(key), len(v), oneline.Field(v))
@@ -311,6 +323,45 @@ func failed(stderr io.Writer, verb, key string, err error, d deps) int {
 		return 2
 	}
 	return 1
+}
+
+// unconfirmed prints spill's one line for a transaction whose confirmation was
+// lost: the store was opened and the transaction handed to it, then the
+// connection dropped or the reply did not come. The write may have committed,
+// so the exit is 1 (it ran, the outcome is unknown) and the remedy is a
+// read-back with the same address, owner and name, under the same
+// environment's login, never a blind re-spill. redisconn's own next step
+// ("start the store or correct the address") is left out: the store was up.
+//
+// err is redisconn's (Conn.Explain); what it unwraps to is the cause, with the
+// password already taken out of any text that held it, and its words are
+// Conn.String's and this function's, so neither "unreachable" nor redisconn's
+// next step appears.
+func unconfirmed(stderr io.Writer, conn *redisconn.Conn, addr, owner, name string, err error) int {
+	cause := err
+	if inner := errors.Unwrap(err); inner != nil {
+		cause = inner
+	}
+	recall := "nova-redis recall --addr " + shellWord(addr) + " --owner " + shellWord(owner) + " --name " + shellWord(name)
+	fmt.Fprintf(stderr, "SPILL UNCONFIRMED key=%s err=%s remedy=%q\n", oneline.Field(owner+":"+name), oneline.Escape(conn.String()+": the transaction was sent and its reply was lost: "+cause.Error()),
+		"confirmation was lost after the transaction was sent, so the write may have committed; read it back with the same login before spilling again: "+recall)
+	return 1
+}
+
+// shellWord is s as one POSIX shell word: as it is when it holds only
+// characters no shell treats specially, else single-quoted.
+func shellWord(s string) string {
+	plain := s != ""
+	for _, r := range s {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("_-.,:/@%+=", r)) {
+			plain = false
+			break
+		}
+	}
+	if plain {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // validKey is the one gate every write passes: an owner, a name and a TTL
