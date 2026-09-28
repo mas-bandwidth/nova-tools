@@ -7,7 +7,7 @@
 // the kind floor the worker is the --default and the exit is 3.
 //
 // The core lives in internal/swarm so `nova-pulse launch` picks each card's
-// worker with the same function (docs/SPEC-DECIDE.md rule 8); this verb keeps
+// worker with the same function (deprecated/docs/SPEC-DECIDE.md rule 8); this verb keeps
 // its flags and its ROUTE REFUSED lines.
 package main
 

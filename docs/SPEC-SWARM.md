@@ -1643,8 +1643,8 @@ four parts: **scatter** admits n cards with one batch id and one deadline;
 **wait** ends every card or the deadline; **gather** folds the batch into one
 bounded packet, mechanically; **read** hands the packet once to one agent.
 The admission half is `batch --tasks <dir>` and the two proposals it cites —
-`docs/PROPOSAL-SWARM-BATCH-RECEIPTS.md` and
-`docs/PROPOSAL-SWARM-BATCH-ADMISSION-CONTRACT.md`. **This section adds no
+`deprecated/docs/PROPOSAL-SWARM-BATCH-RECEIPTS.md` and
+`deprecated/docs/PROPOSAL-SWARM-BATCH-ADMISSION-CONTRACT.md`. **This section adds no
 dispatcher extension beyond those two proposals**: no new admission boundary,
 no new `run` verb, and the receipts stay exactly as the proposals define them.
 
@@ -1667,7 +1667,7 @@ no new `run` verb, and the receipts stay exactly as the proposals define them.
   stale lock each do.
 
 **Admission is per card, never per batch.** A card refused at admission — a
-shape refused under `docs/WORKER-CARDS.md` practice 17, or a repository it
+shape refused under `deprecated/docs/WORKER-CARDS.md` practice 17, or a repository it
 cannot reach without credentials — is **one `ABSTAIN` row** with
 `reason=admission <why>`, and every other card runs. The refusal is said once
 on stderr, `ADMIT REFUSED <label> <why>`, and the `BATCH` line counts the card
@@ -2434,7 +2434,7 @@ PUBLISH OK branch=<name> head=<sha> pr=<url>
 PUBLISH REFUSED: <reason>
 ```
 
-The [profile proposal](SPEC-SWARM-PROFILES.md) additionally specifies
+The [profile proposal](../deprecated/docs/SPEC-SWARM-PROFILES.md) additionally specifies
 `RUN REFUSED profile=<id> reason=secrets_gate code=125` for a profiled credential-gate
 refusal. This is a proposed profile-only variant, not a replacement for the
 existing worker refusal field sequences above; its implementation and
@@ -3823,7 +3823,7 @@ pending path it no longer owns.
 path. The proposed trusted catalog, explicit per-job profile/model selection,
 compact prompt prefixes, provider-capacity observations, frozen non-secret
 attempt snapshots and Go/Zen route rules are normative in
-[`SPEC-SWARM-PROFILES.md`](SPEC-SWARM-PROFILES.md). That document is the one
+[`SPEC-SWARM-PROFILES.md`](../deprecated/docs/SPEC-SWARM-PROFILES.md). That document is the one
 owner of this amendment; it does not add a second dispatcher or ledger. Any
 Go/Zen live-route activation remains a protected `nova-secrets exec` gate
 with the approved store/command; a run without that provenance refuses before
@@ -4423,7 +4423,7 @@ verb, and tests that pin all three by executing them.
 --model ollama/<tag>` runs the card on the Studio's local model with the same
 wall, card contract and RESULT rules, refused by the benchmark window until its
 stamp, so a local job never runs beside a benchmark; the separate
-`docs/SPEC-LOCAL.md` is deleted with the fold.
+`deprecated/docs/SPEC-LOCAL.md` is deleted with the fold.
 
 | source | the idea, in six words | disposition |
 |---|---|---|

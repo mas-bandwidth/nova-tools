@@ -702,6 +702,626 @@ exactly, on every commit, by a parse COUNT: see SPEC.md, "nova-bus", the complex
 
 MIT, see [LICENSE](../LICENSE).
 
+## nova-swarm
+
+> **Retired 2026-09-24 (verb survey, del-swarm-ci-leftovers).** `add`, `run`, `supervise`, `requeue`, `verdict`, `cost`, `note`, `reclaim`, `bench`, `reap`, `publish`, `pull`, `pull-lanes` and `result-lint` are deleted: nothing called them, and card work runs through `nova-sprint card launch` and `nova-card`. The live surface is `slots`, `native`, `lint` and `batch`. Prose below that describes a deleted verb is historical until this section is rewritten.
+
+
+```
+nova-swarm batch    --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--max-input <bytes>]           # queue a directory of them under one batch id
+nova-swarm status   --pool <dir> [--max <n>]                                                # what is pending, running, done, failed, and how many slots are quarantined
+nova-swarm triage   --pool <dir> [--batch <id>] [--max <n>]                                 # one page, and one TRIAGE BATCH line to read a batch down by
+nova-swarm result   --pool <dir> --id <job>                                                 # one report, verbatim: the only path a malformed one takes to a person
+nova-swarm template --name read-pr|probe-row|fix-card|result|worker|setup|capacity|read|fix|text|replay|drift|tone|models.tsv   # the conditions, the forms, and the pulse card templates, baked in, so they are not retyped and not forgotten; setup is #184's agreement form and capacity is #176's offer-and-routing form, neither is a task template
+nova-swarm stop     --pool <dir>                                                            # stop new admissions; drain workers already running — never kill them
+nova-swarm lint     --card <file> [--typed] [--trust <file>] [--lineup <file>] [--base-check [--repo <dir>] [--legs <file>] [--p95 <file>]] [--max <n>] | --fleet <script> | --rules          # one card's mechanical shape, before any spend: no model, no probe, one file
+```
+
+### The card lint
+
+`lint --card <file>` reads the one file it was handed and names every mechanical
+defect by check, line and excerpt **before a token is spent**. No model, no probe,
+no network. The checks are `deprecated/docs/WORKER-CARDS.md`'s rule table and the four typed
+header tokens of `docs/SPEC-TOOLWORK.md` §5 rule 1.
+
+| flag | what it does |
+| --- | --- |
+| `--card <file>` | the card to read. Required unless `--rules` is given |
+| `--rules` | print `LINT RULE <check> remedy=<what it wants>` for every check and exit 0. It takes no card, because the question is asked before there is one, and it is the one listing a bench with a clone months behind its binary can still read (#1464) |
+| `--typed` | apply the typed-header tokens to a card that declares **no** typed line at all. Without it a card with no header is left to the older rules, which is what every card written before §5 is. Under `--typed` the card also carries `DEPENDS-ON: <card-id>[, ...]` or `DEPENDS-ON: -` (#2636) |
+| `--trust <file>` | a file of `TRUST kind=<kind> … state=<trial\|trusted\|paused>` lines; it is what the `paused` token reads. With no file there is no paused kind and the lint says nothing rather than guessing |
+| `--lineup <file>` | the lineup `depends-on` checks ids against, and only together with `--typed`. One card id per line, or a TSV whose id column is named `id`, `card`, `card-id` or `label` — otherwise the first column — and a header row that names `depends-on` is not a card. With no file an id is not called unknown |
+| `--max <n>` | bound the printed drifts, default 20, `0` for all. Over the bound it adds one `LINT MORE` line naming the remedy; it never changes the verdict |
+
+Output, and what a caller does with it:
+
+```
+LINT OK    card=<name> checks=<n> bytes=<n> cap=<n>                      # exit 0: admitted to the wall
+LINT DRIFT card=<name> <check>: <line>: <excerpt> remedy=<what it wants> # exit 2: a caller refuses to admit it
+LINT NOTE  card=<name> <check>: <line>: <excerpt> remedy=<…>             # advice; it changes NO verdict
+LINT MORE  card=<name> findings=<n> remedy=<…>                           # more drifts than --max printed
+LINT SIZE  card=<name> bytes=<n> cap=<n> advisory=true                   # every drifting card's size, and that the cap is advice
+LINT NOT-A-CARD card=<name> template=<name> remedy=<…>                   # exit 1: a shipped template piped in, answered by name
+```
+
+**`DRIFT` is a defect and `NOTE` is advice.** The 12000-byte ceiling is the only
+advisory check today: it is a reading budget, not an input limit, so a card over
+it is never refused and never truncated, draws a `LINT NOTE`, and exits 0
+(#1494, #1527). A card whose only findings are advisory is a clean card.
+
+**Every drift names its remedy on the same line** (#1464), and the `DRIFT` line and
+the `--rules` listing read one table, so a remedy cannot drift from the rule it
+explains. The rule tokens and what each wants are in `deprecated/docs/WORKER-CARDS.md`; the
+`../` rule and the ceiling are written out in `docs/SPEC-SWARM.md`'s lint section.
+
+### native and batch
+
+routes: see docs/MODELS.md
+
+**Routing is the launcher's default: the ladder chooses the model, not the TSV.** `batch --cards` reads `label<TAB>slot<TAB>model<TAB>card-path`, and that `model` column used to be the last word — a string a fill script wrote by hand. The batch now asks the ladder one typed decision per card, in process, **before the card is assigned a model**: which mind does this unit of work. The answer's rung names the model id, from the registry; the TSV's model becomes the **fallback**, which is exactly today's behaviour (SPEC-DECIDE rule 5). Routing is a launcher step and not a line in a brief (#1625).
+
+```
+nova-swarm batch --cards <tsv> [--route-log <path>] [--route-usage <path>]
+                 [--route-registry <path>] [--route-floor 0.9]
+                 [--route-key-env JEV_API_KEY] [--route-base-url <url>]
+                 [--no-route --reason <text>]
+```
+
+A launcher that names no accounting home does not skip the route: the rules answer, no call is made, and the receipt says `why=no-accounting`. `--route-log` and `--route-usage` are where the decision's records go when they are named; accounting is not optional, and a call nobody can account for is not made, but the card is still routed. **The one way out is `--no-route --reason <text>`**, which writes a `"source":"skipped"` row carrying the reason to the route log, so a skipped route is a fact in the log and not an absence. Every routed card carries one receipt line, said on stderr in TSV order and written into the card's job directory as `route.txt`:
+
+```
+ROUTE card-742 ROUTE jev=flash conf=0.94 rung=flash model=opencode/deepseek-v4-flash why=-
+ROUTE card-743 ROUTE jev=fallback conf=0.61 rung=pro model=opencode/deepseek-v4-flash why=below-floor
+ROUTE card-744 ROUTE jev=fallback conf=0.90 rung=opus model=opencode/deepseek-v4-flash why=rung-is-asked-not-run
+```
+
+`jev=` is the rung where the answer chose the model and the literal `fallback` where today's model stands; `rung=` always names what the ladder answered, so a fallback never hides the rung; `why=` is one enumerated token — `no-key`, `no-accounting`, `below-floor`, `refused`, `rung-is-asked-not-run`, `card-names-no-kind`, `no-ladder`. The third line above is the one worth reading in the log: the ladder says that card is judgment work owed to a child or a friend, and the batch ran it on a mechanical model because dispatching a card is the only thing a batch can do. That is evidence for the escalation log, not a silent success.
+
+**The card's own evidence.** The ladder wants a kind, a size, a lane, a platform need and what security is touched, and it reads them from the card's own text — never from a model, and never from anything outside the card. A card may state them outright, one `FIELD: value` line anywhere in its text, and a fill script should write them from now on:
+
+```
+KIND: fix-with-red-test
+FILES: 4
+PACKAGES: 1
+LANES: 1
+LANE: code
+PLATFORM: windows
+TOUCHES: sandbox
+```
+
+Where the card names no `KIND:`, the kind is read from its contract line by a deterministic table of phrases — security phrases first, so security never falls through to a cheaper reading of the same line. A card whose kind cannot be read is **not routed at all**: no evidence is no decision, its line says `why=card-names-no-kind`, and today's model stands. What reaches the provider is never the card: it is the bucketed public projection of the unit and nothing else (SPEC-DECIDE rule 4).
+
+**Two routes, two questions — do not point both at the same column.** `internal/swarm/route.go` (`nova-swarm route`) asks what KIND of work a card's text is and picks the **worker description** for it from a routes table, writing that path into the cards TSV's model column. `--route` here asks which MIND does the unit — over the registry ladder, with the escalation policy on it — and names that mind's **model id**. One chooses the harness a card runs under; the other chooses who does the work, and neither answer is the other's. They write the same column, so a pulse that already rewrote it with `--routes` should run `nova-swarm batch` with `--no-route --reason <text>` (the skip is logged), and a batch that routes by the ladder should be handed a TSV carrying model ids.
+
+**No key is no call.** An absent key is said once, by the name of the variable and never by its value, and the batch runs on today's models — so the loop runs on a bench with no API at all.
+
+**A card that fails its gate re-enters one rung up.** The ladder is the retry policy: a confirmed failure is appended to the unit as evidence, and the rung that failed — and its lineage at that height — is out of the eligible set, so the answer is another lineage on the same rung where there is one (sideways before up) and the rung above where there is not. It is never a retry on the rung that just failed.
+
+**The free tier that queues forever: `--max-inflight` and `--stall-after` (#917).** Both default to **0, which is off**, and a batch that names neither behaves exactly as it does today.
+
+```
+nova-swarm batch --cards <tsv> ... [--max-inflight <n>] [--stall-after <seconds>]
+```
+
+`--max-inflight <n>` caps how many of the batch's cards run against **one route** at a time, where a route is the **provider, the model and the key** — two models on one key share that key's queue and the same model on two keys do not, so neither alone is the unit. The key is named by its **auth profile** (the `--auth` file), never by its value: this string is printed. Cards past the cap **wait** — they hold no process, no bench slot lease and no spend, and their deadlines have not begun. When the batch's own deadline passes, every card still waiting is released unlaunched and scored `deadline`.
+
+With a cap set, one line per route follows the BATCH line:
+
+```
+BATCH ROUTE <model>@<auth-profile> cap=<n> peak=<n> held-back=<n>
+```
+
+`peak` is the most ever in flight on that route and `held-back` is how many launches had to wait for a slot; a route whose `peak` is under the cap and whose `held-back` is `0` never was the constraint. With no cap no such line is printed.
+
+`--stall-after <seconds>` is the **first-token** deadline and is **not** `--idle`. Every signal the idle window has needs a first sample to compare against, so a card that never speaks once is invisible to it and burns its whole deadline. A card that has produced **nothing at all** since it launched is ended at `--stall-after` and scored `ABSTAIN reason=stalled`; a card that spoke once and went quiet is `--idle`'s business and this never fires for it, and a card burning CPU in silence has moved and is not stalled (#593).
+
+Measured 2026-09-17: above roughly 30–40 concurrent requests on one Muse contributor-free key the tail latency goes to infinity — hulk and vision returned zero results in thirteen minutes at load 0.5–2.0 — while `deepseek-flash` on the same bench in the same second answered in 11 s. A launcher with no cap turns a free tier's queue into spend.
+
+**`native` takes no bench slot lease (#3877).** A bench's capacity is one number,
+`bench:<b>:desired` in Redis, and the one place a card is admitted or refused against it
+is the dealer: a card beyond it stays queued and nothing is written on the bench. `native`
+reads no slot store and writes none, so a bench with no `~/nova-bench/slots` runs a dealt
+card. The file ledger it used to lease from (#1546, #2033) was a second answer to the same
+question: on 2026-09-25 it refused seven dealt cards on batman with
+`SLOTS REFUSED owner=swarm-batman want=4 held=16 share=16` while Redis said the bench had
+room. `--slots-store` and `--owner` are still accepted, so a caller built before #3877 is
+not refused on an unknown flag, and they are read by nothing.
+
+`batch` without a `--runner` of its own still asks for the two flags and refuses the
+whole batch without them; the store is no longer leased from by the `native` it launches.
+
+**The release is by identity.** `native` and `run` keep the lease ids `TakeSlotLeases`
+granted them and give back exactly those, pid-fenced. Releasing by owner and label would
+mean that two runs sharing a bench and a card name — or two dispatchers sharing an owner
+and a task id — each give away the other's live seat, and that a run refusing before it
+started — a missing harness, say — deletes a lease it never took (Stella, on #1562;
+dispatcher, #1582). `nova-swarm slots release --owner … --label …` keeps the
+by-owner-and-label behaviour, because that is what a person at a prompt means by it.
+
+**A release never frees a seat whose holder is still running (issue #1902).** Deleting a
+lease does not stop the process holding it: the holder keeps running and the seat it is
+sitting in is handed to the next taker, so two cards end up on a one-seat bench. A lease
+whose pid is alive and is not this process is kept, counted in the `live=` field of the
+`SLOTS RELEASED` line, and named on stderr as `SLOTS KEPT`, and the verb exits 2. Giving
+back your OWN seat is always allowed — that is how `run` and `native` end. `--force` is
+the loud override for a person who knows something the store cannot.
+
+`nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]`
+
+`--force` frees a lease whose holder is still running, which **oversubscribes the bench**:
+the holder keeps its seat in fact while the store hands the same seat to the next taker.
+It is an operator's act, typed at a prompt by someone who knows what the store cannot see
+— a holder on another host, a pid the kernel has since handed to somebody else. No card
+carries it, and no manager, launcher or cleanup path passes it by default.
+
+
+**`native` carries a token budget, and the word is required (rule 13d, #1545).**
+`--tokens <n>` or `--tokens unmetered` on **every** launch. Without it the verb is exit 2
+naming the flag and makes no directory; `--tokens 0` is refused. `unmetered` is the
+caller's statement that this provider has no live accounting and the deadline is the only
+stop, and it is printed on the line:
+
+```
+NATIVE OK label=card-a job=… harness=ok budget=unmetered
+NATIVE OK label=card-a job=… harness=ok budget=-/200000
+```
+
+`budget=` always follows `harness=`. It is `unmetered`, or the number with what was
+observed against it: `<spent>/<n>`, `<spent>+/<n>` when some token column was a dash, and
+`-/<n>` when nothing was observed at all — so a card that ran under an unobservable budget
+is visible as such and is never reported as under budget.
+
+**There is no test for a provider that costs money.** A provider's name is whatever a
+config file says it is, a `baseURL` can point a local-looking name at a metered endpoint,
+and a reported `0` is a measurement, not a licence. So the caller says a number or says
+`unmetered`, every time, and the tool infers neither.
+
+**A budget needs a source the tool can read, and that is checked before anything is made.**
+A native card's usage source is its worker description's `usage`, and `opencode` when there
+is no `--worker`. A numeric `--tokens` beside `usage: none`, or on a bench with no
+`sqlite3` on `PATH`, is `NATIVE REFUSED` at exit 2 **before any directory is made** — for
+rule 13's own reason: a budget nothing can observe is a promise the tool cannot keep. The
+same refusal meets a description that sets `max_cache_read` or `max_turns` under either
+condition, **whatever `--tokens` says**, because the card's own budget is read from the
+same source; so `--tokens unmetered` beside a `max_turns` on a `usage: none` bench is
+refused too. `--tokens unmetered` with no such description runs under both, as it does
+today.
+
+**`--usage-interval <s>`** is how often a live sample reads that source, default 5, the
+same flag `run` takes. On `native` an interval **under one second**, or one **not shorter
+than `--deadline`**, is exit 2: under the first, three quick failed reads would end an
+honest card `budget-unverifiable`; under the second no sample would ever run.
+
+**`native` samples in its own process.** No supervisor is spawned. While a launch runs,
+`native` reads the harness's own database under the job's data home — at both spellings,
+`$XDG_DATA_HOME/opencode/opencode.db` and the `$HOME/.local/share/opencode/opencode.db` a
+Linux harness derives from `HOME` — read-only, every `--usage-interval`. It **never** reads
+`usage.tsv`: that row is written after a launch's process group is dead, so it is the
+record of a stop and cannot be the cause of one.
+
+A sample gets **5 seconds whatever the interval**, **waits for no checkpoint** (rule 13's
+five-second wait for a write-ahead log belongs to the *final* read, made when the harness is
+gone), never overlaps another, and is never in the deadline's way: a read still unanswered
+at its limit is abandoned and counted as a failed read, and the deadline and a TERM from
+outside end the card at their own instants whatever a read is doing.
+
+**The observed sum is `tokens_in + tokens_out + reasoning`.** `cache_write` and `cache_read`
+stand in the usage row and are never in the sum, because a card re-reads about thirty times
+what it sends and a budget that counted them would measure the harness's re-reading.
+
+**The figure on the line is the job's, at the final read.** It is the sum over every launch
+of this one invocation of `native`, taken from each launch's own final read once its group
+is dead — never the sum at a sample. Where no final read could be made at all, the last sum
+a sample saw stands in **with the plus**, because a sample's figure is never allowed to pass
+for a final one.
+
+**The budget is the job's, across every launch, and a stop is the end.** A native job is one
+invocation of `native`: up to three launches when a provider 5xx inside the launch grace
+retries it, one data home, one usage row per launch. The sum is over the whole job, every
+launch counted from the first launch's start, and the stop is `spent >= n` — tested at every
+sample and **once more before any relaunch**, so a first launch that reached the budget
+alone is never launched again.
+
+When it fires, `native` ends the card the way it ends one on a TERM from outside: a
+terminate to the whole process group, a wait, then a kill, after which no process of that
+group is alive — grandchildren and a harness that ignores the terminate included. What the
+card published stays where it is, byte for byte, and on this route the tool writes nothing
+into a report. Nothing is launched again, by `native` or by a batch. `native` exits **1**: it
+ran, and the answer is no.
+
+**The line says what stopped the card**, in a key of its own:
+
+```
+NATIVE OK label=card-a … rc=-1 … harness=ok budget=110/100 stopped=tokens
+```
+
+`stopped=<tokens|max_turns|max_cache_read|unverifiable>`. `reason=terminated` stays what a
+TERM from outside prints, and the `reason=` inside the `usage=none` group stays the usage
+read's.
+
+**Two numbers, kept apart: the row is the launch's and the line is the job's.** Each usage
+row carries what THAT LAUNCH was finally reported to have used, from its own start to its
+own end, and never the job's running sum — a job's rows are disjoint, so adding them counts
+each launch once. Two launches finally reported at 40 and 70 under `--tokens 100` print
+`budget=110/100` on the line, and their rows hold **40 and 70**, never 40 and 110. The
+stopping launch's row carries `end=budget`, and its `rc` is a dash there while the line
+prints `rc=-1`.
+
+**When the source cannot be read**, the three cases stay apart. *Nothing observed*: the
+budget cannot fire, the deadline ends the card, the line prints `budget=-/<n>`. *A partial
+observation* counts the columns it has; it can reach the budget and stop the card, and it
+can never show that the card stayed under it, which is what the plus says. *A read that
+fails* — the database unreadable, the query erroring, the read abandoned at its limit — on
+**three consecutive** samples ends the card with `end=budget-unverifiable`,
+`stopped=unverifiable` and exit 1; two failures and then an answer end nothing.
+
+**The card's own budget comes along.** `--worker` naming a description with `max_cache_read`
+or `max_turns` has them enforced by the same samples, over the whole job, with
+`<job>/harness-output.log` as the turn log (`native` never writes `harness.log`). The stop
+is the one above, with `end=budget` in the row and `stopped=max_turns` or
+`stopped=max_cache_read` on the line. The `PROMPT-DEFECT` line is printed on `native`'s own
+**stdout, after `NATIVE OK`**, and is written into **no file**: the card's `RESULT.md` is the
+card's.
+
+**Every caller passes the word along.** `batch --cards` takes `--tokens <n>|unmetered`,
+required, and refuses the whole batch before any card starts:
+
+```
+BATCH REFUSED reason=no_tokens: --tokens is required; it wants a token budget for EACH card in this batch, or the word `unmetered` when this provider has no live accounting and the deadline is the only stop; it is never divided among the cards and never a total for the batch; refusing to guess
+```
+
+It is **each card's own budget** — the same word for every card, never divided among them
+and never a total for the batch — and the batch puts it verbatim into every `native` argv
+it builds, the local one under `--harness` and the remote one over ssh. A `--runner` is
+handed it as a **sixth** argument after the five it already gets (label, slot, model, card
+path, root), and a runner that reaches `native` without passing it on meets `native`'s own
+refusal.
+
+`native --config` copies the named `opencode.json` into the job's data home. Only the
+provider `--model` names is checked against `--auth`; a provider whose options carry
+`baseURL` and no `apiKey` (ollama on localhost) needs no key and is admitted without one.
+
+**The deadline ends the whole tree, and a TERM is the same cleanup (issue #779).** The
+harness runs as the leader of its own process group, so at `--deadline` the run kills the
+entire tree the card started — grandchildren included, never just the leader — and writes
+`usage.tsv` from what it had up to the kill, so the spend is known. A `SIGTERM` from outside
+(the manager) is handled the same way: the tree is reaped, `usage.tsv` is written, and the
+`NATIVE OK` line carries `reason=terminated` instead of a silent exit.
+
+**A launch that started always prints a verdict, and `native` never exits 255 (#2058).**
+The three words are `NATIVE OK`, `NATIVE INCOMPLETE` and `NATIVE REFUSED`. A darwin
+OpenCode that logged `Error starting FSEvents stream`, wrote `RESULT.md` and exited 255
+prints exactly one `NATIVE INCOMPLETE` with `rc=255` and `why=rc`, never OK or REFUSED.
+Passing 255 through made a fill loop retry a finished card. Local ssh(1) exits 255 for
+any error; that is not proof the remote command never started, so the outcome is
+potentially UNKNOWN and a retry waits on reconciliation. The process exits 1.
+
+### First run
+
+`quickstart` needs nothing but a directory: it makes the pool's structure and names the
+three commands that follow. `./pool` is a directory of yours; the tests run every line below
+against one they make in `t.TempDir()`.
+
+```
+$ nova-swarm quickstart --pool ./pool
+QUICKSTART OK pool=./pool pending=0 next=add,run,triage
+QUICKSTART NOTE a task is a file: nova-swarm add --pool ./pool --task <file> --files <n> --tokens <n>
+QUICKSTART NOTE a worker description says whose model runs: nova-swarm run --pool ./pool --workers <n> --hours <h> --worker <file>
+QUICKSTART NOTE the conditions are worth more than the model: nova-swarm template --name read-pr
+
+$ nova-swarm status --pool ./pool --max 20
+STATUS OK pending=0 running=0 done=0 failed=0 slots=0/0 quarantined=0
+```
+
+### stop, the wall and the worker description
+
+**`stop` holds the pool still without killing anyone.** It writes a `stop` file that
+stops new admissions while workers already running finish under their own deadline. A
+`run` that ends over a stopped pool names the stop in its `RUN NOTE` remedy rather than
+guessing a second run would help — `the pool is stopped; <n> task(s) stay pending until the
+stop file is removed` when work remains, or `the pool is stopped and drained; remove the
+stop file to resume` when it does not. Remove `stop` to admit again; the stop survives a
+dispatcher's death and the next `run`'s recovery (issue #180).
+
+**`run` needs `nova-sandbox` before it needs anything else.** Every job runs inside it
+(docs/SPEC-SANDBOX.md): the job directory and its data home are the only writable paths, the
+worker home and whatever `read_roots` names are readable, and the key file, `~/.ssh` and the
+`gh` configuration are outside both lists and unreadable to the worker. `run` proves the
+wall ONCE, before the first worker, and refuses the pass if it cannot. A machine with no
+backend, or a wall that fails a check, starts no worker at all: `RUN REFUSED
+reason=no_sandbox` names the missing backend and the one workaround.
+
+`--no-sandbox` is that workaround and nothing else is: no environment variable and no file
+turns the wall off, and a pass that takes it says so once per job, on stderr, before the job
+starts — `RUN UNSANDBOXED id=<id> slot=<n>: no OS containment; every read and write this job
+makes is yours`.
+
+**The one input `run` cannot proceed without** is the worker description, and every field
+below is required. This one ran two real DeepSeek workers end to end on 2026-09-11:
+
+```json
+{
+  "name": "deepseek-1",
+  "provider": "deepseek",
+  "model": "deepseek/deepseek-chat",
+  "env_var": "DEEPSEEK_API_KEY",
+  "key_file": "/home/you/.keys/deepseek",
+  "usage": "opencode",
+  "harness": "opencode",
+  "harness_args": ["run", "--model", "{model}", "--title", "nova-swarm", "--", "{prompt}"],
+  "worker_dir": "/home/you/worker",
+  "deadline": "20m",
+  "read_roots": ["/home/you/toolchains"]
+}
+```
+
+`read_roots` and `input_limit_phrases` are the optional fields. `read_roots` is the wall's: a toolchain installed under a
+user directory — Go under `~/go`, node under `~/.nvm`, the Studio's `/Users/<you>/toolchains`
+— is under no system root, so a harness that needs one runs outside the wall and dies inside
+it. Name those directories here and they are READ-ONLY for every job of this worker, named
+once so that N workers read one copy. A worker that needs nothing beyond the system roots
+names nothing, and an absolute directory that does not exist is refused when the description
+is read, not at every launch.
+
+`input_limit_phrases` teaches this provider's own way of saying *your request did not fit*:
+a job that dies on an input limit is its own failure class, `input-limit`, never a 429 to
+retry, and the phrases the tool already knows (OpenCode's `input token limit exceeded`,
+Anthropic's `prompt is too long`, OpenAI's `maximum context length`) are a table this field
+ADDS to. A phrase counts only on the provider's own error line — a line whose own LABEL is an
+`error`, `fatal` or `exception` mark (the mark begins a word, at most two tokens before it and
+at most one of those a bare word, no list marker at the head of the line, no quote character
+before it), or the line directly under one, so a report that merely quotes the sentence beside
+the word is not one, and a line these tools wrote themselves — `RUN REFUSED …`, `SANDBOX OK …`
+— is skipped whole, since a job that runs them logs them, unless its second word is itself a
+mark, which no line of theirs has (a test over the sources keeps that true) and a shouting
+proxy does (`HTTP ERROR: 400 …`) — and a phrase you name must be a sentence, twelve characters
+with a space or a digit in it, refused when the description is read: a job classed this way is
+never retried, so a bare word here would take the retry away from every failed job whose log
+happens to carry it. A task may name the other half, `--max-input <bytes>`, and `run` refuses
+a prompt over it before the launch.
+
+`key_file` lives **outside `worker_dir` and outside every `read_roots` entry**, which is why
+the example keeps it in `~/.keys`. `worker_dir` is copied into the slot directory before
+every job and the slot directory is the job's one readable path, so a key file inside it
+would be copied INSIDE the wall and read by the worker under a green line; a key inside a
+read root is readable without even the copy. The key reaches the harness by `env_var` and
+its FILE is in neither list (docs/SPEC-SANDBOX.md rule 6). A key file inside a SLOT
+directory — `<worker_dir>-1/.key`, or anything under it such as its `jobs/` — is the same
+hole from the other side, since the slot IS the job's readable path, and it is refused too.
+All three placements are refused when the description is read.
+
+`harness_args` is the invocation the harness needs, and `{model}` is where the model goes:
+a harness handed nothing but a path reads that path as a project directory and does
+nothing, so a description that never places `{model}` is refused before any worker starts.
+`{prompt}` is the prompt FILE, appended last where `harness_args` does not name it — the
+task text is never an argument. `usage` names the token source for what it IS: `opencode`
+is OpenCode's own `opencode/opencode.db`, in the job's own data home, read through
+`sqlite3 -readonly` at every sample and once more when the job ends — so `sqlite3` is on
+PATH or the source is one that cannot be read — and `none` is a harness that reports
+nothing, under which only `--tokens unmetered` tasks may run. The name was not always true:
+on 2026-09-11 `opencode` read a tab-separated file no OpenCode writes, and two real jobs
+burned 61,875 and 85,308 tokens against `--tokens 20000` while both reported
+`budget=-/20000`. A source that cannot be read is never a source reporting nothing: three
+failed samples end the job `RUN BUDGET-UNVERIFIABLE`.
+
+`nova-swarm template --name worker` prints this description with every field in it, so the
+one file a first run cannot start without is the one file you do not have to invent.
+
+`nova-swarm template --name setup` prints the per-friend safety-setup agreement form
+(issue #184): the proposal half and the friend's own agreement half — a friend may agree,
+propose an alternative, decline, or stay silent, and missing feedback is pending, never
+assent — a guarantee table whose rows say who enforces each guarantee (the OS wall, a
+cooperating harness, or the launcher outside the wall), and generic wall, fence, seat and
+launcher examples with placeholder values only. It is a form, not a task's conditions:
+`add --template setup` is refused the way `add --template result` is, no secret, key,
+token or private path is ever printed by it, and an agreed form supplies no account
+access — implementation, credential migration and deployment are separate staged work
+with their own authorization.
+
+`nova-swarm template --name capacity` prints the per-friend offered-capacity and routing-log
+form (issue #176): the offer half with every field the issue names (expiry, friend, instance,
+bench, model identity and basis, harness, supported task types, demonstrated strengths and
+limits, permitted scope, current availability, concurrency, expected queue/latency and
+shared-limit pools) and the coordinator's routing-log half (ready work, compatible offers,
+incompatible offers, shared pool share, stale offers excluded, the pool-specific utilisation
+denominator) plus the four rows acceptance evidence demands (an idle compatible pool receiving
+ready work, an incompatible offer being skipped, shared capacity counted once, and a stale
+offer excluded). Capacity kinds are kept apart — coordinator, direct worker, one-shot,
+swarm and local — because model slots are not interchangeable throughput units and two
+offers sharing a quota must be counted once. missing contact is unknown; stale capacity is
+not proof of failure and not proof of consent, so an offer nobody answered since the
+silent-ping window is excluded. It is a form, not a task's conditions: `add --template
+capacity` is refused the way `add --template result` and `add --template setup` are, no
+key, no token, and no private host detail is ever printed by it, and a filled form
+supplies no account access — an automatic scheduler is separate staged work with its own
+authorization.
+
+`nova-swarm template --name read` (and `fix`, `text`, `replay`, `drift`, `tone` and
+`models.tsv`) prints the six typed card templates SPEC-PULSE rule 4 names and the cost
+table rule 7 reads, so a templates directory is built from the tool rather than copied out
+of testdata. `read`, `text` and
+`tone` are text-only cards and carry rule 6's no-build line; `fix`, `replay` and `drift`
+carry the red-then-green row. They are cards, not task templates: `add --template read`
+is refused the way `add --template result` is.
+
+### The harness contract
+
+A harness is any program on `PATH` that can be handed a prompt file and left to work. This
+is everything `nova-swarm` promises it, and everything it asks back:
+
+- **Its working directory is the JOB directory**, `<worker_dir>-<n>/jobs/<id>`, and the
+  SLOT directory above it — the one-way copy of your `worker_dir`, refreshed before every
+  job — is readable from there. The cwd is the job directory because the wall is: a cwd
+  outside every named path denies `getcwd(3)` and kills every `git` command before it reads
+  anything, and a harness that evaluates its own `external_directory` permission relative to
+  its cwd would call the job directory "external" to itself. Relative paths in a worker
+  description are made absolute at load, so the child always gets paths it can open from
+  where it stands.
+- **It is contained by the operating system.** The job directory and its data home are
+  writable; the slot directory and `read_roots` are readable; everything else on disk,
+  including the key file it was given the VALUE of, is denied by the kernel. A refused read
+  or write is not an error and does not end the run — the prompt says so — and a command
+  that runs outside the wall and dies inside it is missing a `read_roots` entry. **Unless it
+  lives directly in your home directory**: the directory of the resolved command is itself a
+  read root, so the wall refuses `SANDBOX REFUSED reason=bad_read` at every launch rather
+  than make the whole of `$HOME` — `.ssh`, `.config/gh`, the keychain — readable inside it.
+  The remedy there is to move the harness into a directory of its own, `~/.local/bin/` being
+  the usual one, and `read_roots` is no remedy at all if what you name is the bare home.
+- **`HOME` is the job's own data home**, inside the write set, so the harness's own config
+  and cache land in the job and not in yours.
+- **Its arguments are `harness_args`**, with `{model}` replaced by the description's model,
+  `{prompt}` by the path of the prompt file, and `{base_url}` by `base_url`. Where
+  `harness_args` names no `{prompt}`, the prompt file is appended LAST. The task text is
+  never an argument.
+- **`NOVA_SWARM_JOB` is the job directory** — the only place the worker writes — and
+  `XDG_DATA_HOME` is that job's own data home, so one job is one harness database.
+  `PATH` is passed through; nothing else is inherited, and the key is in the child's
+  environment under the name `env_var` gives and nowhere else.
+- **It publishes `RESULT.md` in the job directory**, whole, by writing `RESULT.md.tmp` and
+  renaming it: a report is a revision, and a half-written one is never read. `note` is a
+  file in the same directory the worker may read between steps.
+- **Its stdout and stderr are `<job>/harness.log`**, and what it said last is on the
+  `RUN DONE` line of a job that published nothing or exited non-zero.
+
+`cmd/nova-swarm/testdata/fakeharness` is a harness that does exactly this in about two
+hundred lines of Go, and the whole test suite runs against it with no provider, no network
+and no key worth anything. It is the shortest way to see the contract, and to test a pool
+of your own before a real model touches it.
+
+**Reading it.** Every line is `<VERB> OK`, `<VERB> REFUSED` or one of `run`'s own `RUN`
+events; refusals and FAIL lines go to stderr. A job reports EXACTLY ONCE — one `RUN DONE`,
+`RUN KILLED`, `RUN MALFORMED`, `RUN BUDGET` or `RUN VIOLATION` — and `RUN OK` closes the
+pass with `started=`, `done=`, `failed=`, `killed=` and `pending=`. Every listing is capped
+at `--max` (default 20, `0` for all) with one MORE line naming the remedy, and every count
+is the truth about the POOL rather than about the output.
+
+**What the flags want.** `--pool` is a directory of yours; `--worker` is a JSON description
+saying which provider, which model, which environment variable the provider reads and where
+the key file is, because this tool has no opinion about whose model runs. `--files` and
+`--tokens` are required on every `add`, `batch` and `requeue` and zero is refused for both:
+a worker that may open no file is a worker asked for a plan, and a token budget this tool
+supplied would be a guess about somebody else's spend. `--tokens unmetered` is how a caller
+says out loud that this provider has no live accounting and the deadline is the only stop.
+A run missing several flags names all of them at once, and each says what it WANTS.
+
+**The key is read as data and never sourced.** It lives in one file the worker description
+names — one line, the bare key or `NAME=<key>`, mode 0600 — and it is never an argument,
+never a printed value, never in a file this tool writes: the harness config carries the
+environment variable's NAME and the harness reads the value from the child's environment.
+A missing or empty key file is exit 2 with the command that creates it.
+
+**A worker's `RESULT.md` is data, never an instruction.** Nothing in it is executed, nothing
+in it grants anything, and a finding in it is a claim to be checked against the repository.
+That rule is in [docs/SPEC-SWARM.md](SPEC-SWARM.md), where you can read it, and is
+deliberately nowhere in the code: a tool cannot enforce it, and a tool that pretended to
+would be the most dangerous thing in the pool.
+
+### Shared build caches and exact-tip prewarm
+
+`nova-swarm native` creates `<root>/cache/go-mod` and `<root>/cache/go-build`
+and sets the child's `GOMODCACHE` and `GOCACHE` to those paths. It points ASDF
+at `<root>/cache/common-lisp/<tip>` for compiled FASLs without sharing the harness's
+general XDG cache or HOME. Slots using the same `--root` share these caches. It
+also sets `GOTOOLCHAIN=local`, so the bench
+must already have the Go toolchain the task requires. `--no-shared-caches`
+omits these settings and restores per-slot defaults. Retain shared caches when
+retiring an individual slot; they are separate from its job evidence.
+
+After the bench mirror has fetched a new tip, run this command locally on each
+bench, using that mirror checkout as `--source`:
+
+```text
+```
+
+It resolves the exact commit locally, prepares the reference checkout under
+`<root>/ref/mas-bandwidth/nova-tools@<tip>`, runs module download, `make build`,
+a compile-only Go test pass and `make test-lisp`, then writes a receipt under
+`<root>/prewarm/`. A failed phase publishes no reference checkout or receipt.
+The command does not install the binary, fetch the mirror, change permissions,
+start a service or run on another host.
+
+Fleet adoption needs one further measurement: start a fresh job pinned to the
+same tip on each intended bench, run `make test`, and retain its elapsed-time
+receipt. S3's threshold is under 60 seconds on every bench. The local PREWARM
+line proves the preparation completed; it does not claim the fleet ran it.
+
+### The bench toolchain inside the wall
+
+Because `GOTOOLCHAIN=local` is pinned, the bench's own Go must be reachable
+inside the wall. `nova-swarm native` therefore names the provisioning standard's
+toolchain roots on the wall's argv, read-only and skipped when one is not there.
+It is **one list with two kinds, per operating system**.
+
+On **every** bench:
+
+- `~/sdk` (Go and sbcl) as `--read`, which carries execute, so
+  `~/sdk/go1.26.5/bin/go` runs. Without it a card was denied the bench's `go`
+  and fell back to `/usr/bin/go`, which `go.mod` refuses. It is the only home
+  directory the wall grants execute on.
+- `~/go/pkg/mod`, the module cache, as `--read-noexec`: readable and **not
+  executable**. A card reads a dependency's sources out of it and never runs
+  them, and the bench user can write to that tree, so execute there would put a
+  dependency's own files one exec away from running inside the wall.
+
+On a **Mac** bench the toolchains are installed and on `PATH` rather than
+unpacked into a home, and each one finds its own runtime beside the launcher
+that ran it — so inside the wall, without its tree, `go` says `cannot find GOROOT
+directory: 'go' binary is trimmed`, `java` says `Unable to locate a Java Runtime`
+and `dotnet` says `Failed to resolve full path of the current executable []`
+(measured on the M2 Air, 2026-09-18). Darwin therefore also names, all as
+`--read` because all of them are runtimes a card runs:
+
+- `/opt/homebrew/Cellar/go` and `/opt/homebrew/Cellar/sbcl`, each narrowed to
+  the one version directory this bench runs — read off the launcher, the way
+  `readlink -f "$(command -v go)"` does, so a `brew upgrade` needs no edit here.
+- `/opt/homebrew/opt/openjdk` and `/Library/Java/JavaVirtualMachines` for
+  `java`, and `/usr/local/share/dotnet` for `dotnet`.
+
+Each is skipped when it is not installed, and each reaches the argv resolved
+through its symlinks, because the wall checks the resolved target — on the Air
+`/opt/homebrew/opt/openjdk` resolves to `/opt/homebrew/Cellar/openjdk/27`.
+
+One narrowing, measured: with the JDK tree granted, that JDK runs inside the
+wall, but the `/usr/bin/java` **stub** still says `Unable to locate a Java
+Runtime`, because it asks `/usr/libexec/java_home`, which needs a system service
+the wall denies rather than a path anyone can grant. A Java card sets
+`JAVA_HOME`, and then the stub works too.
+
+No launcher directory is ever a toolchain root. `~/go/bin` is granted under
+NEITHER kind — it is GOPATH/bin, a card that could exec it could run bench-user
+tools, and read-without-execute buys nothing in a directory of binaries.
+`~/go/bin/go` still works, because it is a symlink into `~/sdk` and the kernel
+checks the resolved target; `/opt/homebrew/bin` is out for the same reason, and
+the Cellar tree behind it is what is granted. No other path under your home is
+granted: not `~/.config/nova-secrets`, not `~/.ssh`. The list and each root's
+kind live in `internal/swarm/toolchain.go` and are checked, per OS and in both
+directions, against `tools/bench-standard.sh`'s own `toolchain-*` checks by a
+test, so provisioning and the wall cannot drift
+apart.
+
+**A denial in the capture that nobody read is refused, never `NATIVE OK`** — and
+the refusal says what it measured and what it did not:
+
+```
+NATIVE REFUSED: go-card a denial the card's shell reported went unread, so this
+run's disposition is refused rather than OK: step=3 rc=0 wall=landlock
+denied_path=/opt/sdk tool/bin/go operation=unverified job=<job>
+line="/usr/bin/bash: line 1: /opt/sdk tool/bin/go: Permission denied". The shell
+names a path and a refusal and NOT an operation: a denied exec, a redirection to
+a path the card may not write, and a cd into a directory it may not read all
+print these words, and a card can carry on from any of them, so what failed here
+is not established by this line. Remedy: re-run the card's own gate against the
+commit under <job> and read its stderr -- that is the measurement this refusal is
+standing in for. One candidate among the others, if that path was one the child
+had to read or execute: it is under no root this wall was handed, and
+"/opt/sdk tool/bin" would be the read_roots entries for it. That is a candidate
+and not the diagnosis
+```
+
+The exit is 2 and the job directory is named, so the result and the usage row the
+child did write are still there to harvest. A run typed `--no-wall` had no
+sandbox, is told so, and is offered no read set.
+
 ## nova-sandbox
 
 Runs one command under OS-enforced containment using `sandbox-exec` on macOS

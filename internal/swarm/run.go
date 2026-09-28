@@ -49,7 +49,7 @@ type RunInput struct {
 	// once per job. The two are exclusive and the verb refuses both at once.
 	Sandbox   string
 	NoSandbox bool
-	// THE BENCH SLOT LEASE (deprecated/docs/SPEC-SWARM.md, "Bench slot leases"). When SlotsStore
+	// THE BENCH SLOT LEASE (docs/SPEC-SWARM.md, "Bench slot leases"). When SlotsStore
 	// names a store the dispatcher holds one lease per running task, labelled with the
 	// task id and released the moment the task ends; it never launches past SlotOwner's
 	// share. Both empty is the behaviour without a store, unchanged.

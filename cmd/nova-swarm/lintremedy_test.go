@@ -17,7 +17,7 @@ import (
 //
 // `nova-swarm help` says of every listing that it carries "one MORE line naming the remedy".
 // `lint` named the rule, quoted the line and stopped. And the rule TOKENS are in no document
-// a bench can reach: `docs/WORKER-CARDS.md` carries the practices in prose and names none of
+// a bench can reach: `deprecated/docs/WORKER-CARDS.md` carries the practices in prose and names none of
 // them, and a bench's clone of this repository is months behind its installed binary.
 //
 // So: every drift carries its remedy, and the binary can print the whole table on demand --

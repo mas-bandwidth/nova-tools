@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // The onboarding standard (ONBOARDING.md), pinned for this binary: the usage banner's
@@ -223,5 +224,98 @@ func runDocumentedSwarm(t *testing.T) onboarding.Runner {
 		var out, errb bytes.Buffer
 		code := run(s.Args, stdin, &out, &errb, time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC))
 		return onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, nil
+	}
+}
+
+// TestTheCommandReferenceFirstRunIsWhatTheToolPrints executes docs/CLI.md's
+// `### First run` block the same way: the reference is a document a stranger
+// pastes from, and its two commands (quickstart, then status) are run against a
+// pool this test makes; the documented `./pool` is that directory's spelling.
+func TestTheCommandReferenceFirstRunIsWhatTheToolPrints(t *testing.T) {
+	t.Parallel()
+
+	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "CLI.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines, err := onboarding.FirstRun(string(raw), "nova-swarm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps, err := onboarding.Steps("nova-swarm", lines)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) != 2 {
+		t.Fatalf("the `### First run` block of docs/CLI.md runs %d commands, want 2: quickstart and status", len(steps))
+	}
+	pool := filepath.Join(t.TempDir(), "pool")
+	for i := range steps {
+		steps[i].Args = localize(t, pool, steps[i].Args)
+	}
+	for _, p := range onboarding.Execute(steps, runDocumentedSwarm(t), onboarding.Path("./pool", pool)) {
+		t.Error(p)
+	}
+}
+
+// TestUsageBannerExamplesRunThroughTheComparator: the banner's `example:` block
+// is pasted top to bottom by a stranger, so each line is run, in order, through
+// the one comparator. quickstart and status are docs/CLI.md's `### First run`
+// sitting and are compared against it; template --name read-pr prints a
+// document, and is compared against the template package swarm holds.
+func TestUsageBannerExamplesRunThroughTheComparator(t *testing.T) {
+	t.Parallel()
+
+	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "CLI.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines, err := onboarding.FirstRun(string(raw), "nova-swarm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps, err := onboarding.Steps("nova-swarm", lines)
+	if err != nil {
+		t.Fatal(err)
+	}
+	documented := make(map[string]onboarding.Step, len(steps))
+	for _, s := range steps {
+		documented[strings.TrimPrefix(s.Line, "$ ")] = s
+	}
+	// The block, held by name: an example that quietly left the banner would
+	// otherwise leave this test running less than the stranger pastes.
+	linesOfTheBanner := []string{
+		"nova-swarm template --name read-pr",
+		"nova-swarm quickstart --pool ./pool",
+		"nova-swarm status --pool ./pool --max 20",
+	}
+	got := examples(t)
+	if strings.Join(got, "\n") != strings.Join(linesOfTheBanner, "\n") {
+		t.Fatalf("the banner's example block is not the sitting this test runs\nbanner:\n  %s\nwant:\n  %s",
+			strings.Join(got, "\n  "), strings.Join(linesOfTheBanner, "\n  "))
+	}
+	body, err := swarm.Template("read-pr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := filepath.Join(t.TempDir(), "pool")
+	norms := []onboarding.Norm{onboarding.Path("./pool", pool)}
+	run := runDocumentedSwarm(t)
+	for _, ex := range got {
+		step, ok := documented[ex]
+		if !ok {
+			if !strings.HasPrefix(ex, "nova-swarm template ") {
+				t.Fatalf("the banner example %q is in no `### First run` block of docs/CLI.md and prints no template", ex)
+			}
+			step = onboarding.Step{Line: "$ " + ex, Args: strings.Fields(ex)[1:], Want: strings.Split(strings.TrimSuffix(body, "\n"), "\n")}
+		}
+		step.Args = localize(t, pool, step.Args)
+		res, err := run(step)
+		if err != nil {
+			t.Fatalf("the banner example\n  %s\ncould not be run: %v", ex, err)
+		}
+		for _, p := range onboarding.Compare(step, res, norms) {
+			t.Error(p)
+		}
 	}
 }

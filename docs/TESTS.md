@@ -429,6 +429,156 @@ MEMORY NOTE this verb asserts nothing and never exits 1: it hands you k receipts
 MEMORY NOTE a hit in a dated log class is evidence the event was recorded, not that the lesson was banked — the class on each receipt is the distinction
 ```
 
+## nova-swarm
+
+Fixture: a pool this tool makes in `t.TempDir()`, `cmd/nova-swarm/testdata/fakeharness`, a fake harness on `PATH` so the dispatcher is tested end to end with no provider, and the WALL every job runs inside: `nova-sandbox` itself, built from this repository into the same directory, with `cmd/nova-swarm/testdata/fakesandbox` beside it for the seam tests that must run on a platform whose sandbox body is not built.
+
+Every contract test in `cmd/nova-swarm` runs its jobs **inside the real wall** on darwin (`--sandbox <the built binary>`) and takes this tool's one loud workaround (`--no-sandbox`, SPEC-SWARM; `nova-sandbox` has no such flag) where no body is built, which is the argv a reader sees in the test's own output.
+
+Platform: recorded on a machine whose wall probe fails (containment broken) — the `RUN REFUSED` and `RUN UNSANDBOXED` runs below are that machine's, and it is the last machine a friend should be reading a quickstart on; a bench whose wall proves itself (Linux landlock, say) prints `RUN POOL`, `RUN OK` and `RUN NOTE` instead.
+
+### The wall at the launch seam
+
+```
+$ nova-swarm run --pool ./pool --workers 1 --hours 0.25 --worker ./worker.json
+RUN POOL workers=1 hours=0.25 worker=fake-1 model=fake-model auto_retry=true pool=./pool
+RUN REFUSED reason=sandbox_probe: the wall did not prove itself on this machine, so no worker started: PROBE REFUSED reason=check: write_outside expected deny and got allow
+
+$ nova-swarm run --pool ./pool --workers 1 --hours 0.25 --worker ./worker.json --no-sandbox
+RUN POOL workers=1 hours=0.25 worker=fake-1 model=fake-model auto_retry=true pool=./pool
+RUN UNSANDBOXED id=20260912T0146Z-task-c44c5e slot=1: no OS containment; every read and write this job makes is yours
+RUN START id=20260912T0146Z-task-c44c5e slot=1 pid=31027 pgid=31027 started=2026-09-12T01:46:02Z deadline=30s tokens=100000 job=./worker-home-1/jobs/20260912T0146Z-task-c44c5e
+```
+
+Inside the wall, on darwin, the job's own words from `harness.log` — a write outside the job directory and a read of the key file, both denied by the kernel, with the key's VALUE arriving in the environment all the same:
+
+```
+fake harness: the key is present, length 28
+fake harness: touch /…/outside-every-list: open /…/outside-every-list: operation not permitted
+fake harness: cat /…/key: open /…/key: operation not permitted
+```
+
+
+### The budget word on the native route
+
+Every `nova-swarm native` launch carries `--tokens <n>` or `--tokens unmetered`
+(SPEC-SWARM rule 13d, issue #1545). Recorded against the same fake harness, with the paths
+abridged:
+
+```
+$ nova-swarm native --harness ./fakeharness --model fake/fake-model --card ./card.md --slot ./root/slot-1 --root ./root --deadline 30s --no-wall --slots-store ./store --owner me
+nova-swarm native: --tokens is required; it wants a token budget for this job, or the word `unmetered` when this provider has no live accounting and the deadline is the only stop; refusing to guess
+
+$ nova-swarm native --tokens 0 --harness ./fakeharness --model fake/fake-model --card ./card.md --slot ./root/slot-1 --root ./root --deadline 30s --no-wall --slots-store ./store --owner me
+nova-swarm native: --tokens is a budget and is at least 1, got 0; `unmetered` is how a caller says there is no accounting
+
+$ nova-swarm native --tokens unmetered --harness ./fakeharness --model fake/fake-model --card ./card.md --slot ./root/slot-1 --root ./root --deadline 30s --no-wall --slots-store ./store --owner me
+! NATIVE NOTE: no harness store: looked at ./root/slot-1/data/opencode/opencode.db and ./root/slot-1/data/.local/share/opencode/opencode.db
+NATIVE OK label=card job=./root/slot-1/jobs/card tmp=./root/slot-1/tmp/card rc=0 wall=0.18s sandbox=none-by-flag card_sha256=ab6468b200da0b3d5a0175e863d1b1cf772f010abdf4fe70b3ea39926f3fc826 binary_sha256=13c788f4813d7d81152460f6a16d45123314342ce0269f3fb43e6c8438192852 config=68719609 harness=ok budget=unmetered usage=none reason=no-store path=./root/slot-1/data/opencode/opencode.db
+```
+
+Both refusals exit 2 and make no directory: `<slot>/jobs`, `<slot>/data` and `<slot>/tmp`
+do not exist afterwards. `budget=` follows `harness=` on every `NATIVE OK` line.
+
+### A budget nothing can observe, refused before anything is made
+
+A budget wants a source this tool can read (rule 13d). The source is the worker
+description's `usage`, and `opencode` — read with `sqlite3` — when there is no `--worker`:
+
+```
+$ nova-swarm native --tokens 100000 --worker ./usage-none.json --harness ./fakeharness --model fake/fake-model --card ./card.md --slot ./root/slot-1 --root ./root --deadline 30s --no-wall --slots-store ./store --owner me
+! NATIVE REFUSED: a numeric --tokens wants a usage source this tool can read, and the worker description says `usage: none`, which reports nothing; a budget nothing can observe is a promise the tool cannot keep, so this launch is refused rather than run under a cap that would never fire. Give the description `usage: opencode`, or launch with --tokens unmetered and no max_turns or max_cache_read
+
+$ PATH=./empty nova-swarm native --tokens 100000 --harness ./fakeharness --model fake/fake-model --card ./card.md --slot ./root/slot-1 --root ./root --deadline 30s --no-wall --slots-store ./store --owner me
+! NATIVE REFUSED: a numeric --tokens is read from the harness's own database with `sqlite3 -readonly`, and sqlite3 is on no PATH entry of this bench; a budget nothing can observe is a promise the tool cannot keep, so this launch is refused rather than run under a cap that would never fire. Install sqlite3 on this bench, or launch with --tokens unmetered and no max_turns or max_cache_read
+```
+
+The card's own budget is read from the same source, so it meets the same refusal whatever
+`--tokens` says — `unmetered` included:
+
+```
+$ nova-swarm native --tokens unmetered --worker ./usage-none-max-turns.json --harness ./fakeharness --model fake/fake-model --card ./card.md --slot ./root/slot-1 --root ./root --deadline 30s --no-wall --slots-store ./store --owner me
+! NATIVE REFUSED: this worker description's max_turns wants a usage source this tool can read, and the worker description says `usage: none`, which reports nothing; a budget nothing can observe is a promise the tool cannot keep, so this launch is refused rather than run under a cap that would never fire. Give the description `usage: opencode`, or launch with --tokens unmetered and no max_turns or max_cache_read
+```
+
+`--tokens unmetered` with no such description runs under both conditions, as it does today.
+After every refusal above, `<slot>` is empty: nothing was made.
+
+### What the line reports against the number
+
+The fake harness writes a **real sqlite database** in the harness's own shape
+(`FAKE-USAGE-DB`, the five token counts in rule 12's order then `usd`, with `-` for a type
+the provider did not report). Under `--tokens 50000`, the `NATIVE OK` line's `budget=`:
+
+```
+# a harness that reported nothing
+harness=ok budget=-/50000
+# only tokens_in
+harness=ok budget=900+/50000
+# every column a reported zero
+harness=ok budget=0/50000
+# tokens_in 100, tokens_out 50, cache_write 9000, cache_read 90000, reasoning 7
+harness=ok budget=157/50000
+```
+
+The last is the whole of the sum rule: `tokens_in + tokens_out + reasoning` is 157, and the
+99,000 of cache stands in the usage row and never in the budget. A reported `0` is a
+measurement and prints `0/50000` — never `unmetered`. `--tokens unmetered` prints the word
+whatever the harness reported.
+
+### The stop
+
+A card that publishes a report, spends past `--tokens 100000` and then declines the
+terminate, under `--deadline 120s` so that the budget is what ends it:
+
+```
+$ nova-swarm native --tokens 100000 --usage-interval 1s … --deadline 120s
+NATIVE OK label=card job=./root/slot-1/jobs/card tmp=./root/slot-1/tmp/card rc=-1 wall=5.05s sandbox=none-by-flag card_sha256=8e1f… binary_sha256=ad88… config=ffdf555f harness=ok budget=100000/100000 stopped=tokens
+```
+
+Exit 1. The launch's own row carries `end=budget` and a dash for `rc`, while the line prints
+`rc=-1`:
+
+```
+$ cut -f1-8 ./root/slot-1/jobs/card/usage.tsv
+job	attempt	started	ended	end	rc	provider	model
+card	1	2026-09-19T13:16:05Z	2026-09-19T13:16:10Z	budget	-	fake	fake-model
+```
+
+And what the card published is kept byte for byte — the tool writes nothing into it:
+
+```
+$ grep -c PROMPT-DEFECT ./root/slot-1/jobs/card/RESULT.md
+0
+$ grep "findings:" ./root/slot-1/jobs/card/RESULT.md
+findings: 2
+```
+
+### The sample interval's floor and ceiling
+
+```
+$ nova-swarm native --tokens unmetered --usage-interval 900ms … --deadline 30s
+! nova-swarm native: --usage-interval is at least 1s, got 900ms; three failed reads in a row end a card budget-unverifiable, and under a second that is a moment's bad luck rather than a source that has stopped answering
+
+$ nova-swarm native --tokens unmetered --usage-interval 30s … --deadline 30s
+! nova-swarm native: --usage-interval is shorter than --deadline, got 30s against a deadline of 30s; at or past the deadline no sample would ever run and the budget could not fire
+```
+
+`1s` exactly is accepted — the floor is inclusive — and the ceiling is exclusive.
+
+### First run
+
+```
+$ nova-swarm quickstart --pool ./pool
+QUICKSTART OK pool=./pool pending=0 next=add,run,triage
+QUICKSTART NOTE a task is a file: nova-swarm add --pool ./pool --task <file> --files <n> --tokens <n>
+QUICKSTART NOTE a worker description says whose model runs: nova-swarm run --pool ./pool --workers <n> --hours <h> --worker <file>
+QUICKSTART NOTE the conditions are worth more than the model: nova-swarm template --name read-pr
+
+$ nova-swarm status --pool ./pool --max 20
+STATUS OK pending=0 running=0 done=0 failed=0 slots=0/0 quarantined=0
+```
+
 ## nova-tokens
 
 Fixture: `cmd/nova-tokens/testdata/example-bench` (copied into a temp directory first, because a first run WRITES; the bus lane is `example.com`).

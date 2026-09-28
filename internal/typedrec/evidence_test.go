@@ -33,7 +33,7 @@ func TestSpecSwarmContractMatches(t *testing.T) {
 	t.Parallel()
 
 	root := findRoot(t)
-	specPath := filepath.Join(root, "deprecated", "docs", "SPEC-SWARM.md")
+	specPath := filepath.Join(root, "docs", "SPEC-SWARM.md")
 	data, err := os.ReadFile(specPath)
 	if err != nil {
 		t.Fatalf("read SPEC-SWARM.md: %v", err)

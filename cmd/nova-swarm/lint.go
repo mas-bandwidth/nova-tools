@@ -18,7 +18,7 @@ import (
 // clone step that enters the wrong directory, a `../scratch` the wall refuses, a missing red
 // test, no deadline. `lint --card` reads the card mechanically -- no model, no probe, one
 // file -- and names each defect by check, line and excerpt before any spend. The checks are
-// the shape the card deaths taught (docs/WORKER-CARDS.md practices 17, 18, 23, 25).
+// the shape the card deaths taught (deprecated/docs/WORKER-CARDS.md practices 17, 18, 23, 25).
 
 // cardMaxBytes is the ADVISORY ceiling a card is written within: past it a model stops
 // reading the card in one window, so the lint says so before any spend -- and nothing is
@@ -42,7 +42,7 @@ var cardLintAdvisory = map[string]bool{"size": true}
 // LINT OK line so a reader knows how much of the card was actually checked, and it is the
 // size of cardLintRemedies below: a check with no remedy is a red test, never a judgement.
 //
-// It counts the twelve shape rules of docs/WORKER-CARDS.md:23-36, the four typed-header
+// It counts the twelve shape rules of deprecated/docs/WORKER-CARDS.md:23-36, the four typed-header
 // tokens SPEC-TOOLWORK.md §5 rule 1 adds -- `kind-declared`, `paths-declared`, `test-named`
 // and `paused` -- whose rules live in internal/swarm/lintheader.go, beside a note on the
 // gate parser they have to agree with (internal/pulse/cardheader.go, #1721 at f927bccc),
@@ -64,7 +64,7 @@ const cardLintChecks = 22
 // `nova-swarm help` says of every listing that it carries "one MORE line naming the remedy".
 // This one named the rule, quoted the line and stopped.
 //
-// AND THE RULE TOKENS WERE WRITTEN DOWN NOWHERE THE BENCH COULD READ. docs/WORKER-CARDS.md
+// AND THE RULE TOKENS WERE WRITTEN DOWN NOWHERE THE BENCH COULD READ. deprecated/docs/WORKER-CARDS.md
 // carries the practices in prose and names none of these tokens, and a bench's clone of this
 // repository is months behind the binary installed on it -- `grep -rn result-first` over the
 // clone on vision found nothing at all. So the remedies live HERE, in the tool, beside the
