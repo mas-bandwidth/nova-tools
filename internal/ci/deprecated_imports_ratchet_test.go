@@ -2,9 +2,6 @@ package ci
 
 import (
 	"fmt"
-	"go/parser"
-	"go/token"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -88,50 +85,26 @@ func TestLivingPackagesDoNotImportDroppedDeprecatedPackages(t *testing.T) {
 		Key:     parseDeprecatedImportEdgeKey,
 	})
 
-	fset := token.NewFileSet()
+	tree := repoTree(t)
 	measured := map[string]bool{}
 
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
+	for _, f := range tree.Files {
+		if !f.Go || f.AST == nil {
+			continue
 		}
-		if d.IsDir() {
-			name := d.Name()
-			if name == ".git" || name == "vendor" || name == "testdata" || path == filepath.Join(root, "deprecated") {
-				return filepath.SkipDir
-			}
-			rel, err := filepath.Rel(root, path)
-			if err == nil {
-				relSlash := filepath.ToSlash(rel)
-				if relSlash == "deprecated" || strings.HasPrefix(relSlash, "deprecated/") {
-					return filepath.SkipDir
-				}
-			}
-			return nil
+		if f.HasDirNamed(".git") || f.HasDirNamed("vendor") || f.HasDirNamed("testdata") || f.HasDirNamed("deprecated") {
+			continue
 		}
-		if !strings.HasSuffix(d.Name(), ".go") {
-			return nil
-		}
-
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		relSlash := filepath.ToSlash(rel)
+		relSlash := f.Rel
 		pkgPath := filepath.ToSlash(filepath.Dir(relSlash))
 		if pkgPath == "." {
 			pkgPath = ""
 		}
 		if isDroppedDeprecated(lt, pkgPath) {
-			return nil
+			continue
 		}
 
-		file, err := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
-		if err != nil {
-			t.Fatalf("parse %s: %v", relSlash, err)
-		}
-
-		for _, spec := range file.Imports {
+		for _, spec := range f.AST.Imports {
 			if spec.Path == nil {
 				continue
 			}
@@ -144,10 +117,6 @@ func TestLivingPackagesDoNotImportDroppedDeprecatedPackages(t *testing.T) {
 				measured[edge] = true
 			}
 		}
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walk source tree: %v", err)
 	}
 
 	res := allowlist.Check(t, allow, measured)
