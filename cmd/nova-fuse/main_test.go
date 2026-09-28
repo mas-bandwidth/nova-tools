@@ -1908,3 +1908,54 @@ func TestLockdownOnSymlinkedBoxRefuses(t *testing.T) {
 	}
 }
 
+// TestLockdownOnParentSymlinkedBoxRefuses asserts that lockdown on a box path
+// whose parent directory is a symlink is refused. The target file is unchanged.
+func TestLockdownOnParentSymlinkedBoxRefuses(t *testing.T) {
+	t.Parallel()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: symlink creation requires special privileges")
+	}
+
+	root := t.TempDir()
+	outside := filepath.Join(root, "outside")
+	intended := filepath.Join(root, "intended")
+	if err := os.Mkdir(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(intended, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	realBox := filepath.Join(outside, "fuses.json")
+	if err := fuse.WriteBox(realBox, fuse.Box{}); err != nil {
+		t.Fatalf("WriteBox failed: %v", err)
+	}
+	before, err := os.ReadFile(realBox)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+
+	linkdir := filepath.Join(intended, "linkdir")
+	if err := os.Symlink(outside, linkdir); err != nil {
+		t.Fatal(err)
+	}
+	symlinkedBox := filepath.Join(linkdir, "fuses.json")
+
+	now := nowish()
+	code, out, errOut := capture(t, []string{"lockdown", "--box", symlinkedBox, "parent symlink lockdown test"}, now)
+	if code != 1 {
+		t.Fatalf("lockdown on box in symlinked parent dir exit = %d, want 1\nstdout: %q\nstderr: %q", code, out, errOut)
+	}
+	if !strings.Contains(errOut, "LOCKDOWN FAIL") || !strings.Contains(errOut, "symlink") {
+		t.Errorf("stderr = %q, want LOCKDOWN FAIL naming symlink", errOut)
+	}
+
+	after, err := os.ReadFile(realBox)
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("target bytes changed:\nbefore: %s\nafter: %s", before, after)
+	}
+}
+
