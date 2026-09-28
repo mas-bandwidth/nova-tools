@@ -5,6 +5,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -125,8 +128,82 @@ func TestFnVerbsLogInAsTheACLUser(t *testing.T) {
 	if code, out, errOut = fnRun("fn", "check", "--addr", addr, "--user", "fnuser"); code != 0 || !strings.HasPrefix(out, "OK nova_sprint sha="+sha+" loaded="+sha+" want="+sha+" ") || errOut != "" {
 		t.Fatalf("fn check --user fnuser: exit %d %q %q; want OK", code, out, errOut)
 	}
-	// With no user the default user is used, and it is off.
-	if code, _, errOut = fnRun("fn", "check", "--addr", addr); code != 2 || !strings.Contains(errOut, "NOAUTH") && !strings.Contains(errOut, "WRONGPASS") {
-		t.Fatalf("fn check with no user on a store whose default user is off: exit %d %q; want exit 2 naming the refused login", code, errOut)
+	// With no user the default user is used, and it is off: the store
+	// answers, with a refusal, so the exit is 1.
+	if code, _, errOut = fnRun("fn", "check", "--addr", addr); code != 1 || !strings.Contains(errOut, "NOAUTH") && !strings.Contains(errOut, "WRONGPASS") {
+		t.Fatalf("fn check with no user on a store whose default user is off: exit %d %q; want exit 1 naming the refused login", code, errOut)
 	}
+}
+
+// TestFnLoadNamesTheLibraryThatHoldsAFunction: another library on the store
+// registers ns_ping, so the store refuses nova_sprint. fn load is one FAILED
+// line, exit 1, with one remedy, which names that library and the function
+// and says nothing of credentials; the store holds what it held.
+func TestFnLoadNamesTheLibraryThatHoldsAFunction(t *testing.T) {
+	t.Parallel()
+	addr := testredis.Start(t)
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = c.Close() })
+	ctx := context.Background()
+	if err := c.FunctionLoad(ctx, "#!lua name=other_lib\nredis.register_function('ns_ping', function() return 1 end)\n").Err(); err != nil {
+		t.Fatal(err)
+	}
+	d := realDeps()
+	d.getenv = func(string) string { return "" }
+	var out, errb bytes.Buffer
+	code := run([]string{"fn", "load", "--addr", addr}, &out, &errb, d)
+	line := errb.String()
+	if code != 1 || out.Len() != 0 || strings.Count(line, "\n") != 1 || strings.Count(line, "remedy") != 1 ||
+		!strings.Contains(line, "function ns_ping is registered by library other_lib") ||
+		!strings.Contains(line, `remedy="a function name belongs to one library and library other_lib registers ns_ping: `) ||
+		strings.Contains(line, "password") {
+		t.Fatalf("fn load over other_lib's ns_ping: exit %d stdout %q stderr %q; want exit 1 and one FAILED line with one remedy naming other_lib", code, out.String(), line)
+	}
+	libs, err := c.FunctionList(ctx, redis.FunctionListQuery{}).Result()
+	if err != nil || len(libs) != 1 || libs[0].Name != "other_lib" {
+		t.Fatalf("the store after the refused load holds %v (%v); want other_lib alone", libs, err)
+	}
+}
+
+// TestFnFailureIsOneLineFromTheBinary runs nova-redis's main() in a child
+// process (this test binary, re-entered through TestNovaRedisMain) against a
+// port nothing listens on. What the process writes to its own stderr is one
+// FAILED line, exit 2: go-redis's pool log, which goes to the process's
+// stderr and not to run()'s writer, is silenced by the production dial.
+func TestFnFailureIsOneLineFromTheBinary(t *testing.T) {
+	t.Parallel()
+	addr := "127.0.0.1:" + testredis.FreePort(t) // taken and closed: nothing listens
+	cmd := exec.Command(os.Args[0], "-test.run=^TestNovaRedisMain$", "--", "fn", "check", "--addr", addr)
+	cmd.Env = append(os.Environ(), mainEnv+"=1")
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	err := cmd.Run()
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 2 {
+		t.Fatalf("the child ended with %v; want exit 2 (stderr %q)", err, errb.String())
+	}
+	if out.Len() != 0 || strings.Count(errb.String(), "\n") != 1 || !strings.HasPrefix(errb.String(), "FAILED nova_sprint sha=") {
+		t.Fatalf("stdout %q stderr %q; want no stdout and exactly one FAILED line on stderr", out.String(), errb.String())
+	}
+}
+
+// mainEnv, set to 1, makes TestNovaRedisMain be nova-redis's main().
+const mainEnv = "NOVA_REDIS_TEST_MAIN"
+
+// TestNovaRedisMain is nova-redis's main() with the arguments after "--",
+// when mainEnv is 1; otherwise it returns at once. Only
+// TestFnFailureIsOneLineFromTheBinary runs it that way.
+func TestNovaRedisMain(t *testing.T) {
+	t.Parallel()
+	if os.Getenv(mainEnv) != "1" {
+		return
+	}
+	args := os.Args
+	for i, a := range args {
+		if a == "--" {
+			args = args[i+1:]
+			break
+		}
+	}
+	os.Exit(run(args, os.Stdout, os.Stderr, realDeps()))
 }

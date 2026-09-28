@@ -12,12 +12,15 @@ package main
 //     LOADED|UNCHANGED|REPLACED nova_sprint sha=<digest> [was=<digest>] store=<addr>.
 //   - fn check is redisfn's Check and changes nothing: OK (exit 0), STALE or
 //     MISSING (exit 1): OK|STALE|MISSING nova_sprint sha=<digest>
-//     loaded=<digest|none> want=<digest> store=<addr>; or FAILED when the
-//     store could not be read (exit 2). Every line holds one sha=, this
-//     binary's digest.
+//     loaded=<digest|none> want=<digest> store=<addr>.
 //
-// Both log in as --user (default NOVA_REDIS_USER) with NOVA_REDIS_PASSWORD,
-// through the one dial seam every nova-redis verb uses.
+// A failure of either is one FAILED line on stderr, with the remedy for its
+// cause: exit 1 when the store answered with a refusal, exit 2 when no
+// answer came. Every line holds one sha=, this binary's digest.
+//
+// Both log in as --user (default NOVA_REDIS_USER) with the password in the
+// variable --password-env names, through the one dial seam every nova-redis
+// verb uses.
 //
 // A tool on its way to an FCALL never calls these: it calls redisfn's
 // LoadMissing, which never replaces a library (nova-tools #3620). fn load is
@@ -29,6 +32,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strings"
+
+	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -58,7 +64,6 @@ func cmdFn(args []string, stdout, stderr io.Writer, d deps) int {
 	if err := store.check(d); err != nil {
 		return refuse(stderr, " fn "+sub, err.Error())
 	}
-	addr := store.addr
 	lib := library()
 	want, err := lib.Digest()
 	if err != nil {
@@ -66,15 +71,27 @@ func cmdFn(args []string, stdout, stderr io.Writer, d deps) int {
 	}
 	client := store.dial(d)
 	defer func() { _ = client.Close() }()
-	at := oneline.Field(*addr)
+	at := oneline.Field(*store.addr)
 	ctx := context.Background()
+	failed := func(err error) int {
+		cause := oneline.Err(err)
+		var collision *redisfn.CollisionError
+		if errors.As(err, &collision) {
+			// The collision's error ends in its own remedy; the line keeps one,
+			// remedy=, which names the holder and the command.
+			cause, _, _ = strings.Cut(cause, "; remedy: ")
+		}
+		fmt.Fprintf(stderr, "FAILED %s sha=%s store=%s err=%s remedy=%q\n", oneline.Field(lib.Name), want, at, cause, remedy(sub, err, store))
+		if answered(err) {
+			return 1
+		}
+		return 2
+	}
 
 	if sub == "load" {
 		r, err := lib.Ensure(ctx, client)
 		if err != nil {
-			fmt.Fprintf(stderr, "FAILED %s sha=%s store=%s err=%s remedy=%q\n", oneline.Field(lib.Name), want, at, oneline.Err(err),
-				"check --addr, --user ("+UserEnv+") and "+PasswordEnv+", and that the user may FUNCTION LIST and FUNCTION LOAD; then nova-redis fn check --addr "+*addr)
-			return 1
+			return failed(err)
 		}
 		fmt.Fprintf(stdout, "%s store=%s\n", r, at)
 		return 0
@@ -96,10 +113,57 @@ func cmdFn(args []string, stdout, stderr io.Writer, d deps) int {
 			word = "MISSING"
 		}
 		fmt.Fprintf(stdout, "%s %s sha=%s loaded=%s want=%s store=%s remedy=%q\n", word, oneline.Field(lib.Name), want, loaded, want, at,
-			"nova-redis fn load --addr "+*addr+" puts this binary's library on the store")
+			"nova-redis fn load "+store.flags()+" puts this binary's library on the store")
 		return 1
 	}
-	fmt.Fprintf(stderr, "FAILED %s sha=%s store=%s err=%s remedy=%q\n", oneline.Field(lib.Name), want, at, oneline.Err(err),
-		"check --addr, --user ("+UserEnv+") and "+PasswordEnv+", and that the user may FUNCTION LIST")
-	return 2
+	return failed(err)
+}
+
+// answered is true when the store itself replied to the command that failed:
+// a refusal (NOPERM, WRONGPASS, a library it would not take, a function name
+// another library holds). It is false when no answer came: the store could
+// not be reached, or the wait ended. A refusal exits 1, no answer exits 2.
+func answered(err error) bool {
+	var collision *redisfn.CollisionError
+	if errors.As(err, &collision) {
+		return true
+	}
+	var reply redis.Error
+	return errors.As(err, &reply)
+}
+
+// remedy is the one next step for a failure, by its cause.
+func remedy(sub string, err error, store login) string {
+	var collision *redisfn.CollisionError
+	if errors.As(err, &collision) {
+		var held []string
+		for _, h := range collision.Held {
+			if h.Holder != "" {
+				held = append(held, "library "+h.Holder+" registers "+h.Function)
+			} else {
+				held = append(held, "another library registers "+h.Function)
+			}
+		}
+		return "a function name belongs to one library and " + strings.Join(held, ", ") +
+			": load the version of that library that no longer registers it, or delete it, then nova-redis fn load " + store.flags()
+	}
+	needs := "FUNCTION LIST"
+	if sub == "load" {
+		needs = "FUNCTION LIST and FUNCTION LOAD"
+	}
+	var reply redis.Error
+	if errors.As(err, &reply) {
+		text := reply.Error()
+		if strings.HasPrefix(text, "NOPERM") || strings.HasPrefix(text, "WRONGPASS") || strings.HasPrefix(text, "NOAUTH") {
+			return "log in as a user that may run " + needs + ": check --user (" + UserEnv + ") and the password in " + *store.passwordEnv + ", then nova-redis fn " + sub + " " + store.flags()
+		}
+		if sub == "load" {
+			return "the store would not take this binary's library; err names the file and line: fix the Lua and rebuild, then nova-redis fn load " + store.flags()
+		}
+		return "the store refused " + needs + "; read err, then nova-redis fn check " + store.flags()
+	}
+	if sub == "load" {
+		return "no answer, so the store may hold either library: check that the store at " + *store.addr + " is up and --addr is right, then nova-redis fn check " + store.flags()
+	}
+	return "no answer: check that the store at " + *store.addr + " is up and --addr is right, then nova-redis fn check " + store.flags()
 }

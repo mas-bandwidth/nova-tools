@@ -23,6 +23,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -36,8 +37,14 @@ import (
 
 var version string
 
-// PasswordEnv names the variable auth is read from; never an argument.
+// PasswordEnv names the variable the password is read from when neither
+// --password-env nor PasswordEnvEnv names another; never an argument.
 const PasswordEnv = "NOVA_REDIS_PASSWORD"
+
+// PasswordEnvEnv names the variable that names the password's variable when
+// --password-env is not given, so a seat whose secret has its own name
+// (nova-secrets exec --only <NAME>) needs no copy of it.
+const PasswordEnvEnv = "NOVA_REDIS_PASSWORD_ENV"
 
 // UserEnv names the ACL user a verb logs in as when --user is not given.
 // With neither, the verb logs in as the store's default user.
@@ -55,28 +62,33 @@ const usage = `nova-redis — owns the local Redis instance and its scratch verb
 
 usage:
   nova-redis serve  --bind <addr>[,<addr>...] --port <port> --dir <store-dir>
-  nova-redis spill  --addr <host:port> [--user <name>] --owner <owner> --name <name> --ttl <duration> --value <text>
-  nova-redis recall --addr <host:port> [--user <name>] --owner <owner> --name <name>
-  nova-redis fn load  --addr <host:port> [--user <name>]
-  nova-redis fn check --addr <host:port> [--user <name>]
+  nova-redis spill  --addr <host:port> [--user <name>] [--password-env <NAME>] --owner <owner> --name <name> --ttl <duration> --value <text>
+  nova-redis recall --addr <host:port> [--user <name>] [--password-env <NAME>] --owner <owner> --name <name>
+  nova-redis fn load  --addr <host:port> [--user <name>] [--password-env <NAME>]
+  nova-redis fn check --addr <host:port> [--user <name>] [--password-env <NAME>]
   nova-redis version
   nova-redis help
 
-The key is <owner>:<name>. Both verbs refuse a missing or empty --addr, or
-one without a host and a port (exit 2), before anything is dialled. spill
+The key is <owner>:<name>. Every verb that dials a store (spill, recall, fn
+load, fn check) refuses a missing or empty --addr, or one without a host and
+a port (exit 2), before anything is dialled. spill
 refuses a missing owner or a missing, zero or negative TTL (exit 2) and
 writes nothing; an unbounded key is a bug.
 recall exits 1 on a missing or expired key: scratch is allowed to miss.
-Auth is read from NOVA_REDIS_PASSWORD, never from an argument. --user names
-the ACL user to log in as (default NOVA_REDIS_USER; with neither, the store's
-default user); a user with an empty NOVA_REDIS_PASSWORD is refused (exit 2)
-before anything is dialled.
+The password is read from the variable --password-env names (default
+NOVA_REDIS_PASSWORD_ENV, else NOVA_REDIS_PASSWORD), never from an argument.
+--user names the ACL user to log in as (default NOVA_REDIS_USER; with
+neither, the store's default user). A --password-env that is not a variable
+name, a user name with whitespace, and a user whose password variable is
+empty are refused (exit 2) before anything is dialled.
 fn load puts the nova_sprint function library this binary embeds on the store
 unless the store holds exactly its code (LOADED, UNCHANGED or REPLACED, with
-its digest; exit 1 on a failure). fn check changes nothing: OK (exit 0),
-STALE or MISSING (exit 1) with the store's digest and this binary's, FAILED
-when the store could not be read (exit 2). fn load is for the one place that
-deploys: it replaces other code under the library's name.
+its digest). fn check changes nothing: OK (exit 0), STALE or MISSING (exit 1)
+with the store's digest and this binary's. A failure of either is one FAILED
+line on stderr with the remedy for its cause: exit 1 when the store answered
+with a refusal (NOPERM, WRONGPASS, a library it would not take), exit 2 when
+no answer came. fn load is for the one place that deploys: it replaces other
+code under the library's name.
 serve runs redis-server in the foreground, bound only to loopback and tailnet
 addresses (100.64.0.0/10, fd7a:115c:a1e0::/48); --bind has no default and a
 wildcard, public or LAN address is refused (exit 2). The password reaches
@@ -267,38 +279,80 @@ var (
 	errUnbounded = errors.New("unbounded")
 )
 
-// login is the store a verb dials: --addr, and --user with UserEnv as its
-// default. The password is PasswordEnv's, never an argument. Every verb that
-// dials a store takes these flags and dials through d.dial, the one seam.
-type login struct{ addr, user *string }
+// login is the store a verb dials: --addr, --user with UserEnv as its
+// default, and --password-env naming the variable that holds the password
+// (PasswordEnvEnv, else PasswordEnv). The password is never an argument.
+// Every verb that dials a store takes these flags and dials through d.dial,
+// the one seam.
+type login struct {
+	fs                      *flag.FlagSet
+	addr, user, passwordEnv *string
+}
 
 func loginFlags(fs *flag.FlagSet, d deps) login {
+	passwordEnv := d.getenv(PasswordEnvEnv)
+	if passwordEnv == "" {
+		passwordEnv = PasswordEnv
+	}
 	return login{
-		addr: fs.String("addr", "", "store address"),
-		user: fs.String("user", d.getenv(UserEnv), "ACL user"),
+		fs:          fs,
+		addr:        fs.String("addr", "", "store address"),
+		user:        fs.String("user", d.getenv(UserEnv), "ACL user"),
+		passwordEnv: fs.String("password-env", passwordEnv, "the variable that holds the password"),
 	}
 }
 
+// from names where a flag's value came from: the flag, or the variable that
+// is its default.
+func (l login) from(flagName, env string) string {
+	given := false
+	l.fs.Visit(func(f *flag.Flag) { given = given || f.Name == flagName })
+	if given {
+		return "--" + flagName
+	}
+	return env
+}
+
+var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
 // check refuses, before anything is dialled, an address the verb would have
-// to guess at and a user it could not log in as.
+// to guess at and a login it could not make. Each refusal names where the
+// bad value came from.
 func (l login) check(d deps) error {
 	if err := validAddr(*l.addr); err != nil {
 		return err
+	}
+	if !envName.MatchString(*l.passwordEnv) {
+		return fmt.Errorf("%s %q is not a variable name; name the variable that holds the password (default %s)", l.from("password-env", PasswordEnvEnv), *l.passwordEnv, PasswordEnv)
 	}
 	switch {
 	case *l.user == "":
 		return nil
 	case strings.ContainsAny(*l.user, " \t\r\n"):
-		return fmt.Errorf("--user %q holds whitespace; give the ACL user's name (or set %s)", *l.user, UserEnv)
-	case d.getenv(PasswordEnv) == "":
-		return fmt.Errorf("user %s (from --user or %s) but %s is empty; run under nova-secrets exec --only %s, refusing to log in without a password", *l.user, UserEnv, PasswordEnv, PasswordEnv)
+		return fmt.Errorf("%s %q holds whitespace; give the ACL user's name", l.from("user", UserEnv), *l.user)
+	case d.getenv(*l.passwordEnv) == "":
+		return fmt.Errorf("user %s (from %s) but %s is empty; run under nova-secrets exec --only %s, refusing to log in without a password", *l.user, l.from("user", UserEnv), *l.passwordEnv, *l.passwordEnv)
 	}
 	return nil
 }
 
 // dial is the client for the store check accepted.
 func (l login) dial(d deps) redis.UniversalClient {
-	return d.dial(*l.addr, *l.user, d.getenv(PasswordEnv))
+	return d.dial(*l.addr, *l.user, d.getenv(*l.passwordEnv))
+}
+
+// flags is the login as a remedy's command line writes it: --addr, and
+// --user and --password-env when they are not the defaults, so the command a
+// remedy prints logs in as the verb did.
+func (l login) flags() string {
+	line := "--addr " + *l.addr
+	if *l.user != "" {
+		line += " --user " + *l.user
+	}
+	if *l.passwordEnv != PasswordEnv {
+		line += " --password-env " + *l.passwordEnv
+	}
+	return line
 }
 
 // validAddr refuses an address the tool would have to guess at. The Redis

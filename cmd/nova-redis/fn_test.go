@@ -27,6 +27,7 @@ type fnStore struct {
 
 	mu      sync.Mutex
 	held    map[string]string // library name -> code
+	others  []redis.Library   // the libraries of other names an unfiltered FUNCTION LIST answers
 	listErr error             // FUNCTION LIST fails with this when set
 	loadErr error             // FUNCTION LOAD [REPLACE] fails with this when set
 	sent    []string
@@ -51,7 +52,10 @@ func (s *fnStore) take() []string {
 }
 
 func (s *fnStore) FunctionList(ctx context.Context, q redis.FunctionListQuery) *redis.FunctionListCmd {
-	command := "FUNCTION LIST LIBRARYNAME " + q.LibraryNamePattern
+	command := "FUNCTION LIST"
+	if q.LibraryNamePattern != "" {
+		command += " LIBRARYNAME " + q.LibraryNamePattern
+	}
 	if q.WithCode {
 		command += " WITHCODE"
 	}
@@ -62,6 +66,9 @@ func (s *fnStore) FunctionList(ctx context.Context, q redis.FunctionListQuery) *
 		return cmd
 	}
 	var libs []redis.Library
+	if q.LibraryNamePattern == "" {
+		libs = append(libs, s.others...)
+	}
 	for name, code := range s.held {
 		if strings.EqualFold(name, q.LibraryNamePattern) {
 			lib := redis.Library{Name: name}
@@ -104,9 +111,11 @@ func (storeReply) RedisError() {}
 
 // fnHarness runs nova-redis over one fnStore and counts the dials.
 type fnHarness struct {
-	store *fnStore
-	dials int
-	d     deps
+	store       *fnStore
+	dials       int
+	user        string // the user the dial must be handed
+	passwordEnv string // the variable the password is read from; "" is PasswordEnv
+	d           deps
 }
 
 func newFnHarness(t *testing.T) *fnHarness {
@@ -115,13 +124,17 @@ func newFnHarness(t *testing.T) *fnHarness {
 	h.d = deps{
 		dial: func(addr, user, password string) redis.UniversalClient {
 			h.dials++
-			if password != "pw" {
-				t.Errorf("dial got password %q; the fn verbs read %s like every verb", password, PasswordEnv)
+			if user != h.user || password != "pw" {
+				t.Errorf("dial got user %q password %q; want user %q and the password", user, password, h.user)
 			}
 			return h.store
 		},
 		getenv: func(k string) string {
-			if k == PasswordEnv {
+			env := h.passwordEnv
+			if env == "" {
+				env = PasswordEnv
+			}
+			if k == env {
 				return "pw"
 			}
 			return ""
@@ -219,51 +232,94 @@ func TestFnLoadAndCheckOnAStore(t *testing.T) {
 	}
 }
 
-// TestFnFailuresNameTheStateAndTheRemedy: a store that cannot be read, and a
-// load the store refuses, are one FAILED line on stderr that names the
-// operation, the cause, what the store holds and what to do; check exits 2,
-// load exits 1, and nothing is printed on stdout.
+// TestFnFailuresNameTheStateAndTheRemedy: every failure is one FAILED line on
+// stderr that names the operation, the cause and what the store holds, with
+// the one remedy for that cause, and nothing on stdout. A refusal the store
+// answered exits 1; no answer exits 2. The remedy's command logs in as the
+// verb did.
 func TestFnFailuresNameTheStateAndTheRemedy(t *testing.T) {
 	t.Parallel()
 	const addr = "127.0.0.1:6399"
+	unreachable := func(s *fnStore) { s.listErr = errors.New("dial tcp 127.0.0.1:6399: connect: connection refused") }
+	noperm := func(s *fnStore) {
+		s.listErr = storeReply("NOPERM User nofn has no permissions to run the 'function|list' command")
+	}
+	collision := func(s *fnStore) {
+		s.loadErr = storeReply("ERR Function ns_ping already exists")
+		s.others = []redis.Library{{Name: "other_lib", Functions: []redis.Function{{Name: "ns_ping"}}}}
+	}
+	credentials := "log in as a user"
 	cases := []struct {
 		name    string
 		setup   func(*fnStore)
-		verb    string
+		args    []string // the subverb and any flags after --addr
 		code    int
 		inLine  []string
+		notIn   []string
 		notSent string
 	}{
-		{"check, store unreachable", func(s *fnStore) { s.listErr = errors.New("dial tcp 127.0.0.1:6399: connect: connection refused") }, "check", 2,
-			[]string{"FAILED nova_sprint sha=", "store=127.0.0.1:6399", "redisfn: check nova_sprint: the store did not answer", "nothing was changed", "remedy=\"check --addr, --user (NOVA_REDIS_USER) and NOVA_REDIS_PASSWORD"}, ""},
-		{"load, store unreachable", func(s *fnStore) { s.listErr = errors.New("dial tcp 127.0.0.1:6399: connect: connection refused") }, "load", 1,
-			[]string{"FAILED nova_sprint sha=", "redisfn: check nova_sprint: the store did not answer", "nothing was changed", "then nova-redis fn check --addr 127.0.0.1:6399"}, "FUNCTION LOAD REPLACE"},
+		{"check, store unreachable", unreachable, []string{"check"}, 2,
+			[]string{"FAILED nova_sprint sha=", "store=127.0.0.1:6399", "redisfn: check nova_sprint: the store did not answer", "nothing was changed",
+				`remedy="no answer: check that the store at 127.0.0.1:6399 is up and --addr is right, then nova-redis fn check --addr 127.0.0.1:6399"`}, []string{credentials}, ""},
+		{"load, store unreachable", unreachable, []string{"load"}, 2,
+			[]string{"FAILED nova_sprint sha=", "redisfn: check nova_sprint: the store did not answer", "nothing was changed",
+				`remedy="no answer, so the store may hold either library: check that the store at 127.0.0.1:6399 is up and --addr is right, then nova-redis fn check --addr 127.0.0.1:6399"`}, []string{credentials}, "FUNCTION LOAD REPLACE"},
+		{"load, NOPERM, as a named user", noperm, []string{"load", "--user", "nofn"}, 1,
+			[]string{"the store refused: NOPERM User nofn", "nothing was changed",
+				`remedy="log in as a user that may run FUNCTION LIST and FUNCTION LOAD: check --user (NOVA_REDIS_USER) and the password in NOVA_REDIS_PASSWORD, then nova-redis fn load --addr 127.0.0.1:6399 --user nofn"`}, nil, "FUNCTION LOAD REPLACE"},
+		{"check, NOPERM", noperm, []string{"check"}, 1,
+			[]string{`remedy="log in as a user that may run FUNCTION LIST: check --user (NOVA_REDIS_USER) and the password in NOVA_REDIS_PASSWORD, then nova-redis fn check --addr 127.0.0.1:6399"`}, nil, ""},
 		{"load, store refuses the library", func(s *fnStore) {
 			s.loadErr = storeReply("ERR Error compiling function: user_function:3: '=' expected")
-		}, "load", 1,
-			[]string{"FAILED nova_sprint sha=", "redisfn: load nova_sprint: the store refused", "the store holds what it held before", "user_function:3 = "}, ""},
+		}, []string{"load"}, 1,
+			[]string{"FAILED nova_sprint sha=", "redisfn: load nova_sprint: the store refused", "the store holds what it held before", "user_function:3 = ",
+				`remedy="the store would not take this binary's library; err names the file and line: fix the Lua and rebuild, then nova-redis fn load --addr 127.0.0.1:6399"`}, []string{credentials}, ""},
+		{"load, a function name another library holds", collision, []string{"load", "--user", "coordinator"}, 1,
+			[]string{"FAILED nova_sprint sha=", "function ns_ping is registered by library other_lib",
+				`remedy="a function name belongs to one library and library other_lib registers ns_ping: load the version of that library that no longer registers it, or delete it, then nova-redis fn load --addr 127.0.0.1:6399 --user coordinator"`},
+			[]string{credentials, "NOVA_REDIS_PASSWORD", "FUNCTION LIST and"}, ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			h := newFnHarness(t)
+			if len(c.args) > 2 {
+				h.user = c.args[2]
+			}
 			c.setup(h.store)
-			code, out, errOut := h.run("fn", c.verb, "--addr", addr)
+			code, out, errOut := h.run(append([]string{"fn", c.args[0], "--addr", addr}, c.args[1:]...)...)
 			if code != c.code || out != "" {
 				t.Errorf("exit %d stdout %q; want exit %d and no stdout", code, out, c.code)
 			}
-			if strings.Count(errOut, "\n") != 1 {
-				t.Errorf("stderr is %d lines, want one: %q", strings.Count(errOut, "\n"), errOut)
+			if strings.Count(errOut, "\n") != 1 || strings.Count(errOut, "remedy") != 1 {
+				t.Errorf("stderr is %d lines with %d remedies, want one line with one: %q", strings.Count(errOut, "\n"), strings.Count(errOut, "remedy"), errOut)
 			}
 			for _, w := range c.inLine {
 				if !strings.Contains(errOut, w) {
 					t.Errorf("stderr %q does not hold %q", errOut, w)
 				}
 			}
+			for _, w := range c.notIn {
+				if strings.Contains(errOut, w) {
+					t.Errorf("stderr %q holds %q, which is not this cause's remedy", errOut, w)
+				}
+			}
 			if c.notSent != "" && slices.Contains(h.store.take(), c.notSent) {
 				t.Errorf("%s was sent after a failed read", c.notSent)
 			}
 		})
+	}
+}
+
+// TestFnRemedyLogsInAsTheVerbDid: STALE's and MISSING's remedy command
+// carries the --user and --password-env the check was run with.
+func TestFnRemedyLogsInAsTheVerbDid(t *testing.T) {
+	t.Parallel()
+	h := newFnHarness(t)
+	h.user, h.passwordEnv = "coordinator", "SEAT_PW"
+	code, out, _ := h.run("fn", "check", "--addr", "127.0.0.1:6399", "--user", "coordinator", "--password-env", "SEAT_PW")
+	if want := `remedy="nova-redis fn load --addr 127.0.0.1:6399 --user coordinator --password-env SEAT_PW puts this binary's library on the store"`; code != 1 || !strings.HasSuffix(out, want+"\n") {
+		t.Errorf("exit %d %q; want MISSING ending in %s", code, out, want)
 	}
 }
 
@@ -297,9 +353,11 @@ func TestFnRefusesBeforeTheDial(t *testing.T) {
 
 // TestEveryVerbLogsInAsTheUserItIsGiven: spill, recall, fn load and fn check
 // hand the one dial seam the user --user names, else NOVA_REDIS_USER, else
-// none (the default user), always with NOVA_REDIS_PASSWORD; and a user with
-// an empty password, or a name holding whitespace, is refused (exit 2)
-// before the dial.
+// none (the default user), with the password in the variable --password-env
+// names, else NOVA_REDIS_PASSWORD_ENV names, else NOVA_REDIS_PASSWORD. A
+// password variable that is not a name, a user name holding whitespace and a
+// user whose password variable is empty are refused (exit 2) before the dial,
+// each naming where the bad value came from.
 func TestEveryVerbLogsInAsTheUserItIsGiven(t *testing.T) {
 	t.Parallel()
 	verbs := [][]string{
@@ -309,20 +367,30 @@ func TestEveryVerbLogsInAsTheUserItIsGiven(t *testing.T) {
 		{"fn", "check", "--addr", "127.0.0.1:6399"},
 	}
 	cases := []struct {
-		name     string
-		flag     []string
-		env      map[string]string
-		wantUser string
-		refusal  string // "" when the verb dials
+		name    string
+		flag    []string
+		env     map[string]string
+		want    string // user/password the seam is handed
+		refusal string // "" when the verb dials
 	}{
-		{"no user", nil, map[string]string{PasswordEnv: "pw"}, "", ""},
-		{"the environment's", nil, map[string]string{PasswordEnv: "pw", UserEnv: "coordinator"}, "coordinator", ""},
-		{"the flag's", []string{"--user", "fnuser"}, map[string]string{PasswordEnv: "pw"}, "fnuser", ""},
-		{"the flag over the environment", []string{"--user", "fnuser"}, map[string]string{PasswordEnv: "pw", UserEnv: "coordinator"}, "fnuser", ""},
+		{"no user", nil, map[string]string{PasswordEnv: "pw"}, "/pw", ""},
+		{"the environment's user", nil, map[string]string{PasswordEnv: "pw", UserEnv: "coordinator"}, "coordinator/pw", ""},
+		{"the flag's user", []string{"--user", "fnuser"}, map[string]string{PasswordEnv: "pw"}, "fnuser/pw", ""},
+		{"the flag over the environment", []string{"--user", "fnuser"}, map[string]string{PasswordEnv: "pw", UserEnv: "coordinator"}, "fnuser/pw", ""},
+		{"the flag's password variable", []string{"--user", "coordinator", "--password-env", "SEAT_PW"}, map[string]string{PasswordEnv: "pw", "SEAT_PW": "seat"}, "coordinator/seat", ""},
+		{"the environment's password variable", nil, map[string]string{UserEnv: "coordinator", PasswordEnvEnv: "SEAT_PW", "SEAT_PW": "seat"}, "coordinator/seat", ""},
 		{"a user without a password", []string{"--user", "fnuser"}, map[string]string{}, "",
-			"user fnuser (from --user or NOVA_REDIS_USER) but NOVA_REDIS_PASSWORD is empty; run under nova-secrets exec --only NOVA_REDIS_PASSWORD, refusing to log in without a password; run: nova-redis help\n"},
-		{"a name with a space", nil, map[string]string{PasswordEnv: "pw", UserEnv: "fn user"}, "",
-			"--user \"fn user\" holds whitespace; give the ACL user's name (or set NOVA_REDIS_USER); run: nova-redis help\n"},
+			"user fnuser (from --user) but NOVA_REDIS_PASSWORD is empty; run under nova-secrets exec --only NOVA_REDIS_PASSWORD, refusing to log in without a password; run: nova-redis help\n"},
+		{"a user whose named password variable is empty", nil, map[string]string{UserEnv: "coordinator", PasswordEnvEnv: "SEAT_PW", PasswordEnv: "pw"}, "",
+			"user coordinator (from NOVA_REDIS_USER) but SEAT_PW is empty; run under nova-secrets exec --only SEAT_PW, refusing to log in without a password; run: nova-redis help\n"},
+		{"a user name with a space, from the environment", nil, map[string]string{PasswordEnv: "pw", UserEnv: "fn user"}, "",
+			"NOVA_REDIS_USER \"fn user\" holds whitespace; give the ACL user's name; run: nova-redis help\n"},
+		{"a user name with a space, from the flag", []string{"--user", "fn user"}, map[string]string{PasswordEnv: "pw"}, "",
+			"--user \"fn user\" holds whitespace; give the ACL user's name; run: nova-redis help\n"},
+		{"a password variable that is not a name", []string{"--password-env", "1-bad"}, map[string]string{PasswordEnv: "pw"}, "",
+			"--password-env \"1-bad\" is not a variable name; name the variable that holds the password (default NOVA_REDIS_PASSWORD); run: nova-redis help\n"},
+		{"a password variable from the environment that is not a name", nil, map[string]string{PasswordEnvEnv: "SEAT PW"}, "",
+			"NOVA_REDIS_PASSWORD_ENV \"SEAT PW\" is not a variable name; name the variable that holds the password (default NOVA_REDIS_PASSWORD); run: nova-redis help\n"},
 	}
 	for _, c := range cases {
 		for _, verb := range verbs {
@@ -356,7 +424,7 @@ func TestEveryVerbLogsInAsTheUserItIsGiven(t *testing.T) {
 				}
 				continue
 			}
-			if want := []string{c.wantUser + "/" + c.env[PasswordEnv]}; !slices.Equal(got, want) {
+			if want := []string{c.want}; !slices.Equal(got, want) {
 				t.Errorf("%s, %q: dialled as %q, want %q (stderr %q)", c.name, args, got, want, errb.String())
 			}
 		}
