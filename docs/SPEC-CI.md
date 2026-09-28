@@ -1594,6 +1594,38 @@ are lower bounds; the class tests do not time a hosted leg, dev's push run does.
 The heavy list is named from one reader measurement, not from a hosted
 per-package timing.
 
+### `cert-race-shards` — the whole-tree race run meets the cap by shards, its cache saved before the tests
+
+**The rule.** certification.yml's `test` job keeps `timeout-minutes: 2` and meets
+it by shard count: ubuntu-latest and macos-latest each run shards 1..8, every leg
+carrying its OS's `shards`. Its `deal this shard's packages` step is test-hosted's
+deal over the live packages (`live-packages.sh`), with the measured heavy list
+(`cmd/nova-bus`, `internal/ci`, `internal/gh`, `cmd/nova-review`, `internal/bus`,
+`cmd/nova-swarm`) dealt first, one per shard. Every shard
+restores the `<os>-gorace-` cache, builds every external package the live tree's
+tests import under `-race`, SAVES the cache, and only then runs
+`go test -race -count=1` over its packages.
+**The hurt.** Unsharded, the job built, vetted and race-tested the whole tree on
+one runner and was cancelled by the two-minute cap on
+every dev push since the cap landed (27c9ffc66): runs 36355661583, 36356115183,
+36357522017, 36357749379, 36360296846. ubuntu-latest reached the test step 97-119 s
+into the job; its last green run (36137551959, 2026-09-25, 15-minute cap) spent 421 s
+in the test step. A post-step cache save never ran, so every run started cold.
+**The test.** `TestCertificationRaceShardsPartitionTheLiveTree`
+(`internal/ci/cert_race_shards_class_test.go`): both OSes at shards 1..n with n at
+least 8; the deal step, run over the real `go list ./...`, lands every live
+package in exactly one shard and no deprecated one in any; no two heavy packages
+share a shard; restore, race dependency build, save and test in that order; the
+test step carries `-race`, `-count=1` and `$HOSTED_PKGS`.
+**Its allowlist.** `certRaceHeavy` in that file, which the step spells verbatim.
+**Its remedy line.** Add a shard to the matrix and both `include` entries, or name
+a package in `certRaceHeavy` and in the step's `heavy=`; never raise the timeout.
+**Its narrowings.** The heavy list and the shard count come from one Studio run at
+GOMAXPROCS=3, not from a hosted per-package timing; the class test does not time a
+hosted leg, a certification run does. The build and vet this job used to run are
+ci.yml's (lint on every event, test-hosted on push); a package's race compile in
+its shard is the macOS and Linux compile of the race build.
+
 ### `onboarding` — every command meets the onboarding standard
 
 **The rule.** `docs/ONBOARDING.md`, asserted for EVERY directory under `cmd/` by
