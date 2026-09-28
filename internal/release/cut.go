@@ -422,7 +422,7 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 	// finding that out after three network reads is three reads spent to
 	// arrive at the same no. internal/release/dogfoodgate.go says why the gate
 	// is in front of a tag at all.
-	gate, err := dogfoodCheck("CUT", o, deps, filepath.Join(filepath.Dir(o.changelog), "docs", "CLI.md"), out, errs)
+	gate, err := dogfoodCheck("CUT", o, deps, filepath.Dir(o.changelog), out, errs)
 	if err != nil {
 		// The field-line refusal has already been printed, in the shape the
 		// remedy needs.

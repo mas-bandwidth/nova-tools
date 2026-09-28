@@ -54,6 +54,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -291,13 +292,19 @@ func main() {
 }
 
 // run is the whole tool, with its streams and clock injected so the tests can drive it.
-func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time) int {
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time) (code int) {
+	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
+	// before anything is read, dialed or written (the CLI style's rule (b), #4505).
+	defer verbflag.Recover(stdout, "nova-bus", usage, &code)
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb given; `inbox --as <name>` is the one that only looks")
 	}
 	cmd, rest := args[0], args[1:]
 	switch cmd {
 	case "help", "-h", "--help":
+		if cmd == "help" && len(rest) > 0 && rest[0] != "help" && !verbflag.IsHelp(rest[0]) {
+			return run(append(rest, "--help"), stdin, stdout, stderr, now)
+		}
 		fmt.Fprint(stdout, usage)
 		return 0
 	case "draft":
@@ -356,9 +363,9 @@ func newFlags(verb string) *flags {
 // parse runs the flag set and enforces the no-guessing rule for every flag named in
 // required. It prints its own refusal, escaped; exit 2 belongs to the caller.
 func (f *flags) parse(args []string, stderr io.Writer, required map[string]*string) bool {
-	if err := f.fs.Parse(args); err != nil {
-		// -h and -help land here as flag.ErrHelp and are refused like any other unusable
-		// invocation: exit 2, never 0.
+	// -h, -help and --help never land here: verbflag.Parse raises the verb's help, which
+	// run prints on stdout at exit 0.
+	if err := verbflag.Parse(f.fs, args); err != nil {
 		refuse(stderr, " "+f.verb, oneline.Cap(err.Error(), oneline.TailBytes))
 		return false
 	}

@@ -344,7 +344,8 @@ The label is rendered rather than renamed: a reader who has seen `floor list`
 in a finding reads the same words on the summary line. The flag
 parser is given no stream, so an unknown flag after a verb is this tool's own
 one-line refusal — `nova-check <verb>: <what was wrong>; run: nova-check help`,
-and nothing else — at exit 2, `-h` included. Pinned by
+and nothing else — at exit 2. `-h` after a verb is not a refusal: it prints that
+verb's help on stdout at exit 0 (internal/nsprint/verbflag). Pinned by
 `TestNoCallerPathCanForgeALine` and by the source audit every binary runs
 (`internal/oneline/audit`), which classifies every printed argument as
 quoted, numeric, literal, escaped or exempted with a stated reason, and fails
@@ -1459,7 +1460,7 @@ it is shown is not a check.
 ```
 nova-check dogfood ledger (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--git-timeout <s>] [--tools-timeout <s>] [--fail-max <n>]
 nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --verb <v> --by <name> (--ok|--not-ok) --notes <text> [--issue <n>] --receipts <dir>
-nova-check dogfood gate   (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--authors <file>] [--repo <dir>] [--require-all] [--fail-max <n>]
+nova-check dogfood gate   (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--shipped <cmd dir>] [--authors <file>] [--repo <dir>] [--require-all] [--fail-max <n>]
 ```
 
 **Why it exists.** *A tool is not finished until it is tested, dogfooded by
@@ -1593,6 +1594,9 @@ just found a dozen things.
   printed at all**: a ledger read from records it could not parse would
   understate the truth in the one direction that lets a tool ship.
 - `gate` finds an open edge, always, with or without `--require-all`.
+- `gate --shipped <cmd dir>` judges only the tools under that directory: a
+  receipt naming any other tool is set aside, counted on `DOGFOOD NOTE
+  shipped=<n> outside=<n> cmd=<dir>`, and finds nothing.
 - `gate --require-all` finds a verb no non-author has run and passed. Each
   finding is one `DOGFOOD GATE FAIL tool=… verb=…: <why>` line, capped the same
   way, then `DOGFOOD GATE FAIL verbs=<n> findings=<n> shown=<n>`. A green gate

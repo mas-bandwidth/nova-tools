@@ -3,7 +3,6 @@ package update
 import (
 	"bytes"
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -17,6 +16,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/release"
 	"github.com/mas-bandwidth/nova-tools/internal/wake"
@@ -88,6 +88,14 @@ nova-version report --file <manifest: ` + manifestShape + `> [--host <label>] [-
 nova-version send --file <manifest: ` + manifestShape + `> --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b> [--snapshot <path>] [--host <label>]
 nova-version help`
 
+// helpText is what help prints, as a string: the text verbflag quotes a verb's
+// lines from.
+func helpText(name string) string {
+	var b strings.Builder
+	help(name, &b)
+	return b.String()
+}
+
 func help(name string, w io.Writer) {
 	// SPEC-UPDATE's "The verbs" block says these lines are what help prints,
 	// BYTE FOR BYTE, and names one string in the binary as the reason the spec
@@ -142,7 +150,10 @@ func interspersed(f *flag.FlagSet, args []string) []string {
 func Main(name string, args []string, stamp string, out, errs io.Writer) int {
 	return Run(name, args, stamp, out, errs, Environment{})
 }
-func Run(name string, args []string, stamp string, out, errs io.Writer, env Environment) int {
+func Run(name string, args []string, stamp string, out, errs io.Writer, env Environment) (rc int) {
+	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
+	// before any manifest, bus or store is read (the CLI style's rule (b), #4505).
+	defer verbflag.Recover(out, name, helpText(name), &rc)
 	if env.Now == nil {
 		env.Now = time.Now
 	}
@@ -156,6 +167,9 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 	verb := args[0]
 	args = args[1:]
 	if verb == "help" || verb == "--help" || verb == "-h" {
+		if verb == "help" && len(args) > 0 && args[0] != "help" && !verbflag.IsHelp(args[0]) {
+			return Run(name, append(args, "--help"), stamp, out, errs, env)
+		}
 		if len(args) != 0 {
 			return refusal(errs, tool, fmt.Errorf("help takes no arguments (run %s help)", name))
 		}
@@ -163,6 +177,7 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 		return 0
 	}
 	if verb == "version" || verb == "--version" {
+		verbflag.HelpIfAsked(args, "version")
 		if len(args) != 0 {
 			return refusal(errs, tool, fmt.Errorf("version takes no arguments (run %s version)", name))
 		}
@@ -192,6 +207,7 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 		return movedVerb(name, args, out, errs, env)
 	}
 	impliedSend := name == "nova-version" && verb == "send"
+	asked := verb // the verb as typed: send's help is send's, though it runs as report
 	if impliedSend {
 		verb = "report"
 	}
@@ -225,7 +241,7 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 		token = "UPDATE"
 	}
 	o := options{max: 20, timeout: 5 * time.Second, budget: 60 * time.Second}
-	f := flag.NewFlagSet(verb, flag.ContinueOnError)
+	f := flag.NewFlagSet(asked, flag.ContinueOnError)
 	f.SetOutput(io.Discard)
 	f.StringVar(&o.file, "file", "", "manifest")
 	f.DurationVar(&o.timeout, "timeout", o.timeout, "one read deadline")
@@ -248,16 +264,10 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 			f.StringVar(&o.store, "store", "", "fleet Redis host:port: read the bench beats")
 		}
 	}
-	if err := f.Parse(interspersed(f, args)); err != nil {
-		// `<tool> <verb> --help` is a reasonable question, and the flag
-		// package answers it with the sentinel flag.ErrHelp. Printing that
-		// gave the person `flag: help requested` -- the package's internals,
-		// leaked to somebody who asked for help (darwin dogfood, 2026-09-18).
-		// They get the usage, and exit 0, because asking is not an error.
-		if errors.Is(err, flag.ErrHelp) {
-			help(name, out)
-			return 0
-		}
+	if err := verbflag.Parse(f, interspersed(f, args)); err != nil {
+		// `<tool> <verb> --help` never lands here: verbflag.Parse raises that
+		// verb's help, which Run prints on stdout at exit 0 (asking is not an
+		// error; darwin dogfood, 2026-09-18).
 		return refusal(errs, token, fmt.Errorf("%s (run %s help)", err, name))
 	}
 	// --store is the fleet read (#3880): every bench's nova-sprint build from
@@ -550,7 +560,7 @@ func movedVerb(name string, args []string, out, errs io.Writer, env Environment)
 	fs.StringVar(&outPath, "out", "", "note to write")
 	fs.DurationVar(&timeout, "timeout", timeout, "one child's deadline")
 	fs.DurationVar(&budget, "budget", budget, "whole run deadline")
-	if err := fs.Parse(interspersed(fs, args)); err != nil {
+	if err := verbflag.Parse(fs, interspersed(fs, args)); err != nil {
 		return refusal(errs, "MOVED", fmt.Errorf("%s (run %s help)", err, name))
 	}
 	var missing []string

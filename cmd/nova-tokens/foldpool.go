@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
 )
@@ -19,7 +20,7 @@ func cmdFoldPool(args []string, stdout, stderr io.Writer, now time.Time) int {
 	pool := fs.String("pool", "", "")
 	ledger := fs.String("ledger", "", "")
 	since := fs.String("since", "", "")
-	if err := fs.Parse(args); err != nil {
+	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, " fold-pool", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if code, refused := noPositional(fs, stderr, "fold-pool"); refused {

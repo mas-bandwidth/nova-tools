@@ -56,7 +56,7 @@ const NoBatchTokensRefusal = "BATCH REFUSED reason=no_tokens: --tokens is requir
 
 // admitRefusalLine is the one place a card's admission refusal is written: ADMIT REFUSED
 // <label> <why>, where <why> is the reason the card alone was refused -- a card shape
-// against docs/WORKER-CARDS.md practice 17, or a repository it could not reach.
+// against deprecated/docs/WORKER-CARDS.md practice 17, or a repository it could not reach.
 func admitRefusalLine(label, why string) string {
 	return fmt.Sprintf("ADMIT REFUSED %s %s", oneline.Field(label), why)
 }
@@ -2219,7 +2219,7 @@ func allocateBenches(cards []batchCard, benchesPath, benchNames string) (map[str
 // cardShapeFailure checks a card's shape at admission, and only for a DeepSeek model whose
 // provider prefix is opencode/ or deepseek/. Mercury (inception/) cards are not checked.
 // It returns the reason if the card is refused, or "" if the card's shape is acceptable.
-// The refusal cites docs/WORKER-CARDS.md practice 17: a DeepSeek card wants a working
+// The refusal cites deprecated/docs/WORKER-CARDS.md practice 17: a DeepSeek card wants a working
 // directory and the clone as step 1, one command per line, numbered steps, the verdict
 // vocabulary inside the step, the RESULT shape last and short, no capitalised contract
 // block and no launcher text.
@@ -2233,7 +2233,7 @@ func cardShapeFailure(model, raw string) string {
 		return ""
 	}
 	lines := strings.Split(raw, "\n")
-	step := "docs/WORKER-CARDS.md practice 17"
+	step := "deprecated/docs/WORKER-CARDS.md practice 17"
 	if firstNonEmpty := firstNonEmptyLine(lines); lineIsCapitalsOnly(firstNonEmpty) {
 		return "capitalised contract block (" + step + ")"
 	}

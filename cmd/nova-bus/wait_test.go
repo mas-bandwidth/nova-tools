@@ -10,7 +10,7 @@ import (
 // stale: the flag's own usage string says so, and the banner must agree. (#903)
 func TestWaitHelpQuietBeatsDocumentsNoWake(t *testing.T) {
 	t.Parallel()
-	banner := invoke(t, "", "help", "wait").mustCode(t, 0).stdout
+	banner := invoke(t, "", "help").mustCode(t, 0).stdout
 	if strings.Contains(banner, "makes a wait return on a change that is ONLY beats") {
 		t.Fatalf("wait help still promises --quiet-beats wakes a wait:\n%s", banner)
 	}

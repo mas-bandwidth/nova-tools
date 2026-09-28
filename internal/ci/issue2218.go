@@ -109,8 +109,8 @@ func goosValues(line string) []string {
 	return vals
 }
 
-// PastedDocs are the documents a stranger pastes from, per SPEC-TOOLWORK §7
-// rule 7, relative to the repo root.
+// PastedDocs are the documents a stranger pastes from, per SPEC-TOOLWORK.md
+// documents rule 6, relative to the repo root.
 var PastedDocs = []string{
 	"README.md",
 	filepath.Join("docs", "USAGE.md"),
@@ -268,7 +268,7 @@ func BannerExampleLines(banner string) ([]string, error) {
 
 // HelpBannerExamples returns every `example:` line of every `help` banner a
 // tool under root/cmd carries, keyed "example: <line>" and mapped to the
-// source file that carries it, per SPEC-TOOLWORK §7 rule 7 ("every `example:`
+// source file that carries it, per SPEC-TOOLWORK.md documents rule 6 ("every `example:`
 // line of every `help`"). A banner is a string literal (or a `+` chain of
 // them) in a non-test .go file of cmd/<tool>/ holding the `\nexample:\n`
 // heading; its lines are read through BannerExampleLines, every line of the
@@ -384,8 +384,8 @@ func ListRows(list string) []string {
 
 // AddedListRows returns the rows of head that base does not carry: for a
 // shrink-only list, every one is a row the change adds, and each fails the
-// class test (SPEC-TOOLWORK §7 rule 7, "a new unexecuted example fails the
-// class test on the PR that adds it").
+// class test (SPEC-TOOLWORK.md documents rule 6, "a new unexecuted example fails the
+// class test on the change that adds it").
 func AddedListRows(base, head string) []string {
 	had := make(map[string]bool)
 	for _, r := range ListRows(base) {
@@ -559,8 +559,8 @@ func reachOf(pkgDir, test string) (testReach, bool, error) {
 				}
 				switch sel.Sel.Name {
 				case "CompareTranscript", "Compare", "Execute", "ExecuteWith":
-					// CompareTranscript is THE comparator (SPEC-TOOLWORK §7
-					// rule 2); a test the transcripts rule holds to it is a
+					// CompareTranscript is THE comparator (SPEC-TOOLWORK.md
+					// documents rule 2); a test the transcripts rule holds to it is a
 					// comparator test here too, or no new tool could ever
 					// cover its examples (nova-config, 2026-09-27).
 					r.comparator = true

@@ -10,6 +10,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/dogfood"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -65,6 +66,9 @@ var (
 )
 
 func cmdDogfood(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 {
+		verbflag.HelpIfAsked(args[:1], "dogfood")
+	}
 	if len(args) == 0 {
 		return refuse(stderr, " dogfood", "no sub-verb given; ledger reads it, record writes one receipt, gate is the one with an exit code")
 	}
@@ -277,6 +281,7 @@ func cmdDogfoodGate(args []string, stdout, stderr io.Writer) int {
 	receipts, authors, repo, gitTimeout := addDogfoodReadFlags(fs)
 	requireAll := fs.Bool("require-all", false, "every verb in the list must have been run by a non-author, not only the ones with receipts")
 	allowEmpty := fs.Bool("allow-empty", false, "pass on an empty receipt set; without it, no receipts is a refusal and not a green line")
+	shippedDir := fs.String("shipped", "", "a checkout's cmd/ directory: the gate judges only the tools under it, the set a release ships")
 	failMax := addFailMax(fs)
 	if !parse(fs, args, stderr, map[string]*string{"receipts": receipts}) {
 		return 2
@@ -287,6 +292,20 @@ func cmdDogfoodGate(args []string, stdout, stderr io.Writer) int {
 	read, code := dogfoodGather("gate", src, *receipts, *authors, *repo, *gitTimeout, *failMax, stderr)
 	if code != 0 {
 		return code
+	}
+	// THE GATE JUDGES WHAT SHIPS. With --shipped, a receipt about a tool that
+	// is not under that cmd/ is set aside and COUNTED on its own line: it is
+	// true about a tool the release does not contain, and says nothing about
+	// the ones it does. This is the read `nova-update release cut` does.
+	if *shippedDir != "" {
+		set, err := dogfood.ReadShipped(*shippedDir)
+		if err != nil {
+			return refuse(stderr, " dogfood gate", "--shipped names a cmd/ directory of nova-* programs: "+oneline.Err(err))
+		}
+		var outside []dogfood.Receipt
+		read.verbs, read.receipts, outside = set.Scope(read.verbs, read.receipts)
+		fmt.Fprintf(stderr, "DOGFOOD NOTE shipped=%d outside=%d cmd=%s: receipts naming a tool outside the shipped set are set aside\n",
+			len(set.Tools()), len(outside), oneline.Field(*shippedDir))
 	}
 	// No receipts read is an empty evidence set, not a pass: the gate's whole
 	// question is whether the verbs in the list have been dogfooded, and with

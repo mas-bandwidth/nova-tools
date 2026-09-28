@@ -10,6 +10,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/cireceipt"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -22,6 +23,9 @@ const receiptTimeout = 20 * time.Second
 // cmdGitHub is `nova-ci github <verb>`; its one verb is receipt. getenv is
 // os.Getenv in production, the seam a test reads NOVA_REDIS_ADDR through.
 func cmdGitHub(args []string, stdout, stderr io.Writer, getenv func(string) string) int {
+	if len(args) > 0 {
+		verbflag.HelpIfAsked(args[:1], "github")
+	}
 	if len(args) == 0 || args[0] != "receipt" {
 		return refuse(stderr, " github", "the verb is receipt: nova-ci "+receiptUsage)
 	}
@@ -55,7 +59,7 @@ func cmdReceipt(ctx context.Context, args []string, stdout, stderr io.Writer, ge
 		fmt.Fprintln(stdout, "nova-ci "+receiptUsage)
 		return 0
 	}
-	if err := fs.Parse(args); err != nil {
+	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, where, oneline.Cap(err.Error(), oneline.TailBytes)+": nova-ci "+receiptUsage)
 	}
 	if fs.NArg() > 0 {

@@ -14,7 +14,7 @@ import "strings"
 //     (internal/pulse/cut.go, and the example at
 //     docs/spec-pulse/10-the-card-as-cut-writes-it.md:4);
 //   - `lint --card`'s `result-first` wanted `RESULT: ` -- with one
-//     (docs/WORKER-CARDS.md practice 1, and deprecated/docs/SPEC-SWARM.md:969,976);
+//     (deprecated/docs/WORKER-CARDS.md practice 1, and deprecated/docs/SPEC-SWARM.md:969,976);
 //   - `gather` compares line 1 to line 1 and imposes no prefix of its own, so it follows
 //     whichever the other two settle on (internal/pulse/harvest.go, classifyResult).
 //

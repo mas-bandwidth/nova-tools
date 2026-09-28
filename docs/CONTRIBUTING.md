@@ -271,7 +271,7 @@ with its sweep of the tree or it does not land.
 **The rest of the index, by name.** `cap` (every job two minutes, permanently, every platform),
 `templates`, `goenv`, `pathassert`, `busprogress`,
 `outputs`, `cache`, `pinned-actions`, `ci-ok`, `nightly-tags`, `functional` (a test that starts a redis-server, execs a whole program or asserts a real-time bound is behind `//go:build functional`), `selection`, `toolchainroots`, `walltoolchain`, `hostseam`,
-`ciworkspace`, `admitkind`, `namedpaths`, `one section`, `testbins`, `fieldsindex`, `cardtemplates`, `transcripts`, `forestwriter`, `forestscript`, `parallel`, `slowwaits`, `unitwaits`, `allowlist`,
+`ciworkspace`, `namedpaths`, `one section`, `testbins`, `fieldsindex`, `cardtemplates`, `transcripts`, `parallel`, `slowwaits`, `unitwaits`, `allowlist`,
 `seatwrap`, `tiers`, `hosted-shards` (test-hosted meets the two-minute cap by shards, heavy packages one per shard), `seatredis` (no verb of a live tool that selects a seat refuses an empty `--redis`), `wholetree` (no doc or card spells a whole-tree `go test`; run `nova-ci local`), `silent` (no `_ = err` and no `|| true` literal on the copy model's live path), `classtests` (no merge deletes a `_test.go` or an `internal/ci/testdata` list that its first parent had unless the same change declares it in `deleted-tests.txt`), `ci-receipt` (ci-ok reports every run to Redis from the runner, every field, failing loudly). Every entry — the ten above too — is written out in
 [SPEC-CI.md](SPEC-CI.md) under **The class tests** with its rule, the mistake
 it prevents, its allowlist, its remedy line and its narrowings. Read the entry, not
@@ -328,6 +328,18 @@ where the guidance is a sentence of its own it follows on one further indented
 line. Do that, rather than guessing. A class test's refusal names its
 `remedy="…"`; do what it says instead of adding an allowlist row. A `FAIL` line
 at exit 1 means the check ran and said NO — that is the check working.
+
+**Help is never a refusal.** `<tool> <verb> -h` (or `--help`, or `<tool> help
+<verb>` where the tool has a help verb) prints that verb's help on stdout and
+exits 0: its usage lines from `<tool> help`, then every flag it takes, before
+anything is read, dialled or written. Every verb parses its flags through the one
+seam, `internal/nsprint/verbflag` (`verbflag.Parse`, or `verbflag.HelpIfAsked`
+for a verb that reads its arguments by hand), with `verbflag.Recover` deferred in
+the dispatcher; `internal/testverbhelp` is the per-tool check, and
+`internal/ci`'s functional walk holds every verb of every living tool to it.
+`flag: help requested` at exit 2 reads to an AI as a syntax error, not as the
+answer it asked for. nova-fuse is the one exception, on purpose: its exit 0
+means CLEAR, so its verbs still refuse `-h`.
 
 **When the refusal is wrong, that is a gift.** Say three things, in this order:
 what works, where it caught you with the exact sentence it printed, and the fix

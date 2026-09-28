@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
 )
@@ -56,7 +57,7 @@ usage:
                       [--user <name>] [--password-env <NAME>]
   nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
   nova-tokens sum     --swarm-root <dir> --day <YYYY-MM-DD> --out <ledger.tsv>
-  nova-tokens check   --out <dir> [--strict | --no-spend <file>] [--max <n>]
+  nova-tokens check   --out <dir> [--strict | --no-spend <file>] [--through <YYYY-MM-DD>] [--max <n>]
   nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all) [<source flags>] [--unattributed] [--max <n>]
   nova-tokens profiles --swarm-root <dir>
   nova-tokens session --claude-session <jsonl> [--out <dir>] [--day <YYYY-MM-DD>]
@@ -160,13 +161,19 @@ func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, time.Now().UTC())) 
 // run is the whole tool, with its streams and clock injected so the tests can drive it.
 // The clock is an argument and NOT a flag: the stamp on a day file is when the tool
 // computed it, and a stamp a caller could set would be a stamp nobody could trust.
-func run(args []string, stdout, stderr io.Writer, now time.Time) int {
+func run(args []string, stdout, stderr io.Writer, now time.Time) (code int) {
+	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
+	// before anything is read or written (the CLI style's rule (b), #4505).
+	defer verbflag.Recover(stdout, "nova-tokens", usage, &code)
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb given; `sources` is the one that only looks")
 	}
 	verb, rest := args[0], args[1:]
 	switch verb {
 	case "help", "-h", "--help":
+		if verb == "help" && len(rest) > 0 && rest[0] != "help" && !verbflag.IsHelp(rest[0]) {
+			return run(append(rest, "--help"), stdout, stderr, now)
+		}
 		fmt.Fprint(stdout, usage)
 		return 0
 	case "fold":
@@ -340,10 +347,41 @@ func (s *sourceFlags) check(r *refusals) {
 					r.add("--provider " + it.label + "=: a label is [a-z0-9-]+, at most 32 characters")
 				}
 			}
+			switch l.kind {
+			case "claude":
+				if fi, err := os.Stat(it.value); err != nil || !fi.IsDir() {
+					if err != nil && os.IsNotExist(err) {
+						r.add("--claude " + it.label + "=" + it.value + " does not exist; it wants the directory the transcripts live under")
+					} else if err != nil {
+						r.add("--claude " + it.label + "=" + it.value + ": " + err.Error() + "; it wants the directory the transcripts live under")
+					} else {
+						r.add("--claude " + it.label + "=" + it.value + " is not a directory; it wants the directory the transcripts live under")
+					}
+				}
+			case "swarm":
+				if fi, err := os.Stat(it.value); err != nil || !fi.IsDir() {
+					if err != nil && os.IsNotExist(err) {
+						r.add("--swarm " + it.label + "=" + it.value + " does not exist; it wants the swarm pool directory")
+					} else if err != nil {
+						r.add("--swarm " + it.label + "=" + it.value + ": " + err.Error() + "; it wants the swarm pool directory")
+					} else {
+						r.add("--swarm " + it.label + "=" + it.value + " is not a directory; it wants the swarm pool directory")
+					}
+				}
+			}
 		}
 	}
 	if s.bus != "" {
 		any = true
+		if fi, err := os.Stat(s.bus); err != nil || !fi.IsDir() {
+			if err != nil && os.IsNotExist(err) {
+				r.add("--bus does not exist: " + s.bus + "; it wants the bus directory")
+			} else if err != nil {
+				r.add("--bus " + s.bus + ": " + err.Error() + "; it wants the bus directory")
+			} else {
+				r.add("--bus is not a directory: " + s.bus + "; it wants the bus directory")
+			}
+		}
 	}
 	if !any {
 		r.add("at least one source flag is required; it wants " + wantsSources + "; refusing to guess")
@@ -351,6 +389,14 @@ func (s *sourceFlags) check(r *refusals) {
 	if len(s.opencode.items) > 0 {
 		if strings.TrimSpace(s.scratch) == "" {
 			r.required("scratch", "", wantsScratch)
+		} else if fi, err := os.Stat(s.scratch); err != nil || !fi.IsDir() {
+			if err != nil && os.IsNotExist(err) {
+				r.add("--scratch does not exist: " + s.scratch + "; it wants " + wantsScratch)
+			} else if err != nil {
+				r.add("--scratch " + s.scratch + ": " + err.Error() + "; it wants " + wantsScratch)
+			} else {
+				r.add("--scratch is not a directory: " + s.scratch + "; it wants " + wantsScratch)
+			}
 		}
 		if err := tokens.HaveSQLite(); err != nil {
 			r.add(err.Error())
@@ -512,7 +558,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	max := fs.Int("max", bounded.Default, "")
 	var sf sourceFlags
 	sf.declare(fs, true)
-	if err := fs.Parse(args); err != nil {
+	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, " fold", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if code, refused := noPositional(fs, stderr, "fold"); refused {
@@ -527,18 +573,14 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return r.print(stderr)
 	}
 	fi, statErr := os.Stat(*out)
-	switch {
-	case statErr == nil && fi.IsDir():
-		// the ordinary case: the output directory already exists
-	case statErr != nil && os.IsNotExist(statErr):
-		// first run: the output directory is absent, so create it
-		if err := os.MkdirAll(*out, 0o755); err != nil {
-			r.add("--out " + *out + ": " + err.Error() + "; it wants " + wantsOut)
-			return r.print(stderr)
+	if statErr != nil || !fi.IsDir() {
+		if statErr != nil && os.IsNotExist(statErr) {
+			r.add("--out does not exist: " + *out + "; it wants " + wantsOut)
+		} else if statErr != nil {
+			r.add("--out " + *out + ": " + statErr.Error() + "; it wants " + wantsOut)
+		} else {
+			r.add("--out is not a directory: " + *out + "; it wants " + wantsOut)
 		}
-	default:
-		// an existing path that is not a directory is refused, by name, never overwritten
-		r.add("--out is not a directory: " + *out + "; it wants " + wantsOut)
 		return r.print(stderr)
 	}
 	rules, err := tokens.LoadRules(sf.repos)
@@ -949,7 +991,7 @@ func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
 	unattributed := fs.Bool("unattributed", false, "")
 	var sf sourceFlags
 	sf.declare(fs, true)
-	if err := fs.Parse(args); err != nil {
+	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, " sources", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if code, refused := noPositional(fs, stderr, "sources"); refused {
@@ -1042,7 +1084,7 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	passwordEnv := fs.String("password-env", "", "")
 	var sf sourceFlags
 	sf.declare(fs, true)
-	if err := fs.Parse(args); err != nil {
+	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, " report", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if code, refused := noPositional(fs, stderr, "report"); refused {
@@ -1252,7 +1294,7 @@ func cmdSum(args []string, stdout, stderr io.Writer, now time.Time) int {
 	day := fs.String("day", "", "")
 	byFlag := fs.String("by", "pair", "")
 	max := fs.Int("max", bounded.Default, "")
-	if err := fs.Parse(args); err != nil {
+	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, " sum", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if code, refused := noPositional(fs, stderr, "sum"); refused {
@@ -1379,7 +1421,8 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	max := fs.Int("max", bounded.Default, "")
 	strict := fs.Bool("strict", false, "")
 	noSpend := fs.String("no-spend", "", "")
-	if err := fs.Parse(args); err != nil {
+	through := fs.String("through", "", "")
+	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, " check", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if code, refused := noPositional(fs, stderr, "check"); refused {
@@ -1391,7 +1434,12 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if *strict && strings.TrimSpace(*noSpend) != "" {
 		r.add("--strict and --no-spend are two answers to one question: --strict names every calendar gap, --no-spend names the gaps your list does not account for; give one")
 	}
-	opt := tokens.CheckOptions{Strict: *strict}
+	if strings.TrimSpace(*through) != "" {
+		if !tokens.ValidDay(*through) {
+			r.add("--through is not a day: " + *through + "; it wants YYYY-MM-DD (e.g. 2026-09-18)")
+		}
+	}
+	opt := tokens.CheckOptions{Strict: *strict, Through: strings.TrimSpace(*through)}
 	if strings.TrimSpace(*noSpend) != "" {
 		days, err := tokens.ReadNoSpendFile(*noSpend)
 		if err != nil {
@@ -1439,8 +1487,11 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if res.First != "" {
 		first, last = res.First, res.Last
 	}
+	if res.Stale {
+		fmt.Fprintf(stderr, "CHECK FAIL stale last=%s through=%s\n", oneline.Field(last), oneline.Field(*through))
+	}
 	bad := files.Total() + rowsList.Total()
-	if bad > 0 || len(res.Missing) > 0 || len(res.Strays) > 0 {
+	if bad > 0 || len(res.Missing) > 0 || len(res.Strays) > 0 || res.Stale {
 		fmt.Fprintf(stderr, "CHECK FAIL files=%d rows=%d first=%s last=%s bad=%d missing=%d stray=%d gap=%d notes=%d\n",
 			res.Files, res.Rows, oneline.Field(first), oneline.Field(last), bad,
 			len(res.Missing), len(res.Strays), len(res.Gaps), len(res.Notes))

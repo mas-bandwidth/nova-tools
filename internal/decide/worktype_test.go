@@ -42,7 +42,7 @@ Pre-read of PR #1916 for Glenn: brief a human in prose on what it changes.
 	WorkTypeSpecContractProbe: `card-probe-nova-work-contract
 KIND: spec-read
 TEST: none
-Read-only. Does the contract in docs/SPEC-WORK.md say that a card may pick its own number?
+Read-only. Does the contract in docs/SPEC-CI.md say that a card may pick its own number?
 A prose judgement; write nothing.
 `,
 	WorkTypeIssueFixRedFirst: `card-fix-2533

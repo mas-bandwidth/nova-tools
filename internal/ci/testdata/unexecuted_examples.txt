@@ -1,5 +1,5 @@
 # The examples a stranger can paste from our docs and from `help` output that are
-# not yet executed by a test through the comparator (SPEC-TOOLWORK §7 rule 7).
+# not yet executed by a test through the comparator (SPEC-TOOLWORK.md documents rule 6).
 #
 # Every $  line in a fenced block of README.md, docs/USAGE.md, docs/CLI.md and
 # docs/nova-swarm-quickstart.md, every example: line of a `help` banner pasted in

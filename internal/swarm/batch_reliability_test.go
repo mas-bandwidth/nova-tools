@@ -40,7 +40,7 @@ func TestCardShapeCheckCoversContractLinesOnly(t *testing.T) {
 	if !strings.Contains(why, "'launcher' in the contract lines") {
 		t.Fatalf("a launcher named in lines 1-3 is still refused, got %q", why)
 	}
-	if !strings.Contains(why, "docs/WORKER-CARDS.md practice 17") {
+	if !strings.Contains(why, "deprecated/docs/WORKER-CARDS.md practice 17") {
 		t.Fatalf("the refusal cites practice 17: %q", why)
 	}
 }
