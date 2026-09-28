@@ -20,9 +20,11 @@ import (
 // target it writes, and none of them is the forest.
 const forestWriterAllowlistPath = "testdata/forestwriter_allowlist.txt"
 
-// forestWriter is the one function in the tree that writes a work set back to
-// disk, and it refuses a docs/roadmaps/ path before a byte moves (#3340).
-const forestWriter = "cmd/nova-work/forestwrite.go:writeWorkSet"
+// forestWriter was the one function in the tree that wrote a work set back to
+// disk, refusing a docs/roadmaps/ path before a byte moved (#3340). It is parked
+// with nova-work under deprecated/ (2026-09-27), which this rule does not read, so
+// no living function is excepted: the forest has no writer in the living tree.
+const forestWriter = "deprecated/cmd/nova-work/forestwrite.go:writeWorkSet"
 
 // forestDirLiteral is the forest as a source string names it.
 const forestDirLiteral = "docs/roadmaps/"
@@ -38,10 +40,11 @@ const worklangImport = `"github.com/mas-bandwidth/nova-tools/internal/worklang"`
 //  1. Every file write (os.WriteFile, os.Create, os.CreateTemp, a writable
 //     os.OpenFile, os.Rename, os.Truncate, os.Link, os.Symlink and their ioutil
 //     spellings) in a package that reads work sets -- internal/worklang and
-//     every package with a non-test file importing it -- is the one writer or
-//     an entry on the shrink-only list, checked both ways.
+//     every package with a non-test file importing it -- is an entry on the
+//     shrink-only list, checked both ways.
 //  2. No function anywhere under cmd/ or internal/ both writes a file and names
-//     docs/roadmaps/ in a string, the one writer excepted.
+//     docs/roadmaps/ in a string. The one writer used to be excepted; it is
+//     parked with nova-work under deprecated/ (forestWriter above).
 //  3. No script or workflow edits a file in place, redirects, tees, copies or
 //     moves onto docs/roadmaps/ (the bash that did, rowan-tools bin/sprint-xy,
 //     is in another repository and is deleted by #3340's rowan-tools half).
@@ -65,7 +68,6 @@ func TestForestWrittenOnlyByTheKernel(t *testing.T) {
 	}
 
 	seen := map[string]bool{}
-	sawWriter := false
 	var violations []string
 	for _, src := range files {
 		inScope := scope[path.Dir(src.Rel)]
@@ -79,14 +81,10 @@ func TestForestWrittenOnlyByTheKernel(t *testing.T) {
 				continue
 			}
 			key := src.Rel + ":" + removeAllFuncName(fn)
-			if key == forestWriter {
-				sawWriter = true
-				continue
-			}
 			line := tree.FSet.Position(writes[0].Pos()).Line
 			if namesForest(fn.Body) {
 				violations = append(violations, fmt.Sprintf(
-					"%s:%d: %s writes a file and names %s; the forest is written only by the nova-work kernel (#3340), and a work set goes through %s, which refuses it",
+					"%s:%d: %s writes a file and names %s; the forest's one writer, the nova-work kernel (#3340, %s), is parked under deprecated/ and no living code writes it",
 					src.Rel, line, key, forestDirLiteral, forestWriter))
 			}
 			if !inScope {
@@ -95,14 +93,10 @@ func TestForestWrittenOnlyByTheKernel(t *testing.T) {
 			seen[key] = true
 			if !allow.Has(key) {
 				violations = append(violations, fmt.Sprintf(
-					"%s:%d: %s writes a file in a package that reads work sets and is not on %s; write a work set through %s (it refuses the forest), or list this call with the target it writes",
+					"%s:%d: %s writes a file in a package that reads work sets and is not on %s; list this call with the target it writes, never the forest (its one writer, %s, is parked under deprecated/)",
 					src.Rel, line, key, forestWriterAllowlistPath, forestWriter))
 			}
 		}
-	}
-	if !sawWriter {
-		violations = append(violations, fmt.Sprintf(
-			"%s is gone or writes nothing; it is the one writer of a work set and the rule is anchored on it", forestWriter))
 	}
 	for _, row := range allowlist.Check(t, allow, seen).Stale {
 		key := row.Key

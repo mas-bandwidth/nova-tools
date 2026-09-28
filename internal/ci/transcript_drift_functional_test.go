@@ -14,11 +14,12 @@ import (
 // nova-tools#4328). The shape helpers and their negative controls stay in
 // transcript_drift_test.go.
 
-// TestFirstRunTranscriptsMatchInstalledBuild re-runs the four first-run
+// TestFirstRunTranscriptsMatchInstalledBuild re-runs the first-run
 // transcript lines that drifted from the installed build and slipped past the
 // per-binary shape tests, which is nova-tools#1506 (nova-pulse pool went with the frozen verbs): the three
-// nova-decide route lines, nova-work's no-verb refusal and nova-review's
-// version line. Each subtest builds the tool, runs the transcript's command,
+// nova-decide route lines and nova-review's version line (nova-work's no-verb
+// refusal was the fourth; its subtest left when nova-work was parked under
+// deprecated/ on 2026-09-27, with its transcript). Each subtest builds the tool, runs the transcript's command,
 // and compares what the transcript line promises against what the tool printed.
 func TestFirstRunTranscriptsMatchInstalledBuild(t *testing.T) {
 	t.Parallel()
@@ -45,22 +46,6 @@ func TestFirstRunTranscriptsMatchInstalledBuild(t *testing.T) {
 			_, stdout, stderr := runBare(t, root, "nova-decide", bin, args)
 			assertShape(t, cmd, transcript, stdout, stderr)
 		}
-	})
-
-	t.Run("nova-work-refusal", func(t *testing.T) {
-		bin := buildTool(t, root, "nova-work")
-		transcript, found := outputAfterCommand(md, "nova-work")
-		if !found {
-			t.Fatalf("TESTS.md missing command %q", "nova-work")
-		}
-		if len(transcript) == 0 {
-			t.Fatalf("TESTS.md has empty transcript for nova-work")
-		}
-		code, stdout, stderr := runBare(t, root, "nova-work", bin, nil)
-		if code == 0 {
-			t.Fatalf("nova-work bare must exit non-zero on refusal, got 0")
-		}
-		assertShape(t, "nova-work", transcript, stdout, stderr)
 	})
 
 	t.Run("nova-review-version", func(t *testing.T) {

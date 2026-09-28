@@ -26,4 +26,3 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `nova-update/` | binary release update CLI | `go test ./cmd/nova-update` | `go test ./cmd/nova-update` |
 | `nova-version/` | build identity and version CLI | `go test ./cmd/nova-version` | `go test ./cmd/nova-version` |
 | `nova-wake/` | worker wakeup and slot lease CLI | `go test ./cmd/nova-wake` | `go test ./cmd/nova-wake` |
-| `nova-work/` | work item execution and lifecycle CLI | `go test ./cmd/nova-work` | `go test ./cmd/nova-work` |

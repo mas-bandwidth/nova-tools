@@ -14,7 +14,19 @@ here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
 lisp="$root/lisp/nova-work"
 
-[ -d "$lisp" ] || { echo "lisp-test.sh: lisp/nova-work not found in the checkout" >&2; exit 1; }
+# nova-work, the one Lisp system, is PARKED under deprecated/lisp/nova-work
+# (Glenn 2026-09-27: deprecated code is not tested, not built and never blocks
+# CI). With no lisp/ tree there is nothing to test: say so and pass, the way
+# ci.yml passes an empty Go selection. A lisp/ tree this script does not know is
+# refused, so a new system cannot land untested behind a green "nothing".
+if [ ! -d "$lisp" ]; then
+  if [ -e "$root/lisp" ]; then
+    echo "lisp-test.sh: lisp/ exists and holds no nova-work; this script does not know how to test it" >&2
+    exit 1
+  fi
+  echo "lisp-test.sh: nothing to test (lisp/ holds no system; nova-work is parked under deprecated/lisp/nova-work)"
+  exit 0
+fi
 
 # Each run gets its own short TMPDIR. The suite keys its journals, exports and
 # socket bases off the ambient TMPDIR and clears stale directories first, so two

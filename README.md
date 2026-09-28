@@ -38,7 +38,6 @@ come back to the table below for the problem you want it to solve.
 <tr><td>Give a command the credentials it needs.</td><td nowrap><a href="docs/CLI.md#nova-secrets">nova-secrets</a></td><td><strong>Development branch:</strong> encrypted storage and selected credentials delivered to a child command.</td></tr>
 <tr><td>Keep AI workers supplied with ready tasks.</td><td nowrap><a href="docs/SPEC-PULSE.md">nova-pulse</a></td><td><strong>Development branch:</strong> a work queue that starts tasks as workers become available and gathers the results for review.</td></tr>
 <tr><td>Review a post before it leaves the team.</td><td nowrap><a href="docs/CLI.md#nova-post">nova-post</a></td><td><strong>Development branch:</strong> saved drafts and a send gate tied to approval of the exact content.</td></tr>
-<tr><td>Check task dependencies and a work plan.</td><td nowrap><a href="docs/CLI.md#nova-work">nova-work</a></td><td><strong>Development branch:</strong> a ready set, bounded plan checks and generated task cards.</td></tr>
 <tr><td>Spot packages that exceed the test-time budget.</td><td nowrap><a href="docs/CLI.md#nova-ci">nova-ci</a></td><td><strong>Development branch:</strong> package timings read from Go test events.</td></tr>
 <tr><td>Keep session notes you can reliably return to.</td><td nowrap><a href="docs/CLI.md#nova-cairn">nova-cairn</a></td><td><strong>Development branch:</strong> explicit checkpoints, source pointers and a bounded index.</td></tr>
 <tr><td>Ask a model a structured question.</td><td nowrap><a href="docs/CLI.md#nova-decide">nova-decide</a></td><td><strong>Development branch:</strong> typed answers and reported confidence for your workflow to evaluate.</td></tr>
@@ -51,8 +50,8 @@ Pick the row that is your actual problem today. One tool is a fine number.
 
 ## Useful workflows
 
-The `nova-post`, `nova-review`, `nova-secrets`, `nova-pulse`, `nova-work`,
-`nova-ci`, `nova-cairn` and `nova-decide` commands below, and `nova-sandbox
+The `nova-post`, `nova-review`, `nova-secrets`, `nova-pulse`, `nova-ci`,
+`nova-cairn` and `nova-decide` commands below, and `nova-sandbox
 egress`, are available on the development branch and are not part of the pinned
 `v0.15.2` release shown in the install guide.
 
@@ -60,19 +59,15 @@ egress`, are available on the development branch and are not part of the pinned
   inspect it with `show`, then release that exact draft with an approved `send`.
 - Fold worker-pool usage into a ledger with `nova-tokens fold-pool`. Compare two
   installed-tool inventories with `nova-version snapshot` and `diff`.
-- Check a `.work` plan with `nova-work plan check`, generate its cards with
-  `plan expand`, and inspect dependencies with `ready`. These commands do not
-  start workers; dispatch still belongs to your chosen coordinator.
 - `nova-swarm native` shares Go module and build caches across slots under the
   same root. `nova-ci slowtests` reports packages over your chosen whole-second
   time budget; cached tests may finish near zero, so use uncached events when
   the question is how long the tests really take.
 - Keep a bounded coordination loop outside the model with `nova-pulse run`, or
   use `--once` for one tick. The loop coordinates and dispatches work. `status`
-  folds its tick records into convergence windows, `fleet registry` lists the
-  declared machines, and `nova-work set check --ready` derives which units are
-  ready from a bounded work-set file; those three inspect declared or current
-  state without starting workers.
+  folds its tick records into convergence windows, and `fleet registry` lists the
+  declared machines; those two inspect declared or current state without
+  starting workers.
 - Build and check a reviewed outbound policy with `nova-sandbox egress plan`
   and `check`. Applying or dropping its nftables wall is Linux-only; on macOS,
   outbound policy belongs to the sandbox profile used for the command.
@@ -94,7 +89,6 @@ Want to grow an AI friend? [Nova Seed](https://github.com/mas-bandwidth/nova) is
   helps, which two to try first, exactly how to try one cheaply, and the honest
   limits.
 - [Roadmap](ROADMAP.md): the current baseline, tracked work and what comes next.
-- [Lisp kernel](lisp/nova-work/README.md): the Common Lisp transition kernel, validator rules and acceptance suite.
 - [Command reference](docs/CLI.md): every flag, worked examples and caveats.
 - [Model routes](docs/MODELS.md): the registry of every model route a bench can run, so the routes are never forgotten again.
 - [Tool contracts](docs/SPEC.md): what each tool promises, and what it refuses.

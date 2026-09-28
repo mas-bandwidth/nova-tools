@@ -1268,7 +1268,7 @@ class test buys the cheap half.
 an output flag (`-o`, `--out`, `--output`, `--graph`): the run writes it into the
 package directory and leaves it in the tree.
 **The hurt.** Ledger item 32: `go test ./cmd/nova-work/` left
-`cmd/nova-work/deps.json` in the tree, found while reviewing `#1323`; `#1329`
+`deprecated/cmd/nova-work/deps.json` in the tree, found while reviewing `#1323`; `#1329`
 landed the rule and found one more offender. It is ledger item 24's class met one
 directory along — 79 junk files under `scratch/` on dev from one wrong
 `TMPDIR=$PWD/scratch` line replicated across ~100 cards (`#1311`).
@@ -1322,63 +1322,6 @@ caller is invisible — following those means becoming a type checker, and the
 shape that hurt is written inline. And only LISTINGS are read: `os.Stat`,
 `os.Open` and `os.RemoveAll` over one named path in the shared directory are
 questions about that path, which no sibling job can answer wrongly.
-
-### `lisptemppath` — a temp path the Lisp suite builds is this RUN's, never a shared name
-
-**The rule.** Two halves, over every `.lisp` file under `lisp/nova-work/tests/`.
-(a) No file names the SHARED temporary directory —
-`uiop:default-temporary-directory`, `uiop:temporary-directory`,
-`(getenv "TMPDIR")`, a `/tmp` or `/var/tmp` literal — to build a path.
-(b) No file calls `RANDOM`. Both are satisfied by the harness's per-run helpers:
-`test-temp-dir` and `test-temp-file` under `test-run-root`, or, for a path
-`sun_path` keeps out of that root, `test-short-tag`. Uniqueness comes from the
-run's token — a real entropy source plus the pid — never from a counter or a
-clock. It is the Lisp half of what `sharedtemp` and `testoutpath` hold for Go.
-**The hurt.** Every temp path the `lisp/nova-work` acceptance suite made was
-named from `(get-universal-time)` plus a counter that starts at zero in every
-image, under a directory name fixed in the source. Two suites that start inside
-the same second on one host build the SAME path, so one finds the destination
-already there or the journal's lock held by the other: three reds on `#1682`
-(run `35445053795`), a red `ci-ok` on `#1692` on runner `air-nova-2`, and 12–17
-manufactured failures with four suites parallel on `hulk` where the same suites
-one at a time were green (`#1699`). CI runners share hosts — the Air runs two,
-the Studio several, `superman` ten — so it reddened PRs whose changes had nothing
-to do with it and trained reviewers to rerun a red. Half (b) is a second cause
-found while fixing the first: SBCL saves `*random-state*` into its core, so a
-fresh image returns the SAME sequence — three separate images each printed
-`113500 958198 129774` — and the AF_UNIX fixtures named their socket directories
-from it, so two concurrent suites agreed exactly and `short-socket-base` then
-DELETED the other suite's live socket directory before binding. On Linux that is
-`/dev/shm`, shared by every job on the box.
-**The test.** `TestNoLispTestBuildsATempPathWithoutTheHelper` and
-`TestNoLispTestNamesAPathWithRandom`
-(`internal/ci/lisptemppath_class_test.go`), with
-`TestLispTempScannerReadsTheFixtures` over the before/after fixtures in
-`internal/ci/testdata/lisptemppath/` and `TestScrubLispKeepsCodeAndDropsProse`
-over the comment scrubber directly.
-**Its allowlist.** Two, both `file:definition` per row with its reason, both
-shrink-only in both directions.
-`internal/ci/testdata/lisptemppath_allowlist.txt` holds four rows and they are
-all one reason: an AF_UNIX socket path lives in a fixed-size `sun_path` (104
-bytes on darwin) that the run root's name does not fit inside, so those paths
-take their uniqueness from `test-short-tag` and are handed to the harness's exit
-cleanup with `test-temp-register`. `internal/ci/testdata/lisprandom_allowlist.txt`
-holds one: `replays-8642.lisp:async-operations` names a staged-input id, never a
-filesystem path.
-**Its remedy line.** `build the path with test-temp-dir or test-temp-file under
-test-run-root (lisp/nova-work/tests/harness.lisp), or, for a path sun_path keeps
-out of that root, name it with test-short-tag: uniqueness comes from the run's
-token — a real entropy source plus the pid — never from a counter or a clock`.
-**Its narrowings.** Three, named out loud. `lisp/nova-work/tests/harness.lisp`
-is not scanned at all: it DEFINES the helper, so the rule cannot be stated over
-it without forbidding its own implementation. COMMENTS are scrubbed before
-matching, because the paragraphs that say what the old code did quote it exactly
-and a scanner that read prose would need an allowlist row for every sentence
-that told the truth — but STRING LITERALS stay visible, because `#p"/tmp/"` and
-`(getenv "TMPDIR")` are the offence rather than a description of it, so a
-docstring must spell the construct out in words. And attribution is per
-top-level DEFINITION, not per form: a finding names the `defun` or `deftest` it
-sits in, which is the unit an allowlist row can be read against.
 
 ### `busprogress` — progress never enters a protocol stream
 
@@ -1682,119 +1625,13 @@ against real output.
 not true of 8 of 22 sections, and 9 more compared a set of shapes; §7 makes execution, line for
 line through one comparator, the thing the class test asserts.
 
-### `kernel-components` — no kernel source is compiled by nobody
-
-**The rule, in two halves.** Every `.lisp` file under `lisp/nova-work/src/` is
-named by the `nova-work` system's `:components` list in
-`lisp/nova-work/nova-work.asd`, or is named in the `notCompiled` ledger with the
-issue that owes its removal. The system names no file that is gone, and an entry
-whose file is gone or has become a component fails too, so the ledger only
-shrinks. **`tests/` is the other half and is not written out**: since
-`nova-tools#1947` the `nova-work/tests` system names an explicit, ordered
-prelude — `tests/harness`, then `tests/acceptance` — and **discovers** every
-other regular `tests/*.lisp`, sorted by canonical system-relative name with
-`string<`. So the test half of the rule is the *shape* that makes discovery
-safe: the tests system names the prelude and nothing else, both prelude files
-exist, the discovery forms are still in the file, and `notCompiled` holds no
-`tests/` entry, because under discovery a test file cannot be uncompiled.
-**Why two halves.** `src`'s order is semantic — `:serial t` makes it the load
-order and later files depend on earlier ones, so adding a kernel file is a
-decision and is made by hand. A test file is a leaf: it registers `deftest`
-cases against the prelude and nothing reads it. Writing that list out cost
-thirteen pull requests on 2026-09-19 — every PR appended at the same position,
-so **every pair of open nova-work PRs conflicted on this one file and on no
-other file at all** — for zero disagreement, and the cost is quadratic in the
-number of concurrent branches. Closing parens on their own line does not fix it:
-two insertions at one position still conflict under `git merge-tree`, measured.
-**The reload caveat.** ASDF discovers when the `.asd` is **read**, not when the
-system is loaded. `run-tests.sh` and `tools/ci/lisp-test.sh` are fresh images
-every run, so CI always sees the directory as it stands; a **long-lived
-interactive image** must reread the file — `(asdf:clear-system
-:nova-work/tests)` then `(asdf:load-asd …/nova-work.asd)`, or restart — or a
-test file added since will silently not register.
-**Its refusals.** A duplicate component, two names differing only by case (one
-file on the darwin runners), a name that could escape `tests/`, a symbolic link,
-or a missing prelude file is a loud error **while the `.asd` is read**, never a
-quiet change of which files compile.
-**The hurt.** ASDF loads a file because the system names it, never because it is
-in the directory, so an unnamed file is not slow-to-load — SBCL never reads it.
-On 2026-09-19, `dev@47d81e9c`: **28 of the 60 files in `src/` were in no system**
-— all 17 `replays-86NN.lisp` and 11 feature-named `replays-*.lisp`, roughly 700
-defuns and defstructs that nothing compiled — while `run-tests.sh` reported
-`total=327 pass=327 fail=0`. `#1102` read that as a naming problem and called the
-fold mechanical. It is not: appending all 28 to the system and running the suite
-dies with `attempt to redefine the STRUCTURE-OBJECT class SAVEPOINT incompatibly
-with the current definition` loading `src/replays-8641.fasl`, exit 1, the 327
-cases never reached. A card told to move that file into `src/savepoint.lisp`
-would have landed a kernel that does not load — or dropped the colliding form to
-get green, with nobody able to say which of the 700 forms went.
-**The test.** `TestEveryKernelSourceIsACompiledComponent`
-(`internal/ci/lispkernel_class_test.go`). It is a Go test rather than a lisp one
-on purpose: the lisp job runs only when `lisp/**` or `docs/SPEC-WORK.md` moved,
-and a file nothing compiles is exactly what a green lisp run cannot see. It
-reads the `.asd` as text and needs no SBCL, so it holds the *shape* of the tests
-half; the facts that need a running image are held beside the suite, in
-`lisp/nova-work/tests/asd-discovery.lisp` — the components ARE the directory
-(parity, computed from the filesystem, not from the `.asd`'s own function),
-every component registered exactly once, the prelude first and really shared,
-nothing under `tests/acceptance/` discovered, and each refusal above. That the
-order after the prelude carries no meaning is a measurement, re-runnable as
-`lisp/nova-work/tools/asd-order-check.sh`: the whole suite in current, sorted
-and reverse order in three fresh images, compared by test-name set, by each
-name's multiplicity and by every case's outcome, plus a `git archive` with no
-Git in it.
-**Its allowlist.** `notCompiled` in the test file: 28 entries, every one owed to
-`#1102`. It is the point of the test rather than a hole in it — a silent file is
-invisible, a listed one is a debt with an issue number that cannot grow without
-this test saying so.
-**Its remedy line.** The finding names the file and says SBCL never reads it: it
-compiles nothing, no acceptance case covers it, and `run-tests.sh` is green
-without it.
-**Its narrowings.** Only the `nova-work` kernel and only `.lisp` files directly
-under `src/` and `tests/`. It reads the component list, not the load: whether the
-system as named *loads* is `make test-lisp`'s business. It does not run the
-discovery either — it checks that the discovery forms stand; what they actually
-return is `asd-discovery.lisp`'s, inside the suite.
-### `asd-closing-line` — no ASDF component shares its closing line
-
-**The rule.** No line in `lisp/nova-work/nova-work.asd` that names a
-`(:file ...)` component also carries the `:components`/system closing parens.
-Each component stands on its own line and the closers stand on lines of their
-own, so appending a component inserts lines before the closers instead of
-rewriting the line that carries them.
-**The hurt.** Each `:components` list carried its closing parens on the last
-component line (`(:file "tests/replays-fleet-stale-tokens")))`, so any two
-branches that each appended a component rewrote the same line. On 2026-09-19,
-`dev@23d9698b`: thirteen open nova-work pull requests all conflicted on
-`lisp/nova-work/nova-work.asd`, nine of the twelve measured on that file and on
-no other file at all. The resolution is always the union of both sides, but git
-cannot know that, so every pair conflicts forever at quadratic cost.
-**The test.** `TestNoAsdComponentSharesTheClosingLine`
-(`internal/ci/lispkernel_class_test.go`). It is a Go test rather than a lisp one
-on purpose: the shape is what makes concurrent branches merge, and the lisp job
-cannot see a merge conflict. It reads each line's code, not its text: `;`
-comments, `#|...|#` block comments and string contents are removed first, and a
-component line is shared when its code closes more parens than it opens, so a
-trailing `; note` after the closers cannot hide one and a commented-out line
-cannot fake one. `TestAsdSharedClosingLinesReadsCodeNotComments` pins that
-reading with negative and positive fixtures (a closer line followed by a
-comment, closers after `:depends-on`, parens inside a string, a shared line
-inside a block comment).
-**Its allowlist.** None. A shared closing line has no good case: the closers fit
-on a line of their own in every system.
-**Its remedy line.** The finding names the line and says it shares its component
-with the closing parens, so every pair of appending branches rewrites it: put
-each component on its own line and the closing parens on lines of their own.
-**Its narrowings.** Only `lisp/nova-work/nova-work.asd` and only lines naming
-`(:file ...)`. It reads the shape, not the order and not the load: whether the
-order loads is `make test-lisp`'s business.
 ### `one section` — docs/TESTS.md names each tool exactly once
 
 **The rule.** No two `## ` headings in `docs/TESTS.md` carry the same name. A
 tool with more than one thing to say says it in `###` subsections of its one
 section.
 **The hurt.** `docs/TESTS.md` carried `## nova-work` twice. `onboarding.Section`
-cuts to the FIRST match and cannot fail, so `cmd/nova-work/firstrun_test.go`
+cuts to the FIRST match and cannot fail, so `deprecated/cmd/nova-work/firstrun_test.go`
 executed the first section and the second was read by no test at all. It drifted
 into two sentences the binary no longer printed — a bare-command refusal in the
 retired spelling (`nova-work: no verb given`, against the shipped
@@ -1813,9 +1650,9 @@ readership is nobody.
 first is read — by `onboarding.Section`, by every `firstrun_test.go`, and by a
 person looking for the one place to change.
 **Its narrowings.** Only `docs/TESTS.md` and only `## ` headings; a repeated
-`###` inside one tool's section is that section's business, and `cmd/nova-work`'s
-own `TestTESTSRefusalsAreWhatTheToolPrints` is what holds a second subsection to
-what the tool prints.
+`###` inside one tool's section is that section's business, and a tool's own
+test is what holds a second subsection to what the tool prints (nova-work's did,
+and it is parked with the tool under `deprecated/cmd/nova-work`, not run).
 
 ### `transcripts` — every documented transcript is EXECUTED, line for line
 
@@ -2313,57 +2150,19 @@ injected unmarked verb (that is `TestShippedSchemaSurvivesAnInjectedUnmarkedVerb
 its neighbor in the same file) and it does not check that the shipped file uses
 only kinds this test knows (`TestShippedSchemaUsesOnlyKnownEventKinds`).
 
-### `lispduplicate` — the kernel defines each name once, and loads each slice once
-
-**The rule.** Two halves of one class: a definition the Lisp kernel makes twice.
-Within ONE file that `lisp/nova-work/nova-work.asd` names, a top-level `defun`,
-`defmacro`, `defgeneric`, `defparameter`, `defvar` or `defstruct` defines a name
-once; and `lisp/nova-work/tests/acceptance.lisp`'s `*acceptance-slices*` names
-each slice file once.
-**The hurt.** nova-tools #1612, on dev `11aa07a7`. Three duplicate definitions
-stood in the kernel and the class had no register at all, because the only gate
-the kernel had — `lisp/nova-work/run-tests.sh` — loaded under
-`(handler-bind ((warning #'muffle-warning)) ...)` and so could not see the
-failure it was causing: `sbcl --eval '(asdf:load-system :nova-work)'` printed
-`Duplicate definition for COPY-MACHINE found in one file`, ended in an unhandled
-`COMPILE-FILE-ERROR` on `src/fleet`, and exited 1 — while the suite reported
-`total=327 pass=327 fail=0` over a system that did not load. The second half was
-measured on the same tree: `*acceptance-slices*` held
-`slice-09-state-export-replays.lisp` three times and `slice-10-fleet.lisp`
-twice, so `total=335` was 314 distinct cases and 21 repeat runs of sixteen of
-them.
-**The test.** `TestNoKernelFileDefinesTheSameNameTwice` and
-`TestNoAcceptanceSliceIsLoadedTwice`
-(`internal/ci/lispduplicate_class_test.go`). Both are Go, in the fast tier, and
-need no SBCL: they read the same text the reader reads, and so catch the class
-BEFORE the load rather than after it.
-**Its allowlist.** None, in either half. The set of files read is the set
-`nova-work.asd` names through `(:file "…")`, so a file added tomorrow is held on
-the day it appears, and an unread file cannot break a load and is not read.
-**Its remedy line.** `… — SBCL reports this as "Duplicate definition ... found
-in one file", a full WARNING, which makes compile-file fail and
-`(asdf:load-system :nova-work)` exit 1. Keep one definition.`, and for the
-slices, `tests/acceptance.lisp lists <file> <n> times (entries …): the file is
-loaded that many times, every deftest in it is registered that many times, and
-the suite's total= counts each of its cases that many times. List it once.`
-**Its narrowings.** A redefinition ACROSS files is SBCL's style-warning, not a
-`COMPILE-FILE-ERROR` — the later file simply wins — so it is not this rule's
-business. Read-time conditionals are not duplicates: `#+sbcl (defun f …)` beside
-`#-sbcl (defun f …)` is one definition in any one build (`src/transport.lisp`
-has four such pairs), so a definition whose preceding non-blank line opens with
-`#+` or `#-` is skipped.
-
 ### `forestwriter` — the forest has one writer, the nova-work kernel
 
 **The rule.** Every file write (`os.WriteFile`, `os.Create`, `os.CreateTemp`, a
 writable `os.OpenFile`, `os.Rename`, `os.Truncate`, `os.Link`, `os.Symlink` and
 their `ioutil` spellings) in a package that reads work sets — `internal/worklang`
-and every package with a non-test file importing it — is the one writer,
-`cmd/nova-work/forestwrite.go:writeWorkSet`, or an entry on the shrink-only
-allowlist, checked both ways; no function anywhere under `cmd/` or `internal/`
-both writes a file and names `docs/roadmaps/` in a string, the one writer
-excepted; and (the sibling test below) no script or workflow edits, redirects,
-tees, copies or moves onto a `docs/roadmaps/` path.
+and every package with a non-test file importing it — is an entry on the
+shrink-only allowlist, checked both ways; no function anywhere under `cmd/` or
+`internal/` both writes a file and names `docs/roadmaps/` in a string; and (the
+sibling test below) no script or workflow edits, redirects, tees, copies or
+moves onto a `docs/roadmaps/` path. The one writer,
+`deprecated/cmd/nova-work/forestwrite.go:writeWorkSet`, was the one exception
+until 2026-09-27, when nova-work was parked under `deprecated/`; the rule no
+longer anchors on it, so no living code writes the forest and none is excepted.
 **The hurt.** The forest — every file under `docs/roadmaps/`: `nova-work.sexp`,
 `sprint-fixes-2026-09-22.sexp` and the storage split's `work/` and `blobs/`
 beside them — had two writers in the tree, setland's `replaceFile` and attempt's
@@ -2382,16 +2181,16 @@ lock, send or byte.
 **Its allowlist.** `internal/ci/testdata/forestwriter_allowlist.txt`, one
 `file:function # target it writes` per row for every write inside worklang's
 scope that is not the kernel and not the forest — the sprint table's render and
-job storage, the dogfood ledger, the `--log`/`--graph`/`--usage` writes, ask's
+job storage, ask's
 record, the token package's day file, pool ledger and locks, and plan expand's
 job storage; shrink-only in both directions, and every row must carry the target
 it writes.
 **Its remedy lines.** `writes a file in a package that reads work sets and is
-not on the allowlist; write a work set through cmd/nova-work/forestwrite.go
-writeWorkSet (it refuses the forest), or list this call with the target it
-writes`; `writes a file and names docs/roadmaps/; the forest is written only by
-the nova-work kernel (#3340), and a work set goes through writeWorkSet, which
-refuses it`; and for a stale row, `delete the stale entry (the list only
+not on the allowlist; list this call with the target it writes; no living code
+writes the forest (its one writer, nova-work's writeWorkSet, is parked under
+deprecated/cmd/nova-work)`; `writes a file and names docs/roadmaps/; the forest's
+one writer, the nova-work kernel (#3340), is parked under deprecated/cmd/nova-work,
+and no living code writes it`; and for a stale row, `delete the stale entry (the list only
 shrinks)`.
 **Its narrowings.** It follows `fileWriteCalls` within ONE function, so a write
 behind a helper one frame away is attributed to that helper, not its caller;
@@ -2669,7 +2468,6 @@ Every class test reads this repository's own text — `.go` files, `.github/work
 20. `TestEveryActionIsPinnedBySHA` — every `uses:` in `ci.yml` and `certification.yml` is `owner/action@<40-hex-sha>`.
 21. `TestEveryTriggeringEventReachesACIOKVerdict` — `ci-ok` has a verdict step gated for every triggering event (`pull_request`, `merge_group`, `push`, `workflow_dispatch`).
 22. `TestEveryCommandMeetsTheOnboardingStandard` — every `cmd/` tool's help ends in an `example:` block, a bare command refuses in one line, and `docs/TESTS.md` carries its `### First run` transcript.
-23. `TestEveryKernelSourceIsACompiledComponent` — every `.lisp` file under the `nova-work` kernel is named by a `:components` list or the shrink-only `notCompiled` ledger.
 24. `TestNoToolIsWrittenTwiceInTheTranscripts` — no two `## ` headings in `docs/TESTS.md` carry the same tool name.
 25. `TestEveryToolPrintsTheOneVersionLine` — every `cmd/nova-*` binary answers `version` with one line in the `internal/buildinfo` grammar.
 26. `TestTheVersionGrammarIsSpelledOutOnceInTheSpec` — `docs/SPEC.md` states that grammar once.
@@ -2682,7 +2480,6 @@ Every class test reads this repository's own text — `.go` files, `.github/work
 34. `TestWorkspaceCleanupDoesNotFailBeforeCheckout` — the workspace-cleanup step refuses an empty `GITHUB_WORKSPACE`, continues over an absent directory and over a workspace with no `.git` (the belt), so it never fails a job before checkout.
 35. `TestSharedRepoTreeListsAndParsesTheRepository` — the shared tree is this repository, every `.go` file carries a usable syntax tree, and the loader runs exactly once.
 36. `TestSharedRepoTreeSkipsTheGitDirectory` — `.git` is never walked into.
-37. `TestNoKernelFileDefinesTheSameNameTwice` / `TestNoAcceptanceSliceIsLoadedTwice` — no file `nova-work.asd` names defines one top-level name twice, and `*acceptance-slices*` lists each slice file once (read as text, before any SBCL load).
 38. `TestSpecCIIndexesEveryClassTest` — every class test is named by the index and every indexed `Test…` name exists (the parked section exempted).
 39. `TestNoGhInAnyBrief` / `TestBriefRuleCatchesEachSpelling` — no brief this repository ships tells a child to call GitHub (#3600, umbrella #3594: GitHub is a git remote only). **The hurt:** one PR cost ~60 REST calls and the rowan token's 5,000/h was spent twice in a day, freezing every merge for an hour; a brief that says `gh api`, `gh pr`, GraphQL or a bare remote clone teaches the next child to spend the budget again. **The sweep:** every file under `internal/nsprint/brief/tmpl/*.tmpl`, `internal/nsprint/read/tmpl/*.tmpl`, `internal/swarm/templates.go` and `cmd/nova-swarm/testdata/cards/*.md` (an empty glob is a red run, so a template directory that moves must move in the list too); a line matching `gh ` as a command (line start or after a non-word, non-path character, so "through " does not match), `graphql` in any case, or a `git clone` of any remote (`https://`, `ssh://`, `git@`) without `--reference` on the same line is refused. **No allowlist:** the remedy is the verb, not an exception. **The remedy line:** `<file>:<line>: gh  in a brief: <line>` (or `GraphQL in a brief`, or `a remote clone without the bench mirror as --reference`), with the fix named once: `nova-sprint read brief`, `nova-sprint read post`, `nova-sprint card`, or a clone with `--reference ~/nova-bench/mirror/<repo>.git`. **The control:** `TestBriefRuleCatchesEachSpelling` feeds the scanner one brief per spelling and wants exactly one finding at that line, and a brief carrying the verbs, a mirror-referenced clone and the words "through" and "high" wants none.
 40. `TestTaskCardsHaveOneWriter` — no non-test Go file under `cmd/` or `internal/` writes a task card's sets or record (`ws:<stream>:<where>`, `friend:<f>:cards:<where>`, both also under the sprint epoch, `ws:<e>:<stream>:<where>` and `friend:<f>:<e>:cards:<where>`, #4238; the friend-queue idx sets, `task:<id>`) with a direct Redis call; every move is one FCALL of the one writer, `ns_tcard_move` in `internal/nsprint/fn/lua/02_card_move.lua` (#3778, Glenn 2026-09-25: "a card can only ever be in no set, or one of these sets"; the 07:46 table read 143/143 left after a night that landed 27 PRs because four writers kept the sets). Fixtures that seed a throwaway store (a `*fixture*.go` file, `internal/nsprint/ws/wstest`) are the only exceptions; the remedy is `internal/nsprint/taskcard`. Its Lua twin is `TestTaskCardOneWriter` in `internal/nsprint/fn`.
@@ -2930,6 +2727,215 @@ that fits the two-minute law. Read `windows-sizes` below before writing either:
 its rule — a number in a table or a cap must come from a MEASUREMENT, and a
 measurement made at a cap is a floor and not a size — is the one that cost the
 most to learn and it is live today, one platform over, as `darwin-sizes`.
+
+### Parked 2026-09-27: the nova-work Lisp kernel rules (`lisptemppath`, `kernel-components`, `asd-closing-line`, `lispduplicate`)
+
+**Why parked.** Every one of these rules reads `lisp/nova-work`, the nova-work kernel, and nothing else. Glenn, 2026-09-27: *"WIP tools (like nova work, sprint etc) in deprecated until we can do them properly"*; deprecated code is not tested, not built and never blocks CI. The kernel moved to `deprecated/lisp/nova-work` with `deprecated/cmd/nova-work`, PARKED: kept whole, to be sorted with Glenn, not deleted at the end. The four test files (`lisptemppath_class_test.go`, `lispkernel_class_test.go`, `lispduplicate_class_test.go`, and `work_kernel_dep_test.go`, which had no entry here), the two allowlists and the `lisptemppath/` fixtures moved with it to `deprecated/internal/ci/`, where nothing builds or runs them. The entries below keep the hurt. Their Go test paths point at where the files now are; their `lisp/nova-work` paths are as they stood before the move (the tree is now `deprecated/lisp/nova-work`). What would unpark them: a living Lisp system under `lisp/`.
+
+### `lisptemppath` — a temp path the Lisp suite builds is this RUN's, never a shared name
+
+**The rule.** Two halves, over every `.lisp` file under `lisp/nova-work/tests/`.
+(a) No file names the SHARED temporary directory —
+`uiop:default-temporary-directory`, `uiop:temporary-directory`,
+`(getenv "TMPDIR")`, a `/tmp` or `/var/tmp` literal — to build a path.
+(b) No file calls `RANDOM`. Both are satisfied by the harness's per-run helpers:
+`test-temp-dir` and `test-temp-file` under `test-run-root`, or, for a path
+`sun_path` keeps out of that root, `test-short-tag`. Uniqueness comes from the
+run's token — a real entropy source plus the pid — never from a counter or a
+clock. It is the Lisp half of what `sharedtemp` and `testoutpath` hold for Go.
+**The hurt.** Every temp path the `lisp/nova-work` acceptance suite made was
+named from `(get-universal-time)` plus a counter that starts at zero in every
+image, under a directory name fixed in the source. Two suites that start inside
+the same second on one host build the SAME path, so one finds the destination
+already there or the journal's lock held by the other: three reds on `#1682`
+(run `35445053795`), a red `ci-ok` on `#1692` on runner `air-nova-2`, and 12–17
+manufactured failures with four suites parallel on `hulk` where the same suites
+one at a time were green (`#1699`). CI runners share hosts — the Air runs two,
+the Studio several, `superman` ten — so it reddened PRs whose changes had nothing
+to do with it and trained reviewers to rerun a red. Half (b) is a second cause
+found while fixing the first: SBCL saves `*random-state*` into its core, so a
+fresh image returns the SAME sequence — three separate images each printed
+`113500 958198 129774` — and the AF_UNIX fixtures named their socket directories
+from it, so two concurrent suites agreed exactly and `short-socket-base` then
+DELETED the other suite's live socket directory before binding. On Linux that is
+`/dev/shm`, shared by every job on the box.
+**The test.** `TestNoLispTestBuildsATempPathWithoutTheHelper` and
+`TestNoLispTestNamesAPathWithRandom`
+(`deprecated/internal/ci/lisptemppath_class_test.go`), with
+`TestLispTempScannerReadsTheFixtures` over the before/after fixtures in
+`deprecated/internal/ci/testdata/lisptemppath/` and `TestScrubLispKeepsCodeAndDropsProse`
+over the comment scrubber directly.
+**Its allowlist.** Two, both `file:definition` per row with its reason, both
+shrink-only in both directions.
+`deprecated/internal/ci/testdata/lisptemppath_allowlist.txt` holds four rows and they are
+all one reason: an AF_UNIX socket path lives in a fixed-size `sun_path` (104
+bytes on darwin) that the run root's name does not fit inside, so those paths
+take their uniqueness from `test-short-tag` and are handed to the harness's exit
+cleanup with `test-temp-register`. `deprecated/internal/ci/testdata/lisprandom_allowlist.txt`
+holds one: `replays-8642.lisp:async-operations` names a staged-input id, never a
+filesystem path.
+**Its remedy line.** `build the path with test-temp-dir or test-temp-file under
+test-run-root (lisp/nova-work/tests/harness.lisp), or, for a path sun_path keeps
+out of that root, name it with test-short-tag: uniqueness comes from the run's
+token — a real entropy source plus the pid — never from a counter or a clock`.
+**Its narrowings.** Three, named out loud. `lisp/nova-work/tests/harness.lisp`
+is not scanned at all: it DEFINES the helper, so the rule cannot be stated over
+it without forbidding its own implementation. COMMENTS are scrubbed before
+matching, because the paragraphs that say what the old code did quote it exactly
+and a scanner that read prose would need an allowlist row for every sentence
+that told the truth — but STRING LITERALS stay visible, because `#p"/tmp/"` and
+`(getenv "TMPDIR")` are the offence rather than a description of it, so a
+docstring must spell the construct out in words. And attribution is per
+top-level DEFINITION, not per form: a finding names the `defun` or `deftest` it
+sits in, which is the unit an allowlist row can be read against.
+
+### `kernel-components` — no kernel source is compiled by nobody
+
+**The rule, in two halves.** Every `.lisp` file under `lisp/nova-work/src/` is
+named by the `nova-work` system's `:components` list in
+`lisp/nova-work/nova-work.asd`, or is named in the `notCompiled` ledger with the
+issue that owes its removal. The system names no file that is gone, and an entry
+whose file is gone or has become a component fails too, so the ledger only
+shrinks. **`tests/` is the other half and is not written out**: since
+`nova-tools#1947` the `nova-work/tests` system names an explicit, ordered
+prelude — `tests/harness`, then `tests/acceptance` — and **discovers** every
+other regular `tests/*.lisp`, sorted by canonical system-relative name with
+`string<`. So the test half of the rule is the *shape* that makes discovery
+safe: the tests system names the prelude and nothing else, both prelude files
+exist, the discovery forms are still in the file, and `notCompiled` holds no
+`tests/` entry, because under discovery a test file cannot be uncompiled.
+**Why two halves.** `src`'s order is semantic — `:serial t` makes it the load
+order and later files depend on earlier ones, so adding a kernel file is a
+decision and is made by hand. A test file is a leaf: it registers `deftest`
+cases against the prelude and nothing reads it. Writing that list out cost
+thirteen pull requests on 2026-09-19 — every PR appended at the same position,
+so **every pair of open nova-work PRs conflicted on this one file and on no
+other file at all** — for zero disagreement, and the cost is quadratic in the
+number of concurrent branches. Closing parens on their own line does not fix it:
+two insertions at one position still conflict under `git merge-tree`, measured.
+**The reload caveat.** ASDF discovers when the `.asd` is **read**, not when the
+system is loaded. `run-tests.sh` and `tools/ci/lisp-test.sh` are fresh images
+every run, so CI always sees the directory as it stands; a **long-lived
+interactive image** must reread the file — `(asdf:clear-system
+:nova-work/tests)` then `(asdf:load-asd …/nova-work.asd)`, or restart — or a
+test file added since will silently not register.
+**Its refusals.** A duplicate component, two names differing only by case (one
+file on the darwin runners), a name that could escape `tests/`, a symbolic link,
+or a missing prelude file is a loud error **while the `.asd` is read**, never a
+quiet change of which files compile.
+**The hurt.** ASDF loads a file because the system names it, never because it is
+in the directory, so an unnamed file is not slow-to-load — SBCL never reads it.
+On 2026-09-19, `dev@47d81e9c`: **28 of the 60 files in `src/` were in no system**
+— all 17 `replays-86NN.lisp` and 11 feature-named `replays-*.lisp`, roughly 700
+defuns and defstructs that nothing compiled — while `run-tests.sh` reported
+`total=327 pass=327 fail=0`. `#1102` read that as a naming problem and called the
+fold mechanical. It is not: appending all 28 to the system and running the suite
+dies with `attempt to redefine the STRUCTURE-OBJECT class SAVEPOINT incompatibly
+with the current definition` loading `src/replays-8641.fasl`, exit 1, the 327
+cases never reached. A card told to move that file into `src/savepoint.lisp`
+would have landed a kernel that does not load — or dropped the colliding form to
+get green, with nobody able to say which of the 700 forms went.
+**The test.** `TestEveryKernelSourceIsACompiledComponent`
+(`deprecated/internal/ci/lispkernel_class_test.go`). It is a Go test rather than a lisp one
+on purpose: the lisp job runs only when `lisp/**` or `docs/SPEC-WORK.md` moved,
+and a file nothing compiles is exactly what a green lisp run cannot see. It
+reads the `.asd` as text and needs no SBCL, so it holds the *shape* of the tests
+half; the facts that need a running image are held beside the suite, in
+`lisp/nova-work/tests/asd-discovery.lisp` — the components ARE the directory
+(parity, computed from the filesystem, not from the `.asd`'s own function),
+every component registered exactly once, the prelude first and really shared,
+nothing under `tests/acceptance/` discovered, and each refusal above. That the
+order after the prelude carries no meaning is a measurement, re-runnable as
+`lisp/nova-work/tools/asd-order-check.sh`: the whole suite in current, sorted
+and reverse order in three fresh images, compared by test-name set, by each
+name's multiplicity and by every case's outcome, plus a `git archive` with no
+Git in it.
+**Its allowlist.** `notCompiled` in the test file: 28 entries, every one owed to
+`#1102`. It is the point of the test rather than a hole in it — a silent file is
+invisible, a listed one is a debt with an issue number that cannot grow without
+this test saying so.
+**Its remedy line.** The finding names the file and says SBCL never reads it: it
+compiles nothing, no acceptance case covers it, and `run-tests.sh` is green
+without it.
+**Its narrowings.** Only the `nova-work` kernel and only `.lisp` files directly
+under `src/` and `tests/`. It reads the component list, not the load: whether the
+system as named *loads* is `make test-lisp`'s business. It does not run the
+discovery either — it checks that the discovery forms stand; what they actually
+return is `asd-discovery.lisp`'s, inside the suite.
+
+### `asd-closing-line` — no ASDF component shares its closing line
+
+**The rule.** No line in `lisp/nova-work/nova-work.asd` that names a
+`(:file ...)` component also carries the `:components`/system closing parens.
+Each component stands on its own line and the closers stand on lines of their
+own, so appending a component inserts lines before the closers instead of
+rewriting the line that carries them.
+**The hurt.** Each `:components` list carried its closing parens on the last
+component line (`(:file "tests/replays-fleet-stale-tokens")))`, so any two
+branches that each appended a component rewrote the same line. On 2026-09-19,
+`dev@23d9698b`: thirteen open nova-work pull requests all conflicted on
+`lisp/nova-work/nova-work.asd`, nine of the twelve measured on that file and on
+no other file at all. The resolution is always the union of both sides, but git
+cannot know that, so every pair conflicts forever at quadratic cost.
+**The test.** `TestNoAsdComponentSharesTheClosingLine`
+(`deprecated/internal/ci/lispkernel_class_test.go`). It is a Go test rather than a lisp one
+on purpose: the shape is what makes concurrent branches merge, and the lisp job
+cannot see a merge conflict. It reads each line's code, not its text: `;`
+comments, `#|...|#` block comments and string contents are removed first, and a
+component line is shared when its code closes more parens than it opens, so a
+trailing `; note` after the closers cannot hide one and a commented-out line
+cannot fake one. `TestAsdSharedClosingLinesReadsCodeNotComments` pins that
+reading with negative and positive fixtures (a closer line followed by a
+comment, closers after `:depends-on`, parens inside a string, a shared line
+inside a block comment).
+**Its allowlist.** None. A shared closing line has no good case: the closers fit
+on a line of their own in every system.
+**Its remedy line.** The finding names the line and says it shares its component
+with the closing parens, so every pair of appending branches rewrites it: put
+each component on its own line and the closing parens on lines of their own.
+**Its narrowings.** Only `lisp/nova-work/nova-work.asd` and only lines naming
+`(:file ...)`. It reads the shape, not the order and not the load: whether the
+order loads is `make test-lisp`'s business.
+
+### `lispduplicate` — the kernel defines each name once, and loads each slice once
+
+**The rule.** Two halves of one class: a definition the Lisp kernel makes twice.
+Within ONE file that `lisp/nova-work/nova-work.asd` names, a top-level `defun`,
+`defmacro`, `defgeneric`, `defparameter`, `defvar` or `defstruct` defines a name
+once; and `lisp/nova-work/tests/acceptance.lisp`'s `*acceptance-slices*` names
+each slice file once.
+**The hurt.** nova-tools #1612, on dev `11aa07a7`. Three duplicate definitions
+stood in the kernel and the class had no register at all, because the only gate
+the kernel had — `lisp/nova-work/run-tests.sh` — loaded under
+`(handler-bind ((warning #'muffle-warning)) ...)` and so could not see the
+failure it was causing: `sbcl --eval '(asdf:load-system :nova-work)'` printed
+`Duplicate definition for COPY-MACHINE found in one file`, ended in an unhandled
+`COMPILE-FILE-ERROR` on `src/fleet`, and exited 1 — while the suite reported
+`total=327 pass=327 fail=0` over a system that did not load. The second half was
+measured on the same tree: `*acceptance-slices*` held
+`slice-09-state-export-replays.lisp` three times and `slice-10-fleet.lisp`
+twice, so `total=335` was 314 distinct cases and 21 repeat runs of sixteen of
+them.
+**The test.** `TestNoKernelFileDefinesTheSameNameTwice` and
+`TestNoAcceptanceSliceIsLoadedTwice`
+(`deprecated/internal/ci/lispduplicate_class_test.go`). Both are Go, in the fast tier, and
+need no SBCL: they read the same text the reader reads, and so catch the class
+BEFORE the load rather than after it.
+**Its allowlist.** None, in either half. The set of files read is the set
+`nova-work.asd` names through `(:file "…")`, so a file added tomorrow is held on
+the day it appears, and an unread file cannot break a load and is not read.
+**Its remedy line.** `… — SBCL reports this as "Duplicate definition ... found
+in one file", a full WARNING, which makes compile-file fail and
+`(asdf:load-system :nova-work)` exit 1. Keep one definition.`, and for the
+slices, `tests/acceptance.lisp lists <file> <n> times (entries …): the file is
+loaded that many times, every deftest in it is registered that many times, and
+the suite's total= counts each of its cases that many times. List it once.`
+**Its narrowings.** A redefinition ACROSS files is SBCL's style-warning, not a
+`COMPILE-FILE-ERROR` — the later file simply wins — so it is not this rule's
+business. Read-time conditionals are not duplicates: `#+sbcl (defun f …)` beside
+`#-sbcl (defun f …)` is one definition in any one build (`src/transport.lisp`
+has four such pairs), so a definition whose preceding non-blank line opens with
+`#+` or `#-` is skipped.
 
 ### Parked 2026-09-26: the hosted merge leg (Rule T) and its package selection
 

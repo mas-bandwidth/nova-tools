@@ -10,7 +10,7 @@ import (
 // spec_work_record_home_test.go holds docs/SPEC-WORK.md to Glenn's ruling of
 // 2026-09-23 6:35-6:45 PM ET on where the work record lives. The RECORD (the
 // cross-repo sexp, the ingest map, fold receipts) lives in the private repo
-// mas-bandwidth/work, data only. The TOOL (cmd/nova-work and lisp/nova-work)
+// mas-bandwidth/work, data only. The TOOL (deprecated/cmd/nova-work and deprecated/lisp/nova-work, parked)
 // stays in nova-tools, and nova-tools' docs/roadmaps/*.sexp is nova-tools' own
 // public roadmap, a different thing from the record. "I don't want any
 // confusion between nova-work the tool, and work the repo."
@@ -103,7 +103,7 @@ func TestSpecWorkNamesTheWorkRepo(t *testing.T) {
 
 	home := specWorkSection(text, "2")
 	for _, want := range []string{
-		"**The whole record has one home: the work repo, the private repository `mas-bandwidth/work`; its manifest is `work.sexp`; the tool stays `cmd/nova-work` in nova-tools.**",
+		"**The whole record has one home: the work repo, the private repository `mas-bandwidth/work`; its manifest is `work.sexp`; the tool stays `deprecated/cmd/nova-work` in nova-tools.**",
 		"comment 5801899651",
 		"the manifest `work.sexp`",
 	} {

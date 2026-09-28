@@ -75,14 +75,6 @@ $ nova-wake probe --here
 $ nova-wake quickstart --state ./wake.state --reports ./reports
 $ nova-wake serve --bus ./bus --as rowan --on-note ./wake-me --interval 60s \
 $ nova-wake watch --state ./wake.state --max 5s --on-deadline report --interval 5s --reports ./reports
-example: nova-work dependencies --graph ./deps.json --node b
-example: nova-work dependencies --graph ./deps.json --node a --needs b
-example: nova-work ready --node a --graph ./deps.json
-example: nova-work plan check --file ./work.work --max-bytes 65536
-example: nova-work set check --file ./work-set.lisp --ready
-example: nova-work next --file ./units.lisp --for rowan-child --lanes ./lanes.tsv --no-jev --take
-example: nova-work attempt record --file ./units.lisp --unit certify:verb --by rowan-child --outcome ok --proof 8a132e77 --pr 1369
-example: nova-work events --redis 127.0.0.1:6379 --once
 example: go run cmd/nova-ci/timing.go --log internal/ci/timing/testdata/events.jsonl
 example: nova-bus check --bus ./bus --full
 example: nova-bus draft --bus ./bus --as Ada --to Bo --subject gate

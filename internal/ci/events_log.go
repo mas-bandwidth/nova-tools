@@ -52,7 +52,7 @@ func (p *Producer) emit(event, msg, card string, pr int) {
 
 // Announce writes one verb-level line -- start, done or refuse -- with the elapsed time
 // and, on a failure, the error. It is exported because the verb's own spine is written by
-// cmd/nova-work, where the flags and the deadline live, while the per-event lines are
+// deprecated/cmd/nova-work, where the flags and the deadline live, while the per-event lines are
 // written here, where the publishes happen.
 func (p *Producer) Announce(event, msg string, dur time.Duration, err error) {
 	level := "INFO"

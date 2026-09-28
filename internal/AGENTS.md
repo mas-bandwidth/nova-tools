@@ -70,7 +70,5 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `typedrec/` | typed RESULT record contract, parser and legacy adapter | `go test ./internal/typedrec` | `go test ./internal/typedrec` |
 | `update/` | binary updater and checksum verifier | `go test ./internal/update` | `go test ./internal/update` |
 | `wake/` | slot leases and heartbeat monitors | `go test ./internal/wake` | `go test ./internal/wake` |
-| `workclient/` | client bindings for nova-work daemon | `go test ./internal/workclient` | `go test ./internal/workclient` |
 | `worklang/` | worklang s-expression evaluator | `go test ./internal/worklang` | `go test ./internal/worklang` |
-| `workreconcile/` | GitHub issue import and work reconcile | `go test ./internal/workreconcile` | `go test ./internal/workreconcile` |
 | `yield/` | CI over work: a copy or local test run steps itself to nice 15 before it execs (nova-tools#4293) | `go test ./internal/yield` | `go test ./internal/yield` |

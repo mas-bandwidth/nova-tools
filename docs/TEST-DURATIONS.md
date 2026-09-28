@@ -67,7 +67,6 @@ times come from.
 | internal/check | 0.0 | - |
 | internal/dogfood | 0.0 | - |
 | internal/memindex | 0.0 | - |
-| cmd/nova-work | 0.0 | - |
 | internal/release | 0.0 | - |
 | cmd/nova-decide | 0.0 | - |
 | cmd/nova-version | 0.0 | - |
@@ -161,7 +160,6 @@ five of its tests are over 5 s and every one of them is a real `exec`.
 | internal/release | 0.4 | - |
 | internal/check | 0.4 | - |
 | internal/docs | 0.4 | - |
-| cmd/nova-work | 0.4 | - |
 | internal/records | 0.4 | - |
 | cmd/nova-decide | 0.3 | - |
 | cmd/nova-update | 0.3 | - |

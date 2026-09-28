@@ -14,12 +14,11 @@ var DefaultCatalog = []Entry{
 	E(".github", "CI workflows and automation", "go test ./internal/ci", "make test"),
 	E("assets", "static assets and schemas", "none", "none"),
 	E("fleet", "fleet loop units and bench templates", "none", "none"),
-	Page("cmd", "23 nova command-line tools", "nova-ci local", "make build"),
+	Page("cmd", "22 nova command-line tools", "nova-ci local", "make build"),
 	Page("docs", "specs, guides, and proposals", "go test ./internal/docs", "go test ./internal/docs"),
 	E("infra", "runner images and scripts", "none", "none"),
 	Page("internal", "packages and libraries", "nova-ci local", "make test"),
 	E("tla", "the TLA+ models of the state machines and their runners", "tla/check_table.py, tla/check_member.py (each under a 120 s budget)", "none"),
-	E("lisp", "nova-work lisp kernel", "go test ./internal/ci", "make test-lisp"),
 	E("profiles", "swarm worker profiles", "go test ./internal/swarm", "nova-swarm lint"),
 	E("deprecated", "tools and modules no longer in use, kept for reference only; never built, tested or maintained", "none", "none"),
 	E("scripts", "maintenance and operational scripts", "none", "none"),
@@ -49,7 +48,6 @@ var DefaultCatalog = []Entry{
 	E("cmd/nova-update", "binary release update CLI", "go test ./cmd/nova-update", "go test ./cmd/nova-update"),
 	E("cmd/nova-version", "build identity and version CLI", "go test ./cmd/nova-version", "go test ./cmd/nova-version"),
 	E("cmd/nova-wake", "worker wakeup and slot lease CLI", "go test ./cmd/nova-wake", "go test ./cmd/nova-wake"),
-	E("cmd/nova-work", "work item execution and lifecycle CLI", "go test ./cmd/nova-work", "go test ./cmd/nova-work"),
 
 	// internal/
 	E("internal/bounded", "bounded readers and byte buffers", "go test ./internal/bounded", "go test ./internal/bounded"),
@@ -120,9 +118,7 @@ var DefaultCatalog = []Entry{
 	E("internal/typedrec", "typed RESULT record contract, parser and legacy adapter", "go test ./internal/typedrec", "go test ./internal/typedrec"),
 	E("internal/update", "binary updater and checksum verifier", "go test ./internal/update", "go test ./internal/update"),
 	E("internal/wake", "slot leases and heartbeat monitors", "go test ./internal/wake", "go test ./internal/wake"),
-	E("internal/workclient", "client bindings for nova-work daemon", "go test ./internal/workclient", "go test ./internal/workclient"),
 	E("internal/worklang", "worklang s-expression evaluator", "go test ./internal/worklang", "go test ./internal/worklang"),
-	E("internal/workreconcile", "GitHub issue import and work reconcile", "go test ./internal/workreconcile", "go test ./internal/workreconcile"),
 	E("internal/yield", "CI over work: a copy or local test run steps itself to nice 15 before it execs (nova-tools#4293)", "go test ./internal/yield", "go test ./internal/yield"),
 
 	// docs/

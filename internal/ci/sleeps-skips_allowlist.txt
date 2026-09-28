@@ -48,7 +48,6 @@ cmd/nova-swarm	TestProviderBodyThatResumesInsideTheDeadlineIsNotUnknown	#4221 ca
 cmd/nova-swarm	TestProviderDelayedHeadersInsideTheWaitAreNotUnknown	#4221 calls time.Sleep
 cmd/nova-tokens	TestConcurrentWritersDoNotMutateTheBareRemote	#4221 calls time.Sleep
 cmd/nova-update	TestHelpExampleLinesRunAsPrinted	#4221 measured over 5 s on the 2026-09-25 PR run
-cmd/nova-work	TestSetCheckEvaluateDerivesDoneFromCriteria	#4221 measured over 5 s on the 2026-09-25 PR run
 internal/bus	TestTwoConcurrentRunsSerialiseOnOneCheckout	#4221 calls time.Sleep
 internal/bus	TestSendPreparedProcessDeathRecovery	#4221 measured over 5 s on the 2026-09-25 PR run
 internal/bus	TestPreparedIndexRecoveryFromStagedPartialIndexRetainsEarlierEntries	#4221 calls time.Sleep
@@ -112,14 +111,6 @@ cmd/nova-swarm	waitGroupGone	seed #4413: time.Sleep at recovery_test.go:97
 cmd/nova-swarm	waitIdentified	seed #4413: time.Sleep at recovery_test.go:165
 cmd/nova-swarm	waitStopped	seed #4413: time.Sleep at recovery_test.go:132
 cmd/nova-tokens	fakeSqlite3Main	seed #4413: time.Sleep at helpers_test.go:236
-cmd/nova-work	TestAFarFutureDeadlineStillGivesUpOnASilentSession	seed #4413: time.After at deadline_test.go:59
-cmd/nova-work	TestAMalformedDeadlineRefusesBeforeAnythingIsDialled	seed #4413: time.After at deadline_test.go:158
-cmd/nova-work	TestASessionThatNeverAnswersIsRefusedAtTwoAndNotCalledMissing	seed #4413: time.After at main_test.go:912
-cmd/nova-work	TestAnExpiredDeadlineRefusesBeforeAnythingIsDialled	seed #4413: time.After at deadline_test.go:42
-cmd/nova-work	TestAnExplicitEmptyDeadlineRefusesBeforeAnythingIsDialled	seed #4413: time.After at deadline_test.go:207
-cmd/nova-work	TestIssue1696	seed #4413: time.After at issue1696_test.go:52
-cmd/nova-work	awaitRequest	seed #4413: time.After at main_test.go:79
-cmd/nova-work	recvBy	seed #4413: time.After at main_test.go:464
 internal/bus	TestFriendSequencePlantedIndexIsRefused	seed #4413: time.After at planted_index_sequence_unix_test.go:58
 internal/bus	TestReadLaneIndexDoesNotBlockOnAPlantedFIFO	seed #4413: time.After at fifo_test.go:41
 internal/ci	TestReactorRunReturnsAtItsDeadline	seed #4413: time.After at events_test.go:470 and 1 more
@@ -160,7 +151,3 @@ internal/update	TestRule25SnapshotSurvivesAReporterKilledWhileWriting	seed #4413
 internal/update	fakeBus	seed #4413: time.Sleep at delivery_test.go:72
 internal/update	joinWrapper	seed #4413: time.Sleep at join_test.go:424 and 1 more
 internal/update	reporter.killReporterWhen	seed #4413: time.Sleep at join_test.go:848 and 2 more
-internal/workclient	TestExchangeAdmitsASlowButAnsweringSession	seed #4413: time.After at workclient_test.go:180 and 1 more
-internal/workclient	TestExchangeCarriesTheRequestAndReturnsTheOneReplyLine	seed #4413: time.After at workclient_test.go:91
-internal/workclient	TestExchangeFramedCarriesAMultiRowListing	seed #4413: time.After at frame_test.go:106 and 1 more
-internal/workclient	within	seed #4413: time.After at workclient_test.go:57
