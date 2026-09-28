@@ -22,12 +22,15 @@ import (
 // lines, exactly as strict as the shape they assert and nothing more.
 //
 // Three invariants:
-//   (a) every job in ci.yml declares timeout-minutes, and no job ON THE CL PATH
-//       exceeds 2 — the aggregate ci-ok may be 1 — so the CL tier cannot
-//       silently exceed the budget. A job whose `if:` runs it only on push to
-//       main and on the nightly schedule is not on the CL path: no pull request
-//       waits on it to merge, so the two-minute law does not reach it. It must
-//       still declare a ceiling, which is what (a) checks for every job;
+//   (a) every job in every workflow file (.yml and .yaml) declares a literal
+//       `timeout-minutes` of at most 2 at job level, on every event: there is
+//       no schedule, push-to-main or release exemption (twoMinuteCap below).
+//       A scheduled run executes the DEFAULT BRANCH's copy of the workflow, not
+//       this tree's: the nightly of 2026-09-27 (run 36292578789) ran main's
+//       ci.yml from 2026-09-18, whose test-hosted still said 15 and still had
+//       windows-latest, and its windows legs ran 178-195 s uncancelled. This
+//       test polices the tree it runs in; the cap reaches a schedule only once
+//       these files are on the default branch;
 //   (b) every job name that left ci.yml in the split is present in the
 //       certification workflow by the same name, and certification-ok needs
 //       every one of them, so the split deleted nothing;
@@ -54,10 +57,16 @@ func TestEveryCIJobIsCappedAtTwoMinutes(t *testing.T) {
 	t.Parallel()
 
 	root := repoRoot(t)
+	// GitHub runs both extensions; a .yaml workflow must not be a way around the cap.
 	files, err := filepath.Glob(filepath.Join(root, ".github", "workflows", "*.yml"))
 	if err != nil || len(files) == 0 {
 		t.Fatalf("no workflow files under .github/workflows: %v", err)
 	}
+	yamls, err := filepath.Glob(filepath.Join(root, ".github", "workflows", "*.yaml"))
+	if err != nil {
+		t.Fatalf("glob .yaml workflows: %v", err)
+	}
+	files = append(files, yamls...)
 	for _, file := range files {
 		src := readFile(t, file)
 		names := jobNames(src)
@@ -99,7 +108,7 @@ func TestShardGoTestTimeoutIsUnderTheJobCap(t *testing.T) {
 		t.Errorf("go test -timeout %ds is not under the %d-minute job cap", secs, twoMinuteCap)
 	}
 	mk := parseMakefile(t, filepath.Join(repoRoot(t), "Makefile"))
-	for _, v := range []string{"GOTEST_TIMEOUT", "MERGE_TIMEOUT", "DARWIN_TIMEOUT"} {
+	for _, v := range []string{"GOTEST_TIMEOUT", "MERGE_TIMEOUT", "DARWIN_TIMEOUT", "SHORT_TIMEOUT"} {
 		raw, ok := mk.vars[v]
 		if !ok {
 			t.Errorf("the Makefile declares no %s", v)
@@ -113,6 +122,43 @@ func TestShardGoTestTimeoutIsUnderTheJobCap(t *testing.T) {
 		if d >= time.Duration(twoMinuteCap)*time.Minute {
 			t.Errorf("Makefile %s = %s is not under the %d-minute job cap", v, d, twoMinuteCap)
 		}
+	}
+}
+
+// recipeTimeoutRe reads a `go test -timeout <d>` in a Makefile recipe.
+var recipeTimeoutRe = regexp.MustCompile(`-timeout[ =](\S+)`)
+
+// TestEveryMakeTimeoutIsUnderTheJobCap: every `-timeout` a Makefile recipe
+// passes, expanded, is under the two-minute job cap, so a hung test ends with
+// a Go stack naming it instead of the runner killing the job silently.
+// test-short (the hosted legs' target) carried a literal 12m that no check
+// read until 2026-09-27.
+func TestEveryMakeTimeoutIsUnderTheJobCap(t *testing.T) {
+	t.Parallel()
+
+	mk := parseMakefile(t, filepath.Join(repoRoot(t), "Makefile"))
+	seen := 0
+	for target, lines := range mk.recipes {
+		for _, line := range lines {
+			if strings.HasPrefix(strings.TrimLeft(line, "@-+ "), "echo ") {
+				continue // help text names the variable; it runs nothing
+			}
+			for _, m := range recipeTimeoutRe.FindAllStringSubmatch(line, -1) {
+				raw := strings.Trim(mk.expand(mk.vars, m[1]), `"'`)
+				d, err := time.ParseDuration(raw)
+				if err != nil {
+					t.Errorf("make %s: -timeout %q (from %q) is not a Go duration: %v", target, raw, m[1], err)
+					continue
+				}
+				seen++
+				if d >= time.Duration(twoMinuteCap)*time.Minute {
+					t.Errorf("make %s: -timeout %s is not under the %d-minute job cap", target, d, twoMinuteCap)
+				}
+			}
+		}
+	}
+	if seen == 0 {
+		t.Fatal("no -timeout read from any Makefile recipe; the parser is looking in the wrong place")
 	}
 }
 
@@ -396,11 +442,10 @@ func jobNames(src string) []string {
 	return names
 }
 
-// jobTimeouts returns each job's declared timeout-minutes. A job whose ceiling
-// differs per matrix leg declares `timeout-minutes: ${{ matrix.leg.timeout }}`
-// and carries the numbers in its matrix; for those the LARGEST leg value is
-// returned, because the budget question this answers is "how long can this job
-// run", and legTimeouts below is what reads them apart.
+// jobTimeouts returns each job's literal job-level timeout-minutes (a line at
+// four spaces). A step-level timeout sits deeper and is not read, so a job
+// whose only ceiling is on a step has none here and is refused, and an
+// expression is refused by the caller.
 func jobTimeouts(src string) map[string]int {
 	out := make(map[string]int)
 	cur := ""

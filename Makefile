@@ -84,7 +84,7 @@ help:
 	@echo "make test        the unit tier: go test -p GOTEST_P PKGS plus the 2 s package / 1 s test slowtests budgets"
 	@echo "make test-functional the functional tier: only the tests behind //go:build functional in PKGS, -p GOTEST_P"
 	@echo "make test-full   go test -count=1 ./... (the whole tree)"
-	@echo "make test-short  go test -short -count=1 -timeout 12m PKGS"
+	@echo "make test-short  go test -short -count=1 -timeout SHORT_TIMEOUT PKGS"
 	@echo "make test-slow   go test -count=1 -tags slow ./... (the nightly tier: the tests too slow for a commit)"
 	@echo "make test-merge  go test -count=1 -timeout MERGE_TIMEOUT -run RUN PKGS"
 	@echo "make test-race   go test -race ./... (the certification tier)"
@@ -263,8 +263,13 @@ test-functional:
 test-full:
 	$(GO) test -count=1 $(if $(RUN),-run "$(RUN)",) $(PKGS)
 
+# SHORT_TIMEOUT is test-short's `go test -timeout`, per test binary. The hosted
+# legs spend 55-75 s on setup before their test step (run 36367639661), and the
+# slowest hosted package runs 24 s (cmd/nova-review on macos-latest), so 50 s
+# fires before the two-minute job cap kills the leg without a stack.
+SHORT_TIMEOUT ?= 50s
 test-short:
-	$(GO) test -short -count=1 -timeout 12m $(PKGS)
+	$(GO) test -short -count=1 -timeout $(SHORT_TIMEOUT) $(PKGS)
 
 # The nightly tier (go-test-slow): every test behind `//go:build slow`, with the
 # whole tree around it. A test lands there when the per-commit run cannot pay it
