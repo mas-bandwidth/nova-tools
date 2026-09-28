@@ -150,6 +150,7 @@ func TestCostRefusalsNameWhatTheInputWants(t *testing.T) {
 		{"empty stdin", "", costReceiptArgs(), "stdin is empty; it wants the run's job listing"},
 		{"not json", "<html>", costReceiptArgs(), "not the forge's job listing"},
 		{"no jobs", `{"total_count":0,"jobs":[]}`, costReceiptArgs(), "holds no jobs"},
+		{"partial page", `{"total_count":2,"jobs":[{"name":"one","run_attempt":1,"conclusion":"success","started_at":"2026-09-28T00:00:00Z","completed_at":"2026-09-28T00:01:00Z"}]}`, costReceiptArgs(), "listing is partial"},
 		{"positional", listing, costReceiptArgs("jobs.json"), "unexpected argument"},
 	}
 	for _, tc := range cases {
@@ -164,6 +165,94 @@ func TestCostRefusalsNameWhatTheInputWants(t *testing.T) {
 			t.Errorf("%s: stderr = %q, want one `nova-ci cost: ` line holding %q and naming the door", tc.name, stderr, tc.want)
 		}
 	}
+}
+
+// A listing whose total_count exceeds the jobs read is refused before any
+// dial: a complete listing is required before writing a run-total COST entry.
+func TestCostTruncatedPageRefused(t *testing.T) {
+	t.Parallel()
+
+	input := `{"total_count":2,"jobs":[{"name":"one","run_attempt":1,"conclusion":"success","started_at":"2026-09-28T00:00:00Z","completed_at":"2026-09-28T00:01:00Z"}]}`
+	code, stdout, stderr := runCost(t, nil, input, costReceiptArgs()...)
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2; stderr: %s", code, stderr)
+	}
+	if stdout != "" {
+		t.Errorf("stdout = %q, want empty", stdout)
+	}
+	for _, want := range []string{"listing is partial", "1 jobs read", "2 expected", "page through the forge's listing, or pass every page"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr %q lacks %q", stderr, want)
+		}
+	}
+}
+
+// A Redis close failure after a successful XADD prints the COST line with its
+// event id on stdout, reports the close error on stderr, and exits 1 without
+// claiming the entry was not written or recommending a rerun.
+func TestCostCloseFailureAfterSuccessfulWrite(t *testing.T) {
+	t.Parallel()
+
+	f := &fakeCostStore{}
+	var out, errb bytes.Buffer
+	open := func(context.Context, string) (cicost.Writer, func() error, error) {
+		return f, func() error { return errors.New("close failed") }, nil
+	}
+	code := cmdCost(costReceiptArgs("--redis", testverbhelp.RefusedAddr)[1:], strings.NewReader(costListing(t)), &out, &errb, open)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1; stderr: %s", code, errb.String())
+	}
+	if f.stream != cicost.Stream {
+		t.Errorf("stream = %q, want %s", f.stream, cicost.Stream)
+	}
+	if !strings.Contains(out.String(), " ev=1700000000000-0\n") {
+		t.Errorf("stdout %q lacks the event id", out.String())
+	}
+	if strings.Contains(errb.String(), "was not written") {
+		t.Errorf("stderr %q claims entry was not written", errb.String())
+	}
+	if strings.Contains(errb.String(), "rerun") {
+		t.Errorf("stderr %q recommends rerun", errb.String())
+	}
+	if !strings.Contains(errb.String(), "nova-ci cost: close: close failed\n") {
+		t.Errorf("stderr = %q, want close error line", errb.String())
+	}
+}
+
+// TestStellaCostReviewWitnesses keeps Stella's review witnesses active as a
+// regression control.
+func TestStellaCostReviewWitnesses(t *testing.T) {
+	t.Parallel()
+
+	t.Run("partial", func(t *testing.T) {
+		input := `{"total_count":2,"jobs":[{"name":"one","run_attempt":1,"conclusion":"success","started_at":"2026-09-28T00:00:00Z","completed_at":"2026-09-28T00:01:00Z"}]}`
+		code, out, err := runCost(t, nil, input, costReceiptArgs()...)
+		t.Logf("exit=%d stdout=%q stderr=%q", code, out, err)
+		if code == 0 && !strings.Contains(out, "partial") {
+			t.Error("incomplete listing reported as a complete total")
+		}
+		if code != 2 {
+			t.Errorf("exit = %d, want 2", code)
+		}
+	})
+	t.Run("close-after-write", func(t *testing.T) {
+		f := &fakeCostStore{}
+		var out, err bytes.Buffer
+		open := func(context.Context, string) (cicost.Writer, func() error, error) {
+			return f, func() error { return errors.New("close failed") }, nil
+		}
+		code := cmdCost(costReceiptArgs("--redis", "127.0.0.1:1")[1:], strings.NewReader(costListing(t)), &out, &err, open)
+		t.Logf("exit=%d wrote_stream=%q field_values=%d stdout=%q stderr=%q", code, f.stream, len(f.values), out.String(), err.String())
+		if f.stream == cicost.Stream && strings.Contains(err.String(), "was not written") {
+			t.Error("successful XADD misreported as not written")
+		}
+		if code != 1 {
+			t.Errorf("exit = %d, want 1", code)
+		}
+		if !strings.Contains(out.String(), " ev=1700000000000-0\n") {
+			t.Errorf("stdout %q lacks the event id", out.String())
+		}
+	})
 }
 
 // A store that will not take the entry is exit 1 with one line naming the

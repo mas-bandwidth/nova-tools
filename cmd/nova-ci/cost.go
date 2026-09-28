@@ -59,8 +59,9 @@ func openCostStore(ctx context.Context, addr string) (cicost.Writer, func() erro
 }
 
 // cmdCost is the verb. Exit 0 with the COST line on stdout; 1 when the store
-// would not take the entry; 2 for a refusal before any dial: a flag the
-// receipt refuses, or a listing that is not the forge's.
+// would not take the entry or closing it failed; 2 for a refusal before any
+// dial: a flag the receipt refuses, a partial listing, or a listing that is
+// not the forge's.
 func cmdCost(args []string, stdin io.Reader, stdout, stderr io.Writer, open costOpener) int {
 	const where = " cost"
 	fs := flag.NewFlagSet("cost", flag.ContinueOnError)
@@ -94,16 +95,23 @@ func cmdCost(args []string, stdin io.Reader, stdout, stderr io.Writer, open cost
 	if strings.TrimSpace(string(raw)) == "" {
 		return refuse(stderr, where, "stdin is empty; it wants the run's job listing (repos/<owner>/<name>/actions/runs/<id>/jobs)")
 	}
-	_, jobs, err := cicost.ParseJobs(raw)
+	totalCount, jobs, err := cicost.ParseJobs(raw)
 	if err != nil {
 		return refuse(stderr, where, "stdin is not the forge's job listing (repos/<owner>/<name>/actions/runs/<id>/jobs): "+oneline.Err(err))
 	}
 	if len(jobs) == 0 {
 		return refuse(stderr, where, "the listing holds no jobs; a run with none has no cost to write")
 	}
+	if len(jobs) < totalCount {
+		return refuse(stderr, where, fmt.Sprintf("listing is partial (%d jobs read, %d expected); page through the forge's listing, or pass every page", len(jobs), totalCount))
+	}
+	if len(jobs) > totalCount {
+		return refuse(stderr, where, fmt.Sprintf("listing holds %d jobs but total_count is %d", len(jobs), totalCount))
+	}
 	cost := cicost.FromJobs(jobs)
 
 	ev := ""
+	var closeErr error
 	if addr := strings.TrimSpace(*redisAddr); addr != "" {
 		if open == nil {
 			return refuse(stderr, where, "no store opener")
@@ -115,15 +123,16 @@ func cmdCost(args []string, stdin io.Reader, stdout, stderr io.Writer, open cost
 			return costUnwritten(stderr, "open "+oneline.Field(addr)+": "+oneline.Err(err))
 		}
 		ev, err = cicost.Write(ctx, w, &r, cost)
-		closeErr := closeStore()
+		closeErr = closeStore()
 		if err != nil {
 			return costUnwritten(stderr, oneline.Err(err))
 		}
-		if closeErr != nil && !errors.Is(closeErr, context.Canceled) {
-			return costUnwritten(stderr, "close: "+oneline.Err(closeErr))
-		}
 	}
 	fmt.Fprintln(stdout, cost.Line(r, ev))
+	if closeErr != nil && !errors.Is(closeErr, context.Canceled) {
+		fmt.Fprintf(stderr, "nova-ci cost: close: %s\n", oneline.Escape(oneline.Err(closeErr)))
+		return 1
+	}
 	return 0
 }
 
