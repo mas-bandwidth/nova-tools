@@ -1398,14 +1398,10 @@ jobs:
           # two-minute budget instead of hitting Go's 10 m default on main (run
           # 35052889521, panic: test timed out after 10m0s). The self-hosted shards keep
           # running everything; the nightly certification runs the hosted legs full.
-          # -timeout 12m stays above Go's 10 m default (cmd/nova-bus hit it on main,
-          # run 35052889521, panic: test timed out after 10m0s) and fires before the
-          # 15-minute job ceiling, so Go names the hung package instead of the runner
-          # killing the job silently. The two-minute rule is met by gating the
-          # multi-process bus tests behind -short on hosted legs (issue filed); until
-          # that lands, a slow package must not panic the leg. It is the ceiling, not
-          # the target. The Makefile's test-short carries the same 12m ceiling, and
-          # the shard travels in PKGS.
+          # The Makefile's test-short passes -timeout $(SHORT_TIMEOUT), 50 s per
+          # test binary, so a hung package ends with a Go stack naming it before the
+          # two-minute job cap kills the leg silently (internal/ci:
+          # TestEveryMakeTimeoutIsUnderTheJobCap). The shard travels in PKGS.
           make test-short PKGS="$HOSTED_PKGS"
 
   # THERE IS NO HOSTED MERGE LEG SINCE 2026-09-26. The merge group's gate is the

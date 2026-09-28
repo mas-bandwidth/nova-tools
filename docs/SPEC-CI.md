@@ -1910,11 +1910,22 @@ without a hard cap every check-in ends up waiting half an hour; we fix it or it
 does not land, and nothing else stops the test creep.
 
 **The test.** `TestEveryCIJobIsCappedAtTwoMinutes` (`internal/ci/ci_budget_test.go`)
-reads every workflow file and refuses a job over the cap, a job with no literal
-cap, or a `timeout-minutes` expression. `TestShardGoTestTimeoutIsUnderTheJobCap`
+reads every workflow file, `.yml` and `.yaml`, and refuses a job over the cap, a
+job with no literal job-level cap (a step-level timeout does not count), or a
+`timeout-minutes` expression. `TestShardGoTestTimeoutIsUnderTheJobCap`
 keeps `go test -timeout` (the workflow's `GOTEST_TIMEOUT` and the Makefile's
-`GOTEST_TIMEOUT`, `MERGE_TIMEOUT`, `DARWIN_TIMEOUT`) under the cap, so a run ends
-with a Go stack before the job cap kills it without one.
+`GOTEST_TIMEOUT`, `MERGE_TIMEOUT`, `DARWIN_TIMEOUT`, `SHORT_TIMEOUT`) under the
+cap, and `TestEveryMakeTimeoutIsUnderTheJobCap` reads every `-timeout` in every
+Makefile recipe, expanded, and refuses one at or over the cap (test-short, the
+hosted legs' target, carried a literal `12m` no check read), so a run ends with a
+Go stack before the job cap kills it without one.
+
+**The reach.** These tests police the tree they run in. A scheduled run executes
+the default branch's copy of the workflow: the ci nightly of 2026-09-27 (run
+36292578789) ran `main`'s ci.yml of 2026-09-18, whose test-hosted still carried
+`timeout-minutes: 15` and a windows-latest leg, and its four windows legs ran
+178-195 s to success uncancelled. The cap reaches a schedule when these files
+reach the default branch.
 
 **The remedy line.** Split the job (shards by measured package size, or one job
 per functional program), move a process-in-the-loop test behind the `slow` tag
