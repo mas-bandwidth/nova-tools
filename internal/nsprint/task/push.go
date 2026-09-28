@@ -140,7 +140,7 @@ type PushRequest struct {
 	Author string
 	ErrOut io.Writer
 	// Initiator is the seat running the verb ($NOVA_FRIEND). Only
-	// cmd/nova-sprint sets it: when set, PushChecked reads its `friends`
+	// deprecated/cmd/nova-sprint sets it: when set, PushChecked reads its `friends`
 	// membership in its first round trip and returns ErrNotFriend on a 0,
 	// before any write (#2929 rev 6). With Sprint empty, the same round trip
 	// reads the default sprint (lowest-score member of sprint:order). A library

@@ -23,7 +23,6 @@ var notYetExecuted = map[string]string{
 	"nova-bus":     "#1652 (T7): firstrun_test.go reads the section by hand, not through onboarding.Execute",
 	"nova-sandbox": "#1652 (T7): firstrun_test.go checks field names, not the transcript line for line",
 	"nova-secrets": "#1652 (T7): no firstrun_test.go",
-	"nova-sprint":  "#1652 (T7): firstrun_test.go reads the section by hand, not through onboarding.Execute",
 }
 
 func TestEveryTranscriptIsExecutedLineForLine(t *testing.T) {

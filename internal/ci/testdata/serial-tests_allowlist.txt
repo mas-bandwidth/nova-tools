@@ -22,7 +22,7 @@
 # TestReadCopyDealtToBenchRendersALintedCard), then by nine more from the redis
 # stream (seat and #3277 tests on t.Setenv); each owes a per-test seam. Moved
 # from the serialTestsCeiling constant into this file at 876, the count that day.
-# ceiling: 488
+# ceiling: 367
 cmd/nova-bus/issue1451_test.go:TestIssue1451EveryBareVerbRefusalNamesTheDoor serial: t.Setenv
 cmd/nova-bus/main_functional_test.go:TestReceiptMaxWordsDefaultsFromBusFileThenEnv serial: t.Setenv
 cmd/nova-bus/reply_functional_test.go:TestAFilesystemWithNoCreateExclusivePublishIsRefused serial: swaps package var main.publishDraft
@@ -143,115 +143,6 @@ cmd/nova-sandbox/worktree_test.go:TestWorktreeSecondCallReusesTheTree serial: sw
 cmd/nova-self-talk/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
 cmd/nova-self-talk/version_test.go:TestVersionIdentityIsTheStampWhenThereIsOne serial: swaps package var main.version
 cmd/nova-self-talk/version_test.go:TestVersionLineHoldsWhateverTheStampContains serial: swaps package var main.version
-cmd/nova-sprint/adopt_test.go:TestAdoptVerbMatrix serial: t.Setenv
-cmd/nova-sprint/backpressure_test.go:TestBackpressureCheckReceipt serial: t.Setenv
-cmd/nova-sprint/capacity_test.go:TestCapacityBenchWritesLegs serial: t.Setenv
-cmd/nova-sprint/capacity_test.go:TestStage1CapacityIsTheOneWidthWriter serial: t.Setenv
-cmd/nova-sprint/card_cut_test.go:TestCardCutInlinesIndex serial: swaps package var main.cardCutSource, t.Setenv
-cmd/nova-sprint/card_cut_test.go:TestCardCutRefusesNoStream serial: swaps package var main.cardCutSource, t.Setenv
-cmd/nova-sprint/card_cut_test.go:TestCardCutWritesRecord serial: swaps package var main.cardCutSource, t.Chdir, t.Setenv
-cmd/nova-sprint/card_harness_functional_test.go:TestCardRunEndToEnd serial: t.Setenv
-cmd/nova-sprint/control42_redis_test.go:TestControl42Redis serial: t.Setenv
-cmd/nova-sprint/cost_test.go:TestCostImportExitCodes serial: t.Setenv
-cmd/nova-sprint/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
-cmd/nova-sprint/firstrun_functional_test.go:TestUsageBannerExamplesRun serial: t.Chdir
-cmd/nova-sprint/fleet_build_test.go:TestFleetBuildVerbSetDryRunAndDeploy serial: swaps package var main.fleetBuildHome, swaps package var main.fleetBuildRunner
-cmd/nova-sprint/fleet_test.go:TestFleetDownKeepsLeases serial: swaps package var main.reconcileSeams, t.Setenv
-cmd/nova-sprint/fleet_test.go:TestFleetIsUpExits serial: t.Setenv
-cmd/nova-sprint/help_test.go:TestVerbHelpNamesEveryFlag serial: t.Setenv
-cmd/nova-sprint/hold_functional_test.go:TestControl40 serial: swaps package var main.bodySeq, t.Setenv
-cmd/nova-sprint/hold_functional_test.go:TestControl53 serial: swaps package var main.bodySeq, t.Setenv
-cmd/nova-sprint/hold_functional_test.go:TestHoldReleaseHolderOnly serial: swaps package var main.bodySeq, t.Setenv
-cmd/nova-sprint/hold_functional_test.go:TestHoldRouteCrashReplay serial: swaps package var main.bodySeq, t.Setenv
-cmd/nova-sprint/hold_functional_test.go:TestHoldRouteDownHolder serial: swaps package var main.bodySeq, t.Setenv
-cmd/nova-sprint/hold_functional_test.go:TestHoldRouteNoFixSelfOrCI serial: swaps package var main.bodySeq, t.Setenv
-cmd/nova-sprint/hold_functional_test.go:TestHoldRouteNoPolicyRefusal serial: t.Setenv
-cmd/nova-sprint/hold_functional_test.go:TestHoldRouteOneOwner serial: swaps package var main.bodySeq, t.Setenv
-cmd/nova-sprint/hold_functional_test.go:TestHoldRouteReplay serial: swaps package var main.bodySeq, t.Setenv
-cmd/nova-sprint/hold_functional_test.go:TestHoldRouteUnpark serial: swaps package var main.bodySeq, t.Setenv
-cmd/nova-sprint/hold_functional_test.go:TestHoldRouteUnparkFix serial: swaps package var main.bodySeq, t.Setenv
-cmd/nova-sprint/hold_functional_test.go:TestHoldRouteZeroREST serial: swaps package var main.bodySeq, t.Setenv
-cmd/nova-sprint/hold_functional_test.go:TestIngestDeployedLines serial: swaps package var main.bodySeq, t.Setenv
-cmd/nova-sprint/hold_functional_test.go:TestTaskDoneReviewIngest serial: t.Setenv
-cmd/nova-sprint/hold_functional_test.go:TestUnitMergeableWriter serial: swaps package var main.bodySeq, t.Setenv
-cmd/nova-sprint/idem_test.go:TestIdemResolveLinesAndExits serial: t.Setenv
-cmd/nova-sprint/idem_test.go:TestIdemResolvePaddedValidInputs serial: t.Setenv
-cmd/nova-sprint/land_duty_test.go:TestLandDutyRegisteredAndOffWithoutHosts serial: t.Setenv
-cmd/nova-sprint/land_eval_shadow_test.go:TestLandEvalShadowAgreesPerPR serial: swaps package var main.landEvalStdin
-cmd/nova-sprint/land_eval_shadow_test.go:TestLandEvalShadowNoLinesRefuses serial: swaps package var main.landEvalStdin
-cmd/nova-sprint/land_eval_functional_test.go:TestNoStateAPI serial: swaps package var http.DefaultTransport
-cmd/nova-sprint/land_nolocal_functional_test.go:TestLandRefusesLocalTestOnCoordinator serial: swaps package var main.landRunSleep, swaps package var main.landStreamToken, t.Setenv
-cmd/nova-sprint/land_nolocal_test.go:TestPreflightReportsLocalGoTest serial: swaps package var main.preflightProcs, t.Setenv
-cmd/nova-sprint/land_pr_test.go:TestLandPRVerb serial: swaps package var main.landStreamToken, t.Setenv
-cmd/nova-sprint/land_run_test.go:TestLandFenceArmIsMonotonic serial: swaps package var http.DefaultTransport, t.Setenv
-cmd/nova-sprint/land_run_test.go:TestLandGateAtHeadNoReadGate serial: swaps package var http.DefaultTransport, t.Setenv
-cmd/nova-sprint/land_run_test.go:TestLandLeaseLapseRequeues serial: swaps package var http.DefaultTransport, t.Setenv
-cmd/nova-sprint/land_run_test.go:TestLandRunAnySeat serial: swaps package var http.DefaultTransport, swaps package var main.landRunner, t.Setenv
-cmd/nova-sprint/land_run_test.go:TestLandSkipsOpenHold serial: swaps package var http.DefaultTransport, swaps package var main.landRunHooks, t.Setenv
-cmd/nova-sprint/land_run_test.go:TestLandStreamPRLivesOnUnitRecord serial: swaps package var http.DefaultTransport, t.Setenv
-cmd/nova-sprint/land_run_test.go:TestLandTakesStreamPRsOldestFirst serial: swaps package var http.DefaultTransport, t.Chdir, t.Setenv
-cmd/nova-sprint/land_run_test.go:TestLandedOnlyOnMergeCommit serial: swaps package var http.DefaultTransport, t.Setenv
-cmd/nova-sprint/land_stream_functional_test.go:TestLandStreamConflictStops serial: swaps package var main.landStreamToken
-cmd/nova-sprint/land_stream_functional_test.go:TestLandStreamEndToEnd serial: swaps package var main.landStreamToken
-cmd/nova-sprint/land_whole_functional_test.go:TestLandBatchMergesOldestFirst serial: swaps package var main.landRunSleep, swaps package var main.landStreamToken
-cmd/nova-sprint/land_whole_functional_test.go:TestLandPushesDevOnce serial: swaps package var main.landRunSleep, swaps package var main.landStreamToken
-cmd/nova-sprint/land_whole_functional_test.go:TestLandRebuildsOnAMovedBase serial: swaps package var main.landRunSleep, swaps package var main.landStreamToken
-cmd/nova-sprint/land_whole_functional_test.go:TestLandRefusesRedCI serial: swaps package var main.landRunSleep, swaps package var main.landStreamToken
-cmd/nova-sprint/lander_test.go:TestLanderRefusesAMemberWithNoRecord serial: swaps package var main.landerSeams
-cmd/nova-sprint/lander_test.go:TestLanderShadowNeedsNoPrograms serial: swaps package var main.landerSeams
-cmd/nova-sprint/lander_test.go:TestLanderVerbServesMetrics serial: swaps package var main.landerClock, swaps package var main.landerSeams
-cmd/nova-sprint/lineup_test.go:TestLineupPublishStampsRunMarker serial: t.Setenv
-cmd/nova-sprint/main_functional_test.go:TestEndRefusesRelativeResults serial: t.Setenv
-cmd/nova-sprint/main_functional_test.go:TestResultsPathUnixAbsolute serial: t.Setenv
-cmd/nova-sprint/pitstop_functional_test.go:TestPitstopClearNarrowsScope serial: t.Setenv
-cmd/nova-sprint/pitstop_test.go:TestPitstopStatusOnMiniredis serial: t.Setenv
-cmd/nova-sprint/pitstop_functional_test.go:TestPitstopVerbEveryBranch serial: t.Setenv
-cmd/nova-sprint/pitstop_functional_test.go:TestPitstopVerbRepairsWrongType serial: t.Setenv
-cmd/nova-sprint/pitstop_test.go:TestPitstopVerbUsage serial: t.Setenv
-cmd/nova-sprint/plan_test.go:TestPlanHoldPolicy serial: t.Setenv
-cmd/nova-sprint/plan_test.go:TestPlanVerb serial: t.Setenv
-cmd/nova-sprint/pr_key_functional_test.go:TestPRRecordThenReadPostHitOneKeyOnBothSpellings serial: t.Setenv
-cmd/nova-sprint/pr_key_test.go:TestReadRefusesAConflictingOwner serial: t.Setenv
-cmd/nova-sprint/pr_reap_test.go:TestPRReapVerb serial: swaps package var main.landStreamToken
-cmd/nova-sprint/preflight_test.go:TestPreflightAuthenticatesAsTheNamedUser serial: t.Setenv
-cmd/nova-sprint/preflight_test.go:TestPreflightFleetRows serial: swaps package var main.fleetLibrary, t.Setenv
-cmd/nova-sprint/preflight_test.go:TestPreflightVerbPrintsEveryCheckAndExitsOneOnRed serial: t.Setenv
-cmd/nova-sprint/read_functional_test.go:TestReadBriefVerbByTaskID serial: t.Setenv
-cmd/nova-sprint/read_functional_test.go:TestReadBriefVerbWritesTheBriefWithZeroGitHubCalls serial: t.Setenv
-cmd/nova-sprint/read_functional_test.go:TestReadPostVerbNoGitHub serial: t.Setenv
-cmd/nova-sprint/read_test.go:TestReadUsageRefusalsOpenNoStore serial: t.Setenv
-cmd/nova-sprint/ready_test.go:TestReadyWhy serial: swaps package var main.readyForge
-cmd/nova-sprint/reconcile_test.go:TestReconcileOnceSurfacesDutyErrors serial: swaps package var main.reconcileDuties, swaps package var main.reconcileSeams
-cmd/nova-sprint/registry_test.go:TestRegisteredVerbDispatchAndHelp serial: registers a verb in the package-wide verbs map every parallel run() reads (go test -race, 2026-09-25)
-cmd/nova-sprint/route_duty_test.go:TestReconcileOnceRoutesReadFixMerging serial: swaps package var main.consumeHarvestSeams, swaps package var main.reconcileReaders, swaps package var main.reconcileSeams
-cmd/nova-sprint/spec_test.go:TestReadPostSpecLineWritesFacts serial: t.Setenv
-cmd/nova-sprint/spec_test.go:TestSpecMarkDoneOnTwoTensFiresSpecUnblock serial: t.Setenv
-cmd/nova-sprint/spec_test.go:TestSpecsBlockFromRedis serial: t.Setenv
-cmd/nova-sprint/sprint_acl_test.go:TestSprintCloseRefusesWhatIsNotOpen serial: swaps package var main.sprintGate, t.Setenv
-cmd/nova-sprint/sprint_acl_test.go:TestSprintOpenOwnerRefusalNamesTheCause serial: swaps package var main.sprintGate, t.Setenv
-cmd/nova-sprint/sprint_acl_test.go:TestSprintOpenRestrictedSeat serial: swaps package var main.sprintGate, t.Setenv
-cmd/nova-sprint/sprint_fold_test.go:TestSprintFoldVerb serial: t.Setenv
-cmd/nova-sprint/sprint_functional_test.go:TestControl19 serial: swaps package var main.sprintGate, t.Setenv
-cmd/nova-sprint/sprint_functional_test.go:TestControl20 serial: swaps package var main.sprintGate, swaps package var main.sprintStoreOpen, t.Setenv
-cmd/nova-sprint/sprint_functional_test.go:TestControl22 serial: swaps package var main.sprintGate, t.Setenv
-cmd/nova-sprint/sprint_functional_test.go:TestSprintOpenLetsTaskTakeClaim serial: t.Setenv
-cmd/nova-sprint/sprint_functional_test.go:TestSprintOpenPushRefused serial: swaps package var main.sprintGate, t.Setenv
-cmd/nova-sprint/sprint_functional_test.go:TestSprintOpenReplay serial: swaps package var main.sprintGate, swaps package var main.sprintStoreOpen, t.Setenv
-cmd/nova-sprint/sprint_functional_test.go:TestSprintStatusOpenOnly serial: swaps package var main.sprintGate, t.Setenv
-cmd/nova-sprint/stream_life_functional_test.go:TestStreamCloseMarksEveryMemberLanded serial: swaps package var main.landStreamToken
-cmd/nova-sprint/stream_life_functional_test.go:TestStreamOpenRecordsBase serial: swaps package var main.landStreamToken
-cmd/nova-sprint/table_loop_functional_test.go:TestControl3530LoopPublishesOneWriter serial: t.Setenv
-cmd/nova-sprint/table_loop_functional_test.go:TestControl3637ClearVerb serial: t.Setenv
-cmd/nova-sprint/table_loop_functional_test.go:TestTableLiveOnceOut serial: t.Setenv
-cmd/nova-sprint/table_loop_functional_test.go:TestTableLoopTakesSeconds serial: t.Setenv
-cmd/nova-sprint/table_test.go:TestTableLiveLayoutRefusesWithoutItsInputs serial: t.Setenv
-cmd/nova-sprint/table_functional_test.go:TestTableWritesNoFile serial: t.Chdir
-cmd/nova-sprint/table_test.go:TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints serial: t.Chdir
-cmd/nova-sprint/task_card_functional_test.go:TestTaskCardCLI serial: t.Setenv
-cmd/nova-sprint/task_seat_test.go:TestControl2929PushTakeFromSeat serial: os.Unsetenv, t.Setenv
-cmd/nova-sprint/ws_functional_test.go:TestWSVerbRefusals serial: t.Setenv
-cmd/nova-sprint/ws_functional_test.go:TestWSVerbsOnAThousandTasks serial: t.Setenv
-cmd/nova-sprint/ws_test.go:TestWSVerbsRefuseHelpAndUsage serial: t.Setenv
 cmd/nova-tokens/boundary_test.go:TestNoVerbTouchesACheckoutOrItsRemote serial: t.Setenv
 cmd/nova-tokens/contract_test.go:TestEachDeclaredFileIsOpenedOncePerRun serial: counts the process-wide tokens.Opens(), which every parallel fold adds to
 cmd/nova-tokens/demanded_test.go:TestRule16And19TheDatabaseIsCopiedAndQueriedReadOnlyUnderATimeout serial: t.Setenv
@@ -489,25 +380,13 @@ internal/update/update_test.go:TestProcessesAreBoundedAndRawSurvivesFailure seri
 internal/update/update_test.go:TestReportLocalLocatorWithVersionStringInstalled serial: t.Setenv
 internal/update/update_test.go:TestReportNeverReadsLatestAndPartialIsVisible serial: t.Setenv
 internal/update/update_test.go:TestSnapshotObservationDoesNotSuppressDelivery serial: t.Setenv
-cmd/nova-sprint/card_moves_functional_test.go:TestCardSessionCLI serial: t.Setenv
-cmd/nova-sprint/card_moves_functional_test.go:TestCardMovesCLI serial: t.Setenv
-cmd/nova-sprint/fleet_build_test.go:TestFleetBuildCompileVerb serial: swaps package var fleetCompileExec
-cmd/nova-sprint/fleet_build_test.go:TestFleetBuildCompileExecGivesGoItsOwnCaches serial: t.Setenv
-cmd/nova-sprint/jev_test.go:TestJevMechRefusals serial: t.Setenv
-cmd/nova-sprint/lander_unit_functional_test.go:TestLanderLoadsMembersFromUnitRecords serial: swaps package var landerSeams
-cmd/nova-sprint/line_test.go:TestLineVerbPostListImport serial: t.Setenv
-cmd/nova-sprint/task_card_functional_test.go:TestTaskMoveRefusesAPrimaryUnread serial: t.Setenv
 internal/nsprint/card/copy_functional_test.go:TestReadCopyDealtToBenchRendersALintedCard serial: t.Setenv
-cmd/nova-sprint/seat_test.go:TestRedisCLIRunsOneCommandUnderTheSeat serial: t.Setenv
-cmd/nova-sprint/seat_test.go:TestTableRendersUnderSeatWithNoWrapper serial: t.Setenv
 cmd/nova-tokens/token_ledger_test.go:TestLedgerAndReportDialAsTheAclUser serial: t.Setenv
 internal/nsprint/store/issue3277_test.go:TestOpenSendsNoCommand3277 serial: t.Setenv
 internal/nsprint/store/reach_test.go:TestUnreachable3277 serial: t.Setenv
 internal/presence/issue3277_test.go:TestOpenSendsNoCommand3277 serial: t.Setenv
 internal/presence/seat_test.go:TestOpenLogsInAsTheSeat serial: t.Setenv
 internal/seatcred/seatcred_test.go:TestResolveReadsTheSeatThroughTheSecretsLibrary serial: t.Setenv
-cmd/nova-sprint/jev_functional_test.go:TestJevMechRecordsOneLine serial: t.Setenv (through a helper)
 internal/nsprint/reconcile/rebalance_test.go:TestFriendRebalanceNeverSilentZero serial: t.Setenv (through a helper)
 internal/seatcred/seatcred_test.go:TestChildEnvHandsThePasswordToTheChildOnly serial: t.Setenv (through a helper)
 internal/seatcred/seatcred_test.go:TestActiveResolvesOnceAndOnlyWhenSelected serial: t.Setenv (through a helper)
-cmd/nova-sprint/sprint_clear_test.go:TestSprintClearZerosBothTables serial: t.Setenv

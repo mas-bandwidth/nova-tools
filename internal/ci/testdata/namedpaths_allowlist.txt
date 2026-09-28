@@ -83,11 +83,9 @@ fleet/group_vars/all.yml rowan-tools' Ansible inventory, named by internal/nspri
 fleet/launchd/com.rowan.fleet-certify.plist the launchd plist lives in the self repository; there is no fleet/ here
 scripts/coordination/ a prefix in SPEC-RELEASE.md's sensitive-path list, kept in the list though the directory is retired
 testdata/ci/package-sizes-windows.tsv retired with the native Windows legs on 2026-09-18; the measurements are in git at dev 65e86175
-tools/deploy/ a prefix in SPEC-SPRINT.md's live-or-security path list, kept in the list though no tools/deploy/ is in this tree
 cmd/nova-pulse/fleet_verbs.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
 cmd/nova-pulse/sprint.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
 docs/SPEC-PULSE.md deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
-internal/deal deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
 internal/deal/deal.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
 internal/pulse/fleetstandard.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
 internal/pulse/hygiene.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
