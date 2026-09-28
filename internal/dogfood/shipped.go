@@ -8,8 +8,8 @@ import (
 	"strings"
 )
 
-// Shipped is the set of tools a release ships: the directories under cmd/ at
-// the release commit that hold a Go program. A tool parked under deprecated/
+// Shipped is the set of tools a release ships: the nova-* directories under
+// cmd/ at the release commit, which is the list `release build` compiles. A tool parked under deprecated/
 // is not built, not tested and not shipped, so no receipt about it can speak
 // for or against the release.
 //
@@ -24,43 +24,51 @@ type Shipped struct {
 	tools map[string]bool
 }
 
-// ReadShipped reads the shipped set from a cmd/ directory. A directory that
-// cannot be read, or that holds no tool, is refused: a scope that came back
-// empty would set aside every receipt and pass the gate on nothing.
-func ReadShipped(cmdDir string) (Shipped, error) {
+// CmdTools is the one definition of the tools a checkout ships: every
+// directory under cmd/ whose name starts with nova-, sorted. `release build`
+// compiles exactly this list (release.Tools calls it) and the gate judges
+// exactly this list, so the two cannot disagree about what a release holds.
+//
+// AN I/O ERROR IS NOT A PARKED TOOL. Each tool directory is read, and a read
+// that fails is returned with the tool's path: a tool directory that cannot be
+// read is a tool nobody can say anything about, and leaving it out of the set
+// would turn its open edges into receipts set aside -- a gate passing because
+// of a permission bit.
+func CmdTools(cmdDir string) ([]string, error) {
 	entries, err := os.ReadDir(cmdDir)
+	if err != nil {
+		return nil, err
+	}
+	var tools []string
+	for _, e := range entries {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), "nova-") {
+			continue
+		}
+		dir := filepath.Join(cmdDir, e.Name())
+		if _, err := os.ReadDir(dir); err != nil {
+			return nil, fmt.Errorf("cannot read tool directory %s: %w", dir, err)
+		}
+		tools = append(tools, e.Name())
+	}
+	sort.Strings(tools)
+	return tools, nil
+}
+
+// ReadShipped reads the shipped set from a cmd/ directory, by CmdTools. A
+// directory that cannot be read, a tool directory under it that cannot be
+// read, or a cmd/ that holds no tool is refused: a scope that came back short
+// would set receipts aside that it has no grounds to.
+func ReadShipped(cmdDir string) (Shipped, error) {
+	tools, err := CmdTools(cmdDir)
 	if err != nil {
 		return Shipped{}, err
 	}
-	s := Shipped{Dir: cmdDir, tools: map[string]bool{}}
-	for _, e := range entries {
-		if !e.IsDir() || !isToolName(e.Name()) {
-			continue
-		}
-		if hasProgram(filepath.Join(cmdDir, e.Name())) {
-			s.tools[e.Name()] = true
-		}
+	if len(tools) == 0 {
+		return Shipped{}, fmt.Errorf("%s holds no nova-* tool directory", cmdDir)
 	}
-	if len(s.tools) == 0 {
-		return Shipped{}, fmt.Errorf("%s holds no nova-* program", cmdDir)
-	}
+	s := NewShipped(tools...)
+	s.Dir = cmdDir
 	return s, nil
-}
-
-// hasProgram reports whether a directory holds Go source other than tests. An
-// empty directory left behind by a move is not a tool.
-func hasProgram(dir string) bool {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return false
-	}
-	for _, e := range entries {
-		n := e.Name()
-		if !e.IsDir() && strings.HasSuffix(n, ".go") && !strings.HasSuffix(n, "_test.go") {
-			return true
-		}
-	}
-	return false
 }
 
 // NewShipped is a shipped set named directly, for callers that already know it.

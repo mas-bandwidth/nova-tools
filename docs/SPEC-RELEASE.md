@@ -411,9 +411,11 @@ one. What was set aside is counted, never dropped in silence:
 RELEASE CUT NOTE dogfood-gate shipped=<n> outside=<n> cmd=<checkout>/cmd
 ```
 
-A shipped tool's open edge refuses, and so does a shipped tool's not-ok receipt on a verb the
-reference does not declare. A `cmd/` that holds no tool refuses rather than setting every receipt
-aside. `nova-check dogfood gate --shipped <cmd dir>` is the same read.
+The set is every `cmd/nova-*` directory, the same list `build` compiles: one helper
+(`dogfood.CmdTools`) answers both, so what is judged is what is built. A shipped tool's open edge
+refuses, and so does a shipped tool's not-ok receipt on a verb the reference does not declare. A
+`cmd/` that holds no tool refuses rather than setting every receipt aside, and a tool directory that
+cannot be read refuses naming its path: an I/O error is not a parked tool. `nova-check dogfood gate --shipped <cmd dir>` is the same read.
 
 **The two inputs, and the one default in this package.** `--cli` names the command reference and
 defaults to `docs/CLI.md` beside the checkout the verb was already given (`--changelog` for `cut`,
@@ -433,7 +435,8 @@ is a gate nobody has. Every release line now carries `dogfood=ok|waived|skipped`
 `TestCutWaivesTheGateOnlyWithAReasonAndRecordsItEverywhere`, `TestCutNamesASkippedGate`,
 `TestCutFindsTheReferenceBesideTheChangelog`, `TestTheRefusalIsBounded`, `TestTheGateIsASeam`,
 `TestTheDogfoodGateIsInTheReleaseSpec`, `TestCutJudgesOnlyTheToolsUnderCmd`,
-`TestAParkedToolsOpenItemDoesNotBlockAndAShippedToolsDoes`,
+`TestAParkedToolsOpenItemDoesNotBlockAndAShippedToolsDoes`, `TestReadShippedIsEveryNovaDirectoryUnderCmd`,
+`TestReadShippedRefusesAToolDirectoryItCannotRead`, `TestTheGateRefusesAToolDirectoryItCannotRead`,
 `TestDogfoodGateShippedJudgesOnlyTheToolsUnderCmd`.*
 
 ## What this file does not cover

@@ -4,12 +4,14 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
-// The shipped set is the tools under cmd/ that hold a program: a directory with
-// only tests, an empty one, and a name outside the family are not tools.
-func TestReadShippedIsTheToolsUnderCmdThatHoldAProgram(t *testing.T) {
+// The shipped set is every cmd/nova-* directory, the list `release build`
+// compiles: a directory with only tests or none at all is still a tool the
+// builder would try to ship, and a name outside the family is not a tool.
+func TestReadShippedIsEveryNovaDirectoryUnderCmd(t *testing.T) {
 	t.Parallel()
 
 	cmd := t.TempDir()
@@ -35,8 +37,54 @@ func TestReadShippedIsTheToolsUnderCmdThatHoldAProgram(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := s.Tools(), []string{"nova-bus", "nova-table"}; !reflect.DeepEqual(got, want) {
+	want := []string{"nova-bus", "nova-empty", "nova-left", "nova-table"}
+	if got := s.Tools(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("shipped = %v, want %v", got, want)
+	}
+	if got, err := CmdTools(cmd); err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("CmdTools = %v, %v, want %v: the gate and the builder read one list", got, err, want)
+	}
+}
+
+// AN I/O ERROR IS NOT A PARKED TOOL. A second tool directory that cannot be
+// read refuses the whole read, naming the tool's path, rather than leaving the
+// tool out while the set stays non-empty -- which set its open edge aside and
+// passed the gate (Stella, #4531: Shipped:1 Outside:2 Findings:[] on a
+// permission denied).
+func TestReadShippedRefusesAToolDirectoryItCannotRead(t *testing.T) {
+	t.Parallel()
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a mode-000 directory; the refusal cannot be provoked")
+	}
+
+	cmd := t.TempDir()
+	for _, tool := range []string{"nova-bus", "nova-example"} {
+		dir := filepath.Join(cmd, tool)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	locked := filepath.Join(cmd, "nova-example")
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+	if _, err := os.ReadDir(locked); err == nil {
+		t.Skip("this filesystem reads a mode-000 directory; the refusal cannot be provoked")
+	}
+
+	s, err := ReadShipped(cmd)
+	if err == nil {
+		t.Fatalf("an unreadable tool directory was read as a shipped set %v", s.Tools())
+	}
+	if !strings.Contains(err.Error(), locked) {
+		t.Fatalf("the refusal does not name the tool's path %s: %v", locked, err)
+	}
+	if _, err := CmdTools(cmd); err == nil {
+		t.Fatal("CmdTools listed a tool directory it could not read")
 	}
 }
 

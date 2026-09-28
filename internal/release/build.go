@@ -12,6 +12,8 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/dogfood"
 )
 
 // SumsFile is the name of the checksum file in every artifact directory, in the
@@ -87,18 +89,9 @@ func ArtifactDir(root, version, goos, goarch string) string {
 // argument at greater length -- a tool added tomorrow ships on the day it
 // appears rather than on the day somebody remembers a list.
 func Tools(source string) ([]string, error) {
-	entries, err := os.ReadDir(filepath.Join(source, "cmd"))
-	if err != nil {
-		return nil, err
-	}
-	var tools []string
-	for _, e := range entries {
-		if e.IsDir() && strings.HasPrefix(e.Name(), "nova-") {
-			tools = append(tools, e.Name())
-		}
-	}
-	sort.Strings(tools)
-	return tools, nil
+	// One definition, shared with the dogfood gate's shipped set: what is
+	// compiled is what is judged.
+	return dogfood.CmdTools(filepath.Join(source, "cmd"))
 }
 
 func build(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {

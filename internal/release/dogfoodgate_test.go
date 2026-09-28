@@ -509,3 +509,46 @@ func TestCutJudgesOnlyTheToolsUnderCmd(t *testing.T) {
 		t.Fatalf("code=%d, want 2 with open=1 for the shipped tool's edge\nstderr:%s", code, errs.String())
 	}
 }
+
+// Stella's witness on #4531: a shipped tool whose directory cannot be read was
+// left out of the set, its open edge set aside, and the gate passed with
+// {Shipped:1 Outside:2 Findings:[]}. An I/O error is not a parked tool: the
+// read refuses, and the cut with it.
+func TestTheGateRefusesAToolDirectoryItCannotRead(t *testing.T) {
+	t.Parallel()
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a mode-000 directory; the refusal cannot be provoked")
+	}
+
+	cli, receipts := oneOpenEdge(t)
+	cmd := filepath.Join(t.TempDir(), "cmd")
+	for _, tool := range []string{"nova-shipped", "nova-example"} {
+		dir := filepath.Join(cmd, tool)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	locked := filepath.Join(cmd, "nova-example")
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+	if _, err := os.ReadDir(locked); err == nil {
+		t.Skip("this filesystem reads a mode-000 directory; the refusal cannot be provoked")
+	}
+
+	v, err := ReadDogfood(cli, receipts, cmd)
+	if err == nil {
+		t.Fatalf("the gate read an unreadable tool directory as parked: %+v", v)
+	}
+	if !strings.Contains(err.Error(), locked) {
+		t.Fatalf("the refusal does not name the tool's path %s: %v", locked, err)
+	}
+	// And release build's own list refuses the same tree: one definition.
+	if _, err := Tools(filepath.Dir(cmd)); err == nil {
+		t.Fatal("release.Tools listed a tool directory it could not read")
+	}
+}
