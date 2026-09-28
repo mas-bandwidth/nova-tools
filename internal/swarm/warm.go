@@ -1,4 +1,4 @@
-// Package swarm, warm.go: affinity and warm state (docs/SPEC-JOBS.md section 4).
+// Package swarm, warm.go: affinity and warm state (deprecated/docs/SPEC-JOBS.md section 4).
 //
 // Every card carries a kind and a repo. A bench keeps a clone per repo in a worktree
 // under <slot>/worktrees/<owner>/<name>, and pull prefers the card whose repo it already

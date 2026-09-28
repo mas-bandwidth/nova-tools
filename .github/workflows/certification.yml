@@ -459,7 +459,7 @@ jobs:
           }
 
           t="$(mktemp -d)"; printf '# n\n' > "$t/NOTES.md"; printf 'print(1)\n' > "$t/tool.py"
-          check "extension" "$t" "code extension .py (floor list)"
+          check "extension" "$t" "code extension .py (floor-list)"
 
           t="$(mktemp -d)"; printf '# n\n' > "$t/NOTES.md"; printf 'not a script\n' > "$t/thing"; chmod +x "$t/thing"
           check "executable bit" "$t" "executable (mode"

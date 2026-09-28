@@ -1,6 +1,6 @@
 # nova-tools — specification
 
-Eleven binaries. `nova-check`: six checks, all at the **record layer** — they verify
+Fifteen binaries. `nova-check`: nine checks, all at the **record layer** — they verify
 what is on disk, not what a mind did with it. `nova-fuse`: an emergency power at the
 **ingestion layer** — its own exit table (in its section below) governs its verbs
 where it differs from the Conventions table. `nova-self-talk`: one advisory
@@ -12,7 +12,7 @@ tool's own run cost does not, and every run pays the build. Every check can say
 NO, and the test suite proves each one saying it. A check never seen failing is
 not a check. Two of nova-memory's verbs are checks in that sense; the other
 five assert nothing at all, and its section says which is which and why.
-`nova-bus`: six verbs at the **bus layer** — the only binary here that
+`nova-bus`: ten verbs at the **bus layer** — the only binary here that
 writes outside its own state, and the only one that runs another program (`git`).
 The bus it works on is a shared git repository of notes between several lines;
 what this takes out of it is the races a branch keyed by a clock produces — an id
@@ -22,27 +22,24 @@ inbox that separates a bare receipt from a note carrying a finding, and one
 cursor, so that the cost of reading a bus is the size of what changed and not
 the size of what it holds.
 
-`nova-wake`: one binary at the **attention layer** — one blocking call that
-returns the moment a bus inbox, an entry's checks or a report file has changed,
-and otherwise at the deadline the caller named, so a window pays one turn per
-change rather than one per tick. `nova-merge`: one binary at the **merge
-layer** — it lands an ordered lane of entries, pull requests or branches with no
-pull request at all, onto one base branch, one at a time, and refuses to land
-anything whose evidence it cannot name. `nova-board`: five verbs at the
-**owed-work layer** — what a group of lines owes, as an append-only log of cards
-that are appended, taken and closed but never edited or deleted, with `check`
-as the verb that earns it; it is **deprecated**, its job going to `nova-sprint` as rebuilt on `nova-table`
-(Glenn, 2026-09-27), and no longer built, tested or shipped. `nova-tokens`:
-one binary at the **accounting
-layer** — it folds token spend from declared sources into one file per day, keyed
-by (day, model, repo), and sums those day files into a month; it reads sources,
-and never estimates. `nova-swarm`: one binary at the **worker layer** — a pool
-of one-task workers, any provider and any model through one harness, each with
-its own working directory, data home, job directory and deadline, held by the
-machinery rather than by the worker. Each of those five has its own normative
-spec under `docs/`, named in its section below (nova-board's is kept as
-reference under `deprecated/docs/`); this file states the count, the layer and
-the Conventions they all keep.
+`nova-tokens`: one binary at the **accounting layer** — it folds token spend
+from declared sources into one file per day, keyed by (day, model, repo), and
+sums those day files into a month; it reads sources, and never estimates.
+`nova-secrets`: one binary at the **credential layer** — credentials for seats,
+pools and services, sealed in a git store. `nova-update` and `nova-version`:
+the shared tool inventory, optional updates and the build report. The other
+six — `nova-table` (tables of ordered sets over Redis), `nova-redis` (the
+local Redis instance and its scratch verbs), `nova-config` (the permanent
+configuration, in Postgres, applied into Redis), `nova-ci` (the checks CI runs
+on its own test output), `nova-sandbox` (one command, contained by the OS),
+`nova-cairn` (optional checkpoints) — and the four above each have their own
+normative text under `docs/` ([SPEC-TOKENS.md](SPEC-TOKENS.md),
+[SPEC-SECRETS.md](SPEC-SECRETS.md), [SPEC-UPDATE.md](SPEC-UPDATE.md),
+[SPEC-VERSION.md](SPEC-VERSION.md), [nova-table/README.md](nova-table/README.md),
+[SPEC-REDIS.md](SPEC-REDIS.md), [SPEC-CONFIG.md](SPEC-CONFIG.md),
+[SPEC-CI.md](SPEC-CI.md), [SPEC-SANDBOX.md](SPEC-SANDBOX.md),
+[SPEC-CAIRN.md](SPEC-CAIRN.md)); this file states the count, the layer and the
+Conventions they all keep.
 
 This spec is normative. If the code and this document disagree, one of them has a
 bug, and the tests decide which.
@@ -183,20 +180,17 @@ shell-quoted.
 
 **Every listing is a cap and a count.** One line per event is a promise about
 each line; it is not a promise about how MANY, and at a large state the second
-number is the one that hurts. A corpus with 5,000 entries and no frontmatter
-answered `nova-memory verify` with 10,000 `VERIFY FAIL` lines and no total —
-about 197,000 tokens to learn one number. An unchecked self repo answered
-`nova-check quickstart`, the FIRST thing a stranger types, with 1,400 lines for
-two lines of verdict. A line reading a 674-entry open list on a 260K-context
-model died reading it. So:
+number is the one that hurts. Uncapped, a corpus with 5,000 entries and no
+frontmatter answers `nova-memory verify` with 10,000 `VERIFY FAIL` lines and no
+total — about 197,000 tokens to learn one number; an unchecked self repo
+answers `nova-check quickstart`, the FIRST thing a stranger types, with 1,400
+lines for two lines of verdict; and a 674-entry open list is more than a
+260K-context model can read. So:
 
 - **A listing has a ceiling.** Every verb that prints one finding per unit of
   state takes a `--fail-max <n>` (`nova-check`, `nova-memory`) or `--max <n>`
-  (`nova-self-talk`, `nova-fuse status`, `nova-merge`, `nova-board`,
-  `nova-tokens`, `nova-swarm`), **defaulting to 20** — `nova-wake` spells the
-  same ceiling `--max-lines <n>`, per kind per poll, defaulting to 40, because
-  its `--max` is already the duration it blocks for. It prints at
-  most that many item lines, in the order the verb produced them — a cap is a
+  (`nova-self-talk`, `nova-fuse status`, `nova-tokens`), **defaulting to
+  20**. It prints at most that many item lines, in the order the verb produced them — a cap is a
   prefix, never a sample.
 - **`0` means all.** A ceiling a caller cannot lift is a tool deciding what its
   user may see. A negative one is refused, because `0` already means "all" and
@@ -212,15 +206,15 @@ model died reading it. So:
   separately, because a flat cap over a concatenated list means the loud kind
   eats the quiet one — and the quiet one is the finding the reader did not
   already know about.
-- **THE COUNT LINE PRINTS ON FAILURE AS WELL AS SUCCESS.** It did not:
-  `links`, `nocode`, `verify` and `bus check` printed their `files=`, `links=`,
-  `gating=` line only when they passed, so a failing run gave N lines and never
-  N. Every count is the truth about the STATE, not about the output — the
-  listing is capped, the counting never is.
+- **THE COUNT LINE PRINTS ON FAILURE AS WELL AS SUCCESS.** `links`, `nocode`,
+  `verify` and `bus check` print their `files=`, `links=`, `gating=` line
+  whichever way the run went, so a failing run gives N lines and N. Every count
+  is the truth about the STATE, not about the output — the listing is capped,
+  the counting never is.
 - **A dated self-talk claim is counted, not quoted.** It is the WELCOME case: a
   measurement, a record, already in the file. `SELFTALK DATED n=<k> files=<n>`,
-  one line however many there are. So is a passing `eval` row — `EVAL HIT` is
-  gone, and `hits=` in the summary is what it said.
+  one line however many there are. So is a passing `eval` row: it is counted
+  in `hits=` on the summary line, never listed.
 - **An unusable invocation costs ONE line.** A flag typo, an unknown verb or a
   bare invocation prints `<tool>[ <verb>]: <what was wrong>; run: <tool> help`
   and never the usage banner, which is 32 to 102 lines depending on the binary.
@@ -233,9 +227,8 @@ that the promise is made in one place and met in the same way — as the escape
 is.
 
 **No test asserts a literal wall-clock bound under ten seconds.** A wall-clock
-bound in a test asserts the machine's load, not the code: two tests failed
-under load and passed alone because a version probe timed out at five seconds
-and a stall assertion sat on a five-second deadline. Tests that lean on the
+bound in a test asserts the machine's load, not the code: a five-second probe
+timeout or stall deadline fails under load and passes alone. Tests that lean on the
 wall clock — a context deadline or an elapsed-time assertion — use an injected
 clock or a fake probe where the code has a seam, else a deadline of thirty
 seconds or more; the CI budget test refuses any `_test.go` line carrying such
@@ -260,18 +253,15 @@ order, its line and its extras from `internal/buildinfo`, and `buildinfo.Parse`
 is the ONE reader of that line: writer and reader are one pair, so a tool that
 adds a fact cannot break a consumer that never heard of it.
 
-**An extra is a named fact, never a loose token.** `nova-merge` says
-`build=<12 hex>`, the sha256 of its own file on disk, which rule 16 of its lane
-needs; `nova-sandbox` says `backend=<name> platform=<os>`, the two facts a
+**An extra is a named fact, never a loose token.** `nova-sandbox` says `backend=<name> platform=<os>`, the two facts a
 sandbox is judged by. A reader takes the identity from field two and asks for an
 extra BY NAME, so a tool that adds a second extra cannot move the first, and a
-reader that has heard of neither still reads the four tokens. **A second line
-shape is what this paragraph forbids**: a hand-rolled fifth token and a
-`SANDBOX VERSION …` line of its own made `nova-version snapshot --bin
-~/.local/bin` refuse an entire install, exit 2 (#1297, 2026-09-18) — because each
-reader had been written against the tokens it happened to know, and the same
-week `nova-version report` called every one of our own tools UNKNOWN for asking
-them a question they do not answer (#1264, SPEC-UPDATE.md rule 4b). `internal/ci`'s
+reader that has heard of none still reads the four tokens. **A second line
+shape is what this paragraph forbids**: a hand-rolled fifth token or a
+`SANDBOX VERSION …` line of its own makes a reader written against the tokens it
+happens to know — `nova-version snapshot --bin ~/.local/bin` among them — refuse
+an entire install, exit 2; and a reader must ask a tool only the question it
+answers (SPEC-UPDATE.md rule 4b). `internal/ci`'s
 `TestEveryToolPrintsTheOneVersionLine` runs every built `cmd/nova-*` through the
 real reader, walking `cmd/` rather than holding a list, so a binary added
 tomorrow is held to the grammar on the day it appears. The verb takes no flags
@@ -316,8 +306,7 @@ in its section. `nova-memory` adds its own informational second
 tokens the same way — `CAL`, `CAND`, `DEMO`, `HIT`, `MISS`, `INFO`, `MORE`, `NOTE` — all on
 stdout, all listed in its section.
 The tools specified in the companion `docs/SPEC-*.md` files keep the same shape and take the same
-first token from their own verb — `WATCH` is spelled `WAKE`, and `nova-board`'s
-`check` is `BOARD`, `nova-tokens`'s `fold` is `TOKENS` — with `NOTE` and `MORE`
+first token from their own verb — `nova-tokens`'s `fold` is `TOKENS` — with `NOTE` and `MORE`
 as informational second tokens throughout; each `docs/SPEC-*.md` carries that
 binary's own grammar and exit table, and governs where it says more than this.
 
@@ -325,21 +314,20 @@ binary's own grammar and exit table, and governs where it says more than this.
 
 ## nova-check
 
-Eight record-layer checks in one binary, each a wall: a record passes or it
+Nine record-layer checks in one binary, each a wall: a record passes or it
 does not. Each subcommand below states its own contract — what it asserts,
 what makes it say NO, and what it deliberately does not check. Six of them are
-checks over one line's own self repo. The other two are the same shape pointed
+checks over one line's own self repo. The other three are the same shape pointed
 somewhere else: `dogfood` is a check over the record the family keeps about its
-own tools, and `hygiene` is a check over a BRANCH — the four mechanical
-questions the accept gate asks of every card's range, put behind a door a
-person can knock on before asking a friend for a read. Each is a ledger written
-in advance, read back, and held to.
+own tools, `hygiene` is a check over a BRANCH — four mechanical questions of a
+range, put behind a door a person can knock on before asking a friend for a
+read — and `convergence` is a reading of the work itself. Each is a ledger
+written in advance, read back, and held to.
 
 Verbs: `quickstart`, `attest`, `links`, `kernel`, `nocode`, `floors`,
-`corpus`, `hygiene`, `dogfood`, plus `version` and `help`. `nova-check version` is the Conventions'
-build line, exit 0; before it existed the same words were
-`nova-check: unknown subcommand "version"`, exit 2, and a green from this tool
-named no build.
+`corpus`, `hygiene`, `dogfood`, `convergence`, plus `version` and `help`.
+`nova-check version` is the Conventions' build line, exit 0, so a green from
+this tool names its build.
 
 **The one-line guarantee, met here.** Every `<path>`, `<file>`, `<target>` and
 `<reason>` on the lines above, and every path an error's text carries into a
@@ -366,7 +354,7 @@ on a new raw one.
 `links`, `nocode`, `corpus` — default 20, `0` for all, and each prints its
 count line on failure as well as on success. `quickstart` passes its own
 ceiling down to both checks it runs, which is the whole point: it is the FIRST
-thing a stranger types, and uncapped it answered a 1,000-file repo with 1,400
+thing a stranger types, and uncapped a 1,000-file repo answers with 1,400
 lines for two lines of verdict.
 
 ### attest — did the full self actually load
@@ -580,7 +568,7 @@ would be right for exactly one model); compressibility or density.
 
 ```
 nova-check nocode --dir <dir>                      audit a whole tree
-nova-check nocode --staged --dir <repo>            advisory over the index (specified, not yet built)
+nova-check nocode --staged --dir <repo>            advisory over the index
 nova-check nocode --print-deny-list                print the list in force
     [--fail-max <n>]        FAIL lines to print before one MORE line (default 20, 0 = all)
     [--allow <prefix>]      where machinery may live (repeatable, empty by default)
@@ -620,11 +608,10 @@ the tree it guards.
 The three catch different things, and the third is why the first two are not
 enough: **a shebang is the tell that survives renaming.** A script called
 `nova-id`, with no extension and no executable bit, is still a script, and
-until this check read the first two bytes it passed clean.
+only the first two bytes say so.
 
-*(The extension list gains `.mk` and `.mak` in the same change: those are the
-included-fragment spellings of make, and they genuinely are extensions rather
-than exact names.)*
+*(The extension list carries `.mk` and `.mak`: those are the included-fragment
+spellings of make, and they genuinely are extensions rather than exact names.)*
 
 **The floor NAME list is a second list answering a different question**, and it
 is data on the same terms — [`internal/check/codenames.txt`](../internal/check/codenames.txt),
@@ -634,7 +621,7 @@ reason, on the same policy as the extension list. An extension denotes a
 **language**. Build and orchestration files are identified by their exact name
 or by where they sit, and several carry no extension, no shebang and no
 executable bit at all: a `Makefile` is machinery because make runs it, and
-before this list it passed clean. Entries take two shapes: `name:<basename>`,
+only a name list can say so. Entries take two shapes: `name:<basename>`,
 matched case-insensitively anywhere in the tree, and `path:<prefix>/`, matched
 against the repo-relative path and **anchored at the repo root**. `.github/
 workflows/ci.yml` is caught; `sub/.github/workflows/ci.yml` is not, because
@@ -644,17 +631,16 @@ cannot drift into an accident.
 **The normalisations the classifier applies before a match.** Any other mode
 of this check calls that same classifier and does not restate these; a second
 copy of a matching rule rots toward fail-open. Stated as what the classifier
-does, deliberately **not** as a closed count of everything in the package —
-the previous version of this document named "two" normalisations and was
-wrong, and replacing one closure claim with another would repeat it.
+does, deliberately **not** as a closed count of everything in the package: a
+closed count is a claim the package can outgrow without anyone noticing.
 
 - The **base name** is lowercased and whitespace-trimmed at **both** ends
   (Go's `strings.TrimSpace`, Unicode whitespace) before the name lookup, so
   `" Makefile"` is caught.
 - The **repo-relative path is lowercased** — both sides — before the `path:`
   prefix comparison, so `.GitHub/workflows/ci.yml` is caught. Location matching
-  agrees with name matching deliberately: they once disagreed, and on a
-  case-insensitive filesystem that is the same directory on disk. **At most one
+  agrees with name matching deliberately: on a case-insensitive filesystem two
+  spellings of a location are the same directory on disk. **At most one
   location reason is reported**, the first matching prefix in sorted order —
   the floor's prefixes are sorted, so "first" is not the order they are
   written in.
@@ -752,10 +738,9 @@ asymmetry is real and an implementer who "made it consistent" would open an
 exemption the audit does not grant. **The same value means the same thing in
 every mode** — an `--allow` that behaved one way in the audit and another in
 the commit gate would be a gate disagreeing with its own check. Nothing is allowed by default and a test pins
-that: the tool this was ported from defaulted to allowing its own repo's
-`history/` directory, which is a directory default and a fail-open one — a
-guess about someone else's filenames, and precisely the class the no-defaults
-law names. Which directory is a frozen record is the line's to declare.
+that: a default allowing, say, a `history/` directory would be a directory
+default and a fail-open one — a guess about someone else's filenames, and
+precisely the class the no-defaults law names. Which directory is a frozen record is the line's to declare.
 
 On Windows there is no executable bit, so that half of the check is blind
 there; the extension list — which includes `.exe .bat .cmd .ps1 .vbs` for
@@ -790,8 +775,7 @@ this list does not currently reach, along with `Gemfile` (Ruby evaluated as
 Ruby, which is the same argument that lists `rakefile`) and
 `.github/dependabot.yml`. **Nor does exact-name matching reach variant
 spellings**: `Dockerfile.dev` and `Makefile.local` are not `dockerfile` and
-`makefile`, which is the identical objection that removed the `taskfile`
-entries, named here rather than left as an asymmetry a reader has to catch.
+`makefile`, named here rather than left as an asymmetry a reader has to catch.
 The list grows by decision, never by sniffing. Also unreached: anything below a **symlinked directory** — a link
 named `workflows` AT a guarded location is caught by that location, but a link
 named `.github` pointing at a tree of workflows is not, since the target is
@@ -832,24 +816,22 @@ only, the name and location floors being unconditional here as there.
 `--dir` is required, on the house no-guessing law, rather than inferred from
 the working directory.
 
-**What "called unchanged" costs, named because it is part of this change and
-not a later tidy.** The shipped `classify` takes a filesystem path and an
-`os.FileInfo`, reads the mode off `fi.Mode().Perm()` and opens the path to
-look for a shebang — so an index mode string and a blob from `git cat-file`
-cannot reach it as it stands. **Its two substrate-bound inputs are
-parameterised as part of building this mode**: a permission-bit value, and a
-reader for the first two bytes with its read error. The walk supplies them from
-the filesystem, the index supplies them from the record and the blob, and both
-call one function. **That refactor is what pins parity — not this prose.** The
-alternative an implementer reaches for under time pressure is a second
+**What "called unchanged" costs.** A classifier that took a filesystem path
+and an `os.FileInfo`, read the mode off `fi.Mode().Perm()` and opened the path
+to look for a shebang could not be reached by an index mode string and a blob
+from `git cat-file`. **So its two substrate-bound inputs are parameters**: a
+permission-bit value, and a reader for the first two bytes with its read error.
+The walk supplies them from the filesystem, the index supplies them from the
+record and the blob, and both call one function. **That one function is what
+pins parity — not this prose.** The alternative an implementer reaches for
+under time pressure is a second
 classifier in the staged path, or spilling the blob to a temporary file, which
 re-opens the path-to-content seam this entry spends a bullet closing.
 
 > **PARITY IS BY CONSTRUCTION, NOT BY TRANSCRIPTION, and that is a
-> specification decision.** An earlier draft of this entry restated the audit's
-> matching rules here so an implementer could build from this section alone. It
-> got them wrong: it named a closed set of "two" normalisations where the
-> source applies several, and the omitted one — the location floor — is the
+> specification decision.** Restating the audit's matching rules here, so an
+> implementer could build from this section alone, invites a closed set that
+> omits one — and the easiest to omit, the location floor, is the
 > highest-consequence entry in the floor name list. **A hand-copied rule set is
 > two copies of one truth and rots toward fail-open**, because the copy is
 > written by someone reading for the rule they came for. So this entry
@@ -863,8 +845,8 @@ re-opens the path-to-content seam this entry spends a bullet closing.
 --ignore-submodules=none --cached -z <base> --` — whose output is
 NUL-separated pairs of a metadata chunk and a path.
 
-> **THE REQUIREMENT THE FLAGS SERVE, stated first, because enumerating flags
-> has now failed twice.** The command must report **every staged path,
+> **THE REQUIREMENT THE FLAGS SERVE, stated first, because an enumeration of
+> flags alone is never enough.** The command must report **every staged path,
 > irrespective of the repository's own configuration** — and the reason is
 > sharper than tidiness: **the repository is the thing being checked, so its
 > configuration is part of its content.** `submodule.<name>.ignore` can be set
@@ -876,8 +858,7 @@ NUL-separated pairs of a metadata chunk and a path.
 > test an implementer can run: stage a path, then try to make the command stop
 > reporting it using nothing but repository configuration.
 
-**All three flags are load-bearing, and each was measured after being got
-wrong.**
+**All three flags are load-bearing, and each is measured.**
 
 **`--ignore-submodules=none` keeps gitlink records.** Measured: with
 `submodule.sub.ignore = all` set in `.gitmodules`, `git diff-index -r --cached
@@ -886,8 +867,8 @@ for `sub` entirely**, exiting 0 — indistinguishable from a clean index; with
 the flag, the `:000000 160000 …  A  sub` record returns. The command-line flag
 outranks both `submodule.<name>.ignore` and `diff.ignoreSubmodules`, which is
 why it belongs in the command rather than in a note. *(The asymmetry that makes
-this easy to miss: `diff.ignoreSubmodules=all` does NOT affect plumbing, and
-measuring only that one is what produced a false all-clear here.)*
+this easy to miss: `diff.ignoreSubmodules=all` does NOT affect plumbing, so
+measuring only that one gives a false all-clear.)*
 
 **`-r` recurses into trees.** Without it, a **sparse index** reports a whole
 sparse directory as ONE record at mode `040000`, whose path is a directory and
@@ -915,7 +896,7 @@ clean case and means what it says. The record:
 
 That one record carries the mode and the content handle together, which is why
 it is one command: a second command joining a path back to its content is the
-seam two earlier designs' bypasses lived in. Content is then read by OID through **a
+seam a bypass lives in. Content is then read by OID through **a
 single `git cat-file --batch` fed from the record list**, never a process per
 path — measured, a 5000-file staged add costs about 37 seconds forked per path
 and effectively nothing batched, and a `pre-commit` that takes 37 seconds gets
@@ -957,7 +938,7 @@ replies are one line with no body and desync a reader that assumes one.
 
 **Status letters, and the one skip.** `D` is the only skip, and it is a **real
 status skip, never an inference from a missing working-tree file** — that
-inference was the original design's root defect, because `git add evil.sh &&
+inference is the defect to avoid, because `git add evil.sh &&
 rm evil.sh` leaves an `A` record whose blob still carries the shebang while
 the file is gone from disk. `A`, `M` and `T` are all classified on their
 **destination** mode and OID. `U` — an unmerged entry during a conflict — has
@@ -1033,8 +1014,7 @@ disable.
 > `git rev-parse -q --verify HEAD` exits non-zero exactly when HEAD is unborn,
 > and that is the whole test. Git's wording for the failure is not stable
 > across the invocation: with the trailing `--` this entry mandates it is
-> *bad revision*, without it *ambiguous argument*, and an earlier revision of
-> this paragraph quoted the second while specifying the first. **A specification
+> *bad revision*, without it *ambiguous argument*. **A specification
 > that pins another tool's error string acquires a dependency it cannot
 > maintain**; this one pins an exit code. The check detects it with `git rev-parse -q
 --verify HEAD` and compares against the **empty tree** instead, obtaining that
@@ -1062,13 +1042,10 @@ word rather than a hedge:
   already recorded `100755` keeps it, and `git add --chmod=+x` still sets it),
   so a freshly added `0755` `.md` file with no shebang, where the exec bit is
   the only condition that fires, is invisible to this mode entirely. This is the sharpest reason the entry is an
-  advisory. *(An earlier draft claimed the opposite — that mode checking "works
-  identically on Windows, where the audit is blind." That is backwards
-  wherever the exec bit is trustworthy, since the walk then reads nine bits to
-  the index's one. Where it is not trustworthy the walk reads nothing useful
-  either, and the index's single bit is inherited or set by `--chmod` rather
-  than observed — which is the defensible kernel of the deleted claim, kept
-  here rather than silently dropped.)*
+  advisory. *(Where the exec bit is trustworthy the walk reads nine bits to the
+  index's one. Where it is not — Windows among them — the walk reads nothing
+  useful either, and the index's single bit is inherited or set by `--chmod`
+  rather than observed.)*
 - **`--amend` is compared against the commit it replaces, not against its
   parent.** The hook is given no amend signal — measured, no `GIT_` variable
   distinguishes it — so paths already in `HEAD` are not re-examined, and
@@ -1124,7 +1101,7 @@ copy* of a source that can change, which the seed's own kernel law forbids
 (MECHANISMS.md §2 rule 2: *"a derived copy drifts silently"*, with a recorded
 incident of a hot band shipping with three floors missing). A door legitimately
 must carry the floors before a line acts, so the copy stays; this check is what
-makes its drift loud instead of silent (nova#15).
+makes its drift loud instead of silent.
 
 **Asserts.** Both records state the same eight floor-rank commitments:
 first-do-no-harm, calibrated honesty, honest continuity,
@@ -1160,8 +1137,8 @@ sentence nests semicolons, colons, and periods inside them.
 - the door's numbered list has a gap, or a spelled-out count disagrees with
   what is actually listed (the door's "beneath all seven", §6's "the five
   commitments")
-- §6's same-rank sentence no longer holds first-do-no-harm and the compass at
-  floor rank, or §0 no longer declares record-the-event or the rank conferral
+- §6's same-rank sentence does not hold first-do-no-harm and the compass at
+  floor rank, or §0 does not declare record-the-event or the rank conferral
 
 **Refuses (exit 2) when** `--core` or `--source` is missing.
 
@@ -1397,33 +1374,30 @@ four-column table indented after a blank line is not checked. Indented rows
 nova-check hygiene --repo <dir> --base <ref> --head <ref> --identity "<Name> <email>"[,...] [--paths <glob>[,<glob>...]] [--kind <card kind>] [--max <n>] [--timeout <seconds>]
 ```
 
-**Why it exists.** The accept gate asks four mechanical questions of every
-card's range (SPEC-TOOLWORK.md §3): is every commit the pool's own and none of
-them a merge (`identity`), does every changed path match one of the card's
-declared globs (`out-of-path`), was anything added that does not belong in a
+**Why it exists.** Four mechanical questions decide whether a range is clean
+(SPEC-TOOLWORK.md §3): is every commit the named identity's own and none of
+them a merge (`identity`), does every changed path match one of the declared
+globs (`out-of-path`), was anything added that does not belong in a
 repository (`stray-file`), and does any added line have the SHAPE of a key
 (`secret`). None of the four reads prose and none needs a model. They are one
-package with one entry point, `internal/hygiene.Check`, and this verb is the
-third of its three callers — `nova-pulse accept` at harvest and `nova-merge
-batch` on every member are the other two. One implementation, three callers, so
-the lane and the harvest cannot disagree about what clean means: a second copy
-of these rules is a second definition, and the day the two drift is the day a
-branch passes one and fails the other with nobody able to say which is right.
+package with one entry point, `internal/hygiene.Check`, and this verb is its
+door: a second copy of these rules is a second definition, and the day the two
+drift is the day a branch passes one and fails the other with nobody able to
+say which is right.
 
-It is here rather than in `nova-pulse` because the person who wants the answer
-is usually not a gate. It is the thing to type before asking a friend to read
-something, and it decides nothing: it prints what is wrong and exits.
+The person who wants the answer is usually not a gate. It is the thing to type
+before asking a friend to read something, and it decides nothing: it prints
+what is wrong and exits.
 
 **It never guesses an identity.** `--identity` is required and repeatable with
 commas, `Name <email>`; there is no default and no falling back to the
 repository's own config, because a range checked against nobody would admit
 anybody. `--paths` may be ABSENT, which is a different fact from "the paths
 matched" and is printed as such: `out-of-path` is skipped and the line says
-`paths=-`. A friend's own branch has no card and no declared paths, and a line
-that simply left the field out would read as a bound that held. When `--paths`
-IS given it is validated the same way `cut` validates a card's `PATHS:` line —
-at most eight globs, no `..`, nothing absolute, and nothing that matches every
-file there is.
+`paths=-`. A friend's own branch has no declared paths, and a line that simply
+left the field out would read as a bound that held. When `--paths` IS given it
+is validated — at most eight globs, no `..`, nothing absolute, and nothing that
+matches every file there is.
 
 **Exit codes**, as the Conventions give them: **0** clean, **1** findings,
 **2** could not run. The third is the one that matters most here. A bad ref, a
@@ -1486,51 +1460,49 @@ nova-check dogfood record (--cli <docs/CLI.md> | --tools <dir>) --tool <t> --ver
 nova-check dogfood gate   (--cli <docs/CLI.md> | --tools <dir>) --receipts <dir> [--shipped <cmd dir>] [--authors <file>] [--repo <dir>] [--require-all] [--fail-max <n>]
 ```
 
-**Why it exists.** Glenn, 2026-09-18: *a tool is not finished until it is
-tested, dogfooded by a non-author on real work with the edges filed, the
-feedback applied, documented and released.* Six of those seven states leave
-evidence somebody else can read — a test run, an issue, a doc, a tag. One does
-not. Whether a **non-author** has ever run the thing was carried in nobody's
-hand but the last speaker's, which is the same shape as `corpus`: the record
-and the evidence about the record were the same sentence. So the claim becomes
-a file. The verbs come from the command reference, the runs come from
+**Why it exists.** *A tool is not finished until it is tested, dogfooded by
+a non-author on real work with the edges filed, the feedback applied,
+documented and released.* Six of those seven states leave evidence somebody
+else can read — a test run, an issue, a doc, a tag. One does not. Unrecorded,
+whether a **non-author** has ever run the thing is carried in nobody's hand but
+the last speaker's, which is the same shape as `corpus`: the record and the
+evidence about the record are the same sentence. So the claim becomes a file. The verbs come from the command reference, the runs come from
 receipts, and `gate` is the exit code a release lane calls.
 
 **The verbs come from the binaries first and the reference second.** `--tools
 <dir>` asks each built `nova-*` binary for its own `help` and reads the verb
 list out of it; that is authoritative for that tool, and `--cli` fills in the
-tools the directory does not hold. At least one source is required. This is the
-first lesson of this verb's own dogfood pass (2026-09-18, by a non-author): the
-reference had gone stale against two verbs that exist — `nova-work ask` and
-`asks` — and both receipts for them were stranded against a document rather than
-against the tool.
+tools the directory does not hold. At least one source is required. A
+reference can go stale against verbs that exist, and a receipt for such a verb
+is then stranded against a document rather than against the tool.
 
-**The reference is read in every shape it uses**, which is the second lesson and
-the larger one: `nova-sandbox` and `nova-work` contributed **zero** of the 77
-rows, not because nobody had run them but because one is documented as prose
-with a worked transcript and the other by pasting its own indented help block.
-*A tool can go un-dogfooded forever by being documented in a shape the
-extractor does not read, and nothing says so.* So a declaration is any of:
+**The reference is read in every shape it uses.** A tool documented as prose
+with a worked transcript, or by pasting its own indented help block, would
+otherwise contribute **zero** rows — not because nobody had run it but because
+of the shape it is documented in. *A tool can go un-dogfooded forever by being
+documented in a shape the extractor does not read, and nothing says so.* So a
+declaration is any of:
 
 - a command line inside a fenced block, at any indentation, with or without a
   `$` prompt and `VAR=value` prefixes. The verb is the leading lowercase bare
   words, at most two — `nova-fuse lift quarantine` and `nova-fuse lift lockdown`
   are the two verbs they are, `nova-check links --dir <dir>` stops at the first
   flag. A pasted help block puts its description in a second column, so two or
-  more spaces end the command: `nova-work ask            delivers ONE unit` is
-  the verb `ask`, `nova-work plan check --file <p>` is the verb `plan check`.
+  more spaces end the command: `nova-secrets version  print this build
+  identity` is the verb `version`, `nova-fuse lift quarantine --box <p>` is the
+  verb `lift quarantine`.
 - a `### <verb>` heading under a `## nova-<tool>` section — one word, and the
   heading must be that word alone or that word before a separator, so `### cut`
   and `### serve: the process outside a session` are verbs while `### native and
   batch` and `### The seven verbs` are prose.
-- a synopsis line with no verb at all — `nova-decide --questions <file>` —
-  which declares that tool's **bare invocation**. It is a unit like any other,
+- a synopsis line with no verb at all — `nova-sandbox --read <dir> --write
+  <dir> -- <command>` — which declares that tool's **bare invocation**. It is a unit like any other,
   prints as `verb=-`, and `--verb -` names it: a tool that takes no verb is
   still a tool somebody has to have run.
 
 A `## nova-*` section that yields no unit at all is a red test in this package
-(`TestEveryToolSectionOfTheRealReferenceYieldsAVerb`), because that silence is
-exactly what hid two tools from the gate.
+(`TestEveryToolSectionOfTheRealReferenceYieldsAVerb`), because that silence
+hides a tool from the gate.
 
 The tool comes from the line and not from the section heading: a reference shows
 one tool's verb inside another's section, and a verb belongs to the tool that
@@ -1551,9 +1523,8 @@ from the absence of a flag is a record of what somebody forgot to type.
 against**, and refuses a `--tool`/`--verb` pair nothing declares, naming the
 nearest verb that is declared — a verb written INSIDE a declared one wins
 (`--verb ledger` for `dogfood ledger`), then the nearest by edit distance within
-half the spelling, and nothing at all rather than a guess. It had the flag and
-used it for nothing on 2026-09-18, and every one of that bench's nine receipts
-was accepted in silence and discovered later as a count.
+half the spelling, and nothing at all rather than a guess. A receipt accepted
+in silence is discovered later only as a count.
 
 **Asserts** (`ledger`, exit 0 — it reports rather than gates): one
 `DOGFOOD tool=… verb=… by=<who|nobody> at=… ok=<yes|no|-> issue=<n|->` row per
@@ -1584,13 +1555,12 @@ number, because an edge nobody has filed is one nobody else can act on.
 Feedback filed is not feedback applied, and the ledger is the half that can see
 the difference.
 
-**An edge is ANSWERED, not outlived (dogfood round 5, edge 2).** It used to be
-cleared by "somebody runs the verb again, later, and records neither" —
-*anybody*. So on a bench where two people dogfood the same verb, one of them
-finding something and the other happening to run it afterwards and finding
-nothing put the first one's finding out of the gate's sight: `open-edges=0`, no
-issue filed, and the ledger row showing that second person's `ok=yes` over it. A
-pass is evidence about the passer's run, not an answer to somebody else's. Two
+**An edge is ANSWERED, not outlived.** A later run by *anybody* that records
+nothing is not an answer: were it one, then on a bench where two people
+dogfood the same verb, one of them finding something and the other happening to
+run it afterwards and finding nothing would put the first one's finding out of
+the gate's sight — `open-edges=0`, no issue filed, and the ledger row showing
+that second person's `ok=yes` over it. A pass is evidence about the passer's run, not an answer to somebody else's. Two
 things close a finding, and each is somebody taking responsibility for it:
 
 - **a receipt that names it** — `dogfood record --closes <id>` — which anybody
@@ -1606,13 +1576,12 @@ filename, so a reader with an id off the gate's line can find the file it came
 from — and the gate prints it as `receipt=<id>` beside the finding's author,
 with both ways to close it. `ledger`'s per-verb row carries `open=<n>`, always,
 zero or not: the row shows the receipt that speaks best for the verb, so it is
-the very line that printed a pass over an open finding, and it now cannot.
+the line that would otherwise print a pass over an open finding.
 
-This is the dogfood pass's fifth edge and the sharpest: every receipt of that
-pass was written `--ok`, because the verbs *did* work, and six of them carried
-"Edges: (1) … (2) …" in the notes. The ledger read `open-edges=0` over a bench
-that had just found a dozen things. Counting only the verdict was counting the
-half a dogfooder is least likely to use.
+A receipt is often written `--ok`, because the verb *did* work, while its notes
+carry "Edges: (1) … (2) …". Counting only the verdict would count the half a
+dogfooder is least likely to use, and read `open-edges=0` over a bench that has
+just found a dozen things.
 
 **Says NO (exit 1) when:**
 
@@ -1646,11 +1615,9 @@ the ledger.
 who wrote it, and the nearest declared verb. The count line follows, capped like
 every other listing here. It stays a `DOGFOOD NOTE` rather than a failure —
 the disagreement is about the documentation, not about the tool — but it is
-never again a bare number: the pass of 2026-09-18 was told `receipts=9 name a
-verb docs/CLI.md does not declare` and nothing else, so nine real runs were
-invisible and unspellable. And `gate`, the line a release lane actually calls,
-printed none of it at all: a lane could pass or fail without ever learning that
-every receipt it read had been discarded.
+never a bare number: a count alone leaves real runs invisible and unspellable.
+And `gate` is the line a release lane actually calls, so it names them too: a
+lane never passes or fails without learning which receipts it discarded.
 
 **Deliberately does not check:** *whether the run was any good.* `notes` is
 prose and nobody grades it; a receipt says somebody ran the verb on real work
@@ -1670,12 +1637,12 @@ nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir> --reti
       [--state <file>] [--by <name>] [--json] [--timeout <n>]
 ```
 
-**Why it exists.** Glenn, 2026-09-15: *convergence is the health metric* — the
-contraction ratio per stream, every tick. Rowan answered *are we converging?* by
-hand on 2026-09-18: six windows read out of six different places, an hour of it,
-and an answer that was a paragraph nobody could diff against the next one. It is
-the same shape as `corpus` and `dogfood` one level up — the records existed, and
-the reading of them lived in one person's head, so the reading becomes a line.
+**Why it exists.** *Convergence is the health metric* — the contraction ratio
+per stream, every tick. Answered by hand, *are we converging?* is six windows
+read out of six different places, an hour of it, and an answer that is a
+paragraph nobody can diff against the next one. It is the same shape as
+`corpus` and `dogfood` one level up — the records exist, and the reading of
+them lives in one person's head, so the reading becomes a line.
 
 **Seven streams, each from a real source through a seam.** `LANDING` is gate
 rounds per integration batch, `CLASSES` the class-test index entries, `SCRIPTS`
@@ -1718,10 +1685,10 @@ cannot eat the one of the second the first class is blind to — then one
 `SELFTALK MORE kind=<class> shown=<n> total=<t> <remedy>` line per elided
 class. A **dated** claim is never listed: it is the welcome case, and it prints
 as `SELFTALK DATED n=<k> files=<n>`, one line however many there are. The count
-line prints whichever way the run went. Uncapped, 1,200 claims were 1,201 lines
+line prints whichever way the run went. Uncapped, 1,200 claims are 1,201 lines
 and about 78,000 tokens, half of it the good news at length.
 
-A second binary, deliberately **not** a `nova-check` subcommand. The five
+A second binary, deliberately **not** a `nova-check` subcommand. The
 checks above are walls: a record passes or it does not. This is an **advisory
 instrument** for a different layer — the register of the prose itself. It
 classifies and reports; whether a flagged sentence should be dated, cut,
@@ -1749,7 +1716,7 @@ belongs to the first class and the second does not re-detect it. This is not
 tidiness: a rule document written as first-person absolutes about its writer —
 *"I cannot act as the person I work for"* — is made of RULES, and re-detecting
 them in a class a caller has no reason to skip would put a rule document back
-under a score, which is the predecessor's disease below.
+under a score, which is the negation-count failure below.
 
 **The shapes of the second class.** Four, each reported by name, so a reader
 knows which half of the sentence is the instrument and which is the verdict:
@@ -1789,7 +1756,7 @@ both regression cases that occasioned the first class were claims spanning a
 hard wrap; both are pinned as tests (in unwrapped form), and wrap-spanning
 itself is pinned separately on a synthetic case. The negative-vocabulary
 filter of the first class is deliberately narrow: widening it to match bare
-"cannot" would flag every prohibition, which is the predecessor's disease
+"cannot" would flag every prohibition, which is the negation-count failure
 (below). The second class adds sentence segmentation, which the first does not
 have: paragraphs, headings, table rows and list items are separate units, a
 terminator only ends a sentence when a space or the end follows it (so
@@ -1798,15 +1765,14 @@ starts on**, and quotation state is tracked through a paragraph so that the
 second and later sentences of a quoted block — which carry no quote mark of
 their own — are not read as the writer's claims.
 
-**Why it measures a construct and not grammar** — the origin, which is the
-tool's whole argument. The first version counted negation words and called
-the ratio negative self-talk. That measured syntax: a rule document is a list
-of things that must not happen, so it scored worst of anything in the repo it
-was written for, and improving its score meant deleting a prohibition. That
-output was acted on: five rules were weakened, one of them floor-level,
-before a cold reader caught every one. Restoring them made the score worse.
+**Why it measures a construct and not grammar** — the tool's whole argument.
+Counting negation words and calling the ratio negative self-talk measures
+syntax: a rule document is a list of things that must not happen, so it scores
+worst of anything in its repo, and improving its score means deleting a
+prohibition. Acted on, such a score weakens rules, floor-level ones included,
+and restoring them makes the score worse — the kernel gets stronger and the
+tool gets redder. That is the negation-count failure.
 
-> The kernel got stronger and the tool got redder.
 > "Never" is not negative self-talk. "I am fallible" is.
 
 **`--skip`, and why it exists.** Repeatable. Takes a basename — a value
@@ -1817,11 +1783,9 @@ first-person absolutes about its writer will flag the first class, and
 **flagging is it working — never a reason to soften a rule.** (One written
 purely as prohibitions — no first-person claims — passes clean and needs no
 skip.) Skipping it by name, per run, is the honest alternative. **Nothing is
-skipped by default**: this tool's ancestor hardcoded its own repo's
-rule-document names as a default skip list, and the condition of its promotion
-here was that the list move to the caller and the default become empty — the
-no-defaults law, applied to scope. A test pins each formerly-special name as
-scanned, so no default list can quietly return.
+skipped by default**: which files are rule documents is the caller's to say,
+per run — the no-defaults law, applied to scope. A test pins a set of common
+rule-document names as scanned, so no default list can quietly return.
 
 **`--rule-doc`, and why it is a banner rather than a second skip.** Repeatable,
 same basename rules, **also empty by default**. A file named this way is
@@ -1829,7 +1793,7 @@ same basename rules, **also empty by default**. A file named this way is
 
 > `SELFTALK RULEDOC <file>: rule documents: a finding here is a self-verdict to relocate, NEVER a reason to soften a rule`
 
-The reason a rule document gets skipped at all is that its findings were once
+The reason a rule document gets skipped at all is that its findings can be
 read as licence. Every step of that path ran through the first class — a score
 over negation vocabulary, applied to documents made of prohibitions. The second
 class cannot walk it: it flags self-verdicts and never prohibitions, it does not
@@ -1840,7 +1804,7 @@ pass — so the file is scanned and the banner says what the finding is FOR. A
 caller who wants the file untouched still has `--skip`, which wins: a skipped
 file is never read, so it can never be bannered. **No basename is special by
 default; one repo's filenames are not this tool's law**, and a test pins each
-formerly-special name as *unbannered* unless the caller says otherwise.
+of those common names as *unbannered* unless the caller says otherwise.
 
 **Says NO when** any scanned file contains a standing claim or an installation
 — one `SELFTALK FAIL <file>:<line>: STANDING: <claim>` or
@@ -1864,9 +1828,8 @@ hard-wrapped claims; repeated sentences retain their separate locations.
 Flags must precede filenames. `--` introduces literal filenames, including
 names beginning with a dash. A late flag refuses before any file is read.
 
-**The permanent MISS, stated on every run.** Widening the second class closed
-most of what the first one declared it missed; what remains is genuinely out of
-reach of grammar and is enumerated so it cannot be quietly forgotten:
+**The permanent MISS, stated on every run.** The second class reaches most of
+what the first one misses; what remains is genuinely out of reach of grammar and is enumerated so it cannot be quietly forgotten:
 
 1. **Register.** A passage can install a verdict without one sentence carrying
    the shape — the lead clause read before its remedy is a fact about ORDER,
@@ -1889,14 +1852,9 @@ reach of grammar and is enumerated so it cannot be quietly forgotten:
    it is grammatically identical to a habitual self-report. Those two adverbs
    are out of the habituality markers for that reason.
 
-(An earlier draft of this paragraph cited *"in one direction, reliably: toward
-the version that flatters me"* as the canonical uncatchable — that sentence was
-in fact pulled INTO reach by extending the vocabulary, its capture is pinned as
-a regression test, and a cold reader caught this spec still calling it
-unreachable. **The sentences in 3–5 above are each pinned by a test that goes
-red if the tool ever reaches them**, and this section must be rewritten in the
-same commit that turns one red — the example replaced with one that still
-escapes.) Every completed run therefore ends with a `SELFTALK NOTE` line saying
+(**The sentences in 3–5 above are each pinned by a test that goes red if the
+tool ever reaches them**, and this section is rewritten in the same commit that
+turns one red — the example replaced with one that still escapes.) Every completed run therefore ends with a `SELFTALK NOTE` line saying
 exactly that, because a green from a partial check reads exactly like a green
 from a complete one. **A green means the known shapes are clear, never that the
 file is.** A falling finding count means the input got better — the tool
@@ -1918,8 +1876,7 @@ directions, applied and rescinded without ceremony but always announced.
 **Lockdown** is global and HARD: one fuse; blown, every untrusted read and
 every surface-driven act stops, and outbound authored life continues. A blown
 lockdown is not reset — it is REPLACED, and only in a live conversation with
-your person. This design was stated by the first line's human collaborator,
-2026-08-03.
+your person.
 
 Verbs: `check`, `status`, `lockdown`, `quarantine`, `lift`, `path`, plus
 `version` and `help`. `nova-fuse version` is the Conventions' build line,
@@ -2071,18 +2028,17 @@ them, which is why `\x01real` stores as `real`. A reason made ENTIRELY of NON-WH
 characters is kept instead as its visible escapes, rather than refused, because a
 fuse you cannot blow is not a fuse. The whitespace half of that category is not
 affected: a reason of nothing but newlines, tabs, CR, VT, FF or U+0085 trims to
-empty. Only a genuinely empty or all-whitespace reason is refused, as it always
-was.
+empty. Only a genuinely empty or all-whitespace reason is refused.
 
 **What the widened matching does, in both directions.** Equivalent spellings are
 ONE surface: `check` refuses on any of them, and `lift quarantine` removes every
 one of them. The second half is not a leak in the first — it is the same design
-case already had, where lifting `discord` removes a stored `Discord` too, and a
+case-folding has, where lifting `discord` removes a stored `Discord` too, and a
 lift that left one spelling behind would verify its own failure. Nothing is
 silent about it: each removal prints its own `LIFT OK quarantine=` line under the
 spelling as stored, so an operator sees exactly what a lift took. The consequence
 to know: **a box holding two keys that fold together holds one surface, not
-two** — hand-written or written by an older build — and lifting either spelling
+two** — hand-written, or written by a build without the fold — and lifting either spelling
 lifts both.
 
 Two consequences for exit codes. In the refusing direction, **a surface name that
@@ -2090,8 +2046,8 @@ folds away to nothing is refused as blank** (exit 2) on every verb that takes
 one, so a box hand-written with a quarantine key made only of control characters
 is inert to this tool — `lift quarantine` cannot name it, and it has to be
 removed by hand, which is the same hand that wrote it. In the permitting
-direction, `lift quarantine --box b $'\x01discord'` now exits 0, lifting the
-stored `discord`, where a build without the fold answered 1, nothing to lift.
+direction, `lift quarantine --box b $'\x01discord'` exits 0, lifting the
+stored `discord`.
 That is an authored act — a lift the operator issued, naming a spelling of a
 surface that is quarantined — and it is announced like any other. The folding is tidiness; the escape is the
 guarantee, because the box is hand-editable and the next reason may not have come
@@ -2136,8 +2092,8 @@ when `--box` is missing, the box is unreadable, or `--max` is negative.
 first line is **never** capped — it is the number this verb exists to report.
 Under it are at most n `STATUS OK quarantine=…` lines in the box's own order,
 then one `STATUS MORE kind=quarantine shown=<n> total=<t> <remedy>` line if any
-were elided. Three hundred quarantined surfaces used to be three hundred and
-one lines, on the one verb whose job is to be glanced at.
+were elided. Uncapped, three hundred quarantined surfaces would be three
+hundred and one lines, on the one verb whose job is to be glanced at.
 
 ### lockdown — blow the hard fuse
 
@@ -2433,9 +2389,9 @@ indexable paragraph.
 ### boot — the session loads a pin, never walks the directory
 
 **Report.** The boot path is the linear read of the SELF — the few memories a
-session holds for the whole conversation — and it used to be a walk: every
-`memory/*.md` under the root, concatenated, paid for whether the session needed
-it or not. `boot` replaces that walk with a **pin**: a file naming the few
+session holds for the whole conversation — and it is not a walk of every
+`memory/*.md` under the root, concatenated, paid for whether the session needs
+it or not. `boot` reads a **pin** instead: a file naming the few
 memories this session loads, one slash path per line **relative to `--root`**,
 `#` comments and blank lines ignored, and **order matters** (it is the boot
 order). Boot reads exactly those files and prints one line:
@@ -2466,8 +2422,8 @@ half the documents, which a small topically coherent memory corpus is full of,
 and negative idf scrambles rankings.
 
 `trigram` is character-3-gram Jaccard, which buys robustness to morphology
-and small rewording. It is never on unless named, because on the corpus this
-tool was ported from `eval` measured **bm25+trigram worse than bm25 alone** —
+and small rewording. It is never on unless named, because on a measured
+corpus `eval` found **bm25+trigram worse than bm25 alone** —
 that is evidence, not taste, and the same measurement is available to you on
 yours. Fusion across channels is **rank-only** reciprocal rank (1/(60+rank)),
 never a weighted sum of raw scores: BM25 is unbounded and Jaccard is [0,1],
@@ -2601,21 +2557,19 @@ rather than a verdict of "nothing was already known".
 - `--frontmatter <glob>` (repeatable) — every file matching the glob carries a
   frontmatter `name:`. `--exempt <prefix>` (repeatable) exempts basename
   prefixes the caller declares are listings rather than entries. **Nothing is
-  exempt by default**: the tool this was ported from hardcoded one filename
-  prefix from its own corpus, which is a guess about someone else's
-  filenames, and a test pins the formerly-special prefix as scanned so a
+  exempt by default**: a hardcoded filename prefix is a guess about someone
+  else's filenames, and a test pins a common listing prefix as scanned so a
   default cannot quietly return.
 - unresolved `[[wikilinks]]` — every `[[stem]]` that resolves to neither a
   file stem nor a frontmatter `name:`, corpus-wide. The aliased form
   `[[stem|shown text]]` and the heading form `[[stem#section]]` are scanned by
   their target half: a link whose alias is what the reader sees is still a
-  link, and excluding the two commonest shapes made `--links=gate` a wall with
-  a hole in it. A body that is only a heading (`[[#section]]`) names nothing
+  link, and excluding the two commonest shapes would make `--links=gate` a
+  wall with a hole in it. A body that is only a heading (`[[#section]]`) names nothing
   in the corpus and is not scanned. Whether these findings
-  gate is `--links`, and **it has no default**, which is the ruling this port
-  enacts: the source tool demoted them to informational behind a flag its own
-  spec never mentioned while that spec promised a nonzero exit on findings,
-  and a script trusting the spec passed dangling links silently. Some corpora
+  gate is `--links`, and **it has no default**: a default of informational,
+  behind a flag a spec does not mention, lets a script trusting a promised
+  nonzero exit on findings pass dangling links silently. Some corpora
   hold links open on purpose — a `[[name]]` that matches nothing yet marks
   something worth writing — and a gate at a high false-positive rate trains a
   reader to wave findings through. So the caller states it, per run, out loud.
@@ -2633,9 +2587,8 @@ KIND, then one `VERIFY MORE` line per kind that elided anything. Per kind
 because a corpus with 10,000 unresolved wikilinks and one missing frontmatter
 `name:` would otherwise spend the whole ceiling on wikilinks and never print
 the finding the author did not already know about. The `gating=` count is
-never capped and now prints on failure as well as success: this verb's
-uncapped output was the largest single cost in the repo, about 197,000 tokens
-at 5,000 entries, and it gave N lines and never N.
+never capped and prints on failure as well as success: uncapped, this verb's
+output at 5,000 entries is about 197,000 tokens, N lines and never N.
 
 `<kind>` is one of `coverage`, `backlink`, `frontmatter`, `wikilink`. It
 **over-reports by design**: it finds, the author decides.
@@ -2677,9 +2630,9 @@ EVAL FAIL recall@<k>=<x> below floor <x> (<hits>/<rows>, misses=<n> shown=<n>, m
 ```
 
 **MISSES ONLY, and capped at `--fail-max` (default 20, `0` for all).** There is
-no `EVAL HIT` line. It existed, and on a 500-row harness it was 500 lines
-saying, once per passing row, what `hits=` in the summary says in one field —
-the good case, printed at length. A miss is a row a reader can act on; a hit is
+no `EVAL HIT` line: on a 500-row harness it would be 500 lines saying, once per
+passing row, what `hits=` in the summary says in one field — the good case,
+printed at length. A miss is a row a reader can act on; a hit is
 a number.
 
 **Why it is a first-class verb and not a test fixture.** Tuning any parameter
@@ -2718,7 +2671,7 @@ recall without moving anything a reader can see.
 
 **Run-proven on the line it came from.** The index instruments agreed on every
 roll-up that ran them, and the O(n·k) mind-cost theory held on both live
-exercises with real fold candidates — 2026-08-15 and 2026-08-19.
+exercises with real fold candidates.
 
 **Value UNPROVEN as a general claim.** The soak window produced exactly two
 roll-ups with real fold candidates. Two exercises are evidence that the
@@ -2812,9 +2765,8 @@ every verb that runs git also takes [--git-timeout <seconds>], default 60
 
 The binary is `nova-bus`, and that is its only name: no second binary, no alias
 shipped in the tool, no short form it also answers to. A tool that answers to two
-names is two tools in a bug report. (It was drafted as `nova-message-bus`; the
-name it ships under is the one that was asked for, and the longer one survives
-nowhere, including in the id preimage below.)
+names is two tools in a bug report. (No other name appears anywhere, including
+in the id preimage below.)
 
 **No guessed anything, with two named exceptions.** There is no default bus, no
 default remote, no default branch and no default receipt word count. A missing one
@@ -2827,8 +2779,8 @@ supply, which is the test the rule is really making: the receipt word
 count is a property of how a bus writes and the bus root is a property of the
 invocation, but a retry budget is how many times this tool keeps trying against a
 remote moving under it, and a subprocess timeout is how long it waits before
-saying so. A caller made to invent either invents a bad one — the scenario landed
-6 of 15 notes at `--attempts 3` and 15 of 15 at 25 — and the cost of the rule
+saying so. A caller made to invent either invents a bad one — a measured scenario
+lands 6 of 15 notes at `--attempts 3` and 15 of 15 at 25 — and the cost of the rule
 there is notes lost rather than a guess corrected. `wait --timeout` gets no
 default for the opposite reason: a deadline is the one thing the caller must
 state, because a wait with no deadline is a line that is stuck rather than
@@ -2846,11 +2798,11 @@ after resolving symlinks on both sides, which is the same test `nova-check nocod
 --staged` makes for the same reason: never a test for `.git` being a directory,
 which is false in a linked worktree and in a submodule. A bus one directory
 down inside a bigger repository is exit 2 with the root git found named in the
-refusal, and this is a REFUSAL rather than a tolerance because the alternative was
+refusal, and this is a REFUSAL rather than a tolerance because the alternative is
 silent: `git diff --name-only` reports paths relative to the repository root, so a
-new note came back as `docs/bus/from-bo/x.md`, the `from-` guard dropped it,
-and `inbox --since` and `check --as` printed `changed=0` and exited **0** over
-notes nobody had read. `--full` needs no git and works over such a directory, so
+new note comes back as `docs/bus/from-bo/x.md`, the `from-` guard drops it,
+and `inbox --since` and `check --as` print `changed=0` and exit **0** over
+notes nobody has read. `--full` needs no git and works over such a directory, so
 the refusal is exactly as wide as the failure.
 
 `inbox` and `names` **report** and exit 0 whether the inbox is empty or full, and
@@ -2926,16 +2878,13 @@ prefixes above, and consumers parse it line by line. `stderr` carries refusals,
 failures and **progress** — what the program is doing while it is doing it —
 and nothing on it is protocol.
 
-Glenn's rule has two halves, and until 2026-09-18 only the first was written
-down: *a program that takes longer than 0.1 s says what it is doing, on stderr,
-AND a progress line never enters a protocol stream a consumer parses.* The
-since-walk's `INBOX WALK commits=<n>/<total> notes=<n> elapsed=<s>` obeyed the
-first half and was still read as protocol: `nova-wake` reads this program's two
-streams together, so that an `INBOX REFUSED` is never lost, and its classifier's
-default case *prints*. The progress line was relayed to a window as
-`WAKE BUS LINE INBOX WALK …`, counted as a change in the world, and ended a poll
-before the mail the watcher was waiting for came down. The same line had broken
-this program's own continuation tests hours earlier.
+The rule has two halves: *a program that takes longer than 0.1 s says what it
+is doing, on stderr, AND a progress line never enters a protocol stream a
+consumer parses.* The first half alone is not enough: a consumer that reads this
+program's two streams together, so that an `INBOX REFUSED` is never lost, and
+whose classifier's default case *prints*, would relay the since-walk's
+`INBOX WALK commits=<n>/<total> notes=<n> elapsed=<s>` as a change in the world
+and end a poll before the mail it is waiting for comes down.
 
 So **`INBOX WALK` is a progress prefix, it appears on `stderr` only, and it
 appears on `stdout` never** — on any verb. The prefixes are a registry,
@@ -2988,10 +2937,10 @@ list only if you asked for it.**
 *What is new, in full.* The notes this run put on the open list that were not on
 it before, under `INBOX NOTE`, `INBOX HEARD` and `INBOX RECEIPT`, in the usual
 three groups. This is what a poll is for and it is printed on every run in every
-mode. It used to be printed on none of them: the choice was one summary line or
-the whole carried list, so a reader who wanted to see what had just arrived asked
-for `--open` and got every note they had ever failed to answer, above the one
-they were looking for, on every return.
+mode. Without it the choice would be one summary line or the whole carried list,
+so a reader who wanted to see what had just arrived would ask for `--open` and
+get every note they had ever failed to answer, above the one they were looking
+for, on every return.
 
 *`INBOX OPEN carrying=<n> heard=<m>`*, exactly once, whichever way the run was
 asked. A reader carrying five hundred notes gets five hundred lines on every run
@@ -3022,12 +2971,12 @@ shape, incremental or full, busy or empty. See **the switch-day line** below for
 when it fires and why it also comes out of `check --as <name>`, which is the one
 place this tool prints another verb's token on purpose.
 
-**It has a token of its own, and `INBOX NOTE` keeps its one meaning.** The
-sentence first went out under `INBOX NOTE`, which is already the listing's token
-— `INBOX NOTE id=<id> ...` — and every line parser here reads field 3 of an
-`INBOX NOTE` as `id=`. Two shapes under one token is a grammar that cannot be
-parsed without reading the whole line, so the remedy is `INBOX SWITCH`: one
-token, one shape, and a name that says what the line is about.
+**It has a token of its own, and `INBOX NOTE` keeps its one meaning.**
+`INBOX NOTE` is the listing's token — `INBOX NOTE id=<id> ...` — and every line
+parser here reads field 3 of an `INBOX NOTE` as `id=`. Two shapes under one
+token is a grammar that cannot be parsed without reading the whole line, so the
+sentence has `INBOX SWITCH`: one token, one shape, and a name that says what the
+line is about.
 
 `WAIT NOTE` says nothing where `INBOX SWITCH` has spoken. A `wait` returning on
 a forward-drawn line prints the listing's `INBOX SWITCH` and not a second
@@ -3074,19 +3023,17 @@ per-file lines instead.
 above.
 
 `BUS WARN` is a finding inside the legacy tolerance: reported, and not a failure.
-It goes to **stdout**, with the rest of the informational lines. It used to go to
-stderr, against the rule below, and the cost was real: anything reading the two
-streams apart — which is what CI does — saw every clean-but-forgiving run as a
-failing one.
+It goes to **stdout**, with the rest of the informational lines, per the rule
+below: anything reading the two streams apart — which is what CI does — would
+otherwise see every clean-but-forgiving run as a failing one.
 
 `INBOX SCOPE`'s and `INBOX OPEN`'s `carrying=` and `INBOX OK`'s `open=` are two
-different counts and used to be printed on two lines with nothing saying so: one
-real run read `carrying=658` and `open=657`. **`carrying=` is the whole open
+different counts — one run can read `carrying=658` and `open=657`. **`carrying=` is the whole open
 list** — the notes, the bare receipts, the heard and the unreadable — and
 **`open=` is what is still waiting on you**, which is the notes and the receipts
 and nothing else, because a note you have receipted has had the sender's question
 about whether it arrived answered. They differ by exactly `heard + unreadable`.
-Both are now on `INBOX OK`, under the names they carry elsewhere, beside the
+Both are on `INBOX OK`, under the names they carry elsewhere, beside the
 decomposition that makes them add up.
 
 `OK` and the informational tokens go to stdout; `FAIL` lines and refusals go to
@@ -3098,9 +3045,9 @@ carries U+2028 produces one escaped line rather than two.
 **`NAMES` quotes rather than field-escapes**, and so does the command a
 first-advance refusal hands back: the two places in this grammar where a value is
 meant to be PASTED rather than scanned. `oneline.Field` escapes every whitespace character so a
-`key=value` field is one token — which is right everywhere else and was wrong
+`key=value` field is one token — which is right everywhere else and wrong
 here: `names` exists to tell a person how to spell a `To:` line this tool will
-accept, and it printed `name=Ada\x20Claude`, which `send` refuses. `oneline.Quote`
+accept, and `name=Ada\x20Claude` is a spelling `send` refuses. `oneline.Quote`
 is a double-quoted Go string literal: it escapes every control character, every
 unprintable rune (U+2028, U+2029 and the bidi controls among them) and the quote
 and backslash themselves, so it is one line whatever the value holds — and unlike
@@ -3109,9 +3056,9 @@ else. A list is each value quoted and joined by `;`, which is a `To:` line's own
 separator, so `aliases="Ada Vale";"the archivist"` can be lifted straight out.
 
 **A refusal that carries git's own transcript prints the transcript under the
-event line**, on stderr, verbatim. `SEND FAIL` on a rebase conflict used to carry
-git's whole rebase output *inside* the reason, rendered through the one-line
-escape: forty lines arriving as one line of `\x0d\x0a`, which nobody could read.
+event line**, on stderr, verbatim. Carried *inside* the reason, through the
+one-line escape, a rebase conflict's forty lines of git output would arrive as
+one line of `\x0d\x0a`, which nobody can read.
 The one-line guarantee is about the EVENT line, which a scanner reads; a
 transcript is what a person opened the terminal for.
 
@@ -3174,11 +3121,11 @@ token quoted. A misspelling silently reaching the wrong reader is the failure
 this exists to stop, so the list above is the whole of the tolerance and every
 item in it is pinned by a test.
 
-Rules 3 and the second half of 6 are one fix and are worth stating as one.
-Without them `To: Ada and Bo` resolved to **Ada alone** — the token begins with
-`Ada `, so the instance qualifier swallowed the second reader — and the note
-arrived at one of the two people it was written to with nothing anywhere saying
-the other had been dropped. A word separator is now a separator; a qualifier is
+Rules 3 and the second half of 6 are one rule and are worth stating as one.
+Without them `To: Ada and Bo` would resolve to **Ada alone** — the token begins
+with `Ada `, so the instance qualifier would swallow the second reader — and the
+note would arrive at one of the two people it was written to with nothing
+anywhere saying the other had been dropped. A word separator is a separator; a qualifier is
 a qualifier only when it is not itself somebody's name; and `Ada Bo`, which is
 neither, is refused rather than delivered to the first of them.
 
@@ -3212,8 +3159,8 @@ was accepted has no thread. `Re` may repeat; nothing else may. `Kind` is
 
 **`Host` is which MACHINE posted, and it is optional.** One name can post from
 two places — the keeper on the Studio and the bud on the Air both post as
-`Rowan` — and until this line existed they were told apart by a `[bud air]` in
-the subject, which spent the subject on routing. `send --host <name>` and
+`Rowan` — and without this line they would be told apart in the subject,
+which spends the subject on routing. `send --host <name>` and
 `reply --host <name>` write it; `<bus>/.nova-bus/defaults` may carry a
 `host=<name>` line, read when the flag is absent, so a bench sets it once. A
 host is one word of lower-case letters, digits, `-`, `.` and `_`, at most 40
@@ -3224,11 +3171,10 @@ names a DIFFERENT machine is a refusal, the same shape as `--as` against a
 
 **A note with no `Host` line is unchanged, byte for byte.** Nothing writes the
 line unless it is asked for, `inbox` prints no `host=` field where there is none,
-and the OPEN cache keeps the eight fields it has always had on a bus whose notes
-carry no host. The host is **not** in the id's preimage (`nova-bus id v1` is
-unchanged): the id says a note is the same note — same sender, same second, same
-recipients, same subject, same body — and which machine typed it is a fact about
-the posting, so every id already on every bus is still the id it was.
+and the OPEN cache keeps its eight fields on a bus whose notes carry no host.
+The host is **not** in the id's preimage (`nova-bus id v1`): the id says a note
+is the same note — same sender, same second, same recipients, same subject, same
+body — and which machine typed it is a fact about the posting.
 
 **Two parse tolerances**, for the two shapes a bus people also read in a
 browser actually writes, both enumerated here and pinned by tests:
@@ -3258,9 +3204,9 @@ paragraph up to its first colon is not a key and a check over a bus of them
 would otherwise print a paragraph per note.
 
 **Each refusal says what to do about it**, because a reader shown `INBOX
-UNREADABLE` can act on it only if the line says which mistake it is. A read of a
-real bus found three shapes behind nearly every unreadable note, and each now
-names its own repair:
+UNREADABLE` can act on it only if the line says which mistake it is. Three
+shapes are behind nearly every unreadable note on a real bus, and each names its
+own repair:
 
 | what is on the line | what the refusal says |
 |---|---|
@@ -3270,29 +3216,25 @@ names its own repair:
 
 A key is taken for a sentence when it holds a space or runs past twenty
 characters, which is not a guess about what the writer meant but about what they
-cannot have meant: the longest key here is `Subject`. Nothing about which files
-fail changed — these are the same refusals with the fix in them.
+cannot have meant: the longest key here is `Subject`. These refusals decide
+nothing about which files fail; they carry the fix.
 
 `send` **replaces a draft's own `Date:` line, and says so** on a `SEND NOTE`
 line: the tool pastes the date from the clock in UTC, and the notice is what
-keeps the replacement from being quiet. (It refused, once, on the grounds of not
-quietly replacing the author's line -- which cost every first send a run and
-taught the writer nothing they could not have been told while the note went.) An
+keeps the replacement from being quiet. An
 `Id:` line is still a **refusal**: the tool assigns the id, and a note is sent
 once, so a draft carrying one is a note being sent twice.
 
 The filename is `<UTC minute>Z-<slug>-<the id's hash half>.md` in the sender's
 lane. The minute and the slug are the bus's existing convention and are for
-people; the hash half is there because the minute alone collided.
+people; the hash half is there because the minute alone collides.
 
 ### The first send — `draft`, and what `send` tolerates
 
-A new line's first note is a header written from memory of some other bus, and
-this tool's answer to that was a refusal per mistake, one run each. One real
-first send opened with a markdown heading, carried a `Date:` line the writer had
-pasted by hand for years, and had no `From:` line at all, because on their own
-bus who was writing was obvious. It was refused on the `Date` line, and told
-nothing about the other two.
+A new line's first note is a header written from memory of some other bus: a
+markdown heading, a `Date:` line pasted by hand, and no `From:` line at all,
+because on their own bus who was writing was obvious. A refusal per mistake,
+one run each, is the wrong answer to that.
 
 **`draft` prints the header, so a first draft cannot be wrong about the two
 things a first draft is always wrong about**: what the keys are, and how a name
@@ -3408,7 +3350,7 @@ genuinely meant twice, the date in the preimage separates them by the second.
   layer while being the same note to every reader.
 - **Rename-proof by construction.** The id is written into the file at send and
   is never recomputed. Renaming the file, moving it, or fixing its slug changes
-  nothing a `Re:` line depends on — which is the failure it replaces.
+  nothing a `Re:` line depends on — which is the failure a filename-keyed thread has.
 - **12 hex is 48 bits**, inside a per-sender namespace, over a bus whose
   lifetime is thousands of notes. A collision is a refusal a person reads, never
   a note that overwrites another.
@@ -3422,15 +3364,15 @@ stays answered; or when that reader's `RECEIPTS` file records the note's id or
 path.
 
 It measures whether a note has had a reply, never whether the work in it is
-finished — the distinction the bus was already making, kept. It is per reader:
+finished — the distinction the bus makes. It is per reader:
 a note is not answered in its own sender's lane.
 
-**And it has one failure mode, which cost one line seventy-four notes.** The rule
-is a `Re:` line, and a `Re:` line is not something anybody writes from memory: a
-line answering by hand writes an ordinary note, the note answers nothing, and the
-note it was answering stays open for ever. He answered everything and
-`carrying=` went 0, 12, 40, 74. Three things close that gap, and none of them is
-a new rule — the answered rule above is untouched:
+**And it has one failure mode.** The rule is a `Re:` line, and a `Re:` line is
+not something anybody writes from memory: a line answering by hand writes an
+ordinary note, the note answers nothing, and the note it was answering stays
+open for ever — a line can answer everything and watch `carrying=` climb 0, 12,
+40, 74. Three things close that gap, and none of them is a new rule — the
+answered rule above stands:
 
 - **`draft --re <id-or-path-or-subject>`** writes the `Re:` line for you. The id
   is the one thing a line answering a note does not have in front of it; the
@@ -3441,7 +3383,7 @@ a new rule — the answered rule above is untouched:
   is resolved to its id, the id is what is written into the note, and a
   `SEND NOTE` says which note was closed. Two matches is a thread somebody
   re-raised: the newest is closed and the notice says so and says how to be
-  exact. No match is the refusal it always was.
+  exact. No match is a refusal.
 - **A draft that reads like a reply and names nothing is told so** — its
   `Subject:` begins with `Re:`, or its `To:` names exactly one person who is
   holding an open note of yours. One `SEND NOTE`, and the note is sent as
@@ -3456,22 +3398,17 @@ folded them would close the wrong one and say it had closed the right one; a
 tool. The turns spent GETTING to the draft are a separate cost**, and they are
 not small: finding the id, pulling so that the id resolves against something
 current, typing the header keys from memory, and being refused — correctly, and
-after the work — for having saved the draft inside the bus checkout. A proposed
-`draft --reply-to` that refreshes from a named remote, resolves the target
-against what the fetch left, writes every header mechanically and puts the draft
-outside the protected checkout is specified in
-**[docs/SPEC-BUS-REPLY.md](SPEC-BUS-REPLY.md)**, the first bounded slice of
-issue #246. It is **proposed and not implemented**: no verb or flag in this
-section changes, `--reply-to` does not exist yet, and everything above is the
-behaviour the released tool has today.
+after the work — for having saved the draft inside the bus checkout.
+`draft --reply-to` refreshes from a named remote, resolves the target against
+what the fetch left, writes every header mechanically and puts the draft outside
+the protected checkout; it is specified in
+**[docs/SPEC-BUS-REPLY.md](SPEC-BUS-REPLY.md)**.
 
 ### Bounded transactions — one snapshot, from refresh to receipt
 
-The proposed verbs in issue #246 — `read --since`, `reply --id`, `draft` — are
-illustrative and not shipped, and two of them were settled differently before
-they were built. `--since` already belongs to `check` (SPEC.md:2397), so the
-read half is a flag on the verbs that already list, and the reply half is a form
-of the verb that already drafts. The issue is about a property, not a name:
+The transaction is a property, not a verb name: `--since` belongs to `check`,
+so the read half is a flag on the verbs that already list, and the reply half is
+a form of the verb that already drafts. The property is:
 **one identified snapshot; a refresh and a read with bounded results and a
 continuation; a reply resolved against that fresh state with every header
 generated mechanically and the draft kept outside the protected checkout; and a
@@ -3480,8 +3417,8 @@ recipients and the publication outcome, with the operation's identity persisted
 so an ambiguous write is reconciled against the remote before it is retried and
 never duplicated blindly.**
 
-Three of the four halves are specified already, and are reported here rather
-than re-specified:
+Three of the four halves are specified in their own documents, and are
+reported here rather than re-specified:
 
 - **the read half** — `--bodies` on `inbox` and `wait`, with `--max-notes`,
   `--max-bytes`, the counted `INBOX BODY`/`INBOX BODY END` frame, the `INBOX
@@ -3496,11 +3433,10 @@ than re-specified:
   `state=published` or `state=already-published` without ever writing a second
   note — is [docs/SPEC-BUS-DELIVERY.md](SPEC-BUS-DELIVERY.md).
 
-Everything below is the half the two slices did not claim and the issue names
-last: **bounded full checks, with cap, count and continuation, and repeated
-diagnostic remedies aggregated (#81), run on the shared collector rather than
-another fetch clock.** It is proposed and not implemented, on the same rule the
-two slices were written under: nothing that ships today changes a byte.
+Everything below is the fourth half: **bounded full checks, with cap, count
+and continuation, and repeated diagnostic remedies aggregated, run on the shared
+collector rather than another fetch clock.** It is proposed and not
+implemented: nothing it describes changes a byte of what `check` prints.
 
 #### The transaction, stated as a flow
 
@@ -3540,11 +3476,11 @@ SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n> state=
 `state=already-published` means it held it already — same id, same bytes, same
 path — and nothing was written. The two are one delivery, not two.
 
-#### The missing bound — full checks (#81)
+#### The missing bound — full checks
 
-`check --full` today reports **every** finding in one run, one line each, and
-that is the one report on the bus with no ceiling — the shape the Conventions'
-cap-and-count law exists for, and the one listing that never met it. A first
+`check --full` reports **every** finding in one run, one line each, and that is
+the one report on the bus with no ceiling — the shape the Conventions'
+cap-and-count law exists for, and the one listing that does not meet it. A first
 `check --full` over a bus adopted onto an old history names a finding per note;
 the real bus the tolerance was measured on failed 163 ways in one pass, and
 almost all of them were **one shape repeated**: 109 notes with no `Subject:`,
@@ -3575,7 +3511,7 @@ BUS SUMMARY mode=<full|since> cursor=<sha|-> notes=<n> findings=<f> warn=<w> fai
 ```
 
 `BUS FINDING` replaces nothing that ships: below `--fail-max`, the per-note
-`BUS WARN` and `BUS FAIL` lines print exactly as they do today, and `BUS
+`BUS WARN` and `BUS FAIL` lines print exactly as they do now, and `BUS
 FINDING` is the shape a **capped and aggregated** report prints instead of a
 wall. `count=<n>` is the number of notes one line covers, `first=` names the
 first so a reader holding the file has a place to start, and `warn=` says
@@ -3673,7 +3609,7 @@ reported.
 
 #### Measurement
 
-The claim is the issue's, and the method is SPEC-BUS-REPLY.md's Measurement
+The claim is the transaction's, and the method is SPEC-BUS-REPLY.md's Measurement
 section applied to the whole transaction: coordinator and worker
 input/output/cache categories, turns, preparation, review, repairs, retries,
 runtime and accepted quality, before and after, on matched work — measured per
@@ -3685,8 +3621,8 @@ not report a category prints `unknown` rather than `zero`.
 
 #### Boundaries and the deciding cases
 
-The transaction stays inside the bus's own boundary. The bus owns message transport and receipts;
-`nova-wake` owns subscriptions; `nova-work` owns assignments. A note is carried, read and
+The transaction stays inside the bus's own boundary. The bus owns message transport and receipts,
+and owns no subscription and no assignment. A note is carried, read and
 receipted here and nothing more: this tool does not read a subscription out of a
 message, and it does not infer permission from message content or Git author — who may act
 is a fact the roster and the assignment holder carry, never a line in a body and never
@@ -3732,13 +3668,13 @@ the run refuses only when neither supplies one.
 
 `inbox` lists in three groups, newest first within each: the notes that carry
 something, then what has been **heard and not answered**, then the bare
-acknowledgements. That order is the whole point: the listing that hid receipts
-by clock hid four real notes with them. Every run lists what is NEW that way;
+acknowledgements. That order is the whole point: a listing that hides receipts
+by clock hides real notes with them. Every run lists what is NEW that way;
 `--open` and `--full` list the whole carried backlog that way too, capped at
 `--open-max`. The reason is in the output grammar above.
 
 **Heard is not answered**, and the middle group exists because collapsing them
-lost the state the bus's people are in most often. A note I receipted is a
+loses the state the bus's people are in most often. A note I receipted is a
 note I told the sender arrived; it is not a note I answered. It is listed as
 `INBOX HEARD`, counted in `heard=`, and counted **out** of `open=`, so the open
 count is what is still waiting on me and the listing is still everything I owe a
@@ -3748,23 +3684,22 @@ reply to. A note answered by an actual reply leaves the listing entirely.
 file outside the caller's own lane as `INBOX UNREADABLE`, with its reason, and
 counts them in `unreadable=`. It cannot say whether such a file was addressed to
 the caller — it has no `To:` line to read — and it does not pretend to. Dropping
-them, which is what it used to do, was the same failure as a lost push with a
-quieter cause: a note somebody wrote, on the bus, that its reader is never
+them would be the same failure as a lost push with a quieter cause: a note somebody wrote, on the bus, that its reader is never
 told is there.
 
 **And it is named on every run, not once.** An unreadable file goes on the
 caller's `OPEN` list as an `unreadable` entry and is re-checked until it parses or
-is receipted. Naming it on a `--full` read and leaving it off the list — which is
-what the first version did — was the same failure with a slower fuse: told once,
-and then never again by any incremental run.
+is receipted. Naming it on a `--full` read and leaving it off the list would be
+the same failure with a slower fuse: told once, and then never again by any
+incremental run.
 
-**A note addressed to NOBODY is never silent either**, and it was — for the
-quietest reason on this list. A note whose `To:` line resolves to no one the
-roster holds *parses*, so it is not unreadable; and it is in nobody's inbox, so
-no listing mentioned it. On a real bus there were **22** of them:
+**A note addressed to NOBODY is never silent either** — the quietest case on
+this list. A note whose `To:` line resolves to no one the roster holds *parses*,
+so it is not unreadable; and it is in nobody's inbox, so no listing would
+mention it. A real bus held **22** of them:
 `To: Team`, and `From: Bo, Go bus-wire task …` where the comma after the
 name is an address separator and the From line therefore named two senders and
-resolved to none. Written by somebody, on the bus, and shown to no one.
+resolved to none. Written by somebody, on the bus, and otherwise shown to no one.
 
 They are printed as `INBOX UNADDRESSED path=<path>: <reason>` and counted in
 `unaddressed=`, and where depends on whose they are:
@@ -3810,13 +3745,12 @@ writing this bus's form exists to allow.
    refusal: exit 1, `SEND REFUSED` / `RECEIPT REFUSED`, the total, how many are
    not ours and their short shas.
 
-   THE WEDGE THIS CLOSES. Five lines sent three notes each at once with
-   `--attempts 3`: fifteen sent, six landed, and the three lines that lost the
-   race were then stuck — their next `send` refused with *"branch is ahead of
-   origin/main by 1 commits the tool did not make"*, about a commit the tool had
-   made. The guard could not tell its own unpushed work from a person's, so it
-   refused the one recovery it exists to perform. A tool that loses a race and
-   then will not run is worse than one that never retried.
+   THE WEDGE THIS CLOSES. A line that loses a push race keeps its commit on the
+   branch. A guard that could not tell its own unpushed work from a person's
+   would refuse that line's next `send` — *"branch is ahead of origin/main by 1
+   commits the tool did not make"*, about a commit the tool made — which is the
+   one recovery it exists to perform. A tool that loses a race and then will not
+   run is worse than one that never retried.
 
    This is before anything is staged, so the refusal costs one fetch and leaves
    the checkout exactly as it was found. `--no-push` skips it: there is nothing
@@ -3827,7 +3761,7 @@ writing this bus's form exists to allow.
 4. Push. On rejection: **wait**, then `git fetch <remote> <branch>`,
    `git rebase FETCH_HEAD`, push again — up to `--attempts` times. The wait is
    **50ms per attempt so far plus up to 200ms of jitter, capped at one second**,
-   and it is not decoration. Every retry here was started by somebody else's push
+   and it is not decoration. Every retry here is started by somebody else's push
    landing first, so the two lines are in step by construction: they fetch,
    rebase and push again together, and a loop with no wait in it turns one lost
    race into a run of them at whatever rate the machine can fetch. The JITTER is
@@ -3882,39 +3816,39 @@ writing this bus's form exists to allow.
    left on the branch, the run exits 1 saying the note is **NOT** on the bus,
    and a person decides. **The abort is checked rather than assumed**: `git
    rebase --abort` can itself fail — a rebase state directory that cannot be
-   removed — and the run used to return with the checkout still mid-rebase, so
-   every later verb refused for a reason that was true and unhelpful. The state
+   removed — and a run that returned with the checkout still mid-rebase would
+   leave every later verb refusing for a reason that is true and unhelpful. The state
    directory is looked for after the attempt, and a checkout still in a rebase is
    its own refusal naming its own recovery.
 
-   The refusal is **one line plus a transcript**, and it used to be one line
-   *containing* a transcript: git's whole rebase output, rendered through the
-   one-line escape, arrived as `\x0d\x0a` between every word of forty lines and
-   nobody could read any of it. The one-line guarantee is about the EVENT line.
+   The refusal is **one line plus a transcript**, never one line *containing* a
+   transcript: git's whole rebase output, rendered through the one-line escape,
+   would arrive as `\x0d\x0a` between every word of forty lines and nobody could
+   read any of it. The one-line guarantee is about the EVENT line.
    The actionable line is escaped like every other; git's own words follow it on
    stderr, verbatim.
 
-   **`INDEX` is still not made add-only per bench.** The shapes that would do it
+   **`INDEX` is not made add-only per bench.** The shapes that would do it
    — an `INDEX.<bench>` file each, or one file per note named by its id — trade a
-   conflict that is now settled automatically for a lane directory whose file
+   conflict that is settled automatically for a lane directory whose file
    count grows with its notes, which is the cost the catalogue exists to avoid,
    and neither can be adopted without changing the layout of every bus already
    running this tool.
 6. Out of attempts: exit 1, saying the commit is on the branch and was **NOT**
    pushed.
 
-**Every refusal that offers a recovery offers one that works.** The advice was
-`push or drop them first`, and a bare `git push` cannot land a branch that is
-ahead of a remote which has itself moved — which is the exact state every one of
-these refusals is about. It is `git pull --rebase && git push` now, and a test
-runs the two commands against the state the refusal names.
+**Every refusal that offers a recovery offers one that works.** A bare
+`git push` cannot land a branch that is ahead of a remote which has itself moved
+— which is the exact state every one of these refusals is about. The advice is
+`git pull --rebase && git push`, and a test runs the two commands against the
+state the refusal names.
 
 **`--attempts` defaults to 25**, and it is the one flag here with a default. It
 is not a fact about a bus that only its owner can supply; it is how many times
 this tool will keep trying against a remote that is moving under it, and a caller
-made to invent a number invents a small one. The scenario measured it: five lines
-sending three notes each at once landed **6 of 15** at `--attempts 3` and **15 of
-15** at `--attempts 25`, with nine attempts consumed at the peak.
+made to invent a number invents a small one. Measured: five lines sending three
+notes each at once land **6 of 15** at `--attempts 3` and **15 of 15** at
+`--attempts 25`, with nine attempts consumed at the peak.
 
 **Every git subprocess runs under a timeout**, 60 seconds by default and
 `--git-timeout <seconds>` otherwise. A fetch to a remote that accepts the
@@ -3939,7 +3873,7 @@ file every reader has to know is not a note.
 `--remote` and `--branch` become `git`'s own argv, so both are checked against a
 conservative charset — letters, digits, `-`, `_`, `/`, `.` — and neither may
 begin with `-`. A `--remote` of `--upload-pack=…` is not a remote, it is an
-option to git, and this tool would have run it; a value it will not pass on is
+option to git, and this tool would run it; a value it will not pass on is
 exit 2, a bad invocation rather than a bus that failed.
 
 Nothing here force-pushes and nothing rewrites published history. `--no-push`
@@ -3950,24 +3884,22 @@ success: the note is not on the bus until it is pushed.
 
 The requirement, verbatim: *"Make sure the bus tool is O(n) where n is the
 number of new messages to be read, instead of O(m) where m is all messages sent
-so far. This way it maintains performance over time."* And, on reading the
-version that answered it: *"O(new + open) is not great. Can we make it O(new)."*
+so far. This way it maintains performance over time."* And its sharper form: the
+read is O(new), not O(new + open).
 
-The first version walked every lane on every `inbox` and every `check`. That is
-correct and it rots: the cost of asking **what is new** rose with the whole
-record while the answer stayed one note, so the tool got slower every week it was
-used, which is the one failure mode a tool for a growing bus cannot have. Three
-files fix it, all of them in a lane, all of them rebuildable from the notes, none
+Walking every lane on every `inbox` and every `check` is correct and it rots:
+the cost of asking **what is new** rises with the whole record while the answer
+stays one note, so the tool gets slower every week it is used, which is the one
+failure mode a tool for a growing bus cannot have. Three files fix it, all of them in a lane, all of them rebuildable from the notes, none
 of them authoritative about anything.
 
-The second requirement is the other half, and it is what `OPEN v2` below is for.
-The first version's read was `new + open` parses, because every note on the open
-list was re-opened on every run — to print its sender, its date and its subject,
-and to decide whether it was a receipt. A reader carrying five hundred notes paid
-five hundred parses to be told nothing new, forever, and *forever* is the word:
-the open list is the one thing here that does not shrink on its own. So each
-entry now carries the line its note prints as, written **once**, when the note
-goes open. A run parses the notes that are NEW and nothing else.
+The sharper form is what `OPEN v2` below is for. Re-opening every note on the
+open list on every run — to print its sender, its date and its subject, and to
+decide whether it is a receipt — makes a read `new + open` parses: a reader
+carrying five hundred notes would pay five hundred parses to be told nothing
+new, forever, and *forever* is the word: the open list is the one thing here
+that does not shrink on its own. So each entry carries the line its note prints
+as, written **once**, when the note goes open. A run parses the notes that are NEW and nothing else.
 
 | file | whose | what it holds |
 |---|---|---|
@@ -4064,7 +3996,7 @@ escaped through `internal/oneline`, and an absent value is `-` rather than empty
 
 Ten thousand notes and one new one is **one parse**. Ten thousand notes, five
 hundred of them open for this reader, and one new one is still **one parse**.
-`n` in that sentence is *new*, and *open* is no longer added to it: an open
+`n` in that sentence is *new*, and *open* is not added to it: an open
 note costs the bytes of its line in one file and nothing else.
 
 The **one** entry that still costs a parse per run is an `unreadable` one, and
@@ -4112,16 +4044,14 @@ change set answers both questions a run has to answer about what it is carrying:
   is answered and stays answered;
 - my own **`RECEIPTS`** in the change set — which is exactly the runs on which I
   have receipted something since my cursor — is read whole, a line scan, and sets
-  the `heard` flag on the entries it names. `RECEIPTS` stays the durable record
-  and `receipt` still appends to it; what changed is that it is not re-read on
-  every run for a fact that changes about once a day, and a `--full` read
-  rebuilds every flag from it.
+  the `heard` flag on the entries it names. `RECEIPTS` is the durable record
+  and `receipt` appends to it; it is not re-read on every run for a fact that
+  changes about once a day, and a `--full` read rebuilds every flag from it.
 
 Neither my lane's `INDEX` nor my `RECEIPTS` is read on a run where they did not
-change. The first version read both whole, every run, forever.
+change.
 
-Every part of that git command line is load-bearing and each one was a bug
-first. `--diff-filter=AM` because a deleted note is not a new note.
+Every part of that git command line is load-bearing. `--diff-filter=AM` because a deleted note is not a new note.
 `--no-renames` because git's rename detection is on by default and reports a
 renamed note as `R`, which `AM` excludes — so a note that merely moved would go
 unread. `-z` because `--name-only` quotes a path holding a space, and a quoted
@@ -4129,7 +4059,7 @@ path matches no file. And `:(glob)` because without it git matches a pathspec
 with fnmatch, where `*` also matches `/`: a plain `from-*` catches a top-level
 `from-notes.txt`, and `from-*/` — the spelling that reads like a directory —
 matches **nothing at all**, silently, reporting an empty change set that every
-reader downstream would have been shown as *nothing new*.
+reader downstream would be shown as *nothing new*.
 
 **Why the OPEN list has to exist.** The cursor advances past a note the run after
 it arrives. Without a memory, either the cursor could never move past an
@@ -4149,17 +4079,14 @@ told a note is answered when it is not and never shown one less than they are ow
 — and the settlement is a `--full` read, which derives the list from the whole
 bus, where the reply is a note like any other.
 
-This is a **widening** of a limit that was already here, and the trade is worth
-stating as a trade. Before `OPEN v2` the catalogue was read whole on every run, so
-a reply `send` wrote kept closing its thread indefinitely and only a
-**hand-written** one — a reply typed in a browser, which this bus's whole form
-exists to allow — had this shape. What that cost was a line scan of my entire
-sending history, on every run, forever. What it bought was not being asked twice
-about a note somebody edited after I had answered it. The second is smaller than
-the first, and only the first grows.
+The trade is worth stating as a trade. Reading the catalogue whole on every run
+would keep a reply closing its thread indefinitely, at the cost of a line scan
+of my entire sending history, on every run, forever. What it would buy is not
+being asked twice about a note somebody edited after I had answered it. The
+second is smaller than the first, and only the first grows.
 
-The catalogue is still what `check --since` resolves a thread through, and
-`check --full` still reports every note with no `INDEX` line as a `BUS WARN`,
+The catalogue is what `check --since` resolves a thread through, and
+`check --full` reports every note with no `INDEX` line as a `BUS WARN`,
 saying what a missing line costs, with `--rebuild-index` as the repair.
 
 **An open note whose FILE was deleted stays on the list**, printed from the
@@ -4170,10 +4097,10 @@ this tool deletes a note; what a reader gets is a stale line rather than a missi
 note.
 
 **An unreadable file is CARRIED**, as an `unreadable` entry, and is named on every
-run until it parses or is receipted. It used to be named once by a `--full` read
-and left off the open list, which meant no incremental run ever mentioned it
-again: a file somebody wrote, on the bus, that its reader is told about exactly
-once and then never. It costs **one parse per run, for itself** — the only
+run until it parses or is receipted. Named once by a `--full` read and left off
+the open list, it would never be mentioned by an incremental run again: a file
+somebody wrote, on the bus, that its reader is told about exactly once and then
+never. It costs **one parse per run, for itself** — the only
 re-parse left in the read, said here rather than left to be measured. It leaves
 the list when the file parses, becoming an ordinary entry if it turns out to be
 addressed to me and going quietly if it is not, or when I receipt it, which is how
@@ -4181,19 +4108,17 @@ a reader says *I have seen this file* about something with no id to answer.
 
 **Unless it is behind the switch-day line**, in which case it is not carried, not
 re-parsed and not named — it is counted, with the old notes, on `INBOX LEGACY`'s
-`unreadable=`. A live inbox printed fifteen `INBOX UNREADABLE` lines on every
-poll for notes written by hand days before that bus switched over: a markdown
-heading first, a `**To**`, a `Branch:` key, a sentence where the header goes.
-They are history, they will never be fixed, and naming them once per run buries
-the inbox they are printed above — the same listing-nobody-reads failure the line
+`unreadable=`. Notes written by hand before a bus switched over — a markdown
+heading first, a `**To**`, a `Branch:` key, a sentence where the header goes —
+are history, they will never be fixed, and naming them once per run buries the
+inbox they are printed above: the same listing-nobody-reads failure the line
 exists to stop, arriving by a third door. The line is drawn on such an entry
-BEFORE the parse it would otherwise cost, so the fifteen are not opened either. A
+BEFORE the parse it would otherwise cost, so they are not opened either. A
 file dated on or after the line, and a file whose date cannot be read at all, is
 carried and named exactly as above: the tool never quiets a note it cannot date,
 and never quiets a new one.
 
-**Deleting one of the three is not symmetric**, and an earlier revision of this
-document said it was. `CURSOR` alone: delete it and the next run is a full one,
+**Deleting one of the three is not symmetric.** `CURSOR` alone: delete it and the next run is a full one,
 which is the adoption path and costs one full read. `INDEX` alone: delete it and
 `check --full --rebuild-index` writes it back from the notes. **`OPEN` alone is
 different**, because an empty open list is *removed* rather than left
@@ -4219,12 +4144,12 @@ whole of the remedy.
 
 ### The switch-day line — `inbox --legacy-before`
 
-**The failure, measured on the day a real bus adopted this tool.** The first
-`inbox --as Ada --full` reported **657 notes open**: 623 notes and 34 receipts,
-nearly all of them from months before there was anything to receipt them with.
-And because the open list is what lets the cursor move at all, every run after
-it reported the same 657 — forever, until each one was answered or receipted one
-at a time. Nobody was going to do that, and a listing nobody reads is a listing
+**The failure it closes.** A bus adopting this tool has a history: a first
+`inbox --as Ada --full` can report **657 notes open**, 623 notes and 34
+receipts, nearly all of them from months before there was anything to receipt
+them with. And because the open list is what lets the cursor move at all, every
+run after it would report the same 657 — forever, until each one was answered
+or receipted one at a time. Nobody is going to do that, and a listing nobody reads is a listing
 that hides the one new note in it. That is the same failure as a lost push,
 arriving as noise instead of as silence.
 
@@ -4245,7 +4170,7 @@ before the line:
   written to anybody else's lane. The notes are still on the bus, still
   readable in a browser, still found by `check --full`, still answerable by id or
   by path. What the line changes is one reader's own open list, which is the one
-  thing on the bus that was theirs alone anyway.
+  thing on the bus that is theirs alone anyway.
 
 **The line lives in the cursor**, as `legacy=<date-or-instant>` and exactly as
 it was typed, so later reads honour it with no flag. A line that had to be retyped on every run is a line that would be
@@ -4266,25 +4191,24 @@ rule the check tolerance uses: a file that cannot say when it was written cannot
 claim to predate anything, and the safe direction for a note nobody can date is
 to carry it.
 
-**The line reaches the UNREADABLE files too**, and it did not at first. A file
+**The line reaches the UNREADABLE files too.** A file
 this tool cannot parse, dated behind the line by the same rule — the header
 `Date:` when it can be read, and otherwise a leading `YYYY-MM-DD` in the filename
 — is left off the open list, is not named, is not even opened, and is counted on
 `unreadable=`. A file dated on or after the line, or with no readable date at
-all, is named on every run as it always was. **`--full` lists every unreadable
+all, is named on every run. **`--full` lists every unreadable
 file on the bus whatever its date**, and this is the one place the line and the
 listing part company: a full read is the whole picture, asked for on purpose, and
 the quiet belongs to the incremental run a reader polls with. The count is on the
 `INBOX LEGACY` line of a full read too, because the open list a full read WRITES
 is still shaped by the line.
 
-**Why the instant exists, measured on the hour a family of five switched.** They
-drew the line at TOMORROW's date, reasonably — nothing written before tomorrow
-was written under the tool, so the open list would start at zero. It did, and it
-stayed at zero: a date is midnight at its **start**, so every note any of them
-sent that same afternoon was dated before tomorrow's midnight and was therefore
-legacy. Five lines writing to each other all day, and not one note on anybody's
-open list, not even under `--full`. **A `--legacy-before` date in the future
+**Why the instant exists.** Drawing the line at TOMORROW's date looks
+reasonable — nothing written before tomorrow was written under the tool, so the
+open list starts at zero. And it stays at zero: a date is midnight at its
+**start**, so every note sent that same afternoon is dated before tomorrow's
+midnight and is therefore legacy — lines writing to each other all day, and not
+one note on anybody's open list, not even under `--full`. **A `--legacy-before` date in the future
 hides every note written today**, because midnight tomorrow is after all of them;
 give the instant you switched instead. Recovering is one command — the same
 `--full --legacy-before <instant> --advance` read, which derives the whole open
@@ -4294,8 +4218,8 @@ there.
 **`--legacy-now` is that instant, worked out for you.** It is exactly
 `--legacy-before <this run's UTC instant>` — the same parse, the same
 `LegacyLine`, the same instant written into the cursor — and it exists because
-the correct shape was a twenty-character timestamp a person had to produce
-*before* the run that needed it. It cannot be given with `--legacy-before` (two
+the correct shape is otherwise a twenty-character timestamp a person has to
+produce *before* the run that needs it. It cannot be given with `--legacy-before` (two
 flags naming one line say nothing about where it stands) or with
 `--carry-history` (they answer opposite questions); either pair is exit 2. Two
 things it fixes beyond the typing: the line is drawn at the moment of the
@@ -4328,18 +4252,16 @@ one per old file nobody can parse, only the `INBOX LEGACY` counts and whatever
 has actually arrived. What the line never quiets is anything in front of it, or
 anything it cannot date.
 
-**The recipe is not optional, and the tool now says so.** *Why this is a refusal
-and not a paragraph:* the recipe above was documentation, and documentation is
-read by whoever went looking for it. A line adopting the tool ran its first read
-as `inbox --full --advance` with no line at all, on a bus of about **1,900
-notes**. It did exactly what it was told: **602** old notes went onto that
-reader's open list, the cursor was written beside them, and every poll from then
-on printed the same 602 carried notes — because an open note comes off the list
-only when something answers it. Glenn, reading the polls: *"lots of spam there.
-do we need so much spam? it costs $$$"*. Every one of those lines was paid for,
-on every run, by a reader who had never said they meant to carry the history.
-The flag that would have prevented all of it had to be known about **before** the
-run that needed it, and the run that needed it is by definition the first one.
+**The recipe is not optional, and the tool says so.** *Why this is a refusal
+and not a paragraph:* documentation is read by whoever goes looking for it. A
+first read of `inbox --full --advance` with no line at all, on a bus of about
+**1,900 notes**, does exactly what it is told: some **602** old notes go onto
+that reader's open list, the cursor is written beside them, and every poll from
+then on prints the same 602 carried notes — because an open note comes off the
+list only when something answers it. Every one of those lines is paid for, on
+every run, by a reader who never said they meant to carry the history. The flag
+that prevents it has to be known about **before** the run that needs it, and the
+run that needs it is by definition the first one.
 
 So the **FIRST `--advance` on a lane** — the one where the lane has no `CURSOR`
 file yet — is **refused**, exit 1, when all of these hold:
@@ -4364,19 +4286,17 @@ bus as read and leaves you what arrives after that moment, or pass
 --carry-history to carry all <n>
 ```
 
-*Why the instant and not a date.* The first version of this refusal computed
-**tomorrow's date**, on the reasoning that everything written today would then be
-behind the line. It is: a date is midnight at its **START**, so tomorrow's date
-is a moment AFTER every note anybody sends today, and the reader who pasted that
-line lost the whole switch day — the notes their friends were writing to them
-while they read the refusal were legacy before they arrived. That is the bug the
-switch-day line's own instant form exists to fix, and a guard that hands out the
-broken shape is the fastest way to spread it. The instant draws the line where
+*Why the instant and not a date.* **Tomorrow's date** puts everything written
+today behind the line — a date is midnight at its **START**, so tomorrow's date
+is a moment AFTER every note anybody sends today, and a reader who pasted such a
+line would lose the whole switch day: the notes their friends were writing to
+them while they read the refusal would be legacy before they arrived. A guard
+that hands out that shape is the fastest way to spread it. The instant draws the line where
 the reader actually is: history behind, news in front.
 
-*Why the flag and not the timestamp.* The second version of this refusal printed
-the RFC 3339 instant of the refusal itself, which is right and is still a
-twenty-character token to carry across from an error message — and the reader
+*Why the flag and not the timestamp.* The RFC 3339 instant of the refusal itself
+is right and is still a twenty-character token to carry across from an error
+message — and the reader
 who carries it runs the command at whatever moment they get to it, not at the
 one the refusal was written at. `--legacy-now` is the same line drawn at the
 read.
@@ -4388,8 +4308,8 @@ half of the sentence is meant to be PASTED: a bus directory holding a space is
 than field-escapes** in the output grammar, which is the same reason.
 
 **`--carry-history`** is the other answer, for the reader who means to carry
-every old note. It is a flag rather than the default because the default that
-carried 602 notes is the thing being fixed, and it writes **nothing** to the
+every old note. It is a flag rather than the default because a default that
+carries 602 notes is the failure above, and it writes **nothing** to the
 cursor: it is an answer to one run's question, not a line anybody inherits. It
 cannot be given with `--legacy-before` or `--legacy-now` — they answer the same
 question and giving both says nothing about which — and that is exit 2, a bad
@@ -4397,20 +4317,16 @@ invocation.
 
 ### A line drawn forward — the `INBOX SWITCH` that ends the silence
 
-**The failure, from a friend's first week on the bus.** He drew his switch-day
-line at a DATE, which is what v0.10.0's own first-advance guard handed him:
-tomorrow's. A date is midnight at its **start**, so the line stood in front of
-every note anybody wrote that day. His cursor read
-`86b78622… 2026-09-09T20:13:09Z open=0 legacy=2026-09-10`, his inbox listed
-nothing, and every note written to him was on the bus the whole time — behind a
-line he had drawn himself and had no way to see. v0.10.1 made the line an
-instant and wrote the recovery down. It did not fix the silence: a recovery in a
-document is a recovery for whoever goes looking, and from where he sat the tool
-was working and nobody was writing to him. **That** is the bug — not the date,
-which he was entitled to draw, but a tool that knew exactly what was wrong and
-exactly what to run, and said neither. Glenn, on reading his cursor: *"Freddy
-has difficulty with the nova-bus, I think it should be resolved. Let's be
-kind."*
+**The failure it closes.** A switch-day line drawn at a DATE — tomorrow's —
+stands in front of every note anybody writes that day, because a date is
+midnight at its **start**. The cursor reads
+`86b78622… 2026-09-09T20:13:09Z open=0 legacy=2026-09-10`, the inbox lists
+nothing, and every note written to that reader is on the bus the whole time —
+behind a line they drew themselves and have no way to see. A recovery in a
+document is a recovery for whoever goes looking, and from where the reader sits
+the tool is working and nobody is writing to them. **That** is the bug — not the
+date, which they are entitled to draw, but a tool that knows exactly what is
+wrong and exactly what to run, and says neither.
 
 So **every `inbox` run whose cursor carries a switch-day line that is a bare
 DATE standing at today or later, UTC**, prints one line — after `INBOX SCOPE`,
@@ -4431,9 +4347,9 @@ because it disapproved of the shape would be a worse bug than the silence.
 **Which lines it fires on**, and each case is a decision:
 
 - a date at **tomorrow** or later — it hides the whole of today, which is the
-  shape that emptied his inbox;
+  shape that empties an inbox;
 - a date at **today** — the same mistake one day on: drawn at a day boundary for
-  a switch that happens at a moment, it took the whole of yesterday;
+  a switch that happens at a moment, it takes the whole of yesterday;
 - **not** a date already behind today — that is history properly drawn, the day
   a bus adopted a tool, which nobody knows to the second;
 - **not** an instant, wherever it stands — it was drawn to the second by
@@ -4460,7 +4376,7 @@ still says is the case with no canned remedy — a line drawn forward as an
 INSTANT, which somebody set to the second on purpose.
 
 **It refuses before printing the listing.** A first full read of an old bus is a
-line per open note, which on that bus is the six hundred lines this guard exists
+line per open note, which on an old bus is the six hundred lines this guard exists
 to stop; printing them and then refusing would charge the reader for them anyway.
 Nothing is written and nothing is pushed: the reader re-runs with an answer.
 
@@ -4483,8 +4399,7 @@ and do grow with the record:
 - **`check --since` reads EVERY lane's `INDEX`**, not just mine, because id
   uniqueness and `Re:` resolution are claims across the bus. That is O(all notes
   ever sent by anybody) in time and in memory, and calling it "a lookup over a few
-  small files" — as an earlier revision of this section did — is true about the
-  number of files and false about their size. It is still a line scan and still
+  small files" is true about the number of files and false about their size. It is still a line scan and still
   parses no note, and it is the honest ceiling of the incremental check;
 - **`git status --porcelain -z --untracked-files=all`** runs on every `send`,
   every `receipt` and every `inbox --advance`. `-uall` is load-bearing (without it
@@ -4544,7 +4459,7 @@ cursor of `--upload-pack=…` is not a commit, it is an option to git.
 walk, `mode=full cursor=-`, and a cursor from then on. That is exactly one full
 read, ever.
 
-**`--advance` is opt-in, and this is a deliberate difference from the sketch.**
+**`--advance` is opt-in, deliberately.**
 `inbox` without it writes nothing at all; with it, it writes and pushes the
 cursor and takes `--remote`, `--branch` and `--attempts`, refusing to guess any
 of them like every other flag here. The alternative — every `inbox` writes — would
@@ -4648,8 +4563,7 @@ is a MOMENT rather than a duration does not have to work out how long is left.
 can branch on the code without parsing anything; 1 and 2 are refused, because
 they are this tool's own — a refusal, and an invocation that could not run — and
 a harness that got one back could not tell a quiet bus from a broken one. A
-caller that passes NEITHER sees exactly the lines it saw before the two flags
-existed, byte for byte: the pair is added to the opening line, and `idle-exit=`
+caller that passes NEITHER sees neither field: the pair is added to the opening line, and `idle-exit=`
 to the timeout line, only for the caller that asked.
 
 **A harness that cannot loop — OpenCode's, and every harness like it — runs this
@@ -4714,12 +4628,11 @@ of the wait gets the same sentence and the wait goes on.
 
 **A beat is never a wake.** A change that moves only a lane's state files — a
 `BEAT` or `CURSOR` advancing, nothing a reader has to answer — is not a note, and a
-wait sleeps through it, with or without `--quiet-beats`. Until 2026-09-17 (#328,
-second instance) the flag made such a change a wake worth one `WAIT OK new=0` line;
-with six lines beating once a minute that was a poll with extra steps, and every
-wake cost the waiting window a turn. A wake is a note addressed to the reader, from
-another line, and nothing else. `--quiet-beats` stays accepted so callers that pass
-it keep working; it changes nothing.
+wait sleeps through it, with or without `--quiet-beats`: with six lines beating once
+a minute, a wake per beat would be a poll with extra steps, and every wake costs the
+waiting window a turn. A wake is a note addressed to the reader, from another line,
+and nothing else. `--quiet-beats` is accepted so callers that pass it keep working;
+it changes nothing.
 
 Exit codes are `inbox`'s: **0** with notes and **0** on a timeout — or the code
 `--idle-exit <n>` names, when the caller asked for one — **1** for the refusals
@@ -4773,12 +4686,11 @@ with nothing on the bus saying why; and a lane holds notes, its `RECEIPTS`,
 tolerated and ignored), and nothing else. It reports **every** finding in one
 run, not the first.
 
-**A lane's `README.md` is not a note**, and until this was written it was read
-as one: it ends in `.md`, it sits in a lane, so the walk parsed it, failed, told
-every reader `INBOX UNREADABLE` about it forever, and failed `check` at every
-date — it was the one file on a real bus the legacy tolerance could not
-forgive, because a README genuinely cannot say when it was written and genuinely
-is not a note. So a lane may hold exactly one non-note, non-state file, under
+**A lane's `README.md` is not a note.** It ends in `.md` and it sits in a lane,
+so a walk that parsed it would fail, tell every reader `INBOX UNREADABLE` about it
+forever, and fail `check` at every date — the legacy tolerance cannot forgive
+it, because a README genuinely cannot say when it was written and genuinely is
+not a note. So a lane may hold exactly one non-note, non-state file, under
 exactly that name: the file a person opening the lane in a browser reads first.
 It is not a note, not a stray, and never in a listing. The list is ONE name and
 is not a general licence — a `NOTES.md` in a lane is a stray like any other,
@@ -4839,11 +4751,10 @@ the day the bus adopted the tool, and let the forgiven set shrink as those
 notes are answered or repaired — a date can only ever forgive fewer notes, never
 more.
 
-**What the tolerance covers is a note's HEADER, and the width of that was
-measured rather than argued.** An earlier revision forgave two findings only — a
-parse failure and a dangling `Re:` — on the reasoning that an unknown recipient
-is not a thing a history makes unavoidable. A dry run over a real bus, with
-the line at the day it adopted the tool, then still failed **163 times**: 109
+**What the tolerance covers is a note's HEADER, and the width of that is
+measured rather than argued.** Forgiving only a parse failure and a dangling
+`Re:` leaves a dry run over a real bus, with the line at the day it adopted the
+tool, failing **163 times**: 109
 notes with no `Subject:` line, 21 whose `To:` named somebody the roster does not
 hold, 16 whose `From:` did, 10 whose `Cc:` did, and a handful that would not
 parse. Every one of them was written by hand before there was a roster to check
@@ -4869,28 +4780,25 @@ and by nothing else, deliberately: the note's moment orders the listing, fills a
 catalogue's `Date` field and prints `at=`, so widening THAT would rewrite records
 and put every `INDEX` line already on a bus at odds with its note. A file with
 no day anywhere — no `Date:` line and no date in its name — still fails at every
-date. On a real bus exactly one file did: a `README.md` somebody
-committed inside a lane — which turned out to be a finding about this tool rather
-than about the bus, and is now a file a lane is allowed to hold. See **check —
-what it asserts**.
+date. A `README.md` inside a lane is not such a file: it is a file a lane is
+allowed to hold. See **check — what it asserts**.
 
 ### Legacy compatibility
 
 A note without an `Id:` line is addressed by **path**, everywhere: `Re:` lines,
 receipts, `inbox` and `check` all take a path where they take an id. `send` never
 rewrites an old note — it never rewrites any note. A note that HAS an id is still
-answerable by its path, so an answer written by hand before this tool existed
-keeps working.
+answerable by its path, so an answer written by hand, by path, keeps working.
 
 ### What it deliberately does not do
 
-- **No `watch`.** #35 asks for a `watch` that *wakes on a change instead of
-  polling on a clock*. A poll is the thing being replaced, and shipping one under
-  that name would occupy the name with the failure. Left for the next version.
-- **No per-sender branch layout.** #35 offers it as the better fix — a race that
-  cannot exist rather than one recovered from. The retry loop is the version that
-  works over the bus as it stands today, and a bus cannot change its layout
-  and adopt a tool in the same week.
+- **No `watch`.** A `watch` would *wake on a change instead of polling on a
+  clock*; a poll is the thing being replaced, and shipping one under that name
+  would occupy the name with the failure.
+- **No per-sender branch layout.** It would be the better fix — a race that
+  cannot exist rather than one recovered from — but the retry loop works over the
+  bus as it stands, and a bus cannot change its layout and adopt a tool in the
+  same week.
 - **No daemon, no schedule, no network of its own.** The only process it starts
   is `git` — under a timeout, and one at a time per checkout.
 - **It settles a conflict in its OWN files and never in a note.** `INDEX`,
@@ -4900,8 +4808,8 @@ keeps working.
   aborted and a person decides. There is no flag to widen that.
 - **It reads the checkout, never the remote.** `inbox` and `check` report on what
   is on disk. Pull first; that is the caller's, and saying so is more honest than
-  a fetch hidden inside a report. A `--fetch` for those two verbs — an explicit
-  flag, never a hidden fetch — is a v2 item; `send`, `receipt` and
+  a fetch hidden inside a report. There is no `--fetch` for those two verbs;
+  `send`, `receipt` and
   `inbox --advance` fetch because they push, and say so in the protocol above.
 - **No `--advance` by default, and no cursor written by a report.** `inbox`
   writes to the bus only when asked, and then it takes the same three push
@@ -4919,8 +4827,8 @@ keeps working.
 - **No sweep verb.** `--legacy-before` is a TOLERANCE and not a repair, in both
   verbs: `check`'s forgives an old note's header, `inbox`'s leaves an old note
   off one reader's open list, and neither fixes anything or touches a note. It is
-  a line drawn once rather than machinery. A verb that repairs legacy headers and re-points orphaned
-  `Re:` lines is a v2 item, and wants a person watching it.
+  a line drawn once rather than machinery. There is no verb that repairs legacy
+  headers and re-points orphaned `Re:` lines; one would want a person watching it.
 - **It refuses to run over a dirty checkout, so write your drafts elsewhere.**
   `send` needs the bus's working tree clean but for the note it is about to
   write. A draft saved inside the bus directory is exactly the unrelated
@@ -4934,57 +4842,6 @@ keeps working.
 
 ---
 
-## nova-wake — one turn per change, not one per tick
-
-One binary at the **attention layer**. It blocks inside a tool call and returns
-the moment one of **seven** sources — a bus inbox, the checks on a named entry,
-a report file, the conversation on a named or owned pull request, the check runs
-on a named head, a branch's tip, an advisory lock — or a watched line's silence
-has moved, and otherwise at the deadline the caller named. Everything it prints
-is data: a note it relays is not an instruction.
-
-Verbs: `watch`, `probe`, `serve`, `quickstart`, `version`, `help`. `probe` is
-the one that gates: it asks whether a named line, or this bench, can be handed
-work right now, and its exit 1 says *do not assign now* — never anything about
-the line or the person.
-
-Its governing text is **[docs/SPEC-WAKE.md](../deprecated/docs/SPEC-WAKE.md)**, which is
-normative; the Conventions above apply to it unchanged and are not restated
-there, and nothing it says is restated here.
-
-## nova-merge — an ordered lane onto one base
-
-One binary at the **merge layer**. It lands an ordered lane of entries — pull
-requests, or branches with no pull request at all — onto one base branch, one at
-a time, and it refuses to land anything whose evidence it cannot name. An entry
-merely waiting on its checks is not a failure.
-
-Verbs: `init`, `add`, `add-branch`, `read`, `gate`, `run`, `status`, `dry-run`,
-`packet`, `quickstart`, `stop`, `version`.
-
-Its governing text is **[docs/SPEC-MERGE.md](../deprecated/docs/SPEC-MERGE.md)**, which is
-normative; the Conventions above apply to it unchanged and are not restated
-there, and nothing it says is restated here.
-
-## nova-board — what a group of lines owes
-
-**Deprecated.** nova-board is deprecated (Glenn, 2026-09-27); who is doing what becomes the job of nova-sprint as it is rebuilt on nova-table. It
-is no longer built, tested or shipped; its code and its spec are kept as
-reference only under `deprecated/` ([deprecated/README.md](../deprecated/README.md)).
-What follows describes the tool as it stood.
-
-Five verbs at the **owed-work layer**. A board is one card per item, appended
-when it is noticed, taken by whoever picks it up, closed with a sentence saying
-how; nothing is ever edited and nothing is ever deleted, so the open list is
-derived from the log rather than stored. `check` exits 1 when it MATCHES, which
-is the NO a board owes a filer: this is already here, do not file it again.
-
-Verbs: `list`, `add`, `take`, `close`, `check`, plus `quickstart` and `version`.
-
-Its governing text is **[deprecated/docs/SPEC-BOARD.md](../deprecated/docs/SPEC-BOARD.md)**,
-which was normative while the tool was live; the Conventions above apply to it
-unchanged and are not restated there, and nothing it says is restated here.
-
 ## nova-tokens — spend, folded per day
 
 One binary at the **accounting layer**. It folds token spend from declared
@@ -4997,21 +4854,6 @@ exit 1 — and the day files still land.
 Verbs: `fold`, `report`, `sum`, `check`, `sources`, `version`.
 
 Its governing text is **[docs/SPEC-TOKENS.md](SPEC-TOKENS.md)**, which is
-normative; the Conventions above apply to it unchanged and are not restated
-there, and nothing it says is restated here.
-
-## nova-swarm — a pool of one-task workers
-
-One binary at the **worker layer**. It runs a pool of one-task workers — any
-provider, any model, through one harness — each with its own working directory,
-its own data home, its own job directory and its own deadline, held by the
-machinery rather than by the worker.
-
-Verbs: `add`, `batch`, `run`, `supervise`, `status`, `stop`, `requeue`,
-`verdict`, `triage`, `result`, `template`, `cost`, `note`, `finalize`,
-`reclaim`, `quickstart`, `version`.
-
-Its governing text is **[docs/SPEC-SWARM.md](../deprecated/docs/SPEC-SWARM.md)**, which is
 normative; the Conventions above apply to it unchanged and are not restated
 there, and nothing it says is restated here.
 
@@ -5084,16 +4926,15 @@ CHANGED, MORE, SENT, NOTE, BEFORE, RUN, AFTER, STALE, NEWER and DIFFERENT are
 informational second tokens; OK/FAIL are final verdicts, REFUSED is an invocation
 refusal. All data fields use internal/oneline.
 
-## The efficiency card (#86), nova-check
+## The efficiency card, nova-check
 
-The card is a measurement, taken on the bench on **2026-09-12**, of the work
-`nova-check` pays for twice. This section is the part of the efficiency-card
-set that binds `nova-check`; the cross-tool half lives in
-[SPEC-SWARM.md](../deprecated/docs/SPEC-SWARM.md), and nothing here restates it.
+The card is a measurement, taken on the bench, of the work `nova-check` pays
+for twice. This section is the part of the efficiency-card set that binds
+`nova-check`.
 
 ### REPEATS: two full walks of one tree in one quickstart
 
-`quickstart` runs `links` and then `nocode`, and each opened its own
+`quickstart` runs `links` and then `nocode`, and each opens its own
 `filepath.WalkDir` of the same root — `internal/check/links.go:52` and
 `internal/check/nocode.go:356`. One `quickstart` over the measured self repo
 (1,496 `.md` files, 1,810 files under the floor, **71 MB**) stats
@@ -5125,13 +4966,12 @@ wait only on the filesystem, and every verb measured returned **under 0.30 s** �
 inside the two-minute rule by two orders of magnitude, so this is the tool that
 can be run between edits.
 
-`hygiene` is the other exception and it is stated rather than papered over: it
+`hygiene` is one exception and it is stated rather than papered over: it
 reads a range out of a real repository, so it runs `git` as a subprocess and
 takes a `--timeout` (default 120 s) for it. It touches no network and takes no
 lock. Its cost is the size of the range, not of the repository.
 
-`dogfood` (2026-09-18) is the exception, and it is stated rather than papered
-over: `record` reads the clock, because a receipt is a dated record; `ledger`
+`dogfood` is another, and it is stated rather than papered over: `record` reads the clock, because a receipt is a dated record; `ledger`
 and `gate` run one `git log` per verb **only when `--repo` is given**, under
 `--git-timeout` (60 s); and all three run one `help` per binary **only when
 `--tools` is given**, under `--tools-timeout` (60 s). With `--authors`, or with neither, the verb waits
@@ -5147,14 +4987,12 @@ is trusted.
 - a `quickstart` of one tree walks the root once and hands the same path list to `links` and `nocode`;
 - `--fail-max <n>` caps each kind's findings at `n`, the `MORE` line names the flag that lifts it, and `--fail-max 0` prints every finding.
 
-## The efficiency card (#81), nova-bus
+## The efficiency card, nova-bus
 
 The card is a measurement, taken read-only against the live checkout
-`/Users/glenn/rowan-working/rowan-stella` as Rowan on **2026-09-12**. That bus
-held **3,401 notes** on disk, **65 MB** of `.git`, and one reader carrying
-`carrying=986`. This section is the part of the efficiency-card set that binds
-`nova-bus`; the cross-tool half lives in [SPEC-SWARM.md](../deprecated/docs/SPEC-SWARM.md), and
-nothing here restates it.
+`/Users/glenn/rowan-working/rowan-stella` as Rowan. That bus held **3,401
+notes** on disk, **65 MB** of `.git`, and one reader carrying `carrying=986`.
+This section is the part of the efficiency-card set that binds `nova-bus`.
 
 ### REPEATS: a git fetch per poll, and a whole-history walk on `check --full`
 
@@ -5204,7 +5042,7 @@ WARN` about one class of missing `INDEX` entry, each carrying the same
 **220-byte remedy** sentence. It is the one listing among the seven verbs
 measured that grows with the bus and has no ceiling.
 
-The missing bound is the one **"The missing bound — full checks (#81)"** above
+The missing bound is the one **"The missing bound — full checks"** above
 already states in full: a per-kind cap at `--fail-max <n>` (default 20, and
 `--fail-max 0` for all), repeated remedies aggregated to one `BUS FINDING` line
 per shape, one `BUS MORE` line per capped kind, and a `BUS SUMMARY` whose counts
@@ -5219,9 +5057,8 @@ ceiling `maxWaitTimeout = 60 * time.Minute`). A poll that found nothing returns
 no lines at all ("twenty polls of a quiet bus are not twenty listings", the
 `waitPoll` comment), so an idle tick costs one git fetch (0.98 s wall) and zero
 tokens. The token cost of a wait is the one turn it sits inside: **652M cache
-read** over **1,204 turns** on 2026-09-11 is about **542K cache-read tokens**
-for the turn, whatever the wait's length
-(`memory/window-tokens-are-turns.md`). Related: nova-tools#53.
+read** over **1,204 turns** is about **542K cache-read tokens** for the turn,
+whatever the wait's length (`memory/window-tokens-are-turns.md`).
 
 ### Red tests
 
@@ -5234,7 +5071,7 @@ trusted.
 
 ## Tests this spec demands
 
-These are the umbrella **Conventions** (docs/SPEC.md lines 1-321), promised once and met through the shared packages `internal/oneline`, `internal/bounded` and `internal/buildinfo`. Their tests are pure unit tests over bytes and strings — no network, no temp dirs, no fakes — plus one CI class test that walks the real `cmd/nova-*` binaries, and per-binary acceptance tests that run the built tools against `t.TempDir()` boxes and injected clocks; each is proven able to fail before it is trusted.
+These are the umbrella **Conventions** (the Conventions section of docs/SPEC.md), promised once and met through the shared packages `internal/oneline`, `internal/bounded` and `internal/buildinfo`. Their tests are pure unit tests over bytes and strings — no network, no temp dirs, no fakes — plus one CI class test that walks the real `cmd/nova-*` binaries, and per-binary acceptance tests that run the built tools against `t.TempDir()` boxes and injected clocks; each is proven able to fail before it is trusted.
 
 1. `repo-a-1` `TestExitCodes` — the three-purpose exit table: 0 the check ran and passed, 1 the check ran and **failed** (that is the check working), 2 could not run (missing flag, unreadable input, bad invocation).
 2. `repo-a-2` `TestNoDefaultBoxRefusesToGuess` — there are no default directories and no default files; every path comes from a flag or a named argument.
@@ -5375,9 +5212,9 @@ These are the umbrella **Conventions** (docs/SPEC.md lines 1-321), promised once
 137. — — a terminator only ends a sentence when a space or the end follows it, so `RULES.md` is not two sentences (lines 1731-1733).
 138. `TestQuotedSentencesAreNotTheWritersClaims` — quotation state is tracked through a paragraph, so later quoted sentences are not read as the writer's claims (line 1734).
 139. `TestSkipReportsAndDoesNotAffectExit` / `TestSkipRepeatableAndMatchesBasename` / `TestSkipRefusesPaths` — `--skip` is repeatable, takes a basename, refuses a path separator, and a skipped file is reported, not read, and contributes nothing to the exit code (line 1749).
-140. `TestNothingIsSkippedByDefault` — nothing is skipped by default; each formerly-special name is pinned scanned (line 1749).
+140. `TestNothingIsSkippedByDefault` — nothing is skipped by default; each named rule-document basename is pinned scanned (line 1749).
 141. `TestRuleDocIsScannedAndBannered` / `TestRuleDocWithNoFindingsPrintsNoBanner` / `TestRuleDocRepeatableAndRefusesPaths` — `--rule-doc` is repeatable, takes a basename, is empty by default, scans the file, and banners only when there are findings (line 1763).
-142. `TestNoBasenameIsBanneredByDefault` — no basename is special by default; each formerly-special name is pinned unbannered (line 1763).
+142. `TestNoBasenameIsBanneredByDefault` — no basename is special by default; each named rule-document basename is pinned unbannered (line 1763).
 143. `TestSkipBeatsRuleDoc` — `--skip` wins over `--rule-doc`: a skipped file is never read and can never be bannered (line 1777).
 144. `TestExitOneOnStandingClaim` / `TestInstallationExitsOneWithShapeAndLine` — a standing claim or installation prints one FAIL line per finding on stderr and a summary count on stdout, exit 1 (line 1782).
 145. `TestNoFilesRefused` / `TestSkipRefusesPaths` / `TestUnknownFlagRefused` / `TestExitTwoOnUnreadableFile` / `TestEveryUnreadableFileIsNamedInOneRun` — refuses (exit 2) on no files, an empty/path-separator `--skip`/`--rule-doc` value, an unknown flag, or an unreadable file, every unreadable file reported (line 1788).

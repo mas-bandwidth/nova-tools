@@ -36,10 +36,10 @@ func renderAll(t *testing.T, cards []worklang.Card) map[string][]byte {
 	return out
 }
 
-// The expansion contract of docs/SPEC-WORKLANG.md, seen red first:
-// worklang-expansion-is-deterministic-and-replayable,
-// worklang-card-carries-its-budget-and-floor, and
-// worklang-duplicate-branch-name-refuses.
+// The expansion contract of internal/worklang's plan code, which no living verb
+// calls and docs/SPEC-WORKLANG.md does not specify: expansion is deterministic
+// and replayable, a card carries its budget and floor, and a duplicate branch
+// name is refused.
 func TestWorklangExpand(t *testing.T) {
 	t.Parallel()
 
@@ -235,10 +235,8 @@ func TestExpandNamesEveryMissingField(t *testing.T) {
 		t.Errorf("refusal does not name node n1: %s", msg)
 	}
 
-	// The language spec, docs/SPEC-WORKLANG.md, must document both :output and
-	// :budget. (It read docs/CLI.md's nova-work `plan expand` section until
-	// nova-work was parked under deprecated/ on 2026-09-27; that section moved to
-	// deprecated/docs/CLI.md with it.)
+	// The language spec, docs/SPEC-WORKLANG.md, names both :output and :budget
+	// among the keys the reader knows.
 	specPath := "docs/SPEC-WORKLANG.md"
 	if _, err := os.Stat(specPath); err != nil {
 		// Try relative to the test's package directory

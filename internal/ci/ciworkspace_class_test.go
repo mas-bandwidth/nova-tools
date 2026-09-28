@@ -47,21 +47,21 @@ func TestWorkspaceCleanupDoesNotFailBeforeCheckout(t *testing.T) {
 	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
 	lines, bodies := workspaceCleanupStepBodies(src)
 	if len(bodies) == 0 {
-		t.Fatalf("no `%s` step in ci.yml; #1751's precheck has moved and this test is looking in the wrong place", workspaceCleanupStepName)
+		t.Fatalf("no `%s` step in ci.yml; the precheck has moved and this test is looking in the wrong place", workspaceCleanupStepName)
 	}
 	for i, body := range bodies {
 		where := fmt.Sprintf("occurrence %d of %d (ci.yml line %d)", i+1, len(bodies), lines[i])
 		if gitRefusalRe.MatchString(body) {
-			t.Errorf("%s: the cleanup step still refuses a workspace with no .git; it runs before checkout, so a runner whose workspace does not exist yet goes red before a line of the repository is read (#1751)", where)
+			t.Errorf("%s: the cleanup step still refuses a workspace with no .git; it runs before checkout, so a runner whose workspace does not exist yet goes red before a line of the repository is read", where)
 		}
 		if !emptyWorkspaceRefusalRe.MatchString(body) {
-			t.Errorf("%s: the cleanup step no longer refuses an empty GITHUB_WORKSPACE (`[ -n \"${GITHUB_WORKSPACE}\" ] || exit 1`); a missing workspace is still worth refusing (#1751)", where)
+			t.Errorf("%s: the cleanup step no longer refuses an empty GITHUB_WORKSPACE (`[ -n \"${GITHUB_WORKSPACE}\" ] || exit 1`); a missing workspace is still worth refusing", where)
 		}
 		if !absentWorkspaceContinueRe.MatchString(body) {
-			t.Errorf("%s: the cleanup step has no `[ -d \"${GITHUB_WORKSPACE}\" ] || exit 0` guard; a missing workspace directory is the normal first-run state and must continue (#1751)", where)
+			t.Errorf("%s: the cleanup step has no `[ -d \"${GITHUB_WORKSPACE}\" ] || exit 0` guard; a missing workspace directory is the normal first-run state and must continue", where)
 		}
 		if sweepRe.MatchString(body) && !nonRepoWorkspaceBeltRe.MatchString(body) {
-			t.Errorf("%s: the cleanup step runs `find \"${GITHUB_WORKSPACE}\" … -exec rm -rf` with no `[ -d \"${GITHUB_WORKSPACE}/.git\" ] || exit 0` belt in front of it; a workspace that exists but is not a checkout of this repository must be left alone rather than emptied (#1751)", where)
+			t.Errorf("%s: the cleanup step runs `find \"${GITHUB_WORKSPACE}\" … -exec rm -rf` with no `[ -d \"${GITHUB_WORKSPACE}/.git\" ] || exit 0` belt in front of it; a workspace that exists but is not a checkout of this repository must be left alone rather than emptied", where)
 		}
 	}
 }

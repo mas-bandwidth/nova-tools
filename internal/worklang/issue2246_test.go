@@ -8,10 +8,10 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/worklang"
 )
 
-// TestIssue2246 pins docs/SPEC-WORKLANG.md behaviours 7 and 8 the pinned
-// red-first list names but no test has ever proved: the (:derive) sweep and
-// the (:fold) projection both expand into the same Card pass as a hand-written
-// (:node), through the bounded reader the spec already fixes. The fact set is
+// TestIssue2246 pins internal/worklang's plan expansion, which no living verb
+// calls and docs/SPEC-WORKLANG.md does not specify: the (:derive) sweep and the
+// (:fold) projection both expand into the same Card pass as a hand-written
+// (:node), through the bounded reader the spec does fix. The fact set is
 // pinned in code -- 25 open no-PR issues plus one PR-bearing issue, N green
 // sibling branches plus one non-green -- so the test never touches the
 // network and never calls a model; the same facts and the same plan expand

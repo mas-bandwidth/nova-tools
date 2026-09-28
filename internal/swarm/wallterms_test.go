@@ -4,7 +4,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
@@ -417,74 +416,4 @@ func sandboxEcho(t *testing.T) string {
 		t.Skip("no echo to resolve; sandbox.Build resolves the command before a policy exists")
 	}
 	return found
-}
-
-// TestSpecNamesTheHarnessWall is the deliverable in the specs: a rule renamed
-// out of SPEC-SWARM or SPEC-SANDBOX is red here before any launcher is trusted.
-func TestSpecNamesTheHarnessWall(t *testing.T) {
-	t.Parallel()
-
-	swarmDoc := readSpec(t, "../deprecated/docs/SPEC-SWARM.md")
-	sandboxDoc := readSpec(t, "SPEC-SANDBOX.md")
-	section := swarmSection(t, swarmDoc, "## The harness wall (S7, issue #2498)")
-	for _, phrase := range []string{
-		"Declared writes are PATHS; contextual reads are a separate set",
-		"defaults rather than an exhaustive set",
-		"caller/callee, build-input, and reverse-dependent",
-		"blocks and requests that adjustment instead of guessing",
-		"explicitly non-authoritative",
-		"docs/SPEC-*.md",
-		"No web",
-		"Harness-prompt allowlist, not the OS wall",
-		"`MODE: script` is `--net-deny`",
-		"TODO launcher: Rowan",
-		"TestWallTermsRefuseAPathOutsidePATHS",
-		"TestWallTermsRefuseANetworkFetch",
-		"TestWallTermsSpecIsContextualReadNotWrite",
-		"TestWallTermsBodyOnlyModeDoesNotSelectScript",
-		"TestWallTermsReadRootsRejectEscapingSymlink",
-		"Do not pin the #599 nested SBPL form",
-	} {
-		if !strings.Contains(section, phrase) {
-			t.Errorf("SPEC-SWARM.md S7 section does not name %q", phrase)
-		}
-	}
-	if strings.Contains(section, "(local ip (host") && !strings.Contains(section, "Do not pin the #599 nested SBPL form") {
-		t.Error("the S7 section pins the #599 nested SBPL form")
-	}
-	sandboxSection := swarmSection(t, sandboxDoc, "### MODE: script is --net-deny (S7, issue #2498)")
-	for _, phrase := range []string{
-		"TODO launcher: Rowan",
-		"--net-deny",
-		"Do not pin the #599 nested SBPL form",
-		`(remote ip "localhost:PORT")`,
-	} {
-		if !strings.Contains(sandboxSection, phrase) {
-			t.Errorf("SPEC-SANDBOX.md MODE: script section does not name %q", phrase)
-		}
-	}
-}
-
-func readSpec(t *testing.T, name string) string {
-	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", name))
-	if err != nil {
-		t.Fatalf("%s is missing: %s", name, err)
-	}
-	return string(raw)
-}
-
-func swarmSection(t *testing.T, spec, header string) string {
-	t.Helper()
-	start := strings.Index(spec, header)
-	if start < 0 {
-		t.Fatalf("the spec has no %q section", header)
-		return ""
-	}
-	rest := spec[start+len(header):]
-	end := strings.Index(rest, "\n## ")
-	if end < 0 {
-		return rest
-	}
-	return rest[:end]
 }

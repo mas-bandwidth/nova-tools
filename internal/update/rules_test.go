@@ -466,7 +466,7 @@ func TestTheSpecsNamedFixturesLoad(t *testing.T) {
 			}
 		}
 	}
-	// The versions fixture is the spec's own five entries, in its order.
+	// The versions fixture is the spec's own four entries, in its order, then one pin entry.
 	entries, err := Load(strings.NewReader(readFixture(t, "versions.tsv")))
 	if err != nil {
 		t.Fatal(err)
@@ -479,7 +479,7 @@ func TestTheSpecsNamedFixturesLoad(t *testing.T) {
 		{"nova-wake-pin-nova-bus", "pin", "rowan"},
 	}
 	if len(entries) != len(want) {
-		t.Fatalf("the spec prints %d entries, the fixture carries %d", len(want), len(entries))
+		t.Fatalf("the fixture should carry %d entries, it carries %d", len(want), len(entries))
 	}
 	for i, w := range want {
 		if entries[i].Name != w.name || entries[i].Kind != w.kind || entries[i].Owner != w.owner {

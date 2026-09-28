@@ -202,9 +202,9 @@ so the second wait is a real wait:
   nova-bus wait --bus ~/bus --as Ada --receipt-max-words 40 --timeout 25m \
     --advance --remote origin --branch main
 
---quiet-beats is accepted and changes nothing since 2026-09-17 (#328): a change
-that is only beats and cursors -- a lane's BEAT or CURSOR moving, no note --
-never wakes a wait; a beat is not news, exactly as before.
+--quiet-beats is accepted and changes nothing: a change that is only beats
+and cursors -- a lane's BEAT or CURSOR moving, no note -- never wakes a wait;
+a beat is not news.
 
 --until <instant> is an absolute deadline beside --timeout, an RFC 3339 UTC
 instant, and the wait ends at whichever of the two comes first: a caller whose
@@ -2571,7 +2571,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	legacyBefore := f.fs.String("legacy-before", "", "notes dated before this UTC date (YYYY-MM-DD, midnight at its start) or UTC instant (RFC 3339, e.g. 2026-09-09T18:07:00Z) are not carried on your open list, and are counted rather than listed")
 	carryHistory := f.fs.Bool("carry-history", false, "on your FIRST --advance, carry every old note on your open list instead of drawing a switch-day line; does nothing otherwise")
 	diagnostics := f.fs.Bool("diagnostics", false, "name every unreadable file with its reason, even ones already shown; the default collapses unchanged ones to one count line")
-	quietBeats := f.fs.Bool("quiet-beats", false, "accepted for callers that pass it; since #328 (2026-09-17) a change that is only beats and cursors never wakes a wait, with or without this flag; it is not news")
+	quietBeats := f.fs.Bool("quiet-beats", false, "accepted for callers that pass it and changes nothing: a change that is only beats and cursors never wakes a wait, with or without this flag; it is not news")
 	onNote := f.fs.Bool("on-note", false, "wait only for a note addressed to the caller: on arrival exit 0 with the note, and on an empty tick exit 0 with WAIT TIMEOUT and the rearm line; requires --timeout, --bus, --as, --remote and --branch; incompatible with --open and --full")
 	// --max-commits IS HERE BECAUSE THE REMEDY HAS TO BE TYPEABLE AT THE VERB THAT NEEDS IT
 	// (#1518). The since-walk is bounded in inboxListing, which `wait` polls through, so a

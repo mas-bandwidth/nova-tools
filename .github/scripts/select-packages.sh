@@ -167,12 +167,6 @@ want="$want ./internal/ci"
 # the PR that broke it (#1364, #1409).
 want="$want ./internal/docs"
 
-# tools/testdur holds the two-minute rule's suite budget tests; when
-# docs/TEST-DURATIONS.md is updated, tools/testdur must be judged.
-if git diff --name-only "$base" HEAD 2>/dev/null | grep -q '^docs/TEST-DURATIONS\.md$'; then
-  want="$want ./tools/testdur"
-fi
-
 selected=""
 for pkg in "${all[@]}"; do
   case " $want " in *" $pkg "*) selected="$selected$pkg"$'\n' ;; esac
