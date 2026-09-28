@@ -16,7 +16,7 @@
 
 ```bash
 nova-swarm native \
-  --harness /Users/Shared/nova-swarm-stella-20260913/harness-v1.18.20/opencode \
+  --harness /path/to/harness-v1.18.20/opencode \
   --model opencode/deepseek-v4-flash \
   --card cards/card-smoke-ds.md \
   --slot /path/to/root/slot-ds/jobs/card-smoke-ds \
@@ -106,7 +106,7 @@ if [ -z "${INCEPTION_API_KEY:-}" ] && [ -f "$HOME/.config/freddy/env" ]; then
 fi
 
 exec nova-swarm native \
-  --harness /Users/Shared/nova-swarm-stella-20260913/harness-v1.18.20/opencode \
+  --harness /path/to/harness-v1.18.20/opencode \
   --model "$MODEL" \
   --label "$LABEL" \
   --card "$CARD" \
