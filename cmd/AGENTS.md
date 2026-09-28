@@ -14,7 +14,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `nova-memory/` | memory indexing and search CLI | `go test ./cmd/nova-memory` | `go test ./cmd/nova-memory` |
 | `nova-merge/` | batch gate and stream fold CLI | `go test ./cmd/nova-merge` | `go test ./cmd/nova-merge` |
 | `nova-post/` | PR and issue posting CLI | `go test ./cmd/nova-post` | `go test ./cmd/nova-post` |
-| `nova-redis/` | Redis scratch spill/recall CLI | `go test ./cmd/nova-redis` | `go test ./cmd/nova-redis` |
+| `nova-redis/` | Redis instance owner: serve, scratch spill/recall, and fn load/check of the function library | `go test ./cmd/nova-redis` | `go test ./cmd/nova-redis` |
 | `nova-review/` | review packet and verdict CLI | `go test ./cmd/nova-review` | `go test ./cmd/nova-review` |
 | `nova-sandbox/` | OS-level process sandbox CLI | `go test ./cmd/nova-sandbox` | `go test ./cmd/nova-sandbox` |
 | `nova-secrets/` | zero-leak secrets store CLI | `go test ./cmd/nova-secrets` | `go test ./cmd/nova-secrets` |

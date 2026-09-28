@@ -39,7 +39,7 @@ func newHarness(t *testing.T) *harness {
 	h := &harness{mr: mr, clock: clock}
 	h.d = deps{
 		now: clock.now,
-		dial: func(addr, password string) redis.Cmdable {
+		dial: func(addr, password string) redis.UniversalClient {
 			h.dials++
 			c := redis.NewClient(&redis.Options{Addr: addr, Password: password})
 			t.Cleanup(func() { _ = c.Close() })
@@ -74,7 +74,7 @@ func TestAddrRefusedWhenMissingOrEmpty(t *testing.T) {
 	h := newHarness(t)
 	// A regression must fail here, never reach a real host: the seam counts
 	// the dial and hands back a client on the fake whatever address it got.
-	h.d.dial = func(addr, password string) redis.Cmdable {
+	h.d.dial = func(addr, password string) redis.UniversalClient {
 		h.dials++
 		c := redis.NewClient(&redis.Options{Addr: h.mr.Addr()})
 		t.Cleanup(func() { _ = c.Close() })

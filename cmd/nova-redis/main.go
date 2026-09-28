@@ -6,7 +6,8 @@
 // prefix with a required TTL, and `recall` reads it back and refuses a missing
 // or expired key. A write with no owner or no TTL is refused before the
 // instance is dialled, so an unbounded key never reaches Redis (rules 2 and
-// the spill/recall paragraph of the spec; nova-tools #2279).
+// the spill/recall paragraph of the spec; nova-tools #2279). The fn verbs
+// load and check the store's function library (fn.go, over internal/redisfn).
 //
 // Scratch is scratch: nothing spilled is a record, and recall is allowed to
 // miss. Auth comes from the environment (NOVA_REDIS_PASSWORD, which a bench
@@ -25,6 +26,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
@@ -51,6 +53,8 @@ usage:
   nova-redis serve  --bind <addr>[,<addr>...] --port <port> --dir <store-dir>
   nova-redis spill  --addr <host:port> --owner <owner> --name <name> --ttl <duration> --value <text>
   nova-redis recall --addr <host:port> --owner <owner> --name <name>
+  nova-redis fn load  --addr <host:port>
+  nova-redis fn check --addr <host:port>
   nova-redis version
   nova-redis help
 
@@ -60,6 +64,12 @@ refuses a missing owner or a missing, zero or negative TTL (exit 2) and
 writes nothing; an unbounded key is a bug.
 recall exits 1 on a missing or expired key: scratch is allowed to miss.
 Auth is read from NOVA_REDIS_PASSWORD, never from an argument.
+fn load puts the nova_sprint function library this binary embeds on the store
+unless the store holds exactly its code (LOADED, UNCHANGED or REPLACED, with
+its digest; exit 1 on a failure). fn check changes nothing: OK (exit 0),
+STALE or MISSING (exit 1) with the store's digest and this binary's, FAILED
+when the store could not be read (exit 2). fn load is for the one place that
+deploys: it replaces other code under the library's name.
 serve runs redis-server in the foreground, bound only to loopback and tailnet
 addresses (100.64.0.0/10, fd7a:115c:a1e0::/48); --bind has no default and a
 wildcard, public or LAN address is refused (exit 2). The password reaches
@@ -79,7 +89,7 @@ example:
 // clock and the environment. main() passes the real ones; tests pass a fake
 // instance and a controlled clock.
 type deps struct {
-	dial   func(addr, password string) redis.Cmdable
+	dial   func(addr, password string) redis.UniversalClient
 	now    func() time.Time
 	getenv func(string) string
 
@@ -92,7 +102,8 @@ type deps struct {
 
 func realDeps() deps {
 	return deps{
-		dial: func(addr, password string) redis.Cmdable {
+		dial: func(addr, password string) redis.UniversalClient {
+			quietRedisOnce.Do(func() { redis.SetLogger(quietRedis{}) })
 			return redis.NewClient(&redis.Options{Addr: addr, Password: password})
 		},
 		now:      time.Now,
@@ -103,6 +114,15 @@ func realDeps() deps {
 	}
 }
 
+// quietRedis keeps go-redis's own pool log off the output: a verb's failure
+// is its one FAILED line, never library lines ahead of it (nova-table's rule);
+// SetLogger writes a package variable, so once per process.
+type quietRedis struct{}
+
+func (quietRedis) Printf(context.Context, string, ...interface{}) {}
+
+var quietRedisOnce sync.Once
+
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, realDeps())) }
 
 func refuse(stderr io.Writer, where, what string) int {
@@ -112,7 +132,7 @@ func refuse(stderr io.Writer, where, what string) int {
 
 func run(args []string, stdout, stderr io.Writer, d deps) int {
 	if len(args) == 0 {
-		return refuse(stderr, "", "no verb given; serve runs the instance, spill writes scratch, recall reads it")
+		return refuse(stderr, "", "no verb given; serve runs the instance, spill writes scratch, recall reads it, fn loads or checks the function library")
 	}
 	switch args[0] {
 	case "spill":
@@ -121,6 +141,8 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 		return cmdRecall(args[1:], stdout, stderr, d)
 	case "serve":
 		return cmdServe(args[1:], stdout, stderr, d)
+	case "fn":
+		return cmdFn(args[1:], stdout, stderr, d)
 	case "version", "--version":
 		if len(args) > 1 {
 			return refuse(stderr, " version", fmt.Sprintf("takes no arguments, got %d", len(args)-1))

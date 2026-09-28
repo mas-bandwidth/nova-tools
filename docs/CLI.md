@@ -3064,6 +3064,35 @@ nova-config apply --as rowan
 
 **Refusals.** Exit 1 is the store or Redis saying no, one stderr line naming the next step: `machine studio exists; run: nova-config machine set studio ...`, `--store space names no machine row`, `machine studio is the --coordinator of the fleet`, `friend rowan is the --coordinator of the sprint`, `CONFLICT friend: Redis holds rev 9 and this Postgres is at rev 4`, `CEILING studio: friend stella makes the sum 65 over the machine ceiling 64`, `friend stella holds 2 working copies (card:4410,card:4414)`, `friend emma has no beat naming a machine and the fleet names no coordinator machine to charge her slots to`. Exit 2 is an invocation that could not run (a name on a singleton is one).
 
+## nova-redis
+
+```
+nova-redis serve  --bind <addr>[,<addr>...] --port <port> --dir <store-dir>             # run redis-server in the foreground, loopback and tailnet only, AOF on
+nova-redis spill  --addr <host:port> --owner <owner> --name <name> --ttl <d> --value <v> # write scratch under <owner>:<name> with a required TTL
+nova-redis recall --addr <host:port> --owner <owner> --name <name>                       # read it back; exit 1 on a missing or expired key
+nova-redis fn load  --addr <host:port>                                                   # put this binary's function library on the store unless it holds exactly that code
+nova-redis fn check --addr <host:port>                                                   # compare the store's library with this binary's; changes nothing
+```
+
+`nova-redis` owns a Redis instance ([SPEC-REDIS.md](SPEC-REDIS.md)). Auth is read from `NOVA_REDIS_PASSWORD`, never from an argument, and every verb that talks to a store refuses a missing or malformed `--addr` (exit 2) before it dials.
+
+**The function library.** The `fn` verbs handle the `nova_sprint` Redis function library, the Lua that nova-table and nova-config call with `FCALL`. The library is the one this binary embeds (`internal/nsprint/fn`'s `lua/`), and the machinery is `internal/redisfn`. A library's identity is its code as the store holds it, and its digest is the first 16 hex digits of the code's SHA-256.
+
+- `fn load` is the deployer's load (`redisfn.Ensure`). It writes nothing when the store holds exactly this code. Otherwise it sends one `FUNCTION LOAD REPLACE`, so the store holds the whole old library or the whole new one. It prints one line:
+  - `LOADED nova_sprint sha=<d> store=<a>`: the name was free.
+  - `UNCHANGED nova_sprint sha=<d> store=<a>`: nothing was sent after the read.
+  - `REPLACED nova_sprint sha=<d> was=<old> store=<a>`: other code was under the name.
+  
+  A failure is one `FAILED nova_sprint sha=<d> store=<a> err=<...> remedy="..."` line on stderr, exit 1. The error says what was being done, why it failed, and what the store holds after it.
+- `fn check` changes nothing (`redisfn.Check`). Its line is `OK|STALE|MISSING nova_sprint loaded=<d|none> want=<d> store=<a>`:
+  - `OK`: the store holds this binary's code, exit 0.
+  - `STALE`: the store holds other code, exit 1.
+  - `MISSING`: the store holds no library of the name, exit 1.
+  
+  `STALE` and `MISSING` end in the remedy, `nova-redis fn load --addr <a>`. A store that could not be read is a `FAILED` line on stderr, exit 2.
+
+`fn load` replaces, so it belongs to the one place that deploys. Two deployers with different builds replace each other's library for as long as both run (`tla/RedisFn.tla`, `MCRedisFnTwoDeployers`). A tool on its way to an `FCALL` calls `redisfn.LoadMissing`, which never replaces a library (nova-tools #3620). The first run's refusals are in [TESTS.md](TESTS.md#nova-redis).
+
 ## nova-cairn
 
 Keeps explicit session checkpoints, their source pointers and a bounded index.

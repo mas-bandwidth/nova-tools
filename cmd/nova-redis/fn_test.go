@@ -1,0 +1,294 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"slices"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/redis/go-redis/v9"
+
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
+	"github.com/mas-bandwidth/nova-tools/internal/redisfn"
+)
+
+// fnStore is a store that keeps the function libraries it holds, by name,
+// loads as Redis does, and records the commands it was sent (without the
+// code). A method the fn verbs are not meant to call panics on the nil
+// embedded client. The functional test holds the same verbs against a
+// redis-server.
+type fnStore struct {
+	redis.UniversalClient
+
+	mu      sync.Mutex
+	held    map[string]string // library name -> code
+	listErr error             // FUNCTION LIST fails with this when set
+	loadErr error             // FUNCTION LOAD [REPLACE] fails with this when set
+	sent    []string
+	closed  int
+}
+
+func newFnStore() *fnStore { return &fnStore{held: map[string]string{}} }
+
+func (s *fnStore) note(command string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sent = append(s.sent, command)
+}
+
+// take returns the commands sent since the last take.
+func (s *fnStore) take() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sent := s.sent
+	s.sent = nil
+	return sent
+}
+
+func (s *fnStore) FunctionList(ctx context.Context, q redis.FunctionListQuery) *redis.FunctionListCmd {
+	command := "FUNCTION LIST LIBRARYNAME " + q.LibraryNamePattern
+	if q.WithCode {
+		command += " WITHCODE"
+	}
+	s.note(command)
+	cmd := redis.NewFunctionListCmd(ctx, "function", "list")
+	if s.listErr != nil {
+		cmd.SetErr(s.listErr)
+		return cmd
+	}
+	var libs []redis.Library
+	for name, code := range s.held {
+		if strings.EqualFold(name, q.LibraryNamePattern) {
+			lib := redis.Library{Name: name}
+			if q.WithCode {
+				lib.Code = code
+			}
+			libs = append(libs, lib)
+		}
+	}
+	cmd.SetVal(libs)
+	return cmd
+}
+
+func (s *fnStore) FunctionLoadReplace(ctx context.Context, code string) *redis.StringCmd {
+	s.note("FUNCTION LOAD REPLACE")
+	cmd := redis.NewStringCmd(ctx, "function", "load", "replace", code)
+	if s.loadErr != nil {
+		cmd.SetErr(s.loadErr)
+		return cmd
+	}
+	name, _, _ := strings.Cut(strings.TrimPrefix(code, "#!lua name="), "\n")
+	s.held[name] = code
+	cmd.SetVal(name)
+	return cmd
+}
+
+func (s *fnStore) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closed++
+	return nil
+}
+
+// storeReply is an error the store itself replied with.
+type storeReply string
+
+func (e storeReply) Error() string { return string(e) }
+
+func (storeReply) RedisError() {}
+
+// fnHarness runs nova-redis over one fnStore and counts the dials.
+type fnHarness struct {
+	store *fnStore
+	dials int
+	d     deps
+}
+
+func newFnHarness(t *testing.T) *fnHarness {
+	t.Helper()
+	h := &fnHarness{store: newFnStore()}
+	h.d = deps{
+		dial: func(addr, password string) redis.UniversalClient {
+			h.dials++
+			if password != "pw" {
+				t.Errorf("dial got password %q; the fn verbs read %s like every verb", password, PasswordEnv)
+			}
+			return h.store
+		},
+		getenv: func(k string) string {
+			if k == PasswordEnv {
+				return "pw"
+			}
+			return ""
+		},
+	}
+	return h
+}
+
+func (h *fnHarness) run(args ...string) (int, string, string) {
+	var out, errb bytes.Buffer
+	code := run(args, &out, &errb, h.d)
+	return code, out.String(), errb.String()
+}
+
+// want is the digest of the library this binary embeds.
+func want(t *testing.T) string {
+	t.Helper()
+	d, err := library().Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d
+}
+
+// TestFnLibraryIsTheLoadersBytes: the library the fn verbs load is, byte for
+// byte, the source internal/nsprint/fn builds and every earlier loader put on
+// the store, so its digest is the one a deployed store holds.
+func TestFnLibraryIsTheLoadersBytes(t *testing.T) {
+	t.Parallel()
+	source, err := fn.Source()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mine, err := library().Source()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mine != source {
+		t.Fatalf("library().Source() is %d bytes and fn.Source() %d; they must be the same bytes", len(mine), len(source))
+	}
+	if got := want(t); got != fn.Sum(source) {
+		t.Fatalf("digest %s, fn.Sum %s", got, fn.Sum(source))
+	}
+}
+
+// TestFnLoadAndCheckOnAStore walks one store through every state: absent,
+// loaded, loaded again, other code under the name, replaced. Each step's
+// line, exit status and commands sent are what the verb promises.
+func TestFnLoadAndCheckOnAStore(t *testing.T) {
+	t.Parallel()
+	h := newFnHarness(t)
+	sha := want(t)
+	const addr = "127.0.0.1:6399"
+	const list = "FUNCTION LIST LIBRARYNAME nova_sprint WITHCODE"
+	other := "#!lua name=nova_sprint\nredis.register_function('ns_ping', function() return 'PONG' end)\n"
+	remedy := ` remedy="nova-redis fn load --addr 127.0.0.1:6399 puts this binary's library on the store"`
+
+	steps := []struct {
+		name   string
+		before func()
+		args   []string
+		code   int
+		out    string
+		sent   []string
+	}{
+		{"check an empty store", nil, []string{"fn", "check", "--addr", addr}, 1,
+			"MISSING nova_sprint loaded=none want=" + sha + " store=" + addr + remedy + "\n", []string{list}},
+		{"load onto it", nil, []string{"fn", "load", "--addr", addr}, 0,
+			"LOADED nova_sprint sha=" + sha + " store=" + addr + "\n", []string{list, "FUNCTION LOAD REPLACE"}},
+		{"check it", nil, []string{"fn", "check", "--addr", addr}, 0,
+			"OK nova_sprint loaded=" + sha + " want=" + sha + " store=" + addr + "\n", []string{list}},
+		{"load it again", nil, []string{"fn", "load", "--addr", addr}, 0,
+			"UNCHANGED nova_sprint sha=" + sha + " store=" + addr + "\n", []string{list}},
+		{"check other code", func() { h.store.held["nova_sprint"] = other }, []string{"fn", "check", "--addr", addr}, 1,
+			"STALE nova_sprint loaded=" + redisfn.DigestOf(other) + " want=" + sha + " store=" + addr + remedy + "\n", []string{list}},
+		{"replace it", nil, []string{"fn", "load", "--addr", addr}, 0,
+			"REPLACED nova_sprint sha=" + sha + " was=" + redisfn.DigestOf(other) + " store=" + addr + "\n", []string{list, "FUNCTION LOAD REPLACE"}},
+		{"check the replacement", nil, []string{"fn", "check", "--addr", addr}, 0,
+			"OK nova_sprint loaded=" + sha + " want=" + sha + " store=" + addr + "\n", []string{list}},
+	}
+	for i, s := range steps {
+		if s.before != nil {
+			s.before()
+		}
+		code, out, errOut := h.run(s.args...)
+		if code != s.code || out != s.out || errOut != "" {
+			t.Errorf("%s: exit %d stdout %q stderr %q; want exit %d stdout %q and no stderr", s.name, code, out, errOut, s.code, s.out)
+		}
+		if sent := h.store.take(); !slices.Equal(sent, s.sent) {
+			t.Errorf("%s: sent %q, want %q", s.name, sent, s.sent)
+		}
+		if h.store.closed != i+1 {
+			t.Errorf("%s: the client was closed %d times after %d runs", s.name, h.store.closed, i+1)
+		}
+	}
+}
+
+// TestFnFailuresNameTheStateAndTheRemedy: a store that cannot be read, and a
+// load the store refuses, are one FAILED line on stderr that names the
+// operation, the cause, what the store holds and what to do; check exits 2,
+// load exits 1, and nothing is printed on stdout.
+func TestFnFailuresNameTheStateAndTheRemedy(t *testing.T) {
+	t.Parallel()
+	const addr = "127.0.0.1:6399"
+	cases := []struct {
+		name    string
+		setup   func(*fnStore)
+		verb    string
+		code    int
+		inLine  []string
+		notSent string
+	}{
+		{"check, store unreachable", func(s *fnStore) { s.listErr = errors.New("dial tcp 127.0.0.1:6399: connect: connection refused") }, "check", 2,
+			[]string{"FAILED nova_sprint want=", "store=127.0.0.1:6399", "redisfn: check nova_sprint: the store did not answer", "nothing was changed", "remedy=\"check --addr and NOVA_REDIS_PASSWORD"}, ""},
+		{"load, store unreachable", func(s *fnStore) { s.listErr = errors.New("dial tcp 127.0.0.1:6399: connect: connection refused") }, "load", 1,
+			[]string{"FAILED nova_sprint sha=", "redisfn: check nova_sprint: the store did not answer", "nothing was changed", "then nova-redis fn check --addr 127.0.0.1:6399"}, "FUNCTION LOAD REPLACE"},
+		{"load, store refuses the library", func(s *fnStore) {
+			s.loadErr = storeReply("ERR Error compiling function: user_function:3: '=' expected")
+		}, "load", 1,
+			[]string{"FAILED nova_sprint sha=", "redisfn: load nova_sprint: the store refused", "the store holds what it held before", "user_function:3 = "}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			h := newFnHarness(t)
+			c.setup(h.store)
+			code, out, errOut := h.run("fn", c.verb, "--addr", addr)
+			if code != c.code || out != "" {
+				t.Errorf("exit %d stdout %q; want exit %d and no stdout", code, out, c.code)
+			}
+			if strings.Count(errOut, "\n") != 1 {
+				t.Errorf("stderr is %d lines, want one: %q", strings.Count(errOut, "\n"), errOut)
+			}
+			for _, w := range c.inLine {
+				if !strings.Contains(errOut, w) {
+					t.Errorf("stderr %q does not hold %q", errOut, w)
+				}
+			}
+			if c.notSent != "" && slices.Contains(h.store.take(), c.notSent) {
+				t.Errorf("%s was sent after a failed read", c.notSent)
+			}
+		})
+	}
+}
+
+// TestFnRefusesBeforeTheDial: a missing subverb, an unknown one, a missing or
+// malformed --addr and a stray argument are refused (exit 2) and the store is
+// never dialled.
+func TestFnRefusesBeforeTheDial(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		args []string
+		line string
+	}{
+		{[]string{"fn"}, "nova-redis fn: no subverb given; load puts this binary's function library on the store, check compares the store's with it; run: nova-redis help\n"},
+		{[]string{"fn", "deploy", "--addr", "127.0.0.1:6379"}, "nova-redis fn: unknown subverb \"deploy\"; want load or check; run: nova-redis help\n"},
+		{[]string{"fn", "load"}, "nova-redis fn load: --addr is required; refusing to guess; run: nova-redis help\n"},
+		{[]string{"fn", "check", "--addr", "127.0.0.1"}, "nova-redis fn check: --addr \"127.0.0.1\" is not <host:port>; refusing to guess; run: nova-redis help\n"},
+		{[]string{"fn", "check", "--addr", ":6379"}, "nova-redis fn check: --addr \":6379\" names no host; refusing to guess localhost; run: nova-redis help\n"},
+		{[]string{"fn", "load", "--addr", "127.0.0.1:6379", "extra"}, "nova-redis fn load: unexpected argument \"extra\"; run: nova-redis help\n"},
+	}
+	for _, c := range cases {
+		h := newFnHarness(t)
+		code, out, errOut := h.run(c.args...)
+		if code != 2 || out != "" || errOut != c.line {
+			t.Errorf("%q: exit %d stdout %q stderr %q; want exit 2 and %q", c.args, code, out, errOut, c.line)
+		}
+		if h.dials != 0 {
+			t.Errorf("%q: dialled %d times; a refusal comes before the dial", c.args, h.dials)
+		}
+	}
+}
