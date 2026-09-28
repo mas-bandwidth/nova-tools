@@ -1757,8 +1757,8 @@ as does `watch --view <name> --once`. Stored views use active epochs;
 ### Connection and exit codes
 
 Store commands accept `--redis <host:port>` or an absolute Unix socket path;
-otherwise they use `NOVA_SPRINT_REDIS`, `NOVA_REDIS_ADDR`, then the seat address.
-Select a seat with `--seat`, `NOVA_SPRINT_SEAT` or `NOVA_SEAT`. Without a seat,
+otherwise they use `NOVA_REDIS_ADDR`, then the seat address.
+Select a seat with `--seat` or `NOVA_SEAT`. Without a seat,
 `NOVA_SPRINT_REDIS_USER` names the user and `NOVA_SPRINT_REDIS_PASSWORD_ENV` names
 the password variable. Never put a password on the command line. Flags may
 follow positional words; `--` ends flag parsing for literal members such as

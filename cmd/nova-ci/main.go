@@ -76,9 +76,9 @@ usage:
                     --sha <40hex> --run-id <n> --workflow <name>
                     --conclusion success|failure|cancelled [--pr <n>] [--at <rfc3339>]
                       the ci-ok job's run receipt: one ev:github row of the
-                      workflow_run shape, sender runner, the row nova-wake
-                      watch --store blocks on; dialled as the environment's
-                      seat (NOVA_SPRINT_REDIS_USER). One CI RECEIPT line;
+                      workflow_run shape, sender runner; dialled as the
+                      environment's seat (NOVA_SPRINT_REDIS_USER). One CI
+                      RECEIPT line;
                       exit 0 written, 1 the store refused it, 2 usage.
 
 exit codes: 0 inside budget or measured, 2 a CI-SLEEPS line, a CI-SLOW
