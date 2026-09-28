@@ -141,7 +141,9 @@ jobs:
     # gofmt, `go build ./...`, `go vet ./...` and the Windows cross-vet on one
     # runner. Formatting is a property of the source, not of the platform, so
     # gofmt is checked once; build and vet run here on Linux, and their macOS
-    # coverage is the certification tier's `test` job. On a pull_request this is
+    # coverage is test-hosted's `make build` and per-shard `make vet` on
+    # macos-latest (certification's race legs no longer build or vet: they
+    # compile what they test). On a pull_request this is
     # a self-hosted Linux job, guarded so fork code never runs here.
     #
     # THE WINDOWS COMPILE GUARD LIVES HERE, and since 2026-09-18 it is the only

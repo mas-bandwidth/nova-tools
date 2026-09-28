@@ -32,13 +32,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    # TWO operating systems in this job and the third fanned out below. The platforms
-    # genuinely differ -- Windows has no executable bit, so `nocode`'s executable condition
-    # cannot fire there and only the extension and shebang conditions carry it, and the
-    # tests that assert the mode-bit behaviour SKIP on Windows with that reason named, so
-    # the difference is declared rather than silently untested. What changed is where
-    # Windows runs, not whether it does: see test-windows.
+  race-cache:
+    # PRIMES THE RACE CACHE ONCE PER OS, before the sixteen test legs start. Every test leg
+    # restores the `<os>-gorace-` entry, and on a miss every leg builds the same race
+    # dependencies itself: 31-54 s each on ubuntu-latest in run 36377073595, which put two
+    # cold legs over the cap. This job asks for the exact entry without downloading it
+    # (lookup-only) and, only on a miss, builds and saves it, so a cold run's test legs start
+    # warm. On a hit it does nothing else. The paths and key are the test job's, byte for byte.
+    name: race-cache (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -49,15 +50,163 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+      - name: name the Go toolchain's tool-cache directory
+        shell: bash
+        run: echo "GO_TOOL_DIR=${RUNNER_TOOL_CACHE}/go/$(sed -n 's/^go \([0-9.]*\)$/\1/p' go.mod)" >> "$GITHUB_ENV"
+
+      - name: is the race cache entry there
+        id: probe
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          lookup-only: true
+          path: |
+            ${{ runner.os == 'macOS' && '~/Library/Caches/go-build' || '~/.cache/go-build' }}
+            ~/go/pkg/mod
+            ${{ env.GO_TOOL_DIR }}
+          key: ${{ runner.os }}-gorace-${{ hashFiles('go.mod') }}
+
+      - name: restore the nearest race cache entry
+        if: steps.probe.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ${{ runner.os == 'macOS' && '~/Library/Caches/go-build' || '~/.cache/go-build' }}
+            ~/go/pkg/mod
+            ${{ env.GO_TOOL_DIR }}
+          key: ${{ runner.os }}-gorace-${{ hashFiles('go.mod') }}
+          restore-keys: |
+            ${{ runner.os }}-gorace-
+
+      - if: steps.probe.outputs.cache-hit != 'true'
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: build the race-instrumented dependencies
+        if: steps.probe.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          deps=$(go list -deps -test -f '{{if not .Standard}}{{if not .Module.Main}}{{.ImportPath}}{{end}}{{end}}' $(go list ./... | bash .github/scripts/live-packages.sh) | sort -u)
+          echo "$(printf '%s\n' "$deps" | grep -c .) external packages"
+          go build -race $deps
+
+      - name: save the race build cache
+        if: steps.probe.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ${{ runner.os == 'macOS' && '~/Library/Caches/go-build' || '~/.cache/go-build' }}
+            ~/go/pkg/mod
+            ${{ env.GO_TOOL_DIR }}
+          key: ${{ runner.os }}-gorace-${{ hashFiles('go.mod') }}
+
+  test:
+    # THE WHOLE-TREE RACE RUN, on a clean GitHub-hosted image, linux/amd64 and darwin/arm64:
+    # every live package under `go test -race`, full (no -short), and the one place either of
+    # those runs. ci.yml's CL tier runs the same tests without -race (test-race-queue races
+    # internal/redisq only), and its hosted legs run -short.
+    #
+    # SHARDED BY PACKAGE (2026-09-27). Unsharded, this job ran `go build ./...`, `go vet ./...`
+    # and `go test -race ./...` on one runner under the two-minute cap and was cancelled by the
+    # cap on every dev push since the cap landed (27c9ffc66, 2026-09-26): runs 36355661583,
+    # 36356115183, 36357522017, 36357749379 and 36360296846. ubuntu-latest reached the test step
+    # 97-119 s into the job (setup-go 8-10 s, build 52-67 s cold, vet 16-22 s, redis 11-18 s) and
+    # was cancelled in it every time, at most two packages reported; macos-latest reached it at
+    # 78-128 s in three runs and was cancelled in build or vet in the other two.
+    # The last green whole-tree race run (dev push 36137551959, 2026-09-25, 15-minute cap) took
+    # 421 s of test step on ubuntu-latest and 497 s on macos-latest. The cap stays two minutes;
+    # the legs meet it by shard count, with the deal of ci.yml's test-hosted (heavy packages
+    # first, one per shard, then round-robin) over the live packages only (deprecated/PACKAGES:
+    # deprecated packages are never tested).
+    #
+    # THE HEAVY LIST is measured, not named: the per-package times this job's own legs report
+    # (`ok <pkg> <seconds>`), the larger of ubuntu-latest and macos-latest, in the cold run
+    # 36375296705 at 3314df055 plus this change: internal/ci 49.3 s, internal/gh 47.3,
+    # cmd/nova-tokens 46.4, cmd/nova-sandbox 34.2, cmd/nova-self-talk 21.3, internal/update 19.1,
+    # cmd/nova-secrets 16.7, internal/bus 16.6, every other live package under 13 (cmd/nova-bus
+    # 1.2). Eight heavy packages, eight shards: each heavy package has a shard of its own and
+    # the rest are about twelve packages a shard.
+    #
+    # BUILD AND VET ARE NOT HERE ANY MORE. They are ci.yml's: its lint job runs `make build` and
+    # `make vet` on every event (Linux), and its test-hosted legs run `make build` and
+    # `make vet PKGS=<shard>` on ubuntu-latest and macos-latest on every push to dev and main.
+    # Each shard's `go test -race` still compiles every package it tests, so the union of the
+    # shards compiles the whole live tree for both platforms. gofmt stays, on one leg.
+    #
+    # THE RACE BUILD CACHE, the shape of ci.yml's test-hosted (#4482): Go's own cache path per
+    # OS, restored first and SAVED BEFORE THE TESTS, because actions/cache's post-step save
+    # never runs in a job the cap cancels, and this job was never green to save one (setup-go's
+    # own cache logged "Cache is not found" on all ten legs of the runs above). What is saved is the
+    # race-instrumented build of every external module package the live tree's tests import
+    # (139 packages at 82429246b): measured cold on the Studio at -p 4, 18.3 s and 384 MB, then
+    # 0.2 s warm. Every shard builds the same list, so whichever shard saves first saves the
+    # entry every shard needs; the tree's own packages compile per shard in the test step
+    # (the whole live tree's race test binaries, compiled and linked with warm dependencies:
+    # 24.1 s at -p 4 on the Studio, about an eighth of that a shard). The key says `gorace`, so
+    # it is never ci.yml's non-race entry (whose restore prefix is `<os>-go-`, which this key
+    # does not start with).
+    name: test (${{ matrix.os }}, ${{ matrix.shard }})
+    needs: race-cache
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        include:
+          - os: ubuntu-latest
+            shards: 8
+          - os: macos-latest
+            shards: 8
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+      - name: start installing redis-server in the background
+        # The install is 3-45 s of apt or brew on a hosted runner (45 s on ubuntu-latest shard 3
+        # of run 36377703562, the leg's longest step). Started here, it overlaps the cache
+        # restore, the toolchain and the deal; the `install redis-server` step below runs the
+        # same script, which waits on the first one's lock, finds the binary and publishes its
+        # directory to PATH for the steps after it. The runner reaps the process at job end.
+        shell: bash
+        run: nohup bash .github/scripts/install-redis-server.sh > "${RUNNER_TEMP}/redis-install.log" 2>&1 &
+
+      - name: name the Go toolchain's tool-cache directory
+        # The toolchain rides in the race cache entry below. setup-go downloads, extracts and
+        # then copies it into the runner's tool cache: 26-27 s on macos-latest, 16 s of it the
+        # copy (run 36376038363). Restored into the tool cache first, setup-go finds it there
+        # and does neither. The version is go.mod's, which the cache key already hashes.
+        shell: bash
+        run: echo "GO_TOOL_DIR=${RUNNER_TOOL_CACHE}/go/$(sed -n 's/^go \([0-9.]*\)$/\1/p' go.mod)" >> "$GITHUB_ENV"
+
+      - name: restore the race build cache
+        id: gocache
+        if: runner.environment == 'github-hosted'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ${{ runner.os == 'macOS' && '~/Library/Caches/go-build' || '~/.cache/go-build' }}
+            ~/go/pkg/mod
+            ${{ env.GO_TOOL_DIR }}
+          key: ${{ runner.os }}-gorace-${{ hashFiles('go.mod') }}
+          restore-keys: |
+            ${{ runner.os }}-gorace-
+
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
+          # This job manages its cache above and below; setup-go's own saves in a post step,
+          # which a cancelled job never reaches.
+          cache: false
 
       - name: gofmt
         # gofmt -l prints unformatted files and exits 0 either way, so the exit
-        # code is not the product here — the output is. Checked on one runner:
-        # formatting is a property of the source, not of the platform.
-        if: matrix.os == 'ubuntu-latest'
+        # code is not the product here — the output is. Checked on one leg:
+        # formatting is a property of the source, not of the platform or the shard.
+        if: matrix.os == 'ubuntu-latest' && matrix.shard == 1
         shell: bash
         run: |
           # deprecated/ is out of scope of the testing drive (Glenn 2026-09-27); see deprecated/README.md
@@ -68,19 +217,72 @@ jobs:
             exit 1
           fi
 
-      - name: build
-        run: go build ./...
+      - name: deal this shard's packages
+        # ci.yml test-hosted's deal, with this job's measured heavy list (above): the heavy
+        # packages first, one per shard, then every other live package round-robin in go list
+        # order. One line of space-separated packages. internal/ci:
+        # TestCertificationRaceShardsPartitionTheLiveTree (certRaceHeavy).
+        shell: bash
+        run: |
+          heavy="internal/ci internal/gh cmd/nova-tokens cmd/nova-sandbox cmd/nova-self-talk internal/update cmd/nova-secrets internal/bus"
+          deal='
+            BEGIN { h = split(heavy, hv, " ") }
+            {
+              k = 0
+              for (j = 1; j <= h; j++) if ($0 ~ ("/" hv[j] "$")) k = j
+              if (k) s = (k - 1) % n; else { s = (h + r) % n; r++ }
+              if (s == i - 1) print
+            }'
+          pkgs=$(go list ./... | bash .github/scripts/live-packages.sh | awk -v n=${{ matrix.shards }} -v i=${{ matrix.shard }} -v heavy="$heavy" "$deal" | tr '\n' ' ')
+          echo "$pkgs"
+          echo "HOSTED_PKGS=$pkgs" >> "$GITHUB_ENV"
 
-      - name: vet
-        run: go vet ./...
+      - name: fetch origin/dev for the deprecated-imports ratchet
+        # internal/ci's TestDeprecatedImportsAllowlistOnlyShrinksAgainstMergeBase compares the
+        # allowlist against the merge base with refs/remotes/origin/dev and refuses when that
+        # ref is missing. actions/checkout creates it only on a run of dev itself; a dispatch
+        # on a tag, on main or on a branch has no such ref. One commit is enough: with no
+        # shared history in the shallow clone the test compares against HEAD's first parent.
+        if: contains(format(' {0} ', env.HOSTED_PKGS), '/internal/ci ')
+        shell: bash
+        run: git fetch --no-tags --depth=1 origin +dev:refs/remotes/origin/dev
+
+      - name: build the race-instrumented dependencies
+        # Every external package the live tree's tests import, -race, whatever this shard
+        # holds: the same list on every shard, so the entry saved next serves them all.
+        shell: bash
+        run: |
+          set -euo pipefail
+          deps=$(go list -deps -test -f '{{if not .Standard}}{{if not .Module.Main}}{{.ImportPath}}{{end}}{{end}}' $(go list ./... | bash .github/scripts/live-packages.sh) | sort -u)
+          echo "$(printf '%s\n' "$deps" | grep -c .) external packages"
+          go build -race $deps
+
+      - name: save the race build cache
+        # On a miss or a restore-keys fallback only: an exact hit is already the entry. Shards
+        # race for the key; the first reserves it and the rest log a warning and go on.
+        if: runner.environment == 'github-hosted' && steps.gocache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ${{ runner.os == 'macOS' && '~/Library/Caches/go-build' || '~/.cache/go-build' }}
+            ~/go/pkg/mod
+            ${{ env.GO_TOOL_DIR }}
+          key: ${{ steps.gocache.outputs.cache-primary-key }}
 
       - name: install redis-server
         # #3113. This job is the hosted full suite, ubuntu-latest and
         # macos-latest. The controls spawn redis-server; they do not dial a bench.
-        run: bash .github/scripts/install-redis-server.sh
+        # Finishes (or waits on) the background install started at the top of the job.
+        shell: bash
+        run: |
+          bash .github/scripts/install-redis-server.sh || { cat "${RUNNER_TEMP}/redis-install.log"; exit 1; }
 
-      - name: test
-        run: go test -race ./...
+      - name: test (shard ${{ matrix.shard }} of ${{ matrix.shards }})
+        # -count=1: the restored cache must never answer for a test. -timeout 75s: this step
+        # starts 35-50 s into the job, so a package still running at 75 s would be cancelled
+        # by the cap anyway; Go's timeout fires first and names the test with a stack.
+        shell: bash
+        run: go test -race -count=1 -timeout 75s $HOSTED_PKGS
 
   smoke:
     needs: release-dry-run
@@ -124,11 +326,11 @@ jobs:
         with:
           fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
 
-      - name: download the cross-built binaries
+      - name: download this runner's platform from the release build
         id: download
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: cross-built-binaries
+          name: ${{ startsWith(matrix.os, 'ubuntu') && 'release-linux-amd64' || startsWith(matrix.os, 'macos') && 'release-darwin-arm64' || 'release-windows-amd64' }}
           path: dist
 
       - name: take this runner's shipped binary
@@ -143,13 +345,14 @@ jobs:
         run: |
           set -euo pipefail
           case "${{ matrix.os }}" in
-            ubuntu-latest)  target=linux-amd64 ;;
-            macos-latest)   target=darwin-arm64 ;;
-            windows-latest) target=windows-amd64 ;;
+            ubuntu-latest)  target=linux_amd64 ;;
+            macos-latest)   target=darwin_arm64 ;;
+            windows-latest) target=windows_amd64 ;;
             *) echo "no shipped target mapped for ${{ matrix.os }}"; exit 1 ;;
           esac
-          src="dist/$target/nova-check"
-          [ "$target" = "windows-amd64" ] && src="$src.exe"
+          # The release name, <tool>_<stamp>_<goos>_<goarch>[.exe] (release-build.sh).
+          src="dist/nova-check_v0.0.0-dry-run_$target"
+          [ "$target" = "windows_amd64" ] && src="$src.exe"
           [ -f "$src" ] || { echo "$src is not in the artifact: ls -R dist"; ls -R dist; exit 1; }
           mkdir -p "$(dirname "$BIN")"
           cp "$src" "$BIN"
@@ -361,31 +564,46 @@ jobs:
           done
           [ "$bad" -eq 0 ] || { echo "$bad smoke assertion(s) failed"; exit 1; }
 
-  release-dry-run:
-    # The cross-build in .github/workflows/release.yml, run on every certification with
-    # nothing uploaded. It exists because that workflow's first run is triggered by a TAG,
-    # and a tag is the one thing in this repository that cannot be quietly amended: a
-    # target that stopped compiling would be found by the release itself, with the tag
-    # already pushed and half a set of binaries built. Here it is a red run before a
-    # release, not after a tag.
+  release-build:
+    # THE RELEASE BUILD, run on every certification with nothing attached to a release. It
+    # exists because release.yml's first run is triggered by a TAG, and a tag is the one thing
+    # in this repository that cannot be quietly amended: a target that stopped compiling would
+    # be found by the release itself, with the tag already pushed. Here it is a red run
+    # before a release, not after a tag.
     #
-    # The target list is duplicated from release.yml on purpose -- a workflow cannot read
-    # another workflow's matrix -- so a platform added or dropped there belongs here in the
-    # same commit, and this job is worth nothing the moment the two lists disagree.
+    # THE SAME BUILD AS release.yml's `build` job, step for step: one leg per shipped
+    # platform, each running .github/scripts/release-build.sh (every cmd/*/ tool, -trimpath,
+    # CGO_ENABLED=0, the ldflags release-ldflags.sh composes) and uploading its binaries as
+    # the artifact `release-<goos>-<goarch>`. The matrix is the list in
+    # .github/scripts/release-targets, written out because a matrix cannot read a file;
+    # internal/ci's TestReleaseMatricesAreTheTargetsFile holds this matrix, release.yml's
+    # and the file equal. The one difference from the release is the stamp, v0.0.0-dry-run.
     #
-    # One runner and a loop rather than a matrix of five, because Go cross-compiles from
-    # any host: five runners would each pay a checkout and a toolchain setup to save a few
-    # seconds of compiling. Build only, no tests -- the test job above is the tests, and
-    # this job's whole question is whether the compiler can reach each target.
+    # ONE LEG PER PLATFORM, in parallel, under the two-minute cap. One runner cross-building
+    # all five platforms cold was cancelled by the cap inside the build (run 36357749379,
+    # about 146 s into the step). A leg compiles one platform: 45 s of CPU for the fifteen
+    # tools and their dependencies cold on the Studio, 1.2 s warm.
     #
-    # Every action in this file is pinned by SHA. A mutable tag cannot change the
-    # action implementation underneath a previously reviewed workflow.
+    # THE GO BUILD CACHE, per platform, restored first and SAVED right after the build,
+    # before the upload, for the reason the test job gives: a post-step save never runs in a
+    # job the cap cancels. The key is the platform and go.mod/go.sum, so the entry holds the
+    # standard library and every module package compiled for that platform, and the tree's
+    # own packages compile in the leg. release-checks restores the linux-amd64 entry.
+    #
+    # Every action in this file is pinned by SHA. A mutable tag cannot change the action
+    # implementation underneath a previously reviewed workflow.
+    name: release-build (${{ matrix.goos }}, ${{ matrix.goarch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {goos: linux, goarch: amd64}
+          - {goos: linux, goarch: arm64}
+          - {goos: darwin, goarch: arm64}
+          - {goos: darwin, goarch: amd64}
+          - {goos: windows, goarch: amd64}
     runs-on: ubuntu-latest
     timeout-minutes: 2
-    env:
-      # -trimpath here for the same reason the release passes it: build the way the shipped
-      # artifact is built, or this job is checking a configuration nobody ships.
-      GOFLAGS: -trimpath
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -393,22 +611,114 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
+          # This job manages its cache below; setup-go's own saves in a post step.
+          cache: false
 
-      - name: every shipped tool compiles for every shipped platform
+      - name: restore the release build cache
+        id: gocache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: release-${{ matrix.goos }}-${{ matrix.goarch }}-${{ hashFiles('go.mod', 'go.sum') }}
+          restore-keys: |
+            release-${{ matrix.goos }}-${{ matrix.goarch }}-
+
+      - name: every shipped tool compiles for ${{ matrix.goos }}/${{ matrix.goarch }}
+        shell: bash
+        run: .github/scripts/release-build.sh v0.0.0-dry-run "${{ matrix.goos }}" "${{ matrix.goarch }}" dist
+
+      - name: save the release build cache
+        # On a miss or a restore-keys fallback only: an exact hit is already the entry.
+        if: steps.gocache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ steps.gocache.outputs.cache-primary-key }}
+
+      - name: upload this platform's binaries
+        # So that release-dry-run sums the set this would ship and the smoke job runs THE
+        # BINARY THIS WOULD SHIP rather than one it builds itself with different flags.
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/
+          retention-days: 1
+          if-no-files-found: error
+
+  release-dry-run:
+    # release.yml's final job over the dry-run set, on one machine: every platform's
+    # artifact downloaded into one directory, every linux/amd64 binary asked for the stamp it
+    # was built from (.github/scripts/assert-version-stamp.sh, the runner is linux/amd64),
+    # then .github/scripts/release-sums.sh, which refuses a directory that is not exactly the
+    # shipped set (every cmd/*/ tool for every platform in release-targets, nothing else) and
+    # writes and verifies SHA256SUMS over the whole of it. The release runs the same two
+    # scripts in the same order before it attaches the set. No toolchain: nothing is built
+    # here, so nothing here can paper over a leg that did not build.
+    needs: release-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+
+      - name: download every platform's binaries into one directory
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+
+      - name: every shipped binary reports the tag it was built from
         shell: bash
         run: |
           set -euo pipefail
-          # One directory PER TARGET, where an earlier revision built every target over the
-          # top of the last one in a single mktemp dir. The compile was the whole product
-          # then; now the binaries are the product too -- the smoke job below runs them --
-          # and five targets sharing one path means four of them are deleted by the fifth.
-          for target in "linux amd64" "linux arm64" "darwin arm64" "darwin amd64" "windows amd64"; do
-            set -- $target
-            GOOS="$1" GOARCH="$2" CGO_ENABLED=0 go build -o "dist/$1-$2/" ./cmd/...
-            echo "ok $1/$2"
-          done
-          ls -R dist
+          # An artifact does not keep the executable bit.
+          chmod +x dist/*_v0.0.0-dry-run_linux_amd64
+          .github/scripts/assert-version-stamp.sh v0.0.0-dry-run "dist/%s_v0.0.0-dry-run_linux_amd64"
 
+      - name: SHA256SUMS over the whole shipped set
+        shell: bash
+        run: .github/scripts/release-sums.sh v0.0.0-dry-run dist
+
+  release-checks:
+    # THE NEGATIVE CONTROLS OF THE RELEASE SCRIPTS: the stamp refusals, a tool that loses its
+    # stamp, the tag alphabet, the certified gate and the draft/publication boundary. A tag
+    # is the one thing here that cannot be quietly amended, so each refusal release.yml
+    # relies on is seen to fire here, on every certification, rather than first on a tag.
+    #
+    # The fixtures build the tools for this runner, linux/amd64, with the release's
+    # -trimpath and CGO_ENABLED=0, so the compiles are the ones release-build's linux-amd64
+    # leg saved to its cache; it needs that leg for the entry, and each fixture build here is
+    # a link. The binaries built here are fixtures and are never shipped or summed.
+    needs: release-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    env:
+      GOFLAGS: -trimpath
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: restore the linux-amd64 release build cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: release-linux-amd64-${{ hashFiles('go.mod', 'go.sum') }}
+          restore-keys: |
+            release-linux-amd64-
       - name: the release stamp refuses a missing ldflag, and the assertion catches it
         shell: bash
         run: |
@@ -924,19 +1234,6 @@ jobs:
             *) echo "the 403 was treated as a decision rather than a refusal: $out"; exit 1 ;;
           esac
 
-      - name: upload the cross-built binaries
-        # So that the smoke job runs THE BINARY THIS WOULD SHIP rather than one it builds
-        # itself with different flags. The job above already builds with -trimpath and
-        # CGO_ENABLED=0 for the reason stated at the top of it -- build the way the shipped
-        # artifact is built, or the check is checking a configuration nobody ships -- and a
-        # smoke job compiling its own copy was quietly exempt from that.
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: cross-built-binaries
-          path: dist/
-          retention-days: 1
-          if-no-files-found: error
-
   perf:
     # THE WALL CLOCK, nightly, because a wall clock is not a per-commit test.
     #
@@ -960,9 +1257,18 @@ jobs:
     # It is NOT gated on the test job. A red perf job is a thing to go and read in the
     # morning, and making it wait on three operating systems' worth of tests would mean a
     # night where an unrelated flake means no perf evidence at all.
+    #
+    # THE PERF TESTS ONLY, discovered, never named. This job used to run every test of `./...`
+    # under the tag one at a time (`-p 1 -parallel 1`); green in 175 s (36303146135) and 644 s
+    # (36137551959), then cancelled by the two-minute cap on every run, still inside
+    # cmd/nova-bus. Every other test in that run is run by the test job above and by ci.yml;
+    # what only this job runs is the tests the `perf` tag adds. So the job finds them: the live
+    # packages holding a file whose build constraint names `perf`, and in each, the tests
+    # `go test -tags perf -list` names and `go test -list` does not. A perf test added in any
+    # live package tomorrow is in that difference without anyone editing this file, and a test
+    # that is not behind the tag is not re-run here. Today that is the two tests of
+    # cmd/nova-bus/timing_test.go, 8.3 s together on the Studio.
     runs-on: ubuntu-latest
-    # Thirty rather than twenty: `-p 1 -parallel 1` over every package is the whole suite
-    # run one test at a time, which is the point and is not fast.
     timeout-minutes: 2
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -971,46 +1277,80 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
+          # This job manages its cache below; setup-go's own saves in a post step.
+          cache: false
+
+      - name: restore the perf build cache
+        id: gocache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: perf-${{ hashFiles('go.mod', 'go.sum') }}
+          restore-keys: |
+            perf-
+
+      - name: find the perf-tagged tests
+        # Writes `<import path> <run regexp>`, one line per package, to $RUNNER_TEMP/perf-runs.
+        # A perf-tagged package with no test behind the tag is reported and skipped; a tree
+        # with no perf-tagged test at all is red, because then this job asserts nothing.
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > "${RUNNER_TEMP}/perf-runs"
+          go list -tags perf -f '{{.ImportPath}} {{.Dir}}' ./... > "${RUNNER_TEMP}/perf-list"
+          while read -r pkg dir; do
+            grep -lqE '^//go:build .*\bperf\b' "$dir"/*.go 2>/dev/null || continue
+            [ -n "$(echo "$pkg" | bash .github/scripts/live-packages.sh)" ] || continue
+            extra=$(comm -13 \
+              <(go test -list . "$pkg" | grep -E '^(Test|Benchmark|Example|Fuzz)' | LC_ALL=C sort) \
+              <(go test -tags perf -list . "$pkg" | grep -E '^(Test|Benchmark|Example|Fuzz)' | LC_ALL=C sort))
+            if [ -z "$extra" ]; then
+              echo "$pkg carries a perf constraint and no test behind it"
+              continue
+            fi
+            echo "$pkg: $(echo $extra)"
+            echo "$pkg ^($(echo $extra | tr ' ' '|'))\$" >> "${RUNNER_TEMP}/perf-runs"
+          done < "${RUNNER_TEMP}/perf-list"
+          [ -s "${RUNNER_TEMP}/perf-runs" ] || { echo "no live package holds a perf-tagged test: this job would assert nothing"; exit 1; }
+          echo "PERF_PKGS=$(cut -d' ' -f1 "${RUNNER_TEMP}/perf-runs" | tr '\n' ' ')" >> "$GITHUB_ENV"
 
       - name: vet the perf-tagged tests
-        # `go vet ./...` in the test job cannot see a file behind a build tag, so the one
-        # place this file is compiled at all is here. Vet before test, so a perf file that
+        # `go vet` without the tag cannot see a file behind it, so the one place a perf file is
+        # vetted is here: every package that holds one. Vet before test, so a perf file that
         # stopped compiling says that rather than failing as a bound.
-        run: go vet -tags perf ./...
+        run: go vet -tags perf $PERF_PKGS
+
+      - name: save the perf build cache
+        # On a miss or a restore-keys fallback only; before the tests, for the reason the test
+        # job gives.
+        if: steps.gocache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ steps.gocache.outputs.cache-primary-key }}
 
       - name: install redis-server
-        # #3113. This step runs the whole suite, so a nova-sprint control must
-        # have redis-server or NOVA_CI fails it. The binary is not the fleet store.
+        # #3113: NOVA_CI fails a control that wants redis-server and cannot find it. The
+        # binary is not the fleet store.
         run: bash .github/scripts/install-redis-server.sh
 
       - name: the wall-clock tests, one at a time
-        # EVERY PACKAGE `./...` REACHES, under the tag -- not a -run naming one test and not
-        # one package named here. This step used to name
-        # TestEveryVerbIsUnderASecondOnTenThousandNotes, and the second wall-clock test
-        # added in the same pull request -- TestAWaitPollsMoreThanOnceBeforeItsDeadline --
-        # therefore ran NOWHERE: behind a tag the per-commit jobs do not build, and behind a
-        # -run the nightly did not match. A list of test names in a workflow is a list that
-        # goes stale silently, and so is a list of packages: the TAG decides what is extra,
-        # and `./...` decides where it may live.
+        # `-p 1 -parallel 1` because these are wall clocks: a bound in seconds measured while
+        # siblings spawn git processes measures the siblings. One at a time on an otherwise
+        # idle runner is the condition the numbers in timing_test.go were written against.
         #
-        # THE SCOPE IS `./...` AND NOT "WHEREVER IT LIVES", which is the honest version of a
-        # sentence this file carried for three commits. `./...` is this module's packages:
-        # it does not descend into a nested module and it does not reach a package under a
-        # testdata directory, both of which the go command excludes by design. A perf-tagged
-        # test in either of those places would run nowhere and nothing here would say so.
-        # There is no such package today; if one is ever added, this line is what has to
-        # change, and this paragraph is why.
-        #
-        # `-p 1 -parallel 1` because these are wall clocks. The packages now run their tests
-        # in parallel, and a bound in seconds measured while twelve siblings are spawning
-        # git processes measures the siblings. One at a time on an idle nightly runner is
-        # the condition the numbers in timing_test.go were written against.
-        #
-        # `-timeout 25m` under the job's 30: a serial run of the whole suite that gets stuck
-        # should fail as a TEST timeout, which names the test it was in and dumps every
-        # goroutine, rather than as a job cancellation, which names nothing. The gap is five
-        # minutes so the panic has room to print.
-        run: go test -tags perf -count=1 -v -p 1 -parallel 1 -timeout 25m ./...
+        # `-timeout 60s`: a perf test that gets stuck fails as a TEST timeout, which names the
+        # test and dumps every goroutine, before the job cap cancels it naming nothing.
+        shell: bash
+        run: |
+          set -euo pipefail
+          while read -r pkg run; do
+            go test -tags perf -count=1 -v -p 1 -parallel 1 -timeout 60s -run "$run" "$pkg"
+          done < "${RUNNER_TEMP}/perf-runs"
 
   certification-ok:
     # THE ONE CHECK THAT SAYS A RELEASE IS READY, and the reason it exists rather than a
@@ -1019,7 +1359,7 @@ jobs:
     # succeeded, so a leg renamed out of existence shows up here as a missing success and
     # not as silence. A red certification is a blocker for the next release, never for a
     # CL, whose gate is ci-ok in ci.yml.
-    needs: [test, smoke, release-dry-run, perf]
+    needs: [race-cache, test, smoke, release-build, release-dry-run, release-checks, perf]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -1030,9 +1370,12 @@ jobs:
           set -uo pipefail
           bad=0
           for pair in \
+            "race-cache:${{ needs.race-cache.result }}" \
             "test:${{ needs.test.result }}" \
             "smoke:${{ needs.smoke.result }}" \
+            "release-build:${{ needs.release-build.result }}" \
             "release-dry-run:${{ needs.release-dry-run.result }}" \
+            "release-checks:${{ needs.release-checks.result }}" \
             "perf:${{ needs.perf.result }}"
           do
             job="${pair%:*}"; result="${pair##*:}"
