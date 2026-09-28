@@ -71,4 +71,3 @@ func TestUmaskGroupWritableHonored(t *testing.T) {
 		t.Fatalf("subprocess failed: %v\n%s", err, string(out))
 	}
 }
-
