@@ -2093,8 +2093,9 @@ second parent must be dev's: `git merge-base --is-ancestor <second-parent>
 refs/remotes/origin/dev` must hold, which dev's non-fast-forward rule keeps
 true for every promotion, and `origin/dev` is read for that confirmation
 only, never as the history, so the verdict for one main sha never changes as
-dev advances; a second parent outside dev's history (a branch merged into
-main) excuses nothing and is a finding of its own. What is not excused is a
+dev advances; a second parent outside dev's history, or one `origin/dev`
+cannot vouch for here (stale, or shallow), excuses nothing and is a finding
+of its own naming the fetch. What is not excused is a
 finding as everywhere: a file main alone had and the merge lost, since dev
 never deleted it. And the merge's own change is checked against the
 second parent: every guarded path dev's tip has and HEAD lacks is a finding
@@ -2141,8 +2142,11 @@ against its own (the same events on dev, a pull request's merge ref, a
 merge-queue group, a local run off main or detached);
 `TestExcuseDevDeletionsReadsHistoryAndDevTree` pins the filter; and
 `TestMainRunSeesWhatMainAloneHad`, `TestMainRunExcusesOnlyWhatDevDeleted`,
-`TestMainRunHoldsItsTreeControls`, `TestMainRunExcusesOnlyDevsHistory` and
-`TestMainRunFailsClosedOnAShallowAncestry` are the witnesses over a
+`TestMainRunHoldsItsTreeControls`, `TestMainRunExcusesOnlyDevsHistory`,
+`TestMainRunFailsClosedOnAShallowAncestry` and
+`TestMainRunNamesTheFetchWhenDevHasMovedOn` (a depth-2 checkout whose
+`origin/dev` has moved past the second parent is red naming the fetch, and
+green after it) are the witnesses over a
 repository they build once per package (a base with the ledger; main
 adds a file of its own; dev deletes one file with a row, deletes another and
 restores it, trims the rows, adds a file): the merge whose tree is dev's is
@@ -2189,6 +2193,8 @@ everywhere, red for all dev deleted since the last promotion, so the
 promotion lands as a merge commit. A push to dev by a bypass actor is never
 gated by a required check, so what it deletes enters dev's history without
 this rule having run on it, and a main run excuses it all the same.
+`origin/dev` is trusted to be dev's; the workflow's own fetch
+(`+dev:refs/remotes/origin/dev`) makes it so.
 
 ## How the class tests read the tree: one walk, one parse, in parallel
 

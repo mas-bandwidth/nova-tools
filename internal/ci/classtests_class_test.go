@@ -135,18 +135,19 @@ func readCommitDeletions(root, commit, event, ref, branch string) (*mergeDeletio
 		m.Incomplete = fmt.Sprintf("%s (%s): %s is a main run at a merge commit, but the second parent %s is not in this checkout, so what dev's history deleted cannot be excused and the merge's own change cannot be read: every workflow checks out with fetch-depth: 2, then `%s`", head, subject, where, second[:9], devHistoryFetch)
 		return m, "NOTE: " + where + " is a main run at a merge commit whose second parent is not in this checkout: the first-parent comparison ran, and the missing history is a finding", nil
 	}
-	// Control 4: only dev's history excuses. The second parent must be in
-	// refs/remotes/origin/dev's ancestry, which dev's non-fast-forward rule
-	// keeps true for every promotion; a branch merged into main is not dev,
-	// and declares what it deletes like any change.
-	if _, err := gitOut(root, "rev-parse", "--verify", "-q", "refs/remotes/origin/dev^{commit}"); err != nil {
-		m.Incomplete = fmt.Sprintf("%s (%s): %s is a main run at a merge commit, but refs/remotes/origin/dev is not in this checkout, so the second parent %s cannot be confirmed as dev's history and nothing is excused: fetch dev for a main run, `%s`", head, subject, where, second[:9], devHistoryFetch)
-	} else if _, err := gitOut(root, "merge-base", "--is-ancestor", second, "refs/remotes/origin/dev"); err != nil {
-		m.Incomplete = fmt.Sprintf("%s (%s): %s is a main run at a merge commit, but the second parent %s is not in dev's history (refs/remotes/origin/dev), so nothing is excused: only a promotion of dev is excused on main, and a branch merged into main declares what it deletes like any change", head, subject, where, second[:9])
+	// The history must be readable, then it must be dev's. In this order,
+	// so a shallow checkout gets the line naming the fetch: origin/dev
+	// present; the second parent's ancestry complete; origin/dev's ancestry
+	// complete; the second parent an ancestor of origin/dev (control 4: only
+	// dev's history excuses, which dev's non-fast-forward rule keeps true for
+	// every promotion; a branch merged into main is not dev, and declares
+	// what it deletes like any change); a merge base for the range.
+	const devRef = "refs/remotes/origin/dev"
+	devTip, devErr := gitOut(root, "rev-parse", "--verify", "-q", devRef+"^{commit}")
+	devTip = strings.TrimSpace(devTip)
+	if devErr != nil {
+		m.Incomplete = fmt.Sprintf("%s (%s): %s is a main run at a merge commit, but %s is not in this checkout, so the second parent %s cannot be confirmed as dev's history and nothing is excused: fetch dev for a main run, `%s`", head, subject, where, devRef, second[:9], devHistoryFetch)
 	}
-	var history, tree map[string]bool
-	var excused, excusedRows int
-	var since string
 	if m.Incomplete == "" {
 		graft, err := shallowCut(root, second)
 		if err != nil {
@@ -154,7 +155,27 @@ func readCommitDeletions(root, commit, event, ref, branch string) (*mergeDeletio
 		}
 		if graft != "" {
 			m.Incomplete = fmt.Sprintf("%s (%s): %s is a main run at a merge commit, but the second parent %s's ancestry is cut by a shallow graft at %s in this checkout, so what dev's history deleted cannot be excused: fetch dev's full ancestry for a main run, `%s`", head, subject, where, second[:9], graft[:9], devHistoryFetch)
-		} else if mb, err := gitOut(root, "merge-base", parents[0], second); err != nil {
+		}
+	}
+	if m.Incomplete == "" {
+		graft, err := shallowCut(root, devRef)
+		if err != nil {
+			return nil, "", err
+		}
+		if graft != "" {
+			m.Incomplete = fmt.Sprintf("%s (%s): %s is a main run at a merge commit, but %s (%s)'s ancestry is cut by a shallow graft at %s in this checkout, so it cannot vouch for the second parent %s and nothing is excused: fetch dev's full ancestry for a main run, `%s`", head, subject, where, devRef, devTip[:9], graft[:9], second[:9], devHistoryFetch)
+		}
+	}
+	if m.Incomplete == "" {
+		if _, err := gitOut(root, "merge-base", "--is-ancestor", second, devRef); err != nil {
+			m.Incomplete = fmt.Sprintf("%s (%s): %s is a main run at a merge commit, but the second parent %s is not an ancestor of %s (%s) in this checkout: a branch merged into main, or origin/dev stale or shallow here; only a promotion of dev is excused on main; fetch dev for a main run, `%s`", head, subject, where, second[:9], devRef, devTip[:9], devHistoryFetch)
+		}
+	}
+	var history, tree map[string]bool
+	var excused, excusedRows int
+	var since string
+	if m.Incomplete == "" {
+		if mb, err := gitOut(root, "merge-base", parents[0], second); err != nil {
 			m.Incomplete = fmt.Sprintf("%s (%s): %s is a main run at a merge commit, but the parents %s and %s have no merge base in this checkout, so dev's history since the last promotion cannot be read and nothing is excused: `%s`", head, subject, where, parents[0][:9], second[:9], devHistoryFetch)
 		} else {
 			// The excusing history is dev since the last promotion,
@@ -898,7 +919,8 @@ func TestMainRunExcusesOnlyDevsHistory(t *testing.T) {
 	featureMerge := r.git("commit-tree", r.git("write-tree"), "-p", r.mainTip, "-p", feature, "-m", "feature merged into main")
 	got, note := r.run(featureMerge, "push", "refs/heads/main", "")
 	all := strings.Join(got, "\n")
-	if len(got) != 2 || !strings.Contains(all, "deletes keep_test.go,") || !strings.Contains(all, "second parent "+feature[:9]+" is not in dev's history") || !strings.Contains(note, "could not be read") {
+	if len(got) != 2 || !strings.Contains(all, "deletes keep_test.go,") || !strings.Contains(all, "second parent "+feature[:9]+" is not an ancestor of refs/remotes/origin/dev ("+r.devTip[:9]+")") ||
+		!strings.Contains(all, devHistoryFetch) || !strings.Contains(note, "could not be read") {
 		t.Errorf("control 4, a feature branch merged into main: findings = %q, note = %q; want keep_test.go red and the second parent outside dev's history", got, note)
 	}
 }
@@ -927,6 +949,47 @@ func TestMainRunFailsClosedOnAShallowAncestry(t *testing.T) {
 	if len(got) != 3 || !strings.Contains(all, "deletes gone_test.go,") || !strings.Contains(all, "deletes x_test.go,") ||
 		!strings.Contains(all, "ancestry is cut by a shallow graft at") || !strings.Contains(all, devHistoryFetch) || !strings.Contains(note, "could not be read") {
 		t.Errorf("shallow ancestry: findings = %q, note = %q; want the ordinary two and the shallow history, naming the graft and the fetch", got, note)
+	}
+}
+
+// TestMainRunNamesTheFetchWhenDevHasMovedOn is the real CI shape before the
+// fetch step, or when it was skipped: a depth-2 checkout of the landed
+// promotion whose origin/dev has advanced one commit past the second parent.
+// The second parent is still dev's, but the shallow checkout cannot show it;
+// the finding names the fetch, never a branch merged into main. After the
+// guarded fetch (dev's full ancestry, origin/dev at dev's tip) the promotion
+// passes.
+func TestMainRunNamesTheFetchWhenDevHasMovedOn(t *testing.T) {
+	t.Parallel()
+	r := sharedPromotionRepo(t)
+	promotion := r.merge("promotion", r.promotion)
+	devNext := r.git("commit-tree", r.devTip+"^{tree}", "-p", r.devTip, "-m", "dev moves on")
+	r.git("update-ref", "refs/heads/witness-moved-promotion", promotion)
+	r.git("update-ref", "refs/heads/witness-moved-dev", devNext)
+	shallow := filepath.Join(t.TempDir(), "shallow")
+	r.git("clone", "-q", "--depth", "2", "--no-single-branch", "--branch", "witness-moved-promotion", "file://"+r.root, shallow)
+	c := &scratchRepo{t: t, root: shallow}
+	c.git("update-ref", "refs/remotes/origin/dev", devNext)
+
+	m, note, err := readMergeDeletionsFor(shallow, "push", "refs/heads/main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := m.findings()
+	all := strings.Join(got, "\n")
+	if len(got) != 2 || !strings.Contains(all, "deletes gone_test.go,") || !strings.Contains(all, devHistoryFetch) || strings.Contains(all, "branch merged into main") || !strings.Contains(note, "could not be read") {
+		t.Errorf("shallow checkout, origin/dev moved on: findings = %q, note = %q; want gone_test.go unexcused and the shallow history naming the fetch", got, note)
+	}
+
+	// The guarded fetch, as the workflow step runs it (the source's dev is
+	// the moved-on branch here; no blob filter over a file:// remote).
+	c.git("fetch", "-q", "--no-tags", "--unshallow", "origin", "+witness-moved-dev:refs/remotes/origin/dev")
+	m, note, err = readMergeDeletionsFor(shallow, "push", "refs/heads/main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.findings(); len(got) != 0 || !strings.Contains(note, "excused 1 guarded deletions") {
+		t.Errorf("after the fetch: findings = %q, note = %q; want none, gone_test.go excused", got, note)
 	}
 }
 
