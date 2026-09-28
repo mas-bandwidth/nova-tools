@@ -8,3 +8,7 @@
 internal/secrets/seal.go:sealDecrypt
 internal/secrets/seal.go:sealEncrypt
 internal/secrets/sops.go:DecryptFile
+internal/tablemodel/redis.go:StartServer
+internal/tablemodel/replay.go:runHarness
+internal/tablemodel/steps.go:RunSteps
+internal/tlc/suite.go:RunSuite

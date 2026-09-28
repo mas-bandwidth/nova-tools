@@ -23,5 +23,5 @@ make map            # regenerate AGENTS.md and per-directory maps
 | `profiles/` | the darwin sandbox profile template internal/sandbox embeds, and its check script | `go test ./internal/sandbox` | `go test ./internal/sandbox` |
 | `scripts/` | maintenance and operational scripts | none | none |
 | `testdata/` | shared test fixtures and data | `go test ./internal/ci` | `make test` |
-| `tla/` | the TLA+ models of the state machines and their runners | `tla/check_table.py, tla/check_member.py (each under a 120 s budget)` | none |
+| `tla/` | the TLA+ models of the state machines and their runners | `go test ./internal/tlc` | `make tlc-test` |
 | [tools/](tools/AGENTS.md) | developer and bench tools | `nova-ci local` | `make map` |
