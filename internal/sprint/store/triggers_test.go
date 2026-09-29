@@ -6,9 +6,11 @@ package store
 // it in the inbox, read as a coordinator reads it (cursor advanced).
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -55,4 +57,35 @@ func TestTriggerLandingResolvesWaiters(t *testing.T) {
 		t.Fatalf("s1-1 %s, s2-1 %s", h.state("s1-1"), h.state("s2-1"))
 	}
 	h.clean("resolved by the landing")
+}
+
+// A mutated step that moves a primary waiting -> ready past a need that has
+// not landed is refused by the engine's lifecycle check, whether it wraps a
+// real step's plan (which carries the pre-state) or builds its own.
+func TestTheEngineRefusesAMovePastANeed(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(1)
+	h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"s2-1"}, Needs: []string{"s1-1"}}))
+	move := func(s *sprint.Snapshot) sprint.Unit {
+		c := s.Work.Card("s2-1")
+		return sprint.Unit{Key: c.ID, Stream: c.Row, Changes: []sprint.Change{{Table: sprint.Work, Entry: ntable.BatchMemberEntry{ID: c.ID,
+			Expect: &ntable.MemberExpect{Revision: fmt.Sprint(c.Rev), Place: &ntable.PlaceExpect{Row: c.Row, Col: c.Col}},
+			Move:   &ntable.MemberMoveOp{Row: c.Row, Col: sprint.Ready}}}}}
+	}
+	own := Step{Verb: "mutant", Load: []string{sprint.Work}, Plan: func(s *sprint.Snapshot) sprint.Plan {
+		return sprint.Plan{Units: []sprint.Unit{move(s)}}
+	}}
+	wrapped := Step{Verb: "mutant", Load: []string{sprint.Work}, Plan: func(s *sprint.Snapshot) sprint.Plan {
+		p := sprint.Resolve(s, sprint.ResolveReq{})
+		p.Units = append(p.Units, move(s))
+		return p
+	}}
+	for _, step := range []Step{own, wrapped} {
+		res := h.run(step)
+		if len(res.Refused) != 1 || h.state("s2-1") != sprint.Waiting {
+			t.Fatalf("a move past a need: %+v; s2-1 is %s", res, h.state("s2-1"))
+		}
+	}
+	h.clean("still waiting")
 }

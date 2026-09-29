@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -54,6 +55,7 @@ func AddIDs(s *Snapshot, r AddReq) []string {
 // A need names a primary on the table (placed or kept) or one of this add.
 func Add(s *Snapshot, r AddReq) Plan {
 	var p Plan
+	p.on(s)
 	if !ValidID(r.Stream) {
 		for _, id := range AddIDs(s, r) {
 			p.refuse(id, fmt.Sprintf("stream %q wants letters, digits, _ and -", r.Stream))
@@ -94,6 +96,16 @@ func Add(s *Snapshot, r AddReq) Plan {
 			missing = append(missing, n)
 		}
 	}
+	edges := map[string][]string{}
+	for _, id := range AddIDs(s, r) {
+		edges[id] = r.Needs
+	}
+	if cycle := NeedsCycle(s, edges); cycle != nil && len(missing) == 0 {
+		for _, id := range AddIDs(s, r) {
+			p.refuse(id, "the needs would make a cycle: "+strings.Join(cycle, " needs ")+"; nothing is written")
+		}
+		return p
+	}
 	seen := map[string]bool{}
 	for _, id := range AddIDs(s, r) {
 		switch {
@@ -111,17 +123,11 @@ func Add(s *Snapshot, r AddReq) Plan {
 			continue
 		}
 		seen[id] = true
-		col, why := Ready, ""
+		col := Ready
 		for _, n := range r.Needs {
-			if n == id {
-				col, why = "", "needs itself"
-			} else if s.StateOf(n) != Landed && col != "" {
+			if s.StateOf(n) != Landed {
 				col = Waiting
 			}
-		}
-		if col == "" {
-			p.refuse(id, why)
-			continue
 		}
 		fields := map[string]string{"kind": "primary", "stream": r.Stream, "attempt": "0", "admitted": stamp(s.Now)}
 		if r.Brief != "" {
@@ -153,6 +159,96 @@ func Add(s *Snapshot, r AddReq) Plan {
 		}
 	}
 	return p
+}
+
+// NeedsCycle is a cycle the needs would make with the edges given (a primary
+// -> its needs, in place of its own), as the path around it from its first
+// primary back to it; nil when there is none.
+func NeedsCycle(s *Snapshot, edges map[string][]string) []string {
+	needsOf := func(id string) []string {
+		if n, ok := edges[id]; ok {
+			return n
+		}
+		return Split(s.Work.Card(id).F("needs"))
+	}
+	var path []string
+	on, done := map[string]bool{}, map[string]bool{}
+	var visit func(id string) []string
+	visit = func(id string) []string {
+		if on[id] {
+			for i, x := range path {
+				if x == id {
+					return append(append([]string{}, path[i:]...), id)
+				}
+			}
+		}
+		if done[id] {
+			return nil
+		}
+		on[id] = true
+		path = append(path, id)
+		for _, n := range needsOf(id) {
+			if c := visit(n); c != nil {
+				return c
+			}
+		}
+		on[id], done[id] = false, true
+		path = path[:len(path)-1]
+		return nil
+	}
+	ids := make([]string, 0, len(edges))
+	for id := range edges {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		if c := visit(id); c != nil {
+			return c
+		}
+	}
+	return nil
+}
+
+// WaitsFor is what a primary still waits for: its needs that have not landed
+// (before the step, or in it: landing) and that the coordinator did not waive.
+func WaitsFor(s *Snapshot, c *Card, landing map[string]bool) []string {
+	var out []string
+	waived := Split(c.F("waived"))
+	for _, n := range Split(c.F("needs")) {
+		if s.StateOf(n) != Landed && !landing[n] && !contains(waived, n) {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// NeedState is one need of a primary as it stands: the need's state (its
+// column, or off the table with its outcome), and whether it was waived.
+type NeedState struct {
+	ID     string `json:"id"`
+	State  string `json:"state"`
+	Waived bool   `json:"waived,omitempty"`
+}
+
+// NeedsOf is each need of the primary with its state, and the primaries on
+// the table that need it (with the needs read as records into s).
+func NeedsOf(s *Snapshot, id string) (needs []NeedState, neededBy []string) {
+	c := s.Work.Card(id)
+	for _, n := range Split(c.F("needs")) {
+		st := "not on the table"
+		if nc := s.Work.Card(n); nc.Placed() {
+			st = nc.Col
+		} else if nc != nil {
+			st = "off the table (" + orDash(nc.F("outcome")) + ")"
+		}
+		needs = append(needs, NeedState{ID: n, State: st, Waived: contains(Split(c.F("waived")), n)})
+	}
+	for _, o := range s.Work.Column(States...) {
+		if contains(Split(o.F("needs")), id) {
+			neededBy = append(neededBy, o.ID)
+		}
+	}
+	return needs, neededBy
 }
 
 // droppedNeeds is the needs that name a primary dropped off the table.
@@ -203,15 +299,14 @@ func Resolve(s *Snapshot, r ResolveReq) Plan { return Lawful(resolvePlan(s, r)) 
 
 func resolvePlan(s *Snapshot, r ResolveReq) Plan {
 	var p Plan
+	p.on(s)
 	chosen := pick(&p, r.Sel, s.Work.Column(Waiting), rowOf, func(c *Card) string { return inState(c, Waiting) }, s.primaryCard)
 	for _, c := range chosen {
 		var waits, dropped []string
-		for _, n := range Split(c.F("needs")) {
-			switch {
-			case s.StateOf(n) == Landed:
-			case s.Work.Card(n) != nil && !s.Work.Card(n).Placed() && s.Work.Card(n).F("outcome") == "dropped":
+		for _, n := range WaitsFor(s, c, nil) {
+			if len(droppedNeeds(s, []string{n})) > 0 {
 				dropped = append(dropped, n)
-			default:
+			} else {
 				waits = append(waits, n)
 			}
 		}
@@ -245,13 +340,7 @@ func resolvePlan(s *Snapshot, r ResolveReq) Plan {
 func resolveAfter(s *Snapshot, landing map[string]bool) []Unit {
 	var out []Unit
 	for _, c := range s.Work.Column(Waiting) {
-		ready := true
-		for _, n := range Split(c.F("needs")) {
-			if s.StateOf(n) != Landed && !landing[n] {
-				ready = false
-			}
-		}
-		if ready {
+		if len(WaitsFor(s, c, landing)) == 0 {
 			out = append(out, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, moveEntry(c, c.Row, Ready, nil))},
 				Moved: c.ID + " waiting -> ready (its needs landed)"})
 		}

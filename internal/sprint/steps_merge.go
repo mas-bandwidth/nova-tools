@@ -69,6 +69,7 @@ func MergeStep(s *Snapshot, r MergeReq) Plan { return Lawful(mergeStep(s, r)) }
 
 func mergeStep(s *Snapshot, r MergeReq) Plan {
 	var p Plan
+	p.on(s)
 	ctl := s.StreamCtl(r.Stream)
 	if ctl == nil {
 		p.refuse(r.Stream, "no such stream")

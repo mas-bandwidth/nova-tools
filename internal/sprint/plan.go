@@ -54,7 +54,15 @@ type Plan struct {
 	Notes []Note
 	// Closes are open judgments the step answers as a whole (--answers).
 	Closes []Open
+	// pre is the pre-state the plan was built on, set only by the steps of
+	// this package that may admit or move a primary into ready (on): the
+	// lifecycle judges a primary's needs against it, and a plan without one
+	// moves no primary into ready.
+	pre *Snapshot
 }
+
+// on records the pre-state the plan was built on (see Plan.pre).
+func (p *Plan) on(s *Snapshot) { p.pre = s }
 
 // Tables is the logical tables the plan writes, in ApplyOrder.
 func (p Plan) Tables() []string {

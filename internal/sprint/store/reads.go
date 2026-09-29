@@ -53,6 +53,9 @@ type CardInfo struct {
 	Reads   []*sprint.Card
 	Merge   *sprint.Card
 	Open    []sprint.Open
+	// Needs is each need with its state; NeededBy the primaries that need it.
+	Needs    []sprint.NeedState
+	NeededBy []string
 }
 
 // CardOf reads a primary and every card of it by identity.
@@ -67,6 +70,13 @@ func (st *Store) CardOf(ctx context.Context, id string) (CardInfo, error) {
 		return v, nil
 	}
 	v.Primary = card(m)
+	s, err := st.Load(ctx, []string{sprint.Work}, func(*sprint.Snapshot) map[string][]string {
+		return map[string][]string{sprint.Work: append([]string{id}, sprint.Split(v.Primary.F("needs"))...)}
+	})
+	if err != nil {
+		return v, err
+	}
+	v.Needs, v.NeededBy = sprint.NeedsOf(s, id)
 	attempts := v.Primary.Int("attempt")
 	if attempts > 0 {
 		var ids []string

@@ -63,18 +63,24 @@ type queueCard struct {
 	Taken string `json:"taken,omitempty"`
 	Asked string `json:"asked,omitempty"`
 	Begun string `json:"begun,omitempty"`
+	// WaitsFor is, for a waiting primary, the needs it still waits for.
+	WaitsFor []string `json:"waits_for,omitempty"`
 }
 
 func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("queue")
 	as := fs.String("as", "", "a reader (its read cards, asked then reading) or a fleet member (its work cards, ready then working)")
 	stream := fs.String("stream", "", "a stream: its merge queue, then its stuck cards")
+	col := fs.String("col", "", "with --stream: waiting lists the stream's waiting primaries, each with what it still waits for")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "queue", err.Error())
 	}
 	if len(pos) > 0 || (*as == "") == (*stream == "") {
 		return refuse(stderr, "queue", "wants one of --as <reader|member>, --stream <s>")
+	}
+	if *col != "" && (*col != sprint.Waiting || *stream == "") {
+		return refuse(stderr, "queue", "--col takes waiting, with --stream <s>")
 	}
 	st, err := a.store(*c)
 	if err != nil {
@@ -89,7 +95,19 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 				Dealt: x.F("dealt"), Taken: x.F("taken"), Asked: x.F("asked"), Begun: x.F("begun")})
 		}
 	}
-	if *stream != "" {
+	if *col == sprint.Waiting {
+		s, err := st.Load(ctx, []string{sprint.Work}, func(s *sprint.Snapshot) map[string][]string {
+			return map[string][]string{sprint.Work: sprint.ResolveExtras(s)}
+		})
+		if err != nil {
+			return a.readFailed("queue", err, stderr)
+		}
+		cs := s.Work.Cell(*stream, sprint.Waiting)
+		add(sprint.Work, cs)
+		for i, x := range cs {
+			cards[i].WaitsFor = sprint.WaitsFor(s, x, nil)
+		}
+	} else if *stream != "" {
 		cs, err := st.ReadCells(ctx, sprint.Merge, *stream, sprint.Queued, sprint.Stuck)
 		if err != nil {
 			return a.readFailed("queue", err, stderr)
@@ -121,6 +139,9 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 				next = "finish"
 			}
 			l += " gen=" + strconv.Itoa(x.Gen) + " " + next + ": " + x.ID + "@" + strconv.Itoa(x.Gen)
+		}
+		if len(x.WaitsFor) > 0 {
+			l += " waits for: " + strings.Join(x.WaitsFor, ",")
 		}
 		for _, st := range [][2]string{{"dealt", x.Dealt}, {"taken", x.Taken}, {"asked", x.Asked}, {"begun", x.Begun}} {
 			if st[1] != "" {
@@ -387,11 +408,13 @@ func groupLine(g sprint.Group, now time.Time) string {
 
 // cardView is everything about one primary.
 type cardView struct {
-	Primary *sprint.Card   `json:"primary"`
-	Work    []*sprint.Card `json:"work_cards"`
-	Reads   []*sprint.Card `json:"read_cards"`
-	Merge   *sprint.Card   `json:"merge,omitempty"`
-	Open    []sprint.Open  `json:"open,omitempty"`
+	Primary  *sprint.Card       `json:"primary"`
+	Work     []*sprint.Card     `json:"work_cards"`
+	Reads    []*sprint.Card     `json:"read_cards"`
+	Merge    *sprint.Card       `json:"merge,omitempty"`
+	Open     []sprint.Open      `json:"open,omitempty"`
+	Needs    []sprint.NeedState `json:"needs,omitempty"`
+	NeededBy []string           `json:"needed_by,omitempty"`
 }
 
 func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
@@ -415,7 +438,7 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	if c.json {
-		b, _ := json.Marshal(cardView{Primary: v.Primary, Work: v.Work, Reads: v.Reads, Merge: v.Merge, Open: v.Open})
+		b, _ := json.Marshal(cardView{Primary: v.Primary, Work: v.Work, Reads: v.Reads, Merge: v.Merge, Open: v.Open, Needs: v.Needs, NeededBy: v.NeededBy})
 		fmt.Fprintln(stdout, string(b))
 		return 0
 	}
@@ -428,6 +451,16 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 	}
 	if v.Merge != nil {
 		printCard(stdout, "MERGE", v.Merge)
+	}
+	for _, n := range v.Needs {
+		waived := ""
+		if n.Waived {
+			waived = " waived"
+		}
+		fmt.Fprintf(stdout, "NEEDS %s %s%s\n", oneline.Escape(n.ID), oneline.Escape(n.State), waived)
+	}
+	for _, n := range v.NeededBy {
+		fmt.Fprintf(stdout, "NEEDED-BY %s\n", oneline.Escape(n))
 	}
 	for _, o := range v.Open {
 		fmt.Fprintf(stdout, "OPEN %s %s -> %s\n", oneline.Escape(o.Note.ID), oneline.Escape(o.Note.Type), oneline.Escape(strings.Join(o.Note.Decisions, " | ")))

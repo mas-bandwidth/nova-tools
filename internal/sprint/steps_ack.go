@@ -1,6 +1,9 @@
 package sprint
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // AckReq is the coordinator saying it looked at judgments and nothing is to
 // be done.
@@ -17,6 +20,7 @@ type AckReq struct {
 // of its own.
 func Ack(s *Snapshot, r AckReq) Plan {
 	var p Plan
+	p.on(s)
 	closing := map[string]bool{} // every note id this call closes
 	named := map[string]bool{}
 	for _, id := range r.Notes {
@@ -43,6 +47,17 @@ func Ack(s *Snapshot, r AckReq) Plan {
 		closing[id] = true
 		u := Unit{Key: id, Stream: n.Stream, Closes: entries, Moved: fmt.Sprintf("%s (%s) acknowledged: %s", id, n.Type, r.Reason)}
 		u.Notes = append(u.Notes, decided(entries[0], "ack: "+r.Reason, r.Who, s.Now))
+		if n.Type == NBlocked {
+			for _, o := range entries {
+				if c := waive(s, o.Subject(), r.Who); c.Entry.ID != "" {
+					u.Changes = append(u.Changes, c)
+					u.Moved += "; " + o.Subject() + " waives " + c.Entry.Set["waived"]
+					if c.Entry.Move != nil {
+						u.Moved += " and is ready"
+					}
+				}
+			}
+		}
 		p.Units = append(p.Units, u)
 	}
 	// A primary whose last open judgment this call closes, with its reads
@@ -61,6 +76,27 @@ func Ack(s *Snapshot, r AckReq) Plan {
 		}
 	}
 	return p
+}
+
+// waive is the change that records, on a waiting primary, that the
+// coordinator acknowledged its dropped needs: they are waived, by whom and
+// when, and count as satisfied. A primary with nothing else to wait for moves
+// to ready in the same change.
+func waive(s *Snapshot, id, who string) Change {
+	c := s.Work.Placed(id)
+	if c == nil || c.Col != Waiting {
+		return Change{}
+	}
+	gone := droppedNeeds(s, WaitsFor(s, c, nil))
+	if len(gone) == 0 {
+		return Change{}
+	}
+	set := map[string]string{"waived": strings.Join(append(Split(c.F("waived")), gone...), ","), "waived_by": who, "waived_at": stamp(s.Now)}
+	after := &Card{ID: c.ID, Fields: map[string]string{"needs": c.F("needs"), "waived": set["waived"]}}
+	if len(WaitsFor(s, after, nil)) == 0 {
+		return change(Work, moveEntry(c, c.Row, Ready, set))
+	}
+	return change(Work, setEntry(c, set))
 }
 
 // exhaustedAfter is the reads exhausted judgment of a primary in review whose

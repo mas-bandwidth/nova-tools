@@ -9,7 +9,7 @@ import (
 // Violation is one broken rule of docs/SPEC-SPRINT.md section 9, or a step
 // cut short (section 10).
 type Violation struct {
-	Rule   int    `json:"rule"` // 1..9, or 10 for a cut step
+	Rule   int    `json:"rule"` // 1..9 and 11, or 10 for a cut step
 	Detail string `json:"detail"`
 }
 
@@ -203,6 +203,12 @@ func Check(s *Snapshot, pending *Pending) []Violation {
 		}
 		if !open {
 			out = append(out, Violation{9, fmt.Sprintf("stream %s is stopped (%s) with no open judgment notification", st, ctl.F("cause"))})
+		}
+	}
+	// 11. A primary anywhere but waiting has every need landed or waived.
+	for _, c := range s.Work.Column(Ready, Working, Review, Merging, Landed) {
+		if w := WaitsFor(s, c, nil); len(w) > 0 {
+			out = append(out, Violation{11, fmt.Sprintf("%s is %s and needs %s, not landed", c.ID, c.Col, strings.Join(w, ","))})
 		}
 	}
 	// 10. A step that did not finish: the fence holds it.
