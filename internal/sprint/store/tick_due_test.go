@@ -138,6 +138,75 @@ func TestATickThatWentStaleLeavesAFullReadDue(t *testing.T) {
 	}
 }
 
+// The heartbeat's count of failed ticks in a row counts, and a success
+// clears it.
+func TestFailuresInARowCount(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(1)
+	h.startMachine()
+	h.m.Fail = func(p string) error {
+		if p == "fence" {
+			return context.DeadlineExceeded
+		}
+		return nil
+	}
+	for i := 1; i <= 3; i++ {
+		_, _ = h.st.Tick(h.ctx)
+		if _, hb, _ := h.st.Machine(h.ctx); hb.Failures != i || !hb.Full.IsZero() {
+			t.Fatalf("after %d failed ticks: failures %d, full %s", i, hb.Failures, hb.Full)
+		}
+		h.tick(time.Second)
+	}
+	h.m.Fail = nil
+	h.machine()
+	if _, hb, _ := h.st.Machine(h.ctx); hb.Failures != 0 || hb.Error != "" {
+		t.Fatalf("after a good tick: %+v", hb)
+	}
+}
+
+// An idle tick writes the heartbeat at most once every HeartbeatIdleEvery; a
+// STOPPED machine's look likewise; the line stays "running" in between.
+func TestIdleTicksWriteTheHeartbeatSeldom(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(1)
+	h.startMachine()
+	h.machine()
+	h.tick(time.Second)
+	h.machine() // reads its own moves: nothing more to do
+	_, first, _ := h.st.Machine(h.ctx)
+	for i := 1; i < int(HeartbeatIdleEvery/time.Second); i++ {
+		h.tick(time.Second)
+		if res := h.machine(); !res.Idle {
+			t.Fatalf("tick %d is not idle: %+v", i, res)
+		}
+		if _, hb, _ := h.st.Machine(h.ctx); hb.At != first.At || hb.Ticks != first.Ticks {
+			t.Fatalf("idle tick %d wrote the heartbeat: %+v", i, hb)
+		}
+		if line := h.st.MachineLine(h.ctx); line != "machine: running" {
+			t.Fatalf("idle tick %d: %q", i, line)
+		}
+	}
+	h.tick(time.Second)
+	h.machine()
+	if _, hb, _ := h.st.Machine(h.ctx); !hb.At.Equal(h.now) || hb.Ticks != first.Ticks+1 {
+		t.Fatalf("the idle tick at %s wrote no heartbeat: %+v", HeartbeatIdleEvery, hb)
+	}
+	if MachineSilence <= HeartbeatIdleEvery+TickEvery || MachineSilence <= TickBackoffCap {
+		t.Fatalf("the silence %s is not above the longest gap between heartbeats", MachineSilence)
+	}
+	h.stopMachine()
+	h.tick(HeartbeatIdleEvery)
+	h.machine()
+	_, looked, _ := h.st.Machine(h.ctx)
+	h.tick(time.Second)
+	h.machine()
+	if _, hb, _ := h.st.Machine(h.ctx); !hb.Looked.Equal(looked.Looked) {
+		t.Fatalf("a STOPPED look a second later wrote the heartbeat: %+v", hb)
+	}
+}
+
 // stopAtFirstPart stops the machine as the tick's first part takes the fence,
 // as a stop run beside the tick would.
 type stopAtFirstPart struct {
@@ -187,5 +256,77 @@ func TestNoPartBeginsAfterStop(t *testing.T) {
 	s := h.snap()
 	if len(s.Readers.Of("rv")) != 2 || s.StreamCtl("s3").F("state") == sprint.StreamStopped {
 		t.Fatalf("after start: rv asked of %d, s3 %s", len(s.Readers.Of("rv")), s.StreamCtl("s3").F("state"))
+	}
+}
+
+// The cannot-ask judgment is one condition per primary, whatever its wording:
+// "0 free" becoming "1 free" writes nothing again.
+func TestCannotAskIsWrittenOncePerPrimary(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.m = NewMem()
+	h.st.B = h.m
+	if err := h.st.Init(h.ctx); err != nil {
+		t.Fatal(err)
+	}
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
+	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 2}))
+	h.startMachine()
+	h.machine()
+	h.work("m1")
+	h.machine()
+	if got := len(h.openOf(sprint.NCannotAsk)); got != 2 {
+		t.Fatalf("cannot ask open %d, want 2", got)
+	}
+	was := h.written(sprint.NCannotAsk)
+	if err := h.m.RowsAdd(h.ctx, "t-readers", []string{"reader-a"}); err != nil {
+		t.Fatal(err)
+	}
+	h.tick(time.Second)
+	h.machine()
+	h.tick(time.Minute + time.Second)
+	h.machine()
+	if n := h.written(sprint.NCannotAsk); n != was || len(h.openOf(sprint.NCannotAsk)) != 2 {
+		t.Fatalf("cannot ask written %d times (was %d), open %d, after one reader came", n, was, len(h.openOf(sprint.NCannotAsk)))
+	}
+	if err := h.m.RowsAdd(h.ctx, "t-readers", []string{"reader-b"}); err != nil {
+		t.Fatal(err)
+	}
+	h.tick(time.Second)
+	h.machine()
+	if got := len(h.openOf(sprint.NCannotAsk)); got != 0 {
+		t.Fatalf("still open %d with two readers", got)
+	}
+}
+
+// A tick judgment the coordinator acknowledged is not written again while
+// its condition holds; it is written again once the condition has cleared
+// and come back.
+func TestAnAckedTickJudgmentComesBackOnlyWithItsCondition(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 1}))
+	h.startMachine()
+	h.machine()
+	o := h.openOf(sprint.NNoMember)
+	if len(o) != 1 {
+		t.Fatalf("no member: %d", len(o))
+	}
+	h.must(AckStep(sprint.AckReq{Notes: []string{o[0].Note.ID}, Reason: "the fleet is off tonight"}))
+	for i := 0; i < 5; i++ {
+		h.tick(time.Minute + time.Second)
+		h.machine()
+	}
+	if n := h.written(sprint.NNoMember); n != 1 {
+		t.Fatalf("written %d times while acknowledged", n)
+	}
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
+	h.tick(time.Second)
+	h.machine()
+	h.must(FleetStep(sprint.FleetReq{Op: "down", Member: "m1"}))
+	h.tick(time.Second)
+	h.machine()
+	if n := h.written(sprint.NNoMember); n != 2 {
+		t.Fatalf("written %d times after the condition cleared and came back, want 2", n)
 	}
 }

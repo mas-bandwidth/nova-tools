@@ -33,11 +33,17 @@ const (
 const (
 	// TickEvery is the time between two ticks of run.
 	TickEvery = time.Second
-	// MachineSilence is how long a RUNNING machine goes without a tick before
-	// the sprint line says it is STOPPED.
-	MachineSilence = 5 * time.Second
+	// HeartbeatIdleEvery is how often, at most, a tick that did nothing (an
+	// idle tick, or a STOPPED machine's look) writes the heartbeat: a tick
+	// that did anything or failed writes it always.
+	HeartbeatIdleEvery = 5 * time.Second
 	// TickBackoffCap bounds the wait after consecutive failed ticks.
 	TickBackoffCap = 5 * time.Second
+	// MachineSilence is how long a RUNNING machine goes without a heartbeat
+	// before the sprint line says it is STOPPED. It stays above the longest
+	// gap a live run loop leaves between two heartbeats:
+	// HeartbeatIdleEvery + TickEvery when idle, TickBackoffCap when failing.
+	MachineSilence = 15 * time.Second
 	// MaxStopSpans bounds the STOPPED spans the state record keeps.
 	MaxStopSpans = 1000
 	// TickFullEvery is how often a tick reads the whole sprint when nothing
@@ -343,8 +349,10 @@ func staleRefusal(refused []sprint.Refusal, at uint64) bool {
 }
 
 // Tick runs one tick when the machine is RUNNING, and records it on the
-// heartbeat, its error with it when it failed; when the machine is STOPPED
-// it does nothing and writes nothing.
+// heartbeat, its error with it when it failed, with the count of failed
+// ticks in a row; when the machine is STOPPED it moves nothing and only says
+// it looked. A tick that did nothing writes the heartbeat at most once every
+// HeartbeatIdleEvery.
 func (st *Store) Tick(ctx context.Context) (TickResult, error) {
 	m, hb, err := st.Machine(ctx)
 	if err != nil {
@@ -354,7 +362,11 @@ func (st *Store) Tick(ctx context.Context) (TickResult, error) {
 	if !m.Running() {
 		// A STOPPED machine moves nothing; the tick only says it looked, so
 		// start can tell a run loop is waiting.
-		hb.Looked = st.now()
+		now := st.now()
+		if now.Sub(hb.Alive()) < HeartbeatIdleEvery && !hb.Looked.IsZero() {
+			return res, nil
+		}
+		hb.Looked = now
 		return res, st.putJSON(ctx, keyHeartbeat, hb)
 	}
 	seen, err := st.tick(ctx, m, hb, &res)
@@ -368,13 +380,17 @@ func (st *Store) Tick(ctx context.Context) (TickResult, error) {
 			}
 		}
 	}
-	hb.At, hb.Ticks = st.now(), hb.Ticks+1
-	hb.Error, hb.Failures = "", 0
+	now := st.now()
+	if err == nil && res.Idle && res.Halted == "" && len(res.Parts) == 0 && hb.Error == "" && now.Sub(hb.At) < HeartbeatIdleEvery && !hb.At.Before(m.Since) {
+		return res, nil
+	}
+	hb.At, hb.Ticks = now, hb.Ticks+1
 	if err != nil {
 		// A failed tick leaves a full read due: what it did not finish is
 		// read from the state by the next tick.
 		hb.Error, hb.Failures, hb.Full = err.Error(), hb.Failures+1, time.Time{}
 	} else {
+		hb.Error, hb.Failures = "", 0
 		hb.Revisions, hb.Landed, hb.All, hb.Full = seen.Revisions, seen.Landed, seen.All, seen.Full
 		hb.Due = res.Due
 	}

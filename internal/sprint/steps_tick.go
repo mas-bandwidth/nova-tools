@@ -485,10 +485,10 @@ type cond struct {
 }
 
 // condKey identifies a condition on one subject: the type, the subject and
-// what it says. N3's count changes while it stays one condition, so it is
-// keyed by its type and subject only.
+// what it says. N3's count and N1's count of free readers change while each
+// stays one condition, so they are keyed by their type and subject only.
 func condKey(typ, subject, what string) string {
-	if typ == NNoMember {
+	if typ == NNoMember || typ == NCannotAsk {
 		what = ""
 	}
 	return typ + "\x00" + subject + "\x00" + what
