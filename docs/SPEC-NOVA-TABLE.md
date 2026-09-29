@@ -325,8 +325,10 @@ A member appears exactly once: its expected revision, position, extra field guar
 move and field updates are grouped in that entry. A move plus set/unset is one
 member mutation; duplicate entries are never merged. Create requires absence of
 both record and any owned placement; create plus move, remove, or an existing
-member expectation refuses. A guard-only entry participates in validation but not
-the changed count. All references, including guard-only dependencies, are explicit.
+member expectation refuses. An existing unplaced member may receive field-only
+set/unset changes, but cannot be moved into a cell. A guard-only entry participates
+in validation but not the changed count. All references, including guard-only
+dependencies, are explicit.
 
 The member `revision` is a table-owned counter. A legacy existing member with no
 record revision reads as zero. A newly created member starts at one; any accepted
@@ -369,9 +371,10 @@ Use the existing table validation and staged-write machinery inside this one ser
 invocation. After all validation, stage cells, reverse indexes, member fields and
 revisions, the operation record, table revision and receipt together. An accepted
 batch increments the table revision once; every changed member increments its own
-revision once. An accepted no-op batch has a recorded result and one noop receipt;
-a refused batch changes no key, revision, operation record or receipt. Tests must
-pin no-op and refused results separately.
+revision once. An accepted no-op batch also advances the table revision once,
+making other prepared manifests stale, and has a recorded result and one noop
+receipt; a refused batch changes no key, revision, operation record or receipt.
+Tests must pin no-op and refused results separately.
 
 Redis scripts do not provide rollback of writes after a runtime command error.
 The design must therefore show that every staged command's type, bounds, permissions
