@@ -26,6 +26,10 @@ import (
 // only write a string var, and it is package-level and unexported for the same reason.
 var version string
 
+func printVersionLine(stamped string, stdout io.Writer) {
+	fmt.Fprintln(stdout, buildinfo.Line("nova-memory", stamped))
+}
+
 // cmdVersion prints the one line. It takes no flags and no arguments: there is no
 // --short, no --json and no --long, because a second output shape is a second thing to
 // agree about and this verb exists to end an argument rather than to start one.
@@ -35,6 +39,6 @@ func cmdVersion(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "nova-memory version: takes no flags and no arguments, got %d\n", len(args))
 		return 2
 	}
-	fmt.Fprintln(stdout, buildinfo.Line("nova-memory", version))
+	printVersionLine(version, stdout)
 	return 0
 }

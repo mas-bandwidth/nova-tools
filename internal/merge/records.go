@@ -61,16 +61,20 @@ func NewRecords(lane, branch, remote string, g *Git, wait time.Duration) *Record
 	return &Records{Lane: lane, Branch: branch, Remote: remote, Git: g.In(lane), Wait: wait}
 }
 
+func (r *Records) sleepFn() func(time.Duration) {
+	if r != nil && r.Sleep != nil {
+		return r.Sleep
+	}
+	return Sleep
+}
+
 // LockCheckout takes the checkout lock: one Git operation on this checkout at a time,
 // held for the whole of a loop, a pull or a fetch. It is a different lock from the state
 // lock of rule 1, which protects state.json and nothing else.
 func (r *Records) LockCheckout() (func(), error) {
-	now, sleep := r.Now, r.Sleep
+	now, sleep := r.Now, r.sleepFn()
 	if now == nil {
 		now = Now
-	}
-	if sleep == nil {
-		sleep = Sleep
 	}
 	return lockWait(filepath.Join(r.Lane, CheckoutLock), r.Wait, now, sleep)
 }
@@ -717,13 +721,13 @@ func (r *Records) Fold() (*Folded, error) {
 // the rest are surfaced by Packet (rule 23) exactly as Run surfaces them.
 func (r *Records) FoldReadOnly() (*Folded, error) {
 	list := func(dir string) ([]foldFile, error) { return readDirFiles(r.Lane, dir) }
-	return foldWithOneReread(list)
+	return r.foldWithOneReread(list)
 }
 
 // foldWithOneReread is the checkout report-fold policy. The first read may have caught a
 // checkout restore in progress; one later parse is authoritative for a path that then
 // decodes. A problem that remains after both reads is retained by mergeFolds.
-func foldWithOneReread(list func(string) ([]foldFile, error)) (*Folded, error) {
+func (r *Records) foldWithOneReread(list func(string) ([]foldFile, error)) (*Folded, error) {
 	first, err := foldFiles(list)
 	if err != nil {
 		return nil, err
@@ -731,7 +735,7 @@ func foldWithOneReread(list func(string) ([]foldFile, error)) (*Folded, error) {
 	if len(first.Problems) == 0 {
 		return first, nil
 	}
-	Sleep(reReadPause)
+	r.sleepFn()(reReadPause)
 	second, err := foldFiles(list)
 	if err != nil {
 		return nil, err
@@ -833,7 +837,7 @@ func (r *Records) FoldFetchedTip(tip string) (*Folded, error) {
 	// The commit is immutable, so the tree listing remains one snapshot. Match the
 	// lock-free report policy without charging healthy records twice: only paths that
 	// first refused are shown once more at this same full SHA.
-	Sleep(reReadPause)
+	r.sleepFn()(reReadPause)
 	second, err := r.foldTipPaths(tip, foldProblemPaths(first.Problems))
 	if err != nil {
 		return nil, err
