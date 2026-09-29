@@ -10,6 +10,7 @@ import (
 )
 
 func TestAddRefusesDependentsOfAnUnadmittedID(t *testing.T) {
+	t.Parallel()
 	for _, bad := range []string{"bad.id", "ctl-absent"} {
 		t.Run(bad, func(t *testing.T) {
 			h := newHarness(t)
@@ -50,6 +51,7 @@ func seedMissingNeeds(h *harness, id, needs string) {
 }
 
 func TestStoredMissingNeedsHaveOneActionableJudgment(t *testing.T) {
+	t.Parallel()
 	const missing = "a primary is blocked on something missing"
 	for _, sentinel := range []bool{false, true} {
 		for _, live := range []bool{false, true} {
@@ -107,6 +109,7 @@ func TestStoredMissingNeedsHaveOneActionableJudgment(t *testing.T) {
 }
 
 func TestMissingNeedWaiverDoesNotIncludeLaterMissingNeed(t *testing.T) {
+	t.Parallel()
 	const missing = "a primary is blocked on something missing"
 	h := newHarness(t)
 	h.setup(1)
@@ -132,6 +135,7 @@ func TestMissingNeedWaiverDoesNotIncludeLaterMissingNeed(t *testing.T) {
 }
 
 func TestRestoredMissingNeedIsNotWaivedAndItsJudgmentCloses(t *testing.T) {
+	t.Parallel()
 	for _, action := range []string{"ack", "resolve", "dropped"} {
 		t.Run(action, func(t *testing.T) {
 			h := newHarness(t)
@@ -166,6 +170,7 @@ func TestRestoredMissingNeedIsNotWaivedAndItsJudgmentCloses(t *testing.T) {
 }
 
 func TestMissingNeedJudgmentsDrainPastTheTickBound(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	h.setup(1)
 	h.must(AddStep(sprint.AddReq{Stream: "s2", Count: sprint.TickMaxNotes + 1, Needs: []string{"s1-1"}}))
