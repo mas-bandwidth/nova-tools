@@ -942,7 +942,7 @@ func TestInventoryHelpAndDocsReachAWorkingRun(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, w := range []string{printf, chmod, "NOVA_MACHINE", "ANSIBLE_INVENTORY_UNPARSED_FAILED=true ansible-inventory -i ./nova-inventory --list", "unparsed_is_failed = True", "exact machine name", "an empty value counts as unset", "lower-cased first label", "every machine with at least one runner", "run: nova-config migrate", "ansible-inventory -i ./nova-inventory --list", "_meta.hostvars"} {
+		for _, w := range []string{printf, chmod, "NOVA_MACHINE", "ANSIBLE_INVENTORY_UNPARSED_FAILED=true ansible-inventory -i ./nova-inventory --list", "unparsed_is_failed = True", "older than the store", "exact machine name", "an empty value counts as unset", "lower-cased first label", "every machine with at least one runner", "run: nova-config migrate", "ansible-inventory -i ./nova-inventory --list", "_meta.hostvars"} {
 			if !strings.Contains(string(raw), w) {
 				t.Errorf("%s lacks %q", doc, w)
 			}
@@ -1219,5 +1219,26 @@ func TestInventoryHelpKeepsTheToolWideExitFooter(t *testing.T) {
 	_, top, _ := h.run(t, "help")
 	if !strings.Contains(top, "exit codes: 0 done, 1 refused, 2 usage") {
 		t.Errorf("the tool-wide footer changed")
+	}
+}
+
+func TestInventoryOnAStoreMigratedAheadOfTheBinaryRefuses(t *testing.T) {
+	t.Parallel()
+
+	all, err := config.Migrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := inventoryHarness(t, 1)
+	h.store.version = len(all) + 1
+	code, out, errs := h.run(t, "inventory")
+	want := fmt.Sprintf("nova-config inventory: schema config is at version %d and this binary carries %d; this nova-config is older than the store; install a nova-config whose migrations reach version %d\n", len(all)+1, len(all), len(all)+1)
+	if code != 1 || out != "" || errs != want {
+		t.Fatalf("exit %d stdout %q stderr %q\nwant 1, nothing, %q", code, out, errs, want)
+	}
+	// A store at exactly the binary's version is read.
+	h.store.version = len(all)
+	if code, out, _ := h.run(t, "inventory"); code != 0 || out == "" {
+		t.Fatalf("a store at the binary's version: exit %d", code)
 	}
 }

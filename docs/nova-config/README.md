@@ -281,7 +281,10 @@ groups `all` and `benches` (every machine row), `coordinator` and `store`
 (the machines the fleet row names; empty when it names none) and `runners`
 (every machine with at least one runner), and every host's variables under
 `_meta.hostvars`. On a store that is not migrated, or is at an older schema,
-the verb exits 1 with `run: nova-config migrate`. The machine rows are the one machine list;
+the verb exits 1 with `run: nova-config migrate`. On a store
+migrated ahead of the binary it exits 1 with
+`this nova-config is older than the store` and names the schema version a
+`nova-config` must reach. The machine rows are the one machine list;
 there is no second one. Each host's variables are `ansible_host`,
 `ansible_user` (the row's user, the name ansible reads for the login),
 `nova_seat` (the row's seat), `slots`, `runners` and `kind=machine`; each value

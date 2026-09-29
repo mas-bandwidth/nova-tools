@@ -995,6 +995,10 @@ func runInventory(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		return refused(stderr, verb, fmt.Sprintf("schema config is at version %d and this binary carries %d", have, len(all)), migrate)
 	}
 	stage, check = "reading the machines and the fleet row", "check that nothing holds a lock on config.machines or config.fleet"
+	if all, err := config.Migrations(); err == nil && have > len(all) {
+		fmt.Fprintf(stderr, "%s %s: schema config is at version %d and this binary carries %d; this %s is older than the store; install a %s whose migrations reach version %d\n", tool, verb, have, len(all), tool, tool, have)
+		return 1
+	}
 	self, explicit := localHost(d.getenv, d.hostname)
 	inv, err := config.BuildInventory(ctx, st, self)
 	if err != nil {
