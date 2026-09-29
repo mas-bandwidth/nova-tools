@@ -15,9 +15,9 @@ type AckReq struct {
 
 // Ack closes the named judgments, every subject of each, and records the
 // reason as their answer. It is refused for the judgment of a stream that is
-// stopped: that judgment stays open until the stream resumes. A primary whose
-// last open judgment it closes, and whose reads are exhausted, is a judgment
-// of its own.
+// stopped: that judgment stays open until the stream resumes. A primary in
+// review whose last open judgment it closes, and that nothing then moves
+// (reads exhausted, or stranded in review), is a judgment of its own.
 func Ack(s *Snapshot, r AckReq) Plan {
 	var p Plan
 	p.on(s)
@@ -67,11 +67,11 @@ func Ack(s *Snapshot, r AckReq) Plan {
 	for i := range p.Units {
 		for _, o := range p.Units[i].Closes {
 			pr := s.Work.Placed(o.Subject())
-			if pr == nil || written[pr.ID] || o.Note.Type == NReadsExhausted {
+			if pr == nil || written[pr.ID] || o.Note.Type == NReadsExhausted || o.Note.Type == NStranded {
 				continue
 			}
 			written[pr.ID] = true
-			if j, ok := exhaustedAfter(s, pr, closing, r.Who); ok {
+			if j, ok := strandedAfter(s, pr, closing, r.Who); ok {
 				p.Units[i].Notes = append(p.Units[i].Notes, j)
 			}
 		}
@@ -105,11 +105,12 @@ func waive(s *Snapshot, id, who string) (Change, []Note) {
 	return change(Work, setEntry(c, set)), nil
 }
 
-// exhaustedAfter is the reads exhausted judgment of a primary in review whose
-// reads are exhausted and whose every open judgment is among closing (note ids
-// a step closes), if the condition holds.
-func exhaustedAfter(s *Snapshot, pr *Card, closing map[string]bool, who string) (Note, bool) {
-	if !exhausted(s, pr, nil) {
+// strandedAfter is the judgment of a primary in review that nothing moves
+// (reads exhausted, or stranded in review), whose every open judgment is
+// among closing (note ids a step closes), if the condition holds.
+func strandedAfter(s *Snapshot, pr *Card, closing map[string]bool, who string) (Note, bool) {
+	typ, why := stranded(s, pr, nil)
+	if typ == "" {
 		return Note{}, false
 	}
 	for _, x := range closesFor(s.Open, nil, pr.ID) {
@@ -117,7 +118,16 @@ func exhaustedAfter(s *Snapshot, pr *Card, closing map[string]bool, who string) 
 			return Note{}, false
 		}
 	}
-	j := judgment(NReadsExhausted, pr.Row, s.Now, 0, pr.ID)
-	j.Who, j.Attempt = who, pr.Int("attempt")
-	return j, true
+	return strandedNote(s, pr, typ, why, who), true
+}
+
+// strandedNote is the judgment of a stranded primary: failed work is not
+// read, so asking is not a decision for it.
+func strandedNote(s *Snapshot, pr *Card, typ, why, who string) Note {
+	j := judgment(typ, pr.Row, s.Now, 0, pr.ID)
+	j.Who, j.Attempt, j.What = who, pr.Int("attempt"), why
+	if pr.F("result") == "failed" {
+		j.Decisions = removeDecision(j.Decisions, "ask")
+	}
+	return j
 }

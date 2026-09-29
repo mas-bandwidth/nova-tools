@@ -352,6 +352,8 @@ func commands(g Group, first Note, prefix string) []Command {
 			add(d, cmd+"rework"+grp+ans) // each takes its own finding or report
 		case d == "rework with a fix" || d == "rework":
 			add(d, cmd+"rework"+grp+" --fix "+fixText+ans)
+		case d == "ask":
+			add(d, cmd+"ask"+grp+ans)
 		case d == "accept":
 			add(d, cmd+"accept"+grp+ans)
 		case d == "ask another reader":
