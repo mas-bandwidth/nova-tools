@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -53,7 +54,19 @@ type Plan struct {
 	Notes []Note
 	// Closes are open judgments the step answers as a whole (--answers).
 	Closes []Open
+	// pre is the pre-state the plan was built on, set only by the steps of
+	// this package that may admit or move a primary into ready (on): the
+	// lifecycle judges a primary's needs against it, and a plan without one
+	// moves no primary into ready.
+	pre *Snapshot
+	// releasing says release built the plan: the one step that may land a
+	// sentinel. inserting says add inserts a sentinel in front of ready
+	// primaries: the one step that may move a primary ready -> waiting.
+	releasing, inserting bool
 }
+
+// on records the pre-state the plan was built on (see Plan.pre).
+func (p *Plan) on(s *Snapshot) { p.pre = s }
 
 // Tables is the logical tables the plan writes, in ApplyOrder.
 func (p Plan) Tables() []string {
@@ -215,17 +228,62 @@ func decided(o Open, what, who string, now time.Time, primaries ...string) Note 
 }
 
 // setStream is the stream's control card changed by a step, carried by the
-// step's first unit of that stream: the card is changed once per step.
+// step's first unit of that stream: the card is changed once per step, so a
+// second change of it in the plan is merged into the first.
 func setStream(p *Plan, s *Snapshot, stream string, set map[string]string, notes ...Note) {
 	ctl := s.StreamCtl(stream)
 	if ctl == nil || len(set) == 0 {
 		return
 	}
+	first := -1
 	for i := range p.Units {
-		if p.Units[i].Stream == stream {
-			p.Units[i].Changes = append(p.Units[i].Changes, change(Merge, setEntry(ctl, set)))
-			p.Units[i].Notes = append(p.Units[i].Notes, notes...)
-			return
+		if p.Units[i].Stream != stream {
+			continue
+		}
+		if first < 0 {
+			first = i
+		}
+		for j, c := range p.Units[i].Changes {
+			if c.Table == Merge && c.Entry.ID == ctl.ID {
+				merged := map[string]string{}
+				for k, v := range c.Entry.Set {
+					merged[k] = v
+				}
+				for k, v := range set {
+					merged[k] = v
+				}
+				p.Units[i].Changes[j].Entry.Set = merged
+				p.Units[first].Notes = append(p.Units[first].Notes, notes...)
+				return
+			}
+		}
+	}
+	if first >= 0 {
+		p.Units[first].Changes = append(p.Units[first].Changes, change(Merge, setEntry(ctl, set)))
+		p.Units[first].Notes = append(p.Units[first].Notes, notes...)
+	}
+}
+
+// Lists says a judgment's decisions list the verb (a decision starts with it).
+func Lists(n Note, verb string) bool {
+	if verb == "return" && (n.Type == NRed || n.Type == NRejected) {
+		return true // "take the suspect off" is a return
+	}
+	for _, d := range n.Decisions {
+		if d == verb || strings.HasPrefix(d, verb+" ") {
+			return true
+		}
+	}
+	return false
+}
+
+// answerListed records the unit's answer to every stream-level judgment
+// named by --answers, open on the stream, whose decisions list the verb: the
+// judgment stays open while its stream is stopped, and the answer is kept.
+func answerListed(u *Unit, open []Open, answers []string, verb, stream, what, who string, now time.Time, primary string) {
+	for _, o := range open {
+		if o.Note.StreamLevel && o.Note.Stream == stream && contains(answers, o.Note.ID) && Lists(o.Note, verb) && !answeredIn(u.Notes, o.Note.ID) {
+			u.Notes = append(u.Notes, decided(o, what, who, now, primary))
 		}
 	}
 }

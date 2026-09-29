@@ -30,19 +30,25 @@ func (s *Seeded) Read(card string) (bool, string) {
 	return true, ""
 }
 
-func (s *Seeded) Merge(stream string, batch []string, others []string) Outcome {
+// Merge draws a batch's fact; others is read only for a cross fact, and a
+// cross drawn with no card queued in another stream is green.
+func (s *Seeded) Merge(stream string, batch []string, others func() []string) Outcome {
 	r := s.rng.Float64()
 	switch {
 	case r < s.Stuck:
 		return Outcome{Conflict: batch[s.rng.IntN(len(batch))]}
-	case r < s.Stuck+s.Cross && len(others) > 0:
-		return Outcome{Cross: batch[s.rng.IntN(len(batch))] + "=" + others[s.rng.IntN(len(others))]}
+	case r < s.Stuck+s.Cross:
+		if o := others(); len(o) > 0 {
+			return Outcome{Cross: batch[s.rng.IntN(len(batch))] + "=" + o[s.rng.IntN(len(o))]}
+		}
 	case r < s.Stuck+s.Cross+s.Red:
-		return Outcome{Red: true}
+		return Outcome{Red: true, Suspects: []string{batch[s.rng.IntN(len(batch))]}}
 	}
 	return Outcome{}
 }
 
+// Up flips each member with the chance Flap: an up member goes down, and a
+// down member comes up, with the same chance.
 func (s *Seeded) Up(tick int, members []string, up map[string]bool) map[string]bool {
 	next := map[string]bool{}
 	for _, m := range members {

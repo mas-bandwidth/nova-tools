@@ -11,10 +11,11 @@ import (
 type MergeReq struct {
 	Stream   string
 	Batch    int
-	Conflict string // a card of the batch that did not merge
-	Cross    string // "<card>=<other>": a card that needs a card of another stream first
-	Red      bool   // the stream branch went red on the batch
-	Rejected bool   // the merge queue rejected the batch
+	Conflict string   // a card of the batch that did not merge
+	Cross    string   // "<card>=<other>": a card that needs a card of another stream first
+	Red      bool     // the stream branch went red on the batch
+	Suspects []string // with Red: the cards of the batch the caller suspects
+	Rejected bool     // the merge queue rejected the batch
 	Note     string
 	Who      string
 }
@@ -50,6 +51,17 @@ func crossRefusal(s *Snapshot, stream, card, other string) string {
 	return ""
 }
 
+// span is a batch by its first and last card.
+func span(ids []string) string {
+	switch len(ids) {
+	case 0:
+		return "empty"
+	case 1:
+		return ids[0]
+	}
+	return ids[0] + " .. " + ids[len(ids)-1]
+}
+
 // MergeStep merges the head of the stream's queue, in work order, as one
 // batch; or, given a fact that stops the stream, stops it and tells the
 // coordinator why. A stopped stream moves only after resume.
@@ -57,6 +69,7 @@ func MergeStep(s *Snapshot, r MergeReq) Plan { return Lawful(mergeStep(s, r)) }
 
 func mergeStep(s *Snapshot, r MergeReq) Plan {
 	var p Plan
+	p.on(s)
 	ctl := s.StreamCtl(r.Stream)
 	if ctl == nil {
 		p.refuse(r.Stream, "no such stream")
@@ -113,6 +126,18 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		m.Who = r.Who
 		notes = append(notes, m)
 	}
+	// A card named by a fact is a card of the batch: the first n queued.
+	notInBatch := func(id string) bool {
+		if contains(ids, id) {
+			return false
+		}
+		listed := strings.Join(ids, ", ")
+		if len(ids) > MaxLook {
+			listed = span(ids) + "; list it: nova-sprint queue --stream " + r.Stream + " --max " + itoa(len(ids))
+		}
+		p.refuse(id, "not a card of the batch; the batch of "+itoa(len(ids))+" is "+listed)
+		return true
+	}
 	stop := func(cause, typ string, primaries []string, before int, unset ...string) Unit {
 		ctlSet["state"], ctlSet["since"], ctlSet["cause"] = StreamStopped, now, cause
 		j := judgment(typ, r.Stream, s.Now, before, primaries...)
@@ -124,6 +149,9 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		m := s.Merge.Placed(r.Conflict)
 		if m == nil || m.Row != r.Stream || m.Col != Queued {
 			p.refuse(r.Conflict, "not queued in stream "+r.Stream)
+			return p
+		}
+		if notInBatch(r.Conflict) {
 			return p
 		}
 		pr := s.Work.Placed(r.Conflict)
@@ -142,6 +170,9 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 			p.refuse(card, "the cross fact wants <card>=<other> with the card queued in stream "+r.Stream)
 			return p
 		}
+		if notInBatch(card) {
+			return p
+		}
 		if why := crossRefusal(s, r.Stream, card, other); why != "" {
 			p.refuse(card, why)
 			return p
@@ -154,9 +185,24 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		u.Moved = fmt.Sprintf("stream %s stopped: %s queued -> stuck, needs %s (stream %s) landed first", r.Stream, card, other, orDash(otherStream))
 		p.Units = append(p.Units, u)
 	case r.Red:
+		for _, x := range r.Suspects {
+			if !contains(ids, x) {
+				p.refuse(x, "a suspect is a card of the batch; the batch of "+itoa(len(ids))+" is "+span(ids)+"; list it: nova-sprint queue --stream "+r.Stream+" --max "+itoa(len(ids)))
+			}
+		}
+		if len(p.Refused) > 0 {
+			return p
+		}
 		ctlSet["ci"] = "red"
 		u := stop("red", NRed, ids, 0, "card", "other")
-		u.Notes[len(u.Notes)-1].What = "suspects: the batch of " + itoa(len(ids))
+		j := &u.Notes[len(u.Notes)-1]
+		j.Suspects = append([]string(nil), r.Suspects...)
+		if len(r.Suspects) > 0 {
+			ctlSet["suspects"] = strings.Join(r.Suspects, ",")
+			j.What = "suspects: " + strings.Join(r.Suspects, ", ") + " (of the batch of " + itoa(len(ids)) + ")"
+		} else {
+			j.What = "no suspect named; the batch of " + itoa(len(ids)) + " is " + span(ids) + "; list it: nova-sprint queue --stream " + r.Stream + " --max " + itoa(len(ids))
+		}
 		for _, c := range batch {
 			if pr := s.Work.Placed(c.ID); pr != nil {
 				u.Changes = append(u.Changes, change(Work, setEntry(pr, map[string]string{"ci": "red", "ci_at": now})))
@@ -186,8 +232,19 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 			return p
 		}
 		ctlSet["ci"], ctlSet["moved"] = "green", now
-		if streamDone(s, r.Stream, len(landing)) {
+		switch {
+		case streamDone(s, r.Stream, len(landing)):
 			ctlSet["state"], ctlSet["since"] = StreamLanded, now
+		case s.Merge.Count(r.Stream, Queued)+s.Merge.Count(r.Stream, Stuck) == len(landing):
+			// The last queued card lands and the stream is not done: nothing
+			// is queued or stuck, so the stream is waiting.
+			if state == StreamWaiting {
+				delete(ctlSet, "state")
+				delete(ctlSet, "since")
+				notes = nil
+			} else {
+				ctlSet["state"], ctlSet["since"] = StreamWaiting, now
+			}
 		}
 		for i, c := range landing {
 			u := Unit{Key: c.ID, Stream: r.Stream}
@@ -209,8 +266,45 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 			l.Who = r.Who
 			last.Notes = append(last.Notes, l)
 		}
+		lands := map[string]bool{}
+		for _, id := range landed {
+			lands[id] = true
+		}
+		if d, ok := sprintDone(s, lands, nil, r.Who); ok {
+			last.Notes = append(last.Notes, d)
+		}
+		p.Units = append(p.Units, resolveAfter(s, lands, r.Who)...)
 	}
 	return p
+}
+
+// sprintDone is the judgment "the sprint is done", written once by the step
+// that takes the last open primary of the whole sprint out of the open states
+// (landing lands, leaving drops): every primary is landed or off the table,
+// and at least one landed. The dropped count is the streams' control cards'
+// dropped counters, with this step's.
+func sprintDone(s *Snapshot, landing, leaving map[string]bool, who string) (Note, bool) {
+	if len(landing)+len(leaving) == 0 || hasOpen(s.Open, NSprintDone, SprintSubject) {
+		return Note{}, false
+	}
+	for _, st := range []State{Waiting, Ready, Working, Review, Merging} {
+		for _, c := range s.Work.Column(st) {
+			if !landing[c.ID] && !leaving[c.ID] {
+				return Note{}, false
+			}
+		}
+	}
+	landed := len(s.Work.Column(Landed)) + len(landing)
+	if landed == 0 {
+		return Note{}, false
+	}
+	dropped := len(leaving)
+	for _, st := range s.Work.Rows {
+		dropped += s.StreamCtl(st).Int("dropped")
+	}
+	n := judgment(NSprintDone, "", s.Now, 0)
+	n.SprintLevel, n.Who, n.What = true, who, fmt.Sprintf("%d landed, %d dropped", landed, dropped)
+	return n, true
 }
 
 // ResumeReq moves a stopped stream again.

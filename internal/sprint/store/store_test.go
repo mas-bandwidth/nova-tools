@@ -95,7 +95,7 @@ func (h *harness) setup(n int) {
 // through drives primaries to merging queued.
 func (h *harness) through(ids ...string) {
 	h.t.Helper()
-	h.must(StartStep(sprint.StartReq{Sel: sprint.Sel{IDs: ids}}))
+	h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: ids}}))
 	s := h.snap()
 	for _, id := range ids {
 		c := s.Fleet.Card(s.Work.Card(id).F("work"))
@@ -133,7 +133,7 @@ func TestTheLifeOfAStreamThroughTheStore(t *testing.T) {
 	for _, g := range v.Groups {
 		types = append(types, g.Type)
 	}
-	for _, want := range []string{sprint.NWorkOK, sprint.NReadyToAccept, sprint.NStartedMerging, sprint.NBatchLanded, sprint.NStreamLanded} {
+	for _, want := range []string{sprint.NWorkOK, sprint.NStartedMerging, sprint.NBatchLanded, sprint.NStreamLanded} {
 		found := false
 		for _, got := range types {
 			found = found || got == want
@@ -159,7 +159,7 @@ func TestALargeSetIsOneOperationInChunks(t *testing.T) {
 	h := newHarness(t)
 	h.setup(300)
 	before := h.m.Calls["apply"]
-	res := h.must(StartStep(sprint.StartReq{Sel: sprint.Sel{Limit: 1000}}))
+	res := h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 1000}}))
 	if len(res.Moved) != 300 || h.m.Calls["apply"]-before != 6 || h.m.Calls["acquire"] == 0 {
 		t.Fatalf("moved %d in %d manifests", len(res.Moved), h.m.Calls["apply"]-before)
 	}
@@ -187,7 +187,7 @@ func TestD1APendingOperationIsFinishedFirst(t *testing.T) {
 		}
 		return nil
 	}
-	_, err := h.st.Run(h.ctx, StartStep(sprint.StartReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
+	_, err := h.st.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 	if !errors.Is(err, ErrUnknown) || h.m.Pending() == nil {
 		t.Fatalf("a lost reply on the work table: %v, pending %v", err, h.m.Pending())
 	}
@@ -217,7 +217,7 @@ func TestD1NotificationsAtTheCommitOnly(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(1)
-	h.must(StartStep(sprint.StartReq{Sel: sprint.Sel{Limit: 1}}))
+	h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 1}}))
 	h.must(TakeStep(sprint.TakeReq{As: h.snap().Fleet.Card("s1-1.w1").Row, Sel: sprint.Sel{Limit: 1}}))
 	h.m.Fail = func(p string) error {
 		if p == "release" {
@@ -279,13 +279,13 @@ func TestAnotherWriterBetweenReadAndWriteMeansAFreshPlan(t *testing.T) {
 	h.setup(3)
 	other := &Store{B: h.m, Names: h.st.Names, Actor: "other", Now: h.st.Now, NewID: func() string { return "o" }, Sleep: h.st.Sleep}
 	r := &racer{Backend: h.m, at: "acquire", do: func() {
-		if _, err := other.Run(h.ctx, StartStep(sprint.StartReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}})); err != nil {
+		if _, err := other.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}})); err != nil {
 			t.Error(err)
 		}
 	}}
 	st := *h.st
 	st.B = r
-	res, err := st.Run(h.ctx, StartStep(sprint.StartReq{Sel: sprint.Sel{IDs: []string{"s1-1", "s1-2"}}}))
+	res, err := st.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1", "s1-2"}}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,7 +311,7 @@ func TestALaterTableMovedByADisplayWriteIsSentAgain(t *testing.T) {
 	}}
 	st := *h.st
 	st.B = r
-	if _, err := st.Run(h.ctx, StartStep(sprint.StartReq{Sel: sprint.Sel{Limit: 1}})); err != nil {
+	if _, err := st.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 1}})); err != nil {
 		t.Fatal(err)
 	}
 	if h.state("s1-1") != sprint.Working {
@@ -339,7 +339,7 @@ func TestALaterMemberChangedIsSkippedByRepair(t *testing.T) {
 	}}
 	st := *h.st
 	st.B = r
-	_, err := st.Run(h.ctx, StartStep(sprint.StartReq{Sel: sprint.Sel{Limit: 1}}))
+	_, err := st.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 1}}))
 	var cut *CutError
 	if !errors.As(err, &cut) || h.m.Pending() == nil {
 		t.Fatalf("a member changed under a later table: %v", err)
@@ -372,7 +372,7 @@ func TestAnUnappliedPendingOperationIsAbandonedAfterTheGrace(t *testing.T) {
 		}
 		return nil
 	}
-	if _, err := h.st.Run(h.ctx, StartStep(sprint.StartReq{Sel: sprint.Sel{Limit: 1}})); !errors.Is(err, ErrUnknown) {
+	if _, err := h.st.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 1}})); !errors.Is(err, ErrUnknown) {
 		t.Fatalf("start: %v", err)
 	}
 	h.m.Fail = nil
@@ -397,12 +397,12 @@ func TestAnUnappliedPendingOperationIsAbandonedAfterTheGrace(t *testing.T) {
 		t.Fatalf("past the grace: %+v", res)
 	}
 	if h.state("s1-1") != sprint.Ready {
-		t.Fatalf("an abandoned start moved its primary")
+		t.Fatalf("an abandoned deal moved its primary")
 	}
 	notes, _, _ := h.m.NotesSince(h.ctx, "", 1000)
 	found := false
 	for _, n := range notes {
-		found = found || n.Type == sprint.NAbandoned && strings.Contains(n.What, "(start) by tester, 2m0s old")
+		found = found || n.Type == sprint.NAbandoned && strings.Contains(n.What, "(deal) by tester, 2m0s old")
 	}
 	if !found {
 		t.Fatalf("abandoned silently: %+v", notes)
@@ -415,7 +415,7 @@ func TestD3ARetriedFinishReturnsTheOriginal(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(1)
-	h.must(StartStep(sprint.StartReq{Sel: sprint.Sel{Limit: 1}}))
+	h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 1}}))
 	m := h.snap().Fleet.Card("s1-1.w1").Row
 	h.must(TakeStep(sprint.TakeReq{As: m, Sel: sprint.Sel{Limit: 1}}))
 	step := FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{"s1-1.w1"}}, Gens: map[string]int{"s1-1.w1": 1}, Failed: true})
@@ -504,7 +504,7 @@ func TestD7InboxThroughTheStore(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(2)
-	h.must(StartStep(sprint.StartReq{Sel: sprint.Sel{Limit: 2}}))
+	h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 2}}))
 	s := h.snap()
 	for _, id := range []string{"s1-1.w1", "s1-2.w1"} {
 		h.must(TakeStep(sprint.TakeReq{As: s.Fleet.Card(id).Row, Sel: sprint.Sel{IDs: []string{id}}, Gens: map[string]int{id: 1}}))

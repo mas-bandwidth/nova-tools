@@ -21,14 +21,13 @@ func (a *app) cmdPlay(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("play")
 	seed := fs.Uint64("seed", 1, "the seed: the same seed plays the same run")
 	every := fs.Duration("every", time.Second, "between ticks")
-	start := fs.Bool("start", false, "start ready primaries each tick")
 	fail := fs.Float64("fail", 0.1, "the chance a work card comes back failed")
 	broken := fs.Float64("broken", 0.05, "the chance a read finds it broken")
 	batch := fs.Int("batch", 100, "a merge step's batch")
 	stuck := fs.Float64("stuck", 0.10, "the chance a batch has a card that does not merge")
 	cross := fs.Float64("cross", 0.01, "the chance a batch has a card that needs a card of another stream first")
 	red := fs.Float64("red", 0.0, "the chance a batch turns the stream branch red")
-	flap := fs.Float64("flap", 0, "the chance, per member and tick, that a member goes down or comes up")
+	flap := fs.Float64("flap", 0, "the chance, per member and tick, that an up member goes down, and the same chance that a down member comes up; members it took down are brought up before it stops")
 	ticks := fs.Int("ticks", 0, "stop after n ticks; 0 is until every stream lands")
 	take := fs.Int("take", 10, "work cards a member takes a tick")
 	reads := fs.Int("reads", 10, "read cards a reader reports a tick")
@@ -51,7 +50,7 @@ func (a *app) cmdPlay(args []string, stdout, stderr io.Writer) int {
 	facts := driver.NewSeeded(*seed)
 	facts.Fail, facts.Broken, facts.Stuck, facts.Cross, facts.Red, facts.Flap = *fail, *broken, *stuck, *cross, *red, *flap
 	d := &driver.Driver{Run: a.run, Base: base, Facts: facts, Clock: appClock{a}, Out: stdout,
-		Config: driver.Config{Every: *every, Start: *start, Batch: *batch, TakeLimit: *take, ReadLimit: *reads, Ticks: *ticks}}
+		Config: driver.Config{Every: *every, Batch: *batch, TakeLimit: *take, ReadLimit: *reads, Ticks: *ticks}}
 	why, err := d.Loop()
 	if err != nil {
 		fmt.Fprintf(stderr, "%s play: %s\n", prog, oneline.Escape(err.Error()))

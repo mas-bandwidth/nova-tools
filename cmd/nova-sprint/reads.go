@@ -58,12 +58,20 @@ type queueCard struct {
 	Gen     int     `json:"gen,omitempty"`
 	Head    string  `json:"head,omitempty"`
 	Score   float64 `json:"score"`
+	// The stamps: a work card's dealt and taken, a read card's asked and begun.
+	Dealt string `json:"dealt,omitempty"`
+	Taken string `json:"taken,omitempty"`
+	Asked string `json:"asked,omitempty"`
+	Begun string `json:"begun,omitempty"`
+	// WaitsFor is, for a waiting primary, the needs it still waits for.
+	WaitsFor []string `json:"waits_for,omitempty"`
 }
 
 func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("queue")
 	as := fs.String("as", "", "a reader (its read cards, asked then reading) or a fleet member (its work cards, ready then working)")
 	stream := fs.String("stream", "", "a stream: its merge queue, then its stuck cards")
+	col := fs.String("col", "", "with --stream: waiting lists the stream's waiting primaries, each with what it still waits for")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "queue", err.Error())
@@ -71,19 +79,39 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 	if len(pos) > 0 || (*as == "") == (*stream == "") {
 		return refuse(stderr, "queue", "wants one of --as <reader|member>, --stream <s>")
 	}
+	if *col != "" && (*col != sprint.Waiting || *stream == "") {
+		return refuse(stderr, "queue", "--col takes waiting, with --stream <s>")
+	}
 	st, err := a.store(*c)
 	if err != nil {
 		return refuse(stderr, "queue", err.Error())
 	}
 	ctx := context.Background()
+	if st, err = st.Pinned(ctx); err != nil {
+		return a.readFailed("queue", err, stderr)
+	}
+	epoch := st.PinnedEpoch()
 	var cards []queueCard
 	add := func(table string, cs []*sprint.Card) {
 		for _, x := range cs {
 			cards = append(cards, queueCard{ID: x.ID, Table: table, Row: x.Row, Col: x.Col, Primary: x.F("primary"), Stream: x.F("stream"),
-				Attempt: x.Int("attempt"), Gen: x.Int("gen"), Head: x.F("head"), Score: x.Score})
+				Attempt: x.Int("attempt"), Gen: x.Int("gen"), Head: x.F("head"), Score: x.Score,
+				Dealt: x.F("dealt"), Taken: x.F("taken"), Asked: x.F("asked"), Begun: x.F("begun")})
 		}
 	}
-	if *stream != "" {
+	if *col == sprint.Waiting {
+		s, err := st.Load(ctx, []string{sprint.Work}, func(s *sprint.Snapshot) map[string][]string {
+			return map[string][]string{sprint.Work: sprint.ResolveExtras(s)}
+		})
+		if err != nil {
+			return a.readFailed("queue", err, stderr)
+		}
+		cs := s.Work.Cell(*stream, sprint.Waiting)
+		add(sprint.Work, cs)
+		for i, x := range cs {
+			cards[i].WaitsFor = sprint.WaitsFor(s, x, nil)
+		}
+	} else if *stream != "" {
 		cs, err := st.ReadCells(ctx, sprint.Merge, *stream, sprint.Queued, sprint.Stuck)
 		if err != nil {
 			return a.readFailed("queue", err, stderr)
@@ -102,7 +130,7 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 		if cards == nil {
 			cards = []queueCard{}
 		}
-		b, _ := json.Marshal(map[string]any{"as": *as, "stream": *stream, "cards": cards})
+		b, _ := json.Marshal(map[string]any{"as": *as, "stream": *stream, "epoch": epoch, "cards": cards})
 		fmt.Fprintln(stdout, string(b))
 		return 0
 	}
@@ -114,12 +142,20 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 			if x.Col == sprint.Working {
 				next = "finish"
 			}
-			l += " gen=" + strconv.Itoa(x.Gen) + " " + next + ": " + x.ID + "@" + strconv.Itoa(x.Gen)
+			l += " gen=" + strconv.Itoa(x.Gen) + " " + next + ": " + x.ID + "@" + strconv.Itoa(x.Gen) + " --epoch " + strconv.FormatUint(epoch, 10)
+		}
+		if len(x.WaitsFor) > 0 {
+			l += " waits for: " + strings.Join(x.WaitsFor, ",")
+		}
+		for _, st := range [][2]string{{"dealt", x.Dealt}, {"taken", x.Taken}, {"asked", x.Asked}, {"begun", x.Begun}} {
+			if st[1] != "" {
+				l += " " + st[0] + "=" + st[1]
+			}
 		}
 		lines = append(lines, l)
 	}
 	listed(stdout, "CARD", lines, c.max, "queue")
-	fmt.Fprintf(stdout, "QUEUE OK cards=%d\n", len(cards))
+	fmt.Fprintf(stdout, "QUEUE OK cards=%d epoch=%d\n", len(cards), epoch)
 	return 0
 }
 
@@ -133,14 +169,19 @@ func (a *app) readFailed(verbName string, err error, stderr io.Writer) int {
 
 // whereView is the view, for a program.
 type whereView struct {
-	At      time.Time                               `json:"at"`
-	Landed  int64                                   `json:"landed"`
-	All     int64                                   `json:"all"`
-	Summary string                                  `json:"summary"`
-	Tables  map[string]map[string]map[string]string `json:"tables"` // table -> row -> column -> cell as printed
-	Streams []sprint.StreamClock                    `json:"streams"`
-	Stalled []string                                `json:"stalled,omitempty"`
-	Pending string                                  `json:"pending,omitempty"`
+	At          time.Time                               `json:"at"`
+	Landed      int64                                   `json:"landed"`
+	All         int64                                   `json:"all"`
+	Summary     string                                  `json:"summary"`
+	Tables      map[string]map[string]map[string]string `json:"tables"` // table -> row -> column -> cell as printed
+	Streams     []sprint.StreamClock                    `json:"streams"`
+	Stalled     []string                                `json:"stalled,omitempty"`
+	Coordinator string                                  `json:"coordinator,omitempty"`
+	Pending     string                                  `json:"pending,omitempty"`
+	Epoch       uint64                                  `json:"epoch"`
+	Cleared     time.Time                               `json:"cleared,omitempty"` // when the epoch began
+	Machine     string                                  `json:"machine,omitempty"`
+	Goals       []goalView                              `json:"goals,omitempty"`
 }
 
 func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
@@ -148,11 +189,12 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 	watch := fs.Bool("watch", false, "redraw every --every until interrupted")
 	every := fs.Duration("every", time.Second, "the redraw interval with --watch")
 	stale := fs.Duration("stale", defaultStale, "a stream with no progress for longer is shown stalled")
+	atEpoch := fs.Int64("at-epoch", -1, "the sprint as it was at an earlier epoch (before a clear)")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
 		return refuse(stderr, "where", fmt.Sprint("takes no words ", err))
 	}
-	st, err := a.store(*c)
+	st, err := a.storeAt(*c, *atEpoch)
 	if err != nil {
 		return refuse(stderr, "where", err.Error())
 	}
@@ -178,6 +220,14 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 }
 
 func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (whereView, string, error) {
+	st, err := st.Pinned(ctx)
+	if err != nil {
+		return whereView{}, "", err
+	}
+	es, err := st.EpochNow(ctx)
+	if err != nil {
+		return whereView{}, "", err
+	}
 	names := make([]string, len(sprint.ViewOrder))
 	for i, t := range sprint.ViewOrder {
 		names[i] = st.Names.Table(t)
@@ -194,15 +244,27 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 	if err != nil {
 		return whereView{}, "", err
 	}
+	coordinator, err := st.B.Coordinator(ctx)
+	if err != nil {
+		return whereView{}, "", err
+	}
 	now := a.now()
-	v := whereView{At: now, Tables: map[string]map[string]map[string]string{}, Streams: clocks}
+	v := whereView{At: now, Tables: map[string]map[string]map[string]string{}, Streams: clocks, Epoch: st.PinnedEpoch(), Coordinator: coordinator}
+	if v.Epoch == es.N {
+		v.Cleared = es.Cleared
+	}
 	v.Landed, v.All = counts(shapes[0])
 	v.Summary = summary(shapes[0])
 	if f.Pending != nil {
 		v.Pending = f.Pending.ID
 	}
+	v.Machine = st.MachineLine(ctx)
 	var b strings.Builder
-	b.WriteString(now.Format("2006-01-02 15:04:05 MST") + "\n\nSPRINT TABLE\n\n" + v.Summary + "\n\n")
+	b.WriteString(now.Format("2006-01-02 15:04:05 MST") + "\n\nSPRINT TABLE\n\n" + strings.TrimSpace(v.Summary+"  "+v.Machine) + "\n")
+	if coordinator != "" {
+		b.WriteString("coordinator: " + coordinator + "\n")
+	}
+	b.WriteString("\n")
 	var parts []string
 	for i, t := range shapes {
 		logical := sprint.ViewOrder[i]
@@ -220,6 +282,7 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 		}
 	}
 	b.WriteString(strings.Join(parts, "\n"))
+	b.WriteString(a.goalsFrame(ctx, st, &v))
 	for _, c := range clocks {
 		if c.Stalled(now, stale) {
 			v.Stalled = append(v.Stalled, c.Stream)
@@ -234,22 +297,35 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 
 func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("inbox")
-	open := fs.Int("open", 0, "list every primary and notification of group n")
+	open := fs.String("open", "", "list every member and notification of the group of this id")
 	read := fs.Bool("read", false, "move the cursor past what is shown: happened notifications before it are not shown again (open judgments always are)")
 	deadline := fs.Duration("deadline", defaultDeadline, "a judgment open longer is overdue")
 	stale := fs.Duration("stale", defaultStale, "a stream with no progress for longer is shown stalled")
+	atEpoch := fs.Int64("at-epoch", -1, "the inbox as it was at an earlier epoch (before a clear)")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
 		return refuse(stderr, "inbox", fmt.Sprint("takes no words ", err))
 	}
-	st, err := a.store(*c)
+	st, err := a.storeAt(*c, *atEpoch)
 	if err != nil {
 		return refuse(stderr, "inbox", err.Error())
+	}
+	if isNumber(*open) {
+		return refuse(stderr, "inbox", "group numbers are not accepted: --open wants a group's id, as inbox prints it")
 	}
 	ctx := context.Background()
 	v, err := st.Inbox(ctx, *deadline, *stale, 10000)
 	if err != nil {
 		return a.readFailed("inbox", err, stderr)
+	}
+	var opened *sprint.Group
+	if *open != "" {
+		g, ok := sprint.FindGroup(v.Groups, *open)
+		if !ok {
+			fmt.Fprintf(stderr, "%s inbox: no group %s now; %s\n", prog, oneline.Escape(*open), oneline.Escape(groupList(v.Groups)))
+			return 1
+		}
+		opened = &g
 	}
 	if *read && v.Last != "" {
 		if err := st.B.SetCursor(ctx, v.Last); err != nil {
@@ -261,9 +337,9 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 		if groups == nil {
 			groups = []sprint.Group{}
 		}
-		out := map[string]any{"groups": groups, "last": v.Last, "cursor": v.Cursor, "at": a.now()}
-		if *open > 0 && *open <= len(v.Groups) {
-			out["open"] = groupMembers(v, v.Groups[*open-1])
+		out := map[string]any{"groups": groups, "last": v.Last, "cursor": v.Cursor, "at": a.now(), "machine": st.MachineLine(ctx)}
+		if opened != nil {
+			out["open"] = nonNil(opened.Members)
 		}
 		b, _ := json.Marshal(out)
 		fmt.Fprintln(stdout, string(b))
@@ -278,14 +354,23 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 			other++
 		}
 		fmt.Fprintln(stdout, groupLine(g, now))
-		if g.N == *open {
-			for _, m := range groupMembers(v, g) {
+		for _, cmd := range g.Commands {
+			fmt.Fprintf(stdout, "  %s:\n", oneline.Escape(cmd.Decision))
+			for _, l := range cmd.Lines {
+				fmt.Fprintf(stdout, "    %s\n", oneline.Escape(l))
+			}
+		}
+		if opened != nil && g.ID == opened.ID {
+			for _, m := range g.Members {
 				fmt.Fprintf(stdout, "  %s\n", oneline.Escape(m))
 			}
 			fmt.Fprintf(stdout, "  notes: %s\n", oneline.Escape(strings.Join(g.Notes, " ")))
 		}
 	}
 	fmt.Fprintf(stdout, "INBOX OK judgments=%d happened=%d cursor=%s\n", judg, other, dashed(v.Cursor))
+	if line := st.MachineLine(ctx); line != "" {
+		fmt.Fprintln(stdout, line)
+	}
 	return 0
 }
 
@@ -296,20 +381,25 @@ func dashed(s string) string {
 	return s
 }
 
-// groupLine is one inbox group: its number, kind, a mark for a repeat or an
-// overdue one, the type, the stream, how many, how long it waited, the
-// primaries (bounded), and the decisions open to the coordinator.
+// groupLine is one inbox group: its kind, its id (what --group takes), a mark
+// for a repeat or an overdue one, the type, the stream, its size (what --expect
+// takes), how long it waited, the primaries (bounded, then the command that
+// lists them all), and the decisions open to the coordinator.
 func groupLine(g sprint.Group, now time.Time) string {
 	mark := " "
 	if g.Marked {
 		mark = "!"
 	}
 	kind := strings.ToUpper(g.Kind)
-	l := fmt.Sprintf("%s %d %s %s", kind, g.N, mark, g.Type)
+	l := fmt.Sprintf("%s %s %s %s", kind, g.ID, mark, g.Type)
 	if g.Stream != "" {
 		l += "  stream=" + g.Stream
 	}
-	l += "  x" + strconv.Itoa(g.Count)
+	if g.Size > 0 || g.Kind == sprint.Judgment {
+		l += "  size=" + strconv.Itoa(g.Size)
+	} else {
+		l += "  x" + strconv.Itoa(g.Count)
+	}
 	if g.Kind == sprint.Judgment {
 		l += "  waited=" + now.Sub(g.Oldest).Round(time.Second).String()
 		if g.Overdue {
@@ -324,13 +414,19 @@ func groupLine(g sprint.Group, now time.Time) string {
 	if len(g.Primaries) > 0 {
 		ps := g.Primaries
 		more := ""
-		if len(ps) > 8 {
-			ps, more = ps[:8], ",..."
+		if len(ps) > 8 || g.Size > len(ps) {
+			if len(ps) > 8 {
+				ps = ps[:8]
+			}
+			more = ",... all: nova-sprint inbox --open " + g.ID
 		}
 		l += "  (" + strings.Join(ps, ",") + more + ")"
 	}
 	if g.What != "" {
 		l += "  " + g.What
+	}
+	if len(g.Commands) > 0 {
+		return oneline.Escape(l) // the decisions follow, as commands
 	}
 	if len(g.Decisions) > 0 {
 		l += "  -> " + strings.Join(g.Decisions, " | ")
@@ -347,21 +443,24 @@ func groupLine(g sprint.Group, now time.Time) string {
 
 // cardView is everything about one primary.
 type cardView struct {
-	Primary *sprint.Card   `json:"primary"`
-	Work    []*sprint.Card `json:"work_cards"`
-	Reads   []*sprint.Card `json:"read_cards"`
-	Merge   *sprint.Card   `json:"merge,omitempty"`
-	Open    []sprint.Open  `json:"open,omitempty"`
+	Primary  *sprint.Card       `json:"primary"`
+	Work     []*sprint.Card     `json:"work_cards"`
+	Reads    []*sprint.Card     `json:"read_cards"`
+	Merge    *sprint.Card       `json:"merge,omitempty"`
+	Open     []sprint.Open      `json:"open,omitempty"`
+	Needs    []sprint.NeedState `json:"needs,omitempty"`
+	NeededBy []string           `json:"needed_by,omitempty"`
 }
 
 func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("card")
+	atEpoch := fs.Int64("at-epoch", -1, "the primary as it was at an earlier epoch (before a clear)")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) != 1 {
 		return refuse(stderr, "card", fmt.Sprint("wants one primary id ", err))
 	}
 	id := pos[0]
-	st, err := a.store(*c)
+	st, err := a.storeAt(*c, *atEpoch)
 	if err != nil {
 		return refuse(stderr, "card", err.Error())
 	}
@@ -375,7 +474,7 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	if c.json {
-		b, _ := json.Marshal(cardView{Primary: v.Primary, Work: v.Work, Reads: v.Reads, Merge: v.Merge, Open: v.Open})
+		b, _ := json.Marshal(cardView{Primary: v.Primary, Work: v.Work, Reads: v.Reads, Merge: v.Merge, Open: v.Open, Needs: v.Needs, NeededBy: v.NeededBy})
 		fmt.Fprintln(stdout, string(b))
 		return 0
 	}
@@ -388,6 +487,16 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 	}
 	if v.Merge != nil {
 		printCard(stdout, "MERGE", v.Merge)
+	}
+	for _, n := range v.Needs {
+		waived := ""
+		if n.Waived {
+			waived = " waived"
+		}
+		fmt.Fprintf(stdout, "NEEDS %s %s%s\n", oneline.Escape(n.ID), oneline.Escape(n.State), waived)
+	}
+	for _, n := range v.NeededBy {
+		fmt.Fprintf(stdout, "NEEDED-BY %s\n", oneline.Escape(n))
 	}
 	for _, o := range v.Open {
 		fmt.Fprintf(stdout, "OPEN %s %s -> %s\n", oneline.Escape(o.Note.ID), oneline.Escape(o.Note.Type), oneline.Escape(strings.Join(o.Note.Decisions, " | ")))

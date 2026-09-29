@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"strings"
 	"sync"
@@ -83,6 +84,20 @@ func (ta *testApp) json(line string, v any) {
 	}
 }
 
+// deal deals up to n ready primaries, as the machine's tick does, without
+// the rest of the tick: a test that needs exact queues deals by hand.
+func (ta *testApp) deal(n int) {
+	ta.t.Helper()
+	st, err := ta.a.store(common{redis: "mem:0", prefix: "t-", actor: "tester"})
+	if err != nil {
+		ta.t.Fatal(err)
+	}
+	res, err := st.Run(context.Background(), store.DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: n}}))
+	if err != nil || len(res.Refused) > 0 {
+		ta.t.Fatalf("deal %d: %+v %v", n, res.Refused, err)
+	}
+}
+
 func (ta *testApp) clean() {
 	ta.t.Helper()
 	if code, out, errs := ta.do("check"); code != 0 {
@@ -102,7 +117,8 @@ func TestTheCommandDrivesAStreamToLanded(t *testing.T) {
 		t.Fatalf("add: %s", out)
 	}
 	ta.clean()
-	ta.ok("start --limit 4")
+	ta.ok("start")
+	ta.ok("tick")
 	var q struct{ Cards []queueCard }
 	ta.json("queue --as m1", &q)
 	if len(q.Cards) != 2 || q.Cards[0].Gen != 1 {
@@ -154,7 +170,10 @@ func TestJudgmentsReachTheInboxAndTheCoordinatorAnswers(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	ta.ok("add --stream s1 --count 3")
-	ta.ok("start --stream s1")
+	ta.ok("start")
+	ta.ok("tick")
+	ta.ok("take --as m1 --limit 3")
+	ta.ok("tick") // the third is dealt when the member's ready queue has room
 	ta.ok("take --as m1 --limit 3")
 	ta.ok("finish --as m1 s1-1.w1@1 s1-2.w1@1")
 	code, _, errs := ta.do("finish --as m1 s1-3.w1@1 --failed --report 'tests red'")
@@ -163,11 +182,12 @@ func TestJudgmentsReachTheInboxAndTheCoordinatorAnswers(t *testing.T) {
 	}
 	out := ta.ok("inbox")
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if !strings.HasPrefix(lines[0], "JUDGMENT 1") || !strings.Contains(lines[0], "work came back failed") || !strings.Contains(lines[0], "rework with a fix | drop") {
+	if !strings.HasPrefix(lines[0], "JUDGMENT ") || !strings.Contains(lines[0], "work came back failed") || !strings.Contains(lines[0], "size=1") {
 		t.Fatalf("judgment first: %s", out)
 	}
-	// the inbox group is a set
-	out = ta.ok("rework --group 1 --fix 'handle the empty case'")
+	// the inbox group is a set, named by its id
+	id := strings.Fields(lines[0])[1]
+	out = ta.ok("rework --group " + id + " --fix 'handle the empty case'")
 	if !strings.Contains(out, "s1-3 review -> working (rework)") {
 		t.Fatalf("rework: %s", out)
 	}
@@ -193,7 +213,8 @@ func TestAStoppedStreamWaitsForResume(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	ta.ok("add --stream s1 --count 2")
-	ta.ok("start --limit 2")
+	ta.ok("start")
+	ta.ok("tick")
 	ta.ok("take --as m1 --limit 2")
 	ta.ok("finish --as m1 s1-1.w1@1 s1-2.w1@1")
 	ta.ok("ask")
@@ -223,7 +244,8 @@ func TestAStaleFinishIsRefusedAndARetryReplays(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1,m2")
 	ta.ok("add --stream s1 --count 2")
-	ta.ok("start --limit 2")
+	ta.ok("start")
+	ta.ok("tick")
 	var q struct{ Cards []queueCard }
 	ta.json("queue --as m1", &q)
 	card := q.Cards[0].ID
@@ -256,7 +278,7 @@ func TestEveryVerbHasHelpAndRefusesBadUse(t *testing.T) {
 	if code, out, _ := ta.do("help"); code != 0 || !strings.Contains(out, "nova-sprint play") {
 		t.Errorf("help: %d", code)
 	}
-	for _, line := range []string{"", "nosuch", "start", "take", "merge", "read --as reader-a", "rank x", "teardown", "add --stream s1"} {
+	for _, line := range []string{"", "nosuch", "start now", "take", "merge", "read --as reader-a", "rank x", "teardown", "add --stream s1"} {
 		if code, _, errs := ta.do(line); code != 2 || !strings.Contains(errs, "run: nova-sprint") {
 			t.Errorf("%q: exit %d %q", line, code, errs)
 		}
@@ -277,4 +299,51 @@ func TestTeardownWantsTheSamePrefix(t *testing.T) {
 	if code, _, _ := ta.do("where"); code == 0 {
 		t.Fatalf("the tables are still there")
 	}
+}
+
+// clear: a new epoch, the old one readable, a late worker refused naming it,
+// the same ids again.
+func TestClearByTheCommand(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	ta.ok("add --stream s1 --count 2")
+	ta.deal(2)
+	ta.ok("take --as m1 --limit 2")
+	if code, _, _ := ta.do("clear --confirm other"); code != 2 {
+		t.Fatalf("clear with another prefix: %d", code)
+	}
+	out := ta.ok("clear --confirm t-")
+	if !strings.Contains(out, "CLEAR OK epoch=0->1") || !strings.Contains(out, "primaries=2") || !strings.Contains(out, "0/0 0.0% -> ETA") {
+		t.Fatalf("clear: %s", out)
+	}
+	code, _, errs := ta.do("finish --as m1 --epoch 0 s1-1.w1@1")
+	if code != 1 || !strings.Contains(errs, "cleared at") || !strings.Contains(errs, "epoch is now 1") {
+		t.Fatalf("a late finish: %d %s", code, errs)
+	}
+	var w whereView
+	ta.json("where", &w)
+	if w.Epoch != 1 || w.All != 0 || w.Tables["merge"]["s1"]["state"] != "waiting" {
+		t.Fatalf("where after clear: %+v", w)
+	}
+	ta.json("where --at-epoch 0", &w)
+	if w.Epoch != 0 || w.All != 2 {
+		t.Fatalf("where at the old epoch: %+v", w)
+	}
+	if out := ta.ok("card s1-1 --at-epoch 0"); !strings.Contains(out, "place=s1:working") {
+		t.Fatalf("card at the old epoch: %s", out)
+	}
+	ta.ok("add --stream s1 --count 2")
+	ta.deal(2)
+	var q struct {
+		Epoch uint64
+		Cards []queueCard
+	}
+	ta.json("queue --as m1", &q)
+	if q.Epoch != 1 || len(q.Cards) != 2 || q.Cards[0].ID != "s1-1.w1" {
+		t.Fatalf("the same ids in the new epoch: %+v", q)
+	}
+	ta.ok("take --as m1 --epoch 1 s1-1.w1@1")
+	ta.ok("clear --confirm t-")
+	ta.clean()
 }

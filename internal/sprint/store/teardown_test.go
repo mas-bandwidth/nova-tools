@@ -70,7 +70,7 @@ func TestTeardownLeavesTheKeysAsBeforeInit(t *testing.T) {
 // names and the ids: nothing is a pattern.
 func TestTeardownKeysAreExactNames(t *testing.T) {
 	t.Parallel()
-	keys := TeardownKeys(sprint.Names{Prefix: "p-"}, map[string][]string{sprint.Work: {"s1-1"}})
+	keys := TeardownKeys(sprint.Names{Prefix: "p-"}, map[string][]string{sprint.Work: {"s1-1"}}, Epochs{})
 	for _, want := range []string{"table:p-work:identity", "table:p-work:revision", "table:p-work:definition", "table:p-work:changes", "table:p-work:ops",
 		"table:p-fleet:changes", "p-sprint:w:s1-1", "p-sprint:fence", "p-sprint:fencegen", "p-sprint:inbox", "p-sprint:cursor", "p-sprint:done"} {
 		if !slices.Contains(keys, want) {
@@ -80,6 +80,18 @@ func TestTeardownKeysAreExactNames(t *testing.T) {
 	for _, k := range keys {
 		if strings.ContainsAny(k, "*?[") {
 			t.Fatalf("a pattern: %s", k)
+		}
+	}
+}
+
+// After clears, the definition snapshot of every epoch after the first is
+// named, the active one's too.
+func TestTeardownNamesEveryEpochsDefinition(t *testing.T) {
+	t.Parallel()
+	keys := TeardownKeys(sprint.Names{Prefix: "p-"}, nil, Epochs{Last: 2})
+	for _, want := range []string{"table:p-work:1:definition", "table:p-work:2:definition", "p-sprint:epoch", "p-sprint:inbox@2", "p-sprint:fence@1"} {
+		if !slices.Contains(keys, want) {
+			t.Fatalf("no %s in %v", want, keys)
 		}
 	}
 }

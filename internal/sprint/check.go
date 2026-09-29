@@ -9,7 +9,7 @@ import (
 // Violation is one broken rule of docs/SPEC-SPRINT.md section 9, or a step
 // cut short (section 10).
 type Violation struct {
-	Rule   int    `json:"rule"` // 1..9, or 10 for a cut step
+	Rule   int    `json:"rule"` // 1..9 and 11, or 10 for a cut step
 	Detail string `json:"detail"`
 }
 
@@ -137,7 +137,9 @@ func Check(s *Snapshot, pending *Pending) []Violation {
 	// 5. Merge merged = work landed.
 	landed, merged := primarySet{}, primarySet{}
 	for _, c := range s.Work.Column(Landed) {
-		landed.add(c.ID, c.ID)
+		if !IsSentinel(c) { // a sentinel lands by release, never merged
+			landed.add(c.ID, c.ID)
+		}
 	}
 	for _, c := range s.Merge.Column(Merged) {
 		merged.add(c.ID, c.Col)
@@ -147,6 +149,9 @@ func Check(s *Snapshot, pending *Pending) []Violation {
 	}
 	// 6. Nothing enters merging without ok reads from two different readers at its head.
 	for _, c := range s.Work.Column(Merging, Landed) {
+		if IsSentinel(c) {
+			continue // never read
+		}
 		readers := map[string]bool{}
 		for _, rc := range s.Readers.Of(c.ID) {
 			if rc.Col == OK && rc.F("head") == c.F("head") && ReadCardAgrees(rc) {
@@ -203,6 +208,12 @@ func Check(s *Snapshot, pending *Pending) []Violation {
 		}
 		if !open {
 			out = append(out, Violation{9, fmt.Sprintf("stream %s is stopped (%s) with no open judgment notification", st, ctl.F("cause"))})
+		}
+	}
+	// 11. A primary anywhere but waiting has every need landed or waived.
+	for _, c := range s.Work.Column(Ready, Working, Review, Merging, Landed) {
+		if w := WaitsFor(s, c, nil); len(w) > 0 {
+			out = append(out, Violation{11, fmt.Sprintf("%s is %s and needs %s, not landed", c.ID, c.Col, strings.Join(w, ","))})
 		}
 	}
 	// 10. A step that did not finish: the fence holds it.

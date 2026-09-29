@@ -1,0 +1,30 @@
+package main
+
+import (
+	"strings"
+	"testing"
+)
+
+// H11: card shows each need with its state and what needs the card; queue
+// --stream <s> --col waiting shows what each waiting card still waits for.
+func TestTheReadsShowTheNeeds(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	ta.ok("add --stream s1 --count 2")
+	ta.ok("add --stream s2 b --needs s1-1,s1-2")
+	out := ta.ok("card b")
+	if !strings.Contains(out, "NEEDS s1-1 ready\n") || !strings.Contains(out, "NEEDS s1-2 ready\n") {
+		t.Fatalf("card b: %s", out)
+	}
+	if out := ta.ok("card s1-1"); !strings.Contains(out, "NEEDED-BY b\n") {
+		t.Fatalf("card s1-1: %s", out)
+	}
+	if out := ta.ok("queue --stream s2 --col waiting"); !strings.Contains(out, "b work:s2:waiting waits for: s1-1,s1-2") {
+		t.Fatalf("queue: %s", out)
+	}
+	if code, _, errs := ta.do("queue --as m1 --col waiting"); code != 2 || !strings.Contains(errs, "--col takes waiting, with --stream") {
+		t.Fatalf("--col without --stream: %d %s", code, errs)
+	}
+	ta.clean()
+}

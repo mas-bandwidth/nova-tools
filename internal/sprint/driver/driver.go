@@ -1,13 +1,15 @@
 // Package driver plays the world outside the sprint table, on a tick: workers
-// taking and finishing work cards, readers taking and reporting read cards,
-// each stream's merge step with its facts, fleet members going down and up,
-// and the mechanical moves that need no decision. It has no access of its own
-// to the core or the store: everything it does is a nova-sprint verb run
-// through the command's own entry point with an argument list, and everything
-// it knows it reads from the read verbs' --json output. It never runs the
-// coordinator's verbs (accept, rework, drop, rank, resume, return); it keeps
-// playing while things wait for the coordinator, says what waits and for how
-// long, and stops when every stream has landed.
+// taking and finishing work cards, readers reporting read cards, each
+// stream's merge step with its facts, and fleet members going down and up.
+// The mechanical moves are the machine's (nova-sprint run): the driver plays
+// only the outside actors, and refuses to play while no machine is running.
+// It has no access of its own to the core or the store: everything it does is
+// a nova-sprint verb run through the command's own entry point with an
+// argument list, and everything it knows it reads from the read verbs' --json
+// output. It never runs the coordinator's verbs (accept, rework, drop, rank,
+// resume, return, start, stop) nor the machine's (tick, run); it keeps playing
+// while things wait for the coordinator, says what waits and for how long,
+// and stops when every stream has landed.
 package driver
 
 import (
@@ -28,10 +30,13 @@ type Facts interface {
 	Work(card string) (ok bool, report string)
 	// Read is what a reader found in a read card.
 	Read(card string) (ok bool, finding string)
-	// Merge is how a stream's batch went on its branch; others are cards of
-	// other streams in their merge queues, which a card may need first.
-	Merge(stream string, batch []string, others []string) Outcome
-	// Up is which members are up this tick, given which are up now.
+	// Merge is how a stream's batch went on its branch. others reads, when
+	// called, the cards queued in the other streams' merge queues, which a
+	// card may need first: a source calls it only for a cross-stream fact,
+	// and it reads them then, after every merge step before this one.
+	Merge(stream string, batch []string, others func() []string) Outcome
+	// Up is which members are up this tick, given which are up now: a member
+	// up goes down, and a member down comes up, with the same chance.
 	Up(tick int, members []string, up map[string]bool) map[string]bool
 }
 
@@ -40,6 +45,7 @@ type Outcome struct {
 	Conflict string // a card that did not merge
 	Cross    string // <card>=<other>: a card needs a card of another stream first
 	Red      bool
+	Suspects []string // on red, the cards the branch's failure points at
 }
 
 // Clock is the driver's time: read, and slept on between ticks.
@@ -50,13 +56,11 @@ type Clock interface {
 
 // Config is how the driver plays.
 type Config struct {
-	Every      time.Duration // between ticks
-	Start      bool          // start ready primaries (a mechanical move)
-	Batch      int           // a merge step's batch
-	TakeLimit  int           // work cards a member takes a tick
-	ReadLimit  int           // read cards a reader reports a tick
-	StartLimit int           // primaries started a tick
-	Ticks      int           // stop after this many ticks; 0 is until every stream lands
+	Every     time.Duration // between ticks
+	Batch     int           // a merge step's batch
+	TakeLimit int           // work cards a member takes a tick
+	ReadLimit int           // read cards a reader reports a tick
+	Ticks     int           // stop after this many ticks; 0 is until every stream lands
 }
 
 // Driver runs the loop. Run is the command's entry point; Base is the flags
@@ -69,10 +73,13 @@ type Driver struct {
 	Clock  Clock
 	Out    io.Writer
 	Config Config
+	downed map[string]bool // members this driver took down and has not brought up
 }
 
-// coordinatorVerbs are never run by the driver.
-var coordinatorVerbs = map[string]bool{"accept": true, "rework": true, "drop": true, "rank": true, "resume": true, "return": true}
+// coordinatorVerbs are never run by the driver: the coordinator's, and the
+// machine's.
+var coordinatorVerbs = map[string]bool{"accept": true, "rework": true, "drop": true, "rank": true, "resume": true, "return": true,
+	"start": true, "stop": true, "tick": true, "run": true, "resolve": true, "ask": true}
 
 // run runs one verb, prints its command line and its summary shortened, and
 // returns its exit code and stdout.
@@ -127,6 +134,7 @@ func short(verb, text string, code int) string {
 
 // where is what the driver reads of the view.
 type where struct {
+	Epoch   uint64                                  `json:"epoch"`
 	Landed  int64                                   `json:"landed"`
 	All     int64                                   `json:"all"`
 	Summary string                                  `json:"summary"`
@@ -136,6 +144,7 @@ type where struct {
 		State  string `json:"State"`
 	} `json:"streams"`
 	Pending string `json:"pending"`
+	Machine string `json:"machine"`
 }
 
 type queue struct {
@@ -185,6 +194,13 @@ func sortedKeys(m map[string][]string) []string {
 
 func atoi(s string) int { n, _ := strconv.Atoi(s); return n }
 
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
+
 // Loop plays until every stream has landed (exit 0), or until Ticks ticks.
 // It returns the reason it stopped.
 func (d *Driver) Loop() (string, error) {
@@ -198,8 +214,12 @@ func (d *Driver) Loop() (string, error) {
 	if c.ReadLimit <= 0 {
 		c.ReadLimit = 10
 	}
-	if c.StartLimit <= 0 {
-		c.StartLimit = 1000
+	var first where
+	if !d.read(&first, "where") {
+		return "", fmt.Errorf("the view could not be read: run: %s", commandLine(append([]string{"where"}, d.Base...)))
+	}
+	if first.Machine != "machine: running" && !strings.HasPrefix(first.Machine, "machine: running;") {
+		return "", fmt.Errorf("no machine is running (%s): the driver plays only the outside actors; run: nova-sprint start, and nova-sprint run", orDash(first.Machine))
 	}
 	for tick := 1; c.Ticks == 0 || tick <= c.Ticks; tick++ {
 		var w where
@@ -208,6 +228,7 @@ func (d *Driver) Loop() (string, error) {
 		}
 		if landed(w) {
 			fmt.Fprintf(d.Out, "every stream has landed: %s\n", w.Summary)
+			d.restore()
 			return "landed", nil
 		}
 		fmt.Fprintf(d.Out, "tick %d %s\n", tick, d.Clock.Now().Format("15:04:05"))
@@ -218,27 +239,42 @@ func (d *Driver) Loop() (string, error) {
 			fmt.Fprintf(d.Out, "  %s\n", after.Summary)
 			if landed(after) {
 				fmt.Fprintf(d.Out, "every stream has landed: %s\n", after.Summary)
+				d.restore()
 				return "landed", nil
 			}
 		}
 		d.Clock.Sleep(c.Every)
 	}
+	d.restore()
 	return "ticks", nil
 }
 
-func landed(w where) bool {
-	if len(w.Streams) == 0 || w.All == 0 {
-		return false
+// restore brings up every member this driver took down, so a run never ends
+// with the fleet short of what it started with.
+func (d *Driver) restore() {
+	var ms []string
+	for m := range d.downed {
+		ms = append(ms, m)
 	}
-	for _, s := range w.Streams {
-		if s.State != "landed" {
-			return false
+	sort.Strings(ms)
+	for _, m := range ms {
+		if code, _ := d.run(false, "fleet", "up", m); code == 0 {
+			delete(d.downed, m)
 		}
 	}
-	return true
+}
+
+// landed says every primary on the table has landed: a stream with no
+// primaries (a new epoch's, say) has nothing to land.
+func landed(w where) bool {
+	return w.All > 0 && w.Landed == w.All
 }
 
 func (d *Driver) tick(tick int, c Config, w where) {
+	// The workers', readers' and merge step's verbs hold the epoch the tick
+	// read: a clear since refuses them, naming it, and nothing of the old
+	// epoch lands in the new one.
+	held := []string{"--epoch", strconv.FormatUint(w.Epoch, 10)}
 	// Members up and down, as the facts say.
 	fleet := w.Tables["fleet"]
 	members := sortedRows(fleet)
@@ -250,15 +286,17 @@ func (d *Driver) tick(tick int, c Config, w where) {
 	for _, m := range members {
 		switch {
 		case next[m] && !up[m]:
-			d.run(false, "fleet", "up", m)
+			if code, _ := d.run(false, "fleet", "up", m); code == 0 {
+				delete(d.downed, m)
+			}
 		case !next[m] && up[m]:
-			d.run(false, "fleet", "down", m)
+			if code, _ := d.run(false, "fleet", "down", m); code == 0 {
+				if d.downed == nil {
+					d.downed = map[string]bool{}
+				}
+				d.downed[m] = true
+			}
 		}
-	}
-	// The mechanical moves.
-	d.run(false, "resolve")
-	if c.Start {
-		d.run(false, "start", "--limit", strconv.Itoa(c.StartLimit))
 	}
 	// Workers: finish what they took last tick, then take the oldest ready
 	// cards; every card is named <card>@<gen>, the generation from the queue.
@@ -287,16 +325,15 @@ func (d *Driver) tick(tick int, c Config, w where) {
 			}
 		}
 		if len(good) > 0 {
-			d.run(false, append([]string{"finish", "--as", m}, good...)...)
+			d.run(false, append(append([]string{"finish", "--as", m}, held...), good...)...)
 		}
 		for _, report := range sortedKeys(bad) {
-			d.run(false, append([]string{"finish", "--as", m, "--failed", "--report", report}, bad[report]...)...)
+			d.run(false, append(append([]string{"finish", "--as", m, "--failed", "--report", report}, held...), bad[report]...)...)
 		}
 		if len(ready) > 0 {
-			d.run(false, append([]string{"take", "--as", m}, ready...)...)
+			d.run(false, append(append([]string{"take", "--as", m}, held...), ready...)...)
 		}
 	}
-	d.run(false, "ask")
 	// Readers report what is asked of them.
 	for _, r := range sortedRows(w.Tables["readers"]) {
 		var q queue
@@ -316,53 +353,58 @@ func (d *Driver) tick(tick int, c Config, w where) {
 			}
 		}
 		if len(good) > 0 {
-			d.run(false, append([]string{"read", "--as", r, "--ok"}, good...)...)
+			d.run(false, append(append([]string{"read", "--as", r, "--ok"}, held...), good...)...)
 		}
 		for _, f := range sortedKeys(broken) {
-			d.run(false, append([]string{"read", "--as", r, "--broken", "--finding", f}, broken[f]...)...)
+			d.run(false, append(append([]string{"read", "--as", r, "--broken", "--finding", f}, held...), broken[f]...)...)
 		}
 	}
-	// Each stream's merge step, with its facts.
+	// Each stream's merge step, with its facts. A stream's queue is read just
+	// before its step, and the other streams' queues only when a fact needs
+	// them, after every step before it has run.
 	merge := w.Tables["merge"]
 	var streams []string
-	queued := map[string][]string{}
 	for _, s := range w.Streams {
 		streams = append(streams, s.Stream)
 	}
 	sort.Strings(streams)
-	for _, s := range streams {
-		st := merge[s]["state"]
-		if st == "stopped" || st == "landed" || atoi(merge[s]["queued"]) == 0 {
-			continue
-		}
+	queued := func(s string) []string {
+		var out []string
 		var q queue
 		if d.read(&q, "queue", "--stream", s) {
 			for _, card := range q.Cards {
 				if card.Col == "queued" {
-					queued[s] = append(queued[s], card.ID)
+					out = append(out, card.ID)
 				}
 			}
 		}
+		return out
 	}
 	for _, s := range streams {
 		st := merge[s]["state"]
 		if st == "stopped" || st == "landed" {
 			continue
 		}
+		var batch []string
+		if atoi(merge[s]["queued"]) > 0 {
+			batch = queued(s)
+		}
 		work := w.Tables["work"][s]
 		open := atoi(work["waiting"]) + atoi(work["ready"]) + atoi(work["working"]) + atoi(work["review"]) + atoi(work["merging"])
-		if len(queued[s]) == 0 && !(open == 0 && atoi(work["landed"]) > 0) && st != "merging" {
+		if len(batch) == 0 && !(open == 0 && atoi(work["landed"]) > 0) && st != "merging" {
 			continue
 		}
-		batch := queued[s]
 		if len(batch) > c.Batch {
 			batch = batch[:c.Batch]
 		}
-		var others []string
-		for _, o := range streams {
-			if o != s {
-				others = append(others, queued[o]...)
+		others := func() []string {
+			var out []string
+			for _, o := range streams {
+				if o != s && merge[o]["state"] != "landed" {
+					out = append(out, queued(o)...)
+				}
 			}
+			return out
 		}
 		args := []string{"merge", "--stream", s, "--batch", strconv.Itoa(c.Batch)}
 		if len(batch) > 0 {
@@ -374,9 +416,12 @@ func (d *Driver) tick(tick int, c Config, w where) {
 				args = append(args, "--cross", out.Cross)
 			case out.Red:
 				args = append(args, "--red")
+				for _, x := range out.Suspects {
+					args = append(args, "--suspect", x)
+				}
 			}
 		}
-		d.run(false, args...)
+		d.run(false, append(args, held...)...)
 	}
 }
 

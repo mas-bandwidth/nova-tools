@@ -11,7 +11,25 @@ const (
 	Happened = "happened" // no decision
 	Judgment = "judgment" // needs the coordinator
 	Decided  = "decided"  // a judgment answered
+	// Acknowledged is a judgment of the tick the coordinator acknowledged
+	// while its condition held: kept on the condition's subjects, it is no
+	// judgment and shows in no inbox; it stops the tick from writing the
+	// judgment again until the condition has cleared (the tick then closes
+	// it) and come back.
+	Acknowledged = "acknowledged"
 )
+
+// SplitOpen is the open set as judgments and acknowledged conditions.
+func SplitOpen(all []Open) (judgments, acked []Open) {
+	for _, o := range all {
+		if o.Note.Kind == Acknowledged {
+			acked = append(acked, o)
+		} else {
+			judgments = append(judgments, o)
+		}
+	}
+	return judgments, acked
+}
 
 // Notification types. A type is what happened; judgment types name the
 // decisions open to the coordinator.
@@ -19,43 +37,55 @@ const (
 	NStartedMerging = "stream started merging"
 	NBatchLanded    = "batch landed"
 	NStreamLanded   = "stream landed"
-	NReadyToAccept  = "two readers said ok"
 	NWorkOK         = "work came back ok"
 	NMemberUp       = "fleet member up"
 	NMemberDown     = "fleet member down"
 	NWithdrawn      = "cards returned to ready because no member is up"
 	NCIGreen        = "ci green"
 	NAbandoned      = "an operation was abandoned"
+	NSentinelLanded = "sentinel landed" // released by the coordinator
 
-	NWorkFailed     = "work came back failed"
-	NReadBroken     = "a reader found it broken"
-	NConflict       = "stream stopped: conflict on a card"
-	NRed            = "stream stopped: stream branch red"
-	NCross          = "stream stopped: needs a card of another stream first"
-	NRejected       = "stream stopped: the merge queue rejected"
-	NBlocked        = "a primary is blocked on something dropped"
-	NCIRed          = "ci red"
-	NReadsExhausted = "reads exhausted"
-	NRepairSkipped  = "repair skipped changes the store refused as recorded"
-	NOverdue        = "a judgment notification has waited past its deadline"
-	NStreamStale    = "a stream has not changed state or count past its deadline"
-	NRepeatSuffix   = "; a second time for the same cause"
+	NReadyToAccept   = "ready to accept"    // two different readers said ok at its head
+	NReturned        = "returned to review" // sent back from merging: the coordinator decides again
+	NWorkFailed      = "work came back failed"
+	NReadBroken      = "a reader found it broken"
+	NConflict        = "stream stopped: conflict on a card"
+	NRed             = "stream stopped: stream branch red"
+	NCross           = "stream stopped: needs a card of another stream first"
+	NRejected        = "stream stopped: the merge queue rejected"
+	NBlocked         = "a primary is blocked on something dropped"
+	NCIRed           = "ci red"
+	NReadsExhausted  = "reads exhausted"
+	NStranded        = "stranded in review" // failed work acknowledged, or never asked, and nothing open
+	NRepairSkipped   = "repair skipped changes the store refused as recorded"
+	NOpStuck         = "an operation was stuck"
+	NOverdue         = "a judgment notification has waited past its deadline"
+	NStreamStale     = "a stream has not changed state or count past its deadline"
+	NSprintDone      = "the sprint is done"
+	NSentinelReached = "sentinel reached" // a stop: the coordinator decides before going on
+	NRepeatSuffix    = "; a second time for the same cause"
 )
 
 // Decisions open to each judgment type.
 var Decisions = map[string][]string{
-	NWorkFailed:     {"rework with a fix", "drop"},
-	NReadBroken:     {"rework with the finding", "ask another reader", "drop"},
-	NConflict:       {"resolve and resume", "rework", "drop"},
-	NRed:            {"take the suspect off and resume", "rework the suspect"},
-	NCross:          {"rank that card first", "wait", "look at both", "return", "drop"},
-	NRejected:       {"resume", "return", "drop"},
-	NBlocked:        {"replace", "drop"},
-	NCIRed:          {"rework with a fix", "return", "drop", "look"},
-	NReadsExhausted: {"ask another reader", "rework", "drop"},
-	NRepairSkipped:  {"look at the card", "return", "drop", "rework", "ack"},
-	NOverdue:        {"act"},
-	NStreamStale:    {"look"},
+	NReadyToAccept:   {"accept", "rework", "drop"},
+	NReturned:        {"rework", "accept", "drop"}, // accept only while its reads stand at its head
+	NWorkFailed:      {"rework with a fix", "drop"},
+	NReadBroken:      {"rework with the finding", "ask another reader", "drop"},
+	NConflict:        {"resolve and resume", "rework", "drop"},
+	NRed:             {"take the suspect off and resume", "rework the suspect"},
+	NCross:           {"rank that card first", "wait", "look at both", "return", "drop"},
+	NRejected:        {"resume", "return", "drop"},
+	NBlocked:         {"drop", "ack"},
+	NCIRed:           {"rework with a fix", "return", "drop", "look"},
+	NReadsExhausted:  {"ask another reader", "rework", "drop"},
+	NStranded:        {"ask", "rework", "drop"},
+	NRepairSkipped:   {"look at the card", "return", "drop", "rework", "ack"},
+	NOpStuck:         {"check", "ack"},
+	NOverdue:         {"act"},
+	NStreamStale:     {"look"},
+	NSprintDone:      {"clear", "add"},
+	NSentinelReached: {"release", "do more before going on", "drop"},
 }
 
 // RepeatDecision is added to a judgment for a primary that came back a second
@@ -79,11 +109,15 @@ type Note struct {
 	Before    int       `json:"before,omitempty"` // how many times before, for this cause
 	At        time.Time `json:"at"`
 	Decisions []string  `json:"decisions,omitempty"`
-	Marked    bool      `json:"marked,omitempty"`  // a repeat: sorts first
-	Answers   string    `json:"answers,omitempty"` // a decided note: the judgment it answers
+	Marked    bool      `json:"marked,omitempty"`   // a repeat: sorts first
+	Answers   string    `json:"answers,omitempty"`  // a decided note: the judgment it answers
+	Suspects  []string  `json:"suspects,omitempty"` // a red branch: the cards of the batch the caller suspects
 	// StreamLevel says the judgment is about its stream as a whole (a stopped
 	// stream): it stays open until the stream resumes.
 	StreamLevel bool `json:"stream_level,omitempty"`
+	// SprintLevel says the judgment is about the whole sprint (it is done):
+	// its one subject is SprintSubject.
+	SprintLevel bool `json:"sprint_level,omitempty"`
 	// Review is the next review time the coordinator set with wait; the
 	// judgment stays open and shown, and is due then.
 	Review time.Time `json:"review,omitempty"`
@@ -110,6 +144,10 @@ func OpenKey(noteID, subject string) string { return noteID + "|" + subject }
 
 // StreamSubject is the subject of a stream-level judgment.
 func StreamSubject(stream string) string { return "stream:" + stream }
+
+// SprintSubject is the subject of a judgment about the whole sprint; no
+// primary or stream id has a colon.
+const SprintSubject = "sprint:done"
 
 // Subject is the subject half of an open key.
 func (o Open) Subject() string {
@@ -139,6 +177,9 @@ func (n Note) Subjects() []string {
 	if n.StreamLevel {
 		return []string{StreamSubject(n.Stream)}
 	}
+	if n.SprintLevel {
+		return []string{SprintSubject}
+	}
 	return n.Primaries
 }
 
@@ -157,8 +198,15 @@ func MergeNotes(notes []Note) []Note {
 			out = append(out, n)
 			continue
 		}
-		out[i].Primaries = append(out[i].Primaries, n.Primaries...)
-		out[i].Count += n.Count
+		if len(n.Primaries) == 0 {
+			out[i].Count += n.Count
+		}
+		for _, p := range n.Primaries {
+			if !contains(out[i].Primaries, p) {
+				out[i].Primaries = append(out[i].Primaries, p)
+				out[i].Count++
+			}
+		}
 		if n.Before > out[i].Before {
 			out[i].Before = n.Before
 		}

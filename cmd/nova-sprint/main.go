@@ -123,6 +123,8 @@ type common struct {
 	redis, prefix, actor, op string
 	json                     bool
 	max                      int
+	epoch                    int64       // the epoch the caller holds; -1 is none
+	group                    groupReport // set by --group, for the verb's report
 }
 
 func (c *common) register(fs flagSet, getenv func(string) string) {
@@ -132,6 +134,7 @@ func (c *common) register(fs flagSet, getenv func(string) string) {
 	fs.StringVar(&c.op, "op", "", "the caller's operation id: the same id again returns the recorded result and changes nothing")
 	fs.BoolVar(&c.json, "json", false, "print one JSON object for a program instead of the lines")
 	fs.IntVar(&c.max, "max", 20, "listed items of each kind; 0 is all")
+	fs.Int64Var(&c.epoch, "epoch", -1, "the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear")
 }
 
 func firstEnv(getenv func(string) string, names ...string) string {
@@ -175,7 +178,7 @@ func (a *app) run(args []string, stdout, stderr io.Writer) (code int) {
 			return v.run(a, args[len(words):], stdout, stderr)
 		}
 	}
-	if args[0] == "fleet" || args[0] == "reader" {
+	if args[0] == "fleet" || args[0] == "reader" || args[0] == "goal" {
 		return refuse(stderr, args[0], "unknown or missing subverb; run: nova-sprint help "+args[0])
 	}
 	return refuse(stderr, "", "unknown verb "+oneline.Escape(args[0])+"; available: "+strings.Join(verbNames(), ", ")+"; run: nova-sprint help")
@@ -192,4 +195,14 @@ func refuse(stderr io.Writer, verb, what string) int {
 	}
 	fmt.Fprintf(stderr, "%s: %s\n", where, oneline.Escape(what))
 	return 2
+}
+
+// storeAt is the store, reading an earlier epoch as it was when at is 0 or
+// more.
+func (a *app) storeAt(c common, at int64) (*store.Store, error) {
+	st, err := a.store(c)
+	if err != nil || at < 0 {
+		return st, err
+	}
+	return st.At(uint64(at)), nil
 }

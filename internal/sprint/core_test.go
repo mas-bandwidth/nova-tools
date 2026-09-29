@@ -11,6 +11,7 @@ func TestLifecycleIsTheSpecTable(t *testing.T) {
 	legal := map[[2]State]bool{
 		{Waiting, Ready}: true, {Ready, Working}: true, {Working, Review}: true, {Working, Ready}: true,
 		{Review, Merging}: true, {Review, Working}: true, {Review, Ready}: true, {Merging, Review}: true, {Merging, Landed}: true,
+		{Waiting, Landed}: true, {Ready, Waiting}: true, // a sentinel released; a sentinel inserted in front
 	}
 	for _, a := range States {
 		for _, b := range States {
@@ -60,11 +61,11 @@ func TestTheWholeLifeOfAPrimary(t *testing.T) {
 	if got := w.state("s1-1"); got != Ready {
 		t.Fatalf("admitted as %s", got)
 	}
-	w.must(Start(w.s, StartReq{Sel: Sel{Limit: 4}}))
+	w.must(Deal(w.s, DealReq{Sel: Sel{Limit: 4}}))
 	if w.s.Fleet.Count("m1", Ready) != 2 || w.s.Fleet.Count("m2", Ready) != 2 {
 		t.Fatalf("not dealt to the shortest queues: m1=%d m2=%d", w.s.Fleet.Count("m1", Ready), w.s.Fleet.Count("m2", Ready))
 	}
-	w.clean("start")
+	w.clean("deal")
 	w.must(Take(w.s, TakeReq{As: "m1", Sel: Sel{Limit: 10}}))
 	w.must(Take(w.s, TakeReq{As: "m2", Sel: Sel{Limit: 10}}))
 	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-1.w1", "s1-2.w1", "s1-3.w1"}}, Gens: gensOf(w.s, "s1-1.w1", "s1-2.w1", "s1-3.w1")}))
@@ -154,7 +155,7 @@ func TestTheWholeLifeOfAPrimary(t *testing.T) {
 func TestScoresAreCopiedAndOnlyRankChangesThem(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 3)
-	w.must(Start(w.s, StartReq{Sel: Sel{Stream: "s1"}}))
+	w.must(Deal(w.s, DealReq{Sel: Sel{Stream: "s1"}}))
 	c := w.s.Fleet.Card("s1-2.w1")
 	if c.Score != w.s.Work.Card("s1-2").Score {
 		t.Fatalf("the work card does not copy the score")
@@ -174,7 +175,7 @@ func TestScoresAreCopiedAndOnlyRankChangesThem(t *testing.T) {
 func TestFleetDownDealsAndWithdrawsWhenNoneIsUp(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 4)
-	w.must(Start(w.s, StartReq{Sel: Sel{Limit: 4}}))
+	w.must(Deal(w.s, DealReq{Sel: Sel{Limit: 4}}))
 	w.must(Take(w.s, TakeReq{As: "m1", Sel: Sel{Limit: 1}}))
 	w.must(FleetStep(w.s, FleetReq{Op: "down", Member: "m1"}))
 	if w.s.Fleet.Count("m1", Ready)+w.s.Fleet.Count("m1", Working) != 0 || w.s.Fleet.Count("m2", Ready) != 4 {
@@ -192,13 +193,13 @@ func TestFleetDownDealsAndWithdrawsWhenNoneIsUp(t *testing.T) {
 		t.Fatalf("notes: withdrawn %d down %d", len(w.notesOf(NWithdrawn)), len(w.notesOf(NMemberDown)))
 	}
 	w.clean("withdrawn")
-	p := Start(w.s, StartReq{Sel: Sel{Limit: 1}})
+	p := Deal(w.s, DealReq{Sel: Sel{Limit: 1}})
 	if len(p.Units) != 0 || len(p.Refused) != 1 {
-		t.Fatalf("start with nobody up: %+v", p)
+		t.Fatalf("deal with nobody up: %+v", p)
 	}
 	// Up again: the same card is dealt again.
 	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m1"}))
-	w.must(Start(w.s, StartReq{Sel: Sel{IDs: []string{"s1-1"}}}))
+	w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{"s1-1"}}}))
 	if w.s.Work.Card("s1-1").F("work") != "s1-1.w1" {
 		t.Fatalf("after withdrawal the card is %s", w.s.Work.Card("s1-1").F("work"))
 	}
@@ -210,7 +211,7 @@ func TestLevelMovesTheNewestCards(t *testing.T) {
 	w := newWorld(t, "reader-a", "reader-b")
 	w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m1"}))
 	w.must(Add(w.s, AddReq{Stream: "s1", Count: 6}))
-	w.must(Start(w.s, StartReq{Sel: Sel{Limit: 6}}))
+	w.must(Deal(w.s, DealReq{Sel: Sel{Limit: 6}}))
 	p := w.must(FleetStep(w.s, FleetReq{Op: "up", Member: "m2"}))
 	if w.s.Fleet.Count("m1", Ready) != 3 || w.s.Fleet.Count("m2", Ready) != 3 {
 		t.Fatalf("not levelled: %d %d", w.s.Fleet.Count("m1", Ready), w.s.Fleet.Count("m2", Ready))
@@ -275,7 +276,7 @@ func TestMergeFactsStopTheStreamAndResumeMovesIt(t *testing.T) {
 // accepted drives primaries of s1 to merging queued.
 func accepted(w *world, ids ...string) {
 	w.t.Helper()
-	w.must(Start(w.s, StartReq{Sel: Sel{IDs: ids}}))
+	w.must(Deal(w.s, DealReq{Sel: Sel{IDs: ids}}))
 	for _, id := range ids {
 		c := w.s.Fleet.Card(w.s.Work.Card(id).F("work"))
 		w.must(Take(w.s, TakeReq{As: c.Row, Sel: Sel{IDs: []string{c.ID}}, Gens: gensOf(w.s, c.ID)}))
@@ -319,7 +320,7 @@ func TestDropTakesItsCardsAndBlocksWhatNeedsIt(t *testing.T) {
 	if w.state("later") != Waiting {
 		t.Fatalf("a primary with needs is %s", w.state("later"))
 	}
-	w.must(Start(w.s, StartReq{Sel: Sel{IDs: []string{"s1-1"}}}))
+	w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{"s1-1"}}}))
 	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-1"}}, Reason: "obsolete"}))
 	if w.state("s1-1") != "" || w.s.Work.Card("s1-1").F("outcome") != "dropped" || w.s.Fleet.Placed("s1-1.w1") != nil {
 		t.Fatalf("drop left cards behind")
@@ -380,7 +381,7 @@ func TestCheckFindsEveryBrokenRule(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 3)
 	accepted(w, "s1-1")
-	w.must(Start(w.s, StartReq{Sel: Sel{IDs: []string{"s1-2"}}}))
+	w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{"s1-2"}}}))
 	w.clean("before")
 	s := w.s
 	s.Fleet.Card("s1-2.w1").Row, s.Fleet.Card("s1-2.w1").Col = "", "" // lost work card: rules 2 and 8
@@ -456,5 +457,15 @@ func TestLawfulRefusesAMoveOutsideTheLifecycle(t *testing.T) {
 	landed := &Card{ID: "x", Row: "s1", Col: Landed, Rev: 1, Fields: map[string]string{}}
 	if p := Lawful(Plan{Units: []Unit{{Key: "x", Changes: []Change{change(Work, removeEntry(landed, nil))}}}}); len(p.Units) != 0 {
 		t.Fatalf("a landed primary taken off the table: %+v", p)
+	}
+}
+
+// A subject is listed once in a merged note, and counted once.
+func TestMergeNotesListsASubjectOnce(t *testing.T) {
+	t.Parallel()
+	a := happened(NWorkOK, "s1", t0, "p1")
+	got := MergeNotes([]Note{a, a, happened(NWorkOK, "s1", t0, "p2")})
+	if len(got) != 1 || got[0].Count != 2 || len(got[0].Primaries) != 2 {
+		t.Fatalf("merged: %+v", got)
 	}
 }

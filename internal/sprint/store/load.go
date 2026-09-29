@@ -28,6 +28,10 @@ func (e *movedError) Error() string { return "table " + e.table + " changed whil
 // RetryBudget asleep: the snapshot is one consistent state of each table.
 // extras names records to read as well (unplaced ones included), by table.
 func (st *Store) Load(ctx context.Context, tables []string, extras func(*sprint.Snapshot) map[string][]string) (*sprint.Snapshot, error) {
+	st, err := st.pin(ctx)
+	if err != nil {
+		return nil, err
+	}
 	var last *movedError
 	r := st.retry(ctx)
 	for r.next(LoadTries) {
@@ -44,7 +48,7 @@ func (st *Store) Load(ctx context.Context, tables []string, extras func(*sprint.
 }
 
 func (st *Store) loadOnce(ctx context.Context, tables []string, extras func(*sprint.Snapshot) map[string][]string) (*sprint.Snapshot, error) {
-	s := &sprint.Snapshot{Now: st.now()}
+	s := &sprint.Snapshot{Now: st.now(), Epoch: st.epoch}
 	stored := make([]string, len(tables))
 	for i, t := range tables {
 		stored[i] = st.Names.Table(t)
@@ -58,6 +62,9 @@ func (st *Store) loadOnce(ctx context.Context, tables []string, extras func(*spr
 		return nil, err
 	}
 	for i, shape := range shapes {
+		if st.pinned && shape.Epoch != st.epoch {
+			return nil, errCleared
+		}
 		t := sprint.NewTable(tables[i])
 		t.Epoch, t.Revision = shape.Epoch, shape.Revision
 		for _, r := range shape.Rows {
@@ -80,9 +87,11 @@ func (st *Store) loadOnce(ctx context.Context, tables []string, extras func(*spr
 			s.Fleet = t
 		}
 	}
-	if s.Open, err = st.B.OpenNotes(ctx); err != nil {
+	open, err := st.B.OpenNotes(ctx)
+	if err != nil {
 		return nil, err
 	}
+	s.Open, s.Acked = sprint.SplitOpen(open)
 	if extras != nil {
 		for table, want := range extras(s) {
 			t := s.T(table)
@@ -92,7 +101,7 @@ func (st *Store) loadOnce(ctx context.Context, tables []string, extras func(*spr
 					missing = append(missing, id)
 				}
 			}
-			if err := st.readInto(ctx, t, missing, false); err != nil {
+			if err := st.readInto(ctx, t, st.sids(missing), false); err != nil {
 				return nil, err
 			}
 		}
@@ -115,7 +124,7 @@ func (st *Store) readInto(ctx context.Context, t *sprint.Table, ids []string, pl
 			if placed && !m.Placed {
 				return &movedError{table: st.Names.Table(t.Name)}
 			}
-			c := &sprint.Card{ID: m.ID, Score: m.Score, Rev: m.Revision, Fields: m.Fields}
+			c := &sprint.Card{ID: sprint.CardID(m.ID), Score: m.Score, Rev: m.Revision, Fields: m.Fields}
 			if m.Placed {
 				c.Row, c.Col = m.Row, m.Col
 			}

@@ -100,13 +100,15 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		for _, rd := range chosenReaders {
 			q[rd]++
 			u.Changes = append(u.Changes, change(Readers, createEntry(ReadCardID(c.ID, attempt, rd), rd, Asked, c.Score,
-				map[string]string{"kind": "read", "primary": c.ID, "stream": c.Row, "reader": rd, "attempt": itoa(attempt), "head": c.F("head")})))
+				map[string]string{"kind": "read", "primary": c.ID, "stream": c.Row, "reader": rd, "attempt": itoa(attempt), "head": c.F("head"), "asked": stamp(s.Now)})))
 		}
 		all = append(all, chosenReaders...)
 		u.Changes = append(u.Changes, change(Work, setEntry(c, map[string]string{"asked": strings.Join(all, ",")})))
 		u.Moved = c.ID + " asked of " + strings.Join(chosenReaders, ", ")
 		if r.Another {
-			u.Closes = closesFor(s.Open, []string{NReadBroken}, c.ID)
+			u.Closes = closesFor(s.Open, []string{NReadBroken, NReadsExhausted, NStranded}, c.ID)
+		} else {
+			u.Closes = closesFor(s.Open, []string{NStranded}, c.ID)
 		}
 		p.Units = append(p.Units, u)
 	}
@@ -142,8 +144,10 @@ type ReadReq struct {
 }
 
 // Read moves a reader's read cards: asked -> reading, or asked|reading -> ok|broken
-// with the finding. A broken read is a judgment; the second different reader's
-// ok at the primary's head says it is ready to accept.
+// with the finding (a report on a card still asked is the begin and the report
+// in one step, begun stamped with it). A broken read is a judgment; the second different reader's
+// ok at the primary's head is the judgment ready to accept, which accept,
+// rework and drop close.
 func Read(s *Snapshot, r ReadReq) Plan {
 	var p Plan
 	sel := r.Sel
@@ -174,7 +178,7 @@ func Read(s *Snapshot, r ReadReq) Plan {
 	for _, c := range chosen {
 		pr := s.Work.Card(c.F("primary"))
 		if r.Begin {
-			p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Readers, moveEntry(c, c.Row, Reading, nil))},
+			p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Readers, moveEntry(c, c.Row, Reading, map[string]string{"begun": stamp(s.Now)}))},
 				Moved: c.ID + " asked -> reading"})
 			continue
 		}
@@ -183,6 +187,9 @@ func Read(s *Snapshot, r ReadReq) Plan {
 			col = Broken
 		}
 		set := map[string]string{"verdict": r.Verdict, "read": stamp(s.Now)}
+		if c.Col == Asked { // a report on a card never begun is the begin and the report in one step
+			set["begun"] = stamp(s.Now)
+		}
 		if r.Finding != "" {
 			set["finding"] = r.Finding
 		}
@@ -207,16 +214,14 @@ func Read(s *Snapshot, r ReadReq) Plan {
 						others[o.F("reader")] = true
 					}
 				}
-				if len(others) == 1 {
-					n := happened(NReadyToAccept, pr.Row, s.Now, pr.ID)
+				if len(others) == 1 && !hasOpen(s.Open, NReadyToAccept, pr.ID) {
+					n := judgment(NReadyToAccept, pr.Row, s.Now, 0, pr.ID)
 					n.Who, n.Attempt = r.As, attempt
 					u.Notes = append(u.Notes, n)
 				}
 			}
-			if col == OK && exhausted(s, pr, map[string]string{c.ID: OK}) && len(closesFor(s.Open, nil, pr.ID)) == 0 {
-				n := judgment(NReadsExhausted, pr.Row, s.Now, 0, pr.ID)
-				n.Who, n.Attempt, n.What = r.As, attempt, "no read is outstanding and two different readers have not said ok at "+orDash(pr.F("head"))
-				u.Notes = append(u.Notes, n)
+			if typ, why := stranded(s, pr, map[string]string{c.ID: OK}); col == OK && typ != "" && len(closesFor(s.Open, nil, pr.ID)) == 0 {
+				u.Notes = append(u.Notes, strandedNote(s, pr, typ, why, r.As))
 			}
 		}
 		p.Units = append(p.Units, u)
@@ -224,17 +229,18 @@ func Read(s *Snapshot, r ReadReq) Plan {
 	return p
 }
 
-// exhausted says a primary in review, asked at its attempt, has no read card
-// outstanding and not ok reads from two different readers at its head, with
-// the read cards as this step leaves them (moved: card id -> its column after).
-func exhausted(s *Snapshot, pr *Card, moved map[string]string) bool {
+// stranded is the judgment a primary in review needs when nothing moves it:
+// no read outstanding and not ok reads from two different readers at its
+// head, with the read cards as this step leaves them (moved: card id -> its
+// column after). Its type is reads exhausted when it was asked at its
+// attempt, else stranded in review (work that came back failed, or never
+// asked), with why; "" when it is not stranded. Whether a judgment is open on
+// it is the caller's to judge.
+func stranded(s *Snapshot, pr *Card, moved map[string]string) (typ, why string) {
 	if !pr.Placed() || pr.Col != Review {
-		return false
+		return "", ""
 	}
 	reads := readsAt(s, pr, pr.Int("attempt"))
-	if len(reads) == 0 {
-		return false
-	}
 	oks := map[string]bool{}
 	for _, rc := range reads {
 		col := rc.Col
@@ -242,13 +248,21 @@ func exhausted(s *Snapshot, pr *Card, moved map[string]string) bool {
 			col = m
 		}
 		if col == Asked || col == Reading {
-			return false
+			return "", ""
 		}
 		if col == OK && rc.F("head") == pr.F("head") {
 			oks[rc.F("reader")] = true
 		}
 	}
-	return len(oks) < 2
+	switch {
+	case len(oks) >= 2:
+		return "", ""
+	case pr.F("result") == "failed":
+		return NStranded, "its work came back failed and nothing is open on it"
+	case len(reads) == 0:
+		return NStranded, "never asked at attempt " + itoa(pr.Int("attempt")) + " and nothing is open on it"
+	}
+	return NReadsExhausted, "no read is outstanding and two different readers have not said ok at " + orDash(pr.F("head"))
 }
 
 // AcceptReq is the coordinator accepting primaries in review.
@@ -405,7 +419,9 @@ func settle(p *Plan, s *Snapshot, who string, offQueue, offTable map[string]bool
 	}
 }
 
-// ReworkReq is the coordinator sending primaries back with a fix.
+// ReworkReq is the coordinator sending primaries back with a fix. With no
+// fix, each primary's fix is its own: the finding of its broken read, or the
+// report of its failed work; a primary with neither is refused by name.
 type ReworkReq struct {
 	Sel
 	Fix     string
@@ -414,7 +430,7 @@ type ReworkReq struct {
 }
 
 // ReworkResolves is the judgments a rework discharges on its primary.
-var ReworkResolves = []string{NWorkFailed, NReadBroken, NCIRed, NRepairSkipped}
+var ReworkResolves = []string{NWorkFailed, NReadBroken, NCIRed, NRepairSkipped, NReadyToAccept, NReturned, NReadsExhausted, NStranded}
 
 // Rework delegates at once: the next work card attempt, carrying the fix, is
 // cut into the up member with the shortest ready queue and the primary moves
@@ -432,7 +448,15 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 	}, s.primaryCard)
 	up := s.UpMembers()
 	q := readyQueues(s, up)
+	orphans := map[string]bool{}
 	for _, c := range chosen {
+		fix := r.Fix
+		if fix == "" {
+			if fix = ownFix(s, c); fix == "" {
+				p.refuse(c.ID, "no --fix, and no finding of a broken read or report of failed work to take as its fix; give --fix <text>")
+				continue
+			}
+		}
 		attempt := c.Int("attempt")
 		var asked []string
 		broken := 0
@@ -450,14 +474,14 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		if len(asked) > 0 {
 			askedField = strings.Join(orderLike(s.Readers.Rows, asked, ""), ",")
 		}
-		set := map[string]string{"fix": r.Fix, "reworks": itoa(c.Int("reworks") + 1), "broken_reads": itoa(c.Int("broken_reads") + broken)}
+		set := map[string]string{"fix": fix, "reworks": itoa(c.Int("reworks") + 1), "broken_reads": itoa(c.Int("broken_reads") + broken)}
 		if askedField != "" {
 			set["asked"] = askedField
 		}
 		var u Unit
 		if len(up) > 0 {
 			var why string
-			u, why = deal(s, c, r.Fix, up, q, set, "readers")
+			u, why = deal(s, c, fix, up, q, set, "readers")
 			if why != "" {
 				p.refuse(c.ID, why)
 				continue
@@ -469,11 +493,51 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 				Moved: c.ID + " review -> ready (rework; no fleet member is up: start delegates it)"}
 		}
 		u.Moved += fmt.Sprintf("; %d read cards retired", len(retire))
+		if m := orphanMerge(s, c); m != nil {
+			u.Changes = append(u.Changes, change(Merge, moveEntry(m, c.Row, Returned, nil)))
+			u.Moved += "; its orphan merge card off " + m.Col
+			orphans[c.ID] = true
+		}
 		u.Closes = closesFor(s.Open, ReworkResolves, c.ID)
 		p.Units = append(p.Units, u)
 	}
+	settle(&p, s, r.Who, orphans, nil)
 	answered(&p, s.Open, r.Answers)
 	return Lawful(p)
+}
+
+// orphanMerge is the merge card of a primary in review that is still queued
+// or stuck (a repair skipped accept's work entry): rework and return take it
+// off in the same step, into returned, so an accept later moves it back.
+func orphanMerge(s *Snapshot, c *Card) *Card {
+	if s.Merge == nil || !c.Placed() || c.Col != Review {
+		return nil
+	}
+	if m := s.Merge.Placed(c.ID); m != nil && (m.Col == Queued || m.Col == Stuck) {
+		return m
+	}
+	return nil
+}
+
+// ownFix is a primary's own fix, for a rework given none: the findings of its
+// broken reads at its attempt, else the report of its failed work; "" when it
+// has neither.
+func ownFix(s *Snapshot, c *Card) string {
+	var found []string
+	for _, rc := range s.Readers.Of(c.ID) {
+		if rc.Col == Broken && rc.Int("attempt") == c.Int("attempt") && rc.F("finding") != "" && !contains(found, rc.F("finding")) {
+			found = append(found, rc.F("finding"))
+		}
+	}
+	if len(found) > 0 {
+		return strings.Join(found, "; ")
+	}
+	if c.F("result") == "failed" {
+		if wc := s.Fleet.Card(c.F("work")); wc != nil {
+			return wc.F("report")
+		}
+	}
+	return ""
 }
 
 // ReturnReq is the coordinator sending merging primaries back to review.
@@ -503,6 +567,9 @@ func answeredIn(notes []Note, id string) bool {
 func Return(s *Snapshot, r ReturnReq) Plan {
 	var p Plan
 	chosen := pick(&p, r.Sel, s.Work.Column(Merging), rowOf, func(c *Card) string {
+		if orphanMerge(s, c) != nil {
+			return ""
+		}
 		if why := inState(c, Merging); why != "" {
 			return why
 		}
@@ -514,6 +581,12 @@ func Return(s *Snapshot, r ReturnReq) Plan {
 	leaving := map[string]bool{}
 	for _, c := range chosen {
 		m := s.Merge.Placed(c.ID)
+		if orphanMerge(s, c) != nil {
+			leaving[c.ID] = true
+			p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Merge, moveEntry(m, c.Row, Returned, nil))},
+				Closes: closesFor(s.Open, ReturnResolves, c.ID), Moved: fmt.Sprintf("%s review: its orphan merge card off %s", c.ID, m.Col)})
+			continue
+		}
 		set := map[string]string{"returns": itoa(c.Int("returns") + 1)}
 		if r.Reason != "" {
 			set["return_reason"] = r.Reason
@@ -524,17 +597,30 @@ func Return(s *Snapshot, r ReturnReq) Plan {
 		}, Closes: closesFor(s.Open, ReturnResolves, c.ID), Moved: fmt.Sprintf("%s merging -> review (off merge %s)", c.ID, m.Col)}
 		// The stream's red or rejected judgment names return as a decision: the
 		// answer is recorded; the judgment stays open while the stream is stopped.
-		for _, o := range s.Open {
-			if o.Note.StreamLevel && o.Note.Stream == c.Row && contains(r.Answers, o.Note.ID) && contains(ReturnResolves, o.Note.Type) && !answeredIn(u.Notes, o.Note.ID) {
-				u.Notes = append(u.Notes, decided(o, strings.TrimSpace("returned "+c.ID+"; "+r.Reason), r.Who, s.Now, c.ID))
-			}
+		answerListed(&u, s.Open, r.Answers, "return", c.Row, strings.TrimSpace("returned "+c.ID+"; "+r.Reason), r.Who, s.Now, c.ID)
+		// Back in review, the coordinator decides again.
+		j := judgment(NReturned, c.Row, s.Now, c.Int("returns"), c.ID)
+		j.Who, j.Attempt, j.What = r.Who, c.Int("attempt"), r.Reason
+		if len(okReaders(s, c)) < 2 {
+			j.Decisions = removeDecision(j.Decisions, "accept")
 		}
+		u.Notes = append(u.Notes, j)
 		leaving[c.ID] = true
 		p.Units = append(p.Units, u)
 	}
 	settle(&p, s, r.Who, leaving, nil)
 	answered(&p, s.Open, r.Answers)
 	return Lawful(p)
+}
+
+func removeDecision(ds []string, d string) []string {
+	var out []string
+	for _, x := range ds {
+		if x != d {
+			out = append(out, x)
+		}
+	}
+	return out
 }
 
 func orEmpty(c *Card, id string) *Card {
@@ -609,10 +695,24 @@ func Drop(s *Snapshot, r DropReq) Plan {
 			u.Notes = append(u.Notes, n)
 		}
 		u.Closes = closesFor(s.Open, nil, c.ID)
+		answerListed(&u, s.Open, r.Answers, "drop", c.Row, "dropped "+c.ID+"; "+r.Reason, r.Who, s.Now, c.ID)
 		u.Moved = fmt.Sprintf("%s %s -> off the table (%s)", c.ID, c.Col, r.Reason)
 		p.Units = append(p.Units, u)
 	}
 	settle(&p, s, r.Who, dropping, dropping)
+	// Each stream counts its dropped primaries on its control card.
+	for _, st := range unitStreams(p) {
+		k := 0
+		for _, u := range p.Units {
+			if u.Stream == st && dropping[u.Key] {
+				k++
+			}
+		}
+		setStream(&p, s, st, map[string]string{"dropped": itoa(s.StreamCtl(st).Int("dropped") + k)})
+	}
+	if d, ok := sprintDone(s, nil, dropping, r.Who); ok && len(p.Units) > 0 {
+		p.Units[len(p.Units)-1].Notes = append(p.Units[len(p.Units)-1].Notes, d)
+	}
 	answered(&p, s.Open, r.Answers)
 	return Lawful(p)
 }
@@ -671,6 +771,12 @@ func Rank(s *Snapshot, r RankReq) Plan {
 			u.Changes = append(u.Changes, change(Merge, scoreEntry(m, score)))
 		}
 		u.Changes = append(u.Changes, change(Work, scoreEntry(c, score)))
+		answerListed(&u, s.Open, r.Answers, "rank", c.Row, "ranked "+c.ID+" "+fmtScore(score), r.Who, s.Now, c.ID)
+		for _, o := range s.Open { // a cross stop names the card of another stream: rank answers it there
+			if o.Note.StreamLevel && contains(o.Note.Primaries, c.ID) && o.Note.Stream != c.Row {
+				answerListed(&u, s.Open, r.Answers, "rank", o.Note.Stream, "ranked "+c.ID+" "+fmtScore(score), r.Who, s.Now, c.ID)
+			}
+		}
 		u.Moved = fmt.Sprintf("%s score %s -> %s (%d copies)", c.ID, fmtScore(c.Score), fmtScore(score), len(u.Changes)-1)
 		p.Units = append(p.Units, u)
 		score++
@@ -745,6 +851,15 @@ func RecordCI(s *Snapshot, r CIReq) Plan {
 		}
 		if !r.Red && !old {
 			u.Closes = closesFor(s.Open, []string{NCIRed}, c.ID)
+			if len(u.Closes) > 0 {
+				closing := map[string]bool{}
+				for _, o := range u.Closes {
+					closing[o.Note.ID] = true
+				}
+				if j, ok := strandedAfter(s, c, closing, r.Who); ok {
+					u.Notes = append(u.Notes, j)
+				}
+			}
 		}
 		p.Units = append(p.Units, u)
 	}

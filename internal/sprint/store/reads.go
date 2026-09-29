@@ -11,6 +11,10 @@ import (
 // shape, that row's cells, and a read set of what they hold. The cards come
 // column by column, in work order within each.
 func (st *Store) ReadCells(ctx context.Context, logical, row string, cols ...string) ([]*sprint.Card, error) {
+	st, err := st.pin(ctx)
+	if err != nil {
+		return nil, err
+	}
 	name := st.Names.Table(logical)
 	shapes, err := st.B.Shapes(ctx, []string{name})
 	if err != nil {
@@ -53,20 +57,34 @@ type CardInfo struct {
 	Reads   []*sprint.Card
 	Merge   *sprint.Card
 	Open    []sprint.Open
+	// Needs is each need with its state; NeededBy the primaries that need it.
+	Needs    []sprint.NeedState
+	NeededBy []string
 }
 
 // CardOf reads a primary and every card of it by identity.
 func (st *Store) CardOf(ctx context.Context, id string) (CardInfo, error) {
 	var v CardInfo
-	rs, err := st.B.ReadSet(ctx, st.Names.Table(sprint.Work), []string{id})
+	st, err := st.pin(ctx)
 	if err != nil {
 		return v, err
 	}
-	m, ok := rs.Member(id)
+	rs, err := st.B.ReadSet(ctx, st.Names.Table(sprint.Work), []string{st.sid(id)})
+	if err != nil {
+		return v, err
+	}
+	m, ok := rs.Member(st.sid(id))
 	if !ok {
 		return v, nil
 	}
 	v.Primary = card(m)
+	s, err := st.Load(ctx, []string{sprint.Work}, func(*sprint.Snapshot) map[string][]string {
+		return map[string][]string{sprint.Work: append([]string{id}, sprint.Split(v.Primary.F("needs"))...)}
+	})
+	if err != nil {
+		return v, err
+	}
+	v.Needs, v.NeededBy = sprint.NeedsOf(s, id)
 	attempts := v.Primary.Int("attempt")
 	if attempts > 0 {
 		var ids []string
@@ -103,6 +121,7 @@ func (st *Store) CardOf(ctx context.Context, id string) (CardInfo, error) {
 	if err != nil {
 		return v, err
 	}
+	open, _ = sprint.SplitOpen(open)
 	for _, o := range open {
 		if o.Subject() == id || contains(o.Note.Primaries, id) {
 			v.Open = append(v.Open, o)
@@ -124,7 +143,7 @@ func (st *Store) records(ctx context.Context, logical string, ids []string) ([]*
 	var out []*sprint.Card
 	for start := 0; start < len(ids); start += ntable.LimitReadSetMembers {
 		end := min(start+ntable.LimitReadSetMembers, len(ids))
-		rs, err := st.B.ReadSet(ctx, st.Names.Table(logical), ids[start:end])
+		rs, err := st.B.ReadSet(ctx, st.Names.Table(logical), st.sids(ids[start:end]))
 		if err != nil {
 			return nil, err
 		}
@@ -136,7 +155,7 @@ func (st *Store) records(ctx context.Context, logical string, ids []string) ([]*
 }
 
 func card(m ntable.ReadSetMember) *sprint.Card {
-	c := &sprint.Card{ID: m.ID, Score: m.Score, Rev: m.Revision, Fields: m.Fields}
+	c := &sprint.Card{ID: sprint.CardID(m.ID), Score: m.Score, Rev: m.Revision, Fields: m.Fields}
 	if m.Placed {
 		c.Row, c.Col = m.Row, m.Col
 	}

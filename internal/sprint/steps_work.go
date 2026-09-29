@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -23,8 +24,14 @@ type AddReq struct {
 	Needs  []string
 	Brief  string
 	Score  *float64 // the first primary's score; the rest follow it
-	Only   []string
-	Who    string
+	// Sentinel admits one sentinel (IDs names it): a stop in the stream that
+	// the coordinator releases (docs/SPEC-SPRINT.md, sentinel cards).
+	Sentinel bool
+	// Before or After places the cards in line, in front of or after this
+	// card of the stream: their scores lie between its and its neighbour's.
+	Before, After string
+	Only          []string
+	Who           string
 }
 
 // AddIDs is the ids an add admits: the named ones, or Count generated ones
@@ -50,15 +57,35 @@ func AddIDs(s *Snapshot, r AddReq) []string {
 	return out
 }
 
-// Add admits primaries: waiting if they need something not landed, else ready.
-// A need names a primary on the table (placed or kept) or one of this add.
+// Add admits primaries: waiting if they need something not landed, else
+// ready. A need names a primary on the table (placed or kept) or one of this
+// add. A stream's sentinels stop it by position: a card placed after an
+// unlanded sentinel of its stream waits on the latest such sentinel, and a
+// card placed in front of one is a need of it. A sentinel waits for every
+// primary of its stream that sorts before it and has not landed; inserted in
+// front of cards already in line, those waiting wait on it too, those ready go
+// back to waiting, and those in flight are past the stop: it waits for them as
+// well. It is one step: a cycle of needs refuses the whole add.
 func Add(s *Snapshot, r AddReq) Plan {
 	var p Plan
-	if !ValidID(r.Stream) {
-		for _, id := range AddIDs(s, r) {
-			p.refuse(id, fmt.Sprintf("stream %q wants letters, digits, _ and -", r.Stream))
+	p.on(s)
+	ids := AddIDs(s, r)
+	refuseAll := func(why string) Plan {
+		var q Plan
+		for _, id := range ids {
+			q.refuse(id, why)
 		}
-		return p
+		return q
+	}
+	if !ValidID(r.Stream) {
+		return refuseAll(fmt.Sprintf("stream %q wants letters, digits, _ and -", r.Stream))
+	}
+	if r.Sentinel && len(ids) != 1 {
+		return refuseAll("a sentinel is admitted one at a time: add --stream <s> --sentinel <id>")
+	}
+	scores, why := addScores(s, r, len(ids))
+	if why != "" {
+		return refuseAll(why)
 	}
 	for _, t := range []string{Work, Merge} {
 		if !s.T(t).HasRow(r.Stream) {
@@ -74,18 +101,8 @@ func Add(s *Snapshot, r AddReq) Plan {
 	case ctl.F("state") == StreamLanded:
 		head = append(head, change(Merge, setEntry(ctl, map[string]string{"state": StreamWaiting, "since": stamp(s.Now)})))
 	}
-	score := 1.0
-	for _, c := range s.Work.Cards {
-		if c.Score >= score {
-			score = c.Score + 1
-		}
-	}
-	if r.Score != nil {
-		score = *r.Score
-	}
-	needs := strings.Join(r.Needs, ",")
 	adding := map[string]bool{}
-	for _, id := range AddIDs(s, r) {
+	for _, id := range ids {
 		adding[id] = true
 	}
 	var missing []string
@@ -94,8 +111,16 @@ func Add(s *Snapshot, r AddReq) Plan {
 			missing = append(missing, n)
 		}
 	}
+	// The cards admitted, each with its score and needs.
+	type admit struct {
+		id     string
+		score  float64
+		needs  []string
+		behind string // the sentinel it waits behind by position
+	}
+	var in []admit
 	seen := map[string]bool{}
-	for _, id := range AddIDs(s, r) {
+	for i, id := range ids {
 		switch {
 		case seen[id]:
 			p.refuse(id, "named twice")
@@ -111,35 +136,251 @@ func Add(s *Snapshot, r AddReq) Plan {
 			continue
 		}
 		seen[id] = true
-		col, why := Ready, ""
-		for _, n := range r.Needs {
-			if n == id {
-				col, why = "", "needs itself"
-			} else if s.StateOf(n) != Landed && col != "" {
+		a := admit{id: id, score: scores[i], needs: append([]string(nil), r.Needs...)}
+		if st := sentinelBefore(s, r.Stream, a.score); st != nil && !r.Sentinel && !contains(a.needs, st.ID) {
+			a.behind = st.ID
+			a.needs = append(a.needs, st.ID)
+		}
+		in = append(in, a)
+	}
+	// What the admitted change in the cards already in line.
+	mods := map[string]*mod{}
+	var past, pulled []string
+	if r.Sentinel && len(in) == 1 {
+		st := &in[0]
+		for _, c := range streamLine(s, r.Stream) {
+			switch {
+			case c.Col == Landed:
+			case c.Score < st.score:
+				if !contains(st.needs, c.ID) {
+					st.needs = append(st.needs, c.ID)
+				}
+				if c.Col != Waiting && (c.Col != Ready || withdrawnCard(s, c)) {
+					past = append(past, c.ID) // in flight: it waits for it
+				}
+			case c.Col == Waiting || c.Col == Ready && !withdrawnCard(s, c):
+				m := modOf(mods, c)
+				m.addNeed(st.id)
+				if c.Col == Ready {
+					m.to = Waiting
+					pulled = append(pulled, c.ID)
+				}
+				if c.F("reached") != "" {
+					m.unreach = st.id
+				}
+			default: // in flight: past the stop, and the sentinel waits for it
+				past = append(past, c.ID)
+				if !contains(st.needs, c.ID) {
+					st.needs = append(st.needs, c.ID)
+				}
+			}
+		}
+	} else if len(in) > 0 {
+		// A card placed in front of an unlanded sentinel is a need of it.
+		if st := sentinelAfter(s, r.Stream, in[0].score); st != nil {
+			m := modOf(mods, st)
+			for _, a := range in {
+				m.addNeed(a.id)
+			}
+			if st.F("reached") != "" {
+				m.unreach = in[0].id
+			}
+		}
+	}
+	edges := map[string][]string{}
+	for _, a := range in {
+		edges[a.id] = a.needs
+	}
+	for id, m := range mods {
+		edges[id] = m.needs
+	}
+	if cycle := NeedsCycle(s, edges); cycle != nil {
+		return refuseAll("the needs would make a cycle: " + strings.Join(cycle, " needs ") + "; nothing is written")
+	}
+	if len(pulled) > 0 {
+		p.inserting = true
+	}
+	for _, a := range in {
+		col := Ready
+		for _, n := range a.needs {
+			if s.StateOf(n) != Landed {
 				col = Waiting
 			}
 		}
-		if col == "" {
-			p.refuse(id, why)
-			continue
+		kind := "primary"
+		if r.Sentinel {
+			kind, col = "sentinel", Waiting
 		}
-		fields := map[string]string{"kind": "primary", "stream": r.Stream, "attempt": "0", "admitted": stamp(s.Now)}
+		fields := map[string]string{"kind": kind, "stream": r.Stream, "attempt": "0", "admitted": stamp(s.Now)}
 		if r.Brief != "" {
 			fields["brief"] = r.Brief
 		}
-		if needs != "" {
-			fields["needs"] = needs
+		if len(a.needs) > 0 {
+			fields["needs"] = strings.Join(a.needs, ",")
 		}
-		u := Unit{Key: id, Stream: r.Stream, Changes: append(head, change(Work, createEntry(id, r.Stream, col, score, fields))),
-			Moved: fmt.Sprintf("%s -> %s stream=%s score=%s", id, col, r.Stream, fmtScore(score))}
+		u := Unit{Key: a.id, Stream: r.Stream, Moved: fmt.Sprintf("%s -> %s stream=%s score=%s", a.id, col, r.Stream, fmtScore(a.score))}
+		if r.Sentinel {
+			u.Moved = "sentinel " + u.Moved
+			var open []string
+			for _, n := range a.needs {
+				if s.StateOf(n) != Landed {
+					open = append(open, n)
+				}
+			}
+			if len(open) == 0 {
+				fields["reached"] = stamp(s.Now)
+				u.Notes = append(u.Notes, reachedNote(s, &Card{ID: a.id, Row: r.Stream}, nil, len(pulled), r.Who))
+				u.Moved += "; reached"
+			}
+			if len(pulled) > 0 {
+				u.Moved += "; " + strings.Join(pulled, ",") + " ready -> waiting behind it"
+			}
+			if len(past) > 0 {
+				u.Moved += "; already past the stop: " + strings.Join(past, ",")
+			}
+		}
+		if a.behind != "" {
+			u.Moved += "; waits behind sentinel " + a.behind
+		}
+		u.Changes = append(head, change(Work, createEntry(a.id, r.Stream, col, a.score, fields)))
+		if gone := droppedNeeds(s, a.needs); len(gone) > 0 {
+			n := judgment(NBlocked, r.Stream, s.Now, 0, a.id)
+			n.What, n.Who = a.id+" needs "+strings.Join(gone, ",")+", dropped", r.Who
+			u.Notes = append(u.Notes, n)
+		}
 		head = nil
 		p.Units = append(p.Units, u)
-		score++
+	}
+	if len(p.Units) > 0 {
+		last := &p.Units[len(p.Units)-1]
+		for _, c := range streamLine(s, r.Stream) {
+			if m := mods[c.ID]; m != nil {
+				last.Changes = append(last.Changes, m.change(c))
+				if m.unreach != "" {
+					for _, o := range closesFor(s.Open, []string{NSentinelReached}, c.ID) {
+						last.Closes = append(last.Closes, o)
+						last.Notes = append(last.Notes, decided(o, "no longer reached: "+m.unreach+" was placed before it", r.Who, s.Now, c.ID))
+					}
+					last.Moved += "; sentinel " + c.ID + " is no longer reached"
+				} else if !r.Sentinel {
+					last.Moved += "; sentinel " + c.ID + " waits for it too"
+				}
+			}
+		}
 	}
 	if head != nil && len(p.Units) == 0 && len(p.Refused) == 0 {
 		p.Units = append(p.Units, Unit{Key: CtlID(r.Stream), Changes: head, Moved: "stream " + r.Stream + " open"})
 	}
+	// More work: the sprint is not done.
+	if len(p.Units) > 0 {
+		for _, o := range s.Open {
+			if o.Note.Type == NSprintDone {
+				p.Units[0].Closes = append(p.Units[0].Closes, o)
+			}
+		}
+	}
 	return p
+}
+
+// NeedsCycle is a cycle the needs would make with the edges given (a primary
+// -> its needs, in place of its own), as the path around it from its first
+// primary back to it; nil when there is none.
+func NeedsCycle(s *Snapshot, edges map[string][]string) []string {
+	needsOf := func(id string) []string {
+		if n, ok := edges[id]; ok {
+			return n
+		}
+		return Split(s.Work.Card(id).F("needs"))
+	}
+	var path []string
+	on, done := map[string]bool{}, map[string]bool{}
+	var visit func(id string) []string
+	visit = func(id string) []string {
+		if on[id] {
+			for i, x := range path {
+				if x == id {
+					return append(append([]string{}, path[i:]...), id)
+				}
+			}
+		}
+		if done[id] {
+			return nil
+		}
+		on[id] = true
+		path = append(path, id)
+		for _, n := range needsOf(id) {
+			if c := visit(n); c != nil {
+				return c
+			}
+		}
+		on[id], done[id] = false, true
+		path = path[:len(path)-1]
+		return nil
+	}
+	ids := make([]string, 0, len(edges))
+	for id := range edges {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		if c := visit(id); c != nil {
+			return c
+		}
+	}
+	return nil
+}
+
+// WaitsFor is what a primary still waits for: its needs that have not landed
+// (before the step, or in it: landing) and that the coordinator did not waive.
+func WaitsFor(s *Snapshot, c *Card, landing map[string]bool) []string {
+	var out []string
+	waived := Split(c.F("waived"))
+	for _, n := range Split(c.F("needs")) {
+		if s.StateOf(n) != Landed && !landing[n] && !contains(waived, n) {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// NeedState is one need of a primary as it stands: the need's state (its
+// column, or off the table with its outcome), and whether it was waived.
+type NeedState struct {
+	ID     string `json:"id"`
+	State  string `json:"state"`
+	Waived bool   `json:"waived,omitempty"`
+}
+
+// NeedsOf is each need of the primary with its state, and the primaries on
+// the table that need it (with the needs read as records into s).
+func NeedsOf(s *Snapshot, id string) (needs []NeedState, neededBy []string) {
+	c := s.Work.Card(id)
+	for _, n := range Split(c.F("needs")) {
+		st := "not on the table"
+		if nc := s.Work.Card(n); nc.Placed() {
+			st = nc.Col
+		} else if nc != nil {
+			st = "off the table (" + orDash(nc.F("outcome")) + ")"
+		}
+		needs = append(needs, NeedState{ID: n, State: st, Waived: contains(Split(c.F("waived")), n)})
+	}
+	for _, o := range s.Work.Column(States...) {
+		if contains(Split(o.F("needs")), id) {
+			neededBy = append(neededBy, o.ID)
+		}
+	}
+	return needs, neededBy
+}
+
+// droppedNeeds is the needs that name a primary dropped off the table.
+func droppedNeeds(s *Snapshot, needs []string) []string {
+	var out []string
+	for _, n := range needs {
+		if c := s.Work.Card(n); c != nil && !c.Placed() && c.F("outcome") == "dropped" {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 func placeWord(c *Card) string {
@@ -179,15 +420,14 @@ func Resolve(s *Snapshot, r ResolveReq) Plan { return Lawful(resolvePlan(s, r)) 
 
 func resolvePlan(s *Snapshot, r ResolveReq) Plan {
 	var p Plan
+	p.on(s)
 	chosen := pick(&p, r.Sel, s.Work.Column(Waiting), rowOf, func(c *Card) string { return inState(c, Waiting) }, s.primaryCard)
 	for _, c := range chosen {
 		var waits, dropped []string
-		for _, n := range Split(c.F("needs")) {
-			switch {
-			case s.StateOf(n) == Landed:
-			case s.Work.Card(n) != nil && !s.Work.Card(n).Placed() && s.Work.Card(n).F("outcome") == "dropped":
+		for _, n := range WaitsFor(s, c, nil) {
+			if len(droppedNeeds(s, []string{n})) > 0 {
 				dropped = append(dropped, n)
-			default:
+			} else {
 				waits = append(waits, n)
 			}
 		}
@@ -209,25 +449,55 @@ func resolvePlan(s *Snapshot, r ResolveReq) Plan {
 			}
 			continue
 		}
+		if IsSentinel(c) { // reached, never ready: the coordinator releases it
+			if c.F("reached") == "" {
+				p.Units = append(p.Units, reachUnit(s, c, nil, r.Who))
+			} else if len(r.IDs) > 0 {
+				p.refuse(c.ID, "a reached sentinel: the coordinator releases it: nova-sprint release "+c.ID+" --reason <text>")
+			}
+			continue
+		}
 		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, moveEntry(c, c.Row, Ready, nil))},
 			Moved: c.ID + " waiting -> ready"})
 	}
 	return p
 }
 
-// StartReq cuts and deals work cards for ready primaries.
-type StartReq struct {
+// resolveAfter is resolve as a trigger of a step that lands primaries
+// (landing, by id): every waiting primary whose needs have all landed, with
+// this step's, moves to ready in the same step; a sentinel is marked reached
+// instead, and waits for the coordinator's release.
+func resolveAfter(s *Snapshot, landing map[string]bool, who string) []Unit {
+	var out []Unit
+	for _, c := range s.Work.Column(Waiting) {
+		if landing[c.ID] || len(WaitsFor(s, c, landing)) > 0 {
+			continue
+		}
+		if IsSentinel(c) {
+			if c.F("reached") == "" {
+				out = append(out, reachUnit(s, c, landing, who))
+			}
+			continue
+		}
+		out = append(out, Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Work, moveEntry(c, c.Row, Ready, nil))},
+			Moved: c.ID + " waiting -> ready (its needs landed)"})
+	}
+	return out
+}
+
+// DealReq cuts and deals work cards for ready primaries.
+type DealReq struct {
 	Sel
 	Who string
 }
 
-// Start moves ready -> working: for each primary, in work order, its work
+// Deal moves ready -> working: for each primary, in work order, its work
 // card is dealt to the up member with the shortest ready queue. A card
 // withdrawn because no member was up is the same card dealt again at a new
 // generation, its attempt unchanged; otherwise the next attempt's card is cut.
-func Start(s *Snapshot, r StartReq) Plan { return Lawful(startPlan(s, r)) }
+func Deal(s *Snapshot, r DealReq) Plan { return Lawful(dealPlan(s, r)) }
 
-func startPlan(s *Snapshot, r StartReq) Plan {
+func dealPlan(s *Snapshot, r DealReq) Plan {
 	var p Plan
 	chosen := pick(&p, r.Sel, s.Work.Column(Ready), rowOf, func(c *Card) string { return inState(c, Ready) }, s.primaryCard)
 	up := s.UpMembers()
@@ -273,7 +543,7 @@ func deal(s *Snapshot, c *Card, fix string, up []string, q map[string]int, set m
 	}
 	m := shortest(up, q)
 	q[m]++
-	fields := map[string]string{"kind": "work", "primary": c.ID, "stream": c.Row, "attempt": itoa(attempt), "gen": "1", "member": m}
+	fields := map[string]string{"kind": "work", "primary": c.ID, "stream": c.Row, "attempt": itoa(attempt), "gen": "1", "member": m, "dealt": stamp(s.Now)}
 	if fix != "" {
 		fields["fix"] = fix
 	}
@@ -295,7 +565,7 @@ func redeal(s *Snapshot, c, wc *Card, up []string, q map[string]int) Unit {
 	m := shortest(up, q)
 	q[m]++
 	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
-		change(Fleet, moveEntry(wc, m, Ready, nextGen(wc, m), "withdrawn")),
+		change(Fleet, moveEntry(wc, m, Ready, nextGen(wc, m, s.Now), "withdrawn")),
 		change(Work, moveEntry(c, c.Row, Working, map[string]string{"work": wc.ID}, "result")),
 	}, Moved: fmt.Sprintf("%s %s -> working card=%s member=%s gen=%d (dealt again)", c.ID, c.Col, wc.ID, m, wc.Int("gen")+1)}
 }
@@ -472,7 +742,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 					continue
 				}
 				u.Changes = append(u.Changes, change(Readers, createEntry(id, reader, Asked, pr.Score,
-					map[string]string{"kind": "read", "primary": pr.ID, "stream": pr.Row, "reader": reader, "attempt": itoa(attempt), "head": head})))
+					map[string]string{"kind": "read", "primary": pr.ID, "stream": pr.Row, "reader": reader, "attempt": itoa(attempt), "head": head, "asked": stamp(s.Now)})))
 				again = append(again, reader)
 			}
 			if len(again) > 0 {
@@ -570,13 +840,13 @@ func fleetStepPlan(s *Snapshot, r FleetReq) Plan {
 			if len(up) > 0 {
 				m := shortest(up, q)
 				q[m]++
-				p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, m, Ready, nextGen(c, m), "taken"))},
+				p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, m, Ready, nextGen(c, m, s.Now), "taken"))},
 					Moved: fmt.Sprintf("%s %s:%s -> %s:ready gen=%d", c.ID, c.Row, c.Col, m, c.Int("gen")+1)})
 				continue
 			}
-			set := nextGen(c, "")
+			set := nextGen(c, "", s.Now)
 			set["withdrawn"] = stamp(s.Now)
-			u := Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, c.Row, Withdrawn, set, "taken"))},
+			u := Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, c.Row, Withdrawn, set, "taken", "dealt"))},
 				Moved: fmt.Sprintf("%s withdrawn gen=%d", c.ID, c.Int("gen")+1)}
 			if pr := s.Work.Placed(c.F("primary")); pr != nil && pr.Col == Working && pr.F("work") == c.ID {
 				u.Changes = append(u.Changes, change(Work, moveEntry(pr, pr.Row, Ready, nil, "work")))
@@ -632,17 +902,18 @@ func level(s *Snapshot, p *Plan, up []string) {
 		c := q[len(q)-1]
 		queues[long] = q[:len(q)-1]
 		queues[short] = append(queues[short], c)
-		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, short, Ready, nextGen(c, short)))},
+		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, short, Ready, nextGen(c, short, s.Now)))},
 			Moved: fmt.Sprintf("%s %s:ready -> %s:ready gen=%d", c.ID, long, short, c.Int("gen")+1)})
 	}
 }
 
 // nextGen is the fields of a work card dealt again: a new generation, bound
-// to the member it is dealt to ("" when it is withdrawn).
-func nextGen(c *Card, member string) map[string]string {
+// to the member it is dealt to, with dealt stamped now ("" when it is
+// withdrawn: no member, and dealt is unset by the caller).
+func nextGen(c *Card, member string, now time.Time) map[string]string {
 	set := map[string]string{"gen": itoa(c.Int("gen") + 1)}
 	if member != "" {
-		set["member"] = member
+		set["member"], set["dealt"] = member, stamp(now)
 	}
 	return set
 }

@@ -68,7 +68,7 @@ func TestRedisALargeSet(t *testing.T) {
 	st, _ := liveStore(t)
 	h := &harness{t: t, st: st, ctx: context.Background(), now: time.Now()}
 	h.setup(300)
-	res := h.must(StartStep(sprint.StartReq{Sel: sprint.Sel{Limit: 300}}))
+	res := h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 300}}))
 	if len(res.Moved) != 300 {
 		t.Fatalf("moved %d", len(res.Moved))
 	}
@@ -85,7 +85,7 @@ func TestRedisAPendingOperationIsFinishedByTheNextVerb(t *testing.T) {
 	lost := &lostOnce{Backend: st.B, table: st.Names.Table(sprint.Work)}
 	cut := *st
 	cut.B = lost
-	if _, err := cut.Run(h.ctx, StartStep(sprint.StartReq{Sel: sprint.Sel{Limit: 1}})); !errors.Is(err, ErrUnknown) {
+	if _, err := cut.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 1}})); !errors.Is(err, ErrUnknown) {
 		t.Fatalf("start with a lost reply: %v", err)
 	}
 	if f, _ := st.B.ReadFence(h.ctx); f.Pending == nil {
@@ -142,5 +142,43 @@ func TestRedisTwoWritersReleaseOneOperation(t *testing.T) {
 	notes, _, err := st.B.NotesSince(ctx, "", 100)
 	if err != nil || len(notes) != 1 {
 		t.Fatalf("notifications: %d %v", len(notes), err)
+	}
+}
+
+// clear on the real table layer: the epoch advances, the rows are restored at
+// it, the old epoch reads as it was, a writer holding it is refused, the same
+// ids land again, and teardown leaves no key of any epoch.
+func TestRedisClear(t *testing.T) {
+	t.Parallel()
+	st, c := liveStore(t)
+	h := &harness{t: t, st: st, ctx: context.Background(), now: time.Now()}
+	h.setup(3)
+	h.through("s1-1", "s1-2")
+	h.must(MergeStep(sprint.MergeReq{Stream: "s1", Batch: 1}))
+	res, err := st.Clear(h.ctx)
+	if err != nil || res.To != 1 {
+		t.Fatalf("clear: %+v %v", res, err)
+	}
+	h.clean("cleared")
+	old, err := st.At(0).Load(h.ctx, All, nil)
+	if err != nil || old.StateOf("s1-1") != sprint.Landed {
+		t.Fatalf("the old epoch: %v", err)
+	}
+	held := uint64(0)
+	step := MergeStep(sprint.MergeReq{Stream: "s1"})
+	step.Epoch = &held
+	if r, err := st.Run(h.ctx, step); err != nil || len(r.Refused) != 1 {
+		t.Fatalf("a merge holding the old epoch: %+v %v", r, err)
+	}
+	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 2}))
+	h.through("s1-1", "s1-2")
+	h.must(MergeStep(sprint.MergeReq{Stream: "s1"}))
+	h.clean("landed again")
+	if _, err := st.Teardown(h.ctx); err != nil {
+		t.Fatal(err)
+	}
+	keys, err := c.Keys(h.ctx, "*f-*").Result()
+	if err != nil || len(keys) != 0 {
+		t.Fatalf("keys left: %v %v", keys, err)
 	}
 }

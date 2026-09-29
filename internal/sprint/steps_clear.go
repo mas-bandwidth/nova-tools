@@ -1,0 +1,52 @@
+package sprint
+
+// Shape is what a sprint keeps across a clear: its streams, its readers, and
+// its fleet members with their status. The tables, their columns and the view
+// are the table layer's and carry across by themselves.
+type Shape struct {
+	Streams []string          `json:"streams"`
+	Readers []string          `json:"readers"`
+	Members []string          `json:"members"`
+	Status  map[string]string `json:"status"` // member -> up or down
+}
+
+// ShapeOf is a snapshot's shape.
+func ShapeOf(s *Snapshot) Shape {
+	sh := Shape{Readers: append([]string(nil), s.Readers.Rows...), Members: append([]string(nil), s.Fleet.Rows...), Status: map[string]string{}}
+	for _, r := range append(append([]string(nil), s.Work.Rows...), s.Merge.Rows...) {
+		if !contains(sh.Streams, r) {
+			sh.Streams = append(sh.Streams, r)
+		}
+	}
+	for _, m := range sh.Members {
+		st := s.MemberCtl(m).F("status")
+		if st == "" {
+			st = Down
+		}
+		sh.Status[m] = st
+	}
+	return sh
+}
+
+// RestoreShape is the plan that gives a new epoch its control cards: each
+// stream waiting, each member with its status and no work counted. A control
+// card the epoch has already is left as it is.
+func RestoreShape(s *Snapshot, sh Shape) Plan {
+	var p Plan
+	now := stamp(s.Now)
+	for _, st := range sh.Streams {
+		if s.Merge.Card(CtlID(st)) != nil {
+			continue
+		}
+		p.Units = append(p.Units, Unit{Key: CtlID(st), Stream: st, Changes: []Change{change(Merge, createEntry(CtlID(st), st, Ctl, 0,
+			map[string]string{"kind": "stream", "state": StreamWaiting, "since": now}))}, Moved: "stream " + st + " waiting"})
+	}
+	for _, m := range sh.Members {
+		if s.Fleet.Card(CtlID(m)) != nil {
+			continue
+		}
+		p.Units = append(p.Units, Unit{Key: CtlID(m), Changes: []Change{change(Fleet, createEntry(CtlID(m), m, Ctl, 0,
+			map[string]string{"kind": "member", "status": sh.Status[m], "since": now, "ok": "0", "failed": "0"}))}, Moved: "member " + m + " " + sh.Status[m]})
+	}
+	return p
+}
