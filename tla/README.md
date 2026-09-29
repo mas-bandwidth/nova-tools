@@ -472,3 +472,20 @@ witnesses do not establish an implementation refinement proof.
 
 The repository runner records this group using `make tlc` with
 `TLC_GROUP=multitablebatch`, an explicit installed jar and an owned output path.
+
+On 2026-09-29, `make tlc` checked all 16 declarations from commit
+`6bd6e25200317af0c58a7bfef65ac58bcc9fd6b5` in an owned Linux container on
+`spacegame.losangeles`. Twelve normal scenarios passed and all four faulty
+variants violated their exact declared action properties. The measured rows in
+`RUNS.tsv` retain emitted container hostname `236bcec8fdac` and input fingerprint
+`7649c252836fa3c848dac55ea560fa72e02dab8cfa9838442d07741953492674`.
+The TLC jar SHA-256 was
+`936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88`;
+all archived source hashes matched before and after the run. No runtime services
+ran in that model-checking container. These are repository-runner measurements,
+separate from the initial standalone parser and scenario checks.
+
+The other 76 existing model rows retain their measured global fingerprints.
+They have not been relabeled or rerun by this change. The current global record
+gate therefore remains stale for those rows pending integration of the per-case
+fingerprint checker from #4705 and reconciliation of its evidence.
