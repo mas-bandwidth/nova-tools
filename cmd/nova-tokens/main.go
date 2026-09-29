@@ -48,10 +48,10 @@ usage:
   nova-tokens fold    --out <dir> (--day <YYYY-MM-DD> | --all) --repos <file>
                       [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<pool>]... [--bus <dir>]
                       [--provider <kind>:<label>=<file>]... [--scratch <dir>] [--timeout <seconds>] [--allow-shrink] [--max <n>]
-  nova-tokens collate --out <dir> (--day <YYYY-MM-DD> | --today | --yesterday | --all) --repos <file>
+  nova-tokens collate [--out <dir>] (--day <YYYY-MM-DD> | --today | --yesterday | --all) --repos <file>
                       [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<pool>]... [--bus <dir>]
                       [--provider <kind>:<label>=<file>]... [--scratch <dir>] [--timeout <seconds>] [--allow-shrink] [--max <n>]
-                      [--max-staleness <hours>]
+                      [--max-staleness <hours>] [--strict | --no-spend <file>]
   nova-tokens report  --who <name> --day <YYYY-MM-DD> --repos <file>
                       [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <kind>:<label>=<file>]...
                       [--supersedes <note-id>]... [--note <path>] [--scratch <dir>] [--timeout <seconds>]

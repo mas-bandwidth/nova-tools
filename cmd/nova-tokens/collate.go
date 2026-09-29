@@ -96,6 +96,15 @@ func cmdCollate(args []string, stdout, stderr io.Writer, now time.Time) int {
 
 	sf.check(r)
 	checkMax(r, *max)
+	var noSpendDays map[string]bool
+	if strings.TrimSpace(*noSpend) != "" {
+		days, err := tokens.ReadNoSpendFile(*noSpend)
+		if err != nil {
+			r.add("--no-spend " + *noSpend + ": " + err.Error())
+		} else {
+			noSpendDays = days
+		}
+	}
 	if *strict && strings.TrimSpace(*noSpend) != "" {
 		r.add("--strict and --no-spend are two answers to one question; give one")
 	}
@@ -144,6 +153,7 @@ func cmdCollate(args []string, stdout, stderr io.Writer, now time.Time) int {
 	partialList := bounded.Capped(stderr, *max, "TOKENS", "partial", maxRemedy("collate"))
 	quietList := bounded.Capped(stderr, *max, "TOKENS", "quiet", maxRemedy("collate"))
 	staleList := bounded.Capped(stderr, *max, "TOKENS", "stale", maxRemedy("collate"))
+	unwrittenList := bounded.Capped(stderr, *max, "TOKENS", "unwritten", maxRemedy("collate"))
 
 	conflictDays := map[string]bool{}
 	declared := make([]string, 0, len(sources))
@@ -210,6 +220,7 @@ func cmdCollate(args []string, stdout, stderr io.Writer, now time.Time) int {
 				oneline.Field(m.Day), oneline.Field(m.Model), oneline.Field(m.Repo), oneline.Field(strings.Join(m.Bases, ","))))
 		}
 		if conflictDays[d] {
+			unwrittenList.Line(fmt.Sprintf("TOKENS UNWRITTEN day=%s: day was asked for and not written", oneline.Field(d)))
 			continue
 		}
 		turns := tokens.Dash
@@ -219,6 +230,7 @@ func cmdCollate(args []string, stdout, stderr io.Writer, now time.Time) int {
 		res, err := tokens.CollateDay(*out, d, rows, turns, declared, *allowShrink, buildVersion(), now)
 		if err != nil {
 			unreadable.Line(unreadableLine("TOKENS", tokens.Unreadable{Label: "out", Path: tokens.Path(*out, d), Why: err.Error()}))
+			unwrittenList.Line(fmt.Sprintf("TOKENS UNWRITTEN day=%s: day was asked for and not written", oneline.Field(d)))
 			continue
 		}
 		for _, u := range res.Unreadable {
@@ -243,6 +255,8 @@ func cmdCollate(args []string, stdout, stderr io.Writer, now time.Time) int {
 		if res.Written {
 			daysWritten++
 			rowsWritten += res.Rows
+		} else {
+			unwrittenList.Line(fmt.Sprintf("TOKENS UNWRITTEN day=%s: day was asked for and not written", oneline.Field(d)))
 		}
 		oldPath := tokens.Path(*out, d)
 		if old, findings, readErr := tokens.ReadDayFile(oldPath); readErr == nil && len(findings) == 0 {
@@ -259,24 +273,32 @@ func cmdCollate(args []string, stdout, stderr io.Writer, now time.Time) int {
 			collateList.Line(collateLine(res))
 		}
 	}
+
+	checkOpt := tokens.CheckOptions{Strict: *strict, NoSpend: noSpendDays}
+	chkRes, chkErr := tokens.Check(*out, checkOpt)
+	if chkErr != nil {
+		unreadable.Line(unreadableLine("TOKENS", tokens.Unreadable{Label: "out", Path: *out, Why: chkErr.Error()}))
+	} else if chkRes != nil {
+		for _, f := range chkRes.Findings {
+			why := oneline.Escape(f.Reason)
+			if f.Line > 0 {
+				why = fmt.Sprintf("line %d: %s", f.Line, oneline.Escape(f.Reason))
+			}
+			unreadable.Line(unreadableLine("TOKENS", tokens.Unreadable{Label: "out", Path: f.Path, Why: why}))
+		}
+	}
+	lastDay := ""
+	if chkRes != nil {
+		lastDay = chkRes.Last
+	}
+
 	unreadable.More()
+	unwrittenList.More()
 	mixedList.More()
 	collateList.More()
 	shrankList.More()
 	partialList.More()
 	quietList.More()
-
-	checkOpt := tokens.CheckOptions{Strict: *strict}
-	if strings.TrimSpace(*noSpend) != "" {
-		if ns, nsErr := tokens.ReadNoSpendFile(*noSpend); nsErr == nil {
-			checkOpt.NoSpend = ns
-		}
-	}
-	chkRes, _ := tokens.Check(*out, checkOpt)
-	lastDay := ""
-	if chkRes != nil {
-		lastDay = chkRes.Last
-	}
 
 	staleCount := 0
 	hasActivity := len(folder.Days()) > 0
@@ -296,11 +318,11 @@ func cmdCollate(args []string, stdout, stderr io.Writer, now time.Time) int {
 		sumOutput = s.Total.Totals[tokens.Output]
 	}
 
-	bad := unreadable.Total() > 0 || unparsed.Total() > 0 || mixedList.Total() > 0 ||
+	bad := unreadable.Total() > 0 || unwrittenList.Total() > 0 || unparsed.Total() > 0 || mixedList.Total() > 0 ||
 		conflicts.Total() > 0 || (hasShrank && !*allowShrink) || hasPartial || staleCount > 0
 	if bad {
-		fmt.Fprintf(stderr, "COLLATE FAIL days=%d unreadable=%d partial=%d shrank=%d stale=%d\n",
-			daysWritten, unreadable.Total(), partialList.Total(), shrankList.Total(), staleCount)
+		fmt.Fprintf(stderr, "COLLATE FAIL days=%d unreadable=%d unwritten=%d partial=%d shrank=%d stale=%d\n",
+			daysWritten, unreadable.Total(), unwrittenList.Total(), partialList.Total(), shrankList.Total(), staleCount)
 		return 1
 	}
 	fmt.Fprintf(stdout, "COLLATE OK days=%d rows=%d sum_input=%d sum_output=%d ledger=%s published=%s\n",

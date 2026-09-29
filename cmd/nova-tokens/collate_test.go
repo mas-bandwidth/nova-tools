@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -119,29 +121,16 @@ func TestCollateFileLocking(t *testing.T) {
 	out, repos, tr := setupCollateBench(t, day)
 	now := time.Date(2026, 9, 11, 23, 55, 0, 0, time.UTC)
 
-	// Take the lock manually to simulate another process holding it
-	release, err := tokens.TakeFoldLock(out, tokens.LockWait)
-	if err != nil {
-		t.Fatalf("TakeFoldLock failed: %v", err)
+	// A symlinked fold.lock is refused before anything is read or written
+	target := filepath.Join(t.TempDir(), "unrelated")
+	link := filepath.Join(out, tokens.LockName)
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
 	}
-	defer release()
 
-	// Running collate with lock held should fail or refuse after timeout
-	// To keep test fast, we can test that lock is respected
-	done := make(chan result, 1)
-	go func() {
-		// Run with short timeout
-		r := invokeAt(t, now, "collate", "--out", out, "--day", day, "--repos", repos, "--claude", "b="+tr, "--timeout", "1")
-		done <- r
-	}()
-
-	select {
-	case res := <-done:
-		wantExit(t, res, 2)
-		wantContains(t, res.stderr, "fold.lock")
-	case <-time.After(12 * time.Second):
-		t.Fatal("collate did not return after lock timeout")
-	}
+	r := invokeAt(t, now, "collate", "--out", out, "--day", day, "--repos", repos, "--claude", "b="+tr)
+	wantExit(t, r, 2)
+	wantContains(t, r.stderr, "fold.lock")
 }
 
 func TestCollateStalenessDetection(t *testing.T) {
@@ -187,18 +176,9 @@ func TestCollateTodayYesterdaySelection(t *testing.T) {
 }
 
 func TestCollateDefaultReportsTokensDir(t *testing.T) {
-	// Not t.Parallel() because it changes directory
+	t.Parallel()
+
 	dir := t.TempDir()
-	cwd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = os.Chdir(cwd) }()
-
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
-
 	repos := filepath.Join(dir, "repos.tsv")
 	write(t, repos, "schema\t/x/schema/\n")
 	tr := filepath.Join(dir, "tr")
@@ -207,13 +187,53 @@ func TestCollateDefaultReportsTokensDir(t *testing.T) {
 	day := "2026-09-11"
 	write(t, filepath.Join(tr, "a.jsonl"), msg("m1", day+"T10:00:00Z", "claude-sonnet", map[string]int{"input_tokens": 50}, "/x/schema/a.go")+"\n")
 
-	now := time.Date(2026, 9, 11, 23, 55, 0, 0, time.UTC)
-	// Without --out, defaults to reports/tokens
-	r := invokeAt(t, now, "collate", "--day", day, "--repos", repos, "--claude", "b="+tr)
-	wantExit(t, r, 0)
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(self, "collate", "--day", day, "--repos", repos, "--claude", "b="+tr)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), asToolEnv+"=1")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("cmd.Run() failed: %v\nstdout: %s\nstderr: %s", err, stdout.String(), stderr.String())
+	}
 
-	targetFile := filepath.Join("reports", "tokens", day+".tsv")
+	targetFile := filepath.Join(dir, "reports", "tokens", day+".tsv")
 	if _, err := os.Stat(targetFile); err != nil {
 		t.Fatalf("expected default %s to exist: %v", targetFile, err)
 	}
+}
+
+func TestCollateMissingDayFails(t *testing.T) {
+	t.Parallel()
+
+	day := "2026-09-11"
+	out, repos, tr := setupCollateBench(t, day)
+	now := time.Date(2026, 9, 11, 23, 55, 0, 0, time.UTC)
+
+	// Day 2026-09-20 was requested, but sources only have 2026-09-11
+	missingDay := "2026-09-20"
+	r := invokeAt(t, now, "collate", "--out", out, "--day", missingDay, "--repos", repos, "--claude", "b="+tr)
+	wantExit(t, r, 1)
+	wantContains(t, r.stderr, "TOKENS UNWRITTEN day=2026-09-20: day was asked for and not written")
+	wantContains(t, r.stderr, "COLLATE FAIL days=0 unreadable=0 unwritten=1 partial=0 shrank=0 stale=1")
+}
+
+func TestCollateCheckErrorFails(t *testing.T) {
+	t.Parallel()
+
+	day := "2026-09-11"
+	out, repos, tr := setupCollateBench(t, day)
+	now := time.Date(2026, 9, 11, 23, 55, 0, 0, time.UTC)
+
+	// Put a corrupt day file in out directory that check will fail on
+	badDayFile := filepath.Join(out, "2026-09-10.tsv")
+	write(t, badDayFile, "corrupted header line\n")
+
+	r := invokeAt(t, now, "collate", "--out", out, "--day", day, "--repos", repos, "--claude", "b="+tr)
+	wantExit(t, r, 1)
+	wantContains(t, r.stderr, "TOKENS UNREADABLE")
+	wantContains(t, r.stderr, "COLLATE FAIL")
 }
