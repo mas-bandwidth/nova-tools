@@ -248,3 +248,55 @@ func TestPathGrammar(t *testing.T) {
 		}
 	}
 }
+
+func TestTokenNameKindCounterHead(t *testing.T) {
+	t.Parallel()
+	for _, s := range []string{"a", "ci:unit", "review:12", "org/repo@main", "a+b_c-d.e", "sha256:abc"} {
+		if !ValidToken(s, 64) {
+			t.Errorf("ValidToken(%q) = false", s)
+		}
+	}
+	for _, s := range []string{"", "a b", "a,b", `a"b`, "a\\b", "caf\u00e9", "a#b", "a\nb", "a?b"} {
+		if ValidToken(s, 64) {
+			t.Errorf("ValidToken(%q) = true", s)
+		}
+	}
+	if ValidToken(strings.Repeat("a", 65), 64) || !ValidToken(strings.Repeat("a", 64), 64) {
+		t.Error("token bound")
+	}
+	if !ValidName("work", 64) || !ValidName("t.1-x_y", 64) || ValidName(".x", 64) || ValidName("-x", 64) || ValidName("a b", 64) || ValidName("", 64) {
+		t.Error("ValidName")
+	}
+	if !ValidKind("fix-red") || ValidKind("Fix") || ValidKind("-a") || ValidKind("") || ValidKind(strings.Repeat("a", 33)) {
+		t.Error("ValidKind")
+	}
+	for s, want := range map[string]bool{"0": true, "1": true, "18446744073709551615": true, "18446744073709551616": false, "01": false, "-0": false, "+1": false, "1.0": false, "1e3": false, "": false, " 1": false, "\u0661": false} {
+		if got := ValidCounter(s); got != want {
+			t.Errorf("ValidCounter(%q) = %v", s, got)
+		}
+	}
+	if CounterAtLeastOne("0") || !CounterAtLeastOne("1") {
+		t.Error("CounterAtLeastOne")
+	}
+	if n, ok := Count(""); n != 0 || !ok {
+		t.Error("an absent counter reads as zero")
+	}
+	if n, ok := Count("7"); n != 7 || !ok {
+		t.Error("Count(7)")
+	}
+	if _, ok := Count("x"); ok {
+		t.Error("Count(x)")
+	}
+	d := Digest(strings.Repeat("a", 64))
+	if got, ok := ParseTagged(d.Tagged()); !ok || got != d || d.Tagged() != "sha256:"+strings.Repeat("a", 64) {
+		t.Error("Tagged round trip")
+	}
+	for _, s := range []string{"", string(d), "sha256:" + strings.Repeat("A", 64), "sha1:" + strings.Repeat("a", 64), "sha256:abc"} {
+		if _, ok := ParseTagged(s); ok {
+			t.Errorf("ParseTagged(%q)", s)
+		}
+	}
+	if !ValidHead(strings.Repeat("a", 40)) || !ValidHead(d.Tagged()) || ValidHead(string(d)+"a") || ValidHead("main") || ValidHead("") {
+		t.Error("ValidHead")
+	}
+}
