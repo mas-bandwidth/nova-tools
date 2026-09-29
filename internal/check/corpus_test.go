@@ -335,9 +335,13 @@ func tmpLedger(t *testing.T) string {
 	return p
 }
 
-func corpusOK(t *testing.T, root, ledger string, min int, as []Anchor) []Failure {
+func corpusOK(t *testing.T, root, ledger string, min int, as []Anchor, base ...string) []Failure {
 	t.Helper()
-	f, err := Corpus(root, ledger, min, as)
+	var b string
+	if len(base) > 0 {
+		b = base[0]
+	}
+	f, err := corpusWithBase(root, ledger, min, as, b)
 	if err != nil {
 		t.Fatalf("Corpus: %v", err)
 	}
@@ -648,12 +652,51 @@ func TestTheFloorFindingCountsInEnglish(t *testing.T) {
 // anchor as reached through a symlink. Introduced while repairing the symlink
 // finding — every existing test used an absolute temp dir, so nothing saw it.
 func TestARelativeRootIsNotReadAsASymlinkEscape(t *testing.T) {
+	t.Parallel()
+
 	base := t.TempDir()
 	root := filepath.Join(base, "repo")
 	writeTree(t, root, map[string]string{"a.md": "the door is not locked\n"})
-	t.Chdir(base)
 	as := parseOK(t, "| f | h | g | b |\n|---|---|---|---|\n| the door is not locked | a.md | 2026 | me |\n")
-	wantFailures(t, corpusOK(t, "repo", tmpLedger(t), 1, as), nil)
+	wantFailures(t, corpusOK(t, "repo", tmpLedger(t), 1, as, base), nil)
+}
+
+func TestResolveRootWithBase(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	repo := filepath.Join(base, "repo")
+	if err := os.Mkdir(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	abs, resolved, err := resolveRootWithBase("repo", base)
+	if err != nil {
+		t.Fatalf("resolveRootWithBase: %v", err)
+	}
+	wantAbs, err := filepath.Abs(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if abs != wantAbs {
+		t.Errorf("abs = %q, want %q", abs, wantAbs)
+	}
+	wantResolved, err := filepath.EvalSymlinks(wantAbs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved != wantResolved {
+		t.Errorf("resolved = %q, want %q", resolved, wantResolved)
+	}
+
+	// Absolute root ignores base
+	abs2, resolved2, err := resolveRootWithBase(repo, t.TempDir())
+	if err != nil {
+		t.Fatalf("resolveRootWithBase abs: %v", err)
+	}
+	if abs2 != wantAbs || resolved2 != wantResolved {
+		t.Errorf("absolute root did not ignore base: got abs=%q resolved=%q", abs2, resolved2)
+	}
 }
 
 // ---------------------------------------------------------------------------

@@ -341,7 +341,11 @@ func allSeparator(cells []string) bool {
 // were lost in place" — once per anchor, for an invocation mistake, which is
 // the fastest way to teach a caller to ignore the alarm.
 func Corpus(root, ledgerPath string, minAnchors int, as []Anchor) ([]Failure, error) {
-	absRoot, resolvedRoot, err := ResolveRoot(root)
+	return corpusWithBase(root, ledgerPath, minAnchors, as, "")
+}
+
+func corpusWithBase(root, ledgerPath string, minAnchors int, as []Anchor, base string) ([]Failure, error) {
+	absRoot, resolvedRoot, err := resolveRootWithBase(root, base)
 	if err != nil {
 		return nil, err
 	}
@@ -350,7 +354,11 @@ func Corpus(root, ledgerPath string, minAnchors int, as []Anchor) ([]Failure, er
 	// Both sides go through Abs first: comparing an absolute resolution to a
 	// relative one silently disarmed this guard whenever --root and --ledger
 	// were given in different forms, which is an ordinary invocation.
-	absLedger, err := filepath.Abs(ledgerPath)
+	ledgerTarget := ledgerPath
+	if base != "" && !filepath.IsAbs(ledgerPath) {
+		ledgerTarget = filepath.Join(base, ledgerPath)
+	}
+	absLedger, err := filepath.Abs(ledgerTarget)
 	if err != nil {
 		return nil, fmt.Errorf("ledger %q cannot be resolved: %w", ledgerPath, err)
 	}
@@ -484,14 +492,22 @@ func Corpus(root, ledgerPath string, minAnchors int, as []Anchor) ([]Failure, er
 // spelling and comparing against a resolved root made every anchor under a
 // relative --root report as reached through a symlink.
 func ResolveRoot(root string) (abs, resolved string, err error) {
-	info, err := os.Stat(root)
+	return resolveRootWithBase(root, "")
+}
+
+func resolveRootWithBase(root, base string) (abs, resolved string, err error) {
+	target := root
+	if base != "" && !filepath.IsAbs(root) {
+		target = filepath.Join(base, root)
+	}
+	info, err := os.Stat(target)
 	if err != nil {
 		return "", "", fmt.Errorf("root: %w", err)
 	}
 	if !info.IsDir() {
 		return "", "", fmt.Errorf("root %q is not a directory", root)
 	}
-	abs, err = filepath.Abs(root)
+	abs, err = filepath.Abs(target)
 	if err != nil {
 		return "", "", fmt.Errorf("root %q cannot be resolved: %w", root, err)
 	}
