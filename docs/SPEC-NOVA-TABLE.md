@@ -513,7 +513,9 @@ server) is recorded in full; a longer one, whether it is a before-value read fro
 store or a value the manifest sets, is recorded as its length and its SHA-1
 (`before_bytes`, `before_sha1`, `after_bytes`, `after_sha1`, with the value's own side
 null; a null side with no length is an absent field), in the receipt, in the change
-event's `batch_delta` and in the operation record alike, never in full. And the
+event's `batch_delta` and in the operation record's result alike, never in full. The
+record's request is the manifest as sent, in full, because replay compares bytes; a
+value a manifest sets is in the manifest, so the record holds it in full there. And the
 receipt's size, the byte length of its encoded batch delta, is at most `receipt bytes`,
 which is the manifest bound, 1 MiB. The size is computed before the first write, with
 each score the call reads back after its writes counted at its longest form (24 bytes),

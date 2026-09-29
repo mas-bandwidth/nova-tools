@@ -37,9 +37,10 @@ const (
 )
 
 // ReceiptValueBytes is the longest field value a receipt, the change event and
-// the operation record hold in full; a longer one is recorded as its length and
-// SHA-1 (FieldChange.BeforeBytes, BeforeSHA1). table.lua holds the same number
-// (T.receipt_value_bytes); a test compares them.
+// the operation record's result hold in full; a longer one is recorded as its
+// length and SHA-1 (FieldChange.BeforeBytes, BeforeSHA1). The record's request is
+// the manifest as sent, in full, because replay compares bytes. table.lua holds
+// the same number (T.receipt_value_bytes); a test compares them.
 const ReceiptValueBytes = 64
 
 // LimitError is a named LIMIT refusal: the bound and the count found, and the

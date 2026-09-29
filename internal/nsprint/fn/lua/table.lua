@@ -161,7 +161,7 @@ do
     if type(s) ~= 'string' or #s <= 64 then return s end
     return string.sub(s, 1, 32) .. '...(' .. #s .. ' bytes)'
   end
-  -- A receipt, the change event and the operation record hold a field value in
+  -- A receipt, the change event and the operation record's result hold a field value in
   -- full when it is at most this many bytes; a longer one is its length and its
   -- SHA-1 (sha1hex is the digest the script API has). internal/ntable/limits.go
   -- holds the same number (ReceiptValueBytes); a test compares them.
