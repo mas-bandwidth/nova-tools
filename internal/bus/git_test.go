@@ -940,11 +940,9 @@ func TestIssue462(t *testing.T) {
 // test that actually slept would be a test that takes a second to say what a recorded
 // duration says at once.
 func TestThePushRetryWaitsBetweenAttempts(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	var slept []time.Duration
-	real := sleepBetweenAttempts
-	sleepBetweenAttempts = func(d time.Duration) { slept = append(slept, d) }
-	t.Cleanup(func() { sleepBetweenAttempts = real })
 
 	bare := bareBus(t)
 	mine := cloneBus(t, bare)
@@ -954,7 +952,7 @@ func TestThePushRetryWaitsBetweenAttempts(t *testing.T) {
 		t.Fatal(err)
 	}
 	write(t, mine, "from-ada/a.md", noteText("Ada", "mine", "body"))
-	res, err := CommitAndPush(mine, testIdentity["Ada"], []string{"from-ada/a.md"}, "ada: mine", "origin", "main", 3)
+	res, err := commitAndPushWithSleep(mine, testIdentity["Ada"], []string{"from-ada/a.md"}, "ada: mine", "origin", "main", 3, func(d time.Duration) { slept = append(slept, d) })
 	if err != nil {
 		t.Fatal(err)
 	}

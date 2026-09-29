@@ -34,6 +34,12 @@ var BeforeCreate func(rel string)
 
 // Write lays the planned files into root, confined strictly to it.
 func Write(root string, outs []Planned) (written []string, err error) {
+	return WriteWithHook(root, outs, BeforeCreate)
+}
+
+// WriteWithHook lays the planned files into root, confined strictly to it,
+// invoking beforeCreate before each file's creation.
+func WriteWithHook(root string, outs []Planned, beforeCreate func(rel string)) (written []string, err error) {
 	r, err := os.OpenRoot(root)
 	if err != nil {
 		return nil, err
@@ -64,8 +70,8 @@ func Write(root string, outs []Planned) (written []string, err error) {
 		if err := Mkdirs(r, path.Dir(o.Rel), &made); err != nil {
 			return written, err
 		}
-		if BeforeCreate != nil {
-			BeforeCreate(o.Rel)
+		if beforeCreate != nil {
+			beforeCreate(o.Rel)
 		}
 		f, err := r.OpenFile(filepath.FromSlash(o.Rel), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 		if errors.Is(err, fs.ErrExist) {

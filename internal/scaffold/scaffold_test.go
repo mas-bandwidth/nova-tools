@@ -107,17 +107,17 @@ func TestScaffoldRefusesASymlinkedParentDirectory(t *testing.T) {
 }
 
 func TestScaffoldNeverOverwritesACollisionRacedInAfterThePreflight(t *testing.T) {
+	t.Parallel()
 	tree := t.TempDir()
 	outs := []Planned{
 		{Rel: "pkg/raced.txt", Data: []byte("new content")},
 	}
-	BeforeCreate = func(rel string) {
+	beforeCreate := func(rel string) {
 		p := filepath.Join(tree, filepath.FromSlash(rel))
 		_ = os.WriteFile(p, []byte("pre-existing content"), 0o644)
 	}
-	defer func() { BeforeCreate = nil }()
 
-	_, err := Write(tree, outs)
+	_, err := WriteWithHook(tree, outs, beforeCreate)
 	if err == nil || !strings.Contains(err.Error(), "appeared while scaffold was writing") {
 		t.Fatalf("expected raced collision refusal, got %v", err)
 	}

@@ -84,6 +84,10 @@ var (
 // the create and the publish is a different thing and is not promised against: what it can
 // leave is a temporary, which is never a name `send` will read.
 func PublishNoReplace(dir, name string, content []byte) (string, error) {
+	return publishNoReplaceWith(dir, name, content, linkFile, noReplacePublish)
+}
+
+func publishNoReplaceWith(dir, name string, content []byte, link, rename func(string, string) error) (string, error) {
 	final := filepath.Join(dir, name)
 	temp, err := draftTempPath(dir)
 	if err != nil {
@@ -107,7 +111,7 @@ func PublishNoReplace(dir, name string, content []byte) (string, error) {
 		os.Remove(temp)
 		return "", err
 	}
-	linkErr := linkFile(temp, final)
+	linkErr := link(temp, final)
 	switch {
 	case linkErr == nil:
 		os.Remove(temp)
@@ -124,7 +128,7 @@ func PublishNoReplace(dir, name string, content []byte) (string, error) {
 	// call it tried and what the call said", and the first version reported only the
 	// SECOND call's words -- so a reader was told what the fallback said about a
 	// filesystem whose actual complaint came from the call before it.
-	switch renameErr := noReplacePublish(temp, final); {
+	switch renameErr := rename(temp, final); {
 	case renameErr == nil:
 		return final, nil
 	case errors.Is(renameErr, os.ErrExist):

@@ -40,6 +40,7 @@ func laneRecords(lane string) *Records {
 }
 
 func TestAReadOnlyFoldReadsAgainARecordItCaughtHalfWritten(t *testing.T) {
+	t.Parallel()
 	lane, file, whole := recordLane(t)
 	full := filepath.Join(lane, file)
 	if err := os.WriteFile(full, whole[:len(whole)/2], 0o644); err != nil {
@@ -47,14 +48,13 @@ func TestAReadOnlyFoldReadsAgainARecordItCaughtHalfWritten(t *testing.T) {
 	}
 	// The restore finishes inside the fold's own pause: this is the flush's window, held
 	// still rather than raced.
-	old := Sleep
-	defer func() { Sleep = old }()
-	Sleep = func(time.Duration) {
+	rec := laneRecords(lane)
+	rec.Sleep = func(time.Duration) {
 		if err := os.WriteFile(full, whole, 0o644); err != nil {
 			t.Error(err)
 		}
 	}
-	f, err := laneRecords(lane).FoldReadOnly()
+	f, err := rec.FoldReadOnly()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,15 +67,15 @@ func TestAReadOnlyFoldReadsAgainARecordItCaughtHalfWritten(t *testing.T) {
 }
 
 func TestAReadOnlyFoldKeepsARecordThatRefusesTwice(t *testing.T) {
+	t.Parallel()
 	lane, file, whole := recordLane(t)
 	if err := os.WriteFile(filepath.Join(lane, file), whole[:len(whole)/2], 0o644); err != nil {
 		t.Fatal(err)
 	}
 	reread := 0
-	old := Sleep
-	defer func() { Sleep = old }()
-	Sleep = func(time.Duration) { reread++ }
-	f, err := laneRecords(lane).FoldReadOnly()
+	rec := laneRecords(lane)
+	rec.Sleep = func(time.Duration) { reread++ }
+	f, err := rec.FoldReadOnly()
 	if err != nil {
 		t.Fatal(err)
 	}

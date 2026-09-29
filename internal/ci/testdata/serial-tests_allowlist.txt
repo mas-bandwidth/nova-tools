@@ -22,7 +22,7 @@
 # TestReadCopyDealtToBenchRendersALintedCard), then by nine more from the redis
 # stream (seat and #3277 tests on t.Setenv); each owes a per-test seam. Moved
 # from the serialTestsCeiling constant into this file at 876, the count that day.
-# ceiling: 367
+# ceiling: 348
 cmd/nova-bus/issue1451_test.go:TestIssue1451EveryBareVerbRefusalNamesTheDoor serial: t.Setenv
 cmd/nova-bus/main_functional_test.go:TestReceiptMaxWordsDefaultsFromBusFileThenEnv serial: t.Setenv
 cmd/nova-bus/reply_functional_test.go:TestAFilesystemWithNoCreateExclusivePublishIsRefused serial: swaps package var main.publishDraft
@@ -36,16 +36,11 @@ cmd/nova-check/issue2296_test.go:TestIssue2296 serial: os.Setenv
 cmd/nova-check/issue2296_test.go:TestNoCodeStagedRefusals serial: os.Setenv
 cmd/nova-check/issue2311_test.go:TestIssue2311 serial: swaps package var main.dogfoodClock, swaps package var main.dogfoodGitRunner, swaps package var main.dogfoodHelpRunner
 cmd/nova-ci/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
-cmd/nova-ci/version_test.go:TestVersionLineHoldsWhateverTheStampContains serial: swaps package var main.version
 cmd/nova-fuse/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
 cmd/nova-fuse/main_test.go:TestEnvironmentCannotRedirectOrLiftAnything serial: t.Setenv
 cmd/nova-fuse/main_test.go:TestNoDefaultBoxRefusesToGuess serial: t.Setenv
-cmd/nova-fuse/version_test.go:TestVersionIdentityIsTheStampWhenThereIsOne serial: swaps package var main.version
-cmd/nova-fuse/version_test.go:TestVersionLineHoldsWhateverTheStampContains serial: swaps package var main.version
 cmd/nova-memory/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine serial: t.Chdir
 cmd/nova-memory/main_test.go:TestRootIsNeverTakenFromTheEnvironment serial: t.Setenv
-cmd/nova-memory/version_test.go:TestVersionIdentityIsTheStampWhenThereIsOne serial: swaps package var main.version
-cmd/nova-memory/version_test.go:TestVersionLineHoldsWhateverTheStampContains serial: swaps package var main.version
 cmd/nova-sandbox/denied_test.go:TestTheDenialReaderUsesPosixPathsOnEveryPlatform serial: swaps package var main.denialStat
 cmd/nova-sandbox/denied_test.go:TestTheDeniedLineNamesThePathTheOpAndTheRemedy serial: swaps package var main.denialStat
 cmd/nova-sandbox/egress_test.go:TestEgressApplyAndDropRefuseOffLinux serial: swaps package var main.egressGOOS, swaps package var main.egressLookup, swaps package var main.egressPriv
@@ -125,8 +120,6 @@ cmd/nova-sandbox/worktree_test.go:TestWorktreePruneStaleUsesTheClockAndTheProbe 
 cmd/nova-sandbox/worktree_test.go:TestWorktreeRefusals serial: swaps package var main.worktreeForgeFactory, swaps package var main.worktreeGit
 cmd/nova-sandbox/worktree_test.go:TestWorktreeSecondCallReusesTheTree serial: swaps package var main.worktreeForgeFactory, swaps package var main.worktreeGit
 cmd/nova-self-talk/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints serial: t.Chdir
-cmd/nova-self-talk/version_test.go:TestVersionIdentityIsTheStampWhenThereIsOne serial: swaps package var main.version
-cmd/nova-self-talk/version_test.go:TestVersionLineHoldsWhateverTheStampContains serial: swaps package var main.version
 cmd/nova-tokens/boundary_test.go:TestNoVerbTouchesACheckoutOrItsRemote serial: t.Setenv
 cmd/nova-tokens/contract_test.go:TestEachDeclaredFileIsOpenedOncePerRun serial: counts the process-wide tokens.Opens(), which every parallel fold adds to
 cmd/nova-tokens/demanded_test.go:TestRule16And19TheDatabaseIsCopiedAndQueriedReadOnlyUnderATimeout serial: t.Setenv
@@ -151,14 +144,9 @@ internal/bus/cursor_test.go:TestAnUnreadableFileBehindTheLineIsCountedAndNotOpen
 internal/bus/cursor_test.go:TestAnUnreadableFileIsCarriedAndReChecked serial: counts the process-wide NoteParses(), which every parallel test in the package adds to
 internal/bus/cursor_test.go:TestInboxSinceParsesTheChangeSetAndPrintsTheRestFromOpen serial: counts the process-wide NoteParses(), which every parallel test in the package adds to
 internal/bus/cursor_test.go:TestTheLegacyLineLeavesOldNotesOffTheOpenListInBothReads serial: counts the process-wide NoteParses(), which every parallel test in the package adds to
-internal/bus/git_test.go:TestThePushRetryWaitsBetweenAttempts serial: swaps package var bus.sleepBetweenAttempts
-internal/bus/replydraft_test.go:TestNoCreateExclusivePublishQuotesWhatEachCallSaid serial: swaps package var bus.linkFile, swaps package var bus.noReplacePublish
-internal/bus/replydraft_test.go:TestTheSecondPublishIsUsedWhenTheFirstIsNotAvailable serial: swaps package var bus.linkFile, swaps package var bus.noReplacePublish
 internal/bus/timeout_test.go:TestAGitThatHangsIsKilledAndNamed serial: t.Setenv
 internal/check/corpus_test.go:TestARelativeRootIsNotReadAsASymlinkEscape serial: t.Chdir
 internal/ci/source_functional_test.go:TestTheSourceSeamsAnswerAsTheDiskDoes serial: swaps package var ci.walkSourceDir, ci.readSourceFile, ci.parseSource
-internal/ctxindex/ctxindex_test.go:TestLookupReadsOnlyItsBucket serial: swaps package var ctxindex.BucketSize
-internal/ctxindex/ctxindex_test.go:TestPartialBuildLeavesThePreviousIndexWhole serial: swaps package var ctxindex.afterBuckets
 internal/decide/answers_test.go:TestChoiceAnswerOutsideTheCriteriaIsAProviderError serial: t.Setenv
 internal/decide/answers_test.go:TestEmptyChoiceAboveTheFloorIsAProviderError serial: t.Setenv
 internal/decide/decide_test.go:TestDecideSendsBodyAndParses serial: t.Setenv
@@ -169,10 +157,6 @@ internal/decide/questionfile_test.go:TestTheBytesOnTheWireCarryTheNamedCriteriaA
 internal/decide/record_concurrent_test.go:TestOneClientRecordsFromManyGoroutinesWithoutARace serial: t.Setenv
 internal/merge/cisource_test.go:TestChecksMapsTheRecordWord serial: t.Setenv
 internal/merge/fetchedreporttip_test.go:TestWithFetchedReportTipRefusesInvalidBranchAndReservationCollision serial: swaps package var merge.newReportFetchNonce
-internal/merge/foldfetchedtip_test.go:TestFoldFetchedTipRereadsOnlyProblemPaths serial: swaps package var merge.Sleep
-internal/merge/foldfetchedtip_test.go:TestFoldFetchedTipUsesPinnedTreeWithoutCheckoutLock serial: swaps package var merge.Sleep
-internal/merge/foldreadonly_test.go:TestAReadOnlyFoldKeepsARecordThatRefusesTwice serial: swaps package var merge.Sleep
-internal/merge/foldreadonly_test.go:TestAReadOnlyFoldReadsAgainARecordItCaughtHalfWritten serial: swaps package var merge.Sleep
 internal/merge/guard_test.go:TestExecRunCapsRunawayOutputAndMarksIt serial: t.Setenv
 internal/merge/guard_test.go:TestExecRunLeavesBelowCapSuccess serial: t.Setenv
 internal/merge/guard_test.go:TestExecRunReturnsErrorWhenChildEndsAtCaptureCap serial: t.Setenv
@@ -220,7 +204,6 @@ internal/nsprint/fleet/fleet_functional_test.go:TestFleetUpAfterOneFromDown seri
 internal/nsprint/fleet/fleet_functional_test.go:TestFleetUpAfterOneFromHeld serial: t.Setenv
 internal/nsprint/fold/fold_test.go:TestMainJevEvalExitCodes serial: t.Setenv
 internal/nsprint/land/eval_controls_functional_test.go:TestNoStateAPI serial: swaps package var http.DefaultTransport
-internal/nsprint/land/eval_controls_test.go:TestRunnerIDTracksBuild serial: swaps package var land.ToolsVersion
 internal/nsprint/land/fleet_test.go:TestL15 serial: t.Setenv
 internal/nsprint/launch/launch_test.go:TestLaunchOverrunsWithNothingRefused serial: t.Setenv
 internal/nsprint/launch/launch_test.go:TestLaunchRefusesASecondLaunchOfOneAttempt serial: t.Setenv
@@ -267,7 +250,6 @@ internal/sandbox/wrap_darwin_test.go:TestNoSandboxRefusesOnDarwin serial: swaps 
 internal/sandbox/wrap_linux_test.go:TestLandlockABIBelowTheTableRefusesOnLinux serial: swaps package var sandbox.available
 internal/sandbox/wrap_linux_test.go:TestNewerLandlockABIIsClampedToTheTableOnLinux serial: swaps package var sandbox.available
 internal/sandbox/wrap_linux_test.go:TestNoLandlockRefusesOnLinux serial: swaps package var sandbox.available
-internal/scaffold/scaffold_test.go:TestScaffoldNeverOverwritesACollisionRacedInAfterThePreflight serial: swaps package var scaffold.BeforeCreate
 internal/secrets/place_test.go:TestPlaceSSHSeamPanicsUnderTheGuard serial: os.Unsetenv, t.Setenv
 internal/secrets/storepull_test.go:TestStorePullUsesBenchOwnedKey serial: t.Setenv
 internal/sprinttable/session_unix_test.go:TestRefreshInTheUnitGroupDiesWithTheUnit serial: swaps package var sprinttable.heldUnit, swaps package var sprinttable.heldWait
@@ -318,7 +300,6 @@ internal/swarm/staging_functional_test.go:TestWorkerClonesAfterLaunchCarriesPool
 internal/swarm/toolchain_test.go:TestToolchainVersionDirReadsTheVersionOffTheLauncher serial: t.Setenv
 internal/swarm/usagecard_functional_test.go:TestUsageRowWithoutSqlite serial: t.Setenv
 internal/swarm/warm_functional_test.go:TestAClipResetsTheWorktreeToBase serial: t.Setenv
-internal/testbin/testbin_test.go:TestPlaceFallsBackToCopyWhenLinkFails serial: swaps package var testbin.link
 internal/testguard/testguard_test.go:TestAFakeOnPATHIsNotAHost serial: os.Unsetenv, t.Setenv
 internal/testguard/testguard_test.go:TestAllowHostsIsScopedAndNests serial: os.Unsetenv, t.Setenv
 internal/testguard/testguard_test.go:TestArmedGuardNamesTheCommandAndTheRemedy serial: os.Unsetenv, t.Setenv
