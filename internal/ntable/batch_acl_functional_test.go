@@ -77,21 +77,30 @@ func TestBatchWithAReadDeniedIsAnErrorNeverAnAcceptedBatch(t *testing.T) {
 	if len(ans) < 7 || ans[6] != "at least" {
 		t.Errorf("the refusal from the counting pass does not say `at least`: %.200v", ans)
 	}
-	// one read denied: an error naming the command, never an accepted batch, and
-	// nothing written
+	// One read denied: prove that command is forbidden directly, then require
+	// a store ACL error from the batch, never an accepted batch or a write.
 	for _, denied := range batchReads {
 		user := "ns-no-" + strings.TrimPrefix(denied, "+")
+		client := as(user)
+		command := strings.TrimPrefix(denied, "+")
+		args := []any{command, ntable.MemberKey("a")}
+		if command != "hlen" {
+			args = append(args, "big")
+		}
+		if err := client.Do(ctx, args...).Err(); !isACLPermissionError(err) {
+			t.Fatalf("%s must directly deny %s on a member: %v", user, command, err)
+		}
 		for name, fields := range map[string][]string{"big": {"big", "gone"}, "small": {"gone"}} {
-			ans, err := rawApply(ctx, as(user), batch("no-"+denied[1:]+"-"+name, fields...))
-			if err == nil || !strings.Contains(err.Error(), denied[1:]) {
-				// the count stops the big batch before the head is read, so hlen and
-				// hmget are met by the small batch only
-				if name == "big" && (denied == "+hlen" || denied == "+hmget") && err == nil && len(ans) > 1 && ans[1] == "LIMIT" {
-					continue
-				}
-				t.Errorf("without %s, %s batch: %.200v %v; want an error naming the command", denied, name, ans, err)
+			ans, err := rawApply(ctx, client, batch("no-"+denied[1:]+"-"+name, fields...))
+			// The count stops a big batch before the head is read, so missing
+			// HLEN/HMGET is reached by the small batch only.
+			if name == "big" && (denied == "+hlen" || denied == "+hmget") && err == nil && len(ans) > 1 && ans[0] == "REFUSED" && ans[1] == "LIMIT" {
+				continue
 			}
-			if err == nil && len(ans) > 0 && ans[0] == "OK" {
+			if !isACLPermissionError(err) || strings.Contains(err.Error(), "malformed") || strings.Contains(err.Error(), "ERR ERR") {
+				t.Errorf("without %s, %s batch: %.200v %v; want a store ACL denial", denied, name, ans, err)
+			}
+			if len(ans) > 0 && ans[0] == "OK" {
 				t.Errorf("without %s, %s batch: accepted", denied, name)
 			}
 		}
