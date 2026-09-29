@@ -387,10 +387,20 @@ func SessionSource(store, session string) (string, error) {
 		return "", err
 	}
 	if sh == shapeBench {
-		// A bench record keeps its pointer in the header open wrote.
-		raw, err := os.ReadFile(benchFile(store, session))
-		if err != nil {
+		// A bench record keeps its pointer in the header open wrote, read
+		// through the same check as every other read of a record. Only a
+		// record that is not there means "no source"; one that is there and
+		// cannot be read is an error naming it, never a source of none.
+		raw, err := readRecord(newDirs(), "open", store, benchFile(store, session))
+		if os.IsNotExist(err) {
 			return "", nil
+		}
+		var pe *os.PathError
+		if errors.As(err, &pe) {
+			return "", fmt.Errorf("cannot read the session's source from %s: %v", benchFile(store, session), pe.Err)
+		}
+		if err != nil {
+			return "", err
 		}
 		return benchHeaderSource(raw), nil
 	}

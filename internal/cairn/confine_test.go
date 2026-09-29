@@ -231,3 +231,50 @@ func TestOwnStoreWithALinkedSessionsDirectoryStillAppends(t *testing.T) {
 		t.Fatalf("the pointer line did not land in the linked directory: %q %v", raw, err)
 	}
 }
+
+// SessionSource reads the header through the same check as every other read of
+// a record: a record that leads outside the store gives no source.
+func TestSessionSourceOfABenchRecordIsConfined(t *testing.T) {
+	t.Parallel()
+	store := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "elsewhere.md")
+	header := "# Cairn s1\n\nSession s1 opened 2026-09-29T08:00:00Z\nSource: outside-marker\n"
+	if err := os.WriteFile(outside, []byte(header), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(benchFile(store, "ok"), []byte(strings.Replace(header, "outside-marker", "inside-marker", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, benchFile(store, "leak")); err != nil {
+		t.Skipf("no symlinks here: %v", err)
+	}
+	if got, err := SessionSource(store, "ok"); err != nil || got != "inside-marker" {
+		t.Fatalf("a record in the store: %q %v", got, err)
+	}
+	if got, err := SessionSource(store, "leak"); err == nil || got != "" {
+		t.Fatalf("a record that leads outside the store gave its source %q, %v", got, err)
+	}
+	if got, err := SessionSource(store, "absent"); err != nil || got != "" {
+		t.Fatalf("no record at all is no source: %q %v", got, err)
+	}
+}
+
+// An unreadable header is an error naming the record, never "no source": the
+// CLI would otherwise report a successful open with source=- over a pointer
+// that open wrote.
+func TestAnUnreadableBenchHeaderIsAnErrorNotNoSource(t *testing.T) {
+	t.Parallel()
+	store := t.TempDir()
+	locked := benchFile(store, "locked")
+	if err := os.WriteFile(locked, []byte("# Cairn s1\n\nSession s1 opened 2026-09-29T08:00:00Z\nSource: x\n"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	if f, err := os.Open(locked); err == nil {
+		f.Close()
+		t.Skip("mode 000 stays readable here (root or a lax file system)")
+	}
+	got, err := SessionSource(store, "locked")
+	if err == nil || got != "" || !strings.Contains(err.Error(), locked) {
+		t.Fatalf("an unreadable header must be an error naming the record: %q %v", got, err)
+	}
+}
