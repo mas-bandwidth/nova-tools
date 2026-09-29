@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -33,13 +34,17 @@ type InboxReq struct {
 	Stale    time.Duration // a moving stream unchanged longer needs a look
 }
 
-// Group is notifications of one kind, type and stream, as one line.
+// Group is notifications of one kind, type and stream, as one line. Its ID is
+// stable while the group is open: the id of its oldest notification (for a
+// stalled stream, stale:<stream>), never its position in the list, so a verb
+// given --group <id> acts on this group or is refused, never on another.
 type Group struct {
-	N         int           `json:"n"`
+	ID        string        `json:"id"`
 	Kind      string        `json:"kind"`
 	Type      string        `json:"type"`
 	Stream    string        `json:"stream,omitempty"`
 	Count     int           `json:"count"`
+	Size      int           `json:"size"` // the members a verb given --group acts on
 	Primaries []string      `json:"primaries,omitempty"`
 	Notes     []string      `json:"notes,omitempty"`
 	Marked    bool          `json:"marked,omitempty"`
@@ -50,7 +55,14 @@ type Group struct {
 	Decisions []string      `json:"decisions,omitempty"`
 	What      string        `json:"what,omitempty"`
 	Before    int           `json:"before,omitempty"`
+	// Members is every subject a verb given --group acts on: the open
+	// subjects of its judgments (a stopped stream's: the cards it stopped
+	// on), or the primaries of its notifications; sorted, unbounded.
+	Members []string `json:"-"`
 }
+
+// StaleGroupID is the id of a stalled stream's group.
+func StaleGroupID(stream string) string { return "stale:" + stream }
 
 // Inbox groups: open judgments first (marked ones, repeats and overdue, first
 // of all, then the longest waiting), then streams that have not moved past
@@ -60,16 +72,32 @@ func Inbox(r InboxReq) []Group {
 	var judg []Group
 	at := map[string]int{}
 	seen := map[string]bool{}
+	first := map[int]Note{} // each group's oldest note: its id
+	members := map[int]map[string]bool{}
+	member := func(i int, s string) {
+		if strings.HasPrefix(s, "stream:") {
+			return
+		}
+		if members[i] == nil {
+			members[i] = map[string]bool{}
+		}
+		members[i][s] = true
+	}
 	for _, o := range r.Open {
 		n := o.Note
 		due := n.Due(r.Deadline)
 		overdue := (r.Deadline > 0 || !n.Review.IsZero()) && r.Now.After(due)
-		k := n.Type + "\x00" + n.Stream + "\x00" + boolWord(n.Marked || overdue)
+		// Overdue marks a group; it does not split one, so the grouping (and
+		// every group's members) is the same whatever deadline is read with.
+		k := n.Type + "\x00" + n.Stream + "\x00" + boolWord(n.Marked)
 		i, ok := at[k]
 		if !ok {
 			i = len(judg)
 			at[k] = i
 			judg = append(judg, Group{Kind: Judgment, Type: n.Type, Stream: n.Stream, Oldest: n.At, Due: due, Decisions: n.Decisions})
+		}
+		if f, ok := first[i]; !ok || n.At.Before(f.At) || n.At.Equal(f.At) && n.ID < f.ID {
+			first[i] = n
 		}
 		g := &judg[i]
 		if due.Before(g.Due) {
@@ -94,6 +122,7 @@ func Inbox(r InboxReq) []Group {
 				shown = n.Primaries // the cards the stream stopped on
 			}
 			for _, p := range shown {
+				member(i, p)
 				if len(g.Primaries) < MaxListed && !contains(g.Primaries, p) {
 					g.Primaries = append(g.Primaries, p)
 				}
@@ -107,8 +136,12 @@ func Inbox(r InboxReq) []Group {
 		}
 	}
 	for i := range judg {
+		judg[i].ID = first[i].ID
 		judg[i].Waited = r.Now.Sub(judg[i].Oldest)
+		judg[i].Members = sortedSet(members[i])
+		judg[i].Size = len(judg[i].Members)
 		sort.Strings(judg[i].Primaries)
+		sort.Strings(judg[i].Notes)
 	}
 	sort.SliceStable(judg, func(i, j int) bool {
 		if judg[i].Marked != judg[j].Marked {
@@ -121,12 +154,13 @@ func Inbox(r InboxReq) []Group {
 		if !st.Stalled(r.Now, r.Stale) {
 			continue
 		}
-		out = append(out, Group{Kind: Judgment, Type: NStreamStale, Stream: st.Stream, Count: 1, Marked: true, Overdue: true,
+		out = append(out, Group{ID: StaleGroupID(st.Stream), Kind: Judgment, Type: NStreamStale, Stream: st.Stream, Count: 1, Marked: true, Overdue: true,
 			Oldest: st.Progress, Due: st.Progress.Add(r.Stale), Waited: r.Now.Sub(st.Progress), Decisions: Decisions[NStreamStale],
 			What: "state " + st.State + " since " + st.Since.UTC().Format(time.RFC3339)})
 	}
 	var rest []Group
 	at = map[string]int{}
+	restMembers := map[int]map[string]bool{}
 	for _, n := range r.Recent {
 		if n.Kind == Judgment {
 			continue // judgments are shown while open, above
@@ -136,7 +170,8 @@ func Inbox(r InboxReq) []Group {
 		if !ok {
 			i = len(rest)
 			at[k] = i
-			rest = append(rest, Group{Kind: n.Kind, Type: n.Type, Stream: n.Stream, Oldest: n.At, What: n.What})
+			rest = append(rest, Group{ID: n.ID, Kind: n.Kind, Type: n.Type, Stream: n.Stream, Oldest: n.At, What: n.What})
+			restMembers[i] = map[string]bool{}
 		}
 		g := &rest[i]
 		c := n.Count
@@ -145,15 +180,35 @@ func Inbox(r InboxReq) []Group {
 		}
 		g.Count += c
 		for _, p := range n.Primaries {
+			restMembers[i][p] = true
 			if len(g.Primaries) < MaxListed && !contains(g.Primaries, p) {
 				g.Primaries = append(g.Primaries, p)
 			}
 		}
 		g.Notes = append(g.Notes, n.ID)
 	}
-	out = append(out, rest...)
-	for i := range out {
-		out[i].N = i + 1
+	for i := range rest {
+		rest[i].Members = sortedSet(restMembers[i])
+		rest[i].Size = len(rest[i].Members)
 	}
+	return append(out, rest...)
+}
+
+// FindGroup is the group of the id, if it is in the inbox.
+func FindGroup(groups []Group, id string) (Group, bool) {
+	for _, g := range groups {
+		if g.ID == id {
+			return g, true
+		}
+	}
+	return Group{}, false
+}
+
+func sortedSet(m map[string]bool) []string {
+	var out []string
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
 	return out
 }

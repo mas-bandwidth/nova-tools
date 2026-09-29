@@ -24,8 +24,8 @@ func (ta *testApp) coordinate() {
 		}
 		switch {
 		case g.Type == sprint.NWorkFailed || g.Type == sprint.NReadBroken:
-			ta.ok(fmt.Sprintf("rework --group %d --fix 'the fix'", g.N))
-			return // the numbering moves: read the inbox again next round
+			ta.ok(fmt.Sprintf("rework --group %s --expect %d --fix 'the fix'", g.ID, g.Size))
+			return // read the inbox again next round
 		case strings.HasPrefix(g.Type, "stream stopped"):
 			ta.ok("resume --stream " + g.Stream + " --did 'resolved'")
 			return
