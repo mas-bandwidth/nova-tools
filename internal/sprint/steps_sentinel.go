@@ -296,7 +296,7 @@ func Release(s *Snapshot, r ReleaseReq) Plan {
 		return p
 	}
 	p.Units = append(p.Units, after...)
-	settle(&p, s, r.Who, nil, landing)
+	settle(&p, s, r.Who, nil, nil, landing)
 	if d, ok := sprintDone(s, landing, nil, r.Who); ok {
 		p.Units[len(p.Units)-1].Notes = append(p.Units[len(p.Units)-1].Notes, d)
 	}

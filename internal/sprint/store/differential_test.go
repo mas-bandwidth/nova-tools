@@ -65,14 +65,6 @@ var dKnown = []dKnownDiff{
 	{"ENGINE ask --another widens the kept readers beyond the pair", func(f dFinding) bool {
 		return (sigHas("another", "primary.pair")(f) || sigHas("rework", "primary.pair")(f))
 	}},
-	// ENGINE. Section 7: a stream is landed when every primary of it on the
-	// table has landed. Release passes the sentinels it lands to settle as
-	// leaving the table (steps_sentinel.go:299), and settle counts the
-	// landed from the state before the step (steps_review.go:480), so the
-	// release that lands a stream's only landed card leaves the stream
-	// waiting with nothing open, for good (and stalled, to inbox, after its
-	// deadline).
-	{"ENGINE release of a stream's only landed card leaves the stream waiting", sigHas("release", "stream.state=waiting/landed")},
 	// ENGINE or SPEC. Section 16: a sentinel inserted in line sends the
 	// ready cards behind it back to waiting; the engine treats a ready
 	// primary whose card was withdrawn (no member up) as in flight: it

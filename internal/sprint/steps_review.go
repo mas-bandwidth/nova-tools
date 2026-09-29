@@ -465,7 +465,13 @@ func unitStreams(p Plan) []string {
 // (offQueue) or the table (offTable): landed when every primary of the stream
 // left on the table has landed, else waiting when a merging stream has nothing
 // queued or stuck. A stopped stream stays stopped until it resumes.
-func settle(p *Plan, s *Snapshot, who string, offQueue, offTable map[string]bool) {
+func settle(p *Plan, s *Snapshot, who string, offQueue, offTable map[string]bool, landing ...map[string]bool) {
+	lands := map[string]bool{} // the cards this step lands: landed after it
+	for _, l := range landing {
+		for id := range l {
+			lands[id] = true
+		}
+	}
 	for _, st := range unitStreams(*p) {
 		ctl := s.StreamCtl(st)
 		state := ctl.F("state")
@@ -481,7 +487,10 @@ func settle(p *Plan, s *Snapshot, who string, offQueue, offTable map[string]bool
 		open, landed := 0, s.Work.Count(st, Landed)
 		for _, x := range []State{Waiting, Ready, Working, Review, Merging} {
 			for _, c := range s.Work.Cell(st, x) {
-				if !offTable[c.ID] {
+				switch {
+				case lands[c.ID]:
+					landed++
+				case !offTable[c.ID]:
 					open++
 				}
 			}

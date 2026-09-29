@@ -29,3 +29,21 @@ func TestACrossNeedDoesNotSurviveAReturn(t *testing.T) {
 	}
 	h.clean("resumed")
 }
+
+// 2. Releasing a stream's only landed card lands the stream: settle counts
+// from the state after the step.
+func TestReleasingTheOnlyCardLandsItsStream(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	if err := h.m.SetCoordinator(h.ctx, "tester"); err != nil {
+		t.Fatal(err)
+	}
+	h.must(AddStep(sprint.AddReq{Stream: "s3", IDs: []string{"p2"}}))
+	h.must(AddStep(sprint.AddReq{Stream: "s3", IDs: []string{"p4"}, Sentinel: true, Before: "p2"}))
+	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"p2"}}, Reason: "gone"}))
+	h.must(ReleaseStep(sprint.ReleaseReq{IDs: []string{"p4"}, Reason: "done", Coordinator: "tester", Who: "tester"}))
+	if st := h.snap().StreamCtl("s3").F("state"); st != sprint.StreamLanded {
+		t.Fatalf("s3 is %s after its only card landed", st)
+	}
+	h.clean("released")
+}
