@@ -272,20 +272,27 @@ stamps are set. Nothing about the fleet's configuration lives only in Redis.
 ## Ansible inventory
 
 ```
+export NOVA_PG_DSN=postgres://nova_config@127.0.0.1:5432/nova
 nova-config inventory
 ```
 
-`inventory` prints a standard Ansible dynamic JSON inventory (`_meta.hostvars`
-and groups `benches`, `coordinator`, `store`, `runners`) directly from the machine
-and fleet rows in Postgres: one record, no second machine list (ideas#820). Each
-host's variables are `ansible_host`, `ansible_user` (the row's user, left out
-when empty), `registry_seat` (the row's seat, left out when empty), `slots`,
-`runners` and `kind=machine`; `ansible_user` is the name ansible reads for the
-login and `registry_seat` the name the fleet plays read for the seat, so each
-value has one name. Machines and the fleet row are read in one transaction. When executed on a fleet
-machine (named by `NOVA_MACHINE`, else matching the short hostname), that host receives
-`ansible_connection=local` so the control machine connects to itself locally without
-ssh. Pass `--host <name>` for single-host inspection or `--list` for all hosts.
+`inventory` reads Postgres and prints an Ansible dynamic JSON inventory: the
+groups `benches`, `coordinator`, `store` and `runners` and every host's
+variables under `_meta.hostvars`. The machine rows are the one machine list;
+there is no second one. Each host's variables are `ansible_host`,
+`ansible_user` (the row's user), `registry_seat` (the row's seat), `slots`,
+`runners` and `kind=machine`. `ansible_user` is the name ansible reads for the
+login and `registry_seat` the name the plays read for the seat, so each value
+has one name; a user or seat that is empty is left out. The machine rows and
+the fleet row are read in one transaction.
+
+The machine the command runs on is named by the env `NOVA_MACHINE`, else it is
+the short hostname; a machine row of that name gets `ansible_connection=local`,
+so ansible reaches it without ssh.
+
+`--list` prints all of it and is the default when no flag is given. `--host
+<name>` prints one machine's variables; a name with no machine row exits 1 with
+the known names, and `--list` with `--host` is refused.
 
 Ansible's `-i` wants an executable file, so save a two-line wrapper and point
 `-i` at it:
@@ -296,17 +303,14 @@ exec nova-config inventory "$@"
 ```
 
 ```
-export NOVA_PG_DSN=postgres://nova_config@127.0.0.1:5432/nova
 chmod +x nova-inventory
 ansible-inventory -i ./nova-inventory --list
 ```
 
 Ansible starts the script with `--list`. Every host's variables are in the
-`_meta.hostvars` of that output, so ansible does not call `--host <name>`; run
-it by hand to read one machine, and a name with no machine row exits 1 with the
-known names. The script reads `NOVA_PG_DSN` and `NOVA_PG_PASSWORD_ENV` from the
-environment ansible passes it, and `NOVA_MACHINE` (the machine row this process
-runs on; the short hostname when unset) to mark that host local.
+`_meta.hostvars` of that output, so ansible does not call `--host <name>`. The
+script reads `NOVA_PG_DSN` and `NOVA_PG_PASSWORD_ENV` from the environment
+ansible passes it, and `NOVA_MACHINE`.
 
 ## What is deliberately not here
 

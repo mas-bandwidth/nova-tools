@@ -30,8 +30,8 @@ type AnsibleInventory struct {
 
 // BuildInventory reads the machine and fleet rows from the store and builds an
 // AnsibleInventory. When localHost matches a machine name, that host's variables
-// include ansible_connection=local so the control machine reaches itself without
-// ssh.
+// include ansible_connection=local so the machine running the command reaches itself
+// without ssh.
 func BuildInventory(ctx context.Context, st Store, localHost string) (*AnsibleInventory, error) {
 	machines, fleetRow, err := st.MachinesAndFleet(ctx)
 	if err != nil {
@@ -45,7 +45,7 @@ func BuildInventory(ctx context.Context, st Store, localHost string) (*AnsibleIn
 		slots, _ := strconv.Atoi(m.Fields["slots"])
 		runners, _ := strconv.Atoi(m.Fields["runners"])
 		// ansible_user and registry_seat are the two names ansible and the
-		// fleet plays read; an empty value is left out, never emitted as "".
+		// plays read; an empty value is left out, never emitted as "".
 		hv := map[string]any{
 			"ansible_host": m.Name,
 			"slots":        slots,
