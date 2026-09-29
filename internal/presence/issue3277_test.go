@@ -9,9 +9,9 @@ import (
 
 // #3277: Open sends nothing; the first beat or read dials and authenticates.
 func TestOpenSendsNoCommand3277(t *testing.T) {
-	t.Setenv(PasswordEnv, "")
+	t.Parallel()
 	addr, count := testutil.CommandCounter(t)
-	r, err := Open(context.Background(), addr, DefaultUser)
+	r, err := openWithLookup(context.Background(), addr, DefaultUser, func(string) string { return "" })
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}

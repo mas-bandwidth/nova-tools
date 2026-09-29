@@ -42,12 +42,16 @@ type Redis struct {
 // than completed, because the fleet store's port is 6380 and the default is
 // 6379, and a tool that guesses that wrong reports a friend as away.
 func Open(ctx context.Context, addr, user string) (*Redis, error) {
+	return openWithLookup(ctx, addr, user, os.Getenv)
+}
+
+func openWithLookup(ctx context.Context, addr, user string, getenv func(string) string) (*Redis, error) {
 	a, err := Addr(addr)
 	if err != nil {
 		return nil, err
 	}
 	opts := &redis.Options{Addr: a}
-	u, pw, err := Login(user)
+	u, pw, err := loginWithLookup(user, getenv)
 	if err != nil {
 		return nil, err
 	}
@@ -76,6 +80,10 @@ func (r *Redis) fail(err error) error {
 // otherwise it is user (DefaultUser when blank) with PasswordEnv's value, and
 // an empty password means dial with no credentials at all.
 func Login(user string) (string, string, error) {
+	return loginWithLookup(user, os.Getenv)
+}
+
+func loginWithLookup(user string, getenv func(string) string) (string, string, error) {
 	if c, ok, err := seatcred.Active(); ok {
 		if err != nil {
 			return "", "", err
@@ -84,7 +92,10 @@ func Login(user string) (string, string, error) {
 		_ = c.Password.Use(func(v string) error { pw = v; return nil })
 		return c.User, pw, nil
 	}
-	pw := os.Getenv(PasswordEnv)
+	pw := ""
+	if getenv != nil {
+		pw = getenv(PasswordEnv)
+	}
 	if strings.TrimSpace(user) == "" {
 		user = DefaultUser
 	}
