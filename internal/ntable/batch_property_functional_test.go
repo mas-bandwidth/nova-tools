@@ -663,6 +663,11 @@ func (o *batchOracle) verifyPhysical(t *testing.T, ctx context.Context, c *redis
 		if h["revision"] != expectedRev {
 			t.Fatalf("verifyPhysical: member %s revision mismatch: got %s, want %s", mid, h["revision"], expectedRev)
 		}
+		if m.exists {
+			if h["epoch"] != "0" && h["epoch"] != "" {
+				t.Fatalf("verifyPhysical: member %s epoch unexpected: %q", mid, h["epoch"])
+			}
+		}
 		placeKey := "place:" + o.table.name
 		if m.placed {
 			expectedPlace := m.row + ":" + m.col
@@ -679,8 +684,12 @@ func (o *batchOracle) verifyPhysical(t *testing.T, ctx context.Context, c *redis
 			}
 		}
 		for k, v := range m.fields {
-			if h[k] != v {
-				t.Fatalf("verifyPhysical: member %s field %s mismatch: got %s, want %s", mid, k, h[k], v)
+			actualVal, exists := h[k]
+			if !exists {
+				t.Fatalf("verifyPhysical: member %s field %s expected to exist with value %q, but missing from hash", mid, k, v)
+			}
+			if actualVal != v {
+				t.Fatalf("verifyPhysical: member %s field %s mismatch: got %q, want %q", mid, k, actualVal, v)
 			}
 		}
 		for k := range h {
@@ -694,11 +703,31 @@ func (o *batchOracle) verifyPhysical(t *testing.T, ctx context.Context, c *redis
 				continue
 			}
 			if strings.HasPrefix(k, "place:") {
-				continue
+				t.Fatalf("verifyPhysical: member %s unexpected foreign place field %s=%s", mid, k, h[k])
 			}
 			if _, ok := m.fields[k]; !ok {
 				t.Fatalf("verifyPhysical: member %s unexpected extra field %s=%s", mid, k, h[k])
 			}
+		}
+	}
+
+	keys, err := c.Keys(ctx, "table:"+o.table.name+":*").Result()
+	if err != nil {
+		t.Fatalf("verifyPhysical: KEYS table:%s:*: %v", o.table.name, err)
+	}
+	for _, k := range keys {
+		suffix := strings.TrimPrefix(k, "table:"+o.table.name+":")
+		switch {
+		case suffix == "definition" || suffix == "revision" || suffix == "identity" || suffix == "rows" || suffix == "changes" || suffix == "events":
+		case strings.HasPrefix(suffix, "row:"):
+		case strings.HasPrefix(suffix, "cell:"):
+			cell := strings.TrimPrefix(suffix, "cell:")
+			if _, ok := o.table.cells[cell]; !ok {
+				t.Fatalf("verifyPhysical: unexpected cell key %s in store", k)
+			}
+		case strings.HasPrefix(suffix, "op:"):
+		default:
+			t.Fatalf("verifyPhysical: unexpected table key in store: %s", k)
 		}
 	}
 }
@@ -790,7 +819,7 @@ func TestBatchApplyPropertyAndReceiptReplay(t *testing.T) {
 	cols := []string{"a", "b", "c"}
 	membersPool := []string{"m1", "m2", "m3", "m4"}
 	fieldsPool := []string{"role", "tier", "dept"}
-	valuesPool := []string{"worker", "lead", "gold", "silver", "sales"}
+	valuesPool := []string{"worker", "lead", "gold", "silver", "sales", ""}
 
 	seeds := []int64{101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116}
 
@@ -1024,6 +1053,43 @@ func TestBatchApplyPropertyAndReceiptReplay(t *testing.T) {
 				}
 				if rcpt.BatchDelta.ChangedCount != predDelta.ChangedCount {
 					t.Fatalf("ChangedCount mismatch: got %d, want %d", rcpt.BatchDelta.ChangedCount, predDelta.ChangedCount)
+				}
+				if len(rcpt.BatchDelta.Members) != len(predDelta.Members) {
+					t.Fatalf("seed %d step %d: members delta count mismatch: got %d, want %d", seed, step, len(rcpt.BatchDelta.Members), len(predDelta.Members))
+				}
+				for idx := range rcpt.BatchDelta.Members {
+					gotM := rcpt.BatchDelta.Members[idx]
+					wantM := predDelta.Members[idx]
+					if gotM.ID != wantM.ID {
+						t.Fatalf("seed %d step %d member %d: id got %s, want %s", seed, step, idx, gotM.ID, wantM.ID)
+					}
+					if gotM.BeforeRev != wantM.BeforeRev || gotM.AfterRev != wantM.AfterRev {
+						t.Fatalf("seed %d step %d member %s: rev got %s->%s, want %s->%s", seed, step, gotM.ID, gotM.BeforeRev, gotM.AfterRev, wantM.BeforeRev, wantM.AfterRev)
+					}
+					if gotM.BeforePlace != wantM.BeforePlace || gotM.AfterPlace != wantM.AfterPlace {
+						t.Fatalf("seed %d step %d member %s: place got %s->%s, want %s->%s", seed, step, gotM.ID, gotM.BeforePlace, gotM.AfterPlace, wantM.BeforePlace, wantM.AfterPlace)
+					}
+					if (gotM.BeforeScore == nil) != (wantM.BeforeScore == nil) || (gotM.BeforeScore != nil && *gotM.BeforeScore != *wantM.BeforeScore) {
+						t.Fatalf("seed %d step %d member %s: score before got %v, want %v", seed, step, gotM.ID, gotM.BeforeScore, wantM.BeforeScore)
+					}
+					if (gotM.AfterScore == nil) != (wantM.AfterScore == nil) || (gotM.AfterScore != nil && *gotM.AfterScore != *wantM.AfterScore) {
+						t.Fatalf("seed %d step %d member %s: score after got %v, want %v", seed, step, gotM.ID, gotM.AfterScore, wantM.AfterScore)
+					}
+					if len(gotM.Fields) != len(wantM.Fields) {
+						t.Fatalf("seed %d step %d member %s: fields count mismatch: got %d, want %d", seed, step, gotM.ID, len(gotM.Fields), len(wantM.Fields))
+					}
+					for f, wantCh := range wantM.Fields {
+						gotCh, ok := gotM.Fields[f]
+						if !ok {
+							t.Fatalf("seed %d step %d member %s: field %s missing in delta", seed, step, gotM.ID, f)
+						}
+						if (gotCh.Before == nil) != (wantCh.Before == nil) || (gotCh.Before != nil && *gotCh.Before != *wantCh.Before) {
+							t.Fatalf("seed %d step %d member %s field %s before mismatch: got %v, want %v", seed, step, gotM.ID, f, gotCh.Before, wantCh.Before)
+						}
+						if (gotCh.After == nil) != (wantCh.After == nil) || (gotCh.After != nil && *gotCh.After != *wantCh.After) {
+							t.Fatalf("seed %d step %d member %s field %s after mismatch: got %v, want %v", seed, step, gotM.ID, f, gotCh.After, wantCh.After)
+						}
+					}
 				}
 
 				oracle.apply(manifest)
@@ -1280,52 +1346,118 @@ func TestBatchPropertyNMaxAndLimits(t *testing.T) {
 
 func TestBatchReceiptDrivenStateReplay(t *testing.T) {
 	t.Parallel()
-	_, c := live(t)
+	_, clientA := live(t)
+	_, clientB := live(t)
 	ctx := context.Background()
 
-	const tableA = "t_replay_a"
-	const tableB = "t_replay_b"
+	const targetTable = "demo"
 	rows := []string{"r1", "r2"}
 	cols := []string{"a", "b", "c"}
 	membersPool := []string{"m1", "m2", "m3", "m4", "m5"}
 
-	_ = c.FlushAll(ctx).Err()
-	defA := propDefinition(tableA)
-	if err := ntable.Create(ctx, c, defA, time.Now()); err != nil {
-		t.Fatalf("create %s: %v", tableA, err)
+	_ = clientA.FlushAll(ctx).Err()
+	defA := propDefinition(targetTable)
+	if err := ntable.Create(ctx, clientA, defA, time.Now()); err != nil {
+		t.Fatalf("create %s on clientA: %v", targetTable, err)
 	}
 	for _, r := range rows {
-		if _, err := ntable.RowAdd(ctx, c, tableA, r, ntable.RowSpec{}); err != nil {
-			t.Fatalf("rowAdd %s %s: %v", tableA, r, err)
+		if _, err := ntable.RowAdd(ctx, clientA, targetTable, r, ntable.RowSpec{}); err != nil {
+			t.Fatalf("rowAdd %s %s on clientA: %v", targetTable, r, err)
 		}
 	}
 
-	defB := propDefinition(tableB)
-	if err := ntable.Create(ctx, c, defB, time.Now()); err != nil {
-		t.Fatalf("create %s: %v", tableB, err)
+	_ = clientB.FlushAll(ctx).Err()
+	defB := propDefinition(targetTable)
+	if err := ntable.Create(ctx, clientB, defB, time.Now()); err != nil {
+		t.Fatalf("create %s on clientB: %v", targetTable, err)
 	}
 	for _, r := range rows {
-		if _, err := ntable.RowAdd(ctx, c, tableB, r, ntable.RowSpec{}); err != nil {
-			t.Fatalf("rowAdd %s %s: %v", tableB, r, err)
+		if _, err := ntable.RowAdd(ctx, clientB, targetTable, r, ntable.RowSpec{}); err != nil {
+			t.Fatalf("rowAdd %s %s on clientB: %v", targetTable, r, err)
 		}
 	}
 
 	replayDelta := func(delta *ntable.BatchDelta, targetTable string, rev uint64) {
 		t.Helper()
-		if err := c.HSet(ctx, ntable.DefKey(targetTable)+":revision", "n", rev).Err(); err != nil {
+		if err := clientB.HSet(ctx, ntable.DefKey(targetTable)+":revision", "n", rev).Err(); err != nil {
 			t.Fatalf("replay revision: %v", err)
 		}
 		for _, md := range delta.Members {
 			memKey := ntable.MemberKey(md.ID)
+			curHash, err := clientB.HGetAll(ctx, memKey).Result()
+			if err != nil {
+				t.Fatalf("replayDelta: clientB HGetAll %s: %v", md.ID, err)
+			}
+
+			// Validate BeforeRev
+			curRev := curHash["revision"]
+			if curRev == "" {
+				curRev = "0"
+			}
+			expectedBeforeRev := md.BeforeRev
+			if expectedBeforeRev == "" {
+				expectedBeforeRev = "0"
+			}
+			if curRev != expectedBeforeRev {
+				t.Fatalf("replayDelta: member %s before rev mismatch: got %s, want %s", md.ID, curRev, expectedBeforeRev)
+			}
+
+			// Validate BeforePlace
+			placeKey := "place:" + targetTable
+			curPlace := curHash[placeKey]
+			if curPlace != md.BeforePlace {
+				t.Fatalf("replayDelta: member %s before place mismatch: got %q, want %q", md.ID, curPlace, md.BeforePlace)
+			}
+
+			// Validate BeforeScore
+			if md.BeforePlace != "" {
+				parts := strings.Split(md.BeforePlace, ":")
+				cellKey := fmt.Sprintf("table:%s:cell:%s:%s", targetTable, parts[0], parts[1])
+				score, err := clientB.ZScore(ctx, cellKey, md.ID).Result()
+				if err != nil {
+					t.Fatalf("replayDelta: member %s missing from before cell %s: %v", md.ID, cellKey, err)
+				}
+				if md.BeforeScore != nil && score != *md.BeforeScore {
+					t.Fatalf("replayDelta: member %s before score mismatch in %s: got %g, want %g", md.ID, cellKey, score, *md.BeforeScore)
+				}
+			} else {
+				if md.BeforeScore != nil {
+					t.Fatalf("replayDelta: member %s has BeforeScore %g but BeforePlace is empty", md.ID, *md.BeforeScore)
+				}
+			}
+
+			// Validate md.Fields[f].Before
+			for f, ch := range md.Fields {
+				actualVal, exists := curHash[f]
+				if ch.Before == nil {
+					if exists {
+						t.Fatalf("replayDelta: member %s field %s expected absent, got %q", md.ID, f, actualVal)
+					}
+				} else {
+					if !exists {
+						t.Fatalf("replayDelta: member %s field %s expected %q, but missing", md.ID, f, *ch.Before)
+					}
+					if actualVal != *ch.Before {
+						t.Fatalf("replayDelta: member %s field %s before mismatch: got %q, want %q", md.ID, f, actualVal, *ch.Before)
+					}
+				}
+			}
+
+			// Apply md to clientB
+			if md.BeforeRev == "0" || md.BeforeRev == "" {
+				if err := clientB.HSet(ctx, memKey, "epoch", "0").Err(); err != nil {
+					t.Fatalf("replay member epoch: %v", err)
+				}
+			}
 			if md.AfterRev != "" {
-				if err := c.HSet(ctx, memKey, "revision", md.AfterRev).Err(); err != nil {
+				if err := clientB.HSet(ctx, memKey, "revision", md.AfterRev).Err(); err != nil {
 					t.Fatalf("replay member revision: %v", err)
 				}
 			}
 			if md.BeforePlace != "" && md.BeforePlace != md.AfterPlace {
 				oldParts := strings.Split(md.BeforePlace, ":")
 				oldKey := fmt.Sprintf("table:%s:cell:%s:%s", targetTable, oldParts[0], oldParts[1])
-				if err := c.ZRem(ctx, oldKey, md.ID).Err(); err != nil {
+				if err := clientB.ZRem(ctx, oldKey, md.ID).Err(); err != nil {
 					t.Fatalf("replay cell zrem: %v", err)
 				}
 			}
@@ -1336,38 +1468,45 @@ func TestBatchReceiptDrivenStateReplay(t *testing.T) {
 				if md.AfterScore != nil {
 					sc = *md.AfterScore
 				}
-				if err := c.ZAdd(ctx, newKey, redis.Z{Score: sc, Member: md.ID}).Err(); err != nil {
+				if err := clientB.ZAdd(ctx, newKey, redis.Z{Score: sc, Member: md.ID}).Err(); err != nil {
 					t.Fatalf("replay cell zadd: %v", err)
 				}
-				if err := c.HSet(ctx, memKey, "place:"+targetTable, md.AfterPlace).Err(); err != nil {
+				if err := clientB.HSet(ctx, memKey, "place:"+targetTable, md.AfterPlace).Err(); err != nil {
 					t.Fatalf("replay member place: %v", err)
 				}
 			} else if md.BeforePlace != "" {
-				if err := c.HDel(ctx, memKey, "place:"+targetTable).Err(); err != nil {
+				if err := clientB.HDel(ctx, memKey, "place:"+targetTable).Err(); err != nil {
 					t.Fatalf("replay member hdel place: %v", err)
 				}
 			}
 			for f, ch := range md.Fields {
 				if ch.After != nil {
-					if err := c.HSet(ctx, memKey, f, *ch.After).Err(); err != nil {
+					if err := clientB.HSet(ctx, memKey, f, *ch.After).Err(); err != nil {
 						t.Fatalf("replay field hset: %v", err)
 					}
 				} else {
-					if err := c.HDel(ctx, memKey, f).Err(); err != nil {
+					if err := clientB.HDel(ctx, memKey, f).Err(); err != nil {
 						t.Fatalf("replay field hdel: %v", err)
 					}
 				}
 			}
 		}
+
+		opKey := "table:" + targetTable + ":op:" + delta.OperationID
+		clientB.HSet(ctx, opKey, "digest", delta.Digest, "actor", delta.Actor, "rev", rev)
+		clientB.XAdd(ctx, &redis.XAddArgs{
+			Stream: "table:" + targetTable + ":events",
+			Values: map[string]any{"op": delta.OperationID, "rev": rev, "digest": delta.Digest},
+		})
 	}
 
 	verifyTablesMatch := func() {
 		t.Helper()
-		revA, err := c.HGet(ctx, ntable.DefKey(tableA)+":revision", "n").Result()
+		revA, err := clientA.HGet(ctx, ntable.DefKey(targetTable)+":revision", "n").Result()
 		if err != nil {
 			t.Fatalf("get rev A: %v", err)
 		}
-		revB, err := c.HGet(ctx, ntable.DefKey(tableB)+":revision", "n").Result()
+		revB, err := clientB.HGet(ctx, ntable.DefKey(targetTable)+":revision", "n").Result()
 		if err != nil {
 			t.Fatalf("get rev B: %v", err)
 		}
@@ -1377,13 +1516,12 @@ func TestBatchReceiptDrivenStateReplay(t *testing.T) {
 
 		for _, r := range rows {
 			for _, col := range cols {
-				cellA := fmt.Sprintf("table:%s:cell:%s:%s", tableA, r, col)
-				cellB := fmt.Sprintf("table:%s:cell:%s:%s", tableB, r, col)
-				zsA, err := c.ZRangeWithScores(ctx, cellA, 0, -1).Result()
+				cellKey := fmt.Sprintf("table:%s:cell:%s:%s", targetTable, r, col)
+				zsA, err := clientA.ZRangeWithScores(ctx, cellKey, 0, -1).Result()
 				if err != nil {
 					t.Fatalf("zrange A: %v", err)
 				}
-				zsB, err := c.ZRangeWithScores(ctx, cellB, 0, -1).Result()
+				zsB, err := clientB.ZRangeWithScores(ctx, cellKey, 0, -1).Result()
 				if err != nil {
 					t.Fatalf("zrange B: %v", err)
 				}
@@ -1407,11 +1545,11 @@ func TestBatchReceiptDrivenStateReplay(t *testing.T) {
 			}
 		}
 
-		rsA, err := ntable.ReadSetMembers(ctx, c, tableA, membersPool)
+		rsA, err := ntable.ReadSetMembers(ctx, clientA, targetTable, membersPool)
 		if err != nil {
 			t.Fatalf("ReadSetMembers A: %v", err)
 		}
-		rsB, err := ntable.ReadSetMembers(ctx, c, tableB, membersPool)
+		rsB, err := ntable.ReadSetMembers(ctx, clientB, targetTable, membersPool)
 		if err != nil {
 			t.Fatalf("ReadSetMembers B: %v", err)
 		}
@@ -1453,13 +1591,32 @@ func TestBatchReceiptDrivenStateReplay(t *testing.T) {
 				}
 			}
 		}
+
+		for _, mid := range membersPool {
+			hA, err := clientA.HGetAll(ctx, ntable.MemberKey(mid)).Result()
+			if err != nil {
+				t.Fatalf("HGetAll clientA %s: %v", mid, err)
+			}
+			hB, err := clientB.HGetAll(ctx, ntable.MemberKey(mid)).Result()
+			if err != nil {
+				t.Fatalf("HGetAll clientB %s: %v", mid, err)
+			}
+			if len(hA) != len(hB) {
+				t.Fatalf("member %s hash len mismatch: A=%v, B=%v", mid, hA, hB)
+			}
+			for k, v := range hA {
+				if hB[k] != v {
+					t.Fatalf("member %s hash key %s mismatch: A=%q, B=%q", mid, k, v, hB[k])
+				}
+			}
+		}
 	}
 
 	// Batch 1: Create members m1, m2, m3
-	curRevA, _ := strconv.ParseUint(c.HGet(ctx, ntable.DefKey(tableA)+":revision", "n").Val(), 10, 64)
+	curRevA, _ := strconv.ParseUint(clientA.HGet(ctx, ntable.DefKey(targetTable)+":revision", "n").Val(), 10, 64)
 	manifest1 := ntable.BatchManifest{
 		Schema:                1,
-		Table:                 tableA,
+		Table:                 targetTable,
 		Epoch:                 "0",
 		ExpectedTableRevision: strconv.FormatUint(curRevA, 10),
 		OperationID:           "replay-op-1",
@@ -1485,21 +1642,21 @@ func TestBatchReceiptDrivenStateReplay(t *testing.T) {
 			},
 		},
 	}
-	rcpt1, err := ntable.ApplyBatch(ctx, c, manifest1)
+	rcpt1, err := ntable.ApplyBatch(ctx, clientA, manifest1)
 	if err != nil {
 		t.Fatalf("batch 1 failed: %v", err)
 	}
 	if rcpt1.BatchDelta == nil {
 		t.Fatalf("batch 1 missing BatchDelta")
 	}
-	replayDelta(rcpt1.BatchDelta, tableB, rcpt1.After)
+	replayDelta(rcpt1.BatchDelta, targetTable, rcpt1.After)
 	verifyTablesMatch()
 
 	// Batch 2: Move m1, modify fields of m2, move m3
 	score15 := 15.0
 	manifest2 := ntable.BatchManifest{
 		Schema:                1,
-		Table:                 tableA,
+		Table:                 targetTable,
 		Epoch:                 "0",
 		ExpectedTableRevision: strconv.FormatUint(rcpt1.After, 10),
 		OperationID:           "replay-op-2",
@@ -1525,21 +1682,21 @@ func TestBatchReceiptDrivenStateReplay(t *testing.T) {
 			},
 		},
 	}
-	rcpt2, err := ntable.ApplyBatch(ctx, c, manifest2)
+	rcpt2, err := ntable.ApplyBatch(ctx, clientA, manifest2)
 	if err != nil {
 		t.Fatalf("batch 2 failed: %v", err)
 	}
 	if rcpt2.BatchDelta == nil {
 		t.Fatalf("batch 2 missing BatchDelta")
 	}
-	replayDelta(rcpt2.BatchDelta, tableB, rcpt2.After)
+	replayDelta(rcpt2.BatchDelta, targetTable, rcpt2.After)
 	verifyTablesMatch()
 
 	// Batch 3: Remove m1, move m2, create m4
 	score50 := 50.0
 	manifest3 := ntable.BatchManifest{
 		Schema:                1,
-		Table:                 tableA,
+		Table:                 targetTable,
 		Epoch:                 "0",
 		ExpectedTableRevision: strconv.FormatUint(rcpt2.After, 10),
 		OperationID:           "replay-op-3",
@@ -1563,13 +1720,13 @@ func TestBatchReceiptDrivenStateReplay(t *testing.T) {
 			},
 		},
 	}
-	rcpt3, err := ntable.ApplyBatch(ctx, c, manifest3)
+	rcpt3, err := ntable.ApplyBatch(ctx, clientA, manifest3)
 	if err != nil {
 		t.Fatalf("batch 3 failed: %v", err)
 	}
 	if rcpt3.BatchDelta == nil {
 		t.Fatalf("batch 3 missing BatchDelta")
 	}
-	replayDelta(rcpt3.BatchDelta, tableB, rcpt3.After)
+	replayDelta(rcpt3.BatchDelta, targetTable, rcpt3.After)
 	verifyTablesMatch()
 }

@@ -2165,6 +2165,10 @@ func TestBatchAcceptedInteractingCrossRowMultiMemberWitness(t *testing.T) {
 
 func TestBatchLateInvalidAtNMaxRefusal(t *testing.T) {
 	t.Parallel()
+	testBatchLateInvalidAtNMaxRefusal(t)
+}
+
+func testBatchLateInvalidAtNMaxRefusal(t *testing.T) {
 	c, _ := store(t)
 	ctx := context.Background()
 
@@ -2321,7 +2325,8 @@ func TestBatchLateInvalidAtNMaxRefusal(t *testing.T) {
 }
 
 func TestBatchLateInvalidAtNMaxWitness(t *testing.T) {
-	TestBatchLateInvalidAtNMaxRefusal(t)
+	t.Parallel()
+	testBatchLateInvalidAtNMaxRefusal(t)
 }
 
 func TestBatchRetainedUnplacedMemberRemovalWitness(t *testing.T) {

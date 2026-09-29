@@ -136,6 +136,21 @@ func TestValidateBatchManifestRaw(t *testing.T) {
 			raw:       "{\"schema\":1,\"table\":\"demo\",\"members\":[{\"id\":\"m1\\n\"}]}",
 			errSubstr: "invalid member id",
 		},
+		{
+			name:      "stella case 1: uppercase REMOVE false rejected",
+			raw:       `{"schema":1,"table":"demo","members":[{"id":"m","REMOVE":false,"set":{"status":"done"}}]}`,
+			errSubstr: `unknown field "REMOVE" in member object`,
+		},
+		{
+			name:      "stella case 2: null value in set rejected",
+			raw:       `{"schema":1,"table":"demo","members":[{"id":"m","set":{"status":null}}]}`,
+			errSubstr: `null value not allowed in set for field "status"`,
+		},
+		{
+			name:      "stella case 3: case variant duplicate actor and Actor rejected",
+			raw:       `{"schema":1,"table":"demo","actor":"a","Actor":"b","members":[{"id":"m"}]}`,
+			errSubstr: `duplicate key "Actor" in manifest`,
+		},
 	}
 
 	for _, tc := range tests {
@@ -151,4 +166,17 @@ func TestValidateBatchManifestRaw(t *testing.T) {
 			}
 		})
 	}
+
+	// stella case 4: application field named "remove" inside set is accepted
+	t.Run("stella case 4: application field remove in set accepted", func(t *testing.T) {
+		t.Parallel()
+		raw := `{"schema":1,"table":"demo","members":[{"id":"m","set":{"remove":"done"}}]}`
+		m, err := ntable.ValidateBatchManifestRaw([]byte(raw))
+		if err != nil {
+			t.Fatalf("expected valid manifest, got error: %v", err)
+		}
+		if m.Members[0].Set["remove"] != "done" {
+			t.Errorf("expected set.remove='done', got %q", m.Members[0].Set["remove"])
+		}
+	})
 }
