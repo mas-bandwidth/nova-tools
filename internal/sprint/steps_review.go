@@ -560,7 +560,7 @@ func Drop(s *Snapshot, r DropReq) Plan {
 		}
 		return ""
 	}, s.primaryCard)
-	dropping := map[string]bool{}
+	dropping, blocked := map[string]bool{}, map[string]bool{}
 	for _, c := range chosen {
 		dropping[c.ID] = true
 	}
@@ -582,11 +582,19 @@ func Drop(s *Snapshot, r DropReq) Plan {
 		u.Changes = append(u.Changes, change(Work, removeEntry(c, map[string]string{
 			"outcome": "dropped", "reason": r.Reason, "dropped_from": c.Col, "dropped_at": stamp(s.Now)})))
 		for _, w := range s.Work.Column(Waiting) {
-			if dropping[w.ID] || !contains(Split(w.F("needs")), c.ID) || hasOpen(s.Open, NBlocked, w.ID) {
+			if dropping[w.ID] || blocked[w.ID] || !contains(Split(w.F("needs")), c.ID) || hasOpen(s.Open, NBlocked, w.ID) {
 				continue
 			}
+			// One note per waiting primary, naming every need this step drops.
+			blocked[w.ID] = true
+			var gone []string
+			for _, need := range Split(w.F("needs")) {
+				if dropping[need] {
+					gone = append(gone, need)
+				}
+			}
 			n := judgment(NBlocked, w.Row, s.Now, 0, w.ID)
-			n.What, n.Who = w.ID+" needs "+c.ID+", dropped", r.Who
+			n.What, n.Who = w.ID+" needs "+strings.Join(gone, ",")+", dropped", r.Who
 			u.Notes = append(u.Notes, n)
 		}
 		u.Closes = closesFor(s.Open, nil, c.ID)
@@ -609,12 +617,16 @@ type RankReq struct {
 }
 
 // Rank changes a primary's score, and every copy of it: its placed work
-// cards, read cards and merge place. Only rank changes a score.
+// cards, read cards and merge place. Only rank changes a score. A landed
+// primary is final and is not ranked.
 func Rank(s *Snapshot, r RankReq) Plan {
 	var p Plan
 	chosen := pick(&p, Sel{IDs: r.IDs, Only: r.Only}, nil, rowOf, func(c *Card) string {
 		if !c.Placed() {
 			return "not on the table"
+		}
+		if c.Col == Landed {
+			return "landed; landed is final"
 		}
 		return ""
 	}, s.primaryCard)

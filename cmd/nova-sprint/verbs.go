@@ -396,7 +396,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("add")
 	stream := fs.String("stream", "", "the stream the primaries belong to, for life")
 	count := fs.Int("count", 0, "admit n primaries with generated ids <stream>-<n>")
-	needs := fs.String("needs", "", "primaries that must land first, comma separated")
+	needs := fs.String("needs", "", "primaries that must land first, comma separated; each is a primary on the table")
 	brief := fs.String("brief", "", "the brief")
 	score := fs.String("score", "", "the first primary's score; the rest follow it (default: after every primary)")
 	ids, err := parse(fs, args)
@@ -685,7 +685,7 @@ func (a *app) cmdMerge(args []string, stdout, stderr io.Writer) int {
 	stream := fs.String("stream", "", "the stream")
 	batch := fs.Int("batch", 10, "the batch: the head n of the stream's queue")
 	conflict := fs.String("conflict", "", "fact: this card of the batch did not merge")
-	cross := fs.String("cross", "", "fact: <card>=<other>: the card needs a card of another stream first")
+	cross := fs.String("cross", "", "fact: <card>=<other>: the card needs <other> first; <other> is on the table, in another stream, not landed")
 	red := fs.Bool("red", false, "fact: the stream branch went red on the batch")
 	rejected := fs.Bool("rejected", false, "fact: the merge queue rejected the batch")
 	note := fs.String("note", "", "what the facts' source said")
@@ -713,7 +713,7 @@ func (a *app) cmdMerge(args []string, stdout, stderr io.Writer) int {
 func (a *app) cmdResume(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("resume")
 	stream := fs.String("stream", "", "the stopped stream")
-	did := fs.String("did", "", "what the coordinator did about the cause")
+	did := fs.String("did", "", "what the coordinator did about the cause; required after a red branch")
 	ans := fs.String("answers", "", "the judgment notifications this answers, comma separated")
 	pos, err := parse(fs, args)
 	if err != nil {

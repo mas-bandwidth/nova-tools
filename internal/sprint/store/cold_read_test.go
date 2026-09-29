@@ -505,7 +505,6 @@ func TestMergeOrderConflictAndCrossNeed(t *testing.T) {
 // stream, the card itself, or no card at all.
 func TestACrossFactIsChecked(t *testing.T) {
 	t.Parallel()
-	t.Skip("F4: a cross fact is refused unless the other card is placed, in another stream, not landed")
 	for _, other := range []string{"s1-2", "s1-1", "nosuch"} {
 		t.Run(other, func(t *testing.T) {
 			t.Parallel()
@@ -523,7 +522,7 @@ func TestACrossFactIsChecked(t *testing.T) {
 }
 
 // Red: resume without taking the suspect off.
-func TestResumeAfterRedWantsWhatWasDone(t *testing.T) {
+func TestResumeAtOnceAfterRedIsRefused(t *testing.T) {
 	t.Parallel()
 	p := newProbe(t)
 	p.setup(2)
@@ -531,7 +530,7 @@ func TestResumeAfterRedWantsWhatWasDone(t *testing.T) {
 	p.do("merge red", MergeStep(sprint.MergeReq{Stream: "s1", Red: true}))
 	res := p.do("resume at once", ResumeStep(sprint.ResumeReq{Stream: "s1"}))
 	if len(res.Moved) != 0 {
-		t.Logf("MODEL-DIFF: resume after red with the suspects still queued moved: %v", res.Moved)
+		t.Errorf("resume after red without --did moved: %v", res.Moved)
 	}
 }
 

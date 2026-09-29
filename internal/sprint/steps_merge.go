@@ -30,6 +30,26 @@ func streamDone(s *Snapshot, stream string, landing int) bool {
 	return landed > 0 && open == landing
 }
 
+// crossRefusal is why a cross fact "<card>=<other>" is refused, "" when it
+// holds: the other card is a primary placed on the table, in another stream
+// than the card's, and not landed.
+func crossRefusal(s *Snapshot, stream, card, other string) string {
+	oc := s.Work.Placed(other)
+	switch {
+	case other == "":
+		return "the cross fact names no other card; it wants <card>=<other>"
+	case other == card:
+		return "the cross fact names the card itself (" + card + "); the other card is in another stream"
+	case oc == nil:
+		return "the other card " + other + " is not on the table; the other card is placed, in another stream, not landed"
+	case oc.Row == stream:
+		return "the other card " + other + " is in the same stream " + stream + "; the other card is in another stream"
+	case oc.Col == Landed:
+		return "the other card " + other + " (stream " + oc.Row + ") has landed already; nothing to wait for"
+	}
+	return ""
+}
+
 // MergeStep merges the head of the stream's queue, in work order, as one
 // batch; or, given a fact that stops the stream, stops it and tells the
 // coordinator why. A stopped stream moves only after resume.
@@ -120,10 +140,11 @@ func MergeStep(s *Snapshot, r MergeReq) Plan {
 			p.refuse(card, "the cross fact wants <card>=<other> with the card queued in stream "+r.Stream)
 			return p
 		}
-		otherStream := s.Work.Card(other).F("stream")
-		if c := s.Work.Card(other); c != nil && c.Row != "" {
-			otherStream = c.Row
+		if why := crossRefusal(s, r.Stream, card, other); why != "" {
+			p.refuse(card, why)
+			return p
 		}
+		otherStream := s.Work.Placed(other).Row
 		ctlSet["card"], ctlSet["other"] = card, other
 		u := stop("cross", NCross, []string{card, other}, 0)
 		u.Notes[len(u.Notes)-1].What = fmt.Sprintf("%s (stream %s) needs %s (stream %s) landed first", card, r.Stream, other, orDash(otherStream))
@@ -146,36 +167,45 @@ func MergeStep(s *Snapshot, r MergeReq) Plan {
 		u.Moved = fmt.Sprintf("stream %s stopped: the merge queue rejected a batch of %d", r.Stream, len(ids))
 		p.Units = append(p.Units, u)
 	default:
+		// A card queued in merge but not merging in work is refused; the
+		// stream's control change and its notes ride on the first card that
+		// lands, and the batch note lists only the cards that landed.
+		var landing []*Card
+		var landed []string
+		for _, c := range batch {
+			if pr := s.Work.Placed(c.ID); pr == nil || pr.Col != Merging {
+				p.refuse(c.ID, "queued in merge but not merging in work ("+placeWord(orEmpty(pr, c.ID))+"); run: nova-sprint check")
+				continue
+			}
+			landing = append(landing, c)
+			landed = append(landed, c.ID)
+		}
+		if len(landing) == 0 {
+			return p
+		}
 		ctlSet["ci"], ctlSet["moved"] = "green", now
-		if streamDone(s, r.Stream, len(batch)) {
+		if streamDone(s, r.Stream, len(landing)) {
 			ctlSet["state"], ctlSet["since"] = StreamLanded, now
 		}
-		for i, c := range batch {
+		for i, c := range landing {
 			u := Unit{Key: c.ID, Stream: r.Stream}
 			if i == 0 {
 				u.Changes = append(u.Changes, change(Merge, setEntry(ctl, ctlSet)))
 				u.Notes = notes
 			}
 			u.Changes = append(u.Changes, change(Merge, moveEntry(c, r.Stream, Merged, map[string]string{"merged": now})))
-			if pr := s.Work.Placed(c.ID); pr != nil && pr.Col == Merging {
-				u.Changes = append(u.Changes, change(Work, moveEntry(pr, r.Stream, Landed, map[string]string{"ci": "green", "landed": now})))
-			} else {
-				p.refuse(c.ID, "queued in merge but not merging in work ("+placeWord(orEmpty(pr, c.ID))+"); run: nova-sprint check")
-				continue
-			}
+			u.Changes = append(u.Changes, change(Work, moveEntry(s.Work.Placed(c.ID), r.Stream, Landed, map[string]string{"ci": "green", "landed": now})))
 			u.Moved = c.ID + " merging -> landed"
 			p.Units = append(p.Units, u)
 		}
-		if len(p.Units) > 0 {
-			last := &p.Units[len(p.Units)-1]
-			b := happened(NBatchLanded, r.Stream, s.Now, ids...)
-			b.Who, b.What = r.Who, "ci green"
-			last.Notes = append(last.Notes, b)
-			if ctlSet["state"] == StreamLanded {
-				l := happened(NStreamLanded, r.Stream, s.Now)
-				l.Who = r.Who
-				last.Notes = append(last.Notes, l)
-			}
+		last := &p.Units[len(p.Units)-1]
+		b := happened(NBatchLanded, r.Stream, s.Now, landed...)
+		b.Who, b.What = r.Who, "ci green"
+		last.Notes = append(last.Notes, b)
+		if ctlSet["state"] == StreamLanded {
+			l := happened(NStreamLanded, r.Stream, s.Now)
+			l.Who = r.Who
+			last.Notes = append(last.Notes, l)
 		}
 	}
 	return p
@@ -195,7 +225,8 @@ type ResumeReq struct {
 // stuck card that needs a card of another stream waits until that card has
 // landed (ranking it is not landing it). The other causes (a conflict, a red
 // branch, a rejected batch) are resolved by the coordinator, who says what
-// was done. It answers every judgment open on the stream.
+// was done; after a red branch saying it is required. It answers every
+// judgment open on the stream.
 func Resume(s *Snapshot, r ResumeReq) Plan {
 	var p Plan
 	ctl := s.StreamCtl(r.Stream)
@@ -205,6 +236,10 @@ func Resume(s *Snapshot, r ResumeReq) Plan {
 	}
 	if ctl.F("state") != StreamStopped {
 		p.refuse(r.Stream, "not stopped (it is "+orDash(ctl.F("state"))+")")
+		return p
+	}
+	if ctl.F("cause") == "red" && strings.TrimSpace(r.Did) == "" {
+		p.refuse(r.Stream, "stopped for a red branch; say what was done: nova-sprint resume --stream "+r.Stream+" --did <text>")
 		return p
 	}
 	stuck := s.Merge.Cell(r.Stream, Stuck)

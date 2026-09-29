@@ -176,7 +176,9 @@ card is not landing it. The notification names both streams and both cards.
 `resume` moves the stream's stuck cards back to queued at their unchanged scores
 and sets the stream merging; it is refused while a cause is unresolved, naming
 it. The other causes are resolved by the coordinator, who says what was done
-(`resume --did`). `return` sends a merging primary back to review (off queued
+(`resume --did`); after a red stream branch `--did` is required, and a resume
+without it is refused. A cross fact is refused unless the other card is placed,
+in another stream, and not landed. `return` sends a merging primary back to review (off queued
 or stuck), from where it is reworked, dropped or accepted again.
 
 ## 8. Notifications
@@ -197,7 +199,7 @@ cards returned to ready because no member is up; ci green on a primary.
 | a reader found it broken | rework with the finding, ask another reader, drop |
 | stream stopped: conflict on a card | resolve and resume, rework, drop |
 | stream stopped: stream branch red | take the suspect off and resume, rework the suspect |
-| stream stopped: needs a card of another stream first | rank that card first, wait, look at both |
+| stream stopped: needs a card of another stream first | rank that card first, wait, look at both, return, drop |
 | stream stopped: the merge queue rejected | resume, return, drop |
 | ci red on a primary | rework with a fix, return, drop, look |
 | a primary came back a second time for the same cause | stop and look |

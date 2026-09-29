@@ -262,7 +262,7 @@ func TestMergeFactsStopTheStreamAndResumeMovesIt(t *testing.T) {
 	if w2.s.StreamCtl("s1").F("cause") != "red" || len(w2.notesOf(NRed)) != 1 || w2.notesOf(NRed)[0].Count != 2 {
 		t.Fatalf("red: %v", w2.notesOf(NRed))
 	}
-	w2.must(Resume(w2.s, ResumeReq{Stream: "s1"}))
+	w2.must(Resume(w2.s, ResumeReq{Stream: "s1", Did: "reverted the suspect"}))
 	w2.must(MergeStep(w2.s, MergeReq{Stream: "s1", Conflict: "s1-1"}))
 	w2.must(Resume(w2.s, ResumeReq{Stream: "s1"}))
 	w2.must(MergeStep(w2.s, MergeReq{Stream: "s1", Conflict: "s1-1"}))
