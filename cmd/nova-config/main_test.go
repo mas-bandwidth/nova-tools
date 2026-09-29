@@ -926,7 +926,8 @@ func TestInventoryHelpAndDocsReachAWorkingRun(t *testing.T) {
 		"_meta.hostvars", "ansible never calls --host", // why --host is not called
 		"the default when neither --list nor --host is given",                                                                                         // what --list is
 		"all and benches are every machine row", "coordinator and store come from the fleet row", "runners is every machine with at least one runner", // the groups
-		"matched by exact machine name", "lower-cased first label", "nothing is marked local", // how NOVA_MACHINE matches
+		"matched by exact machine name", "lower-cased first label", "nothing is marked local", "an empty value counts as unset", // how NOVA_MACHINE matches
+		"this verb exits 0 when it printed, 1 when the store's state or an unknown machine refused it, 2 when it could not run (usage, connection, timeout)", // its exit codes
 	}
 	for _, w := range needs {
 		if !strings.Contains(help, w) {
@@ -941,7 +942,7 @@ func TestInventoryHelpAndDocsReachAWorkingRun(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, w := range []string{printf, chmod, "NOVA_MACHINE", "exact machine name", "lower-cased first label", "every machine with at least one runner", "run: nova-config migrate", "ansible-inventory -i ./nova-inventory --list", "_meta.hostvars"} {
+		for _, w := range []string{printf, chmod, "NOVA_MACHINE", "exact machine name", "an empty value counts as unset", "lower-cased first label", "every machine with at least one runner", "run: nova-config migrate", "ansible-inventory -i ./nova-inventory --list", "_meta.hostvars"} {
 			if !strings.Contains(string(raw), w) {
 				t.Errorf("%s lacks %q", doc, w)
 			}
@@ -1187,5 +1188,36 @@ func TestInventoryHostnameFallbackLowercasesTheFirstLabel(t *testing.T) {
 	h.env["NOVA_MACHINE"] = "Bench-02"
 	if code, _, _ := h.run(t, "inventory"); code != 1 {
 		t.Fatalf("NOVA_MACHINE=Bench-02 exits %d, want 1", code)
+	}
+}
+
+func TestInventoryEmptyNovaMachineIsUnset(t *testing.T) {
+	t.Parallel()
+
+	h := inventoryHarness(t, 2)
+	h.env["NOVA_MACHINE"] = ""
+	h.hostname = "bench-01.local"
+	code, out, errs := h.run(t, "inventory")
+	if code != 0 || errs != "" {
+		t.Fatalf("an empty NOVA_MACHINE exits %d with stderr %q, want 0 (unset)", code, errs)
+	}
+	if got := localMachines(t, out); len(got) != 1 || got[0] != "bench-01" {
+		t.Fatalf("an empty NOVA_MACHINE marks %v, want the hostname's bench-01", got)
+	}
+}
+
+func TestInventoryHelpKeepsTheToolWideExitFooter(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness()
+	for _, verb := range []string{"inventory", "status", "apply"} {
+		_, help, _ := h.run(t, verb, "-h")
+		if !strings.HasSuffix(help, "exit codes: 0 done, 1 refused, 2 usage\n") {
+			t.Errorf("%s -h footer changed:\n%s", verb, help)
+		}
+	}
+	_, top, _ := h.run(t, "help")
+	if !strings.Contains(top, "exit codes: 0 done, 1 refused, 2 usage") {
+		t.Errorf("the tool-wide footer changed")
 	}
 }

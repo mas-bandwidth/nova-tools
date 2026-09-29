@@ -289,7 +289,7 @@ has one name, and a user or seat that is empty is left out. A deployment maps
 `nova_seat` to its own variable name in its `group_vars`. The machine rows and
 the fleet row are read in one transaction.
 
-The machine the command runs on is named by the env `NOVA_MACHINE`, matched by
+The machine the command runs on is named by the env `NOVA_MACHINE` (an empty value counts as unset), matched by
 exact machine name; when no machine row has that name the verb exits 1 with
 the known names. When `NOVA_MACHINE` is unset, the lower-cased first label of
 the hostname (machine names are lower-case) is matched the same way, and nothing is marked local when no row has it. The

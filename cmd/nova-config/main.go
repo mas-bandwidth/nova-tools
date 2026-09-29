@@ -72,7 +72,8 @@ usage:
       printf '#!/bin/sh\nexec nova-config inventory "$@"\n' > nova-inventory
       chmod +x nova-inventory
       ansible-inventory -i ./nova-inventory --list
-      env: NOVA_PG_DSN and NOVA_PG_PASSWORD_ENV as for every verb; NOVA_MACHINE names the machine row this process runs on, matched by exact machine name and refused with the known names when it names no row; when it is unset the lower-cased first label of the hostname is matched, and nothing is marked local when that matches no row
+      env: NOVA_PG_DSN and NOVA_PG_PASSWORD_ENV as for every verb; NOVA_MACHINE names the machine row this process runs on (an empty value counts as unset), matched by exact machine name and refused with the known names when it names no row; when it is unset the lower-cased first label of the hostname is matched, and nothing is marked local when that matches no row
+      this verb exits 0 when it printed, 1 when the store's state or an unknown machine refused it, 2 when it could not run (usage, connection, timeout)
   nova-config <kind> add <name> --<field> <value> ... --as <friend>
   nova-config <kind> set <name> --<field> <value> ... --as <friend>
   nova-config <kind> remove <name> --as <friend>
@@ -913,9 +914,8 @@ func localHost(getenv func(string) string, hostname func() (string, error)) (nam
 	return "", false
 }
 
-// inventoryTimeout is --timeout's default: how long inventory waits for the
-// store (the connection check and the read), the same 10 s the connection
-// check has always had.
+// inventoryTimeout is --timeout's default, 10 s: how long inventory waits
+// for the store in all, the connection check, the schema check and the read.
 const inventoryTimeout = 10 * time.Second
 
 func runInventory(ctx context.Context, args []string, stdout, stderr io.Writer, d deps) int {
