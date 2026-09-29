@@ -688,3 +688,24 @@ func TestAnUnknownOutcomeIsNeverCleared(t *testing.T) {
 		}
 	}
 }
+
+// A bound of zero is refused, never read as "use the default".
+func TestAZeroBoundIsRefused(t *testing.T) {
+	t.Parallel()
+	tr := newTree(t)
+	for _, flag := range []string{"--max-docs", "--max-bytes"} {
+		code, out, errOut := runTool("harmless outgoing text", "screen", "--root", tr.root, flag, "0", "-")
+		if code != exitCouldNotRun || out != "" || !strings.Contains(errOut, flag[2:]) {
+			t.Errorf("%s 0: exit %d stdout %q stderr %q", flag, code, out, errOut)
+		}
+	}
+}
+
+func TestABackgroundRootThatIsAFileIsRefused(t *testing.T) {
+	t.Parallel()
+	tr := newTree(t)
+	code, _, errOut := runTool("harmless outgoing text", "screen", "--root", tr.root, "--background", tr.path("private/ideas.md"), "-")
+	if code != exitCouldNotRun || !strings.Contains(errOut, "is a file, not a directory") {
+		t.Errorf("exit %d stderr %q", code, errOut)
+	}
+}

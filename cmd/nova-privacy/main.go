@@ -299,7 +299,14 @@ func parse(fs *flag.FlagSet, args []string, stderr io.Writer) bool {
 		refuse(stderr, " "+fs.Name(), oneline.Cap(err.Error(), oneline.TailBytes), "nova-privacy "+fs.Name()+" -h")
 		return false
 	}
-	return true
+	ok := true
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "max-docs" && f.Value.String() == "0" {
+			refuse(stderr, " "+fs.Name(), "--max-docs wants a whole number of one or more, got 0; leave it out for the default", "nova-privacy "+fs.Name()+" -h")
+			ok = false
+		}
+	})
+	return ok
 }
 
 // load resolves and loads the corpus, or refuses in one line.

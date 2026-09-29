@@ -356,6 +356,18 @@ func sampleKey(root, rel string) uint64 {
 // case-insensitively.
 func (c *Corpus) listRoot(root RootSpec, rl *RootLoad) []doc {
 	var found []doc
+	if info, err := os.Stat(root.Dir); err == nil && !info.IsDir() {
+		rl.Err = fmt.Errorf("%s is a file, not a directory", root.Display)
+		c.warn("background: %s is a file, not a directory; nothing is read from it, and ordinary words may score as rare and flag", root.Display)
+		return nil
+	}
+	if root.Recursive {
+		// A root that is a symlink to a directory is followed, once; links
+		// below it are not.
+		if dir, err := filepath.EvalSymlinks(root.Dir); err == nil {
+			root.Dir = dir
+		}
+	}
 	pattern := strings.ToLower(root.Pattern)
 	match := func(name string) bool {
 		ok, err := filepath.Match(pattern, strings.ToLower(name))
@@ -540,6 +552,11 @@ func (o Options) Spec() (Spec, error) {
 	}
 	if err := checkDistinctSources(spec.Sources); err != nil {
 		return Spec{}, err
+	}
+	for _, r := range spec.Roots {
+		if info, err := os.Stat(r.Dir); err == nil && !info.IsDir() {
+			return Spec{}, fmt.Errorf("background root %s is a file, not a directory; name the directory that holds it", r.Display)
+		}
 	}
 	return spec, nil
 }

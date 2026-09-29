@@ -95,7 +95,10 @@ reaches the threshold alone.
 The **background** is a set of directories of the author's ordinary writing,
 each read recursively or flat, keeping the files whose names a pattern matches
 (case-insensitively: `*.md` matches `PAGE.MD`). It is what keeps ordinary
-English from scoring as rare. The roots form one pool: a file reachable from
+English from scoring as rare. A recursive root that is a symlink to a
+directory is followed, once; links below a root are not followed. A root that
+is a file is refused (exit 2) where it is named; a missing or unlistable root
+is a warning. The roots form one pool: a file reachable from
 two roots, by file identity (device and inode), is one document, counted under
 the first root that holds it (`shared=` on the later root's line).
 
@@ -192,7 +195,7 @@ max-bytes 64M
 | `stop` | extra stop words |
 | `refuse`, `warn` | a class name and a regular expression (RE2) that needs at least one character; one that matches the empty string matches every payload and is refused |
 | `allow` | a specimen that never fires, matched case-insensitively |
-| `max-docs` | background documents read, at most; one or more |
+| `max-docs` | background documents read, at most; one or more (`--max-docs 0` is refused, never read as the default) |
 | `max-bytes` | background bytes read, at most; one or more, with an optional `K`, `M` or `G` (KiB, MiB, GiB) |
 
 Every malformed line is reported in one run, each with its line number. A

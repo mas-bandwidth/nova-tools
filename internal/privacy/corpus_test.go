@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"os"
 	"sort"
 	"strings"
 	"testing"
@@ -202,5 +203,44 @@ func TestReadBoundedRefusesADirectory(t *testing.T) {
 	t.Parallel()
 	if _, err := privacy.ReadBounded(t.TempDir(), 10); err == nil || !strings.Contains(err.Error(), "is a directory") {
 		t.Errorf("err %v", err)
+	}
+}
+
+// A recursive root that is a symlink to a directory is followed, once: the
+// documents under it are read, and a second root reaching the same files
+// through the link counts none of them again.
+func TestARecursiveRootThatIsASymlinkIsFollowedOnce(t *testing.T) {
+	t.Parallel()
+	f := &fixture{root: t.TempDir()}
+	f.write(t, "private/later.md", "## A secret (private)\n"+rareWords+"\n")
+	f.write(t, "real/notes/a.md", "alphaword")
+	f.write(t, "real/notes/b.md", "bravoword")
+	if err := os.Symlink(f.path("real/notes"), f.path("linked")); err != nil {
+		t.Fatal(err)
+	}
+	c := privacy.Load(rootSpec(t, f, "source private/later.md\nbackground recursive *.md linked\nbackground recursive *.md real\n"))
+	if c.BackgroundDocs != 2 || c.Roots[0].Read != 2 || c.Roots[1].Shared != 2 || c.Roots[1].Read != 0 {
+		t.Errorf("docs %d roots %+v, want the two documents read once, through the link", c.BackgroundDocs, c.Roots)
+	}
+}
+
+// A root that is a file is refused where it is named, and a Spec built in
+// process with one reads nothing from it and says so.
+func TestARootThatIsAFileIsRefused(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, true)
+	f.write(t, "notes.md", "a single document")
+	for _, cfg := range []string{"background recursive *.md notes.md\n", "background flat *.md notes.md\n"} {
+		f.write(t, "file-root.conf", "source private/later.md\n"+cfg)
+		if _, err := (privacy.Options{Config: f.path("file-root.conf")}).Spec(); err == nil || !strings.Contains(err.Error(), "notes.md is a file, not a directory") {
+			t.Errorf("%q: err %v", cfg, err)
+		}
+	}
+	if _, err := (privacy.Options{Sources: []string{f.path("private/later.md")}, Recursive: []string{f.path("notes.md")}}).Spec(); err == nil || !strings.Contains(err.Error(), "is a file") {
+		t.Errorf("by flag: err %v", err)
+	}
+	c := privacy.Load(rootSpec(t, f, "source private/later.md\nbackground recursive *.md notes.md\n"))
+	if c.BackgroundDocs != 0 || c.Roots[0].Err == nil || !strings.Contains(strings.Join(c.Warnings, "\n"), "is a file") {
+		t.Errorf("docs %d root %+v warnings %v", c.BackgroundDocs, c.Roots[0], c.Warnings)
 	}
 }
