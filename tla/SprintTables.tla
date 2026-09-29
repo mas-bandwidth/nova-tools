@@ -1,8 +1,9 @@
 ---------------------------- MODULE SprintTables ----------------------------
-\* nova-sprint's sprint table (docs/SPEC-SPRINT.md, with the decisions D1 to D8
-\* taken on it): the four tables on nova-table (work, readers, merge, fleet),
-\* the mechanical moves between them, the judgment notifications, the verbs,
-\* and the steps that touch more than one table.
+\* nova-sprint's sprint table (docs/SPEC-SPRINT.md, with the author's
+\* decisions D1 to D8, F1 to F5 and G1 to G6 taken on it): the four tables on
+\* nova-table (work, readers, merge, fleet), the mechanical moves between them,
+\* the judgment notifications, the verbs, and the steps that touch more than
+\* one table.
 \*
 \* The state the design owns:
 \*   work[s][cell]     the work table: a row per stream, cells waiting ready
@@ -45,15 +46,13 @@
 \* notifications of a step open with its last write. Every verb is disabled
 \* while an operation is pending: the verb repairs first or refuses. Repair
 \* applies a move only where its expectation (the primary in the cell it left)
-\* still holds. Invariants 1, 6, 7, 8, 9 hold at every state; 2, 3, 4, 5 hold
-\* whenever no operation is pending.
+\* still holds, reports each move it skipped as a judgment, and releases (F5).
+\* Invariants 1, 6, 7, 8, 9 hold at every state; 2, 3, 4, 5 hold whenever no
+\* operation is pending.
 \*
-\* Fixes is the set of changes this model proposes beyond D1 to D8. A
-\* configuration without one is the design as decided, and TLC finds what the
-\* finding names:
-\*   "readsexhausted"  a read that leaves a primary in review with no read
-\*                     outstanding and not two ok readers opens a judgment
-\*                     (rework, ask another reader, drop).
+\* FreeCoordinator: TRUE, the coordinator may rework, drop or return any card
+\* at any time; FALSE, only a card an open judgment names (a bound that keeps
+\* the three-primary instance checkable). ask --another is free in both (F1).
 \*
 \* Broken is a reversed witness: a deliberately wrong design, each caught by
 \* one property. "none" is the design.
@@ -71,17 +70,23 @@
 \*   "returnkeeps"      return leaves the primary in merge queued/stuck  (4)
 \*   "landskipswork"    a green batch moves merge, never the work table  (5)
 \*   "withdrawlost"     withdrawn work cards leave with no record        (8)
-\*   "recut"            start cuts <p>.w<attempt> again after a withdrawal (8)
+\*   "recut"            start cuts <p>.w<attempt> again after a withdrawal
+\*                      instead of re-dealing it (G1)                    (8)
 \*   "reworkready"      rework cuts the next card and leaves the primary in
 \*                      ready, as section 6 of the spec text reads   (2, D2)
 \*   "nofence"          single-table verbs act on the partial state of a
-\*                      pending operation                            (D1)
+\*                      pending operation                                (D1)
 \*   "stalefinish"      a finish from a generation no longer live is
-\*                      accepted after a redeal           (FinishIsLive, D3)
-\*   "resumeunresolved" resume while a stuck card's cause is unresolved
-\*                                                      (LandsAfterNeed, D6)
+\*                      accepted after a redeal         (FinishIsLive, D3, F2)
+\*   "resumeunresolved" resume while a stuck card's cross-stream need has not
+\*                      landed                          (LandsAfterNeed, D6)
 \*   "cardcloses"       an answer to one card closes the stopped stream's
 \*                      judgment                                     (9, D5)
+\*   "acceptkeepsreads" accept leaves the accepted primary's asked and reading
+\*                      read cards                                   (3, F1)
+\*   "ackstopped"       ack closes a stopped stream's judgment       (9, F3)
+\*   "silentexhausted"  no judgment when a primary's reads run out
+\*                                           (ReadsExhaustedIsNotified, G3)
 
 EXTENDS Naturals, FiniteSets
 
@@ -91,12 +96,10 @@ CONSTANTS Streams, Primaries, Members, Readers,
           Score0,     \* [Primaries -> Nat], distinct
           Admitted0,  \* the primaries admitted before the first step
           MaxAttempt, MaxBad, MaxReturns, MaxRanks,
-          FreeCoordinator,  \* TRUE: rework, drop, return any time; FALSE:
-                            \* only in answer to an open judgment on the card
-          Fixes, Broken
+          FreeCoordinator,
+          Broken
 
 None == "none"
-Fix(x) == x \in Fixes
 Br(x) == Broken = x
 
 WorkCells == {"waiting", "ready", "working", "review", "merging", "landed"}
@@ -109,8 +112,8 @@ RC(p, a, r) == <<"r", p, a, r>>
 WorkCards == {WC(p, a) : p \in Primaries, a \in Attempts}
 ReadCards == {RC(p, a, r) : p \in Primaries, a \in Attempts, r \in Readers}
 Cards == WorkCards \cup ReadCards
-Causes == {"conflict", "red", "needs"}
-CardNoteTypes == {"failed", "broken", "reads", "blocked", "ci"}
+CardCauses == {"conflict", "needs"}
+CardNoteTypes == {"failed", "broken", "reads", "blocked", "ci", "skipped"}
 \* A judgment notification about a card, and a stream's stopped judgment.
 Note(t, p) == [t |-> t, p |-> p, s |-> StreamOf[p]]
 StopNote(s) == [t |-> "stopped", p |-> None, s |-> s]
@@ -133,12 +136,14 @@ InWork(p, c) == p \in work[StreamOf[p]][c]
 Cell(p) == IF \E c \in WorkCells : InWork(p, c)
            THEN CHOOSE c \in WorkCells : InWork(p, c) ELSE None
 Landed == {p \in Primaries : InWork(p, "landed")}
+Placedp(p) == p \in added /\ p \notin dropped
 RL(m) == Cardinality(fleet[m]["ready"])
 Up == {m \in Members : mstatus[m] = "up"}
 ShortestIn(m, S) == m \in S /\ \A x \in S : RL(m) <= RL(x)
 AskedLen(r) == Cardinality(readers[r]["asked"])
 LiveReads == UNION {readers[r][c] : r \in Readers, c \in ReadCells}
 Outstanding == UNION {readers[r][c] : r \in Readers, c \in {"asked", "reading"}}
+OutOf(p) == {c \in Outstanding : c[2] = p}
 Unfinished == UNION {fleet[m][c] : m \in Members, c \in {"ready", "working"}}
 InFleet(c) == \E m \in Members, x \in FleetCells : c \in fleet[m][x]
 InReaders(c) == \E r \in Readers, x \in ReadCells : c \in readers[r][x]
@@ -154,14 +159,28 @@ MinScore == CHOOSE n \in {score[p] : p \in Primaries} :
 MaxScore == CHOOSE n \in {score[p] : p \in Primaries} :
               \A q \in Primaries : n >= score[q]
 Bump(S) == [c \in WorkCards |-> IF c \in S THEN gen[c] + 1 ELSE gen[c]]
+Failed(p) == result[WC(p, attempt[p])] = "failed"
 
-\* The stream's merge state after its queued and stuck cells change. A
-\* stopped stream stays stopped until resume (D5).
-StreamAfter(s, q, st, was) ==
+\* G3: a primary asked at its attempt, in review, with no read outstanding,
+\* without two different readers ok at its head, and no open judgment on it.
+AskedNow(p) == \E r \in Readers : RC(p, attempt[p], r) \in made
+Exhausted(p, outs, oks, opn) ==
+  /\ InWork(p, "review") /\ AskedNow(p)
+  /\ outs = {} /\ Cardinality(oks) < 2
+  /\ ~\E n \in opn : n.p = p
+ExhaustNote(p, outs, oks, opn) ==
+  IF ~Br("silentexhausted") /\ Exhausted(p, outs, oks, opn)
+  THEN {Note("reads", p)} ELSE {}
+
+\* G4: the stream's merge state after its queued and stuck cells change. A
+\* stopped stream stays stopped until resume (D5); landed when every admitted
+\* primary of the stream has landed or left.
+AllDone(s, mergedNow, leaving) ==
+  \A p \in added : StreamOf[p] = s => p \in mergedNow \/ p \in dropped \cup leaving
+StreamAfter(s, q, st, was, mergedNow, leaving) ==
   IF was = "stopped" THEN "stopped"
   ELSE IF q # {} THEN "merging"
-  ELSE IF \A p \in Primaries : StreamOf[p] = s => p \in merge[s]["merged"]
-       THEN "landed" ELSE "waiting"
+  ELSE IF AllDone(s, mergedNow, leaving) THEN "landed" ELSE "waiting"
 
 \* An operation record: the moves of primaries in the work table (to "off"
 \* for drop), the primaries whose attempt increments, new heads, the
@@ -177,13 +196,12 @@ Fenced == op = NoOp \/ Br("nofence")
 
 Begin(o) == op' = o /\ crashed' = FALSE
 
-\* A card the coordinator may act on with rework, drop or return: any card
-\* when the instance frees the coordinator, else one an open judgment names
-\* (a card judgment, or a stuck card of a stopped stream).
+\* A card the coordinator may rework, drop or return.
 Judged(p) ==
   \/ FreeCoordinator
   \/ \E n \in open : n.p = p
-  \/ \E n \in open : n.t = "stopped" /\ p \in merge[n.s]["stuck"]
+  \/ \E n \in open : n.t = "stopped" /\ n.s = StreamOf[p]
+                     /\ p \in merge[n.s]["stuck"] \cup merge[n.s]["queued"]
 
 \* The outside failure budget of the instance.
 Spend(isbad) == IF isbad THEN bad < MaxBad /\ bad' = bad + 1 ELSE UNCHANGED bad
@@ -196,10 +214,11 @@ Closes(n, o) ==
   \/ Br("cardcloses") /\ n.t = "stopped" /\ \E p \in o.closes : StreamOf[p] = n.s
 
 \* The work-table write of an operation, from its record; a move applies only
-\* where its expectation holds (D1: repair never overwrites newer state).
+\* where its expectation holds, and each move skipped is reported (D1, F5).
 ApplyWork(o) ==
   LET ok == {x \in o.moves : InWork(x[1], x[2])}
       moved == {x[1] : x \in ok}
+      skipped == {x[1] : x \in o.moves \ ok}
   IN
   /\ work' = [s \in Streams |-> [c \in WorkCells |->
                (work[s][c] \ {x[1] : x \in {y \in ok : y[2] = c}})
@@ -211,6 +230,7 @@ ApplyWork(o) ==
                                   THEN CHOOSE h \in Attempts : <<p, h>> \in o.hd
                                   ELSE head[p]]
   /\ open' = (open \ {n \in open : Closes(n, o)}) \cup o.notes
+             \cup {Note("skipped", p) : p \in skipped}
 
 \* ------------------------------------------------------------------ init
 
@@ -262,8 +282,8 @@ Resolve(p) ==
                  cause, need, open, op, crashed, bad, returnsN, ranks>>
 
 \* start: ready -> working; the work card of the attempt is dealt to the up
-\* member with the shortest ready queue: cut, or, if it was withdrawn,
-\* re-dealt at a new generation (D3). Fleet first, work last.
+\* member with the shortest ready queue: cut, or, if it was withdrawn, the
+\* same card re-dealt at a new generation (G1, D3). Fleet first, work last.
 Start(p) ==
   /\ Free /\ InWork(p, "ready")
   /\ LET c == WC(p, attempt[p]) IN
@@ -279,7 +299,7 @@ Start(p) ==
                  returnsN, ranks>>
 
 \* take: the worker on an up member moves a work card ready -> working and
-\* holds it at its generation.
+\* holds it at its generation (F2: take names the generation).
 Take(m, c) ==
   /\ Fenced /\ mstatus[m] = "up" /\ c \in fleet[m]["ready"]
   /\ fleet' = [fleet EXCEPT ![m]["ready"] = @ \ {c}, ![m]["working"] = @ \cup {c}]
@@ -288,10 +308,11 @@ Take(m, c) ==
                  attempt, head, pair, gen, fin, result, made, gone, twice,
                  cause, need, open, op, crashed, bad, returnsN, ranks>>
 
-\* finish: a worker reports the card it holds done, ok or failed. Accepted
-\* only for the live generation in its member's working cell (D3): the card
-\* to done, its primary to review at the head the card produced; failed
-\* notifies for judgment. Fleet first, work last.
+\* finish: a worker reports the card it holds, naming its generation (F2),
+\* done ok or failed. Accepted only for the live generation in its member's
+\* working cell (D3): the card to done, its primary to review at the head the
+\* card produced; failed notifies for judgment; ok asks the readers kept on
+\* the primary (G2). Fleet and readers first, work last.
 Live(m, c, g) == c \in fleet[m]["working"] /\ gen[c] = g
 Finish(m, c, g, v) ==
   /\ Free /\ <<c, g>> \in held[m]
@@ -302,12 +323,19 @@ Finish(m, c, g, v) ==
                  IF x = m /\ y = "done" THEN fleet[x][y] \cup {c} ELSE fleet[x][y] \ {c}]]
   /\ result' = [result EXCEPT ![c] = v]
   /\ fin' = [fin EXCEPT ![c] = g]
+  /\ LET p == c[2]
+         again == IF v = "ok" /\ ~Br("finishnomove") THEN pair[p] ELSE {}
+         rcs == {RC(p, c[3], r) : r \in again}
+     IN /\ readers' = [r \in Readers |-> [x \in ReadCells |->
+                         IF x = "asked" /\ r \in again
+                         THEN readers[r][x] \cup {RC(p, c[3], r)} ELSE readers[r][x]]]
+        /\ made' = made \cup rcs
+        /\ twice' = (twice \/ rcs \cap made # {})
   /\ IF Br("finishnomove") THEN UNCHANGED <<op, crashed>>
      ELSE Begin(Op("finish", {<<c[2], "working", "review">>}, {}, {<<c[2], c[3]>>},
                    IF v = "failed" THEN {Note("failed", c[2])} ELSE {}, {}))
-  /\ UNCHANGED <<added, dropped, work, readers, merge, sstate, mstatus, score,
-                 attempt, head, pair, gen, made, gone, twice, cause, need, open,
-                 returnsN, ranks>>
+  /\ UNCHANGED <<added, dropped, work, merge, sstate, mstatus, score, attempt,
+                 head, pair, gen, gone, cause, need, open, returnsN, ranks>>
 
 \* A finish refused as stale: it changes nothing but the worker's hold.
 FinishRefused(m, c, g) ==
@@ -318,10 +346,11 @@ FinishRefused(m, c, g) ==
                  score, attempt, head, pair, gen, fin, result, made, gone, twice,
                  cause, need, open, op, crashed, bad, returnsN, ranks>>
 
-\* ask: a primary in review with no read card on the table is dealt to two
-\* different readers: the two kept on it (D2), or the shortest asked queues.
+\* ask: a primary in review whose work did not fail (G2), with no read card
+\* on the table, is dealt to two different readers: the two kept on it (D2),
+\* or the shortest asked queues.
 Ask(p) ==
-  /\ Fenced /\ InWork(p, "review")
+  /\ Fenced /\ InWork(p, "review") /\ ~Failed(p)
   /\ \A c \in LiveReads : c[2] # p
   /\ \E two \in SUBSET Readers :
        /\ Cardinality(two) = 2
@@ -339,10 +368,10 @@ Ask(p) ==
                  attempt, head, gen, held, fin, result, gone, cause, need, open,
                  op, crashed, bad, returnsN, ranks>>
 
-\* The decision "ask another reader", answering a broken read.
+\* ask --another: the coordinator's judgment, free (F1): one more reader for
+\* a primary in review. It answers a broken read or reads exhausted.
 AskAnother(p, r) ==
   /\ Fenced /\ InWork(p, "review")
-  /\ \E c \in LiveReads : c[2] = p /\ c[3] = attempt[p] /\ result[c] = "broken"
   /\ RC(p, attempt[p], r) \notin made
   /\ readers' = [readers EXCEPT ![r]["asked"] = @ \cup {RC(p, attempt[p], r)}]
   /\ made' = made \cup {RC(p, attempt[p], r)}
@@ -360,38 +389,41 @@ ReadStart(r, c) ==
                  cause, need, open, op, crashed, bad, returnsN, ranks>>
 
 \* read: a reader records ok or broken; a report against a retired card finds
-\* no card and is refused. Broken notifies for judgment.
+\* no card and is refused. Broken notifies for judgment; the read that leaves
+\* the reads exhausted notifies for judgment (G3).
 Read(r, c, v) ==
   /\ Fenced /\ c \in readers[r]["reading"]
   /\ Spend(v = "broken")
   /\ readers' = [readers EXCEPT ![r]["reading"] = @ \ {c}, ![r][v] = @ \cup {c}]
   /\ result' = [result EXCEPT ![c] = v]
   /\ LET p == c[2]
-         others == {x \in Outstanding : x[2] = p} \ {c}
+         opn == open \cup (IF v = "broken" THEN {Note("broken", p)} ELSE {})
          oks == OkReaders(p) \cup (IF v = "ok" /\ c[3] = head[p] THEN {r} ELSE {})
-         short == Fix("readsexhausted") /\ v = "ok" /\ others = {}
-                  /\ Cardinality(oks) < 2 /\ InWork(p, "review")
-     IN open' = open \cup (IF v = "broken" THEN {Note("broken", p)} ELSE {})
-                     \cup (IF short THEN {Note("reads", p)} ELSE {})
+     IN open' = opn \cup ExhaustNote(p, OutOf(p) \ {c}, oks, opn)
   /\ UNCHANGED <<added, dropped, work, fleet, merge, sstate, mstatus, score,
                  attempt, head, pair, gen, held, fin, made, gone, twice, cause,
                  need, op, crashed, returnsN, ranks>>
 
 \* accept: a named set, all or nothing (D4): review -> merging and into merge
 \* queued; refused unless every one has two different readers ok at its head.
-\* Merge first, work last.
+\* Its asked and reading read cards retire in the same step (F1); a waiting
+\* stream becomes merging (G4); its card judgments close. Readers and merge
+\* first, work last.
 Accept(S) ==
   /\ Free /\ S # {}
   /\ \A p \in S : InWork(p, "review") /\ Acceptable(p)
+  /\ LET rl == IF Br("acceptkeepsreads") THEN {} ELSE {c \in Outstanding : c[2] \in S}
+     IN /\ readers' = [r \in Readers |-> [x \in ReadCells |-> readers[r][x] \ rl]]
+        /\ gone' = gone \cup rl
   /\ merge' = [s \in Streams |-> [merge[s] EXCEPT !["queued"] =
                  @ \cup {p \in S : StreamOf[p] = s}]]
   /\ sstate' = [s \in Streams |->
                   IF sstate[s] # "stopped" /\ \E p \in S : StreamOf[p] = s
                   THEN "merging" ELSE sstate[s]]
   /\ Begin(Op("accept", {<<p, "review", "merging">> : p \in S}, {}, {}, {}, S))
-  /\ UNCHANGED <<added, dropped, work, fleet, readers, mstatus, score, attempt,
-                 head, pair, gen, held, fin, result, made, gone, twice, cause,
-                 need, open, bad, returnsN, ranks>>
+  /\ UNCHANGED <<added, dropped, work, fleet, mstatus, score, attempt, head,
+                 pair, gen, held, fin, result, made, twice, cause, need, open,
+                 bad, returnsN, ranks>>
 
 \* rework (D2): the primary's read cards retire; with a member up the next
 \* work card is cut into the shortest ready queue and the primary goes
@@ -420,17 +452,18 @@ Rework(p) ==
 \* its outstanding read cards retire, its merge place goes; work last. A
 \* waiting primary that needs it is blocked: a judgment notification.
 Drop(p) ==
-  /\ Free /\ p \in added /\ p \notin dropped /\ ~InWork(p, "landed") /\ Judged(p)
+  /\ Free /\ Placedp(p) /\ ~InWork(p, "landed") /\ Judged(p)
   /\ LET s == StreamOf[p]
          wl == {c \in Unfinished : c[2] = p}
-         rl == IF Br("dropkeepsreads") THEN {} ELSE {c \in Outstanding : c[2] = p}
+         rl == IF Br("dropkeepsreads") THEN {} ELSE OutOf(p)
          q2 == merge[s]["queued"] \ {p}
          st2 == merge[s]["stuck"] \ {p}
      IN /\ fleet' = [m \in Members |-> [x \in FleetCells |-> fleet[m][x] \ wl]]
         /\ readers' = [r \in Readers |-> [x \in ReadCells |-> readers[r][x] \ rl]]
         /\ gone' = gone \cup wl \cup rl
         /\ merge' = [merge EXCEPT ![s]["queued"] = q2, ![s]["stuck"] = st2]
-        /\ sstate' = [sstate EXCEPT ![s] = StreamAfter(s, q2, st2, @)]
+        /\ sstate' = [sstate EXCEPT ![s] =
+                        StreamAfter(s, q2, st2, @, merge[s]["merged"], {p})]
         /\ Begin(Op("drop", {<<p, Cell(p), "off">>}, {}, {},
                     {Note("blocked", q) : q \in {x \in Primaries :
                         InWork(x, "waiting") /\ p \in Needs[x]}}, {p}))
@@ -439,10 +472,11 @@ Drop(p) ==
   /\ UNCHANGED <<added, dropped, work, mstatus, score, attempt, head, pair, gen,
                  held, fin, result, made, twice, open, bad, returnsN, ranks>>
 
-\* rank: the coordinator changes a score; here, ranks a card first.
+\* rank: the coordinator changes a score; here, ranks a card first. Refused
+\* for a landed primary (G6).
 Rank(p) ==
   /\ Fenced /\ ranks < MaxRanks
-  /\ p \in added /\ p \notin dropped /\ ~InWork(p, "landed")
+  /\ Placedp(p) /\ ~InWork(p, "landed")
   /\ score[p] # MinScore
   /\ score' = [score EXCEPT ![p] = MinScore - 1]
   /\ ranks' = ranks + 1
@@ -451,14 +485,15 @@ Rank(p) ==
                  cause, need, open, op, crashed, bad, returnsN>>
 
 \* return: merging -> review; the card leaves merge queued or stuck (with its
-\* cause). Merge first, work last.
+\* cause); it answers the card's judgments (F3). Merge first, work last.
 Return(p) ==
   /\ Free /\ InWork(p, "merging") /\ returnsN[p] < MaxReturns /\ Judged(p)
   /\ LET s == StreamOf[p]
          q2 == IF Br("returnkeeps") THEN merge[s]["queued"] ELSE merge[s]["queued"] \ {p}
          st2 == IF Br("returnkeeps") THEN merge[s]["stuck"] ELSE merge[s]["stuck"] \ {p}
      IN /\ merge' = [merge EXCEPT ![s]["queued"] = q2, ![s]["stuck"] = st2]
-        /\ sstate' = [sstate EXCEPT ![s] = StreamAfter(s, q2, st2, @)]
+        /\ sstate' = [sstate EXCEPT ![s] =
+                        StreamAfter(s, q2, st2, @, merge[s]["merged"], {})]
   /\ cause' = [cause EXCEPT ![p] = None]
   /\ need' = [need EXCEPT ![p] = None]
   /\ returnsN' = [returnsN EXCEPT ![p] = @ + 1]
@@ -478,22 +513,21 @@ MergeGreen(s, B) ==
   /\ LET q2 == merge[s]["queued"] \ B IN
      /\ merge' = [merge EXCEPT ![s]["queued"] = q2, ![s]["merged"] = @ \cup B]
      /\ sstate' = [sstate EXCEPT ![s] =
-                     IF q2 # {} THEN "merging"
-                     ELSE IF \A p \in Primaries : StreamOf[p] = s => p \in merge[s]["merged"] \cup B
-                          THEN "landed" ELSE "waiting"]
+                     StreamAfter(s, q2, merge[s]["stuck"], "merging", merge[s]["merged"] \cup B, {})]
   /\ IF Br("landskipswork") THEN UNCHANGED <<op, crashed>>
      ELSE Begin(Op("land", {<<b, "merging", "landed">> : b \in B}, {}, {}, {}, {}))
   /\ UNCHANGED <<added, dropped, work, fleet, readers, mstatus, score, attempt,
                  head, pair, gen, held, fin, result, made, gone, twice, cause,
                  need, open, bad, returnsN, ranks>>
 
-\* merge, given a fact that stops the stream: a conflict on a card, the stream
-\* branch red (the suspect named), a card needing a card q of another stream
-\* first (recorded as data, D6). The card goes to stuck, the stream stops,
-\* the coordinator is told.
+\* merge, given a fact on a card that stops the stream: a conflict on it, or
+\* its need of a card q of another stream first, recorded as data (D6);
+\* refused unless q is placed, in another stream, and not landed (F4). The
+\* card goes to stuck, the stream stops, the coordinator is told.
 MergeStop(s, p, why, q) ==
   /\ Fenced /\ sstate[s] = "merging" /\ p \in merge[s]["queued"]
-  /\ IF why = "needs" THEN q \in Primaries /\ StreamOf[q] # s /\ ~InWork(q, "landed")
+  /\ IF why = "needs" THEN q \in Primaries /\ Placedp(q) /\ StreamOf[q] # s
+                           /\ ~InWork(q, "landed")
                       ELSE q = None
   /\ Spend(TRUE)
   /\ merge' = [merge EXCEPT ![s]["queued"] = @ \ {p}, ![s]["stuck"] = @ \cup {p}]
@@ -505,21 +539,32 @@ MergeStop(s, p, why, q) ==
                  head, pair, gen, held, fin, result, made, gone, twice, op,
                  crashed, returnsN, ranks>>
 
-\* resume (D6): refused while a stuck card's cause is unresolved: a red
-\* suspect must be taken off, a cross-stream need resolves when the needed
-\* card has landed; a conflict is resolved by what the resume records. The
-\* stuck cards go back to queued; the stream is no longer stopped, and its
-\* stopped judgment closes (D5).
+\* merge, given a fact on the stream: its branch red, or the merge queue
+\* rejected the batch. The stream stops; no card moves; the coordinator is
+\* told. The suspect is taken off by return (G5, as built).
+MergeRed(s) ==
+  /\ Fenced /\ sstate[s] = "merging"
+  /\ Spend(TRUE)
+  /\ sstate' = [sstate EXCEPT ![s] = "stopped"]
+  /\ open' = IF Br("stopsilent") THEN open ELSE open \cup {StopNote(s)}
+  /\ UNCHANGED <<added, dropped, work, fleet, readers, merge, mstatus, score,
+                 attempt, head, pair, gen, held, fin, result, made, gone, twice,
+                 cause, need, op, crashed, returnsN, ranks>>
+
+\* resume (D6, G5), with what was done (--did): refused while a stuck card's
+\* cross-stream need has not landed; a conflict or a red branch is resolved
+\* by what the resume records. The stuck cards go back to queued at their
+\* scores; the stream is no longer stopped, and its judgment closes (D5).
 Resolved(p) ==
-  CASE cause[p] = "conflict" -> TRUE
-    [] cause[p] = "needs"    -> InWork(need[p], "landed")
-    [] OTHER                 -> FALSE
+  CASE cause[p] = "needs" -> InWork(need[p], "landed")
+    [] OTHER              -> TRUE
 Resume(s) ==
   /\ Fenced /\ sstate[s] = "stopped"
   /\ Br("resumeunresolved") \/ \A p \in merge[s]["stuck"] : Resolved(p)
   /\ LET q2 == merge[s]["queued"] \cup merge[s]["stuck"] IN
      /\ merge' = [merge EXCEPT ![s]["queued"] = q2, ![s]["stuck"] = {}]
-     /\ sstate' = [sstate EXCEPT ![s] = StreamAfter(s, q2, {}, "merging")]
+     /\ sstate' = [sstate EXCEPT ![s] =
+                     StreamAfter(s, q2, {}, "merging", merge[s]["merged"], {})]
   /\ cause' = [p \in Primaries |-> IF p \in merge[s]["stuck"] THEN None ELSE cause[p]]
   /\ open' = open \ {StopNote(s)}
   /\ UNCHANGED <<added, dropped, work, fleet, readers, mstatus, score, attempt,
@@ -579,21 +624,28 @@ FleetUp(m) ==
                  head, pair, held, fin, result, made, gone, twice, cause, need,
                  open, op, crashed, bad, returnsN, ranks>>
 
-\* ci (D8): a red CI observation on a primary in any state. It notifies for
-\* judgment and moves nothing. (Green only notifies what happened.)
+\* ci (D8): a red CI observation on a placed primary in any state. It
+\* notifies for judgment and moves nothing. (Green only notifies what
+\* happened.)
 CiRed(p) ==
-  /\ Fenced /\ p \in added
+  /\ Fenced /\ Placedp(p)
   /\ Spend(TRUE)
   /\ open' = open \cup {Note("ci", p)}
   /\ UNCHANGED <<added, dropped, work, fleet, readers, merge, sstate, mstatus,
                  score, attempt, head, pair, gen, held, fin, result, made, gone,
                  twice, cause, need, op, crashed, returnsN, ranks>>
 
-\* The coordinator's decision on a red CI that moves nothing: recorded as
-\* decided, the obligation discharged.
-Ack(p) ==
-  /\ Fenced /\ Note("ci", p) \in open
-  /\ open' = open \ {Note("ci", p)}
+\* ack <note> --reason (F3): the coordinator looked and nothing is to be done;
+\* the judgment closes with the reason. Refused for a stopped stream's
+\* judgment while the stream is stopped. In the model it is the decision for a
+\* red CI and a skipped repair (the judgments whose decisions include look).
+\* The ack that leaves a primary's reads exhausted notifies (G3).
+Ack(n) ==
+  /\ Fenced /\ n \in open
+  /\ n.t \in {"ci", "skipped"} \/ (Br("ackstopped") /\ n.t = "stopped")
+  /\ LET opn == open \ {n}
+     IN open' = opn \cup (IF n.p = None THEN {}
+                          ELSE ExhaustNote(n.p, OutOf(n.p), OkReaders(n.p), opn))
   /\ UNCHANGED <<added, dropped, work, fleet, readers, merge, sstate, mstatus,
                  score, attempt, head, pair, gen, held, fin, result, made, gone,
                  twice, cause, need, op, crashed, bad, returnsN, ranks>>
@@ -633,19 +685,22 @@ Answer(n) ==
        [] n.t \in {"broken", "reads"} ->
              Rework(n.p) \/ Drop(n.p) \/ \E r \in Readers : AskAnother(n.p, r)
        [] n.t = "blocked" -> Drop(n.p)
-       [] n.t = "ci"      -> Ack(n.p) \/ Rework(n.p) \/ Return(n.p) \/ Drop(n.p)
+       [] n.t = "ci"      -> Ack(n) \/ Rework(n.p) \/ Return(n.p) \/ Drop(n.p)
+       [] n.t = "skipped" -> Ack(n) \/ Drop(n.p)
        [] n.t = "stopped" -> Resume(n.s) \/
-             \E p \in merge[n.s]["stuck"] : Return(p) \/ Drop(p)
+             \E p \in merge[n.s]["stuck"] \cup merge[n.s]["queued"] : Return(p) \/ Drop(p)
 
 MergeStep(s) ==
   \/ \E B \in SUBSET Primaries : MergeGreen(s, B)
-  \/ \E p \in Primaries, why \in Causes, q \in Primaries \cup {None} : MergeStop(s, p, why, q)
+  \/ \E p \in Primaries, why \in CardCauses, q \in Primaries \cup {None} : MergeStop(s, p, why, q)
+  \/ MergeRed(s)
 
 Next ==
   \/ \E p \in Primaries :
        \/ Add(p) \/ Resolve(p) \/ Start(p) \/ Ask(p) \/ Rework(p) \/ Drop(p)
-       \/ Rank(p) \/ Return(p) \/ CiRed(p) \/ Ack(p)
+       \/ Rank(p) \/ Return(p) \/ CiRed(p)
        \/ \E r \in Readers : AskAnother(p, r)
+  \/ \E n \in open : Ack(n)
   \/ \E S \in SUBSET Primaries : Accept(S)
   \/ \E m \in Members :
        \/ FleetDown(m) \/ FleetUp(m)
@@ -663,7 +718,7 @@ Spec == Init /\ [][Next]_vars
 \* step is run with some fact, a down member eventually comes up, the last
 \* write and repair run, the coordinator accepts what is acceptable and
 \* answers every open judgment with one of its decisions. A member going down,
-\* a cut, a red CI and rank are never forced.
+\* a cut, a red CI, ask --another and rank are never forced.
 Fairness ==
   /\ \A p \in Primaries :
        /\ WF_vars(Add(p)) /\ WF_vars(Resolve(p)) /\ WF_vars(Start(p))
@@ -755,7 +810,7 @@ NoCardLostOrTwice ==
 StoppedIsNotified ==
   \A s \in Streams : sstate[s] = "stopped" => StopNote(s) \in open
 
-\* D3. A finish is accepted only from the live generation.
+\* D3, F2. A finish is accepted only from the live generation.
 FinishIsLive == \A c \in WorkCards : fin[c] # 0 => fin[c] = gen[c]
 
 \* D6. A card with a recorded cross-stream need lands only after the card it
@@ -763,6 +818,21 @@ FinishIsLive == \A c \in WorkCards : fin[c] # 0 => fin[c] = gen[c]
 LandsAfterNeed ==
   \A p \in Primaries :
     (InWork(p, "landed") /\ need[p] # None) => InWork(need[p], "landed")
+
+\* G3. A primary whose reads ran out is never silent.
+ReadsExhaustedIsNotified ==
+  op = NoOp => \A p \in Primaries : ~Exhausted(p, OutOf(p), OkReaders(p), open)
+
+\* G4. The stream state is true: merging has queued cards, a stuck card stops
+\* the stream, waiting has none queued, landed has every admitted primary of
+\* the stream landed or dropped.
+StreamStateIsTrue ==
+  op = NoOp =>
+    \A s \in Streams :
+      /\ sstate[s] = "merging" => merge[s]["queued"] # {}
+      /\ merge[s]["stuck"] # {} => sstate[s] = "stopped"
+      /\ sstate[s] \in {"waiting", "landed"} => merge[s]["queued"] = {}
+      /\ sstate[s] = "landed" => AllDone(s, merge[s]["merged"], {})
 
 \* Section 7, 1: in work order, the head of the stream's queued cell first.
 MergeInWorkOrder ==
