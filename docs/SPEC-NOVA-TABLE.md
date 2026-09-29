@@ -249,15 +249,47 @@ When `watch --check` detects an invariant violation on any snapshotted table:
    human operators and coordinators so that remediation can be investigated and
    applied deliberately.
 
+## Batch extension acceptance
+
+The batch model is required for acceptance; the runtime tests do not
+replace it. It must add an atomic batch action, member revisions, field guards,
+operation records and one receipt per accepted batch to the member/epoch table
+model. It reuses the one-place/epoch definitions and preserves the per-verb
+model cases separately. A named batch wrapper/config uses 3 members, 2 rows,
+2 columns, 2 epochs and batch sizes 1..3. Its cases include a guard-only
+dependency and a cross-row move. Evidence retains exact model, config,
+executable and input hashes; a larger configuration that exceeds a budget is
+not silently replaced by a smaller one. TLC runs on a bench.
+
+Reversed witnesses must catch a second member validation failure after a first
+member writes; guards evaluated against a partially updated state; duplicate
+placement; stale epoch, table or member revision; missing revision advancement
+by an ordinary writer; wrong-type or permission refusal after partial writes;
+lost reply causing a second effect; request-hash collision without byte
+comparison; a receipt emitted before its complete delta; and stale retry
+reported as a new operation.
+
+The full table-layer gate requires the model and reversed witnesses; trip,
+commit and complete unchanged-store refusal tests; bounded randomized batches
+on owned Redis (16 fixed seeds, 128 steps each) with runtime checks; Go receipt
+replay with one batch receipt per action; real-use rehearsal on an owned store;
+two independent exact-revision reads of at least 9/10 with accepting
+dispositions; and the maintainer's interactive mini-quack with every verb and
+refusal, a watched table, and findings repaired and repeated until clean.
+Separate cases test N=1 and maximum configured N, including a late invalid
+entry, interacting moves and a replay. Ordinary table callers retain their
+regression suite. The card layer resumes only after this extension passes the
+table gate; a green card test cannot substitute for proving the lower layer.
+
 ## Batched member read and conditional write
 
 The data-oriented rule is **batch always**: members are plain data in arrays,
 and the manager transforms the selected array in one store call.
 
 A caller reads the members it depends on, then writes against what it read.
-The table batch API owns atomic placement and conditional writes; the card manager
-uses it instead of placing members privately or emulating a batch with repeated
-client calls.
+The table batch API owns atomic placement and conditional writes. A caller uses
+one batch call for the selected members; repeated client calls cannot provide
+the same atomic change.
 
 ### Scope and calls
 
@@ -381,10 +413,12 @@ its verified immutable identity must be represented in a member field, or a late
 explicit table extension must provide its guard. A prior unguarded client read is
 not an atomic prerequisite proof.
 
-The bounds are one set. The server enforces batch bounds in `ns_table_apply` and
-the read-set member bound in `ns_table_read_set`; the Go manifest validator and
-`ApplyBatch` enforce the batch bounds. A test compares the shared constants
-with this table:
+The bound values are shared. The server enforces batch bounds in `ns_table_apply`
+and the read-set member bound in `ns_table_read_set`. The Go manifest validator,
+also used by `ApplyBatch`, checks encoded manifest bytes and decoded member and
+entry bounds. Receipt bytes and aggregate value bytes per batch depend on the
+stored values and are enforced by `ns_table_apply`, not the Go manifest validator.
+A test compares the shared constants with this table:
 
 | Bound | Value |
 | --- | --- |
@@ -768,35 +802,3 @@ randomized batches on owned Redis (16 fixed seeds, 128 steps each) with runtime 
 Go receipt replay with one batch receipt per action; N=1 and the maximum configured N
 separately, including a late invalid entry, interacting moves and a replay; and the
 ordinary callers' regression suite.
-
-### Pending model and table-layer acceptance
-
-The batch model is required for acceptance; the runtime tests above do not
-replace it. It must add an atomic batch action, member revisions, field guards,
-operation records and one receipt per accepted batch to the member/epoch table
-model. It reuses the one-place/epoch definitions and preserves the per-verb
-model cases separately. A named batch wrapper/config uses 3 members, 2 rows,
-2 columns, 2 epochs and batch sizes 1..3. Its cases include a guard-only
-dependency and a cross-row move. Evidence retains exact model, config,
-executable and input hashes; a larger configuration that exceeds a budget is
-not silently replaced by a smaller one. TLC runs on a bench.
-
-Reversed witnesses must catch a second member validation failure after a first
-member writes; guards evaluated against a partially updated state; duplicate
-placement; stale epoch, table or member revision; missing revision advancement
-by an ordinary writer; wrong-type or permission refusal after partial writes;
-lost reply causing a second effect; request-hash collision without byte
-comparison; a receipt emitted before its complete delta; and stale retry
-reported as a new operation.
-
-The full table-layer gate requires the model and reversed witnesses; trip,
-commit and complete unchanged-store refusal tests; bounded randomized batches
-on owned Redis (16 fixed seeds, 128 steps each) with runtime checks; Go receipt
-replay with one batch receipt per action; real-use rehearsal on an owned store;
-two independent exact-revision reads of at least 9/10 with accepting
-dispositions; and the maintainer's interactive mini-quack with every verb and
-refusal, a watched table, and findings repaired and repeated until clean.
-Separate cases test N=1 and maximum configured N, including a late invalid
-entry, interacting moves and a replay. Ordinary table callers retain their
-regression suite. The card layer resumes only after this extension passes the
-table gate; a green card test cannot substitute for proving the lower layer.
