@@ -383,7 +383,7 @@ func noStoredIDs(t *testing.T, v InboxView) {
 // ready primary is never dealt; no group or judgment names it. The inbox's
 // last line says "machine: STOPPED (no tick for 3600s)" and the stream is
 // shown stale, naming no card; there is no judgment and no decision.
-func TestAudit2GapDeadRunLoopIsNoJudgment(t *testing.T) {
+func TestAudit2ClosedDeadRunLoopIsNoJudgment(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(1)
@@ -393,23 +393,41 @@ func TestAudit2GapDeadRunLoopIsNoJudgment(t *testing.T) {
 	if h.state("s1-1") != sprint.Ready {
 		t.Fatalf("s1-1 %s", h.state("s1-1"))
 	}
-	h.a2Silent("s1-1", "ready an hour, no tick")
+	var silent *sprint.Group
 	for _, g := range h.a2Inbox().Groups {
-		if g.Kind == sprint.Judgment && g.Type != sprint.NStreamStale {
-			t.Fatalf("a judgment: %+v (gap closed?)", g)
+		if g.Type == sprint.NMachineSilent {
+			silent = &g
 		}
 	}
-	if line := h.st.MachineLine(h.ctx); !strings.Contains(line, "no tick for 3600s") {
-		t.Fatalf("line %q", line)
+	if silent == nil || len(silent.Commands) == 0 || silent.Commands[0].Lines[0] != "nova-sprint run" {
+		t.Fatalf("a RUNNING machine an hour without a tick: %+v", silent)
 	}
-	t.Logf("line %q; stale %v", h.st.MachineLine(h.ctx), h.a2Stale())
+	// three failed ticks in a row are a group too
+	h.m.Fail = func(p string) error {
+		if p == "fence" {
+			return errors.New("the store went away")
+		}
+		return nil
+	}
+	for i := 0; i < 3; i++ {
+		h.tick(time.Second)
+		_, _ = h.st.Tick(h.ctx)
+	}
+	h.m.Fail = nil
+	failing := false
+	for _, g := range h.a2Inbox().Groups {
+		failing = failing || g.Type == sprint.NTickFailing && strings.Contains(g.What, "the store went away")
+	}
+	if !failing {
+		t.Fatalf("three failed ticks: no group")
+	}
 }
 
 // GAP D (not ack, clear). clear leaves the machine STOPPED; its "machine
 // stopped" note is written at the old epoch. Work added at the new epoch is
 // never dealt, and the new epoch's inbox is empty: no group at all, however
 // long (STOPPED time does not count, so not even the stale line).
-func TestAudit2GapClearLeavesTheMachineStoppedSilently(t *testing.T) {
+func TestAudit2ClosedClearLeavesTheMachineStoppedSilently(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(1)
@@ -423,17 +441,21 @@ func TestAudit2GapClearLeavesTheMachineStoppedSilently(t *testing.T) {
 	if h.state("s1-1") != sprint.Ready {
 		t.Fatalf("s1-1 %s", h.state("s1-1"))
 	}
-	if g := h.a2Inbox().Groups; len(g) != 0 {
-		t.Fatalf("the new epoch's inbox shows %+v (gap closed?)", g)
+	var due, note bool
+	for _, g := range h.a2Inbox().Groups {
+		due = due || g.Type == sprint.NStoppedWithDue && strings.Contains(g.What, "3 moves are due") && g.Commands[0].Lines[0] == "nova-sprint start"
+		note = note || g.Type == sprint.NMachineStopped
 	}
-	t.Logf("line %q", h.st.MachineLine(h.ctx))
+	if !due || !note {
+		t.Fatalf("the new epoch's inbox: moves due %v, stopped note %v: %+v", due, note, h.a2Inbox().Groups)
+	}
 }
 
 // DEFECT E. A sprint set up and never started has no STOPPED span (init
 // writes no machine record): its setup time counts as running time. A
 // judgment written during setup is overdue in the inbox, and every stream is
 // stale, before the machine ever ran; the first tick marks it overdue at once.
-func TestAudit2DefectSetupTimeCountsAsRunning(t *testing.T) {
+func TestAudit2ClosedSetupTimeCountsAsRunning(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(1)
@@ -443,13 +465,13 @@ func TestAudit2DefectSetupTimeCountsAsRunning(t *testing.T) {
 	for _, g := range h.a2Inbox().Groups {
 		overdue = overdue || g.Type == sprint.NCIRed && g.Overdue
 	}
-	if !overdue || len(h.a2Stale()) == 0 {
-		t.Fatalf("overdue %v stale %v: defect fixed", overdue, h.a2Stale())
+	if overdue || len(h.a2Stale()) != 0 {
+		t.Fatalf("setup time counted as running: overdue %v stale %v", overdue, h.a2Stale())
 	}
 	h.startMachine()
 	h.machine()
-	if h.written(sprint.NOverdue) != 1 {
-		t.Fatalf("the first tick did not mark it overdue")
+	if h.written(sprint.NOverdue) != 0 {
+		t.Fatalf("the first tick marked a setup judgment overdue")
 	}
 }
 
@@ -501,7 +523,7 @@ func TestAudit2DefectEmptyStreamIsStaleForEver(t *testing.T) {
 
 // DEFECT H. The reminder judgment's decisions (goal set, goal drop) have no
 // commands in the inbox.
-func TestAudit2DefectReminderDecisionsHaveNoCommands(t *testing.T) {
+func TestAudit2ClosedReminderDecisionsHaveNoCommands(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	blocker := t.TempDir() + "/file"
@@ -515,10 +537,10 @@ func TestAudit2DefectReminderDecisionsHaveNoCommands(t *testing.T) {
 	h.machine()
 	for _, g := range h.a2Inbox().Groups {
 		if g.Type == sprint.NRemindFailed {
-			if len(g.Decisions) == 2 && len(g.Commands) == 0 {
-				return
+			if len(g.Commands) != len(g.Decisions) {
+				t.Fatalf("decisions %v commands %v", g.Decisions, g.Commands)
 			}
-			t.Fatalf("decisions %v commands %v: defect fixed", g.Decisions, g.Commands)
+			return
 		}
 	}
 	t.Fatalf("no reminder group")

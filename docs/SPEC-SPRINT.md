@@ -665,6 +665,17 @@ writes one overdue line naming it and marks it held, and marks it again only
 after the mark was lifted (the judgment closed, or a wait moved its due time
 on).
 
+`inbox` computes, from the machine's record and at read time as it computes
+the stale line, three groups no notification holds: the machine is not
+ticking (RUNNING and no tick for 15 s: its run loop is not running; the
+commands start the loop or stop the machine), the tick keeps failing (three
+failed ticks in a row, with the last error), and the machine is STOPPED and
+moves are due (primaries ready, work cards withdrawn, waiters whose needs have
+landed; the command is `start`). `init` writes the machine STOPPED from the
+start, so the time before the first `start` is a STOPPED span and counts
+toward no deadline. `clear` writes, at the new epoch, the happened line that
+the machine is STOPPED by the clear.
+
 ## 15. Reminders
 
 The people who work on a sprint each have a goal: a text of what to keep doing,

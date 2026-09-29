@@ -269,13 +269,20 @@ func TestTheInboxCountsRunningTimeOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, g := range v.Groups {
+		if strings.HasPrefix(g.ID, "machine:") {
+			continue // the harness moves the clock with no run loop ticking
+		}
 		if g.Kind == sprint.Judgment && (g.Overdue || g.Waited != time.Hour || !g.Due.Equal(t0.Add(5*time.Hour))) {
 			t.Fatalf("stopped hours counted: %+v", g)
 		}
 	}
 	h.tick(90 * time.Minute)
 	v, _ = h.st.Inbox(h.ctx, 2*time.Hour, 0, 1000)
-	if len(v.Groups) == 0 || !v.Groups[0].Overdue {
+	overdue := false
+	for _, g := range v.Groups {
+		overdue = overdue || g.Type == sprint.NWorkFailed && g.Overdue
+	}
+	if !overdue {
 		t.Fatalf("past the deadline in running time: %+v", v.Groups)
 	}
 }

@@ -41,6 +41,12 @@ const (
 	NMemberUp       = "fleet member up"
 	NMemberDown     = "fleet member down"
 	NUnknownMachine = "an unknown machine is beating"
+
+	// Computed by inbox from the machine's record, as the stale line is: no
+	// notification holds them.
+	NMachineSilent  = "the machine is not ticking"
+	NTickFailing    = "the tick keeps failing"
+	NStoppedWithDue = "the machine is STOPPED and moves are due"
 	NWithdrawn      = "cards returned to ready because no member is up"
 	NCIGreen        = "ci green"
 	NAbandoned      = "an operation was abandoned"
