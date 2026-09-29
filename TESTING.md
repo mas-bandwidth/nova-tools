@@ -80,7 +80,7 @@ Name the packages. The run needs rootless `podman` (on macOS, a running
    containers by label and prints one line:
 
 ```
-FUNCTIONAL RUN run=<id> ended=finished exit=0 wall=19.8s build=0.0s modcache=1.1s total=21.5s containers_left=0
+FUNCTIONAL RUN run=<id> ended=finished exit=0 wall=20.3s build=0.0s modcache=0.5s total=21.2s containers_left=0
 ```
 
 The test output comes through unchanged on stdout and stderr, and the exit code

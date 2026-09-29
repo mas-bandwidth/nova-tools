@@ -21,21 +21,21 @@ func runTier(ctx context.Context, eng engine, c runConfig, now func() time.Time,
 	// 1. Anything an earlier run left past its deadline goes first.
 	if _, err := reap(ctx, eng, now(), c.grace, false, stderr); err != nil {
 		logf("the reaper could not list containers: %v", err)
-		return exitCannotRun
+		return setupExit(ctx)
 	}
 
 	// 2. The image: the one given, or the context's, built only when absent.
 	image, buildSecs, err := ensureImage(ctx, eng, c, now, stderr)
 	if err != nil {
 		logf("%v", err)
-		return exitCannotRun
+		return setupExit(ctx)
 	}
 
 	// 3. The two cache volumes, this user's own.
 	for _, v := range []struct{ name, kind string }{{c.gocache, "gocache"}, {c.gomod, "gomod"}} {
 		if err := ensureVolume(ctx, eng, v.name, v.kind, c.ownerID); err != nil {
 			logf("%v", err)
-			return exitCannotRun
+			return setupExit(ctx)
 		}
 	}
 
@@ -43,7 +43,7 @@ func runTier(ctx context.Context, eng engine, c runConfig, now func() time.Time,
 	stamp, err := modHash(c.src)
 	if err != nil {
 		logf("hashing go.mod and go.sum: %v", err)
-		return exitCannotRun
+		return setupExit(ctx)
 	}
 	mt := now()
 	pre := prefillArgs(c, image, runID, stamp, moduleProxy(os.Getenv), mt)
@@ -54,7 +54,7 @@ func runTier(ctx context.Context, eng engine, c runConfig, now func() time.Time,
 		if ended == "interrupted" {
 			return exitInterrupted
 		}
-		return exitCannotRun
+		return setupExit(ctx)
 	}
 	modSecs := now().Sub(mt).Seconds()
 
@@ -89,6 +89,15 @@ func runTier(ctx context.Context, eng engine, c runConfig, now func() time.Time,
 	fmt.Fprintf(stderr, "FUNCTIONAL RUN run=%s ended=%s exit=%d wall=%.1fs build=%.1fs modcache=%.1fs total=%.1fs containers_left=%d\n",
 		runID, ended, exit, wall, buildSecs, modSecs, now().Sub(t0).Seconds(), left)
 	return exit
+}
+
+// setupExit is the exit code of a run that ended before its test container:
+// 130 when this process was interrupted, 125 otherwise.
+func setupExit(ctx context.Context) int {
+	if ctx.Err() != nil {
+		return exitInterrupted
+	}
+	return exitCannotRun
 }
 
 // runContainer starts one container attached, streams its output, and ends it

@@ -612,3 +612,90 @@ func TestDispatchRefusals(t *testing.T) {
 		t.Errorf("help: exit %d", code)
 	}
 }
+
+func tierFixture(t *testing.T, owner string, startCode int) (*fakeEngine, runConfig) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := testConfig()
+	c.src = dir
+	c.image = "localhost/nova-functional:given"
+	eng := &fakeEngine{startCode: startCode, answers: map[string]fakeAnswer{
+		strings.Join(reapListArgs(), " "):                                {out: "[]"},
+		"image inspect --format {{.Id}} localhost/nova-functional:given": {out: "sha256:img\n"},
+		strings.Join(volumeInspectArgs(c.gocache), " "):                  {out: owner + "\n"},
+		strings.Join(volumeInspectArgs(c.gomod), " "):                    {out: owner + "\n"},
+	}}
+	return eng, c
+}
+
+func TestRunTierPassesTheContainersExitThroughAndChecksForLeftovers(t *testing.T) {
+	t.Parallel()
+	for _, code := range []int{0, 2} {
+		eng, c := tierFixture(t, "501", code)
+		var stdout, stderr bytes.Buffer
+		// The prefill must finish 0 for the test container to run; the fake
+		// gives both the same code, so a red run is judged at the module step.
+		got := runTier(context.Background(), eng, c, time.Now, &stdout, &stderr)
+		calls := eng.argvs()
+		if code != 0 {
+			if got != exitCannotRun || !strings.Contains(stderr.String(), "module cache step ended finished with exit 2") {
+				t.Errorf("a failed module step: exit %d\n%s", got, stderr.String())
+			}
+			continue
+		}
+		if got != 0 {
+			t.Errorf("a green run exits %d\n%s", got, stderr.String())
+		}
+		var runs []string
+		for _, call := range calls {
+			if strings.HasPrefix(call, "run ") {
+				runs = append(runs, call)
+			}
+		}
+		if len(runs) != 2 || !strings.Contains(runs[0], "go mod download") || !strings.Contains(runs[1], "make test-functional") {
+			t.Fatalf("want the module step then the test container:\n%s", strings.Join(runs, "\n"))
+		}
+		if !strings.Contains(runs[1], " sha256:img ") {
+			t.Errorf("the test container does not run the inspected image id: %q", runs[1])
+		}
+		if calls[0] != strings.Join(reapListArgs(), " ") {
+			t.Errorf("the reaper does not run first: %q", calls[0])
+		}
+		last := calls[len(calls)-1]
+		if !strings.HasPrefix(last, "ps --all --filter label=nova.functional.run=") {
+			t.Errorf("the last call is not the leftover check by label: %q", last)
+		}
+		if !strings.Contains(stderr.String(), "ended=finished exit=0 ") || !strings.Contains(stderr.String(), "containers_left=0") {
+			t.Errorf("receipt line:\n%s", stderr.String())
+		}
+	}
+}
+
+func TestRunTierRefusesAnotherUsersCache(t *testing.T) {
+	t.Parallel()
+	eng, c := tierFixture(t, "502", 0)
+	var stdout, stderr bytes.Buffer
+	if got := runTier(context.Background(), eng, c, time.Now, &stdout, &stderr); got != exitCannotRun {
+		t.Errorf("exit %d, want %d", got, exitCannotRun)
+	}
+	for _, call := range eng.argvs() {
+		if strings.HasPrefix(call, "run ") {
+			t.Errorf("a container ran over another user's cache: %q", call)
+		}
+	}
+}
+
+func TestSetupExit(t *testing.T) {
+	t.Parallel()
+	if got := setupExit(context.Background()); got != exitCannotRun {
+		t.Errorf("setupExit = %d", got)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if got := setupExit(ctx); got != exitInterrupted {
+		t.Errorf("setupExit after an interrupt = %d", got)
+	}
+}
