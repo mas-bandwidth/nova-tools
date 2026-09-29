@@ -35,6 +35,7 @@ type Spec struct {
 	Route, Who, Kind, Type, Repo, Base, BaseSHA, Paths, Test string
 	DependsOn, DoneWhen, Est, Priority, Source, Task, Body   string
 	Stream, Origin                                           string // header lines that fill the push's own options
+	Platforms                                                string
 }
 
 // specFields maps each header key an issue may carry to the record field it
@@ -44,6 +45,7 @@ var specFields = []struct{ key, field string }{
 	{"BASE", "base"}, {"base-sha", "base_sha"}, {"PATHS", "paths"}, {"TEST", "test"},
 	{"DEPENDS-ON", "depends_on"}, {"DONE-WHEN", "done_when"}, {"EST", "est"}, {"PRIORITY", "priority"},
 	{"SOURCE", "source"}, {"TASK", "task"}, {"STREAM", "stream"}, {"ORIGIN", "origin"},
+	{"PLATFORMS", "platforms"},
 }
 
 func (s *Spec) slot(field string) *string {
@@ -84,6 +86,8 @@ func (s *Spec) slot(field string) *string {
 		return &s.Origin
 	case "body":
 		return &s.Body
+	case "platforms":
+		return &s.Platforms
 	}
 	return nil
 }
@@ -134,7 +138,7 @@ var (
 // accepts; a friend needs nothing more than the record.
 func (s *Spec) Complete(ref, origin string) []string {
 	for _, p := range []*string{&s.Route, &s.Who, &s.Kind, &s.Type, &s.Repo, &s.Base, &s.BaseSHA, &s.Paths,
-		&s.Test, &s.DependsOn, &s.DoneWhen, &s.Est, &s.Priority, &s.Source, &s.Task} {
+		&s.Test, &s.DependsOn, &s.DoneWhen, &s.Est, &s.Priority, &s.Source, &s.Task, &s.Platforms} {
 		*p = strings.TrimSpace(onelineRE.ReplaceAllString(*p, " "))
 	}
 	s.Route = strings.ToLower(s.Route)
@@ -163,10 +167,20 @@ func (s *Spec) Complete(ref, origin string) []string {
 			s.Source = "issue"
 		}
 	}
+	var platErr error
+	if s.Platforms == "" {
+		inferred := cardhdr.InferPlatforms("", s.Paths)
+		s.Platforms = strings.Join(inferred, ",")
+	} else {
+		_, platErr = cardhdr.ParsePlatforms(s.Platforms)
+	}
 	if !cardhdr.IsRoute(s.Route) {
 		return nil
 	}
 	var missing []string
+	if platErr != nil {
+		missing = append(missing, "PLATFORMS ("+platErr.Error()+")")
+	}
 	need := func(key, v string) {
 		if v == "" || v == "-" {
 			missing = append(missing, key)
@@ -396,6 +410,9 @@ func RenderHeader(id string, rec map[string]string) ([]byte, error) {
 	line("PATHS", s.Paths)
 	line("TEST", s.Test)
 	line("DEPENDS-ON", s.DependsOn)
+	if s.Platforms != "" {
+		line("PLATFORMS", s.Platforms)
+	}
 	if st := rec["stream"]; st != "" {
 		line("STREAM", st)
 	}

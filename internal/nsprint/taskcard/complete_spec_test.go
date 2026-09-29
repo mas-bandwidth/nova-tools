@@ -54,6 +54,25 @@ func TestSwarmCardIsRefusedWithoutATest(t *testing.T) {
 	if got := taskcard.TestFromDoneWhen("the page reads right"); got != "none" {
 		t.Errorf("TestFromDoneWhen = %q", got)
 	}
+
+	// PLATFORMS parsing and inference
+	sExplicit := taskcard.ParseIssue("PLATFORMS: darwin,linux\nDONE-WHEN: the page reads right")
+	sExplicit.Complete("", "")
+	if sExplicit.Platforms != "darwin,linux" {
+		t.Errorf("Platforms explicit = %q, want darwin,linux", sExplicit.Platforms)
+	}
+
+	sInfer := taskcard.ParseIssue("PATHS: internal/sandbox/wrap_darwin.go\nDONE-WHEN: the page reads right")
+	sInfer.Complete("", "")
+	if sInfer.Platforms != "darwin" {
+		t.Errorf("Platforms inferred = %q, want darwin", sInfer.Platforms)
+	}
+
+	sInvalid := taskcard.ParseIssue("ROUTE: flash\nBASE: dev\nbase-sha: " + sha + "\nPATHS: internal/x\nTEST: ./internal/x TestY\nDONE-WHEN: test\nPLATFORMS: windows")
+	missing := sInvalid.Complete("mas-bandwidth/nova-tools#4313", "")
+	if len(missing) == 0 || !strings.Contains(missing[0], "PLATFORMS") {
+		t.Errorf("Platforms invalid = %v, want PLATFORMS error", missing)
+	}
 }
 
 // TestFromDoneWhenReadsFlagsWithValues is the fix round's item 4 on

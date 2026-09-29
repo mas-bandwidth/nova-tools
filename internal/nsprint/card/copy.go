@@ -75,6 +75,8 @@ type CopyCard struct {
 	// card work and nova-friend pull record); the card's WORKER line (not WHO,
 	// which is the primary's who-may-do-it header, cut.go cutKeys).
 	Model, Harness, Child string
+	// Platform is the platform the copy runs on (darwin, linux; nova-tools#4395).
+	Platform string
 }
 
 // CopyCardFrom reads a copy's record (HGETALL task:<copy>) as a CopyCard.
@@ -83,7 +85,8 @@ func CopyCardFrom(id string, rec map[string]string) CopyCard {
 		PR: rec["pr"], Head: rec["head"], Base: rec["base"], BaseSHA: rec["base_sha"], Paths: rec["paths"],
 		DoneWhen: rec["done_when"], Title: rec["title"], Origin: rec["origin"], Stream: rec["stream"],
 		Finding: rec["finding"], Route: rec["route"], Consumer: rec["consumer"], Review: rec["review"], Body: rec["body"],
-		Branch: rec["branch"], Model: rec["model"], Harness: rec["harness"], Child: rec["child"], Test: rec["test"]}
+		Branch: rec["branch"], Model: rec["model"], Harness: rec["harness"], Child: rec["child"], Test: rec["test"],
+		Platform: rec["platform"]}
 }
 
 // WorkerLine is the copy's WORKER value: model=<m> harness=<h> child=<c>, each
@@ -403,6 +406,9 @@ func RenderCopy(c CopyCard) ([]byte, error) {
 	line("TASK", c.Title)
 	line("COPY", c.ID)
 	line("PRIMARY", c.Primary)
+	if c.Platform != "" {
+		line("PLATFORM", c.Platform)
+	}
 	if c.PR != "" {
 		line("PR", full+"#"+c.PR)
 	}

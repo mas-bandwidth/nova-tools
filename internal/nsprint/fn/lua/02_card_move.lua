@@ -1610,7 +1610,8 @@ local TK = {
     merging_at = true, merging_gen = true },
   FIELDS = { 'where', 'where_ok', 'stream', 'friend', 'owner', 'created_at', 'sprint', 'state', 'title',
     'queue', 'xid', 'front', 'cancelled', 'pr', 'kind', 'ref', 'lease_until', 'beat_at', 'leased_at', 'where_at',
-    'priority', 'dest', 'claimed_at', 'token', 'copy', 'attempts', 'reads', 'head', 'author', 'epoch' },
+    'priority', 'dest', 'claimed_at', 'token', 'copy', 'attempts', 'reads', 'head', 'author', 'epoch',
+    'platform', 'platforms', 'platform_copies' },
   LOG_MAX = '200000',
   -- a take's lease: three missed 60 s beats
   LEASE = 180000,
@@ -3037,6 +3038,7 @@ function TM.holds(p, id, leg)
   leg = TK.str(leg) == '' and 'work' or leg
   local named = p.copy == id
   for w in string.gmatch(p.reads, '%S+') do named = named or w == id end
+  for w in string.gmatch(TK.str(p.platform_copies), '%S+') do named = named or w == id end
   return named and (TM.WANT[leg] or TM.WANT.work)[p.where] == true
 end
 
@@ -3046,6 +3048,51 @@ function TM.parse(c)
   local kind, name = string.match(c, '^(%l+):([A-Za-z0-9][A-Za-z0-9._-]*)$')
   if kind ~= 'bench' and kind ~= 'friend' then return nil end
   return kind, name
+end
+
+-- TM.parse_platforms: the list of platforms named in a comma-separated string
+-- (e.g. 'darwin,linux').
+function TM.parse_platforms(s)
+  if not s or s == '' then return {} end
+  local out = {}
+  for plat in string.gmatch(s, '[^,]+') do
+    plat = string.gsub(plat, '^%s*(.-)%s*$', '%1')
+    if plat ~= '' then out[#out + 1] = plat end
+  end
+  return out
+end
+
+-- TM.consumer_os: the operating system ('darwin' or 'linux') of consumer c,
+-- determined from <c>:desired (os, platform), <c>:beat (os, platform, build),
+-- fleet:release/fleet:config (platform:<bench>), machine:<bench> (os, os_arch, platform),
+-- or the consumer name; '' when unknown.
+function TM.consumer_os(c)
+  if type(c) ~= 'string' or c == '' then return '' end
+  local d = redis.call('HMGET', c .. ':desired', 'os', 'platform')
+  local raw = TK.str(d[1]) ~= '' and d[1] or d[2]
+  if TK.str(raw) == '' then
+    local b = redis.call('HMGET', c .. ':beat', 'os', 'platform', 'build')
+    raw = TK.str(b[1]) ~= '' and b[1] or (TK.str(b[2]) ~= '' and b[2] or b[3])
+  end
+  local kind, name = TM.parse(c)
+  if TK.str(raw) == '' and kind == 'bench' then
+    raw = redis.call('HGET', 'fleet:release', 'platform:' .. name)
+    if TK.str(raw) == '' then
+      raw = redis.call('HGET', 'fleet:config', 'platform:' .. name)
+    end
+    if TK.str(raw) == '' then
+      local m = redis.call('HMGET', 'machine:' .. name, 'os', 'os_arch', 'platform')
+      raw = TK.str(m[1]) ~= '' and m[1] or (TK.str(m[2]) ~= '' and m[2] or m[3])
+    end
+  end
+  local s = string.lower(TK.str(raw))
+  if s == '' then s = string.lower(c) end
+  if string.find(s, 'darwin', 1, true) or string.find(s, 'mac', 1, true) then return 'darwin' end
+  if string.find(s, 'linux', 1, true) then return 'linux' end
+  if kind == 'friend' then return 'darwin' end
+  local def = redis.call('HGET', 'fleet:release', 'default_platform')
+  if def and string.find(string.lower(def), 'linux', 1, true) then return 'linux' end
+  return 'darwin'
 end
 
 -- TM.key(c, col): consumer c's set at col under the current epoch (#4238):
@@ -3189,10 +3236,35 @@ function TM.leg(id, p)
   if TK.is_sentinel(id) then
     return nil, 'SENTINEL task:' .. id .. ' is the stream stop, never dealt: it lands by the coordinator\'s acceptance (task land) when every other card of its stream has'
   end
-  if p.copy ~= '' then return nil, 'LIVECOPY task:' .. id .. ' has live copy ' .. p.copy end
+  local plats = TM.parse_platforms(p.platforms)
+  if #plats > 0 then
+    local all_live_or_ok = true
+    for _, plat in ipairs(plats) do
+      local is_ok = redis.call('HGET', 'task:' .. id, 'ok:' .. plat)
+      if is_ok ~= '1' and is_ok ~= 'ok' then
+        local cpid = redis.call('HGET', 'task:' .. id, 'copy:' .. plat)
+        local is_live = false
+        if cpid and cpid ~= '' then
+          local cp = redis.call('HMGET', 'task:' .. cpid, 'consumer', 'where')
+          if cp[1] and TM.LIVE[TK.str(cp[2])] and redis.call('ZSCORE', TM.key(cp[1], cp[2]), cpid) then
+            is_live = true
+          end
+        end
+        if not is_live then
+          all_live_or_ok = false
+          break
+        end
+      end
+    end
+    if all_live_or_ok then
+      return nil, 'LIVECOPY task:' .. id .. ' has live platform copies'
+    end
+  else
+    if p.copy ~= '' then return nil, 'LIVECOPY task:' .. id .. ' has live copy ' .. p.copy end
+  end
   if p.reads ~= '' then return nil, 'LIVECOPY task:' .. id .. ' has live read copies ' .. p.reads end
   if p.friend ~= '' then return nil, 'OWNED task:' .. id .. ' is ' .. p.friend .. "'s friend-queue task, not a primary" end
-  -- a plan (nova-tools#4317) is never dealt: its children are, and its stitch lands it
+  -- a plan (nova-tools#4317) is never dealt: its children are dealt and its stitch lands it
   if p.kind == 'plan' then return nil, 'PLAN task:' .. id .. ' is a plan: its children are dealt and its stitch lands it' end
   if p.where == 'review' then
     if TM.pending(id) then
@@ -3201,10 +3273,11 @@ function TM.leg(id, p)
     return 'read'
   end
   if p.where == 'ready' then return 'work' end
+  if p.where == 'working' and #plats > 0 then return 'work' end
   if p.where == 'waiting' or not p.placed then
     local dep = TK.str(redis.call('HGET', 'task:' .. id, 'blocked_on'))
     if dep ~= '' and dep ~= '-' and dep ~= 'none' then return nil, 'DEPENDS task:' .. id .. ' waits on ' .. dep end
-    if p.where == 'waiting' then return 'work' end
+    return 'work'
   end
   return nil, 'WHERE task:' .. id .. ' is ' .. (p.where == '' and 'null' or p.where) .. ', not waiting or review'
 end
@@ -3220,7 +3293,7 @@ end
 -- consumer declared. author, when given, is the author a card end is about
 -- to write (the record does not name it yet).
 function TM.may(c, d, id, leg, author)
-  local f = redis.call('HMGET', 'task:' .. id, 'who', 'read_who', 'author', 'tier', 'kind', 'route')
+  local f = redis.call('HMGET', 'task:' .. id, 'who', 'read_who', 'author', 'tier', 'kind', 'route', 'platforms')
   local tier, kind = TK.str(f[4]), TK.str(f[5])
   if tier == '' and TM.MODEL_TYPES[TK.str(f[6])] then tier = TK.str(f[6]) end
   if leg == 'read' then
@@ -3236,8 +3309,35 @@ function TM.may(c, d, id, leg, author)
       if not TM.names(s, c) then return 'READER ' .. c .. ' is not in readers' end
     end
     tier, kind = 'pro', 'read'
-  elseif not TM.admits(f[1], c) then
-    return 'WHO task:' .. id .. ' is ' .. TK.str(f[1])
+  else
+    if not TM.admits(f[1], c) then
+      return 'WHO task:' .. id .. ' is ' .. TK.str(f[1])
+    end
+    local plats = TM.parse_platforms(f[7])
+    if #plats > 0 then
+      local cos = TM.consumer_os(c)
+      if cos == '' then
+        return 'PLATFORM consumer ' .. c .. ' has unknown platform; card requires ' .. TK.str(f[7])
+      end
+      local match = false
+      for _, p in ipairs(plats) do
+        if p == cos then match = true break end
+      end
+      if not match then
+        return 'PLATFORM task:' .. id .. ' requires ' .. TK.str(f[7]) .. '; consumer ' .. c .. ' is ' .. cos
+      end
+      local is_ok = redis.call('HGET', 'task:' .. id, 'ok:' .. cos)
+      if is_ok == '1' or is_ok == 'ok' then
+        return 'LIVECOPY task:' .. id .. ' platform ' .. cos .. ' already ok'
+      end
+      local cpid = redis.call('HGET', 'task:' .. id, 'copy:' .. cos)
+      if cpid and cpid ~= '' then
+        local cp = redis.call('HMGET', 'task:' .. cpid, 'consumer', 'where')
+        if cp[1] and TM.LIVE[TK.str(cp[2])] and redis.call('ZSCORE', TM.key(cp[1], cp[2]), cpid) then
+          return 'LIVECOPY task:' .. id .. ' has live copy ' .. cpid .. ' on platform ' .. cos
+        end
+      end
+    end
   end
   if tier ~= '' and not d.tiers[tier] and (d.declared or TM.MODEL_TYPES[tier]) then
     return 'TIER ' .. c .. ' advertises ' .. TM.list(d.tiers) .. ', not ' .. tier
@@ -3263,7 +3363,19 @@ function TM.cut(c, id, leg, o)
   if not o.verdict and TM.pending(id) then
     return 'VERDICT task:' .. id .. ' is in review for its verdict: nova-sprint review post --verdict recut|redeal|reassign:<consumer>|drop'
   end
+  local cos = TM.consumer_os(c)
+  local plats = TM.parse_platforms(redis.call('HGET', 'task:' .. id, 'platforms'))
+  local is_plat = leg == 'work' and #plats > 0 and cos ~= ''
   local fields = { 'copies', tostring(n) }
+  if is_plat then
+    fields[#fields + 1] = 'copy:' .. cos
+    fields[#fields + 1] = cid
+    local cur_pcs = redis.call('HGET', 'task:' .. id, 'platform_copies')
+    local pcs = TM.words(cur_pcs)
+    pcs[#pcs + 1] = cid
+    fields[#fields + 1] = 'platform_copies'
+    fields[#fields + 1] = table.concat(pcs, ' ')
+  end
   for _, v in ipairs(o.fields or {}) do fields[#fields + 1] = v end
   if leg == 'read' then
     local f = redis.call('HMGET', 'task:' .. id, 'where', 'friend', 'owner', 'reads')
@@ -3286,6 +3398,10 @@ function TM.cut(c, id, leg, o)
   local created, at = TK.ms(p[1]) or cm_now(), cm_now()
   local h = { 'task:' .. cid, 'card', 'copy', 'leg', leg, 'primary', id, 'consumer', c, 'where', 'ready',
     'where_at', tostring(at), 'cut_at', tostring(at), 'created_at', string.format('%.0f', created) }
+  if is_plat then
+    h[#h + 1] = 'platform'
+    h[#h + 1] = cos
+  end
   for i, f in ipairs(TM.CARRY) do
     local v = TK.str(p[i + 3])
     -- a primary with no PATHS carries the paths its work touched (a card
@@ -3373,7 +3489,7 @@ function TM.deal(c, by, k, stream, ids)
     end
     local err = pass({ 'review' }, 'read')
     if err then return { 'REFUSED', 'DRIFT-AFTER ' .. err } end
-    err = pass({ 'ready', 'waiting' }, 'work')
+    err = pass({ 'ready', 'waiting', 'working' }, 'work')
     if err then return { 'REFUSED', 'DRIFT-AFTER ' .. err } end
   end
   out[2] = tostring((#out - 2) / 2)
@@ -3605,7 +3721,9 @@ function TM.finish(id, o)
   local reads = TM.words(p.reads)
   local isread = false
   for _, x in ipairs(reads) do isread = isread or x == id end
-  if p.copy ~= id and not isread then
+  local isplatcopy = false
+  for _, x in ipairs(TM.words(p.platform_copies)) do isplatcopy = isplatcopy or x == id end
+  if p.copy ~= id and not isread and not isplatcopy then
     return 'DRIFT task:' .. pid .. ' names copy ' .. (p.copy == '' and '-' or p.copy) .. ' and reads ' ..
       (p.reads == '' and '-' or p.reads) .. ', not ' .. id
   end
@@ -3622,6 +3740,9 @@ function TM.finish(id, o)
   local cf = {}
   local to, pok, why, sha = nil, nil, TK.str(o.why), TK.str(o.sha)
   local outcome = o.outcome
+  local plats = TM.parse_platforms(p.platforms)
+  local cplat = TK.str(redis.call('HGET', 'task:' .. id, 'platform'))
+  if cplat == '' then cplat = TM.consumer_os(c) end
   -- stay: the primary stays in review (its pointers change, it does not
   -- move); fix: the consumer a fix copy is cut on; recut: fresh read copies
   -- are cut after the open ones retire; rehead: the PR's head moved
@@ -3734,19 +3855,39 @@ function TM.finish(id, o)
     end
   elseif outcome == 'ok' then
     local prn = TK.str(get.pr)
-    if sha ~= '' then
+    if prn == '' or prn == '0' then prn = TK.str(p.pr) end
+    local all_ok = true
+    if #plats > 0 and cplat ~= '' then
+      pf[#pf + 1] = 'ok:' .. cplat
+      pf[#pf + 1] = '1'
+      for _, plat in ipairs(plats) do
+        if plat ~= cplat then
+          local is_ok = redis.call('HGET', 'task:' .. pid, 'ok:' .. plat)
+          if is_ok ~= '1' and is_ok ~= 'ok' then
+            all_ok = false
+            break
+          end
+        end
+      end
+    end
+    if not all_ok then
+      to, stay = 'working', true
+      if why == '' then why = 'platform ' .. cplat .. ' ok, waiting for other platforms (' .. p.platforms .. ')' end
+    elseif sha ~= '' then
       to = 'landed'
       if why == '' then why = 'done-already ' .. sha end
     elseif prn ~= '' and prn ~= '0' then
-      local err, repo = TM.prok(pid, get, r[9])
-      if err then return err end
-      pf[#pf + 1] = 'author'
-      pf[#pf + 1] = c
-      -- the build copy's ok is what moves the primary to review; its read
-      -- copies are cut in this same call (TM.after_move; CI gates those
-      -- reads, not this move)
-      to = 'review'
-      if why == '' then why = 'ok pr ' .. TM.bare(repo) .. '#' .. prn .. ' head ' .. string.sub(get.head, 1, 12) end
+      if TK.str(get.pr) ~= '' and TK.str(get.pr) ~= '0' then
+        local err, repo = TM.prok(pid, get, r[9])
+        if err then return err end
+        pf[#pf + 1] = 'author'
+        pf[#pf + 1] = c
+        to = 'review'
+        if why == '' then why = 'ok pr ' .. TM.bare(repo) .. '#' .. prn .. ' head ' .. string.sub(get.head, 1, 12) end
+      else
+        to = 'review'
+        if why == '' then why = 'all platforms ok (' .. p.platforms .. ')' end
+      end
     else
       to, pok = 'done', 'ok'
     end
@@ -3755,17 +3896,20 @@ function TM.finish(id, o)
     if not o.keep then n = n + 1 end
     pf[#pf + 1] = 'attempts'
     pf[#pf + 1] = tostring(n)
+    if #plats > 0 and cplat ~= '' and not string.find(why, cplat, 1, true) then
+      why = 'platform ' .. cplat .. ' failed: ' .. (why == '' and 'fail' or why)
+    end
     if why == '' then why = 'fail' end
     -- a fail goes to review (#4072); a copy given back returns its primary
     to = 'waiting'
-    if not o.keep then to, review = 'review', { consumer = c, copy = id } end
+    if not o.keep then to, review = 'review', { consumer = c, copy = id, platform = cplat } end
   end
   -- the primary's copy pointer clears when it names this copy; a live fix
   -- copy stays named while a read of the same head ends
   -- a card end's result fields ride the move, its paths as result_paths
   -- (TM.recorded; SP.field, #4322)
   local mo = { by = o.by, why = why, ok = pok, fields = pf, dry = o.dry, review = review ~= nil }
-  if p.copy == id or not stay then mo.copy = '' end
+  if not stay then mo.copy = '' elseif p.copy == id and #plats == 0 then mo.copy = '' end
   if sha ~= '' then mo.sha = sha end
   if score then mo.reads_why = 'superseded: ' .. id .. ' read ' .. score .. '/10' end
   if o.dry then
@@ -3784,12 +3928,19 @@ function TM.finish(id, o)
     if review.demote and review.copy ~= '' then
       TM.demote(review.copy, 'read under ' .. TM.PASS .. ' twice: ' .. why, o.by, r[5])
     end
+    if not o.dry and #plats > 0 then
+      for _, pc in ipairs(TM.words(p.platform_copies)) do
+        if pc ~= id then
+          TM.drop(pc, 'platform ' .. cplat .. ' failed', o.by)
+        end
+      end
+    end
   end
   local nxt, err = {}, nil
   if rehead then
     err, nxt = TM.rehead(pid, rehead, o.by)
   elseif stay then
-    err = TK.move(pid, 'review', mo)
+    err = TK.move(pid, to, mo)
     if not err and fix then
       local n = (tonumber(redis.call('HGET', 'task:' .. pid, 'fix_rounds')) or 0) + 1
       local cid
@@ -3856,10 +4007,15 @@ function TM.evidence(pid, rv, leg, why)
   if TK.str(pr[2]) ~= '' and TK.str(pr[2]) ~= '0' then prref = TM.bare(pr[1]) .. '#' .. pr[2] end
   local jev = 'REVIEW-JEV id=' .. pid .. ' consumer=' .. rv.consumer .. ' shape=' .. shape .. ' same_card=' .. nc ..
     ' same_consumer=' .. nk .. ' suggest=' .. suggest
-  return { 'review_at', tostring(cm_now()), 'review_copy', rv.copy, 'review_consumer', rv.consumer, 'review_leg', rleg,
+  local out = { 'review_at', tostring(cm_now()), 'review_copy', rv.copy, 'review_consumer', rv.consumer, 'review_leg', rleg,
     'review_model', TK.str(cp[1]), 'review_exit', exit, 'review_line', line, 'review_wall', TK.str(cp[5]),
     'review_why', why, 'review_pr', prref, 'review_read', rv.read or TK.str(pr[3]), 'review_shape', shape,
     'same_shape', tostring(nc), 'same_shape_consumer', tostring(nk), 'review_jev', jev }
+  if rv.platform and rv.platform ~= '' then
+    out[#out + 1] = 'review_platform'
+    out[#out + 1] = rv.platform
+  end
+  return out
 end
 
 -- TM.demote: a retired copy that ended ok moves to its consumer's fail set
@@ -4393,8 +4549,27 @@ function TM.cancel(by, why, ids)
           if cp ~= '' and not (r[1] and TM.LIVE[TK.str(r[2])] and redis.call('ZSCORE', TM.key(r[1], r[2]), cp)) then
             err = 'DRIFT task:' .. id .. ' names copy ' .. cp .. ' that is not live; run nova-sprint card fsck --repair'
           end
+          local pcs = TM.words(p.platform_copies)
+          for _, pc in ipairs(pcs) do
+            if pc ~= cp then
+              local pr = redis.call('HMGET', 'task:' .. pc, 'consumer', 'where', 'stream')
+              if pr[1] and TM.LIVE[TK.str(pr[2])] and not redis.call('ZSCORE', TM.key(pr[1], pr[2]), pc) then
+                err = 'DRIFT task:' .. id .. ' names platform copy ' .. pc .. ' that is not live; run nova-sprint card fsck --repair'
+              end
+            end
+          end
           err = err or TK.move(id, 'done', { by = by, why = why, ok = 'fail', copy = '', dry = dry })
-          if not err and not dry and cp ~= '' then TM.retire(cp, r[1], r[2], 'fail', 'cancel: ' .. why, {}, by, r[3]) end
+          if not err and not dry then
+            if cp ~= '' then TM.retire(cp, r[1], r[2], 'fail', 'cancel: ' .. why, {}, by, r[3]) end
+            for _, pc in ipairs(pcs) do
+              if pc ~= cp then
+                local pr = redis.call('HMGET', 'task:' .. pc, 'consumer', 'where', 'stream')
+                if pr[1] and TM.LIVE[TK.str(pr[2])] and redis.call('ZSCORE', TM.key(pr[1], pr[2]), pc) then
+                  TM.retire(pc, pr[1], pr[2], 'fail', 'cancel: ' .. why, {}, by, pr[3])
+                end
+              end
+            end
+          end
           to = 'done'
         end
       end

@@ -2346,6 +2346,12 @@ the original failed measurement.
 **Its remedy lines.** `remedy="remove the host, tailnet or person name; make the reference general or read it from configuration; docs/SPEC-CI.md#generality"`, and for an unlisted or grown count: `remedy="shrink the allowlist count; the list only shrinks"`.
 **Its narrowings.** It scans living `.go` files under `cmd/` and `internal/` only, skipping `testdata/`, `vendor/`, `deprecated/`, and `_test.go` files. It excludes Go package `import` statements (including `github.com/mas-bandwidth/...` imports) and marked documentation examples in comments (lines with `e.g.` or `example:`). Boundary controls ensure substring words like `miniredis`, `revision`, `deterministic`, `minimum`, `studios`, `whitespace`, and compound words like `TrimSpace` are not matched.
 
+### `cardplatforms` — multi-platform cards require every platform copy ok before review
+
+**The rule.** A card with `PLATFORMS` naming multiple operating systems (e.g. `darwin,linux`) cuts one work copy per named platform routed to benches matching that platform OS. The primary transitions to review only when every platform copy has ended `ok`. If any platform copy ends `fail`, the primary is sent to review with the failing platform named.
+**The mistake it prevents.** A change with platform-specific code touching multiple operating systems reaching review or landing after passing on only one operating system, leaving the other broken or untested.
+**The test.** `TestCardPlatformsRequireAllCopiesOk` (`internal/ci/cardplatforms_class_test.go`).
+
 ## How the class tests read the tree: one walk, one parse, in parallel
 
 Every rule above is a sweep of this repository's own source. A rule that pays

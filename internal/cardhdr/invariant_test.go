@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -488,5 +489,42 @@ func TestLintTitleKind(t *testing.T) {
 	body := LintOneInvariant(Card{Text: cardWith("BUILD:", "Build issue #1 as written.")})
 	if got := body.Merge(rs).Rules(); got != RuleBuildIssue {
 		t.Errorf("merge = %q, want one build-issue", got)
+	}
+}
+
+func TestInferPlatforms(t *testing.T) {
+	t.Parallel()
+
+	// Explicit header takes precedence
+	if got := InferPlatforms("darwin,linux", "internal/cardhdr/cardhdr.go"); strings.Join(got, ",") != "darwin,linux" {
+		t.Errorf("InferPlatforms with explicit header = %v, want [darwin linux]", got)
+	}
+	if got := InferPlatforms("darwin", "internal/cardhdr/cardhdr.go"); strings.Join(got, ",") != "darwin" {
+		t.Errorf("InferPlatforms with explicit header = %v, want [darwin]", got)
+	}
+
+	// Suffix inference from paths
+	if got := InferPlatforms("", "internal/sandbox/wrap_darwin.go"); strings.Join(got, ",") != "darwin" {
+		t.Errorf("InferPlatforms darwin suffix = %v, want [darwin]", got)
+	}
+	if got := InferPlatforms("", "internal/sandbox/wrap_linux.go"); strings.Join(got, ",") != "linux" {
+		t.Errorf("InferPlatforms linux suffix = %v, want [linux]", got)
+	}
+	if got := InferPlatforms("", "internal/sandbox/wrap_darwin.go internal/sandbox/wrap_linux.go"); strings.Join(got, ",") != "darwin,linux" {
+		t.Errorf("InferPlatforms both suffixes = %v, want [darwin linux]", got)
+	}
+
+	// Build tag inference from real files on disk
+	if got := InferPlatforms("", "internal/sandbox"); strings.Join(got, ",") != "darwin,linux" {
+		t.Errorf("InferPlatforms dir with darwin and linux = %v, want [darwin linux]", got)
+	}
+
+	// Fallback to runtime.GOOS when no platform specific files/tags are found
+	goos := runtime.GOOS
+	if goos != "darwin" && goos != "linux" {
+		goos = "darwin"
+	}
+	if got := InferPlatforms("", "internal/cardhdr/cardhdr.go"); strings.Join(got, ",") != goos {
+		t.Errorf("InferPlatforms fallback = %v, want [%s]", got, goos)
 	}
 }

@@ -23,9 +23,14 @@ package cardhdr
 // says "build issue #N as written" is refused build-issue.
 
 import (
+	"bufio"
 	"fmt"
+	"go/build/constraint"
+	"os"
 	"path"
+	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -242,6 +247,139 @@ func ParsePlatforms(value string) ([]string, error) {
 		out = append(out, p)
 	}
 	return out, nil
+}
+
+// InferPlatforms returns the card's platforms: ParsePlatforms when a
+// PLATFORMS: line is given; otherwise inferred from PATHS build tags
+// (//go:build) and _darwin.go/_linux.go filename suffixes; else default to
+// the host bench's runtime.GOOS.
+func InferPlatforms(platformsHeader, paths string, files ...string) []string {
+	if strings.TrimSpace(platformsHeader) != "" {
+		if plats, err := ParsePlatforms(platformsHeader); err == nil && len(plats) > 0 {
+			return plats
+		}
+	}
+	detected := map[string]bool{}
+	tokens := strings.FieldsFunc(paths, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\t' || r == '\n' || r == ';'
+	})
+	for _, tok := range tokens {
+		tok = strings.Trim(tok, "`'\"")
+		tok = strings.TrimPrefix(tok, "./")
+		tok = strings.TrimSuffix(strings.TrimSuffix(tok, "..."), "/")
+		if tok == "" || tok == "." {
+			continue
+		}
+		if strings.HasSuffix(tok, "_darwin.go") || strings.Contains(tok, "_darwin.go") {
+			detected["darwin"] = true
+		}
+		if strings.HasSuffix(tok, "_linux.go") || strings.Contains(tok, "_linux.go") {
+			detected["linux"] = true
+		}
+		if len(files) > 0 {
+			for _, f := range files {
+				if ok, _ := path.Match(tok, f); ok || f == tok || strings.HasPrefix(f, tok+"/") {
+					if strings.HasSuffix(f, "_darwin.go") {
+						detected["darwin"] = true
+					}
+					if strings.HasSuffix(f, "_linux.go") {
+						detected["linux"] = true
+					}
+					scanBuildTags(f, detected)
+				}
+			}
+		} else {
+			resolved := resolvePath(tok)
+			if fi, err := os.Stat(resolved); err == nil {
+				if fi.IsDir() {
+					if entries, err := os.ReadDir(resolved); err == nil {
+						for _, e := range entries {
+							if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") {
+								continue
+							}
+							name := e.Name()
+							if strings.HasSuffix(name, "_darwin.go") {
+								detected["darwin"] = true
+							}
+							if strings.HasSuffix(name, "_linux.go") {
+								detected["linux"] = true
+							}
+							scanBuildTags(filepath.Join(resolved, name), detected)
+						}
+					}
+				} else if strings.HasSuffix(resolved, ".go") {
+					scanBuildTags(resolved, detected)
+				}
+			}
+		}
+	}
+	var out []string
+	for _, p := range Platforms {
+		if detected[p] {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		goos := runtime.GOOS
+		if goos != "darwin" && goos != "linux" {
+			goos = "darwin"
+		}
+		out = []string{goos}
+	}
+	return out
+}
+
+func scanBuildTags(path string, detected map[string]bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(line, "package ") {
+			break
+		}
+		if strings.HasPrefix(line, "//go:build ") {
+			tagExpr := strings.TrimPrefix(line, "//go:build ")
+			hasDarwin := strings.Contains(tagExpr, "darwin")
+			hasLinux := strings.Contains(tagExpr, "linux")
+			if hasDarwin || hasLinux {
+				expr, err := constraint.Parse(line)
+				if err == nil {
+					if hasDarwin && expr.Eval(func(t string) bool { return t == "darwin" }) {
+						detected["darwin"] = true
+					}
+					if hasLinux && expr.Eval(func(t string) bool { return t == "linux" }) {
+						detected["linux"] = true
+					}
+				} else {
+					if hasDarwin {
+						detected["darwin"] = true
+					}
+				}
+			}
+		}
+	}
+}
+
+func resolvePath(p string) string {
+	if _, err := os.Stat(p); err == nil {
+		return p
+	}
+	dir := "."
+	for i := 0; i < 5; i++ {
+		candidate := filepath.Join(dir, p)
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			break
+		}
+		dir = filepath.Join("..", dir)
+	}
+	return p
 }
 
 // pathTokenRE is a PATHS entry that is a path (a word such as "(new)" or
