@@ -68,6 +68,14 @@ exit-3 outcome, and the corpus problem is still reported beside it. Then an
 unreadable source, then no private entries, then a payload with no words, then
 vocabulary flags, then the corpus that can never fire.
 
+A declared source is text: UTF-8, with a leading byte-order mark dropped, or
+UTF-16 that opens with a byte-order mark. A source that is not text, or that
+yields no entry at all (empty, prose with no entry token, `# ` headings only),
+is `CORPUS-UNREADABLE` by name, whether or not the other sources are fine: its
+private material, if it holds any, was not seen. A source that has entries and
+none of them private raises a `WARN` line on every screen and in `corpus`,
+since a lost marker looks exactly like that.
+
 With no background document read, the screen runs and warns: rarity is measured
 against the private sources alone, which flags more readily, never less. A
 missing or unreadable background root is a warning for the same reason. A
@@ -180,7 +188,7 @@ SCREEN FLAGGED flags=<n> structure=<n> chars=<n> ...
 SCREEN REMEDY <remedy>; after an edit, run: nova-privacy screen <the same inputs>
 SCREEN <CORPUS-UNREADABLE|NO-PRIVATE-CORPUS|PAYLOAD-HAS-NO-WORDS|NOTHING-CAN-EVER-FIRE> <reason>
 SCREEN REMEDY <remedy>; then run: nova-privacy corpus <the same inputs>
-SCREEN WARN <warning>
+SCREEN WARN <warning>        (for example: source: <path> has <n> entries and none is marked <marker>; ...)
 CORPUS SOURCE path=<path> entries=<n> private=<n>
 CORPUS SOURCE path=<path> unreadable=<error>
 CORPUS BACKGROUND root=<dir> mode=<recursive|flat> pattern=<glob> found=<n> read=<n>

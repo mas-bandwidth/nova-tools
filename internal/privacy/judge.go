@@ -1,6 +1,7 @@
 package privacy
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -134,7 +135,10 @@ func judge(c Corpus, payload string, withPayload bool) Result {
 		}
 		r.Outcome = CorpusUnreadable
 		r.Reason = fmt.Sprintf("declared source %s could not be read: %v", bad.Path, bad.Err)
-		r.Remedy = unreadableRemedy(c.Config, bad)
+		if n := c.unreadable(); n > 1 {
+			r.Reason += fmt.Sprintf(" (and %d more; nova-privacy corpus lists each)", n-1)
+		}
+		r.Remedy = unreadableRemedy(c.Config, bad, rules)
 		return r
 	}
 
@@ -210,7 +214,14 @@ func plural(n int) string {
 
 // unreadableRemedy says what to do about one source that did not load: take
 // it out of the configuration that declares it, or put the file back.
-func unreadableRemedy(config string, bad *SourceLoad) string {
+func unreadableRemedy(config string, bad *SourceLoad, rules Rules) string {
+	if errors.Is(bad.Err, ErrNoEntries) {
+		where := "remove it from " + config
+		if bad.FromFlag || config == "" {
+			where = "drop --source " + bad.Path
+		}
+		return fmt.Sprintf("open each entry in %s with a line starting %s, or %s", bad.Path, tokenList(rules.EntryTokens), where)
+	}
 	if bad.FromFlag || config == "" {
 		return fmt.Sprintf("drop --source %s or restore the file", bad.Path)
 	}

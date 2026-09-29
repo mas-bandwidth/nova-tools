@@ -103,14 +103,76 @@ func TestNoPrivateEntriesVerifiesNothingAndSaysSo(t *testing.T) {
 	}
 }
 
-func TestAnEmptyCorpusVerifiesNothing(t *testing.T) {
+// A declared source that yields no entry is unreadable by name, whether or
+// not the other sources are fine: its private material, if any, was not seen.
+func TestASourceWithNoEntriesIsUnreadableByName(t *testing.T) {
+	t.Parallel()
+	for name, body := range map[string]string{
+		"empty":                  "",
+		"prose with no opener":   "a paragraph of notes with no heading at all\n",
+		"top headings only":      "# The zarquon engine (private)\nflibberty wumpus zarquon\n",
+		"every source empty too": "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t, true)
+			f.write(t, "private/upkeep.md", body)
+			if name == "every source empty too" {
+				f.write(t, "private/later.md", "")
+			}
+			r := privacy.Screen(f.spec, harmless)
+			want := "private/upkeep.md"
+			if name == "every source empty too" {
+				want = "private/later.md could not be read: it yields no entries"
+				if !strings.Contains(r.Reason, "and 1 more") {
+					t.Errorf("reason %q, want the count of the other unreadable sources", r.Reason)
+				}
+			}
+			if r.Outcome != privacy.CorpusUnreadable || !strings.Contains(r.Reason, want) || !strings.Contains(r.Reason, "no entries") {
+				t.Fatalf("outcome %s reason %q, want CORPUS-UNREADABLE naming the source", r.Outcome, r.Reason)
+			}
+			if !errors.Is(r.Sources[1].Err, privacy.ErrNoEntries) || !strings.Contains(r.Remedy, "## ") {
+				t.Errorf("err %v remedy %q, want ErrNoEntries and a remedy naming the entry tokens", r.Sources[1].Err, r.Remedy)
+			}
+		})
+	}
+}
+
+// A source with entries and none private may be a source whose marker was
+// lost; every screen says so.
+func TestASourceWithNoPrivateEntryWarnsOnEveryScreen(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, true)
-	f.write(t, "private/later.md", "")
-	f.write(t, "private/upkeep.md", "")
 	r := privacy.Screen(f.spec, harmless)
-	if r.Outcome != privacy.NoPrivateCorpus || r.Blocks != 0 {
-		t.Errorf("outcome %s blocks %d, want NO-PRIVATE-CORPUS over zero entries", r.Outcome, r.Blocks)
+	if r.Outcome != privacy.UnprovenClean {
+		t.Fatalf("outcome %s", r.Outcome)
+	}
+	w := strings.Join(r.Warnings, "\n")
+	if !strings.Contains(w, "private/upkeep.md has 2 entries and none is marked "+privacy.DefaultMarker) {
+		t.Errorf("warnings %q", w)
+	}
+	if strings.Contains(w, "private/later.md has") {
+		t.Errorf("a source with private entries does not warn: %q", w)
+	}
+}
+
+// A byte-order mark before the first heading does not hide that entry, and a
+// source in UTF-16 with a mark is read as text.
+func TestAByteOrderMarkDoesNotHideTheFirstEntry(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, true)
+	body := "## The zarquon engine (private)\nflibberty wumpus zarquon\n## Plain\nordinary\n"
+	f.write(t, "private/upkeep.md", "\ufeff"+body)
+	if r := privacy.Screen(f.spec, harmless); r.Private != 3 || r.Sources[1].Private != 1 {
+		t.Errorf("private %d source row %+v, want the first entry private", r.Private, r.Sources[1])
+	}
+	f.write(t, "private/upkeep.md", string(utf16Bytes(body, false, true)))
+	if r := privacy.Screen(f.spec, harmless); r.Sources[1].Err != nil || r.Sources[1].Private != 1 {
+		t.Errorf("UTF-16 source row %+v", r.Sources[1])
+	}
+	f.write(t, "private/upkeep.md", body+"\x00")
+	if r := privacy.Screen(f.spec, harmless); r.Outcome != privacy.CorpusUnreadable || !errors.Is(r.Sources[1].Err, privacy.ErrNotText) {
+		t.Errorf("a source that is not text: outcome %s row %+v", r.Outcome, r.Sources[1])
 	}
 }
 

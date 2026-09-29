@@ -31,6 +31,19 @@ const (
 // ErrTooLarge marks a read that exceeded its bound.
 var ErrTooLarge = errors.New("larger than its bound")
 
+// ErrNoEntries marks a declared source that was read and yields no entry: it
+// may hold private material in a shape the entry tokens do not open, so it is
+// unreadable, never an empty part of the corpus.
+var ErrNoEntries = errors.New("it yields no entries")
+
+func tokenList(tokens []string) string {
+	q := make([]string, len(tokens))
+	for i, t := range tokens {
+		q[i] = "`" + t + " `"
+	}
+	return strings.Join(q, " or ")
+}
+
 // SourceLoad is what happened to one declared source. Err is nil only when
 // the file was read end to end.
 type SourceLoad struct {
@@ -73,6 +86,16 @@ func (c Corpus) FirstErr() *SourceLoad {
 		}
 	}
 	return nil
+}
+
+func (c Corpus) unreadable() int {
+	n := 0
+	for _, s := range c.Sources {
+		if s.Err != nil {
+			n++
+		}
+	}
+	return n
 }
 
 // ReadBounded reads a whole file of at most max bytes. A directory, a
@@ -138,14 +161,28 @@ func Load(s Spec) Corpus {
 			c.Sources = append(c.Sources, sl)
 			continue
 		}
-		blocks := c.Rules.ParseBlocks(src.Display, string(b))
+		text, err := DecodeText(b, src.Display)
+		if err != nil {
+			sl.Err = err
+			c.Sources = append(c.Sources, sl)
+			continue
+		}
+		blocks := c.Rules.ParseBlocks(src.Display, text)
 		sl.Blocks = len(blocks)
+		if len(blocks) == 0 {
+			sl.Err = fmt.Errorf("%w: no line starts with %s followed by a blank", ErrNoEntries, tokenList(c.Rules.EntryTokens))
+			c.Sources = append(c.Sources, sl)
+			continue
+		}
 		for _, blk := range blocks {
 			c.Blocks = append(c.Blocks, blk)
 			if c.Rules.IsPrivate(blk) {
 				sl.Private++
 				c.Private = append(c.Private, blk)
 			}
+		}
+		if sl.Private == 0 {
+			c.warn("source: %s has %d entr%s and none is marked %s; if it holds private material, its marker is missing", src.Display, sl.Blocks, plural(sl.Blocks), c.Rules.Marker)
 		}
 		c.Sources = append(c.Sources, sl)
 	}

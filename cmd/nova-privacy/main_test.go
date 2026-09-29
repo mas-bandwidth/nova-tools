@@ -563,3 +563,27 @@ func TestOneSourceDeclaredTwiceIsRefused(t *testing.T) {
 		t.Errorf("exit %d stdout %q stderr %q", code, out, errOut)
 	}
 }
+
+func TestASourceWithNoPrivateEntryWarnsInBothVerbs(t *testing.T) {
+	t.Parallel()
+	tr := newTree(t)
+	_, _, errOut := screenStdin(tr, "harmless outgoing text")
+	if !strings.Contains(errOut, "SCREEN WARN source: private/upkeep.md has 1 entry and none is marked (private)") {
+		t.Errorf("screen stderr %q", errOut)
+	}
+	_, _, errOut = runTool("", "corpus", "--root", tr.root)
+	if !strings.Contains(errOut, "CORPUS WARN source: private/upkeep.md has 1 entry and none is marked (private)") {
+		t.Errorf("corpus stderr %q", errOut)
+	}
+}
+
+func TestAnEmptyExtraSourceIsUnreadable(t *testing.T) {
+	t.Parallel()
+	tr := newTree(t)
+	tr.write(t, "private/extra.md", "")
+	tr.write(t, ".nova-privacy", configFixture+"source private/extra.md\n")
+	code, _, errOut := screenStdin(tr, "harmless outgoing text")
+	if code != exitUnverified || !strings.Contains(errOut, "SCREEN CORPUS-UNREADABLE declared source private/extra.md") {
+		t.Errorf("exit %d stderr %q", code, errOut)
+	}
+}

@@ -2259,7 +2259,8 @@ What a first run gets wrong:
   `source` line, or drop `--root` and name sources with `--source`. A root that
   is named must hold its configuration, even beside `--source`.
 - **Exit 3.** The screen ran and verified nothing: a declared source is missing
-  (`remove it from <config> or restore the file`), no entry is marked private,
+  (`remove it from <config> or restore the file`) or yields no entry, no entry
+  is marked private,
   the payload holds no word, or no private entry has enough rare words to ever
   fire. The remedy line says which, and names the `nova-privacy corpus` command
   to run next.
