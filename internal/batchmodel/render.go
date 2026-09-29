@@ -183,31 +183,33 @@ type BatchAction struct {
 	Members                                  []MemberAction
 }
 
-func (a BatchAction) TLA() (string, error) {
+// ValueExpr is the request record q. TLA wraps it in Apply(q) only when it is
+// used as a transition, never when q is an observed attempt or receipt key.
+func (a BatchAction) ValueExpr() (Expr, error) {
 	if len(a.Canonical) == 0 || a.Table == "" || a.OperationID == "" || a.Actor == "" || a.Digest == "" {
-		return "", errors.New("incomplete model action")
+		return Expr{}, errors.New("incomplete model action")
 	}
 	e, err := decimal(a.Epoch)
 	if err != nil {
-		return "", err
+		return Expr{}, err
 	}
 	if len(a.Members) == 0 || len(a.Members) > 3 {
-		return "", errors.New("model action needs one to three members")
+		return Expr{}, errors.New("model action needs one to three members")
 	}
 	entries := make([]Expr, len(a.Members))
 	seen := map[string]bool{}
 	for i, m := range a.Members {
 		if m.ID == "" || seen[m.ID] {
-			return "", fmt.Errorf("duplicate or empty model member %q", m.ID)
+			return Expr{}, fmt.Errorf("duplicate or empty model member %q", m.ID)
 		}
 		seen[m.ID] = true
 		src, err := m.Source.expr()
 		if err != nil {
-			return "", err
+			return Expr{}, err
 		}
 		dst, err := m.Target.expr()
 		if err != nil {
-			return "", err
+			return Expr{}, err
 		}
 		values := make([]Expr, len(m.GuardValues))
 		for j, v := range m.GuardValues {
@@ -252,6 +254,17 @@ func (a BatchAction) TLA() (string, error) {
 		"id": String(a.OperationID), "actor": String(a.Actor), "members": Tuple(entries...),
 		"bytes": String(hex.EncodeToString(a.Canonical)), "digest": String(a.Digest),
 	})
+	if _, err := q.TLA(); err != nil {
+		return Expr{}, err
+	}
+	return q, nil
+}
+
+func (a BatchAction) TLA() (string, error) {
+	q, err := a.ValueExpr()
+	if err != nil {
+		return "", err
+	}
 	v, err := q.TLA()
 	if err != nil {
 		return "", err
@@ -286,16 +299,8 @@ func RenderHarness(steps []Step) (string, error) {
 		if i > 0 && !reflect.DeepEqual(steps[i-1].AfterModel, s.BeforeModel) {
 			return "", fmt.Errorf("step %d model projection is not continuous", i)
 		}
-		if s.Action.Table != s.Request.Table || s.Action.Epoch != s.Request.Epoch || s.Action.OperationID != s.Request.OperationID || s.Action.Actor != s.Request.Actor || s.Action.Digest != s.Request.Digest || !SameBytes(s.Action.Canonical, s.Request.Canonical) {
-			return "", fmt.Errorf("step %d model action identity differs from runtime request", i)
-		}
-		if len(s.Action.Members) != len(s.Request.Selected) {
-			return "", fmt.Errorf("step %d model selection differs", i)
-		}
-		for j, id := range s.Request.Selected {
-			if s.Action.Members[j].ID != id {
-				return "", fmt.Errorf("step %d model member order differs", i)
-			}
+		if err := validateStepActionIdentity(s); err != nil {
+			return "", fmt.Errorf("step %d: %w", i, err)
 		}
 		action, err := s.Action.TLA()
 		if err != nil {
@@ -321,6 +326,21 @@ func RenderHarness(steps []Step) (string, error) {
 		"ReplayNext ==\n" + strings.Join(cases, "\n") + "\n" +
 		"ReplaySpec == BatchReplayInit /\\ [][ReplayNext]_bvars\n" +
 		"=================================================================\n", nil
+}
+
+func validateStepActionIdentity(s Step) error {
+	if s.Action.Table != s.Request.Table || s.Action.Epoch != s.Request.Epoch || s.Action.OperationID != s.Request.OperationID || s.Action.Actor != s.Request.Actor || s.Action.Digest != s.Request.Digest || !SameBytes(s.Action.Canonical, s.Request.Canonical) {
+		return fmt.Errorf("model action identity differs from runtime request")
+	}
+	if len(s.Action.Members) != len(s.Request.Selected) {
+		return fmt.Errorf("model selection differs")
+	}
+	for j, id := range s.Request.Selected {
+		if s.Action.Members[j].ID != id {
+			return fmt.Errorf("model member order differs")
+		}
+	}
+	return nil
 }
 
 func SameBytes(a, b []byte) bool {

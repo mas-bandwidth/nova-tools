@@ -15,6 +15,7 @@ import (
 // means absent; a present entry containing "" is a present empty value.
 type Member struct {
 	Exists   bool
+	Epoch    string
 	Revision string
 	Place    *Place
 	Fields   map[string]string
@@ -29,20 +30,42 @@ type Place struct{ Row, Column, Score string }
 // by the adapter without lossy value conversion. None of these values come
 // from the receipt being checked.
 type Snapshot struct {
-	Image         map[string][]byte
-	TableRevision string
-	Epoch         string
-	Members       map[string]Member
-	Operations    uint64
-	Receipts      uint64
-	Recorded      *OperationRecord // this request key, read independently
-	LastReceipt   *Receipt         // change-stream tail, read independently
+	Image map[string][]byte
+	// Typed finite facts below are read directly from Redis in the same quiet
+	// capture window as Image; they never come from an FCALL reply.
+	Definitions      map[string]map[string]string            // epoch -> definition hash
+	Rows             map[string][]string                     // epoch -> declared rows
+	RowScores        map[string]map[string]string            // epoch -> row -> exact ZSET score
+	RowFields        map[string]map[string]map[string]string // epoch -> row -> complete row hash
+	Bindings         map[Cell]string                         // owned cell -> external target
+	CellTypes        map[Cell]string                         // absent key projects as zset
+	CellMembers      map[Cell]map[string]string              // member -> exact score spelling
+	TableRevision    string
+	Epoch            string
+	RevisionFields   map[string]string // complete global revision hash
+	EpochFields      map[string]string // complete active-epoch hash
+	Members          map[string]Member
+	Operations       uint64
+	OperationRecords map[string]OperationRecord // physical op key -> durable contents
+	Receipts         uint64
+	Events           []StreamEvent    // full change stream, including setup
+	StreamInfo       StreamInfo       // XINFO metadata not visible in XRANGE
+	Recorded         *OperationRecord // this request key, read independently
+	LastReceipt      *Receipt         // change-stream tail, read independently
+	LastEvent        *StreamEvent     // raw tail retained until strict wire decode
 }
 
 // OperationRecord is the durable lookup for table+epoch+operation ID.
 type OperationRecord struct {
 	Table, Epoch, OperationID, Digest, ReceiptID string
+	BeforeRevision, AfterRevision, Outcome       string
 	Canonical                                    []byte
+	ResultJSON                                   []byte
+}
+
+type StreamInfo struct {
+	EntriesAdded                  uint64
+	LastGeneratedID, MaxDeletedID string
 }
 
 // Delta is a receipt's complete before/after state for one selected member,
@@ -235,6 +258,16 @@ func ValidateStep(s Step) error {
 	if s.Result != Accepted {
 		return fmt.Errorf("unknown result %q", s.Result)
 	}
+	allowed, err := acceptedWriteKeys(s)
+	if err != nil {
+		return err
+	}
+	if err := CheckImageDelta(s.Before.Image, s.After.Image, allowed); err != nil {
+		return fmt.Errorf("accepted complete image: %w", err)
+	}
+	if err := checkAcceptedMetadata(s); err != nil {
+		return err
+	}
 	if s.Before.Epoch != s.Request.Epoch || s.After.Epoch != s.Request.Epoch || s.Before.TableRevision != s.Request.Revision {
 		return errors.New("accepted request did not match prestate epoch and revision")
 	}
@@ -254,6 +287,12 @@ func ValidateStep(s Step) error {
 	if s.After.Operations != s.Before.Operations+1 || s.After.Receipts != s.Before.Receipts+1 {
 		return errors.New("accepted batch did not append exactly one operation and receipt")
 	}
+	if err := checkStreamPrefix(s.Before, s.After, 1); err != nil {
+		return err
+	}
+	if s.After.StreamInfo.EntriesAdded != s.Before.StreamInfo.EntriesAdded+1 || s.After.StreamInfo.MaxDeletedID != s.Before.StreamInfo.MaxDeletedID || s.After.StreamInfo.LastGeneratedID != s.Receipt.StreamID {
+		return errors.New("accepted batch changed hidden stream metadata")
+	}
 	if s.Before.Recorded != nil || s.After.Recorded == nil || !sameOperation(*s.After.Recorded, s.Request, r) {
 		return errors.New("durable operation record differs from exact request bytes or receipt")
 	}
@@ -271,7 +310,7 @@ func ValidateStep(s Step) error {
 		}
 		br, _ := decimal(b.Revision)
 		ar, _ := decimal(a.Revision)
-		physicalChange := b.Exists != a.Exists || !reflect.DeepEqual(b.Place, a.Place) || !reflect.DeepEqual(nonNil(b.Fields), nonNil(a.Fields))
+		physicalChange := b.Exists != a.Exists || b.Epoch != a.Epoch || !reflect.DeepEqual(b.Place, a.Place) || !reflect.DeepEqual(nonNil(b.Fields), nonNil(a.Fields))
 		if physicalChange {
 			if br == ^uint64(0) || ar != br+1 {
 				return fmt.Errorf("changed member %s did not advance revision once", id)
@@ -305,11 +344,11 @@ func ValidateStep(s Step) error {
 
 func sameOperation(o OperationRecord, q Request, r Receipt) bool {
 	return o.Table == q.Table && o.Epoch == q.Epoch && o.OperationID == q.OperationID &&
-		o.Digest == q.Digest && o.ReceiptID == r.StreamID && SameBytes(o.Canonical, q.Canonical)
+		o.Digest == q.Digest && o.ReceiptID == r.StreamID && o.BeforeRevision == r.BeforeRevision && o.AfterRevision == r.AfterRevision && o.Outcome == r.Kind && SameBytes(o.Canonical, q.Canonical)
 }
 
 func equalMember(a, b Member) bool {
-	if a.Exists != b.Exists || a.Revision != b.Revision || !reflect.DeepEqual(a.Place, b.Place) {
+	if a.Exists != b.Exists || a.Epoch != b.Epoch || a.Revision != b.Revision || !reflect.DeepEqual(a.Place, b.Place) {
 		return false
 	}
 	// nil and an empty map both represent no present application fields.

@@ -14,6 +14,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/batchmodel"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tlc"
 )
@@ -36,6 +38,7 @@ type env struct {
 	lookPath       func(string) (string, error)
 	hostname       func() (string, error)
 	exec           tlc.Executor
+	capture        func(context.Context, batchmodel.CaptureSuiteOptions) ([]batchmodel.SuiteCase, error)
 	goos           string
 	tmpDir         string // where a disposable store's directory goes; the system default when empty
 }
@@ -45,6 +48,7 @@ func main() {
 		stdout: os.Stdout, stderr: os.Stderr,
 		getenv: os.Getenv, lookPath: tlc.LookPath, hostname: os.Hostname,
 		exec: tlc.Execute, goos: hostOS,
+		capture: batchmodel.CaptureSuite,
 	}))
 }
 
@@ -64,6 +68,7 @@ func verbs() []verb {
 		{"member", "check the member and epoch protocol and its mutation controls", helpMember, cmdMember},
 		{"replay", "replay table.lua receipts and check them against EpochMemberTable", helpReplay, cmdReplay},
 		{"witnesses", "replay the table model's findings against a table.lua", helpWitnesses, cmdWitnesses},
+		{"batch-replay", "capture and check bounded batch histories against MCBatchMemberTable", helpBatchReplay, cmdBatchReplay},
 	}
 }
 

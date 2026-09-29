@@ -16,7 +16,7 @@ The TLA+ modules here are the specifications of the state machines this repo imp
 | `TableFirstContact.tla` | `MCTableFirstContact*` | nova-table's first contact with a store (cmd/nova-table/library.go): a verb that meets "Function not found" loads the library with LoadMissing at most once per process and is sent again once, only when its first send ran nothing, with three reversed witnesses |
 | `FuseBox.tla` | `MCFuseBox*` | nova-fuse's box: the gate answers only from a box it read and from every box named, only a lift, init or your person's hand makes a surface clear, init never replaces a box, a lockdown always blows; five reversed witnesses |
 
-Runners. `tools/tlacheck` (Go, over `internal/tlc` and `internal/tablemodel`) runs the checks. Run it on a bench that has java and, for the replays, redis-server: neither belongs on a working machine. Every run is bounded by `--timeout` (a timeout is a failure, never a green), downloads nothing, and runs TLC in a private copy of the models under `--dir`, so the checkout never gains the error-trace files TLC writes beside a spec. The jar is `--jar`, or the environment variable `TLC_JAR`; java and redis-server are found on PATH, or named with `--java` and `--redis-server`, and the path found is echoed. `tlacheck help` and `tlacheck <verb> -h` say the rest.
+Runners. `tools/tlacheck` (Go, over `internal/tlc`, `internal/tablemodel` and `internal/batchmodel`) runs the checks. Run it on a bench that has java and, for the replays, redis-server: neither belongs on a working machine. Every run is bounded by `--timeout` (a timeout is a failure, never a green), downloads nothing, and runs TLC in a private copy of the models under `--dir`, so the checkout never gains the error-trace files TLC writes beside a spec. The jar is `--jar`, or the environment variable `TLC_JAR`; java and redis-server are found on PATH, or named with `--java` and `--redis-server`, and the path found is echoed. `tlacheck help` and `tlacheck <verb> -h` say the rest.
 
 | Verb | What it runs |
 |---|---|
@@ -27,6 +27,7 @@ Runners. `tools/tlacheck` (Go, over `internal/tlc` and `internal/tablemodel`) ru
 | `member` | the member and epoch protocol and its four mutation controls (`--suite`), 120 s |
 | `replay` | the execution replay of a `table.lua` against `EpochMemberTable`, 120 s |
 | `witnesses` | the table model's findings replayed against a pinned `table.lua` in a disposable Redis |
+| `batch-replay` | real batch receipts and independent Redis snapshots checked against `BatchMemberTable`, including a corrupted observation control, under one 110 s budget |
 
 ```sh
 go run ./tools/tlacheck groups --root .
@@ -34,6 +35,7 @@ go run ./tools/tlacheck run --root . --jar /path/to/tla2tools.jar --dir /tmp/tlc
 go run ./tools/tlacheck table --root . --jar /path/to/tla2tools.jar --dir /tmp/table-results --mode all
 go run ./tools/tlacheck member --root . --jar /path/to/tla2tools.jar --dir /tmp/member-results
 go run ./tools/tlacheck replay --root . --jar /path/to/tla2tools.jar --dir /tmp/member-replay --source internal/nsprint/fn/lua/table.lua
+go run ./tools/tlacheck batch-replay --root . --jar /path/to/tla2tools.jar --dir /tmp/batch-replay --source internal/nsprint/fn/lua/table.lua
 git show f77458853af46fdbbafd6881a4b46006431f266f:internal/nsprint/fn/lua/table.lua > /tmp/table-pinned.lua
 go run ./tools/tlacheck witnesses /tmp/table-pinned.lua
 timeout 120 java -cp /path/to/tla2tools.jar tlc2.TLC -workers 8 -deadlock tla/MCCardMachine.tla
@@ -517,3 +519,47 @@ That normalization requires the exact expected invariant and exit 12; it does no
 turn parse failures or unexpected outcomes into passing records. Raw bench logs
 retain the original diagnostic. Printed aggregate counts, when available, use the
 last pair TLC reports.
+
+### Batch execution replay
+
+On a Linux bench, `tlacheck batch-replay` loads the supplied `table.lua` into
+disposable Redis instances and captures consecutive calls. Each batch sends its
+exact request bytes in one FCALL. The decoder checks the reply against independent
+pre/post snapshots, the durable operation record and the stream event. It retains
+absent fields separately from present empty strings and checks sparse field
+deltas against the requested set/unset fields. Refusals and retries must preserve
+the complete store image, including Redis stream metadata. Accepted writes may
+change only their exact physical key set. The finite projection also checks row
+scores, definition and operation-record metadata, and every earlier stream event
+including its field order; consumer groups are unsupported and refused.
+
+The generated harness applies the corresponding model action and compares every
+observed state through `MatchesExecution`. It renders captured receipt values as
+literals, rather than deriving observed values from the model's transition.
+A separate negative case changes one observed member field and must fail
+`MatchesExecution`; a parser error or an unrelated invariant failure does not
+count as the expected rejection.
+
+The suite covers move/set with a guard, exact retry and operation conflict;
+same-cell no-op, removal and unset on the retained record; creation and
+preventive refusals; an epoch advance/read/bind/create history; and an ordinary
+remove followed by a batch with an omitted member-revision guard. Each history
+uses the declared finite fixture. Its table definition, row metadata and member
+fields must fit that fixture; unsupported state prevents a replay packet.
+
+The command writes input hashes, captured evidence, generated model/configuration
+files and TLC logs into a new `--dir`. The shared Go TLC executor enforces one
+budget across capture and checking. It refuses to run on non-Linux hosts, downloads
+nothing and leaves the source checkout untouched. Help lists its input flags and
+exit codes. These bounded histories complement the exhaustive finite model cases;
+they do not replace the runtime property corpus, maximum-size checks, CLI review
+or real-use acceptance required by `docs/SPEC-NOVA-TABLE.md`.
+
+`BATCH-REPLAY-RUNS.tsv` records the six expected results from the Linux run on
+2026-09-29: five passing histories and the named corrupted-observation rejection,
+completed in 5.98 seconds. Each row pins the Lua, generated trace, configuration
+and captured evidence hashes. The executed Linux binary SHA256 was
+`b86c7070ff59988e20fe571393e0436d1cb19a006d34a0facd947cca06b001d0`;
+the TLC JAR SHA256 was
+`936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88`.
+Raw capture packets and logs remain in the private evidence archive.

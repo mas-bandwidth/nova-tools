@@ -7,9 +7,9 @@ import (
 )
 
 func fixture() Step {
-	before := Member{Exists: true, Revision: "7", Place: &Place{"r1", "c1", "1"}, Fields: map[string]string{"status": ""}}
-	after := Member{Exists: true, Revision: "8", Place: &Place{"r2", "c1", "1"}, Fields: map[string]string{"status": "done"}}
-	guard := Member{Exists: true, Revision: "2", Place: &Place{"r1", "c2", "2"}, Fields: map[string]string{"token": "permit"}}
+	before := Member{Exists: true, Epoch: "1", Revision: "7", Place: &Place{"r1", "c1", "1"}, Fields: map[string]string{"status": ""}}
+	after := Member{Exists: true, Epoch: "1", Revision: "8", Place: &Place{"r2", "c1", "1"}, Fields: map[string]string{"status": "done"}}
+	guard := Member{Exists: true, Epoch: "1", Revision: "2", Place: &Place{"r1", "c2", "2"}, Fields: map[string]string{"token": "permit"}}
 	canonical := []byte(`{"schema":1,"operation_id":"op1"}`)
 	r := &Receipt{StreamID: "1-0", OperationID: "op1", Digest: "digest", Actor: "w1", Table: "t1", Epoch: "1", BeforeRevision: "12", AfterRevision: "13", Kind: "changed", SelectedCount: 2, GuardCount: 1, ChangedCount: 1, Members: []Delta{{"m1", cloneMember(before), cloneMember(after)}, {"m3", cloneMember(guard), cloneMember(guard)}}}
 	var state ModelState
@@ -19,9 +19,9 @@ func fixture() Step {
 	step := Step{
 		Request: Request{Canonical: canonical, OperationID: "op1", Digest: "digest", Actor: "w1", Table: "t1", Epoch: "1", Revision: "12", Selected: []string{"m1", "m3"}, ExpectedRevision: map[string]*string{"m1": strptr("7"), "m3": strptr("2")}},
 		Result:  Accepted,
-		Before:  Snapshot{Image: map[string][]byte{"all": []byte("before")}, TableRevision: "12", Epoch: "1", Members: map[string]Member{"m1": before, "m3": guard}, Operations: 0, Receipts: 0},
-		After: Snapshot{Image: map[string][]byte{"all": []byte("after")}, TableRevision: "13", Epoch: "1", Members: map[string]Member{"m1": after, "m3": guard}, Operations: 1, Receipts: 1,
-			Recorded: &OperationRecord{Table: "t1", Epoch: "1", OperationID: "op1", Digest: "digest", ReceiptID: "1-0", Canonical: canonical}, LastReceipt: r},
+		Before:  Snapshot{Image: map[string][]byte{"table:t1:revision": []byte("before")}, TableRevision: "12", Epoch: "1", EpochFields: map[string]string{"n": "1"}, RevisionFields: map[string]string{"n": "12"}, Definitions: map[string]map[string]string{"1": {"_present": "1", "_revision": "12"}, "2": {}}, Members: map[string]Member{"m1": before, "m3": guard}, Operations: 0, Receipts: 0, StreamInfo: StreamInfo{LastGeneratedID: "0-0", MaxDeletedID: "0-0"}},
+		After: Snapshot{Image: map[string][]byte{"table:t1:revision": []byte("after")}, TableRevision: "13", Epoch: "1", EpochFields: map[string]string{"n": "1"}, RevisionFields: map[string]string{"n": "13"}, Definitions: map[string]map[string]string{"1": {"_present": "1", "_revision": "13"}, "2": {}}, Members: map[string]Member{"m1": after, "m3": guard}, Operations: 1, Receipts: 1, StreamInfo: StreamInfo{EntriesAdded: 1, LastGeneratedID: "1-0", MaxDeletedID: "0-0"}, Events: []StreamEvent{{ID: "1-0", Fields: map[string]string{"verb": "apply"}}},
+			Recorded: &OperationRecord{Table: "t1", Epoch: "1", OperationID: "op1", Digest: "digest", ReceiptID: "1-0", BeforeRevision: "12", AfterRevision: "13", Outcome: "changed", Canonical: canonical}, LastReceipt: r},
 		Receipt: r, BeforeModel: state, AfterModel: state,
 		TableBaseline: "12", MemberBaseline: map[string]string{"m1": "7", "m3": "2"},
 		Action: BatchAction{Table: "t1", Epoch: "1", OperationID: "op1", Actor: "w1", Digest: "digest", Canonical: canonical, ProjectedRevision: 0, Members: []MemberAction{
@@ -78,7 +78,7 @@ func TestRefusalAndReplayRequireCompleteImageAndOriginalReceipt(t *testing.T) {
 	if err := ValidateStep(s); err != nil {
 		t.Fatal(err)
 	}
-	s.After.Image = map[string][]byte{"all": []byte("changed")}
+	s.After.Image = map[string][]byte{"table:t1:revision": []byte("changed")}
 	if err := ValidateStep(s); err == nil || !strings.Contains(err.Error(), "complete store image") {
 		t.Fatalf("error = %v", err)
 	}
@@ -86,7 +86,7 @@ func TestRefusalAndReplayRequireCompleteImageAndOriginalReceipt(t *testing.T) {
 	s.Result = Replayed
 	s.After = s.Before
 	s.PriorReceipt = s.Receipt
-	s.Before.Recorded = &OperationRecord{Table: "t1", Epoch: "1", OperationID: "op1", Digest: "digest", ReceiptID: "1-0", Canonical: s.Request.Canonical}
+	s.Before.Recorded = &OperationRecord{Table: "t1", Epoch: "1", OperationID: "op1", Digest: "digest", ReceiptID: "1-0", BeforeRevision: "12", AfterRevision: "13", Outcome: "changed", Canonical: s.Request.Canonical}
 	s.After.Recorded = s.Before.Recorded
 	if err := ValidateStep(s); err != nil {
 		t.Fatal(err)
@@ -203,7 +203,7 @@ func TestCaptureReadsBothSidesAndFreezesReceiptAndImage(t *testing.T) {
 			}
 			return f.AfterModel, nil
 		},
-		func(context.Context, Request) (Result, *Receipt, *Receipt, error) {
+		func(context.Context, Request, Snapshot) (Result, *Receipt, *Receipt, error) {
 			calls++
 			return Accepted, f.Receipt, nil, nil
 		})
@@ -214,7 +214,7 @@ func TestCaptureReadsBothSidesAndFreezesReceiptAndImage(t *testing.T) {
 		t.Fatalf("reads=%d calls=%d", reads, calls)
 	}
 	f.Receipt.Members[0].Before.Fields["status"] = "corrupt"
-	f.After.Image["all"][0] = 'X'
+	f.After.Image["table:t1:revision"][0] = 'X'
 	if err := ValidateStep(step); err != nil {
 		t.Fatalf("retained evidence changed after source mutation: %v", err)
 	}

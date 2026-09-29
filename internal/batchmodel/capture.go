@@ -30,7 +30,7 @@ type Project func(Snapshot, ProjectionContext) (ModelState, error)
 // Invoke sends exactly one FCALL and returns its decoded reply. The retained
 // prior receipt on an identical retry must come from the durable operation
 // record, not be synthesized from the new reply.
-type Invoke func(context.Context, Request) (Result, *Receipt, *Receipt, error)
+type Invoke func(context.Context, Request, Snapshot) (Result, *Receipt, *Receipt, error)
 
 // CaptureStep reads before, invokes once, and reads after. It freezes all
 // mutable maps/slices so later decoder reuse or mutation cannot silently edit
@@ -49,7 +49,7 @@ func CaptureStep(ctx context.Context, index uint64, q Request, action BatchActio
 		return Step{}, fmt.Errorf("project before: %w", err)
 	}
 	beforeModel = cloneModelState(beforeModel)
-	result, receipt, prior, err := invoke(ctx, q)
+	result, receipt, prior, err := invoke(ctx, q, cloneSnapshot(before))
 	if err != nil {
 		return Step{}, fmt.Errorf("invoke: %w", err)
 	}
@@ -148,12 +148,126 @@ func cloneSnapshot(s Snapshot) Snapshot {
 		}
 		s.Members = m
 	}
+	if s.Definitions != nil {
+		out := make(map[string]map[string]string, len(s.Definitions))
+		for epoch, fields := range s.Definitions {
+			f := make(map[string]string, len(fields))
+			for k, v := range fields {
+				f[k] = v
+			}
+			out[epoch] = f
+		}
+		s.Definitions = out
+	}
+	if s.RowFields != nil {
+		rows := make(map[string]map[string]map[string]string, len(s.RowFields))
+		for epoch, byRow := range s.RowFields {
+			copyRows := make(map[string]map[string]string, len(byRow))
+			for row, fields := range byRow {
+				cloned := make(map[string]string, len(fields))
+				for k, v := range fields {
+					cloned[k] = v
+				}
+				copyRows[row] = cloned
+			}
+			rows[epoch] = copyRows
+		}
+		s.RowFields = rows
+	}
+	if s.RevisionFields != nil {
+		fields := make(map[string]string, len(s.RevisionFields))
+		for k, v := range s.RevisionFields {
+			fields[k] = v
+		}
+		s.RevisionFields = fields
+	}
+	if s.EpochFields != nil {
+		fields := make(map[string]string, len(s.EpochFields))
+		for k, v := range s.EpochFields {
+			fields[k] = v
+		}
+		s.EpochFields = fields
+	}
+	if s.Rows != nil {
+		out := make(map[string][]string, len(s.Rows))
+		for epoch, rows := range s.Rows {
+			out[epoch] = append([]string(nil), rows...)
+		}
+		s.Rows = out
+	}
+	if s.RowScores != nil {
+		scores := make(map[string]map[string]string, len(s.RowScores))
+		for epoch, byRow := range s.RowScores {
+			copyRows := make(map[string]string, len(byRow))
+			for row, score := range byRow {
+				copyRows[row] = score
+			}
+			scores[epoch] = copyRows
+		}
+		s.RowScores = scores
+	}
+	if s.Bindings != nil {
+		out := make(map[Cell]string, len(s.Bindings))
+		for c, v := range s.Bindings {
+			out[c] = v
+		}
+		s.Bindings = out
+	}
+	if s.CellTypes != nil {
+		out := make(map[Cell]string, len(s.CellTypes))
+		for c, v := range s.CellTypes {
+			out[c] = v
+		}
+		s.CellTypes = out
+	}
+	if s.CellMembers != nil {
+		out := make(map[Cell]map[string]string, len(s.CellMembers))
+		for c, m := range s.CellMembers {
+			members := make(map[string]string, len(m))
+			for id, score := range m {
+				members[id] = score
+			}
+			out[c] = members
+		}
+		s.CellMembers = out
+	}
 	if s.Recorded != nil {
 		r := *s.Recorded
 		r.Canonical = append([]byte(nil), r.Canonical...)
+		r.ResultJSON = append([]byte(nil), r.ResultJSON...)
 		s.Recorded = &r
 	}
+	if s.OperationRecords != nil {
+		records := make(map[string]OperationRecord, len(s.OperationRecords))
+		for k, r := range s.OperationRecords {
+			r.Canonical = append([]byte(nil), r.Canonical...)
+			r.ResultJSON = append([]byte(nil), r.ResultJSON...)
+			records[k] = r
+		}
+		s.OperationRecords = records
+	}
+	if s.Events != nil {
+		events := make([]StreamEvent, len(s.Events))
+		for i, e := range s.Events {
+			events[i].ID = e.ID
+			events[i].RawFields = append([]string(nil), e.RawFields...)
+			events[i].Fields = make(map[string]string, len(e.Fields))
+			for k, v := range e.Fields {
+				events[i].Fields[k] = v
+			}
+		}
+		s.Events = events
+	}
 	s.LastReceipt = cloneReceipt(s.LastReceipt)
+	if s.LastEvent != nil {
+		e := *s.LastEvent
+		e.RawFields = append([]string(nil), s.LastEvent.RawFields...)
+		e.Fields = make(map[string]string, len(s.LastEvent.Fields))
+		for k, v := range s.LastEvent.Fields {
+			e.Fields[k] = v
+		}
+		s.LastEvent = &e
+	}
 	return s
 }
 
