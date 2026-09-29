@@ -54,12 +54,12 @@ var swarmAudit = audit.Config{
 		// the harness's own capture -- a file a card can write -- so nothing but the empty
 		// string and an oneline.Field-escaped path can come back.
 		"fenceSuffix",
-		// doctorOther and doctorReported (doctor.go) render the two tails of a DOCTOR
-		// UNREADABLE line: the other binary's path through oneline.Field and its stamp
+		// doctorOtherSentence (doctor.go) renders the tail of a DOCTOR UNREADABLE line about
+		// the other binary: its path through oneline.Field and its stamp
 		// through doctorExcerpt (oneline.Cap then oneline.Escape) inside themselves, beside
 		// literal words, so what comes back is one escaped token; doctorExcerpt is the
 		// stamp's bounded escape itself.
-		"doctorOther", "doctorReported", "doctorExcerpt",
+		"doctorOtherSentence", "doctorExcerpt",
 		// swarm.WallLine (issue #644's follow-up) builds the `WALL task=<id> path=<p>
 		// step=<n> [commits=<n> branch=<name>]` report line and puts every field through
 		// oneline.Field inside itself. The path and step come from the card's own log and

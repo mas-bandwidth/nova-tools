@@ -407,7 +407,7 @@ func TestPreflightRefusesAnUnreadableBinary(t *testing.T) {
 		absent      []string
 	}{
 		{"hang", "exec sleep 30", good, "path", 0, 2,
-			[]string{"DOCTOR UNREADABLE", "path=", "timed out after 100ms", "stamp=nova-swarm good-stamp", "by hand"},
+			[]string{"DOCTOR UNREADABLE", "path=", "timed out after 100ms", "the other binary, ", ", reported stamp=nova-swarm good-stamp;", "by hand"},
 			[]string{"DOCTOR DRIFT", "shadows"}},
 		{"print then hang: the stamp is compared and the hang reported", "echo 'nova-swarm stale-stamp'; exec sleep 30", good, "path", 500 * time.Millisecond, 2,
 			[]string{"DOCTOR DRIFT path=", "stale-stamp", "shadows", "DOCTOR UNREADABLE", "timed out after 500ms"}, nil},
@@ -422,7 +422,9 @@ func TestPreflightRefusesAnUnreadableBinary(t *testing.T) {
 		{"the local copy hangs", good, "exec sleep 30", "local", 0, 2,
 			[]string{"DOCTOR UNREADABLE", "local=", "timed out after 100ms", "stamp=nova-swarm good-stamp"}, []string{"DOCTOR DRIFT"}},
 		{"both hang: each is named", "exec sleep 30", "exec sleep 30", "path,local", 0, 2,
-			[]string{"DOCTOR UNREADABLE reading the version of path=", "DOCTOR UNREADABLE reading the version of local=", "timed out after 100ms"}, []string{"DOCTOR DRIFT"}},
+			[]string{"DOCTOR UNREADABLE reading the version of path=", "DOCTOR UNREADABLE reading the version of local=", "timed out after 100ms", "could not be read either: timed out after 100ms"}, []string{"DOCTOR DRIFT", "reported nothing", "no other binary"}},
+		{"the PATH binary hangs and no local copy is installed", "exec sleep 30", "", "path", 0, 2,
+			[]string{"DOCTOR UNREADABLE", "timed out after 100ms", "the other binary, ", "is not installed"}, []string{"reported nothing", "no other binary"}},
 		{"both answer and agree", good, good, "", 0, 0, nil, []string{"DOCTOR"}},
 		{"no local copy is tolerated", good, "", "", 0, 0, nil, []string{"DOCTOR"}},
 	}
@@ -677,5 +679,84 @@ func TestPreflightReadsArgumentsAfterTheGlobalFlagsAreStripped(t *testing.T) {
 		if stop != c.stop || (stop && code != 2) || (!stop && code != 0) {
 			t.Errorf("%s: preflight(%v) = (exit=%d, stop=%v), want stop=%v\n%s", c.name, c.args, code, stop, c.stop, errOut.String())
 		}
+	}
+}
+
+// The other binary's part of an unreadable line is a plain sentence in each of its cases:
+// there is no other binary, it could not be read either, it is not installed, it reported a
+// stamp. It is never "no other binary reported nothing".
+func TestDoctorUnreadableLineSaysWhatTheOtherBinaryCameTo(t *testing.T) {
+	t.Parallel()
+	failing := func(path string) (string, error) { return "", errors.New("exited 3") }
+	env := doctorEnv{
+		lookPath: func(string) (string, error) { return "", errors.New("not on PATH") },
+		homeDir:  func() (string, error) { return "/home/me", nil },
+		read: func(path string) (string, error) {
+			switch path {
+			case "/p/one":
+				return "", errors.New("timed out after 5s")
+			case "/l/one":
+				return doctorRebuiltLine, nil
+			case "/l/gone":
+				return "", errDoctorNotFound
+			}
+			return failing(path)
+		},
+	}
+	cases := []struct {
+		name, path, local string
+		want              string
+		not               []string
+	}{
+		{"the other binary reported a stamp", "/p/one", "/l/one", ", reported stamp=" + doctorRebuiltLine, nil},
+		{"there is no other binary: one file", "/p/one", "/p/one", "there is no other binary: PATH resolves to the local copy", []string{"reported"}},
+		{"there is no other binary: nothing resolved", "/p/one", "", "there is no other binary to compare with", []string{"reported"}},
+		{"the other binary is not installed", "/p/one", "/l/gone", ", is not installed", []string{"reported", "no other binary"}},
+		{"the other binary could not be read either", "/p/one", "/l/two", ", could not be read either: exited 3", []string{"reported", "no other binary"}},
+	}
+	for _, c := range cases {
+		var out, errOut bytes.Buffer
+		args := []string{"--path", c.path}
+		if c.local != "" {
+			args = append(args, "--local", c.local)
+		} else {
+			env.homeDir = func() (string, error) { return "", errors.New("no home") }
+		}
+		if code := env.cmdDoctor(args, &out, &errOut); code != 2 {
+			t.Errorf("%s: exit %d, want 2\n%s", c.name, code, errOut.String())
+			continue
+		}
+		got := errOut.String()
+		if !strings.Contains(got, c.want) {
+			t.Errorf("%s: the line lacks %q:\n%s", c.name, c.want, got)
+		}
+		for _, no := range c.not {
+			if strings.Contains(got, no) {
+				t.Errorf("%s: the line holds %q:\n%s", c.name, no, got)
+			}
+		}
+		if strings.Contains(got, "no other binary reported") {
+			t.Errorf("%s: the line reads as its opposite:\n%s", c.name, got)
+		}
+	}
+}
+
+// With nothing on PATH and no local copy, nothing is read, and the doctor says that instead
+// of reporting a stamp: exit 0, no refusal.
+func TestDoctorSaysWhenThereIsNothingToCompare(t *testing.T) {
+	t.Parallel()
+	env := doctorFake(map[string]string{}, noPath, "/home/me")
+	var out, errOut bytes.Buffer
+	if code := env.cmdDoctor(nil, &out, &errOut); code != 0 || errOut.Len() != 0 {
+		t.Fatalf("exit %d, stderr %q, want 0 and silence", code, errOut.String())
+	}
+	if want := "DOCTOR OK nothing to compare: no nova-swarm on PATH and none under the local directory\n"; out.String() != want {
+		t.Errorf("got %q, want %q", out.String(), want)
+	}
+	if strings.Contains(out.String(), "devel") || strings.Contains(out.String(), "stamp=") {
+		t.Errorf("the line reports a stamp nobody read: %q", out.String())
+	}
+	if code, stop := env.preflight([]string{"batch", "--tokens", "1"}, &errOut); code != 0 || stop {
+		t.Errorf("the launch is refused with nothing to compare: (%d, %v)", code, stop)
 	}
 }

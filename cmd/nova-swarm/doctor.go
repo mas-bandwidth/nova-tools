@@ -228,6 +228,9 @@ type doctorReport struct {
 	localLine   string       // the full `version` line it printed, "" when it printed none
 	shadowed    bool         // both stamps read, and the two lines differ
 	unreadable  []doctorRead // every binary compared whose read failed
+	pathCause   string       // why PATH's binary could not be read, "" when it was
+	localCause  string       // why the local copy could not be read, "" when it was, "not found" when absent
+	sameFile    bool         // PATH's binary is the local copy: there is one binary
 	stamp       string       // the line to report when the pair is fine
 }
 
@@ -275,16 +278,17 @@ func (e doctorEnv) compareBinaries(pathBinary, localBinary string) doctorReport 
 	}
 	wg.Wait()
 	if readPath {
-		r.pathLine = pathRead.line
+		r.pathLine, r.pathCause = pathRead.line, pathRead.cause
 		if pathRead.cause != "" {
 			r.unreadable = append(r.unreadable, pathRead)
 		}
 	}
 	if !readLocal {
 		r.stamp = r.pathLine
+		r.sameFile = readPath && localBinary != "" && !readLocal
 		return r
 	}
-	r.localLine = localRead.line
+	r.localLine, r.localCause = localRead.line, localRead.cause
 	if localRead.cause != "" && localRead.cause != errDoctorNotFound.Error() {
 		r.unreadable = append(r.unreadable, localRead)
 	}
@@ -353,7 +357,13 @@ func (e doctorEnv) cmdDoctor(args []string, stdout, stderr io.Writer) int {
 	}
 	r := e.compareBinaries(e.resolveBinaries(*pathFlag, *localFlag))
 	if !r.refused() {
-		fmt.Fprintf(stdout, "DOCTOR OK stamp=%s\n", doctorExcerpt(doctorStamp(r.stamp)))
+		if r.stamp == "" {
+			// No binary was read: there is nothing to compare, and the line says so rather
+			// than reporting a stamp nobody read.
+			fmt.Fprintln(stdout, "DOCTOR OK nothing to compare: no nova-swarm on PATH and none under the local directory")
+			return 0
+		}
+		fmt.Fprintf(stdout, "DOCTOR OK stamp=%s\n", doctorExcerpt(r.stamp))
 		return 0
 	}
 	writeDoctorRefusal(stderr, r)
@@ -374,31 +384,38 @@ func writeDoctorRefusal(stderr io.Writer, r doctorReport) {
 			oneline.Field(r.pathBinary), oneline.Field(r.localBinary))
 	}
 	for _, u := range r.unreadable {
-		role, other, otherLine := "path", r.localBinary, r.localLine
+		role := "path"
 		if u.binary == r.localBinary && u.binary != r.pathBinary {
-			role, other, otherLine = "local", r.pathBinary, r.pathLine
+			role = "local"
 		}
-		fmt.Fprintf(stderr, "DOCTOR UNREADABLE reading the version of %s=%s: %s; %s reported %s; run `%s version` by hand and rebuild or remove the binary that does not answer, then launch again\n",
+		fmt.Fprintf(stderr, "DOCTOR UNREADABLE reading the version of %s=%s: %s; %s; run `%s version` by hand and rebuild or remove the binary that does not answer, then launch again\n",
 			oneline.Field(role), oneline.Field(u.binary), oneline.Escape(u.cause),
-			doctorOther(other), doctorReported(otherLine), oneline.Field(u.binary))
+			doctorOtherSentence(r, role), oneline.Field(u.binary))
 	}
 }
 
-// doctorOther names the other binary in an unreadable line, "no other binary" when the
-// comparison had none. What it returns is already one escaped token.
-func doctorOther(binary string) string {
-	if binary == "" {
-		return "no other binary"
+// doctorOtherSentence says, in words, what the binary that was not the one refused came to:
+// what it reported, that it could not be read either, that it is not installed, or that
+// there is no other binary at all. What it returns is one line, its paths escaped as fields
+// and its stamp as a bounded excerpt.
+func doctorOtherSentence(r doctorReport, role string) string {
+	other, line, cause := r.localBinary, r.localLine, r.localCause
+	if role == "local" {
+		other, line, cause = r.pathBinary, r.pathLine, r.pathCause
 	}
-	return oneline.Field(binary)
-}
-
-// doctorReported is what the other binary said: its stamp, escaped, or that it said nothing.
-func doctorReported(line string) string {
-	if strings.TrimSpace(line) == "" {
-		return "nothing"
+	switch {
+	case r.sameFile:
+		return "there is no other binary: PATH resolves to the local copy"
+	case other == "":
+		return "there is no other binary to compare with"
+	case cause == errDoctorNotFound.Error():
+		return "the other binary, " + oneline.Field(other) + ", is not installed"
+	case cause != "" && line == "":
+		return "the other binary, " + oneline.Field(other) + ", could not be read either: " + oneline.Escape(cause)
+	case cause != "":
+		return "the other binary, " + oneline.Field(other) + ", reported stamp=" + doctorExcerpt(line) + " and then failed: " + oneline.Escape(cause)
 	}
-	return "stamp=" + doctorExcerpt(line)
+	return "the other binary, " + oneline.Field(other) + ", reported stamp=" + doctorExcerpt(line)
 }
 
 // doctorLaunchVerb reports whether v is a verb that starts a card, which is where the
