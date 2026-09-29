@@ -14,7 +14,7 @@ make map            # regenerate AGENTS.md and per-directory maps
 | --- | --- | --- | --- |
 | `.github/` | CI workflows and automation | `go test ./internal/ci` | `make test` |
 | `assets/` | static assets and schemas | none | none |
-| [cmd/](cmd/AGENTS.md) | 15 nova command-line tools | `nova-ci local` | `make build` |
+| [cmd/](cmd/AGENTS.md) | 16 nova command-line tools | `nova-ci local` | `make build` |
 | `deprecated/` | tools and modules not in use, kept for reference only; never built, tested or maintained | none | none |
 | [docs/](docs/AGENTS.md) | specs, guides, and proposals | `go test ./internal/docs` | `go test ./internal/docs` |
 | `fleet/` | fleet loop units and bench templates | none | none |
@@ -23,5 +23,5 @@ make map            # regenerate AGENTS.md and per-directory maps
 | `profiles/` | the darwin sandbox profile template internal/sandbox embeds, and its check script | `go test ./internal/sandbox` | `go test ./internal/sandbox` |
 | `scripts/` | maintenance and operational scripts | none | none |
 | `testdata/` | shared test fixtures and data | `go test ./internal/ci` | `make test` |
-| `tla/` | the TLA+ models of the state machines and their runners | `tla/check_table.py, tla/check_member.py (each under a 120 s budget)` | none |
+| `tla/` | the TLA+ models of the state machines and their runners | `go test ./internal/tlc` | `make tlc-test` |
 | [tools/](tools/AGENTS.md) | developer and bench tools | `nova-ci local` | `make map` |

@@ -22,21 +22,11 @@ keep internal/nsprint/testutil
 keep internal/nsprint/testutil/pg
 keep internal/nsprint/verbflag
 
-# nova-swarm (Glenn 2026-09-27: retired for now; its pool dispatcher is reachable
-# from no command and is to be rewritten on nova-table with the sprint).
-# cmd/nova-swarm moved to deprecated/cmd/. Living code still stands on
-# internal/swarm, so it stays here and stays tested until it is lifted out:
-# internal/ci's card-template and toolchain-root class tests, and internal/redisq's
-# and internal/secrets' tests.
-internal/swarm
-keep internal/swarm
-
 # nova-decide (Glenn 2026-09-27: parked because it is not proven yet; the Jev
 # client, to return when its value is measured). cmd/nova-decide,
 # internal/jevcalib and internal/decide/redtriage moved to deprecated/. Living
 # tools stand on the rest, so it stays tested until it is lifted out.
 internal/decide
-# internal/swarm (kept above)
 keep internal/decide
 # internal/decide
 keep internal/decide/questions

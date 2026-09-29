@@ -1,7 +1,7 @@
 package swarm
 
 // Bench slot leases: a bench-wide lease store with shares, reserve, expiry and
-// live-pid fencing (deprecated/docs/SPEC-SWARM.md, "Bench slot leases").
+// live-pid fencing (docs/SPEC-SWARM.md, "Bench slot leases").
 //
 // The store is <store>/slots with one directory per lease. A lease directory
 // is published by renaming a fully-written staging directory into place, so a

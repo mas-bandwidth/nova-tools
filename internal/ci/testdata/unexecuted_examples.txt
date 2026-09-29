@@ -12,8 +12,6 @@
 # entry that matches no real example is a stale entry and a red run. Remove an
 # entry by moving it to compared_examples.txt once a test executes it.
 
-$ HOME=/Users/me/pool/jobs/j1/home \
-$ mkdir -p /Users/me/pool/jobs/j1/home
 $ nova-bus draft --bus ./bus --as Bo --to Ada --subject gate > draft.md
 $ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --advance --remote origin --branch main
 $ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --full --advance --remote origin --branch main
@@ -75,7 +73,6 @@ example: nova-memory search --root ./corpus --channels bm25 --k 3 lantern glazin
 example: nova-redis recall --addr 127.0.0.1:6379 --owner rowan --name note
 example: nova-redis spill --addr 127.0.0.1:6379 --owner rowan --name note --ttl 10m --value hi
 example: nova-redis version
-example: nova-sandbox --read /Users/me/pool/ref/nova-tools@abc123 \
 example: nova-sandbox run --name card1 --size 8g --timeout 30m --go --out ./handoff \
 example: nova-secrets check --store ./secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops
 example: nova-secrets exec --store ./secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops --only GH_TOKEN --require GH_TOKEN -- gh api user

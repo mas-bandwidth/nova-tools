@@ -1876,7 +1876,7 @@ func TestTheProbeExampleInTheBannerSetsHome(t *testing.T) {
 	// "HOME=" goes green on an example that still exits 2 for any other reason --
 	// a --secret that no longer exists, a flag that was renamed, a --write whose
 	// parent is unwritable. So paste the block the way a reader does: every
-	// /Users/me path becomes a path in this test's temp dir, the mkdir line is the
+	// /path/to path becomes a path in this test's temp dir, the mkdir line is the
 	// mkdir, and the probe line is run with the HOME it carries. EXIT 2 IS "COULD
 	// NOT RUN", and that is the failure this test exists to catch (DeepSeek's read
 	// of #108 at ab880be, finding 2).
@@ -1941,7 +1941,7 @@ func TestTheProbeExampleInTheBannerSetsHome(t *testing.T) {
 }
 
 // exampleCommands turns one banner example block into the lines a reader would type:
-// continuations joined, indentation dropped, and every /Users/me path pointed at a
+// continuations joined, indentation dropped, and every /path/to path pointed at a
 // directory this test owns. The substitution is the only edit a reader makes.
 func exampleCommands(t *testing.T, block, base string) []string {
 	t.Helper()
@@ -1960,7 +1960,7 @@ func exampleCommands(t *testing.T, block, base string) []string {
 		cmdLine = strings.ReplaceAll(cmdLine, `"$PWD/scratch`, filepath.Join(base, "scratch"))
 		cmdLine = strings.ReplaceAll(cmdLine, `"$PWD"`, base)
 		cmdLine = strings.ReplaceAll(cmdLine, `$PWD`, base)
-		cmdLine = strings.ReplaceAll(cmdLine, "/Users/me", base)
+		cmdLine = strings.ReplaceAll(cmdLine, "/path/to", base)
 		lines = append(lines, cmdLine)
 		joined = ""
 	}

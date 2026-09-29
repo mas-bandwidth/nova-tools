@@ -18,3 +18,11 @@ internal/swarm/publicbatch_functional_test.go:TestBatchPublicGateListedRunsUnlis
 internal/update/delivery_test.go:fakeBus sleeps 30s in a helper child that stands in for a hung bus; the test kills it at its own short bound, so the thirty seconds are never paid
 internal/update/inventory_spec_test.go:TestSnapshotTakesItsBoundsFromFlags hands the code under test --timeout 10s; a ceiling the run never reaches: 0.50 s on hetzner at dev 64b9bec48
 internal/update/update_test.go:TestHelperProcess sleeps 30s as a re-exec child standing in for a hung binary; the caller kills it at a short bound, so the thirty seconds are never paid
+cmd/nova-swarm/fixture_guards_test.go:TestTheDeadlineACappedJobIsMeasuredAgainstIsTheOneItRunsUnder hands the code under test --deadline 9s; a ceiling the run never reaches: 0.00 s on hetzner at dev 64b9bec48
+cmd/nova-swarm/native_test.go:TestCmdNativeCLI hands the code under test --deadline 10s; a ceiling the run never reaches: 0.03 s on hetzner at dev 64b9bec48
+cmd/nova-swarm/native_test.go:TestNativeAuthCopyIsGoneAfterTheRun hands the code under test --deadline 10s; a ceiling the run never reaches: 0.03 s on hetzner at dev 64b9bec48
+cmd/nova-swarm/native_test.go:TestNativeAuthWithAWorkerNamesItsLegacyCopy hands the code under test --deadline 10s; a ceiling the run never reaches: 0.03 s on hetzner at dev 64b9bec48
+cmd/nova-swarm/native_test.go:TestNativeOKNamesTheWall hands the code under test --deadline 10s; a ceiling the run never reaches: 0.06 s on hetzner at dev 64b9bec48
+cmd/nova-swarm/native_test.go:TestNativeRefusesAModelThatDiffersFromTheWorkerDescription hands the code under test --deadline 10s; a ceiling the run never reaches: 0.00 s on hetzner at dev 64b9bec48
+cmd/nova-swarm/native_test.go:TestNativeSecretWorkerWritesNoAuthFileAndTheHarnessSeesName hands the code under test --deadline 10s; a ceiling the run never reaches: 0.03 s on hetzner at dev 64b9bec48
+cmd/nova-swarm/native_test.go:TestNativeWorkerModelGateComparesQualifiedName hands the code under test --deadline 10s; a ceiling the run never reaches: 0.03 s on hetzner at dev 64b9bec48

@@ -22,3 +22,5 @@
 # 15, go test -p 2 -parallel 2, GOMAXPROCS=2, -count=1, 2026-09-26) after its
 # staged-kill tests moved to process_functional_test.go. Budget 1.5x.
 internal/update	-	14.1	9.4s@studio
+# @run36262781720: PR #4399's run, 2026-09-26: cmd/nova-swarm 17-19 s as a package,
+cmd/nova-swarm	-	28.5	19s@run36262781720

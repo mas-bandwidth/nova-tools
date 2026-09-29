@@ -13,17 +13,31 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/tlc"
 )
 
 // Model changes require new measured evidence, independent of checkout mtimes.
 // The fingerprint includes every model, configuration, case declaration and the
-// runner, so changing a dependency or the interpretation of a result invalidates
-// the old records too. No JVM or network runs in this class test.
+// runner (internal/tlc's non-test files), so changing a dependency or the
+// interpretation of a result invalidates the old records too. No JVM or network
+// runs in this class test.
 func TestTLCRecordsCoverCurrentModels(t *testing.T) {
 	t.Parallel()
 	root := repoRoot(t)
 	for _, problem := range tlcRecordProblems(root) {
 		t.Error(problem)
+	}
+	// The runner that writes the records and this class test must compute the
+	// same fingerprint of the same files: a record the runner wrote is stale only
+	// because an input changed, never because the two disagree on which files an
+	// input is. The runner reads its own files from the bytes it was built with.
+	want, err := tlcInputFingerprint(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := tlc.Fingerprint(root); err != nil || got != want {
+		t.Errorf("internal/tlc computes fingerprint %s (%v), this class test computes %s: the runner and the class disagree on the inputs", got, err, want)
 	}
 	plan, err := readTLCTSV(filepath.Join(root, "tla", "CASES.tsv"), []string{"config", "module", "expected", "property", "deadlock", "group", "gate", "debt"})
 	if err != nil {
@@ -67,13 +81,19 @@ func readTLCTSV(path string, header []string) ([][]string, error) {
 }
 
 func tlcInputFingerprint(root string) (string, error) {
-	paths := []string{filepath.Join(root, "tla", "CASES.tsv"), filepath.Join(root, "tools", "tlc.py")}
-	for _, pattern := range []string{"*.tla", "MC*.cfg"} {
-		matches, err := filepath.Glob(filepath.Join(root, "tla", pattern))
+	paths := []string{filepath.Join(root, "tla", "CASES.tsv")}
+	for _, pattern := range []string{"tla/*.tla", "tla/MC*.cfg", "internal/tlc/*.go"} {
+		matches, err := filepath.Glob(filepath.Join(root, filepath.FromSlash(pattern)))
 		if err != nil {
 			return "", err
 		}
-		paths = append(paths, matches...)
+		for _, m := range matches {
+			// The runner is internal/tlc's own files; its tests are not part of
+			// how a result is read.
+			if !strings.HasSuffix(m, "_test.go") {
+				paths = append(paths, m)
+			}
+		}
 	}
 	sort.Strings(paths)
 	h := sha256.New()
@@ -227,7 +247,7 @@ func TestTLCRecordFreshnessAndCoverageWitnesses(t *testing.T) {
 			}
 			write("tla/MCSample.tla", "sample model\n")
 			write("tla/MCSample.cfg", "sample configuration\n")
-			write("tools/tlc.py", "sample runner\n")
+			write("internal/tlc/run.go", "sample runner\n")
 			write("tla/CASES.tsv", "config\tmodule\texpected\tproperty\tdeadlock\tgroup\tgate\tdebt\nMCSample.cfg\tMCSample.tla\tpass\t-\tcheck\tsample\trequired\t-\n")
 			fingerprint, err := tlcInputFingerprint(root)
 			if err != nil {
@@ -240,7 +260,7 @@ func TestTLCRecordFreshnessAndCoverageWitnesses(t *testing.T) {
 			case "config":
 				write("tla/MCSample.cfg", "changed bounds\n")
 			case "runner":
-				write("tools/tlc.py", "changed interpretation\n")
+				write("internal/tlc/run.go", "changed interpretation\n")
 			case "new-case":
 				write("tla/MCAdded.cfg", "new configuration\n")
 			case "failed-record":

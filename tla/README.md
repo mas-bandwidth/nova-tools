@@ -15,23 +15,48 @@ The TLA+ modules here are the specifications of the state machines this repo imp
 | `TableFirstContact.tla` | `MCTableFirstContact*` | nova-table's first contact with a store (cmd/nova-table/library.go): a verb that meets "Function not found" loads the library with LoadMissing at most once per process and is sent again once, only when its first send ran nothing, with three reversed witnesses |
 | `FuseBox.tla` | `MCFuseBox*` | nova-fuse's box: the gate answers only from a box it read and from every box named, only a lift, init or your person's hand makes a surface clear, init never replaces a box, a lockdown always blows; five reversed witnesses |
 
-Runners. The table/member model checkers and the member execution replay each run their whole suite under one 120 s budget (a timeout is a failure, never a green); the bare java commands and the Lua replay carry no cap of their own, so wrap them (`timeout 120 ...`) when a bound matters. `-deadlock` on the java commands turns TLC's deadlock check OFF: these models end in a terminal stutter by design, and the safety and liveness properties are what they check.
+Runners. `tools/tlacheck` (Go, over `internal/tlc` and `internal/tablemodel`) runs the checks. Run it on a bench that has java and, for the replays, redis-server: neither belongs on a working machine. Every run is bounded by `--timeout` (a timeout is a failure, never a green), downloads nothing, and runs TLC in a private copy of the models under `--dir`, so the checkout never gains the error-trace files TLC writes beside a spec. The jar is `--jar`, or the environment variable `TLC_JAR`; java and redis-server are found on PATH, or named with `--java` and `--redis-server`, and the path found is echoed. `tlacheck help` and `tlacheck <verb> -h` say the rest.
+
+| Verb | What it runs |
+|---|---|
+| `run` | the declared cases of `CASES.tsv` (one group, or a shard), each held to the result the plan declares, under a 110 s budget, writing `RUNS.tsv` (`make tlc`) |
+| `groups` | the required groups of the plan, as JSON (`make tlc-groups`) |
+| `merge` | the `RUNS.tsv` of the group runs, joined in plan order into the committed `tla/RUNS.tsv` |
+| `table` | the table model: contracts, the five findings, the cross-table scope control (`--mode`), 120 s |
+| `member` | the member and epoch protocol and its four mutation controls (`--suite`), 120 s |
+| `replay` | the execution replay of a `table.lua` against `EpochMemberTable`, 120 s |
+| `witnesses` | the table model's findings replayed against a pinned `table.lua` in a disposable Redis |
 
 ```sh
-python3 tla/check_table.py  --jar /path/to/tla2tools.jar --mode all --out /tmp/table-results
-python3 tla/check_member.py --jar /path/to/tla2tools.jar --out /tmp/member-results
-python3 tla/check_member_replay.py --source internal/nsprint/fn/lua/table.lua --jar /path/to/tla2tools.jar --out /tmp/member-replay
-python3 tla/check_lua_witnesses.py <(git show f77458853af46fdbbafd6881a4b46006431f266f:internal/nsprint/fn/lua/table.lua)
+go run ./tools/tlacheck groups --root .
+go run ./tools/tlacheck run --root . --jar /path/to/tla2tools.jar --dir /tmp/tlc-out --group tablefirstcontact
+go run ./tools/tlacheck table --root . --jar /path/to/tla2tools.jar --dir /tmp/table-results --mode all
+go run ./tools/tlacheck member --root . --jar /path/to/tla2tools.jar --dir /tmp/member-results
+go run ./tools/tlacheck replay --root . --jar /path/to/tla2tools.jar --dir /tmp/member-replay --source internal/nsprint/fn/lua/table.lua
+git show f77458853af46fdbbafd6881a4b46006431f266f:internal/nsprint/fn/lua/table.lua > /tmp/table-pinned.lua
+go run ./tools/tlacheck witnesses /tmp/table-pinned.lua
 timeout 120 java -cp /path/to/tla2tools.jar tlc2.TLC -workers 8 -deadlock tla/MCCardMachine.tla
 timeout 120 java -cp /path/to/tla2tools.jar tlc2.TLC -workers 2 -deadlock tla/MCLandWatch.tla
 timeout 120 java -cp /path/to/tla2tools.jar tlc2.TLC -workers 2 -deadlock -config tla/MCFuseBox.cfg tla/MCFuseBox.tla
 ```
 
-tla2tools v1.7.4 (TLC 2.19); the fleet keeps a copy on space at `~/tla/tla2tools.jar`. The runners live here and not in rowan-new because the self repo is text only (its hook refuses machinery); the CI functional leg will run them under the two-minute cap once the runners carry the jar (owed).
+`-deadlock` on the java commands turns TLC's deadlock check off: these models end in a terminal stutter by design, and the safety and liveness properties are what they check; the bare java commands carry no cap of their own, so they are wrapped in `timeout`. The runners live here and not in the self repo because the self repo is text only.
+
+`RUNS.tsv` holds one record per declared case, and its `input_sha256` is the fingerprint of the inputs the records were measured on: every module, every `MC*.cfg`, `CASES.tsv` and the Go files of `internal/tlc` (the runner's reading of TLC's results; its tests are not part of it). A change to any of them makes the records stale, and `TestTLCRecordsCoverCurrentModels` says so. To refresh them, run every group on a bench with a binary built from the committed files and join the group runs:
+
+```sh
+go build -o /tmp/tlacheck ./tools/tlacheck
+for g in $(cut -f6 tla/CASES.tsv | sed 1d | sort -u); do
+  /tmp/tlacheck run --root . --jar /path/to/tla2tools.jar --dir /tmp/tlc-runs/$g --group $g
+done
+/tmp/tlacheck merge --root . --out tla/RUNS.tsv /tmp/tlc-runs/*/RUNS.tsv
+```
+
+(A group that ends over its budget exits 1 and still writes its records; the bench cases with declared debt are recorded as the failed measurements they are.)
 
 ## Table execution and receipt replay
 
-`check_member_replay.py` captures 32 controlled source-API transitions in a
+`tlacheck replay` captures 32 controlled source-API transitions in a
 disposable Redis, then replays their committed receipt arguments into a second
 fresh store. It checks event counts, revision continuity, metadata, member
 changes and affected cells independently against the observed store states.
@@ -53,6 +78,34 @@ Redis error preflight remain concrete-code functional-test obligations. No-ops
 map to unchanged abstract user state; the model does not encode the receipt
 ledger, which the replay runner checks separately. The original pinned baseline
 runner and its deliberately failing desired-contract gate remain unchanged.
+
+## Shell execution traces
+
+`tools/sessiontrace` captures 16 shell sessions (eight fixed random seeds,
+both keep-going settings) in an owned Redis. Each executed line records its
+output, refusal status and newly committed receipts. The relay loses selected
+write replies after the store answers; the receipt ledger must still contain
+exactly one effect. The harness also covers successful reads/writes, logical
+refusals, usage errors, overlong lines, quit and EOF without timing assertions.
+
+```sh
+go run ./tools/sessiontrace --jar /path/to/tla2tools.jar --out /tmp/session-trace
+```
+
+The runner has one 120-second budget for capture, TLC and negative controls.
+Go dependencies must already be cached; capture disables module downloads and
+automatic toolchain selection.
+It retains the trace, source/model/jar hashes, generated modules and TLC logs.
+The generated module invokes `TableSession` actions and checks observed line
+statuses, final exit, unread input and termination reason. Its input domain is
+the captured sequences and their suffixes. Corrupted final exit and line status
+must fail TLC; a duplicated durable effect must fail receipt validation.
+
+Receipts witness effects separately because `TableSession` does not model the
+ledger or table contents. This bounded replay covers the stated subset; signal
+delivery, store outages and watch liveness retain their existing functional
+and model controls. It is not a proof over arbitrary shell executions. The
+per-tick runtime check remains `watch --check`.
 
 ## The edit verbs (TableEdit) and order (TableOrder)
 

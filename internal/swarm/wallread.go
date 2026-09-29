@@ -3,7 +3,7 @@ package swarm
 // WHAT THE CARD IS SAYING, READ WHILE IT IS STILL SAYING IT.
 //
 // Until this file every wall question was asked of a file AFTER the child was gone:
-// deprecated/cmd/nova-swarm/native.go re-opened <job>/harness-output.log once the process had exited,
+// cmd/nova-swarm/native.go re-opened <job>/harness-output.log once the process had exited,
 // and internal/swarm/supervise.go did the same with <job>/harness.log. A run that stopped
 // making progress therefore cost its WHOLE deadline before anybody looked, and the
 // coordinator watching it saw nothing at all in the meantime.

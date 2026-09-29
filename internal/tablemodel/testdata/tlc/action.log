@@ -1,0 +1,148 @@
+TLC2 Version 2026.09.25.163503 (rev: 8f4bc8b)
+Running breadth-first search Model-Checking with fp 104 and seed 2684274836009969357 with 1 worker on 32 cores with 1926MB heap and 64MB offheap memory [pid: 4027755] (Linux 7.0.0-31-generic amd64, Eclipse Adoptium 21.0.12.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /tmp/port-tlc.GlG0Wb/tla/MCEpochMemberTable.tla
+Parsing file /tmp/port-tlc.GlG0Wb/tla/EpochMemberTable.tla
+Parsing file /tmp/tlc-2834467180573227134/_TLCTrace.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/port-tlc.GlG0Wb/tla/MemberTable.tla
+Parsing file /tmp/port-tlc.GlG0Wb/tla/TableMachine.tla
+Parsing file /tmp/tlc-2834467180573227134/Naturals.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-2834467180573227134/FiniteSets.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-2834467180573227134/Sequences.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-2834467180573227134/TLC.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-2834467180573227134/TLCExt.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Parsing file /tmp/tlc-2834467180573227134/Integers.tla (jar:file:/opt/tla/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TableMachine
+Semantic processing of module MemberTable
+Semantic processing of module EpochMemberTable
+Semantic processing of module TLC
+Semantic processing of module Integers
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module MCEpochMemberTable
+Linting of module TableMachine
+Linting of module MemberTable
+Linting of module EpochMemberTable
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module MCEpochMemberTable
+Starting... (2026-09-28 21:37:05)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-09-28 21:37:05.
+Error: Action property StaleWritesRefuse is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ seenEpoch = [w1 |-> 1, w2 |-> 1]
+/\ writer = "initial"
+/\ op = "initial"
+/\ binds = {}
+/\ checks = [ move |-> TRUE,
+  bound |-> TRUE,
+  clear |-> TRUE,
+  dropBound |-> TRUE,
+  bind |-> TRUE,
+  external |-> TRUE ]
+/\ data = { <<<<<<"external", 0>>, "external", "external">>, "m2", 2>>,
+  <<<<<<"t1", 1>>, "r1", "c1">>, "m1", 1>> }
+/\ step = 0
+/\ rows = { <<<<"t1", 1>>, "r1">>,
+  <<<<"t1", 1>>, "r2">>,
+  <<<<"t2", 1>>, "r1">>,
+  <<<<"t2", 1>>, "r2">> }
+/\ place = [ m1 |->
+      ( <<"t1", 1>> :> <<<<"t1", 1>>, "r1", "c1">> @@
+        <<"t1", 2>> :> <<<<"none", 0>>, "none", "none">> @@
+        <<"t2", 1>> :> <<<<"none", 0>>, "none", "none">> @@
+        <<"t2", 2>> :> <<<<"none", 0>>, "none", "none">> ),
+  m2 |->
+      ( <<"t1", 1>> :> <<<<"none", 0>>, "none", "none">> @@
+        <<"t1", 2>> :> <<<<"none", 0>>, "none", "none">> @@
+        <<"t2", 1>> :> <<<<"none", 0>>, "none", "none">> @@
+        <<"t2", 2>> :> <<<<"none", 0>>, "none", "none">> ),
+  m3 |->
+      ( <<"t1", 1>> :> <<<<"none", 0>>, "none", "none">> @@
+        <<"t1", 2>> :> <<<<"none", 0>>, "none", "none">> @@
+        <<"t2", 1>> :> <<<<"none", 0>>, "none", "none">> @@
+        <<"t2", 2>> :> <<<<"none", 0>>, "none", "none">> ) ]
+/\ live = {<<"t1", 1>>, <<"t1", 2>>, <<"t2", 1>>, <<"t2", 2>>}
+/\ activeEpoch = 1
+
+State 2: <BrokenStaleNext line 120, col 2 to line 125, col 69 of module EpochMemberTable>
+/\ seenEpoch = [w1 |-> 1, w2 |-> 1]
+/\ writer = "w1"
+/\ op = "advance-epoch"
+/\ binds = {}
+/\ checks = [ move |-> TRUE,
+  bound |-> TRUE,
+  clear |-> TRUE,
+  dropBound |-> TRUE,
+  bind |-> TRUE,
+  external |-> TRUE ]
+/\ data = { <<<<<<"external", 0>>, "external", "external">>, "m2", 2>>,
+  <<<<<<"t1", 1>>, "r1", "c1">>, "m1", 1>> }
+/\ step = 1
+/\ rows = { <<<<"t1", 1>>, "r1">>,
+  <<<<"t1", 1>>, "r2">>,
+  <<<<"t2", 1>>, "r1">>,
+  <<<<"t2", 1>>, "r2">> }
+/\ place = [ m1 |->
+      ( <<"t1", 1>> :> <<<<"t1", 1>>, "r1", "c1">> @@
+        <<"t1", 2>> :> <<<<"none", 0>>, "none", "none">> @@
+        <<"t2", 1>> :> <<<<"none", 0>>, "none", "none">> @@
+        <<"t2", 2>> :> <<<<"none", 0>>, "none", "none">> ),
+  m2 |->
+      ( <<"t1", 1>> :> <<<<"none", 0>>, "none", "none">> @@
+        <<"t1", 2>> :> <<<<"none", 0>>, "none", "none">> @@
+        <<"t2", 1>> :> <<<<"none", 0>>, "none", "none">> @@
+        <<"t2", 2>> :> <<<<"none", 0>>, "none", "none">> ),
+  m3 |->
+      ( <<"t1", 1>> :> <<<<"none", 0>>, "none", "none">> @@
+        <<"t1", 2>> :> <<<<"none", 0>>, "none", "none">> @@
+        <<"t2", 1>> :> <<<<"none", 0>>, "none", "none">> @@
+        <<"t2", 2>> :> <<<<"none", 0>>, "none", "none">> ) ]
+/\ live = {<<"t1", 1>>, <<"t1", 2>>, <<"t2", 1>>, <<"t2", 2>>}
+/\ activeEpoch = 2
+
+State 3: <BrokenStaleNext line 120, col 2 to line 125, col 69 of module EpochMemberTable>
+/\ seenEpoch = [w1 |-> 1, w2 |-> 1]
+/\ writer = "w1"
+/\ op = "add"
+/\ binds = {}
+/\ checks = [ move |-> TRUE,
+  bound |-> TRUE,
+  clear |-> TRUE,
+  dropBound |-> TRUE,
+  bind |-> TRUE,
+  external |-> TRUE ]
+/\ data = { <<<<<<"external", 0>>, "external", "external">>, "m2", 2>>,
+  <<<<<<"t1", 1>>, "r1", "c1">>, "m1", 1>>,
+  <<<<<<"t2", 1>>, "r1", "c1">>, "m1", 1>> }
+/\ step = 2
+/\ rows = { <<<<"t1", 1>>, "r1">>,
+  <<<<"t1", 1>>, "r2">>,
+  <<<<"t2", 1>>, "r1">>,
+  <<<<"t2", 1>>, "r2">> }
+/\ place = [ m1 |->
+      ( <<"t1", 1>> :> <<<<"t1", 1>>, "r1", "c1">> @@
+        <<"t1", 2>> :> <<<<"none", 0>>, "none", "none">> @@
+        <<"t2", 1>> :> <<<<"t2", 1>>, "r1", "c1">> @@
+        <<"t2", 2>> :> <<<<"none", 0>>, "none", "none">> ),
+  m2 |->
+      ( <<"t1", 1>> :> <<<<"none", 0>>, "none", "none">> @@
+        <<"t1", 2>> :> <<<<"none", 0>>, "none", "none">> @@
+        <<"t2", 1>> :> <<<<"none", 0>>, "none", "none">> @@
+        <<"t2", 2>> :> <<<<"none", 0>>, "none", "none">> ),
+  m3 |->
+      ( <<"t1", 1>> :> <<<<"none", 0>>, "none", "none">> @@
+        <<"t1", 2>> :> <<<<"none", 0>>, "none", "none">> @@
+        <<"t2", 1>> :> <<<<"none", 0>>, "none", "none">> @@
+        <<"t2", 2>> :> <<<<"none", 0>>, "none", "none">> ) ]
+/\ live = {<<"t1", 1>>, <<"t1", 2>>, <<"t2", 1>>, <<"t2", 2>>}
+/\ activeEpoch = 2
+
+10 states generated, 5 distinct states found, 2 states left on queue.
+The depth of the complete state graph search is 3.
+Finished in 00s at (2026-09-28 21:37:05)
+Trace exploration spec path: ./MCEpochMemberTable_TTrace_1790631425.tla

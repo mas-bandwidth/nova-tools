@@ -115,6 +115,7 @@ var PastedDocs = []string{
 	"README.md",
 	filepath.Join("docs", "USAGE.md"),
 	filepath.Join("docs", "CLI.md"),
+	filepath.Join("docs", "nova-swarm-quickstart.md"),
 }
 
 // DocExample is one pasted example and the doc it is pasted in.
@@ -627,6 +628,15 @@ func ComparedEntryProblem(root string, c ComparedEntry, docs []string) string {
 		return fmt.Sprintf("%q names no command", c.Ex)
 	}
 	tool := fields[0]
+	// Shell setup and assignment prefixes belong to the tool section whose
+	// comparator executes them. Require the WHOLE command literal below.
+	shellExample := tool == "mkdir" || strings.HasPrefix(tool, "HOME=")
+	if shellExample {
+		tool = path.Base(path.Dir(c.File))
+		if !strings.HasPrefix(tool, "nova-") {
+			return "shell example comparator must belong to a nova tool package"
+		}
+	}
 	if dir := "cmd/" + tool + "/"; !strings.HasPrefix(c.File, dir) || strings.Contains(strings.TrimPrefix(c.File, dir), "/") {
 		return fmt.Sprintf("%q runs %s, but %s is not in %s, so %s cannot be the test that executes it", c.Ex, tool, c.File, dir, c.Test)
 	}
@@ -663,7 +673,10 @@ func ComparedEntryProblem(root string, c ComparedEntry, docs []string) string {
 	for _, l := range reach.literals {
 		name := commandText(strings.TrimSpace(l))
 		nf := strings.Fields(name)
-		if len(nf) >= 2 && nf[0] == tool && (cmdText == name || strings.HasPrefix(cmdText, name+" ")) {
+		if shellExample && name == cmdText {
+			return ""
+		}
+		if !shellExample && len(nf) >= 2 && nf[0] == tool && (cmdText == name || strings.HasPrefix(cmdText, name+" ")) {
 			return ""
 		}
 	}
