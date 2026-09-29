@@ -547,4 +547,3 @@ func TestCleanForgeError(t *testing.T) {
 		t.Errorf("query string was not stripped: %q", err3.Error())
 	}
 }
-
