@@ -1,6 +1,6 @@
 # nova-tools — specification
 
-Fifteen binaries. `nova-check`: ten checks, all at the **record layer** — they verify
+Sixteen binaries. `nova-check`: ten checks, all at the **record layer** — they verify
 what is on disk, not what a mind did with it. `nova-fuse`: an emergency power at the
 **ingestion layer** — its own exit table (in its section below) governs its verbs
 where it differs from the Conventions table. `nova-self-talk`: one advisory
@@ -12,8 +12,8 @@ tool's own run cost does not, and every run pays the build. Every check can say
 NO, and the test suite proves each one saying it. A check never seen failing is
 not a check. Two of nova-memory's verbs are checks in that sense; the other
 five assert nothing at all, and its section says which is which and why.
-`nova-bus`: ten verbs at the **bus layer** — the only binary here that
-writes outside its own state, and the only one that runs another program (`git`).
+`nova-bus`: verbs at the **bus layer** — it reads and publishes shared notes
+through `git`.
 The bus it works on is a shared git repository of notes between several lines;
 what this takes out of it is the races a branch keyed by a clock produces — an id
 that cannot collide, a push that fetches, rebases and retries inside the tool, an
@@ -28,18 +28,18 @@ sums those day files into a month; it reads sources, and never estimates.
 `nova-secrets`: one binary at the **credential layer** — credentials for seats,
 pools and services, sealed in a git store. `nova-update` and `nova-version`:
 the shared tool inventory, optional updates and the build report. The other
-six — `nova-table` (tables of ordered sets over Redis), `nova-redis` (the
+seven — `nova-table` (tables of ordered sets over Redis), `nova-redis` (the
 local Redis instance and its scratch verbs), `nova-config` (the permanent
 configuration, in Postgres, applied into Redis), `nova-ci` (the checks CI runs
 on its own test output), `nova-sandbox` (one command, contained by the OS),
-`nova-cairn` (optional checkpoints) — and the four above each have their own
-normative text under `docs/` ([SPEC-TOKENS.md](SPEC-TOKENS.md),
+`nova-cairn` (optional checkpoints), `nova-swarm` (bounded worker runs and card
+batches) — and the four above each have their own normative text under `docs/` ([SPEC-TOKENS.md](SPEC-TOKENS.md),
 [SPEC-SECRETS.md](SPEC-SECRETS.md), [SPEC-UPDATE.md](SPEC-UPDATE.md),
 [SPEC-VERSION.md](SPEC-VERSION.md), [nova-table/README.md](nova-table/README.md),
 [SPEC-REDIS.md](SPEC-REDIS.md), [SPEC-CONFIG.md](SPEC-CONFIG.md),
 [SPEC-CI.md](SPEC-CI.md), [SPEC-SANDBOX.md](SPEC-SANDBOX.md),
-[SPEC-CAIRN.md](SPEC-CAIRN.md)); this file states the count, the layer and the
-Conventions they all keep.
+[SPEC-CAIRN.md](SPEC-CAIRN.md), [SPEC-SWARM.md](SPEC-SWARM.md)); this file states
+the count, the layer and the Conventions they all keep.
 
 This spec is normative. If the code and this document disagree, one of them has a
 bug, and the tests decide which.

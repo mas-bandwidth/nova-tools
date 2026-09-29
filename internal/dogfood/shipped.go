@@ -15,7 +15,7 @@ import (
 //
 // THE GATE JUDGES WHAT SHIPS. A receipt names a tool, and a tool that is not
 // in the set is a tool this release does not contain: its open edges and its
-// not-ok runs are true about that tool and say nothing about the fifteen that
+// not-ok runs are true about that tool and say nothing about the sixteen that
 // ship. Counting them made the 1.0.0 cut refuse on 34 findings against tools
 // the release does not hold, which is a gate nobody can pass and therefore a
 // gate somebody waives.

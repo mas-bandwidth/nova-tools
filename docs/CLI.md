@@ -704,6 +704,157 @@ exactly, on every commit, by a parse COUNT: see SPEC.md, "nova-bus", the complex
 
 MIT, see [LICENSE](../LICENSE).
 
+## nova-swarm
+
+```
+nova-swarm: a pool of one-task workers, with the ways a swarm fails taken out (see docs/SPEC-SWARM.md)
+
+usage:
+  nova-swarm version    print this build identity (--version also accepted)
+  nova-swarm doctor    [--path <file>] [--local <file>]   refuse a launch under a shadowed nova-swarm (PATH vs ~/.local/bin build stamp)
+  nova-swarm batch     --id <id> --cards <file> --deadline <seconds> --root <dir> --tokens <n>|unmetered (--runner <cmd> | --harness <path> --slots-store <dir> --owner <name>) [--idle <seconds>] [--slots <lo>-<hi>] [--then <command>] [--benches <file> --bench <name>[,<name>...]]
+                       (without --runner, batch requires --slots-store <dir> --owner <name> and runs each card through nova-swarm native)
+  nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
+  nova-swarm lint      --card <file> [--typed] [--trust <file>] [--lineup <file>] [--max <n>] | --fleet <file> [--max <n>] | --rules
+                       (--fleet lints a launcher script against the coordinator's /bin/bash 3.2: shebang, bash-4 builtins, unquoted expansions)
+  nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|read|fix|text|replay|drift|tone|models.tsv
+  nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
+  nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--events-store <host:port>]
+  nova-swarm route     --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]
+  nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
+  nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>] [--kind <kind>]
+  nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]
+                       (a lease whose holder is still RUNNING is KEPT: SLOTS KEPT, live=<n>, exit 2.
+                        --force frees it anyway and can oversubscribe the bench: an operator's act,
+                        never a card's and never a manager's default)
+  nova-swarm slots list --store <dir>
+  nova-swarm worker    check <description.json> [--env] [--max <n>]
+
+exit codes: 0 the verb ran and passed; 1 the verb ran and said NO; 2 could not run:
+a missing flag, an unreadable pool or worker description, a key file that is
+absent or empty, a bad invocation.
+
+NO GUESSED ANYTHING. There is no default pool, no default worker description, no
+default number of workers, no default deadline, no default file budget and no
+default token budget. --files is required because a budget this tool supplied
+would be a guess about somebody else's task; --tokens is required for the same
+reason, and --tokens unmetered is a caller's statement that this provider has
+no live accounting and the deadline is the only stop. Zero is refused for both.
+
+THE KEY IS READ AS DATA AND NEVER SOURCED. It lives in one file the worker
+description names -- one line, the bare key or NAME=<key>, mode 0600 -- and it is
+never an argument, never a log line, never in a file this tool writes. The
+harness config this tool writes carries the variable's NAME, never its value.
+
+EVERY JOB RUNS INSIDE nova-sandbox (docs/SPEC-SANDBOX.md). The job directory and
+its data home are the only writable paths; the slot directory and whatever
+read_roots names in the worker description are readable; the key file, ~/.ssh and
+the gh configuration are in neither list and the kernel denies them.
+A command that runs outside the wall and dies
+inside it is missing a read_roots entry.
+
+Every listing is a cap and a count: --max, default 20, 0 for all, one MORE line
+naming the remedy. The counts are the truth about the POOL,
+never about the output.
+
+example:
+  nova-swarm template --name read-pr
+```
+
+### First run
+
+`template` prints a card template:
+
+```
+$ nova-swarm template --name read-pr
+read-pr — read one pull request against the rules
+
+1. READ THE PR BODY'S OWED LIST FIRST, before reading any code, and for every
+   finding you report, say whether it is already on that list. A finding that
+   is already owed is marked `dup:` and is not a new finding.
+   [batch 1: 25 of 67 findings were duplicates of the owed list]
+2. QUOTE EVERY RULE VERBATIM, with `file:line`. Never paraphrase a rule from
+   memory, and never assert a rule you did not open.
+   [batch 1: 5 of 67 findings were wrong, each a paraphrase]
+3. APPEND EACH FINDING TO RESULT.md THE MOMENT IT EXISTS. Not at the end.
+   You may be killed at your deadline; what is on disk is what you found.
+4. A FILE BUDGET: read at most <n> files (the task's --files). When the budget
+   is spent, write what you have and stop. Say in RESULT.md which files you
+   did not open.
+   [batch 3: with a budget, 2 of 3 tasks complete; without, 0 of 3]
+5. A RESULT.md CONTAINING ONLY A PLAN IS A FAILED TASK. The plan belongs at
+   the top, before the work; the findings are the work. A finished read that
+   found nothing is NOT a failed task: write the `## Head` with `findings: 0`.
+   Never report a finding to have something to report.
+6. If a board was supplied, check it before reporting: a card that already names
+   this is a `dup:`. Do not search for an unspecified board.
+7. A SEVERITY FLOOR: emit only findings at or above `HIGH`. A finding below the
+   floor is not emitted at all. State the floor in RESULT.md's `## Head`
+   paragraph as `floor: HIGH`, and mark each emitted finding with its
+   severity. The floor decides which findings are emitted, not how they are
+   written: every emitted finding still quotes its rule verbatim with `file:line`.
+
+Keep RESULT.md concise: omit progress narration, praise, repeated task text, and a
+separate summary. Each finding keeps its proof in compact form: severity, `file:line`,
+the exact quoted rule, the fix, and `dup:` status when applicable. Retain every valid
+finding, its context and evidence, and any coverage limitation; do not drop context or
+evidence by default. Brevity is a soft target: never hard-truncate findings or proof; if
+the report overflows, preserve the proof and say so. Preserve the complete RESULT.md
+shape and its mandatory `## Head`, `## Findings`, `## Per item`, `## Gates`,
+`## Left owed`, and `## One line` sections.
+In Gates, distinguish source checks from tests and report-writing commands.
+Mark only checks actually performed as pass; no tests run does not mean no commands run.
+
+BOUND THE REPORT (issue #74): findings only. No narration of the clone, no
+restated task, no praise, no summary. One line per finding: `file:line`, the
+rule in twelve words, the severity, and the fix in one clause. Keep RESULT.md
+under 40 lines and every line under 300 characters, and no pipe inside backticks:
+a `|` in a quote broke the table grammar twice (D12), so quote the rule without
+it. Put the verdict line last. When there is nothing to report, write
+`findings: 0`.
+```
+
+### The harness contract
+
+Every job runs inside `nova-sandbox` (docs/SPEC-SANDBOX.md). `native` proves the wall
+before launching: the job directory and its data home are the only writable paths, the
+slot directory and whatever `read_roots` names in the worker description are readable; the
+key file, `~/.ssh` and the `gh` configuration are in neither list and the kernel denies them.
+
+A command that runs outside the wall and dies inside it is missing a `read_roots` entry.
+
+- **Its working directory is the JOB directory**, and `NOVA_SWARM_JOB` is the job directory — the only place the worker writes. `XDG_DATA_HOME` is that job's own data home.
+- **Its arguments are `harness_args`**, with `{model}` replaced by the description's model, `{prompt}` by the path of the prompt file, and `{base_url}` by `base_url`. Where `harness_args` names no `{prompt}`, the prompt file is appended LAST.
+- **It publishes `RESULT.md` in the job directory**, whole, by writing `RESULT.md.tmp` and renaming it: a report is a revision, and a half-written one is never read.
+- **Its stdout and stderr are `<job>/harness-output.log`**, capturing all harness output.
+
+`cmd/nova-swarm/testdata/fakeharness` is a harness that does exactly this in about two
+hundred lines of Go, and the whole test suite runs against it with no provider, no network
+and no key worth anything. It is the shortest way to see the contract, and to test a pool
+of your own before a real model touches it.
+
+**`native` takes directory leases (`.lease`, `.slot-lease`), but no bench slot lease (#3877).** A bench's capacity is one number,
+`bench:<b>:desired` in Redis, and the one place a card is admitted or refused against it
+is the dealer: a card beyond it stays queued and nothing is written on the bench. `native`
+reads no slot store and writes none, so a bench with no `~/nova-bench/slots` runs a dealt
+card. The file ledger it used to lease from was a second answer to the same question.
+`--slots-store` and `--owner` flags are accepted for compatibility with callers built before
+#3877, but are read by nothing in `native`.
+
+**The bench toolchain inside the wall.** Because `GOTOOLCHAIN=local` is pinned, the bench's
+own Go must be reachable inside the wall. `nova-swarm native` names the provisioning standard's
+toolchain roots on the wall's argv, read-only and skipped when one is not there:
+- On every bench: `~/sdk` (Go and sbcl) as `--read` (carries execute), and `~/go/pkg/mod` as `--read-noexec` (read without execute).
+- On Darwin: `/opt/homebrew/Cellar/go`, `/opt/homebrew/Cellar/sbcl`, `/opt/homebrew/opt/openjdk`, `/Library/Java/JavaVirtualMachines`, and `/usr/local/share/dotnet`.
+- Launcher directories (`~/go/bin`, `/opt/homebrew/bin`) are never granted as toolchain roots.
+
+**Token budget.** Every launch requires `--tokens <n>` or `--tokens unmetered`.
+`unmetered` is the caller's statement that this provider has no live accounting and the deadline is the only stop.
+
+**Deadline and process group.** The harness runs as the leader of its own process group. At
+`--deadline` or on `SIGTERM`, the machinery reaps the entire process group, writes usage,
+and records the outcome.
+
 ## nova-sandbox
 
 Runs one command under OS-enforced containment using `sandbox-exec` on macOS
@@ -767,16 +918,16 @@ SANDBOX REFUSED reason=unknown_verb: unknown verb "bogus"; available: check, egr
 Prove the wall before the first job:
 
 ```
-$ mkdir -p /Users/me/pool/jobs/j1/home
-$ HOME=/Users/me/pool/jobs/j1/home \
-  nova-sandbox probe --write /Users/me/pool/jobs/j1 \
-               --secret /Users/me/.config/anthropic/env
-PROBE STEP name=write_outside_control expect=allow got=allow path=/Users/me/pool/jobs/.nova-sandbox-probe-31622
-PROBE STEP name=write_outside expect=deny got=deny path=/Users/me/pool/jobs/.nova-sandbox-probe-31622
-PROBE STEP name=read_secret expect=deny got=deny path=/Users/me/.config/anthropic/env
-PROBE STEP name=write_inside expect=allow got=allow path=/Users/me/pool/jobs/j1/.nova-sandbox-probe-inside
-PROBE STEP name=read_root expect=allow got=allow path=/Users/me/.local/bin/nova-sandbox
-PROBE OK backend=sandbox-exec abi=- steps=5 passed=5 net=nopromise
+$ mkdir -p /path/to/pool/jobs/j1/home
+$ HOME=/path/to/pool/jobs/j1/home \
+  nova-sandbox probe --write /path/to/pool/jobs/j1 \
+               --secret /path/to/.config/anthropic/env
+PROBE STEP name=write_outside_control expect=allow got=allow path=/path/to/pool/jobs/.nova-sandbox-probe-31622
+PROBE STEP name=write_outside expect=deny got=deny path=/path/to/pool/jobs/.nova-sandbox-probe-31622
+PROBE STEP name=read_secret expect=deny got=deny path=/path/to/.config/anthropic/env
+PROBE STEP name=write_inside expect=allow got=allow path=/path/to/pool/jobs/j1/.nova-sandbox-probe-inside
+PROBE STEP name=read_root expect=allow got=allow path=/path/to/.local/bin/nova-sandbox
+PROBE OK backend=sandbox-exec abi=- steps=5 passed=5 net=nopromise gpu=none
 ```
 
 `probe` runs **five** checks under the real policy for this platform, not two: a
@@ -788,12 +939,19 @@ misconfiguration rather than a failed check. The `HOME=` prefix is not
 decoration: rule 9's check runs before the policy is built, so a probe run with
 the dispatcher's own `HOME` is refused before it starts.
 
-Then wrap the command:
+Then wrap the command. This example uses an empty repository initialized on
+branch `main` at `/path/to/pool/jobs/j1/repo`; `! ` marks standard error:
 
 ```
-$ HOME=/Users/me/pool/jobs/j1/home \
-  nova-sandbox --read /opt/homebrew --write /Users/me/pool/jobs/j1 \
-               -- /opt/homebrew/bin/git -C /Users/me/pool/jobs/j1/repo status
+$ HOME=/path/to/pool/jobs/j1/home \
+  nova-sandbox --read /opt/homebrew --write /path/to/pool/jobs/j1 \
+               -- /opt/homebrew/bin/git -C /path/to/pool/jobs/j1/repo status
+! SANDBOX OK backend=sandbox-exec abi=- read=1 read-noexec=0 write=1 net=nopromise cwd=/path/to/pool/jobs/j1 cwdb64=L3BhdGgvdG8vcG9vbC9qb2JzL2ox ancestors=11 cmd=git gpu=none
+On branch main
+
+No commits yet
+
+nothing to commit (create/copy files and use "git add" to track)
 ```
 
 What a first run gets wrong, and what each one wants:

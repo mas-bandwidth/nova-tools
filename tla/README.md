@@ -79,6 +79,34 @@ map to unchanged abstract user state; the model does not encode the receipt
 ledger, which the replay runner checks separately. The original pinned baseline
 runner and its deliberately failing desired-contract gate remain unchanged.
 
+## Shell execution traces
+
+`tools/sessiontrace` captures 16 shell sessions (eight fixed random seeds,
+both keep-going settings) in an owned Redis. Each executed line records its
+output, refusal status and newly committed receipts. The relay loses selected
+write replies after the store answers; the receipt ledger must still contain
+exactly one effect. The harness also covers successful reads/writes, logical
+refusals, usage errors, overlong lines, quit and EOF without timing assertions.
+
+```sh
+go run ./tools/sessiontrace --jar /path/to/tla2tools.jar --out /tmp/session-trace
+```
+
+The runner has one 120-second budget for capture, TLC and negative controls.
+Go dependencies must already be cached; capture disables module downloads and
+automatic toolchain selection.
+It retains the trace, source/model/jar hashes, generated modules and TLC logs.
+The generated module invokes `TableSession` actions and checks observed line
+statuses, final exit, unread input and termination reason. Its input domain is
+the captured sequences and their suffixes. Corrupted final exit and line status
+must fail TLC; a duplicated durable effect must fail receipt validation.
+
+Receipts witness effects separately because `TableSession` does not model the
+ledger or table contents. This bounded replay covers the stated subset; signal
+delivery, store outages and watch liveness retain their existing functional
+and model controls. It is not a proof over arbitrary shell executions. The
+per-tick runtime check remains `watch --check`.
+
 ## The edit verbs (TableEdit) and order (TableOrder)
 
 Two bounded safety models of nova-table's edit surface, each an abstraction
