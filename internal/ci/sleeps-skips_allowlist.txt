@@ -31,16 +31,9 @@ cmd/nova-sandbox	TestAForkedChildIsReapedWithTheCallersGroup	#4221 calls time.Sl
 cmd/nova-sandbox	TestWindowsHasNo128PlusN	#4221 calls time.Sleep
 cmd/nova-tokens	TestConcurrentWritersDoNotMutateTheBareRemote	#4221 calls time.Sleep
 cmd/nova-update	TestHelpExampleLinesRunAsPrinted	#4221 measured over 5 s on the 2026-09-25 PR run
-internal/bus	TestTwoConcurrentRunsSerialiseOnOneCheckout	#4221 calls time.Sleep
-internal/bus	TestSendPreparedProcessDeathRecovery	#4221 measured over 5 s on the 2026-09-25 PR run
-internal/bus	TestPreparedIndexRecoveryFromStagedPartialIndexRetainsEarlierEntries	#4221 calls time.Sleep
-internal/bus	TestStaleIndexLockWithALiveGitIsLeftAlone	#4221 calls time.Sleep
-internal/bus	TestStaleLockStaysForCwdGitWithoutDashC	#4221 calls time.Sleep
-internal/bus	TestStellaPreparedAttributePrefixesPublishExactBytes	#4221 measured over 5 s on the 2026-09-25 PR run
 internal/ci	TestWaitsRefusesFixedSleep	#4221 calls time.Sleep
 internal/ci	TestWaitsAllowlistSurvivesShiftedLines	#4221 calls time.Sleep
 internal/ci	TestSlowWaitsRuleSeesEveryShape	#4221 calls time.Sleep
-internal/nsprint/capacity	TestL20b	#4221 calls time.Sleep
 internal/nsprint/card	TestWrapperOwnsOneCardEndToEnd	#4221 calls time.Sleep
 internal/nsprint/card	TestWrapperFillsTheResult	#4221 measured over 5 s on the 2026-09-25 PR run
 internal/nsprint/ci	TestControl54CancelledLegRerunsOnceThenEndsRed	#4221 calls time.Sleep
@@ -48,7 +41,6 @@ internal/nsprint/ci	TestControl54TimedOutLegRerunsOnceThenEndsRed	#4221 waits on
 internal/nsprint/ci	TestParityCountsEveryActionsPassedHead	#4221 calls time.Sleep
 internal/nsprint/land	TestL15	#4221 measured over 5 s on the 2026-09-25 PR run
 internal/nsprint/land/guard	TestGuardsOnThisRepository	#4221 measured over 5 s on the 2026-09-25 PR run
-internal/nsprint/life	TestBenchBeatSingleInstance	#4221 calls time.Sleep
 internal/nsprint/reconcile	TestControl09OneAssignmentOneReceipt	#4221 calls time.Sleep
 internal/nsprint/reconcile	TestHeartbeatHoldsLeaseThroughLongDuty	#4221 calls time.Sleep
 internal/nsprint/reconcile	TestLandDutyLandsEveryReadStreamInOneBatch	#4221 measured over 5 s on the 2026-09-25 PR run
@@ -73,8 +65,6 @@ internal/swarm	TestDelayedHeadersInsideTheWaitPassThrough	#4221 calls time.Sleep
 internal/swarm	TestNoSlotIsEverHeldTwice	#4221 calls time.Sleep
 internal/swarm	TestConcurrentTakesKeepEveryTake	#4221 measured over 5 s on the 2026-09-25 PR run
 internal/update	TestMovedIsBoundedByTheClock	#4221 waits on the wall clock, failed on a 2026-09-25 run
-internal/update	TestRemoveStaleGitTransactionLocksNamesOnly	#4221 calls time.Sleep
-internal/update	TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp	#4221 calls time.Sleep
 cmd/nova-sandbox	TestTheAgentSocketIsUnreachable	seed #4413: time.After at main_test.go:332
 cmd/nova-tokens	fakeSqlite3Main	seed #4413: time.Sleep at helpers_test.go:236
 internal/bus	TestFriendSequencePlantedIndexIsRefused	seed #4413: time.After at planted_index_sequence_unix_test.go:58
