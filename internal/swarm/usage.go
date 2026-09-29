@@ -3,6 +3,7 @@ package swarm
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -259,9 +260,14 @@ func (u ProviderUsage) add(columns []string) (sum int, seen int, partial bool) {
 // BUDGET-UNVERIFIABLE, because a numeric budget the tool has stopped being able to see is a
 // budget the caller believes is enforced and is not.
 func ReadProviderUsage(source, dataHome string) (ProviderUsage, error) {
+	return ReadProviderUsageWith(source, dataHome, exec.LookPath)
+}
+
+// ReadProviderUsageWith is ReadProviderUsage with an injected lookPath seam.
+func ReadProviderUsageWith(source, dataHome string, lookPath func(file string) (string, error)) (ProviderUsage, error) {
 	switch source {
 	case UsageOpenCode:
-		return readOpenCodeUsage(dataHome)
+		return readOpenCodeUsageWith(dataHome, lookPath)
 	case UsageNone, "":
 		return ProviderUsage{Values: map[string]string{}}, nil
 	default:

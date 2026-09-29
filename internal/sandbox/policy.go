@@ -109,6 +109,10 @@ type Policy struct {
 	// When nil, package Available() is called.
 	Available func() (string, bool)
 
+	// LandlockABI is an optional seam for tests checking Linux Landlock ABI behavior.
+	// When nil, package landlockABI is called.
+	LandlockABI func() (int, bool)
+
 	// Extra is the file descriptors the child gets ABOVE stdin/stdout/stderr, in order,
 	// starting at fd 3. It is never built from caller input: Build leaves it nil and the
 	// only writer is the probe, which hands its child one end of a pipe carrying the

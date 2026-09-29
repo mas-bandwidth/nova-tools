@@ -98,6 +98,10 @@ const messagesSQL = `SELECT ` +
 // BUDGET-UNVERIFIABLE on the third such sample, because a numeric budget the tool has
 // stopped being able to see is a budget the caller believes is enforced and is not.
 func readOpenCodeUsage(dataHome string) (ProviderUsage, error) {
+	return readOpenCodeUsageWith(dataHome, exec.LookPath)
+}
+
+func readOpenCodeUsageWith(dataHome string, lookPath func(file string) (string, error)) (ProviderUsage, error) {
 	path, err := findOpenCodeStore(dataHome)
 	if err != nil {
 		return ProviderUsage{}, err
@@ -107,7 +111,7 @@ func readOpenCodeUsage(dataHome string) (ProviderUsage, error) {
 		// reported nothing, which is an absence and not a failure.
 		return ProviderUsage{Values: map[string]string{}}, nil
 	}
-	if _, err := exec.LookPath(SQLiteBinary); err != nil {
+	if _, err := lookPath(SQLiteBinary); err != nil {
 		return ProviderUsage{}, fmt.Errorf("%w: the usage source %s could not be read: %s is not on PATH, and `usage: opencode` reads that database with `%s -readonly`",
 			ErrNoSQLite, path, SQLiteBinary, SQLiteBinary)
 	}

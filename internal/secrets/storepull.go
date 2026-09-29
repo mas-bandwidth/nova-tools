@@ -39,6 +39,7 @@ type StorePullOptions struct {
 	Wall     []string // the card wall's directories (slot, job, work): the key may lie in none
 	Git      string   // the git binary; empty is `git`
 	SSH      string   // the ssh binary; empty is `ssh`
+	Env      []string // the environment for git; nil uses os.Environ()
 }
 
 // StorePullKey checks that o.Key is the bench's own key, and returns its cleaned absolute path.
@@ -140,8 +141,12 @@ func PullStore(o StorePullOptions) (string, error) {
 		sshBin = "ssh"
 	}
 	testguard.RefuseHosts(sshBin, "-i", o.Key, "(git pull --ff-only in "+o.StoreDir+")")
-	env := make([]string, 0, len(os.Environ())+3)
-	for _, kv := range os.Environ() {
+	environ := o.Env
+	if environ == nil {
+		environ = os.Environ()
+	}
+	env := make([]string, 0, len(environ)+3)
+	for _, kv := range environ {
 		if strings.HasPrefix(kv, "SSH_AUTH_SOCK=") || strings.HasPrefix(kv, "GIT_SSH=") ||
 			strings.HasPrefix(kv, "GIT_SSH_COMMAND=") || strings.HasPrefix(kv, "GIT_ASKPASS=") {
 			continue
