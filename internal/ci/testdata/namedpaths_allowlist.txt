@@ -13,6 +13,10 @@
 # --- 1. A specification's plan: a file the spec says will exist, not yet written. ---
 
 docs/templates SPEC-CI cardtemplates: one of CardTemplateDirs, skipped until a template is written there
+internal/card/binding SPEC-CARD-MANAGER's plan: the card layer's store binding (part 4), not yet written
+internal/card/definition SPEC-CARD-MANAGER's plan: the card layer's definition package (part 1), not yet written
+internal/card/manager SPEC-CARD-MANAGER's plan: the card manager policy package (part 3), not yet written
+internal/card/request SPEC-CARD-MANAGER's plan: the card layer's request package (part 2), not yet written
 internal/pkgvalid PROPOSAL-TOKENS-RECORDS-185's plan: the package the proposal would add
 internal/pulse/cardheader.go the typed-header grammar that lands with #1721; lintheader.go names it as the parser not yet in this tree
 internal/pulse/kinds.go SPEC-TOOLWORK §5's kinds-table file; the six kinds live in cutkind.go until the accept gate's table is one file of its own
