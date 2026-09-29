@@ -43,9 +43,9 @@ func TestBatchEventAndRecordStayWithinTheirBoundsAtTheLargestActor(t *testing.T)
 			}
 			return delta, event, int(c.HStrLen(ctx, ntable.DefKey("demo")+":ops", "0:"+op).Val())
 		}
-		d0, _, _ := size(tc.name+"-probe", 1000)
+		d0, _, _ := size("op-p", 1000)
 		n := 1000 + (ntable.LimitReceiptBytes-d0)/tc.grows
-		delta, event, record := size(tc.name+"-largest", n)
+		delta, event, record := size("op-l", n)
 		t.Logf("%s actor of %d bytes: delta %d, event %d, record %d", tc.name, n, delta, event, record)
 		if delta > ntable.LimitReceiptBytes || delta < ntable.LimitReceiptBytes-tc.grows {
 			t.Errorf("%s: the delta is %d, want the bound %d", tc.name, delta, ntable.LimitReceiptBytes)

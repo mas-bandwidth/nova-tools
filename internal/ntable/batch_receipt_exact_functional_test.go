@@ -35,8 +35,9 @@ func TestBatchReceiptSizeIsExactAtItsBound(t *testing.T) {
 	body := strings.Join(creates, ",")
 	deltaLen := func(ans []any) int { return len(fmt.Sprint(ans[1].([]any)[6])) }
 
-	// the receipt grows one byte for each byte of actor; find the pad that fills it
-	probe := manifestWithActor(probeRev(ctx, c), "probe", strings.Repeat("a", 1000), body)
+	// the receipt grows one byte for each byte of actor (the operation ids below
+	// have one length); find the pad that fills it
+	probe := manifestWithActor(probeRev(ctx, c), "op-p", strings.Repeat("a", 1000), body)
 	ans, err := rawApply(ctx, c, probe)
 	if err != nil || ans[0] != "OK" {
 		t.Fatalf("probe: %.200v %v", ans, err)
@@ -50,7 +51,7 @@ func TestBatchReceiptSizeIsExactAtItsBound(t *testing.T) {
 	}
 
 	before := storeImage(t, c)
-	over := manifestWithActor(probeRev(ctx, c), "over", strings.Repeat("a", pad+1), body)
+	over := manifestWithActor(probeRev(ctx, c), "op-o", strings.Repeat("a", pad+1), body)
 	ans, err = rawApply(ctx, c, over)
 	if err != nil || len(ans) < 5 || ans[0] != "REFUSED" || ans[1] != "LIMIT" || ans[2] != "receipt bytes" || fmt.Sprint(ans[4]) != fmt.Sprint(ntable.LimitReceiptBytes+1) {
 		t.Fatalf("one byte over: %.200v %v; want LIMIT receipt bytes, size %d", ans, err, ntable.LimitReceiptBytes+1)
@@ -58,7 +59,7 @@ func TestBatchReceiptSizeIsExactAtItsBound(t *testing.T) {
 	if !reflect.DeepEqual(before, storeImage(t, c)) {
 		t.Errorf("a refusal changed the store")
 	}
-	at := manifestWithActor(probeRev(ctx, c), "at", strings.Repeat("a", pad), body)
+	at := manifestWithActor(probeRev(ctx, c), "op-a", strings.Repeat("a", pad), body)
 	ans, err = rawApply(ctx, c, at)
 	if err != nil || ans[0] != "OK" {
 		t.Fatalf("at the bound: %.200v %v", ans, err)
