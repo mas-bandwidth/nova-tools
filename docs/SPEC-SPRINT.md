@@ -68,8 +68,10 @@ the place to work, and on a later attempt the fix. Identity `<primary>.w<attempt
 Fields: primary, stream, kind=work, attempt, fix, member, gen (its assignment
 generation), dealt and taken (the clock times it was dealt and taken),
 first_dealt and first_taken (the attempt's first deal and first take, kept
-through every redeal and withdrawal), untaken_since (the first deal since its
-last take, unset by a take), ok (set
+through every redeal and withdrawal), untaken_since (the first deal since its last take: a take unsets it, and
+no redeal or withdrawal rewrites it, so a member handed the card after
+someone else's take gets its own 15 minutes and a flapping member cannot
+reset the clock), ok (set
 only when finished), head, report. It takes its primary's score. The primary
 names its live work card.
 
