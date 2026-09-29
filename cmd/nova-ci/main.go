@@ -75,6 +75,9 @@ usage:
                       tests on the next; when there are none, one line
                       CI FUNCTIONAL OK packages=0 reason=<why>. A flag, and a
                       pattern matching no package, are refused (exit 2).
+  nova-ci sweep-orphans [--pid-dir <dir>]
+                      sweep orphaned test redis-server processes recorded by
+                      testutil.Start and remove stale PID files
   nova-ci new-rule [--root <checkout>] <rule-name>
                       scaffold a new class rule skeleton: class test, fixture, and makefile
   nova-ci new-verb [--root <checkout>] <tool> <verb>
@@ -147,6 +150,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 		return cmdLocal(args[1:], stdout, stderr, execLocal)
 	case "functional":
 		return cmdFunctional(args[1:], stdout, stderr)
+	case "sweep-orphans":
+		return cmdSweepOrphans(args[1:], stdout, stderr)
 	case "new-rule":
 		return cmdNewRule(args[1:], stdout, stderr)
 	case "new-verb":

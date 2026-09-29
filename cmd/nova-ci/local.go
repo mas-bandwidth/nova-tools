@@ -43,6 +43,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
@@ -207,6 +208,8 @@ func cmdLocal(args []string, stdout, stderr io.Writer, runner localRunner) int {
 	col := &localCollector{out: stdout, pkgs: map[string]*localPkg{}}
 	lines := &localLines{line: col.line}
 	unitArgv := append(append([]string{}, nice...), "make", "test", pkgArg, "GOTEST_P="+localCores, "GOTEST_COUNT_FLAG=-count=1", "GOTEST_TAGS="+tags)
+	testutil.SweepOrphans()
+	defer testutil.SweepOrphans()
 	unitCode, err := runner(localCmd{Dir: root, Env: append(cores, "RUNNER_TEMP="+tmp), Argv: unitArgv, Stdout: lines, Stderr: stderr})
 	lines.flush()
 	if err != nil {

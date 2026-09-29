@@ -6,11 +6,14 @@ package testutil
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -35,6 +38,207 @@ func Absent(t *testing.T, cause error) {
 	t.Skipf("redis-server unavailable: %v", cause)
 }
 
+// PIDDir returns the directory where test redis PID files are recorded.
+// It uses NOVA_TEST_REDIS_PID_DIR if set, otherwise $TMPDIR/nova-test-redis
+// or os.TempDir()/nova-test-redis.
+func PIDDir() string {
+	if d := os.Getenv("NOVA_TEST_REDIS_PID_DIR"); d != "" {
+		return d
+	}
+	tmp := os.Getenv("TMPDIR")
+	if tmp == "" {
+		tmp = os.TempDir()
+	}
+	return filepath.Join(tmp, "nova-test-redis")
+}
+
+// SweepOrphans scans PIDDir() for test redis PID files, checks each PID, and
+// kills orphaned or dead processes while deleting their PID files.
+// When swept count > 0, it prints to os.Stderr.
+func SweepOrphans() int {
+	return SweepOrphansIn(PIDDir())
+}
+
+// SweepOrphansIn scans dir for test redis PID files, checks each PID, and
+// kills orphaned or dead processes while deleting their PID files.
+// When swept count > 0, it prints to os.Stderr.
+func SweepOrphansIn(dir string) int {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0
+	}
+	swept := 0
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".pid") {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		rec, err := parsePIDFile(path)
+		if err != nil || rec.PID <= 0 {
+			if err := os.Remove(path); err == nil {
+				swept++
+			}
+			continue
+		}
+		if !isProcessRunning(rec.PID) {
+			if err := os.Remove(path); err == nil {
+				swept++
+			}
+			continue
+		}
+		comm, ppid := getProcessInfo(rec.PID)
+		if comm == "" && ppid == 0 && !isProcessRunning(rec.PID) {
+			if err := os.Remove(path); err == nil {
+				swept++
+			}
+			continue
+		}
+		if !strings.Contains(strings.ToLower(comm), "redis-server") {
+			// Process recycled by another program; do not kill it, just remove stale pid file.
+			if err := os.Remove(path); err == nil {
+				swept++
+			}
+			continue
+		}
+		isOrphan := false
+		if ppid == 1 {
+			isOrphan = true
+		} else if rec.CreatorPID > 0 && rec.CreatorPID != os.Getpid() {
+			if !isProcessRunning(rec.CreatorPID) {
+				isOrphan = true
+			}
+		} else if rec.CreatorPID <= 0 && ppid != os.Getpid() {
+			isOrphan = true
+		}
+
+		if isOrphan {
+			killRedisProcess(rec.PID)
+			if err := os.Remove(path); err == nil {
+				swept++
+			}
+		}
+	}
+	if swept > 0 {
+		fmt.Fprintf(os.Stderr, "nova-test-redis: swept %d orphaned redis-server(s)\n", swept)
+	}
+	return swept
+}
+
+type pidRecord struct {
+	PID        int
+	Port       string
+	CreatorPID int
+}
+
+func parsePIDFile(path string) (*pidRecord, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	rec := &pidRecord{}
+	var plainLines []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if k, v, ok := strings.Cut(line, "="); ok {
+			k = strings.TrimSpace(strings.ToLower(k))
+			v = strings.TrimSpace(v)
+			switch k {
+			case "pid":
+				rec.PID, _ = strconv.Atoi(v)
+			case "port":
+				rec.Port = v
+			case "ppid":
+				rec.CreatorPID, _ = strconv.Atoi(v)
+			}
+		} else {
+			plainLines = append(plainLines, line)
+		}
+	}
+	if rec.PID == 0 && len(plainLines) > 0 {
+		rec.PID, _ = strconv.Atoi(plainLines[0])
+		if len(plainLines) > 1 {
+			rec.Port = plainLines[1]
+		}
+		if len(plainLines) > 2 {
+			rec.CreatorPID, _ = strconv.Atoi(plainLines[2])
+		}
+	}
+	if rec.Port == "" {
+		base := filepath.Base(path)
+		rec.Port = strings.TrimSuffix(base, filepath.Ext(base))
+	}
+	return rec, nil
+}
+
+func isProcessRunning(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	err = proc.Signal(syscall.Signal(0))
+	if err != nil {
+		return false
+	}
+	out, err := exec.Command("ps", "-o", "state=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return false
+	}
+	state := strings.TrimSpace(string(out))
+	if strings.HasPrefix(state, "Z") {
+		return false
+	}
+	return true
+}
+
+func getProcessInfo(pid int) (comm string, ppid int) {
+	out, err := exec.Command("ps", "-o", "ppid=", "-o", "state=", "-o", "comm=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return "", 0
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) >= 3 {
+		ppid, _ = strconv.Atoi(fields[0])
+		state := fields[1]
+		comm = strings.Join(fields[2:], " ")
+		if strings.HasPrefix(state, "Z") || strings.Contains(comm, "<defunct>") {
+			return "", 0
+		}
+	} else if len(fields) >= 2 {
+		ppid, _ = strconv.Atoi(fields[0])
+		comm = fields[1]
+	}
+	return comm, ppid
+}
+
+func killRedisProcess(pid int) {
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return
+	}
+	_ = proc.Signal(syscall.SIGTERM)
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+		if !isProcessRunning(pid) {
+			return
+		}
+	}
+	_ = proc.Kill()
+	deadline = time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+		if !isProcessRunning(pid) {
+			return
+		}
+	}
+}
+
 // Start runs a throwaway redis-server on 127.0.0.1 and returns host:port.
 // The server uses --save "" and no append-only file, in the test's temporary
 // directory, and the cleanup kills it. Extra arguments follow the fixed ones
@@ -47,6 +251,7 @@ func Absent(t *testing.T, cause error) {
 // not a dial to a bench.
 func Start(t *testing.T, extra ...string) string {
 	t.Helper()
+	SweepOrphans()
 	bin := Program(t)
 	// THE PORT IS TAKEN, CLOSED AND HANDED OVER, so another process can bind it
 	// in between: with the package's tests in parallel that is another test's
@@ -85,11 +290,18 @@ func startOnce(t *testing.T, bin string, extra []string) (string, bool, string) 
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("redis-server did not start: %v", err)
 	}
+	pidDir := PIDDir()
+	_ = os.MkdirAll(pidDir, 0755)
+	pidPath := filepath.Join(pidDir, port+".pid")
+	pidContent := fmt.Sprintf("pid=%d\nport=%s\nppid=%d\n", cmd.Process.Pid, port, os.Getpid())
+	_ = os.WriteFile(pidPath, []byte(pidContent), 0644)
+
 	exited := make(chan struct{})
 	go func() { _ = cmd.Wait(); close(exited) }()
 	t.Cleanup(func() {
 		_ = cmd.Process.Kill()
 		<-exited
+		_ = os.Remove(pidPath)
 	})
 	client := redis.NewClient(&redis.Options{Addr: addr})
 	defer func() { _ = client.Close() }()
@@ -98,6 +310,7 @@ func startOnce(t *testing.T, bin string, extra []string) (string, bool, string) 
 		select {
 		case <-exited:
 			body, _ := os.ReadFile(logPath)
+			_ = os.Remove(pidPath)
 			return "", false, string(body)
 		default:
 		}
