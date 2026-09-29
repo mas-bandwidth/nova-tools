@@ -16,7 +16,7 @@ import (
 // (Names.Key): the fence and its generation, the notification stream, the
 // judgments, the open subjects, the coordinator's cursor, the streams'
 // progress and the callers' results.
-var sprintKeys = []string{keyFence, keyGen, keyInbox, keyNotes, keyOpen, keyCursor, keyProgress, keyDone}
+var sprintKeys = []string{keyFence, keyGen, keyInbox, keyNotes, keyOpen, keyCursor, keyProgress, keyDone, keyMachine, keyHeartbeat}
 
 // residueSuffixes are the keys of a table the table layer's drop keeps: its
 // identity, revision, definition record and change log; and its operation
@@ -293,6 +293,11 @@ func (m *Mem) sprintKey(s string, del bool) bool {
 		held = len(m.done) > 0
 		if del {
 			m.done = map[string]string{}
+		}
+	default:
+		_, held = m.kv[s]
+		if del {
+			delete(m.kv, s)
 		}
 	}
 	return held

@@ -32,7 +32,10 @@ func init() {
 		{"init", "[--readers <a,b,...>] [--members <m1,m2,...>]", "init --readers reader-a,reader-b,reader-c --members m1,m2", (*app).cmdInit},
 		{"add", "--stream <s> (<id>... | --count <n>) [--needs <a,b>] [--brief <text>] [--score <n>]", "add --stream s1 --count 100", (*app).cmdAdd},
 		{"resolve", "[<id>...] [--stream <s>] [--limit <n>]", "resolve", (*app).cmdResolve},
-		{"start", "(<id>... | --stream <s> | --limit <n> | --group <n>)", "start --limit 10", (*app).cmdStart},
+		{"start", "", "start", (*app).cmdMachineStart},
+		{"stop", "", "stop", (*app).cmdMachineStop},
+		{"run", "", "run", (*app).cmdRun},
+		{"tick", "", "tick", (*app).cmdTick},
 		{"take", "--as <member> [<card>@<gen>...] [--limit <n>]", "take --as m1 s1-1.w1@1", (*app).cmdTake},
 		{"finish", "--as <member> <card>@<gen>... [--failed] [--head <h>] [--report <text>]", "finish --as m1 s1-1.w1@1", (*app).cmdFinish},
 		{"ask", "[<id>...] [--stream <s>] [--limit <n>] [--another]", "ask", (*app).cmdAsk},
@@ -57,7 +60,7 @@ func init() {
 		{"check", "", "check", (*app).cmdCheck},
 		{"repair", "", "repair", (*app).cmdRepair},
 		{"where", "[--watch] [--every <duration>]", "where", (*app).cmdWhere},
-		{"play", "[--seed <n>] [--every <duration>] [--start] [--fail <p>] [--broken <p>] [--batch <n>] [--stuck <p>] [--cross <p>] [--red <p>] [--flap <p>] [--ticks <n>]", "play --seed 7 --every 1s --start", (*app).cmdPlay},
+		{"play", "[--seed <n>] [--every <duration>] [--fail <p>] [--broken <p>] [--batch <n>] [--stuck <p>] [--cross <p>] [--red <p>] [--flap <p>] [--ticks <n>]", "play --seed 7 --every 1s", (*app).cmdPlay},
 		{"teardown", "--confirm <prefix>", "teardown --confirm dev-", (*app).cmdTeardown},
 	}
 }
@@ -97,6 +100,7 @@ generation, and a generation that is not the live one is refused as stale.
 take with no card takes the member's oldest ready cards (--limit n, default 1)
 and prints each one's generation.
 
+` + machineWords() + `
 exit codes: 0 done, 1 refused, 2 usage or a store that did not answer
 
 `)
@@ -352,7 +356,7 @@ func sprintLine(ctx context.Context, st *store.Store) string {
 	if err != nil || len(shapes) == 0 {
 		return ""
 	}
-	return summary(shapes[0])
+	return strings.TrimSpace(summary(shapes[0]) + "  " + st.MachineLine(ctx))
 }
 
 func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
@@ -471,17 +475,6 @@ func (a *app) setVerb(verbName string, args []string, stdout, stderr io.Writer, 
 func (a *app) cmdResolve(args []string, stdout, stderr io.Writer) int {
 	return a.setVerb("resolve", args, stdout, stderr, false, nil, nil, func(ids []string, s *sel, c *common) store.Step {
 		return store.ResolveStep(sprint.ResolveReq{Sel: s.sel(ids), Who: c.actor})
-	})
-}
-
-func (a *app) cmdStart(args []string, stdout, stderr io.Writer) int {
-	return a.setVerb("start", args, stdout, stderr, false, nil, func(ids []string, s *sel) string {
-		if len(ids) == 0 && s.stream == "" && s.limit == 0 {
-			return "wants ids, --stream <s>, --limit <n> or --group <n>"
-		}
-		return ""
-	}, func(ids []string, s *sel, c *common) store.Step {
-		return store.StartStep(sprint.StartReq{Sel: s.sel(ids), Who: c.actor})
 	})
 }
 

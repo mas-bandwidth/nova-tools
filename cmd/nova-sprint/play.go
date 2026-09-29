@@ -21,7 +21,6 @@ func (a *app) cmdPlay(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("play")
 	seed := fs.Uint64("seed", 1, "the seed: the same seed plays the same run")
 	every := fs.Duration("every", time.Second, "between ticks")
-	start := fs.Bool("start", false, "start ready primaries each tick")
 	fail := fs.Float64("fail", 0.1, "the chance a work card comes back failed")
 	broken := fs.Float64("broken", 0.05, "the chance a read finds it broken")
 	batch := fs.Int("batch", 100, "a merge step's batch")
@@ -51,7 +50,7 @@ func (a *app) cmdPlay(args []string, stdout, stderr io.Writer) int {
 	facts := driver.NewSeeded(*seed)
 	facts.Fail, facts.Broken, facts.Stuck, facts.Cross, facts.Red, facts.Flap = *fail, *broken, *stuck, *cross, *red, *flap
 	d := &driver.Driver{Run: a.run, Base: base, Facts: facts, Clock: appClock{a}, Out: stdout,
-		Config: driver.Config{Every: *every, Start: *start, Batch: *batch, TakeLimit: *take, ReadLimit: *reads, Ticks: *ticks}}
+		Config: driver.Config{Every: *every, Batch: *batch, TakeLimit: *take, ReadLimit: *reads, Ticks: *ticks}}
 	why, err := d.Loop()
 	if err != nil {
 		fmt.Fprintf(stderr, "%s play: %s\n", prog, oneline.Escape(err.Error()))

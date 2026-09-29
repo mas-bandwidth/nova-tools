@@ -40,6 +40,7 @@ type Mem struct {
 	cursor   string
 	seq      int
 	Fail     func(point string) error
+	kv       map[string]string // the machine's records (tick.go)
 	// Calls counts store exchanges by kind.
 	Calls map[string]int
 }

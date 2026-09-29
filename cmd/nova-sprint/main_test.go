@@ -102,7 +102,8 @@ func TestTheCommandDrivesAStreamToLanded(t *testing.T) {
 		t.Fatalf("add: %s", out)
 	}
 	ta.clean()
-	ta.ok("start --limit 4")
+	ta.ok("start")
+	ta.ok("tick")
 	var q struct{ Cards []queueCard }
 	ta.json("queue --as m1", &q)
 	if len(q.Cards) != 2 || q.Cards[0].Gen != 1 {
@@ -154,7 +155,10 @@ func TestJudgmentsReachTheInboxAndTheCoordinatorAnswers(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	ta.ok("add --stream s1 --count 3")
-	ta.ok("start --stream s1")
+	ta.ok("start")
+	ta.ok("tick")
+	ta.ok("take --as m1 --limit 3")
+	ta.ok("tick") // the third is dealt when the member's ready queue has room
 	ta.ok("take --as m1 --limit 3")
 	ta.ok("finish --as m1 s1-1.w1@1 s1-2.w1@1")
 	code, _, errs := ta.do("finish --as m1 s1-3.w1@1 --failed --report 'tests red'")
@@ -193,7 +197,8 @@ func TestAStoppedStreamWaitsForResume(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	ta.ok("add --stream s1 --count 2")
-	ta.ok("start --limit 2")
+	ta.ok("start")
+	ta.ok("tick")
 	ta.ok("take --as m1 --limit 2")
 	ta.ok("finish --as m1 s1-1.w1@1 s1-2.w1@1")
 	ta.ok("ask")
@@ -223,7 +228,8 @@ func TestAStaleFinishIsRefusedAndARetryReplays(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1,m2")
 	ta.ok("add --stream s1 --count 2")
-	ta.ok("start --limit 2")
+	ta.ok("start")
+	ta.ok("tick")
 	var q struct{ Cards []queueCard }
 	ta.json("queue --as m1", &q)
 	card := q.Cards[0].ID
@@ -256,7 +262,7 @@ func TestEveryVerbHasHelpAndRefusesBadUse(t *testing.T) {
 	if code, out, _ := ta.do("help"); code != 0 || !strings.Contains(out, "nova-sprint play") {
 		t.Errorf("help: %d", code)
 	}
-	for _, line := range []string{"", "nosuch", "start", "take", "merge", "read --as reader-a", "rank x", "teardown", "add --stream s1"} {
+	for _, line := range []string{"", "nosuch", "start now", "take", "merge", "read --as reader-a", "rank x", "teardown", "add --stream s1"} {
 		if code, _, errs := ta.do(line); code != 2 || !strings.Contains(errs, "run: nova-sprint") {
 			t.Errorf("%q: exit %d %q", line, code, errs)
 		}
