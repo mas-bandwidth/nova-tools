@@ -6,6 +6,8 @@ EXTENDS SprintTables, TLC
 
 MCStreams == {"s1", "s2"}
 MCPrimaries == {"p1", "p2", "p3"}
+\* A two-primary instance (one per stream) for the runs a third would not fit.
+MCPrimaries2 == {"p1", "p3"}
 MCStreamOf == [p \in Primaries |-> IF p = "p3" THEN "s2" ELSE "s1"]
 MCNeeds == [p \in Primaries |-> IF p = "p2" THEN {"p1"} ELSE {}]
 MCScore0 == [p \in Primaries |-> CASE p = "p1" -> 1 [] p = "p2" -> 2 [] p = "p3" -> 3]

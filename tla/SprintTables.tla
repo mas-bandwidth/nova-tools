@@ -91,6 +91,8 @@ CONSTANTS Streams, Primaries, Members, Readers,
           Score0,     \* [Primaries -> Nat], distinct
           Admitted0,  \* the primaries admitted before the first step
           MaxAttempt, MaxBad, MaxReturns, MaxRanks,
+          FreeCoordinator,  \* TRUE: rework, drop, return any time; FALSE:
+                            \* only in answer to an open judgment on the card
           Fixes, Broken
 
 None == "none"
@@ -174,6 +176,14 @@ Free == op = NoOp
 Fenced == op = NoOp \/ Br("nofence")
 
 Begin(o) == op' = o /\ crashed' = FALSE
+
+\* A card the coordinator may act on with rework, drop or return: any card
+\* when the instance frees the coordinator, else one an open judgment names
+\* (a card judgment, or a stuck card of a stopped stream).
+Judged(p) ==
+  \/ FreeCoordinator
+  \/ \E n \in open : n.p = p
+  \/ \E n \in open : n.t = "stopped" /\ p \in merge[n.s]["stuck"]
 
 \* The outside failure budget of the instance.
 Spend(isbad) == IF isbad THEN bad < MaxBad /\ bad' = bad + 1 ELSE UNCHANGED bad
@@ -388,7 +398,7 @@ Accept(S) ==
 \* review -> working; with none up, review -> ready and start cuts it later.
 \* Readers and fleet first, work last.
 Rework(p) ==
-  /\ Free /\ InWork(p, "review") /\ attempt[p] < MaxAttempt
+  /\ Free /\ InWork(p, "review") /\ attempt[p] < MaxAttempt /\ Judged(p)
   /\ LET live == {c \in LiveReads : c[2] = p}
          nc == WC(p, attempt[p] + 1)
          to == IF Up # {} /\ ~Br("reworkready") THEN "working" ELSE "ready"
@@ -410,7 +420,7 @@ Rework(p) ==
 \* its outstanding read cards retire, its merge place goes; work last. A
 \* waiting primary that needs it is blocked: a judgment notification.
 Drop(p) ==
-  /\ Free /\ p \in added /\ p \notin dropped /\ ~InWork(p, "landed")
+  /\ Free /\ p \in added /\ p \notin dropped /\ ~InWork(p, "landed") /\ Judged(p)
   /\ LET s == StreamOf[p]
          wl == {c \in Unfinished : c[2] = p}
          rl == IF Br("dropkeepsreads") THEN {} ELSE {c \in Outstanding : c[2] = p}
@@ -443,7 +453,7 @@ Rank(p) ==
 \* return: merging -> review; the card leaves merge queued or stuck (with its
 \* cause). Merge first, work last.
 Return(p) ==
-  /\ Free /\ InWork(p, "merging") /\ returnsN[p] < MaxReturns
+  /\ Free /\ InWork(p, "merging") /\ returnsN[p] < MaxReturns /\ Judged(p)
   /\ LET s == StreamOf[p]
          q2 == IF Br("returnkeeps") THEN merge[s]["queued"] ELSE merge[s]["queued"] \ {p}
          st2 == IF Br("returnkeeps") THEN merge[s]["stuck"] ELSE merge[s]["stuck"] \ {p}
