@@ -62,7 +62,15 @@ flags:
                     short header (or does nothing when it exists), and append
                     lands a dated "## <stamp> — <entry>" section at the end of
                     the file; no sessions/, entries/, log.jsonl or index
-                    appears beside it. A store holding both shapes is refused
+                    appears beside it. Every append takes the store's lock,
+                    .cairn.lock, on this machine for its check-then-write, so
+                    concurrent appends of one entry id give one writer, and
+                    refuses naming the holder after ten seconds, or naming the
+                    cause when the store directory cannot be written; the file
+                    is empty when free, never deleted, and a store kept in git
+                    lists it in its ignore file. Two machines writing one store
+                    through git are outside the lock. A store holding both
+                    shapes is refused
                     by every verb, naming the paths found of each and, in words,
                     the next action: move the other shape's paths out of the
                     store; the tool moves and deletes nothing. A store is

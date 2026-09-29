@@ -100,10 +100,35 @@ section heading). It creates no `sessions/`, `entries/` or `log.jsonl`, and the
 flat format stores no publication policy, so `--publish` is validated and not
 written. `append` lands a dated `## <stamp> — <entry>` section at the end of the
 file in the file's own shape, one blank line between sections, the words
-byte-for-byte beneath the heading. An append to a session with no file refuses
-with the remedy verb, and appends only after that `open`. Nothing appears
-beside the file: no `entries/`, no `log.jsonl`, no index. The duplicate and
-conflict rules below read the section instead of an entry file. `index` and
+byte-for-byte beneath the heading, less its trailing newlines. A section is
+read back, and compared for duplicate and conflict, whitespace-trimmed: the same
+id with the same words up to leading and trailing whitespace is a duplicate. Words
+that are empty after that trimming are refused as an empty note and file nothing.
+An append to a session with no file refuses with the remedy verb, and appends
+only after that `open`. Nothing appears beside the file but the store's lock
+(below): no `entries/`, no `log.jsonl`, no index. The duplicate and conflict
+rules below read the section instead of an entry file.
+
+**An append is one critical section.** Reading what the entry id already
+holds, deciding duplicate, conflict or new, and writing happen holding an
+exclusive lock on the store, `<store>/.cairn.lock`, taken through
+`internal/filelock` and waited for at most ten seconds. Of N appends of one
+entry id at once with different words exactly one writes and the rest refuse as
+conflicts; with the same words one writes and the rest answer `duplicate=true`.
+When the wait runs out the append refuses at exit 2 naming the process that
+holds the lock (its pid, host and start) and the next action, and writes
+nothing; the lock is released when that process exits. The lock file appears
+beside the records in either shape, is empty when free, is never deleted, and is
+neither a session file nor a shape marker; it appears only when a write takes it
+(a bench `open`, a refusal and the read verbs leave none; an own-shape `open`
+and an `append` take it). A store kept in git lists it in its ignore file with
+the one line `.cairn.lock`. When the store directory cannot be written the lock
+file cannot be made, and `append` refuses at exit 2 naming the cause ("cannot
+create the lock file ...: permission denied on <dir>") and the next action (make
+the directory writable, or write from an account that can). The lock serialises
+writers on ONE machine. Two machines writing one store synced through git are
+outside it: each appends to its own session file, and concurrent appends to the
+same session from two machines conflict in git, which is visible. `index` and
 `receipt` read the dated sections; they see a session as soon as `open` has
 made its file. Their byte counts measure the whitespace-trimmed section body,
 matching duplicate detection; they do not reconstruct the original append's
@@ -127,7 +152,10 @@ named record, in the shape the store already has.
 
 The lifecycle of a store (shape, open, append, duplicate, conflict, refusal) is
 modelled in `tla/CairnStore.tla`: one shape per store, an entry id maps to one
-text, and append never creates a session. The reserved name is outside the
+text (append is three steps by concurrent writers on one machine: take the lock,
+read and decide, write; without the lock two writers both write), and append
+never creates a session. Outside the model: torn writes, an older-version writer,
+and two machines. The reserved name is outside the
 model, whose sessions are an abstract set of ids.
 
 **`append --store <dir> --session <id> --entry <id> (--text <words> |
@@ -232,3 +260,5 @@ New regression cases must demonstrate the defect before the repair.
 50. `TestIndexReadsTheStoreDirectoryOnce` — through a counting seam, `index` over 40 sessions reads the store directory once.
 51. `TestIndexFlagsOneBadSessionAndListsTheOthers` and `TestIndexAtTheCLIFlagsOneBadSessionAmongFive` — one damaged session among five is one flagged row, the other four are listed, `index` exits 1 after printing everything, and naming the damaged session refuses at exit 2.
 52. `TestLongIDIsShownCutAtARuneBoundary` — an over-long id is never cut inside a character.
+53. `TestAppendRefusesNamingTheHolderWhenTheLockStaysHeld`, `TestAppendWaitsForTheHolderAndThenReadsWhatItWrote`, `TestAppendRefusesNamingTheCauseInAReadOnlyStoreDirectory` and `TestTheLockFileIsCreatedByAWriteAndByNothingElse` — with an injected clock, so no real wait: a held lock refuses after the bounded wait naming the holder, and the wait ends when the holder lets go; a read-only store directory refuses naming the cause; the lock file appears only by a write. `TestWordsEmptyAfterTrimmingAreRefusedOnTheBenchShape` — words empty after trimming are refused as an empty note.
+54. `TestConcurrentAppendsOfOneIDWithDifferentWordsHaveOneWinner`, `TestConcurrentAppendsOfOneIDWithTheSameWordsWriteOnce` and `TestConcurrentProcessAppendsOfOneIDHaveOneWinner` (functional tier) — of twelve concurrent appends of one id, in goroutines and in real processes for twelve rounds, in each shape, exactly one writes (different words) or one writes and eleven are duplicates (same words).

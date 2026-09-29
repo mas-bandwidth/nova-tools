@@ -1843,8 +1843,12 @@ On a bench store `open` creates `cairns/<id>.md` with a short header when none
 exists and does nothing when one does; it never writes `sessions/`, `entries/`
 or `log.jsonl`. `append` lands a dated `## <stamp> — <entry>` section at the end
 of the file, one blank line between sections, the words byte-for-byte under the
-heading. Nothing appears beside the file: no `entries/`, no `log.jsonl`, no
-index. Retries and conflicts read that section, so the same ID with the same
+heading. Nothing appears beside the file but the store's lock, `.cairn.lock` (list it in
+the ignore file of a store kept in git), which every `append` takes for its
+check-then-write on this machine, waiting at most ten seconds and then refusing
+at exit 2 naming the holder: no `entries/`, no `log.jsonl`, no
+index. Two machines writing one store through git are outside the lock. Words
+that are empty after trimming are refused as an empty note. Retries and conflicts read that section, so the same ID with the same
 words adds nothing and the same ID with different words refuses. `index` and
 `receipt` read the dated sections, and the coverage ledger counts the file. An
 append addressing a session with no file refuses with the whole remedy verb:

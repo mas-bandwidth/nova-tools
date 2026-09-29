@@ -82,7 +82,8 @@ func TestIndexAndReceiptReadFlatRecordsWithoutChangingThem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 1 {
+	// The appends above left the lock; the reads added nothing else.
+	if len(files) != 2 || files[0].Name() != ".cairn.lock" || files[1].Name() != "flat.md" {
 		t.Fatalf("read added sidecars: %v", files)
 	}
 	code, _, errOut := runCode("", "receipt", "--store", store, "--session", "flat", "--entry", "absent")

@@ -465,6 +465,24 @@ func Open(store, session, source string, now time.Time, publish string) error {
 	if sh == shapeBench {
 		return openBench(store, session, source, now.UTC().Format(time.RFC3339))
 	}
+	// A session that is already open, and a refusal, need no lock and leave
+	// nothing behind. Only a write takes it: the own shape's check-then-write is
+	// one critical section, and the lock needs the store directory to exist.
+	if _, err := SessionSource(store, session); err != nil {
+		return err
+	}
+	if _, _, ok, err := locateRecord(d, "open", store, session, sh); err != nil || ok {
+		return err
+	}
+	if err := os.MkdirAll(store, 0o755); err != nil {
+		return err
+	}
+	return withStoreLock("open", store, func() error {
+		return openOwn(store, session, source, now, publish, sh)
+	})
+}
+
+func openOwn(store, session, source string, now time.Time, publish string, sh shape) error {
 	// The source a session was opened with must be readable before anything
 	// is written or reported: open prints it, and append inherits it.
 	if _, err := SessionSource(store, session); err != nil {
@@ -522,6 +540,11 @@ func ensurePointer(store, session, id string, stamp time.Time) error {
 // persisted=true with published=false, because local durability never waited
 // for the remote.
 func Append(store, session, id, text, source string, now time.Time, publish string) (AppendResult, error) {
+	return appendOn(realClock, lockWait, store, session, id, text, source, now, publish)
+}
+
+// appendOn is Append with the lock's clock and wait named.
+func appendOn(c lockClock, wait time.Duration, store, session, id, text, source string, now time.Time, publish string) (AppendResult, error) {
 	var res AppendResult
 	if store == "" {
 		return res, errors.New("no store given; refusing to guess")
@@ -538,17 +561,50 @@ func Append(store, session, id, text, source string, now time.Time, publish stri
 	if text == "" {
 		return res, errors.New("empty note stores nothing; refusing to file it")
 	}
+	// A refusal (a mixed store, a record path holding a non-record, a session
+	// with no record) is decided without the lock and leaves nothing behind.
+	_, bench, err := appendTarget(store, session, publish)
+	if err != nil {
+		return res, err
+	}
+	// A bench section is compared and read back whitespace-trimmed, so words
+	// that are empty after that trimming file a section with no words: refused
+	// as empty, the same as no words at all.
+	if bench && strings.TrimSpace(text) == "" {
+		return res, errors.New("empty note stores nothing; refusing to file it")
+	}
+	// Reading what the entry id already holds, deciding, and writing are one
+	// critical section: two appends of one id must not both read "new".
+	err = withStoreLockOn(c, wait, "append", store, func() error {
+		var e error
+		res, e = appendLocked(store, session, id, text, source, now, publish)
+		return e
+	})
+	return res, err
+}
+
+// appendTarget finds the record an append addresses, or the refusal.
+func appendTarget(store, session, publish string) (path string, bench bool, err error) {
 	d := newDirs()
 	sh, err := storeShapeIn(d, "append", store)
 	if err != nil {
-		return res, err
+		return "", false, err
 	}
 	path, bench, ok, err := locateRecord(d, "append", store, session, sh)
 	if err != nil {
-		return res, err
+		return "", false, err
 	}
 	if !ok {
-		return res, noRecord(store, session, publish)
+		return "", false, noRecord(store, session, publish)
+	}
+	return path, bench, nil
+}
+
+func appendLocked(store, session, id, text, source string, now time.Time, publish string) (AppendResult, error) {
+	var res AppendResult
+	path, bench, err := appendTarget(store, session, publish)
+	if err != nil {
+		return res, err
 	}
 	stamp := now.UTC()
 	if bench {

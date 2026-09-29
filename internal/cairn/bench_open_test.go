@@ -20,7 +20,8 @@ import (
 
 var benchNow = time.Date(2026, 9, 29, 8, 0, 0, 0, time.UTC)
 
-// listing is the sorted names directly under dir, directories with a slash.
+// listing is the sorted names directly under dir, directories with a slash,
+// without the lock file (its own test says when it is there).
 func listing(t *testing.T, dir string) []string {
 	t.Helper()
 	files, err := os.ReadDir(dir)
@@ -30,6 +31,9 @@ func listing(t *testing.T, dir string) []string {
 	var names []string
 	for _, f := range files {
 		n := f.Name()
+		if n == lockFileName {
+			continue
+		}
 		if f.IsDir() {
 			n += "/"
 		}
@@ -588,4 +592,67 @@ func TestConcurrentBenchOpensWriteOneHeader(t *testing.T) {
 	if strings.Count(string(raw), "# Cairn ") != 1 || strings.Count(string(raw), "Session NEW opened") != 1 || strings.Count(string(raw), "Source: ") != 1 {
 		t.Fatalf("not exactly one header:\n%s", raw)
 	}
+}
+
+// The lock is the one file the tool adds beside the records, and only a write
+// makes it: a bench open, a refusal and the read verbs leave none.
+func TestTheLockFileIsCreatedByAWriteAndByNothingElse(t *testing.T) {
+	t.Parallel()
+	store, _ := manySessionStore(t)
+	has := func() bool { _, err := os.Lstat(filepath.Join(store, lockFileName)); return err == nil }
+	if err := Open(store, "NEW", "", benchNow, PublishManual); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Append(store, "missing", "e", "w", "", benchNow, PublishManual); err == nil {
+		t.Fatal("append to a session with no record must refuse")
+	}
+	if _, err := Append(store, "NEW", "e", " \n\n", "", benchNow, PublishManual); err == nil {
+		t.Fatal("words that are empty after trimming must refuse")
+	}
+	if _, _, err := Index(store, "", 0); err != nil {
+		t.Fatal(err)
+	}
+	if has() {
+		t.Fatal("a bench open, a refusal and a read created the lock file")
+	}
+	if _, err := Append(store, "NEW", "e1", "words", "", benchNow, PublishManual); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(filepath.Join(store, lockFileName))
+	if err != nil || !info.Mode().IsRegular() || info.Size() != 0 {
+		t.Fatalf("after an append the lock file is a free (empty) regular file: %v %v", info, err)
+	}
+	// The lock file is neither a session nor a shape marker.
+	if got, err := storeShape("open", store); got != shapeBench || err != nil {
+		t.Fatalf("shape %v %v", got, err)
+	}
+	if got := Coverage(store).Sessions; got != 6 {
+		t.Fatalf("coverage %d", got)
+	}
+}
+
+// Words that are empty after the trimming the comparison uses are refused as
+// empty, on the bench shape, and file nothing.
+func TestWordsEmptyAfterTrimmingAreRefusedOnTheBenchShape(t *testing.T) {
+	t.Parallel()
+	store := openedBenchStore(t)
+	before, _ := os.ReadFile(benchFile(store, "NEW"))
+	for _, text := range []string{"\n\n", " ", "\t\n ", "\n"} {
+		_, err := Append(store, "NEW", "e1", text, "", benchNow, PublishManual)
+		if err == nil || !strings.Contains(err.Error(), "empty note stores nothing") {
+			t.Errorf("%q: want the empty-note refusal, got %v", text, err)
+		}
+	}
+	if after, _ := os.ReadFile(benchFile(store, "NEW")); string(after) != string(before) {
+		t.Fatal("a refused empty note wrote")
+	}
+}
+
+func openedBenchStore(t *testing.T) string {
+	t.Helper()
+	store, _ := manySessionStore(t)
+	if err := Open(store, "NEW", "", benchNow, PublishManual); err != nil {
+		t.Fatal(err)
+	}
+	return store
 }

@@ -62,15 +62,7 @@ func TestAppendOpenRemedyRoundTripsThroughShell(t *testing.T) {
 func TestAppendOpenRemedyOnABenchStoreCreatesOnlyTheSessionFile(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	bin := filepath.Join(root, "bin")
-	if err := os.Mkdir(bin, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	build := exec.Command("go", "build", "-o", filepath.Join(bin, "nova-cairn"), ".")
-	build.Env = goenv.Clean(os.Environ())
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("go build: %v: %s", err, out)
-	}
+	bin := builtBinary(t, root)
 	store := filepath.Join(root, "cairns")
 	if err := os.Mkdir(store, 0o755); err != nil {
 		t.Fatal(err)
@@ -105,4 +97,19 @@ func TestAppendOpenRemedyOnABenchStoreCreatesOnlyTheSessionFile(t *testing.T) {
 	}
 	// And the append that refused now lands.
 	runOK(t, "", "append", "--store", store, "--session", "NEW", "--entry", "e", "--text", "note", "--publish", "manual")
+}
+
+// builtBinary builds nova-cairn into <root>/bin and returns that directory.
+func builtBinary(t *testing.T, root string) string {
+	t.Helper()
+	bin := filepath.Join(root, "bin")
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	build := exec.Command("go", "build", "-o", filepath.Join(bin, "nova-cairn"), ".")
+	build.Env = goenv.Clean(os.Environ())
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build: %v: %s", err, out)
+	}
+	return bin
 }

@@ -18,6 +18,9 @@ func names(t *testing.T, dir string) []string {
 	var out []string
 	for _, f := range files {
 		n := f.Name()
+		if n == ".cairn.lock" { // the lock a write leaves; see SPEC-CAIRN
+			continue
+		}
 		if f.IsDir() {
 			n += "/"
 		}
