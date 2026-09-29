@@ -363,7 +363,7 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 	for _, c := range s.Fleet.Column(Ready, Working, Withdrawn) {
 		field, limit, word := WorkDeadline(c)
 		if at, ok := late(field, c, limit); ok {
-			conds = append(conds, cond{typ: NWorkLate, stream: c.F("stream"), primaries: []string{c.F("primary")},
+			conds = append(conds, cond{typ: NWorkLate, stream: c.F("stream"), card: c.ID, primaries: []string{c.F("primary")},
 				what:      fmt.Sprintf("%s %s at %s, %s", c.ID, strings.TrimPrefix(strings.Replace(field, "untaken_since", "dealt", 1), "first_"), at, word),
 				decisions: []string{"fleet down " + c.Row, "wait", "drop"}})
 		}
@@ -375,7 +375,7 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 			field, limit, word = "begun", DeadlineUnreported, "not reported"
 		}
 		if at, ok := late(field, c, limit); ok {
-			conds = append(conds, cond{typ: NReadLate, stream: c.F("stream"), primaries: []string{c.F("primary")},
+			conds = append(conds, cond{typ: NReadLate, stream: c.F("stream"), card: c.ID, primaries: []string{c.F("primary")},
 				what: fmt.Sprintf("%s %s of %s at %s, %s", c.ID, field, c.Row, at, word)})
 		}
 	}
@@ -499,6 +499,7 @@ func TickOverdue(s *Snapshot, r TickReq) (Plan, int) {
 // condition with no stream is about the sprint).
 type cond struct {
 	typ, stream string
+	card        string // the consumer card a late judgment is of: its own cause
 	primaries   []string
 	streamLevel bool
 	what        string
@@ -571,7 +572,7 @@ func notify(p *Plan, s *Snapshot, conds []cond, types []string, r TickReq) int {
 		}
 		written++
 		n := Note{Kind: Judgment, Type: c.typ, Stream: c.stream, Primaries: c.primaries, Count: len(c.primaries), What: c.what,
-			Who: who, At: s.Now, StreamLevel: c.streamLevel, Marked: true}
+			Who: who, At: s.Now, StreamLevel: c.streamLevel, Marked: true, Card: c.card}
 		n.Decisions = append([]string(nil), c.decisions...)
 		if len(n.Decisions) == 0 {
 			n.Decisions = append([]string(nil), TickDecisions[c.typ]...)

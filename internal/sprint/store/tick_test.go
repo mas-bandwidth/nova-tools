@@ -654,3 +654,41 @@ func TestARedealtCardAfterATakeIsLateNotTaken(t *testing.T) {
 		}
 	}
 }
+
+// A late read or work card is its own judgment (reader finding 6): a read
+// card late while another read of the same primary is judged late is a
+// second judgment, each naming its card and closing when its own card moves.
+func TestTwoLateReadsOfOnePrimaryAreTwoJudgments(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
+	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"p"}}))
+	h.startMachine()
+	h.machine()
+	h.takeAndFinish(false, "p")
+	h.machine() // asks two readers
+	cards := h.snap().Readers.Of("p")
+	if len(cards) != 2 {
+		t.Fatalf("asked: %d", len(cards))
+	}
+	h.must(ReadStep(sprint.ReadReq{As: cards[0].Row, Begin: true, Sel: sprint.Sel{IDs: []string{cards[0].ID}}}))
+	h.tick(sprint.DeadlineUnbegun + time.Minute)
+	h.machine() // the unbegun read is late
+	late := h.openOf(sprint.NReadLate)
+	if len(late) != 1 || late[0].Note.Card != cards[1].ID {
+		t.Fatalf("the unbegun read late: %+v", late)
+	}
+	h.tick(sprint.DeadlineUnreported)
+	h.machine() // the begun read is late too, while the first is open
+	late = h.openOf(sprint.NReadLate)
+	if len(late) != 2 || late[0].Note.Card == late[1].Note.Card {
+		t.Fatalf("two late reads: %+v", late)
+	}
+	h.must(ReadStep(sprint.ReadReq{As: cards[1].Row, Begin: true, Sel: sprint.Sel{IDs: []string{cards[1].ID}}}))
+	h.tick(time.Second)
+	h.machine()
+	late = h.openOf(sprint.NReadLate)
+	if len(late) != 1 || late[0].Note.Card != cards[0].ID {
+		t.Fatalf("after %s began: %+v", cards[1].ID, late)
+	}
+}

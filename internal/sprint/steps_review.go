@@ -955,9 +955,12 @@ func RecordCI(s *Snapshot, r CIReq) Plan {
 			}
 		}
 		what := r.Note
+		if r.Run != "" {
+			what = strings.TrimSpace("run " + r.Run + ": " + r.Note)
+		}
 		old := head != c.F("head")
 		if old {
-			what = strings.TrimSpace("for an old head " + head + " (current " + orDash(c.F("head")) + "); " + r.Note)
+			what = strings.TrimSpace("for an old head " + head + " (current " + orDash(c.F("head")) + "); " + what)
 		}
 		var n Note
 		if r.Red {
@@ -970,6 +973,10 @@ func RecordCI(s *Snapshot, r CIReq) Plan {
 			Moved: fmt.Sprintf("%s ci %s (%s)", c.ID, result, c.Col)}
 		if old {
 			u.Moved += " for an old head"
+		}
+		if r.Red && !old {
+			// a second red takes the open one's place, with this run's text
+			u.Closes = closesFor(s.Open, []string{NCIRed}, c.ID)
 		}
 		if !r.Red && !old {
 			u.Closes = closesFor(s.Open, []string{NCIRed}, c.ID)

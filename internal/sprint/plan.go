@@ -344,9 +344,10 @@ func OnePerCause(s *Snapshot, p Plan) Plan {
 		closing[o.Key] = true
 	}
 	// A cause is the type, and for a judgment that names needs, the needs
-	// it names: a need dropped later is its own judgment.
+	// it names: a need dropped later is its own judgment; for one that names
+	// its card (a late read or work card), the card: each is its own.
 	cause := func(n Note, sub string) string {
-		return n.Type + "|" + strings.Join(n.Needs, ",") + "|" + sub
+		return n.Type + "|" + strings.Join(n.Needs, ",") + "|" + n.Card + "|" + sub
 	}
 	open := map[string]bool{}
 	for _, o := range s.Open {

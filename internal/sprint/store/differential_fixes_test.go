@@ -69,16 +69,20 @@ func TestAnAllDroppedSprintIsDoneAndItsStreamEmpty(t *testing.T) {
 }
 
 // 4. A judgment is open per card and cause: a second ci red on the same card
-// writes no second judgment, and one ack closes it.
+// writes no second judgment; it takes the first one's place with the new
+// run's text (reader finding 6), and one ack closes it.
 func TestASecondCIRedOnACardWritesNoSecondJudgment(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(1)
-	h.must(CIStep(sprint.CIReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Red: true, Run: "r1"}))
-	h.must(CIStep(sprint.CIReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Red: true, Run: "r2"}))
+	h.must(CIStep(sprint.CIReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Red: true, Run: "r1", Note: "TestA timed out"}))
+	h.must(CIStep(sprint.CIReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Red: true, Run: "r2", Note: "TestB failed"}))
 	open := h.openOf(sprint.NCIRed)
 	if len(open) != 1 {
 		t.Fatalf("ci red open %d times on s1-1", len(open))
+	}
+	if w := open[0].Note.What; !strings.Contains(w, "r2") || !strings.Contains(w, "TestB failed") || strings.Contains(w, "TestA") {
+		t.Fatalf("the open ci red says %q, not the second run", w)
 	}
 	h.must(AckStep(sprint.AckReq{Notes: []string{open[0].Note.ID}, Reason: "a flaky runner"}))
 	if n := len(h.openOf(sprint.NCIRed)); n != 0 {
