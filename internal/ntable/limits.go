@@ -19,6 +19,7 @@ const (
 	LimitColumns          = 1000               // columns per table
 	LimitRows             = 100000             // rows per table
 	LimitReceiptBytes     = LimitManifestBytes // the encoded batch delta of one receipt
+	LimitBatchValueBytes  = 16 << 20           // bytes of the field values a batch's entries name, before and after
 	limitNameManifest     = "manifest bytes"
 	limitNameChanged      = "entries with changes"
 	limitNameGuardEntries = "guard-only entries"
@@ -32,6 +33,7 @@ const (
 	limitNameColumns      = "columns per table"
 	limitNameRows         = "rows per table"
 	limitNameReceipt      = "receipt bytes"
+	limitNameBatchValues  = "value bytes per batch"
 )
 
 // ReceiptValueBytes is the longest field value a receipt, the change event and
@@ -133,6 +135,8 @@ func (e *LimitError) Advice() string {
 		return fmt.Sprintf("a table holds at most %d columns; remove one first or use another table", e.Bound)
 	case limitNameRows:
 		return fmt.Sprintf("a table holds at most %d rows; delete a row first or use another table", e.Bound)
+	case limitNameBatchValues:
+		return fmt.Sprintf("a batch touches at most %d bytes of field values (every before-value and after-value of the fields its entries name); change fewer members or fields in one manifest, split across manifests with their own operation ids", e.Bound)
 	case limitNameReceipt:
 		return fmt.Sprintf("the receipt of one batch is at most %d bytes and records every changed field; change fewer members or fewer fields in one manifest, split across manifests with their own operation ids", e.Bound)
 	}

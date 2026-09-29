@@ -139,7 +139,7 @@ do
     set_fields = 128, unset_fields = 1000, field_guards = 1000, one_of_options = 1000,
     read_set_members = 1024,
     columns = 1000, rows = 100000,
-    receipt_bytes = 1048576,
+    receipt_bytes = 1048576, batch_value_bytes = 16777216,
   }
   T.limit_names = {
     manifest_bytes = 'manifest bytes', changed_entries = 'entries with changes', guard_entries = 'guard-only entries',
@@ -147,7 +147,7 @@ do
     set_fields = 'set fields per member', unset_fields = 'unset fields per member',
     field_guards = 'guards per member', one_of_options = 'one_of options', read_set_members = 'read set members',
     columns = 'columns per table', rows = 'rows per table',
-    receipt_bytes = 'receipt bytes',
+    receipt_bytes = 'receipt bytes', batch_value_bytes = 'value bytes per batch',
   }
   -- T.over(key, observed, member): a LIMIT refusal when observed exceeds the bound.
   function T.over(key, observed, member)
@@ -553,6 +553,31 @@ do
     local epoch = h.epoch or '0'
     if exists and epoch ~= d.epoch then return nil, nil, T.refuse('MEMBEREPOCH', id, epoch, d.epoch) end
     return h, exists
+  end
+  -- T.member_head(d, id): a batch's view of a member: whether the record exists
+  -- and its epoch, revision and place, read by name. Any other field is read on
+  -- first use, by name (record[f]), so what a batch reads is what its entries
+  -- name and not what the record holds; T.batch_value_bytes bounds those reads.
+  function T.member_head(d, id)
+    if not T.word(id) then return nil, nil, T.refuse('MEMBER', 'a member id is a nonempty string without control characters') end
+    local mkey = T.memberkey(d, id)
+    local n = redis.pcall('HLEN', mkey)
+    if type(n) == 'table' and n.err then
+      if string.find(n.err, 'WRONGTYPE') then return nil, nil, T.refuse('WRONGTYPE', mkey, T.kind(mkey), 'hash', id) end
+      T.rethrow(n)
+    end
+    local h = setmetatable({}, {__index = function(t, f)
+      local v = redis.call('HGET', mkey, f)
+      if v then rawset(t, f, v); return v end
+      return nil
+    end})
+    if n == 0 then return h, false end
+    local named = redis.call('HMGET', mkey, 'epoch', 'revision', 'place:' .. d.name)
+    if named[1] then rawset(h, 'epoch', named[1]) end
+    if named[2] then rawset(h, 'revision', named[2]) end
+    if named[3] then rawset(h, 'place:' .. d.name, named[3]) end
+    if (named[1] or '0') ~= d.epoch then return nil, nil, T.refuse('MEMBEREPOCH', id, named[1] or '0', d.epoch) end
+    return h, true
   end
   function T.advance_member_rev(record, exists)
     if not exists then return '1' end
@@ -2173,15 +2198,57 @@ do
 
     -- Pre-state evaluation & expectation checking:
     local member_records = {}
+    local member_exists = {} -- the member has a record
     local member_places = {}
     local member_scores = {}
     local member_score_text = {} -- the score exactly as the store holds it
 
+    -- What the batch touches is counted from lengths before anything is read or
+    -- hashed: the bytes of every before-value and after-value of the fields its
+    -- entries name (set, unset and guarded), and the size the receipt must have at
+    -- least. Either bound refuses the batch at once, before any read of a value.
+    local touched, receipt_least = 0, 2
     for _, entry in ipairs(members_list) do
       local id = entry.id
-      local record, exists, why = T.member(d, id)
+      if type(id) == 'string' and T.word(id) then
+        local mkey = T.memberkey(d, id)
+        local counted = {}
+        local function before_length(f)
+          if counted[f] == nil then
+            local n = redis.pcall('HSTRLEN', mkey, f)
+            if type(n) == 'table' then n = 0 end -- a wrong-type record is refused below
+            if n == 0 and redis.pcall('HEXISTS', mkey, f) ~= 1 then n = false end
+            counted[f] = n
+            touched = touched + (n or 0)
+          end
+          return counted[f]
+        end
+        local function side(key, n)
+          if n == false then return #key + 7 end
+          if n <= T.receipt_value_bytes then return #key + 5 + n end
+          return #key + 7 + (#key + 9 + #tostring(n)) + (#key + 51)
+        end
+        for f, val in pairs(entry.set or {}) do
+          local n = before_length(f)
+          touched = touched + #val
+          receipt_least = receipt_least + #f + 6 + side('before', n) + side('after', #val)
+        end
+        for _, f in ipairs(entry.unset or {}) do
+          local n = before_length(f)
+          receipt_least = receipt_least + #f + 9 + side('before', n) + side('after', false)
+        end
+        for f in pairs((entry.expect and entry.expect.fields) or {}) do before_length(f) end
+        local over = T.over('batch_value_bytes', touched, id) or T.over('receipt_bytes', receipt_least, id)
+        if over then return over end
+      end
+    end
+
+    for _, entry in ipairs(members_list) do
+      local id = entry.id
+      local record, exists, why = T.member_head(d, id)
       if why then return why end
       member_records[id] = record or {}
+      member_exists[id] = exists
 
       local current_place = record and record['place:' .. d.name]
       if current_place then
@@ -2281,7 +2348,7 @@ do
       item.fields = member_fields
 
       if entry.create then
-        if next(record) or current_place then
+        if member_exists[id] or current_place then
           return T.refuse('MEMBEREXISTS', id, current_place and ('placed at ' .. current_place) or 'record without placement')
         end
         local crow, ccol = entry.create.row, entry.create.col
@@ -2302,7 +2369,7 @@ do
         item.before_rev = '0'
         item.after_rev = '1'
       elseif entry.move then
-        if not current_place then return T.refuse('NOTMEMBER', id, next(record) and 'record without placement' or 'no member record', 'a placed member to move') end
+        if not current_place then return T.refuse('NOTMEMBER', id, member_exists[id] and 'record without placement' or 'no member record', 'a placed member to move') end
         local mrow, mcol = entry.move.row, entry.move.col
         local dst_cell, err = T.cell(d, mrow, mcol, true)
         if not dst_cell then return at_member(err, id) end
@@ -2346,7 +2413,7 @@ do
           item.after_rev = item.before_rev
         end
       elseif entry.remove then
-        if not current_place then return T.refuse('NOTMEMBER', id, next(record) and 'record without placement' or 'no member record', 'a placed member to remove') end
+        if not current_place then return T.refuse('NOTMEMBER', id, member_exists[id] and 'record without placement' or 'no member record', 'a placed member to remove') end
         local src_row, src_col = string.match(current_place, '^(.*):([^:]+)$')
         local src_cell, err = T.cell(d, src_row, src_col, true)
         if not src_cell then return at_member(err, id) end
@@ -2372,7 +2439,7 @@ do
         local has_fields = (entry.set ~= nil and next(entry.set) ~= nil) or
                            (entry.unset ~= nil and #entry.unset > 0)
         if has_fields then
-          if not next(record) then return T.refuse('NOTMEMBER', id, 'no member record', 'an existing member to change fields of') end
+          if not member_exists[id] then return T.refuse('NOTMEMBER', id, 'no member record', 'an existing member to change fields of') end
           if fields_changed then
             item.action = 'fields'
             item.effective_change = true

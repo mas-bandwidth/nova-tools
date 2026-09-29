@@ -394,6 +394,7 @@ compares them with this table:
 | columns per table | 1000 |
 | rows per table | 100000 |
 | receipt bytes | 1048576 |
+| value bytes per batch | 16777216 |
 
 `columns per table` and `rows per table` bound the size of a table: `create`, `bind`,
 `set` (`--columns`, `col add`) and `row add`, `rows add` refuse the column or the row

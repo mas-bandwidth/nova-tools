@@ -76,6 +76,7 @@ func TestBatchBoundsAgreeAcrossServerValidatorAndSpec(t *testing.T) {
 		limitNameColumns:      LimitColumns,
 		limitNameRows:         LimitRows,
 		limitNameReceipt:      LimitReceiptBytes,
+		limitNameBatchValues:  LimitBatchValueBytes,
 	}
 	for label, side := range map[string]map[string]int{"table.lua": luaLimits(t), "SPEC-NOVA-TABLE.md": specLimits(t)} {
 		if len(side) != len(goSide) {
