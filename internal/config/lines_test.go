@@ -23,8 +23,8 @@ func TestRowLineNamesEveryFieldAndEscapesValues(t *testing.T) {
 		t.Fatalf("%d tokens, want %d", n, 2+len(friend.Fields))
 	}
 	machine, _ := Lookup(KindMachine)
-	spaced := Row{Name: "studio", Fields: map[string]string{"user": "glenn f", "seat": "studio", "slots": "64", "runners": "0", "tiers": "frontier,pro"}}
-	if got, want := RowLine(machine, spaced), `MACHINE name=studio user=glenn\x20f seat=studio slots=64 runners=0 tiers=frontier,pro`; got != want {
+	spaced := Row{Name: "bench-a", Fields: map[string]string{"user": "user a", "seat": "bench-a", "slots": "64", "runners": "0", "tiers": "frontier,pro"}}
+	if got, want := RowLine(machine, spaced), `MACHINE name=bench-a user=user\x20a seat=bench-a slots=64 runners=0 tiers=frontier,pro`; got != want {
 		t.Fatalf("escaped line\n got %s\nwant %s", got, want)
 	}
 	route, _ := Lookup(KindRoute)

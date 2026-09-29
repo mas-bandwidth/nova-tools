@@ -172,9 +172,7 @@ native takes directory leases (.lease, .slot-lease); bench capacity-store lease 
 
 ## The card is a pipeline, not a loop (issue #856)
 
-Glenn, 2026-09-16, on why every tool call re-sent the context: *"The idea is for
-it to have no memory between calls Rowan. The idea is to just do work."* In this
-repository a card is a pipeline of stateless model calls, not an agent loop.
+Each model call receives its required context explicitly: a card is a pipeline of stateless model calls, not an agent loop; no memory between calls.
 Each rule below carries the hurt that made it, and **Red tests for this
 section** lists the red test for each rule: one per rule, seen red first,
 against the fake harness and the fixture card, with no network.
