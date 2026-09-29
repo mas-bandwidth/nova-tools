@@ -83,7 +83,7 @@ usage:
         [--diagnostics]
   nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
   nova-bus close --bus <dir> --as <name> --before <RFC3339> [--dry-run] [--remote <name> --branch <name> [--attempts <n>] [--no-push]]
-  nova-bus archive --bus <dir> --before <RFC3339> [--as <name>] [--out <path>] [--dry-run] [--remote <name> --branch <name> [--attempts <n>] [--no-push]]
+  nova-bus archive --bus <dir> --before <RFC3339> --as <name> [--out <path>] [--dry-run] [--remote <name> --branch <name> [--attempts <n>] [--no-push]]
   nova-bus check --bus <dir> (--full | --as <name> | --since <commit-or-date>) [--max <n>] [--legacy-before <date-or-instant>] [--rebuild-index]
   nova-bus names --bus <dir>
 
@@ -284,6 +284,11 @@ docs/TESTS.md carries the whole first sitting: read, receipt, advance, send.
 // bare invocation, the unknown verb, and the flag parse error. Everything else nova-bus
 // prints is another line's work.
 func refuse(stderr io.Writer, where, what string) int {
+	if strings.HasPrefix(where, "cmd") {
+		where = " " + strings.ToLower(strings.TrimPrefix(where, "cmd"))
+	} else if where != "" && !strings.HasPrefix(where, " ") {
+		where = " " + where
+	}
 	fmt.Fprintf(stderr, "nova-bus%s: %s; run: nova-bus help\n", oneline.Escape(where), oneline.Escape(what))
 	return 2
 }
@@ -1285,7 +1290,7 @@ func cmdArchive(args []string, stdout, stderr io.Writer, now time.Time) int {
 	f := newFlags("archive")
 	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
 	beforeFlag := f.fs.String("before", "", "every note dated before this RFC 3339 instant is moved to the archive (required)")
-	as := f.fs.String("as", "", "which participant you are committing as (optional)")
+	as := f.fs.String("as", "", "which participant you are committing as (required)")
 	out := f.fs.String("out", "", "archive destination directory or tarball (.tar.gz / .tgz); defaults to <bus>/archive")
 	dryRun := f.fs.Bool("dry-run", false, "report what would be archived and write nothing")
 	remote := f.fs.String("remote", "", "the git remote to push to")
@@ -1296,6 +1301,9 @@ func cmdArchive(args []string, stdout, stderr io.Writer, now time.Time) int {
 
 	if !f.parse(args, stderr, map[string]*string{"bus": busDir, "before": beforeFlag}) {
 		return 2
+	}
+	if strings.TrimSpace(*as) == "" {
+		return refuse(stderr, "cmdArchive", "want --as <name>; state: identity unset; next: supply --as <name>")
 	}
 	if !f.attempts(*attempts, stderr) {
 		return 2
@@ -1331,20 +1339,15 @@ func cmdArchive(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 2
 	}
 
-	var who bus.Participant
-	if strings.TrimSpace(*as) != "" {
-		me, found := t.Config.Lookup(*as)
-		if !found {
-			fmt.Fprintf(stderr, "nova-bus archive: --as %q names no one on this bus (known: %s)\n", *as, oneline.Escape(strings.Join(t.Config.KnownNames(), "; ")))
-			return 2
-		}
-		who = me
-	} else if len(t.Config.Participants) > 0 {
-		who = t.Config.Participants[0]
+	me, found := t.Config.Lookup(*as)
+	if !found {
+		fmt.Fprintf(stderr, "nova-bus archive: --as %q names no one on this bus (known: %s)\n", *as, oneline.Escape(strings.Join(t.Config.KnownNames(), "; ")))
+		return 2
 	}
+	who := me
 	if who.GitName == "" {
-		who.GitName = "Archive"
-		who.GitEmail = "archive@bus.local"
+		who.GitName = who.Name
+		who.GitEmail = who.Name + "@bus.local"
 	}
 
 	targetPath := *out

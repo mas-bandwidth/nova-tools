@@ -607,14 +607,14 @@ CLOSE OK closed=2964 kept=184 receipts=7 commit=9141bd52
 **`archive --before <instant>`** moves notes dated strictly before an RFC 3339 instant out of active lanes and into `<bus>/archive/` (or into a `.tar.gz`/`.tgz` compressed archive if `--out <file>` names a tarball). Archived notes are removed from active lane `INDEX` files and appended to `<bus>/archive/INDEX`, so that references (`Re:`) and receipts remain valid and `check` continues to verify them without indexing old notes in active lanes. Open lists pointing to archived notes are repointed to `archive/...`, preserving reader cursors. `--dry-run` reports what would be archived and writes nothing.
 
 ```sh
-nova-bus archive --bus ~/bus --before 2026-09-01T00:00:00Z --remote origin --branch main
+nova-bus archive --bus ~/bus --before 2026-09-01T00:00:00Z --as Ada --remote origin --branch main
 ARCHIVE OK archived=120 kept=15 target=archive commit=a1b2c3d4 pushed=true attempts=1
 ```
 
 If `--out <path>` ends in `.tar.gz` or `.tgz`, the archived notes are packaged into that tarball and removed from active lanes while `<bus>/archive/INDEX` is updated:
 
 ```sh
-nova-bus archive --bus ~/bus --before 2026-09-01T00:00:00Z --out ~/bus-archive-20260901.tar.gz --remote origin --branch main
+nova-bus archive --bus ~/bus --before 2026-09-01T00:00:00Z --as Ada --out ~/bus-archive-20260901.tar.gz --remote origin --branch main
 ARCHIVE OK archived=120 kept=15 target=/home/ada/bus-archive-20260901.tar.gz commit=e5f6a7b8 pushed=true attempts=1
 ```
 

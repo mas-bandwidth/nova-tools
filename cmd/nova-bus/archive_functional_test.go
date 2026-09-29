@@ -40,7 +40,7 @@ func TestArchiveFunctionalWorkflow(t *testing.T) {
 
 	// 1. Dry run
 	rDry := invoke(t, "", "archive", "--bus", checkout,
-		"--before", "2026-09-08T00:00:00Z", "--dry-run")
+		"--before", "2026-09-08T00:00:00Z", "--as", "Bo", "--dry-run")
 	rDry.mustCode(t, 0)
 	rDry.mustContain(t, "stdout", "ARCHIVE OK archived=4 kept=1 target=archive (dry run)")
 
@@ -51,7 +51,7 @@ func TestArchiveFunctionalWorkflow(t *testing.T) {
 
 	// 2. Real archive run with git push
 	rReal := invoke(t, "", "archive", "--bus", checkout,
-		"--before", "2026-09-08T00:00:00Z",
+		"--before", "2026-09-08T00:00:00Z", "--as", "Bo",
 		"--remote", "origin", "--branch", "main", "--attempts", "3")
 	rReal.mustCode(t, 0)
 	rReal.mustContain(t, "stdout", "ARCHIVE OK archived=4 kept=1 target=archive commit=")
@@ -113,7 +113,7 @@ func TestArchiveFunctionalTarball(t *testing.T) {
 
 	tarPath := filepath.Join(checkout, "archive-20260908.tar.gz")
 	r := invoke(t, "", "archive", "--bus", checkout,
-		"--before", "2026-09-08T00:00:00Z",
+		"--before", "2026-09-08T00:00:00Z", "--as", "Bo",
 		"--out", tarPath,
 		"--remote", "origin", "--branch", "main", "--attempts", "3")
 	r.mustCode(t, 0)
