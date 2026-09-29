@@ -87,6 +87,18 @@ func withStoreLockOn(c lockClock, wait time.Duration, op, store string, fn func(
 // lockFileError is the refusal for a lock file that cannot be made or opened,
 // naming the cause and the next action.
 func lockFileError(op, store, path string, err error) error {
+	// Something that is not a plain file stands at the lock's name: making the
+	// directory writable changes nothing, moving that path does.
+	if li, lerr := os.Lstat(path); lerr == nil && !li.Mode().IsRegular() {
+		what := "not a regular file"
+		if isLink(li) {
+			what = "a symbolic link"
+		} else if li.IsDir() {
+			what = "a directory"
+		}
+		return &LockedError{Msg: fmt.Sprintf("cannot %s: the lock file %q is %s; move or remove that path, then run the same command again",
+			opPhrase(op), path, what)}
+	}
 	switch {
 	case errors.Is(err, fs.ErrPermission):
 		return &LockedError{Msg: fmt.Sprintf("cannot %s: cannot create the lock file %q: permission denied on %q; "+

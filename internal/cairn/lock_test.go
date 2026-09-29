@@ -124,3 +124,44 @@ func TestAppendRefusesNamingTheCauseInAReadOnlyStoreDirectory(t *testing.T) {
 		t.Fatal("a refused append wrote")
 	}
 }
+
+// A link or a directory at the lock's name is refused with the next action that
+// works: move or remove that path. Making the store directory writable, which the
+// generic refusal says, changes nothing here. Nothing is written through the link.
+func TestABadLockFileIsRefusedWithMoveOrRemoveNotWritable(t *testing.T) {
+	t.Parallel()
+	for name, want := range map[string]string{"link": "a symbolic link", "directory": "a directory"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			store := openedBenchStore(t)
+			lock := filepath.Join(store, lockFileName)
+			elsewhere := filepath.Join(t.TempDir(), "elsewhere")
+			if err := os.WriteFile(elsewhere, []byte("precious\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if name == "link" {
+				if err := os.Symlink(elsewhere, lock); err != nil {
+					t.Skipf("no symlinks here: %v", err)
+				}
+			} else if err := os.Mkdir(lock, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			_, err := Append(store, "NEW", "e1", "words", "", benchNow, PublishManual)
+			var le *LockedError
+			if !errors.As(err, &le) {
+				t.Fatalf("want a LockedError, got %v", err)
+			}
+			for _, w := range []string{"cannot append an entry", lock, want, "move or remove that path"} {
+				if !strings.Contains(err.Error(), w) {
+					t.Errorf("%q lacks %q", err, w)
+				}
+			}
+			if strings.Contains(err.Error(), "writable") {
+				t.Errorf("the advice does not fit the cause: %q", err)
+			}
+			if raw, _ := os.ReadFile(elsewhere); string(raw) != "precious\n" {
+				t.Fatalf("a write went through the link: %q", raw)
+			}
+		})
+	}
+}
