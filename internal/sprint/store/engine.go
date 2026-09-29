@@ -223,14 +223,6 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			}
 		}
 		plan := step.Plan(snap)
-		if len(plan.Rows) > 0 && !rowsAdded {
-			if err := st.addRows(ctx, plan.Rows); err != nil {
-				return res, err
-			}
-			rowsAdded = true
-			res.Attempts--
-			continue
-		}
 		res.Refused = plan.Refused
 		res.Moved = nil
 		for _, u := range plan.Units {
@@ -241,6 +233,17 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		op, err := st.operation(step.Verb, family+"-"+strconv.Itoa(res.Attempts), plan, snap)
 		if err != nil {
 			return res, err
+		}
+		if why := unwritable(plan, op); why != "" {
+			return refuseWhole(res, plan, why)
+		}
+		if len(plan.Rows) > 0 && !rowsAdded {
+			if err := st.addRows(ctx, plan.Rows); err != nil {
+				return res, err
+			}
+			rowsAdded = true
+			res.Attempts--
+			continue
 		}
 		if len(op.Manifests) == 0 && len(op.Notes)+len(op.Decided)+len(op.Closes) == 0 {
 			res.Moved = nil
@@ -260,7 +263,8 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			continue
 		}
 		applied, err := st.apply(ctx, op)
-		if err != nil {
+		var bound *boundError
+		if err != nil && !errors.As(err, &bound) {
 			res.Pending = op.ID
 			return res, err
 		}
@@ -268,6 +272,10 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			if err := st.B.Release(ctx, op, false); err != nil {
 				res.Pending = op.ID
 				return res, fmt.Errorf("%w: releasing %s after its first manifest was refused: %v; run: nova-sprint repair", ErrUnknown, op.ID, err)
+			}
+			if bound != nil {
+				res.Op = ""
+				return refuseWhole(res, plan, bound.Error())
 			}
 			continue
 		}
@@ -319,6 +327,98 @@ func (st *Store) addRows(ctx context.Context, rows []sprint.RowAdd) error {
 }
 
 type entryKey struct{ table, id string }
+
+// manifestBudget is the bytes a manifest of a step is split at: the table
+// layer's bound, less room for a longer table revision when a manifest is
+// sent again against a fresher one.
+const manifestBudget = ntable.LimitManifestBytes - 64
+
+// MaxCardTextBytes bounds each text field a card carries (CardTextFields): a
+// step that would write a longer one is refused before anything is written.
+const MaxCardTextBytes = 8 << 10
+
+// CardTextFields are the text fields a card carries.
+var CardTextFields = []string{"brief", "fix", "finding", "report", "reason", "note"}
+
+// unwritable is why a step's plan cannot be written, before anything is: a
+// card text field over MaxCardTextBytes, or a manifest the table layer's own
+// validation refuses (its bounds and rules); "" when it can be.
+func unwritable(plan sprint.Plan, op OpRecord) string {
+	for _, u := range plan.Units {
+		for _, c := range u.Changes {
+			for _, f := range CardTextFields {
+				if v, ok := c.Entry.Set[f]; ok && len(v) > MaxCardTextBytes {
+					return fmt.Sprintf("card %s: field %s is %d bytes, over the bound of %d bytes; shorten it, or point to a file or a comment", c.Entry.ID, f, len(v), MaxCardTextBytes)
+				}
+			}
+		}
+	}
+	for _, man := range op.Manifests {
+		if why := invalid(man); why != "" {
+			return why
+		}
+	}
+	return ""
+}
+
+// invalid is the table layer's own refusal of a manifest that needs no store
+// (its bounds and rules), in the store's words; "" when it is valid.
+func invalid(man ntable.BatchManifest) string {
+	if man.Members == nil {
+		man.Members = []ntable.BatchMemberEntry{}
+	}
+	raw, err := json.Marshal(man)
+	if err != nil {
+		return "table " + man.Table + ": " + err.Error()
+	}
+	_, verr := ntable.ValidateBatchManifestRaw(raw)
+	var le *ntable.LimitError
+	var re *ntable.RuleError
+	switch {
+	case verr == nil:
+		return ""
+	case errors.As(verr, &le):
+		where := ""
+		if le.Member != "" {
+			where = " member " + le.Member + ":"
+		}
+		return fmt.Sprintf("table %s:%s LIMIT: %s; %s", man.Table, where, le.Error(), le.Advice())
+	case errors.As(verr, &re):
+		return fmt.Sprintf("table %s: %s: %s", man.Table, re.Code, re.Msg)
+	}
+	return fmt.Sprintf("table %s: invalid batch manifest: %v", man.Table, verr)
+}
+
+// curable says a refusal of a manifest may not hold on a fresh read (a
+// revision, a place, a member, a field of the store's state); a bound or a
+// rule of the table layer holds whatever the state, and is never retried.
+func curable(err error, man ntable.BatchManifest) bool {
+	if errors.Is(err, ntable.ErrMalformedManifest) || refusalCode(err) == "LIMIT" {
+		return false
+	}
+	return invalid(man) == ""
+}
+
+// refuseWhole is a step refused whole before anything of it was written: every
+// card it was to move is refused with why.
+func refuseWhole(res Result, plan sprint.Plan, why string) (Result, error) {
+	res.Moved = nil
+	res.Refused = append([]sprint.Refusal(nil), plan.Refused...)
+	seen := map[string]bool{}
+	for _, r := range res.Refused {
+		seen[r.Key] = true
+	}
+	for _, u := range plan.Units {
+		if u.Key != "" && !seen[u.Key] {
+			seen[u.Key] = true
+			res.Refused = append(res.Refused, sprint.Refusal{Key: u.Key, Why: "the step cannot be written, nothing was written: " + why})
+		}
+	}
+	if len(res.Refused) == len(plan.Refused) {
+		return res, errors.New("the step cannot be written, nothing was written: " + why)
+	}
+	return res, nil
+}
 
 func hasChanges(e ntable.BatchMemberEntry) bool {
 	return e.Create != nil || e.Move != nil || e.Remove || len(e.Set) > 0 || len(e.Unset) > 0
@@ -383,30 +483,46 @@ func (st *Store) operation(verb, id string, plan sprint.Plan, snap *sprint.Snaps
 		if tb != nil {
 			rev = tb.Revision
 		}
+		if len(entries[t]) == 0 {
+			continue
+		}
 		var cur []ntable.BatchMemberEntry
-		changed, guards := 0, 0
+		changed, guards, size := 0, 0, 0
+		manifest := func(members []ntable.BatchMemberEntry) ntable.BatchManifest {
+			return ntable.BatchManifest{Schema: 1, Table: st.Names.Table(t), Epoch: strconv.FormatUint(tb.Epoch, 10),
+				ExpectedTableRevision: strconv.FormatUint(rev, 10), OperationID: fmt.Sprintf("%s-%d", id, k+1), Actor: st.Actor, Members: members}
+		}
 		flush := func() {
 			if len(cur) == 0 {
 				return
 			}
+			op.Manifests = append(op.Manifests, manifest(cur))
 			k++
-			op.Manifests = append(op.Manifests, ntable.BatchManifest{Schema: 1, Table: st.Names.Table(t), Epoch: strconv.FormatUint(tb.Epoch, 10),
-				ExpectedTableRevision: strconv.FormatUint(rev, 10), OperationID: fmt.Sprintf("%s-%d", id, k), Actor: st.Actor, Members: cur})
 			rev++
-			cur, changed, guards = nil, 0, 0
+			cur, changed, guards, size = nil, 0, 0, 0
 		}
 		for _, e := range entries[t] {
+			b, err := json.Marshal(e)
+			if err != nil {
+				return op, err
+			}
+			envelope, err := json.Marshal(manifest([]ntable.BatchMemberEntry{}))
+			if err != nil {
+				return op, err
+			}
+			if hasChanges(e) && changed == ntable.LimitChangedEntries || !hasChanges(e) && guards == ntable.LimitGuardEntries ||
+				len(cur) > 0 && len(envelope)+size+1+len(b) > manifestBudget {
+				flush()
+			}
 			if hasChanges(e) {
-				if changed == ntable.LimitChangedEntries {
-					flush()
-				}
 				changed++
 			} else {
-				if guards == ntable.LimitGuardEntries {
-					flush()
-				}
 				guards++
 			}
+			if len(cur) > 0 {
+				size++
+			}
+			size += len(b)
 			cur = append(cur, e)
 		}
 		flush()
@@ -464,6 +580,18 @@ func (st *Store) operation(verb, id string, plan sprint.Plan, snap *sprint.Snaps
 	return op, nil
 }
 
+// boundError is a first manifest the store refused on a bound or a rule of
+// the table layer: nothing of the operation applied, and sending it again
+// cannot cure it.
+type boundError struct {
+	Table string
+	Cause error
+}
+
+func (e *boundError) Error() string {
+	return fmt.Sprintf("table %s: the store refused it on a bound or a rule: %v", e.Table, e.Cause)
+}
+
 // apply sends the operation's manifests in order. applied is false when the
 // first manifest was refused: nothing of the operation applied.
 func (st *Store) apply(ctx context.Context, op OpRecord) (bool, error) {
@@ -480,7 +608,10 @@ func (st *Store) apply(ctx context.Context, op OpRecord) (bool, error) {
 				continue
 			}
 		}
-		if i == 0 && ntable.IsRefusal(err) {
+		if i == 0 && (ntable.IsRefusal(err) || errors.Is(err, ntable.ErrMalformedManifest)) {
+			if !curable(err, man) {
+				return false, &boundError{Table: man.Table, Cause: err}
+			}
 			return false, nil
 		}
 		return false, &CutError{Op: op.ID, Table: man.Table, Cause: err}
@@ -615,9 +746,10 @@ const (
 )
 
 // NRepairSkipped is the judgment a repair writes when it skipped entries of a
-// cut operation whose expectations no longer held: a writer outside the fence
-// changed those members. It lists each skipped entry.
-const NRepairSkipped = "repair skipped changes whose expectation no longer held"
+// cut operation: their expectations no longer held (a writer outside the
+// fence changed those members), or the store refused them on a bound or a
+// rule. It lists each skipped entry.
+const NRepairSkipped = "repair skipped changes the store refused as recorded"
 
 // RepairSkippedDecisions are the decisions open on a repair's skips.
 var RepairSkippedDecisions = []string{"look at the card", "return", "drop", "rework"}
@@ -626,10 +758,11 @@ var RepairSkippedDecisions = []string{"look at the card", "return", "drop", "rew
 // expectation no longer held.
 type Skip struct {
 	Card, Primary, Table, Expected, Found string
+	Refused                               string // the store's own refusal
 }
 
 func (k Skip) String() string {
-	return fmt.Sprintf("card %s (primary %s) on %s: expected %s, found %s", k.Card, k.Primary, k.Table, k.Expected, k.Found)
+	return fmt.Sprintf("card %s (primary %s) on %s: expected %s, found %s; the store: %s", k.Card, k.Primary, k.Table, k.Expected, k.Found, k.Refused)
 }
 
 // finish completes a pending operation from its record: each manifest sent
@@ -671,8 +804,10 @@ func (st *Store) finish(ctx context.Context, op OpRecord) (RepairResult, error) 
 			continue
 		}
 		if i == 0 {
-			if st.Now().Sub(op.At) < st.grace() {
-				return RepairResult{Op: op.ID, Verb: op.Verb, Done: "open", Detail: "in flight: its first manifest has not applied yet"}, nil
+			// a first manifest refused on a bound or a rule can never apply:
+			// it is abandoned at once, whoever its writer is
+			if st.Now().Sub(op.At) < st.grace() && curable(err, man) {
+				return RepairResult{Op: op.ID, Verb: op.Verb, Done: RepairOpen, Detail: "in flight: its first manifest has not applied yet"}, nil
 			}
 			if err := st.B.Release(ctx, op, false); err != nil {
 				return r, err
@@ -686,7 +821,7 @@ func (st *Store) finish(ctx context.Context, op OpRecord) (RepairResult, error) 
 		for _, k := range skips {
 			r.Skipped = append(r.Skipped, k.String())
 		}
-		r.Detail = fmt.Sprintf("%d entries skipped, their expectation no longer held; judgment %s: %s", len(skips), op.ID+".skip", strings.Join(r.Skipped, "; "))
+		r.Detail = fmt.Sprintf("%d entries skipped, the store refused them as recorded; judgment %s: %s", len(skips), op.ID+".skip", strings.Join(r.Skipped, "; "))
 	}
 	if err := st.B.Release(ctx, op, true); err != nil {
 		return RepairResult{Op: op.ID, Verb: op.Verb, Done: RepairOpen, Detail: "the commit was not confirmed: " + err.Error()}, nil
@@ -699,7 +834,8 @@ func (st *Store) finish(ctx context.Context, op OpRecord) (RepairResult, error) 
 // applied by an earlier repair replays (or conflicts, when sent against
 // another table revision) and counts as applied. An entry the table layer
 // refuses on its own expectations is skipped, with what it expected and what
-// the store holds.
+// the store holds; so is one refused on a bound or a rule, with the store's
+// own text.
 func (st *Store) applyEntries(ctx context.Context, man ntable.BatchManifest) ([]Skip, error) {
 	var skips []Skip
 	for j, e := range man.Members {
@@ -719,10 +855,13 @@ func (st *Store) applyEntries(ctx context.Context, man ntable.BatchManifest) ([]
 				outcome = "applied"
 			case refusalCode(err) == "REVISION":
 				// the table moved between the read and the send: read again
-			case !ntable.IsRefusal(err):
+			case !ntable.IsRefusal(err) && !errors.Is(err, ntable.ErrMalformedManifest):
 				return nil, err
 			default:
-				skips = append(skips, skipOf(man.Table, e, rs))
+				// its own expectation, or a bound or a rule of the table layer
+				k := skipOf(man.Table, e, rs)
+				k.Refused = err.Error()
+				skips = append(skips, k)
 				outcome = "skipped"
 			}
 		}
@@ -819,7 +958,7 @@ func (st *Store) withSkips(op OpRecord, skips []Skip) OpRecord {
 	}
 	sort.Strings(prims)
 	n := sprint.Note{ID: op.ID + ".skip", Kind: sprint.Judgment, Type: NRepairSkipped, Primaries: prims, Count: len(prims),
-		What: fmt.Sprintf("repair of %s (%s) skipped %d entries a writer outside the fence changed: %s", op.ID, op.Verb, len(skips), strings.Join(lines, "; ")),
+		What: fmt.Sprintf("repair of %s (%s) skipped %d entries the store refused as recorded: %s", op.ID, op.Verb, len(skips), strings.Join(lines, "; ")),
 		Who:  st.Actor, At: st.Now(), Decisions: append([]string(nil), RepairSkippedDecisions...)}
 	op.Notes = append(append([]sprint.Note(nil), op.Notes...), n)
 	var res Result
