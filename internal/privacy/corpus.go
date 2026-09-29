@@ -3,6 +3,7 @@ package privacy
 import (
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"io/fs"
 	"os"
@@ -55,15 +56,27 @@ type SourceLoad struct {
 }
 
 // RootLoad is what happened to one background root: how many files matched,
-// how many were read into the rarity model, and why any were not.
+// how many of those an earlier root already holds (one file is one
+// document), how many were read into the rarity model, and why any were not.
 type RootLoad struct {
 	Dir       string
 	Recursive bool
 	Pattern   string
 	Found     int
+	Shared    int
 	Read      int
 	Err       error
 }
+
+// The sample rules a Corpus reports.
+const (
+	// SampleAll means every matching document was read.
+	SampleAll = "all"
+	// SampleLowestHash means a bound bit, and the documents read are those
+	// with the lowest FNV-1a 64 hash of "<root as written>/<relative path>"
+	// that fit within both bounds.
+	SampleLowestHash = "lowest-path-hash"
+)
 
 // Corpus is everything one run opened, including what it could not open.
 type Corpus struct {
@@ -75,7 +88,15 @@ type Corpus struct {
 	Private        []Block
 	BackgroundDocs int
 	BackgroundFreq map[string]int
-	Warnings       []string
+	// BackgroundFound is how many distinct matching documents the roots
+	// hold; BackgroundBytes is how many bytes were read; SampleRule says
+	// which documents were read, under the bounds MaxDocs and MaxBytes.
+	BackgroundFound int
+	BackgroundBytes int64
+	SampleRule      string
+	MaxDocs         int
+	MaxBytes        int64
+	Warnings        []string
 }
 
 // FirstErr returns the first source that could not be read, or nil.
@@ -186,13 +207,14 @@ func Load(s Spec) Corpus {
 		}
 		c.Sources = append(c.Sources, sl)
 	}
-	maxDocs := s.MaxDocs
-	if maxDocs < 1 {
-		maxDocs = DefaultMaxDocs
+	c.MaxDocs, c.MaxBytes = s.MaxDocs, s.MaxBytes
+	if c.MaxDocs < 1 {
+		c.MaxDocs = DefaultMaxDocs
 	}
-	for _, root := range s.Roots {
-		c.loadRoot(root, maxDocs)
+	if c.MaxBytes < 1 {
+		c.MaxBytes = DefaultMaxBytes
 	}
+	c.loadBackground(s.Roots)
 	return c
 }
 
@@ -235,16 +257,116 @@ func (c *Corpus) warn(format string, a ...any) {
 	c.Warnings = append(c.Warnings, fmt.Sprintf(format, a...))
 }
 
-// loadRoot lists one root's matching files in a fixed order, keeps the first
-// maxDocs of them, and reads those into the rarity model. The order is the
-// walk's: depth first, names sorted within each directory. A flat root is
-// its directory's entries, sorted.
-func (c *Corpus) loadRoot(root RootSpec, maxDocs int) {
-	rl := RootLoad{Dir: root.Display, Recursive: root.Recursive, Pattern: root.Pattern}
-	var found []string
+// doc is one matching background document: where it is, the key it sorts by
+// in a sample, its size, and the root that holds it first.
+type doc struct {
+	path string
+	rel  string
+	key  uint64
+	size int64
+	root int
+}
+
+// loadBackground lists every root's matching files, counts a file reachable
+// from two roots once (by file identity, under the first root that holds
+// it), and reads them into the rarity model. Under both bounds every
+// document is read. Over either, the documents are taken in order of the
+// FNV-1a 64 hash of "<root as written>/<relative path>" while they fit, so
+// the sample follows neither names nor dates and is the same every run.
+func (c *Corpus) loadBackground(roots []RootSpec) {
+	seen := map[string]bool{}
+	var pool []doc
+	var total int64
+	for i, root := range roots {
+		rl := RootLoad{Dir: root.Display, Recursive: root.Recursive, Pattern: root.Pattern}
+		for _, d := range c.listRoot(root, &rl) {
+			info, err := os.Stat(d.path)
+			if err != nil {
+				c.warn("background: cannot stat %s (%v); the rarity model has one document fewer", d.path, err)
+				continue
+			}
+			k := fileKey(d.path, info)
+			if seen[k] {
+				rl.Shared++
+				continue
+			}
+			seen[k] = true
+			if info.Size() > MaxDocBytes {
+				c.warn("background: %s is over MaxDocBytes (%d) and is left out of the rarity model", d.path, MaxDocBytes)
+				continue
+			}
+			d.root, d.size = i, info.Size()
+			d.key = sampleKey(root.Display, d.rel)
+			pool = append(pool, d)
+			total += d.size
+		}
+		c.Roots = append(c.Roots, rl)
+	}
+	c.BackgroundFound = len(pool)
+	c.SampleRule = SampleAll
+	if len(pool) > c.MaxDocs || total > c.MaxBytes {
+		c.SampleRule = SampleLowestHash
+		sort.Slice(pool, func(i, j int) bool {
+			if pool[i].key != pool[j].key {
+				return pool[i].key < pool[j].key
+			}
+			return pool[i].path < pool[j].path
+		})
+		var bytes int64
+		n := 0
+		for n < len(pool) && n < c.MaxDocs && bytes+pool[n].size <= c.MaxBytes {
+			bytes += pool[n].size
+			n++
+		}
+		c.warn("background: found %d documents (%d bytes), over max-docs %d or max-bytes %d; the rarity model reads %d, those with the lowest hash of their relative path (FNV-1a 64 of <root>/<path>), a sample that follows neither names nor dates and is the same every run",
+			len(pool), total, c.MaxDocs, c.MaxBytes, n)
+		pool = pool[:n]
+	}
+	for _, d := range pool {
+		b, err := ReadBounded(d.path, MaxDocBytes)
+		var text string
+		if err == nil {
+			text, err = DecodeText(b, d.path)
+		}
+		if err != nil {
+			if errors.Is(err, ErrTooLarge) {
+				c.warn("background: %s is over MaxDocBytes (%d) and is left out of the rarity model", d.path, MaxDocBytes)
+			} else {
+				c.warn("background: cannot read %s (%v); the rarity model has one document fewer", d.path, err)
+			}
+			continue
+		}
+		c.Roots[d.root].Read++
+		c.BackgroundDocs++
+		c.BackgroundBytes += int64(len(b))
+		for w := range c.Rules.Terms(text) {
+			c.BackgroundFreq[w]++
+		}
+	}
+}
+
+func sampleKey(root, rel string) uint64 {
+	h := fnv.New64a()
+	h.Write([]byte(root + "/" + rel))
+	return h.Sum64()
+}
+
+// listRoot is one root's matching regular files, with their paths relative
+// to the root in slash form. The file pattern matches names
+// case-insensitively.
+func (c *Corpus) listRoot(root RootSpec, rl *RootLoad) []doc {
+	var found []doc
+	pattern := strings.ToLower(root.Pattern)
 	match := func(name string) bool {
-		ok, err := filepath.Match(root.Pattern, name)
+		ok, err := filepath.Match(pattern, strings.ToLower(name))
 		return err == nil && ok
+	}
+	add := func(p string) {
+		rel, err := filepath.Rel(root.Dir, p)
+		if err != nil {
+			rel = p
+		}
+		found = append(found, doc{path: p, rel: filepath.ToSlash(rel)})
 	}
 	if root.Recursive {
 		visited := 0
@@ -262,13 +384,13 @@ func (c *Corpus) loadRoot(root RootSpec, maxDocs int) {
 				return errStop
 			}
 			if !d.IsDir() && d.Type().IsRegular() && match(d.Name()) {
-				found = append(found, p)
+				add(p)
 			}
 			return nil
 		})
 		switch {
 		case errors.Is(err, errStop):
-			c.warn("background: %s holds more than MaxWalkEntries (%d) entries; the walk stopped there, so the sample is the matches found before it", root.Display, MaxWalkEntries)
+			c.warn("background: %s holds more than MaxWalkEntries (%d) entries; the walk stopped there, so the documents are the matches found before it", root.Display, MaxWalkEntries)
 		case err != nil:
 			rl.Err = err
 			c.warn("background: %s cannot be walked (%v); ordinary words may score as rare and flag", root.Display, err)
@@ -281,33 +403,12 @@ func (c *Corpus) loadRoot(root RootSpec, maxDocs int) {
 		}
 		for _, e := range entries {
 			if e.Type().IsRegular() && match(e.Name()) {
-				found = append(found, filepath.Join(root.Dir, e.Name()))
+				add(filepath.Join(root.Dir, e.Name()))
 			}
 		}
-		sort.Strings(found)
 	}
 	rl.Found = len(found)
-	if len(found) > maxDocs {
-		c.warn("background: %s holds %d matching documents and max-docs is %d; the rarity model reads the first %d in walk order (depth first, names sorted within each directory), the same sample every run", root.Display, len(found), maxDocs, maxDocs)
-		found = found[:maxDocs]
-	}
-	for _, p := range found {
-		b, err := ReadBounded(p, MaxDocBytes)
-		if err != nil {
-			if errors.Is(err, ErrTooLarge) {
-				c.warn("background: %s is over MaxDocBytes (%d) and is left out of the rarity model", p, MaxDocBytes)
-			} else {
-				c.warn("background: cannot read %s (%v); the rarity model has one document fewer", p, err)
-			}
-			continue
-		}
-		rl.Read++
-		c.BackgroundDocs++
-		for w := range c.Rules.Terms(string(b)) {
-			c.BackgroundFreq[w]++
-		}
-	}
-	c.Roots = append(c.Roots, rl)
+	return found
 }
 
 // Screen loads the corpus a Spec names and judges one payload against it.
@@ -331,8 +432,10 @@ type Options struct {
 	Pattern   string
 	// Marker replaces the configuration's marker when set.
 	Marker string
-	// MaxDocs replaces the configuration's max-docs when above zero.
-	MaxDocs int
+	// MaxDocs and MaxBytes replace the configuration's max-docs and
+	// max-bytes when above zero.
+	MaxDocs  int
+	MaxBytes int64
 }
 
 // ErrNoCorpus is a corpus nobody named: no root, no configuration, no source.
@@ -376,6 +479,9 @@ func (o Options) Spec() (Spec, error) {
 	if o.MaxDocs < 0 {
 		return Spec{}, fmt.Errorf("--max-docs wants a whole number of one or more, got %d", o.MaxDocs)
 	}
+	if o.MaxBytes < 0 {
+		return Spec{}, fmt.Errorf("--max-bytes wants a whole number of one or more, got %d", o.MaxBytes)
+	}
 	var file File
 	cfg, base := o.ConfigPath(), ""
 	if cfg != "" {
@@ -400,6 +506,9 @@ func (o Options) Spec() (Spec, error) {
 	}
 	if o.MaxDocs > 0 {
 		file.MaxDocs = o.MaxDocs
+	}
+	if o.MaxBytes > 0 {
+		file.MaxBytes = o.MaxBytes
 	}
 	spec, err := file.Resolve(base, cfg)
 	if err != nil {
@@ -427,4 +536,16 @@ func (o Options) Spec() (Spec, error) {
 		return Spec{}, err
 	}
 	return spec, nil
+}
+
+// resolvedPath is a path made absolute with every symlink resolved, or as
+// clean as it can be made when it cannot be resolved.
+func resolvedPath(p string) string {
+	if abs, err := filepath.Abs(p); err == nil {
+		p = abs
+	}
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	return filepath.Clean(p)
 }

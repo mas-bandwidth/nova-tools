@@ -15,9 +15,16 @@ const ConfigName = ".nova-privacy"
 // DefaultPattern is the file pattern of a background root named by flag.
 const DefaultPattern = "*.md"
 
-// DefaultMaxDocs is how many documents each background root contributes to
-// the rarity model before the rest are left out of a deterministic sample.
-const DefaultMaxDocs = 900
+// The background bounds. Under both, every matching document is read; over
+// either, the sample is the documents with the lowest hash of their relative
+// path that fit. The defaults read 5,000 documents of up to 13 KiB each
+// whole.
+const (
+	// DefaultMaxDocs bounds how many background documents are read.
+	DefaultMaxDocs = 20000
+	// DefaultMaxBytes bounds how many bytes of background are read.
+	DefaultMaxBytes int64 = 64 << 20
+)
 
 // Root is one background root: a directory of the author's ordinary writing,
 // walked recursively or read flat, keeping the files whose names match
@@ -47,6 +54,7 @@ type File struct {
 	Warn        []Pattern
 	Allow       []string
 	MaxDocs     int
+	MaxBytes    int64
 }
 
 // ParseConfig reads configuration text. It is line-oriented: a blank line or
@@ -61,7 +69,8 @@ type File struct {
 //	refuse <class> <regexp>                    a structure shape that refuses
 //	warn <class> <regexp>                      a structure shape that warns
 //	allow <text>                               a specimen that never fires
-//	max-docs <n>                               documents per background root
+//	max-docs <n>                               background documents read, at most
+//	max-bytes <n>[K|M|G]                       background bytes read, at most
 //
 // Every malformed line is reported, each with its line number.
 func ParseConfig(text string) (File, error) {
@@ -149,11 +158,41 @@ func ParseConfig(text string) (File, error) {
 				continue
 			}
 			f.MaxDocs = v
+		case "max-bytes":
+			v, err := ParseBytes(rest)
+			if err != nil {
+				bad(n, "max-bytes: %v", err)
+				continue
+			}
+			f.MaxBytes = v
 		default:
-			bad(n, "unknown keyword %q; the keywords are source, background, marker, entry, stop, refuse, warn, allow, max-docs", key)
+			bad(n, "unknown keyword %q; the keywords are source, background, marker, entry, stop, refuse, warn, allow, max-docs, max-bytes", key)
 		}
 	}
 	return f, errors.Join(errs...)
+}
+
+// ParseBytes reads a byte count of one or more: digits, with an optional K,
+// M or G suffix for KiB, MiB or GiB, in either case.
+func ParseBytes(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	orig := s
+	mult := int64(1)
+	if n := len(s); n > 0 {
+		switch s[n-1] {
+		case 'k', 'K':
+			mult, s = 1<<10, s[:n-1]
+		case 'm', 'M':
+			mult, s = 1<<20, s[:n-1]
+		case 'g', 'G':
+			mult, s = 1<<30, s[:n-1]
+		}
+	}
+	v, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || v < 1 || v > (1<<50)/mult {
+		return 0, fmt.Errorf("wants a whole number of bytes of one or more, with an optional K, M or G, got %q", orig)
+	}
+	return v * mult, nil
 }
 
 // cutField splits off the first whitespace-separated word and returns it
@@ -188,7 +227,10 @@ type Spec struct {
 	Sources []SourceSpec
 	Roots   []RootSpec
 	Rules   Rules
-	MaxDocs int
+	// MaxDocs and MaxBytes bound the background read; zero takes the
+	// default.
+	MaxDocs  int
+	MaxBytes int64
 }
 
 // RootSpec is one background root with the path read and the path shown.
@@ -205,7 +247,7 @@ func (f File) Resolve(base, configPath string) (Spec, error) {
 	if err != nil {
 		return Spec{}, err
 	}
-	s := Spec{Config: configPath, Rules: rules, MaxDocs: f.MaxDocs}
+	s := Spec{Config: configPath, Rules: rules, MaxDocs: f.MaxDocs, MaxBytes: f.MaxBytes}
 	for _, p := range f.Sources {
 		s.Sources = append(s.Sources, SourceSpec{Path: join(base, p), Display: p})
 	}
@@ -216,6 +258,9 @@ func (f File) Resolve(base, configPath string) (Spec, error) {
 	}
 	if s.MaxDocs == 0 {
 		s.MaxDocs = DefaultMaxDocs
+	}
+	if s.MaxBytes == 0 {
+		s.MaxBytes = DefaultMaxBytes
 	}
 	return s, nil
 }

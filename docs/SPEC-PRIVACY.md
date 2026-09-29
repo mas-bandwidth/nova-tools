@@ -61,11 +61,28 @@ a private entry when all three hold:
 - it is at least five characters long.
 
 The **background** is a set of directories of the author's ordinary writing,
-each read recursively or flat, keeping the files a pattern matches. It is what
-keeps ordinary English from scoring as rare. Each root contributes at most
-`max-docs` documents (900 by default); beyond that, the first `max-docs` in
-walk order (depth first, names sorted within each directory) are read, and a
-warning says so. The sample is the same every run.
+each read recursively or flat, keeping the files whose names a pattern matches
+(case-insensitively: `*.md` matches `PAGE.MD`). It is what keeps ordinary
+English from scoring as rare. The roots form one pool: a file reachable from
+two roots, by file identity (device and inode), is one document, counted under
+the first root that holds it (`shared=` on the later root's line).
+
+The pool is read whole when it is within both bounds, `max-docs` (20,000 by
+default) and `max-bytes` (64 MiB by default, enough for 5,000 documents of up
+to 13 KiB each). Over either bound, the documents are taken in order of the
+FNV-1a 64 hash of `<root as written>/<path relative to the root>`, while both
+bounds hold, and a warning says how many were found and how many read. The
+sample follows neither names nor dates, so no directory and no period is left
+out as a block, and it is the same every run. `corpus` prints the pool as
+`CORPUS SAMPLE found= read= bytes= rule= max-docs= max-bytes=`, where the rule
+is `all` or `lowest-path-hash`; every screen line carries `background=`
+(read), `found=` and `sample=`.
+
+Which way a sample errs: a term counts as distinctive only when few background
+documents hold it, so a sample over-weighting some directories drops their
+words out of the fingerprints (the screen clears more) and a sample leaving
+directories out adds theirs (it flags more). A hash sample is uniform, so it
+errs neither way in expectation.
 
 A payload that shares **three** or more distinctive terms with one private
 entry flags that entry. Two shared terms are an accident of prose.
@@ -130,7 +147,8 @@ stop harbour lantern
 refuse home-path /home/[a-z]+(/[A-Za-z0-9._-]+)*
 warn tool-name \bacme-[a-z]+\b
 allow acme-docs
-max-docs 900
+max-docs 20000
+max-bytes 64M
 ```
 
 | keyword | value |
@@ -142,7 +160,8 @@ max-docs 900
 | `stop` | extra stop words |
 | `refuse`, `warn` | a class name and a regular expression (RE2) |
 | `allow` | a specimen that never fires, matched case-insensitively |
-| `max-docs` | documents per background root, one or more |
+| `max-docs` | background documents read, at most; one or more |
+| `max-bytes` | background bytes read, at most; one or more, with an optional `K`, `M` or `G` (KiB, MiB, GiB) |
 
 Every malformed line is reported in one run, each with its line number. A
 configuration with no source is refused. Two sources that are one file, by file
@@ -156,7 +175,7 @@ that cannot be read is `CORPUS-UNREADABLE`, and the remedy is
 
 Flags override the file: any `--source` replaces its sources; any
 `--background` or `--background-flat` replaces its roots (with `--pattern`,
-`*.md` by default); `--marker` and `--max-docs` replace theirs. A `--root` or
+`*.md` by default); `--marker`, `--max-docs` and `--max-bytes` replace theirs. A `--root` or
 `--config` that is named must hold a configuration, even when `--source` is
 given: a misspelt root would otherwise drop the refuse shapes, the marker, the
 stop words and the background unseen. `--source` with neither names the corpus
@@ -173,7 +192,8 @@ Every read is bounded, and every refusal or warning a bound causes names it.
 | `MaxPayloadBytes` | 4 MiB | the payload is refused (exit 2) |
 | `MaxDocBytes` | 1 MiB | the background document is left out, with a warning |
 | `MaxWalkEntries` | 200,000 | a recursive walk stops there, with a warning |
-| `max-docs` | 900 per root | the first `max-docs` in walk order, with a warning |
+| `max-docs` | 20,000 documents | the lowest path hashes that fit, with a warning |
+| `max-bytes` | 64 MiB | the lowest path hashes that fit, with a warning |
 
 ## Verbs
 
@@ -210,7 +230,7 @@ One line per event. Lines for a cleared payload and the corpus inventory go to
 standard output; flags, refusals, warnings and remedies go to standard error.
 
 ```
-SCREEN UNPROVEN-CLEAN chars=<n> terms=<n> private=<n> checkable=<n> entries=<n> background=<n> config=<path|->
+SCREEN UNPROVEN-CLEAN chars=<n> terms=<n> private=<n> checkable=<n> entries=<n> background=<n> found=<n> sample=<all|lowest-path-hash> config=<path|->
 SCREEN NOTE nothing was proven: ...
 SCREEN FLAG source=<path> entry=<n> shared=<n> terms=<t,...> title=<title>
 SCREEN STRUCTURE class=<class> specimen=<text>
@@ -222,7 +242,8 @@ SCREEN REMEDY <remedy>; then run: nova-privacy corpus <the same inputs>
 SCREEN WARN <warning>        (for example: source: <path> has <n> entries and none is marked <marker>; ...)
 CORPUS SOURCE path=<path> entries=<n> private=<n>
 CORPUS SOURCE path=<path> unreadable=<error>
-CORPUS BACKGROUND root=<dir> mode=<recursive|flat> pattern=<glob> found=<n> read=<n>
+CORPUS BACKGROUND root=<dir> mode=<recursive|flat> pattern=<glob> found=<n> shared=<n> read=<n>
+CORPUS SAMPLE found=<n> read=<n> bytes=<n> rule=<all|lowest-path-hash> max-docs=<n> max-bytes=<n>
 CORPUS OK sources=<n> entries=<n> private=<n> checkable=<n> background=<n> config=<path|->
 CORPUS <outcome> sources=<n> ...
 CORPUS REMEDY <reason>: <remedy>; then run: nova-privacy corpus <the same inputs>
@@ -236,13 +257,15 @@ count. `--max` caps the flag lines (20 by default, 0 prints all).
 
 `--json` prints one JSON object on standard output instead: `verb`, `outcome`,
 `exit`, `cleared`, `reason`, `remedy`, `config`, the counts, `sources`, `roots`,
-`flags`, `structure`, `warnings` and `bounds`. The exit code is the same.
+`flags`, `structure`, `warnings`, `bounds` and `sample` (`found`, `read`,
+`bytes`, `rule`, `max_docs`, `max_bytes`). The exit code is the same.
 
 ## Tests
 
 `internal/privacy` pins the judgment with hand-built corpora and tempdir trees:
 each refusal path, the threshold at exactly three, the background model as the
 thing that keeps ordinary words quiet (the same payload flags without it), the
-deterministic sample, and every bound. `cmd/nova-privacy` pins the exit
+hash sample under each bound, one file under two roots counted once, and every
+bound. `cmd/nova-privacy` pins the exit
 contract, the evidence on a flag, the remedies, `--json`, verb help, and the
 docs/TESTS.md first run against `cmd/nova-privacy/testdata/example`.

@@ -51,6 +51,7 @@ func TestOptionsRefuseEachBrokenConfiguration(t *testing.T) {
 		"over its bound":       {privacy.Options{Config: f.path("big.conf")}, "MaxConfigBytes"},
 		"bad pattern":          {privacy.Options{Root: f.root, Pattern: "["}, "--pattern"},
 		"negative max-docs":    {privacy.Options{Root: f.root, MaxDocs: -1}, "--max-docs"},
+		"negative max-bytes":   {privacy.Options{Root: f.root, MaxBytes: -1}, "--max-bytes"},
 		"a directory for file": {privacy.Options{Config: empty}, "is a directory"},
 	} {
 		if _, err := c.o.Spec(); err == nil || !strings.Contains(err.Error(), c.want) {
@@ -63,11 +64,12 @@ func TestOptionFlagsReplaceTheConfiguration(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, true)
 	s, err := privacy.Options{
-		Root:    f.root,
-		Sources: []string{"elsewhere.md"},
-		Flat:    []string{"j"},
-		Marker:  "[hush]",
-		MaxDocs: 7,
+		Root:     f.root,
+		Sources:  []string{"elsewhere.md"},
+		Flat:     []string{"j"},
+		Marker:   "[hush]",
+		MaxDocs:  7,
+		MaxBytes: 4096,
 	}.Spec()
 	if err != nil {
 		t.Fatal(err)
@@ -78,8 +80,8 @@ func TestOptionFlagsReplaceTheConfiguration(t *testing.T) {
 	if len(s.Roots) != 1 || s.Roots[0].Dir != "j" || s.Roots[0].Recursive || s.Roots[0].Pattern != privacy.DefaultPattern {
 		t.Errorf("roots %+v", s.Roots)
 	}
-	if s.Rules.Marker != "[hush]" || s.MaxDocs != 7 {
-		t.Errorf("marker %q max-docs %d", s.Rules.Marker, s.MaxDocs)
+	if s.Rules.Marker != "[hush]" || s.MaxDocs != 7 || s.MaxBytes != 4096 {
+		t.Errorf("marker %q max-docs %d max-bytes %d", s.Rules.Marker, s.MaxDocs, s.MaxBytes)
 	}
 }
 

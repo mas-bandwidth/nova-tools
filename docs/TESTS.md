@@ -840,16 +840,17 @@ exits 1.
 $ nova-privacy corpus --root ./example
 CORPUS SOURCE path=private/ideas.md entries=3 private=1
 CORPUS SOURCE path=private/later.md entries=3 private=1
-CORPUS BACKGROUND root=notes mode=recursive pattern=*.md found=6 read=6
-CORPUS BACKGROUND root=journal mode=flat pattern=*.md found=6 read=6
+CORPUS BACKGROUND root=notes mode=recursive pattern=*.md found=6 shared=0 read=6
+CORPUS BACKGROUND root=journal mode=flat pattern=*.md found=6 shared=0 read=6
+CORPUS SAMPLE found=12 read=12 bytes=1782 rule=all max-docs=20000 max-bytes=67108864
 CORPUS OK sources=2 entries=6 private=2 checkable=2 background=12 config=./example/.nova-privacy
 
 $ nova-privacy screen --root ./example ./example/drafts/letter.md
-SCREEN UNPROVEN-CLEAN chars=183 terms=17 private=2 checkable=2 entries=6 background=12 config=./example/.nova-privacy
+SCREEN UNPROVEN-CLEAN chars=183 terms=17 private=2 checkable=2 entries=6 background=12 found=12 sample=all config=./example/.nova-privacy
 SCREEN NOTE nothing was proven: the screen measures shared rare vocabulary and cannot see derivation that shares none
 
 $ nova-privacy screen --root ./example ./example/drafts/leak.md   # Stderr: whole
 ! SCREEN FLAG source=private/ideas.md entry=1 shared=5 terms=across,bellrope,ferry,saltmarsh,tidewater title=The lantern ferry plan (private)
-! SCREEN FLAGGED flags=1 structure=0 chars=134 terms=12 private=2 checkable=2 entries=6 background=12 config=./example/.nova-privacy
+! SCREEN FLAGGED flags=1 structure=0 chars=134 terms=12 private=2 checkable=2 entries=6 background=12 found=12 sample=all config=./example/.nova-privacy
 ! SCREEN REMEDY a mind reads this before it goes out; it is a reading assignment, not a verdict. If it derives from the private entry, it does not ship; after an edit, run: nova-privacy screen --root ./example ./example/drafts/leak.md
 ```

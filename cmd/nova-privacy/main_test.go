@@ -443,7 +443,9 @@ func TestCorpusPrintsWhatAScreenWouldLoad(t *testing.T) {
 	for _, want := range []string{
 		"CORPUS SOURCE path=private/ideas.md entries=3 private=1",
 		"CORPUS SOURCE path=private/upkeep.md entries=1 private=0",
-		"CORPUS BACKGROUND root=journal mode=flat pattern=*.md found=8 read=8",
+		"CORPUS BACKGROUND root=journal mode=flat pattern=*.md found=8 shared=0 read=8",
+		"CORPUS SAMPLE found=8 read=8 bytes=",
+		"rule=all max-docs=20000 max-bytes=67108864",
 		"CORPUS OK sources=2 entries=4 private=1 checkable=1 background=8",
 	} {
 		if !strings.Contains(out, want) {
@@ -584,6 +586,20 @@ func TestAnEmptyExtraSourceIsUnreadable(t *testing.T) {
 	tr.write(t, ".nova-privacy", configFixture+"source private/extra.md\n")
 	code, _, errOut := screenStdin(tr, "harmless outgoing text")
 	if code != exitUnverified || !strings.Contains(errOut, "SCREEN CORPUS-UNREADABLE declared source private/extra.md") {
+		t.Errorf("exit %d stderr %q", code, errOut)
+	}
+}
+
+// A screen says how many background documents were found and read, and by
+// what rule.
+func TestAScreenNamesItsSample(t *testing.T) {
+	t.Parallel()
+	code, out, _ := screenStdin(newTree(t), "an ordinary paragraph about ordinary things")
+	if code != exitClean || !strings.Contains(out, "background=8 found=8 sample=all ") {
+		t.Errorf("exit %d stdout %q", code, out)
+	}
+	code, _, errOut := screenStdin(newTree(t), "an ordinary paragraph about ordinary things", "--max-docs", "3")
+	if code != exitClean || !strings.Contains(errOut, "found 8") || !strings.Contains(errOut, "lowest hash") {
 		t.Errorf("exit %d stderr %q", code, errOut)
 	}
 }

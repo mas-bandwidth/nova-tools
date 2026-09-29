@@ -2243,7 +2243,9 @@ nova-privacy screen --root ./example ./example/drafts/leak.md
 ```
 
 `corpus` lists each source with its entries and private entries, each
-background root with the documents it read, and `CORPUS OK` with `checkable=`,
+background root with the documents it read, `CORPUS SAMPLE` with how many
+background documents were found and read and by what rule (`all`, or
+`lowest-path-hash` when a bound bites), and `CORPUS OK` with `checkable=`,
 the number of private entries able to raise a flag at all. The letter prints
 `SCREEN UNPROVEN-CLEAN` and exits 0. The leak prints a `SCREEN FLAG` line on
 standard error naming `private/ideas.md`, the entry `The lantern ferry plan
@@ -2278,7 +2280,7 @@ background flat *.md journal
 ```
 
 Paths are relative to the file. `marker`, `entry`, `stop`, `refuse`, `warn`,
-`allow` and `max-docs` are optional; `nova-privacy help` lists them and
+`allow`, `max-docs` and `max-bytes` are optional; `nova-privacy help` lists them and
 SPEC-PRIVACY.md defines them. Pipe a draft in with `nova-privacy screen --root
 <dir> -`. `--json` prints one JSON object instead of lines.
 

@@ -26,6 +26,7 @@ func TestEveryKeywordParses(t *testing.T) {
 		"warn tool \\bacme-[a-z]+",
 		"allow acme-docs",
 		"max-docs 12",
+		"max-bytes 32M",
 	}, "\n"))
 	if err != nil {
 		t.Fatal(err)
@@ -36,6 +37,9 @@ func TestEveryKeywordParses(t *testing.T) {
 	want := []privacy.Root{{Dir: ".", Recursive: true, Pattern: "*.md"}, {Dir: "journal dir", Recursive: false, Pattern: "*.txt"}}
 	if !reflect.DeepEqual(f.Roots, want) {
 		t.Errorf("roots %+v", f.Roots)
+	}
+	if f.MaxBytes != 32<<20 {
+		t.Errorf("max-bytes %d, want 32 MiB", f.MaxBytes)
 	}
 	if f.Marker != "[secret]" || !reflect.DeepEqual(f.EntryTokens, []string{"*", "##"}) || f.MaxDocs != 12 {
 		t.Errorf("marker %q entries %q max-docs %d", f.Marker, f.EntryTokens, f.MaxDocs)
@@ -70,16 +74,19 @@ func TestEveryMalformedLineIsReported(t *testing.T) {
 		"source private/later.md",    // 13, fine
 		"background recursive *.md",  // 14
 		"max-docs 0",                 // 15
+		"max-bytes 0",                // 16
+		"max-bytes lots",             // 17
+		"max-bytes 12K",              // 18, fine
 	}, "\n"))
 	if err == nil {
 		t.Fatal("malformed configuration accepted")
 	}
-	for _, n := range []string{"line 1:", "line 2:", "line 3:", "line 5:", "line 6:", "line 7:", "line 8:", "line 9:", "line 10:", "line 11:", "line 12:", "line 14:", "line 15:"} {
+	for _, n := range []string{"line 1:", "line 2:", "line 3:", "line 5:", "line 6:", "line 7:", "line 8:", "line 9:", "line 10:", "line 11:", "line 12:", "line 14:", "line 15:", "line 16:", "line 17:"} {
 		if !strings.Contains(err.Error(), n) {
 			t.Errorf("%q is not reported in:\n%v", n, err)
 		}
 	}
-	for _, n := range []string{"line 4:", "line 13:"} {
+	for _, n := range []string{"line 4:", "line 13:", "line 18:"} {
 		if strings.Contains(err.Error(), n) {
 			t.Errorf("%q is well formed and was reported:\n%v", n, err)
 		}
@@ -110,7 +117,7 @@ func TestRelativePathsResolveAgainstTheConfigurationDirectory(t *testing.T) {
 	if s.Roots[0].Dir != filepath.Join(base, "journal") || s.Roots[0].Display != "journal" || s.Roots[0].Mode() != "flat" {
 		t.Errorf("root %+v", s.Roots[0])
 	}
-	if s.MaxDocs != privacy.DefaultMaxDocs || s.Config != "cfg" || s.Rules.Marker != privacy.DefaultMarker {
+	if s.MaxDocs != privacy.DefaultMaxDocs || s.MaxBytes != privacy.DefaultMaxBytes || s.Config != "cfg" || s.Rules.Marker != privacy.DefaultMarker {
 		t.Errorf("defaults: max-docs %d config %q marker %q", s.MaxDocs, s.Config, s.Rules.Marker)
 	}
 }

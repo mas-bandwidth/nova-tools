@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"hash/fnv"
+	"sort"
 	"strings"
 	"testing"
 
@@ -23,26 +25,43 @@ func rootSpec(t *testing.T, f *fixture, cfg string) privacy.Spec {
 	return s
 }
 
-// Over the cap, the sample is the first max-docs in walk order, the same
-// every run, and the warning says which ones.
-func TestTheBackgroundCapTakesADeterministicSampleAndSaysSo(t *testing.T) {
+// sampleKey is the documented sample order: FNV-1a 64 of the root as the
+// configuration writes it, a slash, and the path relative to the root.
+func sampleKey(root, rel string) uint64 {
+	h := fnv.New64a()
+	h.Write([]byte(root + "/" + rel))
+	return h.Sum64()
+}
+
+// Over a bound, the sample is the documents with the lowest hash of their
+// relative path: it follows neither names nor dates, it is the same every
+// run, and the output says how many were found, how many read, and why.
+func TestTheSampleIsTheLowestPathHashesAndSaysSo(t *testing.T) {
 	t.Parallel()
 	f := &fixture{root: t.TempDir()}
 	f.write(t, "private/later.md", "## A secret (private)\n"+rareWords+"\n")
+	var rels []string
 	for i := 0; i < 6; i++ {
-		f.write(t, fmt.Sprintf("notes/b/page-%d.md", i), fmt.Sprintf("word%d", i))
-		f.write(t, fmt.Sprintf("notes/a/page-%d.md", i), "alphaword")
+		for _, dir := range []string{"a", "b"} {
+			rel := fmt.Sprintf("%s/page-%d.md", dir, i)
+			f.write(t, "notes/"+rel, fmt.Sprintf("word%s%d", dir, i))
+			rels = append(rels, rel)
+		}
 	}
+	sort.Slice(rels, func(i, j int) bool { return sampleKey("notes", rels[i]) < sampleKey("notes", rels[j]) })
 	s := rootSpec(t, f, "source private/later.md\nbackground recursive *.md notes\nmax-docs 4\n")
 	c := privacy.Load(s)
-	if c.BackgroundDocs != 4 || c.Roots[0].Found != 12 || c.Roots[0].Read != 4 {
-		t.Fatalf("docs %d root %+v, want 4 of 12", c.BackgroundDocs, c.Roots[0])
+	if c.BackgroundDocs != 4 || c.BackgroundFound != 12 || c.Roots[0].Found != 12 || c.Roots[0].Read != 4 || c.SampleRule != privacy.SampleLowestHash {
+		t.Fatalf("docs %d found %d rule %q root %+v, want 4 of 12 by the lowest hash", c.BackgroundDocs, c.BackgroundFound, c.SampleRule, c.Roots[0])
 	}
-	if c.BackgroundFreq["alphaword"] != 4 {
-		t.Errorf("the sample is the first four in walk order, all under notes/a: %v", c.BackgroundFreq)
+	for i, rel := range rels {
+		word := "word" + strings.TrimSuffix(strings.ReplaceAll(rel, "/page-", ""), ".md")
+		if got, want := c.BackgroundFreq[word], i < 4; (got == 1) != want {
+			t.Errorf("%s (rank %d): read=%v, want %v", rel, i, got == 1, want)
+		}
 	}
 	w := strings.Join(c.Warnings, "\n")
-	for _, want := range []string{"holds 12 matching documents", "max-docs is 4", "walk order", "same sample every run"} {
+	for _, want := range []string{"found 12", "reads 4", "lowest hash of their relative path", "same every run"} {
 		if !strings.Contains(w, want) {
 			t.Errorf("the warning lacks %q: %s", want, w)
 		}
@@ -50,6 +69,70 @@ func TestTheBackgroundCapTakesADeterministicSampleAndSaysSo(t *testing.T) {
 	again := privacy.Load(s)
 	if fmt.Sprint(again.BackgroundFreq) != fmt.Sprint(c.BackgroundFreq) {
 		t.Error("two loads read two different samples")
+	}
+}
+
+// The byte bound takes documents in the same order until the next one would
+// pass it.
+func TestTheByteBoundTakesTheLowestHashesThatFit(t *testing.T) {
+	t.Parallel()
+	f := &fixture{root: t.TempDir()}
+	f.write(t, "private/later.md", "## A secret (private)\n"+rareWords+"\n")
+	var rels []string
+	for i := 0; i < 10; i++ {
+		base := fmt.Sprintf("p%d", i)
+		f.write(t, "notes/"+base+".md", "word"+base+" "+strings.Repeat("x", 100-len(base)-5))
+		rels = append(rels, base+".md")
+	}
+	sort.Slice(rels, func(i, j int) bool { return sampleKey("notes", rels[i]) < sampleKey("notes", rels[j]) })
+	c := privacy.Load(rootSpec(t, f, "source private/later.md\nbackground flat *.md notes\nmax-bytes 350\n"))
+	if c.BackgroundDocs != 3 || c.BackgroundBytes != 300 || c.SampleRule != privacy.SampleLowestHash {
+		t.Fatalf("docs %d bytes %d rule %q, want the three lowest that fit in 350 bytes", c.BackgroundDocs, c.BackgroundBytes, c.SampleRule)
+	}
+	for i, rel := range rels {
+		word := "word" + strings.TrimSuffix(rel, ".md")
+		if got, want := c.BackgroundFreq[word], i < 3; (got == 1) != want {
+			t.Errorf("%s (rank %d): read=%v, want %v", rel, i, got == 1, want)
+		}
+	}
+}
+
+// Under both bounds, every document is read and the rule says so.
+func TestUnderTheBoundsEveryDocumentIsRead(t *testing.T) {
+	t.Parallel()
+	c := privacy.Load(newFixture(t, true).spec)
+	if c.SampleRule != privacy.SampleAll || c.BackgroundDocs != c.BackgroundFound {
+		t.Errorf("rule %q docs %d found %d", c.SampleRule, c.BackgroundDocs, c.BackgroundFound)
+	}
+	if privacy.DefaultMaxDocs < 5000 || privacy.DefaultMaxBytes < 5000*8<<10 {
+		t.Errorf("the defaults read 5,000 documents of ordinary size whole: max-docs %d max-bytes %d", privacy.DefaultMaxDocs, privacy.DefaultMaxBytes)
+	}
+}
+
+// A document reachable from two roots is one document: the fixture's
+// journal is under the recursive root and is a flat root of its own.
+func TestADocumentUnderTwoRootsIsCountedOnce(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t, true)
+	c := privacy.Load(f.spec)
+	if c.BackgroundDocs != 10 || c.Roots[0].Read != 10 || c.Roots[1].Found != 8 || c.Roots[1].Shared != 8 || c.Roots[1].Read != 0 {
+		t.Errorf("docs %d roots %+v, want the journal counted once, under the first root", c.BackgroundDocs, c.Roots)
+	}
+	if c.BackgroundFreq["prose"] != 8 {
+		t.Errorf("a journal word is in %d documents, want 8", c.BackgroundFreq["prose"])
+	}
+}
+
+// The file pattern matches names case-insensitively.
+func TestThePatternIgnoresCase(t *testing.T) {
+	t.Parallel()
+	f := &fixture{root: t.TempDir()}
+	f.write(t, "private/later.md", "## A secret (private)\n"+rareWords+"\n")
+	f.write(t, "journal/PAGE-0.MD", "upperword")
+	f.write(t, "journal/page-1.Md", "mixedword")
+	c := privacy.Load(rootSpec(t, f, "source private/later.md\nbackground flat *.md journal\n"))
+	if c.BackgroundDocs != 2 {
+		t.Errorf("docs %d, want both names matched", c.BackgroundDocs)
 	}
 }
 

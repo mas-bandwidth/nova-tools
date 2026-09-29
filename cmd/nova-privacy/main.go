@@ -59,12 +59,15 @@ corpus flags (name the corpus with --root, --config or --source):
   --background <dir>       a background root walked recursively (repeatable)
   --background-flat <dir>  a background root read flat (repeatable); either
                            flag replaces the configuration's roots
-  --pattern <glob>         file pattern of the flag roots, default *.md
+  --pattern <glob>         file pattern of the flag roots, default *.md;
+                           names match case-insensitively
   --marker <text>          the marker that declares an entry private,
                            default (private)
-  --max-docs <n>           documents per background root in the rarity
-                           model, default 900; beyond it, the first n in walk
-                           order, the same every run
+  --max-docs <n>           background documents read, at most, default 20000
+  --max-bytes <n>[K|M|G]   background bytes read, at most, default 64M; over
+                           either bound, the documents with the lowest hash of
+                           their relative path, the same every run. A file
+                           under two roots is one document
   --json                   print one JSON object on stdout instead of lines
   --max <n>                screen only: flag lines to print before one MORE
                            line, default 20, 0 prints all
@@ -81,6 +84,7 @@ the file's directory:
   warn <class> <regexp>    a shape that is reported and does not flag
   allow <text>             a specimen that never fires
   max-docs <n>
+  max-bytes <n>[K|M|G]
 
 exit codes: 0 UNPROVEN-CLEAN, the only outcome that permits sending
   1 FLAGGED, a mind reads it before it goes out
@@ -143,6 +147,19 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 	}
 }
 
+// byteCount is a flag of bytes with an optional K, M or G suffix.
+type byteCount int64
+
+func (b *byteCount) String() string { return fmt.Sprint(int64(*b)) }
+func (b *byteCount) Set(v string) error {
+	n, err := privacy.ParseBytes(v)
+	if err != nil {
+		return err
+	}
+	*b = byteCount(n)
+	return nil
+}
+
 type list []string
 
 func (l *list) String() string { return strings.Join(*l, ",") }
@@ -158,6 +175,7 @@ func (l *list) Set(v string) error {
 type corpusFlags struct {
 	opts                     privacy.Options
 	sources, recursive, flat list
+	maxBytes                 byteCount
 	json                     bool
 }
 
@@ -173,7 +191,8 @@ func newFlags(verb string) (*flag.FlagSet, *corpusFlags) {
 	fs.Var(&c.flat, "background-flat", "a background root read flat (repeatable)")
 	fs.StringVar(&c.opts.Pattern, "pattern", "", "file pattern of the flag roots, default *.md")
 	fs.StringVar(&c.opts.Marker, "marker", "", "the marker that declares an entry private, default (private)")
-	fs.IntVar(&c.opts.MaxDocs, "max-docs", 0, "documents per background root, default 900")
+	fs.IntVar(&c.opts.MaxDocs, "max-docs", 0, "background documents read, at most; default 20000")
+	fs.Var(&c.maxBytes, "max-bytes", "background bytes read, at most, with an optional K, M or G; default 64M")
 	fs.BoolVar(&c.json, "json", false, "one JSON object on stdout")
 	return fs, c
 }
@@ -181,6 +200,7 @@ func newFlags(verb string) (*flag.FlagSet, *corpusFlags) {
 func (c *corpusFlags) options() privacy.Options {
 	o := c.opts
 	o.Sources, o.Recursive, o.Flat = c.sources, c.recursive, c.flat
+	o.MaxBytes = int64(c.maxBytes)
 	return o
 }
 
@@ -208,6 +228,9 @@ func (c *corpusFlags) corpusArgs() string {
 	add("--marker", c.opts.Marker)
 	if c.opts.MaxDocs > 0 {
 		add("--max-docs", fmt.Sprint(c.opts.MaxDocs))
+	}
+	if c.maxBytes > 0 {
+		add("--max-bytes", fmt.Sprint(int64(c.maxBytes)))
 	}
 	return strings.Join(out, " ")
 }
@@ -297,8 +320,8 @@ func cmdScreen(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	for _, w := range res.Warnings {
 		fmt.Fprintf(stderr, "SCREEN WARN %s\n", oneline.Escape(w))
 	}
-	counts := fmt.Sprintf("chars=%d terms=%d private=%d checkable=%d entries=%d background=%d config=%s",
-		res.PayloadChars, res.PayloadTerms, res.Private, res.Checkable, res.Blocks, res.Bounds.Docs, configField(corpus.Config))
+	counts := fmt.Sprintf("chars=%d terms=%d private=%d checkable=%d entries=%d background=%d found=%d sample=%s config=%s",
+		res.PayloadChars, res.PayloadTerms, res.Private, res.Checkable, res.Blocks, corpus.BackgroundDocs, corpus.BackgroundFound, corpus.SampleRule, configField(corpus.Config))
 	switch code {
 	case exitClean:
 		fmt.Fprintf(stdout, "SCREEN UNPROVEN-CLEAN %s\n", counts)
@@ -416,9 +439,11 @@ func cmdCorpus(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "CORPUS SOURCE path=%s entries=%d private=%d\n", oneline.Field(s.Path), s.Blocks, s.Private)
 	}
 	for _, r := range corpus.Roots {
-		fmt.Fprintf(stdout, "CORPUS BACKGROUND root=%s mode=%s pattern=%s found=%d read=%d\n",
-			oneline.Field(r.Dir), map[bool]string{true: "recursive", false: "flat"}[r.Recursive], oneline.Field(r.Pattern), r.Found, r.Read)
+		fmt.Fprintf(stdout, "CORPUS BACKGROUND root=%s mode=%s pattern=%s found=%d shared=%d read=%d\n",
+			oneline.Field(r.Dir), map[bool]string{true: "recursive", false: "flat"}[r.Recursive], oneline.Field(r.Pattern), r.Found, r.Shared, r.Read)
 	}
+	fmt.Fprintf(stdout, "CORPUS SAMPLE found=%d read=%d bytes=%d rule=%s max-docs=%d max-bytes=%d\n",
+		corpus.BackgroundFound, corpus.BackgroundDocs, corpus.BackgroundBytes, corpus.SampleRule, corpus.MaxDocs, corpus.MaxBytes)
 	for _, w := range res.Warnings {
 		fmt.Fprintf(stderr, "CORPUS WARN %s\n", oneline.Escape(w))
 	}
@@ -448,6 +473,7 @@ type report struct {
 	Private    int           `json:"private"`
 	Checkable  int           `json:"checkable"`
 	Background int           `json:"background"`
+	Sample     jsonSample    `json:"sample"`
 	Sources    []jsonSource  `json:"sources"`
 	Roots      []jsonRoot    `json:"roots"`
 	Flags      []jsonFlag    `json:"flags,omitempty"`
@@ -468,8 +494,18 @@ type jsonRoot struct {
 	Mode    string `json:"mode"`
 	Pattern string `json:"pattern"`
 	Found   int    `json:"found"`
+	Shared  int    `json:"shared"`
 	Read    int    `json:"read"`
 	Error   string `json:"error,omitempty"`
+}
+
+type jsonSample struct {
+	Found    int    `json:"found"`
+	Read     int    `json:"read"`
+	Bytes    int64  `json:"bytes"`
+	Rule     string `json:"rule"`
+	MaxDocs  int    `json:"max_docs"`
+	MaxBytes int64  `json:"max_bytes"`
 }
 
 type jsonFlag struct {
@@ -498,6 +534,7 @@ func writeJSON(stdout, stderr io.Writer, verb string, code int, c privacy.Corpus
 		Entries: res.Blocks, Private: res.Private, Checkable: res.Checkable, Background: c.BackgroundDocs,
 		Sources: []jsonSource{}, Roots: []jsonRoot{}, Warnings: res.Warnings,
 		Bounds: privacyBounds{Rare: res.Bounds.Rare, Background: res.Bounds.Background},
+		Sample: jsonSample{Found: c.BackgroundFound, Read: c.BackgroundDocs, Bytes: c.BackgroundBytes, Rule: c.SampleRule, MaxDocs: c.MaxDocs, MaxBytes: c.MaxBytes},
 	}
 	for _, s := range c.Sources {
 		js := jsonSource{Path: s.Path, Entries: s.Blocks, Private: s.Private}
@@ -507,7 +544,7 @@ func writeJSON(stdout, stderr io.Writer, verb string, code int, c privacy.Corpus
 		rep.Sources = append(rep.Sources, js)
 	}
 	for _, r := range c.Roots {
-		jr := jsonRoot{Root: r.Dir, Mode: map[bool]string{true: "recursive", false: "flat"}[r.Recursive], Pattern: r.Pattern, Found: r.Found, Read: r.Read}
+		jr := jsonRoot{Root: r.Dir, Mode: map[bool]string{true: "recursive", false: "flat"}[r.Recursive], Pattern: r.Pattern, Found: r.Found, Shared: r.Shared, Read: r.Read}
 		if r.Err != nil {
 			jr.Error = r.Err.Error()
 		}
