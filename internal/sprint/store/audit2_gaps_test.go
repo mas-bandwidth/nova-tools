@@ -606,7 +606,7 @@ func TestNoStoredIDReachesTheCoordinator(t *testing.T) {
 	h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{"stop"}, Sentinel: true}))
 	h.must(AddStep(sprint.AddReq{Stream: "s2", IDs: []string{"w"}, Needs: []string{"s1-6"}}))
 	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-6"}}, Reason: "gone"})) // w is blocked
-	h.a2ToReview("s1-1", true)                                                                 // work failed
+	h.a2ToReview("s1-1", true)                                                               // work failed
 	h.a2ToReview("s1-2", false)
 	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}}))
 	h.nReadAll("s1-2", "broken") // a broken read
