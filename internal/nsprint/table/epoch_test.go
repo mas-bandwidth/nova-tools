@@ -279,3 +279,103 @@ func TestLiveTableClearMidPipelineShowsNoOldFrame(t *testing.T) {
 		t.Fatalf("alpha's cells are not epoch 3's (working 0, ok 1):\n%s", out)
 	}
 }
+
+// TestSprintEpochMultipleIncrementsPreservesOldSetsAndIsolatesWriters (nova-tools#4238):
+// sprint clear is one increment; nothing is moved or deleted in the old epoch's
+// sets; async writes to any older epoch (epoch 0, epoch 1) are invisible to
+// epoch 2; only current epoch writes display.
+func TestSprintEpochMultipleIncrementsPreservesOldSetsAndIsolatesWriters(t *testing.T) {
+	t.Parallel()
+
+	client, _, _ := sprintStore(t)
+	ctx, now := context.Background(), table.SprintFixtureNow()
+	r := table.NewSprintReader(client, table.SprintFixtureConfig())
+
+	// Initial read at epoch 0
+	before, err := r.Read(ctx, now)
+	if err != nil || before.Epoch != 0 {
+		t.Fatalf("initial read: epoch=%d %v", before.Epoch, err)
+	}
+	oldStreamReady := ws.KeyAt(0, "swarm: cards", "ready")
+	oldWorking := ws.ConsumerKeyAt(0, "bench:space", "working")
+	wasStreamReady := client.ZCard(ctx, oldStreamReady).Val()
+	wasWorking := client.ZCard(ctx, oldWorking).Val()
+	if wasStreamReady == 0 || wasWorking == 0 {
+		t.Fatalf("expected non-zero initial sets at epoch 0: stream=%d consumer=%d", wasStreamReady, wasWorking)
+	}
+
+	// First clear: epoch 0 -> 1
+	if err := client.HIncrBy(ctx, ws.EpochKey, ws.EpochField, 1).Err(); err != nil {
+		t.Fatal(err)
+	}
+	// Verify old sets were not deleted or moved
+	if n := client.ZCard(ctx, oldStreamReady).Val(); n != wasStreamReady {
+		t.Fatalf("epoch increment modified old stream set: %d -> %d", wasStreamReady, n)
+	}
+	if n := client.ZCard(ctx, oldWorking).Val(); n != wasWorking {
+		t.Fatalf("epoch increment modified old consumer set: %d -> %d", wasWorking, n)
+	}
+
+	// Async writes landing in epoch 0
+	client.ZAdd(ctx, oldStreamReady, redis.Z{Score: 99, Member: "late-0"})
+	client.ZAdd(ctx, oldWorking, redis.Z{Score: 99, Member: "late-0~copy"})
+
+	// Tick at epoch 1 sees zeros
+	snap1, err := r.Read(ctx, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap1.Epoch != 1 {
+		t.Fatalf("epoch = %d, want 1", snap1.Epoch)
+	}
+	for _, s := range snap1.Streams {
+		if s.Total() != 0 {
+			t.Fatalf("stream %s has non-zero total at epoch 1: %+v", s.Name, s)
+		}
+	}
+
+	// Write under epoch 1
+	client.ZAdd(ctx, ws.KeyAt(1, "swarm: cards", "ready"), redis.Z{Score: 1, Member: "card-e1"})
+	client.ZAdd(ctx, ws.ConsumerKeyAt(1, "bench:space", "working"), redis.Z{Score: 1, Member: "card-e1~copy"})
+
+	snap1b, err := r.Read(ctx, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap1b.Streams[0].Ready != 1 || snap1b.Streams[0].Total() != 1 {
+		t.Fatalf("epoch 1 writes not reflected: %+v", snap1b.Streams[0])
+	}
+
+	// Second clear: epoch 1 -> 2
+	if err := client.HIncrBy(ctx, ws.EpochKey, ws.EpochField, 1).Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Late async writes to epoch 0 and epoch 1
+	client.ZAdd(ctx, ws.KeyAt(0, "swarm: cards", "ready"), redis.Z{Score: 100, Member: "late-0-again"})
+	client.ZAdd(ctx, ws.KeyAt(1, "swarm: cards", "ready"), redis.Z{Score: 100, Member: "late-1"})
+
+	// Tick at epoch 2 sees zeros (neither epoch 0 nor epoch 1 show)
+	snap2, err := r.Read(ctx, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap2.Epoch != 2 {
+		t.Fatalf("epoch = %d, want 2", snap2.Epoch)
+	}
+	for _, s := range snap2.Streams {
+		if s.Total() != 0 {
+			t.Fatalf("stream %s has non-zero total at epoch 2: %+v", s.Name, s)
+		}
+	}
+
+	// Only epoch 2 writes show
+	client.ZAdd(ctx, ws.KeyAt(2, "swarm: cards", "ready"), redis.Z{Score: 1, Member: "card-e2"})
+	snap2b, err := r.Read(ctx, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap2b.Streams[0].Ready != 1 || snap2b.Streams[0].Total() != 1 {
+		t.Fatalf("epoch 2 writes not reflected: %+v", snap2b.Streams[0])
+	}
+}
