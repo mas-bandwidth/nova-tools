@@ -131,3 +131,48 @@ func TestFrontierCardGoesOnlyToAWorkerAdvertisingIt(t *testing.T) {
 	}
 	cleanMoves(t, c, "frontier")
 }
+
+// TestFriendWorkRefusesUncoveredRoute: a friend's copy may only be worked if
+// the model type it advertises covers the card's ROUTE (frontier > pro > flash).
+func TestFriendWorkRefusesUncoveredRoute(t *testing.T) {
+	t.Parallel()
+	c := start(t)
+	ctx := context.Background()
+
+	pushRouted(t, c, "cov-front", taskcard.RouteFrontier)
+	pushRouted(t, c, "cov-pro", taskcard.RoutePro)
+
+	// frontFriend advertises frontier initially
+	frontFriend := frontierWorker(t, c, "friend:front", "frontier")
+
+	a1, err := taskcard.Assign(ctx, c, frontFriend, "cov-front", false, "rowan", "assign 1")
+	if err != nil {
+		t.Fatalf("assign cov-front to frontFriend: %v", err)
+	}
+
+	// 1. Friend with frontier attempting to work with --model flash is refused
+	_, err = taskcard.WorkAs(ctx, c, frontFriend, "front", 0, false, taskcard.Who{Model: "flash"}, a1.Copy)
+	if err == nil || !strings.Contains(err.Error(), "model flash does not cover card route frontier") {
+		t.Fatalf("front friend work with model flash: %v; want model cover refusal", err)
+	}
+
+	// 2. Friend advertised tiers changed to flash,pro attempting to work a frontier card is refused
+	c.HSet(ctx, frontFriend.DesiredKey(), "tiers", "flash,pro")
+	_, err = taskcard.WorkAs(ctx, c, frontFriend, "front", 0, false, taskcard.Who{}, a1.Copy)
+	if err == nil || !strings.Contains(err.Error(), "TIER") || !strings.Contains(err.Error(), "frontier") {
+		t.Fatalf("front friend (now flash,pro) work frontier card: %v; want TIER refusal naming frontier", err)
+	}
+
+	// 3. Friend restored to frontier attempting to work with --model frontier succeeds and records who
+	c.HSet(ctx, frontFriend.DesiredKey(), "tiers", "frontier")
+	w, err := taskcard.WorkAs(ctx, c, frontFriend, "front", 0, false, taskcard.Who{Model: "frontier", Harness: "test-harness", Child: "ch-1"}, a1.Copy)
+	if err != nil || len(w.IDs) != 1 || w.IDs[0] != a1.Copy {
+		t.Fatalf("front friend work with model frontier: %v, %+v", err, w)
+	}
+	whoRec := c.HMGet(ctx, "task:"+a1.Copy, "model", "harness", "child").Val()
+	if fmt.Sprint(whoRec) != "[frontier test-harness ch-1]" {
+		t.Fatalf("task:%s who record = %v, want [frontier test-harness ch-1]", a1.Copy, whoRec)
+	}
+
+	cleanMoves(t, c, "friend-route-cover")
+}

@@ -38,6 +38,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pipeerr"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/redis/go-redis/v9"
@@ -190,6 +191,49 @@ func Work(ctx context.Context, c redis.Cmdable, as Consumer, by string, n int, f
 func WorkAs(ctx context.Context, c redis.Cmdable, as Consumer, by string, n int, fill bool, who Who, ids ...string) (Worked, error) {
 	if err := who.Check(); err != nil {
 		return Worked{}, err
+	}
+	if as.Kind == "friend" {
+		checkIDs := ids
+		if len(checkIDs) == 0 {
+			ready, _ := c.ZRange(ctx, as.KeyAt(0, "ready"), 0, -1).Result()
+			checkIDs = ready
+			if !fill && n > 0 && len(checkIDs) > n {
+				checkIDs = checkIDs[:n]
+			}
+		}
+		if len(checkIDs) > 0 {
+			tiers, err := c.HGet(ctx, as.DesiredKey(), "tiers").Result()
+			if err != nil && !errors.Is(err, redis.Nil) {
+				return Worked{}, err
+			}
+			if tiers == "" {
+				tiers = cardhdr.DefaultTiers
+			}
+			for _, id := range checkIDs {
+				rec, err := c.HMGet(ctx, Key(id), "route", "primary").Result()
+				if err != nil && !errors.Is(err, redis.Nil) {
+					return Worked{}, err
+				}
+				route := ""
+				if len(rec) > 0 {
+					if s, ok := rec[0].(string); ok {
+						route = s
+					}
+				}
+				if route == "" && len(rec) > 1 {
+					if primary, ok := rec[1].(string); ok && primary != "" {
+						route, _ = c.HGet(ctx, Key(primary), "route").Result()
+					}
+				}
+				route = strings.TrimSpace(route)
+				if route != "" && !cardhdr.TiersCover(tiers, route) {
+					return Worked{}, &Refused{Why: fmt.Sprintf("TIER %s advertises %s, not %s", as, tiers, route)}
+				}
+				if who.Model != "" && cardhdr.RouteRank(who.Model) > 0 && cardhdr.RouteRank(who.Model) < cardhdr.RouteRank(route) {
+					return Worked{}, &Refused{Why: fmt.Sprintf("model %s does not cover card route %s", who.Model, route)}
+				}
+			}
+		}
 	}
 	k := any(n)
 	if fill {

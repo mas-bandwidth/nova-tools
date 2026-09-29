@@ -111,6 +111,7 @@ func TestPullRequestCheckRunAndDispositionEachBecomeOneEntry(t *testing.T) {
 				"branch": "johnny/ev-github-2685",
 				"base":   "",
 				"merged": "",
+				"body":   "",
 			},
 		},
 		{

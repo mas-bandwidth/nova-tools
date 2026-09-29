@@ -125,6 +125,7 @@ func Decode(event string, payload []byte) (Entry, error) {
 		e.At = pullAt(p.PullRequest)
 		e.Branch = strings.TrimSpace(p.PullRequest.Head.Ref)
 		e.Base = strings.TrimSpace(p.PullRequest.Base.Ref)
+		e.Body = strp(p.PullRequest.Body)
 		if e.Action == "closed" {
 			e.Merged = strconv.FormatBool(p.PullRequest.Merged)
 		}
@@ -275,6 +276,7 @@ func Fields(e Entry) (map[string]interface{}, error) {
 		v["branch"] = e.Branch
 		v["base"] = e.Base
 		v["merged"] = e.Merged
+		v["body"] = e.Body
 	case "check_run":
 		v["check"] = e.Check
 		v["check_run_id"] = e.CheckRunID
@@ -498,6 +500,7 @@ type pullRequest struct {
 	UpdatedAt *string `json:"updated_at"`
 	CreatedAt *string `json:"created_at"`
 	Merged    bool    `json:"merged"`
+	Body      *string `json:"body"`
 	Head      struct {
 		SHA string `json:"sha"`
 		Ref string `json:"ref"`

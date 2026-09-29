@@ -89,6 +89,40 @@ func IsRoute(s string) bool {
 	return false
 }
 
+// RouteRank returns the rank of a model type: frontier (3) > pro (2) > flash (1);
+// friend or any other route is 0.
+func RouteRank(route string) int {
+	switch strings.ToLower(strings.TrimSpace(route)) {
+	case RouteFrontier:
+		return 3
+	case RoutePro:
+		return 2
+	case RouteFlash:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// TiersCover reports whether the advertised tiers (e.g. "flash,pro" or "frontier")
+// cover the requested card route. A card route with rank 0 (friend, none, empty) is covered
+// by any tiers.
+func TiersCover(advertisedTiers, route string) bool {
+	cardRank := RouteRank(route)
+	if cardRank == 0 {
+		return true
+	}
+	if strings.TrimSpace(advertisedTiers) == "" {
+		advertisedTiers = DefaultTiers
+	}
+	for _, t := range strings.Split(advertisedTiers, ",") {
+		if RouteRank(t) >= cardRank {
+			return true
+		}
+	}
+	return false
+}
+
 // KeyRE is the header line's shape: a key word at column 0, then a colon.
 var KeyRE = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9-]*):\s*(.*)$`)
 

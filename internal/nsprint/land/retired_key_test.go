@@ -5,6 +5,7 @@ import (
 	"go/parser"
 	gotoken "go/token"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -21,7 +22,11 @@ import (
 func TestNoRetiredPRRecordRead(t *testing.T) {
 	t.Parallel()
 
-	roots := []string{filepath.Join("..", "..", "..", "cmd", "nova-sprint"), "."}
+	rootSprint := filepath.Join("..", "..", "..", "cmd", "nova-sprint")
+	if _, err := os.Stat(rootSprint); err != nil {
+		rootSprint = filepath.Join("..", "..", "..", "deprecated", "cmd", "nova-sprint")
+	}
+	roots := []string{rootSprint, "."}
 	scanned := 0
 	for _, root := range roots {
 		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {

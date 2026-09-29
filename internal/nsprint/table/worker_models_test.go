@@ -52,3 +52,35 @@ func TestFriendRowNamesItsModels(t *testing.T) {
 		t.Fatalf("header moved: %q", header)
 	}
 }
+
+// TestFriendRowShowsNewestWorkingCopyModel (#4349): worker table shows the model
+// of the newest working copy for a friend who holds working copies.
+func TestFriendRowShowsNewestWorkingCopyModel(t *testing.T) {
+	t.Parallel()
+	now := table.SprintFixtureNow()
+	ms := func(d time.Duration) string { return strconv.FormatInt(now.Add(d).UnixMilli(), 10) }
+	client, _ := consumerStore(t, [][]string{
+		{"SADD", "friends", "rowan", "emma"},
+		{"HSET", "friend:rowan:beat", "at", ms(-time.Second), "cpu", "12.5", "models", "opus-5.5"},
+		// Older copy has model sonnet-4, newer copy has model opus-5.6
+		{"ZADD", "friend:rowan:cards:working", "1", "old-card~1", "2", "new-card~1"},
+		{"HSET", "task:old-card~1", "model", "sonnet-4"},
+		{"HSET", "task:new-card~1", "model", "opus-5.6"},
+		// Emma has working copy without model in task record, falling back to beat
+		{"HSET", "friend:emma:beat", "at", ms(-time.Second), "models", "gemini-2.5-pro"},
+		{"ZADD", "friend:emma:cards:working", "1", "card-no-model~1"},
+	})
+	snap, err := table.NewSprintReader(client, table.SprintConfig{Friends: []string{"rowan", "emma"}}).Read(context.Background(), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block := consumerBlock(t, snap.Render(now))
+	want := []string{
+		"rowan opus-5.6            |     0 |       2 |     0 |    - | up     | 12.5%",
+		"emma gemini-2.5-pro       |     0 |       1 |     0 |    - | up     | -",
+	}
+	rows := strings.Split(block, "\n")[2:4]
+	if strings.Join(rows, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("rows:\n%s\nwant:\n%s", strings.Join(rows, "\n"), strings.Join(want, "\n"))
+	}
+}

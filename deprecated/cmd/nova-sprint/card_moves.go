@@ -42,10 +42,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/gh"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/brief"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/launch"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/note"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
@@ -375,13 +378,91 @@ func (m *moveCmd) run(ctx context.Context, c *redis.Client, sub string, ids []st
 			}
 			r.Score = s
 		}
+		var rec map[string]string
+		if len(ids) == 1 {
+			var err error
+			rec, err = c.HGetAll(ctx, taskcard.Key(ids[0])).Result()
+			if err != nil {
+				return refuse(errOut, "card end", err.Error())
+			}
+			if rec["where"] == "ready" && *m.ok && *m.as != "" {
+				as, err := consumerArg(*m.as)
+				if err != nil {
+					return refuse(errOut, "card end", err.Error())
+				}
+				who := taskcard.Who{Model: *m.result["model"], Harness: *m.harness, Child: *m.child}
+				if err := who.Check(); err != nil {
+					return refuse(errOut, "card end", err.Error())
+				}
+				w, err := taskcard.WorkAs(ctx, c, as, *m.actor, 0, false, who, ids[0])
+				if err != nil {
+					return refused(err, "as="+as.String())
+				}
+				fmt.Fprintf(out, "WORK+END %s\n", ids[0])
+				if r.Token == "" && len(w.Tokens) > 0 {
+					r.Token = w.Tokens[0]
+				}
+				rec["where"] = "working"
+				if who.Model != "" {
+					rec["model"] = who.Model
+				}
+				if who.Harness != "" {
+					rec["harness"] = who.Harness
+				}
+				if who.Child != "" {
+					rec["child"] = who.Child
+				}
+			}
+		}
+		if r.PR != "" {
+			nInt, err := strconv.Atoi(r.PR)
+			if err != nil {
+				return refuse(errOut, "card end", "--pr wants <repo>#<n>")
+			}
+			exists, err := c.Exists(ctx, prkey.Key(r.Repo, nInt)).Result()
+			if err != nil {
+				return refuse(errOut, "card end", err.Error())
+			}
+			if exists == 0 {
+				ghc := gh.New("card-end", c)
+				pr, err := ghc.ViewPR(ctx, r.Repo, nInt)
+				if err != nil {
+					return refuse(errOut, "card end", fmt.Sprintf("read pr %s#%d: %v", r.Repo, nInt, err))
+				}
+				fmt.Fprintf(out, "READ PR %s#%d\n", r.Repo, nInt)
+				action := pr.State
+				if action == "" {
+					action = "open"
+				}
+				if pr.Merged {
+					action = "closed"
+				}
+				claim := land.PRClaim{
+					Repo:   r.Repo,
+					N:      nInt,
+					Head:   pr.Head.SHA,
+					Action: action,
+					Merged: pr.Merged,
+					Branch: pr.Head.Ref,
+					Base:   pr.Base.Ref,
+					Body:   pr.Body,
+					Source: land.ClaimREST,
+				}
+				if _, err := land.RecordPRHead(ctx, c, claim, time.Now); err != nil {
+					return refuse(errOut, "card end", fmt.Sprintf("record pr %s#%d: %v", r.Repo, nInt, err))
+				}
+			}
+		}
 		if r.OK && r.PR != "" {
 			// the spec gate (#4313) at this door as at nova-friend done: a code
 			// copy's ok with a PR runs it in --repo, the checkout at --head,
 			// before the end (nova-tools#4401 read, DOORS)
-			rec, err := c.HGetAll(ctx, taskcard.Key(ids[0])).Result()
-			if err != nil {
-				return refuse(errOut, "card end", err.Error())
+			if rec == nil {
+				var err error
+				rec, err = c.HGetAll(ctx, taskcard.Key(ids[0])).Result()
+				if err != nil {
+					return refuse(errOut, "card end", err.Error())
+				}
 			}
 			if why := gateCopyEnd(m.parent, c, ids[0], rec, *m.checkout, *m.findingTest, *m.head, out); why != "" {
 				fmt.Fprintf(out, "CARD END REFUSED ids=%s why=%s ms=%d\n", ids[0], quoteField(why), ms())

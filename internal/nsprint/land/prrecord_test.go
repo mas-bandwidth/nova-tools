@@ -1,12 +1,14 @@
 package land
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/mas-bandwidth/nova-tools/internal/ghevent"
 	"github.com/redis/go-redis/v9"
 )
@@ -263,5 +265,75 @@ func TestRESTClaimWritesAMergedRecord(t *testing.T) {
 		if err := b.Validate(); err == nil || !strings.Contains(err.Error(), "a REST claim is a merged PR") {
 			t.Fatalf("%s merged=%t: %v", b.Action, b.Merged, err)
 		}
+	}
+}
+
+// TestBranchCardStreamAndBodyCard (#4349): branch stream/<s> supplies the stream,
+// and PR body CARD: <id> supplies the card id and looks up its task record.
+func TestBranchCardStreamAndBodyCard(t *testing.T) {
+	t.Parallel()
+	c := redis.NewClient(&redis.Options{Addr: miniredis.RunT(t).Addr()})
+	ctx := context.Background()
+
+	c.HSet(ctx, "task:my-feature-card", "stream", "feature-stream", "repo", "mas-bandwidth/nova-tools", "pr", "101")
+
+	// 1. Branch stream/bench-runner gives stream bench-runner
+	card, err := branchCard(ctx, c, "mas-bandwidth/nova-tools", 101, "stream/bench-runner", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if card.Stream != "bench-runner" || card.ID != "" {
+		t.Fatalf("branch stream/bench-runner: got %+v, want stream=bench-runner, id=''", card)
+	}
+
+	// 2. PR body with CARD: my-feature-card resolves card ID and stream from task
+	card, err = branchCard(ctx, c, "mas-bandwidth/nova-tools", 101, "some-random-branch", "Some PR description\n\nCARD: my-feature-card\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if card.ID != "my-feature-card" || card.Stream != "feature-stream" {
+		t.Fatalf("body CARD: got %+v, want id=my-feature-card, stream=feature-stream", card)
+	}
+
+	// 3. Both branch stream/<s> and CARD: <id>
+	card, err = branchCard(ctx, c, "mas-bandwidth/nova-tools", 101, "stream/override-stream", "CARD: my-feature-card")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if card.ID != "my-feature-card" || card.Stream != "override-stream" {
+		t.Fatalf("both branch and body: got %+v, want id=my-feature-card, stream=override-stream", card)
+	}
+}
+
+// TestRESTClaimOpenPR (#4349): a REST claim for an open PR writes the record with state open.
+func TestRESTClaimOpenPR(t *testing.T) {
+	t.Parallel()
+	c := redis.NewClient(&redis.Options{Addr: miniredis.RunT(t).Addr()})
+	ctx := context.Background()
+
+	claim := PRClaim{
+		Repo:   "mas-bandwidth/nova-tools",
+		N:      42,
+		Head:   shaNew,
+		Action: "open",
+		Branch: "stream/tools",
+		Base:   "dev",
+		Source: ClaimREST,
+	}
+	if err := claim.Validate(); err != nil {
+		t.Fatalf("open ClaimREST Validate: %v", err)
+	}
+
+	res, err := RecordPRHead(ctx, c, claim, nil)
+	if err != nil {
+		t.Fatalf("RecordPRHead open ClaimREST: %v", err)
+	}
+	if res.Outcome != "created" || res.State != "open" || res.Stream != "tools" {
+		t.Fatalf("RecordPRHead result = %+v, want outcome=created state=open stream=tools", res)
+	}
+
+	rec := c.HGetAll(ctx, "pr:nova-tools:42").Val()
+	if rec["state"] != "open" || rec["head"] != shaNew || rec["stream"] != "tools" || rec["base"] != "dev" {
+		t.Fatalf("recorded pr hash = %+v", rec)
 	}
 }

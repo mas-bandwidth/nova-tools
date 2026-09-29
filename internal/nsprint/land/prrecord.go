@@ -60,6 +60,7 @@ type PRClaim struct {
 	Merged bool   // closed only: the PR merged
 	Branch string // the head branch, "" when not carried
 	Base   string // the base branch, "" when not carried
+	Body   string // the PR body, "" when not carried
 	Source string // ClaimDelivery, ClaimRunner or ClaimREST
 	EvID   string // the ev:github entry id of the claim
 	RunID  string // runner only: github.run_id (decimal)
@@ -106,7 +107,7 @@ func short8(s string) string {
 }
 
 // prRecFields are the record fields a claim is planned from.
-var prRecFields = []string{"head", "state", "stream", "task", "branch", "gh_ev", "gh_run_id"}
+var prRecFields = []string{"head", "state", "stream", "task", "branch", "base", "gh_ev", "gh_run_id"}
 
 // cardOf is the card a branch names, as far as the store shows it.
 type cardOf struct {
@@ -210,12 +211,19 @@ func planPRHead(key string, rec map[string]string, c PRClaim, card cardOf, nowMS
 	if state != rec["state"] {
 		p.set = append(p.set, "state", state, "updated_at", now)
 	}
-	if rec["task"] == "" && card.ID != "" {
+	if (rec["task"] == "" || rec["task"] == "-") && card.ID != "" {
 		p.set = append(p.set, "task", card.ID)
 		p.res.Task = card.ID
 	}
-	if rec["branch"] == "" && c.Branch != "" {
+	if (rec["stream"] == "" || rec["stream"] == "-") && card.Stream != "" {
+		p.set = append(p.set, "stream", card.Stream)
+		p.res.Stream = card.Stream
+	}
+	if (rec["branch"] == "" || rec["branch"] == "-") && c.Branch != "" {
 		p.set = append(p.set, "branch", c.Branch)
+	}
+	if (rec["base"] == "" || rec["base"] == "-") && c.Base != "" {
+		p.set = append(p.set, "base", c.Base)
 	}
 	p.res.State = state
 	if rec["head"] == c.Head {
@@ -255,8 +263,17 @@ func (c PRClaim) Validate() error {
 			return fmt.Errorf("pr head: a runner claim needs its run id, got %q", c.RunID)
 		}
 	case ClaimREST:
-		if c.Action != "closed" || !c.Merged {
-			return fmt.Errorf("pr head: a REST claim is a merged PR (closed, merged), not %q merged=%t", c.Action, c.Merged)
+		switch c.Action {
+		case "closed":
+			if !c.Merged {
+				return fmt.Errorf("pr head: a REST claim is a merged PR (closed, merged), not closed merged=false")
+			}
+		case "opened", "synchronize", "reopened", "open":
+			if c.Merged {
+				return fmt.Errorf("pr head: a REST claim is a merged PR when closed, not open merged=true")
+			}
+		default:
+			return fmt.Errorf("pr head: a REST claim is an open or merged PR, not %q", c.Action)
 		}
 	default:
 		return fmt.Errorf("pr head: source %q is not delivery, runner or rest", c.Source)
@@ -290,12 +307,12 @@ func RecordPRHead(ctx context.Context, c redis.Cmdable, cl PRClaim, now func() t
 		}
 	}
 	var card cardOf
-	if rec["task"] == "" {
+	if rec["task"] == "" || rec["task"] == "-" || rec["stream"] == "" || rec["stream"] == "-" {
 		branch := cl.Branch
 		if branch == "" {
 			branch = rec["branch"]
 		}
-		if card, err = branchCard(ctx, c, cl.Repo, cl.N, branch); err != nil {
+		if card, err = branchCard(ctx, c, cl.Repo, cl.N, branch, cl.Body); err != nil {
 			return PRHeadResult{}, err
 		}
 	}
@@ -318,31 +335,62 @@ func RecordPRHead(ctx context.Context, c redis.Cmdable, cl PRClaim, now func() t
 	return p.res, nil
 }
 
-// branchCard is the card a branch names: nova/<S>/<label>-a<n> (a bench
-// copy's branch) names label; any other <prefix>/<slug> names slug. It is
-// the card only when task:<id> exists and names this PR's repo and no other
+var prBodyCardRx = regexp.MustCompile(`(?i)(?:^|\n|\b)CARD:\s*([A-Za-z0-9._~-]+)`)
+
+func streamFromBranch(branch string) string {
+	b := strings.TrimPrefix(strings.TrimSpace(branch), "refs/heads/")
+	if s, ok := strings.CutPrefix(b, "stream/"); ok {
+		s = strings.TrimSpace(s)
+		if !strings.ContainsAny(s, " :*?/") {
+			return s
+		}
+	}
+	return ""
+}
+
+// branchCard is the card a branch or PR body names: branch stream/<s> names stream s;
+// body CARD: <id> names card id; nova/<S>/<label>-a<n> names label; any other <prefix>/<slug>
+// names slug. It is the card only when task:<id> exists and names this PR's repo and no other
 // PR.
-func branchCard(ctx context.Context, c redis.Cmdable, repo string, n int, branch string) (cardOf, error) {
-	id := BranchCardID(branch)
-	if id == "" {
-		return cardOf{}, nil
+func branchCard(ctx context.Context, c redis.Cmdable, repo string, n int, branch, body string) (cardOf, error) {
+	var card cardOf
+	if s := streamFromBranch(branch); s != "" {
+		card.Stream = s
 	}
-	vals, err := c.HMGet(ctx, "task:"+id, "stream", "repo", "pr").Result()
-	if err != nil {
-		return cardOf{}, fmt.Errorf("pr head: read task:%s: %w", id, err)
+
+	var candidateIDs []string
+	if m := prBodyCardRx.FindStringSubmatch(body); len(m) > 1 {
+		candidateIDs = append(candidateIDs, strings.TrimSpace(m[1]))
 	}
-	str := func(i int) string { s, _ := vals[i].(string); return s }
-	stream, trepo, tpr := str(0), str(1), str(2)
-	if stream == "" && trepo == "" && tpr == "" {
-		return cardOf{}, nil
+	if card.Stream == "" {
+		if id := BranchCardID(branch); id != "" {
+			candidateIDs = append(candidateIDs, id)
+		}
 	}
-	if trepo != "" && prkey.Name(trepo) != prkey.Name(repo) {
-		return cardOf{}, nil
+
+	for _, id := range candidateIDs {
+		vals, err := c.HMGet(ctx, "task:"+id, "stream", "repo", "pr").Result()
+		if err != nil {
+			return cardOf{}, fmt.Errorf("pr head: read task:%s: %w", id, err)
+		}
+		str := func(i int) string { s, _ := vals[i].(string); return s }
+		stream, trepo, tpr := str(0), str(1), str(2)
+		if stream == "" && trepo == "" && tpr == "" {
+			continue
+		}
+		if trepo != "" && prkey.Name(trepo) != prkey.Name(repo) {
+			continue
+		}
+		if tpr != "" && tpr != "0" && tpr != strconv.Itoa(n) {
+			continue
+		}
+		card.ID = id
+		if card.Stream == "" {
+			card.Stream = stream
+		}
+		break
 	}
-	if tpr != "" && tpr != "0" && tpr != strconv.Itoa(n) {
-		return cardOf{}, nil
-	}
-	return cardOf{ID: id, Stream: stream}, nil
+	return card, nil
 }
 
 var copyBranchRx = regexp.MustCompile(`^nova/[^/]+/(.+)-a[0-9]+$`)
@@ -526,7 +574,7 @@ func ClaimOf(m redis.XMessage) (PRClaim, bool) {
 		return PRClaim{}, false
 	}
 	c := PRClaim{Repo: v("repo"), N: n, Head: head, Action: v("action"), Merged: v("merged") == "true",
-		Branch: v("branch"), Base: v("base"), Source: ClaimDelivery, EvID: m.ID}
+		Branch: v("branch"), Base: v("base"), Body: v("body"), Source: ClaimDelivery, EvID: m.ID}
 	if t, err := time.Parse(time.RFC3339, v("at")); err == nil {
 		c.At = t.UnixMilli()
 	}

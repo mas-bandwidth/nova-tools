@@ -437,11 +437,12 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		lock = pipe.Eval(ctx, lockRefreshScript, []string{cfg.LockKey}, cfg.LockToken, lockTTL(cfg).Milliseconds())
 	}
 	type consumerCmds struct {
-		cells  [4]*redis.IntCmd
-		beat   *redis.SliceCmd
-		down   *redis.IntCmd
-		paused *redis.StringCmd
-		play   *redis.StringCmd // a bench's last fleet play result (#4356)
+		cells       [4]*redis.IntCmd
+		beat        *redis.SliceCmd
+		down        *redis.IntCmd
+		paused      *redis.StringCmd
+		play        *redis.StringCmd // a bench's last fleet play result (#4356)
+		newestModel *redis.Cmd
 	}
 	roster := r.roster()
 	cmds := make([]consumerCmds, len(roster))
@@ -454,6 +455,9 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		cmds[i].paused = pipe.HGet(ctx, c.ID()+":desired", "paused")
 		if c.Kind == "bench" {
 			cmds[i].play = pipe.HGet(ctx, BenchPlayKey(c.Name), "result")
+		}
+		if c.Kind == "friend" {
+			cmds[i].newestModel = pipe.Eval(ctx, newestWorkingModelScript, []string{ws.ConsumerKeyAt(epoch, c.ID(), "working")})
 		}
 	}
 	progress := pipe.HGetAll(ctx, ProgressKey)
@@ -575,13 +579,20 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 				row.Up = true
 			}
 			if c.Kind == "friend" {
-				var ms []string
-				for _, m := range strings.Split(pipeValue(got[4]), ",") {
-					if m = sanitize(m); m != "" {
-						ms = append(ms, m)
+				if cmds[i].newestModel != nil {
+					if v, err := cmds[i].newestModel.Text(); err == nil && sanitize(v) != "" {
+						row.Models = sanitize(v)
 					}
 				}
-				row.Models = strings.Join(ms, ",")
+				if row.Models == "" {
+					var ms []string
+					for _, m := range strings.Split(pipeValue(got[4]), ",") {
+						if m = sanitize(m); m != "" {
+							ms = append(ms, m)
+						}
+					}
+					row.Models = strings.Join(ms, ",")
+				}
 			}
 		}
 		if n, err := cmds[i].down.Result(); err != nil || n > 0 {
@@ -740,6 +751,13 @@ func workerName(name string, r ConsumerRow) string {
 	}
 	return s
 }
+
+// newestWorkingModelScript finds the model of the friend's newest working copy (#4349).
+const newestWorkingModelScript = `local ids = redis.call('ZREVRANGE', KEYS[1], 0, 0)
+if #ids == 0 then return '' end
+local m = redis.call('HGET', 'task:' .. ids[1], 'model')
+if not m then return '' end
+return m`
 
 // The writer's lock: one table writer per key, fleet-wide. AcquireLock takes
 // it with SET NX PX; every tick then runs lockRefreshScript in its own

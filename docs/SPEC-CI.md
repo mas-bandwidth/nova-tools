@@ -2346,6 +2346,15 @@ the original failed measurement.
 **Its remedy lines.** `remedy="remove the host, tailnet or person name; make the reference general or read it from configuration; docs/SPEC-CI.md#generality"`, and for an unlisted or grown count: `remedy="shrink the allowlist count; the list only shrinks"`.
 **Its narrowings.** It scans living `.go` files under `cmd/` and `internal/` only, skipping `testdata/`, `vendor/`, `deprecated/`, and `_test.go` files. It excludes Go package `import` statements (including `github.com/mas-bandwidth/...` imports) and marked documentation examples in comments (lines with `e.g.` or `example:`). Boundary controls ensure substring words like `miniredis`, `revision`, `deterministic`, `minimum`, `studios`, `whitespace`, and compound words like `TrimSpace` are not matched.
 
+### `prrecord` — no verb path needs a hand PR record
+
+**The rule.** No verb path requires or instructs running `pr record` by hand as a prerequisite. `card end --ok --pr` automatically resolves unrecorded PRs via a REST read from GitHub (`gh.ViewPR`) and writes the record with `RecordPRHead`, printing `READ PR <repo>#<n>`. Ingest (`ev:github` pull_request opened/synchronize) creates or refreshes the record with head, base, and the stream or task from `stream/<s>` or `CARD: <id>`. `land.PRClaim` accepts `ClaimREST` for open actions (`open`, `opened`, `synchronize`, `reopened`), and `card end --ok` on a ready copy with `--as` performs work+end in one call.
+**The mistake it prevents.** Requiring a friend or human worker to run an out-of-band `pr record` command before ending a card when the webhook or REST API already possesses the required PR head and base information, resulting in `NOPR` refusals.
+**The test.** `TestNoVerbPathNeedsAHandPRRecord` (`internal/ci/prrecord_class_test.go`).
+**Its allowlist.** None; no exceptions are permitted.
+**Its remedy lines.** `remedy="resolve PR records automatically via webhook ingest or gh.ViewPR on card end; docs/SPEC-CI.md#prrecord"`.
+**Its narrowings.** It asserts `land.PRClaim` permits `ClaimREST` on open PR actions, verifies that `ghevent.Decode` preserves PR bodies for `CARD: <id>` resolution, and verifies that `card end` implements automatic REST resolution and `WORK+END` ready-state transitions.
+
 ## How the class tests read the tree: one walk, one parse, in parallel
 
 Every rule above is a sweep of this repository's own source. A rule that pays
