@@ -42,7 +42,7 @@ func TestAckCombinesDependencyJudgmentsForOnePrimary(t *testing.T) {
 					t.Fatalf("need two distinct judgments: %+v", notes)
 				}
 				ids := []string{notes[0].Note.ID, notes[1].Note.ID}
-				h.must(AckStep(sprint.AckReq{Notes: ids, Reason: "both unnecessary", Who: "coordinator"}))
+				h.must(AckStep(sprint.AckReq{Notes: ids, Reason: "both unnecessary", Who: "tester"}))
 				c := h.snap().Work.Card("waiter")
 				for _, n := range wants {
 					if !strings.Contains(","+c.F("waived")+",", ","+n+",") {

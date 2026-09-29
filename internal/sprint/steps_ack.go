@@ -25,6 +25,12 @@ type AckReq struct {
 func Ack(s *Snapshot, r AckReq) Plan {
 	var p Plan
 	p.on(s)
+	if why := notCoordinator(s, r.Who, "ack"); why != "" {
+		for _, id := range r.Notes {
+			p.refuse(id, why)
+		}
+		return p
+	}
 	closing := map[string]bool{} // every note id this call closes
 	named := map[string]bool{}
 	for _, id := range r.Notes {
@@ -329,6 +335,10 @@ type WaitReq struct {
 // keep (its review time is set instead) and for one not open.
 func Wait(s *Snapshot, r WaitReq) Plan {
 	var p Plan
+	if why := notCoordinator(s, r.Who, "wait"); why != "" {
+		p.refuse(r.Note, why)
+		return p
+	}
 	var entries []Open
 	for _, o := range s.Open {
 		if o.Note.ID == r.Note {

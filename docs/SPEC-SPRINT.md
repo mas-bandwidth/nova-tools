@@ -393,6 +393,10 @@ it drops, and accept every card judgment of the primaries it accepts; ask --anot
 resolves a red one; return resolves a red CI on the primaries it returns, and
 answers its stream's red or rejected batch (recorded; that judgment stays open
 while the stream is stopped); resume resolves the stream's stop.
+Judgments are the coordinator's: `ack`, `wait` and every verb given
+`--answers` are refused for any actor but the sprint's coordinator
+(`init --coordinator`), naming the coordinator, as `release` is; workers and
+readers keep their own verbs (take, finish, read).
 `ack <notification> --reason <text>` answers a judgment that lists ack (the
 table above): it closes that judgment and records the reason. It is refused
 for the judgment of a stopped stream while the stream is stopped. Acting on one card of a

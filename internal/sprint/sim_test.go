@@ -22,7 +22,8 @@ var t0 = time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
 
 func newWorld(t *testing.T, readers ...string) *world {
 	t.Helper()
-	s := &Snapshot{Now: t0, Work: NewTable(Work), Readers: NewTable(Readers), Merge: NewTable(Merge), Fleet: NewTable(Fleet)}
+	s := &Snapshot{Now: t0, Work: NewTable(Work), Readers: NewTable(Readers), Merge: NewTable(Merge), Fleet: NewTable(Fleet),
+		Coordinator: "coordinator", Actor: "coordinator"}
 	s.Readers.Rows = append(s.Readers.Rows, readers...)
 	return &world{t: t, s: s}
 }

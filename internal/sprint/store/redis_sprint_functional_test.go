@@ -60,6 +60,9 @@ func liveHarnessOn(t *testing.T, c *redis.Client, prefix string) *harness {
 	if err := h.st.B.RowsAdd(h.ctx, names.Table(sprint.Readers), []string{"reader-a", "reader-b", "reader-c"}); err != nil {
 		t.Fatal(err)
 	}
+	if err := h.st.B.SetCoordinator(h.ctx, h.st.Actor); err != nil {
+		t.Fatal(err)
+	}
 	h.beat()
 	return h
 }
@@ -899,8 +902,9 @@ func TestRedisTicksRaceEachOther(t *testing.T) {
 func TestRedisTheCoordinatorsRecords(t *testing.T) {
 	t.Parallel()
 	h, _ := liveHarness(t)
-	if who, err := h.st.B.Coordinator(h.ctx); err != nil || who != "" {
-		t.Fatalf("a new sprint's coordinator: %q %v", who, err)
+	// the harness sets its actor as the coordinator; a sprint may change it
+	if who, err := h.st.B.Coordinator(h.ctx); err != nil || who != h.st.Actor {
+		t.Fatalf("the harness's coordinator: %q %v", who, err)
 	}
 	if err := h.st.B.SetCoordinator(h.ctx, "tester"); err != nil {
 		t.Fatal(err)

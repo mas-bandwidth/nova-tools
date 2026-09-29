@@ -180,7 +180,15 @@ func closesFor(open []Open, types []string, subject string) []Open {
 // resolves some obligation of (it closes, or records a decided answer to it);
 // one it does not is refused by its id. Naming a notification closes nothing
 // by itself.
-func answered(p *Plan, s *Snapshot, ids []string) {
+func answered(p *Plan, s *Snapshot, ids []string, who string) {
+	// Judgments are the coordinator's: an answer by anyone else refuses the
+	// whole step.
+	if len(ids) > 0 {
+		if why := notCoordinator(s, who, "--answers"); why != "" {
+			*p = Plan{Refused: []Refusal{{Key: strings.Join(ids, ","), Why: why}}}
+			return
+		}
+	}
 	// An answer of another epoch refuses the whole step: nothing moves, and
 	// the refusal names the id's epoch and when the sprint was cleared.
 	var other []Refusal
@@ -372,4 +380,26 @@ func OnePerCause(s *Snapshot, p Plan) Plan {
 	}
 	p.Notes = keep(p.Notes)
 	return p
+}
+
+// notCoordinator is why who may not answer a judgment: judgments are the
+// sprint's coordinator's (init --coordinator), as release is. "" is may.
+func notCoordinator(s *Snapshot, who, verb string) string {
+	if who == "" {
+		who = s.Actor
+	}
+	return NotCoordinator(s.Coordinator, who, verb)
+}
+
+// NotCoordinator is why who may not answer a judgment of a sprint whose
+// coordinator is coordinator; "" is may.
+func NotCoordinator(coordinator, who, verb string) string {
+	s := struct{ Coordinator string }{coordinator}
+	switch {
+	case s.Coordinator == "":
+		return verb + " answers a judgment, and the sprint has no coordinator; judgments are the coordinator's (init --coordinator)"
+	case who != s.Coordinator:
+		return verb + " answers a judgment, which is the coordinator's alone: " + s.Coordinator + ", not " + orDash(who) + "; nothing was changed"
+	}
+	return ""
 }

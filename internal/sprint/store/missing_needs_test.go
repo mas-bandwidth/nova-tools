@@ -79,9 +79,9 @@ func TestStoredMissingNeedsHaveOneActionableJudgment(t *testing.T) {
 				if strings.Join(n.Needs, ",") != "bad.id" || strings.Join(n.Decisions, ",") != "drop,ack" || !strings.Contains(n.What, "bad.id") {
 					t.Fatalf("not actionable: %+v", n)
 				}
-				h.must(AckStep(sprint.AckReq{Notes: []string{n.ID}, Reason: "dependency not required", Who: "coordinator"}))
+				h.must(AckStep(sprint.AckReq{Notes: []string{n.ID}, Reason: "dependency not required", Who: "tester"}))
 				c := h.snap().Work.Card("waiter")
-				if c.F("waived") != "bad.id" || c.F("waived_by") != "coordinator" || c.F("waived_at") == "" {
+				if c.F("waived") != "bad.id" || c.F("waived_by") != "tester" || c.F("waived_at") == "" {
 					t.Fatalf("waiver not recorded: %+v", c)
 				}
 				switch {
@@ -122,7 +122,7 @@ func TestMissingNeedWaiverDoesNotIncludeLaterMissingNeed(t *testing.T) {
 		t.Fatalf("missing judgment: %+v", notes)
 	}
 	seedMissingNeeds(h, "waiter", "bad.id,later.bad")
-	h.must(AckStep(sprint.AckReq{Notes: []string{notes[0].Note.ID}, Reason: "only the first", Who: "coordinator"}))
+	h.must(AckStep(sprint.AckReq{Notes: []string{notes[0].Note.ID}, Reason: "only the first", Who: "tester"}))
 	c := h.snap().Work.Card("waiter")
 	if c.F("waived") != "bad.id" || c.Col != sprint.Waiting {
 		t.Fatalf("waived unreviewed need: %+v", c)

@@ -43,6 +43,10 @@ func newHarness(t *testing.T) *harness {
 	if err := h.m.RowsAdd(h.ctx, "t-readers", []string{"reader-a", "reader-b", "reader-c"}); err != nil {
 		t.Fatal(err)
 	}
+	// the harness acts as the sprint's coordinator: judgments are theirs
+	if err := h.m.SetCoordinator(h.ctx, h.st.Actor); err != nil {
+		t.Fatal(err)
+	}
 	h.beat()
 	return h
 }

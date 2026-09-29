@@ -177,5 +177,12 @@ func (st *Store) Wait(ctx context.Context, noteID string, at time.Time) (res Res
 			return res, true, err
 		}
 	}
+	coordinator, err := st.B.Coordinator(ctx)
+	if err != nil {
+		return res, false, err
+	}
+	if why := sprint.NotCoordinator(coordinator, st.Actor, "wait"); why != "" {
+		return res, false, errors.New(why)
+	}
 	return res, false, st.SetReview(ctx, noteID, at)
 }

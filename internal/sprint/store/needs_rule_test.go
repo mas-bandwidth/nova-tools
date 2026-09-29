@@ -285,7 +285,7 @@ func TestAddOnDroppedNeedAndWaive(t *testing.T) {
 		t.Fatalf("b %s, blocked %d", h.state("b"), len(h.nOpenOf(sprint.NBlocked, "b")))
 	}
 	id := h.nOpenOf(sprint.NBlocked, "b")[0].Note.ID
-	h.nDo(AckStep(sprint.AckReq{Notes: []string{id}, Reason: "fine", Who: "coord"}))
+	h.nDo(AckStep(sprint.AckReq{Notes: []string{id}, Reason: "fine", Who: "tester"}))
 	b := h.snap().Work.Card("b")
 	if b.Col != sprint.Waiting || b.F("waived") != "s1-1" {
 		t.Fatalf("ack with another need open: %s waived=%q", b.Col, b.F("waived"))

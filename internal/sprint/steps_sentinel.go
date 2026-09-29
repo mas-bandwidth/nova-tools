@@ -300,6 +300,6 @@ func Release(s *Snapshot, r ReleaseReq) Plan {
 	if d, ok := sprintDone(s, landing, nil, r.Who); ok {
 		p.Units[len(p.Units)-1].Notes = append(p.Units[len(p.Units)-1].Notes, d)
 	}
-	answered(&p, s, r.Answers)
+	answered(&p, s, r.Answers, r.Who)
 	return Lawful(p)
 }

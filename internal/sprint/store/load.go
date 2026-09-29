@@ -92,6 +92,10 @@ func (st *Store) loadOnce(ctx context.Context, tables []string, extras func(*spr
 		return nil, err
 	}
 	s.Open, s.Acked = sprint.SplitOpen(open)
+	s.Actor = st.Actor
+	if s.Coordinator, err = st.B.Coordinator(ctx); err != nil {
+		return nil, err
+	}
 	if extras != nil {
 		for table, want := range extras(s) {
 			t := s.T(table)
