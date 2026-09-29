@@ -53,7 +53,7 @@ func runTier(ctx context.Context, eng engine, c runConfig, clk clock, stdout, st
 	mt := now()
 	pre := prefillArgs(c, image, runID, stamp, moduleProxy(os.Getenv), mt)
 	code, ended := runContainer(ctx, eng, clk, pre, containerName(runID+"-mod"), mt.Add(prefillDeadline+clientGrace), stderr, stderr)
-	left := leftovers(eng, clk, runID+"-mod")
+	left := leftovers(eng, clk, runID+"-mod", leftoverBudget)
 	if code != 0 || ended != "finished" || left != 0 {
 		logf("the module cache step ended %s with exit %d, %d container(s) left", ended, code, left)
 		if ended == "interrupted" {
@@ -72,7 +72,7 @@ func runTier(ctx context.Context, eng engine, c runConfig, clk clock, stdout, st
 	ended, exit := classify(code, ended, now().Sub(start), c.deadline)
 
 	// 6. Nothing of the run may be left.
-	left = leftovers(eng, clk, runID)
+	left = leftovers(eng, clk, runID, leftoverBudget)
 	wall := now().Sub(start).Seconds()
 	if left != 0 {
 		exit = exitCannotRun
@@ -192,13 +192,18 @@ func removeContainer(eng engine, name string, stderr io.Writer) {
 	}
 }
 
+// leftoverBudget bounds the whole leftover check: every listing and removal
+// in it, so a hung runtime cannot hold the tool past it.
+const leftoverBudget = 30 * time.Second
+
 // leftovers counts the containers of one run still present, in any state,
-// after giving the runtime's removal a bounded moment to finish; any still
-// there are removed by id and counted again. -1: the count could not be read.
-func leftovers(eng engine, clk clock, runID string) int {
+// after giving the runtime's removal a moment to finish; any still there are
+// removed by id and counted again. All of it within budget. -1: the count
+// could not be read.
+func leftovers(eng engine, clk clock, runID string, budget time.Duration) int {
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
+	defer cancel()
 	count := func() (int, []string) {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
 		out, err := eng.Output(ctx, leftoverArgs(runID)...)
 		if err != nil {
 			return -1, nil
@@ -208,7 +213,7 @@ func leftovers(eng engine, clk clock, runID string) int {
 	}
 	var n int
 	var ids []string
-	for i := 0; i < 20; i++ {
+	for i := 0; i < 20 && ctx.Err() == nil; i++ {
 		n, ids = count()
 		if n == 0 {
 			return 0
@@ -216,7 +221,7 @@ func leftovers(eng engine, clk clock, runID string) int {
 		clk.Sleep(250 * time.Millisecond)
 	}
 	for _, id := range ids {
-		removeContainer(eng, id, io.Discard)
+		_, _ = eng.Output(ctx, removeArgs(id)...)
 	}
 	n, _ = count()
 	return n

@@ -965,3 +965,29 @@ func TestPackageArgumentsAreAllowlisted(t *testing.T) {
 		}
 	}
 }
+
+// stuckEngine hangs every listing until its context ends, as a wedged runtime.
+type stuckEngine struct {
+	fakeEngine
+}
+
+func (s *stuckEngine) Output(ctx context.Context, args ...string) (string, error) {
+	s.fakeEngine.mu.Lock()
+	s.fakeEngine.calls = append(s.fakeEngine.calls, args)
+	s.fakeEngine.mu.Unlock()
+	<-ctx.Done()
+	return "", ctx.Err()
+}
+
+func TestLeftoversHaveOneBudget(t *testing.T) {
+	t.Parallel()
+	eng := &stuckEngine{}
+	start := time.Now()
+	n := leftovers(eng, realClock{}, "run1", 100*time.Millisecond)
+	if took := time.Since(start); took > time.Second {
+		t.Errorf("a hung runtime held the leftover check %s past a 100ms budget", took)
+	}
+	if n != -1 {
+		t.Errorf("an unreadable count is %d, want -1 (unknown)", n)
+	}
+}

@@ -80,8 +80,18 @@ func main() {
 	// died first) must not end it before it removes its container: SIGPIPE is
 	// caught, so a write to the dead pipe fails and the run goes on to its end.
 	signal.Notify(make(chan os.Signal, 1), syscall.SIGPIPE)
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
-	defer stop()
+	// The first interrupt, terminate or hangup ends the run cleanly: the
+	// container is removed and the receipt printed. The next one has the
+	// default action again and kills this process at once.
+	ctx, cancel := context.WithCancel(context.Background())
+	ends := []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP}
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, ends...)
+	go func() {
+		<-sigs
+		signal.Reset(ends...)
+		cancel()
+	}()
 	os.Exit(dispatch(ctx, os.Args[1:], os.Stdout, os.Stderr))
 }
 
