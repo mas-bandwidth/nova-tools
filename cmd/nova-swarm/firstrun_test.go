@@ -177,6 +177,8 @@ func TestTheReadmeTranscriptIsWhatTheToolPrints(t *testing.T) {
 // documented path: it moves to a temp directory where `./pool` is the test's to
 // create, and the tool echoes back the relative `./pool` it was handed.
 func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
+	t.Parallel()
+
 	root := repoRoot(t)
 	raw, err := os.ReadFile(filepath.Join(root, "docs", "TESTS.md"))
 	if err != nil {
@@ -199,7 +201,6 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 	if len(steps) != 1 {
 		t.Errorf("the `### First run` block runs %d commands, want 1: template", len(steps))
 	}
-	t.Chdir(t.TempDir())
 	for _, p := range onboarding.Execute(steps, runDocumentedSwarm(t)) {
 		t.Error(p)
 	}
